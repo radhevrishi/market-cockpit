@@ -83,9 +83,17 @@ interface GradedResponse {
 
 // ─── Formatters ────────────────────────────────────────────────────────────
 
-function pctStr(v: number | null | undefined): string {
+function pctStr(v: number | null | undefined, decimals = 1): string {
   if (v === null || v === undefined || !Number.isFinite(v)) return '—';
-  return `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
+  return `${v >= 0 ? '+' : ''}${v.toFixed(decimals)}%`;
+}
+
+// Compact percent for table cells: no decimal, sign always shown
+function pctCompact(v: number | null | undefined): string {
+  if (v === null || v === undefined || !Number.isFinite(v)) return '   —';
+  const rounded = Math.round(v);
+  const sign = rounded >= 0 ? '+' : '';
+  return `${sign}${rounded}%`;
 }
 
 function crStr(v: number | null | undefined): string {
@@ -203,6 +211,151 @@ function formatCard(card: GradedCard, rank?: number, total?: number): string {
   const quarter = card.quarter ? ` · ${escHtml(card.quarter)}` : '';
   lines.push(`📅 Filed <b>${escHtml(card.filing_date)}</b>${quarter}`);
   lines.push(`🔗 <a href="${escHtml(eoUrl)}">Open card in EO →</a>`);
+
+  return lines.join('\n');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SUMMARY VIEW — one consolidated message combining BLOCKBUSTER + STRONG.
+// Compact institutional snapshot for a date window. Sent as a single
+// Telegram message (no per-card spam).
+// ═══════════════════════════════════════════════════════════════════════════
+
+function formatSummary(cards: GradedCard[], dates: string[]): string {
+  const bb = cards
+    .filter((c) => c.tier === 'BLOCKBUSTER')
+    .sort((a, b) => b.composite_score - a.composite_score);
+  const strong = cards
+    .filter((c) => c.tier === 'STRONG')
+    .sort((a, b) => b.composite_score - a.composite_score);
+
+  const windowLabel =
+    dates.length === 1 ? dates[0] : `LAST ${dates.length} DAYS`;
+  const dateRange =
+    dates.length > 1 ? `${dates[dates.length - 1]} → ${dates[0]}` : dates[0];
+
+  const lines: string[] = [];
+
+  // ═════ HEADER STRIP ═════
+  lines.push(`📊 <b>EARNINGS PULSE — SUMMARY</b>`);
+  lines.push(`<i>${escHtml(windowLabel)}  ·  ${escHtml(dateRange)}</i>`);
+  lines.push(`━━━━━━━━━━━━━━━━━━━━━━━`);
+  lines.push(
+    `Total <b>${cards.length}</b>  ·  ⭐ <b>${bb.length}</b> BB  ·  🟢 <b>${strong.length}</b> STRONG`,
+  );
+
+  // Tablet header for both lists
+  const tableHeader = `  #  TICKER       SCR  SALES   PAT     MOVE`;
+
+  // ═════ BLOCKBUSTER table ═════
+  if (bb.length > 0) {
+    lines.push('');
+    lines.push(`<b>⭐ BLOCKBUSTER (${bb.length})</b>`);
+    const rows = [tableHeader];
+    for (let i = 0; i < Math.min(bb.length, 15); i++) {
+      const c = bb[i];
+      const rank = rpad(`${i + 1}.`, 3);
+      const ticker = rpad(c.ticker.slice(0, 12), 12);
+      const score = rpad(String(c.composite_score), 4);
+      const sales = rpad(pctCompact(c.sales_yoy_pct), 7);
+      const pat = rpad(pctCompact(c.net_profit_yoy_pct), 7);
+      const move = c.move_pct != null ? pctCompact(c.move_pct) : '   —';
+      rows.push(` ${rank} ${ticker} ${score} ${sales} ${pat} ${move}`);
+    }
+    if (bb.length > 15) rows.push(`  … +${bb.length - 15} more`);
+    lines.push(`<pre>${escHtml(rows.join('\n'))}</pre>`);
+  }
+
+  // ═════ STRONG table ═════
+  if (strong.length > 0) {
+    lines.push('');
+    lines.push(`<b>🟢 STRONG (${strong.length})</b>`);
+    const rows = [tableHeader];
+    for (let i = 0; i < Math.min(strong.length, 20); i++) {
+      const c = strong[i];
+      const rank = rpad(`${i + 1}.`, 3);
+      const ticker = rpad(c.ticker.slice(0, 12), 12);
+      const score = rpad(String(c.composite_score), 4);
+      const sales = rpad(pctCompact(c.sales_yoy_pct), 7);
+      const pat = rpad(pctCompact(c.net_profit_yoy_pct), 7);
+      const move = c.move_pct != null ? pctCompact(c.move_pct) : '   —';
+      rows.push(` ${rank} ${ticker} ${score} ${sales} ${pat} ${move}`);
+    }
+    if (strong.length > 20) rows.push(`  … +${strong.length - 20} more`);
+    lines.push(`<pre>${escHtml(rows.join('\n'))}</pre>`);
+  }
+
+  // ═════ TOP MOVERS (post-earnings cumulative) ═════
+  const withMoves = cards
+    .filter((c) => c.move_pct != null && Number.isFinite(c.move_pct))
+    .sort((a, b) => (b.move_pct as number) - (a.move_pct as number));
+  if (withMoves.length > 0) {
+    const upMovers = withMoves.slice(0, 5);
+    const downMovers = withMoves.slice(-3).reverse().filter((c) => (c.move_pct as number) < 0);
+
+    lines.push('');
+    lines.push(`<b>📈 TOP MOVERS — since filing</b>`);
+    if (upMovers.length > 0) {
+      const upLine = upMovers
+        .map((c, i) => `${i + 1}. ${escHtml(c.ticker)} ${pctCompact(c.move_pct)}`)
+        .join('  ·  ');
+      lines.push(`▲ ${upLine}`);
+    }
+    if (downMovers.length > 0) {
+      const dnLine = downMovers
+        .map((c, i) => `${i + 1}. ${escHtml(c.ticker)} ${pctCompact(c.move_pct)}`)
+        .join('  ·  ');
+      lines.push(`▼ ${dnLine}`);
+    }
+  }
+
+  // ═════ SECTOR BREAKDOWN ═════
+  const sectorMap: Record<string, number> = {};
+  for (const c of cards) {
+    const s = c.sector || 'Other';
+    sectorMap[s] = (sectorMap[s] || 0) + 1;
+  }
+  const sectors = Object.entries(sectorMap)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8);
+  if (sectors.length > 0) {
+    lines.push('');
+    lines.push(`<b>🏢 SECTOR MIX</b>`);
+    lines.push(
+      sectors.map(([s, n]) => `${escHtml(s)} <b>${n}</b>`).join('  ·  '),
+    );
+  }
+
+  // ═════ AVERAGE METRICS ═════
+  if (cards.length > 0) {
+    const meanOf = (arr: (number | null | undefined)[]): number | null => {
+      const valid = arr.filter((v): v is number => v != null && Number.isFinite(v));
+      if (valid.length === 0) return null;
+      return valid.reduce((a, b) => a + b, 0) / valid.length;
+    };
+    const avgSales = meanOf(cards.map((c) => c.sales_yoy_pct));
+    const avgPat = meanOf(cards.map((c) => c.net_profit_yoy_pct));
+    const avgScore = meanOf(cards.map((c) => c.composite_score));
+    const avgMove = meanOf(cards.map((c) => c.move_pct ?? null));
+    if (avgSales != null || avgPat != null || avgScore != null) {
+      lines.push('');
+      lines.push(`<b>📊 COHORT AVERAGES</b>`);
+      const bits: string[] = [];
+      if (avgScore != null) bits.push(`Score ${avgScore.toFixed(0)}`);
+      if (avgSales != null) bits.push(`Sales ${pctStr(avgSales, 0)}`);
+      if (avgPat != null) bits.push(`PAT ${pctStr(avgPat, 0)}`);
+      if (avgMove != null) bits.push(`Move ${pctStr(avgMove, 1)}`);
+      lines.push(bits.join('  ·  '));
+    }
+  }
+
+  // ═════ FOOTER ═════
+  lines.push('');
+  lines.push(`─────────────────────`);
+  lines.push(`<i>Switch scope: /summary2 · /summary3 · /summary7</i>`);
+  lines.push(
+    `<i>🔗 <a href="${escHtml(API_BASE)}/earnings-opportunities">Full EO Dashboard →</a></i>`,
+  );
 
   return lines.join('\n');
 }
@@ -334,6 +487,36 @@ export async function GET(req: Request) {
   const windowLabel = targetDates.length === 1
     ? `${escHtml(targetDates[0])}`
     : `last ${targetDates.length} days`;
+
+  // ═════ SUMMARY MODE — one consolidated card, no per-stock spam ═════
+  const renderMode = (searchParams.get('mode') || 'cards').toLowerCase();
+  if (renderMode === 'summary' && !dryRun) {
+    if (allCards.length === 0) {
+      await sendTelegram(
+        `📭 <i>No BLOCKBUSTER / STRONG cards for ${escHtml(windowLabel)}</i>`,
+        targetChatId,
+      );
+    } else {
+      // Summary uses ALL cards (no dedup) — it's a snapshot not a feed
+      const sumText = formatSummary(allCards, targetDates);
+      const sumResult = await sendTelegram(sumText, targetChatId);
+      if (sumResult.ok) sentCount = 1;
+      else failed.push({ ticker: 'SUMMARY', error: sumResult.error || 'unknown' });
+    }
+    return NextResponse.json({
+      status: 'ok',
+      mode: 'summary',
+      window_days: targetDates.length,
+      dates: targetDates,
+      bot_configured: !!BOT_TOKEN,
+      chat_id: targetChatId,
+      override_chat_id: overrideChatId || null,
+      cards_found: allCards.length,
+      cards_sent: sentCount,
+      failures: failed,
+      completed_at: new Date().toISOString(),
+    });
+  }
 
   if (!dryRun) {
     // Pre-flight: send a header message if there's anything to broadcast

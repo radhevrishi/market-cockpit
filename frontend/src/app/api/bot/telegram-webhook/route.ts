@@ -81,19 +81,22 @@ async function answerCallback(callbackId: string, text?: string): Promise<any> {
 const MAIN_MENU_KEYBOARD = {
   inline_keyboard: [
     [
-      { text: '⭐ BLOCKBUSTER (2d)', callback_data: 'cmd:blockbuster' },
-      { text: '🟢 STRONG (2d)', callback_data: 'cmd:strong' },
+      { text: '📋 SUMMARY 2d', callback_data: 'cmd:summary' },
+      { text: '📋 SUMMARY 3d', callback_data: 'cmd:summary3' },
+      { text: '📋 SUMMARY 7d', callback_data: 'cmd:summary7' },
     ],
     [
-      { text: '📅 Today only', callback_data: 'cmd:today' },
+      { text: '⭐ BB cards (2d)', callback_data: 'cmd:blockbuster' },
+      { text: '🟢 STRONG cards', callback_data: 'cmd:strong' },
+    ],
+    [
+      { text: '📅 Today', callback_data: 'cmd:today' },
       { text: '📅 Yesterday', callback_data: 'cmd:yesterday' },
     ],
     [
-      { text: '🗓 Last 3 days', callback_data: 'cmd:last3' },
-      { text: '🗓 Last 5 days', callback_data: 'cmd:last5' },
-    ],
-    [
-      { text: '🗓 Last 7 days', callback_data: 'cmd:week' },
+      { text: '🗓 Cards 3d', callback_data: 'cmd:last3' },
+      { text: '🗓 Cards 5d', callback_data: 'cmd:last5' },
+      { text: '🗓 Cards 7d', callback_data: 'cmd:week' },
     ],
     [
       { text: '📈 Market Pulse', callback_data: 'cmd:pulse' },
@@ -110,18 +113,35 @@ const MAIN_MENU_KEYBOARD = {
   ],
 };
 
-// Quick-action keyboard attached after a results message
+// Quick-action keyboard attached after card-mode results message
 const POST_RESULTS_KEYBOARD = {
   inline_keyboard: [
+    [
+      { text: '📋 Summary 2d', callback_data: 'cmd:summary' },
+      { text: '📋 Summary 3d', callback_data: 'cmd:summary3' },
+    ],
     [
       { text: '⭐ BB (2d)', callback_data: 'cmd:blockbuster' },
       { text: '🟢 STRONG', callback_data: 'cmd:strong' },
       { text: '🗓 Last 3d', callback_data: 'cmd:last3' },
     ],
+    [{ text: '📋 Main menu', callback_data: 'cmd:menu' }],
+  ],
+};
+
+// Quick-action keyboard attached after the summary card — lets the user
+// switch the scope window without leaving the message thread.
+const SUMMARY_KEYBOARD = {
+  inline_keyboard: [
     [
-      { text: '📅 Today', callback_data: 'cmd:today' },
-      { text: '📅 Yesterday', callback_data: 'cmd:yesterday' },
-      { text: '🗓 Last 7d', callback_data: 'cmd:week' },
+      { text: '🗓 2d', callback_data: 'cmd:summary' },
+      { text: '🗓 3d', callback_data: 'cmd:summary3' },
+      { text: '🗓 5d', callback_data: 'cmd:summary5' },
+      { text: '🗓 7d', callback_data: 'cmd:summary7' },
+    ],
+    [
+      { text: '⭐ BB cards', callback_data: 'cmd:blockbuster' },
+      { text: '🟢 STRONG cards', callback_data: 'cmd:strong' },
     ],
     [{ text: '📋 Main menu', callback_data: 'cmd:menu' }],
   ],
@@ -132,13 +152,14 @@ const POST_RESULTS_KEYBOARD = {
 async function triggerEoAlert(
   chatId: string | number,
   tiers: string,
-  opts: { dates?: string; days?: number } = {},
+  opts: { dates?: string; days?: number; mode?: 'cards' | 'summary' } = {},
 ): Promise<void> {
   // Re-use the existing eo-blockbuster-alert endpoint with overrides.
   // force=1 bypasses dedup so on-demand requests always return results.
   // override_chat_id=X routes the messages back to THIS chat instead of
   // the default channel — that way /blockbuster from a DM responds in
   // that DM, not the broadcast channel.
+  // mode=summary returns ONE consolidated message (BB + STRONG combined).
   const params = new URLSearchParams({
     secret: SECRET,
     tiers,
@@ -147,6 +168,7 @@ async function triggerEoAlert(
   });
   if (opts.dates) params.set('dates', opts.dates);
   if (opts.days) params.set('days', String(opts.days));
+  if (opts.mode) params.set('mode', opts.mode);
 
   try {
     await fetch(`${API_BASE}/api/bot/eo-blockbuster-alert?${params}`, {
@@ -198,19 +220,23 @@ async function dispatchCommand(
       '<i>Institutional earnings intelligence · on-demand</i>',
       '━━━━━━━━━━━━━━━━━━━━━━━',
       '',
-      '<b>⭐ TOP-TIER EARNINGS</b>',
-      '/blockbuster — BLOCKBUSTER cards (last 2d)',
-      '/strong — STRONG cards (last 2d)',
+      '<b>📋 SUMMARY (recommended — one card)</b>',
+      '/summary — 2-day snapshot (BB + STRONG)',
+      '/summary3 — 3-day snapshot',
+      '/summary5 — 5-day snapshot',
+      '/summary7 — 7-day snapshot',
+      '',
+      '<b>⭐ INDIVIDUAL CARDS (deep detail)</b>',
+      '/blockbuster — BB cards · last 2d',
+      '/strong — STRONG cards · last 2d',
       '/today /yesterday — single-date filter',
-      '/last3 /last5 /week — wider scope',
+      '/last3 /last5 /week — wider card scope',
       '',
       '<b>📈 MARKET PULSE</b>',
-      '/pulse — full market snapshot',
-      '/gainers /losers /indices /news',
+      '/pulse · /gainers · /losers · /indices · /news',
       '',
       '<b>⭐ WATCHLIST</b>',
-      '/pulse_watchlist — performance card',
-      '/watch SYM · /unwatch SYM · /list',
+      '/pulse_watchlist · /watch · /unwatch · /list',
       '',
       '<i>Daily auto-broadcasts: 11:00 / 14:00 / 21:00 IST</i>',
     ].join('\n');
@@ -223,32 +249,59 @@ async function dispatchCommand(
       '<b>🤖 COMMAND REFERENCE</b>',
       '━━━━━━━━━━━━━━━━━━━━━━━',
       '',
-      '<b>⭐ Earnings Top-Tier</b>',
-      '/blockbuster  /bb  — ⭐ BLOCKBUSTER (2d)',
-      '/strong       — 🟢 STRONG beats (2d)',
-      '/today        — top tier filed today',
-      '/yesterday    — top tier filed yesterday',
-      '/last3        — top tier last 3 days',
-      '/last5        — top tier last 5 days',
-      '/week         — top tier last 7 days',
+      '<b>📋 Earnings Summary (one card)</b>',
+      '/summary    — 2-day BB + STRONG snapshot',
+      '/summary3   — 3-day snapshot',
+      '/summary5   — 5-day snapshot',
+      '/summary7   — 7-day snapshot',
+      '',
+      '<b>⭐ Earnings Cards (per-stock detail)</b>',
+      '/blockbuster /bb — ⭐ BB cards (2d)',
+      '/strong          — 🟢 STRONG cards (2d)',
+      '/today           — top tier filed today',
+      '/yesterday       — filed yesterday',
+      '/last3 /last5 /week — wider card scope',
       '',
       '<b>📈 Market Pulse</b>',
-      '/pulse        — full market snapshot',
-      '/gainers      — top gainers card',
-      '/losers       — top losers card',
-      '/indices      — NIFTY / MIDCAP / SMALL / VIX',
-      '/news         — market intelligence',
-      '/status       — bot status',
+      '/pulse — full snapshot',
+      '/gainers · /losers · /indices',
+      '/news · /status',
       '',
       '<b>⭐ Watchlist</b>',
-      '/pulse_watchlist  — performance card',
-      '/watch SYMBOL     — add stocks (space-sep)',
-      '/unwatch SYMBOL   — remove a stock',
-      '/list             — show your watchlist',
+      '/pulse_watchlist · /watch · /unwatch · /list',
       '',
       '/menu — button keyboard · /help — this',
     ].join('\n');
     await sendMessage(chatId, text, { reply_markup: MAIN_MENU_KEYBOARD });
+    return;
+  }
+
+  // ═════ SUMMARY commands — one consolidated card (BB + STRONG combined) ═════
+  if (lower === 'summary' || lower === 'summary2' || lower === 'summary2d') {
+    await sendMessage(chatId, '⏳ Generating institutional summary · <b>last 2 days</b>…');
+    await triggerEoAlert(chatId, 'BLOCKBUSTER,STRONG', { days: 2, mode: 'summary' });
+    await sendMessage(chatId, '<i>Switch scope or open dashboard:</i>', { reply_markup: SUMMARY_KEYBOARD });
+    return;
+  }
+
+  if (lower === 'summary3' || lower === 'summary3d') {
+    await sendMessage(chatId, '⏳ Generating institutional summary · <b>last 3 days</b>…');
+    await triggerEoAlert(chatId, 'BLOCKBUSTER,STRONG', { days: 3, mode: 'summary' });
+    await sendMessage(chatId, '<i>Switch scope or open dashboard:</i>', { reply_markup: SUMMARY_KEYBOARD });
+    return;
+  }
+
+  if (lower === 'summary5' || lower === 'summary5d') {
+    await sendMessage(chatId, '⏳ Generating institutional summary · <b>last 5 days</b>…');
+    await triggerEoAlert(chatId, 'BLOCKBUSTER,STRONG', { days: 5, mode: 'summary' });
+    await sendMessage(chatId, '<i>Switch scope or open dashboard:</i>', { reply_markup: SUMMARY_KEYBOARD });
+    return;
+  }
+
+  if (lower === 'summary7' || lower === 'summary7d' || lower === 'weeksummary') {
+    await sendMessage(chatId, '⏳ Generating institutional summary · <b>last 7 days</b>…');
+    await triggerEoAlert(chatId, 'BLOCKBUSTER,STRONG', { days: 7, mode: 'summary' });
+    await sendMessage(chatId, '<i>Switch scope or open dashboard:</i>', { reply_markup: SUMMARY_KEYBOARD });
     return;
   }
 
@@ -387,6 +440,10 @@ async function runSetup(): Promise<any> {
     commands: [
       { command: 'start', description: 'Welcome + menu' },
       { command: 'menu', description: 'Show button menu' },
+      { command: 'summary', description: '📋 Summary 2d (BB + STRONG)' },
+      { command: 'summary3', description: '📋 Summary 3d (BB + STRONG)' },
+      { command: 'summary5', description: '📋 Summary 5d (BB + STRONG)' },
+      { command: 'summary7', description: '📋 Summary 7d (BB + STRONG)' },
       { command: 'blockbuster', description: '⭐ Top-tier earnings (2d)' },
       { command: 'bb', description: 'Shortcut for /blockbuster' },
       { command: 'strong', description: '🟢 Strong beats (2d)' },
