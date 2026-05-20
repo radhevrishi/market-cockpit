@@ -244,8 +244,24 @@ function formatSummary(cards: GradedCard[], dates: string[]): string {
     `Total <b>${cards.length}</b>  ·  ⭐ <b>${bb.length}</b> BB  ·  🟢 <b>${strong.length}</b> STRONG`,
   );
 
-  // Tablet header for both lists
-  const tableHeader = `  #  TICKER       SCR  SALES   PAT     MOVE`;
+  // Helper: clean and truncate company name for table cell.
+  // Strips common suffixes (Ltd, Limited, Industries, etc.) to maximize
+  // info density in a 22-char column.
+  const COMPANY_W = 22;
+  const cleanCompany = (raw: string | undefined, ticker: string): string => {
+    const src = (raw || ticker || '').trim();
+    if (!src) return ticker;
+    // Trim noise suffixes that waste column space
+    const cleaned = src
+      .replace(/\s+(Limited|Ltd\.?|Inc\.?|Corp\.?|Corporation|Pvt\.?|Private)\s*$/i, '')
+      .replace(/\s+&\s+/g, ' & ')
+      .trim();
+    if (cleaned.length <= COMPANY_W) return cleaned;
+    return cleaned.slice(0, COMPANY_W - 1) + '…';
+  };
+
+  // Two-column header — name (wide) + numbers (right-aligned)
+  const tableHeader = `  # ${rpad('COMPANY', COMPANY_W)} SCR  SALES   PAT    MOVE`;
 
   // ═════ BLOCKBUSTER table ═════
   if (bb.length > 0) {
@@ -255,12 +271,12 @@ function formatSummary(cards: GradedCard[], dates: string[]): string {
     for (let i = 0; i < Math.min(bb.length, 15); i++) {
       const c = bb[i];
       const rank = rpad(`${i + 1}.`, 3);
-      const ticker = rpad(c.ticker.slice(0, 12), 12);
+      const name = rpad(cleanCompany(c.company, c.ticker), COMPANY_W);
       const score = rpad(String(c.composite_score), 4);
       const sales = rpad(pctCompact(c.sales_yoy_pct), 7);
-      const pat = rpad(pctCompact(c.net_profit_yoy_pct), 7);
+      const pat = rpad(pctCompact(c.net_profit_yoy_pct), 6);
       const move = c.move_pct != null ? pctCompact(c.move_pct) : '   —';
-      rows.push(` ${rank} ${ticker} ${score} ${sales} ${pat} ${move}`);
+      rows.push(` ${rank} ${name} ${score} ${sales} ${pat} ${move}`);
     }
     if (bb.length > 15) rows.push(`  … +${bb.length - 15} more`);
     lines.push(`<pre>${escHtml(rows.join('\n'))}</pre>`);
@@ -274,18 +290,19 @@ function formatSummary(cards: GradedCard[], dates: string[]): string {
     for (let i = 0; i < Math.min(strong.length, 20); i++) {
       const c = strong[i];
       const rank = rpad(`${i + 1}.`, 3);
-      const ticker = rpad(c.ticker.slice(0, 12), 12);
+      const name = rpad(cleanCompany(c.company, c.ticker), COMPANY_W);
       const score = rpad(String(c.composite_score), 4);
       const sales = rpad(pctCompact(c.sales_yoy_pct), 7);
-      const pat = rpad(pctCompact(c.net_profit_yoy_pct), 7);
+      const pat = rpad(pctCompact(c.net_profit_yoy_pct), 6);
       const move = c.move_pct != null ? pctCompact(c.move_pct) : '   —';
-      rows.push(` ${rank} ${ticker} ${score} ${sales} ${pat} ${move}`);
+      rows.push(` ${rank} ${name} ${score} ${sales} ${pat} ${move}`);
     }
     if (strong.length > 20) rows.push(`  … +${strong.length - 20} more`);
     lines.push(`<pre>${escHtml(rows.join('\n'))}</pre>`);
   }
 
   // ═════ TOP MOVERS (post-earnings cumulative) ═════
+  // Compact form: "Company (TICKER) +X%" — company first, ticker as ref
   const withMoves = cards
     .filter((c) => c.move_pct != null && Number.isFinite(c.move_pct))
     .sort((a, b) => (b.move_pct as number) - (a.move_pct as number));
@@ -293,19 +310,18 @@ function formatSummary(cards: GradedCard[], dates: string[]): string {
     const upMovers = withMoves.slice(0, 5);
     const downMovers = withMoves.slice(-3).reverse().filter((c) => (c.move_pct as number) < 0);
 
+    const moverLine = (c: GradedCard, i: number) => {
+      const name = cleanCompany(c.company, c.ticker);
+      return `${i + 1}. <b>${escHtml(name)}</b> ${pctCompact(c.move_pct)}`;
+    };
+
     lines.push('');
     lines.push(`<b>📈 TOP MOVERS — since filing</b>`);
     if (upMovers.length > 0) {
-      const upLine = upMovers
-        .map((c, i) => `${i + 1}. ${escHtml(c.ticker)} ${pctCompact(c.move_pct)}`)
-        .join('  ·  ');
-      lines.push(`▲ ${upLine}`);
+      lines.push(`▲ ${upMovers.map(moverLine).join('   ')}`);
     }
     if (downMovers.length > 0) {
-      const dnLine = downMovers
-        .map((c, i) => `${i + 1}. ${escHtml(c.ticker)} ${pctCompact(c.move_pct)}`)
-        .join('  ·  ');
-      lines.push(`▼ ${dnLine}`);
+      lines.push(`▼ ${downMovers.map(moverLine).join('   ')}`);
     }
   }
 
