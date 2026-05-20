@@ -137,12 +137,18 @@ function useMarketEarnings(months: string[]) {
       return undefined;
     },
     initialDataUpdatedAt: () => {
+      // AUDIT_100 #6 — must always pair with initialData. Returning a number
+      // when initialData returned undefined makes React Query treat fresh
+      // fetches as already-stale; returning undefined when initialData has
+      // a value makes the data "fresh" forever and skips refetch. Force a
+      // safe pairing: if cache shape is invalid, treat as 0 (force refetch).
       if (typeof window === 'undefined') return undefined;
       try {
         const raw = localStorage.getItem(HUB_LS_PREFIX + key);
         if (!raw) return undefined;
         const p = JSON.parse(raw);
-        return p?._cachedAt;
+        if (!p || !p.results) return undefined;
+        return typeof p._cachedAt === 'number' ? p._cachedAt : 0;
       } catch { return undefined; }
     },
   });
@@ -176,13 +182,19 @@ function useLiveEnrichmentMap(symbols: string[], filed?: string) {
   });
 }
 
+// AUDIT_100 #10 — strict YYYY-MM-DD shape before lexical compare.
+// Lexical `<` is only safe for canonical zero-padded ISO. Any source that
+// emits `2026-5-9` (single-digit month/day) sorts wrong and silently drops
+// or misplaces filings. Reject malformed dates instead of letting them slip.
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 // Build the same { by_date, total } shape the Calendar view expects.
 function buildCalendarFromHub(hub: MarketEarningsResponse | undefined, fromIso: string, toIso: string): CalendarPayload {
   const by_date: Record<string, CalendarItem[]> = {};
   let total = 0;
   if (hub?.results) {
     for (const e of hub.results) {
-      if (!e.resultDate || e.resultDate < fromIso || e.resultDate > toIso) continue;
+      if (!e.resultDate || !ISO_DATE_RE.test(e.resultDate)) continue;
+      if (e.resultDate < fromIso || e.resultDate > toIso) continue;
       if (!by_date[e.resultDate]) by_date[e.resultDate] = [];
       by_date[e.resultDate].push({
         symbol: e.ticker,

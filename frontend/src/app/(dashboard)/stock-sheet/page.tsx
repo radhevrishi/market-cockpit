@@ -60,7 +60,17 @@ function safeScalar(v: any): number | null {
       const sign = (dir === 'down' || dir === 'negative' || dir === 'bear' || dir === 'down_strong') ? -1 : 1;
       return mag * sign;
     }
-    if ('value' in v) return safeScalar(v.value);
+    // AUDIT_100 #15 — explicit Number.isFinite guard mirroring the top-level
+    // numeric branch. The recursive `safeScalar(v.value)` does protect via
+    // its own Number.isFinite check, but a bare `Number(v.value)` here would
+    // be defensive against future refactors and is cheaper than recursion.
+    if ('value' in v) {
+      const inner = v.value;
+      if (inner == null) return null;
+      const n = typeof inner === 'number' ? inner : Number(inner);
+      if (Number.isFinite(n)) return n;
+      return safeScalar(inner);
+    }
   }
   return null;
 }

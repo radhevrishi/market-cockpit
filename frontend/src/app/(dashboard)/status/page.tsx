@@ -145,7 +145,12 @@ const PROBES: ProbeDef[] = [
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), 30_000);
       try {
-        const todayIso = new Date().toISOString().slice(0, 10);
+        // AUDIT_100 #24 — use IST-shifted today (UTC+5:30) so the probe asks
+        // for the right calendar date during 00:00-05:30 IST. Previously the
+        // raw UTC slice() asked for tomorrow's IST date during that window,
+        // making the probe report "0 graded" even when data was healthy.
+        const istNow = new Date(Date.now() + 5.5 * 3600_000);
+        const todayIso = istNow.toISOString().slice(0, 10);
         const r = await fetch(`/api/v1/earnings/graded?date=${todayIso}`, { signal: ctl.signal });
         clearTimeout(timer);
         const ms = Math.round(performance.now() - t0);
@@ -216,9 +221,17 @@ function appendHistory(id: string, entry: ProbeHistoryEntry) {
     const all = loadHistory();
     const arr = all[id] || [];
     arr.push(entry);
-    // keep last 200 per probe to bound size
-    const trimmed = arr.slice(-200);
+    // AUDIT_100 #9 — bound by BOTH age (24h) and per-probe count (200). The
+    // old code only enforced the 200 cap; if a heavy user had 16 probes each
+    // capped at 200, that's 3200 entries that never age out (probe IDs that
+    // get removed leave their entries forever). Now we also prune by cutoff.
+    const cutoff = Date.now() - HISTORY_WINDOW_MS;
+    const trimmed = arr.filter(e => e?.t >= cutoff).slice(-200);
     all[id] = trimmed;
+    // Drop probe ids that have aged out entirely so the map doesn't grow.
+    for (const k of Object.keys(all)) {
+      if (!all[k].length) delete all[k];
+    }
     localStorage.setItem(HISTORY_KEY, JSON.stringify(all));
   } catch {}
 }

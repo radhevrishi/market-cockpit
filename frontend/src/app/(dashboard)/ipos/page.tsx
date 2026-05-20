@@ -59,7 +59,11 @@ export default function IPOsPage() {
 
   const fetchIPOs = async () => {
     try {
-      setLoading(true);
+      // AUDIT_100 #20 — only show the page spinner on initial load. Polling
+      // every 5 min was flashing the spinner over present data every poll,
+      // which felt like the page was reloading. Keep isFetchingState for
+      // the small "refreshing" chip; the table stays mounted.
+      if (ipos.length === 0) setLoading(true);
       setIsFetchingState(true);
       const response = await fetch('/api/market/ipos');
 
@@ -420,7 +424,10 @@ export default function IPOsPage() {
                   </div>
                 </div>
                 {typeof ipo.gmp === 'number' && ipo.gmp !== 0 && (
-                  <div style={{
+                  <div
+                    // AUDIT_100 #42 — explain GMP for non-Indian users via tooltip.
+                    title="Grey Market Premium — unofficial pre-listing price indication (₹ per share)"
+                    style={{
                     backgroundColor: ipo.gmp > 0 ? THEME.green : THEME.red,
                     color: THEME.background,
                     padding: '6px 10px',
@@ -428,6 +435,7 @@ export default function IPOsPage() {
                     fontSize: '12px',
                     fontWeight: 'bold',
                     textAlign: 'center',
+                    cursor: 'help',
                   }}>
                     GMP<br />{ipo.gmp > 0 ? '+' : ''}{ipo.gmp}
                   </div>

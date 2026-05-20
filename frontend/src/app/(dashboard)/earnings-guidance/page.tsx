@@ -27,10 +27,16 @@ function writeGuidanceHistory(h: GuidanceHistoryShape) {
   try { localStorage.setItem(GUIDANCE_HISTORY_KEY, JSON.stringify(h)); }
   catch {}
 }
-function periodKey(iso: string): string {
+function periodKey(iso: string, quarter?: string): string {
+  // AUDIT_100 #79 — when quarter is known, include it in the key so a
+  // company reporting Q4 in April vs Q1 in April don't collide on YYYY-MM
+  // and silently overwrite each other. Outer storage is already keyed by
+  // ticker, so the period scope here just needs to be unique per quarter.
   // 'YYYY-MM' grouping so any filing in the same calendar month is one quarter.
-  try { return new Date(iso).toISOString().slice(0, 7); }
-  catch { return ''; }
+  try {
+    const ym = new Date(iso).toISOString().slice(0, 7);
+    return quarter ? `${ym}|${quarter}` : ym;
+  } catch { return ''; }
 }
 
 // ══════════════════════════════════════════════

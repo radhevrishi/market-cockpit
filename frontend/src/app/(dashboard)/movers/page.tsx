@@ -68,6 +68,26 @@ function passesMoveFilter(pct: number, active: Set<MoveToken>): boolean {
   return false;
 }
 
+// AUDIT_100 #44 — explain composability of the move chips to the user.
+// They compose as OR (any active token that passes wins), so selecting
+// both +4% and +6% behaves like +4% alone. Surface that to the chip rail.
+function summarizeMoveFilter(active: Set<MoveToken>): string {
+  if (active.size === 0) return '';
+  const ups = ['+2%','+4%','+6%'].filter(t => active.has(t as MoveToken)) as MoveToken[];
+  const downs = ['-2%','-4%','-6%'].filter(t => active.has(t as MoveToken)) as MoveToken[];
+  const parts: string[] = [];
+  // OR-union semantics: the LOOSEST threshold defines the inclusion floor.
+  if (ups.length) {
+    const minUp = Math.min(...ups.map(u => Number(u.replace('%','').replace('+',''))));
+    parts.push(`up ≥ +${minUp}%`);
+  }
+  if (downs.length) {
+    const minDown = Math.max(...downs.map(d => Number(d.replace('%',''))));
+    parts.push(`down ≤ ${minDown}%`);
+  }
+  return parts.length ? `Showing ${parts.join(' or ')}` : '';
+}
+
 // ── Responsive hook ──────────────────────────────────────────────────────
 function useWindowWidth() {
   const [width, setWidth] = useState<number>(
@@ -576,6 +596,16 @@ export default function MoversPage() {
               <MoveChip token="-4%" label="-4%" color={RED} />
               {!isMobile && <MoveChip token="-6%" label="-6%" color={RED} />}
             </div>
+
+            {/* AUDIT_100 #44 — surface OR-union semantics inline so the user
+                sees "Showing up ≥ +4%" instead of being confused about why
+                selecting +4% AND +6% behaves like +4% alone. */}
+            {moveTokens.size > 0 && (
+              <span title="Move filters compose as OR — the loosest threshold defines the floor"
+                    style={{ fontSize: '10px', color: TEXT3, fontStyle: 'italic', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                {summarizeMoveFilter(moveTokens)}
+              </span>
+            )}
 
             {/* Sector dropdown */}
             <select value={sectorFilter} onChange={e => setSectorFilter(e.target.value)} style={{

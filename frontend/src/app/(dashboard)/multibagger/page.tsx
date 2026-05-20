@@ -6540,6 +6540,21 @@ function USAChecklist() {
   // to re-score on mount; manual upload/clear is driven through events
   // captured below. (Audit found this was the biggest perf hog on the
   // USA tab.)
+  // AUDIT_100 #18 — bump `tick` on cross-tab storage event AND on the existing
+  // 'mc:switch-multibagger-tab' custom event so a fresh CSV upload is reflected
+  // immediately. Previously deps were [] with no listeners → re-uploads were
+  // invisible until a hard browser reload.
+  const [tick, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const bump = () => setTick(x => x + 1);
+    const onStorage = (e: StorageEvent) => { if (e.key === 'mb_usa_scored_v1') bump(); };
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('mc:switch-multibagger-tab', bump as EventListener);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('mc:switch-multibagger-tab', bump as EventListener);
+    };
+  }, []);
   const usaRows = React.useMemo(() => {
     try {
       const saved = localStorage.getItem('mb_usa_scored_v1');
@@ -6547,7 +6562,7 @@ function USAChecklist() {
       const parsed = JSON.parse(saved) as USAResult[];
       return parsed.map(r => scoreUSARow(r as unknown as USARow));
     } catch { return []; }
-  }, []);
+  }, [tick]);
   const [checks, setChecks] = React.useState<Record<string,boolean>>(() => {
     try { return JSON.parse(localStorage.getItem(USA_CHECKLIST_STORAGE)||'{}'); } catch { return {}; }
   });

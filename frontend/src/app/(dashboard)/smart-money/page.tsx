@@ -107,8 +107,11 @@ export default function SmartMoneyPage() {
     if (!data) return [];
 
     return data.deals.filter((deal) => {
-      // Filter by trade type
-      if (tradeTypeFilter !== 'All' && deal.tradeType !== tradeTypeFilter) {
+      // AUDIT_100 #40 — case-insensitive compare. Payloads from different
+      // sources sometimes capitalize tradeType as 'BLOCK' / 'Block' / 'block';
+      // a strict !== drops half the data when the filter is "Block".
+      if (tradeTypeFilter !== 'All' &&
+          String(deal.tradeType || '').toUpperCase() !== tradeTypeFilter.toUpperCase()) {
         return false;
       }
 

@@ -59,8 +59,13 @@ const SEV: Record<string, { bg: string; border: string; badge: string; badgeBg: 
   WATCH:    { bg: '#0F7ABF06', border: '#0F7ABF28', badge: '#0F7ABF', badgeBg: '#0F7ABF14', glow: 'none' },
   DEFAULT:  { bg: 'transparent', border: '#1A2840', badge: '#4A5B6C', badgeBg: '#4A5B6C14', glow: 'none' },
 };
+// AUDIT_100 #11 — explicit allow-list. Previously this iterated Object.keys(SEV)
+// which includes 'DEFAULT'; any label containing the substring "default" matched
+// the placeholder bucket. Now we only test real severity tiers.
+const SEV_KEYS_ORDER = ['CRITICAL', 'HIGH', 'ELEVATED', 'WATCH'] as const;
 const getSev = (label: string) => {
-  for (const k of Object.keys(SEV)) if (label?.toUpperCase().includes(k)) return SEV[k];
+  const up = label?.toUpperCase() || '';
+  for (const k of SEV_KEYS_ORDER) if (up.includes(k)) return SEV[k];
   return SEV.DEFAULT;
 };
 

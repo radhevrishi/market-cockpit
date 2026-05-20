@@ -85,7 +85,10 @@ function pct(p: number | null | undefined, digits = 1): string {
 const NUM = { fontFamily: 'ui-monospace, monospace', fontVariantNumeric: 'tabular-nums' as const };
 
 function Sparkline({ data, color, width = 80, height = 24 }: { data: number[]; color: string; width?: number; height?: number }) {
-  if (!data || data.length < 2) return <svg width={width} height={height} />;
+  // AUDIT_100 #23 — render null rather than a blank SVG box. The empty 80x24
+  // SVG occupied a slot in the card grid and caused visible alignment shimmer
+  // next to populated rows. null collapses the inline flow cleanly.
+  if (!data || data.length < 2) return null;
   const min = Math.min(...data), max = Math.max(...data);
   const range = max - min || 1;
   const points = data.map((v, i) => {
@@ -116,7 +119,14 @@ function ZScoreChips({ commodity }: { commodity: CommodityRow }) {
   const [data, setData] = useState<ZScoreData[] | null>(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
+    // AUDIT_100 #12 — abort in-flight z-score fetches when commodity changes.
+    // Previously only a `cancelled` flag suppressed state writes; the 4 HTTP
+    // requests still completed and held connection slots, and on fast
+    // commodity-A→B clicks the stale A results could resolve AFTER B (because
+    // setData was guarded but the Promise.all ordering depended on network).
+    // AbortController kills the in-flight requests cleanly.
     let cancelled = false;
+    const ctl = new AbortController();
     const fetchAll = async () => {
       const windows = [60, 180, 365, 1825];
       const slug = commodity.name.toLowerCase().replace(/\s+/g, '_');
@@ -124,7 +134,7 @@ function ZScoreChips({ commodity }: { commodity: CommodityRow }) {
       try {
         const results = await Promise.all(
           windows.map(w =>
-            fetch(`/api/v1/transmission/zscore/${encodeURIComponent(slug)}?window=${w}&symbol=${sym}`)
+            fetch(`/api/v1/transmission/zscore/${encodeURIComponent(slug)}?window=${w}&symbol=${sym}`, { signal: ctl.signal })
               .then(r => r.ok ? r.json() : null).catch(() => null)
           )
         );
@@ -135,7 +145,7 @@ function ZScoreChips({ commodity }: { commodity: CommodityRow }) {
       }
     };
     fetchAll();
-    return () => { cancelled = true; };
+    return () => { cancelled = true; ctl.abort(); };
   }, [commodity.name, commodity.symbol]);
   if (loading) {
     return <div style={{ fontSize: 11, color: TOKENS.surface.textMuted, padding: '8px 14px' }}>Computing z-scores…</div>;

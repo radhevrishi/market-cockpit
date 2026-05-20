@@ -203,7 +203,13 @@ function SummaryBar({ items }: { items: WatchlistItem[] }) {
 
   const gainers = items.filter(item => item.changePercent > 0).length;
   const losers = items.filter(item => item.changePercent < 0).length;
-  const avgChange = items.reduce((sum, item) => sum + item.changePercent, 0) / items.length;
+  // AUDIT_100 #22 — exclude items with price=0 (fallback / pre-market /
+  // missing quote) before averaging. Otherwise the headline "Avg Change"
+  // is dragged toward 0 even when 5 of 6 real stocks are solidly up.
+  const valid = items.filter(item => (item.price ?? 0) > 0);
+  const avgChange = valid.length > 0
+    ? valid.reduce((sum, item) => sum + item.changePercent, 0) / valid.length
+    : 0;
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '20px' }}>
@@ -414,7 +420,7 @@ function WatchlistTable({
           {items.map((item, idx) => {
             const isPositive = item.changePercent >= 0;
             return (
-              <tr key={item.ticker} style={{ borderBottom: idx < items.length - 1 ? '1px solid #1A2B3C' : 'none', backgroundColor: idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
+              <tr key={item.ticker} data-watchlist-ticker={item.ticker} style={{ borderBottom: idx < items.length - 1 ? '1px solid #1A2B3C' : 'none', backgroundColor: idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
                 <td style={{ padding: '8px 8px', textAlign: 'center', width: '40px' }}>
                   <button
                     onClick={() => onToggleFlag?.(item.ticker)}
@@ -774,6 +780,15 @@ export default function WatchlistsPage() {
     setTickers(newTickers);
     setStoredTickers(newTickers);
     toast.success(`${symbol} added to watchlist. Total: ${newTickers.length}`);
+    // AUDIT_100 #27 — scroll the new row into view. With 60+ stocks the user
+    // has to manually search for what they just added; data-ticker attribute
+    // on each row lets us find + scroll the freshly-inserted one.
+    setTimeout(() => {
+      try {
+        const el = document.querySelector(`[data-watchlist-ticker="${symbol}"]`) as HTMLElement | null;
+        el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      } catch {}
+    }, 600);
 
     fetch('/api/watchlist', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },

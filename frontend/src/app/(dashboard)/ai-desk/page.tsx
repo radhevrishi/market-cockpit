@@ -245,9 +245,16 @@ function BriefCard({ brief, isLoading, error, onRefresh }: {
     <div>
       <div className="flex items-center justify-between mb-4">
         <p className="text-[#4A5B6C] text-xs">
-          {brief.generated_at
-            ? `Generated ${format(new Date(brief.generated_at), 'MMM d, HH:mm')}`
-            : 'Just generated'}
+          {/* AUDIT_100 #21 — guard format() against invalid generated_at. */}
+          {(() => {
+            if (!brief.generated_at) return 'Just generated';
+            try {
+              const d = new Date(brief.generated_at);
+              return Number.isFinite(d.getTime())
+                ? `Generated ${format(d, 'MMM d, HH:mm')}`
+                : 'Just generated';
+            } catch { return 'Just generated'; }
+          })()}
           {brief.model_version ? ` · ${brief.model_version}` : ''}
         </p>
         <div className="flex gap-2">
@@ -441,7 +448,15 @@ function SavedBriefsTab() {
             <div className="flex items-center justify-between mb-1">
               <span className="text-white text-sm font-medium capitalize">{brief.type?.replace('_', ' ') ?? 'Brief'}</span>
               <span className="text-[#4A5B6C] text-xs">
-                {brief.generated_at ? format(new Date(brief.generated_at), 'MMM d, HH:mm') : ''}
+                {/* AUDIT_100 #21 — guard format() against invalid generated_at
+                    so the renderer doesn't throw on a partial /ai/briefs payload. */}
+                {(() => {
+                  if (!brief.generated_at) return '';
+                  try {
+                    const d = new Date(brief.generated_at);
+                    return Number.isFinite(d.getTime()) ? format(d, 'MMM d, HH:mm') : '';
+                  } catch { return ''; }
+                })()}
               </span>
             </div>
             <p className="text-[#8899AA] text-xs line-clamp-2">

@@ -15,6 +15,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import toast from 'react-hot-toast';
 import api from '@/lib/api';
 import { TOKENS } from '@/lib/design-tokens';
 
@@ -182,7 +183,22 @@ export default function NewsAlertsPage() {
   };
 
   const toggleRule = (id: string) => setRules(rs => rs.map(r => r.id === id ? { ...r, enabled: !r.enabled } : r));
-  const deleteRule = (id: string) => { if (window.confirm('Delete this alert rule?')) setRules(rs => rs.filter(r => r.id !== id)); };
+  // AUDIT_100 #5 — replace native window.confirm with toast confirm; iframe-safe + consistent with the rest of the app.
+  const deleteRule = (id: string) => {
+    toast((t) => (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span>Delete this alert rule?</span>
+        <button onClick={() => { setRules(rs => rs.filter(r => r.id !== id)); toast.dismiss(t.id); toast.success('Rule deleted'); }}
+          style={{ padding: '4px 10px', background: '#EF4444', color: '#fff', borderRadius: 4, border: 0, cursor: 'pointer', fontSize: 12 }}>
+          Delete
+        </button>
+        <button onClick={() => toast.dismiss(t.id)}
+          style={{ padding: '4px 10px', background: 'transparent', color: '#94A3B8', borderRadius: 4, border: '1px solid #2A3B4C', cursor: 'pointer', fontSize: 12 }}>
+          Cancel
+        </button>
+      </div>
+    ), { duration: 8000 });
+  };
 
   // PATCH 0279 — Import / export rules as JSON so users can move them across
   // browsers and machines without depending on cloud sync. Export downloads
@@ -202,8 +218,9 @@ export default function NewsAlertsPage() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (err) {
+      // AUDIT_100 #5 — toast instead of native alert (iframe-safe).
       console.error('exportRules failed', err);
-      window.alert('Export failed. See console.');
+      toast.error('Export failed. See console.');
     }
   };
   const importInputRef = useRef<HTMLInputElement | null>(null);
@@ -214,14 +231,27 @@ export default function NewsAlertsPage() {
         const text = String(reader.result || '');
         const parsed = JSON.parse(text) as AlertRule[];
         if (!Array.isArray(parsed)) throw new Error('Not an array');
-        // Light validation — skip entries that don't look like rules.
+        // AUDIT_100 #16 — schema-validate condition sub-fields. A malicious or
+        // malformed JSON can pass id/name string checks but inject objects /
+        // arrays into conditions.ticker / theme_substring / headline_substring,
+        // which then crash `.toLowerCase()` / `.includes(...)` at matches().
+        const isStrOpt = (x: any) => x === undefined || typeof x === 'string';
+        const isCondOk = (c: any) =>
+          c && typeof c === 'object' &&
+          isStrOpt(c.article_type) &&
+          (c.region === undefined || c.region === 'IN' || c.region === 'US' || c.region === 'ALL') &&
+          (c.min_importance === undefined || typeof c.min_importance === 'number') &&
+          isStrOpt(c.ticker) &&
+          isStrOpt(c.theme_substring) &&
+          isStrOpt(c.headline_substring);
         const valid = parsed.filter((r) =>
           r && typeof r === 'object' &&
           typeof r.id === 'string' &&
           typeof r.name === 'string' &&
-          r.conditions && typeof r.conditions === 'object'
+          isCondOk(r.conditions)
         );
-        if (valid.length === 0) { window.alert('No valid rules found in file.'); return; }
+        // AUDIT_100 #5 — toast.error in place of native alert (iframe-safe).
+        if (valid.length === 0) { toast.error('No valid rules found in file.'); return; }
         setRules((current) => {
           const byId = new Map(current.map(r => [r.id, r]));
           for (const r of valid) {
@@ -233,10 +263,10 @@ export default function NewsAlertsPage() {
           }
           return Array.from(byId.values());
         });
-        window.alert(`Imported ${valid.length} rules.`);
+        toast.success(`Imported ${valid.length} rules.`);
       } catch (err) {
         console.error('importRules failed', err);
-        window.alert('Import failed — invalid JSON or wrong shape. See console.');
+        toast.error('Import failed — invalid JSON or wrong shape.');
       }
     };
     reader.readAsText(file);

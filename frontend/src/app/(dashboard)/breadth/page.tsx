@@ -104,14 +104,29 @@ export default function BreadthPage() {
           </div>
         </div>
         <div style={{ flex: 1, minWidth: 240 }}>
-          <div style={{ fontSize: 20, fontWeight: 800, color: data.regime_color, marginBottom: 6 }}>{data.regime}</div>
-          <div style={{ fontSize: 13, color: '#C9D4E0', marginBottom: 8 }}>{data.regime_desc}</div>
+          {/* AUDIT_100 #29 — regime label deeplinks to news search so users can
+              immediately see "why" the regime is what it is. */}
+          <a
+            href={`/news?search=${encodeURIComponent('breadth ' + (data.regime || ''))}`}
+            title="See related news"
+            style={{ fontSize: 20, fontWeight: 800, color: data.regime_color, marginBottom: 6, textDecoration: 'none', display: 'inline-block' }}
+          >
+            {data.regime} <span style={{ fontSize: 12, opacity: 0.5 }}>→</span>
+          </a>
+          <div style={{ fontSize: 13, color: '#C9D4E0', marginBottom: 8, marginTop: 6 }}>{data.regime_desc}</div>
           <div style={{ fontSize: 11, color: '#94A3B8' }}>
             Suggested cash allocation: <strong style={{ color: '#E6EDF3' }}>{data.suggested_cash_pct}%</strong>
           </div>
         </div>
         <div style={{ fontSize: 10, color: '#6B7A8D', textAlign: 'right' }}>
-          Updated {new Date(data.generated_at).toLocaleString('en-IN')}<br />
+          {/* AUDIT_100 #19 — guard against missing/malformed generated_at so
+              the cell doesn't render "Invalid Date" for a partial payload. */}
+          Updated {(() => {
+            try {
+              const d = new Date(data.generated_at);
+              return Number.isFinite(d.getTime()) ? d.toLocaleString('en-IN') : '—';
+            } catch { return '—'; }
+          })()}<br />
           Universe: {data.universe_size} symbols · Fetch {(data.ms / 1000).toFixed(1)}s
         </div>
       </div>
