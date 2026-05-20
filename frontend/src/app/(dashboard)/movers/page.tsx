@@ -4,6 +4,8 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { RefreshCw, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, ChevronUp, ChevronDown, Zap } from 'lucide-react';
 // PATCH 0284 — Shared freshness chip.
 import { PanelFreshness } from '@/components/PanelFreshness';
+// PATCH 0544 — AUDIT #76 shared quote fetch (dedupe + 60s module cache).
+import { fetchQuotesShared } from '@/lib/hooks/useMarketQuotes';
 
 interface Stock {
   ticker: string;
@@ -158,11 +160,11 @@ export default function MoversPage() {
     try {
       setError(null);
       setIsRefreshing(true);
-      const res = await fetch('/api/market/quotes?market=india', { signal: ctl.signal });
-      if (!res.ok) throw new Error(`API error: ${res.status}`);
-      const json = await res.json();
+      // PATCH 0544 — Shared quote fetch dedupes with /heatmap when user
+      // toggles inside /market-snapshot within the 60s cache window.
+      const json = await fetchQuotesShared({ market: 'india', signal: ctl.signal });
 
-      const stocks: Stock[] = (json.stocks || [])
+      const stocks: Stock[] = ((json as { stocks?: Record<string, unknown>[] }).stocks || [])
         .filter(isValidStock)
         .map((s: Record<string, unknown>) => ({
           ticker: s.ticker as string,

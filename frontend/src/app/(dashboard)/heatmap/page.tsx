@@ -6,6 +6,8 @@ import { RefreshCw, BarChart3, TrendingUp } from 'lucide-react';
 // navigation instead of a full page reload (which loses scroll position,
 // re-mounts the rest of the dashboard, and is jarring).
 import { useRouter } from 'next/navigation';
+// PATCH 0544 — AUDIT #76 shared quote fetch (dedupe + 60s module cache).
+import { fetchQuotesShared } from '@/lib/hooks/useMarketQuotes';
 
 interface Stock {
   ticker: string;
@@ -222,16 +224,14 @@ export default function HeatmapPage() {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 25_000);
       try {
-        const [n50Res, mcRes, scRes] = await Promise.all([
-          fetch('/api/market/quotes?market=india&index=nifty50', { signal: ctrl.signal }),
-          fetch('/api/market/quotes?market=india&index=midcap150', { signal: ctrl.signal }),
-          fetch('/api/market/quotes?market=india&index=smallcap150', { signal: ctrl.signal }),
+        // PATCH 0544 — Shared quote fetch dedupes with /movers when user
+        // toggles inside /market-snapshot within the 60s cache window.
+        const [n50Json, mcJson, scJson] = await Promise.all([
+          fetchQuotesShared({ market: 'india', index: 'nifty50', signal: ctrl.signal }),
+          fetchQuotesShared({ market: 'india', index: 'midcap150', signal: ctrl.signal }),
+          fetchQuotesShared({ market: 'india', index: 'smallcap150', signal: ctrl.signal }),
         ]);
-        if (!n50Res.ok) throw new Error(`NIFTY 50 API: ${n50Res.status}`);
-        if (!mcRes.ok) throw new Error(`Midcap API: ${mcRes.status}`);
-        if (!scRes.ok) throw new Error(`Smallcap API: ${scRes.status}`);
-        const [n50Json, mcJson, scJson] = await Promise.all([n50Res.json(), mcRes.json(), scRes.json()]);
-        setDataMap({ nifty50: n50Json, midcap150: mcJson, smallcap150: scJson });
+        setDataMap({ nifty50: n50Json as ApiResponse, midcap150: mcJson as ApiResponse, smallcap150: scJson as ApiResponse });
         setLastUpdated(new Date());
       } finally {
         clearTimeout(timer);
