@@ -1011,29 +1011,68 @@ export default function RerratingPage() {
 // ─── Sub-panels ─────────────────────────────────────────────────────────────
 
 function MarginExpansionPanel({ rows, loading, color, convictionSet }: { rows: MarginRow[]; loading: boolean; color: string; convictionSet: Set<string> }) {
+  // PATCH 0508 — Sortable column headers. Click a header to sort by that
+  // column; click again to flip direction. Default sort: Δ OPM descending.
+  const [sortBy, setSortBy] = useState<'delta' | 'ticker' | 'latest' | 'oldest' | 'rev' | 'qtrs'>('delta');
+  const [sortAsc, setSortAsc] = useState(false);
+  const sortedRows = useMemo(() => {
+    const sign = sortAsc ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      const av =
+        sortBy === 'delta'  ? a.delta_opm_bps :
+        sortBy === 'latest' ? (a.latest_opm ?? -Infinity) :
+        sortBy === 'oldest' ? (a.oldest_opm ?? -Infinity) :
+        sortBy === 'rev'    ? (a.latest_rev_yoy ?? -Infinity) :
+        sortBy === 'qtrs'   ? a.quarters :
+        a.ticker;
+      const bv =
+        sortBy === 'delta'  ? b.delta_opm_bps :
+        sortBy === 'latest' ? (b.latest_opm ?? -Infinity) :
+        sortBy === 'oldest' ? (b.oldest_opm ?? -Infinity) :
+        sortBy === 'rev'    ? (b.latest_rev_yoy ?? -Infinity) :
+        sortBy === 'qtrs'   ? b.quarters :
+        b.ticker;
+      if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * sign;
+      return String(av).localeCompare(String(bv)) * sign;
+    });
+  }, [rows, sortBy, sortAsc]);
+  const handleSort = (col: typeof sortBy) => {
+    if (sortBy === col) setSortAsc(s => !s);
+    else { setSortBy(col); setSortAsc(col === 'ticker'); }
+  };
+  const sortIndicator = (col: typeof sortBy) => sortBy === col ? (sortAsc ? ' ▲' : ' ▼') : '';
+  const sortableTh = (col: typeof sortBy, label: string) => (
+    <th
+      style={{ ...th(), cursor: 'pointer', userSelect: 'none', color: sortBy === col ? color : '#6B7A8D' }}
+      onClick={() => handleSort(col)}
+      title={`Sort by ${label}`}
+    >
+      {label}{sortIndicator(col)}
+    </th>
+  );
   if (loading) return <Loader label="Loading earnings-scan…" />;
   if (rows.length === 0) return <Empty label="No margin-expansion candidates in the universe yet. Add tickers to portfolio / watchlist or wait for next earnings cycle." />;
   return (
     <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderLeft: `3px solid ${color}`, borderRadius: 12, padding: '14px 18px' }}>
       <div style={{ fontSize: 13, fontWeight: 800, color, letterSpacing: '0.5px', marginBottom: 10 }}>
         📊 MARGIN EXPANSION RANKING
-        <span style={{ marginLeft: 8, fontSize: 11, color: '#6B7A8D', fontWeight: 500 }}>Δ OPM (basis points) over last 4 quarters · sorted desc</span>
+        <span style={{ marginLeft: 8, fontSize: 11, color: '#6B7A8D', fontWeight: 500 }}>Δ OPM (basis points) over last 4 quarters · click headers to sort</span>
       </div>
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
             <tr style={{ color: '#6B7A8D', textAlign: 'left' }}>
               <th style={th()}>#</th>
-              <th style={th()}>Ticker</th>
-              <th style={th()}>Δ OPM (bps)</th>
-              <th style={th()}>Latest OPM</th>
-              <th style={th()}>Oldest OPM</th>
-              <th style={th()}>Rev YoY (latest)</th>
-              <th style={th()}>Quarters</th>
+              {sortableTh('ticker', 'Ticker')}
+              {sortableTh('delta', 'Δ OPM (bps)')}
+              {sortableTh('latest', 'Latest OPM')}
+              {sortableTh('oldest', 'Oldest OPM')}
+              {sortableTh('rev', 'Rev YoY (latest)')}
+              {sortableTh('qtrs', 'Quarters')}
             </tr>
           </thead>
           <tbody>
-            {rows.map((r, i) => (
+            {sortedRows.map((r, i) => (
               <tr
                 key={r.ticker}
                 onClick={() => {

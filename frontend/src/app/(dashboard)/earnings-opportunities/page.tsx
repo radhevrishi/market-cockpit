@@ -1744,7 +1744,7 @@ export default function EarningsOpportunitiesPage() {
             // though no auto-retry was happening.
             setRefreshFeedback(`⚠ ${stamp} · 0/${total} updated — NSE/BSE/Screener haven't published Q-data yet for ${tickerListFromServer()}. Auto-rechecking at 60s + 5min.`);
           } else if (ageDays >= 1 && ageDays <= 7) {
-            setRefreshFeedback(`⚠ ${stamp} · 0/${total} updated for ${tickerListFromServer()}. Screener.in is Cloudflare-blocked from Vercel for these tickers right now. The hourly pre-warm cron will retry — no need to click Refresh again.`);
+            setRefreshFeedback(`⚠ ${stamp} · 0/${total} updated for ${tickerListFromServer()}. Screener.in's Cloudflare temporarily blocked these tickers from Vercel. NSE/BSE filings are in our KV — they'll enrich next time Screener accepts our request. Move on for now.`);
           } else if (ageDays >= 8) {
             setRefreshFeedback(`⚠ ${stamp} · 0/${total} updated — past-date sources rarely backfill. Use Coverage Probe ↓ for individual tickers, or move to a fresher date.`);
           } else {
