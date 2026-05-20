@@ -211,19 +211,29 @@ export default function HeatmapPage() {
     try {
       setError(null);
       setIsRefreshing(true);
-      const [n50Res, mcRes, scRes] = await Promise.all([
-        fetch('/api/market/quotes?market=india&index=nifty50'),
-        fetch('/api/market/quotes?market=india&index=midcap150'),
-        fetch('/api/market/quotes?market=india&index=smallcap150'),
-      ]);
-      if (!n50Res.ok) throw new Error(`NIFTY 50 API: ${n50Res.status}`);
-      if (!mcRes.ok) throw new Error(`Midcap API: ${mcRes.status}`);
-      if (!scRes.ok) throw new Error(`Smallcap API: ${scRes.status}`);
-      const [n50Json, mcJson, scJson] = await Promise.all([n50Res.json(), mcRes.json(), scRes.json()]);
-      setDataMap({ nifty50: n50Json, midcap150: mcJson, smallcap150: scJson });
-      setLastUpdated(new Date());
+      // PATCH 0517 — Wall-clock timeout on daily-mode fetches. Was spinning
+      // indefinitely if /api/market/quotes hung (mirrors fetchEarnings's
+      // 30s pattern at line 237). Falls back to honest error instead.
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 25_000);
+      try {
+        const [n50Res, mcRes, scRes] = await Promise.all([
+          fetch('/api/market/quotes?market=india&index=nifty50', { signal: ctrl.signal }),
+          fetch('/api/market/quotes?market=india&index=midcap150', { signal: ctrl.signal }),
+          fetch('/api/market/quotes?market=india&index=smallcap150', { signal: ctrl.signal }),
+        ]);
+        if (!n50Res.ok) throw new Error(`NIFTY 50 API: ${n50Res.status}`);
+        if (!mcRes.ok) throw new Error(`Midcap API: ${mcRes.status}`);
+        if (!scRes.ok) throw new Error(`Smallcap API: ${scRes.status}`);
+        const [n50Json, mcJson, scJson] = await Promise.all([n50Res.json(), mcRes.json(), scRes.json()]);
+        setDataMap({ nifty50: n50Json, midcap150: mcJson, smallcap150: scJson });
+        setLastUpdated(new Date());
+      } finally {
+        clearTimeout(timer);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch');
+      const msg = err instanceof Error ? err.message : 'Failed to fetch';
+      setError(msg.includes('abort') ? 'Daily heatmap timed out after 25s. Backend may be unavailable — try Refresh.' : msg);
     } finally {
       setLoading(false);
       setIsRefreshing(false);
