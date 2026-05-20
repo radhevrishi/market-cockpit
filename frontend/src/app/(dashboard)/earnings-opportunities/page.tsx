@@ -1394,6 +1394,23 @@ export default function EarningsOpportunitiesPage() {
       );
       const j = await res.json();
       setProbeResult(j);
+      // PATCH 0515 — Auto-force-include when L1 (universe) missing but L2
+      // (enrichment) has real data. This is the Kwality Pharma pattern:
+      // NSE/BSE feeds dropped the ticker but Screener has full Q-data.
+      // Save the user a click — auto-inject the ticker into the page.
+      const ticker = probeTicker.trim().toUpperCase();
+      const l1Missing = j?.l1_universe?.found === false;
+      const l2HasData = !!(j?.l2_enrichment?.found && j?.l2_enrichment?.data && (
+        j.l2_enrichment.data.sales_yoy_pct != null ||
+        j.l2_enrichment.data.pat_yoy_pct != null ||
+        j.l2_enrichment.data.eps_yoy_pct != null
+      ));
+      if (l1Missing && l2HasData && ticker && resolvedDateForGrading) {
+        const cur = forceIncludeMap[resolvedDateForGrading] || [];
+        if (!cur.map((t) => t.toUpperCase()).includes(ticker)) {
+          addForceInclude(ticker);
+        }
+      }
     } catch (e: any) {
       setProbeResult({ error: e?.message || 'probe failed' });
     } finally {
