@@ -81,15 +81,22 @@ async function answerCallback(callbackId: string, text?: string): Promise<any> {
 const MAIN_MENU_KEYBOARD = {
   inline_keyboard: [
     [
-      { text: '⭐ BLOCKBUSTER', callback_data: 'cmd:blockbuster' },
-      { text: '🟢 STRONG', callback_data: 'cmd:strong' },
+      { text: '⭐ BLOCKBUSTER (2d)', callback_data: 'cmd:blockbuster' },
+      { text: '🟢 STRONG (2d)', callback_data: 'cmd:strong' },
     ],
     [
       { text: '📅 Today only', callback_data: 'cmd:today' },
       { text: '📅 Yesterday', callback_data: 'cmd:yesterday' },
     ],
     [
-      { text: '📈 Full Pulse', callback_data: 'cmd:pulse' },
+      { text: '🗓 Last 3 days', callback_data: 'cmd:last3' },
+      { text: '🗓 Last 5 days', callback_data: 'cmd:last5' },
+    ],
+    [
+      { text: '🗓 Last 7 days', callback_data: 'cmd:week' },
+    ],
+    [
+      { text: '📈 Market Pulse', callback_data: 'cmd:pulse' },
       { text: '⭐ Watchlist', callback_data: 'cmd:pulse_watchlist' },
     ],
     [
@@ -107,8 +114,14 @@ const MAIN_MENU_KEYBOARD = {
 const POST_RESULTS_KEYBOARD = {
   inline_keyboard: [
     [
-      { text: '🔄 Refresh', callback_data: 'cmd:blockbuster' },
-      { text: '🟢 Add STRONG', callback_data: 'cmd:strong' },
+      { text: '⭐ BB (2d)', callback_data: 'cmd:blockbuster' },
+      { text: '🟢 STRONG', callback_data: 'cmd:strong' },
+      { text: '🗓 Last 3d', callback_data: 'cmd:last3' },
+    ],
+    [
+      { text: '📅 Today', callback_data: 'cmd:today' },
+      { text: '📅 Yesterday', callback_data: 'cmd:yesterday' },
+      { text: '🗓 Last 7d', callback_data: 'cmd:week' },
     ],
     [{ text: '📋 Main menu', callback_data: 'cmd:menu' }],
   ],
@@ -119,7 +132,7 @@ const POST_RESULTS_KEYBOARD = {
 async function triggerEoAlert(
   chatId: string | number,
   tiers: string,
-  dates?: string,
+  opts: { dates?: string; days?: number } = {},
 ): Promise<void> {
   // Re-use the existing eo-blockbuster-alert endpoint with overrides.
   // force=1 bypasses dedup so on-demand requests always return results.
@@ -132,7 +145,8 @@ async function triggerEoAlert(
     force: '1',
     override_chat_id: String(chatId),
   });
-  if (dates) params.set('dates', dates);
+  if (opts.dates) params.set('dates', opts.dates);
+  if (opts.days) params.set('days', String(opts.days));
 
   try {
     await fetch(`${API_BASE}/api/bot/eo-blockbuster-alert?${params}`, {
@@ -180,25 +194,23 @@ async function dispatchCommand(
 
   if (lower === 'start' || lower === 'menu') {
     const text = [
-      '<b>📊 Market Cockpit Bot</b>',
+      '<b>📊 MARKET COCKPIT BOT</b>',
+      '<i>Institutional earnings intelligence · on-demand</i>',
+      '━━━━━━━━━━━━━━━━━━━━━━━',
       '',
-      'Tap a button below or send a command:',
+      '<b>⭐ TOP-TIER EARNINGS</b>',
+      '/blockbuster — BLOCKBUSTER cards (last 2d)',
+      '/strong — STRONG cards (last 2d)',
+      '/today /yesterday — single-date filter',
+      '/last3 /last5 /week — wider scope',
       '',
-      '<b>Earnings (new):</b>',
-      '⭐ /blockbuster — top-tier earnings (last 2 days)',
-      '🟢 /strong — strong beats (last 2 days)',
-      '📅 /today / /yesterday — single-date filter',
+      '<b>📈 MARKET PULSE</b>',
+      '/pulse — full market snapshot',
+      '/gainers /losers /indices /news',
       '',
-      '<b>Market pulse:</b>',
-      '📈 /pulse — full market snapshot',
-      '📈 /gainers /losers /indices — pulse subsets',
-      '📰 /news — market intelligence',
-      '',
-      '<b>Watchlist:</b>',
-      '⭐ /pulse_watchlist — your tracked tickers',
-      '➕ /watch SYMBOL — add to watchlist',
-      '➖ /unwatch SYMBOL — remove from watchlist',
-      '📋 /list — show current watchlist',
+      '<b>⭐ WATCHLIST</b>',
+      '/pulse_watchlist — performance card',
+      '/watch SYM · /unwatch SYM · /list',
       '',
       '<i>Daily auto-broadcasts: 11:00 / 14:00 / 21:00 IST</i>',
     ].join('\n');
@@ -208,65 +220,88 @@ async function dispatchCommand(
 
   if (lower === 'help') {
     const text = [
-      '<b>🤖 Available commands</b>',
+      '<b>🤖 COMMAND REFERENCE</b>',
+      '━━━━━━━━━━━━━━━━━━━━━━━',
       '',
-      '<b>Earnings (new):</b>',
-      '/blockbuster — ⭐ today+yesterday top tier',
-      '/bb — shortcut for /blockbuster',
-      '/strong — 🟢 today+yesterday strong beats',
-      '/today — top-tier cards filed today',
-      '/yesterday — top-tier cards filed yesterday',
+      '<b>⭐ Earnings Top-Tier</b>',
+      '/blockbuster  /bb  — ⭐ BLOCKBUSTER (2d)',
+      '/strong       — 🟢 STRONG beats (2d)',
+      '/today        — top tier filed today',
+      '/yesterday    — top tier filed yesterday',
+      '/last3        — top tier last 3 days',
+      '/last5        — top tier last 5 days',
+      '/week         — top tier last 7 days',
       '',
-      '<b>Market pulse:</b>',
-      '/pulse — full market snapshot',
-      '/gainers — top gainers card',
-      '/losers — top losers card',
-      '/indices — NIFTY / MIDCAP / SMALL / VIX',
-      '/news — market intelligence',
-      '/status — bot status',
+      '<b>📈 Market Pulse</b>',
+      '/pulse        — full market snapshot',
+      '/gainers      — top gainers card',
+      '/losers       — top losers card',
+      '/indices      — NIFTY / MIDCAP / SMALL / VIX',
+      '/news         — market intelligence',
+      '/status       — bot status',
       '',
-      '<b>Watchlist:</b>',
-      '/pulse_watchlist — performance card',
-      '/watch SYMBOL — add stocks (space-sep)',
-      '/unwatch SYMBOL — remove a stock',
-      '/list — show your watchlist',
+      '<b>⭐ Watchlist</b>',
+      '/pulse_watchlist  — performance card',
+      '/watch SYMBOL     — add stocks (space-sep)',
+      '/unwatch SYMBOL   — remove a stock',
+      '/list             — show your watchlist',
       '',
-      '/menu — button keyboard',
-      '/help — this message',
+      '/menu — button keyboard · /help — this',
     ].join('\n');
     await sendMessage(chatId, text, { reply_markup: MAIN_MENU_KEYBOARD });
     return;
   }
 
   if (lower === 'blockbuster' || lower === 'bb') {
-    await sendMessage(chatId, '⏳ Fetching ⭐ BLOCKBUSTER for last 2 days…');
+    await sendMessage(chatId, '⏳ Scanning ⭐ <b>BLOCKBUSTER</b> tier · last 2 days…');
     await triggerEoAlert(chatId, 'BLOCKBUSTER');
-    await sendMessage(chatId, '✅ Done. Tap below for more:', { reply_markup: POST_RESULTS_KEYBOARD });
+    await sendMessage(chatId, '<i>More options below:</i>', { reply_markup: POST_RESULTS_KEYBOARD });
     return;
   }
 
   if (lower === 'strong') {
-    await sendMessage(chatId, '⏳ Fetching 🟢 STRONG for last 2 days…');
+    await sendMessage(chatId, '⏳ Scanning 🟢 <b>STRONG</b> tier · last 2 days…');
     await triggerEoAlert(chatId, 'STRONG');
-    await sendMessage(chatId, '✅ Done. Tap below for more:', { reply_markup: POST_RESULTS_KEYBOARD });
+    await sendMessage(chatId, '<i>More options below:</i>', { reply_markup: POST_RESULTS_KEYBOARD });
     return;
   }
 
   if (lower === 'today') {
     const istNow = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
     const todayIst = istNow.toISOString().slice(0, 10);
-    await sendMessage(chatId, `⏳ Fetching top tier for ${todayIst}…`);
-    await triggerEoAlert(chatId, 'BLOCKBUSTER,STRONG', todayIst);
-    await sendMessage(chatId, '✅ Done.', { reply_markup: POST_RESULTS_KEYBOARD });
+    await sendMessage(chatId, `⏳ Scanning top tier · <b>${todayIst}</b> only…`);
+    await triggerEoAlert(chatId, 'BLOCKBUSTER,STRONG', { dates: todayIst });
+    await sendMessage(chatId, '<i>More options below:</i>', { reply_markup: POST_RESULTS_KEYBOARD });
     return;
   }
 
   if (lower === 'yesterday') {
     const istNow = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
     const yIst = new Date(istNow.getTime() - 86_400_000).toISOString().slice(0, 10);
-    await sendMessage(chatId, `⏳ Fetching top tier for ${yIst}…`);
-    await triggerEoAlert(chatId, 'BLOCKBUSTER,STRONG', yIst);
-    await sendMessage(chatId, '✅ Done.', { reply_markup: POST_RESULTS_KEYBOARD });
+    await sendMessage(chatId, `⏳ Scanning top tier · <b>${yIst}</b> only…`);
+    await triggerEoAlert(chatId, 'BLOCKBUSTER,STRONG', { dates: yIst });
+    await sendMessage(chatId, '<i>More options below:</i>', { reply_markup: POST_RESULTS_KEYBOARD });
+    return;
+  }
+
+  if (lower === 'last3' || lower === 'last3days' || lower === '3days') {
+    await sendMessage(chatId, '⏳ Scanning top tier · <b>last 3 days</b>…');
+    await triggerEoAlert(chatId, 'BLOCKBUSTER,STRONG', { days: 3 });
+    await sendMessage(chatId, '<i>More options below:</i>', { reply_markup: POST_RESULTS_KEYBOARD });
+    return;
+  }
+
+  if (lower === 'last5' || lower === 'last5days' || lower === '5days') {
+    await sendMessage(chatId, '⏳ Scanning top tier · <b>last 5 days</b>…');
+    await triggerEoAlert(chatId, 'BLOCKBUSTER,STRONG', { days: 5 });
+    await sendMessage(chatId, '<i>More options below:</i>', { reply_markup: POST_RESULTS_KEYBOARD });
+    return;
+  }
+
+  if (lower === 'week' || lower === 'last7') {
+    await sendMessage(chatId, '⏳ Scanning top tier · <b>last 7 days</b>…');
+    await triggerEoAlert(chatId, 'BLOCKBUSTER,STRONG', { days: 7 });
+    await sendMessage(chatId, '<i>More options below:</i>', { reply_markup: POST_RESULTS_KEYBOARD });
     return;
   }
 
@@ -357,6 +392,9 @@ async function runSetup(): Promise<any> {
       { command: 'strong', description: '🟢 Strong beats (2d)' },
       { command: 'today', description: 'Top tier filed today' },
       { command: 'yesterday', description: 'Top tier filed yesterday' },
+      { command: 'last3', description: '🗓 Top tier last 3 days' },
+      { command: 'last5', description: '🗓 Top tier last 5 days' },
+      { command: 'week', description: '🗓 Top tier last 7 days' },
       { command: 'pulse', description: '📈 Full market pulse' },
       { command: 'gainers', description: 'Top gainers card' },
       { command: 'losers', description: 'Top losers card' },

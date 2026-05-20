@@ -108,56 +108,101 @@ function escHtml(s: string): string {
     .replace(/>/g, '&gt;');
 }
 
-function formatCard(card: GradedCard): string {
+// Institutional padding: right-pad a label so values align in monospace
+function rpad(s: string, n: number): string {
+  return s.length >= n ? s : s + ' '.repeat(n - s.length);
+}
+
+// Visual score bar — 10-block bar based on score / 100
+function scoreBar(score: number): string {
+  const pct = Math.max(0, Math.min(100, score)) / 100;
+  const filled = Math.round(pct * 10);
+  return '█'.repeat(filled) + '░'.repeat(10 - filled);
+}
+
+function formatCard(card: GradedCard, rank?: number, total?: number): string {
   const tierEmoji = card.tier === 'BLOCKBUSTER' ? '⭐' : '🟢';
-  const tierLabel = card.tier === 'BLOCKBUSTER' ? '<b>BLOCKBUSTER</b>' : '<b>STRONG</b>';
-  const sectorBit = card.sector ? ` · ${escHtml(card.sector)}` : '';
-  const mcapBit = card.market_cap_bucket ? ` · ${escHtml(card.market_cap_bucket)}` : '';
-  const peBit = card.pe != null ? ` · PE ${card.pe.toFixed(1)}` : '';
-  const priceBit = card.price != null ? ` · ₹${card.price.toFixed(0)}` : '';
+  const tierLabel = card.tier === 'BLOCKBUSTER' ? 'BLOCKBUSTER' : 'STRONG';
+  const rankBit = rank && total ? `  ·  #${rank}/${total}` : '';
+  const dividerThick = '━━━━━━━━━━━━━━━━━━━━━━━';
+  const dividerThin = '─────────────────────';
 
   const lines: string[] = [];
-  lines.push(`${tierEmoji} ${tierLabel} · <b>${escHtml(card.ticker)}</b>`);
-  lines.push(`<i>${escHtml(card.company || card.ticker)}</i>`);
-  lines.push(`${escHtml(card.quarter || 'Q4')}${mcapBit}${sectorBit}${peBit}${priceBit}`);
+
+  // ═════ HEADER — tier + ticker + score visual ═════
+  lines.push(`${tierEmoji} <b>${tierLabel}</b>  ·  Score <b>${card.composite_score}</b>/100${rankBit}`);
+  lines.push(`<code>${scoreBar(card.composite_score)}</code>`);
+  lines.push(dividerThick);
+  lines.push(`<b>${escHtml(card.ticker)}</b>  ·  <i>${escHtml(card.company || card.ticker)}</i>`);
+
+  // ═════ META row — sector · mcap · price · PE ═════
+  const metaBits: string[] = [];
+  if (card.sector) metaBits.push(escHtml(card.sector));
+  if (card.market_cap_bucket) metaBits.push(escHtml(card.market_cap_bucket));
+  if (card.price != null) metaBits.push(`₹${card.price.toFixed(0)}`);
+  if (card.pe != null) metaBits.push(`PE ${card.pe.toFixed(1)}x`);
+  if (metaBits.length) lines.push(metaBits.join('  ·  '));
   lines.push('');
 
-  if (card.sales_yoy_pct != null) {
-    lines.push(
-      `📊 Sales ${pctStr(card.sales_yoy_pct)} · ${escHtml(crStr(card.sales_curr_cr))} vs ${escHtml(crStr(card.sales_prev_cr))}`
-    );
-  }
-  if (card.net_profit_yoy_pct != null) {
-    lines.push(
-      `💰 PAT ${pctStr(card.net_profit_yoy_pct)} · ${escHtml(crStr(card.pat_curr_cr))} vs ${escHtml(crStr(card.pat_prev_cr))}`
-    );
-  }
-  if (card.eps_yoy_pct != null) {
-    lines.push(
-      `📈 EPS ${pctStr(card.eps_yoy_pct)} · ${escHtml(epsStr(card.eps_curr))} vs ${escHtml(epsStr(card.eps_prev))}`
-    );
+  // ═════ QUARTERLY YoY — aligned in <pre> for monospace tabular look ═════
+  const hasSales = card.sales_yoy_pct != null;
+  const hasPat = card.net_profit_yoy_pct != null;
+  const hasEps = card.eps_yoy_pct != null;
+  if (hasSales || hasPat || hasEps) {
+    lines.push(`<b>📊 QUARTERLY (YoY)</b>`);
+    const qLines: string[] = [];
+    if (hasSales) {
+      qLines.push(
+        `${rpad('Sales', 7)}${rpad(pctStr(card.sales_yoy_pct), 9)}${crStr(card.sales_curr_cr)} ← ${crStr(card.sales_prev_cr)}`
+      );
+    }
+    if (hasPat) {
+      qLines.push(
+        `${rpad('PAT', 7)}${rpad(pctStr(card.net_profit_yoy_pct), 9)}${crStr(card.pat_curr_cr)} ← ${crStr(card.pat_prev_cr)}`
+      );
+    }
+    if (hasEps) {
+      qLines.push(
+        `${rpad('EPS', 7)}${rpad(pctStr(card.eps_yoy_pct), 9)}${epsStr(card.eps_curr)} ← ${epsStr(card.eps_prev)}`
+      );
+    }
+    lines.push(`<pre>${escHtml(qLines.join('\n'))}</pre>`);
   }
 
-  lines.push('');
-  const scoreBit = `Score <b>${card.composite_score}</b>`;
-  const moveBit = card.move_pct != null ? ` · Move ${pctStr(card.move_pct)}` : '';
-  const gapBit = card.gap_pct != null ? ` · Gap ${pctStr(card.gap_pct)}` : '';
-  const stageBit = card.stage != null ? ` · Stage ${card.stage}` : '';
-  const rsBit = card.rs_rating != null ? ` · RS ${card.rs_rating}` : '';
-  lines.push(`${scoreBit}${moveBit}${gapBit}${stageBit}${rsBit}`);
+  // ═════ MARGIN / OPERATING quality (if present in card payload) ═════
+  // Not always populated; show only if meaningful
+  // (Future enhancement: opm, op_profit_yoy)
 
+  // ═════ POST-EARNINGS price action ═════
+  if (card.move_pct != null || card.d1_pct != null || card.gap_pct != null) {
+    lines.push(`<b>📈 POST-EARNINGS</b>`);
+    const pBits: string[] = [];
+    if (card.move_pct != null) pBits.push(`Cum ${pctStr(card.move_pct)}`);
+    if (card.d1_pct != null) pBits.push(`D1 ${pctStr(card.d1_pct)}`);
+    if (card.gap_pct != null) pBits.push(`Gap ${pctStr(card.gap_pct)}`);
+    if (card.stage != null) pBits.push(`Stage ${card.stage}`);
+    if (card.rs_rating != null) pBits.push(`RS ${card.rs_rating}`);
+    lines.push(pBits.join('  ·  '));
+  }
+
+  // ═════ METHODOLOGY (why it qualified) ═════
   if (card.methodology_tags && card.methodology_tags.length) {
-    lines.push(`✓ ${card.methodology_tags.map(escHtml).join(' ✓ ')}`);
-  }
-  if (card.caveat_tags && card.caveat_tags.length) {
-    lines.push(`⚠ ${card.caveat_tags.slice(0, 4).map(escHtml).join(' ⚠ ')}`);
+    lines.push(`<b>✅ METHODOLOGY</b>`);
+    lines.push(card.methodology_tags.map((t) => `  ✓ ${escHtml(t)}`).join('\n'));
   }
 
-  // Filing date + EO deeplink
+  // ═════ CAVEATS (risk flags) ═════
+  if (card.caveat_tags && card.caveat_tags.length) {
+    lines.push(`<b>⚠️ RISK FLAGS</b>`);
+    lines.push(card.caveat_tags.slice(0, 5).map((t) => `  ⚠ ${escHtml(t)}`).join('\n'));
+  }
+
+  // ═════ ACTION line — filing date + deep link ═════
   const eoUrl = `${API_BASE}/earnings-opportunities?date=${card.filing_date}`;
-  lines.push('');
-  lines.push(`📅 Filed: ${escHtml(card.filing_date)}`);
-  lines.push(`🌐 <a href="${escHtml(eoUrl)}">Open in EO</a>`);
+  lines.push(dividerThin);
+  const quarter = card.quarter ? ` · ${escHtml(card.quarter)}` : '';
+  lines.push(`📅 Filed <b>${escHtml(card.filing_date)}</b>${quarter}`);
+  lines.push(`🔗 <a href="${escHtml(eoUrl)}">Open card in EO →</a>`);
 
   return lines.join('\n');
 }
@@ -206,12 +251,17 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
-  // Compute today + yesterday in IST so 'last 2 days' aligns with the
-  // user's expectation (Indian filing calendar).
+  // Compute trailing N days in IST so 'last N days' aligns with the
+  // user's expectation (Indian filing calendar). Default = 2.
+  // ?days=3 → today + yesterday + day-before
+  const daysParam = parseInt(searchParams.get('days') || '2', 10);
+  const days = Number.isFinite(daysParam) && daysParam >= 1 && daysParam <= 14 ? daysParam : 2;
   const istNow = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
-  const todayIst = istNow.toISOString().slice(0, 10);
-  const yIst = new Date(istNow.getTime() - 86_400_000).toISOString().slice(0, 10);
-  const dates = [todayIst, yIst];
+  const dates: string[] = [];
+  for (let i = 0; i < days; i++) {
+    const d = new Date(istNow.getTime() - i * 86_400_000);
+    dates.push(d.toISOString().slice(0, 10));
+  }
 
   // Allow caller-override for backfill: ?dates=2026-05-19,2026-05-18
   const datesParam = searchParams.get('dates');
@@ -280,32 +330,43 @@ export async function GET(req: Request) {
   const failed: Array<{ ticker: string; error: string }> = [];
   let sentCount = 0;
 
+  // Compute window label like "last 3 days" or "1 day"
+  const windowLabel = targetDates.length === 1
+    ? `${escHtml(targetDates[0])}`
+    : `last ${targetDates.length} days`;
+
   if (!dryRun) {
     // Pre-flight: send a header message if there's anything to broadcast
     if (toSend.length > 0) {
-      const headerLines = overrideChatId
-        ? [
-            `🔥 <b>EARNINGS PULSE — ON-DEMAND</b>`,
-            `<i>${escHtml(String(toSend.length))} cards across last 2 days</i>`,
-            `<i>Filed: ${escHtml(targetDates.join(', '))}</i>`,
-          ]
-        : [
-            `🔥 <b>EARNINGS PULSE — TOP TIER</b>`,
-            `<i>${escHtml(String(toSend.length))} new fresh prints across last 2 days</i>`,
-            `<i>Filed: ${escHtml(targetDates.join(', '))}</i>`,
-          ];
+      // Compute tier breakdown for the header strip
+      const bbCount = toSend.filter((c) => c.tier === 'BLOCKBUSTER').length;
+      const strongCount = toSend.filter((c) => c.tier === 'STRONG').length;
+      const tierStrip: string[] = [];
+      if (bbCount > 0) tierStrip.push(`⭐ ${bbCount} BLOCKBUSTER`);
+      if (strongCount > 0) tierStrip.push(`🟢 ${strongCount} STRONG`);
+
+      const istHHMM = new Date(Date.now() + 5.5 * 60 * 60 * 1000)
+        .toISOString().slice(11, 16) + ' IST';
+      const titlePrefix = overrideChatId ? 'ON-DEMAND' : 'DAILY BROADCAST';
+
+      const headerLines = [
+        `🔥 <b>EARNINGS PULSE — ${titlePrefix}</b>`,
+        `<i>${tierStrip.join('  ·  ')}  ·  ${windowLabel}</i>`,
+        `<i>Filed: ${escHtml(targetDates.join(', '))}  ·  ${istHHMM}</i>`,
+      ];
       await sendTelegram(headerLines.join('\n'), targetChatId);
       await new Promise((r) => setTimeout(r, 400));
     } else if (overrideChatId) {
       // On-demand pulls deserve a clear empty-state message
       await sendTelegram(
-        `📭 <i>No ${escHtml(Array.from(tiersFilter).join(' / '))} cards found for ${escHtml(targetDates.join(', '))}</i>`,
+        `📭 <i>No ${escHtml(Array.from(tiersFilter).join(' / '))} cards found for ${escHtml(windowLabel)}</i>\n\n<i>Filed scope: ${escHtml(targetDates.join(', '))}</i>`,
         targetChatId,
       );
     }
 
-    for (const card of toSend) {
-      const text = formatCard(card);
+    for (let i = 0; i < toSend.length; i++) {
+      const card = toSend[i];
+      const text = formatCard(card, i + 1, toSend.length);
       const result = await sendTelegram(text, targetChatId);
       if (result.ok) {
         sentCount++;
@@ -324,10 +385,25 @@ export async function GET(req: Request) {
       // Rate-limit between sends
       await new Promise((r) => setTimeout(r, 350));
     }
+
+    // ═════ Final summary message — institutional close-out ═════
+    if (sentCount > 0) {
+      const dashboardUrl = `${API_BASE}/earnings-opportunities`;
+      const summary = [
+        `<b>═══ SCAN COMPLETE ═══</b>`,
+        `<b>${sentCount}</b> top-tier ${sentCount === 1 ? 'card' : 'cards'} delivered`,
+        `Window: ${escHtml(windowLabel)}`,
+        ``,
+        `<i>Use /menu for more options · /last3 for 3-day scope</i>`,
+        `<i>🔗 <a href="${escHtml(dashboardUrl)}">Full EO dashboard →</a></i>`,
+      ];
+      await sendTelegram(summary.join('\n'), targetChatId);
+    }
   }
 
   return NextResponse.json({
     status: 'ok',
+    window_days: targetDates.length,
     dates: targetDates,
     bot_configured: !!BOT_TOKEN,
     chat_id: targetChatId,
@@ -336,6 +412,7 @@ export async function GET(req: Request) {
     cards_to_send: toSend.length,
     cards_skipped: skipped.length,
     cards_sent: sentCount,
+    sent_tickers: sentTickers,
     failures: failed,
     dry_run: dryRun,
     force: force,
