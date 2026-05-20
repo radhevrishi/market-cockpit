@@ -885,6 +885,10 @@ export async function GET(request: Request) {
   diagnostics.steps.push('auth_passed');
 
   const mode = searchParams.get('mode') || 'full';
+  // override_chat_id routes the alert to a specific chat (e.g. webhook DM)
+  // instead of the default broadcast channel.
+  const overrideChatId = searchParams.get('override_chat_id') || '';
+  const targetChatId = overrideChatId || TG_CHAT_ID;
   let watchlist = DEFAULT_WATCHLIST;
 
   // Allow override via URL param for scheduled tasks
@@ -897,7 +901,7 @@ export async function GET(request: Request) {
     diagnostics.config = {
       tokenSet: !!TG_TOKEN && TG_TOKEN.length > 10,
       tokenEnds: TG_TOKEN.slice(-6),
-      chatId: TG_CHAT_ID,
+      chatId: targetChatId,
       apiBase: API_BASE,
       watchlistSize: watchlist.length,
     };
@@ -907,7 +911,8 @@ export async function GET(request: Request) {
   if (mode === 'test') {
     diagnostics.steps.push('sending_test_message');
     const result = await sendTelegram(
-      '[OK] <b>Market Cockpit Watchlist Pulse Connected</b>\n\nYour watchlist alerts are active!\n\nPerformance card — Your tracked stocks\nRelevant news headlines\n\nTwice daily: 10:05 AM &amp; 3:05 PM IST\n\n<a href="https://market-cockpit.vercel.app">View Dashboard</a>'
+      '[OK] <b>Market Cockpit Watchlist Pulse Connected</b>\n\nYour watchlist alerts are active!\n\nPerformance card — Your tracked stocks\nRelevant news headlines\n\nTwice daily: 10:05 AM &amp; 3:05 PM IST\n\n<a href="https://market-cockpit.vercel.app">View Dashboard</a>',
+      targetChatId,
     );
     diagnostics.steps.push(result.ok ? 'test_sent_ok' : 'test_send_failed');
     return NextResponse.json({ ok: result.ok, mode: 'test', telegramResponse: result.telegramResponse, error: result.error, diagnostics, elapsed: Date.now() - startTime });
@@ -940,7 +945,8 @@ export async function GET(request: Request) {
   if (stocks.length === 0) {
     diagnostics.steps.push('no_data_sending_closed_msg');
     const result = await sendTelegram(
-      '<b>Market Cockpit Watchlist Pulse</b>\n\nMarket is closed or watchlist stocks unavailable.\n\n<i>Next alert during market hours.</i>'
+      '<b>Market Cockpit Watchlist Pulse</b>\n\nMarket is closed or watchlist stocks unavailable.\n\n<i>Next alert during market hours.</i>',
+      targetChatId,
     );
     return NextResponse.json({ ok: result.ok, status: 'no-data', telegramResponse: result.telegramResponse, error: result.error, diagnostics, elapsed: Date.now() - startTime });
   }
@@ -953,7 +959,7 @@ export async function GET(request: Request) {
     const gainers = stocks.filter(s => s.changePercent > 0).length;
     const losers = stocks.filter(s => s.changePercent < 0).length;
     const caption = `<b>Watchlist Pulse</b>\n${stocks.length} stocks • Gainers: ${gainers} | Losers: ${losers}\n<a href="https://market-cockpit.vercel.app">Dashboard</a>`;
-    const photoResult = await sendTelegramPhoto(img, caption);
+    const photoResult = await sendTelegramPhoto(img, caption, targetChatId);
     if (!photoResult.ok) {
       imageError = photoResult.error;
       diagnostics.steps.push('image_send_failed');
@@ -968,7 +974,7 @@ export async function GET(request: Request) {
   // Send watchlist summary
   diagnostics.steps.push('sending_summary_text');
   const summary = buildWatchlistMessage(stocks, watchlist);
-  const textResult = await sendTelegram(summary);
+  const textResult = await sendTelegram(summary, targetChatId);
   if (!textResult.ok) {
     diagnostics.steps.push('text_send_failed');
   } else {
@@ -983,7 +989,7 @@ export async function GET(request: Request) {
       newsLines.push(`${i + 1}. ${esc(truncate(news[i].title, 80))}`);
       if (news[i].source) newsLines.push(`   <i>Type: ${news[i].source}</i>`);
     }
-    const newsResult = await sendTelegram(newsLines.join('\n'));
+    const newsResult = await sendTelegram(newsLines.join('\n'), targetChatId);
     diagnostics.steps.push(newsResult.ok ? 'news_sent_ok' : 'news_send_failed');
   }
 

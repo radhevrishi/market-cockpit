@@ -1358,12 +1358,16 @@ export async function GET(request: Request) {
   diagnostics.steps.push('auth_passed');
 
   const mode = searchParams.get('mode') || 'full';
+  // override_chat_id routes the alert to a specific chat (e.g. webhook DM)
+  // instead of the default broadcast channel.
+  const overrideChatId = searchParams.get('override_chat_id') || '';
+  const targetChatId = overrideChatId || TG_CHAT_ID;
 
   if (mode === 'diag') {
     diagnostics.config = {
       tokenSet: !!TG_TOKEN && TG_TOKEN.length > 10,
       tokenEnds: TG_TOKEN.slice(-6),
-      chatId: TG_CHAT_ID,
+      chatId: targetChatId,
       apiBase: API_BASE,
     };
     return NextResponse.json({ ok: true, mode: 'diag', diagnostics, elapsed: Date.now() - startTime });
@@ -1372,7 +1376,8 @@ export async function GET(request: Request) {
   if (mode === 'test') {
     diagnostics.steps.push('sending_test_message');
     const result = await sendTelegram(
-      '<b>Market Cockpit Bot Connected</b>\n\nImage card alerts are active! You\'ll receive:\nTop Gainers card\nTop Losers card\nIndex + Breadth summary\n\nTwice daily at 10:05 AM &amp; 3:05 PM IST.\n\n<a href="https://market-cockpit.vercel.app/movers">View Dashboard</a>'
+      '<b>Market Cockpit Bot Connected</b>\n\nImage card alerts are active! You\'ll receive:\nTop Gainers card\nTop Losers card\nIndex + Breadth summary\n\nTwice daily at 10:05 AM &amp; 3:05 PM IST.\n\n<a href="https://market-cockpit.vercel.app/movers">View Dashboard</a>',
+      targetChatId,
     );
     diagnostics.steps.push(result.ok ? 'test_sent_ok' : 'test_send_failed');
     return NextResponse.json({ ok: result.ok, mode: 'test', telegramResponse: result.telegramResponse, error: result.error, diagnostics, elapsed: Date.now() - startTime });
@@ -1412,13 +1417,14 @@ export async function GET(request: Request) {
   if (movers.total === 0 && earnings.length === 0) {
     diagnostics.steps.push('no_data_sending_closed_msg');
     const result = await sendTelegram(
-      '<b>Market Cockpit</b>\n\nMarket is closed or data unavailable.\n\n<i>Next alert during market hours.</i>'
+      '<b>Market Cockpit</b>\n\nMarket is closed or data unavailable.\n\n<i>Next alert during market hours.</i>',
+      targetChatId,
     );
     return NextResponse.json({ ok: result.ok, status: 'no-data', telegramResponse: result.telegramResponse, error: result.error, diagnostics, elapsed: Date.now() - startTime });
   }
 
   // Send full alert with images
-  const alertResult = await sendFullAlert(movers, earnings, indices);
+  const alertResult = await sendFullAlert(movers, earnings, indices, targetChatId);
   diagnostics.steps.push(alertResult.ok ? 'alert_sent_ok' : 'alert_partial_fail');
   if (alertResult.errors.length > 0) {
     diagnostics.alertErrors = alertResult.errors;

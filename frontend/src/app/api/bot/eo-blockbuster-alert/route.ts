@@ -159,16 +159,20 @@ function formatCard(card: GradedCard): string {
 
 // ─── Telegram sender ───────────────────────────────────────────────────────
 
-async function sendTelegram(text: string): Promise<{ ok: boolean; status?: number; error?: string }> {
+async function sendTelegram(
+  text: string,
+  targetChatId?: string,
+): Promise<{ ok: boolean; status?: number; error?: string }> {
   if (!BOT_TOKEN) return { ok: false, error: 'TELEGRAM_BOT_TOKEN_EARNINGS not set' };
-  if (!CHAT_ID) return { ok: false, error: 'TELEGRAM_CHAT_ID_BLOCKBUSTER not set' };
+  const chatId = targetChatId || CHAT_ID;
+  if (!chatId) return { ok: false, error: 'TELEGRAM_CHAT_ID_BLOCKBUSTER not set' };
 
   try {
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        chat_id: CHAT_ID,
+        chat_id: chatId,
         text,
         parse_mode: 'MarkdownV2',
         disable_web_page_preview: true,
@@ -216,7 +220,12 @@ export async function GET(req: Request) {
 
   const origin = new URL(req.url).origin;
   const dryRun = searchParams.get('dry') === '1';
-  const force = searchParams.get('force') === '1'; // bypass dedup
+  // override_chat_id routes responses to a specific chat (e.g. webhook DM)
+  // instead of the default broadcast channel. When set, also implies
+  // force=1 (skip dedup) since on-demand pulls should always show data.
+  const overrideChatId = searchParams.get('override_chat_id') || '';
+  const targetChatId = overrideChatId || CHAT_ID;
+  const force = searchParams.get('force') === '1' || !!overrideChatId; // bypass dedup
 
   // Fetch graded for each date
   const allCards: GradedCard[] = [];
@@ -269,23 +278,36 @@ export async function GET(req: Request) {
   if (!dryRun) {
     // Pre-flight: send a header message if there's anything to broadcast
     if (toSend.length > 0) {
-      const headerLines = [
-        `🔥 *EARNINGS PULSE — TOP TIER*`,
-        `_${escMd(toSend.length + '')} new fresh prints across last 2 days_`,
-        `_${escMd('Filed: ' + targetDates.join(', '))}_`,
-      ];
-      await sendTelegram(headerLines.join('\n'));
+      const headerLines = overrideChatId
+        ? [
+            `🔥 *EARNINGS PULSE — ON\\-DEMAND*`,
+            `_${escMd(toSend.length + '')} cards across last 2 days_`,
+            `_${escMd('Filed: ' + targetDates.join(', '))}_`,
+          ]
+        : [
+            `🔥 *EARNINGS PULSE — TOP TIER*`,
+            `_${escMd(toSend.length + '')} new fresh prints across last 2 days_`,
+            `_${escMd('Filed: ' + targetDates.join(', '))}_`,
+          ];
+      await sendTelegram(headerLines.join('\n'), targetChatId);
       await new Promise((r) => setTimeout(r, 400));
+    } else if (overrideChatId) {
+      // On-demand pulls deserve a clear empty-state message
+      await sendTelegram(
+        `📭 _No ${escMd(Array.from(tiersFilter).join(' / '))} cards found for_ ${escMd(targetDates.join(', '))}`,
+        targetChatId,
+      );
     }
 
     for (const card of toSend) {
       const text = formatCard(card);
-      const result = await sendTelegram(text);
+      const result = await sendTelegram(text, targetChatId);
       if (result.ok) {
         sentCount++;
         sentTickers.push(card.ticker);
-        // Mark as sent in KV
-        if (isRedisAvailable()) {
+        // Mark as sent in KV — only for default broadcast channel, not
+        // on-demand pulls (those shouldn't burn the dedup budget).
+        if (!overrideChatId && isRedisAvailable()) {
           try {
             const dedupKey = `tg:sent:eo:${card.ticker}:${card.filing_date}`;
             await kvSet(dedupKey, { sent_at: new Date().toISOString(), tier: card.tier }, DEDUP_TTL_S);
@@ -303,7 +325,8 @@ export async function GET(req: Request) {
     status: 'ok',
     dates: targetDates,
     bot_configured: !!BOT_TOKEN,
-    chat_id: CHAT_ID,
+    chat_id: targetChatId,
+    override_chat_id: overrideChatId || null,
     cards_found: allCards.length,
     cards_to_send: toSend.length,
     cards_skipped: skipped.length,
