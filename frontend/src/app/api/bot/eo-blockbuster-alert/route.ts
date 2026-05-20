@@ -99,62 +99,65 @@ function epsStr(v: number | null | undefined): string {
   return `₹${v.toFixed(2)}`;
 }
 
-function escMd(s: string): string {
-  // Escape Telegram MarkdownV2 reserved characters
-  return s.replace(/[_*[\]()~`>#+=|{}.!\\-]/g, (m) => '\\' + m);
+// HTML escape — Telegram HTML mode only needs <, >, & escaped.
+// Much more robust than MarkdownV2 (which trips on every period in a %).
+function escHtml(s: string): string {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 function formatCard(card: GradedCard): string {
   const tierEmoji = card.tier === 'BLOCKBUSTER' ? '⭐' : '🟢';
-  const tierLabel = card.tier === 'BLOCKBUSTER' ? '*BLOCKBUSTER*' : '*STRONG*';
-  const sectorBit = card.sector ? ` · ${escMd(card.sector)}` : '';
-  const mcapBit = card.market_cap_bucket ? ` · ${escMd(card.market_cap_bucket)}` : '';
+  const tierLabel = card.tier === 'BLOCKBUSTER' ? '<b>BLOCKBUSTER</b>' : '<b>STRONG</b>';
+  const sectorBit = card.sector ? ` · ${escHtml(card.sector)}` : '';
+  const mcapBit = card.market_cap_bucket ? ` · ${escHtml(card.market_cap_bucket)}` : '';
   const peBit = card.pe != null ? ` · PE ${card.pe.toFixed(1)}` : '';
   const priceBit = card.price != null ? ` · ₹${card.price.toFixed(0)}` : '';
 
   const lines: string[] = [];
-  lines.push(`${tierEmoji} ${tierLabel} · *${escMd(card.ticker)}*`);
-  lines.push(`_${escMd(card.company || card.ticker)}_`);
-  lines.push(`${escMd(card.quarter || 'Q4')}${mcapBit}${sectorBit}${peBit}${priceBit}`);
+  lines.push(`${tierEmoji} ${tierLabel} · <b>${escHtml(card.ticker)}</b>`);
+  lines.push(`<i>${escHtml(card.company || card.ticker)}</i>`);
+  lines.push(`${escHtml(card.quarter || 'Q4')}${mcapBit}${sectorBit}${peBit}${priceBit}`);
   lines.push('');
 
   if (card.sales_yoy_pct != null) {
     lines.push(
-      `📊 Sales \\${pctStr(card.sales_yoy_pct)} · ${escMd(crStr(card.sales_curr_cr))} vs ${escMd(crStr(card.sales_prev_cr))}`
+      `📊 Sales ${pctStr(card.sales_yoy_pct)} · ${escHtml(crStr(card.sales_curr_cr))} vs ${escHtml(crStr(card.sales_prev_cr))}`
     );
   }
   if (card.net_profit_yoy_pct != null) {
     lines.push(
-      `💰 PAT \\${pctStr(card.net_profit_yoy_pct)} · ${escMd(crStr(card.pat_curr_cr))} vs ${escMd(crStr(card.pat_prev_cr))}`
+      `💰 PAT ${pctStr(card.net_profit_yoy_pct)} · ${escHtml(crStr(card.pat_curr_cr))} vs ${escHtml(crStr(card.pat_prev_cr))}`
     );
   }
   if (card.eps_yoy_pct != null) {
     lines.push(
-      `📈 EPS \\${pctStr(card.eps_yoy_pct)} · ${escMd(epsStr(card.eps_curr))} vs ${escMd(epsStr(card.eps_prev))}`
+      `📈 EPS ${pctStr(card.eps_yoy_pct)} · ${escHtml(epsStr(card.eps_curr))} vs ${escHtml(epsStr(card.eps_prev))}`
     );
   }
 
   lines.push('');
-  const scoreBit = `Score *${card.composite_score}*`;
-  const moveBit = card.move_pct != null ? ` · Move \\${pctStr(card.move_pct)}` : '';
-  const gapBit = card.gap_pct != null ? ` · Gap \\${pctStr(card.gap_pct)}` : '';
+  const scoreBit = `Score <b>${card.composite_score}</b>`;
+  const moveBit = card.move_pct != null ? ` · Move ${pctStr(card.move_pct)}` : '';
+  const gapBit = card.gap_pct != null ? ` · Gap ${pctStr(card.gap_pct)}` : '';
   const stageBit = card.stage != null ? ` · Stage ${card.stage}` : '';
   const rsBit = card.rs_rating != null ? ` · RS ${card.rs_rating}` : '';
   lines.push(`${scoreBit}${moveBit}${gapBit}${stageBit}${rsBit}`);
 
   if (card.methodology_tags && card.methodology_tags.length) {
-    lines.push(`✓ ${card.methodology_tags.map(escMd).join(' ✓ ')}`);
+    lines.push(`✓ ${card.methodology_tags.map(escHtml).join(' ✓ ')}`);
   }
   if (card.caveat_tags && card.caveat_tags.length) {
-    lines.push(`⚠ ${card.caveat_tags.slice(0, 4).map(escMd).join(' ⚠ ')}`);
+    lines.push(`⚠ ${card.caveat_tags.slice(0, 4).map(escHtml).join(' ⚠ ')}`);
   }
 
   // Filing date + EO deeplink
-  const dateLabel = escMd(card.filing_date);
   const eoUrl = `${API_BASE}/earnings-opportunities?date=${card.filing_date}`;
   lines.push('');
-  lines.push(`📅 Filed: ${dateLabel}`);
-  lines.push(`🌐 [Open in EO](${eoUrl})`);
+  lines.push(`📅 Filed: ${escHtml(card.filing_date)}`);
+  lines.push(`🌐 <a href="${escHtml(eoUrl)}">Open in EO</a>`);
 
   return lines.join('\n');
 }
@@ -176,7 +179,7 @@ async function sendTelegram(
       body: JSON.stringify({
         chat_id: chatId,
         text,
-        parse_mode: 'MarkdownV2',
+        parse_mode: 'HTML',
         disable_web_page_preview: true,
       }),
       signal: AbortSignal.timeout(15_000),
@@ -282,21 +285,21 @@ export async function GET(req: Request) {
     if (toSend.length > 0) {
       const headerLines = overrideChatId
         ? [
-            `🔥 *EARNINGS PULSE — ON\\-DEMAND*`,
-            `_${escMd(toSend.length + '')} cards across last 2 days_`,
-            `_${escMd('Filed: ' + targetDates.join(', '))}_`,
+            `🔥 <b>EARNINGS PULSE — ON-DEMAND</b>`,
+            `<i>${escHtml(String(toSend.length))} cards across last 2 days</i>`,
+            `<i>Filed: ${escHtml(targetDates.join(', '))}</i>`,
           ]
         : [
-            `🔥 *EARNINGS PULSE — TOP TIER*`,
-            `_${escMd(toSend.length + '')} new fresh prints across last 2 days_`,
-            `_${escMd('Filed: ' + targetDates.join(', '))}_`,
+            `🔥 <b>EARNINGS PULSE — TOP TIER</b>`,
+            `<i>${escHtml(String(toSend.length))} new fresh prints across last 2 days</i>`,
+            `<i>Filed: ${escHtml(targetDates.join(', '))}</i>`,
           ];
       await sendTelegram(headerLines.join('\n'), targetChatId);
       await new Promise((r) => setTimeout(r, 400));
     } else if (overrideChatId) {
       // On-demand pulls deserve a clear empty-state message
       await sendTelegram(
-        `📭 _No ${escMd(Array.from(tiersFilter).join(' / '))} cards found for_ ${escMd(targetDates.join(', '))}`,
+        `📭 <i>No ${escHtml(Array.from(tiersFilter).join(' / '))} cards found for ${escHtml(targetDates.join(', '))}</i>`,
         targetChatId,
       );
     }
