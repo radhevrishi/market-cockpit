@@ -252,9 +252,11 @@ export default function ScreenerPage() {
       setData(result);
       setDataUpdatedAt(Date.now()); // PATCH 0275
 
-      // Derive sectors from the stocks data
-      const uniqueSectors = new Set(result.stocks.map(stock => stock.sector));
-      const sortedSectors = ['All', ...Array.from(uniqueSectors).sort()];
+      // PATCH 0516 — Null guard: API can return { stocks: undefined } on
+      // transient errors (e.g. upstream NSE/BSE down). Avoid TypeError.
+      const stocksArr = Array.isArray(result?.stocks) ? result.stocks : [];
+      const uniqueSectors = new Set(stocksArr.map((stock: any) => stock?.sector).filter(Boolean));
+      const sortedSectors = ['All', ...Array.from(uniqueSectors).sort() as string[]];
       setSectors(sortedSectors);
 
       setCurrentPage(1);

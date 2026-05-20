@@ -190,7 +190,14 @@ export default function MoversPage() {
   }, []);
 
   useEffect(() => { fetchData(); fetchEarnings(); }, [fetchData, fetchEarnings]);
-  useEffect(() => { const i = setInterval(fetchData, 60000); return () => clearInterval(i); }, [fetchData]);
+  // PATCH 0516 — Visibility-gated polling. Skip when tab hidden to save quota.
+  useEffect(() => {
+    const i = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      fetchData();
+    }, 60000);
+    return () => clearInterval(i);
+  }, [fetchData]);
 
   const filtered = useMemo(() => {
     return allStocks.filter(s => {

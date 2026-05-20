@@ -415,7 +415,7 @@ export default function IPOsPage() {
                     </span>
                   </div>
                 </div>
-                {ipo.gmp !== 0 && (
+                {typeof ipo.gmp === 'number' && ipo.gmp !== 0 && (
                   <div style={{
                     backgroundColor: ipo.gmp > 0 ? THEME.green : THEME.red,
                     color: THEME.background,
