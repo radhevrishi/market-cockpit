@@ -1142,28 +1142,64 @@ function ModelShiftPanel({ rows, loading, color, convictionSet }: { rows: ModelS
 }
 
 function MultipleExpansionPanel({ rows, loading, color, convictionSet }: { rows: MultipleExpandRow[]; loading: boolean; color: string; convictionSet: Set<string> }) {
+  // PATCH 0509 — Sortable columns on Multiple Expansion table.
+  const [sortBy, setSortBy] = useState<'ticker' | 'pe' | 'eps' | 'peg' | 'opm'>('peg');
+  const [sortAsc, setSortAsc] = useState(true);  // PEG ascending = best first
+  const sortedRows = useMemo(() => {
+    const sign = sortAsc ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      const av =
+        sortBy === 'pe'  ? (a.pe ?? Infinity) :
+        sortBy === 'eps' ? (a.eps_yoy ?? -Infinity) :
+        sortBy === 'peg' ? (a.peg ?? Infinity) :
+        sortBy === 'opm' ? (a.latest_opm ?? -Infinity) :
+        a.ticker;
+      const bv =
+        sortBy === 'pe'  ? (b.pe ?? Infinity) :
+        sortBy === 'eps' ? (b.eps_yoy ?? -Infinity) :
+        sortBy === 'peg' ? (b.peg ?? Infinity) :
+        sortBy === 'opm' ? (b.latest_opm ?? -Infinity) :
+        b.ticker;
+      if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * sign;
+      return String(av).localeCompare(String(bv)) * sign;
+    });
+  }, [rows, sortBy, sortAsc]);
+  const handleSort = (col: typeof sortBy) => {
+    if (sortBy === col) setSortAsc(s => !s);
+    else { setSortBy(col); setSortAsc(col === 'ticker' || col === 'peg' || col === 'pe'); }
+  };
+  const sortIndicator = (col: typeof sortBy) => sortBy === col ? (sortAsc ? ' ▲' : ' ▼') : '';
+  const sortableTh = (col: typeof sortBy, label: string) => (
+    <th
+      style={{ ...th(), cursor: 'pointer', userSelect: 'none', color: sortBy === col ? color : '#6B7A8D' }}
+      onClick={() => handleSort(col)}
+      title={`Sort by ${label}`}
+    >
+      {label}{sortIndicator(col)}
+    </th>
+  );
   if (loading) return <Loader label="Loading quotes + earnings…" />;
   if (rows.length === 0) return <Empty label="No multiple-expansion candidates yet. Need positive EPS YoY + valid P/E ratio in your universe." />;
   return (
     <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderLeft: `3px solid ${color}`, borderRadius: 12, padding: '14px 18px' }}>
       <div style={{ fontSize: 13, fontWeight: 800, color, letterSpacing: '0.5px', marginBottom: 10 }}>
         🚀 MULTIPLE EXPANSION RANKING
-        <span style={{ marginLeft: 8, fontSize: 11, color: '#6B7A8D', fontWeight: 500 }}>Lowest PEG (P/E ÷ EPS YoY %) · earnings inflection confirms re-rating runway</span>
+        <span style={{ marginLeft: 8, fontSize: 11, color: '#6B7A8D', fontWeight: 500 }}>Lowest PEG (P/E ÷ EPS YoY %) · click headers to sort</span>
       </div>
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
             <tr style={{ color: '#6B7A8D', textAlign: 'left' }}>
               <th style={th()}>#</th>
-              <th style={th()}>Ticker</th>
-              <th style={th()}>P/E</th>
-              <th style={th()}>EPS YoY</th>
-              <th style={th()}>PEG</th>
-              <th style={th()}>Latest OPM</th>
+              {sortableTh('ticker', 'Ticker')}
+              {sortableTh('pe', 'P/E')}
+              {sortableTh('eps', 'EPS YoY')}
+              {sortableTh('peg', 'PEG')}
+              {sortableTh('opm', 'Latest OPM')}
             </tr>
           </thead>
           <tbody>
-            {rows.map((r, i) => (
+            {sortedRows.map((r, i) => (
               <tr
                 key={r.ticker}
                 onClick={() => {

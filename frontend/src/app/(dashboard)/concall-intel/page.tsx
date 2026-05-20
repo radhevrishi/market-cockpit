@@ -1793,8 +1793,28 @@ function KeywordWatchFeed() {
       )}
 
       {data && data.filings.length === 0 && !loading && (
-        <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic', padding: '12px 0' }}>
-          No matches for selected keywords / groups in last {days} days. Try widening the window or selecting different groups.
+        <div style={{
+          padding: '20px 16px',
+          marginTop: 8,
+          backgroundColor: '#0A1422',
+          border: '1px solid #1A2840',
+          borderLeft: '3px solid #22D3EE',
+          borderRadius: 8,
+          textAlign: 'center',
+        }}>
+          <div style={{ fontSize: 24, marginBottom: 8 }}>🔍</div>
+          <div style={{ fontSize: 13, color: '#E6EDF3', fontWeight: 700, marginBottom: 6 }}>
+            No filings matched these keywords in the last {days}d
+          </div>
+          <div style={{ fontSize: 11, color: '#94A3B8', lineHeight: 1.6, marginBottom: 10 }}>
+            This either means the chosen theme genuinely hasn&apos;t surfaced in recent transcripts,
+            or our window is too narrow for low-frequency topics.
+          </div>
+          <div style={{ fontSize: 10.5, color: '#6B7A8D', lineHeight: 1.6 }}>
+            Try: <span style={{ color: '#22D3EE', fontWeight: 700 }}>widen to 90 or 180 days</span>{' '}
+            · <span style={{ color: '#22D3EE', fontWeight: 700 }}>clear keyword filter</span>{' '}
+            · pick a broader group (e.g. all &ldquo;capex&rdquo; or &ldquo;China+1&rdquo;).
+          </div>
         </div>
       )}
 

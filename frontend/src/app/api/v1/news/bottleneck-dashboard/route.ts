@@ -568,27 +568,50 @@ export async function GET(request: Request) {
       const implicitForBucket = implicitInjections[key] || [];
       const matchingSignals = [...cleanSignals, ...implicitForBucket].filter((s: any) => {
         const text = (s.headline || '') + ' ' + (s.narrative || '') + ' ' + (s.summary || '') + ' ' + (s.eventType || '');
-        // Accept if keyword matches OR if this signal was implicitly injected into this bucket
-        if (config.keywords.test(text)) return true;
-        if (implicitForBucket.includes(s)) return true;
-        return false;
+        // Pass 1: keyword match OR implicit-injection
+        const keywordHit = config.keywords.test(text);
+        const implicitHit = implicitForBucket.includes(s);
+        if (!keywordHit && !implicitHit) return false;
 
-        // Region filter
-        if (regionFilter === 'IN') {
-          if (key.startsWith('INDIA_')) return true;
-          if (key.startsWith('US_')) return false;
+        // PATCH 0510 — Cross-region exclusion guard.
+        // Previously the region filter below was dead code (after `return false`),
+        // so an Indian ticker like NTPC matching the word "AI" in a US_TECH
+        // regex would get bucketed under "US Big Tech & AI". Now: for US_*
+        // buckets reject India-region signals, and vice versa. Detection
+        // priority: explicit s.region field → ticker pattern → headline text.
+        const isIndiaSignal = (() => {
           if (s.region === 'IN') return true;
-          const indiaTest = /\b(india|nse|bse|nifty|sensex|rbi|rupee|inr|sebi|crore|lakh)\b/i;
-          return indiaTest.test(text);
+          // Indian ticker patterns: .NS / .BO suffix, numeric BSE code,
+          // or known Indian listings
+          const sym = String(s.symbol || s.ticker || '').toUpperCase();
+          if (/\.(NS|BO|BSE)$/.test(sym)) return true;
+          if (/^\d{5,7}$/.test(sym)) return true;  // BSE numeric
+          // Strong India keywords in text
+          if (/\b(nse|bse|nifty|sensex|rbi|rupee|inr|sebi|\bcrore\b|\blakh\b|india(n)?)\b/i.test(text)) return true;
+          return false;
+        })();
+        const isUsSignal = (() => {
+          if (s.region === 'US') return true;
+          const sym = String(s.symbol || s.ticker || '').toUpperCase();
+          // US listings: no exchange suffix, all-letters, not numeric.
+          // (this is a soft test — many ambiguous symbols overlap)
+          if (/\b(nasdaq|nyse|fed|wall street|s&p|federal reserve)\b/i.test(text)) return true;
+          if (/\b(sec filing|edgar|10-k|10-q|sec disclosure)\b/i.test(text)) return true;
+          return false;
+        })();
+
+        // Hard cross-region reject:
+        if (key.startsWith('US_') && isIndiaSignal && !isUsSignal) return false;
+        if (key.startsWith('INDIA_') && isUsSignal && !isIndiaSignal) return false;
+
+        // Region filter from UI
+        if (regionFilter === 'IN') {
+          if (key.startsWith('US_')) return false;
         }
         if (regionFilter === 'US') {
-          if (key.startsWith('US_')) return true;
           if (key.startsWith('INDIA_')) return false;
-          if (s.region === 'US') return true;
-          const usTest = /\b(us|usa|nasdaq|nyse|fed|dollar|usd|wall street|s&p|american|united states)\b/i;
-          return usTest.test(text);
         }
-        return true; // ALL region
+        return true;
       });
 
       if (matchingSignals.length > 0) {
