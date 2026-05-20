@@ -112,7 +112,12 @@ async function fetchBseFilings(date: string, signal?: AbortSignal): Promise<Live
       signal,
       fromIso: date,
       toIso: date,
-      pages: 3,  // BSE pagination — typical weekend day under 100 filings
+      // PATCH 0501 — bumped 3 → 10 pages. EarningsPulse shows 72 candidates
+      // for May 19 alone; BSE returns ~50/page so 3 pages caps at 150 raw
+      // announcements and most legitimate Result filings drop past page 3
+      // because dividend/buyback/AGM noise comes first. 10 pages = ~500
+      // records, comfortable headroom for the busiest days.
+      pages: 10,
     });
     if (source !== 'BSE_OK' || filings.length === 0) return [];
 
@@ -120,7 +125,21 @@ async function fetchBseFilings(date: string, signal?: AbortSignal): Promise<Live
     const seenSymbols = new Set<string>();
     for (const f of filings) {
       if (SUBJECT_BLOCKLIST.some((re) => re.test(f.subject))) continue;
-      if (!RESULT_PATTERNS.some((re) => re.test(f.subject))) continue;
+
+      // PATCH 0501 — Three-tier acceptance:
+      //   Tier A — subject matches RESULT_PATTERNS (the strictest, most
+      //            reliable signal — "Outcome of Board Meeting...Financial Result")
+      //   Tier B — BSE category/subcategory metadata indicates "Result"
+      //            (catches companies who put the actual result narrative
+      //            in the attachment but keep a generic subject like
+      //            "Outcome of Board Meeting Held On..." without "result")
+      //   Tier C — bare phrase: subject contains "result" + "quarter" or
+      //            "year" (catch-all for variations the regex missed)
+      const catText = `${f.category || ''} ${f.subcategory || ''}`.toLowerCase();
+      const tierA = RESULT_PATTERNS.some((re) => re.test(f.subject));
+      const tierB = /\bresult\b/i.test(catText) && !/dividend|buyback|allotment|rights/i.test(catText);
+      const tierC = /\bresult/i.test(f.subject) && /\b(quarter|year|q[1-4]|h1|h2|fy)\b/i.test(f.subject);
+      if (!tierA && !tierB && !tierC) continue;
 
       // BSE returns scrip code as symbol (e.g. '526612'). Resolve to NSE
       // symbol when we have the mapping; otherwise keep the BSE code so
