@@ -1068,9 +1068,12 @@ type ConvFilters = {
   eps: number | null;
   pead: number | null;      // USER-REQ — minimum PEAD score (50/60/70/80)
   sortByPead: boolean;
+  // USER-REQ — Guidance in Conviction tab. null = no filter; specific label
+  // means "only entries whose derived guidance matches this label".
+  guidance: 'Positive' | 'Negative' | 'Neutral' | null;
 };
 
-const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false };
+const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, guidance: null };
 
 function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
   const sales = e.sales_yoy_pct ?? 0;
@@ -1086,6 +1089,11 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
   // USER-REQ — PEAD score threshold filter (combinable with all others)
   if (f.pead != null) {
     if (peadScore(e).score < f.pead) return false;
+  }
+  // USER-REQ — Guidance in Conviction tab. Missing guidance treated as
+  // non-match when a specific label is requested.
+  if (f.guidance != null) {
+    if (e.guidance !== f.guidance) return false;
   }
   return true;
 }
@@ -1183,8 +1191,8 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
               🌊 Sort by PEAD {filters.sortByPead ? '✓' : ''}
             </button>
             <button onClick={() => setFilters(FILTER_DEFAULT)}
-              disabled={filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && !filters.sortByPead}
-              style={{ ...chipBase, opacity: (filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && !filters.sortByPead) ? 0.4 : 1 }}>
+              disabled={filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && !filters.sortByPead}
+              style={{ ...chipBase, opacity: (filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && !filters.sortByPead) ? 0.4 : 1 }}>
               Clear
             </button>
           </div>
@@ -1206,6 +1214,36 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
         {renderChipGroup('PEAD SCORE', '#22D3EE', 'pead', [
           { v: 50, lbl: '≥50' }, { v: 60, lbl: '≥60' }, { v: 70, lbl: '≥70' }, { v: 80, lbl: '≥80' },
         ])}
+        {/* USER-REQ — Guidance in Conviction tab. String-keyed values, so
+            render inline rather than generalize the number-keyed helper. */}
+        {(() => {
+          const toggleGuidance = (v: 'Positive' | 'Negative' | 'Neutral') =>
+            setFilters((f) => ({ ...f, guidance: f.guidance === v ? null : v }));
+          const countGuidance = (v: 'Positive' | 'Negative' | 'Neutral') => {
+            const probe: ConvFilters = { ...filters, guidance: v };
+            return entries.filter((e) => passesConvictionFilter(e, probe)).length;
+          };
+          const opts: Array<{ v: 'Positive' | 'Neutral' | 'Negative'; lbl: string; color: string }> = [
+            { v: 'Positive', lbl: '📈 Positive', color: '#10B981' },
+            { v: 'Neutral',  lbl: '➖ Neutral',  color: '#94A3B8' },
+            { v: 'Negative', lbl: '📉 Negative', color: '#EF4444' },
+          ];
+          return (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>GUIDANCE</span>
+              {opts.map((o) => {
+                const active = filters.guidance === o.v;
+                const n = countGuidance(o.v);
+                return (
+                  <button key={o.v} onClick={() => toggleGuidance(o.v)}
+                    style={active ? chipActive(o.color) : chipBase}>
+                    {o.lbl} <span style={{ color: active ? o.color : '#6B7A8D', marginLeft: 3 }}>({n})</span>
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })()}
       </div>
       <div style={{
         padding: '10px 14px', backgroundColor: '#0A1422',
@@ -1313,6 +1351,33 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
         <span><span style={{ color: '#6B7A8D' }}>PAT</span> <strong style={{ color: (entry.net_profit_yoy_pct ?? 0) >= 0 ? '#10B981' : '#EF4444' }}>{pct(entry.net_profit_yoy_pct)}</strong></span>
         <span><span style={{ color: '#6B7A8D' }}>EPS</span> <strong style={{ color: (entry.eps_yoy_pct ?? 0) >= 0 ? '#10B981' : '#EF4444' }}>{pct(entry.eps_yoy_pct)}</strong></span>
       </div>
+      {/* USER-REQ — Guidance in Conviction tab. Same look + colors as the
+          Earnings Hub Scan GuidanceBadge. Only renders when set; entries
+          without a derived label stay quiet. */}
+      {entry.guidance && (() => {
+        const cfg: Record<string, { color: string; icon: string }> = {
+          'Positive': { color: '#10B981', icon: '📈' },
+          'Neutral':  { color: '#94A3B8', icon: '➖' },
+          'Negative': { color: '#EF4444', icon: '📉' },
+        };
+        const c = cfg[entry.guidance] || cfg['Neutral'];
+        const s = entry.guidance_score;
+        const scoreStr = (typeof s === 'number' && entry.guidance !== 'Neutral')
+          ? ` (${s > 0 ? '+' : ''}${s.toFixed(2)})`
+          : '';
+        return (
+          <div>
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10,
+              padding: '2px 7px', borderRadius: 4,
+              backgroundColor: `${c.color}18`, border: `1px solid ${c.color}40`,
+              color: c.color, fontWeight: 700,
+            }}>
+              {c.icon} {entry.guidance}{scoreStr}
+            </span>
+          </div>
+        );
+      })()}
       {entry.source_url && (
         <a href={entry.source_url} target="_blank" rel="noreferrer"
           style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>

@@ -1440,20 +1440,65 @@ export default function EarningsOpportunitiesPage() {
   // safe to call repeatedly.
   useEffect(() => {
     if (!data?.by_tier) return;
+    // USER-REQ — Guidance in Conviction tab. Derive a Positive/Neutral/Negative
+    // label + signed score per card using the same lexicon the Earnings Hub
+    // Scan tab uses. Server `guidance` field is preferred when present (it
+    // currently isn't, but kept for forward compatibility). Otherwise we scan
+    // whatever text fields the card carries (narrative_text / guidance_text /
+    // announcement_text / narrative) for positive vs negative cues.
+    const POS = [
+      /capacity expansion/i, /order book/i, /record (?:quarter|order|revenue|book)/i,
+      /margin expansion/i, /operating leverage/i, /commission(?:ed|ing)?/i,
+      /capex/i, /demand recovery/i, /broad[- ]based/i, /tailwind/i, /confident/i,
+      /guidance rais/i, /upgrade(?:d)? guidance/i, /outlook strong/i,
+      /demand strong/i, /strong demand/i, /raised guidance/i,
+      /(?:vadod|new plant|new line|brownfield|greenfield)/i,
+    ];
+    const NEG = [
+      /margin pressure/i, /demand weak/i, /weak demand/i, /soft demand/i,
+      /slowdown/i, /headwind/i, /guidance cut/i, /lowered guidance/i,
+      /cut guidance/i, /downgrade(?:d)?/i, /miss(?:ed)?/i, /shortfall/i,
+      /below expectation/i, /below estimate/i, /outlook (?:weak|cautious|soft)/i,
+    ];
+    const deriveGuidance = (card: any): { label: 'Positive' | 'Neutral' | 'Negative'; score: number } => {
+      // Prefer a pre-computed server label if it ever appears
+      if (card?.guidance === 'Positive' || card?.guidance === 'Neutral' || card?.guidance === 'Negative') {
+        const s = typeof card.guidance_score === 'number' ? card.guidance_score
+                : typeof card.sentimentScore === 'number' ? card.sentimentScore
+                : (card.guidance === 'Positive' ? 0.5 : card.guidance === 'Negative' ? -0.5 : 0);
+        return { label: card.guidance, score: s };
+      }
+      const text = [
+        card?.narrative_text, card?.guidance_text, card?.announcement_text,
+        card?.attachment, card?.headline, card?.title, card?.narrative,
+      ].filter(Boolean).join(' ');
+      if (!text) return { label: 'Neutral', score: 0 };
+      const pos = POS.filter((p) => p.test(text)).length;
+      const neg = NEG.filter((p) => p.test(text)).length;
+      const total = pos + neg;
+      const score = total === 0 ? 0 : (pos - neg) / total;
+      const label: 'Positive' | 'Neutral' | 'Negative' =
+        score >= 0.3 ? 'Positive' : score <= -0.3 ? 'Negative' : 'Neutral';
+      return { label, score };
+    };
     const entries: Array<{
       ticker: string; company: string; tier: ConvictionTier;
       composite_score: number;
       sales_yoy_pct: number | null; net_profit_yoy_pct: number | null; eps_yoy_pct: number | null;
       filing_date: string; sector?: string; market_cap_bucket?: string; source_url?: string;
+      guidance?: 'Positive' | 'Neutral' | 'Negative'; guidance_score?: number;
     }> = [];
     for (const tier of ['BLOCKBUSTER', 'STRONG'] as const) {
       for (const c of (data.by_tier[tier] || [])) {
+        const g = deriveGuidance(c);
         entries.push({
           ticker: c.ticker, company: c.company, tier,
           composite_score: c.composite_score,
           sales_yoy_pct: c.sales_yoy_pct, net_profit_yoy_pct: c.net_profit_yoy_pct, eps_yoy_pct: c.eps_yoy_pct,
           filing_date: c.filing_date, sector: c.sector, market_cap_bucket: c.market_cap_bucket,
           source_url: c.filing_url,
+          // USER-REQ — Guidance in Conviction tab
+          guidance: g.label, guidance_score: g.score,
         });
       }
     }

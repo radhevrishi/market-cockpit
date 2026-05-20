@@ -14,6 +14,13 @@
 
 export type ConvictionTier = 'BLOCKBUSTER' | 'STRONG';
 
+// USER-REQ — Guidance in Conviction tab. Mirrors the Earnings Hub Scan
+// GuidanceBadge — `guidance` is the label, `guidance_score` is the signed
+// sentiment in [-1, +1] derived from positive vs negative regex matches
+// over narrative / guidance_text / announcement_text. Optional so existing
+// pre-Patch-0538 localStorage entries (no guidance fields) keep working.
+export type GuidanceLabel = 'Positive' | 'Neutral' | 'Negative';
+
 export interface ConvictionEntry {
   ticker: string;
   company: string;
@@ -27,6 +34,9 @@ export interface ConvictionEntry {
   market_cap_bucket?: string;
   added_at: string;           // ISO timestamp when first added
   source_url?: string;
+  // USER-REQ — Guidance in Conviction tab (optional; missing on pre-0538 entries)
+  guidance?: GuidanceLabel;
+  guidance_score?: number;    // signed [-1, +1]
 }
 
 const LS_KEY = 'mc:conviction-beats:v1';
@@ -78,7 +88,17 @@ export function syncFromEarningsOps(entries: Array<Omit<ConvictionEntry, 'added_
     if (existing) {
       const newerDate = e.filing_date > existing.filing_date;
       const tierUpgrade = e.tier === 'BLOCKBUSTER' && existing.tier === 'STRONG';
-      if (!newerDate && !tierUpgrade) continue;
+      if (!newerDate && !tierUpgrade) {
+        // USER-REQ — Guidance in Conviction tab. Backfill guidance fields
+        // onto existing same-filing entries so previously-stored entries
+        // (pre-Patch 0538 or just lacking guidance) light up on the next
+        // sync without forcing the user to prune-and-readd.
+        if (existing.guidance == null && e.guidance != null) {
+          map[key] = { ...existing, guidance: e.guidance, guidance_score: e.guidance_score };
+          count++;
+        }
+        continue;
+      }
     }
     map[key] = { ...e, ticker: key, added_at: existing?.added_at || new Date().toISOString() };
     count++;
