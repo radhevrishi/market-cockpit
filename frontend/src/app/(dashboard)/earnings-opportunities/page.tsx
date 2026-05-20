@@ -1737,8 +1737,16 @@ export default function EarningsOpportunitiesPage() {
           })();
           if (ageDays > 14) {
             setRefreshFeedback(`⚠ ${stamp} · 0/${total} updated — sources have no Q-data for ${resolvedDateForGrading} (${ageDays}d ago). Filings for older dates rarely backfill. Use Coverage Probe ↓ to add manually or move on to a fresher date.`);
-          } else if (ageDays >= 0) {
-            setRefreshFeedback(`⚠ ${stamp} · 0/${total} updated — NSE/BSE/Screener haven't published Q-data yet for ${tickerListFromServer()}. Re-checking automatically at 60s and 5min; press Refresh again later if still missing.`);
+          } else if (ageDays === 0) {
+            // PATCH 0506 — honest messaging. The 60s/5min auto-retry ONLY
+            // fires for today's date (see below). Past dates were getting
+            // the same misleading "Re-checking automatically..." copy even
+            // though no auto-retry was happening.
+            setRefreshFeedback(`⚠ ${stamp} · 0/${total} updated — NSE/BSE/Screener haven't published Q-data yet for ${tickerListFromServer()}. Auto-rechecking at 60s + 5min.`);
+          } else if (ageDays >= 1 && ageDays <= 7) {
+            setRefreshFeedback(`⚠ ${stamp} · 0/${total} updated for ${tickerListFromServer()}. Screener.in is Cloudflare-blocked from Vercel for these tickers right now. The hourly pre-warm cron will retry — no need to click Refresh again.`);
+          } else if (ageDays >= 8) {
+            setRefreshFeedback(`⚠ ${stamp} · 0/${total} updated — past-date sources rarely backfill. Use Coverage Probe ↓ for individual tickers, or move to a fresher date.`);
           } else {
             // ageDays < 0 — future date
             setRefreshFeedback(`⚠ ${stamp} · 0/${total} updated — ${resolvedDateForGrading} is in the future; companies haven't reported yet. Wait for actual filings or move to a past date.`);
@@ -1841,7 +1849,22 @@ export default function EarningsOpportunitiesPage() {
   // on the SAME date shouldn't dim the view (the data is being refined in place).
   // Previous code dimmed forever whenever gradedFetching was true after a refresh
   // because view.filing_date never matched resolvedDateForGrading exactly.
-  const isStaleView = gradedFetching &&
+  // PATCH 0506 — Cap the LOADING badge at 12 seconds. Past dates with cold KV
+  // miss can take 20-30s to rebuild on the server side. The user perception
+  // was "loading forever". Now: badge dismisses after 12s even if fetch still
+  // running. The cards remain visible (from initialData), and a fresh payload
+  // arrives whenever the server is done.
+  const dateNavTimestampRef = useRef<number>(0);
+  useEffect(() => {
+    dateNavTimestampRef.current = Date.now();
+  }, [resolvedDateForGrading]);
+  const [loadingBadgeForceHide, setLoadingBadgeForceHide] = useState(false);
+  useEffect(() => {
+    setLoadingBadgeForceHide(false);
+    const tm = setTimeout(() => setLoadingBadgeForceHide(true), 12_000);
+    return () => clearTimeout(tm);
+  }, [resolvedDateForGrading]);
+  const isStaleView = !loadingBadgeForceHide && gradedFetching &&
     !!view.filing_date &&
     !!resolvedDateForGrading &&
     view.filing_date !== resolvedDateForGrading;
