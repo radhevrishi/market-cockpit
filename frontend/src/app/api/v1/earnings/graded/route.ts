@@ -688,7 +688,7 @@ export async function GET(req: Request) {
   // belt-and-suspenders so a future regex regression can't silently
   // resurrect the bug.
   const dropGhosts = (m: any, e: any): boolean => {
-    if (m.__source !== 'nse-live') return false;
+    if (m.__source !== 'nse-live' && m.__source !== 'nse-live-retry' && m.__source !== 'nse-announcements') return false;
     // Has announce_date and matches → OK
     if (e.announce_date_iso) {
       const d = new Date(e.announce_date_iso).getTime();
@@ -703,7 +703,22 @@ export async function GET(req: Request) {
       const daysSince = (f - q) / 86_400_000;
       if (daysSince >= 0 && daysSince <= 75) return false;
     }
-    // No verification path → drop
+    // PATCH 0511 — When BOTH announce_date AND quarter_end are missing
+    // from enrich (Screener Cloudflare-blocked us, or Yahoo had no Q-data),
+    // we have no signal to verify against. In that case TRUST the live
+    // filing instead of dropping it. Previously this branch dropped any
+    // weekend BSE filing whose enrich came back empty — which is exactly
+    // the Sat/Sun pattern the user keeps reporting.
+    //
+    // The live-NSE/BSE source itself is a strong signal (we already
+    // applied SUBJECT_BLOCKLIST + RESULT_PATTERNS + category metadata
+    // in today-live before getting here). If both verification paths
+    // are missing, accept the filing as-is — it'll render as a preview
+    // card with the company name and source URL, which is far better
+    // than disappearing entirely.
+    if (!e.announce_date_iso && !e.latest_quarter_end_iso) return false;
+    // We have SOME enrich data but it doesn't match — likely a real
+    // ghost-filing or a wrong-period attribution. Drop.
     return true;
   };
   const graded: ParsedEarning[] = [];

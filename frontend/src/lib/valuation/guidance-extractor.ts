@@ -74,12 +74,31 @@ export function extractGuidance(text: string): ExtractedGuidance {
       ebitdaMarginPct = parseFloat(m[1]);
       matches.push(`EBITDA margin: ${ebitdaMarginPct}%`);
     }
-    // "EBITDA margin to rise 300-400 bps" — uplift; can't apply alone
-    const bpsM = t.match(/EBITDA\s*margin\s*(?:to\s*rise|expansion|improvement)\s*(?:of\s*)?(\d{2,4})\s*[-–]?\s*(\d{2,4})?\s*bps/i);
-    if (bpsM) {
-      const lo = parseFloat(bpsM[1]) / 100;
-      const hi = bpsM[2] ? parseFloat(bpsM[2]) / 100 : lo;
-      matches.push(`margin uplift ${(lo+hi)/2}pp — apply on top of current OPM`);
+    // PATCH 0511 — Broadened bps regex. Covered phrasings:
+    //   • "EBITDA margin to rise 300 bps"           (was already covered)
+    //   • "margin expansion of 300-400 bps"         (was already covered)
+    //   • "300 bps margin improvement"              (NEW — bps-first order)
+    //   • "improved 250 bps YoY"                    (NEW — past tense + YoY)
+    //   • "expanded by 200 bps QoQ"                 (NEW — expanded by)
+    //   • "OPM up 350 bps"                          (NEW — OPM/operating margin)
+    //   • "margin gain of 150 bps"                  (NEW — gain)
+    //   • "margins up ~400 bps"                     (NEW — tilde / ~)
+    // The lookahead `(?:.{0,40})?` allows up to 40 chars between number and bps
+    // to catch "300 bps margin improvement" patterns.
+    const bpsPatterns: RegExp[] = [
+      /(?:EBITDA|operating|gross|net)\s*margin\s*(?:to\s*(?:rise|expand|improve)|expansion|improvement|gain|uplift|up)\s*(?:of|by)?\s*[~]?\s*(\d{2,4})\s*[-–]?\s*(\d{2,4})?\s*bps/i,
+      /\b(\d{2,4})\s*[-–]?\s*(\d{2,4})?\s*bps\s*(?:.{0,40})?\b(?:EBITDA|operating|gross|net)?\s*margin\s*(?:expansion|improvement|gain|uplift|increase)/i,
+      /(?:OPM|operating\s*margin)\s*(?:up|gain|expand(?:ed)?|improv(?:ed)?)\s*[~]?\s*(\d{2,4})\s*[-–]?\s*(\d{2,4})?\s*bps/i,
+      /margins?\s*(?:up|expand(?:ed)?|improv(?:ed)?|grew)\s*(?:by\s*)?[~]?\s*(\d{2,4})\s*[-–]?\s*(\d{2,4})?\s*bps/i,
+    ];
+    for (const pat of bpsPatterns) {
+      const bpsM = t.match(pat);
+      if (bpsM) {
+        const lo = parseFloat(bpsM[1]) / 100;
+        const hi = bpsM[2] ? parseFloat(bpsM[2]) / 100 : lo;
+        matches.push(`margin uplift ${((lo+hi)/2).toFixed(2)}pp — apply on top of current OPM`);
+        break;  // first match wins
+      }
     }
   }
 
