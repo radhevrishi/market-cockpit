@@ -50,9 +50,43 @@ export default function ConcallIntelPage() {
     elapsedSec < 50 ? 'Scoring tone + extracting cues…' :
     'Finalising… (almost there)';
 
-  const analyze = async () => {
+  // AUDIT_100 #61 — persistent corpus of last 25 analyses. Saves the user a
+  // 65s wait when comparing two transcripts. Cache key is a 32-bit hash of
+  // the input (ticker + pdfUrl + transcript). Bypass with Force Reanalyze.
+  const CORPUS_KEY = 'mc:concall-corpus:v1';
+  const hashInput = (s: string) => {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) { h = ((h << 5) - h + s.charCodeAt(i)) | 0; }
+    return h.toString(36);
+  };
+  const loadCorpus = (): Record<string, { result: Analysis; ticker: string; ts: number }> => {
+    try { return JSON.parse(localStorage.getItem(CORPUS_KEY) || '{}'); } catch { return {}; }
+  };
+  const saveCorpus = (entry: Analysis) => {
+    try {
+      const corpus = loadCorpus();
+      const key = hashInput(`${ticker}|${pdfUrl}|${transcript.slice(0, 500)}`);
+      corpus[key] = { result: entry, ticker, ts: Date.now() };
+      // Keep last 25 by timestamp
+      const entries = Object.entries(corpus).sort((a, b) => b[1].ts - a[1].ts).slice(0, 25);
+      const trimmed: typeof corpus = {};
+      for (const [k, v] of entries) trimmed[k] = v;
+      localStorage.setItem(CORPUS_KEY, JSON.stringify(trimmed));
+    } catch {}
+  };
+
+  const analyze = async (force = false) => {
     setError(null);
     setResult(null);
+    // AUDIT_100 #61 — cache hit check
+    if (!force) {
+      const corpus = loadCorpus();
+      const key = hashInput(`${ticker}|${pdfUrl}|${transcript.slice(0, 500)}`);
+      if (corpus[key]) {
+        setResult(corpus[key].result);
+        return;
+      }
+    }
     setLoading(true);
     // PATCH 0466 — 65s timeout (Vercel maxDuration on the route is 60s,
     // so 65s gives a buffer before client gives up). Previously the
@@ -74,6 +108,7 @@ export default function ConcallIntelPage() {
       }
       const j = await res.json();
       setResult(j);
+      saveCorpus(j);
     } catch (e: any) {
       setError(e?.name === 'AbortError' ? 'Request timed out after 65s' : (e?.message || 'fetch failed'));
     } finally {
@@ -132,9 +167,15 @@ export default function ConcallIntelPage() {
           rows={6}
           style={{ width: '100%', padding: '8px 10px', backgroundColor: '#0A1422', border: '1px solid #1A2840', borderRadius: 6, color: '#E6EDF3', fontSize: 12, outline: 'none', fontFamily: 'ui-sans-serif, system-ui', resize: 'vertical' }} />
         <div style={{ marginTop: 10, display: 'flex', gap: 10 }}>
-          <button onClick={analyze} disabled={loading || (!pdfUrl.trim() && transcript.trim().length < 200)}
+          <button onClick={() => analyze(false)} disabled={loading || (!pdfUrl.trim() && transcript.trim().length < 200)}
             style={{ padding: '8px 16px', backgroundColor: loading ? '#22D3EE40' : '#22D3EE', color: '#0A0E1A', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 800, cursor: loading ? 'wait' : 'pointer' }}>
             {loading ? 'Analysing…' : 'Analyse Concall'}
+          </button>
+          {/* AUDIT_100 #61 — Force re-analyze bypasses the corpus cache. */}
+          <button onClick={() => analyze(true)} disabled={loading || (!pdfUrl.trim() && transcript.trim().length < 200)}
+            title="Bypass the local 25-analysis cache and re-run the full pipeline"
+            style={{ padding: '8px 12px', backgroundColor: 'transparent', color: '#94A3B8', border: '1px solid #1A2840', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: loading ? 'wait' : 'pointer' }}>
+            ↻ Force re-analyze
           </button>
           {/* AUDIT_100 #36 — surface intermediate phase + elapsed time so 65s
               spinner doesn't look frozen. */}

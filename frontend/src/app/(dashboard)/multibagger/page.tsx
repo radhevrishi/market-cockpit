@@ -14,6 +14,7 @@ import {
 } from '@/lib/multibagger/framework-extensions';
 // PATCH 0272 — Conviction Beats overlay on Multibagger results.
 import { getConvictionTickers } from '@/lib/conviction-beats';
+import { getPortfolioMap } from '@/lib/portfolio-overlay';
 import { getDecision, setDecision, clearDecision, subscribeDecisions, DECISION_META, type DecisionStatus } from '@/lib/decisions';
 // PATCH 0367 — Export toolbar (TradingView + Screener.in) reused from earnings Scan
 import TickerExportToolbar from '@/components/TickerExportToolbar';
@@ -3278,6 +3279,19 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
       window.removeEventListener('conviction-beats:updated', refresh);
     };
   }, []);
+  // AUDIT_100 #52 — portfolio attribution overlay. When a row is also a
+  // holding, render OWN N%/Δ+M% next to the ticker. Cross-tab sync via
+  // storage event.
+  const [portfolioMap, setPortfolioMap] = useState<Map<string, any>>(() => {
+    if (typeof window === 'undefined') return new Map();
+    try { return getPortfolioMap(); } catch { return new Map(); }
+  });
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const refresh = () => { try { setPortfolioMap(getPortfolioMap()); } catch {} };
+    window.addEventListener('storage', refresh);
+    return () => { window.removeEventListener('storage', refresh); };
+  }, []);
   // Conviction-only filter chip in the toolbar.
   const [convictionOnly, setConvictionOnly] = useState(false);
 
@@ -4374,6 +4388,26 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                             }}
                           >🏆 CB</span>
                         )}
+                        {/* AUDIT_100 #52 — Portfolio attribution. If user already
+                            holds this ticker show OWN/Δ chip so they don't double-buy
+                            without seeing the existing position. */}
+                        {(() => {
+                          const h = portfolioMap.get((r.symbol || '').toUpperCase());
+                          if (!h) return null;
+                          const wt = typeof h.weight === 'number' ? `${h.weight.toFixed(1)}%` : '';
+                          const pnl = typeof h.pnlPercent === 'number'
+                            ? `${h.pnlPercent >= 0 ? '+' : ''}${h.pnlPercent.toFixed(1)}%` : '';
+                          const tip = `In your portfolio${wt ? ` · weight ${wt}` : ''}${pnl ? ` · P&L ${pnl}` : ''}. Open /portfolio to view.`;
+                          return (
+                            <span title={tip} style={{
+                              fontSize: 9, fontWeight: 800,
+                              color: (h.pnlPercent ?? 0) >= 0 ? '#10B981' : '#EF4444',
+                              border: '1px solid currentColor',
+                              padding: '1px 5px', borderRadius: 3, letterSpacing: 0.3,
+                              backgroundColor: 'rgba(16,185,129,0.08)',
+                            }}>💼 OWN{wt && ` ${wt}`}{pnl && ` ${pnl}`}</span>
+                          );
+                        })()}
                       </div>
                       {/* Bucket badge */}
                       <span style={{fontSize:F.xs,fontWeight:700,color:BUCKET_CONFIG[r.bucket].color,border:`1px solid ${BUCKET_CONFIG[r.bucket].color}40`,padding:'1px 5px',borderRadius:3,width:'fit-content'}}>
@@ -6803,12 +6837,24 @@ function USACompare() {
     setRowsState(ranked);
     try {
       localStorage.setItem(USA_STORAGE_KEY, JSON.stringify(ranked));
+      // AUDIT_100 #77 — stamp the upload time so we can warn when the
+      // CSV is > 60 days old (stale fundamentals vs fresh price risk
+      // called out in CLAUDE.md §10.10).
+      localStorage.setItem('mb_usa_uploaded_at_v1', String(Date.now()));
       // PATCH 0471 — broadcast cross-tab update so Re-rating/Signals refresh
       // their derived universes immediately after a USA upload (matches
       // India behaviour set up in 0453 P1-18).
       window.dispatchEvent(new CustomEvent('mb-upload:updated', { detail: { market: 'USA', count: ranked.length } }));
     } catch {}
   }
+  // AUDIT_100 #77 — age of the loaded data set in days
+  const usaUploadAgeDays = React.useMemo(() => {
+    try {
+      const stamp = parseInt(localStorage.getItem('mb_usa_uploaded_at_v1') || '0', 10);
+      if (!stamp || isNaN(stamp)) return null;
+      return Math.floor((Date.now() - stamp) / (1000 * 60 * 60 * 24));
+    } catch { return null; }
+  }, [rows.length]);
 
   async function handleFiles(files: FileList | File[]) {
     setParseError(''); setLoading(true);
@@ -6959,6 +7005,22 @@ function USACompare() {
 
       {rows.length>0&&(
         <>
+          {/* AUDIT_100 #77 — data-staleness banner. When the loaded CSV is more
+              than 60 days old, warn that fundamentals may not reflect recent
+              earnings releases / price moves. */}
+          {usaUploadAgeDays != null && usaUploadAgeDays > 60 && (
+            <div style={{ marginBottom: 12, padding: '10px 14px', borderRadius: 8,
+              backgroundColor: '#F59E0B14', border: '1px solid #F59E0B60',
+              color: '#F59E0B', fontSize: 12, fontWeight: 700,
+              display: 'flex', alignItems: 'center', gap: 10,
+            }}>
+              <span style={{ fontSize: 16 }}>⚠</span>
+              <span>
+                STALE FUNDAMENTALS: this CSV was uploaded <strong>{usaUploadAgeDays} days ago</strong>.
+                New earnings + price action since then are not reflected. Re-export from TradingView for current scores.
+              </span>
+            </div>
+          )}
           {/* Summary */}
           <div style={{display:'flex',gap:14,marginBottom:18,flexWrap:'wrap',alignItems:'stretch'}}>
             {[

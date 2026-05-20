@@ -183,6 +183,19 @@ export default function NewsAlertsPage() {
   };
 
   const toggleRule = (id: string) => setRules(rs => rs.map(r => r.id === id ? { ...r, enabled: !r.enabled } : r));
+  // AUDIT_100 #67 — "Test fire" button. Runs the rule against the last 100
+  // articles in the live stream and shows a summary toast of how many would
+  // have matched + the top 3 headlines. Doesn't push to lastFiredArticleIds
+  // (a test should be observable without polluting the real fire log).
+  const testFireRule = (id: string) => {
+    const rule = rules.find(r => r.id === id);
+    if (!rule) return;
+    if (!stream || stream.length === 0) { toast('No articles in current stream to test against.'); return; }
+    const hits = stream.filter(a => matches(a, rule.conditions));
+    if (hits.length === 0) { toast(`"${rule.name}": 0 matches in last ${stream.length} articles.`, { icon: '🔕' }); return; }
+    const preview = hits.slice(0, 3).map((a: any) => `• ${(a.headline || a.title || '').slice(0, 90)}`).join('\n');
+    toast.success(`"${rule.name}": ${hits.length} matches in last ${stream.length} articles\n${preview}`, { duration: 8000, style: { whiteSpace: 'pre-line', maxWidth: 560 } });
+  };
   // AUDIT_100 #5 — replace native window.confirm with toast confirm; iframe-safe + consistent with the rest of the app.
   const deleteRule = (id: string) => {
     toast((t) => (
@@ -380,7 +393,7 @@ export default function NewsAlertsPage() {
                 border: `1px solid ${TOKENS.surface.cardBorder}`,
                 borderLeft: `3px solid ${r.enabled ? TOKENS.state.live.solid : TOKENS.state.archived.solid}`,
                 borderRadius: 8, padding: '10px 14px',
-                display: 'grid', gridTemplateColumns: '1fr 1fr 100px 100px 80px',
+                display: 'grid', gridTemplateColumns: '1fr 1fr 100px 70px 100px 80px',
                 gap: 12, alignItems: 'center',
               }}>
                 <div>
@@ -397,6 +410,13 @@ export default function NewsAlertsPage() {
                 <div style={{ fontSize: 11, color: TOKENS.surface.textDim, fontFamily: 'ui-monospace, monospace', textAlign: 'center' }}>
                   matches now: <strong style={{ color: TOKENS.surface.text }}>{testCounts[r.id] ?? 0}</strong>
                 </div>
+                {/* AUDIT_100 #67 — test fire button: run against last 100 articles. */}
+                <button onClick={() => testFireRule(r.id)} title="Run this rule against the last 100 articles and show how many match (without firing real notifications)" style={{
+                  backgroundColor: 'transparent',
+                  border: `1px solid ${TOKENS.surface.cardBorder}`,
+                  color: TOKENS.surface.textDim,
+                  borderRadius: 5, padding: '4px 8px', fontSize: 10, fontWeight: 700, cursor: 'pointer',
+                }}>⚡ TEST</button>
                 <button onClick={() => toggleRule(r.id)} style={{
                   backgroundColor: r.enabled ? `${TOKENS.state.live.solid}20` : 'transparent',
                   border: `1px solid ${r.enabled ? TOKENS.state.live.solid : TOKENS.surface.cardBorder}`,

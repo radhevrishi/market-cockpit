@@ -15,6 +15,7 @@ import { classifySource, TIER_VISUAL, sourceQualityWeight } from '@/lib/source-t
 import { annotateArticle, clusterByCanonical, confidenceBand, CONFIDENCE_VISUAL } from '@/lib/news/event-detectors';
 // PATCH 0455 CLEANUP-3 — Centralized vocab.
 import { JUNK_TICKERS, TICKER_ALIASES } from '@/lib/news/ticker-vocab';
+import { isInReadingList, toggleReadingList } from '@/lib/reading-list';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -786,6 +787,40 @@ function isMarketRelevant(article: NewsArticle): boolean {
 
 // ── Components ────────────────────────────────────────────────────────────────
 
+// AUDIT_100 #58 — Read-it-later button. Inline component so we don't have to
+// extract NewsCard into its own file.
+function ReadingListButton({ id }: { id: string }) {
+  const [marked, setMarked] = useState(false);
+  useEffect(() => {
+    setMarked(isInReadingList(id));
+    const onUpdate = () => setMarked(isInReadingList(id));
+    window.addEventListener('mc:reading-list:updated', onUpdate);
+    window.addEventListener('storage', onUpdate);
+    return () => {
+      window.removeEventListener('mc:reading-list:updated', onUpdate);
+      window.removeEventListener('storage', onUpdate);
+    };
+  }, [id]);
+  if (!id) return null;
+  return (
+    <button
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); setMarked(toggleReadingList(id)); }}
+      style={{
+        background: marked ? '#22D3EE15' : 'none',
+        border: `1px solid ${marked ? '#22D3EE60' : '#1E2D45'}`,
+        borderRadius: '10px',
+        color: marked ? '#22D3EE' : '#4A5B6C',
+        cursor: 'pointer', padding: '10px', flexShrink: 0,
+        display: 'flex', alignItems: 'center', minWidth: '40px', minHeight: '40px',
+        justifyContent: 'center', fontSize: 14,
+      }}
+      title={marked ? 'Saved to Read it later — click to remove' : 'Save to Read it later'}
+    >
+      {marked ? '★' : '☆'}
+    </button>
+  );
+}
+
 function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: NewsArticle) => void }) {
   const symbols = getTickerSymbols(article);
   const title = getTitle(article);
@@ -1073,6 +1108,9 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
             )}
           </div>
         </div>
+        {/* AUDIT_100 #58 — Read-it-later toggle. Saves the article id to
+            localStorage 'mc:reading-list:v1' for later retrieval. */}
+        <ReadingListButton id={article.id} />
         {/* Info button to open detail overlay */}
         {/* PATCH 0441 BUG-006 — Add preventDefault so clicking 'View details'
             inside an <a href> card opens the drawer instead of navigating to

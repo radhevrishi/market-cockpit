@@ -2183,6 +2183,54 @@ export default function EarningsOpportunitiesPage() {
               {forceRescanning ? '⏳ Scanning…' : '🔄 Force NSE+BSE'}
             </button>
           )}
+          {/* AUDIT_100 #57 — Export today's BLOCKBUSTER + STRONG tiers to CSV.
+              Hot ask for buy-side desk hand-off. One button, no dialog. */}
+          {resolvedDateForGrading && view.by_tier && (
+            (view.by_tier.BLOCKBUSTER?.length || 0) + (view.by_tier.STRONG?.length || 0) > 0
+          ) && (
+            <button
+              onClick={() => {
+                const tiers = ['BLOCKBUSTER','STRONG','MIXED','AVOID'] as const;
+                const header = ['Tier','Ticker','Company','Quarter','Score','Sales_YoY','EBITDA_YoY','PAT_YoY','EPS_YoY','Filing_Date','Source'];
+                const lines = [header.join(',')];
+                for (const t of tiers) {
+                  for (const c of ((view.by_tier?.[t] ?? []) as any[])) {
+                    const row = [
+                      t,
+                      c.ticker || '',
+                      (c.company_name || c.symbol || '').replace(/,/g,';'),
+                      c.quarter || '',
+                      c.score ?? '',
+                      c.metrics?.sales_yoy ?? c.sales_yoy ?? '',
+                      c.metrics?.ebitda_yoy ?? c.ebitda_yoy ?? '',
+                      c.metrics?.pat_yoy ?? c.pat_yoy ?? '',
+                      c.metrics?.eps_yoy ?? c.eps_yoy ?? '',
+                      c.filing_date || resolvedDateForGrading || '',
+                      (c.source || c.attribution_source || '').toString().replace(/,/g,';'),
+                    ];
+                    lines.push(row.join(','));
+                  }
+                }
+                const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `earnings-opportunities-${resolvedDateForGrading}.csv`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+              title="Download all 4 tiers (BLOCKBUSTER/STRONG/MIXED/AVOID) as CSV for this date"
+              style={{
+                padding: '6px 12px', borderRadius: 8,
+                border: '1px solid #F59E0B80',
+                backgroundColor: '#F59E0B15',
+                color: '#F59E0B', fontSize: 11, fontWeight: 800, cursor: 'pointer',
+                letterSpacing: '0.3px', display: 'inline-flex', alignItems: 'center', gap: 6,
+              }}
+            >
+              📊 Export CSV
+            </button>
+          )}
           {/* PATCH 0503 — Source coverage telemetry chip. Surfaces which
               exchange provided how many filings + the merged total so the
               user can spot coverage gaps at a glance. */}

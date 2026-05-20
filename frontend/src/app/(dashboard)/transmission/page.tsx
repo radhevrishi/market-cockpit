@@ -338,6 +338,31 @@ function ScenarioLab({ commodities }: { commodities: CommodityRow[] }) {
   const reset = () => setDeltas(Object.fromEntries(scenarioInputs.map(c => [c.symbol, 0])));
   const anyDelta = Object.values(deltas).some(v => v !== 0);
 
+  // AUDIT_100 #30 — persist last 3 scenarios. Each scenario carries the
+  // active base and the deltas snapshot. Saved to localStorage so users
+  // who switch tabs can come back to their thesis.
+  const SCENARIO_KEY = 'mc:transmission-scenarios:v1';
+  const [savedScenarios, setSavedScenarios] = useState<Array<{ ts: number; base: '1d' | '1m'; deltas: Record<string, number>; label: string }>>(() => {
+    if (typeof window === 'undefined') return [];
+    try { const raw = localStorage.getItem(SCENARIO_KEY); return raw ? JSON.parse(raw) : []; } catch { return []; }
+  });
+  const saveScenario = () => {
+    const label = window.prompt('Name this scenario:', `Scenario ${new Date().toLocaleTimeString()}`);
+    if (!label) return;
+    const next = [{ ts: Date.now(), base, deltas: { ...deltas }, label }, ...savedScenarios].slice(0, 3);
+    setSavedScenarios(next);
+    try { localStorage.setItem(SCENARIO_KEY, JSON.stringify(next)); } catch {}
+  };
+  const loadScenario = (s: typeof savedScenarios[number]) => {
+    setBase(s.base);
+    setDeltas(s.deltas);
+  };
+  const deleteScenario = (ts: number) => {
+    const next = savedScenarios.filter(s => s.ts !== ts);
+    setSavedScenarios(next);
+    try { localStorage.setItem(SCENARIO_KEY, JSON.stringify(next)); } catch {}
+  };
+
   return (
     <div style={{ backgroundColor: TOKENS.surface.card, border: `1px solid ${TOKENS.surface.cardBorder}`, borderRadius: 10, padding: '14px 18px', marginBottom: 18 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
@@ -357,9 +382,24 @@ function ScenarioLab({ commodities }: { commodities: CommodityRow[] }) {
           ))}
         </div>
         {anyDelta && (
-          <button onClick={reset} style={{ backgroundColor: 'transparent', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.textDim, borderRadius: 5, padding: '3px 10px', fontSize: 10, fontWeight: 700, cursor: 'pointer' }}>Reset</button>
+          <>
+            <button onClick={saveScenario} title="Save current sliders + base as a scenario (last 3 retained)" style={{ backgroundColor: TOKENS.semantic.bullish.bg, border: `1px solid ${TOKENS.semantic.bullish.solid}`, color: TOKENS.semantic.bullish.solid, borderRadius: 5, padding: '3px 10px', fontSize: 10, fontWeight: 700, cursor: 'pointer' }}>💾 Save</button>
+            <button onClick={reset} style={{ backgroundColor: 'transparent', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.textDim, borderRadius: 5, padding: '3px 10px', fontSize: 10, fontWeight: 700, cursor: 'pointer' }}>Reset to live</button>
+          </>
         )}
       </div>
+      {/* AUDIT_100 #30 — saved scenarios bar */}
+      {savedScenarios.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, marginBottom: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 10, color: TOKENS.surface.textMuted, fontWeight: 700 }}>SAVED:</span>
+          {savedScenarios.map(s => (
+            <span key={s.ts} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', border: `1px solid ${TOKENS.surface.cardBorder}`, borderRadius: 4, backgroundColor: '#0A1422' }}>
+              <button onClick={() => loadScenario(s)} title={`Restore: ${s.label} (${s.base})`} style={{ background: 'none', border: 'none', color: TOKENS.surface.text, fontSize: 10, fontWeight: 700, cursor: 'pointer', padding: 0 }}>{s.label}</button>
+              <button onClick={() => deleteScenario(s.ts)} title="Forget this scenario" style={{ background: 'none', border: 'none', color: TOKENS.semantic.bearish.solid, fontSize: 11, cursor: 'pointer', padding: '0 2px' }}>×</button>
+            </span>
+          ))}
+        </div>
+      )}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
         <div>
           <div style={{ fontSize: 10, color: TOKENS.surface.textMuted, fontWeight: 700, letterSpacing: '0.4px', marginBottom: 8 }}>INPUT SHOCKS ({base.toUpperCase()})</div>

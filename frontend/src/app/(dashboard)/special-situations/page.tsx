@@ -1510,8 +1510,9 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
               CATALYST SCORE — raw {ev.catalyst_score.raw_score} · decay-adjusted {ev.catalyst_score.decay_score.toFixed(1)}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 11 }}>
-              {ev.catalyst_score.components.map((c, i) => (
-                <div key={i} style={{ color: c.pts > 0 ? '#10B981' : '#EF4444' }}>{c.label}</div>
+              {/* AUDIT_100 #8 — stable key (label) instead of array index. */}
+              {ev.catalyst_score.components.map((c) => (
+                <div key={`${c.label}-${c.pts}`} style={{ color: c.pts > 0 ? '#10B981' : '#EF4444' }}>{c.label}</div>
               ))}
             </div>
           </div>

@@ -86,6 +86,29 @@ export default function DecisionsPage() {
     return filtered;
   }, [decisions, statusFilter, marketFilter, search, sortBy, sortDir]);
 
+  // AUDIT_100 #59 — outcome tracking. Look up the current score from the
+  // multibagger localStorage so each decision shows score-now vs score-at-
+  // decision. Price tracking would require fresh quotes; deferred. Score
+  // alone is signal-rich because re-scoring on a fresh CSV upload captures
+  // earnings/fundamentals updates.
+  const currentScoreMap = useMemo(() => {
+    if (typeof window === 'undefined') return new Map<string, { score?: number; grade?: string }>();
+    const m = new Map<string, { score?: number; grade?: string }>();
+    try {
+      const inScored = JSON.parse(localStorage.getItem('mb_excel_scored_v2') || '[]');
+      if (Array.isArray(inScored)) for (const r of inScored) {
+        if (r?.symbol) m.set(String(r.symbol).toUpperCase() + '|IN', { score: r.composite ?? r.score, grade: r.grade });
+      }
+    } catch {}
+    try {
+      const usScored = JSON.parse(localStorage.getItem('mb_usa_scored_v1') || '[]');
+      if (Array.isArray(usScored)) for (const r of usScored) {
+        if (r?.symbol) m.set(String(r.symbol).toUpperCase() + '|US', { score: r.score, grade: r.grade });
+      }
+    } catch {}
+    return m;
+  }, [decisions]);
+
   const counts = useMemo(() => {
     const c: Record<DecisionStatus, number> = { BUY: 0, WATCH: 0, NEUTRAL: 0, REJECTED: 0 };
     Object.values(decisions).forEach(d => { c[d.status]++; });
@@ -364,6 +387,7 @@ export default function DecisionsPage() {
                   <th style={th}>MKT</th>
                   <th style={th}>COMPANY</th>
                   <th style={{ ...th, textAlign: 'right' }}>SCORE</th>
+                  <th style={{ ...th, textAlign: 'right' }} title="Score now (from latest CSV upload). Δ vs decision-time score below.">NOW</th>
                   <th style={{ ...th, textAlign: 'right' }}>GRADE</th>
                   <th style={th}>DATE</th>
                   <th style={th}>REASON</th>
@@ -391,6 +415,21 @@ export default function DecisionsPage() {
                       </td>
                       <td style={{ ...td, textAlign: 'right', fontFamily: 'ui-monospace, monospace' }}>
                         {d.scoreAtDecision != null ? d.scoreAtDecision.toFixed(0) : '—'}
+                      </td>
+                      {/* AUDIT_100 #59 — outcome tracking (score now). */}
+                      <td style={{ ...td, textAlign: 'right', fontFamily: 'ui-monospace, monospace' }}>
+                        {(() => {
+                          const now = currentScoreMap.get(d.symbol.toUpperCase() + '|' + d.market);
+                          if (!now || now.score == null) return <span style={{ color: DIM }}>—</span>;
+                          const delta = (d.scoreAtDecision != null) ? Math.round(now.score) - Math.round(d.scoreAtDecision) : null;
+                          const deltaColor = delta == null ? DIM : delta > 0 ? '#10B981' : delta < 0 ? '#EF4444' : DIM;
+                          return (
+                            <span title={`Latest re-score from CSV upload. Decision-time score was ${d.scoreAtDecision ?? 'n/a'}.`}>
+                              <span style={{ color: TEXT }}>{Math.round(now.score)}</span>
+                              {delta != null && <span style={{ color: deltaColor, marginLeft: 4, fontSize: 11 }}>{delta > 0 ? '▲+' : delta < 0 ? '▼' : '='}{Math.abs(delta) || ''}</span>}
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td style={{ ...td, textAlign: 'right', fontWeight: 700 }}>{d.gradeAtDecision || '—'}</td>
                       <td style={{ ...td, color: DIM, fontSize: 12, whiteSpace: 'nowrap' }}>
