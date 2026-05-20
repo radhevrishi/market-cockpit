@@ -16,9 +16,13 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
+import { fetchBSEAnnouncements } from '@/lib/nse-bse-feed';
+import { resolveTicker } from '@/lib/bse-nse-mapping';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 25;
+// PATCH 0500 — bumped 25→40s to accommodate parallel NSE + BSE fetches with
+// BSE 3-page pagination. Vercel Pro allows up to 60s on Node runtime.
+export const maxDuration = 40;
 
 const KEY = (date: string) => `today-live:v1:${date}`;
 const CACHE_TTL_SECONDS = 3 * 60;  // 3 minutes — page auto-polls every 4
@@ -80,17 +84,66 @@ interface LiveFiling {
 interface LiveResponse {
   date: string;
   fetched_at: string;
-  source: 'NSE_DIRECT' | 'NSE_BLOCKED' | 'KV_CACHED';
+  source: 'NSE_DIRECT' | 'NSE_BLOCKED' | 'KV_CACHED' | 'BSE_FALLBACK' | 'NSE_BSE_MERGED';
   cache_age_seconds?: number;
   count: number;
   filings: LiveFiling[];
   error?: string;
+  // PATCH 0500 — telemetry for the merged-source debugging
+  nse_count?: number;
+  bse_count?: number;
 }
 
 // Convert YYYY-MM-DD → DD-MM-YYYY (NSE format)
 function isoToNseDate(iso: string): string {
   const [y, m, d] = iso.split('-');
   return `${d}-${m}-${y}`;
+}
+
+// PATCH 0500 — BSE fallback adapter. Indian companies file Sat/Sun during
+// earnings season; NSE corp-announcements often returns empty for weekend
+// dates either because companies file via BSE first, OR because NSE
+// rate-limits anonymous Vercel IPs more aggressively on quiet days. BSE has
+// no such rate-limit and its corporate-announcements API works reliably
+// from any IP.
+async function fetchBseFilings(date: string, signal?: AbortSignal): Promise<LiveFiling[]> {
+  try {
+    const { filings, source } = await fetchBSEAnnouncements({
+      signal,
+      fromIso: date,
+      toIso: date,
+      pages: 3,  // BSE pagination — typical weekend day under 100 filings
+    });
+    if (source !== 'BSE_OK' || filings.length === 0) return [];
+
+    const out: LiveFiling[] = [];
+    const seenSymbols = new Set<string>();
+    for (const f of filings) {
+      if (SUBJECT_BLOCKLIST.some((re) => re.test(f.subject))) continue;
+      if (!RESULT_PATTERNS.some((re) => re.test(f.subject))) continue;
+
+      // BSE returns scrip code as symbol (e.g. '526612'). Resolve to NSE
+      // symbol when we have the mapping; otherwise keep the BSE code so
+      // downstream still has a stable key.
+      const resolved = resolveTicker(f.symbol);
+      const sym = (resolved.nseSymbol || resolved.display || f.symbol).toUpperCase();
+      if (!sym || seenSymbols.has(sym)) continue;
+      seenSymbols.add(sym);
+
+      const attach = f.attachment_urls?.[0] || f.source_url || null;
+      out.push({
+        symbol: sym,
+        company: resolved.shortName || f.company_name || sym,
+        subject: f.subject,
+        filing_iso: f.filing_datetime,
+        filing_date: f.filing_datetime.slice(0, 10),
+        attachment_url: attach,
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
 }
 
 async function fetchNseAnnouncements(date: string, signal?: AbortSignal): Promise<LiveFiling[] | 'BLOCKED'> {
@@ -213,26 +266,51 @@ async function _handleGET(req: NextRequest) {
     } catch {}
   }
 
-  // 8s budget per NSE fetch
-  const result = await fetchNseAnnouncements(date, AbortSignal.timeout(8000));
-  if (result === 'BLOCKED') {
-    const payload: LiveResponse = {
-      date,
-      fetched_at: new Date().toISOString(),
-      source: 'NSE_BLOCKED',
-      count: 0,
-      filings: [],
-      error: 'NSE blocked the request (rate-limit or session cookie). Use Hard Refresh to retry.',
-    };
-    return NextResponse.json(payload);
+  // PATCH 0500 — Fan out NSE + BSE in parallel. Indian companies frequently
+  // file via BSE first (especially weekend filings — BSE accepts them while
+  // NSE corporate-announcements rate-limits anonymous traffic). Merging both
+  // sources gives the same coverage as EarningsPulse.
+  const [nseResult, bseResult] = await Promise.all([
+    fetchNseAnnouncements(date, AbortSignal.timeout(8000)).catch(() => 'BLOCKED' as const),
+    fetchBseFilings(date, AbortSignal.timeout(10000)).catch(() => [] as LiveFiling[]),
+  ]);
+
+  const nseFilings: LiveFiling[] = nseResult === 'BLOCKED' ? [] : nseResult;
+  const bseFilings = bseResult;
+
+  // Merge — NSE filings keep priority (have proper symbols), BSE fills gaps.
+  const merged: LiveFiling[] = [];
+  const seen = new Set<string>();
+  for (const f of nseFilings) {
+    const key = f.symbol.toUpperCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(f);
   }
+  for (const f of bseFilings) {
+    const key = f.symbol.toUpperCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(f);
+  }
+
+  let source: LiveResponse['source'];
+  if (nseFilings.length > 0 && bseFilings.length > 0) source = 'NSE_BSE_MERGED';
+  else if (nseFilings.length > 0) source = 'NSE_DIRECT';
+  else if (bseFilings.length > 0) source = 'BSE_FALLBACK';
+  else source = nseResult === 'BLOCKED' ? 'NSE_BLOCKED' : 'NSE_DIRECT';
 
   const payload: LiveResponse = {
     date,
     fetched_at: new Date().toISOString(),
-    source: 'NSE_DIRECT',
-    count: result.length,
-    filings: result,
+    source,
+    count: merged.length,
+    filings: merged,
+    nse_count: nseFilings.length,
+    bse_count: bseFilings.length,
+    ...(source === 'NSE_BLOCKED' && merged.length === 0
+      ? { error: 'NSE blocked the request (rate-limit or session cookie). BSE fallback also returned no data for this date.' }
+      : {}),
   };
 
   if (isRedisAvailable()) {
