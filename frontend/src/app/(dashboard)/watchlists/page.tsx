@@ -11,6 +11,7 @@ import {
   getConvictionList, removeConviction,
   type ConvictionEntry,
 } from '@/lib/conviction-beats';
+import { peadScore, peadColor, peadLabel } from '@/lib/pead-score';
 import TickerExportToolbar from '@/components/TickerExportToolbar';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -1053,6 +1054,37 @@ export default function WatchlistsPage() {
 // Auto-populated bench of BLOCKBUSTER + STRONG earnings prints from
 // /earnings-opportunities. localStorage-backed via lib/conviction-beats.ts.
 // ═══════════════════════════════════════════════════════════════════════════
+// USER-REQ — Conviction Beats composable filters
+//   1) Op-leverage (PAT/Sales ratio)  ≥1.5× / ≥2× / ≥3×
+//   2) Sales YoY  ≥20/30/40/50%
+//   3) PAT YoY    ≥20/30/40/50/60/100%
+//   4) EPS YoY    ≥20/40/60%
+// All compose AND-style. Counts beside each chip reflect the current
+// post-filter universe so the user can see how each chip narrows.
+type ConvFilters = {
+  opLev: number | null;     // ratio threshold (1.5/2/3)
+  sales: number | null;     // % threshold
+  pat: number | null;
+  eps: number | null;
+  sortByPead: boolean;
+};
+
+const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, sortByPead: false };
+
+function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
+  const sales = e.sales_yoy_pct ?? 0;
+  const pat = e.net_profit_yoy_pct ?? 0;
+  const eps = e.eps_yoy_pct ?? 0;
+  if (f.sales != null && sales < f.sales) return false;
+  if (f.pat != null && pat < f.pat) return false;
+  if (f.eps != null && eps < f.eps) return false;
+  if (f.opLev != null) {
+    const ratio = pat / Math.max(sales, 0.01);
+    if (!(ratio >= f.opLev)) return false;
+  }
+  return true;
+}
+
 function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[]; onRemove: (t: string) => void }) {
   if (entries.length === 0) {
     return (
@@ -1077,11 +1109,95 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
       </div>
     );
   }
-  const blockbusters = entries.filter((e) => e.tier === 'BLOCKBUSTER');
-  const strongs = entries.filter((e) => e.tier === 'STRONG');
-  const allTickers = entries.map((e) => e.ticker);
+  // USER-REQ — filter state (composable AND)
+  const [filters, setFilters] = useState<ConvFilters>(FILTER_DEFAULT);
+  const toggle = <K extends keyof ConvFilters>(k: K, v: ConvFilters[K]) =>
+    setFilters((f) => ({ ...f, [k]: f[k] === v ? null : v } as ConvFilters));
+
+  // Apply filters + optional PEAD sort
+  let filteredEntries = entries.filter((e) => passesConvictionFilter(e, filters));
+  if (filters.sortByPead) {
+    filteredEntries = [...filteredEntries].sort((a, b) => peadScore(b).score - peadScore(a).score);
+  }
+  const blockbusters = filteredEntries.filter((e) => e.tier === 'BLOCKBUSTER');
+  const strongs = filteredEntries.filter((e) => e.tier === 'STRONG');
+  const allTickers = filteredEntries.map((e) => e.ticker);
+
+  // Counts for each candidate chip — applied INDEPENDENTLY to the
+  // post-other-filters universe so the count reflects what the chip would
+  // narrow TO when toggled on (preserves AND-composable semantics).
+  const countWith = (k: keyof ConvFilters, v: number) => {
+    const probe: ConvFilters = { ...filters, [k]: v } as ConvFilters;
+    return entries.filter((e) => passesConvictionFilter(e, probe)).length;
+  };
+
+  const chipBase: React.CSSProperties = {
+    fontSize: 10.5, fontWeight: 700, padding: '4px 9px', borderRadius: 14,
+    cursor: 'pointer', border: '1px solid #2A3B4C', background: '#0A1422',
+    color: '#8BA3C1', whiteSpace: 'nowrap',
+  };
+  const chipActive = (color: string): React.CSSProperties => ({
+    ...chipBase,
+    background: `${color}22`, borderColor: `${color}99`, color,
+  });
+  const renderChipGroup = (
+    label: string, color: string, k: keyof ConvFilters,
+    options: Array<{ v: number; lbl: string }>,
+  ) => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+      <span style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>{label}</span>
+      {options.map((o) => {
+        const active = filters[k] === o.v;
+        const n = countWith(k, o.v);
+        return (
+          <button key={o.v} onClick={() => toggle(k, o.v as any)}
+            style={active ? chipActive(color) : chipBase}>
+            {o.lbl} <span style={{ color: active ? color : '#6B7A8D', marginLeft: 3 }}>({n})</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* USER-REQ — composable filter chips (Op-leverage / Sales / PAT / EPS YoY)
+          + PEAD sort toggle. Renders at TOP of the Conviction Beats tab. */}
+      <div style={{
+        padding: '10px 14px', backgroundColor: '#0A1422',
+        border: '1px solid #1A2840', borderRadius: 8,
+        display: 'flex', flexDirection: 'column', gap: 8,
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', letterSpacing: '0.4px' }}>
+            FILTERS <span style={{ color: '#6B7A8D', fontWeight: 600 }}>· {filteredEntries.length} of {entries.length}</span>
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button onClick={() => setFilters((f) => ({ ...f, sortByPead: !f.sortByPead }))}
+              style={filters.sortByPead ? chipActive('#22D3EE') : chipBase}>
+              🌊 Sort by PEAD {filters.sortByPead ? '✓' : ''}
+            </button>
+            <button onClick={() => setFilters(FILTER_DEFAULT)}
+              disabled={filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && !filters.sortByPead}
+              style={{ ...chipBase, opacity: (filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && !filters.sortByPead) ? 0.4 : 1 }}>
+              Clear
+            </button>
+          </div>
+        </div>
+        {renderChipGroup('OP-LEV (PAT/Sales)', '#A78BFA', 'opLev', [
+          { v: 1.5, lbl: '≥1.5×' }, { v: 2, lbl: '≥2×' }, { v: 3, lbl: '≥3×' },
+        ])}
+        {renderChipGroup('SALES YoY', '#22D3EE', 'sales', [
+          { v: 20, lbl: '≥20%' }, { v: 30, lbl: '≥30%' }, { v: 40, lbl: '≥40%' }, { v: 50, lbl: '≥50%' },
+        ])}
+        {renderChipGroup('PAT YoY', '#10B981', 'pat', [
+          { v: 20, lbl: '≥20%' }, { v: 30, lbl: '≥30%' }, { v: 40, lbl: '≥40%' },
+          { v: 50, lbl: '≥50%' }, { v: 60, lbl: '≥60%' }, { v: 100, lbl: '≥100%' },
+        ])}
+        {renderChipGroup('EPS YoY', '#F59E0B', 'eps', [
+          { v: 20, lbl: '≥20%' }, { v: 40, lbl: '≥40%' }, { v: 60, lbl: '≥60%' },
+        ])}
+      </div>
       <div style={{
         padding: '10px 14px', backgroundColor: '#0A1422',
         border: '1px solid #1A2840', borderRadius: 8,
@@ -1144,6 +1260,12 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
 function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: (t: string) => void }) {
   const tierColor = entry.tier === 'BLOCKBUSTER' ? '#F59E0B' : '#10B981';
   const pct = (v: number | null) => v == null ? '—' : `${v >= 0 ? '+' : ''}${Math.round(v)}%`;
+  // USER-REQ — PEAD score chip (formula from PEAD_Strategy_vF + checklists).
+  const pead = peadScore(entry);
+  const peadClr = peadColor(pead.score);
+  const peadTip = `PEAD ${pead.score} (${peadLabel(pead.score)}) — ${pead.drift_phase} phase, ${pead.days_since_filing}d since filing\n` +
+    `Sales norm ${pead.sales_norm}, PAT norm ${pead.pat_norm}, EPS norm ${pead.eps_norm}, base ${pead.raw}\n` +
+    `Op-leverage +${pead.op_leverage_bonus}, Quality +${pead.quality_signal}, Tier +${pead.tier_bonus}, decay ×${pead.drift_decay}`;
   return (
     <div style={{
       padding: '10px 12px', backgroundColor: '#0A1422',
@@ -1166,6 +1288,11 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
           fontSize: 14, fontWeight: 900, color: tierColor,
           fontFamily: 'ui-monospace, monospace',
         }}>{entry.composite_score}</div>
+        <div title={peadTip} style={{
+          fontSize: 10, fontWeight: 800, padding: '2px 6px', borderRadius: 4,
+          background: `${peadClr}20`, color: peadClr, border: `1px solid ${peadClr}55`,
+          fontFamily: 'ui-monospace, monospace', cursor: 'help', whiteSpace: 'nowrap',
+        }}>PEAD {pead.score}</div>
         <button onClick={() => onRemove(entry.ticker)} title="Remove from Conviction Beats"
           style={{
             background: 'none', border: 'none', color: '#6B7A8D',

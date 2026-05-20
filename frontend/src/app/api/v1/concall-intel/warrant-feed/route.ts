@@ -24,7 +24,9 @@ import {
 
 // PATCH 0430 — bumped v8 → v9 to flush the corrupt v8 payload that had
 // count_relevant=0 due to over-budget early-break bug.
-const CACHE_KEY = (days: number) => `warrant-feed:v9:days:${days}`;
+// PATCH 0536 — v9 → v10 to flush the strict-gate cache (count_passing=0)
+// after gate-D promoter-premium-proxy was added and the floor dropped to 5.5.
+const CACHE_KEY = (days: number) => `warrant-feed:v10:days:${days}`;
 const CACHE_TTL_SHORT = 5 * 60;
 const CACHE_TTL_LONG = 30 * 60;
 // PATCH 0422 — bumped 15 → 40 so more warrant candidates get full PDF
@@ -162,6 +164,9 @@ async function handleWarrantFeed(req: NextRequest) {
   // PATCH 0407 — bumped 90 → 180 days for historical validation
   const days = Math.min(180, Math.max(1, parseInt(req.nextUrl.searchParams.get('days') || '14')));
   // PATCH 0392 — threshold default dropped 8 → 5 (ranking, not hard gate)
+  // PATCH 0536 — keep ranking floor at 5 but the hard passing gate in
+  // warrant-momentum.ts is now 5.5 (was 6.5); callers passing threshold=6.5
+  // get the old behaviour but the default surface is more permissive.
   const threshold = parseFloat(req.nextUrl.searchParams.get('threshold') || '5');
   const passingOnly = req.nextUrl.searchParams.get('passingOnly') === '1';
   // PATCH 0392 — top-N ranking mode (returns best N regardless of threshold)

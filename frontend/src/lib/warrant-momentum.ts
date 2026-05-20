@@ -510,11 +510,16 @@ export function scoreWarrantConviction(inputs: ScoreWarrantInputs): WarrantConvi
   //   A. Promoter participation = present
   //   B. Pricing not deep-discount (premium_pct >= -10 OR unknown)
   //   C. No critical red flags (operator pump, heavy pledge, dilution pattern)
-  //   D. Either breakout/RS OR business momentum present
+  //   D. Either breakout/RS OR business momentum present OR positive issue
+  //      premium ≥ 10% (PATCH 0536 — promoter willing to pay premium to CMP
+  //      is itself a structural conviction signal even when concall PDF
+  //      didn't extract; without this, real warrants where the time-budget
+  //      bail prevented momentum scoring never crossed the gate).
   const gateA = details.is_promoter_subscribed;
   const gateB = premium_pct == null || premium_pct >= -10;
   const gateC = c.governance_penalty >= -1;
-  const gateD = c.breakout_relative_strength > 0 || c.business_momentum > 0;
+  const premiumProxy = premium_pct != null && premium_pct >= 10;
+  const gateD = c.breakout_relative_strength > 0 || c.business_momentum > 0 || premiumProxy;
 
   const conviction = Math.max(0, Math.min(10, raw));
   // PATCH 0425 — Lowered passing floor 8 → 6.5. A pure-data warrant with
@@ -523,7 +528,13 @@ export function scoreWarrantConviction(inputs: ScoreWarrantInputs): WarrantConvi
   // perfectly which essentially never happened on real-world data. Real
   // institutional warrants (STLTECH-class promoter infusions) commonly
   // land in the 6.5-7.5 conviction band, not 8+.
-  const passes_gate = gateA && gateB && gateC && gateD && conviction >= 6.5;
+  // PATCH 0536 — further lowered 6.5 → 5.5. With the new gateD proxy, real
+  // promoter warrants with full diagnostics (issue-price extracted +
+  // premium + governance clean) commonly score in the 5.5-7 band when
+  // Yahoo blocks CMP fetch OR the time-budget skips concall extraction.
+  // Below 5.5 is correctly noise; 5.5-6.5 contains real signal currently
+  // silently dropped.
+  const passes_gate = gateA && gateB && gateC && gateD && conviction >= 5.5;
 
   // PATCH 0423 — extraction & gate-failure diagnostics so the UI can show
   // WHY a warrant scored low instead of forcing the user to guess.

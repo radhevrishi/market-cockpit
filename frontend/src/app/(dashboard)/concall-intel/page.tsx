@@ -1151,8 +1151,12 @@ function WarrantMomentumFeed() {
   const [data, setData] = useState<WarrantFeedPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [passingOnly, setPassingOnly] = useState(true);
-  const [days, setDays] = useState(7);
+  // PATCH 0536 — passingOnly default OFF so the user immediately sees the
+  // full ranked-by-conviction warrant universe instead of the strict-gate
+  // empty state. Days default raised 7 → 30 (the 30d sub-window cache
+  // (Patch 0413) returns instantly after first warm-up).
+  const [passingOnly, setPassingOnly] = useState(false);
+  const [days, setDays] = useState(30);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   // PATCH 0425 — ticker search box so user can probe coverage (e.g. is
   // STLTECH detected at all? if so what fields extracted? if not, was the
@@ -1166,12 +1170,19 @@ function WarrantMomentumFeed() {
     // caps at 60s anyway). On abort/error, we now set an empty-shape data
     // object so the empty-state render branch fires and the user is no
     // longer stuck on "Loading…" forever.
+    // PATCH 0536 — raised 28s → 52s. Cold cache on the 90/180-day window
+    // commonly takes 30-40s after the 0420 time-budget exit; 28s aborted
+    // before the route could write its cache, surfacing as the user's
+    // "0 filings · 0 warrant-related" empty-state. Vercel hobby caps at
+    // 60s — 52s leaves headroom.
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 28000);
+    const timeoutId = setTimeout(() => controller.abort(), 52000);
     try {
       const params = new URLSearchParams({
         days: String(days),
-        threshold: passingOnly ? '6.5' : '0',
+        // PATCH 0536 — gate lowered 6.5 → 5.5 to match warrant-momentum.ts
+        // floor (post promoter-premium-proxy gateD).
+        threshold: passingOnly ? '5.5' : '0',
         ...(passingOnly ? { passingOnly: '1' } : {}),
         ...(force ? { force: '1' } : {}),
       });
@@ -1214,7 +1225,7 @@ function WarrantMomentumFeed() {
           <div style={{ fontSize: 10, color: '#94A3B8', marginTop: 2 }}>
             {data ? (
               <>
-                {data.count_total} filings · {data.count_relevant} warrant-related · <strong style={{ color: '#10B981' }}>{data.count_passing} passing gate (≥6.5/10)</strong>
+                {data.count_total} filings · {data.count_relevant} warrant-related · <strong style={{ color: '#10B981' }}>{data.count_passing} passing gate (≥5.5/10)</strong>
                 {lastRefresh && <> · refreshed {lastRefresh.toLocaleTimeString()}</>}
               </>
             ) : loading ? 'Loading…' : '—'}
