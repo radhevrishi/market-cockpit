@@ -14,6 +14,7 @@
 
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
+import { proxiedFetch } from '@/lib/proxy-fetch';
 import { fetchCompanyFinancialResults } from '@/lib/nse';
 
 export const runtime = 'nodejs';
@@ -164,7 +165,10 @@ async function fetchScreenerHtml(url: string): Promise<string | null> {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), SCREENER_TIMEOUT_MS);
     try {
-      const res = await fetch(url, {
+      // PATCH 0518 — Route through Cloudflare Worker proxy when env vars set.
+      // proxiedFetch falls back to direct fetch when PROXY_URL/PROXY_SECRET
+      // are missing — transparent to callers. See lib/proxy-fetch.ts.
+      const res = await proxiedFetch(url, {
         headers: browserHeaders('https://www.screener.in/'),
         signal: ctrl.signal,
       });

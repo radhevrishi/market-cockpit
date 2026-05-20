@@ -1,0 +1,20 @@
+# Cloudflare Worker config for Market Cockpit proxy
+#
+# Deploy:
+#   1. npm i -g wrangler
+#   2. wrangler login   (opens browser, log into your CF account)
+#   3. From this folder: wrangler deploy
+#   4. Worker URL prints (e.g. https://mc-proxy.YOUR-SUBDOMAIN.workers.dev)
+#   5. Set PROXY_SECRET via: wrangler secret put PROXY_SECRET
+#      (paste any 32-char random string; same value goes in Vercel env)
+
+name = "mc-proxy"
+main = "proxy.js"
+compatibility_date = "2024-09-23"
+
+# Free plan limits: 100k requests/day, 10ms CPU per request — plenty for our use.
+# Workers KV not required for v1 — secret check is sufficient defense.
+
+# Set PROXY_SECRET via:
+#   wrangler secret put PROXY_SECRET
+# Don't commit secrets to this file.
