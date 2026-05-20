@@ -542,7 +542,8 @@ function AnalyticsView({ marketScope, onJumpToInvestor }: { marketScope: MarketS
               {data.bigStakes.map((b, i) => {
                 const meta = STYLE_META[b.inv.style];
                 return (
-                  <tr key={i} style={{ borderTop: `1px solid ${BORDER}` }}>
+                  // AUDIT_100 #8 — stable composite key from inv id + ticker.
+                  <tr key={`${b.inv.id}|${b.ticker}|${i}`} style={{ borderTop: `1px solid ${BORDER}` }}>
                     <td style={tdStyle}>
                       <button onClick={() => onJumpToInvestor(b.inv.id)} style={{
                         background: 'transparent', border: 'none', cursor: 'pointer',
@@ -597,7 +598,8 @@ function AnalyticsView({ marketScope, onJumpToInvestor }: { marketScope: MarketS
                                  : row.topDirection === 'MIXED'   ? { color: '#F59E0B', icon: '↔', label: 'MIXED FLOW'   }
                                  : { color: '#94A3B8', icon: '·', label: 'NEUTRAL' };
                   return (
-                    <tr key={i} style={{ borderTop: `1px solid ${BORDER}` }}>
+                    // AUDIT_100 #8 — stable composite key on flow rows so child state survives re-sort.
+                    <tr key={row.company || row.ticker || i} style={{ borderTop: `1px solid ${BORDER}` }}>
                       <td style={tdStyle}>{row.company}</td>
                       <td style={{ ...tdStyle, textAlign: 'center', color: '#10B981', fontWeight: 700 }}>+{row.addCount}</td>
                       <td style={{ ...tdStyle, textAlign: 'center', color: '#EF4444', fontWeight: 700 }}>-{row.exitCount}</td>
@@ -790,7 +792,8 @@ function AnalyticsView({ marketScope, onJumpToInvestor }: { marketScope: MarketS
                   const ma = STYLE_META[pair.a.style];
                   const mb = STYLE_META[pair.b.style];
                   return (
-                    <tr key={i} style={{ borderTop: `1px solid ${BORDER}` }}>
+                    // AUDIT_100 #8 — stable key from investor ids.
+                    <tr key={`${pair.a.id}|${pair.b.id}|${i}`} style={{ borderTop: `1px solid ${BORDER}` }}>
                       <td style={tdStyle}>
                         <button onClick={() => onJumpToInvestor(pair.a.id)} style={{
                           background: 'transparent', border: 'none', cursor: 'pointer',
@@ -1372,9 +1375,12 @@ function NewsPanel({ query, investorName }: { query: string; investorName: strin
     return () => { alive = false; if (interval) clearInterval(interval); };
   }, [query]);
 
-  // Tick once a minute so the freshness chip re-renders without re-fetching.
+  // AUDIT_100 #46 — Tick interval raised 30s → 60s. The freshness chip
+  // shows minute-resolution ("Xm ago"), so re-rendering every 30s was a
+  // gratuitous bump that re-painted the panel for no visible change.
+  // 60s lines up with the granularity displayed.
   useEffect(() => {
-    const t = setInterval(() => setTick((x) => x + 1), 30_000);
+    const t = setInterval(() => setTick((x) => x + 1), 60_000);
     return () => clearInterval(t);
   }, []);
   void tick; // suppress unused warning

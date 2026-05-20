@@ -114,6 +114,10 @@ export default function MoversPage() {
   const [gainerSort, setGainerSort] = useState<SortState>({ key: 'changePercent', dir: 'desc' });
   const [loserSort, setLoserSort] = useState<SortState>({ key: 'changePercent', dir: 'asc' });
   const [earningsTickers, setEarningsTickers] = useState<Map<string, { quality: string; quarter: string }>>(new Map());
+  // AUDIT_100 #65 — earnings-day movers filter. Toggle limits the table to
+  // symbols in earningsTickers (recent reporters), which is the highest-
+  // signal subset most users want to watch on result days.
+  const [earningsOnly, setEarningsOnly] = useState<boolean>(false);
 
   const windowWidth = useWindowWidth();
   const isMobile = windowWidth < 640;
@@ -142,9 +146,10 @@ export default function MoversPage() {
     setCapFilter('All');
     setSectorFilter('All');
     setMoveTokens(new Set());
+    setEarningsOnly(false);
   }, []);
 
-  const hasActiveFilters = capFilter !== 'All' || sectorFilter !== 'All' || moveTokens.size > 0;
+  const hasActiveFilters = capFilter !== 'All' || sectorFilter !== 'All' || moveTokens.size > 0 || earningsOnly;
 
   const fetchData = useCallback(async () => {
     // PATCH 0472 — 15s timeout
@@ -172,7 +177,13 @@ export default function MoversPage() {
           cap: classifyCap({ indexGroup: s.indexGroup as string, marketCap: s.marketCap as number }),
         }));
 
-      setAllStocks(stocks);
+      // AUDIT_100 #86 — compare-by-cheap-hash before triggering re-render.
+      // Polling fetches were re-setting state every 60s even when the upstream
+      // payload was byte-identical, causing the whole table tree to re-render.
+      setAllStocks(prev => {
+        const sig = (arr: Stock[]) => arr.length + '|' + arr.slice(0, 50).map(s => `${s.ticker}:${s.price}:${s.changePercent}`).join(',');
+        return sig(prev) === sig(stocks) ? prev : stocks;
+      });
       setLastUpdated(new Date());
     } catch (err: any) {
       setError(err?.name === 'AbortError' ? 'Movers fetch timed out' : (err instanceof Error ? err.message : 'Failed to fetch data'));
@@ -225,9 +236,11 @@ export default function MoversPage() {
       if (capFilter !== 'All' && capFilter !== 'Mid & Small' && s.cap !== capFilter) return false;
       if (sectorFilter !== 'All' && s.sector !== sectorFilter) return false;
       if (!passesMoveFilter(s.changePercent, moveTokens)) return false;
+      // AUDIT_100 #65 — earnings-day filter narrows to recent reporters only.
+      if (earningsOnly && !earningsTickers.has(s.ticker)) return false;
       return true;
     });
-  }, [allStocks, capFilter, sectorFilter, moveTokens]);
+  }, [allStocks, capFilter, sectorFilter, moveTokens, earningsOnly, earningsTickers]);
 
   const sortStocks = useCallback((stocks: Stock[], sort: SortState): Stock[] => {
     const mult = sort.dir === 'asc' ? 1 : -1;
@@ -615,6 +628,22 @@ export default function MoversPage() {
             }}>
               {sectors.map(s => <option key={s} value={s}>{s === 'All' ? 'All Sectors' : s}</option>)}
             </select>
+
+            {/* AUDIT_100 #65 — Earnings-day movers filter. Pivots the table to
+                symbols that recently reported (earningsTickers map). */}
+            {earningsTickers.size > 0 && (
+              <button
+                onClick={() => setEarningsOnly(v => !v)}
+                title="Limit movers to symbols that recently reported earnings"
+                style={{
+                  padding: '5px 10px', borderRadius: '8px',
+                  border: `1px solid ${earningsOnly ? '#F59E0B' : BORDER}`,
+                  backgroundColor: earningsOnly ? 'rgba(245,158,11,0.12)' : CARD,
+                  color: earningsOnly ? '#F59E0B' : TEXT3, fontSize: '11px',
+                  cursor: 'pointer', fontWeight: 600, flexShrink: 0, whiteSpace: 'nowrap',
+                }}
+              >📊 Earnings only ({earningsTickers.size})</button>
+            )}
 
             {/* Clear button */}
             {hasActiveFilters && (

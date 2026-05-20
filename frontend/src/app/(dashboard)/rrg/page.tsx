@@ -436,10 +436,16 @@ export default function RRGPage() {
                             setHoveredSector(null);
                             setTooltip(null);
                           }}
-                          onClick={() => {
+                          onClick={(e) => {
                             // PATCH 0293 — Drill into sector news via /news?search=
+                            // AUDIT_100 #49 — Shift+click pivots to /heatmap so users
+                            // can see the underlying stocks in the sector at a glance.
                             try {
-                              window.open(`/news?search=${encodeURIComponent(sector.name)}`, '_blank', 'noopener,noreferrer');
+                              if (e.shiftKey) {
+                                window.open(`/heatmap?index=${encodeURIComponent(sector.name)}`, '_blank', 'noopener,noreferrer');
+                              } else {
+                                window.open(`/news?search=${encodeURIComponent(sector.name)}`, '_blank', 'noopener,noreferrer');
+                              }
                             } catch {}
                           }}
                         />
@@ -484,7 +490,7 @@ export default function RRGPage() {
                         </text>
                         {/* PATCH 0293 — Sector-news drill-through hint */}
                         <text x={tx + 12} y={ty + 86} fill={THEME.accent} fontSize="10" fontWeight="600">
-                          📰 Click dot for sector news →
+                          📰 Click: sector news · ⇧+Click: heatmap →
                         </text>
                       </g>
                     );

@@ -24,8 +24,29 @@ function readGuidanceHistory(): GuidanceHistoryShape {
 }
 function writeGuidanceHistory(h: GuidanceHistoryShape) {
   if (typeof window === 'undefined') return;
-  try { localStorage.setItem(GUIDANCE_HISTORY_KEY, JSON.stringify(h)); }
-  catch {}
+  // AUDIT_100 #9 — bound the store. Without pruning, every (symbol, period)
+  // captured forever would blow past 5 MB localStorage cap for a heavy user.
+  // Strategy: keep at most 16 most-recent periods per symbol (~4 years of
+  // quarterly), then cap to 500 symbols by recency (most-recent period).
+  try {
+    const PERIODS_PER_SYMBOL = 16;
+    const SYMBOLS_CAP = 500;
+    const pruned: GuidanceHistoryShape = {};
+    const symKeys = Object.keys(h || {});
+    // Compute most-recent period per symbol for sorting.
+    const symWithMaxPeriod = symKeys.map(s => {
+      const pk = Object.keys(h[s] || {});
+      const maxP = pk.length ? pk.sort().slice(-1)[0] : '';
+      return { s, maxP };
+    }).sort((a, b) => b.maxP.localeCompare(a.maxP)).slice(0, SYMBOLS_CAP);
+    for (const { s } of symWithMaxPeriod) {
+      const periods = Object.keys(h[s] || {}).sort().slice(-PERIODS_PER_SYMBOL);
+      const next: Record<string, number> = {};
+      for (const p of periods) next[p] = h[s][p];
+      pruned[s] = next;
+    }
+    localStorage.setItem(GUIDANCE_HISTORY_KEY, JSON.stringify(pruned));
+  } catch {}
 }
 function periodKey(iso: string, quarter?: string): string {
   // AUDIT_100 #79 — when quarter is known, include it in the key so a

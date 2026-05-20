@@ -35,6 +35,20 @@ export default function ConcallIntelPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Analysis | null>(null);
+  // AUDIT_100 #36 — phase hint during 65s spinner. Approximate timing based on
+  // observed Vercel serverless behaviour for the existing route (download
+  // → extract → analyze). Pure client-side timer; no SSE wiring required.
+  const [elapsedSec, setElapsedSec] = useState(0);
+  useEffect(() => {
+    if (!loading) { setElapsedSec(0); return; }
+    const t = setInterval(() => setElapsedSec(s => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [loading]);
+  const progressHint = !loading ? '' :
+    elapsedSec < 8 ? 'Downloading PDF…' :
+    elapsedSec < 25 ? 'Extracting text…' :
+    elapsedSec < 50 ? 'Scoring tone + extracting cues…' :
+    'Finalising… (almost there)';
 
   const analyze = async () => {
     setError(null);
@@ -122,6 +136,13 @@ export default function ConcallIntelPage() {
             style={{ padding: '8px 16px', backgroundColor: loading ? '#22D3EE40' : '#22D3EE', color: '#0A0E1A', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 800, cursor: loading ? 'wait' : 'pointer' }}>
             {loading ? 'Analysing…' : 'Analyse Concall'}
           </button>
+          {/* AUDIT_100 #36 — surface intermediate phase + elapsed time so 65s
+              spinner doesn't look frozen. */}
+          {loading && (
+            <span style={{ color: '#22D3EE', fontSize: 11, fontStyle: 'italic' }}>
+              {progressHint} · {elapsedSec}s elapsed
+            </span>
+          )}
           {error && <span style={{ color: '#EF4444', fontSize: 11 }}>⚠ {error}</span>}
         </div>
       </div>

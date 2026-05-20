@@ -384,6 +384,23 @@ export default function SpecialSituationsPage() {
   // PATCH 0252 — Clickable tier/category filters. Clicking a Stat box toggles
   // the filter; multiple categories may be selected (OR semantics).
   const [tierFilter, setTierFilter] = useState<'ALL' | 'TIER_1' | 'TIER_2' | 'WATCHLIST'>('ALL');
+  // AUDIT_100 #32 — show-only-monitored toggle so users can review what they
+  // previously flagged-for-monitor without restoring each one. Pure UI filter,
+  // reads from the same REJECTED_LS_KEY localStorage map the card uses.
+  const [monitoredOnly, setMonitoredOnly] = useState<boolean>(false);
+  const [monitoredMapTick, setMonitoredMapTick] = useState<number>(0);
+  // Re-read rejections on tick so child-card "restore" propagates here too.
+  const monitoredMap = useMemo<Record<string, { reason?: string; ts: number }>>(() => {
+    void monitoredMapTick;
+    if (typeof window === 'undefined') return {};
+    try { return JSON.parse(window.localStorage.getItem(REJECTED_LS_KEY) || '{}') as any; } catch { return {}; }
+  }, [monitoredMapTick]);
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => { if (e.key === REJECTED_LS_KEY) setMonitoredMapTick(t => t + 1); };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+  const monitoredCount = useMemo(() => Object.keys(monitoredMap || {}).length, [monitoredMap]);
   const [catFilterSet, setCatFilterSet] = useState<Set<Category>>(new Set());
   // PATCH 0433 — Coverage-bucket filter (clickable institutional categories)
   const [coverageFilterSet, setCoverageFilterSet] = useState<Set<string>>(new Set());
@@ -474,9 +491,14 @@ export default function SpecialSituationsPage() {
         const bucket = eventTypeToBucket(String(e.event_type));
         if (!bucket || !coverageFilterSet.has(bucket)) return false;
       }
+      // AUDIT_100 #32 — when toggled, render ONLY events the user previously
+      // moved to MONITOR. Event id matches the localStorage key used by the card.
+      if (monitoredOnly) {
+        if (!monitoredMap[e.event_id]) return false;
+      }
       return true;
     });
-  }, [canonicalEvents, tierFilter, catFilterSet, coverageFilterSet]);
+  }, [canonicalEvents, tierFilter, catFilterSet, coverageFilterSet, monitoredOnly, monitoredMap]);
 
   const tier1Canonical = filteredCanonicalEvents.filter((e) => e.tier === 'TIER_1');
   const tier2Canonical = filteredCanonicalEvents.filter((e) => e.tier === 'TIER_2');
@@ -558,6 +580,21 @@ export default function SpecialSituationsPage() {
           ))}
           {anyFilterActive && (
             <button onClick={clearFilters} style={{ marginLeft: 6, alignSelf: 'center', backgroundColor: 'transparent', border: '1px solid #1A2840', color: '#8A95A3', borderRadius: 5, padding: '4px 10px', fontSize: 11, cursor: 'pointer', fontWeight: 600 }}>Clear filters ×</button>
+          )}
+          {/* AUDIT_100 #32 — show-monitored toggle. Surfaces the items the user
+              previously flagged so they can audit / restore their bench. */}
+          {monitoredCount > 0 && (
+            <button
+              onClick={() => setMonitoredOnly(v => !v)}
+              title="Show only events you previously marked MONITOR"
+              style={{
+                marginLeft: 6, alignSelf: 'center',
+                backgroundColor: monitoredOnly ? 'rgba(148,163,184,0.15)' : 'transparent',
+                border: `1px solid ${monitoredOnly ? '#94A3B8' : '#1A2840'}`,
+                color: monitoredOnly ? '#E6EDF3' : '#94A3B8',
+                borderRadius: 5, padding: '4px 10px', fontSize: 11, cursor: 'pointer', fontWeight: 600,
+              }}
+            >◯ {monitoredOnly ? 'Showing monitored' : 'Show monitored'} ({monitoredCount})</button>
           )}
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center' }}>
             <span style={{ fontSize: 11, color: '#6B7A8D', marginRight: 6 }}>Region:</span>
@@ -1915,8 +1952,9 @@ function ResultCard({ title, color, rows }: { title: string; color: string; rows
       <div style={{ fontSize: 12, fontWeight: 800, color, letterSpacing: '0.4px', marginBottom: 8 }}>{title}</div>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5 }}>
         <tbody>
-          {rows.map(([k, v], i) => (
-            <tr key={i} style={{ borderTop: '1px solid #1A2840' }}>
+          {rows.map(([k, v]) => (
+            // AUDIT_100 #8 — stable key (label) so React doesn't snap state across rows
+            <tr key={String(k)} style={{ borderTop: '1px solid #1A2840' }}>
               <td style={{ padding: '5px 0', color: '#94A3B8' }}>{k}</td>
               <td style={{ padding: '5px 0', color: '#E6EDF3', textAlign: 'right', fontWeight: 700, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{v}</td>
             </tr>

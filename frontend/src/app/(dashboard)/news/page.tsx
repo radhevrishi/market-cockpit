@@ -2450,6 +2450,30 @@ export default function NewsFeedPage() {
     }
     return count;
   }, [allArticles, lifecycleFilter, region, articleType, signalFilter, sourceName, earningsSeasonActive]);
+
+  // AUDIT_100 #31 — count-by-lifecycle so chip rail shows "LIVE+WARM (47)"
+  // instead of forcing the user to click a chip to discover it's empty.
+  const lifecycleCounts = useMemo(() => {
+    const out = { LIVE_WARM: 0, STALE: 0, PERSISTENT: 0, ALL: 0 };
+    if (!allArticles) return out;
+    const now = Date.now();
+    const LIVE_WARM_MS = 48 * 3600_000;
+    const STALE_END_MS = 7 * 24 * 3600_000;
+    const base = filterArticles(allArticles, region, earningsSeasonActive ? 'EARNINGS' : articleType, signalFilter, sourceName);
+    for (const a of base) {
+      if (!isMarketRelevant(a)) continue;
+      out.ALL++;
+      const pubTime = new Date(a.published_at || a.ingested_at || 0).getTime();
+      const age = now - pubTime;
+      const isPersistentTheme = (a as any).freshness_layer === 'PERSISTENT_THEME'
+        || (a as any).is_synthetic
+        || (a as any).feed_layer === 'STRUCTURAL_ALPHA';
+      if (age <= LIVE_WARM_MS || isPersistentTheme && age <= LIVE_WARM_MS) out.LIVE_WARM++;
+      else if (age > LIVE_WARM_MS && age <= STALE_END_MS && !isPersistentTheme) out.STALE++;
+      else if (age > STALE_END_MS && isPersistentTheme) out.PERSISTENT++;
+    }
+    return out;
+  }, [allArticles, region, articleType, signalFilter, sourceName, earningsSeasonActive]);
   // PATCH 0210 — Dedupe IN PLAY TODAY by ticker.
   // Root cause of the DEEDEV×2, INOXINDIA×2, CEINSYS×2 rendering: rawInPlay
   // returns one row per (article × ticker mention). Multiple articles
@@ -2975,6 +2999,8 @@ export default function NewsFeedPage() {
             { key: 'ALL',        label: '○ All',          hint: 'No lifecycle filter',              bg: '#1E2D45',   border: '#1E2D45', text: '#8A95A3' },
           ] as const).map(f => {
             const active = lifecycleFilter === f.key;
+            // AUDIT_100 #31 — chip count badge so users see bucket size before clicking.
+            const n = lifecycleCounts[f.key as keyof typeof lifecycleCounts] ?? 0;
             return (
               <button
                 key={f.key}
@@ -2987,7 +3013,7 @@ export default function NewsFeedPage() {
                   borderRadius: 5, padding: '4px 8px', cursor: 'pointer',
                   fontSize: 10, fontWeight: 700, letterSpacing: '0.4px',
                 }}
-              >{f.label}</button>
+              >{f.label} <span style={{ opacity: 0.7, fontWeight: 600 }}>({n})</span></button>
             );
           })}
           {/* PATCH 0225 — Named Saved Views (localStorage-backed) on top of

@@ -15,6 +15,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Trash2, Download, Filter, Plus } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { readDecisions, clearDecision, subscribeDecisions, setDecision, DECISION_META, type Decision, type DecisionStatus, type DecisionMarket } from '@/lib/decisions';
 
 type StatusFilter = 'ALL' | DecisionStatus;
@@ -400,7 +401,18 @@ export default function DecisionsPage() {
                       </td>
                       <td style={td}>
                         <button
-                          onClick={() => { if (window.confirm(`Remove decision for ${d.symbol}?`)) clearDecision(d.symbol); }}
+                          onClick={() => {
+                            // AUDIT_100 #5 — toast confirm in place of native window.confirm (iframe-safe + consistent app-wide).
+                            toast((t) => (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                <span>Remove decision for <strong>{d.symbol}</strong>?</span>
+                                <button onClick={() => { clearDecision(d.symbol); toast.dismiss(t.id); toast.success(`${d.symbol} removed`); }}
+                                  style={{ padding: '4px 10px', background: '#EF4444', color: '#fff', borderRadius: 4, border: 0, cursor: 'pointer', fontSize: 12 }}>Delete</button>
+                                <button onClick={() => toast.dismiss(t.id)}
+                                  style={{ padding: '4px 10px', background: 'transparent', color: '#94A3B8', borderRadius: 4, border: '1px solid #2A3B4C', cursor: 'pointer', fontSize: 12 }}>Cancel</button>
+                              </div>
+                            ), { duration: 8000 });
+                          }}
                           title="Remove this decision"
                           style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', padding: 4 }}
                         >

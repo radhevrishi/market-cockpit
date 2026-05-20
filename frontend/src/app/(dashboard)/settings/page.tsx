@@ -536,6 +536,41 @@ export default function SettingsPage() {
         <Row label="Account" description="Your portfolio data never leaves your machine">
           <span className="text-[#4A5B6C] text-xs">No cloud sync</span>
         </Row>
+        {/* AUDIT_100 #66 — data export. Download every localStorage key as JSON
+            so the user can audit what's persisted (privacy hygiene). */}
+        <Row label="Export all data" description="Download every key Market Cockpit stores in your browser">
+          <button
+            onClick={() => {
+              try {
+                if (typeof window === 'undefined') return;
+                const out: Record<string, unknown> = {};
+                for (let i = 0; i < window.localStorage.length; i++) {
+                  const k = window.localStorage.key(i);
+                  if (!k) continue;
+                  // Only include Market-Cockpit keys (prefix mb_, mc, mc_, mc:).
+                  if (!/^(mb_|mc[_:])/i.test(k)) continue;
+                  const raw = window.localStorage.getItem(k);
+                  try { out[k] = raw ? JSON.parse(raw) : raw; }
+                  catch { out[k] = raw; }
+                }
+                const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `market-cockpit-data-${new Date().toISOString().slice(0, 10)}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+                toast.success(`Exported ${Object.keys(out).length} keys`);
+              } catch (err) {
+                console.error('Data export failed', err);
+                toast.error('Export failed');
+              }
+            }}
+            className="bg-[#0F7ABF]/15 border border-[#0F7ABF]/40 text-[#38A9E8] text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-[#0F7ABF]/25 transition-colors"
+          >
+            ↓ Download JSON
+          </button>
+        </Row>
       </Section>
 
       <Section title="About Market Cockpit" icon={Info}>

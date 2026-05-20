@@ -801,7 +801,7 @@ function useGeoNews(enabled = true) {
     refetchInterval: 90_000, staleTime: 60_000, retry: 1,
   });
 }
-function useUSQuotes() {
+function useUSQuotes(enabled = true) {
   // PATCH 0446 BUG-028 v2 — Audit reported NHPC / NTPC scanner prices showed
   // '—' alongside US tickers. Root cause: this hook only fetched US quotes,
   // so Indian symbols never bound. Now fetch BOTH markets in parallel and
@@ -827,6 +827,9 @@ function useUSQuotes() {
       } catch { return []; }
     },
     refetchInterval: 60_000, staleTime: 45_000, retry: 1,
+    // AUDIT_100 #94 — gate so the heavy paired-market quote fetch only fires
+    // when the Scanner tab is active (where prices actually render).
+    enabled,
   });
 }
 
@@ -3270,7 +3273,7 @@ export default function BottleneckIntelPage() {
   const { data: bnArticles = [], isLoading: bnLoading, refetch: refetchBN } = useBNNews();
   // AUDIT_100 #94 — only fire heavy Geo aggregate when user is on Geo tab.
   const { data: geoArticles = [], isLoading: geoLoading, refetch: refetchGeo } = useGeoNews(activeTab === 'Geo');
-  const { data: usQuotes = [], isLoading: quotesLoading } = useUSQuotes();
+  const { data: usQuotes = [], isLoading: quotesLoading } = useUSQuotes(activeTab === 'Scanner');
 
   const lastRefreshed = useMemo(() => {
     if (!dashTs) return null;

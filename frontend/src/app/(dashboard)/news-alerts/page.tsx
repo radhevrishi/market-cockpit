@@ -340,7 +340,7 @@ export default function NewsAlertsPage() {
           padding: '10px 14px', marginBottom: 16,
           backgroundColor: TOKENS.severity.high.bg, border: `1px solid ${TOKENS.severity.high.border}`,
           color: TOKENS.severity.high.solid, borderRadius: 8,
-          display: 'flex', alignItems: 'center', gap: 10, fontSize: 12,
+          display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, flexWrap: 'wrap',
         }}>
           <span>⚠ Browser notifications are {permission}. On-screen toasts still work; enable notifications for background alerts.</span>
           {permission === 'default' && (
@@ -348,6 +348,24 @@ export default function NewsAlertsPage() {
               Enable notifications
             </button>
           )}
+          {/* AUDIT_100 #37 — inline mock notification preview so the user sees
+              exactly what a fired alert looks like before they grant permission. */}
+          <div style={{
+            flex: '1 1 100%', marginTop: 6, padding: '10px 12px',
+            backgroundColor: '#0A1422', borderRadius: 6,
+            border: '1px dashed #1E2D45', display: 'flex', gap: 10, alignItems: 'flex-start',
+          }}>
+            <div style={{ fontSize: 18, lineHeight: 1 }}>🔔</div>
+            <div style={{ flex: 1, fontFamily: 'system-ui', color: '#E6EDF3' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#94A3B8', letterSpacing: '0.3px', marginBottom: 2 }}>
+                MARKET COCKPIT · just now (preview)
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>Alert: Defence bottlenecks · HIGH only</div>
+              <div style={{ fontSize: 12, color: '#C9D4E0', marginTop: 2 }}>
+                HAL secures ₹26,000 Cr order from Indian Navy for advanced light helicopters…
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

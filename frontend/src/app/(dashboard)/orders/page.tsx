@@ -2281,7 +2281,8 @@ function ConcallIntelligence() {
                               <div style={{fontSize:10,fontWeight:800,color:'#10b981',letterSpacing:'1px',marginBottom:6}}>🏢 COMPANY SIGNALS — confirmed for {s.symbol}</div>
                               <div style={{display:'flex',flexDirection:'column',gap:6}}>
                                 {s.signals.filter(sig=>sig.isAlpha&&sig.origin==='COMPANY').map((sig,i)=>(
-                                  <SignalCard key={i} sig={sig} horizonColor={horizonColor} />
+                                  // AUDIT_100 #8 — stable composite key so child state doesn't snap on filter / sort changes.
+                                  <SignalCard key={`${sig.subject}|${sig.type}|${sig.date||i}`} sig={sig} horizonColor={horizonColor} />
                                 ))}
                               </div>
                             </div>
@@ -2297,7 +2298,8 @@ function ConcallIntelligence() {
                                 {s.signals.filter(sig=>sig.isAlpha&&sig.origin==='SECTOR').map((sig,i)=>{
                                   const sd = (sig as any).sectorDef as (SectorSignalDef|undefined);
                                   return (
-                                    <div key={i} style={{padding:'10px 12px',backgroundColor:'#06b6d408',border:'1px solid #06b6d420',borderLeft:'3px solid #06b6d4',borderRadius:7}}>
+                                    // AUDIT_100 #8 — stable composite key.
+                                    <div key={`${sig.subject}|${sig.type}|${sig.date||i}`} style={{padding:'10px 12px',backgroundColor:'#06b6d408',border:'1px solid #06b6d420',borderLeft:'3px solid #06b6d4',borderRadius:7}}>
                                       <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:4,flexWrap:'wrap'}}>
                                         <span style={{fontSize:11,fontWeight:800,color:'#06b6d4'}}>🌍 {sig.subject}</span>
                                         {sd && <span style={{fontSize:9,color:'#4A5B6C',fontStyle:'italic'}}>driven by: {sd.driver}</span>}
@@ -2324,7 +2326,8 @@ function ConcallIntelligence() {
                               <div style={{fontSize:10,fontWeight:800,color:'#ef4444',letterSpacing:'1px',marginBottom:6}}>⚠ RISK SIGNALS</div>
                               <div style={{display:'flex',flexDirection:'column',gap:6}}>
                                 {s.signals.filter(sig=>sig.isAlpha&&!sig.positive).map((sig,i)=>(
-                                  <SignalCard key={i} sig={sig} horizonColor={horizonColor} />
+                                  // AUDIT_100 #8 — stable composite key.
+                                  <SignalCard key={`${sig.subject}|${sig.type}|${sig.date||i}`} sig={sig} horizonColor={horizonColor} />
                                 ))}
                               </div>
                             </div>
@@ -2337,7 +2340,8 @@ function ConcallIntelligence() {
                           <div style={{fontSize:10,fontWeight:800,color:TEXT3,letterSpacing:'1px',marginBottom:6}}>📰 NOISE SIGNALS — 1-5D relevance only</div>
                           <div style={{display:'flex',flexDirection:'column',gap:4}}>
                             {s.signals.filter(sig=>!sig.isAlpha).map((sig,i)=>(
-                              <div key={i} style={{padding:'7px 10px',backgroundColor:'#1A2840',borderRadius:6,fontSize:10,color:'#8A95A3'}}>
+                              // AUDIT_100 #8 — stable composite key.
+                              <div key={`${sig.subject}|${sig.type}|${sig.date||i}`} style={{padding:'7px 10px',backgroundColor:'#1A2840',borderRadius:6,fontSize:10,color:'#8A95A3'}}>
                                 <span style={{fontWeight:600,color:sig.positive?'#10b981':'#ef4444'}}>{sig.type.replace(/_/g,' ')}</span>: {sig.text.slice(0,80)}...
                               </div>
                             ))}

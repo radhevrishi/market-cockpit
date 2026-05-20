@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Plus, Trash2, TrendingUp, TrendingDown, RefreshCw, Download, ArrowUpDown, Edit3, Check, X } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Plus, Trash2, TrendingUp, TrendingDown, RefreshCw, Download, Upload, ArrowUpDown, Edit3, Check, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import TickerSearch, { type TickerSuggestion } from '@/components/TickerSearch';
 import { normalizeTicker } from '@/lib/tickers';
@@ -595,6 +595,62 @@ export default function PortfolioPage() {
     return sorted;
   }, [rows, sortField, sortOrder]);
 
+  // AUDIT_100 #28 — bulk CSV import. Pastes / drops a broker-export CSV with
+  // columns symbol,price,quantity[,notes]. Header row is optional (auto-detect).
+  // Existing holdings are averaged in; new symbols appended. Pure client-side
+  // parser, no new API surface.
+  const importInputRef = useRef<HTMLInputElement | null>(null);
+  const handleImportCsv = useCallback((file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const text = String(reader.result || '');
+        const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        if (lines.length === 0) { toast.error('Empty file'); return; }
+        // Detect header
+        const first = lines[0].toLowerCase();
+        const hasHeader = /symbol|ticker|qty|quantity|price/.test(first);
+        const dataLines = hasHeader ? lines.slice(1) : lines;
+        const parsed: PortfolioHolding[] = [];
+        const skipped: string[] = [];
+        for (const line of dataLines) {
+          const parts = line.split(/[,\t;]/).map(p => p.trim().replace(/^"|"$/g, ''));
+          if (parts.length < 3) { skipped.push(line); continue; }
+          const sym = parts[0].toUpperCase().replace(/^(NSE|BSE|BOM|MCX):/, '');
+          const px = Number(parts[1]);
+          const qty = Number(parts[2]);
+          const notes = parts[3] || '';
+          if (!/^[A-Z0-9&-]+$/.test(sym) || !isFinite(px) || px <= 0 || !isFinite(qty) || qty <= 0) {
+            skipped.push(line); continue;
+          }
+          parsed.push({ symbol: sym, entryPrice: px, quantity: qty, weight: 0, addedAt: new Date().toISOString(), notes: notes || undefined });
+        }
+        if (parsed.length === 0) { toast.error(`No valid rows. Expected: symbol,price,quantity[,notes]`); return; }
+        // Merge with existing holdings (average in)
+        const byId = new Map(holdings.map(h => [h.symbol, h]));
+        for (const h of parsed) {
+          const ex = byId.get(h.symbol);
+          if (ex) {
+            const totalQty = ex.quantity + h.quantity;
+            const avgPrice = ((ex.entryPrice * ex.quantity) + (h.entryPrice * h.quantity)) / totalQty;
+            byId.set(h.symbol, { ...ex, entryPrice: avgPrice, quantity: totalQty });
+          } else {
+            byId.set(h.symbol, h);
+          }
+        }
+        const merged = Array.from(byId.values());
+        setHoldings(merged);
+        syncToAPI(merged);
+        toast.success(`Imported ${parsed.length} rows${skipped.length ? ` (${skipped.length} skipped)` : ''}`);
+        setTimeout(fetchData, 500);
+      } catch (err) {
+        console.error('CSV import failed', err);
+        toast.error('CSV import failed — check format');
+      }
+    };
+    reader.readAsText(file);
+  }, [holdings]);
+
   // Handlers
   const handleAdd = (h: PortfolioHolding) => {
     const exists = holdings.find(x => x.symbol === h.symbol);
@@ -719,6 +775,30 @@ export default function PortfolioPage() {
           }}>
             <Plus style={{ width: '14px', height: '14px' }} /> Add Holding
           </button>
+          {/* AUDIT_100 #28 — bulk CSV import. Pastes a broker-export CSV. */}
+          <button
+            onClick={() => importInputRef.current?.click()}
+            title="Import a CSV: symbol,price,quantity[,notes]"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: '6px',
+              backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '10px',
+              padding: '10px 14px', color: '#8BA3C1', cursor: 'pointer',
+              fontSize: '13px', fontWeight: '600',
+            }}
+          >
+            <Upload style={{ width: '14px', height: '14px' }} /> Import CSV
+          </button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".csv,.tsv,.txt,text/csv,text/plain"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) handleImportCsv(f);
+              if (importInputRef.current) importInputRef.current.value = '';
+            }}
+          />
           <button onClick={fetchData} disabled={isRefreshing} style={{
             display: 'inline-flex', alignItems: 'center', gap: '6px',
             backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '10px',
@@ -797,7 +877,8 @@ export default function PortfolioPage() {
                     { key: 'changePercent' as SortField, label: 'DAY%', align: 'right' },
                     { key: 'symbol' as SortField, label: '', align: 'right', noSort: true },
                   ].map((col, i) => (
-                    <th key={i} onClick={() => !col.noSort && handleSort(col.key)} style={{
+                    // AUDIT_100 #8 — stable composite key on table headers.
+                    <th key={`${col.key}|${col.label}|${i}`} onClick={() => !col.noSort && handleSort(col.key)} style={{
                       padding: '10px 12px', textAlign: col.align as any, fontSize: '10px', fontWeight: '700',
                       color: '#8BA3C1', letterSpacing: '0.5px', cursor: col.noSort ? 'default' : 'pointer', whiteSpace: 'nowrap',
                     }}>

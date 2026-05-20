@@ -179,6 +179,9 @@ function getSubTextOpacity(pct: number): number {
 
 type HeatmapTab = 'nifty50' | 'midcap150' | 'smallcap150';
 type HeatmapMode = 'daily' | 'earnings';
+// AUDIT_100 #39 — earnings treemap sizing options. mcap = legacy behaviour;
+// move = abs(priceMove). Toggle lives in the toolbar; default mcap.
+type EarningsSizeBy = 'mcap' | 'move';
 
 // Market cap string to numeric value for treemap sizing
 function mcapToValue(mcap: string): number {
@@ -204,6 +207,8 @@ export default function HeatmapPage() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [hoveredTicker, setHoveredTicker] = useState<string | null>(null);
+  // AUDIT_100 #39 — earnings treemap size-by toggle.
+  const [earningsSizeBy, setEarningsSizeBy] = useState<EarningsSizeBy>('mcap');
   const [containerSize, setContainerSize] = useState({ w: 1200, h: 680 });
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -402,8 +407,15 @@ export default function HeatmapPage() {
       sectorMap.set(sector, arr);
     }
 
+    // AUDIT_100 #39 — choose sizing metric based on user toggle.
+    // 'move' uses abs(priceMove) so a 30% mover is bigger than a 5% mover.
+    // Falls back to mcap when priceMove is null (Upcoming/Preview rows).
+    const sizeOf = (r: EarningsResult) => earningsSizeBy === 'move'
+      ? Math.max(1, Math.abs(r.priceMove ?? 0) * 100)
+      : mcapToValue(r.marketCap);
+
     const sectorItems = [...sectorMap.entries()].map(([sector, results]) => ({
-      value: results.reduce((s, r) => s + mcapToValue(r.marketCap), 0),
+      value: results.reduce((s, r) => s + sizeOf(r), 0),
       data: { sector, results },
     }));
 
@@ -414,7 +426,7 @@ export default function HeatmapPage() {
     for (const sr of sectorRects) {
       const { sector, results } = sr.data;
       const stockItems = results.map((r: EarningsResult) => ({
-        value: mcapToValue(r.marketCap),
+        value: sizeOf(r),
         data: r,
       }));
       const gap = 1;
@@ -425,7 +437,7 @@ export default function HeatmapPage() {
     }
 
     return { rects: allRects, sectorRects };
-  }, [earningsData, containerSize, isEarningsMode]);
+  }, [earningsData, containerSize, isEarningsMode, earningsSizeBy]);
 
   const formatTime = (d: Date | null) => d ? d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : '--:--';
 
@@ -492,6 +504,29 @@ export default function HeatmapPage() {
               <TrendingUp size={12} />Post-Earnings
             </button>
           </div>
+
+          {/* AUDIT_100 #39 — Earnings treemap "size by" toggle. mcap (legacy)
+              vs move (abs priceMove). Only visible in earnings mode. */}
+          {isEarningsMode && (
+            <div style={{ display: 'flex', backgroundColor: CARD, borderRadius: '8px', border: `1px solid ${BORDER}`, padding: '3px' }}
+                 title="Toggle how tiles are sized in Post-Earnings mode">
+              {([
+                { key: 'mcap' as EarningsSizeBy, label: 'Size: MCap' },
+                { key: 'move' as EarningsSizeBy, label: 'Size: Move %' },
+              ]).map(t => (
+                <button
+                  key={t.key}
+                  onClick={() => setEarningsSizeBy(t.key)}
+                  style={{
+                    padding: '6px 10px', borderRadius: '5px', border: 'none', fontSize: '11px', fontWeight: 700,
+                    backgroundColor: earningsSizeBy === t.key ? AMBER : 'transparent',
+                    color: earningsSizeBy === t.key ? '#000' : TEXT3,
+                    cursor: 'pointer', whiteSpace: 'nowrap',
+                  }}
+                >{t.label}</button>
+              ))}
+            </div>
+          )}
 
           {/* PATCH 0441 BUG-017 — Show Index Tab Toggle on BOTH daily and
               earnings modes. Audit reported filter buttons disappearing when
