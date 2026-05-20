@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Plus, Trash2, TrendingUp, TrendingDown, RefreshCw, Download, ArrowUpDown, AlertTriangle, Award } from 'lucide-react';
 import toast from 'react-hot-toast';
 import TickerSearch, { type TickerSuggestion } from '@/components/TickerSearch';
@@ -1131,7 +1131,18 @@ function readRichCache(): RichCache {
 
 function writeRichCache(c: RichCache) {
   if (typeof window === 'undefined') return;
-  try { localStorage.setItem(RICH_LS_KEY, JSON.stringify(c)); } catch {}
+  // PATCH 0541 — prune TTL-expired entries on write so the cache doesn't
+  // grow unbounded over time as users add/remove conviction entries.
+  // 24h TTL on cards, but allow a 7-day grace (older entries removed).
+  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const pruned: RichCache = { cards: {} };
+  for (const [k, v] of Object.entries(c.cards)) {
+    if (v?.ts && v.ts > cutoff) pruned.cards[k] = v;
+  }
+  try { localStorage.setItem(RICH_LS_KEY, JSON.stringify(pruned)); } catch {
+    // Quota exceeded — wipe entirely rather than half-write.
+    try { localStorage.removeItem(RICH_LS_KEY); } catch {}
+  }
 }
 
 /** Returns the cached card for a ticker if it's fresh, else null. */
@@ -1149,6 +1160,13 @@ function useEnrichedConvictionCards(tickers: string[]) {
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [error, setError] = useState<string | null>(null);
+  // PATCH 0541 — unmount guard for the refetch path (the useEffect path
+  // already has its own cancelled flag; refetch was missing it).
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   useEffect(() => {
     if (tickers.length === 0) return;
@@ -1238,6 +1256,7 @@ function useEnrichedConvictionCards(tickers: string[]) {
     // The effect depends on tickers.join('|'); we have to nudge it via a
     // ref-like state. Simplest: just re-run the same load logic inline.
     (async () => {
+      if (!mountedRef.current) return;
       setLoading(true);
       try {
         const BATCH = 30;
@@ -1248,6 +1267,7 @@ function useEnrichedConvictionCards(tickers: string[]) {
         const updated: Record<string, EarningsScanCard> = {};
         const cacheUpdate = readRichCache();
         for (let w = 0; w < batches.length; w += PARALLEL) {
+          if (!mountedRef.current) return;
           const wave = batches.slice(w, w + PARALLEL);
           const results = await Promise.allSettled(
             wave.map(async (batch) => {
@@ -1268,12 +1288,15 @@ function useEnrichedConvictionCards(tickers: string[]) {
               }
             }
           }
+          if (!mountedRef.current) return;
           setCards({ ...updated });
           setProgress({ done: Object.keys(updated).length, total: tickers.length });
         }
         writeRichCache(cacheUpdate);
+      } catch (e: any) {
+        console.warn('[Conviction enrichment refetch]', e?.message || e);
       } finally {
-        setLoading(false);
+        if (mountedRef.current) setLoading(false);
       }
     })();
   }, [tickers]);
