@@ -1320,29 +1320,10 @@ function passesHubFilter(c: EarningsScanCard, f: HubFilters, watchlist: Set<stri
 }
 
 function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[]; onRemove: (t: string) => void }) {
-  if (entries.length === 0) {
-    return (
-      <div style={{
-        padding: '40px 24px', textAlign: 'center',
-        backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: 12,
-      }}>
-        <div style={{ fontSize: 32, marginBottom: 10 }}>🏆</div>
-        <h3 style={{ fontSize: 15, fontWeight: 700, color: '#F5F7FA', margin: '0 0 6px' }}>
-          Conviction Beats — empty
-        </h3>
-        <p style={{ fontSize: 12, color: '#8BA3C1', margin: '0 0 12px', lineHeight: 1.5 }}>
-          This bench auto-fills with stocks that print BLOCKBUSTER or STRONG earnings in <strong style={{ color: '#22D3EE' }}>/earnings-opportunities</strong>.
-          <br />Visit that page after a day of filings; this list will populate automatically.
-        </p>
-        <a href="/earnings-opportunities" style={{
-          display: 'inline-block', padding: '8px 16px',
-          backgroundColor: '#F59E0B15', border: '1px solid #F59E0B60',
-          borderRadius: 6, color: '#F59E0B', fontSize: 12, fontWeight: 700,
-          textDecoration: 'none',
-        }}>Open Earnings Opportunities →</a>
-      </div>
-    );
-  }
+  // PATCH 0540 — all hooks declared BEFORE any early-return so React's
+  // Rules-of-Hooks holds across the empty-bench → populated-bench transition
+  // (previously the empty-state returned before useState, which would have
+  // crashed if the bench populated while the user was on the tab).
   // USER-REQ — filter state (composable AND)
   const [filters, setFilters] = useState<ConvFilters>(FILTER_DEFAULT);
   const toggle = <K extends keyof ConvFilters>(k: K, v: ConvFilters[K]) =>
@@ -1409,11 +1390,41 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
     viewMode === 'rich' ? tickersForFetch : [],
   );
 
-  // Apply hub filter on top of the conviction-filtered list.
-  const enrichedList = filteredEntries
+  // Apply hub filter on top of the conviction-filtered list (memoized — was
+  // recomputing on every render even when nothing changed).
+  const enrichedList = useMemo(() => filteredEntries
     .map(e => enrichedCards[e.ticker.toUpperCase()])
-    .filter((c): c is EarningsScanCard => Boolean(c));
-  const hubFilteredList = enrichedList.filter(c => passesHubFilter(c, hubFilters, watchlistSet, portfolioSet));
+    .filter((c): c is EarningsScanCard => Boolean(c)),
+    [filteredEntries, enrichedCards]);
+  const hubFilteredList = useMemo(() => enrichedList.filter(
+    c => passesHubFilter(c, hubFilters, watchlistSet, portfolioSet)),
+    [enrichedList, hubFilters, watchlistSet, portfolioSet]);
+
+  // PATCH 0540 — empty-state render AFTER all hooks (fixes Rules-of-Hooks
+  // landmine if the bench transitions from empty → populated mid-render).
+  if (entries.length === 0) {
+    return (
+      <div style={{
+        padding: '40px 24px', textAlign: 'center',
+        backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: 12,
+      }}>
+        <div style={{ fontSize: 32, marginBottom: 10 }}>🏆</div>
+        <h3 style={{ fontSize: 15, fontWeight: 700, color: '#F5F7FA', margin: '0 0 6px' }}>
+          Conviction Beats — empty
+        </h3>
+        <p style={{ fontSize: 12, color: '#8BA3C1', margin: '0 0 12px', lineHeight: 1.5 }}>
+          This bench auto-fills with stocks that print BLOCKBUSTER or STRONG earnings in <strong style={{ color: '#22D3EE' }}>/earnings-opportunities</strong>.
+          <br />Visit that page after a day of filings; this list will populate automatically.
+        </p>
+        <a href="/earnings-opportunities" style={{
+          display: 'inline-block', padding: '8px 16px',
+          backgroundColor: '#F59E0B15', border: '1px solid #F59E0B60',
+          borderRadius: 6, color: '#F59E0B', fontSize: 12, fontWeight: 700,
+          textDecoration: 'none',
+        }}>Open Earnings Opportunities →</a>
+      </div>
+    );
+  }
 
   // Counts for each candidate chip — applied INDEPENDENTLY to the
   // post-other-filters universe so the count reflects what the chip would
@@ -1614,7 +1625,26 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                 : 'No cards match the current hub filters. Adjust filters above.'}
             </div>
           )}
-          {hubFilteredList.length > 0 && (() => {
+          {hubFilteredList.length > 0 && filters.sortByPead && (
+            // PATCH 0540 — When PEAD sort is active, render a single
+            // top-down sorted grid; grouping by tier would break the
+            // sort signal the user just asked for.
+            <div style={{ backgroundColor: '#0D1623', border: '1px solid #22D3EE40', borderLeft: '4px solid #22D3EE', borderRadius: 12, padding: '14px 18px' }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: '#22D3EE', marginBottom: 10, letterSpacing: '0.5px' }}>
+                🌊 PEAD-SORTED · {hubFilteredList.length}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: 12 }}>
+                {hubFilteredList.map((c) => (
+                  <div key={c.symbol} style={{ position: 'relative' }}>
+                    <EarningsCardComponent card={c} />
+                    <button onClick={() => onRemove(c.symbol)} title="Remove from Conviction Beats"
+                      style={{ position: 'absolute', top: 8, right: 8, background: '#0A1422', border: '1px solid #2A3B4C', color: '#8BA3C1', cursor: 'pointer', padding: '3px 7px', fontSize: 12, borderRadius: 4 }}>×</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {hubFilteredList.length > 0 && !filters.sortByPead && (() => {
             const bb = hubFilteredList.filter(c => {
               const e = entries.find(en => en.ticker.toUpperCase() === c.symbol.toUpperCase());
               return e?.tier === 'BLOCKBUSTER';
