@@ -213,7 +213,9 @@ function OutlookPill({ label, value }: { label: string; value?: string }) {
 }
 
 function FinancialTable({ card }: { card: EarningsScanCard }) {
-  const quarters = card.quarters.slice(0, 3);
+  // PATCH 0545 — defensive against payloads where quarters is missing/null.
+  // Earnings-scan API normally returns [] but server hiccups can drop the field.
+  const quarters = Array.isArray(card.quarters) ? card.quarters.slice(0, 3) : [];
   if (quarters.length === 0) return null;
 
   const metrics = card.isBanking
@@ -267,7 +269,8 @@ function FinancialTable({ card }: { card: EarningsScanCard }) {
 type CommentarySignal = 'POSITIVE' | 'MIXED' | 'RED_FLAG';
 
 function generateEarningsCommentary(card: EarningsScanCard): { text: string; forward: string; signal: CommentarySignal } | null {
-  if (card.dataQuality === 'PRICE_ONLY' || card.quarters.length === 0) return null;
+  // PATCH 0545 — defensive against missing/null quarters in partial payloads.
+  if (card.dataQuality === 'PRICE_ONLY' || !Array.isArray(card.quarters) || card.quarters.length === 0) return null;
 
   const rev = card.revenueYoY;
   const pat = card.patYoY;
@@ -515,7 +518,7 @@ export function EarningsCardComponent({ card, postGap }: { card: EarningsScanCar
       </div>
 
       {/* Financial table */}
-      {card.dataQuality !== 'PRICE_ONLY' && card.quarters.length > 0 ? (
+      {card.dataQuality !== 'PRICE_ONLY' && Array.isArray(card.quarters) && card.quarters.length > 0 ? (
         <div style={{ padding: '8px 12px 12px' }}><FinancialTable card={card} /></div>
       ) : (
         <div style={{ padding: '16px', textAlign: 'center', color: YELLOW, fontSize: '12px', backgroundColor: `${YELLOW}08` }}>
