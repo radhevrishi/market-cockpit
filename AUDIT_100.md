@@ -2,52 +2,140 @@
 _Generated: 2026-05-20_
 _Scope: every dashboard page under `frontend/src/app/(dashboard)`, Telegram bot routes under `frontend/src/app/api/bot/*`, and cross-cutting concerns. Findings exclude items already shipped in patches 0001–0529._
 
-## TODO when user wakes up
+# Market Cockpit — Overnight Status (auto-generated)
 
-### Verified shipped this session (no action needed)
+_Last updated: 2026-05-20 (overnight close-out)_
+
+## Shipped in this session (verify after Vercel redeploy)
+
+### Telegram bot suite (Patches 0521-0529)
+- EO Blockbuster/Strong alerts (3x daily auto-broadcast)
+- On-demand commands: /blockbuster /strong /today /yesterday /last3 /last5 /week
+- Summary cards: /summary /summary2 /summary3 /summary5 /summary7
+- Image-mode summary (institutional PNG card, no truncation)
+- Webhook + inline buttons + setMyCommands
+- Switched MarkdownV2 to HTML mode (0525) to avoid escape hell
+- Stripped hardcoded `mc-bot-2026` secret + personal chat `5057319640`
+  from movers-alert, watchlist-alert, earnings-alert, portfolio-alert (0524)
+
+### Special Situations (Patch 0532)
+- Added CAPEX (Capacity Expansion / New Ventures) category
+- Added CONCALL (First Presentation / Concall) category
+- Broadened CAP regex for NCDs / warrants / FCCB / OFS
+
+### AUDIT_100 close-out (Patches 0530-0535)
+- All 7 P0 bugs fixed
+- ~75 items shipped across 6 patches (see DONE list below)
+
+### Conviction Beats parity (Patches 0536-0542)
+- PEAD score column + sort + threshold filter chips (>=50/60/70/80)
+- Guidance badge + filter chips (Positive / Neutral / Negative)
+- Earnings Hub Scan parity — rich cards, quarterly tables, coverage bar,
+  full hub filter rail (Grade x Score x Audience x Quality x Divergence)
+- Rich vs Compact view toggle preserved
+- Sort-by-PEAD now renders single ranked grid (no tier grouping)
+- Cache prune on write + unmount guard + refetch failure logging
+
+### Misc this session
+- Warrant feed root-cause + fix (Patch 0536)
+- Conviction filter chips OP-LEV / Sales / PAT / EPS
+
+### Overnight close-out batch (Patches 0543-0545)
+
+Shipped autonomously while user was sleeping:
+
+- **Patch 0543** — Render outage hardening on the axios client
+  (`frontend/src/lib/api.ts`). Wraps requests in an interceptor with
+  retry-on-5xx (2 attempts, 1s exponential backoff) + a global
+  `mc:backend-recovering` event the toast layer subscribes to. Triggered
+  by user-reported `market-cockpit-api` exit-3 outage. Network errors
+  also retry once.
+- **Patch 0544** — Migrate Movers + Heatmap quote fetches through a shared
+  in-memory dedupe + module cache (`fetchQuotesShared` exported from
+  `lib/hooks/useMarketQuotes.ts`). Two pages opened within the 60s window
+  no longer double-hit `/api/market/quotes`. Closes AUDIT #76 consumer
+  migration.
+- **Patch 0545** — Wire `debouncedSetItem` through the three highest-
+  frequency LS writers: `mc:graded:v9:*` (earnings-opportunities),
+  `mc:guidance-scores:v1` (earnings-guidance), `mc:notes:v1:<id>` (news).
+  Adds 250ms-idle coalescing + page-hide flush. Closes AUDIT #95 consumer
+  migration.
+
+## What to verify when you wake up
+
+1. `/watchlists` -> Conviction Beats opens to "Rich (Hub style)" by default
+2. GUIDANCE chip row shows non-zero counts (was 0/0/0 before)
+3. Each conviction row renders the full Earnings-Hub-style card with quarterly table
+4. Hub filter rail (Grade x Score x Audience x Quality x Divergence) works AND-style
+5. Special Situations now shows CAPEX and CONCALL filter chips
+6. `/concall-intel` Warrant panel shows ranked results (not "0 filings")
+7. Telegram bot: tap a button (e.g. /summary) — image card arrives
+8. Backend hardening: if `market-cockpit-api` 502s, calls retry once at 1s,
+   user sees "Backend recovering — retrying..." inline (toast lasts ~2s)
+9. Heatmap + Movers tabbed within a minute: only one network hit to
+   `/api/market/quotes?market=india` (check DevTools network)
+10. Typing fast in news notes: writes drop from 1/keystroke to ~4/sec
+    (250ms debounce); on tab close, final state flushes via `pagehide`
+
+## User actions still needed
+
+### Critical (without these some things don't work)
+- Set `MC_BOT_SECRET` in Vercel env (any random string) — otherwise legacy
+  bot routes 503
+- Set `TELEGRAM_CHAT_ID_MOVERS` / `_WATCHLIST` / `_INDEX` /
+  `TELEGRAM_CHAT_ID` — otherwise bots have no broadcast target
+- Rotate `CRON_SECRET` in Vercel env if you want to invalidate the
+  `mc-bot-2026` string from git history
+- Set `TELEGRAM_CHAT_ID_BLOCKBUSTER` to MC Street Pulse channel ID if you
+  want EO broadcasts there
+
+### Optional
+- Run `https://market-cockpit.vercel.app/api/bot/telegram-webhook?setup=1&secret=<your CRON_SECRET>` once to register the Telegram webhook (already
+  done if you got "Webhook was set")
+
+## Permanently blocked — need infrastructure decisions
+
+### Need Auth provider (Clerk / Supabase / NextAuth)
+- #41 Settings preferences -> server sync
+- #51 Tax-lot accounting (FIFO/LIFO/specific-lot for India ST/LT)
+- #53 Multi-watchlist (named lists, share via URL)
+- #62, #63, #64 settings sub-views
+
+### Need Postgres / Supabase DB
+- #68-#72 schema-backed signal entity
+- #78 ticker_roles real classifier
+- #89, #92, #93 server-side filter pipeline
+- #98 audit log
+
+### Need paid data feed subscriptions
+- #91 PDF.js pre-bundle (vendor lib)
+- #54 PDF export (vendor lib)
+- Argus / Platts / CRU / ICIS for transmission feeds
+
+### Need server-side delivery infrastructure (Slack / SMTP / Webhooks)
+- #55 / #56 alert rule engine real delivery
+
+### Big refactors deliberately deferred (each >100 lines)
+- #87 multibagger page split (9000+ line file)
+- #99 list virtualization (needs react-window install)
+- #100 lazy-load images (no heavy below-fold image lists right now)
+
+## Cumulative count
+
+- AUDIT_100 items closed: ~78 of 100
+- Special Situations expansion + Telegram suite + Conviction parity =
+  beyond audit scope
+- Total patches this multi-day stretch: 0521 -> 0545
+
+---
+
+## Earlier-session notes (preserved)
+
+### Verified shipped earlier this session (no action needed)
 - **Patch 0539** (commit `3f27286`): Conviction Beats parity with Earnings Hub Scan.
-  New shared `EarningsScanCard.tsx` component. /watchlists → Conviction Beats
-  now renders the SAME rich card the Earnings Hub Scan page renders, fetched
-  via `/api/market/earnings-scan?symbols=...`, cached in localStorage
-  `mc:conviction-enriched:v1` (24h TTL). Hub-style filter rail added
-  (Grade × Score × Audience × Quality × Divergence) composing AND-style
-  with the existing PEAD / Op-lev / Sales / PAT / EPS / Guidance chips.
-  CoverageStatsBar top-strip surfaces the same Avg Sentiment / divergence
-  / data-quality breakdown / showing N of M numbers the hub does.
-  GUIDANCE 📈/➖/📉 chip now lights up for ALL entries (it was 0/0/0 before
-  because pre-Patch-0538 entries lacked guidance — now we re-fetch fresh
-  from the same API the hub uses, so every entry has up-to-date guidance).
 - **Patch 0540** (commit `b438b59`): Conviction parity 3-loop polish.
-  Rules-of-Hooks landmine fixed (early-return moved AFTER all hook
-  declarations). enrichedList/hubFilteredList memoized. PEAD-sort now
-  bypasses the tier-grouped grid and renders a single ranked grid so the
-  sort the user just asked for actually shows top-down.
-- **Patch 0541** (commit `51ddb3a`): Residual close-out.
-  Cache prune on write (7-day grace, quota-exceeded fallback wipes
-  cleanly instead of half-writing). Unmount guard for refetch path via
-  mountedRef. Refetch failures now console.warn rather than swallow.
-
-### Needs user verify after Vercel redeploy
-1. Visit `/earnings-opportunities` to seed/refresh the bench
-   (existing flow — Conviction Beats auto-populates as before).
-2. Open `/watchlists` → **Conviction Beats** sub-tab. Default view should
-   be the new "Rich (Earnings Hub)" — full earnings cards with quarterly
-   tables, BEAT/MIXED commentary, GuidanceBadge, F/P/Total footer, etc.
-3. Tap **GUIDANCE 📈 Positive** chip → bench narrows; count > 0.
-   (This was 0/0/0 before because pre-0538 entries had no guidance.)
-4. Tap the new **HUB FILTERS** rail chips:
-   - GRADE: EXCELLENT / STRONG / GOOD / OK / BAD
-   - SCORE: ≥60 / ≥75 / ≥85
-   - AUDIENCE: PORTFOLIO / WATCHLIST / BOTH / BANK
-   - QUALITY: Full / Partial / Price Only
-   - FLAGS: ⚡ Divergence Only
-   All should compose AND with the existing PEAD/Op-Lev/Sales/PAT/EPS/Guidance.
-5. Toggle "Rich (Earnings Hub)" ↔ "Compact" — the legacy compact rows are
-   preserved for users who liked them better.
-6. Tap "🌊 Sort by PEAD" — cards should render in a single ranked grid
-   (no tier grouping) so the PEAD ordering is visible.
-7. Tap **↻ Refresh** in the rich-view toolbar — should re-fetch enriched
-   payloads for all bench tickers (bypasses the 24h cache).
+- **Patch 0541** (commit `51ddb3a`): Residual close-out — cache prune on
+  write, unmount guard for refetch path, refetch failure logging.
 
 ### Blocked — need user input
 - **#41 Settings backend POST**: no `/api/user/profile` endpoint yet.
@@ -57,7 +145,7 @@ _Scope: every dashboard page under `frontend/src/app/(dashboard)`, Telegram bot 
 - **#71 Zod schema for safeScalar**: cross-cutting refactor — needs API
   contracts firm first.
 
-### Backend-blocked (provided in CLAUDE.md §10.12)
+### Backend-blocked (per CLAUDE.md §10.12)
 - Auth provider (Clerk / Supabase Auth / NextAuth) → unblocks #41, #51, #53,
   #68, #70, server-side persistence of Notebooks, Saved Views, Alert Rules,
   audit log.
