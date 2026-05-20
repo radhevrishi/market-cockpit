@@ -317,6 +317,92 @@ async function fetchYahooForSymbol(symbol: string): Promise<any | null> {
   finally { clearTimeout(t); }
 }
 
+// ─── Yahoo Finance quarterly fundamentals (4th-source fallback for Cloudflare-blocked Screener) ─
+//
+// PATCH 0512 — Pulls quarterly income statement from Yahoo Finance's
+// quoteSummary endpoint. Used when Screener.in returns null (Cloudflare
+// block on Vercel IPs) AND NSE's structured /financial-results is sparse.
+//
+// Endpoint: /v10/finance/quoteSummary/<SYM>.NS?modules=incomeStatementHistoryQuarterly
+//
+// Returns up to 4 quarters of: totalRevenue, netIncome, basicEPS, ebit.
+// Picks latest 2 quarters and computes Sales/PAT/EPS YoY %.
+//
+// Unlike Screener, Yahoo is NOT Cloudflare-blocked from Vercel IPs.
+// This gives us a fighting chance to surface YoY data for tickers like
+// JAINREC, IOC, IGL, HLEGLAS when Screener is blocking.
+async function fetchYahooFundamentals(symbol: string): Promise<any | null> {
+  const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}.NS?modules=incomeStatementHistoryQuarterly,price,summaryDetail`;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), YAHOO_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': UA, 'Accept': 'application/json' },
+      signal: ctrl.signal,
+    });
+    if (!res.ok) return null;
+    const j = await res.json();
+    const result = j?.quoteSummary?.result?.[0];
+    if (!result) return null;
+    const quarterly = result.incomeStatementHistoryQuarterly?.incomeStatementHistory || [];
+    if (quarterly.length < 2) return null;
+
+    // Yahoo orders newest → oldest. Index 0 = latest Q, find YoY (target ≈ 1y back).
+    const latest = quarterly[0];
+    const latestDate = new Date((latest.endDate?.raw || 0) * 1000);
+    const yoyTarget = new Date(latestDate); yoyTarget.setFullYear(yoyTarget.getFullYear() - 1);
+    let prior: any = null;
+    let bestDiff = Infinity;
+    for (const q of quarterly.slice(1)) {
+      const qd = new Date((q.endDate?.raw || 0) * 1000);
+      const diff = Math.abs(qd.getTime() - yoyTarget.getTime());
+      if (diff < bestDiff) { bestDiff = diff; prior = q; }
+    }
+    if (!prior) return null;
+
+    // Yahoo values are in raw INR (not crores). Divide by 1e7 for Cr.
+    const num = (v: any): number | null => {
+      const n = v?.raw;
+      return typeof n === 'number' && Number.isFinite(n) ? n : null;
+    };
+    const salesCurr = num(latest.totalRevenue);
+    const salesPrev = num(prior.totalRevenue);
+    const patCurr = num(latest.netIncome);
+    const patPrev = num(prior.netIncome);
+    const epsCurr = num(latest.basicEPS) ?? num(latest.dilutedEPS);
+    const epsPrev = num(prior.basicEPS) ?? num(prior.dilutedEPS);
+    const opCurr = num(latest.ebit) ?? num(latest.operatingIncome);
+    const opPrev = num(prior.ebit) ?? num(prior.operatingIncome);
+
+    const yoy = (curr: number | null, prev: number | null): number | null => {
+      if (curr == null || prev == null || prev === 0) return null;
+      return ((curr - prev) / Math.abs(prev)) * 100;
+    };
+
+    const out: any = {
+      sales_curr_cr: salesCurr != null ? salesCurr / 1e7 : null,
+      sales_prev_cr: salesPrev != null ? salesPrev / 1e7 : null,
+      sales_yoy_pct: yoy(salesCurr, salesPrev),
+      pat_curr_cr: patCurr != null ? patCurr / 1e7 : null,
+      pat_prev_cr: patPrev != null ? patPrev / 1e7 : null,
+      pat_yoy_pct: yoy(patCurr, patPrev),
+      eps_curr: epsCurr,
+      eps_prev: epsPrev,
+      eps_yoy_pct: yoy(epsCurr, epsPrev),
+      op_profit_yoy_pct: yoy(opCurr, opPrev),
+      latest_quarter_end_iso: !isNaN(latestDate.getTime()) ? latestDate.toISOString().slice(0, 10) : undefined,
+      period_ended: !isNaN(latestDate.getTime()) ? latestDate.toISOString().slice(0, 10) : undefined,
+      pe: result.summaryDetail?.trailingPE?.raw ?? null,
+      financials_source: 'yahoo-fundamentals',
+    };
+    return out;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 // ─── NSE structured financials (PRIMARY) ───────────────────────────────────
 // Pulls quarterly financial results directly from NSE's
 // /api/corporates-financial-results endpoint. Returns the latest 2
@@ -506,26 +592,31 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
       if (cached) return cached;
     } catch {}
   }
-  // Run all sources in parallel
-  const [nse, screener, yahoo] = await Promise.all([
+  // Run all sources in parallel — added Yahoo fundamentals as 4th source.
+  // PATCH 0512 — Yahoo fundamentals is the rescue path for tickers that
+  // Screener Cloudflare-blocks (JAINREC, IOC, IGL, HLEGLAS, KMSUGAR etc).
+  // Yahoo's quoteSummary endpoint is not blocked from Vercel.
+  const [nse, screener, yahoo, yahooFund] = await Promise.all([
     fetchNseFinancials(symbol),
     fetchScreenerForSymbol(symbol),
     fetchYahooForSymbol(symbol),
+    fetchYahooFundamentals(symbol),
   ]);
-  // Merge: NSE primary, Screener fills gaps, Yahoo overlays price/RS/Stage
-  const fin = nse || screener || {};
-  // If NSE has financials but Screener has sector/market_cap_bucket, take from Screener
+  // Merge priority: NSE → Screener → Yahoo fundamentals (last-resort
+  // financials). Yahoo price/chart data always overlays.
+  const fin = nse || screener || yahooFund || {};
+  // Sector/market_cap_bucket from Screener if available, else from Yahoo summaryDetail
   const meta = screener ? {
     sector: screener.sector,
     market_cap_bucket: screener.market_cap_bucket,
     market_cap_cr: screener.market_cap_cr,
     pe: screener.pe,
-  } : {};
+  } : (yahooFund && yahooFund.pe ? { pe: yahooFund.pe } : {});
   const out: any = {
     ...fin,
     ...meta,
     ...(yahoo || {}),
-    financials_source: nse ? 'nse' : (screener ? 'screener' : null),
+    financials_source: nse ? 'nse' : (screener ? 'screener' : (yahooFund ? 'yahoo-fundamentals' : null)),
     _enriched_at: new Date().toISOString(),
   };
 
