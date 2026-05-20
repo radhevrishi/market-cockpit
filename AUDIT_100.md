@@ -2,6 +2,74 @@
 _Generated: 2026-05-20_
 _Scope: every dashboard page under `frontend/src/app/(dashboard)`, Telegram bot routes under `frontend/src/app/api/bot/*`, and cross-cutting concerns. Findings exclude items already shipped in patches 0001–0529._
 
+## TODO when user wakes up
+
+### Verified shipped this session (no action needed)
+- **Patch 0539** (commit `3f27286`): Conviction Beats parity with Earnings Hub Scan.
+  New shared `EarningsScanCard.tsx` component. /watchlists → Conviction Beats
+  now renders the SAME rich card the Earnings Hub Scan page renders, fetched
+  via `/api/market/earnings-scan?symbols=...`, cached in localStorage
+  `mc:conviction-enriched:v1` (24h TTL). Hub-style filter rail added
+  (Grade × Score × Audience × Quality × Divergence) composing AND-style
+  with the existing PEAD / Op-lev / Sales / PAT / EPS / Guidance chips.
+  CoverageStatsBar top-strip surfaces the same Avg Sentiment / divergence
+  / data-quality breakdown / showing N of M numbers the hub does.
+  GUIDANCE 📈/➖/📉 chip now lights up for ALL entries (it was 0/0/0 before
+  because pre-Patch-0538 entries lacked guidance — now we re-fetch fresh
+  from the same API the hub uses, so every entry has up-to-date guidance).
+- **Patch 0540** (commit `b438b59`): Conviction parity 3-loop polish.
+  Rules-of-Hooks landmine fixed (early-return moved AFTER all hook
+  declarations). enrichedList/hubFilteredList memoized. PEAD-sort now
+  bypasses the tier-grouped grid and renders a single ranked grid so the
+  sort the user just asked for actually shows top-down.
+- **Patch 0541** (commit `51ddb3a`): Residual close-out.
+  Cache prune on write (7-day grace, quota-exceeded fallback wipes
+  cleanly instead of half-writing). Unmount guard for refetch path via
+  mountedRef. Refetch failures now console.warn rather than swallow.
+
+### Needs user verify after Vercel redeploy
+1. Visit `/earnings-opportunities` to seed/refresh the bench
+   (existing flow — Conviction Beats auto-populates as before).
+2. Open `/watchlists` → **Conviction Beats** sub-tab. Default view should
+   be the new "Rich (Earnings Hub)" — full earnings cards with quarterly
+   tables, BEAT/MIXED commentary, GuidanceBadge, F/P/Total footer, etc.
+3. Tap **GUIDANCE 📈 Positive** chip → bench narrows; count > 0.
+   (This was 0/0/0 before because pre-0538 entries had no guidance.)
+4. Tap the new **HUB FILTERS** rail chips:
+   - GRADE: EXCELLENT / STRONG / GOOD / OK / BAD
+   - SCORE: ≥60 / ≥75 / ≥85
+   - AUDIENCE: PORTFOLIO / WATCHLIST / BOTH / BANK
+   - QUALITY: Full / Partial / Price Only
+   - FLAGS: ⚡ Divergence Only
+   All should compose AND with the existing PEAD/Op-Lev/Sales/PAT/EPS/Guidance.
+5. Toggle "Rich (Earnings Hub)" ↔ "Compact" — the legacy compact rows are
+   preserved for users who liked them better.
+6. Tap "🌊 Sort by PEAD" — cards should render in a single ranked grid
+   (no tier grouping) so the PEAD ordering is visible.
+7. Tap **↻ Refresh** in the rich-view toolbar — should re-fetch enriched
+   payloads for all bench tickers (bypasses the 24h cache).
+
+### Blocked — need user input
+- **#41 Settings backend POST**: no `/api/user/profile` endpoint yet.
+- **#51 FIFO tax-lot accounting**: needs Postgres + Auth.
+- **#53 Multi-watchlist persistence**: needs Auth for cross-device.
+- **#62 Bottleneck workbench L1–L6 ladder**: needs schema (per §10.7).
+- **#71 Zod schema for safeScalar**: cross-cutting refactor — needs API
+  contracts firm first.
+
+### Backend-blocked (provided in CLAUDE.md §10.12)
+- Auth provider (Clerk / Supabase Auth / NextAuth) → unblocks #41, #51, #53,
+  #68, #70, server-side persistence of Notebooks, Saved Views, Alert Rules,
+  audit log.
+- Postgres / Supabase DB → unblocks Signal+SignalEvidence, ticker_roles,
+  theme_revisions diff log, lifecycle state machine (real table — heuristic
+  v0 already shipped).
+- Slack / SMTP / webhook creds → unblocks server-side alert delivery.
+- Paid Argus / Platts / CRU / ICIS feeds → unblocks the 14 manual-feed
+  transmission inputs (equity-proxy mode (0250) is the bridge).
+
+---
+
 ## STATUS (closeout pass — 2026-05-20)
 
 Living document. Patch 0535 was the closeout batch; this list tracks what
