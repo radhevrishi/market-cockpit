@@ -880,7 +880,7 @@ export async function GET(request: Request) {
   diagnostics.steps.push('request_received');
 
   if (secret !== BOT_SECRET) {
-    return NextResponse.json({ error: 'Unauthorized', hint: 'Add ?secret=mc-bot-2026 to the URL' }, { status: 401 });
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   diagnostics.steps.push('auth_passed');
 

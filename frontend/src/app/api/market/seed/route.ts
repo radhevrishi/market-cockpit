@@ -7,7 +7,7 @@
  * GET /api/market/seed                → run both pipelines
  * GET /api/market/seed?only=guidance  → guidance ingest only
  * GET /api/market/seed?only=intelligence → intelligence compute only
- * GET /api/market/seed?secret=mc-bot-2026 → secure call (Vercel cron)
+ * GET /api/market/seed?secret=<CRON_SECRET> → secure call (Vercel cron)
  *
  * Returns immediately with job status — actual compute happens in background.
  * Both pipelines have their own distributed locks and run independently.

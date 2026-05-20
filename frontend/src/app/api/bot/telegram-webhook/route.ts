@@ -6,8 +6,9 @@
 // and other data instantly without waiting for the next cron.
 //
 // SETUP (one-time, run from browser or curl):
-//   GET /api/bot/telegram-webhook?setup=1&secret=mc-bot-2026
+//   GET /api/bot/telegram-webhook?setup=1&secret=<CRON_SECRET>
 //     → registers this URL as the webhook with Telegram + sets command menu
+//   CRON_SECRET MUST be set in Vercel env — no hardcoded fallback.
 //
 // TELEGRAM SLASH COMMANDS supported:
 //   /start, /menu        — welcome + button keyboard

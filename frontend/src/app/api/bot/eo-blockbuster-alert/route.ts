@@ -11,14 +11,13 @@
 // to BLOCKBUSTER + STRONG tiers only. KV-deduped so the same ticker is sent
 // at most once per 48h regardless of how many crons fire.
 //
-// Setup (env vars in Vercel):
-//   • TELEGRAM_BOT_TOKEN_EARNINGS — bot token (already set, reused from
-//     existing earnings-alert)
-//   • TELEGRAM_CHAT_ID_BLOCKBUSTER — channel chat ID (e.g. -1001234567890
-//     for a private supergroup, or @MC_Street_Pulse for a public channel).
-//     If unset, falls back to TELEGRAM_CHAT_ID_EARNINGS or the existing
-//     personal chat 5057319640.
-//   • CRON_SECRET — optional auth gate (uses ?secret= query param)
+// Setup (env vars in Vercel — REQUIRED, no hardcoded fallbacks):
+//   • TELEGRAM_BOT_TOKEN_EARNINGS or TELEGRAM_BOT_TOKEN — bot token
+//   • TELEGRAM_CHAT_ID_BLOCKBUSTER or TELEGRAM_CHAT_ID_EARNINGS or
+//     TELEGRAM_CHAT_ID — destination chat ID
+//     (numeric like -1001234567890 for private supergroup, or @handle
+//     for a public channel)
+//   • CRON_SECRET — auth gate; Vercel cron header also accepted
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
@@ -33,10 +32,13 @@ const BOT_TOKEN =
   process.env.TELEGRAM_BOT_TOKEN ||
   '';
 
+// CHAT_ID for the broadcast channel — must be set in Vercel env.
+// No hardcoded personal-chat fallback (security hygiene).
 const CHAT_ID =
   process.env.TELEGRAM_CHAT_ID_BLOCKBUSTER ||
   process.env.TELEGRAM_CHAT_ID_EARNINGS ||
-  '5057319640'; // fallback to existing personal chat
+  process.env.TELEGRAM_CHAT_ID ||
+  '';
 
 const API_BASE = 'https://market-cockpit.vercel.app';
 const DEDUP_TTL_S = 48 * 60 * 60; // 48h — covers all 3 daily cron firings + next day
