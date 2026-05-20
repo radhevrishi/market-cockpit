@@ -5,6 +5,8 @@ import { Activity, Filter, ChevronDown, ChevronUp } from 'lucide-react';
 import { CHAT_ID, BOT_SECRET } from '@/lib/config';
 // PATCH 0273 — Conviction Beats overlay on Earnings Guidance.
 import { getConvictionTickers } from '@/lib/conviction-beats';
+// PATCH 0545 — AUDIT #95 debounced LS writes for the guidance history snapshot.
+import { debouncedSetItem } from '@/lib/debounced-storage';
 
 // PATCH 0294 — Q-over-Q score delta + sparkline (audit IMP-04).
 // We snapshot every (symbol, period) guidance score into localStorage on
@@ -45,7 +47,10 @@ function writeGuidanceHistory(h: GuidanceHistoryShape) {
       for (const p of periods) next[p] = h[s][p];
       pruned[s] = next;
     }
-    localStorage.setItem(GUIDANCE_HISTORY_KEY, JSON.stringify(pruned));
+    // PATCH 0545 — debounced write coalesces N rapid period snapshots from
+    // the render loop into a single LS write per 250ms idle window. Was
+    // doing 1 stringify + setItem per render (heavy on a 500-symbol load).
+    debouncedSetItem(GUIDANCE_HISTORY_KEY, JSON.stringify(pruned));
   } catch {}
 }
 function periodKey(iso: string, quarter?: string): string {

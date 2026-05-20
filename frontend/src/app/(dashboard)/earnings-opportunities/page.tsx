@@ -19,6 +19,8 @@ import { Calendar as CalendarIcon, ExternalLink, RefreshCw, ChevronDown, Chevron
 import api from '@/lib/api';
 // PATCH 0186 — Auto-sync BLOCKBUSTER/STRONG cards into Conviction Beats pipeline
 import { syncFromEarningsOps, type ConvictionTier } from '@/lib/conviction-beats';
+// PATCH 0545 — AUDIT #95 debounced LS writes for the hot graded payload writer.
+import { debouncedSetItem } from '@/lib/debounced-storage';
 
 // ─── Calendar payload types ────────────────────────────────────────────────
 interface CalendarItem {
@@ -112,7 +114,8 @@ function useMarketEarnings(months: string[]) {
         }
       }
       const payload = { results: all, source: responses[0]?.source || 'NSE + BSE', updatedAt: new Date().toISOString() } as MarketEarningsResponse;
-      try { if (typeof window !== 'undefined') localStorage.setItem(HUB_LS_PREFIX + key, JSON.stringify({ ...payload, _cachedAt: Date.now() })); } catch {}
+      // PATCH 0545 — debounced LS write (same rationale as writeLsCache below).
+      try { if (typeof window !== 'undefined') debouncedSetItem(HUB_LS_PREFIX + key, JSON.stringify({ ...payload, _cachedAt: Date.now() })); } catch {}
       return payload;
     },
     // Aggressive caching: hub data is mostly stable. Refetch only every 15 min for current month, 6h for past.
@@ -886,7 +889,10 @@ export default function EarningsOpportunitiesPage() {
   };
   const writeLsCache = (date: string, data: OpportunitiesPayload) => {
     if (!date || typeof window === 'undefined') return;
-    try { localStorage.setItem(LS_PREFIX + date, JSON.stringify({ ...data, _cachedAt: Date.now() })); } catch {}
+    // PATCH 0545 — coalesced via 250ms idle window. Avoids stringify+writeIO
+    // on every React Query revalidate when the user is rapid-clicking the
+    // date arrows (each click can fire a setData + writeLsCache pair).
+    try { debouncedSetItem(LS_PREFIX + date, JSON.stringify({ ...data, _cachedAt: Date.now() })); } catch {}
   };
 
   // PATCH 0161/0165/0185 — graded query reads from localStorage initialData

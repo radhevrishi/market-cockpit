@@ -16,6 +16,8 @@ import { annotateArticle, clusterByCanonical, confidenceBand, CONFIDENCE_VISUAL 
 // PATCH 0455 CLEANUP-3 — Centralized vocab.
 import { JUNK_TICKERS, TICKER_ALIASES } from '@/lib/news/ticker-vocab';
 import { isInReadingList, toggleReadingList } from '@/lib/reading-list';
+// PATCH 0545 — AUDIT #95 debounced LS writes for thesis-notebook autosave.
+import { debouncedSetItem } from '@/lib/debounced-storage';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -1142,7 +1144,10 @@ function loadNote(articleId: string): string {
 function saveNote(articleId: string, text: string) {
   if (typeof window === 'undefined') return;
   try {
-    if (text.trim()) localStorage.setItem(NOTE_KEY_PREFIX + articleId, text);
+    // PATCH 0545 — autosave fires every 600ms while typing. We further coalesce
+    // through a 250ms idle window so a 5-keystroke burst writes ONCE, not 5×.
+    // Empty-text path still uses raw removeItem (small, doesn't need debounce).
+    if (text.trim()) debouncedSetItem(NOTE_KEY_PREFIX + articleId, text);
     else localStorage.removeItem(NOTE_KEY_PREFIX + articleId);
   } catch {}
 }
