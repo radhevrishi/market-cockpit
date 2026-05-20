@@ -33,7 +33,8 @@ const BOT_TOKEN =
   process.env.TELEGRAM_BOT_TOKEN ||
   '';
 const API_BASE = 'https://market-cockpit.vercel.app';
-const SECRET = process.env.CRON_SECRET || 'mc-bot-2026';
+// CRON_SECRET MUST be set in Vercel env — no hardcoded fallback (security).
+const SECRET = process.env.CRON_SECRET || '';
 
 // ─── Telegram helpers ──────────────────────────────────────────────────────
 
@@ -421,8 +422,16 @@ export async function POST(req: Request) {
           from: cb.from,
         },
       };
-      // fire-and-forget so we return 200 to Telegram fast
-      dispatchCommand(chatId, cmd, synthetic).catch(() => {});
+      // AWAIT the work — fire-and-forget gets killed by Vercel the
+      // moment we return 200, so the actual fetch never completes.
+      // Telegram allows up to ~60s for webhook response and we set
+      // maxDuration = 60 above. Wrap in try/catch so a failure inside
+      // the dispatcher still returns 200 to Telegram (no retry storm).
+      try {
+        await dispatchCommand(chatId, cmd, synthetic);
+      } catch (e) {
+        try { await sendMessage(chatId, `⚠️ Error: ${String(e).slice(0, 200)}`); } catch {}
+      }
     }
     return NextResponse.json({ ok: true });
   }
@@ -435,7 +444,11 @@ export async function POST(req: Request) {
     if (chatId && text.startsWith('/')) {
       // Pass full text (not just first word) so /watch SYMBOL args survive
       // the round-trip when forwarded to legacy POST handlers.
-      dispatchCommand(chatId, text, update).catch(() => {});
+      try {
+        await dispatchCommand(chatId, text, update);
+      } catch (e) {
+        try { await sendMessage(chatId, `⚠️ Error: ${String(e).slice(0, 200)}`); } catch {}
+      }
     }
     return NextResponse.json({ ok: true });
   }

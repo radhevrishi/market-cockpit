@@ -1,11 +1,11 @@
 {
   "crons": [
     {
-      "path": "/api/bot/movers-alert?secret=mc-bot-2026&mode=full",
+      "path": "/api/bot/movers-alert?mode=full",
       "schedule": "35 4 * * 1-5"
     },
     {
-      "path": "/api/bot/watchlist-alert?secret=mc-bot-2026&mode=full",
+      "path": "/api/bot/watchlist-alert?mode=full",
       "schedule": "50 4 * * 1-5"
     },
     {
@@ -21,23 +21,23 @@
       "schedule": "0 1 * * *"
     },
     {
-      "path": "/api/v1/cron/concall-intel-warm?secret=mc-bot-2026",
+      "path": "/api/v1/cron/concall-intel-warm",
       "schedule": "30 3 * * 1-5"
     },
     {
-      "path": "/api/v1/cron/concall-intel-snapshot?secret=mc-bot-2026",
+      "path": "/api/v1/cron/concall-intel-snapshot",
       "schedule": "30 14 * * 1-5"
     },
     {
-      "path": "/api/bot/eo-blockbuster-alert?secret=mc-bot-2026",
+      "path": "/api/bot/eo-blockbuster-alert",
       "schedule": "30 5 * * *"
     },
     {
-      "path": "/api/bot/eo-blockbuster-alert?secret=mc-bot-2026",
+      "path": "/api/bot/eo-blockbuster-alert",
       "schedule": "30 8 * * *"
     },
     {
-      "path": "/api/bot/eo-blockbuster-alert?secret=mc-bot-2026",
+      "path": "/api/bot/eo-blockbuster-alert",
       "schedule": "30 15 * * *"
     }
   ],
