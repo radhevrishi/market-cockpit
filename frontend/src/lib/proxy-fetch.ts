@@ -82,13 +82,21 @@ function yoyPct(curr: number | null | undefined, prev: number | null | undefined
  * Fetch a single ticker's pre-extracted financials from the Cloudflare
  * Worker. Returns null if Worker unreachable, ticker not found, or response
  * shape unexpected.
+ *
+ * PATCH 0520 — sends optional X-MC-Token header when WORKER_TOKEN env is
+ * set. Worker accepts requests with no token (back-compat) or rejects
+ * when its own SHARED_TOKEN env is set and token mismatches. Safe to
+ * enable on either side independently.
  */
 export async function fetchWorkerStock(symbol: string, timeoutMs = 10000): Promise<WorkerStockData | null> {
   const url = `${workerUrl()}/stock?symbol=${encodeURIComponent(symbol)}`;
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  const headers: Record<string, string> = {};
+  const token = process.env.WORKER_TOKEN;
+  if (token) headers['X-MC-Token'] = token;
   try {
-    const res = await fetch(url, { signal: ctrl.signal });
+    const res = await fetch(url, { signal: ctrl.signal, headers });
     clearTimeout(t);
     if (!res.ok) return null;
     const j: any = await res.json();
