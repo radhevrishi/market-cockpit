@@ -788,6 +788,15 @@ export default function EarningsOpportunitiesPage() {
   const [expanded, setExpanded] = useState<Record<EarningsTier, boolean>>({
     BLOCKBUSTER: true, STRONG: true, MIXED: false, AVOID: false,
   });
+  // PATCH 0502 — Force re-scan progress state for the always-visible button.
+  const [forceRescanning, setForceRescanning] = useState(false);
+  // PATCH 0503 — Source coverage telemetry (NSE/BSE/merged counts).
+  const [coverageStats, setCoverageStats] = useState<{
+    nse: number;
+    bse: number;
+    total: number;
+    source: string;
+  } | null>(null);
 
   // PATCH 0152 — drive everything from the hub source-of-truth.
   // Months to fetch: cover the current filterDate's month + the previous
@@ -994,6 +1003,32 @@ export default function EarningsOpportunitiesPage() {
       autoWalkProbingRef.current = false;
     })();
   }, [filterDate, gradedData, resolvedDateForGrading]);
+
+  // PATCH 0503 — Populate source coverage stats by probing /today-live.
+  // Fires every time the resolved date changes. Probe is cached server-side
+  // (3min TTL) so this is cheap.
+  useEffect(() => {
+    if (!resolvedDateForGrading) {
+      setCoverageStats(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/v1/earnings/today-live?date=${resolvedDateForGrading}`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        setCoverageStats({
+          nse: typeof data?.nse_count === 'number' ? data.nse_count : 0,
+          bse: typeof data?.bse_count === 'number' ? data.bse_count : 0,
+          total: typeof data?.count === 'number' ? data.count : 0,
+          source: data?.source || 'UNKNOWN',
+        });
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [resolvedDateForGrading, forceRescanning]);
 
   // PATCH 0497 — Probe graded endpoint for past 14 days to discover
   // populated dates the hub aggregator missed. Fires once per resolved date
@@ -2001,6 +2036,61 @@ export default function EarningsOpportunitiesPage() {
               style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid #1A2840', backgroundColor: 'transparent', color: '#8A95A3', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
               ↩ Latest
             </button>
+          )}
+          {/* PATCH 0502 — Always-visible Force Re-scan button. Previously
+              this was buried in the empty-state pill cluster, so users with
+              partial coverage (a few stale cards) couldn't trigger a fresh
+              pull. Now visible on every render. */}
+          {resolvedDateForGrading && (
+            <button
+              onClick={async () => {
+                if (forceRescanning) return;
+                setForceRescanning(true);
+                try {
+                  const d = resolvedDateForGrading;
+                  try { localStorage.removeItem('mc:graded:v9:' + d); localStorage.removeItem('mc:graded:v8:' + d); } catch {}
+                  await Promise.allSettled([
+                    fetch(`/api/v1/earnings/today-live?date=${d}&force=1`, { cache: 'no-store' }),
+                    fetch(`/api/v1/earnings/graded?date=${d}&force=1&refreshMissing=1`, { cache: 'no-store' }),
+                  ]);
+                  await Promise.all([refetchHub(), refetchGraded()]);
+                } finally {
+                  setForceRescanning(false);
+                }
+              }}
+              disabled={forceRescanning}
+              title="Force re-scan NSE + BSE for this date. Bypasses all caches. Works on any date including weekends."
+              style={{
+                padding: '6px 14px', borderRadius: 8,
+                border: '1px solid #10B98180',
+                backgroundColor: forceRescanning ? '#10B98130' : '#10B98115',
+                color: '#10B981', fontSize: 11, fontWeight: 800, cursor: forceRescanning ? 'wait' : 'pointer',
+                letterSpacing: '0.3px', display: 'inline-flex', alignItems: 'center', gap: 6,
+              }}
+            >
+              {forceRescanning ? '⏳ Scanning…' : '🔄 Force NSE+BSE'}
+            </button>
+          )}
+          {/* PATCH 0503 — Source coverage telemetry chip. Surfaces which
+              exchange provided how many filings + the merged total so the
+              user can spot coverage gaps at a glance. */}
+          {coverageStats && (
+            <span
+              title={`NSE corp-announcements: ${coverageStats.nse} filings
+BSE corp-announcements: ${coverageStats.bse} filings
+Total after dedup: ${coverageStats.total}
+Source label: ${coverageStats.source}`}
+              style={{
+                padding: '4px 10px', borderRadius: 6,
+                border: `1px solid ${coverageStats.total >= 10 ? '#10B98140' : coverageStats.total > 0 ? '#F59E0B40' : '#EF444440'}`,
+                backgroundColor: coverageStats.total >= 10 ? '#10B98110' : coverageStats.total > 0 ? '#F59E0B10' : '#EF444410',
+                color: coverageStats.total >= 10 ? '#10B981' : coverageStats.total > 0 ? '#F59E0B' : '#EF4444',
+                fontSize: 10.5, fontWeight: 700, fontFamily: 'monospace',
+                cursor: 'help',
+              }}
+            >
+              NSE {coverageStats.nse} · BSE {coverageStats.bse} · merged {coverageStats.total}
+            </span>
           )}
           <span style={{ marginLeft: 'auto', fontSize: 11, color: '#6B7A8D' }}>
             {view.candidates_total} graded · {view.raw_items_total} earnings articles found
