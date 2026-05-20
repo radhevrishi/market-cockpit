@@ -592,16 +592,53 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
       if (cached) return cached;
     } catch {}
   }
-  // Run all sources in parallel — added Yahoo fundamentals as 4th source.
-  // PATCH 0512 — Yahoo fundamentals is the rescue path for tickers that
-  // Screener Cloudflare-blocks (JAINREC, IOC, IGL, HLEGLAS, KMSUGAR etc).
-  // Yahoo's quoteSummary endpoint is not blocked from Vercel.
-  const [nse, screener, yahoo, yahooFund] = await Promise.all([
-    fetchNseFinancials(symbol),
-    fetchScreenerForSymbol(symbol),
-    fetchYahooForSymbol(symbol),
-    fetchYahooFundamentals(symbol),
-  ]);
+  // PATCH 0514 — Symbol variants for tickers with special chars.
+  // GVT&D, M&MFIN, L&T, P&G — '&' breaks URL encoding on Yahoo/Screener.
+  // Try the original + a sanitized form (strip & or replace with empty).
+  // Yahoo sometimes accepts the literal & via URL encoding, sometimes
+  // needs it stripped. Same for Screener which uses the symbol in URL path.
+  const symVariants: string[] = [symbol];
+  if (symbol.includes('&')) {
+    symVariants.push(symbol.replace(/&/g, ''));     // GVT&D → GVTD
+    symVariants.push(symbol.replace(/&/g, 'AND'));  // GVT&D → GVTANDD
+    symVariants.push(symbol.replace(/&/g, '_'));    // GVT&D → GVT_D
+  }
+  if (symbol.includes('-')) {
+    symVariants.push(symbol.replace(/-/g, ''));     // BAJAJ-AUTO → BAJAJAUTO
+  }
+
+  // Try each variant in parallel via Yahoo + Screener until one returns data.
+  const tryVariant = async (sym: string) => {
+    const [nse, screener, yahoo, yahooFund] = await Promise.all([
+      fetchNseFinancials(sym),
+      fetchScreenerForSymbol(sym),
+      fetchYahooForSymbol(sym),
+      fetchYahooFundamentals(sym),
+    ]);
+    const anyHit = nse || screener || yahoo || yahooFund;
+    return { sym, nse, screener, yahoo, yahooFund, anyHit };
+  };
+
+  // Run all variants in parallel; keep the first variant that actually
+  // produced ANY data. Variant order matters: original first, then
+  // sanitized forms.
+  let nse: any = null, screener: any = null, yahoo: any = null, yahooFund: any = null;
+  if (symVariants.length === 1) {
+    // Fast path — no special chars in symbol, no variant fan-out needed
+    const r = await tryVariant(symbol);
+    nse = r.nse; screener = r.screener; yahoo = r.yahoo; yahooFund = r.yahooFund;
+  } else {
+    // Slow path — fan-out to variants in parallel, pick the most-populated.
+    const results = await Promise.all(symVariants.map(tryVariant));
+    // Score each result by how many sources returned non-null
+    const scored = results.map(r => ({
+      ...r,
+      score: (r.nse ? 1 : 0) + (r.screener ? 1 : 0) + (r.yahoo ? 1 : 0) + (r.yahooFund ? 1 : 0),
+    }));
+    scored.sort((a, b) => b.score - a.score);
+    const best = scored[0];
+    nse = best.nse; screener = best.screener; yahoo = best.yahoo; yahooFund = best.yahooFund;
+  }
   // Merge priority: NSE → Screener → Yahoo fundamentals (last-resort
   // financials). Yahoo price/chart data always overlays.
   const fin = nse || screener || yahooFund || {};
