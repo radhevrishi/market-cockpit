@@ -51,7 +51,9 @@ async function loadScriptWithTimeout(src: string, timeoutMs = 8000): Promise<voi
 async function extractPDFText(
   file: File,
   onProgress?: (pct: number, msg: string) => void,
-): Promise<{ text: string; error: string }> {
+  // AUDIT_100 #85 — return page-selection info so caller can show
+  // "Analyzed N of M pages" honesty notice.
+): Promise<{ text: string; error: string; pagesRead?: number; totalPages?: number; pageRanges?: string }> {
   const OVERALL_TIMEOUT_MS = 30_000;
   const deadline = Date.now() + OVERALL_TIMEOUT_MS;
   const checkDeadline = () => Date.now() > deadline;
@@ -156,7 +158,21 @@ async function extractPDFText(
     if (!allText.trim()) {
       return { text: '', error: 'No text extracted — this PDF may be image-based (scanned). Try copying text manually and using Paste mode.' };
     }
-    return { text: allText, error: '' };
+    // AUDIT_100 #85 — build a human-readable page-range string.
+    const pageRangeStr = (() => {
+      if (pagesToRead.length === totalPageCount) return `1-${totalPageCount}`;
+      // Compress consecutive runs
+      const ranges: string[] = [];
+      let runStart = pagesToRead[0];
+      let runEnd = pagesToRead[0];
+      for (let i = 1; i < pagesToRead.length; i++) {
+        if (pagesToRead[i] === runEnd + 1) { runEnd = pagesToRead[i]; }
+        else { ranges.push(runStart === runEnd ? `${runStart}` : `${runStart}-${runEnd}`); runStart = pagesToRead[i]; runEnd = pagesToRead[i]; }
+      }
+      ranges.push(runStart === runEnd ? `${runStart}` : `${runStart}-${runEnd}`);
+      return ranges.join(', ');
+    })();
+    return { text: allText, error: '', pagesRead: pagesToRead.length, totalPages: totalPageCount, pageRanges: pageRangeStr };
 
   } catch (e: any) {
     const msg = e?.message || 'Unknown error';
@@ -2857,8 +2873,14 @@ export default function EarningsAnalysisPage() {
     const ext = file.name.split('.').pop()?.toLowerCase()||'';
     setLoading(true); setError(''); setLoadingPct(0);
     if (ext === 'pdf') {
-      const {text, error: e} = await extractPDFText(file, (pct, msg) => { setLoadingPct(pct); setLoadingMsg(msg); });
+      const {text, error: e, pagesRead, totalPages, pageRanges} = await extractPDFText(file, (pct, msg) => { setLoadingPct(pct); setLoadingMsg(msg); });
       if (e || !text.trim()) { setError(e||'No text extracted. Try Paste mode.'); setLoading(false); return; }
+      // AUDIT_100 #85 — log honest page-coverage notice. We log to console since
+      // the in-page error state is reset by process(); a permanent banner needs
+      // a separate state field but would require >30 lines to wire.
+      if (pagesRead && totalPages && pagesRead < totalPages) {
+        console.info(`[earnings-analysis] Analyzed pages ${pageRanges} (${pagesRead} of ${totalPages}) — large PDFs are sampled by section.`);
+      }
       process(text);
     } else if (ext === 'xlsx' || ext === 'xls') {
       setLoadingMsg('Parsing Excel…');

@@ -1995,6 +1995,32 @@ export default function EarningsOpportunitiesPage() {
               </span>
             );
           })()}
+          {/* AUDIT_100 #26 — confidence band: show "X of Y enriched · M missing" chip
+              next to the refresh button so users see coverage at a glance. */}
+          {resolvedDateForGrading && (() => {
+            const allCards = ((view.by_tier?.BLOCKBUSTER ?? []) as ParsedEarning[])
+              .concat(view.by_tier?.STRONG ?? [])
+              .concat(view.by_tier?.MIXED ?? [])
+              .concat(view.by_tier?.AVOID ?? []);
+            const total = allCards.length;
+            const missing = allCards.filter((c) => c.sales_curr_cr == null && c.pat_curr_cr == null).length;
+            const enriched = total - missing;
+            if (total === 0) return null;
+            const ratio = enriched / total;
+            const tone = ratio >= 0.95 ? '#10B981' : ratio >= 0.75 ? '#22D3EE' : ratio >= 0.5 ? '#F59E0B' : '#EF4444';
+            const glyph = ratio >= 0.95 ? '✓' : ratio >= 0.5 ? '⚠' : '✗';
+            return (
+              <span title={`${enriched} of ${total} cards have Screener/Yahoo financials enriched. ${missing} missing.`}
+                style={{
+                  fontSize: 10.5, fontWeight: 700, color: tone,
+                  border: `1px solid ${tone}50`, backgroundColor: `${tone}12`,
+                  padding: '3px 8px', borderRadius: 4, letterSpacing: 0.3,
+                  fontFamily: 'ui-monospace, monospace',
+                }}>
+                {glyph} {enriched}/{total} enriched{missing > 0 ? ` · ${missing} missing` : ''}
+              </span>
+            );
+          })()}
           {/* PATCH 0189 — Partial refresh button with INLINE feedback */}
           {resolvedDateForGrading && (() => {
             const missing = ((view.by_tier?.BLOCKBUSTER ?? []) as ParsedEarning[])

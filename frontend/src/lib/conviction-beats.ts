@@ -108,10 +108,21 @@ export function isConviction(ticker: string): boolean {
   return !!map[ticker.toUpperCase()];
 }
 
+// AUDIT_100 #96 — module-scope cache of the parsed Set so 17+ pages calling
+// getConvictionTickers() on every mount don't re-parse localStorage each time.
+// Bust on 'conviction-beats:updated' (in-tab writes) and 'storage' (cross-tab).
+let _cachedSet: Set<string> | null = null;
+if (typeof window !== 'undefined') {
+  const invalidate = () => { _cachedSet = null; };
+  window.addEventListener('conviction-beats:updated', invalidate);
+  window.addEventListener('storage', (e) => { if (e.key === LS_KEY) invalidate(); });
+}
 /** Get just the set of tickers (for filter performance) */
 export function getConvictionTickers(): Set<string> {
+  if (_cachedSet) return _cachedSet;
   const map = readConvictionBeats();
-  return new Set(Object.keys(map));
+  _cachedSet = new Set(Object.keys(map));
+  return _cachedSet;
 }
 
 /** Sorted list, newest filing first */

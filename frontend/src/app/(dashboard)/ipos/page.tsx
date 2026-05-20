@@ -426,7 +426,8 @@ export default function IPOsPage() {
                 {typeof ipo.gmp === 'number' && ipo.gmp !== 0 && (
                   <div
                     // AUDIT_100 #42 — explain GMP for non-Indian users via tooltip.
-                    title="Grey Market Premium — unofficial pre-listing price indication (₹ per share)"
+                    // AUDIT_100 #75 — surface source provenance so users can weight the signal.
+                    title={`Grey Market Premium — unofficial pre-listing price indication (₹ per share). Source: third-party aggregators (Chittorgarh, InvestorGain). Updates intraday; treat as directional only.`}
                     style={{
                     backgroundColor: ipo.gmp > 0 ? THEME.green : THEME.red,
                     color: THEME.background,

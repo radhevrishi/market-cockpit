@@ -758,9 +758,13 @@ function useBNNews() {
     refetchInterval: 90_000, staleTime: 60_000, retry: 1,
   });
 }
-function useGeoNews() {
+// AUDIT_100 #94 — gate Geo query so it only fires when the user lands on
+// the Geo tab. Cuts 5 simultaneous /api/v1/news requests on mount → 0 until
+// activated. Other 5 hooks are smaller payloads + needed by Rotation tab.
+function useGeoNews(enabled = true) {
   return useQuery<NewsArticle[]>({
     queryKey: ['bn', 'geo'],
+    enabled,
     queryFn: async () => {
       // Fetch from MULTIPLE types — typed GEOPOLITICAL/TARIFF are rare in most feeds.
       // Instead use broad fetches and apply geo keyword filtering client-side.
@@ -3264,7 +3268,8 @@ export default function BottleneckIntelPage() {
 
   const { data: dashboard, isLoading: dashLoading, refetch: refetchDash, dataUpdatedAt: dashTs } = useDashboard();
   const { data: bnArticles = [], isLoading: bnLoading, refetch: refetchBN } = useBNNews();
-  const { data: geoArticles = [], isLoading: geoLoading, refetch: refetchGeo } = useGeoNews();
+  // AUDIT_100 #94 — only fire heavy Geo aggregate when user is on Geo tab.
+  const { data: geoArticles = [], isLoading: geoLoading, refetch: refetchGeo } = useGeoNews(activeTab === 'Geo');
   const { data: usQuotes = [], isLoading: quotesLoading } = useUSQuotes();
 
   const lastRefreshed = useMemo(() => {

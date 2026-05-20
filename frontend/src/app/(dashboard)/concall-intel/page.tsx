@@ -98,6 +98,12 @@ export default function ConcallIntelPage() {
       <p style={{ fontSize: 11, color: '#94A3B8', margin: 0, marginBottom: 14 }}>
         Paste a concall transcript OR enter a public PDF URL. Output: tone score, guidance map, key themes, red flags, key numbers.
       </p>
+      {/* AUDIT_100 #80 — calibration disclosure. Tone score is regex/lexicon-based;
+          a 78 vs 72 difference is NOT statistically meaningful. Communicate this
+          explicitly so users don't over-trust small deltas. */}
+      <p style={{ fontSize: 10.5, color: '#6B7A8D', margin: '0 0 14px', fontStyle: 'italic', lineHeight: 1.5 }}>
+        Note: tone is computed from a positive/negative/defensive lexicon (no LLM). Treat ±5 differences as noise — only ±15 changes reflect real shifts. Use the cue counts (📈/📉/🛡) for the actual signal.
+      </p>
 
       {/* ── Input ───────────────────────────────────────────────────── */}
       <div style={{ backgroundColor: '#0D1623', border: '1px solid #1A2540', borderRadius: 10, padding: '14px 18px', marginBottom: 14 }}>

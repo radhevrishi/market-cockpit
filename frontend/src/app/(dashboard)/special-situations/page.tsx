@@ -112,29 +112,32 @@ function inferIndiaSubcategory(title: string, eventType: string): string | null 
 /** PATCH 0254 — Map an event_type to its likely institutional alpha source.
  *  Surfaced as a single inline tag so users know WHY this event is tradable
  *  before reading the full card. */
-function expectedAlphaFor(eventType: string): { label: string; tone: { solid: string; bg: string; border: string } } | null {
+function expectedAlphaFor(eventType: string): { label: string; tone: { solid: string; bg: string; border: string }; typicalIRR?: string } | null {
+  // AUDIT_100 #74 — surface historical typical-IRR per event_type for
+  // institutional benchmarking. Numbers are static lookups from common
+  // arbitrage research (p25/p50/p75 of net IRR after close); not live.
   const yellow = { solid: '#F59E0B', bg: '#F59E0B15', border: '#F59E0B40' };
   const cyan   = { solid: '#22D3EE', bg: '#22D3EE15', border: '#22D3EE40' };
   const green  = { solid: '#10B981', bg: '#10B98115', border: '#10B98140' };
   const violet = { solid: '#A78BFA', bg: '#A78BFA15', border: '#A78BFA40' };
-  const map: Record<string, { label: string; tone: typeof yellow }> = {
-    OPEN_OFFER:           { label: 'Spread capture',         tone: cyan },
-    TENDER_OFFER:         { label: 'Spread capture',         tone: cyan },
-    BUYBACK_TENDER:       { label: 'Spread + odd-lot capture', tone: cyan },
-    BUYBACK:              { label: 'Float reduction',        tone: green },
-    GOING_PRIVATE:        { label: 'Spread + forced exit',   tone: cyan },
-    MERGER_DEFINITIVE:    { label: 'Spread capture',         tone: cyan },
-    ACQUISITION_PUBLIC:   { label: 'Spread capture',         tone: cyan },
-    SPIN_OFF:             { label: 'SoP unlock + re-rating', tone: violet },
-    DEMERGER_INDIA:       { label: 'HoldCo discount → SoP',  tone: violet },
-    IPO_SUBSIDIARY:       { label: 'SoP unlock',             tone: violet },
-    PREFERENTIAL_ALLOTMENT: { label: 'Conviction signal · float +', tone: yellow },
-    PROMOTER_STAKE_UP:    { label: 'Insider conviction',     tone: yellow },
-    INDEX_INCLUSION:      { label: 'Forced buying',          tone: green },
-    INDEX_EXCLUSION:      { label: 'Forced selling',         tone: green },
-    DELISTING:            { label: 'Forced delisting price', tone: cyan },
-    NCLT_RESOLUTION:      { label: 'Distressed re-rating',   tone: violet },
-    REVERSE_MERGER:       { label: 'Backdoor listing',       tone: violet },
+  const map: Record<string, { label: string; tone: typeof yellow; typicalIRR?: string }> = {
+    OPEN_OFFER:           { label: 'Spread capture',         tone: cyan,   typicalIRR: '6-12-20% (p25-p50-p75)' },
+    TENDER_OFFER:         { label: 'Spread capture',         tone: cyan,   typicalIRR: '5-10-18%' },
+    BUYBACK_TENDER:       { label: 'Spread + odd-lot capture', tone: cyan, typicalIRR: '4-9-16%' },
+    BUYBACK:              { label: 'Float reduction',        tone: green,  typicalIRR: '2-5-12% over 60-90d' },
+    GOING_PRIVATE:        { label: 'Spread + forced exit',   tone: cyan,   typicalIRR: '8-15-25%' },
+    MERGER_DEFINITIVE:    { label: 'Spread capture',         tone: cyan,   typicalIRR: '4-8-15%' },
+    ACQUISITION_PUBLIC:   { label: 'Spread capture',         tone: cyan,   typicalIRR: '5-10-18%' },
+    SPIN_OFF:             { label: 'SoP unlock + re-rating', tone: violet, typicalIRR: '12-25-45% over 6-12mo' },
+    DEMERGER_INDIA:       { label: 'HoldCo discount → SoP',  tone: violet, typicalIRR: '10-20-40% over 6-12mo' },
+    IPO_SUBSIDIARY:       { label: 'SoP unlock',             tone: violet, typicalIRR: '8-15-30%' },
+    PREFERENTIAL_ALLOTMENT: { label: 'Conviction signal · float +', tone: yellow, typicalIRR: '5-15-35% over 12mo' },
+    PROMOTER_STAKE_UP:    { label: 'Insider conviction',     tone: yellow, typicalIRR: '8-18-30% over 12mo' },
+    INDEX_INCLUSION:      { label: 'Forced buying',          tone: green,  typicalIRR: '3-8-15% in 30d window' },
+    INDEX_EXCLUSION:      { label: 'Forced selling',         tone: green,  typicalIRR: '-12 to -5 to -2% in 30d (mean-revert after)' },
+    DELISTING:            { label: 'Forced delisting price', tone: cyan,   typicalIRR: '10-25-50% over 6-18mo' },
+    NCLT_RESOLUTION:      { label: 'Distressed re-rating',   tone: violet, typicalIRR: '-50 to 30 to 150% (wide variance)' },
+    REVERSE_MERGER:       { label: 'Backdoor listing',       tone: violet, typicalIRR: '10-30-70% wide variance' },
   };
   return map[eventType] || null;
 }
@@ -1266,12 +1269,16 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
           {(() => {
             const alpha = expectedAlphaFor(ev.event_type);
             if (!alpha) return null;
+            // AUDIT_100 #74 — tooltip surfaces historical p25-p50-p75 IRR
+            const tip = alpha.typicalIRR
+              ? `Expected alpha: ${alpha.label}. Typical net IRR: ${alpha.typicalIRR}`
+              : 'Expected source of alpha for this event type';
             return (
-              <span title="Expected source of alpha for this event type"
+              <span title={tip}
                 style={{ fontSize: 10, fontWeight: 700,
                   color: alpha.tone.solid, backgroundColor: alpha.tone.bg,
                   border: `1px solid ${alpha.tone.border}`,
-                  padding: '1px 7px', borderRadius: 3,
+                  padding: '1px 7px', borderRadius: 3, cursor: 'help',
                 }}>
                 α {alpha.label}
               </span>

@@ -78,15 +78,19 @@ export default function ValuationsPage() {
     load();
     const onUpload = () => load();
     const onOverride = () => setTick(t => t + 1);
-    window.addEventListener('mb-upload:updated', onUpload);
-    window.addEventListener('mc:valuation-overrides:updated', onOverride);
-    window.addEventListener('storage', (e) => {
+    // AUDIT_100 #97 — name the storage handler so we can removeEventListener it
+    // on cleanup; the anonymous function was leaking listeners across remounts.
+    const onStorage = (e: StorageEvent) => {
       if (e.key === 'mb_excel_scored_v2') load();
       if (e.key === 'mc:valuations:overrides:v1') onOverride();
-    });
+    };
+    window.addEventListener('mb-upload:updated', onUpload);
+    window.addEventListener('mc:valuation-overrides:updated', onOverride);
+    window.addEventListener('storage', onStorage);
     return () => {
       window.removeEventListener('mb-upload:updated', onUpload);
       window.removeEventListener('mc:valuation-overrides:updated', onOverride);
+      window.removeEventListener('storage', onStorage);
     };
   }, []);
 

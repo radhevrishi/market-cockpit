@@ -57,12 +57,23 @@ const CALENDAR_CACHE_TTL = 300_000;
 const CALENDAR_CACHE_MAX = 24;
 const _calendarCache = new Map<string, { data: EarningsResponse; ts: number }>();
 
-function calendarCacheSet(key: string, value: { data: EarningsResponse; ts: number }) {
-  // Evict expired entries first
+function evictExpiredCalendarCache() {
+  // AUDIT_100 #14 — eviction must also run on read path
+  // (previously only on set; a read-only session never tripped eviction)
   const now = Date.now();
   for (const [k, v] of _calendarCache.entries()) {
     if (now - v.ts > CALENDAR_CACHE_TTL) _calendarCache.delete(k);
   }
+}
+
+function calendarCacheGet(key: string) {
+  // AUDIT_100 #14 — proactively evict expired entries on every get
+  evictExpiredCalendarCache();
+  return _calendarCache.get(key);
+}
+
+function calendarCacheSet(key: string, value: { data: EarningsResponse; ts: number }) {
+  evictExpiredCalendarCache();
   // If still too large, evict oldest entry
   if (_calendarCache.size >= CALENDAR_CACHE_MAX) {
     const oldest = [..._calendarCache.entries()].sort((a, b) => a[1].ts - b[1].ts)[0];
@@ -89,7 +100,7 @@ export default function CalendarPage() {
   // monthOffset/indexFilter never overwrites a fresher in-flight fetch.
   const fetchData = async (signal?: AbortSignal) => {
     const cacheKey = `${monthStr}_${indexFilter}`;
-    const cached = _calendarCache.get(cacheKey);
+    const cached = calendarCacheGet(cacheKey); // AUDIT_100 #14 — eviction on read
     if (cached && Date.now() - cached.ts < CALENDAR_CACHE_TTL) {
       setData(cached.data);
       setLoading(false);
@@ -301,6 +312,10 @@ export default function CalendarPage() {
                   const goodCount = dayResults.filter(r => ['Excellent', 'Great', 'Good'].includes(r.quality)).length;
                   const weakCount = dayResults.filter(r => ['Weak', 'OK'].includes(r.quality)).length;
                   const upCount = dayResults.filter(r => r.quality === 'Upcoming').length;
+                  // AUDIT_100 #43 — distinguish weekend cells from "filing day but nothing reported".
+                  // Weekend cells stay grey; weekday-with-no-results gets a faint · glyph.
+                  const cellDate = new Date(cell.dateStr);
+                  const isWeekend = cellDate.getDay() === 0 || cellDate.getDay() === 6;
 
                   return (
                     <div key={idx} style={{
@@ -309,6 +324,7 @@ export default function CalendarPage() {
                       borderRadius: '6px',
                       padding: '6px',
                       minHeight: '80px',
+                      opacity: isWeekend && !hasResults ? 0.55 : 1,
                     }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
                         <span style={{ fontSize: '12px', fontWeight: '700', color: isToday ? THEME.accent : THEME.textSecondary }}>
@@ -320,6 +336,10 @@ export default function CalendarPage() {
                             {weakCount > 0 && <span style={{ fontSize: '9px', backgroundColor: `${THEME.red}30`, color: THEME.red, padding: '1px 4px', borderRadius: '3px', fontWeight: '700' }}>{weakCount}</span>}
                             {upCount > 0 && <span style={{ fontSize: '9px', backgroundColor: `#6366F130`, color: '#6366F1', padding: '1px 4px', borderRadius: '3px', fontWeight: '700' }}>{upCount}</span>}
                           </div>
+                        )}
+                        {/* AUDIT_100 #43 — weekday with no results gets a subtle · glyph */}
+                        {!hasResults && !isWeekend && (
+                          <span title="No filings reported" style={{ fontSize: '14px', color: THEME.textSecondary, opacity: 0.4, lineHeight: 1 }}>·</span>
                         )}
                       </div>
                       {hasResults && (

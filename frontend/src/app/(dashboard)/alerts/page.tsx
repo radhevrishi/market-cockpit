@@ -164,13 +164,27 @@ function CreateAlertModal({ onClose }: { onClose: () => void }) {
         {step === 'preset' ? (
           <div className="p-5 space-y-3">
             <p className="text-[#8899AA] text-sm mb-4">Choose a preset or start from scratch</p>
-            {PRESETS.map((p, i) => (
-              <button key={i} onClick={() => applyPreset(p)}
-                className="w-full flex items-center gap-3 bg-[#0D1B2E]/60 hover:bg-[#0D1B2E] border border-[#2A3B4C] hover:border-[#0F7ABF]/50 rounded-xl px-4 py-3 transition-colors text-left">
-                <span className="text-xl">{p.icon}</span>
-                <span className="text-white text-sm font-medium">{p.name}</span>
-              </button>
-            ))}
+            {/* AUDIT_100 #50 — surface the resolved condition next to the preset
+                so user sees exactly what rule they're picking before they click. */}
+            {PRESETS.map((p, i) => {
+              const cond = p.conditions as any;
+              const ncond = p.news_conditions as any;
+              const desc = p.type === 'PRICE'
+                ? `direction:${cond?.direction} · threshold:${cond?.threshold_pct}%`
+                : p.type === 'NEWS' && ncond?.min_importance
+                  ? `min_importance ≥ ${ncond.min_importance}`
+                  : '';
+              return (
+                <button key={i} onClick={() => applyPreset(p)}
+                  className="w-full flex items-center gap-3 bg-[#0D1B2E]/60 hover:bg-[#0D1B2E] border border-[#2A3B4C] hover:border-[#0F7ABF]/50 rounded-xl px-4 py-3 transition-colors text-left">
+                  <span className="text-xl">{p.icon}</span>
+                  <div className="flex-1">
+                    <div className="text-white text-sm font-medium">{p.name}</div>
+                    {desc && <div className="text-[#6B7A8D] text-[10px] mt-0.5 font-mono">{desc}</div>}
+                  </div>
+                </button>
+              );
+            })}
             <button onClick={() => setStep('form')}
               className="w-full flex items-center gap-3 bg-transparent border border-dashed border-[#2A3B4C] hover:border-[#0F7ABF]/50 rounded-xl px-4 py-3 transition-colors text-left">
               <Plus className="w-5 h-5 text-[#4A5B6C]" />

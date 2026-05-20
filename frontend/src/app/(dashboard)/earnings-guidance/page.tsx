@@ -526,11 +526,14 @@ function GuidanceCard({ event, expanded, onToggle, compact, isConviction }: { ev
             const tone = delta > 0 ? GREEN : RED;
             return (
               <span
-                title={`vs ${priorKey} (${priorScore})`}
+                // AUDIT_100 #48 — tooltip now shows explicit prior→current
+                // transition so user knows whether Δ+12 was 78→90 or 45→57.
+                title={`${priorKey}: ${priorScore} → ${curKey}: ${event.sentimentScore}  (Δ ${delta > 0 ? '+' : ''}${delta})`}
                 style={{
                   fontSize: 10, fontWeight: 700, color: tone,
                   border: `1px solid ${tone}60`, backgroundColor: `${tone}14`,
                   padding: '1px 6px', borderRadius: 3, letterSpacing: 0.3,
+                  cursor: 'help',
                 }}
               >Δ {delta > 0 ? '+' : ''}{delta}</span>
             );

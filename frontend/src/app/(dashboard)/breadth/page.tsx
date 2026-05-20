@@ -73,7 +73,9 @@ export default function BreadthPage() {
     { name: 'Trend Breadth',    weight: 35, score: data.pillars.trend.score,    sub: `% >50DMA ${data.pillars.trend.pct50}% · % >200DMA ${data.pillars.trend.pct200}% · ${data.pillars.trend.newHigh} new highs / ${data.pillars.trend.newLow} new lows` },
     { name: 'Sector Breadth',   weight: 25, score: data.pillars.sector.score,   sub: `${data.pillars.sector.above}/${data.pillars.sector.total} sectors above 50DMA` },
     { name: 'Smallcap Particip.', weight: 20, score: data.pillars.smallcap.score, sub: 'SMID vs Nifty 1m + smallcap above 200DMA' },
-    { name: 'Institutional Flow', weight: 10, score: data.pillars.flow.score,   sub: 'PSU Bank vs Nifty 1m (proxy for DII)' },
+    // AUDIT_100 #82 — flag the single-proxy fragility of the flow pillar.
+    // The proxy is PSU Bank 1m vs Nifty 1m; not a real DII flow feed.
+    { name: 'Institutional Flow', weight: 10, score: data.pillars.flow.score,   sub: 'PSU Bank vs Nifty 1m (proxy for DII) · ⚠ LOW CONFIDENCE — single proxy' },
     { name: 'Momentum Breadth',   weight: 10, score: data.pillars.momentum.score, sub: `${data.pillars.momentum.makingHigherHighs}/${data.pillars.momentum.total} making higher highs` },
   ];
 

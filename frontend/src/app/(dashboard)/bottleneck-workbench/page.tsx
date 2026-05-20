@@ -278,12 +278,50 @@ export default function BottleneckWorkbenchPage() {
         // PATCH 0278 — Explicit "theme not found" state. Previously the page
         // showed an indefinite "Loading theme…" spinner when the theme query
         // param pointed to a bucket id that no longer exists.
+        // AUDIT_100 #38 — surface a "Did you mean" Levenshtein suggestion
+        // so stale bookmarks recover gracefully.
         <div style={{ backgroundColor: TOKENS.surface.card, border: `1px solid ${TOKENS.surface.cardBorder}`, borderRadius: 10, padding: '20px 24px' }}>
           <h2 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 8px' }}>Theme not found</h2>
           <p style={{ fontSize: 13, color: TOKENS.surface.textDim, margin: '0 0 14px' }}>
             The theme &ldquo;{activeBucket}&rdquo; isn&rsquo;t in the active bottleneck list. It may have
             rolled off the rolling window or been renamed. Pick another theme from the workbench index.
           </p>
+          {(() => {
+            // Simple Levenshtein-like proximity by character bigrams
+            if (!activeBucket || buckets.length === 0) return null;
+            const a = activeBucket.toLowerCase();
+            const best = buckets
+              .map(b => {
+                const id = (b.bucket_id || '').toLowerCase();
+                // Score = longest common substring length / max(len_a, len_id)
+                let common = 0;
+                for (let i = 0; i < Math.min(a.length, id.length); i++) {
+                  if (a[i] === id[i]) common++;
+                  else break;
+                }
+                // Also reward token overlap
+                const aTokens = new Set(a.split(/[-_\s]+/));
+                const idTokens = id.split(/[-_\s]+/).filter(t => aTokens.has(t)).length;
+                return { b, score: common + idTokens * 3 };
+              })
+              .sort((a, b) => b.score - a.score)
+              .filter(x => x.score >= 3)[0];
+            if (!best) return null;
+            return (
+              <p style={{ fontSize: 12, color: TOKENS.surface.textDim, margin: '0 0 12px' }}>
+                Did you mean{' '}
+                <button
+                  onClick={() => router.push(`${pathname}?theme=${encodeURIComponent(best.b.bucket_id)}`)}
+                  style={{
+                    background: 'none', border: 'none', color: TOKENS.semantic.bullish.solid,
+                    fontWeight: 700, fontSize: 12, cursor: 'pointer', textDecoration: 'underline', padding: 0,
+                  }}
+                >
+                  {best.b.label || best.b.bucket_id}
+                </button>?
+              </p>
+            );
+          })()}
           <button
             onClick={() => router.push(pathname)}
             style={{

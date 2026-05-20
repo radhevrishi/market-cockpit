@@ -355,9 +355,17 @@ export default function RRGPage() {
                   </text>
 
                   {/* Sector trails */}
+                  {/* AUDIT_100 #83 — cap trail length to 25% of the lookback window.
+                      Previously 1m and 6m both rendered ~8-point tails, which
+                      visually exaggerated movement on short timeframes. */}
                   {showTrails && data.sectors.map((sector) => {
                     if (!sector.trail || sector.trail.length < 2) return null;
-                    const points = sector.trail.map(p => `${getPlotX(p.x)},${getPlotY(p.y)}`).join(' ');
+                    const lookbackSessions = timeframe === '1m' ? 21 : timeframe === '3m' ? 63 : timeframe === '6m' ? 126 : 252;
+                    const maxTrailPoints = Math.max(4, Math.floor(lookbackSessions * 0.25));
+                    const trimmedTrail = sector.trail.length > maxTrailPoints
+                      ? sector.trail.slice(-maxTrailPoints)
+                      : sector.trail;
+                    const points = trimmedTrail.map(p => `${getPlotX(p.x)},${getPlotY(p.y)}`).join(' ');
                     return (
                       <g key={`trail-${sector.name}`}>
                         <polyline
@@ -368,15 +376,15 @@ export default function RRGPage() {
                           opacity={hoveredSector === sector.name ? 0.9 : 0.4}
                           strokeLinejoin="round"
                         />
-                        {/* Trail dots */}
-                        {sector.trail.map((p, i) => (
+                        {/* Trail dots — uses trimmedTrail (AUDIT_100 #83) */}
+                        {trimmedTrail.map((p, i) => (
                           <circle
                             key={`td-${sector.name}-${i}`}
                             cx={getPlotX(p.x)}
                             cy={getPlotY(p.y)}
-                            r={i === sector.trail!.length - 1 ? 0 : 2}
+                            r={i === trimmedTrail.length - 1 ? 0 : 2}
                             fill={sector.color}
-                            opacity={0.3 + (i / sector.trail!.length) * 0.5}
+                            opacity={0.3 + (i / trimmedTrail.length) * 0.5}
                           />
                         ))}
                         {/* Arrowhead on last segment */}

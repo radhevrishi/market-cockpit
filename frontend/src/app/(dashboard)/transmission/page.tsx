@@ -753,7 +753,11 @@ export default function TransmissionPage() {
                     )}
                   </span>
                   <span style={{ fontSize: 11, color: TOKENS.surface.textDim, ...NUM }}>
-                    {c.last != null ? `${c.last.toLocaleString()} ${c.unit}` : <span style={{ color: TOKENS.surface.textMuted, fontStyle: 'italic' }}>manual feed</span>}
+                    {c.last != null ? `${c.last.toLocaleString()} ${c.unit}` : (
+                      // AUDIT_100 #73 — flag manual-feed rows as low-confidence so users
+                      // know the value (when present elsewhere) is potentially stale.
+                      <span title="No free spot-price feed available — value is set manually and may be days/weeks stale. Treat as directional only." style={{ color: '#F59E0B', fontStyle: 'italic', cursor: 'help' }}>⚠ manual feed (stale risk)</span>
+                    )}
                   </span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>

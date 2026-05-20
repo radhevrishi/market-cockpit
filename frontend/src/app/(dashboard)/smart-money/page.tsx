@@ -546,6 +546,11 @@ export default function SmartMoneyPage() {
                       <td style={{ padding: '12px', textAlign: 'right', color: THEME.textPrimary }}>₹{deal.tradePrice.toFixed(2)}</td>
                       <td style={{ padding: '12px', textAlign: 'center' }}>
                         <span
+                          // AUDIT_100 #81 — surface the classifier heuristic via tooltip
+                          // so users know why a trade is labeled the way it is.
+                          title={deal.quality === 'Institutional'
+                            ? `Institutional — client name matches a known FII/MF/insurer/pension pattern (e.g. "MUTUAL FUND", "PENSION", "FII", "FPI", "LIC", "INSURANCE")`
+                            : `Retail — client name does not match an institutional pattern. May still be HNI/corporate; treat as best-effort.`}
                           style={{
                             fontSize: '10px',
                             fontWeight: '600',
@@ -553,6 +558,7 @@ export default function SmartMoneyPage() {
                             borderRadius: '4px',
                             backgroundColor: deal.quality === 'Institutional' ? '#10B98120' : '#EF444420',
                             color: deal.quality === 'Institutional' ? THEME.green : THEME.red,
+                            cursor: 'help',
                           }}
                         >
                           {deal.quality}

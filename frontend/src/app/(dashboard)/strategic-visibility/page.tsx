@@ -409,6 +409,18 @@ export default function StrategicVisibilityPage() {
             Multi-year frameworks · hyperscaler commitments · sovereign programs · transformational revenue locks.
             Persisted to KV with a {windowDays}-day rolling window — independent of the live news feed.
           </p>
+          {/* AUDIT_100 #45 / #84 — one-line legend so users know what the chips rank.
+              Funding 5 = financial close (most certain), 1 = press release only.
+              Execution ladder: Announced → Signed → Fin close → Power secured → Under constr → Operational. */}
+          <p style={{ fontSize: 10.5, color: '#4A5B6C', margin: '6px 0 0', lineHeight: 1.5 }}>
+            <span style={{ color: '#94A3B8', fontWeight: 700 }}>LEGEND:</span>{' '}
+            <span style={{ color: '#10B981' }}>FUNDING 5 = financial close</span> →{' '}
+            <span style={{ color: '#22D3EE' }}>4 binding</span> →{' '}
+            <span style={{ color: '#F59E0B' }}>3 signed LOI</span> →{' '}
+            <span style={{ color: '#EF4444' }}>2 mou</span> →{' '}
+            <span style={{ color: '#6B7A8D' }}>1 press release</span>{' '}
+            · <span style={{ color: '#94A3B8' }}>EXEC ladder:</span> Announced → Signed → Fin close → Power secured → Under constr. → Operational
+          </p>
           {/* PATCH 0068 + 0070: window selector with 1Y / 2Y options */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 10, color: '#4A5B6C', fontWeight: 700, letterSpacing: '0.5px' }}>WINDOW:</span>
