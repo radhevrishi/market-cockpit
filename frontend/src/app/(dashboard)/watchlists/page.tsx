@@ -1080,6 +1080,27 @@ type ConvFilters = {
 
 const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, guidance: null };
 
+// PATCH 0546 — Derive guidance from YoY metrics when the entry doesn't have
+// an explicit guidance field (true for the 218 entries that were synced
+// BEFORE Patch 0538 — they have sales/pat/eps numbers but no text-derived
+// guidance label). This way the GUIDANCE filter chips don't show 0/0/0
+// when the bench is full of legacy entries.
+//
+// Simple heuristic — pure metric-based, no text scan:
+//   POSITIVE  : pat YoY ≥ 20 AND sales ≥ 0 AND eps ≥ 10
+//   NEGATIVE  : pat YoY < 0  OR  (sales < 0 AND eps < 0)
+//   NEUTRAL   : everything else
+function deriveGuidanceLabel(e: ConvictionEntry): 'Positive' | 'Negative' | 'Neutral' {
+  // Prefer the explicit field if present (new entries post-0538)
+  if (e.guidance) return e.guidance;
+  const sales = e.sales_yoy_pct ?? 0;
+  const pat = e.net_profit_yoy_pct ?? 0;
+  const eps = e.eps_yoy_pct ?? 0;
+  if (pat < 0 || (sales < 0 && eps < 0)) return 'Negative';
+  if (pat >= 20 && sales >= 0 && eps >= 10) return 'Positive';
+  return 'Neutral';
+}
+
 function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
   const sales = e.sales_yoy_pct ?? 0;
   const pat = e.net_profit_yoy_pct ?? 0;
@@ -1095,10 +1116,10 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
   if (f.pead != null) {
     if (peadScore(e).score < f.pead) return false;
   }
-  // USER-REQ — Guidance in Conviction tab. Missing guidance treated as
-  // non-match when a specific label is requested.
+  // PATCH 0546 — fall back to derived guidance from YoY metrics for legacy
+  // entries; explicit guidance field always wins when present.
   if (f.guidance != null) {
-    if (e.guidance !== f.guidance) return false;
+    if (deriveGuidanceLabel(e) !== f.guidance) return false;
   }
   return true;
 }
@@ -1354,9 +1375,14 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
 
   // PATCH 0539 — view-mode toggle (compact rows vs rich Earnings Hub cards)
   // Default: rich. localStorage so the user's preference survives reloads.
+  // PATCH 0546 — Default to COMPACT. The Rich (Earnings Hub) view depends on
+  // a per-ticker enrichment fetch that's slow/unreliable for 200+ entries.
+  // User reported page stuck on "Loading enriched cards… 0/218" with all
+  // HUB FILTER counts at 0. Make Compact default so the bench is always
+  // usable; user can opt INTO Rich if they want the heavy load.
   const [viewMode, setViewMode] = useState<'rich' | 'compact'>(() => {
-    if (typeof window === 'undefined') return 'rich';
-    try { return (localStorage.getItem('mc:conviction-view') as 'rich' | 'compact') || 'rich'; } catch { return 'rich'; }
+    if (typeof window === 'undefined') return 'compact';
+    try { return (localStorage.getItem('mc:conviction-view') as 'rich' | 'compact') || 'compact'; } catch { return 'compact'; }
   });
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -1971,29 +1997,33 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
         <span><span style={{ color: '#6B7A8D' }}>PAT</span> <strong style={{ color: (entry.net_profit_yoy_pct ?? 0) >= 0 ? '#10B981' : '#EF4444' }}>{pct(entry.net_profit_yoy_pct)}</strong></span>
         <span><span style={{ color: '#6B7A8D' }}>EPS</span> <strong style={{ color: (entry.eps_yoy_pct ?? 0) >= 0 ? '#10B981' : '#EF4444' }}>{pct(entry.eps_yoy_pct)}</strong></span>
       </div>
-      {/* USER-REQ — Guidance in Conviction tab. Same look + colors as the
-          Earnings Hub Scan GuidanceBadge. Only renders when set; entries
-          without a derived label stay quiet. */}
-      {entry.guidance && (() => {
+      {/* PATCH 0546 — Always render guidance badge using derived label
+          (falls back to YoY-metric heuristic when no explicit field).
+          Explicit field shows its signed score; derived label shows the
+          deriving signal so user knows it's heuristic. */}
+      {(() => {
+        const label = deriveGuidanceLabel(entry);
+        const isExplicit = !!entry.guidance;
         const cfg: Record<string, { color: string; icon: string }> = {
           'Positive': { color: '#10B981', icon: '📈' },
           'Neutral':  { color: '#94A3B8', icon: '➖' },
           'Negative': { color: '#EF4444', icon: '📉' },
         };
-        const c = cfg[entry.guidance] || cfg['Neutral'];
+        const c = cfg[label];
         const s = entry.guidance_score;
-        const scoreStr = (typeof s === 'number' && entry.guidance !== 'Neutral')
+        const scoreStr = (isExplicit && typeof s === 'number' && label !== 'Neutral')
           ? ` (${s > 0 ? '+' : ''}${s.toFixed(2)})`
           : '';
+        const suffix = isExplicit ? '' : ' ~';  // ~ marks metric-derived
         return (
           <div>
-            <span style={{
+            <span title={isExplicit ? 'From concall/PR text' : 'Derived from YoY metrics'} style={{
               display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10,
               padding: '2px 7px', borderRadius: 4,
               backgroundColor: `${c.color}18`, border: `1px solid ${c.color}40`,
               color: c.color, fontWeight: 700,
             }}>
-              {c.icon} {entry.guidance}{scoreStr}
+              {c.icon} {label}{scoreStr}{suffix}
             </span>
           </div>
         );
