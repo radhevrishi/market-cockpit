@@ -1578,10 +1578,10 @@ If the new agent needs to push code, it should:
 
 ### 17.0 Quick state check
 
-- **HEAD on `origin/main` = `1c2fc67`** (commit message: "Patch 0569: Ship all 9 P3 UX improvements from QA audit")
-- **Latest patches shipped: 0549 → 0569** (21 patches; 0569 = P3 UX bundle, all 9 items)
+- **HEAD on `origin/main` = `b9454cd`** (commit message: "Patch 0571: Two cleanups to Patch 0569 (P3 UX) shipped yesterday")
+- **Latest patches shipped: 0549 → 0571** (23 patches; 0569 = P3 UX bundle; 0571 = audit-driven cleanups)
 - **Type-check clean as of last commit** (`npx tsc --noEmit` exits 0)
-- **All 12 QA-audit bugs SHIPPED + all 9 P3 UX items SHIPPED.** Next-priority work: TheWrap modules (§17.4 B) and ranking-framework upgrade (§17.4 C).
+- **All 12 QA-audit bugs SHIPPED + all 9 P3 UX items SHIPPED + AUDIT_100 verified mostly stale.** Next-priority work: TheWrap modules (§17.4 B), ranking-framework upgrade (§17.4 C), refresh of AUDIT_100.md itself.
 - **Latest sandbox name was `fervent-kind-hypatia`.** Your new session will have a different one — find it via `ls /sessions/` and substitute everywhere.
 
 ### 17.1 Deploy infrastructure (preserve for next chat)
@@ -1614,7 +1614,31 @@ cd /tmp/mc-deploy && \
 
 **Env vars** are set in Vercel project, names listed in §4 of this file (KV_REST_API_URL, KV_REST_API_TOKEN, CRON_SECRET, ANTHROPIC_API_KEY etc.). Don't ask user for values; they're already configured.
 
-### 17.2 Patches shipped in this session (0549 → 0567)
+### 17.2 Patches shipped in this session (0549 → 0571)
+
+> P3 UX batch + audit-doc verification: AUDIT_100.md is now mostly
+> stale — ~95% of P0-P2 bugs listed there have been shipped in earlier
+> patches. Spot-checks confirm bugs #1, #2, #4, #5, #7, #9, #10, #11,
+> #12, #13, #14, #15 are fixed; UX #42, #44, #47, #48, #49 are
+> shipped; data items #77, #79 are shipped. That doc needs a refresh
+> as a separate task — don't trust its open-list at face value.
+
+```
+0569 — Ship all 9 P3 UX improvements (auto-name Saved Views, lifecycle
+       tooltips, portfolio TREND fallback, news card +Watch, bottleneck
+       matrix collapse STALE·VERY LOW, strategic-visibility skeleton,
+       decision-log examples, company-intel sample, calendar timeout +
+       retry CTA).
+0570 — CLAUDE.md §17 update — mark all 9 P3 UX items shipped.
+0571 — Two cleanups to Patch 0569: (a) WatchlistButton preserves
+       original case on untouched watchlist entries instead of
+       round-tripping through an uppercased Set; (b) calendar
+       FETCH_TIMEOUT_MS always owns a local AbortController so the
+       hard timeout actually fires even when the caller passed its
+       own signal (useEffect cleanup case).
+```
+
+### 17.2.1 Earlier patches in this session (0549 → 0567)
 
 ```
 0549 — Conviction Beats: hard-coerce viewMode='compact', drop legacy 'mc:conviction-view' LS key
@@ -1783,7 +1807,7 @@ frontend/src/components/PanelFreshness.tsx
 
 ### 17.9 STARTER PROMPT for new chat
 
-> Read `/Users/radhevrishi/Desktop/Python/Imp Marketcockpit/market-cockpit/CLAUDE.md` section 17 (END-OF-SESSION HANDOFF) before doing anything. HEAD on main is `1c2fc67` (Patch 0569 — all 9 P3 UX items shipped). Latest patch number to use for new work: **0570**.
+> Read `/Users/radhevrishi/Desktop/Python/Imp Marketcockpit/market-cockpit/CLAUDE.md` section 17 (END-OF-SESSION HANDOFF) before doing anything. HEAD on main is `b9454cd` (Patch 0571 — UX-batch cleanups + AUDIT_100 spot-verify). Latest patch number to use for new work: **0572**.
 >
 > [Now state what you want — examples below]
 > - "Build the Order Book Intelligence tab (TheWrap module 1) per §17.4(B)."
