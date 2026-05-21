@@ -34,6 +34,8 @@ import { readDecisions } from '@/lib/decisions';
 // panel can show real holdings + disclosure dates instead of the thin
 // /super-investor-flow output.
 import { SUPER_INVESTORS } from '@/lib/super-investors';
+// PATCH 0627 — Critical Themes data for Home panel.
+import { getTopThemesForHome } from '@/lib/critical-themes';
 
 const BG = '#0A0E1A';
 const CARD = '#0D1623';
@@ -1047,6 +1049,10 @@ export default function HomeDashboard() {
               All high-priority surfaces accessible from the home header in
               the same chip style. Wraps to multiple rows on narrow screens. */}
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', maxWidth: 920, justifyContent: 'flex-end' }}>
+            <Link href="/playbook"               style={navChip('#F59E0B')}>📚 Playbook</Link>
+            <Link href="/critical-themes"        style={navChip('#EF4444')}>🔥 Themes</Link>
+            <Link href="/valuation-calc"         style={navChip('#22D3EE')}>🧮 Valuation Calc</Link>
+            <Link href="/guidance-extractor"     style={navChip('#A78BFA')}>📋 Guidance</Link>
             <Link href="/multibagger"            style={navChip('#10B981')}>🚀 Multibagger</Link>
             <Link href="/portfolio"              style={navChip('#22D3EE')}>💼 My Book</Link>
             <Link href="/watchlists"             style={navChip('#22D3EE')}>👁 Watchlist</Link>
@@ -1712,6 +1718,60 @@ export default function HomeDashboard() {
             )}
           </div>
         </div>
+
+        {/* ═══════════════ PATCH 0627 — CRITICAL THEMES PANEL ═════════════ */}
+        {(() => {
+          const tt = getTopThemesForHome();
+          return (
+            <div style={{ ...cardStyle, borderLeft: '3px solid #EF4444' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
+                <span style={{ fontSize: 13, fontWeight: 800, color: '#EF4444', letterSpacing: '0.4px' }}>
+                  🔥 CRITICAL THEMES — top {tt.india.length + tt.us.length}
+                </span>
+                <Link href="/critical-themes" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open all →</Link>
+              </div>
+              <div style={{ fontSize: 10, color: DIM, marginBottom: 8 }}>
+                Choke-point themes for 10+ year horizon · monopoly · policy-backed · governance-filtered
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 12 }}>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: '#22D3EE', marginBottom: 6, letterSpacing: '0.5px' }}>🇮🇳 INDIA</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {tt.india.map((t) => (
+                      <Link key={t.id} href={`/critical-themes`} style={{ textDecoration: 'none', color: 'inherit' }}>
+                        <div style={{ background: '#1A2540', border: '1px solid #22D3EE30', borderRadius: 5, padding: '7px 9px' }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: TEXT, marginBottom: 3 }}>{t.emoji} {t.name}</div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                            {t.leaders.slice(0, 4).map((l) => (
+                              <span key={l.ticker} style={{ fontSize: 9, color: '#22D3EE', background: '#22D3EE15', padding: '1px 5px', borderRadius: 3, fontWeight: 600 }}>{l.ticker}</span>
+                            ))}
+                          </div>
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: '#F87171', marginBottom: 6, letterSpacing: '0.5px' }}>🇺🇸 USA</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {tt.us.map((t) => (
+                      <Link key={t.id} href={`/critical-themes`} style={{ textDecoration: 'none', color: 'inherit' }}>
+                        <div style={{ background: '#1A2540', border: '1px solid #F8717130', borderRadius: 5, padding: '7px 9px' }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: TEXT, marginBottom: 3 }}>{t.emoji} {t.name}</div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                            {t.leaders.slice(0, 4).map((l) => (
+                              <span key={l.ticker} style={{ fontSize: 9, color: '#F87171', background: '#F8717115', padding: '1px 5px', borderRadius: 3, fontWeight: 600 }}>{l.ticker}</span>
+                            ))}
+                          </div>
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* ═══════════════ AI INFRASTRUCTURE TRANSMISSION ═══════════════ */}
         <div style={{ ...cardStyle, borderLeft: '3px solid #A78BFA' }}>
