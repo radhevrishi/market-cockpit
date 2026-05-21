@@ -1,7 +1,7 @@
 # Market Cockpit — Claude Handoff Memory
 
 > Read this FIRST when starting any new chat. Saves you 30 minutes of context-rebuilding.
-> **Last updated: 2026-05-21 — POST-COMPACTION CONTINUATION.** Latest patches: 0549–0609 (61 patches in this session). HEAD on `origin/main` = `02a9e61` (Patches 0606–0609: Home v2 perf + sidebar trim + news alerts firing + Order Book Intel page). Section 17 (NEW) has the full session summary, open work, and next-chat starter prompt. Read section 17 first if continuing this work.
+> **Last updated: 2026-05-21 — END OF DAY 2 SESSION.** Latest patches: 0549–0642 (94 patches in this session). HEAD on `origin/main` = `fba6ed7+` (Patches 0637–0642: Auto-Valuation tab with multi-file upload, Activity Log, MTAR-validated parser, realistic worked-example defaults, sanity-check warnings, filename ticker extraction). Section 17 has the full session summary, open work, and next-chat starter prompt. Read section 17 first if continuing this work.
 > **Sandbox-name caveat:** This file references the OLD sandbox `zen-epic-bardeen` in section 2 and `kind-sharp-maxwell` was the active sandbox at session-end. New sessions get a new sandbox name. The repo path mapping pattern is `/Users/.../market-cockpit/` → `/sessions/<sandbox>/mnt/market-cockpit/` — substitute the active sandbox name from `ls /sessions/` or your bash mounts.
 
 ---
@@ -1924,9 +1924,100 @@ delta — what shipped between Patch 0584 and Patch 0609.
 - `frontend/src/app/(dashboard)/DashboardClient.tsx` — NAV_GROUPS + sidebar trim
 - `frontend/src/app/(dashboard)/news-alerts/page.tsx` — firing-logic fix
 
+### 17.11 BIG DAY-2 BATCH (0610 → 0642)
+
+Day 2 (still 2026-05-21 IST timeline) brought a ton of institutional
+features. Major adds shipped in this batch (one line each):
+
+```
+0610-0618 — Sidebar / nav / home polish (Vercel cache fixes, in-play
+            news firing, nav reorder, Saved Workspaces v1 lens-switcher)
+0619      — Full institutional header chip strip (15 chips)
+0620      — Owner Manual docx + alert presets + In-Play moved to top
+0621      — Home panels: Strategic Vis + Movers + Super Investors + Signals
+0622      — Home institutional enhancements: P&L · sector rotation · stale
+            nudge · alpha feedback · watchlist pulse · upcoming earnings ·
+            rating actions today · order book today
+0623-0624 — Super Investors 60d window + combined live flow + static roster
+0625      — Tier 1 fonts bigger, Movers 10/10 smallcap-only, Tier 3 expanded
+0626      — NEW /playbook page (10-step institutional workflow + sector
+            calculator lookup + common-mistakes callout)
+0627      — NEW /critical-themes page (India + USA, 15 themes total)
+            with editorial Why / Leaders / Bear-Bull asymmetry
+0628      — NEW /valuation-calc page (P/E + P/S + EV-EBITDA calculators,
+            7 worked examples preloaded: Rubicon, Bajaj, TD Power, Sterlite,
+            Aeroflex, Atlanta, DEEDEV)
+0629      — NEW /guidance-extractor page (paste concall text → forward FY
+            guidance auto-extracted) + lib/forward-guidance-extractor.ts
+0630      — Critical Themes DYNAMIC ranking (news heat + leader momentum +
+            bottleneck overlay) + BOTH-region default view
+0631      — Valuation Calc: auto-price-fill on ticker entry + Home Valuation
+            Quick-Check panel
+0632      — Sector → Calculator Lookup: 5 example companies per sector +
+            10 new themed sectors (Robotics, AI Infra, EV, Nuclear, Quantum)
+0633      — Save / Edit / Delete saved valuations (localStorage)
+0634      — Analytics tab on Valuation Calc (KPIs + top conviction +
+            worst downside + full saved list table)
+0635      — Concall AI header chip + chip strip alignment cleanup
+0636      — Ticker autocomplete combo box wired into all 3 calculators
+            + explicit shares-outstanding state (locks correct math
+            even when market cap manually edited — PAYS bug root cause)
+0637      — NEW /auto-valuation page (multi-file Excel + PDF upload,
+            auto-parses MTAR-style financial workbook + concall PDFs,
+            extracts forward guidance, auto-runs all calculators,
+            outputs BUY / WATCH / WAIT / AVOID recommendation)
+0638      — NEW /activity-log page (chronological feed of every user
+            action: decisions / valuations / themes / alerts / notes /
+            data uploads) + lib/activity-log.ts
+0639      — Wire TickerCombo into all 3 calculators
+0640      — Realistic WORKED_EXAMPLES market cap defaults + sanity-check
+            warning when base upside > 300%
+0641      — Auto-Valuation Excel parser validated against MTAR template:
+            META block extraction (rows 6/8/9 → shares + price + mcap),
+            Operating Profit auto-computed from Sales - expenses when
+            row missing, EBITDA = OP + Depreciation, fallback chain for
+            market cap (live quote → Excel META → empty)
+0642      — Filename ticker extraction: pick first word, exclude common
+            non-ticker tokens like LIMITED / INDIA / TRANSCRIPT
+```
+
+**HEAD on origin/main after this batch = `fba6ed7+`** (deploys continuing).
+
+**Day 2 new files (in case Vercel build cache misbehaves):**
+- `frontend/src/app/(dashboard)/playbook/page.tsx`
+- `frontend/src/app/(dashboard)/critical-themes/page.tsx`
+- `frontend/src/app/(dashboard)/valuation-calc/page.tsx`
+- `frontend/src/app/(dashboard)/guidance-extractor/page.tsx`
+- `frontend/src/app/(dashboard)/auto-valuation/page.tsx`
+- `frontend/src/app/(dashboard)/activity-log/page.tsx`
+- `frontend/src/lib/critical-themes.ts`
+- `frontend/src/lib/valuation-calculators.ts`
+- `frontend/src/lib/forward-guidance-extractor.ts`
+- `frontend/src/lib/theme-synthesis-prompt.ts`
+- `frontend/src/lib/multibagger-allowlists.ts`
+- `frontend/src/lib/activity-log.ts`
+- `MarketCockpit_Owner_Manual.docx` + `.pdf` (Patch 0620)
+
+**localStorage keys added in this batch:**
+```
+mc:saved-valuations:v1        — Saved Valuation Calc entries
+mc:critical-themes-custom:v1  — User-added themes
+mc:home-active-lens:v1        — Active home dashboard lens
+mc:home-custom-lenses:v1      — User-defined lenses
+```
+
+**New cross-tab events:**
+```
+mc:valuations-updated          — saved/deleted/edited a valuation
+mc:custom-themes-updated       — added/deleted a custom theme
+mc:load-valuation              — clicked EDIT on saved valuation
+```
+
+**Latest patch number for new work: 0643.**
+
 ### 17.9 STARTER PROMPT for new chat
 
-> Read `/Users/radhevrishi/Desktop/Python/Imp Marketcockpit/market-cockpit/CLAUDE.md` section 17 (END-OF-SESSION HANDOFF) before doing anything. HEAD on main is updated through Patch 0609 (Home Dashboard v2 with Decision Stack + Risk Framing, sidebar consolidated 28→11 grouped sections, Order Book Intelligence page under Event-Driven, news alerts firing-logic fixed). Latest patch number to use for new work: **0610**.
+> Read `/Users/radhevrishi/Desktop/Python/Imp Marketcockpit/market-cockpit/CLAUDE.md` section 17 (END-OF-SESSION HANDOFF) before doing anything. HEAD on main is updated through Patch 0642 (Auto-Valuation tab with multi-file Excel+PDF upload, Activity Log, MTAR-validated parser, Playbook + Critical Themes dynamic ranking + Valuation Calc suite with Analytics tab, Guidance Extractor, realistic worked-example defaults, sanity warnings). Latest patch number to use for new work: **0643**.
 >
 > [Now state what you want — examples below]
 > - "Continue auditing for new bugs and fix what you find."

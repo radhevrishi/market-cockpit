@@ -242,9 +242,18 @@ async function extractExcelFinancials(file: File): Promise<ExcelFinancials | nul
     if (v && /^[A-Z]{2,12}$/.test(v)) ticker = v;
   }
   if (!ticker) {
-    const fn = file.name.toUpperCase().replace(/\.[A-Z]+$/, '').replace(/[^A-Z]/g, '');
-    const m = fn.match(/[A-Z]{4,12}/);
-    if (m) ticker = m[0];
+    // PATCH 0642 — pick first WORD from filename, not first 4-12 chars of joined string.
+    // 'MTAR Technologie.xlsx' -> ['MTAR', 'Technologie'] -> 'MTAR'
+    // 'KAYNES-Q4FY26.pdf' -> ['KAYNES', 'Q4FY26'] -> 'KAYNES'
+    const fn = file.name.replace(/\.[a-z]+$/i, '');
+    const words = fn.split(/[^A-Za-z]+/).filter(w => w.length >= 3 && w.length <= 12);
+    if (words.length > 0) {
+      const upper = words[0].toUpperCase();
+      // Exclude obvious non-ticker words
+      if (!/^(THE|FOR|FROM|WITH|ANNUAL|INVESTOR|EARNINGS|TRANSCRIPT|REPORT|PRESENTATION|TECHNOLOGIE|LIMITED|INDIA)$/i.test(upper)) {
+        ticker = upper;
+      }
+    }
   }
 
   // PATCH 0641 — META block extraction (MTAR template rows 6/8/9)
