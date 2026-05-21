@@ -1053,12 +1053,14 @@ export default function HomeDashboard() {
             <Link href="/playbook"               style={navChip('#F59E0B')}>📚 Playbook</Link>
             <Link href="/critical-themes"        style={navChip('#EF4444')}>🔥 Themes</Link>
             <Link href="/valuation-calc"         style={navChip('#22D3EE')}>🧮 Valuation Calc</Link>
+            <Link href="/auto-valuation"         style={navChip('#10B981')}>🤖 Auto-Valuation</Link>
             <Link href="/earnings-hub?tab=concall" style={navChip('#A78BFA')}>🧠 Concall AI</Link>
             <Link href="/guidance-extractor"     style={navChip('#A78BFA')}>📋 Guidance</Link>
             <Link href="/multibagger"            style={navChip('#10B981')}>🚀 Multibagger</Link>
             <Link href="/portfolio"              style={navChip('#22D3EE')}>💼 My Book</Link>
             <Link href="/watchlists"             style={navChip('#22D3EE')}>👁 Watchlist</Link>
             <Link href="/decisions"              style={navChip('#22D3EE')}>📒 Decision Log</Link>
+            <Link href="/activity-log"           style={navChip('#A78BFA')}>📜 Activity</Link>
             <Link href="/concall-intel"          style={navChip('#A78BFA')}>🎙 Concall Intel</Link>
             <Link href="/earnings-opportunities" style={navChip('#F59E0B')}>📅 Earnings Ops</Link>
             <Link href="/earnings"               style={navChip('#F59E0B')}>📊 Earnings Scan</Link>
