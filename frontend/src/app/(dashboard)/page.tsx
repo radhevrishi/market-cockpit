@@ -432,6 +432,74 @@ export default function HomeDashboard() {
   // PATCH 0606 — no full-page loading state. Synchronous Tier 1/2/3 + portfolio
   // heat render instantly; network sections show their own loading chip.
 
+  // ─────────────────────────────────────────────────────────────────────
+  // PATCH 0613 — Saved Workspaces v1 (lens-switcher chip strip).
+  // Filters Tier 1/2/3 cards in real-time. localStorage-persistent.
+  // Preset lenses ship out-of-the-box; user can add custom ones via prompt().
+  // Stored shape: { id: string; label: string; mode: 'all' | 'cbOnly' | 'aplus' | 'sectorRegex'; sectorRegex?: string; emoji?: string }
+  // ─────────────────────────────────────────────────────────────────────
+  type Lens = { id: string; label: string; mode: 'all' | 'cbOnly' | 'aplus' | 'sectorRegex'; sectorRegex?: string; emoji?: string };
+  const PRESET_LENSES: Lens[] = useMemo(() => [
+    { id: 'all',          label: 'ALL',                 mode: 'all',         emoji: '◯' },
+    { id: 'cb-only',      label: 'CONVICTION-ONLY',     mode: 'cbOnly',      emoji: '★' },
+    { id: 'aplus-only',   label: 'A+ ONLY',             mode: 'aplus',       emoji: '💎' },
+    { id: 'industrials',  label: 'INDUSTRIALS',         mode: 'sectorRegex', sectorRegex: 'industrial|capital goods|engineering|machinery|defense|aerospace', emoji: '🏭' },
+    { id: 'infra-power',  label: 'INFRA & POWER',       mode: 'sectorRegex', sectorRegex: 'electrical|power|utilit|infra|construction|cement|transmission', emoji: '⚡' },
+    { id: 'pharma',       label: 'PHARMA & HEALTHCARE', mode: 'sectorRegex', sectorRegex: 'pharma|health|biotech|medical', emoji: '💊' },
+    { id: 'consumer',     label: 'CONSUMER',            mode: 'sectorRegex', sectorRegex: 'consumer|fmcg|retail|durable|personal|textile|jewel', emoji: '🛍' },
+  ], []);
+  const [customLenses, setCustomLenses] = useState<Lens[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try { return JSON.parse(localStorage.getItem('mc:home-custom-lenses:v1') || '[]') || []; } catch { return []; }
+  });
+  const [activeLensId, setActiveLensId] = useState<string>(() => {
+    if (typeof window === 'undefined') return 'all';
+    try { return localStorage.getItem('mc:home-active-lens:v1') || 'all'; } catch { return 'all'; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('mc:home-active-lens:v1', activeLensId); } catch {}
+  }, [activeLensId]);
+  useEffect(() => {
+    try { localStorage.setItem('mc:home-custom-lenses:v1', JSON.stringify(customLenses)); } catch {}
+  }, [customLenses]);
+
+  const allLenses = useMemo(() => [...PRESET_LENSES, ...customLenses], [PRESET_LENSES, customLenses]);
+  const activeLens = useMemo(() => allLenses.find(l => l.id === activeLensId) || PRESET_LENSES[0], [allLenses, activeLensId, PRESET_LENSES]);
+
+  const applyLens = (items: TierAction[], isTier1: boolean): TierAction[] => {
+    if (activeLens.mode === 'all') return items;
+    if (activeLens.mode === 'cbOnly') return items.filter(it => it.cbConfirmed === true || (isTier1 ? false : true));
+    if (activeLens.mode === 'aplus') return items.filter(it => it.grade === 'A+');
+    if (activeLens.mode === 'sectorRegex' && activeLens.sectorRegex) {
+      const re = new RegExp(activeLens.sectorRegex, 'i');
+      return items.filter(it => re.test(it.sector || ''));
+    }
+    return items;
+  };
+  const lensedTier1 = useMemo(() => applyLens(data.tier1, true), [data.tier1, activeLens]);
+  const lensedTier2 = useMemo(() => applyLens(data.tier2, false), [data.tier2, activeLens]);
+  const lensedTier3 = useMemo(() => applyLens(data.tier3, false), [data.tier3, activeLens]);
+
+  const addCustomLens = () => {
+    const name = window.prompt('Lens name (e.g. "AI Infra")');
+    if (!name) return;
+    const pattern = window.prompt('Sector keyword (regex; e.g. "data center|ai|semiconductor")', '');
+    if (!pattern) return;
+    const newLens: Lens = {
+      id: `custom-${Date.now()}`,
+      label: name.toUpperCase().slice(0, 24),
+      mode: 'sectorRegex',
+      sectorRegex: pattern,
+      emoji: '🎯',
+    };
+    setCustomLenses(prev => [...prev, newLens]);
+    setActiveLensId(newLens.id);
+  };
+  const removeCustomLens = (id: string) => {
+    setCustomLenses(prev => prev.filter(l => l.id !== id));
+    if (activeLensId === id) setActiveLensId('all');
+  };
+
   const now = new Date();
   const greeting = now.getHours() < 12 ? 'Good morning' : now.getHours() < 18 ? 'Good afternoon' : 'Good evening';
 
@@ -456,14 +524,72 @@ export default function HomeDashboard() {
           </div>
         </div>
 
+        {/* ═══════════════ PATCH 0613 — LENS SWITCHER ═══════════════════
+            Saved Workspaces v1. Filters Tier 1/2/3 in real-time.
+            User can add custom sector-regex lenses via the + button.
+        ═════════════════════════════════════════════════════════════════ */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          flexWrap: 'wrap',
+          padding: '6px 10px',
+          background: '#0D1623',
+          border: '1px solid #1A2540',
+          borderRadius: 6,
+        }}>
+          <span style={{ fontSize: 10, color: DIM, fontWeight: 700, letterSpacing: '0.5px', marginRight: 4 }}>LENS</span>
+          {allLenses.map((l) => {
+            const isActive = l.id === activeLensId;
+            const isCustom = !PRESET_LENSES.find(p => p.id === l.id);
+            return (
+              <span key={l.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                <button
+                  onClick={() => setActiveLensId(l.id)}
+                  style={{
+                    fontSize: 10,
+                    padding: '3px 9px',
+                    border: isActive ? '1px solid #22D3EE' : '1px solid #1A2540',
+                    background: isActive ? '#22D3EE22' : 'transparent',
+                    color: isActive ? '#22D3EE' : TEXT,
+                    fontWeight: 700,
+                    letterSpacing: '0.3px',
+                    borderRadius: 4,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {l.emoji || '◯'} {l.label}
+                </button>
+                {isCustom && isActive && (
+                  <button
+                    onClick={() => removeCustomLens(l.id)}
+                    title="Delete this lens"
+                    style={{ fontSize: 10, padding: '3px 5px', border: '1px solid #EF444440', background: 'transparent', color: '#EF4444', borderRadius: 4, cursor: 'pointer' }}
+                  >×</button>
+                )}
+              </span>
+            );
+          })}
+          <button
+            onClick={addCustomLens}
+            style={{ fontSize: 10, padding: '3px 9px', border: '1px dashed #22D3EE60', background: 'transparent', color: '#22D3EE', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+            title="Add a custom sector-keyword lens"
+          >+ NEW LENS</button>
+          {activeLens.mode !== 'all' && (
+            <span style={{ fontSize: 10, color: DIM, marginLeft: 4 }}>
+              · Tier 1: {lensedTier1.length}/{data.tier1.length} · Tier 2: {lensedTier2.length}/{data.tier2.length} · Tier 3: {lensedTier3.length}/{data.tier3.length}
+            </span>
+          )}
+        </div>
+
         {/* ═══════════════ TIER 1 — IMMEDIATE ACTION ════════════════════ */}
-        {data.tier1.length > 0 ? (
+        {lensedTier1.length > 0 ? (
           <DecisionTierBlock
             tier={1}
             label="IMMEDIATE ACTION"
             color="#10B981"
             description="Cross-confirmed (★) = A-grade + on Conviction Beats + not in Decision Log. (+) = A-grade top-up when fewer than 6 cross-confirmed exist."
-            items={data.tier1}
+            items={lensedTier1}
             expanded
           />
         ) : (
@@ -506,13 +632,13 @@ export default function HomeDashboard() {
         )}
 
         {/* ═══════════════ TIER 2 — STRUCTURAL WATCHLIST ════════════════ */}
-        {data.tier2.length > 0 && (
+        {lensedTier2.length > 0 && (
           <DecisionTierBlock
             tier={2}
             label="STRUCTURAL WATCHLIST"
             color="#22D3EE"
             description="A-grade scorecard — not yet on Conviction Beats bench OR already decision-tagged"
-            items={data.tier2}
+            items={lensedTier2}
             expanded
             condensed
           />
@@ -656,14 +782,14 @@ export default function HomeDashboard() {
         </div>
 
         {/* ═══════════════ TIER 3 — EXPERIMENTAL (collapsed by default) ═ */}
-        {data.tier3.length > 0 && (
+        {lensedTier3.length > 0 && (
           <div style={cardStyle}>
             <button onClick={() => setShowTier3(v => !v)} style={{
               background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
               fontSize: 13, fontWeight: 800, color: '#94A3B8', letterSpacing: '0.4px',
               display: 'flex', alignItems: 'center', gap: 6, width: '100%',
             }}>
-              {showTier3 ? '▾' : '▸'} 🧪 TIER 3 — EXPERIMENTAL / NARRATIVE ({data.tier3.length})
+              {showTier3 ? '▾' : '▸'} 🧪 TIER 3 — EXPERIMENTAL / NARRATIVE ({lensedTier3.length})
             </button>
             {!showTier3 && (
               <div style={{ marginTop: 4, fontSize: 10, color: DIM }}>
@@ -677,7 +803,7 @@ export default function HomeDashboard() {
                   with weaker fundamentals than Tier 1/2.
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 6 }}>
-                  {data.tier3.map((a, i) => (
+                  {lensedTier3.map((a, i) => (
                     <Link key={a.symbol + i} href={a.href} style={{
                       display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', borderRadius: 4,
                       border: '1px solid #94A3B830', background: '#94A3B808', textDecoration: 'none',

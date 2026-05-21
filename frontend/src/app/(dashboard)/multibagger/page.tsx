@@ -24,6 +24,9 @@ import { scoreTurnaroundRow, parseTurnaroundRow, type TurnaroundResult, type Tur
 import { ValuationStrip } from '@/components/valuation/ValuationStrip';
 // PATCH 0578 — Operating Leverage Cluster framework (§17.4(C))
 import { computeClusterScore, isClusterSeed, CLUSTER_TIER_META, type ClusterResult } from '@/lib/op-leverage-cluster';
+// PATCH 0614 — MNC_ALLOWLIST extracted to lib/multibagger-allowlists.ts as
+// first step toward modularising the 9K-line scorer.
+import { MNC_ALLOWLIST_IN } from '@/lib/multibagger-allowlists';
 
 // Shared API base — respects NEXT_PUBLIC_API_URL env var so all fetch() calls
 // resolve consistently when the base URL changes (fixes #13: mixed /api/v1 vs /api)
@@ -1756,14 +1759,8 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   // majority) and does NOT reflect a diligence-failure. Adding them keeps
   // genuinely clean MNC subs (Kennametal India, Carraro India, Nitta
   // Gelatin's foreign-anchored variant) from being penalized.
-  const MNC_ALLOWLIST = new Set<string>([
-    'KENNAMET','CARRARO','NITTAGELA','GRINDWELL','BOSCHLTD','ABB','SIEMENS',
-    '3MINDIA','HONAUT','CASTROLIND','CASTROL','NESTLEIND','HUL','HINDUNILVR',
-    'COLPAL','GILLETTE','GSK','SANOFI','PFIZER','PROCTER','PGHH','PROCTERG',
-    'WHIRLPOOL','ASTRAZEN','THOMASCOOK','TIMKEN','SKFINDIA','FAGBEAR','MAHSCOOTER',
-    'CUMMINSIND','SCHAEFFLER','CASTROL','SULZER','LINDEINDIA','ESABINDIA',
-  ]);
-  const isMNC = MNC_ALLOWLIST.has((row.symbol || '').toUpperCase());
+  // PATCH 0614 — MNC_ALLOWLIST now lives in lib/multibagger-allowlists.ts
+  const isMNC = MNC_ALLOWLIST_IN.has((row.symbol || '').toUpperCase());
 
   // PATCH 0338 — Governance Watch tiering. Old code was a single bucket
   // (cap 65). Now split:
@@ -5985,9 +5982,23 @@ function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGrade; co
   // (8) ELITE-R40 BONUS — overrides stratospheric cap when truly premium.
   // R40 ≥ 80 = elite (NVDA, PLTR-style hypergrowth-with-economics). Soft +5
   // bonus even past caps. ASTERA LABS, PLTR-quality names.
+  // PATCH 0612 — FCF triple-count de-dup. SaaS/Buffett DNA both gate on
+  // fcfMarginAnn and award +6; Elite R40 implicitly uses FCF via the
+  // R40 = growth + FCF formula. Letting both fire stacks +11 on the same
+  // FCF data point (PAYS pattern: 54% FCF → +6 DNA + +5 R40 + qual pillar).
+  // When DNA already fired we either skip Elite R40 entirely or halve it.
   if ((row.ruleOf40 ?? 0) >= 80 && (effGM ?? 0) >= 40 && noSpeculativeCap) {
-    score = Math.min(100, score + 5);
-    strengths.push(`Elite R40 ${row.ruleOf40?.toFixed(0)} with ${effGM?.toFixed(0)}% GPM — top-decile growth-plus-economics. +5 bonus.`);
+    if (saasDna || buffettDna) {
+      // Already credited via DNA bonus. Soft +2 acknowledgement only
+      // (gives a touch of premium for genuinely elite R40 ≥ 90).
+      if ((row.ruleOf40 ?? 0) >= 90) {
+        score = Math.min(100, score + 2);
+        strengths.push(`Elite R40 ${row.ruleOf40?.toFixed(0)} — +2 acknowledgement on top of DNA bonus (de-dup: FCF margin already credited).`);
+      }
+    } else {
+      score = Math.min(100, score + 5);
+      strengths.push(`Elite R40 ${row.ruleOf40?.toFixed(0)} with ${effGM?.toFixed(0)}% GPM — top-decile growth-plus-economics. +5 bonus.`);
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
