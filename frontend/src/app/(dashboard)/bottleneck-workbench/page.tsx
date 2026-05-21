@@ -28,6 +28,8 @@ import { useQuery } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { TOKENS } from '@/lib/design-tokens';
 import { classifySource, TIER_VISUAL } from '@/lib/source-tiers';
+// PATCH 0593/0594/0595 — institutional bottleneck overlay (quant + counter + India proxies)
+import { resolveTheme, type BottleneckTheme } from '@/lib/bottleneck-intel';
 
 interface BnSignal {
   id: string;
@@ -386,6 +388,13 @@ export default function BottleneckWorkbenchPage() {
             </div>
           </div>
 
+          {/* PATCH 0593/0594/0595 — Bottleneck Intelligence overlay.
+              Mounts the curated theme catalog (quantification + counter-thesis
+              + India-listed proxies) right after the bucket header. When the
+              catalog has a match for this theme, renders three institutional
+              panels. Silent skip when no match. */}
+          <BottleneckIntelOverlay themeId={bucket.bucket_id} label={bucket.label} />
+
           {/* Tickers grid — PATCH 0562 uses article-derived fallback. */}
           {bucketTickersAugmented.length > 0 && (
             <div style={{
@@ -517,6 +526,208 @@ export default function BottleneckWorkbenchPage() {
         filtered contracts ledger, theme revision diff, and portfolio overlay land once the
         Bottleneck entity with explicit transmission_levels + contracts join lands.
       </p>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BOTTLENECK INTELLIGENCE OVERLAY — PATCH 0593/0594/0595
+//
+// Renders three institutional-quality panels when the active bucket matches
+// a curated theme in lib/bottleneck-intel.ts:
+//   📐 QUANTIFICATION — lead-time / ASP / margin-leverage estimates
+//   ⚠ COUNTER-THESIS — de-bottleneck risk + trigger conditions
+//   🇮🇳 INDIA PROXIES   — direct NSE/BSE beneficiaries (curated list)
+//   🌐 GLOBAL PROXIES (compact) — cross-listed reference set
+// Falls back silently when no catalog match.
+// ═══════════════════════════════════════════════════════════════════════════
+
+function BottleneckIntelOverlay({ themeId, label }: { themeId: string; label?: string }) {
+  const theme: BottleneckTheme | undefined = resolveTheme(themeId, label);
+  if (!theme) {
+    return (
+      <div style={{
+        backgroundColor: TOKENS.surface.card,
+        border: `1px dashed ${TOKENS.surface.cardBorder}`,
+        borderRadius: 12, padding: '12px 16px', marginBottom: 16,
+        fontSize: 11, color: TOKENS.surface.textMuted, lineHeight: 1.5,
+      }}>
+        <span style={{ color: TOKENS.surface.textDim, fontWeight: 700 }}>📚 Bottleneck Intelligence:</span>{' '}
+        No curated catalog entry yet for &ldquo;{themeId}&rdquo;. Add quantification + counter-thesis +
+        India proxies in <code>lib/bottleneck-intel.ts</code> to surface this overlay.
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 20 }}>
+
+      {/* ── 📐 QUANTIFICATION ─────────────────────────────────────────── */}
+      {theme.quant.length > 0 && (
+        <div style={{
+          backgroundColor: TOKENS.surface.card,
+          border: `1px solid ${TOKENS.surface.cardBorder}`,
+          borderLeft: `3px solid #22D3EE`,
+          borderRadius: 10, padding: '12px 16px',
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.5px', marginBottom: 8 }}>
+            📐 QUANTIFICATION
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 10 }}>
+            {theme.quant.map((q, i) => (
+              <div key={i} style={{
+                padding: '8px 10px', borderRadius: 6,
+                background: 'rgba(34, 211, 238, 0.06)', border: '1px solid rgba(34, 211, 238, 0.25)',
+              }}>
+                <div style={{ fontSize: 10, color: TOKENS.surface.textMuted, fontWeight: 700, letterSpacing: '0.3px', marginBottom: 3 }}>
+                  {q.metric}
+                </div>
+                <div style={{ fontSize: 13, color: TOKENS.surface.text, fontWeight: 800, marginBottom: 2 }}>
+                  {q.current}
+                </div>
+                <div style={{ fontSize: 10.5, color: TOKENS.surface.textDim, marginBottom: 4 }}>
+                  {q.baseline}
+                </div>
+                <div style={{
+                  fontSize: 11, color: '#10B981', fontWeight: 600, lineHeight: 1.4,
+                  padding: '4px 8px', borderRadius: 4, background: 'rgba(16, 185, 129, 0.08)',
+                  border: '1px solid rgba(16, 185, 129, 0.25)',
+                }}>
+                  → {q.derivedImpact}
+                </div>
+                {q.evidence && (
+                  <div style={{ fontSize: 9, color: TOKENS.surface.textMuted, marginTop: 4, fontStyle: 'italic' }}>
+                    source: {q.evidence}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── ⚠ COUNTER-THESIS ───────────────────────────────────────────── */}
+      {theme.counter.length > 0 && (
+        <div style={{
+          backgroundColor: TOKENS.surface.card,
+          border: `1px solid ${TOKENS.surface.cardBorder}`,
+          borderLeft: `3px solid #F59E0B`,
+          borderRadius: 10, padding: '12px 16px',
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.5px', marginBottom: 6 }}>
+            ⚠ COUNTER-THESIS · DE-BOTTLENECK RISK
+          </div>
+          <div style={{ fontSize: 10.5, color: TOKENS.surface.textMuted, marginBottom: 8, lineHeight: 1.5 }}>
+            Every bottleneck eventually normalizes, overbuilds, or gets substituted.
+            These are the trigger conditions to watch for the structural reversal.
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {theme.counter.map((c, i) => {
+              const sevColor = c.severity === 'HIGH' ? '#EF4444' : c.severity === 'MEDIUM' ? '#F59E0B' : '#94A3B8';
+              return (
+                <div key={i} style={{
+                  padding: '7px 10px', borderRadius: 6,
+                  background: `${sevColor}10`, border: `1px solid ${sevColor}40`,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <span style={{
+                      fontSize: 9, fontWeight: 800, color: sevColor,
+                      padding: '1px 6px', borderRadius: 3,
+                      background: `${sevColor}22`, border: `1px solid ${sevColor}50`,
+                      letterSpacing: '0.4px',
+                    }}>{c.severity}</span>
+                    <span style={{ fontSize: 12, color: TOKENS.surface.text, fontWeight: 700, lineHeight: 1.4 }}>
+                      {c.risk}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 11, color: TOKENS.surface.textDim, lineHeight: 1.45, fontStyle: 'italic' }}>
+                    Trigger: {c.trigger}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── 🇮🇳 INDIA PROXIES + 🌐 GLOBAL ────────────────────────────── */}
+      {theme.inProxies.length > 0 && (
+        <div style={{
+          backgroundColor: TOKENS.surface.card,
+          border: `1px solid ${TOKENS.surface.cardBorder}`,
+          borderLeft: `3px solid #10B981`,
+          borderRadius: 10, padding: '12px 16px',
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: '#10B981', letterSpacing: '0.5px', marginBottom: 8 }}>
+            🇮🇳 INDIA-LISTED PROXIES ({theme.inProxies.length})
+          </div>
+          <div style={{ fontSize: 10.5, color: TOKENS.surface.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+            Curated NSE/BSE beneficiaries with primary exposure to this theme. Open the stock sheet for fundamentals.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 6 }}>
+            {theme.inProxies.map((p, i) => {
+              const exposureMeta = p.exposure === 'PURE'
+                ? { color: '#10B981', emoji: '◆', label: 'PURE' }
+                : p.exposure === 'CORE'
+                  ? { color: '#22D3EE', emoji: '◇', label: 'CORE' }
+                  : { color: '#94A3B8', emoji: '·', label: 'PARTIAL' };
+              return (
+                <a key={p.ticker + i} href={`/stock-sheet?ticker=${encodeURIComponent(p.ticker)}`}
+                  style={{
+                    display: 'flex', flexDirection: 'column', gap: 3,
+                    padding: '7px 10px', borderRadius: 5,
+                    border: `1px solid ${exposureMeta.color}30`, background: `${exposureMeta.color}08`,
+                    textDecoration: 'none',
+                  }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{
+                      fontSize: 9, fontWeight: 800, color: exposureMeta.color,
+                      padding: '1px 5px', borderRadius: 3, background: `${exposureMeta.color}22`,
+                      letterSpacing: '0.4px',
+                    }}>{exposureMeta.emoji} {exposureMeta.label}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: TOKENS.surface.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {p.company}
+                      </div>
+                      <div style={{ fontSize: 9, color: TOKENS.surface.textMuted, fontFamily: 'ui-monospace, monospace', fontWeight: 600 }}>
+                        {p.ticker}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 10, color: TOKENS.surface.textDim, lineHeight: 1.4, fontStyle: 'italic' }}>
+                    {p.thesis}
+                  </div>
+                </a>
+              );
+            })}
+          </div>
+
+          {theme.globalProxies && theme.globalProxies.length > 0 && (
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: `1px dashed ${TOKENS.surface.cardBorder}` }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: TOKENS.surface.textMuted, letterSpacing: '0.4px', marginBottom: 6 }}>
+                🌐 GLOBAL PROXIES (reference)
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {theme.globalProxies.map((g, i) => (
+                  <span key={g.ticker + i} title={g.thesis} style={{
+                    fontSize: 10, fontWeight: 700, color: TOKENS.surface.textDim,
+                    padding: '3px 8px', borderRadius: 4,
+                    border: `1px solid ${TOKENS.surface.cardBorder}`,
+                    fontFamily: 'ui-monospace, monospace',
+                  }}>
+                    {g.ticker} · {g.company}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {theme.notes && (
+        <div style={{ fontSize: 10, color: TOKENS.surface.textMuted, fontStyle: 'italic', lineHeight: 1.5, padding: '0 4px' }}>
+          {theme.notes}
+        </div>
+      )}
     </div>
   );
 }
