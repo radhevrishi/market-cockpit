@@ -119,21 +119,26 @@ export default function CalendarPage() {
     let slowTimer: ReturnType<typeof setTimeout> | null = null;
     let abortTimer: ReturnType<typeof setTimeout> | null = null;
     let didTimeout = false;
+    // PATCH 0571 — always own a local controller so the FETCH_TIMEOUT_MS
+    // can fire even when the caller (useEffect cleanup) already passed
+    // its own signal. We chain the caller's signal to ours so external
+    // aborts still propagate, but the timeout is no longer a no-op.
+    const ourController = new AbortController();
+    if (signal) {
+      if (signal.aborted) ourController.abort();
+      else signal.addEventListener('abort', () => ourController.abort(), { once: true });
+    }
     try {
       setLoading(true);
       // Slow-fetch hint: surface the retry CTA inside the spinner if the
       // request takes long enough to be perceptually broken.
       slowTimer = setTimeout(() => setSlowFetch(true), SLOW_FETCH_HINT_MS);
-      // Hard timeout: if signal is supplied (the caller's AbortController),
-      // we share it; if not, we still cap the wait by tripping didTimeout.
-      const localController = signal ? null : new AbortController();
-      const effectiveSignal = signal ?? localController!.signal;
       abortTimer = setTimeout(() => {
         didTimeout = true;
-        try { localController?.abort(); } catch {}
+        try { ourController.abort(); } catch {}
       }, FETCH_TIMEOUT_MS);
       const indexParam = indexFilter !== 'All' ? `&index=${indexFilter}` : '';
-      const res = await fetch(`/api/market/earnings?market=india&month=${monthStr}${indexParam}`, { signal: effectiveSignal });
+      const res = await fetch(`/api/market/earnings?market=india&month=${monthStr}${indexParam}`, { signal: ourController.signal });
       if (!res.ok) throw new Error('Failed to fetch earnings data');
       const json: EarningsResponse = await res.json();
       if (signal?.aborted) return;

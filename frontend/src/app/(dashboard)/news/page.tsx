@@ -828,30 +828,38 @@ function ReadingListButton({ id }: { id: string }) {
 // from a news headline to a tracked ticker without leaving the page. We
 // only wire the *first* symbol to keep the click cheap; multi-symbol adds
 // stay the watchlist page's job.
+// PATCH 0571 — Preserve the raw array form on write so untouched tickers
+// keep their original case. Earlier Patch-0569 version round-tripped
+// everything through a uppercased Set, silently normalising the entire
+// watchlist on every click; harmless functionally but surprising for any
+// downstream reader that depended on the user's original casing.
 const NEWS_WATCHLIST_KEY = 'mc_watchlist_tickers';
-function readWatchlistTickers(): Set<string> {
-  if (typeof window === 'undefined') return new Set();
+function readRawWatchlistTickers(): string[] {
+  if (typeof window === 'undefined') return [];
   try {
     const raw = localStorage.getItem(NEWS_WATCHLIST_KEY);
-    if (!raw) return new Set();
+    if (!raw) return [];
     const arr = JSON.parse(raw);
-    return new Set((Array.isArray(arr) ? arr : []).map((t: string) => String(t).toUpperCase()));
-  } catch { return new Set(); }
+    return Array.isArray(arr) ? arr.map(t => String(t)) : [];
+  } catch { return []; }
 }
-function writeWatchlistTickers(set: Set<string>) {
+function writeRawWatchlistTickers(arr: string[]) {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(NEWS_WATCHLIST_KEY, JSON.stringify(Array.from(set)));
+    localStorage.setItem(NEWS_WATCHLIST_KEY, JSON.stringify(arr));
     window.dispatchEvent(new Event('mc:watchlist:updated'));
   } catch {}
+}
+function hasTickerCI(arr: string[], upper: string): boolean {
+  return arr.some(t => String(t).toUpperCase() === upper);
 }
 function WatchlistButton({ ticker }: { ticker: string | null | undefined }) {
   const upper = (ticker || '').toUpperCase();
   const [inList, setInList] = useState(false);
   useEffect(() => {
     if (!upper) return;
-    setInList(readWatchlistTickers().has(upper));
-    const onUpdate = () => setInList(readWatchlistTickers().has(upper));
+    setInList(hasTickerCI(readRawWatchlistTickers(), upper));
+    const onUpdate = () => setInList(hasTickerCI(readRawWatchlistTickers(), upper));
     window.addEventListener('mc:watchlist:updated', onUpdate);
     window.addEventListener('storage', onUpdate);
     return () => {
@@ -863,10 +871,13 @@ function WatchlistButton({ ticker }: { ticker: string | null | undefined }) {
   const onClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    const set = readWatchlistTickers();
-    if (set.has(upper)) set.delete(upper); else set.add(upper);
-    writeWatchlistTickers(set);
-    setInList(set.has(upper));
+    const raw = readRawWatchlistTickers();
+    const present = hasTickerCI(raw, upper);
+    const next = present
+      ? raw.filter(t => String(t).toUpperCase() !== upper)
+      : [...raw, upper];
+    writeRawWatchlistTickers(next);
+    setInList(!present);
   };
   return (
     <button
