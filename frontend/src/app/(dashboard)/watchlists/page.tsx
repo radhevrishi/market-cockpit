@@ -1080,24 +1080,33 @@ type ConvFilters = {
 
 const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, guidance: null };
 
-// PATCH 0546 — Derive guidance from YoY metrics when the entry doesn't have
-// an explicit guidance field (true for the 218 entries that were synced
-// BEFORE Patch 0538 — they have sales/pat/eps numbers but no text-derived
-// guidance label). This way the GUIDANCE filter chips don't show 0/0/0
-// when the bench is full of legacy entries.
+// PATCH 0546 / 0547 — Derive guidance from YoY metrics when the entry
+// doesn't have an explicit guidance field. Tightened thresholds so the
+// distribution is MEANINGFUL within the bench (Patch 0546 v1 marked all
+// 70 BLOCKBUSTER+STRONG entries Positive because every one of them had
+// PAT ≥20 / Sales ≥0 / EPS ≥10 trivially).
 //
-// Simple heuristic — pure metric-based, no text scan:
-//   POSITIVE  : pat YoY ≥ 20 AND sales ≥ 0 AND eps ≥ 10
-//   NEGATIVE  : pat YoY < 0  OR  (sales < 0 AND eps < 0)
-//   NEUTRAL   : everything else
+// Discriminating heuristic — separates margin-expanding compounders from
+// margin-compressing or earnings-quality risks:
+//   POSITIVE : op-leverage AND quality
+//              PAT ≥ 40 AND PAT > Sales × 1.2 AND EPS ≥ 25 (PAT outpacing
+//              sales = margin expansion; EPS keeping up = no dilution)
+//   NEGATIVE : margin compression OR earnings quality concern
+//              PAT < 0  OR  (sales > 30 AND pat < sales × 0.6)  OR
+//              (pat > 0 AND eps < pat × 0.4)  (heavy dilution)
+//   NEUTRAL  : everything else (clean growth without standout margin signal)
 function deriveGuidanceLabel(e: ConvictionEntry): 'Positive' | 'Negative' | 'Neutral' {
   // Prefer the explicit field if present (new entries post-0538)
   if (e.guidance) return e.guidance;
   const sales = e.sales_yoy_pct ?? 0;
   const pat = e.net_profit_yoy_pct ?? 0;
   const eps = e.eps_yoy_pct ?? 0;
-  if (pat < 0 || (sales < 0 && eps < 0)) return 'Negative';
-  if (pat >= 20 && sales >= 0 && eps >= 10) return 'Positive';
+  // Negative gates
+  if (pat < 0) return 'Negative';
+  if (sales > 30 && pat < sales * 0.6) return 'Negative';   // margin compression
+  if (pat > 0 && eps < pat * 0.4) return 'Negative';        // dilution (PAT growing, EPS not)
+  // Positive gates — must show op-leverage AND quality
+  if (pat >= 40 && pat > sales * 1.2 && eps >= 25) return 'Positive';
   return 'Neutral';
 }
 
@@ -1612,46 +1621,11 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
         }
       />
 
-      {/* PATCH 0539 — View-mode toggle: Rich (Earnings Hub Scan parity) vs Compact rows */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <div style={{ display: 'inline-flex', gap: 4, padding: 3, backgroundColor: '#0A1422', border: '1px solid #1A2840', borderRadius: 8 }}>
-          <button onClick={() => setViewMode('rich')}
-            style={{
-              padding: '6px 12px', borderRadius: 6, border: 'none',
-              fontSize: 11, fontWeight: 700, cursor: 'pointer',
-              backgroundColor: viewMode === 'rich' ? '#F59E0B22' : 'transparent',
-              color: viewMode === 'rich' ? '#F59E0B' : '#8BA3C1',
-            }}>📊 Rich (Earnings Hub)</button>
-          <button onClick={() => setViewMode('compact')}
-            style={{
-              padding: '6px 12px', borderRadius: 6, border: 'none',
-              fontSize: 11, fontWeight: 700, cursor: 'pointer',
-              backgroundColor: viewMode === 'compact' ? '#F59E0B22' : 'transparent',
-              color: viewMode === 'compact' ? '#F59E0B' : '#8BA3C1',
-            }}>📋 Compact</button>
-        </div>
-        {viewMode === 'rich' && (
-          <div style={{ display: 'inline-flex', gap: 8, alignItems: 'center', fontSize: 11, color: '#8BA3C1' }}>
-            {richLoading && (
-              <span style={{ color: '#22D3EE' }}>Loading enriched cards… {richProgress.done}/{richProgress.total}</span>
-            )}
-            {!richLoading && richProgress.total > 0 && (
-              <span>{Object.keys(enrichedCards).length} of {tickersForFetch.length} enriched</span>
-            )}
-            <button onClick={() => richRefetch()}
-              disabled={richLoading}
-              style={{
-                fontSize: 10, fontWeight: 700, padding: '4px 8px',
-                background: richLoading ? '#1A2840' : '#0A1422',
-                border: '1px solid #2A3B4C', borderRadius: 5,
-                color: richLoading ? '#6B7A8D' : '#22D3EE',
-                cursor: richLoading ? 'not-allowed' : 'pointer',
-              }}>↻ Refresh</button>
-          </div>
-        )}
-      </div>
+      {/* PATCH 0547 — Rich view + view-mode toggle REMOVED per user request.
+          Hub-style enrichment fetch was unreliable for 200+ entries and
+          counts stayed at 0. Compact view is now the only view. */}
 
-      {viewMode === 'rich' ? (
+      {false ? (
         // ── RICH (Earnings Hub Scan parity) ──────────────────────────────
         <>
           {/* PATCH 0539 — Hub-Scan filter rail */}
