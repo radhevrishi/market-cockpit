@@ -22,6 +22,8 @@ import TickerExportToolbar from '@/components/TickerExportToolbar';
 import { scoreTurnaroundRow, parseTurnaroundRow, type TurnaroundResult, type TurnaroundStage, type TurnaroundArchetype } from '@/lib/turnaround';
 // VALUATION-B — inline fair-value strip from 10 institutional valuation models
 import { ValuationStrip } from '@/components/valuation/ValuationStrip';
+// PATCH 0578 — Operating Leverage Cluster framework (§17.4(C))
+import { computeClusterScore, isClusterSeed, CLUSTER_TIER_META, type ClusterResult } from '@/lib/op-leverage-cluster';
 
 // Shared API base — respects NEXT_PUBLIC_API_URL env var so all fetch() calls
 // resolve consistently when the base URL changes (fixes #13: mixed /api/v1 vs /api)
@@ -5373,6 +5375,10 @@ interface USARow {
   ruleOf40?: number;              // revenueGrowthAnn + fcfMarginAnn (≥40 = excellent)
   grossMarginExpansion?: number;  // grossMarginTtm - grossMarginAnn (positive = expanding)
   runwayMonths?: number;          // PATCH 0341: cashStInvest / (annual FCF burn) × 12 — for distress flag
+  // PATCH 0577 — Liquidity intelligence
+  price?: number;                 // Last close (USD), from TradingView "Price" / "Last" column
+  avgVolume30d?: number;          // Average daily share volume, 30-day (TradingView "Average Volume (30 day)")
+  avgDailyValueUsdM?: number;     // Derived: (avgVolume30d × price) / 1e6 — average daily $ traded, in millions
 }
 type USAGrade = 'A+'|'A'|'B+'|'B'|'C'|'D';
 
@@ -5423,8 +5429,23 @@ function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGrade; co
   if (row.fcfMarginAnn !== undefined) {
     const s = row.fcfMarginAnn>=25?92:row.fcfMarginAnn>=15?82:row.fcfMarginAnn>=8?65:row.fcfMarginAnn>=0?45:20;
     qualS+=s; qualC++;
-    if (row.fcfMarginAnn>=15) strengths.push(`FCF margin ${row.fcfMarginAnn.toFixed(1)}% — strong cash generation`);
-    else if (row.fcfMarginAnn<0) risks.push(`Negative FCF margin — burning cash`);
+    // PATCH 0575 — Don't push the standalone "FCF margin X% — strong cash
+    // generation" bullet when R40 or DNA bonus will also fire below. They
+    // already cite the same FCF number, so the standalone bullet creates
+    // triple-counting in the strengths list (PAYS post-mortem root cause).
+    // We suppress the standalone bullet anticipatorily by checking the same
+    // gates we'd use later; the upside is that R40 + DNA bullets are richer
+    // (composite + multi-signal) so the user sees the FCF signal in better
+    // context. Negative FCF still surfaces as a risk regardless.
+    const willFireR40Bullet = (row.ruleOf40 ?? 0) >= 40;
+    const willFireDnaBullet =
+         ((row.ruleOf40 ?? 0) >= 40 && (row.fcfMarginAnn ?? 0) >= 10)
+      || ((row.roe ?? 0) >= 18 && (row.roic ?? 0) >= 15 && (row.fcfMarginAnn ?? 0) >= 15);
+    if (row.fcfMarginAnn>=15 && !willFireR40Bullet && !willFireDnaBullet) {
+      strengths.push(`FCF margin ${row.fcfMarginAnn.toFixed(1)}% — strong cash generation`);
+    } else if (row.fcfMarginAnn<0) {
+      risks.push(`Negative FCF margin — burning cash`);
+    }
   }
   if (row.opmTtm !== undefined) {
     const s=svUS(row.opmTtm,b.opm); qualS+=s; qualC++;
@@ -6428,6 +6449,33 @@ function parseUSARow(row: Record<string,unknown>): USARow | null {
     insiderOwnership: n(row['Insider ownership, %'] ?? row['Insider ownership %']),
     analystCount:     n(row['Number of analyst estimates'] ?? row['Analysts']),
     forwardRevGrowth: n(row['Forward revenue growth %, FY1'] ?? row['Revenue growth %, next year']),
+    // PATCH 0577 — Liquidity intelligence. TradingView CSV usually has Price
+    // and either "Average Volume (30 day)" or just "Volume" (daily). When
+    // both are present we derive avgDailyValueUsdM in millions; otherwise
+    // fall back to the single value we have. Heavy-instituional desks need
+    // ADV ≥ $10M before position sizing can be 5%+; this surfaces it.
+    price: n(row['Price'] ?? row['Last'] ?? row['Close']),
+    avgVolume30d: n(
+      row['Average Volume (30 day)'] ??
+      row['Average Volume, 30 day'] ??
+      row['Avg Volume (30d)'] ??
+      row['Volume'] ??  // Single-day fallback; less ideal but better than nothing
+      row['Average Volume']
+    ),
+    avgDailyValueUsdM: (() => {
+      const p = n(row['Price'] ?? row['Last'] ?? row['Close']);
+      const v = n(
+        row['Average Volume (30 day)'] ??
+        row['Average Volume, 30 day'] ??
+        row['Avg Volume (30d)'] ??
+        row['Volume'] ??
+        row['Average Volume']
+      );
+      if (typeof p === 'number' && typeof v === 'number' && p > 0 && v > 0) {
+        return Math.round((p * v) / 1e6 * 10) / 10;
+      }
+      return undefined;
+    })(),
     // Derived at parse time
     revenueAccel: (revQtr !== undefined && revAnn !== undefined) ? Math.round(revQtr - revAnn) : undefined,
     accelSignal: (revQtr !== undefined && revAnn !== undefined)
@@ -7248,6 +7296,40 @@ function USACompare() {
                           MAX {r.suggestedMaxPositionPct}%
                         </div>
                       )}
+                      {/* PATCH 0577 — ADV (Average Daily $ Value) chip.
+                          Tier colors mirror institutional thresholds:
+                          ≥ $50M = green (any desk can size), $10-50M = amber
+                          (be careful), < $10M = red (institutional slippage
+                          risk). Derived from TradingView price × volume. */}
+                      {r.avgDailyValueUsdM !== undefined && r.avgDailyValueUsdM > 0 && (() => {
+                        const v = r.avgDailyValueUsdM;
+                        const tier = v >= 50 ? { c: '#10b981', bg: '#10b98118', bd: '#10b98140', hint: 'Heavy-institutional liquid — any desk can scale.' }
+                                  : v >= 10 ? { c: '#f59e0b', bg: '#f59e0b18', bd: '#f59e0b40', hint: 'Mid-cap liquid — size with slippage discipline.' }
+                                  :            { c: '#ef4444', bg: '#ef444418', bd: '#ef444440', hint: 'Thin tape — institutional desks avoid above 1% ADV.' };
+                        const label = v >= 1000 ? `$${(v / 1000).toFixed(1)}B`
+                                    : v >= 1   ? `$${v.toFixed(1)}M`
+                                                : `$${(v * 1000).toFixed(0)}K`;
+                        return (
+                          <div title={`Average Daily $ Volume ≈ ${label} (price × 30-day avg volume). ${tier.hint}`}
+                               style={{fontSize:9,fontWeight:800,color:tier.c,background:tier.bg,border:`1px solid ${tier.bd}`,padding:'1px 5px',borderRadius:4,marginTop:2,display:'inline-block'}}>
+                            ADV {label}
+                          </div>
+                        );
+                      })()}
+                      {/* PATCH 0576 — Per-row stale-fundamentals chip. Fires
+                          when this CSV upload is > 60 days old AND the row's
+                          1-year perf has moved ≥ 15% since the snapshot.
+                          Per-row variant of the page-level banner from #77 —
+                          this lets the analyst spot WHICH names specifically
+                          need a re-export (high-momentum names, where the
+                          stale-fundamentals risk is highest). */}
+                      {usaUploadAgeDays != null && usaUploadAgeDays > 60 &&
+                        typeof r.perf1y === 'number' && Math.abs(r.perf1y) >= 15 && (
+                        <div title={`Fundamentals captured ${usaUploadAgeDays}d ago, but 1y perf is ${r.perf1y.toFixed(0)}%. The scorecard may not reflect the current setup — re-export the row from TradingView before acting.`}
+                             style={{fontSize:9,fontWeight:800,color:ORANGE,background:`${ORANGE}18`,border:`1px solid ${ORANGE}40`,padding:'1px 5px',borderRadius:4,marginTop:2,display:'inline-block'}}>
+                          ⏳ STALE {usaUploadAgeDays}d
+                        </div>
+                      )}
                       {r.nextEarnings&&<div style={{fontSize:9,color:'#f59e0b'}}>📅 {r.nextEarnings}</div>}
                       {r.analystRating && (() => {
                         const rating = r.analystRating.toLowerCase();
@@ -8032,6 +8114,99 @@ function MultibaggerAnalytics({
 
     const convictionOverlap = stocks.filter((s) => isInCb(s.symbol));
 
+    // PATCH 0578 — Operating Leverage Cluster scores. Compute on the raw
+    // India rows (which carry the per-row fundamentals the cluster formula
+    // needs); USA rows aren't included because the cluster framework is
+    // India-centric (Indian industrial-capex theme).
+    const clusterEntries = (indiaRows || []).map((r: any) => {
+      const cluster = computeClusterScore(r);
+      const sym = (r.symbol || '').toUpperCase();
+      return {
+        symbol: r.symbol,
+        company: r.companyName,
+        sector: r.sector,
+        score: r.score,
+        grade: r.grade,
+        cluster,
+        isSeed: isClusterSeed(sym),
+      };
+    });
+    const clusterRanked = [...clusterEntries].sort((a, b) =>
+      // Seeds float to the top; otherwise sort by cluster score desc.
+      (b.isSeed ? 1 : 0) - (a.isSeed ? 1 : 0) || b.cluster.score - a.cluster.score
+    );
+    const clusterHighConv = clusterRanked.filter(x => x.cluster.tier === 'HIGH_CONVICTION');
+    const clusterEmerging = clusterRanked.filter(x => x.cluster.tier === 'EMERGING');
+
+    // PATCH 0578.5 — Cash-Rich / Net-Zero Debt hunting lens. User-requested
+    // (mid-session): "next hunting process" target is companies sitting on
+    // meaningful cash with effectively no debt. Computed per-market so we
+    // can show both India and USA candidates side by side.
+    type CashRichRow = {
+      symbol: string; company?: string; sector?: string;
+      score: number; grade: string; market: 'INDIA' | 'USA';
+      cashAbsLabel: string;       // e.g. '₹ 850 Cr' or '$ 2.4B'
+      cashToMcapPct: number;      // 0-100
+      debtIndicator: string;      // 'Net cash' | 'D/E 0.08' | 'ND/EBITDA -1.2×'
+    };
+    const indiaCashRich: CashRichRow[] = (indiaRows || []).map((r: any) => {
+      const cash = num(r.cashAndEq);
+      const mcap = num(r.marketCapCr);
+      const de = num(r.de);
+      const nde = num(r.netDebtEbitda);
+      if (typeof cash !== 'number' || typeof mcap !== 'number' || mcap <= 0) return null;
+      const ratio = (cash / mcap) * 100;
+      const noDebt =
+        (typeof de === 'number' && de < 0.10) ||
+        (typeof nde === 'number' && nde <= 0);
+      if (ratio < 20 || !noDebt) return null;
+      const debtIndicator =
+        (typeof nde === 'number' && nde <= 0) ? 'Net cash'
+        : (typeof de === 'number') ? `D/E ${de.toFixed(2)}`
+        : 'low debt';
+      return {
+        symbol: r.symbol,
+        company: r.companyName,
+        sector: r.sector,
+        score: r.score,
+        grade: r.grade,
+        market: 'INDIA' as const,
+        cashAbsLabel: `₹ ${cash.toFixed(0)} Cr`,
+        cashToMcapPct: Math.round(ratio),
+        debtIndicator,
+      };
+    }).filter(Boolean) as CashRichRow[];
+    const usaCashRich: CashRichRow[] = (usaRows || []).map((r: any) => {
+      const cash = num(r.cashUsd ?? r.cashStInvest);
+      const mcap = num(r.marketCapUsd);
+      const de = num(r.de);
+      const nd = num(r.netDebtUsd);
+      if (typeof cash !== 'number' || typeof mcap !== 'number' || mcap <= 0) return null;
+      const ratio = (cash / mcap) * 100;
+      const noDebt =
+        (typeof de === 'number' && de < 0.10) ||
+        (typeof nd === 'number' && nd <= 0);
+      if (ratio < 20 || !noDebt) return null;
+      const cashB = cash / 1e9;
+      const debtIndicator =
+        (typeof nd === 'number' && nd <= 0) ? 'Net cash'
+        : (typeof de === 'number') ? `D/E ${de.toFixed(2)}`
+        : 'low debt';
+      return {
+        symbol: r.symbol,
+        company: r.companyName,
+        sector: r.sector,
+        score: r.score,
+        grade: r.grade,
+        market: 'USA' as const,
+        cashAbsLabel: cashB >= 1 ? `$ ${cashB.toFixed(1)}B` : `$ ${(cash / 1e6).toFixed(0)}M`,
+        cashToMcapPct: Math.round(ratio),
+        debtIndicator,
+      };
+    }).filter(Boolean) as CashRichRow[];
+    const cashRich = [...indiaCashRich, ...usaCashRich]
+      .sort((a, b) => b.cashToMcapPct - a.cashToMcapPct);
+
     return {
       total, grades, avg, p25, p50, p75,
       sectorRanked, sectorAvgLookup,
@@ -8043,8 +8218,18 @@ function MultibaggerAnalytics({
       capBuckets, hasCapData,
       hiddenGems,
       top3Sectors, top3Pct, concentrationRisk,
+      // PATCH 0578 — cluster scores + cash-rich lens
+      clusterRanked, clusterHighConv, clusterEmerging,
+      cashRich,
     };
-  }, [stocks, convictionSet]);
+  }, [stocks, convictionSet, indiaRows, usaRows]);
+
+  // Local num helper for the new memos.
+  function num(v: any): number | undefined {
+    if (v === undefined || v === null) return undefined;
+    const n = typeof v === 'number' ? v : Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  }
 
   const cardStyle: React.CSSProperties = {
     backgroundColor: '#0D1623', border: '1px solid #1A2540',
@@ -8608,6 +8793,124 @@ function MultibaggerAnalytics({
                   {stats.decisionBridge.aTotal - stats.decisionBridge.aDecisionCount} still untagged
                 </span>.
               </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── 🏭 OPERATING LEVERAGE CLUSTER (PATCH 0578) ───────────────────────
+          §17.4(C) ranking-framework upgrade. 2×2 cluster + weighted Cluster
+          Score formula derives a 0-100 conviction number per India row:
+            0.30·Utilization-Evidence (ROCE, sales accel, OPM trend)
+          + 0.25·Margin-Inflection (EBITDA/Sales growth ratio, OPM)
+          + 0.20·BS-Repair (D/E, ICR, FCF)
+          + 0.15·Demand-Durability (sector prior + 3yr CAGR)
+          + 0.10·Value-Added-Mix (GPM, ROIC)
+          minus downgrade triggers (OPM compress / debt rising / capex peaking).
+          User-seeded core lights up with a ⭐. */}
+      {stats.clusterRanked && stats.clusterRanked.length > 0 && (
+        <div style={cardStyle}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 800, letterSpacing: '0.4px' }}>
+              🏭 OPERATING LEVERAGE CLUSTER ({stats.clusterHighConv.length} high-conviction · {stats.clusterEmerging.length} emerging)
+            </div>
+            <span style={{ fontSize: 10, color: '#22D3EE', background: '#22D3EE22', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>§17.4(C)</span>
+          </div>
+          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.5 }}>
+            Cluster Score = 0.30·Utilization + 0.25·Margin-Inflection + 0.20·BS-Repair + 0.15·Demand-Durability + 0.10·Value-Added-Mix.
+            ⭐ marks user-curated cluster seeds (SHYAMMETL, AJAXENGG, NELCAST, GOPAL, JNKINDIA, TRITURBINE).
+            Downgrades penalize capex peaks, debt creep, margin compression.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(310px, 1fr))', gap: 8 }}>
+            {stats.clusterRanked.slice(0, 18).map((c) => {
+              const meta = CLUSTER_TIER_META[c.cluster.tier];
+              return (
+                <a key={c.symbol} href={`/stock-sheet?ticker=${encodeURIComponent((c.symbol || '').replace(/\.(NS|BO)$/i, ''))}`}
+                  title={[
+                    `Cluster Score: ${c.cluster.score}/100  (${meta.label})`,
+                    `Factors: util ${c.cluster.factors.utilizationEvidence}/10 · margin ${c.cluster.factors.marginInflection}/10 · BS ${c.cluster.factors.bsRepair}/10 · demand ${c.cluster.factors.demandDurability}/10 · VA ${c.cluster.factors.valueAddedMix}/10`,
+                    c.cluster.notes.length ? `Notes: ${c.cluster.notes.join(' | ')}` : '',
+                    c.cluster.downgrades.length ? `Downgrades: ${c.cluster.downgrades.join(' | ')}` : '',
+                  ].filter(Boolean).join('\n')}
+                  style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '7px 10px', borderRadius: 4,
+                    border: `1px solid ${meta.color}40`, background: `${meta.color}10`, textDecoration: 'none' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <TickerCompanyCell ticker={c.isSeed ? `⭐ ${c.symbol}` : c.symbol} company={c.company} />
+                    <span style={{ fontSize: 13, fontWeight: 800, color: meta.color, fontVariantNumeric: 'tabular-nums', minWidth: 30, textAlign: 'right' }}>{c.cluster.score}</span>
+                    <span style={{ fontSize: 9, fontWeight: 800, color: meta.color, padding: '1px 5px', borderRadius: 3, background: `${meta.color}22`, letterSpacing: '0.3px' }}>{meta.emoji} {meta.label}</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9, color: '#94A3B8' }}>
+                    <span title="Utilization Evidence">UTIL {c.cluster.factors.utilizationEvidence}</span>
+                    <span style={{ color: '#1A2540' }}>·</span>
+                    <span title="Margin Inflection">MARG {c.cluster.factors.marginInflection}</span>
+                    <span style={{ color: '#1A2540' }}>·</span>
+                    <span title="Balance-Sheet Repair">BS {c.cluster.factors.bsRepair}</span>
+                    <span style={{ color: '#1A2540' }}>·</span>
+                    <span title="Demand Durability">DEM {c.cluster.factors.demandDurability}</span>
+                    <span style={{ color: '#1A2540' }}>·</span>
+                    <span title="Value-Added Mix">VA {c.cluster.factors.valueAddedMix}</span>
+                    <span style={{ marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }}>{c.score}{c.grade}</span>
+                  </div>
+                  {c.cluster.downgrades.length > 0 && (
+                    <div style={{ fontSize: 9, color: '#F59E0B', fontStyle: 'italic' }}>
+                      ⚠ {c.cluster.downgrades.join(' · ')}
+                    </div>
+                  )}
+                </a>
+              );
+            })}
+          </div>
+          {stats.clusterRanked.length > 18 && (
+            <div style={{ fontSize: 10, color: '#6B7A8D', marginTop: 6, fontStyle: 'italic' }}>
+              Showing top 18 of {stats.clusterRanked.length} ranked. Lower tiers (WATCH / SKIP) hidden.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── 💰 CASH-RICH · NET-ZERO DEBT (PATCH 0578.5) ─────────────────────
+          User-requested "next hunting process" lens. Surfaces names with
+          cash ≥ 20% of market cap AND effectively no debt (D/E < 0.10
+          or net cash by ND/EBITDA / netDebtUsd). Pure balance-sheet
+          filter — composite score / grade are shown but don't gate. */}
+      {stats.cashRich && stats.cashRich.length > 0 && (
+        <div style={cardStyle}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 13, color: '#10B981', fontWeight: 800, letterSpacing: '0.4px' }}>
+              💰 CASH RICH · NET-ZERO DEBT ({stats.cashRich.length})
+            </div>
+            <span style={{ fontSize: 10, color: '#10B981', background: '#10B98122', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>NEXT-HUNT LENS</span>
+          </div>
+          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.5 }}>
+            Cash ≥ 20% of market cap <strong>AND</strong> effectively zero debt (D/E &lt; 0.10 or net-cash by ND/EBITDA).
+            These names have optionality — they can buyback, acquire, or weather a downturn without dilution.
+            Composite score is informational only; the lens is pure balance-sheet quality.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 }}>
+            {stats.cashRich.slice(0, 24).map((r) => (
+              <a key={r.market + ':' + r.symbol} href={`/stock-sheet?ticker=${encodeURIComponent((r.symbol || '').replace(/\.(NS|BO)$/i, ''))}`}
+                title={`${r.cashAbsLabel} cash · ${r.cashToMcapPct}% of market cap · ${r.debtIndicator}`}
+                style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '7px 10px', borderRadius: 4,
+                  border: '1px solid #10B98140', background: '#10B98110', textDecoration: 'none' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <TickerCompanyCell ticker={r.symbol} company={r.company} />
+                  <span style={{ fontSize: 9, color: r.market === 'INDIA' ? '#10B981' : '#22D3EE', fontWeight: 800 }}>{r.market === 'INDIA' ? '🇮🇳' : '🇺🇸'}</span>
+                  <span style={{ fontSize: 11, color: '#10B981', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{r.score}{r.grade}</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: '#94A3B8' }}>
+                  <span style={{ color: '#10B981', fontWeight: 700 }}>{r.cashAbsLabel}</span>
+                  <span style={{ color: '#1A2540' }}>·</span>
+                  <span>{r.cashToMcapPct}% of mcap</span>
+                  <span style={{ color: '#1A2540' }}>·</span>
+                  <span style={{ color: '#10B981', fontStyle: 'italic' }}>{r.debtIndicator}</span>
+                </div>
+                <div style={{ fontSize: 9, color: '#6B7A8D' }}>{r.sector || '—'}</div>
+              </a>
+            ))}
+          </div>
+          {stats.cashRich.length > 24 && (
+            <div style={{ fontSize: 10, color: '#6B7A8D', marginTop: 6, fontStyle: 'italic' }}>
+              Showing top 24 of {stats.cashRich.length} qualifying. Sort: highest cash/mcap ratio first.
             </div>
           )}
         </div>
