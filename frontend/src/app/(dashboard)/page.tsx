@@ -339,7 +339,7 @@ export default function HomeDashboard() {
   // ("hide raw news feeds / low-confidence signals / secondary analytics")
   const [showTier3, setShowTier3] = useState(false);
   const [showInPlay, setShowInPlay] = useState(true);  // PATCH 0620 — In-Play moved to top of Home, default expanded
-  const [showQuickAccess, setShowQuickAccess] = useState(false);
+  const [showQuickAccess, setShowQuickAccess] = useState(true);  // PATCH 0623 — default expanded
 
   useEffect(() => {
     let cancelled = false;
@@ -496,19 +496,39 @@ export default function HomeDashboard() {
       // PATCH 0621 — Top 5 movers + losers (India).
       safeDiag<any>(`/api/market/quotes?market=india&_=${Date.now()}`, 18_000).then(({ data: j }) => {
         if (cancelled) return;
-        const gainers = (j?.gainers || []).slice(0, 5);
-        const losers = (j?.losers || []).slice(0, 5);
+        const gainers = (j?.gainers || []).slice(0, 8);
+        const losers = (j?.losers || []).slice(0, 8);
         setData((d) => ({ ...d, gainers, losers, moversUpdatedAt: j?.updatedAt } as any));
       });
 
-      // PATCH 0621 — Super Investors flow (last 30d).
-      safe<any>(`/api/v1/super-investor-flow?days=30&_=${Date.now()}`).then((j) => {
+      // PATCH 0623 — Super Investors flow (60d primary + 90d fallback).
+      // Upstream data is sparse — only ~7 rows in last 180d — so we widen
+      // the window. Also relax the ticker filter: drop only obvious noise
+      // patterns like 'Q1 for first time' / 'Q3 - Mint', keep everything
+      // else even if ticker is a company name (display layer handles both).
+      (async () => {
+        const cleanRows = (rawRows: any[]) => (rawRows || [])
+          .filter((r: any) => r?.ticker && r?.investors?.length)
+          .filter((r: any) => !/^Q\d\s|first time|^Q[1-4]\s/i.test(r.ticker))
+          .filter((r: any) => r.ticker.length < 40);  // drop excerpt-as-ticker
+
+        let j: any = await safe<any>(`/api/v1/super-investor-flow?days=60&_=${Date.now()}`);
         if (cancelled) return;
-        const rows = (j?.rows || [])
-          .filter((r: any) => r?.ticker && !/^Q\d for first time/i.test(r.ticker))
-          .slice(0, 6);
-        setData((d) => ({ ...d, superInvestors: rows } as any));
-      });
+        let rows = cleanRows(j?.rows || []);
+        if (rows.length < 3) {
+          // Fallback: widen to 90d
+          j = await safe<any>(`/api/v1/super-investor-flow?days=90&_=${Date.now()}`);
+          if (cancelled) return;
+          rows = cleanRows(j?.rows || []);
+        }
+        if (rows.length < 3) {
+          // Last resort: 180d
+          j = await safe<any>(`/api/v1/super-investor-flow?days=180&_=${Date.now()}`);
+          if (cancelled) return;
+          rows = cleanRows(j?.rows || []);
+        }
+        setData((d) => ({ ...d, superInvestors: rows.slice(0, 8) } as any));
+      })();
 
       // PATCH 0621 — Signals: high-importance corporate news from the last 24h.
       safeDiag<any>(`/api/v1/news?limit=30&importance_min=2&article_type=CORPORATE&_=${Date.now()}`, 18_000).then(({ data: j }) => {
@@ -516,7 +536,7 @@ export default function HomeDashboard() {
         const raw = Array.isArray(j) ? j : (j?.articles || j?.items || []);
         const items = (raw as any[])
           .filter((a: any) => !a?.is_synthetic && !a?.structural_status && !(a?.title || '').startsWith('[STRUCTURAL'))
-          .slice(0, 6);
+          .slice(0, 8);
         setData((d) => ({ ...d, signals: items } as any));
       });
 
@@ -1341,7 +1361,7 @@ export default function HomeDashboard() {
           <div style={{ ...cardStyle, borderLeft: '3px solid #A78BFA' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
               <span style={{ fontSize: 13, fontWeight: 800, color: '#A78BFA', letterSpacing: '0.4px' }}>
-                🦅 SUPER INVESTORS — last 30d ({data.superInvestors?.length || 0})
+                🦅 SUPER INVESTORS — last 60d ({data.superInvestors?.length || 0})
               </span>
               <Link href="/super-investors" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
             </div>
@@ -1354,7 +1374,7 @@ export default function HomeDashboard() {
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>No flow activity in window.</div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                {data.superInvestors.slice(0, 5).map((r: any, i: number) => {
+                {data.superInvestors.slice(0, 8).map((r: any, i: number) => {
                   const dirColor = r.topDirection === 'ACCUM' ? '#10B981' : r.topDirection === 'DIST' ? '#EF4444' : '#94A3B8';
                   const dirGlyph = r.topDirection === 'ACCUM' ? '▲' : r.topDirection === 'DIST' ? '▼' : '◆';
                   return (
@@ -1385,7 +1405,7 @@ export default function HomeDashboard() {
               <Link href="/movers" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
             </div>
             <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
-              India · top 5 each side · {data.moversUpdatedAt ? new Date(data.moversUpdatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : 'live'}
+              India · top 8 each side · {data.moversUpdatedAt ? new Date(data.moversUpdatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : 'live'}
             </div>
             {!data.gainers && !data.losers ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
@@ -1394,7 +1414,7 @@ export default function HomeDashboard() {
                 {/* Gainers column */}
                 <div>
                   <div style={{ fontSize: 9, color: '#10B981', fontWeight: 800, letterSpacing: '0.5px', marginBottom: 2 }}>▲ GAINERS</div>
-                  {(data.gainers || []).slice(0, 5).map((g: any) => (
+                  {(data.gainers || []).slice(0, 8).map((g: any) => (
                     <Link key={g.ticker} href={`/stock-sheet?ticker=${encodeURIComponent(g.ticker)}`}
                       style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 4px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
                       <span style={{ fontSize: 10, color: TEXT, fontWeight: 700, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.ticker}</span>
@@ -1405,7 +1425,7 @@ export default function HomeDashboard() {
                 {/* Losers column */}
                 <div>
                   <div style={{ fontSize: 9, color: '#EF4444', fontWeight: 800, letterSpacing: '0.5px', marginBottom: 2 }}>▼ LOSERS</div>
-                  {(data.losers || []).slice(0, 5).map((l: any) => (
+                  {(data.losers || []).slice(0, 8).map((l: any) => (
                     <Link key={l.ticker} href={`/stock-sheet?ticker=${encodeURIComponent(l.ticker)}`}
                       style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 4px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
                       <span style={{ fontSize: 10, color: TEXT, fontWeight: 700, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{l.ticker}</span>
@@ -1434,7 +1454,7 @@ export default function HomeDashboard() {
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>No high-importance corporate items in last 24h.</div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                {data.signals.slice(0, 5).map((s: any, i: number) => {
+                {data.signals.slice(0, 8).map((s: any, i: number) => {
                   const ticker = s.primary_ticker || (Array.isArray(s.ticker_symbols) && s.ticker_symbols[0]) || '';
                   return (
                     <a key={(s.id || '') + i} href={(s as any).url || (s as any).source_url || '#'} target="_blank" rel="noopener noreferrer"
