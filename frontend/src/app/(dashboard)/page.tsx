@@ -48,6 +48,7 @@ interface TierAction {
   thesis: string; risk: string; horizon: string; trigger: string;
   scoreBreakdown?: Record<string, number>;  // factor → points
   href: string;
+  cbConfirmed?: boolean;  // PATCH 0611 — true = on Conviction Beats bench, false = top-up A-grade
 }
 
 interface ChangedRow {
@@ -170,19 +171,39 @@ function buildSyncState(): Omit<HomeState, 'loading' | 'inPlay' | 'bottleneck' |
     try { return JSON.parse(localStorage.getItem('mb_india_prev_scores_v1') || '{}') || {}; } catch { return {}; }
   })();
 
-  const tier1 = indiaRows
+  // PATCH 0611 — Tier 1 fill-to-6 logic.
+  // Strict (cross-confirmed): A+/A grade + on CB + not in Decision Log.
+  // If strict yields < 6, top up with A+/A grade names NOT on CB (still strong,
+  // just not cross-confirmed). Cross-confirmed ones are flagged with cbConfirmed=true.
+  const symKey = (s: any) => (s || '').toString().toUpperCase().replace(/\.(NS|BO)$/i, '');
+  const buildTier1 = (r: any, cbConfirmed: boolean): TierAction => ({
+    symbol: r.symbol, company: r.company || r.companyName,
+    score: r.score ?? r.composite, grade: r.grade, sector: r.sector,
+    ...riskFraming(r.sector, 'multibagger'),
+    scoreBreakdown: decomposeScore(r),
+    href: `/stock-sheet?ticker=${encodeURIComponent((r.symbol || '').replace(/\.(NS|BO)$/i, ''))}`,
+    cbConfirmed,
+  } as TierAction);
+
+  const tier1Strict = indiaRows
     .filter((r: any) => (r.grade === 'A+' || r.grade === 'A')
-                     && cbSet.has((r.symbol || '').toUpperCase().replace(/\.(NS|BO)$/i, ''))
+                     && cbSet.has(symKey(r.symbol))
                      && !decisions[(r.symbol || '').toUpperCase()])
     .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
-    .slice(0, 6)
-    .map((r: any): TierAction => ({
-      symbol: r.symbol, company: r.company || r.companyName,
-      score: r.score ?? r.composite, grade: r.grade, sector: r.sector,
-      ...riskFraming(r.sector, 'multibagger'),
-      scoreBreakdown: decomposeScore(r),
-      href: `/stock-sheet?ticker=${encodeURIComponent((r.symbol || '').replace(/\.(NS|BO)$/i, ''))}`,
-    }));
+    .map((r: any) => buildTier1(r, true));
+
+  let tier1: TierAction[] = tier1Strict.slice(0, 6);
+  if (tier1.length < 6) {
+    const haveSyms = new Set(tier1.map(t => symKey(t.symbol)));
+    const fillers = indiaRows
+      .filter((r: any) => (r.grade === 'A+' || r.grade === 'A')
+                       && !haveSyms.has(symKey(r.symbol))
+                       && !decisions[(r.symbol || '').toUpperCase()])
+      .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
+      .slice(0, 6 - tier1.length)
+      .map((r: any) => buildTier1(r, false));
+    tier1 = [...tier1, ...fillers];
+  }
 
   const tier2 = indiaRows
     .filter((r: any) => (r.grade === 'A+' || r.grade === 'A') && !tier1.find(t => t.symbol === r.symbol))
@@ -311,7 +332,7 @@ export default function HomeDashboard() {
         return [];
       };
       const TIER_RANK: Record<string, number> = { BLOCKBUSTER: 0, STRONG: 1, MIXED: 2, AVOID: 3 };
-      const FOUR_HOURS_MS = 4 * 3600_000;
+      const FOUR_HOURS_MS = 24 * 3600_000; // PATCH 0611 — bumped 4h → 24h so feed always has something fresh
 
       // PATCH 0606 — three independent network fires; each updates state
       // separately so the page is fully usable as soon as ANY one returns.
@@ -349,33 +370,57 @@ export default function HomeDashboard() {
         setNetLoading((n) => ({ ...n, bottleneck: false }));
       });
 
-      // Earnings — try today first, fall back to most-recent working day if 0
+      // Earnings — PATCH 0611. Pull today + last 2 trading days, prioritise
+      // BLOCKBUSTER tier so the home dashboard always shows the heaviest hits
+      // even when today is dry. Label includes the date range used.
       (async () => {
-        const yesterdayIst = (() => {
+        const tradingDays = (() => {
+          const out: string[] = [];
           const d = new Date();
           const ist = new Date(d.getTime() + (d.getTimezoneOffset() + 330) * 60_000);
-          for (let i = 1; i <= 7; i++) {
+          // include today as day 0
+          const todayDow = ist.getDay();
+          if (todayDow !== 0 && todayDow !== 6) out.push(ist.toISOString().slice(0, 10));
+          // walk back up to 10 calendar days, collecting up to 2 weekdays
+          for (let i = 0; i < 10 && out.length < 3; i++) {
             ist.setDate(ist.getDate() - 1);
             const dow = ist.getDay();
-            if (dow !== 0 && dow !== 6) return ist.toISOString().slice(0, 10);
+            if (dow !== 0 && dow !== 6) out.push(ist.toISOString().slice(0, 10));
           }
-          return ist.toISOString().slice(0, 10);
+          return out;
         })();
-        const todayJson = await safe<any>(`/api/v1/earnings/graded?date=${todayIstISO()}`);
-        if (cancelled) return;
-        const todayCards = flattenGraded(todayJson).filter((c: any) => c?.ticker);
-        if (todayCards.length > 0) {
-          todayCards.sort((a: any, b: any) => (TIER_RANK[a.tier] ?? 9) - (TIER_RANK[b.tier] ?? 9) || (b.composite_score ?? 0) - (a.composite_score ?? 0));
-          setData((d) => ({ ...d, earningsToday: todayCards.slice(0, 12), earningsLabel: 'today' }));
-          setNetLoading((n) => ({ ...n, earnings: false }));
-          return;
+
+        const allCards: any[] = [];
+        for (const date of tradingDays) {
+          if (cancelled) return;
+          const j = await safe<any>(`/api/v1/earnings/graded?date=${date}`);
+          if (cancelled) return;
+          const dayCards = flattenGraded(j).filter((c: any) => c?.ticker).map((c: any) => ({ ...c, _date: date }));
+          allCards.push(...dayCards);
         }
-        // Empty today — try yesterday
-        const yJson = await safe<any>(`/api/v1/earnings/graded?date=${yesterdayIst}`);
-        if (cancelled) return;
-        const yCards = flattenGraded(yJson).filter((c: any) => c?.ticker);
-        yCards.sort((a: any, b: any) => (TIER_RANK[a.tier] ?? 9) - (TIER_RANK[b.tier] ?? 9) || (b.composite_score ?? 0) - (a.composite_score ?? 0));
-        setData((d) => ({ ...d, earningsToday: yCards.slice(0, 12), earningsLabel: yCards.length > 0 ? `last working day (${yesterdayIst})` : 'today' }));
+        // Sort: BLOCKBUSTER first, then by tier rank, then score
+        allCards.sort((a: any, b: any) => {
+          const aBlock = (a.tier || '').toUpperCase() === 'BLOCKBUSTER' ? 0 : 1;
+          const bBlock = (b.tier || '').toUpperCase() === 'BLOCKBUSTER' ? 0 : 1;
+          if (aBlock !== bBlock) return aBlock - bBlock;
+          return (TIER_RANK[a.tier] ?? 9) - (TIER_RANK[b.tier] ?? 9)
+              || (b.composite_score ?? 0) - (a.composite_score ?? 0);
+        });
+        // Dedupe by ticker (keep first occurrence, which will be the highest tier)
+        const seen = new Set<string>();
+        const deduped = allCards.filter((c: any) => {
+          const k = (c.ticker || '').toUpperCase();
+          if (seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        });
+        const label = (() => {
+          if (deduped.length === 0) return 'today';
+          const dates = Array.from(new Set(deduped.map((c: any) => c._date))).sort();
+          if (dates.length === 1) return dates[0] === tradingDays[0] ? 'today' : `${dates[0]}`;
+          return `last ${dates.length} trading days`;
+        })();
+        setData((d) => ({ ...d, earningsToday: deduped.slice(0, 12), earningsLabel: label }));
         setNetLoading((n) => ({ ...n, earnings: false }));
       })();
     })();
@@ -417,7 +462,7 @@ export default function HomeDashboard() {
             tier={1}
             label="IMMEDIATE ACTION"
             color="#10B981"
-            description="Cross-confirmed: A-grade scorecard + on Conviction Beats bench + not yet tagged in Decision Log"
+            description="Cross-confirmed (★) = A-grade + on Conviction Beats + not in Decision Log. (+) = A-grade top-up when fewer than 6 cross-confirmed exist."
             items={data.tier1}
             expanded
           />
@@ -476,53 +521,73 @@ export default function HomeDashboard() {
         {/* ═══════════════ TWO-COL: PORTFOLIO HEAT + EARNINGS TODAY ═════ */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12 }}>
 
-          {/* PORTFOLIO EXPOSURE HEAT */}
+          {/* PATCH 0611 — BOTTLENECK PULSE replaces Portfolio Exposure Heat.
+              Surfaces top 3 active bottleneck themes with implicated tickers.
+              Far higher signal: this is the transmission engine driving the whole
+              portal's thesis. Each theme links to the workbench.            */}
           <div style={cardStyle}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: '#10B981', letterSpacing: '0.4px' }}>💼 PORTFOLIO EXPOSURE HEAT</span>
-              <Link href="/portfolio" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open Portfolio →</Link>
+              <span style={{ fontSize: 13, fontWeight: 800, color: '#EF4444', letterSpacing: '0.4px' }}>📡 BOTTLENECK PULSE</span>
+              <Link href="/bottleneck-workbench" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open Workbench →</Link>
             </div>
-            {portfolioCount === 0 ? (
-              <div style={{ fontSize: 11, color: DIM, lineHeight: 1.5 }}>
-                No holdings added yet. <Link href="/portfolio" style={{ color: '#10B981' }}>Add holdings →</Link>
-              </div>
-            ) : data.portfolioBySector.length === 0 ? (
+            {netLoading.bottleneck ? (
+              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Scanning active bottlenecks…</div>
+            ) : data.bottleneck.length === 0 ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>
-                {portfolioCount} holdings — sector data missing. Upload a Multibagger CSV to derive exposure.
+                No active bottlenecks today. <Link href="/news?lifecycle=PERSISTENT" style={{ color: '#22D3EE' }}>Browse structural feed →</Link>
               </div>
             ) : (
-              <>
-                <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
-                  {portfolioCount} holdings across {data.portfolioBySector.length} sectors
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ fontSize: 10, color: DIM, marginBottom: 2 }}>
+                  Top 3 active themes · cross-confirmed across {data.bottleneck.length} buckets
                 </div>
-                {(() => {
-                  const max = Math.max(1, ...data.portfolioBySector.map(s => s.count));
+                {data.bottleneck.slice(0, 3).map((b: any) => {
+                  const sev = (b.severity_label || '').toLowerCase();
+                  const sevColor = sev === 'high' ? '#EF4444' : sev === 'medium' ? '#F59E0B' : '#22D3EE';
+                  const sevGlyph = sev === 'high' ? '🔴' : sev === 'medium' ? '🟠' : '🟡';
+                  const tix = (b.key_tickers || b.tickers || []).slice(0, 4);
+                  const themeName = b.theme || b.label || b.name || 'Untitled bucket';
                   return (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      {data.portfolioBySector.slice(0, 8).map((s) => {
-                        const pct = (s.count / max) * 100;
-                        const sectorPct = (s.count / portfolioCount) * 100;
-                        const heatColor = sectorPct >= 30 ? '#EF4444' : sectorPct >= 20 ? '#F59E0B' : sectorPct >= 10 ? '#22D3EE' : '#94A3B8';
-                        return (
-                          <div key={s.sector} title={s.tickers.join(' · ')} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <span style={{ fontSize: 11, color: TEXT, fontWeight: 600, minWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sector}</span>
-                            <span style={{ fontSize: 10, color: DIM, minWidth: 18, textAlign: 'right' }}>{s.count}</span>
-                            <div style={{ flex: 1, height: 6, background: '#1A2540', borderRadius: 3, overflow: 'hidden' }}>
-                              <div style={{ width: `${pct}%`, height: '100%', background: heatColor }} />
-                            </div>
-                            <span style={{ fontSize: 10, color: heatColor, fontWeight: 700, minWidth: 36, textAlign: 'right' }}>{sectorPct.toFixed(0)}%</span>
+                    <Link
+                      key={themeName}
+                      href={`/bottleneck-workbench?theme=${encodeURIComponent(themeName)}`}
+                      style={{ textDecoration: 'none', color: 'inherit' }}
+                    >
+                      <div style={{
+                        background: '#1A2540',
+                        border: `1px solid ${sevColor}40`,
+                        borderRadius: 5,
+                        padding: '6px 8px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 3,
+                        cursor: 'pointer',
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 6 }}>
+                          <span style={{ fontSize: 11, color: TEXT, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                            {sevGlyph} {themeName}
+                          </span>
+                          <span style={{ fontSize: 9, color: sevColor, fontWeight: 800, letterSpacing: '0.5px' }}>
+                            {(b.severity_label || 'med').toUpperCase()} · {b.article_count || 0}
+                          </span>
+                        </div>
+                        {tix.length > 0 && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                            {tix.map((t: string) => (
+                              <span key={t} style={{ fontSize: 9, color: '#22D3EE', background: '#22D3EE15', padding: '1px 5px', borderRadius: 3, fontWeight: 600 }}>
+                                {t}
+                              </span>
+                            ))}
+                            {(b.key_tickers?.length || 0) > 4 && (
+                              <span style={{ fontSize: 9, color: DIM }}>+{b.key_tickers.length - 4}</span>
+                            )}
                           </div>
-                        );
-                      })}
-                    </div>
+                        )}
+                      </div>
+                    </Link>
                   );
-                })()}
-                {data.portfolioBySector.some(s => (s.count / portfolioCount) >= 0.3) && (
-                  <div style={{ marginTop: 8, fontSize: 10, color: '#EF4444', background: '#EF444412', border: '1px solid #EF444440', borderRadius: 4, padding: '4px 8px' }}>
-                    ⚠ Concentration risk: one sector holds ≥30% of names. Consider rebalancing.
-                  </div>
-                )}
-              </>
+                })}
+              </div>
             )}
           </div>
 
@@ -538,7 +603,7 @@ export default function HomeDashboard() {
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading earnings…</div>
             ) : data.earningsToday.length === 0 ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>
-                No filings graded for today or yesterday. <Link href="/earnings-opportunities" style={{ color: '#22D3EE' }}>Open Earnings Ops →</Link>
+                No filings graded in last 3 trading days. <Link href="/earnings-opportunities" style={{ color: '#22D3EE' }}>Open Earnings Ops →</Link>
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -688,7 +753,7 @@ export default function HomeDashboard() {
             fontSize: 13, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px',
             display: 'flex', alignItems: 'center', gap: 6, width: '100%',
           }}>
-            {showInPlay ? '▾' : '▸'} 🔥 IN-PLAY NEWS — last 4h ({data.inPlay.length})
+            {showInPlay ? '▾' : '▸'} 🔥 IN-PLAY NEWS — last 24h ({data.inPlay.length})
             <span style={{ marginLeft: 'auto', fontSize: 10, color: DIM, fontWeight: 500 }}>
               <Link href="/news" style={{ color: '#22D3EE', textDecoration: 'none' }} onClick={(e) => e.stopPropagation()}>Full feed →</Link>
             </span>
@@ -701,7 +766,7 @@ export default function HomeDashboard() {
           )}
           {showInPlay && !netLoading.inPlay && data.inPlay.length === 0 && (
             <div style={{ fontSize: 11, color: DIM, marginTop: 8, fontStyle: 'italic' }}>
-              No live in-play news in last 4 hours. Structural alerts and older articles are filtered out.
+              No live in-play news in last 24 hours. Structural alerts and older articles are filtered out.
             </div>
           )}
           {showInPlay && !netLoading.inPlay && data.inPlay.length > 0 && (
@@ -828,6 +893,13 @@ function DecisionTierBlock({
                   <span style={{ fontSize: condensed ? 12 : 14, color: '#10B981', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
                     {a.score}{a.grade || ''}
                   </span>
+                )}
+                {/* PATCH 0611 — cbConfirmed glyph so Tier-1 top-ups (non-CB A-grade) are obvious */}
+                {tier === 1 && a.cbConfirmed === true && (
+                  <span title="Cross-confirmed: on Conviction Beats bench" style={{ fontSize: 12, color: '#F59E0B', fontWeight: 800 }}>★</span>
+                )}
+                {tier === 1 && a.cbConfirmed === false && (
+                  <span title="A-grade top-up: not yet on Conviction Beats bench" style={{ fontSize: 10, color: '#94A3B8', background: '#94A3B822', padding: '1px 5px', borderRadius: 3, fontWeight: 700 }}>+</span>
                 )}
               </div>
               {!condensed && (
