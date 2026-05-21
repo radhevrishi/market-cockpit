@@ -995,7 +995,7 @@ export default function HomeDashboard() {
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
           <div>
             <h1 style={{ margin: 0, fontSize: 26, fontWeight: 900, color: TEXT }}>🌅 {greeting}, Rishi</h1>
-            <div style={{ marginTop: 4, fontSize: 12, color: DIM, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ marginTop: 6, fontSize: 12, color: DIM, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', rowGap: 6 }}>
               <span>{now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</span>
               <span>·</span>
               <span>{now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</span>
@@ -1047,13 +1047,13 @@ export default function HomeDashboard() {
               )}
             </div>
           </div>
-          {/* PATCH 0619 — full institutional chip strip per user request.
-              All high-priority surfaces accessible from the home header in
-              the same chip style. Wraps to multiple rows on narrow screens. */}
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', maxWidth: 920, justifyContent: 'flex-end' }}>
+          {/* PATCH 0619/0635 — institutional chip strip. All in one row group,
+              uniform pill style, left-aligned, even row gap. */}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-start', rowGap: 8, alignItems: 'center' }}>
             <Link href="/playbook"               style={navChip('#F59E0B')}>📚 Playbook</Link>
             <Link href="/critical-themes"        style={navChip('#EF4444')}>🔥 Themes</Link>
             <Link href="/valuation-calc"         style={navChip('#22D3EE')}>🧮 Valuation Calc</Link>
+            <Link href="/earnings-hub?tab=concall" style={navChip('#A78BFA')}>🧠 Concall AI</Link>
             <Link href="/guidance-extractor"     style={navChip('#A78BFA')}>📋 Guidance</Link>
             <Link href="/multibagger"            style={navChip('#10B981')}>🚀 Multibagger</Link>
             <Link href="/portfolio"              style={navChip('#22D3EE')}>💼 My Book</Link>
@@ -2059,9 +2059,14 @@ const cardStyle: React.CSSProperties = {
 };
 function navChip(color: string): React.CSSProperties {
   return {
-    fontSize: 11, fontWeight: 700, color, textDecoration: 'none',
-    padding: '5px 10px', borderRadius: 5,
+    // PATCH 0635 — uniform pill: same vertical metric, slight border-radius bump,
+    // consistent horizontal padding so chip widths read as a single strip.
+    fontSize: 11.5, fontWeight: 700, color, textDecoration: 'none',
+    padding: '6px 12px', borderRadius: 6,
     background: `${color}15`, border: `1px solid ${color}40`,
+    lineHeight: 1.2,
+    whiteSpace: 'nowrap',
+    display: 'inline-flex', alignItems: 'center', gap: 4,
   };
 }
 function timeAgo(ms: number): string {
