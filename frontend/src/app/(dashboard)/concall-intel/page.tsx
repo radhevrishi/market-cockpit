@@ -2676,12 +2676,15 @@ function ConcallAnalyticsTab() {
   const moversLost = moversData?.lost_momentum?.length || 0;
   const moversTop = (moversData?.ranking_today || []).slice(0, 10);
 
-  // ── Warrant rollup (summary only — full chart in WarrantAnalytics) ────
-  const warTotal = warrantData?.count_total ?? 0;
-  const warRel = warrantData?.count_relevant ?? 0;
-  const warPassing = warrantData?.count_passing ?? 0;
-  const warGreen = (warrantData?.filings || []).filter((f) => (f.conviction as any)?.bucket === 'GREEN').length;
-  const warPromoter = (warrantData?.filings || []).filter((f) => f.details?.is_promoter_subscribed).length;
+  // PATCH 0597 — warrant rollup vars removed alongside Universe Summary.
+  // WarrantAnalytics card surfaces these inline already; per user feedback
+  // the cross-stream summary added noise without surface value.
+
+  // Reference-date awareness for daily movers: when this is the first
+  // run of the cron there's no yesterday snapshot, so jump / lost
+  // momentum buckets are empty by design. We surface that as an
+  // explanatory note instead of a hollow "none" string.
+  const moversHasReference = !!(moversData?.reference_date);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -2700,39 +2703,14 @@ function ConcallAnalyticsTab() {
         </div>
       </div>
 
-      {/* ── 1. UNIVERSE SUMMARY ─────────────────────────────────────────── */}
-      <div style={cardStyle}>
-        <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px', marginBottom: 8 }}>
-          🌐 UNIVERSE SUMMARY (cross-stream)
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
-          <div style={{ ...cardStyle, background: '#0A1422' }}>
-            <div style={labelStyle}>Warrant filings</div>
-            <div style={{ fontSize: 20, fontWeight: 900, color: '#A78BFA', fontVariantNumeric: 'tabular-nums' }}>{warTotal}</div>
-            <div style={{ fontSize: 10, color: '#6B7A8D' }}>{warRel} warrant-rel · <strong style={{ color: '#10B981' }}>{warPassing} passing</strong> · {warGreen} GREEN · {warPromoter} promoter-subscribed</div>
-          </div>
-          <div style={{ ...cardStyle, background: '#0A1422' }}>
-            <div style={labelStyle}>Bullish concalls</div>
-            <div style={{ fontSize: 20, fontWeight: 900, color: '#10B981', fontVariantNumeric: 'tabular-nums' }}>{liveBullishData?.count_relevant ?? 0}</div>
-            <div style={{ fontSize: 10, color: '#6B7A8D' }}>{liveBullishData?.count_high_bullish ?? 0} high-bullish · of {liveBullishData?.count_total ?? 0} total</div>
-          </div>
-          <div style={{ ...cardStyle, background: '#0A1422' }}>
-            <div style={labelStyle}>Keyword matches</div>
-            <div style={{ fontSize: 20, fontWeight: 900, color: '#F59E0B', fontVariantNumeric: 'tabular-nums' }}>{kwData?.count_matched ?? 0}</div>
-            <div style={{ fontSize: 10, color: '#6B7A8D' }}>{kwData?.totals?.total_hits ?? 0} hits · {kwData?.catalog?.length ?? 0} keywords</div>
-          </div>
-          <div style={{ ...cardStyle, background: '#0A1422' }}>
-            <div style={labelStyle}>Daily movers</div>
-            <div style={{ fontSize: 20, fontWeight: 900, color: '#22D3EE', fontVariantNumeric: 'tabular-nums' }}>{moversNew + moversJump + moversLost}</div>
-            <div style={{ fontSize: 10, color: '#6B7A8D' }}>{moversNew} new · {moversJump} jump · {moversLost} lost</div>
-          </div>
-          <div style={{ ...cardStyle, background: '#0A1422' }}>
-            <div style={labelStyle}>Cross-stream tickers</div>
-            <div style={{ fontSize: 20, fontWeight: 900, color: '#F59E0B', fontVariantNumeric: 'tabular-nums' }}>{crossStream.length}</div>
-            <div style={{ fontSize: 10, color: '#6B7A8D' }}>appearing in ≥ 2 streams</div>
-          </div>
-        </div>
-      </div>
+      {/* PATCH 0597 — Universe Summary panel removed per user feedback
+          ("i dont care this data"). Bottleneck Themes panel added below
+          (loads /news/bottleneck-dashboard, severity-sorted with key
+          tickers) per user request to bring news-side bottleneck data
+          into the Concall Intelligence Analytics tab. */}
+
+      {/* ── 🏗 BOTTLENECK THEMES (news-side, severity-sorted) ───────────── */}
+      <ConcallBottleneckPanel />
 
       {/* ── 2. WARRANT ANALYTICS (reuse) ────────────────────────────────── */}
       {warrantData && warrantData.filings.length > 0 && (
@@ -2918,18 +2896,24 @@ function ConcallAnalyticsTab() {
       {moversData && (moversNew + moversJump + moversLost) > 0 && (
         <div style={cardStyle}>
           <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px', marginBottom: 6 }}>
-            📈 DAILY MOVERS — vs {moversData.reference_date || 'no prior snapshot'}
+            📈 DAILY MOVERS — {moversHasReference ? `vs ${moversData.reference_date}` : 'first snapshot today (no prior reference yet)'}
           </div>
+          {!moversHasReference && (
+            <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 8, lineHeight: 1.5, padding: '6px 10px', background: '#F59E0B12', border: '1px solid #F59E0B40', borderRadius: 4 }}>
+              ⚠ Big Jumps and Lost Momentum will populate after the next cron snapshot. Until then only New Entries
+              (top filings discovered today) is meaningful.
+            </div>
+          )}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
             {[
-              { label: '🆕 NEW ENTRIES',   items: moversData.new_entries || [],   color: '#10B981' },
-              { label: '🔥 BIG JUMPS',     items: moversData.big_jumps || [],     color: '#F59E0B' },
-              { label: '📉 LOST MOMENTUM', items: moversData.lost_momentum || [], color: '#EF4444' },
+              { label: '🆕 NEW ENTRIES',   items: moversData.new_entries || [],   color: '#10B981', emptyHint: 'no new entries today' },
+              { label: '🔥 BIG JUMPS',     items: moversData.big_jumps || [],     color: '#F59E0B', emptyHint: moversHasReference ? 'no big jumps vs yesterday' : 'needs prior-day snapshot' },
+              { label: '📉 LOST MOMENTUM', items: moversData.lost_momentum || [], color: '#EF4444', emptyHint: moversHasReference ? 'no rankings dropped' : 'needs prior-day snapshot' },
             ].map((b) => (
               <div key={b.label} style={{ ...cardStyle, background: '#0A1422', borderColor: `${b.color}30` }}>
                 <div style={{ fontSize: 11, fontWeight: 800, color: b.color, marginBottom: 6 }}>{b.label} ({b.items.length})</div>
                 {b.items.length === 0 ? (
-                  <div style={{ fontSize: 10, color: '#6B7A8D', fontStyle: 'italic' }}>none</div>
+                  <div style={{ fontSize: 10, color: '#6B7A8D', fontStyle: 'italic' }}>{b.emptyHint}</div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                     {b.items.slice(0, 6).map((m, i) => (
@@ -3046,6 +3030,157 @@ function ConcallAnalyticsTab() {
         </ul>
       </div>
 
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONCALL BOTTLENECK PANEL — PATCH 0597
+//
+// Pulls the same /news/bottleneck-dashboard payload that powers the
+// /bottleneck-intel and /bottleneck-workbench pages and renders a
+// compact severity-sorted strip inside the Concall Intelligence Analytics
+// tab. User feedback: "same ke botlenecks from the other concallintelligence
+// should be taken also to analytics" — surface the cross-app bottleneck
+// data here so the analyst doesn't have to navigate away.
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface CiBottleneckBucket {
+  bucket_id: string;
+  label: string;
+  description?: string;
+  severity?: number;
+  severity_label?: string;
+  severity_color?: string;
+  severity_icon?: string;
+  signal_count?: number;
+  article_count?: number;
+  key_tickers?: string[];
+}
+interface CiBottleneckDashboard {
+  buckets: CiBottleneckBucket[];
+}
+
+function ConcallBottleneckPanel() {
+  const [data, setData] = useState<CiBottleneckDashboard | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 20_000);
+    setLoading(true);
+    fetch('/api/v1/news/bottleneck-dashboard', { cache: 'no-store', signal: ctl.signal })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
+      .then((j: CiBottleneckDashboard) => { if (!cancelled) setData(j); })
+      .catch((e: any) => { if (!cancelled) setError(e?.name === 'AbortError' ? 'timeout' : (e?.message || 'fetch failed')); })
+      .finally(() => { clearTimeout(t); if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; ctl.abort(); };
+  }, []);
+
+  // Sort by severity desc (HIGH first) then by article count desc.
+  const sevOrder: Record<string, number> = { high: 0, medium: 1, low: 2 };
+  const sorted = useMemo(() => {
+    const buckets = data?.buckets || [];
+    return [...buckets].sort((a, b) => {
+      const sa = sevOrder[(a.severity_label || '').toLowerCase()] ?? 99;
+      const sb = sevOrder[(b.severity_label || '').toLowerCase()] ?? 99;
+      if (sa !== sb) return sa - sb;
+      return (b.article_count || 0) - (a.article_count || 0);
+    });
+  }, [data]);
+
+  const totalArticles = sorted.reduce((s, b) => s + (b.article_count || 0), 0);
+  const totalSignals = sorted.reduce((s, b) => s + (b.signal_count || 0), 0);
+  const high = sorted.filter(b => (b.severity_label || '').toLowerCase() === 'high').length;
+  const med = sorted.filter(b => (b.severity_label || '').toLowerCase() === 'medium').length;
+
+  if (loading) {
+    return (
+      <div style={{ backgroundColor: '#0D1623', border: '1px solid #1A2540', borderRadius: 6, padding: '12px 14px' }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: '#EF4444', letterSpacing: '0.4px', marginBottom: 6 }}>
+          🏗 BOTTLENECK THEMES (news-side)
+        </div>
+        <div style={{ fontSize: 11, color: '#94A3B8' }}>📡 Loading bottleneck dashboard…</div>
+      </div>
+    );
+  }
+
+  if (error || sorted.length === 0) {
+    return (
+      <div style={{ backgroundColor: '#0D1623', border: '1px solid #1A2540', borderRadius: 6, padding: '12px 14px' }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: '#EF4444', letterSpacing: '0.4px', marginBottom: 6 }}>
+          🏗 BOTTLENECK THEMES (news-side)
+        </div>
+        <div style={{ fontSize: 11, color: '#94A3B8' }}>
+          {error ? `Could not load bottleneck dashboard (${error}). Visit /bottleneck-intel directly to inspect.` : 'No themes in the active news window.'}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ backgroundColor: '#0D1623', border: '1px solid #1A2540', borderRadius: 6, padding: '12px 14px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: '#EF4444', letterSpacing: '0.4px' }}>
+          🏗 BOTTLENECK THEMES (news-side, severity-sorted)
+        </div>
+        <div style={{ fontSize: 10, color: '#94A3B8' }}>
+          {sorted.length} themes · {totalArticles} articles · {totalSignals} signals · <span style={{ color: '#EF4444', fontWeight: 700 }}>{high} HIGH</span>{med > 0 && <> · <span style={{ color: '#F59E0B', fontWeight: 700 }}>{med} MED</span></>}
+        </div>
+      </div>
+      <div style={{ fontSize: 10.5, color: '#6B7A8D', marginBottom: 8, lineHeight: 1.5 }}>
+        Cross-app bottleneck themes from /bottleneck-intel. Click any theme to drill into its workbench
+        (transmission ladder, related articles, India proxies, counter-thesis).
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 6 }}>
+        {sorted.slice(0, 18).map((b) => {
+          const sev = (b.severity_label || '').toLowerCase();
+          const color = b.severity_color || (sev === 'high' ? '#EF4444' : sev === 'medium' ? '#F59E0B' : '#94A3B8');
+          return (
+            <a
+              key={b.bucket_id}
+              href={`/bottleneck-workbench?theme=${encodeURIComponent(b.bucket_id)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: 'flex', flexDirection: 'column', gap: 3,
+                padding: '7px 10px', borderRadius: 4,
+                border: `1px solid ${color}30`, background: `${color}08`,
+                textDecoration: 'none',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 14 }}>{b.severity_icon || '⚡'}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#E6EDF3', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {b.label || b.bucket_id}
+                  </div>
+                </div>
+                <span style={{
+                  fontSize: 9, fontWeight: 800, color, padding: '1px 5px', borderRadius: 3,
+                  background: `${color}22`, border: `1px solid ${color}50`, letterSpacing: '0.4px',
+                }}>{b.severity_label || '—'}</span>
+              </div>
+              <div style={{ fontSize: 9, color: '#94A3B8', display: 'flex', gap: 8 }}>
+                <span>{b.article_count ?? 0} art</span>
+                <span>{b.signal_count ?? 0} sig</span>
+                {(b.key_tickers && b.key_tickers.length > 0) && (
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    🎯 {b.key_tickers.slice(0, 3).join(' · ')}{b.key_tickers.length > 3 ? ` +${b.key_tickers.length - 3}` : ''}
+                  </span>
+                )}
+              </div>
+            </a>
+          );
+        })}
+      </div>
+      {sorted.length > 18 && (
+        <div style={{ fontSize: 10, color: '#6B7A8D', marginTop: 8, fontStyle: 'italic' }}>
+          Showing top 18 of {sorted.length}. Open <a href="/bottleneck-intel" style={{ color: '#22D3EE' }}>/bottleneck-intel</a> for the full rotation tracker.
+        </div>
+      )}
     </div>
   );
 }
