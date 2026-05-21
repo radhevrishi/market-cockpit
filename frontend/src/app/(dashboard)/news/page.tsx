@@ -13,6 +13,8 @@ import { TOKENS, chipStyle } from '@/lib/design-tokens';
 // PATCH 0232 — Source-tier visuals for Evidence Panel
 import { classifySource, TIER_VISUAL, sourceQualityWeight } from '@/lib/source-tiers';
 import { annotateArticle, clusterByCanonical, confidenceBand, CONFIDENCE_VISUAL } from '@/lib/news/event-detectors';
+// PATCH 0579 — TheWrap alternate-data detectors
+import { detectAllTheWrap } from '@/lib/thewrap-detectors';
 // PATCH 0455 CLEANUP-3 — Centralized vocab.
 import { JUNK_TICKERS, TICKER_ALIASES } from '@/lib/news/ticker-vocab';
 import { isInReadingList, toggleReadingList } from '@/lib/reading-list';
@@ -1167,6 +1169,28 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
                   </span>
                 );
               }
+              // PATCH 0579 — TheWrap detector chips. Each chip surfaces an
+              // alternate-data signal (Order-Book / Strategic-Hire /
+              // Marquee-Capital / Marketing-Auth) the standard news feed
+              // would otherwise bury. Pure regex over headline + summary;
+              // no backend required.
+              try {
+                const blob = `${article.title || ''} ${article.headline || ''} ${article.summary || ''}`;
+                const wrapSignals = detectAllTheWrap(blob);
+                for (const sig of wrapSignals) {
+                  chips.push(
+                    <span key={`tw-${sig.label}`}
+                      title={`${sig.evidence}\n\nTheWrap alternate-data detector — heuristic regex match. Verify in the source article before acting.`}
+                      style={{
+                        fontSize: '9px', fontWeight: '700', padding: '3px 7px', borderRadius: '5px',
+                        backgroundColor: sig.color + '15', color: sig.color,
+                        border: `1px solid ${sig.color}40`, letterSpacing: '0.3px',
+                      }}>
+                      {sig.emoji} {sig.label}
+                    </span>
+                  );
+                }
+              } catch { /* defensive: never let a detector regex crash a card */ }
               return chips;
             })()}
           </div>

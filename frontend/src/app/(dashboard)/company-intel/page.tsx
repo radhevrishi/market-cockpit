@@ -19,6 +19,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FileText, Upload, Trash2, Search, RefreshCw } from 'lucide-react';
 import { extractGuidance, categoryLabel, type GuidanceItem } from '@/lib/company-intel/guidance-extractor';
+// PATCH 0581 — Capacity-utilization extractor (§17.4 B-6)
+import { extractCapacity, summarizeCapacity, type CapacityMention } from '@/lib/capacity-util-extractor';
 
 const BG = '#0A0E1A';
 const CARD = '#0D1623';
@@ -100,6 +102,15 @@ export default function CompanyIntelPage() {
     if (text.length < 30) return [];
     return extractGuidance(text);
   }, [text]);
+  // PATCH 0581 — Capacity-utilization preview alongside guidance. Pure
+  // regex, runs on the same in-memory text. Surfaces "current util X%,
+  // target Y%" mentions so the analyst sees the operating-leverage
+  // setup before they save the document.
+  const capacityPreview = useMemo<CapacityMention[]>(() => {
+    if (text.length < 30) return [];
+    return extractCapacity(text);
+  }, [text]);
+  const capacitySummary = useMemo(() => summarizeCapacity(capacityPreview), [capacityPreview]);
 
   // ── Loaders ───────────────────────────────────────────────────────────
   const loadIndex = useCallback(async () => {
@@ -463,6 +474,48 @@ export default function CompanyIntelPage() {
                       <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic', lineHeight: 1.4 }}>“{g.quote}”</div>
                     </div>
                   ))}
+                </div>
+              )}
+
+              {/* PATCH 0581 — Capacity utilization preview. Shown only when
+                  the transcript yields at least one mention; runs alongside
+                  the guidance preview so the analyst sees the op-leverage
+                  setup (current → target utilization) at the same time. */}
+              {capacityPreview.length > 0 && (
+                <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px dashed ${BORDER}` }}>
+                  <h4 style={{ margin: '0 0 8px', fontSize: 13, color: '#10B981', fontWeight: 800, letterSpacing: '0.3px' }}>
+                    🏭 Capacity utilization ({capacityPreview.length} mention{capacityPreview.length === 1 ? '' : 's'})
+                  </h4>
+                  {(capacitySummary.avgCurrent !== undefined || capacitySummary.peakTarget !== undefined) && (
+                    <div style={{ fontSize: 11, color: DIM, marginBottom: 8 }}>
+                      {capacitySummary.avgCurrent !== undefined && <>Avg current: <strong style={{ color: '#22D3EE' }}>{capacitySummary.avgCurrent}%</strong></>}
+                      {capacitySummary.peakTarget !== undefined && <> · Peak target: <strong style={{ color: '#10B981' }}>{capacitySummary.peakTarget}%</strong></>}
+                      {capacitySummary.longestHorizon && <> · By {capacitySummary.longestHorizon}</>}
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {capacityPreview.map((m, i) => (
+                      <div key={i} title={m.raw}
+                        style={{ padding: '7px 10px', borderLeft: '3px solid #10B98160', background: '#0A1422', borderRadius: 4 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                          <span style={{ fontSize: 13, color: '#22D3EE', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
+                            {m.currentPct}%{m.targetPct ? ` → ${m.targetPct}%` : ''}
+                          </span>
+                          {m.plantOrSegment && (
+                            <span style={{ fontSize: 10, color: '#A78BFA', fontWeight: 700, padding: '1px 6px', borderRadius: 3, background: '#A78BFA15', border: '1px solid #A78BFA30' }}>
+                              {m.plantOrSegment}
+                            </span>
+                          )}
+                          {m.horizon && (
+                            <span style={{ fontSize: 10, color: '#F59E0B', fontWeight: 700, padding: '1px 6px', borderRadius: 3, background: '#F59E0B15', border: '1px solid #F59E0B30' }}>
+                              by {m.horizon}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic', lineHeight: 1.4 }}>“{m.raw}”</div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>

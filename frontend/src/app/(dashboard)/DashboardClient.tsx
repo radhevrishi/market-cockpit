@@ -36,6 +36,11 @@ const NAV: NavItem[] = [
   { href: '/orders',        label: 'Signals',            icon: <Shield className="w-5 h-5" /> },
   // PATCH 0092: Special Situations pillar (SPIN / M&A / TURN / CAP scanners)
   { href: '/special-situations', label: 'Special Situations', icon: <Compass className="w-5 h-5" /> },
+  // PATCH 0580 — Rating Actions tracker (§17.4 B-2). ICRA / CRISIL / CARE /
+  // India-Ratings upgrades / downgrades / outlook changes detected from
+  // the news stream. Sits next to Special Situations because both are
+  // event-driven re-rating catalysts rather than periodic fundamentals.
+  { href: '/rating-actions', label: 'Rating Actions',     icon: <Compass className="w-5 h-5" /> },
   // PATCH 0091: Earnings + Earnings AI + Calendar merged into Earnings Hub (sub-tabs inside)
   { href: '/earnings-hub',  label: 'Earnings Hub',       icon: <LineChart className="w-5 h-5" /> },
   // PATCH 0123: bring back the legacy /earnings page (Portfolio + Watchlist + 750-company
