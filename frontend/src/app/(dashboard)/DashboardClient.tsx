@@ -58,16 +58,18 @@ const NAV: NavItem[] = [
   // guidance text. Slots next to Multibagger because it shares the same
   // localStorage upload universe (mb_excel_scored_v2).
   { href: '/valuations',    label: 'Valuations',         icon: <Star className="w-5 h-5" /> },
-  // PATCH 0454 TIER1-A — Decision Logbook (queryable journal of every BUY /
-  // WATCH / NEUTRAL / REJECTED across both markets, with CSV export).
-  { href: '/decisions',     label: 'Decision Logbook',   icon: <BookMarked className="w-5 h-5" /> },
   // PATCH 0482 — Super Investor Tracker. Coat-tail dashboard for 10 Indian
   // growth-style investors: Kacholia / Kedia / Porinju / Pabrai / Andrade /
   // Mukherjea / Anand Shah / Khemani / Bakshi / Mittal. Holdings table +
   // news / interviews per investor.
+  // PATCH 0554 — Moved above Decision Logbook per user.
   { href: '/super-investors', label: 'Super Investors',  icon: <Star className="w-5 h-5" /> },
-  // PATCH 0107 / 0171: Concall Intelligence Engine v2 — moved next to Super Investors (Patch 0553)
+  // PATCH 0107 / 0171: Concall Intelligence Engine v2.
+  // PATCH 0553/0554 — Sits next to Super Investors, both above Decision Logbook.
   { href: '/concall-intel', label: 'Concall Intelligence', icon: <Microscope className="w-5 h-5" /> },
+  // PATCH 0454 TIER1-A — Decision Logbook (queryable journal of every BUY /
+  // WATCH / NEUTRAL / REJECTED across both markets, with CSV export).
+  { href: '/decisions',     label: 'Decision Logbook',   icon: <BookMarked className="w-5 h-5" /> },
   // PATCH 0093: Single-Stock Sheet — 16-section institutional checklist runner
   { href: '/stock-sheet',   label: 'Stock Sheet',        icon: <BookMarked className="w-5 h-5" /> },
   // PATCH 0094: Re-rating Screener — margin expansion + model shift + multiple expansion

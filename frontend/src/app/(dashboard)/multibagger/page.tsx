@@ -15,7 +15,7 @@ import {
 // PATCH 0272 — Conviction Beats overlay on Multibagger results.
 import { getConvictionTickers } from '@/lib/conviction-beats';
 import { getPortfolioMap } from '@/lib/portfolio-overlay';
-import { getDecision, setDecision, clearDecision, subscribeDecisions, DECISION_META, type DecisionStatus } from '@/lib/decisions';
+import { getDecision, setDecision, clearDecision, subscribeDecisions, readDecisions, DECISION_META, type DecisionStatus } from '@/lib/decisions';
 // PATCH 0367 — Export toolbar (TradingView + Screener.in) reused from earnings Scan
 import TickerExportToolbar from '@/components/TickerExportToolbar';
 // PATCH 0370 — Turnaround scoring engine
@@ -7712,21 +7712,56 @@ function MultibaggerAnalytics({
     try { return new Set<string>(getConvictionTickers()); } catch { return new Set<string>(); }
   }, []);
 
-  // Build unified analytics rows.  PATCH 0548 — also expose `prevScore` and
-  // `marketCap` (in ₹ Cr for India, $ B for USA) so downstream blocks can
-  // compute deltas + cap-size buckets without re-reading LS.
-  const stocks: (MbAnalyticsStock & { prevScore?: number; marketCapCr?: number; marketCapB?: number })[] = React.useMemo(() => {
+  // PATCH 0554 — listen for cross-tab decision updates so the
+  // Decision-Bridge / Triple-Confirmed panels reflect new BUY / WATCH /
+  // REJECTED tags without a page reload.
+  const [, forceDecRefresh] = React.useReducer((x: number) => x + 1, 0);
+  React.useEffect(() => subscribeDecisions(() => forceDecRefresh()), []);
+
+  // Build unified analytics rows.  PATCH 0548 / 0554 — also expose `prevScore`,
+  // `marketCap` (in ₹ Cr for India, $ B for USA), red-flag counts (India),
+  // and the USA forensic-flag triple (FCF/Op divergence, post-run stretched,
+  // earnings proximity).  This lets every downstream block — Decision Bridge,
+  // Quality Audit, Triple-Confirmed — operate off one in-memory list.
+  type AnaStock = MbAnalyticsStock & {
+    prevScore?: number;
+    marketCapCr?: number;
+    marketCapB?: number;
+    redFlagSummary?: {
+      critical: number;
+      structural: number;   // HIGH STRUCTURAL count
+      cyclical: number;     // HIGH CYCLICAL count
+      medium: number;
+      total: number;
+    };
+    fcfOpDivergence?: boolean;
+    postRunStretched?: boolean;
+    earningsProximityDays?: number;
+    suggestedMaxPositionPct?: number;
+  };
+  const stocks: AnaStock[] = React.useMemo(() => {
     const stripSym = (s: string) => (s || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
-    const ind = (indiaRows || []).map((r) => ({
-      symbol: r.symbol,
-      company: (r as any).companyName,
-      score: r.score,
-      grade: r.grade,
-      sector: (r as any).sector,
-      market: 'INDIA' as const,
-      prevScore: prevScoreMap[r.symbol] ?? prevScoreMap[stripSym(r.symbol)],
-      marketCapCr: (r as any).marketCapCr as number | undefined,
-    }));
+    const ind = (indiaRows || []).map((r) => {
+      const flags = (r as any).redFlags as { severity: string; kind?: string }[] | undefined;
+      const summary = flags && flags.length > 0 ? {
+        critical: flags.filter((f) => f.severity === 'CRITICAL').length,
+        structural: flags.filter((f) => f.severity === 'HIGH' && f.kind === 'STRUCTURAL').length,
+        cyclical: flags.filter((f) => f.severity === 'HIGH' && f.kind === 'CYCLICAL').length,
+        medium: flags.filter((f) => f.severity === 'MEDIUM').length,
+        total: flags.length,
+      } : { critical: 0, structural: 0, cyclical: 0, medium: 0, total: 0 };
+      return {
+        symbol: r.symbol,
+        company: (r as any).companyName,
+        score: r.score,
+        grade: r.grade,
+        sector: (r as any).sector,
+        market: 'INDIA' as const,
+        prevScore: prevScoreMap[r.symbol] ?? prevScoreMap[stripSym(r.symbol)],
+        marketCapCr: (r as any).marketCapCr as number | undefined,
+        redFlagSummary: summary,
+      };
+    });
     const us = (usaRows || []).map((r: any) => ({
       symbol: r.symbol,
       company: r.companyName,
@@ -7736,8 +7771,12 @@ function MultibaggerAnalytics({
       market: 'USA' as const,
       prevScore: prevScoreMap[r.symbol] ?? prevScoreMap[stripSym(r.symbol)],
       marketCapB: r.marketCapB as number | undefined,
+      fcfOpDivergence: r.fcfOpDivergence === true,
+      postRunStretched: r.postRunStretched === true,
+      earningsProximityDays: typeof r.earningsProximityDays === 'number' ? r.earningsProximityDays : undefined,
+      suggestedMaxPositionPct: typeof r.suggestedMaxPositionPct === 'number' ? r.suggestedMaxPositionPct : undefined,
     }));
-    const merged = [...ind, ...us];
+    const merged: AnaStock[] = [...ind, ...us];
     return scope === 'BOTH' ? merged : merged.filter((s) => s.market === scope);
   }, [indiaRows, usaRows, scope, prevScoreMap]);
 
@@ -7833,10 +7872,122 @@ function MultibaggerAnalytics({
         || (s.grade === 'C' && typeof s.prevScore === 'number' && (s.prevScore - s.score) >= 5))
       .sort((a, b) => a.score - b.score);
 
-    // Sector rotation
-    const sectorWithDelta = sectorRanked.filter((s) => s.delta !== null) as (typeof sectorRanked[number] & { delta: number })[];
-    const heatingUp = [...sectorWithDelta].sort((a, b) => b.delta - a.delta).slice(0, 5);
-    const cooling   = [...sectorWithDelta].sort((a, b) => a.delta - b.delta).slice(0, 5);
+    // PATCH 0554 — Decision Bridge replaces the Sectors Heating/Cooling block,
+    // which was visually broken without a prior-upload baseline. The bridge
+    // surfaces names where SCORE + CONVICTION BEATS + DECISION LOGBOOK
+    // disagree, because that disagreement IS the actionable insight.
+    const decisionMap = (() => {
+      try { return readDecisions(); } catch { return {}; }
+    })();
+    const decisionOf = (sym: string) => decisionMap[stripSym(sym).toUpperCase()];
+
+    // (1) ADD CANDIDATES — Score A+/A but NOT on Conviction Beats.
+    //     Already a strong fundamental but not yet on the institutional bench.
+    const addCandidates = stocks
+      .filter((s) => (s.grade === 'A+' || s.grade === 'A') && !isInCb(s.symbol))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10);
+
+    // (2) DROP ALERTS — On Conviction Beats but score DROPPED ≥5 OR grade is
+    //     now B/B+/C/D. The CB list is curated separately (filings-driven), so
+    //     when the multibagger score deteriorates this is a genuine trim flag.
+    const dropAlerts = stocks
+      .filter((s) => isInCb(s.symbol) && (
+        s.grade === 'B' || s.grade === 'B+' || s.grade === 'C' || s.grade === 'D' ||
+        (typeof s.prevScore === 'number' && (s.prevScore - s.score) >= 5)
+      ))
+      .sort((a, b) => {
+        // Sort by score-drop descending, then by absolute score ascending.
+        const da = typeof a.prevScore === 'number' ? (a.prevScore - a.score) : 0;
+        const db = typeof b.prevScore === 'number' ? (b.prevScore - b.score) : 0;
+        if (db !== da) return db - da;
+        return a.score - b.score;
+      })
+      .slice(0, 10);
+
+    // (3) RE-EVALUATE — Previously decided REJECTED but now grade A+/A.
+    //     This is the "am I being too conservative?" check.
+    const reEvaluate = stocks
+      .filter((s) => {
+        const d = decisionOf(s.symbol);
+        return d && d.status === 'REJECTED' && (s.grade === 'A+' || s.grade === 'A');
+      })
+      .map((s) => ({ ...s, _decision: decisionOf(s.symbol)! }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10);
+
+    // (4) DECISION COVERAGE — % of A-roster that has any logbook decision.
+    //     Helps the user spot uncovered A+ names that haven't been triaged.
+    const aDecisionCount = stocks
+      .filter((s) => (s.grade === 'A+' || s.grade === 'A'))
+      .filter((s) => !!decisionOf(s.symbol)).length;
+
+    // ── QUALITY AUDIT — how clean is the A-roster? ───────────────────────
+    // For the user's PAYS post-mortem: A+ universe shouldn't be celebrated
+    // until we know how many of those A+ names carry latent forensic risk.
+    const aOnlyRoster = stocks.filter((s) => s.grade === 'A+' || s.grade === 'A');
+    const qaIndia = aOnlyRoster.filter((s) => s.market === 'INDIA');
+    const qaUsa   = aOnlyRoster.filter((s) => s.market === 'USA');
+
+    const indCriticalCount   = qaIndia.filter((s) => (s.redFlagSummary?.critical ?? 0) > 0).length;
+    const indStructuralCount = qaIndia.filter((s) => (s.redFlagSummary?.structural ?? 0) > 0).length;
+    const indCyclicalCount   = qaIndia.filter((s) => (s.redFlagSummary?.cyclical ?? 0) > 0).length;
+    const indCleanCount      = qaIndia.filter((s) => (s.redFlagSummary?.total ?? 0) === 0).length;
+
+    const usaFcfDivCount     = qaUsa.filter((s) => s.fcfOpDivergence).length;
+    const usaPostRunCount    = qaUsa.filter((s) => s.postRunStretched).length;
+    const usaEarnSoonCount   = qaUsa.filter((s) =>
+      typeof s.earningsProximityDays === 'number' && s.earningsProximityDays >= 0 && s.earningsProximityDays <= 7
+    ).length;
+    const usaCleanCount      = qaUsa.filter((s) =>
+      !s.fcfOpDivergence && !s.postRunStretched &&
+      !(typeof s.earningsProximityDays === 'number' && s.earningsProximityDays >= 0 && s.earningsProximityDays <= 7)
+    ).length;
+
+    // Build per-flag drill-through lists (cap at 6 for compact display).
+    const indFlaggedRoster = qaIndia
+      .filter((s) => (s.redFlagSummary?.critical ?? 0) > 0 || (s.redFlagSummary?.structural ?? 0) > 0)
+      .sort((a, b) => (b.redFlagSummary?.critical ?? 0) - (a.redFlagSummary?.critical ?? 0)
+                   || (b.redFlagSummary?.structural ?? 0) - (a.redFlagSummary?.structural ?? 0))
+      .slice(0, 8);
+    const usaFcfDivList     = qaUsa.filter((s) => s.fcfOpDivergence).slice(0, 6);
+    const usaPostRunList    = qaUsa.filter((s) => s.postRunStretched).slice(0, 6);
+    const usaEarnSoonList   = qaUsa
+      .filter((s) => typeof s.earningsProximityDays === 'number' && s.earningsProximityDays >= 0 && s.earningsProximityDays <= 7)
+      .sort((a, b) => (a.earningsProximityDays ?? 99) - (b.earningsProximityDays ?? 99))
+      .slice(0, 6);
+
+    // ── TRIPLE-CONFIRMED — score + CB + decision = BUY/WATCH ─────────────
+    // The highest-conviction quadrant.  These are names where the
+    // fundamental scorer, the curated CB bench, AND the user's explicit
+    // logbook decision ALL agree it deserves capital.
+    const tripleConfirmed = stocks
+      .filter((s) => {
+        if (!(s.grade === 'A+' || s.grade === 'A')) return false;
+        if (!isInCb(s.symbol)) return false;
+        const d = decisionOf(s.symbol);
+        return d && (d.status === 'BUY' || d.status === 'WATCH');
+      })
+      .map((s) => ({ ...s, _decision: decisionOf(s.symbol)! }))
+      .sort((a, b) => b.score - a.score);
+
+    const qualityAudit = {
+      aTotal: aOnlyRoster.length,
+      indiaTotal: qaIndia.length,
+      indCriticalCount, indStructuralCount, indCyclicalCount, indCleanCount,
+      indFlaggedRoster,
+      usaTotal: qaUsa.length,
+      usaFcfDivCount, usaPostRunCount, usaEarnSoonCount, usaCleanCount,
+      usaFcfDivList, usaPostRunList, usaEarnSoonList,
+    };
+
+    const decisionBridge = {
+      addCandidates,
+      dropAlerts,
+      reEvaluate,
+      aDecisionCount,
+      aTotal: aOnlyRoster.length,
+    };
 
     // Cap-size breakdown (India only — uses ₹ Cr).
     const indiaWithMcap = stocks.filter((s) => s.market === 'INDIA' && typeof s.marketCapCr === 'number');
@@ -7886,7 +8037,8 @@ function MultibaggerAnalytics({
       sectorRanked, aPlus, aOnly, aTotal, aPct, topPicks, convictionOverlap,
       histogram, meanDelta, newCount,
       strongBuy, rerating, avoid,
-      heatingUp, cooling,
+      // PATCH 0554 — replaces heatingUp / cooling (broken w/o baseline)
+      decisionBridge, qualityAudit, tripleConfirmed,
       capBuckets, hasCapData,
       hiddenGems,
       top3Sectors, top3Pct, concentrationRisk,
@@ -8107,51 +8259,258 @@ function MultibaggerAnalytics({
         </div>
       </div>
 
-      {/* ── SECTOR ROTATION (PATCH 0548) ─────────────────────────────────── */}
-      {(stats.heatingUp.length > 0 || stats.cooling.length > 0) && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12 }}>
-          <div style={cardStyle}>
-            <div style={{ fontSize: 13, color: '#10B981', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
-              🔥 SECTORS HEATING UP
+      {/* ── 🎯 TRIPLE-CONFIRMED (PATCH 0554) ─────────────────────────────────
+          Scored A+/A  ∩  Conviction Beats bench  ∩  decision = BUY / WATCH.
+          The intersection of three independent signals.  Highest-conviction
+          names — show them first because they're the actionable shortlist. */}
+      {stats.tripleConfirmed.length > 0 && (
+        <div style={{ ...cardStyle, borderColor: '#F59E0B70', background: 'linear-gradient(180deg, #F59E0B10 0%, transparent 100%)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+            <div style={{ fontSize: 13, color: '#F59E0B', fontWeight: 800, letterSpacing: '0.4px' }}>
+              🎯 TRIPLE-CONFIRMED ({stats.tripleConfirmed.length})
             </div>
-            <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10 }}>Biggest avg-score gains vs last upload.</div>
-            {stats.heatingUp.length === 0 ? (
-              <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic' }}>No sectors with prev-score baseline.</div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                {stats.heatingUp.map((s) => (
-                  <div key={s.sector} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', borderRadius: 4, border: '1px solid #10B98120' }}>
-                    <span style={{ fontSize: 11, color: '#E6EDF3', fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sector}</span>
-                    <span style={{ fontSize: 10, color: '#6B7A8D', fontVariantNumeric: 'tabular-nums' }}>{s.prevAvg} → {s.avgScore}</span>
-                    <span style={{ fontSize: 10, color: '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>n={s.count}</span>
-                    <span style={{ fontSize: 11, color: '#10B981', fontWeight: 800, fontVariantNumeric: 'tabular-nums', minWidth: 40, textAlign: 'right' }}>▲+{s.delta}</span>
-                  </div>
-                ))}
-              </div>
-            )}
+            <span style={{ fontSize: 10, color: '#F59E0B', background: '#F59E0B22', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>HIGHEST CONVICTION</span>
           </div>
-          <div style={cardStyle}>
-            <div style={{ fontSize: 13, color: '#EF4444', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
-              ❄️ SECTORS COOLING
+          <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 10, lineHeight: 1.5 }}>
+            Score <span style={{ color: '#10B981', fontWeight: 700 }}>A+/A</span>  ∩  on{' '}
+            <span style={{ color: '#F59E0B', fontWeight: 700 }}>Conviction Beats</span>  ∩  decision ={' '}
+            <span style={{ color: '#22D3EE', fontWeight: 700 }}>BUY/WATCH</span>. Independent confirmation from three layers.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 6 }}>
+            {stats.tripleConfirmed.slice(0, 18).map((s) => {
+              const dec = (s as any)._decision as { status: DecisionStatus; reason: string } | undefined;
+              const decColor = dec?.status === 'BUY' ? '#10B981' : '#22D3EE';
+              return (
+                <a key={s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 4,
+                    border: '1px solid #F59E0B40', background: '#F59E0B10', textDecoration: 'none' }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', flex: 1 }}>{s.symbol}</span>
+                  <span style={{ fontSize: 10, color: '#F59E0B', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
+                  <span style={{ fontSize: 9, color: decColor, fontWeight: 800, padding: '1px 5px', borderRadius: 3, border: `1px solid ${decColor}50` }}>{dec?.status}</span>
+                </a>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── 🎯 DECISION BRIDGE (PATCH 0554) ─────────────────────────────────
+          Three side-by-side panels that answer: "what should I do NEXT
+          given the disagreement between my scorer, my bench, and my
+          logbook?". Each panel is a one-click drill-in. */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(310px, 1fr))', gap: 12 }}>
+        {/* ADD CANDIDATES — A+ but NOT on CB */}
+        <div style={{ ...cardStyle, borderColor: '#10B98140' }}>
+          <div style={{ fontSize: 13, color: '#10B981', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+            ➕ ADD TO BENCH ({stats.decisionBridge.addCandidates.length})
+          </div>
+          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.45 }}>
+            Score A+/A but not yet on Conviction Beats. Open the row in Earnings Opportunities to add.
+          </div>
+          {stats.decisionBridge.addCandidates.length === 0 ? (
+            <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic' }}>All A-grade names already on the bench.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+              {stats.decisionBridge.addCandidates.map((s) => (
+                <a key={s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', borderRadius: 4,
+                    border: '1px solid #10B98130', background: '#10B98108', textDecoration: 'none' }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', flex: 1 }}>{s.symbol}</span>
+                  <span style={{ fontSize: 11, color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
+                  <span style={{ fontSize: 9, color: '#94A3B8', maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sector || '—'}</span>
+                </a>
+              ))}
             </div>
-            <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10 }}>Biggest avg-score drops vs last upload.</div>
-            {stats.cooling.length === 0 ? (
-              <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic' }}>No sectors with prev-score baseline.</div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                {stats.cooling.map((s) => (
-                  <div key={s.sector} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', borderRadius: 4, border: '1px solid #EF444420' }}>
-                    <span style={{ fontSize: 11, color: '#E6EDF3', fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sector}</span>
-                    <span style={{ fontSize: 10, color: '#6B7A8D', fontVariantNumeric: 'tabular-nums' }}>{s.prevAvg} → {s.avgScore}</span>
-                    <span style={{ fontSize: 10, color: '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>n={s.count}</span>
-                    <span style={{ fontSize: 11, color: s.delta < 0 ? '#EF4444' : '#94A3B8', fontWeight: 800, fontVariantNumeric: 'tabular-nums', minWidth: 40, textAlign: 'right' }}>
-                      {s.delta < 0 ? '▼' : '•'}{s.delta}
+          )}
+        </div>
+
+        {/* DROP ALERTS — on CB but score deteriorated */}
+        <div style={{ ...cardStyle, borderColor: '#EF444440' }}>
+          <div style={{ fontSize: 13, color: '#EF4444', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+            ⚠ TRIM ALERTS ({stats.decisionBridge.dropAlerts.length})
+          </div>
+          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.45 }}>
+            On Conviction Beats but score has dropped ≥5 or grade fell to B or below. Review for trim.
+          </div>
+          {stats.decisionBridge.dropAlerts.length === 0 ? (
+            <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic' }}>Bench is clean — no deterioration flagged.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+              {stats.decisionBridge.dropAlerts.map((s) => {
+                const delta = typeof s.prevScore === 'number' ? s.score - (s.prevScore as number) : null;
+                return (
+                  <a key={s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', borderRadius: 4,
+                      border: '1px solid #EF444430', background: '#EF444408', textDecoration: 'none' }}>
+                    <span style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', flex: 1 }}>{s.symbol}</span>
+                    <span style={{ fontSize: 11, color: '#EF4444', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
+                    {delta !== null && delta < 0 && (
+                      <span style={{ fontSize: 10, color: '#EF4444', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>▼{delta}</span>
+                    )}
+                  </a>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* RE-EVALUATE — REJECTED but now A+ */}
+        <div style={{ ...cardStyle, borderColor: '#A78BFA40' }}>
+          <div style={{ fontSize: 13, color: '#A78BFA', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+            🔄 RE-EVALUATE ({stats.decisionBridge.reEvaluate.length})
+          </div>
+          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.45 }}>
+            You earlier marked these REJECTED, but the scorer now grades them A+/A. Was the rejection too early?
+          </div>
+          {stats.decisionBridge.reEvaluate.length === 0 ? (
+            <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic' }}>No rejected names have re-graded to A+/A.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+              {stats.decisionBridge.reEvaluate.map((s) => {
+                const dec = (s as any)._decision as { reason: string; date: string } | undefined;
+                return (
+                  <a key={s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
+                    title={dec ? `Reason: ${dec.reason || '—'}\nDate: ${(dec.date || '').slice(0, 10)}` : ''}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', borderRadius: 4,
+                      border: '1px solid #A78BFA30', background: '#A78BFA08', textDecoration: 'none' }}>
+                    <span style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', flex: 1 }}>{s.symbol}</span>
+                    <span style={{ fontSize: 11, color: '#A78BFA', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
+                  </a>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── 🔍 QUALITY AUDIT (PATCH 0554) ────────────────────────────────────
+          "How clean is my A+ universe?" — the PAYS-post-mortem question.
+          One side per market (India structural / cyclical; USA forensic). */}
+      {stats.qualityAudit.aTotal > 0 && (
+        <div style={cardStyle}>
+          <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>
+            🔍 QUALITY AUDIT — A-roster ({stats.qualityAudit.aTotal})
+          </div>
+          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.45 }}>
+            Don't trust the A+ label until you know what's flagged inside it. Audit the latent risk.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(290px, 1fr))', gap: 12 }}>
+            {/* India structural / cyclical */}
+            {stats.qualityAudit.indiaTotal > 0 && (
+              <div style={{ border: '1px solid #1A2540', borderRadius: 4, padding: '8px 10px' }}>
+                <div style={{ fontSize: 11, color: '#10B981', fontWeight: 800, marginBottom: 6 }}>🇮🇳 INDIA ({stats.qualityAudit.indiaTotal})</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                  <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, background: '#10B98122', color: '#10B981', fontWeight: 700 }}>
+                    ✓ CLEAN {stats.qualityAudit.indCleanCount}
+                  </span>
+                  {stats.qualityAudit.indCriticalCount > 0 && (
+                    <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, background: '#EF444422', color: '#EF4444', fontWeight: 700 }}>
+                      🛑 CRITICAL {stats.qualityAudit.indCriticalCount}
                     </span>
+                  )}
+                  {stats.qualityAudit.indStructuralCount > 0 && (
+                    <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, background: '#F59E0B22', color: '#F59E0B', fontWeight: 700 }}>
+                      ⚠ HIGH STRUCTURAL {stats.qualityAudit.indStructuralCount}
+                    </span>
+                  )}
+                  {stats.qualityAudit.indCyclicalCount > 0 && (
+                    <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, background: '#22D3EE22', color: '#22D3EE', fontWeight: 700 }}>
+                      ◐ CYCLICAL {stats.qualityAudit.indCyclicalCount}
+                    </span>
+                  )}
+                </div>
+                {stats.qualityAudit.indFlaggedRoster.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {stats.qualityAudit.indFlaggedRoster.map((s) => (
+                      <a key={s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
+                        style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px', borderRadius: 3,
+                          border: '1px solid #F59E0B25', background: '#F59E0B08', textDecoration: 'none' }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', flex: 1 }}>{s.symbol}</span>
+                        {(s.redFlagSummary?.critical ?? 0) > 0 && (
+                          <span style={{ fontSize: 9, color: '#EF4444', fontWeight: 700 }}>🛑{s.redFlagSummary?.critical}</span>
+                        )}
+                        {(s.redFlagSummary?.structural ?? 0) > 0 && (
+                          <span style={{ fontSize: 9, color: '#F59E0B', fontWeight: 700 }}>⚠{s.redFlagSummary?.structural}</span>
+                        )}
+                        {(s.redFlagSummary?.cyclical ?? 0) > 0 && (
+                          <span style={{ fontSize: 9, color: '#22D3EE', fontWeight: 700 }}>◐{s.redFlagSummary?.cyclical}</span>
+                        )}
+                      </a>
+                    ))}
                   </div>
-                ))}
+                )}
+              </div>
+            )}
+
+            {/* USA forensic flags */}
+            {stats.qualityAudit.usaTotal > 0 && (
+              <div style={{ border: '1px solid #1A2540', borderRadius: 4, padding: '8px 10px' }}>
+                <div style={{ fontSize: 11, color: '#22D3EE', fontWeight: 800, marginBottom: 6 }}>🇺🇸 USA ({stats.qualityAudit.usaTotal})</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                  <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, background: '#10B98122', color: '#10B981', fontWeight: 700 }}>
+                    ✓ CLEAN {stats.qualityAudit.usaCleanCount}
+                  </span>
+                  {stats.qualityAudit.usaFcfDivCount > 0 && (
+                    <span title="FCF margin > 2× Op-Income margin: working-capital / SBC noise inflating FCF" style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, background: '#EF444422', color: '#EF4444', fontWeight: 700 }}>
+                      🚨 FCF SUSPECT {stats.qualityAudit.usaFcfDivCount}
+                    </span>
+                  )}
+                  {stats.qualityAudit.usaPostRunCount > 0 && (
+                    <span title="Up >100% in 1y AND FwdPE >25 — priced for perfection (PAYS pattern)" style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, background: '#F59E0B22', color: '#F59E0B', fontWeight: 700 }}>
+                      🌡 STRETCHED {stats.qualityAudit.usaPostRunCount}
+                    </span>
+                  )}
+                  {stats.qualityAudit.usaEarnSoonCount > 0 && (
+                    <span title="Reports within 7 days — wait for the print" style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, background: '#A78BFA22', color: '#A78BFA', fontWeight: 700 }}>
+                      ⚠ EARNINGS &lt;7d {stats.qualityAudit.usaEarnSoonCount}
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {stats.qualityAudit.usaFcfDivList.map((s) => (
+                    <a key={`fcf-${s.symbol}`} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px', borderRadius: 3,
+                        border: '1px solid #EF444425', background: '#EF444408', textDecoration: 'none' }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', flex: 1 }}>{s.symbol}</span>
+                      <span style={{ fontSize: 9, color: '#EF4444', fontWeight: 700 }}>🚨 FCF</span>
+                    </a>
+                  ))}
+                  {stats.qualityAudit.usaPostRunList.map((s) => (
+                    <a key={`pr-${s.symbol}`} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px', borderRadius: 3,
+                        border: '1px solid #F59E0B25', background: '#F59E0B08', textDecoration: 'none' }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', flex: 1 }}>{s.symbol}</span>
+                      <span style={{ fontSize: 9, color: '#F59E0B', fontWeight: 700 }}>🌡 STR</span>
+                    </a>
+                  ))}
+                  {stats.qualityAudit.usaEarnSoonList.map((s) => (
+                    <a key={`er-${s.symbol}`} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px', borderRadius: 3,
+                        border: '1px solid #A78BFA25', background: '#A78BFA08', textDecoration: 'none' }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', flex: 1 }}>{s.symbol}</span>
+                      <span style={{ fontSize: 9, color: '#A78BFA', fontWeight: 700 }}>⚠ {s.earningsProximityDays}d</span>
+                    </a>
+                  ))}
+                </div>
               </div>
             )}
           </div>
+
+          {/* Decision-coverage strip */}
+          {stats.decisionBridge.aTotal > 0 && (
+            <div style={{ marginTop: 10, padding: '6px 8px', borderTop: '1px solid #1A2540', display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
+              <span style={{ color: '#6B7A8D', fontWeight: 700 }}>DECISION COVERAGE</span>
+              <span style={{ color: '#22D3EE', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
+                {stats.decisionBridge.aDecisionCount}/{stats.decisionBridge.aTotal}
+              </span>
+              <span style={{ color: '#94A3B8' }}>
+                A-roster names have a Decision Logbook entry —{' '}
+                <span style={{ color: stats.decisionBridge.aTotal - stats.decisionBridge.aDecisionCount > 0 ? '#F59E0B' : '#10B981', fontWeight: 700 }}>
+                  {stats.decisionBridge.aTotal - stats.decisionBridge.aDecisionCount} still untagged
+                </span>.
+              </span>
+            </div>
+          )}
         </div>
       )}
 
