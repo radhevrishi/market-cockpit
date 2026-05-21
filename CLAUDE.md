@@ -1,7 +1,7 @@
 # Market Cockpit — Claude Handoff Memory
 
 > Read this FIRST when starting any new chat. Saves you 30 minutes of context-rebuilding.
-> **Last updated: 2026-05-21 — END OF SESSION HANDOFF.** Latest patches: 0549–0567 (17 patches in this session). HEAD on `origin/main` = `7c7f8c5` (Patches 0556–0567: QA audit fixes P0–P2, 12 bugs). Section 17 (NEW) has the full session summary, open work, and next-chat starter prompt. Read section 17 first if continuing this work.
+> **Last updated: 2026-05-21 — POST-COMPACTION CONTINUATION.** Latest patches: 0549–0609 (61 patches in this session). HEAD on `origin/main` = `02a9e61` (Patches 0606–0609: Home v2 perf + sidebar trim + news alerts firing + Order Book Intel page). Section 17 (NEW) has the full session summary, open work, and next-chat starter prompt. Read section 17 first if continuing this work.
 > **Sandbox-name caveat:** This file references the OLD sandbox `zen-epic-bardeen` in section 2 and `kind-sharp-maxwell` was the active sandbox at session-end. New sessions get a new sandbox name. The repo path mapping pattern is `/Users/.../market-cockpit/` → `/sessions/<sandbox>/mnt/market-cockpit/` — substitute the active sandbox name from `ls /sessions/` or your bash mounts.
 
 ---
@@ -1854,12 +1854,82 @@ frontend/src/components/PanelFreshness.tsx
 5. `ls /tmp/mc-deploy 2>/dev/null` → if missing, clone fresh using the token URL from step 3
 6. Read this section (§17) in full + glance at §13 (Hard Rules) before starting
 
+### 17.10 POST-COMPACTION BATCH (0584 → 0609)
+
+The session continued after the §17.2 summary was written. Below is the
+delta — what shipped between Patch 0584 and Patch 0609.
+
+```
+0584 — Special Situations Analytics view
+0585 — Multibagger Analytics: company-name fix across 5 buckets
+       (parser stores r.company, not r.companyName — analytics-side bug)
+0586 — Operating Leverage Cluster DATA_INCOMPLETE handling
+       (relaxed HIGH_CONVICTION threshold 75→65 + tier for <2 of 4 core fields)
+0587 — STRONG BUY relax + AVOID split (Analytics)
+0588 — Valuation Gateway card (Analytics)
+0589 — Today's Top 3 Buys widget (Analytics)
+0591 — Concall Intelligence Analytics — Warrant Analytics module
+0593 — Counter-thesis / de-bottleneck risk overlay
+0594 — India-listed proxy mapping per bottleneck theme
+0595 — Bottleneck quantification badges
+0596 — News signal compression + collapsible defaults
+0598 — Concall Analytics institutional calibration pass
+0599 — Rating Actions: dual-source (news + concall-intel/live-feed) +
+       proper OR-tokenised search via | separator + diagnostic strip
+0600 — Decision Logbook: auto-resolve company name from ticker
+0601 — INSTITUTIONAL_REVIEW.md — 370-line €500K portal audit doc
+0602 — Home dashboard v1 (replace `redirect('/news')` on root /page.tsx)
+0603 — Sidebar consolidation: 28 flat items → 11 grouped NAV_GROUPS sections
+0604 — Kill duplicate routes + Saved Workspaces v0
+0605 — Home Dashboard v2: Decision Stack (Tier 1/2/3) + Risk Framing
+       per sector + Portfolio Exposure Heat + AI Infra Transmission map
+       + Earnings Today + In-Play News
+0606 — Home performance + Top 6 + in-play filter + Earnings Today fix
+       * buildSyncState() for instant render from localStorage
+       * Per-section network fetches with independent loading states
+       * Tier 1 bumped 3 → 6
+       * In-play filter excludes is_synthetic / structural_status /
+         feed_layer === STRUCTURAL_ALPHA / titles starting [STRUCTURAL]
+         / items older than 4h
+       * Earnings Today: flatten by_tier object + fall back to last
+         working day when today is empty
+0607 — Remove duplicate sidebar bottom (Dark/Settings/Signout)
+       — user already has all three in top-right header
+0608 — News Alerts: matches but never fires
+       Root cause: first mount seeded lastSeenIds with ALL existing
+       articles + early-returned, suppressing rule firing for historical
+       articles. Fix: decoupled lastSeenIds (toast dedup only) from
+       rule processing. Per-rule lastFiredArticleIds is the only gate.
+0609 — Order Book Intelligence dedicated page (TheWrap Module 1) —
+       NEW /order-book route under Event-Driven nav group. Dual-source
+       (news + concall-intel/live-feed). detectOrderBook() classifier
+       runs on every article. Tier-1 PSU customer leaderboard
+       (HAL/BHEL/NTPC/PGCIL/BEL/DRDO/ISRO/RBI/NABARD/LIC/ONGC/IOCL/GAIL/
+       NHAI/MoD/Indian Railways). parseValueToCr() normalises Rs/INR +
+       USD->INR @ 85 across crore/lakh/billion/million. Filters by
+       customer tier / value bracket / region. Sortable by date/value/
+       tier. Credibility chip per row from lib/bottleneck-intel.ts.
+```
+
+**HEAD on origin/main after this batch = `02a9e61`** (Patches 0606-0609 squashed commit).
+
+**Latest patch number to use for new work: 0610.**
+
+**New files added this batch:**
+- `frontend/src/app/(dashboard)/order-book/page.tsx` (Patch 0609)
+- `INSTITUTIONAL_REVIEW.md` at repo root (Patch 0601)
+
+**Files modified most recently (in case Vercel cache misbehaves):**
+- `frontend/src/app/(dashboard)/page.tsx` — Home v2 rewrite
+- `frontend/src/app/(dashboard)/DashboardClient.tsx` — NAV_GROUPS + sidebar trim
+- `frontend/src/app/(dashboard)/news-alerts/page.tsx` — firing-logic fix
+
 ### 17.9 STARTER PROMPT for new chat
 
-> Read `/Users/radhevrishi/Desktop/Python/Imp Marketcockpit/market-cockpit/CLAUDE.md` section 17 (END-OF-SESSION HANDOFF) before doing anything. HEAD on main is updated through Patch 0583 (TheWrap modules 1-6 shipped, Operating Leverage Cluster shipped, Cash-Rich lens shipped, USA scoring discipline fixes shipped, AUDIT_100 refreshed). Latest patch number to use for new work: **0584**.
+> Read `/Users/radhevrishi/Desktop/Python/Imp Marketcockpit/market-cockpit/CLAUDE.md` section 17 (END-OF-SESSION HANDOFF) before doing anything. HEAD on main is updated through Patch 0609 (Home Dashboard v2 with Decision Stack + Risk Framing, sidebar consolidated 28→11 grouped sections, Order Book Intelligence page under Event-Driven, news alerts firing-logic fixed). Latest patch number to use for new work: **0610**.
 >
 > [Now state what you want — examples below]
-> - "Build the Order Book Intelligence tab (TheWrap module 1) per §17.4(B)."
-> - "Wire the 2×2 cluster framework into Multibagger Analytics per §17.4(C)."
-> - "Ship the P3 UX items #5 and #7 from §17.4(A)."
 > - "Continue auditing for new bugs and fix what you find."
+> - "Build TheWrap Module 2 (Rating Actions polish) or Module 3 (Strategic Hire detector page)."
+> - "Wire the Saved Workspaces v0 (Patch 0604) into the Home dashboard so users can switch decision-stack lenses."
+> - "Add a Postgres-backed alert delivery (Slack webhook) so news-alerts fire even when the tab is closed."
