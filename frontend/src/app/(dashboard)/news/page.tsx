@@ -1137,6 +1137,21 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
 // Real version (per-user notebooks server-side, @-mentions, version history)
 // requires Auth + notes table — frontend-only v0 here.
 const NOTE_KEY_PREFIX = 'mc:notes:v1:';
+// PATCH 0551 — AUDIT_100 #9 bounded growth.  Sidecar index tracking last-write
+// per note id so we can evict oldest when count exceeds the cap.  Without
+// this, mc:notes:v1:<id> grew unbounded across every news article the user
+// ever opened, eventually blowing past the 5 MB localStorage quota and
+// silently breaking subsequent writes across the app.
+const NOTE_META_KEY = 'mc:notes:meta:v1';
+const NOTE_MAX = 200;
+function readNoteMeta(): Record<string, number> {
+  if (typeof window === 'undefined') return {};
+  try { return JSON.parse(localStorage.getItem(NOTE_META_KEY) || '{}'); } catch { return {}; }
+}
+function writeNoteMeta(m: Record<string, number>) {
+  if (typeof window === 'undefined') return;
+  try { localStorage.setItem(NOTE_META_KEY, JSON.stringify(m)); } catch {}
+}
 function loadNote(articleId: string): string {
   if (typeof window === 'undefined') return '';
   // PATCH 0545 — race-aware read so an autosave-in-flight read returns the
@@ -1149,20 +1164,26 @@ function saveNote(articleId: string, text: string) {
     // PATCH 0545 — autosave fires every 600ms while typing. We further coalesce
     // through a 250ms idle window so a 5-keystroke burst writes ONCE, not 5×.
     // Empty-text path still uses raw removeItem (small, doesn't need debounce).
-    if (text.trim()) debouncedSetItem(NOTE_KEY_PREFIX + articleId, text);
-    else localStorage.removeItem(NOTE_KEY_PREFIX + articleId);
-  } catch {}
-}
-function listNoteIds(): string[] {
-  if (typeof window === 'undefined') return [];
-  const out: string[] = [];
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith(NOTE_KEY_PREFIX)) out.push(k.slice(NOTE_KEY_PREFIX.length));
+    const meta = readNoteMeta();
+    if (text.trim()) {
+      debouncedSetItem(NOTE_KEY_PREFIX + articleId, text);
+      meta[articleId] = Date.now();
+      // PATCH 0551 — prune to NOTE_MAX oldest after each write.
+      const ids = Object.keys(meta);
+      if (ids.length > NOTE_MAX) {
+        const sorted = ids.sort((a, b) => meta[a] - meta[b]);
+        const toDrop = sorted.slice(0, ids.length - NOTE_MAX);
+        for (const dropId of toDrop) {
+          try { localStorage.removeItem(NOTE_KEY_PREFIX + dropId); } catch {}
+          delete meta[dropId];
+        }
+      }
+      writeNoteMeta(meta);
+    } else {
+      localStorage.removeItem(NOTE_KEY_PREFIX + articleId);
+      if (articleId in meta) { delete meta[articleId]; writeNoteMeta(meta); }
     }
   } catch {}
-  return out;
 }
 
 function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: () => void }) {
