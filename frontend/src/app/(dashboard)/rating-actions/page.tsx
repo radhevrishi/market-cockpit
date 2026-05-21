@@ -36,24 +36,126 @@ interface NewsArticleLite {
   ticker_symbols?: Array<string | { ticker: string }>;
 }
 
-// PATCH 0590 — Fix empty page: previous URL had ?search=ICRA+CRISIL+CARE+rating
-// which the /api/v1/news endpoint treats as a literal phrase match (no OR-tokenising),
-// silently zero results. Drop the server-side filter and let the client-side
-// regex detector handle classification across the broader news payload.
-function fetchNews(): Promise<NewsArticleLite[]> {
-  return fetch('/api/v1/news?limit=500', { cache: 'no-store' })
-    .then(r => r.json())
-    .then(j => Array.isArray(j) ? j : (j?.articles || j?.data || []))
-    .catch(() => []);
+// PATCH 0599 — Dual-source ingestion. The /api/v1/news cache is dominated by
+// US tech / global headlines; India rating-agency news (ICRA / CRISIL / CARE
+// / India Ratings / Acuité) appears more reliably in:
+//   (a) news feed, but only when we ask for it with proper OR-tokenized
+//       search (the /api/v1/news endpoint splits search on `|` per its
+//       implementation), AND
+//   (b) /api/v1/concall-intel/live-feed which surfaces NSE/BSE corporate
+//       filings — many of which include rating-agency intimation filings.
+//
+// We fetch BOTH in parallel, classify everything, dedupe by URL/id.
+const RATING_SEARCH_TOKENS = [
+  'ICRA', 'CRISIL', 'CARE Ratings', 'India Ratings', 'Ind-Ra',
+  'Fitch', 'Moody', 'S&P', 'Brickwork', 'Acuit',
+  'credit rating', 'rating upgrade', 'rating downgrade',
+  'rating revised', 'rating reaffirmed', 'rating affirmed',
+  'rating assigned', 'rating withdrawn', 'outlook revised',
+  'placed on watch',
+].join('|');
+
+interface FetchTrace {
+  newsFetched: number;
+  newsError?: string;
+  filingsFetched: number;
+  filingsError?: string;
+  totalSources: number;
+}
+
+interface FetchedPayload {
+  articles: NewsArticleLite[];
+  trace: FetchTrace;
+}
+
+async function fetchRatingPayload(): Promise<FetchedPayload> {
+  const trace: FetchTrace = { newsFetched: 0, filingsFetched: 0, totalSources: 0 };
+  const safe = async <T,>(url: string, label: 'news' | 'filings'): Promise<T | null> => {
+    try {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 25_000);
+      const r = await fetch(url, { cache: 'no-store', signal: ctl.signal });
+      clearTimeout(t);
+      if (!r.ok) {
+        if (label === 'news') trace.newsError = `HTTP ${r.status}`;
+        else trace.filingsError = `HTTP ${r.status}`;
+        return null;
+      }
+      return await r.json() as T;
+    } catch (e: any) {
+      const msg = e?.name === 'AbortError' ? 'timeout' : (e?.message || 'fetch failed');
+      if (label === 'news') trace.newsError = msg;
+      else trace.filingsError = msg;
+      return null;
+    }
+  };
+
+  const [newsJson, filingsJson] = await Promise.all([
+    safe<any>(`/api/v1/news?limit=500&search=${encodeURIComponent(RATING_SEARCH_TOKENS)}`, 'news'),
+    safe<any>(`/api/v1/concall-intel/live-feed?days=14&bullishOnly=false`, 'filings'),
+  ]);
+
+  const articles: NewsArticleLite[] = [];
+
+  // Pull news shape (variable: array OR {articles}/{data})
+  const newsArr: any[] = Array.isArray(newsJson) ? newsJson
+                        : (newsJson?.articles || newsJson?.data || []);
+  trace.newsFetched = newsArr.length;
+  for (const a of newsArr) {
+    articles.push({
+      id: a.id,
+      title: a.title || a.headline,
+      headline: a.headline,
+      summary: a.summary,
+      source: a.source,
+      source_name: a.source_name,
+      url: a.url || a.source_url,
+      published_at: a.published_at,
+      region: a.region,
+      ticker_symbols: a.ticker_symbols,
+    });
+  }
+
+  // Pull corporate filings shape: { filings: [{ symbol, subject, source_url,
+  // filing_datetime, company_name, exchange }] }
+  const filingsArr: any[] = filingsJson?.filings || [];
+  trace.filingsFetched = filingsArr.length;
+  for (const f of filingsArr) {
+    // Reformat as NewsArticleLite so the same detector runs on it.
+    articles.push({
+      id: `filing-${f.symbol}-${f.filing_datetime}`,
+      title: f.subject || '',
+      headline: f.subject || '',
+      summary: `${f.company_name || ''} ${f.exchange || ''}`,
+      source: f.exchange === 'NSE' ? 'NSE Corporate Filing' : 'BSE Corporate Filing',
+      source_name: f.exchange === 'NSE' ? 'NSE Corporate Filing' : 'BSE Corporate Filing',
+      url: f.source_url || f.attachment_urls?.[0],
+      published_at: f.filing_datetime,
+      region: 'IN',
+      ticker_symbols: f.symbol ? [f.symbol] : undefined,
+    });
+  }
+
+  // Dedupe by URL
+  const seen = new Set<string>();
+  const deduped = articles.filter(a => {
+    const k = a.url || a.id || '';
+    if (!k || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+
+  trace.totalSources = (newsArr.length > 0 ? 1 : 0) + (filingsArr.length > 0 ? 1 : 0);
+  return { articles: deduped, trace };
 }
 
 type AgencyFilter = 'ALL' | 'ICRA' | 'CRISIL' | 'CARE' | 'India Ratings' | 'Fitch' | 'Moody\'s' | 'S&P';
 type KindFilter   = 'ALL' | RatingActionKind;
 
 export default function RatingActionsPage() {
-  const { data, isLoading, isFetching, dataUpdatedAt } = useQuery<NewsArticleLite[]>({
-    queryKey: ['rating-actions-news'],
-    queryFn: fetchNews,
+  const { data, isLoading, isFetching, dataUpdatedAt } = useQuery<FetchedPayload>({
+    queryKey: ['rating-actions-dual-source-v2'],
+    queryFn: fetchRatingPayload,
     staleTime: 10 * 60_000,
     refetchOnWindowFocus: false,
   });
@@ -61,19 +163,29 @@ export default function RatingActionsPage() {
   const [kindFilter, setKindFilter] = useState<KindFilter>('ALL');
   const [search, setSearch] = useState('');
 
-  // Detect rating actions across the news payload. Each article that
-  // matches a rating pattern becomes one row; articles with no match are
-  // skipped silently.
-  const actions = useMemo(() => {
+  // Detect rating actions across both news + filings. Each article that
+  // matches a rating pattern becomes one row. Track agency-mention vs
+  // action-match separately so the diagnostics strip can show the
+  // attrition at each stage.
+  const { actions, agencyOnlyCount } = useMemo(() => {
     const out: Array<RatingAction & { article: NewsArticleLite }> = [];
-    for (const a of data || []) {
+    let agencyOnly = 0;
+    // Pattern-level agency hit (without requiring a rating action verb).
+    // Use detector's regex source by running it again with action-less text
+    // is messy; simpler: just count any blob containing one of the agency
+    // names. Diagnostics-only — purely UI counter.
+    const agencyRx = /(ICRA|CRISIL|CARE Ratings?|India Ratings?|Ind-?Ra|Fitch|Moody'?s|S&P|Brickwork|Acuit[eé])/i;
+    for (const a of data?.articles || []) {
       const blob = `${a.title || ''} ${a.headline || ''} ${a.summary || ''}`;
       const det = detectRatingAction(blob);
-      if (det) out.push({ ...det, article: a });
+      if (det) {
+        out.push({ ...det, article: a });
+      } else if (agencyRx.test(blob)) {
+        agencyOnly++;
+      }
     }
-    // Sort by published_at desc by default
     out.sort((x, y) => (y.article.published_at || '').localeCompare(x.article.published_at || ''));
-    return out;
+    return { actions: out, agencyOnlyCount: agencyOnly };
   }, [data]);
 
   const filtered = useMemo(() => {
@@ -112,9 +224,39 @@ export default function RatingActionsPage() {
 
         <div style={{ fontSize: 11, color: DIM, lineHeight: 1.5, marginBottom: 14, maxWidth: 880 }}>
           Re-rating events are high-signal, low-noise catalysts — an upgrade often presages a fundamental
-          improvement the market hasn't fully absorbed. Scanned heuristically from the news stream; verify
-          each row by opening the source article before acting.
+          improvement the market hasn't fully absorbed. Scanned heuristically from <strong style={{ color: TEXT }}>news + NSE/BSE corporate
+          filings</strong>; verify each row by opening the source article before acting.
         </div>
+
+        {/* PATCH 0599 — Dual-source diagnostic strip. Tells the analyst
+            exactly what was fetched and where the attrition happened, so
+            an empty page is debuggable rather than mysterious. */}
+        {data && (
+          <div style={{
+            background: '#0A1422', border: `1px solid ${BORDER}`,
+            borderRadius: 6, padding: '8px 12px', marginBottom: 14,
+            display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 12,
+            fontSize: 11, color: DIM,
+          }}>
+            <span style={{ color: '#8BA3C1', fontWeight: 700 }}>FETCH:</span>
+            <span title="Articles returned by /api/v1/news with the rating-search OR tokens">
+              📰 news: <strong style={{ color: data.trace.newsFetched > 0 ? '#10B981' : '#EF4444' }}>{data.trace.newsFetched}</strong>
+              {data.trace.newsError && <span style={{ color: '#EF4444', marginLeft: 4 }}>({data.trace.newsError})</span>}
+            </span>
+            <span title="NSE/BSE corporate filings from /api/v1/concall-intel/live-feed">
+              📑 filings: <strong style={{ color: data.trace.filingsFetched > 0 ? '#10B981' : '#EF4444' }}>{data.trace.filingsFetched}</strong>
+              {data.trace.filingsError && <span style={{ color: '#EF4444', marginLeft: 4 }}>({data.trace.filingsError})</span>}
+            </span>
+            <span style={{ color: '#1A2540' }}>·</span>
+            <span style={{ color: '#8BA3C1', fontWeight: 700 }}>CLASSIFY:</span>
+            <span title="Articles where the regex matched both an agency name AND a rating action verb">
+              🎯 actions detected: <strong style={{ color: actions.length > 0 ? '#10B981' : '#F59E0B' }}>{actions.length}</strong>
+            </span>
+            <span title="Articles that mention an agency name but had no rating action verb matched (may be company news, not a rating event)">
+              📌 agency-only mentions: {agencyOnlyCount}
+            </span>
+          </div>
+        )}
 
         {/* Filter chips: kind */}
         <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -166,14 +308,44 @@ export default function RatingActionsPage() {
 
         {/* Table */}
         {isLoading ? (
-          <div style={{ padding: 40, textAlign: 'center', color: DIM, fontSize: 12 }}>Scanning news for rating actions…</div>
+          <div style={{ padding: 40, textAlign: 'center', color: DIM, fontSize: 12 }}>Scanning news + NSE/BSE filings for rating actions…</div>
         ) : filtered.length === 0 ? (
+          /* PATCH 0599 — diagnostic empty-state. Explains exactly WHY
+             the page is empty given the trace data. */
           <div style={{ padding: 40, textAlign: 'center', color: DIM, background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8 }}>
             <div style={{ fontSize: 36, marginBottom: 10 }}>🏛</div>
-            <p style={{ margin: 0, fontWeight: 700, color: TEXT }}>No rating actions match these filters.</p>
-            <p style={{ margin: '6px 0 0', fontSize: 12 }}>
-              {actions.length === 0 ? 'No agency mentions found in the current news window.' : 'Clear filters to see all detected actions.'}
+            <p style={{ margin: 0, fontWeight: 700, color: TEXT }}>
+              {actions.length === 0 ? 'No rating actions detected.' : 'No rating actions match these filters.'}
             </p>
+            {actions.length === 0 ? (
+              <div style={{ margin: '8px 0 0', fontSize: 12, color: DIM, maxWidth: 560, marginLeft: 'auto', marginRight: 'auto', lineHeight: 1.6 }}>
+                {data?.trace.newsFetched === 0 && data?.trace.filingsFetched === 0 ? (
+                  <>
+                    <strong style={{ color: '#EF4444' }}>Both sources returned 0 rows.</strong>
+                    {data?.trace.newsError && <> News error: {data.trace.newsError}.</>}
+                    {data?.trace.filingsError && <> Filings error: {data.trace.filingsError}.</>}
+                    {' '}This is usually transient — try the ↻ Refresh button or wait 60s.
+                  </>
+                ) : agencyOnlyCount > 0 ? (
+                  <>
+                    Found <strong style={{ color: '#F59E0B' }}>{agencyOnlyCount} agency mentions</strong>{' '}
+                    but none matched a rating <em>action</em> verb (upgrade / downgrade / outlook / affirmed / withdrawn).
+                    The agencies were probably mentioned in general company news. Detection scope
+                    is conservative by design — false positives on a rating tracker erode trust faster
+                    than false negatives.
+                  </>
+                ) : (
+                  <>
+                    Fetched <strong>{(data?.trace.newsFetched || 0) + (data?.trace.filingsFetched || 0)} rows</strong>{' '}
+                    ({data?.trace.newsFetched || 0} news + {data?.trace.filingsFetched || 0} filings), but none
+                    contained agency mentions in the window. Indian rating actions can be sparse on any given day —
+                    expand the days window in the news cache (it currently holds ~6h of articles).
+                  </>
+                )}
+              </div>
+            ) : (
+              <p style={{ margin: '6px 0 0', fontSize: 12 }}>Clear filters to see all {actions.length} detected actions.</p>
+            )}
           </div>
         ) : (
           <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, overflow: 'hidden' }}>

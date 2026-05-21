@@ -80,6 +80,57 @@ export default function DecisionsPage() {
   const [addStatus, setAddStatus] = useState<DecisionStatus>('WATCH');
   const [addCompany, setAddCompany] = useState('');
   const [addReason, setAddReason] = useState('');
+  // PATCH 0600 — ticker → company resolver. Built once from the same data
+  // sources that power the other analytics surfaces, so adding a decision
+  // by ticker auto-fills the company name field instead of forcing the
+  // user to type it twice. Sources in priority order:
+  //   1. mb_excel_scored_v2  (India Multibagger uploads)
+  //   2. mb_usa_scored_v1    (USA Multibagger uploads)
+  //   3. mc:conviction-beats:v1
+  //   4. Existing decisions (for already-tagged tickers)
+  const tickerToCompany = useMemo<Map<string, { company: string; market?: DecisionMarket }>>(() => {
+    const m = new Map<string, { company: string; market?: DecisionMarket }>();
+    if (typeof window === 'undefined') return m;
+    const add = (sym: any, company: any, market?: DecisionMarket) => {
+      const k = String(sym || '').toUpperCase().trim().replace(/\.(NS|BO)$/i, '');
+      const c = String(company || '').trim();
+      if (k && c && !m.has(k)) m.set(k, { company: c, market });
+    };
+    try {
+      const ind = JSON.parse(localStorage.getItem('mb_excel_scored_v2') || '[]');
+      if (Array.isArray(ind)) for (const r of ind) add(r?.symbol, r?.company, 'IN');
+    } catch {}
+    try {
+      const us = JSON.parse(localStorage.getItem('mb_usa_scored_v1') || '[]');
+      if (Array.isArray(us)) for (const r of us) add(r?.symbol, r?.company || r?.companyName, 'US');
+    } catch {}
+    try {
+      const cb = JSON.parse(localStorage.getItem('mc:conviction-beats:v1') || '{}');
+      if (cb && typeof cb === 'object') {
+        for (const k of Object.keys(cb)) add(cb[k]?.ticker || k, cb[k]?.company);
+      }
+    } catch {}
+    // Also seed from existing decisions so the next manual entry of the same
+    // ticker auto-fills from the user's prior tagging.
+    for (const d of Object.values(decisions)) {
+      if (d.company) add(d.symbol, d.company, d.market);
+    }
+    return m;
+  }, [decisions]);
+
+  // When user types in SYMBOL field, look up + auto-fill company + market.
+  // Doesn't overwrite if user has already typed something in COMPANY NAME.
+  const handleSymbolChange = (raw: string) => {
+    const upper = raw.toUpperCase();
+    setAddSymbol(upper);
+    const stripped = upper.replace(/\.(NS|BO)$/i, '').trim();
+    const hit = tickerToCompany.get(stripped);
+    if (hit) {
+      if (!addCompany.trim()) setAddCompany(hit.company);
+      if (hit.market) setAddMarket(hit.market);
+    }
+  };
+
   const submitNewDecision = () => {
     const sym = addSymbol.trim().toUpperCase();
     if (!sym) return;
@@ -229,10 +280,14 @@ export default function DecisionsPage() {
               <div style={{ display: 'grid', gap: 12 }}>
                 <label style={{ fontSize: 11, color: DIM, fontWeight: 700 }}>
                   SYMBOL
+                  {/* PATCH 0600 — onChange goes through handleSymbolChange
+                      which auto-resolves the company name from
+                      Multibagger / Conviction Beats / prior decisions
+                      caches the moment the user finishes typing. */}
                   <input
                     autoFocus
                     value={addSymbol}
-                    onChange={(e) => setAddSymbol(e.target.value)}
+                    onChange={(e) => handleSymbolChange(e.target.value)}
                     placeholder="e.g. RELIANCE / TCS / NVDA"
                     style={{
                       width: '100%', marginTop: 4, padding: '8px 10px', borderRadius: 5,
@@ -240,10 +295,41 @@ export default function DecisionsPage() {
                       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
                       fontSize: 14, fontWeight: 700, textTransform: 'uppercase',
                     }}
+                    list="decision-ticker-suggestions"
                   />
+                  {/* PATCH 0600 — datalist drives browser-native autocomplete
+                      from the same resolver Map. User types 'REL' and sees
+                      RELIANCE / RELAXO / etc. */}
+                  <datalist id="decision-ticker-suggestions">
+                    {Array.from(tickerToCompany.entries()).slice(0, 200).map(([sym, meta]) => (
+                      <option key={sym} value={sym}>{meta.company}</option>
+                    ))}
+                  </datalist>
+                  {/* PATCH 0600 — Show the resolved company below the field
+                      when the user has typed a known ticker. Gives instant
+                      visual confirmation the auto-fill happened. */}
+                  {(() => {
+                    const k = (addSymbol || '').toUpperCase().trim().replace(/\.(NS|BO)$/i, '');
+                    const hit = k && tickerToCompany.get(k);
+                    if (hit) {
+                      return (
+                        <div style={{ marginTop: 4, fontSize: 10, color: '#10B981', fontWeight: 600 }}>
+                          ✓ resolved: {hit.company}{hit.market ? ` · ${hit.market === 'IN' ? '🇮🇳' : '🇺🇸'}` : ''}
+                        </div>
+                      );
+                    }
+                    if (k && k.length >= 3) {
+                      return (
+                        <div style={{ marginTop: 4, fontSize: 10, color: DIM, fontStyle: 'italic' }}>
+                          ↳ not in Multibagger / Conviction Beats cache — type the company name below manually.
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
                 </label>
                 <label style={{ fontSize: 11, color: DIM, fontWeight: 700 }}>
-                  COMPANY NAME (optional)
+                  COMPANY NAME (auto-filled when ticker is recognised)
                   <input
                     value={addCompany}
                     onChange={(e) => setAddCompany(e.target.value)}
