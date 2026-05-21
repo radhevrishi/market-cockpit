@@ -1578,10 +1578,10 @@ If the new agent needs to push code, it should:
 
 ### 17.0 Quick state check
 
-- **HEAD on `origin/main` = `b9454cd`** (commit message: "Patch 0571: Two cleanups to Patch 0569 (P3 UX) shipped yesterday")
-- **Latest patches shipped: 0549 → 0571** (23 patches; 0569 = P3 UX bundle; 0571 = audit-driven cleanups)
+- **HEAD on `origin/main` = `ee45539`** (commit message: "Patches 0579-0581: TheWrap detectors + Rating Actions page + Capacity-util extractor"; AUDIT refresh + CLAUDE handoff queue under 0582/0583)
+- **Latest patches shipped: 0549 → 0581** (33 patches; 0569 P3 UX, 0571 cleanups, 0573 analytics company-names + reasons, 0574-578 scoring discipline + cluster + cash-rich, 0579-0581 TheWrap)
 - **Type-check clean as of last commit** (`npx tsc --noEmit` exits 0)
-- **All 12 QA-audit bugs SHIPPED + all 9 P3 UX items SHIPPED + AUDIT_100 verified mostly stale.** Next-priority work: TheWrap modules (§17.4 B), ranking-framework upgrade (§17.4 C), refresh of AUDIT_100.md itself.
+- **All 12 QA-audit bugs SHIPPED + all 9 P3 UX items SHIPPED + AUDIT_100 refreshed + TheWrap modules 1-6 SHIPPED + Operating Leverage Cluster SHIPPED + Cash-Rich lens SHIPPED.** Next-priority work: infrastructure decisions (Auth / Postgres / paid feeds) — see §17.4(D) + refreshed AUDIT_100.md.
 - **Latest sandbox name was `fervent-kind-hypatia`.** Your new session will have a different one — find it via `ls /sessions/` and substitute everywhere.
 
 ### 17.1 Deploy infrastructure (preserve for next chat)
@@ -1614,7 +1614,56 @@ cd /tmp/mc-deploy && \
 
 **Env vars** are set in Vercel project, names listed in §4 of this file (KV_REST_API_URL, KV_REST_API_TOKEN, CRON_SECRET, ANTHROPIC_API_KEY etc.). Don't ask user for values; they're already configured.
 
-### 17.2 Patches shipped in this session (0549 → 0571)
+### 17.2 Patches shipped in this session (0549 → 0583)
+
+> Late-session push closed out §17.4(B) TheWrap modules + §17.4(C)
+> ranking-framework + the §17.4(E) latent code-quality items. AUDIT_100
+> has been rewritten as an opens-only doc (Patch 0582).
+
+```
+0573 — Multibagger Analytics polish: company names on every row in
+       STRONG BUY / RE-RATING / AVOID / ADD TO BENCH / TRIM ALERTS /
+       RE-EVALUATE / TRIPLE-CONFIRMED / HIDDEN GEMS / CONVICTION OVERLAP;
+       new COMPANY column in TOP 25; reasonFor() helper produces per-row
+       'Why' rationale chips on every decision bucket.
+0574 — getConvictionTickers module-scope cache (AUDIT #96) — verified
+       already shipped; documented.
+0575 — USA scoring FCF de-dup: standalone 'FCF margin' strength
+       suppressed when R40 or DNA bullet will also fire (PAYS root cause).
+0576 — Stale-fundamentals per-row chip on USA rows when CSV > 60d AND
+       1y perf moved ≥ 15%.
+0577 — Liquidity intelligence: parses TradingView Price + Average
+       Volume (30 day), derives avgDailyValueUsdM, renders ADV chip
+       per USA row with institutional tier colors.
+0578 — Operating Leverage Cluster framework (§17.4 C): new
+       lib/op-leverage-cluster.ts; weighted Cluster Score formula
+       (0.30·Util + 0.25·Margin + 0.20·BS + 0.15·Demand + 0.10·VA);
+       new analytics card with ⭐ seed markers (SHYAMMETL, AJAXENGG,
+       NELCAST, GOPAL, JNKINDIA, TRITURBINE).
+0578.5 — Cash-Rich · Net-Zero Debt 'next-hunt' lens (user request mid-
+       session). New analytics card surfacing names with cash ≥ 20% of
+       market cap AND zero debt (D/E < 0.10 or net cash by ND/EBITDA).
+       Works on both India and USA rows side by side.
+0579 — TheWrap alternate-data detectors (§17.4 B-1/3/4/5): new
+       lib/thewrap-detectors.ts with 4 regex classifiers (Order Book /
+       Strategic Hire / Marquee Capital / Marketing Auth) surfaced as
+       chips on every news card.
+0580 — Rating Actions tracker (§17.4 B-2): new /rating-actions page +
+       lib/rating-agency-detector.ts. ICRA/CRISIL/CARE/India-Ratings/
+       Fitch/Moody's/S&P upgrades, downgrades, outlook changes
+       detected from the news stream. Filter by agency + action kind +
+       free-text. Wired into sidebar nav next to Special Situations.
+0581 — Capacity-util extractor (§17.4 B-6): new
+       lib/capacity-util-extractor.ts. Surfaces 'current util X%,
+       target Y% by FY27' patterns alongside the guidance preview on
+       the Company Intel upload tab. Avg/peak/horizon roll-up shown
+       inline.
+0582 — AUDIT_100.md refresh. Replaced the 100-item legacy log with an
+       opens-only doc; verified 18 items closed in the spot-check pass.
+0583 — This CLAUDE.md handoff update.
+```
+
+### 17.2.0 Patches shipped earlier in this session (0549 → 0572)
 
 > P3 UX batch + audit-doc verification: AUDIT_100.md is now mostly
 > stale — ~95% of P0-P2 bugs listed there have been shipped in earlier
@@ -1807,7 +1856,7 @@ frontend/src/components/PanelFreshness.tsx
 
 ### 17.9 STARTER PROMPT for new chat
 
-> Read `/Users/radhevrishi/Desktop/Python/Imp Marketcockpit/market-cockpit/CLAUDE.md` section 17 (END-OF-SESSION HANDOFF) before doing anything. HEAD on main is `b9454cd` (Patch 0571 — UX-batch cleanups + AUDIT_100 spot-verify). Latest patch number to use for new work: **0572**.
+> Read `/Users/radhevrishi/Desktop/Python/Imp Marketcockpit/market-cockpit/CLAUDE.md` section 17 (END-OF-SESSION HANDOFF) before doing anything. HEAD on main is updated through Patch 0583 (TheWrap modules 1-6 shipped, Operating Leverage Cluster shipped, Cash-Rich lens shipped, USA scoring discipline fixes shipped, AUDIT_100 refreshed). Latest patch number to use for new work: **0584**.
 >
 > [Now state what you want — examples below]
 > - "Build the Order Book Intelligence tab (TheWrap module 1) per §17.4(B)."
