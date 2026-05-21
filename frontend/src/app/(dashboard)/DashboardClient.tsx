@@ -66,6 +66,8 @@ const NAV: NavItem[] = [
   // Mukherjea / Anand Shah / Khemani / Bakshi / Mittal. Holdings table +
   // news / interviews per investor.
   { href: '/super-investors', label: 'Super Investors',  icon: <Star className="w-5 h-5" /> },
+  // PATCH 0107 / 0171: Concall Intelligence Engine v2 — moved next to Super Investors (Patch 0553)
+  { href: '/concall-intel', label: 'Concall Intelligence', icon: <Microscope className="w-5 h-5" /> },
   // PATCH 0093: Single-Stock Sheet — 16-section institutional checklist runner
   { href: '/stock-sheet',   label: 'Stock Sheet',        icon: <BookMarked className="w-5 h-5" /> },
   // PATCH 0094: Re-rating Screener — margin expansion + model shift + multiple expansion
@@ -79,8 +81,6 @@ const NAV: NavItem[] = [
   { href: '/breadth',       label: 'Breadth',            icon: <BarChart3 className="w-5 h-5" /> },
   // PATCH 0096 / 0170: Live Input Cost → Equity Transmission
   { href: '/transmission',  label: 'Transmission',       icon: <TrendingUp className="w-5 h-5" /> },
-  // PATCH 0107 / 0171: Concall Intelligence Engine v2
-  { href: '/concall-intel', label: 'Concall Intelligence', icon: <Microscope className="w-5 h-5" /> },
   // PATCH 0455 — Company Intelligence Hub. Upload concall transcripts /
   // PPTs / guidance docs once → site-wide retrievable corpus + auto-
   // extracted guidance items (revenue / EBITDA / capex / peak / orderbook).
