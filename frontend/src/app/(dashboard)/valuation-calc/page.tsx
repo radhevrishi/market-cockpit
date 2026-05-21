@@ -623,8 +623,15 @@ function PSCalculator() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
           <span style={{ color: DIM, fontWeight: 700, letterSpacing: '0.3px' }}>Ticker</span>
-          <input value={ticker} onChange={(e) => setTicker(e.target.value)}
-            style={{ background: '#0A1422', color: TEXT, border: `1px solid ${BORDER}`, padding: '7px 10px', borderRadius: 4, fontSize: 13, fontWeight: 600 }} />
+          <TickerCombo value={ticker} onChange={setTicker} market="india" onSelect={(h) => {
+            // PATCH 0636 — on select fill the rest from the live hit instantly
+            if (h.price) setCurrentPrice(h.price);
+            if (h.marketCap) {
+              const mcapCr = h.marketCap / 1e7;
+              setMarketCap(Math.round(mcapCr));
+              if (h.price) setShares(mcapCr / h.price);
+            }
+          }} />
         </label>
         <NumberInput label="Forward Revenue (FY27/FY28)" value={revenue} onChange={setRevenue} suffix="₹ Cr" />
         <NumberInput label="Current Market Cap" value={marketCap} onChange={setMarketCap} suffix="₹ Cr" />
@@ -708,8 +715,15 @@ function PECalculator() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
           <span style={{ color: DIM, fontWeight: 700, letterSpacing: '0.3px' }}>Ticker</span>
-          <input value={ticker} onChange={(e) => setTicker(e.target.value)}
-            style={{ background: '#0A1422', color: TEXT, border: `1px solid ${BORDER}`, padding: '7px 10px', borderRadius: 4, fontSize: 13, fontWeight: 600 }} />
+          <TickerCombo value={ticker} onChange={setTicker} market="india" onSelect={(h) => {
+            // PATCH 0636 — on select fill the rest from the live hit instantly
+            if (h.price) setCurrentPrice(h.price);
+            if (h.marketCap) {
+              const mcapCr = h.marketCap / 1e7;
+              setMarketCap(Math.round(mcapCr));
+              if (h.price) setShares(mcapCr / h.price);
+            }
+          }} />
         </label>
         <NumberInput label="Forward PAT (FY27)" value={pat} onChange={setPat} suffix="₹ Cr" />
         <NumberInput label="Current Market Cap" value={marketCap} onChange={setMarketCap} suffix="₹ Cr" />
@@ -777,8 +791,15 @@ function EvEbitdaCalculator() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
           <span style={{ color: DIM, fontWeight: 700, letterSpacing: '0.3px' }}>Ticker</span>
-          <input value={ticker} onChange={(e) => setTicker(e.target.value)}
-            style={{ background: '#0A1422', color: TEXT, border: `1px solid ${BORDER}`, padding: '7px 10px', borderRadius: 4, fontSize: 13, fontWeight: 600 }} />
+          <TickerCombo value={ticker} onChange={setTicker} market="india" onSelect={(h) => {
+            // PATCH 0636 — on select fill the rest from the live hit instantly
+            if (h.price) setCurrentPrice(h.price);
+            if (h.marketCap) {
+              const mcapCr = h.marketCap / 1e7;
+              setMarketCap(Math.round(mcapCr));
+              if (h.price) setShares(mcapCr / h.price);
+            }
+          }} />
         </label>
         <NumberInput label="Forward EBITDA" value={ebitda} onChange={setEbitda} suffix="₹ Cr" />
         <NumberInput label="Net Debt" value={netDebt} onChange={setNetDebt} suffix="₹ Cr" />
