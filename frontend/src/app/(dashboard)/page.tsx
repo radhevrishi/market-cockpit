@@ -36,6 +36,8 @@ import { readDecisions } from '@/lib/decisions';
 import { SUPER_INVESTORS } from '@/lib/super-investors';
 // PATCH 0627 — Critical Themes data for Home panel.
 import { getTopThemesForHome } from '@/lib/critical-themes';
+// PATCH 0631 — Valuation Quick-Check on Home
+import { calculatePE, fetchQuoteAutofill, type QuoteAutoFill } from '@/lib/valuation-calculators';
 
 const BG = '#0A0E1A';
 const CARD = '#0D1623';
@@ -1719,6 +1721,9 @@ export default function HomeDashboard() {
           </div>
         </div>
 
+        {/* ═══════════════ PATCH 0631 — VALUATION QUICK-CHECK ═════════════ */}
+        <HomeValuationQuickCheck />
+
         {/* ═══════════════ PATCH 0627 — CRITICAL THEMES PANEL ═════════════ */}
         {(() => {
           const tt = getTopThemesForHome();
@@ -2067,4 +2072,115 @@ function timeAgo(ms: number): string {
   if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
   return `${d}d ago`;
+}
+
+// PATCH 0631 — Home Valuation Quick-Check panel
+function HomeValuationQuickCheck() {
+  const [ticker, setTicker] = useState('ATLANTAELE');
+  const [pat, setPat] = useState(335);
+  const [pe, setPe] = useState(36);
+  const [horizon, setHorizon] = useState(18);
+  const [mcap, setMcap] = useState(12000);
+  const [price, setPrice] = useState<number | undefined>();
+  const [loading, setLoading] = useState(false);
+  const [autoFilled, setAutoFilled] = useState(false);
+
+  const autoFill = async () => {
+    if (!ticker.trim()) return;
+    setLoading(true);
+    try {
+      const q = await fetchQuoteAutofill(ticker, 'india');
+      if (q) {
+        if (q.currentPrice) setPrice(q.currentPrice);
+        if (q.currentMarketCapCr) setMcap(Math.round(q.currentMarketCapCr));
+        setAutoFilled(true);
+      }
+    } finally { setLoading(false); }
+  };
+
+  const result = useMemo(() => calculatePE({
+    ticker, currentMarketCapCr: mcap, horizonMonths: horizon,
+    forwardPATCr: pat,
+    bearPE: Math.round(pe * 0.75),
+    basePE: pe,
+    bullPE: Math.round(pe * 1.4),
+    currentPrice: price, currency: '₹',
+  }), [ticker, mcap, horizon, pat, pe, price]);
+
+  return (
+    <div style={{ ...cardStyle, borderLeft: '3px solid #22D3EE' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
+        <span style={{ fontSize: 13, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px' }}>
+          🧮 VALUATION QUICK-CHECK
+        </span>
+        <Link href="/valuation-calc" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Full calculator →</Link>
+      </div>
+      <div style={{ fontSize: 10, color: DIM, marginBottom: 10 }}>
+        Quick P/E-based target. Enter ticker + forward PAT + target P/E. Auto-fills current price + market cap from /api/market/quotes.
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8, marginBottom: 10 }}>
+        <label style={{ fontSize: 10, color: DIM, fontWeight: 700, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          TICKER
+          <input value={ticker} onChange={e => { setTicker(e.target.value.toUpperCase()); setAutoFilled(false); }}
+            style={{ background: '#0A1422', color: TEXT, border: '1px solid #1A2540', padding: '4px 7px', borderRadius: 3, fontSize: 12, fontWeight: 600, fontFamily: 'ui-monospace, monospace' }} />
+        </label>
+        <label style={{ fontSize: 10, color: DIM, fontWeight: 700, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          FY27 PAT (₹ Cr)
+          <input type="number" value={pat} onChange={e => setPat(Number(e.target.value))}
+            style={{ background: '#0A1422', color: TEXT, border: '1px solid #1A2540', padding: '4px 7px', borderRadius: 3, fontSize: 12, fontWeight: 600, fontFamily: 'ui-monospace, monospace' }} />
+        </label>
+        <label style={{ fontSize: 10, color: DIM, fontWeight: 700, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          BASE P/E
+          <input type="number" value={pe} onChange={e => setPe(Number(e.target.value))}
+            style={{ background: '#0A1422', color: TEXT, border: '1px solid #1A2540', padding: '4px 7px', borderRadius: 3, fontSize: 12, fontWeight: 600, fontFamily: 'ui-monospace, monospace' }} />
+        </label>
+        <label style={{ fontSize: 10, color: DIM, fontWeight: 700, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          MARKET CAP (₹ Cr)
+          <input type="number" value={mcap} onChange={e => setMcap(Number(e.target.value))}
+            style={{ background: '#0A1422', color: TEXT, border: '1px solid #1A2540', padding: '4px 7px', borderRadius: 3, fontSize: 12, fontWeight: 600, fontFamily: 'ui-monospace, monospace' }} />
+        </label>
+        <label style={{ fontSize: 10, color: DIM, fontWeight: 700, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          HORIZON (months)
+          <input type="number" value={horizon} onChange={e => setHorizon(Number(e.target.value))}
+            style={{ background: '#0A1422', color: TEXT, border: '1px solid #1A2540', padding: '4px 7px', borderRadius: 3, fontSize: 12, fontWeight: 600, fontFamily: 'ui-monospace, monospace' }} />
+        </label>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+        <button onClick={autoFill} disabled={loading} style={{
+          fontSize: 10, padding: '4px 10px', background: '#10B98115', border: '1px solid #10B98150',
+          color: '#10B981', borderRadius: 3, cursor: loading ? 'wait' : 'pointer', fontWeight: 800,
+        }}>
+          {loading ? '⏳ FETCHING…' : '🔄 AUTO-FILL FROM LIVE QUOTE'}
+        </button>
+        {price && (
+          <span style={{ fontSize: 10, color: '#10B981', fontFamily: 'ui-monospace, monospace', fontWeight: 700 }}>
+            ✓ live price ₹{price.toLocaleString('en-IN', { maximumFractionDigits: 1 })} {autoFilled ? '(auto-filled)' : ''}
+          </span>
+        )}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+        {result.cases.map((c) => (
+          <div key={c.label} style={{ background: '#0A1422', border: `1px solid ${c.color}40`, borderLeft: `3px solid ${c.color}`, borderRadius: 4, padding: '8px 10px' }}>
+            <div style={{ fontSize: 9, fontWeight: 800, color: c.color, letterSpacing: '1px' }}>{c.label}</div>
+            <div style={{ fontSize: 15, fontWeight: 900, color: TEXT, marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>
+              ₹{Math.round(c.marketCapCr).toLocaleString('en-IN')} Cr
+            </div>
+            {c.targetPrice !== undefined && (
+              <div style={{ fontSize: 11, color: c.color, fontWeight: 700, marginTop: 2 }}>
+                target ₹{c.targetPrice.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+              </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, marginTop: 4 }}>
+              <span style={{ color: DIM }}>upside</span>
+              <span style={{ color: c.color, fontWeight: 800 }}>{c.upsidePct >= 0 ? '+' : ''}{c.upsidePct.toFixed(0)}%</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, marginTop: 2 }}>
+              <span style={{ color: DIM }}>CAGR</span>
+              <span style={{ color: c.color, fontWeight: 800 }}>{c.annualizedPct >= 0 ? '+' : ''}{c.annualizedPct.toFixed(0)}%</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }

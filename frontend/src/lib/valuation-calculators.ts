@@ -18,6 +18,11 @@ export interface ValuationInput {
   company?: string;
   currentMarketCapCr: number;
   horizonMonths: number; // typically 12, 18, 24
+  // PATCH 0631 — auto-populated from /api/market/quotes when ticker is entered.
+  // If present we also compute target stock price + upside in price space.
+  currentPrice?: number;       // in rupees (or dollars for US)
+  sharesOutstandingCr?: number; // in crores; derived as currentMarketCapCr / currentPrice when not provided
+  currency?: '₹' | '$';        // display only
 }
 
 export interface PSInput extends ValuationInput {
@@ -48,6 +53,10 @@ export interface CalculatorCase {
   upsidePct: number;
   annualizedPct: number;
   color: string;
+  // PATCH 0631 — when input.currentPrice is supplied, populate target stock price.
+  currentPrice?: number;
+  targetPrice?: number;
+  currency?: '₹' | '$';
 }
 
 export interface CalculatorResult {
@@ -70,24 +79,48 @@ const annualize = (totalPct: number, months: number) => {
 const colorFor = (pct: number) =>
   pct >= 50 ? '#10B981' : pct >= 25 ? '#22D3EE' : pct >= 0 ? '#F59E0B' : '#EF4444';
 
-const buildCases = (label: 'BEAR' | 'BASE' | 'BULL', marketCapCr: number, current: number, months: number): CalculatorCase => {
+const buildCases = (
+  label: 'BEAR' | 'BASE' | 'BULL',
+  marketCapCr: number,
+  current: number,
+  months: number,
+  opts?: { currentPrice?: number; sharesOutstandingCr?: number; currency?: '₹' | '$' },
+): CalculatorCase => {
   const upsidePct = ((marketCapCr - current) / current) * 100;
+  let targetPrice: number | undefined;
+  if (opts?.currentPrice && opts?.sharesOutstandingCr && opts.sharesOutstandingCr > 0) {
+    targetPrice = marketCapCr / opts.sharesOutstandingCr;  // both in Cr -> price in rupees/dollars
+  }
   return {
     label,
     marketCapCr,
     upsidePct,
     annualizedPct: annualize(upsidePct, months),
     color: colorFor(upsidePct),
+    currentPrice: opts?.currentPrice,
+    targetPrice,
+    currency: opts?.currency || '₹',
   };
 };
+
+/** Derive shares-outstanding-in-Cr from market-cap-in-Cr + price.
+ *  marketCap (Cr) = price (₹) × shares (Cr) → shares = marketCap / price.
+ */
+function deriveShares(input: ValuationInput): number | undefined {
+  if (input.sharesOutstandingCr) return input.sharesOutstandingCr;
+  if (input.currentPrice && input.currentPrice > 0) return input.currentMarketCapCr / input.currentPrice;
+  return undefined;
+}
 
 // ─── 1. P/S Calculator ──────────────────────────────────────────────────
 export function calculatePS(input: PSInput): CalculatorResult {
   const { forwardRevenueCr, bearPS, basePS, bullPS, currentMarketCapCr, horizonMonths } = input;
+  const shares = deriveShares(input);
+  const opts = { currentPrice: input.currentPrice, sharesOutstandingCr: shares, currency: input.currency };
   const cases: CalculatorCase[] = [
-    buildCases('BEAR', forwardRevenueCr * bearPS, currentMarketCapCr, horizonMonths),
-    buildCases('BASE', forwardRevenueCr * basePS, currentMarketCapCr, horizonMonths),
-    buildCases('BULL', forwardRevenueCr * bullPS, currentMarketCapCr, horizonMonths),
+    buildCases('BEAR', forwardRevenueCr * bearPS, currentMarketCapCr, horizonMonths, opts),
+    buildCases('BASE', forwardRevenueCr * basePS, currentMarketCapCr, horizonMonths, opts),
+    buildCases('BULL', forwardRevenueCr * bullPS, currentMarketCapCr, horizonMonths, opts),
   ];
   const base = cases.find(c => c.label === 'BASE')!;
   const baseSummary = `At base ${basePS.toFixed(1)}x P/S on ₹${forwardRevenueCr} Cr forward revenue → ₹${Math.round(base.marketCapCr).toLocaleString()} Cr market cap = ${base.upsidePct >= 0 ? '+' : ''}${base.upsidePct.toFixed(0)}% upside over ${horizonMonths} months (${base.annualizedPct >= 0 ? '+' : ''}${base.annualizedPct.toFixed(0)}% CAGR).`;
@@ -97,10 +130,12 @@ export function calculatePS(input: PSInput): CalculatorResult {
 // ─── 2. P/E Calculator ──────────────────────────────────────────────────
 export function calculatePE(input: PEInput): CalculatorResult {
   const { forwardPATCr, bearPE, basePE, bullPE, currentMarketCapCr, horizonMonths } = input;
+  const shares = deriveShares(input);
+  const opts = { currentPrice: input.currentPrice, sharesOutstandingCr: shares, currency: input.currency };
   const cases: CalculatorCase[] = [
-    buildCases('BEAR', forwardPATCr * bearPE, currentMarketCapCr, horizonMonths),
-    buildCases('BASE', forwardPATCr * basePE, currentMarketCapCr, horizonMonths),
-    buildCases('BULL', forwardPATCr * bullPE, currentMarketCapCr, horizonMonths),
+    buildCases('BEAR', forwardPATCr * bearPE, currentMarketCapCr, horizonMonths, opts),
+    buildCases('BASE', forwardPATCr * basePE, currentMarketCapCr, horizonMonths, opts),
+    buildCases('BULL', forwardPATCr * bullPE, currentMarketCapCr, horizonMonths, opts),
   ];
   const base = cases.find(c => c.label === 'BASE')!;
   const baseSummary = `At base ${basePE}x P/E on ₹${forwardPATCr} Cr forward PAT → ₹${Math.round(base.marketCapCr).toLocaleString()} Cr market cap = ${base.upsidePct >= 0 ? '+' : ''}${base.upsidePct.toFixed(0)}% upside over ${horizonMonths} months (${base.annualizedPct >= 0 ? '+' : ''}${base.annualizedPct.toFixed(0)}% CAGR).`;
@@ -111,15 +146,85 @@ export function calculatePE(input: PEInput): CalculatorResult {
 export function calculateEvEbitda(input: EvEbitdaInput): CalculatorResult {
   const { forwardEBITDACr, bearMultiple, baseMultiple, bullMultiple, currentMarketCapCr, horizonMonths } = input;
   const netDebt = input.netDebtCr || 0;
+  const shares = deriveShares(input);
+  const opts = { currentPrice: input.currentPrice, sharesOutstandingCr: shares, currency: input.currency };
   const buildEv = (mult: number) => Math.max(0, forwardEBITDACr * mult - netDebt);
   const cases: CalculatorCase[] = [
-    buildCases('BEAR', buildEv(bearMultiple), currentMarketCapCr, horizonMonths),
-    buildCases('BASE', buildEv(baseMultiple), currentMarketCapCr, horizonMonths),
-    buildCases('BULL', buildEv(bullMultiple), currentMarketCapCr, horizonMonths),
+    buildCases('BEAR', buildEv(bearMultiple), currentMarketCapCr, horizonMonths, opts),
+    buildCases('BASE', buildEv(baseMultiple), currentMarketCapCr, horizonMonths, opts),
+    buildCases('BULL', buildEv(bullMultiple), currentMarketCapCr, horizonMonths, opts),
   ];
   const base = cases.find(c => c.label === 'BASE')!;
   const baseSummary = `At base ${baseMultiple}x EV/EBITDA on ₹${forwardEBITDACr} Cr EBITDA${netDebt ? ` (net debt ₹${netDebt} Cr)` : ''} → equity value ₹${Math.round(base.marketCapCr).toLocaleString()} Cr = ${base.upsidePct >= 0 ? '+' : ''}${base.upsidePct.toFixed(0)}% upside over ${horizonMonths} months.`;
   return { ticker: input.ticker, company: input.company, cases, baseSummary, inputs: input };
+}
+
+// ─── Quote auto-fetch (PATCH 0631) ──────────────────────────────────────
+/** Fetches current price + market cap for an India ticker via /api/market/quotes.
+ *  Multiple fallbacks: stock-sheet enrich → user manual override.
+ *  Returns null on failure; UI keeps the user's manual inputs intact. */
+export interface QuoteAutoFill {
+  ticker: string;
+  company?: string;
+  currentPrice?: number;
+  currentMarketCapCr?: number;
+  sharesOutstandingCr?: number;
+  currency?: '₹' | '$';
+  source?: string;
+}
+
+export async function fetchQuoteAutofill(ticker: string, market: 'india' | 'us' = 'india'): Promise<QuoteAutoFill | null> {
+  if (!ticker) return null;
+  const t = ticker.trim().toUpperCase().replace(/\.(NS|BO)$/i, '');
+  const currency: '₹' | '$' = market === 'us' ? '$' : '₹';
+
+  // Primary: /api/market/quotes
+  try {
+    const r = await fetch(`/api/market/quotes?market=${market}`, { cache: 'no-store' });
+    if (r.ok) {
+      const j = await r.json();
+      const stocks: any[] = j?.stocks || [];
+      const hit = stocks.find((s) => (s.ticker || '').toUpperCase() === t);
+      if (hit && hit.price) {
+        // marketCap in API returns absolute rupees → convert to crore for India
+        const marketCapCr = market === 'india'
+          ? (hit.marketCap || 0) / 1e7
+          : (hit.marketCap || 0) / 1e7;
+        return {
+          ticker: t,
+          company: hit.company,
+          currentPrice: hit.price,
+          currentMarketCapCr: marketCapCr || undefined,
+          sharesOutstandingCr: marketCapCr && hit.price ? marketCapCr / hit.price : undefined,
+          currency,
+          source: 'api/market/quotes',
+        };
+      }
+    }
+  } catch {}
+
+  // Fallback: stock-sheet enrich endpoint
+  try {
+    const r = await fetch(`/api/v1/earnings/enrich?symbol=${encodeURIComponent(t)}`, { cache: 'no-store' });
+    if (r.ok) {
+      const j = await r.json();
+      const price = j?.cmp || j?.price;
+      const mcap = j?.market_cap_cr || j?.marketCapCr;
+      if (price && mcap) {
+        return {
+          ticker: t,
+          company: j?.company,
+          currentPrice: price,
+          currentMarketCapCr: mcap,
+          sharesOutstandingCr: mcap / price,
+          currency,
+          source: 'api/v1/earnings/enrich',
+        };
+      }
+    }
+  } catch {}
+
+  return null;
 }
 
 // ─── WORKED EXAMPLES (from user's case studies) ─────────────────────────

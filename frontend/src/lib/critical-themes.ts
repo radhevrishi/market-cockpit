@@ -303,7 +303,111 @@ export function getThemesByRegion(region: ThemeRegion): CriticalTheme[] {
 /** Returns top-5 themes per region (10 total) for the Home dashboard summary card. */
 export function getTopThemesForHome(): { us: CriticalTheme[]; india: CriticalTheme[] } {
   return {
-    us: USA_THEMES.slice().sort((a, b) => a.priorityRank - b.priorityRank).slice(0, 5),
-    india: INDIA_THEMES.slice().sort((a, b) => a.priorityRank - b.priorityRank).slice(0, 5),
+    us:    [...USA_THEMES, ...loadCustomThemes('US')].sort((a, b) => a.priorityRank - b.priorityRank).slice(0, 5),
+    india: [...INDIA_THEMES, ...loadCustomThemes('IN')].sort((a, b) => a.priorityRank - b.priorityRank).slice(0, 5),
   };
+}
+
+// ─── PATCH 0631: User-added custom themes (localStorage) ────────────────
+// Persists across reloads. User can append themes without touching code.
+// Stored under 'mc:critical-themes-custom:v1'.
+const CUSTOM_THEME_KEY = 'mc:critical-themes-custom:v1';
+
+export function loadCustomThemes(region?: ThemeRegion): CriticalTheme[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(CUSTOM_THEME_KEY);
+    if (!raw) return [];
+    const all = JSON.parse(raw) as CriticalTheme[];
+    if (!Array.isArray(all)) return [];
+    return region ? all.filter(t => t.region === region) : all;
+  } catch { return []; }
+}
+
+export function saveCustomTheme(theme: Omit<CriticalTheme, 'id'> & { id?: string }): CriticalTheme {
+  const full: CriticalTheme = {
+    ...theme,
+    id: theme.id || `custom-${theme.region.toLowerCase()}-${Date.now()}`,
+  };
+  const all = loadCustomThemes();
+  const filtered = all.filter(t => t.id !== full.id);
+  filtered.push(full);
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(CUSTOM_THEME_KEY, JSON.stringify(filtered));
+    window.dispatchEvent(new CustomEvent('mc:custom-themes-updated'));
+  }
+  return full;
+}
+
+export function deleteCustomTheme(id: string): void {
+  const all = loadCustomThemes();
+  const filtered = all.filter(t => t.id !== id);
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(CUSTOM_THEME_KEY, JSON.stringify(filtered));
+    window.dispatchEvent(new CustomEvent('mc:custom-themes-updated'));
+  }
+}
+
+// All themes (curated + custom) — used by /critical-themes for dynamic
+// theme discovery + ranking.
+export function getAllThemesForRegion(region: ThemeRegion): CriticalTheme[] {
+  const base = region === 'US' ? USA_THEMES : INDIA_THEMES;
+  return [...base, ...loadCustomThemes(region)];
+}
+
+// ─── PATCH 0631: Emerging-theme detector ────────────────────────────────
+// Auto-discover candidate themes from news the curated list doesn't cover.
+// Strategy: count high-frequency 2-3-word phrases in last-30d news headlines,
+// excluding terms already covered by curated themes' searchKeywords.
+//
+// Run-time call from /critical-themes page; returns suggestions you can
+// promote into a real CriticalTheme via saveCustomTheme().
+export interface EmergingTheme {
+  keyword: string;
+  articleCount: number;
+  sampleHeadlines: string[];
+}
+
+const STOPWORDS = new Set([
+  'the', 'and', 'for', 'with', 'from', 'this', 'that', 'after', 'before',
+  'into', 'about', 'over', 'their', 'will', 'have', 'has', 'been', 'were',
+  'said', 'says', 'told', 'first', 'last', 'next', 'most', 'more', 'less',
+  'than', 'then', 'when', 'where', 'while', 'amid', 'among', 'across',
+  'india', 'indian', 'company', 'companies', 'firm', 'shares', 'stock',
+  'market', 'markets', 'business', 'industry', 'report', 'reports',
+  'announce', 'announced', 'plans', 'plan', 'today', 'year', 'years',
+  'crore', 'lakh', 'billion', 'million', 'percent', 'rupee', 'rupees',
+]);
+
+export function findEmergingThemes(articles: Array<{ title?: string; headline?: string }>, curatedKeywords: string[]): EmergingTheme[] {
+  const curatedLower = new Set(curatedKeywords.map(k => k.toLowerCase()));
+  const phrases: Map<string, { count: number; samples: string[] }> = new Map();
+
+  const isExcludedPhrase = (p: string) => {
+    if (curatedLower.has(p)) return true;
+    for (const k of curatedLower) {
+      if (k.length > 3 && p.includes(k)) return true;
+    }
+    return false;
+  };
+
+  for (const a of articles) {
+    const headline = (a.title || a.headline || '').toLowerCase();
+    const words = headline.split(/[^a-z0-9+&]+/i).filter(w => w.length > 3 && !STOPWORDS.has(w));
+    // bigrams
+    for (let i = 0; i < words.length - 1; i++) {
+      const phrase = `${words[i]} ${words[i+1]}`;
+      if (isExcludedPhrase(phrase)) continue;
+      const cur = phrases.get(phrase) || { count: 0, samples: [] as string[] };
+      cur.count++;
+      if (cur.samples.length < 3 && a.title) cur.samples.push(a.title);
+      phrases.set(phrase, cur);
+    }
+  }
+
+  return Array.from(phrases.entries())
+    .filter(([_, v]) => v.count >= 5)
+    .map(([keyword, v]) => ({ keyword, articleCount: v.count, sampleHeadlines: v.samples }))
+    .sort((a, b) => b.articleCount - a.articleCount)
+    .slice(0, 15);
 }

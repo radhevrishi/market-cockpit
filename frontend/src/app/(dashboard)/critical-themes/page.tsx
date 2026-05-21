@@ -20,7 +20,11 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { USA_THEMES, INDIA_THEMES, type CriticalTheme, type ThemeRegion } from '@/lib/critical-themes';
+import {
+  USA_THEMES, INDIA_THEMES, type CriticalTheme, type ThemeRegion,
+  loadCustomThemes, saveCustomTheme, deleteCustomTheme, getAllThemesForRegion,
+  findEmergingThemes, type EmergingTheme,
+} from '@/lib/critical-themes';
 
 const BG = '#0A0E1A';
 const CARD = '#0D1623';
@@ -168,7 +172,22 @@ export default function CriticalThemesPage() {
   const [loading, setLoading] = useState(true);
   const [fetchedAt, setFetchedAt] = useState<number | null>(null);
 
-  const allThemes = useMemo(() => [...INDIA_THEMES, ...USA_THEMES], []);
+  // PATCH 0631 — pull static + user-added custom themes. Re-fetch on storage events.
+  const [customTick, setCustomTick] = useState(0);
+  useEffect(() => {
+    const onChange = () => setCustomTick(t => t + 1);
+    window.addEventListener('mc:custom-themes-updated', onChange);
+    window.addEventListener('storage', onChange);
+    return () => {
+      window.removeEventListener('mc:custom-themes-updated', onChange);
+      window.removeEventListener('storage', onChange);
+    };
+  }, []);
+  const allThemes = useMemo(() => [
+    ...getAllThemesForRegion('IN'),
+    ...getAllThemesForRegion('US'),
+  ], [customTick]);
+  const [emerging, setEmerging] = useState<EmergingTheme[]>([]);
 
   // ── DYNAMIC RANK COMPUTATION ─────────────────────────────────────────
   useEffect(() => {
@@ -260,6 +279,10 @@ export default function CriticalThemesPage() {
       setSignals(out);
       setLoading(false);
       setFetchedAt(Date.now());
+
+      // PATCH 0631 — emerging-theme detection (news topics not yet covered)
+      const allCuratedKeywords = allThemes.flatMap(t => t.searchKeywords);
+      setEmerging(findEmergingThemes(articles, allCuratedKeywords));
     };
 
     compute();
@@ -285,6 +308,39 @@ export default function CriticalThemesPage() {
   }, [signals]);
 
   const ageMin = fetchedAt ? Math.round((Date.now() - fetchedAt) / 60_000) : null;
+
+  // PATCH 0631 — Custom theme add form
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [draftName, setDraftName] = useState('');
+  const [draftRegion, setDraftRegion] = useState<ThemeRegion>('IN');
+  const [draftWhy, setDraftWhy] = useState('');
+  const [draftLeaders, setDraftLeaders] = useState('');
+  const [draftKeywords, setDraftKeywords] = useState('');
+  const [draftBear, setDraftBear] = useState('Liquidity tightening drawdown: -40%');
+  const [draftBull, setDraftBull] = useState('Structural tailwind: 3-5×');
+  const submitCustomTheme = () => {
+    if (!draftName.trim()) return;
+    const leaders = draftLeaders.split(',').map(s => s.trim()).filter(Boolean).map(t => ({ ticker: t, name: t }));
+    const keywords = draftKeywords.split(',').map(s => s.trim()).filter(Boolean);
+    saveCustomTheme({
+      region: draftRegion, name: draftName.trim(), emoji: '🆕',
+      why: draftWhy.trim() || 'User-added theme.',
+      leaders, bearCase: draftBear, bullCase: draftBull,
+      priorityRank: 9, searchKeywords: keywords.length > 0 ? keywords : [draftName.trim().split(' ')[0]],
+    });
+    setShowAddForm(false);
+    setDraftName(''); setDraftWhy(''); setDraftLeaders(''); setDraftKeywords('');
+  };
+  const promoteEmerging = (e: EmergingTheme, region: ThemeRegion) => {
+    saveCustomTheme({
+      region, name: e.keyword.replace(/\b\w/g, c => c.toUpperCase()), emoji: '✨',
+      why: `Auto-detected from news heat (${e.articleCount} articles in last 30 days). User-promoted from emerging-themes suggestion.`,
+      leaders: [], bearCase: 'Theme fades / news heat dissipates: -50%',
+      bullCase: 'Theme becomes structural: 3-5×',
+      priorityRank: 7,
+      searchKeywords: [e.keyword],
+    });
+  };
 
   return (
     <div style={{ minHeight: '100%', background: BG, color: TEXT, padding: '24px 28px' }}>
@@ -354,6 +410,116 @@ export default function CriticalThemesPage() {
             {rankedUS.map((t, i) => <ThemeBlock key={t.id} t={t} signal={signals[t.id]} dynamicRank={i + 1} />)}
           </>
         )}
+
+        {/* PATCH 0631 — EMERGING THEMES (news-derived suggestions) */}
+        {emerging.length > 0 && (
+          <div style={{
+            background: 'linear-gradient(180deg, #F59E0B12 0%, transparent 100%)',
+            border: '1px solid #F59E0B40',
+            borderRadius: 8, padding: '16px 18px',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
+              <div>
+                <span style={{ fontSize: 13, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.5px' }}>✨ EMERGING THEMES — auto-detected from news</span>
+                <div style={{ fontSize: 11, color: DIM, marginTop: 4 }}>
+                  High-frequency keyword pairs in last-30d news that don&apos;t match any curated theme. Click ✚ to promote to a custom theme.
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {emerging.slice(0, 12).map((e) => (
+                <div key={e.keyword} style={{
+                  display: 'flex', alignItems: 'center', gap: 4,
+                  background: '#1A2540', border: '1px solid #F59E0B30', borderRadius: 4, padding: '4px 8px',
+                }}>
+                  <span style={{ fontSize: 12, color: TEXT, fontWeight: 600 }}>{e.keyword}</span>
+                  <span style={{ fontSize: 9, color: DIM }}>· {e.articleCount} news</span>
+                  <button onClick={() => promoteEmerging(e, 'IN')} title="Promote to India theme"
+                    style={{ marginLeft: 4, fontSize: 9, padding: '1px 5px', background: '#22D3EE22', border: '1px solid #22D3EE60', color: '#22D3EE', borderRadius: 3, cursor: 'pointer', fontWeight: 800 }}>
+                    ✚ IN
+                  </button>
+                  <button onClick={() => promoteEmerging(e, 'US')} title="Promote to USA theme"
+                    style={{ fontSize: 9, padding: '1px 5px', background: '#F8717122', border: '1px solid #F8717160', color: '#F87171', borderRadius: 3, cursor: 'pointer', fontWeight: 800 }}>
+                    ✚ US
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* PATCH 0631 — CUSTOM THEME ADD */}
+        <div style={{ background: CARD, border: `1px dashed #22D3EE40`, borderRadius: 8, padding: '14px 16px' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+            <span style={{ fontSize: 13, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.5px' }}>➕ ADD YOUR OWN THEME</span>
+            <button onClick={() => setShowAddForm(v => !v)} style={{
+              fontSize: 11, padding: '5px 12px', background: '#22D3EE15', border: '1px solid #22D3EE50',
+              color: '#22D3EE', borderRadius: 4, cursor: 'pointer', fontWeight: 800,
+            }}>
+              {showAddForm ? 'CANCEL' : 'NEW THEME'}
+            </button>
+          </div>
+          <div style={{ fontSize: 11, color: DIM, marginTop: 4 }}>
+            Custom themes you add appear alongside curated ones, get the same live ranking, and persist across reloads. Edit-free updates — no code changes needed.
+          </div>
+          {showAddForm && (
+            <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
+              <label style={{ fontSize: 11, color: DIM, fontWeight: 700, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                Region
+                <select value={draftRegion} onChange={e => setDraftRegion(e.target.value as ThemeRegion)} style={{ background: '#0A1422', color: TEXT, border: `1px solid ${BORDER}`, padding: '6px 8px', borderRadius: 4, fontSize: 12 }}>
+                  <option value="IN">🇮🇳 INDIA</option>
+                  <option value="US">🇺🇸 USA</option>
+                </select>
+              </label>
+              <label style={{ fontSize: 11, color: DIM, fontWeight: 700, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                Theme name
+                <input value={draftName} onChange={e => setDraftName(e.target.value)} placeholder="e.g. Quantum Computing"
+                  style={{ background: '#0A1422', color: TEXT, border: `1px solid ${BORDER}`, padding: '6px 8px', borderRadius: 4, fontSize: 12 }} />
+              </label>
+              <label style={{ fontSize: 11, color: DIM, fontWeight: 700, display: 'flex', flexDirection: 'column', gap: 3, gridColumn: '1 / -1' }}>
+                Why (structural driver)
+                <textarea value={draftWhy} onChange={e => setDraftWhy(e.target.value)} placeholder="2-3 lines on macro / policy / tech driver"
+                  rows={2} style={{ background: '#0A1422', color: TEXT, border: `1px solid ${BORDER}`, padding: '6px 8px', borderRadius: 4, fontSize: 12, resize: 'vertical', fontFamily: 'inherit' }} />
+              </label>
+              <label style={{ fontSize: 11, color: DIM, fontWeight: 700, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                Leader tickers (comma-separated)
+                <input value={draftLeaders} onChange={e => setDraftLeaders(e.target.value)} placeholder="HAL, BEL, BDL"
+                  style={{ background: '#0A1422', color: TEXT, border: `1px solid ${BORDER}`, padding: '6px 8px', borderRadius: 4, fontSize: 12 }} />
+              </label>
+              <label style={{ fontSize: 11, color: DIM, fontWeight: 700, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                Search keywords (drives news heat)
+                <input value={draftKeywords} onChange={e => setDraftKeywords(e.target.value)} placeholder="quantum, cryogenic, qubit, IonQ"
+                  style={{ background: '#0A1422', color: TEXT, border: `1px solid ${BORDER}`, padding: '6px 8px', borderRadius: 4, fontSize: 12 }} />
+              </label>
+              <button onClick={submitCustomTheme} disabled={!draftName.trim()} style={{
+                gridColumn: '1 / -1', marginTop: 4,
+                fontSize: 12, padding: '8px 14px', background: '#22D3EE', border: 'none',
+                color: '#0A0E1A', borderRadius: 4, cursor: draftName.trim() ? 'pointer' : 'not-allowed', fontWeight: 800,
+                opacity: draftName.trim() ? 1 : 0.5,
+              }}>
+                ➕ ADD THEME
+              </button>
+            </div>
+          )}
+          {/* Custom theme list (with delete) */}
+          {loadCustomThemes().length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 11, color: DIM, fontWeight: 700, marginBottom: 6 }}>YOUR CUSTOM THEMES</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {loadCustomThemes().map(t => (
+                  <span key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 4, background: '#1A2540', borderRadius: 4, padding: '4px 8px', fontSize: 12 }}>
+                    <span style={{ color: TEXT, fontWeight: 600 }}>{t.emoji} {t.name}</span>
+                    <span style={{ fontSize: 9, color: DIM }}>· {t.region}</span>
+                    <button onClick={() => { deleteCustomTheme(t.id); setCustomTick(x => x + 1); }} title="Delete"
+                      style={{ fontSize: 10, padding: '0 4px', background: 'transparent', border: '1px solid #EF444460', color: '#EF4444', borderRadius: 3, cursor: 'pointer', marginLeft: 4 }}>
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
 
         <div style={{
           marginTop: 8, padding: '14px 16px',

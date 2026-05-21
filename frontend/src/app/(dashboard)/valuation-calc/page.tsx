@@ -11,11 +11,12 @@
 // Consumer, TD Power, Sterlite, Aeroflex, Atlanta Electricals, DEE Dev).
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   calculatePS, calculatePE, calculateEvEbitda,
+  fetchQuoteAutofill,
   WORKED_EXAMPLES, SECTOR_CALCULATOR_MAP,
-  type CalculatorResult,
+  type CalculatorResult, type QuoteAutoFill,
 } from '@/lib/valuation-calculators';
 
 const BG = '#0A0E1A';
@@ -45,9 +46,25 @@ function CalcResultDisplay({ result }: { result: CalculatorResult }) {
               {c.label} CASE
             </div>
             <div style={{ fontSize: 22, fontWeight: 900, color: TEXT, fontVariantNumeric: 'tabular-nums' }}>
-              ₹{Math.round(c.marketCapCr).toLocaleString('en-IN')} Cr
+              {c.currency || '₹'}{Math.round(c.marketCapCr).toLocaleString('en-IN')} Cr
             </div>
             <div style={{ fontSize: 11, color: DIM, marginTop: 4 }}>target market cap</div>
+            {/* PATCH 0631 — target stock price */}
+            {c.targetPrice !== undefined && (
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${c.color}30` }}>
+                <div style={{ fontSize: 9, color: DIM, fontWeight: 800, letterSpacing: '0.5px' }}>TARGET STOCK PRICE</div>
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginTop: 3 }}>
+                  <span style={{ fontSize: 18, fontWeight: 900, color: c.color, fontVariantNumeric: 'tabular-nums' }}>
+                    {c.currency || '₹'}{c.targetPrice.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                  </span>
+                  {c.currentPrice && (
+                    <span style={{ fontSize: 10, color: DIM, fontVariantNumeric: 'tabular-nums' }}>
+                      from {c.currency || '₹'}{c.currentPrice.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
             <div style={{ marginTop: 10, display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
               <span style={{ color: DIM }}>Total upside</span>
               <span style={{ color: c.color, fontWeight: 800 }}>{c.upsidePct >= 0 ? '+' : ''}{c.upsidePct.toFixed(0)}%</span>
@@ -59,6 +76,40 @@ function CalcResultDisplay({ result }: { result: CalculatorResult }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+/** PATCH 0631 — auto-fetch button: pulls current price + market cap from live API */
+function AutoFillBtn({ ticker, market, onFill, currentPrice }: { ticker: string; market: 'india' | 'us'; onFill: (q: QuoteAutoFill) => void; currentPrice?: number }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const handleClick = async () => {
+    if (!ticker.trim()) { setError('Enter ticker first'); return; }
+    setLoading(true); setError(null);
+    try {
+      const q = await fetchQuoteAutofill(ticker, market);
+      if (q) { onFill(q); setError(null); }
+      else setError('Quote not found — using your manual values');
+    } catch {
+      setError('Fetch failed — using manual values');
+    } finally { setLoading(false); }
+  };
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+      <button onClick={handleClick} disabled={loading} style={{
+        fontSize: 11, padding: '5px 12px',
+        background: '#10B98115', border: '1px solid #10B98150',
+        color: '#10B981', borderRadius: 4, cursor: loading ? 'wait' : 'pointer', fontWeight: 800,
+      }}>
+        {loading ? '⏳ Fetching…' : '🔄 Auto-fill price + market cap'}
+      </button>
+      {currentPrice && (
+        <span style={{ fontSize: 11, color: DIM, fontFamily: 'ui-monospace, monospace' }}>
+          live price: <b style={{ color: '#10B981' }}>{market === 'us' ? '$' : '₹'}{currentPrice.toLocaleString('en-IN', { maximumFractionDigits: 1 })}</b>
+        </span>
+      )}
+      {error && <span style={{ fontSize: 10, color: '#F59E0B' }}>{error}</span>}
     </div>
   );
 }
@@ -92,10 +143,11 @@ function PSCalculator() {
   const [bullPS, setBullPS] = useState(15);
   const [marketCap, setMarketCap] = useState(21000);
   const [horizon, setHorizon] = useState(18);
+  const [currentPrice, setCurrentPrice] = useState<number | undefined>();
   const result = useMemo(() => calculatePS({
     ticker, currentMarketCapCr: marketCap, horizonMonths: horizon,
-    forwardRevenueCr: revenue, bearPS, basePS, bullPS,
-  }), [ticker, marketCap, horizon, revenue, bearPS, basePS, bullPS]);
+    forwardRevenueCr: revenue, bearPS, basePS, bullPS, currentPrice, currency: '₹',
+  }), [ticker, marketCap, horizon, revenue, bearPS, basePS, bullPS, currentPrice]);
 
   const loadExample = (key: keyof typeof WORKED_EXAMPLES) => {
     const ex = WORKED_EXAMPLES[key];
@@ -109,6 +161,10 @@ function PSCalculator() {
 
   return (
     <div>
+      <AutoFillBtn ticker={ticker} market="india" currentPrice={currentPrice} onFill={(q) => {
+        if (q.currentPrice) setCurrentPrice(q.currentPrice);
+        if (q.currentMarketCapCr) setMarketCap(Math.round(q.currentMarketCapCr));
+      }} />
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 11, color: DIM, alignSelf: 'center', marginRight: 4, fontWeight: 700 }}>EXAMPLES</span>
         <button onClick={() => loadExample('rubicon')} style={chipBtn('#22D3EE')}>Rubicon Research</button>
@@ -139,10 +195,11 @@ function PECalculator() {
   const [bullPE, setBullPE] = useState(30);
   const [marketCap, setMarketCap] = useState(2700);
   const [horizon, setHorizon] = useState(12);
+  const [currentPrice, setCurrentPrice] = useState<number | undefined>();
   const result = useMemo(() => calculatePE({
     ticker, currentMarketCapCr: marketCap, horizonMonths: horizon,
-    forwardPATCr: pat, bearPE, basePE, bullPE,
-  }), [ticker, marketCap, horizon, pat, bearPE, basePE, bullPE]);
+    forwardPATCr: pat, bearPE, basePE, bullPE, currentPrice, currency: '₹',
+  }), [ticker, marketCap, horizon, pat, bearPE, basePE, bullPE, currentPrice]);
 
   const loadExample = (key: keyof typeof WORKED_EXAMPLES) => {
     const ex = WORKED_EXAMPLES[key];
@@ -156,6 +213,10 @@ function PECalculator() {
 
   return (
     <div>
+      <AutoFillBtn ticker={ticker} market="india" currentPrice={currentPrice} onFill={(q) => {
+        if (q.currentPrice) setCurrentPrice(q.currentPrice);
+        if (q.currentMarketCapCr) setMarketCap(Math.round(q.currentMarketCapCr));
+      }} />
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 11, color: DIM, alignSelf: 'center', marginRight: 4, fontWeight: 700 }}>EXAMPLES</span>
         <button onClick={() => loadExample('bajajConsumer')} style={chipBtn('#22D3EE')}>Bajaj Consumer</button>
@@ -192,13 +253,19 @@ function EvEbitdaCalculator() {
   const [netDebt, setNetDebt] = useState(0);
   const [marketCap, setMarketCap] = useState(8000);
   const [horizon, setHorizon] = useState(18);
+  const [currentPrice, setCurrentPrice] = useState<number | undefined>();
   const result = useMemo(() => calculateEvEbitda({
     ticker, currentMarketCapCr: marketCap, horizonMonths: horizon,
     forwardEBITDACr: ebitda, bearMultiple: bear, baseMultiple: base, bullMultiple: bull, netDebtCr: netDebt,
-  }), [ticker, marketCap, horizon, ebitda, bear, base, bull, netDebt]);
+    currentPrice, currency: '₹',
+  }), [ticker, marketCap, horizon, ebitda, bear, base, bull, netDebt, currentPrice]);
 
   return (
     <div>
+      <AutoFillBtn ticker={ticker} market="india" currentPrice={currentPrice} onFill={(q) => {
+        if (q.currentPrice) setCurrentPrice(q.currentPrice);
+        if (q.currentMarketCapCr) setMarketCap(Math.round(q.currentMarketCapCr));
+      }} />
       <div style={{ marginBottom: 14, fontSize: 11, color: DIM, fontStyle: 'italic' }}>
         EV/EBITDA best for cyclicals, industrials, leveraged businesses. Always subtract net debt to get equity value.
       </div>
