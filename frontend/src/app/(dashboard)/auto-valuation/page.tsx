@@ -56,6 +56,10 @@ interface ExcelFinancials {
   latestSales?: number;
   latestPAT?: number;
   latestEBITDA?: number;        // operating profit + depreciation if available
+  // PATCH 0641 — META block (MTAR template rows 6-9)
+  sharesOutstandingCr?: number; // 'Number of shares' divided by 1 Cr
+  currentPriceFromSheet?: number;
+  currentMarketCapCrFromSheet?: number;
 }
 
 interface ParsedDoc {
@@ -129,18 +133,30 @@ async function extractPdfText(file: File): Promise<string> {
 }
 
 // ─── Excel extraction (XLSX) ────────────────────────────────────────────
+// PATCH 0641 — validated against MTAR Technologies template (Indian standard
+// Screener / value-investor sheet format):
+//   Row 1  COMPANY NAME (col B)
+//   Row 6  Number of shares
+//   Row 8  Current Price
+//   Row 9  Market Capitalization
+//   Row 16 Report Date (year columns)
+//   Row 17 Sales
+//   Row 18-24 Expense rows (raw material, power, employee, S&A, other)
+//   Row 25 Other Income
+//   Row 26 Depreciation
+//   Row 28 Profit before tax
+//   Row 30 Net profit
+// Operating Profit = Sales - sum(Expenses); EBITDA = OP + Depreciation.
 async function extractExcelFinancials(file: File): Promise<ExcelFinancials | null> {
   const XLSX = await import('xlsx');
   const buf = await file.arrayBuffer();
   const wb = XLSX.read(buf, { type: 'array' });
   const sheetNames = wb.SheetNames;
-  // Identify the 'Data Sheet' or fallback to first sheet
   const dataSheetName = sheetNames.find(s => /data\s*sheet/i.test(s)) || sheetNames[0];
   const ws = wb.Sheets[dataSheetName];
   if (!ws) return null;
   const rows = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1, defval: null });
 
-  // Find rows by label
   const findRow = (labels: string[]) => {
     for (let i = 0; i < rows.length; i++) {
       const first = String(rows[i]?.[0] || '').trim().toLowerCase();
@@ -151,14 +167,18 @@ async function extractExcelFinancials(file: File): Promise<ExcelFinancials | nul
     return null;
   };
 
-  // Header row for year labels
   const headerRow = findRow(['Report Date', 'Period', 'Year']) || rows.find((r) => Array.isArray(r) && r.some((c: any) => typeof c === 'string' && /Mar|Dec|FY|20[12][0-9]/.test(c))) || [];
-  const fyLabels = (headerRow || []).slice(1).filter((x: any) => x !== null).map((x: any) => String(x));
+  // PATCH 0641 — header values can be Date objects (MTAR template). Normalize to 'Mar 2024' format.
+  const fyLabels = (headerRow || []).slice(1).filter((x: any) => x !== null).map((x: any) => {
+    if (x instanceof Date) return x.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+    return String(x);
+  });
 
   const toNum = (v: any): number | null => {
     if (v === null || v === undefined || v === '') return null;
     if (typeof v === 'number') return Number.isFinite(v) ? v : null;
-    const n = Number(String(v).replace(/[,₹$\s]/g, ''));
+    if (v instanceof Date) return null;
+    const n = Number(String(v).replace(/[,₹$\s%]/g, ''));
     return Number.isFinite(n) ? n : null;
   };
 
@@ -168,24 +188,74 @@ async function extractExcelFinancials(file: File): Promise<ExcelFinancials | nul
   };
 
   const salesRow = findRow(['Sales', 'Revenue', 'Total Revenue', 'Net Sales']);
-  const opRow = findRow(['Operating Profit', 'EBITDA']);
-  const netProfitRow = findRow(['Net profit', 'Net Profit', 'PAT', 'Profit after tax']);
+  const opRowExplicit = findRow(['Operating Profit', 'EBITDA']);
+  const netProfitRow = findRow(['Net profit', 'PAT', 'Profit after tax']);
   const epsRow = findRow(['EPS', 'Earnings per share']);
-  const priceRow = findRow(['Price', 'CMP']);
+  const priceRow = findRow(['Price', 'CMP', 'Current Price']);
+  const depRow = findRow(['Depreciation']);
 
-  // Company / ticker — look in cell B1 or anywhere
-  let company: string | undefined;
-  let ticker: string | undefined;
-  for (let r = 0; r < Math.min(rows.length, 5); r++) {
-    for (let c = 0; c < Math.min((rows[r] || []).length, 5); c++) {
-      const v = String(rows[r]?.[c] || '');
-      if (v && v.length > 2 && v.length < 80 && /[A-Z]/.test(v) && !/Date|Period|Year|Sales|Revenue|Profit/i.test(v)) {
-        if (!company) company = v;
+  // Operating profit — fall back to Sales minus all expense rows when not explicit
+  let opRow = opRowExplicit;
+  if (!opRow && salesRow) {
+    const expenseRowLabels = ['Raw Material Cost', 'Change in Inventory', 'Power and Fuel',
+      'Other Mfr', 'Employee Cost', 'Selling and admin', 'Other Expenses'];
+    const expRows = expenseRowLabels.map(l => findRow([l])).filter(Boolean) as any[][];
+    if (expRows.length > 0) {
+      const computed: any[] = [null];
+      for (let col = 1; col < salesRow.length; col++) {
+        const sales = toNum(salesRow[col]);
+        if (sales === null) { computed.push(null); continue; }
+        let totalExp = 0; let anyExp = false;
+        for (const er of expRows) {
+          const v = toNum(er[col]);
+          if (v !== null) { totalExp += v; anyExp = true; }
+        }
+        computed.push(anyExp ? sales - totalExp : null);
       }
-      const m = v.match(/^[A-Z]{2,10}$/);
-      if (m && !ticker) ticker = m[0];
+      opRow = computed;
     }
   }
+
+  // Company name — explicit row 1 col B (MTAR template) or first non-empty string
+  let company: string | undefined;
+  let ticker: string | undefined;
+  const companyRow = findRow(['COMPANY NAME', 'Company Name']);
+  if (companyRow) {
+    const v = String(companyRow[1] || '').trim();
+    if (v && v.length > 2) company = v;
+  }
+  if (!company) {
+    for (let r = 0; r < Math.min(rows.length, 5); r++) {
+      for (let c = 1; c < Math.min((rows[r] || []).length, 5); c++) {
+        const v = String(rows[r]?.[c] || '').trim();
+        if (v && v.length > 2 && v.length < 80 && /[A-Za-z]/.test(v) && !/Date|Period|Year/i.test(v)) {
+          if (!company) { company = v; break; }
+        }
+      }
+      if (company) break;
+    }
+  }
+  // Ticker — try ticker label or filename
+  const tickerRow = findRow(['Ticker', 'NSE Symbol', 'BSE Code']);
+  if (tickerRow) {
+    const v = String(tickerRow[1] || '').trim().toUpperCase();
+    if (v && /^[A-Z]{2,12}$/.test(v)) ticker = v;
+  }
+  if (!ticker) {
+    const fn = file.name.toUpperCase().replace(/\.[A-Z]+$/, '').replace(/[^A-Z]/g, '');
+    const m = fn.match(/[A-Z]{4,12}/);
+    if (m) ticker = m[0];
+  }
+
+  // PATCH 0641 — META block extraction (MTAR template rows 6/8/9)
+  const sharesRow = findRow(['Number of shares']);
+  const currentPriceRow = findRow(['Current Price']);
+  const marketCapRow = findRow(['Market Capitalization', 'Market Cap']);
+  const numShares = sharesRow ? toNum(sharesRow[1]) : null;
+  const currentPriceFromSheet = currentPriceRow ? toNum(currentPriceRow[1]) : undefined;
+  const currentMarketCapCrFromSheet = marketCapRow ? toNum(marketCapRow[1]) : undefined;
+  // Indian templates store shares as raw count (e.g. 30,750,000). Convert to crores.
+  const sharesOutstandingCr = numShares ? numShares / 1e7 : undefined;
 
   const fin: ExcelFinancials = {
     source: file.name,
@@ -196,6 +266,9 @@ async function extractExcelFinancials(file: File): Promise<ExcelFinancials | nul
     netProfit: extractRow(netProfitRow),
     eps: extractRow(epsRow),
     price: extractRow(priceRow),
+    sharesOutstandingCr,
+    currentPriceFromSheet: currentPriceFromSheet ?? undefined,
+    currentMarketCapCrFromSheet: currentMarketCapCrFromSheet ?? undefined,
   };
 
   // Derived metrics
@@ -222,7 +295,15 @@ async function extractExcelFinancials(file: File): Promise<ExcelFinancials | nul
     return null;
   }).filter((x): x is number => typeof x === 'number');
   if (opmList.length > 0) fin.opmAvg = opmList.slice(-5).reduce((a, b) => a + b, 0) / Math.min(opmList.length, 5);
-  fin.latestEBITDA = fin.operatingProfit.filter((x): x is number => typeof x === 'number').slice(-1)[0];
+  // PATCH 0641 — proper EBITDA = Operating Profit + Depreciation (when both present).
+  // Otherwise fall back to OP alone (Indian Screener convention).
+  const opSeries = fin.operatingProfit.filter((x): x is number => typeof x === 'number');
+  const latestOP = opSeries.slice(-1)[0];
+  const depSeries = depRow ? extractRow(depRow).filter((x): x is number => typeof x === 'number') : [];
+  const latestDep = depSeries.slice(-1)[0];
+  fin.latestEBITDA = (typeof latestOP === 'number' && typeof latestDep === 'number')
+    ? latestOP + latestDep
+    : latestOP;
 
   return fin;
 }
@@ -360,15 +441,23 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
     }
   }
 
-  const currentMarketCapCr = quote?.currentMarketCapCr || 0;
+  // PATCH 0641 — fallback chain for market cap / price / shares:
+  //   1. Live quote from /api/market/quotes
+  //   2. Excel template META block (rows 6-9)
+  //   3. (manual) — user can adjust on /valuation-calc later
+  const currentMarketCapCr = quote?.currentMarketCapCr
+    || excelData?.currentMarketCapCrFromSheet
+    || 0;
+  const currentPrice = quote?.currentPrice || excelData?.currentPriceFromSheet;
+  const sharesOutstandingCr = quote?.sharesOutstandingCr || excelData?.sharesOutstandingCr;
   const horizonMonths = 18;
   const baseCalcInput = {
     ticker,
     company,
     currentMarketCapCr,
     horizonMonths,
-    currentPrice: quote?.currentPrice,
-    sharesOutstandingCr: quote?.sharesOutstandingCr,
+    currentPrice,
+    sharesOutstandingCr,
     currency: '₹' as const,
   };
 
