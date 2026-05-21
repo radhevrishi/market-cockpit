@@ -194,6 +194,33 @@ export default function NewsAlertsPage() {
     setDraft({});
   };
 
+  // PATCH 0620 — preset alert templates. One-click add to the user's rules.
+  // Curated around the portal's thesis: bottleneck transmission, capacity
+  // signals, special-situation catalysts, marquee-capital entry, etc.
+  const PRESET_ALERTS: Array<{ label: string; emoji: string; conditions: any }> = [
+    { label: 'AI Infra · HIGH only', emoji: '🤖', conditions: { article_type: 'BOTTLENECK', min_importance: 0.6, headline_contains: 'AI|HBM|GPU|data center|CoWoS|silicon|semiconductor' } },
+    { label: 'Power Grid Bottleneck', emoji: '⚡', conditions: { article_type: 'BOTTLENECK', min_importance: 0.5, headline_contains: 'power|transformer|grid|transmission|nuclear|HVDC' } },
+    { label: 'Order Wins (PSU)', emoji: '📑', conditions: { headline_contains: 'order|letter of award|receipt of order|contract worth|order book|LoA' } },
+    { label: 'Rating Upgrade', emoji: '🏛', conditions: { headline_contains: 'ICRA|CRISIL|CARE|upgrade|outlook revised|rating action' } },
+    { label: 'Marquee PE Entry', emoji: '💎', conditions: { headline_contains: 'preferential|stake|KKR|Blackstone|Bain|ChrysCapital|Tata Capital' } },
+    { label: 'Capacity Expansion', emoji: '🏗', conditions: { headline_contains: 'capacity|capex|new plant|expansion|commission|debottlenecking' } },
+    { label: 'Earnings Surprise', emoji: '📊', conditions: { article_type: 'EARNINGS', min_importance: 0.5 } },
+    { label: 'Promoter Buying', emoji: '👀', conditions: { headline_contains: 'promoter|insider|stake hike|increased holding' } },
+  ];
+  const addPreset = (p: typeof PRESET_ALERTS[0]) => {
+    const r: AlertRule = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      name: p.label,
+      enabled: true,
+      conditions: p.conditions,
+      lastFiredArticleIds: [],
+      lastFiredAt: 0,
+      createdAt: Date.now(),
+    };
+    setRules(rs => [r, ...rs]);
+    toast.success(`Added "${p.label}" to your alerts.`);
+  };
+
   const toggleRule = (id: string) => setRules(rs => rs.map(r => r.id === id ? { ...r, enabled: !r.enabled } : r));
   // AUDIT_100 #67 — "Test fire" button. Runs the rule against the last 100
   // articles in the live stream and shows a summary toast of how many would
@@ -394,9 +421,47 @@ export default function NewsAlertsPage() {
         </div>
       )}
 
+      {/* PATCH 0620 — RECOMMENDED ALERT PRESETS. One-click add curated rules
+          aligned with the portal's bottleneck-transmission thesis. */}
+      <div style={{
+        marginBottom: 20,
+        padding: '12px 14px',
+        backgroundColor: TOKENS.surface.card,
+        borderRadius: 8,
+        border: `1px solid ${TOKENS.surface.cardBorder}`,
+      }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: TOKENS.surface.text, letterSpacing: '0.4px', marginBottom: 4 }}>
+          🎯 RECOMMENDED ALERT PRESETS
+        </div>
+        <div style={{ fontSize: 11, color: TOKENS.surface.textDim, marginBottom: 10 }}>
+          One-click templates curated for institutional research. Click any to add it to your rules. You can edit conditions afterwards.
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {PRESET_ALERTS.map(p => (
+            <button
+              key={p.label}
+              onClick={() => addPreset(p)}
+              style={{
+                fontSize: 11,
+                padding: '5px 11px',
+                border: `1px solid ${TOKENS.surface.cardBorder}`,
+                background: 'transparent',
+                color: TOKENS.surface.text,
+                borderRadius: 4,
+                cursor: 'pointer',
+                fontWeight: 600,
+              }}
+              title={`Conditions: ${JSON.stringify(p.conditions)}`}
+            >
+              {p.emoji} {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div style={{ marginBottom: 24 }}>
         {rules.length === 0 ? (
-          <p style={{ fontSize: 13, color: TOKENS.surface.textDim, fontStyle: 'italic' }}>No rules yet. Add one below.</p>
+          <p style={{ fontSize: 13, color: TOKENS.surface.textDim, fontStyle: 'italic' }}>No rules yet. Click a preset above or add one below.</p>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {rules.map(r => (

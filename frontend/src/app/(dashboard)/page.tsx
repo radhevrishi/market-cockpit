@@ -287,7 +287,7 @@ export default function HomeDashboard() {
   // PATCH 0605 — collapse defaults per institutional review
   // ("hide raw news feeds / low-confidence signals / secondary analytics")
   const [showTier3, setShowTier3] = useState(false);
-  const [showInPlay, setShowInPlay] = useState(false);
+  const [showInPlay, setShowInPlay] = useState(true);  // PATCH 0620 — In-Play moved to top of Home, default expanded
   const [showQuickAccess, setShowQuickAccess] = useState(false);
 
   useEffect(() => {
@@ -679,6 +679,65 @@ export default function HomeDashboard() {
           )}
         </div>
 
+        {/* ═══════════════ PATCH 0620 — IN-PLAY NEWS (MOVED TO TOP) ════════ */}
+        <div style={cardStyle}>
+          <button onClick={() => setShowInPlay(v => !v)} style={{
+            background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
+            fontSize: 13, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px',
+            display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+          }}>
+            {showInPlay ? '▾' : '▸'} 🔥 IN-PLAY NEWS — last 24h ({data.inPlay.length})
+            <span style={{ marginLeft: 'auto', fontSize: 10, color: DIM, fontWeight: 500 }}>
+              <Link href="/news" style={{ color: '#22D3EE', textDecoration: 'none' }} onClick={(e) => e.stopPropagation()}>Full feed →</Link>
+            </span>
+          </button>
+          {netLoading.inPlay && !showInPlay && (
+            <div style={{ fontSize: 10, color: DIM, marginTop: 4, fontStyle: 'italic' }}>📡 Loading in-play news…</div>
+          )}
+          {showInPlay && netLoading.inPlay && (
+            <div style={{ fontSize: 11, color: DIM, marginTop: 8, fontStyle: 'italic' }}>📡 Loading…</div>
+          )}
+          {showInPlay && !netLoading.inPlay && data.inPlay.length === 0 && (
+            <div style={{ fontSize: 11, color: DIM, marginTop: 8, fontStyle: 'italic', lineHeight: 1.5 }}>
+              {data.inPlayDiag?.error
+                ? `News feed unreachable (${data.inPlayDiag.error}${data.inPlayDiag.status ? ' / HTTP ' + data.inPlayDiag.status : ''}). Backend may be cold-starting.`
+                : 'No live in-play news in last 24 hours.'}
+              {data.inPlayDiag && (
+                <div style={{ fontSize: 10, color: DIM, marginTop: 6, fontFamily: 'ui-monospace, monospace' }}>
+                  Diagnostic: fetched {data.inPlayDiag.fetched} · within 24h {data.inPlayDiag.recent} · after structural filter {data.inPlayDiag.clean}
+                  {data.inPlayDiag.error && <span style={{ color: '#F87171' }}> · error: {data.inPlayDiag.error}</span>}
+                </div>
+              )}
+              <button
+                onClick={() => { window.location.reload(); }}
+                style={{ marginTop: 8, fontSize: 10, padding: '4px 10px', border: '1px solid #22D3EE60', background: 'transparent', color: '#22D3EE', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+              >
+                🔄 RETRY
+              </button>
+            </div>
+          )}
+          {showInPlay && !netLoading.inPlay && data.inPlay.length > 0 && data.inPlayDiag?.fellBack && (
+            <div style={{ fontSize: 10, color: '#F59E0B', marginTop: 6, padding: '4px 8px', background: '#F59E0B15', border: '1px solid #F59E0B40', borderRadius: 4 }}>
+              ⚠ Only structural alerts available in last 24h — showing them anyway so the feed isn't empty.
+            </div>
+          )}
+          {showInPlay && !netLoading.inPlay && data.inPlay.length > 0 && (
+            <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {data.inPlay.map((n, i) => {
+                const title = n.title || n.headline || '(no headline)';
+                return (
+                  <a key={(n.id || '') + i} href={n.url || n.source_url || '#'} target="_blank" rel="noopener noreferrer"
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                    <span style={{ fontSize: 11, color: DIM, fontWeight: 700, minWidth: 22 }}>{i + 1}</span>
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: TEXT, fontWeight: 500, lineHeight: 1.4 }}>{title}</span>
+                    <span style={{ fontSize: 9, color: DIM, whiteSpace: 'nowrap' }}>{n.source_name || n.source || '—'}</span>
+                  </a>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
         {/* ═══════════════ TIER 1 — IMMEDIATE ACTION ════════════════════ */}
         {lensedTier1.length > 0 ? (
           <DecisionTierBlock
@@ -1022,66 +1081,6 @@ export default function HomeDashboard() {
               </div>
             )}
           </div>
-        </div>
-
-        {/* ═══════════════ IN-PLAY NEWS — live items only (≤4h, no structural) ═ */}
-        <div style={cardStyle}>
-          <button onClick={() => setShowInPlay(v => !v)} style={{
-            background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
-            fontSize: 13, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px',
-            display: 'flex', alignItems: 'center', gap: 6, width: '100%',
-          }}>
-            {showInPlay ? '▾' : '▸'} 🔥 IN-PLAY NEWS — last 24h ({data.inPlay.length})
-            <span style={{ marginLeft: 'auto', fontSize: 10, color: DIM, fontWeight: 500 }}>
-              <Link href="/news" style={{ color: '#22D3EE', textDecoration: 'none' }} onClick={(e) => e.stopPropagation()}>Full feed →</Link>
-            </span>
-          </button>
-          {netLoading.inPlay && !showInPlay && (
-            <div style={{ fontSize: 10, color: DIM, marginTop: 4, fontStyle: 'italic' }}>📡 Loading in-play news…</div>
-          )}
-          {showInPlay && netLoading.inPlay && (
-            <div style={{ fontSize: 11, color: DIM, marginTop: 8, fontStyle: 'italic' }}>📡 Loading…</div>
-          )}
-          {showInPlay && !netLoading.inPlay && data.inPlay.length === 0 && (
-            <div style={{ fontSize: 11, color: DIM, marginTop: 8, fontStyle: 'italic', lineHeight: 1.5 }}>
-              {data.inPlayDiag?.error
-                ? `News feed unreachable (${data.inPlayDiag.error}${data.inPlayDiag.status ? ' / HTTP ' + data.inPlayDiag.status : ''}). Backend may be cold-starting.`
-                : 'No live in-play news in last 24 hours.'}
-              {data.inPlayDiag && (
-                <div style={{ fontSize: 10, color: DIM, marginTop: 6, fontFamily: 'ui-monospace, monospace' }}>
-                  Diagnostic: fetched {data.inPlayDiag.fetched} · within 24h {data.inPlayDiag.recent} · after structural filter {data.inPlayDiag.clean}
-                  {data.inPlayDiag.error && <span style={{ color: '#F87171' }}> · error: {data.inPlayDiag.error}</span>}
-                </div>
-              )}
-              <button
-                onClick={() => { window.location.reload(); }}
-                style={{ marginTop: 8, fontSize: 10, padding: '4px 10px', border: '1px solid #22D3EE60', background: 'transparent', color: '#22D3EE', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
-              >
-                🔄 RETRY
-              </button>
-            </div>
-          )}
-          {/* PATCH 0617 — show fallback notice if structural filter wiped everything but we still surfaced items */}
-          {showInPlay && !netLoading.inPlay && data.inPlay.length > 0 && data.inPlayDiag?.fellBack && (
-            <div style={{ fontSize: 10, color: '#F59E0B', marginTop: 6, padding: '4px 8px', background: '#F59E0B15', border: '1px solid #F59E0B40', borderRadius: 4 }}>
-              ⚠ Only structural alerts available in last 24h — showing them anyway so the feed isn't empty.
-            </div>
-          )}
-          {showInPlay && !netLoading.inPlay && data.inPlay.length > 0 && (
-            <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {data.inPlay.map((n, i) => {
-                const title = n.title || n.headline || '(no headline)';
-                return (
-                  <a key={(n.id || '') + i} href={n.url || n.source_url || '#'} target="_blank" rel="noopener noreferrer"
-                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
-                    <span style={{ fontSize: 11, color: DIM, fontWeight: 700, minWidth: 22 }}>{i + 1}</span>
-                    <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: TEXT, fontWeight: 500, lineHeight: 1.4 }}>{title}</span>
-                    <span style={{ fontSize: 9, color: DIM, whiteSpace: 'nowrap' }}>{n.source_name || n.source || '—'}</span>
-                  </a>
-                );
-              })}
-            </div>
-          )}
         </div>
 
         {/* ═══════════════ QUICK ACCESS GRID (collapsed by default) ═════ */}
