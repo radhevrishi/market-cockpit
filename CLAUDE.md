@@ -1578,11 +1578,11 @@ If the new agent needs to push code, it should:
 
 ### 17.0 Quick state check
 
-- **HEAD on `origin/main` = `7c7f8c5`** (commit message: "Patches 0556-0567: QA audit fixes (P0-P2, 12 bugs)")
-- **Latest patches shipped this session: 0549 → 0567** (19 patches across 8 commits)
-- **Type-check clean as of session end** (`npx tsc --noEmit` exits 0)
-- **All 12 QA-audit bugs SHIPPED.** P3 UX items NOT shipped (see §17.4).
-- **Active sandbox at session end was `kind-sharp-maxwell`.** Your new session will have a different sandbox name — find it via `ls /sessions/` and substitute it everywhere.
+- **HEAD on `origin/main` = `1c2fc67`** (commit message: "Patch 0569: Ship all 9 P3 UX improvements from QA audit")
+- **Latest patches shipped: 0549 → 0569** (21 patches; 0569 = P3 UX bundle, all 9 items)
+- **Type-check clean as of last commit** (`npx tsc --noEmit` exits 0)
+- **All 12 QA-audit bugs SHIPPED + all 9 P3 UX items SHIPPED.** Next-priority work: TheWrap modules (§17.4 B) and ranking-framework upgrade (§17.4 C).
+- **Latest sandbox name was `fervent-kind-hypatia`.** Your new session will have a different one — find it via `ls /sessions/` and substitute everywhere.
 
 ### 17.1 Deploy infrastructure (preserve for next chat)
 
@@ -1665,17 +1665,17 @@ cd /tmp/mc-deploy && \
 
 ### 17.4 OPEN WORK — what the user wants next
 
-#### A) P3 UX improvements from QA audit (NOT yet shipped — user deferred but may want some)
+#### A) P3 UX improvements from QA audit — ALL 9 SHIPPED IN PATCH 0569 ✓
 
-**UX #1** — News Feed Save View: auto-name new views (e.g. "BOTTLENECK · India · May 26"), one-click save (no modal).
-**UX #2** — Lifecycle button tooltips (Live+Warm / Stale / Persistent definitions).
-**UX #3** — Portfolio TREND column: fall back to price-based trend (above/below 50DMA) instead of "—".
-**UX #4** — News card "+ Watch" button to add ticker to Watchlist inline.
-**UX #5** — Bottleneck Conviction Matrix: sort by severity DESC, collapse STALE·VERY LOW by default.
-**UX #6** — Strategic Visibility: skeleton in filter buttons instead of "0" on cold load.
-**UX #7** — Decision Logbook: 2-3 pre-populated greyed-out example decisions.
-**UX #8** — Company Intelligence: ship a sample analyzed company so first-use shows value.
-**UX #9** — Earnings Hub Calendar: explicit timeout state + retry button (currently blank).
+**UX #1** — News Feed Save View: auto-name from active filters; one-click save (no modal). ✓
+**UX #2** — Lifecycle button tooltips: expanded Live+Warm / Stale / Persistent definitions on hover. ✓
+**UX #3** — Portfolio TREND column: cmp-vs-entryPrice fallback prevents '—' when signal/RRG/intraday all miss. ✓ (50DMA proper would require new API)
+**UX #4** — News card +Watch button: inline toggle writes mc_watchlist_tickers + dispatches mc:watchlist:updated. ✓
+**UX #5** — Bottleneck Conviction Matrix: severity DESC sort already in place; STALE·VERY LOW tiles now collapsed behind chevron by default. ✓
+**UX #6** — Strategic Visibility: skeleton shimmer in region count badges on cold load instead of '0'. ✓
+**UX #7** — Decision Logbook: 3 greyed-out example decisions (BUY/WATCH/REJECTED) in empty state. ✓
+**UX #8** — Company Intelligence: greyed-out sample analyzed company in empty state + 'Upload Your First Document' CTA. ✓
+**UX #9** — Earnings Hub Calendar: 20s hard timeout + 8s slow-fetch CTA with retry button inside the spinner. ✓
 
 #### B) TheWrap (Tariq Hussain) automation modules — high user interest
 
@@ -1783,7 +1783,7 @@ frontend/src/components/PanelFreshness.tsx
 
 ### 17.9 STARTER PROMPT for new chat
 
-> Read `/Users/radhevrishi/Desktop/Python/Imp Marketcockpit/market-cockpit/CLAUDE.md` section 17 (END-OF-SESSION HANDOFF) before doing anything. HEAD on main is `7c7f8c5` (Patches 0556-0567). Latest patch number to use for new work: **0568**.
+> Read `/Users/radhevrishi/Desktop/Python/Imp Marketcockpit/market-cockpit/CLAUDE.md` section 17 (END-OF-SESSION HANDOFF) before doing anything. HEAD on main is `1c2fc67` (Patch 0569 — all 9 P3 UX items shipped). Latest patch number to use for new work: **0570**.
 >
 > [Now state what you want — examples below]
 > - "Build the Order Book Intelligence tab (TheWrap module 1) per §17.4(B)."
