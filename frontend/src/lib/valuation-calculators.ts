@@ -227,6 +227,72 @@ export function deleteValuation(id: string): void {
   }
 }
 
+// PATCH 0636 — module-level cached universe for autocomplete.
+// One fetch per session (5-min TTL) to avoid hammering /api/market/quotes
+// every keystroke. Returns ticker + company + sector for typeahead.
+let _universeCache: { ts: number; india: any[]; us: any[] } | null = null;
+const UNIVERSE_TTL_MS = 5 * 60 * 1000;
+
+export interface TickerHit {
+  ticker: string;
+  company?: string;
+  sector?: string;
+  price?: number;
+  marketCap?: number;  // raw rupees from API
+  market: 'india' | 'us';
+}
+
+export async function loadTickerUniverse(market: 'india' | 'us' = 'india'): Promise<TickerHit[]> {
+  const now = Date.now();
+  if (_universeCache && now - _universeCache.ts < UNIVERSE_TTL_MS) {
+    return market === 'us' ? _universeCache.us : _universeCache.india;
+  }
+  try {
+    const r = await fetch(`/api/market/quotes?market=${market}`, { cache: 'no-store' });
+    if (!r.ok) return [];
+    const j = await r.json();
+    const stocks: any[] = j?.stocks || [];
+    const hits: TickerHit[] = stocks.map(s => ({
+      ticker: s.ticker || '',
+      company: s.company,
+      sector: s.sector,
+      price: s.price,
+      marketCap: s.marketCap,
+      market,
+    })).filter(h => h.ticker);
+    // Cache both sides — for now we only fetch one but keep the structure
+    if (!_universeCache) _universeCache = { ts: now, india: [], us: [] };
+    if (market === 'us') _universeCache.us = hits;
+    else _universeCache.india = hits;
+    _universeCache.ts = now;
+    return hits;
+  } catch { return []; }
+}
+
+/** Filters cached universe by prefix or substring match on ticker/company. */
+export function searchTickerUniverse(query: string, market: 'india' | 'us' = 'india', limit = 12): TickerHit[] {
+  if (!_universeCache) return [];
+  const arr = market === 'us' ? _universeCache.us : _universeCache.india;
+  const q = query.trim().toUpperCase();
+  if (!q) return [];
+  // Score: exact ticker prefix > ticker substring > company prefix > company substring
+  return arr
+    .map(h => {
+      const t = (h.ticker || '').toUpperCase();
+      const c = (h.company || '').toUpperCase();
+      let score = 0;
+      if (t.startsWith(q)) score = 100 - (t.length - q.length);
+      else if (t.includes(q)) score = 50;
+      else if (c.startsWith(q)) score = 40;
+      else if (c.includes(q)) score = 20;
+      return { h, score };
+    })
+    .filter(x => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map(x => x.h);
+}
+
 export async function fetchQuoteAutofill(ticker: string, market: 'india' | 'us' = 'india'): Promise<QuoteAutoFill | null> {
   if (!ticker) return null;
   const t = ticker.trim().toUpperCase().replace(/\.(NS|BO)$/i, '');

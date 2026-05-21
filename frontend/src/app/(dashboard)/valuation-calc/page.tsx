@@ -16,8 +16,9 @@ import {
   calculatePS, calculatePE, calculateEvEbitda,
   fetchQuoteAutofill,
   loadSavedValuations, saveValuation, deleteValuation,
+  loadTickerUniverse, searchTickerUniverse,
   WORKED_EXAMPLES, SECTOR_CALCULATOR_MAP,
-  type CalculatorResult, type QuoteAutoFill, type SavedValuation,
+  type CalculatorResult, type QuoteAutoFill, type SavedValuation, type TickerHit,
 } from '@/lib/valuation-calculators';
 
 const BG = '#0A0E1A';
@@ -325,7 +326,11 @@ function SavedValuationsPanel({ onLoad }: { onLoad?: (v: SavedValuation) => void
             <span style={{ fontSize: 9, color: DIM, fontFamily: 'ui-monospace, monospace' }}>
               {v.savedAt.slice(0, 10)}
             </span>
-            <button onClick={() => onLoad?.(v)} style={{
+            <button onClick={() => {
+              // PATCH 0636 — fire event so the matching calculator tab loads it
+              window.dispatchEvent(new CustomEvent('mc:load-valuation', { detail: v }));
+              onLoad?.(v);
+            }} style={{
               fontSize: 10, padding: '3px 8px',
               background: '#22D3EE15', border: '1px solid #22D3EE50', color: '#22D3EE',
               borderRadius: 3, cursor: 'pointer', fontWeight: 700,
@@ -391,6 +396,95 @@ function CalcResultDisplay({ result, calcKind }: { result: CalculatorResult; cal
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// PATCH 0636 — Ticker autocomplete combo box.
+// Loads /api/market/quotes universe once (cached 5min in lib), then filters
+// client-side as user types. On select: ticker + price + market cap autofill.
+function TickerCombo({ value, onChange, onSelect, market = 'india' }: {
+  value: string;
+  onChange: (v: string) => void;
+  onSelect: (hit: TickerHit) => void;
+  market?: 'india' | 'us';
+}) {
+  const [hits, setHits] = useState<TickerHit[]>([]);
+  const [open, setOpen] = useState(false);
+  const [loadingUni, setLoadingUni] = useState(false);
+
+  // Load universe on first focus
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      setLoadingUni(true);
+      await loadTickerUniverse(market);
+      if (!cancelled) {
+        setHits(searchTickerUniverse(value, market));
+        setLoadingUni(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [market]);
+
+  // Re-filter as user types
+  useEffect(() => {
+    setHits(searchTickerUniverse(value, market));
+  }, [value, market]);
+
+  return (
+    <div style={{ position: 'relative', flex: 1, minWidth: 180 }}>
+      <input
+        value={value}
+        onChange={(e) => { onChange(e.target.value.toUpperCase()); setOpen(true); }}
+        onFocus={() => { setOpen(true); setHits(searchTickerUniverse(value, market)); }}
+        onBlur={() => setTimeout(() => setOpen(false), 200)}
+        placeholder={loadingUni ? 'Loading universe…' : 'Start typing ticker or company'}
+        autoComplete="off"
+        style={{
+          width: '100%', boxSizing: 'border-box',
+          background: '#0A1422', color: TEXT, border: `1px solid ${BORDER}`,
+          padding: '7px 10px', borderRadius: 4, fontSize: 13, fontWeight: 600,
+          fontFamily: 'ui-monospace, monospace',
+        }}
+      />
+      {open && hits.length > 0 && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+          marginTop: 4, maxHeight: 280, overflowY: 'auto',
+          background: CARD, border: `1px solid #22D3EE60`, borderRadius: 4,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+        }}>
+          {hits.map((h) => (
+            <button
+              key={h.ticker}
+              onMouseDown={(e) => { e.preventDefault(); onChange(h.ticker); onSelect(h); setOpen(false); }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+                padding: '7px 10px', background: 'transparent', border: 'none',
+                borderBottom: `1px solid ${BORDER}`, color: TEXT,
+                cursor: 'pointer', textAlign: 'left',
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = '#1A2540'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+            >
+              <span style={{ fontSize: 11, color: '#22D3EE', fontFamily: 'ui-monospace, monospace', fontWeight: 800, minWidth: 80 }}>
+                {h.ticker}
+              </span>
+              <span style={{ flex: 1, fontSize: 11, color: TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {h.company}
+              </span>
+              {h.sector && <span style={{ fontSize: 9, color: DIM, whiteSpace: 'nowrap' }}>{h.sector}</span>}
+              {h.price && (
+                <span style={{ fontSize: 10, color: '#10B981', fontFamily: 'ui-monospace, monospace', fontWeight: 700, minWidth: 50, textAlign: 'right' }}>
+                  ₹{h.price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -473,10 +567,33 @@ function PSCalculator() {
   const [marketCap, setMarketCap] = useState(21000);
   const [horizon, setHorizon] = useState(18);
   const [currentPrice, setCurrentPrice] = useState<number | undefined>();
+  // PATCH 0636 — explicit shares state; locked from live API, user-overridable
+  const [shares, setShares] = useState<number | undefined>();
   const result = useMemo(() => calculatePS({
     ticker, currentMarketCapCr: marketCap, horizonMonths: horizon,
-    forwardRevenueCr: revenue, bearPS, basePS, bullPS, currentPrice, currency: '₹',
-  }), [ticker, marketCap, horizon, revenue, bearPS, basePS, bullPS, currentPrice]);
+    forwardRevenueCr: revenue, bearPS, basePS, bullPS,
+    currentPrice, sharesOutstandingCr: shares, currency: '₹',
+  }), [ticker, marketCap, horizon, revenue, bearPS, basePS, bullPS, currentPrice, shares]);
+
+  // PATCH 0636 — listen for EDIT events on this calculator
+  useEffect(() => {
+    const h = (e: any) => {
+      const v = e?.detail as SavedValuation | undefined;
+      if (!v || v.calcKind !== 'PS') return;
+      const i = v.inputs as any;
+      if (i.ticker) setTicker(i.ticker);
+      if (i.forwardRevenueCr !== undefined) setRevenue(i.forwardRevenueCr);
+      if (i.bearPS !== undefined) setBearPS(i.bearPS);
+      if (i.basePS !== undefined) setBasePS(i.basePS);
+      if (i.bullPS !== undefined) setBullPS(i.bullPS);
+      if (i.currentMarketCapCr !== undefined) setMarketCap(i.currentMarketCapCr);
+      if (i.horizonMonths !== undefined) setHorizon(i.horizonMonths);
+      if (i.currentPrice !== undefined) setCurrentPrice(i.currentPrice);
+      if (i.sharesOutstandingCr !== undefined) setShares(i.sharesOutstandingCr);
+    };
+    window.addEventListener('mc:load-valuation', h);
+    return () => window.removeEventListener('mc:load-valuation', h);
+  }, []);
 
   const loadExample = (key: keyof typeof WORKED_EXAMPLES) => {
     const ex = WORKED_EXAMPLES[key];
@@ -486,6 +603,8 @@ function PSCalculator() {
     setRevenue(i.forwardRevenueCr);
     setBearPS(i.bearPS); setBasePS(i.basePS); setBullPS(i.bullPS);
     setMarketCap(i.currentMarketCapCr); setHorizon(i.horizonMonths);
+    // PATCH 0636 — reset shares + price so auto-fill (debounced 600ms) re-derives them.
+    setShares(undefined); setCurrentPrice(undefined);
   };
 
   return (
@@ -493,6 +612,9 @@ function PSCalculator() {
       <AutoFillBtn ticker={ticker} market="india" currentPrice={currentPrice} onFill={(q) => {
         if (q.currentPrice) setCurrentPrice(q.currentPrice);
         if (q.currentMarketCapCr) setMarketCap(Math.round(q.currentMarketCapCr));
+        // PATCH 0636 — set shares explicitly from live API so target-price math
+        // doesn't drift when user manually overrides market cap later.
+        if (q.sharesOutstandingCr) setShares(q.sharesOutstandingCr);
       }} />
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 11, color: DIM, alignSelf: 'center', marginRight: 4, fontWeight: 700 }}>EXAMPLES</span>
@@ -526,10 +648,32 @@ function PECalculator() {
   const [marketCap, setMarketCap] = useState(2700);
   const [horizon, setHorizon] = useState(12);
   const [currentPrice, setCurrentPrice] = useState<number | undefined>();
+  const [shares, setShares] = useState<number | undefined>();
   const result = useMemo(() => calculatePE({
     ticker, currentMarketCapCr: marketCap, horizonMonths: horizon,
-    forwardPATCr: pat, bearPE, basePE, bullPE, currentPrice, currency: '₹',
-  }), [ticker, marketCap, horizon, pat, bearPE, basePE, bullPE, currentPrice]);
+    forwardPATCr: pat, bearPE, basePE, bullPE,
+    currentPrice, sharesOutstandingCr: shares, currency: '₹',
+  }), [ticker, marketCap, horizon, pat, bearPE, basePE, bullPE, currentPrice, shares]);
+
+  // PATCH 0636 — EDIT event listener for P/E calc
+  useEffect(() => {
+    const h = (e: any) => {
+      const v = e?.detail as SavedValuation | undefined;
+      if (!v || v.calcKind !== 'PE') return;
+      const i = v.inputs as any;
+      if (i.ticker) setTicker(i.ticker);
+      if (i.forwardPATCr !== undefined) setPat(i.forwardPATCr);
+      if (i.bearPE !== undefined) setBearPE(i.bearPE);
+      if (i.basePE !== undefined) setBasePE(i.basePE);
+      if (i.bullPE !== undefined) setBullPE(i.bullPE);
+      if (i.currentMarketCapCr !== undefined) setMarketCap(i.currentMarketCapCr);
+      if (i.horizonMonths !== undefined) setHorizon(i.horizonMonths);
+      if (i.currentPrice !== undefined) setCurrentPrice(i.currentPrice);
+      if (i.sharesOutstandingCr !== undefined) setShares(i.sharesOutstandingCr);
+    };
+    window.addEventListener('mc:load-valuation', h);
+    return () => window.removeEventListener('mc:load-valuation', h);
+  }, []);
 
   const loadExample = (key: keyof typeof WORKED_EXAMPLES) => {
     const ex = WORKED_EXAMPLES[key];
@@ -539,6 +683,8 @@ function PECalculator() {
     setPat(i.forwardPATCr);
     setBearPE(i.bearPE); setBasePE(i.basePE); setBullPE(i.bullPE);
     setMarketCap(i.currentMarketCapCr); setHorizon(i.horizonMonths);
+    // PATCH 0636 — reset shares + price so auto-fill (debounced 600ms) re-derives them.
+    setShares(undefined); setCurrentPrice(undefined);
   };
 
   return (
@@ -546,6 +692,9 @@ function PECalculator() {
       <AutoFillBtn ticker={ticker} market="india" currentPrice={currentPrice} onFill={(q) => {
         if (q.currentPrice) setCurrentPrice(q.currentPrice);
         if (q.currentMarketCapCr) setMarketCap(Math.round(q.currentMarketCapCr));
+        // PATCH 0636 — set shares explicitly from live API so target-price math
+        // doesn't drift when user manually overrides market cap later.
+        if (q.sharesOutstandingCr) setShares(q.sharesOutstandingCr);
       }} />
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 11, color: DIM, alignSelf: 'center', marginRight: 4, fontWeight: 700 }}>EXAMPLES</span>
@@ -585,17 +734,42 @@ function EvEbitdaCalculator() {
   const [marketCap, setMarketCap] = useState(8000);
   const [horizon, setHorizon] = useState(18);
   const [currentPrice, setCurrentPrice] = useState<number | undefined>();
+  const [shares, setShares] = useState<number | undefined>();
   const result = useMemo(() => calculateEvEbitda({
     ticker, currentMarketCapCr: marketCap, horizonMonths: horizon,
     forwardEBITDACr: ebitda, bearMultiple: bear, baseMultiple: base, bullMultiple: bull, netDebtCr: netDebt,
-    currentPrice, currency: '₹',
-  }), [ticker, marketCap, horizon, ebitda, bear, base, bull, netDebt, currentPrice]);
+    currentPrice, sharesOutstandingCr: shares, currency: '₹',
+  }), [ticker, marketCap, horizon, ebitda, bear, base, bull, netDebt, currentPrice, shares]);
+
+  // PATCH 0636 — EDIT event listener for EV/EBITDA calc
+  useEffect(() => {
+    const h = (e: any) => {
+      const v = e?.detail as SavedValuation | undefined;
+      if (!v || v.calcKind !== 'EV_EBITDA') return;
+      const i = v.inputs as any;
+      if (i.ticker) setTicker(i.ticker);
+      if (i.forwardEBITDACr !== undefined) setEbitda(i.forwardEBITDACr);
+      if (i.bearMultiple !== undefined) setBear(i.bearMultiple);
+      if (i.baseMultiple !== undefined) setBase(i.baseMultiple);
+      if (i.bullMultiple !== undefined) setBull(i.bullMultiple);
+      if (i.netDebtCr !== undefined) setNetDebt(i.netDebtCr);
+      if (i.currentMarketCapCr !== undefined) setMarketCap(i.currentMarketCapCr);
+      if (i.horizonMonths !== undefined) setHorizon(i.horizonMonths);
+      if (i.currentPrice !== undefined) setCurrentPrice(i.currentPrice);
+      if (i.sharesOutstandingCr !== undefined) setShares(i.sharesOutstandingCr);
+    };
+    window.addEventListener('mc:load-valuation', h);
+    return () => window.removeEventListener('mc:load-valuation', h);
+  }, []);
 
   return (
     <div>
       <AutoFillBtn ticker={ticker} market="india" currentPrice={currentPrice} onFill={(q) => {
         if (q.currentPrice) setCurrentPrice(q.currentPrice);
         if (q.currentMarketCapCr) setMarketCap(Math.round(q.currentMarketCapCr));
+        // PATCH 0636 — set shares explicitly from live API so target-price math
+        // doesn't drift when user manually overrides market cap later.
+        if (q.sharesOutstandingCr) setShares(q.sharesOutstandingCr);
       }} />
       <div style={{ marginBottom: 14, fontSize: 11, color: DIM, fontStyle: 'italic' }}>
         EV/EBITDA best for cyclicals, industrials, leveraged businesses. Always subtract net debt to get equity value.
@@ -628,6 +802,16 @@ const chipBtn = (color: string): React.CSSProperties => ({
 
 export default function ValuationCalcPage() {
   const [tab, setTab] = useState<CalcKind>('PE');
+  // PATCH 0636 — switch tab when EDIT is clicked on a saved valuation
+  useEffect(() => {
+    const h = (e: any) => {
+      const v = e?.detail as SavedValuation | undefined;
+      if (!v) return;
+      setTab(v.calcKind);
+    };
+    window.addEventListener('mc:load-valuation', h);
+    return () => window.removeEventListener('mc:load-valuation', h);
+  }, []);
   return (
     <div style={{ minHeight: '100%', background: BG, color: TEXT, padding: '24px 28px' }}>
       <div style={{ maxWidth: 1100, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -678,33 +862,52 @@ export default function ValuationCalcPage() {
           <div style={{ fontSize: 11, color: DIM, marginBottom: 12, lineHeight: 1.5 }}>
             Match your name&apos;s sector → use the listed calculator → benchmark against the multiple hint. Examples are drawn from names actually discussed in the portal (Multibagger, Conviction Beats, Critical Themes).
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {Object.entries(SECTOR_CALCULATOR_MAP).map(([sector, conf]) => (
-              <div key={sector} style={{
-                background: '#0A1422', border: `1px solid ${BORDER}`, borderRadius: 6, padding: '10px 12px',
-              }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
-                  <span style={{ fontSize: 13, color: TEXT, fontWeight: 800 }}>{sector}</span>
-                  <span style={{ fontSize: 10, color: '#22D3EE', background: '#22D3EE15', border: '1px solid #22D3EE40', padding: '2px 8px', borderRadius: 3, fontFamily: 'ui-monospace, monospace', fontWeight: 800 }}>
-                    {conf.calc === 'EV_EBITDA' ? 'EV / EBITDA' : conf.calc === 'PS' ? 'P/S' : 'P/E'}
-                  </span>
-                  <span style={{ fontSize: 11, color: '#C9D4E0' }}>{conf.multipleHint}</span>
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                  <span style={{ fontSize: 9, color: DIM, fontWeight: 800, letterSpacing: '0.5px', alignSelf: 'center', marginRight: 4 }}>EXAMPLES</span>
-                  {conf.examples.map((ex) => (
-                    <span key={ex} style={{
-                      fontSize: 10, padding: '2px 7px',
-                      background: '#1A2540', border: '1px solid #1A2540',
-                      color: TEXT, borderRadius: 3, fontWeight: 600,
-                      fontFamily: 'ui-monospace, monospace',
-                    }}>
-                      {ex}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ))}
+          {/* PATCH 0636 — proper grid layout: each sector is a horizontal row
+              with aligned columns (sector | calc badge | multiple range | examples).
+              Sticky header row. Alternating row backgrounds for readability. */}
+          <div style={{ overflow: 'auto', border: `1px solid ${BORDER}`, borderRadius: 6 }}>
+            <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: 12 }}>
+              <thead>
+                <tr style={{ background: '#1A2540' }}>
+                  <th style={{ textAlign: 'left', padding: '10px 14px', fontSize: 11, fontWeight: 800, color: DIM, letterSpacing: '0.5px', borderBottom: `1px solid ${BORDER}` }}>SECTOR</th>
+                  <th style={{ textAlign: 'left', padding: '10px 12px', fontSize: 11, fontWeight: 800, color: DIM, letterSpacing: '0.5px', borderBottom: `1px solid ${BORDER}`, width: 110 }}>CALCULATOR</th>
+                  <th style={{ textAlign: 'left', padding: '10px 14px', fontSize: 11, fontWeight: 800, color: DIM, letterSpacing: '0.5px', borderBottom: `1px solid ${BORDER}`, width: 280 }}>MULTIPLE RANGE</th>
+                  <th style={{ textAlign: 'left', padding: '10px 14px', fontSize: 11, fontWeight: 800, color: DIM, letterSpacing: '0.5px', borderBottom: `1px solid ${BORDER}` }}>EXAMPLE COMPANIES</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(SECTOR_CALCULATOR_MAP).map(([sector, conf], i) => (
+                  <tr key={sector} style={{ background: i % 2 === 0 ? '#0A1422' : '#0D1623' }}>
+                    <td style={{ padding: '12px 14px', fontSize: 13, color: TEXT, fontWeight: 700, borderBottom: `1px solid ${BORDER}`, verticalAlign: 'top' }}>
+                      {sector}
+                    </td>
+                    <td style={{ padding: '12px 12px', borderBottom: `1px solid ${BORDER}`, verticalAlign: 'top' }}>
+                      <span style={{ fontSize: 11, color: '#22D3EE', background: '#22D3EE15', border: '1px solid #22D3EE40', padding: '3px 9px', borderRadius: 4, fontFamily: 'ui-monospace, monospace', fontWeight: 800, whiteSpace: 'nowrap' }}>
+                        {conf.calc === 'EV_EBITDA' ? 'EV / EBITDA' : conf.calc === 'PS' ? 'P / S' : 'P / E'}
+                      </span>
+                    </td>
+                    <td style={{ padding: '12px 14px', fontSize: 12, color: '#C9D4E0', borderBottom: `1px solid ${BORDER}`, verticalAlign: 'top', lineHeight: 1.5 }}>
+                      {conf.multipleHint}
+                    </td>
+                    <td style={{ padding: '12px 14px', borderBottom: `1px solid ${BORDER}`, verticalAlign: 'top' }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                        {conf.examples.map((ex) => (
+                          <span key={ex} style={{
+                            fontSize: 11, padding: '3px 8px',
+                            background: '#1A2540', border: '1px solid #2A3A55',
+                            color: TEXT, borderRadius: 4, fontWeight: 600,
+                            fontFamily: 'ui-monospace, monospace',
+                            whiteSpace: 'nowrap',
+                          }}>
+                            {ex}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
 
