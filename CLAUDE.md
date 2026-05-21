@@ -1,8 +1,8 @@
 # Market Cockpit — Claude Handoff Memory
 
 > Read this FIRST when starting any new chat. Saves you 30 minutes of context-rebuilding.
-> Last updated: 2026-05-13 (after Patch 0349 — USA post-mortem fixes from PAYS 16% drop. Section 10.10 (batch-13) has the diagnosis + fixes. Section 10.9 (batch-12) has the prior scoring overhaul. Read both if continuing scoring work.)
-> **Sandbox-name caveat:** This file references the OLD sandbox `zen-epic-bardeen` in section 2. New sessions get a new sandbox name like `sleepy-serene-brahmagupta`. The repo path mapping pattern is `/Users/.../market-cockpit/` → `/sessions/<sandbox>/mnt/market-cockpit/` — substitute the active sandbox name from your bash mounts.
+> **Last updated: 2026-05-21 — END OF SESSION HANDOFF.** Latest patches: 0549–0567 (17 patches in this session). HEAD on `origin/main` = `7c7f8c5` (Patches 0556–0567: QA audit fixes P0–P2, 12 bugs). Section 17 (NEW) has the full session summary, open work, and next-chat starter prompt. Read section 17 first if continuing this work.
+> **Sandbox-name caveat:** This file references the OLD sandbox `zen-epic-bardeen` in section 2 and `kind-sharp-maxwell` was the active sandbox at session-end. New sessions get a new sandbox name. The repo path mapping pattern is `/Users/.../market-cockpit/` → `/sessions/<sandbox>/mnt/market-cockpit/` — substitute the active sandbox name from `ls /sessions/` or your bash mounts.
 
 ---
 
@@ -1559,7 +1559,7 @@ Adjust the `cp` line for whichever files changed. For new files (like
 
 Paste this into the new chat as the first message:
 
-> Read `/Users/radhevrishi/Desktop/Python/Imp Marketcockpit/market-cockpit/CLAUDE.md` before doing anything. It has the full project context from the previous session. Then [your actual request].
+> Read `/Users/radhevrishi/Desktop/Python/Imp Marketcockpit/market-cockpit/CLAUDE.md` before doing anything. Section 17 has the latest session handoff. Then [your actual request].
 
 That's it. The new agent will load the memory and you skip the 30-min rebuild.
 
@@ -1569,3 +1569,224 @@ If the new agent needs to push code, it should:
 3. Use the deploy flow in section 14.5 (the `/tmp/mc-deploy` clone)
 4. Check section 10.9 first if continuing scoring work — patches 0335 and
    0344 fixed CRITICAL bugs you don't want to reintroduce
+
+---
+
+## 17 · END-OF-SESSION HANDOFF — 2026-05-21
+
+> **READ THIS FIRST in a new chat.** Everything you need to continue where the previous chat ended.
+
+### 17.0 Quick state check
+
+- **HEAD on `origin/main` = `7c7f8c5`** (commit message: "Patches 0556-0567: QA audit fixes (P0-P2, 12 bugs)")
+- **Latest patches shipped this session: 0549 → 0567** (19 patches across 8 commits)
+- **Type-check clean as of session end** (`npx tsc --noEmit` exits 0)
+- **All 12 QA-audit bugs SHIPPED.** P3 UX items NOT shipped (see §17.4).
+- **Active sandbox at session end was `kind-sharp-maxwell`.** Your new session will have a different sandbox name — find it via `ls /sessions/` and substitute it everywhere.
+
+### 17.1 Deploy infrastructure (preserve for next chat)
+
+**Token-embedded git URL** — the PAT used for pushes lives inside the user's local clone at `.git/config`. To extract in a new sandbox:
+```bash
+grep -i url '/sessions/<sandbox>/mnt/market-cockpit/.git/config' | head -1
+# Output looks like: url = https://radhevrishi:ghp_XXXXX@github.com/radhevrishi/market-cockpit.git
+```
+The deploy clone at `/tmp/mc-deploy` persists ONLY for the current sandbox lifetime. New sandbox = new clone. Bootstrap with:
+```bash
+URL=$(grep -i url '/sessions/<sandbox>/mnt/market-cockpit/.git/config' | head -1 | sed 's/^[[:space:]]*url[[:space:]]*=[[:space:]]*//')
+git clone "$URL" /tmp/mc-deploy
+```
+**Never paste the raw token-URL into a file that gets pushed** — GitHub secret-scanning will block the push. The extraction command above is enough.
+
+**Per-patch deploy flow** (§14.5 is canonical; this is the abridged form):
+```bash
+cd /tmp/mc-deploy && \
+  git pull --rebase origin main 2>&1 | tail -3 && \
+  cp '/sessions/<sandbox>/mnt/market-cockpit/<changed-file>' '<changed-file>' && \
+  git add -A && \
+  git config user.email "radhev.232@gmail.com" && \
+  git config user.name "Rishi" && \
+  git commit -m "Patch 0XXX: short description" && \
+  git push origin main
+```
+
+**Why this works** — `.git/index.lock` is restricted on the mount, so direct commits from `/sessions/<sandbox>/mnt/market-cockpit/` fail. The `/tmp/mc-deploy` clone is fully-writable, and the `cp` step replicates user-visible file edits into the git copy.
+
+**Env vars** are set in Vercel project, names listed in §4 of this file (KV_REST_API_URL, KV_REST_API_TOKEN, CRON_SECRET, ANTHROPIC_API_KEY etc.). Don't ask user for values; they're already configured.
+
+### 17.2 Patches shipped in this session (0549 → 0567)
+
+```
+0549 — Conviction Beats: hard-coerce viewMode='compact', drop legacy 'mc:conviction-view' LS key
+0550 — Defensive guards (formatShortDate Invalid Date, catCounts NaN, EO initialDataUpdatedAt pairing)
+0551 — AUDIT_100 #9: bound mc:notes:v1 Thesis Notebooks (sidecar index, evict at 200)
+0552 — Race-safe fetchQuotesShared (detach caller signal from shared in-flight fetch)
+0553 — Nav reorder: Concall Intelligence moved next to Super Investors
+0554 — Nav: Super Investors + Concall Intelligence above Decision Logbook
+      + Multibagger Analytics redesign: drop broken Sectors Heating/Cooling,
+        add 🎯 TRIPLE-CONFIRMED (score ∩ CB ∩ BUY/WATCH),
+        🎯 DECISION BRIDGE (Add-to-bench / Trim-alerts / Re-evaluate),
+        🔍 QUALITY AUDIT (India structural/cyclical + USA FCF-divergence/post-run/earnings-soon)
+0555 — EO cross-exchange dedup: same company under NSE ticker + BSE scrip (DJML / 543193).
+      Server-side name-normalization + client-side dedupePayloadByCompany defensive pass.
+0556 — News Filters button — stopPropagation + preventDefault + zIndex:21 on button, zIndex:20 on row
+0557 — DegradedBanner component mounted on Settings/EO/Earnings/Re-rating/Watchlists
+       listening for 'mc:backend-recovering' event; auto-hide after 3 min idle
+0558 — Settings .env copy replaced with admin-managed notice + "Not set — contact admin" status
+0559 — Watchlist: price===0 renders muted em-dash + "Price unavailable" tooltip (price/change/high/low)
+0560 — EO 0 graded for today: added todayIstISO() (UTC+5:30), replaced UTC date derivations
+0561 — Global Cmd+K search: when local matches <3, also query /api/market/quotes both markets,
+       merge with "Not in universe — open stock sheet" label
+0562 — Bottleneck Workbench: added b.articles[] fallback in flatten + bucketTickersAugmented memo
+       that pulls from relatedArticles when key_tickers empty
+0563 — IPO page: 'Various' sector coerces to em-dash; missing listingDate computed as
+       closeDate + 6 working days, displayed as '~ DD MMM (est)'
+0564 — Post-earnings heatmap: 15s AbortController + EmptyState; Refresh button serves as Retry
+0565 — Light-mode sidebar: [data-theme="light"] .desktop-sidebar svg/a/button/span -> #1a1a2e;
+       active items keep cyan
+0566 — Earnings Scan data-quality badge: scoped to filtered set, shows "N/N enriched ✓" when complete
+0567 — Concall Intelligence keyword groups: when catalog empty + count 0,
+       replaces "GROUPS · 0" row with "Add keywords to start monitoring concalls" + Edit Watchlist
+```
+
+**Commit map**:
+- `7c7f8c5` — Patches 0556-0567 (single squashed commit)
+- `0de5d61` — Patch 0555
+- `887f349` — Patch 0554
+- `a6703b8` — Patch 0553
+- `b1c1438` — Patch 0552
+- `50c9ca1` — Patch 0551
+- `82d935e` — Patch 0550
+- `f8c5812` — Patch 0549
+
+### 17.3 New file additions this session
+
+- `frontend/src/components/DegradedBanner.tsx` (Patch 0557) — reusable amber banner listening for `mc:backend-recovering` event. Mounted on 5 pages currently. **If you add a new page that consumes a backend pipeline, mount this banner near the page title.**
+
+### 17.4 OPEN WORK — what the user wants next
+
+#### A) P3 UX improvements from QA audit (NOT yet shipped — user deferred but may want some)
+
+**UX #1** — News Feed Save View: auto-name new views (e.g. "BOTTLENECK · India · May 26"), one-click save (no modal).
+**UX #2** — Lifecycle button tooltips (Live+Warm / Stale / Persistent definitions).
+**UX #3** — Portfolio TREND column: fall back to price-based trend (above/below 50DMA) instead of "—".
+**UX #4** — News card "+ Watch" button to add ticker to Watchlist inline.
+**UX #5** — Bottleneck Conviction Matrix: sort by severity DESC, collapse STALE·VERY LOW by default.
+**UX #6** — Strategic Visibility: skeleton in filter buttons instead of "0" on cold load.
+**UX #7** — Decision Logbook: 2-3 pre-populated greyed-out example decisions.
+**UX #8** — Company Intelligence: ship a sample analyzed company so first-use shows value.
+**UX #9** — Earnings Hub Calendar: explicit timeout state + retry button (currently blank).
+
+#### B) TheWrap (Tariq Hussain) automation modules — high user interest
+
+User uploaded two strategy decks (Sakar Healthcare + Dynacons case studies). His framework = **alternate market data on corp announcements / insider trades / special situations**. I proposed 8 new modules; user hasn't picked which to build yet. Ranked by impact:
+
+1. **Order Book Intelligence tab** (highest impact) — parse Regulation 30 "Receipt of Order/Letter of Award" filings; extract customer, contract value, duration, OPEX/CAPEX; rolling Order Book / TTM Revenue ratio; tier-1 PSU customer tagging (RBI/NABARD/SBI/LIC/BHEL).
+2. **Rating Agency Action Tracker** — scrape ICRA/CRISIL/CARE/India Ratings; detect upgrade/downgrade/outlook changes (Stable→Positive).
+3. **Strategic Hire Detector** — regex NSE/BSE for "Appointment of CXO", LLM-extract name + previous company; tier-1 employer allowlist.
+4. **Marquee Capital Entry Tracker** — SAST + preferential allotment parsing; map acquirer to marquee-PE allowlist (Tata Capital, KKR, Blackstone, HBM, Bain, ChrysCapital).
+5. **Marketing Authorization Tracker** (pharma) — concall-intel overlay for MA/CEP/USFDA EIR/MHRA/WHO GMP/Tech Transfer.
+6. **Capacity Utilization Extractor** — LLM concall extraction of "current util X%, target Y%"; trajectory chart.
+7. **Tax Rate Normalization Watch** — concall extraction of "MAT credit", "effective tax rate"; flag step-ups.
+8. **Industry Value Chain Position Tagger** — manual seed; backward-integration re-rating credit.
+
+**User's preferred starting point: Module 1 (Order Book Intelligence).** This was my recommendation as well — cleanest data pipeline (NSE/BSE corp announcements already in pipeline), highest signal, brand-new tab in nav.
+
+#### C) Ranking-framework upgrade (from the bottom of the QA-audit message)
+
+User shared a 2×2 cluster framework for the operating-leverage / capacity-utilization theme:
+- **Axes**: Evidence (High / Story-ahead) × Demand (Structural / Policy-cycle)
+- **High-conviction core**: SHYAMMETL, AJAXENGG, NELCAST, GOPAL (or JNKINDIA / TRITURBINE for industrial-only)
+- **Cluster Score formula**:
+  ```
+  Score = 0.30·Utilization-Evidence + 0.25·Margin-Inflection + 0.20·BS-Repair
+        + 0.15·Demand-Durability + 0.10·Value-Added-Mix
+  ```
+  Each factor 0–10. Downgrade for: capex peaking, margin below prior-cycle floor, debt rising, mostly-forward-looking commentary.
+- **Where to wire it**: new column/badge on Multibagger India rows + an "Operating Leverage Cluster" tab inside Multibagger Analytics.
+- **Blind spots to monitor**: commodity pass-through risk, working-capital trap (track OCF + WC days, not just EBITDA + ROCE).
+
+#### D) Still blocked on infrastructure decisions (§10.7 / earlier sessions)
+
+These need user input before any progress:
+- Auth provider choice (Clerk / Supabase Auth / NextAuth)
+- Postgres / Supabase DB provisioning
+- Slack / SMTP / webhook creds for Alert Rules server-side delivery
+- Paid data feeds (Argus / Platts / CRU / ICIS)
+- SEC EDGAR + India MCA parser pipeline
+
+#### E) Latent code-quality items (low priority, no user pressure)
+
+- USA scoring engine still triple-counts FCF margin across R40 / DNA bonus / standalone strength bullet (PAYS root cause, surgical fixes shipped in 0349 but de-dup not done)
+- Stale-fundamentals-vs-fresh-price detector
+- Liquidity intelligence column from TradingView for dynamic position sizing
+- Multibagger page is 9K+ lines — needs structural refactor (AUDIT_100 #87)
+
+### 17.5 LocalStorage key inventory (after this session)
+
+```
+mb_excel_scored_v2          — India Multibagger parsed rows
+mb_excel_meta_v2            — India upload metadata
+mb_usa_scored_v1            — USA Multibagger parsed rows
+mb_usa_prev_scores_v1       — USA prev-score baseline for Δ chip
+mb_india_prev_scores_v1     — India prev-score baseline for Δ chip
+mc:graded:v9:<date>         — EO graded payload (PATCH 0545; mirrors KV graded:v8)
+mc:hub:v2:<months>          — Earnings Hub scan
+mc_watchlist_tickers        — User watchlist tickers
+mc:conviction-beats:v1      — Conviction Beats pipeline
+mc:stock-sheet:v3:scrub-2026-05:<ticker>
+mc:specsit:rejected:v1      — Special Situations rejected rows (bounded ring, Patch 0462)
+mc:guidance-scores:v1       — Earnings Guidance Q-over-Q history (per period)
+mc:notes:v1:<id>            — Thesis Notebooks v0 (per news article; bounded 200, Patch 0551)
+mc:notes:meta:v1            — Sidecar index for note eviction (Patch 0551)
+mc:news-alerts:v1           — News Alerts rules
+mc:saved-views:v1           — Named Saved Views (News page)
+mc:status-history:v1        — Status page client-side ring buffer
+mc:decisions:v1             — Decision Logbook (Patch 0347)
+```
+
+### 17.6 Cross-tab event names
+
+```
+'conviction-beats:updated'              — Conviction Beats writers
+'mc:decisions:updated'                  — Decision logbook writers
+'mc:switch-multibagger-tab'             — Cross-market detection (Patch 0347)
+'mc:backend-recovering'                 — DegradedBanner trigger (Patch 0530)
+'storage' (built-in)                    — All localStorage writes
+```
+
+### 17.7 Files you'll touch most often (next session)
+
+```
+frontend/src/app/(dashboard)/multibagger/page.tsx           # 9K lines, scoring engines
+frontend/src/app/(dashboard)/earnings-opportunities/page.tsx
+frontend/src/app/(dashboard)/watchlists/page.tsx
+frontend/src/app/(dashboard)/news/page.tsx
+frontend/src/app/(dashboard)/DashboardClient.tsx            # Nav order
+frontend/src/app/api/market/earnings/route.ts               # EO universe builder
+frontend/src/app/api/v1/earnings/graded/route.ts            # Grading + KV cache
+frontend/src/lib/conviction-beats.ts
+frontend/src/lib/decisions.ts
+frontend/src/lib/pead-score.ts
+frontend/src/components/DegradedBanner.tsx                  # NEW this session
+frontend/src/components/PanelFreshness.tsx
+```
+
+### 17.8 Pre-flight checklist for next chat
+
+1. `ls /sessions/` → note the new sandbox name (will NOT be `kind-sharp-maxwell`)
+2. `cat /sessions/<sandbox>/mnt/market-cockpit/CLAUDE.md | head -30` → confirm this file is mounted
+3. `grep -i url /sessions/<sandbox>/mnt/market-cockpit/.git/config | head -1` → confirm token URL still works
+4. `cd /sessions/<sandbox>/mnt/market-cockpit/frontend && timeout 90 npx tsc --noEmit` → confirm clean baseline
+5. `ls /tmp/mc-deploy 2>/dev/null` → if missing, clone fresh using the token URL from step 3
+6. Read this section (§17) in full + glance at §13 (Hard Rules) before starting
+
+### 17.9 STARTER PROMPT for new chat
+
+> Read `/Users/radhevrishi/Desktop/Python/Imp Marketcockpit/market-cockpit/CLAUDE.md` section 17 (END-OF-SESSION HANDOFF) before doing anything. HEAD on main is `7c7f8c5` (Patches 0556-0567). Latest patch number to use for new work: **0568**.
+>
+> [Now state what you want — examples below]
+> - "Build the Order Book Intelligence tab (TheWrap module 1) per §17.4(B)."
+> - "Wire the 2×2 cluster framework into Multibagger Analytics per §17.4(C)."
+> - "Ship the P3 UX items #5 and #7 from §17.4(A)."
+> - "Continue auditing for new bugs and fix what you find."
