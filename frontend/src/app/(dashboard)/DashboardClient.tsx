@@ -34,26 +34,16 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/',                 label: 'Home Dashboard',     icon: <Star className="w-4 h-4" /> },
     ],
   },
+  // PATCH 0617 — sidebar reorder per user request:
+  //   1. Earnings tabs right after News & Signals (was 3rd, now 2nd).
+  //   2. News Alerts + Themes moved out of News & Signals to the very end.
   {
     id: 'news-signals',
     label: 'News & Signals',
     icon: <Newspaper className="w-5 h-5" />,
     items: [
       { href: '/news',             label: 'News Feed',          icon: <Newspaper className="w-4 h-4" /> },
-      { href: '/news-alerts',      label: 'News Alerts',        icon: <Bell className="w-4 h-4" /> },
-      { href: '/themes',           label: 'Themes',             icon: <BarChart3 className="w-4 h-4" /> },
       { href: '/company-news',     label: 'Company News',       icon: <Newspaper className="w-4 h-4" /> },
-    ],
-  },
-  {
-    id: 'bottleneck',
-    label: 'Bottleneck Intelligence',
-    icon: <Microscope className="w-5 h-5" />,
-    items: [
-      { href: '/bottleneck-intel',     label: 'Bottleneck Intel',     icon: <Microscope className="w-4 h-4" /> },
-      { href: '/bottleneck-workbench', label: 'Bottleneck Workbench', icon: <Microscope className="w-4 h-4" /> },
-      { href: '/transmission',         label: 'Transmission',         icon: <TrendingUp className="w-4 h-4" /> },
-      { href: '/strategic-visibility', label: 'Strategic Visibility', icon: <Star className="w-4 h-4" /> },
     ],
   },
   {
@@ -67,6 +57,17 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/earnings-analysis',      label: 'Earnings Analysis (AI)', icon: <Microscope className="w-4 h-4" /> },
       { href: '/earnings-guidance',      label: 'Earnings Guidance',      icon: <LineChart className="w-4 h-4" /> },
       { href: '/calendars',              label: 'Calendar',               icon: <LineChart className="w-4 h-4" /> },
+    ],
+  },
+  {
+    id: 'bottleneck',
+    label: 'Bottleneck Intelligence',
+    icon: <Microscope className="w-5 h-5" />,
+    items: [
+      { href: '/bottleneck-intel',     label: 'Bottleneck Intel',     icon: <Microscope className="w-4 h-4" /> },
+      { href: '/bottleneck-workbench', label: 'Bottleneck Workbench', icon: <Microscope className="w-4 h-4" /> },
+      { href: '/transmission',         label: 'Transmission',         icon: <TrendingUp className="w-4 h-4" /> },
+      { href: '/strategic-visibility', label: 'Strategic Visibility', icon: <Star className="w-4 h-4" /> },
     ],
   },
   {
@@ -137,11 +138,13 @@ const NAV_GROUPS: NavGroup[] = [
   },
   {
     id: 'system',
-    label: 'System',
+    label: 'System & Tools',
     icon: <Bell className="w-5 h-5" />,
     items: [
-      { href: '/status',   label: 'System Status', icon: <Bell className="w-4 h-4" /> },
-      { href: '/settings', label: 'Settings',      icon: <Shield className="w-4 h-4" /> },
+      { href: '/themes',       label: 'Themes',        icon: <BarChart3 className="w-4 h-4" /> },
+      { href: '/news-alerts',  label: 'News Alerts',   icon: <Bell className="w-4 h-4" /> },
+      { href: '/status',       label: 'System Status', icon: <Bell className="w-4 h-4" /> },
+      { href: '/settings',     label: 'Settings',      icon: <Shield className="w-4 h-4" /> },
     ],
   },
 ];

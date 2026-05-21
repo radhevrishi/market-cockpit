@@ -49,6 +49,7 @@ interface TierAction {
   scoreBreakdown?: Record<string, number>;  // factor → points
   href: string;
   cbConfirmed?: boolean;  // PATCH 0611 — true = on Conviction Beats bench, false = top-up A-grade
+  market?: 'IN' | 'US' | string;  // PATCH 0617 — country chip on card
 }
 
 interface ChangedRow {
@@ -60,6 +61,7 @@ interface ChangedRow {
 interface HomeState {
   loading: boolean;
   inPlay: NewsItem[];
+  inPlayDiag?: { fetched: number; recent: number; clean: number; fellBack: boolean };  // PATCH 0617 — visible diagnostics
   bottleneck: BottleneckBucket[];
   earningsToday: GradedCard[];
   earningsLabel: string;  // 'today' or 'last working day (YYYY-MM-DD)'
@@ -70,6 +72,7 @@ interface HomeState {
   tier3: TierAction[];
   changedToday: ChangedRow[];
   portfolioBySector: Array<{ sector: string; count: number; tickers: string[]; }>;
+  concallHits?: Array<{ ticker: string; company?: string; headline: string; tier?: string; published_at?: string }>;  // PATCH 0617
 }
 
 function todayIstISO(): string {
@@ -164,75 +167,78 @@ function buildSyncState(): Omit<HomeState, 'loading' | 'inPlay' | 'bottleneck' |
   const cbSet = (() => { try { return getConvictionTickers(); } catch { return new Set<string>(); } })();
   const cbList = (() => { try { return getConvictionList().slice(0, 30); } catch { return []; } })();
   const decisions = readDecisions();
-  const indiaRows: any[] = (() => {
+  // PATCH 0617 — pull BOTH India AND USA rows so Tier 1/2/3 reflect the full
+  // multibagger universe, not just one market. Each row carries a _market tag
+  // for the per-card chip + stock-sheet routing.
+  const indiaRaw: any[] = (() => {
     try { return JSON.parse(localStorage.getItem('mb_excel_scored_v2') || '[]') || []; } catch { return []; }
   })();
+  const usaRaw: any[] = (() => {
+    try { return JSON.parse(localStorage.getItem('mb_usa_scored_v1') || '[]') || []; } catch { return []; }
+  })();
+  const indiaRows = indiaRaw.map((r: any) => ({ ...r, _market: 'IN' }));
+  const usaRows = usaRaw.map((r: any) => ({ ...r, _market: 'US' }));
+  const allRows: any[] = [...indiaRows, ...usaRows];
   const prevScores: Record<string, number> = (() => {
     try { return JSON.parse(localStorage.getItem('mb_india_prev_scores_v1') || '{}') || {}; } catch { return {}; }
   })();
+  const prevScoresUsa: Record<string, number> = (() => {
+    try { return JSON.parse(localStorage.getItem('mb_usa_prev_scores_v1') || '{}') || {}; } catch { return {}; }
+  })();
 
-  // PATCH 0611 — Tier 1 fill-to-6 logic.
+  // PATCH 0611 — Tier 1 fill-to-6 logic. PATCH 0617 — extended to USA stocks.
   // Strict (cross-confirmed): A+/A grade + on CB + not in Decision Log.
-  // If strict yields < 6, top up with A+/A grade names NOT on CB (still strong,
-  // just not cross-confirmed). Cross-confirmed ones are flagged with cbConfirmed=true.
+  // If strict yields < 6, top up with A+/A grade names NOT on CB.
+  // Cross-confirmed ones flagged cbConfirmed=true. Each card carries _market.
   const symKey = (s: any) => (s || '').toString().toUpperCase().replace(/\.(NS|BO)$/i, '');
-  const buildTier1 = (r: any, cbConfirmed: boolean): TierAction => ({
+  const buildTier = (r: any, cbConfirmed?: boolean): TierAction => ({
     symbol: r.symbol, company: r.company || r.companyName,
     score: r.score ?? r.composite, grade: r.grade, sector: r.sector,
     ...riskFraming(r.sector, 'multibagger'),
     scoreBreakdown: decomposeScore(r),
-    href: `/stock-sheet?ticker=${encodeURIComponent((r.symbol || '').replace(/\.(NS|BO)$/i, ''))}`,
+    href: `/stock-sheet?ticker=${encodeURIComponent((r.symbol || '').replace(/\.(NS|BO)$/i, ''))}${r._market === 'US' ? '&market=us' : ''}`,
     cbConfirmed,
+    market: r._market,
   } as TierAction);
 
-  const tier1Strict = indiaRows
+  const tier1Strict = allRows
     .filter((r: any) => (r.grade === 'A+' || r.grade === 'A')
                      && cbSet.has(symKey(r.symbol))
                      && !decisions[(r.symbol || '').toUpperCase()])
     .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
-    .map((r: any) => buildTier1(r, true));
+    .map((r: any) => buildTier(r, true));
 
   let tier1: TierAction[] = tier1Strict.slice(0, 6);
   if (tier1.length < 6) {
     const haveSyms = new Set(tier1.map(t => symKey(t.symbol)));
-    const fillers = indiaRows
+    const fillers = allRows
       .filter((r: any) => (r.grade === 'A+' || r.grade === 'A')
                        && !haveSyms.has(symKey(r.symbol))
                        && !decisions[(r.symbol || '').toUpperCase()])
       .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
       .slice(0, 6 - tier1.length)
-      .map((r: any) => buildTier1(r, false));
+      .map((r: any) => buildTier(r, false));
     tier1 = [...tier1, ...fillers];
   }
 
-  const tier2 = indiaRows
+  const tier2 = allRows
     .filter((r: any) => (r.grade === 'A+' || r.grade === 'A') && !tier1.find(t => t.symbol === r.symbol))
     .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
     .slice(0, 6)
-    .map((r: any): TierAction => ({
-      symbol: r.symbol, company: r.company || r.companyName,
-      score: r.score ?? r.composite, grade: r.grade, sector: r.sector,
-      ...riskFraming(r.sector, 'multibagger'),
-      scoreBreakdown: decomposeScore(r),
-      href: `/stock-sheet?ticker=${encodeURIComponent((r.symbol || '').replace(/\.(NS|BO)$/i, ''))}`,
-    }));
+    .map((r: any) => buildTier(r));
 
-  const tier3 = indiaRows
-    .filter((r: any) => r.grade === 'B+' && cbSet.has((r.symbol || '').toUpperCase().replace(/\.(NS|BO)$/i, '')))
+  const tier3 = allRows
+    .filter((r: any) => r.grade === 'B+' && cbSet.has(symKey(r.symbol)))
     .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
     .slice(0, 5)
-    .map((r: any): TierAction => ({
-      symbol: r.symbol, company: r.company || r.companyName,
-      score: r.score ?? r.composite, grade: r.grade, sector: r.sector,
-      ...riskFraming(r.sector, 'multibagger'),
-      scoreBreakdown: decomposeScore(r),
-      href: `/stock-sheet?ticker=${encodeURIComponent((r.symbol || '').replace(/\.(NS|BO)$/i, ''))}`,
-    }));
+    .map((r: any) => buildTier(r));
 
-  const changedToday: ChangedRow[] = indiaRows
+  // PATCH 0617 — includes both India + USA changes
+  const changedToday: ChangedRow[] = allRows
     .map((r: any) => {
       const sym = (r.symbol || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
-      const prev = prevScores[r.symbol] ?? prevScores[sym];
+      const prevMap = r._market === 'US' ? prevScoresUsa : prevScores;
+      const prev = prevMap[r.symbol] ?? prevMap[sym];
       if (typeof prev !== 'number') return null;
       const cur = r.score ?? r.composite ?? 0;
       const delta = cur - prev;
@@ -249,7 +255,7 @@ function buildSyncState(): Omit<HomeState, 'loading' | 'inPlay' | 'bottleneck' |
   const sectorMap = new Map<string, { count: number; tickers: string[] }>();
   for (const h of portfolio) {
     const sym = (h.symbol || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
-    const row = indiaRows.find((r: any) => (r.symbol || '').toUpperCase().replace(/\.(NS|BO)$/i, '') === sym);
+    const row = allRows.find((r: any) => (r.symbol || '').toUpperCase().replace(/\.(NS|BO)$/i, '') === sym);
     const cb = cbList.find((c: any) => (c.ticker || '').toUpperCase() === sym);
     const sector = row?.sector || cb?.sector || 'Unclassified';
     const cur = sectorMap.get(sector) || { count: 0, tickers: [] };
@@ -336,44 +342,58 @@ export default function HomeDashboard() {
 
       // PATCH 0606 — three independent network fires; each updates state
       // separately so the page is fully usable as soon as ANY one returns.
-      // PATCH 0616 — In-Play News source-fix.
-      // /api/v1/news/in-play returns ONLY 4 structural items
-      // (all flagged structural_status=CRITICAL/ELEVATED + feed_layer=STRUCTURAL_ALPHA)
-      // which we correctly filter out, leaving 0 every time. The broader
-      // /api/v1/news endpoint returns the full live feed (~40 items including
-      // genuine breaking news like 'Nvidia memory costs soar 485%', 'AMD
-      // invests $10B in Taiwan'). Switch to the broader feed with the same
-      // structural-noise filters.
-      safe<any>('/api/v1/news?limit=40').then((j) => {
+      //
+      // PATCH 0617 — In-Play News, third time's the charm:
+      // * Cache-bust query param so Vercel edge cache / browser cache cannot
+      //   serve a stale response that wedges this at (0).
+      // * Save fetch + filter counts to state so when the user sees (0) we
+      //   tell them WHY — fetched N, dropped X for structural, Y for stale.
+      // * Tolerate clock skew up to 10 min in the future.
+      // * If after filtering we still have 0, fall back to ALL items within
+      //   24h regardless of structural flags so the panel is never empty
+      //   when there IS data on the wire.
+      safe<any>(`/api/v1/news?limit=60&_=${Date.now()}`).then((j) => {
         if (cancelled) return;
         const raw: NewsItem[] = Array.isArray(j) ? j : (j?.articles || j?.items || []);
-        const filtered = raw.filter((a: any) => {
-          if (a?.is_synthetic) return false;
-          if (a?.structural_status) return false;
-          if (a?.feed_layer === 'STRUCTURAL_ALPHA') return false;
-          if (a?.feed_type === 'STRUCTURAL_ALPHA') return false;
-          const t = (a?.title || a?.headline || '');
-          if (t.startsWith('[STRUCTURAL]')) return false;
-          if (t.startsWith('[STRUCTURAL ALERT]')) return false;
+        const ageOk = (a: any) => {
+          if (!a?.published_at) return true;
           try {
-            if (a?.published_at) {
-              const age = Date.now() - new Date(a.published_at).getTime();
-              if (age > TWENTY_FOUR_H_MS) return false;
-              if (age < -60_000) return false;  // tolerate small clock skew
-            }
-          } catch {}
-          return true;
-        });
-        // Sort by importance_score (highest first), then by recency
-        filtered.sort((a: any, b: any) => {
+            const age = Date.now() - new Date(a.published_at).getTime();
+            if (age > TWENTY_FOUR_H_MS) return false;
+            if (age < -600_000) return false;  // tolerate 10-min clock skew
+            return true;
+          } catch { return true; }
+        };
+        const isStructural = (a: any) => {
+          if (a?.is_synthetic) return true;
+          if (a?.structural_status) return true;
+          if (a?.feed_layer === 'STRUCTURAL_ALPHA') return true;
+          if (a?.feed_type === 'STRUCTURAL_ALPHA') return true;
+          const t = (a?.title || a?.headline || '');
+          if (t.startsWith('[STRUCTURAL]')) return true;
+          if (t.startsWith('[STRUCTURAL ALERT]')) return true;
+          return false;
+        };
+        const recent = raw.filter(ageOk);
+        const clean = recent.filter((a: any) => !isStructural(a));
+        const sortFn = (a: any, b: any) => {
           const aImp = a?.importance_score ?? 0;
           const bImp = b?.importance_score ?? 0;
           if (aImp !== bImp) return bImp - aImp;
           const aT = a?.published_at ? new Date(a.published_at).getTime() : 0;
           const bT = b?.published_at ? new Date(b.published_at).getTime() : 0;
           return bT - aT;
-        });
-        setData((d) => ({ ...d, inPlay: filtered.slice(0, 8) }));
+        };
+        clean.sort(sortFn);
+        // Fallback: if structural filter wiped everything but we DO have
+        // recent items, surface them anyway (they at least show the user
+        // there's a live feed; the structural items get a small chip).
+        const final = clean.length > 0 ? clean : recent.sort(sortFn);
+        setData((d) => ({
+          ...d,
+          inPlay: final.slice(0, 8),
+          inPlayDiag: { fetched: raw.length, recent: recent.length, clean: clean.length, fellBack: clean.length === 0 && recent.length > 0 },
+        } as any));
         setNetLoading((n) => ({ ...n, inPlay: false }));
       });
 
@@ -386,6 +406,26 @@ export default function HomeDashboard() {
                                 || (b.article_count || 0) - (a.article_count || 0));
         setData((d) => ({ ...d, bottleneck: bottleneck.slice(0, 5) }));
         setNetLoading((n) => ({ ...n, bottleneck: false }));
+      });
+
+      // PATCH 0617 — Concall Intelligence summary on Home.
+      // Pulls the same /concall-intel/live-feed used by Rating Actions
+      // (Patch 0599) and surfaces the top 5 most-recent hits with tier.
+      safe<any>(`/api/v1/concall-intel/live-feed?days=14&_=${Date.now()}`).then((j) => {
+        if (cancelled) return;
+        const raw = Array.isArray(j) ? j : (j?.items || j?.articles || j?.results || []);
+        const hits = (raw as any[])
+          .filter((a: any) => a && (a.headline || a.title))
+          .map((a: any) => ({
+            ticker: (a.ticker || a.primary_ticker || a.symbol || '').toString(),
+            company: a.company || a.company_name,
+            headline: a.headline || a.title || '',
+            tier: a.tier || a.investment_tier || a.classification,
+            published_at: a.published_at || a.date,
+          }))
+          .filter((h: any) => h.ticker && h.headline)
+          .slice(0, 8);
+        setData((d) => ({ ...d, concallHits: hits } as any));
       });
 
       // Earnings — PATCH 0615. Pull today + last 2 trading days, filter to
@@ -801,6 +841,46 @@ export default function HomeDashboard() {
           </div>
         </div>
 
+        {/* ═══════════════ PATCH 0617 — CONCALL INTELLIGENCE SUMMARY ═════ */}
+        {data.concallHits && data.concallHits.length > 0 && (
+          <div style={{ ...cardStyle, borderLeft: '3px solid #A78BFA' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: '#A78BFA', letterSpacing: '0.4px' }}>
+                🎙 CONCALL INTELLIGENCE — last 14d ({data.concallHits.length})
+              </span>
+              <Link href="/concall-intel" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Full Intel →</Link>
+            </div>
+            <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
+              Most-recent management commentary catalysts — earnings calls + analyst meets surfaced via the live feed
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {data.concallHits.slice(0, 6).map((h, i) => {
+                const tierColor = !h.tier ? '#94A3B8'
+                  : /BLOCKBUSTER|TIER\s*1/i.test(h.tier) ? '#10B981'
+                  : /STRONG|TIER\s*2/i.test(h.tier) ? '#22D3EE'
+                  : /MIXED|NEUTRAL/i.test(h.tier) ? '#F59E0B' : '#94A3B8';
+                const cleanTier = (h.tier || '').replace(/_/g, ' ').slice(0, 18);
+                return (
+                  <Link key={(h.ticker || '') + i} href={`/stock-sheet?ticker=${encodeURIComponent((h.ticker || '').replace(/\.(NS|BO)$/i, ''))}`}
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                    <span style={{ fontSize: 10, color: '#A78BFA', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 60 }}>
+                      {(h.ticker || '').replace(/\.(NS|BO)$/i, '').slice(0, 8)}
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {h.headline}
+                    </span>
+                    {cleanTier && (
+                      <span style={{ fontSize: 9, fontWeight: 800, color: tierColor, padding: '1px 5px', borderRadius: 3, background: `${tierColor}22`, whiteSpace: 'nowrap' }}>
+                        {cleanTier}
+                      </span>
+                    )}
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* ═══════════════ AI INFRASTRUCTURE TRANSMISSION ═══════════════ */}
         <div style={{ ...cardStyle, borderLeft: '3px solid #A78BFA' }}>
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -942,8 +1022,19 @@ export default function HomeDashboard() {
             <div style={{ fontSize: 11, color: DIM, marginTop: 8, fontStyle: 'italic' }}>📡 Loading…</div>
           )}
           {showInPlay && !netLoading.inPlay && data.inPlay.length === 0 && (
-            <div style={{ fontSize: 11, color: DIM, marginTop: 8, fontStyle: 'italic' }}>
-              No live in-play news in last 24 hours. Structural alerts and older articles are filtered out.
+            <div style={{ fontSize: 11, color: DIM, marginTop: 8, fontStyle: 'italic', lineHeight: 1.5 }}>
+              No live in-play news in last 24 hours.
+              {data.inPlayDiag && (
+                <div style={{ fontSize: 10, color: DIM, marginTop: 6, fontFamily: 'ui-monospace, monospace' }}>
+                  Diagnostic: fetched {data.inPlayDiag.fetched} · within 24h {data.inPlayDiag.recent} · after structural filter {data.inPlayDiag.clean}
+                </div>
+              )}
+            </div>
+          )}
+          {/* PATCH 0617 — show fallback notice if structural filter wiped everything but we still surfaced items */}
+          {showInPlay && !netLoading.inPlay && data.inPlay.length > 0 && data.inPlayDiag?.fellBack && (
+            <div style={{ fontSize: 10, color: '#F59E0B', marginTop: 6, padding: '4px 8px', background: '#F59E0B15', border: '1px solid #F59E0B40', borderRadius: 4 }}>
+              ⚠ Only structural alerts available in last 24h — showing them anyway so the feed isn't empty.
             </div>
           )}
           {showInPlay && !netLoading.inPlay && data.inPlay.length > 0 && (
@@ -1059,8 +1150,14 @@ function DecisionTierBlock({
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 {tier === 1 && <span style={{ fontSize: 18, fontWeight: 900, color }}>#{i + 1}</span>}
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: condensed ? 12 : 14, fontWeight: 700, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  <div style={{ fontSize: condensed ? 12 : 14, fontWeight: 700, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 6 }}>
                     {a.company || a.symbol}
+                    {/* PATCH 0617 — market flag chip (IN/US) */}
+                    {a.market && (
+                      <span style={{ fontSize: 9, fontWeight: 800, padding: '1px 5px', borderRadius: 3, color: a.market === 'US' ? '#F87171' : '#22D3EE', background: a.market === 'US' ? '#F8717122' : '#22D3EE22' }}>
+                        {a.market === 'US' ? '🇺🇸 US' : '🇮🇳 IN'}
+                      </span>
+                    )}
                   </div>
                   <div style={{ fontSize: 10, color: '#94A3B8', fontFamily: 'ui-monospace, monospace', fontWeight: 600 }}>
                     {a.symbol}{a.sector ? ` · ${a.sector}` : ''}
