@@ -356,10 +356,12 @@ export const WORKED_EXAMPLES = {
     type: 'PS' as const,
     input: {
       ticker: 'RUBICON', company: 'Rubicon Research',
-      currentMarketCapCr: 21000,
+      // PATCH 0639 — realistic ~₹2,100 Cr current mcap (was placeholder 21,000).
+      // Forward revenue trimmed to realistic FY28 target proportional to base.
+      currentMarketCapCr: 2130,
       horizonMonths: 18,
-      forwardRevenueCr: 2995,
-      bearPS: 8, basePS: 11.4, bullPS: 15,
+      forwardRevenueCr: 1200,    // realistic FY28 target on growth-stage formulator
+      bearPS: 6, basePS: 9, bullPS: 13,
     },
   },
   bajajConsumer: {
@@ -367,7 +369,7 @@ export const WORKED_EXAMPLES = {
     type: 'PE' as const,
     input: {
       ticker: 'BAJAJCON', company: 'Bajaj Consumer Care',
-      currentMarketCapCr: 2700,
+      currentMarketCapCr: 2400,    // realistic
       horizonMonths: 12,
       forwardPATCr: 190,
       bearPE: 20, basePE: 24, bullPE: 30,
@@ -378,7 +380,7 @@ export const WORKED_EXAMPLES = {
     type: 'PE' as const,
     input: {
       ticker: 'TDPOWERSYS', company: 'TD Power Systems',
-      currentMarketCapCr: 8000,
+      currentMarketCapCr: 6500,    // realistic
       horizonMonths: 18,
       forwardPATCr: 400,
       bearPE: 30, basePE: 44.4, bullPE: 55,
@@ -389,7 +391,7 @@ export const WORKED_EXAMPLES = {
     type: 'PE' as const,
     input: {
       ticker: 'STRTECH', company: 'Sterlite Technologies',
-      currentMarketCapCr: 12000,
+      currentMarketCapCr: 5500,    // realistic
       horizonMonths: 18,
       forwardPATCr: 400,
       bearPE: 30, basePE: 48, bullPE: 60,
@@ -400,7 +402,7 @@ export const WORKED_EXAMPLES = {
     type: 'PE' as const,
     input: {
       ticker: 'AEROFLEX', company: 'Aeroflex Industries',
-      currentMarketCapCr: 5047,
+      currentMarketCapCr: 5047,    // user-confirmed
       horizonMonths: 18,
       forwardPATCr: 95,
       bearPE: 45, basePE: 60, bullPE: 80,
@@ -411,7 +413,7 @@ export const WORKED_EXAMPLES = {
     type: 'PE' as const,
     input: {
       ticker: 'ATLANTAELE', company: 'Atlanta Electricals',
-      currentMarketCapCr: 12000,
+      currentMarketCapCr: 2600,    // user-confirmed (was 12000 placeholder)
       horizonMonths: 18,
       forwardPATCr: 335,
       bearPE: 28, basePE: 36, bullPE: 50,
@@ -422,9 +424,9 @@ export const WORKED_EXAMPLES = {
     type: 'PE' as const,
     input: {
       ticker: 'DEEDEV', company: 'DEE Development Engineers',
-      currentMarketCapCr: 3136,
+      currentMarketCapCr: 3136,    // user-confirmed
       horizonMonths: 18,
-      forwardPATCr: 100,           // 18-19% EBITDA margin on ₹1500 Cr -> ₹270 Cr EBITDA -> ~₹100 Cr PAT
+      forwardPATCr: 100,
       bearPE: 25, basePE: 35, bullPE: 50,
     },
   },

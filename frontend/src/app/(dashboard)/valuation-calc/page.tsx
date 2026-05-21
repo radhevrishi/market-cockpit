@@ -348,8 +348,21 @@ function SavedValuationsPanel({ onLoad }: { onLoad?: (v: SavedValuation) => void
 }
 
 function CalcResultDisplay({ result, calcKind }: { result: CalculatorResult; calcKind?: 'PS' | 'PE' | 'EV_EBITDA' }) {
+  const baseUpside = result.cases.find(c => c.label === 'BASE')?.upsidePct ?? 0;
+  const showSanity = Math.abs(baseUpside) >= 300;
   return (
     <div style={{ marginTop: 18 }}>
+      {showSanity && (
+        <div style={{
+          background: '#F59E0B15', border: '1px solid #F59E0B60', borderRadius: 6,
+          padding: '10px 14px', marginBottom: 10, fontSize: 12, color: TEXT, lineHeight: 1.55,
+        }}>
+          ⚠ <b style={{ color: '#F59E0B' }}>Sanity check:</b> base-case upside is {baseUpside.toFixed(0)}% — that&apos;s unusual.
+          Common causes: (1) current market cap not yet auto-filled — click 🔄 above to pull live data;
+          (2) forward revenue / PAT input is much larger than current scale — verify the FY27/FY28 guidance is realistic;
+          (3) multiple band may be too generous for the sector. Adjust inputs or open <a href="/playbook" style={{ color: '#22D3EE' }}>Playbook</a> for sector-appropriate ranges.
+        </div>
+      )}
       <div style={{
         background: '#22D3EE12', border: '1px solid #22D3EE40', borderRadius: 6,
         padding: '12px 14px', marginBottom: 12, fontSize: 13, color: TEXT, lineHeight: 1.6,
