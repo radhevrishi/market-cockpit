@@ -385,9 +385,9 @@ export default function NewsAlertsPage() {
               <div style={{ fontSize: 11, fontWeight: 700, color: '#94A3B8', letterSpacing: '0.3px', marginBottom: 2 }}>
                 MARKET COCKPIT · just now (preview)
               </div>
-              <div style={{ fontSize: 13, fontWeight: 700 }}>Alert: Defence bottlenecks · HIGH only</div>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>Alert: AI Infrastructure · HIGH severity</div>
               <div style={{ fontSize: 12, color: '#C9D4E0', marginTop: 2 }}>
-                HAL secures ₹26,000 Cr order from Indian Navy for advanced light helicopters…
+                Nvidia memory costs soar 485% as HBM supply remains constrained — Indian transmission proxies surface…
               </div>
             </div>
           </div>
@@ -454,7 +454,7 @@ export default function NewsAlertsPage() {
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
           <input
-            placeholder="Rule name (e.g. 'Defence bottlenecks · HIGH only')"
+            placeholder="Rule name (e.g. 'AI Infrastructure · HIGH only')"
             value={draft.name || ''}
             onChange={e => setDraft({ ...draft, name: e.target.value })}
             style={{ gridColumn: '1 / -1', backgroundColor: '#0A1422', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.text, borderRadius: 6, padding: '8px 10px', fontSize: 13 }}

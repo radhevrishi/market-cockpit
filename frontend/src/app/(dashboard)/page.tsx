@@ -61,7 +61,7 @@ interface ChangedRow {
 interface HomeState {
   loading: boolean;
   inPlay: NewsItem[];
-  inPlayDiag?: { fetched: number; recent: number; clean: number; fellBack: boolean };  // PATCH 0617 — visible diagnostics
+  inPlayDiag?: { fetched: number; recent: number; clean: number; fellBack: boolean; error?: string; status?: number };  // PATCH 0617/0618 — visible diagnostics including fetch error
   bottleneck: BottleneckBucket[];
   earningsToday: GradedCard[];
   earningsLabel: string;  // 'today' or 'last working day (YYYY-MM-DD)'
@@ -208,15 +208,16 @@ function buildSyncState(): Omit<HomeState, 'loading' | 'inPlay' | 'bottleneck' |
     .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
     .map((r: any) => buildTier(r, true));
 
-  let tier1: TierAction[] = tier1Strict.slice(0, 6);
-  if (tier1.length < 6) {
+  // PATCH 0618 — Tier 1 grown 6 → 8 now that USA stocks share the slot.
+  let tier1: TierAction[] = tier1Strict.slice(0, 8);
+  if (tier1.length < 8) {
     const haveSyms = new Set(tier1.map(t => symKey(t.symbol)));
     const fillers = allRows
       .filter((r: any) => (r.grade === 'A+' || r.grade === 'A')
                        && !haveSyms.has(symKey(r.symbol))
                        && !decisions[(r.symbol || '').toUpperCase()])
       .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
-      .slice(0, 6 - tier1.length)
+      .slice(0, 8 - tier1.length)
       .map((r: any) => buildTier(r, false));
     tier1 = [...tier1, ...fillers];
   }
@@ -224,7 +225,7 @@ function buildSyncState(): Omit<HomeState, 'loading' | 'inPlay' | 'bottleneck' |
   const tier2 = allRows
     .filter((r: any) => (r.grade === 'A+' || r.grade === 'A') && !tier1.find(t => t.symbol === r.symbol))
     .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
-    .slice(0, 6)
+    .slice(0, 8)
     .map((r: any) => buildTier(r));
 
   const tier3 = allRows
@@ -294,16 +295,24 @@ export default function HomeDashboard() {
     (async () => {
       // PATCH 0606 — individual section fetches in parallel; each fires its
       // own setState so slow endpoints don't hold up faster ones.
-      const safe = async <T,>(url: string): Promise<T | null> => {
+      // PATCH 0618 — captures WHY a fetch failed so we can surface real
+      // diagnostics on the home dashboard. Returns [data, errorReason].
+      // errorReason values: 'http_404' / 'http_500' / 'timeout' / 'network' / 'parse'.
+      const safeDiag = async <T,>(url: string, timeoutMs = 15_000): Promise<{ data: T | null; error?: string; status?: number }> => {
         try {
           const ctl = new AbortController();
-          const t = setTimeout(() => ctl.abort(), 8_000);
+          const t = setTimeout(() => ctl.abort(), timeoutMs);
           const r = await fetch(url, { cache: 'no-store', signal: ctl.signal });
           clearTimeout(t);
-          if (!r.ok) return null;
-          return await r.json() as T;
-        } catch { return null; }
+          if (!r.ok) return { data: null, error: `http_${r.status}`, status: r.status };
+          try { return { data: await r.json() as T, status: r.status }; }
+          catch { return { data: null, error: 'parse' }; }
+        } catch (e: any) {
+          if (e?.name === 'AbortError') return { data: null, error: 'timeout' };
+          return { data: null, error: 'network' };
+        }
       };
+      const safe = async <T,>(url: string): Promise<T | null> => (await safeDiag<T>(url)).data;
 
       // localStorage reads (alerts)
       let alerts: AlertRule[] = [];
@@ -343,16 +352,14 @@ export default function HomeDashboard() {
       // PATCH 0606 — three independent network fires; each updates state
       // separately so the page is fully usable as soon as ANY one returns.
       //
-      // PATCH 0617 — In-Play News, third time's the charm:
-      // * Cache-bust query param so Vercel edge cache / browser cache cannot
-      //   serve a stale response that wedges this at (0).
-      // * Save fetch + filter counts to state so when the user sees (0) we
-      //   tell them WHY — fetched N, dropped X for structural, Y for stale.
-      // * Tolerate clock skew up to 10 min in the future.
-      // * If after filtering we still have 0, fall back to ALL items within
-      //   24h regardless of structural flags so the panel is never empty
-      //   when there IS data on the wire.
-      safe<any>(`/api/v1/news?limit=60&_=${Date.now()}`).then((j) => {
+      // PATCH 0618 — In-Play News, fix #4 (the one that actually works):
+      // ROOT CAUSE: previous 8s fetch timeout was too tight for /api/v1/news
+      // which returns 300+KB on slower connections. safe() silently returned
+      // null on timeout, so the diagnostic showed 'fetched 0' even though the
+      // API has 46 items. Fix: use safeDiag with 20s timeout, smaller limit
+      // (40 -> still gets 25 items past filter), and surface the actual error
+      // ('timeout' / 'http_500' / 'network') so we never wonder again.
+      safeDiag<any>(`/api/v1/news?limit=40&_=${Date.now()}`, 20_000).then(({ data: j, error, status }) => {
         if (cancelled) return;
         const raw: NewsItem[] = Array.isArray(j) ? j : (j?.articles || j?.items || []);
         const ageOk = (a: any) => {
@@ -392,7 +399,7 @@ export default function HomeDashboard() {
         setData((d) => ({
           ...d,
           inPlay: final.slice(0, 8),
-          inPlayDiag: { fetched: raw.length, recent: recent.length, clean: clean.length, fellBack: clean.length === 0 && recent.length > 0 },
+          inPlayDiag: { fetched: raw.length, recent: recent.length, clean: clean.length, fellBack: clean.length === 0 && recent.length > 0, error, status },
         } as any));
         setNetLoading((n) => ({ ...n, inPlay: false }));
       });
@@ -1023,12 +1030,21 @@ export default function HomeDashboard() {
           )}
           {showInPlay && !netLoading.inPlay && data.inPlay.length === 0 && (
             <div style={{ fontSize: 11, color: DIM, marginTop: 8, fontStyle: 'italic', lineHeight: 1.5 }}>
-              No live in-play news in last 24 hours.
+              {data.inPlayDiag?.error
+                ? `News feed unreachable (${data.inPlayDiag.error}${data.inPlayDiag.status ? ' / HTTP ' + data.inPlayDiag.status : ''}). Backend may be cold-starting.`
+                : 'No live in-play news in last 24 hours.'}
               {data.inPlayDiag && (
                 <div style={{ fontSize: 10, color: DIM, marginTop: 6, fontFamily: 'ui-monospace, monospace' }}>
                   Diagnostic: fetched {data.inPlayDiag.fetched} · within 24h {data.inPlayDiag.recent} · after structural filter {data.inPlayDiag.clean}
+                  {data.inPlayDiag.error && <span style={{ color: '#F87171' }}> · error: {data.inPlayDiag.error}</span>}
                 </div>
               )}
+              <button
+                onClick={() => { window.location.reload(); }}
+                style={{ marginTop: 8, fontSize: 10, padding: '4px 10px', border: '1px solid #22D3EE60', background: 'transparent', color: '#22D3EE', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+              >
+                🔄 RETRY
+              </button>
             </div>
           )}
           {/* PATCH 0617 — show fallback notice if structural filter wiped everything but we still surfaced items */}
