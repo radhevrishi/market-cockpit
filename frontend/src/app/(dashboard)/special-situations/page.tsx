@@ -365,10 +365,15 @@ const TIER_META: Record<Tier, { label: string; color: string; tagline: string }>
 // PAGE
 // ═══════════════════════════════════════════════════════════════════════════
 
-type Tab = 'all' | 'timing' | 'playbook' | 'math' | 'discover';
+type Tab = 'all' | 'analytics' | 'timing' | 'playbook' | 'math' | 'discover';
 
 const TABS: ReadonlyArray<{ id: Tab; label: string }> = [
   { id: 'all',       label: 'All Situations' },
+  // PATCH 0584 — Special Situations Analytics (mirrors Multibagger Analytics).
+  // Wraps the existing merger-arb / deal-probability / playbook libs into a
+  // single ranked dashboard: best risk/reward, break-risk flags, catalyst
+  // timeline, category distribution, source-tier mix, position sizing.
+  { id: 'analytics', label: '📊 Analytics' },
   { id: 'timing',    label: 'When to Buy / Sell' },
   { id: 'playbook',  label: 'Post-Event Playbook' },
   { id: 'math',      label: 'Acceptance / Deal Math' },
@@ -702,6 +707,12 @@ export default function SpecialSituationsPage() {
           canonicalEvents.length > 0
             ? <AllSituationsCanonical isLoading={isLoading} error={error} tier1={tier1Canonical} tier2={tier2Canonical} watchlist={watchlistCanonical} />
             : <AllSituations isLoading={isLoading} error={error} tier1={tier1} tier2={tier2} archive={archive} />
+        )}
+        {/* PATCH 0584 — Analytics view: unified merger-arb + deal-probability
+            + playbook + lifecycle dashboard. Mirrors the Multibagger Analytics
+            philosophy of "tell me what to do given everything I have". */}
+        {active === 'analytics' && (
+          <SpecsitAnalytics events={canonicalEvents} isLoading={isLoading} />
         )}
         {active === 'timing' && <TimingRules />}
         {active === 'playbook' && <Playbook />}
@@ -2050,6 +2061,491 @@ function DiscoverScanner({ feed, isLoading, error, refetch, isFetching, region, 
             </span>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SPECIAL SITUATIONS ANALYTICS — PATCH 0584
+//
+// Mirrors the Multibagger Analytics philosophy of "tell me what to do given
+// everything I have". Wraps the already-shipped libraries (merger-arb,
+// deal-probability, playbooks, lifecycle, source-tiers) into one ranked
+// dashboard so the analyst sees:
+//   • BEST RISK/REWARD — sorted by EV × probability / break-risk proxy
+//   • BREAK-RISK FLAGS — high-probability of failure (regulatory / stalled)
+//   • CATALYST TIMELINE — upcoming hard catalysts in 30 / 60 / 90 day windows
+//   • CATEGORY DISTRIBUTION — count + tradable-share per event_type
+//   • SOURCE TIER MIX — PRIMARY filings vs aggregator (institutional moat)
+//   • QUALITY FILTER — surface vs noise (microcap / no-ticker / SPAC drop)
+//   • POSITION SIZING — Core / Tactical / Optionality / Avoid buckets
+// ═══════════════════════════════════════════════════════════════════════════
+
+function SpecsitAnalytics({ events, isLoading }: { events: CanonicalEvent[]; isLoading: boolean }) {
+  // Map raw event_type to a coarse filing-tier for the deal-probability engine.
+  const filingTierFor = (ev: CanonicalEvent): FilingTier => {
+    const t = (ev.event_type || '').toUpperCase();
+    if (t.includes('MERGER_DEFINITIVE') || t.includes('TENDER_OFFER') || t.includes('OPEN_OFFER') || t.includes('BUYBACK_TENDER')) return 'BINDING_AGREEMENT';
+    if (t.includes('ACQUISITION_PUBLIC') || t.includes('SPIN_OFF') || t.includes('DEMERGER_INDIA') || t.includes('GOING_PRIVATE')) return 'BOARD_APPROVED';
+    if (t.includes('IPO_SUBSIDIARY') || t.includes('PREFERENTIAL_ALLOTMENT')) return 'PRELIMINARY_OFFER';
+    if (t.includes('RUMOR') || ev.lifecycle === 'rumor') return 'RUMOR';
+    return 'EXPLORATORY';
+  };
+
+  // Regulatory hurdles inferred from event_type.
+  const hurdlesFor = (ev: CanonicalEvent) => {
+    const t = (ev.event_type || '').toUpperCase();
+    const region = ev.region;
+    return {
+      cci:  region === 'IN' && (t.includes('MERGER') || t.includes('ACQUISITION') || t.includes('DEMERGER')),
+      sebi: region === 'IN' && (t.includes('OPEN_OFFER') || t.includes('BUYBACK_TENDER') || t.includes('PREFERENTIAL')),
+      nclt: region === 'IN' && (t.includes('DEMERGER') || t.includes('NCLT') || t.includes('MERGER')),
+      cross_border: t.includes('ACQUISITION_PUBLIC') && region !== 'IN',
+      sectoral: t.includes('BANK') || t.includes('INSURANCE'),
+    };
+  };
+
+  // Enrich every event with the libs' outputs once, then operate on the enriched set.
+  const enriched = useMemo(() => events.map((ev) => {
+    const tier = filingTierFor(ev);
+    const prob = computeDealProbability({
+      filingTier: tier,
+      daysSinceAnnounced: Math.round(ev.age_hours / 24),
+      hurdles: hurdlesFor(ev),
+      friendliness: 'FRIENDLY',
+    });
+    const catalyst = nextCatalystFor(ev);
+    const playbook = getPlaybook(ev.event_type);
+    const lifecycle = ev.lifecycle as LifecycleState;
+    const lifecycleMeta = LIFECYCLE_CONFIG[lifecycle] || null;
+    const sourceTier = classifySource(ev.primary_filing?.source || '');
+    const isMicrocapNoise = ev.tickers.length === 0 && (ev.target_name || '').length < 4;
+    return { ev, tier, prob, catalyst, playbook, lifecycle, lifecycleMeta, sourceTier, isMicrocapNoise };
+  }), [events]);
+
+  // ── BEST RISK/REWARD ────────────────────────────────────────────────────
+  // For events without a real spread we approximate EV via catalyst_score ×
+  // probability / time-to-catalyst. Events ranked descending.
+  const ranked = useMemo(() => {
+    const scored = enriched.map((e) => {
+      const cat = e.ev.catalyst_score?.raw_score ?? 0;
+      const tttCat = e.catalyst?.daysOut ?? 90;
+      const ttcSafe = Math.max(7, Math.abs(tttCat));
+      const evScore = (cat * (e.prob.score / 100) * 365) / ttcSafe;
+      return { ...e, evScore };
+    });
+    return [...scored].sort((a, b) => b.evScore - a.evScore);
+  }, [enriched]);
+
+  // ── BREAK-RISK FLAGS ────────────────────────────────────────────────────
+  const breakRisk = useMemo(() => enriched
+    .filter((e) => e.prob.label === 'LOW' || e.prob.label === 'VERY_LOW' || (e.ev.age_hours / 24) > 90)
+    .sort((a, b) => a.prob.score - b.prob.score)
+    .slice(0, 8),
+  [enriched]);
+
+  // ── CATALYST TIMELINE — bucket by days-to-catalyst ──────────────────────
+  const timeline = useMemo(() => {
+    const within = (lo: number, hi: number) => enriched.filter((e) => {
+      const d = e.catalyst?.daysOut;
+      return typeof d === 'number' && d >= lo && d <= hi;
+    }).sort((a, b) => (a.catalyst?.daysOut ?? 0) - (b.catalyst?.daysOut ?? 0));
+    return {
+      next30: within(0, 30),
+      next60: within(31, 60),
+      next90: within(61, 90),
+    };
+  }, [enriched]);
+
+  // ── CATEGORY DISTRIBUTION ───────────────────────────────────────────────
+  const byType = useMemo(() => {
+    const m = new Map<string, { count: number; tradable: number; avgProb: number; probSum: number }>();
+    for (const e of enriched) {
+      const k = e.ev.event_type || 'UNKNOWN';
+      const cur = m.get(k) || { count: 0, tradable: 0, avgProb: 0, probSum: 0 };
+      cur.count++;
+      if (e.ev.is_tradable) cur.tradable++;
+      cur.probSum += e.prob.score;
+      m.set(k, cur);
+    }
+    return Array.from(m.entries()).map(([k, v]) => ({
+      type: k,
+      count: v.count,
+      tradable: v.tradable,
+      avgProb: Math.round(v.probSum / Math.max(1, v.count)),
+    })).sort((a, b) => b.count - a.count);
+  }, [enriched]);
+
+  // ── SOURCE TIER MIX ─────────────────────────────────────────────────────
+  const sourceMix = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const e of enriched) {
+      const tier = e.sourceTier || 'UNKNOWN';
+      m.set(tier, (m.get(tier) || 0) + 1);
+    }
+    const total = enriched.length || 1;
+    return Array.from(m.entries()).map(([tier, count]) => ({
+      tier, count, pct: Math.round((count / total) * 100),
+    })).sort((a, b) => b.count - a.count);
+  }, [enriched]);
+
+  // ── QUALITY FILTER — surface vs noise ───────────────────────────────────
+  const surface = useMemo(() => enriched.filter((e) => {
+    if (!e.ev.is_tradable) return false;
+    if (e.isMicrocapNoise) return false;
+    if (e.ev.tickers.length === 0) return false;
+    if (e.prob.score < 35) return false;
+    return true;
+  }), [enriched]);
+  const noiseDropped = enriched.length - surface.length;
+
+  // ── POSITION SIZING — Core / Tactical / Optionality / Avoid ─────────────
+  // Heuristic without live ADV: filing tier × probability × tradability.
+  const positionBuckets = useMemo(() => {
+    const core: typeof enriched = [];
+    const tactical: typeof enriched = [];
+    const optionality: typeof enriched = [];
+    const avoid: typeof enriched = [];
+    for (const e of enriched) {
+      if (!e.ev.is_tradable || e.ev.tickers.length === 0) {
+        avoid.push(e); continue;
+      }
+      const isBindingOrApproved = e.tier === 'BINDING_AGREEMENT' || e.tier === 'BOARD_APPROVED';
+      if (isBindingOrApproved && e.prob.score >= 75) core.push(e);
+      else if (e.prob.score >= 60) tactical.push(e);
+      else if (e.prob.score >= 35) optionality.push(e);
+      else avoid.push(e);
+    }
+    return { core, tactical, optionality, avoid };
+  }, [enriched]);
+
+  // ── STATS STRIP ─────────────────────────────────────────────────────────
+  const tradableCount = enriched.filter((e) => e.ev.is_tradable).length;
+  const tier1Count = enriched.filter((e) => e.ev.tier === 'TIER_1').length;
+  const avgAge = enriched.length
+    ? Math.round(enriched.reduce((a, b) => a + b.ev.age_hours, 0) / enriched.length / 24)
+    : 0;
+  const avgProb = enriched.length
+    ? Math.round(enriched.reduce((a, b) => a + b.prob.score, 0) / enriched.length)
+    : 0;
+  const inEvents = enriched.filter((e) => e.ev.region === 'IN').length;
+  const usEvents = enriched.filter((e) => e.ev.region === 'US').length;
+
+  const cardStyle: React.CSSProperties = {
+    backgroundColor: '#0D1623', border: '1px solid #1A2540',
+    borderRadius: 6, padding: '12px 14px',
+  };
+  const labelStyle: React.CSSProperties = {
+    fontSize: 11, color: '#6B7A8D', letterSpacing: '0.3px', marginBottom: 4,
+  };
+
+  if (isLoading && enriched.length === 0) {
+    return <div style={{ padding: 30, textAlign: 'center', color: '#8A95A3' }}>📡 Loading special-situations analytics…</div>;
+  }
+  if (enriched.length === 0) {
+    return (
+      <div style={{ padding: 30, textAlign: 'center', color: '#8A95A3' }}>
+        <div style={{ fontSize: 36, marginBottom: 12 }}>📊</div>
+        <p style={{ margin: 0, fontWeight: 700, color: '#E6EDF3' }}>No events to analyze yet</p>
+        <p style={{ margin: '8px 0 0', fontSize: 12, lineHeight: 1.5, maxWidth: 480, marginLeft: 'auto', marginRight: 'auto' }}>
+          The live RSS feed hasn't produced canonical events for analytics yet.
+          Switch to "Discover (raw RSS)" to inspect source health.
+        </p>
+      </div>
+    );
+  }
+
+  // Per-row card builder used everywhere.
+  const EventRow = ({ e, accent, extra }: { e: typeof enriched[number]; accent: string; extra?: React.ReactNode }) => {
+    const primaryTicker = e.ev.tickers[0] || '';
+    return (
+      <a
+        href={e.ev.primary_filing?.link || '#'}
+        target="_blank"
+        rel="noopener noreferrer"
+        style={{
+          display: 'flex', flexDirection: 'column', gap: 3, padding: '7px 10px', borderRadius: 4,
+          border: `1px solid ${accent}30`, background: `${accent}08`, textDecoration: 'none',
+        }}
+        title={[
+          `Filing tier: ${e.tier}`,
+          `Probability: ${e.prob.score}/100 (${e.prob.label})`,
+          e.catalyst ? `Catalyst: ${e.catalyst.label}` : '',
+          e.lifecycleMeta ? `Lifecycle: ${e.lifecycleMeta.label}` : '',
+          `Source: ${e.ev.primary_filing?.source || '—'} (${e.sourceTier || 'UNK'})`,
+        ].filter(Boolean).join('\n')}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+            {primaryTicker || (e.ev.target_name || '—')}
+          </span>
+          <span style={{ fontSize: 9, color: '#94A3B8', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {e.ev.target_name || ''}
+          </span>
+          <span style={{
+            fontSize: 9, fontWeight: 800,
+            color: e.prob.color, background: `${e.prob.color}20`,
+            border: `1px solid ${e.prob.color}40`, padding: '1px 5px', borderRadius: 3,
+          }}>
+            P {e.prob.score}
+          </span>
+          {extra}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9, color: '#94A3B8' }}>
+          <span>{e.ev.event_type?.replace(/_/g, ' ')}</span>
+          <span style={{ color: '#1A2540' }}>·</span>
+          <span>{e.tier}</span>
+          {e.catalyst && (
+            <>
+              <span style={{ color: '#1A2540' }}>·</span>
+              <span style={{ color: '#F59E0B' }}>{e.catalyst.daysOut != null ? `${e.catalyst.daysOut}d` : 'catalyst pending'}</span>
+            </>
+          )}
+          <span style={{ color: '#1A2540' }}>·</span>
+          <span style={{ color: (e.sourceTier && TIER_VISUAL[e.sourceTier]?.tone.solid) || '#6B7A8D' }}>{e.sourceTier || 'UNK'}</span>
+        </div>
+      </a>
+    );
+  };
+
+  return (
+    <div style={{ padding: 4, display: 'flex', flexDirection: 'column', gap: 18 }}>
+
+      {/* ── STATS STRIP ───────────────────────────────────────────────── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
+        <div style={cardStyle}>
+          <div style={labelStyle}>Total events</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: '#22D3EE', fontVariantNumeric: 'tabular-nums' }}>{enriched.length}</div>
+        </div>
+        <div style={cardStyle}>
+          <div style={labelStyle}>Tradable</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: '#10B981', fontVariantNumeric: 'tabular-nums' }}>{tradableCount}</div>
+          <div style={{ fontSize: 10, color: '#6B7A8D' }}>{enriched.length ? Math.round((tradableCount / enriched.length) * 100) : 0}% pass quality bar</div>
+        </div>
+        <div style={cardStyle}>
+          <div style={labelStyle}>Tier-1 hard catalyst</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: '#EF4444', fontVariantNumeric: 'tabular-nums' }}>{tier1Count}</div>
+        </div>
+        <div style={cardStyle}>
+          <div style={labelStyle}>Avg probability</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: '#22D3EE', fontVariantNumeric: 'tabular-nums' }}>{avgProb}</div>
+          <div style={{ fontSize: 10, color: '#6B7A8D' }}>across all events</div>
+        </div>
+        <div style={cardStyle}>
+          <div style={labelStyle}>Avg age</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: '#A78BFA', fontVariantNumeric: 'tabular-nums' }}>{avgAge}d</div>
+        </div>
+        <div style={cardStyle}>
+          <div style={labelStyle}>Regions</div>
+          <div style={{ fontSize: 14, fontWeight: 800, color: '#E6EDF3' }}>🇮🇳 {inEvents} · 🇺🇸 {usEvents}</div>
+        </div>
+        <div style={cardStyle}>
+          <div style={labelStyle}>Surface (post-filter)</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: '#10B981', fontVariantNumeric: 'tabular-nums' }}>{surface.length}</div>
+          <div style={{ fontSize: 10, color: '#6B7A8D' }}>{noiseDropped} filtered as noise</div>
+        </div>
+      </div>
+
+      {/* ── 🎯 BEST RISK/REWARD ─────────────────────────────────────────── */}
+      <div style={{ ...cardStyle, borderColor: '#F59E0B40', background: 'linear-gradient(180deg, #F59E0B10 0%, transparent 100%)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+          <div style={{ fontSize: 13, color: '#F59E0B', fontWeight: 800, letterSpacing: '0.4px' }}>
+            🎯 BEST RISK / REWARD ({ranked.slice(0, 12).length})
+          </div>
+          <span style={{ fontSize: 10, color: '#F59E0B', background: '#F59E0B22', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>
+            EV-RANKED
+          </span>
+        </div>
+        <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.5 }}>
+          EV proxy = catalyst-score × probability × (365 ÷ days-to-catalyst). Higher = sooner + higher conviction.
+          When a deal carries a real offer/spot spread, use the Acceptance / Deal Math tab to get the exact IRR.
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(310px, 1fr))', gap: 6 }}>
+          {ranked.slice(0, 12).map((e, i) => (
+            <EventRow key={e.ev.event_id + i} e={e} accent="#F59E0B" extra={
+              <span style={{ fontSize: 9, color: '#F59E0B', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                EV {Math.round(e.evScore)}
+              </span>
+            } />
+          ))}
+        </div>
+      </div>
+
+      {/* ── ⚠ BREAK-RISK FLAGS ──────────────────────────────────────────── */}
+      {breakRisk.length > 0 && (
+        <div style={{ ...cardStyle, borderColor: '#EF444440' }}>
+          <div style={{ fontSize: 13, color: '#EF4444', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>
+            ⚠ BREAK-RISK FLAGS ({breakRisk.length})
+          </div>
+          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.5 }}>
+            Low-probability deals (regulatory hurdles / rumor-tier / stalled past expected close).
+            Spread-positive trades here often have asymmetric downside if the deal breaks — size accordingly.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(310px, 1fr))', gap: 6 }}>
+            {breakRisk.map((e, i) => (
+              <EventRow key={e.ev.event_id + i} e={e} accent="#EF4444" extra={
+                <span style={{ fontSize: 9, color: '#EF4444', fontWeight: 800 }}>{e.prob.label}</span>
+              } />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── 🕒 CATALYST TIMELINE ───────────────────────────────────────── */}
+      <div style={cardStyle}>
+        <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>
+          🕒 CATALYST TIMELINE
+        </div>
+        <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.5 }}>
+          Hard catalysts grouped by time-to-event. Earliest deals get scaled position first (capital efficiency).
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(290px, 1fr))', gap: 12 }}>
+          {([
+            { key: 'next30', label: 'NEXT 30 DAYS',     color: '#EF4444', items: timeline.next30 },
+            { key: 'next60', label: 'NEXT 31-60 DAYS',  color: '#F59E0B', items: timeline.next60 },
+            { key: 'next90', label: 'NEXT 61-90 DAYS',  color: '#22D3EE', items: timeline.next90 },
+          ] as const).map((b) => (
+            <div key={b.key} style={{ border: '1px solid #1A2540', borderRadius: 4, padding: '8px 10px' }}>
+              <div style={{ fontSize: 11, color: b.color, fontWeight: 800, marginBottom: 6 }}>{b.label} ({b.items.length})</div>
+              {b.items.length === 0 ? (
+                <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic' }}>No catalysts in window.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  {b.items.slice(0, 6).map((e, i) => (
+                    <EventRow key={e.ev.event_id + i} e={e} accent={b.color} />
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── 📊 CATEGORY DISTRIBUTION ──────────────────────────────────── */}
+      <div style={cardStyle}>
+        <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>
+          📊 CATEGORY DISTRIBUTION
+        </div>
+        <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10 }}>
+          What event types dominate today's pipeline. Tradable-share + avg probability per type tells you which buckets are quality vs noise.
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {byType.map((t) => {
+            const maxC = Math.max(1, ...byType.map(x => x.count));
+            const widthPct = Math.round((t.count / maxC) * 100);
+            const tradablePct = Math.round((t.tradable / Math.max(1, t.count)) * 100);
+            const tone = t.avgProb >= 70 ? '#10B981' : t.avgProb >= 50 ? '#22D3EE' : t.avgProb >= 35 ? '#F59E0B' : '#EF4444';
+            return (
+              <div key={t.type} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 11, color: '#6B7A8D', fontWeight: 700, minWidth: 170, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.type.replace(/_/g, ' ')}</span>
+                <span style={{ fontSize: 11, color: '#94A3B8', minWidth: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{t.count}</span>
+                <div style={{ flex: 1, height: 8, background: '#1A2540', borderRadius: 4, overflow: 'hidden' }}>
+                  <div style={{ width: `${widthPct}%`, height: '100%', background: tone }} />
+                </div>
+                <span style={{ fontSize: 10, color: tone, fontWeight: 700, minWidth: 70, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>P {t.avgProb}</span>
+                <span style={{ fontSize: 10, color: '#6B7A8D', minWidth: 90, textAlign: 'right' }}>{tradablePct}% tradable</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── 🏛 SOURCE TIER MIX ─────────────────────────────────────────── */}
+      <div style={cardStyle}>
+        <div style={{ fontSize: 13, color: '#A78BFA', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>
+          🏛 SOURCE TIER MIX
+        </div>
+        <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.5 }}>
+          PRIMARY = exchange filings / regulators (highest confidence).
+          AGGREGATOR = reprints + blogs (lowest). Institutional desks ignore aggregator-only events.
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {sourceMix.map((s) => {
+            const meta = TIER_VISUAL[s.tier as keyof typeof TIER_VISUAL];
+            const color = meta?.tone.solid || '#6B7A8D';
+            const label = meta?.label || s.tier;
+            const glyph = meta?.glyph || '·';
+            return (
+              <div key={s.tier} style={{
+                padding: '6px 12px', borderRadius: 4,
+                border: `1px solid ${color}40`, background: `${color}10`,
+                fontSize: 11, fontWeight: 700, color,
+              }}>
+                {glyph} {label} · {s.count} ({s.pct}%)
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── 🎯 POSITION SIZING ─────────────────────────────────────────── */}
+      <div style={cardStyle}>
+        <div style={{ fontSize: 13, color: '#10B981', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>
+          🎯 POSITION SIZING SUGGESTIONS
+        </div>
+        <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.5 }}>
+          Allocation tier per event. <strong>Core</strong> = binding/approved with high probability.
+          <strong> Tactical</strong> = mid-conviction with hard catalyst.
+          <strong> Optionality</strong> = lottery-ticket / lower probability.
+          <strong> Avoid</strong> = not tradable, no ticker, very-low probability.
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12 }}>
+          {([
+            { key: 'core',        label: '💎 CORE',         color: '#10B981', items: positionBuckets.core,        hint: '≥75% prob · binding/approved' },
+            { key: 'tactical',    label: '⚡ TACTICAL',     color: '#22D3EE', items: positionBuckets.tactical,    hint: '60-75% prob · hard catalyst' },
+            { key: 'optionality', label: '🎲 OPTIONALITY',  color: '#A78BFA', items: positionBuckets.optionality, hint: '35-60% prob · asymmetric upside' },
+            { key: 'avoid',       label: '🚫 AVOID',        color: '#EF4444', items: positionBuckets.avoid,       hint: 'Not tradable / no ticker / very low prob' },
+          ] as const).map((b) => (
+            <div key={b.key} style={{ border: `1px solid ${b.color}40`, borderRadius: 4, padding: '8px 10px', background: `${b.color}08` }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                <span style={{ fontSize: 12, color: b.color, fontWeight: 800 }}>{b.label}</span>
+                <span style={{ fontSize: 11, color: b.color, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>({b.items.length})</span>
+              </div>
+              <div style={{ fontSize: 10, color: '#6B7A8D', marginBottom: 8 }}>{b.hint}</div>
+              {b.items.length === 0 ? (
+                <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic' }}>—</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {b.items.slice(0, 6).map((e, i) => (
+                    <EventRow key={e.ev.event_id + i} e={e} accent={b.color} />
+                  ))}
+                  {b.items.length > 6 && (
+                    <div style={{ fontSize: 10, color: '#6B7A8D', fontStyle: 'italic' }}>+ {b.items.length - 6} more</div>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── 🚫 QUALITY FILTER TRANSPARENCY ─────────────────────────────── */}
+      {noiseDropped > 0 && (
+        <div style={cardStyle}>
+          <div style={{ fontSize: 13, color: '#94A3B8', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>
+            🚫 NOISE FILTERED ({noiseDropped})
+          </div>
+          <div style={{ fontSize: 11, color: '#6B7A8D', lineHeight: 1.5 }}>
+            Surfaced events ({surface.length}) pass: <strong>is_tradable</strong> + at-least-one-ticker
+            + probability ≥ 35 + non-microcap-noise. The remaining {noiseDropped} events failed one or more
+            gates — review them on the All Situations tab if you want to see what was filtered out.
+          </div>
+        </div>
+      )}
+
+      {/* ── 📚 INSTITUTIONAL GAPS (transparent disclosure) ─────────────── */}
+      <div style={{ ...cardStyle, borderColor: '#1A2540' }}>
+        <div style={{ fontSize: 12, color: '#6B7A8D', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 6 }}>
+          📚 KNOWN INSTITUTIONAL GAPS (this view, today)
+        </div>
+        <ul style={{ margin: 0, paddingLeft: 18, fontSize: 11, color: '#94A3B8', lineHeight: 1.6 }}>
+          <li><strong>No real spread engine yet</strong> — payloads don&apos;t carry offerPrice/spotPrice. Use the Acceptance/Deal Math tab to enter terms manually and get IRR / annualized return / break-downside.</li>
+          <li><strong>No quantitative break-risk model</strong> — break-risk shown is rule-based (regulatory hurdles + age past expected close). Bayesian failure-rate per category needs the historical backtest layer.</li>
+          <li><strong>No ADV / liquidity yet on this surface</strong> — &quot;Avoid&quot; bucket catches no-ticker / non-tradable. Per-row liquidity gating arrives when /api/market/quotes is wired into the events.</li>
+          <li><strong>RSS-dependent</strong> — filings-first ingestion (NSE / BSE / SEC EDGAR direct) is blocked on the parser pipeline (§17.4 D). EDGAR submissions adapter shipped in Patch 0318; deeper SC TO-T / DEFM14A extraction is the next module.</li>
+          <li><strong>No historical backtest yet</strong> — playbook priors (avg close days, success-rate, dominant failure modes) are shipped per event type in lib/specsit-playbooks.ts; statistical calibration from 500+ realized deals needs the Postgres layer.</li>
+        </ul>
       </div>
     </div>
   );
