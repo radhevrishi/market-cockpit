@@ -7694,60 +7694,203 @@ function MultibaggerAnalytics({
     } catch { return []; }
   }, []);
 
+  // PATCH 0548 — Read prev-score baselines directly from LS so we can compute
+  // score deltas, "new since last upload", and sector rotation.
+  const prevScoreMap = React.useMemo<Record<string, number>>(() => {
+    if (typeof window === 'undefined') return {};
+    try {
+      const ind = JSON.parse(localStorage.getItem('mb_india_prev_scores_v1') || '{}');
+      const us  = JSON.parse(localStorage.getItem('mb_usa_prev_scores_v1')   || '{}');
+      // Merge — symbols are unique across markets in practice (RELIANCE vs RELIANCE.NS).
+      return { ...ind, ...us };
+    } catch { return {}; }
+  }, []);
+
   // Conviction Beats overlay
   const convictionSet = React.useMemo(() => {
     if (typeof window === 'undefined') return new Set<string>();
     try { return new Set<string>(getConvictionTickers()); } catch { return new Set<string>(); }
   }, []);
 
-  // Build unified analytics rows
-  const stocks: MbAnalyticsStock[] = React.useMemo(() => {
-    const ind: MbAnalyticsStock[] = (indiaRows || []).map((r) => ({
+  // Build unified analytics rows.  PATCH 0548 — also expose `prevScore` and
+  // `marketCap` (in ₹ Cr for India, $ B for USA) so downstream blocks can
+  // compute deltas + cap-size buckets without re-reading LS.
+  const stocks: (MbAnalyticsStock & { prevScore?: number; marketCapCr?: number; marketCapB?: number })[] = React.useMemo(() => {
+    const stripSym = (s: string) => (s || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
+    const ind = (indiaRows || []).map((r) => ({
       symbol: r.symbol,
       company: (r as any).companyName,
       score: r.score,
       grade: r.grade,
       sector: (r as any).sector,
-      market: 'INDIA',
+      market: 'INDIA' as const,
+      prevScore: prevScoreMap[r.symbol] ?? prevScoreMap[stripSym(r.symbol)],
+      marketCapCr: (r as any).marketCapCr as number | undefined,
     }));
-    const us: MbAnalyticsStock[] = (usaRows || []).map((r) => ({
+    const us = (usaRows || []).map((r: any) => ({
       symbol: r.symbol,
       company: r.companyName,
       score: r.score,
       grade: r.grade,
       sector: r.sector,
-      market: 'USA',
+      market: 'USA' as const,
+      prevScore: prevScoreMap[r.symbol] ?? prevScoreMap[stripSym(r.symbol)],
+      marketCapB: r.marketCapB as number | undefined,
     }));
     const merged = [...ind, ...us];
     return scope === 'BOTH' ? merged : merged.filter((s) => s.market === scope);
-  }, [indiaRows, usaRows, scope]);
+  }, [indiaRows, usaRows, scope, prevScoreMap]);
 
+  // PATCH 0548 — Richer stats including median, P25/P75, score histogram,
+  // sector rotation, decision buckets, hidden gems, concentration risk.
   const stats = React.useMemo(() => {
     const total = stocks.length;
     const grades: Record<string, number> = {};
-    let scoreSum = 0;
-    const sectorMap: Record<string, { count: number; avgScore: number; total: number }> = {};
+    const sectorMap: Record<string, { count: number; avgScore: number; total: number; prevTotal: number; prevCount: number }> = {};
+    const scoreArr: number[] = [];
+    const stripSym = (s: string) => (s || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
+
     for (const s of stocks) {
       grades[s.grade] = (grades[s.grade] || 0) + 1;
-      scoreSum += s.score || 0;
+      scoreArr.push(s.score || 0);
       const sec = s.sector || 'Unclassified';
-      if (!sectorMap[sec]) sectorMap[sec] = { count: 0, avgScore: 0, total: 0 };
+      if (!sectorMap[sec]) sectorMap[sec] = { count: 0, avgScore: 0, total: 0, prevTotal: 0, prevCount: 0 };
       sectorMap[sec].count++;
       sectorMap[sec].total += s.score || 0;
+      if (typeof s.prevScore === 'number') {
+        sectorMap[sec].prevTotal += s.prevScore;
+        sectorMap[sec].prevCount++;
+      }
     }
-    for (const k of Object.keys(sectorMap)) {
-      sectorMap[k].avgScore = Math.round(sectorMap[k].total / Math.max(1, sectorMap[k].count));
-    }
+
+    // Score quartiles
+    const sortedScores = [...scoreArr].sort((a, b) => a - b);
+    const pct = (q: number) => {
+      if (sortedScores.length === 0) return 0;
+      const idx = Math.floor((sortedScores.length - 1) * q);
+      return sortedScores[idx];
+    };
+    const p25 = pct(0.25), p50 = pct(0.50), p75 = pct(0.75);
+    const avg = total > 0 ? Math.round(scoreArr.reduce((a, b) => a + b, 0) / total) : 0;
+
+    // Sector rollups + rotation (Δ avg vs prev upload)
     const sectorRanked = Object.entries(sectorMap)
-      .map(([sector, v]) => ({ sector, ...v }))
+      .map(([sector, v]) => {
+        const curAvg = Math.round(v.total / Math.max(1, v.count));
+        const prevAvg = v.prevCount > 0 ? Math.round(v.prevTotal / v.prevCount) : null;
+        const delta = prevAvg !== null ? curAvg - prevAvg : null;
+        return { sector, count: v.count, avgScore: curAvg, prevAvg, delta };
+      })
       .sort((a, b) => b.count - a.count);
-    const avg = total > 0 ? Math.round(scoreSum / total) : 0;
-    const aPlus = (grades['A+'] || 0) + (grades['A'] || 0);
-    const topPicks = [...stocks].sort((a, b) => b.score - a.score).slice(0, 10);
-    const convictionOverlap = stocks.filter((s) =>
-      convictionSet.has(s.symbol.toUpperCase().replace(/\.(NS|BO)$/i, ''))
-    );
-    return { total, grades, avg, sectorRanked, aPlus, topPicks, convictionOverlap };
+    const sectorAvgLookup: Record<string, number> = {};
+    for (const s of sectorRanked) sectorAvgLookup[s.sector] = s.avgScore;
+
+    const aPlus = grades['A+'] || 0;
+    const aOnly = grades['A'] || 0;
+    const aTotal = aPlus + aOnly;
+    const aPct = total > 0 ? Math.round((aTotal / total) * 100) : 0;
+
+    // Score histogram (10-wide bins)
+    const histogram: { bin: string; min: number; max: number; count: number }[] = [];
+    for (let lo = 0; lo <= 90; lo += 10) {
+      const hi = lo === 90 ? 100 : lo + 9;
+      const count = scoreArr.filter((v) => v >= lo && v <= hi).length;
+      histogram.push({ bin: `${lo}-${hi}`, min: lo, max: hi, count });
+    }
+
+    // Δ score vs prev upload
+    let deltaSum = 0, deltaN = 0;
+    let newCount = 0;
+    for (const s of stocks) {
+      if (typeof s.prevScore === 'number') {
+        deltaSum += (s.score || 0) - s.prevScore;
+        deltaN++;
+      } else {
+        newCount++;
+      }
+    }
+    const meanDelta = deltaN > 0 ? Math.round((deltaSum / deltaN) * 10) / 10 : 0;
+
+    // ── Decision buckets ────────────────────────────────────────────────
+    // 🎯 STRONG BUY — grade A/A+, on Conviction Beats, sector hot (≥65 avg)
+    const isInCb = (sym: string) => convictionSet.has(stripSym(sym));
+    const strongBuy = stocks
+      .filter((s) => (s.grade === 'A+' || s.grade === 'A')
+        && isInCb(s.symbol)
+        && (sectorAvgLookup[s.sector || 'Unclassified'] ?? 0) >= 65)
+      .sort((a, b) => b.score - a.score);
+
+    // 📈 RE-RATING — score up ≥5 vs prev, still grade A/A+
+    const rerating = stocks
+      .filter((s) => typeof s.prevScore === 'number'
+        && (s.score - (s.prevScore as number)) >= 5
+        && (s.grade === 'A+' || s.grade === 'A'))
+      .sort((a, b) => (b.score - (b.prevScore as number)) - (a.score - (a.prevScore as number)));
+
+    // ⚠️ AVOID — grade D OR (grade C + drop ≥5)
+    const avoid = stocks
+      .filter((s) => s.grade === 'D'
+        || (s.grade === 'C' && typeof s.prevScore === 'number' && (s.prevScore - s.score) >= 5))
+      .sort((a, b) => a.score - b.score);
+
+    // Sector rotation
+    const sectorWithDelta = sectorRanked.filter((s) => s.delta !== null) as (typeof sectorRanked[number] & { delta: number })[];
+    const heatingUp = [...sectorWithDelta].sort((a, b) => b.delta - a.delta).slice(0, 5);
+    const cooling   = [...sectorWithDelta].sort((a, b) => a.delta - b.delta).slice(0, 5);
+
+    // Cap-size breakdown (India only — uses ₹ Cr).
+    const indiaWithMcap = stocks.filter((s) => s.market === 'INDIA' && typeof s.marketCapCr === 'number');
+    const capBuckets: { label: string; min: number; max: number; count: number; avgScore: number; total: number }[] = [
+      { label: 'Large Cap (≥ ₹20,000 Cr)',     min: 20000, max: Infinity, count: 0, avgScore: 0, total: 0 },
+      { label: 'Mid Cap (₹5,000–20,000 Cr)',   min: 5000,  max: 20000,    count: 0, avgScore: 0, total: 0 },
+      { label: 'Small Cap (₹500–5,000 Cr)',    min: 500,   max: 5000,     count: 0, avgScore: 0, total: 0 },
+      { label: 'Micro Cap (< ₹500 Cr)',        min: 0,     max: 500,      count: 0, avgScore: 0, total: 0 },
+    ];
+    for (const s of indiaWithMcap) {
+      const mcap = s.marketCapCr as number;
+      for (const b of capBuckets) {
+        if (mcap >= b.min && mcap < b.max) { b.count++; b.total += s.score || 0; break; }
+      }
+    }
+    for (const b of capBuckets) b.avgScore = b.count > 0 ? Math.round(b.total / b.count) : 0;
+    const hasCapData = indiaWithMcap.length > 0;
+
+    // Hidden Gems — score ≥70, NOT on CB, sector avg <60
+    const hiddenGems = stocks
+      .filter((s) => (s.score || 0) >= 70
+        && !isInCb(s.symbol)
+        && (sectorAvgLookup[s.sector || 'Unclassified'] ?? 100) < 60)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10);
+
+    // Concentration risk — % of A/A+ in top-3 sectors
+    const aRoster = stocks.filter((s) => s.grade === 'A+' || s.grade === 'A');
+    const aSectorCounts: Record<string, number> = {};
+    for (const s of aRoster) {
+      const sec = s.sector || 'Unclassified';
+      aSectorCounts[sec] = (aSectorCounts[sec] || 0) + 1;
+    }
+    const aSectorRanked = Object.entries(aSectorCounts).sort((a, b) => b[1] - a[1]);
+    const top3Sectors = aSectorRanked.slice(0, 3);
+    const top3Count = top3Sectors.reduce((sum, [, c]) => sum + c, 0);
+    const top3Pct = aRoster.length > 0 ? Math.round((top3Count / aRoster.length) * 100) : 0;
+    const concentrationRisk = top3Pct > 60 && aRoster.length >= 8;
+
+    // Top picks expanded to 25
+    const topPicks = [...stocks].sort((a, b) => b.score - a.score).slice(0, 25);
+
+    const convictionOverlap = stocks.filter((s) => isInCb(s.symbol));
+
+    return {
+      total, grades, avg, p25, p50, p75,
+      sectorRanked, aPlus, aOnly, aTotal, aPct, topPicks, convictionOverlap,
+      histogram, meanDelta, newCount,
+      strongBuy, rerating, avoid,
+      heatingUp, cooling,
+      capBuckets, hasCapData,
+      hiddenGems,
+      top3Sectors, top3Pct, concentrationRisk,
+    };
   }, [stocks, convictionSet]);
 
   const cardStyle: React.CSSProperties = {
@@ -7807,29 +7950,297 @@ function MultibaggerAnalytics({
         })}
       </div>
 
-      {/* ── STATS STRIP ─────────────────────────────────────────────────── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
+      {/* ── STATS STRIP (PATCH 0548: 10-KPI grid) ───────────────────────── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
         <div style={cardStyle}>
-          <div style={labelStyle}>Total stocks loaded</div>
+          <div style={labelStyle}>Total stocks</div>
           <div style={{ fontSize: 22, fontWeight: 900, color: '#22D3EE', fontVariantNumeric: 'tabular-nums' }}>{stats.total}</div>
         </div>
         <div style={cardStyle}>
-          <div style={labelStyle}>Avg score</div>
-          <div style={{ fontSize: 22, fontWeight: 900, color: '#10B981', fontVariantNumeric: 'tabular-nums' }}>{stats.avg}</div>
+          <div style={labelStyle}>Avg / Median score</div>
+          <div style={{ fontSize: 20, fontWeight: 900, color: '#10B981', fontVariantNumeric: 'tabular-nums' }}>
+            {stats.avg} <span style={{ color: '#6B7A8D', fontSize: 13 }}>/ {stats.p50}</span>
+          </div>
         </div>
         <div style={cardStyle}>
-          <div style={labelStyle}>A / A+ grade count</div>
-          <div style={{ fontSize: 22, fontWeight: 900, color: '#F59E0B', fontVariantNumeric: 'tabular-nums' }}>{stats.aPlus}</div>
+          <div style={labelStyle}>P75 / P25 thresholds</div>
+          <div style={{ fontSize: 18, fontWeight: 900, color: '#3B82F6', fontVariantNumeric: 'tabular-nums' }}>
+            {stats.p75} <span style={{ color: '#6B7A8D', fontSize: 13 }}>/ {stats.p25}</span>
+          </div>
         </div>
         <div style={cardStyle}>
-          <div style={labelStyle}>Conviction Beats overlap</div>
+          <div style={labelStyle}>A+ / A counts</div>
+          <div style={{ fontSize: 20, fontWeight: 900, color: '#10B981', fontVariantNumeric: 'tabular-nums' }}>
+            {stats.aPlus} <span style={{ color: '#22D3EE' }}>/ {stats.aOnly}</span>
+          </div>
+        </div>
+        <div style={cardStyle}>
+          <div style={labelStyle}>% A-or-better</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: '#F59E0B', fontVariantNumeric: 'tabular-nums' }}>{stats.aPct}%</div>
+        </div>
+        <div style={cardStyle}>
+          <div style={labelStyle}>Conviction overlap</div>
           <div style={{ fontSize: 22, fontWeight: 900, color: '#EC4899', fontVariantNumeric: 'tabular-nums' }}>{stats.convictionOverlap.length}</div>
         </div>
         <div style={cardStyle}>
           <div style={labelStyle}>Sectors represented</div>
           <div style={{ fontSize: 22, fontWeight: 900, color: '#8B5CF6', fontVariantNumeric: 'tabular-nums' }}>{stats.sectorRanked.length}</div>
         </div>
+        <div style={cardStyle}>
+          <div style={labelStyle}>New since last upload</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: '#06B6D4', fontVariantNumeric: 'tabular-nums' }}>{stats.newCount}</div>
+        </div>
+        <div style={cardStyle}>
+          <div style={labelStyle}>Mean Δ vs last upload</div>
+          <div style={{
+            fontSize: 22, fontWeight: 900,
+            color: stats.meanDelta > 0 ? '#10B981' : stats.meanDelta < 0 ? '#EF4444' : '#94A3B8',
+            fontVariantNumeric: 'tabular-nums',
+          }}>
+            {stats.meanDelta > 0 ? '▲ +' : stats.meanDelta < 0 ? '▼ ' : '• '}{Math.abs(stats.meanDelta).toFixed(1)}
+          </div>
+        </div>
       </div>
+
+      {/* ── CONCENTRATION RISK BANNER (PATCH 0548) ──────────────────────── */}
+      {stats.concentrationRisk && (
+        <div style={{
+          border: '1px solid #F59E0B60', backgroundColor: '#F59E0B10',
+          borderRadius: 6, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12,
+        }}>
+          <span style={{ fontSize: 18 }}>⚠</span>
+          <div style={{ flex: 1, fontSize: 12, color: '#F59E0B', fontWeight: 600, lineHeight: 1.5 }}>
+            <span style={{ fontWeight: 800 }}>Concentration risk:</span>{' '}
+            {stats.top3Pct}% of your A-grade names sit in{' '}
+            {stats.top3Sectors.map(([sec, n]) => (
+              <span key={sec} style={{ fontWeight: 700 }}>{sec} ({n}){', '}</span>
+            ))}
+            <span style={{ color: '#CBD5E1', fontWeight: 500 }}>— diversify exposure across sectors to avoid single-cycle drawdown.</span>
+          </div>
+        </div>
+      )}
+
+      {/* ── DECISION-READY BUCKETS (PATCH 0548) ─────────────────────────── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12 }}>
+        {/* STRONG BUY */}
+        <div style={{ ...cardStyle, borderColor: '#10B98140' }}>
+          <div style={{ fontSize: 13, color: '#10B981', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+            🎯 STRONG BUY ({stats.strongBuy.length})
+          </div>
+          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.45 }}>
+            Grade A/A+, on Conviction Beats, sector avg ≥ 65.
+          </div>
+          {stats.strongBuy.length === 0 ? (
+            <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic' }}>No names meet all three gates yet.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+              {stats.strongBuy.slice(0, 8).map((s) => (
+                <a key={s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', borderRadius: 4,
+                    border: '1px solid #10B98130', background: '#10B98108', textDecoration: 'none' }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', flex: 1 }}>{s.symbol}</span>
+                  <span style={{ fontSize: 11, color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}</span>
+                  <span style={{ fontSize: 9, color: '#94A3B8', maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sector || '—'}</span>
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* RE-RATING */}
+        <div style={{ ...cardStyle, borderColor: '#22D3EE40' }}>
+          <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+            📈 RE-RATING in progress ({stats.rerating.length})
+          </div>
+          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.45 }}>
+            Score jumped ≥ 5 vs last upload, still grade A/A+.
+          </div>
+          {stats.rerating.length === 0 ? (
+            <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic' }}>No re-rating moves yet — upload a fresh CSV to compare.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+              {stats.rerating.slice(0, 8).map((s) => {
+                const delta = s.score - (s.prevScore as number);
+                return (
+                  <a key={s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', borderRadius: 4,
+                      border: '1px solid #22D3EE30', background: '#22D3EE08', textDecoration: 'none' }}>
+                    <span style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', flex: 1 }}>{s.symbol}</span>
+                    <span style={{ fontSize: 10, color: '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>{s.prevScore} →</span>
+                    <span style={{ fontSize: 11, color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}</span>
+                    <span style={{ fontSize: 10, color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>▲+{delta}</span>
+                  </a>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* AVOID / TRIM */}
+        <div style={{ ...cardStyle, borderColor: '#EF444440' }}>
+          <div style={{ fontSize: 13, color: '#EF4444', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+            ⚠️ AVOID / TRIM ({stats.avoid.length})
+          </div>
+          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.45 }}>
+            Grade D, or grade C with ≥ 5-point drop.
+          </div>
+          {stats.avoid.length === 0 ? (
+            <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic' }}>Clean roster — no warning candidates.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+              {stats.avoid.slice(0, 5).map((s) => {
+                const delta = typeof s.prevScore === 'number' ? s.score - s.prevScore : null;
+                return (
+                  <a key={s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', borderRadius: 4,
+                      border: '1px solid #EF444430', background: '#EF444408', textDecoration: 'none' }}>
+                    <span style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', flex: 1 }}>{s.symbol}</span>
+                    <span style={{ fontSize: 11, color: '#EF4444', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score} {s.grade}</span>
+                    {delta !== null && delta < 0 && (
+                      <span style={{ fontSize: 10, color: '#EF4444', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>▼{delta}</span>
+                    )}
+                  </a>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── SECTOR ROTATION (PATCH 0548) ─────────────────────────────────── */}
+      {(stats.heatingUp.length > 0 || stats.cooling.length > 0) && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12 }}>
+          <div style={cardStyle}>
+            <div style={{ fontSize: 13, color: '#10B981', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+              🔥 SECTORS HEATING UP
+            </div>
+            <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10 }}>Biggest avg-score gains vs last upload.</div>
+            {stats.heatingUp.length === 0 ? (
+              <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic' }}>No sectors with prev-score baseline.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                {stats.heatingUp.map((s) => (
+                  <div key={s.sector} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', borderRadius: 4, border: '1px solid #10B98120' }}>
+                    <span style={{ fontSize: 11, color: '#E6EDF3', fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sector}</span>
+                    <span style={{ fontSize: 10, color: '#6B7A8D', fontVariantNumeric: 'tabular-nums' }}>{s.prevAvg} → {s.avgScore}</span>
+                    <span style={{ fontSize: 10, color: '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>n={s.count}</span>
+                    <span style={{ fontSize: 11, color: '#10B981', fontWeight: 800, fontVariantNumeric: 'tabular-nums', minWidth: 40, textAlign: 'right' }}>▲+{s.delta}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div style={cardStyle}>
+            <div style={{ fontSize: 13, color: '#EF4444', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+              ❄️ SECTORS COOLING
+            </div>
+            <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10 }}>Biggest avg-score drops vs last upload.</div>
+            {stats.cooling.length === 0 ? (
+              <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic' }}>No sectors with prev-score baseline.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                {stats.cooling.map((s) => (
+                  <div key={s.sector} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', borderRadius: 4, border: '1px solid #EF444420' }}>
+                    <span style={{ fontSize: 11, color: '#E6EDF3', fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sector}</span>
+                    <span style={{ fontSize: 10, color: '#6B7A8D', fontVariantNumeric: 'tabular-nums' }}>{s.prevAvg} → {s.avgScore}</span>
+                    <span style={{ fontSize: 10, color: '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>n={s.count}</span>
+                    <span style={{ fontSize: 11, color: s.delta < 0 ? '#EF4444' : '#94A3B8', fontWeight: 800, fontVariantNumeric: 'tabular-nums', minWidth: 40, textAlign: 'right' }}>
+                      {s.delta < 0 ? '▼' : '•'}{s.delta}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── SCORE HISTOGRAM (PATCH 0548) ────────────────────────────────── */}
+      <div style={cardStyle}>
+        <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+          📊 SCORE HISTOGRAM
+        </div>
+        <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10 }}>
+          Shape of your universe — bimodal? Top-heavy? Long tail?
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {(() => {
+            const maxCount = Math.max(1, ...stats.histogram.map((b) => b.count));
+            return stats.histogram.map((b) => {
+              const pct = stats.total > 0 ? Math.round((b.count / stats.total) * 100) : 0;
+              const widthPct = Math.round((b.count / maxCount) * 100);
+              const tone = b.min >= 80 ? '#10B981' : b.min >= 70 ? '#22D3EE' : b.min >= 60 ? '#3B82F6'
+                : b.min >= 50 ? '#F59E0B' : b.min >= 40 ? '#94A3B8' : '#EF4444';
+              return (
+                <div key={b.bin} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontSize: 11, color: '#6B7A8D', fontWeight: 700, minWidth: 50, fontVariantNumeric: 'tabular-nums' }}>{b.bin}</span>
+                  <span style={{ fontSize: 11, color: '#94A3B8', minWidth: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{b.count}</span>
+                  <div style={{ flex: 1, height: 8, background: '#1A2540', borderRadius: 4, overflow: 'hidden' }}>
+                    <div style={{ width: `${widthPct}%`, height: '100%', background: tone }} />
+                  </div>
+                  <span style={{ fontSize: 11, color: tone, fontWeight: 700, minWidth: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{pct}%</span>
+                </div>
+              );
+            });
+          })()}
+        </div>
+      </div>
+
+      {/* ── CAP-SIZE BREAKDOWN (PATCH 0548, India only) ─────────────────── */}
+      {stats.hasCapData && (
+        <div style={cardStyle}>
+          <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+            🏛 CAP-SIZE BREAKDOWN (India)
+          </div>
+          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10 }}>
+            Balance your portfolio concentration across size buckets.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
+            {stats.capBuckets.map((b) => {
+              const tone = b.avgScore >= 70 ? '#10B981' : b.avgScore >= 55 ? '#22D3EE' : b.avgScore >= 40 ? '#F59E0B' : '#94A3B8';
+              return (
+                <div key={b.label} style={{ padding: '8px 10px', border: '1px solid #1A2540', borderRadius: 4 }}>
+                  <div style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 700, marginBottom: 4 }}>{b.label}</div>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                    <span style={{ fontSize: 18, fontWeight: 900, color: '#E6EDF3', fontVariantNumeric: 'tabular-nums' }}>{b.count}</span>
+                    <span style={{ fontSize: 10, color: '#94A3B8' }}>stocks</span>
+                    <span style={{ marginLeft: 'auto', fontSize: 12, color: tone, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>avg {b.avgScore}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {!stats.hasCapData && scope !== 'USA' && (
+        <div style={{ fontSize: 10, color: '#6B7A8D', fontStyle: 'italic', padding: '0 4px' }}>
+          (Cap-size breakdown skipped — no market-cap data in current upload.)
+        </div>
+      )}
+
+      {/* ── HIDDEN GEMS (PATCH 0548) ────────────────────────────────────── */}
+      {stats.hiddenGems.length > 0 && (
+        <div style={cardStyle}>
+          <div style={{ fontSize: 13, color: '#A78BFA', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+            💎 HIDDEN GEMS ({stats.hiddenGems.length})
+          </div>
+          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.5 }}>
+            Score ≥ 70, not yet on Conviction Beats, in sectors with avg &lt; 60 —
+            <span style={{ color: '#CBD5E1' }}> they passed your quality bar but the rest of their sector hasn't moved. Alpha window.</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 6 }}>
+            {stats.hiddenGems.map((s) => (
+              <a key={s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 4,
+                  border: '1px solid #A78BFA40', background: '#A78BFA10', textDecoration: 'none' }}>
+                <span style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{s.symbol}</span>
+                <span style={{ fontSize: 10, color: '#A78BFA', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}</span>
+                <span style={{ fontSize: 9, color: '#94A3B8', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sector || '—'}</span>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── GRADE DISTRIBUTION ──────────────────────────────────────────── */}
       <div style={cardStyle}>
@@ -7885,10 +8296,10 @@ function MultibaggerAnalytics({
         </div>
       </div>
 
-      {/* ── TOP 10 BY SCORE ─────────────────────────────────────────────── */}
+      {/* ── TOP 25 BY SCORE (PATCH 0548 — expanded + Δ columns) ─────────── */}
       <div style={cardStyle}>
         <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 10 }}>
-          🏆 TOP 10 BY SCORE
+          🏆 TOP 25 BY SCORE
         </div>
         <div style={{ border: '1px solid #1A2540', borderRadius: 4, overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
@@ -7897,7 +8308,9 @@ function MultibaggerAnalytics({
                 <th style={{ padding: '6px 10px', textAlign: 'left', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>RANK</th>
                 <th style={{ padding: '6px 10px', textAlign: 'left', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>TICKER</th>
                 <th style={{ padding: '6px 10px', textAlign: 'left', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>SECTOR</th>
+                <th style={{ padding: '6px 10px', textAlign: 'right', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>PREV</th>
                 <th style={{ padding: '6px 10px', textAlign: 'right', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>SCORE</th>
+                <th style={{ padding: '6px 10px', textAlign: 'right', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>Δ</th>
                 <th style={{ padding: '6px 10px', textAlign: 'center', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>GRADE</th>
                 <th style={{ padding: '6px 10px', textAlign: 'center', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>MKT</th>
               </tr>
@@ -7905,9 +8318,13 @@ function MultibaggerAnalytics({
             <tbody>
               {stats.topPicks.map((s, i) => {
                 const inCb = convictionSet.has(s.symbol.toUpperCase().replace(/\.(NS|BO)$/i, ''));
+                const hasPrev = typeof s.prevScore === 'number';
+                const delta = hasPrev ? s.score - (s.prevScore as number) : null;
+                const deltaColor = delta === null ? '#94A3B8' : delta > 0 ? '#10B981' : delta < 0 ? '#EF4444' : '#94A3B8';
+                const deltaSym = delta === null ? 'NEW' : delta > 0 ? `▲+${delta}` : delta < 0 ? `▼${delta}` : '•0';
                 return (
                   <tr key={s.symbol + i} style={{ borderTop: '1px solid #1A2540' }}>
-                    <td style={{ padding: '6px 10px', color: '#6B7A8D' }}>{i + 1}</td>
+                    <td style={{ padding: '6px 10px', color: '#6B7A8D', fontVariantNumeric: 'tabular-nums' }}>{i + 1}</td>
                     <td style={{ padding: '6px 10px', color: '#E6EDF3', fontWeight: 700, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
                       <a href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`} style={{ color: '#E6EDF3', textDecoration: 'none' }}>
                         {s.symbol}
@@ -7915,7 +8332,9 @@ function MultibaggerAnalytics({
                       {inCb && <span title="In Conviction Beats" style={{ marginLeft: 5, fontSize: 10, color: '#F59E0B' }}>🏆</span>}
                     </td>
                     <td style={{ padding: '6px 10px', color: '#94A3B8', fontSize: 11 }}>{s.sector || '—'}</td>
+                    <td style={{ padding: '6px 10px', textAlign: 'right', color: '#6B7A8D', fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>{hasPrev ? s.prevScore : '—'}</td>
                     <td style={{ padding: '6px 10px', textAlign: 'right', color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}</td>
+                    <td style={{ padding: '6px 10px', textAlign: 'right', color: deltaColor, fontWeight: 700, fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>{deltaSym}</td>
                     <td style={{ padding: '6px 10px', textAlign: 'center', color: s.grade === 'A+' ? '#10B981' : '#22D3EE', fontWeight: 700 }}>{s.grade}</td>
                     <td style={{ padding: '6px 10px', textAlign: 'center', color: s.market === 'INDIA' ? '#10B981' : '#22D3EE', fontSize: 10, fontWeight: 700 }}>{s.market === 'INDIA' ? '🇮🇳' : '🇺🇸'}</td>
                   </tr>
