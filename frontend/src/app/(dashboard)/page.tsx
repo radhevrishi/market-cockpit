@@ -370,9 +370,10 @@ export default function HomeDashboard() {
         setNetLoading((n) => ({ ...n, bottleneck: false }));
       });
 
-      // Earnings — PATCH 0611. Pull today + last 2 trading days, prioritise
-      // BLOCKBUSTER tier so the home dashboard always shows the heaviest hits
-      // even when today is dry. Label includes the date range used.
+      // Earnings — PATCH 0615. Pull today + last 2 trading days, filter to
+      // BLOCKBUSTER + STRONG only (drop MIXED/AVOID — those clutter the home
+      // dashboard). Sort by tier+score, dedup by ticker, slice to top 8.
+      // Label reflects the date range used: 'today' / 'yesterday' / explicit date.
       (async () => {
         const tradingDays = (() => {
           const out: string[] = [];
@@ -395,10 +396,18 @@ export default function HomeDashboard() {
           if (cancelled) return;
           const j = await safe<any>(`/api/v1/earnings/graded?date=${date}`);
           if (cancelled) return;
-          const dayCards = flattenGraded(j).filter((c: any) => c?.ticker).map((c: any) => ({ ...c, _date: date }));
+          const dayCards = flattenGraded(j)
+            .filter((c: any) => c?.ticker)
+            // PATCH 0615 — filter to BLOCKBUSTER + STRONG only.
+            // MIXED and AVOID don't belong on a home dashboard.
+            .filter((c: any) => {
+              const t = (c.tier || '').toUpperCase();
+              return t === 'BLOCKBUSTER' || t === 'STRONG';
+            })
+            .map((c: any) => ({ ...c, _date: date }));
           allCards.push(...dayCards);
         }
-        // Sort: BLOCKBUSTER first, then by tier rank, then score
+        // Sort: BLOCKBUSTER first, then by score within tier
         allCards.sort((a: any, b: any) => {
           const aBlock = (a.tier || '').toUpperCase() === 'BLOCKBUSTER' ? 0 : 1;
           const bBlock = (b.tier || '').toUpperCase() === 'BLOCKBUSTER' ? 0 : 1;
@@ -414,13 +423,22 @@ export default function HomeDashboard() {
           seen.add(k);
           return true;
         });
+        const today = tradingDays[0];
+        const yesterday = tradingDays[1];
         const label = (() => {
           if (deduped.length === 0) return 'today';
-          const dates = Array.from(new Set(deduped.map((c: any) => c._date))).sort();
-          if (dates.length === 1) return dates[0] === tradingDays[0] ? 'today' : `${dates[0]}`;
+          const dates = Array.from(new Set(deduped.map((c: any) => c._date))).sort().reverse();
+          if (dates.length === 1) {
+            if (dates[0] === today) return 'today';
+            if (dates[0] === yesterday) return 'yesterday';
+            return dates[0];
+          }
+          // multi-date: name the freshest end of the range
+          if (dates[0] === today) return `today + ${dates.length - 1} more`;
+          if (dates[0] === yesterday) return `yesterday + ${dates.length - 1} more`;
           return `last ${dates.length} trading days`;
         })();
-        setData((d) => ({ ...d, earningsToday: deduped.slice(0, 12), earningsLabel: label }));
+        setData((d) => ({ ...d, earningsToday: deduped.slice(0, 8), earningsLabel: label }));
         setNetLoading((n) => ({ ...n, earnings: false }));
       })();
     })();
@@ -731,22 +749,37 @@ export default function HomeDashboard() {
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>
                 No filings graded in last 3 trading days. <Link href="/earnings-opportunities" style={{ color: '#22D3EE' }}>Open Earnings Ops →</Link>
               </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                {data.earningsToday.slice(0, 7).map((c) => {
-                  const tierColor = c.tier === 'BLOCKBUSTER' ? '#10B981' : c.tier === 'STRONG' ? '#22D3EE' : c.tier === 'MIXED' ? '#F59E0B' : '#EF4444';
-                  return (
-                    <Link key={c.ticker} href={`/stock-sheet?ticker=${encodeURIComponent(c.ticker)}`}
-                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
-                      <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.company || c.ticker}</span>
-                      <span style={{ fontSize: 9, fontWeight: 800, color: tierColor, padding: '1px 5px', borderRadius: 3, background: `${tierColor}22` }}>
-                        {c.tier} {c.composite_score}
-                      </span>
-                    </Link>
-                  );
-                })}
-              </div>
-            )}
+            ) : (() => {
+              // PATCH 0615 — show inline date chip per card when multiple dates
+              // are mixed in the result, so the user always sees provenance.
+              const multiDay = new Set(data.earningsToday.map((c: any) => (c as any)._date).filter(Boolean)).size > 1;
+              const fmtDay = (iso?: string) => {
+                if (!iso) return '';
+                const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
+                if (!m) return '';
+                return `${m[3]}-${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(m[2])-1]}`;
+              };
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  {data.earningsToday.map((c: any) => {
+                    const tierColor = c.tier === 'BLOCKBUSTER' ? '#10B981' : c.tier === 'STRONG' ? '#22D3EE' : c.tier === 'MIXED' ? '#F59E0B' : '#EF4444';
+                    const date = c._date as string | undefined;
+                    return (
+                      <Link key={c.ticker} href={`/stock-sheet?ticker=${encodeURIComponent(c.ticker)}`}
+                        style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                        <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.company || c.ticker}</span>
+                        {multiDay && date && (
+                          <span style={{ fontSize: 9, color: DIM, fontFamily: 'ui-monospace, monospace' }}>{fmtDay(date)}</span>
+                        )}
+                        <span style={{ fontSize: 9, fontWeight: 800, color: tierColor, padding: '1px 5px', borderRadius: 3, background: `${tierColor}22` }}>
+                          {c.tier} {c.composite_score}
+                        </span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
         </div>
 
