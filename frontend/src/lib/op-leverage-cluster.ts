@@ -31,7 +31,7 @@
 //      EMERGING / WATCH / SKIP based on score + downgrade triggers.
 // ═══════════════════════════════════════════════════════════════════════════
 
-export type ClusterTier = 'HIGH_CONVICTION' | 'EMERGING' | 'WATCH' | 'SKIP';
+export type ClusterTier = 'HIGH_CONVICTION' | 'EMERGING' | 'WATCH' | 'SKIP' | 'DATA_INCOMPLETE';
 
 export interface ClusterResult {
   score: number;                    // 0-100 composite
@@ -204,6 +204,40 @@ function detectDowngrades(row: any): string[] {
 // ── Public API ───────────────────────────────────────────────────────────────
 
 export function computeClusterScore(row: any): ClusterResult {
+  // PATCH 0586 — DATA_INCOMPLETE handling. User reported UTIL 4 / MARG 0
+  // across every row even on the seed names. Root cause: the formula was
+  // scoring rows that lacked the key fundamentals at all, producing
+  // garbage low scores instead of a clear "we can't tell" signal. Now we
+  // gate the score on having a minimum quorum of input fields. When the
+  // quorum is missing we return DATA_INCOMPLETE so the analyst knows to
+  // add the columns to their Screener export rather than thinking the
+  // company is poor quality.
+  const requiredFields = [
+    num(row.roce),
+    num(row.opmTtm) ?? num(row.opmAnn),
+    num(row.yoySalesPct ?? row.salesGrowthQtr ?? row.salesGrowth),
+    num(row.de ?? row.debtToEquity),
+  ];
+  const presentCount = requiredFields.filter(v => typeof v === 'number').length;
+  // Need at least 2 of 4 core fields to compute meaningfully.
+  if (presentCount < 2) {
+    return {
+      score: 0,
+      tier: 'DATA_INCOMPLETE',
+      factors: {
+        utilizationEvidence: 0,
+        marginInflection: 0,
+        bsRepair: 0,
+        demandDurability: 0,
+        valueAddedMix: 0,
+      },
+      downgrades: [],
+      notes: [
+        `Need ROCE, OPM (TTM/Annual), sales growth, D/E in the CSV to score this cluster. Currently ${presentCount}/4 present.`,
+      ],
+    };
+  }
+
   const util = scoreUtilizationEvidence(row);
   const margin = scoreMarginInflection(row);
   const bs = scoreBsRepair(row);
@@ -223,10 +257,16 @@ export function computeClusterScore(row: any): ClusterResult {
   const penalty = Math.min(24, downgrades.length * 8);
   score = Math.max(0, score - penalty);
 
+  // PATCH 0586 — Relaxed tier thresholds. Previously HIGH_CONVICTION
+  // required ≥75 which produced 0 seeds qualifying even on textbook
+  // industrial-capex names. Per user feedback "0 high-conviction
+  // despite 6 curated seeds → broken". New thresholds match the cluster
+  // formula's range better (raw max ~85 after weighting; downgrades
+  // can knock 24pts off, so 65 is a realistic "high conviction" floor).
   let tier: ClusterTier;
-  if (score >= 75) tier = 'HIGH_CONVICTION';
-  else if (score >= 60) tier = 'EMERGING';
-  else if (score >= 45) tier = 'WATCH';
+  if (score >= 65) tier = 'HIGH_CONVICTION';
+  else if (score >= 50) tier = 'EMERGING';
+  else if (score >= 35) tier = 'WATCH';
   else tier = 'SKIP';
 
   const notes: string[] = [util.note, margin.note, bs.note, demand.note, va.note]
@@ -253,10 +293,12 @@ export function isClusterSeed(symbol: string): boolean {
 
 // Color + label per tier — used by the analytics card.
 export const CLUSTER_TIER_META: Record<ClusterTier, { color: string; label: string; emoji: string }> = {
-  HIGH_CONVICTION: { color: '#10b981', label: 'HIGH CONVICTION', emoji: '⭐' },
-  EMERGING:        { color: '#22d3ee', label: 'EMERGING',        emoji: '📈' },
-  WATCH:           { color: '#f59e0b', label: 'WATCH',           emoji: '👁'  },
-  SKIP:            { color: '#94a3b8', label: 'SKIP',            emoji: '◯'  },
+  HIGH_CONVICTION:  { color: '#10b981', label: 'HIGH CONVICTION',  emoji: '⭐' },
+  EMERGING:         { color: '#22d3ee', label: 'EMERGING',         emoji: '📈' },
+  WATCH:            { color: '#f59e0b', label: 'WATCH',            emoji: '👁'  },
+  SKIP:             { color: '#94a3b8', label: 'SKIP',             emoji: '◯'  },
+  // PATCH 0586 — distinct from SKIP. Missing data ≠ poor quality.
+  DATA_INCOMPLETE:  { color: '#a78bfa', label: 'DATA INCOMPLETE',  emoji: '❓' },
 };
 
 // ── Internals ────────────────────────────────────────────────────────────────

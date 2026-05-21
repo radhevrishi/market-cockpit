@@ -7937,12 +7937,27 @@ function MultibaggerAnalytics({
     const meanDelta = deltaN > 0 ? Math.round((deltaSum / deltaN) * 10) / 10 : 0;
 
     // ── Decision buckets ────────────────────────────────────────────────
-    // 🎯 STRONG BUY — grade A/A+, on Conviction Beats, sector hot (≥65 avg)
+    // PATCH 0587 — STRONG BUY criteria RELAXED per user feedback:
+    // was (Grade A/A+ AND on CB AND sector ≥65 avg) — produced only 2 picks
+    // out of 83. New rule: Grade A/A+ AND (on CB OR sector ≥60 avg) AND
+    // clean (≤ 1 red flag). Expected: ~8-12 names of an 83-row universe,
+    // matching realistic portfolio construction.
     const isInCb = (sym: string) => convictionSet.has(stripSym(sym));
     const strongBuy = stocks
-      .filter((s) => (s.grade === 'A+' || s.grade === 'A')
-        && isInCb(s.symbol)
-        && (sectorAvgLookup[s.sector || 'Unclassified'] ?? 0) >= 65)
+      .filter((s) => {
+        if (!(s.grade === 'A+' || s.grade === 'A')) return false;
+        const cb = isInCb(s.symbol);
+        const sectorHot = (sectorAvgLookup[s.sector || 'Unclassified'] ?? 0) >= 60;
+        if (!cb && !sectorHot) return false;
+        const flagTotal = s.redFlagSummary?.total ?? 0;
+        const critical = s.redFlagSummary?.critical ?? 0;
+        const structural = s.redFlagSummary?.structural ?? 0;
+        // Must be reasonably clean. ≤1 medium flag OK; critical or
+        // structural flags disqualify.
+        if (critical > 0 || structural > 0) return false;
+        if (flagTotal > 1) return false;
+        return true;
+      })
       .sort((a, b) => b.score - a.score);
 
     // 📈 RE-RATING — score up ≥5 vs prev, still grade A/A+
@@ -7952,11 +7967,29 @@ function MultibaggerAnalytics({
         && (s.grade === 'A+' || s.grade === 'A'))
       .sort((a, b) => (b.score - (b.prevScore as number)) - (a.score - (a.prevScore as number)));
 
-    // ⚠️ AVOID — grade D OR (grade C + drop ≥5)
+    // PATCH 0587 — Split AVOID into TWO buckets per user feedback:
+    //   - AVOID (Fundamental): true deterioration confirmed (D, C+drop)
+    //     OR critical/structural red flags surfaced.
+    //   - REVIEW (Data): rows where the scorer can't render a confident
+    //     verdict because of missing data (very low scores with no flags,
+    //     usually < 30 with red-flag count = 0). These were silently
+    //     mixed into AVOID and made the bucket look like everything was
+    //     failing when half of it was just "we don't know yet".
+    const looksLikeDataGap = (s: typeof stocks[number]) => {
+      const t = s.redFlagSummary?.total ?? 0;
+      return s.score < 30 && t === 0;
+    };
     const avoid = stocks
-      .filter((s) => s.grade === 'D'
-        || (s.grade === 'C' && typeof s.prevScore === 'number' && (s.prevScore - s.score) >= 5))
+      .filter((s) => !looksLikeDataGap(s) && (
+        s.grade === 'D'
+        || (s.grade === 'C' && typeof s.prevScore === 'number' && (s.prevScore - s.score) >= 5)
+        || ((s.redFlagSummary?.critical ?? 0) > 0)
+      ))
       .sort((a, b) => a.score - b.score);
+    const reviewDataGap = stocks
+      .filter(looksLikeDataGap)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10);
 
     // PATCH 0554 — Decision Bridge replaces the Sectors Heating/Cooling block,
     // which was visually broken without a prior-upload baseline. The bridge
@@ -8135,10 +8168,14 @@ function MultibaggerAnalytics({
         isSeed: isClusterSeed(sym),
       };
     });
-    const clusterRanked = [...clusterEntries].sort((a, b) =>
-      // Seeds float to the top; otherwise sort by cluster score desc.
+    // PATCH 0586 — split scored vs data-incomplete so the analytics card
+    // can show the gap clearly instead of mixing DATA_INCOMPLETE rows into
+    // the low end of the ranking.
+    const clusterRankedAll = [...clusterEntries].sort((a, b) =>
       (b.isSeed ? 1 : 0) - (a.isSeed ? 1 : 0) || b.cluster.score - a.cluster.score
     );
+    const clusterRanked = clusterRankedAll.filter(x => x.cluster.tier !== 'DATA_INCOMPLETE');
+    const clusterIncomplete = clusterRankedAll.filter(x => x.cluster.tier === 'DATA_INCOMPLETE');
     const clusterHighConv = clusterRanked.filter(x => x.cluster.tier === 'HIGH_CONVICTION');
     const clusterEmerging = clusterRanked.filter(x => x.cluster.tier === 'EMERGING');
 
@@ -8216,14 +8253,61 @@ function MultibaggerAnalytics({
       sectorRanked, sectorAvgLookup,
       aPlus, aOnly, aTotal, aPct, topPicks, convictionOverlap,
       histogram, meanDelta, newCount,
-      strongBuy, rerating, avoid,
+      strongBuy, rerating, avoid, reviewDataGap,
+      // PATCH 0588 — Valuation Gateway (PEG / PB-ROE)
+      valuationGate: (() => {
+        const rated = stocks.map((s: any) => {
+          const peg = num(s.peg);
+          const pb = num(s.pb);
+          const roe = num(s.roe);
+          let vScore = 0;
+          const notes: string[] = [];
+          if (typeof peg === 'number') {
+            if (peg < 1.0) { vScore += 15; notes.push(`PEG ${peg.toFixed(2)} (cheap)`); }
+            else if (peg < 1.5) { vScore += 10; notes.push(`PEG ${peg.toFixed(2)}`); }
+            else if (peg < 2.0) { vScore += 5; notes.push(`PEG ${peg.toFixed(2)}`); }
+            else { notes.push(`PEG ${peg.toFixed(2)} (expensive)`); }
+          }
+          if (typeof pb === 'number' && typeof roe === 'number' && pb < 1.5 && roe > 15) {
+            vScore += 5;
+            notes.push(`PB ${pb.toFixed(1)} + ROE ${roe.toFixed(0)}%`);
+          }
+          return { ...s, valuationScore: vScore, valuationNotes: notes.join(' · ') };
+        });
+        // Only surface A-grade names that ALSO clear the valuation gate (score ≥ 10).
+        return rated
+          .filter((s: any) => (s.grade === 'A+' || s.grade === 'A') && s.valuationScore >= 10)
+          .sort((a: any, b: any) => b.valuationScore - a.valuationScore)
+          .slice(0, 12);
+      })(),
+      // PATCH 0589 — Today's Top 3 Buys widget (auto-picked from STRONG BUY
+      // and ADD TO BENCH where the row is NOT already on Conviction Beats —
+      // surface the names you haven't actioned yet).
+      top3Today: (() => {
+        const candidates = [
+          ...strongBuy,
+          ...stocks
+            .filter((s) => (s.grade === 'A+' || s.grade === 'A') && !isInCb(s.symbol))
+            .sort((a, b) => b.score - a.score),
+        ];
+        const seen = new Set<string>();
+        const out: typeof stocks = [];
+        for (const c of candidates) {
+          const key = (c.symbol || '').toUpperCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push(c);
+          if (out.length >= 3) break;
+        }
+        return out;
+      })(),
       // PATCH 0554 — replaces heatingUp / cooling (broken w/o baseline)
       decisionBridge, qualityAudit, tripleConfirmed,
       capBuckets, hasCapData,
       hiddenGems,
       top3Sectors, top3Pct, concentrationRisk,
       // PATCH 0578 — cluster scores + cash-rich lens
-      clusterRanked, clusterHighConv, clusterEmerging,
+      clusterRanked, clusterHighConv, clusterEmerging, clusterIncomplete,
       cashRich,
     };
   }, [stocks, convictionSet, indiaRows, usaRows]);
@@ -8435,6 +8519,46 @@ function MultibaggerAnalytics({
         </div>
       )}
 
+      {/* ── 🚀 TODAY'S TOP 3 BUYS (PATCH 0589) ───────────────────────────
+          Auto-picked headline widget: highest-conviction A+/A names you
+          haven't actioned yet (STRONG BUY ∪ ADD-TO-BENCH minus already
+          on Conviction Beats). Sits at the top of analytics so the
+          analyst sees the next 3 actions before scrolling. */}
+      {stats.top3Today && stats.top3Today.length > 0 && (
+        <div style={{
+          ...cardStyle,
+          borderColor: '#F59E0B70',
+          background: 'linear-gradient(180deg, #F59E0B14 0%, transparent 100%)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 14, color: '#F59E0B', fontWeight: 900, letterSpacing: '0.4px' }}>
+              🚀 TODAY&apos;S TOP {stats.top3Today.length} BUYS
+            </div>
+            <span style={{ fontSize: 10, color: '#F59E0B', background: '#F59E0B22', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>ACTION-READY</span>
+          </div>
+          <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 10, lineHeight: 1.5 }}>
+            The highest-conviction A+/A names you have not yet added to the bench. Open the row in Earnings
+            Opportunities to add, or click the company name to open the stock sheet.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 8 }}>
+            {stats.top3Today.map((s, i) => (
+              <a key={s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
+                style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '10px 12px', borderRadius: 6,
+                  border: '1px solid #F59E0B40', background: '#F59E0B10', textDecoration: 'none' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 16, fontWeight: 900, color: '#F59E0B' }}>#{i + 1}</span>
+                  <TickerCompanyCell ticker={s.symbol} company={s.company} />
+                  <span style={{ fontSize: 12, color: '#10B981', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
+                </div>
+                <span style={{ fontSize: 10, color: '#CBD5E1', lineHeight: 1.4 }}>
+                  {s.sector || '—'} · {reasonFor(s as any, convictionSet.has((s.symbol || '').toUpperCase().replace(/\.(NS|BO)$/i, '')) ? 'STRONG_BUY' : 'ADD')}
+                </span>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* ── DECISION-READY BUCKETS (PATCH 0548) ─────────────────────────── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12 }}>
         {/* STRONG BUY */}
@@ -8536,6 +8660,84 @@ function MultibaggerAnalytics({
           )}
         </div>
       </div>
+
+      {/* ── 🔬 REVIEW · DATA INCOMPLETE (PATCH 0587) ──────────────────────
+          Rows whose composite score landed below 30 but carry no red flags.
+          Almost always means the Screener export was missing core metrics
+          (debtor days / working capital / interest coverage etc.) rather
+          than the business deteriorating. Splitting these out of AVOID
+          per user feedback: "CRAFTSMAN 0D / QPOWER 5D / GARUDA 10D are
+          probably data gaps, not deterioration." */}
+      {stats.reviewDataGap && stats.reviewDataGap.length > 0 && (
+        <div style={{ ...cardStyle, borderColor: '#A78BFA40' }}>
+          <div style={{ fontSize: 13, color: '#A78BFA', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+            🔬 REVIEW · DATA INCOMPLETE ({stats.reviewDataGap.length})
+          </div>
+          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.45 }}>
+            Very low score but no red flags — likely missing data in the CSV (debtor days, working
+            capital, interest coverage). Don&apos;t auto-avoid; verify the row in Screener and re-upload
+            with the missing columns. METRICS_TO_ADD.md lists what to include.
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {stats.reviewDataGap.slice(0, 8).map((s) => (
+              <a key={s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
+                style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '6px 9px', borderRadius: 4,
+                  border: '1px solid #A78BFA30', background: '#A78BFA08', textDecoration: 'none' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <TickerCompanyCell ticker={s.symbol} company={s.company} />
+                  <span style={{ fontSize: 11, color: '#A78BFA', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
+                </div>
+                <span style={{ fontSize: 9.5, color: '#C4B5FD', fontStyle: 'italic', lineHeight: 1.35 }}>
+                  Why review: 0 flags but score &lt; 30 — check Screener export for missing metrics{s.sector ? ` · ${s.sector}` : ''}
+                </span>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── 💎 VALUATION GATEWAY (PATCH 0588) ─────────────────────────────
+          A-grade names that ALSO clear a valuation discipline: PEG <2,
+          plus PB/ROE bonus when PB<1.5 + ROE>15%. Separates "expensive
+          A-grade" (NMDC at 90, MAYURUNIQ at 30 P/E both score A) from
+          "cheap A-grade you can actually buy". Pulled in directly from
+          the existing row fields — no new data required. */}
+      {stats.valuationGate && stats.valuationGate.length > 0 && (
+        <div style={{ ...cardStyle, borderColor: '#22D3EE40', background: 'linear-gradient(180deg, #22D3EE10 0%, transparent 100%)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 800, letterSpacing: '0.4px' }}>
+              💎 VALUATION GATEWAY ({stats.valuationGate.length})
+            </div>
+            <span style={{ fontSize: 10, color: '#22D3EE', background: '#22D3EE22', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>
+              A-GRADE + CHEAP
+            </span>
+          </div>
+          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.5 }}>
+            A-grade names that <strong>also clear the valuation gate</strong> (PEG &lt; 2 + optional
+            PB/ROE bonus). Separates expensive quality from buyable quality. PEG &lt;1 = 15pts,
+            &lt;1.5 = 10pts, &lt;2 = 5pts; PB&lt;1.5 with ROE&gt;15% adds 5pts. Minimum 10 to qualify.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))', gap: 6 }}>
+            {stats.valuationGate.map((s: any) => (
+              <a key={s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent((s.symbol || '').replace(/\.(NS|BO)$/i, ''))}`}
+                title={`Valuation score ${s.valuationScore}/20 — ${s.valuationNotes || 'PEG / PB / ROE composite'}`}
+                style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '7px 10px', borderRadius: 4,
+                  border: '1px solid #22D3EE40', background: '#22D3EE10', textDecoration: 'none' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <TickerCompanyCell ticker={s.symbol} company={s.company} />
+                  <span style={{ fontSize: 10, color: '#22D3EE', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
+                  <span style={{ fontSize: 9, color: '#22D3EE', fontWeight: 800, padding: '1px 5px', borderRadius: 3, background: '#22D3EE22' }}>
+                    V {s.valuationScore}
+                  </span>
+                </div>
+                <span style={{ fontSize: 9.5, color: '#67E8F9', fontStyle: 'italic', lineHeight: 1.35 }}>
+                  {s.valuationNotes || '—'}
+                </span>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── 🎯 TRIPLE-CONFIRMED (PATCH 0554) ─────────────────────────────────
           Scored A+/A  ∩  Conviction Beats bench  ∩  decision = BUY / WATCH.
@@ -8873,6 +9075,36 @@ function MultibaggerAnalytics({
           {stats.clusterRanked.length > 18 && (
             <div style={{ fontSize: 10, color: '#6B7A8D', marginTop: 6, fontStyle: 'italic' }}>
               Showing top 18 of {stats.clusterRanked.length} ranked. Lower tiers (WATCH / SKIP) hidden.
+            </div>
+          )}
+          {/* PATCH 0586 — DATA INCOMPLETE block. User reported all rows
+              showing UTIL 4 / MARG 0 — root cause was that rows lacking
+              key fundamentals were silently scored at 0. Now those rows
+              are clearly labeled and surfaced as a separate strip so the
+              analyst knows to add the missing columns to their Screener
+              export rather than thinking the company is poor quality. */}
+          {stats.clusterIncomplete && stats.clusterIncomplete.length > 0 && (
+            <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px dashed #1A2540' }}>
+              <div style={{ fontSize: 11, color: '#A78BFA', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 6 }}>
+                ❓ DATA INCOMPLETE ({stats.clusterIncomplete.length})
+              </div>
+              <div style={{ fontSize: 10, color: '#94A3B8', marginBottom: 8 }}>
+                Cluster formula needs at least 2 of: ROCE · OPM (TTM/Annual) · sales growth · D/E.
+                Add the missing columns to the Screener export and re-upload to score these.
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {stats.clusterIncomplete.slice(0, 18).map((c) => (
+                  <a key={c.symbol} href={`/stock-sheet?ticker=${encodeURIComponent((c.symbol || '').replace(/\.(NS|BO)$/i, ''))}`}
+                    style={{ fontSize: 10, fontWeight: 700, color: '#A78BFA',
+                      border: '1px solid #A78BFA30', backgroundColor: '#A78BFA08',
+                      padding: '3px 8px', borderRadius: 4, textDecoration: 'none' }}>
+                    {c.isSeed && '⭐ '}{c.company || c.symbol}
+                  </a>
+                ))}
+                {stats.clusterIncomplete.length > 18 && (
+                  <span style={{ fontSize: 10, color: '#6B7A8D', fontStyle: 'italic' }}>+ {stats.clusterIncomplete.length - 18} more</span>
+                )}
+              </div>
             </div>
           )}
         </div>

@@ -36,10 +36,12 @@ interface NewsArticleLite {
   ticker_symbols?: Array<string | { ticker: string }>;
 }
 
+// PATCH 0590 — Fix empty page: previous URL had ?search=ICRA+CRISIL+CARE+rating
+// which the /api/v1/news endpoint treats as a literal phrase match (no OR-tokenising),
+// silently zero results. Drop the server-side filter and let the client-side
+// regex detector handle classification across the broader news payload.
 function fetchNews(): Promise<NewsArticleLite[]> {
-  return fetch('/api/v1/news?limit=500&search=ICRA+CRISIL+CARE+rating', {
-    cache: 'no-store',
-  })
+  return fetch('/api/v1/news?limit=500', { cache: 'no-store' })
     .then(r => r.json())
     .then(j => Array.isArray(j) ? j : (j?.articles || j?.data || []))
     .catch(() => []);
