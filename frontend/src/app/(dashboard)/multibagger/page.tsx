@@ -7834,7 +7834,9 @@ function MultibaggerAnalytics({
       } : { critical: 0, structural: 0, cyclical: 0, medium: 0, total: 0 };
       return {
         symbol: r.symbol,
-        company: (r as any).companyName,
+        // PATCH 0585 — Field is `company` on parsed India rows, not `companyName`.
+        // Earlier mismatch silently emptied every company display across analytics.
+        company: (r as any).company,
         score: r.score,
         grade: r.grade,
         sector: (r as any).sector,
@@ -7846,7 +7848,9 @@ function MultibaggerAnalytics({
     });
     const us = (usaRows || []).map((r: any) => ({
       symbol: r.symbol,
-      company: r.companyName,
+      // PATCH 0585 — Field is `company` on parsed USA rows (parser stores
+      // `company: String(row['Description']??'').trim()`), not `companyName`.
+      company: r.company || r.companyName,
       score: r.score,
       grade: r.grade,
       sector: r.sector,
@@ -8123,7 +8127,7 @@ function MultibaggerAnalytics({
       const sym = (r.symbol || '').toUpperCase();
       return {
         symbol: r.symbol,
-        company: r.companyName,
+        company: r.company, // PATCH 0585 — was r.companyName (wrong field)
         sector: r.sector,
         score: r.score,
         grade: r.grade,
@@ -8166,7 +8170,7 @@ function MultibaggerAnalytics({
         : 'low debt';
       return {
         symbol: r.symbol,
-        company: r.companyName,
+        company: r.company, // PATCH 0585 — was r.companyName (wrong field)
         sector: r.sector,
         score: r.score,
         grade: r.grade,
@@ -8194,7 +8198,7 @@ function MultibaggerAnalytics({
         : 'low debt';
       return {
         symbol: r.symbol,
-        company: r.companyName,
+        company: r.company || r.companyName, // PATCH 0585 — was r.companyName (wrong field)
         sector: r.sector,
         score: r.score,
         grade: r.grade,
@@ -8293,15 +8297,21 @@ function MultibaggerAnalytics({
     return '';
   };
 
-  // PATCH 0573 — Stacked ticker + company cell. Used in every decision
-  // bucket card so the analyst sees company name without hovering. Each
-  // row has fixed flex:1 so the right-side chips (score / grade / reason)
-  // stay aligned across the bucket grid.
+  // PATCH 0573 / 0585 — Stacked cell. After user feedback (0585), company
+  // name is now the primary line (12px bold sans) and the ticker is the
+  // smaller monospaced badge below it. Earlier version had it flipped and
+  // the parser-field bug (`r.companyName` vs `r.company`) made the company
+  // never render at all — analytics looked ticker-only. Both fixed.
   const TickerCompanyCell = ({ ticker, company }: { ticker: string; company?: string }) => (
     <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
-      <span style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ticker}</span>
-      {company && (
-        <span style={{ fontSize: 9.5, color: '#94A3B8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: 500 }}>{company}</span>
+      {company ? (
+        <>
+          <span style={{ fontSize: 12, fontWeight: 700, color: '#E6EDF3', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{company}</span>
+          <span style={{ fontSize: 9, color: '#94A3B8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 600, letterSpacing: '0.3px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ticker}</span>
+        </>
+      ) : (
+        // No company name available — fall back to ticker as the headline.
+        <span style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ticker}</span>
       )}
     </div>
   );
@@ -8709,7 +8719,7 @@ function MultibaggerAnalytics({
                       <a key={s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
                         style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px', borderRadius: 3,
                           border: '1px solid #F59E0B25', background: '#F59E0B08', textDecoration: 'none' }}>
-                        <span style={{ fontSize: 10, fontWeight: 700, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', flex: 1 }}>{s.symbol}</span>
+                        <TickerCompanyCell ticker={s.symbol} company={s.company} />
                         {(s.redFlagSummary?.critical ?? 0) > 0 && (
                           <span style={{ fontSize: 9, color: '#EF4444', fontWeight: 700 }}>🛑{s.redFlagSummary?.critical}</span>
                         )}
@@ -8755,7 +8765,7 @@ function MultibaggerAnalytics({
                     <a key={`fcf-${s.symbol}`} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
                       style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px', borderRadius: 3,
                         border: '1px solid #EF444425', background: '#EF444408', textDecoration: 'none' }}>
-                      <span style={{ fontSize: 10, fontWeight: 700, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', flex: 1 }}>{s.symbol}</span>
+                      <TickerCompanyCell ticker={s.symbol} company={s.company} />
                       <span style={{ fontSize: 9, color: '#EF4444', fontWeight: 700 }}>🚨 FCF</span>
                     </a>
                   ))}
@@ -8763,7 +8773,7 @@ function MultibaggerAnalytics({
                     <a key={`pr-${s.symbol}`} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
                       style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px', borderRadius: 3,
                         border: '1px solid #F59E0B25', background: '#F59E0B08', textDecoration: 'none' }}>
-                      <span style={{ fontSize: 10, fontWeight: 700, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', flex: 1 }}>{s.symbol}</span>
+                      <TickerCompanyCell ticker={s.symbol} company={s.company} />
                       <span style={{ fontSize: 9, color: '#F59E0B', fontWeight: 700 }}>🌡 STR</span>
                     </a>
                   ))}
@@ -8771,7 +8781,7 @@ function MultibaggerAnalytics({
                     <a key={`er-${s.symbol}`} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
                       style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px', borderRadius: 3,
                         border: '1px solid #A78BFA25', background: '#A78BFA08', textDecoration: 'none' }}>
-                      <span style={{ fontSize: 10, fontWeight: 700, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', flex: 1 }}>{s.symbol}</span>
+                      <TickerCompanyCell ticker={s.symbol} company={s.company} />
                       <span style={{ fontSize: 9, color: '#A78BFA', fontWeight: 700 }}>⚠ {s.earningsProximityDays}d</span>
                     </a>
                   ))}
@@ -9069,10 +9079,13 @@ function MultibaggerAnalytics({
         <div style={{ border: '1px solid #1A2540', borderRadius: 4, overflow: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>
+              {/* PATCH 0585 — COMPANY first, TICKER second per user feedback.
+                  Company name is the primary identity; ticker is the small
+                  accessory for power-users. Score column kept right. */}
               <tr style={{ backgroundColor: '#0A1422' }}>
                 <th style={{ padding: '6px 10px', textAlign: 'left', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>RANK</th>
-                <th style={{ padding: '6px 10px', textAlign: 'left', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>TICKER</th>
                 <th style={{ padding: '6px 10px', textAlign: 'left', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>COMPANY</th>
+                <th style={{ padding: '6px 10px', textAlign: 'left', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>TICKER</th>
                 <th style={{ padding: '6px 10px', textAlign: 'left', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>SECTOR</th>
                 <th style={{ padding: '6px 10px', textAlign: 'right', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>PREV</th>
                 <th style={{ padding: '6px 10px', textAlign: 'right', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>SCORE</th>
@@ -9091,13 +9104,13 @@ function MultibaggerAnalytics({
                 return (
                   <tr key={s.symbol + i} style={{ borderTop: '1px solid #1A2540' }}>
                     <td style={{ padding: '6px 10px', color: '#6B7A8D', fontVariantNumeric: 'tabular-nums' }}>{i + 1}</td>
-                    <td style={{ padding: '6px 10px', color: '#E6EDF3', fontWeight: 700, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                    <td title={s.company || s.symbol} style={{ padding: '6px 10px', color: '#E6EDF3', fontSize: 12, fontWeight: 700, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       <a href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`} style={{ color: '#E6EDF3', textDecoration: 'none' }}>
-                        {s.symbol}
+                        {s.company || s.symbol}
                       </a>
                       {inCb && <span title="In Conviction Beats" style={{ marginLeft: 5, fontSize: 10, color: '#F59E0B' }}>🏆</span>}
                     </td>
-                    <td title={s.company || ''} style={{ padding: '6px 10px', color: '#CBD5E1', fontSize: 11, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.company || '—'}</td>
+                    <td style={{ padding: '6px 10px', color: '#94A3B8', fontSize: 10, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 600 }}>{s.symbol}</td>
                     <td style={{ padding: '6px 10px', color: '#94A3B8', fontSize: 11 }}>{s.sector || '—'}</td>
                     <td style={{ padding: '6px 10px', textAlign: 'right', color: '#6B7A8D', fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>{hasPrev ? s.prevScore : '—'}</td>
                     <td style={{ padding: '6px 10px', textAlign: 'right', color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}</td>
