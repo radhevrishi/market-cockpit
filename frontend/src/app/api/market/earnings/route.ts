@@ -739,7 +739,32 @@ export async function GET(request: Request) {
     // ═══════════════════════════════════════════
     // STEP 6: BSE proxy (Render)
     // ═══════════════════════════════════════════
+    // PATCH 0555 — Cross-exchange dedup fix. When a BSE row has no
+    // nseSymbol the legacy code fell back to the 6-digit scrip code
+    // (e.g. '543193') as the ticker. That bypassed dedup, so a company
+    // already added from the NSE side (e.g. 'DJML' / 'DJ Mediaprint &
+    // Logistics Ltd') would appear a second time keyed by scrip code.
+    // Build a normalized-company-name → ticker map from the existing
+    // eventsMap once, and reuse it for every BSE row that lacks
+    // nseSymbol so the same company never gets added twice.
+    const normalizeCompanyName = (raw: string): string => {
+      if (!raw) return '';
+      return raw
+        .toLowerCase()
+        .replace(/&amp;/g, '&')
+        .replace(/[.,()]/g, ' ')
+        .replace(/\b(ltd|limited|pvt|private|corp|corporation|inc|company|co|the)\b/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    };
+    const nameToTicker = new Map<string, string>();
+    for (const [tk, ev] of eventsMap) {
+      const nn = normalizeCompanyName(ev.company || '');
+      if (nn) nameToTicker.set(nn, tk);
+    }
+
     let bseResultsCount = 0;
+    let bseDupesSkipped = 0;
     try {
       const monthStr = `${fromDate.getFullYear()}-${String(fromDate.getMonth() + 1).padStart(2, '0')}`;
       const bseRes = await fetch(
@@ -762,6 +787,13 @@ export async function GET(request: Request) {
           const resultDate = parseDate(r.date);
           if (!resultDate || resultDate < fromDate || resultDate > toDate) continue;
 
+          // PATCH 0555 — name-based dedup before scrip-code fallback.
+          const normName = normalizeCompanyName(company);
+          if (normName && nameToTicker.has(normName)) {
+            bseDupesSkipped++;
+            continue;
+          }
+
           const ticker = nseSymbol || r.scripCode || company.split(' ')[0].toUpperCase();
           if (eventsMap.has(ticker)) continue;
 
@@ -772,12 +804,22 @@ export async function GET(request: Request) {
             sector: '', industry: '', marketCap: '',
             edp: null, cmp: null, priceMove: null, timing: 'pre', source: 'BSE',
           });
+          if (normName) nameToTicker.set(normName, ticker);
           bseResultsCount++;
         }
 
         for (const bm of (bseData.upcoming || [])) {
           const nseSymbol = bm.nseSymbol || '';
           const company = bm.company || '';
+
+          // PATCH 0555 — name-based dedup for the upcoming branch too.
+          if (nseSymbol && eventsMap.has(nseSymbol)) continue;
+          const normName = normalizeCompanyName(company);
+          if (normName && nameToTicker.has(normName)) {
+            bseDupesSkipped++;
+            continue;
+          }
+
           const ticker = nseSymbol || bm.scripCode || company.split(' ')[0].toUpperCase();
           if (eventsMap.has(ticker)) continue;
 
@@ -791,11 +833,15 @@ export async function GET(request: Request) {
             sector: '', industry: '', marketCap: '',
             edp: null, cmp: null, priceMove: null, timing: '', source: 'BSE',
           });
+          if (normName) nameToTicker.set(normName, ticker);
           bseResultsCount++;
         }
       }
     } catch (bseErr) {
       console.log('BSE proxy unavailable:', String(bseErr));
+    }
+    if (bseDupesSkipped > 0) {
+      console.log(`[earnings] BSE dedup: skipped ${bseDupesSkipped} cross-exchange duplicates by company name`);
     }
 
     // ═══════════════════════════════════════════

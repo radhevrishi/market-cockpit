@@ -273,6 +273,64 @@ const TIER_META: Record<EarningsTier, { label: string; color: string; icon: stri
 };
 const TIER_ORDER: EarningsTier[] = ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID'];
 
+// PATCH 0555 — Client-side dedup for cross-exchange duplicates that slipped
+// past the server merge (e.g. same company entering once with NSE ticker
+// "DJML" and once with BSE scrip "543193").  The server-side fix in
+// /api/market/earnings/route.ts now skips these by normalized company name,
+// but cached graded:v8 payloads written before the fix still contain the
+// duplicate. This defensive client pass guarantees the UI never renders the
+// same company twice. Numeric-only symbols (pure BSE scrip codes) lose to
+// alphabetic NSE tickers; otherwise the higher-score / earlier-tier entry
+// wins. Scoped per-tier to preserve `by_tier` shape.
+function dedupePayloadByCompany<T extends { by_tier?: Record<string, any[]> }>(p: T | undefined | null): T {
+  if (!p || !p.by_tier) return p as T;
+  const norm = (raw: string): string => {
+    if (!raw) return '';
+    return String(raw)
+      .toLowerCase()
+      .replace(/&amp;/g, '&')
+      .replace(/[.,()]/g, ' ')
+      .replace(/\b(ltd|limited|pvt|private|corp|corporation|inc|company|co|the)\b/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+  const isNumericTicker = (t: string) => /^\d+$/.test(String(t || '').trim());
+  // Collect best-card-per-company across tiers (BLOCKBUSTER > STRONG > MIXED > AVOID).
+  const TIER_RANK: Record<string, number> = { BLOCKBUSTER: 0, STRONG: 1, MIXED: 2, AVOID: 3 };
+  const winners = new Map<string, { card: any; tier: string }>();
+  for (const t of (TIER_ORDER as string[])) {
+    const list = p.by_tier?.[t] || [];
+    for (const c of list) {
+      const key = norm(c?.company || '') || String(c?.ticker || '').toUpperCase();
+      if (!key) continue;
+      const existing = winners.get(key);
+      if (!existing) { winners.set(key, { card: c, tier: t }); continue; }
+      // Prefer non-numeric NSE-style ticker over pure BSE scrip code.
+      const exNum = isNumericTicker(existing.card?.ticker);
+      const cuNum = isNumericTicker(c?.ticker);
+      if (exNum && !cuNum) { winners.set(key, { card: c, tier: t }); continue; }
+      if (!exNum && cuNum) continue;
+      // Both alphabetic or both numeric → prefer better tier, then higher composite.
+      if (TIER_RANK[t] < TIER_RANK[existing.tier]) { winners.set(key, { card: c, tier: t }); continue; }
+      if (TIER_RANK[t] === TIER_RANK[existing.tier]) {
+        const cs = Number(c?.composite_score ?? 0);
+        const es = Number(existing.card?.composite_score ?? 0);
+        if (cs > es) winners.set(key, { card: c, tier: t });
+      }
+    }
+  }
+  // Rebuild by_tier with only the winning cards.
+  const out_by_tier: Record<string, any[]> = { BLOCKBUSTER: [], STRONG: [], MIXED: [], AVOID: [] };
+  for (const { card, tier } of winners.values()) {
+    if (out_by_tier[tier]) out_by_tier[tier].push(card);
+  }
+  // Preserve original sort within each tier (descending composite).
+  for (const t of TIER_ORDER as string[]) {
+    out_by_tier[t].sort((a, b) => Number(b?.composite_score ?? 0) - Number(a?.composite_score ?? 0));
+  }
+  return { ...p, by_tier: out_by_tier } as T;
+}
+
 function todayISO(): string {
   const d = new Date();
   d.setDate(d.getDate() - 1);
@@ -920,11 +978,11 @@ export default function EarningsOpportunitiesPage() {
       const isPastDate = resolvedDateForGrading < yIso;
       if (isPastDate) {
         const cached = readLsCache(resolvedDateForGrading);
-        if (cached) return cached as OpportunitiesPayload;
+        if (cached) return dedupePayloadByCompany(cached as OpportunitiesPayload);
       }
       const res = await fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}`, { cache: 'no-store' });
       if (!res.ok) throw new Error('graded fetch failed');
-      const payload = await res.json();
+      const payload = dedupePayloadByCompany(await res.json());
       writeLsCache(resolvedDateForGrading, payload);
       return payload;
     },
