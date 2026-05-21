@@ -11,7 +11,7 @@
 // Plus the original manual transcript-paste analyser below.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 // PATCH 0437 BUG-026 — decode HTML entities in concall subjects (extends BUG-008)
 import { decodeHTMLEntities } from '@/lib/html-decode';
 // PATCH 0490 QA-#14 — resolve raw BSE codes (e.g. 526612) to NSE symbols
@@ -119,13 +119,51 @@ export default function ConcallIntelPage() {
 
   const toneColor = (s: number) => s >= 70 ? '#10B981' : s >= 55 ? '#22D3EE' : s >= 40 ? '#F59E0B' : s >= 25 ? '#F97316' : '#EF4444';
 
+  // PATCH 0592 — Tab system. User requested a dedicated Analytics view
+  // separate from the Live feeds. Live tab keeps every existing
+  // surface untouched; Analytics tab mounts a brand-new component that
+  // fetches all 4 endpoints and renders an institutional-format
+  // consolidated dashboard.
+  const [tab, setTab] = useState<'live' | 'analytics'>('live');
+
   return (
     <div style={{ padding: '20px 24px', backgroundColor: '#0A0E1A', minHeight: '100%', color: '#E6EDF3' }}>
       <h1 style={{ fontSize: 22, fontWeight: 900, margin: 0, marginBottom: 6 }}>🎙️ Concall Intelligence v3</h1>
-      <p style={{ fontSize: 12, color: '#94A3B8', margin: 0, marginBottom: 18 }}>
+      <p style={{ fontSize: 12, color: '#94A3B8', margin: 0, marginBottom: 14 }}>
         🔥 LIVE bullish NSE/BSE concall + investor-presentation filings (auto-poll). ⬇️ Plus manual transcript / PDF analyser below.
       </p>
 
+      {/* PATCH 0592 — Tab rail */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 14, borderBottom: '1px solid #1A2540', paddingBottom: 6 }}>
+        {([
+          { id: 'live',      label: '🔥 Live Feeds',  hint: 'Warrant / Movers / Bullish / Keyword + Manual Analyser' },
+          { id: 'analytics', label: '📊 Analytics',   hint: 'Institutional-format consolidated dashboard' },
+        ] as const).map((t) => {
+          const isActive = tab === t.id;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              title={t.hint}
+              style={{
+                fontSize: 12, fontWeight: 800, letterSpacing: '0.3px',
+                padding: '6px 14px', borderRadius: 6,
+                border: `1px solid ${isActive ? '#22D3EE' : '#1A2540'}`,
+                background: isActive ? '#22D3EE22' : 'transparent',
+                color: isActive ? '#22D3EE' : '#94A3B8',
+                cursor: 'pointer',
+              }}
+            >
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {tab === 'analytics' ? (
+        <ConcallAnalyticsTab />
+      ) : (
+        <>
       {/* PATCH 0422 — Warrant Momentum promoted to TOP. Promoter-warrant +
           post-breakout setups are the highest-conviction one-shot trades on
           the page (typically 50–200% in 12–24 months when they qualify).
@@ -264,6 +302,9 @@ export default function ConcallIntelPage() {
             </div>
           )}
         </div>
+      )}
+      {/* PATCH 0592 — close the 'live' tab fragment */}
+      </>
       )}
     </div>
   );
@@ -2490,6 +2531,521 @@ function WarrantAnalytics({ data }: { data: WarrantFeedPayload }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONCALL ANALYTICS TAB — PATCH 0592
+//
+// Dedicated tab inside Concall Intelligence. Aggregates EVERY signal stream
+// the page produces — warrants, daily movers, live bullish concall filings,
+// keyword watch — into a single institutional-format dashboard.
+//
+// Fetches all four endpoints in parallel on mount; cached for 5 min after
+// first hit. Each section follows the same visual pattern as the
+// Multibagger / Special Situations Analytics views.
+//
+// SECTIONS:
+//   1. UNIVERSE SUMMARY            — KPI strip across all four streams
+//   2. WARRANT ANALYTICS           — bucket / use / promoter / extraction (reuses
+//                                    the inline WarrantAnalytics card from 0591)
+//   3. BULLISH CONCALL ANALYTICS   — tier distribution, sentiment heatmap,
+//                                    top-by-score, sector overlay rollup
+//   4. KEYWORD WATCH ANALYTICS     — by-group heatmap, by-sentiment, top
+//                                    matched keywords, top filings
+//   5. MOVERS ANALYTICS            — new-entries / big-jumps / lost-momentum
+//                                    summary + ranking top
+//   6. CROSS-STREAM INSIGHTS       — tickers showing up across multiple
+//                                    streams (warrant + bullish + keyword)
+//   7. INSTITUTIONAL DISCLOSURE    — how to read + what's heuristic vs hard
+// ═══════════════════════════════════════════════════════════════════════════
+
+function ConcallAnalyticsTab() {
+  const [warrantData, setWarrantData] = useState<WarrantFeedPayload | null>(null);
+  const [liveBullishData, setLiveBullishData] = useState<LiveFeedPayload | null>(null);
+  const [kwData, setKwData] = useState<KwWatchPayload | null>(null);
+  const [moversData, setMoversData] = useState<MoversPayload | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+
+  const fetchAll = useCallback(async () => {
+    setLoading(true);
+    const safeFetch = async <T,>(url: string): Promise<T | null> => {
+      try {
+        const ctl = new AbortController();
+        const t = setTimeout(() => ctl.abort(), 30_000);
+        const res = await fetch(url, { cache: 'no-store', signal: ctl.signal });
+        clearTimeout(t);
+        if (!res.ok) return null;
+        return await res.json() as T;
+      } catch { return null; }
+    };
+    const [w, b, k, m] = await Promise.all([
+      safeFetch<WarrantFeedPayload>('/api/v1/concall-intel/warrant-feed?days=30&threshold=0'),
+      safeFetch<LiveFeedPayload>('/api/v1/concall-intel/live?days=7'),
+      safeFetch<KwWatchPayload>('/api/v1/concall-intel/keyword-watch?days=14'),
+      safeFetch<MoversPayload>('/api/v1/concall-intel/movers'),
+    ]);
+    setWarrantData(w);
+    setLiveBullishData(b);
+    setKwData(k);
+    setMoversData(m);
+    setLastRefresh(new Date());
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  // ── Cross-stream tickers (in ≥2 of warrant / bullish / keyword) ────────
+  const crossStream = useMemo(() => {
+    const sets = {
+      warrant: new Set((warrantData?.filings || []).map(f => f.symbol.toUpperCase())),
+      bullish: new Set((liveBullishData?.filings || []).map(f => f.symbol.toUpperCase())),
+      keyword: new Set((kwData?.filings || []).map(f => f.symbol.toUpperCase())),
+    };
+    const allTickers = new Set([...sets.warrant, ...sets.bullish, ...sets.keyword]);
+    const out: Array<{ symbol: string; streams: string[]; count: number; company?: string }> = [];
+    for (const t of allTickers) {
+      const streams: string[] = [];
+      let company: string | undefined;
+      if (sets.warrant.has(t)) {
+        streams.push('warrant');
+        company = company || warrantData?.filings.find(f => f.symbol.toUpperCase() === t)?.company_name;
+      }
+      if (sets.bullish.has(t)) {
+        streams.push('bullish');
+        company = company || liveBullishData?.filings.find(f => f.symbol.toUpperCase() === t)?.company_name;
+      }
+      if (sets.keyword.has(t)) {
+        streams.push('keyword');
+        company = company || kwData?.filings.find(f => f.symbol.toUpperCase() === t)?.company_name;
+      }
+      if (streams.length >= 2) out.push({ symbol: t, streams, count: streams.length, company });
+    }
+    return out.sort((a, b) => b.count - a.count).slice(0, 12);
+  }, [warrantData, liveBullishData, kwData]);
+
+  const cardStyle: React.CSSProperties = {
+    backgroundColor: '#0D1623', border: '1px solid #1A2540',
+    borderRadius: 6, padding: '12px 14px',
+  };
+  const labelStyle: React.CSSProperties = {
+    fontSize: 11, color: '#6B7A8D', letterSpacing: '0.3px', marginBottom: 4,
+  };
+  const Bar = ({ pct, color, height }: { pct: number; color: string; height?: number }) => (
+    <div style={{ flex: 1, height: height ?? 6, background: '#1A2540', borderRadius: 3, overflow: 'hidden' }}>
+      <div style={{ width: `${Math.max(0, Math.min(100, pct))}%`, height: '100%', background: color }} />
+    </div>
+  );
+
+  if (loading) {
+    return (
+      <div style={{ padding: 40, textAlign: 'center', color: '#94A3B8', fontSize: 12 }}>
+        📡 Loading Concall Intelligence analytics across warrants · movers · bullish · keyword watch…
+      </div>
+    );
+  }
+
+  // ── Bullish tier rollup ───────────────────────────────────────────────
+  const tierCounts: Record<string, number> = {};
+  const sentimentCounts: Record<string, number> = {};
+  const sectorOverlayCounts: Record<string, number> = {};
+  for (const f of liveBullishData?.filings || []) {
+    const tier = (f.bullish?.tier || 'NEUTRAL');
+    tierCounts[tier] = (tierCounts[tier] || 0) + 1;
+    const sent = (f.bullish?.sentiment || 'NEUTRAL');
+    sentimentCounts[sent] = (sentimentCounts[sent] || 0) + 1;
+    const ov = (f as any).sector_overlay?.sector || (f as any).sector_overlay?.label;
+    if (ov) sectorOverlayCounts[ov] = (sectorOverlayCounts[ov] || 0) + 1;
+  }
+  const topBullish = [...(liveBullishData?.filings || [])]
+    .sort((a, b) => (b.bullish?.score ?? 0) - (a.bullish?.score ?? 0))
+    .slice(0, 12);
+
+  // ── Keyword Watch rollup ──────────────────────────────────────────────
+  const kwByGroup = kwData?.totals?.by_group || {};
+  const kwBySentiment = kwData?.totals?.by_sentiment || {};
+  const topKwFilings = [...(kwData?.filings || [])]
+    .sort((a, b) => b.hit_count - a.hit_count)
+    .slice(0, 10);
+
+  // ── Movers rollup ────────────────────────────────────────────────────
+  const moversNew = moversData?.new_entries?.length || 0;
+  const moversJump = moversData?.big_jumps?.length || 0;
+  const moversLost = moversData?.lost_momentum?.length || 0;
+  const moversTop = (moversData?.ranking_today || []).slice(0, 10);
+
+  // ── Warrant rollup (summary only — full chart in WarrantAnalytics) ────
+  const warTotal = warrantData?.count_total ?? 0;
+  const warRel = warrantData?.count_relevant ?? 0;
+  const warPassing = warrantData?.count_passing ?? 0;
+  const warGreen = (warrantData?.filings || []).filter((f) => (f.conviction as any)?.bucket === 'GREEN').length;
+  const warPromoter = (warrantData?.filings || []).filter((f) => f.details?.is_promoter_subscribed).length;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+      {/* ── HEADER ─────────────────────────────────────────────────────── */}
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+        <div style={{ fontSize: 14, fontWeight: 900, color: '#22D3EE', letterSpacing: '0.5px' }}>
+          📊 CONCALL INTELLIGENCE — CONSOLIDATED ANALYTICS
+        </div>
+        <div style={{ display: 'flex', gap: 10, fontSize: 11, color: '#94A3B8', alignItems: 'center' }}>
+          {lastRefresh && <span>as of {lastRefresh.toLocaleTimeString()}</span>}
+          <button onClick={fetchAll} disabled={loading} style={{
+            fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 4,
+            border: '1px solid #22D3EE', background: '#22D3EE15', color: '#22D3EE', cursor: loading ? 'wait' : 'pointer',
+          }}>↻ Refresh all</button>
+        </div>
+      </div>
+
+      {/* ── 1. UNIVERSE SUMMARY ─────────────────────────────────────────── */}
+      <div style={cardStyle}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px', marginBottom: 8 }}>
+          🌐 UNIVERSE SUMMARY (cross-stream)
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
+          <div style={{ ...cardStyle, background: '#0A1422' }}>
+            <div style={labelStyle}>Warrant filings</div>
+            <div style={{ fontSize: 20, fontWeight: 900, color: '#A78BFA', fontVariantNumeric: 'tabular-nums' }}>{warTotal}</div>
+            <div style={{ fontSize: 10, color: '#6B7A8D' }}>{warRel} warrant-rel · <strong style={{ color: '#10B981' }}>{warPassing} passing</strong> · {warGreen} GREEN · {warPromoter} promoter-subscribed</div>
+          </div>
+          <div style={{ ...cardStyle, background: '#0A1422' }}>
+            <div style={labelStyle}>Bullish concalls</div>
+            <div style={{ fontSize: 20, fontWeight: 900, color: '#10B981', fontVariantNumeric: 'tabular-nums' }}>{liveBullishData?.count_relevant ?? 0}</div>
+            <div style={{ fontSize: 10, color: '#6B7A8D' }}>{liveBullishData?.count_high_bullish ?? 0} high-bullish · of {liveBullishData?.count_total ?? 0} total</div>
+          </div>
+          <div style={{ ...cardStyle, background: '#0A1422' }}>
+            <div style={labelStyle}>Keyword matches</div>
+            <div style={{ fontSize: 20, fontWeight: 900, color: '#F59E0B', fontVariantNumeric: 'tabular-nums' }}>{kwData?.count_matched ?? 0}</div>
+            <div style={{ fontSize: 10, color: '#6B7A8D' }}>{kwData?.totals?.total_hits ?? 0} hits · {kwData?.catalog?.length ?? 0} keywords</div>
+          </div>
+          <div style={{ ...cardStyle, background: '#0A1422' }}>
+            <div style={labelStyle}>Daily movers</div>
+            <div style={{ fontSize: 20, fontWeight: 900, color: '#22D3EE', fontVariantNumeric: 'tabular-nums' }}>{moversNew + moversJump + moversLost}</div>
+            <div style={{ fontSize: 10, color: '#6B7A8D' }}>{moversNew} new · {moversJump} jump · {moversLost} lost</div>
+          </div>
+          <div style={{ ...cardStyle, background: '#0A1422' }}>
+            <div style={labelStyle}>Cross-stream tickers</div>
+            <div style={{ fontSize: 20, fontWeight: 900, color: '#F59E0B', fontVariantNumeric: 'tabular-nums' }}>{crossStream.length}</div>
+            <div style={{ fontSize: 10, color: '#6B7A8D' }}>appearing in ≥ 2 streams</div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── 2. WARRANT ANALYTICS (reuse) ────────────────────────────────── */}
+      {warrantData && warrantData.filings.length > 0 && (
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 800, color: '#A78BFA', letterSpacing: '0.4px', marginBottom: 6 }}>
+            🚀 WARRANT MOMENTUM ANALYTICS
+          </div>
+          <WarrantAnalytics data={warrantData} />
+        </div>
+      )}
+
+      {/* ── 3. BULLISH CONCALL ANALYTICS ────────────────────────────────── */}
+      {(liveBullishData?.filings.length ?? 0) > 0 && (
+        <div style={cardStyle}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: '#10B981', letterSpacing: '0.4px', marginBottom: 6 }}>
+            🔥 LIVE BULLISH CONCALL ANALYTICS ({liveBullishData?.count_relevant ?? 0})
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 10 }}>
+
+            {/* Tier breakdown */}
+            <div style={{ ...cardStyle, background: '#0A1422' }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: '#22D3EE', marginBottom: 6 }}>TIER DISTRIBUTION</div>
+              {([
+                { key: 'ULTRA_BULLISH',   label: '🔥 ULTRA',         color: '#10B981' },
+                { key: 'BULLISH',         label: '✓ BULLISH',         color: '#22D3EE' },
+                { key: 'MIXED_POSITIVE',  label: '◐ MIXED+',          color: '#F59E0B' },
+                { key: 'NEUTRAL',         label: '· NEUTRAL',         color: '#94A3B8' },
+                { key: 'BEARISH',         label: '▼ BEARISH',         color: '#EF4444' },
+                { key: 'INSUFFICIENT',    label: '? INSUFFICIENT',    color: '#6B7A8D' },
+                { key: 'DATA_PENDING',    label: '⏳ PENDING',         color: '#6B7A8D' },
+              ] as const).map((row) => {
+                const n = tierCounts[row.key] || 0;
+                if (n === 0) return null;
+                const total = liveBullishData?.filings.length || 1;
+                const pct = (n / total) * 100;
+                return (
+                  <div key={row.key} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                    <span style={{ fontSize: 10, color: '#E6EDF3', fontWeight: 700, minWidth: 120 }}>{row.label}</span>
+                    <span style={{ fontSize: 10, color: '#94A3B8', minWidth: 22, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{n}</span>
+                    <Bar pct={pct} color={row.color} />
+                    <span style={{ fontSize: 10, color: row.color, fontWeight: 700, minWidth: 32, textAlign: 'right' }}>{pct.toFixed(0)}%</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Sector overlay rollup */}
+            {Object.keys(sectorOverlayCounts).length > 0 && (
+              <div style={{ ...cardStyle, background: '#0A1422' }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: '#22D3EE', marginBottom: 6 }}>SECTOR OVERLAY</div>
+                {Object.entries(sectorOverlayCounts).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([sector, n]) => {
+                  const total = liveBullishData?.filings.length || 1;
+                  const pct = (n / total) * 100;
+                  return (
+                    <div key={sector} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                      <span style={{ fontSize: 10, color: '#E6EDF3', fontWeight: 600, minWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sector}</span>
+                      <span style={{ fontSize: 10, color: '#94A3B8', minWidth: 22, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{n}</span>
+                      <Bar pct={pct} color="#22D3EE" />
+                      <span style={{ fontSize: 10, color: '#22D3EE', fontWeight: 700, minWidth: 32, textAlign: 'right' }}>{pct.toFixed(0)}%</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Top bullish by score */}
+          {topBullish.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: '#22D3EE', marginBottom: 6 }}>🎯 TOP 12 BY BULLISH SCORE</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 6 }}>
+                {topBullish.map((f, i) => {
+                  const tier = f.bullish?.tier || 'NEUTRAL';
+                  const tColor = tier === 'ULTRA_BULLISH' ? '#10B981' : tier === 'BULLISH' ? '#22D3EE' : tier === 'MIXED_POSITIVE' ? '#F59E0B' : tier === 'BEARISH' ? '#EF4444' : '#94A3B8';
+                  return (
+                    <a key={f.symbol + i} href={f.source_url} target="_blank" rel="noopener noreferrer" style={{
+                      display: 'flex', flexDirection: 'column', gap: 2,
+                      padding: '6px 8px', borderRadius: 4,
+                      border: `1px solid ${tColor}30`, background: `${tColor}08`,
+                      textDecoration: 'none',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 700, minWidth: 22 }}>#{i + 1}</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: '#E6EDF3', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.company_name}</div>
+                          <div style={{ fontSize: 9, color: '#94A3B8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 600 }}>{f.symbol} · {f.exchange}</div>
+                        </div>
+                        <span style={{ fontSize: 12, fontWeight: 800, color: tColor, fontVariantNumeric: 'tabular-nums' }}>{f.bullish?.score?.toFixed(0) ?? '—'}</span>
+                      </div>
+                      <div style={{ fontSize: 9, color: '#6B7A8D' }}>{tier} · {f.filing_type}</div>
+                    </a>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── 4. KEYWORD WATCH ANALYTICS ──────────────────────────────────── */}
+      {(kwData?.count_matched ?? 0) > 0 && (
+        <div style={cardStyle}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.4px', marginBottom: 6 }}>
+            🔎 KEYWORD WATCH ANALYTICS ({kwData?.count_matched ?? 0} filings · {kwData?.totals?.total_hits ?? 0} hits)
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 10 }}>
+
+            {/* By group */}
+            {Object.keys(kwByGroup).length > 0 && (
+              <div style={{ ...cardStyle, background: '#0A1422' }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: '#22D3EE', marginBottom: 6 }}>HITS BY GROUP</div>
+                {Object.entries(kwByGroup).sort((a, b) => b[1] - a[1]).map(([group, n]) => {
+                  const total = kwData?.totals?.total_hits || 1;
+                  const pct = (n / total) * 100;
+                  const color = KW_GROUP_COLORS[group] || '#6B7A8D';
+                  return (
+                    <div key={group} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                      <span style={{ fontSize: 10, color: '#E6EDF3', fontWeight: 700, minWidth: 110 }}>{group}</span>
+                      <span style={{ fontSize: 10, color: '#94A3B8', minWidth: 22, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{n}</span>
+                      <Bar pct={pct} color={color} />
+                      <span style={{ fontSize: 10, color, fontWeight: 700, minWidth: 32, textAlign: 'right' }}>{pct.toFixed(0)}%</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* By sentiment */}
+            {Object.keys(kwBySentiment).length > 0 && (
+              <div style={{ ...cardStyle, background: '#0A1422' }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: '#22D3EE', marginBottom: 6 }}>HITS BY SENTIMENT</div>
+                {Object.entries(kwBySentiment).sort((a, b) => b[1] - a[1]).map(([sent, n]) => {
+                  const total = kwData?.totals?.total_hits || 1;
+                  const pct = (n / total) * 100;
+                  const color = sent.toLowerCase().includes('positive') ? '#10B981'
+                              : sent.toLowerCase().includes('negative') ? '#EF4444'
+                              : '#94A3B8';
+                  return (
+                    <div key={sent} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                      <span style={{ fontSize: 10, color: '#E6EDF3', fontWeight: 700, minWidth: 110 }}>{sent}</span>
+                      <span style={{ fontSize: 10, color: '#94A3B8', minWidth: 22, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{n}</span>
+                      <Bar pct={pct} color={color} />
+                      <span style={{ fontSize: 10, color, fontWeight: 700, minWidth: 32, textAlign: 'right' }}>{pct.toFixed(0)}%</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Top filings by hit_count */}
+          {topKwFilings.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: '#22D3EE', marginBottom: 6 }}>🎯 TOP {topKwFilings.length} BY KEYWORD HIT COUNT</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 6 }}>
+                {topKwFilings.map((f, i) => (
+                  <a key={f.symbol + i} href={f.source_url} target="_blank" rel="noopener noreferrer" style={{
+                    display: 'flex', flexDirection: 'column', gap: 2,
+                    padding: '6px 8px', borderRadius: 4,
+                    border: '1px solid #F59E0B30', background: '#F59E0B08',
+                    textDecoration: 'none',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 700, minWidth: 22 }}>#{i + 1}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: '#E6EDF3', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.company_name}</div>
+                        <div style={{ fontSize: 9, color: '#94A3B8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 600 }}>{f.symbol} · {f.exchange}</div>
+                      </div>
+                      <span style={{ fontSize: 12, fontWeight: 800, color: '#F59E0B', fontVariantNumeric: 'tabular-nums' }}>{f.hit_count}</span>
+                    </div>
+                    <div style={{ fontSize: 9, color: '#6B7A8D', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {f.hit_groups.join(' · ') || 'no groups'}
+                    </div>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── 5. MOVERS ANALYTICS ─────────────────────────────────────────── */}
+      {moversData && (moversNew + moversJump + moversLost) > 0 && (
+        <div style={cardStyle}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px', marginBottom: 6 }}>
+            📈 DAILY MOVERS — vs {moversData.reference_date || 'no prior snapshot'}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+            {[
+              { label: '🆕 NEW ENTRIES',   items: moversData.new_entries || [],   color: '#10B981' },
+              { label: '🔥 BIG JUMPS',     items: moversData.big_jumps || [],     color: '#F59E0B' },
+              { label: '📉 LOST MOMENTUM', items: moversData.lost_momentum || [], color: '#EF4444' },
+            ].map((b) => (
+              <div key={b.label} style={{ ...cardStyle, background: '#0A1422', borderColor: `${b.color}30` }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: b.color, marginBottom: 6 }}>{b.label} ({b.items.length})</div>
+                {b.items.length === 0 ? (
+                  <div style={{ fontSize: 10, color: '#6B7A8D', fontStyle: 'italic' }}>none</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    {b.items.slice(0, 6).map((m, i) => (
+                      <div key={m.symbol + i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: '#E6EDF3', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.company_name}</div>
+                          <div style={{ fontSize: 9, color: '#94A3B8', fontFamily: 'ui-monospace, monospace' }}>{m.symbol}</div>
+                        </div>
+                        <span style={{ fontSize: 11, color: b.color, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{m.composite_today?.toFixed(1) ?? '—'}</span>
+                        {typeof m.delta === 'number' && (
+                          <span style={{ fontSize: 9, color: m.delta > 0 ? '#10B981' : '#EF4444', fontWeight: 700 }}>{m.delta > 0 ? '+' : ''}{m.delta.toFixed(1)}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Today's top ranking */}
+          {moversTop.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: '#22D3EE', marginBottom: 6 }}>🎯 TODAY&apos;S TOP {moversTop.length}</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 6 }}>
+                {moversTop.map((m, i) => (
+                  <div key={m.symbol + i} style={{
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    padding: '5px 8px', borderRadius: 4,
+                    border: '1px solid #22D3EE25', background: '#22D3EE08',
+                  }}>
+                    <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 700, minWidth: 22 }}>#{m.rank_today}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#E6EDF3', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.company_name}</div>
+                      <div style={{ fontSize: 9, color: '#94A3B8', fontFamily: 'ui-monospace, monospace' }}>{m.symbol}</div>
+                    </div>
+                    <span style={{ fontSize: 11, color: '#22D3EE', fontWeight: 800 }}>{m.composite_today?.toFixed(1) ?? '—'}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── 6. CROSS-STREAM INSIGHTS ────────────────────────────────────── */}
+      {crossStream.length > 0 && (
+        <div style={cardStyle}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.4px', marginBottom: 6 }}>
+            🎯 CROSS-STREAM CONFIRMATION ({crossStream.length})
+          </div>
+          <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 8, lineHeight: 1.5 }}>
+            Tickers that show up in <strong style={{ color: '#E6EDF3' }}>≥ 2 streams</strong> at once —
+            warrant filing + bullish concall + keyword match. Triple confirmation is the highest-conviction
+            structural signal this page produces.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 6 }}>
+            {crossStream.map((c, i) => {
+              const color = c.count >= 3 ? '#10B981' : '#F59E0B';
+              return (
+                <div key={c.symbol + i} style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '6px 10px', borderRadius: 4,
+                  border: `1px solid ${color}40`, background: `${color}10`,
+                }}>
+                  <span style={{ fontSize: 10, color, fontWeight: 800, minWidth: 22, padding: '1px 5px', borderRadius: 3, background: `${color}22` }}>×{c.count}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#E6EDF3', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.company || c.symbol}</div>
+                    <div style={{ fontSize: 9, color: '#94A3B8', fontFamily: 'ui-monospace, monospace' }}>{c.symbol} · {c.streams.join(' + ')}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── 7. INSTITUTIONAL DISCLOSURE ─────────────────────────────────── */}
+      <div style={{ ...cardStyle, borderColor: '#1A2540' }}>
+        <div style={{ fontSize: 12, color: '#94A3B8', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 6 }}>
+          📚 HOW TO READ THIS ANALYTICS
+        </div>
+        <ul style={{ margin: 0, paddingLeft: 18, fontSize: 11, color: '#94A3B8', lineHeight: 1.6 }}>
+          <li>
+            <strong style={{ color: '#10B981' }}>Cross-stream confirmation</strong> is the strongest signal —
+            tickers appearing across warrant + bullish + keyword feeds at the same time
+            are 3-way triangulated. Open these first.
+          </li>
+          <li>
+            <strong style={{ color: '#A78BFA' }}>Warrant Analytics bucket mix</strong> tells you the
+            character of this month's capital raises: strategic-promoter (multibagger setups)
+            vs distress (dilutive working-capital). Use it to gauge market regime.
+          </li>
+          <li>
+            <strong style={{ color: '#22D3EE' }}>Bullish Tier distribution</strong> distinguishes
+            real signal from spam. ULTRA + BULLISH tiers carry actionable confidence.
+            INSUFFICIENT / DATA_PENDING tiers signal extraction gaps, not bearish reality.
+          </li>
+          <li>
+            <strong style={{ color: '#F59E0B' }}>Keyword Watch by group</strong> shows what
+            themes are dominant in this week's concall pipeline. Heavy RISK loading
+            with light OPPORTUNITY = market caution.
+          </li>
+          <li>
+            <strong style={{ color: '#94A3B8' }}>Movers</strong> capture day-over-day delta in
+            composite score — a stock breaking into TOP 25 today that wasn't there yesterday
+            is a high-velocity signal worth investigating.
+          </li>
+          <li>
+            All scores on this page are <strong>heuristic regex + lexicon</strong> based.
+            Treat 5-pt differences as noise; only 15+ pt deltas reflect real signal shifts.
+            Cross-reference the source filings before acting.
+          </li>
+        </ul>
+      </div>
+
     </div>
   );
 }
