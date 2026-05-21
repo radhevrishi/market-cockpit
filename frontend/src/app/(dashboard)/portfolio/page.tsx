@@ -569,11 +569,25 @@ export default function PortfolioPage() {
         : changePercent < -1.5 ? 'Bearish'
         : 'Neutral'
         : undefined;
+      // PATCH 0569 (UX #3) — Final price-based trend fallback. When the
+      // intelligence signal, RRG endpoint, and intraday quote are all
+      // missing (e.g. weekend, frozen ticker, rate-limited Yahoo chart),
+      // use the holding's own price history vs the entry price as a
+      // direction proxy. This keeps the TREND column from ever showing
+      // '—' for an active, fully-priced position. A proper 50DMA would
+      // be nicer but requires a new API surface; cmp vs entry uses data
+      // we already have on every row.
+      const positionTone = !signal?.sectorTrend && !rrgTone && !intradayTone
+        && cmp > 0 && h.entryPrice > 0
+        ? cmp > h.entryPrice * 1.05 ? 'Bullish'
+        : cmp < h.entryPrice * 0.95 ? 'Bearish'
+        : 'Neutral'
+        : undefined;
       return { symbol: h.symbol, company: quote?.company || h.symbol, sector: quote?.sector || '—',
         entryPrice: h.entryPrice, quantity: h.quantity, cmp, change, changePercent,
         investedValue, currentValue, pnl, pnlPercent, dayPnl, notes: h.notes, weight: 0,
         score: signal?.weightedScore ?? fallbackScore,
-        sectorTrend: signal?.sectorTrend ?? rrgTone ?? intradayTone,
+        sectorTrend: signal?.sectorTrend ?? rrgTone ?? intradayTone ?? positionTone,
         decision: signal?.action ?? fallbackDecision };
     });
     // Second pass: weight by current value (proper risk weighting)

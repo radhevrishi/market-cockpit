@@ -29,6 +29,26 @@ const ACCENT = '#22D3EE';
 
 type Tab = 'upload' | 'table' | 'drilldown';
 
+// PATCH 0569 (UX #8) — Sample company shown only when the corpus is
+// empty. Demonstrates what the table will look like once the user
+// uploads their first transcript. These rows are never persisted and
+// are not clickable (would 404 on the drilldown).
+const SAMPLE_COMPANY_ROWS: TableRow[] = [
+  {
+    ticker: 'EXAMPLE',
+    company: 'Example Industries Ltd',
+    summary: 'Mgmt guided 18-22% revenue CAGR FY26-FY28; EBITDA margin to expand 220 bps as Plant 3 ramps to 90% util; export mix to reach 35% by FY27.',
+    doc_count: 2,
+    guidance_count: 7,
+    updated_at: new Date(Date.now() - 6 * 24 * 3600_000).toISOString(),
+    top_guidance: [
+      { category: 'revenue', text: '18-22% revenue CAGR FY26-FY28' },
+      { category: 'margin', text: 'EBITDA margin +220 bps over 24 months' },
+      { category: 'capacity', text: 'Plant 3 utilization 65% → 90% by Q2 FY27' },
+    ],
+  },
+];
+
 interface TableRow {
   ticker: string;
   company?: string;
@@ -253,13 +273,57 @@ export default function CompanyIntelPage() {
               <span style={{ fontSize: 11, color: DIM }}>{visibleRows.length} of {rows.length} companies</span>
             </div>
             {visibleRows.length === 0 ? (
-              <div style={{ padding: 40, textAlign: 'center', background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, color: DIM }}>
-                <div style={{ fontSize: 36, marginBottom: 10 }}>📭</div>
-                <p style={{ margin: 0, fontWeight: 700, color: TEXT }}>No companies stored yet</p>
-                <p style={{ margin: '6px 0 0', fontSize: 12 }}>
-                  Switch to the <strong style={{ color: ACCENT }}>⬆ Upload Document</strong> tab to add your first transcript or PPT.
-                </p>
-              </div>
+              /* PATCH 0569 (UX #8) — When the corpus is empty, show the
+                 empty-state CTA followed by a greyed-out sample row so the
+                 user can see what a populated table looks like before
+                 uploading anything. */
+              <>
+                <div style={{ padding: 40, textAlign: 'center', background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, color: DIM }}>
+                  <div style={{ fontSize: 36, marginBottom: 10 }}>📭</div>
+                  <p style={{ margin: 0, fontWeight: 700, color: TEXT }}>No companies stored yet</p>
+                  <p style={{ margin: '6px 0 0', fontSize: 12 }}>
+                    Switch to the <strong style={{ color: ACCENT }}>⬆ Upload Document</strong> tab to add your first transcript or PPT.
+                  </p>
+                  <button onClick={() => setTab('upload')} style={{
+                    marginTop: 14, padding: '8px 18px', borderRadius: 6,
+                    background: `${ACCENT}15`, border: `1px solid ${ACCENT}60`, color: ACCENT,
+                    fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                  }}>⬆ Upload Your First Document</button>
+                </div>
+                <div style={{ marginTop: 18, opacity: 0.42, pointerEvents: 'none' }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: DIM, letterSpacing: '0.6px', margin: '0 0 8px', textTransform: 'uppercase' }}>
+                    ↓ Sample analyzed company — illustrative only; your uploads will replace this
+                  </div>
+                  <div style={{ background: CARD, border: `1px dashed ${BORDER}`, borderRadius: 8, overflow: 'hidden' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                      <thead>
+                        <tr style={{ background: '#0A1422', borderBottom: `1px solid ${BORDER}` }}>
+                          <th style={th}>TICKER</th>
+                          <th style={th}>COMPANY</th>
+                          <th style={th}>GROWTH GUIDANCE</th>
+                          <th style={{ ...th, textAlign: 'right' }}>DOCS</th>
+                          <th style={{ ...th, textAlign: 'right' }}>ITEMS</th>
+                          <th style={th}>UPDATED</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {SAMPLE_COMPANY_ROWS.map((r, i) => (
+                          <tr key={r.ticker} style={{ borderBottom: i < SAMPLE_COMPANY_ROWS.length - 1 ? `1px solid ${BORDER}` : 'none' }}>
+                            <td style={{ ...td, color: ACCENT, fontWeight: 700, whiteSpace: 'nowrap' }}>{r.ticker}</td>
+                            <td style={{ ...td, color: TEXT, maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company || '—'}</td>
+                            <td style={{ ...td, color: TEXT, lineHeight: 1.5, fontSize: 12.5 }}>{r.summary || '—'}</td>
+                            <td style={{ ...td, textAlign: 'right', color: DIM, fontFamily: 'ui-monospace, monospace' }}>{r.doc_count}</td>
+                            <td style={{ ...td, textAlign: 'right', color: DIM, fontFamily: 'ui-monospace, monospace' }}>{r.guidance_count}</td>
+                            <td style={{ ...td, color: DIM, fontSize: 11, whiteSpace: 'nowrap' }}>
+                              {r.updated_at ? new Date(r.updated_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' }) : '—'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
             ) : (
               <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, overflow: 'hidden' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>

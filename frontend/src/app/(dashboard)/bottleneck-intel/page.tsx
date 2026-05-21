@@ -1412,6 +1412,10 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
   // structural) behind a toggle. Audit feedback: 15/21 themes showing as
   // STALE was polluting the Conviction Matrix and signaling broken coverage.
   const [showStale, setShowStale] = useState(false);
+  // PATCH 0569 (UX #5) — STALE · VERY LOW tiles are collapsed by default
+  // in the Conviction Matrix so the eye lands on actionable rows first.
+  // Click the chevron to reveal them.
+  const [showStaleLow, setShowStaleLow] = useState(false);
 
   // PATCH: Move ALL hook calls BEFORE early returns to satisfy React's
   // rules-of-hooks. The previous version called useEffect at the bottom of
@@ -1526,17 +1530,25 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
                   ))}
                 </div>
               </div>
-              {/* Tile grid — each bucket is a tile */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '8px' }}>
-                {sorted.map(b => {
+              {/* Tile grid — each bucket is a tile.
+                  PATCH 0569 (UX #5) — Split tiles into actionable vs
+                  STALE·VERY LOW. The latter group collapses behind a
+                  toggle so the eye sees the high-severity rows first. */}
+              {(() => {
+                const tileEntries = sorted.map(b => {
                   const vel = velocities[b.bucket_id] ?? { week: 0, prev: 0, trend: '→' as const };
                   const lc = getBucketLifecycle(b.bucket_id, { week: vel.week ?? 0, prev: vel.prev ?? 0, trend: vel.trend ?? '→' });
                   const decayed = decayedSeverities[b.bucket_id];
                   const eff = decayed?.effective ?? b.severity ?? 1;
                   const hasChokepoints = !!(DRILLDOWN[b.bucket_id]?.chokepoints?.length);
                   const invest = getInvestabilityScore(b.bucket_id, { week: vel.week ?? 0, trend: lc.state }, b.signal_count ?? 0, b.article_count ?? 0, hasChokepoints);
+                  const isStaleVeryLow = lc.state === 'STALE' && invest.label.includes('VERY LOW');
+                  return { b, vel, lc, decayed, eff, invest, isStaleVeryLow };
+                });
+                const visible = tileEntries.filter(t => !t.isStaleVeryLow);
+                const hidden = tileEntries.filter(t => t.isStaleVeryLow);
+                const renderTile = ({ b, vel, lc, decayed, eff, invest }: typeof tileEntries[number]) => {
                   const barW = Math.min(100, Math.round(((vel.week ?? 0) / maxWeek) * 100));
-                  // Split lifecycle label safely: '🔥 ACCELERATING' → ['🔥','ACCELERATING']
                   const lcParts = (lc.label ?? '').split(' ');
                   const lcEmoji = lcParts[0] ?? '';
                   const lcWord = lcParts.slice(1).join(' ') || lc.state;
@@ -1554,7 +1566,6 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
                       <div style={{ fontSize: '10px', fontWeight: '800', color: '#F5F7FA', marginBottom: '3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {b.severity_icon ?? '⚡'} {b.label ?? b.bucket_id}
                       </div>
-                      {/* Velocity bar */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '5px' }}>
                         <div style={{ flex: 1, height: '3px', backgroundColor: '#1A2840', borderRadius: '2px', overflow: 'hidden' }}>
                           <div style={{ height: '100%', width: `${barW}%`, backgroundColor: lc.color, borderRadius: '2px' }} />
@@ -1568,8 +1579,35 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
                       </div>
                     </div>
                   );
-                })}
-              </div>
+                };
+                return (
+                  <>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '8px' }}>
+                      {visible.map(renderTile)}
+                    </div>
+                    {hidden.length > 0 && (
+                      <div style={{ marginTop: 10 }}>
+                        <button
+                          onClick={() => setShowStaleLow(v => !v)}
+                          title={showStaleLow ? 'Collapse low-conviction stale themes' : 'Reveal stale themes with very-low investability'}
+                          style={{
+                            background: 'transparent', border: '1px dashed #1E2D45', borderRadius: 6,
+                            color: '#6B7B8C', fontSize: 10, fontWeight: 700, letterSpacing: '0.5px',
+                            padding: '6px 10px', cursor: 'pointer',
+                          }}
+                        >
+                          {showStaleLow ? '▾' : '▸'} STALE · VERY LOW ({hidden.length}) — collapsed by default
+                        </button>
+                        {showStaleLow && (
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '8px', marginTop: 8, opacity: 0.75 }}>
+                            {hidden.map(renderTile)}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
               {/* Selected bucket detail */}
               {activeBucket && sorted.find(x => x.bucket_id === activeBucket) && (() => {
                 const b = sorted.find(x => x.bucket_id === activeBucket)!;

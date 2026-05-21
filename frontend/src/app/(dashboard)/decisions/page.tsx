@@ -22,6 +22,43 @@ type StatusFilter = 'ALL' | DecisionStatus;
 type MarketFilter = 'ALL' | DecisionMarket;
 type SortKey = 'date' | 'symbol' | 'score';
 
+// PATCH 0569 (UX #7) — Pre-populated example decisions shown only when
+// the logbook is empty. Rendered greyed-out below the empty-state CTA so
+// first-time users see what the table looks like once they start logging.
+// These are never persisted; they exist purely as visual scaffolding.
+const EXAMPLE_DECISIONS: Decision[] = [
+  {
+    symbol: 'EXAMPLE-1',
+    market: 'IN',
+    status: 'BUY',
+    company: 'Example Industrial Co.',
+    reason: 'Operating leverage cluster — capacity util 78 → 92%, margin inflection confirmed.',
+    scoreAtDecision: 87,
+    gradeAtDecision: 'A',
+    date: new Date(Date.now() - 12 * 24 * 3600_000).toISOString(),
+  },
+  {
+    symbol: 'EXAMPLE-2',
+    market: 'US',
+    status: 'WATCH',
+    company: 'Example Tech Holdings',
+    reason: 'Pricing power signal but FCF margin lagging — wait for next Q before adding.',
+    scoreAtDecision: 71,
+    gradeAtDecision: 'B+',
+    date: new Date(Date.now() - 5 * 24 * 3600_000).toISOString(),
+  },
+  {
+    symbol: 'EXAMPLE-3',
+    market: 'IN',
+    status: 'REJECTED',
+    company: 'Example Cyclicals Ltd.',
+    reason: 'Mostly forward-looking commentary, debt rising, WC days deteriorating. Pass.',
+    scoreAtDecision: 54,
+    gradeAtDecision: 'C',
+    date: new Date(Date.now() - 2 * 24 * 3600_000).toISOString(),
+  },
+];
+
 const BG = '#0A0E1A';
 const CARD = '#0D1623';
 const BORDER = '#1A2540';
@@ -364,19 +401,80 @@ export default function DecisionsPage() {
 
         {/* Table */}
         {rows.length === 0 ? (
-          <div style={{ padding: 40, textAlign: 'center', color: DIM, border: `1px solid ${BORDER}`, borderRadius: 8, background: CARD }}>
-            <div style={{ fontSize: 36, marginBottom: 10 }}>📒</div>
-            <p style={{ margin: 0, fontWeight: 700, color: TEXT }}>No decisions logged yet</p>
-            <p style={{ margin: '6px 0 0', fontSize: 12 }}>
-              Open Multibagger India or USA, expand any row, and click BUY / WATCH / NEUTRAL / REJECTED to start your logbook —
-              or use the <strong style={{ color: '#10B981' }}>+ NEW DECISION</strong> button above to add one manually.
-            </p>
-            <button onClick={() => setShowAdd(true)} style={{
-              marginTop: 14, padding: '8px 18px', borderRadius: 6,
-              background: '#10B98115', border: '1px solid #10B98160', color: '#10B981',
-              fontSize: 12, fontWeight: 700, cursor: 'pointer',
-            }}>+ Add Your First Decision</button>
-          </div>
+          <>
+            <div style={{ padding: '32px 24px', textAlign: 'center', color: DIM, border: `1px solid ${BORDER}`, borderRadius: 8, background: CARD }}>
+              <div style={{ fontSize: 36, marginBottom: 10 }}>📒</div>
+              <p style={{ margin: 0, fontWeight: 700, color: TEXT }}>No decisions logged yet</p>
+              <p style={{ margin: '6px 0 0', fontSize: 12 }}>
+                Open Multibagger India or USA, expand any row, and click BUY / WATCH / NEUTRAL / REJECTED to start your logbook —
+                or use the <strong style={{ color: '#10B981' }}>+ NEW DECISION</strong> button above to add one manually.
+              </p>
+              <button onClick={() => setShowAdd(true)} style={{
+                marginTop: 14, padding: '8px 18px', borderRadius: 6,
+                background: '#10B98115', border: '1px solid #10B98160', color: '#10B981',
+                fontSize: 12, fontWeight: 700, cursor: 'pointer',
+              }}>+ Add Your First Decision</button>
+            </div>
+
+            {/* PATCH 0569 (UX #7) — Greyed-out example rows. Pre-populated
+                so first-time users see what the table looks like once they
+                start logging. These are not persisted and won't appear once
+                a real decision exists. */}
+            <div style={{ marginTop: 18, opacity: 0.42, pointerEvents: 'none' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: DIM, letterSpacing: '0.6px', margin: '0 0 8px', textTransform: 'uppercase' }}>
+                ↓ Example layout — these rows are illustrative and will be replaced by your actual decisions
+              </div>
+              <div style={{ background: CARD, border: `1px dashed ${BORDER}`, borderRadius: 8, overflow: 'hidden' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ background: '#0A1422', borderBottom: `1px solid ${BORDER}` }}>
+                      <th style={th}>STATUS</th>
+                      <th style={th}>SYMBOL</th>
+                      <th style={th}>MKT</th>
+                      <th style={th}>COMPANY</th>
+                      <th style={{ ...th, textAlign: 'right' }}>SCORE</th>
+                      <th style={{ ...th, textAlign: 'right' }}>GRADE</th>
+                      <th style={th}>DATE</th>
+                      <th style={th}>REASON</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {EXAMPLE_DECISIONS.map((d, i) => {
+                      const meta = DECISION_META[d.status];
+                      return (
+                        <tr key={d.symbol} style={{ borderBottom: i < EXAMPLE_DECISIONS.length - 1 ? `1px solid ${BORDER}` : 'none' }}>
+                          <td style={td}>
+                            <span style={{
+                              display: 'inline-flex', alignItems: 'center', gap: 4,
+                              padding: '2px 8px', borderRadius: 4,
+                              background: `${meta.color}20`, color: meta.color,
+                              border: `1px solid ${meta.color}40`,
+                              fontSize: 11, fontWeight: 800,
+                            }}>{meta.emoji} {meta.label}</span>
+                          </td>
+                          <td style={{ ...td, fontWeight: 700, color: '#22D3EE' }}>{d.symbol}</td>
+                          <td style={td}>{d.market === 'IN' ? '🇮🇳' : '🇺🇸'}</td>
+                          <td style={{ ...td, color: TEXT, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {d.company || '—'}
+                          </td>
+                          <td style={{ ...td, textAlign: 'right', fontFamily: 'ui-monospace, monospace' }}>
+                            {d.scoreAtDecision != null ? d.scoreAtDecision.toFixed(0) : '—'}
+                          </td>
+                          <td style={{ ...td, textAlign: 'right', fontWeight: 700 }}>{d.gradeAtDecision || '—'}</td>
+                          <td style={{ ...td, color: DIM, fontSize: 12, whiteSpace: 'nowrap' }}>
+                            {d.date ? new Date(d.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' }) : '—'}
+                          </td>
+                          <td style={{ ...td, color: DIM, fontStyle: 'italic', fontSize: 12, maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {d.reason || '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
         ) : (
           <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, overflow: 'hidden' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>

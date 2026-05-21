@@ -457,7 +457,11 @@ export default function StrategicVisibilityPage() {
               </span>
             )}
           </div>
-          {/* PATCH 0071: Region filter + sort toggle */}
+          {/* PATCH 0071: Region filter + sort toggle.
+              PATCH 0569 (UX #6) — Show a skeleton bar in the count badge
+              on cold load instead of '0', which previously made it look
+              like the region had no data when really we hadn't fetched
+              yet. The skeleton shimmer matches the rest of the page. */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 10, color: '#4A5B6C', fontWeight: 700, letterSpacing: '0.5px' }}>REGION:</span>
             {(['ALL', 'IN', 'US'] as const).map((r) => (
@@ -474,7 +478,17 @@ export default function StrategicVisibilityPage() {
                 }}
               >
                 {r === 'ALL' ? '🌐 ALL' : r === 'IN' ? '🇮🇳 IN' : '🇺🇸 US'}
-                <span style={{ marginLeft: 5, color: '#4A5B6C', fontWeight: 400 }}>{regionCounts[r]}</span>
+                {isLoading && !data ? (
+                  <span style={{
+                    display: 'inline-block', marginLeft: 5, width: 18, height: 8,
+                    verticalAlign: 'middle', borderRadius: 3,
+                    background: 'linear-gradient(90deg, #1A2840 0%, #2A3B55 50%, #1A2840 100%)',
+                    backgroundSize: '200% 100%',
+                    animation: 'svShimmer 1.4s linear infinite',
+                  }} aria-label="loading count" />
+                ) : (
+                  <span style={{ marginLeft: 5, color: '#4A5B6C', fontWeight: 400 }}>{regionCounts[r]}</span>
+                )}
               </button>
             ))}
             <span style={{ fontSize: 10, color: '#4A5B6C', fontWeight: 700, letterSpacing: '0.5px', marginLeft: 12 }}>SORT:</span>

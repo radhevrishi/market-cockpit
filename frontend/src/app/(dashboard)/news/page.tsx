@@ -823,6 +823,70 @@ function ReadingListButton({ id }: { id: string }) {
   );
 }
 
+// PATCH 0569 (UX #4) — Inline +Watch button on news cards. Adds the first
+// ticker symbol on the article to `mc_watchlist_tickers` so the user can go
+// from a news headline to a tracked ticker without leaving the page. We
+// only wire the *first* symbol to keep the click cheap; multi-symbol adds
+// stay the watchlist page's job.
+const NEWS_WATCHLIST_KEY = 'mc_watchlist_tickers';
+function readWatchlistTickers(): Set<string> {
+  if (typeof window === 'undefined') return new Set();
+  try {
+    const raw = localStorage.getItem(NEWS_WATCHLIST_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return new Set((Array.isArray(arr) ? arr : []).map((t: string) => String(t).toUpperCase()));
+  } catch { return new Set(); }
+}
+function writeWatchlistTickers(set: Set<string>) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(NEWS_WATCHLIST_KEY, JSON.stringify(Array.from(set)));
+    window.dispatchEvent(new Event('mc:watchlist:updated'));
+  } catch {}
+}
+function WatchlistButton({ ticker }: { ticker: string | null | undefined }) {
+  const upper = (ticker || '').toUpperCase();
+  const [inList, setInList] = useState(false);
+  useEffect(() => {
+    if (!upper) return;
+    setInList(readWatchlistTickers().has(upper));
+    const onUpdate = () => setInList(readWatchlistTickers().has(upper));
+    window.addEventListener('mc:watchlist:updated', onUpdate);
+    window.addEventListener('storage', onUpdate);
+    return () => {
+      window.removeEventListener('mc:watchlist:updated', onUpdate);
+      window.removeEventListener('storage', onUpdate);
+    };
+  }, [upper]);
+  if (!upper) return null;
+  const onClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const set = readWatchlistTickers();
+    if (set.has(upper)) set.delete(upper); else set.add(upper);
+    writeWatchlistTickers(set);
+    setInList(set.has(upper));
+  };
+  return (
+    <button
+      onClick={onClick}
+      title={inList ? `${upper} is in your Watchlist — click to remove` : `Add ${upper} to your Watchlist`}
+      style={{
+        background: inList ? '#10B98115' : 'none',
+        border: `1px solid ${inList ? '#10B98160' : '#1E2D45'}`,
+        borderRadius: '10px',
+        color: inList ? '#10B981' : '#4A5B6C',
+        cursor: 'pointer', padding: '6px 10px', flexShrink: 0,
+        display: 'inline-flex', alignItems: 'center', minHeight: '32px',
+        justifyContent: 'center', fontSize: 11, fontWeight: 700, letterSpacing: '0.3px',
+      }}
+    >
+      {inList ? `✓ ${upper}` : `+ Watch`}
+    </button>
+  );
+}
+
 function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: NewsArticle) => void }) {
   const symbols = getTickerSymbols(article);
   const title = getTitle(article);
@@ -1110,6 +1174,10 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
             )}
           </div>
         </div>
+        {/* PATCH 0569 (UX #4) — Inline +Watch button. Uses the first
+            ticker on the article — multi-symbol adds stay the watchlist
+            page's job. Hidden when no ticker is attached. */}
+        <WatchlistButton ticker={symbols[0] || null} />
         {/* AUDIT_100 #58 — Read-it-later toggle. Saves the article id to
             localStorage 'mc:reading-list:v1' for later retrieval. */}
         <ReadingListButton id={article.id} />
@@ -2036,6 +2104,41 @@ function persistSavedViews(views: SavedView[]) {
   try { localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(views)); } catch {}
 }
 
+// PATCH 0569 (UX #1) — Auto-name a Saved View from its query string so the
+// user can save with one click (no modal). Pulls the most semantically
+// meaningful filters (type / region / lifecycle / signal / bottleneck
+// subfilters / search) and appends a short date so a re-saved version
+// doesn't collide. User can still rename via the ✎ pencil.
+function autoNameSavedView(query: string): string {
+  let q = query || '';
+  if (q.startsWith('?')) q = q.slice(1);
+  const p = new URLSearchParams(q);
+  const parts: string[] = [];
+  const type = p.get('type');
+  if (type && type !== 'ALL') parts.push(type.replace(/_/g, ' '));
+  const blevel = p.get('blevel');
+  if (blevel && blevel !== 'ALL') parts.push(blevel.replace(/_/g, ' '));
+  const bcat = p.get('bcat');
+  if (bcat && bcat !== 'ALL') parts.push(bcat.replace(/_/g, ' '));
+  const region = p.get('region');
+  if (region && region !== 'ALL') {
+    parts.push(region === 'IN' ? 'India' : region === 'US' ? 'US' : region);
+  }
+  const lc = p.get('lc');
+  if (lc && lc !== 'LIVE_WARM') {
+    const lcLabel = lc === 'STALE' ? 'Stale' : lc === 'PERSISTENT' ? 'Persistent' : lc === 'ALL' ? 'All Ages' : lc;
+    parts.push(lcLabel);
+  }
+  const sig = p.get('signal');
+  if (sig && sig !== 'ALL') parts.push(sig);
+  if (p.get('struct') === '1') parts.push('Structural');
+  const search = p.get('q');
+  if (search) parts.push(`"${search.slice(0, 24)}"`);
+  if (parts.length === 0) parts.push('Custom');
+  const date = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return `${parts.join(' · ')} · ${date}`;
+}
+
 function SavedViewsControl() {
   const router = useRouter();
   const pathname = usePathname();
@@ -2064,9 +2167,10 @@ function SavedViewsControl() {
       alert(`This filter combo is already saved as "${alreadySaved.name}".`);
       return;
     }
-    const name = window.prompt('Name this view (e.g. "IN bottlenecks · live"):');
-    if (!name?.trim()) return;
-    const next: SavedView = { id: `${Date.now()}-${Math.random().toString(36).slice(2,6)}`, name: name.trim().slice(0, 60), query: currentQuery, createdAt: Date.now() };
+    // PATCH 0569 (UX #1) — One-click save. Auto-name from active filters
+    // (e.g. "BOTTLENECK · India · May 21"). User can rename via ✎ later.
+    const name = autoNameSavedView(currentQuery).slice(0, 60);
+    const next: SavedView = { id: `${Date.now()}-${Math.random().toString(36).slice(2,6)}`, name, query: currentQuery, createdAt: Date.now() };
     const updated = [next, ...views];
     setViews(updated);
     persistSavedViews(updated);
@@ -3058,11 +3162,13 @@ export default function NewsFeedPage() {
             'Live + Warm' so the main feed never shows soup. */}
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8, fontSize: 10, color: '#6B7B8C', fontWeight: 700, letterSpacing: '0.5px' }}>
           <span>LIFECYCLE:</span>
+          {/* PATCH 0569 (UX #2) — Tooltip hints expanded so the meaning of
+              each lifecycle bucket is unambiguous on hover. */}
           {([
-            { key: 'LIVE_WARM',  label: '● Live + Warm',  hint: 'Published in the last 48 hours',  bg: '#10B98120', border: '#10B981', text: '#10B981' },
-            { key: 'STALE',      label: '◐ Stale',        hint: '48 hours to 7 days old',           bg: '#F59E0B20', border: '#F59E0B', text: '#F59E0B' },
-            { key: 'PERSISTENT', label: '◑ Persistent',   hint: 'Older than 7d + structural theme', bg: '#A78BFA20', border: '#A78BFA', text: '#A78BFA' },
-            { key: 'ALL',        label: '○ All',          hint: 'No lifecycle filter',              bg: '#1E2D45',   border: '#1E2D45', text: '#8A95A3' },
+            { key: 'LIVE_WARM',  label: '● Live + Warm',  hint: 'Live + Warm — articles published in the last 48 hours. Default feed: most actionable, recency-weighted ranking.', bg: '#10B98120', border: '#10B981', text: '#10B981' },
+            { key: 'STALE',      label: '◐ Stale',        hint: 'Stale — 48 hours to 7 days old. Still useful for context but losing market relevance; check timestamp before acting.', bg: '#F59E0B20', border: '#F59E0B', text: '#F59E0B' },
+            { key: 'PERSISTENT', label: '◑ Persistent',   hint: 'Persistent — older than 7 days but flagged as a structural / ongoing theme worth re-reading (e.g. multi-quarter bottlenecks).', bg: '#A78BFA20', border: '#A78BFA', text: '#A78BFA' },
+            { key: 'ALL',        label: '○ All',          hint: 'All — no lifecycle filter. Shows every article regardless of age.', bg: '#1E2D45',   border: '#1E2D45', text: '#8A95A3' },
           ] as const).map(f => {
             const active = lifecycleFilter === f.key;
             // AUDIT_100 #31 — chip count badge so users see bucket size before clicking.

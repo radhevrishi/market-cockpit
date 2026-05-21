@@ -96,6 +96,15 @@ export default function CalendarPage() {
   const monthStr = `${viewMonth.getFullYear()}-${(viewMonth.getMonth() + 1).toString().padStart(2, '0')}`;
   const monthLabel = viewMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
+  // PATCH 0569 (UX #9) — Explicit timeout state. The calendar fetch was
+  // previously open-ended; if /api/market/earnings hung past the user's
+  // patience, they saw a perpetual spinner with no way to retry. The
+  // `slowFetch` flag flips on after 8 seconds so we can show a retry CTA
+  // *inside* the loading spinner, and the request is aborted at 20s with
+  // a clear timeout error message.
+  const [slowFetch, setSlowFetch] = useState(false);
+  const FETCH_TIMEOUT_MS = 20_000;
+  const SLOW_FETCH_HINT_MS = 8_000;
   // PATCH 0298 — AbortController so a stale fetch from a previous
   // monthOffset/indexFilter never overwrites a fresher in-flight fetch.
   const fetchData = async (signal?: AbortSignal) => {
@@ -106,10 +115,25 @@ export default function CalendarPage() {
       setLoading(false);
       return;
     }
+    setSlowFetch(false);
+    let slowTimer: ReturnType<typeof setTimeout> | null = null;
+    let abortTimer: ReturnType<typeof setTimeout> | null = null;
+    let didTimeout = false;
     try {
       setLoading(true);
+      // Slow-fetch hint: surface the retry CTA inside the spinner if the
+      // request takes long enough to be perceptually broken.
+      slowTimer = setTimeout(() => setSlowFetch(true), SLOW_FETCH_HINT_MS);
+      // Hard timeout: if signal is supplied (the caller's AbortController),
+      // we share it; if not, we still cap the wait by tripping didTimeout.
+      const localController = signal ? null : new AbortController();
+      const effectiveSignal = signal ?? localController!.signal;
+      abortTimer = setTimeout(() => {
+        didTimeout = true;
+        try { localController?.abort(); } catch {}
+      }, FETCH_TIMEOUT_MS);
       const indexParam = indexFilter !== 'All' ? `&index=${indexFilter}` : '';
-      const res = await fetch(`/api/market/earnings?market=india&month=${monthStr}${indexParam}`, { signal });
+      const res = await fetch(`/api/market/earnings?market=india&month=${monthStr}${indexParam}`, { signal: effectiveSignal });
       if (!res.ok) throw new Error('Failed to fetch earnings data');
       const json: EarningsResponse = await res.json();
       if (signal?.aborted) return;
@@ -117,9 +141,17 @@ export default function CalendarPage() {
       calendarCacheSet(cacheKey, { data: json, ts: Date.now() });
       setError('');
     } catch (err) {
-      if ((err as Error)?.name === 'AbortError') return; // ignore aborted
+      if ((err as Error)?.name === 'AbortError') {
+        if (didTimeout) {
+          setError(`Calendar fetch timed out after ${FETCH_TIMEOUT_MS / 1000}s`);
+        }
+        return; // either user-aborted or our timeout — either way, stop
+      }
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
+      if (slowTimer) clearTimeout(slowTimer);
+      if (abortTimer) clearTimeout(abortTimer);
+      setSlowFetch(false);
       if (!signal?.aborted) setLoading(false);
     }
   };
@@ -279,11 +311,32 @@ export default function CalendarPage() {
         </div>
       </div>
 
-      {/* Loading */}
+      {/* Loading.
+          PATCH 0569 (UX #9) — When the fetch is taking longer than 8s,
+          surface a retry CTA *inside* the spinner so the user has
+          something to click. Previously the calendar would sit blank
+          past a network hiccup. */}
       {loading && (
-        <div style={{ display: 'flex', justifyContent: 'center', padding: '80px 0' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '80px 0', gap: 14 }}>
           <div style={{ width: '40px', height: '40px', border: `3px solid ${THEME.border}`, borderTop: `3px solid ${THEME.accent}`, borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
           <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+          {slowFetch && (
+            <div style={{ textAlign: 'center', maxWidth: 380 }}>
+              <div style={{ fontSize: 12, color: THEME.textSecondary, marginBottom: 8, lineHeight: 1.5 }}>
+                Calendar is taking longer than usual — the NSE source may be slow today.
+              </div>
+              <button
+                onClick={() => fetchData()}
+                style={{
+                  padding: '6px 14px', borderRadius: 6,
+                  border: `1px solid ${THEME.accent}`, backgroundColor: `${THEME.accent}18`, color: THEME.accent,
+                  cursor: 'pointer', fontSize: 12, fontWeight: 700,
+                }}
+              >
+                ↻ Retry now
+              </button>
+            </div>
+          )}
         </div>
       )}
 
