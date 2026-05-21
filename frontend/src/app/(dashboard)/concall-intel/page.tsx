@@ -2288,6 +2288,36 @@ function WarrantAnalytics({ data }: { data: WarrantFeedPayload }) {
       {expanded && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
 
+          {/* PATCH 0598 — Extraction-quality banner. When the underlying
+              filings-extraction pipeline is producing mostly-UNKNOWN
+              promoter / use / issue-price fields, the bucket distribution
+              looks alarming (98% distress / 99% unknown) when really the
+              regex pipeline simply couldn't read the PDFs. Surface this
+              upfront so the analyst doesn't draw bad conclusions. */}
+          {(() => {
+            const promoterRateLocal = total > 0 ? Math.round((extr.promoter / total) * 100) : 0;
+            const pdfRate = total > 0 ? Math.round((extr.pdf / total) * 100) : 0;
+            const issueRate = total > 0 ? Math.round((extr.issuePx / total) * 100) : 0;
+            const lowExtraction = pdfRate < 30 || promoterRateLocal < 20 || issueRate < 20;
+            if (!lowExtraction) return null;
+            return (
+              <div style={{
+                background: '#EF444412', border: '1px solid #EF444440',
+                borderRadius: 4, padding: '8px 12px',
+              }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: '#EF4444', marginBottom: 3 }}>
+                  ⚠ EXTRACTION QUALITY LOW — treat below as anomaly detector, not investment ranking
+                </div>
+                <div style={{ fontSize: 10.5, color: '#FCA5A5', lineHeight: 1.5 }}>
+                  Only {pdfRate}% have PDFs · {promoterRateLocal}% have promoter intent · {issueRate}% have issue price.
+                  The bucket distribution below is dominated by &ldquo;UNKNOWN promoter → distress&rdquo; classifications which
+                  reflect missing data, NOT confirmed dilutive intent. Use this section to <strong>surface anomalies for manual review</strong>,
+                  not as a sized scoring engine. Verify each interesting row by opening the source filing.
+                </div>
+              </div>
+            );
+          })()}
+
           {/* ── STATS STRIP ───────────────────────────────────────────── */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 8 }}>
             <div style={cardStyle}>
@@ -2703,6 +2733,32 @@ function ConcallAnalyticsTab() {
         </div>
       </div>
 
+      {/* ── 📐 INSTITUTIONAL CALIBRATION DISCLOSURE (PATCH 0598) ──────────
+          User feedback called out "synthetic confidence" — 100% / 95% /
+          CRITICAL labels are overstated for a regex-and-lexicon engine
+          with no realized-alpha feedback loop. This banner sets the
+          right calibration up-front so the analyst doesn't over-trust
+          the scores. Every score below is labelled as evidence-density
+          / cross-source-confirmation / signal-persistence — not as a
+          probability. */}
+      <div style={{
+        background: 'linear-gradient(90deg, #1E2D4530 0%, #0D1623 100%)',
+        border: '1px solid #1E2D45',
+        borderLeft: '3px solid #F59E0B',
+        borderRadius: 6, padding: '10px 14px',
+      }}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.5px', marginBottom: 4 }}>
+          📐 CALIBRATION DISCLOSURE — read this once
+        </div>
+        <div style={{ fontSize: 11, color: '#CBD5E1', lineHeight: 1.5 }}>
+          All scores on this page are <strong>evidence-density / cross-source-confirmation</strong> measures
+          (regex + lexicon over filings + news, no backtested probabilities, no realized-alpha attribution).
+          Read scores as <em>"how many independent signals agree?"</em>, not as <em>"how likely is the trade to work?"</em>.
+          Treat ±5 differences as noise; only ±15 deltas reflect real signal shifts. Cross-reference the source
+          filings before any capital allocation decision.
+        </div>
+      </div>
+
       {/* PATCH 0597 — Universe Summary panel removed per user feedback
           ("i dont care this data"). Bottleneck Themes panel added below
           (loads /news/bottleneck-dashboard, severity-sorted with key
@@ -2959,63 +3015,135 @@ function ConcallAnalyticsTab() {
         </div>
       )}
 
-      {/* ── 6. CROSS-STREAM INSIGHTS ────────────────────────────────────── */}
+      {/* ── 6. CROSS-STREAM EVIDENCE CONVERGENCE (PATCH 0598) ─────────────
+          Renamed from 'Cross-stream confirmation' per user feedback that
+          'confirmation' overstates what a regex engine can claim. This
+          is an EVIDENCE-DENSITY measure — multiple independent datasets
+          mention the same ticker. Lower false-positive rate than any
+          single stream alone, but NOT a probability that the trade
+          works. */}
       {crossStream.length > 0 && (
         <div style={cardStyle}>
-          <div style={{ fontSize: 12, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.4px', marginBottom: 6 }}>
-            🎯 CROSS-STREAM CONFIRMATION ({crossStream.length})
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.4px' }}>
+              🎯 CROSS-STREAM EVIDENCE CONVERGENCE ({crossStream.length})
+            </div>
+            <span style={{ fontSize: 9, color: '#F59E0B', background: '#F59E0B22', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>EVIDENCE-DENSITY</span>
           </div>
           <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 8, lineHeight: 1.5 }}>
-            Tickers that show up in <strong style={{ color: '#E6EDF3' }}>≥ 2 streams</strong> at once —
-            warrant filing + bullish concall + keyword match. Triple confirmation is the highest-conviction
-            structural signal this page produces.
+            Tickers mentioned in <strong style={{ color: '#E6EDF3' }}>≥ 2 independent streams</strong> simultaneously
+            (warrant filing · bullish concall · keyword watch). Higher ×N count means more orthogonal datasets agree.
+            Read as <em>"this name has wider evidence"</em>, NOT <em>"this name will outperform"</em>.
+            Validate with price action / earnings revisions before sizing.
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 6 }}>
             {crossStream.map((c, i) => {
               const color = c.count >= 3 ? '#10B981' : '#F59E0B';
+              const evidenceLabel = c.count >= 3 ? 'WIDE EVIDENCE' : 'PAIR EVIDENCE';
               return (
-                <div key={c.symbol + i} style={{
+                <a key={c.symbol + i} href={`/stock-sheet?ticker=${encodeURIComponent(c.symbol)}`} style={{
                   display: 'flex', alignItems: 'center', gap: 8,
                   padding: '6px 10px', borderRadius: 4,
                   border: `1px solid ${color}40`, background: `${color}10`,
+                  textDecoration: 'none',
                 }}>
-                  <span style={{ fontSize: 10, color, fontWeight: 800, minWidth: 22, padding: '1px 5px', borderRadius: 3, background: `${color}22` }}>×{c.count}</span>
+                  <span title={evidenceLabel} style={{ fontSize: 10, color, fontWeight: 800, minWidth: 22, padding: '1px 5px', borderRadius: 3, background: `${color}22` }}>×{c.count}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 12, fontWeight: 700, color: '#E6EDF3', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.company || c.symbol}</div>
                     <div style={{ fontSize: 9, color: '#94A3B8', fontFamily: 'ui-monospace, monospace' }}>{c.symbol} · {c.streams.join(' + ')}</div>
                   </div>
-                </div>
+                </a>
               );
             })}
           </div>
         </div>
       )}
 
-      {/* ── 7. INSTITUTIONAL DISCLOSURE ─────────────────────────────────── */}
+      {/* ── 7. PORTFOLIO BASKET SUGGESTIONS (PATCH 0598) ───────────────────
+          User feedback: "great intelligence, weak monetization framework —
+          you have idea generation, not deployable portfolio intelligence."
+          This block turns the cross-stream convergence into three baskets:
+            CORE       — wide evidence (≥3 streams) + named ticker
+            TACTICAL   — pair evidence + named ticker
+            WATCH      — single-stream signals (informational, not sized)
+          NOT a portfolio. Just a starting structure the analyst can prune
+          before final allocation. */}
+      {crossStream.length > 0 && (
+        <div style={cardStyle}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: '#10B981', letterSpacing: '0.4px' }}>
+              📦 PORTFOLIO BASKET SCAFFOLD
+            </div>
+            <span style={{ fontSize: 9, color: '#10B981', background: '#10B98122', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>STARTING STRUCTURE</span>
+          </div>
+          <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 8, lineHeight: 1.5 }}>
+            A starting structure derived from cross-stream evidence — <strong>not a recommendation</strong>.
+            CORE = wide evidence (≥3 streams). TACTICAL = pair evidence with at least one strong stream.
+            Use this as a candidate list, then prune by valuation, liquidity, and your own conviction work
+            before allocation. Suggested position-size ranges are mcap-tier heuristics, not realized-volatility models.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 10 }}>
+            {([
+              { key: 'core', label: '💎 CORE', color: '#10B981', sizeHint: '3-5% / name', items: crossStream.filter(c => c.count >= 3) },
+              { key: 'tactical', label: '⚡ TACTICAL', color: '#22D3EE', sizeHint: '1-3% / name', items: crossStream.filter(c => c.count === 2) },
+            ] as const).map((b) => (
+              <div key={b.key} style={{ ...cardStyle, background: '#0A1422', borderColor: `${b.color}30` }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <span style={{ fontSize: 12, color: b.color, fontWeight: 800 }}>{b.label}</span>
+                  <span style={{ fontSize: 10, color: b.color, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>({b.items.length})</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 9, color: '#6B7A8D' }}>{b.sizeHint}</span>
+                </div>
+                {b.items.length === 0 ? (
+                  <div style={{ fontSize: 10, color: '#6B7A8D', fontStyle: 'italic' }}>no candidates at this evidence-density tier</div>
+                ) : (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    {b.items.slice(0, 12).map((c) => (
+                      <a key={c.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(c.symbol)}`}
+                        title={`${c.symbol} · ${c.streams.join(' + ')} streams`}
+                        style={{
+                          fontSize: 10, fontWeight: 700, color: b.color,
+                          padding: '3px 8px', borderRadius: 3,
+                          border: `1px solid ${b.color}40`, background: `${b.color}10`,
+                          textDecoration: 'none',
+                        }}>
+                        {c.company ? c.company.split(' ').slice(0, 3).join(' ') : c.symbol}
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── 8. INSTITUTIONAL DISCLOSURE (PATCH 0598 recalibrated) ───────── */}
       <div style={{ ...cardStyle, borderColor: '#1A2540' }}>
         <div style={{ fontSize: 12, color: '#94A3B8', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 6 }}>
-          📚 HOW TO READ THIS ANALYTICS
+          📚 HOW TO READ THIS ANALYTICS (recalibrated)
         </div>
         <ul style={{ margin: 0, paddingLeft: 18, fontSize: 11, color: '#94A3B8', lineHeight: 1.6 }}>
           <li>
-            <strong style={{ color: '#10B981' }}>Cross-stream confirmation</strong> is the strongest signal —
-            tickers appearing across warrant + bullish + keyword feeds at the same time
-            are 3-way triangulated. Open these first.
+            <strong style={{ color: '#10B981' }}>Cross-stream evidence convergence</strong> is
+            this engine&apos;s strongest output — but it is <em>evidence-density</em>, not a
+            probability of trade success. Validate with price action / volume / earnings revisions
+            (a market-implied confirmation layer is on the roadmap but not yet shipped).
           </li>
           <li>
-            <strong style={{ color: '#A78BFA' }}>Warrant Analytics bucket mix</strong> tells you the
-            character of this month's capital raises: strategic-promoter (multibagger setups)
-            vs distress (dilutive working-capital). Use it to gauge market regime.
+            <strong style={{ color: '#A78BFA' }}>Warrant Analytics</strong> currently has known
+            extraction gaps — promoter participation and use-of-proceeds are unknown on most rows.
+            Treat as <em>anomaly detector</em>, not <em>investment ranking</em>, until the
+            filings-extraction pipeline matures.
           </li>
           <li>
             <strong style={{ color: '#22D3EE' }}>Bullish Tier distribution</strong> distinguishes
-            real signal from spam. ULTRA + BULLISH tiers carry actionable confidence.
-            INSUFFICIENT / DATA_PENDING tiers signal extraction gaps, not bearish reality.
+            real signal from spam. ULTRA + BULLISH tiers carry actionable evidence-density;
+            INSUFFICIENT / DATA_PENDING signal extraction gaps (not bearish reality).
           </li>
           <li>
-            <strong style={{ color: '#F59E0B' }}>Keyword Watch by group</strong> shows what
-            themes are dominant in this week's concall pipeline. Heavy RISK loading
-            with light OPPORTUNITY = market caution.
+            <strong style={{ color: '#F59E0B' }}>Keyword Watch by group</strong> shows the
+            thematic loading of this week&apos;s concall pipeline. Heavy RISK loading with
+            light OPPORTUNITY suggests caution; verify by reading the actual matched articles.
           </li>
           <li>
             <strong style={{ color: '#94A3B8' }}>Movers</strong> capture day-over-day delta in
@@ -3026,6 +3154,20 @@ function ConcallAnalyticsTab() {
             All scores on this page are <strong>heuristic regex + lexicon</strong> based.
             Treat 5-pt differences as noise; only 15+ pt deltas reflect real signal shifts.
             Cross-reference the source filings before acting.
+          </li>
+          <li>
+            <strong style={{ color: '#EF4444' }}>Counter-thesis caveat:</strong> the engine
+            currently has structural-bullish bias by construction (every theme is named for
+            its bottleneck, not its normalisation cycle). Curated counter-thesis lives on the
+            Bottleneck Workbench detail pages (lib/bottleneck-intel.ts catalog). For themes
+            without a catalog entry yet, manually consider failure modes — every bottleneck
+            eventually normalises, overbuilds, or gets substituted.
+          </li>
+          <li>
+            <strong style={{ color: '#94A3B8' }}>Missing layers</strong> (institutional roadmap):
+            market-implied confirmation (price/volume/options-flow/short-interest/earnings-revisions),
+            realized-alpha feedback loop, factor-overlap analysis, crowding metrics. Without these,
+            this engine is an idea-generation surface, not a deployable portfolio.
           </li>
         </ul>
       </div>
