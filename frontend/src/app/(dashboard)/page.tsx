@@ -599,11 +599,25 @@ export default function HomeDashboard() {
               {' · '}{now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
             </div>
           </div>
-          {/* ATTENTION-WEIGHTED HEADER CHIPS — only the high-priority surfaces */}
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <Link href="/multibagger" style={navChip('#10B981')}>🚀 Multibagger</Link>
-            <Link href="/portfolio" style={navChip('#22D3EE')}>💼 My Book</Link>
-            <Link href="/concall-intel" style={navChip('#A78BFA')}>🎙 Concall Intel</Link>
+          {/* PATCH 0619 — full institutional chip strip per user request.
+              All high-priority surfaces accessible from the home header in
+              the same chip style. Wraps to multiple rows on narrow screens. */}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', maxWidth: 920, justifyContent: 'flex-end' }}>
+            <Link href="/multibagger"            style={navChip('#10B981')}>🚀 Multibagger</Link>
+            <Link href="/portfolio"              style={navChip('#22D3EE')}>💼 My Book</Link>
+            <Link href="/watchlists"             style={navChip('#22D3EE')}>👁 Watchlist</Link>
+            <Link href="/decisions"              style={navChip('#22D3EE')}>📒 Decision Log</Link>
+            <Link href="/concall-intel"          style={navChip('#A78BFA')}>🎙 Concall Intel</Link>
+            <Link href="/earnings-opportunities" style={navChip('#F59E0B')}>📅 Earnings Ops</Link>
+            <Link href="/earnings"               style={navChip('#F59E0B')}>📊 Earnings Scan</Link>
+            <Link href="/special-situations"     style={navChip('#EF4444')}>🎯 Special Sit</Link>
+            <Link href="/order-book"             style={navChip('#EF4444')}>📑 Order Book</Link>
+            <Link href="/rating-actions"         style={navChip('#EF4444')}>🏛 Rating Actions</Link>
+            <Link href="/strategic-visibility"   style={navChip('#A78BFA')}>⭐ Strategic Vis</Link>
+            <Link href="/movers"                 style={navChip('#10B981')}>📈 Movers</Link>
+            <Link href="/breadth"                style={navChip('#10B981')}>📊 Breadth</Link>
+            <Link href="/super-investors"        style={navChip('#A78BFA')}>🦅 Super Investors</Link>
+            <Link href="/orders"                 style={navChip('#22D3EE')}>📡 Signals</Link>
           </div>
         </div>
 
