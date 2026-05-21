@@ -332,28 +332,46 @@ export default function HomeDashboard() {
         return [];
       };
       const TIER_RANK: Record<string, number> = { BLOCKBUSTER: 0, STRONG: 1, MIXED: 2, AVOID: 3 };
-      const FOUR_HOURS_MS = 24 * 3600_000; // PATCH 0611 — bumped 4h → 24h so feed always has something fresh
+      const TWENTY_FOUR_H_MS = 24 * 3600_000;
 
       // PATCH 0606 — three independent network fires; each updates state
       // separately so the page is fully usable as soon as ANY one returns.
-      // In-play news
-      safe<any>('/api/v1/news/in-play').then((j) => {
+      // PATCH 0616 — In-Play News source-fix.
+      // /api/v1/news/in-play returns ONLY 4 structural items
+      // (all flagged structural_status=CRITICAL/ELEVATED + feed_layer=STRUCTURAL_ALPHA)
+      // which we correctly filter out, leaving 0 every time. The broader
+      // /api/v1/news endpoint returns the full live feed (~40 items including
+      // genuine breaking news like 'Nvidia memory costs soar 485%', 'AMD
+      // invests $10B in Taiwan'). Switch to the broader feed with the same
+      // structural-noise filters.
+      safe<any>('/api/v1/news?limit=40').then((j) => {
         if (cancelled) return;
         const raw: NewsItem[] = Array.isArray(j) ? j : (j?.articles || j?.items || []);
         const filtered = raw.filter((a: any) => {
           if (a?.is_synthetic) return false;
           if (a?.structural_status) return false;
           if (a?.feed_layer === 'STRUCTURAL_ALPHA') return false;
+          if (a?.feed_type === 'STRUCTURAL_ALPHA') return false;
           const t = (a?.title || a?.headline || '');
           if (t.startsWith('[STRUCTURAL]')) return false;
+          if (t.startsWith('[STRUCTURAL ALERT]')) return false;
           try {
             if (a?.published_at) {
               const age = Date.now() - new Date(a.published_at).getTime();
-              if (age > FOUR_HOURS_MS) return false;
-              if (age < 0) return false;
+              if (age > TWENTY_FOUR_H_MS) return false;
+              if (age < -60_000) return false;  // tolerate small clock skew
             }
           } catch {}
           return true;
+        });
+        // Sort by importance_score (highest first), then by recency
+        filtered.sort((a: any, b: any) => {
+          const aImp = a?.importance_score ?? 0;
+          const bImp = b?.importance_score ?? 0;
+          if (aImp !== bImp) return bImp - aImp;
+          const aT = a?.published_at ? new Date(a.published_at).getTime() : 0;
+          const bT = b?.published_at ? new Date(b.published_at).getTime() : 0;
+          return bT - aT;
         });
         setData((d) => ({ ...d, inPlay: filtered.slice(0, 8) }));
         setNetLoading((n) => ({ ...n, inPlay: false }));
