@@ -30,6 +30,10 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { getConvictionTickers, getConvictionList } from '@/lib/conviction-beats';
 import { readDecisions } from '@/lib/decisions';
+// PATCH 0624 — pull rich static roster directly so the Home Super Investors
+// panel can show real holdings + disclosure dates instead of the thin
+// /super-investor-flow output.
+import { SUPER_INVESTORS } from '@/lib/super-investors';
 
 const BG = '#0A0E1A';
 const CARD = '#0D1623';
@@ -78,7 +82,21 @@ interface HomeState {
   gainers?: Array<{ ticker: string; company?: string; changePercent?: number; price?: number }>;
   losers?: Array<{ ticker: string; company?: string; changePercent?: number; price?: number }>;
   moversUpdatedAt?: string;
-  superInvestors?: Array<{ ticker: string; company?: string; addCount?: number; exitCount?: number; totalSignalScore?: number; investors?: string[]; topDirection?: string; lastMoveAt?: string }>;
+  // PATCH 0624 — extended shape: kind='flow' (live) or 'roster' (static curated holdings)
+  superInvestors?: Array<{
+    ticker: string;
+    company?: string;
+    addCount?: number;
+    exitCount?: number;
+    totalSignalScore?: number;
+    investors?: string[];
+    topDirection?: string;
+    lastMoveAt?: string;
+    kind?: 'flow' | 'roster';
+    stakePct?: number;
+    disclosedOn?: string;
+    investorName?: string;
+  }>;
   signals?: Array<{ id?: string; title?: string; headline?: string; published_at?: string; source_name?: string; primary_ticker?: string; ticker_symbols?: any[]; importance_score?: number }>;
   // PATCH 0622 — institutional enhancements
   portfolioPnl?: { totalPct: number; totalChangeRs: number; bestMover?: { ticker: string; pct: number }; worstMover?: { ticker: string; pct: number }; positions: number; covered: number };
@@ -501,33 +519,60 @@ export default function HomeDashboard() {
         setData((d) => ({ ...d, gainers, losers, moversUpdatedAt: j?.updatedAt } as any));
       });
 
-      // PATCH 0623 — Super Investors flow (60d primary + 90d fallback).
-      // Upstream data is sparse — only ~7 rows in last 180d — so we widen
-      // the window. Also relax the ticker filter: drop only obvious noise
-      // patterns like 'Q1 for first time' / 'Q3 - Mint', keep everything
-      // else even if ticker is a company name (display layer handles both).
+      // PATCH 0624 — Super Investors panel = flow API + static roster combined.
+      // The flow API is genuinely sparse upstream (only 7 rows in 180d at probe
+      // time). The /lib/super-investors.ts static roster has 10 investors with
+      // 100+ disclosed holdings, each with a disclosedOn date — that's the
+      // dataset that actually gives the user something to act on.
+      // Strategy: take live flow rows first (recent activity), then top up with
+      // the most-recently-disclosed static holdings — dedupe by ticker.
       (async () => {
-        const cleanRows = (rawRows: any[]) => (rawRows || [])
+        const cleanFlow = (rawRows: any[]) => (rawRows || [])
           .filter((r: any) => r?.ticker && r?.investors?.length)
           .filter((r: any) => !/^Q\d\s|first time|^Q[1-4]\s/i.test(r.ticker))
-          .filter((r: any) => r.ticker.length < 40);  // drop excerpt-as-ticker
+          .filter((r: any) => r.ticker.length < 40)
+          .map((r: any) => ({ ...r, kind: 'flow' as const, investorName: (r.investors || [])[0] }));
 
         let j: any = await safe<any>(`/api/v1/super-investor-flow?days=60&_=${Date.now()}`);
         if (cancelled) return;
-        let rows = cleanRows(j?.rows || []);
-        if (rows.length < 3) {
-          // Fallback: widen to 90d
-          j = await safe<any>(`/api/v1/super-investor-flow?days=90&_=${Date.now()}`);
-          if (cancelled) return;
-          rows = cleanRows(j?.rows || []);
-        }
-        if (rows.length < 3) {
-          // Last resort: 180d
+        let flow = cleanFlow(j?.rows || []);
+        if (flow.length < 3) {
           j = await safe<any>(`/api/v1/super-investor-flow?days=180&_=${Date.now()}`);
           if (cancelled) return;
-          rows = cleanRows(j?.rows || []);
+          flow = cleanFlow(j?.rows || []);
         }
-        setData((d) => ({ ...d, superInvestors: rows.slice(0, 8) } as any));
+
+        // Static roster: flatten + sort by stake desc, then by disclosure date desc
+        const rosterRows = SUPER_INVESTORS.flatMap((inv) =>
+          (inv.topHoldings || []).map((h) => ({
+            ticker: h.ticker,
+            company: h.company,
+            stakePct: h.stakePct,
+            disclosedOn: h.disclosedOn,
+            investorName: inv.name,
+            investors: [inv.name],
+            kind: 'roster' as const,
+            topDirection: 'ACCUM',
+            lastMoveAt: h.disclosedOn,
+          })),
+        )
+        .sort((a, b) => {
+          const dateCompare = (b.disclosedOn || '').localeCompare(a.disclosedOn || '');
+          if (dateCompare !== 0) return dateCompare;
+          return (b.stakePct || 0) - (a.stakePct || 0);
+        });
+
+        // Merge: flow first (recent activity), then roster, dedupe by ticker
+        const seen = new Set<string>();
+        const combined: any[] = [];
+        for (const r of [...flow, ...rosterRows]) {
+          const k = (r.ticker || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
+          if (!k || seen.has(k)) continue;
+          seen.add(k);
+          combined.push(r);
+          if (combined.length >= 12) break;
+        }
+        setData((d) => ({ ...d, superInvestors: combined } as any));
       })();
 
       // PATCH 0621 — Signals: high-importance corporate news from the last 24h.
@@ -1357,34 +1402,59 @@ export default function HomeDashboard() {
             )}
           </div>
 
-          {/* SUPER INVESTORS — latest flow */}
+          {/* SUPER INVESTORS — PATCH 0624: combined flow + static roster */}
           <div style={{ ...cardStyle, borderLeft: '3px solid #A78BFA' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
               <span style={{ fontSize: 13, fontWeight: 800, color: '#A78BFA', letterSpacing: '0.4px' }}>
-                🦅 SUPER INVESTORS — last 60d ({data.superInvestors?.length || 0})
+                🦅 SUPER INVESTORS — holdings + flow ({data.superInvestors?.length || 0})
               </span>
-              <Link href="/super-investors" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
+              <Link href="/super-investors" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open Tracker →</Link>
             </div>
             <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
-              Marquee-investor adds and exits across the last 30 days
+              Marquee-investor positions (live flow + most-recent BSE 1%+ disclosures)
             </div>
             {!data.superInvestors ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
             ) : data.superInvestors.length === 0 ? (
-              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>No flow activity in window.</div>
+              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>No marquee positions found.</div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                {data.superInvestors.slice(0, 8).map((r: any, i: number) => {
+                {data.superInvestors.slice(0, 10).map((r: any, i: number) => {
                   const dirColor = r.topDirection === 'ACCUM' ? '#10B981' : r.topDirection === 'DIST' ? '#EF4444' : '#94A3B8';
                   const dirGlyph = r.topDirection === 'ACCUM' ? '▲' : r.topDirection === 'DIST' ? '▼' : '◆';
+                  const dateStr = r.disclosedOn || r.lastMoveAt;
+                  const fmtDate = dateStr ? (() => {
+                    const m = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+                    return m ? `${m[3]}-${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(m[2])-1]}` : dateStr;
+                  })() : '';
+                  const investor = r.investorName || (r.investors && r.investors[0]) || '';
+                  // Compact investor display (initial + lastname)
+                  const investorShort = investor.split(' ').length > 1
+                    ? investor.split(' ').map((p: string, idx: number) => idx === 0 ? p[0] + '.' : p).join(' ').slice(0, 14)
+                    : investor.slice(0, 12);
                   return (
                     <Link key={(r.ticker || '') + i} href={`/stock-sheet?ticker=${encodeURIComponent((r.ticker || '').replace(/\.(NS|BO)$/i, ''))}`}
                       style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
-                      <span style={{ fontSize: 9, color: '#A78BFA', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 60 }}>
-                        {(r.ticker || '').toString().replace(/\.(NS|BO)$/i, '').slice(0, 8)}
+                      <span style={{ fontSize: 9, color: '#A78BFA', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 56 }}>
+                        {(r.ticker || '').toString().replace(/\.(NS|BO)$/i, '').slice(0, 10)}
                       </span>
-                      <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.company || r.ticker}</span>
-                      <span style={{ fontSize: 9, color: dirColor, fontWeight: 800 }}>{dirGlyph} {r.netActions ?? r.addCount ?? 0}</span>
+                      <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {r.company || r.ticker}
+                      </span>
+                      <span style={{ fontSize: 9, color: DIM, fontStyle: 'italic', whiteSpace: 'nowrap', minWidth: 76, textAlign: 'right' }} title={investor}>
+                        {investorShort}
+                      </span>
+                      {typeof r.stakePct === 'number' && (
+                        <span style={{ fontSize: 9, color: '#A78BFA', fontWeight: 800, fontVariantNumeric: 'tabular-nums', minWidth: 36, textAlign: 'right' }}>
+                          {r.stakePct.toFixed(1)}%
+                        </span>
+                      )}
+                      {r.kind === 'flow' && (
+                        <span style={{ fontSize: 9, color: dirColor, fontWeight: 800 }}>{dirGlyph}{r.netActions ?? r.addCount ?? 0}</span>
+                      )}
+                      {fmtDate && (
+                        <span style={{ fontSize: 9, color: DIM, fontFamily: 'ui-monospace, monospace', minWidth: 38, textAlign: 'right' }}>{fmtDate}</span>
+                      )}
                     </Link>
                   );
                 })}
