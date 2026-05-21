@@ -1726,7 +1726,7 @@ export default function HomeDashboard() {
             <div style={{ ...cardStyle, borderLeft: '3px solid #EF4444' }}>
               <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
                 <span style={{ fontSize: 13, fontWeight: 800, color: '#EF4444', letterSpacing: '0.4px' }}>
-                  🔥 CRITICAL THEMES — top {tt.india.length + tt.us.length}
+                  🔥 CRITICAL THEMES — top {tt.india.length + tt.us.length} ({tt.india.length} IN · {tt.us.length} US)
                 </span>
                 <Link href="/critical-themes" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open all →</Link>
               </div>

@@ -32,7 +32,10 @@ export interface CriticalTheme {
   leaders: ThemeLeader[];
   bearCase: string;     // -60% to -90% scenario
   bullCase: string;     // 5x-20x scenario
-  priorityRank: number; // 1 = highest conviction
+  priorityRank: number; // EDITORIAL base rank (1 = highest conviction). Real rank
+                        // computed dynamically by /critical-themes page using
+                        // newsHeat + leaderMomentum + bottleneckOverlay.
+  searchKeywords: string[]; // PATCH 0630 — pipe-joined as OR query against /api/v1/news
 }
 
 // ─── USA THEMES ─────────────────────────────────────────────────────────
@@ -51,6 +54,7 @@ export const USA_THEMES: CriticalTheme[] = [
     bearCase: 'Liquidity crunch + commodity bust: -70% drawdown realistic',
     bullCase: 'Policy + supply crunch by 2030 = 5-10× upside; sustained reshoring tailwind',
     priorityRank: 1,
+    searchKeywords: ['rare earth', 'rare earths', 'critical mineral', 'lithium', 'cobalt', 'NdPr', 'magnet', 'MP Materials', 'Lynas'],
   },
   {
     id: 'us-ai-compute',
@@ -67,6 +71,7 @@ export const USA_THEMES: CriticalTheme[] = [
     bearCase: 'AI capex cycle peaks + hyperscaler restraint: -50% to -70%',
     bullCase: 'Sustained capex through 2030 + inference at scale: 3-7×',
     priorityRank: 2,
+    searchKeywords: ['AI', 'GPU', 'NVIDIA', 'HBM', 'CoWoS', 'AI chip', 'inference', 'training cluster', 'data center GPU'],
   },
   {
     id: 'us-power-grid',
@@ -83,6 +88,7 @@ export const USA_THEMES: CriticalTheme[] = [
     bearCase: 'Rate hikes crush regulated utility multiples: -40%',
     bullCase: 'Sustained capex + PPA pricing power through 2030s: 3-5×',
     priorityRank: 3,
+    searchKeywords: ['grid', 'transformer', 'power generation', 'utility', 'nuclear', 'SMR', 'PPA', 'hyperscaler power', 'GE Vernova'],
   },
   {
     id: 'us-cyber-defense',
@@ -98,6 +104,7 @@ export const USA_THEMES: CriticalTheme[] = [
     bearCase: 'SaaS multiple compression: -50%',
     bullCase: 'Sustained software-into-defense shift: 3-5×',
     priorityRank: 4,
+    searchKeywords: ['cybersecurity', 'CrowdStrike', 'Palantir', 'cyber attack', 'ransomware', 'defense software'],
   },
   {
     id: 'us-onshoring-industrial',
@@ -113,6 +120,7 @@ export const USA_THEMES: CriticalTheme[] = [
     bearCase: 'Government grants pulled / capex peak: -40%',
     bullCase: 'Multi-decade reshoring secularity: 3-4×',
     priorityRank: 5,
+    searchKeywords: ['reshoring', 'onshoring', 'CHIPS Act', 'IRA', 'industrial capex', 'foundry', 'factory'],
   },
   {
     id: 'us-healthcare-glp1',
@@ -127,6 +135,7 @@ export const USA_THEMES: CriticalTheme[] = [
     bearCase: 'Generic erosion + pricing reform: -40%',
     bullCase: 'Pipeline expansion (cardiac/NASH): 2-3×',
     priorityRank: 6,
+    searchKeywords: ['GLP-1', 'Ozempic', 'Wegovy', 'Mounjaro', 'Zepbound', 'tirzepatide', 'obesity drug'],
   },
   {
     id: 'us-uranium-nuclear-fuel',
@@ -142,6 +151,7 @@ export const USA_THEMES: CriticalTheme[] = [
     bearCase: 'Russia returns to market / nuclear stall: -60%',
     bullCase: 'SMR scale + HALEU shortage: 5-10×',
     priorityRank: 7,
+    searchKeywords: ['uranium', 'HALEU', 'enrichment', 'nuclear fuel', 'Cameco', 'reactor', 'SMR'],
   },
 ];
 
@@ -162,6 +172,7 @@ export const INDIA_THEMES: CriticalTheme[] = [
     bearCase: 'Capex cycle peaks / order intake slips: -40%',
     bullCase: 'Multi-year capex visibility through FY30: 3-5×',
     priorityRank: 1,
+    searchKeywords: ['transmission', 'PGCIL', 'transformer', 'grid', 'capex', 'T&D', 'switchgear', 'KEC', 'Atlanta Electricals'],
   },
   {
     id: 'in-defence-indigenization',
@@ -179,6 +190,7 @@ export const INDIA_THEMES: CriticalTheme[] = [
     bearCase: 'Order intake delays / cost overruns: -30%',
     bullCase: 'Sustained order book + export wins: 3-5×',
     priorityRank: 2,
+    searchKeywords: ['defence', 'HAL', 'BEL', 'BDL', 'MAZDOCK', 'Solar Industries', 'MoD', 'Tejas', 'indigenization'],
   },
   {
     id: 'in-china-plus-one-chemicals',
@@ -195,6 +207,7 @@ export const INDIA_THEMES: CriticalTheme[] = [
     bearCase: 'China dumping returns + crude spike: -40%',
     bullCase: 'CDMO scale + new-molecule pipeline: 3-5×',
     priorityRank: 3,
+    searchKeywords: ['China+1', 'specialty chemical', 'CDMO', 'CRDMO', 'Aarti', 'Neogen', 'agrochemical', 'pharma intermediate'],
   },
   {
     id: 'in-rail-modernization',
@@ -211,6 +224,7 @@ export const INDIA_THEMES: CriticalTheme[] = [
     bearCase: 'Capex cycle delayed / execution slippage: -40%',
     bullCase: 'Multi-decade visibility: 3-5×',
     priorityRank: 4,
+    searchKeywords: ['Vande Bharat', 'RVNL', 'IRCON', 'Titagarh', 'rail', 'KAVACH', 'Indian Railways', 'metro'],
   },
   {
     id: 'in-data-center-build',
@@ -227,6 +241,7 @@ export const INDIA_THEMES: CriticalTheme[] = [
     bearCase: 'Capex cycle peaks + global cloud slowdown: -40%',
     bullCase: 'India DC capacity 5x by 2030: 3-5×',
     priorityRank: 5,
+    searchKeywords: ['data center', 'hyperscaler', 'AWS India', 'cloud capacity', 'Kaynes', 'Netweb', 'ESDM'],
   },
   {
     id: 'in-pharma-us-generics',
@@ -243,6 +258,7 @@ export const INDIA_THEMES: CriticalTheme[] = [
     bearCase: 'USFDA observation / pricing pressure: -40%',
     bullCase: 'Pipeline approval + CDMO scale: 3-5×',
     priorityRank: 6,
+    searchKeywords: ['USFDA', 'generic drug', 'EIR', 'Rubicon', 'Kwality', 'Neuland', 'PI Industries', 'pharma export'],
   },
   {
     id: 'in-financialization',
@@ -259,6 +275,7 @@ export const INDIA_THEMES: CriticalTheme[] = [
     bearCase: 'Equity bear market kills SIPs / regulation: -40%',
     bullCase: 'Multi-decade penetration cycle: 3-5×',
     priorityRank: 7,
+    searchKeywords: ['SIP flows', 'mutual fund AUM', 'HDFC AMC', 'Nippon Life AMC', 'BSE', 'CDSL', 'financialization'],
   },
   {
     id: 'in-premiumization',
@@ -275,6 +292,7 @@ export const INDIA_THEMES: CriticalTheme[] = [
     bearCase: 'Discretionary slowdown / rural distress: -30%',
     bullCase: 'Sustained per-capita rise + brand consolidation: 3-5×',
     priorityRank: 8,
+    searchKeywords: ['premium', 'jewellery', 'Titan', 'Safari', 'Thangamayil', 'DOMS', 'consumer discretionary', 'luxury'],
   },
 ];
 
@@ -282,10 +300,10 @@ export function getThemesByRegion(region: ThemeRegion): CriticalTheme[] {
   return (region === 'US' ? USA_THEMES : INDIA_THEMES).slice().sort((a, b) => a.priorityRank - b.priorityRank);
 }
 
-/** Returns top-3 themes per region for the Home dashboard summary card. */
+/** Returns top-5 themes per region (10 total) for the Home dashboard summary card. */
 export function getTopThemesForHome(): { us: CriticalTheme[]; india: CriticalTheme[] } {
   return {
-    us: USA_THEMES.slice().sort((a, b) => a.priorityRank - b.priorityRank).slice(0, 3),
-    india: INDIA_THEMES.slice().sort((a, b) => a.priorityRank - b.priorityRank).slice(0, 3),
+    us: USA_THEMES.slice().sort((a, b) => a.priorityRank - b.priorityRank).slice(0, 5),
+    india: INDIA_THEMES.slice().sort((a, b) => a.priorityRank - b.priorityRank).slice(0, 5),
   };
 }
