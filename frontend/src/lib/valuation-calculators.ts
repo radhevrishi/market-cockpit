@@ -173,6 +173,60 @@ export interface QuoteAutoFill {
   source?: string;
 }
 
+// ─── Saved Valuations (PATCH 0633) ──────────────────────────────────────
+// Persists user's valuation runs in localStorage so they can come back,
+// review, edit, or delete. Cross-tab sync via 'mc:valuations-updated'.
+const SAVED_VAL_KEY = 'mc:saved-valuations:v1';
+
+export interface SavedValuation {
+  id: string;
+  savedAt: string;            // ISO timestamp
+  calcKind: 'PS' | 'PE' | 'EV_EBITDA';
+  ticker?: string;
+  company?: string;
+  inputs: any;                // PSInput | PEInput | EvEbitdaInput at save time
+  baseSummary: string;
+  notes?: string;
+}
+
+export function loadSavedValuations(): SavedValuation[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(SAVED_VAL_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw) as SavedValuation[];
+    if (!Array.isArray(arr)) return [];
+    return arr.sort((a, b) => (b.savedAt || '').localeCompare(a.savedAt || ''));
+  } catch { return []; }
+}
+
+export function saveValuation(v: Omit<SavedValuation, 'id' | 'savedAt'> & { id?: string }): SavedValuation {
+  const full: SavedValuation = {
+    ...v,
+    id: v.id || `val-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    savedAt: new Date().toISOString(),
+  };
+  const all = loadSavedValuations();
+  const filtered = all.filter(x => x.id !== full.id);
+  filtered.unshift(full);
+  // keep most-recent 100
+  const trimmed = filtered.slice(0, 100);
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(SAVED_VAL_KEY, JSON.stringify(trimmed));
+    window.dispatchEvent(new CustomEvent('mc:valuations-updated'));
+  }
+  return full;
+}
+
+export function deleteValuation(id: string): void {
+  const all = loadSavedValuations();
+  const filtered = all.filter(x => x.id !== id);
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(SAVED_VAL_KEY, JSON.stringify(filtered));
+    window.dispatchEvent(new CustomEvent('mc:valuations-updated'));
+  }
+}
+
 export async function fetchQuoteAutofill(ticker: string, market: 'india' | 'us' = 'india'): Promise<QuoteAutoFill | null> {
   if (!ticker) return null;
   const t = ticker.trim().toUpperCase().replace(/\.(NS|BO)$/i, '');
@@ -310,17 +364,54 @@ export const WORKED_EXAMPLES = {
   },
 };
 
-// ─── Sector → recommended calculator ────────────────────────────────────
-export const SECTOR_CALCULATOR_MAP: Record<string, { calc: 'PS' | 'PE' | 'EV_EBITDA'; multipleHint: string }> = {
-  'Industrials / Capital Goods':  { calc: 'PE',         multipleHint: 'PE 25-45x · cycle peaks compress to 18-22x' },
-  'Defence':                      { calc: 'PE',         multipleHint: 'PE 30-50x · order-book backed' },
-  'Power / Transmission':         { calc: 'EV_EBITDA',  multipleHint: 'EV/EBITDA 18-28x · capex cycle' },
-  'Pharmaceuticals':              { calc: 'PE',         multipleHint: 'PE 30-45x · USFDA premium' },
-  'Specialty Chemicals':          { calc: 'EV_EBITDA',  multipleHint: 'EV/EBITDA 20-30x · CDMO premium' },
-  'Consumer Durables / FMCG':     { calc: 'PE',         multipleHint: 'PE 40-70x · quality moat' },
-  'Auto Components':              { calc: 'EV_EBITDA',  multipleHint: 'EV/EBITDA 12-18x · cycle-midpoint' },
-  'Financial Services / NBFC':    { calc: 'PE',         multipleHint: 'PE 18-28x · ROE-linked' },
-  'IT / Tech Services':           { calc: 'PE',         multipleHint: 'PE 20-35x · USD growth' },
-  'SaaS / Software (US)':         { calc: 'PS',         multipleHint: 'P/S 8-25x · Rule of 40' },
-  'Pre-revenue / Growth':         { calc: 'PS',         multipleHint: 'P/S only — earnings noisy or negative' },
+// ─── Sector → recommended calculator + 5 institutional examples ────────
+// Examples drawn from names actually discussed in the portal (Multibagger
+// CSV, Critical Themes leaders, Conviction Beats, chat history). Quick
+// pattern-match: pick the row that matches your name's sector → use the
+// listed calculator → benchmark against the multiple hint range.
+export const SECTOR_CALCULATOR_MAP: Record<string, { calc: 'PS' | 'PE' | 'EV_EBITDA'; multipleHint: string; examples: string[] }> = {
+  'Industrials / Capital Goods':  { calc: 'PE',         multipleHint: 'PE 25-45x · cycle peaks compress to 18-22x',
+                                    examples: ['DEEDEV (DEE Development)', 'TDPOWERSYS (TD Power)', 'AEROFLEX (Aeroflex Industries)', 'TRITURBINE (Triveni Turbine)', 'AXTEL (Axtel Industries)'] },
+  'Defence':                      { calc: 'PE',         multipleHint: 'PE 30-50x · order-book backed',
+                                    examples: ['HAL (Hindustan Aeronautics)', 'BEL (Bharat Electronics)', 'BDL (Bharat Dynamics)', 'MAZDOCK (Mazagon Dock)', 'SOLARINDS (Solar Industries)'] },
+  'Power / Transmission':         { calc: 'EV_EBITDA',  multipleHint: 'EV/EBITDA 18-28x · capex cycle',
+                                    examples: ['ATLANTAELE (Atlanta Electricals)', 'KEC (KEC International)', 'CGPOWER (CG Power)', 'POWERMECH (Power Mech)', 'STRTECH (Sterlite Tech)'] },
+  'Pharmaceuticals':              { calc: 'PE',         multipleHint: 'PE 30-45x · USFDA premium',
+                                    examples: ['RUBICON (Rubicon Research)', 'KPL (Kwality Pharma)', 'NEULAND (Neuland Labs)', 'DRREDDY (Dr Reddy\'s)', 'LUPIN (Lupin)'] },
+  'Specialty Chemicals':          { calc: 'EV_EBITDA',  multipleHint: 'EV/EBITDA 20-30x · CDMO premium',
+                                    examples: ['NITTAGELA (Nitta Gelatin)', 'AARTIIND (Aarti Industries)', 'NEOGEN (Neogen Chemicals)', 'PIIND (PI Industries)', 'SRF (SRF Ltd)'] },
+  'Consumer Durables / FMCG':     { calc: 'PE',         multipleHint: 'PE 40-70x · quality moat',
+                                    examples: ['TITAN (Titan Company)', 'BAJAJCON (Bajaj Consumer)', 'MAYURUNIQ (Mayur Uniquoters)', 'THANGAMAYL (Thangamayil)', 'SAFARI (Safari Industries)'] },
+  'Auto Components':              { calc: 'EV_EBITDA',  multipleHint: 'EV/EBITDA 12-18x · cycle-midpoint',
+                                    examples: ['CEAT (CEAT)', 'SANSERA (Sansera Engineering)', 'MOTHERSON (Samvardhana Motherson)', 'SCHAEFFLER (Schaeffler India)', 'BOSCHLTD (Bosch)'] },
+  'Financial Services / NBFC':    { calc: 'PE',         multipleHint: 'PE 18-28x · ROE-linked',
+                                    examples: ['HDFCAMC (HDFC AMC)', 'NIPPONLIFE (Nippon Life AMC)', 'BSE (BSE Ltd)', 'CDSL (Central Depository)', 'BAJFINANCE (Bajaj Finance)'] },
+  'IT / Tech Services':           { calc: 'PE',         multipleHint: 'PE 20-35x · USD growth',
+                                    examples: ['TCS (Tata Consultancy)', 'INFY (Infosys)', 'PERSISTENT (Persistent Systems)', 'COFORGE (Coforge)', 'MPHASIS (Mphasis)'] },
+  'SaaS / Software (US)':         { calc: 'PS',         multipleHint: 'P/S 8-25x · Rule of 40',
+                                    examples: ['PAYS (Paysign)', 'CRWD (CrowdStrike)', 'PLTR (Palantir)', 'NOW (ServiceNow)', 'MNDY (Monday.com)'] },
+  'Pre-revenue / Growth':         { calc: 'PS',         multipleHint: 'P/S only — earnings noisy or negative',
+                                    examples: ['CRDO (Credo Technology)', 'FLYW (Flywire)', 'UAN (CVR Partners)', 'ELA (Envela)', 'VMD (Viemed Healthcare)'] },
+
+  // ─── NEW THEMES (P0632) — robotics, AI infra, EV, nuclear, etc. ─────
+  'AI Compute & Infrastructure (US)': { calc: 'PS',     multipleHint: 'P/S 12-30x · capex-cycle premium',
+                                    examples: ['NVDA (NVIDIA)', 'AVGO (Broadcom)', 'TSM (Taiwan Semi)', 'MU (Micron · HBM)', 'CDNS (Cadence)'] },
+  'AI Infrastructure (India)':    { calc: 'PE',         multipleHint: 'PE 35-60x · ESDM premium',
+                                    examples: ['KAYNES (Kaynes Technology)', 'NETWEB (Netweb Tech)', 'CYIENT (Cyient DLM)', 'TATAELXSI (Tata Elxsi)', 'PERSISTENT (Persistent Systems)'] },
+  'Robotics & Automation':        { calc: 'PE',         multipleHint: 'PE 40-65x · industrial automation premium',
+                                    examples: ['ABB (ABB India)', 'SIEMENS (Siemens India)', 'HONAUT (Honeywell Automation)', 'AJAXENGG (Ajax Engineering)', 'TIINDIA (Tube Investments)'] },
+  'EV / Battery / Charging':      { calc: 'EV_EBITDA',  multipleHint: 'EV/EBITDA 18-30x · capex-heavy',
+                                    examples: ['TATAPOWER (Tata Power)', 'EXIDEIND (Exide Industries)', 'AMARAJABAT (Amara Raja)', 'OLECTRA (Olectra Greentech)', 'JBMA (JBM Auto)'] },
+  'Nuclear / Clean Energy (US)':  { calc: 'EV_EBITDA',  multipleHint: 'EV/EBITDA 18-30x · PPA-linked',
+                                    examples: ['CEG (Constellation Energy)', 'VST (Vistra)', 'CCJ (Cameco)', 'NEE (NextEra Energy)', 'LEU (Centrus Energy)'] },
+  'Rail / Metro / Mobility':      { calc: 'PE',         multipleHint: 'PE 25-40x · GoI-backed order book',
+                                    examples: ['RVNL (Rail Vikas Nigam)', 'IRCON (IRCON International)', 'TITAGARH (Titagarh Rail)', 'BEML (BEML Ltd)', 'JWL (Jupiter Wagons)'] },
+  'Critical Minerals / Rare Earth (US)': { calc: 'EV_EBITDA', multipleHint: 'EV/EBITDA 10-22x · supply-crunch optionality',
+                                    examples: ['MP (MP Materials)', 'UUUU (Energy Fuels)', 'LYC (Lynas Rare Earths)', 'CCJ (Cameco)', 'URA (Global X Uranium ETF)'] },
+  'GLP-1 / Healthcare (US)':      { calc: 'PE',         multipleHint: 'PE 30-50x · pricing-power-while-patent',
+                                    examples: ['LLY (Eli Lilly)', 'NVO (Novo Nordisk)', 'VRTX (Vertex Pharma)', 'REGN (Regeneron)', 'ISRG (Intuitive Surgical)'] },
+  'Cybersecurity (US)':           { calc: 'PS',         multipleHint: 'P/S 10-25x · cloud-native premium',
+                                    examples: ['CRWD (CrowdStrike)', 'PANW (Palo Alto Networks)', 'ZS (Zscaler)', 'NET (Cloudflare)', 'OKTA (Okta)'] },
+  'Quantum / Frontier Tech':      { calc: 'PS',         multipleHint: 'P/S volatile · narrative-driven',
+                                    examples: ['IONQ (IonQ)', 'RGTI (Rigetti)', 'QBTS (D-Wave)', 'ARQQ (Arqit Quantum)', 'QUBT (Quantum Computing)'] },
 };

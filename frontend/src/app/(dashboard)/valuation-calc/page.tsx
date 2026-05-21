@@ -15,8 +15,9 @@ import { useState, useMemo, useEffect } from 'react';
 import {
   calculatePS, calculatePE, calculateEvEbitda,
   fetchQuoteAutofill,
+  loadSavedValuations, saveValuation, deleteValuation,
   WORKED_EXAMPLES, SECTOR_CALCULATOR_MAP,
-  type CalculatorResult, type QuoteAutoFill,
+  type CalculatorResult, type QuoteAutoFill, type SavedValuation,
 } from '@/lib/valuation-calculators';
 
 const BG = '#0A0E1A';
@@ -27,7 +28,121 @@ const DIM = '#8A95A3';
 
 type CalcKind = 'PS' | 'PE' | 'EV_EBITDA';
 
-function CalcResultDisplay({ result }: { result: CalculatorResult }) {
+// PATCH 0633 — save-valuation button shown above result cards
+function SaveValuationBar({ calcKind, result, onLoaded }: {
+  calcKind: 'PS' | 'PE' | 'EV_EBITDA';
+  result: CalculatorResult;
+  onLoaded?: () => void;
+}) {
+  const [notes, setNotes] = useState('');
+  const [savedId, setSavedId] = useState<string | null>(null);
+  const handleSave = () => {
+    const v = saveValuation({
+      calcKind,
+      ticker: result.ticker,
+      company: result.company,
+      inputs: result.inputs,
+      baseSummary: result.baseSummary,
+      notes: notes.trim() || undefined,
+    });
+    setSavedId(v.id);
+    setNotes('');
+    onLoaded?.();
+    setTimeout(() => setSavedId(null), 3000);
+  };
+  return (
+    <div style={{
+      marginTop: 14, padding: '10px 12px',
+      background: '#10B98112', border: '1px solid #10B98140', borderRadius: 6,
+      display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+    }}>
+      <input
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+        placeholder="Optional note (e.g. 'mgmt FY27 guidance · cross-confirmed by CB')"
+        style={{
+          flex: 1, minWidth: 240,
+          background: '#0A1422', color: TEXT, border: `1px solid ${BORDER}`,
+          padding: '6px 10px', borderRadius: 4, fontSize: 12,
+        }}
+      />
+      <button onClick={handleSave} style={{
+        fontSize: 12, padding: '6px 14px',
+        background: '#10B981', border: 'none', color: '#0A0E1A',
+        borderRadius: 4, cursor: 'pointer', fontWeight: 800,
+      }}>
+        💾 SAVE VALUATION
+      </button>
+      {savedId && (
+        <span style={{ fontSize: 10, color: '#10B981', fontWeight: 700 }}>
+          ✓ saved
+        </span>
+      )}
+    </div>
+  );
+}
+
+function SavedValuationsPanel({ onLoad }: { onLoad?: (v: SavedValuation) => void }) {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const h = () => setTick(t => t + 1);
+    window.addEventListener('mc:valuations-updated', h);
+    return () => window.removeEventListener('mc:valuations-updated', h);
+  }, []);
+  const saved = loadSavedValuations();
+  if (saved.length === 0) {
+    return (
+      <div style={{ background: CARD, border: `1px dashed ${BORDER}`, borderRadius: 8, padding: '14px 16px', fontSize: 12, color: DIM, fontStyle: 'italic' }}>
+        💾 No saved valuations yet. Run a calculator and click <b style={{ color: '#10B981' }}>SAVE VALUATION</b> to persist it here for later review.
+      </div>
+    );
+  }
+  return (
+    <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '14px 16px' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
+        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: TEXT }}>💾 Saved Valuations ({saved.length})</h2>
+        <span style={{ fontSize: 10, color: DIM, fontFamily: 'ui-monospace, monospace' }}>persists in your browser</span>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {saved.slice(0, 30).map((v) => (
+          <div key={v.id} style={{
+            background: '#0A1422', border: `1px solid ${BORDER}`, borderRadius: 5,
+            padding: '8px 10px',
+            display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap',
+          }}>
+            <span style={{ fontSize: 11, color: '#22D3EE', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 50 }}>
+              {v.calcKind === 'EV_EBITDA' ? 'EV/EB' : v.calcKind}
+            </span>
+            <span style={{ fontSize: 12, color: TEXT, fontWeight: 700 }}>{v.ticker || v.company || '—'}</span>
+            <span style={{ flex: 1, fontSize: 11, color: '#C9D4E0', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {v.baseSummary}
+            </span>
+            {v.notes && (
+              <span style={{ fontSize: 10, color: DIM, fontStyle: 'italic' }} title={v.notes}>
+                📝 {v.notes.slice(0, 40)}{v.notes.length > 40 ? '…' : ''}
+              </span>
+            )}
+            <span style={{ fontSize: 9, color: DIM, fontFamily: 'ui-monospace, monospace' }}>
+              {v.savedAt.slice(0, 10)}
+            </span>
+            <button onClick={() => onLoad?.(v)} style={{
+              fontSize: 10, padding: '3px 8px',
+              background: '#22D3EE15', border: '1px solid #22D3EE50', color: '#22D3EE',
+              borderRadius: 3, cursor: 'pointer', fontWeight: 700,
+            }}>EDIT</button>
+            <button onClick={() => { if (confirm(`Delete saved valuation for ${v.ticker || '—'}?`)) deleteValuation(v.id); }} style={{
+              fontSize: 10, padding: '3px 8px',
+              background: '#EF444415', border: '1px solid #EF444450', color: '#EF4444',
+              borderRadius: 3, cursor: 'pointer', fontWeight: 700,
+            }}>×</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CalcResultDisplay({ result, calcKind }: { result: CalculatorResult; calcKind?: 'PS' | 'PE' | 'EV_EBITDA' }) {
   return (
     <div style={{ marginTop: 18 }}>
       <div style={{
@@ -80,21 +195,35 @@ function CalcResultDisplay({ result }: { result: CalculatorResult }) {
   );
 }
 
-/** PATCH 0631 — auto-fetch button: pulls current price + market cap from live API */
+/** PATCH 0631/0633 — auto-fetch with debounce on ticker change.
+ *  User asked: 'CURRENT MARKET CAP SHOULD BE AUTOAMTICAL DERIVED ALWAYS.'
+ *  So we auto-fire fetchQuoteAutofill 600ms after the ticker stops changing,
+ *  PLUS a manual button for instant refresh. */
 function AutoFillBtn({ ticker, market, onFill, currentPrice }: { ticker: string; market: 'india' | 'us'; onFill: (q: QuoteAutoFill) => void; currentPrice?: number }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const handleClick = async () => {
-    if (!ticker.trim()) { setError('Enter ticker first'); return; }
+  const [lastFetched, setLastFetched] = useState<string>('');
+
+  const fire = async (t: string) => {
+    if (!t.trim()) return;
     setLoading(true); setError(null);
     try {
-      const q = await fetchQuoteAutofill(ticker, market);
-      if (q) { onFill(q); setError(null); }
-      else setError('Quote not found — using your manual values');
-    } catch {
-      setError('Fetch failed — using manual values');
-    } finally { setLoading(false); }
+      const q = await fetchQuoteAutofill(t, market);
+      if (q) { onFill(q); setLastFetched(t); setError(null); }
+      else setError('Quote not found — using manual values');
+    } catch { setError('Fetch failed'); }
+    finally { setLoading(false); }
   };
+
+  // Debounced auto-fire when ticker changes
+  useEffect(() => {
+    if (!ticker.trim() || ticker === lastFetched) return;
+    const t = setTimeout(() => fire(ticker), 600);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticker, market]);
+
+  const handleClick = () => fire(ticker);
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
       <button onClick={handleClick} disabled={loading} style={{
@@ -183,6 +312,7 @@ function PSCalculator() {
         <NumberInput label="Bull P/S" value={bullPS} onChange={setBullPS} suffix="x" />
       </div>
       <CalcResultDisplay result={result} />
+      <SaveValuationBar calcKind={(result.inputs as any)?.bearPS !== undefined ? 'PS' : (result.inputs as any)?.bearPE !== undefined ? 'PE' : 'EV_EBITDA'} result={result} />
     </div>
   );
 }
@@ -240,6 +370,7 @@ function PECalculator() {
         <NumberInput label="Bull P/E" value={bullPE} onChange={setBullPE} suffix="x" />
       </div>
       <CalcResultDisplay result={result} />
+      <SaveValuationBar calcKind={(result.inputs as any)?.bearPS !== undefined ? 'PS' : (result.inputs as any)?.bearPE !== undefined ? 'PE' : 'EV_EBITDA'} result={result} />
     </div>
   );
 }
@@ -284,6 +415,7 @@ function EvEbitdaCalculator() {
         <NumberInput label="Bull EV/EBITDA" value={bull} onChange={setBull} suffix="x" />
       </div>
       <CalcResultDisplay result={result} />
+      <SaveValuationBar calcKind={(result.inputs as any)?.bearPS !== undefined ? 'PS' : (result.inputs as any)?.bearPE !== undefined ? 'PE' : 'EV_EBITDA'} result={result} />
     </div>
   );
 }
@@ -333,23 +465,43 @@ export default function ValuationCalcPage() {
           {tab === 'EV_EBITDA' && <EvEbitdaCalculator />}
         </div>
 
+        {/* PATCH 0633 — Saved valuations panel */}
+        <SavedValuationsPanel />
+
         {/* Sector → calculator map */}
         <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '16px 18px' }}>
-          <h2 style={{ margin: '0 0 8px 0', fontSize: 16, fontWeight: 800, color: TEXT }}>
+          <h2 style={{ margin: '0 0 4px 0', fontSize: 16, fontWeight: 800, color: TEXT }}>
             📋 Sector → Calculator Lookup
           </h2>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 2fr', gap: '6px 14px', fontSize: 12 }}>
-            <div style={{ color: DIM, fontWeight: 800, letterSpacing: '0.5px', fontSize: 11, paddingBottom: 4, borderBottom: `1px solid ${BORDER}` }}>SECTOR</div>
-            <div style={{ color: DIM, fontWeight: 800, letterSpacing: '0.5px', fontSize: 11, paddingBottom: 4, borderBottom: `1px solid ${BORDER}` }}>CALCULATOR</div>
-            <div style={{ color: DIM, fontWeight: 800, letterSpacing: '0.5px', fontSize: 11, paddingBottom: 4, borderBottom: `1px solid ${BORDER}` }}>MULTIPLE HINT</div>
+          <div style={{ fontSize: 11, color: DIM, marginBottom: 12, lineHeight: 1.5 }}>
+            Match your name&apos;s sector → use the listed calculator → benchmark against the multiple hint. Examples are drawn from names actually discussed in the portal (Multibagger, Conviction Beats, Critical Themes).
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {Object.entries(SECTOR_CALCULATOR_MAP).map(([sector, conf]) => (
-              <>
-                <div key={sector + '-s'} style={{ color: TEXT, fontWeight: 600 }}>{sector}</div>
-                <div key={sector + '-c'} style={{ color: '#22D3EE', fontFamily: 'ui-monospace, monospace', fontWeight: 700 }}>
-                  {conf.calc === 'EV_EBITDA' ? 'EV / EBITDA' : conf.calc === 'PS' ? 'P/S' : 'P/E'}
+              <div key={sector} style={{
+                background: '#0A1422', border: `1px solid ${BORDER}`, borderRadius: 6, padding: '10px 12px',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+                  <span style={{ fontSize: 13, color: TEXT, fontWeight: 800 }}>{sector}</span>
+                  <span style={{ fontSize: 10, color: '#22D3EE', background: '#22D3EE15', border: '1px solid #22D3EE40', padding: '2px 8px', borderRadius: 3, fontFamily: 'ui-monospace, monospace', fontWeight: 800 }}>
+                    {conf.calc === 'EV_EBITDA' ? 'EV / EBITDA' : conf.calc === 'PS' ? 'P/S' : 'P/E'}
+                  </span>
+                  <span style={{ fontSize: 11, color: '#C9D4E0' }}>{conf.multipleHint}</span>
                 </div>
-                <div key={sector + '-m'} style={{ color: '#C9D4E0' }}>{conf.multipleHint}</div>
-              </>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  <span style={{ fontSize: 9, color: DIM, fontWeight: 800, letterSpacing: '0.5px', alignSelf: 'center', marginRight: 4 }}>EXAMPLES</span>
+                  {conf.examples.map((ex) => (
+                    <span key={ex} style={{
+                      fontSize: 10, padding: '2px 7px',
+                      background: '#1A2540', border: '1px solid #1A2540',
+                      color: TEXT, borderRadius: 3, fontWeight: 600,
+                      fontFamily: 'ui-monospace, monospace',
+                    }}>
+                      {ex}
+                    </span>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
         </div>
