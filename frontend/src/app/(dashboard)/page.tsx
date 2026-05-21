@@ -73,6 +73,13 @@ interface HomeState {
   changedToday: ChangedRow[];
   portfolioBySector: Array<{ sector: string; count: number; tickers: string[]; }>;
   concallHits?: Array<{ ticker: string; company?: string; headline: string; tier?: string; published_at?: string }>;  // PATCH 0617
+  // PATCH 0621 — four new live panels
+  stratVis?: Array<{ id?: string; title?: string; headline?: string; source_name?: string; source_url?: string; published_at?: string; ticker_symbols?: any[] }>;
+  gainers?: Array<{ ticker: string; company?: string; changePercent?: number; price?: number }>;
+  losers?: Array<{ ticker: string; company?: string; changePercent?: number; price?: number }>;
+  moversUpdatedAt?: string;
+  superInvestors?: Array<{ ticker: string; company?: string; addCount?: number; exitCount?: number; totalSignalScore?: number; investors?: string[]; topDirection?: string; lastMoveAt?: string }>;
+  signals?: Array<{ id?: string; title?: string; headline?: string; published_at?: string; source_name?: string; primary_ticker?: string; ticker_symbols?: any[]; importance_score?: number }>;
 }
 
 function todayIstISO(): string {
@@ -433,6 +440,40 @@ export default function HomeDashboard() {
           .filter((h: any) => h.ticker && h.headline)
           .slice(0, 8);
         setData((d) => ({ ...d, concallHits: hits } as any));
+      });
+
+      // PATCH 0621 — Strategic Visibility latest transformational news.
+      safeDiag<any>(`/api/v1/news?transformational=1&window_days=365&limit=8&_=${Date.now()}`, 18_000).then(({ data: j }) => {
+        if (cancelled) return;
+        const articles = (j?.articles || j?.items || []).slice(0, 6);
+        setData((d) => ({ ...d, stratVis: articles } as any));
+      });
+
+      // PATCH 0621 — Top 5 movers + losers (India).
+      safeDiag<any>(`/api/market/quotes?market=india&_=${Date.now()}`, 18_000).then(({ data: j }) => {
+        if (cancelled) return;
+        const gainers = (j?.gainers || []).slice(0, 5);
+        const losers = (j?.losers || []).slice(0, 5);
+        setData((d) => ({ ...d, gainers, losers, moversUpdatedAt: j?.updatedAt } as any));
+      });
+
+      // PATCH 0621 — Super Investors flow (last 30d).
+      safe<any>(`/api/v1/super-investor-flow?days=30&_=${Date.now()}`).then((j) => {
+        if (cancelled) return;
+        const rows = (j?.rows || [])
+          .filter((r: any) => r?.ticker && !/^Q\d for first time/i.test(r.ticker))
+          .slice(0, 6);
+        setData((d) => ({ ...d, superInvestors: rows } as any));
+      });
+
+      // PATCH 0621 — Signals: high-importance corporate news from the last 24h.
+      safeDiag<any>(`/api/v1/news?limit=30&importance_min=2&article_type=CORPORATE&_=${Date.now()}`, 18_000).then(({ data: j }) => {
+        if (cancelled) return;
+        const raw = Array.isArray(j) ? j : (j?.articles || j?.items || []);
+        const items = (raw as any[])
+          .filter((a: any) => !a?.is_synthetic && !a?.structural_status && !(a?.title || '').startsWith('[STRUCTURAL'))
+          .slice(0, 6);
+        setData((d) => ({ ...d, signals: items } as any));
       });
 
       // Earnings — PATCH 0615. Pull today + last 2 trading days, filter to
@@ -960,6 +1001,160 @@ export default function HomeDashboard() {
             </div>
           </div>
         )}
+
+        {/* ═══════════════ PATCH 0621 — TWO-COL: STRATEGIC VIS + SUPER INVESTORS ═ */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12 }}>
+
+          {/* STRATEGIC VISIBILITY — latest transformational events */}
+          <div style={{ ...cardStyle, borderLeft: '3px solid #F59E0B' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.4px' }}>
+                ⭐ STRATEGIC VISIBILITY ({data.stratVis?.length || 0})
+              </span>
+              <Link href="/strategic-visibility" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
+            </div>
+            <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
+              Transformational catalysts — multi-quarter visibility events
+            </div>
+            {!data.stratVis ? (
+              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
+            ) : data.stratVis.length === 0 ? (
+              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>No transformational news in window.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {data.stratVis.slice(0, 5).map((s: any, i: number) => {
+                  const ticker = (Array.isArray(s.ticker_symbols) && s.ticker_symbols[0]) || '';
+                  const href = s.source_url || (ticker ? `/stock-sheet?ticker=${encodeURIComponent(ticker)}` : '#');
+                  const target = s.source_url ? '_blank' : undefined;
+                  return (
+                    <a key={(s.id || '') + i} href={href} target={target} rel={target ? 'noopener noreferrer' : undefined}
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                      <span style={{ fontSize: 9, color: '#F59E0B', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 56 }}>
+                        {(ticker || '').toString().replace(/\.(NS|BO)$/i, '').slice(0, 8) || '—'}
+                      </span>
+                      <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.title || s.headline}</span>
+                      <span style={{ fontSize: 9, color: DIM, whiteSpace: 'nowrap' }}>{s.source_name || '—'}</span>
+                    </a>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* SUPER INVESTORS — latest flow */}
+          <div style={{ ...cardStyle, borderLeft: '3px solid #A78BFA' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: '#A78BFA', letterSpacing: '0.4px' }}>
+                🦅 SUPER INVESTORS — last 30d ({data.superInvestors?.length || 0})
+              </span>
+              <Link href="/super-investors" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
+            </div>
+            <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
+              Marquee-investor adds and exits across the last 30 days
+            </div>
+            {!data.superInvestors ? (
+              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
+            ) : data.superInvestors.length === 0 ? (
+              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>No flow activity in window.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {data.superInvestors.slice(0, 5).map((r: any, i: number) => {
+                  const dirColor = r.topDirection === 'ACCUM' ? '#10B981' : r.topDirection === 'DIST' ? '#EF4444' : '#94A3B8';
+                  const dirGlyph = r.topDirection === 'ACCUM' ? '▲' : r.topDirection === 'DIST' ? '▼' : '◆';
+                  return (
+                    <Link key={(r.ticker || '') + i} href={`/stock-sheet?ticker=${encodeURIComponent((r.ticker || '').replace(/\.(NS|BO)$/i, ''))}`}
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                      <span style={{ fontSize: 9, color: '#A78BFA', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 60 }}>
+                        {(r.ticker || '').toString().replace(/\.(NS|BO)$/i, '').slice(0, 8)}
+                      </span>
+                      <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.company || r.ticker}</span>
+                      <span style={{ fontSize: 9, color: dirColor, fontWeight: 800 }}>{dirGlyph} {r.netActions ?? r.addCount ?? 0}</span>
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ═══════════════ PATCH 0621 — TWO-COL: MOVERS + SIGNALS ═══════════ */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12 }}>
+
+          {/* TOP 5 MOVERS + TOP 5 LOSERS (India) */}
+          <div style={{ ...cardStyle, borderLeft: '3px solid #10B981' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: '#10B981', letterSpacing: '0.4px' }}>
+                📈 TOP MOVERS · TOP LOSERS
+              </span>
+              <Link href="/movers" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
+            </div>
+            <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
+              India · top 5 each side · {data.moversUpdatedAt ? new Date(data.moversUpdatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : 'live'}
+            </div>
+            {!data.gainers && !data.losers ? (
+              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                {/* Gainers column */}
+                <div>
+                  <div style={{ fontSize: 9, color: '#10B981', fontWeight: 800, letterSpacing: '0.5px', marginBottom: 2 }}>▲ GAINERS</div>
+                  {(data.gainers || []).slice(0, 5).map((g: any) => (
+                    <Link key={g.ticker} href={`/stock-sheet?ticker=${encodeURIComponent(g.ticker)}`}
+                      style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 4px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                      <span style={{ fontSize: 10, color: TEXT, fontWeight: 700, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.ticker}</span>
+                      <span style={{ fontSize: 10, color: '#10B981', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>+{(g.changePercent ?? 0).toFixed(1)}%</span>
+                    </Link>
+                  ))}
+                </div>
+                {/* Losers column */}
+                <div>
+                  <div style={{ fontSize: 9, color: '#EF4444', fontWeight: 800, letterSpacing: '0.5px', marginBottom: 2 }}>▼ LOSERS</div>
+                  {(data.losers || []).slice(0, 5).map((l: any) => (
+                    <Link key={l.ticker} href={`/stock-sheet?ticker=${encodeURIComponent(l.ticker)}`}
+                      style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 4px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                      <span style={{ fontSize: 10, color: TEXT, fontWeight: 700, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{l.ticker}</span>
+                      <span style={{ fontSize: 10, color: '#EF4444', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{(l.changePercent ?? 0).toFixed(1)}%</span>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* SIGNALS — high-importance corporate news */}
+          <div style={{ ...cardStyle, borderLeft: '3px solid #22D3EE' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px' }}>
+                📡 SIGNALS ({data.signals?.length || 0})
+              </span>
+              <Link href="/orders" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
+            </div>
+            <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
+              High-importance corporate actions and re-rating triggers
+            </div>
+            {!data.signals ? (
+              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
+            ) : data.signals.length === 0 ? (
+              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>No high-importance corporate items in last 24h.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {data.signals.slice(0, 5).map((s: any, i: number) => {
+                  const ticker = s.primary_ticker || (Array.isArray(s.ticker_symbols) && s.ticker_symbols[0]) || '';
+                  return (
+                    <a key={(s.id || '') + i} href={(s as any).url || (s as any).source_url || '#'} target="_blank" rel="noopener noreferrer"
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                      <span style={{ fontSize: 9, color: '#22D3EE', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 56 }}>
+                        {(ticker || '').toString().replace(/\.(NS|BO)$/i, '').slice(0, 8) || '—'}
+                      </span>
+                      <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.title || s.headline}</span>
+                      <span style={{ fontSize: 9, color: DIM, whiteSpace: 'nowrap' }}>{s.source_name || '—'}</span>
+                    </a>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
 
         {/* ═══════════════ AI INFRASTRUCTURE TRANSMISSION ═══════════════ */}
         <div style={{ ...cardStyle, borderLeft: '3px solid #A78BFA' }}>
