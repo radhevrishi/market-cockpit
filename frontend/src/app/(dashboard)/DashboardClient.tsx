@@ -19,13 +19,139 @@ import { getConvictionTickers } from '@/lib/conviction-beats';
 
 interface NavItem { href: string; label: string; icon: ReactNode; }
 
-// PATCH 0209 — Institutional nav cleanup:
-// - Full labels (no 'Spec Sit' / 'Strategic Vis' / 'Market Snap' / 'Earnings Ops')
-// - Misleading 'Intelligence' label that routed to /orders renamed to 'Signals'
-//   so the label matches the user's mental model (the route name is legacy).
-// - 'Earnings Cards' renamed 'Earnings Scan' to match the in-page heading.
-// - Acronym 'RRG' kept (industry-standard term).
-const NAV: NavItem[] = [
+// PATCH 0603 — Grouped sidebar. INSTITUTIONAL_REVIEW.md called out the
+// 28-item flat nav as cognitive overload. New structure groups every
+// surface into 9 collapsible parents. URLs are unchanged so deep links
+// and bookmarks still work; only the visual organisation changes.
+interface NavGroup { id: string; label: string; icon: ReactNode; items: NavItem[]; }
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    id: 'home',
+    label: 'Home',
+    icon: <Star className="w-5 h-5" />,
+    items: [
+      { href: '/',                 label: 'Home Dashboard',     icon: <Star className="w-4 h-4" /> },
+    ],
+  },
+  {
+    id: 'news-signals',
+    label: 'News & Signals',
+    icon: <Newspaper className="w-5 h-5" />,
+    items: [
+      { href: '/news',             label: 'News Feed',          icon: <Newspaper className="w-4 h-4" /> },
+      { href: '/news-alerts',      label: 'News Alerts',        icon: <Bell className="w-4 h-4" /> },
+      { href: '/themes',           label: 'Themes',             icon: <BarChart3 className="w-4 h-4" /> },
+      { href: '/company-news',     label: 'Company News',       icon: <Newspaper className="w-4 h-4" /> },
+    ],
+  },
+  {
+    id: 'bottleneck',
+    label: 'Bottleneck Intelligence',
+    icon: <Microscope className="w-5 h-5" />,
+    items: [
+      { href: '/bottleneck-intel',     label: 'Bottleneck Intel',     icon: <Microscope className="w-4 h-4" /> },
+      { href: '/bottleneck-workbench', label: 'Bottleneck Workbench', icon: <Microscope className="w-4 h-4" /> },
+      { href: '/transmission',         label: 'Transmission',         icon: <TrendingUp className="w-4 h-4" /> },
+      { href: '/strategic-visibility', label: 'Strategic Visibility', icon: <Star className="w-4 h-4" /> },
+    ],
+  },
+  {
+    id: 'earnings',
+    label: 'Earnings',
+    icon: <LineChart className="w-5 h-5" />,
+    items: [
+      { href: '/earnings-hub',           label: 'Earnings Hub',           icon: <LineChart className="w-4 h-4" /> },
+      { href: '/earnings-opportunities', label: 'Earnings Opportunities', icon: <Star className="w-4 h-4" /> },
+      { href: '/earnings',               label: 'Earnings Scan',          icon: <BarChart3 className="w-4 h-4" /> },
+      { href: '/earnings-analysis',      label: 'Earnings Analysis (AI)', icon: <Microscope className="w-4 h-4" /> },
+      { href: '/earnings-guidance',      label: 'Earnings Guidance',      icon: <LineChart className="w-4 h-4" /> },
+      { href: '/calendars',              label: 'Calendar',               icon: <LineChart className="w-4 h-4" /> },
+    ],
+  },
+  {
+    id: 'concall',
+    label: 'Concall Intelligence',
+    icon: <Microscope className="w-5 h-5" />,
+    items: [
+      { href: '/concall-intel',  label: 'Concall Intelligence', icon: <Microscope className="w-4 h-4" /> },
+      { href: '/company-intel',  label: 'Company Intelligence', icon: <BookMarked className="w-4 h-4" /> },
+      { href: '/ai-desk',        label: 'AI Desk',              icon: <Microscope className="w-4 h-4" /> },
+    ],
+  },
+  {
+    id: 'special-events',
+    label: 'Event-Driven',
+    icon: <Compass className="w-5 h-5" />,
+    items: [
+      { href: '/special-situations', label: 'Special Situations', icon: <Compass className="w-4 h-4" /> },
+      { href: '/rating-actions',     label: 'Rating Actions',     icon: <Compass className="w-4 h-4" /> },
+    ],
+  },
+  {
+    id: 'research',
+    label: 'Research',
+    icon: <Star className="w-5 h-5" />,
+    items: [
+      { href: '/multibagger',    label: 'Multibagger',     icon: <Star className="w-4 h-4" /> },
+      { href: '/valuations',     label: 'Valuations',      icon: <Star className="w-4 h-4" /> },
+      { href: '/rerating',       label: 'Re-rating',       icon: <TrendingUp className="w-4 h-4" /> },
+      { href: '/stock-sheet',    label: 'Stock Sheet',     icon: <BookMarked className="w-4 h-4" /> },
+      { href: '/screener',       label: 'Screener',        icon: <Filter className="w-4 h-4" /> },
+    ],
+  },
+  {
+    id: 'market',
+    label: 'Market Snapshot',
+    icon: <Grid3X3 className="w-5 h-5" />,
+    items: [
+      { href: '/market-snapshot', label: 'Market Snapshot', icon: <Grid3X3 className="w-4 h-4" /> },
+      { href: '/heatmap',         label: 'Heatmap',         icon: <Grid3X3 className="w-4 h-4" /> },
+      { href: '/movers',          label: 'Movers',          icon: <TrendingUp className="w-4 h-4" /> },
+      { href: '/rrg',             label: 'RRG',             icon: <RefreshCw className="w-4 h-4" /> },
+      { href: '/breadth',         label: 'Breadth',         icon: <BarChart3 className="w-4 h-4" /> },
+    ],
+  },
+  {
+    id: 'smart-money',
+    label: 'Smart Money & IPOs',
+    icon: <Rocket className="w-5 h-5" />,
+    items: [
+      { href: '/super-investors', label: 'Super Investors', icon: <Star className="w-4 h-4" /> },
+      { href: '/smart-money',     label: 'Smart Money',     icon: <Briefcase className="w-4 h-4" /> },
+      { href: '/ipos',            label: 'IPOs',            icon: <Rocket className="w-4 h-4" /> },
+    ],
+  },
+  {
+    id: 'mybook',
+    label: 'My Book',
+    icon: <Briefcase className="w-5 h-5" />,
+    items: [
+      { href: '/portfolio',  label: 'Portfolio',        icon: <Briefcase className="w-4 h-4" /> },
+      { href: '/watchlists', label: 'Watchlist',        icon: <BookMarked className="w-4 h-4" /> },
+      { href: '/decisions',  label: 'Decision Logbook', icon: <BookMarked className="w-4 h-4" /> },
+      { href: '/orders',     label: 'Signals',          icon: <Shield className="w-4 h-4" /> },
+      { href: '/alerts',     label: 'Alerts',           icon: <Bell className="w-4 h-4" /> },
+    ],
+  },
+  {
+    id: 'system',
+    label: 'System',
+    icon: <Bell className="w-5 h-5" />,
+    items: [
+      { href: '/status',   label: 'System Status', icon: <Bell className="w-4 h-4" /> },
+      { href: '/settings', label: 'Settings',      icon: <Shield className="w-4 h-4" /> },
+    ],
+  },
+];
+
+// Flat NAV preserved for any code that still iterates flatly (e.g. CmdK
+// search). Auto-derived from groups so we don't maintain two arrays.
+const NAV: NavItem[] = NAV_GROUPS.flatMap(g => g.items);
+
+// _LEGACY_NAV_FOR_REFERENCE_ — keep the old flat list compiled-out so future
+// readers can see the pre-0603 ordering / comments at a glance.
+const _LEGACY_NAV: NavItem[] = [
   { href: '/news',          label: 'News Feed',          icon: <Newspaper className="w-5 h-5" /> },
   // PATCH 0090: heatmap + movers merged into Market Snapshot (toggle inside)
   { href: '/market-snapshot', label: 'Market Snapshot',  icon: <Grid3X3 className="w-5 h-5" /> },
@@ -377,40 +503,60 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
           }}>MC</div>
         </div>
 
-        {/* Nav items */}
+        {/* Nav items (PATCH 0603 — grouped) */}
         <nav style={{ flex: 1, padding: '8px 0', overflowY: 'auto' }}>
-          {NAV.map(item => {
-            const active = isActive(item.href);
-            return (
-              <Link key={item.href} href={item.href}
-                title={item.label}
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  gap: '4px',
-                  padding: '10px 4px',
-                  margin: '2px 6px',
-                  borderRadius: '10px',
-                  textDecoration: 'none',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s',
-                  backgroundColor: active ? 'rgba(15,122,191,0.18)' : 'transparent',
-                  color: active ? '#0F7ABF' : '#6B7A8D',
-                  fontSize: '9px',
-                  fontWeight: active ? '600' : '400',
-                  letterSpacing: '0.3px',
-                  borderLeft: active ? '2px solid #0F7ABF' : '2px solid transparent',
-                  userSelect: 'none',
-                  WebkitUserSelect: 'none',
+          {NAV_GROUPS.map((group, gi) => (
+            <div key={group.id} style={{ marginBottom: 4 }}>
+              {/* Group divider — first group has no top border */}
+              {gi > 0 && (
+                <div style={{
+                  borderTop: '1px solid #1A2840',
+                  margin: '6px 12px 4px',
+                  paddingTop: 6,
+                  fontSize: 8,
+                  color: '#4A5B6C',
+                  fontWeight: 700,
+                  letterSpacing: '0.5px',
+                  textAlign: 'center',
+                  textTransform: 'uppercase',
                 }}>
-                <div>{item.icon}</div>
-                <span style={{ textAlign: 'center', lineHeight: '1.2' }}>
-                  {item.label.split(' ').map((w, i) => <div key={i}>{w}</div>)}
-                </span>
-              </Link>
-            );
-          })}
+                  {group.label}
+                </div>
+              )}
+              {group.items.map(item => {
+                const active = isActive(item.href);
+                return (
+                  <Link key={item.href} href={item.href}
+                    title={`${group.label} › ${item.label}`}
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: '4px',
+                      padding: '10px 4px',
+                      margin: '2px 6px',
+                      borderRadius: '10px',
+                      textDecoration: 'none',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s',
+                      backgroundColor: active ? 'rgba(15,122,191,0.18)' : 'transparent',
+                      color: active ? '#0F7ABF' : '#6B7A8D',
+                      fontSize: '9px',
+                      fontWeight: active ? '600' : '400',
+                      letterSpacing: '0.3px',
+                      borderLeft: active ? '2px solid #0F7ABF' : '2px solid transparent',
+                      userSelect: 'none',
+                      WebkitUserSelect: 'none',
+                    }}>
+                    <div>{item.icon}</div>
+                    <span style={{ textAlign: 'center', lineHeight: '1.2' }}>
+                      {item.label.split(' ').map((w, i) => <div key={i}>{w}</div>)}
+                    </span>
+                  </Link>
+                );
+              })}
+            </div>
+          ))}
         </nav>
 
         {/* Settings + Signout */}
