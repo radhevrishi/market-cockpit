@@ -1383,21 +1383,21 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
     setFilters((f) => ({ ...f, [k]: f[k] === v ? null : v } as ConvFilters));
 
   // PATCH 0539 — view-mode toggle (compact rows vs rich Earnings Hub cards)
-  // Default: rich. localStorage so the user's preference survives reloads.
-  // PATCH 0546 — Default to COMPACT. The Rich (Earnings Hub) view depends on
-  // a per-ticker enrichment fetch that's slow/unreliable for 200+ entries.
-  // User reported page stuck on "Loading enriched cards… 0/218" with all
-  // HUB FILTER counts at 0. Make Compact default so the bench is always
-  // usable; user can opt INTO Rich if they want the heavy load.
-  const [viewMode, setViewMode] = useState<'rich' | 'compact'>(() => {
-    if (typeof window === 'undefined') return 'compact';
-    try { return (localStorage.getItem('mc:conviction-view') as 'rich' | 'compact') || 'compact'; } catch { return 'compact'; }
-  });
+  // PATCH 0546 — Default to COMPACT.
+  // PATCH 0547 — Rich view dead-coded behind `false ?` because the per-ticker
+  // enrichment fetch was unreliable for 200+ entries (counts stayed at 0).
+  // PATCH 0549 — Returning users with the legacy `'rich'` value still in
+  // `mc:conviction-view` localStorage were triggering the dead-fetch on
+  // every page load: the hook fired against all conviction tickers, the
+  // network burned, and the UI ignored the result. Hard-coerce to 'compact'
+  // and drop the legacy key so the fetch never starts. State is preserved
+  // as a constant so the dead-code branch below still type-checks if the
+  // user toggles it back on later.
+  const viewMode: 'compact' = 'compact';
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      try { localStorage.setItem('mc:conviction-view', viewMode); } catch {}
-    }
-  }, [viewMode]);
+    if (typeof window === 'undefined') return;
+    try { localStorage.removeItem('mc:conviction-view'); } catch {}
+  }, []);
 
   // PATCH 0539 — Hub-Scan-style filter rail (rich view only)
   const [hubFilters, setHubFilters] = useState<HubFilters>(HUB_FILTER_DEFAULT);
@@ -1442,11 +1442,12 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
   const allTickers = filteredEntries.map((e) => e.ticker);
 
   // PATCH 0539 — fetch enriched cards for the bench (cached 24h).
-  // Trigger only when in rich mode and after the first render.
+  // PATCH 0549 — rich view dead-coded, so always pass [] to skip the fetch.
+  // Hook still called (Rules of Hooks) but its effect short-circuits on
+  // empty tickers.
   const tickersForFetch = useMemo(() => filteredEntries.map(e => e.ticker), [filteredEntries.map(e => e.ticker).join('|')]); // eslint-disable-line react-hooks/exhaustive-deps
-  const { cards: enrichedCards, loading: richLoading, progress: richProgress, refetch: richRefetch } = useEnrichedConvictionCards(
-    viewMode === 'rich' ? tickersForFetch : [],
-  );
+  void tickersForFetch;
+  const { cards: enrichedCards, loading: richLoading } = useEnrichedConvictionCards([]);
 
   // Apply hub filter on top of the conviction-filtered list (memoized — was
   // recomputing on every render even when nothing changed).
