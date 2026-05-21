@@ -8034,7 +8034,8 @@ function MultibaggerAnalytics({
 
     return {
       total, grades, avg, p25, p50, p75,
-      sectorRanked, aPlus, aOnly, aTotal, aPct, topPicks, convictionOverlap,
+      sectorRanked, sectorAvgLookup,
+      aPlus, aOnly, aTotal, aPct, topPicks, convictionOverlap,
       histogram, meanDelta, newCount,
       strongBuy, rerating, avoid,
       // PATCH 0554 — replaces heatingUp / cooling (broken w/o baseline)
@@ -8052,6 +8053,73 @@ function MultibaggerAnalytics({
   const labelStyle: React.CSSProperties = {
     fontSize: 11, color: '#6B7A8D', letterSpacing: '0.3px', marginBottom: 4,
   };
+
+  // PATCH 0573 — Per-row "why" reason text shown in the decision-ready
+  // buckets (STRONG BUY / ADD TO BENCH / TRIM ALERTS / RE-EVALUATE).
+  // Reasons are heuristic and derive purely from signals we already have
+  // on the stock object + the stats cache: grade, score, prevScore,
+  // sector momentum, conviction-bench membership, red-flag summary,
+  // forensic flags (USA), and prior decision log entry. Keeps the analyst
+  // honest — they see WHY a row landed in a bucket, not just that it did.
+  type ReasonKind = 'STRONG_BUY' | 'ADD' | 'TRIM' | 'REEVAL';
+  const reasonFor = (s: typeof stats.topPicks[number] & { _decision?: { reason?: string; date?: string } }, kind: ReasonKind): string => {
+    const sectorAvg = stats.sectorAvgLookup?.[s.sector || 'Unclassified'];
+    const delta = typeof s.prevScore === 'number' ? s.score - s.prevScore : null;
+    const flagSummary = s.redFlagSummary;
+    if (kind === 'STRONG_BUY') {
+      const parts: string[] = [];
+      parts.push(`Grade ${s.grade}`);
+      if (typeof sectorAvg === 'number') parts.push(`sector hot (avg ${sectorAvg})`);
+      parts.push('on Conviction Beats');
+      if (delta != null && delta > 0) parts.push(`▲+${delta} vs prev`);
+      if (flagSummary && flagSummary.total === 0) parts.push('clean');
+      return parts.join(' · ');
+    }
+    if (kind === 'ADD') {
+      const parts: string[] = [];
+      parts.push(`Grade ${s.grade}`);
+      if (typeof sectorAvg === 'number' && sectorAvg >= 60) parts.push(`sector strong (avg ${sectorAvg})`);
+      else parts.push('not yet on bench');
+      if (s.fcfOpDivergence) parts.push('⚠ FCF/op divergence');
+      if (s.postRunStretched) parts.push('⚠ post-run stretched');
+      if (flagSummary && flagSummary.critical > 0) parts.push(`⚠ ${flagSummary.critical} critical flag`);
+      else if (flagSummary && flagSummary.structural > 0) parts.push(`⚠ ${flagSummary.structural} structural flag`);
+      else if (flagSummary && flagSummary.total === 0) parts.push('clean');
+      return parts.join(' · ');
+    }
+    if (kind === 'TRIM') {
+      const parts: string[] = [];
+      if (delta != null && delta <= -5) parts.push(`Score ▼${Math.abs(delta)} vs prev`);
+      else if (delta != null && delta < 0) parts.push(`Score ▼${Math.abs(delta)}`);
+      if (['B','C','D'].includes(s.grade)) parts.push(`grade dropped to ${s.grade}`);
+      else if (s.grade === 'B+') parts.push(`grade slipped to ${s.grade}`);
+      if (flagSummary && flagSummary.critical > 0) parts.push(`${flagSummary.critical} critical flag`);
+      else if (flagSummary && flagSummary.structural > 0) parts.push(`${flagSummary.structural} structural flag`);
+      if (parts.length === 0) parts.push(`Watching — ${s.grade} grade`);
+      return parts.join(' · ');
+    }
+    if (kind === 'REEVAL') {
+      const parts: string[] = [];
+      parts.push(`Rejected → ${s.grade}`);
+      if (s._decision?.reason) parts.push(`(reason: "${s._decision.reason.slice(0, 60)}${s._decision.reason.length > 60 ? '…' : ''}")`);
+      if (s._decision?.date) parts.push(`on ${String(s._decision.date).slice(0, 10)}`);
+      return parts.join(' ');
+    }
+    return '';
+  };
+
+  // PATCH 0573 — Stacked ticker + company cell. Used in every decision
+  // bucket card so the analyst sees company name without hovering. Each
+  // row has fixed flex:1 so the right-side chips (score / grade / reason)
+  // stay aligned across the bucket grid.
+  const TickerCompanyCell = ({ ticker, company }: { ticker: string; company?: string }) => (
+    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
+      <span style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ticker}</span>
+      {company && (
+        <span style={{ fontSize: 9.5, color: '#94A3B8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: 500 }}>{company}</span>
+      )}
+    </div>
+  );
 
   if (stats.total === 0) {
     return (
@@ -8188,11 +8256,16 @@ function MultibaggerAnalytics({
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
               {stats.strongBuy.slice(0, 8).map((s) => (
                 <a key={s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
-                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', borderRadius: 4,
+                  style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '6px 9px', borderRadius: 4,
                     border: '1px solid #10B98130', background: '#10B98108', textDecoration: 'none' }}>
-                  <span style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', flex: 1 }}>{s.symbol}</span>
-                  <span style={{ fontSize: 11, color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}</span>
-                  <span style={{ fontSize: 9, color: '#94A3B8', maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sector || '—'}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <TickerCompanyCell ticker={s.symbol} company={s.company} />
+                    <span style={{ fontSize: 11, color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}</span>
+                    <span style={{ fontSize: 9, color: '#94A3B8', maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sector || '—'}</span>
+                  </div>
+                  <span style={{ fontSize: 9.5, color: '#10B981CC', fontStyle: 'italic', lineHeight: 1.35 }}>
+                    Why: {reasonFor(s, 'STRONG_BUY')}
+                  </span>
                 </a>
               ))}
             </div>
@@ -8215,12 +8288,17 @@ function MultibaggerAnalytics({
                 const delta = s.score - (s.prevScore as number);
                 return (
                   <a key={s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
-                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', borderRadius: 4,
+                    style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '6px 9px', borderRadius: 4,
                       border: '1px solid #22D3EE30', background: '#22D3EE08', textDecoration: 'none' }}>
-                    <span style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', flex: 1 }}>{s.symbol}</span>
-                    <span style={{ fontSize: 10, color: '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>{s.prevScore} →</span>
-                    <span style={{ fontSize: 11, color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}</span>
-                    <span style={{ fontSize: 10, color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>▲+{delta}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <TickerCompanyCell ticker={s.symbol} company={s.company} />
+                      <span style={{ fontSize: 10, color: '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>{s.prevScore} →</span>
+                      <span style={{ fontSize: 11, color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}</span>
+                      <span style={{ fontSize: 10, color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>▲+{delta}</span>
+                    </div>
+                    <span style={{ fontSize: 9.5, color: '#67E8F9', fontStyle: 'italic', lineHeight: 1.35 }}>
+                      Why: Score jumped ▲+{delta} vs last upload · still grade {s.grade}{s.sector ? ` · ${s.sector}` : ''}
+                    </span>
                   </a>
                 );
               })}
@@ -8244,13 +8322,18 @@ function MultibaggerAnalytics({
                 const delta = typeof s.prevScore === 'number' ? s.score - s.prevScore : null;
                 return (
                   <a key={s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
-                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', borderRadius: 4,
+                    style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '6px 9px', borderRadius: 4,
                       border: '1px solid #EF444430', background: '#EF444408', textDecoration: 'none' }}>
-                    <span style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', flex: 1 }}>{s.symbol}</span>
-                    <span style={{ fontSize: 11, color: '#EF4444', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score} {s.grade}</span>
-                    {delta !== null && delta < 0 && (
-                      <span style={{ fontSize: 10, color: '#EF4444', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>▼{delta}</span>
-                    )}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <TickerCompanyCell ticker={s.symbol} company={s.company} />
+                      <span style={{ fontSize: 11, color: '#EF4444', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score} {s.grade}</span>
+                      {delta !== null && delta < 0 && (
+                        <span style={{ fontSize: 10, color: '#EF4444', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>▼{delta}</span>
+                      )}
+                    </div>
+                    <span style={{ fontSize: 9.5, color: '#FCA5A5', fontStyle: 'italic', lineHeight: 1.35 }}>
+                      Why avoid: {s.grade === 'D' ? 'Grade D — failing scorecard' : `Grade ${s.grade} with ${delta != null && delta < 0 ? `${Math.abs(delta)}-pt drop` : 'weak fundamentals'}`}{s.sector ? ` · ${s.sector}` : ''}
+                    </span>
                   </a>
                 );
               })}
@@ -8276,15 +8359,16 @@ function MultibaggerAnalytics({
             <span style={{ color: '#F59E0B', fontWeight: 700 }}>Conviction Beats</span>  ∩  decision ={' '}
             <span style={{ color: '#22D3EE', fontWeight: 700 }}>BUY/WATCH</span>. Independent confirmation from three layers.
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 6 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))', gap: 6 }}>
             {stats.tripleConfirmed.slice(0, 18).map((s) => {
               const dec = (s as any)._decision as { status: DecisionStatus; reason: string } | undefined;
               const decColor = dec?.status === 'BUY' ? '#10B981' : '#22D3EE';
               return (
                 <a key={s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
+                  title={dec?.reason ? `Logbook reason: ${dec.reason}` : ''}
                   style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 4,
                     border: '1px solid #F59E0B40', background: '#F59E0B10', textDecoration: 'none' }}>
-                  <span style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', flex: 1 }}>{s.symbol}</span>
+                  <TickerCompanyCell ticker={s.symbol} company={s.company} />
                   <span style={{ fontSize: 10, color: '#F59E0B', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
                   <span style={{ fontSize: 9, color: decColor, fontWeight: 800, padding: '1px 5px', borderRadius: 3, border: `1px solid ${decColor}50` }}>{dec?.status}</span>
                 </a>
@@ -8313,11 +8397,16 @@ function MultibaggerAnalytics({
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
               {stats.decisionBridge.addCandidates.map((s) => (
                 <a key={s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
-                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', borderRadius: 4,
+                  style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '6px 9px', borderRadius: 4,
                     border: '1px solid #10B98130', background: '#10B98108', textDecoration: 'none' }}>
-                  <span style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', flex: 1 }}>{s.symbol}</span>
-                  <span style={{ fontSize: 11, color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
-                  <span style={{ fontSize: 9, color: '#94A3B8', maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sector || '—'}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <TickerCompanyCell ticker={s.symbol} company={s.company} />
+                    <span style={{ fontSize: 11, color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
+                    <span style={{ fontSize: 9, color: '#94A3B8', maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sector || '—'}</span>
+                  </div>
+                  <span style={{ fontSize: 9.5, color: '#10B981CC', fontStyle: 'italic', lineHeight: 1.35 }}>
+                    Why: {reasonFor(s, 'ADD')}
+                  </span>
                 </a>
               ))}
             </div>
@@ -8340,13 +8429,18 @@ function MultibaggerAnalytics({
                 const delta = typeof s.prevScore === 'number' ? s.score - (s.prevScore as number) : null;
                 return (
                   <a key={s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
-                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', borderRadius: 4,
+                    style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '6px 9px', borderRadius: 4,
                       border: '1px solid #EF444430', background: '#EF444408', textDecoration: 'none' }}>
-                    <span style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', flex: 1 }}>{s.symbol}</span>
-                    <span style={{ fontSize: 11, color: '#EF4444', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
-                    {delta !== null && delta < 0 && (
-                      <span style={{ fontSize: 10, color: '#EF4444', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>▼{delta}</span>
-                    )}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <TickerCompanyCell ticker={s.symbol} company={s.company} />
+                      <span style={{ fontSize: 11, color: '#EF4444', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
+                      {delta !== null && delta < 0 && (
+                        <span style={{ fontSize: 10, color: '#EF4444', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>▼{delta}</span>
+                      )}
+                    </div>
+                    <span style={{ fontSize: 9.5, color: '#FCA5A5', fontStyle: 'italic', lineHeight: 1.35 }}>
+                      Why trim: {reasonFor(s, 'TRIM')}
+                    </span>
                   </a>
                 );
               })}
@@ -8371,10 +8465,15 @@ function MultibaggerAnalytics({
                 return (
                   <a key={s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
                     title={dec ? `Reason: ${dec.reason || '—'}\nDate: ${(dec.date || '').slice(0, 10)}` : ''}
-                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', borderRadius: 4,
+                    style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '6px 9px', borderRadius: 4,
                       border: '1px solid #A78BFA30', background: '#A78BFA08', textDecoration: 'none' }}>
-                    <span style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', flex: 1 }}>{s.symbol}</span>
-                    <span style={{ fontSize: 11, color: '#A78BFA', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <TickerCompanyCell ticker={s.symbol} company={s.company} />
+                      <span style={{ fontSize: 11, color: '#A78BFA', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
+                    </div>
+                    <span style={{ fontSize: 9.5, color: '#C4B5FD', fontStyle: 'italic', lineHeight: 1.35 }}>
+                      Why revisit: {reasonFor(s as any, 'REEVAL')}
+                    </span>
                   </a>
                 );
               })}
@@ -8587,14 +8686,14 @@ function MultibaggerAnalytics({
             Score ≥ 70, not yet on Conviction Beats, in sectors with avg &lt; 60 —
             <span style={{ color: '#CBD5E1' }}> they passed your quality bar but the rest of their sector hasn't moved. Alpha window.</span>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 6 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 6 }}>
             {stats.hiddenGems.map((s) => (
               <a key={s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
                 style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 4,
                   border: '1px solid #A78BFA40', background: '#A78BFA10', textDecoration: 'none' }}>
-                <span style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{s.symbol}</span>
+                <TickerCompanyCell ticker={s.symbol} company={s.company} />
                 <span style={{ fontSize: 10, color: '#A78BFA', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}</span>
-                <span style={{ fontSize: 9, color: '#94A3B8', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sector || '—'}</span>
+                <span style={{ fontSize: 9, color: '#94A3B8', maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sector || '—'}</span>
               </a>
             ))}
           </div>
@@ -8660,12 +8759,17 @@ function MultibaggerAnalytics({
         <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 10 }}>
           🏆 TOP 25 BY SCORE
         </div>
-        <div style={{ border: '1px solid #1A2540', borderRadius: 4, overflow: 'hidden' }}>
+        {/* PATCH 0573 — COMPANY column added between TICKER and SECTOR so
+            unfamiliar symbols (especially BSE: scrip codes) are readable
+            at a glance. Truncates with ellipsis on narrow viewports;
+            tooltip shows the full company name on hover. */}
+        <div style={{ border: '1px solid #1A2540', borderRadius: 4, overflow: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>
               <tr style={{ backgroundColor: '#0A1422' }}>
                 <th style={{ padding: '6px 10px', textAlign: 'left', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>RANK</th>
                 <th style={{ padding: '6px 10px', textAlign: 'left', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>TICKER</th>
+                <th style={{ padding: '6px 10px', textAlign: 'left', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>COMPANY</th>
                 <th style={{ padding: '6px 10px', textAlign: 'left', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>SECTOR</th>
                 <th style={{ padding: '6px 10px', textAlign: 'right', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>PREV</th>
                 <th style={{ padding: '6px 10px', textAlign: 'right', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>SCORE</th>
@@ -8690,6 +8794,7 @@ function MultibaggerAnalytics({
                       </a>
                       {inCb && <span title="In Conviction Beats" style={{ marginLeft: 5, fontSize: 10, color: '#F59E0B' }}>🏆</span>}
                     </td>
+                    <td title={s.company || ''} style={{ padding: '6px 10px', color: '#CBD5E1', fontSize: 11, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.company || '—'}</td>
                     <td style={{ padding: '6px 10px', color: '#94A3B8', fontSize: 11 }}>{s.sector || '—'}</td>
                     <td style={{ padding: '6px 10px', textAlign: 'right', color: '#6B7A8D', fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>{hasPrev ? s.prevScore : '—'}</td>
                     <td style={{ padding: '6px 10px', textAlign: 'right', color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}</td>
@@ -8718,14 +8823,19 @@ function MultibaggerAnalytics({
               <a
                 key={s.symbol}
                 href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
+                title={s.company || ''}
                 style={{
                   fontSize: 11, fontWeight: 700, color: '#F59E0B',
                   border: '1px solid #F59E0B40', backgroundColor: '#F59E0B10',
                   padding: '3px 8px', borderRadius: 4, textDecoration: 'none',
                   fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                  display: 'inline-flex', flexDirection: 'column', gap: 1,
                 }}
               >
-                {s.symbol} <span style={{ color: '#94A3B8', fontWeight: 500 }}>· {s.score} {s.grade}</span>
+                <span>{s.symbol} <span style={{ color: '#94A3B8', fontWeight: 500 }}>· {s.score} {s.grade}</span></span>
+                {s.company && (
+                  <span style={{ fontSize: 9, color: '#CBD5E1', fontWeight: 500, fontFamily: 'system-ui, sans-serif', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.company}</span>
+                )}
               </a>
             ))}
           </div>
