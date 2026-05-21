@@ -158,8 +158,13 @@ export default function CalendarPage() {
   const todayStr = now.toISOString().split('T')[0];
 
   // Format date like earningspulse: "5 Mar", "14 Mar"
+  // PATCH 0550 — guard against malformed `dateStr` so the cell renders
+  // an em-dash instead of "NaN Invalid Date" when an upstream source
+  // emits a non-ISO string (e.g. "2026-5-9", "TBD", "").
   const formatShortDate = (dateStr: string) => {
+    if (!dateStr) return '—';
     const d = new Date(dateStr);
+    if (!Number.isFinite(d.getTime())) return '—';
     return `${d.getDate()} ${d.toLocaleDateString('en-US', { month: 'short' })}`;
   };
 
@@ -474,7 +479,12 @@ export default function CalendarPage() {
           {/* Source Info */}
           {data && (
             <div style={{ marginTop: '16px', fontSize: '11px', color: THEME.textSecondary, display: 'flex', justifyContent: 'space-between' }}>
-              <span>Source: {data.source} • Updated: {data.updatedAt ? new Date(data.updatedAt).toLocaleString() : 'N/A'}</span>
+              <span>Source: {data.source} • Updated: {(() => {
+                // PATCH 0550 — Invalid-Date guard mirrors formatShortDate.
+                if (!data.updatedAt) return 'N/A';
+                const d = new Date(data.updatedAt);
+                return Number.isFinite(d.getTime()) ? d.toLocaleString() : 'N/A';
+              })()}</span>
               <span>Universe: {data.stockUniverse} stocks</span>
             </div>
           )}

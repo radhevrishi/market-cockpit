@@ -528,10 +528,19 @@ export default function SpecialSituationsPage() {
   // PATCH 0109 — BUG-03 fix: badges read from canonical events when populated
   // (otherwise the top counters showed 0 while the list rendered items below).
   const catCounts: Record<Category, number> = { SPIN: 0, MA: 0, TURN: 0, CAP: 0, CAPEX: 0, CONCALL: 0 };
+  // PATCH 0550 — guard against a runtime payload whose `e.category` isn't in
+  // the Category union (e.g. a stale cache predating Patch 0532). Previously
+  // `catCounts[unknown]++` produced NaN which then rendered as the string
+  // "NaN" in chip labels.
   if (canonicalEvents.length > 0) {
-    for (const e of canonicalEvents) catCounts[e.category as Category]++;
+    for (const e of canonicalEvents) {
+      const c = e.category as Category;
+      if (c in catCounts) catCounts[c]++;
+    }
   } else {
-    for (const e of allEvents) catCounts[e.category]++;
+    for (const e of allEvents) {
+      if (e.category in catCounts) catCounts[e.category]++;
+    }
   }
   // Tier counts that sync with whichever pipeline is rendering
   const tier1Count = canonicalEvents.length > 0 ? tier1Canonical.length : tier1.length;

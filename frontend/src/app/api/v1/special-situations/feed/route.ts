@@ -830,7 +830,10 @@ export async function GET(req: Request) {
       message: e?.message || String(e),
       last_updated: new Date().toISOString(),
       total: 0,
-      by_category: { SPIN: [], MA: [], TURN: [], CAP: [] },
+      // PATCH 0550 — fallback shape must match the live Category set (Patch
+      // 0532 added CAPEX + CONCALL). Otherwise the page renders the empty
+      // catch payload and the new chip groups silently disappear.
+      by_category: { SPIN: [], MA: [], TURN: [], CAP: [], CAPEX: [], CONCALL: [] },
     }, { status: 200 });
   }
 }

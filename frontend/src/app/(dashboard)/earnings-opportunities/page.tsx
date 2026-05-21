@@ -952,9 +952,17 @@ export default function EarningsOpportunitiesPage() {
     placeholderData: (prev) => prev,  // keep showing previous date while next loads
     // Hydrate from localStorage so the screen never goes blank on navigation
     initialData: () => readLsCache(resolvedDateForGrading),
+    // AUDIT_100 #6 / PATCH 0550 — when initialData returns a value, the
+    // paired initialDataUpdatedAt MUST also return a number. Returning
+    // undefined here while initialData returned an object makes React Query
+    // treat the cache as "fresh forever" and skip the refetch loop. Default
+    // to 0 (force-stale) when `_cachedAt` is missing so the freshness path
+    // re-runs as expected.
     initialDataUpdatedAt: () => {
       const cached = readLsCache(resolvedDateForGrading);
-      return cached ? (cached as any)._cachedAt : undefined;
+      if (!cached) return undefined;
+      const t = (cached as any)._cachedAt;
+      return typeof t === 'number' ? t : 0;
     },
   });
 
