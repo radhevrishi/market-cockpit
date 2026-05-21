@@ -355,7 +355,7 @@ export default function HomeDashboard() {
   const [netLoading, setNetLoading] = useState({ inPlay: true, bottleneck: true, earnings: true });
   // PATCH 0605 — collapse defaults per institutional review
   // ("hide raw news feeds / low-confidence signals / secondary analytics")
-  const [showTier3, setShowTier3] = useState(false);
+  const [showTier3, setShowTier3] = useState(true);  // PATCH 0625 — default expanded
   const [showInPlay, setShowInPlay] = useState(true);  // PATCH 0620 — In-Play moved to top of Home, default expanded
   const [showQuickAccess, setShowQuickAccess] = useState(true);  // PATCH 0623 — default expanded
 
@@ -514,8 +514,16 @@ export default function HomeDashboard() {
       // PATCH 0621 — Top 5 movers + losers (India).
       safeDiag<any>(`/api/market/quotes?market=india&_=${Date.now()}`, 18_000).then(({ data: j }) => {
         if (cancelled) return;
-        const gainers = (j?.gainers || []).slice(0, 8);
-        const losers = (j?.losers || []).slice(0, 8);
+        // PATCH 0625 — smallcap/midcap-only filter on Home. The 'indexGroup'
+        // field on /api/market/quotes returns 'Small' / 'Mid' / 'Large'.
+        // Large-cap noise (RIL / TCS movements) less actionable than small/mid
+        // for multibagger hunting; the /movers page still shows everything.
+        const smallMidOnly = (arr: any[]) => arr.filter((s: any) => {
+          const g = (s?.indexGroup || '').toLowerCase();
+          return g === 'small' || g === 'mid';
+        });
+        const gainers = smallMidOnly(j?.gainers || []).slice(0, 10);
+        const losers = smallMidOnly(j?.losers || []).slice(0, 10);
         setData((d) => ({ ...d, gainers, losers, moversUpdatedAt: j?.updatedAt } as any));
       });
 
@@ -670,12 +678,23 @@ export default function HomeDashboard() {
         }
       });
 
-      // PATCH 0622 — Upcoming Earnings (next 5 trading days, CB-filtered).
-      safeDiag<any>(`/api/market/earnings?market=india&month=${new Date().toISOString().slice(0, 7)}&_=${Date.now()}`, 18_000).then(({ data: j }) => {
+      // PATCH 0625 — Upcoming Earnings: fetch CURRENT + NEXT month (covers
+      // month boundaries), 28s timeout (endpoint is slow), window 7 days.
+      (async () => {
+        const now = new Date();
+        const currentMonth = now.toISOString().slice(0, 7);
+        const nextMonth = (() => {
+          const m = new Date(now); m.setMonth(now.getMonth() + 1);
+          return m.toISOString().slice(0, 7);
+        })();
+        const [{ data: a }, { data: b }] = await Promise.all([
+          safeDiag<any>(`/api/market/earnings?market=india&month=${currentMonth}&_=${Date.now()}`, 28_000),
+          safeDiag<any>(`/api/market/earnings?market=india&month=${nextMonth}&_=${Date.now()}`, 28_000),
+        ]);
         if (cancelled) return;
-        const all = (j?.results || j?.items || []) as any[];
+        const all = [...((a?.results || []) as any[]), ...((b?.results || []) as any[])];
         const today = new Date(); today.setHours(0, 0, 0, 0);
-        const fiveDaysAhead = new Date(today); fiveDaysAhead.setDate(today.getDate() + 7);
+        const window = new Date(today); window.setDate(today.getDate() + 7);
         const cbSet = (() => { try { return getConvictionTickers(); } catch { return new Set<string>(); } })();
         let watchlist: string[] = [];
         try { watchlist = JSON.parse(localStorage.getItem('mc_watchlist_tickers') || '[]') || []; } catch {}
@@ -688,7 +707,7 @@ export default function HomeDashboard() {
             const daysAhead = Math.round((dt.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
             return { ...e, _dt: dt, daysAhead };
           })
-          .filter((e: any) => e._dt >= today && e._dt <= fiveDaysAhead)
+          .filter((e: any) => e._dt >= today && e._dt <= window)
           .map((e: any) => {
             const sym = (e.ticker || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
             return {
@@ -702,93 +721,116 @@ export default function HomeDashboard() {
             };
           })
           .sort((a: any, b: any) => {
-            // CB-first, then watchlist, then date
             if (a.onCb !== b.onCb) return a.onCb ? -1 : 1;
             if (a.onWatchlist !== b.onWatchlist) return a.onWatchlist ? -1 : 1;
             return a.daysAhead - b.daysAhead;
           })
-          .slice(0, 8);
+          .slice(0, 10);
         setData((d) => ({ ...d, upcomingEarnings: upcoming } as any));
-      });
+      })();
 
-      // PATCH 0622 — Rating Actions today.
-      safeDiag<any>(`/api/v1/news?search=${encodeURIComponent('ICRA|CRISIL|CARE|rating|upgrade|downgrade|outlook')}&limit=20&_=${Date.now()}`, 18_000).then(({ data: j }) => {
+      // PATCH 0625 — Rating Actions + Order Book: dual-source pattern,
+      // mirroring the /rating-actions and /order-book pages. The single
+      // /api/v1/news search was too thin (returned 2 items, none usable).
+      // The corporate-filings stream catches actions the news feed misses.
+      (async () => {
+        const RATING_TOKENS = ['ICRA','CRISIL','CARE Ratings','India Ratings','Ind-Ra','Fitch','Moody','S&P','Brickwork','credit rating','rating upgrade','rating downgrade','rating revised','rating reaffirmed','rating affirmed','rating assigned','outlook revised','placed on watch'].join('|');
+        const ORDER_TOKENS = ['order book','letter of award','LoA','receipt of order','contract worth','contract win','contract awarded','intimation under regulation 30','large order','order received'].join('|');
+        const TIER1 = /(HAL|BHEL|NTPC|PGCIL|Power Grid|BEL|DRDO|ISRO|RBI|NABARD|LIC|ONGC|IOCL|GAIL|NHAI|Indian Railways|Indian Navy|Indian Air Force|Indian Army|Ministry of Defence|MoD|Reliance|Adani|L&T|Larsen|Tata Power|JSW|Tata Steel|Vedanta)/i;
+        const AGE_LIMIT_MS = 7 * 24 * 3600_000;  // 7 days — relaxed from 30h since these are episodic
+
+        const [{ data: newsJ }, { data: filingJ }] = await Promise.all([
+          safeDiag<any>(`/api/v1/news?limit=500&_=${Date.now()}`, 20_000),
+          safeDiag<any>(`/api/v1/concall-intel/live-feed?days=14&bullishOnly=false&_=${Date.now()}`, 20_000),
+        ]);
         if (cancelled) return;
-        const raw = Array.isArray(j) ? j : (j?.articles || j?.items || []);
-        const TWENTY_FOUR = 30 * 3600_000;
-        const items = (raw as any[])
-          .filter((a: any) => {
-            if (!a?.title && !a?.headline) return false;
-            if (a?.is_synthetic || a?.structural_status) return false;
-            const t = (a.title || a.headline || '');
-            if (!/ICRA|CRISIL|CARE|Fitch|Moody|S&P|India Ratings|rating action|upgrade|downgrade|outlook revised/i.test(t)) return false;
-            if (a?.published_at) {
-              const age = Date.now() - new Date(a.published_at).getTime();
-              if (age > TWENTY_FOUR) return false;
-            }
-            return true;
+
+        const articles: any[] = [];
+        const newsArr: any[] = Array.isArray(newsJ) ? newsJ : (newsJ?.articles || newsJ?.data || []);
+        for (const a of newsArr) {
+          articles.push({
+            title: a.title || a.headline,
+            url: a.url || a.source_url,
+            source_name: a.source_name,
+            published_at: a.published_at,
+            ticker: a.primary_ticker || (Array.isArray(a.ticker_symbols) ? a.ticker_symbols[0] : undefined),
+            kind: 'news',
+          });
+        }
+        const filingsArr: any[] = filingJ?.filings || [];
+        for (const f of filingsArr) {
+          articles.push({
+            title: f.subject || '',
+            url: f.source_url || f.attachment_urls?.[0],
+            source_name: f.exchange === 'NSE' ? 'NSE Filing' : 'BSE Filing',
+            published_at: f.filing_datetime,
+            ticker: f.symbol,
+            kind: 'filing',
+          });
+        }
+
+        // Rating Actions extraction
+        const ratingRe = new RegExp(RATING_TOKENS.replace(/\|/g, '|'), 'i');
+        const ratingHits = articles
+          .filter((a) => a.title && ratingRe.test(a.title))
+          .filter((a) => {
+            if (!a.published_at) return true;
+            return Date.now() - new Date(a.published_at).getTime() <= AGE_LIMIT_MS;
           })
-          .map((a: any) => {
-            const t = (a.title || a.headline || '');
-            const agencyMatch = t.match(/(ICRA|CRISIL|CARE|Fitch|Moody|S&P|India Ratings)/i);
-            const actionMatch = t.match(/(upgrade|downgrade|outlook revised|reaffirm)/i);
+          .map((a) => {
+            const t = a.title || '';
+            const agencyMatch = t.match(/(ICRA|CRISIL|CARE|Fitch|Moody|S&P|India Ratings|Ind-Ra|Brickwork)/i);
+            const actionMatch = t.match(/(upgrade|downgrade|outlook revised|reaffirm|affirm|assigned|placed on watch|withdrawn)/i);
             return {
-              ticker: a.primary_ticker || (Array.isArray(a.ticker_symbols) ? a.ticker_symbols[0] : undefined),
+              ticker: a.ticker,
               headline: t,
               agency: agencyMatch ? agencyMatch[1] : undefined,
               action: actionMatch ? actionMatch[1] : undefined,
               source_name: a.source_name,
-              url: a.source_url || a.url,
+              url: a.url,
             };
           })
-          .slice(0, 4);
-        setData((d) => ({ ...d, ratingActionsToday: items } as any));
-      });
+          .slice(0, 5);
+        setData((d) => ({ ...d, ratingActionsToday: ratingHits } as any));
 
-      // PATCH 0622 — Order Book wins today.
-      safeDiag<any>(`/api/v1/news?search=${encodeURIComponent('order|letter of award|receipt of order|contract')}&limit=20&_=${Date.now()}`, 18_000).then(({ data: j }) => {
-        if (cancelled) return;
-        const raw = Array.isArray(j) ? j : (j?.articles || j?.items || []);
-        const TWENTY_FOUR = 36 * 3600_000;
-        const TIER1 = /(HAL|BHEL|NTPC|PGCIL|BEL|DRDO|ISRO|RBI|NABARD|LIC|ONGC|IOCL|GAIL|NHAI|Indian Railways|Indian Navy|Indian Air Force|Indian Army|Ministry of Defence|MoD)/i;
-        const items = (raw as any[])
-          .filter((a: any) => {
-            if (!a?.title && !a?.headline) return false;
-            if (a?.is_synthetic || a?.structural_status) return false;
-            const t = (a.title || a.headline || '');
-            if (!/order|letter of award|LoA|contract worth|receipt of order/i.test(t)) return false;
-            if (a?.published_at) {
-              const age = Date.now() - new Date(a.published_at).getTime();
-              if (age > TWENTY_FOUR) return false;
-            }
-            return true;
+        // Order Book extraction
+        const orderRe = new RegExp(ORDER_TOKENS.replace(/\|/g, '|'), 'i');
+        const orderHits = articles
+          .filter((a) => a.title && orderRe.test(a.title))
+          .filter((a) => {
+            if (!a.published_at) return true;
+            return Date.now() - new Date(a.published_at).getTime() <= AGE_LIMIT_MS;
           })
-          .map((a: any) => {
-            const t = (a.title || a.headline || '');
+          .map((a) => {
+            const t = a.title || '';
             const customerMatch = t.match(TIER1);
-            const valueMatch = t.match(/₹\s*([\d,]+(?:\.\d+)?)\s*(crore|cr|lakh|billion|million)/i);
+            const valueMatch = t.match(/₹\s*([\d,]+(?:\.\d+)?)\s*(crore|cr|lakh|billion|million)/i)
+                            || t.match(/(?:Rs\.?|INR)\s*([\d,]+(?:\.\d+)?)\s*(crore|cr|lakh|bn|mn)/i)
+                            || t.match(/(?:\$|USD)\s*([\d,]+(?:\.\d+)?)\s*(billion|million|bn|mn)/i);
             let valueCr: number | undefined;
             if (valueMatch) {
               const num = parseFloat(valueMatch[1].replace(/,/g, ''));
               const unit = valueMatch[2].toLowerCase();
-              valueCr = unit.startsWith('cr') || unit === 'crore' ? num
+              const isUsd = /\$|USD/.test(t);
+              const inrFactor = isUsd ? 85 : 1;
+              valueCr = (unit.startsWith('cr') || unit === 'crore' ? num
                       : unit.startsWith('la') ? num / 100
-                      : unit.startsWith('bi') ? num * 100
-                      : unit.startsWith('mi') ? num / 10
-                      : num;
+                      : unit.startsWith('bi') || unit === 'bn' ? num * 100
+                      : unit.startsWith('mi') || unit === 'mn' ? num / 10
+                      : num) * inrFactor;
             }
             return {
-              ticker: a.primary_ticker || (Array.isArray(a.ticker_symbols) ? a.ticker_symbols[0] : undefined),
+              ticker: a.ticker,
               headline: t,
               customer: customerMatch ? customerMatch[1] : undefined,
               valueCr,
               source_name: a.source_name,
-              url: a.source_url || a.url,
+              url: a.url,
             };
           })
-          .slice(0, 4);
-        setData((d) => ({ ...d, orderBookToday: items } as any));
-      });
+          .slice(0, 5);
+        setData((d) => ({ ...d, orderBookToday: orderHits } as any));
+      })();
 
       // Earnings — PATCH 0615. Pull today + last 2 trading days, filter to
       // BLOCKBUSTER + STRONG only (drop MIXED/AVOID — those clutter the home
@@ -1475,7 +1517,7 @@ export default function HomeDashboard() {
               <Link href="/movers" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
             </div>
             <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
-              India · top 8 each side · {data.moversUpdatedAt ? new Date(data.moversUpdatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : 'live'}
+              India · smallcap + midcap · top 10 each side · {data.moversUpdatedAt ? new Date(data.moversUpdatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : 'live'}
             </div>
             {!data.gainers && !data.losers ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
@@ -1484,7 +1526,7 @@ export default function HomeDashboard() {
                 {/* Gainers column */}
                 <div>
                   <div style={{ fontSize: 9, color: '#10B981', fontWeight: 800, letterSpacing: '0.5px', marginBottom: 2 }}>▲ GAINERS</div>
-                  {(data.gainers || []).slice(0, 8).map((g: any) => (
+                  {(data.gainers || []).slice(0, 10).map((g: any) => (
                     <Link key={g.ticker} href={`/stock-sheet?ticker=${encodeURIComponent(g.ticker)}`}
                       style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 4px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
                       <span style={{ fontSize: 10, color: TEXT, fontWeight: 700, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.ticker}</span>
@@ -1495,7 +1537,7 @@ export default function HomeDashboard() {
                 {/* Losers column */}
                 <div>
                   <div style={{ fontSize: 9, color: '#EF4444', fontWeight: 800, letterSpacing: '0.5px', marginBottom: 2 }}>▼ LOSERS</div>
-                  {(data.losers || []).slice(0, 8).map((l: any) => (
+                  {(data.losers || []).slice(0, 10).map((l: any) => (
                     <Link key={l.ticker} href={`/stock-sheet?ticker=${encodeURIComponent(l.ticker)}`}
                       style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 4px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
                       <span style={{ fontSize: 10, color: TEXT, fontWeight: 700, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{l.ticker}</span>
@@ -1889,7 +1931,7 @@ function DecisionTierBlock({
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 {tier === 1 && <span style={{ fontSize: 18, fontWeight: 900, color }}>#{i + 1}</span>}
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: condensed ? 12 : 14, fontWeight: 700, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div style={{ fontSize: condensed ? 13 : 16, fontWeight: 700, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 6 }}>
                     {a.company || a.symbol}
                     {/* PATCH 0617 — market flag chip (IN/US) */}
                     {a.market && (
@@ -1898,12 +1940,12 @@ function DecisionTierBlock({
                       </span>
                     )}
                   </div>
-                  <div style={{ fontSize: 10, color: '#94A3B8', fontFamily: 'ui-monospace, monospace', fontWeight: 600 }}>
+                  <div style={{ fontSize: 11, color: '#94A3B8', fontFamily: 'ui-monospace, monospace', fontWeight: 600, marginTop: 2 }}>
                     {a.symbol}{a.sector ? ` · ${a.sector}` : ''}
                   </div>
                 </div>
                 {a.score != null && (
-                  <span style={{ fontSize: condensed ? 12 : 14, color: '#10B981', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
+                  <span style={{ fontSize: condensed ? 13 : 16, color: '#10B981', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
                     {a.score}{a.grade || ''}
                   </span>
                 )}
@@ -1917,7 +1959,7 @@ function DecisionTierBlock({
               </div>
               {!condensed && (
                 <>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '4px 8px', fontSize: 10, lineHeight: 1.45, marginTop: 2 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '5px 10px', fontSize: 12, lineHeight: 1.5, marginTop: 4 }}>
                     <span style={{ color: DIM, fontWeight: 700 }}>Thesis</span>
                     <span style={{ color: TEXT }}>{a.thesis}</span>
                     <span style={{ color: DIM, fontWeight: 700 }}>Risk</span>
@@ -1928,9 +1970,9 @@ function DecisionTierBlock({
                     <span style={{ color: '#22D3EE' }}>{a.trigger}</span>
                   </div>
                   {a.scoreBreakdown && (
-                    <div style={{ marginTop: 4, display: 'flex', gap: 6, flexWrap: 'wrap', fontSize: 9 }}>
+                    <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap', fontSize: 11 }}>
                       {Object.entries(a.scoreBreakdown).map(([k, v]) => (
-                        <span key={k} style={{ color: DIM, padding: '1px 5px', background: '#0A1422', borderRadius: 3, fontFamily: 'ui-monospace, monospace' }}>
+                        <span key={k} style={{ color: DIM, padding: '2px 6px', background: '#0A1422', borderRadius: 3, fontFamily: 'ui-monospace, monospace' }}>
                           {k} +{v}
                         </span>
                       ))}
