@@ -1342,6 +1342,16 @@ function WarrantMomentumFeed() {
         );
       })()}
 
+      {/* PATCH 0591 — Warrant Analytics block. Mirrors the Multibagger /
+          Special Situations Analytics philosophy: one consolidated view
+          of the whole warrant universe before diving into individual
+          cards. Surfaces bucket / use-of-proceeds / promoter-participation
+          mix, extraction-quality matrix, and a top-by-weighted-score
+          shortlist — entirely off the same `data` payload, no new fetch. */}
+      {data && data.filings.length > 0 && (
+        <WarrantAnalytics data={data} />
+      )}
+
       {/* PATCH 0428 — BUCKETED RENDERING replaces flat Top 10 list.
           Production-grade pattern (institutional review item 4.C):
           🟢 STRATEGIC CAPITAL INFUSION — hard-filter passes
@@ -2098,6 +2108,388 @@ function MoversPanel() {
         <Section title="BIG JUMPS" items={data.big_jumps} icon="⬆️" color="#22D3EE" />
         <Section title="LOST MOMENTUM" items={data.lost_momentum} icon="⬇️" color="#EF4444" />
       </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WARRANT ANALYTICS — PATCH 0591
+//
+// Mirrors the Multibagger / Special Situations Analytics philosophy: one
+// consolidated dashboard over the entire warrant universe so the analyst
+// sees distribution and quality BEFORE diving into individual cards.
+//
+// Surfaces:
+//   • STATS STRIP        — total / relevant / passing / NSE-BSE split / avg score
+//   • 🎯 TOP BY WEIGHTED — score-ranked shortlist with company names
+//   • 🪣 BUCKET MIX      — GREEN / AMBER / RED split (strategic vs distress)
+//   • 💰 USE OF PROCEEDS — capex / working-capital / unknown breakdown
+//   • 👥 PROMOTER MIX    — promoter-subscribed vs third-party
+//   • 🔍 EXTRACTION QUAL — % of filings with each diagnostic field present
+//   • 💹 PRICING SPREAD  — discount vs premium distribution
+//   • 🕒 AGING           — fresh (<7d) / warm (7-14d) / older (14-30d)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function WarrantAnalytics({ data }: { data: WarrantFeedPayload }) {
+  const [expanded, setExpanded] = useState(true);
+  const filings = data.filings || [];
+  if (filings.length === 0) return null;
+
+  // ── Aggregations (single pass over filings) ───────────────────────────
+  const byBucket: Record<string, number> = { GREEN: 0, AMBER: 0, RED: 0, OTHER: 0 };
+  const byUse: Record<string, number> = {};
+  const byPromoter: Record<string, number> = {};
+  const byExchange: Record<string, number> = { NSE: 0, BSE: 0 };
+  const byTier: Record<string, number> = { T1: 0, T2: 0, T3: 0 };
+  let scoreSum = 0;
+  let scoreCount = 0;
+  let promoterSubscribedCount = 0;
+  let bothPdfAndPromoter = 0;
+  // Pricing premium buckets
+  const pricingBuckets = { discount: 0, atMarket: 0, smallPremium: 0, bigPremium: 0 };
+  // Aging buckets
+  const now = Date.now();
+  const aging = { fresh: 0, warm: 0, older: 0 };
+  // Extraction quality counters
+  const extr = { pdf: 0, promoter: 0, issuePx: 0, convPeriod: 0, cmp: 0, momentum: 0 };
+
+  for (const f of filings) {
+    const c = (f as any).conviction || {};
+    const bucket = c.bucket || 'OTHER';
+    byBucket[bucket] = (byBucket[bucket] || 0) + 1;
+    const tier = c.tier || (bucket === 'GREEN' ? 'T1' : bucket === 'AMBER' ? 'T2' : 'T3');
+    byTier[tier] = (byTier[tier] || 0) + 1;
+    const use = (c.capital_use || c.use_of_proceeds || 'UNKNOWN').toUpperCase();
+    byUse[use] = (byUse[use] || 0) + 1;
+    const promoterIntent = (c.promoter_intent || (f.details?.is_promoter_subscribed ? 'PARTICIPATING' : 'UNKNOWN')).toUpperCase();
+    byPromoter[promoterIntent] = (byPromoter[promoterIntent] || 0) + 1;
+    if (f.details?.is_promoter_subscribed) promoterSubscribedCount++;
+    byExchange[f.exchange] = (byExchange[f.exchange] || 0) + 1;
+
+    const score = c.weighted?.final ?? c.conviction ?? c.raw_score;
+    if (typeof score === 'number') { scoreSum += score; scoreCount++; }
+
+    // Pricing premium classification (uses c.premium_pct if present)
+    const prem = c.premium_pct;
+    if (typeof prem === 'number') {
+      if (prem < -5) pricingBuckets.discount++;
+      else if (prem <= 5) pricingBuckets.atMarket++;
+      else if (prem <= 25) pricingBuckets.smallPremium++;
+      else pricingBuckets.bigPremium++;
+    }
+
+    // Aging
+    try {
+      const ageH = (now - new Date(f.filing_datetime).getTime()) / 3_600_000;
+      if (ageH <= 24 * 7) aging.fresh++;
+      else if (ageH <= 24 * 14) aging.warm++;
+      else aging.older++;
+    } catch {}
+
+    // Extraction quality (mirror the row diagnostic flags)
+    if (f.attachment_urls && f.attachment_urls.length > 0) extr.pdf++;
+    if (f.details?.promoter_participation_pct != null || f.details?.is_promoter_subscribed) extr.promoter++;
+    if (f.details?.issue_price != null) extr.issuePx++;
+    if (f.details?.conversion_period_months != null) extr.convPeriod++;
+    if (f.price?.cmp != null) extr.cmp++;
+    if (typeof f.business_momentum_score === 'number' && f.business_momentum_score > 0) extr.momentum++;
+
+    if (f.attachment_urls?.length && f.details?.is_promoter_subscribed) bothPdfAndPromoter++;
+  }
+
+  const avgScore = scoreCount > 0 ? Math.round((scoreSum / scoreCount) * 10) / 10 : 0;
+  const promoterRate = filings.length > 0 ? Math.round((promoterSubscribedCount / filings.length) * 100) : 0;
+  const total = filings.length;
+
+  // Top by weighted score
+  const topRanked = [...filings]
+    .filter((f) => (f.conviction as any)?.weighted?.final != null || f.conviction?.conviction != null)
+    .sort((a, b) => {
+      const sa = (a.conviction as any)?.weighted?.final ?? a.conviction?.conviction ?? 0;
+      const sb = (b.conviction as any)?.weighted?.final ?? b.conviction?.conviction ?? 0;
+      return sb - sa;
+    })
+    .slice(0, 10);
+
+  // ── Render helpers ────────────────────────────────────────────────────
+  const cardStyle: React.CSSProperties = {
+    backgroundColor: '#0A1422', border: '1px solid #1A2540',
+    borderRadius: 6, padding: '10px 12px',
+  };
+  const labelStyle: React.CSSProperties = {
+    fontSize: 10, color: '#6B7A8D', letterSpacing: '0.3px', marginBottom: 4,
+  };
+
+  const Bar = ({ pct, color, height }: { pct: number; color: string; height?: number }) => (
+    <div style={{ flex: 1, height: height ?? 6, background: '#1A2540', borderRadius: 3, overflow: 'hidden' }}>
+      <div style={{ width: `${Math.max(0, Math.min(100, pct))}%`, height: '100%', background: color }} />
+    </div>
+  );
+
+  return (
+    <div style={{ background: '#0D1623', border: '1px dashed #22D3EE40', borderRadius: 8, padding: '10px 12px', marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
+        <button
+          onClick={() => setExpanded(v => !v)}
+          style={{
+            background: 'transparent', border: 'none', color: '#22D3EE',
+            fontSize: 13, fontWeight: 800, cursor: 'pointer', padding: 0,
+            display: 'flex', alignItems: 'center', gap: 6,
+          }}
+        >
+          {expanded ? '▾' : '▸'} 📊 WARRANT ANALYTICS
+        </button>
+        <span style={{ fontSize: 10, color: '#22D3EE', background: '#22D3EE22', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>
+          {total} filings · avg score {avgScore}/10 · {promoterRate}% promoter-subscribed
+        </span>
+      </div>
+
+      {expanded && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+
+          {/* ── STATS STRIP ───────────────────────────────────────────── */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 8 }}>
+            <div style={cardStyle}>
+              <div style={labelStyle}>Total filings</div>
+              <div style={{ fontSize: 20, fontWeight: 900, color: '#E6EDF3', fontVariantNumeric: 'tabular-nums' }}>{total}</div>
+            </div>
+            <div style={cardStyle}>
+              <div style={labelStyle}>Avg conviction</div>
+              <div style={{ fontSize: 20, fontWeight: 900, color: '#22D3EE', fontVariantNumeric: 'tabular-nums' }}>{avgScore}/10</div>
+            </div>
+            <div style={cardStyle}>
+              <div style={labelStyle}>Strategic (GREEN)</div>
+              <div style={{ fontSize: 20, fontWeight: 900, color: '#10B981', fontVariantNumeric: 'tabular-nums' }}>{byBucket.GREEN || 0}</div>
+            </div>
+            <div style={cardStyle}>
+              <div style={labelStyle}>Distress (RED)</div>
+              <div style={{ fontSize: 20, fontWeight: 900, color: '#EF4444', fontVariantNumeric: 'tabular-nums' }}>{byBucket.RED || 0}</div>
+            </div>
+            <div style={cardStyle}>
+              <div style={labelStyle}>Promoter subscribed</div>
+              <div style={{ fontSize: 20, fontWeight: 900, color: '#A78BFA', fontVariantNumeric: 'tabular-nums' }}>{promoterSubscribedCount}</div>
+              <div style={{ fontSize: 10, color: '#6B7A8D' }}>{promoterRate}% of all</div>
+            </div>
+            <div style={cardStyle}>
+              <div style={labelStyle}>Exchange split</div>
+              <div style={{ fontSize: 13, fontWeight: 800, color: '#E6EDF3' }}>NSE {byExchange.NSE} · BSE {byExchange.BSE}</div>
+            </div>
+            <div style={cardStyle}>
+              <div style={labelStyle}>Aging</div>
+              <div style={{ fontSize: 11, color: '#E6EDF3', fontWeight: 700 }}>
+                <span style={{ color: '#10B981' }}>● {aging.fresh}</span>{' '}
+                <span style={{ color: '#F59E0B' }}>◐ {aging.warm}</span>{' '}
+                <span style={{ color: '#6B7A8D' }}>◯ {aging.older}</span>
+              </div>
+              <div style={{ fontSize: 9, color: '#6B7A8D' }}>fresh · warm · older</div>
+            </div>
+          </div>
+
+          {/* ── 🎯 TOP BY WEIGHTED SCORE ──────────────────────────────── */}
+          {topRanked.length > 0 && (
+            <div style={cardStyle}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: '#F59E0B', marginBottom: 6 }}>
+                🎯 TOP {topRanked.length} BY WEIGHTED SCORE
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 6 }}>
+                {topRanked.map((f, i) => {
+                  const c = (f.conviction as any) || {};
+                  const score = c.weighted?.final ?? c.conviction ?? c.raw_score ?? 0;
+                  const bucket = c.bucket || 'OTHER';
+                  const bcolor = bucket === 'GREEN' ? '#10B981' : bucket === 'AMBER' ? '#F59E0B' : bucket === 'RED' ? '#EF4444' : '#6B7A8D';
+                  return (
+                    <div key={f.symbol + i} style={{
+                      display: 'flex', flexDirection: 'column', gap: 2,
+                      padding: '6px 8px', borderRadius: 4,
+                      border: `1px solid ${bcolor}30`, background: `${bcolor}08`,
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 700, fontVariantNumeric: 'tabular-nums', minWidth: 22 }}>#{i + 1}</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: '#E6EDF3', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {f.company_name}
+                          </div>
+                          <div style={{ fontSize: 9, color: '#94A3B8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 600 }}>
+                            {f.symbol} · {f.exchange}
+                          </div>
+                        </div>
+                        <span style={{ fontSize: 12, fontWeight: 800, color: bcolor, fontVariantNumeric: 'tabular-nums' }}>{score.toFixed(1)}</span>
+                      </div>
+                      <div style={{ fontSize: 9, color: '#6B7A8D', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {(f.warrant_type || '').replace(/_/g, ' ')}
+                        {c.capital_use && ` · use: ${c.capital_use.toLowerCase()}`}
+                        {c.premium_pct != null && ` · ${c.premium_pct > 0 ? '+' : ''}${c.premium_pct.toFixed(0)}% vs CMP`}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 10 }}>
+
+            {/* ── 🪣 BUCKET MIX ──────────────────────────────────────── */}
+            <div style={cardStyle}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', marginBottom: 6 }}>🪣 BUCKET MIX</div>
+              {([
+                { key: 'GREEN', label: '🟢 STRATEGIC', color: '#10B981' },
+                { key: 'AMBER', label: '🟡 NEUTRAL',   color: '#F59E0B' },
+                { key: 'RED',   label: '🔴 DISTRESS',  color: '#EF4444' },
+                { key: 'OTHER', label: '◯ OTHER',     color: '#6B7A8D' },
+              ] as const).map((b) => {
+                const n = byBucket[b.key] || 0;
+                if (n === 0) return null;
+                const pct = total > 0 ? (n / total) * 100 : 0;
+                return (
+                  <div key={b.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <span style={{ fontSize: 10, color: '#E6EDF3', fontWeight: 700, minWidth: 100 }}>{b.label}</span>
+                    <span style={{ fontSize: 10, color: '#94A3B8', minWidth: 24, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{n}</span>
+                    <Bar pct={pct} color={b.color} />
+                    <span style={{ fontSize: 10, color: b.color, fontWeight: 700, minWidth: 36, textAlign: 'right' }}>{pct.toFixed(0)}%</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* ── 💰 USE OF PROCEEDS ─────────────────────────────────── */}
+            <div style={cardStyle}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', marginBottom: 6 }}>💰 USE OF PROCEEDS</div>
+              {Object.entries(byUse).sort((a, b) => b[1] - a[1]).map(([k, n]) => {
+                const pct = total > 0 ? (n / total) * 100 : 0;
+                const tone = /CAPEX|EXPANSION|ACQUISITION/.test(k) ? '#10B981'
+                          : /WORKING.CAPITAL|DEBT|REFINANC/.test(k) ? '#F59E0B'
+                          : '#6B7A8D';
+                return (
+                  <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <span style={{ fontSize: 10, color: '#E6EDF3', fontWeight: 700, minWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{k.replace(/_/g, ' ')}</span>
+                    <span style={{ fontSize: 10, color: '#94A3B8', minWidth: 24, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{n}</span>
+                    <Bar pct={pct} color={tone} />
+                    <span style={{ fontSize: 10, color: tone, fontWeight: 700, minWidth: 36, textAlign: 'right' }}>{pct.toFixed(0)}%</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* ── 👥 PROMOTER MIX ────────────────────────────────────── */}
+            <div style={cardStyle}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', marginBottom: 6 }}>👥 PROMOTER PARTICIPATION</div>
+              <div style={{ fontSize: 10, color: '#94A3B8', marginBottom: 6, lineHeight: 1.4 }}>
+                Promoter-subscribed warrants are the high-conviction subset.
+                Third-party-only warrants imply external dilution without owner alignment.
+              </div>
+              {Object.entries(byPromoter).sort((a, b) => b[1] - a[1]).map(([k, n]) => {
+                const pct = total > 0 ? (n / total) * 100 : 0;
+                const tone = /PARTICIPAT|SUBSCRIB|MAINTAIN/.test(k) ? '#10B981' : '#6B7A8D';
+                return (
+                  <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <span style={{ fontSize: 10, color: '#E6EDF3', fontWeight: 700, minWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{k.replace(/_/g, ' ')}</span>
+                    <span style={{ fontSize: 10, color: '#94A3B8', minWidth: 24, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{n}</span>
+                    <Bar pct={pct} color={tone} />
+                    <span style={{ fontSize: 10, color: tone, fontWeight: 700, minWidth: 36, textAlign: 'right' }}>{pct.toFixed(0)}%</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* ── 🔍 EXTRACTION QUALITY ──────────────────────────────── */}
+            <div style={cardStyle}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', marginBottom: 6 }}>🔍 EXTRACTION QUALITY</div>
+              <div style={{ fontSize: 10, color: '#94A3B8', marginBottom: 6, lineHeight: 1.4 }}>
+                % of filings with each field extracted. Low coverage means
+                the scoring model has limited signal; verify manually.
+              </div>
+              {([
+                { key: 'pdf',        label: 'PDF attached',       n: extr.pdf },
+                { key: 'promoter',   label: 'Promoter intent',    n: extr.promoter },
+                { key: 'issuePx',    label: 'Issue price',        n: extr.issuePx },
+                { key: 'convPeriod', label: 'Conversion period',  n: extr.convPeriod },
+                { key: 'cmp',        label: 'CMP (Yahoo)',        n: extr.cmp },
+                { key: 'momentum',   label: 'Concall momentum',   n: extr.momentum },
+              ] as const).map((row) => {
+                const pct = total > 0 ? (row.n / total) * 100 : 0;
+                const tone = pct >= 80 ? '#10B981' : pct >= 50 ? '#22D3EE' : pct >= 25 ? '#F59E0B' : '#EF4444';
+                return (
+                  <div key={row.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <span style={{ fontSize: 10, color: '#E6EDF3', fontWeight: 700, minWidth: 120 }}>{row.label}</span>
+                    <span style={{ fontSize: 10, color: '#94A3B8', minWidth: 24, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{row.n}</span>
+                    <Bar pct={pct} color={tone} />
+                    <span style={{ fontSize: 10, color: tone, fontWeight: 700, minWidth: 36, textAlign: 'right' }}>{pct.toFixed(0)}%</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* ── 💹 PRICING SPREAD vs CMP ──────────────────────────── */}
+            <div style={cardStyle}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', marginBottom: 6 }}>💹 ISSUE PRICE vs CMP</div>
+              <div style={{ fontSize: 10, color: '#94A3B8', marginBottom: 6, lineHeight: 1.4 }}>
+                Issue price relative to current market price. Deep discounts
+                signal distress; premium offers signal promoter confidence.
+              </div>
+              {([
+                { key: 'discount',     label: 'Deep discount (< -5%)',  n: pricingBuckets.discount,     color: '#EF4444' },
+                { key: 'atMarket',     label: 'At market (±5%)',         n: pricingBuckets.atMarket,     color: '#94A3B8' },
+                { key: 'smallPremium', label: 'Premium (+5 to +25%)',    n: pricingBuckets.smallPremium, color: '#22D3EE' },
+                { key: 'bigPremium',   label: 'Big premium (> +25%)',    n: pricingBuckets.bigPremium,   color: '#10B981' },
+              ] as const).map((row) => {
+                if (row.n === 0) return null;
+                const pricedCount = pricingBuckets.discount + pricingBuckets.atMarket + pricingBuckets.smallPremium + pricingBuckets.bigPremium;
+                const pct = pricedCount > 0 ? (row.n / pricedCount) * 100 : 0;
+                return (
+                  <div key={row.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <span style={{ fontSize: 10, color: '#E6EDF3', fontWeight: 700, minWidth: 160 }}>{row.label}</span>
+                    <span style={{ fontSize: 10, color: '#94A3B8', minWidth: 24, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{row.n}</span>
+                    <Bar pct={pct} color={row.color} />
+                    <span style={{ fontSize: 10, color: row.color, fontWeight: 700, minWidth: 36, textAlign: 'right' }}>{pct.toFixed(0)}%</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* ── 🏷 TIER MIX ───────────────────────────────────────── */}
+            <div style={cardStyle}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', marginBottom: 6 }}>🏷 TIER MIX</div>
+              <div style={{ fontSize: 10, color: '#94A3B8', marginBottom: 6, lineHeight: 1.4 }}>
+                T1 = highest conviction (promoter + low distress).
+                T2 = neutral / partial signals. T3 = distress / non-strategic.
+              </div>
+              {([
+                { key: 'T1', label: '★ TIER 1',    color: '#10B981' },
+                { key: 'T2', label: '◐ TIER 2',    color: '#F59E0B' },
+                { key: 'T3', label: '⚠ TIER 3',    color: '#EF4444' },
+              ] as const).map((row) => {
+                const n = byTier[row.key] || 0;
+                if (n === 0) return null;
+                const pct = total > 0 ? (n / total) * 100 : 0;
+                return (
+                  <div key={row.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <span style={{ fontSize: 10, color: '#E6EDF3', fontWeight: 700, minWidth: 80 }}>{row.label}</span>
+                    <span style={{ fontSize: 10, color: '#94A3B8', minWidth: 24, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{n}</span>
+                    <Bar pct={pct} color={row.color} />
+                    <span style={{ fontSize: 10, color: row.color, fontWeight: 700, minWidth: 36, textAlign: 'right' }}>{pct.toFixed(0)}%</span>
+                  </div>
+                );
+              })}
+            </div>
+
+          </div>
+
+          {/* ── 📚 INSTITUTIONAL DISCLOSURE ────────────────────────────────── */}
+          <div style={{ ...cardStyle, borderColor: '#1A2540' }}>
+            <div style={{ fontSize: 10, color: '#6B7A8D', lineHeight: 1.5 }}>
+              <strong style={{ color: '#94A3B8' }}>HOW TO READ:</strong>{' '}
+              The bucket mix is the most important chart — strategic (GREEN) warrants
+              with promoter subscription and premium pricing are the multibagger setup.
+              Distress (RED) warrants signal capital raises from non-promoter parties
+              for working-capital or refinancing — typically dilutive without alignment.
+              Low extraction quality on Promoter / Issue px / Conversion period means
+              the scoring engine is operating with reduced signal; consider verifying
+              with the source filings before acting.
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
