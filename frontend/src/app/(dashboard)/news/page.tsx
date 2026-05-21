@@ -3086,8 +3086,11 @@ export default function NewsFeedPage() {
               the URL-persistent state from Patch 0218. */}
           <SavedViewsControl />
         </div>
-        {/* Controls row — horizontally scrollable on mobile */}
-        <div className="scrollbar-hide mobile-scroll" style={{ display: 'flex', gap: '8px', alignItems: 'center', overflowX: 'auto', paddingBottom: '4px' }}>
+        {/* Controls row — horizontally scrollable on mobile.
+            Patch 0556 (BUG-AUDIT-1): position:relative + zIndex so the
+            Filters button click cannot bleed through to underlying
+            article links. */}
+        <div className="scrollbar-hide mobile-scroll" style={{ display: 'flex', gap: '8px', alignItems: 'center', overflowX: 'auto', paddingBottom: '4px', position: 'relative', zIndex: 20 }}>
           <input
             value={search} onChange={e => setSearch(e.target.value)} placeholder="Search news…"
             style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: '8px', padding: '7px 12px', color: '#F5F7FA', fontSize: '14px', minWidth: '160px', width: '200px', outline: 'none', flexShrink: 0 }}
@@ -3114,8 +3117,8 @@ export default function NewsFeedPage() {
             🇺🇸 US
           </button>
           <button
-            onClick={() => setShowFilters(f => !f)}
-            style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: showFilters ? '#0F7ABF' : '#111B35', border: `1px solid ${showFilters ? '#0F7ABF' : '#1E2D45'}`, borderRadius: '8px', padding: '7px 12px', color: '#F5F7FA', fontSize: '12px', cursor: 'pointer', flexShrink: 0, minHeight: '36px' }}
+            onClick={(e) => { e.stopPropagation(); e.preventDefault(); setShowFilters(f => !f); }}
+            style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: showFilters ? '#0F7ABF' : '#111B35', border: `1px solid ${showFilters ? '#0F7ABF' : '#1E2D45'}`, borderRadius: '8px', padding: '7px 12px', color: '#F5F7FA', fontSize: '12px', cursor: 'pointer', flexShrink: 0, minHeight: '36px', position: 'relative', zIndex: 21 }}
           >
             <Filter style={{ width: '12px', height: '12px' }} /> Filters
             {(region !== 'ALL' || articleType !== 'ALL' || signalFilter !== 'ALL' || sourceName !== 'ALL' || search) && (

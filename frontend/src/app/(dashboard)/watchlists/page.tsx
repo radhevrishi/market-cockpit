@@ -13,6 +13,8 @@ import {
 } from '@/lib/conviction-beats';
 import { peadScore, peadColor, peadLabel } from '@/lib/pead-score';
 import TickerExportToolbar from '@/components/TickerExportToolbar';
+// PATCH 0557 — BUG-AUDIT-2: backend-degraded banner.
+import DegradedBanner from '@/components/DegradedBanner';
 import {
   EarningsCardComponent,
   CoverageStatsBar,
@@ -442,7 +444,11 @@ function WatchlistTable({
                 </td>
                 <td style={{ padding: '12px 16px', color: '#8BA3C1', fontSize: '12px' }}>{item.sector}</td>
                 <td style={{ padding: '12px 16px', textAlign: 'right', color: '#F5F7FA', fontVariantNumeric: 'tabular-nums' }}>
-                  {isPriceSuspect(item.ticker, item.price) ? (
+                  {/* PATCH 0559 — BUG-AUDIT-4: when quote came back null/0 render
+                      a muted em-dash with a tooltip instead of ₹0.00. */}
+                  {!item.price || item.price === 0 ? (
+                    <span style={{ color: '#4A5B6C' }} title="Price unavailable — quote not returned by data source">—</span>
+                  ) : isPriceSuspect(item.ticker, item.price) ? (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: '#FBBF24' }} title="Suspect price - may be incorrect or stale">
                       <AlertTriangle style={{ width: '12px', height: '12px' }} />
                       ₹{item.price.toFixed(2)}
@@ -452,16 +458,21 @@ function WatchlistTable({
                   )}
                 </td>
                 <td style={{ padding: '12px 16px', textAlign: 'right' }}>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 8px', borderRadius: '6px', backgroundColor: isPositive ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)', color: isPositive ? '#10B981' : '#EF4444', fontWeight: '600', fontVariantNumeric: 'tabular-nums', fontSize: '12px' }}>
-                    {isPositive ? <TrendingUp style={{ width: '11px', height: '11px' }} /> : <TrendingDown style={{ width: '11px', height: '11px' }} />}
-                    {isPositive ? '+' : ''}{item.changePercent.toFixed(2)}%
-                  </span>
+                  {/* PATCH 0559 — also blank pct chip when no live price. */}
+                  {!item.price || item.price === 0 ? (
+                    <span style={{ color: '#4A5B6C' }} title="Change unavailable">—</span>
+                  ) : (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 8px', borderRadius: '6px', backgroundColor: isPositive ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)', color: isPositive ? '#10B981' : '#EF4444', fontWeight: '600', fontVariantNumeric: 'tabular-nums', fontSize: '12px' }}>
+                      {isPositive ? <TrendingUp style={{ width: '11px', height: '11px' }} /> : <TrendingDown style={{ width: '11px', height: '11px' }} />}
+                      {isPositive ? '+' : ''}{item.changePercent.toFixed(2)}%
+                    </span>
+                  )}
                 </td>
                 <td style={{ padding: '12px 16px', textAlign: 'right', color: '#F5F7FA', fontVariantNumeric: 'tabular-nums', fontSize: '12px' }}>
-                  ₹{item.dayHigh.toFixed(2)}
+                  {item.dayHigh ? `₹${item.dayHigh.toFixed(2)}` : <span style={{ color: '#4A5B6C' }}>—</span>}
                 </td>
                 <td style={{ padding: '12px 16px', textAlign: 'right', color: '#F5F7FA', fontVariantNumeric: 'tabular-nums', fontSize: '12px' }}>
-                  ₹{item.dayLow.toFixed(2)}
+                  {item.dayLow ? `₹${item.dayLow.toFixed(2)}` : <span style={{ color: '#4A5B6C' }}>—</span>}
                 </td>
                 {/* PATCH 0442 BUG-020 — Optional column cells */}
                 {OPTIONAL_COLS.filter(c => activeCols.has(c.id)).map(c => {
@@ -879,6 +890,8 @@ export default function WatchlistsPage() {
 
   return (
     <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>
+      {/* PATCH 0557 — backend-degraded banner. */}
+      <DegradedBanner />
       {/* ── Header ────────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
         <div>

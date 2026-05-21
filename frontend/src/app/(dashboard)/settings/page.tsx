@@ -5,6 +5,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Key, ExternalLink, Check, Info, RefreshCw, Globe, Shield, User, Save, Moon, Sun } from 'lucide-react';
 import api from '@/lib/api';
 import toast from 'react-hot-toast';
+// PATCH 0557 — BUG-AUDIT-2: backend-degraded banner.
+import DegradedBanner from '@/components/DegradedBanner';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -404,7 +406,7 @@ function StatusBadgeWithBackend({ status, isLoading, label }: { status: 'present
         : 'bg-yellow-500/20 border-yellow-500/30 text-yellow-400'
     }`}>
       {ok ? <Check className="w-3 h-3" /> : <span>⚠</span>}
-      {ok ? 'Configured' : 'Not set — add to .env'}
+      {ok ? 'Configured' : 'Not set — contact admin'}
     </span>
   );
 }
@@ -453,7 +455,7 @@ function ApiKeysSection() {
       if (aiStatus === 'present' || aiStatus === 'configured') {
         toast.success('API keys checked!');
       } else {
-        toast.error('API key not set in .env');
+        toast.error('API key not configured on server — contact admin');
       }
     } catch {
       setApiKeyStatus('offline');
@@ -478,25 +480,29 @@ function ApiKeysSection() {
         <StatusBadgeWithBackend status={avKeyStatus} isLoading={isLoadingHealth} />
       </Row>
 
+      {/* PATCH 0558 — BUG-AUDIT-8: the previous copy told the user to
+          edit a local `.env` file on their machine. In the Vercel
+          deploy, secrets live in the cloud project config, so the
+          instructions were misleading. Replaced with an admin-managed
+          notice. */}
       <div className="mt-4 bg-[#0D1B2E]/60 border border-[#2A3B4C] rounded-xl p-4">
         <div className="flex items-start gap-2 mb-3">
           <Info className="w-4 h-4 text-[#0F7ABF] shrink-0 mt-0.5" />
-          <p className="text-xs text-[#8899AA] font-semibold">How to add API keys</p>
+          <p className="text-xs text-[#8899AA] font-semibold">About API keys</p>
         </div>
-        <ol className="space-y-1.5 text-xs text-[#4A5B6C] ml-5 list-decimal">
-          <li>Open the <strong className="text-[#8899AA]">market-cockpit</strong> folder on your computer</li>
-          <li>Open the <strong className="text-[#8899AA]">.env</strong> file in Notepad / TextEdit</li>
-          <li>Find the line and paste your key: <code className="bg-[#1A2B3C] border border-[#2A3B4C] px-1.5 py-0.5 rounded text-[#0F7ABF]">ANTHROPIC_API_KEY=XXXX-your-key-here</code></li>
-          <li>Save the file, then run <strong className="text-[#8899AA]">stop.sh</strong> then <strong className="text-[#8899AA]">start.sh</strong></li>
-        </ol>
+        <p className="text-xs text-[#4A5B6C] leading-relaxed">
+          API keys are managed by the server administrator. If a key reads
+          <strong className="text-[#8899AA]"> Not set</strong> above, contact the admin to enable that feature.
+          You don&apos;t need to (and cannot) configure keys from this page.
+        </p>
         <div className="flex flex-wrap gap-4 mt-4">
           <a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer"
             className="flex items-center gap-1.5 text-xs text-[#0F7ABF] hover:text-[#38A9E8] transition-colors">
-            Get Anthropic key <ExternalLink className="w-3 h-3" />
+            About Anthropic <ExternalLink className="w-3 h-3" />
           </a>
           <a href="https://www.alphavantage.co/support/#api-key" target="_blank" rel="noopener noreferrer"
             className="flex items-center gap-1.5 text-xs text-[#0F7ABF] hover:text-[#38A9E8] transition-colors">
-            Get Alpha Vantage key <ExternalLink className="w-3 h-3" />
+            About Alpha Vantage <ExternalLink className="w-3 h-3" />
           </a>
         </div>
       </div>
@@ -513,6 +519,8 @@ export default function SettingsPage() {
         <h1 className="text-lg font-bold text-white">Settings</h1>
         <p className="text-[#4A5B6C] text-sm mt-0.5">Configure your Market Cockpit experience</p>
       </div>
+      {/* PATCH 0557 — backend-degraded banner. */}
+      <DegradedBanner />
 
       <Section title="Profile" icon={User}>
         <ProfileSection />

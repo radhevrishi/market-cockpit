@@ -724,6 +724,28 @@ html[data-theme="light"] body {
   background: #ffffff !important;
 }
 
+/* PATCH 0565 — BUG-AUDIT-10: in light mode the inverted desktop sidebar
+   left icons looking ghost-white. Force the nav links + their lucide
+   icons + the sidebar item labels to a near-black tone with high
+   contrast against the inverted off-white background. */
+html[data-theme="light"] .desktop-sidebar a,
+html[data-theme="light"] .desktop-sidebar button,
+html[data-theme="light"] .desktop-sidebar span {
+  color: #1a1a2e !important;
+}
+html[data-theme="light"] .desktop-sidebar svg {
+  color: #1a1a2e !important;
+  stroke: #1a1a2e !important;
+}
+/* Active state stays cyan so the highlight is still readable. */
+html[data-theme="light"] .desktop-sidebar a[style*="0F7ABF"] {
+  color: #0F7ABF !important;
+}
+html[data-theme="light"] .desktop-sidebar a[style*="0F7ABF"] svg {
+  color: #0F7ABF !important;
+  stroke: #0F7ABF !important;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    PATCH 0078 — RADICALLY DISTINCT PROFESSIONAL THEME
    ─────────────────────────────────────────────────────────────────────────

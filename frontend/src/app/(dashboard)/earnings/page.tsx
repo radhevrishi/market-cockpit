@@ -6,6 +6,8 @@ import { useQuery } from '@tanstack/react-query';
 import { CHAT_ID, BOT_SECRET } from '@/lib/config';
 import { getConvictionTickers } from '@/lib/conviction-beats';
 import TickerExportToolbar from '@/components/TickerExportToolbar';
+// PATCH 0557 — BUG-AUDIT-2: backend-degraded banner.
+import DegradedBanner from '@/components/DegradedBanner';
 
 // ══════════════════════════════════════════════
 // EARNINGS PAGE — Custom Universe Only
@@ -1886,6 +1888,8 @@ export default function EarningsPage() {
       {/* Header */}
       <div style={{ marginBottom: '24px' }}>
         <h1 style={{ fontSize: '28px', fontWeight: 700, margin: '0 0 8px 0' }}>Earnings Intelligence</h1>
+        {/* PATCH 0557 — backend-degraded banner. */}
+        <DegradedBanner />
         <p style={{ color: TEXT_DIM, margin: 0, fontSize: '13px' }}>
           Custom universe quarterly results · Portfolio + Watchlist only · Source: {source || '...'}
           {updatedAt && (
@@ -2260,21 +2264,34 @@ export default function EarningsPage() {
           <span style={{ color: YELLOW }}>● Partial: {liveSummary.dataQualityBreakdown.partial}</span>
           <span style={{ color: RED }}>● Price Only: {liveSummary.dataQualityBreakdown.priceOnly}</span>
           <span>Showing {filteredCards.length} of {visibleCards.length}{viewMode !== 'screener' && visibleCards.length < cards.length ? ` (${cards.length} total)` : ''}{viewMode === 'screener' ? ` (screener universe)` : ''}{dayOneFilters.size > 0 && filteredCards.length < sortedCards.length ? ` · 1d filter trimmed ${sortedCards.length - filteredCards.length}` : ''}</span>
-          {/* Data completeness ratio */}
+          {/* Data completeness ratio.
+              PATCH 0566 — BUG-AUDIT-11: previously divided viewCards by the
+              UNIVERSE size (totalRequested) which produced "Data Quality:
+              0% (LOW)" when the user's filter narrowed the visible list to
+              one or two enriched tickers — even though those tickers had
+              full growth/score/grade. New behaviour: when the filtered list
+              has data, scope the ratio to filteredCards itself and show
+              "N/N enriched ✓" instead of misleading LOW. */}
           {(() => {
-            const totalRequested = viewMode === 'portfolio' ? portfolioSymbols.length : viewMode === 'watchlist' ? watchlistSymbols.length : new Set([...portfolioSymbols, ...watchlistSymbols]).size;
-            // Count cards that match current viewMode (not grade-filtered sortedCards, not total cards)
-            const viewCards = cards.filter(c => {
-              if (viewMode === 'portfolio') return c.universeTag === 'portfolio' || c.universeTag === 'both';
-              if (viewMode === 'watchlist') return c.universeTag === 'watchlist' || c.universeTag === 'both';
-              return true; // 'both' mode
-            }).length;
-            const ratio = totalRequested > 0 ? (viewCards / totalRequested) * 100 : 0;
+            const visible = filteredCards;
+            const enriched = visible.filter(c => c.dataQuality !== 'PRICE_ONLY').length;
+            if (visible.length === 0) return null;
+            // When everything visible is enriched, show a calm "✓" pill.
+            if (enriched === visible.length) {
+              return (
+                <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 700, backgroundColor: `${GREEN}15`, border: `1px solid ${GREEN}40`, color: GREEN }}>
+                  {visible.length}/{visible.length} enriched ✓
+                </span>
+              );
+            }
+            // Otherwise show the ratio against the visible view, not the
+            // entire universe (which made the badge useless under filters).
+            const ratio = (enriched / visible.length) * 100;
             const color = ratio >= 80 ? GREEN : ratio >= 60 ? YELLOW : RED;
             const label = ratio >= 80 ? 'HIGH' : ratio >= 60 ? 'MEDIUM' : 'LOW';
             return (
               <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 700, backgroundColor: `${color}15`, border: `1px solid ${color}40`, color }}>
-                Data Quality: {ratio.toFixed(0)}% ({label}) · {viewCards}/{totalRequested} resolved
+                Data Quality: {ratio.toFixed(0)}% ({label}) · {enriched}/{visible.length} enriched
               </span>
             );
           })()}

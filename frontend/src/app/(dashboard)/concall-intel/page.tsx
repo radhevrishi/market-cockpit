@@ -1830,25 +1830,50 @@ function KeywordWatchFeed() {
         </div>
       </div>
 
-      {/* Group filter row — always visible */}
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
-        <span style={{ fontSize: 10, color: '#94A3B8', fontWeight: 700, marginRight: 4 }}>GROUPS:</span>
-        {Object.keys(KW_GROUP_COLORS).map(g => {
-          const active = selectedGroups.has(g);
-          const color = KW_GROUP_COLORS[g];
-          const count = data?.totals.by_group[g] || 0;
+      {/* Group filter row — always visible.
+          PATCH 0567 — BUG-AUDIT-12: when the user has no configured
+          keywords AND no counts are coming back from the API, swap the
+          row of "0"-counters for a single "Add keywords" prompt. */}
+      {(() => {
+        const totalCount = Object.keys(KW_GROUP_COLORS).reduce(
+          (s, g) => s + (data?.totals.by_group[g] || 0), 0
+        );
+        if (catalog.length === 0 && totalCount === 0 && !loading) {
           return (
-            <button key={g} onClick={() => toggleGroup(g)} style={{ fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 5, border: `1px solid ${active ? color : '#1A2540'}`, background: active ? `${color}20` : 'transparent', color: active ? color : '#94A3B8', cursor: 'pointer' }}>
-              {g} · {count}
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, padding: '8px 12px', background: '#0A1422', border: '1px dashed #22D3EE60', borderRadius: 6 }}>
+              <span style={{ fontSize: 11, color: '#22D3EE', fontWeight: 700 }}>
+                Add keywords to start monitoring concalls
+              </span>
+              <button
+                onClick={() => setShowCatalog(true)}
+                style={{ fontSize: 10, fontWeight: 800, padding: '3px 10px', borderRadius: 5, border: '1px solid #22D3EE', background: '#22D3EE20', color: '#22D3EE', cursor: 'pointer' }}
+              >
+                ▼ Edit watchlist
+              </button>
+            </div>
           );
-        })}
-        {selectedGroups.size > 0 && (
-          <button onClick={() => setSelectedGroups(new Set())} style={{ fontSize: 10, color: '#94A3B8', background: 'transparent', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
-            clear groups
-          </button>
-        )}
-      </div>
+        }
+        return (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+            <span style={{ fontSize: 10, color: '#94A3B8', fontWeight: 700, marginRight: 4 }}>GROUPS:</span>
+            {Object.keys(KW_GROUP_COLORS).map(g => {
+              const active = selectedGroups.has(g);
+              const color = KW_GROUP_COLORS[g];
+              const count = data?.totals.by_group[g] || 0;
+              return (
+                <button key={g} onClick={() => toggleGroup(g)} style={{ fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 5, border: `1px solid ${active ? color : '#1A2540'}`, background: active ? `${color}20` : 'transparent', color: active ? color : '#94A3B8', cursor: 'pointer' }}>
+                  {g} · {count}
+                </button>
+              );
+            })}
+            {selectedGroups.size > 0 && (
+              <button onClick={() => setSelectedGroups(new Set())} style={{ fontSize: 10, color: '#94A3B8', background: 'transparent', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
+                clear groups
+              </button>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Keyword catalog editor (collapsible) */}
       {showCatalog && (

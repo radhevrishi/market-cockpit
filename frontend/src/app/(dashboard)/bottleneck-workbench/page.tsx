@@ -149,10 +149,21 @@ export default function BottleneckWorkbenchPage() {
           ...(a.tickers || []),
         ])
       );
+      // PATCH 0562 — BUG-AUDIT-6: second-level fallback. When some upstream
+      // versions include `articles` directly on the bucket (rather than
+      // under signals), pull those tickers too. Audit reported the workbench
+      // showed "0 implicated tickers" across every theme because the
+      // signal-level fields were empty in the new payload shape.
+      const fromBucketArticles = ((b as any).articles || []).flatMap((a: any) => [
+        ...(a.ticker_symbols || []),
+        ...(a.tickers || []),
+        ...(a.symbols || []),
+      ]);
       const merged = new Set<string>([
         ...(b.key_tickers || []),
         ...fromSignals.map(coerce),
         ...fromArticles.map(coerce),
+        ...fromBucketArticles.map(coerce),
       ].map(t => (t || '').toUpperCase().trim()).filter(t => t && /^[A-Z0-9.\-]{1,12}$/.test(t)));
       return { ...b, key_tickers: Array.from(merged) };
     });
@@ -182,6 +193,23 @@ export default function BottleneckWorkbenchPage() {
   }, [sortedBuckets, themeSearch]);
 
   const { data: relatedArticles, isLoading: artLoading } = useThemedArticles(activeBucket);
+
+  // PATCH 0562 — BUG-AUDIT-6: when the active bucket has 0 implicated tickers
+  // but themed articles loaded, derive tickers from the article-level
+  // ticker_symbols/tickers fields and merge into key_tickers for display.
+  const bucketTickersAugmented = useMemo(() => {
+    if (!bucket) return [] as string[];
+    const have = bucket.key_tickers || [];
+    if (have.length > 0) return have;
+    const out = new Set<string>();
+    for (const a of (relatedArticles || []) as any[]) {
+      for (const t of [...(a.ticker_symbols || []), ...(a.tickers || []), ...(a.symbols || [])]) {
+        const sym = typeof t === 'string' ? t.toUpperCase().trim() : (t?.ticker || t?.symbol || '').toUpperCase().trim();
+        if (sym && /^[A-Z0-9.\-]{1,12}$/.test(sym)) out.add(sym);
+      }
+    }
+    return Array.from(out);
+  }, [bucket, relatedArticles]);
 
   const tickerRoleMap = useMemo(() => {
     // Heuristic: any ticker appearing in 'key_tickers' for a positive-severity
@@ -354,21 +382,21 @@ export default function BottleneckWorkbenchPage() {
             <div style={{ display: 'flex', gap: 18, fontSize: 11, color: TOKENS.surface.textMuted, fontFamily: 'ui-monospace, monospace' }}>
               <span>{bucket.article_count} articles</span>
               <span>{bucket.signal_count} signals</span>
-              <span>{(bucket.key_tickers || []).length} implicated tickers</span>
+              <span>{bucketTickersAugmented.length} implicated tickers</span>
             </div>
           </div>
 
-          {/* Tickers grid */}
-          {(bucket.key_tickers || []).length > 0 && (
+          {/* Tickers grid — PATCH 0562 uses article-derived fallback. */}
+          {bucketTickersAugmented.length > 0 && (
             <div style={{
               backgroundColor: TOKENS.surface.card, border: `1px solid ${TOKENS.surface.cardBorder}`,
               borderRadius: 12, padding: '16px 20px', marginBottom: 20,
             }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: TOKENS.semantic.bullish.solid, letterSpacing: '0.6px', marginBottom: 10 }}>
-                IMPLICATED TICKERS  ·  {(bucket.key_tickers || []).length}
+                IMPLICATED TICKERS  ·  {bucketTickersAugmented.length}
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {(bucket.key_tickers || []).map(t => {
+                {bucketTickersAugmented.map(t => {
                   const role = tickerRoleMap.get(t.toUpperCase());
                   const glyph = role === 'BENEFICIARY' ? '▲' : '◆';
                   const color = role === 'BENEFICIARY' ? TOKENS.semantic.bullish.solid : TOKENS.surface.textDim;

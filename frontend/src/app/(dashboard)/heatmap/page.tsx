@@ -246,13 +246,16 @@ export default function HeatmapPage() {
   }, []);
 
   const fetchEarnings = useCallback(async () => {
-    // PATCH 0439 BUG-002 — 30s wall-clock timeout. Audit reported Post-Earnings
-    // heatmap spinning indefinitely with no error/retry. Now falls back to
-    // 'Post-earnings data unavailable' instead of perpetual spinner.
+    // PATCH 0439 BUG-002 + PATCH 0564 BUG-AUDIT-9 — 15s hard timeout with
+    // an AbortController so the in-flight fetch actually stops (not just the
+    // loading state). After 15s we surface an EmptyState-style message with
+    // a Retry path via the existing Refresh button.
+    const ctl = new AbortController();
     const timeoutId = setTimeout(() => {
-      setError('Post-earnings data timed out after 30s. Backend may be unavailable — try Refresh.');
+      ctl.abort();
+      setError('Data temporarily unavailable. Backend is recovering. Try refreshing in 2–3 minutes.');
       setEarningsLoading(false);
-    }, 30000);
+    }, 15000);
     try {
       setEarningsLoading(true);
       setError(null);
@@ -263,8 +266,8 @@ export default function HeatmapPage() {
       const prevMonth = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
 
       const [curRes, prevRes] = await Promise.all([
-        fetch(`/api/market/earnings?market=india&month=${curMonth}`),
-        fetch(`/api/market/earnings?market=india&month=${prevMonth}`),
+        fetch(`/api/market/earnings?market=india&month=${curMonth}`, { signal: ctl.signal }),
+        fetch(`/api/market/earnings?market=india&month=${prevMonth}`, { signal: ctl.signal }),
       ]);
       clearTimeout(timeoutId);
 

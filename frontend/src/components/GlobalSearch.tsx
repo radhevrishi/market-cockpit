@@ -139,7 +139,62 @@ export default function GlobalSearch() {
     if (localMatches.length > 0) {
       setResults(localMatches)
     }
-    
+
+    // PATCH 0561 — BUG-AUDIT-3: when the local index has fewer than 3
+    // matches, also query the full NSE/BSE/US universe via the bulk
+    // market-quotes endpoint and merge. Previously RELIANCE/TCS/INFY
+    // (which are in TICKER_INDEX) worked, but anything outside the
+    // hardcoded ~50-ticker index would only return the single fallback
+    // row at the bottom of this function. Now any ticker that exists
+    // in /api/market/quotes shows up as a real result with company
+    // name + a "Not in universe" hint so the user knows it's a fresh
+    // lookup rather than a personal-universe match.
+    const fetchUniverseMatches = async () => {
+      if (localMatches.length >= 3) return [] as SearchResult[]
+      const out: SearchResult[] = []
+      const seen = new Set(localMatches.map(m => m.ticker))
+      const ctl = new AbortController()
+      const t = setTimeout(() => ctl.abort(), 3500)
+      try {
+        const queries = ['india', 'us']
+        await Promise.all(queries.map(async (mkt) => {
+          try {
+            const res = await fetch(`/api/market/quotes?market=${mkt}`, { signal: ctl.signal })
+            if (!res.ok) return
+            const data = await res.json()
+            for (const s of (data?.stocks || [])) {
+              const sym = String(s.ticker || '').toUpperCase()
+              if (!sym || seen.has(sym)) continue
+              const company = String(s.company || s.name || '')
+              if (sym.includes(ticker) || company.toUpperCase().includes(ticker)) {
+                seen.add(sym)
+                out.push({
+                  ticker: sym,
+                  name: `${company || sym} — Not in universe — open stock sheet`,
+                  price: s.price || 0,
+                  change_pct: s.changePercent || 0,
+                  exchange: mkt === 'india' ? 'NSE' : 'NASDAQ',
+                })
+                if (out.length >= 5) return
+              }
+            }
+          } catch {}
+        }))
+      } finally { clearTimeout(t) }
+      return out
+    }
+
+    // Fire-and-await universe search in parallel with the per-ticker
+    // /market/quote walk below. Both feed setResults additively.
+    fetchUniverseMatches().then((extra) => {
+      if (extra.length > 0) {
+        setResults(prev => {
+          const prevSet = new Set(prev.map(p => p.ticker))
+          return [...prev, ...extra.filter(e => !prevSet.has(e.ticker))]
+        })
+      }
+    })
+
     // Then try API to get live prices (in background)
     setLoading(true)
     try {

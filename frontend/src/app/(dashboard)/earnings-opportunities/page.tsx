@@ -23,6 +23,8 @@ import { syncFromEarningsOps, type ConvictionTier } from '@/lib/conviction-beats
 // getItemSync is race-aware: if a write is still queued within the 250ms idle
 // window, the read returns the pending value instead of the stale LS string.
 import { debouncedSetItem, getItemSync } from '@/lib/debounced-storage';
+// PATCH 0557 — BUG-AUDIT-2: backend-degraded banner.
+import DegradedBanner from '@/components/DegradedBanner';
 
 // ─── Calendar payload types ────────────────────────────────────────────────
 interface CalendarItem {
@@ -335,6 +337,18 @@ function todayISO(): string {
   const d = new Date();
   d.setDate(d.getDate() - 1);
   return d.toISOString().slice(0, 10);
+}
+
+// PATCH 0560 — BUG-AUDIT-5: return today's date in IST (Asia/Kolkata, UTC+5:30).
+// The server-side graded endpoint already uses IST date attribution. The client
+// was using `new Date().toISOString().slice(0,10)` which is UTC. After ~6:30 PM
+// IST every day, UTC date lagged IST by one day so the page asked for the
+// wrong date and rendered 0 graded cards even though the server had data.
+function todayIstISO(): string {
+  const d = new Date();
+  // Convert to IST (+5:30) by shifting epoch ms then reading UTC parts.
+  const ist = new Date(d.getTime() + (5 * 60 + 30) * 60 * 1000);
+  return ist.toISOString().slice(0, 10);
 }
 
 // PATCH 0145: parse Trendlyne's period_ended (e.g. "31-Mar-2026") → YYYY-MM-DD
@@ -752,7 +766,8 @@ function useEarningsOpportunitiesJoined(
   hub: MarketEarningsResponse | undefined,
   enrichmentMap: Record<string, any> | undefined,
 ): OpportunitiesPayload {
-  const todayIso = new Date().toISOString().slice(0, 10);
+  // PATCH 0560 — IST date attribution.
+  const todayIso = todayIstISO();
   const hubResults = hub?.results || [];
   const enrich = enrichmentMap || {};
 
@@ -900,11 +915,14 @@ export default function EarningsOpportunitiesPage() {
   // auto-walk-back effect below probes yesterday, day-before, etc., via
   // the SAME graded endpoint (which has the live-NSE fallback) instead of
   // relying on hub.results. This means Sat/Sun/Mon filings always surface.
-  const todayIso = new Date().toISOString().slice(0, 10);
+  // PATCH 0560 — BUG-AUDIT-5: use IST date. The server-side graded endpoint
+  // already attributes filings to IST dates, so a UTC-derived "today" string
+  // produced 0 cards after ~6:30 PM IST every evening.
+  const todayIso = todayIstISO();
   const resolvedDateForGrading = useMemo(() => {
     if (filterDate) return filterDate;
-    // Default to today. The auto-walk-back effect (below) will step back
-    // if today is empty.
+    // Default to today (IST). The auto-walk-back effect (below) will step
+    // back if today is empty.
     return todayIso;
   }, [filterDate, todayIso]);
 
@@ -2047,6 +2065,8 @@ export default function EarningsOpportunitiesPage() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: '#0A0E1A' }}>
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <div style={{ padding: '20px 24px 14px', borderBottom: '1px solid #1A2540', backgroundColor: '#0D1623' }}>
+        {/* PATCH 0557 — backend-degraded banner. */}
+        <DegradedBanner />
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
           <h1 style={{ fontSize: 22, fontWeight: 900, color: '#E6EDF3', margin: 0 }}>Earnings Opportunities</h1>
           <button onClick={() => refetch()} disabled={hardRefreshing}
@@ -2693,7 +2713,8 @@ Source label: ${coverageStats.source}`}
           // directly via the recentPopulatedDates state which is populated by
           // the effect below. That state reflects live-NSE-augmented graded
           // data, not the stale hub.
-          const todayIso = new Date().toISOString().slice(0, 10);
+          // PATCH 0560 — use IST date for "today" boundary.
+          const todayIso = todayIstISO();
           // Fallback: merge hub-results count (for older dates) with the
           // live-probed graded counts (for recent dates).
           const cutoffDate = new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 10);

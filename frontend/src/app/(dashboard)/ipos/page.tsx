@@ -554,7 +554,15 @@ export default function IPOsPage() {
                     fontSize: '14px',
                     fontWeight: 'bold',
                   }}>
-                    {ipo.sector}
+                    {/* PATCH 0563 — BUG-AUDIT-7: "Various" is a noisy
+                        upstream placeholder; coerce to em-dash. */}
+                    {(() => {
+                      const s = (ipo.sector || '').trim();
+                      if (!s || s === '-' || s === '—' || /^various$/i.test(s) || /^n\/a$/i.test(s)) {
+                        return <span style={{ color: THEME.textSecondary }}>—</span>;
+                      }
+                      return s;
+                    })()}
                   </div>
                 </div>
               </div>
@@ -568,11 +576,34 @@ export default function IPOsPage() {
                 color: THEME.textSecondary,
               }}>
                 <strong>Timeline:</strong>{' '}
-                {typeof ipo.dates === 'string'
-                  ? ipo.dates
-                  : ipo.dates && typeof ipo.dates === 'object'
-                    ? `Open: ${ipo.dates.open || '-'} | Close: ${ipo.dates.close || '-'} | Listing: ${ipo.dates.listing || '-'}`
-                    : '-'}
+                {(() => {
+                  // PATCH 0563 — BUG-AUDIT-7: when listingDate is null but
+                  // closeDate is set, show an estimated listing date as
+                  // closeDate + 6 working days. Tagged "(est)" so the user
+                  // knows it's not authoritative.
+                  if (typeof ipo.dates === 'string') return ipo.dates;
+                  if (!ipo.dates || typeof ipo.dates !== 'object') return '-';
+                  const open = ipo.dates.open || '-';
+                  const close = ipo.dates.close || '-';
+                  let listing = ipo.dates.listing || '';
+                  if (!listing && ipo.dates.close) {
+                    try {
+                      const d = new Date(ipo.dates.close);
+                      if (!isNaN(d.getTime())) {
+                        let added = 0;
+                        while (added < 6) {
+                          d.setDate(d.getDate() + 1);
+                          const dow = d.getDay();
+                          if (dow !== 0 && dow !== 6) added++;
+                        }
+                        const m = d.toLocaleString('en-US', { month: 'short' });
+                        listing = `~ ${d.getDate()} ${m} (est)`;
+                      }
+                    } catch {}
+                  }
+                  if (!listing) listing = '-';
+                  return `Open: ${open} | Close: ${close} | Listing: ${listing}`;
+                })()}
               </div>
             </div>
           ))}

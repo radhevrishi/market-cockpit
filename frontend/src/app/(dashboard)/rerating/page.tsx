@@ -45,6 +45,8 @@ import { useQuery } from '@tanstack/react-query';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { TrendingUp, RefreshCw, Rocket } from 'lucide-react';
 import api from '@/lib/api';
+// PATCH 0557 — BUG-AUDIT-2: backend-degraded banner.
+import DegradedBanner from '@/components/DegradedBanner';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -849,6 +851,8 @@ export default function RerratingPage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: '#0A0E1A' }}>
+      {/* PATCH 0557 — backend-degraded banner. */}
+      <div style={{ padding: '0 18px' }}><DegradedBanner /></div>
       {/* ── Header ─────────────────────────────────────────────────── */}
       <div style={{ backgroundColor: '#0D1B2E', borderBottom: '1px solid #1E2D45', borderLeft: `4px solid ${activeMeta.color}`, padding: '14px 18px', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
