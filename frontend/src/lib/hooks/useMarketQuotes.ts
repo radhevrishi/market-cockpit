@@ -89,8 +89,10 @@ export type FetchQuotesOpts = {
   force?: boolean;
   /** TTL beyond which the cached payload is considered stale. Default 60_000. */
   cacheTtlMs?: number;
-  /** AbortSignal from the caller; ignored if the in-flight request was started
-   *  by a different caller. Aborting only protects YOUR consumer. */
+  /** Caller's AbortSignal. PATCH 0552 — attached ONLY on a per-caller wrapper
+   *  promise so a single unmount does not cancel the shared in-flight fetch
+   *  for other live consumers. The underlying network request runs to
+   *  completion regardless of any one caller's abort. */
   signal?: AbortSignal;
 };
 
@@ -107,27 +109,48 @@ export async function fetchQuotesShared(opts: FetchQuotesOpts = {}): Promise<Quo
     if (cached && Date.now() - cached.ts < ttl) {
       return cached.payload;
     }
-    const inflight = _inFlight.get(url);
-    if (inflight) {
-      // Note: caller's signal can't abort someone else's fetch, but if it
-      // aborts before our await resolves, the throw propagates naturally.
-      return inflight;
-    }
   }
 
-  const p = (async () => {
-    try {
-      const res = await fetch(url, { signal: opts.signal });
-      if (!res.ok) throw new Error(`quotes ${res.status}`);
-      const json = (await res.json()) as QuotesResponse;
-      _payloadCache.set(url, { ts: Date.now(), payload: json });
-      return json;
-    } finally {
-      _inFlight.delete(url);
-    }
-  })();
-  _inFlight.set(url, p);
-  return p;
+  // PATCH 0552 — Race-safe shared fetch. Previously the in-flight Promise
+  // attached the FIRST caller's `signal` directly to fetch(). If that
+  // caller unmounted and aborted, the underlying fetch rejected for ALL
+  // joined consumers (movers + heatmap inside /market-snapshot was the
+  // canonical case). Fix: never attach any consumer signal to the
+  // shared fetch — it always runs to completion. Each caller then
+  // races their own signal against the shared resolution.
+  let shared = _inFlight.get(url);
+  if (!shared || opts.force) {
+    shared = (async () => {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`quotes ${res.status}`);
+        const json = (await res.json()) as QuotesResponse;
+        _payloadCache.set(url, { ts: Date.now(), payload: json });
+        return json;
+      } finally {
+        _inFlight.delete(url);
+      }
+    })();
+    _inFlight.set(url, shared);
+  }
+
+  // If caller didn't pass a signal, just return the shared promise directly.
+  if (!opts.signal) return shared;
+
+  // Per-caller abort race: caller's signal rejects this wrapper, but the
+  // shared promise keeps running and resolves for the other consumers.
+  return new Promise<QuotesResponse>((resolve, reject) => {
+    const onAbort = () => {
+      const err = new DOMException('Caller aborted', 'AbortError');
+      reject(err);
+    };
+    if (opts.signal!.aborted) { onAbort(); return; }
+    opts.signal!.addEventListener('abort', onAbort, { once: true });
+    shared!.then(
+      (val) => { opts.signal!.removeEventListener('abort', onAbort); resolve(val); },
+      (err) => { opts.signal!.removeEventListener('abort', onAbort); reject(err); },
+    );
+  });
 }
 
 /** Test/diagnostic helper — wipe shared cache. */

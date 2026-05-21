@@ -1428,6 +1428,25 @@ Pre-session patches existed (0073–0095). Recent session highlights:
 - 0349 — USA scoring discipline: FCF/Op divergence cap, post-run reversal cap,
          earnings-proximity warning, position-size guidance chip, analyst
          after-run discount. Triggered by PAYS 16% drop post-earnings.
+- 0549 — Conviction Beats: hard-coerce viewMode='compact' and drop legacy
+         'mc:conviction-view' LS key so returning users with 'rich' set no
+         longer trigger the dead-coded Earnings-Hub enrichment fetch on
+         every visit (200+ tickers, network burned, UI ignored result).
+- 0550 — Defensive guards batch: calendars formatShortDate Invalid-Date
+         fallback; special-situations error-path by_category now includes
+         CAPEX+CONCALL; catCounts guard against runtime category not in
+         union (no more 'NaN' chip labels); earnings-opportunities second
+         useQuery initialDataUpdatedAt now pairs correctly with initialData
+         (AUDIT_100 #6 / patch-pair fix).
+- 0551 — AUDIT_100 #9: bound 'mc:notes:v1' Thesis Notebooks via sidecar
+         'mc:notes:meta:v1' index. Evict oldest by lastWriteEpoch when
+         entry count exceeds NOTE_MAX=200. Prevents silent QuotaExceeded
+         that would freeze setItem across the app.
+- 0552 — fetchQuotesShared race-safe: detach caller's AbortSignal from
+         the shared in-flight fetch so a single unmount no longer cancels
+         the network call for all joined consumers (the documented
+         Patch-0544 limitation). Each caller now races its own signal
+         against the shared promise via a wrapper.
 
 **Other features:**
 - 0089–0094 — Earnings Hub merge, Special Situations pillar, Stock Sheet, Re-rating Screener
