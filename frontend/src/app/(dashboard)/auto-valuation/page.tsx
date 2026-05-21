@@ -314,6 +314,23 @@ async function extractExcelFinancials(file: File): Promise<ExcelFinancials | nul
     ? latestOP + latestDep
     : latestOP;
 
+  // PATCH 0643 — unit auto-detection. Indian Screener exports default to Cr,
+  // but some templates (Tijori) use Lakh. Heuristic: if latest sales > 1e5
+  // (₹100,000 Cr is unrealistic for a typical name in the sheet), assume the
+  // numbers are in lakh and scale down by 100.
+  if (fin.latestSales && fin.latestSales > 100_000) {
+    const scale = 1 / 100;
+    fin.sales = fin.sales.map(v => v !== null ? v * scale : null);
+    fin.operatingProfit = fin.operatingProfit.map(v => v !== null ? v * scale : null);
+    fin.netProfit = fin.netProfit.map(v => v !== null ? v * scale : null);
+    fin.latestSales = fin.latestSales * scale;
+    if (fin.latestPAT) fin.latestPAT = fin.latestPAT * scale;
+    if (fin.latestEBITDA) fin.latestEBITDA = fin.latestEBITDA * scale;
+    if (fin.currentMarketCapCrFromSheet && fin.currentMarketCapCrFromSheet > 1e7) {
+      fin.currentMarketCapCrFromSheet = fin.currentMarketCapCrFromSheet * scale;
+    }
+  }
+
   return fin;
 }
 
@@ -354,17 +371,37 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
   // Resolve company + ticker
   let company = excelData?.company;
   let ticker = excelData?.ticker;
-  // Try to extract ticker from PDF text
+
+  // PATCH 0643 — PDF text patterns for ticker + company
   if (!ticker) {
-    const m = allText.match(/\b(?:NSE Symbol|BSE Scrip Code|Symbol|Ticker)[:\s]+([A-Z]{2,10})\b/);
-    if (m) ticker = m[1];
+    const patterns = [
+      /\bNSE Symbol[:\s]+([A-Z]{2,12})\b/,
+      /\bBSE Scrip Code[:\s]+(\d{5,6})\b/,
+      /\bNSE:\s*([A-Z]{2,12})\b/,
+      /\bBSE:\s*([A-Z]{2,12})\b/,
+      /\(NSE:\s*([A-Z]{2,12})\)/,
+      /\bSymbol[:\s]+([A-Z]{2,12})\b/,
+      /\bTicker[:\s]+([A-Z]{2,12})\b/,
+    ];
+    for (const re of patterns) {
+      const m = allText.match(re);
+      if (m && m[1]) { ticker = m[1]; break; }
+    }
   }
-  // Heuristic from filename
+  // Company name from PDF: 'XYZ Technologies Limited' / 'XYZ Industries Ltd'
+  if (!company) {
+    const m = allText.match(/\b([A-Z][A-Za-z &]{4,40}(?:Technologies|Industries|Limited|Ltd\.?|Corp\.?|Capital|Pharma|Solutions|Systems|Group|Holdings))\b/);
+    if (m && m[1]) company = m[1].trim();
+  }
+  // Heuristic from filename — first WORD, not joined chars
   if (!ticker) {
     for (const d of docs) {
-      const fn = d.name.toUpperCase();
-      const m = fn.match(/\b([A-Z]{3,10})\b/);
-      if (m && !['LIMITED', 'INDIA'].includes(m[1])) { ticker = m[1]; break; }
+      const fn = d.name.replace(/\.[a-z]+$/i, '');
+      const words = fn.split(/[^A-Za-z]+/).filter(w => w.length >= 3 && w.length <= 12);
+      if (words.length === 0) continue;
+      const upper = words[0].toUpperCase();
+      if (/^(THE|FOR|FROM|WITH|ANNUAL|INVESTOR|EARNINGS|TRANSCRIPT|REPORT|PRESENTATION|TECHNOLOGIE|LIMITED|INDIA)$/i.test(upper)) continue;
+      ticker = upper; break;
     }
   }
 
