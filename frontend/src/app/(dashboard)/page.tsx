@@ -80,6 +80,15 @@ interface HomeState {
   moversUpdatedAt?: string;
   superInvestors?: Array<{ ticker: string; company?: string; addCount?: number; exitCount?: number; totalSignalScore?: number; investors?: string[]; topDirection?: string; lastMoveAt?: string }>;
   signals?: Array<{ id?: string; title?: string; headline?: string; published_at?: string; source_name?: string; primary_ticker?: string; ticker_symbols?: any[]; importance_score?: number }>;
+  // PATCH 0622 — institutional enhancements
+  portfolioPnl?: { totalPct: number; totalChangeRs: number; bestMover?: { ticker: string; pct: number }; worstMover?: { ticker: string; pct: number }; positions: number; covered: number };
+  watchlistPulse?: Array<{ ticker: string; company?: string; changePercent: number; price?: number; reason?: string }>;
+  upcomingEarnings?: Array<{ ticker: string; company?: string; resultDate: string; sector?: string; daysAhead: number; onCb: boolean; onWatchlist: boolean }>;
+  sectorRotation?: { topSector?: { sector: string; pct: number }; bottomSector?: { sector: string; pct: number } };
+  ratingActionsToday?: Array<{ ticker?: string; headline: string; agency?: string; action?: string; source_name?: string; url?: string }>;
+  orderBookToday?: Array<{ ticker?: string; headline: string; customer?: string; valueCr?: number; source_name?: string; url?: string }>;
+  alphaFeedback?: { sample: number; avgScoreNow: number; avgScoreBefore: number; held: number };
+  staleDataAgeDays?: number;  // days since most recent multibagger upload
 }
 
 function todayIstISO(): string {
@@ -165,7 +174,7 @@ function decomposeScore(row: any): Record<string, number> {
 // instant (no network) so we run them up-front and render the Home shell
 // immediately. Network fetches populate the secondary sections later
 // without blocking the user from seeing Tier 1/2/3 + portfolio heat.
-function buildSyncState(): Omit<HomeState, 'loading' | 'inPlay' | 'bottleneck' | 'earningsToday' | 'earningsLabel' | 'alerts'> {
+function buildSyncState(): Pick<HomeState, 'tier1' | 'tier2' | 'tier3' | 'changedToday' | 'portfolio' | 'portfolioBySector' | 'staleDataAgeDays' | 'alphaFeedback'> {
   if (typeof window === 'undefined') {
     return { tier1: [], tier2: [], tier3: [], changedToday: [], portfolio: [], portfolioBySector: [] };
   }
@@ -275,7 +284,42 @@ function buildSyncState(): Omit<HomeState, 'loading' | 'inPlay' | 'bottleneck' |
     .map(([sector, v]) => ({ sector, count: v.count, tickers: v.tickers }))
     .sort((a, b) => b.count - a.count);
 
-  return { tier1, tier2, tier3, changedToday, portfolio, portfolioBySector };
+  // PATCH 0622 — stale-data age (days since most-recent multibagger upload).
+  // mb_excel_meta_v2 is written by the multibagger page on each upload.
+  let staleDataAgeDays: number | undefined;
+  try {
+    const meta = JSON.parse(localStorage.getItem('mb_excel_meta_v2') || 'null');
+    const ts = meta?.uploadedAt || meta?.timestamp || meta?.lastUpload;
+    if (ts) {
+      const age = (Date.now() - new Date(ts).getTime()) / (1000 * 60 * 60 * 24);
+      if (age > 0 && age < 365) staleDataAgeDays = Math.floor(age);
+    }
+  } catch {}
+
+  // PATCH 0622 — Alpha feedback v0. Compare current scores against prev-scores
+  // (which is the snapshot from the user's previous CSV upload). Reports how
+  // many names held A+/A grade across both snapshots — a quick consistency check.
+  let alphaFeedback: HomeState['alphaFeedback'];
+  try {
+    const prevSyms = Object.keys(prevScores);
+    if (prevSyms.length >= 5) {
+      let sumNow = 0, sumBefore = 0, sample = 0, held = 0;
+      for (const sym of prevSyms) {
+        const row = indiaRows.find((r: any) => (r.symbol || '') === sym || (r.symbol || '').toUpperCase().replace(/\.(NS|BO)$/i, '') === sym.toUpperCase().replace(/\.(NS|BO)$/i, ''));
+        if (!row) continue;
+        const prev = prevScores[sym];
+        const cur = row.score ?? row.composite ?? 0;
+        if (typeof prev !== 'number' || typeof cur !== 'number') continue;
+        sumBefore += prev; sumNow += cur; sample++;
+        if (prev >= 70 && cur >= 70) held++;
+      }
+      if (sample >= 5) {
+        alphaFeedback = { sample, avgScoreNow: sumNow / sample, avgScoreBefore: sumBefore / sample, held };
+      }
+    }
+  } catch {}
+
+  return { tier1, tier2, tier3, changedToday, portfolio, portfolioBySector, staleDataAgeDays, alphaFeedback };
 }
 
 export default function HomeDashboard() {
@@ -405,7 +449,7 @@ export default function HomeDashboard() {
         const final = clean.length > 0 ? clean : recent.sort(sortFn);
         setData((d) => ({
           ...d,
-          inPlay: final.slice(0, 8),
+          inPlay: final.slice(0, 10),
           inPlayDiag: { fetched: raw.length, recent: recent.length, clean: clean.length, fellBack: clean.length === 0 && recent.length > 0, error, status },
         } as any));
         setNetLoading((n) => ({ ...n, inPlay: false }));
@@ -474,6 +518,211 @@ export default function HomeDashboard() {
           .filter((a: any) => !a?.is_synthetic && !a?.structural_status && !(a?.title || '').startsWith('[STRUCTURAL'))
           .slice(0, 6);
         setData((d) => ({ ...d, signals: items } as any));
+      });
+
+      // PATCH 0622 — Portfolio P&L + Watchlist Pulse + Sector Rotation —
+      // all derived from a single quotes fetch which we also use for Movers.
+      // The Movers fetch above already runs; we ride on the same /quotes call.
+      safeDiag<any>(`/api/market/quotes?market=india&_=${Date.now()}`, 18_000).then(({ data: j }) => {
+        if (cancelled) return;
+        const stocks: any[] = j?.stocks || [];
+        const byTicker = new Map<string, any>();
+        for (const s of stocks) {
+          const sym = (s.ticker || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
+          if (sym) byTicker.set(sym, s);
+        }
+
+        // Portfolio P&L
+        let portfolioHoldings: any[] = [];
+        try { portfolioHoldings = JSON.parse(localStorage.getItem('mc_portfolio_holdings') || '[]') || []; } catch {}
+        if (portfolioHoldings.length > 0) {
+          let totalEntry = 0, totalCurrent = 0, covered = 0;
+          let best = { ticker: '', pct: -Infinity };
+          let worst = { ticker: '', pct: Infinity };
+          for (const h of portfolioHoldings) {
+            const sym = (h.symbol || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
+            const q = byTicker.get(sym);
+            if (!q || !h.quantity || !h.entryPrice) continue;
+            const entryVal = h.quantity * h.entryPrice;
+            const curVal = h.quantity * (q.price ?? h.entryPrice);
+            totalEntry += entryVal;
+            totalCurrent += curVal;
+            covered++;
+            const namePct = q.changePercent ?? 0;
+            if (namePct > best.pct) best = { ticker: sym, pct: namePct };
+            if (namePct < worst.pct) worst = { ticker: sym, pct: namePct };
+          }
+          if (covered > 0 && totalEntry > 0) {
+            const totalChangeRs = totalCurrent - totalEntry;
+            const totalPct = (totalChangeRs / totalEntry) * 100;
+            setData((d) => ({
+              ...d,
+              portfolioPnl: {
+                totalPct, totalChangeRs,
+                bestMover: best.ticker ? best : undefined,
+                worstMover: worst.ticker ? worst : undefined,
+                positions: portfolioHoldings.length,
+                covered,
+              },
+            } as any));
+          }
+        }
+
+        // Watchlist Pulse — show tickers with significant move (|>=3%|)
+        let watchlist: string[] = [];
+        try { watchlist = JSON.parse(localStorage.getItem('mc_watchlist_tickers') || '[]') || []; } catch {}
+        if (watchlist.length > 0) {
+          const pulses = watchlist
+            .map((sym: string) => {
+              const key = sym.toUpperCase().replace(/\.(NS|BO)$/i, '');
+              const q = byTicker.get(key);
+              if (!q) return null;
+              const pct = q.changePercent ?? 0;
+              return { ticker: key, company: q.company, changePercent: pct, price: q.price, reason: Math.abs(pct) >= 3 ? `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}% intraday` : undefined };
+            })
+            .filter((x: any) => x && Math.abs(x.changePercent) >= 3)
+            .sort((a: any, b: any) => Math.abs(b.changePercent) - Math.abs(a.changePercent))
+            .slice(0, 6);
+          setData((d) => ({ ...d, watchlistPulse: pulses as any } as any));
+        }
+
+        // Sector rotation — aggregate avg changePercent per sector
+        const sectorAgg = new Map<string, { sum: number; count: number }>();
+        for (const s of stocks) {
+          const sec = s.sector || 'Other';
+          const cp = s.changePercent ?? 0;
+          if (typeof cp !== 'number') continue;
+          const cur = sectorAgg.get(sec) || { sum: 0, count: 0 };
+          cur.sum += cp; cur.count++;
+          sectorAgg.set(sec, cur);
+        }
+        const sectors = Array.from(sectorAgg.entries())
+          .filter(([s, v]) => v.count >= 3 && s !== 'Other' && s !== 'Diversified')
+          .map(([sector, v]) => ({ sector, pct: v.sum / v.count }));
+        if (sectors.length > 0) {
+          sectors.sort((a, b) => b.pct - a.pct);
+          setData((d) => ({ ...d, sectorRotation: { topSector: sectors[0], bottomSector: sectors[sectors.length - 1] } } as any));
+        }
+      });
+
+      // PATCH 0622 — Upcoming Earnings (next 5 trading days, CB-filtered).
+      safeDiag<any>(`/api/market/earnings?market=india&month=${new Date().toISOString().slice(0, 7)}&_=${Date.now()}`, 18_000).then(({ data: j }) => {
+        if (cancelled) return;
+        const all = (j?.results || j?.items || []) as any[];
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const fiveDaysAhead = new Date(today); fiveDaysAhead.setDate(today.getDate() + 7);
+        const cbSet = (() => { try { return getConvictionTickers(); } catch { return new Set<string>(); } })();
+        let watchlist: string[] = [];
+        try { watchlist = JSON.parse(localStorage.getItem('mc_watchlist_tickers') || '[]') || []; } catch {}
+        const watchSet = new Set(watchlist.map((s: string) => s.toUpperCase().replace(/\.(NS|BO)$/i, '')));
+
+        const upcoming = all
+          .filter((e: any) => e?.resultDate && e?.ticker)
+          .map((e: any) => {
+            const dt = new Date(e.resultDate); dt.setHours(0, 0, 0, 0);
+            const daysAhead = Math.round((dt.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+            return { ...e, _dt: dt, daysAhead };
+          })
+          .filter((e: any) => e._dt >= today && e._dt <= fiveDaysAhead)
+          .map((e: any) => {
+            const sym = (e.ticker || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
+            return {
+              ticker: e.ticker,
+              company: e.company,
+              resultDate: e.resultDate,
+              sector: e.sector,
+              daysAhead: e.daysAhead,
+              onCb: cbSet.has(sym),
+              onWatchlist: watchSet.has(sym),
+            };
+          })
+          .sort((a: any, b: any) => {
+            // CB-first, then watchlist, then date
+            if (a.onCb !== b.onCb) return a.onCb ? -1 : 1;
+            if (a.onWatchlist !== b.onWatchlist) return a.onWatchlist ? -1 : 1;
+            return a.daysAhead - b.daysAhead;
+          })
+          .slice(0, 8);
+        setData((d) => ({ ...d, upcomingEarnings: upcoming } as any));
+      });
+
+      // PATCH 0622 — Rating Actions today.
+      safeDiag<any>(`/api/v1/news?search=${encodeURIComponent('ICRA|CRISIL|CARE|rating|upgrade|downgrade|outlook')}&limit=20&_=${Date.now()}`, 18_000).then(({ data: j }) => {
+        if (cancelled) return;
+        const raw = Array.isArray(j) ? j : (j?.articles || j?.items || []);
+        const TWENTY_FOUR = 30 * 3600_000;
+        const items = (raw as any[])
+          .filter((a: any) => {
+            if (!a?.title && !a?.headline) return false;
+            if (a?.is_synthetic || a?.structural_status) return false;
+            const t = (a.title || a.headline || '');
+            if (!/ICRA|CRISIL|CARE|Fitch|Moody|S&P|India Ratings|rating action|upgrade|downgrade|outlook revised/i.test(t)) return false;
+            if (a?.published_at) {
+              const age = Date.now() - new Date(a.published_at).getTime();
+              if (age > TWENTY_FOUR) return false;
+            }
+            return true;
+          })
+          .map((a: any) => {
+            const t = (a.title || a.headline || '');
+            const agencyMatch = t.match(/(ICRA|CRISIL|CARE|Fitch|Moody|S&P|India Ratings)/i);
+            const actionMatch = t.match(/(upgrade|downgrade|outlook revised|reaffirm)/i);
+            return {
+              ticker: a.primary_ticker || (Array.isArray(a.ticker_symbols) ? a.ticker_symbols[0] : undefined),
+              headline: t,
+              agency: agencyMatch ? agencyMatch[1] : undefined,
+              action: actionMatch ? actionMatch[1] : undefined,
+              source_name: a.source_name,
+              url: a.source_url || a.url,
+            };
+          })
+          .slice(0, 4);
+        setData((d) => ({ ...d, ratingActionsToday: items } as any));
+      });
+
+      // PATCH 0622 — Order Book wins today.
+      safeDiag<any>(`/api/v1/news?search=${encodeURIComponent('order|letter of award|receipt of order|contract')}&limit=20&_=${Date.now()}`, 18_000).then(({ data: j }) => {
+        if (cancelled) return;
+        const raw = Array.isArray(j) ? j : (j?.articles || j?.items || []);
+        const TWENTY_FOUR = 36 * 3600_000;
+        const TIER1 = /(HAL|BHEL|NTPC|PGCIL|BEL|DRDO|ISRO|RBI|NABARD|LIC|ONGC|IOCL|GAIL|NHAI|Indian Railways|Indian Navy|Indian Air Force|Indian Army|Ministry of Defence|MoD)/i;
+        const items = (raw as any[])
+          .filter((a: any) => {
+            if (!a?.title && !a?.headline) return false;
+            if (a?.is_synthetic || a?.structural_status) return false;
+            const t = (a.title || a.headline || '');
+            if (!/order|letter of award|LoA|contract worth|receipt of order/i.test(t)) return false;
+            if (a?.published_at) {
+              const age = Date.now() - new Date(a.published_at).getTime();
+              if (age > TWENTY_FOUR) return false;
+            }
+            return true;
+          })
+          .map((a: any) => {
+            const t = (a.title || a.headline || '');
+            const customerMatch = t.match(TIER1);
+            const valueMatch = t.match(/₹\s*([\d,]+(?:\.\d+)?)\s*(crore|cr|lakh|billion|million)/i);
+            let valueCr: number | undefined;
+            if (valueMatch) {
+              const num = parseFloat(valueMatch[1].replace(/,/g, ''));
+              const unit = valueMatch[2].toLowerCase();
+              valueCr = unit.startsWith('cr') || unit === 'crore' ? num
+                      : unit.startsWith('la') ? num / 100
+                      : unit.startsWith('bi') ? num * 100
+                      : unit.startsWith('mi') ? num / 10
+                      : num;
+            }
+            return {
+              ticker: a.primary_ticker || (Array.isArray(a.ticker_symbols) ? a.ticker_symbols[0] : undefined),
+              headline: t,
+              customer: customerMatch ? customerMatch[1] : undefined,
+              valueCr,
+              source_name: a.source_name,
+              url: a.source_url || a.url,
+            };
+          })
+          .slice(0, 4);
+        setData((d) => ({ ...d, orderBookToday: items } as any));
       });
 
       // Earnings — PATCH 0615. Pull today + last 2 trading days, filter to
@@ -635,9 +884,56 @@ export default function HomeDashboard() {
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
           <div>
             <h1 style={{ margin: 0, fontSize: 26, fontWeight: 900, color: TEXT }}>🌅 {greeting}, Rishi</h1>
-            <div style={{ marginTop: 4, fontSize: 12, color: DIM }}>
-              {now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-              {' · '}{now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+            <div style={{ marginTop: 4, fontSize: 12, color: DIM, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span>{now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</span>
+              <span>·</span>
+              <span>{now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</span>
+              {/* PATCH 0622 — Stale-data nudge */}
+              {typeof data.staleDataAgeDays === 'number' && data.staleDataAgeDays >= 14 && (
+                <Link href="/multibagger" style={{
+                  fontSize: 10, padding: '2px 8px', borderRadius: 4,
+                  background: data.staleDataAgeDays >= 30 ? '#EF444422' : '#F59E0B22',
+                  border: `1px solid ${data.staleDataAgeDays >= 30 ? '#EF4444' : '#F59E0B'}60`,
+                  color: data.staleDataAgeDays >= 30 ? '#EF4444' : '#F59E0B',
+                  fontWeight: 800, textDecoration: 'none',
+                }}>
+                  ⚠ Multibagger upload {data.staleDataAgeDays}d ago — re-upload to refresh scoring
+                </Link>
+              )}
+              {/* PATCH 0622 — Portfolio P&L line */}
+              {data.portfolioPnl && (
+                <Link href="/portfolio" style={{
+                  fontSize: 10, padding: '2px 8px', borderRadius: 4,
+                  background: data.portfolioPnl.totalPct >= 0 ? '#10B98122' : '#EF444422',
+                  border: `1px solid ${data.portfolioPnl.totalPct >= 0 ? '#10B981' : '#EF4444'}60`,
+                  color: data.portfolioPnl.totalPct >= 0 ? '#10B981' : '#EF4444',
+                  fontWeight: 800, textDecoration: 'none',
+                }} title={`${data.portfolioPnl.covered} of ${data.portfolioPnl.positions} positions matched`}>
+                  💼 P&L {data.portfolioPnl.totalPct >= 0 ? '+' : ''}{data.portfolioPnl.totalPct.toFixed(2)}%
+                  {data.portfolioPnl.bestMover && ` · best ${data.portfolioPnl.bestMover.ticker} ${data.portfolioPnl.bestMover.pct >= 0 ? '+' : ''}${data.portfolioPnl.bestMover.pct.toFixed(1)}%`}
+                  {data.portfolioPnl.worstMover && ` · worst ${data.portfolioPnl.worstMover.ticker} ${data.portfolioPnl.worstMover.pct.toFixed(1)}%`}
+                </Link>
+              )}
+              {/* PATCH 0622 — Sector rotation one-liner */}
+              {data.sectorRotation?.topSector && data.sectorRotation?.bottomSector && (
+                <Link href="/movers" style={{
+                  fontSize: 10, padding: '2px 8px', borderRadius: 4,
+                  background: '#22D3EE15', border: '1px solid #22D3EE40', color: '#22D3EE',
+                  fontWeight: 700, textDecoration: 'none',
+                }}>
+                  🔄 {data.sectorRotation.topSector.sector} {data.sectorRotation.topSector.pct >= 0 ? '+' : ''}{data.sectorRotation.topSector.pct.toFixed(1)}% leading · {data.sectorRotation.bottomSector.sector} {data.sectorRotation.bottomSector.pct.toFixed(1)}% lagging
+                </Link>
+              )}
+              {/* PATCH 0622 — Alpha feedback v0 (engine consistency) */}
+              {data.alphaFeedback && (
+                <span style={{
+                  fontSize: 10, padding: '2px 8px', borderRadius: 4,
+                  background: '#A78BFA15', border: '1px solid #A78BFA40', color: '#A78BFA',
+                  fontWeight: 700,
+                }} title={`${data.alphaFeedback.held} of ${data.alphaFeedback.sample} A-grade names held A grade across uploads`}>
+                  🔁 Engine consistency: avg {data.alphaFeedback.avgScoreBefore.toFixed(0)} → {data.alphaFeedback.avgScoreNow.toFixed(0)} ({data.alphaFeedback.held}/{data.alphaFeedback.sample} held A)
+                </span>
+              )}
             </div>
           </div>
           {/* PATCH 0619 — full institutional chip strip per user request.
@@ -1151,6 +1447,135 @@ export default function HomeDashboard() {
                     </a>
                   );
                 })}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ═══════════════ PATCH 0622 — TWO-COL: WATCHLIST PULSE + UPCOMING EARNINGS ═ */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12 }}>
+          {/* WATCHLIST PULSE — names with significant move today */}
+          <div style={{ ...cardStyle, borderLeft: '3px solid #22D3EE' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px' }}>
+                👁 WATCHLIST PULSE ({data.watchlistPulse?.length || 0})
+              </span>
+              <Link href="/watchlists" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
+            </div>
+            <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
+              Watchlist names with ≥3% intraday move
+            </div>
+            {!data.watchlistPulse ? (
+              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
+            ) : data.watchlistPulse.length === 0 ? (
+              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>No watchlist names with significant moves today.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {data.watchlistPulse.slice(0, 5).map((w) => (
+                  <Link key={w.ticker} href={`/stock-sheet?ticker=${encodeURIComponent(w.ticker)}`}
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                    <span style={{ fontSize: 10, color: '#22D3EE', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 70 }}>{w.ticker}</span>
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{w.company || w.ticker}</span>
+                    <span style={{ fontSize: 11, color: w.changePercent >= 0 ? '#10B981' : '#EF4444', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
+                      {w.changePercent >= 0 ? '+' : ''}{w.changePercent.toFixed(1)}%
+                    </span>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* UPCOMING EARNINGS — next 5 days, CB-first */}
+          <div style={{ ...cardStyle, borderLeft: '3px solid #F59E0B' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.4px' }}>
+                ⏭ UPCOMING EARNINGS — next 7d ({data.upcomingEarnings?.length || 0})
+              </span>
+              <Link href="/calendars" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Calendar →</Link>
+            </div>
+            <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
+              Conviction Beats (★) + Watchlist (👁) names reporting first
+            </div>
+            {!data.upcomingEarnings ? (
+              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading earnings calendar…</div>
+            ) : data.upcomingEarnings.length === 0 ? (
+              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>No upcoming filings in next 7 days.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {data.upcomingEarnings.slice(0, 6).map((e) => (
+                  <Link key={e.ticker} href={`/stock-sheet?ticker=${encodeURIComponent(e.ticker)}`}
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                    <span style={{ fontSize: 9, color: DIM, fontFamily: 'ui-monospace, monospace', minWidth: 50 }}>
+                      {e.daysAhead === 0 ? 'today' : e.daysAhead === 1 ? 'tomorrow' : `+${e.daysAhead}d`}
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {e.company || e.ticker}
+                    </span>
+                    {e.onCb && <span style={{ fontSize: 10, color: '#F59E0B' }}>★</span>}
+                    {e.onWatchlist && <span style={{ fontSize: 10, color: '#22D3EE' }}>👁</span>}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ═══════════════ PATCH 0622 — TWO-COL: RATING ACTIONS + ORDER BOOK ═══════ */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12 }}>
+          {/* RATING ACTIONS TODAY */}
+          <div style={{ ...cardStyle, borderLeft: '3px solid #EF4444' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: '#EF4444', letterSpacing: '0.4px' }}>
+                🏛 RATING ACTIONS — today ({data.ratingActionsToday?.length || 0})
+              </span>
+              <Link href="/rating-actions" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
+            </div>
+            <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
+              ICRA / CRISIL / CARE / India Ratings / Fitch / Moody&apos;s / S&P actions
+            </div>
+            {!data.ratingActionsToday ? (
+              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
+            ) : data.ratingActionsToday.length === 0 ? (
+              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>No rating actions in last 30 hours.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {data.ratingActionsToday.map((r, i) => (
+                  <a key={i} href={r.url || '#'} target="_blank" rel="noopener noreferrer"
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                    {r.agency && <span style={{ fontSize: 9, color: '#EF4444', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 50 }}>{r.agency}</span>}
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.headline}</span>
+                    {r.action && <span style={{ fontSize: 9, fontWeight: 800, color: /upgrade/i.test(r.action) ? '#10B981' : /downgrade/i.test(r.action) ? '#EF4444' : '#F59E0B' }}>{r.action.toUpperCase()}</span>}
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ORDER BOOK TODAY */}
+          <div style={{ ...cardStyle, borderLeft: '3px solid #10B981' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: '#10B981', letterSpacing: '0.4px' }}>
+                📑 ORDER BOOK WINS — today ({data.orderBookToday?.length || 0})
+              </span>
+              <Link href="/order-book" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
+            </div>
+            <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
+              Tier-1 PSU contracts and order wins parsed from filings
+            </div>
+            {!data.orderBookToday ? (
+              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
+            ) : data.orderBookToday.length === 0 ? (
+              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>No order wins detected in last 36 hours.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {data.orderBookToday.map((o, i) => (
+                  <a key={i} href={o.url || '#'} target="_blank" rel="noopener noreferrer"
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                    {o.customer && <span style={{ fontSize: 9, color: '#10B981', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 50 }}>{o.customer}</span>}
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{o.headline}</span>
+                    {o.valueCr && <span style={{ fontSize: 10, color: '#10B981', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>₹{o.valueCr.toFixed(0)} Cr</span>}
+                  </a>
+                ))}
               </div>
             )}
           </div>
