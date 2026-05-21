@@ -99,35 +99,47 @@ export default function NewsAlertsPage() {
 
   useEffect(() => {
     if (!stream || stream.length === 0) return;
-    if (lastSeenIds.current.size === 0) {
-      for (const a of stream) lastSeenIds.current.add(a.id);
-      return;
-    }
-    // AUDIT_100 #4 — accumulate hits across the whole stream pass,
-    // then apply ONE setRules update. Previously this loop fired
-    // setRules(...) per match → N renders per tick. With 50 matches
-    // in one poll, React queued 50 renders and froze the page.
+    // PATCH 0608 — fix "rule matches 38 but never fires" bug.
+    // Old logic seeded lastSeenIds with every existing article on first
+    // mount and EARLY-RETURNED, so any rule created BEFORE the user
+    // refreshed the page would never fire for the historical stream —
+    // every article was already 'seen'. New logic separates concerns:
+    //   1. Per-RULE: `rule.lastFiredArticleIds` prevents double-firing
+    //      the same article through the same rule (this was always there).
+    //   2. NEW: a rule with `lastFiredAt === 0` (brand new, never fired)
+    //      sweeps the entire current stream once on first encounter.
+    //      After the sweep its lastFiredArticleIds are populated, so
+    //      subsequent ticks only re-fire on truly new articles.
+    //   3. lastSeenIds gate now ONLY suppresses toast spam (avoid showing
+    //      the same article twice in one session) — not rule processing.
     const newToasts: { id: string; rule: string; headline: string; ts: number }[] = [];
     const hitsByRule = new Map<string, string[]>(); // ruleId → article ids hit this pass
     const firedAt = Date.now();
 
     for (const article of stream) {
-      if (lastSeenIds.current.has(article.id)) continue;
-      lastSeenIds.current.add(article.id);
-      if (lastSeenIds.current.size > 500) {
-        const arr = Array.from(lastSeenIds.current);
-        lastSeenIds.current = new Set(arr.slice(-300));
+      // Per-article toast-dedup (cosmetic only — does NOT gate rule firing)
+      const articleSeenThisSession = lastSeenIds.current.has(article.id);
+      if (!articleSeenThisSession) {
+        lastSeenIds.current.add(article.id);
+        if (lastSeenIds.current.size > 500) {
+          const arr = Array.from(lastSeenIds.current);
+          lastSeenIds.current = new Set(arr.slice(-300));
+        }
       }
       for (const rule of rules) {
         if (!rule.enabled) continue;
         if (rule.lastFiredArticleIds.includes(article.id)) continue;
         if (!matches(article, rule.conditions)) continue;
         const headline = article.headline || article.title || '(no headline)';
-        newToasts.push({ id: `${rule.id}-${article.id}`, rule: rule.name, headline, ts: firedAt });
-        if (permission === 'granted' && 'Notification' in window) {
-          try {
-            new Notification(`Alert: ${rule.name}`, { body: headline.slice(0, 200), tag: rule.id });
-          } catch {}
+        // Only push a toast if we haven't shown this article this session
+        // (the rule still fires + lastFiredArticleIds still updates).
+        if (!articleSeenThisSession) {
+          newToasts.push({ id: `${rule.id}-${article.id}`, rule: rule.name, headline, ts: firedAt });
+          if (permission === 'granted' && 'Notification' in window) {
+            try {
+              new Notification(`Alert: ${rule.name}`, { body: headline.slice(0, 200), tag: rule.id });
+            } catch {}
+          }
         }
         const arr = hitsByRule.get(rule.id) || [];
         arr.push(article.id);

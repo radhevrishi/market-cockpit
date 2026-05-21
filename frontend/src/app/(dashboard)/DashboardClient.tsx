@@ -85,6 +85,7 @@ const NAV_GROUPS: NavGroup[] = [
     icon: <Compass className="w-5 h-5" />,
     items: [
       { href: '/special-situations', label: 'Special Situations', icon: <Compass className="w-4 h-4" /> },
+      { href: '/order-book',         label: 'Order Book Intel',   icon: <Compass className="w-4 h-4" /> },
       { href: '/rating-actions',     label: 'Rating Actions',     icon: <Compass className="w-4 h-4" /> },
     ],
   },
@@ -559,20 +560,10 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
           ))}
         </nav>
 
-        {/* Settings + Signout */}
-        <div style={{ borderTop: '1px solid #1A2840', padding: '8px 0' }}>
-          <ThemeSwitcher compact />
-          <Link href="/settings" title="Settings"
-            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px', padding: '10px 4px',
-              color: '#6B7A8D', textDecoration: 'none', fontSize: '9px' }}>
-            <Settings className="w-4 h-4" /><span>Settings</span>
-          </Link>
-          <button onClick={handleSignOut} title="Sign Out"
-            style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px',
-              padding: '10px 4px', background: 'none', border: 'none', color: '#6B7A8D', cursor: 'pointer', fontSize: '9px' }}>
-            <LogOut className="w-4 h-4" /><span>Sign Out</span>
-          </button>
-        </div>
+        {/* PATCH 0607 — bottom-left sidebar items removed.
+            Theme switcher already present in the top-right header (Dark/Light/Pro).
+            Settings + Sign Out already in the User menu top-right.
+            User feedback: "remove from left — i have those on right already". */}
       </aside>
 
       {/* ── Main ─────────────────────────────────────────────────────── */}
