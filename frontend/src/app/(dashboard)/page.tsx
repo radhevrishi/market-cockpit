@@ -539,28 +539,76 @@ export default function HomeDashboard() {
         const losers = smallMidOnly(j?.losers || []).slice(0, 10);
         setData((d) => ({ ...d, gainers, losers, moversUpdatedAt: j?.updatedAt } as any));
 
-        // PATCH 0650 — Per-ticker /api/v1/news?search=X (broader feed only
-        // covers US tickers; Indian smallcaps need per-ticker server search).
-        // Batches up to 20 movers in parallel; 8s per call so total < 10s.
+        // PATCH 0675 — Dual-source WHY enrichment. The /api/v1/news cache
+        // doesn't reliably index Indian smallcap tickers (probed live — SPARC /
+        // RATEGAIN / MINDACORP all return 0 results). The concall-intel
+        // live-feed has 1,939 Indian NSE/BSE filings indexed by symbol — use
+        // it as the PRIMARY source for the WHY column, with /api/v1/news as
+        // secondary fallback for any ticker not found in the filings.
         const moverTickers = [...gainers, ...losers].map((m: any) => (m.ticker || '').toUpperCase().replace(/\.(NS|BO)$/i, '')).filter(Boolean);
         if (moverTickers.length > 0) {
           (async () => {
             const reasons: Record<string, { kind: 'news' | 'earnings' | 'order' | 'rating' | 'special'; label: string; url?: string }> = {};
             const TWO_DAYS = 48 * 3600_000;
-            // Fire all ticker searches in parallel
-            const results = await Promise.all(
-              moverTickers.map((t) =>
-                safeDiag<any>(`/api/v1/news?search=${encodeURIComponent(t)}&limit=8`, 8_000)
-                  .then(({ data }) => ({ ticker: t, data }))
-                  .catch(() => ({ ticker: t, data: null }))
-              )
+            const TEN_DAYS = 10 * 24 * 3600_000;
+
+            // 1. Fetch concall-intel filings ONCE — gives us indexed access
+            //    by symbol for all 1939 Indian filings in 14-day window.
+            const { data: feedData } = await safeDiag<any>(
+              '/api/v1/concall-intel/live-feed?days=14&bullishOnly=false',
+              12_000
             );
-            if (cancelled) return;
-            for (const { ticker, data } of results) {
-              const articles: any[] = Array.isArray(data) ? data : (data?.articles || data?.items || []);
-              if (articles.length === 0) continue;
-              const fresh = articles
-                .filter((a: any) => {
+            const filingsBySymbol: Record<string, any[]> = {};
+            if (feedData?.filings && Array.isArray(feedData.filings)) {
+              for (const f of feedData.filings) {
+                const sym = (f.symbol || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
+                if (!sym) continue;
+                if (!filingsBySymbol[sym]) filingsBySymbol[sym] = [];
+                filingsBySymbol[sym].push(f);
+              }
+            }
+
+            // 2. Build reasons from filings (primary) — pick most recent
+            //    that's actually relevant to a price move.
+            const tickersStillNeedingWhy: string[] = [];
+            for (const ticker of moverTickers) {
+              const filings = filingsBySymbol[ticker] || [];
+              const fresh = filings.filter((f: any) => {
+                const ts = new Date(f.filing_datetime || 0).getTime();
+                return Number.isFinite(ts) && (Date.now() - ts) < TEN_DAYS;
+              });
+              if (fresh.length === 0) { tickersStillNeedingWhy.push(ticker); continue; }
+              // Sort newest first
+              fresh.sort((a: any, b: any) =>
+                new Date(b.filing_datetime || 0).getTime() - new Date(a.filing_datetime || 0).getTime()
+              );
+              const top = fresh[0];
+              const subj = top.subject || '';
+              const ft = top.filing_type || '';
+              let kind: 'news' | 'earnings' | 'order' | 'rating' | 'special' = 'news';
+              if (ft === 'ORDER_RECEIPT' || /receipt of order|letter of award|loa|order received|bagged order|wins order/i.test(subj)) kind = 'order';
+              else if (ft === 'RATING_ACTION' || /\b(ICRA|CRISIL|CARE|Moody|Fitch|rating|outlook|upgrade|downgrade)\b/i.test(subj)) kind = 'rating';
+              else if (ft === 'TRANSCRIPT' || ft === 'RESULTS_PRESENTATION' || ft === 'INVESTOR_PRESENTATION' || ft === 'CONCALL_INVITE' || /Q[1-4]\s*FY|quarterly|results|earnings|transcript|concall|investor (?:meet|presentation)/i.test(subj)) kind = 'earnings';
+              else if (/preferential|SAST|stake|merger|acquisition|de-listing|open offer/i.test(subj)) kind = 'special';
+              reasons[ticker] = { kind, label: subj, url: top.source_url || top.attachment_urls?.[0] };
+            }
+
+            // 3. For tickers still without a WHY, try /api/v1/news fallback
+            //    (works for tickers that DO have news coverage — typically the
+            //    larger of the smallcaps or those with global news).
+            if (tickersStillNeedingWhy.length > 0) {
+              const results = await Promise.all(
+                tickersStillNeedingWhy.map((t) =>
+                  safeDiag<any>(`/api/v1/news?search=${encodeURIComponent(t)}&limit=8`, 6_000)
+                    .then(({ data }) => ({ ticker: t, data }))
+                    .catch(() => ({ ticker: t, data: null }))
+                )
+              );
+              if (cancelled) return;
+              for (const { ticker, data } of results) {
+                const articles: any[] = Array.isArray(data) ? data : (data?.articles || data?.items || []);
+                if (articles.length === 0) continue;
+                const fresh = articles.filter((a: any) => {
                   if (!a) return false;
                   if (a.is_synthetic || a.structural_status) return false;
                   if (a.published_at) {
@@ -569,21 +617,23 @@ export default function HomeDashboard() {
                   }
                   return true;
                 });
-              if (fresh.length === 0) continue;
-              const top = fresh.sort((a: any, b: any) => {
-                const aImp = a.importance_score ?? 0; const bImp = b.importance_score ?? 0;
-                if (aImp !== bImp) return bImp - aImp;
-                return new Date(b.published_at || 0).getTime() - new Date(a.published_at || 0).getTime();
-              })[0];
-              const title = top.title || top.headline || '';
-              const at = (top.article_type || '').toUpperCase();
-              let kind: 'news' | 'earnings' | 'order' | 'rating' | 'special' = 'news';
-              if (at === 'EARNINGS' || /Q[1-4]\s*FY|quarterly|results|earnings/i.test(title)) kind = 'earnings';
-              else if (/order|letter of award|LoA|contract|won/i.test(title)) kind = 'order';
-              else if (/ICRA|CRISIL|CARE|Moody|S&P|Fitch|upgrade|downgrade|rating/i.test(title)) kind = 'rating';
-              else if (/preferential|SAST|stake|merger|acquisition|de-listing|open offer/i.test(title)) kind = 'special';
-              reasons[ticker] = { kind, label: title, url: top.source_url || top.url };
+                if (fresh.length === 0) continue;
+                const top = fresh.sort((a: any, b: any) => {
+                  const aImp = a.importance_score ?? 0; const bImp = b.importance_score ?? 0;
+                  if (aImp !== bImp) return bImp - aImp;
+                  return new Date(b.published_at || 0).getTime() - new Date(a.published_at || 0).getTime();
+                })[0];
+                const title = top.title || top.headline || '';
+                const at = (top.article_type || '').toUpperCase();
+                let kind: 'news' | 'earnings' | 'order' | 'rating' | 'special' = 'news';
+                if (at === 'EARNINGS' || /Q[1-4]\s*FY|quarterly|results|earnings/i.test(title)) kind = 'earnings';
+                else if (/order|letter of award|LoA|contract|won/i.test(title)) kind = 'order';
+                else if (/ICRA|CRISIL|CARE|Moody|S&P|Fitch|upgrade|downgrade|rating/i.test(title)) kind = 'rating';
+                else if (/preferential|SAST|stake|merger|acquisition|de-listing|open offer/i.test(title)) kind = 'special';
+                reasons[ticker] = { kind, label: title, url: top.source_url || top.url };
+              }
             }
+
             if (!cancelled) setData((d) => ({ ...d, moversReasons: reasons } as any));
           })();
         }
