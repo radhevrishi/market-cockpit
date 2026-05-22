@@ -1466,16 +1466,37 @@ Pre-session patches existed (0073–0095). Recent session highlights:
 
 ## 13 · Hard Rules for ALL Future Sessions
 
-1. **Always type-check before commit:** `cd /sessions/zen-epic-bardeen/mnt/market-cockpit/frontend && timeout 35 npx tsc --noEmit`
-2. **Don't reduce cache TTLs for past dates** — they're immutable, 7d localStorage / 90d KV is correct.
-3. **Don't add regex validators that reject digit-leading tickers.** Always use `[A-Z0-9]` for first char of NSE symbols.
-4. **Don't cache empty enrich results for 6h** — 5min only. See Patch 0194.
-5. **Don't attribute earnings data to dates not backed by confirmation.** Board meeting alone ≠ filing. See Patch 0179, 0187.
-6. **Don't fabricate guidance.** Real forward signals from news/concall text only, never from past YoY tiles. See Patch 0185.
-7. **Always show inline feedback near the button user clicked.** Toasts far from the action get missed. See Patch 0189.
-8. **Hard Refresh must wipe BOTH localStorage and KV.** Refresh-without-bust is a footgun.
-9. **Date navigation arrows skip weekends.** Indian markets only trade Mon-Fri.
-10. **The user's tone is direct. Don't over-apologize. Diagnose deeply, fix at root cause, ship.**
+1. **Always type-check before commit:** `cd /sessions/<sandbox>/mnt/market-cockpit/frontend && timeout 35 npx tsc --noEmit`
+2. **For ANY edit that touches `app/(dashboard)/.../page.tsx`, ALSO run `next build --no-lint` (or at minimum `next lint`) before pushing.** Next.js 14 App Router enforces strict export rules on page files — only `default` export + allowlisted metadata exports are permitted. Adding `export interface Foo` or `export function bar` to a page file passes `tsc --noEmit` BUT fails Vercel's `next build` with:
+   ```
+   Type error: Page "X" does not match the required types of a Next.js Page.
+     "bar" is not a valid Page export field.
+   ```
+   This bit us on Patch 0681 — `tsc` was clean, Vercel build failed. **Rule**: when adding named exports to a page file or refactoring helpers OUT of a page, run the full Next.js build locally first OR move the helpers to a sibling module (e.g. `engine.ts`, NOT `page.tsx`).
+3. **Don't reduce cache TTLs for past dates** — they're immutable, 7d localStorage / 90d KV is correct.
+4. **Don't add regex validators that reject digit-leading tickers.** Always use `[A-Z0-9]` for first char of NSE symbols.
+5. **Don't cache empty enrich results for 6h** — 5min only. See Patch 0194.
+6. **Don't attribute earnings data to dates not backed by confirmation.** Board meeting alone ≠ filing. See Patch 0179, 0187.
+7. **Don't fabricate guidance.** Real forward signals from news/concall text only, never from past YoY tiles. See Patch 0185.
+8. **Always show inline feedback near the button user clicked.** Toasts far from the action get missed. See Patch 0189.
+9. **Hard Refresh must wipe BOTH localStorage and KV.** Refresh-without-bust is a footgun.
+10. **Date navigation arrows skip weekends.** Indian markets only trade Mon-Fri.
+11. **The user's tone is direct. Don't over-apologize. Diagnose deeply, fix at root cause, ship.**
+
+### 13.1 · Pre-push checklist (Next.js page edits)
+
+When the patch modifies any `page.tsx` file under `app/(dashboard)/`:
+
+```bash
+# Step 1: tsc
+cd /sessions/<sandbox>/mnt/market-cockpit/frontend && timeout 35 npx tsc --noEmit
+# Step 2: Next.js export validation (catches what tsc misses)
+cd /sessions/<sandbox>/mnt/market-cockpit/frontend && timeout 90 npx next lint 2>&1 | tail -20
+# OR (slower but full validation):
+cd /sessions/<sandbox>/mnt/market-cockpit/frontend && timeout 180 npx next build 2>&1 | grep -E "error|Failed" | head -10
+```
+
+**Pattern to AVOID**: adding `export` keyword to anything in a page file. If a helper needs to be importable, move it to a sibling `engine.ts` / `helpers.ts` / `lib.ts` module right next to the page (or under `frontend/src/lib/`).
 
 ---
 
@@ -2197,7 +2218,7 @@ mc:concall-snap:updated       — Concall snapshot save fires this
 
 ### 17.9 STARTER PROMPT for new chat
 
-> Read `/Users/radhevrishi/Desktop/Python/Imp Marketcockpit/market-cockpit/CLAUDE.md` section 17 (read 17.12 Day-3 batch AND 17.13 Day-3 late batch) before doing anything. HEAD on main ≈ `e50fd0a+`. Auto-Valuation is now mathematically consistent + the InlineValuationPanel is mounted in Concall AI page (P0681). Latest patch number to use for new work: **0682**.
+> Read `/Users/radhevrishi/Desktop/Python/Imp Marketcockpit/market-cockpit/CLAUDE.md` section 17 (especially 17.13 Day-3 late batch) AND section 13 (Hard Rules — note new Rule 2 about Next.js page exports) before doing anything. HEAD on main ≈ `da112f2`. The Concall AI page has a cross-link card to /auto-valuation; true inline merge (one upload runs both pipelines on same page) is queued as P0682 and requires extracting `buildReport` + helpers from `auto-valuation/page.tsx` into a sibling `engine.ts` module. Latest patch number to use for new work: **0682**.
 >
 > Open work from prior session (pick one or state your own):
 > - "Wire valuation upside into the concall score with ~10% weight (P0682)"
