@@ -517,8 +517,9 @@ function AutoFillBtn({ ticker, market, onFill, currentPrice }: { ticker: string;
     try {
       const q = await fetchQuoteAutofill(t, market);
       if (q) { onFill(q); setLastFetched(t); setError(null); }
-      else setError('Quote not found — using manual values');
-    } catch { setError('Fetch failed'); }
+      // PATCH 0645 — Clearer message: distinguish 'not in universe' from 'fetch error'.
+      else setError(`'${t.toUpperCase()}' not in live universe — enter market cap manually below`);
+    } catch { setError('Live quote fetch failed — enter market cap manually below'); }
     finally { setLoading(false); }
   };
 

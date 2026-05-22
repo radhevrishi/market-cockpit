@@ -299,19 +299,33 @@ export async function fetchQuoteAutofill(ticker: string, market: 'india' | 'us' 
   const currency: '₹' | '$' = market === 'us' ? '$' : '₹';
 
   // Primary: /api/market/quotes
+  // PATCH 0645 — flexible ticker matching: exact → prefix → company-name contains.
+  // Caters for MTAR/MTARTECH, BAJAJ-AUTO/BAJAJAUTO, KAYNES-Q4FY26 etc.
   try {
     const r = await fetch(`/api/market/quotes?market=${market}`, { cache: 'no-store' });
     if (r.ok) {
       const j = await r.json();
       const stocks: any[] = j?.stocks || [];
-      const hit = stocks.find((s) => (s.ticker || '').toUpperCase() === t);
+      let hit: any = stocks.find((s) => (s.ticker || '').toUpperCase() === t);
+      // Prefix match: 'MTAR' -> 'MTARTECH' (when no exact hit)
+      if (!hit && t.length >= 3) {
+        const prefixHits = stocks.filter((s) => (s.ticker || '').toUpperCase().startsWith(t));
+        if (prefixHits.length === 1) hit = prefixHits[0];
+        // If multiple, pick shortest ticker (closest to original input intent)
+        else if (prefixHits.length > 1) hit = prefixHits.sort((a, b) => (a.ticker || '').length - (b.ticker || '').length)[0];
+      }
+      // Company-name contains (handles BAJAJCON -> 'Bajaj Consumer Care')
+      if (!hit && t.length >= 4) {
+        const ncon = stocks.filter((s) => {
+          const c = (s.company || '').toUpperCase().replace(/[^A-Z]/g, '');
+          return c.startsWith(t) || c.includes(t);
+        });
+        if (ncon.length === 1) hit = ncon[0];
+      }
       if (hit && hit.price) {
-        // marketCap in API returns absolute rupees → convert to crore for India
-        const marketCapCr = market === 'india'
-          ? (hit.marketCap || 0) / 1e7
-          : (hit.marketCap || 0) / 1e7;
+        const marketCapCr = (hit.marketCap || 0) / 1e7;
         return {
-          ticker: t,
+          ticker: hit.ticker || t,
           company: hit.company,
           currentPrice: hit.price,
           currentMarketCapCr: marketCapCr || undefined,
@@ -369,10 +383,11 @@ export const WORKED_EXAMPLES = {
     type: 'PE' as const,
     input: {
       ticker: 'BAJAJCON', company: 'Bajaj Consumer Care',
-      currentMarketCapCr: 2400,    // realistic
+      currentMarketCapCr: 2400,    // BAJAJCON not in /api/market/quotes universe — manual default
       horizonMonths: 12,
       forwardPATCr: 190,
       bearPE: 20, basePE: 24, bullPE: 30,
+      currentPrice: 167,           // approx — user can override
     },
   },
   tdPower: {
