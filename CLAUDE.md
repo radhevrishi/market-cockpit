@@ -1,7 +1,7 @@
 # Market Cockpit — Claude Handoff Memory
 
 > Read this FIRST when starting any new chat. Saves you 30 minutes of context-rebuilding.
-> **Last updated: 2026-05-21 — END OF DAY 2 SESSION.** Latest patches: 0549–0642 (94 patches in this session). HEAD on `origin/main` = `fba6ed7+` (Patches 0637–0642: Auto-Valuation tab with multi-file upload, Activity Log, MTAR-validated parser, realistic worked-example defaults, sanity-check warnings, filename ticker extraction). Section 17 has the full session summary, open work, and next-chat starter prompt. Read section 17 first if continuing this work.
+> **Last updated: 2026-05-22.** Day-3 session added Patches 0643–0670 — Auto-Valuation honesty pass (margin hierarchy, sanity checks, override panel, scenario triplets, confidence chips), Learn tab with 12 guidance patterns + 20 practice examples, alphabetical home reorder, ORDER_RECEIPT + RATING_ACTION categories wired into live-feed (upstream NSE data gap acknowledged with honest empty-state). HEAD on `origin/main` ≈ `80902fb`. Latest patch number for new work: **0671**. Look at Section 17.12 first for Day-3 summary.
 > **Sandbox-name caveat:** This file references the OLD sandbox `zen-epic-bardeen` in section 2 and `kind-sharp-maxwell` was the active sandbox at session-end. New sessions get a new sandbox name. The repo path mapping pattern is `/Users/.../market-cockpit/` → `/sessions/<sandbox>/mnt/market-cockpit/` — substitute the active sandbox name from `ls /sessions/` or your bash mounts.
 
 ---
@@ -2015,9 +2015,142 @@ mc:load-valuation              — clicked EDIT on saved valuation
 
 **Latest patch number for new work: 0643.**
 
+### 17.12 DAY-3 BATCH (0643 → 0670) — Auto-Val honesty pass, Learn tab, alphabetical home
+
+Day-3 was an end-to-end audit + honest-numbers pass on the Auto-Valuation page after the
+user pushed back on MTAR producing an AVOID with -68% downside that didn't match
+institutional intuition. The model had multiple compounding bugs.
+
+```
+0643      — Auto-Val PDF-only flow + Excel lakh detection polish
+0644      — Strategic Vis timeout bump 18→25s + RETRY button + skeleton on empty state
+0645      — Ticker matching prefix + company-name fallback (MTAR/BAJAJCON autofill)
+0646      — Earnings Opportunities auto-refresh past dates (staleTime 30d→60min)
+0647      — Home Movers WHY-enrichment + earnings parallel fetch + "today/yesterday"
+            label fix (was showing 2026-05-20 when yesterday was 21st)
+0648      — Auto-Val: round PAT, EBITDA fallback when missing margin guidance,
+            broader guidance extraction patterns
+0649      — Auto-Val persistence per ticker (lib/auto-valuation-store.ts)
+            object map keyed by ticker, 50-entry cap, oldest-first eviction
+0650      — Movers WHY fix per-ticker /news?search=X + Concall AI persistence
+            (lib/concall-snapshot-store.ts mirror of auto-valuation-store)
+0651      — Fix Vercel build error: await import in non-async useCallback
+            in earnings-analysis/page.tsx
+0652      — Auto-Val MATH FIX: catch growth% + margin% guidance patterns,
+            forward revenue derived from latest sales × (1 + growth%)
+0653      — Scenario-aware Auto-Val: bear=low, base=mid, bull=high guidance
+            bound. Each calc runs 3× with different inputs + multiples,
+            merges matching case from each result.
+0654      — Extractor proximity check: keyword must be near number, not just
+            in same sentence. Prevents EBITDA_MARGIN claiming GROWTH range
+            in "expand to 24%, supporting revenue growth 50-80%" sentences.
+0655      — CLEAN REWRITE of guidance extractor — scope-based clause
+            matching (each metric owns its share of sentence between
+            other metric keywords), keyword containment dedup, larger-Cr-
+            value wins for crore metrics in dedupe.
+0656      — Sanity floors on guidance values (EBITDA_MARGIN 3-80%, GROWTH
+            1-300%, etc.) + fix "crores?" plural regex bug (was rejecting
+            "₹5,000 crores" because /\bcrore\b/ doesn't match "crores").
+0657      — Auto-Val FY27/FY28 side-by-side toggle (Y1·18mo / Y2·30mo).
+            Same growth applied one more year for Y2.
+0658      — NEW Learn tab in /valuation-calc with 12 institutional guidance
+            patterns. Each pattern: real company quotes, formula in mono,
+            worked example with steps, tips on common analyst mistakes.
+0659      — NEW Practice Examples section in Learn tab — 20 Indian
+            companies (MTAR, Aeroflex, GNG, Inox India, Emcure, Sai Life,
+            HFCL, Navin Fluorine, etc.) with full guidance-to-upside calcs.
+            Each collapsible with input table → steps → fair value → upside.
+0660      — Extractor coverage gaps: added CAGR, EBITDA_GROWTH, MARGIN_BPS,
+            PEAK_REVENUE metric types. CAGR captures yearsAhead from
+            "over 3-5 years". MARGIN_BPS parses "300-400 bps". PEAK detects
+            "peak revenue by FY28".
+0661      — Shortcut links: each pattern card in Learn tab now lists
+            companies using that pattern as clickable chips → scroll to
+            full worked example. exSlug() function for URL fragments.
+0662      — Auto-Val rationale clarity: distinguish "GUIDED" vs "historical
+            fallback" margin source + new ⚠ warning chip + Override Inputs
+            panel (5 fields) with ↻ RECALCULATE button to swap margin/
+            revenue/multiples when extractor misses.
+0663      — File upload bug fixes: (a) reset input.value after onChange so
+            same file can be re-selected, (b) capture startIdx from
+            setDocs callback so stale closure docs.length doesn't
+            overlap two upload batches.
+0664      — Margin hierarchy in buildReport: opmLatest > opmMedian3y >
+            opmAvg (was: opmAvg only). Per-calc confidence HIGH/MED/LOW
+            chips. Weighted recommendation 45% P/S + 35% P/E + 20% EV/EBITDA
+            with confidence downweighting.
+0665      — Fix Excel OPM calc: use (OP + Depreciation) / Sales so OPM
+            represents EBITDA margin not bare EBIT margin. PAT-margin
+            sanity check fires when OPM < PAT margin (mathematically
+            impossible — confirmed MTAR bug).
+0666      — Tighten sanity check to OPM ≥ 1.3× PAT margin (industrial
+            reality). Also override fin.latestEBITDA so downstream
+            EBITDA→PAT conversion doesn't keep ~0.99 (broken).
+0667      — Fix ordering bug: sanity-check override of latestEBITDA was
+            placed BEFORE the latestEBITDA assignment, so the line silently
+            overwrote it. Move sanity check after EBITDA computation.
+0668      — Alphabetize home Quick Access chips (by label, ignoring emoji).
+0669      — Wire ORDER_RECEIPT + RATING_ACTION through classifyFiling +
+            RELEVANCE_PATTERNS + PDF_PRIORITY + FILING_TYPE_WEIGHTS. Loosen
+            detectOrderBook regex to match real NSE subjects.
+0670      — Improve empty-state messaging on /order-book + /rating-actions
+            with NSE Corp Announcements deep-link, since upstream NSE feed
+            scraper doesn't currently cover Reg-30/Reg-15 categories.
+```
+
+**Important architectural finding (P0670 — unresolved):**
+
+The /order-book and /rating-actions pages are coded correctly with dual-source
+ingestion (news + concall-intel/live-feed) + proper dedup. BUT the upstream
+`fetchNSEAnnouncements` in `lib/nse-bse-feed.ts` only pulls a subset of NSE
+corporate announcements — primarily investor-meetings, analyst-meets,
+transcripts, and presentations. Reg-30 "Receipt of Order / Letter of Award"
+and Reg-15 "Credit Rating Action" filings live in a different NSE category
+URL that the current scraper doesn't hit.
+
+**To fix this properly** (not done in this session — needs a backend addition):
+1. Extend `fetchNSEAnnouncements` to also pull from
+   `https://www.nseindia.com/api/corporate-announcements?index=equities&from_date=X&to_date=Y&category=Receipt%20of%20Order%2FLetter%20of%20Award`
+2. Add a separate fetch for category `Credit%20Rating`
+3. Merge into the same FilingRecord stream so classifyFiling picks them up
+4. Verify the existing P0669 categorization fires on the new filings
+
+For now, the empty-state messaging is honest about the gap and provides a
+deep-link to the NSE corp-filings page for users to verify directly.
+
+**MTAR final state (after all Day-3 patches):**
+- Revenue ₹1,600 Cr (from PDF guidance)
+- EBITDA ₹279 Cr (via inferred 17.4% OPM = PAT margin × 1.6)
+- PAT ₹174 Cr (via 0.625 conversion = 95/152, properly industrial)
+- Recommendation AVOID at -35% weighted base (P/S -10%, P/E -61%, EV/EBITDA -72%)
+- Override panel lets user swap in MTAR's actual 11.4× median P/S → flips to neutral
+- Math is now internally consistent; ChatGPT's "WAIT/WATCH" call can be reproduced
+  via override
+
+**localStorage keys added this session:**
+```
+mc:auto-val:v1                — Saved Auto-Val reports keyed by ticker (P0649)
+mc:concall-snap:v1            — Concall AI snapshots keyed by ticker (P0650)
+```
+
+**Cross-tab events added:**
+```
+mc:auto-val:updated           — Auto-Val save/delete fires this
+mc:concall-snap:updated       — Concall snapshot save fires this
+```
+
+**Files modified most this session** (for Vercel cache debugging if needed):
+- `frontend/src/app/(dashboard)/auto-valuation/page.tsx` — extensive
+- `frontend/src/app/(dashboard)/valuation-calc/page.tsx` — Learn tab added (~600 lines)
+- `frontend/src/lib/forward-guidance-extractor.ts` — clean rewrite + 4 new metrics
+- `frontend/src/app/(dashboard)/page.tsx` — alphabetical sort
+- `frontend/src/lib/concall-bullish.ts` — 2 new filing types
+- `frontend/src/lib/thewrap-detectors.ts` — looser order regex
+- `frontend/src/app/api/v1/concall-intel/live-feed/route.ts` — PDF_PRIORITY updated
+
 ### 17.9 STARTER PROMPT for new chat
 
-> Read `/Users/radhevrishi/Desktop/Python/Imp Marketcockpit/market-cockpit/CLAUDE.md` section 17 (END-OF-SESSION HANDOFF) before doing anything. HEAD on main is updated through Patch 0642 (Auto-Valuation tab with multi-file Excel+PDF upload, Activity Log, MTAR-validated parser, Playbook + Critical Themes dynamic ranking + Valuation Calc suite with Analytics tab, Guidance Extractor, realistic worked-example defaults, sanity warnings). Latest patch number to use for new work: **0643**.
+> Read `/Users/radhevrishi/Desktop/Python/Imp Marketcockpit/market-cockpit/CLAUDE.md` section 17 (especially 17.12 Day-3 batch) before doing anything. HEAD on main = `80902fb+`. Auto-Valuation is now mathematically consistent — margin hierarchy, PAT scaling, scenario triplets, confidence chips, override panel all working. Latest patch number to use for new work: **0671**.
 >
 > [Now state what you want — examples below]
 > - "Continue auditing for new bugs and fix what you find."
