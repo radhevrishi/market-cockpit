@@ -47,13 +47,18 @@ const RELEVANCE_PATTERNS: Array<{ type: ConcallFilingType; re: RegExp }> = [
   { type: 'AUDIO_RECORDING',       re: /audio\s+recording|audio\s+file\s+of|recording\s+of\s+the\s+(?:earnings|investor|analyst|conference)|audio[- ]recording/i },
   { type: 'WEBCAST',               re: /webcast|live\s+stream\s+of|live\s+webcast|web[- ]?cast/i },
   { type: 'PRESS_RELEASE',         re: /press\s+release.*(?:result|earnings|guidance|outlook|q[1-4]|quarter)|q[1-4]\s+(?:fy)?\s*\d{2,4}\s+press\s+release/i },
-  // PATCH 0669 — Reg-30 order receipts. Indian NSE/BSE filings use these
-  // canonical subject lines. Tier-1 PSU orders (HAL/BHEL/Indian Railways/
-  // NHAI/ISRO etc) consistently file under "Receipt of Order/LoA".
-  { type: 'ORDER_RECEIPT',         re: /receipt\s+of\s+order|letter\s+of\s+award|\bLoA\b|work\s+order|purchase\s+order|contract\s+award|order\s+received|bagged\s+(?:an?\s+)?order|wins?\s+(?:an?\s+)?order|secured\s+(?:an?\s+)?order|order\s+(?:intake|book\s+update|win)/i },
-  // PATCH 0669 — Reg-15 rating actions: ICRA/CRISIL/CARE/India Ratings/
-  // Fitch/Moody/S&P upgrade/downgrade/outlook revisions.
-  { type: 'RATING_ACTION',         re: /\b(?:ICRA|CRISIL|CARE\s+Ratings?|India\s+Ratings?|Fitch|Moody|Moody's|Standard\s*&?\s*Poor|S&P\s+Global)\b.{0,80}\b(?:rating|outlook|upgrade|downgrade|reaffirm|revised|assigned|withdrawn|placed|removed)|credit\s+rating\s+(?:action|update|revision)|rating\s+(?:downgrade|upgrade|action|change|placed\s+on)/i },
+  // PATCH 0672 — NSE-canonical category subjects (probed live: 176 order +
+  // 98 rating filings in May 1-22, 2026 window). NSE uses these exact phrases
+  // as the `csubject` field:
+  //   "Bagging/Receiving of orders/contracts"
+  //   "Receipt of Order/Letter of Award"
+  //   "Credit Rating"
+  // My P0669 regex missed both because:
+  //   (a) it required "Receipt of order" but NSE says "Receiving of orders"
+  //   (b) it required "Credit Rating + action/update/revision" suffix
+  //       but NSE files under bare "Credit Rating" category.
+  { type: 'ORDER_RECEIPT',         re: /bagging\s*\/\s*receiving|receipt\s+of\s+order|letter\s+of\s+award|\bLoA\b|work\s+order|purchase\s+order|contract\s+award|order\s+received|receiving\s+of\s+orders|bagging\s+of\s+orders|bagged\s+(?:an?\s+)?order|wins?\s+(?:an?\s+)?order|secured\s+(?:an?\s+)?order|order\s+(?:intake|book\s+update|win)|\bnew\s+order\b/i },
+  { type: 'RATING_ACTION',         re: /\bcredit\s+rating\b|\b(?:ICRA|CRISIL|CARE\s+Ratings?|India\s+Ratings?|Ind[-\s]Ra|Fitch|Moody|Standard\s*&?\s*Poor|S&P\s+Global|Brickwork|Acuit[eé])\b|rating\s+(?:upgrade|downgrade|reaffirm|revised|assigned|withdrawn|placed|removed|action|change|outlook)/i },
 ];
 
 export function classifyFiling(subject: string): ConcallFilingType | null {
