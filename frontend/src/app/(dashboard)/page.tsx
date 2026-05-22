@@ -1113,28 +1113,29 @@ export default function HomeDashboard() {
           {/* PATCH 0619/0635 — institutional chip strip. All in one row group,
               uniform pill style, left-aligned, even row gap. */}
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-start', rowGap: 8, alignItems: 'center' }}>
-            <Link href="/playbook"               style={navChip('#F59E0B')}>📚 Playbook</Link>
-            <Link href="/critical-themes"        style={navChip('#EF4444')}>🔥 Themes</Link>
-            <Link href="/valuation-calc"         style={navChip('#22D3EE')}>🧮 Valuation Calc</Link>
-            <Link href="/auto-valuation"         style={navChip('#10B981')}>🤖 Auto-Valuation</Link>
-            <Link href="/earnings-hub?tab=concall" style={navChip('#A78BFA')}>🧠 Concall AI</Link>
-            <Link href="/guidance-extractor"     style={navChip('#A78BFA')}>📋 Guidance</Link>
-            <Link href="/multibagger"            style={navChip('#10B981')}>🚀 Multibagger</Link>
-            <Link href="/portfolio"              style={navChip('#22D3EE')}>💼 My Book</Link>
-            <Link href="/watchlists"             style={navChip('#22D3EE')}>👁 Watchlist</Link>
-            <Link href="/decisions"              style={navChip('#22D3EE')}>📒 Decision Log</Link>
+            {/* PATCH 0668 — alphabetical order (by label, ignoring emoji) */}
             <Link href="/activity-log"           style={navChip('#A78BFA')}>📜 Activity</Link>
+            <Link href="/auto-valuation"         style={navChip('#10B981')}>🤖 Auto-Valuation</Link>
+            <Link href="/breadth"                style={navChip('#10B981')}>📊 Breadth</Link>
+            <Link href="/earnings-hub?tab=concall" style={navChip('#A78BFA')}>🧠 Concall AI</Link>
             <Link href="/concall-intel"          style={navChip('#A78BFA')}>🎙 Concall Intel</Link>
+            <Link href="/decisions"              style={navChip('#22D3EE')}>📒 Decision Log</Link>
             <Link href="/earnings-opportunities" style={navChip('#F59E0B')}>📅 Earnings Ops</Link>
             <Link href="/earnings"               style={navChip('#F59E0B')}>📊 Earnings Scan</Link>
-            <Link href="/special-situations"     style={navChip('#EF4444')}>🎯 Special Sit</Link>
-            <Link href="/order-book"             style={navChip('#EF4444')}>📑 Order Book</Link>
-            <Link href="/rating-actions"         style={navChip('#EF4444')}>🏛 Rating Actions</Link>
-            <Link href="/strategic-visibility"   style={navChip('#A78BFA')}>⭐ Strategic Vis</Link>
+            <Link href="/guidance-extractor"     style={navChip('#A78BFA')}>📋 Guidance</Link>
             <Link href="/movers"                 style={navChip('#10B981')}>📈 Movers</Link>
-            <Link href="/breadth"                style={navChip('#10B981')}>📊 Breadth</Link>
-            <Link href="/super-investors"        style={navChip('#A78BFA')}>🦅 Super Investors</Link>
+            <Link href="/multibagger"            style={navChip('#10B981')}>🚀 Multibagger</Link>
+            <Link href="/portfolio"              style={navChip('#22D3EE')}>💼 My Book</Link>
+            <Link href="/order-book"             style={navChip('#EF4444')}>📑 Order Book</Link>
+            <Link href="/playbook"               style={navChip('#F59E0B')}>📚 Playbook</Link>
+            <Link href="/rating-actions"         style={navChip('#EF4444')}>🏛 Rating Actions</Link>
             <Link href="/orders"                 style={navChip('#22D3EE')}>📡 Signals</Link>
+            <Link href="/special-situations"     style={navChip('#EF4444')}>🎯 Special Sit</Link>
+            <Link href="/strategic-visibility"   style={navChip('#A78BFA')}>⭐ Strategic Vis</Link>
+            <Link href="/super-investors"        style={navChip('#A78BFA')}>🦅 Super Investors</Link>
+            <Link href="/critical-themes"        style={navChip('#EF4444')}>🔥 Themes</Link>
+            <Link href="/valuation-calc"         style={navChip('#22D3EE')}>🧮 Valuation Calc</Link>
+            <Link href="/watchlists"             style={navChip('#22D3EE')}>👁 Watchlist</Link>
           </div>
         </div>
 
