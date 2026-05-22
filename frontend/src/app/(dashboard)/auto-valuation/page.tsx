@@ -441,9 +441,19 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
     }
   }
 
-  // If we have revenue + margin guidance but no EBITDA explicitly, derive it
+  // PATCH 0648 — Better derivation chain:
+  //   1. If revenue + margin in guidance → derive EBITDA = rev × margin
+  //   2. If revenue but NO margin → derive EBITDA from historical OPM (5yr avg)
+  //   3. PAT derivation from EBITDA × historical conversion ratio
+  //   4. Historical CAGR projection when guidance entirely missing
   if (forwardRevenue && inferredMargin && !forwardEBITDA) {
     forwardEBITDA = forwardRevenue * (inferredMargin / 100);
+  }
+  // PATCH 0648 — NEW fallback: when revenue is known but EBITDA is not and
+  // no margin guidance, use historical 5yr avg OPM as the margin proxy.
+  if (forwardRevenue && !forwardEBITDA && excelData?.opmAvg && excelData.opmAvg > 0) {
+    forwardEBITDA = forwardRevenue * (excelData.opmAvg / 100);
+    if (!inferredMargin) inferredMargin = excelData.opmAvg;
   }
   // Derive PAT from EBITDA via historical conversion (rough heuristic: PAT ≈ EBITDA × 0.45)
   if (forwardEBITDA && !forwardPAT && excelData) {
@@ -459,11 +469,21 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
     const yearsAhead = forwardYear === 'FY28' ? 2 : 1;
     forwardRevenue = excelData.latestSales * Math.pow(1 + excelData.salesCagr5y / 100, yearsAhead);
     if (!forwardYear) forwardYear = 'FY27 (projected)';
+    // Re-derive EBITDA from new revenue + historical OPM
+    if (!forwardEBITDA && excelData.opmAvg && excelData.opmAvg > 0) {
+      forwardEBITDA = forwardRevenue * (excelData.opmAvg / 100);
+      if (!inferredMargin) inferredMargin = excelData.opmAvg;
+    }
   }
   if (!forwardPAT && excelData?.latestPAT && excelData?.patCagr5y && excelData.patCagr5y > 0) {
     const yearsAhead = forwardYear === 'FY28' ? 2 : 1;
     forwardPAT = excelData.latestPAT * Math.pow(1 + excelData.patCagr5y / 100, yearsAhead);
   }
+  // PATCH 0648 — round all forward values to clean integers for display
+  if (forwardRevenue) forwardRevenue = Math.round(forwardRevenue);
+  if (forwardEBITDA) forwardEBITDA = Math.round(forwardEBITDA);
+  if (forwardPAT) forwardPAT = Math.round(forwardPAT);
+  if (inferredMargin) inferredMargin = Math.round(inferredMargin * 10) / 10;
 
   // Sector → multiple lookup
   const sectorConf = sector ? SECTOR_CALCULATOR_MAP[sector] : undefined;

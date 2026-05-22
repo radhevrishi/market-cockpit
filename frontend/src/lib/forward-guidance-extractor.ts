@@ -30,7 +30,10 @@ export interface GuidanceItem {
 
 // Map fiscal year tokens to a normalized 'FY26' / 'FY27' string
 const normalizeFY = (token: string): string => {
-  const m = token.match(/(?:FY|fy)?\s*(\d{2,4})/);
+  // PATCH 0648 — handle '2027-28' (Indian fiscal-year ending notation)
+  const range = token.match(/20(\d{2})[-–](\d{2})/);
+  if (range) return `FY${range[2]}`;
+  const m = token.match(/(?:FY|fy|fiscal\s?(?:year\s?)?)?\s*(\d{2,4})/);
   if (!m) return token.toUpperCase();
   let yr = m[1];
   if (yr.length === 4) yr = yr.slice(-2);
@@ -76,13 +79,23 @@ const METRIC_PATTERNS: Array<{
 ];
 
 // FY token regex for fiscal-year detection
-const FY_TOKEN = /(?:FY\s?\d{2,4}|FY[-\s]?\d{2}|F\.Y\.\s?\d{2,4}|fiscal\s?\d{4}|Q[1-4]\s?FY\s?\d{2,4})/g;
+// PATCH 0648 — widened to catch MTAR-style mentions like 'FY26', '2027-28',
+// 'next financial year', 'this fiscal' and inline 'fiscal 2027'.
+const FY_TOKEN = /(?:FY\s?\d{2,4}|FY[-\s]?\d{2}|F\.Y\.\s?\d{2,4}|fiscal\s?\d{4}|fiscal\s?year\s?\d{2,4}|Q[1-4]\s?FY\s?\d{2,4}|20\d{2}[-–]\d{2})/g;
 
 // Phrases that signal *forward* guidance (vs. backward report)
+// PATCH 0648 — expanded to catch institutional language MTAR/DEEDEV use:
+//   'we estimate', 'should be around', 'in the range of', 'on track for',
+//   'we are confident', 'we believe', 'visibility for', 'we expect to close
+//   FY27 at', 'over the next 2-3 years', 'medium-term', 'long-term'
 const FORWARD_SIGNALS = [
   /target/i, /guidance/i, /expect/i, /aim/i, /aspire/i, /by\s+FY/i,
   /reach/i, /achieve/i, /project/i, /plan(?:ned)?\s+to/i, /likely\s+to/i,
   /going\s+forward/i, /next\s+year/i, /coming\s+year/i, /will\s+(?:be|deliver|achieve|reach)/i,
+  /estimate/i, /should\s+be/i, /in\s+the\s+range/i, /on\s+track/i,
+  /confident/i, /believe/i, /visibility/i, /close\s+FY/i,
+  /medium[-\s]term/i, /long[-\s]term/i, /should\s+(?:reach|cross|touch)/i,
+  /forecast/i, /anticipate/i, /set\s+to/i, /poised\s+to/i,
 ];
 
 const isForwardLooking = (sentence: string): boolean => FORWARD_SIGNALS.some((re) => re.test(sentence));

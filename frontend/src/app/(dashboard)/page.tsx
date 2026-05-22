@@ -86,6 +86,7 @@ interface HomeState {
   gainers?: Array<{ ticker: string; company?: string; changePercent?: number; price?: number }>;
   losers?: Array<{ ticker: string; company?: string; changePercent?: number; price?: number }>;
   moversUpdatedAt?: string;
+  moversReasons?: Record<string, { kind: 'news' | 'earnings' | 'order' | 'rating' | 'special'; label: string; url?: string }>;
   // PATCH 0624 — extended shape: kind='flow' (live) or 'roster' (static curated holdings)
   superInvestors?: Array<{
     ticker: string;
@@ -537,6 +538,52 @@ export default function HomeDashboard() {
         const gainers = smallMidOnly(j?.gainers || []).slice(0, 10);
         const losers = smallMidOnly(j?.losers || []).slice(0, 10);
         setData((d) => ({ ...d, gainers, losers, moversUpdatedAt: j?.updatedAt } as any));
+
+        // PATCH 0647 — for each mover, find the most relevant recent article.
+        // Pulls broader news for ticker-explicit mentions (small caps often
+        // not in /in-play). Reason chip lets user see WHY the move happened
+        // without leaving the Home page.
+        const moverTickers = [...gainers, ...losers].map((m: any) => (m.ticker || '').toUpperCase()).filter(Boolean);
+        if (moverTickers.length > 0) {
+          safeDiag<any>(`/api/v1/news?limit=200&_=${Date.now()}`, 20_000).then(({ data: newsJ }) => {
+            if (cancelled) return;
+            const articles: any[] = Array.isArray(newsJ) ? newsJ : (newsJ?.articles || newsJ?.items || []);
+            const TWO_DAYS = 48 * 3600_000;
+            const reasons: Record<string, { kind: 'news' | 'earnings' | 'order' | 'rating' | 'special'; label: string; url?: string }> = {};
+            for (const t of moverTickers) {
+              // Find articles mentioning this ticker
+              const matches = articles.filter((a: any) => {
+                if (!a) return false;
+                if (a.is_synthetic || a.structural_status) return false;
+                const tickerList: string[] = (a.ticker_symbols || []).concat(a.primary_ticker ? [a.primary_ticker] : []);
+                const hay = ((a.title || '') + ' ' + (a.headline || '') + ' ' + tickerList.join(' ')).toUpperCase();
+                if (!hay.includes(t)) return false;
+                if (a.published_at) {
+                  const age = Date.now() - new Date(a.published_at).getTime();
+                  if (age > TWO_DAYS) return false;
+                }
+                return true;
+              });
+              if (matches.length === 0) continue;
+              // Pick highest importance OR most recent
+              const top = matches.sort((a: any, b: any) => {
+                const aImp = a.importance_score ?? 0; const bImp = b.importance_score ?? 0;
+                if (aImp !== bImp) return bImp - aImp;
+                return new Date(b.published_at || 0).getTime() - new Date(a.published_at || 0).getTime();
+              })[0];
+              const title = top.title || top.headline || '';
+              const at = (top.article_type || '').toUpperCase();
+              // Classify by article_type / keywords
+              let kind: 'news' | 'earnings' | 'order' | 'rating' | 'special' = 'news';
+              if (at === 'EARNINGS' || /Q[1-4]\s*FY|quarterly|results|earnings/i.test(title)) kind = 'earnings';
+              else if (/order|letter of award|LoA|contract|won/i.test(title)) kind = 'order';
+              else if (/ICRA|CRISIL|CARE|Moody|S&P|Fitch|upgrade|downgrade|rating/i.test(title)) kind = 'rating';
+              else if (/preferential|SAST|stake|merger|acquisition|de-listing|open offer/i.test(title)) kind = 'special';
+              reasons[t] = { kind, label: title, url: top.source_url || top.url };
+            }
+            setData((d) => ({ ...d, moversReasons: reasons } as any));
+          });
+        }
       });
 
       // PATCH 0624 — Super Investors panel = flow API + static roster combined.
@@ -865,15 +912,19 @@ export default function HomeDashboard() {
           return out;
         })();
 
+        // PATCH 0647 — parallelize 3 fetches with 25s timeout each (was 15s
+        // sequential = up to 45s total + single failures wiping a whole day).
+        // Each individual day uses safeDiag so timeouts don't break the chain.
+        const dayResults = await Promise.all(
+          tradingDays.map((date) =>
+            safeDiag<any>(`/api/v1/earnings/graded?date=${date}&_=${Date.now()}`, 25_000).then(({ data }) => ({ date, data }))
+          )
+        );
+        if (cancelled) return;
         const allCards: any[] = [];
-        for (const date of tradingDays) {
-          if (cancelled) return;
-          const j = await safe<any>(`/api/v1/earnings/graded?date=${date}`);
-          if (cancelled) return;
+        for (const { date, data: j } of dayResults) {
           const dayCards = flattenGraded(j)
             .filter((c: any) => c?.ticker)
-            // PATCH 0615 — filter to BLOCKBUSTER + STRONG only.
-            // MIXED and AVOID don't belong on a home dashboard.
             .filter((c: any) => {
               const t = (c.tier || '').toUpperCase();
               return t === 'BLOCKBUSTER' || t === 'STRONG';
@@ -899,18 +950,19 @@ export default function HomeDashboard() {
         });
         const today = tradingDays[0];
         const yesterday = tradingDays[1];
+        // PATCH 0647 — Better label: today / yesterday / 2 days ago / 3 days ago
+        const labelFor = (d: string) => {
+          if (d === today) return 'today';
+          if (d === yesterday) return 'yesterday';
+          const daysAgo = (Date.parse(today) - Date.parse(d)) / (1000 * 60 * 60 * 24);
+          if (daysAgo >= 2 && daysAgo <= 7) return `${Math.round(daysAgo)} days ago`;
+          return d;
+        };
         const label = (() => {
           if (deduped.length === 0) return 'today';
           const dates = Array.from(new Set(deduped.map((c: any) => c._date))).sort().reverse();
-          if (dates.length === 1) {
-            if (dates[0] === today) return 'today';
-            if (dates[0] === yesterday) return 'yesterday';
-            return dates[0];
-          }
-          // multi-date: name the freshest end of the range
-          if (dates[0] === today) return `today + ${dates.length - 1} more`;
-          if (dates[0] === yesterday) return `yesterday + ${dates.length - 1} more`;
-          return `last ${dates.length} trading days`;
+          if (dates.length === 1) return labelFor(dates[0]);
+          return `${labelFor(dates[0])} + ${dates.length - 1} more`;
         })();
         setData((d) => ({ ...d, earningsToday: deduped.slice(0, 8), earningsLabel: label }));
         setNetLoading((n) => ({ ...n, earnings: false }));
@@ -1544,32 +1596,45 @@ export default function HomeDashboard() {
             </div>
             {!data.gainers && !data.losers ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
-            ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                {/* Gainers column */}
-                <div>
-                  <div style={{ fontSize: 9, color: '#10B981', fontWeight: 800, letterSpacing: '0.5px', marginBottom: 2 }}>▲ GAINERS</div>
-                  {(data.gainers || []).slice(0, 10).map((g: any) => (
-                    <Link key={g.ticker} href={`/stock-sheet?ticker=${encodeURIComponent(g.ticker)}`}
-                      style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 4px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
-                      <span style={{ fontSize: 10, color: TEXT, fontWeight: 700, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.ticker}</span>
-                      <span style={{ fontSize: 10, color: '#10B981', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>+{(g.changePercent ?? 0).toFixed(1)}%</span>
-                    </Link>
-                  ))}
+            ) : (() => {
+              // PATCH 0647 — each row now shows: ticker · % · reason chip
+              const reasonKindGlyph = (k: string) => k === 'earnings' ? '📊' : k === 'order' ? '📑' : k === 'rating' ? '🏛' : k === 'special' ? '🎯' : '📰';
+              const renderRow = (m: any, pos: 'up' | 'dn') => {
+                const tk = (m.ticker || '').toUpperCase();
+                const reason = data.moversReasons?.[tk];
+                const pct = m.changePercent ?? 0;
+                const c = pos === 'up' ? '#10B981' : '#EF4444';
+                return (
+                  <Link key={tk} href={`/stock-sheet?ticker=${encodeURIComponent(m.ticker)}`}
+                    style={{ display: 'flex', alignItems: 'baseline', gap: 6, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                    <span style={{ fontSize: 11, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 92, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.ticker}</span>
+                    <span style={{ fontSize: 11, color: c, fontWeight: 800, fontVariantNumeric: 'tabular-nums', minWidth: 50, textAlign: 'right' }}>
+                      {pos === 'up' ? '+' : ''}{pct.toFixed(1)}%
+                    </span>
+                    {reason ? (
+                      <span title={reason.label}
+                        style={{ flex: 1, fontSize: 10, color: DIM, fontStyle: 'italic', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.4 }}>
+                        {reasonKindGlyph(reason.kind)} {reason.label.slice(0, 80)}{reason.label.length > 80 ? '…' : ''}
+                      </span>
+                    ) : (
+                      <span style={{ flex: 1, fontSize: 10, color: '#3F4D63', fontStyle: 'italic' }}>—</span>
+                    )}
+                  </Link>
+                );
+              };
+              return (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 8 }}>
+                  <div>
+                    <div style={{ fontSize: 10, color: '#10B981', fontWeight: 800, letterSpacing: '0.5px', marginBottom: 4 }}>▲ GAINERS</div>
+                    {(data.gainers || []).slice(0, 10).map((g: any) => renderRow(g, 'up'))}
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, color: '#EF4444', fontWeight: 800, letterSpacing: '0.5px', marginBottom: 4, marginTop: 6 }}>▼ LOSERS</div>
+                    {(data.losers || []).slice(0, 10).map((l: any) => renderRow(l, 'dn'))}
+                  </div>
                 </div>
-                {/* Losers column */}
-                <div>
-                  <div style={{ fontSize: 9, color: '#EF4444', fontWeight: 800, letterSpacing: '0.5px', marginBottom: 2 }}>▼ LOSERS</div>
-                  {(data.losers || []).slice(0, 10).map((l: any) => (
-                    <Link key={l.ticker} href={`/stock-sheet?ticker=${encodeURIComponent(l.ticker)}`}
-                      style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 4px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
-                      <span style={{ fontSize: 10, color: TEXT, fontWeight: 700, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{l.ticker}</span>
-                      <span style={{ fontSize: 10, color: '#EF4444', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{(l.changePercent ?? 0).toFixed(1)}%</span>
-                    </Link>
-                  ))}
-                </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
 
           {/* SIGNALS — high-importance corporate news */}
