@@ -5481,10 +5481,18 @@ function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGrade; co
   // Rule of 40 — SaaS/tech benchmark (narrative only, NOT added to pillars to prevent double-counting)
   // Revenue growth scored in GROWTH pillar; FCF margin scored in QUALITY above.
   // Rule of 40 here just surfaces the combined number as a strength/risk label.
+  // PATCH 0705 — FCF triple-count de-dup phase 2. The R40-elite bullet (≥60)
+  // cites the FCF margin verbatim, and the DNA bonus below also cites FCF
+  // margin in its own bullet. When DNA fires the elite-R40 phrasing becomes
+  // redundant — suppress and let the richer DNA bullet carry the signal.
+  // (Same pattern P0575 used for the standalone Qual FCF bullet.)
   const ruleOf40 = row.ruleOf40;
   if (ruleOf40 !== undefined) {
-    if (ruleOf40 >= 60) strengths.push(`🏆 Rule of 40: ${ruleOf40.toFixed(0)} — elite (Rev ${(row.revenueGrowthAnn??0).toFixed(0)}% + FCF ${(row.fcfMarginAnn??0).toFixed(0)}%)`);
-    else if (ruleOf40 >= 40) strengths.push(`✅ Rule of 40: ${ruleOf40.toFixed(0)} — passes institutional benchmark (≥40)`);
+    const willFireDnaAtCap =
+         ((row.ruleOf40 ?? 0) >= 40 && (effectiveGM ?? 0) >= 60 && (row.revenueGrowthAnn ?? 0) >= 20 && (row.fcfMarginAnn ?? 0) >= 10)
+      || ((row.roe ?? 0) >= 18 && (row.roic ?? 0) >= 15 && (row.fcfMarginAnn ?? 0) >= 15 && (row.de ?? 99) < 0.5 && (row.revenueGrowthAnn ?? 0) >= 12);
+    if (ruleOf40 >= 60 && !willFireDnaAtCap) strengths.push(`🏆 Rule of 40: ${ruleOf40.toFixed(0)} — elite (Rev ${(row.revenueGrowthAnn??0).toFixed(0)}% + FCF ${(row.fcfMarginAnn??0).toFixed(0)}%)`);
+    else if (ruleOf40 >= 40 && !willFireDnaAtCap) strengths.push(`✅ Rule of 40: ${ruleOf40.toFixed(0)} — passes institutional benchmark (≥40)`);
     else if (ruleOf40 < 20) risks.push(`⚠️ Rule of 40: ${ruleOf40.toFixed(0)} — below threshold (need ≥40 for premium multiple)`);
   }
 
@@ -5595,7 +5603,26 @@ function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGrade; co
     if (row.pctFrom52wHigh >= -5) { mktS = Math.min(100, mktS+10); strengths.push(`Near 52W high (${row.pctFrom52wHigh.toFixed(0)}%) — price confirming thesis`); }
     else if (row.pctFrom52wHigh < -40) mktS = Math.max(0, mktS-10);
   }
-  if (row.perf1y !== undefined && row.perf1y > 20) { mktS = Math.min(100, mktS+6); strengths.push(`+${row.perf1y.toFixed(0)}% past year — momentum confirming fundamentals`); }
+  // PATCH 0705 — 1Y perf de-dup. Previously this added +6 to mktS pillar
+  // AND pushed a standalone momentum bullet on the same data point.
+  // When perf1y > 50 the analyst-after-run logic (Womack 1996) already cites
+  // the same +X% run in its discounted-rating bullet, so this becomes the
+  // third mention of one data point. Also suppress the post-cap-binding case
+  // (perf1y > 100) — the STRETCHED risk bullet at the cap section names the
+  // same run with a more honest framing. Net rule: bullet fires only when
+  // perf1y is in the "healthy momentum" zone (20-50%) where neither the
+  // analyst-discount nor the post-run cap logic will repeat it.
+  if (row.perf1y !== undefined && row.perf1y > 20) {
+    mktS = Math.min(100, mktS+6);
+    const willAnalystAfterRunCite = (row.perf1y > 50) && !!row.analystRating
+      && /buy/i.test(row.analystRating) && !/sell/i.test(row.analystRating);
+    const willPostRunCapCite = row.perf1y > 100
+      && ((row.forwardPe !== undefined && row.forwardPe > 25)
+       || (row.pe !== undefined && row.pe > 30));
+    if (!willAnalystAfterRunCite && !willPostRunCapCite) {
+      strengths.push(`+${row.perf1y.toFixed(0)}% past year — momentum confirming fundamentals`);
+    }
+  }
   const tailwind = getSectorTailwind(row.sector);
   if (tailwind.score >= 70) { mktS = Math.min(100, mktS+6); strengths.push(`Sector tailwind (${tailwind.label}): ${tailwind.drivers.slice(0,50)}`); }
 
