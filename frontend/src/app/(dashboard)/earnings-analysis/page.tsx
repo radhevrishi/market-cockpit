@@ -6,6 +6,7 @@ import { IndiaInstitutionalReport } from '@/components/earnings/IndiaInstitution
 import { buildSnapshot, FinancialsInput, EstimatesInput, HistoryInput } from '@/lib/earnings/build';
 import { buildIndiaSnapshot } from '@/lib/earnings/india-build';
 import type { EarningsSnapshot } from '@/lib/earnings/snapshot';
+import { saveConcallSnapshot } from '@/lib/concall-snapshot-store';
 
 // ── Design tokens
 const BG      = '#0a0a0f';
@@ -2953,20 +2954,22 @@ export default function EarningsAnalysisPage() {
       // PATCH 0650 — client-side persistence keyed by ticker so reopening
       // the same company shows the saved snapshot without re-upload.
       try {
-        const { saveConcallSnapshot } = await import('@/lib/concall-snapshot-store');
-        const concallExtras = snap.indiaExtras?.concall;
+        const concallExtras: any = snap.indiaExtras?.concall;
+        const toneSignals: string[] | undefined = Array.isArray(concallExtras?.toneSignals)
+          ? concallExtras.toneSignals.map((t: any) => typeof t === 'string' ? t : (t?.phrase || ''))
+              .filter((s: string) => !!s)
+          : undefined;
         saveConcallSnapshot({
           ticker: inputs.ticker,
           company: snap.company || inputs.ticker,
-          sector: snap.sector,
-          period: snap.quarter,
+          sector: snap.sector ?? undefined,
+          period: snap.quarter ?? undefined,
           concallScore: concallExtras?.concallScore,
           concallGrade: concallExtras?.concallGrade,
-          toneSignals: concallExtras?.toneSignals,
+          toneSignals,
           topQuotes: concallExtras?.topQuotes,
           guidanceDirection: snap.guidance?.direction,
           guidanceCommentary: snap.guidance?.commentary,
-          forwardOutlook: snap.guidance?.forwardOutlook,
           docSnapshots: [{
             name: 'concall.pdf', size: text.length, uploadedAt: new Date().toISOString(),
           }],
