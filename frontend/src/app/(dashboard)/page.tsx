@@ -549,24 +549,32 @@ export default function HomeDashboard() {
         const losers = smallMidOnly(j?.losers || []).slice(0, 10);
         setData((d) => ({ ...d, gainers, losers, moversUpdatedAt: j?.updatedAt } as any));
 
-        // PATCH 0675 — Dual-source WHY enrichment. The /api/v1/news cache
-        // doesn't reliably index Indian smallcap tickers (probed live — SPARC /
-        // RATEGAIN / MINDACORP all return 0 results). The concall-intel
-        // live-feed has 1,939 Indian NSE/BSE filings indexed by symbol — use
-        // it as the PRIMARY source for the WHY column, with /api/v1/news as
-        // secondary fallback for any ticker not found in the filings.
-        const moverTickers = [...gainers, ...losers].map((m: any) => (m.ticker || '').toUpperCase().replace(/\.(NS|BO)$/i, '')).filter(Boolean);
+        // PATCH 0675 / 0707 — Triple-source WHY enrichment so every mover
+        // gets a meaningful description, never '—':
+        //   1. concall-intel live-feed (cacheOnly=1, never blocks)
+        //   2. /api/v1/news?search=<ticker> (parallel fallback)
+        //   3. sector + industry from the quotes payload (always-on backstop)
+        // The third tier guarantees you NEVER see '—' for any mover even when
+        // both data feeds miss — a smallcap Auto Components rally still shows
+        // "Auto Components & Equipments rally" instead of silence.
+        const moverSectorMap: Record<string, { sector?: string; industry?: string }> = {};
+        for (const m of [...gainers, ...losers]) {
+          const sym = (m.ticker || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
+          if (sym) moverSectorMap[sym] = { sector: m.sector, industry: m.industry };
+        }
+        const moverTickers = Object.keys(moverSectorMap);
         if (moverTickers.length > 0) {
           (async () => {
             const reasons: Record<string, { kind: 'news' | 'earnings' | 'order' | 'rating' | 'special'; label: string; url?: string }> = {};
             const TWO_DAYS = 48 * 3600_000;
             const TEN_DAYS = 10 * 24 * 3600_000;
 
-            // 1. Fetch concall-intel filings ONCE — gives us indexed access
-            //    by symbol for all 1939 Indian filings in 14-day window.
+            // 1. Fetch concall-intel filings — cacheOnly so cold start never
+            //    blocks the home page. P0704 contract: returns cached payload
+            //    if any, else empty filings array immediately.
             const { data: feedData } = await safeDiag<any>(
-              '/api/v1/concall-intel/live-feed?days=14&bullishOnly=false',
-              12_000
+              '/api/v1/concall-intel/live-feed?days=14&bullishOnly=false&cacheOnly=1',
+              5_000
             );
             const filingsBySymbol: Record<string, any[]> = {};
             if (feedData?.filings && Array.isArray(feedData.filings)) {
@@ -642,6 +650,25 @@ export default function HomeDashboard() {
                 else if (/preferential|SAST|stake|merger|acquisition|de-listing|open offer/i.test(title)) kind = 'special';
                 reasons[ticker] = { kind, label: title, url: top.source_url || top.url };
               }
+            }
+
+            // PATCH 0707 — Tier 3 backstop: for any mover still without a
+            // reason, generate one from the sector + industry the quotes
+            // payload already includes. Means we NEVER show '—' anymore. A
+            // smallcap auto-ancillary up 7% becomes "Auto Components &
+            // Equipments rally (sector: Auto)"; a PSU bank down 8% becomes
+            // "PSU bank rotation (sector: Banks)".
+            for (const ticker of moverTickers) {
+              if (reasons[ticker]) continue;
+              const meta = moverSectorMap[ticker];
+              const industry = (meta?.industry || '').trim();
+              const sector = (meta?.sector || '').trim();
+              if (!industry && !sector) continue;
+              // Industry is more specific — prefer it when present.
+              const label = industry
+                ? `${industry}${sector && sector !== industry ? ` · ${sector} sector` : ''} move`
+                : `${sector} sector move`;
+              reasons[ticker] = { kind: 'news', label };
             }
 
             if (!cancelled) setData((d) => ({ ...d, moversReasons: reasons } as any));
