@@ -43,6 +43,16 @@ export const FILING_TYPE_WEIGHTS: Record<ConcallFilingType, number> = {
   // rating action) but no PDF text gets scored.
   ORDER_RECEIPT:         0.55,
   RATING_ACTION:         0.55,
+  // PATCH 0713 — additional event-driven categories. Same 0.55 weight as
+  // the existing Reg-30 / Reg-15 baseline — subject line is the signal,
+  // not the PDF body.
+  CAPEX_ANNOUNCE:        0.55,
+  BUYBACK_ANNOUNCE:      0.55,
+  PROMOTER_TXN:          0.55,
+  BLOCK_DEAL:            0.50,
+  MA_EVENT:              0.60,
+  GOVERNANCE:            0.45,
+  USFDA_EVENT:           0.60,
 };
 
 // ─── Numeric anchor extractor ──────────────────────────────────────────────

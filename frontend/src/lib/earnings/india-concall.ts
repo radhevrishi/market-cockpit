@@ -399,7 +399,10 @@ const TOPIC_PATTERNS: Array<{ topic: ConcallKeyMention['topic']; re: RegExp }> =
   { topic: 'pricing_action', re: /[^.!?]*\b(price hike|price increase|price cut|price (action|adjustment|revision)|price[- ]led growth|pass(ed|ing)? (on|through) (the )?(input|raw material) cost|raised prices|revised prices)\b[^.!?]*[.!?]/i },
 
   // M&A / strategic — acquisitions / divestments / JVs / demergers.
-  { topic: 'mna', re: /[^.!?]*\b(acquired|acquisition (of|completed|announced)|merger|demerger|hive[- ]?off|divest(ed|ment|ing)?|strategic (partnership|alliance|investment)|stake (acquired|sold|bought)|joint venture (with|formed|signed)|signed (an?|a) (definitive|share (purchase|subscription)) agreement)\b[^.!?]*[.!?]/i },
+  // PATCH 0713 — widened to cover scheme-of-amalgamation / slump-sale /
+  // composite scheme / NCLT / court-convened meeting / binding term sheet
+  // / merger ratio / share swap — all Indian-specific M&A phrasings.
+  { topic: 'mna', re: /[^.!?]*\b(acquired|acquisition (of|completed|announced)|merger|demerger|hive[- ]?off|divest(ed|ment|ing)?|strategic (partnership|alliance|investment)|stake (acquired|sold|bought)|joint venture (with|formed|signed)|signed (an?|a) (definitive|share (purchase|subscription)) agreement|scheme of (amalgamation|arrangement|merger|capital reduction)|composite scheme of arrangement|slump (sale|exchange)|share (swap|exchange) ratio|merger ratio|court convened meeting|NCLT (approval|order|sanction|hearing)|binding term sheet|asset purchase agreement)\b[^.!?]*[.!?]/i },
 
   // ESG / net-zero / renewable energy commitments — material for ESG-rated
   // funds and an increasing focus area in Indian midcap commentary.

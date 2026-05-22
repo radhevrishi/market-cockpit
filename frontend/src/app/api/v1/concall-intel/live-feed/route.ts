@@ -369,6 +369,15 @@ async function handleLiveFeed(req: NextRequest) {
     // subject line alone carries the signal for /order-book and /rating-actions).
     ORDER_RECEIPT: 2,
     RATING_ACTION: 2,
+    // PATCH 0713 — new event-driven categories. Subject line carries the
+    // signal; same tier-2 treatment as Reg-30 (pass through, no PDF parse).
+    CAPEX_ANNOUNCE: 2,
+    BUYBACK_ANNOUNCE: 2,
+    PROMOTER_TXN: 2,
+    BLOCK_DEAL: 2,
+    MA_EVENT: 2,
+    GOVERNANCE: 2,
+    USFDA_EVENT: 2,
   };
 
   // PATCH 0412 — Look up cached scored payloads for every candidate.

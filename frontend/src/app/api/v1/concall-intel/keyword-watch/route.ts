@@ -205,6 +205,10 @@ async function handleKeywordWatch(req: NextRequest) {
     // PATCH 0669 — Reg-30 / Reg-15 categories. Subject line carries the
     // signal; skip PDF extraction (priority 9) for keyword-watch flow.
     ORDER_RECEIPT: 9, RATING_ACTION: 9,
+    // PATCH 0713 — new event-driven categories. Subject line carries the
+    // signal; skip PDF extraction for keyword-watch flow.
+    CAPEX_ANNOUNCE: 9, BUYBACK_ANNOUNCE: 9, PROMOTER_TXN: 9,
+    BLOCK_DEAL: 9, MA_EVENT: 9, GOVERNANCE: 9, USFDA_EVENT: 9,
   };
   const extractable = candidates
     .filter(c => PDF_PRIORITY[c.filing_type] <= 3 && c.filing.attachment_urls.length > 0)

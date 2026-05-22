@@ -111,7 +111,7 @@ const METRIC_PATTERNS: Array<{
   { metric: 'PAT_MARGIN',     unit: '%',    keywords: /(?:pat margin|net margin|net profit margin)/i },
   { metric: 'GROWTH',         unit: '%',    keywords: /(?:revenue growth|topline growth|sales growth|growth rate|grow at)/i },
   { metric: 'CAPEX',          unit: '₹ Cr', keywords: /(?:capex|capital expenditure|capital investment)/i },
-  { metric: 'ORDER_BOOK',     unit: '₹ Cr', keywords: /(?:order book|orderbook|orders in hand|backlog)/i },
+  { metric: 'ORDER_BOOK',     unit: '₹ Cr', keywords: /(?:order book|orderbook|orders in hand|backlog|unexecuted\s+order(?:s)?|executable\s+order(?:s)?|pending\s+order(?:s)?)/i }, // PATCH 0713 — widened
 ];
 
 // FY token regex for fiscal-year detection
@@ -157,6 +157,24 @@ const FORWARD_SIGNALS = [
   /scale\s+(?:up\s+)?to/i,
   /by\s+the\s+end\s+of/i,
   /(?:we|the\s+company)\s+(?:should|will)\s+(?:see|deliver|cross|touch)/i,
+  // PATCH 0713 — institutional forward-looking phrasings the prior list
+  // missed. Indian CFO commentary is highly hedged but each of these
+  // implies forward guidance in context:
+  /\b(?:envisage|envision|contemplat(?:e|ing))\b/i,                              // PATCH 0713
+  /\bcommitt(?:ed|ing)\s+to\b/i,                                                  // PATCH 0713
+  /\b(?:upward|downward)\s+(?:revision|trajectory)\b/i,                          // PATCH 0713
+  /\b(?:road[- ]?map|pathway|line\s+of\s+sight)\s+to\b/i,                        // PATCH 0713
+  /\bwe\s+(?:are\s+)?(?:well\s+)?positioned\s+(?:to|for)\b/i,                    // PATCH 0713
+  /\b(?:projection|projecting)\s+(?:to|of|for)\b/i,                              // PATCH 0713
+  /\bguid(?:e|ing|ed)\s+(?:to|towards|for)\b/i,                                  // PATCH 0713
+  /\b(?:order[- ]?book|pipeline)\s+(?:gives\s+us|provides|offers)\s+visibility/i, // PATCH 0713
+  /\bvisibility\s+(?:of|for|till|until|through)\s+(?:FY|Q|the)/i,                // PATCH 0713
+  /\bturn\s+(?:cash\s+positive|profitable|EBITDA\s+positive)\s+by/i,             // PATCH 0713
+  /\b(?:we\s+)?intend\s+to\b/i,                                                   // PATCH 0713
+  /\b(?:firm\s+)?orders\s+(?:in\s+hand\s+)?(?:provid|giv)(?:e|ing)\s+(?:visibility|coverage)/i, // PATCH 0713
+  /\bmedium[- ]?to[- ]?long[- ]?term\b/i,                                         // PATCH 0713
+  /\b(?:upgrad|raisin|maintain)(?:e|ed|ing)\s+(?:our|the)\s+(?:guidance|outlook|estimate|target)/i, // PATCH 0713
+  /\b(?:full[- ]?year|annualised|annualized)\s+(?:run[- ]?rate|guidance|target)/i, // PATCH 0713
 ];
 
 const isForwardLooking = (sentence: string): boolean => FORWARD_SIGNALS.some((re) => re.test(sentence));
