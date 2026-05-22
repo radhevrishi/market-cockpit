@@ -38,6 +38,11 @@ export const FILING_TYPE_WEIGHTS: Record<ConcallFilingType, number> = {
   INVESTOR_PRESENTATION: 0.65,   // bumped 0.45 → 0.65
   WEBCAST:               0.60,
   PRESS_RELEASE:         0.35,
+  // PATCH 0669 — Reg-30 / Reg-15 alpha categories. Carry intermediate weight
+  // because the subject line itself is high-quality evidence (order won,
+  // rating action) but no PDF text gets scored.
+  ORDER_RECEIPT:         0.55,
+  RATING_ACTION:         0.55,
 };
 
 // ─── Numeric anchor extractor ──────────────────────────────────────────────

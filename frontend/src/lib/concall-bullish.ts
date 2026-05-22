@@ -26,7 +26,12 @@ export type ConcallFilingType =
   | 'AUDIO_RECORDING'
   | 'RESULTS_PRESENTATION'
   | 'PRESS_RELEASE'
-  | 'WEBCAST';
+  | 'WEBCAST'
+  // PATCH 0669 — Reg-30 / Reg-15 alpha categories surfaced through
+  // dedicated pages (/order-book, /rating-actions). Previously dropped
+  // by classifyFiling so /order-book + /rating-actions had no data.
+  | 'ORDER_RECEIPT'
+  | 'RATING_ACTION';
 
 // PATCH 0406 — broadened patterns so capital-goods / industrial names whose
 // subject just says "Submission of Earnings Presentation" or "Q4 FY26
@@ -42,6 +47,13 @@ const RELEVANCE_PATTERNS: Array<{ type: ConcallFilingType; re: RegExp }> = [
   { type: 'AUDIO_RECORDING',       re: /audio\s+recording|audio\s+file\s+of|recording\s+of\s+the\s+(?:earnings|investor|analyst|conference)|audio[- ]recording/i },
   { type: 'WEBCAST',               re: /webcast|live\s+stream\s+of|live\s+webcast|web[- ]?cast/i },
   { type: 'PRESS_RELEASE',         re: /press\s+release.*(?:result|earnings|guidance|outlook|q[1-4]|quarter)|q[1-4]\s+(?:fy)?\s*\d{2,4}\s+press\s+release/i },
+  // PATCH 0669 — Reg-30 order receipts. Indian NSE/BSE filings use these
+  // canonical subject lines. Tier-1 PSU orders (HAL/BHEL/Indian Railways/
+  // NHAI/ISRO etc) consistently file under "Receipt of Order/LoA".
+  { type: 'ORDER_RECEIPT',         re: /receipt\s+of\s+order|letter\s+of\s+award|\bLoA\b|work\s+order|purchase\s+order|contract\s+award|order\s+received|bagged\s+(?:an?\s+)?order|wins?\s+(?:an?\s+)?order|secured\s+(?:an?\s+)?order|order\s+(?:intake|book\s+update|win)/i },
+  // PATCH 0669 — Reg-15 rating actions: ICRA/CRISIL/CARE/India Ratings/
+  // Fitch/Moody/S&P upgrade/downgrade/outlook revisions.
+  { type: 'RATING_ACTION',         re: /\b(?:ICRA|CRISIL|CARE\s+Ratings?|India\s+Ratings?|Fitch|Moody|Moody's|Standard\s*&?\s*Poor|S&P\s+Global)\b.{0,80}\b(?:rating|outlook|upgrade|downgrade|reaffirm|revised|assigned|withdrawn|placed|removed)|credit\s+rating\s+(?:action|update|revision)|rating\s+(?:downgrade|upgrade|action|change|placed\s+on)/i },
 ];
 
 export function classifyFiling(subject: string): ConcallFilingType | null {

@@ -59,18 +59,26 @@ const TIER1_PSU_PATTERNS: Array<{ rx: RegExp; name: string }> = [
   { rx: /\bNHAI\b/i,                            name: 'NHAI' },
 ];
 
+// PATCH 0669 — widened to match real NSE/BSE filing subjects and Indian
+// news headlines. Examples that need to pass:
+//   "Receipt of Order/Letter of Award"
+//   "Receipt of new order from BHEL"
+//   "Receipt of order from HAL worth Rs 250 Cr"
+//   "Disclosure under Regulation 30 - Receipt of Order"
+//   "Company wins large order from MoD"
 const ORDER_TRIGGER_PATTERNS = [
-  /receipt of order/i,
-  /receives? (an? )?order/i,
-  /letter of award/i,
+  /receipt\s+of\s+(?:[a-z\s]{0,20})?(?:order|letter\s+of\s+award|loa)/i,
+  /receives?\s+(?:an?\s+|the\s+|new\s+|a\s+large\s+)?order/i,
+  /letter\s+of\s+award/i,
   /\bLOA\b|\bLoA\b/,
-  /work order/i,
-  /purchase order/i,
-  /contract award/i,
-  /bagged (an? )?order/i,
-  /wins? (an? )?order/i,
-  /secured (an? )?order/i,
-  /Reg(?:ulation)?\s*30\s+(?:disclosure|filing)/i,
+  /\bwork\s+order\b/i,
+  /\bpurchase\s+order\b/i,
+  /contract\s+award/i,
+  /\bbagged?\s+(?:an?\s+|the\s+|new\s+|a\s+large\s+)?order/i,
+  /\bwins?\s+(?:an?\s+|the\s+|new\s+|a\s+large\s+)?order/i,
+  /\bsecured?\s+(?:an?\s+|the\s+|new\s+|a\s+large\s+)?order/i,
+  /\border\s+(?:intake|win|received|book\s+update)/i,
+  /Reg(?:ulation)?\s*30.{0,30}(?:disclosure|filing|order|loa|award)/i,
 ];
 
 /**

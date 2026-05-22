@@ -338,6 +338,11 @@ async function handleLiveFeed(req: NextRequest) {
     ANALYST_MEET: 3,
     AUDIO_RECORDING: 9,  // skip — no text
     WEBCAST: 9,          // skip — no text
+    // PATCH 0669 — Order receipts + rating actions get tier-2 priority so
+    // they pass through the filter but aren't pulled for PDF parsing (the
+    // subject line alone carries the signal for /order-book and /rating-actions).
+    ORDER_RECEIPT: 2,
+    RATING_ACTION: 2,
   };
 
   // PATCH 0412 — Look up cached scored payloads for every candidate.
