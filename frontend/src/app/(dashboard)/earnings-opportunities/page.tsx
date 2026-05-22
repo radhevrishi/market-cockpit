@@ -1009,21 +1009,38 @@ export default function EarningsOpportunitiesPage() {
     // PATCH 0447 — Bumped past-date staleTime to 30 days (effectively
     // permanent for the session). Past dates are immutable; revalidation
     // is pure noise.
-    staleTime: resolvedDateForGrading < todayIso ? 30 * 24 * 60 * 60_000 : 3 * 60_000,
-    refetchOnWindowFocus: resolvedDateForGrading >= todayIso,
-    refetchOnReconnect: resolvedDateForGrading >= todayIso,
-    refetchOnMount: resolvedDateForGrading >= todayIso,
+    // PATCH 0646 — REVERSE 0447. Past dates are NOT truly immutable — the
+    // Vercel cron backfills missing filings hours later. User opening
+    // yesterday's earnings was seeing the localStorage-cached payload
+    // forever, never picking up backfills. Fix:
+    //   * past-date staleTime 30d -> 60 min (still cached for fast hover,
+    //     but background-refetches once per hour)
+    //   * refetchOnMount: ALWAYS true (navigating to the page always
+    //     triggers a background re-fetch; localStorage initialData
+    //     keeps the UI populated during the refetch)
+    //   * refetchOnWindowFocus: ALWAYS true (tab returning to focus
+    //     re-checks for backfill)
+    staleTime: resolvedDateForGrading < todayIso ? 60 * 60_000 : 3 * 60_000,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    refetchOnMount: true,
     // PATCH 0362 — Auto-poll every 4 minutes when viewing today's date,
     // ONLY during Indian market hours (9 AM - 4 PM IST). This is the
     // key fix for 'always late' — user no longer has to manually refresh
-    // to catch freshly-filed results. Past dates never poll.
+    // to catch freshly-filed results.
+    // PATCH 0646 — also poll past dates within last 3 trading days every
+    // 10 min (backfill catch-up). Older than that, no poll (truly cold).
     refetchInterval: () => {
-      if (resolvedDateForGrading !== todayIso) return false;
-      // Indian market hours check (IST UTC+5:30)
       const now = new Date();
       const istHours = (now.getUTCHours() + 5.5) % 24;
-      const inMarketHours = istHours >= 9 && istHours <= 17;  // 9 AM - 5 PM IST
-      return inMarketHours ? 4 * 60_000 : false;
+      const inMarketHours = istHours >= 9 && istHours <= 17;
+      if (resolvedDateForGrading === todayIso) {
+        return inMarketHours ? 4 * 60_000 : false;
+      }
+      // Past date — check if it's within last 3 days
+      const daysOld = (Date.parse(todayIso) - Date.parse(resolvedDateForGrading)) / (1000 * 60 * 60 * 24);
+      if (daysOld > 0 && daysOld <= 3) return 10 * 60_000;
+      return false;
     },
     placeholderData: (prev) => prev,  // keep showing previous date while next loads
     // Hydrate from localStorage so the screen never goes blank on navigation
