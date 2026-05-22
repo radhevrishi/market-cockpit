@@ -345,21 +345,29 @@ async function extractExcelFinancials(file: File): Promise<ExcelFinancials | nul
   }
 
   // PATCH 0665 — Sanity check: PAT margin can't exceed EBITDA margin.
-  // If our computed OPM is BELOW PAT margin, the OP row is almost certainly
-  // mis-parsed (maybe finding "EBIT" or "Net Operating Income" instead of
-  // proper Operating Profit). In that case, infer EBITDA margin from
-  // PAT margin × typical conversion (1.6× for industrials, capping at 35%).
+  // PATCH 0666 — Tightened threshold to 1.3× PAT margin. For industrial /
+  // manufacturing names, EBITDA margin is structurally ≥1.3× PAT margin
+  // because depreciation + interest + tax sum to typically 30%+ of EBITDA.
+  // If our parsed OPM is closer than that, the OP row is mis-mapped (maybe
+  // pointing at EBIT or some sub-component instead of true EBITDA). In that
+  // case, infer EBITDA margin from PAT × 1.6 conversion. Also override
+  // fin.latestEBITDA so the downstream EBITDA→PAT conversion uses sensible
+  // numbers (otherwise conv = latestPAT/badEBITDA = ~1.0, breaking PAT scaling).
   const latestPATForCheck = pat5[pat5.length - 1];
   const latestSalesForCheck = sales5[sales5.length - 1];
   if (latestPATForCheck && latestSalesForCheck && latestSalesForCheck > 0) {
     const patMargin = (latestPATForCheck / latestSalesForCheck) * 100;
-    if (fin.opmLatest !== undefined && fin.opmLatest < patMargin) {
-      // OP row is broken. Infer EBITDA margin: PAT × ~1.6x conversion is a
-      // reasonable rule of thumb for industrial / manufacturing names.
+    const requiredMinOPM = patMargin * 1.3;
+    if (fin.opmLatest !== undefined && fin.opmLatest < requiredMinOPM) {
+      // OP row appears mis-mapped. Infer EBITDA margin: PAT × ~1.6x
+      // conversion is the industrial standard.
       const inferredOpm = Math.min(patMargin * 1.6, 35);
       fin.opmLatest = inferredOpm;
       fin.opmMedian3y = inferredOpm;
       fin.opmAvg = inferredOpm;
+      // Override latestEBITDA to match inferred margin so the downstream
+      // PAT-conversion math doesn't keep using the broken parsed value.
+      fin.latestEBITDA = latestSalesForCheck * (inferredOpm / 100);
     }
   }
   // PATCH 0641 — proper EBITDA = Operating Profit + Depreciation (when both present).
