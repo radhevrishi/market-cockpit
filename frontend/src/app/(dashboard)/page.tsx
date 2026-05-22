@@ -509,11 +509,19 @@ export default function HomeDashboard() {
       });
 
       // PATCH 0621 — Strategic Visibility latest transformational news.
-      safeDiag<any>(`/api/v1/news?transformational=1&window_days=365&limit=8&_=${Date.now()}`, 18_000).then(({ data: j }) => {
+      // PATCH 0644 — bump timeout 18s -> 25s; retry once on first failure.
+      const fetchStratVis = async (attempt: number = 0): Promise<void> => {
+        const { data: j } = await safeDiag<any>(`/api/v1/news?transformational=1&window_days=365&limit=8&_=${Date.now()}`, 25_000);
         if (cancelled) return;
         const articles = (j?.articles || j?.items || []).slice(0, 6);
+        if (articles.length === 0 && attempt < 1) {
+          // Retry once after 1.5s (handles Vercel cold-start race)
+          setTimeout(() => { if (!cancelled) fetchStratVis(attempt + 1); }, 1500);
+          return;
+        }
         setData((d) => ({ ...d, stratVis: articles } as any));
-      });
+      };
+      fetchStratVis(0);
 
       // PATCH 0621 — Top 5 movers + losers (India).
       safeDiag<any>(`/api/market/quotes?market=india&_=${Date.now()}`, 18_000).then(({ data: j }) => {
@@ -1432,7 +1440,12 @@ export default function HomeDashboard() {
             {!data.stratVis ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
             ) : data.stratVis.length === 0 ? (
-              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>No transformational news in window.</div>
+              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic', lineHeight: 1.5 }}>
+                No transformational news in window. Backend may have cold-started.
+                <button onClick={() => window.location.reload()} style={{ marginLeft: 8, fontSize: 10, padding: '3px 9px', background: 'transparent', border: '1px solid #22D3EE60', color: '#22D3EE', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}>
+                  🔄 RETRY
+                </button>
+              </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 {data.stratVis.slice(0, 5).map((s: any, i: number) => {
