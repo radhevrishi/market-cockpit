@@ -1,5 +1,4 @@
 {
-  "_comment_p0703_disabled_crons": "concall-intel-warm + concall-intel-snapshot DISABLED until June 1 to escape free-tier Fluid CPU overage. Live-feed KV TTL was bumped from 2-10min to 30-60min so users hit cache anyway. To re-enable later, add { 'path': '/api/v1/cron/concall-intel-warm', 'schedule': '30 3 * * 1' } (Mondays only).",
   "crons": [
     {
       "path": "/api/bot/movers-alert?mode=full",
