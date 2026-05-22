@@ -27,6 +27,11 @@ export default function InlineValuationPanel() {
   const [docs, setDocs] = useState<ParsedDoc[]>([]);
   const [report, setReport] = useState<AutoValuationReport | null>(null);
   const [building, setBuilding] = useState(false);
+  // PATCH 0689 — institutional bear/base/bull + FY27/FY28 toggles, mirroring
+  // the standalone /auto-valuation page. Default to BASE/Y1 so the panel
+  // matches the editorial report's central-case framing on first render.
+  const [scenario, setScenario] = useState<'BEAR' | 'BASE' | 'BULL'>('BASE');
+  const [year, setYear] = useState<'Y1' | 'Y2'>('Y1');
 
   const handleFiles = useCallback(async (files: FileList | File[] | null) => {
     if (!files || files.length === 0) return;
@@ -175,21 +180,77 @@ export default function InlineValuationPanel() {
             {report.rationale.slice(0, 5).map((r, i) => <li key={i}>{r}</li>)}
           </ul>
 
-          {/* Compact 3-card calc summary */}
+          {/* PATCH 0689 — Year + Scenario toggles */}
+          {(() => {
+            const hasY2 = !!(report.peResultY2 || report.psResultY2 || report.evResultY2);
+            const yearLabel = (yr: 'Y1' | 'Y2') => {
+              if (yr === 'Y1') return report.forwardYear || 'FY27 · 18mo';
+              return report.forwardYearY2 || 'FY28 · 30mo';
+            };
+            return (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10, alignItems: 'center' }}>
+                <span style={{ fontSize: 10, color: DIM, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase' }}>Year</span>
+                {(['Y1', 'Y2'] as const).map((y) => {
+                  const active = year === y;
+                  const disabled = y === 'Y2' && !hasY2;
+                  return (
+                    <button
+                      key={y}
+                      disabled={disabled}
+                      onClick={() => setYear(y)}
+                      style={{
+                        padding: '4px 10px', fontSize: 11, fontWeight: 700,
+                        background: active ? '#22D3EE' : 'transparent',
+                        color: active ? '#0A0E1A' : (disabled ? DIM : TEXT),
+                        border: `1px solid ${active ? '#22D3EE' : BORDER}`,
+                        borderRadius: 4, cursor: disabled ? 'not-allowed' : 'pointer',
+                        opacity: disabled ? 0.4 : 1,
+                      }}
+                    >
+                      {yearLabel(y)}
+                    </button>
+                  );
+                })}
+                <span style={{ marginLeft: 14, fontSize: 10, color: DIM, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase' }}>Scenario</span>
+                {(['BEAR', 'BASE', 'BULL'] as const).map((s) => {
+                  const active = scenario === s;
+                  const c = s === 'BEAR' ? '#EF4444' : s === 'BASE' ? '#22D3EE' : '#10B981';
+                  return (
+                    <button
+                      key={s}
+                      onClick={() => setScenario(s)}
+                      style={{
+                        padding: '4px 10px', fontSize: 11, fontWeight: 700,
+                        background: active ? c : 'transparent',
+                        color: active ? '#0A0E1A' : TEXT,
+                        border: `1px solid ${active ? c : BORDER}`,
+                        borderRadius: 4, cursor: 'pointer',
+                      }}
+                    >
+                      {s}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })()}
+
+          {/* Compact 3-card calc summary — driven by scenario+year toggle */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 8 }}>
             {([
-              { label: 'P/E', result: report.peResult, conf: report.peConfidence },
-              { label: 'P/S', result: report.psResult, conf: report.psConfidence },
-              { label: 'EV/EBITDA', result: report.evResult, conf: report.evConfidence },
+              { label: 'P/E', y1: report.peResult, y2: report.peResultY2, conf: report.peConfidence },
+              { label: 'P/S', y1: report.psResult, y2: report.psResultY2, conf: report.psConfidence },
+              { label: 'EV/EBITDA', y1: report.evResult, y2: report.evResultY2, conf: report.evConfidence },
             ]).map((c, i) => {
-              const base = c.result?.cases.find((cc: any) => cc.label === 'BASE');
-              if (!base) return (
+              const result = year === 'Y2' ? (c.y2 || c.y1) : c.y1;
+              const cas = result?.cases.find((cc: any) => cc.label === scenario);
+              if (!cas) return (
                 <div key={i} style={{ padding: 10, background: BG, border: `1px solid ${BORDER}`, borderRadius: 4, opacity: 0.5 }}>
                   <div style={{ fontSize: 11, fontWeight: 800, color: DIM }}>{c.label}</div>
                   <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>insufficient data</div>
                 </div>
               );
-              const color = base.upsidePct >= 25 ? '#10B981' : base.upsidePct >= 0 ? '#22D3EE' : base.upsidePct >= -25 ? '#F59E0B' : '#EF4444';
+              const color = cas.upsidePct >= 25 ? '#10B981' : cas.upsidePct >= 0 ? '#22D3EE' : cas.upsidePct >= -25 ? '#F59E0B' : '#EF4444';
               return (
                 <div key={i} style={{ padding: 10, background: BG, border: `1px solid ${color}50`, borderRadius: 4 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
@@ -197,9 +258,9 @@ export default function InlineValuationPanel() {
                     {c.conf && <span style={{ fontSize: 9, color, fontWeight: 800 }}>{c.conf}</span>}
                   </div>
                   <div style={{ fontSize: 14, fontWeight: 800, color: TEXT, marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>
-                    ₹{Math.round(base.marketCapCr).toLocaleString('en-IN')} Cr
+                    ₹{Math.round(cas.marketCapCr).toLocaleString('en-IN')} Cr
                   </div>
-                  <div style={{ fontSize: 11, color, fontWeight: 700 }}>{base.upsidePct >= 0 ? '+' : ''}{base.upsidePct.toFixed(0)}% upside</div>
+                  <div style={{ fontSize: 11, color, fontWeight: 700 }}>{cas.upsidePct >= 0 ? '+' : ''}{cas.upsidePct.toFixed(0)}% upside</div>
                 </div>
               );
             })}
