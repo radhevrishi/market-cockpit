@@ -27,7 +27,7 @@ const BORDER = '#1A2540';
 const TEXT = '#E6EDF3';
 const DIM = '#8A95A3';
 
-type CalcKind = 'PS' | 'PE' | 'EV_EBITDA' | 'ANALYTICS' | 'LEARN';
+type CalcKind = 'PS' | 'PE' | 'EV_EBITDA' | 'MORE' | 'ANALYTICS' | 'LEARN';
 
 // PATCH 0633 — save-valuation button shown above result cards
 function SaveValuationBar({ calcKind, result, onLoaded }: {
@@ -630,6 +630,11 @@ function PSCalculator() {
         // doesn't drift when user manually overrides market cap later.
         if (q.sharesOutstandingCr) setShares(q.sharesOutstandingCr);
       }} />
+      {/* PATCH 0673 — what-to-enter hint */}
+      <div style={{ marginBottom: 10, padding: '8px 12px', background: '#1A2540', borderLeft: '3px solid #22D3EE', borderRadius: 3, fontSize: 11.5, color: TEXT, lineHeight: 1.55 }}>
+        <div><strong style={{ color: '#22D3EE' }}>What to enter:</strong> Forward revenue (₹ Cr) from management guidance or your own projection. Bear/Base/Bull P/S multiples — Base should be the stock's 5-yr median P/S (Screener shows this), not sector average.</div>
+        <div style={{ marginTop: 4 }}><strong style={{ color: '#F59E0B' }}>Tip:</strong> Best for SaaS, growth, capex-heavy names where PAT is volatile but topline visibility is clean. Don't use for cyclicals at peak revenue (multiple compresses).</div>
+      </div>
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 11, color: DIM, alignSelf: 'center', marginRight: 4, fontWeight: 700 }}>EXAMPLES</span>
         <button onClick={() => loadExample('rubicon')} style={chipBtn('#22D3EE')}>Rubicon Research</button>
@@ -717,6 +722,11 @@ function PECalculator() {
         // doesn't drift when user manually overrides market cap later.
         if (q.sharesOutstandingCr) setShares(q.sharesOutstandingCr);
       }} />
+      {/* PATCH 0673 — what-to-enter hint */}
+      <div style={{ marginBottom: 10, padding: '8px 12px', background: '#1A2540', borderLeft: '3px solid #22D3EE', borderRadius: 3, fontSize: 11.5, color: TEXT, lineHeight: 1.55 }}>
+        <div><strong style={{ color: '#22D3EE' }}>What to enter:</strong> Forward PAT (₹ Cr) from concall guidance or Bloomberg consensus. Bear/Base/Bull P/E — Base should be the stock&apos;s 5-yr trailing median P/E (Screener → Stock → &ldquo;Median PE&rdquo;), not sector average.</div>
+        <div style={{ marginTop: 4 }}><strong style={{ color: '#F59E0B' }}>Tip:</strong> Best for FMCG, quality compounders, financials. Don't use for capex-heavy capital goods (PAT lags), pre-revenue tech (no earnings), or cyclicals at trough (PAT mis-states earning power).</div>
+      </div>
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 11, color: DIM, alignSelf: 'center', marginRight: 4, fontWeight: 700 }}>EXAMPLES</span>
         <button onClick={() => loadExample('bajajConsumer')} style={chipBtn('#22D3EE')}>Bajaj Consumer</button>
@@ -799,8 +809,10 @@ function EvEbitdaCalculator() {
         // doesn't drift when user manually overrides market cap later.
         if (q.sharesOutstandingCr) setShares(q.sharesOutstandingCr);
       }} />
-      <div style={{ marginBottom: 14, fontSize: 11, color: DIM, fontStyle: 'italic' }}>
-        EV/EBITDA best for cyclicals, industrials, leveraged businesses. Always subtract net debt to get equity value.
+      {/* PATCH 0673 — what-to-enter hint */}
+      <div style={{ marginBottom: 10, padding: '8px 12px', background: '#1A2540', borderLeft: '3px solid #22D3EE', borderRadius: 3, fontSize: 11.5, color: TEXT, lineHeight: 1.55 }}>
+        <div><strong style={{ color: '#22D3EE' }}>What to enter:</strong> Forward EBITDA (₹ Cr) from guidance — usually mgmt gives margin %, multiply by forward revenue. Net Debt = Total Debt − Cash (from balance sheet). Bear/Base/Bull multiple — Base = stock's 5-yr median EV/EBITDA.</div>
+        <div style={{ marginTop: 4 }}><strong style={{ color: '#F59E0B' }}>Tip:</strong> Best for cyclicals, industrials, leveraged businesses where PAT is distorted by depreciation/interest. Apply 12-18× for cyclicals, 18-25× for premium industrials, 25-35× for niche precision/chemistry premium names.</div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
@@ -1973,6 +1985,358 @@ function PracticeExampleCard({ ex }: { ex: PracticeExample }) {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// MORE METHODS TAB (PATCH 0673)
+//
+// 6 additional valuation lenses bundled into one tab so the top bar stays
+// institutional. Each calculator: name + emoji + WHAT-TO-ENTER guide +
+// TIP + inputs (no bear/base/bull bands here — these are simpler single-
+// scenario sanity checks). Output: fair value or upside %.
+//
+// Methods covered:
+//   1. DCF (simple 3-stage)   — for compounders / cash-flow stories
+//   2. PEG Ratio               — P/E ÷ growth; <1 = cheap, >2 = expensive
+//   3. P/B (Price-to-Book)     — for banks / financials / asset-heavy
+//   4. FCF Yield               — for mature cash-flow names
+//   5. Sum-of-Parts (SoP)      — for conglomerates (HFCL / Reliance style)
+//   6. Dividend Discount       — Gordon Growth, for dividend yielders
+// ═══════════════════════════════════════════════════════════════════════════
+
+function MethodSection({
+  emoji, title, whatToEnter, tip, children,
+}: {
+  emoji: string; title: string; whatToEnter: string; tip: string; children: React.ReactNode;
+}) {
+  return (
+    <div style={{ background: '#0D1426', border: `1px solid ${BORDER}`, borderRadius: 8, padding: '16px 18px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+        <span style={{ fontSize: 22 }}>{emoji}</span>
+        <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: TEXT }}>{title}</h3>
+      </div>
+      <div style={{ marginBottom: 10, padding: '8px 12px', background: '#1A2540', borderLeft: '3px solid #22D3EE', borderRadius: 3, fontSize: 11.5, color: TEXT, lineHeight: 1.55 }}>
+        <div><strong style={{ color: '#22D3EE' }}>What to enter:</strong> {whatToEnter}</div>
+        <div style={{ marginTop: 4 }}><strong style={{ color: '#F59E0B' }}>Tip:</strong> {tip}</div>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function DCFCalculator() {
+  const [fcf, setFcf] = useState(100);
+  const [growth, setGrowth] = useState(15);
+  const [terminalGrowth, setTerminalGrowth] = useState(4);
+  const [discount, setDiscount] = useState(12);
+  const [years, setYears] = useState(5);
+  const [shares, setShares] = useState(10);
+  const [mcap, setMcap] = useState(2000);
+
+  const result = useMemo(() => {
+    // 3-stage DCF: high growth N years, then terminal Gordon.
+    if (discount <= terminalGrowth) return { fairMcap: 0, perShare: 0, upside: 0, terminalPv: 0, explicitPv: 0 };
+    let explicitPv = 0;
+    let lastFcf = fcf;
+    for (let t = 1; t <= years; t++) {
+      lastFcf = lastFcf * (1 + growth / 100);
+      explicitPv += lastFcf / Math.pow(1 + discount / 100, t);
+    }
+    const tFcf = lastFcf * (1 + terminalGrowth / 100);
+    const terminalValue = tFcf / ((discount - terminalGrowth) / 100);
+    const terminalPv = terminalValue / Math.pow(1 + discount / 100, years);
+    const fairMcap = explicitPv + terminalPv;
+    const perShare = shares > 0 ? fairMcap / shares : 0;
+    const upside = mcap > 0 ? (fairMcap / mcap - 1) * 100 : 0;
+    return { fairMcap, perShare, upside, terminalPv, explicitPv };
+  }, [fcf, growth, terminalGrowth, discount, years, shares, mcap]);
+
+  return (
+    <MethodSection
+      emoji="💸"
+      title="DCF — Discounted Cash Flow (3-stage)"
+      whatToEnter="Current annual Free Cash Flow (FCF) in ₹ Cr, expected growth % for the explicit period (3-7 years typical), terminal growth (2-5% — long-run inflation+real growth), and discount rate (10-14% for India; higher for risky names)."
+      tip="Most fragile to discount rate — small change collapses or explodes the terminal value. Cross-check with sector EV/EBITDA. Terminal value usually drives 60-80% of total DCF — be conservative on terminal growth."
+    >
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12, marginBottom: 14 }}>
+        <NumberInput label="Current FCF" value={fcf} onChange={setFcf} suffix="₹ Cr" />
+        <NumberInput label="Growth % (explicit)" value={growth} onChange={setGrowth} suffix="%" />
+        <NumberInput label="Years (N)" value={years} onChange={setYears} suffix="yr" />
+        <NumberInput label="Terminal Growth %" value={terminalGrowth} onChange={setTerminalGrowth} suffix="%" />
+        <NumberInput label="Discount Rate %" value={discount} onChange={setDiscount} suffix="%" />
+        <NumberInput label="Shares Outstanding" value={shares} onChange={setShares} suffix="Cr" />
+        <NumberInput label="Current Market Cap" value={mcap} onChange={setMcap} suffix="₹ Cr" />
+      </div>
+      <div style={{ padding: '12px 14px', background: '#10B98115', border: '1px solid #10B98140', borderRadius: 4 }}>
+        <div style={{ fontSize: 11, color: '#10B981', fontWeight: 800, marginBottom: 4 }}>
+          FAIR VALUE → ₹{Math.round(result.fairMcap).toLocaleString('en-IN')} Cr
+          {' '}(₹{Math.round(result.perShare).toLocaleString('en-IN')}/share)
+        </div>
+        <div style={{ fontSize: 12, color: result.upside >= 0 ? '#10B981' : '#EF4444', fontWeight: 700 }}>
+          Upside: {result.upside >= 0 ? '+' : ''}{result.upside.toFixed(0)}%
+        </div>
+        <div style={{ marginTop: 6, fontSize: 10, color: DIM }}>
+          Explicit period PV: ₹{Math.round(result.explicitPv).toLocaleString('en-IN')} Cr ·{' '}
+          Terminal PV: ₹{Math.round(result.terminalPv).toLocaleString('en-IN')} Cr{' '}
+          ({result.fairMcap > 0 ? Math.round(result.terminalPv / result.fairMcap * 100) : 0}% of fair value)
+        </div>
+      </div>
+    </MethodSection>
+  );
+}
+
+function PEGCalculator() {
+  const [pe, setPe] = useState(40);
+  const [growth, setGrowth] = useState(25);
+
+  const peg = growth > 0 ? pe / growth : 0;
+  const verdict =
+    peg === 0 ? { color: DIM, label: 'Enter growth %' }
+      : peg < 1 ? { color: '#10B981', label: 'CHEAP — PEG < 1.0' }
+        : peg < 1.5 ? { color: '#22D3EE', label: 'FAIR — PEG 1.0-1.5' }
+          : peg < 2 ? { color: '#F59E0B', label: 'STRETCH — PEG 1.5-2.0' }
+            : { color: '#EF4444', label: 'EXPENSIVE — PEG > 2.0' };
+
+  return (
+    <MethodSection
+      emoji="⚖️"
+      title="PEG — P/E to Growth Ratio (Peter Lynch)"
+      whatToEnter="Forward P/E multiple (or trailing, but forward is cleaner) and the expected earnings growth rate over the next 3-5 years."
+      tip="Lynch's rule: PEG below 1.0 = cheap, above 2.0 = expensive. Works for growth stocks; useless for cyclicals or value names. Always use sustainable growth — one big year doesn't count."
+    >
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12, marginBottom: 14 }}>
+        <NumberInput label="P/E (forward)" value={pe} onChange={setPe} suffix="x" />
+        <NumberInput label="Earnings Growth" value={growth} onChange={setGrowth} suffix="%" />
+      </div>
+      <div style={{ padding: '12px 14px', background: `${verdict.color}15`, border: `1px solid ${verdict.color}40`, borderRadius: 4 }}>
+        <div style={{ fontSize: 11, color: verdict.color, fontWeight: 800, marginBottom: 4 }}>PEG = {peg.toFixed(2)}</div>
+        <div style={{ fontSize: 12, color: TEXT, fontWeight: 700 }}>{verdict.label}</div>
+      </div>
+    </MethodSection>
+  );
+}
+
+function PBCalculator() {
+  const [bvps, setBvps] = useState(120);
+  const [bearPB, setBearPB] = useState(1.5);
+  const [basePB, setBasePB] = useState(2.5);
+  const [bullPB, setBullPB] = useState(3.5);
+  const [shares, setShares] = useState(10);
+  const [mcap, setMcap] = useState(3000);
+
+  const totalBook = bvps * shares;
+  const bear = totalBook * bearPB;
+  const base = totalBook * basePB;
+  const bull = totalBook * bullPB;
+  const upsideBase = mcap > 0 ? (base / mcap - 1) * 100 : 0;
+
+  return (
+    <MethodSection
+      emoji="🏦"
+      title="P/B — Price-to-Book Value"
+      whatToEnter="Book value per share (₹) — find on Screener under 'Book Value'. Multiple bands: typical range for the sector (banks 1-3×, NBFCs 1.5-4×, asset-heavy 0.5-1.5×). Shares outstanding and current market cap."
+      tip="Use ONLY for: banks, NBFCs, insurers, REITs, and asset-heavy businesses (steel, ships). For software, FMCG, pharma — P/B is irrelevant. Always pair with ROE: P/B 2× at ROE 18% = fair; P/B 2× at ROE 8% = expensive."
+    >
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12, marginBottom: 14 }}>
+        <NumberInput label="Book Value / Share" value={bvps} onChange={setBvps} suffix="₹" />
+        <NumberInput label="Shares Outstanding" value={shares} onChange={setShares} suffix="Cr" />
+        <NumberInput label="Bear P/B" value={bearPB} onChange={setBearPB} suffix="x" />
+        <NumberInput label="Base P/B" value={basePB} onChange={setBasePB} suffix="x" />
+        <NumberInput label="Bull P/B" value={bullPB} onChange={setBullPB} suffix="x" />
+        <NumberInput label="Current Market Cap" value={mcap} onChange={setMcap} suffix="₹ Cr" />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+        {[
+          { label: 'BEAR', val: bear, color: '#EF4444' },
+          { label: 'BASE', val: base, color: '#22D3EE' },
+          { label: 'BULL', val: bull, color: '#10B981' },
+        ].map((c) => (
+          <div key={c.label} style={{ padding: '10px 12px', background: '#0A1422', border: `1px solid ${c.color}50`, borderRadius: 4 }}>
+            <div style={{ fontSize: 9, color: c.color, fontWeight: 800, letterSpacing: '1px' }}>{c.label}</div>
+            <div style={{ fontSize: 13, color: TEXT, fontWeight: 800, fontVariantNumeric: 'tabular-nums', marginTop: 2 }}>
+              ₹{Math.round(c.val).toLocaleString('en-IN')} Cr
+            </div>
+            <div style={{ fontSize: 10, color: DIM, marginTop: 2 }}>
+              {mcap > 0 ? ((c.val / mcap - 1) * 100).toFixed(0) + '%' : '—'} vs current
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{ marginTop: 8, fontSize: 11, color: DIM }}>
+        Base case = book value ₹{Math.round(totalBook).toLocaleString('en-IN')} Cr × {basePB}× → ₹{Math.round(base).toLocaleString('en-IN')} Cr → {upsideBase >= 0 ? '+' : ''}{upsideBase.toFixed(0)}%
+      </div>
+    </MethodSection>
+  );
+}
+
+function FCFYieldCalculator() {
+  const [fcf, setFcf] = useState(150);
+  const [mcap, setMcap] = useState(3000);
+  const [riskFree, setRiskFree] = useState(7);
+
+  const yieldPct = mcap > 0 ? (fcf / mcap) * 100 : 0;
+  const spread = yieldPct - riskFree;
+  const verdict =
+    yieldPct === 0 ? { color: DIM, label: 'Enter inputs' }
+      : spread > 3 ? { color: '#10B981', label: 'CHEAP — >3% over risk-free' }
+        : spread > 0 ? { color: '#22D3EE', label: 'FAIR — slight premium to govt bond' }
+          : spread > -3 ? { color: '#F59E0B', label: 'EXPENSIVE — yields less than govt bond' }
+            : { color: '#EF4444', label: 'VERY EXPENSIVE — equity should pay risk premium' };
+
+  return (
+    <MethodSection
+      emoji="💵"
+      title="FCF Yield (Free Cash Flow Yield)"
+      whatToEnter="Trailing 12-month Free Cash Flow (FCF = CFO − Capex) in ₹ Cr, current market cap, and 10-yr government bond yield (currently ~7% in India)."
+      tip="For mature cash-cow businesses (FMCG, IT, dividend payers). FCF Yield should beat the risk-free rate by 2-4% to compensate for equity risk. Don't use for high-capex names where FCF is volatile."
+    >
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12, marginBottom: 14 }}>
+        <NumberInput label="TTM Free Cash Flow" value={fcf} onChange={setFcf} suffix="₹ Cr" />
+        <NumberInput label="Current Market Cap" value={mcap} onChange={setMcap} suffix="₹ Cr" />
+        <NumberInput label="10yr Govt Bond Yield" value={riskFree} onChange={setRiskFree} suffix="%" />
+      </div>
+      <div style={{ padding: '12px 14px', background: `${verdict.color}15`, border: `1px solid ${verdict.color}40`, borderRadius: 4 }}>
+        <div style={{ fontSize: 11, color: verdict.color, fontWeight: 800, marginBottom: 4 }}>
+          FCF Yield = {yieldPct.toFixed(2)}% · Spread over bond = {spread >= 0 ? '+' : ''}{spread.toFixed(2)}%
+        </div>
+        <div style={{ fontSize: 12, color: TEXT, fontWeight: 700 }}>{verdict.label}</div>
+      </div>
+    </MethodSection>
+  );
+}
+
+function SumOfPartsCalculator() {
+  const [s1Name, setS1Name] = useState('Segment A');
+  const [s1Rev, setS1Rev] = useState(2400);
+  const [s1Mult, setS1Mult] = useState(3);
+  const [s2Name, setS2Name] = useState('Segment B');
+  const [s2Rev, setS2Rev] = useState(500);
+  const [s2Mult, setS2Mult] = useState(8);
+  const [s3Name, setS3Name] = useState('Other');
+  const [s3Rev, setS3Rev] = useState(1000);
+  const [s3Mult, setS3Mult] = useState(2);
+  const [netDebt, setNetDebt] = useState(0);
+  const [discount, setDiscount] = useState(10);
+  const [mcap, setMcap] = useState(15000);
+
+  const s1Val = s1Rev * s1Mult;
+  const s2Val = s2Rev * s2Mult;
+  const s3Val = s3Rev * s3Mult;
+  const gross = s1Val + s2Val + s3Val;
+  const conglomDiscount = gross * (discount / 100);
+  const ev = gross - conglomDiscount;
+  const equity = ev - netDebt;
+  const upside = mcap > 0 ? (equity / mcap - 1) * 100 : 0;
+
+  return (
+    <MethodSection
+      emoji="🧩"
+      title="Sum-of-Parts (SoP) — Multi-segment Valuation"
+      whatToEnter="Each segment: name, forward revenue (₹ Cr), and sector-appropriate multiple. Plus net debt and a conglomerate discount (10% for 2 segments, 15% for 3+, 20% for unrelated)."
+      tip="Use when management gives separate guidance per segment (HFCL: OFC ₹3500 + Defence ₹500). High-multiple segment drives most of value — verify margin and growth there carefully. Don't sum-of-parts unrelated lines without applying conglomerate discount."
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 14 }}>
+        {[
+          { name: s1Name, setName: setS1Name, rev: s1Rev, setRev: setS1Rev, mult: s1Mult, setMult: setS1Mult, val: s1Val, color: '#22D3EE' },
+          { name: s2Name, setName: setS2Name, rev: s2Rev, setRev: setS2Rev, mult: s2Mult, setMult: setS2Mult, val: s2Val, color: '#A78BFA' },
+          { name: s3Name, setName: setS3Name, rev: s3Rev, setRev: setS3Rev, mult: s3Mult, setMult: setS3Mult, val: s3Val, color: '#F59E0B' },
+        ].map((s, i) => (
+          <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr auto', gap: 8, alignItems: 'center' }}>
+            <input type="text" value={s.name} onChange={(e) => s.setName(e.target.value)}
+              placeholder="Segment name"
+              style={{ background: '#0A1422', color: TEXT, border: `1px solid ${BORDER}`, padding: '7px 10px', borderRadius: 4, fontSize: 12 }} />
+            <NumberInput label="" value={s.rev} onChange={s.setRev} suffix="₹ Cr" />
+            <NumberInput label="" value={s.mult} onChange={s.setMult} suffix="x" />
+            <span style={{ fontSize: 12, color: s.color, fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 110, textAlign: 'right' }}>
+              ₹{Math.round(s.val).toLocaleString('en-IN')} Cr
+            </span>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12, marginBottom: 14 }}>
+        <NumberInput label="Net Debt" value={netDebt} onChange={setNetDebt} suffix="₹ Cr" />
+        <NumberInput label="Conglomerate Discount" value={discount} onChange={setDiscount} suffix="%" />
+        <NumberInput label="Current Market Cap" value={mcap} onChange={setMcap} suffix="₹ Cr" />
+      </div>
+      <div style={{ padding: '12px 14px', background: '#10B98115', border: '1px solid #10B98140', borderRadius: 4 }}>
+        <div style={{ fontSize: 11, color: '#10B981', fontWeight: 800, marginBottom: 4 }}>
+          Gross EV ₹{Math.round(gross).toLocaleString('en-IN')} − discount ₹{Math.round(conglomDiscount).toLocaleString('en-IN')} = EV ₹{Math.round(ev).toLocaleString('en-IN')} Cr
+        </div>
+        <div style={{ fontSize: 11, color: '#10B981', fontWeight: 800, marginBottom: 4 }}>
+          Equity = ₹{Math.round(equity).toLocaleString('en-IN')} Cr (after net debt)
+        </div>
+        <div style={{ fontSize: 12, color: upside >= 0 ? '#10B981' : '#EF4444', fontWeight: 700 }}>
+          Upside: {upside >= 0 ? '+' : ''}{upside.toFixed(0)}%
+        </div>
+      </div>
+    </MethodSection>
+  );
+}
+
+function DividendDiscountCalculator() {
+  const [dps, setDps] = useState(40);
+  const [growth, setGrowth] = useState(8);
+  const [requiredReturn, setRequiredReturn] = useState(12);
+  const [currentPrice, setCurrentPrice] = useState(500);
+
+  const fairPrice =
+    requiredReturn > growth
+      ? (dps * (1 + growth / 100)) / ((requiredReturn - growth) / 100)
+      : 0;
+  const upside = currentPrice > 0 ? (fairPrice / currentPrice - 1) * 100 : 0;
+  const yieldPct = currentPrice > 0 ? (dps / currentPrice) * 100 : 0;
+
+  return (
+    <MethodSection
+      emoji="💰"
+      title="Dividend Discount Model (Gordon Growth)"
+      whatToEnter="Current dividend per share (₹), expected dividend growth rate (sustainable, usually 5-12%), and your required rate of return (10-15% for equity)."
+      tip="ONLY use for steady dividend-paying names (utilities, FMCG dividend kings, ITC, ONGC, mature IT). Useless for high-growth / no-dividend stocks. Required return must exceed growth or the model breaks."
+    >
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12, marginBottom: 14 }}>
+        <NumberInput label="Dividend / Share (TTM)" value={dps} onChange={setDps} suffix="₹" />
+        <NumberInput label="Expected Growth" value={growth} onChange={setGrowth} suffix="%" />
+        <NumberInput label="Required Return" value={requiredReturn} onChange={setRequiredReturn} suffix="%" />
+        <NumberInput label="Current Share Price" value={currentPrice} onChange={setCurrentPrice} suffix="₹" />
+      </div>
+      {fairPrice === 0 ? (
+        <div style={{ padding: '12px 14px', background: '#EF444415', border: '1px solid #EF444440', borderRadius: 4, fontSize: 12, color: '#EF4444' }}>
+          ⚠ Required return ({requiredReturn}%) must exceed growth ({growth}%) for Gordon Growth to converge.
+        </div>
+      ) : (
+        <div style={{ padding: '12px 14px', background: '#10B98115', border: '1px solid #10B98140', borderRadius: 4 }}>
+          <div style={{ fontSize: 11, color: '#10B981', fontWeight: 800, marginBottom: 4 }}>
+            Fair Value ₹{Math.round(fairPrice).toLocaleString('en-IN')}/share · Current yield {yieldPct.toFixed(2)}%
+          </div>
+          <div style={{ fontSize: 12, color: upside >= 0 ? '#10B981' : '#EF4444', fontWeight: 700 }}>
+            Upside: {upside >= 0 ? '+' : ''}{upside.toFixed(0)}%
+          </div>
+        </div>
+      )}
+    </MethodSection>
+  );
+}
+
+function MoreMethodsTab() {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div>
+        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: TEXT }}>🧬 More Valuation Methods</h2>
+        <div style={{ marginTop: 6, fontSize: 12.5, color: DIM, lineHeight: 1.55 }}>
+          Six additional lenses — DCF, PEG, P/B, FCF Yield, Sum-of-Parts, Dividend Discount.
+          Each one has a "what to enter" guide and a tip. Use the right method for the right
+          business: DCF for compounders, PEG for growth, P/B for banks, FCF Yield for mature
+          cash-cows, SoP for conglomerates, DDM for dividend yielders.
+        </div>
+      </div>
+      <DCFCalculator />
+      <PEGCalculator />
+      <PBCalculator />
+      <FCFYieldCalculator />
+      <SumOfPartsCalculator />
+      <DividendDiscountCalculator />
+    </div>
+  );
+}
+
 function LearnTab() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -2083,6 +2447,7 @@ export default function ValuationCalcPage() {
             { id: 'PE',         label: 'P/E Target',        emoji: '📈' },
             { id: 'PS',         label: 'P/S Target',        emoji: '💰' },
             { id: 'EV_EBITDA',  label: 'EV / EBITDA',       emoji: '🏭' },
+            { id: 'MORE',       label: 'More Methods',      emoji: '🧬' },
             { id: 'ANALYTICS',  label: 'Analytics',         emoji: '📊' },
             { id: 'LEARN',      label: 'Learn',             emoji: '📚' },
           ] as const).map((t) => (
@@ -2104,6 +2469,7 @@ export default function ValuationCalcPage() {
           {tab === 'PS' && <PSCalculator />}
           {tab === 'PE' && <PECalculator />}
           {tab === 'EV_EBITDA' && <EvEbitdaCalculator />}
+          {tab === 'MORE' && <MoreMethodsTab />}
           {tab === 'ANALYTICS' && <ValuationAnalyticsPanel />}
           {tab === 'LEARN' && <LearnTab />}
         </div>
