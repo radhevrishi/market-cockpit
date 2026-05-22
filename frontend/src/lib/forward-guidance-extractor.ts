@@ -20,7 +20,11 @@
 //   EBITDA_GROWTH    — explicit "EBITDA growth X%" guidance (Pattern #08)
 //   MARGIN_BPS       — basis-point margin expansion (Pattern #07)
 //   PEAK_REVENUE     — terminal/peak-capacity revenue (Pattern #09)
-export type GuidanceMetric = 'REVENUE' | 'EBITDA' | 'PAT' | 'EBITDA_MARGIN' | 'PAT_MARGIN' | 'OPM' | 'GROWTH' | 'CAPEX' | 'ORDER_BOOK' | 'CAGR' | 'EBITDA_GROWTH' | 'MARGIN_BPS' | 'PEAK_REVENUE';
+// PATCH 0700 — institutional vocabulary expansion. Adds 6 new metrics
+// covering realization/ASP, debt repayment, dividend payout, tax-rate
+// (incl. MAT credit), capacity-unit guidance, and working-capital-day
+// guidance.
+export type GuidanceMetric = 'REVENUE' | 'EBITDA' | 'PAT' | 'EBITDA_MARGIN' | 'PAT_MARGIN' | 'OPM' | 'GROWTH' | 'CAPEX' | 'ORDER_BOOK' | 'CAGR' | 'EBITDA_GROWTH' | 'MARGIN_BPS' | 'PEAK_REVENUE' | 'ASP' | 'DEBT_REPAYMENT' | 'DIVIDEND_PAYOUT' | 'TAX_RATE' | 'CAPACITY_UNITS' | 'WC_DAYS';
 
 export interface GuidanceItem {
   fiscalYear: string;            // 'FY27' / 'FY28' / 'Q4FY27'
@@ -88,6 +92,17 @@ const METRIC_PATTERNS: Array<{
   { metric: 'EBITDA_GROWTH',  unit: '%',    keywords: /ebitda\s+growth/i },
   { metric: 'MARGIN_BPS',     unit: 'bps',  keywords: /(?:margin\s+(?:expansion|improvement|rise|increase)|(?:expand|improve|rise|increase)\s+(?:by\s+)?\d+[-\s]?\d*\s*bps|\d+[-\s]?\d*\s*bps\s+(?:expansion|improvement|of margin|rise|increase))/i },
   { metric: 'PEAK_REVENUE',   unit: '₹ Cr', keywords: /(?:peak\s+revenue|peak\s+sales|peak\s+turnover|at\s+(?:full|peak)\s+capacity|full[-\s]ramp\s+revenue)/i },
+  // PATCH 0700 — institutional vocabulary expansion. Order matters:
+  // these compound / multi-word keywords must come BEFORE generic
+  // REVENUE / EBITDA so the keyword-containment dedup keeps the right
+  // one. WC_DAYS in particular ("DSO", "working capital days") must be
+  // resolved before any generic dollar-or-percent fallthrough.
+  { metric: 'ASP',            unit: '₹ Cr', keywords: /(?:ASP|average selling price|realiz?ation per (?:ton|tonne|unit|kg|litre|liter)|per[- ]?unit realiz?ation|blended realiz?ation)/i },
+  { metric: 'DEBT_REPAYMENT', unit: '₹ Cr', keywords: /(?:debt repayment|deleveraging|debt reduction|debt prepayment|peak debt|net debt\s+(?:reach|to|of|target|will\s+be))/i },
+  { metric: 'DIVIDEND_PAYOUT',unit: '%',    keywords: /(?:dividend payout|payout ratio|distribute\s+\d+\s*%\s+(?:of|as)\s+(?:profit|earnings|PAT))/i },
+  { metric: 'TAX_RATE',       unit: '%',    keywords: /(?:effective tax rate|ETR|tax payout|MAT (?:credit|utili[sz]ation)|tax rate (?:of|guidance|stood|will\s+be))/i },
+  { metric: 'CAPACITY_UNITS', unit: 'units',keywords: /(?:capacity|installed capacity|production capacity|nameplate capacity).{0,40}(?:reach|expand|increase|scale|stood\s+at|will\s+be|target|guidance|of).{0,60}(?:units?|tonnes?|tons?|skids?|MW|GW|MTPA|KTPA|cases?|bottles?|litres?|liters?)/i },
+  { metric: 'WC_DAYS',        unit: 'days', keywords: /(?:working capital days|cash conversion cycle|CCC|DSO|debtor days|receivable days|inventory days|working capital cycle)/i },
   // Then standard metrics
   { metric: 'REVENUE',        unit: '₹ Cr', keywords: /(?:revenue|topline|sales|turnover|net sales|gross sales)/i },
   { metric: 'EBITDA',         unit: '₹ Cr', keywords: /(?:ebitda|operating profit)/i },
@@ -235,6 +250,11 @@ export function extractGuidance(text: string): GuidanceItem[] {
 
       const wantsPct = (pat.unit === '%');
       const wantsBps = (pat.unit === 'bps');
+      // PATCH 0700 — new units: 'units' (CAPACITY_UNITS) and 'days' (WC_DAYS).
+      // These have their own number-matchers below; they do NOT go through
+      // the ₹ Cr crore/lakh scaling chain.
+      const wantsUnits = (pat.unit === 'units');
+      const wantsDays  = (pat.unit === 'days');
 
       // Use SINGLE-MATCH regex (no /g) per pattern. First plausible match
       // in the clause wins — restores the pre-0654 behavior that worked
@@ -249,6 +269,12 @@ export function extractGuidance(text: string): GuidanceItem[] {
       // PATCH 0660 — bps detection for margin-improvement guidance
       const bpsRange = clause.match(/([\d,]+(?:\.\d+)?)\s*(?:bps|basis points?)?[^%\d]{0,30}?(?:to|[-–])\s*([\d,]+(?:\.\d+)?)\s*(?:bps|basis points?)/i);
       const bpsPoint = clause.match(/([\d,]+(?:\.\d+)?)\s*(?:bps|basis points?)/i);
+      // PATCH 0700 — unit-of-measure (skids/MW/tonnes/units) and day-count
+      // matchers for CAPACITY_UNITS / WC_DAYS guidance.
+      const unitsRange = clause.match(/([\d,]+(?:\.\d+)?)\s*(?:units?|tonnes?|tons?|skids?|MW|GW|MTPA|KTPA|cases?|bottles?|litres?|liters?)?\s*(?:to|[-–])\s*([\d,]+(?:\.\d+)?)\s*(?:units?|tonnes?|tons?|skids?|MW|GW|MTPA|KTPA|cases?|bottles?|litres?|liters?)/i);
+      const unitsPoint = clause.match(/([\d,]+(?:\.\d+)?)\s*(?:units?|tonnes?|tons?|skids?|MW|GW|MTPA|KTPA|cases?|bottles?|litres?|liters?)/i);
+      const daysRange  = clause.match(/([\d,]+(?:\.\d+)?)\s*(?:days?)?\s*(?:to|[-–])\s*([\d,]+(?:\.\d+)?)\s*days?\b/i);
+      const daysPoint  = clause.match(/([\d,]+(?:\.\d+)?)\s*days?\b/i);
 
       let rawMatch = '';
       let amounts: { low?: number; high?: number; point?: number } = {};
@@ -269,6 +295,25 @@ export function extractGuidance(text: string): GuidanceItem[] {
         } else if (pctPoint) {
           rawMatch = pctPoint[0];
           amounts = { point: parseFloat(pctPoint[1].replace(/,/g, '')) };
+        } else continue;
+      } else if (wantsDays) {
+        // PATCH 0700 — WC_DAYS: extract day-count guidance (DSO, CCC, WC days)
+        if (daysRange) {
+          rawMatch = daysRange[0];
+          amounts = { low: parseFloat(daysRange[1].replace(/,/g, '')), high: parseFloat(daysRange[2].replace(/,/g, '')) };
+        } else if (daysPoint) {
+          rawMatch = daysPoint[0];
+          amounts = { point: parseFloat(daysPoint[1].replace(/,/g, '')) };
+        } else continue;
+      } else if (wantsUnits) {
+        // PATCH 0700 — CAPACITY_UNITS: extract unit-count guidance
+        // (skids / MW / MTPA / tonnes / etc.)
+        if (unitsRange) {
+          rawMatch = unitsRange[0];
+          amounts = { low: parseFloat(unitsRange[1].replace(/,/g, '')), high: parseFloat(unitsRange[2].replace(/,/g, '')) };
+        } else if (unitsPoint) {
+          rawMatch = unitsPoint[0];
+          amounts = { point: parseFloat(unitsPoint[1].replace(/,/g, '')) };
         } else continue;
       } else {
         if (crRange) {
@@ -324,6 +369,19 @@ export function extractGuidance(text: string): GuidanceItem[] {
             return raw >= 10;  // Cr-denominated, minimum 10 Cr for any institutional guidance
           case 'PAT':
             return raw >= 1;
+          // PATCH 0700 — institutional vocabulary expansion sanity floors
+          case 'ASP':
+            return raw >= 1;                  // ₹ per unit; very wide range, just reject 0
+          case 'DEBT_REPAYMENT':
+            return raw >= 1;                  // ₹ Cr; allow small repayments
+          case 'DIVIDEND_PAYOUT':
+            return raw >= 1 && raw <= 100;    // % of profit
+          case 'TAX_RATE':
+            return raw >= 5 && raw <= 50;     // ETR rarely outside this band
+          case 'CAPACITY_UNITS':
+            return raw >= 1;                  // unit count — no upper bound
+          case 'WC_DAYS':
+            return raw >= 1 && raw <= 500;    // days
           default:
             return true;
         }
@@ -410,7 +468,11 @@ export function extractGuidance(text: string): GuidanceItem[] {
   //     prefer the LARGER value (institutional forward guidance is
   //     always the larger of any candidate numbers near the keyword).
   //   - For % metrics, prefer point over range (more specific number).
-  const crMetrics = new Set<GuidanceMetric>(['REVENUE', 'EBITDA', 'PAT', 'ORDER_BOOK', 'CAPEX', 'PEAK_REVENUE']);
+  // PATCH 0700 — DEBT_REPAYMENT joins the Cr-denominated dedupe set
+  // (prefer larger value at equal confidence). ASP stays out because
+  // ASP guidance is usually a small ₹/unit number where "larger wins"
+  // is the wrong heuristic.
+  const crMetrics = new Set<GuidanceMetric>(['REVENUE', 'EBITDA', 'PAT', 'ORDER_BOOK', 'CAPEX', 'PEAK_REVENUE', 'DEBT_REPAYMENT']);
   const seen = new Map<string, GuidanceItem>();
   for (const g of out) {
     const k = `${g.fiscalYear}|${g.metric}`;
@@ -454,6 +516,13 @@ export function metricLabel(m: GuidanceMetric): string {
     case 'EBITDA_GROWTH': return 'EBITDA Growth';
     case 'MARGIN_BPS': return 'Margin Expansion (bps)';
     case 'PEAK_REVENUE': return 'Peak Revenue';
+    // PATCH 0700 — institutional vocabulary expansion
+    case 'ASP': return 'ASP / Realization';
+    case 'DEBT_REPAYMENT': return 'Debt Repayment';
+    case 'DIVIDEND_PAYOUT': return 'Dividend Payout';
+    case 'TAX_RATE': return 'Effective Tax Rate';
+    case 'CAPACITY_UNITS': return 'Capacity (units)';
+    case 'WC_DAYS': return 'Working Capital Days';
   }
 }
 
@@ -463,8 +532,14 @@ export function metricColor(m: GuidanceMetric): string {
     case 'REVENUE': case 'GROWTH': case 'CAGR': return '#10B981';
     case 'EBITDA': case 'EBITDA_MARGIN': case 'OPM': case 'EBITDA_GROWTH': case 'MARGIN_BPS': return '#22D3EE';
     case 'PAT': case 'PAT_MARGIN': return '#A78BFA';
-    case 'CAPEX': return '#F59E0B';
+    case 'CAPEX': case 'CAPACITY_UNITS': return '#F59E0B';
     case 'ORDER_BOOK': case 'PEAK_REVENUE': return '#EF4444';
+    // PATCH 0700 — institutional vocabulary expansion
+    case 'ASP': return '#F472B6';            // pink — realisation/pricing
+    case 'DEBT_REPAYMENT': return '#FB923C'; // orange — balance-sheet
+    case 'DIVIDEND_PAYOUT': return '#FBBF24'; // amber — capital return
+    case 'TAX_RATE': return '#94A3B8';       // slate — accounting
+    case 'WC_DAYS': return '#FBBF24';        // amber — working capital
   }
 }
 

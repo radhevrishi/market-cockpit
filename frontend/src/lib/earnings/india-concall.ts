@@ -259,7 +259,11 @@ function isProceduralDisclosure(s: string): boolean {
 const NUMBER_RE = /\b\d+(?:\.\d+)?(?:\s*%|\s*bps|\s*bp|\s*x|\s*Cr|\s*crore|\s*Mn|\s*million|\s*billion|\s*Bn|\s*basis points)?\b/gi;
 const STRONG_VERBS = /\b(grew|grow(ing|s)?|expand(ed|ing|s)?|increase[sd]?|rose|jumped|surged|accelerat(ed|ing|es)?|outperform(ed|ing|s)?|improved|enhanced|optimized|streamlined|delivered|achiev(ed|ing|es)?|beat|exceeded|raised|lowered|reduced|declined|contracted|fell|dropped|missed|impact(ed|ing|s)?|pressured|softened|moderated)\b/gi;
 const FORWARD_WORDS = /\b(guidance|outlook|expect(s|ed|ing)?|forecast(ed|ing|s)?|target(ed|ing|s)?|plan(ned|ning|s)?|going forward|next quarter|next year|FY\s?\d{2,4}|H1|H2|Q[1-4])\b/gi;
-const TOPIC_WORDS = /\b(margin|EBITDA|operating profit|operating leverage|capex|capital expenditure|EPS|earnings|revenue|sales|volume|pricing|mix|new launch|new product|innovation|premium|rural|urban|distribution|reach|coverage|ad spend|A&P|R&D|gross margin|capacity|utilisation|utilization|inventory|working capital|debtor|receivable|payable|order book|backlog|attrition|hiring|deal pipeline|win rate|ARR|deal TCV|net adds|GMV|AUM|NIM|GNPA|slippage|provision|credit cost|book value|ROE|ROCE)\b/gi;
+// PATCH 0700 — widened topic vocabulary so the sentence-scorer rewards
+// institutional terms that an analyst expects to hear in every Indian
+// concall (operating leverage variants, GTM, channel mix, anti-dumping,
+// FX hedge, MAT credit, capex breakup, ASP, OEM/aftermarket etc.).
+const TOPIC_WORDS = /\b(margin|EBITDA|operating profit|operating leverage|fixed cost absorption|incremental margin|drop[- ]?through margin|capex|capital expenditure|capex intensity|capex\/sales|EPS|earnings|revenue|sales|volume|pricing|mix|new launch|new product|innovation|premium|rural|urban|distribution|reach|coverage|ad spend|A&P|R&D|gross margin|capacity|utilisation|utilization|inventory|working capital|debtor|receivable|payable|order book|backlog|attrition|hiring|deal pipeline|win rate|ARR|deal TCV|net adds|GMV|AUM|NIM|GNPA|slippage|provision|credit cost|book value|ROE|ROCE|ROCE bridge|asset turn(?:over)?|capital turnover|GTM|go[- ]to[- ]market|channel mix|online channel|modern trade|general trade|e[- ]commerce share|anti[- ]dumping|safeguard duty|import duty|FX hedge|forex hedge|natural hedge|hedge ratio|hedge cover|derivative MTM|MAT credit|MAT utilization|effective tax rate|ETR|deferred tax|ramp curve|ramp profile|ramp trajectory|dispatches|dispatch volume|realiz?ation|ASP|average selling price|value[- ]added mix|VAM|premium mix|specialty mix|customer concentration|vendor concentration|supplier concentration|greenfield|brownfield|growth capex|maintenance capex|expansion capex|debt refinancing|refinance|tenor extension|payout ratio|dividend policy|buyback|share repurchase|ESOP|share[- ]based payment|SBP|WC days|cash conversion cycle|CCC|DSO|inventory turn|debtor days|receivable days|collection period|peak debt|peak leverage|deleveraging|commissioning timeline|first commercial production|FCD|RFCD|net debt\/EBITDA|leverage ratio|EBITDA leverage|replacement demand|replacement cycle|OEM|aftermarket)\b/gi;
 
 function scoreSentence(s: string): number {
   // Hard reject: pure-number tables, regulatory boilerplate, or procedural
@@ -495,6 +499,202 @@ const SECTOR_KPI_PATTERNS: Record<string, RegExp[]> = {
   'Generation Volume': [/\b(generation (volume|output)|MW (commission(ed|ing)?|added))/i],
   // Note: 'EBITDA Margin' and 'Margin Trajectory' are already defined under
   // Pharma and IT/Services above — they apply cross-sector via the key match.
+
+  // ── PATCH 0700 — Institutional vocabulary expansion ─────────────────
+  // These KPIs are universal across Indian sectors; analysts ask about
+  // each on every concall. Previously the extractor missed them because
+  // SECTOR_KPI_PATTERNS only had narrow sector-specific labels. Adding
+  // them as new KPI keys lights up KEY_TOPICS / topical mentions and
+  // (when a sector template includes the same label) flips KPIs from
+  // "○ not extracted" to "● available".
+  'Operating Leverage': [
+    /\boperating leverage\b/i,
+    /\bfixed[- ]?cost (absorption|leverage|dilution)\b/i,
+    /\bincremental margin\b/i,
+    /\bdrop[- ]?through margin\b/i,
+    /\b(scale|economies of scale)\s+(benefit|advantage|leverage)\b/i,
+  ],
+  'GTM Strategy': [
+    /\bGTM\b/,
+    /\bgo[- ]to[- ]market\b/i,
+    /\bchannel strategy\b/i,
+    /\broute[- ]to[- ]market\b/i,
+  ],
+  'Channel Mix': [
+    /\bonline channel\b/i,
+    /\bmodern trade\b/i,
+    /\bgeneral trade\b/i,
+    /\b(e[- ]?commerce|D2C)\s+(share|mix|contribution|growth)\b/i,
+    /\bchannel mix\b/i,
+    /\b(quick commerce|q[- ]?commerce)\b/i,
+  ],
+  'Anti-Dumping Duty': [
+    /\banti[- ]?dumping\b/i,
+    /\b(?:ADD|CVD)\b/,
+    /\bimport duty (hike|increase|levied|imposed)\b/i,
+    /\bsafeguard duty\b/i,
+    /\bcountervailing duty\b/i,
+  ],
+  'FX Hedging': [
+    /\b(forex|FX)\s+hedge\b/i,
+    /\bhedge ratio\b/i,
+    /\bhedge cover\b/i,
+    /\bnatural hedge\b/i,
+    /\bderivative MTM\b/i,
+    /\b(naturally )?hedged\s+(exposure|position|book)\b/i,
+  ],
+  'Tax Rate / MAT Credit': [
+    /\bMAT credit\b/i,
+    /\bMAT utili[sz]ation\b/i,
+    /\beffective tax rate\b/i,
+    /\bETR\b/,
+    /\bdeferred tax\b/i,
+    /\btax (rate|payout)\s+(of|stood|at|guidance)\b/i,
+  ],
+  'Capex Intensity': [
+    /\bcapex\s*\/\s*sales\b/i,
+    /\bcapex to sales\b/i,
+    /\bcapex intensity\b/i,
+    /\bcapex as a percentage of (sales|revenue)\b/i,
+  ],
+  'Asset Turn': [
+    /\basset turnover\b/i,
+    /\basset turn\b/i,
+    /\bcapital turnover\b/i,
+    /\bfixed asset turnover\b/i,
+  ],
+  'ROCE Bridge': [
+    /\bROCE (bridge|expansion|improvement|trajectory|walk)\b/i,
+    /\b(?:ROIC|return on capital)\s+(?:improvement|expansion|trajectory)\b/i,
+  ],
+  'Capacity Ramp Curve': [
+    /\bramp\s+(curve|profile|trajectory|schedule)\b/i,
+    /\bramp[- ]?up\s+(profile|trajectory|schedule|plan)\b/i,
+    /\bproduction ramp\b/i,
+  ],
+  'Dispatch Volumes': [
+    /\bdispatches\b/i,
+    /\bdispatch (volume|run[- ]?rate)\b/i,
+    /\b(tons|tonnes|units|skids)\s+dispatched\b/i,
+    /\bdespatch(ed|es)?\b/i,
+  ],
+  'Realization per Unit': [
+    /\brealiz?ation per (ton|tonne|unit|kg|litre|liter)\b/i,
+    /\bper[- ]?unit realiz?ation\b/i,
+    /\bASP\b/,
+    /\baverage selling price\b/i,
+    /\bblended realiz?ation\b/i,
+  ],
+  'Value-Added Mix': [
+    /\bvalue[- ]?added mix\b/i,
+    /\bVAM\b/,
+    /\bpremium mix\b/i,
+    /\bspecialty mix\b/i,
+    /\bhigh[- ]margin mix\b/i,
+    /\bvalue[- ]added (products|portfolio|share)\b/i,
+  ],
+  'Customer Concentration': [
+    /\btop\s+(5|10|five|ten)\s+customer/i,
+    /\bcustomer concentration\b/i,
+    /\bsingle largest customer\b/i,
+    /\bkey customer\s+contribut/i,
+    /\blargest client\b/i,
+  ],
+  'Vendor Concentration': [
+    /\bsingle vendor\b/i,
+    /\bvendor concentration\b/i,
+    /\bsupplier concentration\b/i,
+    /\bsole (vendor|supplier)\b/i,
+    /\btop\s+(5|10|five|ten)\s+(vendor|supplier)/i,
+  ],
+  'Capex Breakup': [
+    /\bgreenfield\b/i,
+    /\bbrownfield\b/i,
+    /\bgrowth capex\b/i,
+    /\bmaintenance capex\b/i,
+    /\bexpansion capex\b/i,
+    /\bcapex (breakup|split|breakdown)\b/i,
+  ],
+  'Debt Refinancing': [
+    /\bdebt refinancing\b/i,
+    /\brefinanc(e|ing|ed)\b/i,
+    /\blower cost of (debt|borrowing)\b/i,
+    /\btenor extension\b/i,
+    /\b(coupon|interest rate) reduction\b/i,
+    /\bre[- ]?priced (debt|borrowing|loan)\b/i,
+  ],
+  'Dividend Payout': [
+    /\bdividend payout\b/i,
+    /\bpayout ratio\b/i,
+    /\bdividend policy\b/i,
+    /\bdistributable surplus\b/i,
+  ],
+  'Buyback': [
+    /\bbuyback\b/i,
+    /\bshare repurchase\b/i,
+    /\btender offer buyback\b/i,
+    /\bopen market buyback\b/i,
+  ],
+  'ESOP Dilution': [
+    /\bESOP\b/,
+    /\bemployee stock option\b/i,
+    /\bshare[- ]based payment\b/i,
+    /\bSBP\b/,
+    /\bESOP dilution\b/i,
+    /\bRSU\b/,
+  ],
+  'Working Capital Days': [
+    /\bworking capital days\b/i,
+    /\bWC days\b/i,
+    /\bcash conversion cycle\b/i,
+    /\bCCC\b/,
+    /\bworking capital cycle\b/i,
+  ],
+  'Inventory Days': [
+    /\binventory days\b/i,
+    /\binventory turn(over)?\b/i,
+    /\bdays of inventory\b/i,
+    /\bstock turn\b/i,
+  ],
+  'Debtor Days': [
+    /\bdebtor days\b/i,
+    /\bDSO\b/,
+    /\breceivable days\b/i,
+    /\bcollection period\b/i,
+    /\bdays sales outstanding\b/i,
+  ],
+  'Peak Debt': [
+    /\bpeak debt\b/i,
+    /\bpeak leverage\b/i,
+    /\bdeleveraging path\b/i,
+    /\bdebt peak\b/i,
+  ],
+  'Plant Commissioning': [
+    /\bcommissioning (timeline|schedule|date|status)\b/i,
+    /\bfirst commercial production\b/i,
+    /\bFCD\b/,
+    /\bRFCD\b/,
+    /\bmechanical completion\b/i,
+    /\btrial production\b/i,
+  ],
+  'EBITDA Leverage': [
+    /\bEBITDA leverage\b/i,
+    /\bnet debt\s*\/\s*EBITDA\b/i,
+    /\bleverage ratio\b/i,
+    /\bdebt[- ]?to[- ]?EBITDA\b/i,
+  ],
+  'Replacement Demand': [
+    /\breplacement demand\b/i,
+    /\breplacement cycle\b/i,
+    /\breplacement (market|sales)\b/i,
+  ],
+  'OEM vs Aftermarket Mix': [
+    /\bOEM business\b/i,
+    /\baftermarket business\b/i,
+    /\baftermarket (mix|share|contribution)\b/i,
+    /\bOEM\s*[:.&]?\s*aftermarket\b/i,
+    /\boriginal equipment manufacturer\b/i,
+  ],
 };
 
 // ── Main extractor ─────────────────────────────────────────────────────────
