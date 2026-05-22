@@ -432,28 +432,59 @@ const SECTOR_KPI_PATTERNS: Record<string, RegExp[]> = {
   'CASA': [/\bCASA\b|\b(savings|current account)\s+(growth|ratio)/i],
   'Credit Cost': [/\b(credit cost|provisioning|provision coverage|PCR)\b/i],
   // Auto / Industrials / Capital Goods
-  // Order Book / Inflow now matches: explicit numbers, L1 positions,
-  // tender pipelines, AND negative-disclosure language ("no order book
-  // disclosure" — important transparency signal that should still flag
-  // the KPI as touched).
+  // PATCH 0686 — widened patterns to match real-world Indian concall
+  // language. Previously a transcript saying "received orders", "order
+  // pipeline", "incremental orders", "POs", or "letter of intent" went
+  // undetected because the regex demanded the literal phrase "order
+  // inflow" / "order book". Verified on Aeroflex FY26 concall (skid +
+  // metal bellows orders) — Order Book / Backlog + Order Inflow both
+  // now fire on real prose.
   'Order Book': [
-    /\b(order (book|inflow|backlog|intake)|book[- ]to[- ]bill)\b/i,
+    /\b(order (book|inflow|backlog|intake|pipeline))\b/i,
+    /\bbook[- ]to[- ]bill\b/i,
     /\b(no order book disclosure|order book.{0,30}not disclosed)\b/i,
     /\bbacklog (of|stood at|reached|touched)\s+(₹|Rs\.?|INR)?\s*\d/i,
   ],
   'Order Inflow': [
-    /\b(order (inflow|intake|booking|new order|wins)|fresh orders|won orders|deal wins?|secured orders|won.{0,30}contract|L1\s+(in|for|position))\b/i,
-    /\bnew orders.{0,30}(₹|Rs\.?|INR)?\s*\d/i,
+    /\b(order (inflow|intake|booking|wins))\b/i,
+    /\b(fresh|incremental|new|won|received|secured|bagged)\s+orders?\b/i,
+    /\breceiv(e|ed|ing)\s+orders?\b/i,
+    /\b(deal wins?|secured (a |the )?contract|won.{0,30}contract)\b/i,
+    /\bL1\s+(in|for|position|status)\b/i,
+    /\b(letter\s+of\s+(intent|award)|LO[IA]|purchase\s+orders?|\bPOs?\b)\b/i,
+    /\bquarterly\s+POs?\b/i,
   ],
   'Order Book / Backlog': [
-    /\b(order (book|backlog)|book[- ]to[- ]bill|backlog (of|stood))\b/i,
-    /\b(unexecuted orders?|pending orders?|outstanding orders?)\b/i,
+    /\b(order (book|backlog|pipeline))\b/i,
+    /\bbook[- ]to[- ]bill\b/i,
+    /\bbacklog (of|stood|reached|touched)\b/i,
+    /\b(unexecuted|pending|outstanding|executable)\s+orders?\b/i,
     /\b(no order book disclosure|backlog.{0,30}not disclosed)\b/i,
+    /\b(under\s+execution|to\s+be\s+executed)\b/i,
   ],
-  'Execution / Revenue': [/\b(execution|revenue conversion|backlog (conversion|burn|drawdown)|delivered (orders|revenue))\b/i, /\b(commission(ed|ing)|delivered|despatch(ed|es))\b.{0,40}(plant|capacity|skid|unit|order)/i],
-  'Capex Plan': [/\b(capex plan|capital expenditure|capacity (expansion|addition)|new plant|new facility|brownfield|greenfield|scale up to|expanded.{0,40}capacity)\b/i],
-  'Capacity Utilization': [/\b(capacity utili[sz]ation|plant utili[sz]ation|production volume|capacity (of|stood at|increased to))\b/i],
-  'Export Order Mix': [/\b(export (mix|order|share|revenue|geography|contribution)|domestic\s*[:.&]?\s*export|geographic(al)? (split|mix)|americas?|europe.{0,20}(asia|africa))\b/i],
+  'Execution / Revenue': [
+    /\b(execution|revenue conversion|backlog (conversion|burn|drawdown)|delivered (orders|revenue))\b/i,
+    /\b(commission(ed|ing)|delivered|despatch(ed|es)|dispatch(ed|es))\b.{0,40}(plant|capacity|skid|unit|order)/i,
+    /\b(throughput|production\s+ramp|ramp[- ]?up)\b/i,
+  ],
+  'Capex Plan': [
+    /\b(capex (plan|outlay|guidance|cycle)|capital expenditure|capacity (expansion|addition|ramp))\b/i,
+    /\b(new (plant|facility|line)|brownfield|greenfield|scale up to|expanded.{0,40}capacity)\b/i,
+    /\b(commission(ed|ing)?\s+(a\s+)?(new\s+)?(plant|line|unit))\b/i,
+  ],
+  'Capacity Utilization': [
+    /\b(capacity utili[sz]ation|plant utili[sz]ation|production volume)\b/i,
+    /\b(capacity (of|stood at|increased to|targeting|operating at))\b/i,
+    /\b(\d{1,3}\s*%\s*(capacity\s*)?utili[sz]ation)\b/i,
+    /\butili[sz]ation.{0,15}(\d{1,3}\s*%)/i,
+  ],
+  'Export Order Mix': [
+    /\b(export (mix|order|share|revenue|geography|contribution))\b/i,
+    /\b(domestic\s*[:.&]?\s*export|geographic(al)? (split|mix))\b/i,
+    /\b(international|overseas|global)\s+(customers?|markets?|business|orders?|revenue)\b/i,
+    /\bprincipal\s+(company|customer|supplier)\b/i,
+    /\b(US|USA|North America|Europe|Middle East|EMEA|APAC|Asia[- ]Pacific)\b.{0,30}(business|revenue|market|geography)/i,
+  ],
   // Real estate
   'Pre-sales / Bookings': [/\b(pre[- ]?sales|booking value|sales velocity|launches|new launches|launch pipeline)\b/i],
   'Collections': [/\b(collection (efficiency|run[- ]?rate)|cash flow from operations|cash collections)\b/i],
