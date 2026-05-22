@@ -93,9 +93,10 @@ async function fetchRatingPayload(): Promise<FetchedPayload> {
 
   const [newsJson, filingsJson] = await Promise.all([
     safe<any>(`/api/v1/news?limit=500&search=${encodeURIComponent(RATING_SEARCH_TOKENS)}`, 'news'),
-    // PATCH 0695 — days=14 → days=7 (still wider than order-book since
-    // rating actions are rarer; 7d hits warm KV cache reliably).
-    safe<any>(`/api/v1/concall-intel/live-feed?days=7&bullishOnly=false`, 'filings'),
+    // PATCH 0704 — cacheOnly=1 so cold-start never blocks. If filings
+    // cache is empty (CACHE_WARMING) page renders news-only with banner.
+    // PATCH 0695 — days=7 hits warm KV cache reliably.
+    safe<any>(`/api/v1/concall-intel/live-feed?days=7&bullishOnly=false&cacheOnly=1`, 'filings'),
   ]);
 
   const articles: NewsArticleLite[] = [];

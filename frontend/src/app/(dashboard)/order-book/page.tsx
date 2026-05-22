@@ -80,13 +80,13 @@ async function fetchOrderPayload(): Promise<FetchedPayload> {
     }
   };
 
-  // PATCH 0695 — was days=14 which times out on cold-start (live-feed
-  // route has 60s maxDuration and scans all NSE filings in window).
-  // 3 days hits warm cache reliably + matches eo-blockbuster-alert's
-  // own window so cached results overlap.
+  // PATCH 0704 — cacheOnly=1 so cold-start never blocks the user.
+  // If cache is warming we render news-only and surface that explicitly.
+  // PATCH 0695 — was days=14; 3d window matches eo-blockbuster-alert's
+  // cache so we hit warm KV reliably.
   const [newsJson, filingsJson] = await Promise.all([
     safe<any>(`/api/v1/news?limit=500&search=${encodeURIComponent(ORDER_SEARCH_TOKENS)}`, 'news'),
-    safe<any>(`/api/v1/concall-intel/live-feed?days=3&bullishOnly=false`, 'filings'),
+    safe<any>(`/api/v1/concall-intel/live-feed?days=3&bullishOnly=false&cacheOnly=1`, 'filings'),
   ]);
 
   const articles: NewsArticleLite[] = [];

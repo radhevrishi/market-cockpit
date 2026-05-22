@@ -161,6 +161,11 @@ async function handleLiveFeed(req: NextRequest) {
   const rawThreshold = parseFloat(req.nextUrl.searchParams.get('threshold') || '4');
   const bullishOnly = req.nextUrl.searchParams.get('bullishOnly') === '1';
   const force = req.nextUrl.searchParams.get('force') === '1';
+  // PATCH 0704 — cacheOnly=1 returns cached payload if any, otherwise an
+  // immediate empty payload tagged 'CACHE_WARMING'. Used by /order-book
+  // and /rating-actions so cold-start NEVER blocks user. Page can then
+  // optionally trigger a background warm without ?cacheOnly.
+  const cacheOnly = req.nextUrl.searchParams.get('cacheOnly') === '1';
 
   // KV cache check
   const cacheKey = CACHE_KEY(days);
@@ -169,6 +174,20 @@ async function handleLiveFeed(req: NextRequest) {
     if (cached) {
       return NextResponse.json(applyFilters(cached, { exchangeFilter, bullishOnly }));
     }
+  }
+  // PATCH 0704 — cacheOnly path: no cache → return empty immediately so
+  // client doesn't block on the 30-60s fresh-fetch.
+  if (cacheOnly) {
+    return NextResponse.json({
+      generated_at: new Date().toISOString(),
+      count_total: 0,
+      count_relevant: 0,
+      count_high_bullish: 0,
+      filings: [],
+      theme_clusters: [],
+      sources: { nse: 'NSE_EMPTY', bse: 'BSE_EMPTY' },
+      cacheStatus: 'CACHE_WARMING',
+    });
   }
 
   // Compute date range
