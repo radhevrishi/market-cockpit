@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { ImageResponse } from 'next/og';
 import React from 'react';
+// PATCH 0715 — centralized IST helpers.
+import { istNow as _istNow } from '@/lib/market-hours';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
@@ -283,14 +285,15 @@ function truncate(s: string, maxLen: number): string {
 }
 
 function getISTTimestamp(): string {
-  const now = new Date();
-  const ist = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
-  const day = ist.getDate().toString().padStart(2, '0');
+  // PATCH 0715 — centralized via _istNow. Use UTC getters on the IST-shifted
+  // Date so behavior is timezone-independent (was relying on Vercel UTC).
+  const ist = _istNow();
+  const day = ist.getUTCDate().toString().padStart(2, '0');
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const month = months[ist.getMonth()];
-  const year = ist.getFullYear();
-  const hours = ist.getHours();
-  const minutes = ist.getMinutes().toString().padStart(2, '0');
+  const month = months[ist.getUTCMonth()];
+  const year = ist.getUTCFullYear();
+  const hours = ist.getUTCHours();
+  const minutes = ist.getUTCMinutes().toString().padStart(2, '0');
   const ampm = hours >= 12 ? 'PM' : 'AM';
   const h12 = hours % 12 || 12;
   return `${day} ${month} ${year}, ${h12.toString().padStart(2, '0')}:${minutes} ${ampm}`;
@@ -1056,10 +1059,12 @@ function buildSummaryMessage(
   earnings: Earning[],
   indices: IndexData[],
 ): string {
-  const now = new Date();
-  const ist = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
-  const dateStr = ist.toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
-  const timeStr = ist.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+  // PATCH 0715 — centralized via _istNow. Pass timeZone: 'UTC' so the
+  // already-shifted Date's locale formatting matches IST regardless of
+  // host timezone.
+  const ist = _istNow();
+  const dateStr = ist.toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
+  const timeStr = ist.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
 
   const { total, avgChange, breadth } = movers;
   const DIV = '▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬';
@@ -1322,10 +1327,10 @@ export async function POST(request: Request) {
         await sendTelegramTo(chatId, lines.join('\n'));
       }
     } else if (text === '/status') {
-      const now = new Date();
-      const ist = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
-      const h = ist.getHours();
-      const day = ist.getDay();
+      // PATCH 0715 — centralized via _istNow. UTC getters on IST-shifted Date.
+      const ist = _istNow();
+      const h = ist.getUTCHours();
+      const day = ist.getUTCDay();
       const isMarketDay = day >= 1 && day <= 5;
       const isMarketHours = h >= 9 && h < 16;
       const nextAlert = h < 10 ? '10:05 AM' : h < 15 ? '3:05 PM' : 'Tomorrow 10:05 AM';

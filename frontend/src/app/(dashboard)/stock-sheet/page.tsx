@@ -361,12 +361,19 @@ function useTickerQuote(ticker: string) {
       // safeScalar consumers keep working without per-call changes.
       if (!ticker) return null;
       const t = String(ticker).toUpperCase();
+      // PATCH 0716 — 10s timeout + safe JSON parse + array guard.
       try {
-        const r = await fetch(`/api/market/quote?symbols=${encodeURIComponent(t)}`, { cache: 'no-store' });
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), 10_000);
+        let r: Response;
+        try { r = await fetch(`/api/market/quote?symbols=${encodeURIComponent(t)}`, { cache: 'no-store', signal: ctl.signal }); }
+        finally { clearTimeout(timer); }
         if (!r.ok) return null;
-        const json = await r.json();
-        const stock = (json?.stocks ?? [])[0];
-        if (!stock) return null;
+        let json: any = {};
+        try { json = await r.json(); } catch { return null; }
+        const stocksArr = Array.isArray(json?.stocks) ? json.stocks : [];
+        const stock = stocksArr[0];
+        if (!stock || typeof stock !== 'object') return null;
         return {
           ticker: stock.ticker,
           price: stock.price,

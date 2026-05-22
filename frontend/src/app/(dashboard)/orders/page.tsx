@@ -2466,29 +2466,48 @@ export default function CompanyIntelligencePage() {
       let portfolio: string[] = [];
 
       // Fetch portfolio
+      // PATCH 0716 — added 8s timeout + safe JSON parse + shape guard.
       try {
-        const pRes = await fetch(`/api/portfolio?chatId=${CHAT_ID}`);
-        if (pRes.ok) {
-          const pData = await pRes.json();
-          portfolio = (pData.holdings || []).map((h: any) => h.symbol);
-        }
+        const pfCtl = new AbortController();
+        const pfTimer = setTimeout(() => pfCtl.abort(), 8_000);
+        try {
+          const pRes = await fetch(`/api/portfolio?chatId=${CHAT_ID}`, { signal: pfCtl.signal });
+          clearTimeout(pfTimer);
+          if (pRes.ok) {
+            let pData: any = {};
+            try { pData = await pRes.json(); } catch { pData = {}; }
+            const holdings = Array.isArray(pData?.holdings) ? pData.holdings : [];
+            portfolio = holdings.map((h: any) => h?.symbol).filter((s: any) => typeof s === 'string');
+          }
+        } finally { clearTimeout(pfTimer); }
       } catch {}
 
       // Fetch watchlist + flags + prices
       let flags: Record<string, string> = {};
       let prices: Record<string, number> = {};
       try {
-        const wlRes = await fetch(`/api/watchlist?chatId=${CHAT_ID}`);
-        const wlData = await wlRes.json();
-        if (wlData.watchlist?.length) {
+        // PATCH 0716 — added 8s timeout + safe JSON parse.
+        const wlCtl = new AbortController();
+        const wlTimer = setTimeout(() => wlCtl.abort(), 8_000);
+        let wlData: any = {};
+        try {
+          const wlRes = await fetch(`/api/watchlist?chatId=${CHAT_ID}`, { signal: wlCtl.signal });
+          clearTimeout(wlTimer);
+          if (wlRes.ok) {
+            try { wlData = await wlRes.json(); } catch { wlData = {}; }
+            if (!wlData || typeof wlData !== 'object') wlData = {};
+          }
+        } finally { clearTimeout(wlTimer); }
+        if (Array.isArray(wlData.watchlist) && wlData.watchlist.length) {
           watchlist = wlData.watchlist;
           localStorage.setItem('mc_watchlist_tickers', JSON.stringify(watchlist));
         }
-        if (wlData.flags) { flags = wlData.flags; setWatchlistFlags(flags); }
-        if (wlData.addedPrices) { prices = wlData.addedPrices; setAddedPrices(prices); }
+        if (wlData.flags && typeof wlData.flags === 'object') { flags = wlData.flags; setWatchlistFlags(flags); }
+        if (wlData.addedPrices && typeof wlData.addedPrices === 'object') { prices = wlData.addedPrices; setAddedPrices(prices); }
       } catch {
         const s = localStorage.getItem('mc_watchlist_tickers') || '[]';
-        watchlist = JSON.parse(s);
+        try { watchlist = JSON.parse(s); } catch { watchlist = []; }
+        if (!Array.isArray(watchlist)) watchlist = [];
       }
 
       // ── KEY FIX: merge Excel symbols into the portfolio param ──────────────────
@@ -2527,8 +2546,37 @@ export default function CompanyIntelligencePage() {
       // client UI said "ALL". Watchlist/portfolio are still sent so the
       // backend enricher universe stays correct.
       const universeParam = universeFilter === 'ALL' ? '&universe=all' : '';
-      const res = await fetch(`/api/market/intelligence?days=${daysFilter}${wlParam}${pfParam}${universeParam}&debug=true`);
-      const data = await res.json();
+      // PATCH 0716 — hardened: 30s timeout + safe JSON parse so a hung
+      // backend / malformed payload no longer wedges the page.
+      const _intelCtl = new AbortController();
+      const _intelTimer = setTimeout(() => _intelCtl.abort(), 30_000);
+      let data: any = {};
+      try {
+        const res = await fetch(`/api/market/intelligence?days=${daysFilter}${wlParam}${pfParam}${universeParam}&debug=true`, { signal: _intelCtl.signal });
+        clearTimeout(_intelTimer);
+        if (!res.ok) {
+          console.warn(`[Intelligence] HTTP ${res.status}`);
+          setProductionStatus(`⚠ Backend HTTP ${res.status} — try Refresh in 30s`);
+          setLoading(false);
+          return;
+        }
+        try {
+          data = await res.json();
+        } catch (parseErr) {
+          console.warn('[Intelligence] JSON parse failed', parseErr);
+          setProductionStatus('⚠ Backend returned malformed JSON');
+          setLoading(false);
+          return;
+        }
+        if (!data || typeof data !== 'object') data = {};
+      } catch (fetchErr: any) {
+        clearTimeout(_intelTimer);
+        const isTimeout = fetchErr?.name === 'AbortError';
+        console.warn('[Intelligence]', isTimeout ? 'timeout (30s)' : fetchErr);
+        setProductionStatus(isTimeout ? '⚠ Backend timed out (30s) — try Refresh' : `⚠ Fetch failed: ${fetchErr?.message || 'network'}`);
+        setLoading(false);
+        return;
+      }
 
       setTop3(_retag(data.top3 || []));
       setSignals(_retag(data.signals || []));
@@ -2590,12 +2638,27 @@ export default function CompanyIntelligencePage() {
           setExcelNewsLoading(true);
           // Fetch news for all uncovered Excel tickers in one call using | search
           const searchQuery = uncoveredExcel.join('|');
-          const newsRes = await fetch(
-            `${(typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_API_URL) || '/api/v1'}/news?limit=200&importance_min=1&search=${encodeURIComponent(searchQuery)}`
-          );
-          if (newsRes.ok) {
-            const newsData = await newsRes.json();
-            const articles: any[] = Array.isArray(newsData) ? newsData : [];
+          // PATCH 0716 — 12s timeout + safe JSON parse + array shape guard.
+          const newsCtl = new AbortController();
+          const newsTimer = setTimeout(() => newsCtl.abort(), 12_000);
+          let newsData: any = [];
+          try {
+            const newsRes = await fetch(
+              `${(typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_API_URL) || '/api/v1'}/news?limit=200&importance_min=1&search=${encodeURIComponent(searchQuery)}`,
+              { signal: newsCtl.signal }
+            );
+            clearTimeout(newsTimer);
+            if (newsRes.ok) {
+              try { newsData = await newsRes.json(); } catch { newsData = []; }
+            }
+          } catch { /* swallow — populated as [] */ }
+          finally { clearTimeout(newsTimer); }
+          if (newsData) {
+            const articles: any[] = Array.isArray(newsData)
+              ? newsData
+              : Array.isArray((newsData as any)?.articles)
+                ? (newsData as any).articles
+                : [];
 
             // Match articles to Excel symbols
             const digestItems: ExcelNewsItem[] = [];

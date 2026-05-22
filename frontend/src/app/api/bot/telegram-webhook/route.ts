@@ -24,6 +24,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
+// PATCH 0715 — centralized IST helpers.
+import { istToday as _istToday, istNow as _istNow } from '@/lib/market-hours';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -320,8 +322,8 @@ async function dispatchCommand(
   }
 
   if (lower === 'today') {
-    const istNow = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
-    const todayIst = istNow.toISOString().slice(0, 10);
+    // PATCH 0715 — centralized via _istToday.
+    const todayIst = _istToday();
     await sendMessage(chatId, `⏳ Scanning top tier · <b>${todayIst}</b> only…`);
     await triggerEoAlert(chatId, 'BLOCKBUSTER,STRONG', { dates: todayIst });
     await sendMessage(chatId, '<i>More options below:</i>', { reply_markup: POST_RESULTS_KEYBOARD });
@@ -329,8 +331,9 @@ async function dispatchCommand(
   }
 
   if (lower === 'yesterday') {
-    const istNow = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
-    const yIst = new Date(istNow.getTime() - 86_400_000).toISOString().slice(0, 10);
+    // PATCH 0715 — centralized via _istNow.
+    const istNowVal = _istNow();
+    const yIst = new Date(istNowVal.getTime() - 86_400_000).toISOString().slice(0, 10);
     await sendMessage(chatId, `⏳ Scanning top tier · <b>${yIst}</b> only…`);
     await triggerEoAlert(chatId, 'BLOCKBUSTER,STRONG', { dates: yIst });
     await sendMessage(chatId, '<i>More options below:</i>', { reply_markup: POST_RESULTS_KEYBOARD });

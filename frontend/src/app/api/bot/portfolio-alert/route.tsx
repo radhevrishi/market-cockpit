@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+// PATCH 0715 — centralized IST helpers.
+import { istNow as _istNow } from '@/lib/market-hours';
 import { ImageResponse } from 'next/og';
 import React from 'react';
 import { kvGet, kvSet } from '@/lib/kv';
@@ -370,14 +372,14 @@ function truncate(s: string, maxLen: number): string {
 }
 
 function getISTTimestamp(): string {
-  const now = new Date();
-  const ist = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
-  const day = ist.getDate().toString().padStart(2, '0');
+  // PATCH 0715 — centralized via _istNow + UTC getters.
+  const ist = _istNow();
+  const day = ist.getUTCDate().toString().padStart(2, '0');
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const month = months[ist.getMonth()];
-  const year = ist.getFullYear();
-  const hours = ist.getHours();
-  const minutes = ist.getMinutes().toString().padStart(2, '0');
+  const month = months[ist.getUTCMonth()];
+  const year = ist.getUTCFullYear();
+  const hours = ist.getUTCHours();
+  const minutes = ist.getUTCMinutes().toString().padStart(2, '0');
   const ampm = hours >= 12 ? 'PM' : 'AM';
   const h12 = hours % 12 || 12;
   return `${day} ${month} ${year}, ${h12.toString().padStart(2, '0')}:${minutes} ${ampm}`;
@@ -736,9 +738,9 @@ function fmtPrice(p: number): string {
 
 // ── Build Portfolio Performance Message ─────────────────────────────────
 function buildPortfolioMessage(stocks: Stock[], portfolio: string[]): string {
-  const now = new Date();
-  const ist = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
-  const timeStr = ist.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+  // PATCH 0715 — centralized via _istNow.
+  const ist = _istNow();
+  const timeStr = ist.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
 
   const gainers = stocks.filter(s => s.changePercent > 0).sort((a, b) => b.changePercent - a.changePercent);
   const losers = stocks.filter(s => s.changePercent < 0).sort((a, b) => a.changePercent - b.changePercent);
@@ -963,16 +965,16 @@ export async function POST(request: Request) {
         await sendTelegramTo(chatId, lines.join('\n'));
       }
     } else if (text === '/status') {
-      const now = new Date();
-      const ist = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
-      const h = ist.getHours();
-      const day = ist.getDay();
+      // PATCH 0715 — centralized via _istNow + UTC getters.
+      const ist = _istNow();
+      const h = ist.getUTCHours();
+      const day = ist.getUTCDay();
       const isMarketDay = day >= 1 && day <= 5;
       const isMarketHours = h >= 9 && h < 16;
       const portfolio = await getPortfolio(chatId);
 
       await sendTelegramTo(chatId,
-        `<b>MC Portfolio Pulse — Status</b>\n\n[OK] Bot: Online\nIST: ${ist.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}\n${isMarketDay && isMarketHours ? '[+] Market: Open' : '[-] Market: Closed'}\nPortfolio: <b>${portfolio.length}</b> holdings\nAlerts: 10:15 AM &amp; 3:15 PM IST (Mon–Fri)\n\n<i>Portfolio synced to cloud — persists across sessions.</i>`
+        `<b>MC Portfolio Pulse — Status</b>\n\n[OK] Bot: Online\nIST: ${ist.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })}\n${isMarketDay && isMarketHours ? '[+] Market: Open' : '[-] Market: Closed'}\nPortfolio: <b>${portfolio.length}</b> holdings\nAlerts: 10:15 AM &amp; 3:15 PM IST (Mon–Fri)\n\n<i>Portfolio synced to cloud — persists across sessions.</i>`
       );
     }
 

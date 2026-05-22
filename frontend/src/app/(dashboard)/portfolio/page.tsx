@@ -98,8 +98,10 @@ const fetchStockQuotes = async (): Promise<StockQuote[]> => {
     try {
       const res = await fetch(`/api/market/quotes?market=${market}`, { signal: ctl.signal });
       if (!res.ok) return [];
-      const data = await res.json();
-      return (data.stocks || []).map(mapQuote);
+      // PATCH 0716 — safe JSON parse + array shape guard.
+      let data: any = {};
+      try { data = await res.json(); } catch { return []; }
+      return (Array.isArray(data?.stocks) ? data.stocks : []).map(mapQuote);
     } catch { return []; }
     finally { clearTimeout(timer); }
   };
@@ -369,11 +371,17 @@ export default function PortfolioPage() {
   // Init: load from API, fallback to localStorage
   useEffect(() => {
     const init = async () => {
+      // PATCH 0716 — 8s timeout + safe JSON parse + shape guards.
       try {
-        const res = await fetch(`/api/portfolio?chatId=${CHAT_ID}`);
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), 8_000);
+        let res: Response;
+        try { res = await fetch(`/api/portfolio?chatId=${CHAT_ID}`, { signal: ctl.signal }); }
+        finally { clearTimeout(timer); }
         if (res.ok) {
-          const data = await res.json();
-          if (data.holdings && data.holdings.length > 0) {
+          let data: any = {};
+          try { data = await res.json(); } catch { data = {}; }
+          if (Array.isArray(data?.holdings) && data.holdings.length > 0) {
             setHoldings(data.holdings);
             setStoredHoldings(data.holdings);
             return;

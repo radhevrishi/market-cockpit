@@ -1111,7 +1111,16 @@ function AllSituationsCanonical({ isLoading, error, tier1, tier2, watchlist }: {
       )}
     </div>
   );
-  if (error) return <div style={{ color: '#EF4444', fontSize: 12, padding: 14 }}>Failed to load.</div>;
+  // PATCH 0714 — surface error message + retry hint.
+  if (error) {
+    const msg = (error as any)?.message || String(error || 'unknown');
+    return (
+      <div style={{ color: '#EF4444', fontSize: 12, padding: 14, lineHeight: 1.5 }}>
+        ⚠ Failed to load event-intelligence pipeline: <code style={{ color: '#FCA5A5' }}>{msg}</code>.
+        <div style={{ color: '#8A95A3', marginTop: 4 }}>Try ↻ Refresh now or check System Status.</div>
+      </div>
+    );
+  }
   if (!tier1.length && !tier2.length && !watchlist.length) {
     return (
       <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: 10, padding: 24, color: '#6B7A8D', fontSize: 13, textAlign: 'center' }}>
@@ -1560,7 +1569,16 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
 
 function AllSituations({ isLoading, error, tier1, tier2, archive }: { isLoading: boolean; error: any; tier1: ScoredEvent[]; tier2: ScoredEvent[]; archive: ScoredEvent[] }) {
   if (isLoading) return <div style={{ color: '#6B7A8D', fontSize: 12, padding: 14 }}>Loading live RSS feeds…</div>;
-  if (error)     return <div style={{ color: '#EF4444', fontSize: 12, padding: 14 }}>Failed to load corporate-action feed.</div>;
+  // PATCH 0714 — surface error message + retry hint so users can diagnose.
+  if (error) {
+    const msg = (error as any)?.message || String(error || 'unknown');
+    return (
+      <div style={{ color: '#EF4444', fontSize: 12, padding: 14, lineHeight: 1.5 }}>
+        ⚠ Failed to load corporate-action feed: <code style={{ color: '#FCA5A5' }}>{msg}</code>.
+        <div style={{ color: '#8A95A3', marginTop: 4 }}>Try ↻ Refresh now or check System Status.</div>
+      </div>
+    );
+  }
 
   if (!tier1.length && !tier2.length && !archive.length) {
     return (

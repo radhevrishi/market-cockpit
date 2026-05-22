@@ -570,18 +570,25 @@ export default function WatchlistsPage() {
   useEffect(() => {
     const initTickers = async () => {
       // Try to sync with shared watchlist (remote is source of truth)
+      // PATCH 0716 — 8s timeout + safe JSON parse + array shape guard.
       try {
-        const syncRes = await fetch(`/api/watchlist?chatId=${CHAT_ID}`);
-        if (syncRes.ok) {
-          const syncData = await syncRes.json();
-          if (syncData.watchlist && syncData.watchlist.length > 0) {
-            // Remote wins: use it as the authoritative source
-            setTickers(syncData.watchlist);
-            setStoredTickers(syncData.watchlist);
-            // Load flags from API
-            if (syncData.flags) setWatchlistFlags(syncData.flags);
-            return;
+        const _syncCtl = new AbortController();
+        const _syncTimer = setTimeout(() => _syncCtl.abort(), 8_000);
+        let syncData: any = {};
+        try {
+          const syncRes = await fetch(`/api/watchlist?chatId=${CHAT_ID}`, { signal: _syncCtl.signal });
+          clearTimeout(_syncTimer);
+          if (syncRes.ok) {
+            try { syncData = await syncRes.json(); } catch { syncData = {}; }
           }
+        } finally { clearTimeout(_syncTimer); }
+        if (syncData && Array.isArray(syncData.watchlist) && syncData.watchlist.length > 0) {
+          // Remote wins: use it as the authoritative source
+          setTickers(syncData.watchlist);
+          setStoredTickers(syncData.watchlist);
+          // Load flags from API
+          if (syncData.flags) setWatchlistFlags(syncData.flags);
+          return;
         }
       } catch (e) {
         console.error('Failed to sync watchlist:', e);
@@ -1325,10 +1332,15 @@ function useEnrichedConvictionCards(tickers: string[]) {
           const results = await Promise.allSettled(
             wave.map(async (batch) => {
               const encoded = batch.map(s => encodeURIComponent(s)).join(',');
+              // PATCH 0716 — added 25s timeout + safe JSON parse.
               try {
-                const res = await fetch(`/api/market/earnings-scan?symbols=${encoded}`);
-                if (!res.ok) return null;
-                return (await res.json()) as { cards: EarningsScanCard[] };
+                const _esCtl = new AbortController();
+                const _esTimer = setTimeout(() => _esCtl.abort(), 25_000);
+                try {
+                  const res = await fetch(`/api/market/earnings-scan?symbols=${encoded}`, { signal: _esCtl.signal });
+                  if (!res.ok) return null;
+                  try { return (await res.json()) as { cards: EarningsScanCard[] }; } catch { return null; }
+                } finally { clearTimeout(_esTimer); }
               } catch { return null; }
             })
           );

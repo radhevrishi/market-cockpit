@@ -38,6 +38,8 @@ import {
 } from '@/lib/movers-attribution';
 import { getConvictionTickers, getConvictionList } from '@/lib/conviction-beats';
 import { readDecisions } from '@/lib/decisions';
+// PATCH 0715 — centralized IST helpers.
+import { istToday as _istToday, istLastNWeekdays as _istLastNWeekdays } from '@/lib/market-hours';
 // PATCH 0624 — pull rich static roster directly so the Home Super Investors
 // panel can show real holdings + disclosure dates instead of the thin
 // /super-investor-flow output.
@@ -124,10 +126,9 @@ interface HomeState {
   staleDataAgeDays?: number;  // days since most recent multibagger upload
 }
 
+// PATCH 0715 — centralized IST helpers now live in lib/market-hours.
 function todayIstISO(): string {
-  const now = new Date();
-  const ist = new Date(now.getTime() + (now.getTimezoneOffset() + 330) * 60_000);
-  return ist.toISOString().slice(0, 10);
+  return _istToday();
 }
 
 // PATCH 0605 — heuristic risk framing per sector. Maps to typical
@@ -587,24 +588,8 @@ export default function HomeDashboard() {
             // Plus a fire-and-forget warm trigger on live-feed (no cacheOnly)
             // so the cache fills for the next page load.
 
-            // Helper: last N weekday dates as YYYY-MM-DD (IST-aware)
-            const istDates = (n: number): string[] => {
-              const out: string[] = [];
-              const istOffsetMs = 5.5 * 60 * 60 * 1000;
-              const t = new Date(Date.now() + istOffsetMs);
-              while (out.length < n) {
-                const day = t.getUTCDay();
-                if (day !== 0 && day !== 6) {
-                  const y = t.getUTCFullYear();
-                  const m = String(t.getUTCMonth() + 1).padStart(2, '0');
-                  const d = String(t.getUTCDate()).padStart(2, '0');
-                  out.push(`${y}-${m}-${d}`);
-                }
-                t.setUTCDate(t.getUTCDate() - 1);
-              }
-              return out;
-            };
-            const recentDates = istDates(5);
+            // PATCH 0715 — centralized via _istLastNWeekdays (lib/market-hours).
+            const recentDates = _istLastNWeekdays(5);
 
             const [feedRes, ssRes, ...gradedResults] = await Promise.all([
               safeDiag<any>('/api/v1/concall-intel/live-feed?days=14&bullishOnly=false&cacheOnly=1', 5_000),
@@ -1903,7 +1888,11 @@ export default function HomeDashboard() {
             {!data.ratingActionsToday ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
             ) : data.ratingActionsToday.length === 0 ? (
-              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>No rating actions in last 30 hours.</div>
+              /* PATCH 0714 — actionable empty state with link to Open Reg-15 filings. */
+              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>
+                ✓ Scan complete · 0 rating actions in last 30h.{' '}
+                <Link href="/rating-actions" style={{ color: '#22D3EE', fontStyle: 'normal' }}>See all →</Link>
+              </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 {data.ratingActionsToday.map((r, i) => (
@@ -1932,7 +1921,11 @@ export default function HomeDashboard() {
             {!data.orderBookToday ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
             ) : data.orderBookToday.length === 0 ? (
-              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>No order wins detected in last 36 hours.</div>
+              /* PATCH 0714 — actionable empty state. */
+              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>
+                ✓ Scan complete · 0 order wins detected in last 36h.{' '}
+                <Link href="/order-book" style={{ color: '#22D3EE', fontStyle: 'normal' }}>See archive →</Link>
+              </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 {data.orderBookToday.map((o, i) => (

@@ -15,6 +15,8 @@
 // merge results without remapping.
 
 import { NextRequest, NextResponse } from 'next/server';
+// PATCH 0715 — centralized IST helpers.
+import { istToday as _istToday } from '@/lib/market-hours';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { fetchBSEAnnouncements } from '@/lib/nse-bse-feed';
 import { resolveTicker } from '@/lib/bse-nse-mapping';
@@ -257,11 +259,8 @@ async function _handleGET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   let date = searchParams.get('date') || '';
   if (!date) {
-    // Default to today in IST
-    const now = new Date();
-    const istMs = now.getTime() + (5.5 * 60 * 60 * 1000);
-    const istNow = new Date(istMs);
-    date = istNow.toISOString().slice(0, 10);
+    // PATCH 0715 — centralized via _istToday.
+    date = _istToday();
   }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return NextResponse.json({ error: 'invalid date' }, { status: 400 });

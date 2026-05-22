@@ -386,6 +386,9 @@ export default function OrderBookPage() {
         {isLoading ? (
           <div style={{ padding: 40, textAlign: 'center', color: DIM, fontSize: 12 }}>Scanning news + NSE/BSE filings for order announcements…</div>
         ) : filtered.length === 0 ? (
+          /* PATCH 0714 — diagnostic empty-state. Disambiguates between
+             fetch failure, upstream empty payload, classifier-zero, and
+             filter-driven empty. */
           <div style={{ padding: 40, textAlign: 'center', color: DIM, background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8 }}>
             <div style={{ fontSize: 36, marginBottom: 10 }}>📋</div>
             <p style={{ margin: 0, fontWeight: 700, color: TEXT }}>
@@ -393,14 +396,30 @@ export default function OrderBookPage() {
             </p>
             {counts.ALL === 0 ? (
               <div style={{ margin: '8px 0 0', fontSize: 12, color: DIM, maxWidth: 600, marginLeft: 'auto', marginRight: 'auto', lineHeight: 1.65 }}>
-                Fetched <strong>{(data?.trace.newsFetched || 0) + (data?.trace.filingsFetched || 0)} rows</strong>,
-                none matched the Reg-30 order-announcement pattern.
-                {' '}
-                <span style={{ color: '#F59E0B' }}>
-                  Note: upstream NSE feed currently surfaces investor-meet / transcript filings only.
-                  Reg-30 "Receipt of Order / Letter of Award" filings live on a different NSE
-                  corp-announcements category.
-                </span>
+                {data?.trace.newsError && data?.trace.filingsError ? (
+                  <>
+                    <strong style={{ color: '#EF4444' }}>⚠ Both sources failed.</strong>{' '}
+                    News: {data.trace.newsError}. Filings: {data.trace.filingsError}.{' '}
+                    This is usually transient — try ↻ Refresh or wait 60s.
+                  </>
+                ) : (data?.trace.newsFetched || 0) + (data?.trace.filingsFetched || 0) === 0 ? (
+                  <>
+                    <strong style={{ color: '#F59E0B' }}>⏳ Upstream empty — 0 rows fetched.</strong>{' '}
+                    {data?.trace.newsError && <>News error: {data.trace.newsError}. </>}
+                    {data?.trace.filingsError && <>Filings error: {data.trace.filingsError}. </>}
+                    Cache may be warming. Refresh in 30s.
+                  </>
+                ) : (
+                  <>
+                    Scan complete · Fetched <strong>{(data?.trace.newsFetched || 0) + (data?.trace.filingsFetched || 0)} rows</strong>,
+                    none matched the Reg-30 order-announcement pattern.{' '}
+                    <span style={{ color: '#F59E0B' }}>
+                      Note: upstream NSE feed currently surfaces investor-meet / transcript filings only.
+                      Reg-30 "Receipt of Order / Letter of Award" filings live on a different NSE
+                      corp-announcements category.
+                    </span>
+                  </>
+                )}
                 <div style={{ marginTop: 10 }}>
                   <a href="https://www.nseindia.com/companies-listing/corporate-filings-announcements"
                      target="_blank" rel="noreferrer"

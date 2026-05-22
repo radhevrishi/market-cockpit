@@ -21,6 +21,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
+// PATCH 0715 — centralized IST helpers.
+import { istNow as _istNow, formatISTTime as _formatISTTime } from '@/lib/market-hours';
 import { ImageResponse } from 'next/og';
 import React from 'react';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
@@ -249,10 +251,8 @@ async function generateSummaryImage(
   const dateRange =
     dates.length > 1 ? `${dates[dates.length - 1]} → ${dates[0]}` : dates[0];
 
-  const istTimestamp =
-    new Date(Date.now() + 5.5 * 60 * 60 * 1000)
-      .toISOString()
-      .slice(11, 16) + ' IST';
+  // PATCH 0715 — centralized via _formatISTTime.
+  const istTimestamp = _formatISTTime(new Date());
 
   // Top movers
   const withMoves = cards
@@ -791,10 +791,11 @@ export async function GET(req: Request) {
   // ?days=3 → today + yesterday + day-before
   const daysParam = parseInt(searchParams.get('days') || '2', 10);
   const days = Number.isFinite(daysParam) && daysParam >= 1 && daysParam <= 14 ? daysParam : 2;
-  const istNow = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+  // PATCH 0715 — centralized via _istNow.
+  const istNowVal = _istNow();
   const dates: string[] = [];
   for (let i = 0; i < days; i++) {
-    const d = new Date(istNow.getTime() - i * 86_400_000);
+    const d = new Date(istNowVal.getTime() - i * 86_400_000);
     dates.push(d.toISOString().slice(0, 10));
   }
 
@@ -936,8 +937,8 @@ export async function GET(req: Request) {
       if (bbCount > 0) tierStrip.push(`⭐ ${bbCount} BLOCKBUSTER`);
       if (strongCount > 0) tierStrip.push(`🟢 ${strongCount} STRONG`);
 
-      const istHHMM = new Date(Date.now() + 5.5 * 60 * 60 * 1000)
-        .toISOString().slice(11, 16) + ' IST';
+      // PATCH 0715 — centralized via _formatISTTime.
+      const istHHMM = _formatISTTime(new Date());
       const titlePrefix = overrideChatId ? 'ON-DEMAND' : 'DAILY BROADCAST';
 
       const headerLines = [

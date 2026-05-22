@@ -735,8 +735,9 @@ function useDashboard() {
       const t = setTimeout(() => ctl.abort(), 20_000);
       try {
         const r = await fetch('/api/v1/news/bottleneck-dashboard', { signal: ctl.signal });
-        if (!r.ok) throw new Error('');
-        return await r.json();
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        // PATCH 0716 — safe JSON parse so malformed payload doesn't crash.
+        try { return await r.json(); } catch (e: any) { throw new Error(`parse error: ${e?.message || 'invalid JSON'}`); }
       } finally { clearTimeout(t); }
     },
     refetchInterval: 180_000, staleTime: 120_000, retry: 1,
@@ -750,8 +751,10 @@ function useBNNews() {
       const t = setTimeout(() => ctl.abort(), 20_000);
       try {
         const r = await fetch('/api/v1/news?limit=400&importance_min=2&article_type=BOTTLENECK', { signal: ctl.signal });
-        if (!r.ok) throw new Error('');
-        const d = await r.json();
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        // PATCH 0716 — safe JSON parse.
+        let d: any;
+        try { d = await r.json(); } catch { return []; }
         return Array.isArray(d) ? d : [];
       } finally { clearTimeout(t); }
     },
@@ -2830,14 +2833,21 @@ function useEarningsSignals() {
   return useQuery<NewsArticle[]>({
     queryKey: ['bn', 'earnings-signals'],
     queryFn: async () => {
-      const r = await fetch('/api/v1/news?limit=100&importance_min=3&article_type=EARNINGS');
+      // PATCH 0716 — added 15s timeout + safe JSON parse + shape guard.
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 15_000);
+      let r: Response;
+      try { r = await fetch('/api/v1/news?limit=100&importance_min=3&article_type=EARNINGS', { signal: ctl.signal }); }
+      catch { clearTimeout(t); return []; }
+      finally { clearTimeout(t); }
       if (!r.ok) return [];
-      const data = await r.json();
+      let data: any;
+      try { data = await r.json(); } catch { return []; }
       if (!Array.isArray(data)) return [];
       // Filter to universe stocks only
       return data.filter((a: NewsArticle) => {
-        const tickers = (a.ticker_symbols ?? []);
-        return tickers.some((t: string) => EARNINGS_WATCH.includes(t.toUpperCase()));
+        const tickers = (a?.ticker_symbols ?? []);
+        return Array.isArray(tickers) && tickers.some((t: string) => typeof t === 'string' && EARNINGS_WATCH.includes(t.toUpperCase()));
       });
     },
     refetchInterval: 300_000,
@@ -2850,13 +2860,21 @@ function useConferenceSignals() {
   return useQuery<Record<string, number>>({
     queryKey: ['bn', 'conf-signals'],
     queryFn: async () => {
-      const r = await fetch('/api/v1/news?limit=200&importance_min=2');
+      // PATCH 0716 — added 15s timeout + safe JSON parse + array guard.
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 15_000);
+      let r: Response;
+      try { r = await fetch('/api/v1/news?limit=200&importance_min=2', { signal: ctl.signal }); }
+      catch { clearTimeout(t); return {}; }
+      finally { clearTimeout(t); }
       if (!r.ok) return {};
-      const articles = await r.json() as NewsArticle[];
+      let parsed: any;
+      try { parsed = await r.json(); } catch { return {}; }
+      const articles: NewsArticle[] = Array.isArray(parsed) ? parsed : [];
       const counts: Record<string, number> = {};
       for (const [confName, kws] of Object.entries(CONF_KEYWORDS)) {
         counts[confName] = articles.filter(a => {
-          const text = ((a.title || a.headline || '') + ' ' + (a.summary || '')).toLowerCase();
+          const text = ((a?.title || a?.headline || '') + ' ' + (a?.summary || '')).toLowerCase();
           return kws.some(kw => text.includes(kw));
         }).length;
       }

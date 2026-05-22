@@ -1316,14 +1316,24 @@ export default function EarningsPage() {
         if (missingFromBulk.length > 0) {
           for (let i = 0; i < missingFromBulk.length; i += 20) {
             const batch = missingFromBulk.slice(i, i + 20);
+            // PATCH 0716 — added 10s timeout + safe JSON parse + array shape guard.
             try {
-              const iqRes = await fetch(`/api/market/quote?symbols=${batch.join(',')}`);
-              if (iqRes.ok) {
-                const iqData = await iqRes.json();
-                (iqData.quotes || []).forEach((q: any) => {
-                  quoteMap.set(q.ticker, { price: q.price || 0, mcapCr: q.marketCap || null });
-                });
-              }
+              const _iqCtl = new AbortController();
+              const _iqTimer = setTimeout(() => _iqCtl.abort(), 10_000);
+              try {
+                const iqRes = await fetch(`/api/market/quote?symbols=${batch.join(',')}`, { signal: _iqCtl.signal });
+                clearTimeout(_iqTimer);
+                if (iqRes.ok) {
+                  let iqData: any = {};
+                  try { iqData = await iqRes.json(); } catch { iqData = {}; }
+                  const quotesArr = Array.isArray(iqData?.quotes) ? iqData.quotes : [];
+                  quotesArr.forEach((q: any) => {
+                    if (q && typeof q.ticker === 'string') {
+                      quoteMap.set(q.ticker, { price: q?.price || 0, mcapCr: q?.marketCap || null });
+                    }
+                  });
+                }
+              } finally { clearTimeout(_iqTimer); }
             } catch {}
           }
         }
@@ -1392,10 +1402,19 @@ export default function EarningsPage() {
     setScreenerLoading(true);
     try {
       // Step 1: Get all NSE stock tickers from the quotes API
-      const quotesRes = await fetch('/api/market/quotes?market=india');
-      if (!quotesRes.ok) throw new Error('Failed to fetch stock list');
-      const quotesData = await quotesRes.json();
-      const allStocks: string[] = (quotesData.stocks || []).map((s: any) => s.ticker).filter(Boolean);
+      // PATCH 0716 — 15s timeout + safe JSON parse + array guard.
+      const _qCtl = new AbortController();
+      const _qTimer = setTimeout(() => _qCtl.abort(), 15_000);
+      let quotesData: any = {};
+      try {
+        const quotesRes = await fetch('/api/market/quotes?market=india', { signal: _qCtl.signal });
+        clearTimeout(_qTimer);
+        if (!quotesRes.ok) throw new Error(`Failed to fetch stock list (HTTP ${quotesRes.status})`);
+        try { quotesData = await quotesRes.json(); } catch { throw new Error('Stock list returned malformed JSON'); }
+      } finally { clearTimeout(_qTimer); }
+      const allStocks: string[] = (Array.isArray(quotesData?.stocks) ? quotesData.stocks : [])
+        .map((s: any) => s?.ticker)
+        .filter((t: any): t is string => typeof t === 'string' && t.length > 0);
 
       // Exclude portfolio + watchlist symbols (they're already in the main cards)
       const pfSet = new Set(portfolioSymbols);
@@ -1494,9 +1513,15 @@ export default function EarningsPage() {
           const results = await Promise.allSettled(
             wave.map(async (batch) => {
               const encoded = batch.map(s => encodeURIComponent(s)).join(',');
-              const res = await fetch(`/api/market/earnings-scan?symbols=${encoded}`);
-              if (!res.ok) return null;
-              return res.json() as Promise<ScanResponse>;
+              // PATCH 0716 — added 25s timeout + safe JSON parse.
+              const _ctl = new AbortController();
+              const _timer = setTimeout(() => _ctl.abort(), 25_000);
+              try {
+                const res = await fetch(`/api/market/earnings-scan?symbols=${encoded}`, { signal: _ctl.signal });
+                if (!res.ok) return null;
+                try { return (await res.json()) as ScanResponse; } catch { return null; }
+              } catch { return null; }
+              finally { clearTimeout(_timer); }
             })
           );
           for (const r of results) {
@@ -2556,14 +2581,23 @@ function usePostGapData(cards: EarningsScanCard[]): Record<string, PostGap> {
     queryKey: ['post-earnings-gap', key],
     enabled: items.length > 0,
     queryFn: async () => {
-      const res = await fetch('/api/v1/earnings/post-gap', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items }),
-      });
+      // PATCH 0716 — added 20s timeout + safe JSON parse.
+      const _pgCtl = new AbortController();
+      const _pgTimer = setTimeout(() => _pgCtl.abort(), 20_000);
+      let res: Response;
+      try {
+        res = await fetch('/api/v1/earnings/post-gap', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items }),
+          signal: _pgCtl.signal,
+        });
+      } catch { clearTimeout(_pgTimer); return {} as Record<string, PostGap>; }
+      finally { clearTimeout(_pgTimer); }
       if (!res.ok) return {};
-      const j = await res.json();
-      return j?.data || {};
+      let j: any = {};
+      try { j = await res.json(); } catch { return {} as Record<string, PostGap>; }
+      return (j && typeof j === 'object' && j.data && typeof j.data === 'object') ? j.data : {};
     },
     staleTime: 5 * 60_000,
     refetchOnWindowFocus: false,

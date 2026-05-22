@@ -25,6 +25,8 @@ import { syncFromEarningsOps, type ConvictionTier } from '@/lib/conviction-beats
 import { debouncedSetItem, getItemSync } from '@/lib/debounced-storage';
 // PATCH 0557 — BUG-AUDIT-2: backend-degraded banner.
 import DegradedBanner from '@/components/DegradedBanner';
+// PATCH 0715 — centralized IST helpers.
+import { istToday as _istToday, isIndianMarketOpen as isIndianMarketOpenLocal } from '@/lib/market-hours';
 
 // ─── Calendar payload types ────────────────────────────────────────────────
 interface CalendarItem {
@@ -340,15 +342,9 @@ function todayISO(): string {
 }
 
 // PATCH 0560 — BUG-AUDIT-5: return today's date in IST (Asia/Kolkata, UTC+5:30).
-// The server-side graded endpoint already uses IST date attribution. The client
-// was using `new Date().toISOString().slice(0,10)` which is UTC. After ~6:30 PM
-// IST every day, UTC date lagged IST by one day so the page asked for the
-// wrong date and rendered 0 graded cards even though the server had data.
+// PATCH 0715 — body delegated to centralized lib/market-hours.
 function todayIstISO(): string {
-  const d = new Date();
-  // Convert to IST (+5:30) by shifting epoch ms then reading UTC parts.
-  const ist = new Date(d.getTime() + (5 * 60 + 30) * 60 * 1000);
-  return ist.toISOString().slice(0, 10);
+  return _istToday();
 }
 
 // PATCH 0145: parse Trendlyne's period_ended (e.g. "31-Mar-2026") → YYYY-MM-DD
@@ -2233,10 +2229,8 @@ export default function EarningsOpportunitiesPage() {
               honestly say 'Market closed · historical data only' rather than
               implying live activity. */}
           {(() => {
-            const istNow = new Date(Date.now() + (5.5 * 60 - new Date().getTimezoneOffset()) * 60 * 1000);
-            const hour = istNow.getUTCHours() * 60 + istNow.getUTCMinutes();
-            const day = istNow.getUTCDay();
-            const isMarketOpen = day >= 1 && day <= 5 && hour >= 9 * 60 + 15 && hour <= 15 * 60 + 30;
+            // PATCH 0715 — centralized via isIndianMarketOpen (lib/market-hours).
+            const isMarketOpen = isIndianMarketOpenLocal();
             return (
               <span style={{ marginLeft: 'auto', fontSize: 11, color: '#6B7A8D' }}>
                 {isMarketOpen

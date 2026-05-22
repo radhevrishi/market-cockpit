@@ -915,7 +915,12 @@ export default function ScreenerPage() {
                     {displayedQuotes.length === 0 ? (
                       <tr>
                         <td colSpan={showEarnings ? 8 : 7} style={{ padding: '32px 16px', textAlign: 'center', color: THEME.textSecondary }}>
-                          No results match your filters — try a different search or sector
+                          {/* PATCH 0714 — disambiguate empty cause: API empty vs filter exclusion. */}
+                          {error
+                            ? `⚠ Fetch failed: ${error}`
+                            : !data?.stocks || data.stocks.length === 0
+                              ? '⚠ Upstream empty — no quotes returned. Try ↻ Refresh in 30s.'
+                              : `Scan complete · 0 of ${data.stocks.length} stocks match your filters (search="${searchTerm || '—'}", sector="${selectedSector}"${convictionOnly ? ', Conviction-only' : ''})`}
                         </td>
                       </tr>
                     ) : (

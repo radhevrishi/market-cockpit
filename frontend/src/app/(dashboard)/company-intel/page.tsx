@@ -542,7 +542,16 @@ export default function CompanyIntelPage() {
                 <button
                   onClick={async () => {
                     if (!confirm(`Reset entire corpus for ${drillTicker}? This cannot be undone.`)) return;
-                    await fetch(`/api/v1/company-intel/${encodeURIComponent(drillTicker)}`, { method: 'DELETE' });
+                    // PATCH 0716 — 15s timeout + try/catch so a network error
+                    // doesn't leave the user with no feedback.
+                    const delCtl = new AbortController();
+                    const delTimer = setTimeout(() => delCtl.abort(), 15_000);
+                    try {
+                      const r = await fetch(`/api/v1/company-intel/${encodeURIComponent(drillTicker)}`, { method: 'DELETE', signal: delCtl.signal });
+                      if (!r.ok) alert(`Delete failed: HTTP ${r.status}`);
+                    } catch (e: any) {
+                      alert(`Delete failed: ${e?.name === 'AbortError' ? 'timeout' : (e?.message || 'network error')}`);
+                    } finally { clearTimeout(delTimer); }
                     setDrillCorpus(null);
                     loadIndex();
                   }}
