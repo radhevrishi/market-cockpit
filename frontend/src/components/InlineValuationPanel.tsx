@@ -93,33 +93,49 @@ export default function InlineValuationPanel() {
     buildReport(docs).then(r => { setReport(r); setBuilding(false); }).catch(() => setBuilding(false));
   }, [docs]);
 
+  // PATCH 0687 — once any file has flowed in (either via own dropzone or via
+  // the Concall AI event bridge) we suppress the standalone upload box so the
+  // section reads as one continuous institutional cross-check, not "yet
+  // another upload". The dropzone returns when the user clicks NEW ANALYSIS.
+  const hasFiles = docs.length > 0;
+
   return (
     <div style={{ marginTop: 32, padding: '20px 22px', background: '#0d1623', border: `1px solid ${BORDER}`, borderRadius: 12 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 }}>
-        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: '#22D3EE' }}>
-          🤖 Auto-Valuation Report
-        </h2>
-        <a href="/auto-valuation" style={{ fontSize: 10, color: DIM, textDecoration: 'none' }}>full page →</a>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6, flexWrap: 'wrap', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#22D3EE', letterSpacing: 0.5, textTransform: 'uppercase' }}>
+            🎯 Valuation Triangulation
+          </h2>
+          <span style={{ fontSize: 10, color: DIM, fontStyle: 'italic' }}>
+            quant cross-check
+          </span>
+        </div>
+        <a href="/auto-valuation" style={{ fontSize: 10, color: DIM, textDecoration: 'none' }}>full breakdown · /auto-valuation →</a>
       </div>
-      <div style={{ fontSize: 12, color: DIM, marginBottom: 14, lineHeight: 1.55 }}>
-        Files dropped into the Concall AI uploader above <strong style={{ color: '#10B981' }}>auto-flow here too</strong> —
-        you only have to upload once. Or drop Excel + PDFs in this zone for a standalone
-        P/E + P/S + EV/EBITDA fair-value report.
+      <div style={{ fontSize: 11.5, color: DIM, marginBottom: 14, lineHeight: 1.6 }}>
+        Forward P/E · P/S · EV/EBITDA fair-value using uploaded financials + concall guidance — runs on the same documents
+        as the editorial report above. Reads should <strong style={{ color: TEXT }}>reinforce the editorial call</strong>
+        (e.g. ACCUMULATE with P/E&nbsp;STRETCHED ↔ quant shows -20% downside on P/E base case).
+        Material disagreement = re-check assumptions.
       </div>
 
-      {/* Upload zone */}
-      <label htmlFor="inline-val-files" style={{
-        display: 'block', padding: '18px 16px', textAlign: 'center', cursor: 'pointer',
-        background: '#0A1422', border: `2px dashed ${BORDER}`, borderRadius: 8,
-        fontSize: 13, color: TEXT, marginBottom: 14,
-      }}>
-        <input id="inline-val-files" type="file" multiple accept=".xlsx,.xls,.pdf"
-          onChange={(e) => { handleFiles(e.target.files); e.target.value = ''; }}
-          style={{ display: 'none' }} />
-        <div style={{ fontSize: 24, marginBottom: 6 }}>📂</div>
-        <div style={{ fontWeight: 700, marginBottom: 3 }}>Drop Excel + PDFs for instant valuation</div>
-        <div style={{ fontSize: 11, color: DIM }}>multi-file · .xlsx + .pdf · runs alongside concall analysis</div>
-      </label>
+      {/* Upload zone — hidden once any docs are present (auto-flow OR standalone) */}
+      {!hasFiles && (
+        <label htmlFor="inline-val-files" style={{
+          display: 'block', padding: '18px 16px', textAlign: 'center', cursor: 'pointer',
+          background: '#0A1422', border: `2px dashed ${BORDER}`, borderRadius: 8,
+          fontSize: 13, color: TEXT, marginBottom: 14,
+        }}>
+          <input id="inline-val-files" type="file" multiple accept=".xlsx,.xls,.pdf"
+            onChange={(e) => { handleFiles(e.target.files); e.target.value = ''; }}
+            style={{ display: 'none' }} />
+          <div style={{ fontSize: 22, marginBottom: 6 }}>📂</div>
+          <div style={{ fontWeight: 700, marginBottom: 3, fontSize: 12 }}>Drop Excel financials + concall PDFs to triangulate</div>
+          <div style={{ fontSize: 10.5, color: DIM }}>
+            files dropped in the Concall AI uploader above flow here automatically · .xlsx + .pdf
+          </div>
+        </label>
+      )}
 
       {/* Uploaded list */}
       {docs.length > 0 && (
@@ -143,10 +159,14 @@ export default function InlineValuationPanel() {
       {/* Report */}
       {report && (
         <div style={{ background: '#0A1422', border: `1px solid ${BORDER}`, borderRadius: 8, padding: '14px 16px' }}>
-          {/* Recommendation header */}
+          {/* Quant verdict — explicitly framed as 'quant says X' so the reader
+              compares it against the editorial recommendation banner above. */}
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 10, color: DIM, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase' }}>
+              Quant verdict
+            </span>
             <span style={{ fontSize: 18, fontWeight: 800, color: recColor(report.recommendation) }}>{report.recommendation}</span>
-            {report.company && <span style={{ fontSize: 13, fontWeight: 700, color: TEXT }}>{report.company}</span>}
+            {report.company && <span style={{ fontSize: 12, fontWeight: 700, color: TEXT }}>{report.company}</span>}
             {report.sector && <span style={{ fontSize: 10, color: '#22D3EE', background: '#22D3EE15', padding: '2px 8px', borderRadius: 3 }}>{report.sector}</span>}
           </div>
 

@@ -3149,6 +3149,14 @@ export default function EarningsAnalysisPage() {
             concallProcessing={concallProcessing}
           />
         )}
+        {/* PATCH 0687 — InlineValuationPanel is also mounted at the bottom of
+            the legacy render path (line ~4232), but this branch early-returns
+            for India / US Fundamentals + Consensus modes. Mounting it here
+            too ensures the Auto-Valuation P/E + P/S + EV/EBITDA report shows
+            up regardless of which institutional view the user is in. */}
+        <div style={{ maxWidth: 1280, margin: '0 auto', padding: '0 20px' }}>
+          <InlineValuationPanel />
+        </div>
       </div>
     );
   }
