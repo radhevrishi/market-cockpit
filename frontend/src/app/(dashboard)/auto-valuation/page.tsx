@@ -348,6 +348,24 @@ function pickGuidanceValue(g: GuidanceItem): number | undefined {
   return undefined;
 }
 
+// PATCH 0653 — pick (bear, base, bull) per institutional convention:
+//   bear  = low bound  (most conservative)
+//   base  = midpoint   (analyst consensus)
+//   bull  = high bound (management's stretch goal)
+// When guidance is a point (single number), all three return the same value.
+function pickGuidanceScenarios(g: GuidanceItem | undefined): { bear?: number; base?: number; bull?: number } {
+  if (!g) return {};
+  if (g.low !== undefined && g.high !== undefined) {
+    return {
+      bear: g.low,
+      base: (g.low + g.high) / 2,
+      bull: g.high,
+    };
+  }
+  const v = pickGuidanceValue(g);
+  return { bear: v, base: v, bull: v };
+}
+
 // ─── Sector inference ───────────────────────────────────────────────────
 function inferSector(text: string, company?: string): string | undefined {
   const t = (text + ' ' + (company || '')).toLowerCase();
@@ -428,10 +446,16 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
   let forwardPAT: number | undefined;
   let inferredMargin: number | undefined;
 
-  // PATCH 0652 — also surface GROWTH guidance so we can derive forward
-  // revenue from latest sales × (1 + growth%). MTAR raised FY27 guidance
-  // from 50% to 80%+ revenue growth — we want to honor that even though
-  // it's phrased as a rate, not an absolute number.
+  // PATCH 0653 — scenario-aware projections.
+  // Each metric carries a (bear, base, bull) triplet so the downstream
+  // calculators don't only vary the multiple — they also vary the
+  // underlying forward value. For MTAR's "50% to 80% growth" range:
+  //   bear = 50% growth, base = 65% growth, bull = 80% growth.
+  let revScen: { bear?: number; base?: number; bull?: number } = {};
+  let ebitdaScen: { bear?: number; base?: number; bull?: number } = {};
+  let patScen: { bear?: number; base?: number; bull?: number } = {};
+  let marginScen: { bear?: number; base?: number; bull?: number } = {};
+  let growthScen: { bear?: number; base?: number; bull?: number } = {};
   let inferredGrowth: number | undefined;
   for (const fy of fyOrder.slice().reverse()) {  // start with FY29 going down
     const yearGuidance = allGuidance.filter(g => g.fiscalYear === fy);
@@ -443,61 +467,109 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
       const growth = yearGuidance.find(g => g.metric === 'GROWTH');
       if (rev || ebitda || pat || growth || margin) {
         forwardYear = fy;
-        forwardRevenue = rev ? pickGuidanceValue(rev) : undefined;
-        forwardEBITDA = ebitda ? pickGuidanceValue(ebitda) : undefined;
-        forwardPAT = pat ? pickGuidanceValue(pat) : undefined;
-        inferredMargin = margin ? pickGuidanceValue(margin) : undefined;
-        inferredGrowth = growth ? pickGuidanceValue(growth) : undefined;
+        revScen = pickGuidanceScenarios(rev);
+        ebitdaScen = pickGuidanceScenarios(ebitda);
+        patScen = pickGuidanceScenarios(pat);
+        marginScen = pickGuidanceScenarios(margin);
+        growthScen = pickGuidanceScenarios(growth);
+        forwardRevenue = revScen.base;
+        forwardEBITDA = ebitdaScen.base;
+        forwardPAT = patScen.base;
+        inferredMargin = marginScen.base;
+        inferredGrowth = growthScen.base;
         break;
       }
     }
   }
 
-  // PATCH 0652 — apply guided GROWTH% to latest sales when no absolute
-  // revenue guidance was given.
-  if (!forwardRevenue && inferredGrowth && excelData?.latestSales && excelData.latestSales > 0) {
-    forwardRevenue = excelData.latestSales * (1 + inferredGrowth / 100);
+  // PATCH 0653 — apply guided GROWTH% per scenario to latest sales when
+  // no absolute revenue guidance was given. Each scenario picks the
+  // corresponding growth bound.
+  const latestSales = excelData?.latestSales || 0;
+  if (!revScen.base && growthScen.base && latestSales > 0) {
+    revScen = {
+      bear: growthScen.bear !== undefined ? latestSales * (1 + growthScen.bear / 100) : undefined,
+      base: latestSales * (1 + growthScen.base / 100),
+      bull: growthScen.bull !== undefined ? latestSales * (1 + growthScen.bull / 100) : undefined,
+    };
+    forwardRevenue = revScen.base;
   }
 
-  // PATCH 0648 — Better derivation chain:
-  //   1. If revenue + margin in guidance → derive EBITDA = rev × margin
-  //   2. If revenue but NO margin → derive EBITDA from historical OPM (5yr avg)
-  //   3. PAT derivation from EBITDA × historical conversion ratio
-  //   4. Historical CAGR projection when guidance entirely missing
-  if (forwardRevenue && inferredMargin && !forwardEBITDA) {
-    forwardEBITDA = forwardRevenue * (inferredMargin / 100);
+  // PATCH 0653 — Scenario-aware derivation. The triplet flows from
+  // revenue → EBITDA (via margin scenarios) → PAT (via historical
+  // conversion). For each scenario, if absolute guidance is missing,
+  // fall back to historical-CAGR / margin / conversion proxies.
+  const opmAvg = excelData?.opmAvg && excelData.opmAvg > 0 ? excelData.opmAvg : undefined;
+  const yearsAhead = forwardYear === 'FY28' ? 2 : 1;
+
+  // Step 1: ensure revScen has bear/base/bull populated.
+  if (!revScen.base && latestSales > 0 && excelData?.salesCagr5y && excelData.salesCagr5y > 0) {
+    const v = latestSales * Math.pow(1 + excelData.salesCagr5y / 100, yearsAhead);
+    revScen = { bear: v, base: v, bull: v };
+    if (!forwardYear) forwardYear = 'FY27 (projected)';
   }
-  // PATCH 0648 — NEW fallback: when revenue is known but EBITDA is not and
-  // no margin guidance, use historical 5yr avg OPM as the margin proxy.
-  if (forwardRevenue && !forwardEBITDA && excelData?.opmAvg && excelData.opmAvg > 0) {
-    forwardEBITDA = forwardRevenue * (excelData.opmAvg / 100);
-    if (!inferredMargin) inferredMargin = excelData.opmAvg;
+  // Backfill missing scenario bounds from base when only one side exists.
+  if (revScen.base !== undefined) {
+    if (revScen.bear === undefined) revScen.bear = revScen.base;
+    if (revScen.bull === undefined) revScen.bull = revScen.base;
   }
-  // Derive PAT from EBITDA via historical conversion (rough heuristic: PAT ≈ EBITDA × 0.45)
-  if (forwardEBITDA && !forwardPAT && excelData) {
+
+  // Step 2: derive EBITDA scenarios.
+  const marginBear = marginScen.bear ?? marginScen.base ?? opmAvg;
+  const marginBase = marginScen.base ?? opmAvg;
+  const marginBull = marginScen.bull ?? marginScen.base ?? opmAvg;
+  if (!ebitdaScen.base && revScen.base && marginBase) {
+    ebitdaScen = {
+      bear: revScen.bear !== undefined && marginBear ? revScen.bear * (marginBear / 100) : undefined,
+      base: revScen.base * (marginBase / 100),
+      bull: revScen.bull !== undefined && marginBull ? revScen.bull * (marginBull / 100) : undefined,
+    };
+  }
+  if (ebitdaScen.base !== undefined) {
+    if (ebitdaScen.bear === undefined) ebitdaScen.bear = ebitdaScen.base;
+    if (ebitdaScen.bull === undefined) ebitdaScen.bull = ebitdaScen.base;
+  }
+
+  // Step 3: derive PAT scenarios via historical EBITDA→PAT conversion.
+  if (!patScen.base && ebitdaScen.base && excelData) {
     const latestEBITDA = excelData.latestEBITDA;
     const latestPAT = excelData.latestPAT;
     if (latestEBITDA && latestEBITDA > 0 && latestPAT) {
       const conv = latestPAT / latestEBITDA;
-      if (conv > 0.1 && conv < 1.0) forwardPAT = forwardEBITDA * conv;
+      if (conv > 0.1 && conv < 1.0) {
+        patScen = {
+          bear: ebitdaScen.bear !== undefined ? ebitdaScen.bear * conv : undefined,
+          base: ebitdaScen.base * conv,
+          bull: ebitdaScen.bull !== undefined ? ebitdaScen.bull * conv : undefined,
+        };
+      }
     }
   }
-  // Fallback: project from historical CAGR
-  if (!forwardRevenue && excelData?.latestSales && excelData?.salesCagr5y && excelData.salesCagr5y > 0) {
-    const yearsAhead = forwardYear === 'FY28' ? 2 : 1;
-    forwardRevenue = excelData.latestSales * Math.pow(1 + excelData.salesCagr5y / 100, yearsAhead);
-    if (!forwardYear) forwardYear = 'FY27 (projected)';
-    // Re-derive EBITDA from new revenue + historical OPM
-    if (!forwardEBITDA && excelData.opmAvg && excelData.opmAvg > 0) {
-      forwardEBITDA = forwardRevenue * (excelData.opmAvg / 100);
-      if (!inferredMargin) inferredMargin = excelData.opmAvg;
-    }
+  // Final historical-CAGR fallback for PAT when EBITDA-conversion path failed.
+  if (!patScen.base && excelData?.latestPAT && excelData?.patCagr5y && excelData.patCagr5y > 0) {
+    const v = excelData.latestPAT * Math.pow(1 + excelData.patCagr5y / 100, yearsAhead);
+    patScen = { bear: v, base: v, bull: v };
   }
-  if (!forwardPAT && excelData?.latestPAT && excelData?.patCagr5y && excelData.patCagr5y > 0) {
-    const yearsAhead = forwardYear === 'FY28' ? 2 : 1;
-    forwardPAT = excelData.latestPAT * Math.pow(1 + excelData.patCagr5y / 100, yearsAhead);
+  if (patScen.base !== undefined) {
+    if (patScen.bear === undefined) patScen.bear = patScen.base;
+    if (patScen.bull === undefined) patScen.bull = patScen.base;
   }
-  // PATCH 0648 — round all forward values to clean integers for display
+
+  // Sync the legacy single-value fields used downstream / in the saved report.
+  forwardRevenue = revScen.base;
+  forwardEBITDA = ebitdaScen.base;
+  forwardPAT = patScen.base;
+  if (!inferredMargin && marginBase) inferredMargin = marginBase;
+
+  // Round for display.
+  const roundScen = (s: typeof revScen) => ({
+    bear: s.bear !== undefined ? Math.round(s.bear) : undefined,
+    base: s.base !== undefined ? Math.round(s.base) : undefined,
+    bull: s.bull !== undefined ? Math.round(s.bull) : undefined,
+  });
+  revScen = roundScen(revScen);
+  ebitdaScen = roundScen(ebitdaScen);
+  patScen = roundScen(patScen);
   if (forwardRevenue) forwardRevenue = Math.round(forwardRevenue);
   if (forwardEBITDA) forwardEBITDA = Math.round(forwardEBITDA);
   if (forwardPAT) forwardPAT = Math.round(forwardPAT);
@@ -545,14 +617,50 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
     currency: '₹' as const,
   };
 
-  const peResult = forwardPAT && currentMarketCapCr > 0
-    ? calculatePE({ ...baseCalcInput, forwardPATCr: forwardPAT, bearPE: defaults.PE.bear, basePE: defaults.PE.base, bullPE: defaults.PE.bull })
+  // PATCH 0653 — scenario-aware calculator runs. Each calc runs three
+  // times — once per scenario value — and we pick the matching case
+  // from each. Result: BEAR uses (low forward × low multiple), BASE
+  // uses (mid × mid), BULL uses (high × high). This is the proper
+  // institutional bear/base/bull layering.
+  const mergeScenarioCalc = <T extends CalculatorResult>(
+    runner: (forward: number, multBear: number, multBase: number, multBull: number) => T,
+    scen: { bear?: number; base?: number; bull?: number },
+    multBear: number,
+    multBase: number,
+    multBull: number,
+  ): T | undefined => {
+    if (scen.base === undefined) return undefined;
+    const bearRun = runner(scen.bear ?? scen.base, multBear, multBase, multBull);
+    const baseRun = runner(scen.base, multBear, multBase, multBull);
+    const bullRun = runner(scen.bull ?? scen.base, multBear, multBase, multBull);
+    const cases = [
+      bearRun.cases.find(c => c.label === 'BEAR')!,
+      baseRun.cases.find(c => c.label === 'BASE')!,
+      bullRun.cases.find(c => c.label === 'BULL')!,
+    ];
+    return { ...baseRun, cases };
+  };
+
+  const peResult = patScen.base && currentMarketCapCr > 0
+    ? mergeScenarioCalc(
+        (f, mb, m, mu) => calculatePE({ ...baseCalcInput, forwardPATCr: f, bearPE: mb, basePE: m, bullPE: mu }),
+        patScen,
+        defaults.PE.bear, defaults.PE.base, defaults.PE.bull,
+      )
     : undefined;
-  const psResult = forwardRevenue && currentMarketCapCr > 0
-    ? calculatePS({ ...baseCalcInput, forwardRevenueCr: forwardRevenue, bearPS: defaults.PS.bear, basePS: defaults.PS.base, bullPS: defaults.PS.bull })
+  const psResult = revScen.base && currentMarketCapCr > 0
+    ? mergeScenarioCalc(
+        (f, mb, m, mu) => calculatePS({ ...baseCalcInput, forwardRevenueCr: f, bearPS: mb, basePS: m, bullPS: mu }),
+        revScen,
+        defaults.PS.bear, defaults.PS.base, defaults.PS.bull,
+      )
     : undefined;
-  const evResult = forwardEBITDA && currentMarketCapCr > 0
-    ? calculateEvEbitda({ ...baseCalcInput, forwardEBITDACr: forwardEBITDA, bearMultiple: defaults.EV_EBITDA.bear, baseMultiple: defaults.EV_EBITDA.base, bullMultiple: defaults.EV_EBITDA.bull })
+  const evResult = ebitdaScen.base && currentMarketCapCr > 0
+    ? mergeScenarioCalc(
+        (f, mb, m, mu) => calculateEvEbitda({ ...baseCalcInput, forwardEBITDACr: f, bearMultiple: mb, baseMultiple: m, bullMultiple: mu }),
+        ebitdaScen,
+        defaults.EV_EBITDA.bear, defaults.EV_EBITDA.base, defaults.EV_EBITDA.bull,
+      )
     : undefined;
 
   // Recommendation

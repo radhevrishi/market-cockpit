@@ -158,7 +158,10 @@ export function extractGuidance(text: string): GuidanceItem[] {
       // prefer a number followed by Cr/crore/lakh/billion or preceded by
       // ₹/Rs/INR.
       const wantsPct = (pat.unit === '%');
-      const pctRange = sStripped.match(/(?:from\s+)?([\d,]+(?:\.\d+)?)\s*%\s*(?:to|[-–]|and|up\s+to)\s*([\d,]+(?:\.\d+)?)\s*%?/i);
+      // PATCH 0653 — allow up to 40 non-digit, non-% chars between the two
+      // numbers so "from 50% revenue growth to 80% plus" parses as a range,
+      // not just a point.
+      const pctRange = sStripped.match(/(?:from\s+)?([\d,]+(?:\.\d+)?)\s*%[^%\d]{0,40}?(?:to|[-–]|and|up\s+to)\s*([\d,]+(?:\.\d+)?)\s*%/i);
       const pctPoint = sStripped.match(/(?:around|about|approximately|roughly|of|at|to)?\s*([\d,]+(?:\.\d+)?)\s*%(?:\s*plus|\s*\+)?/i);
       const crRange  = sStripped.match(/(?:₹\s*|Rs\.?\s*|INR\s*)?([\d,]+(?:\.\d+)?)\s*(?:to|[-–])\s*([\d,]+(?:\.\d+)?)\s*(?:crore|cr|lakh|billion|million|bn|mn)?/i);
       const crPoint  = sStripped.match(/(?:₹\s*|Rs\.?\s*|INR\s*)([\d,]+(?:\.\d+)?)\s*(?:crore|cr|lakh|billion|million|bn|mn)?|([\d,]+(?:\.\d+)?)\s*(?:crore|cr|lakh|billion|million|bn|mn)/i);
