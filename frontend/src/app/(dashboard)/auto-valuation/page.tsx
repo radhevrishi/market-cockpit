@@ -114,6 +114,11 @@ interface AutoValuationReport {
   peConfidence?: 'HIGH' | 'MED' | 'LOW';
   psConfidence?: 'HIGH' | 'MED' | 'LOW';
   evConfidence?: 'HIGH' | 'MED' | 'LOW';
+  // PATCH 0678 — explicit reason next to each confidence chip so user knows
+  // exactly WHICH input came from guidance vs historical fallback
+  peReason?: string;
+  psReason?: string;
+  evReason?: string;
 }
 
 // ─── PDF extraction (CDN pdf.js — same pattern as earnings-analysis) ────
@@ -841,6 +846,23 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
   const psConfidence: 'HIGH' | 'MED' | 'LOW' = revFromGuidance ? 'HIGH' : 'MED';
   const peConfidence: 'HIGH' | 'MED' | 'LOW' = patFromGuidance ? 'HIGH' : (revFromGuidance ? 'MED' : 'LOW');
   const evConfidence: 'HIGH' | 'MED' | 'LOW' = marginIsFromGuidance ? 'HIGH' : (evValid ? 'MED' : 'LOW');
+  // PATCH 0678 — explicit per-calc reason. Build a one-line "why this confidence"
+  // from the source flags so the UI can render it under each chip.
+  const psReason = revFromGuidance
+    ? `Forward Revenue ₹${revScen.base?.toFixed(0) || '?'} Cr from PDF guidance — high signal.`
+    : `Forward Revenue ₹${revScen.base?.toFixed(0) || '?'} Cr derived from historical ${excelData?.salesCagr5y?.toFixed(0) || '?'}% sales CAGR — no PDF guidance found.`;
+  const peReason = patFromGuidance
+    ? `Forward PAT ₹${patScen.base?.toFixed(0) || '?'} Cr from explicit PDF guidance.`
+    : revFromGuidance
+      ? `Forward PAT ₹${patScen.base?.toFixed(0) || '?'} Cr derived from guided revenue × historical EBITDA→PAT conversion (no direct PAT guidance).`
+      : `Forward PAT ₹${patScen.base?.toFixed(0) || '?'} Cr derived from historical CAGR + EBITDA chain (no guidance found).`;
+  const evReason = marginIsFromGuidance
+    ? `Forward EBITDA ₹${ebitdaScen.base?.toFixed(0) || '?'} Cr — margin ${inferredMargin?.toFixed(0) || '?'}% from PDF guidance.`
+    : opmSource === 'latest'
+      ? `Forward EBITDA ₹${ebitdaScen.base?.toFixed(0) || '?'} Cr — margin ${inferredMargin?.toFixed(0) || '?'}% from latest-year historical OPM (no guidance).`
+      : opmSource === 'median3y'
+        ? `Forward EBITDA ₹${ebitdaScen.base?.toFixed(0) || '?'} Cr — margin ${inferredMargin?.toFixed(0) || '?'}% from 3-yr median OPM (no guidance).`
+        : `Forward EBITDA ₹${ebitdaScen.base?.toFixed(0) || '?'} Cr — margin ${inferredMargin?.toFixed(0) || '?'}% from 5-yr avg OPM (no guidance).`;
   const weighted: Array<{ w: number; v: number }> = [];
   if (psBase !== undefined) weighted.push({ w: 0.45 * (psConfidence === 'HIGH' ? 1 : psConfidence === 'MED' ? 0.7 : 0.3), v: psBase });
   if (peBase !== undefined) weighted.push({ w: 0.35 * (peConfidence === 'HIGH' ? 1 : peConfidence === 'MED' ? 0.7 : 0.3), v: peBase });
@@ -901,11 +923,12 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
     peResultY2, psResultY2, evResultY2,
     recommendation, rationale,
     peConfidence, psConfidence, evConfidence,
+    peReason, psReason, evReason,
   };
 }
 
 // ─── UI components ──────────────────────────────────────────────────────
-function CalcResultMini({ label, result, confidence }: { label: string; result?: CalculatorResult; confidence?: 'HIGH' | 'MED' | 'LOW' }) {
+function CalcResultMini({ label, result, confidence, reason }: { label: string; result?: CalculatorResult; confidence?: 'HIGH' | 'MED' | 'LOW'; reason?: string }) {
   if (!result) {
     return (
       <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 6, padding: '14px 16px', opacity: 0.5 }}>
@@ -923,11 +946,18 @@ function CalcResultMini({ label, result, confidence }: { label: string; result?:
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
         <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.5px' }}>{label}</div>
         {confidence && (
-          <span style={{ fontSize: 9, padding: '2px 7px', background: `${confColor}20`, color: confColor, border: `1px solid ${confColor}50`, borderRadius: 3, fontWeight: 800, letterSpacing: '0.5px' }} title={confidence === 'HIGH' ? 'Direct guidance from PDF' : confidence === 'MED' ? 'Partial guidance, some historical fallback' : 'Mostly historical fallback — verify margin manually'}>
+          <span style={{ fontSize: 9, padding: '2px 7px', background: `${confColor}20`, color: confColor, border: `1px solid ${confColor}50`, borderRadius: 3, fontWeight: 800, letterSpacing: '0.5px' }}>
             {confidence} CONFIDENCE
           </span>
         )}
       </div>
+      {/* PATCH 0678 — explicit reason for the confidence level. User asked
+          for "why MED/LOW" to be visible, not hidden behind a tooltip. */}
+      {reason && (
+        <div style={{ marginBottom: 8, padding: '6px 10px', background: `${confColor}10`, borderLeft: `2px solid ${confColor}`, borderRadius: 3, fontSize: 10.5, color: '#C9D4E0', lineHeight: 1.5 }}>
+          <strong style={{ color: confColor, marginRight: 4 }}>Why {confidence}:</strong>{reason}
+        </div>
+      )}
       <div style={{ fontSize: 11, color: '#C9D4E0', marginBottom: 8, lineHeight: 1.5 }}>{result.baseSummary}</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
         {result.cases.map((c) => (
@@ -1345,9 +1375,9 @@ export default function AutoValuationPage() {
               </div>
             ) : null}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12 }}>
-              <CalcResultMini label="📈 P/E Valuation" result={viewYear === 'Y2' ? report.peResultY2 : report.peResult} confidence={report.peConfidence} />
-              <CalcResultMini label="💰 P/S Valuation" result={viewYear === 'Y2' ? report.psResultY2 : report.psResult} confidence={report.psConfidence} />
-              <CalcResultMini label="🏭 EV/EBITDA Valuation" result={viewYear === 'Y2' ? report.evResultY2 : report.evResult} confidence={report.evConfidence} />
+              <CalcResultMini label="📈 P/E Valuation" result={viewYear === 'Y2' ? report.peResultY2 : report.peResult} confidence={report.peConfidence} reason={report.peReason} />
+              <CalcResultMini label="💰 P/S Valuation" result={viewYear === 'Y2' ? report.psResultY2 : report.psResult} confidence={report.psConfidence} reason={report.psReason} />
+              <CalcResultMini label="🏭 EV/EBITDA Valuation" result={viewYear === 'Y2' ? report.evResultY2 : report.evResult} confidence={report.evConfidence} reason={report.evReason} />
             </div>
 
             {/* PATCH 0662 — Manual Override Panel. When extractor misses guidance,
