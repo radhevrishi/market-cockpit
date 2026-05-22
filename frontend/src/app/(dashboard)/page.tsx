@@ -578,12 +578,44 @@ export default function HomeDashboard() {
         const moverTickers = moverInputs.map((m) => m.ticker);
         if (moverTickers.length > 0) {
           (async () => {
-            // 1. concall-intel filings (cacheOnly=1 — never blocks)
-            const { data: feedData } = await safeDiag<any>(
-              '/api/v1/concall-intel/live-feed?days=14&bullishOnly=false&cacheOnly=1',
-              5_000
-            );
+            // PATCH 0712 — five-source enrichment, all parallel:
+            //   1. earnings/graded last 5 weekdays  (HIGH-conf earnings catalyst)
+            //   2. special-situations               (HIGH-conf OFS/MNA/buyback)
+            //   3. concall-intel filings cacheOnly  (HIGH-conf disclosure)
+            //   4. news per ticker                  (MEDIUM-conf reporting)
+            //   5. peer cross-correlation           (sector_wide detection)
+            // Plus a fire-and-forget warm trigger on live-feed (no cacheOnly)
+            // so the cache fills for the next page load.
+
+            // Helper: last N weekday dates as YYYY-MM-DD (IST-aware)
+            const istDates = (n: number): string[] => {
+              const out: string[] = [];
+              const istOffsetMs = 5.5 * 60 * 60 * 1000;
+              const t = new Date(Date.now() + istOffsetMs);
+              while (out.length < n) {
+                const day = t.getUTCDay();
+                if (day !== 0 && day !== 6) {
+                  const y = t.getUTCFullYear();
+                  const m = String(t.getUTCMonth() + 1).padStart(2, '0');
+                  const d = String(t.getUTCDate()).padStart(2, '0');
+                  out.push(`${y}-${m}-${d}`);
+                }
+                t.setUTCDate(t.getUTCDate() - 1);
+              }
+              return out;
+            };
+            const recentDates = istDates(5);
+
+            const [feedRes, ssRes, ...gradedResults] = await Promise.all([
+              safeDiag<any>('/api/v1/concall-intel/live-feed?days=14&bullishOnly=false&cacheOnly=1', 5_000),
+              safeDiag<any>('/api/v1/special-situations', 12_000),
+              ...recentDates.map((d) => safeDiag<any>(`/api/v1/earnings/graded?date=${d}`, 12_000)),
+            ]);
+            if (cancelled) return;
+
+            // 1. Filings indexed by symbol
             const filingsBySymbol: Record<string, any[]> = {};
+            const feedData = feedRes?.data;
             if (feedData?.filings && Array.isArray(feedData.filings)) {
               for (const f of feedData.filings) {
                 const sym = (f.symbol || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
@@ -593,7 +625,52 @@ export default function HomeDashboard() {
               }
             }
 
-            // 2. news per ticker (parallel, bounded)
+            // 2. Earnings by ticker — pool across all 5 dates, keep most recent
+            const earningsByTicker: Record<string, any> = {};
+            for (const r of gradedResults) {
+              const g = r?.data;
+              if (!g?.by_tier || typeof g.by_tier !== 'object') continue;
+              for (const [tier, items] of Object.entries(g.by_tier)) {
+                if (!Array.isArray(items)) continue;
+                for (const item of items as any[]) {
+                  const sym = ((item.ticker || item.symbol) || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
+                  if (!sym) continue;
+                  const existing = earningsByTicker[sym];
+                  if (existing && existing.filing_date >= (item.filing_date || g.filing_date)) continue;
+                  earningsByTicker[sym] = {
+                    ticker: sym,
+                    tier,
+                    quarter: item.quarter,
+                    filing_date: item.filing_date || g.filing_date,
+                    sales_yoy_pct: item.sales_yoy_pct,
+                    net_profit_yoy_pct: item.net_profit_yoy_pct,
+                    eps_yoy_pct: item.eps_yoy_pct,
+                  };
+                }
+              }
+            }
+
+            // 3. Special situations by ticker
+            const specialByTicker: Record<string, any> = {};
+            const ssData = ssRes?.data;
+            const ssItems: any[] = Array.isArray(ssData)
+              ? ssData
+              : (ssData?.items || ssData?.events || ssData?.rows || []);
+            for (const ev of ssItems) {
+              const sym = ((ev.ticker || ev.target || ev.symbol) || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
+              if (!sym) continue;
+              if (specialByTicker[sym]) continue; // first wins (assume freshest first)
+              specialByTicker[sym] = {
+                ticker: sym,
+                event_type: ev.event_type || ev.type || 'CORPORATE_ACTION',
+                sub_category: ev.sub_category,
+                announced_at: ev.announced_at || ev.date,
+                headline: ev.headline || ev.title,
+                source_url: ev.source_url || ev.url,
+              };
+            }
+
+            // 4. News per ticker (parallel, bounded)
             const newsByTicker: Record<string, any[]> = {};
             await Promise.all(moverTickers.map(async (t) => {
               const { data } = await safeDiag<any>(
@@ -605,13 +682,20 @@ export default function HomeDashboard() {
             }));
             if (cancelled) return;
 
-            // 3. Run attribution engine — handles catalyst classification,
-            //    sector-wide peer cross-correlation, confidence tiering, and
-            //    honest fallback in one pass.
+            // 5. Fire-and-forget warm: hit live-feed WITHOUT cacheOnly so the
+            //    KV cache fills for next load. No await, no block on home.
+            if (!feedData?.filings?.length) {
+              fetch('/api/v1/concall-intel/live-feed?days=14&bullishOnly=false', { cache: 'no-store' })
+                .catch(() => {/* fire-and-forget */});
+            }
+
+            // 6. Run attribution engine
             const attrib = attributeMovers({
               movers: moverInputs,
               filingsBySymbol,
               newsByTicker,
+              earningsByTicker,
+              specialByTicker,
             });
             if (!cancelled) setData((d) => ({ ...d, moversAttrib: attrib } as any));
           })();

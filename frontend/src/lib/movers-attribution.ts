@@ -72,6 +72,29 @@ export interface NewsInput {
   importance_score?: number;
 }
 
+// PATCH 0711 — Earnings + special-situations as first-class catalysts.
+// /api/v1/earnings/graded returns by_tier[BLOCKBUSTER|STRONG|MODERATE|...]
+// Each item has {ticker, company, sector, filing_date, quarter,
+// sales_yoy_pct, net_profit_yoy_pct, eps_yoy_pct, ...}.
+export interface EarningsHit {
+  ticker: string;
+  tier: 'BLOCKBUSTER' | 'STRONG' | 'MODERATE' | 'WEAK' | 'POOR' | string;
+  quarter?: string;
+  filing_date?: string;
+  sales_yoy_pct?: number;
+  net_profit_yoy_pct?: number;
+  eps_yoy_pct?: number;
+}
+// /api/v1/special-situations returns events with {target, event_type, ...}
+export interface SpecialSituationHit {
+  ticker: string;
+  event_type: string;        // 'OPEN_OFFER' | 'OFS' | 'PREFERENTIAL' | 'MERGER' | 'DEMERGER' | 'BUYBACK' | etc
+  sub_category?: string;
+  announced_at?: string;
+  headline?: string;
+  source_url?: string;
+}
+
 export interface MoverAttribution {
   ticker: string;
   changePercent: number;
@@ -204,12 +227,16 @@ interface AttributeOpts {
   movers: MoverInput[];          // all gainers + losers in one array
   filingsBySymbol: Record<string, FilingInput[]>;
   newsByTicker?: Record<string, NewsInput[]>;
+  // PATCH 0711 — new HIGH-confidence sources
+  earningsByTicker?: Record<string, EarningsHit>;
+  specialByTicker?: Record<string, SpecialSituationHit>;
 }
 
 export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttribution> {
   const peers = buildPeerContext(opts.movers);
   const FILING_WINDOW = 3 * 24 * 3600 * 1000;   // 3 days for catalyst freshness
   const NEWS_WINDOW = 2 * 24 * 3600 * 1000;     // 2 days
+  const EARNINGS_WINDOW = 7 * 24 * 3600 * 1000; // 7 days — earnings reaction often lasts a week
   const SECTOR_WIDE_MIN_PEERS = 4;              // 4+ same-direction peers = sector move
 
   const out: Record<string, MoverAttribution> = {};
@@ -225,7 +252,64 @@ export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttrib
     );
     const sectorScope: Scope = peerCountSameDirection >= SECTOR_WIDE_MIN_PEERS ? 'SECTOR_WIDE' : 'STOCK_SPECIFIC';
 
-    // ── TIER 1: filing match (HIGH confidence) ────────────────────────────
+    // ── TIER 1a: EARNINGS HIT (HIGH confidence) ───────────────────────────
+    // Most common reason for a sharp move. If this ticker reported in the
+    // last 7 days, the move IS the earnings reaction — surface the tier
+    // and growth profile.
+    const earnings = opts.earningsByTicker?.[sym];
+    if (earnings && isFresh(earnings.filing_date, EARNINGS_WINDOW)) {
+      const tier = earnings.tier || 'reported';
+      const period = earnings.quarter || 'recent';
+      const sales = earnings.sales_yoy_pct;
+      const pat = earnings.net_profit_yoy_pct;
+      const growthBlurb = (typeof sales === 'number' || typeof pat === 'number')
+        ? ` · ${typeof sales === 'number' ? `Sales ${sales >= 0 ? '+' : ''}${sales.toFixed(0)}%` : ''}${typeof pat === 'number' ? ` · PAT ${pat >= 0 ? '+' : ''}${pat.toFixed(0)}%` : ''}`
+        : '';
+      out[sym] = {
+        ticker: sym,
+        changePercent: m.changePercent,
+        catalyst: `${tier} earnings (${period})${growthBlurb}`,
+        catalystType: 'EARNINGS',
+        moveType: 'INFORMATION',
+        scope: sectorScope === 'SECTOR_WIDE' ? 'SECTOR_WIDE' : 'STOCK_SPECIFIC',
+        confidence: 'HIGH',
+        evidenceSource: 'filing',
+        sectorPeerCount: peerCountSameDirection,
+        sectorDirection: direction,
+      };
+      continue;
+    }
+
+    // ── TIER 1b: SPECIAL SITUATION (HIGH confidence) ─────────────────────
+    // OFS, preferential allotment, SAST stake, M&A, buyback, demerger —
+    // these ARE the trigger. CENTRALBK -8% with an OFS event qualifies here.
+    const ss = opts.specialByTicker?.[sym];
+    if (ss) {
+      const evtMap: Record<string, CatalystType> = {
+        OFS: 'OFS', OPEN_OFFER: 'MNA', MERGER: 'MNA', DEMERGER: 'MNA',
+        ACQUISITION: 'MNA', BUYBACK: 'BLOCK_DEAL', PREFERENTIAL: 'BLOCK_DEAL',
+        SAST: 'BLOCK_DEAL', RIGHTS: 'BLOCK_DEAL', QIP: 'BLOCK_DEAL',
+        STAKE_SALE: 'BLOCK_DEAL',
+      };
+      const evtType = (ss.event_type || '').toUpperCase();
+      const cat: CatalystType = evtMap[evtType] || 'MNA';
+      out[sym] = {
+        ticker: sym,
+        changePercent: m.changePercent,
+        catalyst: ss.headline || `${ss.event_type.replace(/_/g, ' ')}${ss.sub_category ? ' · ' + ss.sub_category : ''}`,
+        catalystType: cat,
+        moveType: cat === 'OFS' || cat === 'BLOCK_DEAL' ? 'FLOW' : 'INFORMATION',
+        scope: 'STOCK_SPECIFIC',
+        confidence: 'HIGH',
+        evidenceSource: 'filing',
+        evidenceUrl: ss.source_url,
+        sectorPeerCount: peerCountSameDirection,
+        sectorDirection: direction,
+      };
+      continue;
+    }
+
+    // ── TIER 1c: filing match from concall-intel (HIGH confidence) ────────
     const filings = (opts.filingsBySymbol[sym] || [])
       .filter(f => isFresh(f.filing_datetime, FILING_WINDOW))
       .sort((a, b) => new Date(b.filing_datetime || 0).getTime() - new Date(a.filing_datetime || 0).getTime());
