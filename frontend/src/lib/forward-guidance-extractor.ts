@@ -197,11 +197,11 @@ export function extractGuidance(text: string): GuidanceItem[] {
       // for Revenue and Order Book.
       const pctRange = clause.match(/([\d,]+(?:\.\d+)?)\s*%[^%\d]{0,40}?(?:to|[-–]|and|up\s+to)\s*([\d,]+(?:\.\d+)?)\s*%/i);
       const pctPoint = clause.match(/([\d,]+(?:\.\d+)?)\s*%/i);
-      const crRange  = clause.match(/(?:₹\s*|Rs\.?\s*|INR\s*)?([\d,]+(?:\.\d+)?)\s*(?:to|[-–])\s*([\d,]+(?:\.\d+)?)\s*(?:crore|cr|lakh|billion|million|bn|mn)\b/i);
+      const crRange  = clause.match(/(?:₹\s*|Rs\.?\s*|INR\s*)?([\d,]+(?:\.\d+)?)\s*(?:to|[-–])\s*([\d,]+(?:\.\d+)?)\s*(?:crores?|cr|lakhs?|billions?|millions?|bn|mn)\b/i);
       // PATCH 0655 — crPoint requires EITHER ₹/Rs/INR prefix OR
       // crore/cr/lakh/etc suffix. Naked digits don't qualify (prevents
       // "16 manufacturing units" or "50 customers" from matching).
-      const crPoint  = clause.match(/(?:₹\s*|Rs\.?\s*|INR\s*)([\d,]+(?:\.\d+)?)\s*(?:crore|cr|lakh|billion|million|bn|mn)?\b|([\d,]+(?:\.\d+)?)\s*(?:crore|cr|lakh|billion|million|bn|mn)\b/i);
+      const crPoint  = clause.match(/(?:₹\s*|Rs\.?\s*|INR\s*)([\d,]+(?:\.\d+)?)\s*(?:crores?|cr|lakhs?|billions?|millions?|bn|mn)?\b|([\d,]+(?:\.\d+)?)\s*(?:crores?|cr|lakhs?|billions?|millions?|bn|mn)\b/i);
 
       let rawMatch = '';
       let amounts: { low?: number; high?: number; point?: number } = {};
@@ -240,14 +240,49 @@ export function extractGuidance(text: string): GuidanceItem[] {
         return raw;
       };
 
+      // PATCH 0656 — Sanity floors. Reject implausible guidance values
+      // before pushing. MTAR's live run picked up a stray "0%" near
+      // "EBITDA margin" (probably a YoY-delta or chart label).
+      // Institutional guidance numbers always fall in tight ranges.
+      const isSensible = (raw: number | undefined): boolean => {
+        if (raw === undefined) return true; // missing is fine; only reject implausible
+        switch (pat.metric) {
+          case 'EBITDA_MARGIN':
+          case 'OPM':
+            return raw >= 3 && raw <= 80;
+          case 'PAT_MARGIN':
+            return raw >= 1 && raw <= 60;
+          case 'GROWTH':
+            return raw >= 1 && raw <= 300;
+          case 'REVENUE':
+          case 'EBITDA':
+          case 'ORDER_BOOK':
+          case 'CAPEX':
+            return raw >= 10;  // Cr-denominated, minimum 10 Cr for any institutional guidance
+          case 'PAT':
+            return raw >= 1;
+          default:
+            return true;
+        }
+      };
+      const finalLow   = isPct ? amounts.low   : scale(amounts.low);
+      const finalHigh  = isPct ? amounts.high  : scale(amounts.high);
+      const finalPoint = isPct ? amounts.point : scale(amounts.point);
+      // If point is implausible, OR both low/high implausible, skip entirely.
+      if (finalPoint !== undefined && !isSensible(finalPoint)) continue;
+      if (finalLow !== undefined && finalHigh !== undefined && !isSensible(finalLow) && !isSensible(finalHigh)) continue;
+      // Also skip if a single-sided range bound is wildly off (likely noise)
+      if (finalLow !== undefined && !isSensible(finalLow) && finalHigh === undefined) continue;
+      if (finalHigh !== undefined && !isSensible(finalHigh) && finalLow === undefined) continue;
+
       for (const fy of fys) {
         out.push({
           fiscalYear: fy,
           metric: pat.metric,
           unit: isPct ? '%' : pat.unit,
-          low: isPct ? amounts.low : scale(amounts.low),
-          high: isPct ? amounts.high : scale(amounts.high),
-          point: isPct ? amounts.point : scale(amounts.point),
+          low: finalLow,
+          high: finalHigh,
+          point: finalPoint,
           rawPhrase: s.length > 200 ? s.slice(0, 200) + '…' : s,
           confidence: /target|guidance|will\s+(?:reach|achieve|deliver)/i.test(s) ? 'high'
                     : /expect|likely\s+to|aim/i.test(s) ? 'medium'
