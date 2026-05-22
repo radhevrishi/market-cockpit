@@ -344,6 +344,16 @@ async function extractExcelFinancials(file: File): Promise<ExcelFinancials | nul
     fin.opmMedian3y = last3[1];   // middle value of last 3
   }
 
+  // PATCH 0641 — proper EBITDA = Operating Profit + Depreciation (when both present).
+  // Otherwise fall back to OP alone (Indian Screener convention).
+  const opSeries = fin.operatingProfit.filter((x): x is number => typeof x === 'number');
+  const latestOP = opSeries.slice(-1)[0];
+  const depSeries = depRow ? extractRow(depRow).filter((x): x is number => typeof x === 'number') : [];
+  const latestDep = depSeries.slice(-1)[0];
+  fin.latestEBITDA = (typeof latestOP === 'number' && typeof latestDep === 'number')
+    ? latestOP + latestDep
+    : latestOP;
+
   // PATCH 0665 — Sanity check: PAT margin can't exceed EBITDA margin.
   // PATCH 0666 — Tightened threshold to 1.3× PAT margin. For industrial /
   // manufacturing names, EBITDA margin is structurally ≥1.3× PAT margin
@@ -353,6 +363,9 @@ async function extractExcelFinancials(file: File): Promise<ExcelFinancials | nul
   // case, infer EBITDA margin from PAT × 1.6 conversion. Also override
   // fin.latestEBITDA so the downstream EBITDA→PAT conversion uses sensible
   // numbers (otherwise conv = latestPAT/badEBITDA = ~1.0, breaking PAT scaling).
+  // PATCH 0667 — MUST run AFTER the latestEBITDA assignment above, else
+  // that line silently overwrites the sanity-check override. (Found via
+  // MTAR run showing PAT ₹277 = EBITDA ₹279, confirming conv ~= 1.0.)
   const latestPATForCheck = pat5[pat5.length - 1];
   const latestSalesForCheck = sales5[sales5.length - 1];
   if (latestPATForCheck && latestSalesForCheck && latestSalesForCheck > 0) {
@@ -370,15 +383,6 @@ async function extractExcelFinancials(file: File): Promise<ExcelFinancials | nul
       fin.latestEBITDA = latestSalesForCheck * (inferredOpm / 100);
     }
   }
-  // PATCH 0641 — proper EBITDA = Operating Profit + Depreciation (when both present).
-  // Otherwise fall back to OP alone (Indian Screener convention).
-  const opSeries = fin.operatingProfit.filter((x): x is number => typeof x === 'number');
-  const latestOP = opSeries.slice(-1)[0];
-  const depSeries = depRow ? extractRow(depRow).filter((x): x is number => typeof x === 'number') : [];
-  const latestDep = depSeries.slice(-1)[0];
-  fin.latestEBITDA = (typeof latestOP === 'number' && typeof latestDep === 'number')
-    ? latestOP + latestDep
-    : latestOP;
 
   // PATCH 0643 — unit auto-detection. Indian Screener exports default to Cr,
   // but some templates (Tijori) use Lakh. Heuristic: if latest sales > 1e5
