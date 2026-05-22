@@ -20,7 +20,7 @@ export function usePortfolioSummary(portfolioId: string) {
       return data;
     },
     enabled: !!portfolioId,
-    refetchInterval: 60_000,
+    refetchInterval: 2 * 60_000, // PATCH 0688 — 60s → 2min, Vercel CPU diet
   });
 }
 
@@ -32,7 +32,7 @@ export function usePositions(portfolioId: string) {
       return data;
     },
     enabled: !!portfolioId,
-    refetchInterval: 60_000,
+    refetchInterval: 2 * 60_000, // PATCH 0688 — 60s → 2min, Vercel CPU diet
   });
 }
 

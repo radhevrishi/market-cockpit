@@ -416,8 +416,11 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
         return parsed.data;
       } catch { return undefined; }
     })(),
+    // PATCH 0688 — bumped from 60s → 3min to ease Vercel free-tier CPU.
+    // Conviction-Beats count chip already updates via localStorage events
+    // when entries change; the polled refresh is a backstop, not primary.
     staleTime: 60_000,
-    refetchInterval: 60_000,
+    refetchInterval: 3 * 60_000,
     refetchOnMount: 'always',
     refetchOnWindowFocus: true,
     retry: 2,

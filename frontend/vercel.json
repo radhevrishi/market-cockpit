@@ -22,19 +22,15 @@
     },
     {
       "path": "/api/v1/cron/concall-intel-warm",
-      "schedule": "30 3 * * 1-5"
+      "schedule": "30 3 * * 1,3,5"
     },
     {
       "path": "/api/v1/cron/concall-intel-snapshot",
-      "schedule": "30 14 * * 1-5"
+      "schedule": "30 14 * * 1,3,5"
     },
     {
       "path": "/api/bot/eo-blockbuster-alert",
       "schedule": "30 5 * * *"
-    },
-    {
-      "path": "/api/bot/eo-blockbuster-alert",
-      "schedule": "30 8 * * *"
     },
     {
       "path": "/api/bot/eo-blockbuster-alert",

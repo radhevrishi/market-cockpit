@@ -49,7 +49,11 @@ function useAlertInstances() {
   return useQuery<AlertInstance[]>({
     queryKey: ['alerts', 'instances'],
     queryFn: async () => { const { data } = await api.get('/alerts/instances?limit=30'); return data; },
-    refetchInterval: 30_000,
+    // PATCH 0688 — was 30s; that's 120 hits/hour per open tab. Bumped to
+    // 3min to stop burning Vercel free-tier CPU. Alerts are pushed via
+    // browser Notification on rule-fire anyway, so polling is just a
+    // backstop, not the primary signal.
+    refetchInterval: 3 * 60_000,
     staleTime: 2 * 60_000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,

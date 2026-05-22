@@ -23,8 +23,10 @@ export function useNews(filters: NewsFilters = {}) {
       const { data } = await api.get(`/news?${params}`);
       return data;
     },
-    refetchInterval: 60_000, // refresh every 60 seconds
-    staleTime: 30_000,
+    // PATCH 0688 — bumped from 60s → 3min to ease Vercel free-tier CPU.
+    // News feed isn't a tick-by-tick signal; 3min is plenty.
+    refetchInterval: 3 * 60_000,
+    staleTime: 2 * 60_000,
   });
 }
 
