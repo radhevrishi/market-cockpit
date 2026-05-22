@@ -437,20 +437,124 @@ function pickGuidanceScenarios(g: GuidanceItem | undefined): { bear?: number; ba
 }
 
 // ─── Sector inference ───────────────────────────────────────────────────
+// PATCH 0679 — Score-weighted sector inference.
+//
+// Old logic: first regex hit wins. Single mention of "defence" in a Kirloskar
+// Oil Engines concall (where defence is <15% of revenue) → tagged the whole
+// company as Defence → wrong 10× P/S, 40× P/E multiples → fake BUY +151%.
+//
+// New logic: count keyword occurrences per sector, weight by SPECIFICITY,
+// require the dominant sector to clearly beat the runner-up. Defence is
+// only assigned if it dominates 2:1 over Industrials (because pure-play
+// defence names — HAL/BEL/BDL/MAZDOCK — saturate the PDF with defence
+// vocabulary, while diversified industrials only sprinkle it occasionally).
 function inferSector(text: string, company?: string): string | undefined {
   const t = (text + ' ' + (company || '')).toLowerCase();
-  if (/precision|cnc|aerospace|defence|defense|nuclear|space launch/.test(t)) return 'Defence';
-  if (/transmission|transformer|switchgear|grid|t&d/.test(t)) return 'Power / Transmission';
-  if (/pharma|formulation|api |drug|usfda/.test(t)) return 'Pharmaceuticals';
-  if (/specialty chemical|cdmo|crdmo|agrochem/.test(t)) return 'Specialty Chemicals';
-  if (/auto component|tire|tyre|forging|gearbox/.test(t)) return 'Auto Components';
-  if (/data center|server|esdm|electronics/.test(t)) return 'AI Infrastructure (India)';
-  if (/bank|nbfc|asset management|insurance/.test(t)) return 'Financial Services / NBFC';
-  if (/it services|software services|consulting/.test(t)) return 'IT / Tech Services';
-  if (/fmcg|consumer|jewell|durable|premium/.test(t)) return 'Consumer Durables / FMCG';
-  if (/saas|subscription|cloud|platform/.test(t)) return 'SaaS / Software (US)';
-  if (/capital goods|industrial|capex|engineering|machinery/.test(t)) return 'Industrials / Capital Goods';
-  return 'Industrials / Capital Goods';
+  // [sector, [keyword, weight] pairs]
+  // Higher weight = more specific signal. Generic words like "engineering"
+  // get 1 point; sector-defining phrases like "USFDA approval" get 5.
+  const sectors: Array<[string, Array<[RegExp, number]>]> = [
+    ['Defence', [
+      [/\bdefence\b|\bdefense\b/g, 2],
+      [/\baerospace\b/g, 3],
+      [/\bnuclear\b/g, 3],
+      [/\bspace launch\b|\bsatellite\b/g, 3],
+      [/\bmissile\b|\bsubmarine\b|\bwarship\b|\bfighter\b/g, 5],
+      [/\bministry of defence\b|\bMOD\b/gi, 4],
+      [/\bDRDO\b|\bISRO\b|\bHAL\b/gi, 4],
+      [/\border book.{0,30}defence\b/gi, 3],
+    ]],
+    ['Pharmaceuticals', [
+      [/\bpharma(?:ceutical)?\b/g, 3],
+      [/\bformulation\b|\bAPI\b|\bdrug\b/g, 2],
+      [/\bUSFDA\b|\bEU GMP\b|\bWHO GMP\b/g, 5],
+      [/\bANDA\b|\bDMF\b|\binjectable\b/g, 4],
+    ]],
+    ['Specialty Chemicals', [
+      [/\bspecialty chemicals?\b/g, 5],
+      [/\bCDMO\b|\bCRDMO\b/g, 4],
+      [/\bagrochem\b|\bcrop protection\b/g, 4],
+      [/\bfluoro(?:chemical|polymer)\b/g, 4],
+    ]],
+    ['Power / Transmission', [
+      [/\btransformer\b/g, 4],
+      [/\bswitchgear\b/g, 4],
+      [/\btransmission line\b|\bT&D\b/g, 4],
+      [/\bsubstation\b|\bgrid\b/g, 2],
+    ]],
+    ['Auto Components', [
+      [/\bauto component\b|\bautomotive\b/g, 3],
+      [/\btyres?\b|\btires?\b/g, 3],
+      [/\bforging\b|\bgearbox\b|\bdriveline\b/g, 4],
+      [/\bOEM\b/g, 1],
+    ]],
+    ['AI Infrastructure (India)', [
+      [/\bESDM\b|\belectronics manufacturing services\b/g, 5],
+      [/\bdata cent(?:er|re)\b/g, 4],
+      [/\bserver\b.{0,20}\bGPU\b/g, 5],
+      [/\bsemiconductor\b/g, 3],
+    ]],
+    ['Financial Services / NBFC', [
+      [/\bNBFC\b/g, 5],
+      [/\bbank\b/g, 2],
+      [/\basset management\b/g, 3],
+      [/\binsurance\b/g, 3],
+      [/\bAUM\b|\bloan book\b/g, 4],
+    ]],
+    ['IT / Tech Services', [
+      [/\bIT services\b/g, 4],
+      [/\bsoftware services\b/g, 4],
+      [/\bdigital transformation\b|\bcloud services\b/g, 3],
+      [/\bUSD revenue\b|\bbillable hours\b/g, 4],
+    ]],
+    ['Consumer Durables / FMCG', [
+      [/\bFMCG\b/g, 5],
+      [/\bconsumer durables?\b/g, 4],
+      [/\bjewell?ery\b/g, 4],
+      [/\bbrand premium\b|\bdistribution reach\b/g, 3],
+    ]],
+    ['SaaS / Software (US)', [
+      [/\bSaaS\b/g, 5],
+      [/\bARR\b|\bannual recurring revenue\b/g, 5],
+      [/\bsubscription revenue\b/g, 4],
+      [/\bcloud platform\b/g, 3],
+    ]],
+    ['Industrials / Capital Goods', [
+      [/\bindustrial\b/g, 1],
+      [/\bcapital goods\b/g, 4],
+      [/\bcapex\b/g, 1],
+      [/\bengineering\b/g, 1],
+      [/\bmachinery\b|\bequipment\b/g, 2],
+      [/\bdiesel engine\b|\bgenerator\b|\bgenset\b/g, 5],
+      [/\bpump\b|\bcompressor\b|\bturbine\b/g, 4],
+      [/\bfabrication\b|\bplant\b/g, 1],
+    ]],
+  ];
+
+  const scores: Array<{ sector: string; score: number }> = sectors.map(([sector, kws]) => {
+    let s = 0;
+    for (const [rx, w] of kws) {
+      const matches = t.match(rx);
+      if (matches) s += matches.length * w;
+    }
+    return { sector, score: s };
+  });
+  scores.sort((a, b) => b.score - a.score);
+  const top = scores[0];
+  const second = scores[1];
+
+  // No signal at all → default industrial
+  if (!top || top.score === 0) return 'Industrials / Capital Goods';
+
+  // PATCH 0679 — Defence requires DOMINANT score (2× runner-up). A diesel
+  // engines maker with a small defence vertical (KOEL pattern) should NOT
+  // be tagged Defence. Pure-play defence names (HAL/BEL/MAZDOCK/BDL)
+  // saturate the PDF and clear this hurdle.
+  if (top.sector === 'Defence' && (!second || top.score < second.score * 2)) {
+    return second?.score > 0 ? second.sector : 'Industrials / Capital Goods';
+  }
+
+  return top.sector;
 }
 
 // ─── Build the report ───────────────────────────────────────────────────
