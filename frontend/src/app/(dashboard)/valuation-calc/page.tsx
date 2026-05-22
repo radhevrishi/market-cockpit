@@ -11,7 +11,7 @@
 // Consumer, TD Power, Sterlite, Aeroflex, Atlanta Electricals, DEE Dev).
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   calculatePS, calculatePE, calculateEvEbitda,
   fetchQuoteAutofill,
@@ -846,6 +846,301 @@ const chipBtn = (color: string): React.CSSProperties => ({
   background: `${color}15`, border: `1px solid ${color}50`,
   color, borderRadius: 4, cursor: 'pointer', fontWeight: 700,
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SECTOR SCENARIOS (PATCH 0674)
+//
+// Real-time worked example for ONE representative company per sector row.
+// Triggered when user expands the sector row in the lookup table.
+// Same calc the user would run by hand — input table → math → fair value.
+// All inputs are approximate (TTM revenue, mcap) — marked with ~.
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface SectorScenario {
+  ticker: string;
+  company: string;
+  method: 'PE' | 'PS' | 'EV_EBITDA';
+  // Input
+  driverLabel: string;   // "Forward PAT (FY27)" / "Forward Revenue (FY27)" / "Forward EBITDA (FY27)"
+  driverValue: number;   // ₹ Cr
+  multiple: number;      // base multiple
+  currentMcap: number;   // ₹ Cr
+  netDebt?: number;      // for EV/EBITDA
+  // Note for analyst
+  rationale: string;
+}
+
+const SECTOR_SCENARIOS: Record<string, SectorScenario> = {
+  'Industrials / Capital Goods': {
+    ticker: 'TDPOWERSYS', company: 'TD Power Systems', method: 'PE',
+    driverLabel: 'Forward PAT (FY27)', driverValue: 240, multiple: 35,
+    currentMcap: 6800,
+    rationale: 'Generator OEM with order-book backed FY27 revenue ₹2,200+ Cr guidance. PAT margin ~10%. Base P/E 35× for industrial cycle midpoint.',
+  },
+  'Defence': {
+    ticker: 'HAL', company: 'Hindustan Aeronautics', method: 'PE',
+    driverLabel: 'Forward PAT (FY27)', driverValue: 9500, multiple: 40,
+    currentMcap: 380000,
+    rationale: 'PSU defence prime with multi-year order book. PE 30-50× sustainable on Govt-backed visibility. Discount premium when order intake decelerates.',
+  },
+  'Power / Transmission': {
+    ticker: 'ATLANTAELE', company: 'Atlanta Electricals', method: 'EV_EBITDA',
+    driverLabel: 'Forward EBITDA (FY27)', driverValue: 180, multiple: 22,
+    currentMcap: 3800, netDebt: 50,
+    rationale: 'Power transformer manufacturer; capex cycle premium. EV/EBITDA 18-28× on China+1 mfg shift + grid modernization tailwind.',
+  },
+  'Pharmaceuticals': {
+    ticker: 'RUBICON', company: 'Rubicon Research', method: 'PE',
+    driverLabel: 'Forward PAT (FY27)', driverValue: 220, multiple: 38,
+    currentMcap: 8500,
+    rationale: 'USFDA-approved specialty pharma. PE 30-45× sustainable on patent-pipeline visibility. Apply margin-pressure discount if generics pricing softens.',
+  },
+  'Specialty Chemicals': {
+    ticker: 'NEOGEN', company: 'Neogen Chemicals', method: 'EV_EBITDA',
+    driverLabel: 'Forward EBITDA (FY27)', driverValue: 250, multiple: 25,
+    currentMcap: 7200, netDebt: 200,
+    rationale: 'Bromine specialty chemistry with CDMO contracts. Premium EV/EBITDA 20-30× on long-cycle visibility + import-substitution moat.',
+  },
+  'Consumer Durables / FMCG': {
+    ticker: 'TITAN', company: 'Titan Company', method: 'PE',
+    driverLabel: 'Forward PAT (FY27)', driverValue: 5200, multiple: 55,
+    currentMcap: 320000,
+    rationale: 'Quality moat / category leader. PE 40-70× justifiable on brand pricing power + retail expansion. Stretches at cycle peak.',
+  },
+  'Auto Components': {
+    ticker: 'CEAT', company: 'CEAT Tyres', method: 'EV_EBITDA',
+    driverLabel: 'Forward EBITDA (FY27)', driverValue: 1800, multiple: 14,
+    currentMcap: 17500, netDebt: 1200,
+    rationale: 'Auto-cycle exposure. EV/EBITDA 12-18× at cycle midpoint. Apply 0.8× multiple at cycle peak (raw material pressure ahead).',
+  },
+  'Financial Services / NBFC': {
+    ticker: 'BAJFINANCE', company: 'Bajaj Finance', method: 'PE',
+    driverLabel: 'Forward PAT (FY27)', driverValue: 22000, multiple: 25,
+    currentMcap: 480000,
+    rationale: 'Premier NBFC. PE 18-28× pegged to ROE 22-25%. Higher ROE = higher multiple. Watch for credit-cost spikes that compress PE.',
+  },
+  'IT / Tech Services': {
+    ticker: 'INFY', company: 'Infosys', method: 'PE',
+    driverLabel: 'Forward PAT (FY27)', driverValue: 30000, multiple: 26,
+    currentMcap: 750000,
+    rationale: 'Large-cap IT services. PE 20-35× tied to USD revenue growth + margin trajectory. Tighter band than 5-yr median during deal-velocity slowdown.',
+  },
+  'SaaS / Software (US)': {
+    ticker: 'CRWD', company: 'CrowdStrike', method: 'PS',
+    driverLabel: 'Forward Revenue (FY27 $M)', driverValue: 4500, multiple: 16,
+    currentMcap: 88000,
+    rationale: 'Rule-of-40 SaaS. P/S 8-25× tied to ARR growth + FCF margin. Premium 15-25× when both >25%. Avoid <Rule-of-30 names.',
+  },
+  'Pre-revenue / Growth': {
+    ticker: 'CRDO', company: 'Credo Technology', method: 'PS',
+    driverLabel: 'Forward Revenue (FY27 $M)', driverValue: 420, multiple: 18,
+    currentMcap: 8500,
+    rationale: 'Pre-profit growth name. P/S only — earnings noisy. Watch gross margin trajectory — must trend toward 50%+ for the multiple to compound.',
+  },
+  'AI Compute & Infrastructure (US)': {
+    ticker: 'NVDA', company: 'NVIDIA', method: 'PS',
+    driverLabel: 'Forward Revenue (FY27 $B)', driverValue: 220, multiple: 18,
+    currentMcap: 4200000,
+    rationale: 'AI capex cycle. P/S 12-30× justified by GPU monopoly + 75%+ gross margins. Track Blackwell adoption + hyperscaler capex announcements.',
+  },
+  'AI Infrastructure (India)': {
+    ticker: 'KAYNES', company: 'Kaynes Technology', method: 'PE',
+    driverLabel: 'Forward PAT (FY27)', driverValue: 600, multiple: 50,
+    currentMcap: 35000,
+    rationale: 'ESDM (electronics manufacturing services) premium. PE 35-60× on India semicon push + capex-cycle order book. Stretches if PLI subsidies normalise.',
+  },
+  'Robotics & Automation': {
+    ticker: 'ABB', company: 'ABB India', method: 'PE',
+    driverLabel: 'Forward PAT (FY27)', driverValue: 1900, multiple: 52,
+    currentMcap: 120000,
+    rationale: 'Industrial automation premium. PE 40-65× on India automation tailwind. Multiple compresses when order intake decelerates >2 consecutive quarters.',
+  },
+  'EV / Battery / Charging': {
+    ticker: 'EXIDEIND', company: 'Exide Industries', method: 'EV_EBITDA',
+    driverLabel: 'Forward EBITDA (FY27)', driverValue: 2400, multiple: 22,
+    currentMcap: 42000, netDebt: 800,
+    rationale: 'Legacy lead-acid + lithium-ion capex. EV/EBITDA 18-30× as EV adoption scales. Watch capex-EBITDA ratio (>1.5× = stretched).',
+  },
+  'Nuclear / Clean Energy (US)': {
+    ticker: 'CEG', company: 'Constellation Energy', method: 'EV_EBITDA',
+    driverLabel: 'Forward EBITDA (FY27 $B)', driverValue: 5.2, multiple: 22,
+    currentMcap: 95000, netDebt: 8000,
+    rationale: 'PPA-linked nuclear power producer. EV/EBITDA 18-30× on 20-yr contract visibility. Premium when AI hyperscalers sign long-term PPAs.',
+  },
+  'Rail / Metro / Mobility': {
+    ticker: 'TITAGARH', company: 'Titagarh Rail Systems', method: 'PE',
+    driverLabel: 'Forward PAT (FY27)', driverValue: 480, multiple: 32,
+    currentMcap: 18000,
+    rationale: 'Rail/metro coach maker. PE 25-40× on Vande Bharat + metro order pipeline. Order-book to revenue ratio >3× justifies upper band.',
+  },
+  'Critical Minerals / Rare Earth (US)': {
+    ticker: 'MP', company: 'MP Materials', method: 'EV_EBITDA',
+    driverLabel: 'Forward EBITDA (FY27 $M)', driverValue: 220, multiple: 15,
+    currentMcap: 4200, netDebt: 700,
+    rationale: 'Rare-earth supply-crunch optionality. EV/EBITDA 10-22× volatile on REE pricing. Apply lower band — China pricing risk is non-trivial.',
+  },
+  'GLP-1 / Healthcare (US)': {
+    ticker: 'LLY', company: 'Eli Lilly', method: 'PE',
+    driverLabel: 'Forward PAT (FY27 $B)', driverValue: 22, multiple: 38,
+    currentMcap: 850000,
+    rationale: 'GLP-1 patent runway 8-12 years. PE 30-50× sustainable until biosimilars arrive (~2032+). Discount as patent cliff approaches.',
+  },
+  'Cybersecurity (US)': {
+    ticker: 'PANW', company: 'Palo Alto Networks', method: 'PS',
+    driverLabel: 'Forward Revenue (FY27 $B)', driverValue: 13, multiple: 14,
+    currentMcap: 130000,
+    rationale: 'Cloud-native cyber leader. P/S 10-25× on platform consolidation theme. Premium when Next-Gen Security ARR growth >35%.',
+  },
+  'Quantum / Frontier Tech': {
+    ticker: 'IONQ', company: 'IonQ', method: 'PS',
+    driverLabel: 'Forward Revenue (FY27 $M)', driverValue: 130, multiple: 35,
+    currentMcap: 8000,
+    rationale: 'Pre-commercial quantum. P/S highly volatile — narrative-driven. Only size at <2% portfolio; multiple compresses fast on competitive announcements.',
+  },
+};
+
+function SectorScenarioRow({ sector, scenario }: { sector: string; scenario: SectorScenario }) {
+  const isPE = scenario.method === 'PE';
+  const isPS = scenario.method === 'PS';
+  // const isEV = scenario.method === 'EV_EBITDA';
+  let fairMcap: number;
+  let stepCalc: string;
+  if (isPE) {
+    fairMcap = scenario.driverValue * scenario.multiple;
+    stepCalc = `₹${scenario.driverValue} Cr PAT × ${scenario.multiple}× P/E`;
+  } else if (isPS) {
+    fairMcap = scenario.driverValue * scenario.multiple;
+    stepCalc = `₹${scenario.driverValue} × ${scenario.multiple}× P/S`;
+  } else {
+    const ev = scenario.driverValue * scenario.multiple;
+    fairMcap = ev - (scenario.netDebt || 0);
+    stepCalc = `EV ₹${ev} Cr − net debt ₹${scenario.netDebt || 0} Cr`;
+  }
+  const upside = ((fairMcap / scenario.currentMcap) - 1) * 100;
+  const color = upside >= 25 ? '#10B981' : upside >= 0 ? '#22D3EE' : upside >= -25 ? '#F59E0B' : '#EF4444';
+  return (
+    <tr style={{ background: '#0A0E1A' }}>
+      <td colSpan={4} style={{ padding: '12px 18px', borderBottom: `1px solid ${BORDER}` }}>
+        <div style={{ background: '#0D1623', borderLeft: '3px solid #22D3EE', borderRadius: 4, padding: '12px 14px' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 13, fontWeight: 800, color: '#22D3EE' }}>SCENARIO →</span>
+            <span style={{ fontSize: 13, fontWeight: 800, color: TEXT }}>{scenario.ticker}</span>
+            <span style={{ fontSize: 11, color: DIM }}>({scenario.company})</span>
+          </div>
+          <div style={{ fontSize: 11.5, color: TEXT, lineHeight: 1.6, marginBottom: 10 }}>
+            <strong style={{ color: '#F59E0B' }}>Why this multiple:</strong> {scenario.rationale}
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, marginBottom: 8 }}>
+            <tbody>
+              <tr style={{ borderBottom: `1px solid ${BORDER}` }}>
+                <td style={{ padding: '5px 0', color: DIM, width: 200 }}>{scenario.driverLabel} <span style={{ color: '#F59E0B' }}>~</span></td>
+                <td style={{ padding: '5px 0', textAlign: 'right', color: TEXT, fontWeight: 700, fontFamily: 'ui-monospace, monospace' }}>₹{scenario.driverValue.toLocaleString('en-IN')} Cr</td>
+              </tr>
+              <tr style={{ borderBottom: `1px solid ${BORDER}` }}>
+                <td style={{ padding: '5px 0', color: DIM }}>Base multiple</td>
+                <td style={{ padding: '5px 0', textAlign: 'right', color: TEXT, fontWeight: 700, fontFamily: 'ui-monospace, monospace' }}>{scenario.multiple}× ({scenario.method === 'PE' ? 'P/E' : scenario.method === 'PS' ? 'P/S' : 'EV/EBITDA'})</td>
+              </tr>
+              {scenario.netDebt !== undefined && (
+                <tr style={{ borderBottom: `1px solid ${BORDER}` }}>
+                  <td style={{ padding: '5px 0', color: DIM }}>Net debt <span style={{ color: '#F59E0B' }}>~</span></td>
+                  <td style={{ padding: '5px 0', textAlign: 'right', color: TEXT, fontWeight: 700, fontFamily: 'ui-monospace, monospace' }}>₹{scenario.netDebt.toLocaleString('en-IN')} Cr</td>
+                </tr>
+              )}
+              <tr style={{ borderBottom: `1px solid ${BORDER}` }}>
+                <td style={{ padding: '5px 0', color: DIM }}>Current market cap <span style={{ color: '#F59E0B' }}>~</span></td>
+                <td style={{ padding: '5px 0', textAlign: 'right', color: TEXT, fontWeight: 700, fontFamily: 'ui-monospace, monospace' }}>₹{scenario.currentMcap.toLocaleString('en-IN')} Cr</td>
+              </tr>
+              <tr style={{ borderBottom: `1px solid ${BORDER}` }}>
+                <td style={{ padding: '5px 0', color: TEXT, fontWeight: 700 }}>Fair value calc</td>
+                <td style={{ padding: '5px 0', textAlign: 'right', color: '#22D3EE', fontWeight: 800, fontFamily: 'ui-monospace, monospace' }}>{stepCalc}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: `${color}15`, border: `1px solid ${color}40`, borderRadius: 4 }}>
+            <span style={{ fontSize: 12, fontWeight: 800, color }}>
+              FAIR VALUE → ₹{Math.round(fairMcap).toLocaleString('en-IN')} Cr
+            </span>
+            <span style={{ fontSize: 13, fontWeight: 800, color, fontFamily: 'ui-monospace, monospace' }}>
+              {upside >= 0 ? '+' : ''}{upside.toFixed(0)}% upside
+            </span>
+          </div>
+          <div style={{ marginTop: 6, fontSize: 10, color: DIM, fontStyle: 'italic' }}>
+            All inputs marked ~ are approximate (used the sector-typical FY27 driver). Swap in fresh numbers from the live calculator above for precise output. Tilde (~) marks approximate; multiples and rationale are sector-standard.
+          </div>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function SectorLookupPanel() {
+  const [openSector, setOpenSector] = useState<string | null>(null);
+  return (
+    <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '16px 18px' }}>
+      <h2 style={{ margin: '0 0 4px 0', fontSize: 16, fontWeight: 800, color: TEXT }}>
+        📋 Sector → Calculator Lookup
+      </h2>
+      <div style={{ fontSize: 11, color: DIM, marginBottom: 12, lineHeight: 1.5 }}>
+        Match your name&apos;s sector → use the listed calculator → benchmark against the multiple hint.{' '}
+        <strong style={{ color: '#22D3EE' }}>Click any sector row</strong> to see a real-time worked scenario with a representative company (TTM driver, multiple, fair value, upside).
+      </div>
+      <div style={{ overflow: 'auto', border: `1px solid ${BORDER}`, borderRadius: 6 }}>
+        <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: 12 }}>
+          <thead>
+            <tr style={{ background: '#1A2540' }}>
+              <th style={{ textAlign: 'left', padding: '10px 14px', fontSize: 11, fontWeight: 800, color: DIM, letterSpacing: '0.5px', borderBottom: `1px solid ${BORDER}` }}>SECTOR</th>
+              <th style={{ textAlign: 'left', padding: '10px 12px', fontSize: 11, fontWeight: 800, color: DIM, letterSpacing: '0.5px', borderBottom: `1px solid ${BORDER}`, width: 110 }}>CALCULATOR</th>
+              <th style={{ textAlign: 'left', padding: '10px 14px', fontSize: 11, fontWeight: 800, color: DIM, letterSpacing: '0.5px', borderBottom: `1px solid ${BORDER}`, width: 280 }}>MULTIPLE RANGE</th>
+              <th style={{ textAlign: 'left', padding: '10px 14px', fontSize: 11, fontWeight: 800, color: DIM, letterSpacing: '0.5px', borderBottom: `1px solid ${BORDER}` }}>EXAMPLE COMPANIES</th>
+            </tr>
+          </thead>
+          <tbody>
+            {Object.entries(SECTOR_CALCULATOR_MAP).map(([sector, conf], i) => {
+              const scenario = SECTOR_SCENARIOS[sector];
+              const isOpen = openSector === sector;
+              return (
+                <React.Fragment key={sector}>
+                  <tr
+                    onClick={() => setOpenSector(isOpen ? null : sector)}
+                    style={{ background: i % 2 === 0 ? '#0A1422' : '#0D1623', cursor: scenario ? 'pointer' : 'default' }}>
+                    <td style={{ padding: '12px 14px', fontSize: 13, color: TEXT, fontWeight: 700, borderBottom: `1px solid ${BORDER}`, verticalAlign: 'top' }}>
+                      {scenario && (<span style={{ marginRight: 6, color: '#22D3EE', fontSize: 11, fontWeight: 800 }}>{isOpen ? '▼' : '▶'}</span>)}
+                      {sector}
+                    </td>
+                    <td style={{ padding: '12px 12px', borderBottom: `1px solid ${BORDER}`, verticalAlign: 'top' }}>
+                      <span style={{ fontSize: 11, color: '#22D3EE', background: '#22D3EE15', border: '1px solid #22D3EE40', padding: '3px 9px', borderRadius: 4, fontFamily: 'ui-monospace, monospace', fontWeight: 800, whiteSpace: 'nowrap' }}>
+                        {conf.calc === 'EV_EBITDA' ? 'EV / EBITDA' : conf.calc === 'PS' ? 'P / S' : 'P / E'}
+                      </span>
+                    </td>
+                    <td style={{ padding: '12px 14px', fontSize: 12, color: '#C9D4E0', borderBottom: `1px solid ${BORDER}`, verticalAlign: 'top', lineHeight: 1.5 }}>
+                      {conf.multipleHint}
+                    </td>
+                    <td style={{ padding: '12px 14px', borderBottom: `1px solid ${BORDER}`, verticalAlign: 'top' }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                        {conf.examples.map((ex) => (
+                          <span key={ex} style={{
+                            fontSize: 11, padding: '3px 8px',
+                            background: '#1A2540', border: '1px solid #2A3A55',
+                            color: TEXT, borderRadius: 4, fontWeight: 600,
+                            fontFamily: 'ui-monospace, monospace',
+                            whiteSpace: 'nowrap',
+                          }}>
+                            {ex}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                  {isOpen && scenario && <SectorScenarioRow sector={sector} scenario={scenario} />}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // LEARN TAB (PATCH 0658)
@@ -2478,61 +2773,7 @@ export default function ValuationCalcPage() {
         <SavedValuationsPanel />
 
         {/* Sector → calculator map */}
-        <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '16px 18px' }}>
-          <h2 style={{ margin: '0 0 4px 0', fontSize: 16, fontWeight: 800, color: TEXT }}>
-            📋 Sector → Calculator Lookup
-          </h2>
-          <div style={{ fontSize: 11, color: DIM, marginBottom: 12, lineHeight: 1.5 }}>
-            Match your name&apos;s sector → use the listed calculator → benchmark against the multiple hint. Examples are drawn from names actually discussed in the portal (Multibagger, Conviction Beats, Critical Themes).
-          </div>
-          {/* PATCH 0636 — proper grid layout: each sector is a horizontal row
-              with aligned columns (sector | calc badge | multiple range | examples).
-              Sticky header row. Alternating row backgrounds for readability. */}
-          <div style={{ overflow: 'auto', border: `1px solid ${BORDER}`, borderRadius: 6 }}>
-            <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: 12 }}>
-              <thead>
-                <tr style={{ background: '#1A2540' }}>
-                  <th style={{ textAlign: 'left', padding: '10px 14px', fontSize: 11, fontWeight: 800, color: DIM, letterSpacing: '0.5px', borderBottom: `1px solid ${BORDER}` }}>SECTOR</th>
-                  <th style={{ textAlign: 'left', padding: '10px 12px', fontSize: 11, fontWeight: 800, color: DIM, letterSpacing: '0.5px', borderBottom: `1px solid ${BORDER}`, width: 110 }}>CALCULATOR</th>
-                  <th style={{ textAlign: 'left', padding: '10px 14px', fontSize: 11, fontWeight: 800, color: DIM, letterSpacing: '0.5px', borderBottom: `1px solid ${BORDER}`, width: 280 }}>MULTIPLE RANGE</th>
-                  <th style={{ textAlign: 'left', padding: '10px 14px', fontSize: 11, fontWeight: 800, color: DIM, letterSpacing: '0.5px', borderBottom: `1px solid ${BORDER}` }}>EXAMPLE COMPANIES</th>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.entries(SECTOR_CALCULATOR_MAP).map(([sector, conf], i) => (
-                  <tr key={sector} style={{ background: i % 2 === 0 ? '#0A1422' : '#0D1623' }}>
-                    <td style={{ padding: '12px 14px', fontSize: 13, color: TEXT, fontWeight: 700, borderBottom: `1px solid ${BORDER}`, verticalAlign: 'top' }}>
-                      {sector}
-                    </td>
-                    <td style={{ padding: '12px 12px', borderBottom: `1px solid ${BORDER}`, verticalAlign: 'top' }}>
-                      <span style={{ fontSize: 11, color: '#22D3EE', background: '#22D3EE15', border: '1px solid #22D3EE40', padding: '3px 9px', borderRadius: 4, fontFamily: 'ui-monospace, monospace', fontWeight: 800, whiteSpace: 'nowrap' }}>
-                        {conf.calc === 'EV_EBITDA' ? 'EV / EBITDA' : conf.calc === 'PS' ? 'P / S' : 'P / E'}
-                      </span>
-                    </td>
-                    <td style={{ padding: '12px 14px', fontSize: 12, color: '#C9D4E0', borderBottom: `1px solid ${BORDER}`, verticalAlign: 'top', lineHeight: 1.5 }}>
-                      {conf.multipleHint}
-                    </td>
-                    <td style={{ padding: '12px 14px', borderBottom: `1px solid ${BORDER}`, verticalAlign: 'top' }}>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                        {conf.examples.map((ex) => (
-                          <span key={ex} style={{
-                            fontSize: 11, padding: '3px 8px',
-                            background: '#1A2540', border: '1px solid #2A3A55',
-                            color: TEXT, borderRadius: 4, fontWeight: 600,
-                            fontFamily: 'ui-monospace, monospace',
-                            whiteSpace: 'nowrap',
-                          }}>
-                            {ex}
-                          </span>
-                        ))}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <SectorLookupPanel />
 
         <div style={{ fontSize: 11, color: DIM, padding: '12px 0', lineHeight: 1.6, fontStyle: 'italic' }}>
           All calculators run client-side — no data leaves your browser. Edit assumptions freely. Worked examples (Rubicon, Bajaj Consumer, TD Power, Sterlite, Aeroflex, Atlanta Electricals, DEE Dev) ship in <code style={{ background: '#1A2540', padding: '1px 4px', borderRadius: 3 }}>frontend/src/lib/valuation-calculators.ts</code> — load any to see the inputs and tweak.
