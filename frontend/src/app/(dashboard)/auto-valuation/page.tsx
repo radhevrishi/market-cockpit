@@ -90,10 +90,19 @@ interface AutoValuationReport {
   forwardEBITDA?: number;
   forwardPAT?: number;
   inferredMargin?: number;     // EBITDA margin from guidance OR historical
-  // Calculator outputs
+  // Calculator outputs (Year 1 - typically FY27 with 18mo horizon)
   peResult?: CalculatorResult;
   psResult?: CalculatorResult;
   evResult?: CalculatorResult;
+  // PATCH 0657 — Year 2 (FY28, 30mo horizon) — same growth/margin applied
+  // one more year forward. Lets the user compare 1yr vs 2yr end states.
+  forwardYearY2?: string;
+  forwardRevenueY2?: number;
+  forwardEBITDAY2?: number;
+  forwardPATY2?: number;
+  peResultY2?: CalculatorResult;
+  psResultY2?: CalculatorResult;
+  evResultY2?: CalculatorResult;
   recommendation: 'BUY' | 'WATCH' | 'WAIT' | 'AVOID' | 'NEED_MORE_DATA';
   rationale: string[];
 }
@@ -663,6 +672,67 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
       )
     : undefined;
 
+  // PATCH 0657 — Year 2 projections (FY28). Apply guided growth one more
+  // year on top of FY27 (or whichever forwardYear was picked). Margins
+  // assumed to hold flat at the guided rate. Horizon is 30 months (2.5 yr
+  // entry-to-target window typical for institutional 2-yr models).
+  const horizonMonthsY2 = 30;
+  const growthBear = growthScen.bear ?? (excelData?.salesCagr5y);
+  const growthBase = growthScen.base ?? (excelData?.salesCagr5y);
+  const growthBull = growthScen.bull ?? (excelData?.salesCagr5y);
+  // Year 2 scenario triplets — apply growth once more to Y1 values.
+  const revScenY2 = {
+    bear: revScen.bear !== undefined && growthBear ? Math.round(revScen.bear * (1 + growthBear / 100)) : undefined,
+    base: revScen.base !== undefined && growthBase ? Math.round(revScen.base * (1 + growthBase / 100)) : undefined,
+    bull: revScen.bull !== undefined && growthBull ? Math.round(revScen.bull * (1 + growthBull / 100)) : undefined,
+  };
+  const marginBaseY2 = marginScen.base ?? opmAvg;
+  const ebitdaScenY2 = {
+    bear: revScenY2.bear !== undefined && (marginScen.bear ?? opmAvg) ? Math.round(revScenY2.bear * ((marginScen.bear ?? opmAvg)! / 100)) : undefined,
+    base: revScenY2.base !== undefined && marginBaseY2 ? Math.round(revScenY2.base * (marginBaseY2 / 100)) : undefined,
+    bull: revScenY2.bull !== undefined && (marginScen.bull ?? opmAvg) ? Math.round(revScenY2.bull * ((marginScen.bull ?? opmAvg)! / 100)) : undefined,
+  };
+  // PAT via same EBITDA→PAT conversion ratio used for Y1
+  const conv = (excelData?.latestEBITDA && excelData.latestEBITDA > 0 && excelData?.latestPAT)
+    ? excelData.latestPAT / excelData.latestEBITDA
+    : undefined;
+  const validConv = (conv !== undefined && conv > 0.1 && conv < 1.0) ? conv : undefined;
+  const patScenY2 = {
+    bear: ebitdaScenY2.bear !== undefined && validConv ? Math.round(ebitdaScenY2.bear * validConv) : undefined,
+    base: ebitdaScenY2.base !== undefined && validConv ? Math.round(ebitdaScenY2.base * validConv) : undefined,
+    bull: ebitdaScenY2.bull !== undefined && validConv ? Math.round(ebitdaScenY2.bull * validConv) : undefined,
+  };
+  // Compute the FY label (FY28 if Y1 was FY27, FY29 if Y1 was FY28, etc.)
+  const forwardYearY2 = (() => {
+    if (!forwardYear) return undefined;
+    const m = forwardYear.match(/FY(\d+)/);
+    if (!m) return forwardYear + ' +1y';
+    return `FY${parseInt(m[1], 10) + 1}`;
+  })();
+
+  const calcInputY2 = { ...baseCalcInput, horizonMonths: horizonMonthsY2 };
+  const peResultY2 = patScenY2.base && currentMarketCapCr > 0
+    ? mergeScenarioCalc(
+        (f, mb, m, mu) => calculatePE({ ...calcInputY2, forwardPATCr: f, bearPE: mb, basePE: m, bullPE: mu }),
+        patScenY2,
+        defaults.PE.bear, defaults.PE.base, defaults.PE.bull,
+      )
+    : undefined;
+  const psResultY2 = revScenY2.base && currentMarketCapCr > 0
+    ? mergeScenarioCalc(
+        (f, mb, m, mu) => calculatePS({ ...calcInputY2, forwardRevenueCr: f, bearPS: mb, basePS: m, bullPS: mu }),
+        revScenY2,
+        defaults.PS.bear, defaults.PS.base, defaults.PS.bull,
+      )
+    : undefined;
+  const evResultY2 = ebitdaScenY2.base && currentMarketCapCr > 0
+    ? mergeScenarioCalc(
+        (f, mb, m, mu) => calculateEvEbitda({ ...calcInputY2, forwardEBITDACr: f, bearMultiple: mb, baseMultiple: m, bullMultiple: mu }),
+        ebitdaScenY2,
+        defaults.EV_EBITDA.bear, defaults.EV_EBITDA.base, defaults.EV_EBITDA.bull,
+      )
+    : undefined;
+
   // Recommendation
   const baseUpsides = [peResult, psResult, evResult]
     .filter((r): r is CalculatorResult => !!r)
@@ -688,6 +758,10 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
   // through to the projection.
   if (inferredGrowth) rationale.push(`Applied guided revenue growth: ${inferredGrowth.toFixed(0)}% → forward revenue.`);
   if (inferredMargin) rationale.push(`Applied guided EBITDA margin: ${inferredMargin.toFixed(0)}% → forward EBITDA.`);
+  // PATCH 0657 — surface Y2 projection so user knows the 2yr view is computed
+  if (forwardYearY2 && revScenY2.base) {
+    rationale.push(`Year-2 (${forwardYearY2}): Revenue ₹${revScenY2.base.toFixed(0)} Cr · EBITDA ₹${ebitdaScenY2.base?.toFixed(0) || '?'} Cr · PAT ₹${patScenY2.base?.toFixed(0) || '?'} Cr (toggle in calc panel).`);
+  }
 
   return {
     ticker, company, sector,
@@ -696,6 +770,12 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
     guidance: allGuidance,
     forwardYear, forwardRevenue, forwardEBITDA, forwardPAT, inferredMargin,
     peResult, psResult, evResult,
+    // PATCH 0657 — Y2 projections
+    forwardYearY2,
+    forwardRevenueY2: revScenY2.base,
+    forwardEBITDAY2: ebitdaScenY2.base,
+    forwardPATY2: patScenY2.base,
+    peResultY2, psResultY2, evResultY2,
     recommendation, rationale,
   };
 }
@@ -745,6 +825,8 @@ export default function AutoValuationPage() {
   const [docs, setDocs] = useState<ParsedDoc[]>([]);
   const [report, setReport] = useState<AutoValuationReport | null>(null);
   const [building, setBuilding] = useState(false);
+  // PATCH 0657 — toggle between Year 1 (FY27, 18mo) and Year 2 (FY28, 30mo)
+  const [viewYear, setViewYear] = useState<'Y1' | 'Y2'>('Y1');
   // PATCH 0649 — saved-companies state
   const [savedList, setSavedList] = useState<SavedAutoValuation[]>(() => {
     if (typeof window === 'undefined') return [];
@@ -834,6 +916,14 @@ export default function AutoValuationPage() {
             peResult: r.peResult,
             psResult: r.psResult,
             evResult: r.evResult,
+            // PATCH 0657 — persist Y2 so reopening shows the toggle
+            forwardYearY2: r.forwardYearY2,
+            forwardRevenueY2: r.forwardRevenueY2,
+            forwardEBITDAY2: r.forwardEBITDAY2,
+            forwardPATY2: r.forwardPATY2,
+            peResultY2: r.peResultY2,
+            psResultY2: r.psResultY2,
+            evResultY2: r.evResultY2,
           });
           refreshSaved();
         } catch (e) { console.warn('auto-val save failed', e); }
@@ -861,6 +951,14 @@ export default function AutoValuationPage() {
       peResult: s.peResult,
       psResult: s.psResult,
       evResult: s.evResult,
+      // PATCH 0657 — restore Y2 fields
+      forwardYearY2: s.forwardYearY2,
+      forwardRevenueY2: s.forwardRevenueY2,
+      forwardEBITDAY2: s.forwardEBITDAY2,
+      forwardPATY2: s.forwardPATY2,
+      peResultY2: s.peResultY2,
+      psResultY2: s.psResultY2,
+      evResultY2: s.evResultY2,
       recommendation: s.recommendation,
       rationale: s.rationale,
     };
@@ -1050,10 +1148,44 @@ export default function AutoValuationPage() {
               </ul>
             </div>
 
+            {/* PATCH 0657 — Year toggle. Lets user compare FY27 (18mo) vs FY28 (30mo). */}
+            {report.peResultY2 || report.psResultY2 || report.evResultY2 ? (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4, fontSize: 12 }}>
+                <span style={{ color: DIM, fontWeight: 700, letterSpacing: '0.4px' }}>VIEW:</span>
+                {(['Y1', 'Y2'] as const).map(y => {
+                  const label = y === 'Y1'
+                    ? `${report.forwardYear || 'Y1'} · 18mo`
+                    : `${report.forwardYearY2 || 'Y2'} · 30mo`;
+                  const active = viewYear === y;
+                  return (
+                    <button
+                      key={y}
+                      onClick={() => setViewYear(y)}
+                      style={{
+                        background: active ? '#22D3EE' : 'transparent',
+                        color: active ? '#0a0a0f' : DIM,
+                        border: `1px solid ${active ? '#22D3EE' : BORDER}`,
+                        borderRadius: 5,
+                        padding: '5px 12px',
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        letterSpacing: '0.4px',
+                      }}
+                    >{label}</button>
+                  );
+                })}
+                {viewYear === 'Y2' && (
+                  <span style={{ marginLeft: 8, color: '#F59E0B', fontSize: 10, fontStyle: 'italic' }}>
+                    Year-2 = growth applied one more year. Rev ₹{report.forwardRevenueY2?.toLocaleString('en-IN') || '?'} Cr · PAT ₹{report.forwardPATY2?.toLocaleString('en-IN') || '?'} Cr.
+                  </span>
+                )}
+              </div>
+            ) : null}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12 }}>
-              <CalcResultMini label="📈 P/E Valuation" result={report.peResult} />
-              <CalcResultMini label="💰 P/S Valuation" result={report.psResult} />
-              <CalcResultMini label="🏭 EV/EBITDA Valuation" result={report.evResult} />
+              <CalcResultMini label="📈 P/E Valuation" result={viewYear === 'Y2' ? report.peResultY2 : report.peResult} />
+              <CalcResultMini label="💰 P/S Valuation" result={viewYear === 'Y2' ? report.psResultY2 : report.psResult} />
+              <CalcResultMini label="🏭 EV/EBITDA Valuation" result={viewYear === 'Y2' ? report.evResultY2 : report.evResult} />
             </div>
 
             {/* Save to bench */}

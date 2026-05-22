@@ -72,6 +72,14 @@ export interface SavedAutoValuation {
   peResult?: any;
   psResult?: any;
   evResult?: any;
+  // PATCH 0657 — Year-2 projections (FY28-style)
+  forwardYearY2?: string;
+  forwardRevenueY2?: number;
+  forwardEBITDAY2?: number;
+  forwardPATY2?: number;
+  peResultY2?: any;
+  psResultY2?: any;
+  evResultY2?: any;
 }
 
 function readAll(): Record<string, SavedAutoValuation> {
