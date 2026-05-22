@@ -38,9 +38,16 @@ import { applyEvidenceHierarchy, type EvidenceHierarchyResult } from '@/lib/evid
 import { predictEarningsDelta, type EarningsDelta } from '@/lib/economic-translation';
 
 const CACHE_KEY = (days: number) => `concall-feed:v25:days:${days}`;  // v25: Patch 0429 cross-exchange dedup + scored-filing cache flush
-// PATCH 0396 — Aggressive live-cache per user spec: 'always take live data'
-const CACHE_TTL_SHORT = 2 * 60;        // 2 min for fresh data (was 5)
-const CACHE_TTL_LONG = 10 * 60;        // 10 min for older lookback (was 30)
+// PATCH 0703 — Vercel free-tier rescue. User hit 5h16m / 4h Fluid CPU cap
+// (was 4h52m at last check). This route is the single heaviest endpoint
+// (60s maxDuration, parallel PDF parse). Bumping TTLs 15× drops the
+// cold-start frequency from ~every 2 min to ~every 30 min during busy
+// periods — saves the bulk of remaining CPU for the month.
+//   prev (P0396): 2 min / 10 min
+//   now           30 min / 60 min
+// Caller can still force-bypass with ?force=1 (existing param).
+const CACHE_TTL_SHORT = 30 * 60;       // 30 min for fresh data
+const CACHE_TTL_LONG  = 60 * 60;       // 60 min for older lookback
 
 // PATCH 0388 — extract PDFs in parallel for top N most-recent filings.
 // Pure subject-line scoring was producing 0 high-bullish on user's 681
