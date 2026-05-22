@@ -28,6 +28,14 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+// PATCH 0708 — institutional event-attribution engine for the Top Movers panel.
+import {
+  attributeMovers,
+  CATALYST_GLYPH,
+  CONFIDENCE_COLOR,
+  MOVE_TYPE_LABEL,
+  type MoverAttribution,
+} from '@/lib/movers-attribution';
 import { getConvictionTickers, getConvictionList } from '@/lib/conviction-beats';
 import { readDecisions } from '@/lib/decisions';
 // PATCH 0624 — pull rich static roster directly so the Home Super Investors
@@ -86,7 +94,9 @@ interface HomeState {
   gainers?: Array<{ ticker: string; company?: string; changePercent?: number; price?: number }>;
   losers?: Array<{ ticker: string; company?: string; changePercent?: number; price?: number }>;
   moversUpdatedAt?: string;
-  moversReasons?: Record<string, { kind: 'news' | 'earnings' | 'order' | 'rating' | 'special'; label: string; url?: string }>;
+  // PATCH 0708 — richer attribution payload (catalyst type, move type,
+  // scope, confidence, peer count). Replaces the kind/label/url tuple.
+  moversAttrib?: Record<string, MoverAttribution>;
   // PATCH 0624 — extended shape: kind='flow' (live) or 'roster' (static curated holdings)
   superInvestors?: Array<{
     ticker: string;
@@ -549,29 +559,26 @@ export default function HomeDashboard() {
         const losers = smallMidOnly(j?.losers || []).slice(0, 10);
         setData((d) => ({ ...d, gainers, losers, moversUpdatedAt: j?.updatedAt } as any));
 
-        // PATCH 0675 / 0707 — Triple-source WHY enrichment so every mover
-        // gets a meaningful description, never '—':
-        //   1. concall-intel live-feed (cacheOnly=1, never blocks)
-        //   2. /api/v1/news?search=<ticker> (parallel fallback)
-        //   3. sector + industry from the quotes payload (always-on backstop)
-        // The third tier guarantees you NEVER see '—' for any mover even when
-        // both data feeds miss — a smallcap Auto Components rally still shows
-        // "Auto Components & Equipments rally" instead of silence.
-        const moverSectorMap: Record<string, { sector?: string; industry?: string }> = {};
-        for (const m of [...gainers, ...losers]) {
-          const sym = (m.ticker || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
-          if (sym) moverSectorMap[sym] = { sector: m.sector, industry: m.industry };
-        }
-        const moverTickers = Object.keys(moverSectorMap);
+        // PATCH 0708 — Institutional event-attribution engine. Replaces the
+        // shallow "find any match" enrichment with a proper multi-factor
+        // analyzer that classifies catalyst type (EARNINGS/OFS/ORDER_WIN/
+        // RATING/MNA/SECTOR_ROTATION/NONE), move type (info/flow/positioning/
+        // liquidity/macro), scope (stock-specific vs sector-wide), and
+        // confidence (HIGH/MEDIUM/LOW). When nothing concrete is found, it
+        // honestly says "No confirmed trigger — likely liquidity-driven"
+        // instead of inventing causation from correlation.
+        const moverInputs = [...gainers, ...losers].map((m: any) => ({
+          ticker: (m.ticker || '').toUpperCase().replace(/\.(NS|BO)$/i, ''),
+          sector: m.sector,
+          industry: m.industry,
+          changePercent: m.changePercent ?? 0,
+          indexGroup: m.indexGroup,
+          marketCap: m.marketCap,
+        })).filter((m) => m.ticker);
+        const moverTickers = moverInputs.map((m) => m.ticker);
         if (moverTickers.length > 0) {
           (async () => {
-            const reasons: Record<string, { kind: 'news' | 'earnings' | 'order' | 'rating' | 'special'; label: string; url?: string }> = {};
-            const TWO_DAYS = 48 * 3600_000;
-            const TEN_DAYS = 10 * 24 * 3600_000;
-
-            // 1. Fetch concall-intel filings — cacheOnly so cold start never
-            //    blocks the home page. P0704 contract: returns cached payload
-            //    if any, else empty filings array immediately.
+            // 1. concall-intel filings (cacheOnly=1 — never blocks)
             const { data: feedData } = await safeDiag<any>(
               '/api/v1/concall-intel/live-feed?days=14&bullishOnly=false&cacheOnly=1',
               5_000
@@ -586,92 +593,27 @@ export default function HomeDashboard() {
               }
             }
 
-            // 2. Build reasons from filings (primary) — pick most recent
-            //    that's actually relevant to a price move.
-            const tickersStillNeedingWhy: string[] = [];
-            for (const ticker of moverTickers) {
-              const filings = filingsBySymbol[ticker] || [];
-              const fresh = filings.filter((f: any) => {
-                const ts = new Date(f.filing_datetime || 0).getTime();
-                return Number.isFinite(ts) && (Date.now() - ts) < TEN_DAYS;
-              });
-              if (fresh.length === 0) { tickersStillNeedingWhy.push(ticker); continue; }
-              // Sort newest first
-              fresh.sort((a: any, b: any) =>
-                new Date(b.filing_datetime || 0).getTime() - new Date(a.filing_datetime || 0).getTime()
-              );
-              const top = fresh[0];
-              const subj = top.subject || '';
-              const ft = top.filing_type || '';
-              let kind: 'news' | 'earnings' | 'order' | 'rating' | 'special' = 'news';
-              if (ft === 'ORDER_RECEIPT' || /receipt of order|letter of award|loa|order received|bagged order|wins order/i.test(subj)) kind = 'order';
-              else if (ft === 'RATING_ACTION' || /\b(ICRA|CRISIL|CARE|Moody|Fitch|rating|outlook|upgrade|downgrade)\b/i.test(subj)) kind = 'rating';
-              else if (ft === 'TRANSCRIPT' || ft === 'RESULTS_PRESENTATION' || ft === 'INVESTOR_PRESENTATION' || ft === 'CONCALL_INVITE' || /Q[1-4]\s*FY|quarterly|results|earnings|transcript|concall|investor (?:meet|presentation)/i.test(subj)) kind = 'earnings';
-              else if (/preferential|SAST|stake|merger|acquisition|de-listing|open offer/i.test(subj)) kind = 'special';
-              reasons[ticker] = { kind, label: subj, url: top.source_url || top.attachment_urls?.[0] };
-            }
+            // 2. news per ticker (parallel, bounded)
+            const newsByTicker: Record<string, any[]> = {};
+            await Promise.all(moverTickers.map(async (t) => {
+              const { data } = await safeDiag<any>(
+                `/api/v1/news?search=${encodeURIComponent(t)}&limit=8`,
+                6_000,
+              ).catch(() => ({ data: null }));
+              const articles: any[] = Array.isArray(data) ? data : (data?.articles || data?.items || []);
+              if (articles.length > 0) newsByTicker[t] = articles;
+            }));
+            if (cancelled) return;
 
-            // 3. For tickers still without a WHY, try /api/v1/news fallback
-            //    (works for tickers that DO have news coverage — typically the
-            //    larger of the smallcaps or those with global news).
-            if (tickersStillNeedingWhy.length > 0) {
-              const results = await Promise.all(
-                tickersStillNeedingWhy.map((t) =>
-                  safeDiag<any>(`/api/v1/news?search=${encodeURIComponent(t)}&limit=8`, 6_000)
-                    .then(({ data }) => ({ ticker: t, data }))
-                    .catch(() => ({ ticker: t, data: null }))
-                )
-              );
-              if (cancelled) return;
-              for (const { ticker, data } of results) {
-                const articles: any[] = Array.isArray(data) ? data : (data?.articles || data?.items || []);
-                if (articles.length === 0) continue;
-                const fresh = articles.filter((a: any) => {
-                  if (!a) return false;
-                  if (a.is_synthetic || a.structural_status) return false;
-                  if (a.published_at) {
-                    const age = Date.now() - new Date(a.published_at).getTime();
-                    if (age > TWO_DAYS) return false;
-                  }
-                  return true;
-                });
-                if (fresh.length === 0) continue;
-                const top = fresh.sort((a: any, b: any) => {
-                  const aImp = a.importance_score ?? 0; const bImp = b.importance_score ?? 0;
-                  if (aImp !== bImp) return bImp - aImp;
-                  return new Date(b.published_at || 0).getTime() - new Date(a.published_at || 0).getTime();
-                })[0];
-                const title = top.title || top.headline || '';
-                const at = (top.article_type || '').toUpperCase();
-                let kind: 'news' | 'earnings' | 'order' | 'rating' | 'special' = 'news';
-                if (at === 'EARNINGS' || /Q[1-4]\s*FY|quarterly|results|earnings/i.test(title)) kind = 'earnings';
-                else if (/order|letter of award|LoA|contract|won/i.test(title)) kind = 'order';
-                else if (/ICRA|CRISIL|CARE|Moody|S&P|Fitch|upgrade|downgrade|rating/i.test(title)) kind = 'rating';
-                else if (/preferential|SAST|stake|merger|acquisition|de-listing|open offer/i.test(title)) kind = 'special';
-                reasons[ticker] = { kind, label: title, url: top.source_url || top.url };
-              }
-            }
-
-            // PATCH 0707 — Tier 3 backstop: for any mover still without a
-            // reason, generate one from the sector + industry the quotes
-            // payload already includes. Means we NEVER show '—' anymore. A
-            // smallcap auto-ancillary up 7% becomes "Auto Components &
-            // Equipments rally (sector: Auto)"; a PSU bank down 8% becomes
-            // "PSU bank rotation (sector: Banks)".
-            for (const ticker of moverTickers) {
-              if (reasons[ticker]) continue;
-              const meta = moverSectorMap[ticker];
-              const industry = (meta?.industry || '').trim();
-              const sector = (meta?.sector || '').trim();
-              if (!industry && !sector) continue;
-              // Industry is more specific — prefer it when present.
-              const label = industry
-                ? `${industry}${sector && sector !== industry ? ` · ${sector} sector` : ''} move`
-                : `${sector} sector move`;
-              reasons[ticker] = { kind: 'news', label };
-            }
-
-            if (!cancelled) setData((d) => ({ ...d, moversReasons: reasons } as any));
+            // 3. Run attribution engine — handles catalyst classification,
+            //    sector-wide peer cross-correlation, confidence tiering, and
+            //    honest fallback in one pass.
+            const attrib = attributeMovers({
+              movers: moverInputs,
+              filingsBySymbol,
+              newsByTicker,
+            });
+            if (!cancelled) setData((d) => ({ ...d, moversAttrib: attrib } as any));
           })();
         }
       });
@@ -1688,27 +1630,57 @@ export default function HomeDashboard() {
             {!data.gainers && !data.losers ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
             ) : (() => {
-              // PATCH 0647 — each row now shows: ticker · % · reason chip
-              const reasonKindGlyph = (k: string) => k === 'earnings' ? '📊' : k === 'order' ? '📑' : k === 'rating' ? '🏛' : k === 'special' ? '🎯' : '📰';
+              // PATCH 0708 — institutional event-attribution rendering.
+              // Each row now shows: ticker · % · catalyst-glyph · label ·
+              // confidence chip · scope badge. Tooltip on hover shows the
+              // move-type classification + sector peer count for transparency.
               const renderRow = (m: any, pos: 'up' | 'dn') => {
                 const tk = (m.ticker || '').toUpperCase();
-                const reason = data.moversReasons?.[tk];
+                const attr = data.moversAttrib?.[tk];
                 const pct = m.changePercent ?? 0;
                 const c = pos === 'up' ? '#10B981' : '#EF4444';
+                const confColor = attr ? CONFIDENCE_COLOR[attr.confidence] : '#3F4D63';
+                const scopeBadge = attr?.scope === 'SECTOR_WIDE' ? 'sector' : '';
+                const moveTypeLabel = attr ? MOVE_TYPE_LABEL[attr.moveType] : '';
+                const tooltip = attr
+                  ? `${attr.catalyst}\n\nConfidence: ${attr.confidence}\nMove type: ${moveTypeLabel}\nScope: ${attr.scope === 'SECTOR_WIDE' ? `Sector-wide (${attr.sectorPeerCount} peers moving ${attr.sectorDirection})` : 'Stock-specific'}\nEvidence: ${attr.evidenceSource}`
+                  : '';
                 return (
                   <Link key={tk} href={`/stock-sheet?ticker=${encodeURIComponent(m.ticker)}`}
+                    title={tooltip}
                     style={{ display: 'flex', alignItems: 'baseline', gap: 6, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
                     <span style={{ fontSize: 11, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 92, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.ticker}</span>
                     <span style={{ fontSize: 11, color: c, fontWeight: 800, fontVariantNumeric: 'tabular-nums', minWidth: 50, textAlign: 'right' }}>
                       {pos === 'up' ? '+' : ''}{pct.toFixed(1)}%
                     </span>
-                    {reason ? (
-                      <span title={reason.label}
-                        style={{ flex: 1, fontSize: 10, color: DIM, fontStyle: 'italic', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.4 }}>
-                        {reasonKindGlyph(reason.kind)} {reason.label.slice(0, 80)}{reason.label.length > 80 ? '…' : ''}
+                    {attr ? (
+                      <span style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+                        <span style={{ fontSize: 11, flexShrink: 0 }}>{CATALYST_GLYPH[attr.catalystType]}</span>
+                        <span style={{
+                          fontSize: 10, color: DIM,
+                          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                          flex: 1, minWidth: 0, lineHeight: 1.4,
+                          fontStyle: attr.confidence === 'LOW' ? 'italic' : 'normal',
+                        }}>
+                          {attr.catalyst.slice(0, 70)}{attr.catalyst.length > 70 ? '…' : ''}
+                        </span>
+                        <span style={{
+                          fontSize: 8, fontWeight: 800, padding: '1px 4px', borderRadius: 2,
+                          background: `${confColor}22`, color: confColor, flexShrink: 0, letterSpacing: 0.3,
+                        }}>
+                          {attr.confidence}
+                        </span>
+                        {scopeBadge && (
+                          <span style={{
+                            fontSize: 8, fontWeight: 700, padding: '1px 4px', borderRadius: 2,
+                            background: '#22D3EE22', color: '#22D3EE', flexShrink: 0, letterSpacing: 0.3,
+                          }}>
+                            {scopeBadge}
+                          </span>
+                        )}
                       </span>
                     ) : (
-                      <span style={{ flex: 1, fontSize: 10, color: '#3F4D63', fontStyle: 'italic' }}>—</span>
+                      <span style={{ flex: 1, fontSize: 10, color: '#3F4D63', fontStyle: 'italic' }}>analyzing…</span>
                     )}
                   </Link>
                 );

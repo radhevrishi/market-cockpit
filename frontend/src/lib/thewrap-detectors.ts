@@ -66,19 +66,49 @@ const TIER1_PSU_PATTERNS: Array<{ rx: RegExp; name: string }> = [
 //   "Receipt of order from HAL worth Rs 250 Cr"
 //   "Disclosure under Regulation 30 - Receipt of Order"
 //   "Company wins large order from MoD"
+// PATCH 0709 — institutional synonym expansion. User feedback: detectors
+// were catching <20% of real order announcements because the regex demanded
+// literal "won order" or "receipt of order". Indian listed-co filings use a
+// much wider lexicon — L1 bidder positions, EPC awards, framework agreements,
+// rate contracts, supply agreements, turnkey projects, strategic agreements,
+// emergency response contracts, etc. Each of these is a real event-driven
+// catalyst that triggers re-rating.
 const ORDER_TRIGGER_PATTERNS = [
+  // Direct order language
   /receipt\s+of\s+(?:[a-z\s]{0,20})?(?:order|letter\s+of\s+award|loa)/i,
   /receives?\s+(?:an?\s+|the\s+|new\s+|a\s+large\s+)?order/i,
-  /letter\s+of\s+award/i,
-  /\bLOA\b|\bLoA\b/,
+  /\bbagging\s*\/\s*receiving\s+(?:of\s+)?orders?/i,
+  /receiving\s+of\s+orders?/i,
+  /letter\s+of\s+(?:award|acceptance|intent)/i,    // P0709 — LoA & LoI & LoIntent
+  /\bLOA\b|\bLoA\b|\bLOI\b|\bLoI\b/,
   /\bwork\s+order\b/i,
   /\bpurchase\s+order\b/i,
-  /contract\s+award/i,
-  /\bbagged?\s+(?:an?\s+|the\s+|new\s+|a\s+large\s+)?order/i,
-  /\bwins?\s+(?:an?\s+|the\s+|new\s+|a\s+large\s+)?order/i,
-  /\bsecured?\s+(?:an?\s+|the\s+|new\s+|a\s+large\s+)?order/i,
+  /\bquarterly\s+POs?\b/i,
+  /contract\s+(?:award|win|received|secured)/i,
+  /\bbagged?\s+(?:an?\s+|the\s+|new\s+|a\s+large\s+)?(?:order|contract|project)/i,
+  /\bwins?\s+(?:an?\s+|the\s+|new\s+|a\s+large\s+)?(?:order|contract|project|deal|mandate)/i,
+  /\bsecured?\s+(?:an?\s+|the\s+|new\s+|a\s+large\s+)?(?:order|contract|project|mandate)/i,
   /\border\s+(?:intake|win|received|book\s+update)/i,
   /Reg(?:ulation)?\s*30.{0,30}(?:disclosure|filing|order|loa|award)/i,
+  // P0709 — institutional synonyms surfaced by user audit
+  /\bL1\s+(?:bidder|status|position|in\s+the|for\s+the)/i,           // L1 bidder / L1 in
+  /\bselected\s+(?:as\s+(?:the\s+)?)?(?:lowest|preferred|successful)?\s*bidder/i,
+  /\bemerged\s+(?:as\s+)?(?:the\s+)?(?:L1|lowest|preferred|successful)\s*bidder/i,
+  /\bframework\s+(?:agreement|contract)/i,
+  /\brate\s+contract/i,
+  /\bEPC\s+(?:contract|order|project|award)/i,
+  /\bsupply\s+(?:agreement|contract|order)/i,
+  /\bservice\s+agreement\b.{0,40}(?:awarded|signed|received)/i,
+  /\bturnkey\s+(?:project|contract|order)/i,
+  /\bstrategic\s+(?:agreement|partnership|contract)\b.{0,40}(?:signed|entered|inked)/i,
+  /\bdefinitive\s+agreement\b/i,
+  /\b(?:awarded|won)\s+(?:a\s+|the\s+)?(?:tender|bid|RFP|RFQ|EPC|contract)/i,
+  /\b(?:emergency|long[-\s]term)\s+(?:response|supply|service)\s+contract/i,
+  /\bMOU\b|\bmemorandum\s+of\s+understanding\b/i,
+  /\bbinding\s+(?:offer|agreement)/i,
+  /\b(?:DDC|DPSU)\s+(?:award|contract|order)/i,         // defense / public-sector contract codes
+  /\bRail(?:way)?s?\s+(?:order|contract|award)/i,
+  /\b(?:exclusive|sole)\s+(?:supplier|distributor|vendor)\s+(?:agreement|contract)/i,
 ];
 
 /**
