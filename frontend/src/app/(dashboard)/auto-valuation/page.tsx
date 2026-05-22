@@ -43,7 +43,9 @@ const TEXT = '#E6EDF3';
 const DIM = '#8A95A3';
 
 // ─── Types ──────────────────────────────────────────────────────────────
-interface ExcelFinancials {
+// PATCH 0681 — export key types + functions so the Concall AI page can
+// import buildReport and run the same valuation pipeline inline.
+export interface ExcelFinancials {
   source: string;
   ticker?: string;
   company?: string;
@@ -72,7 +74,7 @@ interface ExcelFinancials {
   currentMarketCapCrFromSheet?: number;
 }
 
-interface ParsedDoc {
+export interface ParsedDoc {
   name: string;
   size: number;
   type: 'excel' | 'pdf' | 'unknown';
@@ -83,7 +85,7 @@ interface ParsedDoc {
   guidance?: GuidanceItem[];
 }
 
-interface AutoValuationReport {
+export interface AutoValuationReport {
   ticker?: string;
   company?: string;
   sector?: string;
@@ -139,7 +141,7 @@ async function loadPdfJs(): Promise<any> {
   return pdfjsLib;
 }
 
-async function extractPdfText(file: File): Promise<string> {
+export async function extractPdfText(file: File): Promise<string> {
   const pdfjsLib = await loadPdfJs();
   if (!pdfjsLib) return '';
   const buf = await file.arrayBuffer();
@@ -175,7 +177,7 @@ async function extractPdfText(file: File): Promise<string> {
 //   Row 28 Profit before tax
 //   Row 30 Net profit
 // Operating Profit = Sales - sum(Expenses); EBITDA = OP + Depreciation.
-async function extractExcelFinancials(file: File): Promise<ExcelFinancials | null> {
+export async function extractExcelFinancials(file: File): Promise<ExcelFinancials | null> {
   const XLSX = await import('xlsx');
   const buf = await file.arrayBuffer();
   const wb = XLSX.read(buf, { type: 'array' });
@@ -558,7 +560,7 @@ function inferSector(text: string, company?: string): string | undefined {
 }
 
 // ─── Build the report ───────────────────────────────────────────────────
-async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
+export async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
   // Aggregate data across all parsed docs
   const excelDoc = docs.find(d => d.excelData);
   const excelData = excelDoc?.excelData;

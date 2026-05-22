@@ -1,7 +1,7 @@
 # Market Cockpit — Claude Handoff Memory
 
 > Read this FIRST when starting any new chat. Saves you 30 minutes of context-rebuilding.
-> **Last updated: 2026-05-22.** Day-3 session added Patches 0643–0670 — Auto-Valuation honesty pass (margin hierarchy, sanity checks, override panel, scenario triplets, confidence chips), Learn tab with 12 guidance patterns + 20 practice examples, alphabetical home reorder, ORDER_RECEIPT + RATING_ACTION categories wired into live-feed (upstream NSE data gap acknowledged with honest empty-state). HEAD on `origin/main` ≈ `80902fb`. Latest patch number for new work: **0671**. Look at Section 17.12 first for Day-3 summary.
+> **Last updated: 2026-05-22 (Day-3 LATE).** Day-3 session shipped Patches 0643–0681 (39 patches): Auto-Val honesty pass + Learn tab + 6 More Methods (DCF/PEG/P-B/FCF Yield/SoP/DDM) + sector-lookup inline scenarios + score-weighted sector inference (KOEL Defence misclassification fixed) + ORDER_RECEIPT/RATING_ACTION regex now matches NSE canonical labels + Aeroflex false-positive rejections + InlineValuationPanel mounted in Concall AI page so ONE upload → BOTH analyses. HEAD on `origin/main` ≈ `e50fd0a` (will be ~`P0681+` after this push). Latest patch number for new work: **0682**. Look at Sections 17.12 + 17.13 first for Day-3 summary.
 > **Sandbox-name caveat:** This file references the OLD sandbox `zen-epic-bardeen` in section 2 and `kind-sharp-maxwell` was the active sandbox at session-end. New sessions get a new sandbox name. The repo path mapping pattern is `/Users/.../market-cockpit/` → `/sessions/<sandbox>/mnt/market-cockpit/` — substitute the active sandbox name from `ls /sessions/` or your bash mounts.
 
 ---
@@ -2148,12 +2148,59 @@ mc:concall-snap:updated       — Concall snapshot save fires this
 - `frontend/src/lib/thewrap-detectors.ts` — looser order regex
 - `frontend/src/app/api/v1/concall-intel/live-feed/route.ts` — PDF_PRIORITY updated
 
+### 17.13 DAY-3 LATE BATCH (0672 → 0681) — All-in-Concall merge + sector + NSE coverage
+
+```
+0672      — Extended NSE filing classification (regex widened to match canonical
+            NSE category labels: "Bagging/Receiving of orders/contracts" and
+            bare "Credit Rating" — turned out the data was already in the raw
+            feed, just being silently dropped by overly-narrow regex)
+0673      — Valuation Calc: new "More Methods" tab with 6 additional calculators
+            (DCF, PEG, P/B, FCF Yield, Sum-of-Parts, Dividend Discount) +
+            what-to-enter + tips on existing P/E, P/S, EV/EBITDA
+0674      — Sector → Calculator Lookup: each row now expandable to a worked
+            real-time scenario (21 sectors, click row for representative company)
+0675      — Home Movers WHY: replaced per-ticker news search (returned 0 for
+            Indian smallcaps) with concall-intel/live-feed lookup as primary
+            (1939 Indian filings indexed by symbol), news fallback retained
+0676      — Fixed ORDER_RECEIPT + RATING_ACTION regex to match NSE canonical
+            category labels — 176 orders + 98 ratings now flow through to
+            /order-book and /rating-actions pages
+0677      — Aeroflex extraction fixes: reject market-research CAGR ("Source:
+            Markets & Markets"), reject tabular EBITDA-growth as margin
+            ("EBITDA 30 59% EBITDA Margin 24%"), exclude exchange names from
+            company-name extraction
+0678      — Explicit "Why HIGH/MED/LOW" reason chip under each calculator card
+            naming the source (guidance vs historical CAGR vs latest OPM)
+0679      — Sector inference: score-weighted match. Defence requires 2× dominance
+            over runner-up. KOEL no longer mis-tagged as Defence (was driving
+            fake BUY +151% recommendation)
+0680      — Concall AI tab: prominent cross-link banner to /auto-valuation
+            ("OPEN AUTO-VAL →" gradient card at top)
+0681      — Full inline merge: extracted buildReport/extractPdfText/
+            extractExcelFinancials as named exports from auto-valuation/page.tsx;
+            new components/InlineValuationPanel.tsx with self-contained
+            multi-file upload + compact 3-card render; mounted at bottom of
+            earnings-analysis page (Concall AI tab). One page now runs BOTH
+            concall analysis AND P/E/P/S/EV-EBITDA valuation on the same docs.
+```
+
+**Architectural note on P0681:**
+- `auto-valuation/page.tsx` now has named exports (`buildReport`, `extractPdfText`, `extractExcelFinancials`, `ParsedDoc`, `AutoValuationReport`, `ExcelFinancials`). Next.js page files allow this — only `default export` is consumed for routing.
+- `components/InlineValuationPanel.tsx` is a brand-new self-contained component (~150 lines) that imports the pipeline from auto-valuation/page. Independent upload state, compact 3-card output, link to full Auto-Val page for bear/base/bull breakdown.
+- The Concall AI page (`earnings-analysis/page.tsx`) imports + renders `<InlineValuationPanel />` at the very bottom (after all existing concall output).
+
+**Open follow-ups (if next session continues this thread):**
+- Concall score doesn't yet weight valuation upside — would add ~10% weight per user request. Hook is ready, just need to compose the score.
+- Saved Auto-Val entries from BEFORE P0679 still show "Defence" sector. Add a "↻ Recompute" button or auto-flag stale entries.
+- NSE scraper extension (P0672 turned out to be regex fix; the true scraper extension for additional NSE category pages was not needed but could be added if upstream coverage gets stronger).
+
 ### 17.9 STARTER PROMPT for new chat
 
-> Read `/Users/radhevrishi/Desktop/Python/Imp Marketcockpit/market-cockpit/CLAUDE.md` section 17 (especially 17.12 Day-3 batch) before doing anything. HEAD on main = `80902fb+`. Auto-Valuation is now mathematically consistent — margin hierarchy, PAT scaling, scenario triplets, confidence chips, override panel all working. Latest patch number to use for new work: **0671**.
+> Read `/Users/radhevrishi/Desktop/Python/Imp Marketcockpit/market-cockpit/CLAUDE.md` section 17 (read 17.12 Day-3 batch AND 17.13 Day-3 late batch) before doing anything. HEAD on main ≈ `e50fd0a+`. Auto-Valuation is now mathematically consistent + the InlineValuationPanel is mounted in Concall AI page (P0681). Latest patch number to use for new work: **0682**.
 >
-> [Now state what you want — examples below]
-> - "Continue auditing for new bugs and fix what you find."
-> - "Build TheWrap Module 2 (Rating Actions polish) or Module 3 (Strategic Hire detector page)."
-> - "Wire the Saved Workspaces v0 (Patch 0604) into the Home dashboard so users can switch decision-stack lenses."
-> - "Add a Postgres-backed alert delivery (Slack webhook) so news-alerts fire even when the tab is closed."
+> Open work from prior session (pick one or state your own):
+> - "Wire valuation upside into the concall score with ~10% weight (P0682)"
+> - "Add ↻ Recompute button on saved Auto-Val entries so old saved sectors get refreshed when buildReport logic changes"
+> - "Continue auditing — run MTAR/Aeroflex/Kirloskar through fresh and verify all 3 give honest recommendations now"
+> - "Build TheWrap Module 3 (Strategic Hire detector page)"

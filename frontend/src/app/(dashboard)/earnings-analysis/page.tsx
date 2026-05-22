@@ -7,6 +7,8 @@ import { buildSnapshot, FinancialsInput, EstimatesInput, HistoryInput } from '@/
 import { buildIndiaSnapshot } from '@/lib/earnings/india-build';
 import type { EarningsSnapshot } from '@/lib/earnings/snapshot';
 import { saveConcallSnapshot } from '@/lib/concall-snapshot-store';
+// PATCH 0681 — inline valuation panel rendered at the bottom of the Concall AI page
+import InlineValuationPanel from '@/components/InlineValuationPanel';
 
 // ── Design tokens
 const BG      = '#0a0a0f';
@@ -4224,6 +4226,10 @@ export default function EarningsAnalysisPage() {
           )}
         </>
       )}
+
+      {/* PATCH 0681 — Inline Auto-Valuation panel: drop same docs to also
+          get a P/E + P/S + EV/EBITDA report on the same page. */}
+      <InlineValuationPanel />
     </div>
   );
 }
