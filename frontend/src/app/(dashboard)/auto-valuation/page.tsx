@@ -477,9 +477,29 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
     }
   }
   // Company name from PDF: 'XYZ Technologies Limited' / 'XYZ Industries Ltd'
+  // PATCH 0677 — Reject exchange/regulator names that frequently appear in
+  // SEBI cover letters before the actual company name (e.g., "National Stock
+  // Exchange of India Limited", "BSE Limited"). Also prefer the "For COMPANY
+  // LIMITED" pattern at the bottom of cover letters — that's where the actual
+  // filer signs off.
   if (!company) {
-    const m = allText.match(/\b([A-Z][A-Za-z &]{4,40}(?:Technologies|Industries|Limited|Ltd\.?|Corp\.?|Capital|Pharma|Solutions|Systems|Group|Holdings))\b/);
-    if (m && m[1]) company = m[1].trim();
+    const blacklist = /^(?:National Stock Exchange|Bombay Stock Exchange|BSE|NSE|Securities and Exchange Board|SEBI|Stock Exchange|Listing Department|Department of Corporate Services|General Manager)/i;
+    // First try: explicit "For COMPANY LIMITED" sign-off pattern (most reliable)
+    const signoff = allText.match(/\bFor\s+([A-Z][A-Z &]{4,50}(?:LIMITED|LTD\.?|CORPORATION|INC\.?))\b/);
+    if (signoff && signoff[1] && !blacklist.test(signoff[1])) {
+      company = signoff[1].trim();
+    }
+    // Second try: generic Title Case "XYZ Industries Limited" pattern, but skip blacklist
+    if (!company) {
+      const re = /\b([A-Z][A-Za-z &]{4,40}(?:Technologies|Industries|Limited|Ltd\.?|Corp\.?|Capital|Pharma|Solutions|Systems|Group|Holdings))\b/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(allText)) !== null) {
+        if (!blacklist.test(m[1])) {
+          company = m[1].trim();
+          break;
+        }
+      }
+    }
   }
   // Heuristic from filename — first WORD, not joined chars
   if (!ticker) {

@@ -325,6 +325,41 @@ export function extractGuidance(text: string): GuidanceItem[] {
         }
       }
 
+      // PATCH 0677 — Context-aware exclusions for false-positive extractions.
+      //
+      // Bug 1: CAGR/GROWTH picked up from external market research (e.g.,
+      //   "CAGR 33.2% Source: Markets & Markets Research Report") which is
+      //   the industry size CAGR, NOT company guidance. Reject when context
+      //   mentions market-research source.
+      //
+      // Bug 2: EBITDA_MARGIN picking up YoY EBITDA GROWTH from a table layout.
+      //   PDF says "EBITDA# 30.03 59% 99.74 26% EBITDA Margin# 23.86%". The
+      //   59% is growth-YoY column. Reject when number is followed by "YoY"
+      //   / "yoy growth" / "year-on-year" / "bps" markers within ~30 chars.
+      //
+      // Bug 3: Margin matched where actual number is BPS expansion not absolute
+      //   margin (e.g., "EBITDA margin expanded 326 bps to 23.86%"). My code
+      //   picks 326 (parsed as %) but real margin is 23.86%. Reject when number
+      //   is followed by "bps" or "basis points" within ~10 chars.
+      const marketResearchContext = /\b(?:markets?\s*&?\s*markets|research\s+report|industry\s+(?:cagr|forecast|size|growth)|global\s+market|source\s*:\s*(?:markets|research|knight|gartner|ihs|crisil|nielsen))/i.test(s);
+      const isExternalMarketCAGR = (pat.metric === 'CAGR' || pat.metric === 'GROWTH') && marketResearchContext;
+
+      const numStartIdx = sStripped.indexOf(rawMatch);
+      const after = numStartIdx >= 0 ? sStripped.slice(numStartIdx + rawMatch.length, numStartIdx + rawMatch.length + 30) : '';
+      const looksLikeBpsValue = pat.metric === 'EBITDA_MARGIN' && /\b(?:bps|basis\s*points?)\b/i.test(after);
+      const looksLikeGrowthYoY = (pat.metric === 'EBITDA_MARGIN' || pat.metric === 'OPM' || pat.metric === 'PAT_MARGIN') &&
+        /\b(?:yoy|y-o-y|y\/y|year[-\s]on[-\s]year)\b/i.test(after);
+
+      // Bug 4 detection: tabular EBITDA-with-percent that's actually growth%.
+      // Pattern: "EBITDA <num> <num>%" where num is small (e.g., 30.03) and the
+      // % immediately follows another number — the % is growth, not margin.
+      const tabularGrowthHit = (pat.metric === 'EBITDA_MARGIN' && /ebitda(?:\s*#)?\s+[\d.,]+\s+[\d.,]+\s*%/i.test(s));
+
+      if (isExternalMarketCAGR || looksLikeBpsValue || looksLikeGrowthYoY || tabularGrowthHit) {
+        // Skip this candidate — extraction would mis-attribute.
+        continue;
+      }
+
       for (const fy of fys) {
         out.push({
           fiscalYear: fy,
