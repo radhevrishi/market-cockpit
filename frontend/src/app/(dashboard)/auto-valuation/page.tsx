@@ -54,6 +54,11 @@ interface ExcelFinancials {
   eps: (number | null)[];
   price: (number | null)[];
   opmAvg?: number;              // 5yr avg OPM
+  // PATCH 0664 — margin hierarchy: latest-year and median-3yr expose
+  // more representative margins than the 5yr-avg which gets dragged
+  // down by a single weak year. buildReport picks in priority order.
+  opmLatest?: number;           // latest-year OPM (best when growth is normal)
+  opmMedian3y?: number;         // median of last 3 years (smoothes outliers)
   netMargin?: number;           // latest net margin
   // Derived growth rates
   salesCagr5y?: number;
@@ -105,6 +110,10 @@ interface AutoValuationReport {
   evResultY2?: CalculatorResult;
   recommendation: 'BUY' | 'WATCH' | 'WAIT' | 'AVOID' | 'NEED_MORE_DATA';
   rationale: string[];
+  // PATCH 0664 — per-calc confidence so the UI can dim low-confidence cards
+  peConfidence?: 'HIGH' | 'MED' | 'LOW';
+  psConfidence?: 'HIGH' | 'MED' | 'LOW';
+  evConfidence?: 'HIGH' | 'MED' | 'LOW';
 }
 
 // ─── PDF extraction (CDN pdf.js — same pattern as earnings-analysis) ────
@@ -318,6 +327,13 @@ async function extractExcelFinancials(file: File): Promise<ExcelFinancials | nul
     return null;
   }).filter((x): x is number => typeof x === 'number');
   if (opmList.length > 0) fin.opmAvg = opmList.slice(-5).reduce((a, b) => a + b, 0) / Math.min(opmList.length, 5);
+  // PATCH 0664 — expose latest-year OPM and median-3yr OPM for a smarter
+  // margin hierarchy in buildReport.
+  if (opmList.length > 0) fin.opmLatest = opmList[opmList.length - 1];
+  if (opmList.length >= 3) {
+    const last3 = opmList.slice(-3).slice().sort((a, b) => a - b);
+    fin.opmMedian3y = last3[1];   // middle value of last 3
+  }
   // PATCH 0641 — proper EBITDA = Operating Profit + Depreciation (when both present).
   // Otherwise fall back to OP alone (Indian Screener convention).
   const opSeries = fin.operatingProfit.filter((x): x is number => typeof x === 'number');
@@ -508,7 +524,22 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
   // revenue → EBITDA (via margin scenarios) → PAT (via historical
   // conversion). For each scenario, if absolute guidance is missing,
   // fall back to historical-CAGR / margin / conversion proxies.
-  const opmAvg = excelData?.opmAvg && excelData.opmAvg > 0 ? excelData.opmAvg : undefined;
+  // PATCH 0664 — margin hierarchy: pick the best historical proxy, in priority:
+  //   1. opmLatest  (latest fiscal year — best when growth has been normal)
+  //   2. opmMedian3y (median of last 3 — smoothes outliers)
+  //   3. opmAvg (5yr average — only when 1+2 unavailable)
+  // ChatGPT critique: a single weak year was pulling MTAR's average to 7%
+  // when latest-year + median both sit in the 22-25% range.
+  const opmAvg = (() => {
+    if (excelData?.opmLatest && excelData.opmLatest > 0) return excelData.opmLatest;
+    if (excelData?.opmMedian3y && excelData.opmMedian3y > 0) return excelData.opmMedian3y;
+    if (excelData?.opmAvg && excelData.opmAvg > 0) return excelData.opmAvg;
+    return undefined;
+  })();
+  const opmSource: 'latest' | 'median3y' | '5yr-avg' | undefined =
+    excelData?.opmLatest ? 'latest' :
+    excelData?.opmMedian3y ? 'median3y' :
+    excelData?.opmAvg ? '5yr-avg' : undefined;
   const yearsAhead = forwardYear === 'FY28' ? 2 : 1;
 
   // Step 1: ensure revScen has bear/base/bull populated.
@@ -736,11 +767,29 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
       )
     : undefined;
 
-  // Recommendation
+  // PATCH 0664 — Weighted recommendation. Per ChatGPT critique:
+  //   P/S  = 45% weight (most reliable for growth/scale-up names; rev guidance is the most credible input)
+  //   P/E  = 35% weight (decent but PAT depends on EBITDA chain quality)
+  //   EV/EBITDA = 20% weight (most sensitive to margin extraction accuracy)
+  // Per-calc confidence is HIGH when guidance was found, LOW when fallback used.
+  const psBase = psResult?.cases.find(c => c.label === 'BASE')?.upsidePct;
+  const peBase = peResult?.cases.find(c => c.label === 'BASE')?.upsidePct;
+  const evBase = evResult?.cases.find(c => c.label === 'BASE')?.upsidePct;
+  const revFromGuidance = !!revScen.base && (allGuidance.some(g => g.metric === 'REVENUE' || g.metric === 'GROWTH'));
+  const patFromGuidance = !!patScen.base && (allGuidance.some(g => g.metric === 'PAT'));
+  const evValid = marginIsFromGuidance || (opmSource === 'latest' || opmSource === 'median3y');
+  const psConfidence: 'HIGH' | 'MED' | 'LOW' = revFromGuidance ? 'HIGH' : 'MED';
+  const peConfidence: 'HIGH' | 'MED' | 'LOW' = patFromGuidance ? 'HIGH' : (revFromGuidance ? 'MED' : 'LOW');
+  const evConfidence: 'HIGH' | 'MED' | 'LOW' = marginIsFromGuidance ? 'HIGH' : (evValid ? 'MED' : 'LOW');
+  const weighted: Array<{ w: number; v: number }> = [];
+  if (psBase !== undefined) weighted.push({ w: 0.45 * (psConfidence === 'HIGH' ? 1 : psConfidence === 'MED' ? 0.7 : 0.3), v: psBase });
+  if (peBase !== undefined) weighted.push({ w: 0.35 * (peConfidence === 'HIGH' ? 1 : peConfidence === 'MED' ? 0.7 : 0.3), v: peBase });
+  if (evBase !== undefined) weighted.push({ w: 0.20 * (evConfidence === 'HIGH' ? 1 : evConfidence === 'MED' ? 0.7 : 0.3), v: evBase });
+  const sumW = weighted.reduce((a, b) => a + b.w, 0);
+  const avgBaseUpside = sumW > 0 ? weighted.reduce((a, b) => a + b.w * b.v, 0) / sumW : 0;
   const baseUpsides = [peResult, psResult, evResult]
     .filter((r): r is CalculatorResult => !!r)
     .map(r => r.cases.find(c => c.label === 'BASE')?.upsidePct ?? 0);
-  const avgBaseUpside = baseUpsides.length > 0 ? baseUpsides.reduce((a, b) => a + b, 0) / baseUpsides.length : 0;
 
   let recommendation: AutoValuationReport['recommendation'] = 'NEED_MORE_DATA';
   const rationale: string[] = [];
@@ -761,11 +810,15 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
   // through to the projection.
   if (inferredGrowth) rationale.push(`Applied guided revenue growth: ${inferredGrowth.toFixed(0)}% → forward revenue.`);
   // PATCH 0662 — honest source label: guidance vs historical fallback.
+  // PATCH 0664 — refined: name the specific historical source used.
   if (inferredMargin) {
     if (marginIsFromGuidance) {
       rationale.push(`Applied GUIDED EBITDA margin: ${inferredMargin.toFixed(0)}% → forward EBITDA.`);
     } else {
-      rationale.push(`⚠ Margin guidance NOT found in PDFs. Used historical 5yr OPM ${inferredMargin.toFixed(1)}% as fallback — likely understates EBITDA if management guided expansion. Use the Override panel below to plug in the right margin.`);
+      const sourceLabel = opmSource === 'latest' ? 'latest-year OPM'
+        : opmSource === 'median3y' ? '3-yr median OPM'
+        : '5-yr average OPM';
+      rationale.push(`⚠ Margin guidance NOT found in PDFs. Used ${sourceLabel} ${inferredMargin.toFixed(1)}% as fallback. If management guided expansion (concall mentions "margins of X%" / "margin expansion"), use the Override panel below to set the right margin.`);
     }
   }
   // PATCH 0657 — surface Y2 projection so user knows the 2yr view is computed
@@ -787,11 +840,12 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
     forwardPATY2: patScenY2.base,
     peResultY2, psResultY2, evResultY2,
     recommendation, rationale,
+    peConfidence, psConfidence, evConfidence,
   };
 }
 
 // ─── UI components ──────────────────────────────────────────────────────
-function CalcResultMini({ label, result }: { label: string; result?: CalculatorResult }) {
+function CalcResultMini({ label, result, confidence }: { label: string; result?: CalculatorResult; confidence?: 'HIGH' | 'MED' | 'LOW' }) {
   if (!result) {
     return (
       <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 6, padding: '14px 16px', opacity: 0.5 }}>
@@ -800,9 +854,20 @@ function CalcResultMini({ label, result }: { label: string; result?: CalculatorR
       </div>
     );
   }
+  // PATCH 0664 — visual confidence flag. LOW dims the card so the user
+  // sees this output is less reliable than the others.
+  const confColor = confidence === 'HIGH' ? '#10B981' : confidence === 'MED' ? '#F59E0B' : confidence === 'LOW' ? '#EF4444' : DIM;
+  const cardOpacity = confidence === 'LOW' ? 0.7 : 1;
   return (
-    <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 6, padding: '14px 16px' }}>
-      <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.5px', marginBottom: 8 }}>{label}</div>
+    <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 6, padding: '14px 16px', opacity: cardOpacity }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.5px' }}>{label}</div>
+        {confidence && (
+          <span style={{ fontSize: 9, padding: '2px 7px', background: `${confColor}20`, color: confColor, border: `1px solid ${confColor}50`, borderRadius: 3, fontWeight: 800, letterSpacing: '0.5px' }} title={confidence === 'HIGH' ? 'Direct guidance from PDF' : confidence === 'MED' ? 'Partial guidance, some historical fallback' : 'Mostly historical fallback — verify margin manually'}>
+            {confidence} CONFIDENCE
+          </span>
+        )}
+      </div>
       <div style={{ fontSize: 11, color: '#C9D4E0', marginBottom: 8, lineHeight: 1.5 }}>{result.baseSummary}</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
         {result.cases.map((c) => (
@@ -1220,9 +1285,9 @@ export default function AutoValuationPage() {
               </div>
             ) : null}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12 }}>
-              <CalcResultMini label="📈 P/E Valuation" result={viewYear === 'Y2' ? report.peResultY2 : report.peResult} />
-              <CalcResultMini label="💰 P/S Valuation" result={viewYear === 'Y2' ? report.psResultY2 : report.psResult} />
-              <CalcResultMini label="🏭 EV/EBITDA Valuation" result={viewYear === 'Y2' ? report.evResultY2 : report.evResult} />
+              <CalcResultMini label="📈 P/E Valuation" result={viewYear === 'Y2' ? report.peResultY2 : report.peResult} confidence={report.peConfidence} />
+              <CalcResultMini label="💰 P/S Valuation" result={viewYear === 'Y2' ? report.psResultY2 : report.psResult} confidence={report.psConfidence} />
+              <CalcResultMini label="🏭 EV/EBITDA Valuation" result={viewYear === 'Y2' ? report.evResultY2 : report.evResult} confidence={report.evConfidence} />
             </div>
 
             {/* PATCH 0662 — Manual Override Panel. When extractor misses guidance,
