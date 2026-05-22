@@ -8,14 +8,16 @@ const nextConfig = {
   // for the /api/concall/parse server route.  Marking them external leaves
   // them as runtime imports — Node resolves them normally on Vercel.
   experimental: {
-    serverComponentsExternalPackages: ['pdf-parse', 'mammoth'],
+    // PATCH 0683 — added 'xlsx' so /api/concall/parse can extract Excel
+    // workbooks alongside transcripts (same lib auto-valuation uses).
+    serverComponentsExternalPackages: ['pdf-parse', 'mammoth', 'xlsx'],
   },
   // Belt-and-braces: also tell webpack to not try and bundle these on the
   // server build pass.  Some Next.js versions need both signals.
   webpack: (config, { isServer }) => {
     if (isServer) {
       config.externals = config.externals || [];
-      config.externals.push('pdf-parse', 'mammoth');
+      config.externals.push('pdf-parse', 'mammoth', 'xlsx');
     }
     return config;
   },

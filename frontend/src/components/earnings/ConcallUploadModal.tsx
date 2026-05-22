@@ -27,7 +27,10 @@ interface Props {
   onSubmit: (combinedText: string) => void;
 }
 
-const ALLOWED_EXTS = ['txt', 'md', 'csv', 'pdf', 'docx', 'pptx'] as const;
+// PATCH 0683 — added xlsx + xls so the Concall AI uploader accepts Excel
+// financial sheets (same files the InlineValuationPanel below uses for the
+// P/E + P/S + EV/EBITDA report). Single drop zone, both pipelines fed.
+const ALLOWED_EXTS = ['txt', 'md', 'csv', 'pdf', 'docx', 'pptx', 'xlsx', 'xls'] as const;
 
 function extOf(name: string): string {
   const i = name.lastIndexOf('.');
@@ -74,7 +77,7 @@ export function ConcallUploadModal({
         size: f.size,
         kind: e || 'unknown',
         status: supported ? 'queued' : 'error',
-        error: supported ? undefined : `Unsupported type .${e || '?'} — use TXT / MD / CSV / PDF / DOCX / PPTX`,
+        error: supported ? undefined : `Unsupported type .${e || '?'} — use TXT / MD / CSV / PDF / DOCX / PPTX / XLSX / XLS`,
       };
     });
     setFiles((prev) => [...prev, ...queued]);
@@ -222,9 +225,10 @@ export function ConcallUploadModal({
           </button>
         </div>
         <div style={{ fontSize: 11, color: mutedColor, marginBottom: 14, lineHeight: 1.5 }}>
-          Drop transcripts, investor presentations, press releases, or prepared remarks. Multiple
-          files are combined before extraction. Supported: TXT · MD · CSV · PDF · DOCX · PPTX. You
-          can also paste raw text below alongside the files.
+          Drop transcripts, investor presentations, press releases, prepared remarks, or your
+          Excel financial workbook. Multiple files are combined before extraction.
+          Supported: TXT · MD · CSV · PDF · DOCX · PPTX · XLSX · XLS. You can also paste raw text
+          below alongside the files.
         </div>
 
         {/* Drag-drop zone */}
@@ -250,7 +254,7 @@ export function ConcallUploadModal({
             {dragOver ? 'Drop to upload' : 'Click or drag files here'}
           </div>
           <div style={{ fontSize: 10, color: mutedColor }}>
-            TXT · MD · CSV · PDF · DOCX · PPTX · multi-select supported
+            TXT · MD · CSV · PDF · DOCX · PPTX · XLSX · XLS · multi-select supported
           </div>
           <input
             ref={inputRef}
