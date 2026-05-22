@@ -657,6 +657,10 @@ export default function WatchlistsPage() {
   // PATCH 0690 — case-insensitive ticker lookup. Watchlist stored values
   // may be 'reliance' / 'NSE:RELIANCE' / 'RELIANCE'; the quotes API always
   // returns upper-case bare symbols. Normalize both sides before .find().
+  // PATCH 0691 — Company column now resolves quote.company → quote.name →
+  // ticker fallback; sector reads quote.sector with em-dash fallback. The
+  // quotes API was updated in P0690 to return both `company` and `name`,
+  // so older shapes still work via the chained fallback.
   const normalize = (t: string) => String(t || '').toUpperCase().replace(/^(NSE:|BSE:|NYSE:|NASDAQ:)/, '').trim();
   const watchlistItems = useMemo(() => {
     return tickers.map(ticker => {
@@ -664,8 +668,8 @@ export default function WatchlistsPage() {
       const quote = quotes.find(q => normalize(q.ticker) === norm);
       return {
         ticker,
-        company: quote?.company || (quote as any)?.name || ticker,
-        sector: quote?.sector || '—',
+        company: quote?.company || (quote as any)?.name || ticker, // PATCH 0691
+        sector: quote?.sector || '—', // PATCH 0691
         price: quote?.price || 0,
         change: quote?.change || 0,
         changePercent: quote?.changePercent || 0,

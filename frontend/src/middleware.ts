@@ -27,6 +27,23 @@ const HEAVY_ROUTES = [
   '/api/market/multibagger',
 ];
 
+// PATCH 0699 — Permanent (308) redirects for legacy / wrong slugs that
+// currently 404. Old bookmarks update on first hit.
+//   /activity      → /activity-log
+//   /strategic-vis → /strategic-visibility
+//   /calendar      → /calendars
+//   /guidance      → /earnings-hub?tab=guidance
+//   /my-book       → /portfolio
+//   /concall-ai    → /earnings-analysis (the Concall AI tab)
+const SLUG_REDIRECTS: Record<string, string> = {
+  '/activity': '/activity-log',
+  '/strategic-vis': '/strategic-visibility',
+  '/calendar': '/calendars',
+  '/guidance': '/earnings-hub?tab=guidance',
+  '/my-book': '/portfolio',
+  '/concall-ai': '/earnings-analysis',
+};
+
 function clientIp(req: NextRequest): string {
   return (
     req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
@@ -38,6 +55,16 @@ function clientIp(req: NextRequest): string {
 
 export function middleware(req: NextRequest) {
   const path = req.nextUrl.pathname;
+
+  // PATCH 0699 — Handle legacy slug redirects before any other middleware logic.
+  // Normalise trailing slash (e.g. '/activity/' → '/activity') so both forms hit.
+  const normalisedPath = path.length > 1 && path.endsWith('/') ? path.slice(0, -1) : path;
+  if (SLUG_REDIRECTS[normalisedPath]) {
+    const target = SLUG_REDIRECTS[normalisedPath];
+    const url = new URL(target, req.url);
+    return NextResponse.redirect(url, 308);
+  }
+
   if (!path.startsWith('/api/')) return NextResponse.next();
 
   const ip = clientIp(req);
@@ -72,6 +99,17 @@ export function middleware(req: NextRequest) {
   return res;
 }
 
+// PATCH 0699 — matcher expanded so the middleware fires on the legacy slugs
+// (not just /api/*) so the redirects above can intercept them. Other paths
+// pass through with NextResponse.next() unchanged.
 export const config = {
-  matcher: ['/api/:path*'],
+  matcher: [
+    '/api/:path*',
+    '/activity',
+    '/strategic-vis',
+    '/calendar',
+    '/guidance',
+    '/my-book',
+    '/concall-ai',
+  ],
 };

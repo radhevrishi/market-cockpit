@@ -305,6 +305,9 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
   useEffect(() => { setSidebarOpen(false); }, [pathname]);
 
   // Handle ?ticker= query parameter to open drawer
+  // PATCH 0692 — drop the hardcoded NASDAQ fallback so the drawer can infer
+  // exchange from the LIVE quote response (currency: 'INR' => NSE) rather
+  // than mis-labelling every non-allowlisted Indian ticker as NASDAQ.
   useEffect(() => {
     const tickerParam = searchParams?.get('ticker');
     if (tickerParam) {
@@ -312,7 +315,9 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
                              'TATAMOTORS', 'SUNPHARMA', 'ADANIENT', 'SBIN', 'AXISBANK', 'KOTAKBANK',
                              'HAL', 'BEL', 'NTPC', 'ONGC', 'MARUTI', 'HCLTECH', 'ITC', 'LT', 'POWERGRID',
                              'MTAR', 'BDL'];
-      const exchange = indianTickers.includes(tickerParam.toUpperCase()) ? 'NSE' : 'NASDAQ';
+      // Pass exchange ONLY when we're confident (allowlist hit). Otherwise leave
+      // undefined so TickerDrawer can infer from the live quote.
+      const exchange = indianTickers.includes(tickerParam.toUpperCase()) ? 'NSE' : undefined;
       setDrawerTicker({ symbol: tickerParam, exchange });
     }
   }, [searchParams]);

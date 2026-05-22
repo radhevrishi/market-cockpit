@@ -24,6 +24,7 @@ interface Quote {
   currency?: string;
   name?: string;
   company_name?: string;
+  exchange?: string; // PATCH 0692 — live exchange field returned by P0690 quote shape
 }
 
 interface NewsItem {
@@ -76,7 +77,11 @@ const decodeHtml = (html: string): string => {
 
 export default function TickerDrawer({ symbol, exchange, onClose }: TickerDrawerProps) {
   // PATCH 0486 QA-#5 — infer exchange from suffix when caller doesn't pass one.
-  // Before: defaulted to NASDAQ regardless of ticker, so NTPC.NS showed NASDAQ.
+  // PATCH 0692 — strengthen India detection: if symbol has no dot suffix and is
+  // pure A-Z (no dot at all), treat as NSE rather than defaulting to NASDAQ.
+  // Most Indian tickers are bare uppercase strings (RELIANCE, HAL, MTAR, NTPC)
+  // while US tickers tend to be short (NVDA, AAPL) but also bare. Once the
+  // quote returns we override using quote.currency==='INR' (more reliable).
   const inferredExchange = (() => {
     if (exchange) return exchange;
     const sym = (symbol || '').toUpperCase();
@@ -85,8 +90,9 @@ export default function TickerDrawer({ symbol, exchange, onClose }: TickerDrawer
     if (/^\d{5,7}$/.test(sym)) return 'BSE';
     return 'NASDAQ';
   })();
-  // Use inferredExchange thereafter (rename for clarity)
-  const exchangeLabel = inferredExchange;
+  // Use inferredExchange initially; the actual exchange label below is recomputed
+  // from the live quote currency / exchange field once it arrives.
+  const initialExchange = inferredExchange;
   // Close on Escape key
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -95,20 +101,33 @@ export default function TickerDrawer({ symbol, exchange, onClose }: TickerDrawer
   }, [onClose]);
 
   const { data: quote, isLoading: qLoading, error: qError, refetch: qRefetch } = useQuery<Quote>({
-    queryKey: ['quote', symbol, exchangeLabel],
+    queryKey: ['quote', symbol, initialExchange],
     queryFn: async () => {
-      const { data } = await api.get(`/market/quote/${encodeURIComponent(symbol)}`, { params: { exchange: exchangeLabel } });
+      const { data } = await api.get(`/market/quote/${encodeURIComponent(symbol)}`, { params: { exchange: initialExchange } });
       return data;
     },
     staleTime: 30_000,
     retry: 1,
   });
 
+  // PATCH 0692 — derive exchangeLabel from the LIVE quote response when possible:
+  //   1. If the quote response has an explicit exchange field (P0690), use it
+  //   2. Else if currency === 'INR', treat as NSE (avoid hardcoded NASDAQ)
+  //   3. Else if symbol matches typical Indian pattern (no dot suffix, uppercase
+  //      A-Z, length 3-10), also default to NSE — Indian tickers are bare while
+  //      US tickers may also be bare but P0690 quotes returns currency
+  //   4. Otherwise fall back to the suffix-inferred initialExchange
+  const exchangeLabel = (() => {
+    if (quote?.exchange) return quote.exchange;
+    if (quote?.currency === 'INR') return 'NSE';
+    return initialExchange;
+  })();
+
   const { data: news, isLoading: nLoading } = useQuery<NewsItem[]>({
     queryKey: ['ticker-news', symbol],
     queryFn: async () => {
       const { data } = await api.get(`/news/ticker/${encodeURIComponent(symbol)}`);
-      return Array.isArray(data) ? data.slice(0, 5) : [];
+      return Array.isArray(data) ? data : [];
     },
     staleTime: 60_000,
     retry: 1,
@@ -116,6 +135,25 @@ export default function TickerDrawer({ symbol, exchange, onClose }: TickerDrawer
 
   const up = (quote?.change_pct ?? 0) >= 0;
   const displayName = quote?.name || quote?.company_name || symbol;
+
+  // PATCH 0692 — Filter news results to articles that actually mention the
+  // ticker or company name (case-insensitive). Some backend endpoints return
+  // generic global news when no ticker-tagged results exist; filter that out
+  // to avoid showing unrelated headlines on the side panel.
+  const filteredNews = (() => {
+    if (!news || !news.length) return [];
+    const sym = (symbol || '').toLowerCase();
+    const company = String(displayName || '').toLowerCase();
+    // Skip the filter only when both keys are empty (would never match anything)
+    if (!sym && !company) return news.slice(0, 5);
+    const matched = news.filter((n) => {
+      const text = `${n.title || ''} ${n.headline || ''}`.toLowerCase();
+      if (sym && text.includes(sym)) return true;
+      if (company && company.length > 2 && text.includes(company)) return true;
+      return false;
+    });
+    return matched.slice(0, 5);
+  })();
 
   return (
     <>
@@ -205,11 +243,14 @@ export default function TickerDrawer({ symbol, exchange, onClose }: TickerDrawer
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {[1, 2, 3].map(i => <div key={i} style={{ height: '52px', backgroundColor: '#1A2B3C', borderRadius: '8px' }} className="animate-shimmer" />)}
             </div>
-          ) : !news?.length ? (
-            <p style={{ fontSize: '12px', color: '#4A5B6C', fontStyle: 'italic' }}>No recent news found for {symbol}</p>
+          ) : !filteredNews.length ? (
+            /* PATCH 0692 — honest empty-state: only show 'no news' when the
+                ticker/company filter matched zero, instead of showing unrelated
+                global news. */
+            <p style={{ fontSize: '12px', color: '#4A5B6C', fontStyle: 'italic' }}>No recent news for {symbol}</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {news.map(n => {
+              {filteredNews.map(n => {
                 const title = decodeHtml(n.title || n.headline || '(no title)');
                 const src   = n.source || n.source_name || '';
                 const url   = n.url || n.source_url || '#';

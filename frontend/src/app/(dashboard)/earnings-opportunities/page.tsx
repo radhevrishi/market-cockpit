@@ -2228,9 +2228,23 @@ export default function EarningsOpportunitiesPage() {
               </div>
             );
           })()}
-          <span style={{ marginLeft: 'auto', fontSize: 11, color: '#6B7A8D' }}>
-            Live BSE/NSE results pipeline · {view.sources_polled} sources polled
-          </span>
+          {/* PATCH 0698 — IST market-hours-aware label. During 09:15-15:30 IST
+              (Mon-Fri) the pipeline is actively polling; outside those hours
+              honestly say 'Market closed · historical data only' rather than
+              implying live activity. */}
+          {(() => {
+            const istNow = new Date(Date.now() + (5.5 * 60 - new Date().getTimezoneOffset()) * 60 * 1000);
+            const hour = istNow.getUTCHours() * 60 + istNow.getUTCMinutes();
+            const day = istNow.getUTCDay();
+            const isMarketOpen = day >= 1 && day <= 5 && hour >= 9 * 60 + 15 && hour <= 15 * 60 + 30;
+            return (
+              <span style={{ marginLeft: 'auto', fontSize: 11, color: '#6B7A8D' }}>
+                {isMarketOpen
+                  ? `Live · ${view.sources_polled} sources polling`
+                  : `Market closed · historical data only · ${view.sources_polled} sources polled`}
+              </span>
+            );
+          })()}
         </div>
 
         <div style={{ backgroundColor: '#0A1422', border: '1px solid #1A2840', borderRadius: 8, padding: '10px 14px', marginBottom: 14 }}>

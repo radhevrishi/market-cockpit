@@ -129,7 +129,16 @@ export default function BreadthPage() {
               return Number.isFinite(d.getTime()) ? d.toLocaleString('en-IN') : '—';
             } catch { return '—'; }
           })()}<br />
-          Universe: {data.universe_size} symbols · Fetch {(data.ms / 1000).toFixed(1)}s
+          {/* PATCH 0697 — honest universe label. Previously read 'Universe: N
+              symbols' which implied a full-market scan. The breadth engine
+              actually scans the user's Watchlist + Conviction Beats bench, so
+              relabel to reflect that and link out to /movers for full breadth. */}
+          <span title="Currently scanning your Watchlist + Conviction Beats bench. For full Nifty 500 breadth, see /movers.">
+            Watchlist Breadth · {data.universe_size} symbols · Fetch {(data.ms / 1000).toFixed(1)}s
+          </span>
+          <div style={{ fontSize: 9, color: '#4A5B6C', marginTop: 4, fontStyle: 'italic' }}>
+            scope: Watchlist + Conviction Beats · for Nifty 500 breadth see <a href="/movers" style={{ color: '#22D3EE', textDecoration: 'underline' }}>/movers</a>
+          </div>
         </div>
       </div>
 

@@ -26,23 +26,34 @@ interface Corpus {
 export function CompanyIntelGuidance({ ticker, compact = false }: { ticker?: string; compact?: boolean }) {
   const [corpus, setCorpus] = useState<Corpus | null>(null);
   const [loading, setLoading] = useState(false);
+  // PATCH 0692 — track explicit error state so we can show a Retry CTA instead
+  // of silently falling through to the "No uploaded transcripts" empty-state
+  // when the fetch genuinely failed (timeout/network/server error).
+  const [errored, setErrored] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     if (!ticker) return;
     const tk = String(ticker).toUpperCase().replace(/^(NSE|BSE):/, '').replace(/\.(NS|BO|BSE|NSE)$/, '');
     if (!tk) return;
     setLoading(true);
+    setErrored(false);
     // PATCH 0469 — 15s timeout + cancel-on-unmount via AbortController so
     // a slow corpus fetch can't trigger setState on an unmounted component.
+    // PATCH 0692 — surface timeout / network failures via setErrored so the
+    // user sees a Retry button instead of an empty-state lie.
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), 15_000);
     fetch(`/api/v1/company-intel/${encodeURIComponent(tk)}`, { signal: ctl.signal })
-      .then(r => r.ok ? r.json() : null)
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
       .then(j => setCorpus(j))
-      .catch(() => setCorpus(null))
+      .catch(() => { setCorpus(null); setErrored(true); })
       .finally(() => { clearTimeout(timer); setLoading(false); });
     return () => { clearTimeout(timer); ctl.abort(); };
-  }, [ticker]);
+  }, [ticker, reloadKey]);
 
   if (!ticker) return null;
   if (loading) return (
@@ -50,6 +61,28 @@ export function CompanyIntelGuidance({ ticker, compact = false }: { ticker?: str
       Loading company intelligence…
     </div>
   );
+  // PATCH 0692 — explicit error / timeout panel with Retry button.
+  if (errored) {
+    return (
+      <div style={{
+        padding: 12, fontSize: 11, color: '#FBBF24',
+        border: '1px solid #FBBF2440', borderRadius: 6, background: 'rgba(251,191,36,0.06)',
+        display: 'flex', alignItems: 'center', gap: 10,
+      }}>
+        <span>Company intelligence unavailable</span>
+        <button
+          onClick={() => setReloadKey(k => k + 1)}
+          style={{
+            marginLeft: 'auto', padding: '3px 10px', fontSize: 10, fontWeight: 700,
+            color: '#0A0E1A', background: '#FBBF24', border: 'none', borderRadius: 4,
+            cursor: 'pointer', letterSpacing: '0.4px',
+          }}
+        >
+          RETRY
+        </button>
+      </div>
+    );
+  }
   if (!corpus || !corpus.guidance || corpus.guidance.length === 0) {
     return (
       <div style={{

@@ -11,7 +11,7 @@
 // Consumer, TD Power, Sterlite, Aeroflex, Atlanta Electricals, DEE Dev).
 // ═══════════════════════════════════════════════════════════════════════════
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   calculatePS, calculatePE, calculateEvEbitda,
   fetchQuoteAutofill,
@@ -506,7 +506,7 @@ function TickerCombo({ value, onChange, onSelect, market = 'india' }: {
  *  User asked: 'CURRENT MARKET CAP SHOULD BE AUTOAMTICAL DERIVED ALWAYS.'
  *  So we auto-fire fetchQuoteAutofill 600ms after the ticker stops changing,
  *  PLUS a manual button for instant refresh. */
-function AutoFillBtn({ ticker, market, onFill, currentPrice }: { ticker: string; market: 'india' | 'us'; onFill: (q: QuoteAutoFill) => void; currentPrice?: number }) {
+function AutoFillBtn({ ticker, market, onFill, currentPrice, onNotInUniverse }: { ticker: string; market: 'india' | 'us'; onFill: (q: QuoteAutoFill) => void; currentPrice?: number; onNotInUniverse?: (state: boolean) => void }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastFetched, setLastFetched] = useState<string>('');
@@ -516,10 +516,10 @@ function AutoFillBtn({ ticker, market, onFill, currentPrice }: { ticker: string;
     setLoading(true); setError(null);
     try {
       const q = await fetchQuoteAutofill(t, market);
-      if (q) { onFill(q); setLastFetched(t); setError(null); }
+      if (q) { onFill(q); setLastFetched(t); setError(null); onNotInUniverse?.(false); /* PATCH 0696 */ }
       // PATCH 0645 — Clearer message: distinguish 'not in universe' from 'fetch error'.
-      else setError(`'${t.toUpperCase()}' not in live universe — enter market cap manually below`);
-    } catch { setError('Live quote fetch failed — enter market cap manually below'); }
+      else { setError(`'${t.toUpperCase()}' not in live universe — enter market cap manually below`); onNotInUniverse?.(true); /* PATCH 0696 */ }
+    } catch { setError('Live quote fetch failed — enter market cap manually below'); onNotInUniverse?.(true); /* PATCH 0696 */ }
     finally { setLoading(false); }
   };
 
@@ -551,23 +551,48 @@ function AutoFillBtn({ ticker, market, onFill, currentPrice }: { ticker: string;
   );
 }
 
-function NumberInput({ label, value, onChange, suffix }: { label: string; value: number; onChange: (v: number) => void; suffix?: string }) {
+function NumberInput({ label, value, onChange, suffix, inputRef, highlight, helper, ticker }: { label: string; value: number; onChange: (v: number) => void; suffix?: string; inputRef?: React.RefObject<HTMLInputElement>; highlight?: boolean; helper?: string; ticker?: string }) {
+  // PATCH 0696 — optional ref + highlight border + helper text + ticker
+  // deeplink. When `highlight` toggles true (ticker not in live universe),
+  // the caller useEffects this input's ref into focus.
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
       <span style={{ color: DIM, fontWeight: 700, letterSpacing: '0.3px' }}>{label}</span>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <input
+          ref={inputRef}
           type="number"
           value={Number.isFinite(value) ? value : 0}
           onChange={(e) => onChange(Number(e.target.value))}
+          title={highlight ? 'Not in live price feed — enter current market cap from Screener.in or moneycontrol.' : undefined}
           style={{
-            background: '#0A1422', color: TEXT, border: `1px solid ${BORDER}`,
+            background: '#0A1422', color: TEXT,
+            border: `1px solid ${highlight ? '#F59E0B' : BORDER}`,
             padding: '7px 10px', borderRadius: 4, fontSize: 13, fontFamily: 'ui-monospace, monospace',
             width: 130, fontWeight: 600,
+            boxShadow: highlight ? '0 0 0 2px rgba(245,158,11,0.15)' : undefined,
           }}
         />
         {suffix && <span style={{ fontSize: 11, color: DIM }}>{suffix}</span>}
       </div>
+      {highlight && (
+        <div style={{ marginTop: 4, fontSize: 10, color: '#F59E0B', lineHeight: 1.5 }}>
+          {helper || 'Not in live price feed — enter current market cap from Screener.in or moneycontrol.'}
+          {ticker && (
+            <>
+              {' '}
+              <a
+                href={`https://www.screener.in/company/${encodeURIComponent(ticker.toUpperCase())}/`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: '#F59E0B', textDecoration: 'underline', fontWeight: 700 }}
+              >
+                Look up on Screener.in →
+              </a>
+            </>
+          )}
+        </div>
+      )}
     </label>
   );
 }
@@ -583,6 +608,16 @@ function PSCalculator() {
   const [currentPrice, setCurrentPrice] = useState<number | undefined>();
   // PATCH 0636 — explicit shares state; locked from live API, user-overridable
   const [shares, setShares] = useState<number | undefined>();
+  // PATCH 0696 — track "not in live universe" state to auto-focus + highlight
+  // the Market Cap input so the user immediately knows where to type.
+  const [notInUniverse, setNotInUniverse] = useState(false);
+  const marketCapRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (notInUniverse && marketCapRef.current) {
+      marketCapRef.current.focus();
+      marketCapRef.current.select?.();
+    }
+  }, [notInUniverse]);
   const result = useMemo(() => calculatePS({
     ticker, currentMarketCapCr: marketCap, horizonMonths: horizon,
     forwardRevenueCr: revenue, bearPS, basePS, bullPS,
@@ -623,7 +658,7 @@ function PSCalculator() {
 
   return (
     <div>
-      <AutoFillBtn ticker={ticker} market="india" currentPrice={currentPrice} onFill={(q) => {
+      <AutoFillBtn ticker={ticker} market="india" currentPrice={currentPrice} onNotInUniverse={setNotInUniverse /* PATCH 0696 */} onFill={(q) => {
         if (q.currentPrice) setCurrentPrice(q.currentPrice);
         if (q.currentMarketCapCr) setMarketCap(Math.round(q.currentMarketCapCr));
         // PATCH 0636 — set shares explicitly from live API so target-price math
@@ -653,7 +688,8 @@ function PSCalculator() {
           }} />
         </label>
         <NumberInput label="Forward Revenue (FY27/FY28)" value={revenue} onChange={setRevenue} suffix="₹ Cr" />
-        <NumberInput label="Current Market Cap" value={marketCap} onChange={setMarketCap} suffix="₹ Cr" />
+        {/* PATCH 0696 — Market Cap input gets ref + yellow border + helper when ticker is not in live universe. */}
+        <NumberInput label="Current Market Cap" value={marketCap} onChange={setMarketCap} suffix="₹ Cr" inputRef={marketCapRef} highlight={notInUniverse} ticker={ticker} />
         <NumberInput label="Horizon" value={horizon} onChange={setHorizon} suffix="months" />
         <NumberInput label="Bear P/S" value={bearPS} onChange={setBearPS} suffix="x" />
         <NumberInput label="Base P/S (5yr median)" value={basePS} onChange={setBasePS} suffix="x" />
@@ -675,6 +711,15 @@ function PECalculator() {
   const [horizon, setHorizon] = useState(12);
   const [currentPrice, setCurrentPrice] = useState<number | undefined>();
   const [shares, setShares] = useState<number | undefined>();
+  // PATCH 0696 — auto-focus / highlight Market Cap when not in live universe
+  const [notInUniverse, setNotInUniverse] = useState(false);
+  const marketCapRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (notInUniverse && marketCapRef.current) {
+      marketCapRef.current.focus();
+      marketCapRef.current.select?.();
+    }
+  }, [notInUniverse]);
   const result = useMemo(() => calculatePE({
     ticker, currentMarketCapCr: marketCap, horizonMonths: horizon,
     forwardPATCr: pat, bearPE, basePE, bullPE,
@@ -715,7 +760,7 @@ function PECalculator() {
 
   return (
     <div>
-      <AutoFillBtn ticker={ticker} market="india" currentPrice={currentPrice} onFill={(q) => {
+      <AutoFillBtn ticker={ticker} market="india" currentPrice={currentPrice} onNotInUniverse={setNotInUniverse /* PATCH 0696 */} onFill={(q) => {
         if (q.currentPrice) setCurrentPrice(q.currentPrice);
         if (q.currentMarketCapCr) setMarketCap(Math.round(q.currentMarketCapCr));
         // PATCH 0636 — set shares explicitly from live API so target-price math
@@ -750,7 +795,8 @@ function PECalculator() {
           }} />
         </label>
         <NumberInput label="Forward PAT (FY27)" value={pat} onChange={setPat} suffix="₹ Cr" />
-        <NumberInput label="Current Market Cap" value={marketCap} onChange={setMarketCap} suffix="₹ Cr" />
+        {/* PATCH 0696 — Market Cap input gets ref + yellow border + helper when ticker is not in live universe. */}
+        <NumberInput label="Current Market Cap" value={marketCap} onChange={setMarketCap} suffix="₹ Cr" inputRef={marketCapRef} highlight={notInUniverse} ticker={ticker} />
         <NumberInput label="Horizon" value={horizon} onChange={setHorizon} suffix="months" />
         <NumberInput label="Bear P/E" value={bearPE} onChange={setBearPE} suffix="x" />
         <NumberInput label="Base P/E (3yr median)" value={basePE} onChange={setBasePE} suffix="x" />
@@ -773,6 +819,15 @@ function EvEbitdaCalculator() {
   const [horizon, setHorizon] = useState(18);
   const [currentPrice, setCurrentPrice] = useState<number | undefined>();
   const [shares, setShares] = useState<number | undefined>();
+  // PATCH 0696 — auto-focus / highlight Market Cap when not in live universe
+  const [notInUniverse, setNotInUniverse] = useState(false);
+  const marketCapRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (notInUniverse && marketCapRef.current) {
+      marketCapRef.current.focus();
+      marketCapRef.current.select?.();
+    }
+  }, [notInUniverse]);
   const result = useMemo(() => calculateEvEbitda({
     ticker, currentMarketCapCr: marketCap, horizonMonths: horizon,
     forwardEBITDACr: ebitda, bearMultiple: bear, baseMultiple: base, bullMultiple: bull, netDebtCr: netDebt,
@@ -802,7 +857,7 @@ function EvEbitdaCalculator() {
 
   return (
     <div>
-      <AutoFillBtn ticker={ticker} market="india" currentPrice={currentPrice} onFill={(q) => {
+      <AutoFillBtn ticker={ticker} market="india" currentPrice={currentPrice} onNotInUniverse={setNotInUniverse /* PATCH 0696 */} onFill={(q) => {
         if (q.currentPrice) setCurrentPrice(q.currentPrice);
         if (q.currentMarketCapCr) setMarketCap(Math.round(q.currentMarketCapCr));
         // PATCH 0636 — set shares explicitly from live API so target-price math
@@ -829,7 +884,8 @@ function EvEbitdaCalculator() {
         </label>
         <NumberInput label="Forward EBITDA" value={ebitda} onChange={setEbitda} suffix="₹ Cr" />
         <NumberInput label="Net Debt" value={netDebt} onChange={setNetDebt} suffix="₹ Cr" />
-        <NumberInput label="Current Market Cap" value={marketCap} onChange={setMarketCap} suffix="₹ Cr" />
+        {/* PATCH 0696 — Market Cap input gets ref + yellow border + helper when ticker is not in live universe. */}
+        <NumberInput label="Current Market Cap" value={marketCap} onChange={setMarketCap} suffix="₹ Cr" inputRef={marketCapRef} highlight={notInUniverse} ticker={ticker} />
         <NumberInput label="Horizon" value={horizon} onChange={setHorizon} suffix="months" />
         <NumberInput label="Bear EV/EBITDA" value={bear} onChange={setBear} suffix="x" />
         <NumberInput label="Base EV/EBITDA" value={base} onChange={setBase} suffix="x" />
