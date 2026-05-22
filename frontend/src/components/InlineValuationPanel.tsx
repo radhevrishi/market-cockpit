@@ -28,20 +28,26 @@ export default function InlineValuationPanel() {
   const [report, setReport] = useState<AutoValuationReport | null>(null);
   const [building, setBuilding] = useState(false);
 
-  const handleFiles = useCallback(async (files: FileList | null) => {
+  const handleFiles = useCallback(async (files: FileList | File[] | null) => {
     if (!files || files.length === 0) return;
-    const newDocs: ParsedDoc[] = Array.from(files).map(f => ({
+    // PATCH 0685 — accept FileList (own dropzone) OR File[] (forwarded from
+    // the Concall AI uploader event). Array.from handles both shapes.
+    // Filter to only xlsx/pdf — Concall AI accepts more types but this
+    // panel only knows what to do with financial workbooks + concall PDFs.
+    const arr = Array.from(files).filter(f => /\.(xlsx?|pdf)$/i.test(f.name));
+    if (arr.length === 0) return;
+
+    const newDocs: ParsedDoc[] = arr.map(f => ({
       name: f.name,
       size: f.size,
-      type: /\.xlsx?$/i.test(f.name) ? 'excel' : /\.pdf$/i.test(f.name) ? 'pdf' : 'unknown',
+      type: /\.xlsx?$/i.test(f.name) ? 'excel' : 'pdf',
       status: 'parsing',
     }));
     let startIdx = 0;
     setDocs(prev => { startIdx = prev.length; return [...prev, ...newDocs]; });
 
-    const fileList = Array.from(files);
-    for (let i = 0; i < fileList.length; i++) {
-      const file = fileList[i];
+    for (let i = 0; i < arr.length; i++) {
+      const file = arr[i];
       const docIdx = startIdx + i;
       try {
         if (/\.xlsx?$/i.test(file.name)) {
@@ -60,6 +66,25 @@ export default function InlineValuationPanel() {
     }
   }, []);
 
+  // PATCH 0685 — listen for the Concall AI uploader's broadcast so a single
+  // drop on the top dropzone also feeds this Auto-Val pipeline. Dedupe by
+  // (name, size) against docs already in state to avoid double-processing
+  // when the user opens / closes the modal multiple times.
+  useEffect(() => {
+    const onConcallUpload = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { files?: File[] } | undefined;
+      const incoming = detail?.files;
+      if (!incoming || incoming.length === 0) return;
+      const fresh = incoming.filter(
+        f => !docs.some(d => d.name === f.name && d.size === f.size),
+      );
+      if (fresh.length === 0) return;
+      handleFiles(fresh);
+    };
+    window.addEventListener('mc:concall-files-uploaded', onConcallUpload);
+    return () => window.removeEventListener('mc:concall-files-uploaded', onConcallUpload);
+  }, [docs, handleFiles]);
+
   useEffect(() => {
     if (docs.length === 0) { setReport(null); return; }
     const allDone = docs.every(d => d.status !== 'parsing');
@@ -77,8 +102,9 @@ export default function InlineValuationPanel() {
         <a href="/auto-valuation" style={{ fontSize: 10, color: DIM, textDecoration: 'none' }}>full page →</a>
       </div>
       <div style={{ fontSize: 12, color: DIM, marginBottom: 14, lineHeight: 1.55 }}>
-        Drop your Excel financials + concall PDFs here to ALSO get a P/E + P/S + EV/EBITDA fair-value report
-        alongside the concall analysis above. Same documents = both analyses on this page.
+        Files dropped into the Concall AI uploader above <strong style={{ color: '#10B981' }}>auto-flow here too</strong> —
+        you only have to upload once. Or drop Excel + PDFs in this zone for a standalone
+        P/E + P/S + EV/EBITDA fair-value report.
       </div>
 
       {/* Upload zone */}

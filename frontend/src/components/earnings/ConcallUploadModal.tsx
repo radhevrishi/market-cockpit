@@ -96,6 +96,26 @@ export function ConcallUploadModal({
   const parseFilesOnClient = async (supportedFiles: File[]) => {
     setParsing(true);
     setGlobalError(null);
+
+    // PATCH 0685 — broadcast the same File[] to any sibling component
+    // (specifically the InlineValuationPanel mounted at the bottom of the
+    // earnings-analysis page) so a single drop feeds BOTH pipelines:
+    //   - this modal's concall narrative analysis
+    //   - the Auto-Val P/E + P/S + EV/EBITDA fair-value report
+    // Detail carries the raw File[] (NOT the parsed text) because the
+    // Auto-Val side needs the xlsx binary, not a CSV stringification.
+    try {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('mc:concall-files-uploaded', {
+            detail: { files: supportedFiles },
+          }),
+        );
+      }
+    } catch {
+      // Best-effort; do not block concall parsing if event dispatch fails.
+    }
+
     // Mark all queued files as parsing
     setFiles((prev) =>
       prev.map((s) =>
