@@ -3999,6 +3999,38 @@ export default function EarningsAnalysisPage() {
         </p>
       </div>
 
+      {/* PATCH 0680 — Bridge to Auto-Valuation. User wanted both analyses
+          merged into one page; full inline merge needs sizeable refactor of
+          buildReport into a shared lib. For now, prominent cross-link so the
+          user knows the next tab over runs the same documents through the
+          P/E + P/S + EV/EBITDA pipeline. */}
+      <a href="/auto-valuation" style={{
+        display:'flex', alignItems:'center', justifyContent:'space-between', gap:14,
+        marginBottom:20, padding:'14px 18px',
+        background:'linear-gradient(135deg, #0d2030 0%, #122a3f 100%)',
+        border:'1px solid #22D3EE40', borderRadius:10,
+        textDecoration:'none', cursor:'pointer',
+      }}>
+        <div style={{display:'flex',alignItems:'center',gap:14}}>
+          <div style={{fontSize:28}}>🤖</div>
+          <div>
+            <div style={{fontSize:F.md,fontWeight:800,color:'#22D3EE',marginBottom:2}}>
+              Need a full valuation report on these documents?
+            </div>
+            <div style={{fontSize:F.xs,color:MUTED,lineHeight:1.55}}>
+              Auto-Valuation runs the SAME PDFs + your Excel through P/E + P/S + EV/EBITDA calculators automatically.
+              Single upload, three calculators, BUY / WATCH / WAIT / AVOID call with confidence chips and override panel.
+            </div>
+          </div>
+        </div>
+        <div style={{
+          fontSize:F.sm, fontWeight:800, color:'#0a0a0f', background:'#22D3EE',
+          padding:'8px 16px', borderRadius:6, whiteSpace:'nowrap', letterSpacing:'0.3px',
+        }}>
+          OPEN AUTO-VAL →
+        </div>
+      </a>
+
       {/* Mode tabs — Ticker is default and PRIMARY */}
       <div style={{display:'flex',borderBottom:`1px solid ${BORDER}`,marginBottom:20}}>
         {([
