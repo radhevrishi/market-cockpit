@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import { FileText, Filter, RefreshCw, ChevronDown, ChevronRight, Calendar, Star, TrendingUp, TrendingDown, Minus, AlertCircle, Zap, Eye, Clock } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -147,9 +147,24 @@ export default function CompanyNewsPage() {
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [summary, setSummary] = useState({ totalItems: 0, companiesCovered: 0, topCategories: [] as string[] });
 
+  // PATCH 0718 — mount guard + in-flight abort. Polling fires every 5 min
+  // and selectedDays changes also trigger fetches — prior to this guard a
+  // pending fetch could resolve after unmount (setNews/setSummary/setError
+  // on unmounted component) or stomp a fresher selectedDays fetch.
+  const mountedRef = useRef(true);
+  const inFlightCtlRef = useRef<AbortController | null>(null);
+  useEffect(() => () => {
+    mountedRef.current = false;
+    inFlightCtlRef.current?.abort();
+  }, []);
+
   const fetchNews = async (tickers?: string[]) => {
+    // Abort any in-flight fetch before starting a new one
+    inFlightCtlRef.current?.abort();
+    const ctl = new AbortController();
+    inFlightCtlRef.current = ctl;
     try {
-      setLoading(true);
+      if (mountedRef.current) setLoading(true);
       let tickersToFetch = tickers;
       if (!tickersToFetch || tickersToFetch.length === 0) {
         const stored = localStorage.getItem('mc_watchlist_tickers');
@@ -158,7 +173,6 @@ export default function CompanyNewsPage() {
       const symbolsParam = (tickersToFetch || DEFAULT_TICKERS).join(',');
       // PATCH 0466 — 20s timeout. Company news fetch can be slow with
       // many tickers; cap to avoid the spinner hanging forever.
-      const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), 20_000);
       let response: Response;
       try {
@@ -166,16 +180,20 @@ export default function CompanyNewsPage() {
       } finally { clearTimeout(timer); }
       if (!response.ok) throw new Error('Failed to fetch company news');
       const data: NewsResponse = await response.json();
+      if (!mountedRef.current || ctl.signal.aborted) return;
       setNews(data.news || []);
       setSummary(data.summary || { totalItems: data.news?.length || 0, companiesCovered: new Set(data.news?.map(n => n.ticker)).size || 0, topCategories: [] });
       setLastUpdated(data.updatedAt);
       setError('');
     } catch (err) {
+      if (!mountedRef.current || ctl.signal.aborted) return;
+      // Suppress AbortError noise (intentional cancellation, not a real failure)
+      if (err instanceof Error && err.name === 'AbortError') return;
       const msg = err instanceof Error ? err.message : 'An error occurred';
       setError(msg);
       toast.error(msg);
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
   };
 
@@ -187,8 +205,9 @@ export default function CompanyNewsPage() {
       fetchNews();
     }, 5 * 60 * 1000);
     return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  useEffect(() => { fetchNews(); }, [selectedDays]);
+  useEffect(() => { fetchNews(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [selectedDays]);
 
   const toggleExpand = (id: string) => {
     setExpandedItems(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });

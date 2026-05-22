@@ -17,6 +17,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Trash2, Download, Filter, Plus } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { readDecisions, clearDecision, subscribeDecisions, setDecision, DECISION_META, type Decision, type DecisionStatus, type DecisionMarket } from '@/lib/decisions';
+import { canonicalTicker } from '@/lib/ticker-normalize'; // PATCH 0721
 
 type StatusFilter = 'ALL' | DecisionStatus;
 type MarketFilter = 'ALL' | DecisionMarket;
@@ -92,7 +93,7 @@ export default function DecisionsPage() {
     const m = new Map<string, { company: string; market?: DecisionMarket }>();
     if (typeof window === 'undefined') return m;
     const add = (sym: any, company: any, market?: DecisionMarket) => {
-      const k = String(sym || '').toUpperCase().trim().replace(/\.(NS|BO)$/i, '');
+      const k = canonicalTicker(sym); // PATCH 0721
       const c = String(company || '').trim();
       if (k && c && !m.has(k)) m.set(k, { company: c, market });
     };
@@ -123,7 +124,7 @@ export default function DecisionsPage() {
   const handleSymbolChange = (raw: string) => {
     const upper = raw.toUpperCase();
     setAddSymbol(upper);
-    const stripped = upper.replace(/\.(NS|BO)$/i, '').trim();
+    const stripped = canonicalTicker(upper); // PATCH 0721
     const hit = tickerToCompany.get(stripped);
     if (hit) {
       if (!addCompany.trim()) setAddCompany(hit.company);
@@ -309,7 +310,7 @@ export default function DecisionsPage() {
                       when the user has typed a known ticker. Gives instant
                       visual confirmation the auto-fill happened. */}
                   {(() => {
-                    const k = (addSymbol || '').toUpperCase().trim().replace(/\.(NS|BO)$/i, '');
+                    const k = canonicalTicker(addSymbol); // PATCH 0721
                     const hit = k && tickerToCompany.get(k);
                     if (hit) {
                       return (

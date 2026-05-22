@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 // PATCH 0275 — Shared freshness chip helper.
 import { PanelFreshness } from '@/components/PanelFreshness';
 
@@ -57,21 +57,34 @@ export default function IPOsPage() {
   const [dataSource, setDataSource] = useState<string>('');
   const [error, setError] = useState<string>('');
 
+  // PATCH 0718 — mount guard + in-flight abort.
+  const mountedRef = useRef(true);
+  const inFlightCtlRef = useRef<AbortController | null>(null);
+  useEffect(() => () => {
+    mountedRef.current = false;
+    inFlightCtlRef.current?.abort();
+  }, []);
+
   const fetchIPOs = async () => {
+    // Cancel any earlier in-flight request before starting a new one.
+    inFlightCtlRef.current?.abort();
+    const ctl = new AbortController();
+    inFlightCtlRef.current = ctl;
     try {
       // AUDIT_100 #20 — only show the page spinner on initial load. Polling
       // every 5 min was flashing the spinner over present data every poll,
       // which felt like the page was reloading. Keep isFetchingState for
       // the small "refreshing" chip; the table stays mounted.
-      if (ipos.length === 0) setLoading(true);
-      setIsFetchingState(true);
-      const response = await fetch('/api/market/ipos');
+      if (mountedRef.current && ipos.length === 0) setLoading(true);
+      if (mountedRef.current) setIsFetchingState(true);
+      const response = await fetch('/api/market/ipos', { signal: ctl.signal });
 
       if (!response.ok) {
         throw new Error('Failed to fetch IPOs');
       }
 
       const data: IPOResponse = await response.json();
+      if (!mountedRef.current || ctl.signal.aborted) return;
       // PATCH 0460 — defend against malformed payload (data.ipos can be
       // undefined when upstream NSE/BSE scraper is down).
       setIpos(Array.isArray(data?.ipos) ? data.ipos : []);
@@ -80,11 +93,15 @@ export default function IPOsPage() {
       setDataSource(data?.source || '');
       setError('');
     } catch (err) {
+      if (!mountedRef.current || ctl.signal.aborted) return;
+      if (err instanceof Error && err.name === 'AbortError') return;
       setError(err instanceof Error ? err.message : 'An error occurred');
       console.error('Error fetching IPOs:', err);
     } finally {
-      setLoading(false);
-      setIsFetchingState(false);
+      if (mountedRef.current) {
+        setLoading(false);
+        setIsFetchingState(false);
+      }
     }
   };
 
@@ -96,6 +113,7 @@ export default function IPOsPage() {
       fetchIPOs();
     }, 5 * 60 * 1000);
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const getStatusColor = (status: string) => {

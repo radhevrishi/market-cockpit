@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { RefreshCw, Search } from 'lucide-react';
 // PATCH 0284 — Shared freshness chip.
 import { PanelFreshness } from '@/components/PanelFreshness';
@@ -64,13 +64,26 @@ export default function SmartMoneyPage() {
   const [qualityFilter, setQualityFilter] = useState<QualityFilter>('All');
   const [searchQuery, setSearchQuery] = useState('');
 
+  // PATCH 0718 — mount guard so post-unmount fetches don't setState.
+  const mountedRef = useRef(true);
+  const inFlightCtlRef = useRef<AbortController | null>(null);
+  useEffect(() => () => {
+    mountedRef.current = false;
+    inFlightCtlRef.current?.abort();
+  }, []);
+
   const fetchData = async () => {
     // PATCH 0472 — 20s timeout
+    // PATCH 0718 — abort any in-flight request before starting a new one
+    inFlightCtlRef.current?.abort();
     const ctl = new AbortController();
+    inFlightCtlRef.current = ctl;
     const timer = setTimeout(() => ctl.abort(), 20_000);
     try {
-      setError(null);
-      setIsRefreshing(true);
+      if (mountedRef.current) {
+        setError(null);
+        setIsRefreshing(true);
+      }
       const response = await fetch('/api/market/smart-money', { signal: ctl.signal });
 
       if (!response.ok) {
@@ -78,14 +91,19 @@ export default function SmartMoneyPage() {
       }
 
       const json = await response.json();
+      if (!mountedRef.current || ctl.signal.aborted) return;
       setData(json);
       setLastUpdated(new Date());
     } catch (err: any) {
+      if (!mountedRef.current || ctl.signal.aborted) return;
+      if (err?.name === 'AbortError') return;
       setError(err?.name === 'AbortError' ? 'Smart-money fetch timed out' : (err instanceof Error ? err.message : 'Failed to fetch data'));
     } finally {
       clearTimeout(timer);
-      setLoading(false);
-      setIsRefreshing(false);
+      if (mountedRef.current) {
+        setLoading(false);
+        setIsRefreshing(false);
+      }
     }
   };
 

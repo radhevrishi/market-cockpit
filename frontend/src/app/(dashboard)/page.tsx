@@ -37,6 +37,7 @@ import {
   type MoverAttribution,
 } from '@/lib/movers-attribution';
 import { getConvictionTickers, getConvictionList } from '@/lib/conviction-beats';
+import { canonicalTicker } from '@/lib/ticker-normalize'; // PATCH 0721
 import { readDecisions } from '@/lib/decisions';
 // PATCH 0715 — centralized IST helpers.
 import { istToday as _istToday, istLastNWeekdays as _istLastNWeekdays } from '@/lib/market-hours';
@@ -240,7 +241,7 @@ function buildSyncState(): Pick<HomeState, 'tier1' | 'tier2' | 'tier3' | 'change
   // Strict (cross-confirmed): A+/A grade + on CB + not in Decision Log.
   // If strict yields < 6, top up with A+/A grade names NOT on CB.
   // Cross-confirmed ones flagged cbConfirmed=true. Each card carries _market.
-  const symKey = (s: any) => (s || '').toString().toUpperCase().replace(/\.(NS|BO)$/i, '');
+  const symKey = (s: any) => canonicalTicker(s); // PATCH 0721 — was: (s||'').toString().toUpperCase().replace(/\.(NS|BO)$/i, '')
   const buildTier = (r: any, cbConfirmed?: boolean): TierAction => ({
     symbol: r.symbol, company: r.company || r.companyName,
     score: r.score ?? r.composite, grade: r.grade, sector: r.sector,
@@ -287,7 +288,7 @@ function buildSyncState(): Pick<HomeState, 'tier1' | 'tier2' | 'tier3' | 'change
   // PATCH 0617 — includes both India + USA changes
   const changedToday: ChangedRow[] = allRows
     .map((r: any) => {
-      const sym = (r.symbol || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
+      const sym = canonicalTicker(r.symbol); // PATCH 0721
       const prevMap = r._market === 'US' ? prevScoresUsa : prevScores;
       const prev = prevMap[r.symbol] ?? prevMap[sym];
       if (typeof prev !== 'number') return null;
@@ -305,8 +306,8 @@ function buildSyncState(): Pick<HomeState, 'tier1' | 'tier2' | 'tier3' | 'change
 
   const sectorMap = new Map<string, { count: number; tickers: string[] }>();
   for (const h of portfolio) {
-    const sym = (h.symbol || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
-    const row = allRows.find((r: any) => (r.symbol || '').toUpperCase().replace(/\.(NS|BO)$/i, '') === sym);
+    const sym = canonicalTicker(h.symbol); // PATCH 0721
+    const row = allRows.find((r: any) => canonicalTicker(r.symbol) === sym);
     const cb = cbList.find((c: any) => (c.ticker || '').toUpperCase() === sym);
     const sector = row?.sector || cb?.sector || 'Unclassified';
     const cur = sectorMap.get(sector) || { count: 0, tickers: [] };
@@ -339,7 +340,7 @@ function buildSyncState(): Pick<HomeState, 'tier1' | 'tier2' | 'tier3' | 'change
     if (prevSyms.length >= 5) {
       let sumNow = 0, sumBefore = 0, sample = 0, held = 0;
       for (const sym of prevSyms) {
-        const row = indiaRows.find((r: any) => (r.symbol || '') === sym || (r.symbol || '').toUpperCase().replace(/\.(NS|BO)$/i, '') === sym.toUpperCase().replace(/\.(NS|BO)$/i, ''));
+        const row = indiaRows.find((r: any) => (r.symbol || '') === sym || canonicalTicker(r.symbol) === canonicalTicker(sym)); // PATCH 0721
         if (!row) continue;
         const prev = prevScores[sym];
         const cur = row.score ?? row.composite ?? 0;
@@ -569,7 +570,7 @@ export default function HomeDashboard() {
         // honestly says "No confirmed trigger — likely liquidity-driven"
         // instead of inventing causation from correlation.
         const moverInputs = [...gainers, ...losers].map((m: any) => ({
-          ticker: (m.ticker || '').toUpperCase().replace(/\.(NS|BO)$/i, ''),
+          ticker: canonicalTicker(m.ticker), // PATCH 0721
           sector: m.sector,
           industry: m.industry,
           changePercent: m.changePercent ?? 0,
@@ -603,7 +604,7 @@ export default function HomeDashboard() {
             const feedData = feedRes?.data;
             if (feedData?.filings && Array.isArray(feedData.filings)) {
               for (const f of feedData.filings) {
-                const sym = (f.symbol || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
+                const sym = canonicalTicker(f.symbol); // PATCH 0721
                 if (!sym) continue;
                 if (!filingsBySymbol[sym]) filingsBySymbol[sym] = [];
                 filingsBySymbol[sym].push(f);
@@ -618,7 +619,7 @@ export default function HomeDashboard() {
               for (const [tier, items] of Object.entries(g.by_tier)) {
                 if (!Array.isArray(items)) continue;
                 for (const item of items as any[]) {
-                  const sym = ((item.ticker || item.symbol) || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
+                  const sym = canonicalTicker(item.ticker || item.symbol); // PATCH 0721
                   if (!sym) continue;
                   const existing = earningsByTicker[sym];
                   if (existing && existing.filing_date >= (item.filing_date || g.filing_date)) continue;

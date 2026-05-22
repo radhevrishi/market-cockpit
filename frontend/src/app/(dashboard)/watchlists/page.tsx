@@ -5,6 +5,7 @@ import { Plus, Trash2, TrendingUp, TrendingDown, RefreshCw, Download, ArrowUpDow
 import toast from 'react-hot-toast';
 import TickerSearch, { type TickerSuggestion } from '@/components/TickerSearch';
 import { normalizeTicker } from '@/lib/tickers';
+import { canonicalTicker } from '@/lib/ticker-normalize'; // PATCH 0721
 import { isPriceSuspect } from '@/lib/nse';
 import { CHAT_ID, BOT_SECRET } from '@/lib/config';
 import {
@@ -668,7 +669,7 @@ export default function WatchlistsPage() {
   // ticker fallback; sector reads quote.sector with em-dash fallback. The
   // quotes API was updated in P0690 to return both `company` and `name`,
   // so older shapes still work via the chained fallback.
-  const normalize = (t: string) => String(t || '').toUpperCase().replace(/^(NSE:|BSE:|NYSE:|NASDAQ:)/, '').trim();
+  const normalize = canonicalTicker; // PATCH 0721 — also strips .NS/.BO suffix now (was prefix-only)
   const watchlistItems = useMemo(() => {
     return tickers.map(ticker => {
       const norm = normalize(ticker);

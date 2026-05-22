@@ -946,10 +946,33 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   let qualS=0,qualC=0, growS=0,growC=0, accelS=50,accelC=1,
       longS=0,longC=0, finS=0,finC=0, valS=0, mktS=50,mktC=1;
 
+  // PATCH 0717 — India DNA bullet de-dup (mirror of USA P0575/P0612/P0705).
+  // The 500-bagger DNA bullet (line ~2339) cites Promoter+ROCE+CFO/PAT+FCF+D/E
+  // +CAGR in one composite line. The standalone per-metric strength bullets
+  // for these same data points (ROCE/CFO/promoter/FCF/D/E/CAGR) would then
+  // create a triple-count in the strengths list. Compute the same DNA gate
+  // up-front so the per-metric bullets can suppress themselves when the
+  // richer DNA line will fire. Score-side weights are unchanged (pillars +
+  // DNA bonus stay) — only the visible bullets are de-duplicated.
+  const _dnaWillLikelyFire =
+       (row.promoter ?? 0) >= 50 && (row.promoter ?? 0) <= 75
+    && (row.roce ?? 0) > 25
+    && (row.cfoToPat ?? 0) > 1.0
+    && (row.fcfAbsolute ?? -1) > 0
+    && (row.de ?? 99) < 0.3
+    && !cyclical
+    && (row.revCagr ?? 0) >= 18
+    && (row.pledge ?? 0) === 0
+    && (row.changeInPromoter ?? 0) >= -1;
+  // Approximation: we don't yet know if any HIGH-structural red flag will
+  // fire, so this gate is best-effort. Worst case if a flag fires later: the
+  // DNA bonus is skipped and the standalone bullets are missing — acceptable
+  // because the QUAL pillar still credits the underlying scores.
+
   // ── QUALITY (feeds qual pillar) ───────────────────────────────────────────
   if (row.roce!==undefined) {
     const s=sv(row.roce,b.roce); qualS+=s; qualC++;
-    if (s>=80) strengths.push(`ROCE ${row.roce.toFixed(1)}% — above sector, moat confirmed`);
+    if (s>=80 && !_dnaWillLikelyFire) strengths.push(`ROCE ${row.roce.toFixed(1)}% — above sector, moat confirmed`); // PATCH 0717
     else if (s<45) risks.push(`ROCE ${row.roce.toFixed(1)}% — below sector benchmark`);
   }
   if (row.roe!==undefined)  { qualS+=sv(row.roe,[12,18,26]); qualC++; }
@@ -957,19 +980,19 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   if (row.cfoToPat!==undefined) {
     const s = row.cfoToPat>=1.0?90:row.cfoToPat>=0.8?78:row.cfoToPat>=0.5?55:row.cfoToPat>=0?32:15;
     qualS+=s; qualC++;
-    if (row.cfoToPat>=1.0) strengths.push(`CFO/PAT ${row.cfoToPat.toFixed(2)}x — excellent earnings quality`);
+    if (row.cfoToPat>=1.0 && !_dnaWillLikelyFire) strengths.push(`CFO/PAT ${row.cfoToPat.toFixed(2)}x — excellent earnings quality`); // PATCH 0717
     if (row.cfoToPat<0) { risks.push(`Negative CFO/PAT — earnings not backed by cash`); redFlags.push({label:'Negative cash flow from operations',severity:'HIGH',source:'Fisher'}); }
   }
   if (row.fcfAbsolute!==undefined) {
     const s = row.fcfAbsolute>0?80:50;
     qualS+=s; qualC++;
-    if (row.fcfAbsolute>0) strengths.push(`FCF positive ₹${row.fcfAbsolute.toFixed(0)}Cr — self-funding growth`);
-    else risks.push(`FCF negative — dependent on external capital`);
+    if (row.fcfAbsolute>0 && !_dnaWillLikelyFire) strengths.push(`FCF positive ₹${row.fcfAbsolute.toFixed(0)}Cr — self-funding growth`); // PATCH 0717
+    else if (row.fcfAbsolute<=0) risks.push(`FCF negative — dependent on external capital`);
   }
   if (row.promoter!==undefined) {
     qualS+=sv(row.promoter,[20,40,60]); qualC++;
     if (row.promoter<20) redFlags.push({label:`Promoter ${row.promoter.toFixed(0)}% — very low`,severity:'HIGH',source:'MOSL+Fisher'});
-    if (row.promoter>=55) strengths.push(`Promoter ${row.promoter.toFixed(0)}% — strong alignment`);
+    if (row.promoter>=55 && !_dnaWillLikelyFire) strengths.push(`Promoter ${row.promoter.toFixed(0)}% — strong alignment`); // PATCH 0717
   }
 
   // ── GPM (Gross Profit Margin) — pricing power & moat signal ─────────────────
@@ -1055,7 +1078,7 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   // ── GROWTH (historical trajectory) ───────────────────────────────────────
   if (row.revCagr!==undefined) {
     const s=sv(row.revCagr,[8,15,25]); growS+=s; growC++;
-    if (s>=80) strengths.push(`Revenue CAGR ${row.revCagr.toFixed(1)}% — excellent growth engine`);
+    if (s>=80 && !_dnaWillLikelyFire) strengths.push(`Revenue CAGR ${row.revCagr.toFixed(1)}% — excellent growth engine`); // PATCH 0717
   }
   if (row.profitCagr!==undefined) {
     const s=sv(row.profitCagr,[10,20,30]); growS+=s; growC++;
@@ -1180,7 +1203,7 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     finS+=sv(row.de,[0.5,1.0,2.0],false); finC++;
     if (row.de>3.0) redFlags.push({label:`D/E ${row.de.toFixed(2)}× — CRITICAL debt`,severity:'CRITICAL',source:'Fisher'});
     else if (row.de>2.0) redFlags.push({label:`D/E ${row.de.toFixed(2)}× — high leverage`,severity:'HIGH',source:'Fisher'});
-    if (row.de<=0.1) strengths.push(`D/E ${row.de.toFixed(2)}× — debt-free`);
+    if (row.de<=0.1 && !_dnaWillLikelyFire) strengths.push(`D/E ${row.de.toFixed(2)}× — debt-free`); // PATCH 0717
   }
   if (row.netDebtEbitda!==undefined) {
     const s = row.netDebtEbitda<0?95:row.netDebtEbitda<0.5?88:row.netDebtEbitda<1.5?72:row.netDebtEbitda<3?45:20;
@@ -1193,7 +1216,7 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     finS+=sv(row.pledge,[2,10,25],false); finC++;
     if (row.pledge>50) redFlags.push({label:`Pledge ${row.pledge.toFixed(0)}% — CRITICAL`,severity:'CRITICAL',source:'Fisher'});
     else if (row.pledge>25) redFlags.push({label:`Pledge ${row.pledge.toFixed(0)}% — risky`,severity:'HIGH',source:'Fisher'});
-    if (row.pledge<1) strengths.push(`Zero pledge`);
+    if (row.pledge<1 && !_dnaWillLikelyFire) strengths.push(`Zero pledge`); // PATCH 0717
   }
   if (row.changeInPromoter!==undefined) {
     const s = row.changeInPromoter>1?85:row.changeInPromoter>0?72:row.changeInPromoter>-1?55:30;
