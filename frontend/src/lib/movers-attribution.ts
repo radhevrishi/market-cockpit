@@ -298,14 +298,21 @@ export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttrib
     }
 
     // ── TIER 4: honest "no confirmed trigger" (LOW confidence) ───────────
-    // For smallcaps with no filing + no news + no sector confirmation, the
-    // move is most likely liquidity / momentum-driven. Say so honestly
-    // rather than inventing causation.
+    // Always include industry context so the label is actually informative.
+    // E.g. "Auto Components & Equipments · smallcap momentum (no confirmed
+    // trigger — likely liquidity-driven)" instead of just "No confirmed
+    // trigger — smallcap momentum".
     const indGroup = (m.indexGroup || '').toLowerCase();
     const smallcap = indGroup === 'small';
+    const industryHint = (m.industry || m.sector || '').trim();
+    const moveDir = direction === 'up' ? 'momentum' : 'unwind';
     const honestLabel = smallcap
-      ? `No confirmed trigger — smallcap ${direction === 'up' ? 'momentum' : 'unwind'} (likely liquidity-driven)`
-      : `No confirmed trigger — ${m.industry || m.sector || 'sector'} ${direction === 'up' ? 'rotation' : 'profit booking'}`;
+      ? (industryHint
+          ? `${industryHint} · smallcap ${moveDir} (no confirmed trigger — likely liquidity-driven)`
+          : `Smallcap ${moveDir} (no confirmed trigger — likely liquidity-driven)`)
+      : (industryHint
+          ? `${industryHint} ${direction === 'up' ? 'rotation' : 'profit booking'} (no stock-specific trigger found)`
+          : `Sector ${direction === 'up' ? 'rotation' : 'profit booking'} (no stock-specific trigger found)`);
     out[sym] = {
       ticker: sym,
       changePercent: m.changePercent,
