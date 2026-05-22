@@ -73,6 +73,24 @@ export function collectActivity(): ActivityItem[] {
     });
   }
 
+  // ── Auto-Valuations (mc:auto-val:v1) — PATCH 0649 ────────────────────
+  const autoVals = tryParse<Record<string, any>>('mc:auto-val:v1', {});
+  for (const [ticker, av] of Object.entries(autoVals)) {
+    if (!av?.savedAt) continue;
+    const ts = new Date(av.savedAt).getTime();
+    if (!Number.isFinite(ts)) continue;
+    out.push({
+      id: `autoval-${ticker}`,
+      kind: 'VALUATION',
+      ...KIND_META.VALUATION,
+      ts,
+      ticker,
+      label: `Auto-Valuation · ${ticker} · ${av.recommendation || '—'}`,
+      detail: `${av.docSnapshots?.length || 0} doc(s) · ${av.sector || ''} · ${av.forwardYear || ''} ₹${av.forwardPAT ?? '?'} Cr PAT`,
+      href: `/auto-valuation`,
+    });
+  }
+
   // ── Valuations (mc:saved-valuations:v1) ───────────────────────────────
   const vals = tryParse<any[]>('mc:saved-valuations:v1', []);
   for (const v of vals) {

@@ -30,6 +30,11 @@ import {
   type CalculatorResult, type QuoteAutoFill,
 } from '@/lib/valuation-calculators';
 import { extractGuidance, type GuidanceItem, metricLabel, formatGuidanceValue } from '@/lib/forward-guidance-extractor';
+// PATCH 0649 — per-company persistence
+import {
+  saveAutoValuation, loadAutoValuation, deleteAutoValuation, listAutoValuations, appendDocsToSaved,
+  type SavedAutoValuation, type SavedDocSnapshot,
+} from '@/lib/auto-valuation-store';
 
 const BG = '#0A0E1A';
 const CARD = '#0D1623';
@@ -614,6 +619,21 @@ export default function AutoValuationPage() {
   const [docs, setDocs] = useState<ParsedDoc[]>([]);
   const [report, setReport] = useState<AutoValuationReport | null>(null);
   const [building, setBuilding] = useState(false);
+  // PATCH 0649 — saved-companies state
+  const [savedList, setSavedList] = useState<SavedAutoValuation[]>(() => {
+    if (typeof window === 'undefined') return [];
+    return listAutoValuations();
+  });
+  const refreshSaved = useCallback(() => setSavedList(listAutoValuations()), []);
+  useEffect(() => {
+    const h = () => refreshSaved();
+    window.addEventListener('mc:auto-val:updated', h);
+    window.addEventListener('storage', h);
+    return () => {
+      window.removeEventListener('mc:auto-val:updated', h);
+      window.removeEventListener('storage', h);
+    };
+  }, [refreshSaved]);
 
   const handleFiles = useCallback(async (files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -651,8 +671,83 @@ export default function AutoValuationPage() {
     const allDone = docs.every(d => d.status !== 'parsing');
     if (!allDone) return;
     setBuilding(true);
-    buildReport(docs).then(r => { setReport(r); setBuilding(false); });
-  }, [docs]);
+    buildReport(docs).then(r => {
+      setReport(r);
+      setBuilding(false);
+      // PATCH 0649 — auto-persist whenever we have a usable report
+      if (r.ticker && (r.peResult || r.psResult || r.evResult)) {
+        try {
+          saveAutoValuation({
+            ticker: r.ticker,
+            company: r.company,
+            sector: r.sector,
+            forwardYear: r.forwardYear,
+            forwardRevenue: r.forwardRevenue,
+            forwardEBITDA: r.forwardEBITDA,
+            forwardPAT: r.forwardPAT,
+            inferredMargin: r.inferredMargin,
+            recommendation: r.recommendation,
+            rationale: r.rationale,
+            docSnapshots: docs.filter(d => d.status === 'done').map(d => ({
+              name: d.name, size: d.size, type: d.type,
+              message: d.message, guidanceCount: d.guidance?.length,
+              uploadedAt: new Date().toISOString(),
+            })),
+            excelSummary: r.excelData ? {
+              latestSales: r.excelData.latestSales,
+              latestPAT: r.excelData.latestPAT,
+              latestEBITDA: r.excelData.latestEBITDA,
+              opmAvg: r.excelData.opmAvg,
+              salesCagr5y: r.excelData.salesCagr5y,
+              patCagr5y: r.excelData.patCagr5y,
+              sharesOutstandingCr: r.excelData.sharesOutstandingCr,
+              currentPriceFromSheet: r.excelData.currentPriceFromSheet,
+              currentMarketCapCrFromSheet: r.excelData.currentMarketCapCrFromSheet,
+            } : undefined,
+            guidance: r.guidance.map(g => ({ ...g })),
+            peResult: r.peResult,
+            psResult: r.psResult,
+            evResult: r.evResult,
+          });
+          refreshSaved();
+        } catch (e) { console.warn('auto-val save failed', e); }
+      }
+    });
+  }, [docs, refreshSaved]);
+
+  // PATCH 0649 — Load a saved report directly (no re-upload needed)
+  const handleLoadSaved = useCallback((s: SavedAutoValuation) => {
+    setDocs(s.docSnapshots.map(snap => ({
+      name: snap.name, size: snap.size, type: snap.type,
+      status: 'done' as const, message: snap.message,
+    })));
+    // Reconstruct report shape from saved
+    const reconstructed: AutoValuationReport = {
+      ticker: s.ticker,
+      company: s.company,
+      sector: s.sector,
+      guidance: (s.guidance || []) as any,
+      forwardYear: s.forwardYear,
+      forwardRevenue: s.forwardRevenue,
+      forwardEBITDA: s.forwardEBITDA,
+      forwardPAT: s.forwardPAT,
+      inferredMargin: s.inferredMargin,
+      peResult: s.peResult,
+      psResult: s.psResult,
+      evResult: s.evResult,
+      recommendation: s.recommendation,
+      rationale: s.rationale,
+    };
+    setReport(reconstructed);
+  }, []);
+
+  const handleClearSaved = useCallback((ticker: string) => {
+    if (!confirm(`Clear saved Auto-Valuation for ${ticker}? You'll need to re-upload reports to recompute.`)) return;
+    deleteAutoValuation(ticker);
+    refreshSaved();
+    setReport(null);
+    setDocs([]);
+  }, [refreshSaved]);
 
   const recColor = (r?: string) =>
     r === 'BUY' ? '#10B981' : r === 'WATCH' ? '#22D3EE' : r === 'WAIT' ? '#F59E0B' : r === 'AVOID' ? '#EF4444' : '#94A3B8';
@@ -695,6 +790,86 @@ export default function AutoValuationPage() {
             Accepts .xlsx · .pdf · multiple files. Excel parsed for Data Sheet rows. PDF parsed for forward FY27/FY28 guidance.
           </div>
         </div>
+
+        {/* PATCH 0649 — Saved Companies panel */}
+        {savedList.length > 0 && (
+          <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderLeft: '3px solid #10B981', borderRadius: 8, padding: '14px 16px' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: '#10B981', letterSpacing: '0.4px' }}>
+                💾 SAVED COMPANIES ({savedList.length})
+              </span>
+              <span style={{ fontSize: 10, color: DIM, fontStyle: 'italic' }}>persists in browser · auto-saved on each report</span>
+            </div>
+            <div style={{ fontSize: 11, color: DIM, marginBottom: 10, lineHeight: 1.5 }}>
+              Reports you&apos;ve already generated. Click <b style={{ color: '#22D3EE' }}>Open</b> to view without re-uploading. <b style={{ color: '#F59E0B' }}>Add docs</b> appends new files (e.g. next quarter&apos;s PDFs). <b style={{ color: '#EF4444' }}>Clear</b> wipes and lets you start fresh.
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {savedList.map((s) => {
+                const recColor = s.recommendation === 'BUY' ? '#10B981' : s.recommendation === 'WATCH' ? '#22D3EE' : s.recommendation === 'WAIT' ? '#F59E0B' : s.recommendation === 'AVOID' ? '#EF4444' : '#94A3B8';
+                const ageHours = (Date.now() - new Date(s.savedAt).getTime()) / 3600_000;
+                const ageLabel = ageHours < 1 ? 'just now' : ageHours < 24 ? `${Math.round(ageHours)}h ago` : `${Math.round(ageHours / 24)}d ago`;
+                return (
+                  <div key={s.ticker} style={{
+                    background: '#0A1422', border: `1px solid ${BORDER}`, borderRadius: 5,
+                    padding: '8px 11px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                  }}>
+                    <span style={{ fontSize: 11, color: recColor, fontWeight: 900, background: `${recColor}22`, padding: '2px 7px', borderRadius: 3, letterSpacing: '0.5px', minWidth: 50, textAlign: 'center' }}>
+                      {s.recommendation}
+                    </span>
+                    <span style={{ fontSize: 12, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 80 }}>
+                      {s.ticker}
+                    </span>
+                    <span style={{ fontSize: 12, color: TEXT, fontWeight: 600, flex: 1, minWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {s.company || '—'}
+                    </span>
+                    {s.sector && (
+                      <span style={{ fontSize: 9, color: '#22D3EE', background: '#22D3EE15', padding: '2px 7px', borderRadius: 3, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                        {s.sector}
+                      </span>
+                    )}
+                    {s.forwardYear && (
+                      <span style={{ fontSize: 9, color: '#A78BFA', fontFamily: 'ui-monospace, monospace', whiteSpace: 'nowrap' }}>
+                        {s.forwardYear}: ₹{s.forwardPAT ?? '?'} Cr PAT
+                      </span>
+                    )}
+                    <span style={{ fontSize: 9, color: DIM, fontFamily: 'ui-monospace, monospace', whiteSpace: 'nowrap' }}>
+                      {s.docSnapshots.length} doc(s) · {ageLabel}
+                    </span>
+                    <button onClick={() => handleLoadSaved(s)} style={{
+                      fontSize: 10, padding: '4px 10px', background: '#22D3EE15', border: '1px solid #22D3EE50',
+                      color: '#22D3EE', borderRadius: 3, cursor: 'pointer', fontWeight: 800,
+                    }}>OPEN</button>
+                    <label htmlFor={`add-${s.ticker}`} style={{
+                      fontSize: 10, padding: '4px 10px', background: '#F59E0B15', border: '1px solid #F59E0B50',
+                      color: '#F59E0B', borderRadius: 3, cursor: 'pointer', fontWeight: 800,
+                    }}>+ DOCS</label>
+                    <input id={`add-${s.ticker}`} type="file" multiple accept=".xlsx,.xls,.pdf"
+                      onChange={(e) => {
+                        if (!e.target.files || e.target.files.length === 0) return;
+                        // Append doc snapshots to saved record + also feed into current upload flow
+                        const snaps: SavedDocSnapshot[] = Array.from(e.target.files).map(f => ({
+                          name: f.name, size: f.size,
+                          type: /\.xlsx?$/i.test(f.name) ? 'excel' : /\.pdf$/i.test(f.name) ? 'pdf' : 'unknown',
+                          uploadedAt: new Date().toISOString(),
+                        }));
+                        appendDocsToSaved(s.ticker, snaps);
+                        refreshSaved();
+                        // Also trigger normal upload flow to recompute the report
+                        handleLoadSaved(s);
+                        handleFiles(e.target.files);
+                        e.target.value = '';
+                      }}
+                      style={{ display: 'none' }} />
+                    <button onClick={() => handleClearSaved(s.ticker)} style={{
+                      fontSize: 10, padding: '4px 8px', background: '#EF444415', border: '1px solid #EF444450',
+                      color: '#EF4444', borderRadius: 3, cursor: 'pointer', fontWeight: 800,
+                    }}>× CLEAR</button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Parsed docs */}
         {docs.length > 0 && (
