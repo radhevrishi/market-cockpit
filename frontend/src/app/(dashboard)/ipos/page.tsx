@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 // PATCH 0275 — Shared freshness chip helper.
 import { PanelFreshness } from '@/components/PanelFreshness';
 
@@ -135,9 +135,18 @@ export default function IPOsPage() {
     return status.charAt(0).toUpperCase() + status.slice(1);
   };
 
-  const openCount = ipos.filter(i => i.status === 'open').length;
-  const upcomingCount = ipos.filter(i => i.status === 'upcoming').length;
-  const listedCount = ipos.filter(i => i.status === 'listed').length;
+  // PATCH 0720 — single-pass status counts (was 3 inline filter walks per
+  // render). Memoize so re-renders driven by lastFetchAt / filter state
+  // changes don't re-walk the ipos array unnecessarily.
+  const { openCount, upcomingCount, listedCount } = useMemo(() => {
+    let openC = 0, upC = 0, lC = 0;
+    for (const i of ipos) {
+      if (i.status === 'open') openC++;
+      else if (i.status === 'upcoming') upC++;
+      else if (i.status === 'listed') lC++;
+    }
+    return { openCount: openC, upcomingCount: upC, listedCount: lC };
+  }, [ipos]);
 
   const formatDate = (dateString: string) => {
     try {

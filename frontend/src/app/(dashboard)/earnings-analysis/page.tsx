@@ -4014,11 +4014,15 @@ export default function EarningsAnalysisPage() {
           buildReport into a shared lib. For now, prominent cross-link so the
           user knows the next tab over runs the same documents through the
           P/E + P/S + EV/EBITDA pipeline. */}
+      {/* PATCH 0719 — Replace hardcoded dark-only gradient with the
+          CARD2 token + cyan accent border so the bridge card stays legible
+          when the global light-mode filter inverts it (the literal #0d2030
+          → near-white #f2dfcf was washing the chip out below 60% opacity). */}
       <a href="/auto-valuation" style={{
         display:'flex', alignItems:'center', justifyContent:'space-between', gap:14,
         marginBottom:20, padding:'14px 18px',
-        background:'linear-gradient(135deg, #0d2030 0%, #122a3f 100%)',
-        border:'1px solid #22D3EE40', borderRadius:10,
+        background: CARD2,
+        border:'1px solid #22D3EE60', borderRadius:10,
         textDecoration:'none', cursor:'pointer',
       }}>
         <div style={{display:'flex',alignItems:'center',gap:14}}>

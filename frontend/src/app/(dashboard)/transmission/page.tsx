@@ -199,11 +199,17 @@ function ZScoreChips({ commodity }: { commodity: CommodityRow }) {
 }
 
 function DrilldownPanel({ commodity, onClose }: { commodity: CommodityRow; onClose: () => void }) {
-  const sortedImpacts = [...commodity.impacts].sort((a, b) => {
-    const pa = Math.abs(a.margin_pressure_pp_1m ?? 0);
-    const pb = Math.abs(b.margin_pressure_pp_1m ?? 0);
-    return pb - pa;
-  });
+  // PATCH 0720 — Memoize the per-commodity impact sort so it only re-runs
+  // when the impacts array changes. Was creating a fresh sorted copy on
+  // every render even though the panel re-renders on parent state churn
+  // (filter / scenario lab slider drags / scroll position).
+  const sortedImpacts = useMemo(() => {
+    return [...commodity.impacts].sort((a, b) => {
+      const pa = Math.abs(a.margin_pressure_pp_1m ?? 0);
+      const pb = Math.abs(b.margin_pressure_pp_1m ?? 0);
+      return pb - pa;
+    });
+  }, [commodity.impacts]);
   const tone = commodity.category ? CATEGORY_LABELS[commodity.category].tone : TOKENS.surface.cardBorder;
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 100, backgroundColor: 'rgba(0,0,0,0.65)' }}>

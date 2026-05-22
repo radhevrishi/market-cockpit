@@ -663,6 +663,59 @@ main [role="dialog"] [style*="maxWidth"] {
   .bottleneck-reading-region {
     grid-template-columns: 1fr !important;
   }
+
+  /* PATCH 0719 — Mobile fixes #1: extend the grid-collapse rule to catch
+     the other rigid 2-column patterns the original 230px-keyed rule missed.
+     - /super-investors uses '320px 1fr' for the investor-list rail
+     - /rrg uses '1fr 300px' for the chart + side panel
+     - /valuations uses '180px 1fr 200px' for its bulk-import preview rows.
+     Collapse all of them to single-column below 768px so nothing tears. */
+  main div[style*="gridTemplateColumns:"][style*="320px 1fr"],
+  main div[style*="grid-template-columns:"][style*="320px 1fr"],
+  main div[style*="gridTemplateColumns:"][style*="1fr 300px"],
+  main div[style*="grid-template-columns:"][style*="1fr 300px"],
+  main div[style*="gridTemplateColumns:"][style*="180px 1fr 200px"],
+  main div[style*="grid-template-columns:"][style*="180px 1fr 200px"] {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+
+  /* PATCH 0719 — Mobile fix #2: wrap raw <table> elements in horizontal
+     scroll. /super-investors, /smart-money, /screener etc. all render plain
+     <table style="width:100%"> which overflows the viewport below ~700px.
+     Forcing table-layout fixed alone isn't enough; we need its parent to
+     scroll. Add overflow on the immediate parent of any wide table. */
+  main table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+  }
+  main table thead,
+  main table tbody {
+    display: table;
+    width: 100%;
+    min-width: 560px;
+  }
+
+  /* PATCH 0719 — Mobile fix #3: chip strips that don't already wrap should
+     scroll horizontally rather than push the entire row off-screen. The
+     existing wrap rule at line 624 only catches inline `display: flex`;
+     this catches the `display: 'flex'` quoted-string variant and the
+     compact tabbed chip rows in news / bottleneck-intel filter rails. */
+  main div[style*="overflowX: 'auto'"],
+  main div[style*="overflow-x: auto"] {
+    max-width: 100%;
+  }
+
+  /* PATCH 0719 — Mobile fix #4: hard fallback for sticky LEFT rails (filter
+     rails on /transmission, /news drawer overlays). The existing rule only
+     hits `aside[position: sticky]`. Many filter rails use a plain div with
+     position: sticky. */
+  main div[style*="position: 'sticky'"][style*="top:"],
+  main div[style*="position:sticky"][style*="top:"] {
+    position: static !important;
+  }
 }
 
 /* ─── PATCH 0263 — Tablet (768-1023) tweaks ─────────────────────────── */

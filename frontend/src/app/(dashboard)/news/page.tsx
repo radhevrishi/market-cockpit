@@ -185,8 +185,15 @@ function useNews(search: string) {
       const { data } = await api.get(`/news?${params}`);
       return Array.isArray(data) ? data : [];
     },
-    refetchInterval: 90_000,
-    staleTime: 60_000,
+    // PATCH 0720 — was 90s. The /news?limit=500 payload is ~250-400KB and
+    // each refetch re-runs the in-page filter+sort+annotate over the full
+    // article set. The Must-Read, Anomaly, Bottleneck, In-Play and Persistent
+    // hooks on this same page already operate on 2-5min cadences, so the
+    // 90s primary refetch was the only sub-2min poll left here and the
+    // dominant network-burner. 180s is well inside dashboard freshness
+    // expectations (chip turns amber after 5min via PanelFreshness anyway).
+    refetchInterval: 180_000,
+    staleTime: 150_000,
     retry: 1,
   });
 }
@@ -2693,6 +2700,37 @@ export default function NewsFeedPage() {
     return out;
   }, [allArticles, region, articleType, signalFilter, sourceName, earningsSeasonActive]);
 
+  // PATCH 0720 — Memoize the per-tier and per-layer counters so the
+  // signals summary bar + layered-view header don't re-walk the 200-500
+  // article array on every keystroke / hover / panel-toggle. Previously
+  // ran three independent .filter() passes inline at lines 3675/3678/3767;
+  // each was O(N) and re-ran on every render of the page (which happens
+  // on every chip-select / lifecycle change / refetch).
+  const tierCounts = useMemo(() => {
+    const t1: number[] = [], t2: number[] = [];
+    if (!articles) return { high: 0, medium: 0 };
+    let high = 0, medium = 0;
+    for (const a of articles) {
+      const tier = a.investment_tier || 0;
+      if (tier === 1) high++;
+      else if (tier === 2) medium++;
+    }
+    // suppress unused-var warning from t1/t2 — kept to make the intent obvious
+    void t1; void t2;
+    return { high, medium };
+  }, [articles]);
+
+  const layerArticleMap = useMemo(() => {
+    const out: Record<FeedLayer, NewsArticle[]> = {
+      MACRO_REGIME: [], STRUCTURAL: [], COMPANY_ALPHA: [], GENERAL: [],
+    };
+    if (!articles) return out;
+    for (const a of articles) {
+      out[getArticleLayer(a)].push(a);
+    }
+    return out;
+  }, [articles]);
+
   // PATCH 0693 — auto-fallback from LIVE_WARM to ALL when the live bucket
   // is empty but the broader feed has content. Prevents the QA BUG-03
   // symptom where the lifecycle default of LIVE_WARM silently hid every
@@ -3672,10 +3710,11 @@ export default function NewsFeedPage() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px', padding: '8px 12px', backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: '10px', flexWrap: 'wrap' }}>
           <span style={{ fontSize: '10px', fontWeight: '700', color: '#6A7B8C', letterSpacing: '0.5px' }}>SIGNALS</span>
           <span style={{ fontSize: '11px', color: '#EF4444', fontWeight: '600' }}>
-            🔴 {articles.filter(a => (a.investment_tier || 0) === 1).length} High
+            {/* PATCH 0720 — read from memoized tierCounts */}
+            🔴 {tierCounts.high} High
           </span>
           <span style={{ fontSize: '11px', color: '#F59E0B', fontWeight: '600' }}>
-            🟡 {articles.filter(a => (a.investment_tier || 0) === 2).length} Medium
+            🟡 {tierCounts.medium} Medium
           </span>
           <span style={{ fontSize: '11px', color: '#4A5B6C' }}>
             {articles.length} total
@@ -3747,8 +3786,10 @@ export default function NewsFeedPage() {
         ) : groupByLayer && !showBottleneckDashboard && articleType === 'ALL' ? (
           // ── Layered view: group articles by institutional hierarchy ──
           <>
+            {/* PATCH 0720 — read layered articles from the memoized map
+                instead of walking the full array N times per render. */}
             {(['MACRO_REGIME', 'STRUCTURAL', 'COMPANY_ALPHA', 'GENERAL'] as FeedLayer[]).map(layer => {
-              const layerArticles = articles.filter(a => getArticleLayer(a) === layer);
+              const layerArticles = layerArticleMap[layer];
               if (layerArticles.length === 0) return null;
               const config = LAYER_CONFIG[layer];
               return (
@@ -3764,7 +3805,9 @@ export default function NewsFeedPage() {
               );
             })}
             <div style={{ textAlign: 'center', padding: '16px 0 8px', fontSize: '12px', color: '#4A5B6C' }}>
-              Showing {articles.length} articles across {(['MACRO_REGIME', 'STRUCTURAL', 'COMPANY_ALPHA', 'GENERAL'] as FeedLayer[]).filter(l => articles.some(a => getArticleLayer(a) === l)).length} layers
+              {/* PATCH 0720 — count layers from the memoized map (was a
+                  nested filter+some that was O(N×4) on every render). */}
+              Showing {articles.length} articles across {(['MACRO_REGIME', 'STRUCTURAL', 'COMPANY_ALPHA', 'GENERAL'] as FeedLayer[]).filter(l => layerArticleMap[l].length > 0).length} layers
             </div>
           </>
         ) : (

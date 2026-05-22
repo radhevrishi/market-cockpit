@@ -446,8 +446,23 @@ export default function HeatmapPage() {
 
   // PATCH 0281 — guard .stocks / .results before .find/.filter; the server
   // sometimes returns an envelope without the inner array on transient errors.
-  const hoveredDailyStock = !isEarningsMode && hoveredTicker && dailyData?.stocks ? dailyData.stocks.find(s => s.ticker === hoveredTicker) : null;
-  const hoveredEarningsResult = isEarningsMode && hoveredTicker && earningsData?.results ? earningsData.results.find(r => r.ticker === hoveredTicker) : null;
+  // PATCH 0720 — Build ticker-keyed Maps once per data refresh so hover
+  // lookups are O(1) instead of O(N) per mouse-move. The treemap has
+  // ~200-500 cells; previously every hover walked the full array twice
+  // (once daily, once earnings) on every state-tick which made the
+  // tooltip lag visibly on slower CPUs.
+  const dailyStockMap = useMemo(() => {
+    const m = new Map<string, Stock>();
+    if (dailyData?.stocks) for (const s of dailyData.stocks) m.set(s.ticker, s);
+    return m;
+  }, [dailyData?.stocks]);
+  const earningsResultMap = useMemo(() => {
+    const m = new Map<string, EarningsResult>();
+    if (earningsData?.results) for (const r of earningsData.results) m.set(r.ticker, r);
+    return m;
+  }, [earningsData?.results]);
+  const hoveredDailyStock = !isEarningsMode && hoveredTicker ? (dailyStockMap.get(hoveredTicker) || null) : null;
+  const hoveredEarningsResult = isEarningsMode && hoveredTicker ? (earningsResultMap.get(hoveredTicker) || null) : null;
 
   // Earnings summary stats
   const earningsSummary = useMemo(() => {
