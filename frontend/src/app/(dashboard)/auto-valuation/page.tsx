@@ -320,10 +320,19 @@ async function extractExcelFinancials(file: File): Promise<ExcelFinancials | nul
     if (first > 0 && last > 0) fin.patCagr5y = (Math.pow(last / first, 1 / (pat5.length - 1)) - 1) * 100;
     fin.latestPAT = last;
   }
-  // OPM avg
+  // PATCH 0665 — EBITDA-aware OPM. In some Indian Screener templates the
+  // "Operating Profit" row is actually EBIT (post-depreciation), not EBITDA.
+  // When a Depreciation row exists, EBITDA = OP + Dep is the proper number
+  // to use for valuation. Symptom that caught the bug: MTAR showing OPM 7%
+  // while PAT margin = 10.8% — mathematically impossible.
+  const depValues = depRow ? extractRow(depRow) : [];
   const opmList = fin.operatingProfit.map((op, i) => {
     const s = fin.sales[i];
-    if (typeof op === 'number' && typeof s === 'number' && s > 0) return (op / s) * 100;
+    const dep = depValues[i];
+    if (typeof op === 'number' && typeof s === 'number' && s > 0) {
+      const ebitda = (typeof dep === 'number' && dep > 0) ? op + dep : op;
+      return (ebitda / s) * 100;
+    }
     return null;
   }).filter((x): x is number => typeof x === 'number');
   if (opmList.length > 0) fin.opmAvg = opmList.slice(-5).reduce((a, b) => a + b, 0) / Math.min(opmList.length, 5);
@@ -333,6 +342,25 @@ async function extractExcelFinancials(file: File): Promise<ExcelFinancials | nul
   if (opmList.length >= 3) {
     const last3 = opmList.slice(-3).slice().sort((a, b) => a - b);
     fin.opmMedian3y = last3[1];   // middle value of last 3
+  }
+
+  // PATCH 0665 — Sanity check: PAT margin can't exceed EBITDA margin.
+  // If our computed OPM is BELOW PAT margin, the OP row is almost certainly
+  // mis-parsed (maybe finding "EBIT" or "Net Operating Income" instead of
+  // proper Operating Profit). In that case, infer EBITDA margin from
+  // PAT margin × typical conversion (1.6× for industrials, capping at 35%).
+  const latestPATForCheck = pat5[pat5.length - 1];
+  const latestSalesForCheck = sales5[sales5.length - 1];
+  if (latestPATForCheck && latestSalesForCheck && latestSalesForCheck > 0) {
+    const patMargin = (latestPATForCheck / latestSalesForCheck) * 100;
+    if (fin.opmLatest !== undefined && fin.opmLatest < patMargin) {
+      // OP row is broken. Infer EBITDA margin: PAT × ~1.6x conversion is a
+      // reasonable rule of thumb for industrial / manufacturing names.
+      const inferredOpm = Math.min(patMargin * 1.6, 35);
+      fin.opmLatest = inferredOpm;
+      fin.opmMedian3y = inferredOpm;
+      fin.opmAvg = inferredOpm;
+    }
   }
   // PATCH 0641 — proper EBITDA = Operating Profit + Depreciation (when both present).
   // Otherwise fall back to OP alone (Indian Screener convention).
