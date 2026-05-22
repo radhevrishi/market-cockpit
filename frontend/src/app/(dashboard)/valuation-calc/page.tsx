@@ -1393,6 +1393,33 @@ function MethodCard({ m, idx }: { m: GuidanceMethod; idx: number }) {
             </div>
           </div>
 
+          {/* PATCH 0661 — Practice example shortcuts. Click any company chip
+              to scroll directly to its full calculation in the Practice
+              Examples section below. */}
+          {(() => {
+            const matches = PRACTICE_EXAMPLES.filter(ex => ex.methodIds.includes(m.id));
+            if (matches.length === 0) return null;
+            return (
+              <div style={{ marginTop: 12, marginBottom: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: '#10B981', letterSpacing: '0.5px', marginBottom: 6 }}>
+                  → JUMP TO PRACTICE EXAMPLE ({matches.length})
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                  {matches.map((ex, i) => (
+                    <a key={i} href={`#${exSlug(ex.company)}`} style={{
+                      fontSize: 11, padding: '4px 10px',
+                      background: '#10B98115', border: '1px solid #10B98140',
+                      color: '#10B981', borderRadius: 4, fontWeight: 700,
+                      textDecoration: 'none', whiteSpace: 'nowrap',
+                    }}>
+                      {ex.company.replace(/ Ltd$/, '').replace(/ Industries$/, '')} ↓
+                    </a>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Tips */}
           {m.tips && m.tips.length > 0 && (
             <div style={{ marginTop: 12 }}>
@@ -1425,6 +1452,10 @@ interface PracticeExample {
   sector: string;
   guidance: string;
   pattern: string;           // matches Pattern # from GUIDANCE_METHODS
+  // PATCH 0661 — tag with one or more methodIds for cross-linking back
+  // from the 12-pattern table. Most examples use 1 pattern; combos
+  // (e.g. Aeroflex uses EBITDA growth + Peak revenue) list both.
+  methodIds: string[];
   inputs: Array<{ label: string; value: string; approx?: boolean }>;
   steps: Array<{ label: string; calc: string; result: string }>;
   fairValue: string;
@@ -1433,11 +1464,16 @@ interface PracticeExample {
   note?: string;
 }
 
+// PATCH 0661 — slugify company name to give each example a URL-fragment ID
+function exSlug(c: string): string {
+  return 'ex-' + c.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+}
+
 const PRACTICE_EXAMPLES: PracticeExample[] = [
   {
     company: 'Acutaas Chemicals Ltd', sector: 'Specialty Chemicals',
     guidance: '30% revenue growth for FY26',
-    pattern: '#01 Revenue Growth %',
+    pattern: '#01 Revenue Growth %', methodIds: ['revenue-growth-pct'],
     inputs: [
       { label: 'TTM Revenue (FY25)', value: '~₹500 Cr', approx: true },
       { label: 'Current Market Cap', value: '~₹4,000 Cr', approx: true },
@@ -1456,7 +1492,7 @@ const PRACTICE_EXAMPLES: PracticeExample[] = [
   {
     company: 'Aeroflex Industries Ltd', sector: 'Niche Manufacturing (Flexible hoses)',
     guidance: '25% EBITDA growth FY26 + peak ₹735 Cr revenue by FY28',
-    pattern: '#08 EBITDA Growth + #09 Peak Revenue',
+    pattern: '#08 EBITDA Growth + #09 Peak Revenue', methodIds: ['ebitda-growth', 'peak-revenue'],
     inputs: [
       { label: 'TTM Revenue', value: '~₹350 Cr', approx: true },
       { label: 'TTM EBITDA (~26% margin)', value: '~₹91 Cr', approx: true },
@@ -1480,7 +1516,7 @@ const PRACTICE_EXAMPLES: PracticeExample[] = [
   {
     company: 'Aimtron Electronics Ltd', sector: 'EMS / SME',
     guidance: '40-50% CAGR revenue growth for FY26',
-    pattern: '#02 Revenue Range',
+    pattern: '#02 Revenue Range', methodIds: ['revenue-growth-range'],
     inputs: [
       { label: 'TTM Revenue', value: '~₹250 Cr', approx: true },
       { label: 'Current Market Cap', value: '~₹1,200 Cr', approx: true },
@@ -1499,7 +1535,7 @@ const PRACTICE_EXAMPLES: PracticeExample[] = [
   {
     company: 'Azad Engineering Ltd', sector: 'Premium Precision (Aero/Defence)',
     guidance: '25%+ revenue growth; 33-35% EBITDA margin sustainable',
-    pattern: '#01 Growth + #11 Sustainable Margin',
+    pattern: '#01 Growth + #11 Sustainable Margin', methodIds: ['revenue-growth-pct', 'sustainable-margin'],
     inputs: [
       { label: 'TTM Revenue', value: '~₹400 Cr', approx: true },
       { label: 'Sustainable EBITDA Margin', value: '34% (mid)' },
@@ -1520,7 +1556,7 @@ const PRACTICE_EXAMPLES: PracticeExample[] = [
   {
     company: 'CCL Products (India) Ltd', sector: 'Coffee / F&B',
     guidance: '25% EBITDA growth guidance for FY26',
-    pattern: '#08 EBITDA Growth',
+    pattern: '#08 EBITDA Growth', methodIds: ['ebitda-growth'],
     inputs: [
       { label: 'TTM Revenue', value: '~₹2,500 Cr', approx: true },
       { label: 'TTM EBITDA (~18%)', value: '~₹450 Cr', approx: true },
@@ -1541,7 +1577,7 @@ const PRACTICE_EXAMPLES: PracticeExample[] = [
   {
     company: 'DEE Development Engineers Ltd', sector: 'Capital Goods (Piping)',
     guidance: '18% to 20% EBITDA margin guidance for FY27',
-    pattern: '#06 EBITDA Margin',
+    pattern: '#06 EBITDA Margin', methodIds: ['ebitda-margin'],
     inputs: [
       { label: 'TTM Revenue', value: '~₹1,200 Cr', approx: true },
       { label: 'Assumed Growth (no rev guidance)', value: '15% (sector default)' },
@@ -1563,7 +1599,7 @@ const PRACTICE_EXAMPLES: PracticeExample[] = [
   {
     company: 'Emcure Pharmaceuticals Ltd', sector: 'Pharma',
     guidance: 'Low-to-mid teens CAGR 3-5yr + 300-400 bps margin rise to 23-24% by FY29',
-    pattern: '#03 CAGR + #07 bps Improvement',
+    pattern: '#03 CAGR + #07 bps Improvement', methodIds: ['multi-year-cagr', 'ebitda-margin-bps'],
     inputs: [
       { label: 'TTM Revenue (FY26)', value: '~₹6,500 Cr', approx: true },
       { label: 'Current EBITDA margin', value: '~20%' },
@@ -1589,7 +1625,7 @@ const PRACTICE_EXAMPLES: PracticeExample[] = [
   {
     company: 'GNG Electronics Ltd', sector: 'Refurbished IT',
     guidance: 'Revenue 28-30% FY26 + EBITDA margin +150-200 bps',
-    pattern: '#02 Range + #07 bps',
+    pattern: '#02 Range + #07 bps', methodIds: ['revenue-growth-range', 'ebitda-margin-bps'],
     inputs: [
       { label: 'TTM Revenue', value: '~₹600 Cr', approx: true },
       { label: 'Current EBITDA margin', value: '~8%', approx: true },
@@ -1613,7 +1649,7 @@ const PRACTICE_EXAMPLES: PracticeExample[] = [
   {
     company: 'HFCL Ltd', sector: 'Telecom Infra (OFC + Defence)',
     guidance: 'OFC ₹3,500 Cr + Defence ₹500 Cr in FY27',
-    pattern: '#12 Sum-of-Parts',
+    pattern: '#12 Sum-of-Parts', methodIds: ['sum-of-parts'],
     inputs: [
       { label: 'OFC Revenue FY27', value: '₹3,500 Cr' },
       { label: 'Defence Revenue FY27', value: '₹500 Cr' },
@@ -1640,7 +1676,7 @@ const PRACTICE_EXAMPLES: PracticeExample[] = [
   {
     company: 'Inox India Ltd', sector: 'Cryogenic Engineering',
     guidance: '18-20% revenue growth guidance for FY27',
-    pattern: '#02 Revenue Range',
+    pattern: '#02 Revenue Range', methodIds: ['revenue-growth-range'],
     inputs: [
       { label: 'TTM Revenue', value: '~₹1,300 Cr', approx: true },
       { label: 'P/S (bear/base/bull)', value: '8× / 11× / 14×' },
@@ -1658,7 +1694,7 @@ const PRACTICE_EXAMPLES: PracticeExample[] = [
   {
     company: 'Knowledge Marine & Engineering Works Ltd', sector: 'Marine Logistics',
     guidance: '20%+ YoY revenue growth for FY27',
-    pattern: '#01 Revenue Growth %',
+    pattern: '#01 Revenue Growth %', methodIds: ['revenue-growth-pct'],
     inputs: [
       { label: 'TTM Revenue', value: '~₹450 Cr', approx: true },
       { label: 'Current Market Cap', value: '~₹4,000 Cr', approx: true },
@@ -1677,7 +1713,7 @@ const PRACTICE_EXAMPLES: PracticeExample[] = [
   {
     company: 'Lumax Auto Technologies Ltd', sector: 'Auto Ancillary',
     guidance: 'Revenue growth revised to 30% for FY26',
-    pattern: '#01 Revenue Growth %',
+    pattern: '#01 Revenue Growth %', methodIds: ['revenue-growth-pct'],
     inputs: [
       { label: 'TTM Revenue', value: '~₹3,200 Cr', approx: true },
       { label: 'Current Market Cap', value: '~₹6,500 Cr', approx: true },
@@ -1696,7 +1732,7 @@ const PRACTICE_EXAMPLES: PracticeExample[] = [
   {
     company: 'MTAR Technologies Ltd', sector: 'Defence / Premium Engineering',
     guidance: '50% revenue growth for FY27 (raised from earlier 50% to 80%+ in concall)',
-    pattern: '#01 Growth + #03 CAGR (multi-year)',
+    pattern: '#01 Growth + #03 CAGR (multi-year)', methodIds: ['revenue-growth-pct', 'multi-year-cagr'],
     inputs: [
       { label: 'TTM Revenue (FY26)', value: '₹876 Cr' },
       { label: 'Growth FY27', value: '50% (floor) → 80% (stretch)' },
@@ -1717,7 +1753,7 @@ const PRACTICE_EXAMPLES: PracticeExample[] = [
   {
     company: 'Navin Fluorine International Ltd', sector: 'Specialty Chemicals (Premium)',
     guidance: '30%+ EBITDA margin FY26 + ₹600-825 Cr peak revenue from R32 by Q3 FY27',
-    pattern: '#06 Margin + #09 Peak Revenue',
+    pattern: '#06 Margin + #09 Peak Revenue', methodIds: ['ebitda-margin', 'peak-revenue'],
     inputs: [
       { label: 'TTM Revenue', value: '~₹2,000 Cr', approx: true },
       { label: 'Forward Rev assumption', value: '~₹2,400 Cr (20% growth)', approx: true },
@@ -1739,7 +1775,7 @@ const PRACTICE_EXAMPLES: PracticeExample[] = [
   {
     company: 'Quality Power Electrical Equipments Ltd', sector: 'Grid Equipment',
     guidance: '₹700-800 Cr revenue + 22%+ EBITDA margin FY26',
-    pattern: '#04 Absolute Revenue + #06 Margin',
+    pattern: '#04 Absolute Revenue + #06 Margin', methodIds: ['absolute-revenue', 'ebitda-margin'],
     inputs: [
       { label: 'Forward Revenue FY26 (mid)', value: '₹750 Cr' },
       { label: 'EBITDA margin', value: '22%' },
@@ -1760,7 +1796,7 @@ const PRACTICE_EXAMPLES: PracticeExample[] = [
   {
     company: 'S J S Enterprises Ltd', sector: 'Auto Decoratives',
     guidance: 'Exports to reach 14-15% of revenue by FY28',
-    pattern: '#10 Segment Mix Shift',
+    pattern: '#10 Segment Mix Shift', methodIds: ['segment-mix'],
     inputs: [
       { label: 'TTM Revenue', value: '~₹700 Cr', approx: true },
       { label: 'Assumed growth (18%)', value: '18% CAGR' },
@@ -1785,7 +1821,7 @@ const PRACTICE_EXAMPLES: PracticeExample[] = [
   {
     company: 'Sai Life Sciences Ltd', sector: 'Pharma CDMO',
     guidance: '15-20% revenue CAGR over 3-5 years + 28-30% EBITDA margin by FY27',
-    pattern: '#03 CAGR + #06 Margin',
+    pattern: '#03 CAGR + #06 Margin', methodIds: ['multi-year-cagr', 'ebitda-margin'],
     inputs: [
       { label: 'TTM Revenue', value: '~₹1,800 Cr', approx: true },
       { label: 'CAGR (mid 17.5%)', value: '17.5%' },
@@ -1808,7 +1844,7 @@ const PRACTICE_EXAMPLES: PracticeExample[] = [
   {
     company: 'Sansera Engineering Ltd', sector: 'Auto Ancillary (Precision)',
     guidance: 'ADS Revenue ₹550-600 Cr for FY27 (segment only)',
-    pattern: '#04 Absolute Revenue (segment) + sector default for rest',
+    pattern: '#04 Absolute Revenue (segment) + sector default for rest', methodIds: ['absolute-revenue'],
     inputs: [
       { label: 'TTM Revenue', value: '~₹2,800 Cr', approx: true },
       { label: 'ADS segment FY27 (mid)', value: '₹575 Cr' },
@@ -1830,7 +1866,7 @@ const PRACTICE_EXAMPLES: PracticeExample[] = [
   {
     company: 'Sterlite Technologies Ltd', sector: 'Telecom (OFC)',
     guidance: '20%+ YoY revenue growth for FY26',
-    pattern: '#01 Revenue Growth %',
+    pattern: '#01 Revenue Growth %', methodIds: ['revenue-growth-pct'],
     inputs: [
       { label: 'TTM Revenue', value: '~₹4,500 Cr', approx: true },
       { label: 'P/S (Commoditized telecom)', value: '1.5×' },
@@ -1849,7 +1885,7 @@ const PRACTICE_EXAMPLES: PracticeExample[] = [
   {
     company: 'TD Power Systems Ltd', sector: 'Generator OEM',
     guidance: '₹2,200+ Cr FY27 (conservative)',
-    pattern: '#04 Absolute Revenue (floor)',
+    pattern: '#04 Absolute Revenue (floor)', methodIds: ['absolute-revenue'],
     inputs: [
       { label: 'FY27 Revenue (floor)', value: '₹2,200 Cr (treated as BEAR)' },
       { label: 'Stretch (~+10%)', value: '~₹2,420 Cr (base)' },
@@ -1872,7 +1908,7 @@ const PRACTICE_EXAMPLES: PracticeExample[] = [
 function PracticeExampleCard({ ex }: { ex: PracticeExample }) {
   const [open, setOpen] = useState(false);
   return (
-    <div style={{ background: '#0D1426', border: `1px solid ${BORDER}`, borderRadius: 6, overflow: 'hidden' }}>
+    <div id={exSlug(ex.company)} style={{ background: '#0D1426', border: `1px solid ${BORDER}`, borderRadius: 6, overflow: 'hidden', scrollMarginTop: 80 }}>
       <button onClick={() => setOpen(!open)} style={{
         width: '100%', background: 'transparent', border: 'none',
         padding: '10px 14px', textAlign: 'left', cursor: 'pointer',

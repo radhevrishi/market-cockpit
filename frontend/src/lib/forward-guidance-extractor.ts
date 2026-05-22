@@ -15,17 +15,26 @@
 // ambiguity, surface both the high and low. Analyst always cross-checks.
 // ═══════════════════════════════════════════════════════════════════════════
 
-export type GuidanceMetric = 'REVENUE' | 'EBITDA' | 'PAT' | 'EBITDA_MARGIN' | 'PAT_MARGIN' | 'OPM' | 'GROWTH' | 'CAPEX' | 'ORDER_BOOK';
+// PATCH 0660 — added 4 metric types so the extractor catches all 12 Learn-tab patterns:
+//   CAGR             — multi-year compounded growth (distinct from single-yr GROWTH)
+//   EBITDA_GROWTH    — explicit "EBITDA growth X%" guidance (Pattern #08)
+//   MARGIN_BPS       — basis-point margin expansion (Pattern #07)
+//   PEAK_REVENUE     — terminal/peak-capacity revenue (Pattern #09)
+export type GuidanceMetric = 'REVENUE' | 'EBITDA' | 'PAT' | 'EBITDA_MARGIN' | 'PAT_MARGIN' | 'OPM' | 'GROWTH' | 'CAPEX' | 'ORDER_BOOK' | 'CAGR' | 'EBITDA_GROWTH' | 'MARGIN_BPS' | 'PEAK_REVENUE';
 
 export interface GuidanceItem {
   fiscalYear: string;            // 'FY27' / 'FY28' / 'Q4FY27'
   metric: GuidanceMetric;
-  unit: '₹ Cr' | '%' | 'units' | 'days';
+  unit: '₹ Cr' | '%' | 'units' | 'days' | 'bps';
   low?: number;
   high?: number;
   point?: number;                // when single value (not a range)
   rawPhrase: string;             // original sentence excerpt for verification
   confidence: 'high' | 'medium' | 'low';
+  // PATCH 0660 — flags for context the extractor can detect
+  sustainable?: boolean;         // "sustainable / long-term / over a long period"
+  isPeak?: boolean;              // "peak revenue potential / at full capacity"
+  yearsAhead?: number;           // for CAGR: how many years to compound
 }
 
 // Map fiscal year tokens to a normalized 'FY26' / 'FY27' string
@@ -65,11 +74,21 @@ const sentences = (text: string): string[] => {
 };
 
 // ─── Patterns by metric ─────────────────────────────────────────────────
+// PATCH 0660 — order matters. More-specific patterns must come BEFORE
+// less-specific ones so the keyword-containment dedup keeps the right
+// one. e.g. EBITDA_GROWTH ("ebitda growth") must precede EBITDA
+// ("ebitda") and GROWTH ("growth rate").
 const METRIC_PATTERNS: Array<{
   metric: GuidanceMetric;
   unit: GuidanceItem['unit'];
   keywords: RegExp;
 }> = [
+  // Most-specific compound patterns first
+  { metric: 'CAGR',           unit: '%',    keywords: /(?:cagr|compound annual growth rate|compounded annual growth|annualized growth)/i },
+  { metric: 'EBITDA_GROWTH',  unit: '%',    keywords: /ebitda\s+growth/i },
+  { metric: 'MARGIN_BPS',     unit: 'bps',  keywords: /(?:margin\s+(?:expansion|improvement|rise|increase)|(?:expand|improve|rise|increase)\s+(?:by\s+)?\d+[-\s]?\d*\s*bps|\d+[-\s]?\d*\s*bps\s+(?:expansion|improvement|of margin|rise|increase))/i },
+  { metric: 'PEAK_REVENUE',   unit: '₹ Cr', keywords: /(?:peak\s+revenue|peak\s+sales|peak\s+turnover|at\s+(?:full|peak)\s+capacity|full[-\s]ramp\s+revenue)/i },
+  // Then standard metrics
   { metric: 'REVENUE',        unit: '₹ Cr', keywords: /(?:revenue|topline|sales|turnover|net sales|gross sales)/i },
   { metric: 'EBITDA',         unit: '₹ Cr', keywords: /(?:ebitda|operating profit)/i },
   { metric: 'PAT',            unit: '₹ Cr', keywords: /(?:PAT|net profit|profit after tax|bottomline|bottom line)/i },
@@ -191,6 +210,7 @@ export function extractGuidance(text: string): GuidanceItem[] {
       const clause = sStripped.slice(clauseStart, clauseEnd);
 
       const wantsPct = (pat.unit === '%');
+      const wantsBps = (pat.unit === 'bps');
 
       // Use SINGLE-MATCH regex (no /g) per pattern. First plausible match
       // in the clause wins — restores the pre-0654 behavior that worked
@@ -202,12 +222,23 @@ export function extractGuidance(text: string): GuidanceItem[] {
       // crore/cr/lakh/etc suffix. Naked digits don't qualify (prevents
       // "16 manufacturing units" or "50 customers" from matching).
       const crPoint  = clause.match(/(?:₹\s*|Rs\.?\s*|INR\s*)([\d,]+(?:\.\d+)?)\s*(?:crores?|cr|lakhs?|billions?|millions?|bn|mn)?\b|([\d,]+(?:\.\d+)?)\s*(?:crores?|cr|lakhs?|billions?|millions?|bn|mn)\b/i);
+      // PATCH 0660 — bps detection for margin-improvement guidance
+      const bpsRange = clause.match(/([\d,]+(?:\.\d+)?)\s*(?:bps|basis points?)?[^%\d]{0,30}?(?:to|[-–])\s*([\d,]+(?:\.\d+)?)\s*(?:bps|basis points?)/i);
+      const bpsPoint = clause.match(/([\d,]+(?:\.\d+)?)\s*(?:bps|basis points?)/i);
 
       let rawMatch = '';
       let amounts: { low?: number; high?: number; point?: number } = {};
       let isPct = wantsPct;
 
-      if (wantsPct) {
+      if (wantsBps) {
+        if (bpsRange) {
+          rawMatch = bpsRange[0];
+          amounts = { low: parseFloat(bpsRange[1].replace(/,/g, '')), high: parseFloat(bpsRange[2].replace(/,/g, '')) };
+        } else if (bpsPoint) {
+          rawMatch = bpsPoint[0];
+          amounts = { point: parseFloat(bpsPoint[1].replace(/,/g, '')) };
+        } else continue;
+      } else if (wantsPct) {
         if (pctRange) {
           rawMatch = pctRange[0];
           amounts = { low: parseFloat(pctRange[1].replace(/,/g, '')), high: parseFloat(pctRange[2].replace(/,/g, '')) };
@@ -227,6 +258,9 @@ export function extractGuidance(text: string): GuidanceItem[] {
         } else continue;
         isPct = isPercentNumber(rawMatch, s);
       }
+      // PATCH 0660 — detect sustainable / peak flags from sentence context
+      const sustainable = /sustainable|long[-\s]?term|over\s+a\s+long\s+period|long[-\s]horizon|steady[-\s]state/i.test(s);
+      const isPeak = /peak\s+revenue|peak\s+sales|peak\s+turnover|at\s+(?:full|peak)\s+capacity|full[-\s]ramp/i.test(s);
       // Suppress kwPos/kwEnd unused warning - kept for future proximity refinements
       void kwPos; void kwEnd;
 
@@ -253,11 +287,16 @@ export function extractGuidance(text: string): GuidanceItem[] {
           case 'PAT_MARGIN':
             return raw >= 1 && raw <= 60;
           case 'GROWTH':
+          case 'EBITDA_GROWTH':
+          case 'CAGR':
             return raw >= 1 && raw <= 300;
+          case 'MARGIN_BPS':
+            return raw >= 10 && raw <= 2000;   // 10-2000 bps = 0.1-20% margin expansion
           case 'REVENUE':
           case 'EBITDA':
           case 'ORDER_BOOK':
           case 'CAPEX':
+          case 'PEAK_REVENUE':
             return raw >= 10;  // Cr-denominated, minimum 10 Cr for any institutional guidance
           case 'PAT':
             return raw >= 1;
@@ -275,11 +314,22 @@ export function extractGuidance(text: string): GuidanceItem[] {
       if (finalLow !== undefined && !isSensible(finalLow) && finalHigh === undefined) continue;
       if (finalHigh !== undefined && !isSensible(finalHigh) && finalLow === undefined) continue;
 
+      // PATCH 0660 — for CAGR detect how many years (e.g. "over 3-5 years")
+      let yearsAhead: number | undefined;
+      if (pat.metric === 'CAGR') {
+        const ymatch = s.match(/(?:over\s+)?(\d+)\s*(?:-|to|–)\s*(\d+)\s*years?|over\s+(\d+)\s*years?|next\s+(\d+)\s*years?/i);
+        if (ymatch) {
+          if (ymatch[1] && ymatch[2]) yearsAhead = Math.round((parseInt(ymatch[1]) + parseInt(ymatch[2])) / 2);
+          else if (ymatch[3]) yearsAhead = parseInt(ymatch[3]);
+          else if (ymatch[4]) yearsAhead = parseInt(ymatch[4]);
+        }
+      }
+
       for (const fy of fys) {
         out.push({
           fiscalYear: fy,
           metric: pat.metric,
-          unit: isPct ? '%' : pat.unit,
+          unit: wantsBps ? 'bps' : (isPct ? '%' : pat.unit),
           low: finalLow,
           high: finalHigh,
           point: finalPoint,
@@ -287,6 +337,9 @@ export function extractGuidance(text: string): GuidanceItem[] {
           confidence: /target|guidance|will\s+(?:reach|achieve|deliver)/i.test(s) ? 'high'
                     : /expect|likely\s+to|aim/i.test(s) ? 'medium'
                     : 'low',
+          sustainable: sustainable || undefined,
+          isPeak: isPeak || undefined,
+          yearsAhead,
         });
       }
     }
@@ -298,7 +351,7 @@ export function extractGuidance(text: string): GuidanceItem[] {
   //     prefer the LARGER value (institutional forward guidance is
   //     always the larger of any candidate numbers near the keyword).
   //   - For % metrics, prefer point over range (more specific number).
-  const crMetrics = new Set<GuidanceMetric>(['REVENUE', 'EBITDA', 'PAT', 'ORDER_BOOK', 'CAPEX']);
+  const crMetrics = new Set<GuidanceMetric>(['REVENUE', 'EBITDA', 'PAT', 'ORDER_BOOK', 'CAPEX', 'PEAK_REVENUE']);
   const seen = new Map<string, GuidanceItem>();
   for (const g of out) {
     const k = `${g.fiscalYear}|${g.metric}`;
@@ -338,17 +391,21 @@ export function metricLabel(m: GuidanceMetric): string {
     case 'GROWTH': return 'Growth';
     case 'CAPEX': return 'Capex';
     case 'ORDER_BOOK': return 'Order Book';
+    case 'CAGR': return 'CAGR';
+    case 'EBITDA_GROWTH': return 'EBITDA Growth';
+    case 'MARGIN_BPS': return 'Margin Expansion (bps)';
+    case 'PEAK_REVENUE': return 'Peak Revenue';
   }
 }
 
 /** Color for metric chip. */
 export function metricColor(m: GuidanceMetric): string {
   switch (m) {
-    case 'REVENUE': case 'GROWTH': return '#10B981';
-    case 'EBITDA': case 'EBITDA_MARGIN': case 'OPM': return '#22D3EE';
+    case 'REVENUE': case 'GROWTH': case 'CAGR': return '#10B981';
+    case 'EBITDA': case 'EBITDA_MARGIN': case 'OPM': case 'EBITDA_GROWTH': case 'MARGIN_BPS': return '#22D3EE';
     case 'PAT': case 'PAT_MARGIN': return '#A78BFA';
     case 'CAPEX': return '#F59E0B';
-    case 'ORDER_BOOK': return '#EF4444';
+    case 'ORDER_BOOK': case 'PEAK_REVENUE': return '#EF4444';
   }
 }
 
