@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useRef, useState } from 'react';
+import { parseFileToText } from '@/lib/concall-file-parser';
 
 interface FileStatus {
   name: string;
@@ -84,76 +85,52 @@ export function ConcallUploadModal({
     // Parse only the supported ones
     const supportedFiles = arr.filter((_, i) => queued[i].status === 'queued');
     if (supportedFiles.length === 0) return;
-    parseFilesOnServer(supportedFiles, queued);
+    parseFilesOnClient(supportedFiles);
   }, []);
 
-  const parseFilesOnServer = async (supportedFiles: File[], statusEntries: FileStatus[]) => {
+  // PATCH 0684 — was POSTing all files to /api/concall/parse, which hit
+  // Vercel's 4.5 MB multipart body cap (HTTP 413) whenever the user dropped
+  // 3+ concall PDFs or a typical financial workbook. Now parses entirely in
+  // the browser using the same xlsx / pdf.js / mammoth / JSZip helpers the
+  // Auto-Val panel already uses. No upload → no size limit.
+  const parseFilesOnClient = async (supportedFiles: File[]) => {
     setParsing(true);
-    try {
-      const fd = new FormData();
-      for (const f of supportedFiles) fd.append('files', f);
-      // mark in-progress
-      setFiles((prev) =>
-        prev.map((s) =>
-          statusEntries.some((q) => q.name === s.name && q.status === 'queued' && q === s)
-            ? { ...s, status: 'parsing' }
-            : s,
-        ),
-      );
-      // PATCH 0469 — 60s timeout (PDF parsing can be slow but a hung upload
-      // should not leave files in 'parsing' status forever).
-      const ctl = new AbortController();
-      const timer = setTimeout(() => ctl.abort(), 60_000);
-      let res: Response;
-      try {
-        res = await fetch('/api/concall/parse', { method: 'POST', body: fd, signal: ctl.signal });
-      } catch (e: any) {
-        clearTimeout(timer);
-        const msg = e?.name === 'AbortError' ? 'Parse timed out after 60s' : (e?.message || 'Network error');
-        setGlobalError(msg);
-        setFiles((prev) => prev.map((s) => s.status === 'parsing' ? { ...s, status: 'error', error: msg } : s));
-        return;
-      }
-      clearTimeout(timer);
-      const json = await res.json().catch(() => null);
-      if (!res.ok || !json?.ok) {
-        const msg = json?.error || `Parse server returned ${res.status}`;
-        setGlobalError(msg);
-        setFiles((prev) =>
-          prev.map((s) =>
-            s.status === 'parsing' ? { ...s, status: 'error', error: msg } : s,
-          ),
-        );
-        return;
-      }
-      // Update each file status from perFile array
-      const perFile: Array<{ name: string; chars: number; error?: string; kind: string }> =
-        json.perFile || [];
+    setGlobalError(null);
+    // Mark all queued files as parsing
+    setFiles((prev) =>
+      prev.map((s) =>
+        supportedFiles.some((f) => f.name === s.name) && s.status === 'queued'
+          ? { ...s, status: 'parsing' }
+          : s,
+      ),
+    );
+
+    const collectedTexts: string[] = [];
+    for (const file of supportedFiles) {
+      const result = await parseFileToText(file);
       setFiles((prev) =>
         prev.map((s) => {
-          const hit = perFile.find((p) => p.name === s.name);
-          if (!hit) return s;
-          if (hit.error) return { ...s, status: 'error', error: hit.error };
-          return { ...s, status: 'parsed', chars: hit.chars, kind: hit.kind };
+          if (s.name !== file.name || s.status !== 'parsing') return s;
+          if (result.error) return { ...s, status: 'error', error: result.error };
+          return { ...s, status: 'parsed', chars: result.chars, kind: result.kind };
         }),
       );
-      // Stash full text on the FIRST status entry as a "shared" carrier
-      // (all files' text is concatenated server-side already)
+      if (!result.error && result.text.length > 0) {
+        collectedTexts.push(`=== ${file.name} ===\n\n${result.text}`);
+      }
+    }
+
+    const combined = collectedTexts.join('\n\n').trim();
+    // Stash full combined text on the FIRST parsed entry so submit() can pick
+    // it up (mirrors the previous server-flow contract).
+    if (combined.length > 0) {
       setFiles((prev) => {
         const first = prev.find((s) => s.status === 'parsed');
         if (!first) return prev;
-        return prev.map((s) => (s === first ? { ...s, text: json.text } : s));
+        return prev.map((s) => (s === first ? { ...s, text: combined } : s));
       });
-    } catch (err: any) {
-      setGlobalError(err?.message || 'Upload failed');
-      setFiles((prev) =>
-        prev.map((s) =>
-          s.status === 'parsing' ? { ...s, status: 'error', error: err?.message || 'failed' } : s,
-        ),
-      );
-    } finally {
-      setParsing(false);
     }
+    setParsing(false);
   };
 
   const onFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
