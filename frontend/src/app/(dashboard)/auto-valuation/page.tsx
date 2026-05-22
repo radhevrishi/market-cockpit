@@ -524,6 +524,9 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
   }
 
   // Step 2: derive EBITDA scenarios.
+  // PATCH 0662 — track WHERE the margin came from so the rationale
+  // honestly says "historical fallback" vs "guidance".
+  const marginIsFromGuidance = marginScen.base !== undefined;
   const marginBear = marginScen.bear ?? marginScen.base ?? opmAvg;
   const marginBase = marginScen.base ?? opmAvg;
   const marginBull = marginScen.bull ?? marginScen.base ?? opmAvg;
@@ -757,7 +760,14 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
   // user can see whether management's growth/margin guidance flowed
   // through to the projection.
   if (inferredGrowth) rationale.push(`Applied guided revenue growth: ${inferredGrowth.toFixed(0)}% → forward revenue.`);
-  if (inferredMargin) rationale.push(`Applied guided EBITDA margin: ${inferredMargin.toFixed(0)}% → forward EBITDA.`);
+  // PATCH 0662 — honest source label: guidance vs historical fallback.
+  if (inferredMargin) {
+    if (marginIsFromGuidance) {
+      rationale.push(`Applied GUIDED EBITDA margin: ${inferredMargin.toFixed(0)}% → forward EBITDA.`);
+    } else {
+      rationale.push(`⚠ Margin guidance NOT found in PDFs. Used historical 5yr OPM ${inferredMargin.toFixed(1)}% as fallback — likely understates EBITDA if management guided expansion. Use the Override panel below to plug in the right margin.`);
+    }
+  }
   // PATCH 0657 — surface Y2 projection so user knows the 2yr view is computed
   if (forwardYearY2 && revScenY2.base) {
     rationale.push(`Year-2 (${forwardYearY2}): Revenue ₹${revScenY2.base.toFixed(0)} Cr · EBITDA ₹${ebitdaScenY2.base?.toFixed(0) || '?'} Cr · PAT ₹${patScenY2.base?.toFixed(0) || '?'} Cr (toggle in calc panel).`);
@@ -827,6 +837,18 @@ export default function AutoValuationPage() {
   const [building, setBuilding] = useState(false);
   // PATCH 0657 — toggle between Year 1 (FY27, 18mo) and Year 2 (FY28, 30mo)
   const [viewYear, setViewYear] = useState<'Y1' | 'Y2'>('Y1');
+  // PATCH 0662 — manual override state. When user knows the right margin /
+  // revenue / multiple, plug it in and recompute. Useful when extractor
+  // misses guidance (e.g. MTAR's "EBITDA margin 24%" missed but live PDF text differs).
+  const [overrideMargin, setOverrideMargin] = useState<string>('');     // % e.g. "24"
+  const [overrideRevenue, setOverrideRevenue] = useState<string>('');   // ₹ Cr
+  const [overridePE, setOverridePE] = useState<string>('');             // multiple
+  const [overridePS, setOverridePS] = useState<string>('');             // multiple
+  const [overrideEV, setOverrideEV] = useState<string>('');             // multiple
+  const [overrideResult, setOverrideResult] = useState<null | {
+    revenue: number; ebitda: number; pat: number;
+    pe?: any; ps?: any; ev?: any;
+  }>(null);
   // PATCH 0649 — saved-companies state
   const [savedList, setSavedList] = useState<SavedAutoValuation[]>(() => {
     if (typeof window === 'undefined') return [];
@@ -1186,6 +1208,99 @@ export default function AutoValuationPage() {
               <CalcResultMini label="📈 P/E Valuation" result={viewYear === 'Y2' ? report.peResultY2 : report.peResult} />
               <CalcResultMini label="💰 P/S Valuation" result={viewYear === 'Y2' ? report.psResultY2 : report.psResult} />
               <CalcResultMini label="🏭 EV/EBITDA Valuation" result={viewYear === 'Y2' ? report.evResultY2 : report.evResult} />
+            </div>
+
+            {/* PATCH 0662 — Manual Override Panel. When extractor misses guidance,
+                let user plug in correct values and recompute. */}
+            <div style={{ background: '#1A1F33', border: `1px solid ${BORDER}`, borderRadius: 8, padding: '14px 16px' }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.5px', marginBottom: 4 }}>
+                🛠 OVERRIDE INPUTS — adjust when the extractor missed something
+              </div>
+              <div style={{ fontSize: 11, color: DIM, marginBottom: 12, lineHeight: 1.5 }}>
+                Plug in the values you know from reading the concall yourself. Leave blank to keep the auto-extracted number.
+                Forward Revenue and EBITDA Margin are the two that matter most — they flow into all 3 calculators.
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10, marginBottom: 12 }}>
+                {[
+                  { label: 'Forward Revenue (₹ Cr)', val: overrideRevenue, set: setOverrideRevenue, hint: `auto: ${report.forwardRevenue ?? '?'}` },
+                  { label: 'EBITDA Margin (%)', val: overrideMargin, set: setOverrideMargin, hint: `auto: ${report.inferredMargin?.toFixed(1) ?? '?'}` },
+                  { label: 'P/E multiple (base)', val: overridePE, set: setOverridePE, hint: 'sector default' },
+                  { label: 'P/S multiple (base)', val: overridePS, set: setOverridePS, hint: 'sector default' },
+                  { label: 'EV/EBITDA multiple (base)', val: overrideEV, set: setOverrideEV, hint: 'sector default' },
+                ].map((f, i) => (
+                  <div key={i}>
+                    <div style={{ fontSize: 10, color: DIM, marginBottom: 3, letterSpacing: '0.4px', fontWeight: 700 }}>{f.label}</div>
+                    <input
+                      type="number"
+                      value={f.val}
+                      onChange={(e) => f.set(e.target.value)}
+                      placeholder={f.hint}
+                      style={{
+                        width: '100%', padding: '7px 10px', fontSize: 13, color: TEXT,
+                        background: '#0D1426', border: `1px solid ${BORDER}`, borderRadius: 4,
+                        fontFamily: 'ui-monospace, monospace',
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={() => {
+                  const rev = parseFloat(overrideRevenue) || report.forwardRevenue || 0;
+                  const margin = parseFloat(overrideMargin) || report.inferredMargin || 0;
+                  if (!rev || !margin) {
+                    alert('Need both forward revenue and EBITDA margin to recompute.');
+                    return;
+                  }
+                  const ebitda = rev * (margin / 100);
+                  // Estimate PAT via historical EBITDA→PAT conversion
+                  const conv = (report.excelData?.latestEBITDA && report.excelData.latestEBITDA > 0 && report.excelData.latestPAT)
+                    ? report.excelData.latestPAT / report.excelData.latestEBITDA : 0.4;
+                  const pat = ebitda * conv;
+                  const mcap = report.quote?.currentMarketCapCr || report.excelData?.currentMarketCapCrFromSheet || 0;
+                  const baseInput = {
+                    ticker: report.ticker,
+                    company: report.company,
+                    currentMarketCapCr: mcap,
+                    horizonMonths: 18,
+                    currentPrice: report.quote?.currentPrice || report.excelData?.currentPriceFromSheet,
+                    sharesOutstandingCr: report.quote?.sharesOutstandingCr || report.excelData?.sharesOutstandingCr,
+                    currency: '₹' as const,
+                  };
+                  const peBase = parseFloat(overridePE) || 40;
+                  const psBase = parseFloat(overridePS) || 10;
+                  const evBase = parseFloat(overrideEV) || 18;
+                  const pe = mcap > 0 ? calculatePE({ ...baseInput, forwardPATCr: Math.round(pat), bearPE: peBase * 0.75, basePE: peBase, bullPE: peBase * 1.25 }) : undefined;
+                  const ps = mcap > 0 ? calculatePS({ ...baseInput, forwardRevenueCr: Math.round(rev), bearPS: psBase * 0.75, basePS: psBase, bullPS: psBase * 1.4 }) : undefined;
+                  const ev = mcap > 0 ? calculateEvEbitda({ ...baseInput, forwardEBITDACr: Math.round(ebitda), bearMultiple: evBase * 0.75, baseMultiple: evBase, bullMultiple: evBase * 1.4 }) : undefined;
+                  setOverrideResult({ revenue: Math.round(rev), ebitda: Math.round(ebitda), pat: Math.round(pat), pe, ps, ev });
+                }} style={{
+                  fontSize: 12, padding: '8px 16px', background: '#F59E0B', border: 'none',
+                  color: '#0A0E1A', borderRadius: 5, cursor: 'pointer', fontWeight: 800,
+                }}>↻ RECALCULATE WITH OVERRIDES</button>
+                {overrideResult && (
+                  <button onClick={() => {
+                    setOverrideResult(null);
+                    setOverrideMargin(''); setOverrideRevenue(''); setOverridePE(''); setOverridePS(''); setOverrideEV('');
+                  }} style={{
+                    fontSize: 11, padding: '8px 14px', background: 'transparent', border: `1px solid ${BORDER}`,
+                    color: DIM, borderRadius: 5, cursor: 'pointer', fontWeight: 700,
+                  }}>Clear</button>
+                )}
+              </div>
+
+              {overrideResult && (
+                <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px dashed #F59E0B40' }}>
+                  <div style={{ fontSize: 11, color: '#F59E0B', fontWeight: 800, marginBottom: 8 }}>
+                    ✓ OVERRIDE SCENARIO — Revenue ₹{overrideResult.revenue.toLocaleString('en-IN')} Cr · EBITDA ₹{overrideResult.ebitda.toLocaleString('en-IN')} Cr · PAT ₹{overrideResult.pat.toLocaleString('en-IN')} Cr
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12 }}>
+                    <CalcResultMini label="📈 P/E (override)" result={overrideResult.pe} />
+                    <CalcResultMini label="💰 P/S (override)" result={overrideResult.ps} />
+                    <CalcResultMini label="🏭 EV/EBITDA (override)" result={overrideResult.ev} />
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Save to bench */}
