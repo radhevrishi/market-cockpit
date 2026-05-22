@@ -386,11 +386,22 @@ export default function OrderBookPage() {
               {counts.ALL === 0 ? 'No order announcements detected.' : 'No order announcements match these filters.'}
             </p>
             {counts.ALL === 0 ? (
-              <div style={{ margin: '8px 0 0', fontSize: 12, color: DIM, maxWidth: 540, marginLeft: 'auto', marginRight: 'auto', lineHeight: 1.6 }}>
+              <div style={{ margin: '8px 0 0', fontSize: 12, color: DIM, maxWidth: 600, marginLeft: 'auto', marginRight: 'auto', lineHeight: 1.65 }}>
                 Fetched <strong>{(data?.trace.newsFetched || 0) + (data?.trace.filingsFetched || 0)} rows</strong>,
-                none matched the Reg-30 order-announcement pattern in the current window.
-                Indian order intimations can be sparse on weekends — try refresh in 60s or expand the
-                source-window.
+                none matched the Reg-30 order-announcement pattern.
+                {' '}
+                <span style={{ color: '#F59E0B' }}>
+                  Note: upstream NSE feed currently surfaces investor-meet / transcript filings only.
+                  Reg-30 "Receipt of Order / Letter of Award" filings live on a different NSE
+                  corp-announcements category.
+                </span>
+                <div style={{ marginTop: 10 }}>
+                  <a href="https://www.nseindia.com/companies-listing/corporate-filings-announcements"
+                     target="_blank" rel="noreferrer"
+                     style={{ color: '#22D3EE', textDecoration: 'none', borderBottom: '1px dotted #22D3EE' }}>
+                    Open NSE Corp Announcements (Reg 30 → Receipt of Order) →
+                  </a>
+                </div>
               </div>
             ) : (
               <p style={{ margin: '6px 0 0', fontSize: 12 }}>Clear filters to see all {counts.ALL} detected orders.</p>

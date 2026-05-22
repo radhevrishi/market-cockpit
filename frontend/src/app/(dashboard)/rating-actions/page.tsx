@@ -337,9 +337,18 @@ export default function RatingActionsPage() {
                 ) : (
                   <>
                     Fetched <strong>{(data?.trace.newsFetched || 0) + (data?.trace.filingsFetched || 0)} rows</strong>{' '}
-                    ({data?.trace.newsFetched || 0} news + {data?.trace.filingsFetched || 0} filings), but none
-                    contained agency mentions in the window. Indian rating actions can be sparse on any given day —
-                    expand the days window in the news cache (it currently holds ~6h of articles).
+                    ({data?.trace.newsFetched || 0} news + {data?.trace.filingsFetched || 0} filings), none with agency mentions.{' '}
+                    <span style={{ color: '#F59E0B' }}>
+                      Note: upstream NSE feed currently scrapes investor-meet / transcript filings only.
+                      Reg-15 "Credit Rating Action" filings live on a different NSE corp-announcements category.
+                    </span>
+                    <div style={{ marginTop: 10 }}>
+                      <a href="https://www.nseindia.com/companies-listing/corporate-filings-announcements"
+                         target="_blank" rel="noreferrer"
+                         style={{ color: '#22D3EE', textDecoration: 'none', borderBottom: '1px dotted #22D3EE' }}>
+                        Open NSE Corp Announcements (Reg 15 → Credit Rating) →
+                      </a>
+                    </div>
                   </>
                 )}
               </div>
