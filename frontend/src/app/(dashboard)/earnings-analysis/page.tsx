@@ -2950,6 +2950,28 @@ export default function EarningsAnalysisPage() {
         text,
       );
       setSnapshot(snap);
+      // PATCH 0650 — client-side persistence keyed by ticker so reopening
+      // the same company shows the saved snapshot without re-upload.
+      try {
+        const { saveConcallSnapshot } = await import('@/lib/concall-snapshot-store');
+        const concallExtras = snap.indiaExtras?.concall;
+        saveConcallSnapshot({
+          ticker: inputs.ticker,
+          company: snap.company || inputs.ticker,
+          sector: snap.sector,
+          period: snap.quarter,
+          concallScore: concallExtras?.concallScore,
+          concallGrade: concallExtras?.concallGrade,
+          toneSignals: concallExtras?.toneSignals,
+          topQuotes: concallExtras?.topQuotes,
+          guidanceDirection: snap.guidance?.direction,
+          guidanceCommentary: snap.guidance?.commentary,
+          forwardOutlook: snap.guidance?.forwardOutlook,
+          docSnapshots: [{
+            name: 'concall.pdf', size: text.length, uploadedAt: new Date().toISOString(),
+          }],
+        });
+      } catch (e) { /* non-fatal */ }
       // Fire-and-forget archive so future Concall Intel tab can compare
       // guidance vs outcome across quarters.
       const concall = snap.indiaExtras?.concall;

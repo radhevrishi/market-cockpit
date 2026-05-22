@@ -539,50 +539,53 @@ export default function HomeDashboard() {
         const losers = smallMidOnly(j?.losers || []).slice(0, 10);
         setData((d) => ({ ...d, gainers, losers, moversUpdatedAt: j?.updatedAt } as any));
 
-        // PATCH 0647 — for each mover, find the most relevant recent article.
-        // Pulls broader news for ticker-explicit mentions (small caps often
-        // not in /in-play). Reason chip lets user see WHY the move happened
-        // without leaving the Home page.
-        const moverTickers = [...gainers, ...losers].map((m: any) => (m.ticker || '').toUpperCase()).filter(Boolean);
+        // PATCH 0650 — Per-ticker /api/v1/news?search=X (broader feed only
+        // covers US tickers; Indian smallcaps need per-ticker server search).
+        // Batches up to 20 movers in parallel; 8s per call so total < 10s.
+        const moverTickers = [...gainers, ...losers].map((m: any) => (m.ticker || '').toUpperCase().replace(/\.(NS|BO)$/i, '')).filter(Boolean);
         if (moverTickers.length > 0) {
-          safeDiag<any>(`/api/v1/news?limit=200&_=${Date.now()}`, 20_000).then(({ data: newsJ }) => {
-            if (cancelled) return;
-            const articles: any[] = Array.isArray(newsJ) ? newsJ : (newsJ?.articles || newsJ?.items || []);
-            const TWO_DAYS = 48 * 3600_000;
+          (async () => {
             const reasons: Record<string, { kind: 'news' | 'earnings' | 'order' | 'rating' | 'special'; label: string; url?: string }> = {};
-            for (const t of moverTickers) {
-              // Find articles mentioning this ticker
-              const matches = articles.filter((a: any) => {
-                if (!a) return false;
-                if (a.is_synthetic || a.structural_status) return false;
-                const tickerList: string[] = (a.ticker_symbols || []).concat(a.primary_ticker ? [a.primary_ticker] : []);
-                const hay = ((a.title || '') + ' ' + (a.headline || '') + ' ' + tickerList.join(' ')).toUpperCase();
-                if (!hay.includes(t)) return false;
-                if (a.published_at) {
-                  const age = Date.now() - new Date(a.published_at).getTime();
-                  if (age > TWO_DAYS) return false;
-                }
-                return true;
-              });
-              if (matches.length === 0) continue;
-              // Pick highest importance OR most recent
-              const top = matches.sort((a: any, b: any) => {
+            const TWO_DAYS = 48 * 3600_000;
+            // Fire all ticker searches in parallel
+            const results = await Promise.all(
+              moverTickers.map((t) =>
+                safeDiag<any>(`/api/v1/news?search=${encodeURIComponent(t)}&limit=8`, 8_000)
+                  .then(({ data }) => ({ ticker: t, data }))
+                  .catch(() => ({ ticker: t, data: null }))
+              )
+            );
+            if (cancelled) return;
+            for (const { ticker, data } of results) {
+              const articles: any[] = Array.isArray(data) ? data : (data?.articles || data?.items || []);
+              if (articles.length === 0) continue;
+              const fresh = articles
+                .filter((a: any) => {
+                  if (!a) return false;
+                  if (a.is_synthetic || a.structural_status) return false;
+                  if (a.published_at) {
+                    const age = Date.now() - new Date(a.published_at).getTime();
+                    if (age > TWO_DAYS) return false;
+                  }
+                  return true;
+                });
+              if (fresh.length === 0) continue;
+              const top = fresh.sort((a: any, b: any) => {
                 const aImp = a.importance_score ?? 0; const bImp = b.importance_score ?? 0;
                 if (aImp !== bImp) return bImp - aImp;
                 return new Date(b.published_at || 0).getTime() - new Date(a.published_at || 0).getTime();
               })[0];
               const title = top.title || top.headline || '';
               const at = (top.article_type || '').toUpperCase();
-              // Classify by article_type / keywords
               let kind: 'news' | 'earnings' | 'order' | 'rating' | 'special' = 'news';
               if (at === 'EARNINGS' || /Q[1-4]\s*FY|quarterly|results|earnings/i.test(title)) kind = 'earnings';
               else if (/order|letter of award|LoA|contract|won/i.test(title)) kind = 'order';
               else if (/ICRA|CRISIL|CARE|Moody|S&P|Fitch|upgrade|downgrade|rating/i.test(title)) kind = 'rating';
               else if (/preferential|SAST|stake|merger|acquisition|de-listing|open offer/i.test(title)) kind = 'special';
-              reasons[t] = { kind, label: title, url: top.source_url || top.url };
+              reasons[ticker] = { kind, label: title, url: top.source_url || top.url };
             }
-            setData((d) => ({ ...d, moversReasons: reasons } as any));
-          });
+            if (!cancelled) setData((d) => ({ ...d, moversReasons: reasons } as any));
+          })();
         }
       });
 
