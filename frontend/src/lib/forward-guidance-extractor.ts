@@ -33,8 +33,10 @@ const normalizeFY = (token: string): string => {
   // PATCH 0648 — handle '2027-28' (Indian fiscal-year ending notation)
   const range = token.match(/20(\d{2})[-–](\d{2})/);
   if (range) return `FY${range[2]}`;
-  const m = token.match(/(?:FY|fy|fiscal\s?(?:year\s?)?)?\s*(\d{2,4})/);
-  if (!m) return token.toUpperCase();
+  // PATCH 0651b — handle 'FY '27', 'FY'27' (apostrophe-prefixed Indian style)
+  const cleaned = token.replace(/[''‘’]/g, '');
+  const m = cleaned.match(/(?:FY|fy|fiscal\s?(?:year\s?)?)?\s*(\d{2,4})/);
+  if (!m) return cleaned.toUpperCase();
   let yr = m[1];
   if (yr.length === 4) yr = yr.slice(-2);
   return `FY${yr}`;
@@ -81,7 +83,8 @@ const METRIC_PATTERNS: Array<{
 // FY token regex for fiscal-year detection
 // PATCH 0648 — widened to catch MTAR-style mentions like 'FY26', '2027-28',
 // 'next financial year', 'this fiscal' and inline 'fiscal 2027'.
-const FY_TOKEN = /(?:FY\s?\d{2,4}|FY[-\s]?\d{2}|F\.Y\.\s?\d{2,4}|fiscal\s?\d{4}|fiscal\s?year\s?\d{2,4}|Q[1-4]\s?FY\s?\d{2,4}|20\d{2}[-–]\d{2})/g;
+// PATCH 0651b — added apostrophe variants: "FY '27", "FY'27", "FY ’27".
+const FY_TOKEN = /(?:FY\s?[''‘’]?\d{2,4}|FY[-\s]?[''‘’]?\d{2}|F\.Y\.\s?[''‘’]?\d{2,4}|fiscal\s?[''‘’]?\d{2,4}|fiscal\s?year\s?[''‘’]?\d{2,4}|Q[1-4]\s?FY\s?[''‘’]?\d{2,4}|20\d{2}[-–]\d{2})/g;
 
 // Phrases that signal *forward* guidance (vs. backward report)
 // PATCH 0648 — expanded to catch institutional language MTAR/DEEDEV use:
@@ -112,22 +115,93 @@ export function extractGuidance(text: string): GuidanceItem[] {
   const sents = sentences(text);
   const out: GuidanceItem[] = [];
 
+  // PATCH 0651b — track the most recent FY token seen so a sentence
+  // like "EBITDA margins of around 24%" (no inline FY) can be attributed
+  // to whatever FY was established two sentences earlier.
+  let recentFY: string | null = null;
+  let recentFYAge = 99; // sentences since last FY token; gate at 4
+
   for (const s of sents) {
+    // Update recent-FY tracker BEFORE skipping non-forward sentences so
+    // even backward "in FY26 we did X" anchors a context for subsequent
+    // forward statements like "we target 30% growth".
+    const inlineFys = (s.match(FY_TOKEN) || []).map(normalizeFY);
+    if (inlineFys.length > 0) {
+      // Use the LAST inline FY (usually the forward one in "from FY26 to FY27")
+      recentFY = inlineFys[inlineFys.length - 1];
+      recentFYAge = 0;
+    } else {
+      recentFYAge += 1;
+    }
+
     if (!isForwardLooking(s)) continue;
-    const fys = (s.match(FY_TOKEN) || []).map(normalizeFY);
+
+    // Determine FYs to attribute to this sentence:
+    //   - inline FYs if present
+    //   - else fall back to recentFY if it's within 4 sentences
+    let fys: string[] = inlineFys;
+    if (fys.length === 0 && recentFY && recentFYAge <= 4) {
+      fys = [recentFY];
+    }
     if (fys.length === 0) continue;
+
+    // PATCH 0651b — strip FY tokens from the sentence BEFORE matching
+    // numbers, so "FY '27 from 50% revenue growth to 80%" yields 50/80
+    // not 27.
+    const sStripped = s.replace(FY_TOKEN, ' ');
 
     for (const pat of METRIC_PATTERNS) {
       if (!pat.keywords.test(s)) continue;
-      const numMatch = s.match(/(?:₹\s*|Rs\.?\s*|INR\s*)?([\d,]+(?:\.\d+)?(?:\s*[-–to]+\s*[\d,]+(?:\.\d+)?)?)\s*(?:%|crore|cr|lakh|billion|million|bn|mn)?/i);
-      if (!numMatch) continue;
-      const amounts = parseAmount(numMatch[0]);
-      const isPct = pat.unit === '%' || isPercentNumber(numMatch[0], s);
+
+      // PATCH 0651b — for percentage-based metrics (GROWTH / EBITDA_MARGIN /
+      // PAT_MARGIN), prefer a number followed by '%'. For absolute Cr metrics,
+      // prefer a number followed by Cr/crore/lakh/billion or preceded by
+      // ₹/Rs/INR.
+      const wantsPct = (pat.unit === '%');
+      const pctRange = sStripped.match(/(?:from\s+)?([\d,]+(?:\.\d+)?)\s*%\s*(?:to|[-–]|and|up\s+to)\s*([\d,]+(?:\.\d+)?)\s*%?/i);
+      const pctPoint = sStripped.match(/(?:around|about|approximately|roughly|of|at|to)?\s*([\d,]+(?:\.\d+)?)\s*%(?:\s*plus|\s*\+)?/i);
+      const crRange  = sStripped.match(/(?:₹\s*|Rs\.?\s*|INR\s*)?([\d,]+(?:\.\d+)?)\s*(?:to|[-–])\s*([\d,]+(?:\.\d+)?)\s*(?:crore|cr|lakh|billion|million|bn|mn)?/i);
+      const crPoint  = sStripped.match(/(?:₹\s*|Rs\.?\s*|INR\s*)([\d,]+(?:\.\d+)?)\s*(?:crore|cr|lakh|billion|million|bn|mn)?|([\d,]+(?:\.\d+)?)\s*(?:crore|cr|lakh|billion|million|bn|mn)/i);
+
+      let rawMatch = '';
+      let amounts: { low?: number; high?: number; point?: number } = {};
+      let isPct = wantsPct;
+
+      if (wantsPct) {
+        if (pctRange) {
+          rawMatch = pctRange[0];
+          amounts = {
+            low:  parseFloat(pctRange[1].replace(/,/g, '')),
+            high: parseFloat(pctRange[2].replace(/,/g, '')),
+          };
+        } else if (pctPoint) {
+          rawMatch = pctPoint[0];
+          amounts = { point: parseFloat(pctPoint[1].replace(/,/g, '')) };
+        } else {
+          continue;
+        }
+      } else {
+        if (crRange) {
+          rawMatch = crRange[0];
+          amounts = {
+            low:  parseFloat(crRange[1].replace(/,/g, '')),
+            high: parseFloat(crRange[2].replace(/,/g, '')),
+          };
+        } else if (crPoint) {
+          rawMatch = crPoint[0];
+          const n = crPoint[1] || crPoint[2];
+          if (!n) continue;
+          amounts = { point: parseFloat(n.replace(/,/g, '')) };
+        } else {
+          continue;
+        }
+        isPct = isPercentNumber(rawMatch, s);
+      }
 
       // Normalize unit-aware values to Cr or %
       const scale = (raw: number | undefined): number | undefined => {
         if (raw === undefined) return undefined;
-        const lower = numMatch[0].toLowerCase();
+        const lower = rawMatch.toLowerCase();
         if (lower.includes('lakh')) return raw / 100;
         if (lower.includes('billion') || lower.includes('bn')) return raw * 100;
         if (lower.includes('million') || lower.includes('mn')) return raw / 10;

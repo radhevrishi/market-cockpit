@@ -428,6 +428,11 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
   let forwardPAT: number | undefined;
   let inferredMargin: number | undefined;
 
+  // PATCH 0652 — also surface GROWTH guidance so we can derive forward
+  // revenue from latest sales × (1 + growth%). MTAR raised FY27 guidance
+  // from 50% to 80%+ revenue growth — we want to honor that even though
+  // it's phrased as a rate, not an absolute number.
+  let inferredGrowth: number | undefined;
   for (const fy of fyOrder.slice().reverse()) {  // start with FY29 going down
     const yearGuidance = allGuidance.filter(g => g.fiscalYear === fy);
     if (yearGuidance.length > 0) {
@@ -435,15 +440,23 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
       const ebitda = yearGuidance.find(g => g.metric === 'EBITDA');
       const pat = yearGuidance.find(g => g.metric === 'PAT');
       const margin = yearGuidance.find(g => g.metric === 'EBITDA_MARGIN');
-      if (rev || ebitda || pat) {
+      const growth = yearGuidance.find(g => g.metric === 'GROWTH');
+      if (rev || ebitda || pat || growth || margin) {
         forwardYear = fy;
         forwardRevenue = rev ? pickGuidanceValue(rev) : undefined;
         forwardEBITDA = ebitda ? pickGuidanceValue(ebitda) : undefined;
         forwardPAT = pat ? pickGuidanceValue(pat) : undefined;
         inferredMargin = margin ? pickGuidanceValue(margin) : undefined;
+        inferredGrowth = growth ? pickGuidanceValue(growth) : undefined;
         break;
       }
     }
+  }
+
+  // PATCH 0652 — apply guided GROWTH% to latest sales when no absolute
+  // revenue guidance was given.
+  if (!forwardRevenue && inferredGrowth && excelData?.latestSales && excelData.latestSales > 0) {
+    forwardRevenue = excelData.latestSales * (1 + inferredGrowth / 100);
   }
 
   // PATCH 0648 — Better derivation chain:
@@ -562,6 +575,11 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
   if (excelData?.opmAvg && excelData.opmAvg > 18) rationale.push(`Healthy 5yr avg OPM ${excelData.opmAvg.toFixed(0)}%.`);
   if (sector) rationale.push(`Sector: ${sector} → ${sectorConf?.calc === 'EV_EBITDA' ? 'EV/EBITDA' : sectorConf?.calc || 'P/E'} preferred; multiple ${sectorConf?.multipleHint || 'sector default'}.`);
   if (forwardYear) rationale.push(`Forward year used: ${forwardYear}. Revenue ₹${forwardRevenue?.toFixed(0) || '?'} Cr · EBITDA ₹${forwardEBITDA?.toFixed(0) || '?'} Cr · PAT ₹${forwardPAT?.toFixed(0) || '?'} Cr.`);
+  // PATCH 0652 — surface what guidance was actually applied so the
+  // user can see whether management's growth/margin guidance flowed
+  // through to the projection.
+  if (inferredGrowth) rationale.push(`Applied guided revenue growth: ${inferredGrowth.toFixed(0)}% → forward revenue.`);
+  if (inferredMargin) rationale.push(`Applied guided EBITDA margin: ${inferredMargin.toFixed(0)}% → forward EBITDA.`);
 
   return {
     ticker, company, sector,
