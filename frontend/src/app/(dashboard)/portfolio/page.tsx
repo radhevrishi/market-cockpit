@@ -516,8 +516,16 @@ export default function PortfolioPage() {
   const rows = useMemo((): PortfolioRow[] => {
     // First pass: compute currentValue for each holding
     const rawRows = holdings.map(h => {
+      // PATCH 0690 — case-insensitive ticker lookup. h.symbol stored as
+      // typed by user (sometimes lowercase / with prefix); quotes API
+      // always returns upper-case bare symbols. Normalize both sides.
       const normalized = normalizeTicker(h.symbol);
-      const quote = quotes.find(q => q.ticker === h.symbol || q.ticker === normalized);
+      const upperSym = String(h.symbol || '').toUpperCase();
+      const upperNorm = String(normalized || '').toUpperCase();
+      const quote = quotes.find(q => {
+        const qt = String(q.ticker || '').toUpperCase();
+        return qt === upperSym || qt === upperNorm;
+      });
       const cmp = quote?.price || 0;
       const change = quote?.change || 0;
       const changePercent = quote?.changePercent || 0;

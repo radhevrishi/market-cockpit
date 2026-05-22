@@ -125,17 +125,27 @@ const IN_TICKERS = THEMES.flatMap(t =>
 interface QuoteEntry { price?: number; change_pct?: number; currency?: string }
 type QuoteMap = Record<string, QuoteEntry>;
 
-// Helper: normalize API response to QuoteMap
+// PATCH 0690 — normalize from the real /api/market/quotes GET shape:
+//   { stocks: [{ ticker, price, changePercent, currency, ... }] }
+// Old code POSTed to /api/v1/market/quotes (does not exist as a file route
+// → fell through to vercel.json rewrite → Render backend, often cold/down)
+// and expected the response keyed by ticker with change_pct (snake_case).
+// Both endpoint + field name were wrong, which is why no theme price ever
+// resolved.
 function normalizeQuoteResponse(data: unknown): QuoteMap {
   if (!data) return {};
-  if (Array.isArray(data)) {
-    const map: QuoteMap = {};
-    (data as Array<{ ticker?: string; price?: number; change_pct?: number; currency?: string }>).forEach(quote => {
-      if (quote?.ticker) map[quote.ticker] = quote;
-    });
-    return map;
+  const stocks: Array<{ ticker?: string; price?: number; changePercent?: number; change_pct?: number; currency?: string }> =
+    (data as any)?.stocks ?? (Array.isArray(data) ? (data as any[]) : []);
+  const map: QuoteMap = {};
+  for (const q of stocks) {
+    if (!q?.ticker) continue;
+    map[q.ticker.toUpperCase()] = {
+      price: q.price,
+      change_pct: q.changePercent ?? q.change_pct,
+      currency: q.currency,
+    };
   }
-  return (typeof data === 'object') ? data as QuoteMap : {};
+  return map;
 }
 
 // ── Hooks ─────────────────────────────────────────────────────────────────────
@@ -144,23 +154,26 @@ function useThemeQuotes() {
   return useQuery<QuoteMap>({
     queryKey: ['themes', 'quotes'],
     queryFn: async () => {
-      // Run US and India quote fetches in parallel (different market endpoints)
-      const results = await Promise.allSettled([
-        US_TICKERS.length > 0 ? api.post('/market/quotes', US_TICKERS) : Promise.resolve({ data: {} }),
-        IN_TICKERS.length > 0 ? api.post('/market/quotes', IN_TICKERS) : Promise.resolve({ data: {} }),
-      ]);
-
-      const merged: QuoteMap = {};
-      for (const r of results) {
-        if (r.status === 'fulfilled') {
-          const part = normalizeQuoteResponse(r.value.data);
-          Object.assign(merged, part);
+      // PATCH 0690 — switched from broken POST /api/v1/market/quotes to the
+      // canonical GET /api/market/quotes?market=… (same endpoint /movers uses
+      // successfully). Same-origin fetch so no axios baseURL rewrite trap.
+      const fetchMarket = async (market: 'us' | 'india'): Promise<unknown> => {
+        try {
+          const r = await fetch(`/api/market/quotes?market=${market}`, { cache: 'no-store' });
+          if (!r.ok) return null;
+          return await r.json();
+        } catch {
+          return null;
         }
-      }
-      return merged;
+      };
+      const [usData, inData] = await Promise.all([
+        US_TICKERS.length > 0 ? fetchMarket('us') : Promise.resolve(null),
+        IN_TICKERS.length > 0 ? fetchMarket('india') : Promise.resolve(null),
+      ]);
+      return { ...normalizeQuoteResponse(usData), ...normalizeQuoteResponse(inData) };
     },
     staleTime: 60_000,
-    refetchInterval: 120_000,
+    refetchInterval: 3 * 60_000, // PATCH 0688
     retry: 1,
   });
 }
@@ -246,7 +259,7 @@ export default function ThemesPage() {
 
           // Only count tickers that have real price data (price > 0)
           const liveQuotes = theme.tickers
-            .map(t => quotes?.[t.ticker])
+            .map(t => quotes?.[t.ticker?.toUpperCase()])
             .filter((q): q is QuoteEntry => q != null && (q.price ?? 0) > 0);
           const livePcts = liveQuotes
             .map(q => q.change_pct)
@@ -311,7 +324,7 @@ export default function ThemesPage() {
                         ticker={t.ticker}
                         exchange={t.exchange}
                         name={t.name}
-                        quote={quotes?.[t.ticker]}
+                        quote={quotes?.[t.ticker?.toUpperCase()]}
                         loading={quotesLoading}
                         onClick={() => setDrawerTicker({ symbol: t.ticker, exchange: t.exchange })}
                       />

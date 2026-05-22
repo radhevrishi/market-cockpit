@@ -353,9 +353,31 @@ function useTickerQuote(ticker: string) {
   return useQuery({
     queryKey: ['ticker-quote', ticker],
     queryFn: async () => {
+      // PATCH 0690 — was POSTing to /api/v1/market/quotes which doesn't
+      // exist as a Next.js file route and fell through to the Render
+      // backend rewrite (cold/down). Switched to GET /api/market/quote
+      // (singular) — same endpoint Portfolio + Movers fallback uses
+      // successfully. Remap changePercent → change_pct so the existing
+      // safeScalar consumers keep working without per-call changes.
       if (!ticker) return null;
-      const { data } = await api.post('/market/quotes', { symbols: [ticker] });
-      return Array.isArray(data) ? data[0] : data?.[ticker] || null;
+      const t = String(ticker).toUpperCase();
+      try {
+        const r = await fetch(`/api/market/quote?symbols=${encodeURIComponent(t)}`, { cache: 'no-store' });
+        if (!r.ok) return null;
+        const json = await r.json();
+        const stock = (json?.stocks ?? [])[0];
+        if (!stock) return null;
+        return {
+          ticker: stock.ticker,
+          price: stock.price,
+          change_pct: stock.changePercent ?? stock.change_pct,
+          currency: stock.currency,
+          exchange: stock.exchange,
+          name: stock.name,
+        };
+      } catch {
+        return null;
+      }
     },
     enabled: !!ticker,
     staleTime: 60_000,

@@ -654,12 +654,17 @@ export default function WatchlistsPage() {
   }, [tickers, fetchData]);
 
   // Build watchlist items — show ALL tickers, even without live quotes
+  // PATCH 0690 — case-insensitive ticker lookup. Watchlist stored values
+  // may be 'reliance' / 'NSE:RELIANCE' / 'RELIANCE'; the quotes API always
+  // returns upper-case bare symbols. Normalize both sides before .find().
+  const normalize = (t: string) => String(t || '').toUpperCase().replace(/^(NSE:|BSE:|NYSE:|NASDAQ:)/, '').trim();
   const watchlistItems = useMemo(() => {
     return tickers.map(ticker => {
-      const quote = quotes.find(q => q.ticker === ticker);
+      const norm = normalize(ticker);
+      const quote = quotes.find(q => normalize(q.ticker) === norm);
       return {
         ticker,
-        company: quote?.company || ticker,
+        company: quote?.company || (quote as any)?.name || ticker,
         sector: quote?.sector || '—',
         price: quote?.price || 0,
         change: quote?.change || 0,
@@ -669,6 +674,7 @@ export default function WatchlistsPage() {
         flag: watchlistFlags[ticker] || null,
       };
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tickers, quotes, watchlistFlags]);
 
   // Sort items
