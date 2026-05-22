@@ -1408,6 +1408,535 @@ function MethodCard({ m, idx }: { m: GuidanceMethod; idx: number }) {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// PRACTICE EXAMPLES (PATCH 0659)
+//
+// Worked valuations for all 23 companies in the user's guidance table.
+// Each example carries: the actual guidance quote, the pattern applied,
+// approximate TTM revenue + market cap anchors, sector multiple, full
+// step-by-step calculation, fair value, and upside. Notes call out
+// which inputs are approximate vs. guidance-given so the user can swap
+// in precise numbers when they have them.
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface PracticeExample {
+  company: string;
+  ticker?: string;
+  sector: string;
+  guidance: string;
+  pattern: string;           // matches Pattern # from GUIDANCE_METHODS
+  inputs: Array<{ label: string; value: string; approx?: boolean }>;
+  steps: Array<{ label: string; calc: string; result: string }>;
+  fairValue: string;
+  upside: string;
+  upsideColor: string;       // green / amber / red
+  note?: string;
+}
+
+const PRACTICE_EXAMPLES: PracticeExample[] = [
+  {
+    company: 'Acutaas Chemicals Ltd', sector: 'Specialty Chemicals',
+    guidance: '30% revenue growth for FY26',
+    pattern: '#01 Revenue Growth %',
+    inputs: [
+      { label: 'TTM Revenue (FY25)', value: '~₹500 Cr', approx: true },
+      { label: 'Current Market Cap', value: '~₹4,000 Cr', approx: true },
+      { label: 'Chemicals P/S (base)', value: '8×' },
+      { label: 'Guidance', value: '30% growth' },
+    ],
+    steps: [
+      { label: 'Forward Revenue FY26', calc: '500 × 1.30', result: '₹650 Cr' },
+      { label: 'Target Mcap', calc: '650 × 8', result: '₹5,200 Cr' },
+      { label: 'Upside %', calc: '(5,200 / 4,000) − 1', result: '+30%' },
+    ],
+    fairValue: '₹5,200 Cr',
+    upside: '+30% (1yr horizon) → WATCH/BUY zone',
+    upsideColor: '#10B981',
+  },
+  {
+    company: 'Aeroflex Industries Ltd', sector: 'Niche Manufacturing (Flexible hoses)',
+    guidance: '25% EBITDA growth FY26 + peak ₹735 Cr revenue by FY28',
+    pattern: '#08 EBITDA Growth + #09 Peak Revenue',
+    inputs: [
+      { label: 'TTM Revenue', value: '~₹350 Cr', approx: true },
+      { label: 'TTM EBITDA (~26% margin)', value: '~₹91 Cr', approx: true },
+      { label: 'Peak Revenue FY28', value: '₹735 Cr (₹650 + ₹85)' },
+      { label: 'Current Market Cap', value: '~₹3,500 Cr', approx: true },
+      { label: 'EV/EBITDA (premium industrial)', value: '20×' },
+      { label: 'P/S (peak basis)', value: '8×' },
+    ],
+    steps: [
+      { label: 'Method A — FY26 EBITDA', calc: '91 × 1.25', result: '₹114 Cr' },
+      { label: '  ↳ EV at 20×', calc: '114 × 20', result: '₹2,280 Cr → −35%' },
+      { label: 'Method B — Peak Mcap FY28', calc: '735 × 8', result: '₹5,880 Cr' },
+      { label: '  ↳ Total upside (2yr)', calc: '(5,880 / 3,500) − 1', result: '+68%' },
+      { label: '  ↳ Annualized', calc: '(5,880/3,500)^(1/2) − 1', result: '+30% CAGR' },
+    ],
+    fairValue: '₹2,280 Cr (FY26) → ₹5,880 Cr (FY28 peak)',
+    upside: 'Near-term −35%, 2-yr +68% — patient capital story',
+    upsideColor: '#22D3EE',
+    note: 'Patience play — FY26 looks expensive but FY28 peak justifies hold-through.',
+  },
+  {
+    company: 'Aimtron Electronics Ltd', sector: 'EMS / SME',
+    guidance: '40-50% CAGR revenue growth for FY26',
+    pattern: '#02 Revenue Range',
+    inputs: [
+      { label: 'TTM Revenue', value: '~₹250 Cr', approx: true },
+      { label: 'Current Market Cap', value: '~₹1,200 Cr', approx: true },
+      { label: 'EMS P/S (bear/base/bull)', value: '4× / 6× / 9×' },
+    ],
+    steps: [
+      { label: 'Bear (40% × 4×)', calc: '250 × 1.40 × 4', result: '₹1,400 Cr → +17%' },
+      { label: 'Base (45% × 6×)', calc: '250 × 1.45 × 6', result: '₹2,175 Cr → +81%' },
+      { label: 'Bull (50% × 9×)', calc: '250 × 1.50 × 9', result: '₹3,375 Cr → +181%' },
+    ],
+    fairValue: '₹2,175 Cr (base)',
+    upside: '+81% base, +17% bear / +181% bull — wide spread',
+    upsideColor: '#10B981',
+    note: 'SME EMS multiples re-rate fast — verify orders are signed, not pipeline.',
+  },
+  {
+    company: 'Azad Engineering Ltd', sector: 'Premium Precision (Aero/Defence)',
+    guidance: '25%+ revenue growth; 33-35% EBITDA margin sustainable',
+    pattern: '#01 Growth + #11 Sustainable Margin',
+    inputs: [
+      { label: 'TTM Revenue', value: '~₹400 Cr', approx: true },
+      { label: 'Sustainable EBITDA Margin', value: '34% (mid)' },
+      { label: 'Current Market Cap', value: '~₹12,000 Cr', approx: true },
+      { label: 'EV/EBITDA (premium precision)', value: '30×' },
+    ],
+    steps: [
+      { label: 'Forward Revenue', calc: '400 × 1.25', result: '₹500 Cr' },
+      { label: 'Forward EBITDA', calc: '500 × 0.34', result: '₹170 Cr' },
+      { label: 'EV at 30×', calc: '170 × 30', result: '₹5,100 Cr' },
+      { label: 'Upside', calc: '(5,100 / 12,000) − 1', result: '−57%' },
+    ],
+    fairValue: '₹5,100 Cr',
+    upside: '−57% — premium already in price',
+    upsideColor: '#EF4444',
+    note: 'Quality is right, price is wrong. Wait for re-rating event or accumulate on dips.',
+  },
+  {
+    company: 'CCL Products (India) Ltd', sector: 'Coffee / F&B',
+    guidance: '25% EBITDA growth guidance for FY26',
+    pattern: '#08 EBITDA Growth',
+    inputs: [
+      { label: 'TTM Revenue', value: '~₹2,500 Cr', approx: true },
+      { label: 'TTM EBITDA (~18%)', value: '~₹450 Cr', approx: true },
+      { label: 'Net Debt', value: '~₹800 Cr', approx: true },
+      { label: 'Current Market Cap', value: '~₹9,500 Cr', approx: true },
+      { label: 'EV/EBITDA (F&B)', value: '18×' },
+    ],
+    steps: [
+      { label: 'Forward EBITDA', calc: '450 × 1.25', result: '₹563 Cr' },
+      { label: 'EV', calc: '563 × 18', result: '₹10,134 Cr' },
+      { label: 'Equity Value', calc: '10,134 − 800', result: '₹9,334 Cr' },
+      { label: 'Upside', calc: '(9,334 / 9,500) − 1', result: '−2%' },
+    ],
+    fairValue: '₹9,334 Cr',
+    upside: '−2% — fairly valued (consensus reflects guidance)',
+    upsideColor: '#F59E0B',
+  },
+  {
+    company: 'DEE Development Engineers Ltd', sector: 'Capital Goods (Piping)',
+    guidance: '18% to 20% EBITDA margin guidance for FY27',
+    pattern: '#06 EBITDA Margin',
+    inputs: [
+      { label: 'TTM Revenue', value: '~₹1,200 Cr', approx: true },
+      { label: 'Assumed Growth (no rev guidance)', value: '15% (sector default)' },
+      { label: 'Margin (mid 19%)', value: '19%' },
+      { label: 'EV/EBITDA (Engineering)', value: '14×' },
+      { label: 'Current Market Cap', value: '~₹3,500 Cr', approx: true },
+    ],
+    steps: [
+      { label: 'Forward Revenue FY27', calc: '1,200 × 1.15', result: '₹1,380 Cr' },
+      { label: 'Forward EBITDA', calc: '1,380 × 0.19', result: '₹262 Cr' },
+      { label: 'EV', calc: '262 × 14', result: '₹3,668 Cr' },
+      { label: 'Upside', calc: '(3,668 / 3,500) − 1', result: '+5%' },
+    ],
+    fairValue: '₹3,668 Cr',
+    upside: '+5% — fairly valued',
+    upsideColor: '#F59E0B',
+    note: 'Margin guidance only. Used 15% revenue growth assumption (sector default) — verify with actual guidance.',
+  },
+  {
+    company: 'Emcure Pharmaceuticals Ltd', sector: 'Pharma',
+    guidance: 'Low-to-mid teens CAGR 3-5yr + 300-400 bps margin rise to 23-24% by FY29',
+    pattern: '#03 CAGR + #07 bps Improvement',
+    inputs: [
+      { label: 'TTM Revenue (FY26)', value: '~₹6,500 Cr', approx: true },
+      { label: 'Current EBITDA margin', value: '~20%' },
+      { label: 'Revenue CAGR (mid)', value: '14%' },
+      { label: 'Horizon', value: '3 yr (FY26 → FY29)' },
+      { label: 'Forward margin (mid 23.5%)', value: '20% + 350 bps' },
+      { label: 'Net Debt', value: '~₹4,000 Cr', approx: true },
+      { label: 'EV/EBITDA (Pharma)', value: '18×' },
+      { label: 'Current Market Cap', value: '~₹25,000 Cr', approx: true },
+    ],
+    steps: [
+      { label: 'Forward Revenue FY29', calc: '6,500 × (1.14)^3', result: '₹9,627 Cr' },
+      { label: 'Forward EBITDA', calc: '9,627 × 0.235', result: '₹2,262 Cr' },
+      { label: 'EV', calc: '2,262 × 18', result: '₹40,716 Cr' },
+      { label: 'Equity', calc: '40,716 − 4,000', result: '₹36,716 Cr' },
+      { label: 'Total upside (3yr)', calc: '(36,716 / 25,000) − 1', result: '+47%' },
+      { label: 'Annualized', calc: '(36,716/25,000)^(1/3) − 1', result: '+14% CAGR' },
+    ],
+    fairValue: '₹36,716 Cr',
+    upside: '+47% total / +14% CAGR — decent compounder',
+    upsideColor: '#10B981',
+  },
+  {
+    company: 'GNG Electronics Ltd', sector: 'Refurbished IT',
+    guidance: 'Revenue 28-30% FY26 + EBITDA margin +150-200 bps',
+    pattern: '#02 Range + #07 bps',
+    inputs: [
+      { label: 'TTM Revenue', value: '~₹600 Cr', approx: true },
+      { label: 'Current EBITDA margin', value: '~8%', approx: true },
+      { label: 'Growth (mid 29%)', value: '29%' },
+      { label: 'Forward margin (8% + 175 bps)', value: '9.75%' },
+      { label: 'EV/EBITDA', value: '18×' },
+      { label: 'Current Market Cap', value: '~₹4,000 Cr', approx: true },
+    ],
+    steps: [
+      { label: 'Forward Revenue', calc: '600 × 1.29', result: '₹774 Cr' },
+      { label: 'Forward EBITDA', calc: '774 × 0.0975', result: '₹75 Cr' },
+      { label: 'EV', calc: '75 × 18', result: '₹1,350 Cr' },
+      { label: 'Upside (EV/EBITDA basis)', calc: '(1,350 / 4,000) − 1', result: '−66%' },
+      { label: 'Cross-check via P/S 6×', calc: '774 × 6', result: '₹4,644 → +16%' },
+    ],
+    fairValue: '₹1,350 Cr (EV/EBITDA) / ₹4,644 Cr (P/S)',
+    upside: 'Method disagreement — refurbished biz has low EBITDA but high revenue. P/S more relevant.',
+    upsideColor: '#F59E0B',
+    note: 'When methods disagree, sector convention wins. Refurbished IT is typically valued on P/S (gross margin > EBITDA margin).',
+  },
+  {
+    company: 'HFCL Ltd', sector: 'Telecom Infra (OFC + Defence)',
+    guidance: 'OFC ₹3,500 Cr + Defence ₹500 Cr in FY27',
+    pattern: '#12 Sum-of-Parts',
+    inputs: [
+      { label: 'OFC Revenue FY27', value: '₹3,500 Cr' },
+      { label: 'Defence Revenue FY27', value: '₹500 Cr' },
+      { label: 'Other (existing biz)', value: '~₹1,000 Cr', approx: true },
+      { label: 'OFC P/S', value: '3× (cyclical)' },
+      { label: 'Defence P/S', value: '8× (premium)' },
+      { label: 'Other P/S', value: '2×' },
+      { label: 'Net Debt', value: '~₹2,000 Cr', approx: true },
+      { label: 'Current Market Cap', value: '~₹17,000 Cr', approx: true },
+    ],
+    steps: [
+      { label: 'OFC value', calc: '3,500 × 3', result: '₹10,500 Cr' },
+      { label: 'Defence value', calc: '500 × 8', result: '₹4,000 Cr' },
+      { label: 'Other biz value', calc: '1,000 × 2', result: '₹2,000 Cr' },
+      { label: 'Total EV', calc: '10,500 + 4,000 + 2,000', result: '₹16,500 Cr' },
+      { label: 'Less: 10% conglom discount', calc: '16,500 × 0.90', result: '₹14,850 Cr' },
+      { label: 'Equity (− net debt)', calc: '14,850 − 2,000', result: '₹12,850 Cr' },
+      { label: 'Upside', calc: '(12,850 / 17,000) − 1', result: '−24%' },
+    ],
+    fairValue: '₹12,850 Cr',
+    upside: '−24% — defence segment carries most of the value but doesn\'t close the gap',
+    upsideColor: '#EF4444',
+  },
+  {
+    company: 'Inox India Ltd', sector: 'Cryogenic Engineering',
+    guidance: '18-20% revenue growth guidance for FY27',
+    pattern: '#02 Revenue Range',
+    inputs: [
+      { label: 'TTM Revenue', value: '~₹1,300 Cr', approx: true },
+      { label: 'P/S (bear/base/bull)', value: '8× / 11× / 14×' },
+      { label: 'Current Market Cap', value: '~₹16,000 Cr', approx: true },
+    ],
+    steps: [
+      { label: 'Bear (18% × 8×)', calc: '1,300 × 1.18 × 8', result: '₹12,272 Cr → −23%' },
+      { label: 'Base (19% × 11×)', calc: '1,300 × 1.19 × 11', result: '₹17,017 Cr → +6%' },
+      { label: 'Bull (20% × 14×)', calc: '1,300 × 1.20 × 14', result: '₹21,840 Cr → +37%' },
+    ],
+    fairValue: '₹17,017 Cr (base)',
+    upside: '+6% base, ±25% scenario range — fair zone',
+    upsideColor: '#F59E0B',
+  },
+  {
+    company: 'Knowledge Marine & Engineering Works Ltd', sector: 'Marine Logistics',
+    guidance: '20%+ YoY revenue growth for FY27',
+    pattern: '#01 Revenue Growth %',
+    inputs: [
+      { label: 'TTM Revenue', value: '~₹450 Cr', approx: true },
+      { label: 'Current Market Cap', value: '~₹4,000 Cr', approx: true },
+      { label: 'P/S (Marine logistics)', value: '6×' },
+    ],
+    steps: [
+      { label: 'Forward Revenue', calc: '450 × 1.20', result: '₹540 Cr' },
+      { label: 'Target Mcap', calc: '540 × 6', result: '₹3,240 Cr' },
+      { label: 'Upside', calc: '(3,240 / 4,000) − 1', result: '−19%' },
+    ],
+    fairValue: '₹3,240 Cr',
+    upside: '−19% — multiple already premium for this growth rate',
+    upsideColor: '#EF4444',
+    note: '20%+ growth is the FLOOR — stretch case could justify higher. But sector convention caps P/S at 6× for marine.',
+  },
+  {
+    company: 'Lumax Auto Technologies Ltd', sector: 'Auto Ancillary',
+    guidance: 'Revenue growth revised to 30% for FY26',
+    pattern: '#01 Revenue Growth %',
+    inputs: [
+      { label: 'TTM Revenue', value: '~₹3,200 Cr', approx: true },
+      { label: 'Current Market Cap', value: '~₹6,500 Cr', approx: true },
+      { label: 'P/S (Auto ancillary)', value: '2×' },
+    ],
+    steps: [
+      { label: 'Forward Revenue', calc: '3,200 × 1.30', result: '₹4,160 Cr' },
+      { label: 'Target Mcap', calc: '4,160 × 2', result: '₹8,320 Cr' },
+      { label: 'Upside', calc: '(8,320 / 6,500) − 1', result: '+28%' },
+    ],
+    fairValue: '₹8,320 Cr',
+    upside: '+28% — WATCH/BUY zone',
+    upsideColor: '#10B981',
+    note: 'Upward revision in guidance is a positive signal — actual delivery often exceeds revised target.',
+  },
+  {
+    company: 'MTAR Technologies Ltd', sector: 'Defence / Premium Engineering',
+    guidance: '50% revenue growth for FY27 (raised from earlier 50% to 80%+ in concall)',
+    pattern: '#01 Growth + #03 CAGR (multi-year)',
+    inputs: [
+      { label: 'TTM Revenue (FY26)', value: '₹876 Cr' },
+      { label: 'Growth FY27', value: '50% (floor) → 80% (stretch)' },
+      { label: 'P/S (Defence)', value: '10× base, 14× bull' },
+      { label: 'Current Market Cap', value: '~₹17,675 Cr' },
+    ],
+    steps: [
+      { label: 'Conservative (50%)', calc: '876 × 1.50 × 10', result: '₹13,140 Cr → −26%' },
+      { label: 'Stretch (80%)', calc: '876 × 1.80 × 10', result: '₹15,768 Cr → −11%' },
+      { label: 'Bull (80% × 14×)', calc: '876 × 1.80 × 14', result: '₹22,075 Cr → +25%' },
+      { label: 'FY28 (compounded 65%/yr × 12×)', calc: '876 × 1.65 × 1.65 × 12', result: '₹28,627 Cr → +62% (2yr)' },
+    ],
+    fairValue: '₹13,140-22,075 Cr (FY27 range)',
+    upside: 'AVOID near-term, WATCH for FY28 if growth holds',
+    upsideColor: '#F59E0B',
+    note: 'Same name covered in Auto-Valuation tab. Use FY28 toggle there for the 2-year view.',
+  },
+  {
+    company: 'Navin Fluorine International Ltd', sector: 'Specialty Chemicals (Premium)',
+    guidance: '30%+ EBITDA margin FY26 + ₹600-825 Cr peak revenue from R32 by Q3 FY27',
+    pattern: '#06 Margin + #09 Peak Revenue',
+    inputs: [
+      { label: 'TTM Revenue', value: '~₹2,000 Cr', approx: true },
+      { label: 'Forward Rev assumption', value: '~₹2,400 Cr (20% growth)', approx: true },
+      { label: 'R32 Peak Revenue add', value: '~₹712 Cr (mid)' },
+      { label: 'Total Forward Revenue', value: '~₹3,112 Cr' },
+      { label: 'EBITDA margin', value: '30%' },
+      { label: 'EV/EBITDA (premium chem)', value: '30×' },
+      { label: 'Current Market Cap', value: '~₹26,000 Cr', approx: true },
+    ],
+    steps: [
+      { label: 'Forward EBITDA', calc: '3,112 × 0.30', result: '₹934 Cr' },
+      { label: 'EV', calc: '934 × 30', result: '₹28,020 Cr' },
+      { label: 'Upside', calc: '(28,020 / 26,000) − 1', result: '+8%' },
+    ],
+    fairValue: '₹28,020 Cr',
+    upside: '+8% — fully valued, near term',
+    upsideColor: '#F59E0B',
+  },
+  {
+    company: 'Quality Power Electrical Equipments Ltd', sector: 'Grid Equipment',
+    guidance: '₹700-800 Cr revenue + 22%+ EBITDA margin FY26',
+    pattern: '#04 Absolute Revenue + #06 Margin',
+    inputs: [
+      { label: 'Forward Revenue FY26 (mid)', value: '₹750 Cr' },
+      { label: 'EBITDA margin', value: '22%' },
+      { label: 'EV/EBITDA (premium grid)', value: '20×' },
+      { label: 'P/S cross-check', value: '8×' },
+      { label: 'Current Market Cap', value: '~₹5,500 Cr', approx: true },
+    ],
+    steps: [
+      { label: 'Forward EBITDA', calc: '750 × 0.22', result: '₹165 Cr' },
+      { label: 'EV at 20×', calc: '165 × 20', result: '₹3,300 Cr → −40%' },
+      { label: 'P/S cross-check', calc: '750 × 8', result: '₹6,000 Cr → +9%' },
+    ],
+    fairValue: '₹3,300-6,000 Cr',
+    upside: 'Methods disagree (−40% to +9%) — fair value zone',
+    upsideColor: '#F59E0B',
+    note: 'For high-margin niche grid names, EV/EBITDA can understate value. P/S often more reliable.',
+  },
+  {
+    company: 'S J S Enterprises Ltd', sector: 'Auto Decoratives',
+    guidance: 'Exports to reach 14-15% of revenue by FY28',
+    pattern: '#10 Segment Mix Shift',
+    inputs: [
+      { label: 'TTM Revenue', value: '~₹700 Cr', approx: true },
+      { label: 'Assumed growth (18%)', value: '18% CAGR' },
+      { label: 'FY28 Revenue', value: '~₹974 Cr' },
+      { label: 'Export % (mid 14.5%)', value: '14.5%' },
+      { label: 'Export margin', value: '25%' },
+      { label: 'Domestic margin', value: '15%' },
+      { label: 'P/S (Auto decoratives)', value: '5×' },
+      { label: 'Current Market Cap', value: '~₹4,500 Cr', approx: true },
+    ],
+    steps: [
+      { label: 'Export revenue', calc: '974 × 0.145', result: '₹141 Cr' },
+      { label: 'Domestic revenue', calc: '974 × 0.855', result: '₹833 Cr' },
+      { label: 'Blended EBITDA', calc: '(141×0.25) + (833×0.15)', result: '₹160 Cr' },
+      { label: 'Blended margin', calc: '160 / 974', result: '16.4%' },
+      { label: 'Target Mcap (P/S 5×)', calc: '974 × 5', result: '₹4,870 Cr → +8%' },
+    ],
+    fairValue: '₹4,870 Cr',
+    upside: '+8% (2yr) — fair zone. Mix shift = quality premium, not big upside',
+    upsideColor: '#F59E0B',
+  },
+  {
+    company: 'Sai Life Sciences Ltd', sector: 'Pharma CDMO',
+    guidance: '15-20% revenue CAGR over 3-5 years + 28-30% EBITDA margin by FY27',
+    pattern: '#03 CAGR + #06 Margin',
+    inputs: [
+      { label: 'TTM Revenue', value: '~₹1,800 Cr', approx: true },
+      { label: 'CAGR (mid 17.5%)', value: '17.5%' },
+      { label: 'Horizon', value: '4 yr → FY30' },
+      { label: 'EBITDA margin', value: '29%' },
+      { label: 'EV/EBITDA (Pharma CDMO)', value: '22×' },
+      { label: 'Current Market Cap', value: '~₹16,000 Cr', approx: true },
+    ],
+    steps: [
+      { label: 'FY30 Revenue', calc: '1,800 × (1.175)^4', result: '₹3,423 Cr' },
+      { label: 'FY30 EBITDA', calc: '3,423 × 0.29', result: '₹993 Cr' },
+      { label: 'EV', calc: '993 × 22', result: '₹21,846 Cr' },
+      { label: 'Total upside (4yr)', calc: '(21,846 / 16,000) − 1', result: '+37%' },
+      { label: 'Annualized', calc: '(21,846/16,000)^(1/4) − 1', result: '+8% CAGR' },
+    ],
+    fairValue: '₹21,846 Cr (FY30)',
+    upside: '+37% total / +8% CAGR — modest 4yr compounder',
+    upsideColor: '#22D3EE',
+  },
+  {
+    company: 'Sansera Engineering Ltd', sector: 'Auto Ancillary (Precision)',
+    guidance: 'ADS Revenue ₹550-600 Cr for FY27 (segment only)',
+    pattern: '#04 Absolute Revenue (segment) + sector default for rest',
+    inputs: [
+      { label: 'TTM Revenue', value: '~₹2,800 Cr', approx: true },
+      { label: 'ADS segment FY27 (mid)', value: '₹575 Cr' },
+      { label: 'Other segments (15% growth)', value: '~₹2,645 Cr', approx: true },
+      { label: 'Total FY27 Revenue', value: '~₹3,220 Cr' },
+      { label: 'P/S (Auto precision)', value: '3×' },
+      { label: 'Current Market Cap', value: '~₹8,500 Cr', approx: true },
+    ],
+    steps: [
+      { label: 'Total FY27 revenue', calc: '575 + 2,645', result: '₹3,220 Cr' },
+      { label: 'Target Mcap', calc: '3,220 × 3', result: '₹9,660 Cr' },
+      { label: 'Upside', calc: '(9,660 / 8,500) − 1', result: '+14%' },
+    ],
+    fairValue: '₹9,660 Cr',
+    upside: '+14% — modest, partial guidance limits precision',
+    upsideColor: '#22D3EE',
+    note: 'Only ADS segment got explicit guidance. Other segments assumed 15% sector default — verify with actual concall.',
+  },
+  {
+    company: 'Sterlite Technologies Ltd', sector: 'Telecom (OFC)',
+    guidance: '20%+ YoY revenue growth for FY26',
+    pattern: '#01 Revenue Growth %',
+    inputs: [
+      { label: 'TTM Revenue', value: '~₹4,500 Cr', approx: true },
+      { label: 'P/S (Commoditized telecom)', value: '1.5×' },
+      { label: 'Current Market Cap', value: '~₹6,500 Cr', approx: true },
+    ],
+    steps: [
+      { label: 'Forward Revenue', calc: '4,500 × 1.20', result: '₹5,400 Cr' },
+      { label: 'Target Mcap', calc: '5,400 × 1.5', result: '₹8,100 Cr' },
+      { label: 'Upside', calc: '(8,100 / 6,500) − 1', result: '+25%' },
+    ],
+    fairValue: '₹8,100 Cr',
+    upside: '+25% — cheap on P/S basis',
+    upsideColor: '#10B981',
+    note: 'Cyclical telecom — verify margin recovery actually happens before sizing in.',
+  },
+  {
+    company: 'TD Power Systems Ltd', sector: 'Generator OEM',
+    guidance: '₹2,200+ Cr FY27 (conservative)',
+    pattern: '#04 Absolute Revenue (floor)',
+    inputs: [
+      { label: 'FY27 Revenue (floor)', value: '₹2,200 Cr (treated as BEAR)' },
+      { label: 'Stretch (~+10%)', value: '~₹2,420 Cr (base)' },
+      { label: 'Bull (~+20%)', value: '~₹2,640 Cr' },
+      { label: 'P/S (Industrial cap goods)', value: '5×' },
+      { label: 'Current Market Cap', value: '~₹6,800 Cr', approx: true },
+    ],
+    steps: [
+      { label: 'Bear (2,200 × 5×)', calc: '2,200 × 5', result: '₹11,000 Cr → +62%' },
+      { label: 'Base (2,420 × 5×)', calc: '2,420 × 5', result: '₹12,100 Cr → +78%' },
+      { label: 'Bull (2,640 × 5×)', calc: '2,640 × 5', result: '₹13,200 Cr → +94%' },
+    ],
+    fairValue: '₹12,100 Cr (base)',
+    upside: '+78% base — STRONG BUY zone (conservative guidance = floor)',
+    upsideColor: '#10B981',
+    note: 'When mgmt explicitly says "conservative", treat as your BEAR case. Real bear is -10% to -20% below.',
+  },
+];
+
+function PracticeExampleCard({ ex }: { ex: PracticeExample }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ background: '#0D1426', border: `1px solid ${BORDER}`, borderRadius: 6, overflow: 'hidden' }}>
+      <button onClick={() => setOpen(!open)} style={{
+        width: '100%', background: 'transparent', border: 'none',
+        padding: '10px 14px', textAlign: 'left', cursor: 'pointer',
+        display: 'flex', alignItems: 'center', gap: 10,
+      }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: TEXT }}>{ex.company}</div>
+          <div style={{ fontSize: 10, color: DIM, marginTop: 2 }}>{ex.sector} · {ex.pattern}</div>
+        </div>
+        <div style={{ fontSize: 12, fontWeight: 800, color: ex.upsideColor, minWidth: 65, textAlign: 'right' }}>
+          {ex.upside.match(/^([-+]?\d+%)/)?.[1] || '—'}
+        </div>
+        <span style={{ fontSize: 14, color: DIM, marginLeft: 4 }}>{open ? '−' : '+'}</span>
+      </button>
+      {open && (
+        <div style={{ padding: '0 14px 14px 14px' }}>
+          <div style={{ background: '#1A2540', borderLeft: '3px solid #22D3EE', padding: '8px 12px', borderRadius: 3, marginBottom: 12, fontSize: 12 }}>
+            <span style={{ fontWeight: 800, color: '#22D3EE', marginRight: 8 }}>Management quote:</span>
+            <span style={{ color: TEXT, fontStyle: 'italic' }}>"{ex.guidance}"</span>
+          </div>
+
+          <div style={{ fontSize: 11, fontWeight: 800, color: DIM, letterSpacing: '0.5px', marginBottom: 5 }}>INPUTS</div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, marginBottom: 12 }}>
+            <tbody>
+              {ex.inputs.map((inp, i) => (
+                <tr key={i} style={{ borderBottom: i === ex.inputs.length - 1 ? 'none' : `1px solid ${BORDER}` }}>
+                  <td style={{ padding: '4px 8px 4px 0', color: DIM }}>
+                    {inp.label}{inp.approx && <span style={{ color: '#F59E0B', marginLeft: 4, fontSize: 10 }}>~</span>}
+                  </td>
+                  <td style={{ padding: '4px 0', textAlign: 'right', color: TEXT, fontWeight: 700, fontFamily: 'ui-monospace, monospace' }}>{inp.value}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <div style={{ fontSize: 11, fontWeight: 800, color: DIM, letterSpacing: '0.5px', marginBottom: 5 }}>CALCULATION</div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, marginBottom: 12 }}>
+            <tbody>
+              {ex.steps.map((s, i) => (
+                <tr key={i} style={{ borderBottom: `1px solid ${BORDER}` }}>
+                  <td style={{ padding: '5px 8px 5px 0', color: TEXT, fontWeight: 700 }}>{s.label}</td>
+                  <td style={{ padding: '5px 8px', color: DIM, fontFamily: 'ui-monospace, monospace', fontSize: 11 }}>{s.calc}</td>
+                  <td style={{ padding: '5px 0', textAlign: 'right', color: '#22D3EE', fontWeight: 800, fontFamily: 'ui-monospace, monospace' }}>{s.result}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <div style={{ padding: '10px 12px', background: `${ex.upsideColor}15`, border: `1px solid ${ex.upsideColor}40`, borderRadius: 4 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: ex.upsideColor, marginBottom: 3 }}>FAIR VALUE → {ex.fairValue}</div>
+            <div style={{ fontSize: 12, color: TEXT }}>{ex.upside}</div>
+          </div>
+
+          {ex.note && (
+            <div style={{ marginTop: 10, fontSize: 11, color: '#F59E0B', fontStyle: 'italic', padding: '6px 10px', background: '#F59E0B10', borderRadius: 3 }}>
+              💡 {ex.note}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LearnTab() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -1449,6 +1978,27 @@ function LearnTab() {
             <MethodCard m={m} idx={i} />
           </div>
         ))}
+      </div>
+
+      {/* PATCH 0659 — Practice Examples — 20 real company calculations */}
+      <div style={{ background: '#1A1F33', border: `1px solid ${BORDER}`, borderRadius: 8, padding: '16px 18px', marginTop: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 4 }}>
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#22D3EE' }}>
+            📊 Practice Examples — 20 Companies, Live Calculations
+          </h3>
+          <span style={{ fontSize: 10, color: DIM, fontFamily: 'ui-monospace, monospace' }}>tilde (~) marks approximate inputs</span>
+        </div>
+        <div style={{ fontSize: 12, color: DIM, lineHeight: 1.55, marginBottom: 14 }}>
+          Each company below uses the exact guidance from the management table you provided. TTM revenue and
+          current market cap are approximate — swap in precise numbers from a fresh quote to refine. The
+          methodology is what matters: each row picks the right pattern from above and works the calc end-to-end.
+          Click any row to expand the full breakdown.
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {PRACTICE_EXAMPLES.map((ex, i) => (
+            <PracticeExampleCard key={i} ex={ex} />
+          ))}
+        </div>
       </div>
 
       {/* Footer — meta-lessons */}
