@@ -43,9 +43,10 @@ const TEXT = '#E6EDF3';
 const DIM = '#8A95A3';
 
 // ─── Types ──────────────────────────────────────────────────────────────
-// PATCH 0681 — export key types + functions so the Concall AI page can
-// import buildReport and run the same valuation pipeline inline.
-export interface ExcelFinancials {
+// PATCH 0681 — Next.js page files don't allow named exports. The Concall AI
+// page imports buildReport from the sibling engine.ts (which has a duplicate
+// of these functions). Plan: dedupe by importing from engine.ts here too.
+interface ExcelFinancials {
   source: string;
   ticker?: string;
   company?: string;
@@ -74,7 +75,7 @@ export interface ExcelFinancials {
   currentMarketCapCrFromSheet?: number;
 }
 
-export interface ParsedDoc {
+interface ParsedDoc {
   name: string;
   size: number;
   type: 'excel' | 'pdf' | 'unknown';
@@ -85,7 +86,7 @@ export interface ParsedDoc {
   guidance?: GuidanceItem[];
 }
 
-export interface AutoValuationReport {
+interface AutoValuationReport {
   ticker?: string;
   company?: string;
   sector?: string;
@@ -141,7 +142,7 @@ async function loadPdfJs(): Promise<any> {
   return pdfjsLib;
 }
 
-export async function extractPdfText(file: File): Promise<string> {
+async function extractPdfText(file: File): Promise<string> {
   const pdfjsLib = await loadPdfJs();
   if (!pdfjsLib) return '';
   const buf = await file.arrayBuffer();
@@ -177,7 +178,7 @@ export async function extractPdfText(file: File): Promise<string> {
 //   Row 28 Profit before tax
 //   Row 30 Net profit
 // Operating Profit = Sales - sum(Expenses); EBITDA = OP + Depreciation.
-export async function extractExcelFinancials(file: File): Promise<ExcelFinancials | null> {
+async function extractExcelFinancials(file: File): Promise<ExcelFinancials | null> {
   const XLSX = await import('xlsx');
   const buf = await file.arrayBuffer();
   const wb = XLSX.read(buf, { type: 'array' });
@@ -560,7 +561,7 @@ function inferSector(text: string, company?: string): string | undefined {
 }
 
 // ─── Build the report ───────────────────────────────────────────────────
-export async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
+async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
   // Aggregate data across all parsed docs
   const excelDoc = docs.find(d => d.excelData);
   const excelData = excelDoc?.excelData;
