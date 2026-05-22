@@ -873,11 +873,21 @@ export default function AutoValuationPage() {
       type: /\.xlsx?$/i.test(f.name) ? 'excel' : /\.pdf$/i.test(f.name) ? 'pdf' : 'unknown',
       status: 'parsing',
     }));
-    setDocs(prev => [...prev, ...newDocs]);
+    // PATCH 0663 — capture starting index from the functional setState
+    // BEFORE the append, so the indexing into the per-file parsing loop
+    // is correct even when multiple uploads happen back-to-back. The old
+    // code used closure-captured docs.length which goes stale.
+    let startIdx = 0;
+    setDocs(prev => {
+      startIdx = prev.length;
+      return [...prev, ...newDocs];
+    });
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const docIdx = docs.length + i;
+    // Snapshot files array since FileList becomes invalid after async work
+    const fileList = Array.from(files);
+    for (let i = 0; i < fileList.length; i++) {
+      const file = fileList[i];
+      const docIdx = startIdx + i;
       try {
         if (/\.xlsx?$/i.test(file.name)) {
           const data = await extractExcelFinancials(file);
@@ -893,7 +903,7 @@ export default function AutoValuationPage() {
         setDocs(prev => prev.map((d, idx) => idx === docIdx ? { ...d, status: 'error', message: e?.message || 'parse failed' } : d));
       }
     }
-  }, [docs.length]);
+  }, []);
 
   // Re-build report whenever docs change
   useEffect(() => {
@@ -1022,7 +1032,12 @@ export default function AutoValuationPage() {
             type="file"
             multiple
             accept=".xlsx,.xls,.pdf"
-            onChange={(e) => handleFiles(e.target.files)}
+            onChange={(e) => {
+              handleFiles(e.target.files);
+              // PATCH 0663 — reset value so the same file can be re-selected
+              // without browsers silently dropping the onChange event.
+              e.target.value = '';
+            }}
             style={{ display: 'none' }}
           />
           <label htmlFor="auto-val-files" style={{
