@@ -136,11 +136,11 @@ export function extractGuidance(text: string): GuidanceItem[] {
 
     if (!isForwardLooking(s)) continue;
 
-    // Determine FYs to attribute to this sentence:
-    //   - inline FYs if present
-    //   - else fall back to recentFY if it's within 4 sentences
+    // PATCH 0655 — tighten carry-forward to ≤2 sentences (was 4).
+    // Wider window over-attributed random later sentences (e.g. an
+    // unrelated "50 crore" mention) to the most-recent FY.
     let fys: string[] = inlineFys;
-    if (fys.length === 0 && recentFY && recentFYAge <= 4) {
+    if (fys.length === 0 && recentFY && recentFYAge <= 2) {
       fys = [recentFY];
     }
     if (fys.length === 0) continue;
@@ -150,93 +150,85 @@ export function extractGuidance(text: string): GuidanceItem[] {
     // not 27.
     const sStripped = s.replace(FY_TOKEN, ' ');
 
+    // PATCH 0655 — find positions of ALL metric keywords in the
+    // sentence first. Each metric is then SCOPED to the substring
+    // between its own keyword and the next other-metric keyword
+    // (or end of sentence). This semantically partitions a
+    // multi-metric sentence so EBITDA_MARGIN can't claim numbers
+    // that belong to GROWTH and vice versa.
+    type KwHit = { pat: typeof METRIC_PATTERNS[number]; pos: number; end: number };
+    const kwHits: KwHit[] = [];
     for (const pat of METRIC_PATTERNS) {
-      const kwMatch = pat.keywords.exec(s);
-      if (!kwMatch) continue;
-      const kwPos = kwMatch.index;
-      const kwEnd = kwPos + kwMatch[0].length;
-      // PATCH 0654 — reset regex lastIndex for safety in case patterns
-      // become /g later
-      pat.keywords.lastIndex = 0;
+      const re = new RegExp(pat.keywords.source, 'i');
+      const m = re.exec(s);
+      if (m) kwHits.push({ pat, pos: m.index, end: m.index + m[0].length });
+    }
+    if (kwHits.length === 0) continue;
+    // PATCH 0655 — drop hits CONTAINED within other hits. Example:
+    // REVENUE keyword "revenue" overlaps with GROWTH keyword "revenue
+    // growth" — they match at the same position. Keep the longer
+    // (more specific) keyword so its clause boundaries are correct.
+    const deduped: KwHit[] = kwHits.filter(h => {
+      const containedBy = kwHits.find(other =>
+        other !== h &&
+        other.pos <= h.pos &&
+        other.end >= h.end &&
+        (other.pos < h.pos || other.end > h.end)
+      );
+      return !containedBy;
+    });
+    kwHits.length = 0;
+    kwHits.push(...deduped);
+    // Sort by position so we can compute each metric's clause boundaries.
+    kwHits.sort((a, b) => a.pos - b.pos);
+
+    for (let i = 0; i < kwHits.length; i++) {
+      const { pat, pos: kwPos, end: kwEnd } = kwHits[i];
+      // Clause spans from the PREVIOUS keyword's end (or start of sentence)
+      // to the NEXT keyword's start (or end of sentence).
+      const clauseStart = i === 0 ? 0 : kwHits[i - 1].end;
+      const clauseEnd   = i === kwHits.length - 1 ? s.length : kwHits[i + 1].pos;
+      const clause = sStripped.slice(clauseStart, clauseEnd);
 
       const wantsPct = (pat.unit === '%');
 
-      // PATCH 0654 — proximity-aware matching. Find ALL candidate number
-      // matches with their positions, then pick the candidate whose
-      // position is closest to the keyword. Within 80 chars only.
-      // This prevents the EBITDA_MARGIN keyword from claiming a 50-80%
-      // range that actually belongs to the GROWTH keyword in the same
-      // sentence.
-      const PROXIMITY_LIMIT = 80;
+      // Use SINGLE-MATCH regex (no /g) per pattern. First plausible match
+      // in the clause wins — restores the pre-0654 behavior that worked
+      // for Revenue and Order Book.
+      const pctRange = clause.match(/([\d,]+(?:\.\d+)?)\s*%[^%\d]{0,40}?(?:to|[-–]|and|up\s+to)\s*([\d,]+(?:\.\d+)?)\s*%/i);
+      const pctPoint = clause.match(/([\d,]+(?:\.\d+)?)\s*%/i);
+      const crRange  = clause.match(/(?:₹\s*|Rs\.?\s*|INR\s*)?([\d,]+(?:\.\d+)?)\s*(?:to|[-–])\s*([\d,]+(?:\.\d+)?)\s*(?:crore|cr|lakh|billion|million|bn|mn)\b/i);
+      // PATCH 0655 — crPoint requires EITHER ₹/Rs/INR prefix OR
+      // crore/cr/lakh/etc suffix. Naked digits don't qualify (prevents
+      // "16 manufacturing units" or "50 customers" from matching).
+      const crPoint  = clause.match(/(?:₹\s*|Rs\.?\s*|INR\s*)([\d,]+(?:\.\d+)?)\s*(?:crore|cr|lakh|billion|million|bn|mn)?\b|([\d,]+(?:\.\d+)?)\s*(?:crore|cr|lakh|billion|million|bn|mn)\b/i);
 
-      // PATCH 0653 — pctRange allows up to 40 non-digit, non-% chars
-      // between the two numbers.
-      // PATCH 0654 — pctPoint now starts at the digit (no prefix words
-      // consumed) so its position lines up with pctRange when both
-      // refer to the same number — lets range win the tiebreaker.
-      const pctRangeRe = /([\d,]+(?:\.\d+)?)\s*%[^%\d]{0,40}?(?:to|[-–]|and|up\s+to)\s*([\d,]+(?:\.\d+)?)\s*%/gi;
-      const pctPointRe = /([\d,]+(?:\.\d+)?)\s*%/gi;
-      const crRangeRe  = /(?:₹\s*|Rs\.?\s*|INR\s*)?([\d,]+(?:\.\d+)?)\s*(?:to|[-–])\s*([\d,]+(?:\.\d+)?)\s*(?:crore|cr|lakh|billion|million|bn|mn)\b/gi;
-      const crPointRe  = /(?:₹\s*|Rs\.?\s*|INR\s*)([\d,]+(?:\.\d+)?)|([\d,]+(?:\.\d+)?)\s*(?:crore|cr|lakh|billion|million|bn|mn)\b/gi;
+      let rawMatch = '';
+      let amounts: { low?: number; high?: number; point?: number } = {};
+      let isPct = wantsPct;
 
-      type Cand = { kind: 'pctR' | 'pctP' | 'crR' | 'crP'; raw: string; pos: number; vals: { low?: number; high?: number; point?: number } };
-      const candidates: Cand[] = [];
-
-      let m: RegExpExecArray | null;
-      while ((m = pctRangeRe.exec(sStripped)) !== null) {
-        candidates.push({ kind: 'pctR', raw: m[0], pos: m.index, vals: { low: parseFloat(m[1].replace(/,/g, '')), high: parseFloat(m[2].replace(/,/g, '')) } });
+      if (wantsPct) {
+        if (pctRange) {
+          rawMatch = pctRange[0];
+          amounts = { low: parseFloat(pctRange[1].replace(/,/g, '')), high: parseFloat(pctRange[2].replace(/,/g, '')) };
+        } else if (pctPoint) {
+          rawMatch = pctPoint[0];
+          amounts = { point: parseFloat(pctPoint[1].replace(/,/g, '')) };
+        } else continue;
+      } else {
+        if (crRange) {
+          rawMatch = crRange[0];
+          amounts = { low: parseFloat(crRange[1].replace(/,/g, '')), high: parseFloat(crRange[2].replace(/,/g, '')) };
+        } else if (crPoint) {
+          rawMatch = crPoint[0];
+          const n = crPoint[1] || crPoint[2];
+          if (!n) continue;
+          amounts = { point: parseFloat(n.replace(/,/g, '')) };
+        } else continue;
+        isPct = isPercentNumber(rawMatch, s);
       }
-      while ((m = pctPointRe.exec(sStripped)) !== null) {
-        candidates.push({ kind: 'pctP', raw: m[0], pos: m.index, vals: { point: parseFloat(m[1].replace(/,/g, '')) } });
-      }
-      while ((m = crRangeRe.exec(sStripped)) !== null) {
-        candidates.push({ kind: 'crR', raw: m[0], pos: m.index, vals: { low: parseFloat(m[1].replace(/,/g, '')), high: parseFloat(m[2].replace(/,/g, '')) } });
-      }
-      while ((m = crPointRe.exec(sStripped)) !== null) {
-        const n = m[1] || m[2];
-        if (!n) continue;
-        candidates.push({ kind: 'crP', raw: m[0], pos: m.index, vals: { point: parseFloat(n.replace(/,/g, '')) } });
-      }
-
-      if (candidates.length === 0) continue;
-
-      // Filter by unit-fit AND proximity.
-      const fit = candidates.filter(c => {
-        const isPctK = c.kind === 'pctR' || c.kind === 'pctP';
-        if (wantsPct && !isPctK) return false;
-        if (!wantsPct && isPctK) return false;
-        // Distance to nearest end of keyword:
-        const dist = c.pos < kwPos ? kwPos - (c.pos + c.raw.length) : c.pos - kwEnd;
-        return dist <= PROXIMITY_LIMIT;
-      });
-      if (fit.length === 0) continue;
-
-      // PATCH 0654 — Sort priority:
-      //   1. Candidates that ENCLOSE the keyword (range straddles it,
-      //      e.g. "from 50% revenue growth to 80%") rank highest —
-      //      these are unambiguous metric → number bindings.
-      //   2. Then candidates whose END is at/after the keyword start
-      //      (natural reading order: "X margin is 24%").
-      //   3. Then closest by distance.
-      //   4. Then ranges over points.
-      fit.sort((a, b) => {
-        const aEnclose = (a.pos <= kwPos && a.pos + a.raw.length >= kwEnd) ? 0 : 1;
-        const bEnclose = (b.pos <= kwPos && b.pos + b.raw.length >= kwEnd) ? 0 : 1;
-        if (aEnclose !== bEnclose) return aEnclose - bEnclose;
-        const aAfter = (a.pos + a.raw.length >= kwPos) ? 0 : 1;
-        const bAfter = (b.pos + b.raw.length >= kwPos) ? 0 : 1;
-        if (aAfter !== bAfter) return aAfter - bAfter;
-        const aDist = Math.abs(a.pos < kwPos ? kwPos - a.pos : a.pos - kwEnd);
-        const bDist = Math.abs(b.pos < kwPos ? kwPos - b.pos : b.pos - kwEnd);
-        if (aDist !== bDist) return aDist - bDist;
-        const aRange = (a.kind === 'pctR' || a.kind === 'crR') ? 0 : 1;
-        const bRange = (b.kind === 'pctR' || b.kind === 'crR') ? 0 : 1;
-        return aRange - bRange;
-      });
-      const chosen = fit[0];
-      const rawMatch = chosen.raw;
-      const amounts = chosen.vals;
-      const isPct = wantsPct ? true : isPercentNumber(rawMatch, s);
+      // Suppress kwPos/kwEnd unused warning - kept for future proximity refinements
+      void kwPos; void kwEnd;
 
       // Normalize unit-aware values to Cr or %
       const scale = (raw: number | undefined): number | undefined => {
@@ -265,9 +257,13 @@ export function extractGuidance(text: string): GuidanceItem[] {
     }
   }
 
-  // PATCH 0654 — Dedupe: keep highest-confidence per (fy, metric); for ties
-  // prefer a single point (more specific) over a range (broader, often
-  // borrowed from a different metric in the same sentence).
+  // PATCH 0655 — Dedupe: keep highest-confidence per (fy, metric).
+  // At equal confidence:
+  //   - For Cr-denominated metrics (REVENUE/EBITDA/PAT/ORDER_BOOK/CAPEX),
+  //     prefer the LARGER value (institutional forward guidance is
+  //     always the larger of any candidate numbers near the keyword).
+  //   - For % metrics, prefer point over range (more specific number).
+  const crMetrics = new Set<GuidanceMetric>(['REVENUE', 'EBITDA', 'PAT', 'ORDER_BOOK', 'CAPEX']);
   const seen = new Map<string, GuidanceItem>();
   for (const g of out) {
     const k = `${g.fiscalYear}|${g.metric}`;
@@ -275,11 +271,18 @@ export function extractGuidance(text: string): GuidanceItem[] {
     const conf = { high: 3, medium: 2, low: 1 };
     const cg = conf[g.confidence];
     const cp = prev ? conf[prev.confidence] : -1;
-    const gIsPoint = g.point !== undefined;
-    const pIsPoint = prev ? prev.point !== undefined : false;
-    const shouldReplace = !prev
-      || cg > cp
-      || (cg === cp && gIsPoint && !pIsPoint);
+    const valOf = (it: GuidanceItem): number => it.point ?? it.high ?? it.low ?? 0;
+    const isCrMetric = crMetrics.has(g.metric);
+    let shouldReplace: boolean;
+    if (!prev) shouldReplace = true;
+    else if (cg > cp) shouldReplace = true;
+    else if (cg < cp) shouldReplace = false;
+    else if (isCrMetric) shouldReplace = valOf(g) > valOf(prev);  // prefer larger Cr value
+    else {
+      const gIsPoint = g.point !== undefined;
+      const pIsPoint = prev.point !== undefined;
+      shouldReplace = gIsPoint && !pIsPoint;
+    }
     if (shouldReplace) seen.set(k, g);
   }
   return Array.from(seen.values()).sort((a, b) => {
