@@ -151,55 +151,92 @@ export function extractGuidance(text: string): GuidanceItem[] {
     const sStripped = s.replace(FY_TOKEN, ' ');
 
     for (const pat of METRIC_PATTERNS) {
-      if (!pat.keywords.test(s)) continue;
+      const kwMatch = pat.keywords.exec(s);
+      if (!kwMatch) continue;
+      const kwPos = kwMatch.index;
+      const kwEnd = kwPos + kwMatch[0].length;
+      // PATCH 0654 — reset regex lastIndex for safety in case patterns
+      // become /g later
+      pat.keywords.lastIndex = 0;
 
-      // PATCH 0651b — for percentage-based metrics (GROWTH / EBITDA_MARGIN /
-      // PAT_MARGIN), prefer a number followed by '%'. For absolute Cr metrics,
-      // prefer a number followed by Cr/crore/lakh/billion or preceded by
-      // ₹/Rs/INR.
       const wantsPct = (pat.unit === '%');
-      // PATCH 0653 — allow up to 40 non-digit, non-% chars between the two
-      // numbers so "from 50% revenue growth to 80% plus" parses as a range,
-      // not just a point.
-      const pctRange = sStripped.match(/(?:from\s+)?([\d,]+(?:\.\d+)?)\s*%[^%\d]{0,40}?(?:to|[-–]|and|up\s+to)\s*([\d,]+(?:\.\d+)?)\s*%/i);
-      const pctPoint = sStripped.match(/(?:around|about|approximately|roughly|of|at|to)?\s*([\d,]+(?:\.\d+)?)\s*%(?:\s*plus|\s*\+)?/i);
-      const crRange  = sStripped.match(/(?:₹\s*|Rs\.?\s*|INR\s*)?([\d,]+(?:\.\d+)?)\s*(?:to|[-–])\s*([\d,]+(?:\.\d+)?)\s*(?:crore|cr|lakh|billion|million|bn|mn)?/i);
-      const crPoint  = sStripped.match(/(?:₹\s*|Rs\.?\s*|INR\s*)([\d,]+(?:\.\d+)?)\s*(?:crore|cr|lakh|billion|million|bn|mn)?|([\d,]+(?:\.\d+)?)\s*(?:crore|cr|lakh|billion|million|bn|mn)/i);
 
-      let rawMatch = '';
-      let amounts: { low?: number; high?: number; point?: number } = {};
-      let isPct = wantsPct;
+      // PATCH 0654 — proximity-aware matching. Find ALL candidate number
+      // matches with their positions, then pick the candidate whose
+      // position is closest to the keyword. Within 80 chars only.
+      // This prevents the EBITDA_MARGIN keyword from claiming a 50-80%
+      // range that actually belongs to the GROWTH keyword in the same
+      // sentence.
+      const PROXIMITY_LIMIT = 80;
 
-      if (wantsPct) {
-        if (pctRange) {
-          rawMatch = pctRange[0];
-          amounts = {
-            low:  parseFloat(pctRange[1].replace(/,/g, '')),
-            high: parseFloat(pctRange[2].replace(/,/g, '')),
-          };
-        } else if (pctPoint) {
-          rawMatch = pctPoint[0];
-          amounts = { point: parseFloat(pctPoint[1].replace(/,/g, '')) };
-        } else {
-          continue;
-        }
-      } else {
-        if (crRange) {
-          rawMatch = crRange[0];
-          amounts = {
-            low:  parseFloat(crRange[1].replace(/,/g, '')),
-            high: parseFloat(crRange[2].replace(/,/g, '')),
-          };
-        } else if (crPoint) {
-          rawMatch = crPoint[0];
-          const n = crPoint[1] || crPoint[2];
-          if (!n) continue;
-          amounts = { point: parseFloat(n.replace(/,/g, '')) };
-        } else {
-          continue;
-        }
-        isPct = isPercentNumber(rawMatch, s);
+      // PATCH 0653 — pctRange allows up to 40 non-digit, non-% chars
+      // between the two numbers.
+      // PATCH 0654 — pctPoint now starts at the digit (no prefix words
+      // consumed) so its position lines up with pctRange when both
+      // refer to the same number — lets range win the tiebreaker.
+      const pctRangeRe = /([\d,]+(?:\.\d+)?)\s*%[^%\d]{0,40}?(?:to|[-–]|and|up\s+to)\s*([\d,]+(?:\.\d+)?)\s*%/gi;
+      const pctPointRe = /([\d,]+(?:\.\d+)?)\s*%/gi;
+      const crRangeRe  = /(?:₹\s*|Rs\.?\s*|INR\s*)?([\d,]+(?:\.\d+)?)\s*(?:to|[-–])\s*([\d,]+(?:\.\d+)?)\s*(?:crore|cr|lakh|billion|million|bn|mn)\b/gi;
+      const crPointRe  = /(?:₹\s*|Rs\.?\s*|INR\s*)([\d,]+(?:\.\d+)?)|([\d,]+(?:\.\d+)?)\s*(?:crore|cr|lakh|billion|million|bn|mn)\b/gi;
+
+      type Cand = { kind: 'pctR' | 'pctP' | 'crR' | 'crP'; raw: string; pos: number; vals: { low?: number; high?: number; point?: number } };
+      const candidates: Cand[] = [];
+
+      let m: RegExpExecArray | null;
+      while ((m = pctRangeRe.exec(sStripped)) !== null) {
+        candidates.push({ kind: 'pctR', raw: m[0], pos: m.index, vals: { low: parseFloat(m[1].replace(/,/g, '')), high: parseFloat(m[2].replace(/,/g, '')) } });
       }
+      while ((m = pctPointRe.exec(sStripped)) !== null) {
+        candidates.push({ kind: 'pctP', raw: m[0], pos: m.index, vals: { point: parseFloat(m[1].replace(/,/g, '')) } });
+      }
+      while ((m = crRangeRe.exec(sStripped)) !== null) {
+        candidates.push({ kind: 'crR', raw: m[0], pos: m.index, vals: { low: parseFloat(m[1].replace(/,/g, '')), high: parseFloat(m[2].replace(/,/g, '')) } });
+      }
+      while ((m = crPointRe.exec(sStripped)) !== null) {
+        const n = m[1] || m[2];
+        if (!n) continue;
+        candidates.push({ kind: 'crP', raw: m[0], pos: m.index, vals: { point: parseFloat(n.replace(/,/g, '')) } });
+      }
+
+      if (candidates.length === 0) continue;
+
+      // Filter by unit-fit AND proximity.
+      const fit = candidates.filter(c => {
+        const isPctK = c.kind === 'pctR' || c.kind === 'pctP';
+        if (wantsPct && !isPctK) return false;
+        if (!wantsPct && isPctK) return false;
+        // Distance to nearest end of keyword:
+        const dist = c.pos < kwPos ? kwPos - (c.pos + c.raw.length) : c.pos - kwEnd;
+        return dist <= PROXIMITY_LIMIT;
+      });
+      if (fit.length === 0) continue;
+
+      // PATCH 0654 — Sort priority:
+      //   1. Candidates that ENCLOSE the keyword (range straddles it,
+      //      e.g. "from 50% revenue growth to 80%") rank highest —
+      //      these are unambiguous metric → number bindings.
+      //   2. Then candidates whose END is at/after the keyword start
+      //      (natural reading order: "X margin is 24%").
+      //   3. Then closest by distance.
+      //   4. Then ranges over points.
+      fit.sort((a, b) => {
+        const aEnclose = (a.pos <= kwPos && a.pos + a.raw.length >= kwEnd) ? 0 : 1;
+        const bEnclose = (b.pos <= kwPos && b.pos + b.raw.length >= kwEnd) ? 0 : 1;
+        if (aEnclose !== bEnclose) return aEnclose - bEnclose;
+        const aAfter = (a.pos + a.raw.length >= kwPos) ? 0 : 1;
+        const bAfter = (b.pos + b.raw.length >= kwPos) ? 0 : 1;
+        if (aAfter !== bAfter) return aAfter - bAfter;
+        const aDist = Math.abs(a.pos < kwPos ? kwPos - a.pos : a.pos - kwEnd);
+        const bDist = Math.abs(b.pos < kwPos ? kwPos - b.pos : b.pos - kwEnd);
+        if (aDist !== bDist) return aDist - bDist;
+        const aRange = (a.kind === 'pctR' || a.kind === 'crR') ? 0 : 1;
+        const bRange = (b.kind === 'pctR' || b.kind === 'crR') ? 0 : 1;
+        return aRange - bRange;
+      });
+      const chosen = fit[0];
+      const rawMatch = chosen.raw;
+      const amounts = chosen.vals;
+      const isPct = wantsPct ? true : isPercentNumber(rawMatch, s);
 
       // Normalize unit-aware values to Cr or %
       const scale = (raw: number | undefined): number | undefined => {
@@ -228,13 +265,22 @@ export function extractGuidance(text: string): GuidanceItem[] {
     }
   }
 
-  // Dedupe: keep highest-confidence per (fy, metric) combo
+  // PATCH 0654 — Dedupe: keep highest-confidence per (fy, metric); for ties
+  // prefer a single point (more specific) over a range (broader, often
+  // borrowed from a different metric in the same sentence).
   const seen = new Map<string, GuidanceItem>();
   for (const g of out) {
     const k = `${g.fiscalYear}|${g.metric}`;
     const prev = seen.get(k);
     const conf = { high: 3, medium: 2, low: 1 };
-    if (!prev || conf[g.confidence] > conf[prev.confidence]) seen.set(k, g);
+    const cg = conf[g.confidence];
+    const cp = prev ? conf[prev.confidence] : -1;
+    const gIsPoint = g.point !== undefined;
+    const pIsPoint = prev ? prev.point !== undefined : false;
+    const shouldReplace = !prev
+      || cg > cp
+      || (cg === cp && gIsPoint && !pIsPoint);
+    if (shouldReplace) seen.set(k, g);
   }
   return Array.from(seen.values()).sort((a, b) => {
     if (a.fiscalYear !== b.fiscalYear) return a.fiscalYear.localeCompare(b.fiscalYear);
