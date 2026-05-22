@@ -2390,6 +2390,12 @@ export default function CompanyIntelligencePage() {
   const [addedPrices, setAddedPrices] = useState<Record<string, number>>({});
   const [computing, setComputing] = useState(false);
   const [computePollCount, setComputePollCount] = useState(0);
+  // PATCH 0693 — terminal exhausted state. Previously the poll stopped at
+  // attempt 15 silently, leaving the user looking at a spinner that would
+  // never resolve. Now we flip an explicit flag the UI can branch on.
+  const [computeExhausted, setComputeExhausted] = useState(false);
+  const [lastComputeAt, setLastComputeAt] = useState<number | null>(null);
+  const MAX_COMPUTE_ATTEMPTS = 15;
   const [showNoise, setShowNoise] = useState(false);
   const [noHighConfSignals, setNoHighConfSignals] = useState(false);
   const [noActionableSignals, setNoActionableSignals] = useState(false);
@@ -2548,7 +2554,11 @@ export default function CompanyIntelligencePage() {
       // Detect computing state
       const isComputing = data._meta?.computing === true || data._meta?.source === 'skeleton';
       setComputing(isComputing);
-      if (!isComputing) setComputePollCount(0);
+      if (!isComputing) {
+        setComputePollCount(0);
+        setComputeExhausted(false); // PATCH 0693 — clear terminal flag on real data
+      }
+      setLastComputeAt(Date.now()); // PATCH 0693
 
       // Cache retagged data so cache hits preserve correct portfolio/watchlist/excel flags
       if (!isComputing) {
@@ -2664,11 +2674,28 @@ export default function CompanyIntelligencePage() {
   }, [universeFilter]);
 
   // Keep computing poll — needed for background compute jobs
+  // PATCH 0693 — guard against exceeding MAX_COMPUTE_ATTEMPTS. When the
+  // poll budget is exhausted, flip computeExhausted=true so the UI can
+  // render a terminal error + retry button instead of pretending it's
+  // still working. Also stamp lastComputeAt for the "Last scan" chip.
   useEffect(() => {
     if (!computing) return;
-    if (computePollCount >= 15) return;
+    if (computePollCount > MAX_COMPUTE_ATTEMPTS) {
+      setComputeExhausted(true);
+      setComputing(false);
+      setLastComputeAt(Date.now());
+      return;
+    }
+    if (computePollCount >= MAX_COMPUTE_ATTEMPTS) {
+      // Reached cap — schedule no further polls; flip terminal state next tick
+      setComputeExhausted(true);
+      setComputing(false);
+      setLastComputeAt(Date.now());
+      return;
+    }
     const timer = setTimeout(() => {
       setComputePollCount(p => p + 1);
+      setLastComputeAt(Date.now());
       fetchData(true);
     }, 20000);
     return () => clearTimeout(timer);
@@ -4744,12 +4771,34 @@ export default function CompanyIntelligencePage() {
       {/* Empty / Computing state — only show if truly no signals at all */}
       {!loading && signals.length === 0 && monitorList.length === 0 && notableSignals.length === 0 && top3.length === 0 && speculativeSignals.length === 0 && (
         <div style={{ textAlign: 'center', padding: '50px 0' }}>
-          {computing ? (
+          {/* PATCH 0693 — three explicit states: computing / exhausted / empty.
+              The exhausted branch caps the spinner so the user never sees
+              "attempt 16/15" or worse. */}
+          {computeExhausted ? (
+            <>
+              <Eye size={40} color={'#EF4444'} style={{ margin: '0 auto 12px', display: 'block' }} />
+              <p style={{ color: '#EF4444', fontSize: '14px', fontWeight: 600 }}>⚠ Upstream slow — backend compute did not finish</p>
+              <p style={{ color: TEXT3, fontSize: '12px', marginBottom: 14 }}>
+                Tried {MAX_COMPUTE_ATTEMPTS} times over ~5 minutes. NSE / Moneycontrol may be throttled right now.
+              </p>
+              <button
+                onClick={() => { setComputeExhausted(false); setComputePollCount(0); fetchData(true); }}
+                style={{ padding: '8px 18px', borderRadius: 6, border: `1px solid ${ACCENT}`, backgroundColor: `${ACCENT}18`, color: ACCENT, cursor: 'pointer', fontSize: 12, fontWeight: 700 }}
+              >
+                ↻ Retry
+              </button>
+              {lastComputeAt && (
+                <p style={{ color: TEXT3, fontSize: 11, marginTop: 10 }}>
+                  Last scan: {new Date(lastComputeAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} IST
+                </p>
+              )}
+            </>
+          ) : computing ? (
             <>
               <Zap size={40} color={ACCENT} style={{ margin: '0 auto 12px', display: 'block' }} />
               <p style={{ color: ACCENT, fontSize: '14px', fontWeight: 600 }}>Computing intelligence signals...</p>
               <p style={{ color: TEXT3, fontSize: '12px' }}>
-                Fetching from NSE + Moneycontrol. Auto-refresh in 20s (attempt {computePollCount + 1}/15).
+                Fetching from NSE + Moneycontrol. Auto-refresh in 20s (attempt {Math.min(computePollCount + 1, MAX_COMPUTE_ATTEMPTS)}/{MAX_COMPUTE_ATTEMPTS}).
               </p>
               <div style={{ width: '200px', height: '3px', backgroundColor: BORDER, borderRadius: '2px', margin: '16px auto 0', overflow: 'hidden' }}>
                 <div style={{ height: '100%', backgroundColor: ACCENT, borderRadius: '2px', width: '35%', animation: 'progress-bar 2s linear infinite' }} />
@@ -4758,10 +4807,15 @@ export default function CompanyIntelligencePage() {
           ) : (
             <>
               <Eye size={40} color={TEXT3} style={{ margin: '0 auto 12px', display: 'block' }} />
-              <p style={{ color: TEXT2, fontSize: '14px', fontWeight: 600 }}>No signals in {daysFilter}D window</p>
+              <p style={{ color: TEXT2, fontSize: '14px', fontWeight: 600 }}>✓ Scan complete · 0 results in {daysFilter}D window</p>
               <p style={{ color: TEXT3, fontSize: '12px' }}>
                 {daysFilter <= 7 ? `Try 14D or 30D for a wider view` : 'Check during market hours or add more stocks to your watchlist'}
               </p>
+              {lastComputeAt && (
+                <p style={{ color: TEXT3, fontSize: 11, marginTop: 8 }}>
+                  Last scan: {new Date(lastComputeAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} IST
+                </p>
+              )}
             </>
           )}
         </div>

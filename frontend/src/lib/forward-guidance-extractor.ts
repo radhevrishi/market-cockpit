@@ -110,6 +110,10 @@ const FY_TOKEN = /(?:FY\s?[''‘’]?\d{2,4}|FY[-\s]?[''‘’]?\d{2}|F\.Y\.\s?[
 //   'we estimate', 'should be around', 'in the range of', 'on track for',
 //   'we are confident', 'we believe', 'visibility for', 'we expect to close
 //   FY27 at', 'over the next 2-3 years', 'medium-term', 'long-term'
+// PATCH 0694 — widened to cover institutional Indian-concall phrasing the
+// QA report (BUG-10) flagged: "we expect to deliver", "we are targeting",
+// "our aspiration is", "we should be able to achieve", "our goal for the
+// year", "aim to reach", "trajectory of", "exit-rate", "run-rate" etc.
 const FORWARD_SIGNALS = [
   /target/i, /guidance/i, /expect/i, /aim/i, /aspire/i, /by\s+FY/i,
   /reach/i, /achieve/i, /project/i, /plan(?:ned)?\s+to/i, /likely\s+to/i,
@@ -118,6 +122,26 @@ const FORWARD_SIGNALS = [
   /confident/i, /believe/i, /visibility/i, /close\s+FY/i,
   /medium[-\s]term/i, /long[-\s]term/i, /should\s+(?:reach|cross|touch)/i,
   /forecast/i, /anticipate/i, /set\s+to/i, /poised\s+to/i,
+  // PATCH 0694 — Indian concall vernacular
+  /we\s+expect\s+to\s+(?:deliver|achieve|reach|grow|maintain|sustain)/i,
+  /we\s+(?:are|will\s+be)\s+targeting/i,
+  /our\s+aspiration\s+is/i,
+  /we\s+should\s+be\s+able\s+to/i,
+  /our\s+goal\s+(?:for|is|of)/i,
+  /goal\s+(?:for|is|of)\s+the\s+(?:year|period|quarter)/i,
+  /aim\s+to\s+(?:reach|achieve|deliver|cross|touch)/i,
+  /trajectory\s+of/i, /trajectory\s+to/i,
+  /exit[-\s]rate/i, /exit\s+(?:run[-\s]?)?rate/i,
+  /run[-\s]?rate\s+of/i,
+  /(?:we|our)\s+see\s+(?:a\s+)?path\s+to/i,
+  /(?:we|our)\s+plan\s+to\s+(?:reach|touch|achieve|exit)/i,
+  /(?:should|will|expect\s+to)\s+(?:exit|end)\s+(?:the\s+)?(?:year|quarter|FY)/i,
+  /(?:next|over\s+the\s+next)\s+(?:two|three|2|3|few)\s+(?:years|quarters)/i,
+  /step[-\s]up\s+(?:to|in)/i,
+  /ramp\s+(?:up\s+)?to/i,
+  /scale\s+(?:up\s+)?to/i,
+  /by\s+the\s+end\s+of/i,
+  /(?:we|the\s+company)\s+(?:should|will)\s+(?:see|deliver|cross|touch)/i,
 ];
 
 const isForwardLooking = (sentence: string): boolean => FORWARD_SIGNALS.some((re) => re.test(sentence));

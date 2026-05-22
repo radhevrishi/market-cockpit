@@ -1055,6 +1055,9 @@ export default function EarningsPage() {
   // Don't show loading screen if we have cached data to render immediately
   const [loading, setLoading] = useState(!_initial);
   const [error, setError] = useState('');
+  // PATCH 0693 — last-scan timestamp so the error/empty states can show
+  // "Last scan: 14:32 IST" instead of a context-free spinner trace.
+  const [lastScanAt, setLastScanAt] = useState<number | null>(_initial ? Date.now() : null);
   const [summary, setSummary] = useState<ScanResponse['summary'] | null>(_initial?.data?.summary || null);
   const [source, setSource] = useState<string>(_initial?.data?.source || '');
   const [updatedAt, setUpdatedAt] = useState<string>(_initial?.data?.updatedAt || '');
@@ -1379,6 +1382,7 @@ export default function EarningsPage() {
     } finally {
       clearTimeout(fetchTimeoutId);
       setLoading(false);
+      setLastScanAt(Date.now()); // PATCH 0693
     }
   }, []);
 
@@ -2309,10 +2313,18 @@ export default function EarningsPage() {
       )}
 
       {/* Error */}
+      {/* PATCH 0693 — explicit terminal error w/ last-scan timestamp. */}
       {error && !loading && (
-        <div style={{ backgroundColor: `${RED}15`, border: `1px solid ${RED}40`, borderRadius: '8px', padding: '16px', color: RED, marginBottom: '24px' }}>
-          <strong>Error:</strong> {error}
-          <button onClick={() => fetchData(true)} style={{ marginLeft: '12px', backgroundColor: RED, border: 'none', color: '#fff', padding: '4px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>Retry</button>
+        <div style={{ backgroundColor: `${RED}15`, border: `1px solid ${RED}40`, borderRadius: '8px', padding: '16px', color: RED, marginBottom: '24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span><strong>{error.includes('timed out') ? '⚠ Upstream slow' : '⚠ Fetch failed'}:</strong> {error}</span>
+            {lastScanAt && (
+              <span style={{ fontSize: 11, color: TEXT_DIM }}>
+                Last scan: {new Date(lastScanAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} IST
+              </span>
+            )}
+          </div>
+          <button onClick={() => fetchData(true)} style={{ backgroundColor: RED, border: 'none', color: '#fff', padding: '6px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 700, flexShrink: 0 }}>↻ Retry</button>
         </div>
       )}
 

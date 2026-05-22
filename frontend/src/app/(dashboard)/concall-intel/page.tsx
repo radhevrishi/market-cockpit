@@ -1192,6 +1192,10 @@ function WarrantMomentumFeed() {
   const [data, setData] = useState<WarrantFeedPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // PATCH 0693 — show a slow-fetch hint after 15s so the user sees a
+  // visible Retry option instead of staring at "Loading…" for 52s
+  // while the warrant feed warms its cache (BUG-18).
+  const [slowFetch, setSlowFetch] = useState(false);
   // PATCH 0536 — passingOnly default OFF so the user immediately sees the
   // full ranked-by-conviction warrant universe instead of the strict-gate
   // empty state. Days default raised 7 → 30 (the 30d sub-window cache
@@ -1218,6 +1222,9 @@ function WarrantMomentumFeed() {
     // 60s — 52s leaves headroom.
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 52000);
+    // PATCH 0693 — slow-fetch hint fires at 15s for retry CTA visibility
+    setSlowFetch(false);
+    const slowTimer = setTimeout(() => setSlowFetch(true), 15000);
     try {
       const params = new URLSearchParams({
         days: String(days),
@@ -1242,6 +1249,8 @@ function WarrantMomentumFeed() {
       setData((prev) => prev || { filings: [], count_total: 0, count_relevant: 0, count_passing: 0 } as any);
     } finally {
       clearTimeout(timeoutId);
+      clearTimeout(slowTimer); // PATCH 0693
+      setSlowFetch(false); // PATCH 0693
       setLoading(false);
     }
   };
@@ -1269,7 +1278,7 @@ function WarrantMomentumFeed() {
                 {data.count_total} filings · {data.count_relevant} warrant-related · <strong style={{ color: '#10B981' }}>{data.count_passing} passing gate (≥5.5/10)</strong>
                 {lastRefresh && <> · refreshed {lastRefresh.toLocaleTimeString()}</>}
               </>
-            ) : loading ? 'Loading…' : '—'}
+            ) : loading ? (slowFetch ? 'Loading… (cache warming, ~30s)' : 'Loading…') : '—'}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -1300,7 +1309,18 @@ function WarrantMomentumFeed() {
 
       {/* PATCH 0420 — Suppress red HTTP 500 chip when warrant data is loaded */}
       {error && (!data || data.count_total === 0) && (
-        <div style={{ fontSize: 11, color: '#EF4444', marginBottom: 8 }}>⚠ {error}</div>
+        <div style={{ fontSize: 11, color: '#EF4444', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span>⚠ {error}</span>
+          {/* PATCH 0693 — explicit Retry button on terminal error */}
+          <button onClick={() => fetchFeed(true)} style={{ fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 4, border: '1px solid #EF4444', background: '#EF444420', color: '#EF4444', cursor: 'pointer' }}>↻ Retry</button>
+        </div>
+      )}
+      {/* PATCH 0693 — slow-fetch warning during long initial load. */}
+      {loading && slowFetch && !data && (
+        <div style={{ fontSize: 11, color: '#F59E0B', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span>⚠ Warrant feed is slow — cache warming up. Will time out at 52s.</span>
+          <button onClick={() => fetchFeed(true)} style={{ fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 4, border: '1px solid #F59E0B', background: '#F59E0B20', color: '#F59E0B', cursor: 'pointer' }}>↻ Retry now</button>
+        </div>
       )}
       {error && data && data.count_total > 0 && (
         <div style={{ fontSize: 10, color: '#F59E0B', marginBottom: 8, fontStyle: 'italic' }}>

@@ -358,6 +358,16 @@ export default function HomeDashboard() {
     };
   });
   const [netLoading, setNetLoading] = useState({ inPlay: true, bottleneck: true, earnings: true });
+  // PATCH 0693 — hard wall-clock fallback. If safeDiag never resolves
+  // (e.g. fetch hangs without aborting), the section spinners would sit
+  // forever. After 25s force them all off so the UI surfaces empty/
+  // error states instead of '📰 Loading…' indefinitely (BUG-19).
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setNetLoading(prev => ({ inPlay: false, bottleneck: false, earnings: false }));
+    }, 25_000);
+    return () => clearTimeout(t);
+  }, []);
   // PATCH 0605 — collapse defaults per institutional review
   // ("hide raw news feeds / low-confidence signals / secondary analytics")
   const [showTier3, setShowTier3] = useState(true);  // PATCH 0625 — default expanded

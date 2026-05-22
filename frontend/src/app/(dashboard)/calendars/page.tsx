@@ -103,6 +103,13 @@ export default function CalendarPage() {
   // *inside* the loading spinner, and the request is aborted at 20s with
   // a clear timeout error message.
   const [slowFetch, setSlowFetch] = useState(false);
+  // PATCH 0693 — bounded retry count + last-scan timestamp so /calendars
+  // never traps the user in a perpetual spinner. After MAX_RETRIES failed
+  // attempts, we surface the "View in Earnings Hub instead" deeplink as
+  // an escape hatch (that route uses a different upstream and works).
+  const [retryCount, setRetryCount] = useState(0);
+  const [lastScanAt, setLastScanAt] = useState<number | null>(null);
+  const MAX_RETRIES = 2;
   const FETCH_TIMEOUT_MS = 20_000;
   const SLOW_FETCH_HINT_MS = 8_000;
   // PATCH 0298 — AbortController so a stale fetch from a previous
@@ -145,14 +152,18 @@ export default function CalendarPage() {
       setData(json);
       calendarCacheSet(cacheKey, { data: json, ts: Date.now() });
       setError('');
+      setLastScanAt(Date.now()); // PATCH 0693
+      setRetryCount(0); // PATCH 0693 — reset on success
     } catch (err) {
       if ((err as Error)?.name === 'AbortError') {
         if (didTimeout) {
-          setError(`Calendar fetch timed out after ${FETCH_TIMEOUT_MS / 1000}s`);
+          setError(`Calendar fetch timed out after ${FETCH_TIMEOUT_MS / 1000}s`); // PATCH 0693
+          setLastScanAt(Date.now()); // PATCH 0693 — stamp even on failure
         }
         return; // either user-aborted or our timeout — either way, stop
       }
       setError(err instanceof Error ? err.message : 'An error occurred');
+      setLastScanAt(Date.now()); // PATCH 0693
     } finally {
       if (slowTimer) clearTimeout(slowTimer);
       if (abortTimer) clearTimeout(abortTimer);
@@ -331,7 +342,7 @@ export default function CalendarPage() {
                 Calendar is taking longer than usual — the NSE source may be slow today.
               </div>
               <button
-                onClick={() => fetchData()}
+                onClick={() => { setRetryCount(retryCount + 1); fetchData(); }} // PATCH 0693
                 style={{
                   padding: '6px 14px', borderRadius: 6,
                   border: `1px solid ${THEME.accent}`, backgroundColor: `${THEME.accent}18`, color: THEME.accent,
@@ -346,11 +357,30 @@ export default function CalendarPage() {
       )}
 
       {error && !loading && (
+        // PATCH 0693 — after MAX_RETRIES, swap the Retry button for an
+        // explicit "View in Earnings Hub instead" deeplink. /earnings-hub
+        // uses a different upstream + cache path so it tends to render
+        // even when /calendars is being throttled.
         <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.red}`, borderRadius: '8px', padding: '14px 16px', color: THEME.red, marginBottom: '24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
-          <span>⚠ {error} — NSE API may be temporarily unavailable.</span>
-          <button onClick={() => fetchData()} style={{ padding: '6px 14px', borderRadius: '6px', border: `1px solid ${THEME.red}`, backgroundColor: `${THEME.red}18`, color: THEME.red, cursor: 'pointer', fontSize: '12px', fontWeight: '700', flexShrink: 0 }}>
-            ↻ Retry
-          </button>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span>⚠ {error} — NSE API may be temporarily unavailable.</span>
+            {lastScanAt && (
+              <span style={{ fontSize: 11, color: THEME.textSecondary, fontWeight: 500 }}>
+                Last scan: {new Date(lastScanAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} IST · attempt {retryCount + 1}/{MAX_RETRIES + 1}
+              </span>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+            {retryCount < MAX_RETRIES ? (
+              <button onClick={() => { setRetryCount(retryCount + 1); fetchData(); }} style={{ padding: '6px 14px', borderRadius: '6px', border: `1px solid ${THEME.red}`, backgroundColor: `${THEME.red}18`, color: THEME.red, cursor: 'pointer', fontSize: '12px', fontWeight: '700' }}>
+                ↻ Retry
+              </button>
+            ) : (
+              <a href="/earnings-hub?tab=calendar" style={{ padding: '6px 14px', borderRadius: '6px', border: `1px solid ${THEME.accent}`, backgroundColor: `${THEME.accent}18`, color: THEME.accent, cursor: 'pointer', fontSize: '12px', fontWeight: '700', textDecoration: 'none' }}>
+                View in Earnings Hub instead →
+              </a>
+            )}
+          </div>
         </div>
       )}
 

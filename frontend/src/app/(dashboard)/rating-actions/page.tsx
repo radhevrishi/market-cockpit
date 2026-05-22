@@ -73,7 +73,8 @@ async function fetchRatingPayload(): Promise<FetchedPayload> {
   const safe = async <T,>(url: string, label: 'news' | 'filings'): Promise<T | null> => {
     try {
       const ctl = new AbortController();
-      const t = setTimeout(() => ctl.abort(), 25_000);
+      // PATCH 0695 — 25s → 50s so cold-start live-feed fetch completes
+      const t = setTimeout(() => ctl.abort(), 50_000);
       const r = await fetch(url, { cache: 'no-store', signal: ctl.signal });
       clearTimeout(t);
       if (!r.ok) {
@@ -92,7 +93,9 @@ async function fetchRatingPayload(): Promise<FetchedPayload> {
 
   const [newsJson, filingsJson] = await Promise.all([
     safe<any>(`/api/v1/news?limit=500&search=${encodeURIComponent(RATING_SEARCH_TOKENS)}`, 'news'),
-    safe<any>(`/api/v1/concall-intel/live-feed?days=14&bullishOnly=false`, 'filings'),
+    // PATCH 0695 — days=14 → days=7 (still wider than order-book since
+    // rating actions are rarer; 7d hits warm KV cache reliably).
+    safe<any>(`/api/v1/concall-intel/live-feed?days=7&bullishOnly=false`, 'filings'),
   ]);
 
   const articles: NewsArticleLite[] = [];

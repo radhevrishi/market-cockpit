@@ -2405,7 +2405,20 @@ export default function NewsFeedPage() {
     return () => clearTimeout(t);
   }, [search]);
   // Fetch ALL articles once — filters applied client-side for instant switching
-  const { data: allArticles, isLoading, error, refetch, dataUpdatedAt } = useNews(debouncedSearch);
+  const { data: allArticles, isLoading: rawIsLoading, error, refetch, dataUpdatedAt } = useNews(debouncedSearch);
+  // PATCH 0693 — hard timeout guard. The useQuery skeleton would otherwise
+  // sit there indefinitely on a hung backend (the QA BUG-03 symptom:
+  // skeleton forever, lifecycle counters all 0). When 25s elapses
+  // without data, flip newsTimeout=true; the UI then shows a terminal
+  // error + Retry button instead of the shimmer.
+  const [newsTimeout, setNewsTimeout] = useState(false);
+  useEffect(() => {
+    if (allArticles || error) { setNewsTimeout(false); return; }
+    if (!rawIsLoading) return;
+    const t = setTimeout(() => setNewsTimeout(true), 25_000);
+    return () => clearTimeout(t);
+  }, [rawIsLoading, allArticles, error]);
+  const isLoading = rawIsLoading && !newsTimeout; // PATCH 0693 — drop skeleton after timeout
   // Format the last-fetched time for display
   const newsFetchedAt = dataUpdatedAt
     ? new Date(dataUpdatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
@@ -2679,6 +2692,22 @@ export default function NewsFeedPage() {
     }
     return out;
   }, [allArticles, region, articleType, signalFilter, sourceName, earningsSeasonActive]);
+
+  // PATCH 0693 — auto-fallback from LIVE_WARM to ALL when the live bucket
+  // is empty but the broader feed has content. Prevents the QA BUG-03
+  // symptom where the lifecycle default of LIVE_WARM silently hid every
+  // article and the feed read "0 articles" indefinitely. Fires once per
+  // dataset and only if user hasn't manually overridden the filter.
+  const autoFallbackFiredRef = useRef(false);
+  useEffect(() => {
+    if (autoFallbackFiredRef.current) return;
+    if (!allArticles || allArticles.length === 0) return;
+    if (lifecycleFilter !== 'LIVE_WARM') return;
+    if (lifecycleCounts.LIVE_WARM === 0 && lifecycleCounts.ALL > 0) {
+      autoFallbackFiredRef.current = true;
+      setLifecycleFilter('ALL');
+    }
+  }, [allArticles, lifecycleFilter, lifecycleCounts]);
   // PATCH 0210 — Dedupe IN PLAY TODAY by ticker.
   // Root cause of the DEEDEV×2, INOXINDIA×2, CEINSYS×2 rendering: rawInPlay
   // returns one row per (article × ticker mention). Multiple articles
@@ -3389,11 +3418,29 @@ export default function NewsFeedPage() {
       )}
 
       {/* ── Error ────────────────────────────────────────────────────── */}
-      {error && !isLoading && (
+      {/* PATCH 0693 — show error OR explicit timeout state. Last-scan
+          timestamp surfaces what we know so the user doesn't think the
+          UI is frozen. */}
+      {(error || newsTimeout) && !isLoading && (
         <div style={{ backgroundColor: '#1a0a0a', border: '1px solid #7f1d1d', borderRadius: '12px', padding: '14px 16px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
           <AlertCircle style={{ width: '16px', height: '16px', color: '#EF4444' }} />
-          <span style={{ fontSize: '13px', color: '#fca5a5' }}>Could not load news — check that the backend is running</span>
-          <button onClick={handleRefresh} disabled={isRefreshing} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#EF4444', cursor: isRefreshing ? 'wait' : 'pointer', fontSize: '12px' }}>{isRefreshing ? 'Refreshing…' : 'Retry'}</button>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span style={{ fontSize: '13px', color: '#fca5a5' }}>
+              {newsTimeout && !error
+                ? '⚠ Upstream slow — news feed did not respond in 25s'
+                : 'Could not load news — check that the backend is running'}
+            </span>
+            {newsFetchedAt && (
+              <span style={{ fontSize: 11, color: '#7d8a99' }}>Last scan: {newsFetchedAt} IST</span>
+            )}
+          </div>
+          <button
+            onClick={() => { setNewsTimeout(false); refetch(); handleRefresh(); }}
+            disabled={isRefreshing}
+            style={{ marginLeft: 'auto', background: 'none', border: '1px solid #EF4444', borderRadius: 6, padding: '4px 12px', color: '#EF4444', cursor: isRefreshing ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 700 }}
+          >
+            {isRefreshing ? 'Refreshing…' : '↻ Retry'}
+          </button>
         </div>
       )}
 

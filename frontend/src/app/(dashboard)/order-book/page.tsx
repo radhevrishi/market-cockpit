@@ -61,7 +61,9 @@ async function fetchOrderPayload(): Promise<FetchedPayload> {
   const safe = async <T,>(url: string, label: 'news' | 'filings'): Promise<T | null> => {
     try {
       const ctl = new AbortController();
-      const t = setTimeout(() => ctl.abort(), 25_000);
+      // PATCH 0695 — was 25s; bumped to 50s so cold-start fetches
+      // (live-feed has 60s maxDuration) actually complete.
+      const t = setTimeout(() => ctl.abort(), 50_000);
       const r = await fetch(url, { cache: 'no-store', signal: ctl.signal });
       clearTimeout(t);
       if (!r.ok) {
@@ -78,9 +80,13 @@ async function fetchOrderPayload(): Promise<FetchedPayload> {
     }
   };
 
+  // PATCH 0695 — was days=14 which times out on cold-start (live-feed
+  // route has 60s maxDuration and scans all NSE filings in window).
+  // 3 days hits warm cache reliably + matches eo-blockbuster-alert's
+  // own window so cached results overlap.
   const [newsJson, filingsJson] = await Promise.all([
     safe<any>(`/api/v1/news?limit=500&search=${encodeURIComponent(ORDER_SEARCH_TOKENS)}`, 'news'),
-    safe<any>(`/api/v1/concall-intel/live-feed?days=14&bullishOnly=false`, 'filings'),
+    safe<any>(`/api/v1/concall-intel/live-feed?days=3&bullishOnly=false`, 'filings'),
   ]);
 
   const articles: NewsArticleLite[] = [];

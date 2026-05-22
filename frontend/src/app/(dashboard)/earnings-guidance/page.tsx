@@ -142,6 +142,8 @@ export default function EarningsGuidancePage() {
   const [computing, setComputing] = useState(false);
   const [pollCount, setPollCount] = useState(0);
   const [pollStopped, setPollStopped] = useState(false); // user manually stopped OR max reached
+  // PATCH 0693 — last-scan timestamp for terminal-state messaging on BUG-15
+  const [lastScanAt, setLastScanAt] = useState<number | null>(null);
   const MAX_POLLS = 15; // 15 × 20s = 5 min max
   const [filterMode, setFilterMode] = useState<FilterMode>('ALL');
   const [showOpLeverage, setShowOpLeverage] = useState(false);
@@ -222,6 +224,7 @@ export default function EarningsGuidancePage() {
       setError(err instanceof Error ? err.message : 'Failed to load guidance data');
     } finally {
       if (!isPolling) setLoading(false);
+      setLastScanAt(Date.now()); // PATCH 0693
     }
   }, []);
 
@@ -344,9 +347,14 @@ export default function EarningsGuidancePage() {
       </div>
 
       {/* Error */}
+      {/* PATCH 0693 — terminal error w/ retry + last-scan timestamp. */}
       {error && (
-        <div style={{ backgroundColor: '#2D1B1B', border: `1px solid ${RED}`, borderRadius: '8px', padding: '16px', marginBottom: '20px', color: RED }}>
-          {error}
+        <div style={{ backgroundColor: '#2D1B1B', border: `1px solid ${RED}`, borderRadius: '8px', padding: '16px', marginBottom: '20px', color: RED, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span><strong>⚠ Fetch failed:</strong> {error}</span>
+            {lastScanAt && <span style={{ fontSize: 11, color: TEXT_DIM }}>Last scan: {new Date(lastScanAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} IST</span>}
+          </div>
+          <button onClick={() => { setError(''); fetchData(); }} style={{ backgroundColor: RED, border: 'none', color: '#fff', padding: '6px 14px', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>↻ Retry</button>
         </div>
       )}
 
@@ -359,25 +367,48 @@ export default function EarningsGuidancePage() {
       )}
 
       {/* Empty */}
+      {/* PATCH 0693 — terminal "polling exhausted" state with a Retry
+          button and last-scan timestamp. Closes BUG-15 where the
+          "Polling backend... attempt 1/15" message rendered indefinitely
+          with no way to break out other than reloading the page. */}
       {!loading && !error && filteredEvents.length === 0 && (
         <div style={{ backgroundColor: CARD, border: `1px solid ${CARD_BORDER}`, borderRadius: '8px', padding: '60px 20px', textAlign: 'center', color: TEXT_DIM }}>
-          <div style={{ fontSize: '48px', marginBottom: '16px' }}>{computing ? '⟳' : '📊'}</div>
-          <p style={{ margin: '0 0 8px', fontSize: '16px', fontWeight: 500, color: computing ? ACCENT : TEXT_DIM }}>
+          <div style={{ fontSize: '48px', marginBottom: '16px' }}>{computing ? '⟳' : pollStopped ? '⚠' : '📊'}</div>
+          <p style={{ margin: '0 0 8px', fontSize: '16px', fontWeight: 500, color: computing ? ACCENT : pollStopped ? RED : TEXT_DIM }}>
             {data?.events?.length
               ? 'No events match your filters'
+              : pollStopped && !computing
+              ? '⚠ Upstream slow — backend compute exhausted'
               : computing
               ? 'Fetching earnings data from screener.in...'
-              : 'No guidance events found'}
+              : '✓ Scan complete · 0 guidance events found'}
           </p>
           <p style={{ margin: 0, fontSize: '13px' }}>
             {data?.events?.length
               ? 'Try adjusting filters'
               : pollStopped && !computing
-              ? `Stopped after ${MAX_POLLS} attempts. Backend may still be computing — try refreshing manually.`
+              ? `Stopped after ${MAX_POLLS} attempts (~5 min). The backend pipeline may still be computing — retry or check System Status.`
               : computing
               ? `Polling backend pipeline — attempt ${pollCount + 1}/${MAX_POLLS} (${pollCount * 20}s elapsed). Stop polling if backend is offline.`
               : 'Data refreshes automatically via background pipeline. Check back shortly.'}
           </p>
+          {lastScanAt && (
+            <p style={{ margin: '8px 0 0', fontSize: 11, color: TEXT_DIM }}>
+              Last scan: {new Date(lastScanAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} IST
+            </p>
+          )}
+          {pollStopped && !computing && (
+            <button
+              onClick={() => { setPollStopped(false); setPollCount(0); setComputing(false); fetchData(); }}
+              style={{
+                marginTop: 16, padding: '8px 18px', borderRadius: 6,
+                border: `1px solid ${ACCENT}`, backgroundColor: `${ACCENT}18`, color: ACCENT,
+                cursor: 'pointer', fontSize: 12, fontWeight: 700,
+              }}
+            >
+              ↻ Retry
+            </button>
+          )}
           {computing && !pollStopped && (
             <div style={{ marginTop: '20px' }}>
               <div style={{ width: '200px', height: '4px', backgroundColor: '#1A2540', borderRadius: '2px', margin: '0 auto 14px', overflow: 'hidden' }}>
