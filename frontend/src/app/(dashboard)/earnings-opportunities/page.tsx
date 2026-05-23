@@ -994,7 +994,31 @@ export default function EarningsOpportunitiesPage() {
         const cached = readLsCache(resolvedDateForGrading);
         if (cached) return dedupePayloadByCompany(cached as OpportunitiesPayload);
       }
-      const res = await fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}`, { cache: 'no-store' });
+      // PATCH 0741 — Client-side 20s hard timeout. Before this, when the
+      // backend was degraded (Vercel hits 60s maxDuration on its own), the
+      // user saw "Fetching live results..." for 60+ seconds before the
+      // 504 banner appeared. Now we abort at 20s and show a faster, more
+      // useful error message that distinguishes client-abort from server-504.
+      const ctrl = new AbortController();
+      const clientTimeout = setTimeout(() => ctrl.abort(), 20_000);
+      let res: Response;
+      try {
+        res = await fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}`, {
+          cache: 'no-store',
+          signal: ctrl.signal,
+        });
+      } catch (e: any) {
+        clearTimeout(clientTimeout);
+        if (e?.name === 'AbortError') {
+          const err: any = new Error('Pipeline taking longer than 20s. NSE/BSE upstream may be degraded — retry in a moment.');
+          err.status = 0; // 0 = client-side timeout, not a real HTTP code
+          err.detail = 'client_timeout_20s';
+          err.dateAttempted = resolvedDateForGrading;
+          throw err;
+        }
+        throw e;
+      }
+      clearTimeout(clientTimeout);
       // PATCH 0736 — surface server timeout/error explicitly so the UI can
       // show a banner instead of silently falling back to placeholderData
       // (the previous query's payload — which appears on screen as "same
