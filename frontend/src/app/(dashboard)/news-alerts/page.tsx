@@ -140,6 +140,37 @@ export default function NewsAlertsPage() {
               new Notification(`Alert: ${rule.name}`, { body: headline.slice(0, 200), tag: rule.id });
             } catch {}
           }
+          // PATCH 0726 — fire-and-forget server-side dispatch to Slack / SMTP /
+          // generic webhook. Each channel no-ops when its env vars aren't set,
+          // so this is safe to call unconditionally. Don't block the UI on
+          // the result; just log failures.
+          try {
+            fetch('/api/v1/alerts/dispatch', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                rule: { id: rule.id, name: rule.name },
+                article: {
+                  title: headline,
+                  url: article.url,
+                  source: article.source,
+                  published_at: article.published_at || article.publishedAt,
+                  ticker_symbols: (article.ticker_symbols || []).map((t: any) =>
+                    typeof t === 'string' ? t : t?.ticker || ''
+                  ).filter(Boolean),
+                  importance_score: article.importance_score,
+                },
+                triggeredAt: new Date(firedAt).toISOString(),
+              }),
+            }).catch((err) => {
+              // 401 (no secret on client) is expected — endpoint is gated.
+              // Silently drop; users running a server-side rule engine
+              // would call this endpoint directly with the secret.
+              if (process.env.NODE_ENV !== 'production') {
+                console.debug('[alert-dispatch] fire-and-forget failed', err);
+              }
+            });
+          } catch {}
         }
         const arr = hitsByRule.get(rule.id) || [];
         arr.push(article.id);
