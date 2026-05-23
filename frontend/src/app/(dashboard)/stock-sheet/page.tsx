@@ -400,10 +400,53 @@ function useTickerNews(ticker: string) {
       // `watchlist` param (CSV of tickers) which the backend honours — that
       // restricts the feed to articles mentioning the requested ticker.
       // Then filter to last 90 days client-side.
-      const { data } = await api.get('/news', { params: { watchlist: ticker } });
-      const arr: any[] = Array.isArray(data) ? data : (data?.articles || data?.items || []);
+      // PATCH 0737 — additionally fan out to /api/v1/news-india/<ticker>
+      // (Yahoo + Google RSS free fallback, KV-cached 6h) in parallel. The
+      // editorial /news cache is genuinely sparse for sub-₹5000Cr Indian
+      // smallcaps (MINDACORP, SPARC, RATEGAIN-class). Merging the two
+      // sources gives those names a real news section. USA tickers won't
+      // typically get hits from the India fallback, so the merge is a
+      // no-op for them.
+      const [primaryRes, indiaRes] = await Promise.allSettled([
+        api.get('/news', { params: { watchlist: ticker } }),
+        // /api/v1/news-india/<ticker> — direct fetch, this endpoint isn't
+        // under the api.get baseURL prefix the way /news is.
+        fetch(`/api/v1/news-india/${encodeURIComponent(ticker)}`, { cache: 'no-store' })
+          .then((r) => r.ok ? r.json() : { articles: [] })
+          .catch(() => ({ articles: [] })),
+      ]);
+
+      const primary: any[] = primaryRes.status === 'fulfilled'
+        ? (Array.isArray(primaryRes.value.data)
+            ? primaryRes.value.data
+            : (primaryRes.value.data?.articles || primaryRes.value.data?.items || []))
+        : [];
+
+      const indiaPayload: any = indiaRes.status === 'fulfilled' ? indiaRes.value : { articles: [] };
+      const indiaArticles: any[] = (indiaPayload?.articles || []).map((n: any) => ({
+        id: `india-rss:${n.url || n.title}`,
+        title: n.title,
+        url: n.url,
+        source: n.source || 'India RSS',
+        source_name: n.source || 'India RSS',
+        published_at: n.publishedAt || n.published_at,
+        // mark so the UI can tag these as fallback-source if desired
+        _source_tier: 'INDIA_FALLBACK',
+      }));
+
+      // Merge + dedupe by URL/title — primary wins (editorial curation
+      // is higher quality than raw RSS).
+      const seen = new Set<string>();
+      const merged: any[] = [];
+      for (const a of [...primary, ...indiaArticles]) {
+        const key = (a?.url || a?.title || '').slice(0, 200);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        merged.push(a);
+      }
+
       const cutoff = Date.now() - 90 * 86400000;
-      return arr.filter((a: any) => {
+      return merged.filter((a: any) => {
         if (!a?.published_at) return true;
         const t = new Date(a.published_at).getTime();
         return isNaN(t) || t >= cutoff;
