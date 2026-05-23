@@ -579,6 +579,38 @@ export default function HomeDashboard() {
         })).filter((m) => m.ticker);
         const moverTickers = moverInputs.map((m) => m.ticker);
         if (moverTickers.length > 0) {
+          // PATCH 0746 — Outer hard timeout (15s) on the entire enrichment block.
+          // When Upstash/backend is degraded (e.g. quota exhausted, NSE upstream
+          // 50% failure), individual endpoints can stall. Previously this kept
+          // data.moversAttrib === undefined → "analyzing…" rendered forever.
+          // Now we ALWAYS fire setData with whatever indices we have, even
+          // partial. The Tier-4 fallthrough in attributeMovers labels rows
+          // honestly as "no confirmed trigger" instead of leaving "analyzing…".
+          const ENRICH_BUDGET_MS = 15_000;
+          let enrichSettled = false;
+          const fireAttribution = (
+            earningsByTicker: Record<string, any>,
+            specialByTicker: Record<string, any>,
+            filingsBySymbol: Record<string, any[]>,
+            newsByTicker: Record<string, any[]>,
+          ) => {
+            if (enrichSettled || cancelled) return;
+            enrichSettled = true;
+            const attrib = attributeMovers({
+              movers: moverInputs,
+              filingsBySymbol,
+              newsByTicker,
+              earningsByTicker,
+              specialByTicker,
+            });
+            setData((d) => ({ ...d, moversAttrib: attrib } as any));
+          };
+          // Hard-timeout fallback — fires attribution with empty indices so
+          // every row gets at least a Tier-4 honest label.
+          const enrichTimeout = setTimeout(() => {
+            fireAttribution({}, {}, {}, {});
+          }, ENRICH_BUDGET_MS);
+
           (async () => {
             // PATCH 0712 — five-source enrichment, all parallel:
             //   1. earnings/graded last 5 weekdays  (HIGH-conf earnings catalyst)
@@ -720,16 +752,17 @@ export default function HomeDashboard() {
                 .catch(() => {/* fire-and-forget */});
             }
 
-            // 6. Run attribution engine
-            const attrib = attributeMovers({
-              movers: moverInputs,
-              filingsBySymbol,
-              newsByTicker,
-              earningsByTicker,
-              specialByTicker,
-            });
-            if (!cancelled) setData((d) => ({ ...d, moversAttrib: attrib } as any));
-          })();
+            // 6. Run attribution engine — PATCH 0746 uses fireAttribution which
+            //    races the outer 15s timeout. First call wins; subsequent calls
+            //    are no-ops via the enrichSettled flag.
+            clearTimeout(enrichTimeout);
+            fireAttribution(earningsByTicker, specialByTicker, filingsBySymbol, newsByTicker);
+          })().catch(() => {
+            // PATCH 0746 — any uncaught error in the enrichment block still
+            //    triggers attribution with empty indices so rows are labeled.
+            clearTimeout(enrichTimeout);
+            fireAttribution({}, {}, {}, {});
+          });
         }
       });
 

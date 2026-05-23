@@ -256,6 +256,15 @@ export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttrib
     // Most common reason for a sharp move. If this ticker reported in the
     // last 7 days, the move IS the earnings reaction — surface the tier
     // and growth profile.
+    //
+    // PATCH 0747 — When EARNINGS hit AND the move direction is OPPOSITE the
+    // tier sentiment, this is post-results profit-taking (GPIL pattern:
+    // STRONG Q4 results, then -2.5% next day on profit-booking). Phrase it
+    // explicitly so the user doesn't think the engine is contradicting itself.
+    //
+    // PATCH 0747 — Also merge in any same-ticker special-situation event
+    // (IRB pattern: Q4 PAT +38% AND 4th interim dividend declared on same
+    // day). Both belong on the same row.
     const earnings = opts.earningsByTicker?.[sym];
     if (earnings && isFresh(earnings.filing_date, EARNINGS_WINDOW)) {
       const tier = earnings.tier || 'reported';
@@ -265,10 +274,36 @@ export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttrib
       const growthBlurb = (typeof sales === 'number' || typeof pat === 'number')
         ? ` · ${typeof sales === 'number' ? `Sales ${sales >= 0 ? '+' : ''}${sales.toFixed(0)}%` : ''}${typeof pat === 'number' ? ` · PAT ${pat >= 0 ? '+' : ''}${pat.toFixed(0)}%` : ''}`
         : '';
+      // Post-results profit-taking detection: STRONG/BLOCKBUSTER + price down,
+      // or AVOID/POOR + price up (relief rally). Either way the move is the
+      // earnings reaction, but the framing changes.
+      const tierUpper = (tier || '').toUpperCase();
+      const isStrongTier = /^(BLOCKBUSTER|STRONG|MIXED)$/i.test(tierUpper);
+      const isWeakTier = /^(AVOID|POOR|WEAK)$/i.test(tierUpper);
+      const movingDown = m.changePercent < 0;
+      const movingUp = m.changePercent > 0;
+      const profitTaking = isStrongTier && movingDown;
+      const reliefRally = isWeakTier && movingUp;
+      // Same-day special-situation: dividend / buyback / investor meet attached
+      const earningsSpecial = opts.specialByTicker?.[sym];
+      let extraTag = '';
+      if (earningsSpecial) {
+        const evt = (earningsSpecial.event_type || '').toUpperCase();
+        if (/DIVIDEND/.test(evt)) extraTag = ' + dividend';
+        else if (/BUYBACK/.test(evt)) extraTag = ' + buyback';
+        else if (/INVESTOR_MEET|CONFERENCE/.test(evt)) extraTag = ' + investor meet';
+        else if (/OFS|STAKE_SALE/.test(evt)) extraTag = ' + OFS';
+        else if (/PREFERENTIAL|QIP|RIGHTS|SAST/.test(evt)) extraTag = ' + capital action';
+      }
+      const framing = profitTaking
+        ? `post-results profit-taking (${tier} ${period})`
+        : reliefRally
+        ? `relief rally (${tier} ${period} — reaction inverted)`
+        : `${tier} earnings (${period})`;
       out[sym] = {
         ticker: sym,
         changePercent: m.changePercent,
-        catalyst: `${tier} earnings (${period})${growthBlurb}`,
+        catalyst: `${framing}${growthBlurb}${extraTag}`,
         catalystType: 'EARNINGS',
         moveType: 'INFORMATION',
         scope: sectorScope === 'SECTOR_WIDE' ? 'SECTOR_WIDE' : 'STOCK_SPECIFIC',
@@ -382,21 +417,30 @@ export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttrib
     }
 
     // ── TIER 4: honest "no confirmed trigger" (LOW confidence) ───────────
-    // Always include industry context so the label is actually informative.
-    // E.g. "Auto Components & Equipments · smallcap momentum (no confirmed
-    // trigger — likely liquidity-driven)" instead of just "No confirmed
-    // trigger — smallcap momentum".
+    // PATCH 0747 — Tighter, user-spec language. The original wording was
+    // both verbose and accidentally judgmental ("likely liquidity-driven"
+    // sounded pejorative when often it's just an unenriched smallcap with
+    // ordinary intraday flow). User feedback:
+    //   • Use explicit categories: "momentum only" vs "no confirmed trigger"
+    //   • Don't duplicate industry text — home page renders the industry chip
+    //     separately, so the catalyst label should focus on cause, not topic
+    //   • Be honest about confidence WITHOUT inventing a story
+    //
+    // Industry chip on the home page already shows "Civil Construction" /
+    // "Housing Finance Company" / etc, so we DON'T repeat it here.
     const indGroup = (m.indexGroup || '').toLowerCase();
     const smallcap = indGroup === 'small';
-    const industryHint = (m.industry || m.sector || '').trim();
     const moveDir = direction === 'up' ? 'momentum' : 'unwind';
-    const honestLabel = smallcap
-      ? (industryHint
-          ? `${industryHint} · smallcap ${moveDir} (no confirmed trigger — likely liquidity-driven)`
-          : `Smallcap ${moveDir} (no confirmed trigger — likely liquidity-driven)`)
-      : (industryHint
-          ? `${industryHint} ${direction === 'up' ? 'rotation' : 'profit booking'} (no stock-specific trigger found)`
-          : `Sector ${direction === 'up' ? 'rotation' : 'profit booking'} (no stock-specific trigger found)`);
+    // Loud/extreme moves (>7%) on smallcaps with NO trigger are almost always
+    // operator-driven or sentiment-driven flow. Frame separately from
+    // ordinary 3-6% moves which are more likely just intraday rotation.
+    const absPct = Math.abs(m.changePercent);
+    const extreme = smallcap && absPct >= 7;
+    const honestLabel = extreme
+      ? `${moveDir} only · no confirmed trigger (verify before chasing)`
+      : smallcap
+      ? `${moveDir} only · no confirmed trigger`
+      : `sector ${direction === 'up' ? 'rotation' : 'profit booking'} · no stock-specific trigger`;
     out[sym] = {
       ticker: sym,
       changePercent: m.changePercent,
