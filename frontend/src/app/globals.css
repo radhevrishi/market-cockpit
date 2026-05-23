@@ -952,3 +952,248 @@ html[data-theme="professional"] hr {
 html[data-theme="professional"] body {
   line-height: 1.35;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PATCH 0727 — Mobile responsiveness pass (top 20 dashboard pages)
+   ─────────────────────────────────────────────────────────────────────────
+   Extends prior PATCH 0263 + PATCH 0719 mobile rules with:
+   - Broader fixed-pixel multi-column grid collapse
+   - Mobile-friendly table wrap (already started in 0719, hardened here)
+   - Sticky rail neutralization (left + right rails)
+   - Chip-row wrap fallback for the many `display:flex gap:N` toolbars
+   - Tighter padding / font sizes on heavy headers
+   - Wide-content overflow guards
+   Targets pages: portfolio, watchlists, news, movers, heatmap, screener,
+   earnings-opportunities, earnings-analysis, bottleneck-intel, transmission,
+   super-investors, stock-sheet, multibagger, valuation-calc, auto-valuation,
+   critical-themes, order-book, rating-actions, special-situations, home.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 767px) {
+  /* P0727 #1 — Collapse EVERY fixed-pixel multi-column grid pattern to a
+     single column. Catches the long-tail of variations the prior rules
+     missed: 110px..400px first-column widths + any "Npx 1fr" / "1fr Npx"
+     / "Npx 1fr Mpx" combinations. */
+  main div[style*="gridTemplateColumns:"][style*="110px 1fr"],
+  main div[style*="gridTemplateColumns:"][style*="120px 1fr"],
+  main div[style*="gridTemplateColumns:"][style*="130px 1fr"],
+  main div[style*="gridTemplateColumns:"][style*="140px 1fr"],
+  main div[style*="gridTemplateColumns:"][style*="160px 1fr"],
+  main div[style*="gridTemplateColumns:"][style*="180px 1fr"],
+  main div[style*="gridTemplateColumns:"][style*="200px 1fr"],
+  main div[style*="gridTemplateColumns:"][style*="220px 1fr"],
+  main div[style*="gridTemplateColumns:"][style*="240px 1fr"],
+  main div[style*="gridTemplateColumns:"][style*="260px 1fr"],
+  main div[style*="gridTemplateColumns:"][style*="280px 1fr"],
+  main div[style*="gridTemplateColumns:"][style*="320px 1fr"],
+  main div[style*="gridTemplateColumns:"][style*="360px 1fr"],
+  main div[style*="gridTemplateColumns:"][style*="400px 1fr"],
+  main div[style*="grid-template-columns:"][style*="110px 1fr"],
+  main div[style*="grid-template-columns:"][style*="120px 1fr"],
+  main div[style*="grid-template-columns:"][style*="130px 1fr"],
+  main div[style*="grid-template-columns:"][style*="140px 1fr"],
+  main div[style*="grid-template-columns:"][style*="160px 1fr"],
+  main div[style*="grid-template-columns:"][style*="180px 1fr"],
+  main div[style*="grid-template-columns:"][style*="200px 1fr"],
+  main div[style*="grid-template-columns:"][style*="220px 1fr"],
+  main div[style*="grid-template-columns:"][style*="240px 1fr"],
+  main div[style*="grid-template-columns:"][style*="260px 1fr"],
+  main div[style*="grid-template-columns:"][style*="280px 1fr"],
+  main div[style*="grid-template-columns:"][style*="320px 1fr"],
+  main div[style*="grid-template-columns:"][style*="360px 1fr"],
+  main div[style*="grid-template-columns:"][style*="400px 1fr"],
+  main div[style*="gridTemplateColumns:"][style*="1fr 200px"],
+  main div[style*="gridTemplateColumns:"][style*="1fr 220px"],
+  main div[style*="gridTemplateColumns:"][style*="1fr 240px"],
+  main div[style*="gridTemplateColumns:"][style*="1fr 260px"],
+  main div[style*="gridTemplateColumns:"][style*="1fr 280px"],
+  main div[style*="gridTemplateColumns:"][style*="1fr 320px"],
+  main div[style*="gridTemplateColumns:"][style*="1fr 360px"],
+  main div[style*="gridTemplateColumns:"][style*="1fr 400px"],
+  main div[style*="grid-template-columns:"][style*="1fr 200px"],
+  main div[style*="grid-template-columns:"][style*="1fr 220px"],
+  main div[style*="grid-template-columns:"][style*="1fr 240px"],
+  main div[style*="grid-template-columns:"][style*="1fr 260px"],
+  main div[style*="grid-template-columns:"][style*="1fr 280px"],
+  main div[style*="grid-template-columns:"][style*="1fr 320px"],
+  main div[style*="grid-template-columns:"][style*="1fr 360px"],
+  main div[style*="grid-template-columns:"][style*="1fr 400px"] {
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+  }
+
+  /* P0727 #2 — Multi-column dense data grids that contain 4+ fixed
+     columns (used heavily on /multibagger, /valuations, /bottleneck-intel
+     and /news-alerts). Allow them to scroll horizontally rather than
+     forcibly collapse — the columns matter for those data tables. */
+  main div[style*="gridTemplateColumns:"][style*="px"][style*="px"][style*="px"][style*="px"]:not([style*="repeat("]) {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+  }
+
+  /* P0727 #3 — Sticky left + right rails (filter rail, intel rail) on
+     /transmission, /news, /movers. Already handled for <aside sticky> in
+     0263 + plain divs in 0719, this widens to also catch "position:sticky"
+     without space. */
+  main aside[style*="sticky"],
+  main div[style*="position:sticky"],
+  main div[style*="position: sticky"] {
+    position: static !important;
+    top: auto !important;
+  }
+
+  /* P0727 #4 — Chip-row wrap fallback. The prior PATCH 0263 rule uses a
+     negative `:not([style*="flex-wrap"])` matcher which is brittle (any
+     other flex prop counts as a hit). Just force every flex row inside
+     main to wrap on mobile — chips and toolbar buttons are the dominant
+     case and they all benefit. */
+  main [style*="display: flex"][style*="gap"],
+  main [style*="display:flex"][style*="gap"],
+  main [style*="display: 'flex'"][style*="gap"] {
+    flex-wrap: wrap !important;
+  }
+
+  /* P0727 #5 — Heavier padding cleanup. PATCH 0263 only caught 24px
+     padding on direct children of main. Many pages nest a wrapper div
+     first; this catches 20-32px on any descendant. */
+  main div[style*="padding: 20px"],
+  main div[style*="padding:20px"],
+  main div[style*="padding: 24px"],
+  main div[style*="padding:24px"],
+  main div[style*="padding: 28px"],
+  main div[style*="padding:28px"],
+  main div[style*="padding: 32px"],
+  main div[style*="padding:32px"] {
+    padding: 12px !important;
+  }
+  main div[style*="padding: '24px"],
+  main div[style*="padding: '28px"],
+  main div[style*="padding: '32px"] {
+    padding: 12px !important;
+  }
+  main div[style*="padding: \"24px"],
+  main div[style*="padding: \"28px"],
+  main div[style*="padding: \"32px"] {
+    padding: 12px !important;
+  }
+
+  /* P0727 #6 — Big numeric headlines (28-40px) used on Home tier-cards,
+     /movers KPI strip, /portfolio P&L, /transmission scenario lab. */
+  main [style*="fontSize: 28"],
+  main [style*="fontSize:28"],
+  main [style*="fontSize: 32"],
+  main [style*="fontSize:32"],
+  main [style*="fontSize: 36"],
+  main [style*="fontSize:36"],
+  main [style*="fontSize: 40"],
+  main [style*="fontSize:40"],
+  main [style*="font-size: 28"],
+  main [style*="font-size: 32"],
+  main [style*="font-size: 36"],
+  main [style*="font-size: 40"] {
+    font-size: 22px !important;
+  }
+  main h1[style*="fontSize: 24"],
+  main h1[style*="fontSize:24"],
+  main h2[style*="fontSize: 24"],
+  main h2[style*="fontSize:24"] {
+    font-size: 18px !important;
+  }
+
+  /* P0727 #7 — Toolbar/button rows that don't already wrap should wrap.
+     Many pages render a flex row of buttons with `gap:N` and no wrap. */
+  main div[style*="display: flex"][style*="gap"] > button,
+  main div[style*="display:flex"][style*="gap"] > button {
+    flex-shrink: 0;
+  }
+
+  /* P0727 #8 — Tables. PATCH 0719 already converts tables to block +
+     scroll. Hardening: also reduce header font on the scroll-table so
+     the min-width:560px doesn't truncate badly. */
+  main table th {
+    font-size: 10px !important;
+    padding: 6px 8px !important;
+  }
+  main table td {
+    font-size: 11px !important;
+    padding: 6px 8px !important;
+  }
+
+  /* P0727 #9 — Auto-fit/auto-fill grids should single-column on mobile.
+     PATCH 0263 covered display:grid + auto-fill. Hardening for auto-fit. */
+  main div[style*="display: grid"][style*="auto-fit"],
+  main div[style*="display:grid"][style*="auto-fit"] {
+    grid-template-columns: 1fr !important;
+  }
+  /* repeat(N, ...) explicit column counts also collapse, but only when
+     N > 2 (2-up is usually fine on mobile). Catch 3-up + 4-up + 5-up. */
+  main div[style*="repeat(3, 1fr)"],
+  main div[style*="repeat(3,1fr)"],
+  main div[style*="repeat(4, 1fr)"],
+  main div[style*="repeat(4,1fr)"],
+  main div[style*="repeat(5, 1fr)"],
+  main div[style*="repeat(5,1fr)"],
+  main div[style*="repeat(6, 1fr)"],
+  main div[style*="repeat(6,1fr)"] {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 8px !important;
+  }
+  /* Tighter cards inside the 2-up collapse */
+  @media (max-width: 480px) {
+    main div[style*="repeat(3, 1fr)"],
+    main div[style*="repeat(3,1fr)"],
+    main div[style*="repeat(4, 1fr)"],
+    main div[style*="repeat(4,1fr)"],
+    main div[style*="repeat(5, 1fr)"],
+    main div[style*="repeat(5,1fr)"],
+    main div[style*="repeat(6, 1fr)"],
+    main div[style*="repeat(6,1fr)"] {
+      grid-template-columns: 1fr !important;
+    }
+  }
+
+  /* P0727 #10 — Overflow guard on the page itself. Any container with
+     fixed pixel width that exceeds viewport should scroll, not overflow. */
+  main {
+    overflow-x: hidden;
+  }
+  main > div {
+    max-width: 100vw;
+  }
+
+  /* P0727 #11 — Buttons inside compact toolbars should never shrink
+     content beyond readability. The various `padding: 6px 14px` chips
+     get a touch-target floor of 36px height. */
+  main button[style*="padding: 6px"],
+  main button[style*="padding:6px"],
+  main button[style*="padding: 4px"],
+  main button[style*="padding:4px"] {
+    min-height: 32px;
+  }
+
+  /* P0727 #12 — News card filter strip on /news is sticky and dense.
+     Already partly handled by 0719 #4 but the strip itself often uses
+     position: sticky inline-styled with single quotes (escaped above)
+     plus a min-height that makes it hog half the viewport. */
+  main div[style*="top: 0"][style*="zIndex"] {
+    position: static !important;
+  }
+}
+
+/* P0727 — Small phone (≤ 480px) tightening: drop home tier-cards and
+   any 2-column grids to single column, shrink padding even further. */
+@media (max-width: 480px) {
+  main div[style*="gridTemplateColumns:"][style*="1fr 1fr"]:not([style*="repeat"]),
+  main div[style*="grid-template-columns:"][style*="1fr 1fr"]:not([style*="repeat"]) {
+    grid-template-columns: 1fr !important;
+  }
+  main div[style*="padding: 12px"],
+  main div[style*="padding:12px"] {
+    padding: 10px !important;
+  }
+  main [style*="fontSize: 22"],
+  main [style*="fontSize:22"] {
+    font-size: 18px !important;
+  }
+}
