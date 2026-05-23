@@ -140,9 +140,43 @@ export async function GET(request: Request) {
     cached: false,
   };
 
+  // PATCH 0729 — Upstash KV SET was failing on 180d payload (UpstashError:
+  // 'Command fail'). Likely cause: payload exceeded Upstash 1 MiB request
+  // size limit. Counter-measures:
+  //   1. Build a TRIMMED variant for cache write: top 30 rows + truncated
+  //      investors list per row (cap 8) + short ISO dates (no ms). This
+  //      typically halves the payload size while preserving the entire
+  //      shape consumers depend on.
+  //   2. Size-check before SET — if still > 900 KB, log + skip cache
+  //      rather than retry. The route already returns 200 with fresh data
+  //      so the user-facing output is unaffected.
+  //   3. Longer TTL for larger windows (180d data changes slowly): 30 min
+  //      for ≤30d, 60 min for ≤90d, 120 min for 180d. Fewer SET attempts
+  //      = fewer chances to fail.
   try {
-    await kvSet(cacheKey, { ...payload, _ts: Date.now() }, 30 * 60);
-  } catch {}
+    const trimmedRows = rows.slice(0, 30).map((r) => ({
+      ticker: (r.ticker || '').slice(0, 80),
+      company: (r.company || '').slice(0, 80),
+      addCount: r.addCount,
+      exitCount: r.exitCount,
+      netActions: r.netActions,
+      totalSignalScore: Math.round(r.totalSignalScore * 10) / 10,  // 1 decimal
+      investors: r.investors.slice(0, 8),
+      topDirection: r.topDirection,
+      lastMoveAt: (r.lastMoveAt || '').slice(0, 10),               // YYYY-MM-DD only
+    }));
+    const cachePayload = { ...payload, rows: trimmedRows, _ts: Date.now() };
+    const sizeBytes = JSON.stringify(cachePayload).length;
+    if (sizeBytes > 900_000) {
+      console.warn(`[super-investor-flow] cache SKIPPED — payload ${(sizeBytes / 1024).toFixed(0)} KB exceeds 900 KB safe limit for ${days}d window`);
+    } else {
+      const ttlSec = days <= 30 ? 30 * 60 : days <= 90 ? 60 * 60 : 120 * 60;
+      await kvSet(cacheKey, cachePayload, ttlSec);
+    }
+  } catch (err) {
+    // KV write failure must NEVER break the response — log + continue.
+    console.warn('[super-investor-flow] KV SET failed (non-fatal):', err instanceof Error ? err.message : String(err));
+  }
 
   return NextResponse.json(payload);
 }

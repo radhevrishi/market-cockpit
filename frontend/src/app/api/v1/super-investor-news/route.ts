@@ -446,11 +446,14 @@ export async function GET(request: Request): Promise<NextResponse<ResponseShape>
 
   const cacheKey = `super-investor-news:v1:${query.toLowerCase().replace(/\s+/g, '_')}`;
   try {
-    // PATCH 0484 — 5-min cache instead of 30. User wants the feed to feel
-    // LIVE so a fresh stake-disclosure shows up quickly. Google News /
-    // Moneycontrol RSS endpoints handle this load fine.
+    // PATCH 0730 — 5min → 30min validity. Vercel observability shows this
+    // route is the single biggest CPU drain (493 calls / 12h). Stake
+    // disclosures are quarterly events — '5-min live feel' was wasteful.
+    // Each cache miss does 4 RSS fetches (Google News + Moneycontrol +
+    // ET + Trendlyne). 30min cache cuts fetch frequency 6× without
+    // hurting user-facing data quality.
     const cached = await kvGet<ResponseShape & { _ts?: number }>(cacheKey);
-    if (cached && cached._ts && Date.now() - cached._ts < 5 * 60 * 1000) {
+    if (cached && cached._ts && Date.now() - cached._ts < 30 * 60 * 1000) {
       return NextResponse.json({ ...cached, cached: true });
     }
   } catch {}
@@ -519,8 +522,13 @@ export async function GET(request: Request): Promise<NextResponse<ResponseShape>
   };
 
   try {
-    await kvSet(cacheKey, { ...payload, _ts: Date.now() }, 15 * 60); // 15-min TTL (live feel)
-  } catch {}
+    // PATCH 0730 — KV TTL 15min → 60min to match the new 30min validity
+    // window. Total CPU savings on this route ~6× since it's the single
+    // biggest per-call consumer (493 invocations / 12h per Vercel obs).
+    await kvSet(cacheKey, { ...payload, _ts: Date.now() }, 60 * 60);
+  } catch (err) {
+    console.warn('[super-investor-news] KV SET failed (non-fatal):', err instanceof Error ? err.message : String(err));
+  }
 
   return NextResponse.json(payload);
 }

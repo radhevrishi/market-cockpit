@@ -21,6 +21,10 @@
       "schedule": "0 1 * * *"
     },
     {
+      "path": "/api/v1/cron/concall-intel-warm",
+      "schedule": "30 21 * * 0"
+    },
+    {
       "path": "/api/bot/eo-blockbuster-alert",
       "schedule": "30 5 * * *"
     },
