@@ -1383,6 +1383,27 @@ export default function AutoValuationPage() {
                         e.target.value = '';
                       }}
                       style={{ display: 'none' }} />
+                    <button onClick={() => {
+                      // PATCH 0751 — Recompute. Re-runs sector inference on the
+                      // stored guidance text + company name, so saved entries
+                      // with pre-P0679 sector classifications (e.g. KOEL stuck
+                      // as 'Defence') get refreshed with the latest scoring
+                      // logic. Doesn't require the raw PDF/Excel — uses what's
+                      // already persisted.
+                      const guidanceText = (s.guidance || []).map(g => `${g.metric} ${g.rawPhrase || ''}`).join(' ');
+                      const recomputedSector = inferSector(guidanceText, s.company);
+                      // Detect if anything actually changed before write.
+                      if (recomputedSector === s.sector) {
+                        // No-op feedback so the user knows the rule didn't change.
+                        alert(`No change — sector still "${s.sector || '—'}" after recompute. (Sector inference rules haven't moved since this entry was saved.)`);
+                        return;
+                      }
+                      saveAutoValuation({ ...s, sector: recomputedSector, savedAt: new Date().toISOString() });
+                      refreshSaved();
+                    }} style={{
+                      fontSize: 10, padding: '4px 8px', background: '#A78BFA15', border: '1px solid #A78BFA50',
+                      color: '#A78BFA', borderRadius: 3, cursor: 'pointer', fontWeight: 800,
+                    }} title="Re-infer sector from latest classification rules — no re-upload needed">↻ RECOMP</button>
                     <button onClick={() => handleClearSaved(s.ticker)} style={{
                       fontSize: 10, padding: '4px 8px', background: '#EF444415', border: '1px solid #EF444450',
                       color: '#EF4444', borderRadius: 3, cursor: 'pointer', fontWeight: 800,
