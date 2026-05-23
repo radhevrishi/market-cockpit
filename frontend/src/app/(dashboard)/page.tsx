@@ -118,7 +118,7 @@ interface HomeState {
   signals?: Array<{ id?: string; title?: string; headline?: string; published_at?: string; source_name?: string; primary_ticker?: string; ticker_symbols?: any[]; importance_score?: number }>;
   // PATCH 0622 — institutional enhancements
   portfolioPnl?: { totalPct: number; totalChangeRs: number; bestMover?: { ticker: string; pct: number }; worstMover?: { ticker: string; pct: number }; positions: number; covered: number };
-  watchlistPulse?: Array<{ ticker: string; company?: string; changePercent: number; price?: number; reason?: string }>;
+  watchlistPulse?: Array<{ ticker: string; company?: string; changePercent: number; price?: number; reason?: string; cap?: string; attrib?: MoverAttribution }>;
   upcomingEarnings?: Array<{ ticker: string; company?: string; resultDate: string; sector?: string; daysAhead: number; onCb: boolean; onWatchlist: boolean }>;
   sectorRotation?: { topSector?: { sector: string; pct: number }; bottomSector?: { sector: string; pct: number } };
   ratingActionsToday?: Array<{ ticker?: string; headline: string; agency?: string; action?: string; source_name?: string; url?: string }>;
@@ -622,7 +622,37 @@ export default function HomeDashboard() {
               earningsByTicker,
               specialByTicker,
             });
-            setData((d) => ({ ...d, moversAttrib: attrib } as any));
+            // PATCH 0774 — also run attribution against watchlist names
+            // so the Watchlist Pulse card can render the same "why" labels
+            // as Top Movers. We rebuild the input list from the latest
+            // pulses (which already have ticker + changePercent + cap).
+            setData((d) => {
+              let watchAttrib: Record<string, MoverAttribution> | undefined;
+              const pulses = d.watchlistPulse;
+              if (pulses && pulses.length > 0) {
+                const watchInputs = pulses.map((p: any) => ({
+                  ticker: canonicalTicker(p.ticker),
+                  sector: undefined,
+                  industry: undefined,
+                  changePercent: p.changePercent ?? 0,
+                  indexGroup: p.cap,
+                  marketCap: undefined,
+                })).filter((m: any) => m.ticker);
+                watchAttrib = attributeMovers({
+                  movers: watchInputs,
+                  filingsBySymbol,
+                  newsByTicker,
+                  earningsByTicker,
+                  specialByTicker,
+                });
+                const enrichedPulses = pulses.map((p: any) => ({
+                  ...p,
+                  attrib: watchAttrib?.[canonicalTicker(p.ticker)],
+                }));
+                return { ...d, moversAttrib: attrib, watchlistPulse: enrichedPulses as any } as any;
+              }
+              return { ...d, moversAttrib: attrib } as any;
+            });
           };
           // Hard-timeout fallback — fires attribution with empty indices so
           // every row gets at least a Tier-4 honest label.
@@ -914,10 +944,13 @@ export default function HomeDashboard() {
           }
         }
 
-        // Watchlist Pulse — show tickers with significant move (|>=3%|)
-        // PATCH 0756 — when market is closed and the >=3% set is empty, fall
-        // back to last-close data with a relaxed >=1% threshold so the card
-        // still surfaces SOMETHING useful instead of "🕒 NSE closed" emptiness.
+        // Watchlist Pulse — PATCH 0774
+        //   (a) Carries indexGroup so the renderer can apply a small+mid
+        //       cap filter (user feedback: home Movers + Pulse should
+        //       prioritize actionable small/midcap moves, not large-caps).
+        //   (b) Reuses the same MoverAttribution engine that powers Top
+        //       Movers so each row gets a "why it's up/down" label
+        //       instead of a bare "+X.X%" snippet.
         let watchlist: string[] = [];
         try { watchlist = JSON.parse(localStorage.getItem('mc_watchlist_tickers') || '[]') || []; } catch {}
         if (watchlist.length > 0) {
@@ -927,16 +960,28 @@ export default function HomeDashboard() {
               const q = byTicker.get(key);
               if (!q) return null;
               const pct = q.changePercent ?? 0;
-              return { ticker: key, company: q.company, changePercent: pct, price: q.price, reason: `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}% last close` };
+              return {
+                ticker: key,
+                company: q.company,
+                changePercent: pct,
+                price: q.price,
+                cap: q.indexGroup,
+                reason: `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}% last close`,
+              };
             })
             .filter((x: any) => x !== null) as any[];
-          // PATCH 0769 — Three-tier threshold cascade.
-          // Strict ≥3% (intraday-significant) → relaxed ≥1% → ANY non-zero
-          // movement. The third tier guarantees a non-empty list whenever
-          // the quote API has data, which it now reliably does post-P0769.
-          const strong = allMoves.filter(x => Math.abs(x.changePercent) >= 3);
-          const moderate = allMoves.filter(x => Math.abs(x.changePercent) >= 1);
-          const anyMove = allMoves.filter(x => x.changePercent !== 0);
+          // PATCH 0774 — smallcap/midcap-only filter, fall back to full
+          // list when smallcap-only returns empty (typical on weekends
+          // or whenever the upstream indexGroup field isn't populated).
+          const smallMidOnly = allMoves.filter((x: any) => {
+            const g = (x?.cap || '').toLowerCase();
+            return g === 'small' || g === 'mid';
+          });
+          const universe = smallMidOnly.length > 0 ? smallMidOnly : allMoves;
+          // Three-tier threshold cascade (P0769).
+          const strong   = universe.filter((x: any) => Math.abs(x.changePercent) >= 3);
+          const moderate = universe.filter((x: any) => Math.abs(x.changePercent) >= 1);
+          const anyMove  = universe.filter((x: any) => x.changePercent !== 0);
           const pulses = (strong.length > 0 ? strong
                        : moderate.length > 0 ? moderate
                        : anyMove)
@@ -1015,108 +1060,11 @@ export default function HomeDashboard() {
         setData((d) => ({ ...d, upcomingEarnings: upcoming } as any));
       })();
 
-      // PATCH 0625 — Rating Actions + Order Book: dual-source pattern,
-      // mirroring the /rating-actions and /order-book pages. The single
-      // /api/v1/news search was too thin (returned 2 items, none usable).
-      // The corporate-filings stream catches actions the news feed misses.
-      (async () => {
-        const RATING_TOKENS = ['ICRA','CRISIL','CARE Ratings','India Ratings','Ind-Ra','Fitch','Moody','S&P','Brickwork','credit rating','rating upgrade','rating downgrade','rating revised','rating reaffirmed','rating affirmed','rating assigned','outlook revised','placed on watch'].join('|');
-        const ORDER_TOKENS = ['order book','letter of award','LoA','receipt of order','contract worth','contract win','contract awarded','intimation under regulation 30','large order','order received'].join('|');
-        const TIER1 = /(HAL|BHEL|NTPC|PGCIL|Power Grid|BEL|DRDO|ISRO|RBI|NABARD|LIC|ONGC|IOCL|GAIL|NHAI|Indian Railways|Indian Navy|Indian Air Force|Indian Army|Ministry of Defence|MoD|Reliance|Adani|L&T|Larsen|Tata Power|JSW|Tata Steel|Vedanta)/i;
-        const AGE_LIMIT_MS = 7 * 24 * 3600_000;  // 7 days — relaxed from 30h since these are episodic
-
-        const [{ data: newsJ }, { data: filingJ }] = await Promise.all([
-          safeDiag<any>(`/api/v1/news?limit=500&_=${Date.now()}`, 20_000),
-          safeDiag<any>(`/api/v1/concall-intel/live-feed?days=14&bullishOnly=false&_=${Date.now()}`, 20_000),
-        ]);
-        if (cancelled) return;
-
-        const articles: any[] = [];
-        const newsArr: any[] = Array.isArray(newsJ) ? newsJ : (newsJ?.articles || newsJ?.data || []);
-        for (const a of newsArr) {
-          articles.push({
-            title: a.title || a.headline,
-            url: a.url || a.source_url,
-            source_name: a.source_name,
-            published_at: a.published_at,
-            ticker: a.primary_ticker || (Array.isArray(a.ticker_symbols) ? a.ticker_symbols[0] : undefined),
-            kind: 'news',
-          });
-        }
-        const filingsArr: any[] = filingJ?.filings || [];
-        for (const f of filingsArr) {
-          articles.push({
-            title: f.subject || '',
-            url: f.source_url || f.attachment_urls?.[0],
-            source_name: f.exchange === 'NSE' ? 'NSE Filing' : 'BSE Filing',
-            published_at: f.filing_datetime,
-            ticker: f.symbol,
-            kind: 'filing',
-          });
-        }
-
-        // Rating Actions extraction
-        const ratingRe = new RegExp(RATING_TOKENS.replace(/\|/g, '|'), 'i');
-        const ratingHits = articles
-          .filter((a) => a.title && ratingRe.test(a.title))
-          .filter((a) => {
-            if (!a.published_at) return true;
-            return Date.now() - new Date(a.published_at).getTime() <= AGE_LIMIT_MS;
-          })
-          .map((a) => {
-            const t = a.title || '';
-            const agencyMatch = t.match(/(ICRA|CRISIL|CARE|Fitch|Moody|S&P|India Ratings|Ind-Ra|Brickwork)/i);
-            const actionMatch = t.match(/(upgrade|downgrade|outlook revised|reaffirm|affirm|assigned|placed on watch|withdrawn)/i);
-            return {
-              ticker: a.ticker,
-              headline: t,
-              agency: agencyMatch ? agencyMatch[1] : undefined,
-              action: actionMatch ? actionMatch[1] : undefined,
-              source_name: a.source_name,
-              url: a.url,
-            };
-          })
-          .slice(0, 5);
-        setData((d) => ({ ...d, ratingActionsToday: ratingHits } as any));
-
-        // Order Book extraction
-        const orderRe = new RegExp(ORDER_TOKENS.replace(/\|/g, '|'), 'i');
-        const orderHits = articles
-          .filter((a) => a.title && orderRe.test(a.title))
-          .filter((a) => {
-            if (!a.published_at) return true;
-            return Date.now() - new Date(a.published_at).getTime() <= AGE_LIMIT_MS;
-          })
-          .map((a) => {
-            const t = a.title || '';
-            const customerMatch = t.match(TIER1);
-            const valueMatch = t.match(/₹\s*([\d,]+(?:\.\d+)?)\s*(crore|cr|lakh|billion|million)/i)
-                            || t.match(/(?:Rs\.?|INR)\s*([\d,]+(?:\.\d+)?)\s*(crore|cr|lakh|bn|mn)/i)
-                            || t.match(/(?:\$|USD)\s*([\d,]+(?:\.\d+)?)\s*(billion|million|bn|mn)/i);
-            let valueCr: number | undefined;
-            if (valueMatch) {
-              const num = parseFloat(valueMatch[1].replace(/,/g, ''));
-              const unit = valueMatch[2].toLowerCase();
-              const isUsd = /\$|USD/.test(t);
-              const inrFactor = isUsd ? 85 : 1;
-              valueCr = (unit.startsWith('cr') || unit === 'crore' ? num
-                      : unit.startsWith('la') ? num / 100
-                      : unit.startsWith('bi') || unit === 'bn' ? num * 100
-                      : unit.startsWith('mi') || unit === 'mn' ? num / 10
-                      : num) * inrFactor;
-            }
-            return {
-              ticker: a.ticker,
-              headline: t,
-              customer: customerMatch ? customerMatch[1] : undefined,
-              valueCr,
-              source_name: a.source_name,
-              url: a.url,
-            };
-          })
-          .slice(0, 5);
-        setData((d) => ({ ...d, orderBookToday: orderHits } as any));
-      })();
+      // PATCH 0773 — Rating Actions + Order Book fetchers DELETED.
+      // Home dashboard no longer renders these panels (see render block
+      // below) and the standalone /rating-actions + /order-book pages
+      // are also removed. Removing the parallel fetch saves ~2× /news +
+      // 1× /concall-intel calls on every home load.
 
       // Earnings — PATCH 0615. Pull today + last 2 trading days, filter to
       // BLOCKBUSTER + STRONG only (drop MIXED/AVOID — those clutter the home
@@ -2012,7 +1960,7 @@ export default function HomeDashboard() {
 
         {/* ═══════════════ PATCH 0622 — TWO-COL: WATCHLIST PULSE + UPCOMING EARNINGS ═ */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12 }}>
-          {/* WATCHLIST PULSE — names with significant move today */}
+          {/* WATCHLIST PULSE — PATCH 0774 — cap filter + attribution */}
           <div style={{ ...cardStyle, borderLeft: '3px solid #22D3EE' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
               <span style={{ fontSize: 13, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px' }}>
@@ -2022,16 +1970,12 @@ export default function HomeDashboard() {
             </div>
             <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
               {_isIndianMarketOpen()
-                ? 'Watchlist names with ≥3% intraday move'
-                : '🕒 NSE closed · showing last close moves (≥1% threshold)'}
+                ? 'Small + Midcap watchlist names with ≥3% intraday move · with reason'
+                : '🕒 NSE closed · small + midcap last-close moves with attribution'}
             </div>
             {!data.watchlistPulse ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
             ) : data.watchlistPulse.length === 0 ? (
-              // PATCH 0756 — when market is closed AND the relaxed 1% threshold
-              // also returns nothing, every watchlist name closed within ±1% on
-              // Friday. State that explicitly so the user knows it's a quiet
-              // tape, not a defect.
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic', lineHeight: 1.5 }}>
                 {_isIndianMarketOpen()
                   ? 'No watchlist names ≥3% today.'
@@ -2039,16 +1983,29 @@ export default function HomeDashboard() {
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                {data.watchlistPulse.slice(0, 5).map((w) => (
-                  <Link key={w.ticker} href={`/stock-sheet?ticker=${encodeURIComponent(w.ticker)}`}
-                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
-                    <span style={{ fontSize: 10, color: '#22D3EE', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 70 }}>{w.ticker}</span>
-                    <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{w.company || w.ticker}</span>
-                    <span style={{ fontSize: 11, color: w.changePercent >= 0 ? '#10B981' : '#EF4444', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
-                      {w.changePercent >= 0 ? '+' : ''}{w.changePercent.toFixed(1)}%
-                    </span>
-                  </Link>
-                ))}
+                {data.watchlistPulse.slice(0, 5).map((w) => {
+                  const attr = (w as any).attrib;
+                  const label = attr?.label || (w as any).reason || '';
+                  const conf = attr?.confidence;
+                  return (
+                    <Link key={w.ticker} href={`/stock-sheet?ticker=${encodeURIComponent(w.ticker)}`}
+                      style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontSize: 10, color: '#22D3EE', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 70 }}>{w.ticker}</span>
+                        <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{w.company || w.ticker}</span>
+                        {(w as any).cap && <span style={{ fontSize: 8, color: '#8DA1B9', fontWeight: 700, padding: '1px 4px', border: '1px solid #2A3550', borderRadius: 3 }}>{((w as any).cap || '').toUpperCase()}</span>}
+                        <span style={{ fontSize: 11, color: w.changePercent >= 0 ? '#10B981' : '#EF4444', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
+                          {w.changePercent >= 0 ? '+' : ''}{w.changePercent.toFixed(1)}%
+                        </span>
+                      </div>
+                      {label && (
+                        <div style={{ fontSize: 10, color: DIM, paddingLeft: 76, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {label}{conf && <span style={{ marginLeft: 6, fontSize: 8, color: conf === 'HIGH' ? '#10B981' : conf === 'MEDIUM' ? '#F59E0B' : '#6B7A8D', fontWeight: 700 }}>{conf}</span>}
+                        </div>
+                      )}
+                    </Link>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -2103,93 +2060,12 @@ export default function HomeDashboard() {
           </div>
         </div>
 
-        {/* ═══════════════ PATCH 0622 — TWO-COL: RATING ACTIONS + ORDER BOOK ═══════ */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12 }}>
-          {/* RATING ACTIONS TODAY */}
-          <div style={{ ...cardStyle, borderLeft: '3px solid #EF4444' }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: '#EF4444', letterSpacing: '0.4px' }}>
-                🏛 RATING ACTIONS — today ({data.ratingActionsToday?.length || 0})
-              </span>
-              <Link href="/rating-actions" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
-            </div>
-            <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
-              ICRA / CRISIL / CARE / India Ratings / Fitch / Moody&apos;s / S&P actions
-            </div>
-            {!data.ratingActionsToday ? (
-              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
-            ) : data.ratingActionsToday.length === 0 ? (
-              /* PATCH 0714 — actionable empty state with link to Open Reg-15 filings. */
-              /* PATCH 0750 — copy fix: AGE_LIMIT_MS is 7 days (line ~979), not 30h. */
-              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic', lineHeight: 1.5 }}>
-                ✓ Scan complete · 0 rating actions in last 7 days.{' '}
-                <Link href="/rating-actions" style={{ color: '#22D3EE', fontStyle: 'normal' }}>See all →</Link>
-                {(() => {
-                  // Weekend hint: KV cache may be cold-starting.
-                  const d = new Date();
-                  const ist = new Date(d.getTime() + (d.getTimezoneOffset() + 330) * 60_000);
-                  const dow = ist.getDay();
-                  return (dow === 0 || dow === 6) ? (
-                    <div style={{ marginTop: 4, fontSize: 10 }}>🕒 Weekend · agencies don&apos;t publish Sat/Sun. Resumes Monday.</div>
-                  ) : null;
-                })()}
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                {data.ratingActionsToday.map((r, i) => (
-                  <a key={i} href={r.url || '#'} target="_blank" rel="noopener noreferrer"
-                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
-                    {r.agency && <span style={{ fontSize: 9, color: '#EF4444', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 50 }}>{r.agency}</span>}
-                    <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.headline}</span>
-                    {r.action && <span style={{ fontSize: 9, fontWeight: 800, color: /upgrade/i.test(r.action) ? '#10B981' : /downgrade/i.test(r.action) ? '#EF4444' : '#F59E0B' }}>{r.action.toUpperCase()}</span>}
-                  </a>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* ORDER BOOK TODAY */}
-          <div style={{ ...cardStyle, borderLeft: '3px solid #10B981' }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: '#10B981', letterSpacing: '0.4px' }}>
-                📑 ORDER BOOK WINS — today ({data.orderBookToday?.length || 0})
-              </span>
-              <Link href="/order-book" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
-            </div>
-            <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
-              Tier-1 PSU contracts and order wins parsed from filings
-            </div>
-            {!data.orderBookToday ? (
-              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
-            ) : data.orderBookToday.length === 0 ? (
-              /* PATCH 0714 — actionable empty state. */
-              /* PATCH 0750 — copy fix: window is 7 days, not 36h. */
-              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic', lineHeight: 1.5 }}>
-                ✓ Scan complete · 0 order wins detected in last 7 days.{' '}
-                <Link href="/order-book" style={{ color: '#22D3EE', fontStyle: 'normal' }}>See archive →</Link>
-                {(() => {
-                  const d = new Date();
-                  const ist = new Date(d.getTime() + (d.getTimezoneOffset() + 330) * 60_000);
-                  const dow = ist.getDay();
-                  return (dow === 0 || dow === 6) ? (
-                    <div style={{ marginTop: 4, fontSize: 10 }}>🕒 Weekend · NSE/BSE filings paused. Resumes Monday.</div>
-                  ) : null;
-                })()}
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                {data.orderBookToday.map((o, i) => (
-                  <a key={i} href={o.url || '#'} target="_blank" rel="noopener noreferrer"
-                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
-                    {o.customer && <span style={{ fontSize: 9, color: '#10B981', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 50 }}>{o.customer}</span>}
-                    <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{o.headline}</span>
-                    {o.valueCr && <span style={{ fontSize: 10, color: '#10B981', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>₹{o.valueCr.toFixed(0)} Cr</span>}
-                  </a>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+        {/* PATCH 0773 — Rating Actions + Order Book panels DELETED.
+            User feedback: "i am tred delete these and all reelvant atbs".
+            Upstream filings feed was producing 0 rows / stale data for
+            multiple days post-Upstash migration. Modules are no longer
+            shown on the Home dashboard; standalone pages also deleted
+            (see /rating-actions and /order-book routes). */}
 
         {/* ═══════════════ PATCH 0631 — VALUATION QUICK-CHECK ═════════════ */}
         <HomeValuationQuickCheck />

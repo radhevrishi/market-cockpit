@@ -186,6 +186,76 @@ export const NIFTY50: { ticker: string; company: string; sector: string }[] = [
   { ticker: 'SHRIRAMFIN.NS', company: 'Shriram Finance', sector: 'Financial Services' },
 ];
 
+// PATCH 0772 (reverted P0773) — User feedback: stop relying on Yahoo
+// for Indian data; use Screener / Trendlyne / NSE / BSE scrapers we
+// already have. Keeping the constant in case a future Indian-source
+// failure makes a curated fallback list useful, but it's no longer
+// wired into the quotes endpoint.
+export const _NIFTY_MIDSMALL_REPS_LEGACY: { ticker: string; company: string; sector: string; cap: 'Mid' | 'Small' }[] = [
+  // ── Midcap reps ─────────────────────────────────────────────
+  { ticker: 'POLYCAB.NS',    company: 'Polycab India',           sector: 'Capital Goods',       cap: 'Mid' },
+  { ticker: 'PIIND.NS',      company: 'PI Industries',           sector: 'Chemicals',           cap: 'Mid' },
+  { ticker: 'PERSISTENT.NS', company: 'Persistent Systems',      sector: 'IT',                  cap: 'Mid' },
+  { ticker: 'COFORGE.NS',    company: 'Coforge',                 sector: 'IT',                  cap: 'Mid' },
+  { ticker: 'LICHSGFIN.NS',  company: 'LIC Housing Finance',     sector: 'Financial Services',  cap: 'Mid' },
+  { ticker: 'MPHASIS.NS',    company: 'Mphasis',                 sector: 'IT',                  cap: 'Mid' },
+  { ticker: 'OBEROIRLTY.NS', company: 'Oberoi Realty',           sector: 'Realty',              cap: 'Mid' },
+  { ticker: 'BHEL.NS',       company: 'BHEL',                    sector: 'Capital Goods',       cap: 'Mid' },
+  { ticker: 'CONCOR.NS',     company: 'Container Corp',          sector: 'Logistics',           cap: 'Mid' },
+  { ticker: 'BIOCON.NS',     company: 'Biocon',                  sector: 'Pharma',              cap: 'Mid' },
+  { ticker: 'AUBANK.NS',     company: 'AU Small Finance Bank',   sector: 'Banking',             cap: 'Mid' },
+  { ticker: 'MARICO.NS',     company: 'Marico',                  sector: 'FMCG',                cap: 'Mid' },
+  { ticker: 'JUBLFOOD.NS',   company: 'Jubilant FoodWorks',      sector: 'Consumer',            cap: 'Mid' },
+  { ticker: 'PAGEIND.NS',    company: 'Page Industries',         sector: 'Apparel',             cap: 'Mid' },
+  { ticker: 'COLPAL.NS',     company: 'Colgate-Palmolive',       sector: 'FMCG',                cap: 'Mid' },
+  { ticker: 'PETRONET.NS',   company: 'Petronet LNG',            sector: 'Energy',              cap: 'Mid' },
+  { ticker: 'IRCTC.NS',      company: 'IRCTC',                   sector: 'Travel',              cap: 'Mid' },
+  { ticker: 'TVSMOTOR.NS',   company: 'TVS Motor Company',       sector: 'Auto',                cap: 'Mid' },
+  { ticker: 'TORNTPHARM.NS', company: 'Torrent Pharmaceuticals', sector: 'Pharma',              cap: 'Mid' },
+  { ticker: 'CUMMINSIND.NS', company: 'Cummins India',           sector: 'Capital Goods',       cap: 'Mid' },
+  { ticker: 'ZYDUSLIFE.NS',  company: 'Zydus Lifesciences',      sector: 'Pharma',              cap: 'Mid' },
+  { ticker: 'AUROPHARMA.NS', company: 'Aurobindo Pharma',        sector: 'Pharma',              cap: 'Mid' },
+  { ticker: 'IDFCFIRSTB.NS', company: 'IDFC First Bank',         sector: 'Banking',             cap: 'Mid' },
+  { ticker: 'PFC.NS',        company: 'Power Finance Corp',      sector: 'Financial Services',  cap: 'Mid' },
+  { ticker: 'RECLTD.NS',     company: 'REC Limited',             sector: 'Financial Services',  cap: 'Mid' },
+  { ticker: 'SAIL.NS',       company: 'SAIL',                    sector: 'Metals',              cap: 'Mid' },
+  { ticker: 'INDIANB.NS',    company: 'Indian Bank',             sector: 'Banking',             cap: 'Mid' },
+  { ticker: 'BHARATFORG.NS', company: 'Bharat Forge',            sector: 'Auto Ancillary',      cap: 'Mid' },
+  { ticker: 'GMRINFRA.NS',   company: 'GMR Airports',            sector: 'Infrastructure',      cap: 'Mid' },
+  { ticker: 'HAL.NS',        company: 'Hindustan Aeronautics',   sector: 'Defence',             cap: 'Mid' },
+  // ── Smallcap reps ───────────────────────────────────────────
+  { ticker: 'IIFL.NS',       company: 'IIFL Finance',            sector: 'Financial Services',  cap: 'Small' },
+  { ticker: 'KEI.NS',        company: 'KEI Industries',          sector: 'Capital Goods',       cap: 'Small' },
+  { ticker: 'CYIENT.NS',     company: 'Cyient',                  sector: 'IT',                  cap: 'Small' },
+  { ticker: 'CHOLAFIN.NS',   company: 'Cholamandalam Fin',       sector: 'Financial Services',  cap: 'Small' },
+  { ticker: 'JBCHEPHARM.NS', company: 'JB Chemicals',            sector: 'Pharma',              cap: 'Small' },
+  { ticker: 'CRISIL.NS',     company: 'CRISIL',                  sector: 'Financial Services',  cap: 'Small' },
+  { ticker: 'TRENT.NS',      company: 'Trent',                   sector: 'Retail',              cap: 'Small' },
+  { ticker: 'KPITTECH.NS',   company: 'KPIT Technologies',       sector: 'IT',                  cap: 'Small' },
+  { ticker: 'TATAELXSI.NS',  company: 'Tata Elxsi',              sector: 'IT',                  cap: 'Small' },
+  { ticker: 'LAURUSLABS.NS', company: 'Laurus Labs',             sector: 'Pharma',              cap: 'Small' },
+  { ticker: 'CDSL.NS',       company: 'CDSL',                    sector: 'Financial Services',  cap: 'Small' },
+  { ticker: 'INDIGO.NS',     company: 'InterGlobe Aviation',     sector: 'Aviation',            cap: 'Small' },
+  { ticker: 'NAM-INDIA.NS',  company: 'Nippon Life Asset Mgmt',  sector: 'Financial Services',  cap: 'Small' },
+  { ticker: 'IDEA.NS',       company: 'Vodafone Idea',           sector: 'Telecom',             cap: 'Small' },
+  { ticker: 'IRFC.NS',       company: 'Indian Railway Finance',  sector: 'Financial Services',  cap: 'Small' },
+  { ticker: 'GRINDWELL.NS',  company: 'Grindwell Norton',        sector: 'Capital Goods',       cap: 'Small' },
+  { ticker: 'MAZDOCK.NS',    company: 'Mazagon Dock',            sector: 'Defence',             cap: 'Small' },
+  { ticker: 'BSE.NS',        company: 'BSE Limited',             sector: 'Financial Services',  cap: 'Small' },
+  { ticker: 'POLICYBZR.NS',  company: 'PB Fintech',              sector: 'Financial Services',  cap: 'Small' },
+  { ticker: 'TANLA.NS',      company: 'Tanla Platforms',         sector: 'IT',                  cap: 'Small' },
+  { ticker: 'NHPC.NS',       company: 'NHPC',                    sector: 'Power',               cap: 'Small' },
+  { ticker: 'SCHAEFFLER.NS', company: 'Schaeffler India',        sector: 'Auto Ancillary',      cap: 'Small' },
+  { ticker: 'BLUESTARCO.NS', company: 'Blue Star',               sector: 'Consumer Durables',   cap: 'Small' },
+  { ticker: 'KRBL.NS',       company: 'KRBL',                    sector: 'FMCG',                cap: 'Small' },
+  { ticker: 'BALRAMCHIN.NS', company: 'Balrampur Chini',         sector: 'Sugar',               cap: 'Small' },
+  { ticker: 'EXIDEIND.NS',   company: 'Exide Industries',        sector: 'Auto Ancillary',      cap: 'Small' },
+  { ticker: 'ABCAPITAL.NS',  company: 'Aditya Birla Capital',    sector: 'Financial Services',  cap: 'Small' },
+  { ticker: 'GUJGASLTD.NS',  company: 'Gujarat Gas',              sector: 'Energy',              cap: 'Small' },
+  { ticker: 'IEX.NS',        company: 'Indian Energy Exchange',  sector: 'Power',               cap: 'Small' },
+  { ticker: 'GLENMARK.NS',   company: 'Glenmark Pharma',         sector: 'Pharma',              cap: 'Small' },
+];
+
 // US S&P 500 top stocks
 export const US_TOP: { ticker: string; company: string; sector: string }[] = [
   // Mega Cap Tech

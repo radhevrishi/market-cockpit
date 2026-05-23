@@ -87,8 +87,9 @@ const NAV_GROUPS: NavGroup[] = [
     icon: <Compass className="w-5 h-5" />,
     items: [
       { href: '/special-situations', label: 'Special Situations', icon: <Compass className="w-4 h-4" /> },
-      { href: '/order-book',         label: 'Order Book Intel',   icon: <Compass className="w-4 h-4" /> },
-      { href: '/rating-actions',     label: 'Rating Actions',     icon: <Compass className="w-4 h-4" /> },
+      // PATCH 0773 — Order Book Intel + Rating Actions nav entries DELETED.
+      // User feedback: empty data, distracting from real workflow.
+      // Pages also removed from the route table.
     ],
   },
   {
@@ -172,11 +173,8 @@ const _LEGACY_NAV: NavItem[] = [
   { href: '/orders',        label: 'Signals',            icon: <Shield className="w-5 h-5" /> },
   // PATCH 0092: Special Situations pillar (SPIN / M&A / TURN / CAP scanners)
   { href: '/special-situations', label: 'Special Situations', icon: <Compass className="w-5 h-5" /> },
-  // PATCH 0580 — Rating Actions tracker (§17.4 B-2). ICRA / CRISIL / CARE /
-  // India-Ratings upgrades / downgrades / outlook changes detected from
-  // the news stream. Sits next to Special Situations because both are
-  // event-driven re-rating catalysts rather than periodic fundamentals.
-  { href: '/rating-actions', label: 'Rating Actions',     icon: <Compass className="w-5 h-5" /> },
+  // PATCH 0773 — Rating Actions legacy flat-nav entry DELETED (matches
+  // the grouped-nav removal at line ~89). Page route also removed.
   // PATCH 0091: Earnings + Earnings AI + Calendar merged into Earnings Hub (sub-tabs inside)
   { href: '/earnings-hub',  label: 'Earnings Hub',       icon: <LineChart className="w-5 h-5" /> },
   // PATCH 0123: bring back the legacy /earnings page (Portfolio + Watchlist + 750-company
