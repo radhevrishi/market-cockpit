@@ -1138,11 +1138,39 @@ export default function HomeDashboard() {
           if (daysAgo >= 2 && daysAgo <= 7) return `${Math.round(daysAgo)} days ago`;
           return d;
         };
+        // PATCH 0750 — weekend awareness. tradingDays[0] is "Friday" when
+        // today is Saturday/Sunday IST; we shouldn't call Friday's data
+        // "today". Compute the actual IST date and compare. If they differ
+        // (= weekend or holiday), use the explicit weekday name instead.
+        const actualTodayIst = (() => {
+          const d = new Date();
+          const ist = new Date(d.getTime() + (d.getTimezoneOffset() + 330) * 60_000);
+          return ist.toISOString().slice(0, 10);
+        })();
+        const WEEKDAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        const labelForWeekendAware = (d: string) => {
+          // When market is closed (today != tradingDays[0]), surface the
+          // explicit weekday rather than the misleading "today".
+          if (actualTodayIst !== today) {
+            const dt = new Date(d + 'T00:00:00Z');
+            if (d === today) return WEEKDAY_NAMES[dt.getUTCDay()].toLowerCase();
+            return labelFor(d);
+          }
+          return labelFor(d);
+        };
         const label = (() => {
-          if (deduped.length === 0) return 'today';
+          if (deduped.length === 0) {
+            // Weekend empty-state: show weekday name of last working day so
+            // header isn't a misleading "TODAY (0)".
+            if (actualTodayIst !== today && today) {
+              const dt = new Date(today + 'T00:00:00Z');
+              return WEEKDAY_NAMES[dt.getUTCDay()].toLowerCase();
+            }
+            return 'today';
+          }
           const dates = Array.from(new Set(deduped.map((c: any) => c._date))).sort().reverse();
-          if (dates.length === 1) return labelFor(dates[0]);
-          return `${labelFor(dates[0])} + ${dates.length - 1} more`;
+          if (dates.length === 1) return labelForWeekendAware(dates[0]);
+          return `${labelForWeekendAware(dates[0])} + ${dates.length - 1} more`;
         })();
         setData((d) => ({ ...d, earningsToday: deduped.slice(0, 8), earningsLabel: label }));
         setNetLoading((n) => ({ ...n, earnings: false }));
@@ -1579,8 +1607,24 @@ export default function HomeDashboard() {
             {netLoading.earnings ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading earnings…</div>
             ) : data.earningsToday.length === 0 ? (
-              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>
-                No filings graded in last 3 trading days. <Link href="/earnings-opportunities" style={{ color: '#22D3EE' }}>Open Earnings Ops →</Link>
+              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic', lineHeight: 1.5 }}>
+                No BLOCKBUSTER/STRONG filings in last 3 trading days.
+                <Link href="/earnings-opportunities" style={{ color: '#22D3EE' }}> Open Earnings Ops →</Link>
+                {(() => {
+                  // PATCH 0750 — weekend honest hint + Backfill nudge for cold KV.
+                  const d = new Date();
+                  const ist = new Date(d.getTime() + (d.getTimezoneOffset() + 330) * 60_000);
+                  const dow = ist.getDay();
+                  return (dow === 0 || dow === 6) ? (
+                    <div style={{ marginTop: 4, fontSize: 10 }}>
+                      🕒 Weekend · NSE/BSE closed. Hit <strong>Backfill 60d</strong> on EO page to populate cache.
+                    </div>
+                  ) : (
+                    <div style={{ marginTop: 4, fontSize: 10 }}>
+                      Cache may be cold-starting after migration. Hit <strong>Backfill 60d</strong> on EO page.
+                    </div>
+                  );
+                })()}
               </div>
             ) : (() => {
               // PATCH 0615 — show inline date chip per card when multiple dates
@@ -2013,9 +2057,19 @@ export default function HomeDashboard() {
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
             ) : data.ratingActionsToday.length === 0 ? (
               /* PATCH 0714 — actionable empty state with link to Open Reg-15 filings. */
-              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>
-                ✓ Scan complete · 0 rating actions in last 30h.{' '}
+              /* PATCH 0750 — copy fix: AGE_LIMIT_MS is 7 days (line ~979), not 30h. */
+              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic', lineHeight: 1.5 }}>
+                ✓ Scan complete · 0 rating actions in last 7 days.{' '}
                 <Link href="/rating-actions" style={{ color: '#22D3EE', fontStyle: 'normal' }}>See all →</Link>
+                {(() => {
+                  // Weekend hint: KV cache may be cold-starting.
+                  const d = new Date();
+                  const ist = new Date(d.getTime() + (d.getTimezoneOffset() + 330) * 60_000);
+                  const dow = ist.getDay();
+                  return (dow === 0 || dow === 6) ? (
+                    <div style={{ marginTop: 4, fontSize: 10 }}>🕒 Weekend · agencies don&apos;t publish Sat/Sun. Resumes Monday.</div>
+                  ) : null;
+                })()}
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -2046,9 +2100,18 @@ export default function HomeDashboard() {
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
             ) : data.orderBookToday.length === 0 ? (
               /* PATCH 0714 — actionable empty state. */
-              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>
-                ✓ Scan complete · 0 order wins detected in last 36h.{' '}
+              /* PATCH 0750 — copy fix: window is 7 days, not 36h. */
+              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic', lineHeight: 1.5 }}>
+                ✓ Scan complete · 0 order wins detected in last 7 days.{' '}
                 <Link href="/order-book" style={{ color: '#22D3EE', fontStyle: 'normal' }}>See archive →</Link>
+                {(() => {
+                  const d = new Date();
+                  const ist = new Date(d.getTime() + (d.getTimezoneOffset() + 330) * 60_000);
+                  const dow = ist.getDay();
+                  return (dow === 0 || dow === 6) ? (
+                    <div style={{ marginTop: 4, fontSize: 10 }}>🕒 Weekend · NSE/BSE filings paused. Resumes Monday.</div>
+                  ) : null;
+                })()}
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
