@@ -1,0 +1,59 @@
+name: Concall Intel Warm (daily)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PATCH 0733 — Move concall-intel-warm from Vercel cron (weekly) to GitHub
+# Actions (daily). The Vercel CPU cost is identical per run (~60s of PDF
+# extraction), but the cadence jumps from once/week → once/day so Order Book,
+# Rating Actions, Concall AI and Movers Attribution see fresh data every
+# morning instead of stale data by Wednesday. GH Actions trigger itself
+# costs zero Vercel CPU — only the hit to the endpoint does.
+#
+# Required GitHub Actions secret: CRON_SECRET
+#   Settings → Secrets and variables → Actions → New repository secret
+#   Same value as the CRON_SECRET env var in Vercel project settings.
+# ──────────────────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    # 22:00 UTC = 03:30 IST. Daily, every day — Sunday-evening concall PDFs
+    # need to be in cache before Monday open, weekday filings need same-day
+    # warmth so users navigating to /order-book or /rating-actions on
+    # Tue-Fri see current data.
+    - cron: '30 22 * * *'
+  workflow_dispatch: {}   # allow manual trigger from GitHub UI
+
+# Don't queue overlapping runs; if one is in flight, skip the next.
+concurrency:
+  group: concall-warm-daily
+  cancel-in-progress: false
+
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Hit /api/v1/cron/concall-intel-warm
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error title=CRON_SECRET missing::Add CRON_SECRET in Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          set -euo pipefail
+          echo "Triggering concall-warm at $(date -u --iso-8601=seconds)"
+          response_file=$(mktemp)
+          http_status=$(curl --silent --show-error --max-time 90 \
+            --output "$response_file" \
+            --write-out "%{http_code}" \
+            "https://market-cockpit.vercel.app/api/v1/cron/concall-intel-warm?secret=${CRON_SECRET}")
+          echo "HTTP status: $http_status"
+          echo "--- response body ---"
+          cat "$response_file"
+          echo
+          echo "--- end body ---"
+          if [ "$http_status" != "200" ]; then
+            echo "::error title=Endpoint returned $http_status::See body above."
+            exit 1
+          fi
+          echo "::notice title=Warm complete::Concall pipelines refreshed."
