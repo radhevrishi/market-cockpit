@@ -499,17 +499,38 @@ async function fetchIndianDataWithCache() {
       : stocks.slice(0, 200).map(s => s.ticker + '.NS');
     try {
       const quotes = await yhFetch(symbols);
+      // PATCH 0770 — Probe confirmed Yahoo also returns regularMarketChangePercent=0
+      // on weekends. The data we need (price + previousClose) IS in the Yahoo
+      // response, but the computed-pct field is reset. Apply the same
+      // compute-from-prices logic we use for the NSE path. RELIANCE example
+      // from live probe: price=1354.5, previousClose=1349.6, change=4.9 (Yahoo
+      // computed this correctly), but changePercent=0 (Yahoo reset to 0
+      // because no intraday session). 4.9/1349.6 = 0.36% is the answer.
+      const computeYahooPct = (q: any): { change: number; changePercent: number } => {
+        const price = q?.regularMarketPrice || 0;
+        const prevClose = q?.regularMarketPreviousClose || 0;
+        const ychange = Number.isFinite(q?.regularMarketChange) ? q.regularMarketChange : 0;
+        const ypct = Number.isFinite(q?.regularMarketChangePercent) ? q.regularMarketChangePercent : 0;
+        const computedChange = (price > 0 && prevClose > 0) ? (price - prevClose) : 0;
+        const computedPct = (price > 0 && prevClose > 0) ? ((price - prevClose) / prevClose) * 100 : 0;
+        return {
+          change: ychange !== 0 ? ychange : computedChange,
+          changePercent: ypct !== 0 ? ypct : computedPct,
+        };
+      };
+
       if (stocks.length === 0) {
         // Hard fallback: build the stock list entirely from Yahoo.
         stocks = NIFTY50.map(stock => {
           const q = quotes.find((quote: any) => quote.symbol === stock.ticker || quote.symbol === stock.ticker.replace('.NS', ''));
+          const { change, changePercent } = computeYahooPct(q);
           return {
             ticker: stock.ticker.replace('.NS', ''),
             company: q?.shortName || stock.company,
             sector: stock.sector,
             price: q?.regularMarketPrice || 0,
-            change: q?.regularMarketChange || 0,
-            changePercent: q?.regularMarketChangePercent || 0,
+            change,
+            changePercent,
             volume: q?.regularMarketVolume || 0,
             marketCap: q?.marketCap || 0,
             previousClose: q?.regularMarketPreviousClose || 0,
@@ -526,10 +547,13 @@ async function fetchIndianDataWithCache() {
         let enriched = 0;
         for (const s of stocks) {
           const yh = yhMap.get((s.ticker || '').toUpperCase());
-          if (yh && Number.isFinite(yh.regularMarketChangePercent) && yh.regularMarketChangePercent !== 0) {
-            s.changePercent = yh.regularMarketChangePercent;
-            if (Number.isFinite(yh.regularMarketChange)) s.change = yh.regularMarketChange;
-            enriched++;
+          if (yh) {
+            const { change, changePercent } = computeYahooPct(yh);
+            if (changePercent !== 0) {
+              s.changePercent = changePercent;
+              s.change = change;
+              enriched++;
+            }
           }
         }
         // If Yahoo too returned all zeros (rare — maybe consecutive holidays),
