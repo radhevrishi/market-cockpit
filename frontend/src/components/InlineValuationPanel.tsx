@@ -9,12 +9,16 @@
 // export rules don't block the import). One page, both analyses.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   buildReport, extractPdfText, extractExcelFinancials,
   type ParsedDoc, type AutoValuationReport,
 } from '@/app/(dashboard)/auto-valuation/engine';
 import { extractGuidance } from '@/lib/forward-guidance-extractor';
+// PATCH 0752 — pull the latest concall snapshot for this ticker and blend
+// its score with the valuation triangulation upside (90/10 weight).
+import { listConcallSnapshots } from '@/lib/concall-snapshot-store';
+import { blendConcallWithValuation } from '@/lib/concall-valuation-blend';
 
 const BG = '#0A0E1A';
 const BORDER = '#1A2540';
@@ -265,6 +269,57 @@ export default function InlineValuationPanel() {
               );
             })}
           </div>
+
+          {/* PATCH 0752 — Concall × Valuation blended score. When a concall
+              snapshot exists for this ticker, blend its concallScore with the
+              average upside% across P/E + P/S + EV/EBITDA (90% concall + 10%
+              valuation). Display-only; doesn't change the editorial
+              recommendation. Helps confirm/contradict the editorial call. */}
+          {(() => {
+            if (!report.ticker) return null;
+            const snaps = (typeof window === 'undefined') ? [] : listConcallSnapshots();
+            const snap = snaps.find(s => s.ticker.toUpperCase() === (report.ticker || '').toUpperCase());
+            if (!snap || typeof snap.concallScore !== 'number') return null;
+            // Average upside across the 3 calculators for the active year + scenario
+            const yr = year;
+            const results = [report.peResult, report.psResult, report.evResult];
+            const resultsY2 = [report.peResultY2, report.psResultY2, report.evResultY2];
+            const active = yr === 'Y2' ? resultsY2.map((r, i) => r || results[i]) : results;
+            const upsides = active.flatMap(r => {
+              const c = r?.cases?.find((cc: any) => cc.label === scenario);
+              return (c && Number.isFinite(c.upsidePct)) ? [c.upsidePct] : [];
+            });
+            if (upsides.length === 0) return null;
+            const avgUpside = upsides.reduce((a, b) => a + b, 0) / upsides.length;
+            const blended = blendConcallWithValuation({
+              concallScore: snap.concallScore,
+              valuationUpsidePct: avgUpside,
+            });
+            const blendColor = blended.valuationContribution > 0 ? '#10B981' : blended.valuationContribution < 0 ? '#EF4444' : '#94A3B8';
+            return (
+              <div style={{
+                marginTop: 12, padding: '10px 12px', background: '#0A1422',
+                border: `1px solid ${blendColor}40`, borderLeft: `3px solid ${blendColor}`,
+                borderRadius: 5, fontSize: 11, color: TEXT, lineHeight: 1.6,
+              }}>
+                <span style={{ fontSize: 9, color: DIM, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase' }}>
+                  Concall × Valuation blended ·
+                </span>
+                <span style={{ fontSize: 14, color: TEXT, fontWeight: 800, fontVariantNumeric: 'tabular-nums', marginLeft: 6 }}>
+                  {blended.blendedScore}
+                </span>
+                <span style={{ fontSize: 10, color: DIM, marginLeft: 8 }}>
+                  ({snap.concallScore} concall · 90% + {blended.valuationScore} valuation · 10%)
+                </span>
+                <span style={{ fontSize: 10, color: blendColor, fontWeight: 800, marginLeft: 8 }}>
+                  {blended.valuationContribution >= 0 ? '+' : ''}{blended.valuationContribution} from valuation
+                </span>
+                <div style={{ fontSize: 10, color: DIM, fontStyle: 'italic', marginTop: 4 }}>
+                  Average upside this scenario: {avgUpside >= 0 ? '+' : ''}{avgUpside.toFixed(0)}% across P/E + P/S + EV/EBITDA
+                </div>
+              </div>
+            );
+          })()}
 
           <div style={{ marginTop: 10, fontSize: 10, color: DIM, fontStyle: 'italic', textAlign: 'center' }}>
             For full breakdown (bear/base/bull · FY27/FY28 toggle · override panel · save-bench) → <a href="/auto-valuation" style={{ color: '#22D3EE', textDecoration: 'none', borderBottom: '1px dotted #22D3EE' }}>open Auto-Val full page</a>
