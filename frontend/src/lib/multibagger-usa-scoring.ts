@@ -133,7 +133,25 @@ export function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGr
     else if (s<45) risks.push(`Gross margin ${effectiveGM.toFixed(1)}% (${label}) — thin, limited pricing power`);
   }
   if (row.fcfMarginAnn !== undefined) {
-    const s = row.fcfMarginAnn>=25?92:row.fcfMarginAnn>=15?82:row.fcfMarginAnn>=8?65:row.fcfMarginAnn>=0?45:20;
+    let s = row.fcfMarginAnn>=25?92:row.fcfMarginAnn>=15?82:row.fcfMarginAnn>=8?65:row.fcfMarginAnn>=0?45:20;
+    // PATCH 0753 — single-source FCF rule. When DNA bonus is GOING to fire
+    // below (which awards +6 explicitly crediting FCF margin), AND the FCF
+    // margin is already extreme (≥20%), the Quality pillar's FCF
+    // contribution is partially double-counting the same signal at the
+    // composite level. P0349 surgically patched PAYS via the FCF/Op
+    // divergence detector, but didn't address the general case where a
+    // legit-but-FCF-dominant name gets +qualS:92 + DNA:+6 stacked.
+    // Fix: when DNA will fire AND FCF margin ≥ 20%, halve the FCF Quality
+    // contribution (92 → 46) so the row scores from MULTIPLE quality signals,
+    // not just FCF amplified. Doesn't affect names where FCF is a minor
+    // contributor or where DNA doesn't fire. Net effect: a ~3-5 point
+    // reduction on FCF-stacked rows, no change elsewhere.
+    const dnaWillFire =
+         ((row.ruleOf40 ?? 0) >= 40 && (row.fcfMarginAnn ?? 0) >= 10 && ((row.grossMarginTtm ?? row.grossMarginAnn ?? 0) >= 60) && ((row.revenueGrowthAnn ?? 0) >= 20))
+      || ((row.roe ?? 0) >= 18 && (row.roic ?? 0) >= 15 && (row.fcfMarginAnn ?? 0) >= 15 && ((row.de ?? 99) < 0.5) && ((row.revenueGrowthAnn ?? 0) >= 12));
+    if (dnaWillFire && row.fcfMarginAnn >= 20) {
+      s = Math.round(s * 0.5);
+    }
     qualS+=s; qualC++;
     // PATCH 0575 — Don't push the standalone "FCF margin X% — strong cash
     // generation" bullet when R40 or DNA bonus will also fire below. They
