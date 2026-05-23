@@ -14,6 +14,38 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { createHash } from 'crypto';
+import {
+  dedupedCall,
+  negCacheCheck,
+  negCacheSet,
+} from './nse-resilient-fetch';
+
+// PATCH 0732 — defaults applied to both NSE and BSE announcement adapters
+// to absorb the ~50% upstream failure rate. Negative-cache TTL matches
+// lib/nse.ts; per-call timeout protects callers that forgot to pass an
+// AbortSignal (otherwise upstream hangs eat the full Vercel maxDuration).
+const ANNOUNCEMENT_NEG_CACHE_MS = 90_000;
+const ANNOUNCEMENT_DEFAULT_TIMEOUT_MS = 12_000;
+
+// Combines a caller-supplied AbortSignal with a default timeout signal so
+// the fetch always has an upper bound, while still honouring caller-side
+// aborts (e.g. React useEffect cleanup).
+function withDefaultTimeout(callerSignal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  if (!callerSignal) return AbortSignal.timeout(timeoutMs);
+  // AbortSignal.any was added in Node 20 and is on the Vercel runtime.
+  // Fall back to a manual chained controller for older runtimes.
+  const anyFn = (AbortSignal as any).any;
+  if (typeof anyFn === 'function') {
+    return anyFn([callerSignal, AbortSignal.timeout(timeoutMs)]);
+  }
+  const ctl = new AbortController();
+  const onAbort = () => ctl.abort();
+  if (callerSignal.aborted) ctl.abort();
+  else callerSignal.addEventListener('abort', onAbort, { once: true });
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  ctl.signal.addEventListener('abort', () => clearTimeout(timer), { once: true });
+  return ctl.signal;
+}
 
 export interface FilingRecord {
   exchange: 'NSE' | 'BSE';
@@ -55,62 +87,86 @@ export async function fetchNSEAnnouncements(opts: {
   const toStr = opts.toIso || today.toISOString().slice(0, 10);
   const url = `https://www.nseindia.com/api/corporate-announcements?index=equities&from_date=${formatNSEDate(fromStr)}&to_date=${formatNSEDate(toStr)}`;
 
-  try {
-    const res = await fetch(url, {
-      signal: opts.signal,
-      headers: NSE_HEADERS,
-      cache: 'no-store',
-    });
-    if (!res.ok) {
-      if (res.status === 401 || res.status === 403 || res.status === 429) {
-        return { filings: [], source: 'NSE_BLOCKED' };
-      }
-      return { filings: [], source: 'NSE_BLOCKED' };
-    }
-    const data = await res.json();
-    const entries: Array<Record<string, any>> = Array.isArray(data)
-      ? data
-      : Array.isArray((data as any)?.data) ? (data as any).data : [];
-
-    const filings: FilingRecord[] = [];
-    for (const e of entries) {
-      const subject = String(e.subject || e.desc || '').trim();
-      if (!subject) continue;
-      const ts = e.an_dt || e.sm_dt || e.dt || e.broadcastdt;
-      if (!ts) continue;
-      let isoDt: string;
-      try {
-        const d = new Date(ts);
-        if (!Number.isFinite(d.getTime())) continue;
-        isoDt = d.toISOString();
-      } catch { continue; }
-
-      const symbol = String(e.symbol || '').trim().toUpperCase();
-      const company = String(e.sm_name || e.company_name || symbol).trim();
-      const urls: string[] = [];
-      if (e.attchmntFile) urls.push(String(e.attchmntFile));
-      if (e.attachmentUrl) urls.push(String(e.attachmentUrl));
-
-      filings.push({
-        exchange: 'NSE',
-        symbol,
-        company_name: company,
-        subject,
-        category: e.csubject || e.category || null,
-        subcategory: e.smkt_cat || e.sub_category || null,
-        filing_datetime: isoDt,
-        attachment_urls: urls,
-        source_url: `https://www.nseindia.com/companies-listing/corporate-filings-announcements?symbol=${encodeURIComponent(symbol)}`,
-        content_hash: hashRecord('NSE', symbol, subject, isoDt, urls),
-      });
-    }
-    return {
-      filings,
-      source: filings.length === 0 ? 'NSE_EMPTY' : 'NSE_OK',
-    };
-  } catch {
+  // PATCH 0732 — short-circuit if this exact window has recently failed.
+  // Keyed by the date range so a different date scan isn't blocked by a
+  // failed scan of a different range.
+  const dedupKey = `nse-feed:announcements:${fromStr}:${toStr}`;
+  if (negCacheCheck(dedupKey)) {
     return { filings: [], source: 'NSE_BLOCKED' };
   }
+
+  return dedupedCall(dedupKey, async () => {
+    // Re-check negative cache inside the dedup lock — another concurrent
+    // caller may have flipped this window into the failure state while
+    // we were waiting.
+    if (negCacheCheck(dedupKey)) {
+      return { filings: [], source: 'NSE_BLOCKED' as const };
+    }
+
+    try {
+      const res = await fetch(url, {
+        signal: withDefaultTimeout(opts.signal, ANNOUNCEMENT_DEFAULT_TIMEOUT_MS),
+        headers: NSE_HEADERS,
+        cache: 'no-store',
+      });
+      if (!res.ok) {
+        negCacheSet(dedupKey, ANNOUNCEMENT_NEG_CACHE_MS, `HTTP ${res.status}`);
+        return { filings: [], source: 'NSE_BLOCKED' as const };
+      }
+      const data = await res.json();
+      const entries: Array<Record<string, any>> = Array.isArray(data)
+        ? data
+        : Array.isArray((data as any)?.data) ? (data as any).data : [];
+
+      const filings: FilingRecord[] = [];
+      for (const e of entries) {
+        const subject = String(e.subject || e.desc || '').trim();
+        if (!subject) continue;
+        const ts = e.an_dt || e.sm_dt || e.dt || e.broadcastdt;
+        if (!ts) continue;
+        let isoDt: string;
+        try {
+          const d = new Date(ts);
+          if (!Number.isFinite(d.getTime())) continue;
+          isoDt = d.toISOString();
+        } catch { continue; }
+
+        const symbol = String(e.symbol || '').trim().toUpperCase();
+        const company = String(e.sm_name || e.company_name || symbol).trim();
+        const urls: string[] = [];
+        if (e.attchmntFile) urls.push(String(e.attchmntFile));
+        if (e.attachmentUrl) urls.push(String(e.attachmentUrl));
+
+        filings.push({
+          exchange: 'NSE',
+          symbol,
+          company_name: company,
+          subject,
+          category: e.csubject || e.category || null,
+          subcategory: e.smkt_cat || e.sub_category || null,
+          filing_datetime: isoDt,
+          attachment_urls: urls,
+          source_url: `https://www.nseindia.com/companies-listing/corporate-filings-announcements?symbol=${encodeURIComponent(symbol)}`,
+          content_hash: hashRecord('NSE', symbol, subject, isoDt, urls),
+        });
+      }
+      // PATCH 0732 — NSE_EMPTY is also worth a brief negative cache. NSE
+      // legitimately returns empty payloads when blocking softly (429 in
+      // some windows, empty body in others). Use a shorter TTL so we
+      // recover faster than for a hard failure.
+      if (filings.length === 0) {
+        negCacheSet(dedupKey, Math.floor(ANNOUNCEMENT_NEG_CACHE_MS / 3), 'empty');
+      }
+      return {
+        filings,
+        source: filings.length === 0 ? 'NSE_EMPTY' as const : 'NSE_OK' as const,
+      };
+    } catch (e: any) {
+      const reason = e?.name === 'AbortError' ? 'timeout' : (e?.message || 'network');
+      negCacheSet(dedupKey, ANNOUNCEMENT_NEG_CACHE_MS, reason);
+      return { filings: [], source: 'NSE_BLOCKED' as const };
+    }
+  });
 }
 
 // ─── BSE adapter (best-effort) ─────────────────────────────────────────────
@@ -132,20 +188,33 @@ export async function fetchBSEAnnouncements(opts: {
   const fromStr = (opts.fromIso || isoDaysAgo(2)).replace(/-/g, '');
   const toStr = (opts.toIso || today.toISOString().slice(0, 10)).replace(/-/g, '');
   const pages = opts.pages || 1;
-  const allFilings: FilingRecord[] = [];
 
-  try {
+  // PATCH 0732 — same resilience pattern as fetchNSEAnnouncements.
+  // Pages is included in the key because a 1-page scan and a 5-page scan
+  // touch different upstream URLs and may succeed/fail independently.
+  const dedupKey = `bse-feed:announcements:${fromStr}:${toStr}:${pages}`;
+  if (negCacheCheck(dedupKey)) {
+    return { filings: [], source: 'BSE_BLOCKED' };
+  }
+
+  return dedupedCall(dedupKey, async () => {
+    if (negCacheCheck(dedupKey)) {
+      return { filings: [], source: 'BSE_BLOCKED' as const };
+    }
+    const allFilings: FilingRecord[] = [];
+    try {
     for (let pageno = 1; pageno <= pages; pageno++) {
       // strCat=AnnLatest fetches recent announcements across all scrips
       const url = `https://api.bseindia.com/BseIndiaAPI/api/AnnGetData/w?pageno=${pageno}&strCat=-1&strPrevDate=${fromStr}&strScrip=&strSearch=P&strToDate=${toStr}&strType=C`;
       const res = await fetch(url, {
-        signal: opts.signal,
+        signal: withDefaultTimeout(opts.signal, ANNOUNCEMENT_DEFAULT_TIMEOUT_MS),
         headers: BSE_HEADERS,
         cache: 'no-store',
       });
       if (!res.ok) {
         if (res.status === 401 || res.status === 403 || res.status === 429) {
-          return { filings: allFilings, source: 'BSE_BLOCKED' };
+          negCacheSet(dedupKey, ANNOUNCEMENT_NEG_CACHE_MS, `HTTP ${res.status}`);
+          return { filings: allFilings, source: 'BSE_BLOCKED' as const };
         }
         continue;
       }
@@ -185,13 +254,19 @@ export async function fetchBSEAnnouncements(opts: {
         });
       }
     }
+    if (allFilings.length === 0) {
+      negCacheSet(dedupKey, Math.floor(ANNOUNCEMENT_NEG_CACHE_MS / 3), 'empty');
+    }
     return {
       filings: allFilings,
-      source: allFilings.length === 0 ? 'BSE_EMPTY' : 'BSE_OK',
+      source: allFilings.length === 0 ? 'BSE_EMPTY' as const : 'BSE_OK' as const,
     };
-  } catch {
-    return { filings: allFilings, source: 'BSE_BLOCKED' };
-  }
+    } catch (e: any) {
+      const reason = e?.name === 'AbortError' ? 'timeout' : (e?.message || 'network');
+      negCacheSet(dedupKey, ANNOUNCEMENT_NEG_CACHE_MS, reason);
+      return { filings: allFilings, source: 'BSE_BLOCKED' as const };
+    }
+  });
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────

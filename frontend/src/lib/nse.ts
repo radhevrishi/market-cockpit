@@ -1,7 +1,25 @@
 // NSE India API scraper - fetches live data directly from NSE website
 // NSE requires cookies from the main page before API calls work
+//
+// PATCH 0732 — wrapped with in-flight dedup + short negative-cache via
+// lib/nse-resilient-fetch. Targets the ~50% upstream failure rate visible
+// in Vercel observability (CLAUDE.md §18.5 / §18.8). Behaviour change is
+// scoped to the miss path: positive cache hits and 403/401 cookie-refresh
+// retry semantics are unchanged.
+
+import {
+  dedupedCall,
+  negCacheCheck,
+  negCacheSet,
+} from './nse-resilient-fetch';
 
 const NSE_BASE = 'https://www.nseindia.com';
+
+// Negative-cache TTL for failed NSE calls. Short enough not to mask
+// upstream recovery (NSE typically restores within 30-60s after a block
+// burst), long enough to absorb a wave of retries from the same warm
+// Vercel instance.
+const NSE_NEG_CACHE_MS = 90_000;
 
 // Cache for cookies and data
 let nseCookies: string = '';
@@ -56,48 +74,73 @@ async function refreshCookies(): Promise<string> {
   }
 }
 
-// Generic NSE API fetch with cookie handling
+// Generic NSE API fetch with cookie handling.
+//
+// PATCH 0732 — wrapped with dedupedCall (in-flight Map) + negative-cache.
+// The positive in-memory data cache is checked first (unchanged).
+// On miss, the negative cache is checked next — if a recent failure for
+// the same path is still within the 90s window, return null immediately
+// without hitting NSE. Otherwise the upstream call runs under an
+// in-flight dedup so N concurrent callers share one fetch.
 export async function nseApiFetch(path: string, cacheTtl = 60000): Promise<any> {
   const cacheKey = `nse:${path}`;
+
+  // 1) Positive cache — fast path, unchanged.
   const cached = getCached(cacheKey, cacheTtl);
   if (cached) return cached;
 
-  const cookies = await refreshCookies();
+  // 2) Negative cache — short-circuit a recent failure.
+  if (negCacheCheck(cacheKey)) return null;
 
-  try {
-    const res = await fetch(`${NSE_BASE}${path}`, {
-      headers: {
-        ...HEADERS,
-        Cookie: cookies,
-      },
-      signal: AbortSignal.timeout(10000), // 10s timeout per API call
-    });
+  // 3) Dedup any concurrent miss — share a single upstream promise.
+  return dedupedCall(cacheKey, async () => {
+    // Re-check positive cache inside the lock — another concurrent
+    // caller may have just populated it before we acquired our turn.
+    const recheck = getCached(cacheKey, cacheTtl);
+    if (recheck) return recheck;
 
-    if (!res.ok) {
-      // If 403/401, refresh cookies and retry once
-      if (res.status === 403 || res.status === 401) {
-        nseCookies = '';
-        cookieExpiry = 0;
-        const newCookies = await refreshCookies();
-        const retry = await fetch(`${NSE_BASE}${path}`, {
-          headers: { ...HEADERS, Cookie: newCookies },
-          signal: AbortSignal.timeout(10000),
-        });
-        if (retry.ok) {
-          const data = await retry.json();
-          setCache(cacheKey, data);
-          return data;
+    const cookies = await refreshCookies();
+
+    try {
+      const res = await fetch(`${NSE_BASE}${path}`, {
+        headers: {
+          ...HEADERS,
+          Cookie: cookies,
+        },
+        signal: AbortSignal.timeout(10000), // 10s timeout per API call
+      });
+
+      if (!res.ok) {
+        // If 403/401, refresh cookies and retry once (existing recovery).
+        if (res.status === 403 || res.status === 401) {
+          nseCookies = '';
+          cookieExpiry = 0;
+          const newCookies = await refreshCookies();
+          const retry = await fetch(`${NSE_BASE}${path}`, {
+            headers: { ...HEADERS, Cookie: newCookies },
+            signal: AbortSignal.timeout(10000),
+          });
+          if (retry.ok) {
+            const data = await retry.json();
+            setCache(cacheKey, data);
+            return data;
+          }
+          // Cookie-refresh retry also failed — fall through to negcache.
         }
+        negCacheSet(cacheKey, NSE_NEG_CACHE_MS, `HTTP ${res.status}`);
+        return null;
       }
+
+      const data = await res.json();
+      setCache(cacheKey, data);
+      return data;
+    } catch (e: any) {
+      // AbortError → timeout; everything else → network/parse failure.
+      const reason = e?.name === 'AbortError' ? 'timeout' : (e?.message || 'network');
+      negCacheSet(cacheKey, NSE_NEG_CACHE_MS, reason);
       return null;
     }
-
-    const data = await res.json();
-    setCache(cacheKey, data);
-    return data;
-  } catch {
-    return null;
-  }
+  });
 }
 
 // ======= PUBLIC API FUNCTIONS =======
