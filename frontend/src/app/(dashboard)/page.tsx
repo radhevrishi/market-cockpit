@@ -657,15 +657,60 @@ export default function HomeDashboard() {
             }
 
             // 4. News per ticker (parallel, bounded)
+            // PATCH 0724 — Dual-source: standard /api/v1/news pipeline
+            // PLUS free RSS fallback (/api/v1/news-india/<ticker>) for
+            // smallcap names the editorial cache misses (MINDACORP,
+            // SPARC, RATEGAIN class). Both sources fetch in parallel,
+            // 5s per ticker, total 8s budget enforced via Promise.race.
             const newsByTicker: Record<string, any[]> = {};
-            await Promise.all(moverTickers.map(async (t) => {
-              const { data } = await safeDiag<any>(
-                `/api/v1/news?search=${encodeURIComponent(t)}&limit=8`,
-                6_000,
-              ).catch(() => ({ data: null }));
-              const articles: any[] = Array.isArray(data) ? data : (data?.articles || data?.items || []);
-              if (articles.length > 0) newsByTicker[t] = articles;
-            }));
+            const moverInputByTicker = new Map(moverInputs.map((m: any) => [m.ticker, m]));
+            const NEWS_TOTAL_BUDGET_MS = 8_000;
+            const PER_TICKER_TIMEOUT_MS = 5_000;
+            const enrichAllNews = (async () => {
+              await Promise.all(moverTickers.map(async (t) => {
+                const meta = moverInputByTicker.get(t);
+                // Use industry || sector as the Google News query for richer matching.
+                // Falls back to ticker symbol when neither is present.
+                const company = (meta?.industry || meta?.sector || '').trim();
+                const [stdRes, indiaRes] = await Promise.all([
+                  safeDiag<any>(
+                    `/api/v1/news?search=${encodeURIComponent(t)}&limit=8`,
+                    PER_TICKER_TIMEOUT_MS,
+                  ).catch(() => ({ data: null })),
+                  safeDiag<any>(
+                    `/api/v1/news-india/${encodeURIComponent(t)}${
+                      company ? `?company=${encodeURIComponent(company)}` : ''
+                    }`,
+                    PER_TICKER_TIMEOUT_MS,
+                  ).catch(() => ({ data: null })),
+                ]);
+                const stdArticles: any[] = Array.isArray(stdRes?.data)
+                  ? stdRes.data
+                  : (stdRes?.data?.articles || stdRes?.data?.items || []);
+                const indiaArticles: any[] = Array.isArray(indiaRes?.data?.articles)
+                  ? indiaRes.data.articles
+                  : (indiaRes?.data?.items || []);
+                // Merge + dedupe by normalized title so the standard pipeline
+                // wins authority but Indian RSS fills the gaps.
+                const merged: any[] = [];
+                const seen = new Set<string>();
+                for (const a of [...stdArticles, ...indiaArticles]) {
+                  const key = (a?.title || a?.headline || a?.url || '')
+                    .toString()
+                    .toLowerCase()
+                    .replace(/\s+/g, ' ')
+                    .trim();
+                  if (!key || seen.has(key)) continue;
+                  seen.add(key);
+                  merged.push(a);
+                }
+                if (merged.length > 0) newsByTicker[t] = merged;
+              }));
+            })();
+            await Promise.race([
+              enrichAllNews,
+              new Promise<void>((resolve) => setTimeout(resolve, NEWS_TOTAL_BUDGET_MS)),
+            ]);
             if (cancelled) return;
 
             // 5. Fire-and-forget warm: hit live-feed WITHOUT cacheOnly so the
