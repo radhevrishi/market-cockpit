@@ -581,24 +581,38 @@ export default function HomeDashboard() {
         const rawG = j?.gainers || [];
         const rawL = j?.losers || [];
         const inUniverse = (s: any) => universe.has(norm(s?.ticker || s?.symbol || ''));
+        const smallMidOnly = (arr: any[]) => arr.filter((s: any) => {
+          const g = (s?.indexGroup || '').toLowerCase();
+          return g === 'small' || g === 'mid';
+        });
 
-        // When the user has NO universe configured (cold-start before they
-        // add any watchlist/portfolio/CB entries), fall through to the
-        // existing small+mid filter so the panel isn't empty for new users.
-        let gainers: any[];
-        let losers: any[];
+        // Tier order:
+        //   1) Own universe (watchlist+portfolio+CB) intersected with the quotes response
+        //   2) Small+midcap intersection (broader, still excludes NIFTY 50 noise)
+        //   3) Full quotes list (raw response)
+        // This handles the "broad NSE failed → API returned NIFTY 50 only"
+        // case gracefully — user still sees their large-cap names when no
+        // smallcap data is available rather than an empty card.
+        let gainers: any[] = [];
+        let losers: any[] = [];
         if (universe.size > 0) {
-          gainers = rawG.filter(inUniverse).slice(0, 10);
-          losers = rawL.filter(inUniverse).slice(0, 10);
-        } else {
-          const smallMidOnly = (arr: any[]) => arr.filter((s: any) => {
-            const g = (s?.indexGroup || '').toLowerCase();
-            return g === 'small' || g === 'mid';
-          });
+          const uG = rawG.filter(inUniverse);
+          const uL = rawL.filter(inUniverse);
+          if (uG.length > 0 || uL.length > 0) {
+            gainers = uG.slice(0, 10);
+            losers = uL.slice(0, 10);
+          }
+        }
+        if (gainers.length === 0 && losers.length === 0) {
           const filteredG = smallMidOnly(rawG);
           const filteredL = smallMidOnly(rawL);
-          gainers = (filteredG.length > 0 ? filteredG : rawG).slice(0, 10);
-          losers = (filteredL.length > 0 ? filteredL : rawL).slice(0, 10);
+          if (filteredG.length > 0 || filteredL.length > 0) {
+            gainers = filteredG.slice(0, 10);
+            losers = filteredL.slice(0, 10);
+          } else {
+            gainers = rawG.slice(0, 10);
+            losers = rawL.slice(0, 10);
+          }
         }
         setData((d) => ({ ...d, gainers, losers, moversUpdatedAt: j?.updatedAt } as any));
 
@@ -1888,11 +1902,12 @@ export default function HomeDashboard() {
             </div>
             {/* PATCH 0775 — sub-header reflects own-universe filter
                 (Watchlist + Portfolio + Conviction Beats). Falls back to
-                small+midcap when user has no universe configured. */}
+                small+midcap when user's universe doesn't intersect the
+                quotes response. */}
             <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
               {(() => {
                 const open = _isIndianMarketOpen();
-                if (open) return `Your universe · Watchlist + Portfolio + CB · top 10 each side · live · ${data.moversUpdatedAt ? new Date(data.moversUpdatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : ''}`;
+                if (open) return `Watchlist + Portfolio + CB · live · ${data.moversUpdatedAt ? new Date(data.moversUpdatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : ''}`;
                 const ist = new Date(new Date().getTime() + (new Date().getTimezoneOffset() + 330) * 60_000);
                 const dow = ist.getDay();
                 const lastClose = (() => {
