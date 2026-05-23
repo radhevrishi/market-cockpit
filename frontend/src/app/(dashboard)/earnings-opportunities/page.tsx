@@ -977,7 +977,7 @@ export default function EarningsOpportunitiesPage() {
   // so navigation is INSTANT for previously-visited dates, then revalidates
   // from server in background. Past dates are immutable so revalidation is
   // basically a no-op (KV hit). No more 30s waits per click.
-  const { data: gradedData, refetch: refetchGraded, isFetching: gradedFetching } = useQuery<OpportunitiesPayload>({
+  const { data: gradedData, refetch: refetchGraded, isFetching: gradedFetching, error: gradedError } = useQuery<OpportunitiesPayload>({
     queryKey: ['graded-by-date', resolvedDateForGrading],
     enabled: !!resolvedDateForGrading,
     queryFn: async () => {
@@ -995,8 +995,25 @@ export default function EarningsOpportunitiesPage() {
         if (cached) return dedupePayloadByCompany(cached as OpportunitiesPayload);
       }
       const res = await fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}`, { cache: 'no-store' });
-      if (!res.ok) throw new Error('graded fetch failed');
+      // PATCH 0736 — surface server timeout/error explicitly so the UI can
+      // show a banner instead of silently falling back to placeholderData
+      // (the previous query's payload — which appears on screen as "same
+      // data as yesterday/4 days ago"). Includes the upstream status code
+      // and body excerpt so the banner can be specific.
+      if (!res.ok) {
+        let detail = '';
+        try { const j = await res.json(); detail = j?.error || j?.message || ''; } catch {}
+        const err: any = new Error(detail || `graded fetch failed (HTTP ${res.status})`);
+        err.status = res.status;
+        err.detail = detail;
+        err.dateAttempted = resolvedDateForGrading;
+        throw err;
+      }
       const payload = dedupePayloadByCompany(await res.json());
+      // PATCH 0736 — tag payload with the date it was actually built for, so
+      // the UI can detect mismatches between displayed-data-date and
+      // currently-selected-date (the "same data on every date" symptom).
+      (payload as any)._builtForDate = resolvedDateForGrading;
       writeLsCache(resolvedDateForGrading, payload);
       return payload;
     },
@@ -2290,6 +2307,47 @@ export default function EarningsOpportunitiesPage() {
             <button onClick={() => shiftDate(-1)} style={{ padding: '6px 10px', background: 'none', border: 'none', color: '#94A3B8', fontSize: 14, cursor: 'pointer' }}>←</button>
             <button onClick={() => shiftDate(1)}  style={{ padding: '6px 10px', background: 'none', border: 'none', color: '#94A3B8', fontSize: 14, cursor: 'pointer' }}>→</button>
           </div>
+          {/* PATCH 0736 — surface server timeout / date mismatch so user
+              doesn't see the same data on multiple consecutive dates and
+              think the app is broken. Three states:
+                1. fetch error AND we're showing stale data → red banner
+                2. data._builtForDate != resolvedDate → amber banner
+                3. fetch error but no stale data → red banner with retry */}
+          {(() => {
+            const builtFor = (gradedData as any)?._builtForDate as string | undefined;
+            const mismatch = builtFor && builtFor !== resolvedDateForGrading;
+            const errStatus = (gradedError as any)?.status as number | undefined;
+            const errDetail = (gradedError as any)?.detail as string | undefined;
+            if (!gradedError && !mismatch) return null;
+            const bg = gradedError ? '#7F1D1D33' : '#92400E33';
+            const border = gradedError ? '#EF4444' : '#F59E0B';
+            const color = gradedError ? '#FCA5A5' : '#FDE68A';
+            const msg = gradedError
+              ? `Server couldn't build data for ${resolvedDateForGrading}${errStatus ? ` (HTTP ${errStatus}` : ''}${errDetail ? `: ${errDetail})` : errStatus ? ')' : ''}.${mismatch ? ` Showing cached ${builtFor} instead.` : ''}`
+              : `Showing cached ${builtFor} data — server hasn't built ${resolvedDateForGrading} yet.`;
+            return (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
+                border: `1px solid ${border}80`, borderRadius: 6, background: bg,
+                color, fontSize: 11.5, fontWeight: 500,
+              }}>
+                <span style={{ fontSize: 14 }}>{gradedError ? '🚨' : '⚠'}</span>
+                <span style={{ flex: 1 }}>{msg}</span>
+                <button
+                  onClick={() => refetchGraded()}
+                  disabled={gradedFetching}
+                  style={{
+                    padding: '4px 10px', fontSize: 11, fontWeight: 700,
+                    background: border, color: '#0A1422', border: 'none',
+                    borderRadius: 4, cursor: gradedFetching ? 'wait' : 'pointer',
+                    opacity: gradedFetching ? 0.5 : 1,
+                  }}
+                >
+                  {gradedFetching ? 'Retrying…' : '↻ Retry'}
+                </button>
+              </div>
+            );
+          })()}
           {/* PATCH 0493 — Sparse-day hint banner */}
           {sparseDayHint && (
             <button
