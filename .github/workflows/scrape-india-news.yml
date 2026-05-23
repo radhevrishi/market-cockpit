@@ -1,0 +1,52 @@
+name: Scrape India News (4×/day)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PATCH 0738 — Indian financial news ingestion via GitHub Actions free CPU.
+# Fans out across ET Markets, Mint, Moneycontrol, Business Standard, NDTV
+# Profit RSS feeds. Parses entries, writes a consolidated blob to Upstash
+# Redis. Vercel /api/v1/news-india/[ticker] route reads the blob and merges
+# matched entries into the response. Zero Vercel CPU used for ingestion.
+#
+# Required GitHub Actions secrets:
+#   UPSTASH_REDIS_REST_URL    — same value as Vercel env var
+#   UPSTASH_REDIS_REST_TOKEN  — same value as Vercel env var
+#   (Settings → Secrets and variables → Actions → New repository secret)
+# ──────────────────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    # 4×/day at IST 06:30, 11:00, 15:30, 20:00
+    # → UTC 01:00, 05:30, 10:00, 14:30
+    - cron: '0 1 * * *'    # 06:30 IST
+    - cron: '30 5 * * *'   # 11:00 IST
+    - cron: '0 10 * * *'   # 15:30 IST
+    - cron: '30 14 * * *'  # 20:00 IST
+  workflow_dispatch: {}    # manual trigger from GitHub UI
+
+concurrency:
+  group: scrape-india-news
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run scraper
+        env:
+          UPSTASH_REDIS_REST_URL:   ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+        run: |
+          if [ -z "$UPSTASH_REDIS_REST_URL" ] || [ -z "$UPSTASH_REDIS_REST_TOKEN" ]; then
+            echo "::error title=Missing secrets::Add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          node .github/scripts/scrape-india-news.mjs

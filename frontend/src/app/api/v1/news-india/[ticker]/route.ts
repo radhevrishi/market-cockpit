@@ -69,6 +69,64 @@ export async function GET(
     articles = [];
   }
 
+  // PATCH 0738 — merge entries from the GitHub-Actions-scraped blob.
+  // The scraper runs 4×/day on GH free CPU, pulls 10 Indian RSS feeds,
+  // and writes a single consolidated blob to Upstash. We filter that
+  // blob for entries mentioning this ticker OR the optional company
+  // name and merge alongside the live Yahoo+Google RSS results. This
+  // is the principal Indian smallcap coverage path now — Yahoo+Google
+  // RSS is sparse for sub-₹5000Cr names; the GH scraper hits the
+  // editorial sources (ET/Mint/Moneycontrol/BS/NDTV) where smallcap
+  // mentions actually live.
+  if (isRedisAvailable()) {
+    try {
+      const blob = await kvGet<{
+        generatedAt?: string;
+        entries?: Array<{ title: string; url: string; source?: string; publishedAt?: string; snippet?: string }>;
+      }>('scraped-india-news:v1:latest');
+      const entries = Array.isArray(blob?.entries) ? blob!.entries : [];
+      if (entries.length > 0) {
+        // Match by ticker symbol OR company-name fragment. Use word-boundary
+        // checks to avoid false positives ("MCX" matching "commerce" etc).
+        const symRe = new RegExp(`\\b${sym.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+        const coRe = company && company.length >= 3
+          ? new RegExp(`\\b${company.split(/\s+/).slice(0, 2).join('\\s+').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i')
+          : null;
+        const matched: NewsItem[] = [];
+        for (const e of entries) {
+          const haystack = `${e.title || ''} ${e.snippet || ''}`;
+          if (symRe.test(haystack) || (coRe && coRe.test(haystack))) {
+            // The shared NewsItem type uses snake_case + a narrow source
+            // union; the scraped-blob entries use camelCase + an open
+            // source string. Cast through `any` so this normalization
+            // doesn't require widening the lib type for what is, in
+            // practice, the same shape.
+            matched.push({
+              title: e.title,
+              url: e.url,
+              source: (e.source || 'India RSS') as any,
+              published_at: e.publishedAt || new Date().toISOString(),
+              summary: e.snippet,
+            } as NewsItem);
+          }
+        }
+        if (matched.length > 0) {
+          // Merge in, dedupe by URL, keep newest first.
+          const seen = new Set(articles.map((a) => (a.url || a.title || '').slice(0, 200)));
+          for (const m of matched) {
+            const key = (m.url || m.title || '').slice(0, 200);
+            if (!key || seen.has(key)) continue;
+            seen.add(key);
+            articles.push(m);
+          }
+          articles.sort((a, b) => (b.published_at || '').localeCompare(a.published_at || ''));
+        }
+      }
+    } catch {
+      /* best-effort: ignore blob read failure, keep the live fetch results */
+    }
+  }
+
   const generatedAt = new Date().toISOString();
 
   // Cache even empty results — prevents hammering RSS endpoints for
