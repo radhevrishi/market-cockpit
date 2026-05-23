@@ -560,7 +560,7 @@ export default function HomeDashboard() {
       // conviction beats in my watchlist not for all companies. now fix it
       // and make it that way." The /movers full page still shows the broad
       // market — this is just the home dashboard panel filter.
-      safeDiag<any>(`/api/market/quotes?market=india&_=${Date.now()}`, 18_000).then(({ data: j }) => {
+      safeDiag<any>(`/api/market/quotes?market=india&_=${Date.now()}`, 18_000).then(async ({ data: j }) => {
         if (cancelled) return;
         // Build the user's universe (UPPER + suffix-stripped tickers).
         const norm = (s: string) => (s || '').toString().toUpperCase().replace(/\.(NS|BO)$/i, '').trim();
@@ -585,22 +585,45 @@ export default function HomeDashboard() {
           const g = (s?.indexGroup || '').toLowerCase();
           return g === 'small' || g === 'mid';
         });
+        const splitGainersLosers = (arr: any[]) => {
+          const g = arr.filter((s: any) => (s?.changePercent || 0) > 0).sort((a, b) => (b.changePercent || 0) - (a.changePercent || 0));
+          const l = arr.filter((s: any) => (s?.changePercent || 0) < 0).sort((a, b) => (a.changePercent || 0) - (b.changePercent || 0));
+          return { g, l };
+        };
+
+        // PATCH 0780 — Augment with per-ticker fetch for any universe
+        // members the broad quotes response didn't cover. Saves the
+        // smallcap user experience whenever upstream NSE index endpoints
+        // are degraded (which forces the broad API to fall back to NIFTY 50).
+        const broadTickers = new Set((j?.stocks || j?.indicesData || []).map((s: any) => norm(s?.ticker)));
+        const missing = Array.from(universe).filter(t => !broadTickers.has(t) && t).slice(0, 20);
+        let universeStocks: any[] = [];
+        if (missing.length > 0) {
+          try {
+            const { data: pjson } = await safeDiag<any>(
+              `/api/market/quote?symbols=${encodeURIComponent(missing.join(','))}&_=${Date.now()}`,
+              15_000
+            );
+            universeStocks = (pjson?.stocks || []).filter((s: any) => s?.price > 0);
+          } catch { /* Yahoo path will still run from broad endpoint cache */ }
+        }
+        const universeStocksUniverse = universeStocks.filter(inUniverse);
+        const { g: uExtraG, l: uExtraL } = splitGainersLosers(universeStocksUniverse);
 
         // Tier order:
-        //   1) Own universe (watchlist+portfolio+CB) intersected with the quotes response
-        //   2) Small+midcap intersection (broader, still excludes NIFTY 50 noise)
-        //   3) Full quotes list (raw response)
-        // This handles the "broad NSE failed → API returned NIFTY 50 only"
-        // case gracefully — user still sees their large-cap names when no
-        // smallcap data is available rather than an empty card.
+        //   1) Own universe — broad-response intersect + per-ticker fetch (P0780)
+        //   2) Small+midcap intersection from broad response (excludes NIFTY 50 noise)
+        //   3) Full broad response (last resort, never blank)
         let gainers: any[] = [];
         let losers: any[] = [];
         if (universe.size > 0) {
           const uG = rawG.filter(inUniverse);
           const uL = rawL.filter(inUniverse);
-          if (uG.length > 0 || uL.length > 0) {
-            gainers = uG.slice(0, 10);
-            losers = uL.slice(0, 10);
+          const allG = [...uG, ...uExtraG].sort((a, b) => (b.changePercent || 0) - (a.changePercent || 0));
+          const allL = [...uL, ...uExtraL].sort((a, b) => (a.changePercent || 0) - (b.changePercent || 0));
+          if (allG.length > 0 || allL.length > 0) {
+            gainers = allG.slice(0, 10);
+            losers = allL.slice(0, 10);
           }
         }
         if (gainers.length === 0 && losers.length === 0) {

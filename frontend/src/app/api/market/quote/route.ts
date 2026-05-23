@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { fetchStockQuote } from '@/lib/nse';
+import { fetchQuotesWithFallback } from '@/lib/yahoo';
 import { rateLimitResponse } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
@@ -7,6 +8,19 @@ export const dynamic = 'force-dynamic';
 // Response-level cache (avoids re-assembly on rapid polls)
 const responseCache = new Map<string, { data: any; ts: number }>();
 const RESPONSE_TTL = 30_000; // 30s cache for assembled response
+
+// PATCH 0780 — Reusable pct/change resolver. NSE pChange returns 0 on
+// weekends + holidays even with valid prices; compute from lastPrice +
+// previousClose as fallback.
+function resolvePctChange(lastPrice: number, previousClose: number, reportedChange: number, reportedPct: number) {
+  const canCompute = lastPrice > 0 && previousClose > 0;
+  const computedChange = canCompute ? lastPrice - previousClose : 0;
+  const computedPct = canCompute ? ((lastPrice - previousClose) / previousClose) * 100 : 0;
+  return {
+    change: reportedChange !== 0 ? reportedChange : computedChange,
+    changePercent: reportedPct !== 0 ? reportedPct : computedPct,
+  };
+}
 
 /**
  * GET /api/market/quote?symbols=AEROFLEX,CEINSYS,MACPOWER
@@ -65,6 +79,7 @@ export async function GET(request: Request) {
 
   const results: any[] = [];
   const errors: string[] = [];
+  const missing: string[] = []; // PATCH 0780 — track for Yahoo fallback
 
   // Fetch in parallel (batches of 5 to avoid rate limiting)
   for (let i = 0; i < symbols.length; i += 5) {
@@ -74,32 +89,37 @@ export async function GET(request: Request) {
         const data = await fetchStockQuote(symbol);
         if (!data || !data.priceInfo) {
           errors.push(`${symbol}: no data`);
+          missing.push(symbol);
           return null;
         }
 
         const pi = data.priceInfo;
         const info = data.info || {};
         const meta = data.metadata || {};
+        const lastPrice = pi.lastPrice || pi.close || 0;
+        const previousClose = pi.previousClose || 0;
+        const { change, changePercent } = resolvePctChange(lastPrice, previousClose, pi.change || 0, pi.pChange || 0);
 
         return {
           ticker: info.symbol || symbol,
           company: info.companyName || meta.companyName || symbol,
           sector: meta.industry || info.industry || '—',
           industry: meta.industry || info.industry || '—',
-          price: pi.lastPrice || pi.close || 0,
-          change: pi.change || 0,
-          changePercent: pi.pChange || 0,
-          dayHigh: pi.intraDayHighLow?.max || pi.lastPrice || 0,
-          dayLow: pi.intraDayHighLow?.min || pi.lastPrice || 0,
+          price: lastPrice,
+          change,
+          changePercent,
+          dayHigh: pi.intraDayHighLow?.max || lastPrice,
+          dayLow: pi.intraDayHighLow?.min || lastPrice,
           open: pi.open || 0,
-          previousClose: pi.previousClose || 0,
+          previousClose,
           weekHigh52: pi.weekHighLow?.max || 0,
           weekLow52: pi.weekHighLow?.min || 0,
           totalTradedVolume: data.preOpenMarket?.totalTradedVolume || 0,
-          marketCap: data.securityInfo?.issuedSize ? (data.securityInfo.issuedSize * (pi.lastPrice || 0)) / 10000000 : null,
+          marketCap: data.securityInfo?.issuedSize ? (data.securityInfo.issuedSize * lastPrice) / 10000000 : null,
         };
       } catch (err) {
         errors.push(`${symbol}: ${err instanceof Error ? err.message : 'fetch failed'}`);
+        missing.push(symbol);
         return null;
       }
     });
@@ -108,12 +128,48 @@ export async function GET(request: Request) {
     results.push(...batchResults.filter(Boolean));
   }
 
+  // PATCH 0780 — Yahoo fallback for symbols NSE couldn't resolve. NSE
+  // gates many smallcap names on session cookies and rate-limits during
+  // weekend hours; Yahoo provides reliable last-close data for almost
+  // any NSE-listed ticker via the .NS suffix.
+  if (missing.length > 0) {
+    try {
+      const yahooSymbols = missing.map(s => `${s}.NS`);
+      const yQuotes = await fetchQuotesWithFallback(yahooSymbols);
+      for (const q of yQuotes) {
+        const baseSym = (q?.symbol || '').replace(/\.(NS|BO)$/i, '');
+        if (!baseSym || results.find(r => r.ticker === baseSym)) continue;
+        const price = q.regularMarketPrice || 0;
+        const prevClose = q.regularMarketPreviousClose || 0;
+        if (price <= 0) continue;
+        const { change, changePercent } = resolvePctChange(price, prevClose, q.regularMarketChange || 0, q.regularMarketChangePercent || 0);
+        results.push({
+          ticker: baseSym,
+          company: q.shortName || baseSym,
+          sector: '—',
+          industry: '—',
+          price,
+          change,
+          changePercent,
+          dayHigh: q.regularMarketDayHigh || price,
+          dayLow: q.regularMarketDayLow || price,
+          open: q.regularMarketOpen || 0,
+          previousClose: prevClose,
+          weekHigh52: q.fiftyTwoWeekHigh || 0,
+          weekLow52: q.fiftyTwoWeekLow || 0,
+          totalTradedVolume: q.regularMarketVolume || 0,
+          marketCap: q.marketCap ? Math.round(q.marketCap / 10000000) : null,
+        });
+      }
+    } catch { /* Yahoo failed too — return what we have */ }
+  }
+
   const responseData = {
     stocks: results,
     count: results.length,
     requested: symbols.length,
     errors: errors.length > 0 ? errors : undefined,
-    source: 'nse-individual',
+    source: missing.length > 0 ? 'nse-individual+yahoo-fallback' : 'nse-individual',
     updatedAt: new Date().toISOString(),
   };
 
