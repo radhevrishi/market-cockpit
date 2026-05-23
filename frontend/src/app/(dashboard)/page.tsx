@@ -1031,8 +1031,10 @@ export default function HomeDashboard() {
         }
       });
 
-      // PATCH 0625 — Upcoming Earnings: fetch CURRENT + NEXT month (covers
-      // month boundaries), 28s timeout (endpoint is slow), window 7 days.
+      // PATCH 0775 (extended) — Upcoming Earnings: fetch CURRENT + NEXT
+      // month, then prioritize CB ∪ Watchlist names first. Always set
+      // some value (empty array on full failure) so the loading spinner
+      // resolves even if both upstreams timeout.
       (async () => {
         const now = new Date();
         const currentMonth = now.toISOString().slice(0, 7);
@@ -1040,12 +1042,17 @@ export default function HomeDashboard() {
           const m = new Date(now); m.setMonth(now.getMonth() + 1);
           return m.toISOString().slice(0, 7);
         })();
-        const [{ data: a }, { data: b }] = await Promise.all([
-          safeDiag<any>(`/api/market/earnings?market=india&month=${currentMonth}&_=${Date.now()}`, 28_000),
-          safeDiag<any>(`/api/market/earnings?market=india&month=${nextMonth}&_=${Date.now()}`, 28_000),
-        ]);
+        let aData: any = null;
+        let bData: any = null;
+        try {
+          const [ra, rb] = await Promise.all([
+            safeDiag<any>(`/api/market/earnings?market=india&month=${currentMonth}&_=${Date.now()}`, 28_000),
+            safeDiag<any>(`/api/market/earnings?market=india&month=${nextMonth}&_=${Date.now()}`, 28_000),
+          ]);
+          aData = ra?.data; bData = rb?.data;
+        } catch {}
         if (cancelled) return;
-        const all = [...((a?.results || []) as any[]), ...((b?.results || []) as any[])];
+        const all = [...((aData?.results || []) as any[]), ...((bData?.results || []) as any[])];
         const today = new Date(); today.setHours(0, 0, 0, 0);
         const window = new Date(today); window.setDate(today.getDate() + 7);
         const cbSet = (() => { try { return getConvictionTickers(); } catch { return new Set<string>(); } })();
@@ -1053,32 +1060,32 @@ export default function HomeDashboard() {
         try { watchlist = JSON.parse(localStorage.getItem('mc_watchlist_tickers') || '[]') || []; } catch {}
         const watchSet = new Set(watchlist.map((s: string) => s.toUpperCase().replace(/\.(NS|BO)$/i, '')));
 
-        const upcoming = all
+        const allIn7d = all
           .filter((e: any) => e?.resultDate && e?.ticker)
           .map((e: any) => {
             const dt = new Date(e.resultDate); dt.setHours(0, 0, 0, 0);
             const daysAhead = Math.round((dt.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-            return { ...e, _dt: dt, daysAhead };
-          })
-          .filter((e: any) => e._dt >= today && e._dt <= window)
-          .map((e: any) => {
             const sym = (e.ticker || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
             return {
               ticker: e.ticker,
               company: e.company,
               resultDate: e.resultDate,
               sector: e.sector,
-              daysAhead: e.daysAhead,
+              daysAhead,
+              _dt: dt,
               onCb: cbSet.has(sym),
               onWatchlist: watchSet.has(sym),
             };
           })
-          .sort((a: any, b: any) => {
-            if (a.onCb !== b.onCb) return a.onCb ? -1 : 1;
-            if (a.onWatchlist !== b.onWatchlist) return a.onWatchlist ? -1 : 1;
-            return a.daysAhead - b.daysAhead;
-          })
-          .slice(0, 10);
+          .filter((e: any) => e._dt >= today && e._dt <= window);
+
+        // Sort: CB first → watchlist second → soonest-date third
+        allIn7d.sort((a: any, b: any) => {
+          if (a.onCb !== b.onCb) return a.onCb ? -1 : 1;
+          if (a.onWatchlist !== b.onWatchlist) return a.onWatchlist ? -1 : 1;
+          return a.daysAhead - b.daysAhead;
+        });
+        const upcoming = allIn7d.slice(0, 10);
         setData((d) => ({ ...d, upcomingEarnings: upcoming } as any));
       })();
 
