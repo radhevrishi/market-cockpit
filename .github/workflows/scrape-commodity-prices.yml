@@ -1,0 +1,50 @@
+name: Scrape Commodity Prices (4×/day)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PATCH 0740 — Commodity price ingestion for /transmission via GH Actions.
+# Batched Yahoo Finance call for all 37 commodity + equity-proxy symbols,
+# results written to Upstash. Vercel /api/v1/transmission route reads
+# from KV instead of fanning out 37 Yahoo calls per request.
+#
+# Required GitHub Actions secrets:
+#   UPSTASH_REDIS_REST_URL    — same value as Vercel env var
+#   UPSTASH_REDIS_REST_TOKEN  — same value as Vercel env var
+# ──────────────────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    # 4×/day, offset from the other two scrapers by ~15min so all three
+    # don't pummel Upstash in the same minute. IST 06:45, 11:15, 15:45, 20:15.
+    - cron: '15 1 * * *'    # 06:45 IST
+    - cron: '45 5 * * *'    # 11:15 IST
+    - cron: '15 10 * * *'   # 15:45 IST
+    - cron: '45 14 * * *'   # 20:15 IST
+  workflow_dispatch: {}
+
+concurrency:
+  group: scrape-commodity-prices
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run scraper
+        env:
+          UPSTASH_REDIS_REST_URL:   ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+        run: |
+          if [ -z "$UPSTASH_REDIS_REST_URL" ] || [ -z "$UPSTASH_REDIS_REST_TOKEN" ]; then
+            echo "::error title=Missing secrets::Add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          node .github/scripts/scrape-commodity-prices.mjs
