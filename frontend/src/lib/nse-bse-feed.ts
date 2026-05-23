@@ -19,6 +19,47 @@ import {
   negCacheCheck,
   negCacheSet,
 } from './nse-resilient-fetch';
+import { kvGet, isRedisAvailable } from './kv';
+
+// PATCH 0739 — GH-Actions-scraped corp-filings blob. Written by
+// .github/scripts/scrape-corp-filings.mjs 4×/day on GitHub Actions free
+// CPU. When this blob is fresh, fetchNSEAnnouncements / fetchBSEAnnouncements
+// serve from it instead of calling NSE/BSE live — moves the ingestion
+// cost off Vercel (CLAUDE.md §18.5 CPU rescue) and dodges the 50% NSE
+// upstream failure rate (§18.8).
+const GH_BLOB_KEY = 'corp-filings:v1:latest';
+const GH_BLOB_MAX_AGE_MS = 6 * 60 * 60 * 1000;   // 6h — half the 12h gap between scrapes
+
+interface GhBlobShape {
+  generatedAt?: string;
+  filings?: FilingRecord[];
+}
+
+async function readGhBlob(): Promise<GhBlobShape | null> {
+  if (!isRedisAvailable()) return null;
+  try {
+    const blob = await kvGet<GhBlobShape>(GH_BLOB_KEY);
+    if (!blob || !Array.isArray(blob.filings) || blob.filings.length === 0) return null;
+    if (blob.generatedAt) {
+      const ageMs = Date.now() - new Date(blob.generatedAt).getTime();
+      if (!Number.isFinite(ageMs) || ageMs > GH_BLOB_MAX_AGE_MS) return null;
+    }
+    return blob;
+  } catch {
+    return null;
+  }
+}
+
+function filterBlobToWindow(filings: FilingRecord[], fromIso: string, toIso: string, exchange: 'NSE' | 'BSE'): FilingRecord[] {
+  const fromMs = new Date(`${fromIso}T00:00:00Z`).getTime();
+  const toMs   = new Date(`${toIso}T23:59:59Z`).getTime();
+  return filings.filter((f) => {
+    if (f.exchange !== exchange) return false;
+    const t = new Date(f.filing_datetime).getTime();
+    if (!Number.isFinite(t)) return false;
+    return t >= fromMs && t <= toMs;
+  });
+}
 
 // PATCH 0732 — defaults applied to both NSE and BSE announcement adapters
 // to absorb the ~50% upstream failure rate. Negative-cache TTL matches
@@ -101,6 +142,26 @@ export async function fetchNSEAnnouncements(opts: {
     // we were waiting.
     if (negCacheCheck(dedupKey)) {
       return { filings: [], source: 'NSE_BLOCKED' as const };
+    }
+
+    // PATCH 0739 — Try the GH-Actions-scraped blob FIRST. If it's fresh
+    // (< 6h old) and has filings, we never touch NSE — zero Vercel CPU
+    // spent on the upstream call, and we dodge the 50% upstream failure
+    // rate documented in §18.8. If the blob is missing/stale, fall
+    // through to the live fetch path below (unchanged).
+    try {
+      const blob = await readGhBlob();
+      if (blob?.filings) {
+        const filtered = filterBlobToWindow(blob.filings, fromStr, toStr, 'NSE');
+        if (filtered.length > 0) {
+          return {
+            filings: filtered,
+            source: 'NSE_OK' as const,
+          };
+        }
+      }
+    } catch {
+      /* best-effort: fall through to live fetch */
     }
 
     try {
@@ -201,6 +262,28 @@ export async function fetchBSEAnnouncements(opts: {
     if (negCacheCheck(dedupKey)) {
       return { filings: [], source: 'BSE_BLOCKED' as const };
     }
+
+    // PATCH 0739 — GH-blob fast path. Same rationale as the NSE adapter
+    // above. Saves Vercel CPU + dodges BSE rate-limiting.
+    try {
+      const blob = await readGhBlob();
+      // For BSE, the iso strings have hyphens stripped (compare to NSE);
+      // reconstruct YYYY-MM-DD for the filter helper.
+      const fromIso = `${fromStr.slice(0, 4)}-${fromStr.slice(4, 6)}-${fromStr.slice(6, 8)}`;
+      const toIso   = `${toStr.slice(0, 4)}-${toStr.slice(4, 6)}-${toStr.slice(6, 8)}`;
+      if (blob?.filings) {
+        const filtered = filterBlobToWindow(blob.filings, fromIso, toIso, 'BSE');
+        if (filtered.length > 0) {
+          return {
+            filings: filtered,
+            source: 'BSE_OK' as const,
+          };
+        }
+      }
+    } catch {
+      /* best-effort: fall through to live fetch */
+    }
+
     const allFilings: FilingRecord[] = [];
     try {
     for (let pageno = 1; pageno <= pages; pageno++) {

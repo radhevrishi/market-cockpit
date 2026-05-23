@@ -1,0 +1,59 @@
+name: Scrape Corp Filings (4×/day)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PATCH 0739 — NSE + BSE corporate-filings ingestion via GitHub Actions.
+# Feeds 4 Vercel routes that previously had to call NSE live (and hit the
+# 50% upstream failure rate per CLAUDE.md §18.8):
+#   • /api/v1/concall-intel/live-feed
+#   • /api/v1/concall-intel/warrant-feed
+#   • /api/v1/concall-intel/keyword-watch
+#   • (consumers: /order-book, /rating-actions, /special-situations,
+#      concall-intel page, movers-attribution engine)
+#
+# Vercel CPU savings: each route currently spends 5-30s per cold call
+# fetching from NSE. Once the blob is populated, the route reads from
+# KV in ~50ms.
+#
+# Required GitHub Actions secrets:
+#   UPSTASH_REDIS_REST_URL    — same value as Vercel env var
+#   UPSTASH_REDIS_REST_TOKEN  — same value as Vercel env var
+# ──────────────────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    # 4×/day at IST 07:00, 11:30, 16:00, 20:30 (covers pre-open, mid-morning,
+    # close, post-close). 30 min after the india-news scraper so the runs
+    # don't queue and we don't double-load Upstash in the same minute.
+    - cron: '30 1 * * *'    # 07:00 IST
+    - cron: '0 6 * * *'     # 11:30 IST
+    - cron: '30 10 * * *'   # 16:00 IST
+    - cron: '0 15 * * *'    # 20:30 IST
+  workflow_dispatch: {}
+
+concurrency:
+  group: scrape-corp-filings
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run scraper
+        env:
+          UPSTASH_REDIS_REST_URL:   ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+        run: |
+          if [ -z "$UPSTASH_REDIS_REST_URL" ] || [ -z "$UPSTASH_REDIS_REST_TOKEN" ]; then
+            echo "::error title=Missing secrets::Add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          node .github/scripts/scrape-corp-filings.mjs
