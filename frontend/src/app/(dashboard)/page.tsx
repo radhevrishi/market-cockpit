@@ -927,12 +927,19 @@ export default function HomeDashboard() {
               const q = byTicker.get(key);
               if (!q) return null;
               const pct = q.changePercent ?? 0;
-              return { ticker: key, company: q.company, changePercent: pct, price: q.price, reason: `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}% last close` };
+              return { ticker: key, company: q.company, changePercent: pct, price: q.price, reason: `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}% last close` };
             })
             .filter((x: any) => x !== null) as any[];
+          // PATCH 0769 — Three-tier threshold cascade.
+          // Strict ≥3% (intraday-significant) → relaxed ≥1% → ANY non-zero
+          // movement. The third tier guarantees a non-empty list whenever
+          // the quote API has data, which it now reliably does post-P0769.
           const strong = allMoves.filter(x => Math.abs(x.changePercent) >= 3);
-          const fallback = allMoves.filter(x => Math.abs(x.changePercent) >= 1);
-          const pulses = (strong.length > 0 ? strong : fallback)
+          const moderate = allMoves.filter(x => Math.abs(x.changePercent) >= 1);
+          const anyMove = allMoves.filter(x => x.changePercent !== 0);
+          const pulses = (strong.length > 0 ? strong
+                       : moderate.length > 0 ? moderate
+                       : anyMove)
             .sort((a: any, b: any) => Math.abs(b.changePercent) - Math.abs(a.changePercent))
             .slice(0, 6);
           setData((d) => ({ ...d, watchlistPulse: pulses as any } as any));

@@ -36,50 +36,34 @@ async function fetchNseOrderAnnouncements(): Promise<NseAnnouncementRaw[]> {
   const from = fmt(sevenDaysAgo);
   const to = fmt(today);
 
-  // PATCH 0767 — Expanded NEAPS XBRL category variants. SEBI's circular
-  // mandates issuers to use specific labels for order/contract intimations
-  // and they vary slightly across templates.
-  const categories = [
-    'Awarding of Order',
-    'Awarding%20of%20Order',
-    'Receipt of Order',
-    'Receipt%20of%20Order',
-    'Receipt of Order/Contract',
-    'Receipt%20of%20Order%2FContract',
-    'Order/Contract',
-    'Order%2FContract',
-    'Awarding/Bagging/Receiving of orders/contracts',
-    'Awarding%2FBagging%2FReceiving%20of%20orders%2Fcontracts',
-    'Letter of Award',
-    'Letter%20of%20Award',
-    'Work Order',
-    'Work%20Order',
-    'Acquisition (Receipt of Order)',
-    'Reg. 30 (LODR)',
-    'Reg.%2030%20(LODR)',
-  ];
-
+  // PATCH 0769 — First-principles fix: instead of guessing what NSE's
+  // category strings are, pull ALL corp announcements for the week and let
+  // the engine's `isOrderTemplateNse` + `isOrderLikeText` filters
+  // classify them. Trades 1 broader fetch for unknown-category-mismatch
+  // failures. Same approach the existing /concall-intel/live-feed uses.
   const all: NseAnnouncementRaw[] = [];
-  for (const cat of categories) {
-    try {
-      const path = `/api/corporate-announcements?index=equities&from_date=${from}&to_date=${to}&category=${cat}`;
-      const data = await nseApiFetch(path, 5 * 60_000);
-      const items = Array.isArray(data) ? data : (data?.rows || data?.data || []);
-      for (const item of items) {
-        all.push({
-          companyName: item.sm_name || item.companyName,
-          symbol: item.symbol || item.sm_symbol,
-          isin: item.sm_isin || item.isin,
-          headline: item.subject || item.attchmntText || '',
-          category: cat.replace(/%20/g, ' ').replace(/%2F/g, '/'),
-          subCategory: item.smIndustry,
-          description: item.attchmntText || item.subject,
-          attachmentUrl: item.attchmntFile ? `https://nsearchives.nseindia.com/${item.attchmntFile}` : undefined,
-          announcementTime: item.attchmntDate || item.an_dt,
-        });
-      }
-    } catch { /* try next category */ }
-  }
+  try {
+    const path = `/api/corporate-announcements?index=equities&from_date=${from}&to_date=${to}`;
+    const data = await nseApiFetch(path, 5 * 60_000);
+    const items = Array.isArray(data) ? data : (data?.rows || data?.data || []);
+    for (const item of items) {
+      const subject = (item.subject || item.attchmntText || '').toLowerCase();
+      // Pre-filter to obvious order-like subjects to keep payload manageable.
+      // Engine will further validate via isOrderTemplateNse / isOrderLikeText.
+      if (!/order|contract|award|loa|bagged|receipt of/i.test(subject)) continue;
+      all.push({
+        companyName: item.sm_name || item.companyName,
+        symbol: item.symbol || item.sm_symbol,
+        isin: item.sm_isin || item.isin,
+        headline: item.subject || item.attchmntText || '',
+        category: item.attchmntType || '',
+        subCategory: item.smIndustry,
+        description: item.attchmntText || item.subject,
+        attachmentUrl: item.attchmntFile ? `https://nsearchives.nseindia.com/${item.attchmntFile}` : undefined,
+        announcementTime: item.attchmntDate || item.an_dt,
+      });
+    }
+  } catch { /* fail silently — engine returns empty source */ }
   return all;
 }
 

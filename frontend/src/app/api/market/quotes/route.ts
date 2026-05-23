@@ -399,17 +399,34 @@ async function fetchIndianDataWithCache() {
         : ffmc > 5_000_000_000   ? 'Small'
         : 'Micro');
 
+    // PATCH 0769 — First-principles fix for "No movers data on weekends".
+    // NSE's equity-stockindices endpoint returns `lastPrice` (Friday close)
+    // AND `previousClose` (Thursday close) ALWAYS, including weekends. But
+    // the `pChange` and `change` fields are reset to 0 on non-trading days.
+    // Compute change/changePercent from the price fields directly so we
+    // always have the last completed trading session's move.
+    const lastPrice = item.lastPrice || item.ltP || 0;
+    const prevClose = item.previousClose || item.prevClose || 0;
+    const reportedPChange = typeof item.pChange === 'number' ? item.pChange : 0;
+    const reportedChange = typeof item.change === 'number' ? item.change : 0;
+    const computedChange = (lastPrice > 0 && prevClose > 0) ? (lastPrice - prevClose) : 0;
+    const computedPct = (lastPrice > 0 && prevClose > 0) ? ((lastPrice - prevClose) / prevClose) * 100 : 0;
+    // Use NSE's reported values when non-zero (live market); fall back to
+    // the computed values from price diff when NSE returns 0 (weekend/holiday).
+    const changePercent = reportedPChange !== 0 ? reportedPChange : computedPct;
+    const change = reportedChange !== 0 ? reportedChange : computedChange;
+
     return {
       ticker: symbol,
       company: item.meta?.companyName || item.identifier || symbol,
       sector,
       industry: rawIndustry,
-      price: item.lastPrice || item.ltP || 0,
-      change: typeof item.change === 'number' ? item.change : 0,
-      changePercent: item.pChange || 0,
+      price: lastPrice,
+      change,
+      changePercent,
       volume: item.totalTradedVolume || item.trdVol || 0,
       marketCap: estimatedMcap,
-      previousClose: item.previousClose || item.prevClose || 0,
+      previousClose: prevClose,
       open: item.open || 0,
       dayHigh: item.dayHigh || 0,
       dayLow: item.dayLow || 0,
