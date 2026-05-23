@@ -463,24 +463,64 @@ async function fetchIndianDataWithCache() {
   }
 
   // Yahoo Finance as last resort
-  if (stocks.length === 0) {
-    const { NIFTY50 } = await import('@/lib/yahoo');
-    const symbols = NIFTY50.map(s => s.ticker);
-    const quotes = await fetchQuotesWithFallback(symbols);
-    stocks = NIFTY50.map(stock => {
-      const q = quotes.find((quote: any) => quote.symbol === stock.ticker || quote.symbol === stock.ticker.replace('.NS', ''));
-      return {
-        ticker: stock.ticker.replace('.NS', ''),
-        company: q?.shortName || stock.company,
-        sector: stock.sector,
-        price: q?.regularMarketPrice || 0,
-        change: q?.regularMarketChange || 0,
-        changePercent: q?.regularMarketChangePercent || 0,
-        volume: q?.regularMarketVolume || 0,
-        marketCap: q?.marketCap || 0,
-        previousClose: q?.regularMarketPreviousClose || 0,
-      };
-    }).filter(s => s.price > 0);
+  // PATCH 0764 — Also trigger Yahoo fallback when NSE returned the stocks
+  // list but all changePercent values are 0. NSE's index endpoints on
+  // weekends/holidays return last-close prices but pChange=0 (no intraday
+  // moves), which makes the route's downstream gainers/losers derivation
+  // produce empty arrays. Yahoo's regularMarketChangePercent reflects the
+  // LAST trading day's % move even on weekends, which is what users want
+  // when they open the dashboard on a Saturday.
+  const allZeroChange = stocks.length > 0 && stocks.every(s => !s.changePercent || s.changePercent === 0);
+  if (stocks.length === 0 || allZeroChange) {
+    const { NIFTY50, fetchQuotesWithFallback: yhFetch } = await import('@/lib/yahoo');
+    const symbols = stocks.length === 0
+      ? NIFTY50.map(s => s.ticker)
+      // Enrichment path: ask Yahoo for changePercent on the existing tickers
+      : stocks.slice(0, 200).map(s => s.ticker + '.NS');
+    try {
+      const quotes = await yhFetch(symbols);
+      if (stocks.length === 0) {
+        // Hard fallback: build the stock list entirely from Yahoo.
+        stocks = NIFTY50.map(stock => {
+          const q = quotes.find((quote: any) => quote.symbol === stock.ticker || quote.symbol === stock.ticker.replace('.NS', ''));
+          return {
+            ticker: stock.ticker.replace('.NS', ''),
+            company: q?.shortName || stock.company,
+            sector: stock.sector,
+            price: q?.regularMarketPrice || 0,
+            change: q?.regularMarketChange || 0,
+            changePercent: q?.regularMarketChangePercent || 0,
+            volume: q?.regularMarketVolume || 0,
+            marketCap: q?.marketCap || 0,
+            previousClose: q?.regularMarketPreviousClose || 0,
+          };
+        }).filter(s => s.price > 0);
+      } else {
+        // Enrichment path: keep NSE's classification but overlay Yahoo's
+        // last-close changePercent so weekend movers show real data.
+        const yhMap = new Map<string, any>();
+        for (const q of quotes) {
+          const sym = (q?.symbol || '').replace('.NS', '').toUpperCase();
+          if (sym) yhMap.set(sym, q);
+        }
+        let enriched = 0;
+        for (const s of stocks) {
+          const yh = yhMap.get((s.ticker || '').toUpperCase());
+          if (yh && Number.isFinite(yh.regularMarketChangePercent) && yh.regularMarketChangePercent !== 0) {
+            s.changePercent = yh.regularMarketChangePercent;
+            if (Number.isFinite(yh.regularMarketChange)) s.change = yh.regularMarketChange;
+            enriched++;
+          }
+        }
+        // If Yahoo too returned all zeros (rare — maybe consecutive holidays),
+        // leave as-is. The render path will still show prices + a closed banner.
+        if (enriched === 0 && stocks.length > 0) {
+          // Skip the assignment of gainers/losers and let downstream handle.
+        }
+      }
+    } catch {
+      // Yahoo fallback failed — keep NSE data as-is.
+    }
   }
 
   // Derive gainers/losers
