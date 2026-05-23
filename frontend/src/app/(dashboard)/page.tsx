@@ -837,8 +837,23 @@ export default function HomeDashboard() {
       safeDiag<any>(`/api/v1/news?limit=30&importance_min=2&article_type=CORPORATE&_=${Date.now()}`, 18_000).then(({ data: j }) => {
         if (cancelled) return;
         const raw = Array.isArray(j) ? j : (j?.articles || j?.items || []);
+        // PATCH 0757 — strip CDATA wrappers from URLs. Some RSS sources
+        // (NDTV Profit, BL Companies) embed CDATA[…] markup in their feed
+        // that survives to client when not parsed. lib/indian-news-rss.ts
+        // strips at its source, but other ingest paths don't. Defensive
+        // strip at the render edge.
+        const stripCdata = (s: any) => typeof s === 'string'
+          ? s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').trim()
+          : s;
         const items = (raw as any[])
           .filter((a: any) => !a?.is_synthetic && !a?.structural_status && !(a?.title || '').startsWith('[STRUCTURAL'))
+          .map((a: any) => ({
+            ...a,
+            url: stripCdata(a?.url),
+            source_url: stripCdata(a?.source_url),
+            title: stripCdata(a?.title),
+            headline: stripCdata(a?.headline),
+          }))
           .slice(0, 8);
         setData((d) => ({ ...d, signals: items } as any));
       });

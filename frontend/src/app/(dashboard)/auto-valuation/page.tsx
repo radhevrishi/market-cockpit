@@ -1172,6 +1172,16 @@ export default function AutoValuationPage() {
     if (docs.length === 0) { setReport(null); return; }
     const allDone = docs.every(d => d.status !== 'parsing');
     if (!allDone) return;
+    // PATCH 0759 — BUG 10 fix. When a saved entry is loaded via
+    // handleLoadSaved, the docs array only contains lightweight snapshots
+    // (no excelData / pdfText). Running buildReport on empty docs yields
+    // NEED_MORE_DATA which then OVERWRITES the reconstructed report —
+    // causing the inconsistency where saved badge says BUY but inline
+    // report says NEED_MORE_DATA. Skip the rebuild when no doc has raw
+    // parsed data attached; the reconstructed report is the source of
+    // truth in that case.
+    const hasRawData = docs.some(d => d.excelData !== undefined || (d.pdfText !== undefined && d.pdfText.length > 0));
+    if (!hasRawData) return;
     setBuilding(true);
     buildReport(docs).then(r => {
       setReport(r);
@@ -1383,6 +1393,37 @@ export default function AutoValuationPage() {
                         e.target.value = '';
                       }}
                       style={{ display: 'none' }} />
+                    {/* PATCH 0760 — Log to Decision bridge (BUG 11 + IMP4).
+                         One-click writes the saved Auto-Val recommendation
+                         into the Decision Log keyed by ticker. Maps
+                         BUY → BUY, WATCH → WATCH, AVOID → REJECTED, else
+                         NEUTRAL. */}
+                    <button onClick={() => {
+                      try {
+                        // Lazy import to avoid circular-dep risk
+                        const { setDecision } = require('@/lib/decisions');
+                        const statusMap: Record<string, string> = {
+                          BUY: 'BUY', WATCH: 'WATCH',
+                          AVOID: 'REJECTED', WAIT: 'NEUTRAL',
+                        };
+                        const status = statusMap[s.recommendation || ''] || 'NEUTRAL';
+                        const reason = `Auto-Val ${s.recommendation || 'computed'}: ${(s.rationale || []).slice(0, 2).join(' · ')}`.slice(0, 180);
+                        setDecision({
+                          symbol: s.ticker,
+                          market: 'IN',
+                          status,
+                          reason,
+                          scoreAtDecision: undefined,
+                          gradeAtDecision: undefined,
+                        });
+                        alert(`Logged to Decision Log: ${s.ticker} → ${status}`);
+                      } catch (e: any) {
+                        alert('Failed to log decision: ' + (e?.message || 'unknown'));
+                      }
+                    }} style={{
+                      fontSize: 10, padding: '4px 8px', background: '#22D3EE15', border: '1px solid #22D3EE50',
+                      color: '#22D3EE', borderRadius: 3, cursor: 'pointer', fontWeight: 800,
+                    }} title="Bridge to Decision Log — writes BUY/WATCH/REJECTED with Auto-Val rationale">+ DECISION</button>
                     <button onClick={() => {
                       // PATCH 0751 — Recompute. Re-runs sector inference on the
                       // stored guidance text + company name, so saved entries
@@ -1425,7 +1466,20 @@ export default function AutoValuationPage() {
                   <span style={{ fontSize: 10, color: d.type === 'excel' ? '#10B981' : '#22D3EE', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 40 }}>
                     {d.type === 'excel' ? 'XLSX' : d.type === 'pdf' ? 'PDF' : '?'}
                   </span>
-                  <span style={{ flex: 1, fontSize: 12, color: TEXT, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.name}</span>
+                  {/* PATCH 0758 — fall back to ticker-based label when the
+                       upload-time filename is a UUID (32-char hex with
+                       dashes). Some browsers/file inputs strip readable
+                       names when files come from app sandboxes. */}
+                  <span style={{ flex: 1, fontSize: 12, color: TEXT, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {(() => {
+                      const looksUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(pdf|xlsx?|docx?)$/i.test(d.name || '');
+                      if (looksUuid) {
+                        const ext = d.type === 'excel' ? 'Excel' : d.type === 'pdf' ? 'PDF' : 'Doc';
+                        return `${ext} #${i + 1} · ${d.name}`;
+                      }
+                      return d.name;
+                    })()}
+                  </span>
                   <span style={{ fontSize: 10, color: DIM }}>{(d.size / 1024).toFixed(0)} KB</span>
                   <span style={{ fontSize: 10, color: d.status === 'done' ? '#10B981' : d.status === 'error' ? '#EF4444' : '#F59E0B', fontWeight: 700 }}>
                     {d.status === 'parsing' ? '⏳ parsing…' : d.status === 'done' ? '✓ ' + (d.message || 'done') : '✗ ' + (d.message || 'error')}
