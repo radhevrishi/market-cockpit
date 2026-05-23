@@ -2493,3 +2493,211 @@ bash call. Updated header at top of file now warns about this.
 > Note the Day-5 sandbox quirk: `/tmp` does NOT persist between bash
 > invocations. Per §18.11, the §14.5 deploy flow needs to happen in a
 > single bash call (clone + cp + commit + push chained with `&&`).
+
+---
+
+## 19 · DAY-6 HANDOFF — 2026-05-23 EVENING (Patches 0733 → 0747)
+
+> **READ THIS FIRST in a new chat.** Supersedes §18 for current state.
+> HEAD on `origin/main` = `bd43029`. Latest patch number for new work: **0748**.
+> Day-6 sandbox: `trusting-fervent-archimedes` (new session = new name).
+
+### 19.0 THE MAJOR FINDING — Upstash 500K monthly quota exhausted
+
+Day-6 root-caused a cascade of symptoms (EO stale 4 days in a row, Super
+Investors junk rows, India news disappointing, Movers stuck "analyzing…",
+Vercel "Needs Attention" on every KV_ env var, GitHub Actions runs failing
+in 13-32s) to a single source:
+
+```
+Upstash SET failed: HTTP 400 —
+{"error":"ERR max requests limit exceeded. Limit: 500000, Usage: 500000.
+See https://upstash.com/docs/redis/troubleshooting/max_requests_limit"}
+```
+
+The free-tier Upstash database `upstash-kv-camel-ball` (created Mar 31)
+hit the 500K commands/month cap mid-cycle. ALL writes silently failed,
+so the app served stale read-cache and new graded payloads / sanitized
+investor rows / NSE blobs never landed.
+
+**P0742 migration (in progress when chat ended):** Create fresh free
+Upstash DB (`market-cockpit-kv-may26` in us-east-1, AWS) → copy
+UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN → paste into both:
+- Vercel project env vars (Settings → Environment Variables: update
+  KV_REST_API_URL + KV_REST_API_TOKEN, **mark both as Sensitive**)
+- GitHub Actions secrets (Settings → Secrets and variables → Actions:
+  update UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN)
+- Trigger Vercel redeploy (auto-fires on env-var save OR via empty commit)
+- Re-run 4 GitHub workflows manually (Concall Warm + 3 scrapers)
+
+The Chrome-extension automation got stuck mid-Upstash-UI-flow when the
+extension disconnected. Resume by:
+1. User clicks Claude in Chrome extension icon to reconnect
+2. New session navigates to https://console.upstash.com/redis
+3. Database "market-cockpit-kv-may26" may already exist (partial create)
+   — verify on the list page first before re-creating
+
+### 19.1 Patches shipped in Day-6 (P0733 → P0747)
+
+```
+0733 — Move concall-intel-warm from Vercel cron (weekly Monday-only)
+       to GitHub Actions (daily). 1200 min/month free vs Vercel CPU.
+       File: .github/workflows/concall-warm-daily.yml
+       Auth: CRON_SECRET added as Vercel env var + GH Actions secret.
+
+0734 — Super Investors data-quality bug fix. /api/v1/super-investors
+       was returning rows where `company` field contained news headlines
+       like "TV Today Network - Moneycontrol.com" instead of company
+       names. Added sanitizer that rejects rows where company looks
+       like a URL-bearing news title or contains "-Moneycontrol",
+       "- The Hindu", " - ET", etc. Falls back to ticker symbol when
+       sanitization strips everything.
+
+0735 — Movers + Watchlist Pulse honest empty-state. When NSE closed
+       (weekend, after hours), instead of two blank "▲ GAINERS" /
+       "▼ LOSERS" headers (read as bug), show "🕒 NSE closed · weekend
+       · live movers resume Mon 09:15 IST" with link to /movers full
+       page. Detection via _isIndianMarketOpen() in lib/market-hours.
+
+0736 — EO stale-data banner: server timeout/error explicit. Previously
+       a failed graded fetch silently rendered placeholderData (the
+       previously-cached payload), making the page look like "same
+       data every day" even when nothing was actually live. Now:
+       - Throws explicit err.status + err.detail + err.dateAttempted
+       - Banner renders "🚨 Server couldn't build data for YYYY-MM-DD
+         (HTTP 504: hub fetch timeout). ↻ Retry"
+       - placeholderData removed for the failed-fetch case
+       - Force calendar refresh button hardened: 60s + 5min follow-up.
+
+0737 — Phase 2: wire /api/v1/news-india/[ticker] into more pages
+       (Stock Sheet useTickerNews already wired in P0724). Now also
+       used as a parallel source in Home Movers attribution (P0708).
+
+0738 — Phase 3: GitHub Actions Indian smallcap news scraper.
+       .github/workflows/scrape-india-news.yml — 4×/day cron.
+       Pulls Yahoo Finance + Google News RSS per ticker from the
+       conviction-beats + watchlist + EO universe (~500 tickers),
+       writes blobs to KV with 24h TTL keyed by
+       `news-india-blob:v1:<ticker>`. /api/v1/news-india/[ticker]
+       reads blob first (cache fast-path), then falls back to live
+       RSS fetch on cache miss.
+
+0739 — GitHub Actions NSE+BSE corp-filings scraper.
+       .github/workflows/scrape-corp-filings.yml — 4×/day cron.
+       Hits NSE corporate-announcements + BSE corporate-actions
+       (Reg-30 / Reg-15 categories), writes the merged filing
+       stream to KV blob `corp-filings-blob:v1:<YYYY-MM-DD>`,
+       which the existing /api/v1/concall-intel/live-feed reads
+       as a fast-path before falling back to direct upstream fetch.
+
+0740 — GitHub Actions commodity-prices scraper (transmission).
+       .github/workflows/scrape-commodity-prices.yml — 4×/day.
+       Yahoo batch quote fetch for ~21 commodity symbols + ~17
+       equity proxies, writes to KV blob `commodity-prices-blob:v1`.
+       Transmission engine reads blob first.
+
+0741 — EO client-side 20s hard timeout (AbortController). Before:
+       backend 504s at 60s caused "Fetching live results from
+       BSE/NSE..." to spin for the full 60s before error banner.
+       After: client aborts at 20s, throws err.status=0 + err.detail=
+       'client_timeout_20s', faster more useful message
+       "Pipeline taking longer than 20s. NSE/BSE upstream may be
+       degraded — retry in a moment."
+
+0742 — In progress (Upstash migration, see §19.0)
+
+0743/0747 — Tighten Movers attribution labels per user QA feedback.
+       File: lib/movers-attribution.ts
+       - Tier-1a EARNINGS now detects post-results profit-taking
+         (STRONG/BLOCKBUSTER tier + price down = explicit
+         "post-results profit-taking" framing, not just "STRONG
+         earnings"). Relief rally for AVOID/POOR + price up.
+       - Same-ticker special-situation merged into earnings label
+         (IRB case: Q4 PAT +38% + 4th interim dividend → one row
+         showing "MIXED earnings (Q4 FY26) · Sales -10% · PAT +38%
+         + dividend").
+       - Tier-4 honest label condensed (drop industry duplication —
+         home page renders industry chip separately):
+         * extreme smallcap moves (>=7%): "momentum only · no
+           confirmed trigger (verify before chasing)"
+         * ordinary smallcap: "momentum only · no confirmed trigger"
+         * non-smallcap: "sector rotation · no stock-specific trigger"
+
+0744 — Pending (downstream of P0742 Upstash fix)
+0745 — Pending (downstream of P0742 Upstash fix)
+
+0746 — Home Movers 15s outer timeout race. Wrap entire 5-source
+       enrichment block in setTimeout. fireAttribution() ALWAYS runs
+       at most once: either when all enrichment resolves OR at 15s
+       hard cap with empty indices. Eliminates "analyzing…" stuck
+       state forever. The Tier-4 fallthrough labels are infinitely
+       better than nothing.
+
+0747 — (Merged with 0743 in commit 82ae957)
+```
+
+### 19.2 What user sees AFTER current deploy (no Upstash fix yet)
+
+The Day-6 patches improve graceful-degradation behavior even WITH the
+Upstash quota still exhausted:
+
+✓ Home Movers no longer stuck "analyzing…" — every row labeled within 15s
+✓ EO 504 banner appears at 20s instead of 60s
+✓ Better attribution labels for the rows where earnings DID make it to KV
+  (the cache was already-warm pre-quota-burn)
+✓ Honest empty-state on NSE-closed weekends
+
+What still REQUIRES Upstash migration (P0742) before showing real data:
+✗ Upcoming Earnings (next 7d) = 0 — calendar cron can't write
+✗ Most rows hitting Tier-4 "no confirmed trigger" — earnings index empty
+✗ EO graded payloads for new dates = still 504/empty
+✗ Super Investors sanitizer effect invisible — sanitized rows can't persist
+
+### 19.3 New libs / files added across Day-5+Day-6
+
+```
+frontend/src/lib/nse-resilient-fetch.ts             P0732 — dedup + negcache
+.github/workflows/concall-warm-daily.yml            P0733 — GH cron
+.github/workflows/scrape-india-news.yml             P0738 — RSS fan-out cron
+.github/workflows/scrape-corp-filings.yml           P0739 — NSE+BSE cron
+.github/workflows/scrape-commodity-prices.yml       P0740 — Yahoo batch cron
+```
+
+(P0743-P0747 are EDITS to existing files, not new libs:
+ `lib/movers-attribution.ts`, `app/(dashboard)/page.tsx`,
+ `app/(dashboard)/earnings-opportunities/page.tsx`.)
+
+### 19.4 Env vars / secrets state at session end
+
+| Var | Vercel | GH Actions |
+|-----|--------|------------|
+| KV_REST_API_URL | OLD (stale Upstash, quota exhausted) | n/a |
+| KV_REST_API_TOKEN | OLD | n/a |
+| UPSTASH_REDIS_REST_URL | n/a | OLD (must be updated post-P0742) |
+| UPSTASH_REDIS_REST_TOKEN | n/a | OLD |
+| CRON_SECRET | ✓ ADDED Day-6 | ✓ ADDED Day-6 |
+| ANTHROPIC_API_KEY | ✗ NOT SET (still blocks BLK-01) | n/a |
+| SLACK_WEBHOOK_URL etc | ✗ NOT SET (still blocks P0726) | n/a |
+
+### 19.5 STARTER PROMPT for Day-7
+
+> Read `/Users/radhevrishi/Desktop/Python/Imp Marketcockpit/market-cockpit/CLAUDE.md`
+> section 19 (Day-6 handoff, especially §19.0 Upstash quota finding) AND
+> section 13 (Hard Rules) before doing anything. HEAD on main = `bd43029`.
+> Latest patch number for new work: **0748**.
+>
+> P0742 Upstash migration is THE blocker — until the new free DB is wired
+> in (browser steps in §19.0), most dashboards will keep showing stale or
+> empty data even though the code is correct.
+>
+> If P0742 done by user: re-run 4 GitHub workflows manually
+> (https://github.com/radhevrishi/market-cockpit/actions), verify EO page
+> for today + yesterday loads in <20s, verify Movers attribution rows now
+> show earnings labels instead of all Tier-4.
+>
+> Next-priority work (pick one):
+> - "Wire ANTHROPIC_API_KEY into /api/v1/concall/analyze" (BLK-01)
+> - "TheWrap Module 3: Strategic Hire detector page" (/strategic-hires)
+> - "TheWrap Module 4: Marquee Capital Entry Tracker" (/marquee-capital)
+> - "Wire valuation upside into concall score (~10% weight)" (P0681 follow-up)
+> - "Recompute button on saved Auto-Val entries" so stale sectors refresh

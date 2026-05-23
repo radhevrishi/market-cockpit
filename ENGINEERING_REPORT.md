@@ -130,3 +130,48 @@ tsc --noEmit                       EXIT 0 (clean)
 System is materially more robust than at session start. Honest "remaining risk" is **medium-low** across the board, with the highest residual risk being upstream data-gap exposure on Indian smallcap event coverage (which is structural and needs backend work).
 
 **Day-5 update (P0732):** the NSE 50% failure-rate symptom called out in §18.8 of CLAUDE.md now has surgical mitigation shipped. Effect will be visible in Vercel observability over the next 24-48h once warm instances exercise the new in-flight dedup + 90s negative cache. Worst case is no regression vs prior behaviour — the resilience primitives are additive to the existing positive cache and cookie-refresh retry.
+
+---
+
+## Day-6 batch (P0733 → P0747) — Upstash quota cascade
+
+| ID | Severity | Module | Root Cause | Fix Applied | Retest | Risk |
+|---|---|---|---|---|---|---|
+| BUG-28 | **P0** | KV / Upstash | Free-tier `upstash-kv-camel-ball` hit 500K commands/month cap mid-cycle. ALL writes failed with `ERR max requests limit exceeded`. Caused the cascade: EO stale, Super Investors junk, India news disappointing, Movers stuck "analyzing…", Vercel "Needs Attention" badges, GH Actions runs failing in 13-32s. | P0742 — Migrate to fresh free Upstash DB (`market-cockpit-kv-may26` in us-east-1). Update Vercel env vars (KV_REST_API_URL, KV_REST_API_TOKEN) + GH Actions secrets (UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN). Trigger Vercel redeploy. | ⚠ Browser steps **in progress** when chat ended (Chrome extension disconnected mid-flow) | High until completed — every downstream symptom traces back here |
+| BUG-29 | P1 | Home Movers panel | "analyzing…" placeholder stuck forever when any of the 7 parallel enrichment endpoints stalled (Upstash-degraded backend, NSE 50% upstream failure). Component condition was `data.moversAttrib?.[tk]` which stayed undefined while the async block waited indefinitely. | P0746 — 15s outer timeout race via `setTimeout(fireAttribution, 15_000)`. `fireAttribution(...)` is idempotent via `enrichSettled` flag — first caller wins. Catches any uncaught error in the async chain and labels rows honestly via Tier-4 fallthrough. | ✅ tsc clean | Low — fallback uses existing honest-label code |
+| BUG-30 | P1 | EO page | Backend 504 at Vercel maxDuration (60s) made the EO page show "Fetching live results from BSE/NSE + 12 Indian results feeds…" for the full 60s before any error banner appeared. With Upstash dead, this was almost every page load. | P0741 — Client-side AbortController fires at 20s. Throws `err.status = 0`, `err.detail = 'client_timeout_20s'` distinguishable from real HTTP 504. Banner message: "Pipeline taking longer than 20s. NSE/BSE upstream may be degraded — retry in a moment." | ✅ tsc clean | Low |
+| BUG-31 | P1 | Movers attribution labels | User feedback: too many rows labeled generic "smallcap momentum (no confirmed trigger — likely liquidity-driven)" with industry text duplicating the home-page industry chip. Also missed post-results profit-taking pattern (GPIL: STRONG Q4 +32.5% PAT, then -2.5% next day labeled as generic "STRONG earnings" instead of "post-results profit-taking"). | P0743/P0747 — (1) Tier-1a EARNINGS detects STRONG/BLOCKBUSTER + price-down = "post-results profit-taking" framing. AVOID/POOR + price-up = "relief rally (reaction inverted)". (2) Merge same-ticker special-situation into earnings label (IRB: PAT +38% + interim dividend → one row). (3) Tier-4 condensed: extreme smallcap (>=7%) = "momentum only · no confirmed trigger (verify before chasing)"; ordinary smallcap = "momentum only · no confirmed trigger"; non-smallcap = "sector rotation · no stock-specific trigger". (4) Dropped industry duplication. | ✅ tsc clean | Low |
+| BUG-32 | P1 | Super Investors panel | /api/v1/super-investors was returning rows where `company` field contained news headlines ("TV Today Network - Moneycontrol.com") instead of company names. Cache wrote these as authoritative. | P0734 — Sanitizer rejects rows where company looks like URL-bearing news title (contains "- Moneycontrol", "- The Hindu", " - ET", etc). Falls back to ticker symbol when sanitization strips everything. | ⚠ Sanitized rows can't persist until P0742 fixes KV writes — code is correct but invisible in production until Upstash quota refreshes | Low after P0742 |
+| BUG-33 | P2 | Movers + Watchlist Pulse | When NSE closed (weekend, after hours), two blank "▲ GAINERS" / "▼ LOSERS" headers rendered with no explanation — read as a bug. | P0735 — Market-hours-aware empty state: "🕒 NSE closed · weekend · live movers resume Mon 09:15 IST" with link to /movers full page. Detection via `_isIndianMarketOpen()` in `lib/market-hours.ts`. | ✅ | Low |
+| BUG-34 | P1 | EO stale banner | Failed graded fetch silently rendered placeholderData (the previously-cached payload), making the page look like "same data every day" even when nothing was actually live. | P0736 — Throw explicit `err.status + err.detail + err.dateAttempted`. Banner shows "🚨 Server couldn't build data for YYYY-MM-DD (HTTP 504: hub fetch timeout). ↻ Retry". placeholderData removed for the failed-fetch case. Force-refresh button hardened with 60s + 5min follow-up. | ✅ tsc clean | Low |
+
+### Day-6 infrastructure additions
+
+The Vercel CPU rescue from Day-4 (BUG-23) wasn't enough — Day-6 added a
+**GitHub Actions ingestion plane** that does the heavy upstream scraping for free:
+
+| Workflow | Cadence | What it writes to KV | Cost |
+|---|---|---|---|
+| `concall-warm-daily.yml` | Daily (was weekly P0725) | `concall-intel:live-feed:*` cache | GH Actions free tier (1200 min/mo) |
+| `scrape-india-news.yml` | 4×/day | `news-india-blob:v1:<ticker>` (24h TTL) | GH Actions free tier |
+| `scrape-corp-filings.yml` | 4×/day | `corp-filings-blob:v1:<YYYY-MM-DD>` | GH Actions free tier |
+| `scrape-commodity-prices.yml` | 4×/day | `commodity-prices-blob:v1` | GH Actions free tier |
+
+All four scrapers FAILED on their first manual run with the Upstash quota
+error — that's what surfaced BUG-28. Once P0742 ships, all four will start
+populating KV without burning Vercel CPU.
+
+### Commit map (Day-6)
+
+- `82ae957` — P0746 + P0747 movers attribution hardening (also includes
+  earlier 0733-0740 GH Actions infra commits pulled in)
+- `bd43029` — P0741 EO 20s client timeout
+
+### Outstanding items going into Day-7
+
+The 4 BLK-* infrastructure items from §10.7/§18.7 remain blocked on user
+decisions (Auth provider / Postgres / paid feeds / ANTHROPIC_API_KEY).
+
+The single biggest unblock is **P0742 Upstash migration** — until that
+ships, the Day-6 batch of code patches is "correct but invisible" because
+the dependent data still can't be written.
