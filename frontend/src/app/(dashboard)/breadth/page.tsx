@@ -69,6 +69,28 @@ export default function BreadthPage() {
     );
   }
 
+  // PATCH 0763 — IMP10. 30-day historical sparkline of the composite score.
+  // Appends today's value on each load (deduped by IST date) and renders an
+  // inline SVG trend. localStorage-only so no backend dependency.
+  if (typeof window !== 'undefined' && data?.composite !== undefined) {
+    try {
+      const STORE = 'mc:breadth-history:v1';
+      const ist = new Date();
+      const istIso = new Date(ist.getTime() + (ist.getTimezoneOffset() + 330) * 60_000).toISOString().slice(0, 10);
+      const raw = localStorage.getItem(STORE);
+      const arr: Array<{ d: string; v: number }> = raw ? JSON.parse(raw) : [];
+      if (arr.length === 0 || arr[arr.length - 1].d !== istIso) {
+        arr.push({ d: istIso, v: data.composite });
+        if (arr.length > 30) arr.shift();
+        localStorage.setItem(STORE, JSON.stringify(arr));
+      } else if (arr[arr.length - 1].v !== data.composite) {
+        // Same day, different value — refresh last entry
+        arr[arr.length - 1] = { d: istIso, v: data.composite };
+        localStorage.setItem(STORE, JSON.stringify(arr));
+      }
+    } catch { /* silent */ }
+  }
+
   const pillars = [
     { name: 'Trend Breadth',    weight: 35, score: data.pillars.trend.score,    sub: `% >50DMA ${data.pillars.trend.pct50}% · % >200DMA ${data.pillars.trend.pct200}% · ${data.pillars.trend.newHigh} new highs / ${data.pillars.trend.newLow} new lows` },
     { name: 'Sector Breadth',   weight: 25, score: data.pillars.sector.score,   sub: `${data.pillars.sector.above}/${data.pillars.sector.total} sectors above 50DMA` },
@@ -104,6 +126,39 @@ export default function BreadthPage() {
           <div style={{ fontSize: 56, fontWeight: 900, color: data.regime_color, lineHeight: 1 }}>
             {data.composite}<span style={{ fontSize: 18, color: '#94A3B8', fontWeight: 600 }}>/100</span>
           </div>
+          {/* PATCH 0763 — IMP10 sparkline. Reads from mc:breadth-history:v1
+              localStorage and draws a 30-day trend. Lets the user see if
+              breadth is improving or deteriorating. */}
+          {typeof window !== 'undefined' && (() => {
+            try {
+              const raw = localStorage.getItem('mc:breadth-history:v1');
+              const arr: Array<{ d: string; v: number }> = raw ? JSON.parse(raw) : [];
+              if (arr.length < 2) return null;
+              const w = 120, h = 28;
+              const min = Math.min(...arr.map(x => x.v));
+              const max = Math.max(...arr.map(x => x.v));
+              const range = Math.max(1, max - min);
+              const pts = arr.map((p, i) => {
+                const x = (i / (arr.length - 1)) * w;
+                const y = h - ((p.v - min) / range) * (h - 4) - 2;
+                return `${x.toFixed(1)},${y.toFixed(1)}`;
+              }).join(' ');
+              const first = arr[0].v;
+              const last = arr[arr.length - 1].v;
+              const delta = last - first;
+              const trendColor = delta > 0 ? '#10B981' : delta < 0 ? '#EF4444' : '#6B7A8D';
+              return (
+                <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <svg width={w} height={h} style={{ overflow: 'visible' }}>
+                    <polyline points={pts} fill="none" stroke={trendColor} strokeWidth={1.6} />
+                  </svg>
+                  <span style={{ fontSize: 10, color: trendColor, fontWeight: 700, fontFamily: 'ui-monospace, monospace' }}>
+                    {delta >= 0 ? '+' : ''}{delta} · {arr.length}d
+                  </span>
+                </div>
+              );
+            } catch { return null; }
+          })()}
         </div>
         <div style={{ flex: 1, minWidth: 240 }}>
           {/* AUDIT_100 #29 — regime label deeplinks to news search so users can

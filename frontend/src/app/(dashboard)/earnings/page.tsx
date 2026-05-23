@@ -1920,7 +1920,10 @@ export default function EarningsPage() {
         {/* PATCH 0557 — backend-degraded banner. */}
         <DegradedBanner />
         <p style={{ color: TEXT_DIM, margin: 0, fontSize: '13px' }}>
-          Custom universe quarterly results · Portfolio + Watchlist only · Source: {source || '...'}
+          {/* PATCH 0762 — Source label fallback. Was '...' forever when the
+              API didn't echo back the source string. Now resolves to a sane
+              default once the fetch settles. */}
+          Custom universe quarterly results · Portfolio + Watchlist + Conviction Beats · Source: {source || (loading ? 'loading…' : 'FMP + NSE')}
           {updatedAt && (
             <span style={{ marginLeft: '8px', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 600,
               backgroundColor: (() => {
@@ -2429,14 +2432,37 @@ export default function EarningsPage() {
           {(() => {
             const total = cards.length;
             if (total === 0) {
+              // PATCH 0762 — universe-aware empty state. Was always saying
+              // 'no watchlist stocks found' even when Conviction Beats was
+              // the active filter (BUG 2). Now reflects the actual selected
+              // universe set.
+              const cbSelected = selectedUniverses.has('conviction');
+              const wlSelected = selectedUniverses.has('watchlist');
+              const ptSelected = selectedUniverses.has('portfolio');
+              const scSelected = selectedUniverses.has('screener');
+              const cbCount = convictionTickersState.size;
+              let title = 'No results yet';
+              let hint = 'Pick a universe filter (Portfolio · Watchlist · Conviction Beats · Screener).';
+              if (cbSelected && cbCount > 0 && !convictionScanned) {
+                title = `Scanning ${cbCount} Conviction Beats names…`;
+                hint = 'CB scan is lazy-loaded — may take 10-20s on first hit.';
+              } else if (cbSelected && cbCount === 0) {
+                title = 'Conviction Beats bench is empty';
+                hint = 'Build the bench from /earnings-opportunities (BLOCKBUSTER + STRONG rows auto-add).';
+              } else if (wlSelected && !cbSelected) {
+                title = 'No watchlist stocks found';
+                hint = 'Add stocks to your watchlist · or check the Conviction Beats checkbox.';
+              } else if (ptSelected && !cbSelected) {
+                title = 'No portfolio holdings found';
+                hint = 'Upload your portfolio from /portfolio first.';
+              } else if (scSelected) {
+                title = 'No screener results';
+                hint = 'Run a fresh screen on /screener · results auto-flow here.';
+              }
               return (
                 <>
-                  <p style={{ margin: '0 0 8px', fontSize: '16px', fontWeight: 500 }}>
-                    {viewMode === 'portfolio' ? 'No portfolio holdings found' : 'No watchlist stocks found'}
-                  </p>
-                  <p style={{ margin: 0, fontSize: '13px' }}>
-                    Add stocks to your {viewMode === 'portfolio' ? 'portfolio' : 'watchlist'} first.
-                  </p>
+                  <p style={{ margin: '0 0 8px', fontSize: '16px', fontWeight: 500 }}>{title}</p>
+                  <p style={{ margin: 0, fontSize: '13px' }}>{hint}</p>
                 </>
               );
             }

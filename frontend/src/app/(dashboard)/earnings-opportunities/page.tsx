@@ -917,9 +917,17 @@ export default function EarningsOpportunitiesPage() {
   const todayIso = todayIstISO();
   const resolvedDateForGrading = useMemo(() => {
     if (filterDate) return filterDate;
-    // Default to today (IST). The auto-walk-back effect (below) will step
-    // back if today is empty.
-    return todayIso;
+    // PATCH 0763 — weekend-aware default. When today is Sat/Sun IST, auto-
+    // walk back to Friday so we don't spin on an empty date. Previously the
+    // page defaulted to today, fetched 0, then the calendar walk-back effect
+    // kicked in — but Graded Tiers UI was already 'Fetching live results…'
+    // on the empty Saturday by the time walk-back fired. Better: walk back
+    // here, synchronously.
+    const dt = new Date(todayIso + 'T00:00:00Z');
+    const dow = dt.getUTCDay();
+    if (dow === 0) dt.setUTCDate(dt.getUTCDate() - 2); // Sun → Fri
+    else if (dow === 6) dt.setUTCDate(dt.getUTCDate() - 1); // Sat → Fri
+    return dt.toISOString().slice(0, 10);
   }, [filterDate, todayIso]);
 
   // PATCH 0187 — localStorage cache (v9). Past dates: 7 days fresh, today: 15 min.
