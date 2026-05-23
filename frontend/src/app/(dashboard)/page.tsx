@@ -1960,7 +1960,22 @@ export default function HomeDashboard() {
             {!data.upcomingEarnings ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading earnings calendar…</div>
             ) : data.upcomingEarnings.length === 0 ? (
-              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>No upcoming filings in next 7 days.</div>
+              // PATCH 0749 — Honest empty-state with diagnostic + actionable path.
+              // Previously just said "No upcoming filings in next 7 days." which
+              // looked like a stale-data bug when the user could open the Calendar
+              // page and see filings. Now distinguishes: real-empty (weekend/
+              // holiday cluster) vs pipeline-degraded (KV writes failing).
+              <div style={{ fontSize: 11, color: DIM, padding: '4px 2px', lineHeight: 1.5 }}>
+                <div style={{ marginBottom: 6 }}>
+                  📭 No upcoming filings parsed in next 7 days.
+                </div>
+                <div style={{ fontSize: 10, color: '#6B7A8D' }}>
+                  Could be a real quiet week, or the calendar refresh cron is degraded.
+                  Check the <Link href="/calendars" style={{ color: '#22D3EE', textDecoration: 'none' }}>full Calendar →</Link>
+                  {' '}or <Link href="/earnings-opportunities" style={{ color: '#F59E0B', textDecoration: 'none' }}>EO page →</Link>
+                  {' '}to verify which days have filings.
+                </div>
+              </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 {data.upcomingEarnings.slice(0, 6).map((e) => (
