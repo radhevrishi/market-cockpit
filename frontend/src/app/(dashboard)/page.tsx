@@ -40,7 +40,7 @@ import { getConvictionTickers, getConvictionList } from '@/lib/conviction-beats'
 import { canonicalTicker } from '@/lib/ticker-normalize'; // PATCH 0721
 import { readDecisions } from '@/lib/decisions';
 // PATCH 0715 — centralized IST helpers.
-import { istToday as _istToday, istLastNWeekdays as _istLastNWeekdays } from '@/lib/market-hours';
+import { istToday as _istToday, istLastNWeekdays as _istLastNWeekdays, isIndianMarketOpen as _isIndianMarketOpen } from '@/lib/market-hours';
 // PATCH 0624 — pull rich static roster directly so the Home Super Investors
 // panel can show real holdings + disclosure dates instead of the thin
 // /super-investor-flow output.
@@ -1751,8 +1751,17 @@ export default function HomeDashboard() {
             <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
               India · smallcap + midcap · top 10 each side · {data.moversUpdatedAt ? new Date(data.moversUpdatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : 'live'}
             </div>
+            {/* PATCH 0735 — honest empty-state when market is closed. Was just
+                showing two empty headers ("▲ GAINERS" + "▼ LOSERS") with no
+                explanation, which read as a bug. Now market-hours aware. */}
             {!data.gainers && !data.losers ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
+            ) : (((data.gainers?.length || 0) === 0 && (data.losers?.length || 0) === 0) && !_isIndianMarketOpen()) ? (
+              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic', padding: '8px 6px', lineHeight: 1.5 }}>
+                🕒 NSE closed · {new Date().getUTCDay() === 0 || new Date().getUTCDay() === 6 ? 'weekend' : 'after hours'} · live movers resume <strong style={{ color: TEXT }}>Mon 09:15 IST</strong>.
+                <br />
+                <span style={{ fontSize: 10 }}>Last close data still visible on the <Link href="/movers" style={{ color: '#22D3EE', textDecoration: 'none' }}>full Movers page</Link>.</span>
+              </div>
             ) : (() => {
               // PATCH 0708 — institutional event-attribution rendering.
               // Each row now shows: ticker · % · catalyst-glyph · label ·
@@ -1875,7 +1884,19 @@ export default function HomeDashboard() {
             {!data.watchlistPulse ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
             ) : data.watchlistPulse.length === 0 ? (
-              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>No watchlist names with significant moves today.</div>
+              // PATCH 0735 — disambiguate two scenarios: market is open and
+              // genuinely no watchlist name is moving > 3%, vs market is
+              // closed (intraday Δ = 0 by construction so nothing can pass
+              // the threshold). User screenshot showed the second case,
+              // which read like a defect.
+              !_isIndianMarketOpen() ? (
+                <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic', lineHeight: 1.5 }}>
+                  🕒 NSE closed — intraday pulse needs live ticks.
+                  <br /><span style={{ fontSize: 10 }}>Resumes <strong style={{ color: TEXT }}>Mon 09:15 IST</strong>.</span>
+                </div>
+              ) : (
+                <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>No watchlist names ≥3% today.</div>
+              )
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 {data.watchlistPulse.slice(0, 5).map((w) => (
