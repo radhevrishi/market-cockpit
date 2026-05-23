@@ -42,16 +42,22 @@ export async function fetchChart(symbol: string, range = '1d', interval = '1d') 
     if (!result) return null;
 
     const meta = result.meta;
+    // PATCH 0771: previousClose fallback chain now also drives the
+    // changePercent calc (was: only meta.previousClose was checked, so
+    // a quote with only chartPreviousClose returned changePercent=0
+    // even when price + chartPreviousClose were both valid).
+    const _price = meta.regularMarketPrice || 0;
+    const _prevClose = meta.previousClose || meta.chartPreviousClose || 0;
+    const _change = (_price > 0 && _prevClose > 0) ? (_price - _prevClose) : 0;
+    const _changePercent = (_price > 0 && _prevClose > 0) ? ((_price - _prevClose) / _prevClose) * 100 : 0;
     const data = {
       symbol: meta.symbol,
       shortName: meta.shortName || meta.symbol,
       currency: meta.currency,
-      regularMarketPrice: meta.regularMarketPrice,
-      previousClose: meta.previousClose || meta.chartPreviousClose,
-      change: meta.regularMarketPrice - (meta.previousClose || meta.chartPreviousClose || meta.regularMarketPrice),
-      changePercent: meta.previousClose
-        ? ((meta.regularMarketPrice - meta.previousClose) / meta.previousClose) * 100
-        : 0,
+      regularMarketPrice: _price,
+      previousClose: _prevClose,
+      change: _change,
+      changePercent: _changePercent,
       volume: meta.regularMarketVolume || 0,
       marketCap: 0, // not available in chart API
       timestamps: result.timestamp || [],

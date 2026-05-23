@@ -1996,7 +1996,22 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
     };
     const pctOf = (q: any): number | undefined => {
       if (!q) return undefined;
+      // PATCH 0771: skip zeros from reported field (NSE/Yahoo return
+      // 0 on weekends + holidays even when prices are valid). Take
+      // first finite non-zero candidate, then fall through to a
+      // price-vs-prevClose compute as last resort.
       const candidates = [q.changePercent, q.regularMarketChangePercent, q.pChange, q.change_pct];
+      for (const c of candidates) {
+        const n = Number(c);
+        if (Number.isFinite(n) && n !== 0) return n;
+      }
+      const price = Number(q.price ?? q.regularMarketPrice ?? q.lastPrice ?? q.cmp ?? q.ltp);
+      const prev = Number(q.previousClose ?? q.regularMarketPreviousClose ?? q.prevClose);
+      if (Number.isFinite(price) && Number.isFinite(prev) && price > 0 && prev > 0 && price !== prev) {
+        return ((price - prev) / prev) * 100;
+      }
+      // No non-zero candidates and no price/prevClose info — preserve old
+      // semantics by returning the first finite candidate (often 0).
       for (const c of candidates) {
         const n = Number(c);
         if (Number.isFinite(n)) return n;
