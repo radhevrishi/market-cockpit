@@ -891,6 +891,30 @@ export function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGr
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // PATCH 0754 — STALE-FUNDAMENTALS-VS-FRESH-PRICE DETECTOR.
+  // When the company's earnings date has passed (the CSV was downloaded before
+  // the next earnings release) AND the price has moved materially (>15% in
+  // either direction over the last year), the row's fundamentals are likely
+  // out-of-sync with the current price. Surface as a risk + soft composite
+  // cap so a stale-data row doesn't grade A+ on outdated metrics.
+  //
+  // The user explicitly called this out: "Stale-fundamentals-vs-fresh-price
+  // detector" (CLAUDE.md §10.10 open work). Doesn't fail safe — just nudges
+  // the user to re-upload current CSV.
+  // ═══════════════════════════════════════════════════════════════════════════
+  if (earningsProximityDays !== undefined && earningsProximityDays < 0) {
+    const movedMaterially = Math.abs(row.perf1y ?? 0) >= 15;
+    const daysStale = Math.abs(earningsProximityDays);
+    if (movedMaterially && daysStale >= 30) {
+      risks.push(`🕒 STALE DATA: nextEarnings date ${row.nextEarnings} was ${daysStale}d ago AND 1Y perf ${row.perf1y!.toFixed(0)}% — CSV likely reflects pre-results figures, not current state. Re-upload from TradingView before sizing.`);
+      score = Math.min(score, 75);
+    } else if (movedMaterially) {
+      // Not yet 30d stale, just a soft warning
+      risks.push(`⏱ Verify freshness: nextEarnings date ${row.nextEarnings} has passed and price moved ${row.perf1y!.toFixed(0)}% over 1Y — confirm CSV is post-results before sizing.`);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // PATCH 0349e — POSITION-SIZE GUIDANCE (display only, no score impact).
   // Microcap volatility is structurally 2-3× large-cap. A "score 90" microcap
   // and "score 90" megacap are NOT equivalent risk-adjusted bets. Render a
