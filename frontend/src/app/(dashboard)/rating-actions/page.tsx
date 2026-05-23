@@ -70,7 +70,7 @@ interface FetchedPayload {
 
 async function fetchRatingPayload(): Promise<FetchedPayload> {
   const trace: FetchTrace = { newsFetched: 0, filingsFetched: 0, totalSources: 0 };
-  const safe = async <T,>(url: string, label: 'news' | 'filings'): Promise<T | null> => {
+  const safe = async <T,>(url: string, label: 'news' | 'filings' | 'v2'): Promise<T | null> => {
     try {
       const ctl = new AbortController();
       // PATCH 0695 — 25s → 50s so cold-start live-feed fetch completes
@@ -79,19 +79,25 @@ async function fetchRatingPayload(): Promise<FetchedPayload> {
       clearTimeout(t);
       if (!r.ok) {
         if (label === 'news') trace.newsError = `HTTP ${r.status}`;
-        else trace.filingsError = `HTTP ${r.status}`;
+        else if (label === 'filings') trace.filingsError = `HTTP ${r.status}`;
         return null;
       }
       return await r.json() as T;
     } catch (e: any) {
       const msg = e?.name === 'AbortError' ? 'timeout' : (e?.message || 'fetch failed');
       if (label === 'news') trace.newsError = msg;
-      else trace.filingsError = msg;
+      else if (label === 'filings') trace.filingsError = msg;
       return null;
     }
   };
 
-  const [newsJson, filingsJson] = await Promise.all([
+  // PATCH 0767 — query v2 engine first. v2 returns structured rows from the
+  // NSE Credit Rating XBRL endpoints directly + news. When v2 has rows,
+  // synthesize them into the legacy NewsArticleLite shape so the existing
+  // detector + dedup downstream can run unchanged. v1 path still fires in
+  // parallel as a safety net.
+  const [v2Json, newsJson, filingsJson] = await Promise.all([
+    safe<any>('/api/v1/rating-actions/v2', 'v2'),
     safe<any>(`/api/v1/news?limit=500&search=${encodeURIComponent(RATING_SEARCH_TOKENS)}`, 'news'),
     // PATCH 0704 — cacheOnly=1 so cold-start never blocks. If filings
     // cache is empty (CACHE_WARMING) page renders news-only with banner.
@@ -101,10 +107,34 @@ async function fetchRatingPayload(): Promise<FetchedPayload> {
 
   const articles: NewsArticleLite[] = [];
 
+  // PATCH 0767 — Synthesize v2 engine rows as NewsArticleLite so they flow
+  // through the existing detector + dedup pipeline. v2 has already done the
+  // hard work (NSE XBRL category filter + normalization + transition
+  // extraction); we just need to surface them.
+  const v2Rows: any[] = (v2Json?.rows || []).concat(v2Json?.verifyRows || []);
+  for (const r of v2Rows) {
+    const transition = r.oldRating && r.newRating ? ` (${r.oldRating} → ${r.newRating})` : '';
+    articles.push({
+      id: `v2-${r.id}`,
+      title: `${(r.agency || '').replace('_', ' ')} ${r.actionType}: ${r.company}${transition}`,
+      headline: r.headline || `${r.actionLabel}${transition}`,
+      summary: r.remarks || '',
+      source: r.sourceType === 'nse_credit' ? 'NSE Credit Rating (v2)'
+            : r.sourceType === 'nse_reg30'  ? 'NSE Reg 30 SDD (v2)'
+            : r.sourceType === 'news'        ? 'News (v2)' : 'PDF (v2)',
+      source_name: r.sourceType === 'nse_credit' ? 'NSE Credit Rating (v2)'
+                 : r.sourceType === 'nse_reg30' ? 'NSE Reg 30 SDD (v2)' : 'News (v2)',
+      url: r.sourceUrl,
+      published_at: r.reportedAt || r.effectiveDate,
+      region: 'IN',
+      ticker_symbols: r.symbol ? [r.symbol] : undefined,
+    });
+  }
+
   // Pull news shape (variable: array OR {articles}/{data})
   const newsArr: any[] = Array.isArray(newsJson) ? newsJson
                         : (newsJson?.articles || newsJson?.data || []);
-  trace.newsFetched = newsArr.length;
+  trace.newsFetched = newsArr.length + v2Rows.length;  // count v2 as enriched news
   for (const a of newsArr) {
     articles.push({
       id: a.id,

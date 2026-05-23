@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { fetchNifty50, fetchNiftyNext50, fetchNifty500, fetchNifty200, fetchNiftyMidcap50, fetchNiftyMidcap100, fetchNiftyMidcap250, fetchNiftySmallcap50, fetchNiftySmallcap100, fetchNiftySmallcap250, fetchNiftyMicrocap250, fetchNiftyTotalMarket, fetchGainers, fetchLosers, buildDynamicSectorMap, normalizeSector, NIFTY50_SECTORS } from '@/lib/nse';
 import { fetchQuotesWithFallback, US_TOP } from '@/lib/yahoo';
+// PATCH 0768 — Trading calendar + KV snapshot for "NEVER show empty movers".
+import { getEffectiveTradingDate, isMarketOpenNow, effectiveDateLabel } from '@/lib/trading-calendar';
+import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 
 export const dynamic = 'force-dynamic';
 
@@ -533,6 +536,67 @@ async function fetchIndianDataWithCache() {
 
   const validStocks = stocks.filter(s => s.price > 0);
 
+  // PATCH 0768 — Trading Calendar + KV Snapshot Fallback.
+  // User mandate: "Top Movers module must ALWAYS show the latest valid
+  // trading-session data. NEVER show 'No movers data available'."
+  //
+  // Pipeline:
+  //   1. If we have non-empty gainers + losers AND market is open OR within
+  //      30min of close → WRITE snapshot to KV keyed by effective trading date.
+  //   2. If we have empty gainers/losers (weekend cold + Yahoo also empty)
+  //      → READ snapshot for the effective trading date from KV.
+  const effectiveDate = getEffectiveTradingDate('NSE');
+  const marketOpen = isMarketOpenNow('NSE');
+  const haveLiveData = gainers.length > 0 || losers.length > 0;
+  const SNAPSHOT_KEY = `movers-snapshot:v1:NSE:${effectiveDate}`;
+
+  if (haveLiveData && isRedisAvailable()) {
+    // Write-through: keep snapshot fresh whenever we successfully assembled live data.
+    // 7-day TTL is plenty — by then a fresh trading day's data will be cached anyway.
+    try {
+      const trimGainers = gainers.slice(0, 30);
+      const trimLosers = losers.slice(0, 30);
+      await kvSet(SNAPSHOT_KEY, {
+        exchange: 'NSE',
+        trading_date: effectiveDate,
+        gainers: trimGainers,
+        losers: trimLosers,
+        stocksSample: validStocks.slice(0, 200), // keep top 200 by index for sector views
+        summary: {
+          total: validStocks.length,
+          gainersCount: trimGainers.length,
+          losersCount: trimLosers.length,
+          avgChange: validStocks.length > 0 ? validStocks.reduce((s, st) => s + st.changePercent, 0) / validStocks.length : 0,
+          sectors: [...new Set(validStocks.map(s => s.sector))].length,
+        },
+        generated_at: new Date().toISOString(),
+      }, 7 * 86400);
+    } catch { /* non-fatal */ }
+  }
+
+  if (!haveLiveData) {
+    // FALLBACK: try the snapshot for the effective trading date
+    try {
+      const snap: any = await kvGet(SNAPSHOT_KEY);
+      if (snap?.gainers && snap.gainers.length > 0) {
+        const dateLabel = effectiveDateLabel(effectiveDate, 'NSE');
+        return {
+          stocks: snap.stocksSample || validStocks,
+          gainers: snap.gainers,
+          losers: snap.losers || [],
+          summary: snap.summary || {
+            total: 0, gainersCount: 0, losersCount: 0, avgChange: 0, sectors: 0,
+          },
+          source: 'KV Snapshot · ' + dateLabel,
+          source_fallback: true,
+          effectiveTradingDate: effectiveDate,
+          effectiveTradingLabel: dateLabel,
+          updatedAt: snap.generated_at || new Date().toISOString(),
+        };
+      }
+    } catch { /* fall through to normal empty */ }
+  }
+
   return {
     stocks: validStocks,
     gainers,
@@ -545,6 +609,8 @@ async function fetchIndianDataWithCache() {
       sectors: [...new Set(validStocks.map(s => s.sector))].length,
     },
     source: nifty500Data?.data ? 'NSE India' : 'Yahoo Finance',
+    marketOpen,
+    effectiveTradingDate: effectiveDate,
     updatedAt: new Date().toISOString(),
   };
 }

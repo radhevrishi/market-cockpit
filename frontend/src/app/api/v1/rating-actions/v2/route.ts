@@ -36,11 +36,24 @@ async function fetchNseCreditAnnouncements(): Promise<NseCreditRawRow[]> {
   const from = fmt(sevenDaysAgo);
   const to = fmt(today);
 
-  // Categories observed in NEAPS for credit rating disclosures
+  // PATCH 0767 — Expanded category variants. NSE's NEAPS XBRL has multiple
+  // canonical labels across instrument types (debt vs equity vs SDD).
+  // The engine's isOrderTemplate check uses .includes() so partial matches
+  // also catch any variant we missed.
   const categories = [
     'Credit Rating',
     'Credit%20Rating',
+    'Receipt of Credit Rating',
     'Receipt%20of%20Credit%20Rating',
+    'Credit Rating - Reg 30',
+    'Credit%20Rating%20-%20Reg%2030',
+    'Revision in Credit Rating',
+    'Revision%20in%20Credit%20Rating',
+    'Intimation of Credit Rating',
+    'Intimation%20of%20Credit%20Rating',
+    // SDD bucket also surfaces credit-rating revisions
+    'Structured Digital Database',
+    'SDD',
   ];
 
   const all: NseCreditRawRow[] = [];

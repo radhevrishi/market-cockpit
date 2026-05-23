@@ -58,7 +58,7 @@ const ORDER_SEARCH_TOKENS = [
 
 async function fetchOrderPayload(): Promise<FetchedPayload> {
   const trace: FetchTrace = { newsFetched: 0, filingsFetched: 0 };
-  const safe = async <T,>(url: string, label: 'news' | 'filings'): Promise<T | null> => {
+  const safe = async <T,>(url: string, label: 'news' | 'filings' | 'v2'): Promise<T | null> => {
     try {
       const ctl = new AbortController();
       // PATCH 0695 — was 25s; bumped to 50s so cold-start fetches
@@ -68,30 +68,54 @@ async function fetchOrderPayload(): Promise<FetchedPayload> {
       clearTimeout(t);
       if (!r.ok) {
         if (label === 'news') trace.newsError = `HTTP ${r.status}`;
-        else trace.filingsError = `HTTP ${r.status}`;
+        else if (label === 'filings') trace.filingsError = `HTTP ${r.status}`;
         return null;
       }
       return await r.json() as T;
     } catch (e: any) {
       const msg = e?.name === 'AbortError' ? 'timeout' : (e?.message || 'fetch failed');
       if (label === 'news') trace.newsError = msg;
-      else trace.filingsError = msg;
+      else if (label === 'filings') trace.filingsError = msg;
       return null;
     }
   };
 
   // PATCH 0704 — cacheOnly=1 so cold-start never blocks the user.
-  // If cache is warming we render news-only and surface that explicitly.
-  // PATCH 0695 — was days=14; 3d window matches eo-blockbuster-alert's
-  // cache so we hit warm KV reliably.
-  const [newsJson, filingsJson] = await Promise.all([
+  // PATCH 0767 — also fetch v2 engine output (NSE/BSE structured Order
+  // category) in parallel. v2 rows get synthesized as NewsArticleLite so
+  // the existing detector runs on them — but they already passed the
+  // engine's category-aware classifier so confidence is higher.
+  const [v2Json, newsJson, filingsJson] = await Promise.all([
+    safe<any>('/api/v1/order-book/v2', 'v2'),
     safe<any>(`/api/v1/news?limit=500&search=${encodeURIComponent(ORDER_SEARCH_TOKENS)}`, 'news'),
     safe<any>(`/api/v1/concall-intel/live-feed?days=3&bullishOnly=false&cacheOnly=1`, 'filings'),
   ]);
 
   const articles: NewsArticleLite[] = [];
+  // PATCH 0767 — Synthesize v2 OrderRow → NewsArticleLite so downstream
+  // detector + UI render pipeline runs unchanged.
+  const v2Rows: any[] = v2Json?.rows || [];
+  for (const r of v2Rows) {
+    const tierTag = r.customerTier === 'tier1_psu' ? ' [Tier-1]' : '';
+    const valueTag = r.orderValueNumeric ? ` · ₹${r.orderValueNumeric.toFixed(0)} Cr` : '';
+    articles.push({
+      id: `v2-${r.id}`,
+      title: `${r.company}${tierTag}: ${r.description}${valueTag}`.slice(0, 220),
+      headline: r.description || '',
+      summary: r.remarks || '',
+      source: r.sourceType === 'nse' ? 'NSE Order/Contract (v2)'
+            : r.sourceType === 'bse' ? 'BSE Receipt of Orders (v2)'
+            : 'News (v2)',
+      source_name: r.sourceType === 'nse' ? 'NSE Order (v2)'
+                 : r.sourceType === 'bse' ? 'BSE Order (v2)' : 'News (v2)',
+      url: r.sourceUrl,
+      published_at: r.announcementTime || r.effectiveDate,
+      region: r.region || 'IN',
+      ticker_symbols: r.symbol ? [r.symbol] : undefined,
+    });
+  }
   const newsArr: any[] = Array.isArray(newsJson) ? newsJson : (newsJson?.articles || newsJson?.data || []);
-  trace.newsFetched = newsArr.length;
+  trace.newsFetched = newsArr.length + v2Rows.length;
   for (const a of newsArr) {
     articles.push({
       id: a.id, title: a.title || a.headline, headline: a.headline, summary: a.summary,
