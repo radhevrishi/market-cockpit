@@ -554,30 +554,52 @@ export default function HomeDashboard() {
       };
       fetchStratVis(0);
 
-      // PATCH 0621 — Top 5 movers + losers (India).
+      // PATCH 0775 — Home Top Movers is OWN-UNIVERSE only:
+      //   gainers/losers limited to (watchlist ∪ portfolio ∪ conviction beats).
+      // User feedback: "it used to work only for my watchlist, portfolio,
+      // conviction beats in my watchlist not for all companies. now fix it
+      // and make it that way." The /movers full page still shows the broad
+      // market — this is just the home dashboard panel filter.
       safeDiag<any>(`/api/market/quotes?market=india&_=${Date.now()}`, 18_000).then(({ data: j }) => {
         if (cancelled) return;
-        // PATCH 0625 — smallcap/midcap-only filter on Home. The 'indexGroup'
-        // field on /api/market/quotes returns 'Small' / 'Mid' / 'Large'.
-        // Large-cap noise (RIL / TCS movements) less actionable than small/mid
-        // for multibagger hunting; the /movers page still shows everything.
-        // PATCH 0756 — fall back to FULL list (no smallcap filter) when the
-        // smallcap-only set comes back empty (typical on weekends when
-        // indexGroup field isn't populated for last-close data). User feedback:
-        // 'show last working day data, else i cant ensure our data correct.'
-        const smallMidOnly = (arr: any[]) => arr.filter((s: any) => {
-          const g = (s?.indexGroup || '').toLowerCase();
-          return g === 'small' || g === 'mid';
-        });
+        // Build the user's universe (UPPER + suffix-stripped tickers).
+        const norm = (s: string) => (s || '').toString().toUpperCase().replace(/\.(NS|BO)$/i, '').trim();
+        const universe = new Set<string>();
+        try {
+          const wl: string[] = JSON.parse(localStorage.getItem('mc_watchlist_tickers') || '[]') || [];
+          wl.forEach((t) => universe.add(norm(t)));
+        } catch {}
+        try {
+          const cb = getConvictionTickers();
+          cb.forEach((t) => universe.add(norm(t)));
+        } catch {}
+        try {
+          const ph: any[] = JSON.parse(localStorage.getItem('portfolioHoldings') || '[]') || [];
+          ph.forEach((h) => { if (h?.ticker) universe.add(norm(h.ticker)); });
+        } catch {}
+
         const rawG = j?.gainers || [];
         const rawL = j?.losers || [];
-        const filteredG = smallMidOnly(rawG);
-        const filteredL = smallMidOnly(rawL);
-        // If smallcap filter strips everything but the API has data, fall back.
-        // This happens whenever the upstream returns last-close data without
-        // populated indexGroup (weekends, holidays, post-trading hours).
-        const gainers = (filteredG.length > 0 ? filteredG : rawG).slice(0, 10);
-        const losers = (filteredL.length > 0 ? filteredL : rawL).slice(0, 10);
+        const inUniverse = (s: any) => universe.has(norm(s?.ticker || s?.symbol || ''));
+
+        // When the user has NO universe configured (cold-start before they
+        // add any watchlist/portfolio/CB entries), fall through to the
+        // existing small+mid filter so the panel isn't empty for new users.
+        let gainers: any[];
+        let losers: any[];
+        if (universe.size > 0) {
+          gainers = rawG.filter(inUniverse).slice(0, 10);
+          losers = rawL.filter(inUniverse).slice(0, 10);
+        } else {
+          const smallMidOnly = (arr: any[]) => arr.filter((s: any) => {
+            const g = (s?.indexGroup || '').toLowerCase();
+            return g === 'small' || g === 'mid';
+          });
+          const filteredG = smallMidOnly(rawG);
+          const filteredL = smallMidOnly(rawL);
+          gainers = (filteredG.length > 0 ? filteredG : rawG).slice(0, 10);
+          losers = (filteredL.length > 0 ? filteredL : rawL).slice(0, 10);
+        }
         setData((d) => ({ ...d, gainers, losers, moversUpdatedAt: j?.updatedAt } as any));
 
         // PATCH 0708 — Institutional event-attribution engine. Replaces the
@@ -1326,9 +1348,8 @@ export default function HomeDashboard() {
             <Link href="/movers"                 style={navChip('#10B981')}>📈 Movers</Link>
             <Link href="/multibagger"            style={navChip('#10B981')}>🚀 Multibagger</Link>
             <Link href="/portfolio"              style={navChip('#22D3EE')}>💼 My Book</Link>
-            <Link href="/order-book"             style={navChip('#EF4444')}>📑 Order Book</Link>
+            {/* PATCH 0776 — 📑 Order Book + 🏛 Rating Actions chips removed (modules deleted). */}
             <Link href="/playbook"               style={navChip('#F59E0B')}>📚 Playbook</Link>
-            <Link href="/rating-actions"         style={navChip('#EF4444')}>🏛 Rating Actions</Link>
             <Link href="/orders"                 style={navChip('#22D3EE')}>📡 Signals</Link>
             <Link href="/special-situations"     style={navChip('#EF4444')}>🎯 Special Sit</Link>
             <Link href="/strategic-visibility"   style={navChip('#A78BFA')}>⭐ Strategic Vis</Link>
@@ -1820,12 +1841,13 @@ export default function HomeDashboard() {
               </span>
               <Link href="/movers" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
             </div>
-            {/* PATCH 0756 — weekend honest sub-header. Live during market hours,
-                "Last close · Friday" otherwise so the user knows what they're seeing. */}
+            {/* PATCH 0775 — sub-header reflects own-universe filter
+                (Watchlist + Portfolio + Conviction Beats). Falls back to
+                small+midcap when user has no universe configured. */}
             <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
               {(() => {
                 const open = _isIndianMarketOpen();
-                if (open) return `India · smallcap + midcap · top 10 each side · live · ${data.moversUpdatedAt ? new Date(data.moversUpdatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : ''}`;
+                if (open) return `Your universe · Watchlist + Portfolio + CB · top 10 each side · live · ${data.moversUpdatedAt ? new Date(data.moversUpdatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : ''}`;
                 const ist = new Date(new Date().getTime() + (new Date().getTimezoneOffset() + 330) * 60_000);
                 const dow = ist.getDay();
                 const lastClose = (() => {
@@ -2260,7 +2282,7 @@ export default function HomeDashboard() {
               {[
                 { href: '/concall-intel', label: '🎙 Concall Intel' },
                 { href: '/special-situations', label: '🎯 Special Sit' },
-                { href: '/rating-actions', label: '🏛 Rating Actions' },
+                // PATCH 0776 — Rating Actions chip removed (module deleted).
                 { href: '/multibagger', label: '🚀 Multibagger' },
                 { href: '/valuations', label: '💎 Valuations' },
                 { href: '/screener', label: '🔍 Screener' },
