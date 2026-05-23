@@ -374,10 +374,18 @@ export default function HomeDashboard() {
   // (e.g. fetch hangs without aborting), the section spinners would sit
   // forever. After 25s force them all off so the UI surfaces empty/
   // error states instead of '📰 Loading…' indefinitely (BUG-19).
+  // PATCH 0761 — Tightened to 15s + force-initialize ratingActions/
+  // orderBook to [] so those cards fall through to their (now-helpful)
+  // weekend empty states instead of staying in 'Loading…' forever.
   useEffect(() => {
     const t = setTimeout(() => {
       setNetLoading(prev => ({ inPlay: false, bottleneck: false, earnings: false }));
-    }, 25_000);
+      setData(prev => ({
+        ...prev,
+        ratingActionsToday: prev.ratingActionsToday ?? [],
+        orderBookToday: prev.orderBookToday ?? [],
+      } as any));
+    }, 15_000);
     return () => clearTimeout(t);
   }, []);
   // PATCH 0605 — collapse defaults per institutional review

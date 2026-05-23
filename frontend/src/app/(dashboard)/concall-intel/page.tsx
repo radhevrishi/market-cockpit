@@ -1220,11 +1220,15 @@ function WarrantMomentumFeed() {
     // before the route could write its cache, surfacing as the user's
     // "0 filings · 0 warrant-related" empty-state. Vercel hobby caps at
     // 60s — 52s leaves headroom.
+    // PATCH 0761 — lowered 52s → 25s. The cache should be warm enough now
+    // that 25s is plenty; if not, the empty-shape fallback surfaces and the
+    // user can retry instead of staring at 'Loading… (cache warming, ~30s)'
+    // which felt indistinguishable from a stuck state (BUG 6).
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 52000);
-    // PATCH 0693 — slow-fetch hint fires at 15s for retry CTA visibility
+    const timeoutId = setTimeout(() => controller.abort(), 25000);
+    // Slow-fetch hint fires at 8s for retry CTA visibility (was 15s).
     setSlowFetch(false);
-    const slowTimer = setTimeout(() => setSlowFetch(true), 15000);
+    const slowTimer = setTimeout(() => setSlowFetch(true), 8000);
     try {
       const params = new URLSearchParams({
         days: String(days),
@@ -2621,28 +2625,50 @@ function ConcallAnalyticsTab() {
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
+    // PATCH 0761 — Outer hard timeout (20s) so Analytics tab never sticks
+    // on 'Loading…' forever. User feedback: 'shows Loading... with no
+    // resolution even after 10+ seconds.'
+    let settled = false;
+    const outerTimer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      setLastRefresh(new Date());
+      setLoading(false);
+    }, 20_000);
     const safeFetch = async <T,>(url: string): Promise<T | null> => {
       try {
         const ctl = new AbortController();
-        const t = setTimeout(() => ctl.abort(), 30_000);
+        // Per-endpoint cap 12s so 4 parallel fetches fit comfortably in outer 20s
+        const t = setTimeout(() => ctl.abort(), 12_000);
         const res = await fetch(url, { cache: 'no-store', signal: ctl.signal });
         clearTimeout(t);
         if (!res.ok) return null;
         return await res.json() as T;
       } catch { return null; }
     };
-    const [w, b, k, m] = await Promise.all([
-      safeFetch<WarrantFeedPayload>('/api/v1/concall-intel/warrant-feed?days=30&threshold=0'),
-      safeFetch<LiveFeedPayload>('/api/v1/concall-intel/live?days=7'),
-      safeFetch<KwWatchPayload>('/api/v1/concall-intel/keyword-watch?days=14'),
-      safeFetch<MoversPayload>('/api/v1/concall-intel/movers'),
-    ]);
-    setWarrantData(w);
-    setLiveBullishData(b);
-    setKwData(k);
-    setMoversData(m);
-    setLastRefresh(new Date());
-    setLoading(false);
+    try {
+      const [w, b, k, m] = await Promise.all([
+        safeFetch<WarrantFeedPayload>('/api/v1/concall-intel/warrant-feed?days=30&threshold=0'),
+        safeFetch<LiveFeedPayload>('/api/v1/concall-intel/live?days=7'),
+        safeFetch<KwWatchPayload>('/api/v1/concall-intel/keyword-watch?days=14'),
+        safeFetch<MoversPayload>('/api/v1/concall-intel/movers'),
+      ]);
+      if (settled) return;
+      settled = true;
+      clearTimeout(outerTimer);
+      setWarrantData(w);
+      setLiveBullishData(b);
+      setKwData(k);
+      setMoversData(m);
+      setLastRefresh(new Date());
+      setLoading(false);
+    } catch {
+      if (settled) return;
+      settled = true;
+      clearTimeout(outerTimer);
+      setLastRefresh(new Date());
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
