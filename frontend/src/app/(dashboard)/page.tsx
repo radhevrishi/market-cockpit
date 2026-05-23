@@ -553,12 +553,23 @@ export default function HomeDashboard() {
         // field on /api/market/quotes returns 'Small' / 'Mid' / 'Large'.
         // Large-cap noise (RIL / TCS movements) less actionable than small/mid
         // for multibagger hunting; the /movers page still shows everything.
+        // PATCH 0756 — fall back to FULL list (no smallcap filter) when the
+        // smallcap-only set comes back empty (typical on weekends when
+        // indexGroup field isn't populated for last-close data). User feedback:
+        // 'show last working day data, else i cant ensure our data correct.'
         const smallMidOnly = (arr: any[]) => arr.filter((s: any) => {
           const g = (s?.indexGroup || '').toLowerCase();
           return g === 'small' || g === 'mid';
         });
-        const gainers = smallMidOnly(j?.gainers || []).slice(0, 10);
-        const losers = smallMidOnly(j?.losers || []).slice(0, 10);
+        const rawG = j?.gainers || [];
+        const rawL = j?.losers || [];
+        const filteredG = smallMidOnly(rawG);
+        const filteredL = smallMidOnly(rawL);
+        // If smallcap filter strips everything but the API has data, fall back.
+        // This happens whenever the upstream returns last-close data without
+        // populated indexGroup (weekends, holidays, post-trading hours).
+        const gainers = (filteredG.length > 0 ? filteredG : rawG).slice(0, 10);
+        const losers = (filteredL.length > 0 ? filteredL : rawL).slice(0, 10);
         setData((d) => ({ ...d, gainers, losers, moversUpdatedAt: j?.updatedAt } as any));
 
         // PATCH 0708 — Institutional event-attribution engine. Replaces the
@@ -881,18 +892,24 @@ export default function HomeDashboard() {
         }
 
         // Watchlist Pulse — show tickers with significant move (|>=3%|)
+        // PATCH 0756 — when market is closed and the >=3% set is empty, fall
+        // back to last-close data with a relaxed >=1% threshold so the card
+        // still surfaces SOMETHING useful instead of "🕒 NSE closed" emptiness.
         let watchlist: string[] = [];
         try { watchlist = JSON.parse(localStorage.getItem('mc_watchlist_tickers') || '[]') || []; } catch {}
         if (watchlist.length > 0) {
-          const pulses = watchlist
+          const allMoves = watchlist
             .map((sym: string) => {
               const key = sym.toUpperCase().replace(/\.(NS|BO)$/i, '');
               const q = byTicker.get(key);
               if (!q) return null;
               const pct = q.changePercent ?? 0;
-              return { ticker: key, company: q.company, changePercent: pct, price: q.price, reason: Math.abs(pct) >= 3 ? `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}% intraday` : undefined };
+              return { ticker: key, company: q.company, changePercent: pct, price: q.price, reason: `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}% last close` };
             })
-            .filter((x: any) => x && Math.abs(x.changePercent) >= 3)
+            .filter((x: any) => x !== null) as any[];
+          const strong = allMoves.filter(x => Math.abs(x.changePercent) >= 3);
+          const fallback = allMoves.filter(x => Math.abs(x.changePercent) >= 1);
+          const pulses = (strong.length > 0 ? strong : fallback)
             .sort((a: any, b: any) => Math.abs(b.changePercent) - Math.abs(a.changePercent))
             .slice(0, 6);
           setData((d) => ({ ...d, watchlistPulse: pulses as any } as any));
@@ -1825,19 +1842,37 @@ export default function HomeDashboard() {
               </span>
               <Link href="/movers" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
             </div>
+            {/* PATCH 0756 — weekend honest sub-header. Live during market hours,
+                "Last close · Friday" otherwise so the user knows what they're seeing. */}
             <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
-              India · smallcap + midcap · top 10 each side · {data.moversUpdatedAt ? new Date(data.moversUpdatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : 'live'}
+              {(() => {
+                const open = _isIndianMarketOpen();
+                if (open) return `India · smallcap + midcap · top 10 each side · live · ${data.moversUpdatedAt ? new Date(data.moversUpdatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : ''}`;
+                const ist = new Date(new Date().getTime() + (new Date().getTimezoneOffset() + 330) * 60_000);
+                const dow = ist.getDay();
+                const lastClose = (() => {
+                  const d = new Date(ist);
+                  // Walk back to most recent weekday
+                  while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() - 1);
+                  if (d.toDateString() === ist.toDateString()) d.setDate(d.getDate() - 1);
+                  while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() - 1);
+                  return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()];
+                })();
+                return `🕒 NSE closed · ${dow === 0 || dow === 6 ? 'weekend' : 'after hours'} · showing last close (${lastClose})`;
+              })()}
             </div>
             {/* PATCH 0735 — honest empty-state when market is closed. Was just
                 showing two empty headers ("▲ GAINERS" + "▼ LOSERS") with no
                 explanation, which read as a bug. Now market-hours aware. */}
             {!data.gainers && !data.losers ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
-            ) : (((data.gainers?.length || 0) === 0 && (data.losers?.length || 0) === 0) && !_isIndianMarketOpen()) ? (
+            ) : ((data.gainers?.length || 0) === 0 && (data.losers?.length || 0) === 0) ? (
+              /* PATCH 0756 — upstream returned no movers (rare even on weekends —
+                 means the quotes API has no data for this date). Show the open
+                 Movers page deeplink, but don't pre-emptively hide the list
+                 just because market is closed (P0735's behaviour). */
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic', padding: '8px 6px', lineHeight: 1.5 }}>
-                🕒 NSE closed · {new Date().getUTCDay() === 0 || new Date().getUTCDay() === 6 ? 'weekend' : 'after hours'} · live movers resume <strong style={{ color: TEXT }}>Mon 09:15 IST</strong>.
-                <br />
-                <span style={{ fontSize: 10 }}>Last close data still visible on the <Link href="/movers" style={{ color: '#22D3EE', textDecoration: 'none' }}>full Movers page</Link>.</span>
+                No movers data available right now. <Link href="/movers" style={{ color: '#22D3EE', textDecoration: 'none' }}>Open full Movers page →</Link>
               </div>
             ) : (() => {
               // PATCH 0708 — institutional event-attribution rendering.
@@ -1956,24 +1991,22 @@ export default function HomeDashboard() {
               <Link href="/watchlists" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
             </div>
             <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
-              Watchlist names with ≥3% intraday move
+              {_isIndianMarketOpen()
+                ? 'Watchlist names with ≥3% intraday move'
+                : '🕒 NSE closed · showing last close moves (≥1% threshold)'}
             </div>
             {!data.watchlistPulse ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
             ) : data.watchlistPulse.length === 0 ? (
-              // PATCH 0735 — disambiguate two scenarios: market is open and
-              // genuinely no watchlist name is moving > 3%, vs market is
-              // closed (intraday Δ = 0 by construction so nothing can pass
-              // the threshold). User screenshot showed the second case,
-              // which read like a defect.
-              !_isIndianMarketOpen() ? (
-                <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic', lineHeight: 1.5 }}>
-                  🕒 NSE closed — intraday pulse needs live ticks.
-                  <br /><span style={{ fontSize: 10 }}>Resumes <strong style={{ color: TEXT }}>Mon 09:15 IST</strong>.</span>
-                </div>
-              ) : (
-                <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>No watchlist names ≥3% today.</div>
-              )
+              // PATCH 0756 — when market is closed AND the relaxed 1% threshold
+              // also returns nothing, every watchlist name closed within ±1% on
+              // Friday. State that explicitly so the user knows it's a quiet
+              // tape, not a defect.
+              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic', lineHeight: 1.5 }}>
+                {_isIndianMarketOpen()
+                  ? 'No watchlist names ≥3% today.'
+                  : 'All watchlist names closed within ±1% last session.'}
+              </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 {data.watchlistPulse.slice(0, 5).map((w) => (
