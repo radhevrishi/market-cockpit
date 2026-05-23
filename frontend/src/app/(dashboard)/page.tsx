@@ -893,19 +893,33 @@ export default function HomeDashboard() {
         setData((d) => ({ ...d, superInvestors: combined } as any));
       })();
 
-      // PATCH 0621 — Signals: high-importance corporate news from the last 24h.
-      safeDiag<any>(`/api/v1/news?limit=30&importance_min=2&article_type=CORPORATE&_=${Date.now()}`, 18_000).then(({ data: j }) => {
+      // PATCH 0778 — Signals: corporate news pulled at importance>=2,
+      // then prioritized to (CB ∪ Watchlist ∪ Portfolio) names first.
+      // Falls back to broader corporate signals when no own-universe
+      // hits, so the panel never goes empty for new users.
+      // Region preference: 'India' tagged news first, then anything else.
+      safeDiag<any>(`/api/v1/news?limit=80&importance_min=2&article_type=CORPORATE&_=${Date.now()}`, 18_000).then(({ data: j }) => {
         if (cancelled) return;
         const raw = Array.isArray(j) ? j : (j?.articles || j?.items || []);
-        // PATCH 0757 — strip CDATA wrappers from URLs. Some RSS sources
-        // (NDTV Profit, BL Companies) embed CDATA[…] markup in their feed
-        // that survives to client when not parsed. lib/indian-news-rss.ts
-        // strips at its source, but other ingest paths don't. Defensive
-        // strip at the render edge.
         const stripCdata = (s: any) => typeof s === 'string'
           ? s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').trim()
           : s;
-        const items = (raw as any[])
+        const norm = (s: string) => (s || '').toString().toUpperCase().replace(/\.(NS|BO)$/i, '').trim();
+        const universe = new Set<string>();
+        try {
+          const wl: string[] = JSON.parse(localStorage.getItem('mc_watchlist_tickers') || '[]') || [];
+          wl.forEach((t) => universe.add(norm(t)));
+        } catch {}
+        try {
+          const cb = getConvictionTickers();
+          cb.forEach((t) => universe.add(norm(t)));
+        } catch {}
+        try {
+          const ph: any[] = JSON.parse(localStorage.getItem('portfolioHoldings') || '[]') || [];
+          ph.forEach((h) => { if (h?.ticker) universe.add(norm(h.ticker)); });
+        } catch {}
+
+        const all = (raw as any[])
           .filter((a: any) => !a?.is_synthetic && !a?.structural_status && !(a?.title || '').startsWith('[STRUCTURAL'))
           .map((a: any) => ({
             ...a,
@@ -913,9 +927,33 @@ export default function HomeDashboard() {
             source_url: stripCdata(a?.source_url),
             title: stripCdata(a?.title),
             headline: stripCdata(a?.headline),
-          }))
-          .slice(0, 8);
-        setData((d) => ({ ...d, signals: items } as any));
+          }));
+
+        const inUniverse = (a: any) => {
+          if (universe.size === 0) return false;
+          if (a?.primary_ticker && universe.has(norm(a.primary_ticker))) return true;
+          if (Array.isArray(a?.ticker_symbols)) {
+            return a.ticker_symbols.some((t: any) => universe.has(norm(t)));
+          }
+          return false;
+        };
+        const isIndian = (a: any) => {
+          const r = (a?.region || a?.market || '').toString().toLowerCase();
+          if (r === 'india' || r === 'in') return true;
+          // Heuristic: ticker chip looks like NSE/BSE
+          if (a?.primary_ticker && /^[A-Z0-9&-]{2,12}$/.test(a.primary_ticker) && !/^[A-Z]{1,5}$/.test(a.primary_ticker)) return true;
+          return false;
+        };
+
+        // Tier 1: own universe + recent (any region)
+        const tier1 = all.filter((a: any) => inUniverse(a));
+        // Tier 2: Indian corporate signals (not in universe)
+        const tier2 = all.filter((a: any) => !inUniverse(a) && isIndian(a));
+        // Tier 3: anything else (US/global)
+        const tier3 = all.filter((a: any) => !inUniverse(a) && !isIndian(a));
+
+        const merged = [...tier1, ...tier2, ...tier3].slice(0, 8);
+        setData((d) => ({ ...d, signals: merged } as any));
       });
 
       // PATCH 0622 — Portfolio P&L + Watchlist Pulse + Sector Rotation —
