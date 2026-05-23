@@ -1,8 +1,8 @@
 # Market Cockpit — Claude Handoff Memory
 
 > Read this FIRST when starting any new chat. Saves you 30 minutes of context-rebuilding.
-> **Last updated: 2026-05-22 (Day-3 LATE).** Day-3 session shipped Patches 0643–0681 (39 patches): Auto-Val honesty pass + Learn tab + 6 More Methods (DCF/PEG/P-B/FCF Yield/SoP/DDM) + sector-lookup inline scenarios + score-weighted sector inference (KOEL Defence misclassification fixed) + ORDER_RECEIPT/RATING_ACTION regex now matches NSE canonical labels + Aeroflex false-positive rejections + InlineValuationPanel mounted in Concall AI page so ONE upload → BOTH analyses. HEAD on `origin/main` ≈ `e50fd0a` (will be ~`P0681+` after this push). Latest patch number for new work: **0682**. Look at Sections 17.12 + 17.13 first for Day-3 summary.
-> **Sandbox-name caveat:** This file references the OLD sandbox `zen-epic-bardeen` in section 2 and `kind-sharp-maxwell` was the active sandbox at session-end. New sessions get a new sandbox name. The repo path mapping pattern is `/Users/.../market-cockpit/` → `/sessions/<sandbox>/mnt/market-cockpit/` — substitute the active sandbox name from `ls /sessions/` or your bash mounts.
+> **Last updated: 2026-05-23 (Day-4 MARATHON, 30+ patches).** Day-4 shipped Patches 0688–0730 covering: 21-bug QA report fixes (every infinite-loading page, quote API mapping, NSE/NASDAQ label, 404 slugs), Vercel CPU rescue (free-tier diet), Movers Attribution Engine v2 (institutional event-driven), 100+ new detector synonyms, market-hours lib, safe-fetch lib, ticker-normalize lib, alert dispatcher infrastructure (Slack/SMTP/webhook ready for env vars), Indian smallcap news ingestion via Yahoo+Google RSS, multibagger scoring extracted to libs (page.tsx 10,719 → 7,140 lines). **READ §18 FIRST in new sessions** — it has the complete handoff for Day-4. HEAD on `origin/main` = `b920509`. Latest patch number for new work: **0731**.
+> **Sandbox name was `fervent-kind-hypatia` at Day-4 session end.** New sessions get a new name — substitute via `ls /sessions/`. Path mapping: `/Users/.../market-cockpit/` → `/sessions/<sandbox>/mnt/market-cockpit/`.
 
 ---
 
@@ -2225,3 +2225,177 @@ mc:concall-snap:updated       — Concall snapshot save fires this
 > - "Add ↻ Recompute button on saved Auto-Val entries so old saved sectors get refreshed when buildReport logic changes"
 > - "Continue auditing — run MTAR/Aeroflex/Kirloskar through fresh and verify all 3 give honest recommendations now"
 > - "Build TheWrap Module 3 (Strategic Hire detector page)"
+
+---
+
+## 18 · END-OF-SESSION HANDOFF — 2026-05-23 (DAY-4 MARATHON, 30+ patches)
+
+> **READ THIS FIRST — supersedes section 17 for current state.** This was a marathon session triggered by a 21-bug QA report from Perplexity Comet + the user's institutional QA directive. Session shipped P0688 → P0730. ENGINEERING_REPORT.md added at repo root with full ID/Severity/Module/Root-Cause/Fix/Retest/Risk table.
+
+### 18.0 Quick state check (run these first in a new session)
+
+```bash
+ls /sessions/                                                          # find current sandbox name
+cat /sessions/<sandbox>/mnt/market-cockpit/CLAUDE.md | head -30        # confirm this file is mounted
+grep -i url /sessions/<sandbox>/mnt/market-cockpit/.git/config | head -1   # token URL
+cd /sessions/<sandbox>/mnt/market-cockpit/frontend && timeout 60 npx tsc --noEmit   # baseline
+ls /tmp/mc-deploy 2>/dev/null                                          # deploy clone
+```
+
+- **HEAD on `origin/main` = `b920509`** (commit "Patch 0728: Multibagger scoring extracted to lib")
+- **Latest patch number for new work: 0731**
+- **Sandbox at session end: `fervent-kind-hypatia`** (new session = new name)
+- **tsc clean across whole frontend** ✓
+
+### 18.1 Patches shipped in this marathon (P0688 → P0730)
+
+| Patch | Commit | Module | What it does |
+|-------|--------|--------|--------------|
+| 0688 | d18effe | Vercel CPU | Retired dead `/api/concall/parse`, cron freq cuts, refetch intervals bumped |
+| 0689 | d79798a | InlineValuationPanel | Bear/Base/Bull + FY27/FY28 toggles mirroring `/auto-valuation` |
+| 0690 | 17d1c4b | Quotes API | Themes + Stock-Sheet POSTed to non-existent `/api/v1/market/quotes` (fell to Render). Switched to canonical GET `/api/market/quotes`. Watchlist + Portfolio: UPPER + prefix-strip ticker normalize |
+| 0691-0699 | 63500a0 | Multi-bug batch | Watchlist company name fallback, Stock sheet NSE/BSE label + intel timeout + news filter, Valuation Calc auto-focus market-cap, Breadth label, EO market-hours awareness, /activity → /activity-log middleware redirects |
+| 0693-0695 | d2d31c2 | Loading states | 7 infinite-loading pages get terminal states + Retry buttons (news, earnings, orders, earnings-guidance, calendars, concall-intel Warrant block, home in-play). Plus Order Book + Rating Actions: days=14→3/7, client timeout 25s→50s. Plus forward-guidance extractor widened for Indian vernacular |
+| 0700 | 7f96ec9 | Concall AI | 27 new SECTOR_KPI_PATTERNS entries + 6 new GuidanceMetric types (ASP, DEBT_REPAYMENT, DIVIDEND_PAYOUT, TAX_RATE, CAPACITY_UNITS, WC_DAYS). TOPIC_WORDS expanded |
+| 0703 | 67e28e0 | CPU rescue | live-feed KV TTL 2-10min → 30-60min; concall-intel-warm + snapshot crons disabled |
+| 0704 | 391122d | Live-feed | New `?cacheOnly=1` query param — returns cached or empty `CACHE_WARMING` flag immediately, never blocks |
+| 0705 | f09f829 | USA scoring | FCF + perf1y triple-count de-dup in scoreUSARow |
+| 0706 | fac9c65 | SEC EDGAR | New `/api/v1/edgar/deal-terms?cik=&accession=&doc=` regex-extracts offer price + consideration mix + tender close + premium + financing certainty from SC TO-T / DEFM14A primary docs |
+| 0707-0712 | 11a8979 + 59e5e44 | Movers Attribution | New `lib/movers-attribution.ts` 5-tier engine: earnings/graded → special-sit → concall filing → news → sector-wide peer → honest fallback. HIGH/MEDIUM/LOW confidence chips + STOCK_SPECIFIC vs SECTOR_WIDE scope badges. Always includes industry context |
+| 0709 | 11a8979 | Order/Rating detectors | 100+ institutional synonyms: L1 bidder, EPC contract, framework agreement, supply agreement, turnkey, MOU, LoA/LoI, outlook revised, watch with developing implications, BWR/SMERA/Acuité/Infomerics agencies |
+| 0713 | 6c7fe69 | Synonym audit | +55 detector synonyms across 8 libs + 7 new ConcallFilingType variants (CAPEX_ANNOUNCE / BUYBACK_ANNOUNCE / PROMOTER_TXN / BLOCK_DEAL / MA_EVENT / GOVERNANCE / USFDA_EVENT) |
+| 0714-0716 | 1f7391f | Robustness | Empty-state diagnostics (6 surfaces), `lib/market-hours.ts` canonical IST/US helpers (13 inline-math sites migrated), `lib/safe-fetch.ts` + 12 risky fetches hardened |
+| 0717-0721 | 519cd15 | Deep hygiene | India scorer 500-bagger DNA dedup, race conditions + AbortController on 3 leak-prone pages (company-news, ipos, smart-money), `lib/ticker-normalize.ts` canonical helper (canonicalTicker + canonicalTickerList + tickerEquals) |
+| 0719-0720 | 28e22a1 | UX + perf | Mobile responsiveness CSS fixes, light-mode literal-gradient fix, memoized news tier counts + heatmap O(1) ticker Maps |
+| 0722 | 8fe3379 | Documentation | `ENGINEERING_REPORT.md` at repo root in user's required `ID \| Severity \| Module \| Root Cause \| Fix \| Retest \| Regression \| Risk` table format |
+| 0724 | 48a8130 | Smallcap news | `lib/indian-news-rss.ts` + `/api/v1/news-india/[ticker]` — Yahoo Finance + Google News RSS fan-out for tickers the standard news cache misses (MINDACORP, SPARC class). 6h KV cache. Wired into Home Movers attribution as parallel enrichment source |
+| 0725 | 30a0cef | Cron | Re-enabled concall-intel-warm with Monday-only schedule (`30 21 * * 0` UTC = Mon 03:00 IST) — 1 run/week, minimal CPU |
+| 0726 | ee7897e | Alert dispatcher | `lib/alert-dispatcher.ts` + `/api/v1/alerts/dispatch?secret=` POST endpoint. Reads env vars SLACK_WEBHOOK_URL, SMTP_*, GENERIC_WEBHOOK_URL. Graceful no-op when env missing. Wired into news-alerts fire-and-forget. Code ready, user just adds env vars |
+| 0727 | bd183a5 | Mobile | 12 new CSS rules in globals.css covering 20 priority pages — fixed-pixel grid collapse, table overflow scroll wrappers, sticky rail neutralization, flex-wrap enforcement, padding/font scaling. Plus 480px deep-mobile block |
+| 0728 | b920509 | Multibagger refactor | Extracted scoring to `lib/multibagger-india-scoring.ts` (2,629 lines) + `lib/multibagger-usa-scoring.ts` (991 lines). page.tsx shrunk 10,719 → 7,140 lines (33% reduction). Pure code move, behavior identical. CSV parsers + React components deliberately kept in page.tsx |
+| 0729 | 30a0cef | Upstash KV | super-investor-flow:v1:180d SET was failing (payload > 1 MiB limit). Trimmed cache payload (top 30 rows, investors capped 8, dates as YYYY-MM-DD only), pre-SET 900 KB size check, window-aware TTL. User-facing output unchanged |
+| 0730 | 30a0cef | super-investor-news | Vercel observability: 493 calls/12h, the single biggest CPU drain. Cache validity 5min→30min, KV TTL 15min→60min. Stake disclosures are quarterly events, 5min "live feel" was wasteful. Expected ~6× reduction in invocations |
+
+### 18.2 New lib modules created this marathon (for future imports)
+
+```
+frontend/src/lib/movers-attribution.ts        P0708 — 5-tier event-attribution engine
+frontend/src/lib/market-hours.ts              P0715 — canonical IST/US market hours (istNow, istToday, istLastNWeekdays, isIndianMarketOpen, isUSMarketOpen, formatISTTime)
+frontend/src/lib/safe-fetch.ts                P0716 — safeFetchJson + safeArray helpers
+frontend/src/lib/ticker-normalize.ts          P0721 — canonicalTicker + canonicalTickerList + tickerEquals (UPPER + prefix-strip + suffix-strip)
+frontend/src/lib/indian-news-rss.ts           P0724 — fetchYahooFinanceRSS + fetchGoogleNewsRSS + fetchIndianNews
+frontend/src/lib/alert-dispatcher.ts          P0726 — dispatchAlert(payload) → Slack + SMTP + webhook
+frontend/src/lib/multibagger-india-scoring.ts P0728 — scoreExcelRow + helpers + types
+frontend/src/lib/multibagger-usa-scoring.ts   P0728 — scoreUSARow + applyUSARanking + helpers
+frontend/src/lib/concall-file-parser.ts       P0684 — client-side PDF/XLSX/DOCX/PPTX parsing
+```
+
+### 18.3 New API routes created this marathon
+
+```
+/api/v1/edgar/deal-terms         P0706 — SC TO-T / DEFM14A deal terms extractor
+/api/v1/news-india/[ticker]      P0724 — Yahoo + Google RSS for Indian smallcaps
+/api/v1/alerts/dispatch          P0726 — server-side alert delivery (Slack/SMTP/webhook)
+```
+
+### 18.4 Env vars to know
+
+| Env var | Status | What it unlocks |
+|---------|--------|------------------|
+| `KV_REST_API_URL` + `KV_REST_API_TOKEN` (or `UPSTASH_REDIS_REST_URL` + `_TOKEN`) | **Set in Vercel** | Upstash Redis caching layer |
+| `CRON_SECRET` | **Set in Vercel** | Cron auth + required for new `/api/v1/alerts/dispatch` endpoint |
+| `ANTHROPIC_API_KEY` | NOT set | **BIGGEST single quality jump available** — replaces regex/lexicon in `/api/v1/concall/analyze` with true LLM extraction. BLK-01 |
+| `SLACK_WEBHOOK_URL` | NOT set | P0726 Slack alert delivery |
+| `SMTP_HOST` + `SMTP_PORT` + `SMTP_USER` + `SMTP_PASS` + `SMTP_FROM` + `SMTP_TO` | NOT set | P0726 email alerts (also needs `npm i nodemailer`) |
+| `GENERIC_WEBHOOK_URL` | NOT set | P0726 generic webhook POST |
+| `PUBLIC_API_KEYS` or `PUBLIC_API_ANON=1` | NOT set | P0311 public read-only `/api/v1/public/graded/<date>` |
+
+### 18.5 Vercel state at session end
+
+- **Hit Fluid Active CPU cap** during session (5h 16m / 4h monthly). Aggressive CPU rescue shipped via P0688 + P0703 + P0730. Effect measurable at June 1 monthly reset.
+- **Top CPU consumers per Observability:**
+  - `/api/v1/super-investor-news` 493 calls/12h — P0730 cache 6× bump should cut this ~80%
+  - `/stock-sheet` 290 calls/12h — page hits, mostly cached
+  - `/api/v1/news` 221 — healthy
+  - `/api/v1/earnings/graded` 131 (1.6% error) — minor
+  - `/api/v1/concall-intel/live-feed` 39 — was much higher, P0703 TTL bump worked
+- **NSE / Screener 50% failure rate observed** — was a real upstream issue. Each failure burns CPU on timeout. Future work: negative-cache failures + dedup in-flight requests (P0729 proposal not shipped, noted as next-session candidate).
+- **Build failures** this session: 1 (vercel.json schema `_comment` field rejected). Fixed in P0706. Never put non-schema fields in vercel.json.
+
+### 18.6 Cron schedule at session end
+
+```
+35 4 * * 1-5      /api/bot/movers-alert?mode=full
+50 4 * * 1-5      /api/bot/watchlist-alert?mode=full
+0  4 * * 1-5      /api/market/intelligence/compute
+15 4 * * 1-5      /api/market/earnings-guidance/ingest
+0  1 * * *        /api/v1/cron/refresh-earnings-calendar
+30 21 * * 0       /api/v1/cron/concall-intel-warm        (P0725 — Mon 03:00 IST, weekly)
+30 5  * * *       /api/bot/eo-blockbuster-alert
+30 15 * * *       /api/bot/eo-blockbuster-alert
+```
+
+NOTE: `concall-intel-snapshot` cron still DISABLED. Live-feed TTL 30-60min means users hit cache anyway. Re-enable if CPU budget allows.
+
+### 18.7 Open / blocked items going into next session
+
+The 9 BLK items in ENGINEERING_REPORT.md — none are fixable in code alone:
+
+| ID | Need | Why it matters |
+|----|------|----------------|
+| BLK-01 | Add `ANTHROPIC_API_KEY` env var | LLM concall extraction. Biggest quality jump. |
+| BLK-02 | Backend: Trendlyne/Moneycontrol scraper cron | P0724 RSS partial-solves; richer ingestion needed for institutional-grade coverage |
+| BLK-03 | Pick Auth provider (Clerk/Supabase Auth/NextAuth) | Cross-device persistence of Decision Logbook, Saved Views, Alert Rules |
+| BLK-04 | Provision Postgres (Supabase free tier OK) | Signal+SignalEvidence schema, ticker_roles real table, theme_revisions diff, regression coefficients |
+| BLK-05 | Paid commodity feeds | 14 transmission inputs use equity proxies; real prices would replace estimates |
+| BLK-06 | Re-enable concall-intel-warm — **DONE in P0725 (Monday-only)** | ✓ |
+| BLK-07 | Slack/SMTP/webhook creds — **infra DONE in P0726**, user adds env vars | Alert delivery code ready |
+| BLK-08 | Mobile redesign — **CSS pass DONE in P0719 + P0727**; ~25 pages still cramped on phones | Dedicated mobile session |
+| BLK-09 | Multibagger refactor — **DONE in P0728** (33% reduction, scoring in libs) | ✓ |
+
+### 18.8 Honest known weaknesses going into next session
+
+- **Indian smallcap news coverage** is still patchy. P0724 adds Yahoo+Google RSS but standard `/api/v1/news` cache index is sparse for sub-₹5000 Cr names. Movers attribution falls through to honest "no confirmed trigger" tier-4 a lot. Real fix is BLK-02 backend ingestion.
+- **Order Book + Rating Actions pages depend on cache warmth.** First visit after Vercel deploy may show empty. P0704 cacheOnly contract + Monday warm cron (P0725) help, but the upstream live-feed is genuinely slow on cold start (60s maxDuration).
+- **NSE 50% failure rate** is a real upstream pain. P0729 proposal (negative-cache failures, dedup in-flight, tighter timeouts) was discussed but not shipped — recommended next-session item for further CPU savings.
+- **Concall AI uses regex/lexicon only**, no LLM. Quality ceiling capped here until ANTHROPIC_API_KEY wired (BLK-01).
+- **Saved Auto-Val entries from before P0679** still show stale "Defence" sector classification for KOEL-like names. Add a "↻ Recompute" button when picking this back up.
+
+### 18.9 Deploy flow reminder (sandbox-restricted .git/index.lock)
+
+```bash
+# From a fresh sandbox:
+URL=$(grep -i url /sessions/<sandbox>/mnt/market-cockpit/.git/config | head -1 | sed 's/^[[:space:]]*url[[:space:]]*=[[:space:]]*//')
+git clone "$URL" /tmp/mc-deploy   # only if /tmp/mc-deploy missing
+
+# Per patch:
+cd /tmp/mc-deploy && \
+  git pull --rebase origin main && \
+  cp '/sessions/<sandbox>/mnt/market-cockpit/<changed-file>' '<changed-file>' && \
+  git add -A && \
+  git config user.email "radhev.232@gmail.com" && \
+  git config user.name "Rishi" && \
+  git commit -m "Patch 0XXX: short description" && \
+  git push origin main
+```
+
+### 18.10 STARTER PROMPT for Day-5 session
+
+> Read `/Users/radhevrishi/Desktop/Python/Imp Marketcockpit/market-cockpit/CLAUDE.md` section 18 (Day-4 marathon handoff) AND section 13 (Hard Rules) before doing anything. HEAD on main = `b920509`. Latest patch number for new work: **0731**. ENGINEERING_REPORT.md at repo root has the full audit trail.
+>
+> Active state: Vercel CPU rescue shipped (effect measurable June 1). New libs added — market-hours.ts, safe-fetch.ts, ticker-normalize.ts, movers-attribution.ts, indian-news-rss.ts, alert-dispatcher.ts, multibagger-india-scoring.ts, multibagger-usa-scoring.ts. New routes: /api/v1/edgar/deal-terms, /api/v1/news-india/[ticker], /api/v1/alerts/dispatch.
+>
+> Top candidates for next session (pick one, or state your own):
+> - "Wire `ANTHROPIC_API_KEY` into `/api/v1/concall/analyze`" — biggest quality jump (BLK-01)
+> - "Add negative-cache + dedup in-flight + tighter NSE timeouts" — addresses the 50% NSE failure rate seen in Vercel observability (P0731 candidate, ~30-50% additional CPU savings)
+> - "Trendlyne/Moneycontrol scraper cron for Indian smallcap news" — fixes the persistent tier-4 "no confirmed trigger" labels (BLK-02)
+> - "Build TheWrap Module 3: Strategic Hire detector page" — detector exists in lib/thewrap-detectors.ts (P0713), needs dedicated `/strategic-hires` route consuming it
+> - "Build TheWrap Module 4: Marquee Capital Entry Tracker" — same pattern, `/marquee-capital` route
+> - "Build TheWrap Module 5: Marketing Authorization Tracker" — pharma USFDA/MHRA/EIR, `/marketing-auth` route
+> - "Add ↻ Recompute button on saved Auto-Val entries" so old sectors auto-refresh
+> - "Wire valuation upside into concall score with ~10% weight" — long-pending follow-up from P0681
+>
+> Hard rules to remember (§13.1):
+> - For any edit to `app/(dashboard)/.../page.tsx`, run `next lint` OR `next build --no-lint` before push — Next.js page-export validation catches what `tsc --noEmit` misses
+> - Never put `_comment` or non-schema fields in `vercel.json` — Vercel rejects it (P0706 lesson)
+> - Multibagger scoring now lives in `lib/multibagger-india-scoring.ts` + `lib/multibagger-usa-scoring.ts` — edit there, NOT page.tsx
