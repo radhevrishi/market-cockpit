@@ -85,6 +85,49 @@ function stripHtml(s: string): string {
     .trim();
 }
 
+// PATCH 0734 — defensive sanitizer for company names extracted from headlines.
+// Returns the cleaned name, or '' (falsy) when the input was clearly garbage.
+// The home Super Investors panel surfaces these directly, so anything that
+// makes it through here ends up in front of the user.
+function sanitizeCompanyName(raw: string): string {
+  if (!raw) return '';
+  let s = raw.trim();
+
+  // 1) Strip "for Rs N crore / lakh" / "worth ₹N" / "at Rs N" tails that
+  //    headline regex captures by accident. Run multiple times in case
+  //    the tail repeats ("for Rs 216 crore at 145 per share").
+  s = s.replace(/\s+(?:for|worth|at|of|paying|@)\s+(?:rs\.?|inr|₹|\$)\s*[\d,.]+(?:\s*(?:crore|cr|lakh|lac|million|mn|billion|bn))?\b.*/i, '');
+  s = s.replace(/\s+(?:for|worth|at)\s+[\d,.]+\s*(?:crore|cr|lakh|lac|million|mn|billion|bn)\b.*/i, '');
+
+  // 2) Strip source-attribution suffixes like " - Moneycontrol.com" /
+  //    " | Bloomberg" / " — Economic Times" / " (Reuters)". Most public
+  //    news pubs append their domain or name with a delimiter.
+  s = s.replace(/\s*[-–—|·]\s*(?:moneycontrol|et\s*markets|economic\s*times|livemint|mint|business\s*standard|ndtv|cnbc|bloomberg|reuters|trendlyne|equitymaster|business\s*today)(?:\.\w+)?\b.*/i, '');
+  // Bare ".com / .in" domain hint at the end → strip last word.
+  s = s.replace(/\s+\S*\.(?:com|in|net|org|co)\b.*/i, '');
+
+  // 3) Strip trailing pricing / quantity / share-count phrases.
+  s = s.replace(/\s+(?:shares?|stake|stocks?|holding|holdings|positions?|portfolio|units?)\s*$/i, '');
+  s = s.replace(/\s+(?:Q[1-4]\s*FY\d{2,4}|H[12]\s*FY\d{2,4}|FY\d{2,4}).*$/i, '');
+
+  // 4) Strip leading prepositions / verbs that may sneak in.
+  s = s.replace(/^(?:in|the|by|via|from|on)\s+/i, '');
+
+  // 5) Drop trailing punctuation noise.
+  s = s.replace(/[\s\-–—|.,;:]+$/g, '').trim();
+
+  // 6) Final validation — reject if too short, too long, contains URL hints,
+  //    contains digits at the END (likely a fragment), or contains delimiter
+  //    chars that aren't found in real company names.
+  if (s.length < 3 || s.length > 40) return '';
+  if (/^(?:Rs\.?|INR|USD|EUR|₹|\$)/i.test(s)) return '';
+  if (/\b(?:http|www|\.com|\.in|\.net)\b/i.test(s)) return '';
+  if (/\b(?:per\s*share|crore|lakh|billion|million)\b/i.test(s)) return '';
+  if (/\b(?:first\s*time|now\s*holds|raises\s*stake|cuts\s*stake|exits|enters)\b/i.test(s)) return '';
+  if (!/^[A-Za-z]/.test(s)) return '';  // must start with a letter
+  return s;
+}
+
 function parseRss(xml: string): Array<Partial<NewsArticle>> {
   const items: Array<Partial<NewsArticle>> = [];
   // Tolerant matcher — Google News uses <item>, Moneycontrol uses <item> too.
@@ -357,15 +400,23 @@ function extractMove(article: NewsArticle, investorName: string): StakeMove | nu
   }
 
   // Company name — try snippet "in <COMPANY>" first (often cleaner) then headline.
+  // PATCH 0734 — tighten capture window from {2,60} to {2,40} and add
+  // multi-stage stripping so headline garbage like "in Nazara for Rs 216 crore"
+  // or "in TV Today Network - Moneycontrol.com" doesn't leak through as the
+  // company name. The user saw rows on the Home dashboard like:
+  //   - "Nazara for Rs 216 crore"   ← "for Rs N crore" tail not stripped
+  //   - "TV Today Network - Moneycontrol.com"  ← source attribution leaked
+  //   - "Sammaan CaSammaan Capital" ← ticker label + duplicate company
   let company: string | undefined;
-  const inSnippet = snippet.match(/\bin\s+([A-Z][A-Za-z0-9 \-&.()]{2,60}?)(?:\s+(?:Limited|Ltd|Pvt|Private|Corp(?:oration)?))?\b/);
+  const inSnippet = snippet.match(/\bin\s+([A-Z][A-Za-z0-9 \-&.()]{2,40}?)(?:\s+(?:Limited|Ltd|Pvt|Private|Corp(?:oration)?))?\b/);
   if (inSnippet) company = inSnippet[1].trim();
   if (!company) {
-    const inMatch = headline.match(/\bin\s+([A-Z][A-Za-z0-9 \-&.()]{2,60})(?:[.,;]|$)/);
+    const inMatch = headline.match(/\bin\s+([A-Z][A-Za-z0-9 \-&.()]{2,40})(?:[.,;]|$)/);
     if (inMatch) company = inMatch[1].trim();
   }
   if (company) {
-    company = company.replace(/\b(shares|stake|stocks?|company|Limited|Ltd)\b\s*$/i, '').trim();
+    company = sanitizeCompanyName(company);
+    if (!company) return null;  // sanitizer rejected it as garbage
   }
 
   // Skip when we found NOTHING actionable.

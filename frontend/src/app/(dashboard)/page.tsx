@@ -1697,14 +1697,23 @@ export default function HomeDashboard() {
                   const investorShort = investor.split(' ').length > 1
                     ? investor.split(' ').map((p: string, idx: number) => idx === 0 ? p[0] + '.' : p).join(' ').slice(0, 14)
                     : investor.slice(0, 12);
+                  // PATCH 0734 — for news-derived rows the "ticker" is actually the
+                  // company name (no real ticker parseable from headlines). Showing
+                  // ticker + company side-by-side produces "Sammaan CaSammaan Capital"-
+                  // style duplicates. Only show the ticker label when it looks like
+                  // a real ticker — UPPERCASE alpha+digits, no spaces, ≤10 chars.
+                  const rawTicker = (r.ticker || '').toString().replace(/\.(NS|BO)$/i, '');
+                  const isRealTicker = /^[A-Z][A-Z0-9&-]{1,9}$/.test(rawTicker);
                   return (
-                    <Link key={(r.ticker || '') + i} href={`/stock-sheet?ticker=${encodeURIComponent((r.ticker || '').replace(/\.(NS|BO)$/i, ''))}`}
+                    <Link key={(r.ticker || '') + i} href={`/stock-sheet?ticker=${encodeURIComponent(rawTicker)}`}
                       style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
-                      <span style={{ fontSize: 9, color: '#A78BFA', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 56 }}>
-                        {(r.ticker || '').toString().replace(/\.(NS|BO)$/i, '').slice(0, 10)}
-                      </span>
+                      {isRealTicker && (
+                        <span style={{ fontSize: 9, color: '#A78BFA', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 56 }}>
+                          {rawTicker.slice(0, 10)}
+                        </span>
+                      )}
                       <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {r.company || r.ticker}
+                        {r.company || rawTicker}
                       </span>
                       <span style={{ fontSize: 9, color: DIM, fontStyle: 'italic', whiteSpace: 'nowrap', minWidth: 76, textAlign: 'right' }} title={investor}>
                         {investorShort}

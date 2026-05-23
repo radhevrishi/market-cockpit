@@ -52,7 +52,11 @@ function normalizeCompany(s: string): string {
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const days = parseInt(searchParams.get('days') || '30', 10);
-  const cacheKey = `super-investor-flow:v1:${days}d`;
+  // PATCH 0734 — bumped v1→v2 to invalidate any cached payloads built with
+  // the old (unsanitized) company-name extractor. The new sanitizer +
+  // aggregator-side `looksLikeCompany` filter would otherwise be masked
+  // by stale entries serving "Nazara for Rs 216 crore"-style garbage.
+  const cacheKey = `super-investor-flow:v2:${days}d`;
 
   try {
     const cached = await kvGet<any>(cacheKey);
@@ -88,9 +92,32 @@ export async function GET(request: Request) {
   }
 
   // Aggregate by company (canonical key — exact ticker often not parseable from news).
+  // PATCH 0734 — defensive secondary filter so even if super-investor-news
+  // sanitizer ever misses something, the home Super Investors panel doesn't
+  // render garbage. Rejects company strings that contain pricing fragments,
+  // URL hints, or anything that doesn't look like a real company name.
+  const looksLikeCompany = (s: string): boolean => {
+    if (!s) return false;
+    if (s.length < 3 || s.length > 45) return false;
+    if (!/^[A-Za-z]/.test(s)) return false;
+    // Pricing / quantity contaminants
+    if (/\b(?:Rs\.?|INR|USD|EUR|₹|\$)\s*[\d,.]/i.test(s)) return false;
+    if (/\b(?:crore|lakh|million|billion|cr\.?\s*\d)\b/i.test(s)) return false;
+    if (/\b(?:per\s*share|each|@)\b/i.test(s)) return false;
+    // URL hints
+    if (/\b(?:\.com|\.in|\.net|http|www\.|moneycontrol|trendlyne|bloomberg)\b/i.test(s)) return false;
+    // Verb phrases that mean it captured a sentence, not a name
+    if (/\b(?:bought|sold|adds|trims|exits|raises|cuts|holds|owns|reduces|increases)\b/i.test(s)) return false;
+    // Q1 FY25 / first time / etc.
+    if (/\b(?:Q[1-4]|FY\d{2}|first\s*time|new\s*entry)\b/i.test(s)) return false;
+    return true;
+  };
+
   const byCo = new Map<string, FlowRow>();
+  let rejectedCount = 0;
   for (const { investor, move } of allMoves) {
     if (!move.company || move.confidence === 'LOW') continue;
+    if (!looksLikeCompany(move.company)) { rejectedCount++; continue; }
     const key = normalizeCompany(move.company);
     if (!key || key.length < 3) continue;
     if (!byCo.has(key)) {
