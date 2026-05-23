@@ -38,6 +38,7 @@
 | BUG-24 | P1 | /api/concall/parse | Vercel multipart body limit (HTTP 413) | P0684 — moved Concall AI uploader to client-side parsing in lib/concall-file-parser.ts; route now returns 410 Gone | ✅ | ✅ | None |
 | BUG-25 | P1 | InlineValuationPanel | Mounted only in legacy view path; institutional view early-returned before reaching it | P0687 — mounted in both branches; reframed as "Valuation Triangulation · quant cross-check" | ✅ | ✅ | Low |
 | BUG-26 | P1 | Valuation Triangulation | Only BASE case rendered; no FY27/FY28 toggle | P0689 — added Bear/Base/Bull + FY27/FY28 toggles mirroring /auto-valuation page | ✅ | ✅ | Low |
+| BUG-27 | P0 | NSE upstream | ~50% failure rate visible in Vercel observability; no in-flight dedup, no negative cache — parallel callers + repeat refreshes hammered NSE during outages, each failure burned CPU on the full 10s timeout, thundering herd on /api/market/quotes (11 parallel NIFTY index variants per page load) and watchlist/portfolio alert crons | P0732 — new `lib/nse-resilient-fetch.ts` with dedupedCall (in-flight Map<key,Promise>) + negCacheCheck/Set (90s in-memory failure cache, 30s for empty). Wired into nseApiFetch funnel in lib/nse.ts; both adapters in lib/nse-bse-feed.ts also get the wrap + a default 12s AbortController so callers that forgot to pass a signal can no longer eat the full Vercel maxDuration | ⚠ tsc clean; effect measurable in Vercel observability over the next 24-48h once warm pool exercises the new code paths | ✅ Positive cache + 403/401 cookie-refresh retry semantics unchanged | Low — in-memory cache resets on cold start (desirable, NSE may have recovered); if outages are sustained beyond 90s, callers retry and may re-fail, but no worse than the prior baseline |
 | BUG-27 | P0 | ConcallUploadModal | Server-side /api/concall/parse only handled txt/md/csv/pdf/docx/pptx; rejected xlsx | P0683 then P0684 made it moot by going client-side; xlsx + xls now both work | ✅ | ✅ | None |
 | BUG-28 | P1 | NSE filing scraper | ORDER_RECEIPT + RATING_ACTION regex too narrow — caught <20% of real filings | P0676 + P0686 + P0709 + P0713 — widened to match canonical NSE category labels ("Bagging/Receiving of orders/contracts", "Credit Rating") + 100+ institutional synonyms (L1 bidder, EPC contract, framework agreement, outlook revised, watch with developing implications, BWR/SMERA/Acuité/Infomerics agencies, etc.) | ⚠ Live retest pending — needs concall-intel cache to warm | ✅ | Medium — upstream NSE scraper may still miss new event types |
 | BUG-29 | P1 | Auto-Val sector inference | KOEL Defence misclassification → fake BUY +151% | P0679 — score-weighted sector match with 2× dominance requirement for Defence | ✅ | ✅ | Low |
@@ -115,6 +116,7 @@ tsc --noEmit                       EXIT 0 (clean)
 - `1f7391f` — P0714 + P0715 + P0716 robustness pass
 - `519cd15` — P0717 + P0718 + P0721 deep hygiene
 - `28e22a1` — P0719 + P0720 UX + perf
+- `43b1f6a` — P0732 NSE resilient-fetch (dedup + negative-cache; BUG-27)
 
 ---
 
@@ -126,3 +128,5 @@ tsc --noEmit                       EXIT 0 (clean)
 4. **Multibagger split** (BLK-09) — file is 10k lines, refactor into engine + page modules so future fixes are safer
 
 System is materially more robust than at session start. Honest "remaining risk" is **medium-low** across the board, with the highest residual risk being upstream data-gap exposure on Indian smallcap event coverage (which is structural and needs backend work).
+
+**Day-5 update (P0732):** the NSE 50% failure-rate symptom called out in §18.8 of CLAUDE.md now has surgical mitigation shipped. Effect will be visible in Vercel observability over the next 24-48h once warm instances exercise the new in-flight dedup + 90s negative cache. Worst case is no regression vs prior behaviour — the resilience primitives are additive to the existing positive cache and cookie-refresh retry.

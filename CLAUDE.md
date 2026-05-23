@@ -1,8 +1,9 @@
 # Market Cockpit — Claude Handoff Memory
 
 > Read this FIRST when starting any new chat. Saves you 30 minutes of context-rebuilding.
-> **Last updated: 2026-05-23 (Day-4 MARATHON, 30+ patches).** Day-4 shipped Patches 0688–0730 covering: 21-bug QA report fixes (every infinite-loading page, quote API mapping, NSE/NASDAQ label, 404 slugs), Vercel CPU rescue (free-tier diet), Movers Attribution Engine v2 (institutional event-driven), 100+ new detector synonyms, market-hours lib, safe-fetch lib, ticker-normalize lib, alert dispatcher infrastructure (Slack/SMTP/webhook ready for env vars), Indian smallcap news ingestion via Yahoo+Google RSS, multibagger scoring extracted to libs (page.tsx 10,719 → 7,140 lines). **READ §18 FIRST in new sessions** — it has the complete handoff for Day-4. HEAD on `origin/main` = `b920509`. Latest patch number for new work: **0731**.
-> **Sandbox name was `fervent-kind-hypatia` at Day-4 session end.** New sessions get a new name — substitute via `ls /sessions/`. Path mapping: `/Users/.../market-cockpit/` → `/sessions/<sandbox>/mnt/market-cockpit/`.
+> **Last updated: 2026-05-23 (Day-5, Patch 0732 — NSE resilient-fetch).** Day-5 shipped P0732: surgical mitigation for the ~50% NSE upstream failure rate flagged in Day-4 §18.8. New `lib/nse-resilient-fetch.ts` adds in-flight dedup (`Map<key, Promise>`) + 90s in-memory negative cache, wired into the `nseApiFetch` funnel and both NSE/BSE announcement adapters. Effect measurable in Vercel observability over next 24-48h. **READ §18 FIRST** for full Day-4 context (P0688–P0731) — Day-5 delta is at the bottom of §18 (§18.11). HEAD on `origin/main` = `43b1f6a`. Latest patch number for new work: **0733**.
+> **Day-4 sandbox was `fervent-kind-hypatia`; Day-5 was `trusting-fervent-archimedes`.** New sessions get a new name — substitute via `ls /sessions/`. Path mapping: `/Users/.../market-cockpit/` → `/sessions/<sandbox>/mnt/market-cockpit/`.
+> **Sandbox `/tmp` is wiped between bash invocations in Day-5's runtime.** The §14.5 / §18.9 deploy flow had to be amended: do `git clone … /tmp/mc-deployN && cd … && cp … && git commit … && git push` all in ONE bash call rather than across separate calls. See §18.11.
 
 ---
 
@@ -2399,3 +2400,96 @@ cd /tmp/mc-deploy && \
 > - For any edit to `app/(dashboard)/.../page.tsx`, run `next lint` OR `next build --no-lint` before push — Next.js page-export validation catches what `tsc --noEmit` misses
 > - Never put `_comment` or non-schema fields in `vercel.json` — Vercel rejects it (P0706 lesson)
 > - Multibagger scoring now lives in `lib/multibagger-india-scoring.ts` + `lib/multibagger-usa-scoring.ts` — edit there, NOT page.tsx
+
+---
+
+### 18.11 · DAY-5 DELTA (Patch 0732) — NSE resilient-fetch
+
+Single-patch session. Picked off the top candidate from §18.10:
+"Add negative-cache + dedup in-flight + tighter NSE timeouts".
+
+**What shipped (commit `43b1f6a`):**
+
+- **New `frontend/src/lib/nse-resilient-fetch.ts`** — pure primitives:
+  - `dedupedCall(key, fn)` — in-flight `Map<string, Promise>`. N concurrent
+    callers with the same key share one upstream fetch. Entries auto-evict
+    after the promise settles.
+  - `negCacheCheck(key)` / `negCacheSet(key, ttlMs, reason)` /
+    `negCacheClear(key)` — short-lived in-memory failure cache. 90s default,
+    30s for empty payloads. Bounded at 1000 entries with batch eviction.
+  - `getResilienceStats()` — opt-in observability counters
+    (dedups, negHits, negSets, in-flight size, neg-cache size).
+  - `_resetResilienceState()` — test helper, not for production use.
+
+- **`lib/nse.ts:nseApiFetch()`** — wrapped. Order is now:
+  1. Positive in-memory cache check (unchanged fast path).
+  2. Negative cache check — return null immediately if window-recent failure.
+  3. `dedupedCall` lock — concurrent miss path shares one fetch.
+  4. Inside the lock, re-check positive cache (another caller may have
+     populated it). Then run the existing upstream fetch incl. 403/401
+     cookie-refresh retry. On any failure path, `negCacheSet` is called.
+
+- **`lib/nse-bse-feed.ts:fetchNSEAnnouncements` / `fetchBSEAnnouncements`** —
+  bypass `nseApiFetch` entirely, so wired with the same dedup + negcache
+  primitives directly. Dedup key includes from/to date (and pages for BSE).
+  Also added a `withDefaultTimeout(callerSignal, 12_000ms)` helper —
+  combines a caller-supplied AbortSignal with a 12s upper bound so a hung
+  upstream can no longer eat the full Vercel maxDuration when a caller
+  forgot to pass a signal. Uses `AbortSignal.any` when available (Node
+  20+ runtime) and falls back to a manually-chained controller otherwise.
+
+**Why in-memory and not KV for negative cache:**
+- KV writes during an outage burst burn Upstash budget at exactly the
+  worst moment (the period when NSE is failing repeatedly is also the
+  period with the most retry traffic).
+- In-memory survives across requests within a warm Vercel instance —
+  enough to absorb burst retries within a single user's session and
+  across the warm pool.
+- Cold start resets it, which is desirable behaviour (NSE may have
+  recovered, so we want callers to retry).
+- No extra async overhead in the hot path.
+
+**Behavior change scoped to the miss path.** Positive cache hits unchanged.
+The 403/401 cookie-refresh retry inside `nseApiFetch` is unchanged. The
+only new behaviour: after a failure, callers within the 90s window get
+null immediately rather than burning another 10s timeout.
+
+**Sandbox `/tmp` quirk discovered (worth recording for future sessions):**
+The Day-5 runtime wipes `/tmp` between separate `mcp__workspace__bash`
+invocations. The documented deploy flow in §14.5 / §18.9 used two
+separate bash calls (clone → cp-commit-push) and the `/tmp/mc-deploy`
+directory vanished between them. Fix: chain the entire flow in a single
+bash call. Updated header at top of file now warns about this.
+
+**Verification:**
+- `npx tsc --noEmit` across the whole frontend: 0 errors.
+- 3 files modified (+381/-94 lines net): new `lib/nse-resilient-fetch.ts`,
+  edits to `lib/nse.ts` and `lib/nse-bse-feed.ts`.
+- No `page.tsx` touched, so §13.1 Next-build validation not required.
+- Pushed to `origin/main` cleanly: `442cfaa..43b1f6a`.
+
+**Still open (P0733+ candidates):**
+- Wire `ANTHROPIC_API_KEY` into `/api/v1/concall/analyze` (BLK-01)
+- Trendlyne/Moneycontrol scraper cron (BLK-02)
+- Build TheWrap Module 3/4/5 (Strategic Hire / Marquee Capital /
+  Marketing Authorization) — detectors exist in `lib/thewrap-detectors.ts`,
+  routes needed
+- Add `↻ Recompute` button on saved Auto-Val entries so stale sector
+  classifications refresh
+- Wire valuation upside into concall score (~10% weight) — long-pending
+  follow-up from P0681
+
+**STARTER PROMPT for Day-6:**
+
+> Read `/Users/radhevrishi/Desktop/Python/Imp Marketcockpit/market-cockpit/CLAUDE.md` section 18 (especially §18.11 Day-5 delta) AND section 13 (Hard Rules) before doing anything. HEAD on main = `43b1f6a`. Latest patch number for new work: **0733**.
+>
+> NSE resilient-fetch (P0732) is live as of 2026-05-23. Check Vercel
+> observability for `/api/v1/super-investor-news` and
+> `/api/v1/concall-intel/live-feed` to confirm the dedup + negcache is
+> actually reducing call volume and the 50% failure rate dropped.
+> Telemetry available via `getResilienceStats()` from
+> `@/lib/nse-resilient-fetch` if a /api/v1/health endpoint is wanted.
+>
+> Note the Day-5 sandbox quirk: `/tmp` does NOT persist between bash
+> invocations. Per §18.11, the §14.5 deploy flow needs to happen in a
+> single bash call (clone + cp + commit + push chained with `&&`).
