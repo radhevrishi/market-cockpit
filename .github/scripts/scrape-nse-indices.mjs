@@ -146,6 +146,93 @@ async function fetchEquityMaster() {
   return null;
 }
 
+// ─── PATCH 0790: NSE BHAVCOPY (EOD prices for all NSE-listed equities) ────
+// NSE publishes a daily security-bhavdata-full CSV with EOD OHLC + prev close
+// + volume + delivery for every stock that traded. Eliminates the need to
+// fetch Yahoo prices from Vercel (which is currently rate-limited).
+//
+// URL variants to try (NSE has moved this file across infrastructure):
+//   1. Undated 'latest' file (single fixed URL)
+//   2. Dated file (walk back 10 weekdays to find most recent)
+const BHAVCOPY_URLS = [
+  // Latest/undated patterns (one of these usually exists)
+  'https://nsearchives.nseindia.com/products/content/sec_bhavdata_full.csv',
+  'https://archives.nseindia.com/products/content/sec_bhavdata_full.csv',
+];
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+
+function bhavCopyDatedUrls(d) {
+  const dd = pad2(d.getUTCDate());
+  const mm = pad2(d.getUTCMonth() + 1);
+  const yyyy = d.getUTCFullYear();
+  return [
+    `https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_${dd}${mm}${yyyy}.csv`,
+    `https://archives.nseindia.com/products/content/sec_bhavdata_full_${dd}${mm}${yyyy}.csv`,
+  ];
+}
+
+async function fetchBhavCopy() {
+  // Try latest/undated URLs first
+  for (const url of BHAVCOPY_URLS) {
+    const rows = await fetchCsv(url, `BHAVCOPY ${new URL(url).hostname} (latest)`);
+    if (rows && rows.length > 500) {
+      console.log(`  ✓ BHAVCOPY loaded from ${url}`);
+      return { rows, url };
+    }
+  }
+  // Walk back up to 10 weekdays trying dated URLs
+  const today = new Date();
+  for (let back = 1; back <= 10; back++) {
+    const d = new Date(today.getTime() - back * 86400_000);
+    const dow = d.getUTCDay();
+    if (dow === 0 || dow === 6) continue;
+    for (const url of bhavCopyDatedUrls(d)) {
+      const rows = await fetchCsv(url, `BHAVCOPY ${d.toISOString().slice(0,10)}`);
+      if (rows && rows.length > 500) {
+        console.log(`  ✓ BHAVCOPY loaded from ${url}`);
+        return { rows, url };
+      }
+    }
+  }
+  console.log('::warning title=BHAVCOPY::all date/URL combinations failed');
+  return null;
+}
+
+// sec_bhavdata_full.csv columns (with leading spaces on most):
+//   SYMBOL, SERIES, DATE1, PREV_CLOSE, OPEN_PRICE, HIGH_PRICE, LOW_PRICE,
+//   LAST_PRICE, CLOSE_PRICE, AVG_PRICE, TTL_TRD_QNTY, TURNOVER_LACS,
+//   NO_OF_TRADES, DELIV_QTY, DELIV_PER
+function parseBhavRow(row) {
+  // Many fields have leading space due to NSE's CSV format. Try both.
+  const G = (k) => (row[k] ?? row[' ' + k] ?? row[k + ' '] ?? '').toString().trim();
+  const sym = G('SYMBOL').toUpperCase();
+  const series = G('SERIES');
+  if (!sym || series !== 'EQ') return null;
+  const close = parseFloat(G('CLOSE_PRICE')) || 0;
+  const prevClose = parseFloat(G('PREV_CLOSE')) || 0;
+  const open = parseFloat(G('OPEN_PRICE')) || 0;
+  const high = parseFloat(G('HIGH_PRICE')) || 0;
+  const low = parseFloat(G('LOW_PRICE')) || 0;
+  const last = parseFloat(G('LAST_PRICE')) || 0;
+  const volume = parseInt(G('TTL_TRD_QNTY'), 10) || 0;
+  if (close <= 0) return null;
+  const change = prevClose > 0 ? close - prevClose : 0;
+  const changePercent = prevClose > 0 ? (change / prevClose) * 100 : 0;
+  return {
+    ticker: sym,
+    price: close,
+    previousClose: prevClose,
+    change,
+    changePercent,
+    open,
+    dayHigh: high,
+    dayLow: low,
+    lastTraded: last,
+    volume,
+  };
+}
+
 async function main() {
   const startedAt = Date.now();
   console.log(`▶ scrape-nse-indices (full master + indices) at ${new Date().toISOString()}`);
@@ -206,15 +293,47 @@ async function main() {
     process.exit(1);
   }
 
+  // Phase 3: NSE BHAVCOPY → EOD prices for all NSE-listed equities. PATCH 0790.
+  // Embedding prices in the KV blob eliminates Vercel's dependency on Yahoo
+  // for weekend prices (Yahoo rate-limits Vercel IPs heavily after burst probing).
+  console.log('  ── Phase 3: NSE BHAVCOPY (EOD prices) ──');
+  const priceMap = new Map();
+  let bhavDate = null;
+  const bhav = await fetchBhavCopy();
+  if (bhav) {
+    bhavDate = bhav.url;
+    for (const row of bhav.rows) {
+      const px = parseBhavRow(row);
+      if (px) priceMap.set(px.ticker, px);
+    }
+    console.log(`  BHAVCOPY parsed: ${priceMap.size} EQ-series prices`);
+  } else {
+    console.log('  ⚠ BHAVCOPY unavailable — blob will be ticker-only; Vercel will fall back to Yahoo enrichment.');
+  }
+
   const tickers = [];
   for (const [sym, cap] of tickerCap) {
+    const px = priceMap.get(sym);
     tickers.push({
       ticker: sym,
       company: tickerCompany.get(sym) || sym,
       industry: tickerIndustry.get(sym) || '',
       cap,
+      // PATCH 0790: embed EOD prices when available
+      price: px?.price || 0,
+      previousClose: px?.previousClose || 0,
+      change: px?.change || 0,
+      changePercent: px?.changePercent || 0,
+      open: px?.open || 0,
+      dayHigh: px?.dayHigh || 0,
+      dayLow: px?.dayLow || 0,
+      volume: px?.volume || 0,
+      hasPrice: !!px,
     });
   }
+
+  const pricedCount = tickers.filter(t => t.hasPrice).length;
+  console.log(`  embedded prices: ${pricedCount}/${tickers.length} tickers`);
 
   const capBreakdown = tickers.reduce((acc, t) => { acc[t.cap] = (acc[t.cap] || 0) + 1; return acc; }, {});
   const elapsed = Date.now() - startedAt;
@@ -223,6 +342,8 @@ async function main() {
     generatedAt: new Date().toISOString(),
     elapsedMs: elapsed,
     totalTickers: tickers.length,
+    pricedCount,
+    bhavSource: bhavDate,
     capBreakdown,
     tickers,
   };

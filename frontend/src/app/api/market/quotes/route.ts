@@ -480,38 +480,72 @@ async function fetchIndianDataWithCache() {
   if (stocks.length < 100) {
     try {
       const universeBlob = await kvGet<any>('nse-ticker-universe:v1:latest');
-      const tickers: Array<{ ticker: string; company: string; industry: string; cap: string }> = universeBlob?.tickers || [];
+      const tickers: Array<any> = universeBlob?.tickers || [];
       if (tickers.length >= 100) {
         const universeAgeMs = Date.now() - new Date(universeBlob?.generatedAt || 0).getTime();
         const universeAgeStr = `${Math.round(universeAgeMs / 60_000)}m old`;
-        // Fetch prices for the entire universe via Yahoo (in batches handled by fetchQuotesWithFallback)
-        const yahooSyms = tickers.map(t => `${t.ticker}.NS`);
-        const quotes = await fetchQuotesWithFallback(yahooSyms);
-        const quoteMap = new Map<string, any>();
-        for (const q of quotes) {
-          const raw = (q?.symbol || '').replace(/\.(NS|BO)$/i, '').toUpperCase();
-          if (raw) quoteMap.set(raw, q);
+        // PATCH 0790 — KV blob now carries EOD prices (BHAVCOPY). Use those
+        // directly; skip Yahoo entirely. Yahoo enrichment only fires for
+        // tickers without embedded prices (rare, ~0 after BHAVCOPY phase
+        // runs successfully).
+        const pricedFromBlob = tickers.filter((t: any) => t.hasPrice && (t.price ?? 0) > 0);
+        const unpricedSyms = tickers.filter((t: any) => !t.hasPrice).map((t: any) => `${t.ticker}.NS`);
+        let yahooMap = new Map<string, any>();
+        if (unpricedSyms.length > 0 && unpricedSyms.length < 800) {
+          // Yahoo enrichment only when there's a manageable miss count
+          // (cap at 800 to avoid Vercel maxDuration on cold Yahoo state).
+          try {
+            const quotes = await fetchQuotesWithFallback(unpricedSyms);
+            for (const q of quotes) {
+              const raw = (q?.symbol || '').replace(/\.(NS|BO)$/i, '').toUpperCase();
+              if (raw) yahooMap.set(raw, q);
+            }
+          } catch { /* Yahoo failure tolerated — we have blob prices */ }
         }
+
         const mergedStocks: any[] = [];
         for (const t of tickers) {
-          const q = quoteMap.get(t.ticker);
-          if (!q || !(q.regularMarketPrice > 0)) continue;
-          const price = q.regularMarketPrice || 0;
-          const prevClose = q.regularMarketPreviousClose || 0;
-          const reportedChg = Number.isFinite(q.regularMarketChange) ? q.regularMarketChange : 0;
-          const reportedPct = Number.isFinite(q.regularMarketChangePercent) ? q.regularMarketChangePercent : 0;
-          const computedChg = (price > 0 && prevClose > 0) ? (price - prevClose) : 0;
-          const computedPct = (price > 0 && prevClose > 0) ? ((price - prevClose) / prevClose) * 100 : 0;
-          const change = reportedChg !== 0 ? reportedChg : computedChg;
-          const changePercent = reportedPct !== 0 ? reportedPct : computedPct;
+          let price = 0, prevClose = 0, change = 0, changePercent = 0;
+          let volume = 0, marketCap = 0, open = 0, dayHigh = 0, dayLow = 0, yearHigh = 0, yearLow = 0;
+          let companyFromYahoo = '';
+
+          if (t.hasPrice && (t.price ?? 0) > 0) {
+            // EOD from BHAVCOPY (canonical NSE source)
+            price = t.price;
+            prevClose = t.previousClose || 0;
+            change = t.change || 0;
+            changePercent = t.changePercent || 0;
+            volume = t.volume || 0;
+            open = t.open || 0;
+            dayHigh = t.dayHigh || 0;
+            dayLow = t.dayLow || 0;
+          } else {
+            // Yahoo enrichment for missing prices
+            const q = yahooMap.get(t.ticker);
+            if (!q || !(q.regularMarketPrice > 0)) continue;
+            price = q.regularMarketPrice || 0;
+            prevClose = q.regularMarketPreviousClose || 0;
+            const reportedChg = Number.isFinite(q.regularMarketChange) ? q.regularMarketChange : 0;
+            const reportedPct = Number.isFinite(q.regularMarketChangePercent) ? q.regularMarketChangePercent : 0;
+            const computedChg = (price > 0 && prevClose > 0) ? (price - prevClose) : 0;
+            const computedPct = (price > 0 && prevClose > 0) ? ((price - prevClose) / prevClose) * 100 : 0;
+            change = reportedChg !== 0 ? reportedChg : computedChg;
+            changePercent = reportedPct !== 0 ? reportedPct : computedPct;
+            volume = q.regularMarketVolume || 0;
+            marketCap = q.marketCap || 0;
+            open = q.regularMarketOpen || 0;
+            dayHigh = q.regularMarketDayHigh || 0;
+            dayLow = q.regularMarketDayLow || 0;
+            yearHigh = q.fiftyTwoWeekHigh || 0;
+            yearLow = q.fiftyTwoWeekLow || 0;
+            companyFromYahoo = q.shortName || '';
+          }
+
           const sector = sectorMap[t.ticker] || normalizeSector(t.industry || '') || NIFTY50_SECTORS[t.ticker] || 'Other';
-          // PATCH 0789 — derive cap from Yahoo marketCap when blob has 'Other'
-          // (non-indexed names from EQUITY_L master list). Thresholds in ₹ crores:
-          //   >50,000 Cr Large · >15,000 Cr Mid · >2,000 Cr Small · else Micro
-          // q.marketCap is in INR (not Cr); divide by 10^7 to get crores.
+          // Cap derivation: index-canonical first; for 'Other' use mcap if available
           let cap = t.cap;
           if (cap === 'Other' || !cap) {
-            const mcapCr = q.marketCap ? q.marketCap / 1e7 : 0;
+            const mcapCr = marketCap ? marketCap / 1e7 : 0;
             if (mcapCr > 50_000)      cap = 'Large';
             else if (mcapCr > 15_000) cap = 'Mid';
             else if (mcapCr > 2_000)  cap = 'Small';
@@ -519,24 +553,26 @@ async function fetchIndianDataWithCache() {
           }
           mergedStocks.push({
             ticker: t.ticker,
-            company: t.company || q.shortName || t.ticker,
+            company: t.company || companyFromYahoo || t.ticker,
             sector,
             industry: t.industry || '',
             price,
             change,
             changePercent,
-            volume: q.regularMarketVolume || 0,
-            marketCap: q.marketCap || 0,
+            volume,
+            marketCap,
             previousClose: prevClose,
-            open: q.regularMarketOpen || 0,
-            dayHigh: q.regularMarketDayHigh || 0,
-            dayLow: q.regularMarketDayLow || 0,
-            yearHigh: q.fiftyTwoWeekHigh || 0,
-            yearLow: q.fiftyTwoWeekLow || 0,
+            open,
+            dayHigh,
+            dayLow,
+            yearHigh,
+            yearLow,
             indexGroup: cap,
           });
         }
-        if (mergedStocks.length >= 100) {
+        // Lower threshold from 100 to 30 — partial result is better than NIFTY-50
+        // last-resort which is also Yahoo-dependent.
+        if (mergedStocks.length >= 30) {
           const gainers = [...mergedStocks].sort((a, b) => b.changePercent - a.changePercent).filter((s: any) => s.changePercent > 0).slice(0, 30);
           const losers  = [...mergedStocks].sort((a, b) => a.changePercent - b.changePercent).filter((s: any) => s.changePercent < 0).slice(0, 30);
           return {
@@ -550,7 +586,7 @@ async function fetchIndianDataWithCache() {
               avgChange: mergedStocks.length ? mergedStocks.reduce((s: number, x: any) => s + (x.changePercent || 0), 0) / mergedStocks.length : 0,
               sectors: new Set(mergedStocks.map((s: any) => s.sector)).size,
             },
-            source: `NSE-universe (KV ${universeAgeStr}) + Yahoo prices`,
+            source: `NSE-universe (KV ${universeAgeStr}) + BHAVCOPY/${universeBlob.pricedCount || 0} + Yahoo enrich/${yahooMap.size}`,
             updatedAt: new Date().toISOString(),
           };
         }
