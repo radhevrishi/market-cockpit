@@ -614,28 +614,39 @@ export default function HomeDashboard() {
         //   1) Own universe — broad-response intersect + per-ticker fetch (P0780)
         //   2) Small+midcap intersection from broad response (excludes NIFTY 50 noise)
         //   3) Full broad response (last resort, never blank)
+        // PATCH 0793 — ALWAYS fill to 10 each side. User universe gets
+        // priority placement (top of list), then fill remaining slots from
+        // broad market gainers/losers. Previously when user's CB+watchlist
+        // had only 3 names overlapping with gainers, only 3 rows showed.
+        const broadG = rawG.slice().sort((a: any, b: any) => (b.changePercent || 0) - (a.changePercent || 0));
+        const broadL = rawL.slice().sort((a: any, b: any) => (a.changePercent || 0) - (b.changePercent || 0));
         let gainers: any[] = [];
         let losers: any[] = [];
+        const TARGET = 10;
         if (universe.size > 0) {
-          const uG = rawG.filter(inUniverse);
-          const uL = rawL.filter(inUniverse);
-          const allG = [...uG, ...uExtraG].sort((a, b) => (b.changePercent || 0) - (a.changePercent || 0));
-          const allL = [...uL, ...uExtraL].sort((a, b) => (a.changePercent || 0) - (b.changePercent || 0));
-          if (allG.length > 0 || allL.length > 0) {
-            gainers = allG.slice(0, 10);
-            losers = allL.slice(0, 10);
-          }
-        }
-        if (gainers.length === 0 && losers.length === 0) {
-          const filteredG = smallMidOnly(rawG);
-          const filteredL = smallMidOnly(rawL);
-          if (filteredG.length > 0 || filteredL.length > 0) {
-            gainers = filteredG.slice(0, 10);
-            losers = filteredL.slice(0, 10);
-          } else {
-            gainers = rawG.slice(0, 10);
-            losers = rawL.slice(0, 10);
-          }
+          const uG = broadG.filter(inUniverse);
+          const uL = broadL.filter(inUniverse);
+          const uExtraGFiltered = uExtraG.filter((s: any) => !uG.find((g: any) => g.ticker === s.ticker));
+          const uExtraLFiltered = uExtraL.filter((s: any) => !uL.find((g: any) => g.ticker === s.ticker));
+          const universeG = [...uG, ...uExtraGFiltered].sort((a, b) => (b.changePercent || 0) - (a.changePercent || 0));
+          const universeL = [...uL, ...uExtraLFiltered].sort((a, b) => (a.changePercent || 0) - (b.changePercent || 0));
+          // Take all from universe, then fill from broad excluding duplicates
+          const universeSetG = new Set(universeG.map((g: any) => g.ticker));
+          const universeSetL = new Set(universeL.map((l: any) => l.ticker));
+          const fillG = broadG.filter((s: any) => !universeSetG.has(s.ticker));
+          const fillL = broadL.filter((s: any) => !universeSetL.has(s.ticker));
+          gainers = [...universeG, ...fillG].slice(0, TARGET);
+          losers  = [...universeL, ...fillL].slice(0, TARGET);
+        } else {
+          // No universe configured — small+mid preferred, then full broad
+          const filteredG = smallMidOnly(broadG);
+          const filteredL = smallMidOnly(broadL);
+          const fillSetG = new Set(filteredG.map((s: any) => s.ticker));
+          const fillSetL = new Set(filteredL.map((s: any) => s.ticker));
+          const restG = broadG.filter((s: any) => !fillSetG.has(s.ticker));
+          const restL = broadL.filter((s: any) => !fillSetL.has(s.ticker));
+          gainers = [...filteredG, ...restG].slice(0, TARGET);
+          losers  = [...filteredL, ...restL].slice(0, TARGET);
         }
         setData((d) => ({ ...d, gainers, losers, moversUpdatedAt: j?.updatedAt } as any));
 
