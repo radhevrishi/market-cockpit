@@ -24,6 +24,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
+import { kvGet } from '@/lib/kv';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -79,9 +80,246 @@ function sigmoid(x: number, mid: number, k: number) {
   return 100 / (1 + Math.exp(-(x - mid) / k));
 }
 
-export async function GET() {
-  const t0 = Date.now();
+// ═══════════════════════════════════════════════════════════════════════════
+// PATCH 0807 — Broad-universe breadth path
+//
+// Default mode now uses the nse-ticker-universe + nse-rolling-stats blobs
+// to compute breadth over the full ~2,369-ticker NSE universe instead of
+// the 25-symbol Yahoo basket.
+//
+// DMA proxies (since we don't have explicit 50DMA / 200DMA in the blobs):
+//   • mom1M  ≥  0%  → proxy for "above 50DMA"   (in uptrend last month)
+//   • pctOf52wHigh ≥ 0.70 → proxy for "above 200DMA" (within 30% of 52W high)
+//   • pctOf52wHigh ≥ 0.98 → 52W new high
+//   • pctOf52wHigh ≤ 0.05 → 52W new low (within 5% of 52W low)
+//
+// Sector breadth uses sector field per ticker; participation across all
+// sectors with ≥ 5 stocks classified.
+//
+// Fallback: when the blobs are missing or stale (>48h), the route falls
+// back to the legacy 25-symbol Yahoo basket so the page always renders.
+// ═══════════════════════════════════════════════════════════════════════════
 
+interface UniverseTicker {
+  ticker: string;
+  sector?: string;
+  industry?: string;
+  marketCap?: number;
+  changePercent?: number;
+  hasPrice?: boolean;
+  indexGroup?: string;
+}
+
+interface RollingStat {
+  vol20DAvg?: number;
+  mom1M?: number;
+  high52w?: number;
+  low52w?: number;
+  pctOf52wHigh?: number;
+}
+
+interface BroadResult {
+  ok: boolean;
+  trendScore?: number;
+  sectorScore?: number;
+  smallcapScore?: number;
+  flowScore?: number;
+  momScore?: number;
+  pillars?: any;
+  universeSize?: number;
+  cohortDate?: string;
+}
+
+async function computeBroadBreadth(): Promise<BroadResult> {
+  // Read both blobs in parallel — neither blocks the other.
+  const [uniBlob, rsBlob] = await Promise.all([
+    kvGet<{ tickers?: UniverseTicker[]; generatedAt?: string }>('nse-ticker-universe:v1:latest').catch(() => null),
+    kvGet<{ stats?: Record<string, RollingStat>; generatedAt?: string }>('nse-rolling-stats:v1:latest').catch(() => null),
+  ]);
+
+  if (!uniBlob?.tickers || !Array.isArray(uniBlob.tickers) || uniBlob.tickers.length < 100) {
+    return { ok: false };
+  }
+
+  // Quality gate: blob older than 4 days = stale, fall back.
+  if (uniBlob.generatedAt) {
+    const ageDays = (Date.now() - new Date(uniBlob.generatedAt).getTime()) / 86400000;
+    if (ageDays > 4) return { ok: false };
+  }
+
+  const stats = rsBlob?.stats || {};
+  const tickers = uniBlob.tickers.filter((t) => t.hasPrice && t.ticker);
+
+  // ─── TREND BREADTH (35%) ─────────────────────────────────────────────
+  let aboveTrend50 = 0, hasTrend50 = 0;       // mom1M ≥ 0
+  let aboveTrend200 = 0, hasTrend200 = 0;     // pctOf52wHigh ≥ 0.70
+  let newHigh = 0, newLow = 0, hasHL = 0;
+  for (const t of tickers) {
+    const s = stats[t.ticker] || {};
+    if (Number.isFinite(s.mom1M)) {
+      hasTrend50++;
+      if (s.mom1M! >= 0) aboveTrend50++;
+    }
+    if (Number.isFinite(s.pctOf52wHigh)) {
+      hasTrend200++;
+      const p = s.pctOf52wHigh!;
+      if (p >= 0.70) aboveTrend200++;
+      hasHL++;
+      if (p >= 0.98) newHigh++;
+      if (p <= 0.05) newLow++;
+    }
+  }
+  const pct50 = hasTrend50 > 0 ? (aboveTrend50 / hasTrend50) * 100 : 50;
+  const pct200 = hasTrend200 > 0 ? (aboveTrend200 / hasTrend200) * 100 : 50;
+  const hlSpread = hasHL > 0 ? ((newHigh - newLow) / hasHL) * 100 : 0;
+  const trendScore =
+    0.45 * pct50 +
+    0.40 * pct200 +
+    0.15 * Math.max(0, Math.min(100, 50 + hlSpread * 15));
+
+  // ─── SECTOR BREADTH (25%) ────────────────────────────────────────────
+  // Group tickers by sector; count sectors where median mom1M ≥ 0.
+  const sectorMom: Record<string, number[]> = {};
+  for (const t of tickers) {
+    const sec = (t.sector || '').trim();
+    if (!sec) continue;
+    const s = stats[t.ticker] || {};
+    if (!Number.isFinite(s.mom1M)) continue;
+    if (!sectorMom[sec]) sectorMom[sec] = [];
+    sectorMom[sec].push(s.mom1M!);
+  }
+  const sectorRows: { sector: string; n: number; medianMom: number; pctUp: number }[] = [];
+  for (const [sec, vals] of Object.entries(sectorMom)) {
+    if (vals.length < 5) continue;            // require ≥5 stocks to count
+    const sorted = vals.slice().sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    const up = vals.filter((v) => v >= 0).length;
+    sectorRows.push({ sector: sec, n: vals.length, medianMom: median, pctUp: (up / vals.length) * 100 });
+  }
+  const sectorsAbove = sectorRows.filter((r) => r.medianMom >= 0).length;
+  const sectorScore = sectorRows.length > 0 ? (sectorsAbove / sectorRows.length) * 100 : 50;
+
+  // ─── SMALLCAP PARTICIPATION (20%) ────────────────────────────────────
+  // % of small/microcap names with mom1M > 0, vs large/midcap baseline
+  let smMomUp = 0, smMomHas = 0;
+  let lgMomUp = 0, lgMomHas = 0;
+  for (const t of tickers) {
+    const s = stats[t.ticker] || {};
+    if (!Number.isFinite(s.mom1M)) continue;
+    const cap = (t.indexGroup || '').toLowerCase();
+    const isSmall = cap === 'small' || cap === 'micro' || (t.marketCap !== undefined && t.marketCap < 10000);
+    if (isSmall) {
+      smMomHas++;
+      if (s.mom1M! >= 0) smMomUp++;
+    } else {
+      lgMomHas++;
+      if (s.mom1M! >= 0) lgMomUp++;
+    }
+  }
+  const smPct = smMomHas > 0 ? (smMomUp / smMomHas) * 100 : 50;
+  const lgPct = lgMomHas > 0 ? (lgMomUp / lgMomHas) * 100 : 50;
+  // Smallcap outperformance = healthy participation
+  const smallcapScore = Math.max(0, Math.min(100, 50 + (smPct - lgPct) * 1.0));
+
+  // ─── INSTITUTIONAL FLOW (10%) ────────────────────────────────────────
+  // % of largecaps (≥ ₹50,000 Cr) above 200DMA proxy — institutional ownership concentrates here
+  let lcAbove = 0, lcHas = 0;
+  for (const t of tickers) {
+    if (!t.marketCap || t.marketCap < 50000) continue;
+    const s = stats[t.ticker] || {};
+    if (!Number.isFinite(s.pctOf52wHigh)) continue;
+    lcHas++;
+    if (s.pctOf52wHigh! >= 0.70) lcAbove++;
+  }
+  const flowScore = lcHas > 0 ? (lcAbove / lcHas) * 100 : 50;
+
+  // ─── MOMENTUM BREADTH (10%) ──────────────────────────────────────────
+  // % of universe where today's change AND mom1M agree (sign-aligned)
+  let aligned = 0, hasAlign = 0;
+  for (const t of tickers) {
+    const s = stats[t.ticker] || {};
+    if (!Number.isFinite(s.mom1M) || !Number.isFinite(t.changePercent)) continue;
+    hasAlign++;
+    if (Math.sign(s.mom1M!) === Math.sign(t.changePercent!) && Math.abs(s.mom1M!) > 1) aligned++;
+  }
+  const momScore = hasAlign > 0 ? (aligned / hasAlign) * 100 : 50;
+
+  return {
+    ok: true,
+    trendScore, sectorScore, smallcapScore, flowScore, momScore,
+    pillars: {
+      trend: {
+        score: Math.round(trendScore),
+        weight: 35,
+        pct50: Math.round(pct50),
+        pct200: Math.round(pct200),
+        newHigh,
+        newLow,
+        hlSpread: Math.round(hlSpread),
+        proxy: true,                          // signal to UI: these are proxies
+        proxyNote: 'mom1M ≥ 0 used as 50DMA proxy; pctOf52wHigh ≥ 0.70 as 200DMA proxy',
+      },
+      sector: {
+        score: Math.round(sectorScore),
+        weight: 25,
+        above: sectorsAbove,
+        total: sectorRows.length,
+        topSectors: sectorRows.slice().sort((a, b) => b.medianMom - a.medianMom).slice(0, 5)
+          .map((r) => ({ sector: r.sector, n: r.n, medianMom: +r.medianMom.toFixed(2), pctUp: Math.round(r.pctUp) })),
+        bottomSectors: sectorRows.slice().sort((a, b) => a.medianMom - b.medianMom).slice(0, 5)
+          .map((r) => ({ sector: r.sector, n: r.n, medianMom: +r.medianMom.toFixed(2), pctUp: Math.round(r.pctUp) })),
+      },
+      smallcap: { score: Math.round(smallcapScore), weight: 20, smPct: Math.round(smPct), lgPct: Math.round(lgPct), smCount: smMomHas, lgCount: lgMomHas },
+      flow:     { score: Math.round(flowScore), weight: 10, lcAbove, lcTotal: lcHas, proxy: true, proxyNote: 'largecap above 200DMA proxy = institutional ownership concentration' },
+      momentum: { score: Math.round(momScore), weight: 10, aligned, total: hasAlign },
+    },
+    universeSize: tickers.length,
+    cohortDate: uniBlob.generatedAt,
+  };
+}
+
+export async function GET(request: Request) {
+  const t0 = Date.now();
+  const { searchParams } = new URL(request.url);
+  const mode = (searchParams.get('mode') || 'broad').toLowerCase();   // PATCH 0807 — default to broad
+
+  // ─── BROAD MODE — read from KV blobs, full NSE universe ──────────────
+  if (mode === 'broad' || mode === 'auto') {
+    const broad = await computeBroadBreadth();
+    if (broad.ok) {
+      const composite =
+        broad.trendScore! * 0.35 +
+        broad.sectorScore! * 0.25 +
+        broad.smallcapScore! * 0.20 +
+        broad.flowScore! * 0.10 +
+        broad.momScore! * 0.10;
+      const compositeR = Math.round(composite);
+      const regime =
+        compositeR >= 80 ? { label: 'Expansion',    color: '#10B981', desc: 'Broad participation, aggressive risk-on', cash: 0 } :
+        compositeR >= 60 ? { label: 'Healthy Bull', color: '#22D3EE', desc: 'Bullish but selective; reward leadership', cash: 10 } :
+        compositeR >= 40 ? { label: 'Transitional', color: '#F59E0B', desc: 'Mixed signals; penalize weak balance sheets', cash: 25 } :
+                           { label: 'Risk-Off',     color: '#EF4444', desc: 'Narrow tape; only quality and FCF survives', cash: 45 };
+      const payload = {
+        composite: compositeR,
+        regime: regime.label,
+        regime_color: regime.color,
+        regime_desc: regime.desc,
+        suggested_cash_pct: regime.cash,
+        pillars: broad.pillars,
+        universe_size: broad.universeSize,
+        scope: 'broad',
+        scope_label: `Full NSE universe (${broad.universeSize} stocks)`,
+        source: 'nse-ticker-universe + nse-rolling-stats (GH Actions BHAVCOPY)',
+        cohort_date: broad.cohortDate,
+        ms: Date.now() - t0,
+        generated_at: new Date().toISOString(),
+      };
+      return NextResponse.json(payload, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } });
+    }
+    // Fall through to Yahoo basket when blobs missing/stale
+  }
+
+  // ─── LEGACY YAHOO BASKET (?mode=basket or blob fallback) ─────────────
   // Fetch all in parallel
   const results = await Promise.all(BASKET.map((s) => fetchYahooDaily(s)));
   const byName = new Map<string, YahooPoint[]>();
@@ -205,6 +443,9 @@ export async function GET() {
       momentum: { score: Math.round(momScore), weight: 10, makingHigherHighs: mhh, total: mhhHas },
     },
     universe_size: byName.size,
+    scope: 'basket',                                    // PATCH 0807
+    scope_label: `Curated 25-symbol Yahoo basket (${byName.size} resolved)`,
+    source: 'Yahoo Finance daily bars',
     ms: Date.now() - t0,
     generated_at: new Date().toISOString(),
   };

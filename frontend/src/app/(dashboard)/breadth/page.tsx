@@ -18,13 +18,17 @@ interface BreadthPayload {
   regime_desc: string;
   suggested_cash_pct: number;
   pillars: {
-    trend:    { score: number; weight: number; pct50: number; pct200: number; newHigh: number; newLow: number; hlSpread: number };
-    sector:   { score: number; weight: number; above: number; total: number };
-    smallcap: { score: number; weight: number };
-    flow:     { score: number; weight: number };
-    momentum: { score: number; weight: number; makingHigherHighs: number; total: number };
+    trend:    { score: number; weight: number; pct50: number; pct200: number; newHigh: number; newLow: number; hlSpread: number; proxy?: boolean; proxyNote?: string };
+    sector:   { score: number; weight: number; above: number; total: number; topSectors?: any[]; bottomSectors?: any[] };
+    smallcap: { score: number; weight: number; smPct?: number; lgPct?: number; smCount?: number; lgCount?: number };
+    flow:     { score: number; weight: number; lcAbove?: number; lcTotal?: number; proxy?: boolean; proxyNote?: string };
+    momentum: { score: number; weight: number; makingHigherHighs?: number; aligned?: number; total: number };
   };
   universe_size: number;
+  scope?: 'broad' | 'basket';                          // PATCH 0807
+  scope_label?: string;
+  source?: string;
+  cohort_date?: string;
   ms: number;
   generated_at: string;
 }
@@ -184,15 +188,17 @@ export default function BreadthPage() {
               return Number.isFinite(d.getTime()) ? d.toLocaleString('en-IN') : '—';
             } catch { return '—'; }
           })()}<br />
-          {/* PATCH 0697 — honest universe label. Previously read 'Universe: N
-              symbols' which implied a full-market scan. The breadth engine
-              actually scans the user's Watchlist + Conviction Beats bench, so
-              relabel to reflect that and link out to /movers for full breadth. */}
-          <span title="Currently scanning your Watchlist + Conviction Beats bench. For full Nifty 500 breadth, see /movers.">
-            Watchlist Breadth · {data.universe_size} symbols · Fetch {(data.ms / 1000).toFixed(1)}s
+          {/* PATCH 0807 — broad-universe scope label. The breadth engine now
+              reads nse-ticker-universe + nse-rolling-stats blobs populated by
+              the GH Actions BHAVCOPY scraper. Falls back to a 25-symbol Yahoo
+              basket when the blobs are missing or stale. */}
+          <span title={data.source ? `Source: ${data.source}` : ''}>
+            {data.scope_label || `Universe · ${data.universe_size} symbols`} · Fetch {(data.ms / 1000).toFixed(1)}s
           </span>
           <div style={{ fontSize: 9, color: '#4A5B6C', marginTop: 4, fontStyle: 'italic' }}>
-            scope: Watchlist + Conviction Beats · for Nifty 500 breadth see <a href="/movers" style={{ color: '#22D3EE', textDecoration: 'underline' }}>/movers</a>
+            {data.scope === 'broad'
+              ? <>scope: full NSE universe (BHAVCOPY-backed) · for per-stock detail see <a href="/movers" style={{ color: '#22D3EE', textDecoration: 'underline' }}>/movers</a></>
+              : <>scope: curated 25-symbol basket (fallback) · for per-stock detail see <a href="/movers" style={{ color: '#22D3EE', textDecoration: 'underline' }}>/movers</a></>}
           </div>
         </div>
       </div>
