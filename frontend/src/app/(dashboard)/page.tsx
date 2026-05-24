@@ -40,6 +40,11 @@ import {
   cleanMoverLabel,
   type MoverAttribution,
 } from '@/lib/movers-attribution';
+import {
+  scoreCatalyst,
+  BUCKET_LABEL,
+  BUCKET_COLOR,
+} from '@/lib/catalyst-scoring';
 import { getConvictionTickers, getConvictionList } from '@/lib/conviction-beats';
 import { canonicalTicker } from '@/lib/ticker-normalize'; // PATCH 0721
 import { readDecisions } from '@/lib/decisions';
@@ -2013,10 +2018,33 @@ export default function HomeDashboard() {
                 const tier = moverTier(pct);
                 const anom = anomalyTag({ changePercent: pct, attribution: attr, tier });
                 const inUniverse = universeSet.has(tk);
-                const cleanLabel = attr ? cleanMoverLabel(attr) : '';
-                const tooltip = attr
-                  ? `${cleanLabel}\n\n${attr.detail || ''}\n\nConfidence: ${attr.confidence}\nScope: ${attr.scope === 'SECTOR_WIDE' ? 'Sector-wide' : 'Stock-specific'}`
-                  : '';
+
+                // PATCH 0797 — composite scoring with microstructure inputs.
+                // Degrades gracefully: if attr/delivery/volMultiple are all
+                // missing, scoreCatalyst falls back to a sensible primary
+                // driver from price action alone.
+                const score = scoreCatalyst({
+                  attribution: attr,
+                  changePercent: pct,
+                  marketCap: m.marketCap,
+                  indexGroup: m.indexGroup,
+                  volume: m.volume,
+                  deliveryPct: m.deliveryPct,
+                  turnoverLacs: m.turnoverLacs,
+                  // volMultiple, mom1M, pctOf52wHigh come from rolling-stats blob
+                  // (Item 2 — will be wired when that workflow runs).
+                  volMultiple: m.volMultiple,
+                  mom1M: m.mom1M,
+                  pctOf52wHigh: m.pctOf52wHigh,
+                });
+                const primaryLabel = score.primaryDriver;
+                const tooltip = [
+                  `${primaryLabel} (score ${score.compositeScore})`,
+                  score.narrative,
+                  attr?.detail || '',
+                  `Confidence: ${attr?.confidence || 'LOW'} · Sustainability: ${score.sustainability.toUpperCase()}`,
+                ].filter(Boolean).join('\n');
+
                 return (
                   <Link key={tk} href={`/stock-sheet?ticker=${encodeURIComponent(m.ticker)}`}
                     title={tooltip}
@@ -2026,31 +2054,43 @@ export default function HomeDashboard() {
                     <span style={{ fontSize: 11, color: c, fontWeight: 800, fontVariantNumeric: 'tabular-nums', minWidth: 52, textAlign: 'right' }}>
                       {pos === 'up' ? '+' : ''}{pct.toFixed(1)}%
                     </span>
-                    {anom && (
+                    {/* Bucket badge — institutional-grade tier (HIGH CONVICTION / TURNAROUND / etc.) */}
+                    {attr && (
+                      <span style={{
+                        fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2, letterSpacing: 0.3, flexShrink: 0,
+                        background: `${BUCKET_COLOR[score.bucket]}22`, color: BUCKET_COLOR[score.bucket],
+                      }}>
+                        {BUCKET_LABEL[score.bucket]}
+                      </span>
+                    )}
+                    {anom && anom !== 'NEWS_GAP' && (
                       <span style={{
                         fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2, letterSpacing: 0.3,
                         background: `${ANOMALY_COLOR[anom]}22`, color: ANOMALY_COLOR[anom], flexShrink: 0,
                       }}>
-                        {anom === 'NEWS_GAP' ? 'NEWS' : anom}
+                        {anom}
                       </span>
                     )}
-                    {attr ? (
+                    {/* Primary narrative — what's driving the move */}
+                    <span style={{
+                      flex: 1, fontSize: 10, color: TEXT, fontWeight: 500,
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                      minWidth: 0, lineHeight: 1.4,
+                    }}>
+                      {attr ? `${primaryLabel}${score.secondaryDriver ? ' · ' + score.secondaryDriver : ''}` : <em style={{ color: '#3F4D63' }}>analyzing…</em>}
+                    </span>
+                    {/* Top evidence chip (vol / delivery) */}
+                    {score.chips[0] && (
                       <span style={{
-                        flex: 1, fontSize: 10, color: TEXT, fontWeight: 500,
-                        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                        minWidth: 0, lineHeight: 1.4,
+                        fontSize: 8, fontWeight: 700, padding: '1px 4px', borderRadius: 2, letterSpacing: 0.2, flexShrink: 0,
+                        background: score.chips[0].tone === 'positive' ? '#10B98122'
+                                  : score.chips[0].tone === 'negative' ? '#EF444422'
+                                  : score.chips[0].tone === 'event' ? '#A78BFA22' : '#3F4D6322',
+                        color:      score.chips[0].tone === 'positive' ? '#10B981'
+                                  : score.chips[0].tone === 'negative' ? '#EF4444'
+                                  : score.chips[0].tone === 'event' ? '#A78BFA' : '#8DA1B9',
                       }}>
-                        {cleanLabel.slice(0, 60)}{cleanLabel.length > 60 ? '…' : ''}
-                      </span>
-                    ) : (
-                      <span style={{ flex: 1, fontSize: 10, color: '#3F4D63', fontStyle: 'italic' }}>analyzing…</span>
-                    )}
-                    {attr && (
-                      <span style={{
-                        fontSize: 8, fontWeight: 800, padding: '1px 4px', borderRadius: 2, letterSpacing: 0.3, flexShrink: 0,
-                        background: `${CONFIDENCE_COLOR[attr.confidence]}22`, color: CONFIDENCE_COLOR[attr.confidence],
-                      }}>
-                        {attr.confidence}
+                        {score.chips[0].text}
                       </span>
                     )}
                   </Link>

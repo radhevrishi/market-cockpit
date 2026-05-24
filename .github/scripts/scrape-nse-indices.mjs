@@ -212,10 +212,6 @@ function parseBhavRow(row) {
   const G = (k) => (row[k] ?? row[' ' + k] ?? row[k + ' '] ?? '').toString().trim();
   const sym = G('SYMBOL').toUpperCase();
   const series = G('SERIES');
-  // PATCH 0791: accept EQ + BE + BL + BZ. BE/BL/BZ are trade-to-trade
-  // settlement series — common for many smallcap names (DYNACONS, etc.)
-  // but they're still regular equity trading. SME series excluded per
-  // user instruction.
   if (!sym) return null;
   if (series && series !== 'EQ' && series !== 'BE' && series !== 'BL' && series !== 'BZ') return null;
   const close = parseFloat(G('CLOSE_PRICE')) || 0;
@@ -225,6 +221,17 @@ function parseBhavRow(row) {
   const low = parseFloat(G('LOW_PRICE')) || 0;
   const last = parseFloat(G('LAST_PRICE')) || 0;
   const volume = parseInt(G('TTL_TRD_QNTY'), 10) || 0;
+  // PATCH 0797: parse DELIV_PER (delivery percentage) and DELIV_QTY.
+  // Delivery % above 60% suggests genuine accumulation; below 20% on a
+  // big intraday move typically means operator-driven flow without
+  // institutional follow-through.
+  const deliveryQty = parseInt(G('DELIV_QTY'), 10) || 0;
+  const deliveryPctRaw = G('DELIV_PER');
+  const deliveryPct = deliveryPctRaw === '-' || deliveryPctRaw === ''
+    ? null
+    : (parseFloat(deliveryPctRaw) || 0);
+  // PATCH 0797: turnover in lakhs (₹) — useful for liquidity classification
+  const turnoverLacs = parseFloat(G('TURNOVER_LACS')) || 0;
   if (close <= 0) return null;
   const change = prevClose > 0 ? close - prevClose : 0;
   const changePercent = prevClose > 0 ? (change / prevClose) * 100 : 0;
@@ -239,6 +246,9 @@ function parseBhavRow(row) {
     dayLow: low,
     lastTraded: last,
     volume,
+    deliveryQty,
+    deliveryPct,
+    turnoverLacs,
   };
 }
 
@@ -338,6 +348,9 @@ async function main() {
       dayHigh: px?.dayHigh || 0,
       dayLow: px?.dayLow || 0,
       volume: px?.volume || 0,
+      // PATCH 0797: delivery metrics for accumulation/operator detection
+      deliveryPct: px?.deliveryPct ?? null,
+      turnoverLacs: px?.turnoverLacs || 0,
       hasPrice: !!px,
     });
   }

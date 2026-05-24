@@ -573,6 +573,9 @@ async function fetchIndianDataWithCache() {
             yearHigh,
             yearLow,
             indexGroup: cap,
+            // PATCH 0797: pass-through delivery + turnover for attribution scoring
+            deliveryPct: (t as any).deliveryPct ?? null,
+            turnoverLacs: (t as any).turnoverLacs ?? 0,
           });
         }
         // Lower threshold from 100 to 30 — partial result is better than NIFTY-50
