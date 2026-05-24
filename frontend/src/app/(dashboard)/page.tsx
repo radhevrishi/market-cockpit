@@ -127,6 +127,8 @@ interface HomeState {
   signals?: Array<{ id?: string; title?: string; headline?: string; published_at?: string; source_name?: string; primary_ticker?: string; ticker_symbols?: any[]; importance_score?: number }>;
   // PATCH 0800 — Screener fundamentals per ticker, fetched on-demand for top movers
   moverFundamentals?: Record<string, any>;
+  // PATCH 0801 — Multi-source news headlines per extreme mover (no LLM)
+  moverReasons?: Record<string, { topReason?: any; narrative?: any; allReasons?: any[] }>;
   // PATCH 0622 — institutional enhancements
   portfolioPnl?: { totalPct: number; totalChangeRs: number; bestMover?: { ticker: string; pct: number }; worstMover?: { ticker: string; pct: number }; positions: number; covered: number };
   watchlistPulse?: Array<{ ticker: string; company?: string; changePercent: number; price?: number; reason?: string; cap?: string; attrib?: MoverAttribution }>;
@@ -659,6 +661,16 @@ export default function HomeDashboard() {
             const fundamentals = (f?.fundamentals || {}) as Record<string, any>;
             setData((d) => ({ ...d, moverFundamentals: fundamentals } as any));
           }).catch(() => { /* graceful — no fundamentals if KV miss */ });
+
+          // PATCH 0801 — Fetch multi-source news headlines for extreme movers.
+          // GH Actions scrapes Google News + Moneycontrol + Trendlyne + Yahoo
+          // hourly during market hours. Surfaces real headline as primary
+          // driver when the local engine has 'no confirmed trigger'.
+          safeDiag<any>(`/api/market/mover-reasons?tickers=${extremeTickers.join(',')}&_=${Date.now()}`, 12_000).then(({ data: r }) => {
+            if (cancelled) return;
+            const reasons = (r?.reasons || {}) as Record<string, any>;
+            setData((d) => ({ ...d, moverReasons: reasons } as any));
+          }).catch(() => { /* graceful — no reasons if KV miss */ });
         }
 
         // PATCH 0794 — compute sector aggregates from the FULL stocks
@@ -2038,11 +2050,10 @@ export default function HomeDashboard() {
                 const anom = anomalyTag({ changePercent: pct, attribution: attr, tier });
                 const inUniverse = universeSet.has(tk);
 
-                // PATCH 0797 + P0800 — composite scoring with microstructure
-                // + Screener fundamentals. All inputs optional; engine degrades
-                // gracefully if attr / delivery / volMultiple / fundamentals
-                // are missing.
+                // PATCH 0797 + P0800 + P0801 — composite scoring with all
+                // available data sources. All inputs optional; graceful fallback.
                 const fund = data.moverFundamentals?.[tk];
+                const reason = data.moverReasons?.[tk];
                 const score = scoreCatalyst({
                   attribution: attr,
                   changePercent: pct,
@@ -2054,7 +2065,6 @@ export default function HomeDashboard() {
                   volMultiple: m.volMultiple,
                   mom1M: m.mom1M,
                   pctOf52wHigh: m.pctOf52wHigh,
-                  // PATCH 0800 — fundamentals from Screener.in (refreshed weekly)
                   promoterPct: fund?.promoterPct,
                   opmLatestQ: fund?.opmLatestQ,
                   opMargin3yAvg: fund?.opMargin3yAvg,
@@ -2062,6 +2072,30 @@ export default function HomeDashboard() {
                   patQtrYoY: fund?.patQtrYoY,
                   exceptionalItemsFlag: fund?.exceptionalItemsFlag,
                 });
+                // PATCH 0801 — When the local engine has no confirmed trigger
+                // AND we have a public-source headline from the multi-source
+                // news scrape, override primaryDriver with the headline. This
+                // is the highest-quality public signal we can offer free.
+                if (reason?.topReason?.headline && (
+                  !attr ||
+                  attr.catalystType === 'NONE' ||
+                  attr.catalystType === 'SECTOR_ROTATION'
+                )) {
+                  score.primaryDriver = reason.topReason.headline.length > 80
+                    ? reason.topReason.headline.slice(0, 80) + '…'
+                    : reason.topReason.headline;
+                  if (!score.secondaryDriver && reason.narrative?.category) {
+                    score.secondaryDriver = `${reason.narrative.category} · ${reason.topReason.source}`;
+                  }
+                  // Bump bucket — public-source headline means we have a real reason
+                  if (score.bucket === 'random_noise' || score.bucket === 'speculative') {
+                    score.bucket = 'high_conviction';
+                  }
+                  // Add a chip if not already there
+                  if (!score.chips.find((c: any) => c.text === 'NEWS')) {
+                    score.chips.unshift({ text: reason.narrative?.category || 'NEWS', tone: 'positive' });
+                  }
+                }
                 const primaryLabel = score.primaryDriver;
                 const tooltip = [
                   `${primaryLabel} (score ${score.compositeScore})`,

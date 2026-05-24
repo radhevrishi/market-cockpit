@@ -1,0 +1,50 @@
+name: Scrape Mover Reasons (hourly during market hours)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PATCH 0801 — For each extreme NSE mover (≥10%), pull news from 4 free
+# public sources (Google News RSS, Moneycontrol, Trendlyne, Yahoo Finance)
+# to find the actual catalyst. Writes per-ticker KV keys that Vercel reads
+# to surface real headlines instead of generic "No confirmed trigger".
+#
+# Schedule: hourly during market hours (09:00-16:00 IST) + once post-close,
+# plus workflow_dispatch for manual triggers. GH Actions free tier is
+# unlimited for public repos.
+# ──────────────────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    # Hourly during NSE market hours (09:15-15:30 IST = 03:45-10:00 UTC)
+    # Plus one post-close run at 16:00 IST = 10:30 UTC
+    - cron: '15 4 * * 1-5'   # 09:45 IST
+    - cron: '15 5 * * 1-5'   # 10:45 IST
+    - cron: '15 6 * * 1-5'   # 11:45 IST
+    - cron: '15 7 * * 1-5'   # 12:45 IST
+    - cron: '15 8 * * 1-5'   # 13:45 IST
+    - cron: '15 9 * * 1-5'   # 14:45 IST
+    - cron: '0 11 * * 1-5'   # 16:30 IST — post-close sweep
+    - cron: '0 14 * * *'     # 19:30 IST daily — evening update for weekend viewing
+  workflow_dispatch: {}
+
+concurrency:
+  group: scrape-mover-reasons
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run mover-reasons scraper
+        env:
+          UPSTASH_REDIS_REST_URL:   ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+        run: |
+          if [ -z "$UPSTASH_REDIS_REST_URL" ] || [ -z "$UPSTASH_REDIS_REST_TOKEN" ]; then
+            echo "::error title=Missing secrets::Set UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN in repo secrets."
+            exit 1
+          fi
+          node .github/scripts/scrape-mover-reasons.mjs
