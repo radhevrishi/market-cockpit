@@ -491,11 +491,16 @@ async function fetchIndianDataWithCache() {
         const pricedFromBlob = tickers.filter((t: any) => t.hasPrice && (t.price ?? 0) > 0);
         const unpricedSyms = tickers.filter((t: any) => !t.hasPrice).map((t: any) => `${t.ticker}.NS`);
         let yahooMap = new Map<string, any>();
-        if (unpricedSyms.length > 0 && unpricedSyms.length < 800) {
-          // Yahoo enrichment only when there's a manageable miss count
-          // (cap at 800 to avoid Vercel maxDuration on cold Yahoo state).
+        if (unpricedSyms.length > 0) {
+          // PATCH 0791: Yahoo enrichment for ALL unpriced tickers (was capped at
+          // 800). With BHAVCOPY giving ~1100 prices, ~1050 unpriced names need
+          // Yahoo. At CONC=4 × 53 batches × 1.5s = ~80s — bumped Vercel
+          // maxDuration to 60s; if it exceeds we still return blob-priced rows.
+          // The maxDuration timeout interrupts cleanly; we just won't enrich
+          // the laggards.
+          const cap = Math.min(unpricedSyms.length, 1500);
           try {
-            const quotes = await fetchQuotesWithFallback(unpricedSyms);
+            const quotes = await fetchQuotesWithFallback(unpricedSyms.slice(0, cap));
             for (const q of quotes) {
               const raw = (q?.symbol || '').replace(/\.(NS|BO)$/i, '').toUpperCase();
               if (raw) yahooMap.set(raw, q);

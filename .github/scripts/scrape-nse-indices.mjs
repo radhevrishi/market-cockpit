@@ -208,7 +208,12 @@ function parseBhavRow(row) {
   const G = (k) => (row[k] ?? row[' ' + k] ?? row[k + ' '] ?? '').toString().trim();
   const sym = G('SYMBOL').toUpperCase();
   const series = G('SERIES');
-  if (!sym || series !== 'EQ') return null;
+  // PATCH 0791: accept EQ + BE + BL + BZ. BE/BL/BZ are trade-to-trade
+  // settlement series — common for many smallcap names (DYNACONS, etc.)
+  // but they're still regular equity trading. SME series excluded per
+  // user instruction.
+  if (!sym) return null;
+  if (series && series !== 'EQ' && series !== 'BE' && series !== 'BL' && series !== 'BZ') return null;
   const close = parseFloat(G('CLOSE_PRICE')) || 0;
   const prevClose = parseFloat(G('PREV_CLOSE')) || 0;
   const open = parseFloat(G('OPEN_PRICE')) || 0;
@@ -272,9 +277,10 @@ async function main() {
       // PAID UP VALUE, MARKET LOT, ISIN NUMBER, FACE VALUE
       const sym = (row['SYMBOL'] || row[' SYMBOL'] || row['Symbol'] || '').trim().toUpperCase();
       const series = (row['SERIES'] || row[' SERIES'] || '').trim();
-      // EQ = regular equity; SM = SME (skip per user instruction); BE/BL/BZ = restricted
+      // PATCH 0791: accept EQ + BE + BL + BZ. SME (SM-series) excluded.
+      // BE/BL/BZ are trade-to-trade smallcap series — still regular equity.
       if (!sym) continue;
-      if (series && series !== 'EQ') continue;
+      if (series && series !== 'EQ' && series !== 'BE' && series !== 'BL' && series !== 'BZ') continue;
       if (!tickerCap.has(sym)) {
         tickerCap.set(sym, 'Other');
         added++;
