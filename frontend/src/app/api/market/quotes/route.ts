@@ -5,7 +5,7 @@ import { fetchQuotesWithFallback, US_TOP } from '@/lib/yahoo';
 import { kvGet } from '@/lib/kv';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 30; // PATCH 0788 — Yahoo bulk for 755 tickers needs ~15-20s
+export const maxDuration = 60; // PATCH 0789 — Yahoo bulk for ~2000 tickers (NSE master) needs up to 60s
 
 // Response-level cache (avoids re-assembly on rapid polls)
 const responseCache = new Map<string, { data: any; ts: number }>();
@@ -505,6 +505,18 @@ async function fetchIndianDataWithCache() {
           const change = reportedChg !== 0 ? reportedChg : computedChg;
           const changePercent = reportedPct !== 0 ? reportedPct : computedPct;
           const sector = sectorMap[t.ticker] || normalizeSector(t.industry || '') || NIFTY50_SECTORS[t.ticker] || 'Other';
+          // PATCH 0789 — derive cap from Yahoo marketCap when blob has 'Other'
+          // (non-indexed names from EQUITY_L master list). Thresholds in ₹ crores:
+          //   >50,000 Cr Large · >15,000 Cr Mid · >2,000 Cr Small · else Micro
+          // q.marketCap is in INR (not Cr); divide by 10^7 to get crores.
+          let cap = t.cap;
+          if (cap === 'Other' || !cap) {
+            const mcapCr = q.marketCap ? q.marketCap / 1e7 : 0;
+            if (mcapCr > 50_000)      cap = 'Large';
+            else if (mcapCr > 15_000) cap = 'Mid';
+            else if (mcapCr > 2_000)  cap = 'Small';
+            else                       cap = 'Micro';
+          }
           mergedStocks.push({
             ticker: t.ticker,
             company: t.company || q.shortName || t.ticker,
@@ -521,7 +533,7 @@ async function fetchIndianDataWithCache() {
             dayLow: q.regularMarketDayLow || 0,
             yearHigh: q.fiftyTwoWeekHigh || 0,
             yearLow: q.fiftyTwoWeekLow || 0,
-            indexGroup: t.cap,
+            indexGroup: cap,
           });
         }
         if (mergedStocks.length >= 100) {

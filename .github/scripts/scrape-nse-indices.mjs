@@ -124,14 +124,39 @@ async function kvSet(key, value, ttlSeconds) {
   }
 }
 
+// PATCH 0789 — NSE master list URLs. EQUITY_L.csv is the canonical list
+// of all ~2000 NSE-listed equities. Tickers not in any benchmark index
+// (DYNACONS, AEROFLEX, SASKEN etc.) live here. Try multiple URL patterns
+// since NSE has moved this file across infrastructure over time.
+const EQUITY_MASTER_URLS = [
+  'https://archives.nseindia.com/content/equities/EQUITY_L.csv',
+  'https://www1.nseindia.com/content/equities/EQUITY_L.csv',
+  'https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv',
+];
+
+async function fetchEquityMaster() {
+  for (const url of EQUITY_MASTER_URLS) {
+    const rows = await fetchCsv(url, `EQUITY_L (${new URL(url).hostname})`);
+    if (rows && rows.length > 500) {
+      console.log(`  ✓ master list loaded from ${url}`);
+      return rows;
+    }
+  }
+  console.log('::warning title=EQUITY_L::all master list URLs failed');
+  return null;
+}
+
 async function main() {
   const startedAt = Date.now();
-  console.log(`▶ scrape-nse-indices (ticker-only) at ${new Date().toISOString()}`);
+  console.log(`▶ scrape-nse-indices (full master + indices) at ${new Date().toISOString()}`);
 
   const tickerCap = new Map();
   const tickerCompany = new Map();
   const tickerIndustry = new Map();
+  const tickerSeries = new Map();
 
+  // Phase 1: NSE benchmark index CSVs → canonical cap labels (Large/Mid/Small/Micro)
+  console.log('  ── Phase 1: NSE benchmark indices ──');
   for (const list of CONSTITUENT_LISTS) {
     const rows = await fetchCsv(list.url, list.name);
     if (!rows) continue;
@@ -145,7 +170,36 @@ async function main() {
       if (industry && !tickerIndustry.has(sym)) tickerIndustry.set(sym, industry);
     }
   }
-  console.log(`  ticker universe: ${tickerCap.size} unique symbols`);
+  const indexCount = tickerCap.size;
+  console.log(`  indexed universe: ${indexCount} unique symbols`);
+
+  // Phase 2: NSE EQUITY_L master list → adds the ~1250 NSE-listed equities
+  // that aren't in any benchmark index (DYNACONS, AEROFLEX, SASKEN, etc.).
+  // Tagged with cap='Other'; Vercel side derives cap from Yahoo marketCap.
+  console.log('  ── Phase 2: NSE EQUITY_L master list ──');
+  const masterRows = await fetchEquityMaster();
+  if (masterRows) {
+    let added = 0;
+    for (const row of masterRows) {
+      // EQUITY_L columns: SYMBOL, NAME OF COMPANY, SERIES, DATE OF LISTING,
+      // PAID UP VALUE, MARKET LOT, ISIN NUMBER, FACE VALUE
+      const sym = (row['SYMBOL'] || row[' SYMBOL'] || row['Symbol'] || '').trim().toUpperCase();
+      const series = (row['SERIES'] || row[' SERIES'] || '').trim();
+      // EQ = regular equity; SM = SME (skip per user instruction); BE/BL/BZ = restricted
+      if (!sym) continue;
+      if (series && series !== 'EQ') continue;
+      if (!tickerCap.has(sym)) {
+        tickerCap.set(sym, 'Other');
+        added++;
+      }
+      tickerSeries.set(sym, series || 'EQ');
+      const company = row[' NAME OF COMPANY'] || row['NAME OF COMPANY'] || row['Company Name'] || '';
+      if (company && !tickerCompany.has(sym)) tickerCompany.set(sym, company.trim());
+    }
+    console.log(`  master added: +${added} non-indexed tickers (total ${tickerCap.size})`);
+  }
+
+  console.log(`  FINAL ticker universe: ${tickerCap.size} unique symbols (${indexCount} indexed + ${tickerCap.size - indexCount} other)`);
 
   if (tickerCap.size < 50) {
     console.log('::error title=Too few tickers::Constituent CSV fetches returned <50 rows total.');
