@@ -344,67 +344,11 @@ async function fetchNifty50DataWithCache() {
 }
 
 async function fetchIndianDataWithCache() {
-  // ─── PATCH 0782 — KV blob PRIMARY source ───────────────────────────
-  // GH Actions scraper (.github/workflows/scrape-nse-indices.yml) runs 4×/day
-  // and writes the consolidated NIFTY 50 + Next 50 + Midcap 250 + Smallcap 250
-  // + Microcap 250 + Nifty 500 stock universe (~750-900 unique tickers) to
-  // `nse-indices-blob:v1:latest`. We try the blob first — when it's present
-  // and fresh (<6h old), we skip all live NSE fetches entirely. This is
-  // 10× cheaper on Vercel CPU and bypasses the upstream rate-limiting that
-  // makes the broad NSE endpoints unreliable when called from serverless IPs.
-  try {
-    const blob = await kvGet<any>('nse-indices-blob:v1:latest');
-    if (blob && Array.isArray(blob.stocks) && blob.stocks.length >= 100) {
-      const ageMs = Date.now() - new Date(blob.generatedAt || 0).getTime();
-      if (ageMs < 6 * 3600_000) {
-        const sectorMap = await buildDynamicSectorMap().catch(() => ({} as Record<string, string>));
-        const mapped = blob.stocks
-          .filter((s: any) => s?.ticker && (s.price ?? 0) > 0)
-          .map((s: any) => {
-            const sector = (sectorMap as any)[s.ticker] || normalizeSector(s.industry || '') || NIFTY50_SECTORS[s.ticker] || 'Other';
-            const ffmc = s.ffmc || 0;
-            const estimatedMcap = ffmc > 0 ? ffmc : Math.round((s.price || 0) * (s.volume || 1) / 10000);
-            return {
-              ticker: s.ticker,
-              company: s.company || s.ticker,
-              sector,
-              industry: s.industry || '',
-              price: s.price || 0,
-              change: s.change || 0,
-              changePercent: s.changePercent || 0,
-              volume: s.volume || 0,
-              marketCap: estimatedMcap,
-              previousClose: s.previousClose || 0,
-              open: s.open || 0,
-              dayHigh: s.dayHigh || 0,
-              dayLow: s.dayLow || 0,
-              yearHigh: s.yearHigh || 0,
-              yearLow: s.yearLow || 0,
-              indexGroup: s.cap || 'Small',
-            };
-          });
-        const gainers = [...mapped].sort((a, b) => b.changePercent - a.changePercent).filter((s: any) => s.changePercent > 0).slice(0, 30);
-        const losers  = [...mapped].sort((a, b) => a.changePercent - b.changePercent).filter((s: any) => s.changePercent < 0).slice(0, 30);
-        return {
-          stocks: mapped,
-          gainers,
-          losers,
-          summary: {
-            total: mapped.length,
-            gainersCount: gainers.length,
-            losersCount: losers.length,
-            avgChange: mapped.length ? mapped.reduce((s: number, x: any) => s + (x.changePercent || 0), 0) / mapped.length : 0,
-            sectors: new Set(mapped.map((s: any) => s.sector)).size,
-          },
-          source: `KV-blob (NSE indices · ${Math.round(ageMs / 60_000)}m old)`,
-          generatedAt: blob.generatedAt,
-          updatedAt: new Date().toISOString(),
-        };
-      }
-    }
-  } catch { /* fall through to live NSE */ }
-
-  // ─── Live NSE primary path (used when KV blob missing or stale) ────
+  // ─── Live NSE primary path (tried FIRST) ────────────────────────────
+  // When NSE upstream is healthy (weekdays), this returns ~750 stocks
+  // with live intraday pChange + full cap classification. When NSE
+  // fails (weekends, rate limiting), we fall through to the KV ticker
+  // blob + Vercel-side Yahoo price fetch below.
   // Build dynamic sector map in parallel with stock data
   const [sectorMap, nifty500Data, midcap250Data, smallcap250Data, microcap250Data, totalMarketData, nseGainers, nseLosers] = await Promise.all([
     buildDynamicSectorMap(),
@@ -523,6 +467,82 @@ async function fetchIndianDataWithCache() {
     tickerSet.clear();
     addStocks(nifty50Data);
     addStocks(niftyNext50Data);
+  }
+
+  // ─── PATCH 0786 — KV ticker-universe blob → Yahoo prices ────────────
+  // When live NSE returned <50 stocks (broad indices blocked / rate-limited),
+  // try the GH-Actions-populated ticker→cap blob. NSE constituent CSVs from
+  // archives.nseindia.com ARE accessible from GH IPs (confirmed in run #3).
+  // We use that ticker list + Yahoo for prices (Vercel→Yahoo works fine,
+  // proven by /api/market/quote endpoint). Result: 500+ stocks with proper
+  // cap labels (Large/Mid/Small) and real last-close % moves.
+  if (stocks.length < 100) {
+    try {
+      const universeBlob = await kvGet<any>('nse-ticker-universe:v1:latest');
+      const tickers: Array<{ ticker: string; company: string; industry: string; cap: string }> = universeBlob?.tickers || [];
+      if (tickers.length >= 100) {
+        const universeAgeMs = Date.now() - new Date(universeBlob?.generatedAt || 0).getTime();
+        const universeAgeStr = `${Math.round(universeAgeMs / 60_000)}m old`;
+        // Fetch prices for the entire universe via Yahoo (in batches handled by fetchQuotesWithFallback)
+        const yahooSyms = tickers.map(t => `${t.ticker}.NS`);
+        const quotes = await fetchQuotesWithFallback(yahooSyms);
+        const quoteMap = new Map<string, any>();
+        for (const q of quotes) {
+          const raw = (q?.symbol || '').replace(/\.(NS|BO)$/i, '').toUpperCase();
+          if (raw) quoteMap.set(raw, q);
+        }
+        const mergedStocks: any[] = [];
+        for (const t of tickers) {
+          const q = quoteMap.get(t.ticker);
+          if (!q || !(q.regularMarketPrice > 0)) continue;
+          const price = q.regularMarketPrice || 0;
+          const prevClose = q.regularMarketPreviousClose || 0;
+          const reportedChg = Number.isFinite(q.regularMarketChange) ? q.regularMarketChange : 0;
+          const reportedPct = Number.isFinite(q.regularMarketChangePercent) ? q.regularMarketChangePercent : 0;
+          const computedChg = (price > 0 && prevClose > 0) ? (price - prevClose) : 0;
+          const computedPct = (price > 0 && prevClose > 0) ? ((price - prevClose) / prevClose) * 100 : 0;
+          const change = reportedChg !== 0 ? reportedChg : computedChg;
+          const changePercent = reportedPct !== 0 ? reportedPct : computedPct;
+          const sector = sectorMap[t.ticker] || normalizeSector(t.industry || '') || NIFTY50_SECTORS[t.ticker] || 'Other';
+          mergedStocks.push({
+            ticker: t.ticker,
+            company: t.company || q.shortName || t.ticker,
+            sector,
+            industry: t.industry || '',
+            price,
+            change,
+            changePercent,
+            volume: q.regularMarketVolume || 0,
+            marketCap: q.marketCap || 0,
+            previousClose: prevClose,
+            open: q.regularMarketOpen || 0,
+            dayHigh: q.regularMarketDayHigh || 0,
+            dayLow: q.regularMarketDayLow || 0,
+            yearHigh: q.fiftyTwoWeekHigh || 0,
+            yearLow: q.fiftyTwoWeekLow || 0,
+            indexGroup: t.cap,
+          });
+        }
+        if (mergedStocks.length >= 100) {
+          const gainers = [...mergedStocks].sort((a, b) => b.changePercent - a.changePercent).filter((s: any) => s.changePercent > 0).slice(0, 30);
+          const losers  = [...mergedStocks].sort((a, b) => a.changePercent - b.changePercent).filter((s: any) => s.changePercent < 0).slice(0, 30);
+          return {
+            stocks: mergedStocks,
+            gainers,
+            losers,
+            summary: {
+              total: mergedStocks.length,
+              gainersCount: gainers.length,
+              losersCount: losers.length,
+              avgChange: mergedStocks.length ? mergedStocks.reduce((s: number, x: any) => s + (x.changePercent || 0), 0) / mergedStocks.length : 0,
+              sectors: new Set(mergedStocks.map((s: any) => s.sector)).size,
+            },
+            source: `NSE-universe (KV ${universeAgeStr}) + Yahoo prices`,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+      }
+    } catch { /* fall through to NIFTY 50 Yahoo last-resort */ }
   }
 
   // Yahoo Finance as last resort

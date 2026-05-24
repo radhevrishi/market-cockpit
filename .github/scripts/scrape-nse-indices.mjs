@@ -1,29 +1,25 @@
 #!/usr/bin/env node
 // ═══════════════════════════════════════════════════════════════════════════
-// PATCH 0785 — Hybrid NSE constituents + Yahoo prices scraper.
+// PATCH 0786 — NSE constituent CSV scraper. Ticker → cap blob ONLY.
 //
-// Previous attempts:
-//   Workflow #1 + #2 → NSE www.nseindia.com/api/equity-stockIndices blocked
-//                      by Akamai (only AKA_A2=A sentinel cookie).
-//   Workflow #3      → NSE archives constituent CSVs partially worked
-//                      (504 unique tickers from Nifty50 + Next50 + Nifty500
-//                      + Smallcap250), but BHAVCOPY URL pattern changed
-//                      and returns 404 for the last 10 weekdays.
+// Confirmed across runs #1-#4:
+//   ✓ NSE archives.nseindia.com CSVs accessible from GH Actions IPs
+//     (Nifty50 50 + Next50 54 + Smallcap250 250 + Nifty500 504 = 504 unique).
+//   ✗ NSE main API (/api/equity-stockIndices) blocked by Akamai bot-detection.
+//   ✗ NSE BHAVCOPY URL pattern changed — 404 for last 10 weekdays.
+//   ✗ Yahoo Finance v7 quote API also blocks GH Actions IPs (0/504 resolved).
 //
-// This patch goes with: NSE archives for the ticker universe + cap labels
-// (proven to work from GH Actions IPs), Yahoo Finance for prices (only
-// IP-unrestricted last-close source we have). This gives the user 500+
-// stocks with correct cap labels and real Friday close % moves.
+// Resolution: write ONLY the ticker → cap blob. Vercel /api/market/quotes
+// reads this blob and does its own Yahoo price fetch (Vercel IPs are NOT
+// blocked by Yahoo — proven by existing /api/market/quote endpoint).
 //
-// Cap classification derived purely from index membership:
-//   • Nifty 50 + Next 50         → Large
-//   • Nifty Smallcap 250         → Small
-//   • Nifty 500 ∖ (Large + Small) → Mid
+// KV blob shape (new key): nse-ticker-universe:v1:latest
+//   { generatedAt, totalTickers, capBreakdown, tickers: [
+//       { ticker, company, industry, cap }
+//   ]}
 //
-// Pure Node 20 — built-in fetch only. No deps.
+// Pure Node 20.
 // ═══════════════════════════════════════════════════════════════════════════
-
-// ─── Config ─────────────────────────────────────────────────────────────────
 
 const ARCHIVES_BASE = 'https://archives.nseindia.com';
 
@@ -32,18 +28,11 @@ const CONSTITUENT_LISTS = [
   { name: 'Nifty Next 50',      url: `${ARCHIVES_BASE}/content/indices/ind_niftynext50list.csv`,    cap: 'Large' },
   { name: 'Nifty Smallcap 250', url: `${ARCHIVES_BASE}/content/indices/ind_niftysmallcap250list.csv`, cap: 'Small' },
   { name: 'Nifty 500',          url: `${ARCHIVES_BASE}/content/indices/ind_nifty500list.csv`,        cap: 'Mid'   },
-  // Tried Midcap250 + Microcap250 archives URLs — both 404. Mid label
-  // derived as 'in Nifty 500 but not in Large+Small' which gives a
-  // ~150-200-ticker midcap segment.
 ];
 
-const YAHOO_BASE = 'https://query1.finance.yahoo.com';
-const YAHOO_BATCH = 20;          // v7 quote endpoint limit
-const YAHOO_TIMEOUT_MS = 15_000;
 const FETCH_TIMEOUT_MS = 30_000;
-
-const KV_KEY = 'nse-indices-blob:v1:latest';
-const KV_TTL_SECONDS = 4 * 60 * 60; // 4h
+const KV_KEY = 'nse-ticker-universe:v1:latest';
+const KV_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days — NSE constituents change weekly at most
 
 const ARCHIVE_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -51,21 +40,12 @@ const ARCHIVE_HEADERS = {
   'Accept-Language': 'en-US,en;q=0.9',
 };
 
-const YAHOO_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Accept': 'application/json,*/*',
-};
-
-// ─── Env validation ─────────────────────────────────────────────────────────
-
 const KV_URL = process.env.UPSTASH_REDIS_REST_URL;
 const KV_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
 if (!KV_URL || !KV_TOKEN) {
-  console.error('::error title=Missing env::Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN as repo secrets.');
+  console.error('::error title=Missing env::Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.');
   process.exit(1);
 }
-
-// ─── CSV parsing ────────────────────────────────────────────────────────────
 
 function parseCsv(text) {
   const out = [];
@@ -75,9 +55,7 @@ function parseCsv(text) {
   for (let i = 1; i < lines.length; i++) {
     const cols = parseCsvLine(lines[i]);
     const row = {};
-    for (let c = 0; c < headers.length; c++) {
-      row[headers[c]] = (cols[c] || '').trim();
-    }
+    for (let c = 0; c < headers.length; c++) row[headers[c]] = (cols[c] || '').trim();
     out.push(row);
   }
   return out;
@@ -120,71 +98,6 @@ async function fetchCsv(url, label) {
   }
 }
 
-// ─── Yahoo bulk quote fetcher ───────────────────────────────────────────────
-
-async function fetchYahooBatch(symbols) {
-  // symbols expected to be raw NSE tickers; we append .NS suffix
-  const yahooSyms = symbols.map(s => `${s}.NS`);
-  const url = `${YAHOO_BASE}/v7/finance/quote?symbols=${encodeURIComponent(yahooSyms.join(','))}`;
-  try {
-    const res = await fetch(url, { headers: YAHOO_HEADERS, signal: AbortSignal.timeout(YAHOO_TIMEOUT_MS) });
-    if (!res.ok) return [];
-    const json = await res.json();
-    return json?.quoteResponse?.result || [];
-  } catch {
-    return [];
-  }
-}
-
-async function fetchAllYahooPrices(tickers) {
-  const priceMap = new Map();
-  const batches = [];
-  for (let i = 0; i < tickers.length; i += YAHOO_BATCH) {
-    batches.push(tickers.slice(i, i + YAHOO_BATCH));
-  }
-  console.log(`  ── Yahoo bulk fetch: ${tickers.length} tickers in ${batches.length} batches of ${YAHOO_BATCH} ──`);
-
-  // Run 4 batches in parallel — keeps under Yahoo rate-limit while finishing
-  // ~25 batches in ~10s rather than 25s serial.
-  const CONC = 4;
-  let resolved = 0;
-  for (let b = 0; b < batches.length; b += CONC) {
-    const slab = batches.slice(b, b + CONC);
-    const results = await Promise.all(slab.map(fetchYahooBatch));
-    for (const arr of results) {
-      for (const q of arr) {
-        const raw = (q?.symbol || '').replace(/\.(NS|BO)$/i, '');
-        if (!raw) continue;
-        const price = q.regularMarketPrice || 0;
-        const prevClose = q.regularMarketPreviousClose || 0;
-        if (price <= 0) continue;
-        const reportedChg = Number.isFinite(q.regularMarketChange) ? q.regularMarketChange : 0;
-        const reportedPct = Number.isFinite(q.regularMarketChangePercent) ? q.regularMarketChangePercent : 0;
-        const computedChg = (price > 0 && prevClose > 0) ? (price - prevClose) : 0;
-        const computedPct = (price > 0 && prevClose > 0) ? ((price - prevClose) / prevClose) * 100 : 0;
-        priceMap.set(raw, {
-          price,
-          previousClose: prevClose,
-          change: reportedChg !== 0 ? reportedChg : computedChg,
-          changePercent: reportedPct !== 0 ? reportedPct : computedPct,
-          open: q.regularMarketOpen || 0,
-          dayHigh: q.regularMarketDayHigh || 0,
-          dayLow: q.regularMarketDayLow || 0,
-          yearHigh: q.fiftyTwoWeekHigh || 0,
-          yearLow: q.fiftyTwoWeekLow || 0,
-          volume: q.regularMarketVolume || 0,
-          companyShort: q.shortName || '',
-        });
-        resolved++;
-      }
-    }
-  }
-  console.log(`  Yahoo resolved ${resolved}/${tickers.length} tickers`);
-  return priceMap;
-}
-
-// ─── Upstash KV writer ──────────────────────────────────────────────────────
-
 async function kvSet(key, value, ttlSeconds) {
   const url = `${KV_URL.replace(/\/+$/, '')}/set/${encodeURIComponent(key)}?EX=${ttlSeconds}`;
   const body = typeof value === 'string' ? value : JSON.stringify(value);
@@ -203,14 +116,10 @@ async function kvSet(key, value, ttlSeconds) {
   }
 }
 
-// ─── Main ───────────────────────────────────────────────────────────────────
-
 async function main() {
   const startedAt = Date.now();
-  console.log(`▶ scrape-nse-indices (hybrid CSV+Yahoo) at ${new Date().toISOString()}`);
+  console.log(`▶ scrape-nse-indices (ticker-only) at ${new Date().toISOString()}`);
 
-  // Step 1: Pull NSE constituent CSVs → ticker → cap map + company name.
-  console.log('  ── Pulling NSE constituent CSVs ──');
   const tickerCap = new Map();
   const tickerCompany = new Map();
   const tickerIndustry = new Map();
@@ -221,10 +130,7 @@ async function main() {
     for (const row of rows) {
       const sym = (row['Symbol'] || row['symbol'] || '').trim().toUpperCase();
       if (!sym) continue;
-      // First match wins for cap; CONSTITUENT_LISTS is ordered Large → Small → Mid (Nifty 500)
-      if (!tickerCap.has(sym)) {
-        tickerCap.set(sym, list.cap);
-      }
+      if (!tickerCap.has(sym)) tickerCap.set(sym, list.cap);
       const company = row['Company Name'] || row['company name'] || row['company'] || '';
       const industry = row['Industry'] || row['industry'] || '';
       if (company && !tickerCompany.has(sym)) tickerCompany.set(sym, company);
@@ -232,75 +138,39 @@ async function main() {
     }
   }
   console.log(`  ticker universe: ${tickerCap.size} unique symbols`);
-  if (tickerCap.size === 0) {
-    console.log('::error title=No constituents::All constituent CSV fetches returned 0 rows.');
+
+  if (tickerCap.size < 50) {
+    console.log('::error title=Too few tickers::Constituent CSV fetches returned <50 rows total.');
     process.exit(1);
   }
 
-  // Step 2: Yahoo bulk fetch for prices.
-  const tickerList = Array.from(tickerCap.keys());
-  const priceMap = await fetchAllYahooPrices(tickerList);
-
-  if (priceMap.size === 0) {
-    console.log('::error title=No prices::Yahoo bulk fetch returned 0 prices.');
-    process.exit(1);
-  }
-
-  // Step 3: Merge → final stock list.
-  const stocks = [];
+  const tickers = [];
   for (const [sym, cap] of tickerCap) {
-    const p = priceMap.get(sym);
-    if (!p) continue;
-    stocks.push({
+    tickers.push({
       ticker: sym,
-      company: tickerCompany.get(sym) || p.companyShort || sym,
+      company: tickerCompany.get(sym) || sym,
       industry: tickerIndustry.get(sym) || '',
       cap,
-      price: p.price,
-      previousClose: p.previousClose,
-      change: p.change,
-      changePercent: p.changePercent,
-      open: p.open,
-      dayHigh: p.dayHigh,
-      dayLow: p.dayLow,
-      yearHigh: p.yearHigh,
-      yearLow: p.yearLow,
-      volume: p.volume,
-      ffmc: 0,
     });
   }
 
-  const capBreakdown = stocks.reduce((acc, s) => { acc[s.cap] = (acc[s.cap] || 0) + 1; return acc; }, {});
+  const capBreakdown = tickers.reduce((acc, t) => { acc[t.cap] = (acc[t.cap] || 0) + 1; return acc; }, {});
   const elapsed = Date.now() - startedAt;
-  console.log(`  totals: ${stocks.length} unique stocks · breakdown: ${JSON.stringify(capBreakdown)}`);
-
-  if (stocks.length < 50) {
-    console.log('::error title=Too few stocks::Merged result has <50 stocks. KV blob NOT updated.');
-    process.exit(1);
-  }
 
   const payload = {
     generatedAt: new Date().toISOString(),
     elapsedMs: elapsed,
-    sources: {
-      constituents: 'archives.nseindia.com CSV',
-      prices: 'Yahoo Finance v7 quote API',
-    },
+    totalTickers: tickers.length,
     capBreakdown,
-    totalStocks: stocks.length,
-    stocks,
+    tickers,
   };
 
-  let payloadSize = JSON.stringify(payload).length;
-  console.log(`  payload size: ${Math.round(payloadSize / 1024)} KB`);
-  while (payloadSize > 900_000 && payload.stocks.length > 200) {
-    payload.stocks = payload.stocks.slice(0, Math.floor(payload.stocks.length * 0.85));
-    payloadSize = JSON.stringify(payload).length;
-  }
+  const payloadSize = JSON.stringify(payload).length;
+  console.log(`  payload size: ${Math.round(payloadSize / 1024)} KB · breakdown: ${JSON.stringify(capBreakdown)}`);
 
   await kvSet(KV_KEY, payload, KV_TTL_SECONDS);
-  console.log(`✓ wrote ${KV_KEY} (${payload.stocks.length} stocks, ${Math.round(payloadSize / 1024)} KB) in ${elapsed}ms`);
-  console.log(`::notice title=Scrape complete::${payload.stocks.length} NSE stocks cached for 4h (hybrid CSV+Yahoo).`);
+  console.log(`✓ wrote ${KV_KEY} (${tickers.length} tickers, ${Math.round(payloadSize / 1024)} KB) in ${elapsed}ms`);
+  console.log(`::notice title=Scrape complete::${tickers.length} NSE tickers cached for 7d.`);
 }
 
 main().catch((e) => {
