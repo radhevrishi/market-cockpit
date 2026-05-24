@@ -54,6 +54,14 @@ const HEADLINE_BLACKLIST = [
   /^podcasts?$/i,
   /^webinars?$/i,
   /^download our app$/i,
+  // P0804: TradingView / Walletinvestor / algorithmic price-forecast pages —
+  // not real news, just SEO-spam pages with auto-generated predictions
+  /\bforecast\s*[—\-]\s*price\s+target\b/i,
+  /\bprediction\s+for\s+\d{4}\b/i,
+  /-\s*TradingView$/i,
+  /^\s*\w+\s+(stock\s+)?prediction\s+\d{4}/i,
+  /^\s*\w+\s+stock\s+forecast\b/i,
+  /\bwalletinvestor\b/i,
 ];
 
 function looksLikeRealHeadline(title) {
@@ -140,6 +148,38 @@ async function fetchUrl(url, label) {
 
 // ─── Source 1: Google News RSS ──────────────────────────────────────────
 
+// P0804: cross-ticker leak guard. Google News RSS regularly returns
+// results that don't mention our ticker (e.g. OCCLLTD query returned
+// a Ramco Systems Group-B gainers article). Headline must mention the
+// ticker OR a meaningful chunk of the company name to qualify.
+function headlineMentionsCompany(title, ticker, companyName) {
+  if (!title) return false;
+  const t = title.toLowerCase();
+  // Ticker symbol present anywhere
+  if (ticker && t.includes(ticker.toLowerCase())) return true;
+  if (!companyName) return false;
+  // Try the first 2-3 distinctive words of the company name.
+  // Strip stop-words like "Ltd", "Limited", "India", "Industries" — they
+  // appear in dozens of unrelated companies and would let everything through.
+  const STOP = new Set([
+    'ltd', 'limited', 'india', 'industries', 'industry', 'corporation',
+    'corp', 'company', 'co', 'group', 'enterprises', 'enterprise',
+    'holdings', 'holding', 'international', 'systems', 'technologies',
+    'tech', 'solutions', 'services', 'and', 'the', 'of', 'for', 'inc',
+  ]);
+  const tokens = companyName
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 4 && !STOP.has(w));
+  if (tokens.length === 0) return false;
+  // Need at least one distinctive company-name token in the headline
+  for (const tok of tokens.slice(0, 4)) {
+    if (t.includes(tok)) return true;
+  }
+  return false;
+}
+
 async function fetchGoogleNews(ticker, companyName) {
   // Build query: ticker + company name + India context for better matches
   const qParts = [ticker];
@@ -157,6 +197,8 @@ async function fetchGoogleNews(ticker, companyName) {
     const link  = pickXmlTag(block, 'link');
     const pub   = pickXmlTag(block, 'pubDate');
     if (!title || !link) continue;
+    if (!looksLikeRealHeadline(title)) continue;
+    if (!headlineMentionsCompany(title, ticker, companyName)) continue;
     items.push({
       headline: title,
       url: link,
@@ -215,7 +257,7 @@ async function fetchTrendlyne(ticker) {
   while ((m = re.exec(html)) !== null && items.length < 5) {
     const href = m[1];
     const title = stripHtml(m[2]);
-    if (!title || title.length < 20) continue;
+    if (!looksLikeRealHeadline(title)) continue;     // P0804: filter junk
     if (seen.has(title)) continue;
     seen.add(title);
     items.push({
@@ -247,7 +289,7 @@ async function fetchYahoo(ticker) {
       source: `Yahoo (${n.publisher || 'unknown'})`,
       sourceWeight: 40,
       publishedAt: n.providerPublishTime ? new Date(n.providerPublishTime * 1000).toISOString() : null,
-    })).filter((x) => x.headline && x.url);
+    })).filter((x) => x.headline && x.url && looksLikeRealHeadline(x.headline));  // P0804
   } catch { return []; }
 }
 
