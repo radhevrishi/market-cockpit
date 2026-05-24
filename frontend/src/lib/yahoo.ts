@@ -80,22 +80,31 @@ export async function fetchQuotes(symbols: string[]): Promise<any[]> {
   if (cached) return cached;
 
   try {
-    // Split into chunks of 20 to avoid URL length limits
+    // PATCH 0787 — concurrent batching. Was: serial loop of 20-symbol
+    // batches, ~1s each. For 1500 symbols (Nifty 500 + Microcap + Total
+    // Market) that's 75s — exceeds Vercel maxDuration. Now: 8-way
+    // parallel batches, ~10s total for 1500 symbols.
+    const BATCH = 20;
+    const CONC  = 8;
     const chunks: string[][] = [];
-    for (let i = 0; i < symbols.length; i += 20) {
-      chunks.push(symbols.slice(i, i + 20));
+    for (let i = 0; i < symbols.length; i += BATCH) {
+      chunks.push(symbols.slice(i, i + BATCH));
     }
 
     const allResults: any[] = [];
-    for (const chunk of chunks) {
-      const symbolStr = chunk.join(',');
-      const url = `${YF_BASE2}/v7/finance/quote?symbols=${encodeURIComponent(symbolStr)}`;
-      const res = await fetch(url, { headers: HEADERS, next: { revalidate: 300 } });
-      if (res.ok) {
+    const fetchOne = async (chunk: string[]) => {
+      const url = `${YF_BASE2}/v7/finance/quote?symbols=${encodeURIComponent(chunk.join(','))}`;
+      try {
+        const res = await fetch(url, { headers: HEADERS, next: { revalidate: 300 }, signal: AbortSignal.timeout(8000) });
+        if (!res.ok) return [];
         const json = await res.json();
-        const results = json?.quoteResponse?.result || [];
-        allResults.push(...results);
-      }
+        return json?.quoteResponse?.result || [];
+      } catch { return []; }
+    };
+    for (let i = 0; i < chunks.length; i += CONC) {
+      const slab = chunks.slice(i, i + CONC);
+      const results = await Promise.all(slab.map(fetchOne));
+      for (const arr of results) allResults.push(...arr);
     }
 
     setCache(cacheKey, allResults);

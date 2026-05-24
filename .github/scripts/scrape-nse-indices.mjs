@@ -23,11 +23,19 @@
 
 const ARCHIVES_BASE = 'https://archives.nseindia.com';
 
+// Priority order: Large → Mid → Small → Micro. First match wins for cap label.
+// PATCH 0787: added Total Market 750 + Microcap 250 + LargeMidcap 250 to
+// widen the universe so +12% to +20% movers (which are usually
+// smallcap/microcap) show up. SME excluded per user instruction.
 const CONSTITUENT_LISTS = [
-  { name: 'Nifty 50',           url: `${ARCHIVES_BASE}/content/indices/ind_nifty50list.csv`,        cap: 'Large' },
-  { name: 'Nifty Next 50',      url: `${ARCHIVES_BASE}/content/indices/ind_niftynext50list.csv`,    cap: 'Large' },
-  { name: 'Nifty Smallcap 250', url: `${ARCHIVES_BASE}/content/indices/ind_niftysmallcap250list.csv`, cap: 'Small' },
-  { name: 'Nifty 500',          url: `${ARCHIVES_BASE}/content/indices/ind_nifty500list.csv`,        cap: 'Mid'   },
+  { name: 'Nifty 50',              url: `${ARCHIVES_BASE}/content/indices/ind_nifty50list.csv`,            cap: 'Large' },
+  { name: 'Nifty Next 50',         url: `${ARCHIVES_BASE}/content/indices/ind_niftynext50list.csv`,        cap: 'Large' },
+  { name: 'Nifty LargeMidcap 250', url: `${ARCHIVES_BASE}/content/indices/ind_niftylargemidcap250list.csv`, cap: 'Mid'   },
+  { name: 'Nifty Midcap 150',      url: `${ARCHIVES_BASE}/content/indices/ind_niftymidcap150list.csv`,     cap: 'Mid'   },
+  { name: 'Nifty Smallcap 250',    url: `${ARCHIVES_BASE}/content/indices/ind_niftysmallcap250list.csv`,   cap: 'Small' },
+  { name: 'Nifty Microcap 250',    url: `${ARCHIVES_BASE}/content/indices/ind_niftymicrocap250_list.csv`,  cap: 'Micro' },
+  { name: 'Nifty Total Market',    url: `${ARCHIVES_BASE}/content/indices/ind_niftytotalmarket_list.csv`,  cap: 'Small' },
+  { name: 'Nifty 500',             url: `${ARCHIVES_BASE}/content/indices/ind_nifty500list.csv`,           cap: 'Mid'   },
 ];
 
 const FETCH_TIMEOUT_MS = 30_000;
