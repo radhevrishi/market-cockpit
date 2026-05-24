@@ -1,52 +1,65 @@
 #!/usr/bin/env node
 // ═══════════════════════════════════════════════════════════════════════════
-// PATCH 0782 — NSE broad-indices scraper for GitHub Actions.
+// PATCH 0784 — NSE broad-indices scraper for GitHub Actions.
 //
-// Background: NSE's /api/equity-stockIndices is heavily rate-limited when
-// called from Vercel's serverless IPs, especially on weekends. The Vercel-
-// hosted /api/market/quotes endpoint regularly falls back to Yahoo-only
-// (49 NIFTY-50 names) when the broad indices fail upstream.
+// Workflow #1 + #2 confirmed that NSE's main API (www.nseindia.com/api/
+// equity-stockIndices) is fronted by Akamai's bot-detection layer.
+// GitHub Actions IP range is blocked: only the Akamai sentinel cookie
+// AKA_A2=A is issued, not the real NSE session cookies, and every
+// /api call returns HTTP 404.
 //
-// This scraper runs from a GitHub Actions ubuntu-latest runner (different
-// IP pool), fetches the broad indices, normalizes them with cap labels,
-// and writes a consolidated blob to Upstash Redis. The Vercel route then
-// reads the KV blob FIRST and only falls back to live NSE if the blob is
-// stale or missing.
+// Solution: use NSE's `archives.nseindia.com` infra instead. The
+// archives subdomain serves static CSV files for:
+//   • Ticker → index membership lists (constituent CSVs)
+//   • End-of-day BHAVCOPY (full equity-cash market dump)
 //
-// Indices ingested (in priority order — first match wins for cap label):
-//   • NIFTY 50           → cap='Large'
-//   • NIFTY NEXT 50      → cap='Large'
-//   • NIFTY MIDCAP 250   → cap='Mid'
-//   • NIFTY SMALLCAP 250 → cap='Small'
-//   • NIFTY MICROCAP 250 → cap='Micro'
-//   • NIFTY 500          → cap=fallback ('Mid' if not in above sets)
+// archives.nseindia.com is a different CDN (not the Akamai-fronted
+// API gateway) — accepts requests from any IP without session cookies.
 //
-// KV write strategy: single blob `nse-indices-blob:v1:latest`, ~150KB
-// containing 750-900 deduped tickers. TTL 4h (next run overwrites).
-// Costs 1 KV write per run × 4 runs/day = 4 writes/day (well under cap).
+// Strategy:
+//   1. Pull constituent CSVs for Nifty 50 / Next 50 / Midcap 250 /
+//      Smallcap 250 / Microcap 250 / Nifty 500. Build ticker→cap map.
+//   2. Pull the latest BHAVCOPY (most recent trading day). Parse to
+//      get last close, prev close, change, volume, day high/low,
+//      year high/low.
+//   3. Merge constituent lists with prices. Compute change/changePct
+//      from close vs prevClose.
 //
-// Pure Node 20 — built-in fetch only. No dependencies.
+// Pure Node 20 — built-in fetch + zlib (gzip decompression). No deps.
 //
-// Required env vars (GH Actions secrets):
+// Required env (GH Actions secrets):
 //   UPSTASH_REDIS_REST_URL
 //   UPSTASH_REDIS_REST_TOKEN
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { gunzipSync } from 'node:zlib';
+
 // ─── Config ─────────────────────────────────────────────────────────────────
 
-const INDICES = [
-  { key: 'NIFTY 50',           cap: 'Large' },
-  { key: 'NIFTY NEXT 50',      cap: 'Large' },
-  { key: 'NIFTY MIDCAP 250',   cap: 'Mid'   },
-  { key: 'NIFTY SMALLCAP 250', cap: 'Small' },
-  { key: 'NIFTY MICROCAP 250', cap: 'Micro' },
-  { key: 'NIFTY 500',          cap: 'Mid'   }, // fallback for any name not in above
+const ARCHIVES_BASE = 'https://archives.nseindia.com';
+const NSE_BASE = 'https://www.nseindia.com';
+
+// Constituent list URLs — these are public CSVs hosted by NSE archives.
+// First-match-wins on cap label (priority: Large → Mid → Small → Micro).
+const CONSTITUENT_LISTS = [
+  { name: 'Nifty 50',           url: `${ARCHIVES_BASE}/content/indices/ind_nifty50list.csv`,        cap: 'Large' },
+  { name: 'Nifty Next 50',      url: `${ARCHIVES_BASE}/content/indices/ind_niftynext50list.csv`,    cap: 'Large' },
+  { name: 'Nifty Midcap 250',   url: `${ARCHIVES_BASE}/content/indices/ind_niftymidcap250list.csv`, cap: 'Mid'   },
+  { name: 'Nifty Smallcap 250', url: `${ARCHIVES_BASE}/content/indices/ind_niftysmallcap250list.csv`, cap: 'Small' },
+  { name: 'Nifty Microcap 250', url: `${ARCHIVES_BASE}/content/indices/ind_niftymicrocap250list.csv`, cap: 'Micro' },
+  { name: 'Nifty 500',          url: `${ARCHIVES_BASE}/content/indices/ind_nifty500list.csv`,        cap: 'Mid'   },
 ];
 
-const NSE_BASE = 'https://www.nseindia.com';
-const FETCH_TIMEOUT_MS = 20_000;
+const FETCH_TIMEOUT_MS = 30_000;
 const KV_KEY = 'nse-indices-blob:v1:latest';
 const KV_TTL_SECONDS = 4 * 60 * 60; // 4h
+
+// Headers that pass NSE archive CDN. Less strict than main API.
+const ARCHIVE_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Accept': 'text/csv,application/octet-stream,*/*',
+  'Accept-Language': 'en-US,en;q=0.9',
+};
 
 // ─── Env validation ─────────────────────────────────────────────────────────
 
@@ -57,105 +70,123 @@ if (!KV_URL || !KV_TOKEN) {
   process.exit(1);
 }
 
-// ─── NSE session bootstrap (cookies) ────────────────────────────────────────
+// ─── CSV helpers ────────────────────────────────────────────────────────────
 
-// Headers MUST match what lib/nse.ts uses — NSE fingerprints these and
-// will return 404/403 if any required header is missing. Referer is the
-// site root, not a deep page. Cookies acquired by visiting the root.
-const NSE_HEADERS_BASE = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Accept': 'application/json, text/plain, */*',
-  'Accept-Language': 'en-US,en;q=0.9',
-  'Accept-Encoding': 'gzip, deflate, br',
-  'Connection': 'keep-alive',
-  'Referer': 'https://www.nseindia.com/',
-};
+function parseCsv(text) {
+  // RFC-ish CSV parser handling quoted fields with commas.
+  const out = [];
+  const lines = text.split(/\r?\n/).filter(l => l.length > 0);
+  if (lines.length === 0) return out;
+  const headers = parseCsvLine(lines[0]).map(h => h.trim());
+  for (let i = 1; i < lines.length; i++) {
+    const cols = parseCsvLine(lines[i]);
+    const row = {};
+    for (let c = 0; c < headers.length; c++) {
+      row[headers[c]] = (cols[c] || '').trim();
+    }
+    out.push(row);
+  }
+  return out;
+}
 
-let nseCookieJar = '';
+function parseCsvLine(line) {
+  const cols = [];
+  let cur = '';
+  let inQuote = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuote && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else {
+        inQuote = !inQuote;
+      }
+    } else if (ch === ',' && !inQuote) {
+      cols.push(cur);
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  cols.push(cur);
+  return cols;
+}
 
-async function bootstrapNseCookies() {
+// ─── Fetch with timeout ─────────────────────────────────────────────────────
+
+async function fetchCsv(url, label) {
   try {
-    const res = await fetch(NSE_BASE, {
-      headers: {
-        'User-Agent': NSE_HEADERS_BASE['User-Agent'],
-        'Accept': 'text/html,application/xhtml+xml',
-      },
-      redirect: 'follow',
+    const res = await fetch(url, {
+      headers: ARCHIVE_HEADERS,
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      redirect: 'follow',
     });
-    // Node 20 fetch exposes res.headers.getSetCookie() returning an array
-    // of full Set-Cookie strings (one per cookie). Use that if available
-    // for robust parsing — splitting raw header text on `,` breaks on
-    // comma-containing dates.
-    let cookies = [];
-    if (typeof res.headers.getSetCookie === 'function') {
-      cookies = res.headers.getSetCookie();
-    } else {
-      const raw = res.headers.get('set-cookie') || '';
-      cookies = raw.split(/,(?=[^=]+=)/g);
+    if (!res.ok) {
+      console.log(`::warning title=${label}::HTTP ${res.status} from ${url}`);
+      return null;
     }
-    const jar = cookies
-      .map((c) => String(c).split(';')[0].trim())
-      .filter(Boolean);
-    nseCookieJar = jar.join('; ');
-    if (!nseCookieJar) {
-      console.log('::warning title=NSE cookie bootstrap::No Set-Cookie received');
-    } else {
-      console.log(`  NSE cookie acquired (${jar.length} fields): ${nseCookieJar.slice(0, 120)}${nseCookieJar.length > 120 ? '...' : ''}`);
-    }
+    const text = await res.text();
+    const rows = parseCsv(text);
+    console.log(`  ${label.padEnd(22)} → ${rows.length} rows`);
+    return rows;
   } catch (e) {
-    console.log(`::warning title=NSE cookie bootstrap::${e?.message || e}`);
+    const msg = e?.name === 'AbortError' ? `timeout (${FETCH_TIMEOUT_MS}ms)` : (e?.message || String(e));
+    console.log(`::warning title=${label}::${msg}`);
+    return null;
   }
 }
 
-async function fetchIndex(indexKey) {
-  const url = `${NSE_BASE}/api/equity-stockIndices?index=${encodeURIComponent(indexKey)}`;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const res = await fetch(url, {
-        headers: { ...NSE_HEADERS_BASE, Cookie: nseCookieJar },
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      });
-      // 401, 403, 404 all suggest cookie/session issue — refresh and retry.
-      if (res.status === 401 || res.status === 403 || res.status === 404) {
-        if (attempt < 2) {
-          console.log(`  ${indexKey}: HTTP ${res.status}, refreshing cookie (attempt ${attempt + 1})`);
-          // Light browse to a sub-page to upgrade session before retry
-          try {
-            await fetch(`${NSE_BASE}/market-data/live-equity-market`, {
-              headers: { ...NSE_HEADERS_BASE, Cookie: nseCookieJar },
-              signal: AbortSignal.timeout(8000),
-            });
-          } catch {}
-          await bootstrapNseCookies();
-          await new Promise(r => setTimeout(r, 1500));
-          continue;
-        }
-      }
-      if (!res.ok) {
-        console.log(`::warning title=${indexKey}::HTTP ${res.status}`);
-        // Log the response body once for the first index for debugging
-        if (indexKey === 'NIFTY 50') {
-          try {
-            const body = await res.text();
-            console.log(`  body (first 300 chars): ${body.slice(0, 300)}`);
-          } catch {}
-        }
-        return null;
-      }
-      const json = await res.json();
-      const items = Array.isArray(json) ? json : (json?.data || []);
-      console.log(`  ${indexKey.padEnd(22)} → ${items.length} stocks`);
-      return items;
-    } catch (e) {
-      const msg = e?.name === 'AbortError' ? `timeout (${FETCH_TIMEOUT_MS}ms)` : (e?.message || String(e));
-      if (attempt < 2) {
-        console.log(`  ${indexKey}: ${msg}, retrying...`);
-        await new Promise(r => setTimeout(r, 1500));
-        continue;
-      }
-      console.log(`::warning title=${indexKey}::${msg}`);
+async function fetchBhavCopyGz(url, label) {
+  try {
+    const res = await fetch(url, {
+      headers: { ...ARCHIVE_HEADERS, 'Accept': 'application/octet-stream,*/*' },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      redirect: 'follow',
+    });
+    if (!res.ok) {
+      console.log(`  ${label}: HTTP ${res.status}`);
       return null;
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    const unzipped = gunzipSync(buf).toString('utf8');
+    const rows = parseCsv(unzipped);
+    console.log(`  ${label.padEnd(22)} → ${rows.length} rows`);
+    return rows;
+  } catch (e) {
+    const msg = e?.name === 'AbortError' ? `timeout (${FETCH_TIMEOUT_MS}ms)` : (e?.message || String(e));
+    console.log(`  ${label}: ${msg}`);
+    return null;
+  }
+}
+
+// ─── Find most recent BHAVCOPY ──────────────────────────────────────────────
+// BHAVCOPY filename pattern: cmDDMMMYYYYbhav.csv.gz (e.g. cm22MAY2026bhav.csv.gz)
+// Walk back from yesterday looking for the most recent file that exists.
+
+const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+
+function bhavCopyUrl(d) {
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  const month = MONTHS[d.getUTCMonth()];
+  const year = d.getUTCFullYear();
+  const filename = `cm${day}${month}${year}bhav.csv.gz`;
+  return `${ARCHIVES_BASE}/content/historical/EQUITIES/${year}/${month}/${filename}`;
+}
+
+async function findRecentBhavCopy() {
+  // Walk back up to 10 calendar days
+  const today = new Date();
+  for (let back = 1; back <= 10; back++) {
+    const d = new Date(today.getTime() - back * 86400_000);
+    // Skip weekends — NSE doesn't publish Sat/Sun
+    const dow = d.getUTCDay();
+    if (dow === 0 || dow === 6) continue;
+    const url = bhavCopyUrl(d);
+    const label = `BHAVCOPY ${d.toISOString().slice(0, 10)}`;
+    const rows = await fetchBhavCopyGz(url, label);
+    if (rows && rows.length > 100) {
+      return { rows, dateISO: d.toISOString().slice(0, 10), url };
     }
   }
   return null;
@@ -184,89 +215,130 @@ async function kvSet(key, value, ttlSeconds) {
   }
 }
 
-// ─── Normalization ──────────────────────────────────────────────────────────
-
-function normalizeItem(item, capDefault) {
-  const symbol = item.symbol || '';
-  if (!symbol || symbol.includes(' ')) return null; // skip header rows like 'NIFTY 50'
-  const lastPrice = item.lastPrice || item.ltP || 0;
-  const previousClose = item.previousClose || item.prevClose || 0;
-  // Compute change/pct from prices (NSE returns pChange=0 on non-trading days)
-  const reportedPChange = typeof item.pChange === 'number' ? item.pChange : 0;
-  const reportedChange = typeof item.change === 'number' ? item.change : 0;
-  const computedChange = (lastPrice > 0 && previousClose > 0) ? (lastPrice - previousClose) : 0;
-  const computedPct = (lastPrice > 0 && previousClose > 0) ? ((lastPrice - previousClose) / previousClose) * 100 : 0;
-  return {
-    ticker: symbol,
-    company: item.meta?.companyName || item.identifier || symbol,
-    industry: item.meta?.industry || item.industry || '',
-    price: lastPrice,
-    previousClose,
-    change: reportedChange !== 0 ? reportedChange : computedChange,
-    changePercent: reportedPChange !== 0 ? reportedPChange : computedPct,
-    volume: item.totalTradedVolume || item.trdVol || 0,
-    ffmc: item.ffmc || item.freeFloatMktCap || 0,
-    yearHigh: item.yearHigh || 0,
-    yearLow: item.yearLow || 0,
-    dayHigh: item.dayHigh || 0,
-    dayLow: item.dayLow || 0,
-    open: item.open || 0,
-    cap: capDefault,
-  };
-}
-
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 async function main() {
   const startedAt = Date.now();
-  console.log(`▶ scrape-nse-indices at ${new Date().toISOString()}`);
+  console.log(`▶ scrape-nse-indices (archives mode) at ${new Date().toISOString()}`);
 
-  await bootstrapNseCookies();
+  // Step 1: Build ticker → cap + company name map from constituent CSVs.
+  // CSV columns vary by index file but generally include:
+  //   "Company Name", "Industry", "Symbol", "Series", "ISIN Code"
+  console.log('  ── Pulling constituent CSVs ──');
+  const tickerCap = new Map();
+  const tickerCompany = new Map();
+  const tickerIndustry = new Map();
 
-  // Sequential fetch — NSE rate-limits parallel calls on the same cookie.
-  const stocksByTicker = new Map();
-  const indexCounts = {};
-
-  for (const { key, cap } of INDICES) {
-    const items = await fetchIndex(key);
-    if (!items) {
-      indexCounts[key] = 0;
-      continue;
-    }
-    indexCounts[key] = items.length;
-    for (const raw of items) {
-      const item = normalizeItem(raw, cap);
-      if (!item) continue;
-      // First match wins (cap-priority order in INDICES const).
-      if (!stocksByTicker.has(item.ticker)) {
-        stocksByTicker.set(item.ticker, item);
+  for (const list of CONSTITUENT_LISTS) {
+    const rows = await fetchCsv(list.url, list.name);
+    if (!rows) continue;
+    for (const row of rows) {
+      const sym = (row['Symbol'] || row['symbol'] || '').trim().toUpperCase();
+      if (!sym) continue;
+      // First match wins for cap (priority order in CONSTITUENT_LISTS)
+      if (!tickerCap.has(sym)) {
+        tickerCap.set(sym, list.cap);
       }
+      const company = row['Company Name'] || row['company name'] || row['company'] || '';
+      const industry = row['Industry'] || row['industry'] || '';
+      if (company && !tickerCompany.has(sym)) tickerCompany.set(sym, company);
+      if (industry && !tickerIndustry.has(sym)) tickerIndustry.set(sym, industry);
     }
-    // Polite pause to avoid burst-limit
-    await new Promise(r => setTimeout(r, 500));
+  }
+  console.log(`  ticker universe: ${tickerCap.size} unique symbols`);
+
+  if (tickerCap.size === 0) {
+    console.log('::error title=No constituents::All constituent CSV fetches returned 0 rows.');
+    process.exit(1);
   }
 
-  const stocks = Array.from(stocksByTicker.values());
-  const elapsed = Date.now() - startedAt;
-  const capBreakdown = stocks.reduce((acc, s) => { acc[s.cap] = (acc[s.cap] || 0) + 1; return acc; }, {});
+  // Step 2: Pull most recent BHAVCOPY for prices.
+  console.log('  ── Pulling BHAVCOPY for prices ──');
+  const bhav = await findRecentBhavCopy();
+  if (!bhav) {
+    console.log('::error title=No BHAVCOPY::Could not find a BHAVCOPY file within the last 10 weekdays.');
+    process.exit(1);
+  }
+  console.log(`  using BHAVCOPY ${bhav.dateISO}`);
 
+  // BHAVCOPY columns (canonical):
+  //   SYMBOL, SERIES, OPEN, HIGH, LOW, CLOSE, LAST, PREVCLOSE, TOTTRDQTY,
+  //   TOTTRDVAL, TIMESTAMP, TOTALTRADES, ISIN
+  // We want SERIES='EQ' (regular equity, skip BE/EQ-special/etc).
+  const priceMap = new Map();
+  for (const row of bhav.rows) {
+    const series = (row['SERIES'] || row[' SERIES'] || '').trim();
+    if (series !== 'EQ') continue;
+    const sym = (row['SYMBOL'] || row[' SYMBOL'] || '').trim().toUpperCase();
+    if (!sym) continue;
+    const close = Number(row['CLOSE']) || Number(row[' CLOSE']) || 0;
+    const prevClose = Number(row['PREVCLOSE']) || Number(row[' PREVCLOSE']) || 0;
+    const open = Number(row['OPEN']) || Number(row[' OPEN']) || 0;
+    const high = Number(row['HIGH']) || Number(row[' HIGH']) || 0;
+    const low = Number(row['LOW']) || Number(row[' LOW']) || 0;
+    const volume = Number(row['TOTTRDQTY']) || Number(row[' TOTTRDQTY']) || 0;
+    if (close <= 0) continue;
+    const change = prevClose > 0 ? close - prevClose : 0;
+    const changePct = prevClose > 0 ? (change / prevClose) * 100 : 0;
+    priceMap.set(sym, {
+      price: close,
+      previousClose: prevClose,
+      change,
+      changePercent: changePct,
+      open,
+      dayHigh: high,
+      dayLow: low,
+      volume,
+    });
+  }
+  console.log(`  parsed ${priceMap.size} EQ-series prices from BHAVCOPY`);
+
+  // Step 3: Merge → final stock list
+  const stocks = [];
+  for (const [sym, cap] of tickerCap) {
+    const p = priceMap.get(sym);
+    if (!p) continue; // skip symbols without a price in this BHAVCOPY
+    stocks.push({
+      ticker: sym,
+      company: tickerCompany.get(sym) || sym,
+      industry: tickerIndustry.get(sym) || '',
+      cap,
+      price: p.price,
+      previousClose: p.previousClose,
+      change: p.change,
+      changePercent: p.changePercent,
+      open: p.open,
+      dayHigh: p.dayHigh,
+      dayLow: p.dayLow,
+      yearHigh: 0,
+      yearLow: 0,
+      volume: p.volume,
+      ffmc: 0,
+    });
+  }
+
+  const capBreakdown = stocks.reduce((acc, s) => { acc[s.cap] = (acc[s.cap] || 0) + 1; return acc; }, {});
+  const elapsed = Date.now() - startedAt;
   console.log(`  totals: ${stocks.length} unique stocks · breakdown: ${JSON.stringify(capBreakdown)}`);
 
-  if (stocks.length === 0) {
-    console.log('::error title=Empty scrape::All NSE index fetches returned 0 stocks. KV blob NOT updated.');
+  if (stocks.length < 50) {
+    console.log('::error title=Too few stocks::Merged result has <50 stocks. KV blob NOT updated.');
     process.exit(1);
   }
 
   const payload = {
     generatedAt: new Date().toISOString(),
     elapsedMs: elapsed,
-    indexCounts,
+    sourceBhavDate: bhav.dateISO,
+    sourceBhavUrl: bhav.url,
+    indexCounts: Object.fromEntries(
+      CONSTITUENT_LISTS.map(l => [l.name, Array.from(tickerCap.entries()).filter(([_, c]) => c === l.cap).length])
+    ),
     capBreakdown,
     totalStocks: stocks.length,
     stocks,
   };
 
-  // Trim if too large (Upstash REST has 1MiB body limit)
   let payloadSize = JSON.stringify(payload).length;
   console.log(`  payload size: ${Math.round(payloadSize / 1024)} KB`);
   while (payloadSize > 900_000 && payload.stocks.length > 200) {
@@ -276,7 +348,7 @@ async function main() {
 
   await kvSet(KV_KEY, payload, KV_TTL_SECONDS);
   console.log(`✓ wrote ${KV_KEY} (${payload.stocks.length} stocks, ${Math.round(payloadSize / 1024)} KB) in ${elapsed}ms`);
-  console.log(`::notice title=Scrape complete::${payload.stocks.length} NSE stocks cached for 4h.`);
+  console.log(`::notice title=Scrape complete::${payload.stocks.length} NSE stocks cached for 4h (BHAVCOPY ${bhav.dateISO}).`);
 }
 
 main().catch((e) => {
