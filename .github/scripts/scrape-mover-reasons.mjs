@@ -29,9 +29,41 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 const FETCH_TIMEOUT_MS = 10_000;
-const TICKER_THROTTLE_MS = 800;
-const MAX_TICKERS_PER_RUN = 50;       // bounded — typically <50 extreme movers per day
+const TICKER_THROTTLE_MS = 600;
+const MAX_TICKERS_PER_RUN = 80;       // includes EXTREME (≥10%) + STANDARD (≥5%)
+const MOVER_PCT_THRESHOLD = 5;        // P0802: lowered from 10 to catch JSWCEMENT-class moves
 const KV_TTL_SECONDS = 24 * 60 * 60;
+
+// Headline blacklist — Moneycontrol/Trendlyne nav widgets that match the regex
+const HEADLINE_BLACKLIST = [
+  /^business videos?$/i,
+  /^latest news$/i,
+  /^more news$/i,
+  /^watch\b/i,
+  /^live tv$/i,
+  /^subscribe\b/i,
+  /^follow us$/i,
+  /^top stories$/i,
+  /^market dashboard$/i,
+  /^market overview$/i,
+  /^markets$/i,
+  /^news$/i,
+  /^stocks?$/i,
+  /^companies$/i,
+  /^videos?$/i,
+  /^podcasts?$/i,
+  /^webinars?$/i,
+  /^download our app$/i,
+];
+
+function looksLikeRealHeadline(title) {
+  if (!title) return false;
+  if (title.length < 25) return false;
+  for (const re of HEADLINE_BLACKLIST) if (re.test(title)) return false;
+  // Real headlines have at least one verb-like or number-like marker
+  if (!/[a-z]{4,}/i.test(title)) return false;
+  return true;
+}
 
 const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -145,21 +177,23 @@ async function fetchMoneycontrol(ticker) {
   if (!html) return [];
 
   const items = [];
-  // Moneycontrol article cards: <li class="clearfix"><h2><a href="...">Title</a></h2>...
-  // OR <div class="article_list"><h3><a href="...">...</a></h3>
+  // PATCH 0802: tighter regex — must point to a Moneycontrol news article URL
+  // AND not match the headline blacklist (drops "Business videos" etc.)
   const re = /<(?:h2|h3)[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>\s*<\/(?:h2|h3)>/g;
   let m;
   while ((m = re.exec(html)) !== null && items.length < 5) {
     const href = m[1];
     const title = stripHtml(m[2]);
-    if (!title || title.length < 15) continue;
-    if (!/moneycontrol|news|article|stock|company/i.test(href)) continue;
+    if (!looksLikeRealHeadline(title)) continue;
+    // Moneycontrol news article URLs always contain '/news/' and end in a numeric id
+    if (!/moneycontrol\.com\/news\/.+\d+\.html/i.test(href)
+        && !(/^\/news\//.test(href) && /\d+\.html$/.test(href))) continue;
     items.push({
       headline: title,
       url: href.startsWith('http') ? href : `https://www.moneycontrol.com${href}`,
       source: 'Moneycontrol',
       sourceWeight: 70,
-      publishedAt: null,  // MC HTML rarely has reliable ISO dates inline
+      publishedAt: null,
     });
   }
   return items;
