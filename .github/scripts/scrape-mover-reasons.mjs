@@ -297,7 +297,7 @@ async function loadExtremeMovers() {
   const blob = await kvGet('nse-ticker-universe:v1:latest');
   if (!blob || !Array.isArray(blob.tickers)) return [];
   const extreme = blob.tickers
-    .filter((t) => t.hasPrice && Math.abs(t.changePercent || 0) >= 10)
+    .filter((t) => t.hasPrice && Math.abs(t.changePercent || 0) >= MOVER_PCT_THRESHOLD)
     .sort((a, b) => Math.abs(b.changePercent) - Math.abs(a.changePercent))
     .slice(0, MAX_TICKERS_PER_RUN);
   return extreme;
@@ -340,9 +340,9 @@ async function main() {
   console.log(`▶ scrape-mover-reasons at ${new Date().toISOString()}`);
 
   const extreme = await loadExtremeMovers();
-  console.log(`  found ${extreme.length} extreme movers (≥10%)`);
+  console.log(`  found ${extreme.length} movers (≥${MOVER_PCT_THRESHOLD}%)`);
   if (extreme.length === 0) {
-    console.log('  no extreme movers — nothing to scrape');
+    console.log('  no movers above threshold — nothing to scrape');
     return;
   }
 
@@ -365,7 +365,7 @@ async function main() {
 
   const elapsed = Math.round((Date.now() - startedAt) / 1000);
   console.log(`✓ done in ${elapsed}s · ok=${ok}/${extreme.length} · with-public-reason=${withReason}`);
-  console.log(`::notice title=Mover reasons::${withReason}/${extreme.length} extreme movers got public-source headlines.`);
+  console.log(`::notice title=Mover reasons::${withReason}/${extreme.length} movers got public-source headlines.`);
 }
 
 main().catch((e) => {
