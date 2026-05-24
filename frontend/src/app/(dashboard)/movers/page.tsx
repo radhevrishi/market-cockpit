@@ -233,7 +233,11 @@ export default function MoversPage() {
   }, [fetchData]);
 
   const filtered = useMemo(() => {
+    // PATCH 0796 — volume filter: only consider stocks with ≥5 lakh shares
+    // traded today (user spec). Drops illiquid noise from /movers display.
+    const MIN_VOLUME = 500_000;
     return allStocks.filter(s => {
+      if ((s.volume || 0) < MIN_VOLUME) return false;
       if (capFilter === 'Mid & Small' && s.cap === 'Large') return false;
       if (capFilter !== 'All' && capFilter !== 'Mid & Small' && s.cap !== capFilter) return false;
       if (sectorFilter !== 'All' && s.sector !== sectorFilter) return false;

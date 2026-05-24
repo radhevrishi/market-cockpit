@@ -34,6 +34,10 @@ import {
   CATALYST_GLYPH,
   CONFIDENCE_COLOR,
   MOVE_TYPE_LABEL,
+  moverTier,
+  anomalyTag,
+  ANOMALY_COLOR,
+  cleanMoverLabel,
   type MoverAttribution,
 } from '@/lib/movers-attribution';
 import { getConvictionTickers, getConvictionList } from '@/lib/conviction-beats';
@@ -614,40 +618,23 @@ export default function HomeDashboard() {
         //   1) Own universe — broad-response intersect + per-ticker fetch (P0780)
         //   2) Small+midcap intersection from broad response (excludes NIFTY 50 noise)
         //   3) Full broad response (last resort, never blank)
-        // PATCH 0793 — ALWAYS fill to 10 each side. User universe gets
-        // priority placement (top of list), then fill remaining slots from
-        // broad market gainers/losers. Previously when user's CB+watchlist
-        // had only 3 names overlapping with gainers, only 3 rows showed.
-        const broadG = rawG.slice().sort((a: any, b: any) => (b.changePercent || 0) - (a.changePercent || 0));
-        const broadL = rawL.slice().sort((a: any, b: any) => (a.changePercent || 0) - (b.changePercent || 0));
-        let gainers: any[] = [];
-        let losers: any[] = [];
-        const TARGET = 10;
-        if (universe.size > 0) {
-          const uG = broadG.filter(inUniverse);
-          const uL = broadL.filter(inUniverse);
-          const uExtraGFiltered = uExtraG.filter((s: any) => !uG.find((g: any) => g.ticker === s.ticker));
-          const uExtraLFiltered = uExtraL.filter((s: any) => !uL.find((g: any) => g.ticker === s.ticker));
-          const universeG = [...uG, ...uExtraGFiltered].sort((a, b) => (b.changePercent || 0) - (a.changePercent || 0));
-          const universeL = [...uL, ...uExtraLFiltered].sort((a, b) => (a.changePercent || 0) - (b.changePercent || 0));
-          // Take all from universe, then fill from broad excluding duplicates
-          const universeSetG = new Set(universeG.map((g: any) => g.ticker));
-          const universeSetL = new Set(universeL.map((l: any) => l.ticker));
-          const fillG = broadG.filter((s: any) => !universeSetG.has(s.ticker));
-          const fillL = broadL.filter((s: any) => !universeSetL.has(s.ticker));
-          gainers = [...universeG, ...fillG].slice(0, TARGET);
-          losers  = [...universeL, ...fillL].slice(0, TARGET);
-        } else {
-          // No universe configured — small+mid preferred, then full broad
-          const filteredG = smallMidOnly(broadG);
-          const filteredL = smallMidOnly(broadL);
-          const fillSetG = new Set(filteredG.map((s: any) => s.ticker));
-          const fillSetL = new Set(filteredL.map((s: any) => s.ticker));
-          const restG = broadG.filter((s: any) => !fillSetG.has(s.ticker));
-          const restL = broadL.filter((s: any) => !fillSetL.has(s.ticker));
-          gainers = [...filteredG, ...restG].slice(0, TARGET);
-          losers  = [...filteredL, ...restL].slice(0, TARGET);
-        }
+        // PATCH 0796 — institutional movers display:
+        //   • Volume filter ≥ 10 lakh (1,000,000 shares) — drop illiquid noise
+        //   • Strict abs(%) DESC sort within both sides (market-wide ranking)
+        //   • Universe priority dropped — show explosive movers from anywhere;
+        //     own-universe names get a 👁 badge in the renderer instead
+        //   • Top 15 each side (gives ~5 extreme + ~10 standard); tier
+        //     split happens at render time
+        const MIN_VOLUME = 500_000; // 5 lakh shares (per user spec)
+        const liquid = (s: any) => (s?.volume || 0) >= MIN_VOLUME;
+        const gainers = rawG.slice()
+          .filter(liquid)
+          .sort((a: any, b: any) => (b.changePercent || 0) - (a.changePercent || 0))
+          .slice(0, 15);
+        const losers = rawL.slice()
+          .filter(liquid)
+          .sort((a: any, b: any) => (a.changePercent || 0) - (b.changePercent || 0))
+          .slice(0, 15);
         setData((d) => ({ ...d, gainers, losers, moversUpdatedAt: j?.updatedAt } as any));
 
         // PATCH 0794 — compute sector aggregates from the FULL stocks
@@ -2006,85 +1993,138 @@ export default function HomeDashboard() {
                 No movers data available right now. <Link href="/movers" style={{ color: '#22D3EE', textDecoration: 'none' }}>Open full Movers page →</Link>
               </div>
             ) : (() => {
-              // PATCH 0708 — institutional event-attribution rendering.
-              // Each row now shows: ticker · % · catalyst-glyph · label ·
-              // confidence chip · scope badge. Tooltip on hover shows the
-              // move-type classification + sector peer count for transparency.
-              // PATCH 0794 — two-line row: top = ticker + pct + short label + chips;
-              // bottom = analyst-grade detail (attr.detail) that explains WHAT was
-              // checked, peer counts, sector vs index, and feed-gap state.
+              // PATCH 0796 — tiered movers display:
+              //   • Compact 1-line row (ticker + pct + label + chips). No multi-line prose.
+              //   • Sections: 🔴 EXTREME (|%|≥10) and 🟠 STANDARD (5–10).
+              //   • Anomaly tag (CIRCUIT/NEWS_GAP/UNEXPLAINED) when applicable.
+              //   • 👁 badge if ticker is in user's universe (Watchlist∪Portfolio∪CB).
+              //   • Sector breadth moved to footer (single line, not per-row).
+              const norm = (s: string) => (s || '').toString().toUpperCase().replace(/\.(NS|BO)$/i, '').trim();
+              const universeSet = new Set<string>();
+              try { (JSON.parse(localStorage.getItem('mc_watchlist_tickers') || '[]') || []).forEach((t: string) => universeSet.add(norm(t))); } catch {}
+              try { getConvictionTickers().forEach((t: string) => universeSet.add(norm(t))); } catch {}
+              try { (JSON.parse(localStorage.getItem('portfolioHoldings') || '[]') || []).forEach((h: any) => { if (h?.ticker) universeSet.add(norm(h.ticker)); }); } catch {}
+
               const renderRow = (m: any, pos: 'up' | 'dn') => {
                 const tk = (m.ticker || '').toUpperCase();
                 const attr = data.moversAttrib?.[tk];
                 const pct = m.changePercent ?? 0;
                 const c = pos === 'up' ? '#10B981' : '#EF4444';
-                const confColor = attr ? CONFIDENCE_COLOR[attr.confidence] : '#3F4D63';
-                const scopeBadge = attr?.scope === 'SECTOR_WIDE' ? 'sector' : '';
-                const moveTypeLabel = attr ? MOVE_TYPE_LABEL[attr.moveType] : '';
+                const tier = moverTier(pct);
+                const anom = anomalyTag({ changePercent: pct, attribution: attr, tier });
+                const inUniverse = universeSet.has(tk);
+                const cleanLabel = attr ? cleanMoverLabel(attr) : '';
                 const tooltip = attr
-                  ? `${attr.catalyst}\n\n${attr.detail || ''}\n\nConfidence: ${attr.confidence}\nMove type: ${moveTypeLabel}\nScope: ${attr.scope === 'SECTOR_WIDE' ? `Sector-wide (${attr.sectorPeerCount} peers ${attr.sectorDirection})` : 'Stock-specific'}\nEvidence: ${attr.evidenceSource}`
+                  ? `${cleanLabel}\n\n${attr.detail || ''}\n\nConfidence: ${attr.confidence}\nScope: ${attr.scope === 'SECTOR_WIDE' ? 'Sector-wide' : 'Stock-specific'}`
                   : '';
                 return (
                   <Link key={tk} href={`/stock-sheet?ticker=${encodeURIComponent(m.ticker)}`}
                     title={tooltip}
-                    style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '5px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
-                    {/* Top line: ticker + pct + short catalyst label + confidence + scope */}
-                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                      <span style={{ fontSize: 11, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 92, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.ticker}</span>
-                      <span style={{ fontSize: 11, color: c, fontWeight: 800, fontVariantNumeric: 'tabular-nums', minWidth: 50, textAlign: 'right' }}>
-                        {pos === 'up' ? '+' : ''}{pct.toFixed(1)}%
-                      </span>
-                      {attr ? (
-                        <span style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
-                          <span style={{ fontSize: 11, flexShrink: 0 }}>{CATALYST_GLYPH[attr.catalystType]}</span>
-                          <span style={{
-                            fontSize: 10, color: TEXT,
-                            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                            flex: 1, minWidth: 0, lineHeight: 1.4, fontWeight: 600,
-                          }}>
-                            {attr.catalyst.slice(0, 60)}{attr.catalyst.length > 60 ? '…' : ''}
-                          </span>
-                          <span style={{
-                            fontSize: 8, fontWeight: 800, padding: '1px 4px', borderRadius: 2,
-                            background: `${confColor}22`, color: confColor, flexShrink: 0, letterSpacing: 0.3,
-                          }}>
-                            {attr.confidence}
-                          </span>
-                          {scopeBadge && (
-                            <span style={{
-                              fontSize: 8, fontWeight: 700, padding: '1px 4px', borderRadius: 2,
-                              background: '#22D3EE22', color: '#22D3EE', flexShrink: 0, letterSpacing: 0.3,
-                            }}>
-                              {scopeBadge}
-                            </span>
-                          )}
-                        </span>
-                      ) : (
-                        <span style={{ flex: 1, fontSize: 10, color: '#3F4D63', fontStyle: 'italic' }}>analyzing…</span>
-                      )}
-                    </div>
-                    {/* Bottom line: analyst-grade detail explaining WHY/WHAT/HOW */}
-                    {attr?.detail && (
-                      <div style={{
-                        fontSize: 9.5, color: DIM, paddingLeft: 98, lineHeight: 1.4,
-                        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    style={{ display: 'flex', alignItems: 'baseline', gap: 6, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                    {inUniverse && <span style={{ fontSize: 10, color: '#22D3EE', flexShrink: 0 }} title="In your Watchlist/Portfolio/CB">👁</span>}
+                    <span style={{ fontSize: 11, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 84, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.ticker}</span>
+                    <span style={{ fontSize: 11, color: c, fontWeight: 800, fontVariantNumeric: 'tabular-nums', minWidth: 52, textAlign: 'right' }}>
+                      {pos === 'up' ? '+' : ''}{pct.toFixed(1)}%
+                    </span>
+                    {anom && (
+                      <span style={{
+                        fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2, letterSpacing: 0.3,
+                        background: `${ANOMALY_COLOR[anom]}22`, color: ANOMALY_COLOR[anom], flexShrink: 0,
                       }}>
-                        {attr.detail}
-                      </div>
+                        {anom === 'NEWS_GAP' ? 'NEWS' : anom}
+                      </span>
+                    )}
+                    {attr ? (
+                      <span style={{
+                        flex: 1, fontSize: 10, color: TEXT, fontWeight: 500,
+                        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                        minWidth: 0, lineHeight: 1.4,
+                      }}>
+                        {cleanLabel.slice(0, 60)}{cleanLabel.length > 60 ? '…' : ''}
+                      </span>
+                    ) : (
+                      <span style={{ flex: 1, fontSize: 10, color: '#3F4D63', fontStyle: 'italic' }}>analyzing…</span>
+                    )}
+                    {attr && (
+                      <span style={{
+                        fontSize: 8, fontWeight: 800, padding: '1px 4px', borderRadius: 2, letterSpacing: 0.3, flexShrink: 0,
+                        background: `${CONFIDENCE_COLOR[attr.confidence]}22`, color: CONFIDENCE_COLOR[attr.confidence],
+                      }}>
+                        {attr.confidence}
+                      </span>
                     )}
                   </Link>
                 );
               };
+
+              // Tier split — EXTREME first, then STANDARD. Drop MINOR (<5%).
+              const gainersList = data.gainers || [];
+              const losersList  = data.losers  || [];
+              const extremeG = gainersList.filter((g: any) => moverTier(g.changePercent || 0) === 'EXTREME');
+              const standardG = gainersList.filter((g: any) => moverTier(g.changePercent || 0) === 'STANDARD');
+              const extremeL = losersList.filter((l: any) => moverTier(l.changePercent || 0) === 'EXTREME');
+              const standardL = losersList.filter((l: any) => moverTier(l.changePercent || 0) === 'STANDARD');
+
+              // Sector breadth footer — top 3 advancing + top 3 declining sectors
+              const sectorMoves = (data as any).sectorRotation;
+
               return (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 8 }}>
-                  <div>
-                    <div style={{ fontSize: 10, color: '#10B981', fontWeight: 800, letterSpacing: '0.5px', marginBottom: 4 }}>▲ GAINERS</div>
-                    {(data.gainers || []).slice(0, 10).map((g: any) => renderRow(g, 'up'))}
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 10, color: '#EF4444', fontWeight: 800, letterSpacing: '0.5px', marginBottom: 4, marginTop: 6 }}>▼ LOSERS</div>
-                    {(data.losers || []).slice(0, 10).map((l: any) => renderRow(l, 'dn'))}
-                  </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {(extremeG.length > 0 || extremeL.length > 0) && (
+                    <div>
+                      <div style={{ fontSize: 9.5, color: '#EF4444', fontWeight: 800, letterSpacing: '0.5px', marginBottom: 3 }}>
+                        🔴 EXTREME MOVERS (≥ 10%)
+                      </div>
+                      {extremeG.length > 0 && (
+                        <>
+                          <div style={{ fontSize: 9, color: '#10B981', fontWeight: 700, marginTop: 2, marginBottom: 2 }}>▲ GAINERS</div>
+                          {extremeG.map((g: any) => renderRow(g, 'up'))}
+                        </>
+                      )}
+                      {extremeL.length > 0 && (
+                        <>
+                          <div style={{ fontSize: 9, color: '#EF4444', fontWeight: 700, marginTop: 4, marginBottom: 2 }}>▼ LOSERS</div>
+                          {extremeL.map((l: any) => renderRow(l, 'dn'))}
+                        </>
+                      )}
+                    </div>
+                  )}
+                  {(standardG.length > 0 || standardL.length > 0) && (
+                    <div>
+                      <div style={{ fontSize: 9.5, color: '#F59E0B', fontWeight: 800, letterSpacing: '0.5px', marginBottom: 3, marginTop: 4 }}>
+                        🟠 STANDARD MOVERS (5–10%)
+                      </div>
+                      {standardG.length > 0 && (
+                        <>
+                          <div style={{ fontSize: 9, color: '#10B981', fontWeight: 700, marginTop: 2, marginBottom: 2 }}>▲ GAINERS</div>
+                          {standardG.slice(0, 8).map((g: any) => renderRow(g, 'up'))}
+                        </>
+                      )}
+                      {standardL.length > 0 && (
+                        <>
+                          <div style={{ fontSize: 9, color: '#EF4444', fontWeight: 700, marginTop: 4, marginBottom: 2 }}>▼ LOSERS</div>
+                          {standardL.slice(0, 8).map((l: any) => renderRow(l, 'dn'))}
+                        </>
+                      )}
+                    </div>
+                  )}
+                  {extremeG.length === 0 && standardG.length === 0 && extremeL.length === 0 && standardL.length === 0 && (
+                    <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic', padding: '4px 0' }}>
+                      No movers ≥ ±5% with ≥5 lakh volume today.
+                    </div>
+                  )}
+                  {/* Footer: sector breadth — single block, not per-row */}
+                  {sectorMoves?.topSector && sectorMoves?.bottomSector && (
+                    <div style={{
+                      fontSize: 9.5, color: DIM, padding: '4px 6px', marginTop: 4,
+                      borderTop: '1px solid #1A2540', lineHeight: 1.5,
+                    }}>
+                      <span style={{ color: '#8DA1B9', fontWeight: 700 }}>Sector breadth:</span>{' '}
+                      <span style={{ color: '#10B981' }}>{sectorMoves.topSector.sector} {sectorMoves.topSector.pct >= 0 ? '+' : ''}{sectorMoves.topSector.pct.toFixed(1)}%</span>
+                      {' · '}
+                      <span style={{ color: '#EF4444' }}>{sectorMoves.bottomSector.sector} {sectorMoves.bottomSector.pct.toFixed(1)}%</span>
+                    </div>
+                  )}
                 </div>
               );
             })()}

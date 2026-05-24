@@ -646,6 +646,74 @@ export function detectFeedGap(attrib: Record<string, MoverAttribution>): { feedG
   return { feedGap: false };
 }
 
+// ─── PATCH 0796: tier + anomaly classification ──────────────────────────
+
+export type MoverTier = 'EXTREME' | 'STANDARD' | 'MINOR';
+export type AnomalyTag = 'CIRCUIT' | 'NEWS_GAP' | 'UNEXPLAINED' | null;
+
+/** Classify a mover into one of three tiers based on absolute % move. */
+export function moverTier(changePercent: number): MoverTier {
+  const abs = Math.abs(changePercent);
+  if (abs >= 10) return 'EXTREME';
+  if (abs >= 5) return 'STANDARD';
+  return 'MINOR';
+}
+
+/**
+ * NSE circuit limits: ±5%, ±10%, ±20%. A move within 0.15% of any of these
+ * is almost certainly the result of a circuit-locked session, not free price
+ * discovery.
+ */
+export function isCircuitMove(changePercent: number): boolean {
+  const abs = Math.abs(changePercent);
+  for (const limit of [5, 10, 20]) {
+    if (Math.abs(abs - limit) < 0.15) return true;
+  }
+  return false;
+}
+
+/**
+ * Compute one short anomaly tag per mover. Priority:
+ *   CIRCUIT  > NEWS_GAP > UNEXPLAINED > null
+ * Only return a tag when it adds information beyond the row label.
+ */
+export function anomalyTag(args: {
+  changePercent: number;
+  attribution?: MoverAttribution;
+  tier?: MoverTier;
+}): AnomalyTag {
+  const tier = args.tier || moverTier(args.changePercent);
+  if (isCircuitMove(args.changePercent)) return 'CIRCUIT';
+  const src = args.attribution?.evidenceSource;
+  if (tier === 'EXTREME' && (src === 'filing' || src === 'news')) return 'NEWS_GAP';
+  if (tier === 'EXTREME' && (src === 'inferred' || src === 'sector_peer') && args.attribution?.confidence === 'LOW') {
+    return 'UNEXPLAINED';
+  }
+  return null;
+}
+
+export const ANOMALY_COLOR: Record<Exclude<AnomalyTag, null>, string> = {
+  CIRCUIT: '#EF4444',       // red
+  NEWS_GAP: '#10B981',      // green
+  UNEXPLAINED: '#F59E0B',   // amber
+};
+
+/**
+ * Replace the tier-4 "Momentum burst / Position unwind" label with the
+ * cleaner alternatives the user asked for when render context favors
+ * a terser surface. The original engine output is kept for backwards
+ * compat — this function is used by the UI layer.
+ */
+export function cleanMoverLabel(attr: MoverAttribution | undefined): string {
+  if (!attr) return '';
+  if (attr.catalystType !== 'NONE') return attr.catalyst;
+  // attr.catalystType === 'NONE' — replace the verb-ish labels
+  if (attr.changePercent > 0) {
+    return Math.abs(attr.changePercent) >= 10 ? 'UNEXPLAINED MOVE' : 'No confirmed trigger';
+  }
+  return Math.abs(attr.changePercent) >= 10 ? 'LIQUIDATION MOVE' : 'No confirmed trigger';
+}
+
 // ─── render helpers ─────────────────────────────────────────────────────
 
 export const CATALYST_GLYPH: Record<CatalystType, string> = {
