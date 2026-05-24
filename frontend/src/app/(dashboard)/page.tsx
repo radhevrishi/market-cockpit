@@ -650,14 +650,26 @@ export default function HomeDashboard() {
         }
         setData((d) => ({ ...d, gainers, losers, moversUpdatedAt: j?.updatedAt } as any));
 
-        // PATCH 0708 — Institutional event-attribution engine. Replaces the
-        // shallow "find any match" enrichment with a proper multi-factor
-        // analyzer that classifies catalyst type (EARNINGS/OFS/ORDER_WIN/
-        // RATING/MNA/SECTOR_ROTATION/NONE), move type (info/flow/positioning/
-        // liquidity/macro), scope (stock-specific vs sector-wide), and
-        // confidence (HIGH/MEDIUM/LOW). When nothing concrete is found, it
-        // honestly says "No confirmed trigger — likely liquidity-driven"
-        // instead of inventing causation from correlation.
+        // PATCH 0794 — compute sector aggregates from the FULL stocks
+        // response so attributeMovers can give analyst-grade context
+        // ("Pharma sector +1.5% vs index -0.3%; 7 of 12 peers ↑ >3%").
+        const _sectorAgg: Record<string, { sum: number; count: number }> = {};
+        let _indexSum = 0, _indexCount = 0;
+        for (const s of (j?.stocks || [])) {
+          const sec = s?.sector || 'Other';
+          const cp = Number.isFinite(s?.changePercent) ? s.changePercent : null;
+          if (cp === null) continue;
+          if (!_sectorAgg[sec]) _sectorAgg[sec] = { sum: 0, count: 0 };
+          _sectorAgg[sec].sum += cp; _sectorAgg[sec].count++;
+          _indexSum += cp; _indexCount++;
+        }
+        const sectorAggregates: Record<string, { avgChangePct: number; stockCount: number }> = {};
+        for (const [sec, agg] of Object.entries(_sectorAgg)) {
+          if (agg.count >= 2) sectorAggregates[sec] = { avgChangePct: agg.sum / agg.count, stockCount: agg.count };
+        }
+        const indexAvgChangePct = _indexCount > 0 ? _indexSum / _indexCount : undefined;
+
+        // PATCH 0708 — Institutional event-attribution engine.
         const moverInputs = [...gainers, ...losers].map((m: any) => ({
           ticker: canonicalTicker(m.ticker), // PATCH 0721
           sector: m.sector,
@@ -691,6 +703,11 @@ export default function HomeDashboard() {
               newsByTicker,
               earningsByTicker,
               specialByTicker,
+              sectorAggregates,
+              indexAvgChangePct,
+              filingsFeedHealthy: Object.keys(filingsBySymbol).length > 0,
+              newsFeedHealthy: Object.keys(newsByTicker).length > 0,
+              earningsFeedHealthy: Object.keys(earningsByTicker).length > 0,
             });
             // PATCH 0774 — also run attribution against watchlist names
             // so the Watchlist Pulse card can render the same "why" labels
@@ -714,6 +731,11 @@ export default function HomeDashboard() {
                   newsByTicker,
                   earningsByTicker,
                   specialByTicker,
+                  sectorAggregates,
+                  indexAvgChangePct,
+                  filingsFeedHealthy: Object.keys(filingsBySymbol).length > 0,
+                  newsFeedHealthy: Object.keys(newsByTicker).length > 0,
+                  earningsFeedHealthy: Object.keys(earningsByTicker).length > 0,
                 });
                 const enrichedPulses = pulses.map((p: any) => ({
                   ...p,
@@ -1973,6 +1995,9 @@ export default function HomeDashboard() {
               // Each row now shows: ticker · % · catalyst-glyph · label ·
               // confidence chip · scope badge. Tooltip on hover shows the
               // move-type classification + sector peer count for transparency.
+              // PATCH 0794 — two-line row: top = ticker + pct + short label + chips;
+              // bottom = analyst-grade detail (attr.detail) that explains WHAT was
+              // checked, peer counts, sector vs index, and feed-gap state.
               const renderRow = (m: any, pos: 'up' | 'dn') => {
                 const tk = (m.ticker || '').toUpperCase();
                 const attr = data.moversAttrib?.[tk];
@@ -1982,44 +2007,55 @@ export default function HomeDashboard() {
                 const scopeBadge = attr?.scope === 'SECTOR_WIDE' ? 'sector' : '';
                 const moveTypeLabel = attr ? MOVE_TYPE_LABEL[attr.moveType] : '';
                 const tooltip = attr
-                  ? `${attr.catalyst}\n\nConfidence: ${attr.confidence}\nMove type: ${moveTypeLabel}\nScope: ${attr.scope === 'SECTOR_WIDE' ? `Sector-wide (${attr.sectorPeerCount} peers moving ${attr.sectorDirection})` : 'Stock-specific'}\nEvidence: ${attr.evidenceSource}`
+                  ? `${attr.catalyst}\n\n${attr.detail || ''}\n\nConfidence: ${attr.confidence}\nMove type: ${moveTypeLabel}\nScope: ${attr.scope === 'SECTOR_WIDE' ? `Sector-wide (${attr.sectorPeerCount} peers ${attr.sectorDirection})` : 'Stock-specific'}\nEvidence: ${attr.evidenceSource}`
                   : '';
                 return (
                   <Link key={tk} href={`/stock-sheet?ticker=${encodeURIComponent(m.ticker)}`}
                     title={tooltip}
-                    style={{ display: 'flex', alignItems: 'baseline', gap: 6, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
-                    <span style={{ fontSize: 11, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 92, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.ticker}</span>
-                    <span style={{ fontSize: 11, color: c, fontWeight: 800, fontVariantNumeric: 'tabular-nums', minWidth: 50, textAlign: 'right' }}>
-                      {pos === 'up' ? '+' : ''}{pct.toFixed(1)}%
-                    </span>
-                    {attr ? (
-                      <span style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
-                        <span style={{ fontSize: 11, flexShrink: 0 }}>{CATALYST_GLYPH[attr.catalystType]}</span>
-                        <span style={{
-                          fontSize: 10, color: DIM,
-                          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                          flex: 1, minWidth: 0, lineHeight: 1.4,
-                          fontStyle: attr.confidence === 'LOW' ? 'italic' : 'normal',
-                        }}>
-                          {attr.catalyst.slice(0, 70)}{attr.catalyst.length > 70 ? '…' : ''}
-                        </span>
-                        <span style={{
-                          fontSize: 8, fontWeight: 800, padding: '1px 4px', borderRadius: 2,
-                          background: `${confColor}22`, color: confColor, flexShrink: 0, letterSpacing: 0.3,
-                        }}>
-                          {attr.confidence}
-                        </span>
-                        {scopeBadge && (
-                          <span style={{
-                            fontSize: 8, fontWeight: 700, padding: '1px 4px', borderRadius: 2,
-                            background: '#22D3EE22', color: '#22D3EE', flexShrink: 0, letterSpacing: 0.3,
-                          }}>
-                            {scopeBadge}
-                          </span>
-                        )}
+                    style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '5px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                    {/* Top line: ticker + pct + short catalyst label + confidence + scope */}
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                      <span style={{ fontSize: 11, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 92, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.ticker}</span>
+                      <span style={{ fontSize: 11, color: c, fontWeight: 800, fontVariantNumeric: 'tabular-nums', minWidth: 50, textAlign: 'right' }}>
+                        {pos === 'up' ? '+' : ''}{pct.toFixed(1)}%
                       </span>
-                    ) : (
-                      <span style={{ flex: 1, fontSize: 10, color: '#3F4D63', fontStyle: 'italic' }}>analyzing…</span>
+                      {attr ? (
+                        <span style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+                          <span style={{ fontSize: 11, flexShrink: 0 }}>{CATALYST_GLYPH[attr.catalystType]}</span>
+                          <span style={{
+                            fontSize: 10, color: TEXT,
+                            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                            flex: 1, minWidth: 0, lineHeight: 1.4, fontWeight: 600,
+                          }}>
+                            {attr.catalyst.slice(0, 60)}{attr.catalyst.length > 60 ? '…' : ''}
+                          </span>
+                          <span style={{
+                            fontSize: 8, fontWeight: 800, padding: '1px 4px', borderRadius: 2,
+                            background: `${confColor}22`, color: confColor, flexShrink: 0, letterSpacing: 0.3,
+                          }}>
+                            {attr.confidence}
+                          </span>
+                          {scopeBadge && (
+                            <span style={{
+                              fontSize: 8, fontWeight: 700, padding: '1px 4px', borderRadius: 2,
+                              background: '#22D3EE22', color: '#22D3EE', flexShrink: 0, letterSpacing: 0.3,
+                            }}>
+                              {scopeBadge}
+                            </span>
+                          )}
+                        </span>
+                      ) : (
+                        <span style={{ flex: 1, fontSize: 10, color: '#3F4D63', fontStyle: 'italic' }}>analyzing…</span>
+                      )}
+                    </div>
+                    {/* Bottom line: analyst-grade detail explaining WHY/WHAT/HOW */}
+                    {attr?.detail && (
+                      <div style={{
+                        fontSize: 9.5, color: DIM, paddingLeft: 98, lineHeight: 1.4,
+                        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                      }}>
+                        {attr.detail}
+                      </div>
                     )}
                   </Link>
                 );
