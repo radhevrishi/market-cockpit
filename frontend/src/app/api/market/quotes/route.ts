@@ -1,9 +1,6 @@
 import { NextResponse } from 'next/server';
 import { fetchNifty50, fetchNiftyNext50, fetchNifty500, fetchNifty200, fetchNiftyMidcap50, fetchNiftyMidcap100, fetchNiftyMidcap250, fetchNiftySmallcap50, fetchNiftySmallcap100, fetchNiftySmallcap250, fetchNiftyMicrocap250, fetchNiftyTotalMarket, fetchGainers, fetchLosers, buildDynamicSectorMap, normalizeSector, NIFTY50_SECTORS } from '@/lib/nse';
 import { fetchQuotesWithFallback, US_TOP } from '@/lib/yahoo';
-// PATCH 0768 — Trading calendar + KV snapshot for "NEVER show empty movers".
-import { getEffectiveTradingDate, isMarketOpenNow, effectiveDateLabel } from '@/lib/trading-calendar';
-import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 
 export const dynamic = 'force-dynamic';
 
@@ -399,34 +396,17 @@ async function fetchIndianDataWithCache() {
         : ffmc > 5_000_000_000   ? 'Small'
         : 'Micro');
 
-    // PATCH 0769 — First-principles fix for "No movers data on weekends".
-    // NSE's equity-stockindices endpoint returns `lastPrice` (Friday close)
-    // AND `previousClose` (Thursday close) ALWAYS, including weekends. But
-    // the `pChange` and `change` fields are reset to 0 on non-trading days.
-    // Compute change/changePercent from the price fields directly so we
-    // always have the last completed trading session's move.
-    const lastPrice = item.lastPrice || item.ltP || 0;
-    const prevClose = item.previousClose || item.prevClose || 0;
-    const reportedPChange = typeof item.pChange === 'number' ? item.pChange : 0;
-    const reportedChange = typeof item.change === 'number' ? item.change : 0;
-    const computedChange = (lastPrice > 0 && prevClose > 0) ? (lastPrice - prevClose) : 0;
-    const computedPct = (lastPrice > 0 && prevClose > 0) ? ((lastPrice - prevClose) / prevClose) * 100 : 0;
-    // Use NSE's reported values when non-zero (live market); fall back to
-    // the computed values from price diff when NSE returns 0 (weekend/holiday).
-    const changePercent = reportedPChange !== 0 ? reportedPChange : computedPct;
-    const change = reportedChange !== 0 ? reportedChange : computedChange;
-
     return {
       ticker: symbol,
       company: item.meta?.companyName || item.identifier || symbol,
       sector,
       industry: rawIndustry,
-      price: lastPrice,
-      change,
-      changePercent,
+      price: item.lastPrice || item.ltP || 0,
+      change: typeof item.change === 'number' ? item.change : 0,
+      changePercent: item.pChange || 0,
       volume: item.totalTradedVolume || item.trdVol || 0,
       marketCap: estimatedMcap,
-      previousClose: prevClose,
+      previousClose: item.previousClose || item.prevClose || 0,
       open: item.open || 0,
       dayHigh: item.dayHigh || 0,
       dayLow: item.dayLow || 0,
@@ -483,88 +463,24 @@ async function fetchIndianDataWithCache() {
   }
 
   // Yahoo Finance as last resort
-  // PATCH 0764 — Also trigger Yahoo fallback when NSE returned the stocks
-  // list but all changePercent values are 0. NSE's index endpoints on
-  // weekends/holidays return last-close prices but pChange=0 (no intraday
-  // moves), which makes the route's downstream gainers/losers derivation
-  // produce empty arrays. Yahoo's regularMarketChangePercent reflects the
-  // LAST trading day's % move even on weekends, which is what users want
-  // when they open the dashboard on a Saturday.
-  const allZeroChange = stocks.length > 0 && stocks.every(s => !s.changePercent || s.changePercent === 0);
-  if (stocks.length === 0 || allZeroChange) {
-    const { NIFTY50, fetchQuotesWithFallback: yhFetch } = await import('@/lib/yahoo');
-    const symbols = stocks.length === 0
-      ? NIFTY50.map(s => s.ticker)
-      // Enrichment path: ask Yahoo for changePercent on the existing tickers
-      : stocks.slice(0, 200).map(s => s.ticker + '.NS');
-    try {
-      const quotes = await yhFetch(symbols);
-      // PATCH 0770 — Probe confirmed Yahoo also returns regularMarketChangePercent=0
-      // on weekends. The data we need (price + previousClose) IS in the Yahoo
-      // response, but the computed-pct field is reset. Apply the same
-      // compute-from-prices logic we use for the NSE path. RELIANCE example
-      // from live probe: price=1354.5, previousClose=1349.6, change=4.9 (Yahoo
-      // computed this correctly), but changePercent=0 (Yahoo reset to 0
-      // because no intraday session). 4.9/1349.6 = 0.36% is the answer.
-      const computeYahooPct = (q: any): { change: number; changePercent: number } => {
-        const price = q?.regularMarketPrice || 0;
-        const prevClose = q?.regularMarketPreviousClose || 0;
-        const ychange = Number.isFinite(q?.regularMarketChange) ? q.regularMarketChange : 0;
-        const ypct = Number.isFinite(q?.regularMarketChangePercent) ? q.regularMarketChangePercent : 0;
-        const computedChange = (price > 0 && prevClose > 0) ? (price - prevClose) : 0;
-        const computedPct = (price > 0 && prevClose > 0) ? ((price - prevClose) / prevClose) * 100 : 0;
-        return {
-          change: ychange !== 0 ? ychange : computedChange,
-          changePercent: ypct !== 0 ? ypct : computedPct,
-        };
+  if (stocks.length === 0) {
+    const { NIFTY50 } = await import('@/lib/yahoo');
+    const symbols = NIFTY50.map(s => s.ticker);
+    const quotes = await fetchQuotesWithFallback(symbols);
+    stocks = NIFTY50.map(stock => {
+      const q = quotes.find((quote: any) => quote.symbol === stock.ticker || quote.symbol === stock.ticker.replace('.NS', ''));
+      return {
+        ticker: stock.ticker.replace('.NS', ''),
+        company: q?.shortName || stock.company,
+        sector: stock.sector,
+        price: q?.regularMarketPrice || 0,
+        change: q?.regularMarketChange || 0,
+        changePercent: q?.regularMarketChangePercent || 0,
+        volume: q?.regularMarketVolume || 0,
+        marketCap: q?.marketCap || 0,
+        previousClose: q?.regularMarketPreviousClose || 0,
       };
-
-      if (stocks.length === 0) {
-        // Hard fallback: build the stock list entirely from Yahoo.
-        stocks = NIFTY50.map(stock => {
-          const q = quotes.find((quote: any) => quote.symbol === stock.ticker || quote.symbol === stock.ticker.replace('.NS', ''));
-          const { change, changePercent } = computeYahooPct(q);
-          return {
-            ticker: stock.ticker.replace('.NS', ''),
-            company: q?.shortName || stock.company,
-            sector: stock.sector,
-            price: q?.regularMarketPrice || 0,
-            change,
-            changePercent,
-            volume: q?.regularMarketVolume || 0,
-            marketCap: q?.marketCap || 0,
-            previousClose: q?.regularMarketPreviousClose || 0,
-          };
-        }).filter(s => s.price > 0);
-      } else {
-        // Enrichment path: keep NSE's classification but overlay Yahoo's
-        // last-close changePercent so weekend movers show real data.
-        const yhMap = new Map<string, any>();
-        for (const q of quotes) {
-          const sym = (q?.symbol || '').replace('.NS', '').toUpperCase();
-          if (sym) yhMap.set(sym, q);
-        }
-        let enriched = 0;
-        for (const s of stocks) {
-          const yh = yhMap.get((s.ticker || '').toUpperCase());
-          if (yh) {
-            const { change, changePercent } = computeYahooPct(yh);
-            if (changePercent !== 0) {
-              s.changePercent = changePercent;
-              s.change = change;
-              enriched++;
-            }
-          }
-        }
-        // If Yahoo too returned all zeros (rare — maybe consecutive holidays),
-        // leave as-is. The render path will still show prices + a closed banner.
-        if (enriched === 0 && stocks.length > 0) {
-          // Skip the assignment of gainers/losers and let downstream handle.
-        }
-      }
-    } catch {
-      // Yahoo fallback failed — keep NSE data as-is.
-    }
+    }).filter(s => s.price > 0);
   }
 
   // Derive gainers/losers
@@ -576,67 +492,6 @@ async function fetchIndianDataWithCache() {
   }
 
   const validStocks = stocks.filter(s => s.price > 0);
-
-  // PATCH 0768 — Trading Calendar + KV Snapshot Fallback.
-  // User mandate: "Top Movers module must ALWAYS show the latest valid
-  // trading-session data. NEVER show 'No movers data available'."
-  //
-  // Pipeline:
-  //   1. If we have non-empty gainers + losers AND market is open OR within
-  //      30min of close → WRITE snapshot to KV keyed by effective trading date.
-  //   2. If we have empty gainers/losers (weekend cold + Yahoo also empty)
-  //      → READ snapshot for the effective trading date from KV.
-  const effectiveDate = getEffectiveTradingDate('NSE');
-  const marketOpen = isMarketOpenNow('NSE');
-  const haveLiveData = gainers.length > 0 || losers.length > 0;
-  const SNAPSHOT_KEY = `movers-snapshot:v1:NSE:${effectiveDate}`;
-
-  if (haveLiveData && isRedisAvailable()) {
-    // Write-through: keep snapshot fresh whenever we successfully assembled live data.
-    // 7-day TTL is plenty — by then a fresh trading day's data will be cached anyway.
-    try {
-      const trimGainers = gainers.slice(0, 30);
-      const trimLosers = losers.slice(0, 30);
-      await kvSet(SNAPSHOT_KEY, {
-        exchange: 'NSE',
-        trading_date: effectiveDate,
-        gainers: trimGainers,
-        losers: trimLosers,
-        stocksSample: validStocks.slice(0, 200), // keep top 200 by index for sector views
-        summary: {
-          total: validStocks.length,
-          gainersCount: trimGainers.length,
-          losersCount: trimLosers.length,
-          avgChange: validStocks.length > 0 ? validStocks.reduce((s, st) => s + st.changePercent, 0) / validStocks.length : 0,
-          sectors: [...new Set(validStocks.map(s => s.sector))].length,
-        },
-        generated_at: new Date().toISOString(),
-      }, 7 * 86400);
-    } catch { /* non-fatal */ }
-  }
-
-  if (!haveLiveData) {
-    // FALLBACK: try the snapshot for the effective trading date
-    try {
-      const snap: any = await kvGet(SNAPSHOT_KEY);
-      if (snap?.gainers && snap.gainers.length > 0) {
-        const dateLabel = effectiveDateLabel(effectiveDate, 'NSE');
-        return {
-          stocks: snap.stocksSample || validStocks,
-          gainers: snap.gainers,
-          losers: snap.losers || [],
-          summary: snap.summary || {
-            total: 0, gainersCount: 0, losersCount: 0, avgChange: 0, sectors: 0,
-          },
-          source: 'KV Snapshot · ' + dateLabel,
-          source_fallback: true,
-          effectiveTradingDate: effectiveDate,
-          effectiveTradingLabel: dateLabel,
-          updatedAt: snap.generated_at || new Date().toISOString(),
-        };
-      }
-    } catch { /* fall through to normal empty */ }
-  }
 
   return {
     stocks: validStocks,
@@ -650,8 +505,6 @@ async function fetchIndianDataWithCache() {
       sectors: [...new Set(validStocks.map(s => s.sector))].length,
     },
     source: nifty500Data?.data ? 'NSE India' : 'Yahoo Finance',
-    marketOpen,
-    effectiveTradingDate: effectiveDate,
     updatedAt: new Date().toISOString(),
   };
 }
