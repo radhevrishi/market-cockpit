@@ -118,6 +118,11 @@ export function scoreCatalyst(ctx: ScoringContext): CatalystScoring {
     score += 20;
     primaryDriver = 'Regulatory disclosure';
     chips.push({ text: 'REGULATORY', tone: 'neutral' });
+  } else if (cat === 'SECTOR_ROTATION') {
+    // Don't lose sector-rotation signal; treat as a soft-positive driver
+    score += 15;
+    primaryDriver = attr?.catalyst || 'Sector-led move';
+    chips.push({ text: 'SECTOR', tone: 'neutral' });
   }
 
   // ─── Tier 2: microstructure signals ─────────────────────────────────

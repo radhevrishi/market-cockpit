@@ -205,7 +205,65 @@ async function main() {
 
   await kvSet(KV_KEY, payload, KV_TTL_SECONDS);
   console.log(`✓ wrote ${KV_KEY} (${finalEntries.length} entries, ${Math.round(payloadSize / 1024)} KB) in ${elapsed}ms`);
-  console.log(`::notice title=Scrape complete::${finalEntries.length} Indian news entries cached for 24h.`);
+
+  // ─── PATCH 0798: per-ticker news index ────────────────────────────────────
+  // Build a per-ticker lookup so the attribution engine can ask "any news
+  // about RPOWER in last 72h?" with a single KV GET instead of full blob scan.
+  // We extract candidate NSE tickers from each headline using a simple
+  // uppercase-token heuristic plus an allowlist of common NSE symbols.
+  const tickerRegex = /\b([A-Z][A-Z0-9&-]{2,14})\b/g;
+  // Common false-positive words that look like tickers but aren't
+  const STOP_TOKENS = new Set([
+    'IPO','RBI','SEBI','GST','FY','FY26','FY25','FY24','Q1','Q2','Q3','Q4','PSU','NSE','BSE','MCX',
+    'CEO','CFO','CTO','COO','MD','BSE','NSE','SEBI','TRAI','NCLT','EBITDA','PAT','YOY','QOQ','TTM',
+    'INR','USD','EUR','PE','PB','ROE','ROCE','CAGR','GDP','CPI','WPI','RBI','FII','DII','MF','ETF',
+    'AI','EV','5G','API','URL','HTTP','PDF','CSV','XML','JSON','HTML','CSS','JS','PR','IN','THE',
+    'TO','OF','AT','BY','ON','IS','AS','AND','FOR','WITH','FROM','THIS','THAT','ITS','BE','HAS',
+    'WAS','WILL','RS','CR','LTD','LIMITED','COMPANY','CORP','INDIA','BANK','NEW','BIG','HIGH','LOW',
+    'UP','DOWN','TOP','HOT','BUY','SELL','HOLD','MAY','JAN','FEB','MAR','APR','JUN','JUL','AUG',
+    'SEP','OCT','NOV','DEC',
+  ]);
+  const perTickerIndex = new Map(); // ticker -> [{title, url, source, publishedAt}]
+  for (const e of finalEntries) {
+    const text = `${e.title || ''} ${e.snippet || ''}`;
+    const seen = new Set();
+    let m;
+    while ((m = tickerRegex.exec(text)) !== null) {
+      const tk = m[1].toUpperCase();
+      if (tk.length < 3 || tk.length > 14) continue;
+      if (STOP_TOKENS.has(tk)) continue;
+      if (!/[A-Z]/.test(tk)) continue; // must contain at least one letter
+      if (seen.has(tk)) continue;
+      seen.add(tk);
+      if (!perTickerIndex.has(tk)) perTickerIndex.set(tk, []);
+      perTickerIndex.get(tk).push({
+        title: e.title,
+        url: e.url,
+        source: e.source,
+        publishedAt: e.publishedAt,
+      });
+    }
+  }
+
+  // Write per-ticker keys ONLY when we have ≥2 mentions (filters out junk
+  // false-positives from common words slipping past STOP_TOKENS).
+  let writtenTickers = 0;
+  for (const [ticker, entries] of perTickerIndex) {
+    if (entries.length < 1) continue;
+    // Cap to 20 entries per ticker, newest first
+    entries.sort((a, b) => (b.publishedAt || '').localeCompare(a.publishedAt || ''));
+    const capped = entries.slice(0, 20);
+    const tickerKey = `news-by-ticker:v1:${ticker}`;
+    try {
+      await kvSet(tickerKey, { ticker, generatedAt: new Date().toISOString(), entries: capped }, 24 * 60 * 60);
+      writtenTickers++;
+    } catch (err) {
+      // Single ticker failure shouldn't crash the whole script
+      console.log(`::warning title=${ticker}::KV write failed: ${err?.message || err}`);
+    }
+  }
+  console.log(`✓ wrote per-ticker news indexes: ${writtenTickers} keys`);
+  console.log(`::notice title=Scrape complete::${finalEntries.length} Indian news entries cached for 24h, ${writtenTickers} per-ticker indexes.`);
 }
 
 main().catch((e) => {

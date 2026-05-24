@@ -481,6 +481,10 @@ async function fetchIndianDataWithCache() {
     try {
       const universeBlob = await kvGet<any>('nse-ticker-universe:v1:latest');
       const tickers: Array<any> = universeBlob?.tickers || [];
+      // PATCH 0798 — also read rolling-stats blob for vol20D/mom1M/52w% enrichment.
+      // Optional — engine degrades gracefully if blob missing or stale.
+      const rollingBlob = await kvGet<any>('nse-rolling-stats:v1:latest').catch(() => null);
+      const rollingStats: Record<string, any> = rollingBlob?.stats || {};
       if (tickers.length >= 100) {
         const universeAgeMs = Date.now() - new Date(universeBlob?.generatedAt || 0).getTime();
         const universeAgeStr = `${Math.round(universeAgeMs / 60_000)}m old`;
@@ -556,6 +560,8 @@ async function fetchIndianDataWithCache() {
             else if (mcapCr > 2_000)  cap = 'Small';
             else                       cap = 'Micro';
           }
+          // PATCH 0798: merge rolling stats if available
+          const rs = rollingStats[t.ticker];
           mergedStocks.push({
             ticker: t.ticker,
             company: t.company || companyFromYahoo || t.ticker,
@@ -570,12 +576,17 @@ async function fetchIndianDataWithCache() {
             open,
             dayHigh,
             dayLow,
-            yearHigh,
-            yearLow,
+            yearHigh: yearHigh || rs?.high52w || 0,
+            yearLow: yearLow || rs?.low52w || 0,
             indexGroup: cap,
-            // PATCH 0797: pass-through delivery + turnover for attribution scoring
+            // PATCH 0797: delivery + turnover
             deliveryPct: (t as any).deliveryPct ?? null,
             turnoverLacs: (t as any).turnoverLacs ?? 0,
+            // PATCH 0798: rolling stats (null when blob not yet populated)
+            vol20DAvg: rs?.vol20DAvg ?? null,
+            volMultiple: rs?.volMultiple ?? null,
+            mom1M: rs?.mom1M ?? null,
+            pctOf52wHigh: rs?.pctOf52wHigh ?? null,
           });
         }
         // Lower threshold from 100 to 30 — partial result is better than NIFTY-50

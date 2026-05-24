@@ -1,0 +1,42 @@
+name: Scrape NSE Rolling Stats (daily)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PATCH 0798 — 20-day rolling stats per NSE ticker.
+# Pulls last 20 BHAVCOPY files, computes vol20DAvg / volMultiple / mom1M /
+# pctOf52wHigh per ticker. Vercel /api/market/quotes reads this blob and
+# merges stats into ticker payload so catalyst-scoring engine can label
+# moves with "Vol 3.2× 20D avg / Position unwind / Near 52w high".
+#
+# Runs once daily after Indian market close.
+# ──────────────────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    # 22:30 IST → 17:00 UTC, ~3h after market close, gives NSE archives time
+    # to publish the day's BHAVCOPY
+    - cron: '0 17 * * 1-5'   # weekdays only
+  workflow_dispatch: {}
+
+concurrency:
+  group: scrape-rolling-stats
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run rolling stats scraper
+        env:
+          UPSTASH_REDIS_REST_URL:   ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+        run: |
+          if [ -z "$UPSTASH_REDIS_REST_URL" ] || [ -z "$UPSTASH_REDIS_REST_TOKEN" ]; then
+            echo "::error title=Missing secrets::Set UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN in repo secrets."
+            exit 1
+          fi
+          node .github/scripts/scrape-rolling-stats.mjs
