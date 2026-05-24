@@ -313,6 +313,16 @@ export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttrib
     const sectorAgg = m.sector ? opts.sectorAggregates?.[m.sector] : undefined;
     const peerStats = sectorStats || industryStats;
     const sectorContext = buildSectorContext(m.sector, sectorAgg, opts.indexAvgChangePct, peerStats, direction);
+    // PATCH 0795 — never show 'Other' / 'Unknown' / 'NA' in user-facing text.
+    // Map to readable fallback so labels feel curated, not broken.
+    const friendlySector = (() => {
+      const s = (m.sector || '').trim();
+      if (!s || /^(other|unknown|na|n\/a|misc)$/i.test(s)) {
+        const ig = (m.indexGroup || '').toLowerCase();
+        return ig === 'small' ? 'smallcap basket' : ig === 'micro' ? 'microcap basket' : 'unclassified basket';
+      }
+      return s;
+    })();
     const sharedEvidence = {
       sectorMovePct: sectorAgg?.avgChangePct,
       indexMovePct: opts.indexAvgChangePct,
@@ -372,18 +382,17 @@ export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttrib
         : reliefRally
         ? `relief rally (${tier} ${period} — reaction inverted)`
         : `${tier} earnings (${period})`;
+      // PATCH 0795 — terse 1-line earnings detail
       const earningsDetail = (() => {
-        const parts: string[] = [];
-        parts.push(`Q-results disclosed: ${[
+        const growthBits = [
           typeof sales === 'number' ? `Sales ${sales >= 0 ? '+' : ''}${sales.toFixed(0)}%` : null,
           typeof pat === 'number' ? `PAT ${pat >= 0 ? '+' : ''}${pat.toFixed(0)}%` : null,
-        ].filter(Boolean).join(', ') || 'tier=' + tier}.`);
-        if (profitTaking) parts.push('Stock moving DOWN despite strong tier — classic profit-taking.');
-        else if (reliefRally) parts.push('Stock moving UP despite weak tier — relief rally / short cover.');
-        else parts.push(`Move IS the earnings reaction.`);
-        if (sectorContext) parts.push(sectorContext + '.');
-        if (extraTag) parts.push(`Same-day:${extraTag}.`);
-        return parts.join(' ');
+        ].filter(Boolean).join(', ');
+        const framing = profitTaking ? 'profit-taking after strong tier'
+                      : reliefRally ? 'relief rally despite weak tier'
+                      : 'earnings reaction';
+        const head = growthBits ? `${growthBits}; ${framing}` : framing;
+        return extraTag ? `${head}${extraTag}.` : `${head}.`;
       })();
       out[sym] = {
         ticker: sym,
@@ -453,18 +462,16 @@ export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttrib
       const filingAgeH = top.filing_datetime
         ? Math.round((Date.now() - new Date(top.filing_datetime).getTime()) / 3600_000)
         : null;
+      // PATCH 0795 — terse 1-line filing detail
       const filingDetail = (() => {
-        const parts: string[] = [];
-        if (cat.type === 'ORDER_WIN') parts.push(`Exchange filing under Reg 30 (order/contract receipt).`);
-        else if (cat.type === 'RATING') parts.push(`Credit rating action filed by issuer/agency.`);
-        else if (cat.type === 'MNA') parts.push(`Corporate-action filing (merger/demerger/SAST/preferential).`);
-        else if (cat.type === 'REGULATORY') parts.push(`Regulatory filing — read carefully before reacting.`);
-        else if (cat.type === 'OFS') parts.push(`OFS supply announcement — flow-driven.`);
-        else if (cat.type === 'EARNINGS') parts.push(`Results / transcript / investor presentation filed.`);
-        else parts.push(`Material disclosure on exchange.`);
-        if (filingAgeH !== null) parts.push(`Filed ~${filingAgeH}h ago.`);
-        if (sectorContext) parts.push(sectorContext + '.');
-        return parts.join(' ');
+        const tag = cat.type === 'ORDER_WIN' ? 'Reg-30 order/contract'
+                  : cat.type === 'RATING'    ? 'credit rating action'
+                  : cat.type === 'MNA'       ? 'corporate-action filing'
+                  : cat.type === 'REGULATORY'? 'regulatory disclosure'
+                  : cat.type === 'OFS'       ? 'OFS supply announcement'
+                  : cat.type === 'EARNINGS'  ? 'results/transcript filed'
+                  : 'material exchange disclosure';
+        return filingAgeH !== null ? `${tag}; filed ~${filingAgeH}h ago.` : `${tag}.`;
       })();
       out[sym] = {
         ticker: sym,
@@ -497,16 +504,14 @@ export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttrib
       const top = news[0];
       const cat = classifyNewsCatalyst(top);
       const newsConfidence: Confidence = peerCountSameDirection >= SECTOR_WIDE_MIN_PEERS ? 'MEDIUM' : 'MEDIUM';
+      // PATCH 0795 — terse 1-line news detail
       const newsDetail = (() => {
-        const parts: string[] = [];
         const src = (top as any).source_name || 'News';
-        parts.push(`${src} headline (no exchange filing in last 72h).`);
-        if (cat.type !== 'NONE') parts.push(`Classified as ${cat.type.replace(/_/g, ' ').toLowerCase()}.`);
-        if (peerCountSameDirection >= SECTOR_WIDE_MIN_PEERS) {
-          parts.push('Caveat: peers moving same direction — news may be REPORTING the sector move rather than driving it.');
-        }
-        if (sectorContext) parts.push(sectorContext + '.');
-        return parts.join(' ');
+        const typeTag = cat.type !== 'NONE' ? cat.type.replace(/_/g, ' ').toLowerCase() : 'news mention';
+        const peerNote = peerCountSameDirection >= SECTOR_WIDE_MIN_PEERS
+          ? ' — but peers moving same direction, may be reporting not driving'
+          : '';
+        return `${src} headline (${typeTag})${peerNote}.`;
       })();
       out[sym] = {
         ticker: sym,
@@ -526,39 +531,37 @@ export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttrib
       continue;
     }
 
-    // ── TIER 3: sector-peer inference (MEDIUM-LOW confidence) ───────────
-    // PATCH 0794: richer detail — explicitly cite sector vs index move,
-    // peer count, what we checked. Confidence MEDIUM when peer-count is
-    // strong AND we successfully checked filings/news (so 'no trigger'
-    // is meaningful); LOW otherwise.
+    // ── TIER 3: sector / breadth inference ────────────────────────────
+    // PATCH 0795 — new taxonomy:
+    //   sector_led:           sector clearly outperforms index (|delta| >= 1.5%)
+    //   broad_participation:  breadth strong but sector return ~ index
+    //   sector_wide_derisking: down direction with sector wide spread
+    // 1-line subtitle, max ~22 words. No filler.
     if (sectorScope === 'SECTOR_WIDE') {
-      const sectorLabel = m.sector || m.industry || 'sector';
-      const tier3Conf: Confidence = (filingChecked && newsChecked && peerCountSameDirection >= 6) ? 'MEDIUM' : 'LOW';
-      const tier3Detail = (() => {
-        const parts: string[] = [];
-        if (sectorAgg && typeof opts.indexAvgChangePct === 'number') {
-          parts.push(`${sectorLabel} sector ${fmtPct(sectorAgg.avgChangePct)} vs market ${fmtPct(opts.indexAvgChangePct)}.`);
-        } else if (sectorAgg) {
-          parts.push(`${sectorLabel} sector avg ${fmtPct(sectorAgg.avgChangePct)} today.`);
-        }
-        const total = (peerStats?.up || 0) + (peerStats?.down || 0);
-        parts.push(`${peerCountSameDirection} of ${total} ${sectorLabel} peers moving ${direction === 'up' ? '↑' : '↓'} >3% — broad-based move.`);
-        if (filingChecked && newsChecked) {
-          parts.push('No fresh stock-specific filing/news in last 48-72h.');
-        } else if (feedGap) {
-          parts.push('⚠ Feed gap (filings/news fetch incomplete) — manual verification recommended.');
-        }
-        const isUp = direction === 'up';
-        parts.push(isUp
-          ? 'Flow-driven sector rotation; this stock is a passenger, not the trigger.'
-          : 'Sector-wide profit-booking; broad de-risking rather than stock-specific blow-up.');
-        return parts.join(' ');
-      })();
+      const total = (peerStats?.up || 0) + (peerStats?.down || 0);
+      const sectorPct = sectorAgg?.avgChangePct;
+      const indexPct = opts.indexAvgChangePct;
+      const delta = (sectorPct !== undefined && indexPct !== undefined) ? sectorPct - indexPct : undefined;
+      const SECTOR_LED_THRESHOLD = 1.5;  // % delta vs index to qualify as 'sector-led'
+      const isSectorLed = typeof delta === 'number' && Math.abs(delta) >= SECTOR_LED_THRESHOLD;
+      const isUp = direction === 'up';
+      let label = '';
+      let subtitle = '';
+      let tier3Conf: Confidence = 'LOW';
+      if (isSectorLed) {
+        label = `Sector-led ${isUp ? 'rally' : 'sell-off'} (${friendlySector})`;
+        subtitle = `${friendlySector} ${fmtPct(sectorPct)} vs index ${fmtPct(indexPct)}; ${peerCountSameDirection}/${total} peers ${isUp ? '↑' : '↓'} >3%.`;
+        tier3Conf = (filingChecked && newsChecked) ? 'MEDIUM' : 'LOW';
+      } else {
+        label = `Broad participation (${friendlySector})`;
+        subtitle = `${peerCountSameDirection}/${total} peers ${isUp ? '↑' : '↓'} >3%; sector roughly in line with index${typeof sectorPct === 'number' ? ` (${fmtPct(sectorPct)})` : ''}.`;
+        tier3Conf = (filingChecked && newsChecked && peerCountSameDirection >= 6) ? 'MEDIUM' : 'LOW';
+      }
       out[sym] = {
         ticker: sym,
         changePercent: m.changePercent,
-        catalyst: `Sector ${direction === 'up' ? 'rotation' : 'profit booking'} (${sectorLabel})`,
-        detail: tier3Detail,
+        catalyst: label,
+        detail: subtitle,
         catalystType: 'SECTOR_ROTATION',
         moveType: 'MACRO',
         scope: 'SECTOR_WIDE',
@@ -583,55 +586,42 @@ export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttrib
     //
     // Industry chip on the home page already shows "Civil Construction" /
     // "Housing Finance Company" / etc, so we DON'T repeat it here.
+    // ── TIER 4: no confirmed trigger ──────────────────────────────────
+    // PATCH 0795 — terse 1-line subtitle. No multi-paragraph essays. No
+    // 'operator-driven flow' hallucination. Module-level feed-gap banner
+    // handles the disclaimer once; per-row just says 'no confirmed trigger
+    // in available scans'.
     const indGroup = (m.indexGroup || '').toLowerCase();
     const smallcap = indGroup === 'small' || indGroup === 'micro';
-    const moveDir = direction === 'up' ? 'momentum' : 'unwind';
-    const absPct = Math.abs(m.changePercent);
-    const extreme = smallcap && absPct >= 7;
-    // PATCH 0794: distinguish "checked + found nothing" (honest momentum)
-    // from "feeds failed" (verify manually). Distinguish "stretched run-up
-    // unwinding" from "fresh blow-up move".
-    const honestLabel = feedGap
-      ? `${moveDir} (feeds incomplete — verify manually)`
-      : extreme
-      ? `${moveDir} only · no confirmed trigger (verify before chasing)`
-      : smallcap
-      ? `${moveDir} — no confirmed trigger`
-      : `${moveDir} — no stock-specific trigger`;
-    const tier4Detail = (() => {
-      const parts: string[] = [];
-      if (feedGap) {
-        parts.push(`⚠ Filings or news feeds returned incomplete — we couldn't confirm there's nothing.`);
-        parts.push('Manual check recommended on NSE corp announcements + ET/Mint headlines.');
+    const isUp = direction === 'up';
+    const moveLabel = isUp ? 'Momentum burst' : 'Position unwind';
+    // Subtitle is ONE clean sentence with the available facts.
+    const subtitleParts: string[] = [];
+    if (sectorAgg && typeof opts.indexAvgChangePct === 'number') {
+      const sectorPct = sectorAgg.avgChangePct;
+      const idxPct = opts.indexAvgChangePct;
+      // Only mention sector if it's not perfectly flat
+      if (Math.abs(sectorPct) >= 0.3 || Math.abs(sectorPct - idxPct) >= 0.5) {
+        subtitleParts.push(`${friendlySector} ${fmtPct(sectorPct)} vs index ${fmtPct(idxPct)}`);
       } else {
-        parts.push(`No fresh exchange filing or major news headline in last 48-72h for this ticker.`);
+        subtitleParts.push(`${friendlySector} flat`);
       }
-      if (sectorAgg && typeof opts.indexAvgChangePct === 'number') {
-        const sectorVsIdx = sectorAgg.avgChangePct - (opts.indexAvgChangePct || 0);
-        if (Math.abs(sectorVsIdx) > 0.8) {
-          parts.push(`${m.sector || 'sector'} ${fmtPct(sectorAgg.avgChangePct)} vs index ${fmtPct(opts.indexAvgChangePct)} — modest sector drift.`);
-        } else {
-          parts.push(`${m.sector || 'sector'} broadly flat (${fmtPct(sectorAgg.avgChangePct)}) — move not sector-driven.`);
-        }
-      }
-      if (extreme) {
-        parts.push(`Smallcap with ${fmtPct(m.changePercent)} on no news — typical operator-driven flow or sentiment squeeze. Verify volume + delivery before chasing.`);
-      } else if (smallcap) {
-        parts.push(`Smallcap intraday ${moveDir} — likely positioning / liquidity rather than information.`);
-      } else {
-        parts.push(`Largecap/midcap drift without trigger usually = fund flows or index rebalance pressure.`);
-      }
-      return parts.join(' ');
-    })();
+    }
+    subtitleParts.push(feedGap
+      ? `no confirmed trigger in available scans`
+      : `no confirmed filing/news trigger`);
+    if (smallcap) {
+      subtitleParts.push(`stock-specific ${isUp ? 'momentum' : 'unwind'}`);
+    }
     out[sym] = {
       ticker: sym,
       changePercent: m.changePercent,
-      catalyst: honestLabel,
-      detail: tier4Detail,
+      catalyst: moveLabel,
+      detail: subtitleParts.join('; ') + '.',
       catalystType: 'NONE',
       moveType: smallcap ? 'LIQUIDITY' : 'MACRO',
       scope: 'STOCK_SPECIFIC',
-      confidence: feedGap ? 'LOW' : 'LOW',
+      confidence: 'LOW',
       evidenceSource: 'inferred',
       sectorPeerCount: peerCountSameDirection,
       sectorDirection: direction,
@@ -640,6 +630,20 @@ export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttrib
   }
 
   return out;
+}
+
+// PATCH 0795 — module-level feed-gap detection helper. Home page renders
+// a single top-of-card banner instead of repeating the warning in every row.
+export function detectFeedGap(attrib: Record<string, MoverAttribution>): { feedGap: boolean; whichFeed?: string } {
+  for (const a of Object.values(attrib)) {
+    if (a.evidence?.feedGap) {
+      const missing: string[] = [];
+      if (a.evidence.filingChecked === false) missing.push('filings');
+      if (a.evidence.newsChecked === false) missing.push('news');
+      return { feedGap: true, whichFeed: missing.join(' + ') || 'some' };
+    }
+  }
+  return { feedGap: false };
 }
 
 // ─── render helpers ─────────────────────────────────────────────────────

@@ -1954,8 +1954,23 @@ export default function HomeDashboard() {
               <span style={{ fontSize: 13, fontWeight: 800, color: '#10B981', letterSpacing: '0.4px' }}>
                 📈 TOP MOVERS · TOP LOSERS
               </span>
-              <Link href="/movers" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
+              <Link href="/movers" title="Home shows YOUR universe (Watchlist + Portfolio + CB) first, then fills with broad-market top movers. The /movers page shows the full NSE universe by raw % move." style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
             </div>
+            {/* PATCH 0795 — module-level feed-gap banner (replaces per-row repetition) */}
+            {(() => {
+              const attrs = Object.values(data.moversAttrib || {});
+              const gapCount = attrs.filter((a: any) => a?.evidence?.feedGap).length;
+              if (gapCount === 0 || attrs.length === 0) return null;
+              return (
+                <div style={{
+                  fontSize: 10, color: '#F59E0B', padding: '4px 6px',
+                  background: '#F59E0B11', border: '1px solid #F59E0B22',
+                  borderRadius: 3, marginBottom: 6, lineHeight: 1.4,
+                }}>
+                  ⚠ Some scans incomplete · confidence reduced for movers without confirmed triggers
+                </div>
+              );
+            })()}
             {/* PATCH 0775 — sub-header reflects own-universe filter
                 (Watchlist + Portfolio + Conviction Beats). Falls back to
                 small+midcap when user's universe doesn't intersect the
