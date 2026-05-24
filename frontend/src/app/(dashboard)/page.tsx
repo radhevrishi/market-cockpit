@@ -125,6 +125,8 @@ interface HomeState {
     investorName?: string;
   }>;
   signals?: Array<{ id?: string; title?: string; headline?: string; published_at?: string; source_name?: string; primary_ticker?: string; ticker_symbols?: any[]; importance_score?: number }>;
+  // PATCH 0800 — Screener fundamentals per ticker, fetched on-demand for top movers
+  moverFundamentals?: Record<string, any>;
   // PATCH 0622 — institutional enhancements
   portfolioPnl?: { totalPct: number; totalChangeRs: number; bestMover?: { ticker: string; pct: number }; worstMover?: { ticker: string; pct: number }; positions: number; covered: number };
   watchlistPulse?: Array<{ ticker: string; company?: string; changePercent: number; price?: number; reason?: string; cap?: string; attrib?: MoverAttribution }>;
@@ -641,6 +643,23 @@ export default function HomeDashboard() {
           .sort((a: any, b: any) => (a.changePercent || 0) - (b.changePercent || 0))
           .slice(0, 15);
         setData((d) => ({ ...d, gainers, losers, moversUpdatedAt: j?.updatedAt } as any));
+
+        // PATCH 0800 — Fetch Screener fundamentals for EXTREME movers only
+        // (≥10%). Fire-and-forget; updates moverFundamentals when resolved.
+        // Coverage may be partial (Screener scrape rotates through universe
+        // over 1-2 weeks). Missing tickers gracefully return null.
+        const extremeTickers = [...gainers, ...losers]
+          .filter((m: any) => Math.abs(m.changePercent || 0) >= 10)
+          .map((m: any) => (m.ticker || '').toUpperCase())
+          .filter((t: string) => t.length > 0)
+          .slice(0, 30);
+        if (extremeTickers.length > 0) {
+          safeDiag<any>(`/api/market/fundamentals?tickers=${extremeTickers.join(',')}&_=${Date.now()}`, 12_000).then(({ data: f }) => {
+            if (cancelled) return;
+            const fundamentals = (f?.fundamentals || {}) as Record<string, any>;
+            setData((d) => ({ ...d, moverFundamentals: fundamentals } as any));
+          }).catch(() => { /* graceful — no fundamentals if KV miss */ });
+        }
 
         // PATCH 0794 — compute sector aggregates from the FULL stocks
         // response so attributeMovers can give analyst-grade context
@@ -2019,23 +2038,29 @@ export default function HomeDashboard() {
                 const anom = anomalyTag({ changePercent: pct, attribution: attr, tier });
                 const inUniverse = universeSet.has(tk);
 
-                // PATCH 0797 — composite scoring with microstructure inputs.
-                // Degrades gracefully: if attr/delivery/volMultiple are all
-                // missing, scoreCatalyst falls back to a sensible primary
-                // driver from price action alone.
+                // PATCH 0797 + P0800 — composite scoring with microstructure
+                // + Screener fundamentals. All inputs optional; engine degrades
+                // gracefully if attr / delivery / volMultiple / fundamentals
+                // are missing.
+                const fund = data.moverFundamentals?.[tk];
                 const score = scoreCatalyst({
                   attribution: attr,
                   changePercent: pct,
-                  marketCap: m.marketCap,
+                  marketCap: m.marketCap || fund?.mcapCr,
                   indexGroup: m.indexGroup,
                   volume: m.volume,
                   deliveryPct: m.deliveryPct,
                   turnoverLacs: m.turnoverLacs,
-                  // volMultiple, mom1M, pctOf52wHigh come from rolling-stats blob
-                  // (Item 2 — will be wired when that workflow runs).
                   volMultiple: m.volMultiple,
                   mom1M: m.mom1M,
                   pctOf52wHigh: m.pctOf52wHigh,
+                  // PATCH 0800 — fundamentals from Screener.in (refreshed weekly)
+                  promoterPct: fund?.promoterPct,
+                  opmLatestQ: fund?.opmLatestQ,
+                  opMargin3yAvg: fund?.opMargin3yAvg,
+                  salesQtrYoY: fund?.salesQtrYoY,
+                  patQtrYoY: fund?.patQtrYoY,
+                  exceptionalItemsFlag: fund?.exceptionalItemsFlag,
                 });
                 const primaryLabel = score.primaryDriver;
                 const tooltip = [

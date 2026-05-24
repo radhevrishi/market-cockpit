@@ -1,34 +1,4 @@
 {
-  "crons": [
-    {
-      "path": "/api/bot/movers-alert?mode=full",
-      "schedule": "35 4 * * 1-5"
-    },
-    {
-      "path": "/api/bot/watchlist-alert?mode=full",
-      "schedule": "50 4 * * 1-5"
-    },
-    {
-      "path": "/api/market/intelligence/compute",
-      "schedule": "0 4 * * 1-5"
-    },
-    {
-      "path": "/api/market/earnings-guidance/ingest",
-      "schedule": "15 4 * * 1-5"
-    },
-    {
-      "path": "/api/v1/cron/refresh-earnings-calendar",
-      "schedule": "0 1 * * *"
-    },
-    {
-      "path": "/api/bot/eo-blockbuster-alert",
-      "schedule": "30 5 * * *"
-    },
-    {
-      "path": "/api/bot/eo-blockbuster-alert",
-      "schedule": "30 15 * * *"
-    }
-  ],
   "rewrites": [
     {
       "source": "/api/v1/:path*",

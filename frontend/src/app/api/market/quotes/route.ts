@@ -485,6 +485,11 @@ async function fetchIndianDataWithCache() {
       // Optional — engine degrades gracefully if blob missing or stale.
       const rollingBlob = await kvGet<any>('nse-rolling-stats:v1:latest').catch(() => null);
       const rollingStats: Record<string, any> = rollingBlob?.stats || {};
+      // PATCH 0800 — fundamentals are stored per-ticker (not a single blob).
+      // We DON'T pre-fetch all 2000 here — too many KV reads. Instead the
+      // ticker payload includes a hasFundamentals flag, and downstream
+      // consumers (home page client, stock-sheet) can fetch the per-ticker
+      // key on demand for the few rows they care about.
       if (tickers.length >= 100) {
         const universeAgeMs = Date.now() - new Date(universeBlob?.generatedAt || 0).getTime();
         const universeAgeStr = `${Math.round(universeAgeMs / 60_000)}m old`;

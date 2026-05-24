@@ -1,0 +1,138 @@
+name: Vercel Cron Bridge
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PATCH 0799 — Bridge GitHub Actions cron schedules to existing Vercel endpoints.
+#
+# Vercel Hobby tier allows only 2 cron jobs; we have 7. This workflow lets us
+# keep the existing endpoint code (no refactor) while moving the trigger
+# schedule from Vercel cron to GitHub Actions (unlimited on public repos).
+#
+# Each schedule fires one job that POSTs to the corresponding Vercel endpoint
+# with CRON_SECRET in the URL. Endpoints already accept this auth pattern.
+#
+# Required secrets:
+#   CRON_SECRET             — same value as Vercel env var (gates the endpoints)
+#
+# Schedule routing via github.event.schedule (matches the cron expression):
+# ──────────────────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    # Times in UTC. IST = UTC + 5:30.
+    - cron: '0 1 * * *'        # 01:00 UTC daily   → refresh-earnings-calendar
+    - cron: '0 4 * * 1-5'      # 04:00 UTC Mon-Fri → intelligence/compute
+    - cron: '15 4 * * 1-5'     # 04:15 UTC Mon-Fri → earnings-guidance/ingest
+    - cron: '35 4 * * 1-5'     # 04:35 UTC Mon-Fri → movers-alert?mode=full
+    - cron: '50 4 * * 1-5'     # 04:50 UTC Mon-Fri → watchlist-alert?mode=full
+    - cron: '30 5 * * *'       # 05:30 UTC daily   → eo-blockbuster-alert (morning)
+    - cron: '30 15 * * *'      # 15:30 UTC daily   → eo-blockbuster-alert (evening)
+  workflow_dispatch:
+    inputs:
+      endpoint:
+        description: 'Endpoint to hit (manual override)'
+        required: false
+        type: choice
+        options:
+          - intelligence/compute
+          - earnings-guidance/ingest
+          - movers-alert
+          - watchlist-alert
+          - refresh-earnings-calendar
+          - eo-blockbuster-alert
+
+concurrency:
+  group: vercel-cron-bridge-${{ github.event.schedule || github.event.inputs.endpoint || 'manual' }}
+  cancel-in-progress: false
+
+jobs:
+  bridge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Resolve target endpoint from schedule
+        id: route
+        run: |
+          SCHEDULE="${{ github.event.schedule }}"
+          INPUT="${{ github.event.inputs.endpoint }}"
+          echo "Schedule: '$SCHEDULE' / Input: '$INPUT'"
+          case "$SCHEDULE" in
+            "0 1 * * *")
+              echo "path=/api/v1/cron/refresh-earnings-calendar" >> "$GITHUB_OUTPUT"
+              echo "label=refresh-earnings-calendar" >> "$GITHUB_OUTPUT"
+              ;;
+            "0 4 * * 1-5")
+              echo "path=/api/market/intelligence/compute" >> "$GITHUB_OUTPUT"
+              echo "label=intelligence-compute" >> "$GITHUB_OUTPUT"
+              ;;
+            "15 4 * * 1-5")
+              echo "path=/api/market/earnings-guidance/ingest" >> "$GITHUB_OUTPUT"
+              echo "label=earnings-guidance-ingest" >> "$GITHUB_OUTPUT"
+              ;;
+            "35 4 * * 1-5")
+              echo "path=/api/bot/movers-alert?mode=full" >> "$GITHUB_OUTPUT"
+              echo "label=movers-alert" >> "$GITHUB_OUTPUT"
+              ;;
+            "50 4 * * 1-5")
+              echo "path=/api/bot/watchlist-alert?mode=full" >> "$GITHUB_OUTPUT"
+              echo "label=watchlist-alert" >> "$GITHUB_OUTPUT"
+              ;;
+            "30 5 * * *")
+              echo "path=/api/bot/eo-blockbuster-alert" >> "$GITHUB_OUTPUT"
+              echo "label=eo-blockbuster-morning" >> "$GITHUB_OUTPUT"
+              ;;
+            "30 15 * * *")
+              echo "path=/api/bot/eo-blockbuster-alert" >> "$GITHUB_OUTPUT"
+              echo "label=eo-blockbuster-evening" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              # Manual dispatch path
+              case "$INPUT" in
+                intelligence/compute)        echo "path=/api/market/intelligence/compute" >> "$GITHUB_OUTPUT"; echo "label=intelligence-manual" >> "$GITHUB_OUTPUT" ;;
+                earnings-guidance/ingest)    echo "path=/api/market/earnings-guidance/ingest" >> "$GITHUB_OUTPUT"; echo "label=earnings-guidance-manual" >> "$GITHUB_OUTPUT" ;;
+                movers-alert)                echo "path=/api/bot/movers-alert?mode=full" >> "$GITHUB_OUTPUT"; echo "label=movers-manual" >> "$GITHUB_OUTPUT" ;;
+                watchlist-alert)             echo "path=/api/bot/watchlist-alert?mode=full" >> "$GITHUB_OUTPUT"; echo "label=watchlist-manual" >> "$GITHUB_OUTPUT" ;;
+                refresh-earnings-calendar)   echo "path=/api/v1/cron/refresh-earnings-calendar" >> "$GITHUB_OUTPUT"; echo "label=cal-manual" >> "$GITHUB_OUTPUT" ;;
+                eo-blockbuster-alert)        echo "path=/api/bot/eo-blockbuster-alert" >> "$GITHUB_OUTPUT"; echo "label=eo-manual" >> "$GITHUB_OUTPUT" ;;
+                *)
+                  echo "::error title=No route::Unknown schedule and no manual input"
+                  exit 1
+                  ;;
+              esac
+              ;;
+          esac
+
+      - name: Hit Vercel endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error title=Missing secret::CRON_SECRET not set in repo secrets"
+            exit 1
+          fi
+          PATH_PART="${{ steps.route.outputs.path }}"
+          LABEL="${{ steps.route.outputs.label }}"
+          BASE="https://market-cockpit.vercel.app"
+          # If the path already has ? params, append &secret=; else use ?secret=
+          if [[ "$PATH_PART" == *"?"* ]]; then
+            URL="$BASE$PATH_PART&secret=$CRON_SECRET"
+          else
+            URL="$BASE$PATH_PART?secret=$CRON_SECRET"
+          fi
+          # Don't print the URL with secret in logs
+          SAFE_URL="$BASE$PATH_PART"
+          echo "▶ POST $SAFE_URL  (label=$LABEL)"
+          # Use --max-time 240s — most Vercel functions complete in 10-60s but
+          # earnings-calendar refresh can take longer.
+          STATUS=$(curl -s -o /tmp/response.json -w "%{http_code}" -X POST \
+            -H 'Content-Type: application/json' \
+            --max-time 240 \
+            "$URL" || echo "000")
+          echo "← HTTP $STATUS"
+          head -c 600 /tmp/response.json || true
+          echo
+          if [ "$STATUS" != "200" ] && [ "$STATUS" != "201" ] && [ "$STATUS" != "202" ] && [ "$STATUS" != "204" ]; then
+            echo "::warning title=$LABEL::Vercel returned HTTP $STATUS"
+            # Don't fail the workflow on non-2xx — endpoint may still have done work
+            exit 0
+          fi
+          echo "::notice title=$LABEL::Vercel endpoint responded $STATUS"

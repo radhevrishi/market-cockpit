@@ -1,0 +1,45 @@
+name: Scrape Screener Fundamentals (daily, rotating)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PATCH 0800 — Per-ticker fundamentals from screener.in.
+#
+# Processes 200 tickers per run, rotating through the universe. 2155 tickers
+# / 200 per run ≈ 11 runs to cover everything → 11 days to fully refresh.
+# Daily run schedule means each ticker gets refreshed at least once / 1-2 weeks.
+#
+# Output: per-ticker KV keys 'fundamentals:v1:<TICKER>' (24h TTL on each
+# but rolling rotation refreshes them).
+#
+# Used by catalyst-scoring engine to detect 'quality of earnings' issues
+# like the SPARC case (PAT spike on exceptional gains, revenue flat).
+# ──────────────────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    # 23:30 IST daily → 18:00 UTC. After Indian market close.
+    - cron: '0 18 * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: scrape-screener-fundamentals
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run Screener fundamentals scraper
+        env:
+          UPSTASH_REDIS_REST_URL:   ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+        run: |
+          if [ -z "$UPSTASH_REDIS_REST_URL" ] || [ -z "$UPSTASH_REDIS_REST_TOKEN" ]; then
+            echo "::error title=Missing secrets::Set UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN in repo secrets."
+            exit 1
+          fi
+          node .github/scripts/scrape-screener-fundamentals.mjs

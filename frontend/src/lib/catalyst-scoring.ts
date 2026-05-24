@@ -39,6 +39,13 @@ export interface ScoringContext {
   volMultiple?: number;        // volume / vol20DAvg
   mom1M?: number;              // 1-month relative return %
   pctOf52wHigh?: number;       // current price / 52w high
+  // PATCH 0800 — Screener fundamentals (optional, refreshed weekly)
+  promoterPct?: number | null;
+  opmLatestQ?: number | null;
+  opMargin3yAvg?: number | null;
+  salesQtrYoY?: number | null;
+  patQtrYoY?: number | null;
+  exceptionalItemsFlag?: boolean;
 }
 
 export interface CatalystScoring {
@@ -197,6 +204,38 @@ export function scoreCatalyst(ctx: ScoringContext): CatalystScoring {
   if (typeof marketCap === 'number' && marketCap > 0 && marketCap < 300 && absPct >= 10) {
     score -= 5;
     if (!chips.find(c => c.text.startsWith('Microcap'))) chips.push({ text: '<₹300Cr', tone: 'negative' });
+  }
+
+  // ─── PATCH 0800: Quality-of-earnings detection from Screener data ──
+  // The SPARC case: PAT spiked but Sales fell — exceptional gain
+  // dominated. Downgrade confidence + add explicit flag chip.
+  if (ctx.exceptionalItemsFlag === true) {
+    score -= 18;  // strong downgrade — fake earnings beat
+    chips.push({ text: 'Exceptional gain', tone: 'negative' });
+    if (!tertiaryDriver) tertiaryDriver = 'PAT spike likely from one-time gain';
+  }
+  // Margin compression even with revenue growth = weak earnings quality
+  if (typeof ctx.opmLatestQ === 'number' && typeof ctx.opMargin3yAvg === 'number'
+      && ctx.opmLatestQ < ctx.opMargin3yAvg - 3
+      && typeof ctx.salesQtrYoY === 'number' && ctx.salesQtrYoY > 10) {
+    score -= 8;
+    chips.push({ text: 'OPM compression', tone: 'negative' });
+  }
+  // Promoter holding very low + microcap + extreme move = governance risk
+  if (typeof ctx.promoterPct === 'number' && ctx.promoterPct < 25
+      && microcap && absPct >= 10) {
+    score -= 10;
+    chips.push({ text: `Promoter ${ctx.promoterPct.toFixed(0)}%`, tone: 'negative' });
+    if (!tertiaryDriver) tertiaryDriver = `Low promoter holding (${ctx.promoterPct.toFixed(0)}%)`;
+  }
+  // High-quality earnings boost: strong revenue + margin expansion
+  if (typeof ctx.salesQtrYoY === 'number' && ctx.salesQtrYoY >= 20
+      && typeof ctx.opmLatestQ === 'number' && typeof ctx.opMargin3yAvg === 'number'
+      && ctx.opmLatestQ > ctx.opMargin3yAvg + 2
+      && !ctx.exceptionalItemsFlag) {
+    score += 10;
+    chips.push({ text: 'OPM expansion', tone: 'positive' });
+    if (!secondaryDriver) secondaryDriver = `Sales +${ctx.salesQtrYoY.toFixed(0)}% with margin expansion`;
   }
 
   // ─── Fill primary driver if still empty ─────────────────────────────
