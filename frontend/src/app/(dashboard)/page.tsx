@@ -45,6 +45,12 @@ import {
   BUCKET_LABEL,
   BUCKET_COLOR,
 } from '@/lib/catalyst-scoring';
+// PATCH 0805 — Move Quality + Continuation Probability + bucket taxonomy
+import {
+  computeMoveQuality,
+  QUALITY_COLOR,
+  CONTINUATION_COLOR,
+} from '@/lib/move-quality';
 import { getConvictionTickers, getConvictionList } from '@/lib/conviction-beats';
 import { canonicalTicker } from '@/lib/ticker-normalize'; // PATCH 0721
 import { readDecisions } from '@/lib/decisions';
@@ -2097,11 +2103,31 @@ export default function HomeDashboard() {
                   }
                 }
                 const primaryLabel = score.primaryDriver;
+
+                // PATCH 0805 — Move Quality + Continuation Probability + Smart Money
+                // Layer on top of attribution. Graceful fallback when fields missing.
+                const mq = attr ? computeMoveQuality({
+                  changePercent: pct,
+                  attribution: attr,
+                  volMultiple: m.volMultiple,
+                  deliveryPct: m.deliveryPct,
+                  turnoverLacs: m.turnoverLacs,
+                  pctOf52wHigh: m.pctOf52wHigh,
+                  mom1M: m.mom1M,
+                  vol20DAvg: m.vol20DAvg,
+                  marketCap: m.marketCap || fund?.mcapCr,
+                  indexGroup: m.indexGroup,
+                }) : null;
+
                 const tooltip = [
                   `${primaryLabel} (score ${score.compositeScore})`,
                   score.narrative,
                   attr?.detail || '',
                   `Confidence: ${attr?.confidence || 'LOW'} · Sustainability: ${score.sustainability.toUpperCase()}`,
+                  mq ? `\n── Move Quality ${mq.quality}/100 (${mq.qualityLabel}) · Continuation ${mq.continuation} · ${mq.bucketLabel}` : '',
+                  ...(mq?.smartMoney || []),
+                  mq?.technical ? `Technical: ${mq.technical}` : '',
+                  mq ? `Liquidity: ${mq.liquidityRisk}` : '',
                 ].filter(Boolean).join('\n');
 
                 return (
@@ -2150,6 +2176,31 @@ export default function HomeDashboard() {
                                   : score.chips[0].tone === 'event' ? '#A78BFA' : '#8DA1B9',
                       }}>
                         {score.chips[0].text}
+                      </span>
+                    )}
+                    {/* PATCH 0805 — Move Quality + Continuation Probability chips */}
+                    {mq && (
+                      <span style={{
+                        fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2, letterSpacing: 0.3, flexShrink: 0,
+                        background: `${QUALITY_COLOR[mq.qualityLabel]}22`, color: QUALITY_COLOR[mq.qualityLabel],
+                      }} title={`Move Quality ${mq.quality}/100\nvol ${Math.round(mq.components.relVol)} · deliv ${Math.round(mq.components.delivery)} · structure ${Math.round(mq.components.structure)} · sector ${Math.round(mq.components.sector)} · trigger ${Math.round(mq.components.trigger)}`}>
+                        Q{mq.quality}
+                      </span>
+                    )}
+                    {mq && mq.continuation !== 'UNKNOWN' && (
+                      <span style={{
+                        fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2, letterSpacing: 0.3, flexShrink: 0,
+                        background: `${CONTINUATION_COLOR[mq.continuation]}22`, color: CONTINUATION_COLOR[mq.continuation],
+                      }} title={`Continuation: ${mq.continuation}\nBucket: ${mq.bucketLabel}`}>
+                        {mq.continuation === 'HIGH' ? '↑↑' : mq.continuation === 'MEDIUM' ? '↑' : '↓'}
+                      </span>
+                    )}
+                    {mq?.liquidityRisk === 'HIGH' && (
+                      <span style={{
+                        fontSize: 8, fontWeight: 800, padding: '1px 4px', borderRadius: 2, letterSpacing: 0.2, flexShrink: 0,
+                        background: '#EF444422', color: '#EF4444',
+                      }} title="Thin turnover — not tradable in real size">
+                        ⌀
                       </span>
                     )}
                   </Link>
