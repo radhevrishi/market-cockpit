@@ -1,0 +1,56 @@
+name: Scrape NSE Indices (4×/day)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PATCH 0782 — NSE broad-indices ingestion via GitHub Actions free CPU.
+#
+# Fetches NIFTY 50 / Next 50 / Midcap 250 / Smallcap 250 / Microcap 250 /
+# Nifty 500 from NSE, normalizes them with cap labels, writes consolidated
+# blob (~150-200KB, 750-900 unique tickers) to Upstash Redis.
+#
+# Vercel's /api/market/quotes reads this blob FIRST; only falls back to
+# live NSE on cache miss. Restores /movers, /heatmap, /breadth to the
+# 750+ stock universe with correct cap labels even when NSE upstream
+# rate-limits Vercel's serverless IPs.
+#
+# Required GitHub Actions secrets (Settings → Secrets and variables → Actions):
+#   UPSTASH_REDIS_REST_URL    — same value as Vercel env var
+#   UPSTASH_REDIS_REST_TOKEN  — same value as Vercel env var
+# ──────────────────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    # 4×/day at IST 06:30, 11:00, 15:30, 20:00
+    # → UTC 01:00, 05:30, 10:00, 14:30
+    - cron: '0 1 * * *'    # 06:30 IST
+    - cron: '30 5 * * *'   # 11:00 IST
+    - cron: '0 10 * * *'   # 15:30 IST
+    - cron: '30 14 * * *'  # 20:00 IST
+  workflow_dispatch: {}    # manual trigger from GitHub UI
+
+concurrency:
+  group: scrape-nse-indices
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run scraper
+        env:
+          UPSTASH_REDIS_REST_URL:   ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+        run: |
+          if [ -z "$UPSTASH_REDIS_REST_URL" ] || [ -z "$UPSTASH_REDIS_REST_TOKEN" ]; then
+            echo "::error title=Missing secrets::Add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          node .github/scripts/scrape-nse-indices.mjs

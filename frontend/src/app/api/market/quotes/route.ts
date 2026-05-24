@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { fetchNifty50, fetchNiftyNext50, fetchNifty500, fetchNifty200, fetchNiftyMidcap50, fetchNiftyMidcap100, fetchNiftyMidcap250, fetchNiftySmallcap50, fetchNiftySmallcap100, fetchNiftySmallcap250, fetchNiftyMicrocap250, fetchNiftyTotalMarket, fetchGainers, fetchLosers, buildDynamicSectorMap, normalizeSector, NIFTY50_SECTORS } from '@/lib/nse';
 import { fetchQuotesWithFallback, US_TOP } from '@/lib/yahoo';
+// PATCH 0782 — KV blob primary source (populated by GH Actions scraper).
+import { kvGet } from '@/lib/kv';
 
 export const dynamic = 'force-dynamic';
 
@@ -342,6 +344,67 @@ async function fetchNifty50DataWithCache() {
 }
 
 async function fetchIndianDataWithCache() {
+  // ─── PATCH 0782 — KV blob PRIMARY source ───────────────────────────
+  // GH Actions scraper (.github/workflows/scrape-nse-indices.yml) runs 4×/day
+  // and writes the consolidated NIFTY 50 + Next 50 + Midcap 250 + Smallcap 250
+  // + Microcap 250 + Nifty 500 stock universe (~750-900 unique tickers) to
+  // `nse-indices-blob:v1:latest`. We try the blob first — when it's present
+  // and fresh (<6h old), we skip all live NSE fetches entirely. This is
+  // 10× cheaper on Vercel CPU and bypasses the upstream rate-limiting that
+  // makes the broad NSE endpoints unreliable when called from serverless IPs.
+  try {
+    const blob = await kvGet<any>('nse-indices-blob:v1:latest');
+    if (blob && Array.isArray(blob.stocks) && blob.stocks.length >= 100) {
+      const ageMs = Date.now() - new Date(blob.generatedAt || 0).getTime();
+      if (ageMs < 6 * 3600_000) {
+        const sectorMap = await buildDynamicSectorMap().catch(() => ({} as Record<string, string>));
+        const mapped = blob.stocks
+          .filter((s: any) => s?.ticker && (s.price ?? 0) > 0)
+          .map((s: any) => {
+            const sector = (sectorMap as any)[s.ticker] || normalizeSector(s.industry || '') || NIFTY50_SECTORS[s.ticker] || 'Other';
+            const ffmc = s.ffmc || 0;
+            const estimatedMcap = ffmc > 0 ? ffmc : Math.round((s.price || 0) * (s.volume || 1) / 10000);
+            return {
+              ticker: s.ticker,
+              company: s.company || s.ticker,
+              sector,
+              industry: s.industry || '',
+              price: s.price || 0,
+              change: s.change || 0,
+              changePercent: s.changePercent || 0,
+              volume: s.volume || 0,
+              marketCap: estimatedMcap,
+              previousClose: s.previousClose || 0,
+              open: s.open || 0,
+              dayHigh: s.dayHigh || 0,
+              dayLow: s.dayLow || 0,
+              yearHigh: s.yearHigh || 0,
+              yearLow: s.yearLow || 0,
+              indexGroup: s.cap || 'Small',
+            };
+          });
+        const gainers = [...mapped].sort((a, b) => b.changePercent - a.changePercent).filter((s: any) => s.changePercent > 0).slice(0, 30);
+        const losers  = [...mapped].sort((a, b) => a.changePercent - b.changePercent).filter((s: any) => s.changePercent < 0).slice(0, 30);
+        return {
+          stocks: mapped,
+          gainers,
+          losers,
+          summary: {
+            total: mapped.length,
+            gainersCount: gainers.length,
+            losersCount: losers.length,
+            avgChange: mapped.length ? mapped.reduce((s: number, x: any) => s + (x.changePercent || 0), 0) / mapped.length : 0,
+            sectors: new Set(mapped.map((s: any) => s.sector)).size,
+          },
+          source: `KV-blob (NSE indices · ${Math.round(ageMs / 60_000)}m old)`,
+          generatedAt: blob.generatedAt,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+    }
+  } catch { /* fall through to live NSE */ }
+
+  // ─── Live NSE primary path (used when KV blob missing or stale) ────
   // Build dynamic sector map in parallel with stock data
   const [sectorMap, nifty500Data, midcap250Data, smallcap250Data, microcap250Data, totalMarketData, nseGainers, nseLosers] = await Promise.all([
     buildDynamicSectorMap(),
