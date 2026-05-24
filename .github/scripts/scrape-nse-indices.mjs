@@ -59,36 +59,49 @@ if (!KV_URL || !KV_TOKEN) {
 
 // ─── NSE session bootstrap (cookies) ────────────────────────────────────────
 
+// Headers MUST match what lib/nse.ts uses — NSE fingerprints these and
+// will return 404/403 if any required header is missing. Referer is the
+// site root, not a deep page. Cookies acquired by visiting the root.
 const NSE_HEADERS_BASE = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   'Accept': 'application/json, text/plain, */*',
   'Accept-Language': 'en-US,en;q=0.9',
   'Accept-Encoding': 'gzip, deflate, br',
   'Connection': 'keep-alive',
-  'Referer': 'https://www.nseindia.com/market-data/live-equity-market',
+  'Referer': 'https://www.nseindia.com/',
 };
 
 let nseCookieJar = '';
 
 async function bootstrapNseCookies() {
-  // NSE refuses API calls without a session cookie. The cookie is set on
-  // any HTML page load.
   try {
-    const res = await fetch(`${NSE_BASE}/market-data/live-equity-market`, {
-      headers: NSE_HEADERS_BASE,
+    const res = await fetch(NSE_BASE, {
+      headers: {
+        'User-Agent': NSE_HEADERS_BASE['User-Agent'],
+        'Accept': 'text/html,application/xhtml+xml',
+      },
+      redirect: 'follow',
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
-    const setCookie = res.headers.get('set-cookie') || '';
-    // Concatenate all set-cookie entries (Node sees them as a single comma-
-    // separated string for raw header access; we split + extract).
-    const parts = setCookie.split(/,(?=[^=]+=)/g)
-      .map(c => c.split(';')[0].trim())
-      .filter(Boolean);
-    nseCookieJar = parts.join('; ');
-    if (!nseCookieJar) {
-      console.log('::warning title=NSE cookie bootstrap::No Set-Cookie received from NSE — requests may be rejected.');
+    // Node 20 fetch exposes res.headers.getSetCookie() returning an array
+    // of full Set-Cookie strings (one per cookie). Use that if available
+    // for robust parsing — splitting raw header text on `,` breaks on
+    // comma-containing dates.
+    let cookies = [];
+    if (typeof res.headers.getSetCookie === 'function') {
+      cookies = res.headers.getSetCookie();
     } else {
-      console.log(`  NSE cookie acquired (${parts.length} fields)`);
+      const raw = res.headers.get('set-cookie') || '';
+      cookies = raw.split(/,(?=[^=]+=)/g);
+    }
+    const jar = cookies
+      .map((c) => String(c).split(';')[0].trim())
+      .filter(Boolean);
+    nseCookieJar = jar.join('; ');
+    if (!nseCookieJar) {
+      console.log('::warning title=NSE cookie bootstrap::No Set-Cookie received');
+    } else {
+      console.log(`  NSE cookie acquired (${jar.length} fields): ${nseCookieJar.slice(0, 120)}${nseCookieJar.length > 120 ? '...' : ''}`);
     }
   } catch (e) {
     console.log(`::warning title=NSE cookie bootstrap::${e?.message || e}`);
@@ -97,20 +110,37 @@ async function bootstrapNseCookies() {
 
 async function fetchIndex(indexKey) {
   const url = `${NSE_BASE}/api/equity-stockIndices?index=${encodeURIComponent(indexKey)}`;
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const res = await fetch(url, {
         headers: { ...NSE_HEADERS_BASE, Cookie: nseCookieJar },
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
-      if (res.status === 401 || res.status === 403) {
-        // Cookie expired — refresh and retry once
-        console.log(`  ${indexKey}: HTTP ${res.status}, refreshing cookie...`);
-        await bootstrapNseCookies();
-        continue;
+      // 401, 403, 404 all suggest cookie/session issue — refresh and retry.
+      if (res.status === 401 || res.status === 403 || res.status === 404) {
+        if (attempt < 2) {
+          console.log(`  ${indexKey}: HTTP ${res.status}, refreshing cookie (attempt ${attempt + 1})`);
+          // Light browse to a sub-page to upgrade session before retry
+          try {
+            await fetch(`${NSE_BASE}/market-data/live-equity-market`, {
+              headers: { ...NSE_HEADERS_BASE, Cookie: nseCookieJar },
+              signal: AbortSignal.timeout(8000),
+            });
+          } catch {}
+          await bootstrapNseCookies();
+          await new Promise(r => setTimeout(r, 1500));
+          continue;
+        }
       }
       if (!res.ok) {
         console.log(`::warning title=${indexKey}::HTTP ${res.status}`);
+        // Log the response body once for the first index for debugging
+        if (indexKey === 'NIFTY 50') {
+          try {
+            const body = await res.text();
+            console.log(`  body (first 300 chars): ${body.slice(0, 300)}`);
+          } catch {}
+        }
         return null;
       }
       const json = await res.json();
@@ -119,7 +149,7 @@ async function fetchIndex(indexKey) {
       return items;
     } catch (e) {
       const msg = e?.name === 'AbortError' ? `timeout (${FETCH_TIMEOUT_MS}ms)` : (e?.message || String(e));
-      if (attempt === 0) {
+      if (attempt < 2) {
         console.log(`  ${indexKey}: ${msg}, retrying...`);
         await new Promise(r => setTimeout(r, 1500));
         continue;
