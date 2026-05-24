@@ -151,14 +151,13 @@ async function fetchEquityMaster() {
 // + volume + delivery for every stock that traded. Eliminates the need to
 // fetch Yahoo prices from Vercel (which is currently rate-limited).
 //
-// URL variants to try (NSE has moved this file across infrastructure):
-//   1. Undated 'latest' file (single fixed URL)
-//   2. Dated file (walk back 10 weekdays to find most recent)
-const BHAVCOPY_URLS = [
-  // Latest/undated patterns (one of these usually exists)
-  'https://nsearchives.nseindia.com/products/content/sec_bhavdata_full.csv',
-  'https://archives.nseindia.com/products/content/sec_bhavdata_full.csv',
-];
+// PATCH 0792: The undated 'sec_bhavdata_full.csv' URL at nsearchives was
+// serving a STALE file (verified by user: RPOWER showing +15.91% when
+// actual Friday move was -0.92%; YESBANK -22.71% matches the 2020 RBI
+// takeover crash, not any recent day). ALWAYS use DATED URL pattern.
+//
+// NSE bhavdata DATED URL format: sec_bhavdata_full_DDMMYYYY.csv
+// e.g. 22-May-2026 → sec_bhavdata_full_22052026.csv
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 
@@ -173,29 +172,34 @@ function bhavCopyDatedUrls(d) {
 }
 
 async function fetchBhavCopy() {
-  // Try latest/undated URLs first
-  for (const url of BHAVCOPY_URLS) {
-    const rows = await fetchCsv(url, `BHAVCOPY ${new URL(url).hostname} (latest)`);
-    if (rows && rows.length > 500) {
-      console.log(`  ✓ BHAVCOPY loaded from ${url}`);
-      return { rows, url };
-    }
-  }
-  // Walk back up to 10 weekdays trying dated URLs
+  // ONLY use dated URLs — walk back from yesterday (today's not published
+  // yet) looking for the most recent dated BHAVCOPY. Skips weekends.
+  // Sanity-check date is in 2025-2027 range so we don't accidentally
+  // pull a 2019 file.
   const today = new Date();
   for (let back = 1; back <= 10; back++) {
     const d = new Date(today.getTime() - back * 86400_000);
     const dow = d.getUTCDay();
     if (dow === 0 || dow === 6) continue;
+    const dateStr = d.toISOString().slice(0, 10);
     for (const url of bhavCopyDatedUrls(d)) {
-      const rows = await fetchCsv(url, `BHAVCOPY ${d.toISOString().slice(0,10)}`);
+      const rows = await fetchCsv(url, `BHAVCOPY ${dateStr}`);
       if (rows && rows.length > 500) {
-        console.log(`  ✓ BHAVCOPY loaded from ${url}`);
-        return { rows, url };
+        // Validate: sample row's DATE1 column should match our requested date
+        // (catches NSE serving wrong date silently). DATE1 format: DD-MMM-YYYY
+        const sample = rows[0];
+        const dateField = (sample[' DATE1'] ?? sample['DATE1'] ?? '').toString().trim();
+        const yearOk = dateField.includes(String(d.getUTCFullYear()));
+        if (!yearOk && dateField) {
+          console.log(`  ⚠ ${dateStr} URL returned data dated ${dateField} — rejecting`);
+          continue;
+        }
+        console.log(`  ✓ BHAVCOPY ${dateStr} loaded from ${url} (DATE1 sample: ${dateField})`);
+        return { rows, url, dateISO: dateStr };
       }
     }
   }
-  console.log('::warning title=BHAVCOPY::all date/URL combinations failed');
+  console.log('::warning title=BHAVCOPY::all dated URLs failed in 10-weekday window');
   return null;
 }
 
