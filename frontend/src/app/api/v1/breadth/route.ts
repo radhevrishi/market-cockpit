@@ -100,14 +100,17 @@ function sigmoid(x: number, mid: number, k: number) {
 // back to the legacy 25-symbol Yahoo basket so the page always renders.
 // ═══════════════════════════════════════════════════════════════════════════
 
+// PATCH 0809 — actual nse-ticker-universe:v1:latest blob shape:
+//   { ticker, company, industry, cap, price, changePercent, deliveryPct,
+//     turnoverLacs, hasPrice, ... }
+// No `sector`, `marketCap`, or `indexGroup` — those come from enrichments.
 interface UniverseTicker {
   ticker: string;
-  sector?: string;
   industry?: string;
-  marketCap?: number;
+  cap?: string;                  // 'Large' | 'Mid' | 'Small' | 'Micro'
   changePercent?: number;
   hasPrice?: boolean;
-  indexGroup?: string;
+  turnoverLacs?: number;
 }
 
 interface RollingStat {
@@ -178,10 +181,10 @@ async function computeBroadBreadth(): Promise<BroadResult> {
     0.15 * Math.max(0, Math.min(100, 50 + hlSpread * 15));
 
   // ─── SECTOR BREADTH (25%) ────────────────────────────────────────────
-  // Group tickers by sector; count sectors where median mom1M ≥ 0.
+  // P0809: blob uses `industry` not `sector`; group by industry.
   const sectorMom: Record<string, number[]> = {};
   for (const t of tickers) {
-    const sec = (t.sector || '').trim();
+    const sec = (t.industry || '').trim();
     if (!sec) continue;
     const s = stats[t.ticker] || {};
     if (!Number.isFinite(s.mom1M)) continue;
@@ -200,14 +203,14 @@ async function computeBroadBreadth(): Promise<BroadResult> {
   const sectorScore = sectorRows.length > 0 ? (sectorsAbove / sectorRows.length) * 100 : 50;
 
   // ─── SMALLCAP PARTICIPATION (20%) ────────────────────────────────────
-  // % of small/microcap names with mom1M > 0, vs large/midcap baseline
+  // P0809: blob uses `cap` field ('Large' | 'Mid' | 'Small' | 'Micro').
   let smMomUp = 0, smMomHas = 0;
   let lgMomUp = 0, lgMomHas = 0;
   for (const t of tickers) {
     const s = stats[t.ticker] || {};
     if (!Number.isFinite(s.mom1M)) continue;
-    const cap = (t.indexGroup || '').toLowerCase();
-    const isSmall = cap === 'small' || cap === 'micro' || (t.marketCap !== undefined && t.marketCap < 10000);
+    const cap = (t.cap || '').toLowerCase();
+    const isSmall = cap === 'small' || cap === 'micro';
     if (isSmall) {
       smMomHas++;
       if (s.mom1M! >= 0) smMomUp++;
@@ -222,10 +225,14 @@ async function computeBroadBreadth(): Promise<BroadResult> {
   const smallcapScore = Math.max(0, Math.min(100, 50 + (smPct - lgPct) * 1.0));
 
   // ─── INSTITUTIONAL FLOW (10%) ────────────────────────────────────────
-  // % of largecaps (≥ ₹50,000 Cr) above 200DMA proxy — institutional ownership concentrates here
+  // P0809: cap='Large' = institutional ownership concentration tier
+  // (top constituents of Nifty + Nifty Next 50). Use turnover ≥ ₹100 Cr
+  // (= 10,000 lacs) as a secondary filter so we exclude largecaps with
+  // negligible institutional participation today.
   let lcAbove = 0, lcHas = 0;
   for (const t of tickers) {
-    if (!t.marketCap || t.marketCap < 50000) continue;
+    const cap = (t.cap || '').toLowerCase();
+    if (cap !== 'large') continue;
     const s = stats[t.ticker] || {};
     if (!Number.isFinite(s.pctOf52wHigh)) continue;
     lcHas++;
