@@ -857,6 +857,28 @@ export default function HomeDashboard() {
                 source_url: ev.source_url || ev.url,
               };
             }
+            // PATCH 0806 — publish raw ss items onto `data` so the home panel
+            // can render. Keep newest first (sorted by announced_at desc).
+            const ssForHome = ssItems
+              .map((ev: any) => ({
+                ticker: ((ev.ticker || ev.target || ev.symbol) || '').toUpperCase().replace(/\.(NS|BO)$/i, ''),
+                company: ev.company || ev.target_company || ev.acquirer,
+                event_type: ev.event_type || ev.type || 'CORPORATE_ACTION',
+                sub_category: ev.sub_category,
+                announced_at: ev.announced_at || ev.date,
+                next_catalyst_date: ev.next_catalyst_date,
+                headline: ev.headline || ev.title,
+                source_url: ev.source_url || ev.url,
+                expected_alpha: ev.expected_alpha,
+                source_tier: ev.source_tier,
+              }))
+              .filter((x: any) => x.ticker && x.event_type)
+              .sort((a: any, b: any) => {
+                const ta = new Date(a.announced_at || 0).getTime();
+                const tb = new Date(b.announced_at || 0).getTime();
+                return tb - ta;
+              });
+            setData((d) => ({ ...d, specialSituations: ssForHome } as any));
 
             // 4. News per ticker (parallel, bounded)
             // PATCH 0724 — Dual-source: standard /api/v1/news pipeline
@@ -2313,6 +2335,104 @@ export default function HomeDashboard() {
               </div>
             )}
           </div>
+        </div>
+
+        {/* ═══════════════ PATCH 0806 — SPECIAL SITUATIONS (below Signals) ═══════════ */}
+        <div style={{ ...cardStyle, borderLeft: '3px solid #EF4444' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
+            <span style={{ fontSize: 13, fontWeight: 800, color: '#EF4444', letterSpacing: '0.4px' }}>
+              🎯 SPECIAL SITUATIONS ({(data as any).specialSituations?.length || 0})
+            </span>
+            <Link href="/special-situations" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
+          </div>
+          <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
+            OFS · open offers · buybacks · mergers · preferential allotments — spread, deadline + alpha tag
+          </div>
+          {!(data as any).specialSituations ? (
+            <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
+          ) : (data as any).specialSituations.length === 0 ? (
+            <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>
+              No active situations in feed. <Link href="/special-situations" style={{ color: '#22D3EE' }}>Browse all →</Link>
+            </div>
+          ) : (() => {
+            const EVENT_COLOR: Record<string, string> = {
+              OPEN_OFFER:    '#10B981',
+              OFS:           '#F59E0B',
+              BUYBACK:       '#A78BFA',
+              MERGER:        '#22D3EE',
+              DEMERGER:      '#22D3EE',
+              PREFERENTIAL:  '#FB7185',
+              QIP:           '#FB7185',
+              RIGHTS:        '#60A5FA',
+              SPIN_OFF:      '#22D3EE',
+              CORPORATE_ACTION: '#94A3B8',
+            };
+            const norm = (s: string) => (s || '').toString().toUpperCase().replace(/\.(NS|BO)$/i, '').trim();
+            const universeSet = new Set<string>();
+            try { (JSON.parse(localStorage.getItem('mc_watchlist_tickers') || '[]') || []).forEach((t: string) => universeSet.add(norm(t))); } catch {}
+            try { getConvictionTickers().forEach((t: string) => universeSet.add(norm(t))); } catch {}
+            try { (JSON.parse(localStorage.getItem('portfolioHoldings') || '[]') || []).forEach((h: any) => { if (h?.ticker) universeSet.add(norm(h.ticker)); }); } catch {}
+            const items: any[] = (data as any).specialSituations.slice(0, 12);
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {items.map((ev: any, i: number) => {
+                  const evColor = EVENT_COLOR[ev.event_type] || '#94A3B8';
+                  const inUniverse = universeSet.has(ev.ticker);
+                  // Days since announced + days to next catalyst (heuristic from lib/specsit-playbooks if data is missing)
+                  let daysSince = '';
+                  let nextCatalyst = '';
+                  if (ev.announced_at) {
+                    const days = Math.max(0, Math.round((Date.now() - new Date(ev.announced_at).getTime()) / 86400000));
+                    daysSince = days === 0 ? 'today' : `${days}d ago`;
+                  }
+                  if (ev.next_catalyst_date) {
+                    const days = Math.round((new Date(ev.next_catalyst_date).getTime() - Date.now()) / 86400000);
+                    if (days >= 0) nextCatalyst = `→ ${days}d`;
+                    else nextCatalyst = `${-days}d past`;
+                  }
+                  const headline = ev.headline || ev.sub_category || ev.event_type;
+                  const evLabel = (ev.event_type || '').replace(/_/g, ' ');
+                  return (
+                    <Link key={(ev.ticker || '') + i}
+                      href={`/stock-sheet?ticker=${encodeURIComponent(ev.ticker)}`}
+                      title={[
+                        `${ev.ticker} · ${evLabel}${ev.sub_category ? ' · ' + ev.sub_category : ''}`,
+                        headline,
+                        ev.announced_at ? `Announced: ${ev.announced_at} (${daysSince})` : '',
+                        ev.next_catalyst_date ? `Next catalyst: ${ev.next_catalyst_date} (${nextCatalyst})` : '',
+                        ev.expected_alpha ? `Expected alpha: ${ev.expected_alpha}` : '',
+                      ].filter(Boolean).join('\n')}
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                      {inUniverse && <span style={{ fontSize: 10, color: '#22D3EE', flexShrink: 0 }} title="In your Watchlist/Portfolio/CB">👁</span>}
+                      <span style={{ fontSize: 11, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 84, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {ev.ticker}
+                      </span>
+                      <span style={{
+                        fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2, letterSpacing: 0.3, flexShrink: 0,
+                        background: `${evColor}22`, color: evColor,
+                      }}>
+                        {evLabel}
+                      </span>
+                      <span style={{
+                        flex: 1, fontSize: 11, color: TEXT, fontWeight: 500,
+                        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0,
+                      }}>
+                        {headline}
+                      </span>
+                      {ev.expected_alpha && (
+                        <span style={{ fontSize: 8, color: '#10B981', fontWeight: 700, padding: '1px 4px', borderRadius: 2, background: '#10B98122', flexShrink: 0 }}>
+                          {ev.expected_alpha}
+                        </span>
+                      )}
+                      <span style={{ fontSize: 9, color: DIM, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                        {daysSince}{nextCatalyst && <> · <span style={{ color: '#F59E0B' }}>{nextCatalyst}</span></>}
+                      </span>
+                    </Link>
+                  );
+                })}
+              </div>
+            );
+          })()}
         </div>
 
         {/* ═══════════════ PATCH 0622 — TWO-COL: WATCHLIST PULSE + UPCOMING EARNINGS ═ */}
