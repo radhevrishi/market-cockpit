@@ -5,6 +5,7 @@ import { fetchQuotesWithFallback, US_TOP } from '@/lib/yahoo';
 import { kvGet } from '@/lib/kv';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 30; // PATCH 0788 — Yahoo bulk for 755 tickers needs ~15-20s
 
 // Response-level cache (avoids re-assembly on rapid polls)
 const responseCache = new Map<string, { data: any; ts: number }>();

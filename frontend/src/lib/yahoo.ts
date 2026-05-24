@@ -80,12 +80,16 @@ export async function fetchQuotes(symbols: string[]): Promise<any[]> {
   if (cached) return cached;
 
   try {
-    // PATCH 0787 — concurrent batching. Was: serial loop of 20-symbol
-    // batches, ~1s each. For 1500 symbols (Nifty 500 + Microcap + Total
-    // Market) that's 75s — exceeds Vercel maxDuration. Now: 8-way
-    // parallel batches, ~10s total for 1500 symbols.
+    // PATCH 0788 — concurrent batching with rate-limit-friendly settings.
+    // P0787 used CONC=8 + 8s timeout — Yahoo rate-limited after 4-5
+    // batches and resolved only 239/755 tickers. Backing off to CONC=4
+    // (gentler) + 12s timeout (Yahoo cold quotes can be slow), with a
+    // 100ms gap between slabs. For 755 symbols (38 batches) that's
+    // ~10 slabs × ~1.5s = ~15s total — well within Vercel maxDuration
+    // and reliable.
     const BATCH = 20;
-    const CONC  = 8;
+    const CONC  = 4;
+    const SLAB_GAP_MS = 100;
     const chunks: string[][] = [];
     for (let i = 0; i < symbols.length; i += BATCH) {
       chunks.push(symbols.slice(i, i + BATCH));
@@ -95,7 +99,7 @@ export async function fetchQuotes(symbols: string[]): Promise<any[]> {
     const fetchOne = async (chunk: string[]) => {
       const url = `${YF_BASE2}/v7/finance/quote?symbols=${encodeURIComponent(chunk.join(','))}`;
       try {
-        const res = await fetch(url, { headers: HEADERS, next: { revalidate: 300 }, signal: AbortSignal.timeout(8000) });
+        const res = await fetch(url, { headers: HEADERS, next: { revalidate: 300 }, signal: AbortSignal.timeout(12_000) });
         if (!res.ok) return [];
         const json = await res.json();
         return json?.quoteResponse?.result || [];
@@ -105,6 +109,7 @@ export async function fetchQuotes(symbols: string[]): Promise<any[]> {
       const slab = chunks.slice(i, i + CONC);
       const results = await Promise.all(slab.map(fetchOne));
       for (const arr of results) allResults.push(...arr);
+      if (i + CONC < chunks.length) await new Promise(r => setTimeout(r, SLAB_GAP_MS));
     }
 
     setCache(cacheKey, allResults);
