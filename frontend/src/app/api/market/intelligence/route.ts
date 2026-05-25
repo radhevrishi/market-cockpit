@@ -2946,9 +2946,17 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
     debug.totalSignalsBeforeDedup = allSignals.length;
 
     const qualityFiltered = allSignals.filter(s => {
-      // Gate 0: STRICT fake M&A kill — known fake value patterns
-      if (s.confidenceType === 'HEURISTIC' && s.eventType === 'M&A' && Math.round(s.valueCr) === 280) return false;
-      if (s.confidenceType === 'HEURISTIC' && Math.round(s.valueCr) === 350) return false;
+      // PATCH 0831 — STRICT kill on template-pattern signals (the ₹280 Cr M&A
+      // and ₹105 Cr Order Win duplicated across every largecap).
+      // The old Gate 0 only caught confidenceType=HEURISTIC, missing the
+      // INFERRED variants. Now: ANY anomalyFlags containing TEMPLATE_PATTERN_
+      // is killed, regardless of confidenceType / signalClass.
+      if (Array.isArray(s.anomalyFlags) && s.anomalyFlags.some((f: string) => /^TEMPLATE_PATTERN_/.test(f))) return false;
+      // Explicit fallback for known fake values (kept for safety in case
+      // template detector didn't fire)
+      const rv = Math.round(s.valueCr || 0);
+      if ((s.confidenceType === 'HEURISTIC' || s.confidenceType === 'INFERRED') &&
+          (rv === 280 || rv === 350 || rv === 105 || rv === 210)) return false;
 
       // Gate 1: Drop only zero-value heuristic signals for non-tracked companies
       if (s.confidenceType === 'HEURISTIC' && s.inferenceUsed && Math.round(s.valueCr) === 0) {
@@ -2961,6 +2969,12 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
 
       // Gate 3: Keep all signals for tracked companies, drop IGNORE for untracked
       if (s.action === 'IGNORE' && !s.isWatchlist && !s.isPortfolio) return false;
+
+      // PATCH 0831 — also kill TIER_D signals (the 'TEMPLATE/LOW CONF' tier)
+      // that aren't on watchlist/portfolio. These are the 'DIMMED' visibility
+      // junk that shouldn't be in production lists.
+      if (s.evidenceTier === 'TIER_D' && !s.isWatchlist && !s.isPortfolio) return false;
+      if (s.visibility === 'HIDDEN' && !s.isWatchlist && !s.isPortfolio) return false;
 
       return true;
     });
