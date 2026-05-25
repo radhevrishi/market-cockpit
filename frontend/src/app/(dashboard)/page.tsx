@@ -921,28 +921,109 @@ export default function HomeDashboard() {
               };
             }
 
-            // PATCH 0806/0824 — publish to home panel
-            const ssForHome = allSsItems
-              .map((ev: any) => ({
-                ticker: extractTicker(ev),
+            // PATCH 0859 — Home Special Situations rail: DIRECT-TRADE items only.
+            // Previously the rail dumped raw by_category items including law-court
+            // judgments (TURN bucket: 'Section 2(1)(e) of Arbitration Act…',
+            // 'Shaifali Steels vs ITO'). User correctly flagged: 'wired a raw
+            // law-judgment RSS dump straight into a Special Situations rail with
+            // almost no product thinking'. Now:
+            //   (a) PREFER the structured events[] stream (BUYBACK_TENDER /
+            //       OPEN_OFFER / SCHEME / DEMERGER / RIGHTS / etc with real tickers
+            //       extracted from filings).
+            //   (b) DROP law-judgment-shaped headlines (regex on title).
+            //   (c) DROP bogus ticker abbreviations (UBS/OTP/QIP/PLI class).
+            //   (d) DROP items with no real corporate-action keyword in title.
+            //   (e) DEDUP by canonical key.
+            //   (f) Cap top rail at 12.
+            // Heavier law-precedent items still flow to /special-situations full
+            // page; the home rail is curated.
+
+            // Heuristic: real listed-equity ticker pattern (2-12 uppercase letters,
+            // optional digits, no common abbreviation noise).
+            const NOISE_TICKERS = new Set(['OTP','UBS','QIP','PLI','SEBI','NCLT','RBI','GST','IBC','RERA','REAT','HC','SC','CIRP','NPA','OFS','OEM','MOU','LOA','LOI','PSU','NBFC','AMC','FII','DII','API','PAT','OPM','PBT','PBIT','EBITDA','NSE','BSE','MCA','SAT','IT','ITO','CIT','PCIT','AO','ITR','AT','GSTR']);
+            const isValidTicker = (t: string) => {
+              if (!t) return false;
+              const T = String(t).toUpperCase().trim();
+              if (NOISE_TICKERS.has(T)) return false;
+              return /^[A-Z][A-Z0-9&-]{1,11}$/.test(T);
+            };
+
+            // Heuristic: law-judgment / case-citation pattern.
+            const isLawJudgment = (title: string) => {
+              if (!title) return false;
+              const t = String(title);
+              // Case citation: 'X vs Y', 'X v. Y', 'X versus Y'
+              if (/\b(?:vs?\.?|versus)\s+[A-Z][A-Za-z]/.test(t)) return true;
+              // Section / Act / Article citations
+              if (/Section\s+\d+|Act,?\s*\d{4}|Article\s+\d+|Rule\s+\d+/i.test(t)) return true;
+              // Court / tribunal references
+              if (/\b(High Court|Supreme Court|Madras HC|Delhi HC|Mumbai HC|Bombay HC|Calcutta HC|NCLT|NCLAT|REAT|RERA Tribunal|SAT|ITAT|Tribunal\b)/i.test(t)) return true;
+              return false;
+            };
+
+            // Heuristic: corporate-action keywords (positive filter for home rail)
+            const CORP_ACTION_RE = /(?:buyback|tender|open offer|OFS|merger|demerger|scheme of arrangement|rights issue|preferential (?:allotment|issue)|delisting|spin-?off|split[- ]off|QIP|FPO|stake (?:sale|acquisition)|capital reduction|warrant conversion|bonus issue|share split|stock split)/i;
+
+            // Structured events FIRST — these are the institutional-grade rows.
+            const structuredEventTypes = new Set([
+              'BUYBACK_TENDER','OPEN_OFFER','SCHEME_OF_ARRANGEMENT','DEMERGER','MERGER','MA',
+              'RIGHTS_ISSUE','DELISTING','SPIN_OFF','PREFERENTIAL','QIP','FPO',
+              'STAKE_SALE','WARRANT_CONVERSION','BONUS','STOCK_SPLIT','CAPITAL_REDUCTION',
+            ]);
+
+            const _candidates: any[] = [];
+            for (const ev of allSsItems) {
+              const ticker = extractTicker(ev);
+              const headline = extractHeadline(ev);
+              const eventType = extractEventType(ev);
+              if (!ticker || !headline) continue;
+              // Drop noise tickers
+              if (!isValidTicker(ticker)) continue;
+              // Drop law-judgment headlines
+              if (isLawJudgment(headline)) continue;
+              // Direct-trade filter: structured event_type OR title contains real corp-action keyword
+              const isStructured = structuredEventTypes.has(String(eventType).toUpperCase());
+              const hasCorpAction = CORP_ACTION_RE.test(headline);
+              if (!isStructured && !hasCorpAction) continue;
+              // Tradeability tier
+              const tradeability = isStructured ? 'DIRECT_TRADE' : 'CORP_ACTION_NEWS';
+              _candidates.push({
+                ticker,
                 company: ev.company || ev.target_company || ev.acquirer,
-                event_type: extractEventType(ev),
+                event_type: eventType,
                 sub_category: ev.sub_category || ev.category_label,
                 announced_at: extractAnnouncedAt(ev),
                 next_catalyst_date: ev.next_catalyst_date,
-                headline: extractHeadline(ev),
+                headline: headline.replace(/\s+/g, ' ').trim().slice(0, 140),
                 source_url: ev.source_url || ev.url || ev.link || ev.primary_filing?.link,
                 expected_alpha: ev.expected_alpha,
                 source_tier: ev.source_tier || ev.tier,
                 region: ev.region,
                 lifecycle: ev.lifecycle,
-              }))
-              .filter((x: any) => x.ticker && x.event_type)
+                tradeability,
+              });
+            }
+
+            // Dedup by canonical key: event_type + ticker + first-60-chars-of-headline.
+            const seen = new Set<string>();
+            const deduped = _candidates.filter((x) => {
+              const k = `${x.event_type}|${x.ticker}|${(x.headline || '').toLowerCase().slice(0, 60)}`;
+              if (seen.has(k)) return false;
+              seen.add(k);
+              return true;
+            });
+
+            // Sort: DIRECT_TRADE first, then by recency.
+            const ssForHome = deduped
               .sort((a: any, b: any) => {
+                if (a.tradeability !== b.tradeability) {
+                  return a.tradeability === 'DIRECT_TRADE' ? -1 : 1;
+                }
                 const ta = new Date(a.announced_at || 0).getTime();
                 const tb = new Date(b.announced_at || 0).getTime();
                 return tb - ta;
-              });
+              })
+              .slice(0, 12);  // cap top rail per user spec
             setData((d) => ({ ...d, specialSituations: ssForHome } as any));
 
             // 4. News per ticker (parallel, bounded)
@@ -2458,7 +2539,7 @@ export default function HomeDashboard() {
             <Link href="/special-situations" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
           </div>
           <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
-            OFS · open offers · buybacks · mergers · preferential allotments — spread, deadline + alpha tag
+            OFS · buybacks · open offers · mergers · demergers · rights · preferential — equity-linked only · law precedents pushed to <Link href="/special-situations" style={{ color: '#22D3EE' }}>full page</Link>
           </div>
           {!(data as any).specialSituations ? (
             <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
@@ -2516,6 +2597,18 @@ export default function HomeDashboard() {
                       ].filter(Boolean).join('\n')}
                       style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
                       {inUniverse && <span style={{ fontSize: 10, color: '#22D3EE', flexShrink: 0 }} title="In your Watchlist/Portfolio/CB">👁</span>}
+                      {/* PATCH 0859 — Direct-trade vs corp-action-news tier badge */}
+                      {ev.tradeability === 'DIRECT_TRADE' ? (
+                        <span title="Direct-trade event (structured filing — OFS/buyback/open-offer/scheme)"
+                          style={{ fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2, letterSpacing: 0.3, background: '#10B98122', color: '#10B981', flexShrink: 0 }}>
+                          DIRECT
+                        </span>
+                      ) : (
+                        <span title="Corp-action news mention (lower-confidence — verify before sizing)"
+                          style={{ fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2, letterSpacing: 0.3, background: '#A78BFA22', color: '#A78BFA', flexShrink: 0 }}>
+                          NEWS
+                        </span>
+                      )}
                       <span style={{ fontSize: 11, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 84, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {ev.ticker}
                       </span>
