@@ -346,6 +346,21 @@ const NIFTY_LARGECAP_SET = new Set<string>([
   'JIOFIN','LICI','LODHA','LTIM','MOTHERSON','NAUKRI','PIDILITIND','PFC',
   'PNB','RECLTD','SBICARD','SHREECEM','SIEMENS','TATAPOWER','TORNTPHARM',
   'TRENT','TVSMOTOR','UNITDSPR','VEDL','VBL','ZOMATO','ZYDUSLIFE',
+  // PATCH 0847 — Nifty 100 + selected largecaps user explicitly excludes
+  // (Aurobindo/Paytm/Railtel etc surfaced as junk template themes)
+  'AUROPHARMA','PAYTM','RAILTEL','BIOCON','LUPIN','ABBOTINDIA','ABCAPITAL',
+  'ABFRL','ACC','ADANITRANS','ADANIENSOL','ADANIWILMAR','APLLTD','ASTRAL',
+  'AUBANK','BAJAJHLDNG','BALKRISIND','BANDHANBNK','BANKINDIA','BHARATFORG',
+  'CGPOWER','COFORGE','COROMANDEL','CUMMINSIND','DALBHARAT','DEEPAKNTR',
+  'DIXON','ESCORTS','EXIDEIND','FEDERALBNK','GICRE','GLAND','GMRINFRA',
+  'GODREJPROP','GUJGASLTD','HDFCAMC','HINDPETRO','HINDZINC','IDFCFIRSTB',
+  'IDEA','INDHOTEL','INDIANB','INDUSTOWER','IGL','IPCALAB','IRCTC',
+  'JSWENERGY','JUBLFOOD','KPITTECH','LICHSGFIN','LTTS','LUPIN','MARICO',
+  'MAXHEALTH','MAZDOCK','MFSL','MPHASIS','MRPL','MUTHOOTFIN','NHPC',
+  'NMDC','OBEROIRLTY','OFSS','PAGEIND','PERSISTENT','PETRONET','PIIND',
+  'POLICYBZR','POLYCAB','POONAWALLA','PRESTIGE','RVNL','SAIL','SOLARINDS',
+  'SONACOMS','SRF','SUNDARMFIN','SUPREMEIND','SUZLON','SYNGENE','TIINDIA',
+  'TORNTPOWER','TVSSCS','UNIONBANK','UPL','YESBANK',
 ]);
 
 function isLargecapForSignals(symbol: any, _item: any): boolean {
@@ -383,10 +398,45 @@ function stripJunkResponse(resp: any): any {
   for (const key of ['signals', 'notable', 'observations', 'speculative', 'top3', 'thematicIdeas']) {
     if (Array.isArray(next[key])) next[key] = stripJunk(next[key]);
   }
-  // PATCH 0836 — thematicIdeas use {symbol, isWatchlist, isPortfolio} too;
-  // drop largecap themes unless tracked.
+  // PATCH 0836 + 0847 — thematicIdeas hygiene.
+  //   (a) Drop Nifty 50 / Next 50 / Nifty-100 largecaps unless watchlisted.
+  //   (b) Drop themes whose narrative is pure inference — "mostly estimated
+  //       data" is the explicit risk flag the upstream generator uses for
+  //       template fill with no real signal.
+  //   (c) Dedup by theme.tag — when ≥2 LOW-confidence themes share the same
+  //       tag (e.g. "AI / Tech Platform Transition" spread across 4 unrelated
+  //       tickers, or "capex ₹105 Cr" across TEXRAIL+RAILTEL), it's template
+  //       fill: drop EVERY LOW-confidence row carrying that tag.
   if (Array.isArray(next.thematicIdeas)) {
-    next.thematicIdeas = next.thematicIdeas.filter((t: any) => !isLargecapForSignals(t.symbol, t));
+    let themes = next.thematicIdeas.filter((t: any) => {
+      if (isLargecapForSignals(t?.symbol, t)) return false;
+      const narrative = String(t?.theme?.narrative || t?.description || '').toLowerCase();
+      const conf = String(t?.theme?.confidence || '').toUpperCase();
+      // (b) pure-inference tell
+      if (/mostly\s+estimated\s+data/.test(narrative) && conf === 'LOW') return false;
+      return true;
+    });
+    // (c) tag-dedup pass
+    const tagCounts: Record<string, number> = {};
+    const tagConfMax: Record<string, string> = {};
+    for (const t of themes) {
+      const tag = String(t?.theme?.tag || '').toUpperCase();
+      const conf = String(t?.theme?.confidence || '').toUpperCase();
+      if (!tag) continue;
+      tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+      // remember the highest confidence seen for this tag
+      const rank = (c: string) => c === 'HIGH' ? 3 : c === 'MEDIUM' ? 2 : c === 'LOW' ? 1 : 0;
+      if (!tagConfMax[tag] || rank(conf) > rank(tagConfMax[tag])) tagConfMax[tag] = conf;
+    }
+    themes = themes.filter((t: any) => {
+      const tag = String(t?.theme?.tag || '').toUpperCase();
+      const conf = String(t?.theme?.confidence || '').toUpperCase();
+      if (!tag) return true;
+      // template fill: same tag on ≥2 tickers AND this row is LOW-confidence
+      if ((tagCounts[tag] || 0) >= 2 && conf === 'LOW') return false;
+      return true;
+    });
+    next.thematicIdeas = themes;
   }
   // Trends carry s.signals inside each item — strip junk inside, drop trends that lose all evidence
   // PATCH 0836 — ALSO drop the trend wholesale if its top-level symbol is a
