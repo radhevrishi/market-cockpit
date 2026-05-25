@@ -348,8 +348,11 @@ const NIFTY_LARGECAP_SET = new Set<string>([
   'TRENT','TVSMOTOR','UNITDSPR','VEDL','VBL','ZOMATO','ZYDUSLIFE',
 ]);
 
-function isLargecapForSignals(symbol: any, item: any): boolean {
-  if (item?.isWatchlist || item?.isPortfolio) return false;  // tracked passes
+function isLargecapForSignals(symbol: any, _item: any): boolean {
+  // PATCH 0836-followup: drop Nifty 50 + Next 50 largecaps from Signals
+  // ENTIRELY — even if they're in user's watchlist. Largecaps belong on
+  // the /watchlists page directly, not buried in Signals where the user
+  // is hunting for small+midcap edge.
   const sym = String(symbol || '').toUpperCase().replace(/\.(NS|BO)$/i, '').trim();
   return NIFTY_LARGECAP_SET.has(sym);
 }
