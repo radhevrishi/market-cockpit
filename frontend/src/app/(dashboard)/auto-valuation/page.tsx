@@ -486,10 +486,19 @@ function inferSector(text: string, company?: string): string | undefined {
       [/\bsubstation\b|\bgrid\b/g, 2],
     ]],
     ['Auto Components', [
-      [/\bauto component\b|\bautomotive\b/g, 3],
+      [/\bauto\s+component(?:s)?\b|\bautomotive\b/g, 4],
       [/\btyres?\b|\btires?\b/g, 3],
       [/\bforging\b|\bgearbox\b|\bdriveline\b/g, 4],
-      [/\bOEM\b/g, 1],
+      [/\bOEM(?:s)?\b/g, 2],
+      // PATCH 0844 — Sandhar/Minda/Bosch-class profile: locks/mirrors/sheet
+      // metal/cabins/two-wheeler are dead giveaways for auto-comps.
+      [/\block(?:s|ing)?\b|\bmirror(?:s)?\b|\bwiper(?:s)?\b|\bhorn(?:s)?\b/g, 3],
+      [/\bsheet metal\b|\bstamping\b|\bdie[- ]casting\b/g, 4],
+      [/\bcabin(?:s)?\b/g, 2],
+      [/\b(?:two|four)[- ]wheeler\b|\b2W\b|\b4W\b/g, 3],
+      [/\bEV\s+powertrain\b|\bbattery\s+pack\b|\bcharger\b/g, 4],
+      [/\bclutch\b|\bbrake\b|\bsuspension\b|\baxle\b/g, 3],
+      [/\b(?:Maruti|Tata|Mahindra|TVS|Hero|Bajaj|Honda|Hyundai)\s+(?:Suzuki|Motors|Auto)?\b/g, 2],  // OEM customers
     ]],
     ['AI Infrastructure (India)', [
       [/\bESDM\b|\belectronics manufacturing services\b/g, 5],
