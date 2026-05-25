@@ -325,6 +325,46 @@ async function fetchGoogleNewsRSS(symbols: string[]): Promise<MCNewsItem[]> {
 // When all sources fail → serve stale cache
 
 const SIGNAL_CACHE_KEY = 'intelligence:signals:latest';
+
+// PATCH 0833 — template-pattern junk filter applied to EVERY response,
+// including KV-cached paths that bypass the compute-time quality gate.
+function isJunkSignal(s: any): boolean {
+  if (!s) return true;
+  const flags = Array.isArray(s.anomalyFlags) ? s.anomalyFlags : [];
+  if (flags.some((f: any) => typeof f === 'string' && /^TEMPLATE_PATTERN_/.test(f))) return true;
+  const rv = Math.round(s.valueCr || 0);
+  const ct = s.confidenceType;
+  if ((ct === 'HEURISTIC' || ct === 'INFERRED') && (rv === 280 || rv === 350 || rv === 105 || rv === 210)) return true;
+  if (s.visibility === 'HIDDEN' && !s.isWatchlist && !s.isPortfolio) return true;
+  if (s.evidenceTier === 'TIER_D' && !s.isWatchlist && !s.isPortfolio) return true;
+  if (s.signalTier === 'TIER2_INFERRED' && ct === 'HEURISTIC' && !s.isWatchlist && !s.isPortfolio) return true;
+  return false;
+}
+
+function stripJunk(arr: any): any {
+  if (!Array.isArray(arr)) return arr;
+  return arr.filter((s: any) => !isJunkSignal(s));
+}
+
+function stripJunkResponse(resp: any): any {
+  if (!resp || typeof resp !== 'object') return resp;
+  const next = { ...resp };
+  for (const key of ['signals', 'notable', 'observations', 'speculative', 'top3', 'thematicIdeas']) {
+    if (Array.isArray(next[key])) next[key] = stripJunk(next[key]);
+  }
+  // Trends carry s.signals inside each item — strip junk inside, drop trends that lose all evidence
+  if (Array.isArray(next.trends)) {
+    next.trends = next.trends.map((t: any) => {
+      if (!t || !Array.isArray(t.signals)) return t;
+      const cleanedSignals = stripJunk(t.signals);
+      return { ...t, signals: cleanedSignals, signalCount: cleanedSignals.length };
+    }).filter((t: any) => (t.signalCount ?? t.signals?.length ?? 0) >= 2);
+  }
+  // Hide _allSignals too — the frontend can rebuild from cleaned arrays
+  if (Array.isArray(next._allSignals)) next._allSignals = stripJunk(next._allSignals);
+  return next;
+}
+
 const SIGNAL_CACHE_TTL = 6 * 60 * 60; // 6 hours
 
 async function cacheSignals(data: any): Promise<void> {
@@ -2416,7 +2456,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
     const cacheKey = `${watchlist.join(',')}|${portfolio.join(',')}|${days}`;
     if (_routeCache && _routeCache.key === cacheKey && (Date.now() - _routeCache.timestamp) < ROUTE_CACHE_TTL) {
       console.log(`[Intelligence] Cache hit (${Date.now() - startTime}ms)`);
-      return NextResponse.json(_routeCache.data);
+      return NextResponse.json(stripJunkResponse(_routeCache.data));
     }
 
     const watchlistSet = new Set(watchlist);
@@ -3168,13 +3208,13 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
           s.headline = `[STALE] ${s.headline || ''}`;
         }
 
-        return NextResponse.json({
+        return NextResponse.json(stripJunkResponse({
           ...cached,
           updatedAt: new Date().toISOString(),
           stale: true,
           staleAgeMinutes: cacheAgeMin,
           debug: searchParams.get('debug') === 'true' ? debug : undefined,
-        });
+        }));
       }
     }
 
@@ -3186,7 +3226,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
     _routeCache = { key: cacheKey, data: finalResponse, timestamp: Date.now() };
 
     console.log(`[Intelligence] Done in ${Date.now() - startTime}ms — ${response.signals?.length || 0} signals`);
-    return NextResponse.json(finalResponse);
+    return NextResponse.json(stripJunkResponse(finalResponse));
   } catch (error) {
     console.error(`[Intelligence] Fatal error:`, error);
 
