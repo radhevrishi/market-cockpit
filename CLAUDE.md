@@ -2911,3 +2911,151 @@ frontend/src/app/api/market/intelligence/route.ts         — largecap set expan
 >   should be honest across all 36 sectors. If user finds another edge case,
 >   the playbook is: (1) read page.tsx version of inferSector, (2) match the
 >   pattern, (3) sync the same change into engine.ts, (4) typecheck.
+
+---
+
+## 21 · DAY-7-EVENING DELTA — 2026-05-25 (Patches 0850 → 0853)
+
+After the P0849 base shipped, user noted Signals tab stuck on
+"Computing intelligence — auto-refreshing in 20 seconds..." forever.
+Then asked for all the proposed institutional improvements from the
+investing-style mapping discussion. Delivered:
+
+### 21.1 Patches shipped (P0850 → P0853)
+
+```
+0850  — Signals stale-lock auto-clear + ?clearLock=1 admin bypass.
+        Symptom: page polled 15× with skeleton response. Compute returned
+        {skipped:true} every time because LOCK_KEY was stuck in Upstash
+        (TTL 120s sometimes doesn't auto-expire under retry pressure).
+        Fix in runLockedCompute(): when lock is held, also read META_KEY.
+        If META is missing OR computedAt > 5min old → lock is stale,
+        kvDel(LOCK_KEY), re-acquire, proceed. Plus admin escape hatch
+        ?clearLock=1 on GET that wipes LOCK_KEY + META_KEY before running
+        (optional &wipeProd=1 also nukes PROD_SIGNALS_KEY).
+
+0850-followup — Honest empty-state when upstream genuinely empty.
+        After lock fix, compute completed but produced 0 signals because
+        the corp-filings-blob (GH Actions scraper) had no items. The
+        skeleton response was misleading users into thinking it was
+        still computing. Now probes live-feed?cacheOnly=1 and surfaces
+        either 'Weekend — no new NSE/BSE filings since Friday close'
+        or 'Upstream corp-filings scraper is empty. Check /system-status
+        or trigger the GH Actions scrape-corp-filings workflow.'
+
+0851  — Auto-Val institutional chip strip (the user-style alignment).
+        Five computed-from-Excel chips + two client-side overlays:
+          ⚡ MARGIN INFLECTION ±Xpp — latest OPM vs trailing-3-yr avg.
+          🚨 PUMP N/11 — lightweight forensic detector (microcap+>35%
+            CAGR / IPO-stub CAGR>80 / <3 Cr shares / PAT margin >
+            EBITDA margin / compression+decel combo). Severity
+            CLEAN/WATCH/HIGH/CRITICAL.
+          ⇑ SALES ACCEL ±pp — latest YoY vs 5y CAGR delta.
+          🧬 DNA N/6 — 500-bagger lite criteria match.
+          ✓ FORENSIC CLEAN — only when pumpScore=0.
+          📒 PRIOR: BUY/WATCH/REJECTED — getDecision() lookup.
+          🏆 CB — getConvictionTickers() lookup.
+        Rendered in BOTH /auto-valuation page + InlineValuationPanel
+        (Concall AI embed). Critical signals (margin inflection + pump
+        HIGH/CRITICAL) also prepended to rationale list so they're
+        always visible even with chips collapsed.
+
+0852  — Decision Logbook improvements.
+        Decision interface extended with optional fields:
+          bullCase, bearCase, wouldChangeMind, priceAtDecision.
+        Old `reason` stays for back-compat. New bull/bear/change-mind
+        fields render as ▲ bull / ▼ bear / ↻ change-mind chips with
+        full text on tooltip (preserves the structured-thinking habit
+        the user wants without bloating the table).
+        Buy-the-dip helper: when a REJECTED row's live price has
+        dropped ≥25% since priceAtDecision, surface a green
+        '⤴ RE-EVALUATE? · N% since reject' chip. Tooltip: 'Rejected
+        at ₹X, now ₹Y — fundamentals unchanged?'. Fetches
+        /api/market/quotes once on mount.
+        Multibagger DecisionBar (both India + USA) now captures
+        r.cmp as priceAtDecision on every new decision.
+
+0853  — Signals version stamps for /system-status.
+        Bumped intelligence:meta to carry computeVersion / filterVersion /
+        universeVersion / computedAt / signalCount / signalHash. The
+        /api/v1/system-status endpoint surfaces all of those in a
+        signalsVersions field. /system-status page renders a 'Signals
+        build stamp' strip right below the summary chips:
+          compute: v0853 · filter: v0853 · universe: 2026-05-25 ·
+          last compute: 3m ago · signals: 42 · hash: a3f9c2e1
+        When last-compute > 60 min: row turns amber and suggests the
+        ?clearLock=1 admin bypass. Saves 30-60 min per future
+        regression-debug session — you instantly know whether
+        latest deploy + cron + universe are all current.
+```
+
+### 21.2 Files most touched
+
+```
+frontend/src/app/api/market/intelligence/route.ts         — skeleton diagnostic
+frontend/src/app/api/market/intelligence/compute/route.ts — stale-lock + clearLock + versions
+frontend/src/app/(dashboard)/auto-valuation/engine.ts     — chip computation
+frontend/src/app/(dashboard)/auto-valuation/page.tsx      — chip strip render + duplicate engine sync
+frontend/src/components/InlineValuationPanel.tsx          — chip strip render
+frontend/src/lib/decisions.ts                             — bull/bear/change-mind/priceAtDecision
+frontend/src/app/(dashboard)/decisions/page.tsx           — buy-the-dip + bull/bear preview
+frontend/src/app/(dashboard)/multibagger/page.tsx         — priceAtDecision capture in DecisionBar
+frontend/src/app/api/v1/system-status/route.ts            — signalsVersions field
+frontend/src/app/(dashboard)/system-status/page.tsx       — versions strip
+```
+
+### 21.3 Open / blocked items
+
+Same as §20 — Anthropic LLM concall extraction (BLK-01), Trendlyne/
+Moneycontrol scraper (BLK-02), Auth provider (BLK-03), Postgres
+(BLK-04), paid commodity feeds (BLK-05), Slack/SMTP/webhook creds
+(BLK-07).
+
+Plus newly surfaced:
+  - GH Actions scrape-corp-filings workflow needs to be re-run /
+    verified. The skeleton hint now points the user there explicitly
+    when upstream is empty.
+
+### 21.4 Architectural lessons preserved
+
+1. **Lock TTL alone is not enough.** Upstash may not auto-expire under
+   retry pressure. Always pair distributed locks with a freshness
+   check on the meta blob, and add an admin escape hatch.
+
+2. **The skeleton response is a lie when upstream is empty.**
+   'Computing...' implies progress that isn't happening. Always probe
+   the upstream source and tell the truth.
+
+3. **Compute version stamps are debug time savers.** Without them,
+   '/orders looks wrong' takes 30 min to bisect. With them, you read
+   one chip on /status and know exactly which deploy + cron + universe
+   is live.
+
+4. **Dual-page duplicate buildReport pattern.** /auto-valuation page.tsx
+   and engine.ts both have full copies. Any logic change needs to be
+   ported to both. The chip strip in P0851 was the 3rd time we've
+   tripped on this — eventually deduplicate but the cost-of-refactor
+   isn't worth it yet.
+
+### 21.5 STARTER PROMPT for Day-8
+
+> Read `/Users/radhevrishi/Desktop/Python/Imp Marketcockpit/market-cockpit/CLAUDE.md`
+> section 21 (Day-7-evening delta) AND section 13 (Hard Rules) before
+> doing anything. HEAD on main = `9370083`. Latest patch number for new
+> work: **0854**.
+>
+> Open the /system-status page first — the new Signals build stamp tells
+> you the state of compute / filter / universe in one glance. If last
+> compute > 60 min, hit /api/market/intelligence/compute?clearLock=1.
+>
+> Next-priority work (pick one):
+> - "Wire ANTHROPIC_API_KEY into /api/v1/concall/analyze" (BLK-01) —
+>   single biggest quality jump on Auto-Val
+> - "TheWrap Module 3: Strategic Hire detector page"
+> - "TheWrap Module 4: Marquee Capital Entry Tracker"
+> - "Server-side persistence for Decision Logbook via Auth + DB" (BLK-03/04)
+> - "News-since-decision feed on Decision Logbook" (Tier 5 from P0849
+>   suggestions — read news with published_at > decision.date filtered
+>   to ticker)
+> - User-driven: upload more company reports through Auto-Val. Each new
+>   edge case → port the fix into BOTH engine.ts + page.tsx.
