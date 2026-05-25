@@ -170,7 +170,28 @@ function todayIstISO(): string {
 // PATCH 0605 — heuristic risk framing per sector. Maps to typical
 // cyclicality / catalyst horizon / trigger conditions. Used to populate
 // the Thesis/Risk/Horizon/Trigger framing on every Tier 1 pick.
-function riskFraming(sector: string | undefined, category: 'multibagger' | 'earnings' | 'bench'): { thesis: string; risk: string; horizon: string; trigger: string } {
+function riskFraming(sector: string | undefined, category: 'multibagger' | 'earnings' | 'bench', ticker?: string): { thesis: string; risk: string; horizon: string; trigger: string } {
+  // PATCH 0868 — per-ticker overrides for known names where the sector
+  // template misleads (e.g. MAYURUNIQ is classified 'Consumer Durables'
+  // so the generic Premiumisation/Festive template fires — but it's
+  // actually a PVC leather / specialty auto-interiors play).
+  const tk = (ticker || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
+  const TICKER_OVERRIDES: Record<string, { thesis: string; risk: string; horizon: string; trigger: string }> = {
+    MAYURUNIQ: { thesis: 'PVC-coated fabrics / auto-interiors export expansion', risk: 'OEM mix shift · synthetic-leather raw material', horizon: '2-4 quarters', trigger: 'Tier-1 OEM contract wins + export volumes' },
+    THANGAMAYL: { thesis: 'South-India jewellery retail SSSG + store rollout', risk: 'Gold price swings · wedding-season demand', horizon: '2-4 quarters', trigger: 'Festive SSSG print + new store ramp' },
+    RUBICON: { thesis: 'US-FDA ANDA pipeline + India formulator base', risk: 'USFDA inspection · ANDA approval timing', horizon: '2-4 quarters', trigger: 'Filing-date USFDA EIR + Q-results' },
+    KPL: { thesis: 'API + bulk-drug capacity utilisation', risk: 'Solvent / KSM China supply · pricing pressure', horizon: '2-4 quarters', trigger: 'Capacity ramp + China spreads' },
+    NITTAGELA: { thesis: 'China+1 gelatin / collagen specialty wins', risk: 'Raw material crude-linked volatility', horizon: '2-4 quarters', trigger: 'Forward order book + new CRDMO contracts' },
+    ATLANTAELE: { thesis: 'Power T&D capex + AI campus transmission demand', risk: 'EPC order intake decel · execution slippage', horizon: '4-8 quarters', trigger: 'PGCIL / NTPC order announcements' },
+    CEATLTD: { thesis: 'Tyre operating leverage + premium passenger mix', risk: 'OEM volume softness · natural rubber inflation', horizon: '2-3 quarters', trigger: 'Plant utilisation update + Q-margin print' },
+    AEROFLEX: { thesis: 'Stainless-steel flexible-hose niche export ramp', risk: 'Stainless steel input cost · export demand', horizon: '2-4 quarters', trigger: 'Capacity utilisation + export book updates' },
+    BAJAJCON: { thesis: 'Hair-oil distribution + premium portfolio reset', risk: 'Volume softness · ad-spend competitive intensity', horizon: '2-4 quarters', trigger: 'Almond Drops growth + premium SKU mix' },
+    KIRLPNU: { thesis: 'Industrial-gas-compressor capex tailwind', risk: 'CapEx cycle dependency · order intake', horizon: '3-6 quarters', trigger: 'Order inflow + utilisation update' },
+    CORONA: { thesis: 'CDMO + specialty formulations pipeline', risk: 'Customer concentration · regulatory inspections', horizon: '2-4 quarters', trigger: 'Customer win disclosures + USFDA outcomes' },
+    SANDHAR: { thesis: 'Auto-components locks/mirrors/sheet-metal OEM ramp', risk: 'OEM volume cyclicality · EV transition pace', horizon: '2-3 quarters', trigger: 'OEM volume + capex utilisation' },
+  };
+  if (tk && TICKER_OVERRIDES[tk]) return TICKER_OVERRIDES[tk];
+
   const s = (sector || '').toLowerCase();
   // Sector-specific risk profiles
   if (/pharma|biotech|drug/.test(s)) {
@@ -280,7 +301,7 @@ function buildSyncState(): Pick<HomeState, 'tier1' | 'tier2' | 'tier3' | 'change
   const buildTier = (r: any, cbConfirmed?: boolean): TierAction => ({
     symbol: r.symbol, company: r.company || r.companyName,
     score: r.score ?? r.composite, grade: r.grade, sector: r.sector,
-    ...riskFraming(r.sector, 'multibagger'),
+    ...riskFraming(r.sector, 'multibagger', r.symbol),
     scoreBreakdown: decomposeScore(r),
     href: `/stock-sheet?ticker=${encodeURIComponent((r.symbol || '').replace(/\.(NS|BO)$/i, ''))}${r._market === 'US' ? '&market=us' : ''}`,
     cbConfirmed,

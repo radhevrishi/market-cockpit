@@ -854,34 +854,53 @@ export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttrib
     //   sector_wide_derisking: down direction with sector wide spread
     // 1-line subtitle, max ~22 words. No filler.
     if (sectorScope === 'SECTOR_WIDE') {
+      // PATCH 0867 — instead of bare 'Broad participation (microcap basket)',
+      // run the same multi-layer causal inference used in Tier 4 so the rail
+      // surfaces commodity linkage / technical setup / delivery quality /
+      // float dynamics alongside the sector observation. The strongest signal
+      // drives the label; sector context is appended as evidence.
       const total = (peerStats?.up || 0) + (peerStats?.down || 0);
       const sectorPct = sectorAgg?.avgChangePct;
       const indexPct = opts.indexAvgChangePct;
       const delta = (sectorPct !== undefined && indexPct !== undefined) ? sectorPct - indexPct : undefined;
-      const SECTOR_LED_THRESHOLD = 1.5;  // % delta vs index to qualify as 'sector-led'
+      const SECTOR_LED_THRESHOLD = 1.5;
       const isSectorLed = typeof delta === 'number' && Math.abs(delta) >= SECTOR_LED_THRESHOLD;
       const isUp = direction === 'up';
-      let label = '';
-      let subtitle = '';
-      let tier3Conf: Confidence = 'LOW';
-      if (isSectorLed) {
-        label = `Sector-led ${isUp ? 'rally' : 'sell-off'} (${friendlySector})`;
-        subtitle = `${friendlySector} ${fmtPct(sectorPct)} vs index ${fmtPct(indexPct)}; ${peerCountSameDirection}/${total} peers ${isUp ? '↑' : '↓'} >3%.`;
-        tier3Conf = (filingChecked && newsChecked) ? 'MEDIUM' : 'LOW';
-      } else {
-        label = `Broad participation (${friendlySector})`;
-        subtitle = `${peerCountSameDirection}/${total} peers ${isUp ? '↑' : '↓'} >3%; sector roughly in line with index${typeof sectorPct === 'number' ? ` (${fmtPct(sectorPct)})` : ''}.`;
-        tier3Conf = (filingChecked && newsChecked && peerCountSameDirection >= 6) ? 'MEDIUM' : 'LOW';
-      }
+      const indGroup3 = (m.indexGroup || '').toLowerCase();
+      const smallcap3 = indGroup3 === 'small' || indGroup3 === 'micro';
+      const microcap3 = indGroup3 === 'micro';
+      const causalSignals3 = inferCausalSignals(m, {
+        isUp,
+        sectorPct,
+        indexPct,
+        peerCountSameDir: peerCountSameDirection,
+        peerTotal: total,
+        friendlySector,
+        smallcap: smallcap3,
+        microcap: microcap3,
+      });
+      // Sector-led IS itself a Layer-2 finding — bump it as a high-weight
+      // signal at the top of the list.
+      const sectorPhrase = isSectorLed
+        ? `sector-led ${isUp ? 'rally' : 'sell-off'} — ${friendlySector} ${fmtPct(sectorPct)} vs index ${fmtPct(indexPct)} (${peerCountSameDirection}/${total} peers ${isUp ? '↑' : '↓'} >3%)`
+        : `broad participation — ${peerCountSameDirection}/${total} peers ${isUp ? '↑' : '↓'} >3% with sector roughly in line${typeof sectorPct === 'number' ? ` (${fmtPct(sectorPct)})` : ''}`;
+      causalSignals3.unshift({ layer: 2, phrase: sectorPhrase, weight: isSectorLed ? 75 : 55 });
+      const fused3 = fuseCausalNarrative(causalSignals3, isUp, smallcap3, microcap3);
+      const label3 = isSectorLed
+        ? `Sector-led ${isUp ? 'rally' : 'sell-off'} (${friendlySector})`
+        : fused3.label;
+      const tier3Conf3: Confidence = isSectorLed
+        ? ((filingChecked && newsChecked) ? 'MEDIUM' : 'LOW')
+        : ((filingChecked && newsChecked && peerCountSameDirection >= 6) ? 'MEDIUM' : 'LOW');
       out[sym] = {
         ticker: sym,
         changePercent: m.changePercent,
-        catalyst: label,
-        detail: subtitle,
+        catalyst: label3,
+        detail: fused3.detail,
         catalystType: 'SECTOR_ROTATION',
         moveType: 'MACRO',
         scope: 'SECTOR_WIDE',
-        confidence: tier3Conf,
+        confidence: tier3Conf3,
         evidenceSource: 'sector_peer',
         sectorPeerCount: peerCountSameDirection,
         sectorDirection: direction,
