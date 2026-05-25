@@ -99,7 +99,11 @@ export default function InlineValuationPanel() {
     const allDone = docs.every(d => d.status !== 'parsing');
     if (!allDone) return;
     setBuilding(true);
-    buildReport(docs).then(r => { setReport(r); setBuilding(false); }).catch(() => setBuilding(false));
+    buildReport(docs).then(r => { setReport(r); setBuilding(false); }).catch(err => {
+      console.error('[InlineValuationPanel] buildReport threw:', err);
+      setBuilding(false);
+      setReport({ guidance: [], rationale: [`Error building report: ${err?.message || String(err)}. Try re-uploading.`], recommendation: 'NEED_MORE_DATA' } as any);
+    });
   }, [docs]);
 
   // PATCH 0687 — once any file has flowed in (either via own dropzone or via

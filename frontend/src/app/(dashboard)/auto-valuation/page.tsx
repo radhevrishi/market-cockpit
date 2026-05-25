@@ -1225,7 +1225,18 @@ export default function AutoValuationPage() {
     const hasRawData = docs.some(d => d.excelData !== undefined || (d.pdfText !== undefined && d.pdfText.length > 0));
     if (!hasRawData) return;
     setBuilding(true);
-    buildReport(docs).then(r => {
+    buildReport(docs).catch(err => {
+      // PATCH 0849 — never silently die on a malformed PDF/Excel. Surface to
+      // user via a NEED_MORE_DATA report so the upload state isn't stuck.
+      console.error('[auto-val] buildReport threw:', err);
+      setBuilding(false);
+      setReport({
+        guidance: [], rationale: [`Error building report: ${err?.message || String(err)}. Try re-uploading the file.`],
+        recommendation: 'NEED_MORE_DATA',
+      } as any);
+      return null;
+    }).then(r => {
+      if (!r) return;
       setReport(r);
       setBuilding(false);
       // PATCH 0649 — auto-persist whenever we have a usable report

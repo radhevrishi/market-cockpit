@@ -193,12 +193,31 @@ export async function extractExcelFinancials(file: File): Promise<ExcelFinancial
     return row.slice(1).map(toNum);
   };
 
-  const salesRow = findRow(['Sales', 'Revenue', 'Total Revenue', 'Net Sales']);
-  const opRowExplicit = findRow(['Operating Profit', 'EBITDA']);
-  const netProfitRow = findRow(['Net profit', 'PAT', 'Profit after tax']);
-  const epsRow = findRow(['EPS', 'Earnings per share']);
-  const priceRow = findRow(['Price', 'CMP', 'Current Price']);
-  const depRow = findRow(['Depreciation']);
+  // PATCH 0849 — expanded row-label matching for diverse report formats
+  // (Screener, Trendlyne, Annual-Report extracts, IPO prospectuses, etc.)
+  const salesRow = findRow([
+    'Sales', 'Revenue', 'Total Revenue', 'Net Sales', 'Revenue from Operations',
+    'Total Income', 'Income from Operations', 'Gross Sales', 'Net Revenue', 'Turnover',
+  ]);
+  const opRowExplicit = findRow([
+    'Operating Profit', 'EBITDA', 'EBIT', 'Operating Income',
+    'Profit before Interest', 'PBIT', 'Operating EBITDA',
+  ]);
+  const netProfitRow = findRow([
+    'Net profit', 'PAT', 'Profit after tax', 'Profit for the year', 'Profit/(Loss)',
+    'Profit after Tax', 'Net Profit after Tax', 'Profit for the Period',
+    'Net Income', 'Net Earnings', 'Bottomline',
+  ]);
+  const epsRow = findRow([
+    'EPS', 'Earnings per share', 'EPS (Basic)', 'Basic EPS', 'Diluted EPS',
+  ]);
+  const priceRow = findRow([
+    'Price', 'CMP', 'Current Price', 'Share Price', 'Closing Price',
+  ]);
+  const depRow = findRow([
+    'Depreciation', 'Depreciation & Amortisation', 'Depreciation and Amortization',
+    'D&A', 'Depreciation/Amortisation',
+  ]);
 
   // Operating profit — fall back to Sales minus all expense rows when not explicit
   let opRow = opRowExplicit;
