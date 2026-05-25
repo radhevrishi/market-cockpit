@@ -108,27 +108,10 @@ app.include_router(watchlists.router,  prefix="/api/v1")
 
 @app.get("/health", tags=["health"])
 async def health_check():
-    """PATCH 0811: shallow liveness probe — returns 200 OK immediately.
-
-    Render's deployment health-check on the free tier has a tight
-    timeout; if /health touches the DB it can fail during cold start
-    while the lifespan startup is still warming up. Shallow probe
-    keeps Render happy. Use /health/deep for the full status dump.
-    """
-    import time
-    return {"status": "ok", "timestamp": int(time.time())}
-
-
-@app.get("/health/deep", tags=["health"])
-async def health_check_deep():
-    """Deep health check — touches DB + Redis + integrations.
-
-    Use this for monitoring + debugging. Render does NOT hit this for
-    its deployment health-check (path is /health, not /health/deep).
-    """
+    """Health check endpoint — checks DB and Redis connectivity."""
     import time
     status = {"status": "ok", "timestamp": int(time.time()), "services": {}}
-
+    
     # Check DB
     try:
         async with AsyncSessionLocal() as db:
@@ -138,7 +121,7 @@ async def health_check_deep():
     except Exception as e:
         status["services"]["database"] = f"error: {str(e)[:50]}"
         status["status"] = "degraded"
-
+    
     # Check Redis (optional — not required for core functionality)
     try:
         from app.core.redis import get_redis, _redis_available
@@ -147,8 +130,9 @@ async def health_check_deep():
         status["services"]["redis"] = "ok" if _redis_available else "not_available (optional)"
     except Exception as e:
         status["services"]["redis"] = "not_available (optional)"
-
-    # Check AI key — just check if it exists, don't validate credentials
+    
+    # Check AI key — just check if it exists, don't validate credentials (would require API call)
+    # Return 'present' if key is set and not a placeholder, 'not_configured' otherwise
     ai_status = "present" if (settings.anthropic_api_key and settings.anthropic_api_key != "your-anthropic-api-key-here" and len(settings.anthropic_api_key.strip()) > 0) else "not_configured"
     status["services"]["ai"] = ai_status
 
@@ -163,11 +147,6 @@ async def health_check_deep():
 @app.get("/api/v1/health", tags=["health"])
 async def health_check_api():
     return await health_check()
-
-
-@app.get("/api/v1/health/deep", tags=["health"])
-async def health_check_api_deep():
-    return await health_check_deep()
 
 
 @app.get("/", tags=["root"])
