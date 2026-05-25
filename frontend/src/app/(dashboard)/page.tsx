@@ -2137,8 +2137,15 @@ export default function HomeDashboard() {
                   // a real ticker — UPPERCASE alpha+digits, no spaces, ≤10 chars.
                   const rawTicker = (r.ticker || '').toString().replace(/\.(NS|BO)$/i, '');
                   const isRealTicker = /^[A-Z][A-Z0-9&-]{1,9}$/.test(rawTicker);
+                  // PATCH 0866 — when ticker is a company-name string (not real
+                  // NSE symbol), route to the full /super-investors page instead of
+                  // a broken stock-sheet URL.
+                  const linkHref = isRealTicker
+                    ? `/stock-sheet?ticker=${encodeURIComponent(rawTicker)}`
+                    : '/super-investors';
                   return (
-                    <Link key={(r.ticker || '') + i} href={`/stock-sheet?ticker=${encodeURIComponent(rawTicker)}`}
+                    <Link key={(r.ticker || '') + i} href={linkHref}
+                      title={isRealTicker ? '' : 'No NSE ticker — open Super Investors tracker'}
                       style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
                       {isRealTicker && (
                         <span style={{ fontSize: 9, color: '#A78BFA', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 56 }}>
@@ -2472,12 +2479,20 @@ export default function HomeDashboard() {
                     // Derive top-3 leaders from gainers/losers list in each sector
                     const topSec = sectorMoves.topSector.sector;
                     const botSec = sectorMoves.bottomSector.sector;
+                    // PATCH 0866 — relaxed match — sector aggregate label may be
+                    // 'Energy' while individual stock sector may be 'Oil, Gas & Consumable
+                    // Fuels'. Substring match both ways so leaders/laggards always render.
+                    const matchSector = (stockSec: string, target: string) => {
+                      if (!stockSec || !target) return false;
+                      const s = stockSec.toLowerCase(); const t = target.toLowerCase();
+                      return s === t || s.includes(t) || t.includes(s);
+                    };
                     const topLeaders = (data.gainers || [])
-                      .filter((g: any) => (g.sector || '').toLowerCase() === topSec.toLowerCase())
+                      .filter((g: any) => matchSector(g.sector || '', topSec))
                       .slice(0, 3)
                       .map((g: any) => g.ticker);
                     const botLaggards = (data.losers || [])
-                      .filter((l: any) => (l.sector || '').toLowerCase() === botSec.toLowerCase())
+                      .filter((l: any) => matchSector(l.sector || '', botSec))
                       .slice(0, 3)
                       .map((l: any) => l.ticker);
                     return (
@@ -2700,7 +2715,14 @@ export default function HomeDashboard() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 {data.watchlistPulse.slice(0, 5).map((w) => {
                   const attr = (w as any).attrib;
-                  const label = attr?.label || (w as any).reason || '';
+                  // PATCH 0866 — drop the '+5.83% last close' echo. Show attribution
+                  // label (real reason) if present, else hide the sub-line entirely.
+                  // Previously was: `attr?.label || (w as any).reason || ''` which
+                  // fell back to '+X% last close' duplicating the pct chip on the
+                  // main row.
+                  const rawReason = (w as any).reason || '';
+                  const isPctEcho = /^[+-]?\d+(?:\.\d+)?%\s+last\s+close$/i.test(rawReason);
+                  const label = attr?.label || (isPctEcho ? '' : rawReason);
                   const conf = attr?.confidence;
                   // PATCH 0821 — compute Move Quality on watchlist pulse rows too
                   const mqW = attr ? computeMoveQuality({
@@ -2922,14 +2944,21 @@ export default function HomeDashboard() {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 6 }}>
                   {lensedTier3.map((a, i) => (
                     <Link key={a.symbol + i} href={a.href} style={{
-                      display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', borderRadius: 4,
+                      display: 'flex', alignItems: 'flex-start', gap: 6, padding: '6px 8px', borderRadius: 4,
                       border: '1px solid #94A3B830', background: '#94A3B808', textDecoration: 'none',
                     }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 11, color: TEXT, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.company || a.symbol}</div>
                         <div style={{ fontSize: 9, color: DIM }}>{a.symbol} · {a.sector}</div>
+                        {/* PATCH 0866 — show thesis snippet so Tier 3 card doesn't render bare */}
+                        {(a as any).thesis && (
+                          <div style={{ fontSize: 9.5, color: '#94A3B8', marginTop: 3, lineHeight: 1.4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                            title={(a as any).thesis}>
+                            {(a as any).thesis}
+                          </div>
+                        )}
                       </div>
-                      <span style={{ fontSize: 10, color: '#94A3B8', fontWeight: 700 }}>{a.score}{a.grade}</span>
+                      <span style={{ fontSize: 10, color: '#94A3B8', fontWeight: 700, flexShrink: 0 }}>{a.score}{a.grade}</span>
                     </Link>
                   ))}
                 </div>
