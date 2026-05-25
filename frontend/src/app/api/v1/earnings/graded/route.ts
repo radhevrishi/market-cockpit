@@ -219,12 +219,14 @@ function gradeRow(row: any): ParsedEarning | null {
   const cleanMag = salesY != null && salesY >= 25 && patY != null && patY >= 25 && epsY != null && epsY >= 25;
   const exceptMag = salesY != null && salesY >= 40 && patY != null && patY >= 50 && epsY != null && epsY >= 50;
   const megaMag = salesY != null && salesY >= 40 && patY != null && patY >= 75 && epsY != null && epsY >= 75;
-  // PATCH 0837 — Margin Inflection / Operating Leverage path. Companies with
-  // exploding PAT/EPS on modest sales growth (classic op-leverage stories like
-  // GLOSTERLTD sales+36% PAT+454% EPS+454%, or SHIVAUM sales+8% PAT+8120%
-  // EPS+7450%) were being blocked because they failed the sales>=40 gate.
-  // Require both PAT and EPS >= 100% AND sales not collapsing (>= -5%).
+  // PATCH 0837 + 0838 — Margin Inflection / Operating Leverage path.
+  // Tier A (extreme): PAT >= 100 + EPS >= 100 + sales not collapsing.
+  //   Catches GLOSTERLTD (PAT+454/EPS+454), SHIVAUM (PAT+8120/EPS+7450).
+  // Tier B (strong, P0838): PAT >= 75 + EPS >= 75 + sales >= 0 + stage != 4.
+  //   Catches near-mega stories like Investment & Precision Castings
+  //   (PAT+98/EPS+98/sales+20/comp 68) that failed the Tier A 100% gate.
   const marginInflection = patY != null && patY >= 100 && epsY != null && epsY >= 100 && salesY != null && salesY >= -5;
+  const marginInflectionLoose = patY != null && patY >= 75 && epsY != null && epsY >= 75 && salesY != null && salesY >= 0 && stage !== 4;
 
   // Guidance signal — scan available text
   const guidanceText = [
@@ -248,7 +250,12 @@ function gradeRow(row: any): ParsedEarning | null {
   // PATCH 0837 — Path D: pure margin inflection (PAT+EPS >= 100%). Ignores
   // sales growth requirement — the extreme PAT/EPS magnitude IS the signal.
   const bbPathD = marginInflection && caveat_tags.length <= 3 && stage !== 4;
-  const blockbusterGate = bbPathA || bbPathB || bbPathC || bbPathD;
+  // PATCH 0838 — Path E: loose margin inflection (PAT+EPS >= 75% + sales >= 0).
+  // Tighter caveat limit (<=2) and stage filter since the magnitude is less
+  // extreme than Path D. Catches operating-leverage stories where PAT/EPS
+  // double on modest sales growth — Investment & Precision Castings class.
+  const bbPathE = marginInflectionLoose && caveat_tags.length <= 2;
+  const blockbusterGate = bbPathA || bbPathB || bbPathC || bbPathD || bbPathE;
   if (broken && composite < 70) tier = 'AVOID';
   else if (blockbusterGate) tier = 'BLOCKBUSTER';
   else if (composite >= 68 && mCount >= 1 && caveat_tags.length <= 3 && stage !== 4) tier = 'STRONG';
