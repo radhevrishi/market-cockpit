@@ -1507,6 +1507,62 @@ export default function AutoValuationPage() {
     return listAutoValuations();
   });
   const refreshSaved = useCallback(() => setSavedList(listAutoValuations()), []);
+  // PATCH 0855 — Live data overlays for saved bench + active report.
+  const [livePrices, setLivePrices] = useState<Record<string, number>>({});
+  const [smartMoneyByTicker, setSmartMoneyByTicker] = useState<Record<string, any>>({});
+  const [upcomingEarningsByTicker, setUpcomingEarningsByTicker] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let cancelled = false;
+    // Live quotes for stale-price flag (saved bench)
+    (async () => {
+      try {
+        const r = await fetch('/api/market/quotes?market=india', { cache: 'no-store' });
+        if (!r.ok || cancelled) return;
+        const j = await r.json();
+        const map: Record<string, number> = {};
+        for (const s of (j?.stocks || [])) {
+          if (s.ticker && s.price) map[String(s.ticker).toUpperCase()] = Number(s.price);
+        }
+        if (!cancelled) setLivePrices(map);
+      } catch {}
+    })();
+    // Smart-money rows for ticker overlay
+    (async () => {
+      try {
+        const r = await fetch('/api/v1/super-investor-flow?days=180', { cache: 'no-store' });
+        if (!r.ok || cancelled) return;
+        const j = await r.json();
+        const rows = j?.rows || [];
+        const map: Record<string, any> = {};
+        for (const row of rows) {
+          if (row?.ticker) map[String(row.ticker).toUpperCase()] = row;
+        }
+        if (!cancelled) setSmartMoneyByTicker(map);
+      } catch {}
+    })();
+    // Upcoming earnings (next 14d) for earnings-soon chip
+    (async () => {
+      try {
+        const r = await fetch('/api/v1/calendar?days=14', { cache: 'no-store' });
+        if (!r.ok || cancelled) return;
+        const j = await r.json();
+        const map: Record<string, string> = {};
+        // Calendar buckets: { 'YYYY-MM-DD': [{ticker, ...}, ...] }
+        const buckets = j?.buckets || j?.data || {};
+        if (buckets && typeof buckets === 'object') {
+          for (const [date, list] of Object.entries(buckets)) {
+            if (!Array.isArray(list)) continue;
+            for (const item of list) {
+              const t = String((item as any)?.ticker || (item as any)?.symbol || '').toUpperCase();
+              if (t && !map[t]) map[t] = date;  // first occurrence wins (earliest date)
+            }
+          }
+        }
+        if (!cancelled) setUpcomingEarningsByTicker(map);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
   useEffect(() => {
     const h = () => refreshSaved();
     window.addEventListener('mc:auto-val:updated', h);
@@ -1617,6 +1673,7 @@ export default function AutoValuationPage() {
               currentPriceFromSheet: r.excelData.currentPriceFromSheet,
               currentMarketCapCrFromSheet: r.excelData.currentMarketCapCrFromSheet,
             } : undefined,
+            priceAtSave: r.quote?.currentPrice ?? r.excelData?.currentPriceFromSheet,
             guidance: r.guidance.map(g => ({ ...g })),
             peResult: r.peResult,
             psResult: r.psResult,
@@ -1781,6 +1838,21 @@ export default function AutoValuationPage() {
                     <span style={{ fontSize: 9, color: DIM, fontFamily: 'ui-monospace, monospace', whiteSpace: 'nowrap' }}>
                       {s.docSnapshots.length} doc(s) · {ageLabel}
                     </span>
+                    {/* PATCH 0855 — Stale-price flag: cmp moved >15% from priceAtSave */}
+                    {(() => {
+                      const live = livePrices[(s.ticker || '').toUpperCase()];
+                      const anchor = s.priceAtSave ?? s.excelSummary?.currentPriceFromSheet;
+                      if (!live || !anchor || anchor <= 0) return null;
+                      const movePct = ((live - anchor) / anchor) * 100;
+                      if (Math.abs(movePct) < 15) return null;
+                      const c = movePct < 0 ? '#10B981' : '#F59E0B';
+                      return (
+                        <span title={`Saved at ₹${anchor.toFixed(0)}, now ₹${live.toFixed(0)}. Recompute valuation?`}
+                          style={{ fontSize: 9, color: c, background: `${c}15`, border: `1px solid ${c}60`, padding: '2px 6px', borderRadius: 3, fontWeight: 800, whiteSpace: 'nowrap' }}>
+                          📊 {movePct > 0 ? '+' : ''}{movePct.toFixed(0)}% since save
+                        </span>
+                      );
+                    })()}
                     <button onClick={() => handleLoadSaved(s)} style={{
                       fontSize: 10, padding: '4px 10px', background: '#22D3EE15', border: '1px solid #22D3EE50',
                       color: '#22D3EE', borderRadius: 3, cursor: 'pointer', fontWeight: 800,
@@ -1973,6 +2045,33 @@ export default function AutoValuationPage() {
                 if (sa && sa.state === 'ACCELERATING') chips.push(<span key="sa" title={`Latest YoY ${sa.latestYoY.toFixed(0)}% vs 5y CAGR ${sa.cagr5y.toFixed(0)}%`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#10B98125', color: '#10B981', border: '1px solid #10B98160', borderRadius: 3 }}>⇑ SALES ACCEL +{sa.delta.toFixed(0)}pp</span>);
                 else if (sa && sa.state === 'DECELERATING') chips.push(<span key="sa" title={`Latest YoY ${sa.latestYoY.toFixed(0)}% vs 5y CAGR ${sa.cagr5y.toFixed(0)}%`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#F59E0B25', color: '#F59E0B', border: '1px solid #F59E0B60', borderRadius: 3 }}>⇓ SALES DECEL {sa.delta.toFixed(0)}pp</span>);
                 if (dna) { const dnaColor = dna.matched >= 5 ? '#10B981' : dna.matched >= 3 ? '#22D3EE' : '#94A3B8'; chips.push(<span key="dna" title={`500-bagger DNA: ${dna.criteria.join(' · ')}`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: `${dnaColor}25`, color: dnaColor, border: `1px solid ${dnaColor}60`, borderRadius: 3 }}>🧬 DNA {dna.matched}/6</span>); }
+                // PATCH 0855 — Smart-money overlay
+                const sm = smartMoneyByTicker[ticker];
+                if (sm) {
+                  const accent = sm.topDirection === 'ACCUM' ? '#10B981' : sm.topDirection === 'EXIT' ? '#EF4444' : '#94A3B8';
+                  const arrow = sm.topDirection === 'ACCUM' ? '⬆' : sm.topDirection === 'EXIT' ? '⬇' : '◆';
+                  const investors = Array.isArray(sm.investors) ? sm.investors.slice(0, 3).join(', ') : '';
+                  chips.push(
+                    <span key="sm" title={`Super investors ${sm.topDirection || 'active'} · ${investors || 'recent activity'} · ${sm.netActions || 0} net actions`}
+                      style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: `${accent}25`, color: accent, border: `1px solid ${accent}60`, borderRadius: 3 }}>
+                      {arrow} SUPER INV {sm.netActions != null ? sm.netActions : ''}
+                    </span>
+                  );
+                }
+                // PATCH 0855 — Earnings proximity chip
+                const earnDate = upcomingEarningsByTicker[ticker];
+                if (earnDate) {
+                  const daysOut = Math.round((new Date(earnDate).getTime() - Date.now()) / 86400000);
+                  if (daysOut >= 0 && daysOut <= 14) {
+                    const eColor = daysOut <= 3 ? '#EF4444' : daysOut <= 7 ? '#F59E0B' : '#22D3EE';
+                    chips.push(
+                      <span key="earn" title={`Earnings filing expected on ${earnDate}`}
+                        style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: `${eColor}25`, color: eColor, border: `1px solid ${eColor}60`, borderRadius: 3 }}>
+                        ⏰ EARNINGS {daysOut === 0 ? 'TODAY' : daysOut === 1 ? 'TOMORROW' : `${daysOut}d`}
+                      </span>
+                    );
+                  }
+                }
                 if (chips.length === 0) return null;
                 return (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 12, padding: '8px 0', borderTop: `1px dashed ${BORDER}` }}>

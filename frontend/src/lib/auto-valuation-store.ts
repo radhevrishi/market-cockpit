@@ -57,6 +57,10 @@ export interface SavedAutoValuation {
     currentPriceFromSheet?: number;
     currentMarketCapCrFromSheet?: number;
   };
+  // PATCH 0855 — Snapshot of live price at save time for the stale-price flag.
+  // When cmp later moves >15% from this anchor, the saved-bench row surfaces
+  // a ⚠ "stale valuation · cmp moved Xpct since save" chip.
+  priceAtSave?: number;
   // Persisted full guidance list so we don't lose context
   guidance: Array<{
     fiscalYear: string;
