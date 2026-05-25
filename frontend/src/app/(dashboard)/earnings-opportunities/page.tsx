@@ -1002,13 +1002,13 @@ export default function EarningsOpportunitiesPage() {
         const cached = readLsCache(resolvedDateForGrading);
         if (cached) return dedupePayloadByCompany(cached as OpportunitiesPayload);
       }
-      // PATCH 0741 — Client-side 20s hard timeout. Before this, when the
-      // backend was degraded (Vercel hits 60s maxDuration on its own), the
-      // user saw "Fetching live results..." for 60+ seconds before the
-      // 504 banner appeared. Now we abort at 20s and show a faster, more
-      // useful error message that distinguishes client-abort from server-504.
+      // PATCH 0741 + 0842 — Client-side timeout. Was 20s — too aggressive
+      // for past dates that have no LS cache yet (cold backend, big
+      // historical day = 25-40s to grade). Now: 45s for past dates,
+      // 20s for today/yesterday (where backend is always warm).
       const ctrl = new AbortController();
-      const clientTimeout = setTimeout(() => ctrl.abort(), 20_000);
+      const timeoutMs = isPastDate ? 45_000 : 20_000;
+      const clientTimeout = setTimeout(() => ctrl.abort(), timeoutMs);
       let res: Response;
       try {
         res = await fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}`, {
@@ -1018,9 +1018,9 @@ export default function EarningsOpportunitiesPage() {
       } catch (e: any) {
         clearTimeout(clientTimeout);
         if (e?.name === 'AbortError') {
-          const err: any = new Error('Pipeline taking longer than 20s. NSE/BSE upstream may be degraded — retry in a moment.');
-          err.status = 0; // 0 = client-side timeout, not a real HTTP code
-          err.detail = 'client_timeout_20s';
+          const err: any = new Error(`Pipeline taking longer than ${timeoutMs / 1000}s. NSE/BSE upstream may be degraded — retry in a moment.`);
+          err.status = 0;
+          err.detail = `client_timeout_${timeoutMs / 1000}s`;
           err.dateAttempted = resolvedDateForGrading;
           throw err;
         }
