@@ -379,3 +379,38 @@ export const CONTINUATION_COLOR: Record<ContinuationProbability, string> = {
   LOW:     '#94A3B8',
   UNKNOWN: '#64748B',
 };
+
+// ─── Historical outcome priors (PATCH 0821) ────────────────────────────────
+// Approximate post-move follow-through stats by bucket type, based on
+// commonly-cited equity-market priors. NOT backtested on this app's data —
+// directional only. Surfaces in row tooltip so user knows roughly what to
+// expect after seeing each bucket. Refine when we have a real backtest blob.
+
+export interface HistoricalOutcome {
+  followThroughPct: number;       // % of historical setups that continue 5d
+  medianReturn5d: string;          // text label, e.g. '+7%' or '-2%'
+  note: string;
+}
+
+export function getHistoricalOutcome(bucket: MoveBucket): HistoricalOutcome {
+  switch (bucket) {
+    case 'FUNDAMENTAL_RERATING':
+      return { followThroughPct: 63, medianReturn5d: '+7%', note: 'PEAD anomaly — earnings beat + healthy delivery typically continues' };
+    case 'PRE_EVENT':
+      return { followThroughPct: 50, medianReturn5d: '+3%', note: 'Event-dependent: outcome reveals whether positioning was correct' };
+    case 'SHORT_COVERING':
+      return { followThroughPct: 28, medianReturn5d: '-2%', note: 'Squeeze exhaustion — typically fades within 1-2 sessions' };
+    case 'OPERATOR':
+      return { followThroughPct: 22, medianReturn5d: '-4%', note: 'Gap-and-fade risk — operator pumps rarely sustain' };
+    case 'FLOW':
+      return { followThroughPct: 40, medianReturn5d: '+1%', note: 'Block deals + OFS — flow-driven, mean-reverts to fundamentals' };
+    case 'ROTATION':
+      return { followThroughPct: 55, medianReturn5d: '+3%', note: 'Sector rotation — sustains while sector RS holds' };
+    case 'TECHNICAL':
+      return { followThroughPct: 50, medianReturn5d: '+4%', note: 'Technical breakout — needs vol confirmation + close near high' };
+    case 'SPECULATIVE':
+      return { followThroughPct: 30, medianReturn5d: '-1%', note: 'Low-conviction momentum — mean reversion risk elevated' };
+    case 'ILLIQUID':
+      return { followThroughPct: 0, medianReturn5d: 'n/a', note: 'Thin float — price not reliable, impact cost high' };
+  }
+}

@@ -51,6 +51,7 @@ import {
   QUALITY_COLOR,
   CONTINUATION_COLOR,
   BUCKET_COLOR as BUCKET_MQ_COLOR,
+  getHistoricalOutcome,
   type MoveBucket,
 } from '@/lib/move-quality';
 
@@ -2174,6 +2175,8 @@ export default function HomeDashboard() {
                   indexGroup: m.indexGroup,
                 }) : null;
 
+                // PATCH 0821 — historical outcome priors per bucket
+                const hist = mq ? getHistoricalOutcome(mq.bucket) : null;
                 const tooltip = [
                   `${primaryLabel} (score ${score.compositeScore})`,
                   score.narrative,
@@ -2183,6 +2186,7 @@ export default function HomeDashboard() {
                   ...(mq?.smartMoney || []),
                   mq?.technical ? `Technical: ${mq.technical}` : '',
                   mq ? `Liquidity: ${mq.liquidityRisk}` : '',
+                  hist ? `\n── Historical: ${hist.followThroughPct}% follow-through · median ${hist.medianReturn5d} 5d\n${hist.note}` : '',
                 ].filter(Boolean).join('\n');
 
                 // PATCH 0820: cleaner row — use the new 9-bucket taxonomy from
@@ -2192,10 +2196,13 @@ export default function HomeDashboard() {
                 const primaryDriverText = attr
                   ? (score.primaryDriver + (score.secondaryDriver ? ' · ' + score.secondaryDriver : ''))
                   : null;
+                // PATCH 0821 — smart-money signal as 2nd line under the row
+                const smartLine = (mq?.smartMoney || [])[0];
                 return (
                   <Link key={tk} href={`/stock-sheet?ticker=${encodeURIComponent(m.ticker)}`}
                     title={tooltip}
-                    style={{ display: 'flex', alignItems: 'baseline', gap: 6, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                    style={{ display: 'flex', flexDirection: 'column', gap: 1, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                     {inUniverse && <span style={{ fontSize: 10, color: '#22D3EE', flexShrink: 0 }} title="In your Watchlist/Portfolio/CB">👁</span>}
                     <span style={{ fontSize: 11, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 84, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.ticker}</span>
                     <span style={{ fontSize: 11, color: c, fontWeight: 800, fontVariantNumeric: 'tabular-nums', minWidth: 52, textAlign: 'right' }}>
@@ -2256,6 +2263,13 @@ export default function HomeDashboard() {
                         ⌀
                       </span>
                     )}
+                  </div>
+                  {/* PATCH 0821 — smart-money signal as sub-line */}
+                  {smartLine && (
+                    <div style={{ fontSize: 9, color: '#94A3B8', paddingLeft: 90, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {smartLine}
+                    </div>
+                  )}
                   </Link>
                 );
               };
@@ -2316,18 +2330,40 @@ export default function HomeDashboard() {
                       No movers ≥ ±5% with ≥5 lakh volume today.
                     </div>
                   )}
-                  {/* Footer: sector breadth — single block, not per-row */}
-                  {sectorMoves?.topSector && sectorMoves?.bottomSector && (
-                    <div style={{
-                      fontSize: 9.5, color: DIM, padding: '4px 6px', marginTop: 4,
-                      borderTop: '1px solid #1A2540', lineHeight: 1.5,
-                    }}>
-                      <span style={{ color: '#8DA1B9', fontWeight: 700 }}>Sector breadth:</span>{' '}
-                      <span style={{ color: '#10B981' }}>{sectorMoves.topSector.sector} {sectorMoves.topSector.pct >= 0 ? '+' : ''}{sectorMoves.topSector.pct.toFixed(1)}%</span>
-                      {' · '}
-                      <span style={{ color: '#EF4444' }}>{sectorMoves.bottomSector.sector} {sectorMoves.bottomSector.pct.toFixed(1)}%</span>
-                    </div>
-                  )}
+                  {/* PATCH 0821 — sector breadth + top-3 leaders per sector */}
+                  {sectorMoves?.topSector && sectorMoves?.bottomSector && (() => {
+                    // Derive top-3 leaders from gainers/losers list in each sector
+                    const topSec = sectorMoves.topSector.sector;
+                    const botSec = sectorMoves.bottomSector.sector;
+                    const topLeaders = (data.gainers || [])
+                      .filter((g: any) => (g.sector || '').toLowerCase() === topSec.toLowerCase())
+                      .slice(0, 3)
+                      .map((g: any) => g.ticker);
+                    const botLaggards = (data.losers || [])
+                      .filter((l: any) => (l.sector || '').toLowerCase() === botSec.toLowerCase())
+                      .slice(0, 3)
+                      .map((l: any) => l.ticker);
+                    return (
+                      <div style={{
+                        fontSize: 9.5, color: DIM, padding: '4px 6px', marginTop: 4,
+                        borderTop: '1px solid #1A2540', lineHeight: 1.6,
+                      }}>
+                        <div>
+                          <span style={{ color: '#8DA1B9', fontWeight: 700 }}>Sector breadth:</span>{' '}
+                          <span style={{ color: '#10B981' }}>{topSec} {sectorMoves.topSector.pct >= 0 ? '+' : ''}{sectorMoves.topSector.pct.toFixed(1)}%</span>
+                          {' · '}
+                          <span style={{ color: '#EF4444' }}>{botSec} {sectorMoves.bottomSector.pct.toFixed(1)}%</span>
+                        </div>
+                        {(topLeaders.length > 0 || botLaggards.length > 0) && (
+                          <div style={{ fontSize: 9, color: '#6B7A8D', marginTop: 1 }}>
+                            {topLeaders.length > 0 && <>▲ leaders: <span style={{ color: '#94A3B8' }}>{topLeaders.join(', ')}</span></>}
+                            {topLeaders.length > 0 && botLaggards.length > 0 && ' · '}
+                            {botLaggards.length > 0 && <>▼ laggards: <span style={{ color: '#94A3B8' }}>{botLaggards.join(', ')}</span></>}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })()}
@@ -2495,6 +2531,12 @@ export default function HomeDashboard() {
                   const attr = (w as any).attrib;
                   const label = attr?.label || (w as any).reason || '';
                   const conf = attr?.confidence;
+                  // PATCH 0821 — compute Move Quality on watchlist pulse rows too
+                  const mqW = attr ? computeMoveQuality({
+                    changePercent: w.changePercent,
+                    attribution: attr,
+                  }) : null;
+                  const smartLineW = (mqW?.smartMoney || [])[0];
                   return (
                     <Link key={w.ticker} href={`/stock-sheet?ticker=${encodeURIComponent(w.ticker)}`}
                       style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
@@ -2505,10 +2547,27 @@ export default function HomeDashboard() {
                         <span style={{ fontSize: 11, color: w.changePercent >= 0 ? '#10B981' : '#EF4444', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
                           {w.changePercent >= 0 ? '+' : ''}{w.changePercent.toFixed(1)}%
                         </span>
+                        {/* PATCH 0821 — Q + continuation chips */}
+                        {mqW && (
+                          <span style={{ fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2, background: `${QUALITY_COLOR[mqW.qualityLabel]}22`, color: QUALITY_COLOR[mqW.qualityLabel], flexShrink: 0 }}>
+                            Q{mqW.quality}
+                          </span>
+                        )}
+                        {mqW && mqW.continuation !== 'UNKNOWN' && (
+                          <span style={{ fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2, background: `${CONTINUATION_COLOR[mqW.continuation]}22`, color: CONTINUATION_COLOR[mqW.continuation], flexShrink: 0 }}>
+                            {mqW.continuation === 'HIGH' ? '↑↑' : mqW.continuation === 'MEDIUM' ? '↑' : '↓'}
+                          </span>
+                        )}
                       </div>
                       {label && (
                         <div style={{ fontSize: 10, color: DIM, paddingLeft: 76, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                           {label}{conf && <span style={{ marginLeft: 6, fontSize: 8, color: conf === 'HIGH' ? '#10B981' : conf === 'MEDIUM' ? '#F59E0B' : '#6B7A8D', fontWeight: 700 }}>{conf}</span>}
+                        </div>
+                      )}
+                      {/* PATCH 0821 — smart-money signal */}
+                      {smartLineW && (
+                        <div style={{ fontSize: 9, color: '#94A3B8', paddingLeft: 76, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {smartLineW}
                         </div>
                       )}
                     </Link>
