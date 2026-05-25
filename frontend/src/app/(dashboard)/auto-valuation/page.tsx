@@ -30,6 +30,8 @@ import {
   type CalculatorResult, type QuoteAutoFill,
 } from '@/lib/valuation-calculators';
 import { extractGuidance, type GuidanceItem, metricLabel, formatGuidanceValue } from '@/lib/forward-guidance-extractor';
+import { getDecision, DECISION_META } from '@/lib/decisions';
+import { getConvictionTickers } from '@/lib/conviction-beats';
 // PATCH 0649 — per-company persistence
 import {
   saveAutoValuation, loadAutoValuation, deleteAutoValuation, listAutoValuations, appendDocsToSaved,
@@ -122,6 +124,12 @@ interface AutoValuationReport {
   peReason?: string;
   psReason?: string;
   evReason?: string;
+  // PATCH 0851 — institutional chips
+  marginInflectionChip?: { fired: boolean; latestQ: number; trailingAvg: number; gapPp: number; direction: 'EXPANSION' | 'COMPRESSION' | 'STABLE'; interpretation: string };
+  forensicPumpChip?: { pumpScore: number; severity: 'CLEAN' | 'WATCH' | 'HIGH' | 'CRITICAL'; flags: string[] };
+  dnaMatchChip?: { matched: number; criteria: string[]; pass: boolean };
+  salesAccelChip?: { latestYoY: number; cagr5y: number; delta: number; state: 'ACCELERATING' | 'STABLE' | 'DECELERATING' };
+  cashConversionChip?: { cfoToPat?: number; note: string };
 }
 
 // ─── PDF extraction (CDN pdf.js — same pattern as earnings-analysis) ────
@@ -1328,6 +1336,73 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
     rationale.push(`Year-2 (${forwardYearY2}): Revenue ₹${revScenY2.base.toFixed(0)} Cr · EBITDA ₹${ebitdaScenY2.base?.toFixed(0) || '?'} Cr · PAT ₹${patScenY2.base?.toFixed(0) || '?'} Cr (toggle in calc panel).`);
   }
 
+  // PATCH 0851 — Institutional chips computed from excelData
+  let marginInflectionChip: AutoValuationReport['marginInflectionChip'];
+  let forensicPumpChip: AutoValuationReport['forensicPumpChip'];
+  let dnaMatchChip: AutoValuationReport['dnaMatchChip'];
+  let salesAccelChip: AutoValuationReport['salesAccelChip'];
+  let cashConversionChip: AutoValuationReport['cashConversionChip'];
+  if (excelData) {
+    const opmList = excelData.operatingProfit.map((op, i) => {
+      const s = excelData.sales[i];
+      if (op != null && s != null && s > 0) return (op / s) * 100;
+      return null;
+    }).filter((v): v is number => v != null);
+    if (opmList.length >= 4) {
+      const latestQ = opmList[opmList.length - 1];
+      const trailing3 = opmList.slice(-4, -1);
+      const trailingAvg = trailing3.reduce((a, b) => a + b, 0) / trailing3.length;
+      const gapPp = latestQ - trailingAvg;
+      const direction = gapPp > 2 ? 'EXPANSION' : gapPp < -2 ? 'COMPRESSION' : 'STABLE';
+      const interpretation =
+        direction === 'EXPANSION' ? `⚡ Margin inflection: latest OPM ${latestQ.toFixed(1)}% vs 3-yr avg ${trailingAvg.toFixed(1)}% (+${gapPp.toFixed(1)}pp). Operating-leverage story.` :
+        direction === 'COMPRESSION' ? `▼ Margin compression: latest OPM ${latestQ.toFixed(1)}% vs 3-yr avg ${trailingAvg.toFixed(1)}% (${gapPp.toFixed(1)}pp).` :
+        `Margin stable: latest ${latestQ.toFixed(1)}% vs 3-yr ${trailingAvg.toFixed(1)}%.`;
+      marginInflectionChip = { fired: direction === 'EXPANSION', latestQ, trailingAvg, gapPp, direction, interpretation };
+    }
+    if (excelData.salesCagr5y !== undefined && excelData.sales.length >= 2) {
+      const lastIdx = excelData.sales.length - 1;
+      const lastSales = excelData.sales[lastIdx] || 0;
+      const prevSales = excelData.sales[lastIdx - 1] || 0;
+      if (lastSales > 0 && prevSales > 0) {
+        const latestYoY = ((lastSales - prevSales) / prevSales) * 100;
+        const delta = latestYoY - excelData.salesCagr5y;
+        const state = delta > 5 ? 'ACCELERATING' : delta < -5 ? 'DECELERATING' : 'STABLE';
+        salesAccelChip = { latestYoY, cagr5y: excelData.salesCagr5y, delta, state };
+      }
+    }
+    cashConversionChip = { cfoToPat: undefined, note: 'Cash conversion (CFO/PAT) requires Screener Cash from Operating Activity column.' };
+    const flags: string[] = [];
+    let pumpScore = 0;
+    const latestSales_ = excelData.latestSales || 0;
+    const latestPAT_ = excelData.latestPAT || 0;
+    const mcapNow = (quote?.currentMarketCapCr) || excelData.currentMarketCapCrFromSheet || 0;
+    if (mcapNow > 0 && mcapNow < 3000) {
+      if ((excelData.salesCagr5y || 0) > 35 && latestPAT_ > 0) { flags.push('Microcap + >35% sales CAGR — verify cash'); pumpScore += 1; }
+    }
+    if (marginInflectionChip?.direction === 'COMPRESSION' && salesAccelChip?.state === 'DECELERATING') { flags.push('Margin compression + sales decel'); pumpScore += 2; }
+    if ((excelData.salesCagr5y || 0) > 80) { flags.push('5y CAGR >80% — IPO-stub distortion'); pumpScore += 1; }
+    if (mcapNow > 0 && mcapNow < 1000 && (excelData.sharesOutstandingCr || 99) < 3) { flags.push('<3 Cr shares + microcap — thin float'); pumpScore += 2; }
+    const _opmAvg2 = excelData.opmLatest || excelData.opmAvg || 0;
+    if (latestSales_ > 0 && latestPAT_ > 0) {
+      const _patMargin = (latestPAT_ / latestSales_) * 100;
+      if (_patMargin > _opmAvg2 && _opmAvg2 > 0) { flags.push(`PAT margin ${_patMargin.toFixed(1)}% > EBITDA margin ${_opmAvg2.toFixed(1)}%`); pumpScore += 2; }
+    }
+    const severity: 'CLEAN' | 'WATCH' | 'HIGH' | 'CRITICAL' = pumpScore >= 5 ? 'CRITICAL' : pumpScore >= 3 ? 'HIGH' : pumpScore >= 1 ? 'WATCH' : 'CLEAN';
+    forensicPumpChip = { pumpScore, severity, flags };
+    const dnaCriteria: string[] = [];
+    let dnaMatched = 0;
+    if (_opmAvg2 >= 20) { dnaMatched++; dnaCriteria.push(`OPM ${_opmAvg2.toFixed(0)}% ≥ 20%`); }
+    if ((excelData.salesCagr5y || 0) >= 18) { dnaMatched++; dnaCriteria.push(`Sales CAGR ${(excelData.salesCagr5y || 0).toFixed(0)}% ≥ 18%`); }
+    if ((excelData.patCagr5y || 0) >= 18) { dnaMatched++; dnaCriteria.push(`PAT CAGR ${(excelData.patCagr5y || 0).toFixed(0)}% ≥ 18%`); }
+    if (severity === 'CLEAN') { dnaMatched++; dnaCriteria.push('No forensic pump flags'); }
+    if (salesAccelChip && salesAccelChip.state === 'ACCELERATING') { dnaMatched++; dnaCriteria.push('Sales accelerating'); }
+    if (marginInflectionChip && marginInflectionChip.direction === 'EXPANSION') { dnaMatched++; dnaCriteria.push('Margin inflection'); }
+    dnaMatchChip = { matched: dnaMatched, criteria: dnaCriteria, pass: dnaMatched >= 4 };
+    if (marginInflectionChip?.fired) rationale.unshift(`⚡ MARGIN INFLECTION DETECTED: ${marginInflectionChip.interpretation}`);
+    if (severity === 'HIGH' || severity === 'CRITICAL') rationale.unshift(`🚨 FORENSIC PUMP WATCH (${pumpScore}/11 flags, ${severity}): ${flags.slice(0, 2).join(' · ')}`);
+  }
+
   return {
     ticker, company, sector,
     quote: quote || undefined,
@@ -1344,6 +1419,8 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
     recommendation, rationale,
     peConfidence, psConfidence, evConfidence,
     peReason, psReason, evReason,
+    // PATCH 0851 — institutional chips
+    marginInflectionChip, forensicPumpChip, dnaMatchChip, salesAccelChip, cashConversionChip,
   };
 }
 
@@ -1871,6 +1948,38 @@ export default function AutoValuationPage() {
               <ul style={{ margin: '12px 0 0 22px', padding: 0, fontSize: 12.5, color: TEXT, lineHeight: 1.65 }}>
                 {report.rationale.map((r, i) => <li key={i}>{r}</li>)}
               </ul>
+
+              {/* PATCH 0851 — Institutional chip strip */}
+              {(() => {
+                const ticker = (report.ticker || '').toUpperCase();
+                const priorDecision = ticker ? getDecision(ticker) : undefined;
+                const cbSet = (typeof window !== 'undefined' ? getConvictionTickers() : new Set<string>());
+                const isOnCB = ticker && cbSet.has(ticker);
+                const mi = report.marginInflectionChip;
+                const fp = report.forensicPumpChip;
+                const sa = report.salesAccelChip;
+                const dna = report.dnaMatchChip;
+                const chips: React.ReactNode[] = [];
+                if (priorDecision) {
+                  const m = DECISION_META[priorDecision.status];
+                  chips.push(<span key="dec" title={`Prior decision: ${priorDecision.status} on ${priorDecision.date.slice(0,10)} — ${priorDecision.reason || ''}`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: `${m.color}25`, color: m.color, border: `1px solid ${m.color}60`, borderRadius: 3 }}>{m.emoji} PRIOR: {priorDecision.status}</span>);
+                }
+                if (isOnCB) chips.push(<span key="cb" style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#F59E0B25', color: '#F59E0B', border: '1px solid #F59E0B60', borderRadius: 3 }}>🏆 CB</span>);
+                if (mi?.fired) chips.push(<span key="mi" title={mi.interpretation} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#10B98125', color: '#10B981', border: '1px solid #10B98160', borderRadius: 3 }}>⚡ MARGIN INFLECTION +{mi.gapPp.toFixed(1)}pp</span>);
+                else if (mi?.direction === 'COMPRESSION') chips.push(<span key="mi" title={mi.interpretation} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#EF444425', color: '#EF4444', border: '1px solid #EF444460', borderRadius: 3 }}>▼ MARGIN COMPRESSION {mi.gapPp.toFixed(1)}pp</span>);
+                if (fp && (fp.severity === 'HIGH' || fp.severity === 'CRITICAL')) chips.push(<span key="fp" title={fp.flags.join(' · ')} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#EF444425', color: '#EF4444', border: '1px solid #EF444460', borderRadius: 3 }}>🚨 PUMP {fp.pumpScore}/11</span>);
+                else if (fp && fp.severity === 'WATCH') chips.push(<span key="fp" title={fp.flags.join(' · ')} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#F59E0B25', color: '#F59E0B', border: '1px solid #F59E0B60', borderRadius: 3 }}>⚠ PUMP WATCH {fp.pumpScore}</span>);
+                else if (fp && fp.severity === 'CLEAN') chips.push(<span key="fp" style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', background: '#22D3EE15', color: '#22D3EE', border: '1px solid #22D3EE40', borderRadius: 3 }}>✓ FORENSIC CLEAN</span>);
+                if (sa && sa.state === 'ACCELERATING') chips.push(<span key="sa" title={`Latest YoY ${sa.latestYoY.toFixed(0)}% vs 5y CAGR ${sa.cagr5y.toFixed(0)}%`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#10B98125', color: '#10B981', border: '1px solid #10B98160', borderRadius: 3 }}>⇑ SALES ACCEL +{sa.delta.toFixed(0)}pp</span>);
+                else if (sa && sa.state === 'DECELERATING') chips.push(<span key="sa" title={`Latest YoY ${sa.latestYoY.toFixed(0)}% vs 5y CAGR ${sa.cagr5y.toFixed(0)}%`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#F59E0B25', color: '#F59E0B', border: '1px solid #F59E0B60', borderRadius: 3 }}>⇓ SALES DECEL {sa.delta.toFixed(0)}pp</span>);
+                if (dna) { const dnaColor = dna.matched >= 5 ? '#10B981' : dna.matched >= 3 ? '#22D3EE' : '#94A3B8'; chips.push(<span key="dna" title={`500-bagger DNA: ${dna.criteria.join(' · ')}`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: `${dnaColor}25`, color: dnaColor, border: `1px solid ${dnaColor}60`, borderRadius: 3 }}>🧬 DNA {dna.matched}/6</span>); }
+                if (chips.length === 0) return null;
+                return (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 12, padding: '8px 0', borderTop: `1px dashed ${BORDER}` }}>
+                    {chips}
+                  </div>
+                );
+              })()}
             </div>
 
             {/* PATCH 0657 — Year toggle. Lets user compare FY27 (18mo) vs FY28 (30mo). */}

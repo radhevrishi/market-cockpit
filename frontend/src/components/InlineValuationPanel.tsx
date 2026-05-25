@@ -15,6 +15,8 @@ import {
   type ParsedDoc, type AutoValuationReport,
 } from '@/app/(dashboard)/auto-valuation/engine';
 import { extractGuidance, metricLabel, formatGuidanceValue, type GuidanceItem } from '@/lib/forward-guidance-extractor';
+import { getDecision, DECISION_META } from '@/lib/decisions';
+import { getConvictionTickers } from '@/lib/conviction-beats';
 // PATCH 0752 — pull the latest concall snapshot for this ticker and blend
 // its score with the valuation triangulation upside (90/10 weight).
 import { listConcallSnapshots } from '@/lib/concall-snapshot-store';
@@ -182,6 +184,97 @@ export default function InlineValuationPanel() {
             {report.company && <span style={{ fontSize: 12, fontWeight: 700, color: TEXT }}>{report.company}</span>}
             {report.sector && <span style={{ fontSize: 10, color: '#22D3EE', background: '#22D3EE15', padding: '2px 8px', borderRadius: 3 }}>{report.sector}</span>}
           </div>
+
+          {/* PATCH 0851 — Institutional chip strip — prior decision + CB membership +
+              forensic pump + margin inflection + sales accel + DNA match */}
+          {(() => {
+            const ticker = (report.ticker || '').toUpperCase();
+            const priorDecision = ticker ? getDecision(ticker) : undefined;
+            const cbSet = (typeof window !== 'undefined' ? getConvictionTickers() : new Set<string>());
+            const isOnCB = ticker && cbSet.has(ticker);
+            const mi = report.marginInflectionChip;
+            const fp = report.forensicPumpChip;
+            const sa = report.salesAccelChip;
+            const dna = report.dnaMatchChip;
+            const chips: React.ReactNode[] = [];
+            if (priorDecision) {
+              const m = DECISION_META[priorDecision.status];
+              chips.push(
+                <span key="dec" title={`Prior decision: ${priorDecision.status} on ${priorDecision.date.slice(0,10)} — ${priorDecision.reason || '(no reason given)'}`}
+                  style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: `${m.color}25`, color: m.color, border: `1px solid ${m.color}60`, borderRadius: 3 }}>
+                  {m.emoji} PRIOR: {priorDecision.status}
+                </span>
+              );
+            }
+            if (isOnCB) {
+              chips.push(
+                <span key="cb" title="On Conviction Beats bench" style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#F59E0B25', color: '#F59E0B', border: '1px solid #F59E0B60', borderRadius: 3 }}>
+                  🏆 CB
+                </span>
+              );
+            }
+            if (mi?.fired) {
+              chips.push(
+                <span key="mi" title={mi.interpretation} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#10B98125', color: '#10B981', border: '1px solid #10B98160', borderRadius: 3 }}>
+                  ⚡ MARGIN INFLECTION +{mi.gapPp.toFixed(1)}pp
+                </span>
+              );
+            } else if (mi?.direction === 'COMPRESSION') {
+              chips.push(
+                <span key="mi" title={mi.interpretation} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#EF444425', color: '#EF4444', border: '1px solid #EF444460', borderRadius: 3 }}>
+                  ▼ MARGIN COMPRESSION {mi.gapPp.toFixed(1)}pp
+                </span>
+              );
+            }
+            if (fp && (fp.severity === 'HIGH' || fp.severity === 'CRITICAL')) {
+              chips.push(
+                <span key="fp" title={`Forensic pump score ${fp.pumpScore}/11 — ${fp.flags.join(' · ')}`}
+                  style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#EF444425', color: '#EF4444', border: '1px solid #EF444460', borderRadius: 3 }}>
+                  🚨 PUMP {fp.pumpScore}/11
+                </span>
+              );
+            } else if (fp && fp.severity === 'WATCH') {
+              chips.push(
+                <span key="fp" title={fp.flags.join(' · ')} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#F59E0B25', color: '#F59E0B', border: '1px solid #F59E0B60', borderRadius: 3 }}>
+                  ⚠ PUMP WATCH {fp.pumpScore}
+                </span>
+              );
+            } else if (fp && fp.severity === 'CLEAN') {
+              chips.push(
+                <span key="fp" title="No forensic pump flags detected" style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', background: '#22D3EE15', color: '#22D3EE', border: '1px solid #22D3EE40', borderRadius: 3 }}>
+                  ✓ FORENSIC CLEAN
+                </span>
+              );
+            }
+            if (sa && sa.state === 'ACCELERATING') {
+              chips.push(
+                <span key="sa" title={`Latest YoY ${sa.latestYoY.toFixed(0)}% vs 5y CAGR ${sa.cagr5y.toFixed(0)}% (+${sa.delta.toFixed(0)}pp)`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#10B98125', color: '#10B981', border: '1px solid #10B98160', borderRadius: 3 }}>
+                  ⇑ SALES ACCEL +{sa.delta.toFixed(0)}pp
+                </span>
+              );
+            } else if (sa && sa.state === 'DECELERATING') {
+              chips.push(
+                <span key="sa" title={`Latest YoY ${sa.latestYoY.toFixed(0)}% vs 5y CAGR ${sa.cagr5y.toFixed(0)}% (${sa.delta.toFixed(0)}pp)`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#F59E0B25', color: '#F59E0B', border: '1px solid #F59E0B60', borderRadius: 3 }}>
+                  ⇓ SALES DECEL {sa.delta.toFixed(0)}pp
+                </span>
+              );
+            }
+            if (dna) {
+              const dnaColor = dna.matched >= 5 ? '#10B981' : dna.matched >= 3 ? '#22D3EE' : '#94A3B8';
+              chips.push(
+                <span key="dna" title={`500-bagger DNA: ${dna.criteria.join(' · ') || 'no criteria matched'}`}
+                  style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: `${dnaColor}25`, color: dnaColor, border: `1px solid ${dnaColor}60`, borderRadius: 3 }}>
+                  🧬 DNA {dna.matched}/6
+                </span>
+              );
+            }
+            if (chips.length === 0) return null;
+            return (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 10, padding: '6px 0', borderTop: `1px dashed ${BORDER}`, borderBottom: `1px dashed ${BORDER}` }}>
+                {chips}
+              </div>
+            );
+          })()}
 
           {/* Rationale */}
           <ul style={{ margin: '0 0 12px 18px', padding: 0, fontSize: 11.5, color: TEXT, lineHeight: 1.6 }}>

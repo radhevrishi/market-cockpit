@@ -97,6 +97,35 @@ export interface AutoValuationReport {
   peReason?: string;
   psReason?: string;
   evReason?: string;
+  // PATCH 0851 — institutional chips computed from excelData
+  marginInflectionChip?: {
+    fired: boolean;
+    latestQ: number;
+    trailingAvg: number;
+    gapPp: number;
+    direction: 'EXPANSION' | 'COMPRESSION' | 'STABLE';
+    interpretation: string;
+  };
+  forensicPumpChip?: {
+    pumpScore: number;          // 0-11
+    severity: 'CLEAN' | 'WATCH' | 'HIGH' | 'CRITICAL';
+    flags: string[];            // list of triggered signals
+  };
+  dnaMatchChip?: {
+    matched: number;            // 0-9
+    criteria: string[];         // which criteria matched
+    pass: boolean;              // ≥7/9
+  };
+  salesAccelChip?: {
+    latestYoY: number;
+    cagr5y: number;
+    delta: number;              // latestYoY - cagr5y (positive = accelerating)
+    state: 'ACCELERATING' | 'STABLE' | 'DECELERATING';
+  };
+  cashConversionChip?: {
+    cfoToPat?: number;          // if available — computed when CFO row found
+    note: string;
+  };
 }
 
 // ─── PDF extraction (CDN pdf.js — same pattern as earnings-analysis) ────
@@ -1301,6 +1330,120 @@ export async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationRepor
     rationale.push(`Year-2 (${forwardYearY2}): Revenue ₹${revScenY2.base.toFixed(0)} Cr · EBITDA ₹${ebitdaScenY2.base?.toFixed(0) || '?'} Cr · PAT ₹${patScenY2.base?.toFixed(0) || '?'} Cr (toggle in calc panel).`);
   }
 
+  // ════════════════════════════════════════════════════════════════════════
+  // PATCH 0851 — Institutional chips computed from excelData
+  // ════════════════════════════════════════════════════════════════════════
+  let marginInflectionChip: AutoValuationReport['marginInflectionChip'];
+  let forensicPumpChip: AutoValuationReport['forensicPumpChip'];
+  let dnaMatchChip: AutoValuationReport['dnaMatchChip'];
+  let salesAccelChip: AutoValuationReport['salesAccelChip'];
+  let cashConversionChip: AutoValuationReport['cashConversionChip'];
+
+  if (excelData) {
+    // Re-derive opmList for chip computation
+    const opmList = excelData.operatingProfit.map((op, i) => {
+      const s = excelData.sales[i];
+      if (op != null && s != null && s > 0) return (op / s) * 100;
+      return null;
+    }).filter((v): v is number => v != null);
+
+    // ── 1. Margin inflection chip (P0851 #2)
+    if (opmList.length >= 4) {
+      const latestQ = opmList[opmList.length - 1];
+      const trailing3 = opmList.slice(-4, -1);
+      const trailingAvg = trailing3.reduce((a, b) => a + b, 0) / trailing3.length;
+      const gapPp = latestQ - trailingAvg;
+      const direction = gapPp > 2 ? 'EXPANSION' : gapPp < -2 ? 'COMPRESSION' : 'STABLE';
+      const interpretation =
+        direction === 'EXPANSION' ? `⚡ Margin inflection: latest OPM ${latestQ.toFixed(1)}% vs 3-yr avg ${trailingAvg.toFixed(1)}% (+${gapPp.toFixed(1)}pp). Operating-leverage story.` :
+        direction === 'COMPRESSION' ? `▼ Margin compression: latest OPM ${latestQ.toFixed(1)}% vs 3-yr avg ${trailingAvg.toFixed(1)}% (${gapPp.toFixed(1)}pp). Cost pressure or cycle peak rolled off.` :
+        `Margin stable: latest ${latestQ.toFixed(1)}% vs 3-yr ${trailingAvg.toFixed(1)}%.`;
+      marginInflectionChip = { fired: direction === 'EXPANSION', latestQ, trailingAvg, gapPp, direction, interpretation };
+    }
+
+    // ── 2. Sales acceleration chip
+    if (excelData.salesCagr5y !== undefined && excelData.sales.length >= 2) {
+      const lastIdx = excelData.sales.length - 1;
+      const lastSales = excelData.sales[lastIdx] || 0;
+      const prevSales = excelData.sales[lastIdx - 1] || 0;
+      if (lastSales > 0 && prevSales > 0) {
+        const latestYoY = ((lastSales - prevSales) / prevSales) * 100;
+        const delta = latestYoY - excelData.salesCagr5y;
+        const state = delta > 5 ? 'ACCELERATING' : delta < -5 ? 'DECELERATING' : 'STABLE';
+        salesAccelChip = { latestYoY, cagr5y: excelData.salesCagr5y, delta, state };
+      }
+    }
+
+    // ── 3. Cash conversion (rough heuristic — CFO row often not parsed; flag for now)
+    cashConversionChip = {
+      cfoToPat: undefined,
+      note: 'Cash conversion (CFO/PAT) requires Screener "Cash from Operating Activity" column. Add to upload for full picture.',
+    };
+
+    // ── 4. Forensic pump-score (P0851 #3) — adapted lightweight from multibagger lib
+    const flags: string[] = [];
+    let pumpScore = 0;
+    const latestSales_ = excelData.latestSales || 0;
+    const latestPAT_ = excelData.latestPAT || 0;
+    const mcapNow = (quote?.currentMarketCapCr) || excelData.currentMarketCapCrFromSheet || 0;
+    // (a) Microcap with extreme sales surge + weak CFO conversion (story-stock pattern)
+    if (mcapNow > 0 && mcapNow < 3000) {
+      if ((excelData.salesCagr5y || 0) > 35 && latestPAT_ > 0) {
+        flags.push('Microcap + >35% sales CAGR — verify cash conversion');
+        pumpScore += 1;
+      }
+    }
+    // (b) Margin compression with growth-deceleration combo (cycle peak passed)
+    if (marginInflectionChip?.direction === 'COMPRESSION' && salesAccelChip?.state === 'DECELERATING') {
+      flags.push('Margin compression + sales decel — cycle peak passed');
+      pumpScore += 2;
+    }
+    // (c) IPO-stub CAGR (5y CAGR > 80% almost always a recent listing distortion)
+    if ((excelData.salesCagr5y || 0) > 80) {
+      flags.push('5y CAGR >80% — IPO-stub distortion likely');
+      pumpScore += 1;
+    }
+    // (d) Microcap + below-floor share count (<3 Cr shares = 30M shares = manipulable)
+    if (mcapNow > 0 && mcapNow < 1000 && (excelData.sharesOutstandingCr || 99) < 3) {
+      flags.push('<3 Cr shares + microcap — thin float');
+      pumpScore += 2;
+    }
+    // (e) PAT margin > EBITDA margin impossibility (extractor mishap or accrual abuse)
+    const _opmAvg = excelData.opmLatest || excelData.opmAvg || 0;
+    if (latestSales_ > 0 && latestPAT_ > 0) {
+      const _patMargin = (latestPAT_ / latestSales_) * 100;
+      if (_patMargin > _opmAvg && _opmAvg > 0) {
+        flags.push(`PAT margin ${_patMargin.toFixed(1)}% > EBITDA margin ${_opmAvg.toFixed(1)}% — accounting anomaly`);
+        pumpScore += 2;
+      }
+    }
+    const severity: 'CLEAN' | 'WATCH' | 'HIGH' | 'CRITICAL' =
+      pumpScore >= 5 ? 'CRITICAL' :
+      pumpScore >= 3 ? 'HIGH' :
+      pumpScore >= 1 ? 'WATCH' : 'CLEAN';
+    forensicPumpChip = { pumpScore, severity, flags };
+
+    // ── 5. 500-bagger DNA matcher (lightweight — 6 criteria we can check from Excel alone)
+    const dnaCriteria: string[] = [];
+    let dnaMatched = 0;
+    if (_opmAvg >= 20) { dnaMatched++; dnaCriteria.push(`ROCE-proxy OPM ${_opmAvg.toFixed(0)}% ≥ 20%`); }
+    if ((excelData.salesCagr5y || 0) >= 18) { dnaMatched++; dnaCriteria.push(`5y Sales CAGR ${(excelData.salesCagr5y || 0).toFixed(0)}% ≥ 18%`); }
+    if ((excelData.patCagr5y || 0) >= 18) { dnaMatched++; dnaCriteria.push(`5y PAT CAGR ${(excelData.patCagr5y || 0).toFixed(0)}% ≥ 18%`); }
+    if (forensicPumpChip.severity === 'CLEAN') { dnaMatched++; dnaCriteria.push('No forensic pump flags'); }
+    if (salesAccelChip && salesAccelChip.state === 'ACCELERATING') { dnaMatched++; dnaCriteria.push('Sales accelerating'); }
+    if (marginInflectionChip && marginInflectionChip.direction === 'EXPANSION') { dnaMatched++; dnaCriteria.push('Margin inflection (expansion)'); }
+    const dnaTotal = 6;
+    dnaMatchChip = { matched: dnaMatched, criteria: dnaCriteria, pass: dnaMatched >= dnaTotal - 2 };
+
+    // Surface margin inflection in rationale
+    if (marginInflectionChip?.fired) {
+      rationale.unshift(`⚡ MARGIN INFLECTION DETECTED: ${marginInflectionChip.interpretation}`);
+    }
+    if (forensicPumpChip.severity === 'HIGH' || forensicPumpChip.severity === 'CRITICAL') {
+      rationale.unshift(`🚨 FORENSIC PUMP WATCH (${forensicPumpChip.pumpScore}/11 flags, ${forensicPumpChip.severity}): ${forensicPumpChip.flags.slice(0, 2).join(' · ')}`);
+    }
+  }
+
   return {
     ticker, company, sector,
     quote: quote || undefined,
@@ -1317,6 +1460,12 @@ export async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationRepor
     recommendation, rationale,
     peConfidence, psConfidence, evConfidence,
     peReason, psReason, evReason,
+    // PATCH 0851 — institutional chips
+    marginInflectionChip,
+    forensicPumpChip,
+    dnaMatchChip,
+    salesAccelChip,
+    cashConversionChip,
   };
 }
 
