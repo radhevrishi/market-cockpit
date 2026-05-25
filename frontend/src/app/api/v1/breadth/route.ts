@@ -27,7 +27,7 @@ import { NextResponse } from 'next/server';
 import { kvGet } from '@/lib/kv';
 
 export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+// PATCH 0819: removed force-dynamic so Cache-Control headers aren't overridden by Next.js. Query params still force dynamic at runtime.
 export const maxDuration = 30;
 
 const NSE_BASE = 'https://www.nseindia.com/api';

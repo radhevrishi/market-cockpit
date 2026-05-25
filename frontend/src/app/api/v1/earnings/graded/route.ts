@@ -27,7 +27,7 @@ import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30; // PATCH 0818
-export const dynamic = 'force-dynamic';
+// PATCH 0819: removed force-dynamic so Cache-Control headers aren't overridden by Next.js. Query params still force dynamic at runtime.
 
 // ─── Types (mirror frontend) ───────────────────────────────────────────────
 type EarningsTier = 'BLOCKBUSTER' | 'STRONG' | 'MIXED' | 'AVOID';

@@ -64,7 +64,7 @@ import {
 // PATCH 0069: curated seed of verified transformational contracts
 import { seedTransformational } from '@/lib/news/transformational-seed';
 
-export const dynamic = 'force-dynamic';
+// PATCH 0819: removed force-dynamic so Cache-Control headers aren't overridden by Next.js. Query params still force dynamic at runtime.
 export const maxDuration = 20; // PATCH 0818 — tighter cap
 
 // ── RSS Feed Sources ──────────────────────────────────────────────────

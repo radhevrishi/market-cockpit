@@ -16,7 +16,7 @@ import {
 // PATCH 0181 — Self-updating earnings calendar (populated by daily Vercel Cron)
 import { getCalendarEntriesInRange } from '@/lib/earnings-week-seed';
 
-export const dynamic = 'force-dynamic';
+// PATCH 0819: removed force-dynamic so Cache-Control headers aren't overridden by Next.js. Query params still force dynamic at runtime.
 export const maxDuration = 30; // PATCH 0818
 
 // ── In-memory cache per month (5 min TTL) ──

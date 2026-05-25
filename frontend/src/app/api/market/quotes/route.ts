@@ -4,7 +4,7 @@ import { fetchQuotesWithFallback, US_TOP } from '@/lib/yahoo';
 // PATCH 0782 — KV blob primary source (populated by GH Actions scraper).
 import { kvGet } from '@/lib/kv';
 
-export const dynamic = 'force-dynamic';
+// PATCH 0819: removed force-dynamic so Cache-Control headers aren't overridden by Next.js. Query params still force dynamic at runtime.
 export const maxDuration = 30; // PATCH 0818 — 60 → 30, caps CPU per call for ~2000 tickers (NSE master) needs up to 60s
 
 // Response-level cache (avoids re-assembly on rapid polls)

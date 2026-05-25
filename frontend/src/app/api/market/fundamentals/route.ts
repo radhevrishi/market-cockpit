@@ -14,7 +14,7 @@ import { NextResponse } from 'next/server';
 import { kvGet } from '@/lib/kv';
 import { rateLimitResponse } from '@/lib/rateLimit';
 
-export const dynamic = 'force-dynamic';
+// PATCH 0819: removed force-dynamic so Cache-Control headers aren't overridden by Next.js. Query params still force dynamic at runtime.
 export const maxDuration = 15;
 
 const RESPONSE_TTL = 60_000; // 60s in-memory cache for assembled batch

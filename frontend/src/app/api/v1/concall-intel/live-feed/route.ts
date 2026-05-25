@@ -119,7 +119,7 @@ interface FeedPayload {
 }
 
 export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+// PATCH 0819: removed force-dynamic so Cache-Control headers aren't overridden by Next.js. Query params still force dynamic at runtime.
 export const maxDuration = 30;  // PATCH 0818 — tighter cap to bound CPU per call
 
 export async function GET(req: NextRequest) {
