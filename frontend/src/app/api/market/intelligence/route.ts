@@ -2525,6 +2525,27 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
         const computeUrl = new URL('/api/market/intelligence/compute', request.url);
         fetch(computeUrl.toString(), { method: 'GET' }).catch(() => {});
       } catch {}
+      // PATCH 0850 — Honest empty-state diagnostic. When compute keeps
+      // producing 0 signals (because upstream corp-filings scraper hasn't
+      // run / Upstash blob empty / weekend with no filings), surface that
+      // instead of the eternal 'computing...' spinner. The /api/v1/concall-
+      // intel/live-feed cacheOnly is the upstream source — if IT has 0
+      // items, the whole pipeline is going to produce 0.
+      let upstreamHint = '';
+      try {
+        const r = await fetch(new URL('/api/v1/concall-intel/live-feed?cacheOnly=1', request.url).toString(), { signal: AbortSignal.timeout(2000) } as any);
+        if (r.ok) {
+          const j = await r.json();
+          const upstreamCount = (j?.filings || j?.items || []).length;
+          if (upstreamCount === 0) {
+            const day = new Date().getDay();
+            const isWeekend = day === 0 || day === 6;
+            upstreamHint = isWeekend
+              ? 'Weekend — no new NSE/BSE filings since Friday close.'
+              : 'Upstream corp-filings scraper is empty. Check /system-status or trigger the GH Actions scrape-corp-filings workflow.';
+          }
+        }
+      } catch {}
       return NextResponse.json({
         top3: [],
         signals: [],
@@ -2537,10 +2558,10 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
           highImpactCount: 0, activeSectors: [], buyWatchCount: 0, trackCount: 0,
           totalSignals: 0, totalOrderValueCr: 0, totalDealValueCr: 0,
           portfolioAlerts: 0, negativeSignals: 0,
-          summary: 'Computing intelligence — auto-refreshing in 20 seconds...',
+          summary: upstreamHint || 'Computing intelligence — auto-refreshing in 20 seconds...',
         },
         updatedAt: new Date().toISOString(),
-        _meta: { source: 'skeleton', computing: true },
+        _meta: { source: 'skeleton', computing: !upstreamHint, upstreamEmpty: !!upstreamHint, upstreamHint },
       });
     }
 
