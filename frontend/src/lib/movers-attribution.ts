@@ -49,6 +49,16 @@ export interface MoverInput {
   changePercent: number;
   indexGroup?: string;    // 'Small' / 'Mid' / 'Large'
   marketCap?: number;     // ₹ Cr
+  // PATCH 0860 — microstructure fields enable institutional-grade Tier 4
+  // attribution. All optional; engine falls back gracefully when missing.
+  deliveryPct?: number;   // 0-100 — institutional positioning signal
+  volMultiple?: number;   // volume vs 20-day average (1.0 = normal)
+  volume?: number;        // today's volume in shares
+  previousClose?: number; // for gap detection
+  open?: number;          // for gap-up/gap-down inference
+  dayHigh?: number;
+  dayLow?: number;
+  price?: number;         // closing/current price
 }
 
 export interface FilingInput {
@@ -586,33 +596,113 @@ export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttrib
     //
     // Industry chip on the home page already shows "Civil Construction" /
     // "Housing Finance Company" / etc, so we DON'T repeat it here.
-    // ── TIER 4: no confirmed trigger ──────────────────────────────────
-    // PATCH 0795 — terse 1-line subtitle. No multi-paragraph essays. No
-    // 'operator-driven flow' hallucination. Module-level feed-gap banner
-    // handles the disclaimer once; per-row just says 'no confirmed trigger
-    // in available scans'.
+    // ── TIER 4: no confirmed trigger — INSTITUTIONAL-GRADE REASONING (P0860) ─
+    // Per user critique: stop emitting generic 'Smallcap unwind' / 'Broad
+    // participation' / 'Momentum burst' fallbacks. Use the available
+    // microstructure (delivery%, volume multiple, gap behavior, sector
+    // peer context) to write a desk-commentary-style 1-line reason.
+    //
+    // Hierarchy applied here (Levels 1-3 already handled by Tiers 1-3 above):
+    //   Level 4 — Microstructure interpretation
+    //     High volume + low delivery  → speculative intraday participation
+    //     High delivery + price expansion → positional/institutional buying
+    //     High delivery + decline → long unwinding with conviction
+    //     Low delivery + decline → speculative unwind
+    //     Gap up + weak close → profit-booking / failed breakout
+    //     Microcap + low float → low-float momentum / pump-risk
+    //     Lower-circuit + thin volume → liquidity vacuum
     const indGroup = (m.indexGroup || '').toLowerCase();
     const smallcap = indGroup === 'small' || indGroup === 'micro';
+    const microcap = indGroup === 'micro';
     const isUp = direction === 'up';
-    const moveLabel = isUp ? 'Momentum burst' : 'Position unwind';
-    // Subtitle is ONE clean sentence with the available facts.
-    const subtitleParts: string[] = [];
-    if (sectorAgg && typeof opts.indexAvgChangePct === 'number') {
-      const sectorPct = sectorAgg.avgChangePct;
-      const idxPct = opts.indexAvgChangePct;
-      // Only mention sector if it's not perfectly flat
-      if (Math.abs(sectorPct) >= 0.3 || Math.abs(sectorPct - idxPct) >= 0.5) {
-        subtitleParts.push(`${friendlySector} ${fmtPct(sectorPct)} vs index ${fmtPct(idxPct)}`);
+    const absPct = Math.abs(m.changePercent || 0);
+    const dlv = typeof m.deliveryPct === 'number' ? m.deliveryPct : null;
+    const vm = typeof m.volMultiple === 'number' ? m.volMultiple : null;
+    const lowDelivery = dlv !== null && dlv <= 30;
+    const highDelivery = dlv !== null && dlv >= 55;
+    const highVolume = vm !== null && vm >= 3;
+    const veryHighVolume = vm !== null && vm >= 6;
+    // Gap behavior — only when we have both previousClose and open
+    const gappedUp = m.open && m.previousClose && (m.open - m.previousClose) / m.previousClose > 0.02;
+    const gappedDown = m.open && m.previousClose && (m.previousClose - m.open) / m.previousClose > 0.02;
+    const weakClose = m.open && m.price && m.dayHigh && (m.dayHigh - m.price) / ((m.dayHigh - m.open) || 1) > 0.6;
+    const strongClose = m.open && m.price && m.dayLow && m.dayHigh && (m.price - m.dayLow) / ((m.dayHigh - m.dayLow) || 1) > 0.7;
+    const peerTotal = (peerStats?.up || 0) + (peerStats?.down || 0);
+    const peerAlignment = peerTotal > 0 ? peerCountSameDirection / peerTotal : 0;
+    const sectorInline = peerAlignment > 0.4 && peerTotal >= 4
+      ? ` — sector profile supports thematic flow (${peerCountSameDirection}/${peerTotal} peers ${isUp ? '↑' : '↓'} >3%)`
+      : '';
+
+    // Build the desk-commentary headline + detail.
+    let moveLabel = '';
+    let detailLead = '';
+    let confidenceNote = '';
+
+    if (isUp) {
+      if (veryHighVolume && lowDelivery) {
+        moveLabel = 'Speculative intraday participation';
+        detailLead = `${vm!.toFixed(1)}× volume with weak ${dlv}% delivery suggests momentum scalping rather than positional buying`;
+      } else if (veryHighVolume && highDelivery) {
+        moveLabel = 'Positional accumulation';
+        detailLead = `${vm!.toFixed(1)}× volume on ${dlv}% delivery — institutional/HNI positioning consistent with conviction buying`;
+      } else if (highVolume && highDelivery) {
+        moveLabel = 'Quality buying';
+        detailLead = `Volume expansion (${vm!.toFixed(1)}×) with strong ${dlv}% delivery suggests sustained accumulation`;
+      } else if (highVolume && lowDelivery) {
+        moveLabel = 'Momentum chase';
+        detailLead = `${vm!.toFixed(1)}× volume but only ${dlv}% delivery indicates intraday speculation`;
+      } else if (gappedUp && weakClose) {
+        moveLabel = 'Failed breakout';
+        detailLead = `Opened gap-up but closed weak — early demand absorbed by profit-booking`;
+      } else if (microcap && highVolume) {
+        moveLabel = 'Low-float momentum';
+        detailLead = `Microcap (${m.indexGroup}) with ${vm!.toFixed(1)}× volume — likely thin-float retail/speculative chase` + (lowDelivery ? `; ${dlv}% delivery confirms speculative profile` : '');
+      } else if (smallcap) {
+        moveLabel = 'Smallcap momentum extension';
+        detailLead = `No company-specific trigger detected; price action consistent with ${(friendlySector || 'smallcap').toLowerCase()} momentum extension`;
+        if (highDelivery) detailLead += ` (${dlv}% delivery quality, watchable)`;
+        else if (lowDelivery) detailLead += ` with weak ${dlv}% delivery, lower-confidence`;
       } else {
-        subtitleParts.push(`${friendlySector} flat`);
+        moveLabel = 'No confirmed trigger';
+        detailLead = `No filing or news catalyst detected; participation profile inconclusive`;
+        if (dlv !== null) detailLead += ` (${dlv}% delivery)`;
       }
+      confidenceNote = highDelivery ? 'positioning suggests conviction' : lowDelivery ? 'speculative profile reduces conviction' : '';
+    } else {  // declines
+      if (veryHighVolume && lowDelivery) {
+        moveLabel = 'Speculative unwind';
+        detailLead = `${vm!.toFixed(1)}× volume on weak ${dlv}% delivery — speculative intraday liquidation rather than institutional distribution`;
+      } else if (highVolume && highDelivery) {
+        moveLabel = 'Long unwinding';
+        detailLead = `Decline with ${vm!.toFixed(1)}× volume and ${dlv}% delivery suggests positional exits with conviction`;
+      } else if (highVolume && lowDelivery) {
+        moveLabel = 'Profit-taking';
+        detailLead = `Elevated volume (${vm!.toFixed(1)}×) with only ${dlv}% delivery indicates intraday churn / profit-booking`;
+      } else if (absPct >= 9 && (vm === null || vm < 0.5)) {
+        moveLabel = 'Liquidity vacuum';
+        detailLead = `Sharp decline on thin volume — likely circuit or one-sided book with no real distribution`;
+      } else if (microcap) {
+        moveLabel = 'Microcap distribution';
+        detailLead = `Microcap (${m.indexGroup}) decline${dlv !== null ? ` with ${dlv}% delivery` : ''} — verify before adding;` +
+          (lowDelivery ? ` weak delivery suggests speculative unwind` : ` quality of exit ambiguous`);
+      } else if (smallcap) {
+        moveLabel = 'Smallcap profit-taking';
+        detailLead = `No filing trigger; profile suggests profit-taking after recently active ${(friendlySector || 'smallcap').toLowerCase()} names`;
+        if (dlv !== null) detailLead += ` (${dlv}% delivery${lowDelivery ? ', limited institutional exit conviction' : ''})`;
+      } else {
+        moveLabel = 'No confirmed trigger';
+        detailLead = `No filing or news catalyst; decline likely position-led`;
+        if (dlv !== null) detailLead += ` (${dlv}% delivery)`;
+      }
+      confidenceNote = highDelivery ? 'delivery quality suggests genuine distribution' : '';
     }
-    subtitleParts.push(feedGap
-      ? `no confirmed trigger in available scans`
-      : `no confirmed filing/news trigger`);
-    if (smallcap) {
-      subtitleParts.push(`stock-specific ${isUp ? 'momentum' : 'unwind'}`);
-    }
+
+    // Compose subtitle: detailLead + sector context + (optional confidence note) + feed-gap caveat
+    const subtitleParts: string[] = [detailLead];
+    if (sectorInline) subtitleParts.push(sectorInline.replace(/^ — /, ''));
+    if (confidenceNote) subtitleParts.push(confidenceNote);
+    if (feedGap && (!dlv && !vm)) subtitleParts.push('available scans incomplete');
+
     out[sym] = {
       ticker: sym,
       changePercent: m.changePercent,
@@ -706,8 +796,12 @@ export const ANOMALY_COLOR: Record<Exclude<AnomalyTag, null>, string> = {
  */
 export function cleanMoverLabel(attr: MoverAttribution | undefined): string {
   if (!attr) return '';
-  if (attr.catalystType !== 'NONE') return attr.catalyst;
-  // attr.catalystType === 'NONE' — replace the verb-ish labels
+  // PATCH 0860 — Tier 4 now produces specific labels (Speculative intraday
+  // participation / Long unwinding / Low-float momentum / Liquidity vacuum
+  // etc) instead of generic 'Momentum burst' / 'Position unwind'. Return
+  // them directly. The legacy override below stays for ATTR.catalystType==='NONE'
+  // edge cases.
+  if (attr.catalyst) return attr.catalyst;
   if (attr.changePercent > 0) {
     return Math.abs(attr.changePercent) >= 10 ? 'UNEXPLAINED MOVE' : 'No confirmed trigger';
   }

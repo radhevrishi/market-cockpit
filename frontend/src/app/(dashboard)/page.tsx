@@ -728,6 +728,8 @@ export default function HomeDashboard() {
         const indexAvgChangePct = _indexCount > 0 ? _indexSum / _indexCount : undefined;
 
         // PATCH 0708 — Institutional event-attribution engine.
+        // PATCH 0860 — pass microstructure fields so Tier 4 can produce
+        // institutional-grade reasoning (delivery%, volume multiple, gap)
         const moverInputs = [...gainers, ...losers].map((m: any) => ({
           ticker: canonicalTicker(m.ticker), // PATCH 0721
           sector: m.sector,
@@ -735,6 +737,14 @@ export default function HomeDashboard() {
           changePercent: m.changePercent ?? 0,
           indexGroup: m.indexGroup,
           marketCap: m.marketCap,
+          deliveryPct: m.deliveryPct,
+          volMultiple: m.volMultiple,
+          volume: m.volume,
+          previousClose: m.previousClose,
+          open: m.open,
+          dayHigh: m.dayHigh,
+          dayLow: m.dayLow,
+          price: m.price,
         })).filter((m) => m.ticker);
         const moverTickers = moverInputs.map((m) => m.ticker);
         if (moverTickers.length > 0) {
@@ -2327,7 +2337,7 @@ export default function HomeDashboard() {
                 return (
                   <Link key={tk} href={`/stock-sheet?ticker=${encodeURIComponent(m.ticker)}`}
                     title={tooltip}
-                    style={{ display: 'flex', flexDirection: 'column', gap: 1, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                    style={{ display: 'flex', alignItems: 'baseline', gap: 6, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                     {inUniverse && <span style={{ fontSize: 10, color: '#22D3EE', flexShrink: 0 }} title="In your Watchlist/Portfolio/CB">👁</span>}
                     <span style={{ fontSize: 11, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 84, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.ticker}</span>
@@ -2390,12 +2400,9 @@ export default function HomeDashboard() {
                       </span>
                     )}
                   </div>
-                  {/* PATCH 0821 — smart-money signal as sub-line */}
-                  {smartLine && (
-                    <div style={{ fontSize: 9, color: '#94A3B8', paddingLeft: 90, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {smartLine}
-                    </div>
-                  )}
+                  {/* PATCH 0860 — Smart-money signal MOVED into tooltip; no 2nd line.
+                      User said: 'should be in same line for one company'. The signal
+                      stays accessible via hover tooltip but doesn't take vertical space. */}
                   </Link>
                 );
               };
