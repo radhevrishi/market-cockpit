@@ -3059,3 +3059,133 @@ Plus newly surfaced:
 >   to ticker)
 > - User-driven: upload more company reports through Auto-Val. Each new
 >   edge case → port the fix into BOTH engine.ts + page.tsx.
+
+---
+
+## 22 · DAY-7 LATE BATCH — 2026-05-25 (Patches 0855 → 0856)
+
+User said "do pending ones" after P0853 — shipped the remaining
+Tier-3/4/5 ideas from the investing-style alignment discussion.
+
+### 22.1 Patches shipped
+
+```
+0855  — Auto-Val Tier 3 — stale-price + smart-money + earnings-soon overlays.
+
+  (a) Stale-price flag on saved bench.
+      SavedAutoValuation interface extended with priceAtSave.
+      saveAutoValuation() snapshots r.quote.currentPrice on every save.
+      Page mounts one-shot /api/market/quotes → livePrices map.
+      Per saved row: when |live − priceAtSave|/priceAtSave > 15%,
+      render '📊 +Npct since save' chip (green if down, amber if up).
+      Tooltip: 'Saved at ₹X, now ₹Y. Recompute valuation?'
+      Catches case where you saved BUY at ₹500, stock is now ₹800,
+      upside math is stale.
+
+  (b) Smart-money overlay on active report.
+      Mount-time fetch /api/v1/super-investor-flow?days=180.
+      Indexes rows by ticker. When current report's ticker matches
+      a super-investor row (Vijay Kedia / Mukul Agrawal / etc),
+      renders '⬆ SUPER INV N' (ACCUM, green) / '⬇ SUPER INV N'
+      (EXIT, red) / '◆ SUPER INV N' (neutral). Tooltip lists top 3
+      investors + net action count.
+
+  (c) Earnings proximity chip on active report.
+      Mount-time fetch /api/v1/calendar?days=14 → ticker→date map.
+      When the report's ticker has a filing in next 14 days, renders
+      '⏰ EARNINGS Nd' chip with color tiers (red ≤3d, amber ≤7d,
+      cyan ≤14d). 'TODAY' / 'TOMORROW' labels for very near.
+      Port of P0349d USA logic to India.
+
+0856  — News-since-decision feed on Decision Logbook.
+
+  Bulk-fetches /api/v1/news?limit=300 once on /decisions page mount.
+  Indexes articles by ticker_symbols.
+  For each decision row: filters to articles where
+    published_at > decision.date  AND  ticker matches row.symbol.
+  Renders '📰 N news since decision' chip on the reason cell with
+  tooltip showing top 5 headlines + dates. A '→ latest: <title>'
+  link routes to the most recent article URL (when present).
+
+  Audit workflow unlocked:
+    - You logged BUY on MTAR at ₹2200 on May 10
+    - Today, 12 articles tagged MTAR have appeared
+    - Chip surfaces '📰 12 news since decision'
+    - Hover → all 12 headlines + dates
+    - Click latest → confirm thesis still holds vs new info
+    - If any contradicts, edit the decision to REJECTED with new reason
+```
+
+### 22.2 Files touched
+
+```
+frontend/src/lib/auto-valuation-store.ts                  — priceAtSave field
+frontend/src/app/(dashboard)/auto-valuation/page.tsx      — 3 live-overlay hooks + chips
+frontend/src/app/(dashboard)/decisions/page.tsx           — news-since-decision feed
+```
+
+### 22.3 Cumulative state across the Day-7 evening run
+
+15 patches shipped end-to-end (P0846 → P0856):
+  P0846 — Vercel build fix (3 type errors)
+  P0847 — Signals largecap + theme regression filter
+  P0848 — Signals compute precision pass (MVT gate + confidence-mult materiality)
+  P0849 + 5 followups — Auto-Val industry-universal hardening (36 sectors,
+                        sanity guards, multi-line guidance, error handling)
+  P0850 — Signals stale-lock + ?clearLock=1 + honest empty-state
+  P0851 — Auto-Val institutional chip strip (margin inflection / pump /
+          DNA / sales accel / prior decision / CB)
+  P0852 — Decision Logbook bull/bear/change-mind + buy-the-dip helper
+  P0853 — Signals version stamps on /system-status
+  P0854 — CLAUDE.md §21 mid-batch handoff
+  P0855 — Auto-Val stale-price + smart-money + earnings-soon overlays
+  P0856 — News-since-decision feed
+  P0857 — This handoff update
+
+### 22.4 What pending suggestions remain (still not shipped)
+
+From the original 15-item suggestion list at the start of this session,
+these are NOT yet done — flagged as Day-8+ candidates:
+
+  #1  ANTHROPIC_API_KEY into /api/v1/concall/analyze
+      → blocked on env var the user must set in Vercel
+
+  #7b WC days + CFO/PAT proper Excel parsing
+      → partial: cashConversionChip placeholder added in P0851. Full
+        implementation needs new ExcelFinancials fields + row matchers
+        for 'Cash from Operating Activity' / 'Debtor Days' / 'Inventory
+        Days' / 'Creditor Days'. User would need to add Screener columns
+        to upload.
+
+  #10 Verbatim concall quote on Signals
+      → needs sentence-level join from concall PDFs to signals. Larger
+        refactor; defer until Anthropic LLM (#1) is wired.
+
+  #15 Persistent 'Watch this report for results' subscription
+      → needs scheduled-task or cron infra. Use existing schedule skill
+        when the user wants this.
+
+### 22.5 STARTER PROMPT for Day-8
+
+> Read `/Users/radhevrishi/Desktop/Python/Imp Marketcockpit/market-cockpit/CLAUDE.md`
+> sections 20 + 21 + 22 (the Day-7 morning + evening + late batches)
+> AND section 13 (Hard Rules) before doing anything. HEAD on main =
+> `1fb6b7d` (or wherever P0857 lands). Latest patch for new work: **0858**.
+>
+> Open /system-status first — Signals build stamp shows compute /
+> filter / universe versions + last-compute age. If amber, hit
+> /api/market/intelligence/compute?clearLock=1. If upstream is empty,
+> trigger the GH Actions scrape-corp-filings workflow.
+>
+> Open /auto-valuation and observe the new chip strip on any uploaded
+> report: margin inflection / pump / DNA / sales accel / prior decision /
+> CB / smart-money / earnings-soon. Saved bench shows stale-price chips.
+> Open /decisions and observe '📰 N news since decision' chips on rows
+> with new tagged articles since their decision date.
+>
+> Day-8 candidates:
+> - Wire ANTHROPIC_API_KEY into /api/v1/concall/analyze (BLK-01)
+> - TheWrap Module 3/4/5 (Strategic Hire / Marquee Capital / Marketing Auth)
+> - Server-side persistence for Decision Logbook via Auth + DB (BLK-03/04)
+> - Or user uploads more company reports → port any new edge case fix
+>   into BOTH engine.ts AND page.tsx duplicate copies of buildReport.
