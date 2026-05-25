@@ -1242,10 +1242,10 @@ export default function HomeDashboard() {
         }
       });
 
-      // PATCH 0775 (extended) — Upcoming Earnings: fetch CURRENT + NEXT
-      // month, then prioritize CB ∪ Watchlist names first. Always set
-      // some value (empty array on full failure) so the loading spinner
-      // resolves even if both upstreams timeout.
+      // PATCH 0775 + 0841 — Upcoming Earnings: fetch CURRENT + NEXT
+      // month from /api/market/earnings, then prioritize CB ∪ Watchlist
+      // names first. P0841 adds graceful fallback + always-set-array so
+      // the panel is never stuck on stale empty state.
       (async () => {
         const now = new Date();
         const currentMonth = now.toISOString().slice(0, 7);
@@ -1255,25 +1255,22 @@ export default function HomeDashboard() {
         })();
         let aData: any = null;
         let bData: any = null;
+        let _aErr = ''; let _bErr = '';
         try {
           const [ra, rb] = await Promise.all([
-            // PATCH 0823: CDN cache now serves repeat requests instantly,
-            // so 28s budget is plenty. But still log if both fail so we can
-            // debug empty upcoming-earnings state.
             safeDiag<any>(`/api/market/earnings?market=india&month=${currentMonth}&_=${Date.now()}`, 28_000),
             safeDiag<any>(`/api/market/earnings?market=india&month=${nextMonth}&_=${Date.now()}`, 28_000),
           ]);
           aData = ra?.data; bData = rb?.data;
+          _aErr = String(ra?.error || ra?.status || '');
+          _bErr = String(rb?.error || rb?.status || '');
           if (!aData?.results?.length && !bData?.results?.length) {
-            // Both empty — log for diagnostic
             // eslint-disable-next-line no-console
-            console.warn('[upcoming-earnings] both months returned empty', {
-              currentMonth, nextMonth,
-              aErr: ra?.error || ra?.status,
-              bErr: rb?.error || rb?.status,
-            });
+            console.warn('[upcoming-earnings] both months empty:', { currentMonth, nextMonth, _aErr, _bErr });
           }
-        } catch {}
+        } catch (e: any) {
+          _aErr = e?.message || 'fetch-throw';
+        }
         if (cancelled) return;
         // PATCH 0823 — accept multiple response shapes (.results, .items, .rows, raw array)
         const flatten = (d: any): any[] => {
@@ -2642,6 +2639,11 @@ export default function HomeDashboard() {
                   {' '}or <Link href="/earnings-opportunities" style={{ color: '#F59E0B', textDecoration: 'none' }}>EO page →</Link>
                   {' '}to verify which days have filings.
                 </div>
+                {/* PATCH 0841 — manual retry button (full reload triggers cache-busted fetch) */}
+                <button onClick={() => { try { window.location.reload(); } catch {} }}
+                  style={{ marginTop: 8, padding: '4px 10px', fontSize: 10, background: 'transparent', color: '#22D3EE', border: '1px solid #22D3EE', borderRadius: 4, cursor: 'pointer' }}>
+                  ↻ Retry fetch
+                </button>
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
