@@ -504,14 +504,32 @@ async function fetchIndianDataWithCache() {
         // 100 largecap names every request so the top of the page is live
         // intraday. Smallcap/midcap continue to use blob EOD to stay within
         // Yahoo rate limits + Vercel maxDuration.
+        // PATCH 0814: top-500-by-turnover live refresh.
+        // P0813 only covered cap='Large' (100 names), which left ~2,200 smallcap
+        // names showing yesterday's BHAVCOPY close even when market was open.
+        // Now we sort by today's turnoverLacs and live-refresh the top 500 most
+        // liquid names — that captures both the largecap leaders AND the
+        // smallcap movers (LAXMIDENTL, RAMCOSYS, SPARC class) that drive the
+        // /movers page. 500 names ÷ 50/batch × 1.5s = ~15s, comfortably under
+        // the 60s Vercel budget.
         const marketOpen = isIndianMarketOpen();
         const pricedFromBlob = tickers.filter((t: any) => t.hasPrice && (t.price ?? 0) > 0);
-        const liveSymsLarge: string[] = marketOpen
-          ? tickers.filter((t: any) => (t.cap || '').toLowerCase() === 'large').map((t: any) => `${t.ticker}.NS`)
-          : [];
+        // Build live-refresh list: top 500 by turnoverLacs + ALL largecaps
+        // (so even no-volume largecaps like ITC during quiet hours stay live)
+        const liveSyms: string[] = [];
+        if (marketOpen) {
+          const topByTurnover = tickers
+            .slice()
+            .sort((a: any, b: any) => (b.turnoverLacs || 0) - (a.turnoverLacs || 0))
+            .slice(0, 500);
+          for (const t of topByTurnover) liveSyms.push(`${t.ticker}.NS`);
+          for (const t of tickers) {
+            if ((t.cap || '').toLowerCase() === 'large') liveSyms.push(`${t.ticker}.NS`);
+          }
+        }
         const unpricedSyms = tickers.filter((t: any) => !t.hasPrice).map((t: any) => `${t.ticker}.NS`);
         // Combine, dedupe, cap.
-        const yahooSymsSet = new Set<string>([...liveSymsLarge, ...unpricedSyms]);
+        const yahooSymsSet = new Set<string>([...liveSyms, ...unpricedSyms]);
         const yahooSyms = Array.from(yahooSymsSet);
         let yahooMap = new Map<string, any>();
         if (yahooSyms.length > 0) {
@@ -641,7 +659,7 @@ async function fetchIndianDataWithCache() {
               avgChange: mergedStocks.length ? mergedStocks.reduce((s: number, x: any) => s + (x.changePercent || 0), 0) / mergedStocks.length : 0,
               sectors: new Set(mergedStocks.map((s: any) => s.sector)).size,
             },
-            source: `NSE-universe (KV ${universeAgeStr}) + BHAVCOPY/${universeBlob.pricedCount || 0} + Yahoo ${marketOpen ? 'LIVE' : 'enrich'}/${yahooMap.size}${marketOpen ? ' (market open: largecaps live)' : ''}`,
+            source: `NSE-universe (KV ${universeAgeStr}) + BHAVCOPY/${universeBlob.pricedCount || 0} + Yahoo ${marketOpen ? 'LIVE' : 'enrich'}/${yahooMap.size}${marketOpen ? ' (top-500 + largecaps live)' : ''}`,
             updatedAt: new Date().toISOString(),
           };
         }
