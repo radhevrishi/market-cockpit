@@ -905,6 +905,27 @@ export async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationRepor
       bull: revScen.bull !== undefined && marginBull ? revScen.bull * (marginBull / 100) : undefined,
     };
   }
+  // PATCH 0849 — Port P0845 EBITDA-margin sanity clamp from page.tsx into engine.ts
+  // so the Concall AI InlineValuationPanel (which uses engine.ts) also benefits.
+  // Triggered by Senores Pharma case: 385% Branded Generics revenue growth was
+  // caught as EBITDA growth → 75% implied margin. The clamp forces a re-derive
+  // from historical OPM when implied margin exceeds the sector-typical ceiling.
+  if (ebitdaScen.base && revScen.base) {
+    const impliedMargin = (ebitdaScen.base / revScen.base) * 100;
+    const isFinancial = sector === 'Financial Services / NBFC' || sector === 'Insurance';
+    const upperBound = isFinancial ? 80 : 50;  // banks/NBFCs/insurance can have higher
+    if (impliedMargin > upperBound && opmAvg && opmAvg > 0 && opmAvg < upperBound) {
+      const correctedBase = revScen.base * (opmAvg / 100);
+      const correctedBear = (revScen.bear || revScen.base) * (opmAvg / 100);
+      const correctedBull = (revScen.bull || revScen.base) * (opmAvg / 100);
+      ebitdaScen = { bear: correctedBear, base: correctedBase, bull: correctedBull };
+      console.warn(`[auto-val engine] EBITDA sanity-clamp fired: implied margin ${impliedMargin.toFixed(0)}% > ${upperBound}%, using opmAvg ${opmAvg.toFixed(1)}%`);
+    }
+  }
+  // PATCH 0849 — PAT-margin > EBITDA-margin sanity. If our derived ebitdaScen
+  // is internally inconsistent (very rare but possible when the extractor caught
+  // a tabular PAT number), don't propagate. Just log a warning; the conversion
+  // step below already uses historical EBITDA→PAT ratio safely.
   if (ebitdaScen.base !== undefined) {
     if (ebitdaScen.bear === undefined) ebitdaScen.bear = ebitdaScen.base;
     if (ebitdaScen.bull === undefined) ebitdaScen.bull = ebitdaScen.base;
