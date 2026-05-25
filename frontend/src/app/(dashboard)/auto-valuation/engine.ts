@@ -863,6 +863,37 @@ export async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationRepor
     }
   }
 
+  // PATCH 0849 — Guidance vs historical sanity check. If extracted REVENUE
+  // guidance is > 10× latest sales OR < 0.2× latest sales for a 1-yr horizon,
+  // the extraction is almost certainly wrong (caught a different metric, market-
+  // research industry-size number, etc). Reject the guidance value and fall
+  // back to GROWTH-based or CAGR-based projection downstream.
+  const _latestSalesGuard = excelData?.latestSales || 0;
+  if (_latestSalesGuard > 0 && revScen.base !== undefined) {
+    const _maxPlausible = _latestSalesGuard * 10;  // 10× allows 5-yr peak guidance
+    const _minPlausible = _latestSalesGuard * 0.2; // 5× drop = catastrophic, almost certainly wrong
+    if (revScen.base > _maxPlausible || revScen.base < _minPlausible) {
+      console.warn(`[auto-val] Guidance sanity-clamp: REVENUE ₹${revScen.base.toFixed(0)} Cr implausible vs latest ₹${_latestSalesGuard.toFixed(0)} Cr — rejecting and falling back.`);
+      revScen = {};
+      forwardRevenue = undefined;
+    }
+  }
+  // Same plausibility check for EBITDA / PAT relative to latest values
+  if (excelData?.latestEBITDA && excelData.latestEBITDA > 0 && ebitdaScen.base !== undefined) {
+    if (ebitdaScen.base > excelData.latestEBITDA * 15 || ebitdaScen.base < excelData.latestEBITDA * 0.1) {
+      console.warn(`[auto-val] Guidance sanity-clamp: EBITDA ₹${ebitdaScen.base.toFixed(0)} Cr implausible vs latest ₹${excelData.latestEBITDA.toFixed(0)} Cr — rejecting.`);
+      ebitdaScen = {};
+      forwardEBITDA = undefined;
+    }
+  }
+  if (excelData?.latestPAT && excelData.latestPAT > 0 && patScen.base !== undefined) {
+    if (patScen.base > excelData.latestPAT * 20 || patScen.base < excelData.latestPAT * 0.05) {
+      console.warn(`[auto-val] Guidance sanity-clamp: PAT ₹${patScen.base.toFixed(0)} Cr implausible vs latest ₹${excelData.latestPAT.toFixed(0)} Cr — rejecting.`);
+      patScen = {};
+      forwardPAT = undefined;
+    }
+  }
+
   // PATCH 0653 — apply guided GROWTH% per scenario to latest sales when
   // no absolute revenue guidance was given. Each scenario picks the
   // corresponding growth bound.
