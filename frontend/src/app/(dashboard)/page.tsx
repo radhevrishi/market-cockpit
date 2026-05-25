@@ -1233,7 +1233,7 @@ export default function HomeDashboard() {
         // Tier 3: anything else (US/global)
         const tier3 = all.filter((a: any) => !inUniverse(a) && !isIndian(a));
 
-        const merged = [...tier1, ...tier2, ...tier3].slice(0, 25);  // PATCH 0863: was 8, user asked for 25 visible on home
+        const merged = [...tier1, ...tier2, ...tier3].slice(0, 30);  // PATCH 0864: bump 25 → 30 per user
         setData((d) => ({ ...d, signals: merged } as any));
       });
 
@@ -2537,7 +2537,7 @@ export default function HomeDashboard() {
                 if (a._inUniverse !== b._inUniverse) return a._inUniverse ? -1 : 1;
                 return 0;
               });
-              const SHOWN = 25;  // was 8 — fills the vertical space alongside Movers
+              const SHOWN = 30;  // PATCH 0864: bumped 25 → 30 per user
               const items = enriched.slice(0, SHOWN);
               return (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1, minHeight: 0 }}>
