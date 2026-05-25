@@ -59,6 +59,10 @@ export interface MoverInput {
   dayHigh?: number;
   dayLow?: number;
   price?: number;         // closing/current price
+  // PATCH 0861 — fields for multi-layer causal inference engine
+  pctOf52wHigh?: number;  // 0-100 — proximity to 52-week high
+  mom1M?: number;         // 1-month price momentum %
+  turnoverLacs?: number;  // today's traded value in lakhs
 }
 
 export interface FilingInput {
@@ -293,6 +297,308 @@ function buildSectorContext(
     }
   }
   return parts.join('; ');
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// PATCH 0861 — Multi-layer causal inference for non-trigger moves.
+// User critique: 'engine only works for structured triggers; for real
+// smallcap movers (operator circulation, peer sympathy, commodity
+// linkage, technical, delivery anomaly, float distortion, market
+// regime) it collapses everything to FLOW/ROTATE/Smallcap-unwind.'
+// Now: each Tier-4 mover runs through up to 7 inference layers; top 2-3
+// signals are fused into desk-commentary.
+// ════════════════════════════════════════════════════════════════════════
+
+// Industry/sector → commodity linkage map. Keyed by lowercase regex.
+const COMMODITY_LINK: Array<{ rx: RegExp; commodity: string; direction: 'POSITIVE_ON_UP' | 'NEGATIVE_ON_UP' | 'MIXED' }> = [
+  // Paints / specialty chemicals — crude is input
+  { rx: /paint|coating|adhesive/i, commodity: 'crude / titanium dioxide', direction: 'NEGATIVE_ON_UP' },
+  // Tyres — rubber + crude
+  { rx: /tyre|tire/i, commodity: 'natural rubber / crude', direction: 'NEGATIVE_ON_UP' },
+  // Airlines — crude jet fuel
+  { rx: /airline|aviation/i, commodity: 'crude / ATF', direction: 'NEGATIVE_ON_UP' },
+  // OMCs — refining cracks + crude (mixed direction)
+  { rx: /refiner|oil marketing|petroleum.*refin/i, commodity: 'crude cracks', direction: 'MIXED' },
+  // Cement — coal + pet-coke + diesel
+  { rx: /cement/i, commodity: 'coal / pet-coke', direction: 'NEGATIVE_ON_UP' },
+  // Sugar
+  { rx: /sugar/i, commodity: 'sugar / ethanol', direction: 'POSITIVE_ON_UP' },
+  // Aluminum producers
+  { rx: /aluminium|aluminum/i, commodity: 'LME aluminum', direction: 'POSITIVE_ON_UP' },
+  // Steel
+  { rx: /steel/i, commodity: 'iron ore / coking coal', direction: 'POSITIVE_ON_UP' },
+  // Copper
+  { rx: /copper/i, commodity: 'LME copper', direction: 'POSITIVE_ON_UP' },
+  // Power gen
+  { rx: /power generat|thermal power|hydroelec|coal-based power/i, commodity: 'coal / spot power', direction: 'POSITIVE_ON_UP' },
+  // Gas distribution
+  { rx: /city gas|gas distribut|CGD/i, commodity: 'gas spot price', direction: 'NEGATIVE_ON_UP' },
+  // Specialty chemicals — solvents/feedstock
+  { rx: /specialty chem|fine chem|agrochem/i, commodity: 'crude / xylene / methanol', direction: 'NEGATIVE_ON_UP' },
+  // Edible oils
+  { rx: /edible oil|FMCG.*oil|vanaspati/i, commodity: 'palm oil / soybean', direction: 'NEGATIVE_ON_UP' },
+  // Textiles
+  { rx: /textile|spinning|yarn/i, commodity: 'cotton', direction: 'NEGATIVE_ON_UP' },
+  // Pharma API
+  { rx: /\bAPI\b|active pharmaceutical|bulk drug/i, commodity: 'KSM solvents / China supply', direction: 'NEGATIVE_ON_UP' },
+];
+
+interface CausalSignal {
+  layer: number;
+  phrase: string;
+  weight: number;   // 0-100; higher = stronger evidence for the move
+}
+
+function inferCausalSignals(
+  m: MoverInput,
+  ctx: {
+    isUp: boolean;
+    sectorPct?: number;
+    indexPct?: number;
+    peerCountSameDir?: number;
+    peerTotal?: number;
+    friendlySector: string;
+    smallcap: boolean;
+    microcap: boolean;
+  }
+): CausalSignal[] {
+  const signals: CausalSignal[] = [];
+  const absPct = Math.abs(m.changePercent || 0);
+  const dlv = typeof m.deliveryPct === 'number' ? m.deliveryPct : null;
+  const vm = typeof m.volMultiple === 'number' ? m.volMultiple : null;
+  const hi52 = typeof m.pctOf52wHigh === 'number' ? m.pctOf52wHigh : null;
+  const mom = typeof m.mom1M === 'number' ? m.mom1M : null;
+
+  // ─── LAYER 2 — Peer sympathy ───
+  if (ctx.peerTotal && ctx.peerTotal >= 4 && (ctx.peerCountSameDir || 0) / ctx.peerTotal >= 0.5) {
+    const sec = ctx.friendlySector.toLowerCase();
+    if (ctx.isUp) {
+      signals.push({
+        layer: 2,
+        phrase: `move appears linked to continued strength across ${sec} names (${ctx.peerCountSameDir}/${ctx.peerTotal} peers ↑ >3%)`,
+        weight: Math.min(80, 40 + (ctx.peerCountSameDir || 0) * 3),
+      });
+    } else {
+      signals.push({
+        layer: 2,
+        phrase: `decline tracks broader weakness in ${sec} basket (${ctx.peerCountSameDir}/${ctx.peerTotal} peers ↓ >3%)`,
+        weight: Math.min(80, 40 + (ctx.peerCountSameDir || 0) * 3),
+      });
+    }
+  }
+
+  // ─── LAYER 3 — Commodity linkage ───
+  const sectorIndustry = `${m.industry || ''} ${m.sector || ''}`.toLowerCase();
+  for (const link of COMMODITY_LINK) {
+    if (link.rx.test(sectorIndustry)) {
+      const upWord = ctx.isUp ? 'rally' : 'decline';
+      if (link.direction === 'POSITIVE_ON_UP') {
+        signals.push({
+          layer: 3,
+          phrase: ctx.isUp
+            ? `${upWord} consistent with ${link.commodity} strength`
+            : `${upWord} may reflect ${link.commodity} weakness`,
+          weight: 50,
+        });
+      } else if (link.direction === 'NEGATIVE_ON_UP') {
+        signals.push({
+          layer: 3,
+          phrase: ctx.isUp
+            ? `${upWord} may reflect easing ${link.commodity} input pressure`
+            : `${upWord} likely tied to ${link.commodity}-linked margin concerns`,
+          weight: 50,
+        });
+      } else {
+        signals.push({
+          layer: 3,
+          phrase: `move may reflect shifting ${link.commodity} spread`,
+          weight: 40,
+        });
+      }
+      break; // first matching commodity wins
+    }
+  }
+
+  // ─── LAYER 4 — Technical triggers ───
+  if (hi52 !== null) {
+    if (ctx.isUp && hi52 >= 99 && absPct >= 5) {
+      signals.push({
+        layer: 4,
+        phrase: `breakout above 52-week high (price at ${hi52.toFixed(0)}% of range top)`,
+        weight: 70,
+      });
+    } else if (ctx.isUp && hi52 >= 90 && absPct >= 5) {
+      signals.push({
+        layer: 4,
+        phrase: `pressing toward 52-week high (${hi52.toFixed(0)}% of range top) — near-breakout setup`,
+        weight: 55,
+      });
+    } else if (!ctx.isUp && hi52 <= 25 && absPct >= 5) {
+      signals.push({
+        layer: 4,
+        phrase: `extended decline — price at ${hi52.toFixed(0)}% of 52w range`,
+        weight: 55,
+      });
+    } else if (!ctx.isUp && hi52 <= 60 && mom !== null && mom <= -10) {
+      signals.push({
+        layer: 4,
+        phrase: `continued breakdown from recent base (1m momentum ${mom.toFixed(0)}%)`,
+        weight: 50,
+      });
+    }
+  }
+  // Gap behavior
+  if (m.open && m.previousClose && m.price && m.dayHigh) {
+    const gapPct = ((m.open - m.previousClose) / m.previousClose) * 100;
+    if (gapPct > 2 && (m.dayHigh - m.price) / ((m.dayHigh - m.open) || 1) > 0.6) {
+      signals.push({
+        layer: 4,
+        phrase: `opened gap-up but closed off highs — early demand absorbed by profit-booking`,
+        weight: 60,
+      });
+    } else if (gapPct < -2 && m.dayLow && (m.price - m.dayLow) / ((m.dayHigh - m.dayLow) || 1) > 0.7) {
+      signals.push({
+        layer: 4,
+        phrase: `gap-down reclaimed intraday — buyers stepped in from session lows`,
+        weight: 55,
+      });
+    }
+  }
+
+  // ─── LAYER 6 — Delivery interpretation ───
+  if (dlv !== null && vm !== null) {
+    if (vm >= 5 && dlv <= 25) {
+      signals.push({
+        layer: 6,
+        phrase: `${vm.toFixed(1)}× volume with only ${dlv}% delivery — speculative intraday participation dominates`,
+        weight: 75,
+      });
+    } else if (vm >= 3 && dlv >= 55) {
+      signals.push({
+        layer: 6,
+        phrase: `${vm.toFixed(1)}× volume on ${dlv}% delivery — positional accumulation${ctx.isUp ? '' : '/distribution'} with conviction`,
+        weight: 75,
+      });
+    } else if (vm >= 3 && dlv <= 30) {
+      signals.push({
+        layer: 6,
+        phrase: `elevated volume (${vm.toFixed(1)}×) with weak ${dlv}% delivery — momentum chase`,
+        weight: 60,
+      });
+    } else if (dlv >= 60) {
+      signals.push({
+        layer: 6,
+        phrase: `${dlv}% delivery suggests positional ${ctx.isUp ? 'buying' : 'exits'} rather than intraday churn`,
+        weight: 55,
+      });
+    } else if (dlv <= 20) {
+      signals.push({
+        layer: 6,
+        phrase: `low ${dlv}% delivery flags speculative profile`,
+        weight: 45,
+      });
+    }
+  } else if (vm !== null && vm >= 4) {
+    signals.push({
+      layer: 6,
+      phrase: `${vm.toFixed(1)}× normal volume — institutional/HNI participation likely`,
+      weight: 50,
+    });
+  } else if (vm !== null && vm < 0.5 && absPct >= 7) {
+    signals.push({
+      layer: 6,
+      phrase: `sharp move on thin (${vm.toFixed(1)}×) volume — liquidity vacuum`,
+      weight: 70,
+    });
+  }
+
+  // ─── LAYER 7 — Float / liquidity dynamics ───
+  if (ctx.microcap && absPct >= 8) {
+    signals.push({
+      layer: 7,
+      phrase: `microcap structure amplifies move — thin float distorts price discovery`,
+      weight: 60,
+    });
+  } else if (ctx.smallcap && absPct >= 12 && (m.turnoverLacs || 0) > 0 && (m.turnoverLacs || 0) < 500) {
+    signals.push({
+      layer: 7,
+      phrase: `move disproportionate to ₹${(m.turnoverLacs! / 100).toFixed(0)} Cr turnover — limited liquidity tail`,
+      weight: 60,
+    });
+  }
+
+  // ─── LAYER 10 — Market regime ───
+  if (typeof ctx.indexPct === 'number') {
+    const idxAbs = Math.abs(ctx.indexPct);
+    if (ctx.isUp && ctx.indexPct >= 0.5 && absPct > idxAbs * 3) {
+      signals.push({
+        layer: 10,
+        phrase: `aided by broader risk-on tape (index ${fmtPct(ctx.indexPct)})`,
+        weight: 35,
+      });
+    } else if (!ctx.isUp && ctx.indexPct <= -0.5 && absPct > idxAbs * 2) {
+      signals.push({
+        layer: 10,
+        phrase: `pressure intensified by weak tape (index ${fmtPct(ctx.indexPct)})`,
+        weight: 35,
+      });
+    } else if (ctx.isUp && ctx.indexPct <= -0.2) {
+      signals.push({
+        layer: 10,
+        phrase: `relative strength stands out — index ${fmtPct(ctx.indexPct)}`,
+        weight: 45,
+      });
+    } else if (!ctx.isUp && ctx.indexPct >= 0.2) {
+      signals.push({
+        layer: 10,
+        phrase: `decline against rising tape (index ${fmtPct(ctx.indexPct)}) suggests stock-specific weakness`,
+        weight: 45,
+      });
+    }
+  }
+
+  // Sort by weight desc
+  signals.sort((a, b) => b.weight - a.weight);
+  return signals;
+}
+
+function fuseCausalNarrative(signals: CausalSignal[], isUp: boolean, smallcap: boolean, microcap: boolean): { label: string; detail: string; topLayer: number } {
+  if (signals.length === 0) {
+    // Honest fallback — no signal layers fired
+    return {
+      label: isUp ? 'No confirmed trigger' : 'No confirmed trigger',
+      detail: 'No filing/news catalyst detected; participation profile inconclusive',
+      topLayer: 0,
+    };
+  }
+  // Pick top signal for label; merge top 2-3 phrases for detail.
+  const top = signals[0];
+  const labelByLayer: Record<number, string> = {
+    2: isUp ? 'Peer-sympathy momentum' : 'Sector basket weakness',
+    3: 'Commodity-linked move',
+    4: isUp ? 'Technical breakout' : 'Technical breakdown',
+    6: top.phrase.includes('positional') ? (isUp ? 'Positional accumulation' : 'Long unwinding') :
+       top.phrase.includes('speculative') || top.phrase.includes('momentum chase') ? (isUp ? 'Speculative momentum' : 'Speculative unwind') :
+       top.phrase.includes('liquidity vacuum') ? 'Liquidity vacuum' :
+       (isUp ? 'Flow-driven move' : 'Position unwind'),
+    7: microcap ? (isUp ? 'Low-float momentum' : 'Microcap distribution') : (isUp ? 'Thin-liquidity expansion' : 'Thin-liquidity decline'),
+    10: isUp ? 'Tape-aided rally' : 'Tape-aided decline',
+  };
+  const label = labelByLayer[top.layer] || (isUp ? 'Flow-driven move' : 'Position unwind');
+  // Take top 2-3 phrases, dedupe by layer
+  const seen = new Set<number>();
+  const phrases: string[] = [];
+  for (const s of signals) {
+    if (seen.has(s.layer)) continue;
+    seen.add(s.layer);
+    phrases.push(s.phrase);
+    if (phrases.length >= 3) break;
+  }
+  return {
+    label,
+    detail: phrases.join('; '),
+    topLayer: top.layer,
+  };
 }
 
 export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttribution> {
@@ -596,112 +902,34 @@ export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttrib
     //
     // Industry chip on the home page already shows "Civil Construction" /
     // "Housing Finance Company" / etc, so we DON'T repeat it here.
-    // ── TIER 4: no confirmed trigger — INSTITUTIONAL-GRADE REASONING (P0860) ─
-    // Per user critique: stop emitting generic 'Smallcap unwind' / 'Broad
-    // participation' / 'Momentum burst' fallbacks. Use the available
-    // microstructure (delivery%, volume multiple, gap behavior, sector
-    // peer context) to write a desk-commentary-style 1-line reason.
-    //
-    // Hierarchy applied here (Levels 1-3 already handled by Tiers 1-3 above):
-    //   Level 4 — Microstructure interpretation
-    //     High volume + low delivery  → speculative intraday participation
-    //     High delivery + price expansion → positional/institutional buying
-    //     High delivery + decline → long unwinding with conviction
-    //     Low delivery + decline → speculative unwind
-    //     Gap up + weak close → profit-booking / failed breakout
-    //     Microcap + low float → low-float momentum / pump-risk
-    //     Lower-circuit + thin volume → liquidity vacuum
+    // ── TIER 4: no confirmed trigger — MULTI-LAYER CAUSAL INFERENCE (P0861) ──
+    // User critique: 'engine only works for structured triggers; for real
+    // smallcap movers, all causes collapse to FLOW/ROTATE/Smallcap-unwind.'
+    // Now: 7-layer inference (peer sympathy / commodity / technical /
+    // delivery / float / regime) + fused desk-commentary.
     const indGroup = (m.indexGroup || '').toLowerCase();
     const smallcap = indGroup === 'small' || indGroup === 'micro';
     const microcap = indGroup === 'micro';
     const isUp = direction === 'up';
-    const absPct = Math.abs(m.changePercent || 0);
     const dlv = typeof m.deliveryPct === 'number' ? m.deliveryPct : null;
     const vm = typeof m.volMultiple === 'number' ? m.volMultiple : null;
-    const lowDelivery = dlv !== null && dlv <= 30;
-    const highDelivery = dlv !== null && dlv >= 55;
-    const highVolume = vm !== null && vm >= 3;
-    const veryHighVolume = vm !== null && vm >= 6;
-    // Gap behavior — only when we have both previousClose and open
-    const gappedUp = m.open && m.previousClose && (m.open - m.previousClose) / m.previousClose > 0.02;
-    const gappedDown = m.open && m.previousClose && (m.previousClose - m.open) / m.previousClose > 0.02;
-    const weakClose = m.open && m.price && m.dayHigh && (m.dayHigh - m.price) / ((m.dayHigh - m.open) || 1) > 0.6;
-    const strongClose = m.open && m.price && m.dayLow && m.dayHigh && (m.price - m.dayLow) / ((m.dayHigh - m.dayLow) || 1) > 0.7;
-    const peerTotal = (peerStats?.up || 0) + (peerStats?.down || 0);
-    const peerAlignment = peerTotal > 0 ? peerCountSameDirection / peerTotal : 0;
-    const sectorInline = peerAlignment > 0.4 && peerTotal >= 4
-      ? ` — sector profile supports thematic flow (${peerCountSameDirection}/${peerTotal} peers ${isUp ? '↑' : '↓'} >3%)`
-      : '';
 
-    // Build the desk-commentary headline + detail.
-    let moveLabel = '';
-    let detailLead = '';
-    let confidenceNote = '';
-
-    if (isUp) {
-      if (veryHighVolume && lowDelivery) {
-        moveLabel = 'Speculative intraday participation';
-        detailLead = `${vm!.toFixed(1)}× volume with weak ${dlv}% delivery suggests momentum scalping rather than positional buying`;
-      } else if (veryHighVolume && highDelivery) {
-        moveLabel = 'Positional accumulation';
-        detailLead = `${vm!.toFixed(1)}× volume on ${dlv}% delivery — institutional/HNI positioning consistent with conviction buying`;
-      } else if (highVolume && highDelivery) {
-        moveLabel = 'Quality buying';
-        detailLead = `Volume expansion (${vm!.toFixed(1)}×) with strong ${dlv}% delivery suggests sustained accumulation`;
-      } else if (highVolume && lowDelivery) {
-        moveLabel = 'Momentum chase';
-        detailLead = `${vm!.toFixed(1)}× volume but only ${dlv}% delivery indicates intraday speculation`;
-      } else if (gappedUp && weakClose) {
-        moveLabel = 'Failed breakout';
-        detailLead = `Opened gap-up but closed weak — early demand absorbed by profit-booking`;
-      } else if (microcap && highVolume) {
-        moveLabel = 'Low-float momentum';
-        detailLead = `Microcap (${m.indexGroup}) with ${vm!.toFixed(1)}× volume — likely thin-float retail/speculative chase` + (lowDelivery ? `; ${dlv}% delivery confirms speculative profile` : '');
-      } else if (smallcap) {
-        moveLabel = 'Smallcap momentum extension';
-        detailLead = `No company-specific trigger detected; price action consistent with ${(friendlySector || 'smallcap').toLowerCase()} momentum extension`;
-        if (highDelivery) detailLead += ` (${dlv}% delivery quality, watchable)`;
-        else if (lowDelivery) detailLead += ` with weak ${dlv}% delivery, lower-confidence`;
-      } else {
-        moveLabel = 'No confirmed trigger';
-        detailLead = `No filing or news catalyst detected; participation profile inconclusive`;
-        if (dlv !== null) detailLead += ` (${dlv}% delivery)`;
-      }
-      confidenceNote = highDelivery ? 'positioning suggests conviction' : lowDelivery ? 'speculative profile reduces conviction' : '';
-    } else {  // declines
-      if (veryHighVolume && lowDelivery) {
-        moveLabel = 'Speculative unwind';
-        detailLead = `${vm!.toFixed(1)}× volume on weak ${dlv}% delivery — speculative intraday liquidation rather than institutional distribution`;
-      } else if (highVolume && highDelivery) {
-        moveLabel = 'Long unwinding';
-        detailLead = `Decline with ${vm!.toFixed(1)}× volume and ${dlv}% delivery suggests positional exits with conviction`;
-      } else if (highVolume && lowDelivery) {
-        moveLabel = 'Profit-taking';
-        detailLead = `Elevated volume (${vm!.toFixed(1)}×) with only ${dlv}% delivery indicates intraday churn / profit-booking`;
-      } else if (absPct >= 9 && (vm === null || vm < 0.5)) {
-        moveLabel = 'Liquidity vacuum';
-        detailLead = `Sharp decline on thin volume — likely circuit or one-sided book with no real distribution`;
-      } else if (microcap) {
-        moveLabel = 'Microcap distribution';
-        detailLead = `Microcap (${m.indexGroup}) decline${dlv !== null ? ` with ${dlv}% delivery` : ''} — verify before adding;` +
-          (lowDelivery ? ` weak delivery suggests speculative unwind` : ` quality of exit ambiguous`);
-      } else if (smallcap) {
-        moveLabel = 'Smallcap profit-taking';
-        detailLead = `No filing trigger; profile suggests profit-taking after recently active ${(friendlySector || 'smallcap').toLowerCase()} names`;
-        if (dlv !== null) detailLead += ` (${dlv}% delivery${lowDelivery ? ', limited institutional exit conviction' : ''})`;
-      } else {
-        moveLabel = 'No confirmed trigger';
-        detailLead = `No filing or news catalyst; decline likely position-led`;
-        if (dlv !== null) detailLead += ` (${dlv}% delivery)`;
-      }
-      confidenceNote = highDelivery ? 'delivery quality suggests genuine distribution' : '';
+    const causalSignals = inferCausalSignals(m, {
+      isUp,
+      sectorPct: sectorAgg?.avgChangePct,
+      indexPct: opts.indexAvgChangePct,
+      peerCountSameDir: peerCountSameDirection,
+      peerTotal: (peerStats?.up || 0) + (peerStats?.down || 0),
+      friendlySector,
+      smallcap,
+      microcap,
+    });
+    const fused = fuseCausalNarrative(causalSignals, isUp, smallcap, microcap);
+    let moveLabel = fused.label;
+    const subtitleParts: string[] = [fused.detail];
+    if (feedGap && causalSignals.length === 0) {
+      subtitleParts.push('available scans incomplete');
     }
-
-    // Compose subtitle: detailLead + sector context + (optional confidence note) + feed-gap caveat
-    const subtitleParts: string[] = [detailLead];
-    if (sectorInline) subtitleParts.push(sectorInline.replace(/^ — /, ''));
-    if (confidenceNote) subtitleParts.push(confidenceNote);
-    if (feedGap && (!dlv && !vm)) subtitleParts.push('available scans incomplete');
 
     out[sym] = {
       ticker: sym,

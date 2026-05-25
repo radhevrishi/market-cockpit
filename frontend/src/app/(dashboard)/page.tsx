@@ -745,6 +745,10 @@ export default function HomeDashboard() {
           dayHigh: m.dayHigh,
           dayLow: m.dayLow,
           price: m.price,
+          // PATCH 0861 — extra fields for causal inference layers
+          pctOf52wHigh: m.pctOf52wHigh,
+          mom1M: m.mom1M,
+          turnoverLacs: m.turnoverLacs,
         })).filter((m) => m.ticker);
         const moverTickers = moverInputs.map((m) => m.ticker);
         if (moverTickers.length > 0) {
