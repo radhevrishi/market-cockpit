@@ -480,63 +480,166 @@ async function fetchIndianDataWithCache() {
   if (stocks.length < 100) {
     try {
       const universeBlob = await kvGet<any>('nse-ticker-universe:v1:latest');
-      const tickers: Array<{ ticker: string; company: string; industry: string; cap: string }> = universeBlob?.tickers || [];
+      const tickers: Array<any> = universeBlob?.tickers || [];
+      // PATCH 0798 — also read rolling-stats blob for vol20D/mom1M/52w% enrichment.
+      // Optional — engine degrades gracefully if blob missing or stale.
+      const rollingBlob = await kvGet<any>('nse-rolling-stats:v1:latest').catch(() => null);
+      const rollingStats: Record<string, any> = rollingBlob?.stats || {};
+      // PATCH 0800 — fundamentals are stored per-ticker (not a single blob).
+      // We DON'T pre-fetch all 2000 here — too many KV reads. Instead the
+      // ticker payload includes a hasFundamentals flag, and downstream
+      // consumers (home page client, stock-sheet) can fetch the per-ticker
+      // key on demand for the few rows they care about.
       if (tickers.length >= 100) {
         const universeAgeMs = Date.now() - new Date(universeBlob?.generatedAt || 0).getTime();
         const universeAgeStr = `${Math.round(universeAgeMs / 60_000)}m old`;
-        // Fetch prices for the entire universe via Yahoo (in batches handled by fetchQuotesWithFallback)
-        const yahooSyms = tickers.map(t => `${t.ticker}.NS`);
-        const quotes = await fetchQuotesWithFallback(yahooSyms);
-        const quoteMap = new Map<string, any>();
-        for (const q of quotes) {
-          const raw = (q?.symbol || '').replace(/\.(NS|BO)$/i, '').toUpperCase();
-          if (raw) quoteMap.set(raw, q);
+        // PATCH 0790 — KV blob now carries EOD prices (BHAVCOPY). Use those
+        // directly; skip Yahoo entirely. Yahoo enrichment only fires for
+        // tickers without embedded prices (rare, ~0 after BHAVCOPY phase
+        // runs successfully).
+        // PATCH 0812 — during Indian market hours, the BHAVCOPY price in the
+        // blob is yesterday's close (T-1). Force Yahoo enrichment for the
+        // 100 largecap names every request so the top of the page is live
+        // intraday. Smallcap/midcap continue to use blob EOD to stay within
+        // Yahoo rate limits + Vercel maxDuration.
+        // PATCH 0815: ALWAYS prefer Yahoo over embedded BHAVCOPY (restores
+        // pre-P0790 'perfect 7 days ago' behavior). The embedded BHAVCOPY
+        // price is yesterday's close; during market hours Yahoo is fresh.
+        // Outside market hours Yahoo serves the same close — same data,
+        // just normalized. The price-resolution loop below prefers Yahoo
+        // when present, BHAVCOPY otherwise — so this is safe.
+        //
+        // Top-500-by-turnover + all largecaps gets us comprehensive coverage
+        // of every name on /movers, within Vercel's 60s budget.
+        const pricedFromBlob = tickers.filter((t: any) => t.hasPrice && (t.price ?? 0) > 0);
+        const topByTurnover = tickers
+          .slice()
+          .sort((a: any, b: any) => (b.turnoverLacs || 0) - (a.turnoverLacs || 0))
+          .slice(0, 500);
+        const liveSyms: string[] = topByTurnover.map((t: any) => `${t.ticker}.NS`);
+        for (const t of tickers) {
+          if ((t.cap || '').toLowerCase() === 'large') liveSyms.push(`${t.ticker}.NS`);
         }
+        const unpricedSyms = tickers.filter((t: any) => !t.hasPrice).map((t: any) => `${t.ticker}.NS`);
+        // Combine, dedupe, cap.
+        const yahooSymsSet = new Set<string>([...liveSyms, ...unpricedSyms]);
+        const yahooSyms = Array.from(yahooSymsSet);
+        let yahooMap = new Map<string, any>();
+        if (yahooSyms.length > 0) {
+          // PATCH 0791/0812: Yahoo enrichment for unpriced + live-largecap.
+          // At CONC=4 × ~25 batches × 1.5s = ~40s for 100 largecaps;
+          // total budget bounded by Vercel maxDuration=60s.
+          const cap = Math.min(yahooSyms.length, 1500);
+          try {
+            const quotes = await fetchQuotesWithFallback(yahooSyms.slice(0, cap));
+            for (const q of quotes) {
+              const raw = (q?.symbol || '').replace(/\.(NS|BO)$/i, '').toUpperCase();
+              if (raw) yahooMap.set(raw, q);
+            }
+          } catch { /* Yahoo failure tolerated — we have blob prices */ }
+        }
+
         const mergedStocks: any[] = [];
         for (const t of tickers) {
-          const q = quoteMap.get(t.ticker);
-          if (!q || !(q.regularMarketPrice > 0)) continue;
-          const price = q.regularMarketPrice || 0;
-          const prevClose = q.regularMarketPreviousClose || 0;
-          const reportedChg = Number.isFinite(q.regularMarketChange) ? q.regularMarketChange : 0;
-          const reportedPct = Number.isFinite(q.regularMarketChangePercent) ? q.regularMarketChangePercent : 0;
-          const computedChg = (price > 0 && prevClose > 0) ? (price - prevClose) : 0;
-          const computedPct = (price > 0 && prevClose > 0) ? ((price - prevClose) / prevClose) * 100 : 0;
-          const change = reportedChg !== 0 ? reportedChg : computedChg;
-          const changePercent = reportedPct !== 0 ? reportedPct : computedPct;
+          let price = 0, prevClose = 0, change = 0, changePercent = 0;
+          let volume = 0, marketCap = 0, open = 0, dayHigh = 0, dayLow = 0, yearHigh = 0, yearLow = 0;
+          let companyFromYahoo = '';
+
+          // PATCH 0815 — ALWAYS prefer Yahoo when present (live during
+          // market hours, T-1 close otherwise — both fresher than blob).
+          const liveQ = yahooMap.get(t.ticker);
+          if (liveQ && liveQ.regularMarketPrice > 0) {
+            // Live intraday from Yahoo during market hours
+            price = liveQ.regularMarketPrice || 0;
+            prevClose = liveQ.regularMarketPreviousClose || t.previousClose || 0;
+            const reportedChg = Number.isFinite(liveQ.regularMarketChange) ? liveQ.regularMarketChange : 0;
+            const reportedPct = Number.isFinite(liveQ.regularMarketChangePercent) ? liveQ.regularMarketChangePercent : 0;
+            const computedChg = (price > 0 && prevClose > 0) ? (price - prevClose) : 0;
+            const computedPct = (price > 0 && prevClose > 0) ? ((price - prevClose) / prevClose) * 100 : 0;
+            change = reportedChg !== 0 ? reportedChg : computedChg;
+            changePercent = reportedPct !== 0 ? reportedPct : computedPct;
+            volume = liveQ.regularMarketVolume || t.volume || 0;
+            marketCap = liveQ.marketCap || 0;
+            open = liveQ.regularMarketOpen || t.open || 0;
+            dayHigh = liveQ.regularMarketDayHigh || t.dayHigh || 0;
+            dayLow = liveQ.regularMarketDayLow || t.dayLow || 0;
+            yearHigh = liveQ.fiftyTwoWeekHigh || 0;
+            yearLow = liveQ.fiftyTwoWeekLow || 0;
+            companyFromYahoo = liveQ.shortName || '';
+          } else if (t.hasPrice && (t.price ?? 0) > 0) {
+            // EOD from BHAVCOPY (canonical NSE source) — when market closed
+            price = t.price;
+            prevClose = t.previousClose || 0;
+            change = t.change || 0;
+            changePercent = t.changePercent || 0;
+            volume = t.volume || 0;
+            open = t.open || 0;
+            dayHigh = t.dayHigh || 0;
+            dayLow = t.dayLow || 0;
+          } else {
+            // Yahoo enrichment for missing prices
+            const q = yahooMap.get(t.ticker);
+            if (!q || !(q.regularMarketPrice > 0)) continue;
+            price = q.regularMarketPrice || 0;
+            prevClose = q.regularMarketPreviousClose || 0;
+            const reportedChg = Number.isFinite(q.regularMarketChange) ? q.regularMarketChange : 0;
+            const reportedPct = Number.isFinite(q.regularMarketChangePercent) ? q.regularMarketChangePercent : 0;
+            const computedChg = (price > 0 && prevClose > 0) ? (price - prevClose) : 0;
+            const computedPct = (price > 0 && prevClose > 0) ? ((price - prevClose) / prevClose) * 100 : 0;
+            change = reportedChg !== 0 ? reportedChg : computedChg;
+            changePercent = reportedPct !== 0 ? reportedPct : computedPct;
+            volume = q.regularMarketVolume || 0;
+            marketCap = q.marketCap || 0;
+            open = q.regularMarketOpen || 0;
+            dayHigh = q.regularMarketDayHigh || 0;
+            dayLow = q.regularMarketDayLow || 0;
+            yearHigh = q.fiftyTwoWeekHigh || 0;
+            yearLow = q.fiftyTwoWeekLow || 0;
+            companyFromYahoo = q.shortName || '';
+          }
+
           const sector = sectorMap[t.ticker] || normalizeSector(t.industry || '') || NIFTY50_SECTORS[t.ticker] || 'Other';
-          // PATCH 0789 — derive cap from Yahoo marketCap when blob has 'Other'
-          // (non-indexed names from EQUITY_L master list). Thresholds in ₹ crores:
-          //   >50,000 Cr Large · >15,000 Cr Mid · >2,000 Cr Small · else Micro
-          // q.marketCap is in INR (not Cr); divide by 10^7 to get crores.
+          // Cap derivation: index-canonical first; for 'Other' use mcap if available
           let cap = t.cap;
           if (cap === 'Other' || !cap) {
-            const mcapCr = q.marketCap ? q.marketCap / 1e7 : 0;
+            const mcapCr = marketCap ? marketCap / 1e7 : 0;
             if (mcapCr > 50_000)      cap = 'Large';
             else if (mcapCr > 15_000) cap = 'Mid';
             else if (mcapCr > 2_000)  cap = 'Small';
             else                       cap = 'Micro';
           }
+          // PATCH 0798: merge rolling stats if available
+          const rs = rollingStats[t.ticker];
           mergedStocks.push({
             ticker: t.ticker,
-            company: t.company || q.shortName || t.ticker,
+            company: t.company || companyFromYahoo || t.ticker,
             sector,
             industry: t.industry || '',
             price,
             change,
             changePercent,
-            volume: q.regularMarketVolume || 0,
-            marketCap: q.marketCap || 0,
+            volume,
+            marketCap,
             previousClose: prevClose,
-            open: q.regularMarketOpen || 0,
-            dayHigh: q.regularMarketDayHigh || 0,
-            dayLow: q.regularMarketDayLow || 0,
-            yearHigh: q.fiftyTwoWeekHigh || 0,
-            yearLow: q.fiftyTwoWeekLow || 0,
+            open,
+            dayHigh,
+            dayLow,
+            yearHigh: yearHigh || rs?.high52w || 0,
+            yearLow: yearLow || rs?.low52w || 0,
             indexGroup: cap,
+            // PATCH 0797: delivery + turnover
+            deliveryPct: (t as any).deliveryPct ?? null,
+            turnoverLacs: (t as any).turnoverLacs ?? 0,
+            // PATCH 0798: rolling stats (null when blob not yet populated)
+            vol20DAvg: rs?.vol20DAvg ?? null,
+            volMultiple: rs?.volMultiple ?? null,
+            mom1M: rs?.mom1M ?? null,
+            pctOf52wHigh: rs?.pctOf52wHigh ?? null,
           });
         }
-        if (mergedStocks.length >= 100) {
+        // Lower threshold from 100 to 30 — partial result is better than NIFTY-50
+        // last-resort which is also Yahoo-dependent.
+        if (mergedStocks.length >= 30) {
           const gainers = [...mergedStocks].sort((a, b) => b.changePercent - a.changePercent).filter((s: any) => s.changePercent > 0).slice(0, 30);
           const losers  = [...mergedStocks].sort((a, b) => a.changePercent - b.changePercent).filter((s: any) => s.changePercent < 0).slice(0, 30);
           return {
@@ -550,7 +653,7 @@ async function fetchIndianDataWithCache() {
               avgChange: mergedStocks.length ? mergedStocks.reduce((s: number, x: any) => s + (x.changePercent || 0), 0) / mergedStocks.length : 0,
               sectors: new Set(mergedStocks.map((s: any) => s.sector)).size,
             },
-            source: `NSE-universe (KV ${universeAgeStr}) + Yahoo prices`,
+            source: `NSE-universe (KV ${universeAgeStr}) + BHAVCOPY/${universeBlob.pricedCount || 0} + Yahoo/${yahooMap.size} (top-500 + largecaps preferred over EOD)`,
             updatedAt: new Date().toISOString(),
           };
         }
