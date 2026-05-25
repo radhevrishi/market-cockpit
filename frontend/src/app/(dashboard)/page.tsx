@@ -811,7 +811,7 @@ export default function HomeDashboard() {
 
             const [feedRes, ssRes, ...gradedResults] = await Promise.all([
               safeDiag<any>('/api/v1/concall-intel/live-feed?days=14&bullishOnly=false&cacheOnly=1', 5_000),
-              safeDiag<any>('/api/v1/special-situations', 12_000),
+              safeDiag<any>('/api/v1/special-situations/feed', 12_000),  // PATCH 0823 — was /api/v1/special-situations (404)
               ...recentDates.map((d) => safeDiag<any>(`/api/v1/earnings/graded?date=${d}`, 12_000)),
             ]);
             if (cancelled) return;
@@ -1220,13 +1220,31 @@ export default function HomeDashboard() {
         let bData: any = null;
         try {
           const [ra, rb] = await Promise.all([
+            // PATCH 0823: CDN cache now serves repeat requests instantly,
+            // so 28s budget is plenty. But still log if both fail so we can
+            // debug empty upcoming-earnings state.
             safeDiag<any>(`/api/market/earnings?market=india&month=${currentMonth}&_=${Date.now()}`, 28_000),
             safeDiag<any>(`/api/market/earnings?market=india&month=${nextMonth}&_=${Date.now()}`, 28_000),
           ]);
           aData = ra?.data; bData = rb?.data;
+          if (!aData?.results?.length && !bData?.results?.length) {
+            // Both empty — log for diagnostic
+            // eslint-disable-next-line no-console
+            console.warn('[upcoming-earnings] both months returned empty', {
+              currentMonth, nextMonth,
+              aErr: ra?.error || ra?.status,
+              bErr: rb?.error || rb?.status,
+            });
+          }
         } catch {}
         if (cancelled) return;
-        const all = [...((aData?.results || []) as any[]), ...((bData?.results || []) as any[])];
+        // PATCH 0823 — accept multiple response shapes (.results, .items, .rows, raw array)
+        const flatten = (d: any): any[] => {
+          if (!d) return [];
+          if (Array.isArray(d)) return d;
+          return d.results || d.items || d.rows || d.data?.results || [];
+        };
+        const all = [...flatten(aData), ...flatten(bData)];
         const today = new Date(); today.setHours(0, 0, 0, 0);
         const window = new Date(today); window.setDate(today.getDate() + 7);
         const cbSet = (() => { try { return getConvictionTickers(); } catch { return new Set<string>(); } })();
