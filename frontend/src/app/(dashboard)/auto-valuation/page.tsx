@@ -736,7 +736,12 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
 
   // Step 1: ensure revScen has bear/base/bull populated.
   if (!revScen.base && latestSales > 0 && excelData?.salesCagr5y && excelData.salesCagr5y > 0) {
-    const v = latestSales * Math.pow(1 + excelData.salesCagr5y / 100, yearsAhead);
+    // PATCH 0845 — clamp historical CAGR to a sane upper bound. IPO stubs
+    // (1-2 years of history with a tiny pre-IPO base) produce 100-300% CAGR
+    // that's purely a data artifact. Senores Pharma case: 158% CAGR →
+    // 158% blind extrapolation. Cap at 50% (still aggressive but defensible).
+    const cagr = Math.min(excelData.salesCagr5y, 50);
+    const v = latestSales * Math.pow(1 + cagr / 100, yearsAhead);
     revScen = { bear: v, base: v, bull: v };
     if (!forwardYear) forwardYear = 'FY27 (projected)';
   }
@@ -759,6 +764,23 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
       base: revScen.base * (marginBase / 100),
       bull: revScen.bull !== undefined && marginBull ? revScen.bull * (marginBull / 100) : undefined,
     };
+  }
+  // PATCH 0845 — Sanity clamp on EBITDA projection. If implied margin
+  // (ebitda/revenue) exceeds 50% for non-Financial sectors, the extractor
+  // likely grabbed a wrong number (e.g. revenue-growth % tagged as
+  // EBITDA growth). Senores case: 385% Branded Generics revenue growth
+  // got applied to EBITDA → 75% implied margin. Override with opmAvg.
+  if (ebitdaScen.base && revScen.base) {
+    const impliedMargin = (ebitdaScen.base / revScen.base) * 100;
+    const isFinancial = sector === 'Financial Services / NBFC';
+    const upperBound = isFinancial ? 80 : 50;  // banks/NBFCs can have higher
+    if (impliedMargin > upperBound && opmAvg && opmAvg > 0 && opmAvg < upperBound) {
+      const correctedBase = revScen.base * (opmAvg / 100);
+      const correctedBear = (revScen.bear || revScen.base) * (opmAvg / 100);
+      const correctedBull = (revScen.bull || revScen.base) * (opmAvg / 100);
+      ebitdaScen = { bear: correctedBear, base: correctedBase, bull: correctedBull };
+      console.warn(`[auto-val] EBITDA sanity-clamp fired: implied margin ${impliedMargin.toFixed(0)}% > ${upperBound}%, using opmAvg ${opmAvg.toFixed(1)}%`);
+    }
   }
   if (ebitdaScen.base !== undefined) {
     if (ebitdaScen.bear === undefined) ebitdaScen.bear = ebitdaScen.base;
