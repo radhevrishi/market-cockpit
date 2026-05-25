@@ -24,7 +24,7 @@ const COLOR: Record<string, string> = {
 };
 
 export default function SystemStatusPage() {
-  const [data, setData] = useState<{ summary: any; probes: ProbeResult[]; generated_at: string } | null>(null);
+  const [data, setData] = useState<{ summary: any; probes: ProbeResult[]; generated_at: string; signalsVersions?: any } | null>(null);
   const [loading, setLoading] = useState(true);
   const [updatedAt, setUpdatedAt] = useState<number>(0);
 
@@ -84,6 +84,32 @@ export default function SystemStatusPage() {
           );
         })}
       </div>
+
+      {/* PATCH 0853 — Signals compute/filter/universe version stamps */}
+      {data.signalsVersions && (
+        <div style={{ marginBottom: 22, padding: '10px 14px', background: '#0D1623', border: '1px solid #1A2540', borderRadius: 6 }}>
+          <div style={{ fontSize: 10, color: '#94A3B8', fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 6 }}>
+            Signals build stamp
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, fontSize: 12, color: '#E2E8F0', fontFamily: 'ui-monospace, monospace' }}>
+            <span><span style={{ color: '#94A3B8' }}>compute:</span> <b>v{data.signalsVersions.computeVersion}</b></span>
+            <span><span style={{ color: '#94A3B8' }}>filter:</span> <b>v{data.signalsVersions.filterVersion}</b></span>
+            <span><span style={{ color: '#94A3B8' }}>universe:</span> <b>{data.signalsVersions.universeVersion}</b></span>
+            <span><span style={{ color: '#94A3B8' }}>last compute:</span> <b style={{ color: typeof data.signalsVersions.computedAgeMin === 'number' && data.signalsVersions.computedAgeMin > 60 ? '#EF4444' : '#10B981' }}>
+              {data.signalsVersions.computedAgeMin == null ? '—' : `${data.signalsVersions.computedAgeMin}m ago`}
+            </b></span>
+            <span><span style={{ color: '#94A3B8' }}>signals:</span> <b>{data.signalsVersions.signalCount}</b></span>
+            {data.signalsVersions.signalHashShort && (
+              <span><span style={{ color: '#94A3B8' }}>hash:</span> <b>{data.signalsVersions.signalHashShort}</b></span>
+            )}
+          </div>
+          {typeof data.signalsVersions.computedAgeMin === 'number' && data.signalsVersions.computedAgeMin > 60 && (
+            <div style={{ marginTop: 8, fontSize: 11, color: '#F59E0B' }}>
+              ⚠ Last compute is older than 1 hour — cron may have stalled. Try <code style={{ background: '#1A2540', padding: '1px 4px', borderRadius: 2 }}>/api/market/intelligence/compute?clearLock=1</code>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Probes by category */}
       {Object.entries(byCategory).map(([cat, probes]) => (

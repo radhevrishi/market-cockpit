@@ -70,9 +70,32 @@ export async function GET(request: Request) {
     empty: results.filter(r => r.status === 'EMPTY').length,
     down: results.filter(r => r.status === 'DOWN').length,
   };
+  // PATCH 0853 — Surface Signals compute/filter/universe version stamps
+  // and last-compute age so the dashboard tells you AT A GLANCE whether
+  // the latest deploy is live, the cron has fired since deploy, and the
+  // universe blob is fresh.
+  let signalsVersions: any = undefined;
+  try {
+    const { kvGet } = await import('@/lib/kv');
+    const meta = await kvGet<any>('intelligence:meta');
+    if (meta) {
+      const ageMs = meta.computedAt ? (Date.now() - new Date(meta.computedAt).getTime()) : Infinity;
+      const ageMin = Number.isFinite(ageMs) ? Math.round(ageMs / 60000) : null;
+      signalsVersions = {
+        computeVersion: meta.computeVersion || 'pre-0853',
+        filterVersion:  meta.filterVersion  || 'pre-0853',
+        universeVersion: meta.universeVersion || 'unknown',
+        computedAt: meta.computedAt || null,
+        computedAgeMin: ageMin,
+        signalCount: meta.signalCount ?? 0,
+        signalHashShort: meta.signalHash ? String(meta.signalHash).slice(0, 16) : null,
+      };
+    }
+  } catch {}
   return NextResponse.json({
     generated_at: new Date().toISOString(),
     summary,
+    signalsVersions,
     probes: results,
   }, { headers: { 'Cache-Control': 's-maxage=60, stale-while-revalidate=300' } });
 }

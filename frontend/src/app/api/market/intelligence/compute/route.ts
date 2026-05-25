@@ -21,6 +21,12 @@ import { kvGet, kvSet, kvSetNX, kvSwap, kvDel } from '@/lib/kv';
 
 const LOCK_KEY = 'lock:intelligence:compute';
 const LOCK_TTL = 120; // 2 minutes (short — Vercel may kill function without running finally block)
+// PATCH 0853 — Compute/filter/universe version stamps. Bump these when the
+// compute logic, filter logic, or universe blob materially changes so the
+// /status page can show "compute v848 · filter v847 · universe 05-25"
+// and stale-data issues become deterministic to debug.
+const COMPUTE_VERSION = '0853';  // bump when computeMaterialityScore / MVT / theme-gate logic changes
+const FILTER_VERSION = '0853';   // bump when stripJunkResponse / largecap set / theme dedup changes
 const TEMP_SIGNALS_KEY = 'intelligence:signals:temp';
 const PROD_SIGNALS_KEY = 'intelligence:signals';
 const META_KEY = 'intelligence:meta';
@@ -5529,12 +5535,23 @@ async function runLockedCompute(watchlist: string[], portfolio: string[]): Promi
       .join('|');
     const version = Array.from(signalHash).reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0);
 
+    // PATCH 0853 — Read universe blob age + lock the version stamps
+    let universeVersion = 'unknown';
+    try {
+      const universeBlob: any = await kvGet('nse-ticker-universe:v1:latest');
+      if (universeBlob?.generatedAt) universeVersion = String(universeBlob.generatedAt).slice(0, 10);
+      else if (universeBlob?._meta?.generatedAt) universeVersion = String(universeBlob._meta.generatedAt).slice(0, 10);
+    } catch {}
     await kvSet(META_KEY, {
       computedAt: new Date().toISOString(),
       signalCount: response.signals.length,
       version,
       signalHash,
       ttl: STORE_TTL,
+      // PATCH 0853 — version stamps for /status page
+      computeVersion: COMPUTE_VERSION,
+      filterVersion: FILTER_VERSION,
+      universeVersion,
     }, STORE_TTL);
 
     const totalStored = (response.signals?.length || 0) + (response.observations?.length || 0);
