@@ -3,6 +3,8 @@ import { fetchNifty50, fetchNiftyNext50, fetchNifty500, fetchNifty200, fetchNift
 import { fetchQuotesWithFallback, US_TOP } from '@/lib/yahoo';
 // PATCH 0782 — KV blob primary source (populated by GH Actions scraper).
 import { kvGet } from '@/lib/kv';
+// PATCH 0812 — during market hours we want live Yahoo prices, not EOD blob.
+import { isIndianMarketOpen } from '@/lib/market-hours';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // PATCH 0789 — Yahoo bulk for ~2000 tickers (NSE master) needs up to 60s
@@ -497,19 +499,28 @@ async function fetchIndianDataWithCache() {
         // directly; skip Yahoo entirely. Yahoo enrichment only fires for
         // tickers without embedded prices (rare, ~0 after BHAVCOPY phase
         // runs successfully).
+        // PATCH 0812 — during Indian market hours, the BHAVCOPY price in the
+        // blob is yesterday's close (T-1). Force Yahoo enrichment for the
+        // 100 largecap names every request so the top of the page is live
+        // intraday. Smallcap/midcap continue to use blob EOD to stay within
+        // Yahoo rate limits + Vercel maxDuration.
+        const marketOpen = isIndianMarketOpen();
         const pricedFromBlob = tickers.filter((t: any) => t.hasPrice && (t.price ?? 0) > 0);
+        const liveSymsLarge: string[] = marketOpen
+          ? tickers.filter((t: any) => (t.cap || '').toLowerCase() === 'large').map((t: any) => `${t.ticker}.NS`)
+          : [];
         const unpricedSyms = tickers.filter((t: any) => !t.hasPrice).map((t: any) => `${t.ticker}.NS`);
+        // Combine, dedupe, cap.
+        const yahooSymsSet = new Set<string>([...liveSymsLarge, ...unpricedSyms]);
+        const yahooSyms = Array.from(yahooSymsSet);
         let yahooMap = new Map<string, any>();
-        if (unpricedSyms.length > 0) {
-          // PATCH 0791: Yahoo enrichment for ALL unpriced tickers (was capped at
-          // 800). With BHAVCOPY giving ~1100 prices, ~1050 unpriced names need
-          // Yahoo. At CONC=4 × 53 batches × 1.5s = ~80s — bumped Vercel
-          // maxDuration to 60s; if it exceeds we still return blob-priced rows.
-          // The maxDuration timeout interrupts cleanly; we just won't enrich
-          // the laggards.
-          const cap = Math.min(unpricedSyms.length, 1500);
+        if (yahooSyms.length > 0) {
+          // PATCH 0791/0812: Yahoo enrichment for unpriced + live-largecap.
+          // At CONC=4 × ~25 batches × 1.5s = ~40s for 100 largecaps;
+          // total budget bounded by Vercel maxDuration=60s.
+          const cap = Math.min(yahooSyms.length, 1500);
           try {
-            const quotes = await fetchQuotesWithFallback(unpricedSyms.slice(0, cap));
+            const quotes = await fetchQuotesWithFallback(yahooSyms.slice(0, cap));
             for (const q of quotes) {
               const raw = (q?.symbol || '').replace(/\.(NS|BO)$/i, '').toUpperCase();
               if (raw) yahooMap.set(raw, q);
@@ -523,8 +534,28 @@ async function fetchIndianDataWithCache() {
           let volume = 0, marketCap = 0, open = 0, dayHigh = 0, dayLow = 0, yearHigh = 0, yearLow = 0;
           let companyFromYahoo = '';
 
-          if (t.hasPrice && (t.price ?? 0) > 0) {
-            // EOD from BHAVCOPY (canonical NSE source)
+          // PATCH 0812 — prefer LIVE Yahoo over blob EOD when market open
+          const liveQ = marketOpen ? yahooMap.get(t.ticker) : null;
+          if (liveQ && liveQ.regularMarketPrice > 0) {
+            // Live intraday from Yahoo during market hours
+            price = liveQ.regularMarketPrice || 0;
+            prevClose = liveQ.regularMarketPreviousClose || t.previousClose || 0;
+            const reportedChg = Number.isFinite(liveQ.regularMarketChange) ? liveQ.regularMarketChange : 0;
+            const reportedPct = Number.isFinite(liveQ.regularMarketChangePercent) ? liveQ.regularMarketChangePercent : 0;
+            const computedChg = (price > 0 && prevClose > 0) ? (price - prevClose) : 0;
+            const computedPct = (price > 0 && prevClose > 0) ? ((price - prevClose) / prevClose) * 100 : 0;
+            change = reportedChg !== 0 ? reportedChg : computedChg;
+            changePercent = reportedPct !== 0 ? reportedPct : computedPct;
+            volume = liveQ.regularMarketVolume || t.volume || 0;
+            marketCap = liveQ.marketCap || 0;
+            open = liveQ.regularMarketOpen || t.open || 0;
+            dayHigh = liveQ.regularMarketDayHigh || t.dayHigh || 0;
+            dayLow = liveQ.regularMarketDayLow || t.dayLow || 0;
+            yearHigh = liveQ.fiftyTwoWeekHigh || 0;
+            yearLow = liveQ.fiftyTwoWeekLow || 0;
+            companyFromYahoo = liveQ.shortName || '';
+          } else if (t.hasPrice && (t.price ?? 0) > 0) {
+            // EOD from BHAVCOPY (canonical NSE source) — when market closed
             price = t.price;
             prevClose = t.previousClose || 0;
             change = t.change || 0;
@@ -610,7 +641,7 @@ async function fetchIndianDataWithCache() {
               avgChange: mergedStocks.length ? mergedStocks.reduce((s: number, x: any) => s + (x.changePercent || 0), 0) / mergedStocks.length : 0,
               sectors: new Set(mergedStocks.map((s: any) => s.sector)).size,
             },
-            source: `NSE-universe (KV ${universeAgeStr}) + BHAVCOPY/${universeBlob.pricedCount || 0} + Yahoo enrich/${yahooMap.size}`,
+            source: `NSE-universe (KV ${universeAgeStr}) + BHAVCOPY/${universeBlob.pricedCount || 0} + Yahoo ${marketOpen ? 'LIVE' : 'enrich'}/${yahooMap.size}${marketOpen ? ' (market open: largecaps live)' : ''}`,
             updatedAt: new Date().toISOString(),
           };
         }

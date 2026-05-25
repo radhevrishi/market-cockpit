@@ -15,18 +15,44 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup and shutdown events."""
+    """Startup and shutdown events.
+
+    PATCH 0813: init_db() is now non-blocking. Previously the lifespan
+    awaited init_db() before yielding control to FastAPI, which meant
+    /health didn't become reachable until the DB connection completed.
+    On Render's free-tier Postgres, the DB can take 30-60s to wake from
+    sleep — longer than Render's deploy health-check window. That caused
+    P0811's deploy to fail even though the code change was correct.
+    """
     logger.info("Starting Market Cockpit API...")
-    
-    # Init DB tables
-    await init_db()
-    
-    # Seed calendar data in background (non-blocking)
+
+    # PATCH 0813: fire init_db as a background task so /health is reachable
+    # immediately. DB-dependent endpoints fail gracefully if init_db is
+    # still in flight; they'll succeed on retry.
+    asyncio.create_task(_init_db_background())
+
+    # Seed calendar data in background (non-blocking, deferred 30s)
     asyncio.create_task(_seed_initial_data())
-    
+
     yield
-    
+
     logger.info("Shutting down Market Cockpit API...")
+
+
+async def _init_db_background():
+    """Init DB tables without blocking the lifespan / health check.
+
+    Render free-tier Postgres can take 30-60s to wake from sleep on cold
+    start. If we awaited this synchronously the health-check window
+    would expire and Render would mark the deploy failed (status 3).
+    Run it in the background — it'll complete a few seconds after the
+    container is marked healthy.
+    """
+    try:
+        await init_db()
+        logger.info("DB tables initialized")
+    except Exception as e:
+        logger.error(f"init_db failed (non-fatal, routes that need DB will retry): {e}")
 
 
 async def _seed_initial_data():
