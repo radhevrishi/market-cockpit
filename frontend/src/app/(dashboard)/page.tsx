@@ -42,15 +42,30 @@ import {
 } from '@/lib/movers-attribution';
 import {
   scoreCatalyst,
-  BUCKET_LABEL,
-  BUCKET_COLOR,
+  // PATCH 0820 — BUCKET_LABEL/BUCKET_COLOR removed; now use mq.bucketLabel from move-quality.ts
 } from '@/lib/catalyst-scoring';
 // PATCH 0805 — Move Quality + Continuation Probability + bucket taxonomy
+// PATCH 0820 — pull BUCKET_COLOR + BUCKET_GLYPH for the new 9-bucket primary chip
 import {
   computeMoveQuality,
   QUALITY_COLOR,
   CONTINUATION_COLOR,
+  BUCKET_COLOR as BUCKET_MQ_COLOR,
+  type MoveBucket,
 } from '@/lib/move-quality';
+
+// PATCH 0820 — short labels for the new bucket taxonomy on home Movers row
+const BUCKET_MQ_SHORT: Record<MoveBucket, string> = {
+  FUNDAMENTAL_RERATING: 'RERATE',
+  PRE_EVENT:            'PRE-EVT',
+  SHORT_COVERING:       'COVER',
+  OPERATOR:             'OP-PUMP',
+  FLOW:                 'FLOW',
+  ROTATION:             'ROTATE',
+  TECHNICAL:            'BREAKOUT',
+  SPECULATIVE:          'SPEC',
+  ILLIQUID:             'ILLIQUID',
+};
 import { getConvictionTickers, getConvictionList } from '@/lib/conviction-beats';
 import { canonicalTicker } from '@/lib/ticker-normalize'; // PATCH 0721
 import { readDecisions } from '@/lib/decisions';
@@ -2152,6 +2167,13 @@ export default function HomeDashboard() {
                   mq ? `Liquidity: ${mq.liquidityRisk}` : '',
                 ].filter(Boolean).join('\n');
 
+                // PATCH 0820: cleaner row — use the new 9-bucket taxonomy from
+                // move-quality.ts as the ONE primary label. Drop the duplicate
+                // catalyst-scoring bucket (had "NOISE") and the event chip.
+                // Final row: 👁 · ticker · pct · [bucket from mq] · driver · Q · ↑/↓ · ⌀
+                const primaryDriverText = attr
+                  ? (score.primaryDriver + (score.secondaryDriver ? ' · ' + score.secondaryDriver : ''))
+                  : null;
                 return (
                   <Link key={tk} href={`/stock-sheet?ticker=${encodeURIComponent(m.ticker)}`}
                     title={tooltip}
@@ -2161,16 +2183,19 @@ export default function HomeDashboard() {
                     <span style={{ fontSize: 11, color: c, fontWeight: 800, fontVariantNumeric: 'tabular-nums', minWidth: 52, textAlign: 'right' }}>
                       {pos === 'up' ? '+' : ''}{pct.toFixed(1)}%
                     </span>
-                    {/* Bucket badge — institutional-grade tier (HIGH CONVICTION / TURNAROUND / etc.) */}
-                    {attr && (
+                    {/* PATCH 0820: ONE bucket label from the refined 9-bucket taxonomy
+                        (FUNDAMENTAL_RERATING / SHORT_COVERING / OPERATOR / FLOW /
+                         ROTATION / TECHNICAL / SPECULATIVE / ILLIQUID / PRE_EVENT).
+                        Falls back to ANOMALY (CIRCUIT) when bucket is unknown. */}
+                    {mq && (
                       <span style={{
                         fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2, letterSpacing: 0.3, flexShrink: 0,
-                        background: `${BUCKET_COLOR[score.bucket]}22`, color: BUCKET_COLOR[score.bucket],
-                      }}>
-                        {BUCKET_LABEL[score.bucket]}
+                        background: `${BUCKET_MQ_COLOR[mq.bucket]}22`, color: BUCKET_MQ_COLOR[mq.bucket],
+                      }} title={mq.bucketLabel}>
+                        {BUCKET_MQ_SHORT[mq.bucket]}
                       </span>
                     )}
-                    {anom && anom !== 'NEWS_GAP' && (
+                    {!mq && anom && anom !== 'NEWS_GAP' && (
                       <span style={{
                         fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2, letterSpacing: 0.3,
                         background: `${ANOMALY_COLOR[anom]}22`, color: ANOMALY_COLOR[anom], flexShrink: 0,
@@ -2178,29 +2203,15 @@ export default function HomeDashboard() {
                         {anom}
                       </span>
                     )}
-                    {/* Primary narrative — what's driving the move */}
+                    {/* Primary driver — what's actually moving it */}
                     <span style={{
                       flex: 1, fontSize: 10, color: TEXT, fontWeight: 500,
                       whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                       minWidth: 0, lineHeight: 1.4,
                     }}>
-                      {attr ? `${primaryLabel}${score.secondaryDriver ? ' · ' + score.secondaryDriver : ''}` : <em style={{ color: '#3F4D63' }}>analyzing…</em>}
+                      {primaryDriverText || <em style={{ color: '#3F4D63' }}>analyzing…</em>}
                     </span>
-                    {/* Top evidence chip (vol / delivery) */}
-                    {score.chips[0] && (
-                      <span style={{
-                        fontSize: 8, fontWeight: 700, padding: '1px 4px', borderRadius: 2, letterSpacing: 0.2, flexShrink: 0,
-                        background: score.chips[0].tone === 'positive' ? '#10B98122'
-                                  : score.chips[0].tone === 'negative' ? '#EF444422'
-                                  : score.chips[0].tone === 'event' ? '#A78BFA22' : '#3F4D6322',
-                        color:      score.chips[0].tone === 'positive' ? '#10B981'
-                                  : score.chips[0].tone === 'negative' ? '#EF4444'
-                                  : score.chips[0].tone === 'event' ? '#A78BFA' : '#8DA1B9',
-                      }}>
-                        {score.chips[0].text}
-                      </span>
-                    )}
-                    {/* PATCH 0805 — Move Quality + Continuation Probability chips */}
+                    {/* Move Quality 0-100 (color-tiered) */}
                     {mq && (
                       <span style={{
                         fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2, letterSpacing: 0.3, flexShrink: 0,
@@ -2209,6 +2220,7 @@ export default function HomeDashboard() {
                         Q{mq.quality}
                       </span>
                     )}
+                    {/* Continuation Probability */}
                     {mq && mq.continuation !== 'UNKNOWN' && (
                       <span style={{
                         fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2, letterSpacing: 0.3, flexShrink: 0,
@@ -2217,6 +2229,7 @@ export default function HomeDashboard() {
                         {mq.continuation === 'HIGH' ? '↑↑' : mq.continuation === 'MEDIUM' ? '↑' : '↓'}
                       </span>
                     )}
+                    {/* Illiquid warning — thin turnover */}
                     {mq?.liquidityRisk === 'HIGH' && (
                       <span style={{
                         fontSize: 8, fontWeight: 800, padding: '1px 4px', borderRadius: 2, letterSpacing: 0.2, flexShrink: 0,
