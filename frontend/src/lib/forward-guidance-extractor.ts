@@ -24,7 +24,7 @@
 // covering realization/ASP, debt repayment, dividend payout, tax-rate
 // (incl. MAT credit), capacity-unit guidance, and working-capital-day
 // guidance.
-export type GuidanceMetric = 'REVENUE' | 'EBITDA' | 'PAT' | 'EBITDA_MARGIN' | 'PAT_MARGIN' | 'OPM' | 'GROWTH' | 'CAPEX' | 'ORDER_BOOK' | 'CAGR' | 'EBITDA_GROWTH' | 'MARGIN_BPS' | 'PEAK_REVENUE' | 'ASP' | 'DEBT_REPAYMENT' | 'DIVIDEND_PAYOUT' | 'TAX_RATE' | 'CAPACITY_UNITS' | 'WC_DAYS';
+export type GuidanceMetric = 'REVENUE' | 'EBITDA' | 'PAT' | 'EBITDA_MARGIN' | 'PAT_MARGIN' | 'OPM' | 'GROWTH' | 'CAPEX' | 'ORDER_BOOK' | 'ORDER_INFLOW' | 'BOOK_TO_BILL' | 'CAPACITY_RAMP' | 'CAGR' | 'EBITDA_GROWTH' | 'MARGIN_BPS' | 'PEAK_REVENUE' | 'ASP' | 'DEBT_REPAYMENT' | 'DIVIDEND_PAYOUT' | 'TAX_RATE' | 'CAPACITY_UNITS' | 'WC_DAYS';
 
 export interface GuidanceItem {
   fiscalYear: string;            // 'FY27' / 'FY28' / 'Q4FY27'
@@ -111,7 +111,10 @@ const METRIC_PATTERNS: Array<{
   { metric: 'PAT_MARGIN',     unit: '%',    keywords: /(?:pat margin|net margin|net profit margin)/i },
   { metric: 'GROWTH',         unit: '%',    keywords: /(?:revenue growth|topline growth|sales growth|growth rate|grow at)/i },
   { metric: 'CAPEX',          unit: '₹ Cr', keywords: /(?:capex|capital expenditure|capital investment)/i },
-  { metric: 'ORDER_BOOK',     unit: '₹ Cr', keywords: /(?:order book|orderbook|orders in hand|backlog|unexecuted\s+order(?:s)?|executable\s+order(?:s)?|pending\s+order(?:s)?)/i }, // PATCH 0713 — widened
+  { metric: 'ORDER_BOOK',     unit: '₹ Cr', keywords: /(?:order\s+book|orderbook|orders\s+in\s+hand|backlog|unexecuted\s+order(?:s)?|executable\s+order(?:s)?|pending\s+order(?:s)?|order\s+pipeline|orders\s+on\s+hand)/i }, // PATCH 0713 + 0843 — widened
+  { metric: 'ORDER_INFLOW',   unit: '₹ Cr', keywords: /(?:order\s+intake|order\s+inflow|new\s+order(?:s)?|orders?\s+booked|orders?\s+received|orders?\s+secured|orders?\s+won|fresh\s+order(?:s)?|incremental\s+order(?:s)?)/i }, // PATCH 0843
+  { metric: 'BOOK_TO_BILL',   unit: 'x',    keywords: /(?:book[- ]to[- ]bill|book[- ]bill\s+ratio)/i }, // PATCH 0843
+  { metric: 'CAPACITY_RAMP',  unit: '%',    keywords: /(?:capacity\s+(?:ramp|expansion|scale[- ]?up|increase|addition|doubl(?:ing|ed?)|tripl(?:ing|ed?))|scale\s+up\s+to|expand(?:ing)?\s+capacity|capacity\s+(?:to|from)\s+\d)/i }, // PATCH 0843
 ];
 
 // FY token regex for fiscal-year detection
@@ -490,7 +493,7 @@ export function extractGuidance(text: string): GuidanceItem[] {
   // (prefer larger value at equal confidence). ASP stays out because
   // ASP guidance is usually a small ₹/unit number where "larger wins"
   // is the wrong heuristic.
-  const crMetrics = new Set<GuidanceMetric>(['REVENUE', 'EBITDA', 'PAT', 'ORDER_BOOK', 'CAPEX', 'PEAK_REVENUE', 'DEBT_REPAYMENT']);
+  const crMetrics = new Set<GuidanceMetric>(['REVENUE', 'EBITDA', 'PAT', 'ORDER_BOOK', 'ORDER_INFLOW', 'CAPEX', 'PEAK_REVENUE', 'DEBT_REPAYMENT']);  // PATCH 0843
   const seen = new Map<string, GuidanceItem>();
   for (const g of out) {
     const k = `${g.fiscalYear}|${g.metric}`;
@@ -530,6 +533,9 @@ export function metricLabel(m: GuidanceMetric): string {
     case 'GROWTH': return 'Growth';
     case 'CAPEX': return 'Capex';
     case 'ORDER_BOOK': return 'Order Book';
+    case 'ORDER_INFLOW': return 'Order Intake';
+    case 'BOOK_TO_BILL': return 'Book-to-Bill';
+    case 'CAPACITY_RAMP': return 'Capacity Ramp';
     case 'CAGR': return 'CAGR';
     case 'EBITDA_GROWTH': return 'EBITDA Growth';
     case 'MARGIN_BPS': return 'Margin Expansion (bps)';
@@ -551,7 +557,8 @@ export function metricColor(m: GuidanceMetric): string {
     case 'EBITDA': case 'EBITDA_MARGIN': case 'OPM': case 'EBITDA_GROWTH': case 'MARGIN_BPS': return '#22D3EE';
     case 'PAT': case 'PAT_MARGIN': return '#A78BFA';
     case 'CAPEX': case 'CAPACITY_UNITS': return '#F59E0B';
-    case 'ORDER_BOOK': case 'PEAK_REVENUE': return '#EF4444';
+    case 'ORDER_BOOK': case 'ORDER_INFLOW': case 'BOOK_TO_BILL': case 'PEAK_REVENUE': return '#EF4444';
+    case 'CAPACITY_RAMP': return '#F59E0B';
     // PATCH 0700 — institutional vocabulary expansion
     case 'ASP': return '#F472B6';            // pink — realisation/pricing
     case 'DEBT_REPAYMENT': return '#FB923C'; // orange — balance-sheet

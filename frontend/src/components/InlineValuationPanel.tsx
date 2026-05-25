@@ -184,6 +184,43 @@ export default function InlineValuationPanel() {
             {report.rationale.slice(0, 5).map((r, i) => <li key={i}>{r}</li>)}
           </ul>
 
+          {/* PATCH 0843 — Editorial-Quant gap explainer */}
+          {(report.recommendation === 'AVOID' || report.recommendation === 'WAIT') && (() => {
+            const drivers: string[] = [];
+            // Capacity ramp guidance present → revenue projection might be too conservative
+            const capRamp = (report.guidance || []).filter((g: any) =>
+              g.metric === 'CAPACITY_RAMP' || g.metric === 'CAPACITY_UNITS' || g.metric === 'PEAK_REVENUE'
+            );
+            if (capRamp.length > 0) {
+              drivers.push(`Capacity ramp / peak-revenue guidance found in concall (${capRamp.length} mention${capRamp.length > 1 ? 's' : ''}) — forward revenue projection may be too conservative. Try overriding in /auto-valuation.`);
+            }
+            // Order book / inflow guidance present
+            const orders = (report.guidance || []).filter((g: any) => g.metric === 'ORDER_BOOK' || g.metric === 'ORDER_INFLOW');
+            if (orders.length > 0) {
+              drivers.push(`Order book / intake mentioned (${orders.length}) — backlog conversion may justify higher forward revenue.`);
+            }
+            // OPM came from historical fallback, not guidance
+            const opmFromGuidance = (report.guidance || []).some((g: any) => g.metric === 'EBITDA_MARGIN' || g.metric === 'OPM' || g.metric === 'PAT_MARGIN');
+            if (!opmFromGuidance && report.excelData?.opmLatestQ && report.inferredMargin && Math.abs(report.excelData.opmLatestQ - report.inferredMargin) > 2) {
+              drivers.push(`OPM used (${report.inferredMargin.toFixed(1)}%) is the historical fallback, but latest quarter is ${report.excelData.opmLatestQ.toFixed(1)}% — operating leverage in progress. Override in /auto-valuation.`);
+            }
+            // P/E multiple looks high vs sector
+            if (report.peResult && report.peResult.targetPE && report.peResult.targetPE < 50 && (report.excelData?.currentPriceFromSheet || 0) > 0) {
+              drivers.push(`Quant uses sector median P/E ${report.peResult.targetPE.toFixed(0)}× — if you believe re-rating (e.g. moving to AI-infra premium), set higher P/E in override.`);
+            }
+            if (drivers.length === 0) return null;
+            return (
+              <div style={{ padding: 10, background: '#F59E0B10', border: '1px solid #F59E0B40', borderLeft: '3px solid #F59E0B', borderRadius: 5, marginBottom: 12 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: '#F59E0B', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6 }}>
+                  ⚠ Editorial-Quant gap detected — why
+                </div>
+                <ul style={{ margin: '0 0 0 18px', padding: 0, fontSize: 11, color: TEXT, lineHeight: 1.55 }}>
+                  {drivers.map((d, i) => <li key={i} style={{ marginBottom: 4 }}>{d}</li>)}
+                </ul>
+              </div>
+            );
+          })()}
+
           {/* PATCH 0689 — Year + Scenario toggles */}
           {(() => {
             const hasY2 = !!(report.peResultY2 || report.psResultY2 || report.evResultY2);

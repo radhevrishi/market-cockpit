@@ -1277,6 +1277,18 @@ export default function AutoValuationPage() {
     setDocs([]);
   }, [refreshSaved]);
 
+  // PATCH 0843 — Clear ONLY the uploaded attachments while keeping the
+  // saved report in localStorage. User asked: 'save the report, then
+  // clear attachments — open later and see the whole report without
+  // re-uploading.' The saved entry (lib/auto-valuation-store) already
+  // persists the full report + doc snapshots. Clearing in-memory docs
+  // shows just the saved report on next render.
+  const handleClearAttachments = useCallback(() => {
+    if (!confirm('Clear uploaded attachments? Your saved Auto-Val report stays — you can open it again from the saved-companies list below.')) return;
+    setDocs([]);
+    // Don't null out report — leave it on screen so user sees what was saved.
+  }, []);
+
   const recColor = (r?: string) =>
     r === 'BUY' ? '#10B981' : r === 'WATCH' ? '#22D3EE' : r === 'WAIT' ? '#F59E0B' : r === 'AVOID' ? '#EF4444' : '#94A3B8';
 
@@ -1500,11 +1512,26 @@ export default function AutoValuationPage() {
               background: `linear-gradient(180deg, ${recColor(report.recommendation)}15 0%, transparent 100%)`,
               border: `1px solid ${recColor(report.recommendation)}50`,
               borderLeft: `4px solid ${recColor(report.recommendation)}`,
+              position: 'relative' as const,
               borderRadius: 8, padding: '18px 22px',
             }}>
               <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
                 <div>
                   <div style={{ fontSize: 11, color: DIM, fontWeight: 800, letterSpacing: '0.5px' }}>RECOMMENDATION</div>
+                  {/* PATCH 0843 — Saved indicator + Clear attachments button */}
+                  {report.ticker && savedList.find(s => s.ticker === report.ticker) && (
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '4px 10px', background: '#10B98115', border: '1px solid #10B98155', borderRadius: 4, marginBottom: 6 }}>
+                      <span style={{ fontSize: 10, color: '#10B981', fontWeight: 700 }}>
+                        ✓ SAVED · this report is persisted; reload anytime
+                      </span>
+                      {docs.length > 0 && (
+                        <button onClick={handleClearAttachments}
+                          style={{ marginLeft: 4, padding: '2px 8px', fontSize: 10, background: 'transparent', color: '#10B981', border: '1px solid #10B98155', borderRadius: 3, cursor: 'pointer' }}>
+                          ↻ Clear attachments (keep report)
+                        </button>
+                      )}
+                    </div>
+                  )}
                   <div style={{ fontSize: 30, fontWeight: 900, color: recColor(report.recommendation), letterSpacing: '-0.5px', marginTop: 4 }}>
                     {report.recommendation}
                   </div>
