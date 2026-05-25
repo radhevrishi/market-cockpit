@@ -2402,8 +2402,10 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             };
           }
 
+          // PATCH 0833 — strip template-pattern junk from precomputed cache hits
+          const _cleaned = stripJunkResponse(responseData);
           return NextResponse.json({
-            ...responseData,
+            ..._cleaned,
             _meta: {
               source: 'precomputed',
               computedAt: meta.computedAt,
@@ -2412,7 +2414,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               version: meta.version,
               totalSignalsBefore: allCachedSignals.length,
               totalSignalsDateFiltered: dateFilteredSignals.length,
-              totalSignalsAfter: (responseData.signals?.length || 0) + (responseData.notable?.length || 0) + (responseData.observations?.length || 0),
+              totalSignalsAfter: (_cleaned.signals?.length || 0) + (_cleaned.notable?.length || 0) + (_cleaned.observations?.length || 0),
               filterRange: days + 'D',
               cutoffDate: cutoffMs > 0 ? new Date(cutoffMs).toISOString() : 'none',
             }
