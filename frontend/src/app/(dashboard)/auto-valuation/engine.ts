@@ -163,14 +163,33 @@ export async function extractExcelFinancials(file: File): Promise<ExcelFinancial
   if (!ws) return null;
   const rows = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1, defval: null });
 
+  // PATCH 0849 — robust matcher: exact > prefix > includes, AND reject
+  // rows whose label is a modified-metric variant ('Sales Growth %', 'PAT Margin',
+  // 'CAGR', 'YoY', etc) when we're trying to find the bare metric row.
   const findRow = (labels: string[]) => {
+    const isModified = (s: string) => /\b(growth|margin|cagr|yoy|qoq|ratio|change|%|trend|trailing|annualized)\b/i.test(s);
+    const norm = (s: string) => s.trim().toLowerCase();
+    const matchTier = (label: string, first: string) => {
+      const L = norm(label);
+      const F = norm(first);
+      if (F === L) return 3;                              // exact match
+      if (F.startsWith(L + ' ') || F.startsWith(L + ':') || F === L + 's') return 2;  // prefix
+      if (F.includes(L) && !isModified(F)) return 1;      // safe includes — not a modified variant
+      return 0;
+    };
+    // Score every row × every label; return the best non-modified match.
+    let bestRow: any = null;
+    let bestScore = 0;
     for (let i = 0; i < rows.length; i++) {
-      const first = String(rows[i]?.[0] || '').trim().toLowerCase();
+      const first = String(rows[i]?.[0] || '').trim();
+      if (!first) continue;
       for (const lab of labels) {
-        if (first === lab.toLowerCase() || first.includes(lab.toLowerCase())) return rows[i];
+        const sc = matchTier(lab, first);
+        if (sc > bestScore) { bestScore = sc; bestRow = rows[i]; }
+        if (sc === 3) return rows[i];                     // exact match — early exit
       }
     }
-    return null;
+    return bestRow;
   };
 
   const headerRow = findRow(['Report Date', 'Period', 'Year']) || rows.find((r) => Array.isArray(r) && r.some((c: any) => typeof c === 'string' && /Mar|Dec|FY|20[12][0-9]/.test(c))) || [];

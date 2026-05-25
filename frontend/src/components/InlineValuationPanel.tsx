@@ -249,7 +249,7 @@ export default function InlineValuationPanel() {
           })()}
 
           {/* PATCH 0843 — Editorial-Quant gap explainer */}
-          {(report.recommendation === 'AVOID' || report.recommendation === 'WAIT') && (() => {
+          {(report.recommendation === 'AVOID' || report.recommendation === 'WAIT' || report.recommendation === 'WATCH') && (() => {
             const drivers: string[] = [];
             // Capacity ramp guidance present → revenue projection might be too conservative
             const capRamp = (report.guidance || []).filter((g: any) =>
