@@ -415,10 +415,17 @@ export default function HomeDashboard() {
   useEffect(() => {
     const t = setTimeout(() => {
       setNetLoading(prev => ({ inPlay: false, bottleneck: false, earnings: false }));
-      setData(prev => ({
+      setData((prev: any) => ({
         ...prev,
         ratingActionsToday: prev.ratingActionsToday ?? [],
         orderBookToday: prev.orderBookToday ?? [],
+        // PATCH 0858 — force-empty more late-arriving sections so the
+        // honest empty-state replaces the eternal '📡 Loading…' spinner.
+        specialSituations: prev.specialSituations ?? [],
+        upcomingEarnings: prev.upcomingEarnings ?? [],
+        watchlistPulse: prev.watchlistPulse ?? [],
+        gainers: prev.gainers ?? [],
+        losers: prev.losers ?? [],
       } as any));
     }, 15_000);
     return () => clearTimeout(t);
@@ -658,14 +665,20 @@ export default function HomeDashboard() {
         //     split happens at render time
         const MIN_VOLUME = 500_000; // 5 lakh shares (per user spec)
         const liquid = (s: any) => (s?.volume || 0) >= MIN_VOLUME;
-        const gainers = rawG.slice()
-          .filter(liquid)
-          .sort((a: any, b: any) => (b.changePercent || 0) - (a.changePercent || 0))
-          .slice(0, 15);
-        const losers = rawL.slice()
-          .filter(liquid)
-          .sort((a: any, b: any) => (a.changePercent || 0) - (b.changePercent || 0))
-          .slice(0, 15);
+        // PATCH 0858 — Cascading fallback: liquid → all (when volume field is
+        // missing on weekend BHAVCOPY snapshot, liquid filter would otherwise
+        // produce empty list, then user sees 'No movers data' even though the
+        // API returned 30 gainers + 30 losers).
+        const gainersLiquid = rawG.slice().filter(liquid)
+          .sort((a: any, b: any) => (b.changePercent || 0) - (a.changePercent || 0));
+        const losersLiquid = rawL.slice().filter(liquid)
+          .sort((a: any, b: any) => (a.changePercent || 0) - (b.changePercent || 0));
+        const gainersAll = rawG.slice()
+          .sort((a: any, b: any) => (b.changePercent || 0) - (a.changePercent || 0));
+        const losersAll = rawL.slice()
+          .sort((a: any, b: any) => (a.changePercent || 0) - (b.changePercent || 0));
+        const gainers = (gainersLiquid.length > 0 ? gainersLiquid : gainersAll).slice(0, 15);
+        const losers = (losersLiquid.length > 0 ? losersLiquid : losersAll).slice(0, 15);
         setData((d) => ({ ...d, gainers, losers, moversUpdatedAt: j?.updatedAt } as any));
 
         // PATCH 0800 — Fetch Screener fundamentals for EXTREME movers only
@@ -1211,13 +1224,12 @@ export default function HomeDashboard() {
             return g === 'small' || g === 'mid';
           });
           const universe = smallMidOnly.length > 0 ? smallMidOnly : allMoves;
-          // Three-tier threshold cascade (P0769).
-          const strong   = universe.filter((x: any) => Math.abs(x.changePercent) >= 3);
-          const moderate = universe.filter((x: any) => Math.abs(x.changePercent) >= 1);
-          const anyMove  = universe.filter((x: any) => x.changePercent !== 0);
-          const pulses = (strong.length > 0 ? strong
-                       : moderate.length > 0 ? moderate
-                       : anyMove)
+          // PATCH 0858 — drop the ±1% gate. User reported 'All watchlist names
+          // closed within ±1% last session' even though the API has fresh data.
+          // The previous cascade collapsed to empty when |pct|=0 dominated.
+          // Now: just sort ALL watchlist names by abs% DESC, take top 6.
+          // Empty-state still fires when universe is genuinely empty.
+          const pulses = universe.slice()
             .sort((a: any, b: any) => Math.abs(b.changePercent) - Math.abs(a.changePercent))
             .slice(0, 6);
           setData((d) => ({ ...d, watchlistPulse: pulses as any } as any));
