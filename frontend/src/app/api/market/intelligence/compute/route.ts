@@ -2987,12 +2987,17 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   ]);
 
   // Start MC/Google in parallel with NSE (don't wait for NSE to fail first)
+  // PATCH 0835 — lift MC + Google caps from 5/3 → all WL+PF (capped at 50
+  // for Vercel time budget). Both helpers batch internally so 50 tickers
+  // resolves in ~15-20s, well within the 55s function limit.
+  const MC_MAX = 50;
+  const GOOGLE_MAX = 50;
   const mcGooglePromise = (allTracked.length > 0) ? Promise.all([
-    fetchMoneycontrolNews(allTracked.slice(0, 5)).catch((e: any) => {
+    fetchMoneycontrolNews(allTracked.slice(0, MC_MAX)).catch((e: any) => {
       debug.errors.push(`MC news: ${(e as Error).message}`);
       return [] as MCNewsItem[];
     }),
-    fetchGoogleNewsRSS(allTracked.slice(0, 3)).catch((e: any) => {
+    fetchGoogleNewsRSS(allTracked.slice(0, GOOGLE_MAX)).catch((e: any) => {
       debug.errors.push(`Google news: ${(e as Error).message}`);
       return [] as MCNewsItem[];
     }),
@@ -3079,19 +3084,47 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     ...googleNewsAnnouncements,
   ];
 
-  // ── PF+WL ONLY FILTER: Intelligence is exclusively for tracked companies ──
-  // When portfolio/watchlist are populated, restrict to those symbols only
-  // This eliminates market-wide noise (Company Secretary filings etc. from random companies)
+  // PATCH 0835 — NSE Mid+Smallcap universe filter (PF+WL takes priority).
+  // User: 'i want Nifty smallcap + Nifty midcap + BSE smallcap + BSE midcap,
+  // not all 2000 stocks'. Read nse-ticker-universe:v1:latest blob — it has
+  // a 'cap' field per ticker ('Large' | 'Mid' | 'Small' | 'Micro'). Drop
+  // Large names from announcement processing entirely.
+  let midSmallSet = new Set<string>();
+  try {
+    const { kvGet } = await import('@/lib/kv');
+    const blob: any = await kvGet('nse-ticker-universe:v1:latest');
+    if (blob?.tickers && Array.isArray(blob.tickers)) {
+      for (const t of blob.tickers) {
+        const cap = (t.cap || '').toLowerCase();
+        if (cap === 'mid' || cap === 'small' || cap === 'micro') {
+          midSmallSet.add((t.ticker || '').toUpperCase());
+        }
+      }
+      console.log(`[Compute] Mid+Smallcap universe: ${midSmallSet.size} tickers (Large dropped)`);
+    }
+  } catch (e: any) {
+    console.warn('[Compute] mid+smallcap universe unavailable, using PF+WL only:', e?.message);
+  }
+
+  // ── PF+WL TRACKED FILTER ──
+  // When portfolio/watchlist are populated, those names ALWAYS pass through
+  // (even if they're largecaps). Otherwise, restrict to Mid+Smallcap universe.
   const trackedSet = new Set(allTracked.map(s => s.toUpperCase().trim()));
   const shouldFilterToTracked = allTracked.length > 0;
 
   // Filter announcements, then cap at 100 most recent to stay within 55s Vercel limit
   const filteredAnnAll = allAnnouncements.filter(item => {
     if (!item.symbol || (!item.desc && !item.subject)) return false;
-    // PF+WL filter: skip companies not in portfolio or watchlist
-    if (shouldFilterToTracked) {
-      const sym = (item.symbol || '').toUpperCase().trim();
-      if (!trackedSet.has(sym)) return false;
+    const sym = (item.symbol || '').toUpperCase().trim();
+    // Tracked names always pass (user explicitly added them — could be largecap)
+    if (shouldFilterToTracked && trackedSet.has(sym)) {
+      // keep
+    } else {
+      // PATCH 0835 — drop largecaps. Only Mid/Small/Micro qualify when
+      // the user hasn't tracked them explicitly.
+      if (midSmallSet.size > 0 && !midSmallSet.has(sym)) return false;
+      // If PF+WL is populated AND ticker isn't tracked, drop unless mid+smallcap
+      if (shouldFilterToTracked && midSmallSet.size === 0) return false;
     }
     const combined = `${item.subject || ''} ${item.desc || ''}`.toLowerCase();
     if (NOISE_PATTERNS.some(p => combined.includes(p))) return false;
