@@ -854,39 +854,75 @@ export default function HomeDashboard() {
               }
             }
 
-            // 3. Special situations by ticker
+            // 3. Special situations — PATCH 0824 actual shape from
+            // /api/v1/special-situations/feed:
+            //   { events: [{event_id, event_type, category, primary_filing,
+            //               tickers:[], region, lifecycle, tier, ...}],
+            //     by_category: { MA: [{id, title, link, source, tickers:[], ...}], ... },
+            //     total, by_tier }
             const specialByTicker: Record<string, any> = {};
-            const ssData = ssRes?.data;
-            const ssItems: any[] = Array.isArray(ssData)
+            const ssData = ssRes?.data || {};
+            const ssEvents: any[] = Array.isArray(ssData)
               ? ssData
-              : (ssData?.items || ssData?.events || ssData?.rows || []);
-            for (const ev of ssItems) {
-              const sym = ((ev.ticker || ev.target || ev.symbol) || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
+              : (ssData.events || []);
+            // Also flatten by_category items as a richer fallback (87 items vs 31 events)
+            const byCategory = ssData.by_category || {};
+            const ssCategoryItems: any[] = [];
+            for (const [cat, items] of Object.entries(byCategory)) {
+              if (!Array.isArray(items)) continue;
+              for (const item of items as any[]) {
+                ssCategoryItems.push({ ...item, _category: cat });
+              }
+            }
+            const allSsItems: any[] = [...ssEvents, ...ssCategoryItems];
+
+            // Helper — extract ticker (events use tickers[], legacy items use ticker)
+            const extractTicker = (ev: any): string => {
+              if (Array.isArray(ev.tickers) && ev.tickers.length > 0) return String(ev.tickers[0]).toUpperCase().replace(/\.(NS|BO)$/i, '');
+              if (ev.ticker) return String(ev.ticker).toUpperCase().replace(/\.(NS|BO)$/i, '');
+              if (ev.target) return String(ev.target).toUpperCase().replace(/\.(NS|BO)$/i, '');
+              if (ev.symbol) return String(ev.symbol).toUpperCase().replace(/\.(NS|BO)$/i, '');
+              return '';
+            };
+            const extractHeadline = (ev: any): string => {
+              return ev.headline || ev.title || ev.primary_filing?.title || ev.why_tradable?.what_happened || '';
+            };
+            const extractEventType = (ev: any): string => {
+              return ev.event_type || ev.type || ev._category || ev.category || 'CORPORATE_ACTION';
+            };
+            const extractAnnouncedAt = (ev: any): string | null => {
+              return ev.announced_at || ev.date || ev.pub_date || ev.primary_filing?.pub_date || null;
+            };
+
+            for (const ev of allSsItems) {
+              const sym = extractTicker(ev);
               if (!sym) continue;
-              if (specialByTicker[sym]) continue; // first wins (assume freshest first)
+              if (specialByTicker[sym]) continue;
               specialByTicker[sym] = {
                 ticker: sym,
-                event_type: ev.event_type || ev.type || 'CORPORATE_ACTION',
-                sub_category: ev.sub_category,
-                announced_at: ev.announced_at || ev.date,
-                headline: ev.headline || ev.title,
-                source_url: ev.source_url || ev.url,
+                event_type: extractEventType(ev),
+                sub_category: ev.sub_category || ev.category_label,
+                announced_at: extractAnnouncedAt(ev),
+                headline: extractHeadline(ev),
+                source_url: ev.source_url || ev.url || ev.link || ev.primary_filing?.link,
               };
             }
-            // PATCH 0806 — publish raw ss items onto `data` so the home panel
-            // can render. Keep newest first (sorted by announced_at desc).
-            const ssForHome = ssItems
+
+            // PATCH 0806/0824 — publish to home panel
+            const ssForHome = allSsItems
               .map((ev: any) => ({
-                ticker: ((ev.ticker || ev.target || ev.symbol) || '').toUpperCase().replace(/\.(NS|BO)$/i, ''),
+                ticker: extractTicker(ev),
                 company: ev.company || ev.target_company || ev.acquirer,
-                event_type: ev.event_type || ev.type || 'CORPORATE_ACTION',
-                sub_category: ev.sub_category,
-                announced_at: ev.announced_at || ev.date,
+                event_type: extractEventType(ev),
+                sub_category: ev.sub_category || ev.category_label,
+                announced_at: extractAnnouncedAt(ev),
                 next_catalyst_date: ev.next_catalyst_date,
-                headline: ev.headline || ev.title,
-                source_url: ev.source_url || ev.url,
+                headline: extractHeadline(ev),
+                source_url: ev.source_url || ev.url || ev.link || ev.primary_filing?.link,
                 expected_alpha: ev.expected_alpha,
-                source_tier: ev.source_tier,
+                source_tier: ev.source_tier || ev.tier,
+                region: ev.region,
+                lifecycle: ev.lifecycle,
               }))
               .filter((x: any) => x.ticker && x.event_type)
               .sort((a: any, b: any) => {
