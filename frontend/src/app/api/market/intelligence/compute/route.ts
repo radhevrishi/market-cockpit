@@ -5465,17 +5465,38 @@ async function runLockedCompute(watchlist: string[], portfolio: string[]): Promi
   error?: string;
   _debug?: any;
 }> {
-  // 1. Acquire distributed lock
-  const lockAcquired = await kvSetNX(LOCK_KEY, `pid:${Date.now()}`, LOCK_TTL);
+  // 1. Acquire distributed lock — with stale-lock detection (PATCH 0850).
+  // The TTL is 120s but Upstash sometimes doesn't auto-expire. If the lock
+  // exists AND meta indicates a fresh prod store, honour the lock. Otherwise
+  // it's stale — kill it and re-acquire. Stops the 'skipped/skipped/skipped'
+  // infinite loop that left the page on skeleton forever.
+  let lockAcquired = await kvSetNX(LOCK_KEY, `pid:${Date.now()}`, LOCK_TTL);
   if (!lockAcquired) {
-    console.log('[Compute] Lock exists — another compute is running. Skipping.');
     const meta = await kvGet<any>(META_KEY);
-    return {
-      ok: true,
-      signalCount: meta?.signalCount || 0,
-      computedAt: meta?.computedAt || new Date().toISOString(),
-      skipped: true,
-    };
+    const metaAge = meta?.computedAt ? (Date.now() - new Date(meta.computedAt).getTime()) : Infinity;
+    const STALE_THRESHOLD_MS = 5 * 60 * 1000;  // 5 minutes
+    if (!meta || metaAge > STALE_THRESHOLD_MS) {
+      console.log(`[Compute] Lock held but META is ${meta ? `${Math.round(metaAge/1000)}s old` : 'missing'} — clearing stale lock and re-acquiring.`);
+      await kvDel(LOCK_KEY);
+      lockAcquired = await kvSetNX(LOCK_KEY, `pid:${Date.now()}`, LOCK_TTL);
+      if (!lockAcquired) {
+        console.log('[Compute] Re-acquire failed (race with another instance). Skipping.');
+        return {
+          ok: true,
+          signalCount: 0,
+          computedAt: new Date().toISOString(),
+          skipped: true,
+        };
+      }
+    } else {
+      console.log(`[Compute] Lock held and META is fresh (${Math.round(metaAge/1000)}s old). Skipping.`);
+      return {
+        ok: true,
+        signalCount: meta?.signalCount || 0,
+        computedAt: meta?.computedAt || new Date().toISOString(),
+        skipped: true,
+      };
+    }
   }
 
   try {
@@ -5584,6 +5605,20 @@ async function autoLoadSymbols(): Promise<{ watchlist: string[]; portfolio: stri
 export async function GET(request: Request) {
   console.log('[Compute] GET triggered (cron)');
   try {
+    // PATCH 0850 — admin escape hatch: ?clearLock=1 forcibly nukes the
+    // distributed lock + meta + prod blob before running. Used when the
+    // page is stuck on the skeleton response despite stale-lock detection.
+    const url = new URL(request.url);
+    if (url.searchParams.get('clearLock') === '1') {
+      console.log('[Compute] clearLock=1 — wiping lock + meta + prod blob');
+      await kvDel(LOCK_KEY);
+      await kvDel(META_KEY);
+      // Don't delete PROD_SIGNALS_KEY by default — only if explicitly asked
+      if (url.searchParams.get('wipeProd') === '1') {
+        await kvDel(PROD_SIGNALS_KEY);
+        await kvDel(TEMP_SIGNALS_KEY);
+      }
+    }
     // Auto-load portfolio + watchlist from Redis (or use defaults)
     const { watchlist, portfolio } = await autoLoadSymbols();
     const result = await runLockedCompute(watchlist, portfolio);
