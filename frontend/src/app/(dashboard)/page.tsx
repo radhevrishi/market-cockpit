@@ -2112,8 +2112,11 @@ export default function HomeDashboard() {
                       <span style={{ fontSize: 9, color: '#F59E0B', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 56 }}>
                         {(ticker || '').toString().replace(/\.(NS|BO)$/i, '').slice(0, 8) || '—'}
                       </span>
-                      <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.title || s.headline}</span>
-                      <span style={{ fontSize: 9, color: DIM, whiteSpace: 'nowrap' }}>{s.source_name || '—'}</span>
+                      <span title={s.title || s.headline || ''}
+                        style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {((s.title || s.headline) || '').toString().slice(0, 110) + ((s.title || s.headline || '').length > 110 ? '…' : '')}
+                      </span>
+                      <span style={{ fontSize: 9, color: DIM, whiteSpace: 'nowrap', maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.source_name || '—'}</span>
                     </a>
                   );
                 })}

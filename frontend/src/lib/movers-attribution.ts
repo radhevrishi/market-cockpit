@@ -665,24 +665,128 @@ export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttrib
     // day). Both belong on the same row.
     const earnings = opts.earningsByTicker?.[sym];
     if (earnings && isFresh(earnings.filing_date, EARNINGS_WINDOW)) {
+      // ════════════════════════════════════════════════════════════════════
+      // PATCH 0869 — EARNINGS INTERPRETATION ENGINE
+      // User critique: 'You detect the event category (BLOCKBUSTER/MIXED/AVOID
+      // earnings reaction) but not the market interpretation layer. That is
+      // insufficiently analytical.'
+      // Now classify reaction (FUNDAMENTAL_RERATE / POSITIONING_UNWIND /
+      // SHORT_COVER / MARGIN_SHOCK / OVERREACTION_SELLOFF /
+      // INSTITUTIONAL_DISTRIBUTION / OPERATING_DELEVERAGE /
+      // FLOW_DRIVEN_EXTENSION / VALUATION_COMPRESSION / RELIEF_RALLY / IN_LINE)
+      // then generate desk-commentary.
+      // ════════════════════════════════════════════════════════════════════
       const tier = earnings.tier || 'reported';
       const period = earnings.quarter || 'recent';
       const sales = earnings.sales_yoy_pct;
       const pat = earnings.net_profit_yoy_pct;
-      const growthBlurb = (typeof sales === 'number' || typeof pat === 'number')
-        ? ` · ${typeof sales === 'number' ? `Sales ${sales >= 0 ? '+' : ''}${sales.toFixed(0)}%` : ''}${typeof pat === 'number' ? ` · PAT ${pat >= 0 ? '+' : ''}${pat.toFixed(0)}%` : ''}`
-        : '';
-      // Post-results profit-taking detection: STRONG/BLOCKBUSTER + price down,
-      // or AVOID/POOR + price up (relief rally). Either way the move is the
-      // earnings reaction, but the framing changes.
-      const tierUpper = (tier || '').toUpperCase();
-      const isStrongTier = /^(BLOCKBUSTER|STRONG|MIXED)$/i.test(tierUpper);
-      const isWeakTier = /^(AVOID|POOR|WEAK)$/i.test(tierUpper);
-      const movingDown = m.changePercent < 0;
+      const eps = earnings.eps_yoy_pct;
+      const tierUpper = String(tier || '').toUpperCase();
+      const isStrong = /^(BLOCKBUSTER|STRONG)$/i.test(tierUpper);
+      const isMixed = /^MIXED$/i.test(tierUpper);
+      const isWeak = /^(AVOID|POOR|WEAK)$/i.test(tierUpper);
       const movingUp = m.changePercent > 0;
-      const profitTaking = isStrongTier && movingDown;
-      const reliefRally = isWeakTier && movingUp;
-      // Same-day special-situation: dividend / buyback / investor meet attached
+      const movingDown = m.changePercent < 0;
+      const absPct = Math.abs(m.changePercent || 0);
+      const dlv = typeof m.deliveryPct === 'number' ? m.deliveryPct : null;
+      const vm = typeof m.volMultiple === 'number' ? m.volMultiple : null;
+      const highDelivery = dlv !== null && dlv >= 55;
+      const lowDelivery = dlv !== null && dlv <= 25;
+      const highVolume = vm !== null && vm >= 3;
+
+      // Structural signals from metric divergence
+      const hasMetrics = typeof sales === 'number' && typeof pat === 'number';
+      const operatingLeverage = hasMetrics && pat! >= sales! + 8;
+      const marginCompression = hasMetrics && pat! <= sales! - 8;
+      const operatingDeleverage = hasMetrics && sales! >= 5 && pat! <= -5;
+      const sharesDilution = typeof eps === 'number' && typeof pat === 'number' && pat! >= 0 && eps! < pat! - 8;
+      const buybackEffect = typeof eps === 'number' && typeof pat === 'number' && eps! > pat! + 5;
+      const lowQualityBeat = isStrong && hasMetrics && Math.abs(pat!) > 100 && (sales || 0) < 10;
+
+      type ReactionState =
+        | 'FUNDAMENTAL_RERATE' | 'POSITIONING_UNWIND' | 'SHORT_COVER'
+        | 'MARGIN_SHOCK' | 'OVERREACTION_SELLOFF' | 'INSTITUTIONAL_DISTRIBUTION'
+        | 'OPERATING_DELEVERAGE' | 'FLOW_DRIVEN_EXTENSION'
+        | 'VALUATION_COMPRESSION' | 'RELIEF_RALLY' | 'IN_LINE';
+      let reaction: ReactionState = 'IN_LINE';
+      let confidenceQuality: 'HIGH_QUALITY' | 'LOW_QUALITY' | 'NEUTRAL' = 'NEUTRAL';
+
+      if (isStrong && movingUp) {
+        if (operatingLeverage && highDelivery) { reaction = 'FUNDAMENTAL_RERATE'; confidenceQuality = 'HIGH_QUALITY'; }
+        else if (highVolume && lowDelivery)    { reaction = 'FLOW_DRIVEN_EXTENSION'; confidenceQuality = 'LOW_QUALITY'; }
+        else if (lowQualityBeat)               { reaction = 'FLOW_DRIVEN_EXTENSION'; confidenceQuality = 'LOW_QUALITY'; }
+        else                                    reaction = 'FUNDAMENTAL_RERATE';
+      } else if (isStrong && movingDown) {
+        if (highDelivery && absPct >= 5)       { reaction = 'POSITIONING_UNWIND'; confidenceQuality = 'HIGH_QUALITY'; }
+        else if (lowDelivery)                  { reaction = 'POSITIONING_UNWIND'; confidenceQuality = 'LOW_QUALITY'; }
+        else                                    reaction = 'VALUATION_COMPRESSION';
+      } else if (isMixed && movingUp) {
+        if (operatingLeverage)                  reaction = 'FUNDAMENTAL_RERATE';
+        else if (highVolume && lowDelivery)     reaction = 'SHORT_COVER';
+        else                                    reaction = 'RELIEF_RALLY';
+      } else if (isMixed && movingDown) {
+        if (marginCompression)                  reaction = 'MARGIN_SHOCK';
+        else if (highDelivery)                  reaction = 'VALUATION_COMPRESSION';
+        else                                    reaction = 'IN_LINE';
+      } else if (isWeak && movingDown) {
+        if (highDelivery && absPct >= 5)       { reaction = 'INSTITUTIONAL_DISTRIBUTION'; confidenceQuality = 'HIGH_QUALITY'; }
+        else if (lowDelivery)                  { reaction = 'OVERREACTION_SELLOFF'; confidenceQuality = 'LOW_QUALITY'; }
+        else if (operatingDeleverage)          { reaction = 'OPERATING_DELEVERAGE'; confidenceQuality = 'HIGH_QUALITY'; }
+        else if (marginCompression)             reaction = 'MARGIN_SHOCK';
+        else                                    reaction = 'INSTITUTIONAL_DISTRIBUTION';
+      } else if (isWeak && movingUp) {
+        if (highVolume)                         reaction = 'SHORT_COVER';
+        else                                    reaction = 'RELIEF_RALLY';
+      }
+
+      const fmt = (n: number | undefined) => typeof n === 'number' ? `${n >= 0 ? '+' : ''}${n.toFixed(0)}%` : '?';
+      const labelByReaction: Record<ReactionState, string> = {
+        FUNDAMENTAL_RERATE: 'Fundamental re-rate',
+        POSITIONING_UNWIND: 'Post-results positioning unwind',
+        SHORT_COVER: 'Post-results short-covering',
+        MARGIN_SHOCK: 'Margin shock',
+        OVERREACTION_SELLOFF: 'Earnings overreaction',
+        INSTITUTIONAL_DISTRIBUTION: 'Institutional distribution',
+        OPERATING_DELEVERAGE: 'Operating deleverage',
+        FLOW_DRIVEN_EXTENSION: 'Flow-driven extension',
+        VALUATION_COMPRESSION: 'Valuation compression',
+        RELIEF_RALLY: 'Relief rally',
+        IN_LINE: 'In-line earnings reaction',
+      };
+      const moveLabel = labelByReaction[reaction];
+      const parts: string[] = [];
+      if (hasMetrics) {
+        if (operatingLeverage) parts.push(`Sales ${fmt(sales)}, PAT ${fmt(pat)} — operating leverage drove margin expansion`);
+        else if (marginCompression) parts.push(`Sales ${fmt(sales)} but PAT only ${fmt(pat)} — margin compression`);
+        else if (operatingDeleverage) parts.push(`Sales ${fmt(sales)} alongside PAT ${fmt(pat)} — operating deleverage on rising costs`);
+        else parts.push(`Sales ${fmt(sales)}, PAT ${fmt(pat)}`);
+        if (sharesDilution) parts.push('EPS lagged PAT — share dilution concern');
+        else if (buybackEffect) parts.push(`EPS ${fmt(eps)} > PAT growth — buyback / share reduction support`);
+      }
+      if (reaction === 'FUNDAMENTAL_RERATE') {
+        parts.push(highDelivery ? `${dlv}% delivery confirms institutional participation in the re-rate` : 'rally consistent with earnings quality');
+      } else if (reaction === 'POSITIONING_UNWIND') {
+        parts.push(highDelivery ? `${dlv}% delivery on the decline suggests crowded positioning unwinding — expectations exceeded the print` : 'decline despite the tier suggests crowded positioning unwinding');
+      } else if (reaction === 'SHORT_COVER') {
+        parts.push(vm !== null ? `${vm.toFixed(1)}× volume + ${dlv ?? '?'}% delivery — short-covering rather than fresh accumulation` : 'bounce despite weak tier — likely short-covering');
+      } else if (reaction === 'MARGIN_SHOCK') {
+        parts.push(`market focused on margin trajectory rather than topline${highDelivery ? ` — ${dlv}% delivery confirms genuine de-rating` : ''}`);
+      } else if (reaction === 'OVERREACTION_SELLOFF') {
+        parts.push(`${dlv}% delivery is weak — reaction appears speculative rather than broad institutional exit`);
+      } else if (reaction === 'INSTITUTIONAL_DISTRIBUTION') {
+        parts.push(`${dlv ?? 'elevated'}% delivery profile suggests genuine institutional de-risking after earnings miss`);
+      } else if (reaction === 'OPERATING_DELEVERAGE') {
+        parts.push('topline growth on declining profitability — cost pressures dominated the print');
+      } else if (reaction === 'FLOW_DRIVEN_EXTENSION') {
+        parts.push(lowQualityBeat ? `headline PAT inflated by base effect / one-offs; ${vm ? vm.toFixed(1) + '×' : 'elevated'} volume on ${dlv ?? '?'}% delivery flags speculative chase` : 'participation profile suggests momentum continuation beyond fundamental re-rating');
+      } else if (reaction === 'VALUATION_COMPRESSION') {
+        parts.push('despite headline tier, decline appears to reflect valuation reset — fundamentals stable but multiple compressing');
+      } else if (reaction === 'RELIEF_RALLY') {
+        parts.push('bad results already priced in — print not as weak as feared');
+      }
+      if (confidenceQuality === 'LOW_QUALITY') parts.push('quality of move flagged as low-confidence — verify before sizing');
+
+      // Special-situation overlay
       const earningsSpecial = opts.specialByTicker?.[sym];
       let extraTag = '';
       if (earningsSpecial) {
@@ -692,29 +796,16 @@ export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttrib
         else if (/INVESTOR_MEET|CONFERENCE/.test(evt)) extraTag = ' + investor meet';
         else if (/OFS|STAKE_SALE/.test(evt)) extraTag = ' + OFS';
         else if (/PREFERENTIAL|QIP|RIGHTS|SAST/.test(evt)) extraTag = ' + capital action';
+        if (extraTag) parts.push(extraTag.replace(/^ \+ /, '') + ' announced alongside results');
       }
-      const framing = profitTaking
-        ? `post-results profit-taking (${tier} ${period})`
-        : reliefRally
-        ? `relief rally (${tier} ${period} — reaction inverted)`
-        : `${tier} earnings (${period})`;
-      // PATCH 0795 — terse 1-line earnings detail
-      const earningsDetail = (() => {
-        const growthBits = [
-          typeof sales === 'number' ? `Sales ${sales >= 0 ? '+' : ''}${sales.toFixed(0)}%` : null,
-          typeof pat === 'number' ? `PAT ${pat >= 0 ? '+' : ''}${pat.toFixed(0)}%` : null,
-        ].filter(Boolean).join(', ');
-        const framing = profitTaking ? 'profit-taking after strong tier'
-                      : reliefRally ? 'relief rally despite weak tier'
-                      : 'earnings reaction';
-        const head = growthBits ? `${growthBits}; ${framing}` : framing;
-        return extraTag ? `${head}${extraTag}.` : `${head}.`;
-      })();
+      const catalyst = `${moveLabel} (${tier} · ${period})${extraTag}`;
+      const detail = parts.join('; ');
+
       out[sym] = {
         ticker: sym,
         changePercent: m.changePercent,
-        catalyst: `${framing}${growthBlurb}${extraTag}`,
-        detail: earningsDetail,
+        catalyst,
+        detail: detail.charAt(0).toUpperCase() + detail.slice(1) + (detail.endsWith('.') ? '' : '.'),
         catalystType: 'EARNINGS',
         moveType: 'INFORMATION',
         scope: sectorScope === 'SECTOR_WIDE' ? 'SECTOR_WIDE' : 'STOCK_SPECIFIC',

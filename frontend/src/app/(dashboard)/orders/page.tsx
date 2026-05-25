@@ -2386,6 +2386,7 @@ export default function CompanyIntelligencePage() {
   const [addedPrices, setAddedPrices] = useState<Record<string, number>>({});
   const [computing, setComputing] = useState(false);
   const [computePollCount, setComputePollCount] = useState(0);
+  const [upstreamHint, setUpstreamHint] = useState<string>('');
   const [showNoise, setShowNoise] = useState(false);
   const [noHighConfSignals, setNoHighConfSignals] = useState(false);
   const [noActionableSignals, setNoActionableSignals] = useState(false);
@@ -2541,9 +2542,13 @@ export default function CompanyIntelligencePage() {
       const ts = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
       setLastUpdated(ts);
 
-      // Detect computing state
-      const isComputing = data._meta?.computing === true || data._meta?.source === 'skeleton';
+      // Detect computing state — PATCH 0869: when server signals upstream is
+      // empty (corp-filings scraper hasn't run), stop polling entirely. The
+      // diagnostic banner explains it to the user.
+      const upstreamEmpty = data._meta?.upstreamEmpty === true;
+      const isComputing = !upstreamEmpty && (data._meta?.computing === true || data._meta?.source === 'skeleton');
       setComputing(isComputing);
+      setUpstreamHint(typeof data._meta?.upstreamHint === 'string' ? data._meta.upstreamHint : '');
       if (!isComputing) setComputePollCount(0);
 
       // Cache retagged data so cache hits preserve correct portfolio/watchlist/excel flags
@@ -4740,7 +4745,18 @@ export default function CompanyIntelligencePage() {
       {/* Empty / Computing state — only show if truly no signals at all */}
       {!loading && signals.length === 0 && monitorList.length === 0 && notableSignals.length === 0 && top3.length === 0 && speculativeSignals.length === 0 && (
         <div style={{ textAlign: 'center', padding: '50px 0' }}>
-          {computing ? (
+          {upstreamHint ? (
+            <>
+              <Eye size={40} color="#F59E0B" style={{ margin: '0 auto 12px', display: 'block' }} />
+              <p style={{ color: '#F59E0B', fontSize: '14px', fontWeight: 600 }}>No signals available</p>
+              <p style={{ color: TEXT3, fontSize: '12px', maxWidth: 520, margin: '8px auto 0', lineHeight: 1.5 }}>
+                {upstreamHint}
+              </p>
+              <p style={{ color: TEXT3, fontSize: '11px', marginTop: 12 }}>
+                <a href="/system-status" style={{ color: ACCENT }}>Open System Status →</a>
+              </p>
+            </>
+          ) : computing ? (
             <>
               <Zap size={40} color={ACCENT} style={{ margin: '0 auto 12px', display: 'block' }} />
               <p style={{ color: ACCENT, fontSize: '14px', fontWeight: 600 }}>Computing intelligence signals...</p>
