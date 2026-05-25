@@ -173,6 +173,37 @@ export default function DecisionsPage() {
     return () => { cancelled = true; };
   }, []);
 
+  // PATCH 0856 — News-since-decision feed. Bulk-fetch /api/v1/news once,
+  // index by ticker, then for each decision row filter to articles
+  // published AFTER the decision date. Helps user audit thesis evolution:
+  // 'I bought at ₹X, here are the N news items that came after — did any
+  // contradict my thesis?'.
+  const [newsByTicker, setNewsByTicker] = useState<Record<string, Array<{title: string; published_at: string; url?: string; source?: string}>>>({});
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch('/api/v1/news?limit=300', { cache: 'no-store' });
+        if (!r.ok || cancelled) return;
+        const list = await r.json();
+        if (!Array.isArray(list) || cancelled) return;
+        const map: Record<string, Array<{title: string; published_at: string; url?: string; source?: string}>> = {};
+        for (const a of list) {
+          const tickers: string[] = a?.ticker_symbols || [];
+          const title = a?.title || a?.headline;
+          if (!tickers.length || !title || !a?.published_at) continue;
+          for (const t of tickers) {
+            const k = String(t).toUpperCase();
+            if (!map[k]) map[k] = [];
+            map[k].push({ title, published_at: a.published_at, url: a.url || a.source_url, source: a.source_name || a.source });
+          }
+        }
+        if (!cancelled) setNewsByTicker(map);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   // Filtered + sorted rows.
   const rows = useMemo(() => {
     const all = Object.values(decisions);
@@ -668,6 +699,36 @@ export default function DecisionsPage() {
                             {d.wouldChangeMind && <span style={{ color: '#22D3EE' }} title={d.wouldChangeMind}>↻ change-mind</span>}
                           </div>
                         )}
+                        {/* PATCH 0856 — News-since-decision feed */}
+                        {(() => {
+                          const ticker = (d.symbol || '').toUpperCase();
+                          const since = d.date ? new Date(d.date).getTime() : 0;
+                          if (!since) return null;
+                          const articles = newsByTicker[ticker] || [];
+                          const fresh = articles.filter(a => {
+                            const t = new Date(a.published_at).getTime();
+                            return Number.isFinite(t) && t > since;
+                          }).sort((a, b) => new Date(b.published_at).getTime() - new Date(a.published_at).getTime());
+                          if (fresh.length === 0) return null;
+                          const tooltipText = fresh.slice(0, 5).map(a => `${a.published_at.slice(0,10)} · ${a.title}`).join('\n');
+                          return (
+                            <div style={{ marginTop: 4, fontSize: 10, fontStyle: 'normal' }}>
+                              <span title={tooltipText}
+                                style={{ color: '#22D3EE', background: '#22D3EE15', border: '1px solid #22D3EE40', padding: '2px 6px', borderRadius: 3, fontWeight: 800 }}>
+                                📰 {fresh.length} news since decision
+                              </span>
+                              {fresh[0]?.url ? (
+                                <a href={fresh[0].url} target="_blank" rel="noreferrer noopener" style={{ marginLeft: 6, fontSize: 9, color: DIM }}>
+                                  → latest: {fresh[0].title.slice(0, 60)}{fresh[0].title.length > 60 ? '…' : ''}
+                                </a>
+                              ) : (
+                                <span style={{ marginLeft: 6, fontSize: 9, color: DIM }}>
+                                  → latest: {fresh[0].title.slice(0, 60)}{fresh[0].title.length > 60 ? '…' : ''}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td style={td}>
                         <button
