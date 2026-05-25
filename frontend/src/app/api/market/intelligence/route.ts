@@ -2951,7 +2951,10 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
       // The old Gate 0 only caught confidenceType=HEURISTIC, missing the
       // INFERRED variants. Now: ANY anomalyFlags containing TEMPLATE_PATTERN_
       // is killed, regardless of confidenceType / signalClass.
-      if (Array.isArray(s.anomalyFlags) && s.anomalyFlags.some((f: string) => /^TEMPLATE_PATTERN_/.test(f))) return false;
+      // Cast to any because anomalyFlags/visibility/evidenceTier are runtime
+      // fields not on the IntelSignal interface yet.
+      const sx = s as any;
+      if (Array.isArray(sx.anomalyFlags) && sx.anomalyFlags.some((f: string) => /^TEMPLATE_PATTERN_/.test(f))) return false;
       // Explicit fallback for known fake values (kept for safety in case
       // template detector didn't fire)
       const rv = Math.round(s.valueCr || 0);
@@ -2973,8 +2976,8 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
       // PATCH 0831 — also kill TIER_D signals (the 'TEMPLATE/LOW CONF' tier)
       // that aren't on watchlist/portfolio. These are the 'DIMMED' visibility
       // junk that shouldn't be in production lists.
-      if (s.evidenceTier === 'TIER_D' && !s.isWatchlist && !s.isPortfolio) return false;
-      if (s.visibility === 'HIDDEN' && !s.isWatchlist && !s.isPortfolio) return false;
+      if (sx.evidenceTier === 'TIER_D' && !s.isWatchlist && !s.isPortfolio) return false;
+      if (sx.visibility === 'HIDDEN' && !s.isWatchlist && !s.isPortfolio) return false;
 
       return true;
     });
