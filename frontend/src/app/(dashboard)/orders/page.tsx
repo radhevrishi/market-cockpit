@@ -2382,7 +2382,7 @@ export default function CompanyIntelligencePage() {
   const [lastUpdated, setLastUpdated] = useState('');
   const [daysFilter, setDaysFilter] = useState(7);
   const [typeFilter, setTypeFilter] = useState<FilterType>('ALL');
-  const [universeFilter, setUniverseFilter] = useState<UniverseFilter>('OWN'); // PATCH 0825 — own universe default
+  const [universeFilter, setUniverseFilter] = useState<UniverseFilter>('ALL'); // PATCH 0827 — back to ALL default (OWN was hiding all signals when WL/PF tags didn't match)
   const [debugInfo, setDebugInfo] = useState<any>(null);
   const [isStale, setIsStale] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
