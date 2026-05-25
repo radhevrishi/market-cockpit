@@ -499,10 +499,13 @@ function inferSector(text: string, company?: string): string | undefined {
     ]],
     ['Financial Services / NBFC', [
       [/\bNBFC\b/g, 5],
-      [/\bbank\b/g, 2],
       [/\basset management\b/g, 3],
-      [/\binsurance\b/g, 3],
-      [/\bAUM\b|\bloan book\b/g, 4],
+      [/\binsurance company\b|\blife insurance\b|\bgeneral insurance\b/g, 4],
+      [/\bAUM\b|\bloan book\b|\bdisburs(?:ed|ement|als)\b/g, 4],
+      [/\bnet interest margin\b|\bNIM\b/g, 5],
+      // PATCH 0844 — generic 'bank' is too loose; only count when paired with banking-specific terms
+      [/\b(?:retail|wholesale|corporate|cooperative|small finance|private)\s+bank\b/g, 3],
+      [/\bcredit growth\b|\bgross NPA\b|\bprovisioning\b|\bbasel\b/g, 4],
     ]],
     ['IT / Tech Services', [
       [/\bIT services\b/g, 4],
@@ -515,6 +518,14 @@ function inferSector(text: string, company?: string): string | undefined {
       [/\bconsumer durables?\b/g, 4],
       [/\bjewell?ery\b/g, 4],
       [/\bbrand premium\b|\bdistribution reach\b/g, 3],
+      // PATCH 0844 — Personal Care + FMCG-Indian specific terms (Bajaj Consumer Care, HUL, Dabur class)
+      [/\bpersonal care\b|\bhair oil\b|\bshampoo\b|\bcosmetic(?:s)?\b|\bdetergent\b|\btoothpaste\b|\bsoap\b|\bskin care\b/g, 5],
+      [/\boral care\b|\bdeodorant\b|\bperfume\b|\bbeauty\b/g, 4],
+      [/\b(?:packaged|branded)\s+food(?:s)?\b|\bbeverages?\b|\bdairy\b|\bsnack(?:s)?\b|\bbiscuit(?:s)?\b/g, 4],
+      [/\bvolume\s+growth\b|\brural\s+(?:growth|demand|distribution|reach)\b/g, 3],
+      [/\b(?:hair|skin|oral)\s+(?:colou?r|treatment|nutrition)\b/g, 4],
+      [/\bADHO\b|\balmond drops\b/g, 5],  // explicit Bajaj Consumer Care brand
+      [/\bconsumer\s+(?:care|goods|products|brands?)\b/g, 4],
     ]],
     ['SaaS / Software (US)', [
       [/\bSaaS\b/g, 5],
