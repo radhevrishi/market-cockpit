@@ -340,6 +340,18 @@ const eventTypeIcon = (t: string) => {
   return '📌';
 };
 
+// PATCH 0829 — drop signals the backend classifier generated heuristically
+// when real evidence wasn't available. These show up as identical ₹280 Cr M&A
+// or ₹105 Cr Order Win across every largecap — clearly fake template data.
+function isRealSignal(s: any): boolean {
+  if (!s) return false;
+  if (s.signalTier === 'TIER2_INFERRED') return false;
+  if (s.confidenceType === 'HEURISTIC' || s.confidenceType === 'INFERRED') return false;
+  if (typeof s.confidenceScore === 'number' && s.confidenceScore < 35) return false;
+  if (s.sourceTier === 'INFERRED' || s.sourceTier === 'HEURISTIC') return false;
+  return true;
+}
+
 // PATCH 0828 — historical default: exclude top 50 largecaps from Signal Stacking
 // trends, since user audits this list for small+midcap opportunities. Toggle
 // via the 'Show largecaps' chip if needed.
@@ -2597,18 +2609,25 @@ export default function CompanyIntelligencePage() {
         return;
       }
 
-      setTop3(_retag(data.top3 || []));
-      setSignals(_retag(data.signals || []));
-      setNotableSignals(_filterGovNoise(_retag(data.notable || [])));
-      setSpeculativeSignals(_retag(data.speculative || []));
+      // PATCH 0829 — strip inferred / template-pattern junk from every list
+      const _real = (arr: any[]) => (arr || []).filter(isRealSignal);
+      const _realTrends = (arr: any[]) => (arr || []).map((t: any) => ({
+        ...t,
+        signals: Array.isArray(t.signals) ? t.signals.filter(isRealSignal) : t.signals,
+        signalCount: Array.isArray(t.signals) ? t.signals.filter(isRealSignal).length : t.signalCount,
+      })).filter((t: any) => (t.signalCount || 0) >= 2);
+      setTop3(_retag(_real(data.top3 || [])));
+      setSignals(_retag(_real(data.signals || [])));
+      setNotableSignals(_filterGovNoise(_retag(_real(data.notable || []))));
+      setSpeculativeSignals(_retag(_real(data.speculative || [])));
       setQuietMarket(!!data.quietMarket);
-      setThematicIdeas(_retag(data.thematicIdeas || []));
-      setTrends(_retag(data.trends || []));
+      setThematicIdeas(_retag(_real(data.thematicIdeas || [])));
+      setTrends(_retag(_realTrends(data.trends || [])));
       setBias(data.bias || null);
       setStats(data._stats || null);
       setNoHighConfSignals(!!data.noHighConfSignals);
       setNoActionableSignals(!!data.noActionableSignals);
-      setMonitorList(_filterGovNoise(_tagExcel(data.observations || [])));
+      setMonitorList(_filterGovNoise(_tagExcel(_real(data.observations || []))));  // PATCH 0829
       const statsLine = data._stats ?
         `${data._stats.actionable || 0} actionable · ${data._stats.notable || 0} notable · ${data._stats.monitor || 0} monitor · ${data._stats.speculative || 0} speculative · ${data._stats.rejected || 0} rejected` : '';
       const filterLine = data._meta?.filterRange ? ` · Filter: ${data._meta.filterRange} (${data._meta.totalSignalsBefore ?? '?'}→${data._meta.totalSignalsDateFiltered ?? data._meta.totalSignalsBefore ?? '?'}→${data._meta.totalSignalsAfter ?? '?'})` : '';
@@ -2631,12 +2650,13 @@ export default function CompanyIntelligencePage() {
       if (!isComputing) {
         _cache = { data: {
           ...data,
-          signals:       _retag(data.signals        || []),
-          notable:       _retag(data.notable        || []),
-          speculative:   _retag(data.speculative    || []),
-          thematicIdeas: _retag(data.thematicIdeas  || []),
-          trends:        _retag(data.trends         || []),
-          top3:          _retag(data.top3           || []),
+          // PATCH 0829 — strip inferred / template-pattern junk before caching
+          signals:       _retag(_real(data.signals        || [])),
+          notable:       _retag(_real(data.notable        || [])),
+          speculative:   _retag(_real(data.speculative    || [])),
+          thematicIdeas: _retag(_real(data.thematicIdeas  || [])),
+          trends:        _retag(_realTrends(data.trends   || [])),
+          top3:          _retag(_real(data.top3           || [])),
           flags, addedPrices: prices, lastUpdated: ts,
         }, timestamp: Date.now(), daysFilter };
       }
