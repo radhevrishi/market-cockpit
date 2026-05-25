@@ -16,7 +16,7 @@ import { SUPER_INVESTORS } from '@/lib/super-investors';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
-export const maxDuration = 60;
+export const maxDuration = 30; // PATCH 0818
 
 interface MoveLite {
   direction: 'BUY' | 'ADD' | 'TRIM' | 'EXIT' | 'UNKNOWN';
@@ -61,7 +61,7 @@ export async function GET(request: Request) {
   try {
     const cached = await kvGet<any>(cacheKey);
     if (cached && cached._ts && Date.now() - cached._ts < 30 * 60 * 1000) {
-      return NextResponse.json({ ...cached, cached: true });
+      return NextResponse.json({ ...cached, cached: true }, { headers: { 'Cache-Control': 's-maxage=600, stale-while-revalidate=1800' } });  // PATCH 0818 — flow data changes slowly
     }
   } catch {}
 
@@ -205,5 +205,5 @@ export async function GET(request: Request) {
     console.warn('[super-investor-flow] KV SET failed (non-fatal):', err instanceof Error ? err.message : String(err));
   }
 
-  return NextResponse.json(payload);
+  return NextResponse.json(payload, { headers: { 'Cache-Control': 's-maxage=600, stale-while-revalidate=1800' } });  // PATCH 0818 — flow data changes slowly
 }

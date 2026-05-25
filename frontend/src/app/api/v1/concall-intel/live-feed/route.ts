@@ -120,7 +120,7 @@ interface FeedPayload {
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;  // PATCH 0388: extended for PDF extraction budget
+export const maxDuration = 30;  // PATCH 0818 — tighter cap to bound CPU per call
 
 export async function GET(req: NextRequest) {
   try {
@@ -139,7 +139,7 @@ export async function GET(req: NextRequest) {
       theme_clusters: [],
       sources: { nse: 'NSE_BLOCKED', bse: 'BSE_BLOCKED' },
       error: `live-feed failed: ${msg.slice(0, 200)}`,
-    });
+    }, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } });  // PATCH 0818
   }
 }
 
@@ -172,7 +172,7 @@ async function handleLiveFeed(req: NextRequest) {
   if (!force && isRedisAvailable()) {
     const cached = await kvGet<FeedPayload>(cacheKey);
     if (cached) {
-      return NextResponse.json(applyFilters(cached, { exchangeFilter, bullishOnly }));
+      return NextResponse.json(applyFilters(cached, { exchangeFilter, bullishOnly }), { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } });  // PATCH 0818
     }
   }
   // PATCH 0704 — cacheOnly path: no cache → return empty immediately so
@@ -187,7 +187,7 @@ async function handleLiveFeed(req: NextRequest) {
       theme_clusters: [],
       sources: { nse: 'NSE_EMPTY', bse: 'BSE_EMPTY' },
       cacheStatus: 'CACHE_WARMING',
-    });
+    }, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } });  // PATCH 0818
   }
 
   // Compute date range
@@ -667,7 +667,7 @@ async function handleLiveFeed(req: NextRequest) {
     await kvSet(cacheKey, payload, ttl);
   }
 
-  return NextResponse.json(applyFilters(payload, { exchangeFilter, bullishOnly }));
+  return NextResponse.json(applyFilters(payload, { exchangeFilter, bullishOnly }), { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } });  // PATCH 0818
 }
 
 // PATCH 0389 — Cross-exchange dedup. Same disclosure often filed on both

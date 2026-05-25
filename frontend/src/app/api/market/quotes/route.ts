@@ -5,11 +5,11 @@ import { fetchQuotesWithFallback, US_TOP } from '@/lib/yahoo';
 import { kvGet } from '@/lib/kv';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60; // PATCH 0789 — Yahoo bulk for ~2000 tickers (NSE master) needs up to 60s
+export const maxDuration = 30; // PATCH 0818 — 60 → 30, caps CPU per call for ~2000 tickers (NSE master) needs up to 60s
 
 // Response-level cache (avoids re-assembly on rapid polls)
 const responseCache = new Map<string, { data: any; ts: number }>();
-const RESPONSE_TTL = 30_000; // 30s cache for assembled response
+const RESPONSE_TTL = 120_000; // PATCH 0818 — 30s → 2min (cuts CPU 4x) // 30s cache for assembled response
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -22,7 +22,9 @@ export async function GET(request: Request) {
   // Check response cache
   const cached = responseCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < RESPONSE_TTL) {
-    return NextResponse.json(cached.data);
+    return NextResponse.json(cached.data, {
+      headers: { 'Cache-Control': 's-maxage=60, stale-while-revalidate=300' }, // PATCH 0818
+    });
   }
 
   try {
@@ -52,7 +54,9 @@ export async function GET(request: Request) {
       responseCache.delete(oldest[0]);
     }
 
-    return NextResponse.json(responseData);
+    return NextResponse.json(responseData, {
+      headers: { 'Cache-Control': 's-maxage=60, stale-while-revalidate=300' }, // PATCH 0818
+    });
   } catch (error) {
     console.error('Market quotes error:', error);
     return NextResponse.json({ error: 'Failed to fetch market data', stocks: [], gainers: [], losers: [], summary: { total: 0, gainersCount: 0, losersCount: 0, avgChange: 0, sectors: 0 } }, { status: 500 });

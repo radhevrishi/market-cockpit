@@ -26,7 +26,7 @@ import { NextResponse } from 'next/server';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 
 export const runtime = 'nodejs';
-export const maxDuration = 60;
+export const maxDuration = 30; // PATCH 0818
 export const dynamic = 'force-dynamic';
 
 // ─── Types (mirror frontend) ───────────────────────────────────────────────
@@ -407,7 +407,7 @@ export async function GET(req: Request) {
           )
           .map((c) => c.ticker);
         if (needTickers.length === 0) {
-          return NextResponse.json({ ...existing, _cache: 'hit', _refresh: 'no-op (all populated)' });
+          return NextResponse.json({ ...existing, _cache: 'hit', _refresh: 'no-op (all populated)' }, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } });  // PATCH 0818
         }
         const base = new URL(req.url);
         const chunks: string[][] = [];
@@ -516,7 +516,7 @@ export async function GET(req: Request) {
         // Write back with same TTL strategy
         const ttl = isPast ? 365 * 24 * 3600 : 5 * 60;
         try { await kvSet(cacheKey, payload, ttl); } catch {}
-        return NextResponse.json(payload);
+        return NextResponse.json(payload, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } });  // PATCH 0818
       }
     } catch (e) {
       // Fall through to full-rebuild path
@@ -659,7 +659,7 @@ export async function GET(req: Request) {
     if (isPast && isRedisAvailable()) {
       try { await kvSet(cacheKey, empty, 365 * 24 * 3600); } catch {}
     }
-    return NextResponse.json(empty);
+    return NextResponse.json(empty, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } });  // PATCH 0818
   }
 
   // Fetch enrichment for all tickers (chunk to 40 per request)
@@ -807,5 +807,5 @@ export async function GET(req: Request) {
     try { await kvSet(cacheKey, payload, ttl); } catch {}
   }
 
-  return NextResponse.json(payload);
+  return NextResponse.json(payload, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } });  // PATCH 0818
 }

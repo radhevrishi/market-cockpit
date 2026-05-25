@@ -17,7 +17,7 @@ import {
 import { getCalendarEntriesInRange } from '@/lib/earnings-week-seed';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+export const maxDuration = 30; // PATCH 0818
 
 // ── In-memory cache per month (5 min TTL) ──
 const EARNINGS_ROUTE_CACHE_TTL = 300_000;
@@ -422,7 +422,9 @@ export async function GET(request: Request) {
   const cacheKey = `${market}_${month || 'current'}_${indexFilter || 'all'}`;
   const cached = _earningsRouteCache.get(cacheKey);
   if (!force && cached && Date.now() - cached.ts < EARNINGS_ROUTE_CACHE_TTL) {
-    return NextResponse.json(cached.data);
+    return NextResponse.json(cached.data, {
+      headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' }, // PATCH 0818
+    });
   }
 
   try {
@@ -1140,7 +1142,9 @@ export async function GET(request: Request) {
     // Save to route cache
     _earningsRouteCache.set(cacheKey, { data: responseData, ts: Date.now() });
 
-    return NextResponse.json(responseData);
+    return NextResponse.json(responseData, {
+      headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' }, // PATCH 0818
+    });
   } catch (error) {
     console.error('Earnings API error:', error);
     return NextResponse.json({

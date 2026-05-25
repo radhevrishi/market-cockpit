@@ -75,7 +75,7 @@ function useNewsStream() {
       const { data } = await api.get('/news?limit=100');
       return Array.isArray(data) ? data : (data?.items || []);
     },
-    refetchInterval: 60_000,
+    refetchInterval: 300_000 /* PATCH 0818: 60s→5m */,
     staleTime: 30_000,
   });
 }

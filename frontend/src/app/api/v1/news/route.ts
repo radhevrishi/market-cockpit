@@ -65,7 +65,7 @@ import {
 import { seedTransformational } from '@/lib/news/transformational-seed';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 30;
+export const maxDuration = 20; // PATCH 0818 — tighter cap
 
 // ── RSS Feed Sources ──────────────────────────────────────────────────
 // Each feed gets a `tier` so the BOTTLENECK classifier can require
@@ -2680,7 +2680,7 @@ export async function GET(request: Request) {
       }
       // Top up if one side has fewer than 5
       const ranked = merged.slice(0, 10);
-      return NextResponse.json(ranked);
+      return NextResponse.json(ranked, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } } );// PATCH 0818
     }
 
     // ── Phase 2.5 / 3.14: Anomaly detector ──
@@ -2906,7 +2906,7 @@ export async function GET(request: Request) {
       });
     }
 
-    return NextResponse.json(filtered);
+    return NextResponse.json(filtered, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } } );// PATCH 0818
   } catch (error) {
     console.error('[News API] Error:', error);
     return NextResponse.json([], { status: 200 });

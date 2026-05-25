@@ -79,5 +79,7 @@ export async function GET(request: Request) {
     responseCache.delete(oldest[0]);
   }
 
-  return NextResponse.json(responseData);
+  return NextResponse.json(responseData, {
+    headers: { 'Cache-Control': 's-maxage=600, stale-while-revalidate=3600' }, // PATCH 0818 — fundamentals change weekly
+  });
 }
