@@ -2506,8 +2506,8 @@ export default function HomeDashboard() {
             })()}
           </div>
 
-          {/* SIGNALS — high-importance corporate news */}
-          <div style={{ ...cardStyle, borderLeft: '3px solid #22D3EE' }}>
+          {/* SIGNALS — high-importance corporate news (PATCH 0862 — fills vertical space, 👁 chip, denser rows) */}
+          <div style={{ ...cardStyle, borderLeft: '3px solid #22D3EE', display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
               <span style={{ fontSize: 13, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px' }}>
                 📡 SIGNALS ({data.signals?.length || 0})
@@ -2515,29 +2515,51 @@ export default function HomeDashboard() {
               <Link href="/orders" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
             </div>
             <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
-              High-importance corporate actions and re-rating triggers
+              High-importance corporate actions and re-rating triggers · 👁 = in your universe
             </div>
             {!data.signals ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
             ) : data.signals.length === 0 ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>No high-importance corporate items in last 24h.</div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                {data.signals.slice(0, 8).map((s: any, i: number) => {
-                  const ticker = s.primary_ticker || (Array.isArray(s.ticker_symbols) && s.ticker_symbols[0]) || '';
-                  return (
+            ) : (() => {
+              // Build user-universe set for 👁 chip + reorder (universe rows first)
+              const norm = (s: string) => (s || '').toString().toUpperCase().replace(/\.(NS|BO)$/i, '').trim();
+              const universeSet = new Set<string>();
+              try { (JSON.parse(localStorage.getItem('mc_watchlist_tickers') || '[]') || []).forEach((t: string) => universeSet.add(norm(t))); } catch {}
+              try { getConvictionTickers().forEach((t: string) => universeSet.add(norm(t))); } catch {}
+              try { (JSON.parse(localStorage.getItem('portfolioHoldings') || '[]') || []).forEach((h: any) => { if (h?.ticker) universeSet.add(norm(h.ticker)); }); } catch {}
+              const enriched = data.signals.slice().map((s: any) => {
+                const tk = norm(s.primary_ticker || (Array.isArray(s.ticker_symbols) && s.ticker_symbols[0]) || '');
+                return { ...s, _ticker: tk, _inUniverse: tk && universeSet.has(tk) };
+              });
+              // Sort: universe rows first, otherwise preserve relative order
+              enriched.sort((a: any, b: any) => {
+                if (a._inUniverse !== b._inUniverse) return a._inUniverse ? -1 : 1;
+                return 0;
+              });
+              const SHOWN = 25;  // was 8 — fills the vertical space alongside Movers
+              const items = enriched.slice(0, SHOWN);
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1, minHeight: 0 }}>
+                  {items.map((s: any, i: number) => (
                     <a key={(s.id || '') + i} href={(s as any).url || (s as any).source_url || '#'} target="_blank" rel="noopener noreferrer"
-                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                      style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '2px 5px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                      {s._inUniverse && <span title="In your Watchlist/Portfolio/CB" style={{ fontSize: 10, color: '#22D3EE', flexShrink: 0 }}>👁</span>}
                       <span style={{ fontSize: 9, color: '#22D3EE', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 56 }}>
-                        {(ticker || '').toString().replace(/\.(NS|BO)$/i, '').slice(0, 8) || '—'}
+                        {(s._ticker || '').slice(0, 8) || '—'}
                       </span>
                       <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.title || s.headline}</span>
-                      <span style={{ fontSize: 9, color: DIM, whiteSpace: 'nowrap' }}>{s.source_name || '—'}</span>
+                      <span style={{ fontSize: 9, color: DIM, whiteSpace: 'nowrap', maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.source_name || '—'}</span>
                     </a>
-                  );
-                })}
-              </div>
-            )}
+                  ))}
+                  {data.signals.length > SHOWN && (
+                    <Link href="/orders" style={{ fontSize: 10, color: '#22D3EE', textAlign: 'center', padding: '6px 0', textDecoration: 'none', fontWeight: 700, marginTop: 4 }}>
+                      + {data.signals.length - SHOWN} more · Open Signals page →
+                    </Link>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         </div>
 
