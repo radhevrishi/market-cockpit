@@ -115,10 +115,21 @@ interface UniverseTicker {
 
 interface RollingStat {
   vol20DAvg?: number;
+  vol50DAvg?: number;
+  sma20?: number | null;
+  sma50?: number | null;
+  aboveSma20?: boolean;
+  aboveSma50?: boolean;
   mom1M?: number;
+  mom3M?: number | null;
+  range60dHigh?: number;
+  range60dLow?: number;
+  pctOfRange60dHigh?: number;
+  // legacy aliases (same values, kept for back-compat with existing callers)
   high52w?: number;
   low52w?: number;
   pctOf52wHigh?: number;
+  sessions?: number;
 }
 
 interface BroadResult {
@@ -154,26 +165,35 @@ async function computeBroadBreadth(): Promise<BroadResult> {
   const tickers = uniBlob.tickers.filter((t) => t.hasPrice && t.ticker);
 
   // ─── TREND BREADTH (35%) ─────────────────────────────────────────────
-  let aboveTrend50 = 0, hasTrend50 = 0;       // mom1M ≥ 0
-  let aboveTrend200 = 0, hasTrend200 = 0;     // pctOf52wHigh ≥ 0.70
+  // PATCH 0810: now uses REAL sma20 + sma50 from rolling-stats blob
+  // (computed by GH Actions over 60-day BHAVCOPY window). 60-day range
+  // high/low is used for "new high/low" — that's an HONEST 60d signal,
+  // not pretending to be 52w.
+  let aboveSma20 = 0, hasSma20 = 0;
+  let aboveSma50 = 0, hasSma50 = 0;
   let newHigh = 0, newLow = 0, hasHL = 0;
   for (const t of tickers) {
     const s = stats[t.ticker] || {};
-    if (Number.isFinite(s.mom1M)) {
-      hasTrend50++;
-      if (s.mom1M! >= 0) aboveTrend50++;
+    if (typeof s.aboveSma20 === 'boolean') {
+      hasSma20++;
+      if (s.aboveSma20) aboveSma20++;
     }
-    if (Number.isFinite(s.pctOf52wHigh)) {
-      hasTrend200++;
-      const p = s.pctOf52wHigh!;
-      if (p >= 0.70) aboveTrend200++;
+    if (typeof s.aboveSma50 === 'boolean') {
+      hasSma50++;
+      if (s.aboveSma50) aboveSma50++;
+    }
+    // 60-day range — current within 2% of period high = new high; within 5% of low = new low
+    const p = Number.isFinite(s.pctOfRange60dHigh)
+      ? s.pctOfRange60dHigh!
+      : (Number.isFinite(s.pctOf52wHigh) ? s.pctOf52wHigh! : null);
+    if (p !== null) {
       hasHL++;
       if (p >= 0.98) newHigh++;
       if (p <= 0.05) newLow++;
     }
   }
-  const pct50 = hasTrend50 > 0 ? (aboveTrend50 / hasTrend50) * 100 : 50;
-  const pct200 = hasTrend200 > 0 ? (aboveTrend200 / hasTrend200) * 100 : 50;
+  const pct50 = hasSma20 > 0 ? (aboveSma20 / hasSma20) * 100 : 50;
+  const pct200 = hasSma50 > 0 ? (aboveSma50 / hasSma50) * 100 : 50;   // historical name, actually sma50
   const hlSpread = hasHL > 0 ? ((newHigh - newLow) / hasHL) * 100 : 0;
   const trendScore =
     0.45 * pct50 +
@@ -225,18 +245,16 @@ async function computeBroadBreadth(): Promise<BroadResult> {
   const smallcapScore = Math.max(0, Math.min(100, 50 + (smPct - lgPct) * 1.0));
 
   // ─── INSTITUTIONAL FLOW (10%) ────────────────────────────────────────
-  // P0809: cap='Large' = institutional ownership concentration tier
-  // (top constituents of Nifty + Nifty Next 50). Use turnover ≥ ₹100 Cr
-  // (= 10,000 lacs) as a secondary filter so we exclude largecaps with
-  // negligible institutional participation today.
+  // P0810: largecap participation using REAL aboveSma50 (not a 20-day
+  // pctOf52wHigh proxy). cap='Large' = top Nifty + Next 50 tier.
   let lcAbove = 0, lcHas = 0;
   for (const t of tickers) {
     const cap = (t.cap || '').toLowerCase();
     if (cap !== 'large') continue;
     const s = stats[t.ticker] || {};
-    if (!Number.isFinite(s.pctOf52wHigh)) continue;
+    if (typeof s.aboveSma50 !== 'boolean') continue;
     lcHas++;
-    if (s.pctOf52wHigh! >= 0.70) lcAbove++;
+    if (s.aboveSma50) lcAbove++;
   }
   const flowScore = lcHas > 0 ? (lcAbove / lcHas) * 100 : 50;
 
@@ -258,13 +276,14 @@ async function computeBroadBreadth(): Promise<BroadResult> {
       trend: {
         score: Math.round(trendScore),
         weight: 35,
-        pct50: Math.round(pct50),
-        pct200: Math.round(pct200),
+        pct50: Math.round(pct50),                 // % above real sma20 (was: mom1M ≥ 0 proxy)
+        pct200: Math.round(pct200),               // % above real sma50 (NOT sma200 yet — 60d window)
         newHigh,
         newLow,
         hlSpread: Math.round(hlSpread),
-        proxy: true,                          // signal to UI: these are proxies
-        proxyNote: 'mom1M ≥ 0 used as 50DMA proxy; pctOf52wHigh ≥ 0.70 as 200DMA proxy',
+        proxy: false,
+        proxyNote: 'sma20 + sma50 computed from 60d BHAVCOPY window. true sma200 will land when scraper is extended.',
+        windowDays: 60,
       },
       sector: {
         score: Math.round(sectorScore),
@@ -277,7 +296,7 @@ async function computeBroadBreadth(): Promise<BroadResult> {
           .map((r) => ({ sector: r.sector, n: r.n, medianMom: +r.medianMom.toFixed(2), pctUp: Math.round(r.pctUp) })),
       },
       smallcap: { score: Math.round(smallcapScore), weight: 20, smPct: Math.round(smPct), lgPct: Math.round(lgPct), smCount: smMomHas, lgCount: lgMomHas },
-      flow:     { score: Math.round(flowScore), weight: 10, lcAbove, lcTotal: lcHas, proxy: true, proxyNote: 'largecap above 200DMA proxy = institutional ownership concentration' },
+      flow:     { score: Math.round(flowScore), weight: 10, lcAbove, lcTotal: lcHas, proxy: false, proxyNote: 'largecap above real sma50 — institutional ownership concentration tier' },
       momentum: { score: Math.round(momScore), weight: 10, aligned, total: hasAlign },
     },
     universeSize: tickers.length,

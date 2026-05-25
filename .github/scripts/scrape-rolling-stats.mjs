@@ -31,7 +31,7 @@ const ARCHIVES_BASE = 'https://nsearchives.nseindia.com';
 const FETCH_TIMEOUT_MS = 25_000;
 const KV_KEY = 'nse-rolling-stats:v1:latest';
 const KV_TTL_SECONDS = 7 * 24 * 60 * 60; // 7d
-const DAYS_WINDOW = 20;
+const DAYS_WINDOW = 60;        // PATCH 0810 — 20 → 60 for real sma20 + sma50 + honest range
 
 const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -94,7 +94,7 @@ async function fetchRecentBhavs() {
   // Walk back from yesterday; skip weekends; collect DAYS_WINDOW successful fetches.
   const today = new Date();
   const collected = [];
-  for (let back = 1; back <= 45 && collected.length < DAYS_WINDOW; back++) {
+  for (let back = 1; back <= 100 && collected.length < DAYS_WINDOW; back++) {
     const d = new Date(today.getTime() - back * 86400_000);
     const dow = d.getUTCDay();
     if (dow === 0 || dow === 6) continue;
@@ -163,32 +163,65 @@ async function main() {
   }
   console.log(`  ✓ ${history.size} unique tickers with at least 1 session`);
 
-  // Compute per-ticker stats. bhavs[0] is newest; index 0 → today, last → ~20 days ago.
+  // Compute per-ticker stats. bhavs[0] is newest; index 0 → today, last → ~60 days ago.
+  // PATCH 0810: now compute real sma20 + sma50, plus honest range60d (NOT 52w).
   const stats = {};
   let withStats = 0;
+  const mean = (arr) => arr.reduce((s, v) => s + v, 0) / arr.length;
   for (const [ticker, h] of history) {
     if (h.closes.length < 5) continue; // not enough data
-    const currentClose = h.closes[0];
-    const oldestClose = h.closes[h.closes.length - 1];
-    const high52w = Math.max(...h.closes);
-    const low52w  = Math.min(...h.closes);
-    const vol20DAvg = h.volumes.reduce((s, v) => s + v, 0) / h.volumes.length;
-    const currentVol = h.volumes[0];
+    const closes = h.closes;            // newest-first (index 0 = today)
+    const volumes = h.volumes;
+    const sessions = closes.length;
+    const currentClose = closes[0];
+    const currentVol = volumes[0];
+
+    // SMAs over the most-recent N sessions (with fall-through when window short)
+    const sma20 = sessions >= 5  ? mean(closes.slice(0, Math.min(20, sessions))) : null;
+    const sma50 = sessions >= 30 ? mean(closes.slice(0, Math.min(50, sessions))) : null;
+
+    // Volume averages
+    const vol20DAvg = mean(volumes.slice(0, Math.min(20, sessions)));
+    const vol50DAvg = sessions >= 30 ? mean(volumes.slice(0, Math.min(50, sessions))) : vol20DAvg;
     const volMultiple = vol20DAvg > 0 ? currentVol / vol20DAvg : 0;
-    // mom1M: current vs ~20 sessions back (oldest in window). Closer to 1M if window=20.
-    const mom1M = oldestClose > 0 ? ((currentClose - oldestClose) / oldestClose) * 100 : 0;
+
+    // Momentum vs N sessions ago (clamp to available history)
+    const idx1M = Math.min(21, sessions - 1);
+    const idx3M = sessions >= 63 ? 62 : null;
+    const close1MAgo = closes[idx1M];
+    const close3MAgo = idx3M !== null ? closes[idx3M] : null;
+    const mom1M = close1MAgo > 0 ? ((currentClose - close1MAgo) / close1MAgo) * 100 : 0;
+    const mom3M = close3MAgo !== null && close3MAgo > 0
+      ? ((currentClose - close3MAgo) / close3MAgo) * 100
+      : null;
+
+    // Honest range over the actual window (NOT 52w — we only have ~60 days)
+    const range60dHigh = Math.max(...closes);
+    const range60dLow  = Math.min(...closes);
+    const pctOfRange60dHigh = range60dHigh > 0 ? currentClose / range60dHigh : 0;
+
     stats[ticker] = {
       vol20DAvg: Math.round(vol20DAvg),
+      vol50DAvg: Math.round(vol50DAvg),
       volMultiple: Math.round(volMultiple * 100) / 100,
+      sma20: sma20 !== null ? Math.round(sma20 * 100) / 100 : null,
+      sma50: sma50 !== null ? Math.round(sma50 * 100) / 100 : null,
+      aboveSma20: sma20 !== null && currentClose > sma20,
+      aboveSma50: sma50 !== null && currentClose > sma50,
       mom1M: Math.round(mom1M * 100) / 100,
-      high52w,
-      low52w,
-      pctOf52wHigh: high52w > 0 ? Math.round((currentClose / high52w) * 1000) / 1000 : 0,
-      sessions: h.closes.length,
+      mom3M: mom3M !== null ? Math.round(mom3M * 100) / 100 : null,
+      range60dHigh,
+      range60dLow,
+      pctOfRange60dHigh: Math.round(pctOfRange60dHigh * 1000) / 1000,
+      // LEGACY field aliases (kept so old consumers don't break)
+      high52w: range60dHigh,
+      low52w: range60dLow,
+      pctOf52wHigh: Math.round(pctOfRange60dHigh * 1000) / 1000,
+      sessions,
     };
     withStats++;
   }
-  console.log(`  ✓ ${withStats} tickers have computed stats`);
+  console.log(`  ✓ ${withStats} tickers have computed stats (with sma20 + sma50)`);
 
   const elapsed = Date.now() - startedAt;
   const payload = {
