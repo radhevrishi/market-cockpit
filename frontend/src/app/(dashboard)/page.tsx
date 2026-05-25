@@ -1233,7 +1233,7 @@ export default function HomeDashboard() {
         // Tier 3: anything else (US/global)
         const tier3 = all.filter((a: any) => !inUniverse(a) && !isIndian(a));
 
-        const merged = [...tier1, ...tier2, ...tier3].slice(0, 8);
+        const merged = [...tier1, ...tier2, ...tier3].slice(0, 25);  // PATCH 0863: was 8, user asked for 25 visible on home
         setData((d) => ({ ...d, signals: merged } as any));
       });
 
