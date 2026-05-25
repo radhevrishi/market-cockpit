@@ -341,7 +341,7 @@ const eventTypeIcon = (t: string) => {
 };
 
 type FilterType = 'ALL' | 'BUY' | 'ADD' | 'HOLD' | 'WATCH' | 'TRIM' | 'ORDERS' | 'CAPEX' | 'DEALS' | 'STRATEGIC' | 'NEGATIVE' | 'HIGH_IMPACT' | 'NOTABLE';
-type UniverseFilter = 'ALL' | 'PORTFOLIO' | 'WATCHLIST' | 'EXCEL' | 'CONVICTION';  // PATCH 0251
+type UniverseFilter = 'OWN' | 'ALL' | 'PORTFOLIO' | 'WATCHLIST' | 'EXCEL' | 'CONVICTION';  // PATCH 0825 added OWN (union)
 
 
 /** Filter out GOVERNANCE / Mgmt Change signals — not useful for portfolio decisions */
@@ -2382,7 +2382,7 @@ export default function CompanyIntelligencePage() {
   const [lastUpdated, setLastUpdated] = useState('');
   const [daysFilter, setDaysFilter] = useState(7);
   const [typeFilter, setTypeFilter] = useState<FilterType>('ALL');
-  const [universeFilter, setUniverseFilter] = useState<UniverseFilter>('ALL');
+  const [universeFilter, setUniverseFilter] = useState<UniverseFilter>('OWN'); // PATCH 0825 — own universe default
   const [debugInfo, setDebugInfo] = useState<any>(null);
   const [isStale, setIsStale] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
@@ -2545,6 +2545,8 @@ export default function CompanyIntelligencePage() {
       // the feed always collapsed to a handful of signals even though the
       // client UI said "ALL". Watchlist/portfolio are still sent so the
       // backend enricher universe stays correct.
+      // PATCH 0825 — 'ALL' explicitly asks server for full universe; 'OWN' relies
+      // on the watchlist+portfolio params already sent (server filters to that).
       const universeParam = universeFilter === 'ALL' ? '&universe=all' : '';
       // PATCH 0716 — hardened: 30s timeout + safe JSON parse so a hung
       // backend / malformed payload no longer wedges the page.
@@ -2793,9 +2795,12 @@ export default function CompanyIntelligencePage() {
   const filteredSignals = useMemo(() => {
     let list = signals;
     // Universe filter
+    // PATCH 0825 — OWN = union of Portfolio ∪ Watchlist ∪ Excel/Multibagger ∪ Conviction Beats
+    if (universeFilter === 'OWN')       list = list.filter(s => s.isPortfolio || s.isWatchlist || s.isExcel || s.isConviction);
     if (universeFilter === 'PORTFOLIO') list = list.filter(s => s.isPortfolio);
     if (universeFilter === 'WATCHLIST') list = list.filter(s => s.isWatchlist);
     if (universeFilter === 'EXCEL')     list = list.filter(s => s.isExcel);
+    if (universeFilter === 'CONVICTION') list = list.filter((s: any) => s.isConviction);
     if (universeFilter === 'CONVICTION') list = list.filter(s => (s as any).isConviction);  // PATCH 0251
     // Type filter
     if (typeFilter === 'BUY') list = list.filter(s => s.action === 'BUY');
@@ -2835,6 +2840,9 @@ export default function CompanyIntelligencePage() {
   const negativeCount = signals.filter(s => s.isNegative).length;
   const portfolioCount = signals.filter(s => s.isPortfolio).length;
   const watchlistCount = signals.filter(s => s.isWatchlist).length;
+  // PATCH 0825 — counts for OWN (union) + CONVICTION
+  const convictionCount = signals.filter((s: any) => s.isConviction).length;
+  const ownCount = signals.filter((s: any) => s.isPortfolio || s.isWatchlist || s.isExcel || s.isConviction).length;
   // Count unique Excel-tagged symbols across ALL signal arrays
   const excelSymbolsSeen = new Set<string>();
   [...signals, ...notableSignals, ...speculativeSignals, ...monitorList].forEach(s => {
@@ -3831,12 +3839,14 @@ export default function CompanyIntelligencePage() {
         <div style={{ display: 'flex', gap: '8px', marginBottom: '14px', flexWrap: 'wrap', alignItems: 'center' }}>
           <Filter size={13} color={TEXT3} />
 
-          {/* Universe filter */}
+          {/* PATCH 0825 — Universe filter with 'OWN' as primary chip. OWN = WL ∪ PF ∪ Excel ∪ CB. */}
           {([
-            { key: 'ALL'       as UniverseFilter, label: 'All',          count: signals.length,  color: PURPLE },
-            { key: 'PORTFOLIO' as UniverseFilter, label: 'Portfolio',    count: portfolioCount,  color: PURPLE },
-            { key: 'WATCHLIST' as UniverseFilter, label: 'Watchlist',    count: watchlistCount,  color: ACCENT },
-            { key: 'EXCEL'     as UniverseFilter, label: '📊 Excel Picks', count: excelCount,    color: '#10b981' },
+            { key: 'OWN'       as UniverseFilter, label: '👁 My Universe', count: ownCount,        color: '#22D3EE' },
+            { key: 'ALL'       as UniverseFilter, label: 'All',            count: signals.length,  color: PURPLE },
+            { key: 'PORTFOLIO' as UniverseFilter, label: 'Portfolio',      count: portfolioCount,  color: PURPLE },
+            { key: 'WATCHLIST' as UniverseFilter, label: 'Watchlist',      count: watchlistCount,  color: ACCENT },
+            { key: 'EXCEL'     as UniverseFilter, label: '📊 Excel Picks', count: excelCount,      color: '#10b981' },
+            { key: 'CONVICTION' as UniverseFilter, label: '🏆 Conviction', count: convictionCount, color: '#F59E0B' },
           ]).map(f => (
             <button key={f.key} onClick={() => setUniverseFilter(f.key)} style={{
               padding: '4px 10px', borderRadius: '5px', fontSize: '11px', fontWeight: 600, cursor: 'pointer',
