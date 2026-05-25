@@ -3,8 +3,6 @@ import { fetchNifty50, fetchNiftyNext50, fetchNifty500, fetchNifty200, fetchNift
 import { fetchQuotesWithFallback, US_TOP } from '@/lib/yahoo';
 // PATCH 0782 — KV blob primary source (populated by GH Actions scraper).
 import { kvGet } from '@/lib/kv';
-// PATCH 0812 — during market hours we want live Yahoo prices, not EOD blob.
-import { isIndianMarketOpen } from '@/lib/market-hours';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // PATCH 0789 — Yahoo bulk for ~2000 tickers (NSE master) needs up to 60s
@@ -504,28 +502,23 @@ async function fetchIndianDataWithCache() {
         // 100 largecap names every request so the top of the page is live
         // intraday. Smallcap/midcap continue to use blob EOD to stay within
         // Yahoo rate limits + Vercel maxDuration.
-        // PATCH 0814: top-500-by-turnover live refresh.
-        // P0813 only covered cap='Large' (100 names), which left ~2,200 smallcap
-        // names showing yesterday's BHAVCOPY close even when market was open.
-        // Now we sort by today's turnoverLacs and live-refresh the top 500 most
-        // liquid names — that captures both the largecap leaders AND the
-        // smallcap movers (LAXMIDENTL, RAMCOSYS, SPARC class) that drive the
-        // /movers page. 500 names ÷ 50/batch × 1.5s = ~15s, comfortably under
-        // the 60s Vercel budget.
-        const marketOpen = isIndianMarketOpen();
+        // PATCH 0815: ALWAYS prefer Yahoo over embedded BHAVCOPY (restores
+        // pre-P0790 'perfect 7 days ago' behavior). The embedded BHAVCOPY
+        // price is yesterday's close; during market hours Yahoo is fresh.
+        // Outside market hours Yahoo serves the same close — same data,
+        // just normalized. The price-resolution loop below prefers Yahoo
+        // when present, BHAVCOPY otherwise — so this is safe.
+        //
+        // Top-500-by-turnover + all largecaps gets us comprehensive coverage
+        // of every name on /movers, within Vercel's 60s budget.
         const pricedFromBlob = tickers.filter((t: any) => t.hasPrice && (t.price ?? 0) > 0);
-        // Build live-refresh list: top 500 by turnoverLacs + ALL largecaps
-        // (so even no-volume largecaps like ITC during quiet hours stay live)
-        const liveSyms: string[] = [];
-        if (marketOpen) {
-          const topByTurnover = tickers
-            .slice()
-            .sort((a: any, b: any) => (b.turnoverLacs || 0) - (a.turnoverLacs || 0))
-            .slice(0, 500);
-          for (const t of topByTurnover) liveSyms.push(`${t.ticker}.NS`);
-          for (const t of tickers) {
-            if ((t.cap || '').toLowerCase() === 'large') liveSyms.push(`${t.ticker}.NS`);
-          }
+        const topByTurnover = tickers
+          .slice()
+          .sort((a: any, b: any) => (b.turnoverLacs || 0) - (a.turnoverLacs || 0))
+          .slice(0, 500);
+        const liveSyms: string[] = topByTurnover.map((t: any) => `${t.ticker}.NS`);
+        for (const t of tickers) {
+          if ((t.cap || '').toLowerCase() === 'large') liveSyms.push(`${t.ticker}.NS`);
         }
         const unpricedSyms = tickers.filter((t: any) => !t.hasPrice).map((t: any) => `${t.ticker}.NS`);
         // Combine, dedupe, cap.
@@ -552,8 +545,9 @@ async function fetchIndianDataWithCache() {
           let volume = 0, marketCap = 0, open = 0, dayHigh = 0, dayLow = 0, yearHigh = 0, yearLow = 0;
           let companyFromYahoo = '';
 
-          // PATCH 0812 — prefer LIVE Yahoo over blob EOD when market open
-          const liveQ = marketOpen ? yahooMap.get(t.ticker) : null;
+          // PATCH 0815 — ALWAYS prefer Yahoo when present (live during
+          // market hours, T-1 close otherwise — both fresher than blob).
+          const liveQ = yahooMap.get(t.ticker);
           if (liveQ && liveQ.regularMarketPrice > 0) {
             // Live intraday from Yahoo during market hours
             price = liveQ.regularMarketPrice || 0;
@@ -659,7 +653,7 @@ async function fetchIndianDataWithCache() {
               avgChange: mergedStocks.length ? mergedStocks.reduce((s: number, x: any) => s + (x.changePercent || 0), 0) / mergedStocks.length : 0,
               sectors: new Set(mergedStocks.map((s: any) => s.sector)).size,
             },
-            source: `NSE-universe (KV ${universeAgeStr}) + BHAVCOPY/${universeBlob.pricedCount || 0} + Yahoo ${marketOpen ? 'LIVE' : 'enrich'}/${yahooMap.size}${marketOpen ? ' (top-500 + largecaps live)' : ''}`,
+            source: `NSE-universe (KV ${universeAgeStr}) + BHAVCOPY/${universeBlob.pricedCount || 0} + Yahoo/${yahooMap.size} (top-500 + largecaps preferred over EOD)`,
             updatedAt: new Date().toISOString(),
           };
         }
