@@ -2506,21 +2506,21 @@ export default function HomeDashboard() {
             })()}
           </div>
 
-          {/* SIGNALS — high-importance corporate news (PATCH 0862 — fills vertical space, 👁 chip, denser rows) */}
+          {/* SIGNALS — high-importance corporate news (PATCH 0865 — institutional font sizing) */}
           <div style={{ ...cardStyle, borderLeft: '3px solid #22D3EE', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ fontSize: 15, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px' }}>
                 📡 SIGNALS ({data.signals?.length || 0})
               </span>
-              <Link href="/orders" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
+              <Link href="/orders" style={{ fontSize: 12, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
             </div>
-            <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
+            <div style={{ fontSize: 11.5, color: DIM, marginBottom: 8 }}>
               High-importance corporate actions and re-rating triggers · 👁 = in your universe
             </div>
             {!data.signals ? (
-              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
+              <div style={{ fontSize: 13, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
             ) : data.signals.length === 0 ? (
-              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>No high-importance corporate items in last 24h.</div>
+              <div style={{ fontSize: 13, color: DIM, fontStyle: 'italic' }}>No high-importance corporate items in last 24h.</div>
             ) : (() => {
               // Build user-universe set for 👁 chip + reorder (universe rows first)
               const norm = (s: string) => (s || '').toString().toUpperCase().replace(/\.(NS|BO)$/i, '').trim();
@@ -2540,20 +2540,20 @@ export default function HomeDashboard() {
               const SHOWN = 30;  // PATCH 0864: bumped 25 → 30 per user
               const items = enriched.slice(0, SHOWN);
               return (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1, minHeight: 0 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1, minHeight: 0 }}>
                   {items.map((s: any, i: number) => (
                     <a key={(s.id || '') + i} href={(s as any).url || (s as any).source_url || '#'} target="_blank" rel="noopener noreferrer"
-                      style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '2px 5px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
-                      {s._inUniverse && <span title="In your Watchlist/Portfolio/CB" style={{ fontSize: 10, color: '#22D3EE', flexShrink: 0 }}>👁</span>}
-                      <span style={{ fontSize: 9, color: '#22D3EE', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 56 }}>
+                      style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 7px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                      {s._inUniverse && <span title="In your Watchlist/Portfolio/CB" style={{ fontSize: 13, color: '#22D3EE', flexShrink: 0 }}>👁</span>}
+                      <span style={{ fontSize: 11.5, color: '#22D3EE', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 68 }}>
                         {(s._ticker || '').slice(0, 8) || '—'}
                       </span>
-                      <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.title || s.headline}</span>
-                      <span style={{ fontSize: 9, color: DIM, whiteSpace: 'nowrap', maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.source_name || '—'}</span>
+                      <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.4 }}>{s.title || s.headline}</span>
+                      <span style={{ fontSize: 11, color: DIM, whiteSpace: 'nowrap', maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.source_name || '—'}</span>
                     </a>
                   ))}
                   {data.signals.length > SHOWN && (
-                    <Link href="/orders" style={{ fontSize: 10, color: '#22D3EE', textAlign: 'center', padding: '6px 0', textDecoration: 'none', fontWeight: 700, marginTop: 4 }}>
+                    <Link href="/orders" style={{ fontSize: 12, color: '#22D3EE', textAlign: 'center', padding: '8px 0', textDecoration: 'none', fontWeight: 700, marginTop: 6 }}>
                       + {data.signals.length - SHOWN} more · Open Signals page →
                     </Link>
                   )}
