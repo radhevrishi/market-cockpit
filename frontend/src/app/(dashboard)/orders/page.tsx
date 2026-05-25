@@ -340,34 +340,8 @@ const eventTypeIcon = (t: string) => {
   return '📌';
 };
 
-// PATCH 0829 — drop signals the backend classifier generated heuristically
-// when real evidence wasn't available. These show up as identical ₹280 Cr M&A
-// or ₹105 Cr Order Win across every largecap — clearly fake template data.
-function isRealSignal(s: any): boolean {
-  if (!s) return false;
-  if (s.signalTier === 'TIER2_INFERRED') return false;
-  if (s.confidenceType === 'HEURISTIC' || s.confidenceType === 'INFERRED') return false;
-  if (typeof s.confidenceScore === 'number' && s.confidenceScore < 35) return false;
-  if (s.sourceTier === 'INFERRED' || s.sourceTier === 'HEURISTIC') return false;
-  return true;
-}
-
-// PATCH 0828 — historical default: exclude top 50 largecaps from Signal Stacking
-// trends, since user audits this list for small+midcap opportunities. Toggle
-// via the 'Show largecaps' chip if needed.
-const NIFTY50_TICKERS = new Set<string>([
-  'RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK', 'HINDUNILVR', 'ITC', 'SBIN',
-  'BHARTIARTL', 'KOTAKBANK', 'LT', 'HCLTECH', 'AXISBANK', 'ASIANPAINT', 'MARUTI',
-  'SUNPHARMA', 'TITAN', 'BAJFINANCE', 'DMART', 'ULTRACEMCO', 'NTPC', 'ONGC',
-  'NESTLEIND', 'WIPRO', 'M&M', 'JSWSTEEL', 'POWERGRID', 'TATASTEEL', 'TATAMOTORS',
-  'ADANIENT', 'ADANIPORTS', 'DIVISLAB', 'COALINDIA', 'BAJAJFINSV', 'TECHM',
-  'DRREDDY', 'CIPLA', 'BRITANNIA', 'APOLLOHOSP', 'EICHERMOT', 'TATACONSUM',
-  'GRASIM', 'INDUSINDBK', 'BPCL', 'HEROMOTOCO', 'SBILIFE', 'HDFCLIFE',
-  'BAJAJ-AUTO', 'HINDALCO', 'SHRIRAMFIN',
-]);
-
 type FilterType = 'ALL' | 'BUY' | 'ADD' | 'HOLD' | 'WATCH' | 'TRIM' | 'ORDERS' | 'CAPEX' | 'DEALS' | 'STRATEGIC' | 'NEGATIVE' | 'HIGH_IMPACT' | 'NOTABLE';
-type UniverseFilter = 'OWN' | 'ALL' | 'PORTFOLIO' | 'WATCHLIST' | 'EXCEL' | 'CONVICTION';  // PATCH 0825 added OWN (union)
+type UniverseFilter = 'ALL' | 'PORTFOLIO' | 'WATCHLIST' | 'EXCEL' | 'CONVICTION';  // PATCH 0251
 
 
 /** Filter out GOVERNANCE / Mgmt Change signals — not useful for portfolio decisions */
@@ -2307,8 +2281,7 @@ function ConcallIntelligence() {
                               <div style={{fontSize:10,fontWeight:800,color:'#10b981',letterSpacing:'1px',marginBottom:6}}>🏢 COMPANY SIGNALS — confirmed for {s.symbol}</div>
                               <div style={{display:'flex',flexDirection:'column',gap:6}}>
                                 {s.signals.filter(sig=>sig.isAlpha&&sig.origin==='COMPANY').map((sig,i)=>(
-                                  // AUDIT_100 #8 — stable composite key so child state doesn't snap on filter / sort changes.
-                                  <SignalCard key={`${sig.subject}|${sig.type}|${sig.date||i}`} sig={sig} horizonColor={horizonColor} />
+                                  <SignalCard key={i} sig={sig} horizonColor={horizonColor} />
                                 ))}
                               </div>
                             </div>
@@ -2324,8 +2297,7 @@ function ConcallIntelligence() {
                                 {s.signals.filter(sig=>sig.isAlpha&&sig.origin==='SECTOR').map((sig,i)=>{
                                   const sd = (sig as any).sectorDef as (SectorSignalDef|undefined);
                                   return (
-                                    // AUDIT_100 #8 — stable composite key.
-                                    <div key={`${sig.subject}|${sig.type}|${sig.date||i}`} style={{padding:'10px 12px',backgroundColor:'#06b6d408',border:'1px solid #06b6d420',borderLeft:'3px solid #06b6d4',borderRadius:7}}>
+                                    <div key={i} style={{padding:'10px 12px',backgroundColor:'#06b6d408',border:'1px solid #06b6d420',borderLeft:'3px solid #06b6d4',borderRadius:7}}>
                                       <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:4,flexWrap:'wrap'}}>
                                         <span style={{fontSize:11,fontWeight:800,color:'#06b6d4'}}>🌍 {sig.subject}</span>
                                         {sd && <span style={{fontSize:9,color:'#4A5B6C',fontStyle:'italic'}}>driven by: {sd.driver}</span>}
@@ -2352,8 +2324,7 @@ function ConcallIntelligence() {
                               <div style={{fontSize:10,fontWeight:800,color:'#ef4444',letterSpacing:'1px',marginBottom:6}}>⚠ RISK SIGNALS</div>
                               <div style={{display:'flex',flexDirection:'column',gap:6}}>
                                 {s.signals.filter(sig=>sig.isAlpha&&!sig.positive).map((sig,i)=>(
-                                  // AUDIT_100 #8 — stable composite key.
-                                  <SignalCard key={`${sig.subject}|${sig.type}|${sig.date||i}`} sig={sig} horizonColor={horizonColor} />
+                                  <SignalCard key={i} sig={sig} horizonColor={horizonColor} />
                                 ))}
                               </div>
                             </div>
@@ -2366,8 +2337,7 @@ function ConcallIntelligence() {
                           <div style={{fontSize:10,fontWeight:800,color:TEXT3,letterSpacing:'1px',marginBottom:6}}>📰 NOISE SIGNALS — 1-5D relevance only</div>
                           <div style={{display:'flex',flexDirection:'column',gap:4}}>
                             {s.signals.filter(sig=>!sig.isAlpha).map((sig,i)=>(
-                              // AUDIT_100 #8 — stable composite key.
-                              <div key={`${sig.subject}|${sig.type}|${sig.date||i}`} style={{padding:'7px 10px',backgroundColor:'#1A2840',borderRadius:6,fontSize:10,color:'#8A95A3'}}>
+                              <div key={i} style={{padding:'7px 10px',backgroundColor:'#1A2840',borderRadius:6,fontSize:10,color:'#8A95A3'}}>
                                 <span style={{fontWeight:600,color:sig.positive?'#10b981':'#ef4444'}}>{sig.type.replace(/_/g,' ')}</span>: {sig.text.slice(0,80)}...
                               </div>
                             ))}
@@ -2408,10 +2378,7 @@ export default function CompanyIntelligencePage() {
   const [lastUpdated, setLastUpdated] = useState('');
   const [daysFilter, setDaysFilter] = useState(7);
   const [typeFilter, setTypeFilter] = useState<FilterType>('ALL');
-  const [universeFilter, setUniverseFilter] = useState<UniverseFilter>('ALL'); // PATCH 0827 — back to ALL default (OWN was hiding all signals when WL/PF tags didn't match)
-  // PATCH 0828 — Signal Stacking has historically excluded top-50 largecaps
-  // (small+midcap is the user's edge). Click 'Show largecaps' to override.
-  const [showLargecaps, setShowLargecaps] = useState(false);
+  const [universeFilter, setUniverseFilter] = useState<UniverseFilter>('ALL');
   const [debugInfo, setDebugInfo] = useState<any>(null);
   const [isStale, setIsStale] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
@@ -2419,12 +2386,6 @@ export default function CompanyIntelligencePage() {
   const [addedPrices, setAddedPrices] = useState<Record<string, number>>({});
   const [computing, setComputing] = useState(false);
   const [computePollCount, setComputePollCount] = useState(0);
-  // PATCH 0693 — terminal exhausted state. Previously the poll stopped at
-  // attempt 15 silently, leaving the user looking at a spinner that would
-  // never resolve. Now we flip an explicit flag the UI can branch on.
-  const [computeExhausted, setComputeExhausted] = useState(false);
-  const [lastComputeAt, setLastComputeAt] = useState<number | null>(null);
-  const MAX_COMPUTE_ATTEMPTS = 15;
   const [showNoise, setShowNoise] = useState(false);
   const [noHighConfSignals, setNoHighConfSignals] = useState(false);
   const [noActionableSignals, setNoActionableSignals] = useState(false);
@@ -2495,48 +2456,29 @@ export default function CompanyIntelligencePage() {
       let portfolio: string[] = [];
 
       // Fetch portfolio
-      // PATCH 0716 — added 8s timeout + safe JSON parse + shape guard.
       try {
-        const pfCtl = new AbortController();
-        const pfTimer = setTimeout(() => pfCtl.abort(), 8_000);
-        try {
-          const pRes = await fetch(`/api/portfolio?chatId=${CHAT_ID}`, { signal: pfCtl.signal });
-          clearTimeout(pfTimer);
-          if (pRes.ok) {
-            let pData: any = {};
-            try { pData = await pRes.json(); } catch { pData = {}; }
-            const holdings = Array.isArray(pData?.holdings) ? pData.holdings : [];
-            portfolio = holdings.map((h: any) => h?.symbol).filter((s: any) => typeof s === 'string');
-          }
-        } finally { clearTimeout(pfTimer); }
+        const pRes = await fetch(`/api/portfolio?chatId=${CHAT_ID}`);
+        if (pRes.ok) {
+          const pData = await pRes.json();
+          portfolio = (pData.holdings || []).map((h: any) => h.symbol);
+        }
       } catch {}
 
       // Fetch watchlist + flags + prices
       let flags: Record<string, string> = {};
       let prices: Record<string, number> = {};
       try {
-        // PATCH 0716 — added 8s timeout + safe JSON parse.
-        const wlCtl = new AbortController();
-        const wlTimer = setTimeout(() => wlCtl.abort(), 8_000);
-        let wlData: any = {};
-        try {
-          const wlRes = await fetch(`/api/watchlist?chatId=${CHAT_ID}`, { signal: wlCtl.signal });
-          clearTimeout(wlTimer);
-          if (wlRes.ok) {
-            try { wlData = await wlRes.json(); } catch { wlData = {}; }
-            if (!wlData || typeof wlData !== 'object') wlData = {};
-          }
-        } finally { clearTimeout(wlTimer); }
-        if (Array.isArray(wlData.watchlist) && wlData.watchlist.length) {
+        const wlRes = await fetch(`/api/watchlist?chatId=${CHAT_ID}`);
+        const wlData = await wlRes.json();
+        if (wlData.watchlist?.length) {
           watchlist = wlData.watchlist;
           localStorage.setItem('mc_watchlist_tickers', JSON.stringify(watchlist));
         }
-        if (wlData.flags && typeof wlData.flags === 'object') { flags = wlData.flags; setWatchlistFlags(flags); }
-        if (wlData.addedPrices && typeof wlData.addedPrices === 'object') { prices = wlData.addedPrices; setAddedPrices(prices); }
+        if (wlData.flags) { flags = wlData.flags; setWatchlistFlags(flags); }
+        if (wlData.addedPrices) { prices = wlData.addedPrices; setAddedPrices(prices); }
       } catch {
         const s = localStorage.getItem('mc_watchlist_tickers') || '[]';
-        try { watchlist = JSON.parse(s); } catch { watchlist = []; }
-        if (!Array.isArray(watchlist)) watchlist = [];
+        watchlist = JSON.parse(s);
       }
 
       // ── KEY FIX: merge Excel symbols into the portfolio param ──────────────────
@@ -2574,60 +2516,22 @@ export default function CompanyIntelligencePage() {
       // the feed always collapsed to a handful of signals even though the
       // client UI said "ALL". Watchlist/portfolio are still sent so the
       // backend enricher universe stays correct.
-      // PATCH 0825 — 'ALL' explicitly asks server for full universe; 'OWN' relies
-      // on the watchlist+portfolio params already sent (server filters to that).
       const universeParam = universeFilter === 'ALL' ? '&universe=all' : '';
-      // PATCH 0716 — hardened: 30s timeout + safe JSON parse so a hung
-      // backend / malformed payload no longer wedges the page.
-      const _intelCtl = new AbortController();
-      const _intelTimer = setTimeout(() => _intelCtl.abort(), 30_000);
-      let data: any = {};
-      try {
-        const res = await fetch(`/api/market/intelligence?days=${daysFilter}${wlParam}${pfParam}${universeParam}&debug=true`, { signal: _intelCtl.signal });
-        clearTimeout(_intelTimer);
-        if (!res.ok) {
-          console.warn(`[Intelligence] HTTP ${res.status}`);
-          setProductionStatus(`⚠ Backend HTTP ${res.status} — try Refresh in 30s`);
-          setLoading(false);
-          return;
-        }
-        try {
-          data = await res.json();
-        } catch (parseErr) {
-          console.warn('[Intelligence] JSON parse failed', parseErr);
-          setProductionStatus('⚠ Backend returned malformed JSON');
-          setLoading(false);
-          return;
-        }
-        if (!data || typeof data !== 'object') data = {};
-      } catch (fetchErr: any) {
-        clearTimeout(_intelTimer);
-        const isTimeout = fetchErr?.name === 'AbortError';
-        console.warn('[Intelligence]', isTimeout ? 'timeout (30s)' : fetchErr);
-        setProductionStatus(isTimeout ? '⚠ Backend timed out (30s) — try Refresh' : `⚠ Fetch failed: ${fetchErr?.message || 'network'}`);
-        setLoading(false);
-        return;
-      }
+      const res = await fetch(`/api/market/intelligence?days=${daysFilter}${wlParam}${pfParam}${universeParam}&debug=true`);
+      const data = await res.json();
 
-      // PATCH 0829 — strip inferred / template-pattern junk from every list
-      const _real = (arr: any[]) => (arr || []).filter(isRealSignal);
-      const _realTrends = (arr: any[]) => (arr || []).map((t: any) => ({
-        ...t,
-        signals: Array.isArray(t.signals) ? t.signals.filter(isRealSignal) : t.signals,
-        signalCount: Array.isArray(t.signals) ? t.signals.filter(isRealSignal).length : t.signalCount,
-      })).filter((t: any) => (t.signalCount || 0) >= 2);
-      setTop3(_retag(_real(data.top3 || [])));
-      setSignals(_retag(_real(data.signals || [])));
-      setNotableSignals(_filterGovNoise(_retag(_real(data.notable || []))));
-      setSpeculativeSignals(_retag(_real(data.speculative || [])));
+      setTop3(_retag(data.top3 || []));
+      setSignals(_retag(data.signals || []));
+      setNotableSignals(_filterGovNoise(_retag(data.notable || [])));
+      setSpeculativeSignals(_retag(data.speculative || []));
       setQuietMarket(!!data.quietMarket);
-      setThematicIdeas(_retag(_real(data.thematicIdeas || [])));
-      setTrends(_retag(_realTrends(data.trends || [])));
+      setThematicIdeas(_retag(data.thematicIdeas || []));
+      setTrends(_retag(data.trends || []));
       setBias(data.bias || null);
       setStats(data._stats || null);
       setNoHighConfSignals(!!data.noHighConfSignals);
       setNoActionableSignals(!!data.noActionableSignals);
-      setMonitorList(_filterGovNoise(_tagExcel(_real(data.observations || []))));  // PATCH 0829
+      setMonitorList(_filterGovNoise(_tagExcel(data.observations || [])));
       const statsLine = data._stats ?
         `${data._stats.actionable || 0} actionable · ${data._stats.notable || 0} notable · ${data._stats.monitor || 0} monitor · ${data._stats.speculative || 0} speculative · ${data._stats.rejected || 0} rejected` : '';
       const filterLine = data._meta?.filterRange ? ` · Filter: ${data._meta.filterRange} (${data._meta.totalSignalsBefore ?? '?'}→${data._meta.totalSignalsDateFiltered ?? data._meta.totalSignalsBefore ?? '?'}→${data._meta.totalSignalsAfter ?? '?'})` : '';
@@ -2640,23 +2544,18 @@ export default function CompanyIntelligencePage() {
       // Detect computing state
       const isComputing = data._meta?.computing === true || data._meta?.source === 'skeleton';
       setComputing(isComputing);
-      if (!isComputing) {
-        setComputePollCount(0);
-        setComputeExhausted(false); // PATCH 0693 — clear terminal flag on real data
-      }
-      setLastComputeAt(Date.now()); // PATCH 0693
+      if (!isComputing) setComputePollCount(0);
 
       // Cache retagged data so cache hits preserve correct portfolio/watchlist/excel flags
       if (!isComputing) {
         _cache = { data: {
           ...data,
-          // PATCH 0829 — strip inferred / template-pattern junk before caching
-          signals:       _retag(_real(data.signals        || [])),
-          notable:       _retag(_real(data.notable        || [])),
-          speculative:   _retag(_real(data.speculative    || [])),
-          thematicIdeas: _retag(_real(data.thematicIdeas  || [])),
-          trends:        _retag(_realTrends(data.trends   || [])),
-          top3:          _retag(_real(data.top3           || [])),
+          signals:       _retag(data.signals        || []),
+          notable:       _retag(data.notable        || []),
+          speculative:   _retag(data.speculative    || []),
+          thematicIdeas: _retag(data.thematicIdeas  || []),
+          trends:        _retag(data.trends         || []),
+          top3:          _retag(data.top3           || []),
           flags, addedPrices: prices, lastUpdated: ts,
         }, timestamp: Date.now(), daysFilter };
       }
@@ -2677,27 +2576,12 @@ export default function CompanyIntelligencePage() {
           setExcelNewsLoading(true);
           // Fetch news for all uncovered Excel tickers in one call using | search
           const searchQuery = uncoveredExcel.join('|');
-          // PATCH 0716 — 12s timeout + safe JSON parse + array shape guard.
-          const newsCtl = new AbortController();
-          const newsTimer = setTimeout(() => newsCtl.abort(), 12_000);
-          let newsData: any = [];
-          try {
-            const newsRes = await fetch(
-              `${(typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_API_URL) || '/api/v1'}/news?limit=200&importance_min=1&search=${encodeURIComponent(searchQuery)}`,
-              { signal: newsCtl.signal }
-            );
-            clearTimeout(newsTimer);
-            if (newsRes.ok) {
-              try { newsData = await newsRes.json(); } catch { newsData = []; }
-            }
-          } catch { /* swallow — populated as [] */ }
-          finally { clearTimeout(newsTimer); }
-          if (newsData) {
-            const articles: any[] = Array.isArray(newsData)
-              ? newsData
-              : Array.isArray((newsData as any)?.articles)
-                ? (newsData as any).articles
-                : [];
+          const newsRes = await fetch(
+            `${(typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_API_URL) || '/api/v1'}/news?limit=200&importance_min=1&search=${encodeURIComponent(searchQuery)}`
+          );
+          if (newsRes.ok) {
+            const newsData = await newsRes.json();
+            const articles: any[] = Array.isArray(newsData) ? newsData : [];
 
             // Match articles to Excel symbols
             const digestItems: ExcelNewsItem[] = [];
@@ -2776,28 +2660,11 @@ export default function CompanyIntelligencePage() {
   }, [universeFilter]);
 
   // Keep computing poll — needed for background compute jobs
-  // PATCH 0693 — guard against exceeding MAX_COMPUTE_ATTEMPTS. When the
-  // poll budget is exhausted, flip computeExhausted=true so the UI can
-  // render a terminal error + retry button instead of pretending it's
-  // still working. Also stamp lastComputeAt for the "Last scan" chip.
   useEffect(() => {
     if (!computing) return;
-    if (computePollCount > MAX_COMPUTE_ATTEMPTS) {
-      setComputeExhausted(true);
-      setComputing(false);
-      setLastComputeAt(Date.now());
-      return;
-    }
-    if (computePollCount >= MAX_COMPUTE_ATTEMPTS) {
-      // Reached cap — schedule no further polls; flip terminal state next tick
-      setComputeExhausted(true);
-      setComputing(false);
-      setLastComputeAt(Date.now());
-      return;
-    }
+    if (computePollCount >= 15) return;
     const timer = setTimeout(() => {
       setComputePollCount(p => p + 1);
-      setLastComputeAt(Date.now());
       fetchData(true);
     }, 20000);
     return () => clearTimeout(timer);
@@ -2832,12 +2699,9 @@ export default function CompanyIntelligencePage() {
   const filteredSignals = useMemo(() => {
     let list = signals;
     // Universe filter
-    // PATCH 0825 — OWN = union of Portfolio ∪ Watchlist ∪ Excel/Multibagger ∪ Conviction Beats
-    if (universeFilter === 'OWN')       list = list.filter(s => s.isPortfolio || s.isWatchlist || s.isExcel || s.isConviction);
     if (universeFilter === 'PORTFOLIO') list = list.filter(s => s.isPortfolio);
     if (universeFilter === 'WATCHLIST') list = list.filter(s => s.isWatchlist);
     if (universeFilter === 'EXCEL')     list = list.filter(s => s.isExcel);
-    if (universeFilter === 'CONVICTION') list = list.filter((s: any) => s.isConviction);
     if (universeFilter === 'CONVICTION') list = list.filter(s => (s as any).isConviction);  // PATCH 0251
     // Type filter
     if (typeFilter === 'BUY') list = list.filter(s => s.action === 'BUY');
@@ -2877,9 +2741,6 @@ export default function CompanyIntelligencePage() {
   const negativeCount = signals.filter(s => s.isNegative).length;
   const portfolioCount = signals.filter(s => s.isPortfolio).length;
   const watchlistCount = signals.filter(s => s.isWatchlist).length;
-  // PATCH 0825 — counts for OWN (union) + CONVICTION
-  const convictionCount = signals.filter((s: any) => s.isConviction).length;
-  const ownCount = signals.filter((s: any) => s.isPortfolio || s.isWatchlist || s.isExcel || s.isConviction).length;
   // Count unique Excel-tagged symbols across ALL signal arrays
   const excelSymbolsSeen = new Set<string>();
   [...signals, ...notableSignals, ...speculativeSignals, ...monitorList].forEach(s => {
@@ -3240,24 +3101,11 @@ export default function CompanyIntelligencePage() {
       {/* ── TREND LAYER (Signal Stacking) ── */}
       {trends.length > 0 && typeFilter === 'ALL' && (universeFilter === 'ALL' || universeFilter === 'PORTFOLIO' || universeFilter === 'WATCHLIST' || universeFilter === 'EXCEL') && (
         <div style={{ marginBottom: '16px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: '8px' }}>
-            <span style={{ fontSize: '11px', fontWeight: 700, color: TEXT3, textTransform: 'uppercase', letterSpacing: '1.5px' }}>
-              SIGNAL STACKING — MULTI-EVENT COMPANIES
-            </span>
-            {/* PATCH 0828 — largecap include/exclude toggle */}
-            <button onClick={() => setShowLargecaps(v => !v)} style={{
-              padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 600, cursor: 'pointer',
-              border: `1px solid ${showLargecaps ? '#22D3EE' : BORDER}`,
-              background: showLargecaps ? '#22D3EE22' : 'transparent',
-              color: showLargecaps ? '#22D3EE' : TEXT3,
-            }} title={showLargecaps ? 'Currently showing Nifty-50 largecaps. Click to hide.' : 'Top-50 largecaps hidden (small+midcap mode). Click to show.'}>
-              {showLargecaps ? '👁 Including Nifty-50' : '🔍 Small+Midcap only'}
-            </button>
+          <div style={{ fontSize: '11px', fontWeight: 700, color: TEXT3, marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '1.5px' }}>
+            SIGNAL STACKING — MULTI-EVENT COMPANIES
           </div>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             {trends
-              // PATCH 0828 — exclude top-50 largecaps unless user opts in
-              .filter(t => showLargecaps || !NIFTY50_TICKERS.has((t.symbol || '').toUpperCase().replace(/\.(NS|BO)$/i, '')))
               .filter(t => universeFilter === 'PORTFOLIO' ? t.isPortfolio :
                            universeFilter === 'WATCHLIST'  ? t.isWatchlist  :
                            universeFilter === 'EXCEL'      ? t.isExcel      : true)
@@ -3889,14 +3737,12 @@ export default function CompanyIntelligencePage() {
         <div style={{ display: 'flex', gap: '8px', marginBottom: '14px', flexWrap: 'wrap', alignItems: 'center' }}>
           <Filter size={13} color={TEXT3} />
 
-          {/* PATCH 0825 — Universe filter with 'OWN' as primary chip. OWN = WL ∪ PF ∪ Excel ∪ CB. */}
+          {/* Universe filter */}
           {([
-            { key: 'OWN'       as UniverseFilter, label: '👁 My Universe', count: ownCount,        color: '#22D3EE' },
-            { key: 'ALL'       as UniverseFilter, label: 'All',            count: signals.length,  color: PURPLE },
-            { key: 'PORTFOLIO' as UniverseFilter, label: 'Portfolio',      count: portfolioCount,  color: PURPLE },
-            { key: 'WATCHLIST' as UniverseFilter, label: 'Watchlist',      count: watchlistCount,  color: ACCENT },
-            { key: 'EXCEL'     as UniverseFilter, label: '📊 Excel Picks', count: excelCount,      color: '#10b981' },
-            { key: 'CONVICTION' as UniverseFilter, label: '🏆 Conviction', count: convictionCount, color: '#F59E0B' },
+            { key: 'ALL'       as UniverseFilter, label: 'All',          count: signals.length,  color: PURPLE },
+            { key: 'PORTFOLIO' as UniverseFilter, label: 'Portfolio',    count: portfolioCount,  color: PURPLE },
+            { key: 'WATCHLIST' as UniverseFilter, label: 'Watchlist',    count: watchlistCount,  color: ACCENT },
+            { key: 'EXCEL'     as UniverseFilter, label: '📊 Excel Picks', count: excelCount,    color: '#10b981' },
           ]).map(f => (
             <button key={f.key} onClick={() => setUniverseFilter(f.key)} style={{
               padding: '4px 10px', borderRadius: '5px', fontSize: '11px', fontWeight: 600, cursor: 'pointer',
@@ -4894,34 +4740,12 @@ export default function CompanyIntelligencePage() {
       {/* Empty / Computing state — only show if truly no signals at all */}
       {!loading && signals.length === 0 && monitorList.length === 0 && notableSignals.length === 0 && top3.length === 0 && speculativeSignals.length === 0 && (
         <div style={{ textAlign: 'center', padding: '50px 0' }}>
-          {/* PATCH 0693 — three explicit states: computing / exhausted / empty.
-              The exhausted branch caps the spinner so the user never sees
-              "attempt 16/15" or worse. */}
-          {computeExhausted ? (
-            <>
-              <Eye size={40} color={'#EF4444'} style={{ margin: '0 auto 12px', display: 'block' }} />
-              <p style={{ color: '#EF4444', fontSize: '14px', fontWeight: 600 }}>⚠ Upstream slow — backend compute did not finish</p>
-              <p style={{ color: TEXT3, fontSize: '12px', marginBottom: 14 }}>
-                Tried {MAX_COMPUTE_ATTEMPTS} times over ~5 minutes. NSE / Moneycontrol may be throttled right now.
-              </p>
-              <button
-                onClick={() => { setComputeExhausted(false); setComputePollCount(0); fetchData(true); }}
-                style={{ padding: '8px 18px', borderRadius: 6, border: `1px solid ${ACCENT}`, backgroundColor: `${ACCENT}18`, color: ACCENT, cursor: 'pointer', fontSize: 12, fontWeight: 700 }}
-              >
-                ↻ Retry
-              </button>
-              {lastComputeAt && (
-                <p style={{ color: TEXT3, fontSize: 11, marginTop: 10 }}>
-                  Last scan: {new Date(lastComputeAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} IST
-                </p>
-              )}
-            </>
-          ) : computing ? (
+          {computing ? (
             <>
               <Zap size={40} color={ACCENT} style={{ margin: '0 auto 12px', display: 'block' }} />
               <p style={{ color: ACCENT, fontSize: '14px', fontWeight: 600 }}>Computing intelligence signals...</p>
               <p style={{ color: TEXT3, fontSize: '12px' }}>
-                Fetching from NSE + Moneycontrol. Auto-refresh in 20s (attempt {Math.min(computePollCount + 1, MAX_COMPUTE_ATTEMPTS)}/{MAX_COMPUTE_ATTEMPTS}).
+                Fetching from NSE + Moneycontrol. Auto-refresh in 20s (attempt {computePollCount + 1}/15).
               </p>
               <div style={{ width: '200px', height: '3px', backgroundColor: BORDER, borderRadius: '2px', margin: '16px auto 0', overflow: 'hidden' }}>
                 <div style={{ height: '100%', backgroundColor: ACCENT, borderRadius: '2px', width: '35%', animation: 'progress-bar 2s linear infinite' }} />
@@ -4930,15 +4754,10 @@ export default function CompanyIntelligencePage() {
           ) : (
             <>
               <Eye size={40} color={TEXT3} style={{ margin: '0 auto 12px', display: 'block' }} />
-              <p style={{ color: TEXT2, fontSize: '14px', fontWeight: 600 }}>✓ Scan complete · 0 results in {daysFilter}D window</p>
+              <p style={{ color: TEXT2, fontSize: '14px', fontWeight: 600 }}>No signals in {daysFilter}D window</p>
               <p style={{ color: TEXT3, fontSize: '12px' }}>
                 {daysFilter <= 7 ? `Try 14D or 30D for a wider view` : 'Check during market hours or add more stocks to your watchlist'}
               </p>
-              {lastComputeAt && (
-                <p style={{ color: TEXT3, fontSize: 11, marginTop: 8 }}>
-                  Last scan: {new Date(lastComputeAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} IST
-                </p>
-              )}
             </>
           )}
         </div>
