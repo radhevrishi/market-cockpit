@@ -14,7 +14,7 @@ import {
   buildReport, extractPdfText, extractExcelFinancials,
   type ParsedDoc, type AutoValuationReport,
 } from '@/app/(dashboard)/auto-valuation/engine';
-import { extractGuidance } from '@/lib/forward-guidance-extractor';
+import { extractGuidance, metricLabel, formatGuidanceValue, type GuidanceItem } from '@/lib/forward-guidance-extractor';
 // PATCH 0752 — pull the latest concall snapshot for this ticker and blend
 // its score with the valuation triangulation upside (90/10 weight).
 import { listConcallSnapshots } from '@/lib/concall-snapshot-store';
@@ -183,6 +183,66 @@ export default function InlineValuationPanel() {
           <ul style={{ margin: '0 0 12px 18px', padding: 0, fontSize: 11.5, color: TEXT, lineHeight: 1.6 }}>
             {report.rationale.slice(0, 5).map((r, i) => <li key={i}>{r}</li>)}
           </ul>
+
+          {/* PATCH 0849 — Multi-line guidance display. User feedback: only one
+              line was shown earlier; now group ALL extracted guidance items by
+              metric so the user sees REVENUE / EBITDA / PAT / MARGIN / GROWTH /
+              CAPEX / ORDER BOOK / CAPACITY etc. side-by-side with FY tags. */}
+          {report.guidance && report.guidance.length > 0 && (() => {
+            const byMetric = new Map<string, GuidanceItem[]>();
+            for (const g of report.guidance) {
+              const key = String(g.metric || 'OTHER');
+              const arr = byMetric.get(key) || [];
+              arr.push(g);
+              byMetric.set(key, arr);
+            }
+            // Sort metric groups: REVENUE / GROWTH / EBITDA / PAT / MARGINS / CAPEX / ORDERS / CAPACITY / OTHER
+            const ORDER = ['REVENUE','GROWTH','CAGR','EBITDA','EBITDA_GROWTH','PAT','EBITDA_MARGIN','PAT_MARGIN','OPM','MARGIN_BPS','CAPEX','ORDER_BOOK','ORDER_INFLOW','BOOK_TO_BILL','CAPACITY_RAMP','CAPACITY_UNITS','PEAK_REVENUE','ASP','DEBT_REPAYMENT','DIVIDEND_PAYOUT','TAX_RATE','WC_DAYS'];
+            const sortedMetrics = Array.from(byMetric.keys()).sort((a, b) => {
+              const ai = ORDER.indexOf(a); const bi = ORDER.indexOf(b);
+              if (ai === -1 && bi === -1) return a.localeCompare(b);
+              if (ai === -1) return 1;
+              if (bi === -1) return -1;
+              return ai - bi;
+            });
+            return (
+              <div style={{
+                marginBottom: 12, padding: '10px 12px',
+                background: '#0A1422', border: `1px solid #A78BFA40`,
+                borderLeft: '3px solid #A78BFA', borderRadius: 5,
+              }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: '#A78BFA', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6 }}>
+                  📋 Forward Guidance Extracted ({report.guidance.length})
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
+                  {sortedMetrics.map((metric) => {
+                    const items = byMetric.get(metric)!;
+                    return (
+                      <div key={metric} style={{ background: BG, border: `1px solid ${BORDER}`, borderRadius: 4, padding: '6px 8px' }}>
+                        <div style={{ fontSize: 9, fontWeight: 800, color: '#A78BFA', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
+                          {metricLabel(metric as any)}
+                        </div>
+                        {items.slice(0, 8).map((g, i) => (
+                          <div key={i} title={g.rawPhrase} style={{ fontSize: 11, color: TEXT, fontFamily: 'ui-monospace, monospace', lineHeight: 1.55, display: 'flex', gap: 6 }}>
+                            <span style={{ color: '#22D3EE', fontWeight: 700, minWidth: 38 }}>{g.fiscalYear || '—'}</span>
+                            <span>{formatGuidanceValue(g)}</span>
+                          </div>
+                        ))}
+                        {items.length > 8 && (
+                          <div style={{ fontSize: 9, color: DIM, marginTop: 4 }}>+ {items.length - 8} more</div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                {report.forwardYear && (
+                  <div style={{ marginTop: 8, fontSize: 10, color: DIM, fontStyle: 'italic' }}>
+                    Used <b style={{ color: '#22D3EE' }}>{report.forwardYear}</b> as the base forward year for the projection above.
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* PATCH 0843 — Editorial-Quant gap explainer */}
           {(report.recommendation === 'AVOID' || report.recommendation === 'WAIT') && (() => {
