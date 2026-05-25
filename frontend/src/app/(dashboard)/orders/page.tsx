@@ -340,6 +340,20 @@ const eventTypeIcon = (t: string) => {
   return '📌';
 };
 
+// PATCH 0828 — historical default: exclude top 50 largecaps from Signal Stacking
+// trends, since user audits this list for small+midcap opportunities. Toggle
+// via the 'Show largecaps' chip if needed.
+const NIFTY50_TICKERS = new Set<string>([
+  'RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK', 'HINDUNILVR', 'ITC', 'SBIN',
+  'BHARTIARTL', 'KOTAKBANK', 'LT', 'HCLTECH', 'AXISBANK', 'ASIANPAINT', 'MARUTI',
+  'SUNPHARMA', 'TITAN', 'BAJFINANCE', 'DMART', 'ULTRACEMCO', 'NTPC', 'ONGC',
+  'NESTLEIND', 'WIPRO', 'M&M', 'JSWSTEEL', 'POWERGRID', 'TATASTEEL', 'TATAMOTORS',
+  'ADANIENT', 'ADANIPORTS', 'DIVISLAB', 'COALINDIA', 'BAJAJFINSV', 'TECHM',
+  'DRREDDY', 'CIPLA', 'BRITANNIA', 'APOLLOHOSP', 'EICHERMOT', 'TATACONSUM',
+  'GRASIM', 'INDUSINDBK', 'BPCL', 'HEROMOTOCO', 'SBILIFE', 'HDFCLIFE',
+  'BAJAJ-AUTO', 'HINDALCO', 'SHRIRAMFIN',
+]);
+
 type FilterType = 'ALL' | 'BUY' | 'ADD' | 'HOLD' | 'WATCH' | 'TRIM' | 'ORDERS' | 'CAPEX' | 'DEALS' | 'STRATEGIC' | 'NEGATIVE' | 'HIGH_IMPACT' | 'NOTABLE';
 type UniverseFilter = 'OWN' | 'ALL' | 'PORTFOLIO' | 'WATCHLIST' | 'EXCEL' | 'CONVICTION';  // PATCH 0825 added OWN (union)
 
@@ -2383,6 +2397,9 @@ export default function CompanyIntelligencePage() {
   const [daysFilter, setDaysFilter] = useState(7);
   const [typeFilter, setTypeFilter] = useState<FilterType>('ALL');
   const [universeFilter, setUniverseFilter] = useState<UniverseFilter>('ALL'); // PATCH 0827 — back to ALL default (OWN was hiding all signals when WL/PF tags didn't match)
+  // PATCH 0828 — Signal Stacking has historically excluded top-50 largecaps
+  // (small+midcap is the user's edge). Click 'Show largecaps' to override.
+  const [showLargecaps, setShowLargecaps] = useState(false);
   const [debugInfo, setDebugInfo] = useState<any>(null);
   const [isStale, setIsStale] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
@@ -3203,11 +3220,24 @@ export default function CompanyIntelligencePage() {
       {/* ── TREND LAYER (Signal Stacking) ── */}
       {trends.length > 0 && typeFilter === 'ALL' && (universeFilter === 'ALL' || universeFilter === 'PORTFOLIO' || universeFilter === 'WATCHLIST' || universeFilter === 'EXCEL') && (
         <div style={{ marginBottom: '16px' }}>
-          <div style={{ fontSize: '11px', fontWeight: 700, color: TEXT3, marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '1.5px' }}>
-            SIGNAL STACKING — MULTI-EVENT COMPANIES
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: '8px' }}>
+            <span style={{ fontSize: '11px', fontWeight: 700, color: TEXT3, textTransform: 'uppercase', letterSpacing: '1.5px' }}>
+              SIGNAL STACKING — MULTI-EVENT COMPANIES
+            </span>
+            {/* PATCH 0828 — largecap include/exclude toggle */}
+            <button onClick={() => setShowLargecaps(v => !v)} style={{
+              padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 600, cursor: 'pointer',
+              border: `1px solid ${showLargecaps ? '#22D3EE' : BORDER}`,
+              background: showLargecaps ? '#22D3EE22' : 'transparent',
+              color: showLargecaps ? '#22D3EE' : TEXT3,
+            }} title={showLargecaps ? 'Currently showing Nifty-50 largecaps. Click to hide.' : 'Top-50 largecaps hidden (small+midcap mode). Click to show.'}>
+              {showLargecaps ? '👁 Including Nifty-50' : '🔍 Small+Midcap only'}
+            </button>
           </div>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             {trends
+              // PATCH 0828 — exclude top-50 largecaps unless user opts in
+              .filter(t => showLargecaps || !NIFTY50_TICKERS.has((t.symbol || '').toUpperCase().replace(/\.(NS|BO)$/i, '')))
               .filter(t => universeFilter === 'PORTFOLIO' ? t.isPortfolio :
                            universeFilter === 'WATCHLIST'  ? t.isWatchlist  :
                            universeFilter === 'EXCEL'      ? t.isExcel      : true)
