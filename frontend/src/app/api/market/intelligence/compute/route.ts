@@ -803,13 +803,23 @@ function computeMaterialityScore(signal: any): number {
   const signalClass: SignalClass = signal.signalClass || 'COMPLIANCE';
 
   // Component 1: Economic Impact (0-40)
+  // PATCH 0848 — Confidence is now a MULTIPLICATIVE gatekeeper on economic
+  // impact, not just an additive bonus. A fabricated ₹105 Cr capex from
+  // HEURISTIC pattern-matching can no longer score the same as a real
+  // ACTUAL filing with the same number.
   let economicImpact = 0;
   if (signalClass === 'ECONOMIC') {
     const revPct = Math.abs(signal.impactPct || 0);
     const valRatio = signal.revenueCr ? (signal.valueCr / signal.revenueCr) * 100 : 0;
     economicImpact = Math.min(40, (revPct * 3) + (valRatio * 2));
-    // Bonus for actual (non-inferred) numbers
-    if (signal.confidenceType === 'ACTUAL' && signal.valueCr > 0) economicImpact = Math.min(40, economicImpact + 10);
+    // Confidence multiplier (was additive +10 bonus — now multiplicative cap)
+    const confMul =
+      signal.confidenceType === 'ACTUAL'    ? 1.0  :
+      signal.confidenceType === 'VERIFIED'  ? 0.85 :
+      signal.confidenceType === 'INFERRED'  ? 0.35 :
+      signal.confidenceType === 'HEURISTIC' ? 0.15 :
+      /* unknown */                            0.50 ;
+    economicImpact = economicImpact * confMul;
   }
 
   // Component 2: Event Type Weight (0-25)
@@ -1335,6 +1345,28 @@ function generateMinimumViableThemes(
 ): AlphaTheme | null {
   if (!companySignals || companySignals.length === 0) return null;
 
+  // PATCH 0848 — HARD EVIDENCE GATE. MVT is the #1 source of fabricated
+  // 'AI / Tech Platform Transition' themes spread across 4 unrelated
+  // tickers and 'capex ₹105 Cr' duplicated across multiple companies.
+  // The fix is structural: do not invent a theme when every underlying
+  // signal is HEURISTIC / INFERRED — there's no evidence to support it.
+  const hasActualEvidence = companySignals.some(s =>
+    s.confidenceType === 'ACTUAL' ||
+    s.sourceTier === 'VERIFIED'
+  );
+  if (!hasActualEvidence) return null;
+
+  // Also require numeric anchor for ECONOMIC themes — a heuristic
+  // 'capex' tag with no rupee value is not a theme.
+  const hasNumericAnchor = companySignals.some(s =>
+    (typeof s.valueCr === 'number' && s.valueCr > 0) ||
+    (typeof s.impactPct === 'number' && Math.abs(s.impactPct) > 0)
+  );
+  // Allow governance/strategic themes without numeric anchor (CEO change etc),
+  // but require at least one ACTUAL signal — already enforced above.
+  const isEconomicHeavy = companySignals.filter(s => s.signalClass === 'ECONOMIC').length >= companySignals.length / 2;
+  if (isEconomicHeavy && !hasNumericAnchor) return null;
+
   const stackCount = companySignals.length;
   const company = companySignals[0]?.company || companySignals[0]?.symbol || '';
   const segment = companySignals.find(s => s.segment)?.segment || null;
@@ -1368,15 +1400,20 @@ function generateMinimumViableThemes(
     };
   }
 
-  // Multi-signal cluster (2+ signals, any type) → activity theme
-  if (stackCount >= 2) {
+  // PATCH 0848 — Multi-signal cluster: require 3+ signals AND ≥1 ACTUAL
+  // (was 2+ of any quality, which produced 'N-Signal Activity Cluster'
+  // themes for any ticker with two heuristic matches in the same week).
+  const actualCount = companySignals.filter(s =>
+    s.confidenceType === 'ACTUAL' || s.sourceTier === 'VERIFIED'
+  ).length;
+  if (stackCount >= 3 && actualCount >= 1) {
     const score = Math.min(45, 20 + (stackCount * 5) + (hasFresh ? 10 : 0) + (isPortfolio ? 10 : isWatchlist ? 5 : 0));
     return {
       tag: 'MULTI_SIGNAL',
       label: `${stackCount}-Signal Activity Cluster`,
       score,
-      confidence: 'LOW',
-      narrative: `${company} generating ${stackCount} signals — watch for trend confirmation or catalyst`,
+      confidence: score >= 40 ? 'MEDIUM' : 'LOW',
+      narrative: `${company} generating ${stackCount} signals (${actualCount} verified) — watch for trend confirmation`,
     };
   }
 
@@ -5034,7 +5071,20 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
         if (mvt) themes = [mvt];
       }
 
-      if (themes.length > 0) {
+      // PATCH 0848 — Theme admission gate. A theme is published to
+      // thematicIdeas only if it carries real evidence:
+      //   (a) confidence in {HIGH, MEDIUM} AND score >= 40, OR
+      //   (b) ≥1 underlying signal with ACTUAL or VERIFIED confidence.
+      // This kills the 'AI / Tech Platform Transition' template that was
+      // emerging from MVT fallback with confidence=LOW + score=30.
+      const themeHasRealEvidence = companySignals.some(s =>
+        s.confidenceType === 'ACTUAL' || s.sourceTier === 'VERIFIED'
+      );
+      const themePassesAdmission =
+        (themes[0].confidence !== 'LOW' && themes[0].score >= 40) ||
+        themeHasRealEvidence;
+
+      if (themes.length > 0 && themePassesAdmission) {
         companyThemeMap.set(symbol, themes);
         // Apply best theme to all signals of this company
         for (const s of companySignals) {
