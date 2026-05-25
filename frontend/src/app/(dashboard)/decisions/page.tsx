@@ -152,6 +152,27 @@ export default function DecisionsPage() {
     return unsub;
   }, []);
 
+  // PATCH 0852 — Live-price lookup for buy-the-dip helper on REJECTED entries.
+  // Fetch /api/market/quotes once on mount, build a ticker→price map.
+  const [livePrices, setLivePrices] = useState<Record<string, number>>({});
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch('/api/market/quotes?market=india', { cache: 'no-store' });
+        if (!r.ok) return;
+        const j = await r.json();
+        if (cancelled) return;
+        const map: Record<string, number> = {};
+        for (const s of (j?.stocks || [])) {
+          if (s.ticker && s.price) map[String(s.ticker).toUpperCase()] = Number(s.price);
+        }
+        setLivePrices(map);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   // Filtered + sorted rows.
   const rows = useMemo(() => {
     const all = Object.values(decisions);
@@ -620,8 +641,33 @@ export default function DecisionsPage() {
                       <td style={{ ...td, color: DIM, fontSize: 12, whiteSpace: 'nowrap' }}>
                         {d.date ? new Date(d.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' }) : '—'}
                       </td>
-                      <td style={{ ...td, color: DIM, fontStyle: 'italic', fontSize: 12, maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {d.reason || '—'}
+                      <td style={{ ...td, color: DIM, fontStyle: 'italic', fontSize: 12, maxWidth: 360 }}>
+                        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.reason || '—'}</div>
+                        {/* PATCH 0852 — Buy-the-dip helper for REJECTED entries.
+                            When live price has dropped >25% since rejection date,
+                            surface a 'RE-EVALUATE?' chip with the price-drop %
+                            so the user is prompted to reconsider previously-rejected
+                            names where the bear case may have already played out. */}
+                        {(() => {
+                          if (d.status !== 'REJECTED') return null;
+                          const live = livePrices[(d.symbol || '').toUpperCase()];
+                          if (!live || !d.priceAtDecision || d.priceAtDecision <= 0) return null;
+                          const dropPct = ((live - d.priceAtDecision) / d.priceAtDecision) * 100;
+                          if (dropPct > -25) return null;  // only fire when price fell ≥25%
+                          return (
+                            <div style={{ marginTop: 4, fontSize: 10, fontWeight: 800, color: '#10B981', background: '#10B98115', border: '1px solid #10B98140', borderRadius: 3, padding: '3px 7px', display: 'inline-block', fontStyle: 'normal' }} title={`Rejected at ₹${d.priceAtDecision.toFixed(0)}, now ₹${live.toFixed(0)} — fundamentals unchanged?`}>
+                              ⤴ RE-EVALUATE? · {dropPct.toFixed(0)}% since reject
+                            </div>
+                          );
+                        })()}
+                        {/* Bull/Bear quick-glance when present */}
+                        {(d.bullCase || d.bearCase || d.wouldChangeMind) && (
+                          <div style={{ marginTop: 4, fontSize: 10, color: DIM, fontStyle: 'normal' }}>
+                            {d.bullCase && <span style={{ color: '#10B981', marginRight: 8 }} title={d.bullCase}>▲ bull</span>}
+                            {d.bearCase && <span style={{ color: '#EF4444', marginRight: 8 }} title={d.bearCase}>▼ bear</span>}
+                            {d.wouldChangeMind && <span style={{ color: '#22D3EE' }} title={d.wouldChangeMind}>↻ change-mind</span>}
+                          </div>
+                        )}
                       </td>
                       <td style={td}>
                         <button

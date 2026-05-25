@@ -27,6 +27,14 @@ export interface Decision {
   date: string;            // ISO timestamp of last update
   scoreAtDecision?: number;// score on the row when the decision was recorded
   gradeAtDecision?: string;// grade on the row when the decision was recorded
+  // PATCH 0852 — Bull/Bear/Change-mind split. Old `reason` stays for back-
+  // compat; new fields are optional and used by the enriched decision UI.
+  bullCase?: string;       // why this works
+  bearCase?: string;       // why this might not work
+  wouldChangeMind?: string; // what news/event would flip the decision
+  // PATCH 0852 — price snapshot at decision time so the buy-the-dip helper
+  // on REJECTED entries can detect 'price fell N% since rejection'.
+  priceAtDecision?: number;
 }
 
 const LS_KEY = 'mc:decisions:v1';

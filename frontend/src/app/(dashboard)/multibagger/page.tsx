@@ -2179,7 +2179,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                 {isExp&&(
                   <div style={{padding:'16px 14px 20px',backgroundColor:`${CARD_BG}CC`,borderTop:`1px solid ${BORDER}`}}>
                     {/* PATCH 0347 — Decision logbook bar (per-stock BUY/WATCH/NEUTRAL/REJECTED + reason) */}
-                    <DecisionBar symbol={r.symbol} company={r.company} market="IN" score={r.score} grade={r.grade} bump={bumpDecisions} />
+                    <DecisionBar symbol={r.symbol} company={r.company} market="IN" score={r.score} grade={r.grade} currentPrice={(r as any).cmp} bump={bumpDecisions} />
                     <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(240px,1fr))',gap:16}}>
                       {/* Metrics by group */}
                       <div>
@@ -3893,7 +3893,7 @@ function USACompare() {
                 {isExp&&(
                   <div style={{padding:'16px 14px 20px',backgroundColor:`${CARD_BG}CC`,borderTop:`1px solid ${BORDER}`}}>
                     {/* PATCH 0347 — Decision logbook bar (USA) */}
-                    <DecisionBar symbol={r.symbol} company={r.company} market="US" score={r.score} grade={r.grade} bump={bumpUsDecisions} />
+                    <DecisionBar symbol={r.symbol} company={r.company} market="US" score={r.score} grade={r.grade} currentPrice={(r as any).cmp} bump={bumpUsDecisions} />
                     <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',gap:16}}>
                       <div>
                         <div style={{fontSize:F.sm,color:MUTED,fontWeight:700,letterSpacing:'0.8px',marginBottom:8}}>KEY METRICS</div>
@@ -3956,9 +3956,11 @@ const STORAGE_META = 'mb_excel_meta_v2';
 // Shows 4 status buttons (BUY/WATCH/NEUTRAL/REJECTED) + reason input.
 // Persists to localStorage via lib/decisions.ts — survives data clears.
 // ═══════════════════════════════════════════════════════════════════════════
-function DecisionBar({ symbol, company, market, score, grade, bump }: {
+function DecisionBar({ symbol, company, market, score, grade, currentPrice, bump }: {
   symbol: string; company?: string; market: 'IN' | 'US';
-  score?: number; grade?: string; bump: () => void;
+  score?: number; grade?: string;
+  currentPrice?: number;  // PATCH 0852 — snapshotted at decision time for buy-the-dip helper
+  bump: () => void;
 }) {
   const existing = getDecision(symbol);
   const [reason, setReason] = React.useState(existing?.reason ?? '');
@@ -3975,6 +3977,7 @@ function DecisionBar({ symbol, company, market, score, grade, bump }: {
     setDecision({
       symbol, market, status: newStatus, reason,
       company, scoreAtDecision: score, gradeAtDecision: grade,
+      priceAtDecision: currentPrice && currentPrice > 0 ? currentPrice : undefined,
     });
     bump();
   };
@@ -3983,6 +3986,7 @@ function DecisionBar({ symbol, company, market, score, grade, bump }: {
     setDecision({
       symbol, market, status, reason,
       company, scoreAtDecision: score, gradeAtDecision: grade,
+      priceAtDecision: currentPrice && currentPrice > 0 ? currentPrice : undefined,
     });
     bump();
   };
