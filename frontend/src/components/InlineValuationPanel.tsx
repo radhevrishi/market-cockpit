@@ -201,12 +201,13 @@ export default function InlineValuationPanel() {
             }
             // OPM came from historical fallback, not guidance
             const opmFromGuidance = (report.guidance || []).some((g: any) => g.metric === 'EBITDA_MARGIN' || g.metric === 'OPM' || g.metric === 'PAT_MARGIN');
-            if (!opmFromGuidance && report.excelData?.opmLatestQ && report.inferredMargin && Math.abs(report.excelData.opmLatestQ - report.inferredMargin) > 2) {
-              drivers.push(`OPM used (${report.inferredMargin.toFixed(1)}%) is the historical fallback, but latest quarter is ${report.excelData.opmLatestQ.toFixed(1)}% — operating leverage in progress. Override in /auto-valuation.`);
+            if (!opmFromGuidance && report.excelData?.opmLatest && report.inferredMargin && Math.abs(report.excelData?.opmLatest - report.inferredMargin) > 2) {
+              drivers.push(`OPM used (${report.inferredMargin.toFixed(1)}%) is the historical fallback, but latest quarter is ${report.excelData?.opmLatest.toFixed(1)}% — operating leverage in progress. Override in /auto-valuation.`);
             }
-            // P/E multiple looks high vs sector
-            if (report.peResult && report.peResult.targetPE && report.peResult.targetPE < 50 && (report.excelData?.currentPriceFromSheet || 0) > 0) {
-              drivers.push(`Quant uses sector median P/E ${report.peResult.targetPE.toFixed(0)}× — if you believe re-rating (e.g. moving to AI-infra premium), set higher P/E in override.`);
+            // P/E multiple from sector lookup — read off inputs.targetPE (CalculatorResult.inputs is untyped)
+            const peTarget = (report.peResult?.inputs as any)?.targetPE;
+            if (typeof peTarget === 'number' && peTarget < 50 && (report.excelData?.currentPriceFromSheet || 0) > 0) {
+              drivers.push(`Quant uses sector median P/E ${peTarget.toFixed(0)}× — if you believe re-rating (e.g. moving to AI-infra premium), set higher P/E in override.`);
             }
             if (drivers.length === 0) return null;
             return (

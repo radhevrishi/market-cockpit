@@ -114,9 +114,14 @@ async function dispatchEmail(
 
   let nodemailer: any;
   try {
-    // Dynamic import so the build doesn't fail when the dep is absent.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    nodemailer = require('nodemailer');
+    // Webpack-opaque require so the bundler does NOT try to resolve nodemailer
+    // at build time. The package is genuinely optional — user installs it only
+    // when they wire up SMTP. Without this trick, `require('nodemailer')` is
+    // statically analysed by Next/webpack and the build fails with "Module not
+    // found: Can't resolve 'nodemailer'" even though the call is inside try/catch.
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-eval
+    const dynamicRequire: NodeRequire = eval('require');
+    nodemailer = dynamicRequire('nodemailer');
   } catch {
     // Don't add nodemailer as a dependency — user can install it. Until
     // then this channel is a no-op even when SMTP env vars are set.

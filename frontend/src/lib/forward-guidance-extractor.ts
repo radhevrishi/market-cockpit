@@ -29,7 +29,7 @@ export type GuidanceMetric = 'REVENUE' | 'EBITDA' | 'PAT' | 'EBITDA_MARGIN' | 'P
 export interface GuidanceItem {
   fiscalYear: string;            // 'FY27' / 'FY28' / 'Q4FY27'
   metric: GuidanceMetric;
-  unit: '₹ Cr' | '%' | 'units' | 'days' | 'bps';
+  unit: '₹ Cr' | '%' | 'units' | 'days' | 'bps' | 'x';
   low?: number;
   high?: number;
   point?: number;                // when single value (not a range)
