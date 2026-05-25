@@ -326,8 +326,34 @@ async function fetchGoogleNewsRSS(symbols: string[]): Promise<MCNewsItem[]> {
 
 const SIGNAL_CACHE_KEY = 'intelligence:signals:latest';
 
-// PATCH 0833 — template-pattern junk filter applied to EVERY response,
-// including KV-cached paths that bypass the compute-time quality gate.
+// PATCH 0833/0836 — template-pattern junk filter + Nifty 50 largecap drop.
+// Applied to EVERY response, including KV-cached paths that bypass the
+// compute-time quality gate.
+const NIFTY_LARGECAP_SET = new Set<string>([
+  // Nifty 50 (50 names)
+  'RELIANCE','TCS','HDFCBANK','INFY','ICICIBANK','HINDUNILVR','ITC','SBIN',
+  'BHARTIARTL','KOTAKBANK','LT','HCLTECH','AXISBANK','ASIANPAINT','MARUTI',
+  'SUNPHARMA','TITAN','BAJFINANCE','DMART','ULTRACEMCO','NTPC','ONGC',
+  'NESTLEIND','WIPRO','M&M','JSWSTEEL','POWERGRID','TATASTEEL','TATAMOTORS',
+  'ADANIENT','ADANIPORTS','DIVISLAB','COALINDIA','BAJAJFINSV','TECHM',
+  'DRREDDY','CIPLA','BRITANNIA','APOLLOHOSP','EICHERMOT','TATACONSUM',
+  'GRASIM','INDUSINDBK','BPCL','HEROMOTOCO','SBILIFE','HDFCLIFE',
+  'BAJAJ-AUTO','HINDALCO','SHRIRAMFIN',
+  // Nifty Next 50 (more largecaps user typically doesn't want in signals)
+  'ADANIGREEN','ADANIPOWER','AMBUJACEM','BANKBARODA','BEL','BERGEPAINT',
+  'BOSCHLTD','CANBK','CHOLAFIN','COLPAL','DABUR','DLF','GAIL','GODREJCP',
+  'HAVELLS','HAL','ICICIGI','ICICIPRULI','IOC','IRFC','INDIGO','JINDALSTEL',
+  'JIOFIN','LICI','LODHA','LTIM','MOTHERSON','NAUKRI','PIDILITIND','PFC',
+  'PNB','RECLTD','SBICARD','SHREECEM','SIEMENS','TATAPOWER','TORNTPHARM',
+  'TRENT','TVSMOTOR','UNITDSPR','VEDL','VBL','ZOMATO','ZYDUSLIFE',
+]);
+
+function isLargecapForSignals(symbol: any, item: any): boolean {
+  if (item?.isWatchlist || item?.isPortfolio) return false;  // tracked passes
+  const sym = String(symbol || '').toUpperCase().replace(/\.(NS|BO)$/i, '').trim();
+  return NIFTY_LARGECAP_SET.has(sym);
+}
+
 function isJunkSignal(s: any): boolean {
   if (!s) return true;
   const flags = Array.isArray(s.anomalyFlags) ? s.anomalyFlags : [];
@@ -338,6 +364,8 @@ function isJunkSignal(s: any): boolean {
   if (s.visibility === 'HIDDEN' && !s.isWatchlist && !s.isPortfolio) return true;
   if (s.evidenceTier === 'TIER_D' && !s.isWatchlist && !s.isPortfolio) return true;
   if (s.signalTier === 'TIER2_INFERRED' && ct === 'HEURISTIC' && !s.isWatchlist && !s.isPortfolio) return true;
+  // PATCH 0836 — drop Nifty 50 + Next 50 largecaps unless explicitly tracked
+  if (isLargecapForSignals(s.symbol, s)) return true;
   return false;
 }
 
@@ -352,13 +380,23 @@ function stripJunkResponse(resp: any): any {
   for (const key of ['signals', 'notable', 'observations', 'speculative', 'top3', 'thematicIdeas']) {
     if (Array.isArray(next[key])) next[key] = stripJunk(next[key]);
   }
+  // PATCH 0836 — thematicIdeas use {symbol, isWatchlist, isPortfolio} too;
+  // drop largecap themes unless tracked.
+  if (Array.isArray(next.thematicIdeas)) {
+    next.thematicIdeas = next.thematicIdeas.filter((t: any) => !isLargecapForSignals(t.symbol, t));
+  }
   // Trends carry s.signals inside each item — strip junk inside, drop trends that lose all evidence
+  // PATCH 0836 — ALSO drop the trend wholesale if its top-level symbol is a
+  // largecap (unless explicitly tracked).
   if (Array.isArray(next.trends)) {
-    next.trends = next.trends.map((t: any) => {
-      if (!t || !Array.isArray(t.signals)) return t;
-      const cleanedSignals = stripJunk(t.signals);
-      return { ...t, signals: cleanedSignals, signalCount: cleanedSignals.length };
-    }).filter((t: any) => (t.signalCount ?? t.signals?.length ?? 0) >= 2);
+    next.trends = next.trends
+      .filter((t: any) => !isLargecapForSignals(t.symbol, t))
+      .map((t: any) => {
+        if (!t || !Array.isArray(t.signals)) return t;
+        const cleanedSignals = stripJunk(t.signals);
+        return { ...t, signals: cleanedSignals, signalCount: cleanedSignals.length };
+      })
+      .filter((t: any) => (t.signalCount ?? t.signals?.length ?? 0) >= 2);
   }
   // Hide _allSignals too — the frontend can rebuild from cleaned arrays
   if (Array.isArray(next._allSignals)) next._allSignals = stripJunk(next._allSignals);
