@@ -218,12 +218,30 @@ async function extractExcelFinancials(file: File): Promise<ExcelFinancials | nul
     return row.slice(1).map(toNum);
   };
 
-  const salesRow = findRow(['Sales', 'Revenue', 'Total Revenue', 'Net Sales']);
-  const opRowExplicit = findRow(['Operating Profit', 'EBITDA']);
-  const netProfitRow = findRow(['Net profit', 'PAT', 'Profit after tax']);
-  const epsRow = findRow(['EPS', 'Earnings per share']);
-  const priceRow = findRow(['Price', 'CMP', 'Current Price']);
-  const depRow = findRow(['Depreciation']);
+  // PATCH 0849 — expanded row-label matching for diverse report formats
+  const salesRow = findRow([
+    'Sales', 'Revenue', 'Total Revenue', 'Net Sales', 'Revenue from Operations',
+    'Total Income', 'Income from Operations', 'Gross Sales', 'Net Revenue', 'Turnover',
+  ]);
+  const opRowExplicit = findRow([
+    'Operating Profit', 'EBITDA', 'EBIT', 'Operating Income',
+    'Profit before Interest', 'PBIT', 'Operating EBITDA',
+  ]);
+  const netProfitRow = findRow([
+    'Net profit', 'PAT', 'Profit after tax', 'Profit for the year', 'Profit/(Loss)',
+    'Profit after Tax', 'Net Profit after Tax', 'Profit for the Period',
+    'Net Income', 'Net Earnings', 'Bottomline',
+  ]);
+  const epsRow = findRow([
+    'EPS', 'Earnings per share', 'EPS (Basic)', 'Basic EPS', 'Diluted EPS',
+  ]);
+  const priceRow = findRow([
+    'Price', 'CMP', 'Current Price', 'Share Price', 'Closing Price',
+  ]);
+  const depRow = findRow([
+    'Depreciation', 'Depreciation & Amortisation', 'Depreciation and Amortization',
+    'D&A', 'Depreciation/Amortisation',
+  ]);
 
   // Operating profit — fall back to Sales minus all expense rows when not explicit
   let opRow = opRowExplicit;
@@ -552,6 +570,170 @@ function inferSector(text: string, company?: string): string | undefined {
       [/\bpump\b|\bcompressor\b|\bturbine\b/g, 4],
       [/\bfabrication\b|\bplant\b/g, 1],
     ]],
+    // PATCH 0849 — 25 India-listed sectors covering most NSE industries.
+    ['Breweries / Distilleries', [
+      [/\bbrewer(?:y|ies)\b/g, 5],
+      [/\bdistiller(?:y|ies)\b/g, 5],
+      [/\balcohol(?:ic)?\s+beverages?\b/g, 5],
+      [/\bliquor\b|\bspirits\b|\bwhisk(?:e)?y\b|\brum\b|\bvodka\b|\bbeer\b/g, 4],
+      [/\bIMFL\b|\bIndian made foreign liquor\b/g, 5],
+      [/\bENA\b|\bextra neutral alcohol\b|\bgrain alcohol\b/g, 4],
+      [/\bcountry liquor\b|\bbottling\b/g, 3],
+    ]],
+    ['Cement', [
+      [/\bcement\b/g, 5],
+      [/\bclinker\b/g, 5],
+      [/\bgrinding unit\b|\bcement plant\b/g, 4],
+      [/\bMTPA\b.{0,30}cement/gi, 4],
+      [/\bOPC\b|\bPPC\b|\bportland\b/g, 3],
+    ]],
+    ['Hotels & Hospitality', [
+      [/\bhotels?\b/g, 3],
+      [/\bhospitality\b/g, 4],
+      [/\bRevPAR\b|\bADR\b|\boccupancy rate\b/g, 5],
+      [/\bresort\b|\bbanquet\b|\brestaurant\b/g, 2],
+      [/\bF&B\b.{0,20}revenue/gi, 3],
+    ]],
+    ['Aviation', [
+      [/\baviation\b|\bairline\b/g, 5],
+      [/\baircraft\b/g, 3],
+      [/\bload factor\b|\bASK\b|\bRPK\b|\bCASK\b|\bRASK\b/g, 5],
+      [/\bfleet\b.{0,20}aircraft/gi, 3],
+    ]],
+    ['Logistics & Warehousing', [
+      [/\blogistics\b/g, 4],
+      [/\b3PL\b|\bthird party logistics\b/g, 5],
+      [/\bwarehous(?:e|ing)\b/g, 4],
+      [/\bfreight\b|\btrucking\b|\bsupply chain solutions\b/g, 3],
+      [/\bcontainer\b.{0,20}terminal/gi, 4],
+    ]],
+    ['Sugar / Agri Processing', [
+      [/\bsugar mill\b|\bsugar refinery\b|\bsugar industry\b/g, 5],
+      [/\bcane crushing\b|\bsugarcane\b/g, 4],
+      [/\bethanol\b/g, 3],
+      [/\bmolasses\b|\bbagasse\b/g, 4],
+    ]],
+    ['Steel & Metals', [
+      [/\bsteel\b/g, 3],
+      [/\baluminum\b|\baluminium\b/g, 4],
+      [/\bcopper\b.{0,20}(?:smelt|cathode|refinery)/gi, 5],
+      [/\bzinc\b.{0,20}smelter\b/gi, 5],
+      [/\bblast furnace\b|\bHRC\b|\bCRC\b|\blong products\b/g, 4],
+      [/\bferrochrome\b|\bferroalloy\b/g, 4],
+    ]],
+    ['Mining', [
+      [/\bmining\b/g, 4],
+      [/\biron ore\b|\bcoal mining\b|\bbauxite\b/g, 5],
+      [/\bmineral processing\b/g, 3],
+      [/\bopen.cast\b|\bunderground mine\b/g, 3],
+    ]],
+    ['Textiles & Apparel', [
+      [/\btextile\b/g, 4],
+      [/\byarn\b|\bspinning\b|\bweaving\b|\bfabric\b/g, 3],
+      [/\bapparel\b|\bgarment\b/g, 4],
+      [/\bdenim\b|\bcotton mill\b/g, 4],
+    ]],
+    ['Real Estate / Construction', [
+      [/\breal estate\b/g, 5],
+      [/\bresidential project\b|\bcommercial project\b/g, 4],
+      [/\bbookings\b.{0,30}(?:saleable|carpet|sq\.?\s*ft)/gi, 4],
+      [/\bdeveloper\b|\bbuilder\b/g, 2],
+      [/\bcollections\b.{0,30}real estate/gi, 4],
+    ]],
+    ['Telecom', [
+      [/\btelecom\b|\btelecommunication\b/g, 4],
+      [/\bARPU\b/g, 5],
+      [/\bsubscriber base\b|\bnet adds\b.{0,20}subscribers?\b/g, 4],
+      [/\bspectrum\b|\b5G rollout\b|\b4G\b|\btower\b/g, 3],
+    ]],
+    ['Hospitals / Healthcare Services', [
+      [/\bhospital\b/g, 4],
+      [/\bbed capacity\b|\boccupancy.{0,15}bed/gi, 5],
+      [/\bARPOB\b|\baverage revenue per occupied bed\b/g, 5],
+      [/\bclinical services\b|\bsurger(?:y|ies)\b/g, 3],
+    ]],
+    ['Diagnostics & Pathology', [
+      [/\bdiagnostics?\b/g, 5],
+      [/\bpathology\b|\bpath lab\b/g, 5],
+      [/\bradiology\b|\bimaging\b/g, 3],
+      [/\btest count\b|\bbillable tests\b/g, 4],
+    ]],
+    ['Power Utility (Generation)', [
+      [/\bpower generation\b|\bpower plant\b/g, 4],
+      [/\bthermal power\b|\bcoal-based power\b/g, 4],
+      [/\bhydro(?:electric)?\b/g, 3],
+      [/\bPLF\b|\bplant load factor\b/g, 5],
+      [/\bPPA\b|\bpower purchase agreement\b/g, 4],
+    ]],
+    ['Renewable Energy', [
+      [/\brenewable energy\b|\bsolar power\b|\bwind power\b/g, 5],
+      [/\bsolar EPC\b|\bwind EPC\b/g, 5],
+      [/\bMW capacity\b.{0,40}(?:solar|wind|renewable)/gi, 4],
+      [/\bmodule manufacturing\b/g, 4],
+    ]],
+    ['Insurance', [
+      [/\binsurance\b/g, 3],
+      [/\bAPE\b|\bannualized premium equivalent\b|\bnew business premium\b/g, 5],
+      [/\bVNB\b|\bvalue of new business\b/g, 5],
+      [/\blife insurance\b|\bgeneral insurance\b|\bhealth insurance\b/g, 4],
+      [/\bclaims ratio\b|\bcombined ratio\b/g, 4],
+    ]],
+    ['Oil & Gas — Upstream', [
+      [/\bcrude oil\b|\bnatural gas\b/g, 3],
+      [/\bE&P\b|\bupstream\b|\bdrilling\b/g, 4],
+      [/\boil block\b|\bproduction sharing contract\b/g, 5],
+      [/\bbpd\b|\bbarrels per day\b|\bmmscfd\b/g, 4],
+    ]],
+    ['Oil & Gas — Refining & Marketing', [
+      [/\brefiner(?:y|ies)\b/g, 5],
+      [/\bGRM\b|\bgross refining margin\b/g, 5],
+      [/\bdiesel\b.{0,20}retail\b/gi, 3],
+      [/\bpetrol pumps?\b|\bfuel retail\b/g, 3],
+    ]],
+    ['Gas Distribution / CGD', [
+      [/\bCGD\b|\bcity gas distribution\b/g, 5],
+      [/\bPNG\b|\bCNG\b/g, 4],
+      [/\bgas pipeline\b|\bgas transmission\b/g, 3],
+    ]],
+    ['Media / Print / Broadcasting', [
+      [/\bprint media\b|\bnewspaper\b|\bperiodical\b/g, 4],
+      [/\bbroadcasting\b|\bTV channels?\b|\bDTH\b/g, 4],
+      [/\bcirculation revenue\b|\badvertising revenue\b/g, 4],
+    ]],
+    ['Tobacco / Cigarettes', [
+      [/\btobacco\b/g, 5],
+      [/\bcigarette\b/g, 5],
+      [/\bsmokeless\b/g, 3],
+    ]],
+    ['Plantations / Tea / Coffee', [
+      [/\btea\s+(?:plantation|estate|garden|crop)\b/g, 5],
+      [/\bcoffee\s+(?:plantation|estate|crop)\b/g, 5],
+      [/\brubber\s+plantation\b/g, 5],
+      [/\bestate\b.{0,15}(?:hectare|acre)\b/gi, 3],
+    ]],
+    ['Retail & E-Commerce', [
+      [/\bretail\s+(?:stores?|chain|business)\b/g, 4],
+      [/\bsame[- ]store\s+sales\s+growth\b|\bSSSG\b/g, 5],
+      [/\bgross merchandise value\b|\bGMV\b/g, 5],
+      [/\be-commerce\b|\bonline retail\b/g, 4],
+      [/\bstore count\b/g, 3],
+    ]],
+    ['Education / Edtech', [
+      [/\beducation\s+services\b|\bedtech\b/g, 5],
+      [/\bcoaching institute\b|\btest preparation\b/g, 4],
+      [/\bstudent enrollment\b|\benrollments\b/g, 4],
+      [/\bonline learning\b|\be-learning\b/g, 3],
+    ]],
+    ['Agrochemicals & Crop Protection', [
+      [/\bagrochemical\b|\bcrop protection\b/g, 5],
+      [/\bpesticide\b|\bherbicide\b|\bfungicide\b|\binsecticide\b/g, 4],
+      [/\bactive ingredient\b.{0,15}agro/gi, 4],
+    ]],
+    ['API / Bulk Drugs', [
+      [/\bactive pharmaceutical ingredient\b|\bAPI manufacturing\b/g, 5],
+      [/\bbulk drugs?\b/g, 5],
+      [/\bintermediates?\b.{0,15}pharma/gi, 4],
+    ]],
   ];
 
   const scores: Array<{ sector: string; score: number }> = sectors.map(([sector, kws]) => {
@@ -656,7 +838,8 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
   const sector = inferSector(allText + ' ' + (company || ''), company);
 
   // Pick a forward year — prefer FY27, then FY28
-  const fyOrder = ['FY26', 'FY27', 'FY28', 'FY29'];
+  // PATCH 0849 — FY26 dropped from search list (today is May 2026, FY26 is mostly REPORTED).
+  const fyOrder = ['FY27', 'FY28', 'FY29'];
   let forwardYear: string | undefined;
   let forwardRevenue: number | undefined;
   let forwardEBITDA: number | undefined;
@@ -735,6 +918,20 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
   const yearsAhead = forwardYear === 'FY28' ? 2 : 1;
 
   // Step 1: ensure revScen has bear/base/bull populated.
+  // PATCH 0849 — DECLINING-SALES GUARD. Always emit a fallback revScen so the
+  // P/S calculator doesn't fall back to a generic 10× multiple × latest sales
+  // (which produced the Associated Alcohols +631% absurd on declining sales).
+  if (!revScen.base && latestSales > 0) {
+    const _cagr5y = excelData?.salesCagr5y ?? 0;
+    if (_cagr5y <= 0) {
+      revScen = {
+        bear: latestSales * Math.pow(0.95, yearsAhead),
+        base: latestSales,
+        bull: latestSales * Math.pow(1.05, yearsAhead),
+      };
+      if (!forwardYear) forwardYear = 'FY27 (projected)';
+    }
+  }
   if (!revScen.base && latestSales > 0 && excelData?.salesCagr5y && excelData.salesCagr5y > 0) {
     // PATCH 0845 — clamp historical CAGR to a sane upper bound. IPO stubs
     // (1-2 years of history with a tiny pre-IPO base) produce 100-300% CAGR
@@ -835,10 +1032,16 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
   // Sector → multiple lookup
   const sectorConf = sector ? SECTOR_CALCULATOR_MAP[sector] : undefined;
   // Default multiple bands per calc
+  // PATCH 0849 — sector-aware default bounds. Old 5/10/18 P/S generic default
+  // was wildly inappropriate for sub-3× P/S sectors (liquor/textiles/sugar/
+  // refining/mining/oil&gas).
+  const _decliningHere = (excelData?.salesCagr5y ?? 0) < 0;
   const defaults = {
-    PE:        { bear: 20, base: 30, bull: 45 },
-    PS:        { bear: 5,  base: 10, bull: 18 },
-    EV_EBITDA: { bear: 12, base: 18, bull: 25 },
+    PE:        { bear: 18, base: 25, bull: 35 },
+    PS:        _decliningHere
+                 ? { bear: 0.8, base: 1.5, bull: 2.5 }
+                 : { bear: 2,   base: 3.5, bull: 6 },
+    EV_EBITDA: { bear: 10, base: 14, bull: 20 },
   };
   // Parse multipleHint to refine the band when sector is known
   if (sectorConf) {
@@ -1017,7 +1220,9 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
   if (peBase !== undefined) weighted.push({ w: 0.35 * (peConfidence === 'HIGH' ? 1 : peConfidence === 'MED' ? 0.7 : 0.3), v: peBase });
   if (evBase !== undefined) weighted.push({ w: 0.20 * (evConfidence === 'HIGH' ? 1 : evConfidence === 'MED' ? 0.7 : 0.3), v: evBase });
   const sumW = weighted.reduce((a, b) => a + b.w, 0);
-  const avgBaseUpside = sumW > 0 ? weighted.reduce((a, b) => a + b.w * b.v, 0) / sumW : 0;
+  // PATCH 0849 — NaN guard
+  const _rawAvg = sumW > 0 ? weighted.reduce((a, b) => a + b.w * b.v, 0) / sumW : 0;
+  const avgBaseUpside = Number.isFinite(_rawAvg) ? _rawAvg : 0;
   const baseUpsides = [peResult, psResult, evResult]
     .filter((r): r is CalculatorResult => !!r)
     .map(r => r.cases.find(c => c.label === 'BASE')?.upsidePct ?? 0);
@@ -1031,6 +1236,22 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
     else if (avgBaseUpside >= 25) { recommendation = 'WATCH'; rationale.push(`Base-case upside ${avgBaseUpside.toFixed(0)}% — solid but not exceptional. Wait for a better entry.`); }
     else if (avgBaseUpside >= 0) { recommendation = 'WAIT'; rationale.push(`Base-case upside only ${avgBaseUpside.toFixed(0)}% — fairly valued. Need re-rating catalyst or earnings surprise.`); }
     else { recommendation = 'AVOID'; rationale.push(`Base-case implies DOWNSIDE ${avgBaseUpside.toFixed(0)}% — multiples already stretched.`); }
+
+    // PATCH 0849 — sanity downgrades to prevent absurd BUY recommendations
+    const _salesDeclining = (excelData?.salesCagr5y ?? 0) < 0;
+    const _latestPATNeg = (excelData?.latestPAT ?? 0) < 0;
+    if (recommendation === 'BUY' && _salesDeclining) {
+      recommendation = 'WATCH';
+      rationale.unshift(`⚠ DECLINING-SALES SANITY: 5y sales CAGR ${(excelData?.salesCagr5y ?? 0).toFixed(0)}% (negative). BUY downgraded to WATCH — wait for revenue turnaround.`);
+    }
+    if (recommendation === 'BUY' && avgBaseUpside > 250) {
+      recommendation = 'WATCH';
+      rationale.unshift(`⚠ EXTREME-UPSIDE SANITY: ${avgBaseUpside.toFixed(0)}% upside is almost certainly a model artifact. Downgraded to WATCH. Cross-check sector multiple, OPM proxy, and forward growth rate.`);
+    }
+    if (recommendation === 'BUY' && _latestPATNeg) {
+      recommendation = 'WATCH';
+      rationale.unshift(`⚠ LOSS-MAKING SANITY: Latest PAT ₹${(excelData?.latestPAT ?? 0).toFixed(0)} Cr (negative). BUY downgraded to WATCH — wait for profitability inflection.`);
+    }
   }
   if (excelData?.salesCagr5y && excelData.salesCagr5y > 20) rationale.push(`Strong 5yr sales CAGR ${excelData.salesCagr5y.toFixed(0)}%.`);
   if (excelData?.opmAvg && excelData.opmAvg > 18) rationale.push(`Healthy 5yr avg OPM ${excelData.opmAvg.toFixed(0)}%.`);
