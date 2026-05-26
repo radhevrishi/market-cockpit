@@ -230,6 +230,64 @@ export function resolveTickerName(ticker: string): string {
   return NSE_TICKER_NAMES[t] || t;
 }
 
+// PATCH 0901 — Reverse map: company name → ticker. Used by the home-page
+// Super Investors panel where the API returns a company-name string in
+// the ticker field (live flow rows aren't keyed on NSE symbols).
+// Build lazily once; case- and punctuation-insensitive.
+let _REVERSE_NAME_MAP: Record<string, string> | null = null;
+function getReverseNameMap(): Record<string, string> {
+  if (_REVERSE_NAME_MAP) return _REVERSE_NAME_MAP;
+  const out: Record<string, string> = {};
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  for (const [ticker, name] of Object.entries(NSE_TICKER_NAMES)) {
+    out[norm(name)] = ticker;
+    // Also index a "stripped" form without common suffixes
+    const stripped = name.replace(/\s+(Limited|Ltd\.?|Industries|India|Pharma|Pharmaceuticals|Capital|Corporation|Corp\.?|Company|Co\.?|Technologies|Tech)\s*$/i, '');
+    out[norm(stripped)] = ticker;
+  }
+  // Hardcoded common Super Investor flow company names that aren't in
+  // NSE_TICKER_NAMES yet (avoid bloating the main map; these are
+  // marquee-investor names that show up specifically on the home-page
+  // flow rail).
+  const FLOW_EXTRAS: Record<string, string> = {
+    'sammaancapital':       'SAMMAANCAP',
+    'sammaan capital':      'SAMMAANCAP',
+    'tvtodaynetwork':       'TVTODAY',
+    'tv today network':     'TVTODAY',
+    'nazara':               'NAZARA',
+    'nazaratechnologies':   'NAZARA',
+    'jbchemicalspharma':    'JBCHEPHARM',
+    'jbchemicals':          'JBCHEPHARM',
+    'jbchemicalsandpharma': 'JBCHEPHARM',
+    'jb chemicals & pharma':'JBCHEPHARM',
+    'polymedicure':         'POLYMED',
+    'relaxofootwears':      'RELAXO',
+    'pidilite':             'PIDILITIND',
+    'pidiliteindustries':   'PIDILITIND',
+    'asianpaints':          'ASIANPAINT',
+    'bajajfinance':         'BAJFINANCE',
+    'titancompany':         'TITAN',
+  };
+  for (const [k, v] of Object.entries(FLOW_EXTRAS)) {
+    out[norm(k)] = v;
+  }
+  _REVERSE_NAME_MAP = out;
+  return out;
+}
+
+/**
+ * PATCH 0901 — Reverse-resolve: company name → NSE ticker. Returns
+ * undefined when no mapping exists. Used by the home-page Super
+ * Investors panel to align flow rows (company-name only) with roster
+ * rows (ticker + company).
+ */
+export function resolveCompanyToTicker(companyName: string): string | undefined {
+  if (!companyName) return undefined;
+  const norm = companyName.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!norm) return undefined;
+  return getReverseNameMap()[norm];
+}
+
 /**
  * True if we have an explicit mapping for this ticker (vs falling back
  * to the ticker symbol itself).

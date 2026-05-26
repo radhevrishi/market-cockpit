@@ -81,7 +81,8 @@ import { getTopThemesForHome } from '@/lib/critical-themes';
 // PATCH 0631 — Valuation Quick-Check on Home
 import { calculatePE, fetchQuoteAutofill, type QuoteAutoFill } from '@/lib/valuation-calculators';
 // PATCH 0888 — Authoritative ticker→long-form-name map for news search
-import { NSE_TICKER_NAMES as _NSE_TICKER_NAMES } from '@/lib/nse-ticker-names';
+// PATCH 0901 — Reverse map for Super Investors flow rows (company-name → ticker)
+import { NSE_TICKER_NAMES as _NSE_TICKER_NAMES, resolveCompanyToTicker } from '@/lib/nse-ticker-names';
 
 const BG = '#0A0E1A';
 const CARD = '#0D1623';
@@ -2373,27 +2374,32 @@ export default function HomeDashboard() {
                     ? investor.split(' ').map((p: string, idx: number) => idx === 0 ? p[0] + '.' : p).join(' ').slice(0, 14)
                     : investor.slice(0, 12);
                   // PATCH 0734 — for news-derived rows the "ticker" is actually the
-                  // company name (no real ticker parseable from headlines). Showing
-                  // ticker + company side-by-side produces "Sammaan CaSammaan Capital"-
-                  // style duplicates. Only show the ticker label when it looks like
-                  // a real ticker — UPPERCASE alpha+digits, no spaces, ≤10 chars.
+                  // company name (no real ticker parseable from headlines).
+                  // PATCH 0901 — Try reverse-resolving the company name to a ticker
+                  // (Sammaan Capital → SAMMAANCAP, TV Today Network → TVTODAY,
+                  // Nazara → NAZARA, etc) so all rows show a ticker chip and align
+                  // visually with roster rows. When unresolvable, reserve the same
+                  // column width with an em-dash so the layout doesn't reflow.
                   const rawTicker = (r.ticker || '').toString().replace(/\.(NS|BO)$/i, '');
-                  const isRealTicker = /^[A-Z][A-Z0-9&-]{1,9}$/.test(rawTicker);
-                  // PATCH 0866 — when ticker is a company-name string (not real
-                  // NSE symbol), route to the full /super-investors page instead of
-                  // a broken stock-sheet URL.
+                  let resolvedTicker = '';
+                  if (/^[A-Z][A-Z0-9&-]{1,9}$/.test(rawTicker)) {
+                    resolvedTicker = rawTicker;
+                  } else {
+                    // ticker field is a company-name string — reverse-lookup
+                    const fromName = resolveCompanyToTicker(r.company || rawTicker);
+                    if (fromName) resolvedTicker = fromName;
+                  }
+                  const isRealTicker = !!resolvedTicker;
                   const linkHref = isRealTicker
-                    ? `/stock-sheet?ticker=${encodeURIComponent(rawTicker)}`
+                    ? `/stock-sheet?ticker=${encodeURIComponent(resolvedTicker)}`
                     : '/super-investors';
                   return (
                     <Link key={(r.ticker || '') + i} href={linkHref}
-                      title={isRealTicker ? '' : 'No NSE ticker — open Super Investors tracker'}
+                      title={isRealTicker ? `Open ${resolvedTicker} stock sheet` : 'No NSE ticker found — open Super Investors tracker'}
                       style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
-                      {isRealTicker && (
-                        <span style={{ fontSize: 9, color: '#A78BFA', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 56 }}>
-                          {rawTicker.slice(0, 10)}
-                        </span>
-                      )}
+                      <span style={{ fontSize: 9, color: isRealTicker ? '#A78BFA' : '#3F4D63', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 70, textAlign: 'left' }}>
+                        {isRealTicker ? resolvedTicker.slice(0, 10) : '—'}
+                      </span>
                       <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {r.company || rawTicker}
                       </span>
@@ -2839,17 +2845,65 @@ export default function HomeDashboard() {
               No active situations in feed. <Link href="/special-situations" style={{ color: '#22D3EE' }}>Browse all →</Link>
             </div>
           ) : (() => {
+            // PATCH 0902 — institutional event-type taxonomy with full
+            // human-readable labels (not "MA" / "BUYBACK_TENDER" raw enums).
             const EVENT_COLOR: Record<string, string> = {
-              OPEN_OFFER:    '#10B981',
-              OFS:           '#F59E0B',
-              BUYBACK:       '#A78BFA',
-              MERGER:        '#22D3EE',
-              DEMERGER:      '#22D3EE',
-              PREFERENTIAL:  '#FB7185',
-              QIP:           '#FB7185',
-              RIGHTS:        '#60A5FA',
-              SPIN_OFF:      '#22D3EE',
+              OPEN_OFFER:       '#10B981',
+              OFS:              '#F59E0B',
+              BUYBACK:          '#A78BFA',
+              BUYBACK_TENDER:   '#A78BFA',
+              MERGER:           '#22D3EE',
+              MA:               '#22D3EE',  // some payloads emit raw "MA"
+              DEMERGER:         '#22D3EE',
+              PREFERENTIAL:     '#FB7185',
+              QIP:              '#FB7185',
+              RIGHTS:           '#60A5FA',
+              RIGHTS_ISSUE:     '#60A5FA',
+              SPIN_OFF:         '#22D3EE',
               CORPORATE_ACTION: '#94A3B8',
+              STAKE_SALE:       '#FB923C',
+              ACQUISITION:      '#10B981',
+            };
+            const EVENT_LABEL: Record<string, string> = {
+              OPEN_OFFER:       'Open offer',
+              OFS:              'OFS',
+              BUYBACK:          'Buyback',
+              BUYBACK_TENDER:   'Buyback (tender)',
+              MERGER:           'Merger',
+              MA:               'M&A',
+              DEMERGER:         'Demerger',
+              PREFERENTIAL:     'Pref. allotment',
+              QIP:              'QIP',
+              RIGHTS:           'Rights issue',
+              RIGHTS_ISSUE:     'Rights issue',
+              SPIN_OFF:         'Spin-off',
+              STAKE_SALE:       'Stake sale',
+              ACQUISITION:      'Acquisition',
+              CORPORATE_ACTION: 'Corp. action',
+            };
+            // Crude market inference: USA tickers are typically 1-4 chars
+            // ALL-CAPS without digits; Indian tickers can be 5-12 chars OR
+            // BSE 6-digit numeric codes.
+            const inferMarket = (tk: string): 'IN' | 'US' => {
+              const t = (tk || '').trim().toUpperCase();
+              if (/^\d{6}$/.test(t)) return 'IN';
+              if (t.length >= 5) return 'IN';
+              // 1-4 char alpha-only ticker → probably US (KMB, MDT, BIRK, MUFG, TCS overlap unfortunately)
+              // Override: known Indian short tickers
+              const INDIAN_SHORT = new Set(['TCS', 'LIC', 'IOC', 'ITC', 'BPCL', 'NTPC', 'ONGC', 'IRFC', 'CMS', 'IDFC', 'IGL', 'MGL', 'CGCL', 'HUL', 'SBI', 'GAIL', 'IDBI', 'OIL', 'GIC', 'IOB']);
+              if (INDIAN_SHORT.has(t)) return 'IN';
+              return /^[A-Z]{1,4}$/.test(t) ? 'US' : 'IN';
+            };
+            // Try to parse a ₹ Cr / $ M figure from the headline
+            const extractDealValue = (headline: string): string | null => {
+              if (!headline) return null;
+              const inr = headline.match(/(?:₹|Rs\.?)\s*([\d,]+(?:\.\d+)?)\s*(?:crore|cr\.?|Cr)/i);
+              if (inr) return `₹${inr[1]} Cr`;
+              const usdBn = headline.match(/\$\s*([\d,]+(?:\.\d+)?)\s*(?:bn|billion)/i);
+              if (usdBn) return `$${usdBn[1]}bn`;
+              const usdMn = headline.match(/\$\s*([\d,]+(?:\.\d+)?)\s*(?:m\b|mn\b|million)/i);
+              if (usdMn) return `$${usdMn[1]}M`;
+              return null;
             };
             const norm = (s: string) => (s || '').toString().toUpperCase().replace(/\.(NS|BO)$/i, '').trim();
             const universeSet = new Set<string>();
@@ -2875,52 +2929,67 @@ export default function HomeDashboard() {
                     else nextCatalyst = `${-days}d past`;
                   }
                   const headline = ev.headline || ev.sub_category || ev.event_type;
-                  const evLabel = (ev.event_type || '').replace(/_/g, ' ');
+                  const evRaw = (ev.event_type || '').toString().toUpperCase();
+                  const evLabel = EVENT_LABEL[evRaw] || evRaw.replace(/_/g, ' ').toLowerCase().replace(/^(.)/, (c: string) => c.toUpperCase());
+                  const market = inferMarket(ev.ticker || '');
+                  const dealValue = extractDealValue(headline);
                   return (
                     <Link key={(ev.ticker || '') + i}
                       href={`/stock-sheet?ticker=${encodeURIComponent(ev.ticker)}`}
                       title={[
-                        `${ev.ticker} · ${evLabel}${ev.sub_category ? ' · ' + ev.sub_category : ''}`,
+                        `${ev.ticker} (${market}) · ${evLabel}${ev.sub_category ? ' · ' + ev.sub_category : ''}`,
                         headline,
                         ev.announced_at ? `Announced: ${ev.announced_at} (${daysSince})` : '',
                         ev.next_catalyst_date ? `Next catalyst: ${ev.next_catalyst_date} (${nextCatalyst})` : '',
                         ev.expected_alpha ? `Expected alpha: ${ev.expected_alpha}` : '',
+                        dealValue ? `Deal value: ${dealValue}` : '',
                       ].filter(Boolean).join('\n')}
-                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
-                      {inUniverse && <span style={{ fontSize: 10, color: '#22D3EE', flexShrink: 0 }} title="In your Watchlist/Portfolio/CB">👁</span>}
-                      {/* PATCH 0859 — Direct-trade vs corp-action-news tier badge */}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                      {inUniverse && <span style={{ fontSize: 11, color: '#22D3EE', flexShrink: 0 }} title="In your Watchlist/Portfolio/CB">👁</span>}
+                      {/* PATCH 0902 — FILED vs REPORTED replaces DIRECT vs NEWS for clarity */}
                       {ev.tradeability === 'DIRECT_TRADE' ? (
-                        <span title="Direct-trade event (structured filing — OFS/buyback/open-offer/scheme)"
-                          style={{ fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2, letterSpacing: 0.3, background: '#10B98122', color: '#10B981', flexShrink: 0 }}>
-                          DIRECT
+                        <span title="Filed event — exchange-disclosed structured filing (OFS / buyback / open offer / scheme)"
+                          style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, letterSpacing: 0.4, background: '#10B98122', color: '#10B981', flexShrink: 0 }}>
+                          FILED
                         </span>
                       ) : (
-                        <span title="Corp-action news mention (lower-confidence — verify before sizing)"
-                          style={{ fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2, letterSpacing: 0.3, background: '#A78BFA22', color: '#A78BFA', flexShrink: 0 }}>
-                          NEWS
+                        <span title="Reported in news — verify against filing before sizing"
+                          style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, letterSpacing: 0.4, background: '#A78BFA22', color: '#A78BFA', flexShrink: 0 }}>
+                          REPORTED
                         </span>
                       )}
-                      <span style={{ fontSize: 11, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 84, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      <span style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, flexShrink: 0, color: market === 'US' ? '#F87171' : '#22D3EE', background: market === 'US' ? '#F8717122' : '#22D3EE22' }}>
+                        {market === 'US' ? '🇺🇸 US' : '🇮🇳 IN'}
+                      </span>
+                      <span style={{ fontSize: 12, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 78, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {ev.ticker}
                       </span>
                       <span style={{
-                        fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2, letterSpacing: 0.3, flexShrink: 0,
-                        background: `${evColor}22`, color: evColor,
+                        fontSize: 9.5, fontWeight: 800, padding: '2px 7px', borderRadius: 3, letterSpacing: 0.3, flexShrink: 0,
+                        background: `${evColor}22`, color: evColor, border: `1px solid ${evColor}40`,
                       }}>
-                        {evLabel}
+                        {evLabel.toUpperCase()}
                       </span>
+                      {dealValue && (
+                        <span style={{
+                          fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 3, letterSpacing: 0.2, flexShrink: 0,
+                          color: '#FBBF24', background: '#FBBF2415', fontFamily: 'ui-monospace, monospace',
+                        }} title="Deal value extracted from headline">
+                          {dealValue}
+                        </span>
+                      )}
                       <span style={{
-                        flex: 1, fontSize: 11, color: TEXT, fontWeight: 500,
-                        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0,
+                        flex: 1, fontSize: 12, color: TEXT, fontWeight: 500,
+                        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, lineHeight: 1.4,
                       }}>
                         {headline}
                       </span>
                       {ev.expected_alpha && (
-                        <span style={{ fontSize: 8, color: '#10B981', fontWeight: 700, padding: '1px 4px', borderRadius: 2, background: '#10B98122', flexShrink: 0 }}>
+                        <span style={{ fontSize: 9, color: '#10B981', fontWeight: 700, padding: '2px 5px', borderRadius: 3, background: '#10B98122', flexShrink: 0 }}>
                           {ev.expected_alpha}
                         </span>
                       )}
-                      <span style={{ fontSize: 9, color: DIM, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                      <span style={{ fontSize: 10, color: DIM, whiteSpace: 'nowrap', flexShrink: 0 }}>
                         {daysSince}{nextCatalyst && <> · <span style={{ color: '#F59E0B' }}>{nextCatalyst}</span></>}
                       </span>
                     </Link>
