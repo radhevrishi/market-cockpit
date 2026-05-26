@@ -24,11 +24,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { fetchNSEAnnouncements, fetchBSEAnnouncements, type FilingRecord } from '@/lib/nse-bse-feed';
 import { classifyFiling, scoreBullish, isHighBullishRaw, type BullishScore, type ConcallFilingType } from '@/lib/concall-bullish';
-// PATCH 0931 — Haiku LLM catalyst classifier (KV-cached, budget-capped).
-// Wraps the existing regex classification with structured LLM extraction
-// for high-priority freshly-scored filings only. Returns null gracefully
-// when key missing, budget exhausted, or API errors.
-import { classifyCatalyst, type HaikuCatalystResult } from '@/lib/anthropic-classifier';
+// PATCH 0934 — Haiku import REMOVED from Signals pipeline per user
+// directive. Wrapper stays available at @/lib/anthropic-classifier for the
+// /api/v1/haiku/health diagnostic endpoint and any FUTURE non-Signals use.
 import { extractFirstPdf } from '@/lib/pdf-text-extractor';
 import { extractSections } from '@/lib/concall-sections';
 import { applySectorOverlay, type SectorOverlayResult } from '@/lib/concall-sector-overlays';
@@ -88,7 +86,7 @@ interface ScoredFiling extends FilingRecord {
   bottleneck?: BottleneckSignal;          // PATCH 0407 — supply-chain bottleneck detection
   evidence?: EvidenceHierarchyResult;     // PATCH 0410 — institutional evidence hierarchy
   earnings_delta?: EarningsDelta;         // PATCH 0424 — economic translation: revenue/margin direction
-  haiku_catalyst?: HaikuCatalystResult;   // PATCH 0931 — LLM catalyst type + entities (M&A target, stake %, deal value)
+  // PATCH 0934 — haiku_catalyst field removed; Signals stays regex-only.
 }
 
 // PATCH 0408 — Cross-Company Theme Cluster.
@@ -625,59 +623,10 @@ async function handleLiveFeed(req: NextRequest) {
     freshlyScored.push(scored);
   }
 
-  // PATCH 0931 — Haiku catalyst classification (LLM enrichment).
-  // Runs ONLY on freshly-scored HIGH-PRIORITY filings (PDF_PRIORITY ≤ 2):
-  // M&A events, order receipts, rating actions, capex announcements, buybacks,
-  // promoter transactions, block deals, governance, USFDA, press releases.
-  // Skips low-signal subjects (audio/webcast/concall-invite/analyst-meet) so we
-  // don't burn budget on filings that don't carry catalyst-level information.
-  //
-  // Cost discipline (all built into classifyCatalyst):
-  //   - 24h KV cache by content hash → same headline never hits LLM twice
-  //   - $0.50/day budget cap, halts cleanly when reached
-  //   - 8s timeout per call, returns null on any error
-  //
-  // Hard wall-clock guard: 6s for the whole batch so we never push Vercel
-  // 60s timeout. After the budget, remaining filings persist without Haiku
-  // and will pick up classification on the next live-feed refresh.
-  const HAIKU_HIGH_PRIORITY: ConcallFilingType[] = [
-    'MA_EVENT', 'ORDER_RECEIPT', 'RATING_ACTION', 'CAPEX_ANNOUNCE',
-    'BUYBACK_ANNOUNCE', 'PROMOTER_TXN', 'BLOCK_DEAL', 'GOVERNANCE',
-    'USFDA_EVENT', 'PRESS_RELEASE',
-  ];
-  const HAIKU_WALL_BUDGET_MS = 6000;
-  const haikuStart = Date.now();
-  const haikuCandidates = freshlyScored.filter(s => HAIKU_HIGH_PRIORITY.includes(s.filing_type));
-  if (haikuCandidates.length > 0 && timeRemaining() > HAIKU_WALL_BUDGET_MS + 1000) {
-    try {
-      const results = await Promise.race([
-        Promise.all(haikuCandidates.map(async (s) => {
-          const cls = await classifyCatalyst(s.subject, s.symbol).catch(() => null);
-          return { hash: s.content_hash, cls };
-        })),
-        new Promise<Array<{ hash: string; cls: null }>>((resolve) =>
-          setTimeout(
-            () => resolve(haikuCandidates.map(s => ({ hash: s.content_hash, cls: null }))),
-            HAIKU_WALL_BUDGET_MS
-          )
-        ),
-      ]) as Array<{ hash: string; cls: HaikuCatalystResult | null }>;
-      let attached = 0;
-      for (const r of results) {
-        if (!r.cls) continue;
-        const target = freshlyScored.find(s => s.content_hash === r.hash);
-        if (target) {
-          target.haiku_catalyst = r.cls;
-          attached++;
-        }
-      }
-      console.log(`[live-feed] haiku: ${attached}/${haikuCandidates.length} classified in ${Date.now() - haikuStart}ms`);
-    } catch (e) {
-      console.warn(`[live-feed] haiku batch failed:`, (e as Error).message);
-    }
-  } else if (haikuCandidates.length > 0) {
-    console.log(`[live-feed] haiku skipped: ${haikuCandidates.length} candidates but only ${timeRemaining()}ms remaining`);
-  }
+  // PATCH 0934 — Haiku wiring REVERTED per user directive ("For signals
+  // dont use anthropic key"). Haiku classifier remains available via
+  // /api/v1/haiku/health for future use but does NOT touch the Signals path.
+  // Original P0931/P0932 wiring removed to keep this pipeline regex-only.
 
   // PATCH 0412 — Persist newly-scored filings to KV (fire-and-forget batched).
   // Each scored filing keyed by content_hash with 90-day TTL. Next request

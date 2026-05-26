@@ -374,16 +374,20 @@ function isLargecapForSignals(symbol: any, _item: any): boolean {
 
 function isJunkSignal(s: any): boolean {
   if (!s) return true;
-  const flags = Array.isArray(s.anomalyFlags) ? s.anomalyFlags : [];
-  if (flags.some((f: any) => typeof f === 'string' && /^TEMPLATE_PATTERN_/.test(f))) return true;
+  // PATCH 0934 — Restore "10 days ago" Signals behavior per user directive.
+  // The Patches 0829/0831/0833/0836 stacking made the filter so aggressive
+  // that quiet-pipeline days returned 0 visible (today's pre-fix state).
+  // Now: keep ONLY the narrow known-fake-values gate that catches template
+  // junk. Largecap-drop / TIER_D-drop / HIDDEN-drop / TIER2_INFERRED-drop
+  // are disabled. Users said the noise from those was a fair price for
+  // having data on the page.
   const rv = Math.round(s.valueCr || 0);
   const ct = s.confidenceType;
   if ((ct === 'HEURISTIC' || ct === 'INFERRED') && (rv === 280 || rv === 350 || rv === 105 || rv === 210)) return true;
-  if (s.visibility === 'HIDDEN' && !s.isWatchlist && !s.isPortfolio) return true;
-  if (s.evidenceTier === 'TIER_D' && !s.isWatchlist && !s.isPortfolio) return true;
-  if (s.signalTier === 'TIER2_INFERRED' && ct === 'HEURISTIC' && !s.isWatchlist && !s.isPortfolio) return true;
-  // PATCH 0836 — drop Nifty 50 + Next 50 largecaps unless explicitly tracked
-  if (isLargecapForSignals(s.symbol, s)) return true;
+  // Keep the explicit anomaly-flag gate ONLY for the literal TEMPLATE_PATTERN_*
+  // flags upstream attached — these are deterministic fakes, not heuristics.
+  const flags = Array.isArray(s.anomalyFlags) ? s.anomalyFlags : [];
+  if (flags.some((f: any) => typeof f === 'string' && /^TEMPLATE_PATTERN_/.test(f))) return true;
   return false;
 }
 
@@ -454,8 +458,10 @@ function stripJunkResponse(resp: any): any {
   //       tickers, or "capex ₹105 Cr" across TEXRAIL+RAILTEL), it's template
   //       fill: drop EVERY LOW-confidence row carrying that tag.
   if (Array.isArray(next.thematicIdeas)) {
+    // PATCH 0934 — Drop the P0836 largecap-exclusion from thematicIdeas
+    // per user directive ("restore what worked 10 days ago"). Keep only
+    // the explicit "mostly estimated data" + LOW-confidence filter.
     let themes = next.thematicIdeas.filter((t: any) => {
-      if (isLargecapForSignals(t?.symbol, t)) return false;
       const narrative = String(t?.theme?.narrative || t?.description || '').toLowerCase();
       const conf = String(t?.theme?.confidence || '').toUpperCase();
       // (b) pure-inference tell
@@ -488,8 +494,9 @@ function stripJunkResponse(resp: any): any {
   // PATCH 0836 — ALSO drop the trend wholesale if its top-level symbol is a
   // largecap (unless explicitly tracked).
   if (Array.isArray(next.trends)) {
+    // PATCH 0934 — Drop the P0836 largecap-exclusion from trends per user
+    // directive. Keep only the "drop trends that lose all evidence" rule.
     next.trends = next.trends
-      .filter((t: any) => !isLargecapForSignals(t.symbol, t))
       .map((t: any) => {
         if (!t || !Array.isArray(t.signals)) return t;
         const cleanedSignals = stripJunk(t.signals);
