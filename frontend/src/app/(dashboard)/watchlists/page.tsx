@@ -1931,90 +1931,107 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
           // previous two-row layout buried Quarter above FY and the
           // labels collided visually. New layout puts a bigger PERIOD
           // header + visible vertical divider between Q-chips and FY-chips.
+          // PATCH 0922 — Indian-FY chip labels rewritten to disambiguate
+          // "reporting quarter" (what the filing covers) vs "filing month"
+          // (when it was submitted). User report: "Q4 Jan-Mar (359) ... most
+          // companies are reported after April lot of bugs". Confusion was
+          // semantic, not a code bug. Now each chip has explicit reporting-
+          // quarter + filing-window in the tooltip, and the row has a
+          // header line spelling out the convention.
+          const qMeta: Record<string, { label: string; reports: string; filed: string }> = {
+            Q1: { label: 'Q1', reports: 'Apr-Jun results', filed: 'typically filed Jul-Aug' },
+            Q2: { label: 'Q2', reports: 'Jul-Sep results', filed: 'typically filed Oct-Nov' },
+            Q3: { label: 'Q3', reports: 'Oct-Dec results', filed: 'typically filed Jan-Feb' },
+            Q4: { label: 'Q4', reports: 'Jan-Mar results · annual', filed: 'typically filed Apr-Jun' },
+          };
           return (
             <div style={{
-              display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
-              padding: '6px 8px',
+              display: 'flex', flexDirection: 'column', gap: 6,
+              padding: '8px 10px',
               background: 'rgba(245,158,11,0.04)',
               border: '1px solid rgba(245,158,11,0.25)',
               borderRadius: 6,
             }}>
-              <span style={{ fontSize: 10.5, color: '#F59E0B', fontWeight: 800, letterSpacing: '0.6px', textTransform: 'uppercase' }}>
-                📅 PERIOD
-              </span>
-              <span style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700, marginLeft: 2 }}>QTR:</span>
+              {/* PATCH 0922 — Inline definitional banner so user never
+                  has to translate Q4 → Jan-Mar quarter → filed Apr-Jun. */}
+              <div style={{ fontSize: 10, color: '#94A3B8', lineHeight: 1.4 }}>
+                <span style={{ color: '#F59E0B', fontWeight: 800 }}>📅 PERIOD</span>
+                <span style={{ marginLeft: 6 }}>
+                  Indian FY: <strong style={{ color: '#E6EDF3' }}>FY26 = Apr 2025 → Mar 2026</strong>.
+                  Quarter chips filter by <strong style={{ color: '#E6EDF3' }}>reporting quarter</strong>
+                  {' '}(what the results cover), NOT filing month.
+                  Q4 dominates right now because we&apos;re in the <strong style={{ color: '#F59E0B' }}>Q4 FY26 filing season</strong>
+                  {' '}(May-Jun 2026 = companies publishing their Jan-Mar 2026 numbers).
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 700, minWidth: 110 }}>Reporting quarter:</span>
               {quarters.map((q) => {
                 const active = filters.quarter === q;
                 const n = countQ(q);
-                const qLabel: Record<string, string> = { Q1: 'Q1 Apr-Jun', Q2: 'Q2 Jul-Sep', Q3: 'Q3 Oct-Dec', Q4: 'Q4 Jan-Mar' };
+                const meta = qMeta[q];
                 return (
                   <button key={q} onClick={() => toggleQ(q)}
                     style={active ? chipActive('#F59E0B') : chipBase}
-                    title={`Filter to filings reporting ${q} of any FY (Indian FY: Q1=Apr-Jun · Q2=Jul-Sep · Q3=Oct-Dec · Q4=Jan-Mar)`}>
-                    {qLabel[q]} <span style={{ color: active ? '#F59E0B' : '#6B7A8D', marginLeft: 3 }}>({n})</span>
+                    title={`${meta.label} = ${meta.reports} · ${meta.filed}. Click to filter the bench to entries reporting this fiscal quarter, regardless of when they were filed.`}>
+                    {meta.label} <span style={{ fontSize: 9, color: active ? '#F59E0B' : '#94A3B8', marginLeft: 2 }}>({meta.reports.split(' · ')[0]})</span> <span style={{ color: active ? '#F59E0B' : '#6B7A8D', marginLeft: 3, fontWeight: 800 }}>({n})</span>
                   </button>
                 );
               })}
+              </div>
               {presentFY.length > 0 && (
-                <>
-                  <span style={{ width: 1, height: 16, background: '#2A3550', margin: '0 4px' }} />
-                  <span style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700 }}>YEAR:</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 700, minWidth: 110 }}>Fiscal year:</span>
                   {presentFY.map((fy) => {
                     const active = filters.fy === fy;
                     const n = countFY(fy);
-                    // 2-digit FY to 4-digit calendar year for tooltip.
-                    // For FY00-FY49 → 21st century (2000-2049);
-                    // FY50-FY99 → 21st century too (2050-2099). After 2099 we
-                    // need to expand to 3 digits — fine for the next 70 years.
                     const fyFull = fy < 50 ? 2000 + fy : 2000 + fy;
                     return (
                       <button key={fy} onClick={() => toggleFY(fy)}
                         style={active ? chipActive('#A78BFA') : chipBase}
-                        title={`FY${fy} = Apr ${fyFull - 1} → Mar ${fyFull} (full year, all 4 quarters Q1+Q2+Q3+Q4). Click a QTR chip above to narrow to one quarter. ${n === 0 ? 'No bench entries for this FY yet.' : `${n} entr${n === 1 ? 'y' : 'ies'} match.`}`}>
-                        FY{fy} <span style={{ color: active ? '#A78BFA' : '#6B7A8D', marginLeft: 3 }}>({n})</span>
+                        title={`FY${fy} = Apr ${fyFull - 1} → Mar ${fyFull} (full Indian fiscal year, all 4 quarters Q1+Q2+Q3+Q4). Click a quarter chip above to narrow further. ${n === 0 ? 'No bench entries for this FY yet — try Add demo entries to test.' : `${n} entr${n === 1 ? 'y' : 'ies'} match.`}`}>
+                        FY{fy} <span style={{ fontSize: 9, color: active ? '#A78BFA' : '#94A3B8', marginLeft: 2 }}>(Apr {fyFull - 1}–Mar {fyFull})</span> <span style={{ color: active ? '#A78BFA' : '#6B7A8D', marginLeft: 3, fontWeight: 800 }}>({n})</span>
                       </button>
                     );
                   })}
-                </>
+                </div>
               )}
-              {/* PATCH 0918 — Custom date-range filter inside PERIOD row.
-                  Composes AND with the QTR + YEAR chips above. */}
-              <span style={{ width: 1, height: 16, background: '#2A3550', margin: '0 4px' }} />
-              <span style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700 }}>FROM:</span>
-              <input
-                type="date"
-                value={filters.fromDate || ''}
-                onChange={(e) => {
-                  // PATCH 0919 — store ONLY clean YYYY-MM-DD or null.
-                  // Browsers can fire intermediate onChange events with
-                  // partial values (esp. on mobile / accessibility paths).
-                  // A bad value silently filtered every entry out → 0 of N.
-                  const v = e.target.value;
-                  const ok = v && /^\d{4}-\d{2}-\d{2}$/.test(v);
-                  setFilters((f) => ({ ...f, fromDate: ok ? v : null }));
-                }}
-                title="Filter to entries filed on or AFTER this date (inclusive)"
-                style={{ background: '#0A1422', border: '1px solid #2A3550', color: '#22D3EE', fontSize: 11, fontWeight: 700, padding: '3px 6px', borderRadius: 4, outline: 'none', cursor: 'pointer' }}
-              />
-              <span style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700 }}>TO:</span>
-              <input
-                type="date"
-                value={filters.toDate || ''}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  const ok = v && /^\d{4}-\d{2}-\d{2}$/.test(v);
-                  setFilters((f) => ({ ...f, toDate: ok ? v : null }));
-                }}
-                title="Filter to entries filed on or BEFORE this date (inclusive)"
-                style={{ background: '#0A1422', border: '1px solid #2A3550', color: '#22D3EE', fontSize: 11, fontWeight: 700, padding: '3px 6px', borderRadius: 4, outline: 'none', cursor: 'pointer' }}
-              />
-              {(filters.quarter || filters.fy != null || filters.fromDate || filters.toDate) && (
-                <button
-                  onClick={() => setFilters((f) => ({ ...f, quarter: null, fy: null, fromDate: null, toDate: null }))}
-                  title="Clear all Period filters (QTR + FY + date range)"
-                  style={{ ...chipBase, marginLeft: 4, opacity: 0.8 }}
-                >× clear period</button>
-              )}
+              {/* PATCH 0918 + 0922 — Filing-date range filter, own row,
+                  clearly labeled distinct from reporting-quarter chips. */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 700, minWidth: 110 }}>Filing date range:</span>
+                <span style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700 }}>FROM:</span>
+                <input
+                  type="date"
+                  value={filters.fromDate || ''}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    const ok = v && /^\d{4}-\d{2}-\d{2}$/.test(v);
+                    setFilters((f) => ({ ...f, fromDate: ok ? v : null }));
+                  }}
+                  title="Filter to entries with filing_date on or AFTER this date (inclusive). This is the actual day the result was filed with NSE/BSE — different from the reporting quarter."
+                  style={{ background: '#0A1422', border: '1px solid #2A3550', color: '#22D3EE', fontSize: 11, fontWeight: 700, padding: '3px 6px', borderRadius: 4, outline: 'none', cursor: 'pointer' }}
+                />
+                <span style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700 }}>TO:</span>
+                <input
+                  type="date"
+                  value={filters.toDate || ''}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    const ok = v && /^\d{4}-\d{2}-\d{2}$/.test(v);
+                    setFilters((f) => ({ ...f, toDate: ok ? v : null }));
+                  }}
+                  title="Filter to entries with filing_date on or BEFORE this date (inclusive)."
+                  style={{ background: '#0A1422', border: '1px solid #2A3550', color: '#22D3EE', fontSize: 11, fontWeight: 700, padding: '3px 6px', borderRadius: 4, outline: 'none', cursor: 'pointer' }}
+                />
+                {(filters.quarter || filters.fy != null || filters.fromDate || filters.toDate) && (
+                  <button
+                    onClick={() => setFilters((f) => ({ ...f, quarter: null, fy: null, fromDate: null, toDate: null }))}
+                    title="Clear ALL period filters (reporting quarter + fiscal year + filing date range)"
+                    style={{ ...chipBase, marginLeft: 4, opacity: 0.8 }}
+                  >× clear period</button>
+                )}
+              </div>
             </div>
           );
         })()}
@@ -2048,11 +2065,23 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
           if (!dominantQ || totalQ === 0) return null;
           const dominantPct = (dominantQ[1] / totalQ) * 100;
           if (dominantPct < 70) return null; // Only show when one quarter dominates >70%
+          // PATCH 0922 — Quarter→date-range cheat sheet so user can verify.
+          const qPeriodMap: Record<string, string> = {
+            Q1: 'Apr–Jun results (filed Jul–Aug)',
+            Q2: 'Jul–Sep results (filed Oct–Nov)',
+            Q3: 'Oct–Dec results (filed Jan–Feb)',
+            Q4: 'Jan–Mar results · annual (filed Apr–Jun)',
+          };
           return (
-            <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.3)', borderRadius: 4, fontSize: 11, color: '#A78BFA', lineHeight: 1.5 }}>
-              ℹ️ <strong>Why is {dominantQ[0]} so dominant?</strong> Bench auto-populates ONLY when a stock is GRADED (filed + parsed + tiered) — not when its board meeting is scheduled.
-              We&apos;re in the middle of Q4 FY26 filing season (Apr-Jun 2026), so {dominantQ[0]} naturally has {dominantQ[1]} of {totalQ} entries ({dominantPct.toFixed(0)}%).
-              To test filters across OTHER quarters, click <strong>🧪 Add demo entries</strong> above to seed 8 synthetic FY25 + FY26 entries spanning all 4 quarters.
+            <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.3)', borderRadius: 4, fontSize: 11, color: '#A78BFA', lineHeight: 1.6 }}>
+              ℹ️ <strong>Why is {dominantQ[0]} so dominant?</strong> Bench auto-populates only when a stock is GRADED (filed + parsed + tiered) — not when its board meeting is scheduled.
+              We&apos;re in the middle of <strong>Q4 FY26 filing season</strong> (May–Jun 2026 — companies publishing their Jan–Mar 2026 numbers), so {dominantQ[0]} naturally has {dominantQ[1]} of {totalQ} entries ({dominantPct.toFixed(0)}%).
+              <div style={{ marginTop: 6, fontSize: 10, color: '#94A3B8' }}>
+                <strong style={{ color: '#E6EDF3' }}>Quarter → date cheat sheet:</strong> Q1 = {qPeriodMap.Q1} · Q2 = {qPeriodMap.Q2} · Q3 = {qPeriodMap.Q3} · Q4 = {qPeriodMap.Q4}
+              </div>
+              <div style={{ marginTop: 4, fontSize: 10, color: '#94A3B8' }}>
+                To test filters on OTHER quarters, click <strong style={{ color: '#A78BFA' }}>🧪 Add demo entries</strong> above to seed 8 synthetic FY25 + FY26 entries across all 4 quarters.
+              </div>
             </div>
           );
         })()}
