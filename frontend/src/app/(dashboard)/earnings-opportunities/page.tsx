@@ -2346,7 +2346,13 @@ export default function EarningsOpportunitiesPage() {
         </div>
 
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: `1px solid ${isStaleView ? '#F59E0B60' : '#1A2840'}`, borderRadius: 8, padding: '2px 2px 2px 12px', backgroundColor: '#0A1422' }}>
+          {/* PATCH 0916 — FILING DATE box now includes an inline native
+              date picker so user can jump to ANY date with one click + one
+              calendar pick. Plus quick-jump chips for Today / Yesterday /
+              7 days ago. User feedback: "now only posible to go one day
+              back liek that make it eay edtion or selecting directyl
+              needed date by calendar option". */}
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: `1px solid ${isStaleView ? '#F59E0B60' : '#1A2840'}`, borderRadius: 8, padding: '2px 4px 2px 12px', backgroundColor: '#0A1422', flexWrap: 'wrap' }}>
             <span style={{ fontSize: 11, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.4px' }}>FILING DATE</span>
             <span style={{ fontSize: 12, color: '#22D3EE', fontWeight: 700 }}>· {filingDateLabel}</span>
             {isStaleView && (
@@ -2365,8 +2371,49 @@ export default function EarningsOpportunitiesPage() {
                 <style>{`@keyframes pulse { 0%,100%{opacity:1}50%{opacity:.3} }`}</style>
               </span>
             )}
-            <button onClick={() => shiftDate(-1)} style={{ padding: '6px 10px', background: 'none', border: 'none', color: '#94A3B8', fontSize: 14, cursor: 'pointer' }}>←</button>
-            <button onClick={() => shiftDate(1)}  style={{ padding: '6px 10px', background: 'none', border: 'none', color: '#94A3B8', fontSize: 14, cursor: 'pointer' }}>→</button>
+            <button onClick={() => shiftDate(-1)} title="Previous trading day"
+              style={{ padding: '6px 10px', background: 'none', border: 'none', color: '#94A3B8', fontSize: 14, cursor: 'pointer' }}>←</button>
+            <button onClick={() => shiftDate(1)} title="Next trading day"
+              style={{ padding: '6px 10px', background: 'none', border: 'none', color: '#94A3B8', fontSize: 14, cursor: 'pointer' }}>→</button>
+            {/* PATCH 0916 — Inline calendar picker inside the FILING DATE box */}
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 8px', border: '1px solid #22D3EE40', borderRadius: 5, backgroundColor: '#22D3EE10', cursor: 'pointer', marginLeft: 4 }}
+              title="Click to open a calendar — jump to any date (past or future)">
+              <CalendarIcon style={{ width: 12, height: 12, color: '#22D3EE' }} />
+              <span style={{ fontSize: 10, color: '#22D3EE', fontWeight: 800, letterSpacing: '0.3px' }}>PICK DATE</span>
+              <input
+                type="date"
+                value={effectiveDate}
+                onChange={(e) => { if (e.target.value) setFilterDate(e.target.value); }}
+                style={{ background: 'transparent', border: 'none', color: '#22D3EE', fontSize: 11, fontWeight: 700, outline: 'none', cursor: 'pointer', width: 110, padding: 0 }}
+              />
+            </label>
+            {/* PATCH 0916 — Quick-jump shortcuts */}
+            <button
+              onClick={() => {
+                const today = new Date();
+                setFilterDate(today.toISOString().slice(0, 10));
+              }}
+              title="Jump to today"
+              style={{ padding: '4px 8px', background: 'transparent', border: '1px solid #1A2840', color: '#94A3B8', fontSize: 10, fontWeight: 700, borderRadius: 4, cursor: 'pointer' }}
+            >Today</button>
+            <button
+              onClick={() => {
+                const d = new Date(); d.setDate(d.getDate() - 1);
+                // Skip Sun/Sat backwards
+                while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() - 1);
+                setFilterDate(d.toISOString().slice(0, 10));
+              }}
+              title="Jump to most recent trading day before today"
+              style={{ padding: '4px 8px', background: 'transparent', border: '1px solid #1A2840', color: '#94A3B8', fontSize: 10, fontWeight: 700, borderRadius: 4, cursor: 'pointer' }}
+            >Yesterday</button>
+            <button
+              onClick={() => {
+                const d = new Date(); d.setDate(d.getDate() - 7);
+                setFilterDate(d.toISOString().slice(0, 10));
+              }}
+              title="Jump to 7 days ago"
+              style={{ padding: '4px 8px', background: 'transparent', border: '1px solid #1A2840', color: '#94A3B8', fontSize: 10, fontWeight: 700, borderRadius: 4, cursor: 'pointer' }}
+            >−7d</button>
           </div>
           {/* PATCH 0736 — surface server timeout / date mismatch so user
               doesn't see the same data on multiple consecutive dates and
