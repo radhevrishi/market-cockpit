@@ -13,7 +13,7 @@ export interface NewsItem {
   title: string;
   url: string;
   published_at: string;        // ISO 8601
-  source: 'Yahoo Finance' | 'Google News';
+  source: 'Yahoo Finance' | 'Google News' | 'Moneycontrol' | 'Business Standard';
   summary?: string;
 }
 
@@ -183,11 +183,144 @@ export async function fetchGoogleNewsRSS(
   }
 }
 
+// ── Moneycontrol RSS — PATCH 0886 ────────────────────────────────────
+// Moneycontrol publishes a "latest stocks news" RSS that is broad
+// (not ticker-filtered) but covers the corporate-action / earnings /
+// acquisition stories that Yahoo Finance / Google News miss for
+// Indian smallcaps. We post-filter by ticker + company-name match.
+// URL: https://www.moneycontrol.com/rss/MCtopnews.xml
+//      https://www.moneycontrol.com/rss/marketreports.xml
+//      https://www.moneycontrol.com/rss/business.xml
+
+const MONEYCONTROL_FEEDS = [
+  'https://www.moneycontrol.com/rss/MCtopnews.xml',
+  'https://www.moneycontrol.com/rss/business.xml',
+  'https://www.moneycontrol.com/rss/marketreports.xml',
+];
+
+export async function fetchMoneycontrolRSS(
+  matchTokens: string[],
+): Promise<NewsItem[]> {
+  if (!matchTokens || matchTokens.length === 0) return [];
+  // Build a single regex of OR'd tokens for matching titles. Lowercased.
+  const escaped = matchTokens
+    .map((t) => (t || '').trim())
+    .filter(Boolean)
+    .map((t) => t.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (escaped.length === 0) return [];
+  const matcher = new RegExp(`\\b(${escaped.join('|')})\\b`, 'i');
+  const xmls = await Promise.all(MONEYCONTROL_FEEDS.map((u) => fetchText(u)));
+  const out: NewsItem[] = [];
+  for (const xml of xmls) {
+    if (!xml) continue;
+    try {
+      const items = splitItems(xml);
+      for (const it of items) {
+        const title = extractTag(it, 'title');
+        const link = extractTag(it, 'link');
+        const pubDate = extractTag(it, 'pubDate');
+        const description = stripHtml(extractTag(it, 'description'));
+        if (!title || !link) continue;
+        // Post-filter: title or description must contain a match token.
+        if (!matcher.test(title) && !matcher.test(description)) continue;
+        out.push({
+          title,
+          url: link,
+          published_at: toIso(pubDate),
+          source: 'Moneycontrol',
+          summary: description || undefined,
+        });
+      }
+    } catch {}
+  }
+  return out;
+}
+
+// ── Business Standard RSS — PATCH 0886 ───────────────────────────────
+// Business Standard's markets feed covers the same corporate-action
+// stories. Post-filtered by token match like Moneycontrol.
+// URL: https://www.business-standard.com/rss/markets-106.rss
+//      https://www.business-standard.com/rss/companies-101.rss
+
+const BUSINESS_STANDARD_FEEDS = [
+  'https://www.business-standard.com/rss/markets-106.rss',
+  'https://www.business-standard.com/rss/companies-101.rss',
+];
+
+export async function fetchBusinessStandardRSS(
+  matchTokens: string[],
+): Promise<NewsItem[]> {
+  if (!matchTokens || matchTokens.length === 0) return [];
+  const escaped = matchTokens
+    .map((t) => (t || '').trim())
+    .filter(Boolean)
+    .map((t) => t.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (escaped.length === 0) return [];
+  const matcher = new RegExp(`\\b(${escaped.join('|')})\\b`, 'i');
+  const xmls = await Promise.all(BUSINESS_STANDARD_FEEDS.map((u) => fetchText(u)));
+  const out: NewsItem[] = [];
+  for (const xml of xmls) {
+    if (!xml) continue;
+    try {
+      const items = splitItems(xml);
+      for (const it of items) {
+        const title = extractTag(it, 'title');
+        const link = extractTag(it, 'link');
+        const pubDate = extractTag(it, 'pubDate');
+        const description = stripHtml(extractTag(it, 'description'));
+        if (!title || !link) continue;
+        if (!matcher.test(title) && !matcher.test(description)) continue;
+        out.push({
+          title,
+          url: link,
+          published_at: toIso(pubDate),
+          source: 'Business Standard',
+          summary: description || undefined,
+        });
+      }
+    } catch {}
+  }
+  return out;
+}
+
+// PATCH 0886 — Derive plausible name fragments from a ticker so we can
+// match articles that use the long-form company name. Example:
+//   BLISSGVS → ['blissgvs', 'bliss gvs', 'bliss']
+//   MARKSANS → ['marksans']
+//   ASTRAMICRO → ['astramicro', 'astra micro', 'astra microwave']
+// The heuristic is intentionally conservative — we generate up to ~3
+// candidates and rely on RSS sources to do their own filtering.
+function deriveNameTokens(ticker: string, explicitName?: string): string[] {
+  const tokens = new Set<string>();
+  const sym = (ticker || '').trim().toUpperCase().replace(/\.(NS|BO)$/i, '');
+  if (sym) tokens.add(sym.toLowerCase());
+  // Insert space at character-class boundaries (4-7 char prefix split)
+  if (sym.length >= 6) {
+    for (let i = 4; i <= Math.min(sym.length - 2, 7); i++) {
+      const a = sym.slice(0, i).toLowerCase();
+      const b = sym.slice(i).toLowerCase();
+      tokens.add(`${a} ${b}`);
+    }
+    // First-half fragment alone (often the company prefix, e.g. "Bliss")
+    tokens.add(sym.slice(0, Math.min(5, sym.length - 2)).toLowerCase());
+  }
+  if (explicitName) {
+    const clean = explicitName.trim();
+    if (clean) {
+      tokens.add(clean.toLowerCase());
+      // Strip common suffix words for a tighter match
+      const stripped = clean.replace(/\s+(Limited|Ltd\.?|Industries|India|Pharma|Pharmaceuticals|Corporation|Corp\.?|Company|Co\.?|PLC)\s*$/i, '').trim();
+      if (stripped) tokens.add(stripped.toLowerCase());
+    }
+  }
+  return [...tokens];
+}
+
 // ── Combined union ───────────────────────────────────────────────────
-// Runs both feeds in parallel, dedupes by normalized title (case +
-// whitespace insensitive — RSS feeds frequently double-list the same
-// article under slightly different titles), sorts newest first, caps
-// at 30 items.
+// PATCH 0886 — runs FOUR feeds in parallel: Yahoo (by ticker), Google News
+// (by ticker AND company-name when supplied), Moneycontrol (top + market
+// reports, filtered by tokens), Business Standard (markets + companies,
+// filtered by tokens). Dedupes by normalized title, sorts newest first.
 
 export async function fetchIndianNews(
   ticker: string,
@@ -197,18 +330,27 @@ export async function fetchIndianNews(
   if (!sym) return [];
 
   // For Google News, prefer the explicit company name when supplied,
-  // otherwise fall back to the ticker (which is good enough for unique
-  // ticker symbols like MINDACORP / RATEGAIN but bad for generic ones).
+  // otherwise fall back to the ticker.
   const gQuery = (companyName || '').trim() || sym;
+  // Token set used to post-filter the broad Moneycontrol / BS feeds.
+  const matchTokens = deriveNameTokens(sym, companyName);
 
-  const [yahoo, google] = await Promise.all([
+  // PATCH 0886 — fire FOUR parallel queries; Promise.all so they all
+  // get the same timeout budget. Failures fail-soft to [].
+  const [yahoo, google, moneycontrol, bs, googleAlt] = await Promise.all([
     fetchYahooFinanceRSS(sym),
     fetchGoogleNewsRSS(gQuery),
+    fetchMoneycontrolRSS(matchTokens),
+    fetchBusinessStandardRSS(matchTokens),
+    // Second Google News query with a wider phrasing — catches headlines
+    // that mention "<ticker> stock" / "<ticker> shares" / "<ticker> upper
+    // circuit" without explicitly naming the ticker symbol.
+    (companyName ? Promise.resolve([] as NewsItem[]) : fetchGoogleNewsRSS(`${sym} stock OR shares OR upper circuit`)),
   ]);
 
   const seen = new Set<string>();
   const all: NewsItem[] = [];
-  for (const it of [...yahoo, ...google]) {
+  for (const it of [...yahoo, ...google, ...googleAlt, ...moneycontrol, ...bs]) {
     const k = it.title.toLowerCase().replace(/\s+/g, ' ').trim();
     if (!k || seen.has(k)) continue;
     seen.add(k);
