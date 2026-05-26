@@ -1,0 +1,1015 @@
+From 3416186dfca690e689b51a27983d44f8a539d0ea Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Tue, 26 May 2026 11:04:54 +0200
+Subject: [PATCH] patch 0872: multibagger analytics bug fixes + USA +
+ Turnaround analytics tabs
+
+- Fix decisions stale in Analytics memo (decisionTick in deps)
+- Fix PREV_SCORES saved AFTER scoring (zeroed every score-delta panel)
+- Fix conviction set frozen at mount (now state + storage/cb listener)
+- Add USAAnalytics: grade dist, R40, Piotroski, forensic flags, leaderboard
+- Add TurnaroundAnalytics: stage, archetype, phase, survival, best list
+- Add 'usa-analytics' and 'turnaround-analytics' tabs to multibagger nav
+---
+ .../src/app/(dashboard)/multibagger/page.tsx  | 903 +++++++++++++++++-
+ 1 file changed, 874 insertions(+), 29 deletions(-)
+
+diff --git a/frontend/src/app/(dashboard)/multibagger/page.tsx b/frontend/src/app/(dashboard)/multibagger/page.tsx
+index 4d2c119..cff5af2 100644
+--- a/frontend/src/app/(dashboard)/multibagger/page.tsx
++++ b/frontend/src/app/(dashboard)/multibagger/page.tsx
+@@ -980,6 +980,12 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
+   async function handleFiles(files:FileList|File[]) {
+     const arr=Array.from(files);
+     setLoading(true); setParseError('');
++    // PATCH 0872 — Save PRE-upload score baseline FIRST so the next analytics
++    // render can compute genuine score deltas. Previously this was saved
++    // AFTER scoring (line ~1039 pre-0872), which meant PREV always equalled
++    // CURRENT and every delta-driven panel (RE-RATING, DROP ALERTS,
++    // "new since last upload", sector rotation) was permanently zeroed.
++    try { localStorage.setItem(PREV_SCORES_KEY, JSON.stringify(Object.fromEntries(rows.map(r=>[r.symbol,r.score])))); } catch {}
+     try {
+       const XLSX=await import('xlsx');
+       // Start with existing rows — new uploads MERGE in, never replace
+@@ -1035,8 +1041,10 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
+       const merged = [...rows, ...newScored].sort((a,b) => b.score - a.score);
+       const allScored = applyForcedRanking(merged);
+       setRows(allScored);
+-      // Save score baseline so score-change indicator works on next load
+-      try { localStorage.setItem(PREV_SCORES_KEY, JSON.stringify(Object.fromEntries(allScored.map(r=>[r.symbol,r.score])))); } catch {}
++      // PATCH 0872 — Pre-upload baseline now captured at the TOP of this
++      // function (saving current scores here turned PREV==CURRENT and broke
++      // every score-delta indicator). Intentional no-op write here so the
++      // old call site stays grep-able for future devs.
+ 
+       const addedCount = newRows.length;
+       const totalCount = allScored.length;
+@@ -3391,6 +3399,10 @@ function USACompare() {
+ 
+   async function handleFiles(files: FileList | File[]) {
+     setParseError(''); setLoading(true);
++    // PATCH 0872 — Capture pre-upload USA baseline FIRST (was previously
++    // written AFTER scoring, which made PREV==CURRENT and zeroed every
++    // USA score-delta indicator in MultibaggerAnalytics).
++    try { localStorage.setItem(USA_PREV_KEY, JSON.stringify(Object.fromEntries(rows.map(r=>[r.symbol,r.score])))); } catch {}
+     try {
+       const XLSX = await import('xlsx');
+       const arr = Array.from(files);
+@@ -3427,8 +3439,7 @@ function USACompare() {
+       const scored = allRows.map(r => scoreUSARow(r));
+       const merged = [...rows, ...scored].sort((a,b)=>b.score-a.score);
+       setRows(merged);
+-      // Save USA score baseline
+-      try { localStorage.setItem(USA_PREV_KEY, JSON.stringify(Object.fromEntries(merged.map(r=>[r.symbol,r.score])))); } catch {}
++      // PATCH 0872 — Pre-upload baseline saved at TOP of handleFiles now.
+       setFileName(`${arr.length} file${arr.length>1?'s':''} · ${merged.length} stocks`);
+     } catch(e) { setParseError(`Error: ${e instanceof Error?e.message:String(e)}`); }
+     setLoading(false);
+@@ -4085,7 +4096,11 @@ function DecisionBadge({ symbol }: { symbol: string }) {
+ export default function MultibaggerPage() {
+   // PATCH 0492 — 'analytics' tab added as DEFAULT landing view. User wanted to land
+   // on the cross-stock analytics overview, not the per-row ranking table.
+-  const [activeTab, setActiveTab] = useState<'analytics'|'excel'|'usa'|'turnaround'|'usa-checklist'|'checklist'|'capital-alloc'|'reference'>('analytics');
++  // PATCH 0872 — Added 'usa-analytics' and 'turnaround-analytics' as
++  // dedicated dashboards for the USA Multibagger universe and the
++  // Turnaround universe respectively. The original 'analytics' tab stays
++  // as the cross-market overview (India-led).
++  const [activeTab, setActiveTab] = useState<'analytics'|'excel'|'usa'|'usa-analytics'|'turnaround'|'turnaround-analytics'|'usa-checklist'|'checklist'|'capital-alloc'|'reference'>('analytics');
+   React.useEffect(() => {
+     const onSwitch = (e: Event) => {
+       const ce = e as CustomEvent<{ tab: 'excel' | 'usa' }>;
+@@ -4186,14 +4201,19 @@ export default function MultibaggerPage() {
+             {([
+               // PATCH 0492 — Analytics tab is FIRST (default landing). User asked
+               // to see analytics first, not the ranking table.
+-              {id:'analytics',     label:'📊 Analytics'},
+-              {id:'excel',    label:'🇮🇳 India Multibagger Ranking'},
+-              {id:'usa',           label:'🇺🇸 USA Multibagger'},
+-              {id:'turnaround',    label:'🔄 Turnarounds'},
+-              {id:'usa-checklist', label:'🇺🇸 USA Checklist'},
+-              {id:'checklist',label:`📋 Research Checklist${excelRows.length?` (${excelRows.length} loaded)`:''}`},
+-              {id:'capital-alloc', label:'💰 Capital Allocation'},
+-              {id:'reference',     label:'📚 Multibagger Reference'},
++              // PATCH 0872 — Dedicated USA Analytics and Turnaround Analytics
++              // tabs placed RIGHT NEXT to their data tabs so user can flip
++              // between raw ranking and the institutional dashboard.
++              {id:'analytics',              label:'📊 Analytics'},
++              {id:'excel',                  label:'🇮🇳 India Multibagger Ranking'},
++              {id:'usa',                    label:'🇺🇸 USA Multibagger'},
++              {id:'usa-analytics',          label:'📊 USA Analytics'},
++              {id:'turnaround',             label:'🔄 Turnarounds'},
++              {id:'turnaround-analytics',   label:'📈 Turnaround Analytics'},
++              {id:'usa-checklist',          label:'🇺🇸 USA Checklist'},
++              {id:'checklist',              label:`📋 Research Checklist${excelRows.length?` (${excelRows.length} loaded)`:''}`},
++              {id:'capital-alloc',          label:'💰 Capital Allocation'},
++              {id:'reference',              label:'📚 Multibagger Reference'},
+             ] as const).map(tab=>{
+               const active=activeTab===tab.id;
+               return (
+@@ -4206,14 +4226,17 @@ export default function MultibaggerPage() {
+         </div>
+       </div>
+ 
+-      {activeTab==='analytics'  && <MultibaggerAnalytics indiaRows={excelRows} onSwitchTab={(t) => setActiveTab(t as any)} />}
+-      {activeTab==='excel'     && <ExcelCompare rows={excelRows} setRows={setExcelRows} />}
+-      {activeTab==='usa'          && <USACompare />}
+-      {activeTab==='turnaround'    && <TurnaroundCompare />}
+-      {activeTab==='usa-checklist'&& <USAChecklist />}
+-      {activeTab==='checklist' && <MultibaggerChecklist excelRows={excelRows} />}
+-      {activeTab==='capital-alloc' && <CapitalAllocationPanel />}
+-      {activeTab==='reference'     && <MultibaggerReference excelRows={excelRows} />}
++      {activeTab==='analytics'             && <MultibaggerAnalytics indiaRows={excelRows} onSwitchTab={(t) => setActiveTab(t as any)} />}
++      {activeTab==='excel'                 && <ExcelCompare rows={excelRows} setRows={setExcelRows} />}
++      {activeTab==='usa'                   && <USACompare />}
++      {/* PATCH 0872 — dedicated USA + Turnaround analytics dashboards */}
++      {activeTab==='usa-analytics'         && <USAAnalytics />}
++      {activeTab==='turnaround'            && <TurnaroundCompare />}
++      {activeTab==='turnaround-analytics'  && <TurnaroundAnalytics />}
++      {activeTab==='usa-checklist'         && <USAChecklist />}
++      {activeTab==='checklist'             && <MultibaggerChecklist excelRows={excelRows} />}
++      {activeTab==='capital-alloc'         && <CapitalAllocationPanel />}
++      {activeTab==='reference'             && <MultibaggerReference excelRows={excelRows} />}
+     </div>
+   );
+ }
+@@ -4246,16 +4269,40 @@ function MultibaggerAnalytics({
+ }) {
+   const [scope, setScope] = React.useState<MbMarketScope>('INDIA');
+ 
+-  // Read USA rows from localStorage directly (no shared state in this scope).
++  // PATCH 0874 — USA rows + prev-score baselines now live in state with
++  // a tick-bumping listener pair (storage + mb-upload:updated), so this
++  // Analytics tab stays LIVE when the user uploads to the USA tab.
++  // Previous useMemo([]) reads were one-shot at mount and went stale the
++  // moment a fresh CSV was scored — the user reported a USA leaderboard
++  // that refused to update without a full page reload.
++  const [dataTick, bumpData] = React.useReducer((x: number) => x + 1, 0);
++  React.useEffect(() => {
++    if (typeof window === 'undefined') return;
++    const refresh = () => bumpData();
++    const onStorage = (e: StorageEvent) => {
++      if (!e.key) { refresh(); return; }
++      if (e.key === USA_STORAGE_KEY || e.key === 'mb_india_prev_scores_v1' || e.key === 'mb_usa_prev_scores_v1') refresh();
++    };
++    window.addEventListener('storage', onStorage);
++    window.addEventListener('mb-upload:updated', refresh);
++    return () => {
++      window.removeEventListener('storage', onStorage);
++      window.removeEventListener('mb-upload:updated', refresh);
++    };
++  }, []);
++
+   const usaRows = React.useMemo<any[]>(() => {
++    if (typeof window === 'undefined') return [];
+     try {
+       const raw = localStorage.getItem(USA_STORAGE_KEY);
+       return raw ? JSON.parse(raw) : [];
+     } catch { return []; }
+-  }, []);
++  }, [dataTick]);
+ 
+   // PATCH 0548 — Read prev-score baselines directly from LS so we can compute
+   // score deltas, "new since last upload", and sector rotation.
++  // PATCH 0874 — dep on dataTick so a fresh upload from another tab
++  // refreshes the baseline view.
+   const prevScoreMap = React.useMemo<Record<string, number>>(() => {
+     if (typeof window === 'undefined') return {};
+     try {
+@@ -4264,18 +4311,38 @@ function MultibaggerAnalytics({
+       // Merge — symbols are unique across markets in practice (RELIANCE vs RELIANCE.NS).
+       return { ...ind, ...us };
+     } catch { return {}; }
+-  }, []);
+-
+-  // Conviction Beats overlay
+-  const convictionSet = React.useMemo(() => {
++  }, [dataTick]);
++
++  // Conviction Beats overlay.
++  // PATCH 0872 — was a one-shot useMemo, meaning Analytics overlays
++  // (STRONG BUY, Add Candidates, Triple-Confirmed) went stale the moment
++  // the user adjusted the CB list on /earnings-opportunities. Convert to
++  // state + listener (matches the pattern already used elsewhere on the
++  // page — search for `conviction-beats:updated`).
++  const [convictionSet, setConvictionSet] = React.useState<Set<string>>(() => {
+     if (typeof window === 'undefined') return new Set<string>();
+     try { return new Set<string>(getConvictionTickers()); } catch { return new Set<string>(); }
++  });
++  React.useEffect(() => {
++    if (typeof window === 'undefined') return;
++    const refresh = () => { try { setConvictionSet(new Set<string>(getConvictionTickers())); } catch {} };
++    window.addEventListener('storage', refresh);
++    window.addEventListener('conviction-beats:updated', refresh);
++    return () => {
++      window.removeEventListener('storage', refresh);
++      window.removeEventListener('conviction-beats:updated', refresh);
++    };
+   }, []);
+ 
+   // PATCH 0554 — listen for cross-tab decision updates so the
+   // Decision-Bridge / Triple-Confirmed panels reflect new BUY / WATCH /
+   // REJECTED tags without a page reload.
+-  const [, forceDecRefresh] = React.useReducer((x: number) => x + 1, 0);
++  // PATCH 0872 — Expose decisionTick so the `stats` useMemo can include it
++  // in its deps; previously forceDecRefresh re-rendered the component but
++  // the memo was cached against unchanged inputs, defeating the listener
++  // (Decision Bridge / Triple-Confirmed / Decision Coverage % stayed stale
++  // until the user manually switched tabs).
++  const [decisionTick, forceDecRefresh] = React.useReducer((x: number) => x + 1, 0);
+   React.useEffect(() => subscribeDecisions(() => forceDecRefresh()), []);
+ 
+   // Build unified analytics rows.  PATCH 0548 / 0554 — also expose `prevScore`,
+@@ -4788,7 +4855,10 @@ function MultibaggerAnalytics({
+       clusterRanked, clusterHighConv, clusterEmerging, clusterIncomplete,
+       cashRich,
+     };
+-  }, [stocks, convictionSet, indiaRows, usaRows]);
++    // PATCH 0872 — `decisionTick` added so any BUY/WATCH/REJECTED tag
++    // change anywhere in the app re-computes this memo (Decision Bridge,
++    // Triple-Confirmed, Decision Coverage %). Was previously cached.
++  }, [stocks, convictionSet, indiaRows, usaRows, decisionTick]);
+ 
+   // Local num helper for the new memos.
+   function num(v: any): number | undefined {
+@@ -7112,3 +7182,778 @@ function CapitalAllocationPanel() {
+     </div>
+   );
+ }
++
++// ═══════════════════════════════════════════════════════════════════════════
++// PATCH 0872 — USA ANALYTICS TAB
++//
++// Self-contained analytics dashboard for the USA Multibagger universe.
++// Reads USAResult[] from localStorage with proper listeners so it stays
++// LIVE when the user uploads / clears / edits decisions / adjusts the
++// conviction beats list — no manual refresh needed.
++//
++// Panels:
++//   • Stats strip (count · avg score · A+/A count · R40 ≥40 · Piotroski ≥7)
++//   • Grade distribution
++//   • Sector exposure (top 8)
++//   • Rule of 40 buckets (<0 / 0-20 / 20-40 / 40-60 / 60-80 / ≥80)
++//   • Piotroski F-Score buckets (0-3 / 4-6 / 7-9)
++//   • Forensic flag summary (FCF-Op divergence / post-run stretched / earnings prox)
++//   • Decision overlay (BUY / WATCH / REJECTED counts)
++//   • Conviction-Beats overlap
++//   • Top 15 leaderboard
++// ═══════════════════════════════════════════════════════════════════════════
++
++function USAAnalytics() {
++  // Live USA dataset — single source of truth read from LS, refreshed on
++  // every relevant event so this tab never shows stale data.
++  const [rows, setRows] = React.useState<USAResult[]>(() => {
++    if (typeof window === 'undefined') return [];
++    try {
++      const raw = localStorage.getItem(USA_STORAGE_KEY);
++      const parsed = raw ? JSON.parse(raw) : [];
++      return Array.isArray(parsed) ? parsed : [];
++    } catch { return []; }
++  });
++  React.useEffect(() => {
++    if (typeof window === 'undefined') return;
++    const refresh = () => {
++      try {
++        const raw = localStorage.getItem(USA_STORAGE_KEY);
++        const parsed = raw ? JSON.parse(raw) : [];
++        setRows(Array.isArray(parsed) ? parsed : []);
++      } catch { setRows([]); }
++    };
++    const onStorage = (e: StorageEvent) => {
++      if (!e.key || e.key === USA_STORAGE_KEY) refresh();
++    };
++    window.addEventListener('storage', onStorage);
++    window.addEventListener('mb-upload:updated', refresh);
++    return () => {
++      window.removeEventListener('storage', onStorage);
++      window.removeEventListener('mb-upload:updated', refresh);
++    };
++  }, []);
++
++  // Conviction-Beats overlay (live).
++  const [convictionSet, setConvictionSet] = React.useState<Set<string>>(() => {
++    if (typeof window === 'undefined') return new Set();
++    try { return new Set<string>(getConvictionTickers()); } catch { return new Set(); }
++  });
++  React.useEffect(() => {
++    if (typeof window === 'undefined') return;
++    const refresh = () => { try { setConvictionSet(new Set<string>(getConvictionTickers())); } catch {} };
++    window.addEventListener('storage', refresh);
++    window.addEventListener('conviction-beats:updated', refresh);
++    return () => {
++      window.removeEventListener('storage', refresh);
++      window.removeEventListener('conviction-beats:updated', refresh);
++    };
++  }, []);
++
++  // Decision-log tick — included in every consumer memo so BUY/WATCH/REJECT
++  // changes propagate without a page reload.
++  const [decisionTick, bumpDec] = React.useReducer((x: number) => x + 1, 0);
++  React.useEffect(() => subscribeDecisions(() => bumpDec()), []);
++
++  // Pre-upload baseline for score-delta panels.
++  const prevScoreMap = React.useMemo<Record<string, number>>(() => {
++    if (typeof window === 'undefined') return {};
++    try { return JSON.parse(localStorage.getItem('mb_usa_prev_scores_v1') || '{}'); } catch { return {}; }
++  }, [rows.length]);
++
++  const empty = rows.length === 0;
++  const F2 = F;
++  const GRADE_COLOR_US: Record<string, string> = { 'A+': '#10b981', 'A': '#34d399', 'B+': '#f59e0b', 'B': '#f97316', 'C': '#fb923c', 'D': '#ef4444' };
++
++  const stats = React.useMemo(() => {
++    const n = rows.length;
++    const avgScore = n ? rows.reduce((s, r) => s + (r.score || 0), 0) / n : 0;
++    const topGradeCount = rows.filter(r => r.grade === 'A+' || r.grade === 'A').length;
++    const r40Pass = rows.filter(r => (r.ruleOf40 ?? -999) >= 40).length;
++    const r40Elite = rows.filter(r => (r.ruleOf40 ?? -999) >= 60).length;
++    const piotroskiPass = rows.filter(r => (r.piotroskiFScore ?? -1) >= 7).length;
++    const altmanSafe = rows.filter(r => (r.altmanZScore ?? -1) >= 3).length;
++    const acceleratingCount = rows.filter(r => r.accelSignal === 'ACCELERATING').length;
++    const fcfDivCount = rows.filter(r => r.fcfOpDivergence).length;
++    const postRunCount = rows.filter(r => r.postRunStretched).length;
++    const earningsCloseCount = rows.filter(r => (r.earningsProximityDays ?? 999) <= 7).length;
++    const totalMcapB = rows.reduce((s, r) => s + (r.marketCapB || 0), 0);
++    const avgMcapB = n ? totalMcapB / n : 0;
++    // Grade distribution
++    const gradeBuckets: Record<string, number> = { 'A+': 0, 'A': 0, 'B+': 0, 'B': 0, 'C': 0, 'D': 0 };
++    rows.forEach(r => { if (r.grade && gradeBuckets[r.grade] != null) gradeBuckets[r.grade]++; });
++    // Sector exposure
++    const sectorMap = new Map<string, number>();
++    rows.forEach(r => {
++      const s = (r.sector || 'Unknown').trim() || 'Unknown';
++      sectorMap.set(s, (sectorMap.get(s) || 0) + 1);
++    });
++    const topSectors = Array.from(sectorMap.entries()).sort((a, b) => b[1] - a[1]).slice(0, 8);
++    // R40 buckets
++    const r40Buckets: Array<{ label: string; n: number; color: string }> = [
++      { label: '<0',     n: rows.filter(r => (r.ruleOf40 ?? -999) < 0).length,                                              color: RED },
++      { label: '0–20',   n: rows.filter(r => { const x = r.ruleOf40 ?? -999; return x >= 0 && x < 20; }).length,            color: ORANGE },
++      { label: '20–40',  n: rows.filter(r => { const x = r.ruleOf40 ?? -999; return x >= 20 && x < 40; }).length,           color: YELLOW },
++      { label: '40–60',  n: rows.filter(r => { const x = r.ruleOf40 ?? -999; return x >= 40 && x < 60; }).length,           color: GREEN },
++      { label: '60–80',  n: rows.filter(r => { const x = r.ruleOf40 ?? -999; return x >= 60 && x < 80; }).length,           color: ACCENT },
++      { label: '≥80',    n: rows.filter(r => (r.ruleOf40 ?? -999) >= 80).length,                                            color: PURPLE },
++    ];
++    // Piotroski buckets
++    const piotroskiBuckets = [
++      { label: '0–3 (weak)',   n: rows.filter(r => (r.piotroskiFScore ?? -1) >= 0 && (r.piotroskiFScore ?? -1) <= 3).length, color: RED },
++      { label: '4–6 (mid)',    n: rows.filter(r => (r.piotroskiFScore ?? -1) >= 4 && (r.piotroskiFScore ?? -1) <= 6).length, color: YELLOW },
++      { label: '7–9 (elite)',  n: rows.filter(r => (r.piotroskiFScore ?? -1) >= 7).length,                                   color: GREEN },
++    ];
++    // Decision overlay
++    const decisionCounts = { BUY: 0, WATCH: 0, REJECTED: 0, NONE: 0 };
++    rows.forEach(r => {
++      const d = getDecision(r.symbol);
++      if (!d) decisionCounts.NONE++;
++      else if (d.status === 'BUY') decisionCounts.BUY++;
++      else if (d.status === 'WATCH') decisionCounts.WATCH++;
++      else if (d.status === 'REJECTED') decisionCounts.REJECTED++;
++    });
++    // Conviction overlap (case-insensitive)
++    const cbUpper = new Set<string>([...convictionSet].map(s => s.toUpperCase().trim()));
++    const convictionOverlap = rows.filter(r => cbUpper.has((r.symbol || '').toUpperCase().trim())).length;
++    // Score deltas (vs pre-upload baseline)
++    const scoreDeltas = rows.map(r => {
++      const prev = prevScoreMap[r.symbol];
++      return prev === undefined ? null : (r.score - prev);
++    }).filter((x): x is number => x !== null);
++    const newSinceLast = rows.filter(r => prevScoreMap[r.symbol] === undefined).length;
++    const reratingUp = rows.filter(r => {
++      const prev = prevScoreMap[r.symbol];
++      return prev !== undefined && (r.score - prev) >= 5;
++    }).sort((a, b) => (b.score - prevScoreMap[b.symbol]) - (a.score - prevScoreMap[a.symbol]));
++    const ratingDown = rows.filter(r => {
++      const prev = prevScoreMap[r.symbol];
++      return prev !== undefined && (r.score - prev) <= -5;
++    }).sort((a, b) => (a.score - prevScoreMap[a.symbol]) - (b.score - prevScoreMap[b.symbol]));
++    // Leaderboard
++    const top15 = [...rows].sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 15);
++    return {
++      n, avgScore, topGradeCount, r40Pass, r40Elite, piotroskiPass, altmanSafe,
++      acceleratingCount, fcfDivCount, postRunCount, earningsCloseCount,
++      totalMcapB, avgMcapB, gradeBuckets, topSectors, r40Buckets, piotroskiBuckets,
++      decisionCounts, convictionOverlap, scoreDeltas, newSinceLast,
++      reratingUp, ratingDown, top15,
++    };
++  }, [rows, convictionSet, prevScoreMap, decisionTick]);
++
++  if (empty) {
++    return (
++      <div style={{ maxWidth: 1800, margin: '0 auto', padding: '24px' }}>
++        <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 12, padding: '40px 32px', textAlign: 'center' }}>
++          <div style={{ fontSize: 56, marginBottom: 16 }}>🇺🇸</div>
++          <h2 style={{ fontSize: F.h2, color: TEXT, margin: '0 0 8px' }}>USA Analytics — no data yet</h2>
++          <p style={{ fontSize: F.md, color: MUTED, margin: 0 }}>
++            Upload a USA TradingView export on the <strong style={{ color: PURPLE }}>🇺🇸 USA Multibagger</strong> tab. This dashboard will then summarise grade distribution, Rule of 40, Piotroski, forensic flags, decision tags, and conviction-beats overlap.
++          </p>
++        </div>
++      </div>
++    );
++  }
++
++  return (
++    <div style={{ maxWidth: 1800, margin: '0 auto', padding: '20px 24px 32px' }}>
++      {/* ── STATS STRIP ────────────────────────────────────────────────── */}
++      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 18 }}>
++        {[
++          { label: 'STOCKS',           value: stats.n.toString(),                                                color: PURPLE },
++          { label: 'AVG SCORE',        value: stats.avgScore.toFixed(1),                                        color: ACCENT },
++          { label: 'A+/A GRADES',      value: `${stats.topGradeCount} (${stats.n ? (100 * stats.topGradeCount / stats.n).toFixed(0) : 0}%)`, color: GREEN },
++          { label: 'R40 ≥40 / ≥60',    value: `${stats.r40Pass} / ${stats.r40Elite}`,                           color: ACCENT },
++          { label: 'PIOTROSKI ≥7',     value: stats.piotroskiPass.toString(),                                   color: GREEN },
++          { label: 'ALTMAN Z ≥3',      value: stats.altmanSafe.toString(),                                      color: GREEN },
++          { label: 'ACCELERATING',     value: stats.acceleratingCount.toString(),                               color: PURPLE },
++          { label: 'CONVICTION',       value: stats.convictionOverlap.toString(),                               color: PURPLE },
++          { label: 'AGG MCAP $B',      value: stats.totalMcapB >= 1000 ? `${(stats.totalMcapB / 1000).toFixed(1)}T` : stats.totalMcapB.toFixed(0), color: TEXT },
++          { label: 'NEW (vs PREV)',    value: stats.newSinceLast.toString(),                                    color: stats.newSinceLast > 0 ? GREEN : MUTED },
++        ].map((s) => (
++          <div key={s.label} style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: '12px 14px' }}>
++            <div style={{ fontSize: 10, color: MUTED, fontWeight: 700, letterSpacing: 0.6 }}>{s.label}</div>
++            <div style={{ fontSize: 22, fontWeight: 800, color: s.color, fontFamily: 'ui-monospace,monospace', marginTop: 2 }}>{s.value}</div>
++          </div>
++        ))}
++      </div>
++
++      {/* ── DISTRIBUTIONS ROW ─────────────────────────────────────────── */}
++      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 14, marginBottom: 18 }}>
++        {/* Grade distribution */}
++        <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 16 }}>
++          <div style={{ fontSize: F2.sm, fontWeight: 800, color: TEXT, marginBottom: 12 }}>GRADE DISTRIBUTION</div>
++          {(['A+','A','B+','B','C','D'] as const).map(g => {
++            const c = stats.gradeBuckets[g] || 0;
++            const pct = stats.n ? (100 * c / stats.n) : 0;
++            return (
++              <div key={g} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
++                <div style={{ width: 28, fontSize: 12, fontWeight: 800, color: GRADE_COLOR_US[g] }}>{g}</div>
++                <div style={{ flex: 1, height: 14, background: '#0a0a0f', borderRadius: 4, overflow: 'hidden', position: 'relative' }}>
++                  <div style={{ width: `${pct}%`, height: '100%', background: GRADE_COLOR_US[g], transition: 'width 0.3s' }} />
++                </div>
++                <div style={{ width: 64, fontSize: 11, color: MUTED, fontFamily: 'ui-monospace,monospace', textAlign: 'right' }}>{c} · {pct.toFixed(0)}%</div>
++              </div>
++            );
++          })}
++        </div>
++
++        {/* Sector exposure */}
++        <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 16 }}>
++          <div style={{ fontSize: F2.sm, fontWeight: 800, color: TEXT, marginBottom: 12 }}>SECTOR EXPOSURE (TOP 8)</div>
++          {stats.topSectors.length === 0 && <div style={{ fontSize: 12, color: MUTED }}>No sector tags found in dataset.</div>}
++          {stats.topSectors.map(([sector, count]) => {
++            const pct = stats.n ? (100 * count / stats.n) : 0;
++            return (
++              <div key={sector} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
++                <div style={{ width: 130, fontSize: 11, color: TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={sector}>{sector}</div>
++                <div style={{ flex: 1, height: 12, background: '#0a0a0f', borderRadius: 4, overflow: 'hidden' }}>
++                  <div style={{ width: `${pct}%`, height: '100%', background: ACCENT }} />
++                </div>
++                <div style={{ width: 56, fontSize: 11, color: MUTED, fontFamily: 'ui-monospace,monospace', textAlign: 'right' }}>{count} · {pct.toFixed(0)}%</div>
++              </div>
++            );
++          })}
++        </div>
++      </div>
++
++      {/* ── QUALITY HISTOGRAMS ROW ───────────────────────────────────── */}
++      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 14, marginBottom: 18 }}>
++        <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 16 }}>
++          <div style={{ fontSize: F2.sm, fontWeight: 800, color: TEXT, marginBottom: 4 }}>RULE OF 40 BUCKETS</div>
++          <div style={{ fontSize: 10, color: MUTED, marginBottom: 12 }}>RevGrowth + FCF Margin · ≥40 institutional pass · ≥60 strong · ≥80 elite</div>
++          {stats.r40Buckets.map(b => {
++            const pct = stats.n ? (100 * b.n / stats.n) : 0;
++            return (
++              <div key={b.label} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 5 }}>
++                <div style={{ width: 60, fontSize: 11, color: TEXT }}>{b.label}</div>
++                <div style={{ flex: 1, height: 12, background: '#0a0a0f', borderRadius: 4, overflow: 'hidden' }}>
++                  <div style={{ width: `${pct}%`, height: '100%', background: b.color }} />
++                </div>
++                <div style={{ width: 36, fontSize: 11, color: MUTED, fontFamily: 'ui-monospace,monospace', textAlign: 'right' }}>{b.n}</div>
++              </div>
++            );
++          })}
++        </div>
++
++        <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 16 }}>
++          <div style={{ fontSize: F2.sm, fontWeight: 800, color: TEXT, marginBottom: 4 }}>PIOTROSKI F-SCORE</div>
++          <div style={{ fontSize: 10, color: MUTED, marginBottom: 12 }}>9-pt financial-strength scale · ≥7 = elite quality (Piotroski 2000)</div>
++          {stats.piotroskiBuckets.map(b => {
++            const pct = stats.n ? (100 * b.n / stats.n) : 0;
++            return (
++              <div key={b.label} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 5 }}>
++                <div style={{ width: 100, fontSize: 11, color: TEXT }}>{b.label}</div>
++                <div style={{ flex: 1, height: 12, background: '#0a0a0f', borderRadius: 4, overflow: 'hidden' }}>
++                  <div style={{ width: `${pct}%`, height: '100%', background: b.color }} />
++                </div>
++                <div style={{ width: 36, fontSize: 11, color: MUTED, fontFamily: 'ui-monospace,monospace', textAlign: 'right' }}>{b.n}</div>
++              </div>
++            );
++          })}
++        </div>
++      </div>
++
++      {/* ── FORENSIC FLAGS + DECISION OVERLAY ─────────────────────── */}
++      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 14, marginBottom: 18 }}>
++        <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 16 }}>
++          <div style={{ fontSize: F2.sm, fontWeight: 800, color: TEXT, marginBottom: 12 }}>FORENSIC FLAGS</div>
++          {[
++            { label: 'FCF / OP divergence', n: stats.fcfDivCount, color: RED, hint: 'Operating profit grows but FCF lags — accrual/working-cap warning' },
++            { label: 'Post-run stretched',  n: stats.postRunCount, color: ORANGE, hint: 'Big 1Y run + extended valuation — late-cycle entry risk' },
++            { label: 'Earnings ≤7 days',    n: stats.earningsCloseCount, color: YELLOW, hint: 'Print imminent — sizing should reflect event risk' },
++          ].map(f => (
++            <div key={f.label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: `1px solid ${BORDER}` }}>
++              <div>
++                <div style={{ fontSize: 12, color: TEXT, fontWeight: 700 }}>{f.label}</div>
++                <div style={{ fontSize: 10, color: MUTED, marginTop: 2 }}>{f.hint}</div>
++              </div>
++              <div style={{ fontSize: 22, fontWeight: 800, color: f.n > 0 ? f.color : MUTED, fontFamily: 'ui-monospace,monospace' }}>{f.n}</div>
++            </div>
++          ))}
++        </div>
++
++        <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 16 }}>
++          <div style={{ fontSize: F2.sm, fontWeight: 800, color: TEXT, marginBottom: 4 }}>DECISION OVERLAY</div>
++          <div style={{ fontSize: 10, color: MUTED, marginBottom: 12 }}>Live counts from your decision logbook · refreshes immediately on tag change</div>
++          {[
++            { label: 'BUY',      n: stats.decisionCounts.BUY,      color: GREEN },
++            { label: 'WATCH',    n: stats.decisionCounts.WATCH,    color: YELLOW },
++            { label: 'REJECTED', n: stats.decisionCounts.REJECTED, color: RED },
++            { label: 'No tag',   n: stats.decisionCounts.NONE,     color: MUTED },
++          ].map(d => {
++            const pct = stats.n ? (100 * d.n / stats.n) : 0;
++            return (
++              <div key={d.label} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
++                <div style={{ width: 80, fontSize: 12, color: d.color, fontWeight: 700 }}>{d.label}</div>
++                <div style={{ flex: 1, height: 12, background: '#0a0a0f', borderRadius: 4, overflow: 'hidden' }}>
++                  <div style={{ width: `${pct}%`, height: '100%', background: d.color }} />
++                </div>
++                <div style={{ width: 70, fontSize: 11, color: MUTED, fontFamily: 'ui-monospace,monospace', textAlign: 'right' }}>{d.n} · {pct.toFixed(0)}%</div>
++              </div>
++            );
++          })}
++          <div style={{ marginTop: 12, padding: 10, background: '#0a0a0f', borderRadius: 6, fontSize: 11, color: MUTED }}>
++            Decision coverage: <span style={{ color: TEXT, fontWeight: 700 }}>{stats.n ? (100 * (stats.n - stats.decisionCounts.NONE) / stats.n).toFixed(0) : 0}%</span> of universe tagged
++          </div>
++        </div>
++      </div>
++
++      {/* ── RE-RATING DELTAS ──────────────────────────────────────── */}
++      {(stats.reratingUp.length > 0 || stats.ratingDown.length > 0) && (
++        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 14, marginBottom: 18 }}>
++          <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 16 }}>
++            <div style={{ fontSize: F2.sm, fontWeight: 800, color: GREEN, marginBottom: 4 }}>↑ RE-RATING (score +5 or better)</div>
++            <div style={{ fontSize: 10, color: MUTED, marginBottom: 10 }}>Vs your last upload baseline — fundamentals improving</div>
++            {stats.reratingUp.slice(0, 8).map(r => {
++              const prev = prevScoreMap[r.symbol];
++              const delta = r.score - prev;
++              return (
++                <div key={r.symbol} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${BORDER}` }}>
++                  <div style={{ fontSize: 12, color: TEXT, fontFamily: 'ui-monospace,monospace' }}>{r.symbol}</div>
++                  <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
++                    <div style={{ fontSize: 11, color: MUTED, fontFamily: 'ui-monospace,monospace' }}>{prev.toFixed(0)} → {r.score.toFixed(0)}</div>
++                    <div style={{ fontSize: 12, fontWeight: 800, color: GREEN, fontFamily: 'ui-monospace,monospace' }}>+{delta.toFixed(0)}</div>
++                  </div>
++                </div>
++              );
++            })}
++            {stats.reratingUp.length === 0 && <div style={{ fontSize: 11, color: MUTED, padding: 8 }}>No upward re-ratings in this batch.</div>}
++          </div>
++          <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 16 }}>
++            <div style={{ fontSize: F2.sm, fontWeight: 800, color: RED, marginBottom: 4 }}>↓ DROP ALERTS (score −5 or worse)</div>
++            <div style={{ fontSize: 10, color: MUTED, marginBottom: 10 }}>Vs your last upload baseline — review or trim</div>
++            {stats.ratingDown.slice(0, 8).map(r => {
++              const prev = prevScoreMap[r.symbol];
++              const delta = r.score - prev;
++              return (
++                <div key={r.symbol} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${BORDER}` }}>
++                  <div style={{ fontSize: 12, color: TEXT, fontFamily: 'ui-monospace,monospace' }}>{r.symbol}</div>
++                  <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
++                    <div style={{ fontSize: 11, color: MUTED, fontFamily: 'ui-monospace,monospace' }}>{prev.toFixed(0)} → {r.score.toFixed(0)}</div>
++                    <div style={{ fontSize: 12, fontWeight: 800, color: RED, fontFamily: 'ui-monospace,monospace' }}>{delta.toFixed(0)}</div>
++                  </div>
++                </div>
++              );
++            })}
++            {stats.ratingDown.length === 0 && <div style={{ fontSize: 11, color: MUTED, padding: 8 }}>No score drops in this batch.</div>}
++          </div>
++        </div>
++      )}
++
++      {/* ── TOP 15 LEADERBOARD ────────────────────────────────────── */}
++      <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 16 }}>
++        <div style={{ fontSize: F2.sm, fontWeight: 800, color: TEXT, marginBottom: 12 }}>TOP 15 BY SCORE</div>
++        <div style={{ overflowX: 'auto' }}>
++          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
++            <thead>
++              <tr style={{ color: MUTED, textAlign: 'left' }}>
++                <th style={{ padding: '6px 8px', borderBottom: `1px solid ${BORDER}` }}>#</th>
++                <th style={{ padding: '6px 8px', borderBottom: `1px solid ${BORDER}` }}>SYMBOL</th>
++                <th style={{ padding: '6px 8px', borderBottom: `1px solid ${BORDER}` }}>SECTOR</th>
++                <th style={{ padding: '6px 8px', borderBottom: `1px solid ${BORDER}`, textAlign: 'right' }}>SCORE</th>
++                <th style={{ padding: '6px 8px', borderBottom: `1px solid ${BORDER}`, textAlign: 'right' }}>GRADE</th>
++                <th style={{ padding: '6px 8px', borderBottom: `1px solid ${BORDER}`, textAlign: 'right' }}>R40</th>
++                <th style={{ padding: '6px 8px', borderBottom: `1px solid ${BORDER}`, textAlign: 'right' }}>PIOTROSKI</th>
++                <th style={{ padding: '6px 8px', borderBottom: `1px solid ${BORDER}`, textAlign: 'right' }}>MCAP $B</th>
++                <th style={{ padding: '6px 8px', borderBottom: `1px solid ${BORDER}`, textAlign: 'right' }}>TAGS</th>
++              </tr>
++            </thead>
++            <tbody>
++              {stats.top15.map((r, i) => {
++                const d = getDecision(r.symbol);
++                const inCb = convictionSet.has(r.symbol.toUpperCase());
++                return (
++                  <tr key={r.symbol} style={{ color: TEXT }}>
++                    <td style={{ padding: '6px 8px', color: MUTED, fontFamily: 'ui-monospace,monospace' }}>{i + 1}</td>
++                    <td style={{ padding: '6px 8px', fontWeight: 700, fontFamily: 'ui-monospace,monospace' }}>{r.symbol}</td>
++                    <td style={{ padding: '6px 8px', fontSize: 11, color: MUTED, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.sector || ''}</td>
++                    <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'ui-monospace,monospace', fontWeight: 700 }}>{(r.score || 0).toFixed(1)}</td>
++                    <td style={{ padding: '6px 8px', textAlign: 'right', color: GRADE_COLOR_US[r.grade] || TEXT, fontWeight: 800 }}>{r.grade}</td>
++                    <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'ui-monospace,monospace', color: (r.ruleOf40 ?? -999) >= 40 ? GREEN : MUTED }}>{r.ruleOf40 != null ? r.ruleOf40.toFixed(0) : '—'}</td>
++                    <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'ui-monospace,monospace', color: (r.piotroskiFScore ?? -1) >= 7 ? GREEN : MUTED }}>{r.piotroskiFScore != null ? r.piotroskiFScore.toFixed(0) : '—'}</td>
++                    <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'ui-monospace,monospace', color: MUTED }}>{r.marketCapB != null ? r.marketCapB.toFixed(1) : '—'}</td>
++                    <td style={{ padding: '6px 8px', textAlign: 'right' }}>
++                      {d && <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: d.status === 'BUY' ? `${GREEN}30` : d.status === 'WATCH' ? `${YELLOW}30` : `${RED}30`, color: d.status === 'BUY' ? GREEN : d.status === 'WATCH' ? YELLOW : RED, fontWeight: 700, marginLeft: 4 }}>{d.status}</span>}
++                      {inCb && <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: `${PURPLE}30`, color: PURPLE, fontWeight: 700, marginLeft: 4 }}>CB</span>}
++                    </td>
++                  </tr>
++                );
++              })}
++            </tbody>
++          </table>
++        </div>
++      </div>
++    </div>
++  );
++}
++
++// ═══════════════════════════════════════════════════════════════════════════
++// PATCH 0872 — TURNAROUND ANALYTICS TAB
++//
++// Self-contained analytics dashboard for the Turnaround universe. Reads
++// TurnaroundResult[] from localStorage with proper listeners (storage +
++// mb-upload:updated) plus a decision-tick reducer so BUY/WATCH/REJECTED
++// tag changes flow through immediately.
++//
++// Panels (institutional playbook order — Phase ↔ Stage ↔ Survival):
++//   • Stats strip (count · avg · BUY-ZONE · BEST · survival pass · concall ≥15)
++//   • Stage distribution (DISTRESS → SETUP → EARLY-SHOOTS → PATTERN →
++//     CONFIRMED → MATURE → NOT-TURNAROUND)
++//   • Archetype breakdown (TURNAROUND vs GROWTH / QUALITY / VALUE-TRAP /
++//     DECLINING / WAIT / NEUTRAL — tells user which rows belong on this tab)
++//   • Turnaround Type breakdown (CYCLICAL / OPERATIONAL / DISTRESSED)
++//   • Phase distribution (1 Collapse / 2 Stabilisation / 3 Inflection BUY /
++//     4 Re-rating)
++//   • Survival score histogram (0-8 from playbook Ch.4 gate filter)
++//   • Best candidates leaderboard (isBestCandidate === true)
++//   • Top 12 by total score
++// ═══════════════════════════════════════════════════════════════════════════
++
++function TurnaroundAnalytics() {
++  const [rows, setRows] = React.useState<TurnaroundResult[]>(() => {
++    if (typeof window === 'undefined') return [];
++    try {
++      const raw = localStorage.getItem(TURNAROUND_STORAGE_KEY);
++      const parsed = raw ? JSON.parse(raw) : [];
++      return Array.isArray(parsed) ? parsed : [];
++    } catch { return []; }
++  });
++  React.useEffect(() => {
++    if (typeof window === 'undefined') return;
++    const refresh = () => {
++      try {
++        const raw = localStorage.getItem(TURNAROUND_STORAGE_KEY);
++        const parsed = raw ? JSON.parse(raw) : [];
++        setRows(Array.isArray(parsed) ? parsed : []);
++      } catch { setRows([]); }
++    };
++    const onStorage = (e: StorageEvent) => {
++      if (!e.key || e.key === TURNAROUND_STORAGE_KEY) refresh();
++    };
++    window.addEventListener('storage', onStorage);
++    window.addEventListener('mb-upload:updated', refresh);
++    return () => {
++      window.removeEventListener('storage', onStorage);
++      window.removeEventListener('mb-upload:updated', refresh);
++    };
++  }, []);
++
++  const [convictionSet, setConvictionSet] = React.useState<Set<string>>(() => {
++    if (typeof window === 'undefined') return new Set();
++    try { return new Set<string>(getConvictionTickers()); } catch { return new Set(); }
++  });
++  React.useEffect(() => {
++    if (typeof window === 'undefined') return;
++    const refresh = () => { try { setConvictionSet(new Set<string>(getConvictionTickers())); } catch {} };
++    window.addEventListener('storage', refresh);
++    window.addEventListener('conviction-beats:updated', refresh);
++    return () => {
++      window.removeEventListener('storage', refresh);
++      window.removeEventListener('conviction-beats:updated', refresh);
++    };
++  }, []);
++
++  const [decisionTick, bumpDec] = React.useReducer((x: number) => x + 1, 0);
++  React.useEffect(() => subscribeDecisions(() => bumpDec()), []);
++
++  const empty = rows.length === 0;
++  const GRADE_COLOR_TA: Record<string, string> = { 'A+': '#10b981', 'A': '#34d399', 'B+': '#f59e0b', 'B': '#f97316', 'C': '#fb923c', 'D': '#ef4444' };
++
++  const stats = React.useMemo(() => {
++    const n = rows.length;
++    const avgScore = n ? rows.reduce((s, r) => s + (r.totalScore || 0), 0) / n : 0;
++    const buyZone = rows.filter(r => r.inBuyZone).length;
++    const best = rows.filter(r => r.isBestCandidate).length;
++    const confirmed = rows.filter(r => r.stage === 'CONFIRMED').length;
++    const survivalPass = rows.filter(r => (r.survivalScore || 0) >= 6).length;
++    const highConcall = rows.filter(r => (r.concallScore || 0) >= 15).length;
++    const realTurnarounds = rows.filter(r => r.archetype === 'TURNAROUND').length;
++    const valueTraps = rows.filter(r => r.archetype === 'VALUE-TRAP').length;
++    // Stage distribution
++    const stages: TurnaroundStage[] = ['DISTRESS', 'SETUP', 'EARLY-SHOOTS', 'PATTERN', 'CONFIRMED', 'MATURE', 'NOT-TURNAROUND'];
++    const stageBuckets = stages.map(s => ({
++      label: s,
++      n: rows.filter(r => r.stage === s).length,
++      color: s === 'EARLY-SHOOTS' ? GREEN : s === 'PATTERN' ? ACCENT : s === 'CONFIRMED' ? PURPLE : s === 'MATURE' ? YELLOW : s === 'SETUP' ? '#94a3b8' : s === 'DISTRESS' ? ORANGE : RED,
++      emoji: s === 'EARLY-SHOOTS' ? '🌱' : s === 'PATTERN' ? '📈' : s === 'CONFIRMED' ? '✅' : s === 'MATURE' ? '🌅' : s === 'SETUP' ? '⏳' : s === 'DISTRESS' ? '🚫' : '❌',
++    }));
++    // Archetype distribution
++    const archetypes: TurnaroundArchetype[] = ['TURNAROUND', 'GROWTH', 'QUALITY', 'VALUE-TRAP', 'DECLINING', 'WAIT', 'NEUTRAL'];
++    const archetypeBuckets = archetypes.map(a => ({
++      label: a,
++      n: rows.filter(r => r.archetype === a).length,
++      color: a === 'TURNAROUND' ? PURPLE : a === 'GROWTH' ? GREEN : a === 'QUALITY' ? ACCENT : a === 'VALUE-TRAP' ? RED : a === 'DECLINING' ? ORANGE : a === 'WAIT' ? YELLOW : MUTED,
++    }));
++    // Turnaround type
++    const typeBuckets: Array<{ label: string; n: number; color: string }> = [
++      { label: 'CYCLICAL',    n: rows.filter(r => r.turnaroundType === 'CYCLICAL').length,    color: ACCENT },
++      { label: 'OPERATIONAL', n: rows.filter(r => r.turnaroundType === 'OPERATIONAL').length, color: PURPLE },
++      { label: 'DISTRESSED',  n: rows.filter(r => r.turnaroundType === 'DISTRESSED').length,  color: ORANGE },
++      { label: 'UNKNOWN',     n: rows.filter(r => r.turnaroundType === 'UNKNOWN' || !r.turnaroundType).length, color: MUTED },
++    ];
++    // Phase
++    const phaseBuckets = ([1, 2, 3, 4] as const).map(p => ({
++      label: p === 1 ? '1 · COLLAPSE' : p === 2 ? '2 · STABILISATION' : p === 3 ? '3 · INFLECTION (BUY)' : '4 · RE-RATING',
++      n: rows.filter(r => r.phase === p).length,
++      color: p === 1 ? RED : p === 2 ? ORANGE : p === 3 ? GREEN : ACCENT,
++    }));
++    // Survival score buckets
++    const survivalBuckets = [
++      { label: '0–2 (fragile)', n: rows.filter(r => (r.survivalScore ?? -1) >= 0 && (r.survivalScore ?? -1) <= 2).length, color: RED },
++      { label: '3–5 (mid)',     n: rows.filter(r => (r.survivalScore ?? -1) >= 3 && (r.survivalScore ?? -1) <= 5).length, color: YELLOW },
++      { label: '6–8 (robust)',  n: rows.filter(r => (r.survivalScore ?? -1) >= 6).length,                                  color: GREEN },
++    ];
++    // Decision overlay
++    const decisionCounts = { BUY: 0, WATCH: 0, REJECTED: 0, NONE: 0 };
++    rows.forEach(r => {
++      const d = getDecision(r.symbol);
++      if (!d) decisionCounts.NONE++;
++      else if (d.status === 'BUY') decisionCounts.BUY++;
++      else if (d.status === 'WATCH') decisionCounts.WATCH++;
++      else if (d.status === 'REJECTED') decisionCounts.REJECTED++;
++    });
++    // Conviction overlap
++    const cbUpper = new Set<string>([...convictionSet].map(s => s.toUpperCase().trim()));
++    const convictionOverlap = rows.filter(r => cbUpper.has((r.symbol || '').toUpperCase().trim())).length;
++    // Best candidates
++    const bestList = [...rows].filter(r => r.isBestCandidate).sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0));
++    // Top 12 overall
++    const top12 = [...rows].sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0)).slice(0, 12);
++    return {
++      n, avgScore, buyZone, best, confirmed, survivalPass, highConcall, realTurnarounds, valueTraps,
++      stageBuckets, archetypeBuckets, typeBuckets, phaseBuckets, survivalBuckets,
++      decisionCounts, convictionOverlap, bestList, top12,
++    };
++  }, [rows, convictionSet, decisionTick]);
++
++  if (empty) {
++    return (
++      <div style={{ maxWidth: 1800, margin: '0 auto', padding: '24px' }}>
++        <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 12, padding: '40px 32px', textAlign: 'center' }}>
++          <div style={{ fontSize: 56, marginBottom: 16 }}>🔄</div>
++          <h2 style={{ fontSize: F.h2, color: TEXT, margin: '0 0 8px' }}>Turnaround Analytics — no data yet</h2>
++          <p style={{ fontSize: F.md, color: MUTED, margin: 0 }}>
++            Upload a turnaround Screener CSV on the <strong style={{ color: PURPLE }}>🔄 Turnarounds</strong> tab. This dashboard summarises stage, archetype, phase, survival score, and the institutional best-candidate shortlist.
++          </p>
++        </div>
++      </div>
++    );
++  }
++
++  return (
++    <div style={{ maxWidth: 1800, margin: '0 auto', padding: '20px 24px 32px' }}>
++      {/* ── STATS STRIP ────────────────────────────────────────────── */}
++      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 18 }}>
++        {[
++          { label: 'CANDIDATES',     value: stats.n.toString(),                                                                                            color: PURPLE },
++          { label: 'AVG SCORE',      value: stats.avgScore.toFixed(1),                                                                                     color: ACCENT },
++          { label: 'BUY-ZONE',       value: `${stats.buyZone} (${stats.n ? (100 * stats.buyZone / stats.n).toFixed(0) : 0}%)`,                            color: GREEN },
++          { label: 'BEST CAND.',     value: stats.best.toString(),                                                                                         color: GREEN },
++          { label: 'CONFIRMED',      value: stats.confirmed.toString(),                                                                                    color: ACCENT },
++          { label: 'SURVIVAL ≥6',    value: stats.survivalPass.toString(),                                                                                 color: GREEN },
++          { label: 'CONCALL ≥15',    value: stats.highConcall.toString(),                                                                                  color: PURPLE },
++          { label: 'REAL T-AROUNDS', value: `${stats.realTurnarounds} / ${stats.n}`,                                                                       color: PURPLE },
++          { label: 'VALUE TRAPS',    value: stats.valueTraps.toString(),                                                                                   color: stats.valueTraps > 0 ? RED : MUTED },
++          { label: 'CONVICTION',     value: stats.convictionOverlap.toString(),                                                                            color: PURPLE },
++        ].map((s) => (
++          <div key={s.label} style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: '12px 14px' }}>
++            <div style={{ fontSize: 10, color: MUTED, fontWeight: 700, letterSpacing: 0.6 }}>{s.label}</div>
++            <div style={{ fontSize: 22, fontWeight: 800, color: s.color, fontFamily: 'ui-monospace,monospace', marginTop: 2 }}>{s.value}</div>
++          </div>
++        ))}
++      </div>
++
++      {/* ── STAGE + ARCHETYPE DISTRIBUTIONS ─────────────────────── */}
++      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 14, marginBottom: 18 }}>
++        <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 16 }}>
++          <div style={{ fontSize: F.sm, fontWeight: 800, color: TEXT, marginBottom: 4 }}>STAGE DISTRIBUTION</div>
++          <div style={{ fontSize: 10, color: MUTED, marginBottom: 12 }}>Lifecycle: DISTRESS → EARLY-SHOOTS (BUY-ZONE 1) → PATTERN (BUY-ZONE 2) → CONFIRMED → MATURE</div>
++          {stats.stageBuckets.map(b => {
++            const pct = stats.n ? (100 * b.n / stats.n) : 0;
++            return (
++              <div key={b.label} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
++                <div style={{ width: 18, fontSize: 14 }}>{b.emoji}</div>
++                <div style={{ width: 130, fontSize: 11, color: TEXT, fontWeight: 700 }}>{b.label}</div>
++                <div style={{ flex: 1, height: 12, background: '#0a0a0f', borderRadius: 4, overflow: 'hidden' }}>
++                  <div style={{ width: `${pct}%`, height: '100%', background: b.color }} />
++                </div>
++                <div style={{ width: 56, fontSize: 11, color: MUTED, fontFamily: 'ui-monospace,monospace', textAlign: 'right' }}>{b.n} · {pct.toFixed(0)}%</div>
++              </div>
++            );
++          })}
++        </div>
++
++        <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 16 }}>
++          <div style={{ fontSize: F.sm, fontWeight: 800, color: TEXT, marginBottom: 4 }}>ARCHETYPE BREAKDOWN</div>
++          <div style={{ fontSize: 10, color: MUTED, marginBottom: 12 }}>What each row really IS — non-TURNAROUND archetypes belong on different tabs</div>
++          {stats.archetypeBuckets.map(b => {
++            const pct = stats.n ? (100 * b.n / stats.n) : 0;
++            return (
++              <div key={b.label} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
++                <div style={{ width: 100, fontSize: 11, color: b.color, fontWeight: 700 }}>{b.label}</div>
++                <div style={{ flex: 1, height: 12, background: '#0a0a0f', borderRadius: 4, overflow: 'hidden' }}>
++                  <div style={{ width: `${pct}%`, height: '100%', background: b.color }} />
++                </div>
++                <div style={{ width: 56, fontSize: 11, color: MUTED, fontFamily: 'ui-monospace,monospace', textAlign: 'right' }}>{b.n} · {pct.toFixed(0)}%</div>
++              </div>
++            );
++          })}
++        </div>
++      </div>
++
++      {/* ── TYPE + PHASE + SURVIVAL ─────────────────────────────── */}
++      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 14, marginBottom: 18 }}>
++        <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 16 }}>
++          <div style={{ fontSize: F.sm, fontWeight: 800, color: TEXT, marginBottom: 4 }}>TURNAROUND TYPE</div>
++          <div style={{ fontSize: 10, color: MUTED, marginBottom: 12 }}>Cyclical = sector-driven · Operational = mgmt-driven · Distressed = balance-sheet first</div>
++          {stats.typeBuckets.map(b => {
++            const pct = stats.n ? (100 * b.n / stats.n) : 0;
++            return (
++              <div key={b.label} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
++                <div style={{ width: 100, fontSize: 11, color: TEXT, fontWeight: 700 }}>{b.label}</div>
++                <div style={{ flex: 1, height: 12, background: '#0a0a0f', borderRadius: 4, overflow: 'hidden' }}>
++                  <div style={{ width: `${pct}%`, height: '100%', background: b.color }} />
++                </div>
++                <div style={{ width: 36, fontSize: 11, color: MUTED, fontFamily: 'ui-monospace,monospace', textAlign: 'right' }}>{b.n}</div>
++              </div>
++            );
++          })}
++        </div>
++
++        <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 16 }}>
++          <div style={{ fontSize: F.sm, fontWeight: 800, color: TEXT, marginBottom: 4 }}>PLAYBOOK PHASE</div>
++          <div style={{ fontSize: 10, color: MUTED, marginBottom: 12 }}>Phase 3 is the institutional BUY window — alpha before consensus</div>
++          {stats.phaseBuckets.map(b => {
++            const pct = stats.n ? (100 * b.n / stats.n) : 0;
++            return (
++              <div key={b.label} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
++                <div style={{ width: 140, fontSize: 11, color: b.color, fontWeight: 700 }}>{b.label}</div>
++                <div style={{ flex: 1, height: 12, background: '#0a0a0f', borderRadius: 4, overflow: 'hidden' }}>
++                  <div style={{ width: `${pct}%`, height: '100%', background: b.color }} />
++                </div>
++                <div style={{ width: 36, fontSize: 11, color: MUTED, fontFamily: 'ui-monospace,monospace', textAlign: 'right' }}>{b.n}</div>
++              </div>
++            );
++          })}
++        </div>
++
++        <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 16 }}>
++          <div style={{ fontSize: F.sm, fontWeight: 800, color: TEXT, marginBottom: 4 }}>SURVIVAL SCORE</div>
++          <div style={{ fontSize: 10, color: MUTED, marginBottom: 12 }}>Playbook Ch.4 gate — ≥6 = cleared institutional bankruptcy filter</div>
++          {stats.survivalBuckets.map(b => {
++            const pct = stats.n ? (100 * b.n / stats.n) : 0;
++            return (
++              <div key={b.label} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
++                <div style={{ width: 110, fontSize: 11, color: TEXT, fontWeight: 700 }}>{b.label}</div>
++                <div style={{ flex: 1, height: 12, background: '#0a0a0f', borderRadius: 4, overflow: 'hidden' }}>
++                  <div style={{ width: `${pct}%`, height: '100%', background: b.color }} />
++                </div>
++                <div style={{ width: 36, fontSize: 11, color: MUTED, fontFamily: 'ui-monospace,monospace', textAlign: 'right' }}>{b.n}</div>
++              </div>
++            );
++          })}
++        </div>
++      </div>
++
++      {/* ── BEST CANDIDATES + DECISION OVERLAY ─────────────────── */}
++      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 14, marginBottom: 18 }}>
++        <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 16 }}>
++          <div style={{ fontSize: F.sm, fontWeight: 800, color: GREEN, marginBottom: 4 }}>⭐ BEST CANDIDATES ({stats.bestList.length})</div>
++          <div style={{ fontSize: 10, color: MUTED, marginBottom: 10 }}>Pass: archetype = TURNAROUND · survival ≥6 · phase 2-3 · concall ≥15</div>
++          {stats.bestList.length === 0 && <div style={{ fontSize: 11, color: MUTED, padding: 12, textAlign: 'center' }}>No row passes the institutional best-candidate filter today.</div>}
++          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
++            {stats.bestList.slice(0, 10).map(r => {
++              const d = getDecision(r.symbol);
++              const inCb = convictionSet.has(r.symbol.toUpperCase());
++              return (
++                <div key={r.symbol} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: '#0a0a0f', borderRadius: 6 }}>
++                  <div style={{ width: 110, fontSize: 12, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace,monospace' }}>{r.symbol}</div>
++                  <div style={{ flex: 1, fontSize: 11, color: MUTED, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.company}>{r.company}</div>
++                  <div style={{ fontSize: 10, color: r.stageColor, padding: '2px 6px', background: `${r.stageColor}20`, borderRadius: 4, fontWeight: 700 }}>{r.stageEmoji} {r.stage}</div>
++                  <div style={{ fontSize: 10, color: ACCENT, padding: '2px 6px', background: `${ACCENT}20`, borderRadius: 4, fontWeight: 700 }}>P{r.phase}</div>
++                  <div style={{ width: 50, fontSize: 12, color: TEXT, fontFamily: 'ui-monospace,monospace', fontWeight: 800, textAlign: 'right' }}>{(r.totalScore || 0).toFixed(0)}</div>
++                  {d && <span style={{ fontSize: 9, padding: '2px 5px', borderRadius: 4, background: d.status === 'BUY' ? `${GREEN}30` : d.status === 'WATCH' ? `${YELLOW}30` : `${RED}30`, color: d.status === 'BUY' ? GREEN : d.status === 'WATCH' ? YELLOW : RED, fontWeight: 700 }}>{d.status}</span>}
++                  {inCb && <span style={{ fontSize: 9, padding: '2px 5px', borderRadius: 4, background: `${PURPLE}30`, color: PURPLE, fontWeight: 700 }}>CB</span>}
++                </div>
++              );
++            })}
++          </div>
++        </div>
++
++        <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 16 }}>
++          <div style={{ fontSize: F.sm, fontWeight: 800, color: TEXT, marginBottom: 12 }}>DECISION OVERLAY</div>
++          {[
++            { label: 'BUY',      n: stats.decisionCounts.BUY,      color: GREEN },
++            { label: 'WATCH',    n: stats.decisionCounts.WATCH,    color: YELLOW },
++            { label: 'REJECTED', n: stats.decisionCounts.REJECTED, color: RED },
++            { label: 'No tag',   n: stats.decisionCounts.NONE,     color: MUTED },
++          ].map(d => {
++            const pct = stats.n ? (100 * d.n / stats.n) : 0;
++            return (
++              <div key={d.label} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
++                <div style={{ width: 64, fontSize: 11, color: d.color, fontWeight: 700 }}>{d.label}</div>
++                <div style={{ flex: 1, height: 10, background: '#0a0a0f', borderRadius: 4, overflow: 'hidden' }}>
++                  <div style={{ width: `${pct}%`, height: '100%', background: d.color }} />
++                </div>
++                <div style={{ width: 50, fontSize: 11, color: MUTED, fontFamily: 'ui-monospace,monospace', textAlign: 'right' }}>{d.n}</div>
++              </div>
++            );
++          })}
++          <div style={{ marginTop: 12, padding: 10, background: '#0a0a0f', borderRadius: 6, fontSize: 11, color: MUTED }}>
++            Decision coverage: <span style={{ color: TEXT, fontWeight: 700 }}>{stats.n ? (100 * (stats.n - stats.decisionCounts.NONE) / stats.n).toFixed(0) : 0}%</span>
++          </div>
++        </div>
++      </div>
++
++      {/* ── TOP 12 BY TOTAL SCORE ───────────────────────────────── */}
++      <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 16 }}>
++        <div style={{ fontSize: F.sm, fontWeight: 800, color: TEXT, marginBottom: 12 }}>TOP 12 BY TOTAL SCORE</div>
++        <div style={{ overflowX: 'auto' }}>
++          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
++            <thead>
++              <tr style={{ color: MUTED, textAlign: 'left' }}>
++                <th style={{ padding: '6px 8px', borderBottom: `1px solid ${BORDER}` }}>#</th>
++                <th style={{ padding: '6px 8px', borderBottom: `1px solid ${BORDER}` }}>SYMBOL</th>
++                <th style={{ padding: '6px 8px', borderBottom: `1px solid ${BORDER}` }}>COMPANY</th>
++                <th style={{ padding: '6px 8px', borderBottom: `1px solid ${BORDER}` }}>STAGE</th>
++                <th style={{ padding: '6px 8px', borderBottom: `1px solid ${BORDER}` }}>PHASE</th>
++                <th style={{ padding: '6px 8px', borderBottom: `1px solid ${BORDER}` }}>TYPE</th>
++                <th style={{ padding: '6px 8px', borderBottom: `1px solid ${BORDER}`, textAlign: 'right' }}>SCORE</th>
++                <th style={{ padding: '6px 8px', borderBottom: `1px solid ${BORDER}`, textAlign: 'right' }}>GRADE</th>
++                <th style={{ padding: '6px 8px', borderBottom: `1px solid ${BORDER}`, textAlign: 'right' }}>CONCALL</th>
++                <th style={{ padding: '6px 8px', borderBottom: `1px solid ${BORDER}`, textAlign: 'right' }}>SURVIVAL</th>
++                <th style={{ padding: '6px 8px', borderBottom: `1px solid ${BORDER}`, textAlign: 'right' }}>TAGS</th>
++              </tr>
++            </thead>
++            <tbody>
++              {stats.top12.map((r, i) => {
++                const d = getDecision(r.symbol);
++                const inCb = convictionSet.has(r.symbol.toUpperCase());
++                return (
++                  <tr key={r.symbol} style={{ color: TEXT }}>
++                    <td style={{ padding: '6px 8px', color: MUTED, fontFamily: 'ui-monospace,monospace' }}>{i + 1}</td>
++                    <td style={{ padding: '6px 8px', fontWeight: 700, fontFamily: 'ui-monospace,monospace' }}>{r.symbol}</td>
++                    <td style={{ padding: '6px 8px', fontSize: 11, color: MUTED, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.company}>{r.company}</td>
++                    <td style={{ padding: '6px 8px', fontSize: 11, color: r.stageColor, fontWeight: 700 }}>{r.stageEmoji} {r.stage}</td>
++                    <td style={{ padding: '6px 8px', fontSize: 11, color: ACCENT, fontWeight: 700 }}>{r.phase ? `P${r.phase}` : '—'}</td>
++                    <td style={{ padding: '6px 8px', fontSize: 11, color: MUTED }}>{r.turnaroundType || '—'}</td>
++                    <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'ui-monospace,monospace', fontWeight: 800 }}>{(r.totalScore || 0).toFixed(0)}</td>
++                    <td style={{ padding: '6px 8px', textAlign: 'right', color: GRADE_COLOR_TA[r.grade] || TEXT, fontWeight: 800 }}>{r.grade}</td>
++                    <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'ui-monospace,monospace', color: (r.concallScore ?? -1) >= 15 ? GREEN : MUTED }}>{r.concallScore != null ? r.concallScore.toFixed(0) : '—'}</td>
++                    <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'ui-monospace,monospace', color: (r.survivalScore ?? -1) >= 6 ? GREEN : MUTED }}>{r.survivalScore != null ? r.survivalScore.toFixed(0) : '—'}</td>
++                    <td style={{ padding: '6px 8px', textAlign: 'right' }}>
++                      {r.isBestCandidate && <span style={{ fontSize: 9, padding: '2px 5px', borderRadius: 4, background: `${GREEN}30`, color: GREEN, fontWeight: 700, marginLeft: 2 }}>BEST</span>}
++                      {d && <span style={{ fontSize: 9, padding: '2px 5px', borderRadius: 4, background: d.status === 'BUY' ? `${GREEN}30` : d.status === 'WATCH' ? `${YELLOW}30` : `${RED}30`, color: d.status === 'BUY' ? GREEN : d.status === 'WATCH' ? YELLOW : RED, fontWeight: 700, marginLeft: 2 }}>{d.status}</span>}
++                      {inCb && <span style={{ fontSize: 9, padding: '2px 5px', borderRadius: 4, background: `${PURPLE}30`, color: PURPLE, fontWeight: 700, marginLeft: 2 }}>CB</span>}
++                    </td>
++                  </tr>
++                );
++              })}
++            </tbody>
++          </table>
++        </div>
++      </div>
++    </div>
++  );
++}
+-- 
+2.50.1 (Apple Git-155)
+
