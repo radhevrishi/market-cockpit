@@ -1293,7 +1293,53 @@ export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttrib
         else if (/PREFERENTIAL|QIP|RIGHTS|SAST/.test(evt)) extraTag = ' + capital action';
         if (extraTag) parts.push(extraTag.replace(/^ \+ /, '') + ' announced alongside results');
       }
-      const catalyst = `${moveLabel} (${tier} · ${period})${extraTag}`;
+      // PATCH 0895 — Also scan same-ticker news for accompaniment catalysts
+      // (dividend/bonus/split) — they often live in news, not specialByTicker.
+      // This mirrors the 0894 composition layer but at Tier 1a so even when
+      // Tier 1a wins (which it should for fresh earnings), the dividend
+      // accompaniment still surfaces.
+      if (!extraTag) {
+        const sameTickerNews = (opts.newsByTicker?.[sym] || []).filter(
+          (a) => !a.is_synthetic && isFresh(a.published_at, EARNINGS_WINDOW),
+        );
+        for (const a of sameTickerNews) {
+          const t = (a.title || a.headline || '').toLowerCase();
+          if (/\b(?:interim|final|special)?\s*dividend\s+(?:declared|of\s+)/.test(t)) { extraTag = ' + dividend declared'; break; }
+          if (/\bbonus\s+(?:issue|share)/.test(t)) { extraTag = ' + bonus issue'; break; }
+          if (/\bstock\s+split|share\s+split/.test(t)) { extraTag = ' + stock split'; break; }
+          if (/\bbuy[- ]?back/.test(t)) { extraTag = ' + buyback'; break; }
+        }
+      }
+      // PATCH 0895 — Days-since-filing + growth nums in the row label.
+      // User wants the chip to surface: tier + quarter + when + how
+      // (e.g., "Fundamental re-rate (BLOCKBUSTER · Q4 FY26 · today · sales +53% · PAT +169%)").
+      // Without these inline, the user has to hover/expand to see why.
+      const daysSinceFiling = (() => {
+        try {
+          if (!earnings.filing_date) return null;
+          const f = Date.parse(earnings.filing_date);
+          if (!Number.isFinite(f)) return null;
+          const today = Date.now();
+          const diff = Math.floor((today - f) / 86_400_000);
+          return diff < 0 ? null : diff;
+        } catch { return null; }
+      })();
+      const timingTag =
+        daysSinceFiling === 0 ? 'today' :
+        daysSinceFiling === 1 ? '1d ago' :
+        daysSinceFiling !== null && daysSinceFiling > 1 ? `${daysSinceFiling}d ago` :
+        null;
+      // Growth nums inline (only if at least one is present)
+      const growthInline = (() => {
+        const bits: string[] = [];
+        if (typeof sales === 'number') bits.push(`sales ${fmt(sales)}`);
+        if (typeof pat === 'number') bits.push(`PAT ${fmt(pat)}`);
+        return bits.length > 0 ? bits.join(' · ') : null;
+      })();
+      const chipBits: string[] = [tier, period];
+      if (timingTag) chipBits.push(timingTag);
+      if (growthInline) chipBits.push(growthInline);
+      const catalyst = `${moveLabel} (${chipBits.join(' · ')})${extraTag}`;
       const detail = parts.join('; ');
 
       out[sym] = {

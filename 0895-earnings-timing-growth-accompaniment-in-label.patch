@@ -1,0 +1,111 @@
+From 477c112c90f89236b7b9d4f117681e9da5adc73c Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Tue, 26 May 2026 12:33:15 +0000
+Subject: [PATCH] patch 0895: Tier 1a earnings label - timing + growth +
+ accompaniment
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+User audit format: every earnings move should communicate (1) when the
+print happened (today / 1d ago / 3d ago), (2) WHAT the growth profile
+was (sales/PAT YoY), (3) any same-day routine accompaniment (dividend
+/ bonus / split). The 0894 composition layer did this for Tier 2
+news-based earnings but not for Tier 1a graded-API earnings.
+
+Two changes to Tier 1a (movers-attribution.ts):
+
+1. days-since-filing computed from earnings.filing_date and added to
+   chip as "today" / "1d ago" / "Nd ago". User can see at-a-glance
+   whether the move is same-day reaction or PEAD continuation.
+
+2. Growth nums inline in label: "sales +53% · PAT +169%" appended.
+   Previously these only lived in the tooltip / detail string; now
+   the row chip carries them directly.
+
+3. Accompaniment scan inside Tier 1a: when specialByTicker has no
+   dividend/buyback/etc event, also scan same-ticker news for
+   "interim/final/special dividend declared", bonus issue, stock
+   split, buyback. If found, append " + dividend declared" (etc) to
+   the chip. Mirrors the 0894 composition at the higher tier so
+   MARKSANS-class names with both earnings and dividend on the same
+   day surface both signals.
+
+Expected row label format after this patch:
+  "Fundamental re-rate (BLOCKBUSTER · Q4 FY26 · today · sales +53% · PAT +169%)"
+  "Post-results follow-through (STRONG · Q4 FY26 · 1d ago · sales +30% · PAT +45%) + dividend declared"
+  "Margin shock (MIXED · Q4 FY26 · 2d ago · sales +12% · PAT -8%)"
+
+If MARKSANS earnings is in the graded-API payload (which the home
+page fetches for last 5 days), this row will now read:
+  "Fundamental re-rate (STRONG · Q4 FY26 · today · sales +X% · PAT +Y%) + dividend declared"
+instead of just "dividend declared". If graded-API does NOT have
+MARKSANS for any of the last 5 days (data gap), the row falls back
+to the Tier 2 news classifier which under 0894 produces
+"earnings result + dividend declared".
+---
+ frontend/src/lib/movers-attribution.ts | 48 +++++++++++++++++++++++++-
+ 1 file changed, 47 insertions(+), 1 deletion(-)
+
+diff --git a/frontend/src/lib/movers-attribution.ts b/frontend/src/lib/movers-attribution.ts
+index 58c26bf..a9b6c2e 100644
+--- a/frontend/src/lib/movers-attribution.ts
++++ b/frontend/src/lib/movers-attribution.ts
+@@ -1293,7 +1293,53 @@ export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttrib
+         else if (/PREFERENTIAL|QIP|RIGHTS|SAST/.test(evt)) extraTag = ' + capital action';
+         if (extraTag) parts.push(extraTag.replace(/^ \+ /, '') + ' announced alongside results');
+       }
+-      const catalyst = `${moveLabel} (${tier} · ${period})${extraTag}`;
++      // PATCH 0895 — Also scan same-ticker news for accompaniment catalysts
++      // (dividend/bonus/split) — they often live in news, not specialByTicker.
++      // This mirrors the 0894 composition layer but at Tier 1a so even when
++      // Tier 1a wins (which it should for fresh earnings), the dividend
++      // accompaniment still surfaces.
++      if (!extraTag) {
++        const sameTickerNews = (opts.newsByTicker?.[sym] || []).filter(
++          (a) => !a.is_synthetic && isFresh(a.published_at, EARNINGS_WINDOW),
++        );
++        for (const a of sameTickerNews) {
++          const t = (a.title || a.headline || '').toLowerCase();
++          if (/\b(?:interim|final|special)?\s*dividend\s+(?:declared|of\s+)/.test(t)) { extraTag = ' + dividend declared'; break; }
++          if (/\bbonus\s+(?:issue|share)/.test(t)) { extraTag = ' + bonus issue'; break; }
++          if (/\bstock\s+split|share\s+split/.test(t)) { extraTag = ' + stock split'; break; }
++          if (/\bbuy[- ]?back/.test(t)) { extraTag = ' + buyback'; break; }
++        }
++      }
++      // PATCH 0895 — Days-since-filing + growth nums in the row label.
++      // User wants the chip to surface: tier + quarter + when + how
++      // (e.g., "Fundamental re-rate (BLOCKBUSTER · Q4 FY26 · today · sales +53% · PAT +169%)").
++      // Without these inline, the user has to hover/expand to see why.
++      const daysSinceFiling = (() => {
++        try {
++          if (!earnings.filing_date) return null;
++          const f = Date.parse(earnings.filing_date);
++          if (!Number.isFinite(f)) return null;
++          const today = Date.now();
++          const diff = Math.floor((today - f) / 86_400_000);
++          return diff < 0 ? null : diff;
++        } catch { return null; }
++      })();
++      const timingTag =
++        daysSinceFiling === 0 ? 'today' :
++        daysSinceFiling === 1 ? '1d ago' :
++        daysSinceFiling !== null && daysSinceFiling > 1 ? `${daysSinceFiling}d ago` :
++        null;
++      // Growth nums inline (only if at least one is present)
++      const growthInline = (() => {
++        const bits: string[] = [];
++        if (typeof sales === 'number') bits.push(`sales ${fmt(sales)}`);
++        if (typeof pat === 'number') bits.push(`PAT ${fmt(pat)}`);
++        return bits.length > 0 ? bits.join(' · ') : null;
++      })();
++      const chipBits: string[] = [tier, period];
++      if (timingTag) chipBits.push(timingTag);
++      if (growthInline) chipBits.push(growthInline);
++      const catalyst = `${moveLabel} (${chipBits.join(' · ')})${extraTag}`;
+       const detail = parts.join('; ');
+ 
+       out[sym] = {
+-- 
+2.34.1
+
