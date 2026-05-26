@@ -1333,12 +1333,29 @@ export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttrib
         microcap: microcap3,
         rejections: rejections3,
       });
-      // Sector-led IS itself a Layer-2 finding — bump it as a high-weight
-      // signal at the top of the list.
-      const sectorPhrase = isSectorLed
-        ? `sector-led ${isUp ? 'rally' : 'sell-off'} — ${friendlySector} ${fmtPct(sectorPct)} vs index ${fmtPct(indexPct)} (${peerCountSameDirection}/${total} peers ${isUp ? '↑' : '↓'} >3%)`
-        : `broad participation — ${peerCountSameDirection}/${total} peers ${isUp ? '↑' : '↓'} >3% with sector roughly in line${typeof sectorPct === 'number' ? ` (${fmtPct(sectorPct)})` : ''}`;
-      causalSignals3.unshift({ layer: 2, phrase: sectorPhrase, weight: isSectorLed ? 75 : 55 });
+      // PATCH 0885 — Only inject the sector-led signal when the move
+      // ACTUALLY correlates with the sector. The previous code force-
+      // injected a layer-2 phrase even when peer magnitudes / vol
+      // co-movement disagreed, producing the BLISSGVS / AVROIND false
+      // positive ("11/23 peers ↑ >3% with sector roughly in line"
+      // while BLISSGVS itself was +20% and peers were +3-5%).
+      //
+      // Rule: inject only if (a) clear sector-led move (delta ≥1.5pp)
+      // OR (b) the 3-pillar gate inside inferCausalSignals ALREADY
+      // emitted a layer-2 peer-sympathy signal (peer magnitude +
+      // volume both pass). Otherwise let the engine output the
+      // honest fallback ("thin-float expansion, no confirmed peer
+      // cluster") with REJECTED reason in the tooltip.
+      const peerSympathyAlreadyFired = causalSignals3.some((s) => s.layer === 2);
+      if (isSectorLed) {
+        const sectorPhrase = `sector-led ${isUp ? 'rally' : 'sell-off'} — ${friendlySector} ${fmtPct(sectorPct)} vs index ${fmtPct(indexPct)} (${peerCountSameDirection}/${total} peers ${isUp ? '↑' : '↓'} >3%)`;
+        causalSignals3.unshift({ layer: 2, phrase: sectorPhrase, weight: 75 });
+      } else if (peerSympathyAlreadyFired) {
+        // 3-pillar gate already approved; the existing layer-2 signal
+        // is fine — no force-inject needed.
+      }
+      // else: no layer-2 — engine falls through to LIQUIDITY_VACUUM
+      // fallback with rejection reasons in the tooltip.
       const fused3 = fuseCausalNarrative(causalSignals3, isUp, smallcap3, microcap3, rejections3);
       const label3 = isSectorLed
         ? `Sector-led ${isUp ? 'rally' : 'sell-off'} (${friendlySector})`

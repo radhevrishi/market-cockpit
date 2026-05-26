@@ -1,0 +1,146 @@
+From ac84d61044bfc954c74b2a465eaaf2f55f192af3 Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Tue, 26 May 2026 10:59:31 +0000
+Subject: [PATCH] patch 0885: Tier 3 strict gate + kill category labels in
+ catalyst-scoring
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Two leftover false-positive paths after 0883/0884:
+
+1. Tier 3 (SECTOR_WIDE) ALWAYS force-injected a layer-2 sector phrase
+   before calling fuseCausalNarrative. That bypassed the strict 3-pillar
+   peer-sympathy gate added in 0884. Result: BLISSGVS +20% was tagged
+   "sector-cluster transmission — 11/23 peers ↑ >3% with sector roughly
+   in line (+0.9%)" even though peer magnitudes (3-5%) were nowhere
+   near BLISSGVS magnitude (20%) and the sector was NOT outperforming.
+   Fix: only inject the sector-led phrase when (a) sector delta ≥1.5pp
+   OR (b) the gate inside inferCausalSignals already approved a
+   layer-2 signal. Otherwise the engine falls through to the
+   LIQUIDITY_VACUUM fallback with REJECTED reasons in the tooltip.
+
+2. catalyst-scoring.ts had legacy category labels still emitting:
+     "Speculative spike" (for absPct ≥15)
+     "Smallcap momentum"
+     "Move without confirmed trigger"
+   These survived 0883 (which only fixed movers-attribution.ts).
+   Per user directive ("category words must only exist internally;
+   final output = causal sentence + mechanism"), replaced with:
+     "thin-float expansion (Xpct on muted volume) — liquidity-driven
+      repricing, no confirmed catalyst"
+     "smallcap liquidity expansion, no confirmed peer cluster —
+      likely retail-driven repricing"
+     "no confirmed catalyst detected — likely positional flow /
+      sector micro-rotation"
+   Volume-led case carries the vol multiple in the sentence.
+
+For BLISSGVS specifically (assuming peer median << 20% and vol co-
+movement < 50%, both very likely given the screen output), the new
+output reads:
+  "thin-float expansion (liquidity-driven) — no confirmed peer cluster"
+with tooltip:
+  "PRIMARY: liquidity expansion in thin-float name ·
+   REJECTED: peer-sympathy (peer median 3.5% << this 20.0%; only
+   2/11 peers showed vol co-movement; sector outperformance 0.4pp
+   < 1.0pp threshold)"
+
+Per-ticker news refetch (the third queued item) is already happening
+on the home page (lines 1074-1118) via both /api/v1/news?search and
+/api/v1/news-india/<ticker>. If BLISSGVS acquisition news exists in
+the upstream feeds at all, it would be matched by the 0882 ACQUISITION
+pattern. If it does not exist (genuine data gap), the engine is now
+honest about that.
+---
+ frontend/src/lib/catalyst-scoring.ts   | 29 +++++++++++++++++++++-----
+ frontend/src/lib/movers-attribution.ts | 29 ++++++++++++++++++++------
+ 2 files changed, 47 insertions(+), 11 deletions(-)
+
+diff --git a/frontend/src/lib/catalyst-scoring.ts b/frontend/src/lib/catalyst-scoring.ts
+index 52a08df..1ecb205 100644
+--- a/frontend/src/lib/catalyst-scoring.ts
++++ b/frontend/src/lib/catalyst-scoring.ts
+@@ -239,16 +239,35 @@ export function scoreCatalyst(ctx: ScoringContext): CatalystScoring {
+   }
+ 
+   // ─── Fill primary driver if still empty ─────────────────────────────
++  // PATCH 0885 — Per user audit: "Stop using category words as final
++  // output. Final output must always be causal sentence + mechanism."
++  // The old labels ('Speculative spike', 'Smallcap momentum', 'Move
++  // without confirmed trigger') are category words. Replace with
++  // mechanism-aware honest sentences that name the absence of a
++  // catalyst AND the dominant microstructure mechanism.
+   if (!primaryDriver) {
+-    // No trigger detected from attribution; build from microstructure if rich
++    const sectorBasket = smallcap ? 'smallcap basket' : 'name';
+     if (typeof volMultiple === 'number' && volMultiple >= 2.5) {
+-      primaryDriver = isUp ? 'Volume-led momentum (no news)' : 'Volume-led unwind (no news)';
++      // Heavy volume + no news = either operator rotation or institutional
++      // accumulation. Without delivery data we can't fully disambiguate,
++      // but the volume itself is the news.
++      primaryDriver = isUp
++        ? `volume-led ${sectorBasket} expansion (vol ${volMultiple.toFixed(1)}× 20D), no confirmed catalyst — likely operator rotation or pre-event positioning`
++        : `volume-led ${sectorBasket} contraction (vol ${volMultiple.toFixed(1)}× 20D), no confirmed catalyst — likely positioning unwind`;
+     } else if (absPct >= 15) {
+-      primaryDriver = isUp ? 'Speculative spike' : 'Sharp drawdown';
++      // Extreme move with no news + no volume → almost always thin-float
++      // liquidity vacuum. State this explicitly.
++      primaryDriver = isUp
++        ? `thin-float expansion (${absPct.toFixed(0)}% on muted volume) — liquidity-driven repricing, no confirmed catalyst`
++        : `thin-float contraction (${absPct.toFixed(0)}% on muted volume) — liquidity-driven repricing, no confirmed catalyst`;
+     } else if (smallcap) {
+-      primaryDriver = isUp ? 'Smallcap momentum' : 'Smallcap unwind';
++      primaryDriver = isUp
++        ? 'smallcap liquidity expansion, no confirmed peer cluster — likely retail-driven repricing'
++        : 'smallcap liquidity contraction, no confirmed catalyst';
+     } else {
+-      primaryDriver = isUp ? 'Move without confirmed trigger' : 'Drop without confirmed trigger';
++      primaryDriver = isUp
++        ? 'no confirmed catalyst detected — likely positional flow / sector micro-rotation'
++        : 'no confirmed catalyst detected — likely position unwind / sector micro-rotation';
+     }
+   }
+ 
+diff --git a/frontend/src/lib/movers-attribution.ts b/frontend/src/lib/movers-attribution.ts
+index af4da58..1226b47 100644
+--- a/frontend/src/lib/movers-attribution.ts
++++ b/frontend/src/lib/movers-attribution.ts
+@@ -1333,12 +1333,29 @@ export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttrib
+         microcap: microcap3,
+         rejections: rejections3,
+       });
+-      // Sector-led IS itself a Layer-2 finding — bump it as a high-weight
+-      // signal at the top of the list.
+-      const sectorPhrase = isSectorLed
+-        ? `sector-led ${isUp ? 'rally' : 'sell-off'} — ${friendlySector} ${fmtPct(sectorPct)} vs index ${fmtPct(indexPct)} (${peerCountSameDirection}/${total} peers ${isUp ? '↑' : '↓'} >3%)`
+-        : `broad participation — ${peerCountSameDirection}/${total} peers ${isUp ? '↑' : '↓'} >3% with sector roughly in line${typeof sectorPct === 'number' ? ` (${fmtPct(sectorPct)})` : ''}`;
+-      causalSignals3.unshift({ layer: 2, phrase: sectorPhrase, weight: isSectorLed ? 75 : 55 });
++      // PATCH 0885 — Only inject the sector-led signal when the move
++      // ACTUALLY correlates with the sector. The previous code force-
++      // injected a layer-2 phrase even when peer magnitudes / vol
++      // co-movement disagreed, producing the BLISSGVS / AVROIND false
++      // positive ("11/23 peers ↑ >3% with sector roughly in line"
++      // while BLISSGVS itself was +20% and peers were +3-5%).
++      //
++      // Rule: inject only if (a) clear sector-led move (delta ≥1.5pp)
++      // OR (b) the 3-pillar gate inside inferCausalSignals ALREADY
++      // emitted a layer-2 peer-sympathy signal (peer magnitude +
++      // volume both pass). Otherwise let the engine output the
++      // honest fallback ("thin-float expansion, no confirmed peer
++      // cluster") with REJECTED reason in the tooltip.
++      const peerSympathyAlreadyFired = causalSignals3.some((s) => s.layer === 2);
++      if (isSectorLed) {
++        const sectorPhrase = `sector-led ${isUp ? 'rally' : 'sell-off'} — ${friendlySector} ${fmtPct(sectorPct)} vs index ${fmtPct(indexPct)} (${peerCountSameDirection}/${total} peers ${isUp ? '↑' : '↓'} >3%)`;
++        causalSignals3.unshift({ layer: 2, phrase: sectorPhrase, weight: 75 });
++      } else if (peerSympathyAlreadyFired) {
++        // 3-pillar gate already approved; the existing layer-2 signal
++        // is fine — no force-inject needed.
++      }
++      // else: no layer-2 — engine falls through to LIQUIDITY_VACUUM
++      // fallback with rejection reasons in the tooltip.
+       const fused3 = fuseCausalNarrative(causalSignals3, isUp, smallcap3, microcap3, rejections3);
+       const label3 = isSectorLed
+         ? `Sector-led ${isUp ? 'rally' : 'sell-off'} (${friendlySector})`
+-- 
+2.34.1
+

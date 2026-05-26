@@ -239,16 +239,35 @@ export function scoreCatalyst(ctx: ScoringContext): CatalystScoring {
   }
 
   // ─── Fill primary driver if still empty ─────────────────────────────
+  // PATCH 0885 — Per user audit: "Stop using category words as final
+  // output. Final output must always be causal sentence + mechanism."
+  // The old labels ('Speculative spike', 'Smallcap momentum', 'Move
+  // without confirmed trigger') are category words. Replace with
+  // mechanism-aware honest sentences that name the absence of a
+  // catalyst AND the dominant microstructure mechanism.
   if (!primaryDriver) {
-    // No trigger detected from attribution; build from microstructure if rich
+    const sectorBasket = smallcap ? 'smallcap basket' : 'name';
     if (typeof volMultiple === 'number' && volMultiple >= 2.5) {
-      primaryDriver = isUp ? 'Volume-led momentum (no news)' : 'Volume-led unwind (no news)';
+      // Heavy volume + no news = either operator rotation or institutional
+      // accumulation. Without delivery data we can't fully disambiguate,
+      // but the volume itself is the news.
+      primaryDriver = isUp
+        ? `volume-led ${sectorBasket} expansion (vol ${volMultiple.toFixed(1)}× 20D), no confirmed catalyst — likely operator rotation or pre-event positioning`
+        : `volume-led ${sectorBasket} contraction (vol ${volMultiple.toFixed(1)}× 20D), no confirmed catalyst — likely positioning unwind`;
     } else if (absPct >= 15) {
-      primaryDriver = isUp ? 'Speculative spike' : 'Sharp drawdown';
+      // Extreme move with no news + no volume → almost always thin-float
+      // liquidity vacuum. State this explicitly.
+      primaryDriver = isUp
+        ? `thin-float expansion (${absPct.toFixed(0)}% on muted volume) — liquidity-driven repricing, no confirmed catalyst`
+        : `thin-float contraction (${absPct.toFixed(0)}% on muted volume) — liquidity-driven repricing, no confirmed catalyst`;
     } else if (smallcap) {
-      primaryDriver = isUp ? 'Smallcap momentum' : 'Smallcap unwind';
+      primaryDriver = isUp
+        ? 'smallcap liquidity expansion, no confirmed peer cluster — likely retail-driven repricing'
+        : 'smallcap liquidity contraction, no confirmed catalyst';
     } else {
-      primaryDriver = isUp ? 'Move without confirmed trigger' : 'Drop without confirmed trigger';
+      primaryDriver = isUp
+        ? 'no confirmed catalyst detected — likely positional flow / sector micro-rotation'
+        : 'no confirmed catalyst detected — likely position unwind / sector micro-rotation';
     }
   }
 
