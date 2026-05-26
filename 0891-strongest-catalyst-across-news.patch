@@ -1,0 +1,93 @@
+From 2ee51e61587df60335c24db9b0b233bd131f1dbe Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Tue, 26 May 2026 11:41:43 +0000
+Subject: [PATCH] patch 0891: pick strongest catalyst across ALL news, not just
+ news[0]
+
+Final missing piece for BLISSGVS. After 0890 fixed the vercel.json
+hijack and /api/v1/news-india/BLISSGVS started returning articles
+correctly, the attribution engine STILL emitted the liquidity-vacuum
+fallback because:
+
+  news[0] = "Bliss GVS Pharma Ltd Locks at Upper Circuit With 20%
+            Gain - Buyers Queue, Sellers Absent - Markets Mojo"
+            (generic upper-circuit headline, classifier returns
+             NEWS_GENERIC)
+  news[1] = "Modison Ltd leads gainers in B group"
+            (no Bliss mention, NEWS_GENERIC)
+  news[2] = "Bliss GVS hits 20% upper circuit as Anupam Rasayan to
+            acquire up to 43% stake for Rs 1,369 crore"
+            (THE acquisition, classifier returns MNA / ACQUISITION)
+
+Tier 2 was hardcoded to use news[0] only. So even with the right
+article in the response, the engine never looked past the first one.
+
+Fix: classify EVERY article, sort by catalyst priority + recency,
+pick the strongest:
+  MNA            100   M&A / acquisition / stake / open offer
+  REGULATORY      80   USFDA / SEBI / RBI / CDSCO
+  RATING          70   credit rating
+  ORDER_WIN       65   order / contract / LoA
+  EARNINGS        60   results / guidance
+  OFS             55   OFS / floor price
+  BLOCK_DEAL      50   promoter / block / bulk
+  SECTOR_ROTATION 20   sector-wide
+  NONE             0   generic
+
+Same pattern naturally upgrades other tickers too: any name with a
+GENERIC headline at #0 but a REAL catalyst at #1+ now gets the right
+chip.
+
+For BLISSGVS the row should now read:
+  "acquires 43% stake in Bliss GVS Pharma"
+- the 0889 ACQUIRE_VERB regex catches "to acquire up to 43% stake",
+emits subType=ACQUISITION, label generated from the regex match.
+---
+ frontend/src/lib/movers-attribution.ts | 31 ++++++++++++++++++++++++--
+ 1 file changed, 29 insertions(+), 2 deletions(-)
+
+diff --git a/frontend/src/lib/movers-attribution.ts b/frontend/src/lib/movers-attribution.ts
+index 70ae425..3bee824 100644
+--- a/frontend/src/lib/movers-attribution.ts
++++ b/frontend/src/lib/movers-attribution.ts
+@@ -1287,8 +1287,35 @@ export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttrib
+         return new Date(b.published_at || 0).getTime() - new Date(a.published_at || 0).getTime();
+       });
+     if (news.length > 0) {
+-      const top = news[0];
+-      const cat = classifyNewsCatalyst(top);
++      // PATCH 0891 — Pick the strongest catalyst across ALL news, not just
++      // news[0]. For BLISSGVS, the recency-sorted news[0] is a generic
++      // "Markets Mojo Upper Circuit" headline (no real catalyst), but
++      // news[2] is the actual "Anupam Rasayan to acquire 43% stake in
++      // Bliss GVS Pharma" acquisition. Previous code always picked the
++      // first → engine returned NEWS_GENERIC → row fell through to
++      // liquidity-vacuum fallback. Now: classify every article, sort by
++      // catalyst priority + recency, pick the strongest.
++      const CATALYST_PRIORITY: Record<CatalystType, number> = {
++        MNA:             100,  // M&A / acquisition / stake / open offer / etc
++        REGULATORY:       80,  // USFDA / SEBI / RBI / CDSCO
++        RATING:           70,  // credit rating action
++        ORDER_WIN:        65,  // ₹X Cr order / contract
++        EARNINGS:         60,  // Q[1-4] results / guidance
++        OFS:              55,  // OFS / floor price
++        BLOCK_DEAL:       50,  // promoter / block / bulk
++        SECTOR_ROTATION:  20,  // sector-wide
++        NONE:              0,  // generic
++      };
++      const classified = news.map((a) => ({ a, cat: classifyNewsCatalyst(a) }));
++      // Sort: catalyst priority desc, then recency desc.
++      classified.sort((x, y) => {
++        const px = CATALYST_PRIORITY[x.cat.type] ?? 0;
++        const py = CATALYST_PRIORITY[y.cat.type] ?? 0;
++        if (px !== py) return py - px;
++        return new Date(y.a.published_at || 0).getTime() - new Date(x.a.published_at || 0).getTime();
++      });
++      const top = classified[0].a;
++      const cat = classified[0].cat;
+       const newsConfidence: Confidence = peerCountSameDirection >= SECTOR_WIDE_MIN_PEERS ? 'MEDIUM' : 'MEDIUM';
+       // PATCH 0795 — terse 1-line news detail
+       const newsDetail = (() => {
+-- 
+2.34.1
+

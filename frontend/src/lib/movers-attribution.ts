@@ -1287,8 +1287,35 @@ export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttrib
         return new Date(b.published_at || 0).getTime() - new Date(a.published_at || 0).getTime();
       });
     if (news.length > 0) {
-      const top = news[0];
-      const cat = classifyNewsCatalyst(top);
+      // PATCH 0891 — Pick the strongest catalyst across ALL news, not just
+      // news[0]. For BLISSGVS, the recency-sorted news[0] is a generic
+      // "Markets Mojo Upper Circuit" headline (no real catalyst), but
+      // news[2] is the actual "Anupam Rasayan to acquire 43% stake in
+      // Bliss GVS Pharma" acquisition. Previous code always picked the
+      // first → engine returned NEWS_GENERIC → row fell through to
+      // liquidity-vacuum fallback. Now: classify every article, sort by
+      // catalyst priority + recency, pick the strongest.
+      const CATALYST_PRIORITY: Record<CatalystType, number> = {
+        MNA:             100,  // M&A / acquisition / stake / open offer / etc
+        REGULATORY:       80,  // USFDA / SEBI / RBI / CDSCO
+        RATING:           70,  // credit rating action
+        ORDER_WIN:        65,  // ₹X Cr order / contract
+        EARNINGS:         60,  // Q[1-4] results / guidance
+        OFS:              55,  // OFS / floor price
+        BLOCK_DEAL:       50,  // promoter / block / bulk
+        SECTOR_ROTATION:  20,  // sector-wide
+        NONE:              0,  // generic
+      };
+      const classified = news.map((a) => ({ a, cat: classifyNewsCatalyst(a) }));
+      // Sort: catalyst priority desc, then recency desc.
+      classified.sort((x, y) => {
+        const px = CATALYST_PRIORITY[x.cat.type] ?? 0;
+        const py = CATALYST_PRIORITY[y.cat.type] ?? 0;
+        if (px !== py) return py - px;
+        return new Date(y.a.published_at || 0).getTime() - new Date(x.a.published_at || 0).getTime();
+      });
+      const top = classified[0].a;
+      const cat = classified[0].cat;
       const newsConfidence: Confidence = peerCountSameDirection >= SECTOR_WIDE_MIN_PEERS ? 'MEDIUM' : 'MEDIUM';
       // PATCH 0795 — terse 1-line news detail
       const newsDetail = (() => {
