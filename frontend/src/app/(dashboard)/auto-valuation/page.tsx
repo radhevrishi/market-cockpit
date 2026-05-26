@@ -517,6 +517,16 @@ function inferSector(text: string, company?: string): string | undefined {
       [/\bformulation\b|\bAPI\b|\bdrug\b/g, 2],
       [/\bUSFDA\b|\bEU GMP\b|\bWHO GMP\b/g, 5],
       [/\bANDA\b|\bDMF\b|\binjectable\b/g, 4],
+      // PATCH 0877 — Animal health / Veterinary API also belongs here.
+      // Mirrored from engine.ts (the two have to stay in sync per
+      // CLAUDE.md §20.3 architectural lesson).
+      [/\bveterinar(?:y|ian)\b/g, 5],
+      [/\banimal\s+health\b/g, 5],
+      [/\banimal\s+api\b/g, 5],
+      [/\banimal\s+(?:healthcare|pharma)\b/g, 5],
+      [/\banthelmintics?\b|\bectoparasiticides?\b|\bantiprotozoals?\b/g, 5],
+      [/\bbiosimilars?\b|\bvaccines?\b/g, 3],
+      [/\bcGMP\b/g, 3],
     ]],
     ['Specialty Chemicals', [
       [/\bspecialty chemicals?\b/g, 5],
@@ -1403,11 +1413,36 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
     if (severity === 'HIGH' || severity === 'CRITICAL') rationale.unshift(`🚨 FORENSIC PUMP WATCH (${pumpScore}/11 flags, ${severity}): ${flags.slice(0, 2).join(' · ')}`);
   }
 
+  // PATCH 0877 — Filter displayed guidance items through plausibility gate
+  // (mirrored from engine.ts). Drops page-number noise / wrong-metric
+  // matches that previously surfaced like "Revenue FY22 ₹14 Cr" on a
+  // company with ₹500 Cr actual revenue.
+  const _lsales = excelData?.latestSales || 0;
+  const _lebitda = excelData?.latestEBITDA || 0;
+  const _lpat = excelData?.latestPAT || 0;
+  const guidanceFiltered = allGuidance.filter((g) => {
+    if (g.unit !== '₹ Cr') return true;
+    const v = g.point ?? g.high ?? g.low ?? 0;
+    if (v <= 0) return true;
+    if (g.metric === 'REVENUE' || g.metric === 'PEAK_REVENUE') {
+      if (_lsales > 0 && (v > _lsales * 10 || v < _lsales * 0.2)) return false;
+    } else if (g.metric === 'EBITDA') {
+      if (_lebitda > 0 && (v > _lebitda * 15 || v < _lebitda * 0.1)) return false;
+    } else if (g.metric === 'PAT') {
+      if (_lpat > 0 && (v > _lpat * 20 || v < _lpat * 0.05)) return false;
+    }
+    return true;
+  });
+  const guidanceRejectedCount = allGuidance.length - guidanceFiltered.length;
+  if (guidanceRejectedCount > 0) {
+    rationale.push(`Guidance filter: ${guidanceRejectedCount} extractor matches dropped as implausible vs latest reported numbers.`);
+  }
+
   return {
     ticker, company, sector,
     quote: quote || undefined,
     excelData,
-    guidance: allGuidance,
+    guidance: guidanceFiltered,
     forwardYear, forwardRevenue, forwardEBITDA, forwardPAT, inferredMargin,
     peResult, psResult, evResult,
     // PATCH 0657 — Y2 projections

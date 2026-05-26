@@ -514,6 +514,18 @@ function inferSector(text: string, company?: string): string | undefined {
       [/\bformulation\b|\bAPI\b|\bdrug\b/g, 2],
       [/\bUSFDA\b|\bEU GMP\b|\bWHO GMP\b/g, 5],
       [/\bANDA\b|\bDMF\b|\binjectable\b/g, 4],
+      // PATCH 0877 — Animal health / Veterinary API also belongs here.
+      // NGL Fine Chem (95% Animal API, WHO-GMP) was getting mis-routed
+      // to Industrials / Capital Goods because the only matches were
+      // generic 'capex' and 'manufacturing'. Veterinary API is a
+      // pharma sub-segment, not industrials.
+      [/\bveterinar(?:y|ian)\b/g, 5],
+      [/\banimal\s+health\b/g, 5],
+      [/\banimal\s+api\b/g, 5],
+      [/\banimal\s+(?:healthcare|pharma)\b/g, 5],
+      [/\banthelmintics?\b|\bectoparasiticides?\b|\bantiprotozoals?\b/g, 5],
+      [/\bbiosimilars?\b|\bvaccines?\b/g, 3],
+      [/\bcGMP\b/g, 3],
     ]],
     ['Specialty Chemicals', [
       [/\bspecialty chemicals?\b/g, 5],
@@ -1444,11 +1456,40 @@ export async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationRepor
     }
   }
 
+  // PATCH 0877 — Filter the DISPLAYED guidance items through the same
+  // plausibility gate that 0849 already applies to the valuation chain.
+  // Previously the panel "📋 Forward Guidance Extracted (N)" showed every
+  // item the regex matched — including page numbers (`14 NGL Fine-Chem`)
+  // and footer noise that the valuation engine had already discarded.
+  // For NGL Fine Chem this surfaced "Revenue FY22 ₹14 Cr" repeatedly when
+  // the real revenue was ₹500 Cr. Apply the same min/max bounds here.
+  const _lsales = excelData?.latestSales || 0;
+  const _lebitda = excelData?.latestEBITDA || 0;
+  const _lpat = excelData?.latestPAT || 0;
+  const guidanceFiltered: GuidanceItem[] = allGuidance.filter((g) => {
+    // Always keep non-monetary metrics (margins, growth %, days, units, bps)
+    if (g.unit !== '₹ Cr') return true;
+    const v = g.point ?? g.high ?? g.low ?? 0;
+    if (v <= 0) return true; // can't validate, let it through
+    if (g.metric === 'REVENUE' || g.metric === 'PEAK_REVENUE') {
+      if (_lsales > 0 && (v > _lsales * 10 || v < _lsales * 0.2)) return false;
+    } else if (g.metric === 'EBITDA') {
+      if (_lebitda > 0 && (v > _lebitda * 15 || v < _lebitda * 0.1)) return false;
+    } else if (g.metric === 'PAT') {
+      if (_lpat > 0 && (v > _lpat * 20 || v < _lpat * 0.05)) return false;
+    }
+    return true;
+  });
+  const guidanceRejectedCount = allGuidance.length - guidanceFiltered.length;
+  if (guidanceRejectedCount > 0) {
+    rationale.push(`Guidance filter: ${guidanceRejectedCount} extractor matches dropped as implausible vs latest reported numbers (page-number noise / wrong-metric matches).`);
+  }
+
   return {
     ticker, company, sector,
     quote: quote || undefined,
     excelData,
-    guidance: allGuidance,
+    guidance: guidanceFiltered,
     forwardYear, forwardRevenue, forwardEBITDA, forwardPAT, inferredMargin,
     peResult, psResult, evResult,
     // PATCH 0657 — Y2 projections

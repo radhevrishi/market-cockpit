@@ -1,0 +1,158 @@
+From 3cf3f858af5a812ed20b1acd908d149a3dbd7335 Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Tue, 26 May 2026 09:54:30 +0000
+Subject: [PATCH] patch 0877: Auto-Val sector inference + guidance plausibility
+ filter
+
+NGL Fine Chem audit surfaced two real bugs:
+
+1. Sector inference routed veterinary API maker (95% Animal API per their
+   PDF p.7) to Industrials/Capital Goods instead of Pharmaceuticals -
+   cascading to wrong P/E multiple band (25-45x industrials default).
+   Added Veterinary / Animal Health / Animal API / Anthelmintics /
+   Ectoparasiticides / Antiprotozoals / cGMP keywords with weight 5
+   under Pharmaceuticals so animal-health makers route correctly.
+
+2. Displayed Forward Guidance Extracted panel showed page-number /
+   footer noise ("Revenue FY22 14 Cr" on a 500 Cr company) because the
+   panel rendered allGuidance directly. The valuation engine plausibility
+   gate (PATCH 0849) was rejecting these from the calc chain but the
+   visual panel still surfaced them. Filter is now mirrored on the
+   displayed list: implausible REVENUE / EBITDA / PAT values (vs
+   excelData latest) are dropped + a rationale line reports the
+   rejected count.
+
+Both fixes mirrored to engine.ts and page.tsx duplicate copies of
+buildReport + inferSector (CLAUDE.md S20.3 architectural lesson).
+---
+ .../app/(dashboard)/auto-valuation/engine.ts  | 43 ++++++++++++++++++-
+ .../app/(dashboard)/auto-valuation/page.tsx   | 37 +++++++++++++++-
+ 2 files changed, 78 insertions(+), 2 deletions(-)
+
+diff --git a/frontend/src/app/(dashboard)/auto-valuation/engine.ts b/frontend/src/app/(dashboard)/auto-valuation/engine.ts
+index 82f6697..65392bb 100644
+--- a/frontend/src/app/(dashboard)/auto-valuation/engine.ts
++++ b/frontend/src/app/(dashboard)/auto-valuation/engine.ts
+@@ -514,6 +514,18 @@ function inferSector(text: string, company?: string): string | undefined {
+       [/\bformulation\b|\bAPI\b|\bdrug\b/g, 2],
+       [/\bUSFDA\b|\bEU GMP\b|\bWHO GMP\b/g, 5],
+       [/\bANDA\b|\bDMF\b|\binjectable\b/g, 4],
++      // PATCH 0877 — Animal health / Veterinary API also belongs here.
++      // NGL Fine Chem (95% Animal API, WHO-GMP) was getting mis-routed
++      // to Industrials / Capital Goods because the only matches were
++      // generic 'capex' and 'manufacturing'. Veterinary API is a
++      // pharma sub-segment, not industrials.
++      [/\bveterinar(?:y|ian)\b/g, 5],
++      [/\banimal\s+health\b/g, 5],
++      [/\banimal\s+api\b/g, 5],
++      [/\banimal\s+(?:healthcare|pharma)\b/g, 5],
++      [/\banthelmintics?\b|\bectoparasiticides?\b|\bantiprotozoals?\b/g, 5],
++      [/\bbiosimilars?\b|\bvaccines?\b/g, 3],
++      [/\bcGMP\b/g, 3],
+     ]],
+     ['Specialty Chemicals', [
+       [/\bspecialty chemicals?\b/g, 5],
+@@ -1444,11 +1456,40 @@ export async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationRepor
+     }
+   }
+ 
++  // PATCH 0877 — Filter the DISPLAYED guidance items through the same
++  // plausibility gate that 0849 already applies to the valuation chain.
++  // Previously the panel "📋 Forward Guidance Extracted (N)" showed every
++  // item the regex matched — including page numbers (`14 NGL Fine-Chem`)
++  // and footer noise that the valuation engine had already discarded.
++  // For NGL Fine Chem this surfaced "Revenue FY22 ₹14 Cr" repeatedly when
++  // the real revenue was ₹500 Cr. Apply the same min/max bounds here.
++  const _lsales = excelData?.latestSales || 0;
++  const _lebitda = excelData?.latestEBITDA || 0;
++  const _lpat = excelData?.latestPAT || 0;
++  const guidanceFiltered: GuidanceItem[] = allGuidance.filter((g) => {
++    // Always keep non-monetary metrics (margins, growth %, days, units, bps)
++    if (g.unit !== '₹ Cr') return true;
++    const v = g.point ?? g.high ?? g.low ?? 0;
++    if (v <= 0) return true; // can't validate, let it through
++    if (g.metric === 'REVENUE' || g.metric === 'PEAK_REVENUE') {
++      if (_lsales > 0 && (v > _lsales * 10 || v < _lsales * 0.2)) return false;
++    } else if (g.metric === 'EBITDA') {
++      if (_lebitda > 0 && (v > _lebitda * 15 || v < _lebitda * 0.1)) return false;
++    } else if (g.metric === 'PAT') {
++      if (_lpat > 0 && (v > _lpat * 20 || v < _lpat * 0.05)) return false;
++    }
++    return true;
++  });
++  const guidanceRejectedCount = allGuidance.length - guidanceFiltered.length;
++  if (guidanceRejectedCount > 0) {
++    rationale.push(`Guidance filter: ${guidanceRejectedCount} extractor matches dropped as implausible vs latest reported numbers (page-number noise / wrong-metric matches).`);
++  }
++
+   return {
+     ticker, company, sector,
+     quote: quote || undefined,
+     excelData,
+-    guidance: allGuidance,
++    guidance: guidanceFiltered,
+     forwardYear, forwardRevenue, forwardEBITDA, forwardPAT, inferredMargin,
+     peResult, psResult, evResult,
+     // PATCH 0657 — Y2 projections
+diff --git a/frontend/src/app/(dashboard)/auto-valuation/page.tsx b/frontend/src/app/(dashboard)/auto-valuation/page.tsx
+index 68ecd4b..6f11511 100644
+--- a/frontend/src/app/(dashboard)/auto-valuation/page.tsx
++++ b/frontend/src/app/(dashboard)/auto-valuation/page.tsx
+@@ -517,6 +517,16 @@ function inferSector(text: string, company?: string): string | undefined {
+       [/\bformulation\b|\bAPI\b|\bdrug\b/g, 2],
+       [/\bUSFDA\b|\bEU GMP\b|\bWHO GMP\b/g, 5],
+       [/\bANDA\b|\bDMF\b|\binjectable\b/g, 4],
++      // PATCH 0877 — Animal health / Veterinary API also belongs here.
++      // Mirrored from engine.ts (the two have to stay in sync per
++      // CLAUDE.md §20.3 architectural lesson).
++      [/\bveterinar(?:y|ian)\b/g, 5],
++      [/\banimal\s+health\b/g, 5],
++      [/\banimal\s+api\b/g, 5],
++      [/\banimal\s+(?:healthcare|pharma)\b/g, 5],
++      [/\banthelmintics?\b|\bectoparasiticides?\b|\bantiprotozoals?\b/g, 5],
++      [/\bbiosimilars?\b|\bvaccines?\b/g, 3],
++      [/\bcGMP\b/g, 3],
+     ]],
+     ['Specialty Chemicals', [
+       [/\bspecialty chemicals?\b/g, 5],
+@@ -1403,11 +1413,36 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
+     if (severity === 'HIGH' || severity === 'CRITICAL') rationale.unshift(`🚨 FORENSIC PUMP WATCH (${pumpScore}/11 flags, ${severity}): ${flags.slice(0, 2).join(' · ')}`);
+   }
+ 
++  // PATCH 0877 — Filter displayed guidance items through plausibility gate
++  // (mirrored from engine.ts). Drops page-number noise / wrong-metric
++  // matches that previously surfaced like "Revenue FY22 ₹14 Cr" on a
++  // company with ₹500 Cr actual revenue.
++  const _lsales = excelData?.latestSales || 0;
++  const _lebitda = excelData?.latestEBITDA || 0;
++  const _lpat = excelData?.latestPAT || 0;
++  const guidanceFiltered = allGuidance.filter((g) => {
++    if (g.unit !== '₹ Cr') return true;
++    const v = g.point ?? g.high ?? g.low ?? 0;
++    if (v <= 0) return true;
++    if (g.metric === 'REVENUE' || g.metric === 'PEAK_REVENUE') {
++      if (_lsales > 0 && (v > _lsales * 10 || v < _lsales * 0.2)) return false;
++    } else if (g.metric === 'EBITDA') {
++      if (_lebitda > 0 && (v > _lebitda * 15 || v < _lebitda * 0.1)) return false;
++    } else if (g.metric === 'PAT') {
++      if (_lpat > 0 && (v > _lpat * 20 || v < _lpat * 0.05)) return false;
++    }
++    return true;
++  });
++  const guidanceRejectedCount = allGuidance.length - guidanceFiltered.length;
++  if (guidanceRejectedCount > 0) {
++    rationale.push(`Guidance filter: ${guidanceRejectedCount} extractor matches dropped as implausible vs latest reported numbers.`);
++  }
++
+   return {
+     ticker, company, sector,
+     quote: quote || undefined,
+     excelData,
+-    guidance: allGuidance,
++    guidance: guidanceFiltered,
+     forwardYear, forwardRevenue, forwardEBITDA, forwardPAT, inferredMargin,
+     peResult, psResult, evResult,
+     // PATCH 0657 — Y2 projections
+-- 
+2.34.1
+
