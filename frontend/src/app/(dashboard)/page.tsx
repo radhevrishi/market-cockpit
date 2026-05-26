@@ -2019,16 +2019,39 @@ export default function HomeDashboard() {
           </div>
         )}
 
-        {/* ═══════════════ PATCH 0897 — TURNAROUND TIER ═════════════════ */}
-        {lensedTurnaround.length > 0 && (
+        {/* ═══════════════ PATCH 0897/0898 — TURNAROUND TIER ═════════════
+            Always renders. When user has no turnaround data uploaded,
+            shows an empty-state nudge with the upload path. When data
+            exists, renders the institutional BUY-ZONE shortlist. */}
+        {lensedTurnaround.length > 0 ? (
           <DecisionTierBlock
             tier={1}
             label="TURNAROUND BUY-ZONE"
             color="#F59E0B"
-            description="Top turnaround setups from your /multibagger Turnarounds upload — BEST candidates only (archetype = TURNAROUND, in BUY-ZONE / Phase 2-3, survival ≥6, concall ≥15). Different playbook than the IMMEDIATE ACTION list above — these are INFLECTION setups, not sustained-quality compounders."
+            description="Top turnaround setups from your /multibagger Turnarounds upload — BEST candidates (archetype = TURNAROUND, in BUY-ZONE / Phase 2-3, survival ≥6, concall ≥15). Different playbook than the IMMEDIATE ACTION list above — these are INFLECTION setups, not sustained-quality compounders."
             items={lensedTurnaround}
             expanded
           />
+        ) : (
+          <div style={{ ...cardStyle, borderLeft: '3px solid #F59E0B' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span style={{ fontSize: 14, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.4px' }}>
+                🔄 TURNAROUND BUY-ZONE (0)
+              </span>
+              <Link href="/multibagger?tab=turnaround" style={{ fontSize: 11, color: '#F59E0B', textDecoration: 'none' }}>Open →</Link>
+            </div>
+            <div style={{ fontSize: 11.5, color: DIM, lineHeight: 1.5, marginBottom: 8 }}>
+              Inflection setups · BUY-ZONE 1 (EARLY-SHOOTS) + BUY-ZONE 2 (PATTERN) shortlist
+              from your <Link href="/multibagger?tab=turnaround" style={{ color: '#F59E0B', textDecoration: 'underline' }}>Turnarounds</Link> tab.
+              Different playbook than the IMMEDIATE ACTION list above — these are recovery / re-rating plays,
+              not sustained-quality compounders.
+            </div>
+            <div style={{ fontSize: 11, color: DIM, lineHeight: 1.5, padding: 10, background: '#0a0e1a', borderRadius: 6, border: `1px dashed ${BORDER}` }}>
+              📭 No turnaround candidates yet. Upload a turnaround Screener CSV on the{' '}
+              <Link href="/multibagger?tab=turnaround" style={{ color: '#F59E0B', textDecoration: 'underline' }}>🔄 Turnarounds tab</Link>{' '}
+              of the Multibagger page. The engine scores 7 dimensions (earnings reversal · operational reset · balance-sheet repair · concall quality · sector tailwind · governance · valuation set-up) and surfaces BEST candidates here.
+            </div>
+          </div>
         )}
 
         {/* ═══════════════ WHAT CHANGED TODAY ═══════════════════════════ */}
@@ -2746,7 +2769,7 @@ export default function HomeDashboard() {
                 if (a._inUniverse !== b._inUniverse) return a._inUniverse ? -1 : 1;
                 return 0;
               });
-              const SHOWN = 30;  // PATCH 0864: bumped 25 → 30 per user
+              const SHOWN = 15;  // PATCH 0898: 30 → 15 per user — half the rail, makes room for Turnaround block
               const items = enriched.slice(0, SHOWN);
               return (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1, minHeight: 0 }}>
