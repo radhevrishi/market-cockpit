@@ -122,6 +122,8 @@ interface HomeState {
   tier1: TierAction[];
   tier2: TierAction[];
   tier3: TierAction[];
+  // PATCH 0897 — Dedicated turnaround setups (different playbook than multibagger)
+  turnaroundTier1?: TierAction[];
   changedToday: ChangedRow[];
   portfolioBySector: Array<{ sector: string; count: number; tickers: string[]; }>;
   concallHits?: Array<{ ticker: string; company?: string; headline: string; tier?: string; published_at?: string }>;  // PATCH 0617
@@ -267,9 +269,9 @@ function decomposeScore(row: any): Record<string, number> {
 // instant (no network) so we run them up-front and render the Home shell
 // immediately. Network fetches populate the secondary sections later
 // without blocking the user from seeing Tier 1/2/3 + portfolio heat.
-function buildSyncState(): Pick<HomeState, 'tier1' | 'tier2' | 'tier3' | 'changedToday' | 'portfolio' | 'portfolioBySector' | 'staleDataAgeDays' | 'alphaFeedback'> {
+function buildSyncState(): Pick<HomeState, 'tier1' | 'tier2' | 'tier3' | 'turnaroundTier1' | 'changedToday' | 'portfolio' | 'portfolioBySector' | 'staleDataAgeDays' | 'alphaFeedback'> {
   if (typeof window === 'undefined') {
-    return { tier1: [], tier2: [], tier3: [], changedToday: [], portfolio: [], portfolioBySector: [] };
+    return { tier1: [], tier2: [], tier3: [], turnaroundTier1: [], changedToday: [], portfolio: [], portfolioBySector: [] };
   }
   let portfolio: PortfolioHolding[] = [];
   try { portfolio = JSON.parse(localStorage.getItem('mc_portfolio_holdings') || '[]') || []; } catch {}
@@ -317,16 +319,47 @@ function buildSyncState(): Pick<HomeState, 'tier1' | 'tier2' | 'tier3' | 'change
     .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
     .map((r: any) => buildTier(r, true));
 
-  // PATCH 0618 — Tier 1 grown 6 → 8 now that USA stocks share the slot.
-  let tier1: TierAction[] = tier1Strict.slice(0, 8);
-  if (tier1.length < 8) {
+  // PATCH 0897 — Tier 1 grown 8 → 10 per user request, with explicit
+  // US slot guarantee: reserve at least 2 spots for top-scored US names
+  // when any exist in the universe (most user uploads are India-heavy,
+  // so India would otherwise occupy all 10 even with strong US picks).
+  const TIER1_CAP = 10;
+  const TIER1_US_MIN = 2;
+  let tier1: TierAction[] = tier1Strict.slice(0, TIER1_CAP);
+  // Ensure at least N US names appear when US names exist that qualify.
+  const usaQualified = allRows
+    .filter((r: any) => r._market === 'US'
+                     && (r.grade === 'A+' || r.grade === 'A')
+                     && !decisions[(r.symbol || '').toUpperCase()])
+    .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0));
+  const usaInTier1 = () => tier1.filter(t => (t as any).market === 'US').length;
+  if (usaQualified.length > 0 && usaInTier1() < TIER1_US_MIN) {
+    const haveSyms = new Set(tier1.map(t => symKey(t.symbol)));
+    const usaTopUp = usaQualified
+      .filter((r: any) => !haveSyms.has(symKey(r.symbol)))
+      .slice(0, TIER1_US_MIN - usaInTier1())
+      .map((r: any) => buildTier(r, cbSet.has(symKey(r.symbol))));
+    // Drop the lowest-scoring entries to make room, but never drop ★ cross-confirmed
+    while (tier1.length + usaTopUp.length > TIER1_CAP) {
+      // Find the lowest-scoring non-cbConfirmed entry to drop
+      const dropIdx = tier1
+        .map((t, i) => ({ t, i }))
+        .filter(x => !x.t.cbConfirmed)
+        .sort((a, b) => (a.t.score ?? 0) - (b.t.score ?? 0))[0]?.i ?? -1;
+      if (dropIdx < 0) break;
+      tier1.splice(dropIdx, 1);
+    }
+    tier1 = [...tier1, ...usaTopUp];
+  }
+  // Fill any remaining slots with A-grade non-CB fillers.
+  if (tier1.length < TIER1_CAP) {
     const haveSyms = new Set(tier1.map(t => symKey(t.symbol)));
     const fillers = allRows
       .filter((r: any) => (r.grade === 'A+' || r.grade === 'A')
                        && !haveSyms.has(symKey(r.symbol))
                        && !decisions[(r.symbol || '').toUpperCase()])
       .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
-      .slice(0, 8 - tier1.length)
+      .slice(0, TIER1_CAP - tier1.length)
       .map((r: any) => buildTier(r, false));
     tier1 = [...tier1, ...fillers];
   }
@@ -342,6 +375,51 @@ function buildSyncState(): Pick<HomeState, 'tier1' | 'tier2' | 'tier3' | 'change
     .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
     .slice(0, 5)
     .map((r: any) => buildTier(r));
+
+  // PATCH 0897 — NEW: Turnaround tier. Reads the turnaround scoring data
+  // the user uploads on the Turnarounds tab and surfaces the top 3 best
+  // candidates as a dedicated home-page section (separate from the
+  // multibagger Tier 1 because the playbook is different: turnaround =
+  // INFLECTION setup, multibagger = sustained quality).
+  const turnaroundRaw: any[] = (() => {
+    try { return JSON.parse(localStorage.getItem('mb_turnaround_scored_v1') || '[]') || []; } catch { return []; }
+  })();
+  const turnaroundTier1: TierAction[] = (turnaroundRaw || [])
+    .filter((r: any) => r && (r.isBestCandidate === true || (r.archetype === 'TURNAROUND' && (r.totalScore ?? 0) >= 60)))
+    .sort((a: any, b: any) => (b.totalScore ?? 0) - (a.totalScore ?? 0))
+    .slice(0, 5)
+    .map((r: any) => {
+      // Compose a turnaround-specific thesis line carrying stage + phase + tier
+      const phaseLbl = r.phaseLabel ? r.phaseLabel : (r.phase ? `Phase ${r.phase}` : '');
+      const stageLbl = r.stage ? String(r.stage).replace(/-/g, ' ').toLowerCase() : '';
+      const survival = typeof r.survivalScore === 'number' ? `survival ${r.survivalScore}/8` : '';
+      const thesisParts = [phaseLbl, stageLbl, survival].filter(Boolean);
+      const triggerParts: string[] = [];
+      if (r.inBuyZone) triggerParts.push('BUY-ZONE');
+      if (r.concallScore >= 15) triggerParts.push('concall ≥15');
+      const horizon = r.phase === 2 || r.phase === 3 ? '2-4 quarters' : '4-8 quarters';
+      return {
+        symbol: r.symbol,
+        company: r.company || r.companyName || r.symbol,
+        score: r.totalScore ?? 0,
+        grade: r.grade || 'B',
+        sector: r.sector || 'Turnaround',
+        thesis: `Turnaround setup · ${thesisParts.join(' · ')}` || 'Turnaround inflection setup',
+        risk: (r.killers && r.killers.length > 0 ? r.killers.slice(0, 2).join(' · ') : 'Stage regression · liquidity squeeze'),
+        horizon,
+        trigger: triggerParts.length > 0 ? triggerParts.join(' + ') : 'Next concall + margin print',
+        scoreBreakdown: {
+          quality: r.balanceSheetScore || 0,
+          growth: r.earningsScore || 0,
+          momentum: r.concallScore || 0,
+          valuation: r.valuationScore || 0,
+          other: (r.industryScore || 0) + (r.governanceScore || 0),
+        },
+        href: `/multibagger?tab=turnaround#${encodeURIComponent(r.symbol)}`,
+        cbConfirmed: cbSet.has(symKey(r.symbol)),
+        market: 'IN',
+      } as TierAction;
+    });
 
   // PATCH 0617 — includes both India + USA changes
   const changedToday: ChangedRow[] = allRows
@@ -412,7 +490,7 @@ function buildSyncState(): Pick<HomeState, 'tier1' | 'tier2' | 'tier3' | 'change
     }
   } catch {}
 
-  return { tier1, tier2, tier3, changedToday, portfolio, portfolioBySector, staleDataAgeDays, alphaFeedback };
+  return { tier1, tier2, tier3, turnaroundTier1, changedToday, portfolio, portfolioBySector, staleDataAgeDays, alphaFeedback };
 }
 
 export default function HomeDashboard() {
@@ -1675,6 +1753,8 @@ export default function HomeDashboard() {
   const lensedTier1 = useMemo(() => applyLens(data.tier1, true), [data.tier1, activeLens]);
   const lensedTier2 = useMemo(() => applyLens(data.tier2, false), [data.tier2, activeLens]);
   const lensedTier3 = useMemo(() => applyLens(data.tier3, false), [data.tier3, activeLens]);
+  // PATCH 0897 — Turnaround tier lensing
+  const lensedTurnaround = useMemo(() => applyLens((data as any).turnaroundTier1 || [], true), [(data as any).turnaroundTier1, activeLens]);
 
   const addCustomLens = () => {
     const name = window.prompt('Lens name (e.g. "AI Infra")');
@@ -1921,7 +2001,7 @@ export default function HomeDashboard() {
             tier={1}
             label="IMMEDIATE ACTION"
             color="#10B981"
-            description="Cross-confirmed (★) = A-grade + on Conviction Beats + not in Decision Log. (+) = A-grade top-up when fewer than 6 cross-confirmed exist."
+            description="Cross-confirmed (★) = A-grade + on Conviction Beats + not in Decision Log. (+) = A-grade top-up when fewer than 10 cross-confirmed exist. India + USA combined; at least 2 US slots reserved when US A-grade names exist."
             items={lensedTier1}
             expanded
           />
@@ -1937,6 +2017,18 @@ export default function HomeDashboard() {
               <Link href="/earnings-opportunities" style={navChip('#F59E0B')}>📅 Earnings Ops</Link>
             </div>
           </div>
+        )}
+
+        {/* ═══════════════ PATCH 0897 — TURNAROUND TIER ═════════════════ */}
+        {lensedTurnaround.length > 0 && (
+          <DecisionTierBlock
+            tier={1}
+            label="TURNAROUND BUY-ZONE"
+            color="#F59E0B"
+            description="Top turnaround setups from your /multibagger Turnarounds upload — BEST candidates only (archetype = TURNAROUND, in BUY-ZONE / Phase 2-3, survival ≥6, concall ≥15). Different playbook than the IMMEDIATE ACTION list above — these are INFLECTION setups, not sustained-quality compounders."
+            items={lensedTurnaround}
+            expanded
+          />
         )}
 
         {/* ═══════════════ WHAT CHANGED TODAY ═══════════════════════════ */}
