@@ -1,0 +1,164 @@
+From 28ccb5e5f6cf40fbd286f55e2512dc9f91944adf Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Tue, 26 May 2026 11:33:53 +0000
+Subject: [PATCH] patch 0890: vercel.json - exclude Next.js native routes from
+ Render proxy
+
+THE ACTUAL ROOT CAUSE of why BLISSGVS / MARKSANS / BIRLAPREC / AVROIND
+kept showing "thin-float expansion" despite patches 0886-0889 fixing
+every other layer of the pipeline.
+
+Diagnostic: curl https://market-cockpit.vercel.app/api/v1/news-india/BLISSGVS
+returns {"detail":"Not Found"} - FastAPI format, not Next.js. Response
+header x-render-origin-server=uvicorn confirms the request is being
+served by the Render Python backend, NOT by my Next.js route at
+src/app/api/v1/news-india/[ticker]/route.ts.
+
+The previous vercel.json had a single catch-all rewrite:
+  { source: "/api/v1/:path*",
+    destination: "https://market-cockpit-api.onrender.com/api/v1/:path*" }
+
+That forwarded EVERY /api/v1/* request to Render, even when a Next.js
+route file existed. The Render backend does not have /api/v1/news-india,
+so the request 404ed. The home page Movers enrichment got an empty
+news payload, the engine had no catalyst, the row fell through to the
+LIQUIDITY_VACUUM fallback - the "thin-float expansion" the user kept
+seeing.
+
+The next.config.js comment even explicitly said
+  "On Vercel, Next.js API routes serve /api/v1/* natively. No rewrite
+   needed."
+- but vercel.json contradicted it. The contradiction never got noticed
+because most of the Next.js routes that have been added (graded,
+concall-intel/live-feed, etc) HAPPEN to have matching Render endpoints,
+so the proxy returned the same data and looked "fine". news-india
+never had a Render counterpart - the bug only surfaced for that path.
+
+Fix: passthrough self-rewrites for every Next.js-native namespace
+BEFORE the Render catch-all. Vercel evaluates rewrites top-to-bottom;
+a self-rewrite (source == destination) tells the edge "do nothing,
+let Next.js handle this natively". The final catch-all stays so any
+genuinely Render-only endpoint still proxies correctly.
+
+Namespaces excluded from Render proxy:
+  news-india, news, concall-intel, concall, earnings, heartbeat,
+  edgar, order-book, rating-actions, super-investor-flow,
+  super-investor-news, alerts, cron, breadth, admin, themes,
+  specsit, special-situations, ticker-roles, transmission, public,
+  source-tier, system-status
+
+Did NOT include the _comment field (CLAUDE.md S18.5 P0706 lesson:
+Vercel rejects vercel.json with non-schema fields).
+---
+ frontend/vercel.json | 96 ++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 96 insertions(+)
+
+diff --git a/frontend/vercel.json b/frontend/vercel.json
+index b4d3001..0fc3ee1 100644
+--- a/frontend/vercel.json
++++ b/frontend/vercel.json
+@@ -1,5 +1,101 @@
+ {
+   "rewrites": [
++    {
++      "source": "/api/v1/news-india/:path*",
++      "destination": "/api/v1/news-india/:path*"
++    },
++    {
++      "source": "/api/v1/news/:path*",
++      "destination": "/api/v1/news/:path*"
++    },
++    {
++      "source": "/api/v1/news",
++      "destination": "/api/v1/news"
++    },
++    {
++      "source": "/api/v1/concall-intel/:path*",
++      "destination": "/api/v1/concall-intel/:path*"
++    },
++    {
++      "source": "/api/v1/concall/:path*",
++      "destination": "/api/v1/concall/:path*"
++    },
++    {
++      "source": "/api/v1/earnings/:path*",
++      "destination": "/api/v1/earnings/:path*"
++    },
++    {
++      "source": "/api/v1/heartbeat/:path*",
++      "destination": "/api/v1/heartbeat/:path*"
++    },
++    {
++      "source": "/api/v1/edgar/:path*",
++      "destination": "/api/v1/edgar/:path*"
++    },
++    {
++      "source": "/api/v1/order-book/:path*",
++      "destination": "/api/v1/order-book/:path*"
++    },
++    {
++      "source": "/api/v1/rating-actions/:path*",
++      "destination": "/api/v1/rating-actions/:path*"
++    },
++    {
++      "source": "/api/v1/super-investor-flow/:path*",
++      "destination": "/api/v1/super-investor-flow/:path*"
++    },
++    {
++      "source": "/api/v1/super-investor-news/:path*",
++      "destination": "/api/v1/super-investor-news/:path*"
++    },
++    {
++      "source": "/api/v1/alerts/:path*",
++      "destination": "/api/v1/alerts/:path*"
++    },
++    {
++      "source": "/api/v1/cron/:path*",
++      "destination": "/api/v1/cron/:path*"
++    },
++    {
++      "source": "/api/v1/breadth/:path*",
++      "destination": "/api/v1/breadth/:path*"
++    },
++    {
++      "source": "/api/v1/admin/:path*",
++      "destination": "/api/v1/admin/:path*"
++    },
++    {
++      "source": "/api/v1/themes/:path*",
++      "destination": "/api/v1/themes/:path*"
++    },
++    {
++      "source": "/api/v1/specsit/:path*",
++      "destination": "/api/v1/specsit/:path*"
++    },
++    {
++      "source": "/api/v1/special-situations/:path*",
++      "destination": "/api/v1/special-situations/:path*"
++    },
++    {
++      "source": "/api/v1/ticker-roles/:path*",
++      "destination": "/api/v1/ticker-roles/:path*"
++    },
++    {
++      "source": "/api/v1/transmission/:path*",
++      "destination": "/api/v1/transmission/:path*"
++    },
++    {
++      "source": "/api/v1/public/:path*",
++      "destination": "/api/v1/public/:path*"
++    },
++    {
++      "source": "/api/v1/source-tier",
++      "destination": "/api/v1/source-tier"
++    },
++    {
++      "source": "/api/v1/system-status",
++      "destination": "/api/v1/system-status"
++    },
+     {
+       "source": "/api/v1/:path*",
+       "destination": "https://market-cockpit-api.onrender.com/api/v1/:path*"
+-- 
+2.34.1
+
