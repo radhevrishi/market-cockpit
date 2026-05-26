@@ -1,0 +1,490 @@
+From ba9d067a629c27b07ec09e8b473f740bfc829abb Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Tue, 26 May 2026 09:37:08 +0000
+Subject: [PATCH] patch 0875+0876: turnaround + USA analytics actionability
+ rewrite
+
+- Turnaround: default to TURNAROUNDS-ONLY view, context banner with dataset
+  mix, view toggle, stats strip 10->6, data-missing coaching on empty panels
+- USA: stats strip 10->6 with subtitles, new TOP BUYS shortlist
+  (A+/A x R40>=40 x Piotroski>=6 x clean forensics x earnings>7d), new
+  AT-RISK ROWS list (sorted by score), sector exposure 8->5, R40 buckets
+  6->4 (FAIL/PASS/STRONG/ELITE), leaderboard 15->10
+---
+ .../src/app/(dashboard)/multibagger/page.tsx  | 342 ++++++++++++++----
+ 1 file changed, 269 insertions(+), 73 deletions(-)
+
+diff --git a/frontend/src/app/(dashboard)/multibagger/page.tsx b/frontend/src/app/(dashboard)/multibagger/page.tsx
+index cff5af2..cdbc7d4 100644
+--- a/frontend/src/app/(dashboard)/multibagger/page.tsx
++++ b/frontend/src/app/(dashboard)/multibagger/page.tsx
+@@ -7288,15 +7288,18 @@ function USAAnalytics() {
+       const s = (r.sector || 'Unknown').trim() || 'Unknown';
+       sectorMap.set(s, (sectorMap.get(s) || 0) + 1);
+     });
+-    const topSectors = Array.from(sectorMap.entries()).sort((a, b) => b[1] - a[1]).slice(0, 8);
+-    // R40 buckets
++    // PATCH 0876 — Trim sector exposure 8 → 5 (top 5 is enough for
++    // concentration risk; longer tail is noise on a screen-glance).
++    const topSectors = Array.from(sectorMap.entries()).sort((a, b) => b[1] - a[1]).slice(0, 5);
++    // PATCH 0876 — R40 buckets collapsed 6 → 4. The <0 / 0–20 / 20–40
++    // tiers all mean "fails the Rule of 40" institutionally — there's
++    // no decision difference between them. The right cuts are:
++    // FAIL (<40) · PASS (40–60) · STRONG (60–80) · ELITE (≥80).
+     const r40Buckets: Array<{ label: string; n: number; color: string }> = [
+-      { label: '<0',     n: rows.filter(r => (r.ruleOf40 ?? -999) < 0).length,                                              color: RED },
+-      { label: '0–20',   n: rows.filter(r => { const x = r.ruleOf40 ?? -999; return x >= 0 && x < 20; }).length,            color: ORANGE },
+-      { label: '20–40',  n: rows.filter(r => { const x = r.ruleOf40 ?? -999; return x >= 20 && x < 40; }).length,           color: YELLOW },
+-      { label: '40–60',  n: rows.filter(r => { const x = r.ruleOf40 ?? -999; return x >= 40 && x < 60; }).length,           color: GREEN },
+-      { label: '60–80',  n: rows.filter(r => { const x = r.ruleOf40 ?? -999; return x >= 60 && x < 80; }).length,           color: ACCENT },
+-      { label: '≥80',    n: rows.filter(r => (r.ruleOf40 ?? -999) >= 80).length,                                            color: PURPLE },
++      { label: 'FAIL (<40)',   n: rows.filter(r => (r.ruleOf40 ?? -999) < 40).length,                                            color: RED },
++      { label: 'PASS (40–60)', n: rows.filter(r => { const x = r.ruleOf40 ?? -999; return x >= 40 && x < 60; }).length,           color: GREEN },
++      { label: 'STRONG (60–80)', n: rows.filter(r => { const x = r.ruleOf40 ?? -999; return x >= 60 && x < 80; }).length,         color: ACCENT },
++      { label: 'ELITE (≥80)',  n: rows.filter(r => (r.ruleOf40 ?? -999) >= 80).length,                                          color: PURPLE },
+     ];
+     // Piotroski buckets
+     const piotroskiBuckets = [
+@@ -7330,14 +7333,45 @@ function USAAnalytics() {
+       const prev = prevScoreMap[r.symbol];
+       return prev !== undefined && (r.score - prev) <= -5;
+     }).sort((a, b) => (a.score - prevScoreMap[a.symbol]) - (b.score - prevScoreMap[b.symbol]));
+-    // Leaderboard
+-    const top15 = [...rows].sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 15);
++    // Leaderboard — top 10 (was top 15; tighter view).
++    const top10 = [...rows].sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 10);
++    // PATCH 0876 — Institutional TOP BUYS shortlist. The right question
++    // isn't "what's the average grade" — it's "of 300 rows, which 5-10
++    // would I actually open a position on right now". Filter chain:
++    //  • Grade A+ or A           — fundamentals pass institutional bar
++    //  • R40 ≥ 40                — growth + cash-gen efficiency
++    //  • Piotroski ≥ 6           — financial-strength gate (Piotroski 2000)
++    //  • No FCF/Op divergence    — earnings quality clean
++    //  • Not post-run stretched  — entry not late-cycle
++    //  • Earnings > 7 days away  — no print-risk window
++    // The strict version (≥7 Piotroski, no flags) is too narrow for a
++    // 300-stock universe; relaxing Piotroski to ≥6 + dropping flag-free
++    // requirement to "no critical flags" yields a useful 5-15 candidate
++    // shortlist on a typical universe.
++    const topBuys = [...rows]
++      .filter(r => (r.grade === 'A+' || r.grade === 'A'))
++      .filter(r => (r.ruleOf40 ?? -999) >= 40)
++      .filter(r => (r.piotroskiFScore ?? -1) >= 6)
++      .filter(r => !r.fcfOpDivergence)
++      .filter(r => !r.postRunStretched)
++      .filter(r => (r.earningsProximityDays ?? 999) > 7)
++      .sort((a, b) => (b.score || 0) - (a.score || 0))
++      .slice(0, 12);
++    // PATCH 0876 — AT-RISK shortlist. The user explicitly wants warnings,
++    // not just opportunities. Surface every row that has at least one
++    // forensic flag, sorted by score (so the highest-conviction risks
++    // appear first — those are the most dangerous because the user is
++    // most likely to act on them without realising the flag).
++    const atRiskRows = [...rows]
++      .filter(r => r.fcfOpDivergence || r.postRunStretched || (r.earningsProximityDays ?? 999) <= 7)
++      .sort((a, b) => (b.score || 0) - (a.score || 0))
++      .slice(0, 12);
+     return {
+       n, avgScore, topGradeCount, r40Pass, r40Elite, piotroskiPass, altmanSafe,
+       acceleratingCount, fcfDivCount, postRunCount, earningsCloseCount,
+       totalMcapB, avgMcapB, gradeBuckets, topSectors, r40Buckets, piotroskiBuckets,
+       decisionCounts, convictionOverlap, scoreDeltas, newSinceLast,
+-      reratingUp, ratingDown, top15,
++      reratingUp, ratingDown, top10, topBuys, atRiskRows,
+     };
+   }, [rows, convictionSet, prevScoreMap, decisionTick]);
+ 
+@@ -7357,27 +7391,92 @@ function USAAnalytics() {
+ 
+   return (
+     <div style={{ maxWidth: 1800, margin: '0 auto', padding: '20px 24px 32px' }}>
+-      {/* ── STATS STRIP ────────────────────────────────────────────────── */}
+-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 18 }}>
++      {/* ── PATCH 0876 STATS STRIP — trimmed 10 → 6 actionable KPIs ────── */}
++      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, marginBottom: 18 }}>
+         {[
+-          { label: 'STOCKS',           value: stats.n.toString(),                                                color: PURPLE },
+-          { label: 'AVG SCORE',        value: stats.avgScore.toFixed(1),                                        color: ACCENT },
+-          { label: 'A+/A GRADES',      value: `${stats.topGradeCount} (${stats.n ? (100 * stats.topGradeCount / stats.n).toFixed(0) : 0}%)`, color: GREEN },
+-          { label: 'R40 ≥40 / ≥60',    value: `${stats.r40Pass} / ${stats.r40Elite}`,                           color: ACCENT },
+-          { label: 'PIOTROSKI ≥7',     value: stats.piotroskiPass.toString(),                                   color: GREEN },
+-          { label: 'ALTMAN Z ≥3',      value: stats.altmanSafe.toString(),                                      color: GREEN },
+-          { label: 'ACCELERATING',     value: stats.acceleratingCount.toString(),                               color: PURPLE },
+-          { label: 'CONVICTION',       value: stats.convictionOverlap.toString(),                               color: PURPLE },
+-          { label: 'AGG MCAP $B',      value: stats.totalMcapB >= 1000 ? `${(stats.totalMcapB / 1000).toFixed(1)}T` : stats.totalMcapB.toFixed(0), color: TEXT },
+-          { label: 'NEW (vs PREV)',    value: stats.newSinceLast.toString(),                                    color: stats.newSinceLast > 0 ? GREEN : MUTED },
++          { label: 'STOCKS',        value: stats.n.toString(),                          sub: 'in current upload',           color: PURPLE },
++          { label: 'TOP-TIER',      value: `${stats.topGradeCount}`,                    sub: `A+/A grade · ${stats.n ? (100 * stats.topGradeCount / stats.n).toFixed(0) : 0}%`, color: stats.topGradeCount > 0 ? GREEN : MUTED },
++          { label: 'R40 ELITE',     value: stats.r40Elite.toString(),                   sub: 'rule of 40 ≥60',              color: stats.r40Elite > 0 ? PURPLE : MUTED },
++          { label: 'PIOTROSKI ≥7',  value: stats.piotroskiPass.toString(),              sub: 'elite financial quality',     color: stats.piotroskiPass > 0 ? GREEN : MUTED },
++          { label: 'FORENSIC ⚠',    value: (stats.fcfDivCount + stats.postRunCount).toString(), sub: 'flagged risks',       color: (stats.fcfDivCount + stats.postRunCount) > 0 ? RED : MUTED },
++          { label: 'CONVICTION',    value: stats.convictionOverlap.toString(),          sub: 'overlap with your bench',     color: stats.convictionOverlap > 0 ? PURPLE : MUTED },
+         ].map((s) => (
+           <div key={s.label} style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: '12px 14px' }}>
+             <div style={{ fontSize: 10, color: MUTED, fontWeight: 700, letterSpacing: 0.6 }}>{s.label}</div>
+-            <div style={{ fontSize: 22, fontWeight: 800, color: s.color, fontFamily: 'ui-monospace,monospace', marginTop: 2 }}>{s.value}</div>
++            <div style={{ fontSize: 24, fontWeight: 800, color: s.color, fontFamily: 'ui-monospace,monospace', marginTop: 2 }}>{s.value}</div>
++            {s.sub && <div style={{ fontSize: 9, color: MUTED, marginTop: 2, letterSpacing: 0.3 }}>{s.sub}</div>}
+           </div>
+         ))}
+       </div>
+ 
++      {/* ── PATCH 0876: ACTIONABLE SHORTLISTS — what to buy, what to avoid ─── */}
++      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 18 }}>
++        <div style={{ background: CARD_BG, border: `1px solid ${GREEN}40`, borderRadius: 10, padding: 16 }}>
++          <div style={{ fontSize: F2.sm, fontWeight: 800, color: GREEN, marginBottom: 4 }}>🎯 TOP BUYS ({stats.topBuys.length})</div>
++          <div style={{ fontSize: 10, color: MUTED, marginBottom: 10, lineHeight: 1.5 }}>
++            Grade A+/A · R40 ≥40 · Piotroski ≥6 · clean forensics · earnings &gt;7d away
++          </div>
++          {stats.topBuys.length === 0 ? (
++            <div style={{ fontSize: 11, color: MUTED, padding: 12, textAlign: 'center', background: '#0a0a0f', borderRadius: 6 }}>
++              No rows pass the institutional buy gate today. Likely cause: too few A+/A grades, or every top-graded row has a forensic flag or earnings in the next 7 days.
++            </div>
++          ) : (
++            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
++              {stats.topBuys.map(r => {
++                const d = getDecision(r.symbol);
++                const inCb = convictionSet.has(r.symbol.toUpperCase());
++                return (
++                  <div key={r.symbol} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: '#0a0a0f', borderRadius: 6 }}>
++                    <div style={{ width: 70, fontSize: 12, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace,monospace' }}>{r.symbol}</div>
++                    <div style={{ flex: 1, fontSize: 11, color: MUTED, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.sector}>{r.sector || ''}</div>
++                    <div style={{ fontSize: 10, color: GRADE_COLOR_US[r.grade] || TEXT, padding: '2px 6px', background: `${GRADE_COLOR_US[r.grade] || TEXT}20`, borderRadius: 4, fontWeight: 700 }}>{r.grade}</div>
++                    <div style={{ fontSize: 10, color: ACCENT, padding: '2px 6px', background: `${ACCENT}20`, borderRadius: 4, fontWeight: 700, fontFamily: 'ui-monospace,monospace' }} title="Rule of 40">R40 {r.ruleOf40 != null ? r.ruleOf40.toFixed(0) : '—'}</div>
++                    <div style={{ width: 36, fontSize: 12, color: TEXT, fontFamily: 'ui-monospace,monospace', fontWeight: 800, textAlign: 'right' }}>{(r.score || 0).toFixed(0)}</div>
++                    {d && <span style={{ fontSize: 9, padding: '2px 5px', borderRadius: 4, background: d.status === 'BUY' ? `${GREEN}30` : d.status === 'WATCH' ? `${YELLOW}30` : `${RED}30`, color: d.status === 'BUY' ? GREEN : d.status === 'WATCH' ? YELLOW : RED, fontWeight: 700 }}>{d.status}</span>}
++                    {inCb && <span style={{ fontSize: 9, padding: '2px 5px', borderRadius: 4, background: `${PURPLE}30`, color: PURPLE, fontWeight: 700 }}>CB</span>}
++                  </div>
++                );
++              })}
++            </div>
++          )}
++        </div>
++
++        <div style={{ background: CARD_BG, border: `1px solid ${RED}40`, borderRadius: 10, padding: 16 }}>
++          <div style={{ fontSize: F2.sm, fontWeight: 800, color: RED, marginBottom: 4 }}>⚠ AT-RISK ROWS ({stats.atRiskRows.length})</div>
++          <div style={{ fontSize: 10, color: MUTED, marginBottom: 10, lineHeight: 1.5 }}>
++            Has at least one forensic flag: FCF/Op divergence · post-run stretched · earnings ≤7d. Sorted by score (highest-conviction risk first).
++          </div>
++          {stats.atRiskRows.length === 0 ? (
++            <div style={{ fontSize: 11, color: GREEN, padding: 12, textAlign: 'center', background: '#0a0a0f', borderRadius: 6 }}>
++              ✓ No row in the universe is currently flagged for forensic risk, post-run extension, or near-term earnings.
++            </div>
++          ) : (
++            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
++              {stats.atRiskRows.map(r => {
++                const flags: Array<{ label: string; color: string }> = [];
++                if (r.fcfOpDivergence) flags.push({ label: 'FCF≠OP', color: RED });
++                if (r.postRunStretched) flags.push({ label: 'STRETCHED', color: ORANGE });
++                if ((r.earningsProximityDays ?? 999) <= 7) flags.push({ label: `ER ${r.earningsProximityDays}d`, color: YELLOW });
++                const d = getDecision(r.symbol);
++                return (
++                  <div key={r.symbol} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: '#0a0a0f', borderRadius: 6 }}>
++                    <div style={{ width: 70, fontSize: 12, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace,monospace' }}>{r.symbol}</div>
++                    <div style={{ flex: 1, fontSize: 11, color: MUTED, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.sector || ''}</div>
++                    <div style={{ display: 'flex', gap: 4 }}>
++                      {flags.map(f => (
++                        <span key={f.label} style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: `${f.color}25`, color: f.color, fontWeight: 700 }}>{f.label}</span>
++                      ))}
++                    </div>
++                    <div style={{ width: 36, fontSize: 12, color: TEXT, fontFamily: 'ui-monospace,monospace', fontWeight: 800, textAlign: 'right' }}>{(r.score || 0).toFixed(0)}</div>
++                    {d && <span style={{ fontSize: 9, padding: '2px 5px', borderRadius: 4, background: d.status === 'BUY' ? `${GREEN}30` : d.status === 'WATCH' ? `${YELLOW}30` : `${RED}30`, color: d.status === 'BUY' ? GREEN : d.status === 'WATCH' ? YELLOW : RED, fontWeight: 700 }}>{d.status}</span>}
++                  </div>
++                );
++              })}
++            </div>
++          )}
++        </div>
++      </div>
++
+       {/* ── DISTRIBUTIONS ROW ─────────────────────────────────────────── */}
+       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 14, marginBottom: 18 }}>
+         {/* Grade distribution */}
+@@ -7543,7 +7642,7 @@ function USAAnalytics() {
+ 
+       {/* ── TOP 15 LEADERBOARD ────────────────────────────────────── */}
+       <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 16 }}>
+-        <div style={{ fontSize: F2.sm, fontWeight: 800, color: TEXT, marginBottom: 12 }}>TOP 15 BY SCORE</div>
++        <div style={{ fontSize: F2.sm, fontWeight: 800, color: TEXT, marginBottom: 12 }}>TOP 10 BY SCORE</div>
+         <div style={{ overflowX: 'auto' }}>
+           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+             <thead>
+@@ -7560,7 +7659,7 @@ function USAAnalytics() {
+               </tr>
+             </thead>
+             <tbody>
+-              {stats.top15.map((r, i) => {
++              {stats.top10.map((r, i) => {
+                 const d = getDecision(r.symbol);
+                 const inCb = convictionSet.has(r.symbol.toUpperCase());
+                 return (
+@@ -7657,56 +7756,92 @@ function TurnaroundAnalytics() {
+   const [decisionTick, bumpDec] = React.useReducer((x: number) => x + 1, 0);
+   React.useEffect(() => subscribeDecisions(() => bumpDec()), []);
+ 
++  // PATCH 0875 — Default view = real turnarounds only. User uploaded 100
++  // rows from a general-purpose Screener, of which ~80 are quality
++  // compounders or growth stocks that don't belong on this tab. Showing
++  // analytics over all 100 diluted every signal (avg score 8.7, BUY-ZONE
++  // 0, ALL panels 0). The toggle exposes the full dataset when the user
++  // explicitly wants the mis-classification breakdown.
++  const [viewMode, setViewMode] = React.useState<'TURNAROUNDS' | 'ALL'>('TURNAROUNDS');
++
+   const empty = rows.length === 0;
+   const GRADE_COLOR_TA: Record<string, string> = { 'A+': '#10b981', 'A': '#34d399', 'B+': '#f59e0b', 'B': '#f97316', 'C': '#fb923c', 'D': '#ef4444' };
+ 
++  // PATCH 0875 — Pre-compute the dataset composition so the context banner
++  // can warn when the upload is mostly non-turnaround rows.
++  const datasetMix = React.useMemo(() => {
++    const total = rows.length;
++    const real = rows.filter(r => r.archetype === 'TURNAROUND').length;
++    const quality = rows.filter(r => r.archetype === 'QUALITY').length;
++    const growth = rows.filter(r => r.archetype === 'GROWTH').length;
++    const valueTrap = rows.filter(r => r.archetype === 'VALUE-TRAP').length;
++    const declining = rows.filter(r => r.archetype === 'DECLINING').length;
++    const realPct = total ? Math.round(100 * real / total) : 0;
++    const misclassified = total - real;
++    return { total, real, quality, growth, valueTrap, declining, realPct, misclassified };
++  }, [rows]);
++
+   const stats = React.useMemo(() => {
+-    const n = rows.length;
+-    const avgScore = n ? rows.reduce((s, r) => s + (r.totalScore || 0), 0) / n : 0;
+-    const buyZone = rows.filter(r => r.inBuyZone).length;
+-    const best = rows.filter(r => r.isBestCandidate).length;
+-    const confirmed = rows.filter(r => r.stage === 'CONFIRMED').length;
+-    const survivalPass = rows.filter(r => (r.survivalScore || 0) >= 6).length;
+-    const highConcall = rows.filter(r => (r.concallScore || 0) >= 15).length;
+-    const realTurnarounds = rows.filter(r => r.archetype === 'TURNAROUND').length;
+-    const valueTraps = rows.filter(r => r.archetype === 'VALUE-TRAP').length;
+-    // Stage distribution
++    // PATCH 0875 — analytics now compute over the active view's subset.
++    const displayRows = viewMode === 'TURNAROUNDS'
++      ? rows.filter(r => r.archetype === 'TURNAROUND')
++      : rows;
++    const n = displayRows.length;
++    const avgScore = n ? displayRows.reduce((s, r) => s + (r.totalScore || 0), 0) / n : 0;
++    const buyZone = displayRows.filter(r => r.inBuyZone).length;
++    const best = displayRows.filter(r => r.isBestCandidate).length;
++    const confirmed = displayRows.filter(r => r.stage === 'CONFIRMED').length;
++    const survivalPass = displayRows.filter(r => (r.survivalScore || 0) >= 6).length;
++    const highConcall = displayRows.filter(r => (r.concallScore || 0) >= 15).length;
++    const realTurnarounds = displayRows.filter(r => r.archetype === 'TURNAROUND').length;
++    const valueTraps = displayRows.filter(r => r.archetype === 'VALUE-TRAP').length;
++    // Inflection phase = institutional BUY window
++    const inflection = displayRows.filter(r => r.phase === 3).length;
++    // Stage distribution — filter zeros to keep the panel clean
+     const stages: TurnaroundStage[] = ['DISTRESS', 'SETUP', 'EARLY-SHOOTS', 'PATTERN', 'CONFIRMED', 'MATURE', 'NOT-TURNAROUND'];
+-    const stageBuckets = stages.map(s => ({
++    const stageBucketsAll = stages.map(s => ({
+       label: s,
+-      n: rows.filter(r => r.stage === s).length,
++      n: displayRows.filter(r => r.stage === s).length,
+       color: s === 'EARLY-SHOOTS' ? GREEN : s === 'PATTERN' ? ACCENT : s === 'CONFIRMED' ? PURPLE : s === 'MATURE' ? YELLOW : s === 'SETUP' ? '#94a3b8' : s === 'DISTRESS' ? ORANGE : RED,
+       emoji: s === 'EARLY-SHOOTS' ? '🌱' : s === 'PATTERN' ? '📈' : s === 'CONFIRMED' ? '✅' : s === 'MATURE' ? '🌅' : s === 'SETUP' ? '⏳' : s === 'DISTRESS' ? '🚫' : '❌',
+     }));
++    const stageBuckets = stageBucketsAll.filter(b => b.n > 0);
+     // Archetype distribution
+     const archetypes: TurnaroundArchetype[] = ['TURNAROUND', 'GROWTH', 'QUALITY', 'VALUE-TRAP', 'DECLINING', 'WAIT', 'NEUTRAL'];
+-    const archetypeBuckets = archetypes.map(a => ({
++    const archetypeBucketsAll = archetypes.map(a => ({
+       label: a,
+-      n: rows.filter(r => r.archetype === a).length,
++      n: displayRows.filter(r => r.archetype === a).length,
+       color: a === 'TURNAROUND' ? PURPLE : a === 'GROWTH' ? GREEN : a === 'QUALITY' ? ACCENT : a === 'VALUE-TRAP' ? RED : a === 'DECLINING' ? ORANGE : a === 'WAIT' ? YELLOW : MUTED,
+     }));
++    const archetypeBuckets = archetypeBucketsAll.filter(b => b.n > 0);
+     // Turnaround type
+-    const typeBuckets: Array<{ label: string; n: number; color: string }> = [
+-      { label: 'CYCLICAL',    n: rows.filter(r => r.turnaroundType === 'CYCLICAL').length,    color: ACCENT },
+-      { label: 'OPERATIONAL', n: rows.filter(r => r.turnaroundType === 'OPERATIONAL').length, color: PURPLE },
+-      { label: 'DISTRESSED',  n: rows.filter(r => r.turnaroundType === 'DISTRESSED').length,  color: ORANGE },
+-      { label: 'UNKNOWN',     n: rows.filter(r => r.turnaroundType === 'UNKNOWN' || !r.turnaroundType).length, color: MUTED },
++    const typeBucketsAll: Array<{ label: string; n: number; color: string }> = [
++      { label: 'CYCLICAL',    n: displayRows.filter(r => r.turnaroundType === 'CYCLICAL').length,    color: ACCENT },
++      { label: 'OPERATIONAL', n: displayRows.filter(r => r.turnaroundType === 'OPERATIONAL').length, color: PURPLE },
++      { label: 'DISTRESSED',  n: displayRows.filter(r => r.turnaroundType === 'DISTRESSED').length,  color: ORANGE },
++      { label: 'UNKNOWN',     n: displayRows.filter(r => r.turnaroundType === 'UNKNOWN' || !r.turnaroundType).length, color: MUTED },
+     ];
++    const typeAllUnknown = typeBucketsAll.find(b => b.label === 'UNKNOWN')?.n === n && n > 0;
++    const typeBuckets = typeBucketsAll;
+     // Phase
+-    const phaseBuckets = ([1, 2, 3, 4] as const).map(p => ({
++    const phaseBucketsAll = ([1, 2, 3, 4] as const).map(p => ({
+       label: p === 1 ? '1 · COLLAPSE' : p === 2 ? '2 · STABILISATION' : p === 3 ? '3 · INFLECTION (BUY)' : '4 · RE-RATING',
+-      n: rows.filter(r => r.phase === p).length,
++      n: displayRows.filter(r => r.phase === p).length,
+       color: p === 1 ? RED : p === 2 ? ORANGE : p === 3 ? GREEN : ACCENT,
+     }));
++    const phaseAllZero = phaseBucketsAll.every(b => b.n === 0) && n > 0;
++    const phaseBuckets = phaseBucketsAll;
+     // Survival score buckets
+-    const survivalBuckets = [
+-      { label: '0–2 (fragile)', n: rows.filter(r => (r.survivalScore ?? -1) >= 0 && (r.survivalScore ?? -1) <= 2).length, color: RED },
+-      { label: '3–5 (mid)',     n: rows.filter(r => (r.survivalScore ?? -1) >= 3 && (r.survivalScore ?? -1) <= 5).length, color: YELLOW },
+-      { label: '6–8 (robust)',  n: rows.filter(r => (r.survivalScore ?? -1) >= 6).length,                                  color: GREEN },
++    const survivalBucketsAll = [
++      { label: '0–2 (fragile)', n: displayRows.filter(r => (r.survivalScore ?? -1) >= 0 && (r.survivalScore ?? -1) <= 2).length, color: RED },
++      { label: '3–5 (mid)',     n: displayRows.filter(r => (r.survivalScore ?? -1) >= 3 && (r.survivalScore ?? -1) <= 5).length, color: YELLOW },
++      { label: '6–8 (robust)',  n: displayRows.filter(r => (r.survivalScore ?? -1) >= 6).length,                                  color: GREEN },
+     ];
++    const survivalAllFragile = survivalBucketsAll[0].n === n && n > 0;
++    const survivalBuckets = survivalBucketsAll;
+     // Decision overlay
+     const decisionCounts = { BUY: 0, WATCH: 0, REJECTED: 0, NONE: 0 };
+-    rows.forEach(r => {
++    displayRows.forEach(r => {
+       const d = getDecision(r.symbol);
+       if (!d) decisionCounts.NONE++;
+       else if (d.status === 'BUY') decisionCounts.BUY++;
+@@ -7715,17 +7850,18 @@ function TurnaroundAnalytics() {
+     });
+     // Conviction overlap
+     const cbUpper = new Set<string>([...convictionSet].map(s => s.toUpperCase().trim()));
+-    const convictionOverlap = rows.filter(r => cbUpper.has((r.symbol || '').toUpperCase().trim())).length;
++    const convictionOverlap = displayRows.filter(r => cbUpper.has((r.symbol || '').toUpperCase().trim())).length;
+     // Best candidates
+-    const bestList = [...rows].filter(r => r.isBestCandidate).sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0));
++    const bestList = [...displayRows].filter(r => r.isBestCandidate).sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0));
+     // Top 12 overall
+-    const top12 = [...rows].sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0)).slice(0, 12);
++    const top12 = [...displayRows].sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0)).slice(0, 12);
+     return {
+-      n, avgScore, buyZone, best, confirmed, survivalPass, highConcall, realTurnarounds, valueTraps,
++      displayRows, n, avgScore, buyZone, best, confirmed, survivalPass, highConcall, realTurnarounds, valueTraps, inflection,
+       stageBuckets, archetypeBuckets, typeBuckets, phaseBuckets, survivalBuckets,
++      typeAllUnknown, phaseAllZero, survivalAllFragile,
+       decisionCounts, convictionOverlap, bestList, top12,
+     };
+-  }, [rows, convictionSet, decisionTick]);
++  }, [rows, convictionSet, decisionTick, viewMode]);
+ 
+   if (empty) {
+     return (
+@@ -7743,23 +7879,71 @@ function TurnaroundAnalytics() {
+ 
+   return (
+     <div style={{ maxWidth: 1800, margin: '0 auto', padding: '20px 24px 32px' }}>
+-      {/* ── STATS STRIP ────────────────────────────────────────────── */}
+-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 18 }}>
++      {/* ── PATCH 0875: CONTEXT BANNER — surfaces dataset mis-classification ─ */}
++      {datasetMix.realPct < 80 && datasetMix.total > 0 && (
++        <div style={{
++          background: `linear-gradient(90deg, ${PURPLE}15, ${ACCENT}10)`,
++          border: `1px solid ${PURPLE}40`,
++          borderRadius: 10,
++          padding: '14px 18px',
++          marginBottom: 14,
++          display: 'flex',
++          alignItems: 'center',
++          gap: 14,
++          flexWrap: 'wrap',
++        }}>
++          <div style={{ fontSize: 20 }}>🔍</div>
++          <div style={{ flex: 1, minWidth: 240 }}>
++            <div style={{ fontSize: F.sm, color: TEXT, fontWeight: 700, marginBottom: 4 }}>
++              Dataset mix · {datasetMix.real} real turnarounds in {datasetMix.total} uploaded rows ({datasetMix.realPct}%)
++            </div>
++            <div style={{ fontSize: 11, color: MUTED, lineHeight: 1.5 }}>
++              {datasetMix.quality > 0 && <span>💎 {datasetMix.quality} QUALITY compounders · </span>}
++              {datasetMix.growth > 0 && <span>🚀 {datasetMix.growth} GROWTH stocks · </span>}
++              {datasetMix.valueTrap > 0 && <span style={{ color: RED }}>🧊 {datasetMix.valueTrap} VALUE-TRAPS · </span>}
++              {datasetMix.declining > 0 && <span style={{ color: ORANGE }}>📉 {datasetMix.declining} DECLINING · </span>}
++              <span>the others go on different tabs.</span>
++            </div>
++          </div>
++          <div style={{ display: 'flex', gap: 6, padding: 4, background: '#0a0a0f', borderRadius: 8 }}>
++            <button
++              onClick={() => setViewMode('TURNAROUNDS')}
++              style={{
++                padding: '6px 14px',
++                background: viewMode === 'TURNAROUNDS' ? PURPLE : 'transparent',
++                color: viewMode === 'TURNAROUNDS' ? '#0a0a0f' : MUTED,
++                border: 'none', borderRadius: 6, cursor: 'pointer',
++                fontSize: 11, fontWeight: 700, letterSpacing: 0.4,
++              }}
++            >TURNAROUNDS ONLY ({datasetMix.real})</button>
++            <button
++              onClick={() => setViewMode('ALL')}
++              style={{
++                padding: '6px 14px',
++                background: viewMode === 'ALL' ? PURPLE : 'transparent',
++                color: viewMode === 'ALL' ? '#0a0a0f' : MUTED,
++                border: 'none', borderRadius: 6, cursor: 'pointer',
++                fontSize: 11, fontWeight: 700, letterSpacing: 0.4,
++              }}
++            >ALL ROWS ({datasetMix.total})</button>
++          </div>
++        </div>
++      )}
++
++      {/* ── STATS STRIP — PATCH 0875: trimmed 10 → 6 actionable KPIs ───── */}
++      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, marginBottom: 18 }}>
+         {[
+-          { label: 'CANDIDATES',     value: stats.n.toString(),                                                                                            color: PURPLE },
+-          { label: 'AVG SCORE',      value: stats.avgScore.toFixed(1),                                                                                     color: ACCENT },
+-          { label: 'BUY-ZONE',       value: `${stats.buyZone} (${stats.n ? (100 * stats.buyZone / stats.n).toFixed(0) : 0}%)`,                            color: GREEN },
+-          { label: 'BEST CAND.',     value: stats.best.toString(),                                                                                         color: GREEN },
+-          { label: 'CONFIRMED',      value: stats.confirmed.toString(),                                                                                    color: ACCENT },
+-          { label: 'SURVIVAL ≥6',    value: stats.survivalPass.toString(),                                                                                 color: GREEN },
+-          { label: 'CONCALL ≥15',    value: stats.highConcall.toString(),                                                                                  color: PURPLE },
+-          { label: 'REAL T-AROUNDS', value: `${stats.realTurnarounds} / ${stats.n}`,                                                                       color: PURPLE },
+-          { label: 'VALUE TRAPS',    value: stats.valueTraps.toString(),                                                                                   color: stats.valueTraps > 0 ? RED : MUTED },
+-          { label: 'CONVICTION',     value: stats.convictionOverlap.toString(),                                                                            color: PURPLE },
++          { label: viewMode === 'TURNAROUNDS' ? 'TURNAROUNDS' : 'ALL ROWS', value: stats.n.toString(), sub: viewMode === 'TURNAROUNDS' ? `of ${datasetMix.total} uploaded` : undefined, color: PURPLE },
++          { label: 'AVG SCORE',          value: stats.avgScore.toFixed(1),                                                       sub: 'out of 100', color: ACCENT },
++          { label: 'BUY-ZONE',           value: stats.buyZone.toString(),                                                        sub: 'EARLY-SHOOTS + PATTERN', color: stats.buyZone > 0 ? GREEN : MUTED },
++          { label: 'INFLECTION (P3)',    value: stats.inflection.toString(),                                                     sub: 'institutional buy window', color: stats.inflection > 0 ? GREEN : MUTED },
++          { label: 'BEST CAND.',         value: stats.best.toString(),                                                           sub: 'survival≥6 · concall≥15', color: stats.best > 0 ? GREEN : MUTED },
++          { label: 'CONVICTION',         value: stats.convictionOverlap.toString(),                                              sub: 'overlap with your bench', color: stats.convictionOverlap > 0 ? PURPLE : MUTED },
+         ].map((s) => (
+           <div key={s.label} style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: '12px 14px' }}>
+             <div style={{ fontSize: 10, color: MUTED, fontWeight: 700, letterSpacing: 0.6 }}>{s.label}</div>
+-            <div style={{ fontSize: 22, fontWeight: 800, color: s.color, fontFamily: 'ui-monospace,monospace', marginTop: 2 }}>{s.value}</div>
++            <div style={{ fontSize: 24, fontWeight: 800, color: s.color, fontFamily: 'ui-monospace,monospace', marginTop: 2 }}>{s.value}</div>
++            {s.sub && <div style={{ fontSize: 9, color: MUTED, marginTop: 2, letterSpacing: 0.3 }}>{s.sub}</div>}
+           </div>
+         ))}
+       </div>
+@@ -7807,7 +7991,11 @@ function TurnaroundAnalytics() {
+         <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 16 }}>
+           <div style={{ fontSize: F.sm, fontWeight: 800, color: TEXT, marginBottom: 4 }}>TURNAROUND TYPE</div>
+           <div style={{ fontSize: 10, color: MUTED, marginBottom: 12 }}>Cyclical = sector-driven · Operational = mgmt-driven · Distressed = balance-sheet first</div>
+-          {stats.typeBuckets.map(b => {
++          {stats.typeAllUnknown ? (
++            <div style={{ fontSize: 11, color: ORANGE, padding: '10px 12px', background: `${ORANGE}10`, border: `1px solid ${ORANGE}40`, borderRadius: 6, lineHeight: 1.5 }}>
++              <strong>Data missing.</strong> All rows classified UNKNOWN. The type classifier needs: <span style={{ color: TEXT }}>Loss-making years 5y</span>, <span style={{ color: TEXT }}>OPM history (Y2-Y5)</span>, and <span style={{ color: TEXT }}>D/E history</span>. Add these as custom Screener.in ratios and re-upload.
++            </div>
++          ) : stats.typeBuckets.map(b => {
+             const pct = stats.n ? (100 * b.n / stats.n) : 0;
+             return (
+               <div key={b.label} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+@@ -7824,7 +8012,11 @@ function TurnaroundAnalytics() {
+         <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 16 }}>
+           <div style={{ fontSize: F.sm, fontWeight: 800, color: TEXT, marginBottom: 4 }}>PLAYBOOK PHASE</div>
+           <div style={{ fontSize: 10, color: MUTED, marginBottom: 12 }}>Phase 3 is the institutional BUY window — alpha before consensus</div>
+-          {stats.phaseBuckets.map(b => {
++          {stats.phaseAllZero ? (
++            <div style={{ fontSize: 11, color: ORANGE, padding: '10px 12px', background: `${ORANGE}10`, border: `1px solid ${ORANGE}40`, borderRadius: 6, lineHeight: 1.5 }}>
++              <strong>Data missing.</strong> Phase classifier returned 0 for every row. It needs <span style={{ color: TEXT }}>5-year sales/PAT/OPM history</span> + <span style={{ color: TEXT }}>concall paste-text</span> per row (the Turnarounds tab has a per-row concall input — paste the latest transcript or guidance bullets there).
++            </div>
++          ) : stats.phaseBuckets.map(b => {
+             const pct = stats.n ? (100 * b.n / stats.n) : 0;
+             return (
+               <div key={b.label} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+@@ -7841,7 +8033,11 @@ function TurnaroundAnalytics() {
+         <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 16 }}>
+           <div style={{ fontSize: F.sm, fontWeight: 800, color: TEXT, marginBottom: 4 }}>SURVIVAL SCORE</div>
+           <div style={{ fontSize: 10, color: MUTED, marginBottom: 12 }}>Playbook Ch.4 gate — ≥6 = cleared institutional bankruptcy filter</div>
+-          {stats.survivalBuckets.map(b => {
++          {stats.survivalAllFragile ? (
++            <div style={{ fontSize: 11, color: ORANGE, padding: '10px 12px', background: `${ORANGE}10`, border: `1px solid ${ORANGE}40`, borderRadius: 6, lineHeight: 1.5 }}>
++              <strong>Data missing.</strong> Survival ≡ 0 for every row. Add <span style={{ color: TEXT }}>Interest coverage ratio</span>, <span style={{ color: TEXT }}>Pledged percentage</span>, and <span style={{ color: TEXT }}>D/E (current)</span> columns from Screener.in and re-upload to populate the bankruptcy-gate score.
++            </div>
++          ) : stats.survivalBuckets.map(b => {
+             const pct = stats.n ? (100 * b.n / stats.n) : 0;
+             return (
+               <div key={b.label} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+-- 
+2.34.1
+
