@@ -1969,6 +1969,47 @@ export default function HomeDashboard() {
                   🔁 Engine consistency: avg {data.alphaFeedback.avgScoreBefore.toFixed(0)} → {data.alphaFeedback.avgScoreNow.toFixed(0)} ({data.alphaFeedback.held}/{data.alphaFeedback.sample} held A)
                 </span>
               )}
+              {/* PATCH 0907 — Sector heatmap inline chip (top 3 sectors by abs move).
+                  Same one-line style as Portfolio P&L / sector rotation chips. */}
+              {data.sectorPulse && data.sectorPulse.length > 0 && (() => {
+                const top3 = data.sectorPulse.slice().sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct)).slice(0, 3);
+                return (
+                  <Link href="/heatmap" style={{
+                    fontSize: 10, padding: '2px 8px', borderRadius: 4,
+                    background: '#22D3EE15', border: '1px solid #22D3EE40', color: '#22D3EE',
+                    fontWeight: 700, textDecoration: 'none',
+                  }} title="Open full Sector Heatmap →">
+                    🗺 {top3.map(s => `${s.sector} ${s.pct >= 0 ? '+' : ''}${s.pct.toFixed(1)}%`).join(' · ')}
+                  </Link>
+                );
+              })()}
+              {/* PATCH 0907 — Conviction Beats inline chip (top 3 by today's abs move).
+                  Sorted by move per user feedback. Same chip style as above. */}
+              {data.convictionLive && data.convictionLive.length > 0 && (() => {
+                const top3 = data.convictionLive
+                  .filter(c => typeof c.changePercent === 'number')
+                  .slice(0, 3);
+                if (top3.length === 0) {
+                  return (
+                    <Link href="/watchlists?tab=conviction" style={{
+                      fontSize: 10, padding: '2px 8px', borderRadius: 4,
+                      background: '#F59E0B15', border: '1px solid #F59E0B40', color: '#F59E0B',
+                      fontWeight: 700, textDecoration: 'none',
+                    }} title="Open Conviction Beats bench →">
+                      🏆 BEATS ({data.convictionLive.length}) · no live quotes yet
+                    </Link>
+                  );
+                }
+                return (
+                  <Link href="/watchlists?tab=conviction" style={{
+                    fontSize: 10, padding: '2px 8px', borderRadius: 4,
+                    background: '#F59E0B15', border: '1px solid #F59E0B40', color: '#F59E0B',
+                    fontWeight: 700, textDecoration: 'none',
+                  }} title={`${data.convictionLive.length} names on bench · sorted by today's abs move`}>
+                    🏆 {top3.map(c => `${c.ticker} ${(c.changePercent as number) >= 0 ? '+' : ''}${(c.changePercent as number).toFixed(1)}%`).join(' · ')}
+                  </Link>
+                );
+              })()}
             </div>
           </div>
           {/* PATCH 0619/0635 — institutional chip strip. All in one row group,
@@ -2002,6 +2043,11 @@ export default function HomeDashboard() {
         {/* ═══════════════ PATCH 0613 — LENS SWITCHER ═══════════════════
             Saved Workspaces v1. Filters Tier 1/2/3 in real-time.
             User can add custom sector-regex lenses via the + button.
+            (PATCH 0907 reverted the multi-row variant — user wanted
+            Heatmap + Conviction Beats as simple inline chips at the
+            top of the page, like P&L / sector rotation. Those now live
+            in the Portfolio P&L chip-row above. LENS bar returns to
+            its original single-row Tier-filter role.)
         ═════════════════════════════════════════════════════════════════ */}
         <div style={{
           display: 'flex',
@@ -2055,120 +2101,6 @@ export default function HomeDashboard() {
               · Tier 1: {lensedTier1.length}/{data.tier1.length} · Tier 2: {lensedTier2.length}/{data.tier2.length} · Tier 3: {lensedTier3.length}/{data.tier3.length}
             </span>
           )}
-        </div>
-
-        {/* ═══════════════ PATCH 0906 — CONVICTION BEATS + SECTOR HEATMAP ═════
-            Mounted directly under the LENS switcher per user feedback:
-            "i want heatmap here not as you did ... also conviction beats
-            add here ... sort based on moves". Two-col grid that collapses
-            to one column on narrow screens. CB is sorted by abs % move
-            DESC (the names actually MOVING today float to the top).
-        ═════════════════════════════════════════════════════════════════════ */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12 }}>
-          {/* CONVICTION BEATS — live bench sorted by today's move */}
-          <div style={{ ...cardStyle, borderLeft: '3px solid #F59E0B' }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.4px' }}>
-                🏆 CONVICTION BEATS ({data.convictionLive?.length || 0})
-              </span>
-              <Link href="/watchlists?tab=conviction" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open bench →</Link>
-            </div>
-            <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
-              Sorted by today&apos;s absolute move · ★ BLOCKBUSTER · ◆ STRONG
-            </div>
-            {!data.convictionLive ? (
-              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading conviction bench…</div>
-            ) : data.convictionLive.length === 0 ? (
-              <div style={{ fontSize: 11, color: DIM, padding: '4px 2px', lineHeight: 1.5 }}>
-                <div style={{ marginBottom: 6 }}>📭 No conviction beats on bench yet.</div>
-                <div style={{ fontSize: 10, color: '#6B7A8D' }}>
-                  Auto-populated from <Link href="/earnings-opportunities" style={{ color: '#F59E0B', textDecoration: 'none' }}>Earnings Opportunities →</Link>
-                  {' '}when a stock lands in BLOCKBUSTER or STRONG tier.
-                </div>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 3, maxHeight: 320, overflowY: 'auto' }}>
-                {data.convictionLive.slice(0, 12).map((c) => {
-                  const pct = c.changePercent ?? 0;
-                  const hasPx = typeof c.price === 'number';
-                  return (
-                    <Link key={c.ticker} href={`/stock-sheet?ticker=${encodeURIComponent(c.ticker)}`}
-                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
-                      <span style={{ fontSize: 10, color: c.tier === 'BLOCKBUSTER' ? '#F59E0B' : '#10B981', fontWeight: 800, minWidth: 14 }}>
-                        {c.tier === 'BLOCKBUSTER' ? '★' : '◆'}
-                      </span>
-                      <span style={{ fontSize: 10, color: '#22D3EE', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 70 }}>{c.ticker}</span>
-                      <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {c.company || c.ticker}
-                      </span>
-                      {c.cap && <span style={{ fontSize: 8, color: '#8DA1B9', fontWeight: 700, padding: '1px 4px', border: '1px solid #2A3550', borderRadius: 3 }}>{(c.cap || '').toUpperCase()}</span>}
-                      {hasPx ? (
-                        <>
-                          <span style={{ fontSize: 10, color: DIM, fontVariantNumeric: 'tabular-nums', minWidth: 50, textAlign: 'right' }}>
-                            ₹{(c.price as number).toFixed(1)}
-                          </span>
-                          <span style={{ fontSize: 11, color: pct >= 0 ? '#10B981' : '#EF4444', fontWeight: 800, fontVariantNumeric: 'tabular-nums', minWidth: 48, textAlign: 'right' }}>
-                            {pct >= 0 ? '+' : ''}{pct.toFixed(1)}%
-                          </span>
-                        </>
-                      ) : (
-                        <span style={{ fontSize: 9, color: '#6B7A8D', fontStyle: 'italic' }}>no quote</span>
-                      )}
-                    </Link>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* SECTOR HEATMAP — compact tile grid built from sectorPulse.
-              Each tile colored by avg sector pct, with top gainer / worst
-              loser inline. Click → /heatmap?sector=… for the full treemap. */}
-          <div style={{ ...cardStyle, borderLeft: '3px solid #22D3EE' }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px' }}>
-                🗺 SECTOR HEATMAP ({data.sectorPulse?.length || 0})
-              </span>
-              <Link href="/heatmap" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Full treemap →</Link>
-            </div>
-            <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
-              Avg % per sector · top gainer ↑ / worst loser ↓ shown inline
-            </div>
-            {!data.sectorPulse ? (
-              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading sector aggregates…</div>
-            ) : data.sectorPulse.length === 0 ? (
-              <div style={{ fontSize: 11, color: DIM, padding: '4px 2px', lineHeight: 1.5 }}>
-                📭 Sector aggregates unavailable.{' '}
-                <Link href="/heatmap" style={{ color: '#22D3EE', textDecoration: 'none' }}>Open full Heatmap →</Link>
-              </div>
-            ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 4 }}>
-                {data.sectorPulse.slice(0, 18).map((s) => {
-                  const abs = Math.abs(s.pct);
-                  const isUp = s.pct >= 0;
-                  const tileBg = isUp
-                    ? (abs >= 2 ? 'rgba(16,185,129,0.30)' : abs >= 1 ? 'rgba(16,185,129,0.18)' : abs >= 0.3 ? 'rgba(16,185,129,0.08)' : 'rgba(30,41,59,0.4)')
-                    : (abs >= 2 ? 'rgba(239,68,68,0.30)'  : abs >= 1 ? 'rgba(239,68,68,0.18)'  : abs >= 0.3 ? 'rgba(239,68,68,0.08)'  : 'rgba(30,41,59,0.4)');
-                  const tileBorder = isUp ? 'rgba(16,185,129,0.4)' : 'rgba(239,68,68,0.4)';
-                  return (
-                    <Link key={s.sector} href={`/heatmap?sector=${encodeURIComponent(s.sector)}`}
-                      style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '6px 7px', textDecoration: 'none', border: `1px solid ${tileBorder}`, background: tileBg, borderRadius: 4 }}>
-                      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 4 }}>
-                        <span style={{ fontSize: 10, color: TEXT, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1 }}>{s.sector}</span>
-                        <span style={{ fontSize: 11, color: isUp ? '#10B981' : '#EF4444', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
-                          {isUp ? '+' : ''}{s.pct.toFixed(1)}%
-                        </span>
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: '#94A3B8', fontFamily: 'ui-monospace, monospace' }}>
-                        {s.topGainer && <span style={{ color: '#10B981' }}>↑ {s.topGainer.ticker} {s.topGainer.pct >= 0 ? '+' : ''}{s.topGainer.pct.toFixed(1)}%</span>}
-                        {s.topLoser && s.topLoser.ticker !== s.topGainer?.ticker && <span style={{ color: '#EF4444' }}>↓ {s.topLoser.ticker} {s.topLoser.pct.toFixed(1)}%</span>}
-                      </div>
-                    </Link>
-                  );
-                })}
-              </div>
-            )}
-          </div>
         </div>
 
         {/* ═══════════════ PATCH 0620 — IN-PLAY NEWS (MOVED TO TOP) ════════ */}
