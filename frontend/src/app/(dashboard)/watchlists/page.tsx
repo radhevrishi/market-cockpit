@@ -1919,16 +1919,21 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
               const qfy = deriveQuarterFY(e);
               if (qfy) s.add(qfy.fy);
             }
-            // Add current FY + 3 prior FYs (always visible, even if empty)
+            // PATCH 0926 — Add the FILING-FOCUS FY + next FY + 2 prior FYs.
+            // Filing-focus FY is the year whose Q-results are currently being
+            // filed (not the calendar FY we happen to be in). For May 2026
+            // this gives FY26 (current filing focus), plus FY27 (next), FY25,
+            // FY24. So the user sees FY26 (where their bench actually lives)
+            // not FY27 (empty calendar year just begun).
             const now = new Date();
             const calY = now.getFullYear();
-            const calM = now.getMonth() + 1; // 1-12
-            // Indian FY{N} ends Mar of year 20YY where YY = N. So if we're
-            // in Apr-Dec, the current FY ends NEXT March → FY{(calY+1)%100}.
-            // If Jan-Mar, the current FY ends THIS March → FY{calY%100}.
-            const currentFY = calM >= 4 ? (calY + 1) % 100 : calY % 100;
-            for (let offset = 0; offset < 4; offset++) {
-              s.add((currentFY - offset + 100) % 100);
+            const calM = now.getMonth() + 1;
+            const filingFY = calM <= 6 ? calY % 100 : (calY + 1) % 100;
+            // filingFY + next + 2 prior
+            s.add(filingFY);
+            s.add((filingFY + 1) % 100);
+            for (let offset = 1; offset <= 2; offset++) {
+              s.add((filingFY - offset + 100) % 100);
             }
             return Array.from(s).sort((a, b) => b - a);
           })();
@@ -1945,26 +1950,53 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
           // previous two-row layout buried Quarter above FY and the
           // labels collided visually. New layout puts a bigger PERIOD
           // header + visible vertical divider between Q-chips and FY-chips.
-          // PATCH 0922 + 0924 — Q chip labels now carry the SPECIFIC
+          // PATCH 0922 + 0924 + 0926 — Q chip labels carry the SPECIFIC
           // calendar year derived from the active fiscal-year context.
-          // User: "give year to this. think and do all institution level".
           //
-          // Context FY = either the active filter (filters.fy) OR the
-          // current Indian FY computed from today. Mapping:
-          //   Q1 FY{N} = Apr-Jun of year (2000+N-1)
-          //   Q2 FY{N} = Jul-Sep of year (2000+N-1)
-          //   Q3 FY{N} = Oct-Dec of year (2000+N-1)
-          //   Q4 FY{N} = Jan-Mar of year (2000+N) ← annual quarter
+          // ctxFY = either the active FY filter OR the FILING-FOCUS FY
+          // (what's currently being filed), NOT the calendar FY we're in.
           //
-          // E.g. for FY26: Q1=Apr-Jun 2025, Q2=Jul-Sep 2025, Q3=Oct-Dec 2025,
-          // Q4=Jan-Mar 2026. When user switches FY filter to FY27, all four
-          // chips re-label to the FY27 calendar window (Apr 2026 → Mar 2027).
+          // Filing windows by calendar month:
+          //   Apr-Jun: filing Q4 of FY{calY}   (Jan-Mar calY results)
+          //   Jul-Sep: filing Q1 of FY{calY+1} (Apr-Jun calY results)
+          //   Oct-Dec: filing Q2 of FY{calY+1} (Jul-Sep calY results)
+          //   Jan-Mar: filing Q3 of FY{calY}   (Oct-Dec calY-1 results)
+          //
+          // User feedback: "Showing for FY27 (Apr 2026 → Mar 2027) ← we're here
+          // now" in May 2026 was confusing — we're CALENDAR-in FY27, but
+          // every filing right now is Q4 FY26. Bench data reflects filing
+          // focus, so the default chip should match.
           const ctxFY: number = (() => {
             if (filters.fy != null) return filters.fy;
             const now = new Date();
             const calY = now.getFullYear();
             const calM = now.getMonth() + 1;
-            return calM >= 4 ? (calY + 1) % 100 : calY % 100;
+            // calM <= 6 (Jan-Jun) → filing Q3 or Q4 of FY{calY}
+            // calM >= 7 (Jul-Dec) → filing Q1 or Q2 of FY{calY+1}
+            return calM <= 6 ? calY % 100 : (calY + 1) % 100;
+          })();
+          // PATCH 0926 — Which quarter row is "we're here now" annotated.
+          // Based on calendar month (independent of any FY override):
+          //   Apr-Jun → Q4 (filing Q4 results)
+          //   Jul-Sep → Q1
+          //   Oct-Dec → Q2
+          //   Jan-Mar → Q3
+          const currentFilingQuarter: 'Q1' | 'Q2' | 'Q3' | 'Q4' = (() => {
+            const m = new Date().getMonth() + 1;
+            if (m >= 4 && m <= 6) return 'Q4';
+            if (m >= 7 && m <= 9) return 'Q1';
+            if (m >= 10 && m <= 12) return 'Q2';
+            return 'Q3';
+          })();
+          // True only when the cheat sheet's FY matches the current filing-
+          // focus FY (so the "← we're here now" indicator is honest if user
+          // switched to a past or future FY).
+          const isCtxFYCurrent = (() => {
+            const now = new Date();
+            const calY = now.getFullYear();
+            const calM = now.getMonth() + 1;
+            const realCurrentFY = calM <= 6 ? calY % 100 : (calY + 1) % 100;
+            return ctxFY === realCurrentFY;
           })();
           const ctxFYFull = ctxFY < 50 ? 2000 + ctxFY : 2000 + ctxFY;
           const calForQ1Q2Q3 = ctxFYFull - 1;
@@ -2018,14 +2050,28 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                         </tr>
                       </thead>
                       <tbody>
-                        <tr><td style={{ padding: '2px 6px', color: '#E6EDF3', fontWeight: 800 }}>Q1 FY{ctxFY}</td><td style={{ padding: '2px 6px', color: '#94A3B8' }}>Apr–Jun {calForQ1Q2Q3}</td><td style={{ padding: '2px 6px', color: '#94A3B8' }}>Jul–Aug {calForQ1Q2Q3}</td></tr>
-                        <tr><td style={{ padding: '2px 6px', color: '#E6EDF3', fontWeight: 800 }}>Q2 FY{ctxFY}</td><td style={{ padding: '2px 6px', color: '#94A3B8' }}>Jul–Sep {calForQ1Q2Q3}</td><td style={{ padding: '2px 6px', color: '#94A3B8' }}>Oct–Nov {calForQ1Q2Q3}</td></tr>
-                        <tr><td style={{ padding: '2px 6px', color: '#E6EDF3', fontWeight: 800 }}>Q3 FY{ctxFY}</td><td style={{ padding: '2px 6px', color: '#94A3B8' }}>Oct–Dec {calForQ1Q2Q3}</td><td style={{ padding: '2px 6px', color: '#94A3B8' }}>Jan–Feb {calForQ4}</td></tr>
-                        <tr style={{ background: 'rgba(245,158,11,0.10)' }}>
-                          <td style={{ padding: '2px 6px', color: '#F59E0B', fontWeight: 800 }}>Q4 FY{ctxFY}</td>
-                          <td style={{ padding: '2px 6px', color: '#F59E0B' }}>Jan–Mar {calForQ4} (also annual)</td>
-                          <td style={{ padding: '2px 6px', color: '#F59E0B', fontWeight: 700 }}>Apr–Jun {calForQ4}{(() => { const now = new Date(); const curFY = now.getMonth() + 1 >= 4 ? (now.getFullYear() + 1) % 100 : now.getFullYear() % 100; return ctxFY === curFY ? ' ← we\'re here now' : ''; })()}</td>
-                        </tr>
+                        {/* PATCH 0926 — "we're here now" annotation moves to
+                            the quarter row that matches the current FILING
+                            window. Only fires when ctxFY matches the real
+                            current filing-focus FY (else past-FY browsing
+                            would falsely claim "we're here now"). */}
+                        {([
+                          { q: 'Q1', period: `Apr–Jun ${calForQ1Q2Q3}`, filed: `Jul–Aug ${calForQ1Q2Q3}` },
+                          { q: 'Q2', period: `Jul–Sep ${calForQ1Q2Q3}`, filed: `Oct–Nov ${calForQ1Q2Q3}` },
+                          { q: 'Q3', period: `Oct–Dec ${calForQ1Q2Q3}`, filed: `Jan–Feb ${calForQ4}` },
+                          { q: 'Q4', period: `Jan–Mar ${calForQ4} (also annual)`, filed: `Apr–Jun ${calForQ4}` },
+                        ] as const).map((row) => {
+                          const isCurrent = isCtxFYCurrent && row.q === currentFilingQuarter;
+                          return (
+                            <tr key={row.q} style={isCurrent ? { background: 'rgba(245,158,11,0.10)' } : undefined}>
+                              <td style={{ padding: '2px 6px', color: isCurrent ? '#F59E0B' : '#E6EDF3', fontWeight: 800 }}>{row.q} FY{ctxFY}</td>
+                              <td style={{ padding: '2px 6px', color: isCurrent ? '#F59E0B' : '#94A3B8' }}>{row.period}</td>
+                              <td style={{ padding: '2px 6px', color: isCurrent ? '#F59E0B' : '#94A3B8', fontWeight: isCurrent ? 700 : undefined }}>
+                                {row.filed}{isCurrent ? ' ← we\'re here now' : ''}
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
