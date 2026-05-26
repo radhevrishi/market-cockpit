@@ -1293,12 +1293,26 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
     if (f.quarter != null && qfy.q !== f.quarter) return false;
     if (f.fy != null && qfy.fy !== f.fy) return false;
   }
-  // PATCH 0918 — Free-form date range filter (composes AND with Q + FY).
-  if (f.fromDate || f.toDate) {
+  // PATCH 0918 + 0919 — Free-form date range filter (composes AND with
+  // Q + FY). Strict validation: if EITHER bound is non-empty but malformed
+  // (e.g. partial browser input "2025" or "29"), we silently ignore that
+  // bound rather than treating it as a real filter — otherwise string
+  // comparison filters out every entry and the user sees a confusing
+  // "0 of 360" with no visible chip active. (Reported bug Patch 0919.)
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  const fromOk = !!f.fromDate && DATE_RE.test(f.fromDate);
+  const toOk   = !!f.toDate   && DATE_RE.test(f.toDate);
+  if (fromOk || toOk) {
     const fdate = (e.filing_date || '').slice(0, 10);
-    if (!fdate || !/^\d{4}-\d{2}-\d{2}$/.test(fdate)) return false;
-    if (f.fromDate && fdate < f.fromDate) return false;
-    if (f.toDate && fdate > f.toDate) return false;
+    // If we can't parse the entry's filing_date, DON'T eliminate it on
+    // date-range alone — let other filters decide. Only enforce when the
+    // entry has a clean filing date to compare against. This prevents
+    // bench entries with explicit quarter/fy but malformed filing_date
+    // from getting wiped by a single bad input.
+    if (DATE_RE.test(fdate)) {
+      if (fromOk && fdate < (f.fromDate as string)) return false;
+      if (toOk   && fdate > (f.toDate as string))   return false;
+    }
   }
   return true;
 }
@@ -1706,8 +1720,24 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
         display: 'flex', flexDirection: 'column', gap: 8,
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-          <div style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', letterSpacing: '0.4px' }}>
-            FILTERS <span style={{ color: '#6B7A8D', fontWeight: 600 }}>· {filteredEntries.length} of {entries.length}</span>
+          <div style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', letterSpacing: '0.4px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span>FILTERS</span>
+            <span style={{ color: '#6B7A8D', fontWeight: 600 }}>· {filteredEntries.length} of {entries.length}</span>
+            {/* PATCH 0919 — Safety-net "0 results" hint. When the bench is
+                non-empty but no entries pass the filter, surface a prominent
+                Reset button so the user isn't stuck wondering which chip is
+                hiding the data. */}
+            {filteredEntries.length === 0 && entries.length > 0 && (
+              <button
+                onClick={() => setFilters(FILTER_DEFAULT)}
+                title="Resets every filter (Sales/PAT/EPS/OP-Lev/PEAD/Guidance/Quarter/FY/date range)"
+                style={{
+                  padding: '3px 9px', fontSize: 10, fontWeight: 800,
+                  background: '#F59E0B22', border: '1px solid #F59E0B80',
+                  color: '#F59E0B', borderRadius: 4, cursor: 'pointer',
+                }}
+              >⚠ 0 match — Reset all filters</button>
+            )}
           </div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {/* PATCH 0917 — Demo seed button. User feedback: "what i am
@@ -1948,7 +1978,15 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
               <input
                 type="date"
                 value={filters.fromDate || ''}
-                onChange={(e) => setFilters((f) => ({ ...f, fromDate: e.target.value || null }))}
+                onChange={(e) => {
+                  // PATCH 0919 — store ONLY clean YYYY-MM-DD or null.
+                  // Browsers can fire intermediate onChange events with
+                  // partial values (esp. on mobile / accessibility paths).
+                  // A bad value silently filtered every entry out → 0 of N.
+                  const v = e.target.value;
+                  const ok = v && /^\d{4}-\d{2}-\d{2}$/.test(v);
+                  setFilters((f) => ({ ...f, fromDate: ok ? v : null }));
+                }}
                 title="Filter to entries filed on or AFTER this date (inclusive)"
                 style={{ background: '#0A1422', border: '1px solid #2A3550', color: '#22D3EE', fontSize: 11, fontWeight: 700, padding: '3px 6px', borderRadius: 4, outline: 'none', cursor: 'pointer' }}
               />
@@ -1956,7 +1994,11 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
               <input
                 type="date"
                 value={filters.toDate || ''}
-                onChange={(e) => setFilters((f) => ({ ...f, toDate: e.target.value || null }))}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  const ok = v && /^\d{4}-\d{2}-\d{2}$/.test(v);
+                  setFilters((f) => ({ ...f, toDate: ok ? v : null }));
+                }}
                 title="Filter to entries filed on or BEFORE this date (inclusive)"
                 style={{ background: '#0A1422', border: '1px solid #2A3550', color: '#22D3EE', fontSize: 11, fontWeight: 700, padding: '3px 6px', borderRadius: 4, outline: 'none', cursor: 'pointer' }}
               />
