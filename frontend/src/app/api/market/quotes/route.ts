@@ -4,12 +4,22 @@ import { fetchQuotesWithFallback, US_TOP } from '@/lib/yahoo';
 // PATCH 0782 — KV blob primary source (populated by GH Actions scraper).
 import { kvGet } from '@/lib/kv';
 
-// PATCH 0819: removed force-dynamic so Cache-Control headers aren't overridden by Next.js. Query params still force dynamic at runtime.
+// PATCH 0873 — Restore force-dynamic. PATCH 0819 dropped it to let
+// Cache-Control headers control edge caching, but Next.js can still
+// statically-optimise a route handler at build-time if it doesn't read a
+// dynamic API. The query-params read here is enough at runtime BUT the
+// build can sneak through. Quotes are LIVE data — leaving any chance of
+// static optimisation creates a "stale forever until next deploy" risk.
+export const dynamic = 'force-dynamic';
 export const maxDuration = 30; // PATCH 0818 — 60 → 30, caps CPU per call for ~2000 tickers (NSE master) needs up to 60s
 
 // Response-level cache (avoids re-assembly on rapid polls)
 const responseCache = new Map<string, { data: any; ts: number }>();
-const RESPONSE_TTL = 120_000; // PATCH 0818 — 30s → 2min (cuts CPU 4x) // 30s cache for assembled response
+// PATCH 0873 — TTL 120s → 30s. 2-min cache on the live quote bar made
+// ticker prices visibly stale (user reported wrong %change on ticker bar).
+// CPU concern from 0818 is acceptable: heatmap is the heavy caller and it
+// uses a lighter sub-endpoint.
+const RESPONSE_TTL = 30_000;
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -23,7 +33,7 @@ export async function GET(request: Request) {
   const cached = responseCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < RESPONSE_TTL) {
     return NextResponse.json(cached.data, {
-      headers: { 'Cache-Control': 's-maxage=60, stale-while-revalidate=300' }, // PATCH 0818
+      headers: { 'Cache-Control': 's-maxage=30, stale-while-revalidate=60' }, // PATCH 0873 — tightened from 60/300 for live quote freshness
     });
   }
 
@@ -55,7 +65,7 @@ export async function GET(request: Request) {
     }
 
     return NextResponse.json(responseData, {
-      headers: { 'Cache-Control': 's-maxage=60, stale-while-revalidate=300' }, // PATCH 0818
+      headers: { 'Cache-Control': 's-maxage=30, stale-while-revalidate=60' }, // PATCH 0873 — tightened from 60/300 for live quote freshness
     });
   } catch (error) {
     console.error('Market quotes error:', error);

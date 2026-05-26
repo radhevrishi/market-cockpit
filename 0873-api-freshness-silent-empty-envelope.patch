@@ -1,0 +1,272 @@
+From b52804531405474ad2b94996c14fa259787290ad Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Tue, 26 May 2026 11:04:54 +0200
+Subject: [PATCH] patch 0873: api freshness + silent-empty envelope
+
+- earnings/opportunities: 12h cache -> 10min, per-feed health _meta,
+  refuse to cache empty, return 503 when all feeds fail
+- market/quote: stop caching 400 responses (poisoned cache for 30s)
+- market/quotes: restore force-dynamic, TTL 120s -> 30s, edge 60/300 -> 30/60
+- news: restore force-dynamic, edge 300/900 -> 60/120
+- orders/[symbol]: return 200 + _meta.error envelope (was 500, dropped body)
+---
+ frontend/src/app/api/market/quote/route.ts    |  5 +-
+ frontend/src/app/api/market/quotes/route.ts   | 18 +++--
+ frontend/src/app/api/orders/[symbol]/route.ts | 10 ++-
+ .../api/v1/earnings/opportunities/route.ts    | 66 +++++++++++++++----
+ frontend/src/app/api/v1/news/route.ts         | 11 +++-
+ 5 files changed, 89 insertions(+), 21 deletions(-)
+
+diff --git a/frontend/src/app/api/market/quote/route.ts b/frontend/src/app/api/market/quote/route.ts
+index 11bde59..10707cd 100644
+--- a/frontend/src/app/api/market/quote/route.ts
++++ b/frontend/src/app/api/market/quote/route.ts
+@@ -72,8 +72,11 @@ export async function GET(request: Request) {
+     .slice(0, 20); // Cap at 20
+ 
+   if (symbols.length === 0) {
++    // PATCH 0873 — Do NOT cache the 400-error response. Previously a bad
++    // symbols input poisoned the cache for 30s, returning empty for any
++    // subsequent caller with the same (bad) param. Caching is for happy-
++    // path responses only.
+     const responseData = { stocks: [], error: 'No valid symbols provided' };
+-    responseCache.set(cacheKey, { data: responseData, ts: Date.now() });
+     return NextResponse.json(responseData, { status: 400 });
+   }
+ 
+diff --git a/frontend/src/app/api/market/quotes/route.ts b/frontend/src/app/api/market/quotes/route.ts
+index b7d721f..c48805a 100644
+--- a/frontend/src/app/api/market/quotes/route.ts
++++ b/frontend/src/app/api/market/quotes/route.ts
+@@ -4,12 +4,22 @@ import { fetchQuotesWithFallback, US_TOP } from '@/lib/yahoo';
+ // PATCH 0782 — KV blob primary source (populated by GH Actions scraper).
+ import { kvGet } from '@/lib/kv';
+ 
+-// PATCH 0819: removed force-dynamic so Cache-Control headers aren't overridden by Next.js. Query params still force dynamic at runtime.
++// PATCH 0873 — Restore force-dynamic. PATCH 0819 dropped it to let
++// Cache-Control headers control edge caching, but Next.js can still
++// statically-optimise a route handler at build-time if it doesn't read a
++// dynamic API. The query-params read here is enough at runtime BUT the
++// build can sneak through. Quotes are LIVE data — leaving any chance of
++// static optimisation creates a "stale forever until next deploy" risk.
++export const dynamic = 'force-dynamic';
+ export const maxDuration = 30; // PATCH 0818 — 60 → 30, caps CPU per call for ~2000 tickers (NSE master) needs up to 60s
+ 
+ // Response-level cache (avoids re-assembly on rapid polls)
+ const responseCache = new Map<string, { data: any; ts: number }>();
+-const RESPONSE_TTL = 120_000; // PATCH 0818 — 30s → 2min (cuts CPU 4x) // 30s cache for assembled response
++// PATCH 0873 — TTL 120s → 30s. 2-min cache on the live quote bar made
++// ticker prices visibly stale (user reported wrong %change on ticker bar).
++// CPU concern from 0818 is acceptable: heatmap is the heavy caller and it
++// uses a lighter sub-endpoint.
++const RESPONSE_TTL = 30_000;
+ 
+ export async function GET(request: Request) {
+   const { searchParams } = new URL(request.url);
+@@ -23,7 +33,7 @@ export async function GET(request: Request) {
+   const cached = responseCache.get(cacheKey);
+   if (cached && Date.now() - cached.ts < RESPONSE_TTL) {
+     return NextResponse.json(cached.data, {
+-      headers: { 'Cache-Control': 's-maxage=60, stale-while-revalidate=300' }, // PATCH 0818
++      headers: { 'Cache-Control': 's-maxage=30, stale-while-revalidate=60' }, // PATCH 0873 — tightened from 60/300 for live quote freshness
+     });
+   }
+ 
+@@ -55,7 +65,7 @@ export async function GET(request: Request) {
+     }
+ 
+     return NextResponse.json(responseData, {
+-      headers: { 'Cache-Control': 's-maxage=60, stale-while-revalidate=300' }, // PATCH 0818
++      headers: { 'Cache-Control': 's-maxage=30, stale-while-revalidate=60' }, // PATCH 0873 — tightened from 60/300 for live quote freshness
+     });
+   } catch (error) {
+     console.error('Market quotes error:', error);
+diff --git a/frontend/src/app/api/orders/[symbol]/route.ts b/frontend/src/app/api/orders/[symbol]/route.ts
+index 5f5a2e3..f79bd30 100644
+--- a/frontend/src/app/api/orders/[symbol]/route.ts
++++ b/frontend/src/app/api/orders/[symbol]/route.ts
+@@ -157,14 +157,20 @@ export async function GET(
+       relatedIntel: [],
+       updatedAt: new Date().toISOString(),
+     });
+-  } catch (error) {
++  } catch (error: any) {
+     console.error(`[Orders Detail] Error for ${symbol}:`, error);
++    // PATCH 0873 — Return 200 with _meta.error envelope. fetch().ok=false
++    // on 500 caused the client to discard the body (and any partial data)
++    // and triggered React-Query retries that pounded the upstream. With
++    // a 200 envelope the UI can render the empty-state with the error
++    // hint and stop the retry storm.
+     return NextResponse.json({
+       symbol,
+       orders: [],
+       news: [],
+       relatedIntel: [],
+       updatedAt: new Date().toISOString(),
+-    }, { status: 500 });
++      _meta: { error: (error && (error.message || String(error))) || 'unknown_error', upstreamEmpty: true },
++    });
+   }
+ }
+diff --git a/frontend/src/app/api/v1/earnings/opportunities/route.ts b/frontend/src/app/api/v1/earnings/opportunities/route.ts
+index c6aff36..9ffa0d8 100644
+--- a/frontend/src/app/api/v1/earnings/opportunities/route.ts
++++ b/frontend/src/app/api/v1/earnings/opportunities/route.ts
+@@ -324,7 +324,12 @@ function pubDateToISO(s: string): string {
+ }
+ 
+ // ─── Fetch one feed with timeout ───────────────────────────────────────────
+-async function fetchFeed(url: string, ms = 9000): Promise<string> {
++// PATCH 0873 — Return a structured result so the handler can track which
++// feeds failed and report it in _meta. Previously `catch { return '' }`
++// silently dropped the failure → "0 candidates" with no indication that
++// every upstream feed was actually 502/timeout. That's the root cause of
++// the user's recurring "Earnings Opportunities missing companies" complaint.
++async function fetchFeed(url: string, ms = 9000): Promise<{ xml: string; error?: string }> {
+   const ctrl = new AbortController();
+   const t = setTimeout(() => ctrl.abort(), ms);
+   try {
+@@ -333,10 +338,11 @@ async function fetchFeed(url: string, ms = 9000): Promise<string> {
+       signal: ctrl.signal,
+       cache: 'no-store',
+     });
+-    if (!res.ok) return '';
+-    return await res.text();
+-  } catch { return ''; }
+-  finally { clearTimeout(t); }
++    if (!res.ok) return { xml: '', error: `HTTP ${res.status}` };
++    return { xml: await res.text() };
++  } catch (e: any) {
++    return { xml: '', error: (e && (e.name === 'AbortError' ? 'timeout' : e.message)) || 'fetch_failed' };
++  } finally { clearTimeout(t); }
+ }
+ 
+ // ─── KV cache ──────────────────────────────────────────────────────────────
+@@ -350,9 +356,18 @@ try {
+   }
+ } catch {}
+ 
+-const CACHE_TTL_S = 12 * 3600;
++// PATCH 0873 — Slashed from 12h → 10min. 12h cache meant a single bad
++// run (all feeds failing → 0 candidates) blocked fresh data for the rest
++// of the trading day. 10min gives the cron / first reader after the
++// failure a chance to refresh; the route is cheap (RSS).
++const CACHE_TTL_S = 10 * 60;
+ function cacheKey(date: string): string { return `earnings:opps:v1:${date || 'all'}`; }
+ 
++// PATCH 0873 — `dynamic = 'force-dynamic'` already set at top of file
++// (line 5). Adding `revalidate = 0` belt-and-braces against any future
++// static-optimization regression.
++export const revalidate = 0;
++
+ // ─── Main handler ──────────────────────────────────────────────────────────
+ export async function GET(req: Request) {
+   const url = new URL(req.url);
+@@ -368,14 +383,23 @@ export async function GET(req: Request) {
+   }
+ 
+   // Fetch all feeds in parallel
+-  const xmls = await Promise.all(
+-    RESULTS_FEEDS.map(async (f) => ({ feed: f, xml: await fetchFeed(f.url) })),
++  // PATCH 0873 — Track per-feed success/failure so we can report it in
++  // _meta and refuse to cache an empty payload caused entirely by feed
++  // failures.
++  const results = await Promise.all(
++    RESULTS_FEEDS.map(async (f) => ({ feed: f, ...(await fetchFeed(f.url)) })),
+   );
++  const feeds_ok: string[] = [];
++  const feeds_failed: Array<{ name: string; error: string }> = [];
++  for (const r of results) {
++    if (r.xml) feeds_ok.push(r.feed.name);
++    else feeds_failed.push({ name: r.feed.name, error: r.error || 'empty' });
++  }
+ 
+   // Parse + dedup by title
+   const allItems: RssItem[] = [];
+   const seen = new Set<string>();
+-  for (const { feed, xml } of xmls) {
++  for (const { feed, xml } of results) {
+     if (!xml) continue;
+     const items = parseRss(xml, feed.name, feed.tier);
+     for (const it of items) {
+@@ -416,6 +440,10 @@ export async function GET(req: Request) {
+     by_tier[t].sort((a, b) => b.composite_score - a.composite_score);
+   }
+ 
++  // PATCH 0873 — `_meta` surfaces feed health to the UI so an empty list
++  // is no longer indistinguishable from "every upstream is broken".
++  const upstreamHealthy = feeds_ok.length > 0;
++  const allFeedsFailed = feeds_failed.length === RESULTS_FEEDS.length;
+   const payload = {
+     filing_date: date || null,
+     candidates_total: candidates.length,
+@@ -423,12 +451,28 @@ export async function GET(req: Request) {
+     by_tier,
+     generated_at: new Date().toISOString(),
+     sources_polled: RESULTS_FEEDS.length,
++    _meta: {
++      feeds_ok_count: feeds_ok.length,
++      feeds_failed_count: feeds_failed.length,
++      feeds_failed,
++      upstreamHealthy,
++      upstreamEmpty: candidates.length === 0,
++      allFeedsFailed,
++    },
+   };
+ 
+-  // Cache
+-  if (redis) {
++  // PATCH 0873 — Never cache a fully-failed run. Caching candidates_total===0
++  // when every feed errored locked the user into "0 candidates" for 12h
++  // (now 10min). We only cache when at least one feed succeeded AND we got
++  // at least one candidate — otherwise let the next caller retry upstream.
++  if (redis && !allFeedsFailed && candidates.length > 0) {
+     try { await redis.set(cacheKey(date), payload, { ex: CACHE_TTL_S }); } catch {}
+   }
+ 
++  // If everything upstream failed, return 503 so client retry logic and
++  // monitoring can react. UI gets the same shape, just with proper status.
++  if (allFeedsFailed) {
++    return NextResponse.json(payload, { status: 503 });
++  }
+   return NextResponse.json(payload);
+ }
+diff --git a/frontend/src/app/api/v1/news/route.ts b/frontend/src/app/api/v1/news/route.ts
+index 7743e63..315200a 100644
+--- a/frontend/src/app/api/v1/news/route.ts
++++ b/frontend/src/app/api/v1/news/route.ts
+@@ -64,7 +64,12 @@ import {
+ // PATCH 0069: curated seed of verified transformational contracts
+ import { seedTransformational } from '@/lib/news/transformational-seed';
+ 
+-// PATCH 0819: removed force-dynamic so Cache-Control headers aren't overridden by Next.js. Query params still force dynamic at runtime.
++// PATCH 0873 — Restore force-dynamic. PATCH 0819 dropped it for header-
++// controlled edge caching, but Next.js can still statically-optimise the
++// handler at build → "deploy-fresh, then frozen". News is the live RSS
++// blend; users expect <2 min freshness. Force dynamic + tighter
++// Cache-Control restores the freshness contract.
++export const dynamic = 'force-dynamic';
+ export const maxDuration = 20; // PATCH 0818 — tighter cap
+ 
+ // ── RSS Feed Sources ──────────────────────────────────────────────────
+@@ -2680,7 +2685,7 @@ export async function GET(request: Request) {
+       }
+       // Top up if one side has fewer than 5
+       const ranked = merged.slice(0, 10);
+-      return NextResponse.json(ranked, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } } );// PATCH 0818
++      return NextResponse.json(ranked, { headers: { 'Cache-Control': 's-maxage=60, stale-while-revalidate=120' } } );// PATCH 0818
+     }
+ 
+     // ── Phase 2.5 / 3.14: Anomaly detector ──
+@@ -2906,7 +2911,7 @@ export async function GET(request: Request) {
+       });
+     }
+ 
+-    return NextResponse.json(filtered, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } } );// PATCH 0818
++    return NextResponse.json(filtered, { headers: { 'Cache-Control': 's-maxage=60, stale-while-revalidate=120' } } );// PATCH 0818
+   } catch (error) {
+     console.error('[News API] Error:', error);
+     return NextResponse.json([], { status: 200 });
+-- 
+2.50.1 (Apple Git-155)
+

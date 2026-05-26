@@ -157,14 +157,20 @@ export async function GET(
       relatedIntel: [],
       updatedAt: new Date().toISOString(),
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error(`[Orders Detail] Error for ${symbol}:`, error);
+    // PATCH 0873 — Return 200 with _meta.error envelope. fetch().ok=false
+    // on 500 caused the client to discard the body (and any partial data)
+    // and triggered React-Query retries that pounded the upstream. With
+    // a 200 envelope the UI can render the empty-state with the error
+    // hint and stop the retry storm.
     return NextResponse.json({
       symbol,
       orders: [],
       news: [],
       relatedIntel: [],
       updatedAt: new Date().toISOString(),
-    }, { status: 500 });
+      _meta: { error: (error && (error.message || String(error))) || 'unknown_error', upstreamEmpty: true },
+    });
   }
 }

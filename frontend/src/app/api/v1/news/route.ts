@@ -64,7 +64,12 @@ import {
 // PATCH 0069: curated seed of verified transformational contracts
 import { seedTransformational } from '@/lib/news/transformational-seed';
 
-// PATCH 0819: removed force-dynamic so Cache-Control headers aren't overridden by Next.js. Query params still force dynamic at runtime.
+// PATCH 0873 — Restore force-dynamic. PATCH 0819 dropped it for header-
+// controlled edge caching, but Next.js can still statically-optimise the
+// handler at build → "deploy-fresh, then frozen". News is the live RSS
+// blend; users expect <2 min freshness. Force dynamic + tighter
+// Cache-Control restores the freshness contract.
+export const dynamic = 'force-dynamic';
 export const maxDuration = 20; // PATCH 0818 — tighter cap
 
 // ── RSS Feed Sources ──────────────────────────────────────────────────
@@ -2680,7 +2685,7 @@ export async function GET(request: Request) {
       }
       // Top up if one side has fewer than 5
       const ranked = merged.slice(0, 10);
-      return NextResponse.json(ranked, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } } );// PATCH 0818
+      return NextResponse.json(ranked, { headers: { 'Cache-Control': 's-maxage=60, stale-while-revalidate=120' } } );// PATCH 0818
     }
 
     // ── Phase 2.5 / 3.14: Anomaly detector ──
@@ -2906,7 +2911,7 @@ export async function GET(request: Request) {
       });
     }
 
-    return NextResponse.json(filtered, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } } );// PATCH 0818
+    return NextResponse.json(filtered, { headers: { 'Cache-Control': 's-maxage=60, stale-while-revalidate=120' } } );// PATCH 0818
   } catch (error) {
     console.error('[News API] Error:', error);
     return NextResponse.json([], { status: 200 });

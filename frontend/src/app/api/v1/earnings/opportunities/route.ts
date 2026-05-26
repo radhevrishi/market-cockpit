@@ -324,7 +324,12 @@ function pubDateToISO(s: string): string {
 }
 
 // ─── Fetch one feed with timeout ───────────────────────────────────────────
-async function fetchFeed(url: string, ms = 9000): Promise<string> {
+// PATCH 0873 — Return a structured result so the handler can track which
+// feeds failed and report it in _meta. Previously `catch { return '' }`
+// silently dropped the failure → "0 candidates" with no indication that
+// every upstream feed was actually 502/timeout. That's the root cause of
+// the user's recurring "Earnings Opportunities missing companies" complaint.
+async function fetchFeed(url: string, ms = 9000): Promise<{ xml: string; error?: string }> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
   try {
@@ -333,10 +338,11 @@ async function fetchFeed(url: string, ms = 9000): Promise<string> {
       signal: ctrl.signal,
       cache: 'no-store',
     });
-    if (!res.ok) return '';
-    return await res.text();
-  } catch { return ''; }
-  finally { clearTimeout(t); }
+    if (!res.ok) return { xml: '', error: `HTTP ${res.status}` };
+    return { xml: await res.text() };
+  } catch (e: any) {
+    return { xml: '', error: (e && (e.name === 'AbortError' ? 'timeout' : e.message)) || 'fetch_failed' };
+  } finally { clearTimeout(t); }
 }
 
 // ─── KV cache ──────────────────────────────────────────────────────────────
@@ -350,8 +356,17 @@ try {
   }
 } catch {}
 
-const CACHE_TTL_S = 12 * 3600;
+// PATCH 0873 — Slashed from 12h → 10min. 12h cache meant a single bad
+// run (all feeds failing → 0 candidates) blocked fresh data for the rest
+// of the trading day. 10min gives the cron / first reader after the
+// failure a chance to refresh; the route is cheap (RSS).
+const CACHE_TTL_S = 10 * 60;
 function cacheKey(date: string): string { return `earnings:opps:v1:${date || 'all'}`; }
+
+// PATCH 0873 — `dynamic = 'force-dynamic'` already set at top of file
+// (line 5). Adding `revalidate = 0` belt-and-braces against any future
+// static-optimization regression.
+export const revalidate = 0;
 
 // ─── Main handler ──────────────────────────────────────────────────────────
 export async function GET(req: Request) {
@@ -368,14 +383,23 @@ export async function GET(req: Request) {
   }
 
   // Fetch all feeds in parallel
-  const xmls = await Promise.all(
-    RESULTS_FEEDS.map(async (f) => ({ feed: f, xml: await fetchFeed(f.url) })),
+  // PATCH 0873 — Track per-feed success/failure so we can report it in
+  // _meta and refuse to cache an empty payload caused entirely by feed
+  // failures.
+  const results = await Promise.all(
+    RESULTS_FEEDS.map(async (f) => ({ feed: f, ...(await fetchFeed(f.url)) })),
   );
+  const feeds_ok: string[] = [];
+  const feeds_failed: Array<{ name: string; error: string }> = [];
+  for (const r of results) {
+    if (r.xml) feeds_ok.push(r.feed.name);
+    else feeds_failed.push({ name: r.feed.name, error: r.error || 'empty' });
+  }
 
   // Parse + dedup by title
   const allItems: RssItem[] = [];
   const seen = new Set<string>();
-  for (const { feed, xml } of xmls) {
+  for (const { feed, xml } of results) {
     if (!xml) continue;
     const items = parseRss(xml, feed.name, feed.tier);
     for (const it of items) {
@@ -416,6 +440,10 @@ export async function GET(req: Request) {
     by_tier[t].sort((a, b) => b.composite_score - a.composite_score);
   }
 
+  // PATCH 0873 — `_meta` surfaces feed health to the UI so an empty list
+  // is no longer indistinguishable from "every upstream is broken".
+  const upstreamHealthy = feeds_ok.length > 0;
+  const allFeedsFailed = feeds_failed.length === RESULTS_FEEDS.length;
   const payload = {
     filing_date: date || null,
     candidates_total: candidates.length,
@@ -423,12 +451,28 @@ export async function GET(req: Request) {
     by_tier,
     generated_at: new Date().toISOString(),
     sources_polled: RESULTS_FEEDS.length,
+    _meta: {
+      feeds_ok_count: feeds_ok.length,
+      feeds_failed_count: feeds_failed.length,
+      feeds_failed,
+      upstreamHealthy,
+      upstreamEmpty: candidates.length === 0,
+      allFeedsFailed,
+    },
   };
 
-  // Cache
-  if (redis) {
+  // PATCH 0873 — Never cache a fully-failed run. Caching candidates_total===0
+  // when every feed errored locked the user into "0 candidates" for 12h
+  // (now 10min). We only cache when at least one feed succeeded AND we got
+  // at least one candidate — otherwise let the next caller retry upstream.
+  if (redis && !allFeedsFailed && candidates.length > 0) {
     try { await redis.set(cacheKey(date), payload, { ex: CACHE_TTL_S }); } catch {}
   }
 
+  // If everything upstream failed, return 503 so client retry logic and
+  // monitoring can react. UI gets the same shape, just with proper status.
+  if (allFeedsFailed) {
+    return NextResponse.json(payload, { status: 503 });
+  }
   return NextResponse.json(payload);
 }

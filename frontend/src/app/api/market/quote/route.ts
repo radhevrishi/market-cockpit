@@ -72,8 +72,11 @@ export async function GET(request: Request) {
     .slice(0, 20); // Cap at 20
 
   if (symbols.length === 0) {
+    // PATCH 0873 — Do NOT cache the 400-error response. Previously a bad
+    // symbols input poisoned the cache for 30s, returning empty for any
+    // subsequent caller with the same (bad) param. Caching is for happy-
+    // path responses only.
     const responseData = { stocks: [], error: 'No valid symbols provided' };
-    responseCache.set(cacheKey, { data: responseData, ts: Date.now() });
     return NextResponse.json(responseData, { status: 400 });
   }
 
