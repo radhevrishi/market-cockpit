@@ -1934,18 +1934,35 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
           // previous two-row layout buried Quarter above FY and the
           // labels collided visually. New layout puts a bigger PERIOD
           // header + visible vertical divider between Q-chips and FY-chips.
-          // PATCH 0922 — Indian-FY chip labels rewritten to disambiguate
-          // "reporting quarter" (what the filing covers) vs "filing month"
-          // (when it was submitted). User report: "Q4 Jan-Mar (359) ... most
-          // companies are reported after April lot of bugs". Confusion was
-          // semantic, not a code bug. Now each chip has explicit reporting-
-          // quarter + filing-window in the tooltip, and the row has a
-          // header line spelling out the convention.
+          // PATCH 0922 + 0924 — Q chip labels now carry the SPECIFIC
+          // calendar year derived from the active fiscal-year context.
+          // User: "give year to this. think and do all institution level".
+          //
+          // Context FY = either the active filter (filters.fy) OR the
+          // current Indian FY computed from today. Mapping:
+          //   Q1 FY{N} = Apr-Jun of year (2000+N-1)
+          //   Q2 FY{N} = Jul-Sep of year (2000+N-1)
+          //   Q3 FY{N} = Oct-Dec of year (2000+N-1)
+          //   Q4 FY{N} = Jan-Mar of year (2000+N) ← annual quarter
+          //
+          // E.g. for FY26: Q1=Apr-Jun 2025, Q2=Jul-Sep 2025, Q3=Oct-Dec 2025,
+          // Q4=Jan-Mar 2026. When user switches FY filter to FY27, all four
+          // chips re-label to the FY27 calendar window (Apr 2026 → Mar 2027).
+          const ctxFY: number = (() => {
+            if (filters.fy != null) return filters.fy;
+            const now = new Date();
+            const calY = now.getFullYear();
+            const calM = now.getMonth() + 1;
+            return calM >= 4 ? (calY + 1) % 100 : calY % 100;
+          })();
+          const ctxFYFull = ctxFY < 50 ? 2000 + ctxFY : 2000 + ctxFY;
+          const calForQ1Q2Q3 = ctxFYFull - 1;
+          const calForQ4 = ctxFYFull;
           const qMeta: Record<string, { label: string; reports: string; filed: string }> = {
-            Q1: { label: 'Q1', reports: 'Apr-Jun results', filed: 'typically filed Jul-Aug' },
-            Q2: { label: 'Q2', reports: 'Jul-Sep results', filed: 'typically filed Oct-Nov' },
-            Q3: { label: 'Q3', reports: 'Oct-Dec results', filed: 'typically filed Jan-Feb' },
-            Q4: { label: 'Q4', reports: 'Jan-Mar results · annual', filed: 'typically filed Apr-Jun' },
+            Q1: { label: 'Q1', reports: `Apr-Jun ${calForQ1Q2Q3} results`,   filed: `typically filed Jul-Aug ${calForQ1Q2Q3}` },
+            Q2: { label: 'Q2', reports: `Jul-Sep ${calForQ1Q2Q3} results`,   filed: `typically filed Oct-Nov ${calForQ1Q2Q3}` },
+            Q3: { label: 'Q3', reports: `Oct-Dec ${calForQ1Q2Q3} results`,   filed: `typically filed Jan-Feb ${calForQ4}` },
+            Q4: { label: 'Q4', reports: `Jan-Mar ${calForQ4} results · annual`, filed: `typically filed Apr-Jun ${calForQ4}` },
           };
           return (
             <div style={{
@@ -1977,6 +1994,10 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                 </div>
                 {showQuarterCheatSheet && (
                   <div style={{ marginTop: 6, padding: '6px 8px', background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.35)', borderRadius: 4 }}>
+                    <div style={{ fontSize: 9.5, color: '#94A3B8', marginBottom: 4 }}>
+                      Showing for <strong style={{ color: '#F59E0B' }}>FY{ctxFY}</strong> (Apr {ctxFYFull - 1} → Mar {ctxFYFull})
+                      {filters.fy == null && <span style={{ marginLeft: 4, color: '#6B7A8D' }}>· default · switch YEAR chip below to shift</span>}
+                    </div>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
                       <thead>
                         <tr style={{ borderBottom: '1px solid rgba(245,158,11,0.3)' }}>
@@ -1986,13 +2007,13 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                         </tr>
                       </thead>
                       <tbody>
-                        <tr><td style={{ padding: '2px 6px', color: '#E6EDF3', fontWeight: 800 }}>Q1</td><td style={{ padding: '2px 6px', color: '#94A3B8' }}>Apr–Jun</td><td style={{ padding: '2px 6px', color: '#94A3B8' }}>Jul–Aug</td></tr>
-                        <tr><td style={{ padding: '2px 6px', color: '#E6EDF3', fontWeight: 800 }}>Q2</td><td style={{ padding: '2px 6px', color: '#94A3B8' }}>Jul–Sep</td><td style={{ padding: '2px 6px', color: '#94A3B8' }}>Oct–Nov</td></tr>
-                        <tr><td style={{ padding: '2px 6px', color: '#E6EDF3', fontWeight: 800 }}>Q3</td><td style={{ padding: '2px 6px', color: '#94A3B8' }}>Oct–Dec</td><td style={{ padding: '2px 6px', color: '#94A3B8' }}>Jan–Feb</td></tr>
+                        <tr><td style={{ padding: '2px 6px', color: '#E6EDF3', fontWeight: 800 }}>Q1 FY{ctxFY}</td><td style={{ padding: '2px 6px', color: '#94A3B8' }}>Apr–Jun {calForQ1Q2Q3}</td><td style={{ padding: '2px 6px', color: '#94A3B8' }}>Jul–Aug {calForQ1Q2Q3}</td></tr>
+                        <tr><td style={{ padding: '2px 6px', color: '#E6EDF3', fontWeight: 800 }}>Q2 FY{ctxFY}</td><td style={{ padding: '2px 6px', color: '#94A3B8' }}>Jul–Sep {calForQ1Q2Q3}</td><td style={{ padding: '2px 6px', color: '#94A3B8' }}>Oct–Nov {calForQ1Q2Q3}</td></tr>
+                        <tr><td style={{ padding: '2px 6px', color: '#E6EDF3', fontWeight: 800 }}>Q3 FY{ctxFY}</td><td style={{ padding: '2px 6px', color: '#94A3B8' }}>Oct–Dec {calForQ1Q2Q3}</td><td style={{ padding: '2px 6px', color: '#94A3B8' }}>Jan–Feb {calForQ4}</td></tr>
                         <tr style={{ background: 'rgba(245,158,11,0.10)' }}>
-                          <td style={{ padding: '2px 6px', color: '#F59E0B', fontWeight: 800 }}>Q4</td>
-                          <td style={{ padding: '2px 6px', color: '#F59E0B' }}>Jan–Mar (also annual)</td>
-                          <td style={{ padding: '2px 6px', color: '#F59E0B', fontWeight: 700 }}>Apr–Jun ← we&apos;re here now</td>
+                          <td style={{ padding: '2px 6px', color: '#F59E0B', fontWeight: 800 }}>Q4 FY{ctxFY}</td>
+                          <td style={{ padding: '2px 6px', color: '#F59E0B' }}>Jan–Mar {calForQ4} (also annual)</td>
+                          <td style={{ padding: '2px 6px', color: '#F59E0B', fontWeight: 700 }}>Apr–Jun {calForQ4}{(() => { const now = new Date(); const curFY = now.getMonth() + 1 >= 4 ? (now.getFullYear() + 1) % 100 : now.getFullYear() % 100; return ctxFY === curFY ? ' ← we\'re here now' : ''; })()}</td>
                         </tr>
                       </tbody>
                     </table>
@@ -2001,15 +2022,23 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 700, minWidth: 110 }}>Reporting quarter:</span>
+                <span style={{ fontSize: 9, color: '#94A3B8', fontStyle: 'italic' }}>
+                  ({filters.fy != null ? `FY${ctxFY}` : `FY${ctxFY} default`})
+                </span>
               {quarters.map((q) => {
                 const active = filters.quarter === q;
                 const n = countQ(q);
                 const meta = qMeta[q];
+                // The "Q3 FY26" full label so the chip is institutionally
+                // unambiguous even when read out of context.
+                const qFyLabel = `${meta.label} FY${ctxFY}`;
+                // Strip the "results · annual" tail for compact inline tag.
+                const periodTag = meta.reports.replace(' results', '').replace(' · annual', '');
                 return (
                   <button key={q} onClick={() => toggleQ(q)}
                     style={active ? chipActive('#F59E0B') : chipBase}
-                    title={`${meta.label} = ${meta.reports} · ${meta.filed}. Click to filter the bench to entries reporting this fiscal quarter, regardless of when they were filed.`}>
-                    {meta.label} <span style={{ fontSize: 9, color: active ? '#F59E0B' : '#94A3B8', marginLeft: 2 }}>({meta.reports.split(' · ')[0]})</span> <span style={{ color: active ? '#F59E0B' : '#6B7A8D', marginLeft: 3, fontWeight: 800 }}>({n})</span>
+                    title={`${qFyLabel} = ${meta.reports} · ${meta.filed}. Click to filter the bench to entries reporting this fiscal quarter, regardless of when they were filed. (Calendar years shown reflect ${filters.fy != null ? `your selected FY${ctxFY}` : `the current default FY${ctxFY}`}; if you switch the YEAR chip below, these labels will shift.)`}>
+                    {qFyLabel} <span style={{ fontSize: 9, color: active ? '#F59E0B' : '#94A3B8', marginLeft: 2 }}>({periodTag})</span> <span style={{ color: active ? '#F59E0B' : '#6B7A8D', marginLeft: 3, fontWeight: 800 }}>({n})</span>
                   </button>
                 );
               })}
