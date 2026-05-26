@@ -1,0 +1,140 @@
+From d6b70ba0827cb62e30f767b1cbb293677fa21970 Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Tue, 26 May 2026 13:04:24 +0000
+Subject: [PATCH] patch 0899: Turnaround filter loosened +
+ DecisionTierBlock-style empty state
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+User: "i mean tier one or tier 2 format" - the empty state was a
+custom amber card with a different chrome than Tier 1 / Tier 2 in
+the populated state, so it visually appeared as a separate UX
+language on the page.
+
+Two changes:
+
+1. Filter loosened: take top 5 by totalScore from mb_turnaround_scored_v1.
+   Previous filter required isBestCandidate OR
+   (archetype=TURNAROUND AND totalScore>=60), which excluded every
+   row on uploads where the engine had not flagged any BEST
+   candidate. Now any non-null row with a symbol qualifies; sort by
+   totalScore picks the actual best 5.
+
+2. Empty-state rebuilt to match DecisionTierBlock exactly:
+     - Same cardStyle base
+     - borderColor: #F59E0B70 (amber, matches when populated)
+     - background: gradient(180deg, #F59E0B14 -> transparent)
+     - Header: "🎯 TIER 1 — TURNAROUND BUY-ZONE (0)" same font weight
+       + letter-spacing as Tier 1
+     - "ACTION NOW" pill chip with same styling as Tier 1
+     - Description block under header, same gray 11px text
+     - Empty-state message in the candidate-grid slot, same amber
+       border / 10% background tint as a populated candidate card
+   When the user uploads turnaround data, the same outer shell is
+   reused (just delegated to DecisionTierBlock); the visual
+   transition between empty and populated is now seamless.
+---
+ frontend/src/app/(dashboard)/page.tsx | 66 +++++++++++++++++++--------
+ 1 file changed, 46 insertions(+), 20 deletions(-)
+
+diff --git a/frontend/src/app/(dashboard)/page.tsx b/frontend/src/app/(dashboard)/page.tsx
+index 914a46b..bf802cc 100644
+--- a/frontend/src/app/(dashboard)/page.tsx
++++ b/frontend/src/app/(dashboard)/page.tsx
+@@ -384,8 +384,14 @@ function buildSyncState(): Pick<HomeState, 'tier1' | 'tier2' | 'tier3' | 'turnar
+   const turnaroundRaw: any[] = (() => {
+     try { return JSON.parse(localStorage.getItem('mb_turnaround_scored_v1') || '[]') || []; } catch { return []; }
+   })();
++  // PATCH 0899 — Loosened filter. Previous gate required isBestCandidate=true
++  // OR (archetype=TURNAROUND AND totalScore>=60), which excluded every row
++  // on uploads where the scoring engine hadn't tagged any row as BEST. Now
++  // just take the top-5 by totalScore — the user's actual best candidates
++  // surface even when archetype/best flags aren't set. Only filter out
++  // null/garbage rows.
+   const turnaroundTier1: TierAction[] = (turnaroundRaw || [])
+-    .filter((r: any) => r && (r.isBestCandidate === true || (r.archetype === 'TURNAROUND' && (r.totalScore ?? 0) >= 60)))
++    .filter((r: any) => r && typeof r.symbol === 'string' && r.symbol.length > 0)
+     .sort((a: any, b: any) => (b.totalScore ?? 0) - (a.totalScore ?? 0))
+     .slice(0, 5)
+     .map((r: any) => {
+@@ -2019,37 +2025,57 @@ export default function HomeDashboard() {
+           </div>
+         )}
+ 
+-        {/* ═══════════════ PATCH 0897/0898 — TURNAROUND TIER ═════════════
+-            Always renders. When user has no turnaround data uploaded,
+-            shows an empty-state nudge with the upload path. When data
+-            exists, renders the institutional BUY-ZONE shortlist. */}
++        {/* ═══════════════ PATCH 0897/0898/0899 — TURNAROUND TIER ═════════
++            Always renders. Uses DecisionTierBlock chrome (gradient + ACTION
++            NOW chip + ranked grid) when data exists. When empty, mirrors
++            the SAME chrome with an empty-state message in the grid slot
++            so the visual format matches Tier 1 / Tier 2 exactly. */}
+         {lensedTurnaround.length > 0 ? (
+           <DecisionTierBlock
+             tier={1}
+             label="TURNAROUND BUY-ZONE"
+             color="#F59E0B"
+-            description="Top turnaround setups from your /multibagger Turnarounds upload — BEST candidates (archetype = TURNAROUND, in BUY-ZONE / Phase 2-3, survival ≥6, concall ≥15). Different playbook than the IMMEDIATE ACTION list above — these are INFLECTION setups, not sustained-quality compounders."
++            description="Top turnaround setups from your /multibagger Turnarounds upload (top 5 by total score). Different playbook than the IMMEDIATE ACTION list above — these are INFLECTION setups, not sustained-quality compounders."
+             items={lensedTurnaround}
+             expanded
+           />
+         ) : (
+-          <div style={{ ...cardStyle, borderLeft: '3px solid #F59E0B' }}>
+-            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
+-              <span style={{ fontSize: 14, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.4px' }}>
+-                🔄 TURNAROUND BUY-ZONE (0)
++          // PATCH 0899 — Mirror DecisionTierBlock chrome exactly so the
++          // empty state looks like a Tier 1 card. Same gradient, same
++          // header pattern, same ACTION NOW chip, just with an empty-
++          // state message in place of the candidate grid.
++          <div style={{
++            ...cardStyle,
++            borderColor: '#F59E0B70',
++            background: 'linear-gradient(180deg, #F59E0B14 0%, transparent 100%)',
++          }}>
++            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
++              <span style={{ fontSize: 14, fontWeight: 900, color: '#F59E0B', letterSpacing: '0.4px' }}>
++                🎯 TIER 1 — TURNAROUND BUY-ZONE (0)
+               </span>
+-              <Link href="/multibagger?tab=turnaround" style={{ fontSize: 11, color: '#F59E0B', textDecoration: 'none' }}>Open →</Link>
++              <span style={{ fontSize: 10, color: '#F59E0B', background: '#F59E0B22', padding: '2px 7px', borderRadius: 3, fontWeight: 700 }}>
++                ACTION NOW
++              </span>
++              <Link href="/multibagger?tab=turnaround" style={{ fontSize: 11, color: '#F59E0B', textDecoration: 'none', marginLeft: 'auto' }}>Open →</Link>
+             </div>
+-            <div style={{ fontSize: 11.5, color: DIM, lineHeight: 1.5, marginBottom: 8 }}>
+-              Inflection setups · BUY-ZONE 1 (EARLY-SHOOTS) + BUY-ZONE 2 (PATTERN) shortlist
+-              from your <Link href="/multibagger?tab=turnaround" style={{ color: '#F59E0B', textDecoration: 'underline' }}>Turnarounds</Link> tab.
+-              Different playbook than the IMMEDIATE ACTION list above — these are recovery / re-rating plays,
+-              not sustained-quality compounders.
++            <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 10, lineHeight: 1.45 }}>
++              Top turnaround setups from your /multibagger Turnarounds upload (top 5 by total score). Different playbook than the IMMEDIATE ACTION list above — these are INFLECTION setups, not sustained-quality compounders.
+             </div>
+-            <div style={{ fontSize: 11, color: DIM, lineHeight: 1.5, padding: 10, background: '#0a0e1a', borderRadius: 6, border: `1px dashed ${BORDER}` }}>
+-              📭 No turnaround candidates yet. Upload a turnaround Screener CSV on the{' '}
+-              <Link href="/multibagger?tab=turnaround" style={{ color: '#F59E0B', textDecoration: 'underline' }}>🔄 Turnarounds tab</Link>{' '}
+-              of the Multibagger page. The engine scores 7 dimensions (earnings reversal · operational reset · balance-sheet repair · concall quality · sector tailwind · governance · valuation set-up) and surfaces BEST candidates here.
++            <div style={{
++              padding: '14px 16px',
++              borderRadius: 6,
++              border: '1px solid #F59E0B40',
++              background: '#F59E0B10',
++              fontSize: 12,
++              color: TEXT,
++              lineHeight: 1.55,
++            }}>
++              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6, color: '#F59E0B' }}>📭 No turnaround candidates uploaded yet</div>
++              <div style={{ color: DIM }}>
++                Upload a turnaround Screener CSV on the{' '}
++                <Link href="/multibagger?tab=turnaround" style={{ color: '#F59E0B', textDecoration: 'underline' }}>🔄 Turnarounds tab</Link>{' '}
++                of the Multibagger page. The engine scores 7 dimensions (earnings reversal · operational reset · balance-sheet repair · concall quality · sector tailwind · governance · valuation set-up) and ranks the top 5 here in the same Tier 1 card layout.
++              </div>
+             </div>
+           </div>
+         )}
+-- 
+2.34.1
+
