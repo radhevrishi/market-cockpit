@@ -2795,7 +2795,7 @@ export default function HomeDashboard() {
                 if (a._inUniverse !== b._inUniverse) return a._inUniverse ? -1 : 1;
                 return 0;
               });
-              const SHOWN = 15;  // PATCH 0898: 30 → 15 per user — half the rail, makes room for Turnaround block
+              const SHOWN = 30;  // PATCH 0900: restored 30 per user — 15 felt too short, 30 was right
               const items = enriched.slice(0, SHOWN);
               return (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1, minHeight: 0 }}>
