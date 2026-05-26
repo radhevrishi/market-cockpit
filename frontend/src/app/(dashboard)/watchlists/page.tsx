@@ -1193,13 +1193,29 @@ function parseDateLoose(s: string): { y: number; m: number; d: number } | null {
   return null;
 }
 function deriveQuarterFY(e: ConvictionEntry | string): { q: 'Q1' | 'Q2' | 'Q3' | 'Q4'; fy: number; fyFull: number } | null {
-  // Tier 1 — explicit fields from EO graded payload (Patch 0911)
-  if (typeof e === 'object' && e && e.quarter && e.fiscal_year) {
-    return {
-      q: e.quarter as 'Q1' | 'Q2' | 'Q3' | 'Q4',
-      fy: e.fiscal_year % 100,
-      fyFull: e.fiscal_year,
-    };
+  // PATCH 0915 — Bug fix: bench entries can have a `quarter` field stored
+  // as the full graded-route string "Q4 FY26" (not just "Q4"). Previously
+  // the tier-1 path cast the raw value to 'Q1'-'Q4' without validation, so
+  // countQ('Q4') compared against runtime "Q4 FY26" and returned 0 for
+  // every entry. User report: "FILTERS · 0 of 359" with all Q chips (0)
+  // but FY26 chip (358). Now we regex-extract the clean Q before trusting.
+  //
+  // Tier 1 — explicit fields. Extract clean Q1-Q4 from whatever shape.
+  if (typeof e === 'object' && e && e.fiscal_year) {
+    let validQ: 'Q1' | 'Q2' | 'Q3' | 'Q4' | null = null;
+    if (typeof e.quarter === 'string') {
+      const qm = e.quarter.match(/Q([1-4])/i);
+      if (qm) validQ = ('Q' + qm[1]) as 'Q1' | 'Q2' | 'Q3' | 'Q4';
+    }
+    if (validQ) {
+      return {
+        q: validQ,
+        fy: e.fiscal_year % 100,
+        fyFull: e.fiscal_year,
+      };
+    }
+    // Explicit fiscal_year is set but quarter is missing/dirty —
+    // fall through to heuristic so we still derive a Q from filing_date.
   }
   // Tier 2 — heuristic from filing_date
   const fdate = typeof e === 'string' ? e : e?.filing_date;

@@ -2151,6 +2151,15 @@ export default function EarningsOpportunitiesPage() {
         <DegradedBanner />
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
           <h1 style={{ fontSize: 22, fontWeight: 900, color: '#E6EDF3', margin: 0 }}>Earnings Opportunities</h1>
+          {/* PATCH 0915 — Direct link to NSE's official calendar so user can
+              verify the universe vs our aggregator. User feedback: hub
+              shows 93 filings for the date but NSE's calendar shows 118+. */}
+          <a
+            href="https://www.nseindia.com/companies-listing/corporate-filings-financial-results"
+            target="_blank" rel="noopener noreferrer"
+            title="Open NSE's official corporate-filings page in a new tab to verify the full universe of filings for any date"
+            style={{ fontSize: 10, padding: '4px 10px', borderRadius: 6, border: '1px solid #94A3B860', background: 'transparent', color: '#94A3B8', fontWeight: 700, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+          >🔗 NSE official ↗</a>
           <button onClick={() => refetch()} disabled={hardRefreshing}
             title="Hard refresh — busts cache, re-fetches NSE/BSE feeds, pulls in newly-filed tickers (works for any date including weekends)"
             style={{
