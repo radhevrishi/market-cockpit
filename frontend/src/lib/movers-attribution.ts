@@ -566,7 +566,20 @@ function inferCausalSignals(
   const mom = typeof m.mom1M === 'number' ? m.mom1M : null;
 
   // ─── LAYER 2 — Peer sympathy ───
-  if (ctx.peerTotal && ctx.peerTotal >= 4 && (ctx.peerCountSameDir || 0) / ctx.peerTotal >= 0.5) {
+  // PATCH 0883 — Tightened gate per user audit: "Do NOT declare peer-sympathy
+  // unless ≥2 correlated stocks move with same direction, same time window,
+  // volume co-movement". Previous gate (4 peers, 50% same-dir) was too loose
+  // and produced false "Peer-sympathy momentum" labels for stocks like
+  // BLISSGVS that had no real peer cluster (the rest of pharma was flat).
+  // New gate: ≥2 same-direction peers, sector outperforming index by ≥1pp,
+  // and the rail's own count of same-direction peers must dominate the
+  // opposite direction (sameDir / total ≥ 0.65 not 0.50).
+  const peerTotal = ctx.peerTotal || 0;
+  const sameDir = ctx.peerCountSameDir || 0;
+  const peerRatio = peerTotal > 0 ? sameDir / peerTotal : 0;
+  const sectorOutperf = (ctx.sectorPct !== undefined && ctx.indexPct !== undefined) ? Math.abs(ctx.sectorPct - ctx.indexPct) : 0;
+  const peerSympathyConfirmed = peerTotal >= 4 && sameDir >= 2 && peerRatio >= 0.65 && sectorOutperf >= 1.0;
+  if (peerSympathyConfirmed) {
     const sec = ctx.friendlySector.toLowerCase();
     if (ctx.isUp) {
       signals.push({
@@ -758,30 +771,83 @@ function inferCausalSignals(
   return signals;
 }
 
-function fuseCausalNarrative(signals: CausalSignal[], isUp: boolean, smallcap: boolean, microcap: boolean): { label: string; detail: string; topLayer: number } {
+// PATCH 0883 — Mechanism inference layer.
+// Per user directive: "Stop using category words as final output. Final output
+// must always be causal sentence + mechanism." Each signal-layer combo maps to
+// a MECHANISM (how the market transmitted the event), and the OUTPUT is a
+// natural-language sentence — not a 2-word label.
+//
+// Mechanism taxonomy (from the user's audit):
+//   INFORMATION_FLOW  · earnings / news / filings / ratings / regulatory
+//   POSITIONING       · profit booking, stop loss cascade, crowded trade exit
+//   SHORT_COVERING    · OI drop + price spike, breakout squeeze
+//   MOMENTUM_EXTENSION· trend continuation, breakout follow-through
+//   LIQUIDITY_VACUUM  · low float, thin order book, gap expansion
+//   PEER_TRANSMISSION · validated by ≥2 correlated peers with vol co-movement
+//   OPERATOR_ROTATION · microcap basket moves, low delivery, sudden vol spike
+//   DERIVATIVES       · option walls, gamma squeeze, index hedging
+//
+// Output: causal sentence ("Event → Mechanism → Market impact"). When no
+// catalyst found, the function is honest about uncertainty: "no confirmed
+// peer linkage … likely liquidity-driven repricing in low-float [sector]".
+
+type Mechanism =
+  | 'INFORMATION_FLOW' | 'POSITIONING' | 'SHORT_COVERING'
+  | 'MOMENTUM_EXTENSION' | 'LIQUIDITY_VACUUM' | 'PEER_TRANSMISSION'
+  | 'OPERATOR_ROTATION' | 'DERIVATIVES';
+
+function fuseCausalNarrative(signals: CausalSignal[], isUp: boolean, smallcap: boolean, microcap: boolean): { label: string; detail: string; topLayer: number; mechanism?: Mechanism } {
   if (signals.length === 0) {
-    // Honest fallback — no signal layers fired
+    // PATCH 0883 — Even the honest fallback is now a real sentence with a
+    // mechanism hint, not a bare "No confirmed trigger" label.
+    const baseSector = microcap ? 'microcap basket' : smallcap ? 'smallcap basket' : 'name';
+    if (isUp) {
+      return {
+        label: `liquidity expansion in low-float ${baseSector} — no confirmed peer cluster`,
+        detail: 'No filing or news catalyst detected; sector participation does not confirm peer-sympathy. Move likely driven by liquidity expansion in a thin-float name, suggesting retail-driven repricing rather than thematic transmission.',
+        topLayer: 0,
+        mechanism: 'LIQUIDITY_VACUUM',
+      };
+    }
     return {
-      label: isUp ? 'No confirmed trigger' : 'No confirmed trigger',
-      detail: 'No filing/news catalyst detected; participation profile inconclusive',
+      label: `liquidity-driven repricing in ${baseSector} — no confirmed catalyst`,
+      detail: 'No filing or news catalyst detected; sector participation does not confirm sector-wide derisking. Move likely driven by liquidity contraction in a thin-float name.',
       topLayer: 0,
+      mechanism: 'LIQUIDITY_VACUUM',
     };
   }
-  // Pick top signal for label; merge top 2-3 phrases for detail.
   const top = signals[0];
-  const labelByLayer: Record<number, string> = {
-    2: isUp ? 'Peer-sympathy momentum' : 'Sector basket weakness',
-    3: 'Commodity-linked move',
-    4: isUp ? 'Technical breakout' : 'Technical breakdown',
-    6: top.phrase.includes('positional') ? (isUp ? 'Positional accumulation' : 'Long unwinding') :
-       top.phrase.includes('speculative') || top.phrase.includes('momentum chase') ? (isUp ? 'Speculative momentum' : 'Speculative unwind') :
-       top.phrase.includes('liquidity vacuum') ? 'Liquidity vacuum' :
-       (isUp ? 'Flow-driven move' : 'Position unwind'),
-    7: microcap ? (isUp ? 'Low-float momentum' : 'Microcap distribution') : (isUp ? 'Thin-liquidity expansion' : 'Thin-liquidity decline'),
-    10: isUp ? 'Tape-aided rally' : 'Tape-aided decline',
+  // Layer → mechanism mapping
+  const mech: Mechanism = (() => {
+    switch (top.layer) {
+      case 2:  return 'PEER_TRANSMISSION';
+      case 3:  return 'INFORMATION_FLOW';        // commodity-linked = real info
+      case 4:  return 'MOMENTUM_EXTENSION';
+      case 6:  return top.phrase.includes('speculative') || top.phrase.includes('momentum chase') ? 'OPERATOR_ROTATION'
+                    : top.phrase.includes('liquidity vacuum') ? 'LIQUIDITY_VACUUM'
+                    : 'POSITIONING';
+      case 7:  return microcap ? 'LIQUIDITY_VACUUM' : 'OPERATOR_ROTATION';
+      case 10: return 'POSITIONING';
+      default: return 'POSITIONING';
+    }
+  })();
+  // Build a natural causal sentence from the strongest signal.
+  // Format: "<mechanism descriptor> — <evidence>"
+  const mechDescriptor: Record<Mechanism, { up: string; down: string }> = {
+    INFORMATION_FLOW:   { up: 'commodity-linked re-rate',          down: 'commodity-linked de-rate' },
+    POSITIONING:        { up: 'positional accumulation',           down: 'long unwind / profit booking' },
+    SHORT_COVERING:     { up: 'short-covering squeeze',            down: 'short re-build' },
+    MOMENTUM_EXTENSION: { up: 'breakout follow-through',            down: 'breakdown follow-through' },
+    LIQUIDITY_VACUUM:   { up: 'thin-float expansion (liquidity-driven)', down: 'thin-float contraction (liquidity-driven)' },
+    PEER_TRANSMISSION:  { up: 'sector-cluster transmission',       down: 'sector-cluster derisking' },
+    OPERATOR_ROTATION:  { up: 'operator-rotation / speculative chase', down: 'operator distribution / speculative unwind' },
+    DERIVATIVES:        { up: 'derivatives-anchored extension',    down: 'derivatives-anchored compression' },
   };
-  const label = labelByLayer[top.layer] || (isUp ? 'Flow-driven move' : 'Position unwind');
-  // Take top 2-3 phrases, dedupe by layer
+  const descriptor = mechDescriptor[mech][isUp ? 'up' : 'down'];
+  // Causal sentence: descriptor + the most evidentiary phrase
+  const label = `${descriptor} — ${top.phrase}`;
+
+  // Detail: top 2-3 phrases, deduped by layer
   const seen = new Set<number>();
   const phrases: string[] = [];
   for (const s of signals) {
@@ -794,6 +860,7 @@ function fuseCausalNarrative(signals: CausalSignal[], isUp: boolean, smallcap: b
     label,
     detail: phrases.join('; '),
     topLayer: top.layer,
+    mechanism: mech,
   };
 }
 

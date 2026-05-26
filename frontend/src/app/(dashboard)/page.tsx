@@ -2390,24 +2390,25 @@ export default function HomeDashboard() {
                     <span style={{ fontSize: 11, color: c, fontWeight: 800, fontVariantNumeric: 'tabular-nums', minWidth: 52, textAlign: 'right' }}>
                       {pos === 'up' ? '+' : ''}{pct.toFixed(1)}%
                     </span>
-                    {/* PATCH 0820: ONE bucket label from the refined 9-bucket taxonomy
-                        (FUNDAMENTAL_RERATING / SHORT_COVERING / OPERATOR / FLOW /
-                         ROTATION / TECHNICAL / SPECULATIVE / ILLIQUID / PRE_EVENT).
-                        Falls back to ANOMALY (CIRCUIT) when bucket is unknown. */}
+                    {/* PATCH 0883 — Bucket label demoted to a single-character
+                        dot, per user directive: "Stop using category words as
+                        final output. These are intermediate signals not
+                        explanations. Final output must always be causal sentence
+                        + mechanism." Tooltip still carries the bucket name for
+                        analysts who want it; the headline text is now driven by
+                        the mechanism-aware causal sentence below. */}
                     {mq && (
                       <span style={{
-                        fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2, letterSpacing: 0.3, flexShrink: 0,
-                        background: `${BUCKET_MQ_COLOR[mq.bucket]}22`, color: BUCKET_MQ_COLOR[mq.bucket],
-                      }} title={mq.bucketLabel}>
-                        {BUCKET_MQ_SHORT[mq.bucket]}
+                        fontSize: 11, lineHeight: 1, flexShrink: 0, color: BUCKET_MQ_COLOR[mq.bucket],
+                      }} title={`${BUCKET_MQ_SHORT[mq.bucket]} · ${mq.bucketLabel}`}>
+                        ●
                       </span>
                     )}
                     {!mq && anom && anom !== 'NEWS_GAP' && (
                       <span style={{
-                        fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2, letterSpacing: 0.3,
-                        background: `${ANOMALY_COLOR[anom]}22`, color: ANOMALY_COLOR[anom], flexShrink: 0,
-                      }}>
-                        {anom}
+                        fontSize: 11, lineHeight: 1, flexShrink: 0, color: ANOMALY_COLOR[anom],
+                      }} title={anom}>
+                        ●
                       </span>
                     )}
                     {/* Primary driver — what's actually moving it */}
