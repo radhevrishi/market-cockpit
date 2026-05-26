@@ -1734,13 +1734,32 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
             const probe: ConvFilters = { ...filters, quarter: q };
             return entries.filter((e) => passesConvictionFilter(e, probe)).length;
           };
-          // Discover which FYs are actually present on the bench (drives the
-          // FY chip set so we don't render dead FY24 / FY30 buttons).
+          // PATCH 0913 — Show current FY + 3 prior FYs as chips regardless
+          // of whether bench has data for them. User feedback: "i cant test
+          // past . if past works future also works thats why". Empty FYs
+          // render with (0) count so the chip is always available; user
+          // can verify the filter logic by clicking a past FY even before
+          // adding past-quarter entries to the bench.
+          //
+          // Today is 2026-05-26 (IST), so currentFY = FY26 (Apr 2025 - Mar
+          // 2026 — we're in the post-Q4 filing window). Past 3 = FY25, FY24,
+          // FY23. Future FY27 is shown only if any bench entry has it (rare).
           const presentFY = (() => {
             const s = new Set<number>();
             for (const e of entries) {
               const qfy = deriveQuarterFY(e);
               if (qfy) s.add(qfy.fy);
+            }
+            // Add current FY + 3 prior FYs (always visible, even if empty)
+            const now = new Date();
+            const calY = now.getFullYear();
+            const calM = now.getMonth() + 1; // 1-12
+            // Indian FY{N} ends Mar of year 20YY where YY = N. So if we're
+            // in Apr-Dec, the current FY ends NEXT March → FY{(calY+1)%100}.
+            // If Jan-Mar, the current FY ends THIS March → FY{calY%100}.
+            const currentFY = calM >= 4 ? (calY + 1) % 100 : calY % 100;
+            for (let offset = 0; offset < 4; offset++) {
+              s.add((currentFY - offset + 100) % 100);
             }
             return Array.from(s).sort((a, b) => b - a);
           })();
@@ -1795,7 +1814,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                     return (
                       <button key={fy} onClick={() => toggleFY(fy)}
                         style={active ? chipActive('#A78BFA') : chipBase}
-                        title={`FY${fy} = Apr ${fyFull - 1} → Mar ${fyFull}. Composes AND with the QTR chips above.`}>
+                        title={`FY${fy} = Apr ${fyFull - 1} → Mar ${fyFull} (full year, all 4 quarters Q1+Q2+Q3+Q4). Click a QTR chip above to narrow to one quarter. ${n === 0 ? 'No bench entries for this FY yet.' : `${n} entr${n === 1 ? 'y' : 'ies'} match.`}`}>
                         FY{fy} <span style={{ color: active ? '#A78BFA' : '#6B7A8D', marginLeft: 3 }}>({n})</span>
                       </button>
                     );
