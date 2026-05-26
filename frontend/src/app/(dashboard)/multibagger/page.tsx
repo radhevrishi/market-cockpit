@@ -5139,7 +5139,11 @@ function MultibaggerAnalytics({
           )}
         </div>
 
-        {/* RE-RATING */}
+        {/* PATCH 0927 — RE-RATING block: only render when ≥1 row.
+            User feedback: "remove these in multibagger analytics" because
+            empty 0-state blocks waste real estate. Block re-appears the
+            moment any score jumps ≥5 vs last upload. */}
+        {stats.rerating.length > 0 && (
         <div style={{ ...cardStyle, borderColor: '#22D3EE40' }}>
           <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
             📈 RE-RATING in progress ({stats.rerating.length})
@@ -5147,31 +5151,28 @@ function MultibaggerAnalytics({
           <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.45 }}>
             Score jumped ≥ 5 vs last upload, still grade A/A+.
           </div>
-          {stats.rerating.length === 0 ? (
-            <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic' }}>No re-rating moves yet — upload a fresh CSV to compare.</div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-              {stats.rerating.slice(0, 8).map((s) => {
-                const delta = s.score - (s.prevScore as number);
-                return (
-                  <a key={s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
-                    style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '6px 9px', borderRadius: 4,
-                      border: '1px solid #22D3EE30', background: '#22D3EE08', textDecoration: 'none' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <TickerCompanyCell ticker={s.symbol} company={s.company} />
-                      <span style={{ fontSize: 10, color: '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>{s.prevScore} →</span>
-                      <span style={{ fontSize: 11, color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}</span>
-                      <span style={{ fontSize: 10, color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>▲+{delta}</span>
-                    </div>
-                    <span style={{ fontSize: 9.5, color: '#67E8F9', fontStyle: 'italic', lineHeight: 1.35 }}>
-                      Why: Score jumped ▲+{delta} vs last upload · still grade {s.grade}{s.sector ? ` · ${s.sector}` : ''}
-                    </span>
-                  </a>
-                );
-              })}
-            </div>
-          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {stats.rerating.slice(0, 8).map((s) => {
+              const delta = s.score - (s.prevScore as number);
+              return (
+                <a key={s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
+                  style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '6px 9px', borderRadius: 4,
+                    border: '1px solid #22D3EE30', background: '#22D3EE08', textDecoration: 'none' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <TickerCompanyCell ticker={s.symbol} company={s.company} />
+                    <span style={{ fontSize: 10, color: '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>{s.prevScore} →</span>
+                    <span style={{ fontSize: 11, color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}</span>
+                    <span style={{ fontSize: 10, color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>▲+{delta}</span>
+                  </div>
+                  <span style={{ fontSize: 9.5, color: '#67E8F9', fontStyle: 'italic', lineHeight: 1.35 }}>
+                    Why: Score jumped ▲+{delta} vs last upload · still grade {s.grade}{s.sector ? ` · ${s.sector}` : ''}
+                  </span>
+                </a>
+              );
+            })}
+          </div>
         </div>
+        )}
 
         {/* AVOID / TRIM */}
         <div style={{ ...cardStyle, borderColor: '#EF444440' }}>
@@ -5393,7 +5394,9 @@ function MultibaggerAnalytics({
           )}
         </div>
 
-        {/* RE-EVALUATE — REJECTED but now A+ */}
+        {/* PATCH 0927 — RE-EVALUATE block: only render when ≥1 row.
+            Block re-appears the moment any REJECTED ticker re-grades to A+/A. */}
+        {stats.decisionBridge.reEvaluate.length > 0 && (
         <div style={{ ...cardStyle, borderColor: '#A78BFA40' }}>
           <div style={{ fontSize: 13, color: '#A78BFA', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
             🔄 RE-EVALUATE ({stats.decisionBridge.reEvaluate.length})
@@ -5401,11 +5404,8 @@ function MultibaggerAnalytics({
           <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.45 }}>
             You earlier marked these REJECTED, but the scorer now grades them A+/A. Was the rejection too early?
           </div>
-          {stats.decisionBridge.reEvaluate.length === 0 ? (
-            <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic' }}>No rejected names have re-graded to A+/A.</div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-              {stats.decisionBridge.reEvaluate.map((s) => {
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {stats.decisionBridge.reEvaluate.map((s) => {
                 const dec = (s as any)._decision as { reason: string; date: string } | undefined;
                 return (
                   <a key={s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
@@ -5416,15 +5416,15 @@ function MultibaggerAnalytics({
                       <TickerCompanyCell ticker={s.symbol} company={s.company} />
                       <span style={{ fontSize: 11, color: '#A78BFA', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
                     </div>
-                    <span style={{ fontSize: 9.5, color: '#C4B5FD', fontStyle: 'italic', lineHeight: 1.35 }}>
-                      Why revisit: {reasonFor(s as any, 'REEVAL')}
-                    </span>
-                  </a>
-                );
-              })}
-            </div>
-          )}
+                  <span style={{ fontSize: 9.5, color: '#C4B5FD', fontStyle: 'italic', lineHeight: 1.35 }}>
+                    Why revisit: {reasonFor(s as any, 'REEVAL')}
+                  </span>
+                </a>
+              );
+            })}
+          </div>
         </div>
+        )}
       </div>
 
       {/* ── 🔍 QUALITY AUDIT (PATCH 0554) ────────────────────────────────────

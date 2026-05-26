@@ -5086,17 +5086,22 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       const themeHasRealEvidence = companySignals.some(s =>
         s.confidenceType === 'ACTUAL' || s.sourceTier === 'VERIFIED'
       );
+      // PATCH 0928 — Guard themes[0] access. Previously crashed compute
+      // with "Cannot read properties of undefined (reading 'confidence')"
+      // when themes was empty — breaking the whole Signals pipeline.
       const themePassesAdmission =
-        (themes[0].confidence !== 'LOW' && themes[0].score >= 40) ||
-        themeHasRealEvidence;
+        themes.length > 0 && (
+          (themes[0]?.confidence !== 'LOW' && (themes[0]?.score ?? 0) >= 40) ||
+          themeHasRealEvidence
+        );
 
       if (themes.length > 0 && themePassesAdmission) {
         companyThemeMap.set(symbol, themes);
         // Apply best theme to all signals of this company
         for (const s of companySignals) {
           s.alphaTheme = themes[0];
-          if (themes[0].confidence !== 'LOW' && themes[0].score >= 40) {
-            s.tag = themes[0].label;
+          if (themes[0]?.confidence !== 'LOW' && (themes[0]?.score ?? 0) >= 40) {
+            s.tag = themes[0]?.label;
           }
         }
 
