@@ -19,13 +19,31 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const probe = url.searchParams.get('probe') === '1';
 
-  const hasApiKey = !!process.env.ANTHROPIC_API_KEY;
+  const rawKey = process.env.ANTHROPIC_API_KEY || '';
+  const hasApiKey = !!rawKey;
   const budget = await getHaikuBudget();
+
+  // PATCH 0931-followup3 — surface key FORMAT (length / prefix / suffix / whitespace)
+  // without exposing the value, so we can diagnose 401 invalid_x_api_key.
+  // Anthropic keys start with sk-ant-api03- and are ~108 chars long.
+  const keyDiagnostic = rawKey ? {
+    length: rawKey.length,
+    first12: rawKey.slice(0, 12),
+    last4: rawKey.slice(-4),
+    startsWithSkAnt: rawKey.startsWith('sk-ant-'),
+    hasLeadingWhitespace: /^\s/.test(rawKey),
+    hasTrailingWhitespace: /\s$/.test(rawKey),
+    hasLeadingQuote: rawKey.startsWith('"') || rawKey.startsWith("'"),
+    hasTrailingQuote: rawKey.endsWith('"') || rawKey.endsWith("'"),
+    hasInternalSpace: /\s/.test(rawKey.trim()),
+    hasNewline: /[\r\n]/.test(rawKey),
+  } : null;
 
   const out: any = {
     ok: true,
     service: 'haiku-classifier',
     hasApiKey,
+    keyDiagnostic,
     budget,
   };
 
