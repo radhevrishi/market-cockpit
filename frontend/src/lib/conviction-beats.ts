@@ -88,29 +88,87 @@ export function upsertConviction(entry: ConvictionEntry): boolean {
   return true;
 }
 
+// PATCH 0920 — Composite key support for multi-quarter bench history.
+// User feedback: visiting EO Jan 29 2026 shows 24 graded BLOCKBUSTER/STRONG
+// entries but the bench Q3 chip shows (0) — because syncFromEarningsOps used
+// to key by TICKER only. When MTAR filed Q4 FY26 on May 22 2026, that entry
+// OVERWROTE the older Q3 FY26 entry from Jan 29 (newer filing wins). Result:
+// the bench was 99% Q4-FY26 even though the user had been browsing multiple
+// quarters in EO.
+//
+// Fix: when an incoming filing is OLDER than what's already on the bench
+// AND has a different quarter or FY, store it under a composite key
+//   TICKER@Q-FY  (e.g. "MTAR@Q3-2026")
+// so both versions coexist. The bare "TICKER" key is reserved for the
+// most-recent filing (used by getConvictionTickers() for membership checks).
+//
+// Backward-compatible: existing bare-ticker entries are untouched; only NEW
+// out-of-order syncs go to composite keys.
+function compositeKey(ticker: string, q?: string, fy?: number): string {
+  if (!q || !fy) return ticker.toUpperCase();
+  return `${ticker.toUpperCase()}@${q}-${fy}`;
+}
+
 /** Batch upsert — used by Earnings Ops on every render */
 export function syncFromEarningsOps(entries: Array<Omit<ConvictionEntry, 'added_at'>>): number {
   let count = 0;
   const map = readConvictionBeats();
   for (const e of entries) {
-    const key = e.ticker.toUpperCase();
-    const existing = map[key];
+    const ticker = e.ticker.toUpperCase();
+    const bareKey = ticker;
+    const existing = map[bareKey];
     if (existing) {
       const newerDate = e.filing_date > existing.filing_date;
       const tierUpgrade = e.tier === 'BLOCKBUSTER' && existing.tier === 'STRONG';
       if (!newerDate && !tierUpgrade) {
+        // PATCH 0920 — If the incoming filing reports a DIFFERENT quarter
+        // (or FY) than what's currently stored, archive it under composite
+        // key so historical quarters survive instead of getting dropped.
+        // Same-quarter older filings still get the guidance-backfill path.
+        const sameQ = (e as any).quarter && existing.quarter && (e as any).quarter === existing.quarter;
+        const sameFY = (e as any).fiscal_year && existing.fiscal_year && (e as any).fiscal_year === existing.fiscal_year;
+        const isHistorical = (e as any).quarter && (e as any).fiscal_year && !(sameQ && sameFY);
+        if (isHistorical) {
+          const cKey = compositeKey(ticker, (e as any).quarter, (e as any).fiscal_year);
+          if (!map[cKey]) {
+            map[cKey] = { ...(e as any), ticker, added_at: new Date().toISOString() };
+            count++;
+          } else if (map[cKey].guidance == null && e.guidance != null) {
+            map[cKey] = { ...map[cKey], guidance: e.guidance, guidance_score: e.guidance_score };
+            count++;
+          }
+          continue;
+        }
         // USER-REQ — Guidance in Conviction tab. Backfill guidance fields
         // onto existing same-filing entries so previously-stored entries
         // (pre-Patch 0538 or just lacking guidance) light up on the next
         // sync without forcing the user to prune-and-readd.
         if (existing.guidance == null && e.guidance != null) {
-          map[key] = { ...existing, guidance: e.guidance, guidance_score: e.guidance_score };
+          map[bareKey] = { ...existing, guidance: e.guidance, guidance_score: e.guidance_score };
           count++;
         }
         continue;
       }
+      // PATCH 0920 — incoming is NEWER or tier-upgrade. Before overwriting,
+      // archive the current entry under its composite key SO LONG AS the
+      // existing Q/FY DIFFERS from incoming. Same-quarter tier upgrades
+      // (e.g. STRONG → BLOCKBUSTER for same Q4 FY26) should NOT archive —
+      // we just replace in place. Distinct-quarter replacements (Q3 →
+      // Q4, FY25 → FY26) DO archive so historical quarters survive.
+      if (existing.quarter && existing.fiscal_year) {
+        const sameQAsIncoming = (e as any).quarter && existing.quarter === (e as any).quarter;
+        const sameFYAsIncoming = (e as any).fiscal_year && existing.fiscal_year === (e as any).fiscal_year;
+        const distinctPeriod = !(sameQAsIncoming && sameFYAsIncoming);
+        if (distinctPeriod) {
+          const archiveKey = compositeKey(ticker, existing.quarter, existing.fiscal_year);
+          if (!map[archiveKey]) {
+            map[archiveKey] = { ...existing };
+            count++;
+          }
+        }
+      }
     }
-    map[key] = { ...e, ticker: key, added_at: existing?.added_at || new Date().toISOString() };
+    map[bareKey] = { ...(e as any), ticker, added_at: existing?.added_at || new Date().toISOString() };
     count++;
   }
   if (count > 0) {
@@ -122,20 +180,39 @@ export function syncFromEarningsOps(entries: Array<Omit<ConvictionEntry, 'added_
   return count;
 }
 
-/** Remove a single ticker (user manually pruning) */
-export function removeConviction(ticker: string) {
+/** Remove a single entry (user manually pruning).
+ *  PATCH 0920 — supports both bare ticker and composite key "TICKER@Q-FY".
+ *  If only the bare ticker is given, ALL composite keys for that ticker
+ *  are also removed (so a single × click prunes the entire history). */
+export function removeConviction(key: string) {
   const map = readConvictionBeats();
-  delete map[ticker.toUpperCase()];
+  const upper = key.toUpperCase();
+  if (upper.includes('@')) {
+    delete map[upper];
+  } else {
+    delete map[upper];
+    // Also remove every composite key for this ticker
+    for (const k of Object.keys(map)) {
+      if (k.startsWith(upper + '@')) delete map[k];
+    }
+  }
   writeConvictionBeats(map);
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('conviction-beats:updated'));
   }
 }
 
-/** Quick membership check — used for filtering Scan / Watchlist */
+/** Quick membership check — used for filtering Scan / Watchlist.
+ *  PATCH 0920 — also returns true when ANY composite "TICKER@Q-FY"
+ *  entry exists for this ticker (historical quarter archive). */
 export function isConviction(ticker: string): boolean {
   const map = readConvictionBeats();
-  return !!map[ticker.toUpperCase()];
+  const upper = ticker.toUpperCase();
+  if (map[upper]) return true;
+  for (const k of Object.keys(map)) {
+    if (k.startsWith(upper + '@')) return true;
+  }
+  return false;
 }
 
 // AUDIT_100 #96 — module-scope cache of the parsed Set so 17+ pages calling
@@ -147,11 +224,21 @@ if (typeof window !== 'undefined') {
   window.addEventListener('conviction-beats:updated', invalidate);
   window.addEventListener('storage', (e) => { if (e.key === LS_KEY) invalidate(); });
 }
-/** Get just the set of tickers (for filter performance) */
+/** Get just the set of BARE tickers (for filter performance).
+ *  PATCH 0920 — strips composite-key suffixes ("MTAR@Q3-2026" → "MTAR")
+ *  so consumers (home chips, screener overlays, multibagger, etc.) still
+ *  see exactly one entry per ticker regardless of how many quarter-history
+ *  archives we hold. The bench tab itself uses getConvictionList()
+ *  which returns the full per-quarter list. */
 export function getConvictionTickers(): Set<string> {
   if (_cachedSet) return _cachedSet;
   const map = readConvictionBeats();
-  _cachedSet = new Set(Object.keys(map));
+  const out = new Set<string>();
+  for (const k of Object.keys(map)) {
+    const at = k.indexOf('@');
+    out.add(at >= 0 ? k.slice(0, at) : k);
+  }
+  _cachedSet = out;
   return _cachedSet;
 }
 
