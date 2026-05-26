@@ -176,32 +176,228 @@ function classifyFilingCatalyst(filing: FilingInput): { type: CatalystType; labe
   return { type: 'NONE', label: subj.slice(0, 100) || 'Disclosure' };
 }
 
-function classifyNewsCatalyst(article: NewsInput): { type: CatalystType; label: string } {
+// PATCH 0882 — Granular news subtype so attribution shows the SPECIFIC
+// catalyst instead of generic "Peer-sympathy" / "Speculative spike".
+// User audit (NGL Movers): RUBYMILLS was tagged "Peer-sympathy" but the
+// news headline literally said "Independent Director Appointment in
+// EOGM"; MARKSANS / ASTRAMICRO were "smallcap momentum" while their
+// own earnings hit the wire same day. Root cause: only 7 catalyst
+// patterns existed and the labeller fell through to generic tiers.
+// Expanded to 40+ specific patterns with ordered priority.
+export type NewsSubType =
+  // Corporate actions (highest priority — these are evidence-backed events)
+  | 'EARNINGS_RESULTS'        // Q4/FY results published
+  | 'EARNINGS_PREVIEW'        // results expected this week
+  | 'GUIDANCE_RAISE'
+  | 'GUIDANCE_CUT'
+  | 'ACQUISITION'             // company acquires X% stake / 100% of target
+  | 'STAKE_SALE'              // company sells stake in subsidiary
+  | 'JV_FORMATION'
+  | 'DEMERGER'
+  | 'MERGER_SCHEME'
+  | 'OPEN_OFFER'
+  | 'PREFERENTIAL_ALLOTMENT'
+  | 'WARRANT_CONVERSION'
+  | 'QIP_LAUNCH'
+  | 'RIGHTS_ISSUE'
+  | 'BUYBACK'
+  | 'BONUS_ISSUE'
+  | 'STOCK_SPLIT'
+  | 'DIVIDEND_DECLARATION'
+  | 'INTERIM_DIVIDEND'
+  // Promoter / insider / flow
+  | 'PROMOTER_BUY'
+  | 'PROMOTER_SELL'
+  | 'PROMOTER_PLEDGE_RELEASE'
+  | 'PROMOTER_PLEDGE_ADD'
+  | 'BLOCK_DEAL_BUY'
+  | 'BLOCK_DEAL_SELL'
+  | 'OFS'
+  // Governance / leadership
+  | 'BOARD_MEETING_FUNDRAISE' // "board to meet to consider fund raising"
+  | 'BOARD_MEETING_GENERIC'
+  | 'INDEPENDENT_DIRECTOR_APPT'
+  | 'CEO_MD_APPOINTMENT'
+  | 'CEO_MD_RESIGNATION'
+  | 'CFO_CHANGE'
+  | 'AUDITOR_CHANGE'
+  // Business events
+  | 'ORDER_WIN_LARGE'         // ₹X Cr order / letter of award
+  | 'ORDER_WIN_PSU'           // PSU customer (Indian Railways / BHEL / etc)
+  | 'NEW_CONTRACT'
+  | 'CAPACITY_COMMISSIONING'
+  | 'CAPEX_ANNOUNCEMENT'
+  | 'NEW_PRODUCT_LAUNCH'
+  | 'PATENT_GRANT'
+  | 'MOU_SIGNING'
+  // Regulatory
+  | 'USFDA_APPROVAL'
+  | 'USFDA_OBSERVATION'       // 483 / warning letter
+  | 'CDSCO_DCGI_APPROVAL'
+  | 'WHO_GMP_GRANTED'
+  | 'SEBI_ACTION'
+  | 'RBI_ACTION'
+  // Rating
+  | 'RATING_UPGRADE'
+  | 'RATING_DOWNGRADE'
+  | 'OUTLOOK_REVISION'
+  // Index / fund flow
+  | 'INDEX_INCLUSION'
+  | 'INDEX_REMOVAL'
+  | 'FNO_INCLUSION'
+  | 'FNO_BAN'
+  // Catch-all
+  | 'NEWS_GENERIC';
+
+const NEWS_PATTERNS: Array<{ subType: NewsSubType; type: CatalystType; re: RegExp; format?: (m: RegExpMatchArray, title: string) => string }> = [
+  // ── CORPORATE ACTIONS / M&A (specific deals first) ─────────────────────
+  { subType: 'ACQUISITION',     type: 'MNA',         re: /\b(?:acquir(?:es|ed|ing|isition\s+of))\b.{0,80}?(\d{1,3}(?:\.\d+)?)\s*%\s*(?:stake|equity|share|holding)(?:\s+in\s+([A-Z][\w &-]{2,40}))?/i,
+    format: (m) => `acquires ${m[1]}% stake${m[2] ? ` in ${m[2].trim()}` : ''}` },
+  { subType: 'ACQUISITION',     type: 'MNA',         re: /\b(?:acquir(?:es|ed|ing)|to acquire)\s+(?:100%\s+of\s+)?([A-Z][\w &-]{2,40})\b/i,
+    format: (m) => `acquires ${m[1].trim()}` },
+  { subType: 'STAKE_SALE',      type: 'MNA',         re: /\b(?:sells|divest|stake sale|hive[- ]off|to\s+sell)\b.{0,40}?(?:stake|holding|share)/i,
+    format: () => 'stake sale / divestiture' },
+  { subType: 'JV_FORMATION',    type: 'MNA',         re: /\bjoint\s+venture\s+(?:with|formed|signed)|JV\s+(?:with|formed)/i,
+    format: () => 'joint venture announcement' },
+  { subType: 'DEMERGER',        type: 'MNA',         re: /\bde-?merger|demerge|spin[- ]?off|hive\s+off/i,
+    format: () => 'demerger / spin-off plan' },
+  { subType: 'MERGER_SCHEME',   type: 'MNA',         re: /\bscheme\s+of\s+arrangement|amalgamation|merger\s+(?:plan|approval|completion|with|of)/i,
+    format: () => 'merger / scheme of arrangement' },
+  { subType: 'OPEN_OFFER',      type: 'MNA',         re: /\bopen\s+offer\b/i,
+    format: () => 'open offer triggered' },
+  { subType: 'PREFERENTIAL_ALLOTMENT', type: 'MNA',  re: /\bpreferential\s+(?:allotment|issue)/i,
+    format: () => 'preferential allotment' },
+  { subType: 'WARRANT_CONVERSION',     type: 'MNA',  re: /\bwarrant(?:s)?\s+(?:conversion|converted|allotment|exercis)/i,
+    format: () => 'warrant conversion / allotment' },
+  { subType: 'QIP_LAUNCH',      type: 'MNA',         re: /\bQIP\b|qualified\s+institutional\s+placement/i,
+    format: () => 'QIP launched' },
+  { subType: 'RIGHTS_ISSUE',    type: 'MNA',         re: /\brights\s+issue/i,
+    format: () => 'rights issue' },
+  { subType: 'BUYBACK',         type: 'MNA',         re: /\bbuy[- ]?back|share\s+repurchase/i,
+    format: () => 'buyback announcement' },
+  { subType: 'BONUS_ISSUE',     type: 'MNA',         re: /\bbonus\s+(?:issue|share)/i,
+    format: () => 'bonus issue' },
+  { subType: 'STOCK_SPLIT',     type: 'MNA',         re: /\bstock\s+split|share\s+split|sub[- ]?divis(?:ion|ed)/i,
+    format: () => 'stock split announcement' },
+  { subType: 'INTERIM_DIVIDEND', type: 'MNA',        re: /\binterim\s+dividend\b/i,
+    format: () => 'interim dividend' },
+  { subType: 'DIVIDEND_DECLARATION', type: 'MNA',    re: /\b(?:final|special)\s+dividend\b|dividend\s+(?:declared|of\s+₹|of\s+Rs)/i,
+    format: () => 'dividend declared' },
+
+  // ── EARNINGS ────────────────────────────────────────────────────────────
+  { subType: 'GUIDANCE_RAISE',  type: 'EARNINGS',    re: /\bguidance\s+(?:raised|upgraded|increased|hiked)/i,
+    format: () => 'guidance raised' },
+  { subType: 'GUIDANCE_CUT',    type: 'EARNINGS',    re: /\bguidance\s+(?:cut|lowered|reduced|trimmed)/i,
+    format: () => 'guidance cut' },
+  { subType: 'EARNINGS_RESULTS',type: 'EARNINGS',    re: /\bQ[1-4]\s*(?:FY)?\s*\d{2,4}\b|\bquarterly\s+(?:results|earnings)|\bearnings\s+result(?:s)?\b|\bresults?\s+(?:announcement|declared|published|posted)|\b(?:net\s+profit|revenue|PAT)\s+(?:jumps?|rises?|surges?|grew|growth|up\s+\d|down\s+\d)/i,
+    format: () => 'earnings result' },
+  { subType: 'EARNINGS_PREVIEW',type: 'EARNINGS',    re: /\bresults?\s+(?:on|expected|due)\s+(?:Mon|Tue|Wed|Thu|Fri|today|tomorrow)|board\s+meeting\s+on\s+.{0,30}?(?:results|financial)/i,
+    format: () => 'earnings expected this week' },
+
+  // ── PROMOTER / FLOW ────────────────────────────────────────────────────
+  { subType: 'PROMOTER_BUY',    type: 'BLOCK_DEAL',  re: /\bpromoter\s+(?:buys?|acquir|stake\s+(?:hike|increase|raise|purchase))|insider\s+(?:buy|purchase)/i,
+    format: () => 'promoter buying' },
+  { subType: 'PROMOTER_SELL',   type: 'BLOCK_DEAL',  re: /\bpromoter\s+(?:sells?|offload|trim|stake\s+(?:sale|reduction|cut|trim))|insider\s+sale/i,
+    format: () => 'promoter selling' },
+  { subType: 'PROMOTER_PLEDGE_RELEASE', type: 'BLOCK_DEAL', re: /\bpledge(?:d)?\s+(?:released|revoked|reduced)/i,
+    format: () => 'promoter pledge released' },
+  { subType: 'PROMOTER_PLEDGE_ADD',     type: 'BLOCK_DEAL', re: /\bpromoter\s+(?:pledges?|pledged|additional\s+pledge)/i,
+    format: () => 'promoter pledge added' },
+  { subType: 'BLOCK_DEAL_BUY',  type: 'BLOCK_DEAL',  re: /\bblock\s+deal\s+(?:buy|purchase)|bulk\s+deal\s+(?:buy|purchase)/i,
+    format: () => 'block-deal buy' },
+  { subType: 'BLOCK_DEAL_SELL', type: 'BLOCK_DEAL',  re: /\bblock\s+deal\s+sell|bulk\s+deal\s+sell|block\s+deal(?!\s+buy)|bulk\s+deal(?!\s+buy)/i,
+    format: () => 'block deal' },
+  { subType: 'OFS',             type: 'OFS',         re: /\bOFS\b|offer\s+for\s+sale|floor\s+price/i,
+    format: () => 'OFS / offer for sale' },
+
+  // ── GOVERNANCE / LEADERSHIP ────────────────────────────────────────────
+  { subType: 'BOARD_MEETING_FUNDRAISE', type: 'MNA', re: /\bboard\s+(?:to\s+meet|meeting).{0,40}?(?:fund\s+rais|fundrais|capital\s+rais|borrow)/i,
+    format: () => 'board meeting to consider fund-raise' },
+  { subType: 'INDEPENDENT_DIRECTOR_APPT',type: 'NONE',re: /\b(?:independent\s+director|ID)\s+(?:appointment|appointed|reappointed)|appointment\s+of\s+(?:an?\s+)?independent\s+director|approves?.{0,30}?director\s+appointment/i,
+    format: () => 'independent director appointment' },
+  { subType: 'CEO_MD_APPOINTMENT', type: 'NONE',     re: /\bappoint(?:s|ed|ment\s+of)\s+(?:as\s+)?(?:CEO|MD|managing\s+director|chief\s+executive)|new\s+(?:CEO|MD|managing\s+director)/i,
+    format: () => 'new CEO/MD appointed' },
+  { subType: 'CEO_MD_RESIGNATION', type: 'NONE',     re: /\b(?:CEO|MD|managing\s+director|chief\s+executive)\s+(?:resign|step(?:s|ped)\s+down|exit)|resignation\s+of\s+(?:CEO|MD)/i,
+    format: () => 'CEO/MD resignation' },
+  { subType: 'CFO_CHANGE',      type: 'NONE',        re: /\bCFO\s+(?:appoint|resign|change|new)|new\s+CFO|chief\s+financial\s+officer/i,
+    format: () => 'CFO change' },
+  { subType: 'AUDITOR_CHANGE',  type: 'NONE',        re: /\bauditor\s+(?:resign|appoint|change)|new\s+auditor|statutory\s+auditor/i,
+    format: () => 'auditor change' },
+  { subType: 'BOARD_MEETING_GENERIC', type: 'NONE',  re: /\bboard\s+(?:to\s+meet|meeting\s+on|meeting\s+scheduled)/i,
+    format: () => 'board meeting' },
+
+  // ── BUSINESS EVENTS ────────────────────────────────────────────────────
+  { subType: 'ORDER_WIN_LARGE', type: 'ORDER_WIN',   re: /\b(?:bag|secur|won|receiv)(?:s|ed|es|ing)?\s+(?:an?\s+)?order(?:s)?.{0,50}?₹?\s?([\d,]+(?:\.\d+)?)\s*(?:cr|crore)/i,
+    format: (m) => `bagged ₹${m[1]} Cr order` },
+  { subType: 'ORDER_WIN_PSU',   type: 'ORDER_WIN',   re: /\border.{0,40}?(?:Indian\s+Railways|BHEL|NTPC|PGCIL|HAL|BEL|DRDO|ISRO|NABARD|LIC|ONGC|IOCL|GAIL|MoD|Ministry\s+of\s+Defence|Indian\s+Navy|Indian\s+Army)/i,
+    format: (m) => `order from ${m[0].match(/(?:Indian\s+Railways|BHEL|NTPC|PGCIL|HAL|BEL|DRDO|ISRO|NABARD|LIC|ONGC|IOCL|GAIL|MoD|Ministry\s+of\s+Defence|Indian\s+Navy|Indian\s+Army)/i)?.[0]}` },
+  { subType: 'NEW_CONTRACT',    type: 'ORDER_WIN',   re: /\b(?:letter\s+of\s+award|LoA|new\s+contract|contract\s+(?:won|secured|awarded))/i,
+    format: () => 'new contract / LoA' },
+  { subType: 'CAPACITY_COMMISSIONING', type: 'NONE', re: /\bcommercial\s+production\s+(?:commenced|started|begun)|commission(?:ing|ed)\s+(?:of\s+)?(?:new\s+)?(?:plant|line|facility|unit)/i,
+    format: () => 'capacity commissioning' },
+  { subType: 'CAPEX_ANNOUNCEMENT', type: 'NONE',     re: /\bcapex\s+(?:plan|announcement)|capital\s+expenditure\s+(?:plan|of)|greenfield\s+(?:plant|facility|expansion)/i,
+    format: () => 'capex / greenfield announcement' },
+  { subType: 'NEW_PRODUCT_LAUNCH', type: 'NONE',     re: /\b(?:launch(?:es|ed)?|unveil(?:s|ed)?)\s+(?:new\s+)?(?:product|drug|formulation|API|range)/i,
+    format: () => 'new product launch' },
+  { subType: 'PATENT_GRANT',    type: 'NONE',        re: /\bpatent\s+(?:granted|approved|awarded)/i,
+    format: () => 'patent grant' },
+  { subType: 'MOU_SIGNING',     type: 'NONE',        re: /\b(?:MoU|memorandum\s+of\s+understanding)\s+(?:signed|with)/i,
+    format: () => 'MoU signed' },
+
+  // ── REGULATORY ─────────────────────────────────────────────────────────
+  { subType: 'USFDA_APPROVAL',  type: 'REGULATORY',  re: /\b(?:USFDA|US\s+FDA)\s+(?:approval|approved|clearance|EIR)|ANDA\s+approval/i,
+    format: () => 'USFDA approval / EIR' },
+  { subType: 'USFDA_OBSERVATION', type: 'REGULATORY',re: /\b(?:USFDA|US\s+FDA)\s+(?:483|observation|warning\s+letter|import\s+alert|OAI)/i,
+    format: () => 'USFDA observation / warning' },
+  { subType: 'CDSCO_DCGI_APPROVAL',type: 'REGULATORY',re: /\b(?:CDSCO|DCGI)\s+(?:approval|approved|clearance)/i,
+    format: () => 'CDSCO/DCGI approval' },
+  { subType: 'WHO_GMP_GRANTED', type: 'REGULATORY',  re: /\bWHO[- ]?GMP|EU[- ]?GMP|EDQM|MHRA\s+approval/i,
+    format: () => 'WHO-GMP / EU-GMP cleared' },
+  { subType: 'SEBI_ACTION',     type: 'REGULATORY',  re: /\bSEBI\s+(?:order|fine|penalty|action|notice|directs?|bars?)/i,
+    format: () => 'SEBI action' },
+  { subType: 'RBI_ACTION',      type: 'REGULATORY',  re: /\bRBI\s+(?:approval|nod|directive|cap|tightens|rolls?\s+out)/i,
+    format: () => 'RBI action' },
+
+  // ── RATING ─────────────────────────────────────────────────────────────
+  { subType: 'RATING_UPGRADE',  type: 'RATING',      re: /\b(?:ICRA|CRISIL|CARE|India\s+Ratings|Fitch|Moody|S&P|BWR|Brickwork|Acuit[eé])\s+.{0,30}?upgrad|rating\s+upgrade/i,
+    format: () => 'credit rating upgrade' },
+  { subType: 'RATING_DOWNGRADE',type: 'RATING',      re: /\b(?:ICRA|CRISIL|CARE|India\s+Ratings|Fitch|Moody|S&P|BWR|Brickwork|Acuit[eé])\s+.{0,30}?downgrad|rating\s+downgrade/i,
+    format: () => 'credit rating downgrade' },
+  { subType: 'OUTLOOK_REVISION',type: 'RATING',      re: /\boutlook\s+(?:revised|raised|positive|negative|stable|developing)/i,
+    format: () => 'outlook revision' },
+
+  // ── INDEX / FUND FLOW ──────────────────────────────────────────────────
+  { subType: 'INDEX_INCLUSION', type: 'NONE',        re: /\b(?:Nifty|Sensex|MSCI|FTSE|BSE|NSE)\s+.{0,30}?(?:inclusion|added|added\s+to|inclusion\s+in)/i,
+    format: () => 'index inclusion' },
+  { subType: 'INDEX_REMOVAL',   type: 'NONE',        re: /\b(?:Nifty|Sensex|MSCI|FTSE|BSE|NSE)\s+.{0,30}?(?:removal|removed|exclusion|exit)/i,
+    format: () => 'index removal' },
+  { subType: 'FNO_INCLUSION',   type: 'NONE',        re: /\bF&O\s+inclusion|derivatives?\s+segment|added\s+to\s+F&O/i,
+    format: () => 'F&O inclusion' },
+  { subType: 'FNO_BAN',         type: 'NONE',        re: /\bF&O\s+ban|MWPL|market[- ]?wide\s+position\s+limit/i,
+    format: () => 'F&O ban / MWPL hit' },
+];
+
+// Stop-words that mean the title is generic listing / link clickbait.
+const GENERIC_NEWS = /^(?:is\s+now\s+the\s+time|here(?:'s|\s+is)?\s+why|stock\s+to\s+watch|hot\s+stocks|today's\s+(?:top|hot)|breakout\s+stocks|stock(?:s)?\s+(?:up|down|in\s+focus)|why\s+is)/i;
+
+function classifyNewsCatalyst(article: NewsInput): { type: CatalystType; label: string; subType: NewsSubType } {
   const title = (article.title || article.headline || '').trim();
   const at = (article.article_type || '').toUpperCase();
-
-  if (at === 'EARNINGS' || /Q[1-4]\s*FY|quarterly|results|earnings/i.test(title)) {
-    return { type: 'EARNINGS', label: title.slice(0, 100) };
+  if (!title) return { type: 'NONE', label: 'News mention', subType: 'NEWS_GENERIC' };
+  // Generic clickbait / listing — skip to NEWS_GENERIC so it doesn't pretend
+  // to be a real catalyst.
+  if (GENERIC_NEWS.test(title)) return { type: 'NONE', label: title.slice(0, 100), subType: 'NEWS_GENERIC' };
+  // Run patterns in declared order — most specific first. First match wins.
+  for (const { subType, type, re, format } of NEWS_PATTERNS) {
+    const m = title.match(re);
+    if (m) {
+      const lbl = format ? format(m, title) : title.slice(0, 100);
+      return { type, label: lbl, subType };
+    }
   }
-  if (/\bOFS\b|offer for sale|stake sale|floor price/i.test(title)) {
-    return { type: 'OFS', label: title.slice(0, 100) };
-  }
-  if (/block deal|bulk deal|promoter (?:sells|offload|trim)|insider sale/i.test(title)) {
-    return { type: 'BLOCK_DEAL', label: title.slice(0, 100) };
-  }
-  if (/order|letter of award|\bLoA\b|contract|won/i.test(title)) {
-    return { type: 'ORDER_WIN', label: title.slice(0, 100) };
-  }
-  if (/ICRA|CRISIL|CARE|Moody|S&P|Fitch|upgrade|downgrade|rating/i.test(title)) {
-    return { type: 'RATING', label: title.slice(0, 100) };
-  }
-  if (/merger|acquisition|de-?listing|open offer|scheme of arrangement|demerger|stake hike/i.test(title)) {
-    return { type: 'MNA', label: title.slice(0, 100) };
-  }
-  if (/SEBI|RBI|FDA|USFDA|MHRA|approval|regulator|policy/i.test(title)) {
-    return { type: 'REGULATORY', label: title.slice(0, 100) };
-  }
-  return { type: 'NONE', label: title.slice(0, 100) || 'News mention' };
+  // article_type=EARNINGS but title didn't match → still tag as EARNINGS
+  if (at === 'EARNINGS') return { type: 'EARNINGS', label: title.slice(0, 100), subType: 'EARNINGS_RESULTS' };
+  return { type: 'NONE', label: title.slice(0, 100), subType: 'NEWS_GENERIC' };
 }
 
 // Determine move type from catalyst type.
