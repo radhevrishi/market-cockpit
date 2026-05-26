@@ -1969,47 +1969,12 @@ export default function HomeDashboard() {
                   🔁 Engine consistency: avg {data.alphaFeedback.avgScoreBefore.toFixed(0)} → {data.alphaFeedback.avgScoreNow.toFixed(0)} ({data.alphaFeedback.held}/{data.alphaFeedback.sample} held A)
                 </span>
               )}
-              {/* PATCH 0907 — Sector heatmap inline chip (top 3 sectors by abs move).
-                  Same one-line style as Portfolio P&L / sector rotation chips. */}
-              {data.sectorPulse && data.sectorPulse.length > 0 && (() => {
-                const top3 = data.sectorPulse.slice().sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct)).slice(0, 3);
-                return (
-                  <Link href="/heatmap" style={{
-                    fontSize: 10, padding: '2px 8px', borderRadius: 4,
-                    background: '#22D3EE15', border: '1px solid #22D3EE40', color: '#22D3EE',
-                    fontWeight: 700, textDecoration: 'none',
-                  }} title="Open full Sector Heatmap →">
-                    🗺 {top3.map(s => `${s.sector} ${s.pct >= 0 ? '+' : ''}${s.pct.toFixed(1)}%`).join(' · ')}
-                  </Link>
-                );
-              })()}
-              {/* PATCH 0907 — Conviction Beats inline chip (top 3 by today's abs move).
-                  Sorted by move per user feedback. Same chip style as above. */}
-              {data.convictionLive && data.convictionLive.length > 0 && (() => {
-                const top3 = data.convictionLive
-                  .filter(c => typeof c.changePercent === 'number')
-                  .slice(0, 3);
-                if (top3.length === 0) {
-                  return (
-                    <Link href="/watchlists?tab=conviction" style={{
-                      fontSize: 10, padding: '2px 8px', borderRadius: 4,
-                      background: '#F59E0B15', border: '1px solid #F59E0B40', color: '#F59E0B',
-                      fontWeight: 700, textDecoration: 'none',
-                    }} title="Open Conviction Beats bench →">
-                      🏆 BEATS ({data.convictionLive.length}) · no live quotes yet
-                    </Link>
-                  );
-                }
-                return (
-                  <Link href="/watchlists?tab=conviction" style={{
-                    fontSize: 10, padding: '2px 8px', borderRadius: 4,
-                    background: '#F59E0B15', border: '1px solid #F59E0B40', color: '#F59E0B',
-                    fontWeight: 700, textDecoration: 'none',
-                  }} title={`${data.convictionLive.length} names on bench · sorted by today's abs move`}>
-                    🏆 {top3.map(c => `${c.ticker} ${(c.changePercent as number) >= 0 ? '+' : ''}${(c.changePercent as number).toFixed(1)}%`).join(' · ')}
-                  </Link>
-                );
-              })()}
+              {/* PATCH 0908 — Heatmap + Conviction Beats chips moved out of
+                  this row into their own dedicated row directly above the
+                  LENS bar (see Patch 0908 block below). User feedback:
+                  "still i dont see in this in home tab the newly requested
+                  ones" — the conditional rendering here was hiding them
+                  when no live quotes arrived (weekend / cold start). */}
             </div>
           </div>
           {/* PATCH 0619/0635 — institutional chip strip. All in one row group,
@@ -2040,14 +2005,110 @@ export default function HomeDashboard() {
           </div>
         </div>
 
+        {/* ═══════════════ PATCH 0908 — HEATMAP + CONVICTION BEATS ROW ═══════
+            Dedicated chip row directly above the LENS bar. Always renders
+            (loading / empty placeholders shown when data unavailable) so
+            the user never wonders whether the panels exist. Each chip
+            links to the full page. Sorted by absolute % move.
+            User feedback: "still i dont see in this in home tab the newly
+            requested ones" — previous Patch 0907 hid these chips when
+            conditional render fell through (weekend / no live quotes).
+        ═════════════════════════════════════════════════════════════════════ */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          flexWrap: 'wrap',
+          padding: '8px 12px',
+          background: '#0D1623',
+          border: '1px solid #1A2540',
+          borderRadius: 6,
+        }}>
+          {/* 🗺 HEATMAP CHIP */}
+          {(() => {
+            const sp = data.sectorPulse;
+            if (!sp) {
+              return (
+                <Link href="/heatmap" style={{
+                  fontSize: 12, padding: '4px 10px', borderRadius: 4,
+                  background: '#22D3EE15', border: '1px solid #22D3EE60', color: '#22D3EE',
+                  fontWeight: 800, textDecoration: 'none',
+                }}>🗺 HEATMAP · loading sectors…</Link>
+              );
+            }
+            if (sp.length === 0) {
+              return (
+                <Link href="/heatmap" style={{
+                  fontSize: 12, padding: '4px 10px', borderRadius: 4,
+                  background: '#22D3EE15', border: '1px solid #22D3EE60', color: '#22D3EE',
+                  fontWeight: 800, textDecoration: 'none',
+                }}>🗺 HEATMAP · no sector data · Open →</Link>
+              );
+            }
+            const top3 = sp.slice().sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct)).slice(0, 3);
+            return (
+              <Link href="/heatmap" style={{
+                fontSize: 12, padding: '4px 10px', borderRadius: 4,
+                background: '#22D3EE15', border: '1px solid #22D3EE60', color: '#22D3EE',
+                fontWeight: 800, textDecoration: 'none',
+              }} title="Open full Sector Heatmap →">
+                🗺 HEATMAP · {top3.map(s => `${s.sector} ${s.pct >= 0 ? '+' : ''}${s.pct.toFixed(1)}%`).join(' · ')}
+              </Link>
+            );
+          })()}
+
+          {/* 🏆 CONVICTION BEATS CHIP */}
+          {(() => {
+            const cb = data.convictionLive;
+            if (!cb) {
+              return (
+                <Link href="/watchlists?tab=conviction" style={{
+                  fontSize: 12, padding: '4px 10px', borderRadius: 4,
+                  background: '#F59E0B15', border: '1px solid #F59E0B60', color: '#F59E0B',
+                  fontWeight: 800, textDecoration: 'none',
+                }}>🏆 BEATS · loading bench…</Link>
+              );
+            }
+            if (cb.length === 0) {
+              return (
+                <Link href="/earnings-opportunities" style={{
+                  fontSize: 12, padding: '4px 10px', borderRadius: 4,
+                  background: '#F59E0B15', border: '1px solid #F59E0B60', color: '#F59E0B',
+                  fontWeight: 800, textDecoration: 'none',
+                }}>🏆 BEATS · empty bench · populate from EO →</Link>
+              );
+            }
+            const withQuotes = cb.filter(c => typeof c.changePercent === 'number');
+            if (withQuotes.length === 0) {
+              return (
+                <Link href="/watchlists?tab=conviction" style={{
+                  fontSize: 12, padding: '4px 10px', borderRadius: 4,
+                  background: '#F59E0B15', border: '1px solid #F59E0B60', color: '#F59E0B',
+                  fontWeight: 800, textDecoration: 'none',
+                }} title={`${cb.length} names on bench · no live quotes (NSE closed?)`}>
+                  🏆 BEATS ({cb.length}) · no live quotes · {cb.slice(0, 4).map(c => c.ticker).join(' · ')}
+                </Link>
+              );
+            }
+            const top4 = withQuotes.slice(0, 4);
+            return (
+              <Link href="/watchlists?tab=conviction" style={{
+                fontSize: 12, padding: '4px 10px', borderRadius: 4,
+                background: '#F59E0B15', border: '1px solid #F59E0B60', color: '#F59E0B',
+                fontWeight: 800, textDecoration: 'none',
+              }} title={`${cb.length} names on bench · sorted by today's abs move`}>
+                🏆 BEATS ({cb.length}) · {top4.map(c => `${c.ticker} ${(c.changePercent as number) >= 0 ? '+' : ''}${(c.changePercent as number).toFixed(1)}%`).join(' · ')}
+              </Link>
+            );
+          })()}
+        </div>
+
         {/* ═══════════════ PATCH 0613 — LENS SWITCHER ═══════════════════
             Saved Workspaces v1. Filters Tier 1/2/3 in real-time.
             User can add custom sector-regex lenses via the + button.
-            (PATCH 0907 reverted the multi-row variant — user wanted
-            Heatmap + Conviction Beats as simple inline chips at the
-            top of the page, like P&L / sector rotation. Those now live
-            in the Portfolio P&L chip-row above. LENS bar returns to
-            its original single-row Tier-filter role.)
+            (PATCH 0907/0908 — Heatmap + Conviction Beats live in their
+            own always-visible chip row directly above this LENS bar.
+            LENS itself is the original single-row Tier-filter.)
         ═════════════════════════════════════════════════════════════════ */}
         <div style={{
           display: 'flex',
