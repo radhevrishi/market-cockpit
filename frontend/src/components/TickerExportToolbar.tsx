@@ -213,17 +213,32 @@ export default function TickerExportToolbar({
   // serving 502 Bad Gateway on bulk-import; this gives them a portable file
   // they can keep, open in Excel, re-upload later, or paste anywhere.
   //
+  // PATCH 0871 — Original output was rejected by Screener.in import with
+  // "We couldn't find any ISIN codes in the given file". Root cause: header
+  // was a generic `Ticker` and the column mixed 6-digit BSE numeric scrip
+  // codes (`538897`) with alphabetic NSE symbols (`KDDL`). Screener.in's
+  // importer is column-header-aware: it accepts a column literally headed
+  // `BSE Code`, `NSE Code`, or `ISIN`, but won't recognise heterogeneous
+  // values under a generic header.
+  //
+  // Fix: route each ticker into the correct column based on its shape and
+  // emit BOTH columns (one will be empty per row). Screener.in then picks
+  // the matching code automatically. `Name` column stays for human use in
+  // Excel — Screener.in ignores unknown columns.
+  //
   // Format:
-  //   Header row:  Name,Ticker
-  //   Data rows:   "Acutaas Chemicals",ACUTAAS
-  //                "Lloyds Metals & Energy",LLOYDSME    ← entities decoded, suffix stripped
-  //                "KRISHANA",KRISHANA                   ← bare-ticker fallback when no name
+  //   Header row:  Name,NSE Code,BSE Code
+  //   Data rows:   "KDDL",KDDL,
+  //                "Shri Niwas Leasing & Finance",,538897
+  //                "Lloyds Metals & Energy",LLOYDSME,    ← entities decoded, suffix stripped
   const downloadScreenerCsv = (subset: string[], label: string) => {
     if (subset.length === 0) { toast.error(`No ${label} tickers to download`); return; }
-    const rows: string[] = ['Name,Ticker'];
+    const rows: string[] = ['Name,NSE Code,BSE Code'];
     let nameCount = 0;
+    let bseCount = 0;
+    let nseCount = 0;
     for (const t of subset) {
-      const upT = t.toUpperCase();
+      const upT = t.toUpperCase().trim();
       const co = tickerCompanyMap?.[upT];
       let name: string;
       if (co && co.trim() && co.trim().toUpperCase() !== upT) {
@@ -232,12 +247,17 @@ export default function TickerExportToolbar({
       } else {
         name = upT;
       }
+      // 6-digit pure-numeric → BSE scrip code. Anything else → NSE symbol.
+      const isBse = /^\d{6}$/.test(upT);
+      const nseCol = isBse ? '' : upT;
+      const bseCol = isBse ? upT : '';
+      if (isBse) bseCount++; else nseCount++;
       // CSV-quote any value containing commas, quotes, or newlines
       const csvQuote = (s: string) => {
         if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
         return s;
       };
-      rows.push(`${csvQuote(name)},${csvQuote(upT)}`);
+      rows.push(`${csvQuote(name)},${csvQuote(nseCol)},${csvQuote(bseCol)}`);
     }
     const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -248,7 +268,7 @@ export default function TickerExportToolbar({
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    toast.success(`Downloaded ${subset.length} rows (${nameCount} as names, ${subset.length - nameCount} as tickers)`);
+    toast.success(`Downloaded ${subset.length} rows (${nseCount} NSE + ${bseCount} BSE, ${nameCount} with names) — ready for Screener.in import`);
   };
 
   const btnBase = {

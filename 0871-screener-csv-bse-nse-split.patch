@@ -1,0 +1,144 @@
+From 34b082396bd5ce2f402c8e7381c9905910cfa1ee Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Tue, 26 May 2026 08:36:57 +0200
+Subject: [PATCH] patch 0871: screener.in csv split NSE/BSE columns
+
+---
+ .../src/components/TickerExportToolbar.tsx    | 72 +++++++++++++++----
+ 1 file changed, 57 insertions(+), 15 deletions(-)
+
+diff --git a/frontend/src/components/TickerExportToolbar.tsx b/frontend/src/components/TickerExportToolbar.tsx
+index 12af7ff..438f074 100644
+--- a/frontend/src/components/TickerExportToolbar.tsx
++++ b/frontend/src/components/TickerExportToolbar.tsx
+@@ -64,12 +64,34 @@ export default function TickerExportToolbar({
+     }
+   };
+ 
++  // PATCH 0436 — Auto-prefix exchange per ticker. User reported pasting
++  // a mixed list (BSE numeric codes 523850/524717 + named NSE symbols like
++  // LUMAXTECH) into TradingView fails because we naively prefix all with
++  // 'NSE:'. TradingView accepts 'BSE:523850' but rejects 'NSE:523850'.
++  // Heuristic: 6-digit numeric ticker → BSE: prefix; alphabetic → NSE: prefix.
++  // Caller-supplied `exchange` prop still wins when set explicitly.
++  const tvSymbolFor = (raw: string): string => {
++    const t = raw.toUpperCase().trim();
++    // Strip any existing exchange prefix
++    const bare = t.replace(/^(NSE|BSE|NYSE|NASDAQ):/i, '');
++    // If caller pinned a non-default exchange, honor it
++    if (exchange !== 'NSE') return `${exchange}:${bare}`;
++    // 6-digit pure-numeric → BSE scrip code
++    if (/^\d{6}$/.test(bare)) return `BSE:${bare}`;
++    // Default: NSE
++    return `NSE:${bare}`;
++  };
++
+   const copyTradingView = async (subset: string[], label: string) => {
+     if (subset.length === 0) { toast.error(`No ${label} tickers to copy`); return; }
+-    const tv = subset.map((t) => `${exchange}:${t}`).join(',');
++    const tv = subset.map(tvSymbolFor).join(',');
+     try {
+       await navigator.clipboard.writeText(tv);
+-      toast.success(`Copied ${subset.length} ${label} ticker${subset.length === 1 ? '' : 's'} for TradingView`);
++      const bseCount = subset.filter(t => /^\d{6}$/.test(t.toUpperCase().trim().replace(/^(NSE|BSE):/i, ''))).length;
++      const msg = bseCount > 0
++        ? `Copied ${subset.length} tickers (${bseCount} BSE numeric, ${subset.length - bseCount} NSE) for TradingView`
++        : `Copied ${subset.length} ${label} ticker${subset.length === 1 ? '' : 's'} for TradingView`;
++      toast.success(msg);
+     } catch {
+       toast.error('Clipboard write failed — check browser permission');
+     }
+@@ -77,7 +99,8 @@ export default function TickerExportToolbar({
+ 
+   const downloadTxt = (subset: string[], label: string) => {
+     if (subset.length === 0) { toast.error(`No ${label} tickers to download`); return; }
+-    const txt = subset.map((t) => `${exchange}:${t}`).join('\n');
++    // PATCH 0436 — per-ticker BSE/NSE auto-prefix
++    const txt = subset.map(tvSymbolFor).join('\n');
+     const blob = new Blob([txt], { type: 'text/plain' });
+     const url = URL.createObjectURL(blob);
+     const a = document.createElement('a');
+@@ -92,10 +115,9 @@ export default function TickerExportToolbar({
+ 
+   const openInTradingView = (subset: string[]) => {
+     if (subset.length === 0) { toast.error(`No tickers to open`); return; }
+-    // Open single-ticker chart for the first one; copy the full list so user
+-    // can paste into their TradingView watchlist after.
+-    const first = `${exchange}:${subset[0]}`;
+-    const tv = subset.map((t) => `${exchange}:${t}`).join(',');
++    // PATCH 0436 — per-ticker BSE/NSE auto-prefix
++    const first = tvSymbolFor(subset[0]);
++    const tv = subset.map(tvSymbolFor).join(',');
+     navigator.clipboard.writeText(tv).catch(() => {});
+     window.open(`https://www.tradingview.com/chart/?symbol=${encodeURIComponent(first)}`, '_blank', 'noopener,noreferrer');
+     toast.success(`Opened ${first} · ${subset.length} tickers copied for paste`);
+@@ -191,17 +213,32 @@ export default function TickerExportToolbar({
+   // serving 502 Bad Gateway on bulk-import; this gives them a portable file
+   // they can keep, open in Excel, re-upload later, or paste anywhere.
+   //
++  // PATCH 0871 — Original output was rejected by Screener.in import with
++  // "We couldn't find any ISIN codes in the given file". Root cause: header
++  // was a generic `Ticker` and the column mixed 6-digit BSE numeric scrip
++  // codes (`538897`) with alphabetic NSE symbols (`KDDL`). Screener.in's
++  // importer is column-header-aware: it accepts a column literally headed
++  // `BSE Code`, `NSE Code`, or `ISIN`, but won't recognise heterogeneous
++  // values under a generic header.
++  //
++  // Fix: route each ticker into the correct column based on its shape and
++  // emit BOTH columns (one will be empty per row). Screener.in then picks
++  // the matching code automatically. `Name` column stays for human use in
++  // Excel — Screener.in ignores unknown columns.
++  //
+   // Format:
+-  //   Header row:  Name,Ticker
+-  //   Data rows:   "Acutaas Chemicals",ACUTAAS
+-  //                "Lloyds Metals & Energy",LLOYDSME    ← entities decoded, suffix stripped
+-  //                "KRISHANA",KRISHANA                   ← bare-ticker fallback when no name
++  //   Header row:  Name,NSE Code,BSE Code
++  //   Data rows:   "KDDL",KDDL,
++  //                "Shri Niwas Leasing & Finance",,538897
++  //                "Lloyds Metals & Energy",LLOYDSME,    ← entities decoded, suffix stripped
+   const downloadScreenerCsv = (subset: string[], label: string) => {
+     if (subset.length === 0) { toast.error(`No ${label} tickers to download`); return; }
+-    const rows: string[] = ['Name,Ticker'];
++    const rows: string[] = ['Name,NSE Code,BSE Code'];
+     let nameCount = 0;
++    let bseCount = 0;
++    let nseCount = 0;
+     for (const t of subset) {
+-      const upT = t.toUpperCase();
++      const upT = t.toUpperCase().trim();
+       const co = tickerCompanyMap?.[upT];
+       let name: string;
+       if (co && co.trim() && co.trim().toUpperCase() !== upT) {
+@@ -210,12 +247,17 @@ export default function TickerExportToolbar({
+       } else {
+         name = upT;
+       }
++      // 6-digit pure-numeric → BSE scrip code. Anything else → NSE symbol.
++      const isBse = /^\d{6}$/.test(upT);
++      const nseCol = isBse ? '' : upT;
++      const bseCol = isBse ? upT : '';
++      if (isBse) bseCount++; else nseCount++;
+       // CSV-quote any value containing commas, quotes, or newlines
+       const csvQuote = (s: string) => {
+         if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+         return s;
+       };
+-      rows.push(`${csvQuote(name)},${csvQuote(upT)}`);
++      rows.push(`${csvQuote(name)},${csvQuote(nseCol)},${csvQuote(bseCol)}`);
+     }
+     const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8' });
+     const url = URL.createObjectURL(blob);
+@@ -226,7 +268,7 @@ export default function TickerExportToolbar({
+     a.click();
+     document.body.removeChild(a);
+     URL.revokeObjectURL(url);
+-    toast.success(`Downloaded ${subset.length} rows (${nameCount} as names, ${subset.length - nameCount} as tickers)`);
++    toast.success(`Downloaded ${subset.length} rows (${nseCount} NSE + ${bseCount} BSE, ${nameCount} with names) — ready for Screener.in import`);
+   };
+ 
+   const btnBase = {
+-- 
+2.50.1 (Apple Git-155)
+
