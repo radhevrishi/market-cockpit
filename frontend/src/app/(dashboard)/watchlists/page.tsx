@@ -1112,9 +1112,35 @@ type ConvFilters = {
   // USER-REQ — Guidance in Conviction tab. null = no filter; specific label
   // means "only entries whose derived guidance matches this label".
   guidance: 'Positive' | 'Negative' | 'Neutral' | null;
+  // PATCH 0909 — Indian-FY quarter + fiscal-year filter.
+  //   Derived from filing_date by deriveQuarterFY() below using the
+  //   Indian FY convention (Apr-Mar). User feedback: "earnings hub,
+  //   conviction beats i need some way to filter dates by quarter and
+  //   year and all filter logic to be perfect".
+  quarter: 'Q1' | 'Q2' | 'Q3' | 'Q4' | null;
+  fy: number | null;        // 26 = FY26 (Apr 2025 - Mar 2026), etc.
 };
 
-const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, guidance: null };
+const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, guidance: null, quarter: null, fy: null };
+
+// PATCH 0909 — Derive Indian-FY quarter + fiscal year from filing_date.
+// Convention: FY26 = Apr 2025 → Mar 2026. The QUARTER REPORTED differs
+// from the filing month — filings happen 1-3 months after the quarter
+// ends, e.g. Q4 FY26 (Jan-Mar 2026) is filed Apr-Jun 2026.
+//   Filing Apr-Jun YYYY → reports Q4 FY{YYYY}
+//   Filing Jul-Sep YYYY → reports Q1 FY{YYYY+1}
+//   Filing Oct-Dec YYYY → reports Q2 FY{YYYY+1}
+//   Filing Jan-Mar YYYY → reports Q3 FY{YYYY}
+export function deriveQuarterFY(fdate: string): { q: 'Q1' | 'Q2' | 'Q3' | 'Q4'; fy: number } | null {
+  if (!fdate || !/^\d{4}-\d{2}-\d{2}/.test(fdate)) return null;
+  const year = parseInt(fdate.slice(0, 4), 10);
+  const month = parseInt(fdate.slice(5, 7), 10);
+  if (month >= 4 && month <= 6)  return { q: 'Q4', fy: year % 100 };
+  if (month >= 7 && month <= 9)  return { q: 'Q1', fy: (year + 1) % 100 };
+  if (month >= 10 && month <= 12) return { q: 'Q2', fy: (year + 1) % 100 };
+  if (month >= 1 && month <= 3)  return { q: 'Q3', fy: year % 100 };
+  return null;
+}
 
 // PATCH 0546 / 0547 — Derive guidance from YoY metrics when the entry
 // doesn't have an explicit guidance field. Tightened thresholds so the
@@ -1165,6 +1191,13 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
   // entries; explicit guidance field always wins when present.
   if (f.guidance != null) {
     if (deriveGuidanceLabel(e) !== f.guidance) return false;
+  }
+  // PATCH 0909 — Quarter + FY filter (Indian fiscal year, derived from filing_date)
+  if (f.quarter != null || f.fy != null) {
+    const qfy = deriveQuarterFY(e.filing_date);
+    if (!qfy) return false;
+    if (f.quarter != null && qfy.q !== f.quarter) return false;
+    if (f.fy != null && qfy.fy !== f.fy) return false;
   }
   return true;
 }
@@ -1581,8 +1614,8 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
               🌊 Sort by PEAD {filters.sortByPead ? '✓' : ''}
             </button>
             <button onClick={() => setFilters(FILTER_DEFAULT)}
-              disabled={filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && !filters.sortByPead}
-              style={{ ...chipBase, opacity: (filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && !filters.sortByPead) ? 0.4 : 1 }}>
+              disabled={filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && !filters.sortByPead}
+              style={{ ...chipBase, opacity: (filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && !filters.sortByPead) ? 0.4 : 1 }}>
               Clear
             </button>
           </div>
@@ -1632,6 +1665,72 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                 );
               })}
             </div>
+          );
+        })()}
+        {/* PATCH 0909 — Quarter (Q1-Q4) + FY filter chips. Indian fiscal-
+            year convention derived from filing_date via deriveQuarterFY().
+            Each chip shows a live (N) count under the OTHER active filters
+            so the user sees how each option narrows the post-filter set.
+            User feedback: "earnings hub, conviction beats i need some way
+            to filter dates by quarter and year and all filter logic to be
+            perfect". */}
+        {(() => {
+          const quarters: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'> = ['Q1', 'Q2', 'Q3', 'Q4'];
+          const toggleQ = (q: 'Q1' | 'Q2' | 'Q3' | 'Q4') =>
+            setFilters((f) => ({ ...f, quarter: f.quarter === q ? null : q }));
+          const countQ = (q: 'Q1' | 'Q2' | 'Q3' | 'Q4') => {
+            const probe: ConvFilters = { ...filters, quarter: q };
+            return entries.filter((e) => passesConvictionFilter(e, probe)).length;
+          };
+          // Discover which FYs are actually present on the bench (drives the
+          // FY chip set so we don't render dead FY24 / FY30 buttons).
+          const presentFY = (() => {
+            const s = new Set<number>();
+            for (const e of entries) {
+              const qfy = deriveQuarterFY(e.filing_date);
+              if (qfy) s.add(qfy.fy);
+            }
+            return Array.from(s).sort((a, b) => b - a);
+          })();
+          const toggleFY = (fy: number) =>
+            setFilters((f) => ({ ...f, fy: f.fy === fy ? null : fy }));
+          const countFY = (fy: number) => {
+            const probe: ConvFilters = { ...filters, fy };
+            return entries.filter((e) => passesConvictionFilter(e, probe)).length;
+          };
+          return (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>QUARTER</span>
+                {quarters.map((q) => {
+                  const active = filters.quarter === q;
+                  const n = countQ(q);
+                  return (
+                    <button key={q} onClick={() => toggleQ(q)}
+                      style={active ? chipActive('#F59E0B') : chipBase}
+                      title={`Filter to filings reporting ${q} (Indian FY: Q1=Apr-Jun · Q2=Jul-Sep · Q3=Oct-Dec · Q4=Jan-Mar)`}>
+                      {q} <span style={{ color: active ? '#F59E0B' : '#6B7A8D', marginLeft: 3 }}>({n})</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {presentFY.length > 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>FY</span>
+                  {presentFY.map((fy) => {
+                    const active = filters.fy === fy;
+                    const n = countFY(fy);
+                    return (
+                      <button key={fy} onClick={() => toggleFY(fy)}
+                        style={active ? chipActive('#A78BFA') : chipBase}
+                        title={`Filter to FY${fy} (Apr 20${fy - 1} → Mar 20${fy})`}>
+                        FY{fy} <span style={{ color: active ? '#A78BFA' : '#6B7A8D', marginLeft: 3 }}>({n})</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </>
           );
         })()}
       </div>

@@ -2510,9 +2510,19 @@ Source label: ${coverageStats.source}`}
               NSE {coverageStats.nse} · BSE {coverageStats.bse} · merged {coverageStats.total}
             </span>
           )}
-          <span style={{ marginLeft: 'auto', fontSize: 11, color: '#6B7A8D' }}>
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: '#6B7A8D' }}
+            title="Graded = filings that have actually been published AND parsed. Calendar = SCHEDULED filings (some may not have filed yet, some filed too recently for our parser to pick up). Mismatch is expected near filing day.">
             {view.candidates_total} graded · {view.raw_items_total} earnings articles found
           </span>
+          {/* PATCH 0909 — Upstream hub-fail banner. When the graded API
+              fell back to live-NSE only (or stale KV), let the user know
+              why the list might look short. */}
+          {(view as any)?._hub_fail && (
+            <span
+              title={`Earnings hub was unreachable (${(view as any)._hub_fail}). Showing live NSE filings only. Retry in a moment to get the full list.`}
+              style={{ fontSize: 10, padding: '3px 8px', borderRadius: 4, background: '#F59E0B20', border: '1px solid #F59E0B60', color: '#F59E0B', fontWeight: 800 }}
+            >⚠ upstream degraded · partial list</span>
+          )}
           {counts.map((c) => (
             <span key={c.tier} style={{
               fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20,
@@ -3182,11 +3192,60 @@ function CalendarView({ data, loading, from, to, onPickDate }: { data: CalendarP
   }
 
   const byDate = data?.by_date || {};
+  // PATCH 0909 — Build a flat de-duped list of all tickers in the visible
+  // calendar window so the user can copy them as a single comma-separated
+  // string (TradingView-ready) or as NSE: prefixed string (Investing.com / Zerodha).
+  // User report: "i am trying to copy tickers in the earninsg calendar in
+  // earning opportunities its not posible".
+  const allTickers: string[] = (() => {
+    const set = new Set<string>();
+    for (const items of Object.values(byDate)) {
+      for (const it of items) {
+        if (it?.symbol) set.add(String(it.symbol).toUpperCase().replace(/\.(NS|BO)$/i, ''));
+      }
+    }
+    return Array.from(set).sort();
+  })();
+  const copyToClipboard = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      // Lightweight toast — uses native alert as fallback if no toast lib.
+      console.log(`[calendar] copied ${label}: ${text.slice(0, 80)}...`);
+    } catch {
+      // navigator.clipboard fails in non-https contexts; fall back to textarea + execCommand
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.top = '-1000px';
+        document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch {}
+    }
+  };
   return (
     <div style={{ backgroundColor: '#0D1623', border: '1px solid #1A2540', borderRadius: 10, padding: '14px 18px' }}>
-      <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <h2 style={{ margin: 0, fontSize: 14, fontWeight: 800, color: '#E6EDF3', letterSpacing: '0.4px' }}>📅 NSE EARNINGS CALENDAR</h2>
         <span style={{ fontSize: 11, color: '#6B7A8D' }}>{from} → {to} · {Object.values(byDate).reduce((a, b) => a + b.length, 0)} filings</span>
+        {/* PATCH 0909 — Copy-all-tickers controls */}
+        {allTickers.length > 0 && (
+          <span style={{ display: 'inline-flex', gap: 4, marginLeft: 4 }}>
+            <button
+              onClick={() => copyToClipboard(allTickers.join(','), 'plain CSV')}
+              title="Copy all tickers (CSV — Excel-friendly)"
+              style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid #22D3EE60', color: '#22D3EE', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+            >📋 CSV ({allTickers.length})</button>
+            <button
+              onClick={() => copyToClipboard(allTickers.map(t => `NSE:${t}`).join(','), 'TradingView')}
+              title="Copy as NSE:TICKER,NSE:TICKER (TradingView watchlist import format)"
+              style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid #22D3EE60', color: '#22D3EE', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+            >📊 TradingView</button>
+            <button
+              onClick={() => copyToClipboard(allTickers.join('\n'), 'one per line')}
+              title="Copy one ticker per line"
+              style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid #22D3EE60', color: '#22D3EE', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+            >↓ Lines</button>
+          </span>
+        )}
         {data?.scraped_at && (
           <span style={{ marginLeft: 'auto', fontSize: 10, color: '#6B7A8D' }}>scraped {new Date(data.scraped_at).toLocaleString('en-IN')}</span>
         )}
@@ -3212,9 +3271,22 @@ function CalendarView({ data, loading, from, to, onPickDate }: { data: CalendarP
                 <span style={{ fontSize: 11, fontWeight: 700, color: isToday ? '#22D3EE' : '#94A3B8' }}>
                   {weekday} {dayLabel}
                 </span>
-                {items.length > 0 && (
-                  <span style={{ fontSize: 11, fontWeight: 800, color: '#F59E0B' }}>{items.length}</span>
-                )}
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  {items.length > 0 && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const day = items.map(it => String(it.symbol || '').toUpperCase().replace(/\.(NS|BO)$/i, '')).filter(Boolean).join(',');
+                        copyToClipboard(day, `${weekday} ${dayLabel}`);
+                      }}
+                      title={`Copy ${items.length} tickers filing ${weekday} ${dayLabel}`}
+                      style={{ fontSize: 9, padding: '1px 5px', background: 'transparent', border: '1px solid #22D3EE40', color: '#22D3EE', borderRadius: 3, cursor: 'pointer', fontWeight: 700 }}
+                    >📋</button>
+                  )}
+                  {items.length > 0 && (
+                    <span style={{ fontSize: 11, fontWeight: 800, color: '#F59E0B' }}>{items.length}</span>
+                  )}
+                </span>
               </div>
               <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                 {items.length === 0 ? (

@@ -548,7 +548,17 @@ export async function GET(req: Request) {
   // hang for the full Vercel function lifetime (60s) and return a 504,
   // poisoning the client's retry loop. AbortController fires at 25s so
   // we still have a few seconds of budget left for KV write + response.
-  let hubRes: Response;
+  // PATCH 0909 — Resilient hub fetch. Instead of returning hard 504/502 on
+  // upstream failure, fall back through a tiered chain:
+  //   1. Stale KV payload for this date (even past TTL — better than nothing)
+  //   2. Live-NSE today-live filings (skip hub entirely)
+  //   3. 200 + empty payload with `_stale` reason flag (client renders empty
+  //      state cleanly without a hard error toast)
+  // User report: "/api/v1/earnings/graded returning 502" cascaded into "few
+  // companies in graded tiers" because client retry loop saw the error and
+  // didn't bother trying again.
+  let hubRes: Response | null = null;
+  let hubFailReason: string | null = null;
   try {
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), 25_000);
@@ -558,12 +568,42 @@ export async function GET(req: Request) {
       clearTimeout(timer);
     }
   } catch (e: any) {
-    return NextResponse.json({ error: 'hub fetch timeout', message: e?.message }, { status: 504 });
+    hubFailReason = e?.name === 'AbortError' ? 'hub_timeout_25s' : `hub_throw_${e?.message || 'unknown'}`;
+    hubRes = null;
   }
-  if (!hubRes.ok) {
-    return NextResponse.json({ error: 'hub fetch failed', status: hubRes.status }, { status: 502 });
+  if (hubRes && !hubRes.ok) {
+    hubFailReason = `hub_http_${hubRes.status}`;
   }
-  const hub = await hubRes.json();
+  const hubOk = hubRes && hubRes.ok;
+  let hub: any = null;
+  if (hubOk) {
+    try {
+      hub = await hubRes!.json();
+    } catch (e: any) {
+      hubFailReason = `hub_parse_${e?.message || 'unknown'}`;
+      hub = null;
+    }
+  }
+  if (!hub) {
+    // Fallback chain — hub failed for some reason. Try not to hard-error.
+    console.warn(`[graded] ${date}: hub fetch failed (${hubFailReason}), attempting fallback chain`);
+    // Tier 1: stale KV payload (allow any cache hit even if force=1 came in)
+    if (isRedisAvailable()) {
+      try {
+        const staleCached = await kvGet(cacheKey);
+        if (staleCached) {
+          console.log(`[graded] ${date}: served stale KV cache (hub down: ${hubFailReason})`);
+          return NextResponse.json(
+            { ...staleCached, _cache: 'stale-fallback', _hub_fail: hubFailReason },
+            { headers: { 'Cache-Control': 'no-store' } }
+          );
+        }
+      } catch {}
+    }
+    // Tier 2: live-NSE only path — skip hub entirely. We synthesize a tiny
+    // hub stub so the rest of the pipeline can run on just live NSE filings.
+    hub = { results: [] };
+  }
   let dayList: any[] = (hub?.results || []).filter((r: any) => r.resultDate === date && r.quality !== 'Upcoming');
 
   // PATCH 0363 / PATCH 0497 — Augment with live NSE corp-announcements.
@@ -664,7 +704,7 @@ export async function GET(req: Request) {
   }
 
   if (dayList.length === 0) {
-    const empty = {
+    const empty: any = {
       filing_date: date,
       candidates_total: 0,
       raw_items_total: 0,
@@ -672,10 +712,16 @@ export async function GET(req: Request) {
       generated_at: new Date().toISOString(),
       sources_polled: 1,
     };
-    if (isPast && isRedisAvailable()) {
+    // PATCH 0909 — tag the empty payload with the hub failure reason so the
+    // client can show "upstream degraded — retry shortly" instead of a silent
+    // empty state. Only cache the empty when hub was actually OK (don't
+    // poison KV with a false-negative).
+    if (hubFailReason) {
+      empty._hub_fail = hubFailReason;
+    } else if (isPast && isRedisAvailable()) {
       try { await kvSet(cacheKey, empty, 365 * 24 * 3600); } catch {}
     }
-    return NextResponse.json(empty, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } });  // PATCH 0818
+    return NextResponse.json(empty, { headers: { 'Cache-Control': hubFailReason ? 'no-store' : 's-maxage=300, stale-while-revalidate=900' } });
   }
 
   // Fetch enrichment for all tickers (chunk to 40 per request)
@@ -815,13 +861,18 @@ export async function GET(req: Request) {
     _refresh: `${populated}/${dayList.length} updated`,
     _attempted_tickers: dayList.map((m: any) => m.ticker),
     _failed_tickers: failedTickers,
+    // PATCH 0909 — propagate hub failure flag if applicable (live-NSE saved us)
+    ...(hubFailReason ? { _hub_fail: hubFailReason } : {}),
   };
 
   // Cache: past dates 90 days (immutable), today 15 min
-  if (isRedisAvailable()) {
+  // PATCH 0909 — Don't cache payloads built without the hub. Live-NSE is a
+  // subset of what the hub knows, so caching this would lock out the
+  // complete view once the hub recovers.
+  if (isRedisAvailable() && !hubFailReason) {
     const ttl = isPast ? 365 * 24 * 3600 : 5 * 60;
     try { await kvSet(cacheKey, payload, ttl); } catch {}
   }
 
-  return NextResponse.json(payload, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } });  // PATCH 0818
+  return NextResponse.json(payload, { headers: { 'Cache-Control': hubFailReason ? 'no-store' : 's-maxage=300, stale-while-revalidate=900' } });
 }
