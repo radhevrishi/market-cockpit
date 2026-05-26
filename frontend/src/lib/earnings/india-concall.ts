@@ -207,6 +207,20 @@ function isTableNoise(s: string): boolean {
   if (/(?:\bQ[1-4]\s?FY\s?\d{2,4}\b\s*){3,}/.test(s)) return true;
   // Comma-separated number lists ("46 4,98,861 2.3 Q4FY26 571 3,31,763 18.9")
   if ((s.match(/\d[,.]\d{2,3}/g) || []).length >= 3) return true;
+  // PATCH 0878 — Excel Bull/Base/Bear template leak: rows from the
+  // SOIC valuation template ("PE - To rerate upward in bull case,,,
+  // BEAR,7%,,, BASE,,REVENUE - To move in the same trend..."). Hits
+  // typically have 5+ consecutive commas AND a "case/scenario" keyword.
+  if (/,{5,}/.test(s)) return true;
+  if (/\b(bull case|bear case|base case|exit (?:PE|MULTIPLE)|TTM PAT|terminal growth)\b/i.test(s) && /,{3,}/.test(s)) return true;
+  // PATCH 0878 — spaced-letter slide titles ("I N V E S T O R
+  // P R E S E N T A T I O N"). Detect 5+ single-letter "words" in a
+  // row separated by spaces — that's PDF rendering of letter-spaced
+  // headlines, not real prose.
+  if (/(?:\b[A-Za-z]\b\s+){4,}[A-Za-z]\b/.test(s)) return true;
+  // PATCH 0878 — chart-axis stubs from PDF extraction ("Ebitda margin,,,,
+  // Net Profit Margin,,,,,,,,,,,,AVG."). Trailing commas + "AVG" / "MEDIAN".
+  if (/\b(?:AVG\.?|MEDIAN|MIN|MAX)\b\s*$/i.test(s) && /,{3,}/.test(s)) return true;
 
   // Footnote-style sentences that snuck through previously:
   //   "70 Crs as on 31st March 2026 10 Figures for the previous periods
@@ -228,7 +242,21 @@ function isTableNoise(s: string): boolean {
 
 // Detect cover-letter / regulatory boilerplate sentences
 function isBoilerplate(s: string): boolean {
-  return /\b(National Stock Exchange|BSE Limited|Bandra Kurla Complex|P\.J\. Towers|Listing Department|Trading Symbol|Compliance Officer|Membership No\.|Pursuant to Regulation|Yours faithfully|Dear Sir|Subject\s*:|safe harbor|forward looking statements concerning|risks and uncertainties)\b/i.test(s);
+  if (/\b(National Stock Exchange|BSE Limited|Bandra Kurla Complex|P\.J\. Towers|Listing Department|Trading Symbol|Compliance Officer|Membership No\.|Pursuant to Regulation|Yours faithfully|Dear Sir|Subject\s*:|safe harbor|forward looking statements concerning|risks and uncertainties)\b/i.test(s)) return true;
+  // PATCH 0878 — `Sub:` (Indian cover-letter shortform of `Subject:`)
+  // + scrip-code / symbol header line ("Scrip Code: 524774 Symbol: NGLFINE")
+  if (/\bSub\s*:\s*(?:Investor|Outcome|Intimation|Disclosure|Submission|Notice|Update|Press Release)/i.test(s)) return true;
+  if (/\b(?:Scrip Code|Symbol)\s*:\s*[\w\d]+\s+Sub\s*:/i.test(s)) return true;
+  // PATCH 0878 — Address blocks: "Regd. Office ..." / "Corporate Office ..."
+  // / lines ending with a 6-digit pincode + state + India.
+  if (/\b(?:Regd\.?|Registered|Corporate|Corp\.?|Head)\s+Office\b/i.test(s)) return true;
+  if (/\b\d{6}\s+(?:Maharashtra|Karnataka|Tamil\s*Nadu|Gujarat|Telangana|Andhra\s*Pradesh|Delhi|West\s*Bengal|Uttar\s*Pradesh|Haryana|Punjab|Rajasthan|Madhya\s*Pradesh|Kerala|Odisha|Bihar|Assam|Jharkhand|Chhattisgarh|Uttarakhand|Himachal\s*Pradesh|Goa)(?:,)?\s+India\b/i.test(s)) return true;
+  // PATCH 0878 — Disclaimer / forward-looking-statement boilerplate that
+  // appears at the start of every investor presentation.
+  if (/\bThis (?:investor )?presentation has been prepared by\b/i.test(s)) return true;
+  if (/\bdoes not constitute a (?:prospectus|placement memorandum|offer to acquire)\b/i.test(s)) return true;
+  if (/\bNo representation or warranty,\s*express or implied\b/i.test(s)) return true;
+  return false;
 }
 
 // Detect PROCEDURAL disclosures — corporate-action / governance announcements
