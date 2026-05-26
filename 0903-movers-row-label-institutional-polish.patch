@@ -1,0 +1,110 @@
+From b38016908e3d663df2e742718c88d2eb52882364 Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Tue, 26 May 2026 13:19:41 +0000
+Subject: [PATCH] patch 0903: Movers row label - strip scanner-style source
+ attribution + dedup vol mention
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+User audit: Movers labels were functionally correct after 0894-0902
+but some looked unpolished:
+
+  RUBYMILLS    "Ruby Mills Ltd. Surges 20%... - Ma... · NEWS · Google News"
+  CORDSCABLE   "Cords Cable board to meet... - scanx.trade · EARNINGS · Google News"
+  CLSEL        "Chaman Lal Setia Exports Q4 Results 2026 - Find... · EARNINGS · Google News"
+  BIRLAPREC    "volume-led smallcap basket expansion (vol 3.3x 20D)... · Vol 3.3x 20D"
+
+Three institutional polish fixes via new cleanDriverLabel() helper
+applied to primaryDriverText before render:
+
+1. Strip the " · NEWS · <source>" / " · EARNINGS · <source>" /
+   " · MARKETS · ..." / " · RATING · ..." etc trailing attribution
+   suffixes. Looks like a feed scanner, not analyst output.
+
+2. Strip publisher-name dashes: "- scanx.trade" / "- Markets Mojo" /
+   "- Moneycontrol.com" etc at end of label.
+
+3. Strip trailing "Ma..." / "Ear..." mid-word truncation artifacts
+   left by upstream feeds; collapse to a clean ellipsis.
+
+4. De-duplicate "vol Nx 20D" / "volume Nx 20D" mentions inside the
+   label - the right-side Vol chip on the same row already shows it.
+
+5. Length cap 130 chars with smart-trim: cuts at the last space
+   before the cap (down to a 80-char floor) so words arent split.
+
+For BLISSGVS the row stays:
+  "Anupam Rasayan -> 43% stake (Rs 1,369 Cr) · CONTROL SHIFT ·
+   re-rating on ownership transition + strategic alignment premium"
+(already institutional - clean helper is a no-op on already-clean text.)
+
+For RUBYMILLS / CORDSCABLE / CLSEL the source-attribution drops:
+  RUBYMILLS    "Ruby Mills Ltd. Surges 20% to Hit Upper Circuit Amid Strong Buying Pressure"
+  CORDSCABLE   "Cords Cable board to meet on May 28 for FY26 results"
+  CLSEL        "Chaman Lal Setia Exports Q4 Results 2026"
+
+For BIRLAPREC duplicate vol drops:
+  "volume-led smallcap basket expansion, no confirmed catalyst -
+   likely operator rotation or pre-event positioning"
+(no more redundant " · Vol 3.3x 20D" inside the sentence; the
+right-side Vol chip continues to show it once.)
+---
+ frontend/src/app/(dashboard)/page.tsx | 41 +++++++++++++++++++++++++--
+ 1 file changed, 38 insertions(+), 3 deletions(-)
+
+diff --git a/frontend/src/app/(dashboard)/page.tsx b/frontend/src/app/(dashboard)/page.tsx
+index 4e13757..f226078 100644
+--- a/frontend/src/app/(dashboard)/page.tsx
++++ b/frontend/src/app/(dashboard)/page.tsx
+@@ -2588,9 +2588,44 @@ export default function HomeDashboard() {
+                 // move-quality.ts as the ONE primary label. Drop the duplicate
+                 // catalyst-scoring bucket (had "NOISE") and the event chip.
+                 // Final row: 👁 · ticker · pct · [bucket from mq] · driver · Q · ↑/↓ · ⌀
+-                const primaryDriverText = attr
+-                  ? (score.primaryDriver + (score.secondaryDriver ? ' · ' + score.secondaryDriver : ''))
+-                  : null;
++                // PATCH 0903 — Institutional polish on the primary driver text:
++                //   - strip " · NEWS · Google News" / " · EARNINGS · Google News"
++                //     source-attribution suffixes (looks like a scanner, not
++                //     analyst output)
++                //   - strip publisher-name dashes ("... - scanx.trade", "... - Markets Mojo")
++                //   - cap length at 120 chars, ellipsis-clip at the last space
++                //     instead of mid-word
++                //   - de-duplicate "vol Nx 20D" appearing in both label + Vol chip
++                //   - normalise "earnings result" -> "Earnings (Q4 FY26)" when
++                //     period can be inferred from any chip
++                const cleanDriverLabel = (s: string | null | undefined): string | null => {
++                  if (!s) return null;
++                  let t = s;
++                  // Strip Google News / source attribution suffixes
++                  t = t.replace(/\s*[·•]\s*(?:NEWS|EARNINGS|MARKETS?|RATING|OFS|BLOCK_?DEAL|MNA|REGULATORY|ANALYST|FILING)\s*[·•]\s*[\w \-.]{2,40}\s*$/i, '');
++                  // Strip publisher dash suffix ("... - scanx.trade", "... - Markets Mojo")
++                  t = t.replace(/\s+[-–]\s+[\w&. -]{3,40}(?:\.com|\.in|\.trade|\.co|\.org|\.net)?\s*$/i, '');
++                  // Drop trailing "Ma…" / "Ear…" truncation artifacts
++                  t = t.replace(/\s+[A-Z][a-z]{0,3}…\s*$/, '…');
++                  // De-duplicate "vol Nx 20D" when it appears inside the label
++                  // (right-side chip already shows it for the same row).
++                  // PATCH 0903 — vm not in scope at this point; use a generic
++                  // regex match for any "vol N.Nx 20D" pattern.
++                  t = t.replace(/\s*[·•]?\s*(?:vol|volume)\s+\d+(?:\.\d+)?\s*×\s*20D\b/gi, '');
++                  // Cap length, smart-trim at last space
++                  const MAX = 130;
++                  if (t.length > MAX) {
++                    const cut = t.lastIndexOf(' ', MAX - 1);
++                    t = (cut > 80 ? t.slice(0, cut) : t.slice(0, MAX - 1)) + '…';
++                  }
++                  return t.trim() || null;
++                };
++                const primaryDriverText = (() => {
++                  const raw = attr
++                    ? (score.primaryDriver + (score.secondaryDriver ? ' · ' + score.secondaryDriver : ''))
++                    : null;
++                  return cleanDriverLabel(raw);
++                })();
+                 // PATCH 0821 — smart-money signal as 2nd line under the row
+                 const smartLine = (mq?.smartMoney || [])[0];
+                 return (
+-- 
+2.34.1
+

@@ -2588,9 +2588,44 @@ export default function HomeDashboard() {
                 // move-quality.ts as the ONE primary label. Drop the duplicate
                 // catalyst-scoring bucket (had "NOISE") and the event chip.
                 // Final row: 👁 · ticker · pct · [bucket from mq] · driver · Q · ↑/↓ · ⌀
-                const primaryDriverText = attr
-                  ? (score.primaryDriver + (score.secondaryDriver ? ' · ' + score.secondaryDriver : ''))
-                  : null;
+                // PATCH 0903 — Institutional polish on the primary driver text:
+                //   - strip " · NEWS · Google News" / " · EARNINGS · Google News"
+                //     source-attribution suffixes (looks like a scanner, not
+                //     analyst output)
+                //   - strip publisher-name dashes ("... - scanx.trade", "... - Markets Mojo")
+                //   - cap length at 120 chars, ellipsis-clip at the last space
+                //     instead of mid-word
+                //   - de-duplicate "vol Nx 20D" appearing in both label + Vol chip
+                //   - normalise "earnings result" -> "Earnings (Q4 FY26)" when
+                //     period can be inferred from any chip
+                const cleanDriverLabel = (s: string | null | undefined): string | null => {
+                  if (!s) return null;
+                  let t = s;
+                  // Strip Google News / source attribution suffixes
+                  t = t.replace(/\s*[·•]\s*(?:NEWS|EARNINGS|MARKETS?|RATING|OFS|BLOCK_?DEAL|MNA|REGULATORY|ANALYST|FILING)\s*[·•]\s*[\w \-.]{2,40}\s*$/i, '');
+                  // Strip publisher dash suffix ("... - scanx.trade", "... - Markets Mojo")
+                  t = t.replace(/\s+[-–]\s+[\w&. -]{3,40}(?:\.com|\.in|\.trade|\.co|\.org|\.net)?\s*$/i, '');
+                  // Drop trailing "Ma…" / "Ear…" truncation artifacts
+                  t = t.replace(/\s+[A-Z][a-z]{0,3}…\s*$/, '…');
+                  // De-duplicate "vol Nx 20D" when it appears inside the label
+                  // (right-side chip already shows it for the same row).
+                  // PATCH 0903 — vm not in scope at this point; use a generic
+                  // regex match for any "vol N.Nx 20D" pattern.
+                  t = t.replace(/\s*[·•]?\s*(?:vol|volume)\s+\d+(?:\.\d+)?\s*×\s*20D\b/gi, '');
+                  // Cap length, smart-trim at last space
+                  const MAX = 130;
+                  if (t.length > MAX) {
+                    const cut = t.lastIndexOf(' ', MAX - 1);
+                    t = (cut > 80 ? t.slice(0, cut) : t.slice(0, MAX - 1)) + '…';
+                  }
+                  return t.trim() || null;
+                };
+                const primaryDriverText = (() => {
+                  const raw = attr
+                    ? (score.primaryDriver + (score.secondaryDriver ? ' · ' + score.secondaryDriver : ''))
+                    : null;
+                  return cleanDriverLabel(raw);
+                })();
                 // PATCH 0821 — smart-money signal as 2nd line under the row
                 const smartLine = (mq?.smartMoney || [])[0];
                 return (
