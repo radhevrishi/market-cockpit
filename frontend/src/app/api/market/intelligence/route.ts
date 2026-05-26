@@ -389,7 +389,28 @@ function isJunkSignal(s: any): boolean {
 
 function stripJunk(arr: any): any {
   if (!Array.isArray(arr)) return arr;
-  return arr.filter((s: any) => !isJunkSignal(s));
+  const cleaned = arr.filter((s: any) => !isJunkSignal(s));
+  // PATCH 0930 — Empty-result safety net. If discipline filters wiped
+  // EVERYTHING but the input had TIER_A signals (highest quality), keep
+  // the TIER_A ones even if they'd otherwise drop (typically largecaps).
+  // Showing "3 Actionable" in the bias counter but 0 in the array is
+  // worse UX than showing a few largecap TIER_A signals. User feedback:
+  // "Signals page totally empty / Signals is broken".
+  if (cleaned.length === 0 && arr.length > 0) {
+    const tierA = arr.filter((s: any) => {
+      if (!s) return false;
+      // Drop only the truly toxic ones (TEMPLATE_PATTERN, suspicious values).
+      const flags = Array.isArray(s.anomalyFlags) ? s.anomalyFlags : [];
+      if (flags.some((f: any) => typeof f === 'string' && /^TEMPLATE_PATTERN_/.test(f))) return false;
+      const rv = Math.round(s.valueCr || 0);
+      const ct = s.confidenceType;
+      if ((ct === 'HEURISTIC' || ct === 'INFERRED') && (rv === 280 || rv === 350 || rv === 105 || rv === 210)) return false;
+      // Keep TIER_A signals (highest quality) regardless of largecap status.
+      return s.evidenceTier === 'TIER_A' || s.signalTier === 'TIER1' || s.confidenceType === 'ACTUAL';
+    });
+    return tierA;
+  }
+  return cleaned;
 }
 
 function stripJunkResponse(resp: any): any {
