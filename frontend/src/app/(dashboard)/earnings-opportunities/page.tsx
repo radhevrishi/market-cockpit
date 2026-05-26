@@ -1649,6 +1649,23 @@ export default function EarningsOpportunitiesPage() {
     for (const tier of ['BLOCKBUSTER', 'STRONG'] as const) {
       for (const c of (data.by_tier[tier] || [])) {
         const g = deriveGuidance(c);
+        // PATCH 0911 — Parse the graded payload's "quarter" string (e.g.
+        // "Q4 FY26" or "Q1 FY27" or just "Q4") into explicit fields so the
+        // bench filter doesn't have to GUESS from filing_date later. Works
+        // for the next 10 years regardless of calendar rollover.
+        let qParsed: 'Q1' | 'Q2' | 'Q3' | 'Q4' | undefined;
+        let fyParsed: number | undefined;
+        if (typeof c.quarter === 'string') {
+          const qm = c.quarter.match(/Q([1-4])/i);
+          if (qm) qParsed = ('Q' + qm[1]) as 'Q1' | 'Q2' | 'Q3' | 'Q4';
+          const fm = c.quarter.match(/FY\s?(\d{2})(?:\d{2})?/i);
+          if (fm) {
+            // Expand 2-digit to 4-digit (FY26 → 2026); assume 21st century
+            // through 2099. After 2099 the heuristic switches centuries.
+            const yy = parseInt(fm[1], 10);
+            fyParsed = yy < 50 ? 2000 + yy : 1900 + yy;
+          }
+        }
         entries.push({
           ticker: c.ticker, company: c.company, tier,
           composite_score: c.composite_score,
@@ -1657,6 +1674,9 @@ export default function EarningsOpportunitiesPage() {
           source_url: c.filing_url,
           // USER-REQ — Guidance in Conviction tab
           guidance: g.label, guidance_score: g.score,
+          // PATCH 0911 — explicit quarter + fy from graded payload
+          ...(qParsed ? { quarter: qParsed } : {}),
+          ...(fyParsed ? { fiscal_year: fyParsed } : {}),
         });
       }
     }

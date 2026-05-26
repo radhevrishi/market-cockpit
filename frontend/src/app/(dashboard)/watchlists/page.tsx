@@ -1123,22 +1123,74 @@ type ConvFilters = {
 
 const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, guidance: null, quarter: null, fy: null };
 
-// PATCH 0909 — Derive Indian-FY quarter + fiscal year from filing_date.
-// Convention: FY26 = Apr 2025 → Mar 2026. The QUARTER REPORTED differs
-// from the filing month — filings happen 1-3 months after the quarter
-// ends, e.g. Q4 FY26 (Jan-Mar 2026) is filed Apr-Jun 2026.
+// PATCH 0911 — Robust derivation of Indian-FY quarter + fiscal year.
+//
+// Lookup order:
+//   1. Use the entry's explicit `quarter` + `fiscal_year` fields (set by
+//      Patch 0911 sync from EO graded payload — authoritative; doesn't
+//      mis-classify late filings or amendments).
+//   2. Fall back to heuristic from filing_date (for legacy bench entries
+//      that pre-date Patch 0911). Multiple date formats accepted:
+//        - "YYYY-MM-DD" (canonical)
+//        - "YYYY-MM-DDT..." (ISO with time)
+//        - "DD/MM/YYYY" or "DD-MM-YYYY" (Indian dd/mm/yyyy)
+//        - "Mon DD, YYYY" or "DD Mon YYYY" (human)
+//
+// Indian FY convention (long-term — works through year 2099):
+//   FY26 = Apr 2025 → Mar 2026. The reported QUARTER differs from the
+//   FILING month — filings happen 1-3 months after quarter end.
 //   Filing Apr-Jun YYYY → reports Q4 FY{YYYY}
 //   Filing Jul-Sep YYYY → reports Q1 FY{YYYY+1}
 //   Filing Oct-Dec YYYY → reports Q2 FY{YYYY+1}
 //   Filing Jan-Mar YYYY → reports Q3 FY{YYYY}
-function deriveQuarterFY(fdate: string): { q: 'Q1' | 'Q2' | 'Q3' | 'Q4'; fy: number } | null {
-  if (!fdate || !/^\d{4}-\d{2}-\d{2}/.test(fdate)) return null;
-  const year = parseInt(fdate.slice(0, 4), 10);
-  const month = parseInt(fdate.slice(5, 7), 10);
-  if (month >= 4 && month <= 6)  return { q: 'Q4', fy: year % 100 };
-  if (month >= 7 && month <= 9)  return { q: 'Q1', fy: (year + 1) % 100 };
-  if (month >= 10 && month <= 12) return { q: 'Q2', fy: (year + 1) % 100 };
-  if (month >= 1 && month <= 3)  return { q: 'Q3', fy: year % 100 };
+//
+// FY display: we return the LAST 2 digits (FY26, FY27 …). The 2-digit
+// label is unambiguous through FY99; for completeness deriveQuarterFY
+// also returns the full 4-digit calendar year of FY end so chip tooltips
+// can show "FY26 = Apr 2025 → Mar 2026".
+function parseDateLoose(s: string): { y: number; m: number; d: number } | null {
+  if (!s || typeof s !== 'string') return null;
+  // Canonical ISO
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return { y: +m[1], m: +m[2], d: +m[3] };
+  // dd/mm/yyyy or dd-mm-yyyy (Indian convention)
+  m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
+  if (m) return { y: +m[3], m: +m[2], d: +m[1] };
+  // "Mon DD, YYYY" or "DD Mon YYYY"
+  const months: Record<string, number> = { JAN:1, FEB:2, MAR:3, APR:4, MAY:5, JUN:6, JUL:7, AUG:8, SEP:9, OCT:10, NOV:11, DEC:12 };
+  m = s.match(/(?:([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(\d{4}))|(?:(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{4}))/);
+  if (m) {
+    if (m[1]) {
+      const mm = months[m[1].slice(0, 3).toUpperCase()];
+      if (mm) return { y: +m[3], m: mm, d: +m[2] };
+    } else if (m[5]) {
+      const mm = months[m[5].slice(0, 3).toUpperCase()];
+      if (mm) return { y: +m[6], m: mm, d: +m[4] };
+    }
+  }
+  // Last resort — let Date parse it
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) return { y: d.getFullYear(), m: d.getMonth() + 1, d: d.getDate() };
+  return null;
+}
+function deriveQuarterFY(e: ConvictionEntry | string): { q: 'Q1' | 'Q2' | 'Q3' | 'Q4'; fy: number; fyFull: number } | null {
+  // Tier 1 — explicit fields from EO graded payload (Patch 0911)
+  if (typeof e === 'object' && e && e.quarter && e.fiscal_year) {
+    return {
+      q: e.quarter as 'Q1' | 'Q2' | 'Q3' | 'Q4',
+      fy: e.fiscal_year % 100,
+      fyFull: e.fiscal_year,
+    };
+  }
+  // Tier 2 — heuristic from filing_date
+  const fdate = typeof e === 'string' ? e : e?.filing_date;
+  const parsed = parseDateLoose(fdate);
+  if (!parsed) return null;
+  const { y, m } = parsed;
+  if (m >= 4 && m <= 6)  return { q: 'Q4', fy: y % 100, fyFull: y };
+  if (m >= 7 && m <= 9)  return { q: 'Q1', fy: (y + 1) % 100, fyFull: y + 1 };
+  if (m >= 10 && m <= 12) return { q: 'Q2', fy: (y + 1) % 100, fyFull: y + 1 };
+  if (m >= 1 && m <= 3)  return { q: 'Q3', fy: y % 100, fyFull: y };
   return null;
 }
 
@@ -1194,7 +1246,7 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
   }
   // PATCH 0909 — Quarter + FY filter (Indian fiscal year, derived from filing_date)
   if (f.quarter != null || f.fy != null) {
-    const qfy = deriveQuarterFY(e.filing_date);
+    const qfy = deriveQuarterFY(e);
     if (!qfy) return false;
     if (f.quarter != null && qfy.q !== f.quarter) return false;
     if (f.fy != null && qfy.fy !== f.fy) return false;
@@ -1687,7 +1739,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
           const presentFY = (() => {
             const s = new Set<number>();
             for (const e of entries) {
-              const qfy = deriveQuarterFY(e.filing_date);
+              const qfy = deriveQuarterFY(e);
               if (qfy) s.add(qfy.fy);
             }
             return Array.from(s).sort((a, b) => b - a);
@@ -1698,39 +1750,66 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
             const probe: ConvFilters = { ...filters, fy };
             return entries.filter((e) => passesConvictionFilter(e, probe)).length;
           };
+          // PATCH 0911 — Single prominent PERIOD row containing both
+          // Quarter and FY chip groups, separated by a visual divider.
+          // User feedback: "FYFY26 (289) why no quarter there" — the
+          // previous two-row layout buried Quarter above FY and the
+          // labels collided visually. New layout puts a bigger PERIOD
+          // header + visible vertical divider between Q-chips and FY-chips.
           return (
-            <>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>QUARTER</span>
-                {quarters.map((q) => {
-                  const active = filters.quarter === q;
-                  const n = countQ(q);
-                  return (
-                    <button key={q} onClick={() => toggleQ(q)}
-                      style={active ? chipActive('#F59E0B') : chipBase}
-                      title={`Filter to filings reporting ${q} (Indian FY: Q1=Apr-Jun · Q2=Jul-Sep · Q3=Oct-Dec · Q4=Jan-Mar)`}>
-                      {q} <span style={{ color: active ? '#F59E0B' : '#6B7A8D', marginLeft: 3 }}>({n})</span>
-                    </button>
-                  );
-                })}
-              </div>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+              padding: '6px 8px',
+              background: 'rgba(245,158,11,0.04)',
+              border: '1px solid rgba(245,158,11,0.25)',
+              borderRadius: 6,
+            }}>
+              <span style={{ fontSize: 10.5, color: '#F59E0B', fontWeight: 800, letterSpacing: '0.6px', textTransform: 'uppercase' }}>
+                📅 PERIOD
+              </span>
+              <span style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700, marginLeft: 2 }}>QTR:</span>
+              {quarters.map((q) => {
+                const active = filters.quarter === q;
+                const n = countQ(q);
+                const qLabel: Record<string, string> = { Q1: 'Q1 Apr-Jun', Q2: 'Q2 Jul-Sep', Q3: 'Q3 Oct-Dec', Q4: 'Q4 Jan-Mar' };
+                return (
+                  <button key={q} onClick={() => toggleQ(q)}
+                    style={active ? chipActive('#F59E0B') : chipBase}
+                    title={`Filter to filings reporting ${q} of any FY (Indian FY: Q1=Apr-Jun · Q2=Jul-Sep · Q3=Oct-Dec · Q4=Jan-Mar)`}>
+                    {qLabel[q]} <span style={{ color: active ? '#F59E0B' : '#6B7A8D', marginLeft: 3 }}>({n})</span>
+                  </button>
+                );
+              })}
               {presentFY.length > 0 && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>FY</span>
+                <>
+                  <span style={{ width: 1, height: 16, background: '#2A3550', margin: '0 4px' }} />
+                  <span style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700 }}>YEAR:</span>
                   {presentFY.map((fy) => {
                     const active = filters.fy === fy;
                     const n = countFY(fy);
+                    // 2-digit FY to 4-digit calendar year for tooltip.
+                    // For FY00-FY49 → 21st century (2000-2049);
+                    // FY50-FY99 → 21st century too (2050-2099). After 2099 we
+                    // need to expand to 3 digits — fine for the next 70 years.
+                    const fyFull = fy < 50 ? 2000 + fy : 2000 + fy;
                     return (
                       <button key={fy} onClick={() => toggleFY(fy)}
                         style={active ? chipActive('#A78BFA') : chipBase}
-                        title={`Filter to FY${fy} (Apr 20${fy - 1} → Mar 20${fy})`}>
+                        title={`FY${fy} = Apr ${fyFull - 1} → Mar ${fyFull}. Composes AND with the QTR chips above.`}>
                         FY{fy} <span style={{ color: active ? '#A78BFA' : '#6B7A8D', marginLeft: 3 }}>({n})</span>
                       </button>
                     );
                   })}
-                </div>
+                </>
               )}
-            </>
+              {(filters.quarter || filters.fy != null) && (
+                <button
+                  onClick={() => setFilters((f) => ({ ...f, quarter: null, fy: null }))}
+                  title="Clear Period filter"
+                  style={{ ...chipBase, marginLeft: 4, opacity: 0.8 }}
+                >× clear period</button>
+              )}
+            </div>
           );
         })()}
       </div>

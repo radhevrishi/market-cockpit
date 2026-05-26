@@ -37,6 +37,16 @@ export interface ConvictionEntry {
   // USER-REQ — Guidance in Conviction tab (optional; missing on pre-0538 entries)
   guidance?: GuidanceLabel;
   guidance_score?: number;    // signed [-1, +1]
+  // PATCH 0911 — Explicit quarter + fiscal year (Indian FY convention).
+  // When syncing from EO graded payload, the route already returns a
+  // `quarter` string like "Q4 FY26" — we preserve it here so filters
+  // don't have to GUESS from filing_date (which is fragile for late
+  // filings or filings that span multiple quarters).
+  //   quarter — 'Q1' | 'Q2' | 'Q3' | 'Q4'
+  //   fiscal_year — 4-digit (e.g. 2026 for FY26, the year that contains Mar)
+  // Both optional — old entries fall through to deriveQuarterFY heuristic.
+  quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+  fiscal_year?: number;
 }
 
 const LS_KEY = 'mc:conviction-beats:v1';
