@@ -1131,7 +1131,7 @@ const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: 
 //   Filing Jul-Sep YYYY → reports Q1 FY{YYYY+1}
 //   Filing Oct-Dec YYYY → reports Q2 FY{YYYY+1}
 //   Filing Jan-Mar YYYY → reports Q3 FY{YYYY}
-export function deriveQuarterFY(fdate: string): { q: 'Q1' | 'Q2' | 'Q3' | 'Q4'; fy: number } | null {
+function deriveQuarterFY(fdate: string): { q: 'Q1' | 'Q2' | 'Q3' | 'Q4'; fy: number } | null {
   if (!fdate || !/^\d{4}-\d{2}-\d{2}/.test(fdate)) return null;
   const year = parseInt(fdate.slice(0, 4), 10);
   const month = parseInt(fdate.slice(5, 7), 10);
