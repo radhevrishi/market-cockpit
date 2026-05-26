@@ -535,7 +535,7 @@ function stripJunkResponse(resp: any): any {
       holdCount: 0,
       reduceExitCount: 0,
       trimExitCount: 0,
-      summary: `${notCount} Notable · ${obsCount} Monitor · 0 Rejected · Net: ${next.bias.netBias || 'Neutral'}`,
+      summary: `${sigCount} Actionable · ${notCount} Notable · ${obsCount} Monitor · Net: ${next.bias.netBias || 'Neutral'}`,
     };
   }
   // Also align _stats with the final visible counts
