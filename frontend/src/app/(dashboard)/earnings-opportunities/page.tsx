@@ -1618,8 +1618,17 @@ export default function EarningsOpportunitiesPage() {
       /cut guidance/i, /downgrade(?:d)?/i, /miss(?:ed)?/i, /shortfall/i,
       /below expectation/i, /below estimate/i, /outlook (?:weak|cautious|soft)/i,
     ];
+    // PATCH 0925 — YoY-metric fallback for guidance derivation.
+    // User report: every BLOCKBUSTER row on the bench showed "➖ Neutral"
+    // even with Sales +300% PAT +1000% EPS +500%. Cause: the previous
+    // implementation only scanned narrative text for positive/negative
+    // keywords. Recent filings publish without narrative_text populated,
+    // so text scan returned (0,0) → defaulted to Neutral.
+    // Fix order:
+    //   1. Trust explicit server guidance field (current/future).
+    //   2. If text yields a clear positive/negative signal, use it.
+    //   3. Else derive from Sales/PAT/EPS YoY using institutional gates.
     const deriveGuidance = (card: any): { label: 'Positive' | 'Neutral' | 'Negative'; score: number } => {
-      // Prefer a pre-computed server label if it ever appears
       if (card?.guidance === 'Positive' || card?.guidance === 'Neutral' || card?.guidance === 'Negative') {
         const s = typeof card.guidance_score === 'number' ? card.guidance_score
                 : typeof card.sentimentScore === 'number' ? card.sentimentScore
@@ -1630,14 +1639,35 @@ export default function EarningsOpportunitiesPage() {
         card?.narrative_text, card?.guidance_text, card?.announcement_text,
         card?.attachment, card?.headline, card?.title, card?.narrative,
       ].filter(Boolean).join(' ');
-      if (!text) return { label: 'Neutral', score: 0 };
-      const pos = POS.filter((p) => p.test(text)).length;
-      const neg = NEG.filter((p) => p.test(text)).length;
-      const total = pos + neg;
-      const score = total === 0 ? 0 : (pos - neg) / total;
-      const label: 'Positive' | 'Neutral' | 'Negative' =
-        score >= 0.3 ? 'Positive' : score <= -0.3 ? 'Negative' : 'Neutral';
-      return { label, score };
+      if (text) {
+        const pos = POS.filter((p) => p.test(text)).length;
+        const neg = NEG.filter((p) => p.test(text)).length;
+        const total = pos + neg;
+        if (total > 0) {
+          const score = (pos - neg) / total;
+          const label: 'Positive' | 'Neutral' | 'Negative' =
+            score >= 0.3 ? 'Positive' : score <= -0.3 ? 'Negative' : 'Neutral';
+          return { label, score };
+        }
+      }
+      // PATCH 0925 — fall back to YoY metric gates.
+      const sales = card?.sales_yoy_pct ?? 0;
+      const pat = card?.pat_yoy_pct ?? card?.net_profit_yoy_pct ?? 0;
+      const eps = card?.eps_yoy_pct ?? 0;
+      // Negative gates first (in priority order)
+      if (pat < 0) return { label: 'Negative', score: -0.5 };
+      if (sales > 30 && pat < sales * 0.6) return { label: 'Negative', score: -0.4 };  // margin compression
+      // PATCH 0925 — dilution gate only fires when EPS is genuinely weak.
+      // Suppress when EPS already grew ≥ 50% (no real dilution concern even
+      // if PAT grew faster — e.g. EYANTRA Sales+224 PAT+1404 EPS+398).
+      if (pat > 0 && eps < pat * 0.4 && eps < 50) return { label: 'Negative', score: -0.3 };
+      // Positive gates — op-leverage AND quality
+      if (pat >= 40 && pat > sales * 1.2 && eps >= 25) return { label: 'Positive', score: 0.5 };
+      // Secondary Positive — strong growth across all 3 metrics even without
+      // sharp op-leverage. PATCH 0925 — institutional threshold relaxation
+      // so a 30/20/20 print still reads Positive rather than getting buried.
+      if (pat >= 30 && sales >= 20 && eps >= 20) return { label: 'Positive', score: 0.4 };
+      return { label: 'Neutral', score: 0 };
     };
     const entries: Array<{
       ticker: string; company: string; tier: ConvictionTier;

@@ -1252,17 +1252,28 @@ function deriveQuarterFY(e: ConvictionEntry | string): { q: 'Q1' | 'Q2' | 'Q3' |
 //              (pat > 0 AND eps < pat × 0.4)  (heavy dilution)
 //   NEUTRAL  : everything else (clean growth without standout margin signal)
 function deriveGuidanceLabel(e: ConvictionEntry): 'Positive' | 'Negative' | 'Neutral' {
-  // Prefer the explicit field if present (new entries post-0538)
-  if (e.guidance) return e.guidance;
+  // PATCH 0925 — Only trust EXPLICIT Positive/Negative from the stored
+  // entry. Stored "Neutral" gets re-derived from YoY metrics — bench
+  // entries written before Patch 0925 were ALL written as Neutral because
+  // their narrative_text was empty, but their metrics (Sales+300% etc)
+  // clearly warranted Positive. Re-derive to fix retroactively.
+  if (e.guidance === 'Positive' || e.guidance === 'Negative') return e.guidance;
   const sales = e.sales_yoy_pct ?? 0;
   const pat = e.net_profit_yoy_pct ?? 0;
   const eps = e.eps_yoy_pct ?? 0;
   // Negative gates
   if (pat < 0) return 'Negative';
   if (sales > 30 && pat < sales * 0.6) return 'Negative';   // margin compression
-  if (pat > 0 && eps < pat * 0.4) return 'Negative';        // dilution (PAT growing, EPS not)
-  // Positive gates — must show op-leverage AND quality
+  // PATCH 0925 — dilution gate only when EPS is genuinely weak (< 50%).
+  // Otherwise the ratio test mis-classifies hyper-growth (Sales+224, PAT
+  // +1404, EPS +398 → EPS<PAT*0.4 but EPS is still strong absolute).
+  if (pat > 0 && eps < pat * 0.4 && eps < 50) return 'Negative';
+  // Positive gates — op-leverage + quality
   if (pat >= 40 && pat > sales * 1.2 && eps >= 25) return 'Positive';
+  // PATCH 0925 — Secondary Positive: strong growth across all 3 metrics
+  // (Sales ≥ 20, PAT ≥ 30, EPS ≥ 20) without sharp op-leverage. This
+  // catches solid Compounders that the strict op-leverage gate misses.
+  if (pat >= 30 && sales >= 20 && eps >= 20) return 'Positive';
   return 'Neutral';
 }
 
