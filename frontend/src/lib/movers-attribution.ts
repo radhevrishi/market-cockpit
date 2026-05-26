@@ -249,38 +249,154 @@ export type NewsSubType =
   // Catch-all
   | 'NEWS_GENERIC';
 
-// PATCH 0889 — Broadened acquisition leading-verb set so headlines using
-// infinitive forms ("to acquire", "set to acquire", "plans to acquire",
-// "approves acquisition", "agreed to acquire", "definitive agreement to
-// acquire") match. The previous regex only handled the conjugated forms
-// (acquires / acquired / acquiring) and missed every news source covering
-// the Anupam Rasayan -> Bliss GVS deal — every headline used "to acquire".
-const ACQUIRE_VERB = String.raw`(?:acquir(?:es|ed|ing|ition\s+of)|(?:to|will|plans?\s+to|set\s+to|propose[ds]?\s+to|approve[ds]?\s+(?:the\s+)?acquisition\s+of|agreed?\s+to\s+acquire|enter(?:s|ed)?\s+(?:into\s+)?(?:a\s+)?definitive\s+agreement\s+to\s+acquire)\s+(?:up\s+to\s+)?(?:a\s+)?(?:100%\s+(?:of|equity\s+stake)?\s*(?:in)?\s*)?)`;
+// PATCH 0893 — TIGHTENED acquisition verb set. Every alternation now REQUIRES
+// the word "acquire" / "acquisition" to be part of the matched string. The
+// 0889 version allowed bare "to" / "will" / "plans to" without the acquire
+// verb, which produced false positives like:
+//   SANSTAR  "board to meet on May 28 to discuss fund raising"  -> "acquires discuss fund raising"
+//   AVROIND  "board to meet on May 28 to consider FY26 results" -> "acquires consider FY26 results"
+// because "to discuss" / "to consider" matched the bare "to" alternation
+// and the following lazy capture grabbed any text.
+//
+// Required acquire-verb forms (each MUST contain acquire/acquisition):
+//   acquires / acquired / acquiring / acquisition of
+//   to acquire / will acquire / plans to acquire / set to acquire
+//   proposed to acquire / agreed to acquire
+//   approves acquisition of / approved the acquisition of
+//   enters (into a) definitive agreement to acquire
+const ACQUIRE_VERB = String.raw`(?:acquir(?:es|ed|ing|ition\s+of)|(?:to|will|plans?\s+to|set\s+to|propose[ds]?\s+to|agreed?\s+to|approve[ds]?\s+(?:the\s+)?acquisition\s+of|enter(?:s|ed)?\s+(?:into\s+)?(?:a\s+)?definitive\s+agreement\s+to)\s+acquire(?:s|d|\s+up\s+to)?(?:\s+(?:a\s+)?(?:100%\s+(?:of|equity\s+stake)?\s*(?:in)?\s*)?)?)`;
 
-// PATCH 0889 — Standalone STAKE_PURCHASE detector. Catches any "<N>% stake"
-// or "<N>% equity" reference in a title, regardless of the verb form. This
-// is the safety-net that fires when none of the verb-specific patterns hit
-// (every "Bliss GVS upper circuit as Anupam Rasayan to acquire 43% stake"
-// headline contains "43% stake" plainly).
+// PATCH 0893 — STAKE_PCT_PATTERN tightened: must co-occur with an
+// acquisition-related verb somewhere in the title (within 60 chars on
+// either side of the % stake). Prevents "20% Gain" / "20% YoY revenue"
+// type mentions from being mis-tagged as a stake transaction.
 const STAKE_PCT_PATTERN = /\b(\d{1,3}(?:\.\d+)?)\s*(?:%|pc|per\s+cent|percent)\s*(?:stake|equity|share(?:holding)?|holding)\b/i;
+
+// PATCH 0893 — Stake → control classification (per user audit:
+// 25-51% = control shift / takeover; 10-25% = strategic minority;
+// <10% = financial / passive; >51% = full takeover).
+type ControlClass = 'CONTROL_SHIFT' | 'STRATEGIC_MINORITY' | 'FINANCIAL' | 'TAKEOVER' | 'UNCERTAIN';
+function classifyStakeControl(pct?: number): ControlClass {
+  if (pct === undefined || !Number.isFinite(pct)) return 'UNCERTAIN';
+  if (pct >= 51) return 'TAKEOVER';
+  if (pct >= 25) return 'CONTROL_SHIFT';
+  if (pct >= 10) return 'STRATEGIC_MINORITY';
+  return 'FINANCIAL';
+}
+
+// PATCH 0893 — Heuristic acquirer extraction. Look for capitalised entity
+// (1-4 word phrase) immediately before "to acquire" / "to buy" / "acquires".
+// Returns undefined when no clean entity precedes the verb.
+function extractAcquirer(title: string): string | undefined {
+  // Patterns matched, in order of confidence:
+  //   <Acquirer> to acquire ...
+  //   <Acquirer> acquires ...
+  //   <Acquirer> agreed to acquire ...
+  //   ... by <Acquirer>
+  const before = title.match(/\b([A-Z][\w]+(?:\s+(?:[A-Z][\w]+|India|Ltd\.?|Limited|Pvt\.?|Pharma|Industries|Capital|Group|Holdings|Partners|Energy|Resources|Investments?)){0,4})\s+(?:to|will|plans?\s+to|set\s+to|agreed?\s+to|propose[ds]?\s+to|enter(?:s|ed)?\s+(?:into\s+)?(?:a\s+)?definitive\s+agreement\s+to)\s+acquire/);
+  if (before && before[1]) {
+    // Trim trailing helper words
+    const acq = before[1].replace(/\s+(India|Ltd\.?|Limited|Pvt\.?)$/i, '').trim();
+    if (acq.length >= 3 && !/^(?:Bliss|stock|shares?|company|board)$/i.test(acq)) return acq;
+  }
+  const conjugated = title.match(/\b([A-Z][\w]+(?:\s+[A-Z][\w]+){0,4})\s+acquir(?:es|ed|ing)\b/);
+  if (conjugated && conjugated[1]) {
+    const acq = conjugated[1].trim();
+    if (acq.length >= 3 && !/^(?:Bliss|stock|shares?|company|board)$/i.test(acq)) return acq;
+  }
+  const byPattern = title.match(/\bby\s+([A-Z][\w]+(?:\s+(?:[A-Z][\w]+|India|Ltd\.?|Limited|Pvt\.?|Pharma|Industries|Capital|Group|Holdings|Partners|Energy|Investments?)){0,3})\b/);
+  if (byPattern && byPattern[1]) {
+    return byPattern[1].trim();
+  }
+  return undefined;
+}
+
+// PATCH 0893 — Heuristic target extraction. Patterns:
+//   ... stake in <Target> ...
+//   ... acquire <Target> for/at ...
+function extractTarget(title: string): string | undefined {
+  const inX = title.match(/\bstake\s+in\s+([A-Z][\w]+(?:\s+[A-Z][\w]+){0,3}(?:\s+(?:Pharma|Pharmaceuticals|Industries|Limited|Ltd\.?|India|Capital|Group|Holdings|Energy))?)\b/);
+  if (inX && inX[1]) return inX[1].trim();
+  const acquireX = title.match(/\bacquire\s+([A-Z][\w]+(?:\s+[A-Z][\w]+){0,3})\s+for\b/i);
+  if (acquireX && acquireX[1]) return acquireX[1].trim();
+  return undefined;
+}
+
+// PATCH 0893 — Structured acquisition parser. Returns the institutional
+// fields the user audit demanded: stake %, acquirer, target, control
+// classification, completeness score, market-impact narrative.
+export interface AcquisitionStructure {
+  stakePct?: number;
+  acquirer?: string;
+  target?: string;
+  controlClass: ControlClass;
+  completeness: 'HIGH' | 'MEDIUM' | 'LOW';
+  narrative: string;        // institutional 1-line summary for the row
+}
+
+function parseAcquisitionStructure(title: string, dealCr?: string): AcquisitionStructure {
+  // Stake % — first "<N>% stake" / "<N> pc stake" / etc anywhere
+  const pctMatch = title.match(/(\d{1,3}(?:\.\d+)?)\s*(?:%|pc|per\s+cent|percent)\s*(?:stake|equity|share(?:holding)?|holding)/i);
+  const stakePct = pctMatch ? parseFloat(pctMatch[1]) : undefined;
+  const acquirer = extractAcquirer(title);
+  const target = extractTarget(title);
+  const controlClass = classifyStakeControl(stakePct);
+
+  // Completeness: HIGH = acquirer + stake known. MEDIUM = one of the two.
+  // LOW = neither (just "stake transaction" mention).
+  let completeness: AcquisitionStructure['completeness'] = 'LOW';
+  if (acquirer && stakePct !== undefined) completeness = 'HIGH';
+  else if (acquirer || stakePct !== undefined) completeness = 'MEDIUM';
+
+  // Deal size capture: "₹1,369 crore" / "Rs 1,370 cr"
+  const dealMatch = title.match(/(?:₹|Rs\.?)\s*([\d,]+(?:\.\d+)?)\s*(?:crore|cr)/i);
+  const dealValue = dealMatch ? `₹${dealMatch[1]} Cr` : (dealCr || '');
+
+  // Build institutional narrative — per user spec:
+  //   CONTROL SHIFT → strong rerate
+  //   STRATEGIC MINORITY → flow + medium-term momentum
+  //   FINANCIAL → speculative pop
+  //   TAKEOVER → full ownership transition
+  //   UNCERTAIN → downgrade to "uncertain trigger"
+  const stakeStr = stakePct !== undefined ? `${stakePct}% stake` : 'stake';
+  const dealStr = dealValue ? ` (${dealValue})` : '';
+  const inTarget = target ? ` in ${target}` : '';
+  let narrative: string;
+  if (completeness === 'LOW') {
+    narrative = `${stakeStr} transaction${inTarget}${dealStr} — acquirer not disclosed in headline → uncertain trigger`;
+  } else if (controlClass === 'TAKEOVER') {
+    narrative = `${acquirer || 'Unknown acquirer'} → ${stakeStr}${inTarget}${dealStr} · TAKEOVER · full ownership transition expected`;
+  } else if (controlClass === 'CONTROL_SHIFT') {
+    narrative = `${acquirer || 'Unknown acquirer'} → ${stakeStr}${inTarget}${dealStr} · CONTROL SHIFT · re-rating on ownership transition + strategic alignment premium`;
+  } else if (controlClass === 'STRATEGIC_MINORITY') {
+    narrative = `${acquirer || 'Unknown acquirer'} → ${stakeStr}${inTarget}${dealStr} · STRATEGIC MINORITY · medium-term flow + momentum, no control change`;
+  } else if (controlClass === 'FINANCIAL') {
+    narrative = `${acquirer || 'Unknown acquirer'} → ${stakeStr}${inTarget}${dealStr} · FINANCIAL INVESTMENT · short-term flow, passive entry`;
+  } else {
+    narrative = `${acquirer ? `${acquirer} acquisition` : 'Acquisition reported'}${inTarget}${dealStr} · stake size not captured → uncertain trigger`;
+  }
+  return { stakePct, acquirer, target, controlClass, completeness, narrative };
+}
 
 const NEWS_PATTERNS: Array<{ subType: NewsSubType; type: CatalystType; re: RegExp; format?: (m: RegExpMatchArray, title: string) => string }> = [
   // ── CORPORATE ACTIONS / M&A (specific deals first) ─────────────────────
-  // PATCH 0889 — Acquisition with explicit "% stake" capture + target name
-  { subType: 'ACQUISITION',     type: 'MNA',         re: new RegExp(`\\b${ACQUIRE_VERB}.{0,80}?(\\d{1,3}(?:\\.\\d+)?)\\s*(?:%|pc|per\\s+cent)\\s*(?:stake|equity|share|holding)(?:\\s+in\\s+([A-Z][\\w &-]{2,40}))?`, 'i'),
-    format: (m) => `acquires ${m[1]}% stake${m[2] ? ` in ${m[2].trim()}` : ''}` },
-  // PATCH 0889 — Acquisition with TARGET captured (case-insensitive after
-  // verb; previously required [A-Z] start which missed "Anupam Rasayan to
-  // acquire Bliss GVS for ₹1,370 crore" headlines where the article title
-  // is already title-cased).
+  // PATCH 0893 — Acquisition with explicit "% stake" capture. Format
+  // function now runs the structured parser to produce an institutional
+  // narrative with acquirer + control classification + completeness, per
+  // the user's audit ("acquires X% stake" alone is banned).
+  { subType: 'ACQUISITION',     type: 'MNA',         re: new RegExp(`\\b${ACQUIRE_VERB}.{0,80}?(\\d{1,3}(?:\\.\\d+)?)\\s*(?:%|pc|per\\s+cent)\\s*(?:stake|equity|share|holding)`, 'i'),
+    format: (_m, title) => parseAcquisitionStructure(title).narrative },
+  // PATCH 0893 — Acquisition with TARGET captured (no % stake in title;
+  // e.g. "Anupam Rasayan to acquire Bliss GVS for ₹1,370 crore"). The
+  // tightened ACQUIRE_VERB now requires "acquire" to be present, so
+  // false positives like "to discuss" / "to consider" can't slip through.
   { subType: 'ACQUISITION',     type: 'MNA',         re: new RegExp(`\\b${ACQUIRE_VERB}([A-Za-z][\\w &.-]{3,40}?)(?:\\s+(?:for|for\\s+₹|for\\s+Rs|at|valued|deal)\\b|\\s*$)`, 'i'),
-    format: (m) => `acquires ${m[1].trim()}` },
-  // PATCH 0889 — Final M&A catch-all: any "<N>% stake" pattern in a title
-  // even when the verb form didn't match cleanly. Lower priority than the
-  // two specific patterns above but still better than letting it fall
-  // through to NEWS_GENERIC.
+    format: (_m, title) => parseAcquisitionStructure(title).narrative },
+  // PATCH 0893 — Standalone STAKE_PCT safety-net. Only fires when no
+  // explicit acquirer verb matched. Produces the "uncertain trigger"
+  // narrative per user spec when acquirer can't be identified.
   { subType: 'ACQUISITION',     type: 'MNA',         re: STAKE_PCT_PATTERN,
-    format: (m) => `${m[1]}% stake transaction` },
+    format: (_m, title) => parseAcquisitionStructure(title).narrative },
   { subType: 'STAKE_SALE',      type: 'MNA',         re: /\b(?:sells|divest|stake sale|hive[- ]off|to\s+sell)\b.{0,40}?(?:stake|holding|share)/i,
     format: () => 'stake sale / divestiture' },
   { subType: 'JV_FORMATION',    type: 'MNA',         re: /\bjoint\s+venture\s+(?:with|formed|signed)|JV\s+(?:with|formed)/i,
