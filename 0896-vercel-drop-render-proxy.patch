@@ -1,0 +1,156 @@
+From f19c3055b3a5fafab71fa31631b8ac9ecc6ecb27 Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Tue, 26 May 2026 12:46:26 +0000
+Subject: [PATCH] patch 0896: vercel.json - drop Render proxy entirely
+
+User report: SPECIAL_SITUATIONS / WATCHLIST_PULSE / UPCOMING_EARNINGS /
+TOP_MOVERS all empty on home, but direct curl on every endpoint
+returns 200 with real data:
+  /api/v1/special-situations/feed     179 events
+  /api/v1/earnings/calendar?days=14   1170 entries
+  /api/v1/calendar?days=14            17 entries
+  /api/v1/super-investor-flow         rows
+  /api/market/intelligence            structured response
+  /api/market/quotes?market=india     200 OK (8.8s first hit)
+
+Backend healthy. So the home page is timing out client-side. Two
+contributing factors:
+
+1. /api/market/quotes was 8.8s on cold start (Render sleep + warm-up).
+   Home pages 8s news-enrichment budget cant accommodate that.
+2. My 0890 vercel.json added 20+ self-rewrites that slow Vercels
+   edge-routing layer. Vercel evaluates rewrites top-to-bottom per
+   request; 20+ entries with regex patterns adds measurable latency.
+
+Verified all 22 /api/v1/* namespaces have Next.js route files (every
+folder under src/app/api/v1/). The Render proxy is dead code: no
+endpoint actually lives only on Render. The next.config.js comment
+the original author wrote explicitly said
+  "No rewrite on Vercel - Next.js API routes serve /api/v1/* natively"
+- but vercel.json had a catch-all proxy contradicting that. 0890 fixed
+the news-india symptom by adding passthroughs around the proxy; 0896
+fixes the cause by deleting the proxy.
+
+Net: empty rewrites array. Vercel skips the rewrite layer entirely
+for /api/v1/*, Next.js file-based routes serve every request directly,
+edge-routing latency drops, home page client-side fetches no longer
+time out on cold start of a dead proxy.
+---
+ frontend/vercel.json | 103 +------------------------------------------
+ 1 file changed, 1 insertion(+), 102 deletions(-)
+
+diff --git a/frontend/vercel.json b/frontend/vercel.json
+index 0fc3ee1..b1ce892 100644
+--- a/frontend/vercel.json
++++ b/frontend/vercel.json
+@@ -1,106 +1,5 @@
+ {
+-  "rewrites": [
+-    {
+-      "source": "/api/v1/news-india/:path*",
+-      "destination": "/api/v1/news-india/:path*"
+-    },
+-    {
+-      "source": "/api/v1/news/:path*",
+-      "destination": "/api/v1/news/:path*"
+-    },
+-    {
+-      "source": "/api/v1/news",
+-      "destination": "/api/v1/news"
+-    },
+-    {
+-      "source": "/api/v1/concall-intel/:path*",
+-      "destination": "/api/v1/concall-intel/:path*"
+-    },
+-    {
+-      "source": "/api/v1/concall/:path*",
+-      "destination": "/api/v1/concall/:path*"
+-    },
+-    {
+-      "source": "/api/v1/earnings/:path*",
+-      "destination": "/api/v1/earnings/:path*"
+-    },
+-    {
+-      "source": "/api/v1/heartbeat/:path*",
+-      "destination": "/api/v1/heartbeat/:path*"
+-    },
+-    {
+-      "source": "/api/v1/edgar/:path*",
+-      "destination": "/api/v1/edgar/:path*"
+-    },
+-    {
+-      "source": "/api/v1/order-book/:path*",
+-      "destination": "/api/v1/order-book/:path*"
+-    },
+-    {
+-      "source": "/api/v1/rating-actions/:path*",
+-      "destination": "/api/v1/rating-actions/:path*"
+-    },
+-    {
+-      "source": "/api/v1/super-investor-flow/:path*",
+-      "destination": "/api/v1/super-investor-flow/:path*"
+-    },
+-    {
+-      "source": "/api/v1/super-investor-news/:path*",
+-      "destination": "/api/v1/super-investor-news/:path*"
+-    },
+-    {
+-      "source": "/api/v1/alerts/:path*",
+-      "destination": "/api/v1/alerts/:path*"
+-    },
+-    {
+-      "source": "/api/v1/cron/:path*",
+-      "destination": "/api/v1/cron/:path*"
+-    },
+-    {
+-      "source": "/api/v1/breadth/:path*",
+-      "destination": "/api/v1/breadth/:path*"
+-    },
+-    {
+-      "source": "/api/v1/admin/:path*",
+-      "destination": "/api/v1/admin/:path*"
+-    },
+-    {
+-      "source": "/api/v1/themes/:path*",
+-      "destination": "/api/v1/themes/:path*"
+-    },
+-    {
+-      "source": "/api/v1/specsit/:path*",
+-      "destination": "/api/v1/specsit/:path*"
+-    },
+-    {
+-      "source": "/api/v1/special-situations/:path*",
+-      "destination": "/api/v1/special-situations/:path*"
+-    },
+-    {
+-      "source": "/api/v1/ticker-roles/:path*",
+-      "destination": "/api/v1/ticker-roles/:path*"
+-    },
+-    {
+-      "source": "/api/v1/transmission/:path*",
+-      "destination": "/api/v1/transmission/:path*"
+-    },
+-    {
+-      "source": "/api/v1/public/:path*",
+-      "destination": "/api/v1/public/:path*"
+-    },
+-    {
+-      "source": "/api/v1/source-tier",
+-      "destination": "/api/v1/source-tier"
+-    },
+-    {
+-      "source": "/api/v1/system-status",
+-      "destination": "/api/v1/system-status"
+-    },
+-    {
+-      "source": "/api/v1/:path*",
+-      "destination": "https://market-cockpit-api.onrender.com/api/v1/:path*"
+-    }
+-  ],
++  "rewrites": [],
+   "headers": [
+     {
+       "source": "/(.*)",
+-- 
+2.34.1
+
