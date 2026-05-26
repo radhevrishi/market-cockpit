@@ -84,15 +84,19 @@ export default function GlobalSearch() {
     return () => window.removeEventListener('keydown', handler)
   }, [])
 
-  // Focus input when opened
+  // Focus input when opened.
+  // PATCH 0874 — Capture setTimeout id and return cleanup. Previously
+  // the timeout would fire 50ms after open=true even if the search
+  // closed in the meantime, focussing a hidden/unmounted input and
+  // (rarely) throwing a React warning about state-update on unmounted.
   useEffect(() => {
-    if (open) {
-      setTimeout(() => inputRef.current?.focus(), 50)
-      setQuery('')
-      setResults([])
-      setSelected(0)
-    }
-  }, [open])
+    if (!open) return;
+    const focusTimer = setTimeout(() => inputRef.current?.focus(), 50);
+    setQuery('');
+    setResults([]);
+    setSelected(0);
+    return () => clearTimeout(focusTimer);
+  }, [open]);
 
   // Search with debounce - first check local index + Excel stocks, then try API
   const search = useCallback(async (q: string) => {

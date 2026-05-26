@@ -91,11 +91,18 @@ function summarizeMoveFilter(active: Set<MoveToken>): string {
 }
 
 // ── Responsive hook ──────────────────────────────────────────────────────
+// PATCH 0874 — SSR-safe rewrite. Previous version initialised state from
+// `window.innerWidth` (or 1024 on server), then `useEffect` set the real
+// width on client. The first client render therefore differed from the
+// server-rendered HTML whenever the viewport wasn't 1024px → hydration
+// mismatch warning + isMobile/isTablet branches rendered wrong layout
+// on initial paint. Now we always start at 1024 on BOTH server and
+// client, then update post-hydration. Avoids the mismatch entirely.
 function useWindowWidth() {
-  const [width, setWidth] = useState<number>(
-    typeof window !== 'undefined' ? window.innerWidth : 1024
-  );
+  const [width, setWidth] = useState<number>(1024);
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    setWidth(window.innerWidth);
     const handler = () => setWidth(window.innerWidth);
     window.addEventListener('resize', handler);
     return () => window.removeEventListener('resize', handler);

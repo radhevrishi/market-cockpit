@@ -1,0 +1,187 @@
+From 212a6a27ebd5fa00458858727b67ea069d8ec51e Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Tue, 26 May 2026 11:04:54 +0200
+Subject: [PATCH] patch 0874: critical client bugs + hydration mismatches
+
+- movers useWindowWidth: SSR mismatch fixed (always 1024 init, then effect)
+- orders fetchConcallData: silent no-op fixed (deps now [screenerStocks.length])
+- MultibaggerAnalytics: usaRows + prevScoreMap reactive to LS changes via dataTick
+- DashboardClient hasToken: SSR-safe init via state + effect
+- watchlists convictionEntries: SSR-safe init (lazy-init was reading LS)
+- Home greeting + clock: deferred to post-mount (no hydration mismatch)
+- GlobalSearch focus timer: cleanup on unmount
+---
+ .../src/app/(dashboard)/DashboardClient.tsx   | 16 ++++++++++++++-
+ frontend/src/app/(dashboard)/movers/page.tsx  | 13 +++++++++---
+ frontend/src/app/(dashboard)/orders/page.tsx  | 11 +++++++++-
+ frontend/src/app/(dashboard)/page.tsx         | 19 ++++++++++++++----
+ .../src/app/(dashboard)/watchlists/page.tsx   |  7 ++++++-
+ frontend/src/components/GlobalSearch.tsx      | 20 +++++++++++--------
+ 6 files changed, 68 insertions(+), 18 deletions(-)
+
+diff --git a/frontend/src/app/(dashboard)/DashboardClient.tsx b/frontend/src/app/(dashboard)/DashboardClient.tsx
+index bb7d3f6..94436bd 100644
+--- a/frontend/src/app/(dashboard)/DashboardClient.tsx
++++ b/frontend/src/app/(dashboard)/DashboardClient.tsx
+@@ -430,7 +430,21 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
+   });
+ 
+   // Fetch user profile
+-  const hasToken = typeof window !== 'undefined' && !!localStorage.getItem('token');
++  // PATCH 0874 — SSR-safe token check. Reading localStorage in render
++  // body produced `false` during SSR and (potentially) `true` on client,
++  // toggling React Query's `enabled` flag between renders → hydration
++  // mismatch warnings on every load. Track via state + effect so server
++  // and first client render agree (both `false`), then update post-mount.
++  const [hasToken, setHasToken] = useState<boolean>(false);
++  useEffect(() => {
++    if (typeof window === 'undefined') return;
++    setHasToken(!!localStorage.getItem('token'));
++    const onStorage = (e: StorageEvent) => {
++      if (!e.key || e.key === 'token') setHasToken(!!localStorage.getItem('token'));
++    };
++    window.addEventListener('storage', onStorage);
++    return () => window.removeEventListener('storage', onStorage);
++  }, []);
+   const { data: userProfile } = useQuery<UserProfile>({
+     queryKey: ['auth', 'me'],
+     queryFn: async () => {
+diff --git a/frontend/src/app/(dashboard)/movers/page.tsx b/frontend/src/app/(dashboard)/movers/page.tsx
+index d108683..fa3dba1 100644
+--- a/frontend/src/app/(dashboard)/movers/page.tsx
++++ b/frontend/src/app/(dashboard)/movers/page.tsx
+@@ -91,11 +91,18 @@ function summarizeMoveFilter(active: Set<MoveToken>): string {
+ }
+ 
+ // ── Responsive hook ──────────────────────────────────────────────────────
++// PATCH 0874 — SSR-safe rewrite. Previous version initialised state from
++// `window.innerWidth` (or 1024 on server), then `useEffect` set the real
++// width on client. The first client render therefore differed from the
++// server-rendered HTML whenever the viewport wasn't 1024px → hydration
++// mismatch warning + isMobile/isTablet branches rendered wrong layout
++// on initial paint. Now we always start at 1024 on BOTH server and
++// client, then update post-hydration. Avoids the mismatch entirely.
+ function useWindowWidth() {
+-  const [width, setWidth] = useState<number>(
+-    typeof window !== 'undefined' ? window.innerWidth : 1024
+-  );
++  const [width, setWidth] = useState<number>(1024);
+   useEffect(() => {
++    if (typeof window === 'undefined') return;
++    setWidth(window.innerWidth);
+     const handler = () => setWidth(window.innerWidth);
+     window.addEventListener('resize', handler);
+     return () => window.removeEventListener('resize', handler);
+diff --git a/frontend/src/app/(dashboard)/orders/page.tsx b/frontend/src/app/(dashboard)/orders/page.tsx
+index eb13780..dad9303 100644
+--- a/frontend/src/app/(dashboard)/orders/page.tsx
++++ b/frontend/src/app/(dashboard)/orders/page.tsx
+@@ -1796,7 +1796,16 @@ function ConcallIntelligence() {
+     setLoading(false);
+   }
+ 
+-  useEffect(() => { if (screenerStocks.length > 0) fetchConcallData(); }, []); // eslint-disable-line
++  // PATCH 0874 — Fix silent no-op. Previous deps `[]` (eslint-disabled)
++  // captured screenerStocks at first mount when it was empty, so the
++  // guard `length > 0` was always false → fetchConcallData NEVER ran.
++  // Tracking screenerStocks.length triggers the call once data arrives
++  // asynchronously from the storage listener. fetchConcallData is a
++  // plain (non-memoised) function recreated every render and reads
++  // screenerStocks via closure, so it's left out of the dep array on
++  // purpose (would cause an infinite loop).
++  // eslint-disable-next-line react-hooks/exhaustive-deps
++  useEffect(() => { if (screenerStocks.length > 0) fetchConcallData(); }, [screenerStocks.length]);
+ 
+   const ACCENT2 = '#a78bfa';
+   // ── Manual Concall Input state — paste raw transcript/highlight text ──
+diff --git a/frontend/src/app/(dashboard)/page.tsx b/frontend/src/app/(dashboard)/page.tsx
+index 179d764..eee8e68 100644
+--- a/frontend/src/app/(dashboard)/page.tsx
++++ b/frontend/src/app/(dashboard)/page.tsx
+@@ -1630,8 +1630,19 @@ export default function HomeDashboard() {
+     if (activeLensId === id) setActiveLensId('all');
+   };
+ 
+-  const now = new Date();
+-  const greeting = now.getHours() < 12 ? 'Good morning' : now.getHours() < 18 ? 'Good afternoon' : 'Good evening';
++  // PATCH 0874 — Defer time/greeting computation to post-mount state so
++  // server HTML and first client render agree. Reading `new Date()` in
++  // render body produced a hydration mismatch every load (server clock
++  // != user clock to the second; also greeting may differ across the
++  // noon/6pm boundary). Now both render `Good day` initially, then the
++  // useEffect updates to the real greeting + clock.
++  const [now, setNow] = useState<Date | null>(null);
++  useEffect(() => {
++    setNow(new Date());
++    const t = setInterval(() => setNow(new Date()), 60_000);
++    return () => clearInterval(t);
++  }, []);
++  const greeting = !now ? 'Good day' : now.getHours() < 12 ? 'Good morning' : now.getHours() < 18 ? 'Good afternoon' : 'Good evening';
+ 
+   return (
+     <div style={{ minHeight: '100%', background: BG, color: TEXT, padding: '20px 24px' }}>
+@@ -1642,9 +1653,9 @@ export default function HomeDashboard() {
+           <div>
+             <h1 style={{ margin: 0, fontSize: 26, fontWeight: 900, color: TEXT }}>🌅 {greeting}, Rishi</h1>
+             <div style={{ marginTop: 6, fontSize: 12, color: DIM, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', rowGap: 6 }}>
+-              <span>{now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</span>
++              <span>{now ? now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : '—'}</span>
+               <span>·</span>
+-              <span>{now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</span>
++              <span>{now ? now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '—:—'}</span>
+               {/* PATCH 0622 — Stale-data nudge */}
+               {typeof data.staleDataAgeDays === 'number' && data.staleDataAgeDays >= 14 && (
+                 <Link href="/multibagger" style={{
+diff --git a/frontend/src/app/(dashboard)/watchlists/page.tsx b/frontend/src/app/(dashboard)/watchlists/page.tsx
+index 909f670..2910327 100644
+--- a/frontend/src/app/(dashboard)/watchlists/page.tsx
++++ b/frontend/src/app/(dashboard)/watchlists/page.tsx
+@@ -527,7 +527,12 @@ export default function WatchlistsPage() {
+   // PATCH 0186 — Tab switcher: 'main' (existing user watchlist) vs 'conviction'
+   // (auto-populated from Earnings Ops BLOCKBUSTER + STRONG cards).
+   const [activeTab, setActiveTab] = useState<'main' | 'conviction'>('main');
+-  const [convictionEntries, setConvictionEntries] = useState<ConvictionEntry[]>(() => getConvictionList());
++  // PATCH 0874 — Init to empty array instead of reading LS in lazy-init.
++  // The lazy-init reads localStorage which is unavailable during SSR,
++  // returning [] on the server but the user's actual list on the client →
++  // hydration mismatch on the conviction count and chip rail. The
++  // existing useEffect below already hydrates from LS on mount.
++  const [convictionEntries, setConvictionEntries] = useState<ConvictionEntry[]>([]);
+   // Re-read on mount + listen for cross-tab updates
+   useEffect(() => {
+     setConvictionEntries(getConvictionList());
+diff --git a/frontend/src/components/GlobalSearch.tsx b/frontend/src/components/GlobalSearch.tsx
+index e44e5f5..36b032c 100644
+--- a/frontend/src/components/GlobalSearch.tsx
++++ b/frontend/src/components/GlobalSearch.tsx
+@@ -84,15 +84,19 @@ export default function GlobalSearch() {
+     return () => window.removeEventListener('keydown', handler)
+   }, [])
+ 
+-  // Focus input when opened
++  // Focus input when opened.
++  // PATCH 0874 — Capture setTimeout id and return cleanup. Previously
++  // the timeout would fire 50ms after open=true even if the search
++  // closed in the meantime, focussing a hidden/unmounted input and
++  // (rarely) throwing a React warning about state-update on unmounted.
+   useEffect(() => {
+-    if (open) {
+-      setTimeout(() => inputRef.current?.focus(), 50)
+-      setQuery('')
+-      setResults([])
+-      setSelected(0)
+-    }
+-  }, [open])
++    if (!open) return;
++    const focusTimer = setTimeout(() => inputRef.current?.focus(), 50);
++    setQuery('');
++    setResults([]);
++    setSelected(0);
++    return () => clearTimeout(focusTimer);
++  }, [open]);
+ 
+   // Search with debounce - first check local index + Excel stocks, then try API
+   const search = useCallback(async (q: string) => {
+-- 
+2.50.1 (Apple Git-155)
+

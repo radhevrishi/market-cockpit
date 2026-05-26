@@ -1796,7 +1796,16 @@ function ConcallIntelligence() {
     setLoading(false);
   }
 
-  useEffect(() => { if (screenerStocks.length > 0) fetchConcallData(); }, []); // eslint-disable-line
+  // PATCH 0874 — Fix silent no-op. Previous deps `[]` (eslint-disabled)
+  // captured screenerStocks at first mount when it was empty, so the
+  // guard `length > 0` was always false → fetchConcallData NEVER ran.
+  // Tracking screenerStocks.length triggers the call once data arrives
+  // asynchronously from the storage listener. fetchConcallData is a
+  // plain (non-memoised) function recreated every render and reads
+  // screenerStocks via closure, so it's left out of the dep array on
+  // purpose (would cause an infinite loop).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (screenerStocks.length > 0) fetchConcallData(); }, [screenerStocks.length]);
 
   const ACCENT2 = '#a78bfa';
   // ── Manual Concall Input state — paste raw transcript/highlight text ──

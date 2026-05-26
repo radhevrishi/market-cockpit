@@ -527,7 +527,12 @@ export default function WatchlistsPage() {
   // PATCH 0186 — Tab switcher: 'main' (existing user watchlist) vs 'conviction'
   // (auto-populated from Earnings Ops BLOCKBUSTER + STRONG cards).
   const [activeTab, setActiveTab] = useState<'main' | 'conviction'>('main');
-  const [convictionEntries, setConvictionEntries] = useState<ConvictionEntry[]>(() => getConvictionList());
+  // PATCH 0874 — Init to empty array instead of reading LS in lazy-init.
+  // The lazy-init reads localStorage which is unavailable during SSR,
+  // returning [] on the server but the user's actual list on the client →
+  // hydration mismatch on the conviction count and chip rail. The
+  // existing useEffect below already hydrates from LS on mount.
+  const [convictionEntries, setConvictionEntries] = useState<ConvictionEntry[]>([]);
   // Re-read on mount + listen for cross-tab updates
   useEffect(() => {
     setConvictionEntries(getConvictionList());

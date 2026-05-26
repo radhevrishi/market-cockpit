@@ -1630,8 +1630,19 @@ export default function HomeDashboard() {
     if (activeLensId === id) setActiveLensId('all');
   };
 
-  const now = new Date();
-  const greeting = now.getHours() < 12 ? 'Good morning' : now.getHours() < 18 ? 'Good afternoon' : 'Good evening';
+  // PATCH 0874 — Defer time/greeting computation to post-mount state so
+  // server HTML and first client render agree. Reading `new Date()` in
+  // render body produced a hydration mismatch every load (server clock
+  // != user clock to the second; also greeting may differ across the
+  // noon/6pm boundary). Now both render `Good day` initially, then the
+  // useEffect updates to the real greeting + clock.
+  const [now, setNow] = useState<Date | null>(null);
+  useEffect(() => {
+    setNow(new Date());
+    const t = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+  const greeting = !now ? 'Good day' : now.getHours() < 12 ? 'Good morning' : now.getHours() < 18 ? 'Good afternoon' : 'Good evening';
 
   return (
     <div style={{ minHeight: '100%', background: BG, color: TEXT, padding: '20px 24px' }}>
@@ -1642,9 +1653,9 @@ export default function HomeDashboard() {
           <div>
             <h1 style={{ margin: 0, fontSize: 26, fontWeight: 900, color: TEXT }}>🌅 {greeting}, Rishi</h1>
             <div style={{ marginTop: 6, fontSize: 12, color: DIM, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', rowGap: 6 }}>
-              <span>{now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</span>
+              <span>{now ? now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : '—'}</span>
               <span>·</span>
-              <span>{now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</span>
+              <span>{now ? now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '—:—'}</span>
               {/* PATCH 0622 — Stale-data nudge */}
               {typeof data.staleDataAgeDays === 'number' && data.staleDataAgeDays >= 14 && (
                 <Link href="/multibagger" style={{

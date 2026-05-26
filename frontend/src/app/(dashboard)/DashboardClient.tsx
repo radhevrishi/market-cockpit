@@ -430,7 +430,21 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
   });
 
   // Fetch user profile
-  const hasToken = typeof window !== 'undefined' && !!localStorage.getItem('token');
+  // PATCH 0874 — SSR-safe token check. Reading localStorage in render
+  // body produced `false` during SSR and (potentially) `true` on client,
+  // toggling React Query's `enabled` flag between renders → hydration
+  // mismatch warnings on every load. Track via state + effect so server
+  // and first client render agree (both `false`), then update post-mount.
+  const [hasToken, setHasToken] = useState<boolean>(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    setHasToken(!!localStorage.getItem('token'));
+    const onStorage = (e: StorageEvent) => {
+      if (!e.key || e.key === 'token') setHasToken(!!localStorage.getItem('token'));
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
   const { data: userProfile } = useQuery<UserProfile>({
     queryKey: ['auth', 'me'],
     queryFn: async () => {
