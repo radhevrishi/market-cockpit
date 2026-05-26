@@ -1403,35 +1403,112 @@ export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttrib
         return new Date(b.published_at || 0).getTime() - new Date(a.published_at || 0).getTime();
       });
     if (news.length > 0) {
-      // PATCH 0891 — Pick the strongest catalyst across ALL news, not just
-      // news[0]. For BLISSGVS, the recency-sorted news[0] is a generic
-      // "Markets Mojo Upper Circuit" headline (no real catalyst), but
-      // news[2] is the actual "Anupam Rasayan to acquire 43% stake in
-      // Bliss GVS Pharma" acquisition. Previous code always picked the
-      // first → engine returned NEWS_GENERIC → row fell through to
-      // liquidity-vacuum fallback. Now: classify every article, sort by
-      // catalyst priority + recency, pick the strongest.
-      const CATALYST_PRIORITY: Record<CatalystType, number> = {
-        MNA:             100,  // M&A / acquisition / stake / open offer / etc
-        REGULATORY:       80,  // USFDA / SEBI / RBI / CDSCO
-        RATING:           70,  // credit rating action
-        ORDER_WIN:        65,  // ₹X Cr order / contract
-        EARNINGS:         60,  // Q[1-4] results / guidance
-        OFS:              55,  // OFS / floor price
-        BLOCK_DEAL:       50,  // promoter / block / bulk
-        SECTOR_ROTATION:  20,  // sector-wide
-        NONE:              0,  // generic
+      // PATCH 0894 — Per-SUBTYPE priority (was per-CatalystType in 0891).
+      // The MARKSANS bug: my old "MNA=100 > EARNINGS=60" picked a routine
+      // "dividend declared" article over the actual "Q4 results" article
+      // for the same day. But dividend/bonus/split declarations are
+      // typically ACCOMPANIMENTS to earnings, not separate catalysts.
+      // Now each NewsSubType gets its own priority — actionable M&A
+      // (acquisition / open offer / merger / preferential) stays at 100,
+      // routine accompaniments (interim/special dividend / bonus / split)
+      // drop to 30 (BELOW EARNINGS_RESULTS at 70).
+      const SUBTYPE_PRIORITY: Partial<Record<NewsSubType, number>> = {
+        // Actionable M&A — these legitimately rerate the stock
+        ACQUISITION:             100,
+        STAKE_SALE:               95,
+        OPEN_OFFER:              100,
+        MERGER_SCHEME:           100,
+        DEMERGER:                 95,
+        JV_FORMATION:             85,
+        PREFERENTIAL_ALLOTMENT:   90,
+        WARRANT_CONVERSION:       70,
+        QIP_LAUNCH:               85,
+        RIGHTS_ISSUE:             75,
+        BUYBACK:                  85,
+        // Guidance changes — strong forward signal
+        GUIDANCE_RAISE:           90,
+        GUIDANCE_CUT:             90,
+        // Regulatory — USFDA/CDSCO actions are real moves
+        USFDA_APPROVAL:           85,
+        USFDA_OBSERVATION:        85,
+        CDSCO_DCGI_APPROVAL:      80,
+        WHO_GMP_GRANTED:          75,
+        SEBI_ACTION:              80,
+        RBI_ACTION:               80,
+        // Rating actions
+        RATING_UPGRADE:           75,
+        RATING_DOWNGRADE:         75,
+        OUTLOOK_REVISION:         60,
+        // Order wins — institutional but not as primary as M&A
+        ORDER_WIN_LARGE:          75,
+        ORDER_WIN_PSU:            75,
+        NEW_CONTRACT:             65,
+        // Earnings — should beat routine corporate accompaniments
+        EARNINGS_RESULTS:         70,
+        EARNINGS_PREVIEW:         40,
+        // Promoter / flow
+        PROMOTER_BUY:             70,
+        PROMOTER_SELL:            70,
+        PROMOTER_PLEDGE_RELEASE:  65,
+        PROMOTER_PLEDGE_ADD:      75,
+        BLOCK_DEAL_BUY:           55,
+        BLOCK_DEAL_SELL:          55,
+        OFS:                      60,
+        // Business events
+        CAPACITY_COMMISSIONING:   65,
+        CAPEX_ANNOUNCEMENT:       55,
+        NEW_PRODUCT_LAUNCH:       55,
+        PATENT_GRANT:             60,
+        MOU_SIGNING:              50,
+        // Governance / leadership
+        BOARD_MEETING_FUNDRAISE:  60,
+        INDEPENDENT_DIRECTOR_APPT:35,
+        CEO_MD_APPOINTMENT:       55,
+        CEO_MD_RESIGNATION:       70,
+        CFO_CHANGE:               45,
+        AUDITOR_CHANGE:           65,
+        BOARD_MEETING_GENERIC:    25,
+        // Routine corporate accompaniments — lower than earnings so they
+        // don't outrank Q4 results on the same day.
+        DIVIDEND_DECLARATION:     30,
+        INTERIM_DIVIDEND:         30,
+        BONUS_ISSUE:              35,
+        STOCK_SPLIT:              35,
+        // Index / F&O
+        INDEX_INCLUSION:          70,
+        INDEX_REMOVAL:            70,
+        FNO_INCLUSION:            55,
+        FNO_BAN:                  60,
+        // Generic
+        NEWS_GENERIC:              0,
       };
       const classified = news.map((a) => ({ a, cat: classifyNewsCatalyst(a) }));
-      // Sort: catalyst priority desc, then recency desc.
+      // Sort: subtype priority desc, then recency desc.
       classified.sort((x, y) => {
-        const px = CATALYST_PRIORITY[x.cat.type] ?? 0;
-        const py = CATALYST_PRIORITY[y.cat.type] ?? 0;
+        const px = SUBTYPE_PRIORITY[x.cat.subType] ?? 0;
+        const py = SUBTYPE_PRIORITY[y.cat.subType] ?? 0;
         if (px !== py) return py - px;
         return new Date(y.a.published_at || 0).getTime() - new Date(x.a.published_at || 0).getTime();
       });
       const top = classified[0].a;
       const cat = classified[0].cat;
+      // PATCH 0894 — Earnings + dividend composition. When the top catalyst
+      // is EARNINGS_RESULTS and another article is DIVIDEND_DECLARATION /
+      // INTERIM_DIVIDEND / BONUS_ISSUE, append "+ <accompaniment>" to the
+      // label so the row reads "earnings result + dividend declared"
+      // instead of dropping one of them. Same for ORDER_WIN + dividend, etc.
+      const ROUTINE_ACCOMP_SUBTYPES: NewsSubType[] = [
+        'DIVIDEND_DECLARATION', 'INTERIM_DIVIDEND', 'BONUS_ISSUE', 'STOCK_SPLIT',
+      ];
+      const accompaniments = classified
+        .slice(1)
+        .filter((x) => ROUTINE_ACCOMP_SUBTYPES.includes(x.cat.subType))
+        .slice(0, 1);  // Just one accompaniment in the label
+      if (accompaniments.length > 0 && !cat.label.toLowerCase().includes('dividend')
+          && !cat.label.toLowerCase().includes('bonus')
+          && !cat.label.toLowerCase().includes('split')) {
+        cat.label = `${cat.label} + ${accompaniments[0].cat.label}`;
+      }
       const newsConfidence: Confidence = peerCountSameDirection >= SECTOR_WIDE_MIN_PEERS ? 'MEDIUM' : 'MEDIUM';
       // PATCH 0795 — terse 1-line news detail
       const newsDetail = (() => {
