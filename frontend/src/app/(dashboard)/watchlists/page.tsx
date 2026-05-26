@@ -1880,8 +1880,13 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
           const quarters: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'> = ['Q1', 'Q2', 'Q3', 'Q4'];
           const toggleQ = (q: 'Q1' | 'Q2' | 'Q3' | 'Q4') =>
             setFilters((f) => ({ ...f, quarter: f.quarter === q ? null : q }));
+          // PATCH 0921 — Independent-dimension count. When showing "Q4 (N)"
+          // ignore other PERIOD filters (fy, fromDate, toDate) and only apply
+          // the non-PERIOD filters (sales/PAT/EPS/etc) PLUS this specific Q.
+          // Otherwise a narrow date range gets Q4 count = 0 even though the
+          // bench has 359 Q4 entries — confusing UX.
           const countQ = (q: 'Q1' | 'Q2' | 'Q3' | 'Q4') => {
-            const probe: ConvFilters = { ...filters, quarter: q };
+            const probe: ConvFilters = { ...filters, quarter: q, fy: null, fromDate: null, toDate: null };
             return entries.filter((e) => passesConvictionFilter(e, probe)).length;
           };
           // PATCH 0913 — Show current FY + 3 prior FYs as chips regardless
@@ -1915,8 +1920,9 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
           })();
           const toggleFY = (fy: number) =>
             setFilters((f) => ({ ...f, fy: f.fy === fy ? null : fy }));
+          // PATCH 0921 — same independent-dimension rule for FY chips.
           const countFY = (fy: number) => {
-            const probe: ConvFilters = { ...filters, fy };
+            const probe: ConvFilters = { ...filters, fy, quarter: null, fromDate: null, toDate: null };
             return entries.filter((e) => passesConvictionFilter(e, probe)).length;
           };
           // PATCH 0911 — Single prominent PERIOD row containing both
