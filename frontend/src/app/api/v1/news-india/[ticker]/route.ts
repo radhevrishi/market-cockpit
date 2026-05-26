@@ -19,7 +19,20 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 15;
 
-const KEY = (ticker: string) => `news-india:v1:${ticker.toUpperCase()}`;
+// PATCH 0888 — Cache key must include the companyName hint. Before this fix,
+// the cache returned ticker-only results from yesterday's fetch even when
+// the caller now passed company="Bliss GVS" — so patch 0887's company hint
+// was being silently ignored. Companion fix: bump version to v2 so OLD
+// ticker-only entries don't poison the new keyed namespace.
+const KEY = (ticker: string, company?: string) => {
+  const t = ticker.toUpperCase();
+  if (company && company.trim()) {
+    // Stable suffix from company hint, lowercased + whitespace-collapsed.
+    const suffix = company.trim().toLowerCase().replace(/\s+/g, '-').slice(0, 40);
+    return `news-india:v2:${t}::${suffix}`;
+  }
+  return `news-india:v2:${t}`;
+};
 const TTL_SECONDS = 6 * 60 * 60; // 6h
 
 interface CachedPayload {
@@ -45,9 +58,12 @@ export async function GET(
   const company = (url.searchParams.get('company') || '').trim();
 
   // ── Cache read ──────────────────────────────────────────────────
+  // PATCH 0888 — cache key now includes the company hint so ticker-only
+  // cached results (from previous deploys) don't pre-empt fresh searches
+  // that include the actual company name.
   if (isRedisAvailable()) {
     try {
-      const cached = await kvGet<CachedPayload>(KEY(sym));
+      const cached = await kvGet<CachedPayload>(KEY(sym, company));
       if (cached && Array.isArray(cached.articles)) {
         return NextResponse.json({
           ticker: sym,
@@ -135,7 +151,7 @@ export async function GET(
   if (isRedisAvailable()) {
     try {
       await kvSet(
-        KEY(sym),
+        KEY(sym, company),                              // PATCH 0888 — same key as the read
         { ticker: sym, articles, generatedAt } as CachedPayload,
         TTL_SECONDS,
       );

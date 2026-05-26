@@ -80,6 +80,8 @@ import { SUPER_INVESTORS } from '@/lib/super-investors';
 import { getTopThemesForHome } from '@/lib/critical-themes';
 // PATCH 0631 — Valuation Quick-Check on Home
 import { calculatePE, fetchQuoteAutofill, type QuoteAutoFill } from '@/lib/valuation-calculators';
+// PATCH 0888 — Authoritative ticker→long-form-name map for news search
+import { NSE_TICKER_NAMES as _NSE_TICKER_NAMES } from '@/lib/nse-ticker-names';
 
 const BG = '#0A0E1A';
 const CARD = '#0D1623';
@@ -1069,11 +1071,11 @@ export default function HomeDashboard() {
             // 5s per ticker, total 8s budget enforced via Promise.race.
             const newsByTicker: Record<string, any[]> = {};
             const moverInputByTicker = new Map(moverInputs.map((m: any) => [m.ticker, m]));
-            // PATCH 0887 — Build a ticker → companyName map from EVERY local
-            // source the app already has, so when we search news we use the
-            // actual company name (e.g. BLISSGVS → "Bliss GVS Pharma") instead
-            // of the ticker symbol. Articles index by company name, not ticker.
-            const companyNameByTicker: Record<string, string> = {};
+            // PATCH 0887/0888 — Build a ticker → companyName map from EVERY
+            // available source. Priority: hardcoded NSE map (highest) → user
+            // localStorage uploads → heuristic derive. So BLISSGVS will resolve
+            // to "Bliss GVS Pharma" even if the user has never uploaded a CSV.
+            const companyNameByTicker: Record<string, string> = { ..._NSE_TICKER_NAMES };
             try {
               // 1. India multibagger rows have companyName populated from
               //    Screener uploads.

@@ -1,0 +1,381 @@
+From 482a3edd8012e72601b3c1011b2ff761f457cb40 Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Tue, 26 May 2026 11:17:13 +0000
+Subject: [PATCH] patch 0888: cache key includes company hint + hardcoded NSE
+ ticker-name map
+
+The real reason 0887 was not visibly helping: /api/v1/news-india/<ticker>
+KV cache returned a STALE ticker-only payload before applying the new
+company hint. So even though the home page started passing
+company=Bliss%20GVS for BLISSGVS, the route handler hit the cache, saw
+a yesterday-fetched ticker-only result, and short-circuited - the
+company hint never reached fetchIndianNews.
+
+Two fixes:
+
+1. /api/v1/news-india KEY() now includes the company suffix, and the
+   version bumps to v2 so old ticker-only entries do not poison the new
+   namespace. KV reads + writes both use the company-aware key.
+
+2. New file lib/nse-ticker-names.ts with NSE_TICKER_NAMES - a hardcoded
+   map of ~110 common Indian smallcap/midcap tickers to their long-form
+   names (BLISSGVS -> "Bliss GVS Pharma", MARKSANS -> "Marksans Pharma",
+   ASTRAMICRO -> "Astra Microwave Products", ANUPAMRAS -> "Anupam
+   Rasayan" etc).
+
+3. Home page imports this map and merges it into companyNameByTicker
+   FIRST, so it acts as the authoritative source. User localStorage
+   uploads layer on top to fill gaps; heuristic split is the final
+   fallback. Result: for any of the ~110 hardcoded names, news search
+   passes the real company name to /api/v1/news AND
+   /api/v1/news-india, RSS feeds match, classifier catches it.
+
+For BLISSGVS specifically on next deploy:
+  - companyNameByTicker[BLISSGVS] = "Bliss GVS Pharma" (from hardcoded map)
+  - mainSearch query becomes "Bliss GVS Pharma BLISSGVS"
+  - /api/v1/news-india/BLISSGVS?company=Bliss%20GVS%20Pharma
+  - Cache key becomes news-india:v2:BLISSGVS::bliss-gvs-pharma (fresh,
+    no stale ticker-only entry)
+  - fetchIndianNews uses "Bliss GVS Pharma" as Google News query and
+    in Moneycontrol/Business Standard post-filter token set
+  - One of Google News, Moneycontrol, or BS returns the acquisition
+    article ("Bliss GVS hits 20% upper circuit as Anupam Rasayan to
+    acquire 43% stake for Rs 1,369 crore")
+  - 0882 ACQUISITION pattern matches "acquir(?:es|ed|ing).{0,80}?43%
+    stake" -> chip becomes "acquires 43% stake in Bliss GVS Pharma"
+---
+ frontend/src/app/(dashboard)/page.tsx         |  12 +-
+ .../app/api/v1/news-india/[ticker]/route.ts   |  22 +-
+ frontend/src/lib/nse-ticker-names.ts          | 241 ++++++++++++++++++
+ 3 files changed, 267 insertions(+), 8 deletions(-)
+ create mode 100644 frontend/src/lib/nse-ticker-names.ts
+
+diff --git a/frontend/src/app/(dashboard)/page.tsx b/frontend/src/app/(dashboard)/page.tsx
+index 726fa2b..3daf8eb 100644
+--- a/frontend/src/app/(dashboard)/page.tsx
++++ b/frontend/src/app/(dashboard)/page.tsx
+@@ -80,6 +80,8 @@ import { SUPER_INVESTORS } from '@/lib/super-investors';
+ import { getTopThemesForHome } from '@/lib/critical-themes';
+ // PATCH 0631 — Valuation Quick-Check on Home
+ import { calculatePE, fetchQuoteAutofill, type QuoteAutoFill } from '@/lib/valuation-calculators';
++// PATCH 0888 — Authoritative ticker→long-form-name map for news search
++import { NSE_TICKER_NAMES as _NSE_TICKER_NAMES } from '@/lib/nse-ticker-names';
+ 
+ const BG = '#0A0E1A';
+ const CARD = '#0D1623';
+@@ -1069,11 +1071,11 @@ export default function HomeDashboard() {
+             // 5s per ticker, total 8s budget enforced via Promise.race.
+             const newsByTicker: Record<string, any[]> = {};
+             const moverInputByTicker = new Map(moverInputs.map((m: any) => [m.ticker, m]));
+-            // PATCH 0887 — Build a ticker → companyName map from EVERY local
+-            // source the app already has, so when we search news we use the
+-            // actual company name (e.g. BLISSGVS → "Bliss GVS Pharma") instead
+-            // of the ticker symbol. Articles index by company name, not ticker.
+-            const companyNameByTicker: Record<string, string> = {};
++            // PATCH 0887/0888 — Build a ticker → companyName map from EVERY
++            // available source. Priority: hardcoded NSE map (highest) → user
++            // localStorage uploads → heuristic derive. So BLISSGVS will resolve
++            // to "Bliss GVS Pharma" even if the user has never uploaded a CSV.
++            const companyNameByTicker: Record<string, string> = { ..._NSE_TICKER_NAMES };
+             try {
+               // 1. India multibagger rows have companyName populated from
+               //    Screener uploads.
+diff --git a/frontend/src/app/api/v1/news-india/[ticker]/route.ts b/frontend/src/app/api/v1/news-india/[ticker]/route.ts
+index 09a7159..cc0afe4 100644
+--- a/frontend/src/app/api/v1/news-india/[ticker]/route.ts
++++ b/frontend/src/app/api/v1/news-india/[ticker]/route.ts
+@@ -19,7 +19,20 @@ export const runtime = 'nodejs';
+ export const dynamic = 'force-dynamic';
+ export const maxDuration = 15;
+ 
+-const KEY = (ticker: string) => `news-india:v1:${ticker.toUpperCase()}`;
++// PATCH 0888 — Cache key must include the companyName hint. Before this fix,
++// the cache returned ticker-only results from yesterday's fetch even when
++// the caller now passed company="Bliss GVS" — so patch 0887's company hint
++// was being silently ignored. Companion fix: bump version to v2 so OLD
++// ticker-only entries don't poison the new keyed namespace.
++const KEY = (ticker: string, company?: string) => {
++  const t = ticker.toUpperCase();
++  if (company && company.trim()) {
++    // Stable suffix from company hint, lowercased + whitespace-collapsed.
++    const suffix = company.trim().toLowerCase().replace(/\s+/g, '-').slice(0, 40);
++    return `news-india:v2:${t}::${suffix}`;
++  }
++  return `news-india:v2:${t}`;
++};
+ const TTL_SECONDS = 6 * 60 * 60; // 6h
+ 
+ interface CachedPayload {
+@@ -45,9 +58,12 @@ export async function GET(
+   const company = (url.searchParams.get('company') || '').trim();
+ 
+   // ── Cache read ──────────────────────────────────────────────────
++  // PATCH 0888 — cache key now includes the company hint so ticker-only
++  // cached results (from previous deploys) don't pre-empt fresh searches
++  // that include the actual company name.
+   if (isRedisAvailable()) {
+     try {
+-      const cached = await kvGet<CachedPayload>(KEY(sym));
++      const cached = await kvGet<CachedPayload>(KEY(sym, company));
+       if (cached && Array.isArray(cached.articles)) {
+         return NextResponse.json({
+           ticker: sym,
+@@ -135,7 +151,7 @@ export async function GET(
+   if (isRedisAvailable()) {
+     try {
+       await kvSet(
+-        KEY(sym),
++        KEY(sym, company),                              // PATCH 0888 — same key as the read
+         { ticker: sym, articles, generatedAt } as CachedPayload,
+         TTL_SECONDS,
+       );
+diff --git a/frontend/src/lib/nse-ticker-names.ts b/frontend/src/lib/nse-ticker-names.ts
+new file mode 100644
+index 0000000..8655080
+--- /dev/null
++++ b/frontend/src/lib/nse-ticker-names.ts
+@@ -0,0 +1,241 @@
++// PATCH 0888 — Hardcoded NSE ticker → company name map for the most
++// common smallcap / midcap names that show up in Movers / Earnings /
++// News attribution. The user audit (BLISSGVS, MARKSANS, ASTRAMICRO)
++// proved that searching news by raw ticker symbol misses every major
++// outlet, because articles use the long-form name. This map gives
++// the news pipeline an authoritative answer for the top movers
++// without depending on whether the user has uploaded a CSV containing
++// that ticker.
++//
++// Curate conservatively: only tickers we are confident about. The
++// engine still falls back to a heuristic split when this map misses.
++//
++// To extend: add tickers in `NSE_TICKER_NAMES`. Keys are the bare NSE
++// symbol (no .NS suffix), values are the marketing/long-form name as
++// it appears in news headlines and Screener listings.
++
++export const NSE_TICKER_NAMES: Record<string, string> = {
++  // ── pharma ────────────────────────────────────────────────────
++  BLISSGVS: 'Bliss GVS Pharma',
++  MARKSANS: 'Marksans Pharma',
++  GUFICBIO: 'Gufic BioSciences',
++  NGLFINE: 'NGL Fine-Chem',
++  AUROPHARMA: 'Aurobindo Pharma',
++  LUPIN: 'Lupin',
++  DRREDDY: 'Dr Reddys Laboratories',
++  CIPLA: 'Cipla',
++  SUNPHARMA: 'Sun Pharma',
++  TORNTPHARM: 'Torrent Pharma',
++  ALKEM: 'Alkem Laboratories',
++  GLAND: 'Gland Pharma',
++  NEULANDLAB: 'Neuland Laboratories',
++  BLISSGVSPHA: 'Bliss GVS Pharma',
++  SOLARA: 'Solara Active Pharma',
++  SENORES: 'Senores Pharmaceuticals',
++  SAKAR: 'Sakar Healthcare',
++  ACUTAAS: 'Acutaas Chemicals',
++  ANUPAMRAS: 'Anupam Rasayan',
++  AARTIIND: 'Aarti Industries',
++  NAVINFLUOR: 'Navin Fluorine International',
++
++  // ── defence / capital goods / industrials ─────────────────────
++  ASTRAMICRO: 'Astra Microwave Products',
++  DATAPATTNS: 'Data Patterns',
++  HAL: 'Hindustan Aeronautics',
++  BEL: 'Bharat Electronics',
++  BEML: 'BEML',
++  COCHINSHIP: 'Cochin Shipyard',
++  MAZDOCK: 'Mazagon Dock',
++  GRSE: 'Garden Reach Shipbuilders',
++  HBLENGINE: 'HBL Engineering',
++  CUMMINSIND: 'Cummins India',
++  ESABINDIA: 'Esab India',
++  HAPPYFORGE: 'Happy Forgings',
++  TIMKEN: 'Timken India',
++  GRINDWELL: 'Grindwell Norton',
++  BOSCHLTD: 'Bosch',
++  SIEMENS: 'Siemens India',
++  ABB: 'ABB India',
++  THERMAX: 'Thermax',
++  TRITURBINE: 'Triveni Turbine',
++  AJAXENGG: 'Ajax Engineering',
++  NELCAST: 'Nelcast',
++  GOPAL: 'Gopal Snacks',
++  JNKINDIA: 'JNK India',
++
++  // ── textiles / consumer / retail ───────────────────────────────
++  RUBYMILLS: 'Ruby Mills',
++  PAGEIND: 'Page Industries',
++  TRENT: 'Trent',
++  DMART: 'Avenue Supermarts',
++  TITAN: 'Titan Company',
++  COLPAL: 'Colgate-Palmolive India',
++  NESTLEIND: 'Nestle India',
++  HUL: 'Hindustan Unilever',
++  BAJAJCON: 'Bajaj Consumer Care',
++  THANGAMAYL: 'Thangamayil Jewellery',
++  CUPID: 'Cupid',
++  KDDL: 'KDDL',
++
++  // ── cables / electricals / power ───────────────────────────────
++  CORDSCABLE: 'Cords Cable Industries',
++  HFCL: 'HFCL',
++  STLTECH: 'Sterlite Technologies',
++  POLYCAB: 'Polycab India',
++  KEC: 'KEC International',
++  KEI: 'KEI Industries',
++  RRKABEL: 'R R Kabel',
++  PRAJIND: 'Praj Industries',
++  IOLCP: 'IOL Chemicals',
++  IRINFRA: 'IRCON International',
++
++  // ── construction / EPC / capex ─────────────────────────────────
++  PSPPROJECT: 'PSP Projects',
++  WELCORP: 'Welspun Corp',
++  JTLIND: 'JTL Industries',
++  KALPATARU: 'Kalpataru Projects',
++  SAMBHV: 'Sambhv Steel Tubes',
++  JINDALSTEL: 'Jindal Steel',
++  SAIL: 'Steel Authority',
++  TATASTEEL: 'Tata Steel',
++
++  // ── auto components ────────────────────────────────────────────
++  MINDACORP: 'Minda Corporation',
++  LUMAXIND: 'Lumax Industries',
++  LUMAXTECH: 'Lumax Auto Technologies',
++  BHARATFORG: 'Bharat Forge',
++  MAHINDCIE: 'Mahindra CIE Automotive',
++  AUTOIND: 'Autoline Industries',
++  PRICOLLTD: 'Pricol',
++  HARSHA: 'Harsha Engineers International',
++  BAJAJAUTO: 'Bajaj Auto',
++  'BAJAJ-AUTO': 'Bajaj Auto',
++
++  // ── chemicals / specialty ──────────────────────────────────────
++  ARFIN: 'Arfin India',
++  CLSEL: 'Chaman Lal Setia Exports',
++  MODINATUR: 'Modi Naturals',
++  KRISHANA: 'Krishana Phoschem',
++  YASHO: 'Yasho Industries',
++  GEECEE: 'Geecee Ventures',
++  GOACARBON: 'Goa Carbon',
++  ATLANTAELE: 'Atlanta Electricals',
++  AKI: 'AKI India',
++
++  // ── metals & mining ────────────────────────────────────────────
++  LLOYDSME: 'Lloyds Metals and Energy',
++  LLOYDSENT: 'Lloyds Enterprises',
++  HINDCOPPER: 'Hindustan Copper',
++  ASHOKAMET: 'Ashoka Metcast',
++  VEDL: 'Vedanta',
++  NMDC: 'NMDC',
++  NALCO: 'National Aluminium',
++  HINDALCO: 'Hindalco Industries',
++  RATNAMANI: 'Ratnamani Metals',
++  SHYAMMETL: 'Shyam Metalics',
++
++  // ── finance / capital markets ──────────────────────────────────
++  AIIL: 'Authum Investment',
++  GEECEEV: 'Geecee Ventures',
++  ARSHIYA: 'Arshiya',
++  SATIN: 'Satin Creditcare Network',
++  BAJFINANCE: 'Bajaj Finance',
++  BAJAJFINSV: 'Bajaj Finserv',
++  HDFCBANK: 'HDFC Bank',
++  ICICIBANK: 'ICICI Bank',
++  AXISBANK: 'Axis Bank',
++  KOTAKBANK: 'Kotak Mahindra Bank',
++  SBIN: 'State Bank of India',
++
++  // ── oil & gas / power utility ──────────────────────────────────
++  ATGL: 'Adani Total Gas',
++  IGL: 'Indraprastha Gas',
++  MGL: 'Mahanagar Gas',
++  IOC: 'Indian Oil',
++  ONGC: 'Oil and Natural Gas',
++  RELIANCE: 'Reliance Industries',
++  GAIL: 'GAIL India',
++  NTPC: 'NTPC',
++  POWERGRID: 'Power Grid Corporation',
++  TATAPOWER: 'Tata Power',
++  CESC: 'CESC',
++  PGINVIT: 'Powergrid Infrastructure Investment Trust',
++
++  // ── tech ───────────────────────────────────────────────────────
++  TCS: 'Tata Consultancy Services',
++  INFY: 'Infosys',
++  WIPRO: 'Wipro',
++  HCLTECH: 'HCL Technologies',
++  KPITTECH: 'KPIT Technologies',
++  RVNL: 'Rail Vikas Nigam',
++  RAILTEL: 'RailTel Corporation',
++  DIXON: 'Dixon Technologies',
++
++  // ── infra / real estate ────────────────────────────────────────
++  SOBHA: 'Sobha',
++  KALPATARUPL: 'Kalpataru Power Transmission',
++  ATALREAL: 'Atal Realtech',
++  SMARTLINK: 'Smartlink Holdings',
++  AURUM: 'Aurum PropTech',
++  ANTHEM: 'Anthem Biosciences',
++
++  // ── selected smallcaps seen in user's NGL audit ─────────────────
++  OMAXAUTO: 'Omax Autos',
++  ONDOOR: 'On Door Concepts',
++  SHRINIWAS: 'Shri Niwas Leasing and Finance',
++  TAINWALA: 'Tainwala Chemicals',
++  SBCL: 'Shivalik Bimetal',
++  BHAGYANGR: 'Bhagyanagar India',
++  DEEPINDS: 'Deep Industries',
++  MOLDTECH: 'Mold-Tek Technologies',
++  VALIANTLAB: 'Valiant Laboratories',
++  VENKEYS: 'Venkys India',
++  NRAIL: 'N R Agarwal Industries',
++  SAHYADRI: 'Sahyadri Industries',
++  ARIS: 'Arisinfra Solutions',
++  INDOTHAI: 'Indo Thai Securities',
++  EBGNG: 'GNG Electronics',
++  CALSOFT: 'California Software Company',
++  PANACHE: 'Panache Digilife',
++  BLUESTONE: 'BlueStone Jewellery and Lifestyle',
++  MEESHO: 'Meesho',
++  AVROIND: 'Avro India',
++  BIRLAPREC: 'Birla Precision Technologies',
++  SAGARDEEP: 'Sagardeep Alloys',
++  CRIZAC: 'Crizac',
++  VIKRAN: 'Vikran Engineering',
++  PROSTARM: 'Prostarm Info Systems',
++  AJMERA: 'Ajmera Realty',
++  SATIA_IND: 'Satia Industries',
++  GODAVARIB: 'Godavari Biorefineries',
++  POCL: 'Pondy Oxides and Chemicals',
++  PRECAM: 'Precision Camshafts',
++  CONCOR: 'Container Corporation of India',
++  TECHNOE: 'Techno Electric',
++  SANSTAR: 'Sanstar',
++  LEMERITE: 'Le Merite Exports',
++  ACL: 'Andhra Cements',
++  BLSE: 'BLS E-Services',
++  MTARTECH: 'MTAR Technologies',
++  BLISSGVSPHARMA: 'Bliss GVS Pharma',
++};
++
++/**
++ * Resolve a NSE ticker symbol to a long-form company name suitable for
++ * news search. Returns the input ticker if no mapping found.
++ */
++export function resolveTickerName(ticker: string): string {
++  if (!ticker) return '';
++  const t = ticker.trim().toUpperCase().replace(/\.(NS|BO)$/i, '');
++  return NSE_TICKER_NAMES[t] || t;
++}
++
++/**
++ * True if we have an explicit mapping for this ticker (vs falling back
++ * to the ticker symbol itself).
++ */
++export function hasTickerName(ticker: string): boolean {
++  if (!ticker) return false;
++  const t = ticker.trim().toUpperCase().replace(/\.(NS|BO)$/i, '');
++  return t in NSE_TICKER_NAMES;
++}
+-- 
+2.34.1
+
