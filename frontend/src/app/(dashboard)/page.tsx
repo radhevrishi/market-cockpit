@@ -1986,10 +1986,14 @@ export default function HomeDashboard() {
             <Link href="/breadth"                style={navChip('#10B981')}>📊 Breadth</Link>
             <Link href="/earnings-hub?tab=concall" style={navChip('#A78BFA')}>🧠 Concall AI</Link>
             <Link href="/concall-intel"          style={navChip('#A78BFA')}>🎙 Concall Intel</Link>
+            {/* PATCH 0910 — User request: surface Conviction Beats + Heatmap
+                here, alphabetical. CB lives inside /watchlists as a sub-tab. */}
+            <Link href="/watchlists?tab=conviction" style={navChip('#F59E0B')}>🏆 Conviction Beats</Link>
             <Link href="/decisions"              style={navChip('#22D3EE')}>📒 Decision Log</Link>
             <Link href="/earnings-opportunities" style={navChip('#F59E0B')}>📅 Earnings Ops</Link>
             <Link href="/earnings"               style={navChip('#F59E0B')}>📊 Earnings Scan</Link>
             <Link href="/guidance-extractor"     style={navChip('#A78BFA')}>📋 Guidance</Link>
+            <Link href="/heatmap"                style={navChip('#22D3EE')}>🗺 Heatmap</Link>
             <Link href="/movers"                 style={navChip('#10B981')}>📈 Movers</Link>
             <Link href="/multibagger"            style={navChip('#10B981')}>🚀 Multibagger</Link>
             <Link href="/portfolio"              style={navChip('#22D3EE')}>💼 My Book</Link>
