@@ -161,6 +161,16 @@ interface HomeState {
   watchlistPulse?: Array<{ ticker: string; company?: string; changePercent: number; price?: number; reason?: string; cap?: string; attrib?: MoverAttribution }>;
   upcomingEarnings?: Array<{ ticker: string; company?: string; resultDate: string; sector?: string; daysAhead: number; onCb: boolean; onWatchlist: boolean }>;
   sectorRotation?: { topSector?: { sector: string; pct: number }; bottomSector?: { sector: string; pct: number } };
+  // PATCH 0905 — Full sector pulse list for the mini heatmap on home.
+  // Aggregated from the same /api/market/quotes call that already
+  // powers Movers + Watchlist Pulse. Each entry carries avg pct, sample
+  // size, and a list of the top 2 tickers contributing to the move.
+  sectorPulse?: Array<{ sector: string; pct: number; count: number; topGainer?: { ticker: string; pct: number }; topLoser?: { ticker: string; pct: number } }>;
+  // PATCH 0905 — Conviction Beats with live price overlay. User said
+  // "keep conviction bets in watchlist also here in home screen i use
+  // that more" — so we surface the bench inline instead of forcing a
+  // /watchlists round-trip every morning.
+  convictionLive?: Array<{ ticker: string; company?: string; tier?: string; sector?: string; price?: number; changePercent?: number; cap?: string; addedAt?: string; filingDate?: string }>;
   ratingActionsToday?: Array<{ ticker?: string; headline: string; agency?: string; action?: string; source_name?: string; url?: string }>;
   orderBookToday?: Array<{ ticker?: string; headline: string; customer?: string; valueCr?: number; source_name?: string; url?: string }>;
   alphaFeedback?: { sample: number; avgScoreNow: number; avgScoreBefore: number; held: number };
@@ -534,6 +544,9 @@ export default function HomeDashboard() {
         watchlistPulse: prev.watchlistPulse ?? [],
         gainers: prev.gainers ?? [],
         losers: prev.losers ?? [],
+        // PATCH 0905 — force-empty so honest empty-state replaces loading spinner
+        convictionLive: prev.convictionLive ?? [],
+        sectorPulse: prev.sectorPulse ?? [],
       } as any));
     }, 15_000);
     return () => clearTimeout(t);
@@ -1612,6 +1625,79 @@ export default function HomeDashboard() {
         if (sectors.length > 0) {
           sectors.sort((a, b) => b.pct - a.pct);
           setData((d) => ({ ...d, sectorRotation: { topSector: sectors[0], bottomSector: sectors[sectors.length - 1] } } as any));
+        }
+
+        // PATCH 0905 — Sector Pulse (mini heatmap) — same source as
+        // sectorRotation, but keeps the full ranked list so the home
+        // panel can render every sector tile with its top contributor
+        // (best gainer / worst loser inside that sector).
+        const sectorContrib = new Map<string, { gainer?: { ticker: string; pct: number }; loser?: { ticker: string; pct: number } }>();
+        for (const s of stocks) {
+          const sec = s.sector || 'Other';
+          if (sec === 'Other' || sec === 'Diversified') continue;
+          const cp = s.changePercent ?? 0;
+          if (typeof cp !== 'number') continue;
+          const sym = (s.ticker || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
+          const cur = sectorContrib.get(sec) || {};
+          if (!cur.gainer || cp > cur.gainer.pct) cur.gainer = { ticker: sym, pct: cp };
+          if (!cur.loser || cp < cur.loser.pct) cur.loser = { ticker: sym, pct: cp };
+          sectorContrib.set(sec, cur);
+        }
+        const sectorPulseList = sectors
+          .map((sec) => ({
+            sector: sec.sector,
+            pct: sec.pct,
+            count: sectorAgg.get(sec.sector)?.count || 0,
+            topGainer: sectorContrib.get(sec.sector)?.gainer,
+            topLoser: sectorContrib.get(sec.sector)?.loser,
+          }))
+          .filter((x) => x.count >= 3)
+          .sort((a, b) => b.pct - a.pct);
+        if (sectorPulseList.length > 0) {
+          setData((d) => ({ ...d, sectorPulse: sectorPulseList } as any));
+        }
+
+        // PATCH 0905 — Conviction Beats with live price overlay. User said
+        // "keep conviction bets in watchlist also here in home screen i
+        // use that more" — so we render the bench inline. Reads from
+        // mc:conviction-beats:v1 localStorage, joins by ticker to the
+        // live byTicker quote map, sorts BLOCKBUSTER first then by abs%.
+        try {
+          const cbMap = (() => { try { return JSON.parse(localStorage.getItem('mc:conviction-beats:v1') || '{}') || {}; } catch { return {}; } })();
+          const cbEntries = Object.values(cbMap) as any[];
+          if (cbEntries.length > 0) {
+            const cbRows = cbEntries
+              .map((e: any) => {
+                const sym = (e.ticker || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
+                const q = byTicker.get(sym);
+                return {
+                  ticker: sym,
+                  company: e.company || q?.company,
+                  tier: e.tier,
+                  sector: e.sector || q?.sector,
+                  price: q?.price,
+                  changePercent: q?.changePercent,
+                  cap: q?.indexGroup,
+                  addedAt: e.added_at,
+                  filingDate: e.filing_date,
+                };
+              })
+              // Sort: BLOCKBUSTER tier first, then by abs % change DESC, then by recency.
+              .sort((a: any, b: any) => {
+                const ta = a.tier === 'BLOCKBUSTER' ? 0 : 1;
+                const tb = b.tier === 'BLOCKBUSTER' ? 0 : 1;
+                if (ta !== tb) return ta - tb;
+                const absA = Math.abs(a.changePercent ?? 0);
+                const absB = Math.abs(b.changePercent ?? 0);
+                if (absA !== absB) return absB - absA;
+                return String(b.addedAt || '').localeCompare(String(a.addedAt || ''));
+              });
+            setData((d) => ({ ...d, convictionLive: cbRows } as any));
+          } else {
+            setData((d) => ({ ...d, convictionLive: [] } as any));
+          }
+        } catch {
+          setData((d) => ({ ...d, convictionLive: [] } as any));
         }
       });
 
@@ -3196,6 +3282,122 @@ export default function HomeDashboard() {
                     {e.onWatchlist && <span style={{ fontSize: 10, color: '#22D3EE' }}>👁</span>}
                   </Link>
                 ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ═══════════════ PATCH 0905 — CONVICTION BEATS + SECTOR HEATMAP ═══════ */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12 }}>
+          {/* CONVICTION BEATS LIVE — bench with current price + change.
+              User feedback: "keep conviction bets in watchlist also here in
+              home screen i use that more". Pulls from mc:conviction-beats:v1
+              and joins to live /api/market/quotes (same fetch as Watchlist
+              Pulse). BLOCKBUSTER tier rendered first with a gold ★, then
+              STRONG. Click → /stock-sheet?ticker=… or /watchlists for full bench. */}
+          <div style={{ ...cardStyle, borderLeft: '3px solid #F59E0B' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.4px' }}>
+                🏆 CONVICTION BEATS ({data.convictionLive?.length || 0})
+              </span>
+              <Link href="/watchlists?tab=conviction" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open bench →</Link>
+            </div>
+            <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
+              BLOCKBUSTER ★ first · STRONG next · live close-of-day price + change
+            </div>
+            {!data.convictionLive ? (
+              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading conviction bench…</div>
+            ) : data.convictionLive.length === 0 ? (
+              <div style={{ fontSize: 11, color: DIM, padding: '4px 2px', lineHeight: 1.5 }}>
+                <div style={{ marginBottom: 6 }}>📭 No conviction beats on bench yet.</div>
+                <div style={{ fontSize: 10, color: '#6B7A8D' }}>
+                  Auto-populated from <Link href="/earnings-opportunities" style={{ color: '#F59E0B', textDecoration: 'none' }}>Earnings Opportunities →</Link>
+                  {' '}when a stock lands in BLOCKBUSTER or STRONG tier.
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3, maxHeight: 280, overflowY: 'auto' }}>
+                {data.convictionLive.slice(0, 10).map((c) => {
+                  const pct = c.changePercent ?? 0;
+                  const hasPx = typeof c.price === 'number';
+                  return (
+                    <Link key={c.ticker} href={`/stock-sheet?ticker=${encodeURIComponent(c.ticker)}`}
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                      <span style={{ fontSize: 10, color: c.tier === 'BLOCKBUSTER' ? '#F59E0B' : '#10B981', fontWeight: 800, minWidth: 18 }}>
+                        {c.tier === 'BLOCKBUSTER' ? '★' : '◆'}
+                      </span>
+                      <span style={{ fontSize: 10, color: '#22D3EE', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 70 }}>{c.ticker}</span>
+                      <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {c.company || c.ticker}
+                      </span>
+                      {c.cap && <span style={{ fontSize: 8, color: '#8DA1B9', fontWeight: 700, padding: '1px 4px', border: '1px solid #2A3550', borderRadius: 3 }}>{(c.cap || '').toUpperCase()}</span>}
+                      {hasPx ? (
+                        <>
+                          <span style={{ fontSize: 10, color: DIM, fontVariantNumeric: 'tabular-nums', minWidth: 50, textAlign: 'right' }}>
+                            ₹{(c.price as number).toFixed(1)}
+                          </span>
+                          <span style={{ fontSize: 11, color: pct >= 0 ? '#10B981' : '#EF4444', fontWeight: 800, fontVariantNumeric: 'tabular-nums', minWidth: 48, textAlign: 'right' }}>
+                            {pct >= 0 ? '+' : ''}{pct.toFixed(1)}%
+                          </span>
+                        </>
+                      ) : (
+                        <span style={{ fontSize: 9, color: '#6B7A8D', fontStyle: 'italic' }}>no quote</span>
+                      )}
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* SECTOR HEATMAP — mini grid built from sectorPulse. Each tile is
+              colored by avg sector pct (green tiers / red tiers / neutral),
+              with the top gainer and worst loser inside that sector shown
+              below the sector name. Click → /heatmap for the full treemap.
+              User feedback: "heatmap also show here". */}
+          <div style={{ ...cardStyle, borderLeft: '3px solid #22D3EE' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px' }}>
+                🗺 SECTOR HEATMAP ({data.sectorPulse?.length || 0})
+              </span>
+              <Link href="/heatmap" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Full treemap →</Link>
+            </div>
+            <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
+              Avg % change per sector · top gainer ↑ / worst loser ↓ shown inline
+            </div>
+            {!data.sectorPulse ? (
+              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading sector aggregates…</div>
+            ) : data.sectorPulse.length === 0 ? (
+              <div style={{ fontSize: 11, color: DIM, padding: '4px 2px', lineHeight: 1.5 }}>
+                📭 Sector aggregates unavailable.{' '}
+                <Link href="/heatmap" style={{ color: '#22D3EE', textDecoration: 'none' }}>Open full Heatmap →</Link>
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 4 }}>
+                {data.sectorPulse.slice(0, 18).map((s) => {
+                  // Tile color tiers by abs avg pct
+                  const abs = Math.abs(s.pct);
+                  const isUp = s.pct >= 0;
+                  const tileBg = isUp
+                    ? (abs >= 2 ? 'rgba(16,185,129,0.30)' : abs >= 1 ? 'rgba(16,185,129,0.18)' : abs >= 0.3 ? 'rgba(16,185,129,0.08)' : 'rgba(30,41,59,0.4)')
+                    : (abs >= 2 ? 'rgba(239,68,68,0.30)'  : abs >= 1 ? 'rgba(239,68,68,0.18)'  : abs >= 0.3 ? 'rgba(239,68,68,0.08)'  : 'rgba(30,41,59,0.4)');
+                  const tileBorder = isUp ? 'rgba(16,185,129,0.4)' : 'rgba(239,68,68,0.4)';
+                  return (
+                    <Link key={s.sector} href={`/heatmap?sector=${encodeURIComponent(s.sector)}`}
+                      style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '6px 7px', textDecoration: 'none', border: `1px solid ${tileBorder}`, background: tileBg, borderRadius: 4 }}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 4 }}>
+                        <span style={{ fontSize: 10, color: TEXT, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1 }}>{s.sector}</span>
+                        <span style={{ fontSize: 11, color: isUp ? '#10B981' : '#EF4444', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
+                          {isUp ? '+' : ''}{s.pct.toFixed(1)}%
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: '#94A3B8', fontFamily: 'ui-monospace, monospace' }}>
+                        {s.topGainer && <span style={{ color: '#10B981' }}>↑ {s.topGainer.ticker} {s.topGainer.pct >= 0 ? '+' : ''}{s.topGainer.pct.toFixed(1)}%</span>}
+                        {s.topLoser && s.topLoser.ticker !== s.topGainer?.ticker && <span style={{ color: '#EF4444' }}>↓ {s.topLoser.ticker} {s.topLoser.pct.toFixed(1)}%</span>}
+                      </div>
+                    </Link>
+                  );
+                })}
               </div>
             )}
           </div>

@@ -42,8 +42,10 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'News & Signals',
     icon: <Newspaper className="w-5 h-5" />,
     items: [
+      // PATCH 0905 — /company-news route was deleted in an earlier sweep
+      // (frontend/src/app/(dashboard)/company-news/** removed). The nav link
+      // remained, sending users to a 404. Removed per user request.
       { href: '/news',             label: 'News Feed',          icon: <Newspaper className="w-4 h-4" /> },
-      { href: '/company-news',     label: 'Company News',       icon: <Newspaper className="w-4 h-4" /> },
     ],
   },
   {
