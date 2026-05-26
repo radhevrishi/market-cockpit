@@ -1069,23 +1069,87 @@ export default function HomeDashboard() {
             // 5s per ticker, total 8s budget enforced via Promise.race.
             const newsByTicker: Record<string, any[]> = {};
             const moverInputByTicker = new Map(moverInputs.map((m: any) => [m.ticker, m]));
+            // PATCH 0887 — Build a ticker → companyName map from EVERY local
+            // source the app already has, so when we search news we use the
+            // actual company name (e.g. BLISSGVS → "Bliss GVS Pharma") instead
+            // of the ticker symbol. Articles index by company name, not ticker.
+            const companyNameByTicker: Record<string, string> = {};
+            try {
+              // 1. India multibagger rows have companyName populated from
+              //    Screener uploads.
+              const indiaRows = JSON.parse(localStorage.getItem('mb_excel_scored_v2') || '[]');
+              if (Array.isArray(indiaRows)) {
+                for (const r of indiaRows) {
+                  const t = (r?.symbol || '').toString().toUpperCase().trim();
+                  const n = (r?.company || r?.companyName || '').toString().trim();
+                  if (t && n && n.toUpperCase() !== t) companyNameByTicker[t] = n;
+                }
+              }
+              // 2. Conviction Beats has companyName too.
+              const cbList = JSON.parse(localStorage.getItem('mc:conviction-beats:v1') || '[]');
+              if (Array.isArray(cbList)) {
+                for (const e of cbList) {
+                  const t = (e?.symbol || e?.ticker || '').toString().toUpperCase().trim();
+                  const n = (e?.companyName || e?.company || '').toString().trim();
+                  if (t && n && n.toUpperCase() !== t && !companyNameByTicker[t]) companyNameByTicker[t] = n;
+                }
+              }
+              // 3. USA multibagger.
+              const usaRows = JSON.parse(localStorage.getItem('mb_usa_scored_v1') || '[]');
+              if (Array.isArray(usaRows)) {
+                for (const r of usaRows) {
+                  const t = (r?.symbol || '').toString().toUpperCase().trim();
+                  const n = (r?.company || r?.companyName || '').toString().trim();
+                  if (t && n && n.toUpperCase() !== t && !companyNameByTicker[t]) companyNameByTicker[t] = n;
+                }
+              }
+            } catch {/* localStorage may not be available SSR */}
+            // PATCH 0887 — Heuristic: derive a plausible 2-word company prefix
+            // from the ticker when we have no real name (BLISSGVS → "Bliss GVS").
+            // This is a best-effort fallback; the news-india endpoint also runs
+            // its own deriveNameTokens internally (patch 0886).
+            const derivePrefix = (sym: string): string | null => {
+              const t = (sym || '').trim().toUpperCase().replace(/\.(NS|BO)$/i, '');
+              if (t.length < 6) return null;
+              // Try splitting at a few plausible boundaries (chars 4-7)
+              for (let i = 5; i >= 4; i--) {
+                if (i + 2 <= t.length) {
+                  const a = t.slice(0, i);
+                  const b = t.slice(i);
+                  return `${a.charAt(0)}${a.slice(1).toLowerCase()} ${b.charAt(0)}${b.slice(1).toLowerCase()}`;
+                }
+              }
+              return null;
+            };
             const NEWS_TOTAL_BUDGET_MS = 8_000;
             const PER_TICKER_TIMEOUT_MS = 5_000;
             const enrichAllNews = (async () => {
               await Promise.all(moverTickers.map(async (t) => {
                 const meta = moverInputByTicker.get(t);
-                // Use industry || sector as the Google News query for richer matching.
-                // Falls back to ticker symbol when neither is present.
-                const company = (meta?.industry || meta?.sector || '').trim();
+                // PATCH 0887 — Build the BEST news-search query for this ticker.
+                // Priority: explicit local-name → derived prefix → bare ticker.
+                // Build two query strings: one for the main /api/v1/news search
+                // (which does full-text on cached articles) and one for the
+                // /api/v1/news-india RSS aggregator (which takes a company hint).
+                const explicitName = companyNameByTicker[t] || '';
+                const derived = explicitName ? '' : (derivePrefix(t) || '');
+                const companyHint = explicitName || derived || '';
+                // Main search query: prefer company name (will match "Bliss GVS
+                // Pharma shares jump"); fall back to ticker. Pass BOTH when we
+                // have a name so the search index can disambiguate.
+                const mainSearch = companyHint
+                  ? `${companyHint} ${t}`.trim().slice(0, 80)
+                  : t;
+                const indiaQS = new URLSearchParams();
+                if (companyHint) indiaQS.set('company', companyHint);
+                const indiaSuffix = indiaQS.toString() ? `?${indiaQS.toString()}` : '';
                 const [stdRes, indiaRes] = await Promise.all([
                   safeDiag<any>(
-                    `/api/v1/news?search=${encodeURIComponent(t)}&limit=8`,
+                    `/api/v1/news?search=${encodeURIComponent(mainSearch)}&limit=8`,
                     PER_TICKER_TIMEOUT_MS,
                   ).catch(() => ({ data: null })),
                   safeDiag<any>(
-                    `/api/v1/news-india/${encodeURIComponent(t)}${
-                      company ? `?company=${encodeURIComponent(company)}` : ''
-                    }`,
+                    `/api/v1/news-india/${encodeURIComponent(t)}${indiaSuffix}`,
                     PER_TICKER_TIMEOUT_MS,
                   ).catch(() => ({ data: null })),
                 ]);
