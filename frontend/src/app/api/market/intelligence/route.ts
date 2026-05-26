@@ -390,25 +390,50 @@ function isJunkSignal(s: any): boolean {
 function stripJunk(arr: any): any {
   if (!Array.isArray(arr)) return arr;
   const cleaned = arr.filter((s: any) => !isJunkSignal(s));
-  // PATCH 0930 — Empty-result safety net. If discipline filters wiped
-  // EVERYTHING but the input had TIER_A signals (highest quality), keep
-  // the TIER_A ones even if they'd otherwise drop (typically largecaps).
-  // Showing "3 Actionable" in the bias counter but 0 in the array is
-  // worse UX than showing a few largecap TIER_A signals. User feedback:
-  // "Signals page totally empty / Signals is broken".
+  // PATCH 0930 / 0933 — Empty-result safety net (widened).
+  //
+  // PATCH 0930 kept TIER_A signals only when discipline filters wiped everything.
+  // But on quiet days the upstream pipeline returns 0 TIER_A signals (today's
+  // _debug shows 6 raw → TIER_B:1 + TIER_D:5, no TIER_A). Result: safety net
+  // returned [] and the page rendered empty while the bias counter still said
+  // "1 Notable" — exactly the broken-state the user just hit.
+  //
+  // P0933 widens the rescue ladder:
+  //   1st pass — TIER_A only (P0930 behavior, highest signal)
+  //   2nd pass — TIER_A + TIER_B (when no TIER_A but ≥1 quality survives)
+  //   3rd pass — drop only the truly toxic signals (TEMPLATE_PATTERN,
+  //              known fake values) and tag everything else as
+  //              _qualityDegraded=true so the UI can render a clear caveat.
+  // Empty-state can still happen if the entire input is TEMPLATE-junk, which
+  // is the correct behavior in that case.
   if (cleaned.length === 0 && arr.length > 0) {
-    const tierA = arr.filter((s: any) => {
-      if (!s) return false;
-      // Drop only the truly toxic ones (TEMPLATE_PATTERN, suspicious values).
+    const isToxic = (s: any): boolean => {
+      if (!s) return true;
       const flags = Array.isArray(s.anomalyFlags) ? s.anomalyFlags : [];
-      if (flags.some((f: any) => typeof f === 'string' && /^TEMPLATE_PATTERN_/.test(f))) return false;
+      if (flags.some((f: any) => typeof f === 'string' && /^TEMPLATE_PATTERN_/.test(f))) return true;
       const rv = Math.round(s.valueCr || 0);
       const ct = s.confidenceType;
-      if ((ct === 'HEURISTIC' || ct === 'INFERRED') && (rv === 280 || rv === 350 || rv === 105 || rv === 210)) return false;
-      // Keep TIER_A signals (highest quality) regardless of largecap status.
-      return s.evidenceTier === 'TIER_A' || s.signalTier === 'TIER1' || s.confidenceType === 'ACTUAL';
-    });
-    return tierA;
+      if ((ct === 'HEURISTIC' || ct === 'INFERRED') && (rv === 280 || rv === 350 || rv === 105 || rv === 210)) return true;
+      return false;
+    };
+    const survivors = arr.filter((s: any) => !isToxic(s));
+    if (survivors.length === 0) return [];
+    // 1st pass: TIER_A
+    const tierA = survivors.filter((s: any) =>
+      s.evidenceTier === 'TIER_A' || s.signalTier === 'TIER1' || s.confidenceType === 'ACTUAL'
+    );
+    if (tierA.length > 0) return tierA;
+    // 2nd pass: TIER_A + TIER_B (medium-confidence)
+    const tierAB = survivors.filter((s: any) =>
+      s.evidenceTier === 'TIER_A' || s.evidenceTier === 'TIER_B' ||
+      s.signalTier === 'TIER1' || s.signalTier === 'TIER2' ||
+      s.confidenceType === 'ACTUAL' || s.confidenceType === 'VERIFIED'
+    );
+    if (tierAB.length > 0) {
+      return tierAB.map((s: any) => ({ ...s, _qualityDegraded: true, _degradedReason: 'low-volume day · medium-confidence signals surfaced' }));
+    }
+    // 3rd pass: everything non-toxic, flagged
+    return survivors.map((s: any) => ({ ...s, _qualityDegraded: true, _degradedReason: 'low-volume day · heuristic signals surfaced' }));
   }
   return cleaned;
 }
@@ -474,6 +499,52 @@ function stripJunkResponse(resp: any): any {
   }
   // Hide _allSignals too — the frontend can rebuild from cleaned arrays
   if (Array.isArray(next._allSignals)) next._allSignals = stripJunk(next._allSignals);
+
+  // PATCH 0933 — Re-derive bias counts AFTER stripping so the chip strip
+  // (0 Actionable · 1 Notable · 0 Monitor) doesn't lie when the underlying
+  // arrays are actually empty. Without this, the compute-time bias was
+  // showing "1 Notable" while notable: [] — the exact bug the user just hit.
+  if (next.bias && typeof next.bias === 'object') {
+    const sigCount = Array.isArray(next.signals) ? next.signals.length : 0;
+    const notCount = Array.isArray(next.notable) ? next.notable.length : 0;
+    const obsCount = Array.isArray(next.observations) ? next.observations.length : 0;
+    const specCount = Array.isArray(next.speculative) ? next.speculative.length : 0;
+    const buyWatchCount = Array.isArray(next.signals)
+      ? next.signals.filter((s: any) => String(s?.action || '').toUpperCase() === 'BUY WATCH').length
+      : 0;
+    const trackCount = Array.isArray(next.signals)
+      ? next.signals.filter((s: any) => String(s?.action || '').toUpperCase() === 'TRACK').length
+      : 0;
+    // Don't blow away existing keys we don't track — only overwrite the visible counts
+    next.bias = {
+      ...next.bias,
+      totalSignals: sigCount,
+      totalObservations: obsCount + notCount,
+      buyWatchCount,
+      buyCount: buyWatchCount,
+      watchCount: notCount,
+      monitorCount: obsCount,
+      addCount: 0,
+      holdCount: 0,
+      reduceExitCount: 0,
+      trimExitCount: 0,
+      summary: `${notCount} Notable · ${obsCount} Monitor · 0 Rejected · Net: ${next.bias.netBias || 'Neutral'}`,
+    };
+  }
+  // Also align _stats with the final visible counts
+  if (next._stats && typeof next._stats === 'object') {
+    const sigCount = Array.isArray(next.signals) ? next.signals.length : 0;
+    const notCount = Array.isArray(next.notable) ? next.notable.length : 0;
+    const obsCount = Array.isArray(next.observations) ? next.observations.length : 0;
+    const specCount = Array.isArray(next.speculative) ? next.speculative.length : 0;
+    next._stats = {
+      ...next._stats,
+      actionable: sigCount,
+      notable: notCount,
+      monitor: obsCount,
+      speculative: specCount,
+    };
+  }
   return next;
 }
 
