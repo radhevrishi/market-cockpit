@@ -93,13 +93,25 @@ export function scoreCatalyst(ctx: ScoringContext): CatalystScoring {
   const cat = attr?.catalystType;
   const evSrc = attr?.evidenceSource;
 
+  // PATCH 0892 — Use the DETAILED catalyst label produced by
+  // classifyNewsCatalyst / earnings interpreter as the primary driver,
+  // not a generic category word. classifyNewsCatalyst already extracts
+  // specifics like "acquires 43% stake in Bliss GVS Pharma" / "bagged
+  // ₹250 Cr order from BHEL" / "ICRA upgrades long-term rating" — those
+  // are the institutional labels the user wants, not "M&A / corporate
+  // action" / "Order/contract win" / "Credit rating action".
+  //
+  // Helper: a catalyst label is "detailed" if it's long enough to carry
+  // specifics. Anything shorter than 15 chars is likely a category fallback.
+  const isDetailed = (s?: string) => typeof s === 'string' && s.trim().length >= 15;
+  const detail = attr?.catalyst || '';
+
   if (cat === 'EARNINGS') {
     score += 45;
-    // Try to extract the growth blurb if present
-    const sales = (attr as any)?.evidence?.salesYoy;
-    const pat = (attr as any)?.evidence?.patYoy;
-    const tier = attr?.catalyst.match(/(BLOCKBUSTER|STRONG|MIXED|AVOID|POOR|WEAK)/i)?.[1] || '';
-    primaryDriver = tier ? `${tier} earnings reaction` : 'Earnings reaction';
+    const tier = detail.match(/(BLOCKBUSTER|STRONG|MIXED|AVOID|POOR|WEAK)/i)?.[1] || '';
+    // Prefer the detailed regex-emitted label ("Q4 results net profit jumps 38%"
+    // or the BLOCKBUSTER tier text from the earnings engine).
+    primaryDriver = isDetailed(detail) ? detail : (tier ? `${tier} earnings reaction` : 'Earnings reaction');
     chips.push({ text: 'EARNINGS', tone: 'positive' });
     if (tier === 'BLOCKBUSTER' || tier === 'STRONG') {
       score += 10;
@@ -107,28 +119,34 @@ export function scoreCatalyst(ctx: ScoringContext): CatalystScoring {
     }
   } else if (cat === 'ORDER_WIN') {
     score += 40;
-    primaryDriver = 'Order/contract win';
+    // Use "bagged ₹250 Cr order from BHEL" when available
+    primaryDriver = isDetailed(detail) ? detail : 'Order / contract win';
     chips.push({ text: 'ORDER WIN', tone: 'positive' });
   } else if (cat === 'RATING') {
     score += 30;
-    primaryDriver = 'Credit rating action';
-    chips.push({ text: 'RATING', tone: /upgrade|positive/i.test(attr?.catalyst || '') ? 'positive' : 'neutral' });
+    // Use "credit rating upgrade" / "credit rating downgrade" / "outlook revision"
+    primaryDriver = isDetailed(detail) ? detail : 'Credit rating action';
+    chips.push({ text: 'RATING', tone: /upgrade|positive/i.test(detail) ? 'positive' : 'neutral' });
   } else if (cat === 'MNA') {
     score += 35;
-    primaryDriver = 'M&A / corporate action';
+    // Use "acquires 43% stake in Bliss GVS Pharma" / "buyback announcement" /
+    // "preferential allotment" / "demerger / spin-off plan" / etc.
+    primaryDriver = isDetailed(detail) ? detail : 'M&A / corporate action';
     chips.push({ text: 'M&A', tone: 'event' });
   } else if (cat === 'OFS' || cat === 'BLOCK_DEAL') {
     score += 25;
-    primaryDriver = cat === 'OFS' ? 'OFS supply pressure' : 'Block deal flow';
+    // Use "promoter buying" / "block-deal sell" / "OFS / offer for sale" / etc.
+    primaryDriver = isDetailed(detail) ? detail : (cat === 'OFS' ? 'OFS supply pressure' : 'Block deal flow');
     chips.push({ text: cat, tone: 'event' });
   } else if (cat === 'REGULATORY') {
     score += 20;
-    primaryDriver = 'Regulatory disclosure';
+    // Use "USFDA approval / EIR" / "USFDA observation / warning" / "CDSCO" etc.
+    primaryDriver = isDetailed(detail) ? detail : 'Regulatory disclosure';
     chips.push({ text: 'REGULATORY', tone: 'neutral' });
   } else if (cat === 'SECTOR_ROTATION') {
     // Don't lose sector-rotation signal; treat as a soft-positive driver
     score += 15;
-    primaryDriver = attr?.catalyst || 'Sector-led move';
+    primaryDriver = detail || 'Sector-led move';
     chips.push({ text: 'SECTOR', tone: 'neutral' });
   }
 
