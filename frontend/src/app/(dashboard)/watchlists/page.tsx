@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useSearchParams } from 'next/navigation'; // PATCH 0914 — read ?tab=conviction
 import { Plus, Trash2, TrendingUp, TrendingDown, RefreshCw, Download, ArrowUpDown, AlertTriangle, Award } from 'lucide-react';
 import toast from 'react-hot-toast';
 import TickerSearch, { type TickerSuggestion } from '@/components/TickerSearch';
@@ -526,7 +527,25 @@ export default function WatchlistsPage() {
 
   // PATCH 0186 — Tab switcher: 'main' (existing user watchlist) vs 'conviction'
   // (auto-populated from Earnings Ops BLOCKBUSTER + STRONG cards).
-  const [activeTab, setActiveTab] = useState<'main' | 'conviction'>('main');
+  // PATCH 0914 — Honor ?tab=conviction in the URL so the Home Quick Access
+  // chip "🏆 Conviction Beats" lands on the bench tab directly instead of
+  // dropping users on the Main watchlist tab. User feedback: "even when
+  // selecting conviction betas short cut its going to watchlist only why".
+  const searchParams = useSearchParams();
+  const initialTab: 'main' | 'conviction' =
+    searchParams?.get('tab') === 'conviction' ? 'conviction' : 'main';
+  const [activeTab, setActiveTab] = useState<'main' | 'conviction'>(initialTab);
+  // Also react to URL changes mid-session (e.g. user clicks the chip again
+  // from another page → SPA nav). Without this, the activeTab state from
+  // the first render would stay on whatever tab was active.
+  useEffect(() => {
+    const t = searchParams?.get('tab');
+    if (t === 'conviction' && activeTab !== 'conviction') setActiveTab('conviction');
+    if (t === 'main' && activeTab !== 'main') setActiveTab('main');
+    // Intentionally not depending on activeTab to avoid clobbering manual
+    // tab clicks that don't update the URL.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
   // PATCH 0874 — Init to empty array instead of reading LS in lazy-init.
   // The lazy-init reads localStorage which is unavailable during SSR,
   // returning [] on the server but the user's actual list on the client →
