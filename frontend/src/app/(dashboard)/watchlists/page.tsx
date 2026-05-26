@@ -1138,9 +1138,16 @@ type ConvFilters = {
   //   year and all filter logic to be perfect".
   quarter: 'Q1' | 'Q2' | 'Q3' | 'Q4' | null;
   fy: number | null;        // 26 = FY26 (Apr 2025 - Mar 2026), etc.
+  // PATCH 0918 — Free-form date-range filter on filing_date.
+  // User feedback: "also give option to slect dates i want with year
+  // also give that optin as filter". Composes AND with Q + FY chips so
+  // user can narrow even further (e.g. "Q4 FY26 entries filed
+  // between May 1 and May 15"). Both nullable — either side optional.
+  fromDate: string | null;  // YYYY-MM-DD or null
+  toDate: string | null;    // YYYY-MM-DD or null
 };
 
-const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, guidance: null, quarter: null, fy: null };
+const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null };
 
 // PATCH 0911 — Robust derivation of Indian-FY quarter + fiscal year.
 //
@@ -1285,6 +1292,13 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
     if (!qfy) return false;
     if (f.quarter != null && qfy.q !== f.quarter) return false;
     if (f.fy != null && qfy.fy !== f.fy) return false;
+  }
+  // PATCH 0918 — Free-form date range filter (composes AND with Q + FY).
+  if (f.fromDate || f.toDate) {
+    const fdate = (e.filing_date || '').slice(0, 10);
+    if (!fdate || !/^\d{4}-\d{2}-\d{2}$/.test(fdate)) return false;
+    if (f.fromDate && fdate < f.fromDate) return false;
+    if (f.toDate && fdate > f.toDate) return false;
   }
   return true;
 }
@@ -1772,8 +1786,8 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
               🌊 Sort by PEAD {filters.sortByPead ? '✓' : ''}
             </button>
             <button onClick={() => setFilters(FILTER_DEFAULT)}
-              disabled={filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && !filters.sortByPead}
-              style={{ ...chipBase, opacity: (filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && !filters.sortByPead) ? 0.4 : 1 }}>
+              disabled={filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && !filters.sortByPead}
+              style={{ ...chipBase, opacity: (filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && !filters.sortByPead) ? 0.4 : 1 }}>
               Clear
             </button>
           </div>
@@ -1927,10 +1941,29 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                   })}
                 </>
               )}
-              {(filters.quarter || filters.fy != null) && (
+              {/* PATCH 0918 — Custom date-range filter inside PERIOD row.
+                  Composes AND with the QTR + YEAR chips above. */}
+              <span style={{ width: 1, height: 16, background: '#2A3550', margin: '0 4px' }} />
+              <span style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700 }}>FROM:</span>
+              <input
+                type="date"
+                value={filters.fromDate || ''}
+                onChange={(e) => setFilters((f) => ({ ...f, fromDate: e.target.value || null }))}
+                title="Filter to entries filed on or AFTER this date (inclusive)"
+                style={{ background: '#0A1422', border: '1px solid #2A3550', color: '#22D3EE', fontSize: 11, fontWeight: 700, padding: '3px 6px', borderRadius: 4, outline: 'none', cursor: 'pointer' }}
+              />
+              <span style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700 }}>TO:</span>
+              <input
+                type="date"
+                value={filters.toDate || ''}
+                onChange={(e) => setFilters((f) => ({ ...f, toDate: e.target.value || null }))}
+                title="Filter to entries filed on or BEFORE this date (inclusive)"
+                style={{ background: '#0A1422', border: '1px solid #2A3550', color: '#22D3EE', fontSize: 11, fontWeight: 700, padding: '3px 6px', borderRadius: 4, outline: 'none', cursor: 'pointer' }}
+              />
+              {(filters.quarter || filters.fy != null || filters.fromDate || filters.toDate) && (
                 <button
-                  onClick={() => setFilters((f) => ({ ...f, quarter: null, fy: null }))}
-                  title="Clear Period filter"
+                  onClick={() => setFilters((f) => ({ ...f, quarter: null, fy: null, fromDate: null, toDate: null }))}
+                  title="Clear all Period filters (QTR + FY + date range)"
                   style={{ ...chipBase, marginLeft: 4, opacity: 0.8 }}
                 >× clear period</button>
               )}
@@ -1943,9 +1976,38 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
         border: '1px solid #1A2840', borderRadius: 8,
         fontSize: 11.5, color: '#8BA3C1', lineHeight: 1.5,
       }}>
-        Institutional bench of high-quality post-earnings setups.
-        Auto-populated from <strong style={{ color: '#22D3EE' }}>Earnings Opportunities</strong> whenever a stock prints BLOCKBUSTER or STRONG.
-        Removed entries don't auto-readd — use × to permanently prune.
+        <div>
+          Institutional bench of high-quality post-earnings setups.
+          Auto-populated from <strong style={{ color: '#22D3EE' }}>Earnings Opportunities</strong> whenever a stock prints BLOCKBUSTER or STRONG.
+          Removed entries don't auto-readd — use × to permanently prune.
+        </div>
+        {/* PATCH 0918 — Explain why bench is heavily skewed toward current quarter.
+            User feedback: clicked Jan 29 2026 on EO, saw 101 scheduled, expected
+            those to land on the bench. They don't — bench only gains entries
+            when a company is GRADED BLOCKBUSTER/STRONG (i.e. it actually filed
+            financials AND beat the bar), not when a board meeting is announced. */}
+        {(() => {
+          // Compute quarter distribution to show user why their filters look skewed.
+          const counts = { Q1: 0, Q2: 0, Q3: 0, Q4: 0, none: 0 };
+          for (const e of entries) {
+            const qfy = deriveQuarterFY(e);
+            if (qfy) counts[qfy.q]++; else counts.none++;
+          }
+          const totalQ = counts.Q1 + counts.Q2 + counts.Q3 + counts.Q4;
+          const dominantQ = (Object.entries(counts) as Array<[string, number]>)
+            .filter(([k]) => k !== 'none')
+            .sort((a, b) => b[1] - a[1])[0];
+          if (!dominantQ || totalQ === 0) return null;
+          const dominantPct = (dominantQ[1] / totalQ) * 100;
+          if (dominantPct < 70) return null; // Only show when one quarter dominates >70%
+          return (
+            <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.3)', borderRadius: 4, fontSize: 11, color: '#A78BFA', lineHeight: 1.5 }}>
+              ℹ️ <strong>Why is {dominantQ[0]} so dominant?</strong> Bench auto-populates ONLY when a stock is GRADED (filed + parsed + tiered) — not when its board meeting is scheduled.
+              We&apos;re in the middle of Q4 FY26 filing season (Apr-Jun 2026), so {dominantQ[0]} naturally has {dominantQ[1]} of {totalQ} entries ({dominantPct.toFixed(0)}%).
+              To test filters across OTHER quarters, click <strong>🧪 Add demo entries</strong> above to seed 8 synthetic FY25 + FY26 entries spanning all 4 quarters.
+            </div>
+          );
+        })()}
       </div>
 
       {/* PATCH 0196 — Export toolbar (CSV, TradingView, .txt, Open chart). Tier-grouped.
