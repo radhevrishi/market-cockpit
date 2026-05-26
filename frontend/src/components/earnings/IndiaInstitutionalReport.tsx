@@ -302,8 +302,43 @@ export function IndiaInstitutionalReport({
               </span>
             </div>
             {fwd && (
-              <div style={{ fontSize: 11, color: fwdColor, marginTop: 6, lineHeight: 1.5, fontWeight: 500 }}>
-                ▶ Forward outlook: <strong>{fwd.label.toLowerCase()}</strong> — {fwd.evidence}
+              <div style={{ marginTop: 6, lineHeight: 1.55 }}>
+                <div style={{ fontSize: 11, color: fwdColor, fontWeight: 500 }}>
+                  ▶ Forward outlook: <strong>{fwd.label.toLowerCase()}</strong> — {fwd.evidence}
+                </div>
+                {/* PATCH 0879 — Capex line: classify as growth vs maintenance
+                    + name the purpose so analysts don't have to guess. */}
+                {fwd.capex && fwd.capex.type !== 'unspecified' && (
+                  <div
+                    style={{ fontSize: 11, color: MUTED, marginTop: 3, fontWeight: 500 }}
+                    title={fwd.capex.evidenceQuote || ''}
+                  >
+                    <span style={{ color: '#a78bfa' }}>⚙ Capex:</span>{' '}
+                    <strong style={{ color: fwd.capex.type === 'growth' ? GREEN : fwd.capex.type === 'maintenance' ? '#fbbf24' : '#fb923c' }}>
+                      {fwd.capex.type.toUpperCase()}
+                    </strong>
+                    {fwd.capex.purpose && fwd.capex.purpose !== '—' && (
+                      <span style={{ color: MUTED }}> — {fwd.capex.purpose}</span>
+                    )}
+                  </div>
+                )}
+                {/* PATCH 0879 — Why-mixed: pull the actual positive vs cautious
+                    snippets that produced a mixed/cautious/weak call so the
+                    analyst sees the underlying signal mix at a glance. */}
+                {fwd.mixedReason && (fwd.mixedReason.positives.length > 0 || fwd.mixedReason.cautions.length > 0) && (
+                  <div style={{ fontSize: 11, color: MUTED, marginTop: 3, fontWeight: 500, lineHeight: 1.55 }}>
+                    <span style={{ color: '#a78bfa' }}>↔ Why {fwd.label.toLowerCase()}:</span>{' '}
+                    {fwd.mixedReason.positives.length > 0 && (
+                      <span><span style={{ color: GREEN }}>⬆</span> {fwd.mixedReason.positives.join(' · ')}</span>
+                    )}
+                    {fwd.mixedReason.positives.length > 0 && fwd.mixedReason.cautions.length > 0 && (
+                      <span style={{ color: FAINT }}>  ·  </span>
+                    )}
+                    {fwd.mixedReason.cautions.length > 0 && (
+                      <span><span style={{ color: '#fb923c' }}>⚠</span> {fwd.mixedReason.cautions.join(' · ')}</span>
+                    )}
+                  </div>
+                )}
               </div>
             )}
             <div style={{ fontSize: 12, color: MUTED, marginTop: 6, lineHeight: 1.5 }}>

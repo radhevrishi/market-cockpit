@@ -1338,8 +1338,74 @@ function buildTopLineVerdict(args: {
       return 'no forward-looking commentary detected';
     })();
 
+    // PATCH 0879 — Capex classification + mixed-reason narrative.
+    // Analysts want to know two things at-a-glance:
+    //   (a) Is the capex MAINTENANCE (keeps lights on) or GROWTH
+    //       (expands capacity / new products)? Very different valuation
+    //       implications — growth capex compounding earnings, maintenance
+    //       capex is a wash.
+    //   (b) When the call is "mixed", WHY mixed? Show the actual positive
+    //       + cautious snippets from concall toneSignals so the user
+    //       doesn't have to scroll for context.
+    let capex: NonNullable<typeof forwardLook>['capex'] | undefined;
+    if (hasConcall) {
+      // Find the capex-related quote from keyMentions, or the highest-
+      // scoring concall sentence mentioning capex/capacity/expansion.
+      const capexQuote = (concall?.keyMentions || []).find((m) => m.topic === 'capex' || m.topic === 'capacity')?.quote || '';
+      // Combine concall text for keyword scanning. topQuotes is a small
+      // set already filtered for prose quality.
+      const scanText = ((concall?.topQuotes || []).join(' ') + ' ' + capexQuote).toLowerCase();
+      // Growth signals — expansion / new product / greenfield / brownfield /
+      // commissioning / new line / capacity addition / Phase N
+      const growthKW = /\b(?:greenfield|brownfield|capacity\s+(?:expansion|addition|ramp|scale)|new\s+product|new\s+(?:plant|line|facility|unit)|commission(?:ing)?|expansion|phase\s+(?:i|ii|iii|iv|1|2|3|4)|expanded\s+capacity|debottlenecking|backward\s+integrat|forward\s+integrat)\b/i;
+      // Maintenance signals — replacement / upgrade / refurbish / retrofit
+      const maintKW = /\b(?:maintenance\s+(?:capex|capital)|replacement\s+capex|refurbish|retrofit|upkeep|upgrade\s+(?:existing|legacy))\b/i;
+      const hasGrowth = growthKW.test(scanText);
+      const hasMaint = maintKW.test(scanText);
+      let type: NonNullable<NonNullable<typeof forwardLook>['capex']>['type'] = 'unspecified';
+      if (hasGrowth && hasMaint) type = 'mixed';
+      else if (hasGrowth) type = 'growth';
+      else if (hasMaint) type = 'maintenance';
+      // Purpose: try to extract specific phrases like "₹210 Cr greenfield
+      // expansion at Tarapur" / "Phase II commercial production from H2FY27".
+      const purposeBits: string[] = [];
+      const phaseMatch = capexQuote.match(/Phase\s+(I{1,4}|\d)[^.]{0,80}(?:commercial production|commissioning|completion|H[12]FY\d{2}|Q[1-4]FY\d{2})/i);
+      if (phaseMatch) purposeBits.push(phaseMatch[0].trim());
+      const greenfieldMatch = capexQuote.match(/(?:greenfield|brownfield)[^.]{0,80}/i);
+      if (greenfieldMatch && !purposeBits.some((p) => p.includes(greenfieldMatch[0].slice(0, 20)))) purposeBits.push(greenfieldMatch[0].trim());
+      const crMatch = capexQuote.match(/₹\s?[\d,.]+\s*Cr(?:ore)?[^.]{0,60}/i);
+      if (crMatch && !purposeBits.some((p) => p.includes(crMatch[0].slice(0, 20)))) purposeBits.push(crMatch[0].trim());
+      const newProductMatch = capexQuote.match(/new\s+products?[^.]{0,60}/i);
+      if (newProductMatch && !purposeBits.some((p) => p.includes(newProductMatch[0].slice(0, 20)))) purposeBits.push(newProductMatch[0].trim());
+      let purpose = purposeBits.join(' · ').slice(0, 220);
+      if (!purpose && type !== 'unspecified') {
+        purpose = type === 'growth'
+          ? 'capacity expansion / new products mentioned but specifics not detailed'
+          : type === 'maintenance'
+          ? 'maintenance / replacement spend'
+          : 'mixed growth + maintenance spend';
+      }
+      if (type !== 'unspecified' || purpose) {
+        capex = { type, purpose: purpose || '—', evidenceQuote: capexQuote || undefined };
+      }
+    }
+
+    // Mixed-reason narrative: collect 1-2 actual positive + 1-2 cautious
+    // snippets from toneSignals, capped at ~120 chars each so the UI stays
+    // compact. Only populated when grade is mixed/cautious/weak (when
+    // grade is very_positive/positive we don't need to defend the call).
+    let mixedReason: NonNullable<typeof forwardLook>['mixedReason'] | undefined;
+    if (hasConcall && (grade === 'mixed' || grade === 'cautious' || grade === 'weak')) {
+      const trim = (s: string) => (s.length > 130 ? s.slice(0, 127).replace(/\s+\S*$/, '') + '…' : s).trim();
+      const positives = (concall!.toneSignals.filter((t) => t.sentiment === 'positive').slice(0, 2)).map((t) => `${t.phrase}: ${trim(t.context)}`);
+      const cautions = (concall!.toneSignals.filter((t) => t.sentiment === 'cautious' || t.sentiment === 'negative').slice(0, 2)).map((t) => `${t.phrase}: ${trim(t.context)}`);
+      if (positives.length > 0 || cautions.length > 0) {
+        mixedReason = { positives, cautions };
+      }
+    }
+
     if (grade !== 'not_provided') {
-      forwardLook = { grade, label: labelMap[grade], evidence };
+      forwardLook = { grade, label: labelMap[grade], evidence, capex, mixedReason };
     }
   }
 

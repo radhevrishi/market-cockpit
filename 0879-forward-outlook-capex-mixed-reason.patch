@@ -1,0 +1,200 @@
+From 28668c44c1baf9dbcb6dcb1ef88b45a3042f70a1 Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Tue, 26 May 2026 10:01:50 +0000
+Subject: [PATCH] patch 0879: Forward outlook - classify capex + explain
+ "mixed"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+NGL Fine Chem audit: the single line "Forward outlook: mixed -
+capacity / capex expansion + forward guidance" was not informative
+enough. User wants to know two things at-a-glance:
+  (1) is this MAINTENANCE capex or GROWTH capex - and what specifically
+      do they do with it?
+  (2) when verdict is "mixed", what comments produced that mix?
+
+Now renders as 3 lines:
+  Line 1 - base direction (unchanged): "Forward outlook: mixed - capacity /
+           capex expansion + forward guidance"
+  Line 2 - capex classification: "Capex: GROWTH - Phase II commercial
+           production from H2FY27 - ₹210 Cr greenfield Tarapur - new products"
+           (color-coded: green=growth / amber=maintenance / orange=mixed)
+  Line 3 - mixed reason: "Why mixed: ⬆ <positive snippets> · ⚠ <cautious
+           snippets>" pulling actual tone-signal sentences
+
+Implementation:
+  - snapshot.ts: extended forwardLook with optional capex {type, purpose,
+    evidenceQuote} and mixedReason {positives[], cautions[]}.
+  - india-build.ts: classify capex via growthKW (greenfield/brownfield/
+    new product/capacity expansion/Phase N/etc) vs maintKW (replacement/
+    refurbish/retrofit). Extract purpose phrases (Phase milestone, ₹ Cr
+    amount, greenfield/brownfield modifier, new-products mention).
+    Pull positive + cautious tone snippets when grade is mixed/cautious/weak.
+  - IndiaInstitutionalReport.tsx: render the new fields when present;
+    falls back to single-line behavior when no concall data available.
+---
+ .../earnings/IndiaInstitutionalReport.tsx     | 39 ++++++++++-
+ frontend/src/lib/earnings/india-build.ts      | 68 ++++++++++++++++++-
+ frontend/src/lib/earnings/snapshot.ts         | 15 ++++
+ 3 files changed, 119 insertions(+), 3 deletions(-)
+
+diff --git a/frontend/src/components/earnings/IndiaInstitutionalReport.tsx b/frontend/src/components/earnings/IndiaInstitutionalReport.tsx
+index 0af6fcc..8292f5b 100644
+--- a/frontend/src/components/earnings/IndiaInstitutionalReport.tsx
++++ b/frontend/src/components/earnings/IndiaInstitutionalReport.tsx
+@@ -302,8 +302,43 @@ export function IndiaInstitutionalReport({
+               </span>
+             </div>
+             {fwd && (
+-              <div style={{ fontSize: 11, color: fwdColor, marginTop: 6, lineHeight: 1.5, fontWeight: 500 }}>
+-                ▶ Forward outlook: <strong>{fwd.label.toLowerCase()}</strong> — {fwd.evidence}
++              <div style={{ marginTop: 6, lineHeight: 1.55 }}>
++                <div style={{ fontSize: 11, color: fwdColor, fontWeight: 500 }}>
++                  ▶ Forward outlook: <strong>{fwd.label.toLowerCase()}</strong> — {fwd.evidence}
++                </div>
++                {/* PATCH 0879 — Capex line: classify as growth vs maintenance
++                    + name the purpose so analysts don't have to guess. */}
++                {fwd.capex && fwd.capex.type !== 'unspecified' && (
++                  <div
++                    style={{ fontSize: 11, color: MUTED, marginTop: 3, fontWeight: 500 }}
++                    title={fwd.capex.evidenceQuote || ''}
++                  >
++                    <span style={{ color: '#a78bfa' }}>⚙ Capex:</span>{' '}
++                    <strong style={{ color: fwd.capex.type === 'growth' ? GREEN : fwd.capex.type === 'maintenance' ? '#fbbf24' : '#fb923c' }}>
++                      {fwd.capex.type.toUpperCase()}
++                    </strong>
++                    {fwd.capex.purpose && fwd.capex.purpose !== '—' && (
++                      <span style={{ color: MUTED }}> — {fwd.capex.purpose}</span>
++                    )}
++                  </div>
++                )}
++                {/* PATCH 0879 — Why-mixed: pull the actual positive vs cautious
++                    snippets that produced a mixed/cautious/weak call so the
++                    analyst sees the underlying signal mix at a glance. */}
++                {fwd.mixedReason && (fwd.mixedReason.positives.length > 0 || fwd.mixedReason.cautions.length > 0) && (
++                  <div style={{ fontSize: 11, color: MUTED, marginTop: 3, fontWeight: 500, lineHeight: 1.55 }}>
++                    <span style={{ color: '#a78bfa' }}>↔ Why {fwd.label.toLowerCase()}:</span>{' '}
++                    {fwd.mixedReason.positives.length > 0 && (
++                      <span><span style={{ color: GREEN }}>⬆</span> {fwd.mixedReason.positives.join(' · ')}</span>
++                    )}
++                    {fwd.mixedReason.positives.length > 0 && fwd.mixedReason.cautions.length > 0 && (
++                      <span style={{ color: FAINT }}>  ·  </span>
++                    )}
++                    {fwd.mixedReason.cautions.length > 0 && (
++                      <span><span style={{ color: '#fb923c' }}>⚠</span> {fwd.mixedReason.cautions.join(' · ')}</span>
++                    )}
++                  </div>
++                )}
+               </div>
+             )}
+             <div style={{ fontSize: 12, color: MUTED, marginTop: 6, lineHeight: 1.5 }}>
+diff --git a/frontend/src/lib/earnings/india-build.ts b/frontend/src/lib/earnings/india-build.ts
+index 3dcc4d0..f673e6d 100644
+--- a/frontend/src/lib/earnings/india-build.ts
++++ b/frontend/src/lib/earnings/india-build.ts
+@@ -1338,8 +1338,74 @@ function buildTopLineVerdict(args: {
+       return 'no forward-looking commentary detected';
+     })();
+ 
++    // PATCH 0879 — Capex classification + mixed-reason narrative.
++    // Analysts want to know two things at-a-glance:
++    //   (a) Is the capex MAINTENANCE (keeps lights on) or GROWTH
++    //       (expands capacity / new products)? Very different valuation
++    //       implications — growth capex compounding earnings, maintenance
++    //       capex is a wash.
++    //   (b) When the call is "mixed", WHY mixed? Show the actual positive
++    //       + cautious snippets from concall toneSignals so the user
++    //       doesn't have to scroll for context.
++    let capex: NonNullable<typeof forwardLook>['capex'] | undefined;
++    if (hasConcall) {
++      // Find the capex-related quote from keyMentions, or the highest-
++      // scoring concall sentence mentioning capex/capacity/expansion.
++      const capexQuote = (concall?.keyMentions || []).find((m) => m.topic === 'capex' || m.topic === 'capacity')?.quote || '';
++      // Combine concall text for keyword scanning. topQuotes is a small
++      // set already filtered for prose quality.
++      const scanText = ((concall?.topQuotes || []).join(' ') + ' ' + capexQuote).toLowerCase();
++      // Growth signals — expansion / new product / greenfield / brownfield /
++      // commissioning / new line / capacity addition / Phase N
++      const growthKW = /\b(?:greenfield|brownfield|capacity\s+(?:expansion|addition|ramp|scale)|new\s+product|new\s+(?:plant|line|facility|unit)|commission(?:ing)?|expansion|phase\s+(?:i|ii|iii|iv|1|2|3|4)|expanded\s+capacity|debottlenecking|backward\s+integrat|forward\s+integrat)\b/i;
++      // Maintenance signals — replacement / upgrade / refurbish / retrofit
++      const maintKW = /\b(?:maintenance\s+(?:capex|capital)|replacement\s+capex|refurbish|retrofit|upkeep|upgrade\s+(?:existing|legacy))\b/i;
++      const hasGrowth = growthKW.test(scanText);
++      const hasMaint = maintKW.test(scanText);
++      let type: NonNullable<NonNullable<typeof forwardLook>['capex']>['type'] = 'unspecified';
++      if (hasGrowth && hasMaint) type = 'mixed';
++      else if (hasGrowth) type = 'growth';
++      else if (hasMaint) type = 'maintenance';
++      // Purpose: try to extract specific phrases like "₹210 Cr greenfield
++      // expansion at Tarapur" / "Phase II commercial production from H2FY27".
++      const purposeBits: string[] = [];
++      const phaseMatch = capexQuote.match(/Phase\s+(I{1,4}|\d)[^.]{0,80}(?:commercial production|commissioning|completion|H[12]FY\d{2}|Q[1-4]FY\d{2})/i);
++      if (phaseMatch) purposeBits.push(phaseMatch[0].trim());
++      const greenfieldMatch = capexQuote.match(/(?:greenfield|brownfield)[^.]{0,80}/i);
++      if (greenfieldMatch && !purposeBits.some((p) => p.includes(greenfieldMatch[0].slice(0, 20)))) purposeBits.push(greenfieldMatch[0].trim());
++      const crMatch = capexQuote.match(/₹\s?[\d,.]+\s*Cr(?:ore)?[^.]{0,60}/i);
++      if (crMatch && !purposeBits.some((p) => p.includes(crMatch[0].slice(0, 20)))) purposeBits.push(crMatch[0].trim());
++      const newProductMatch = capexQuote.match(/new\s+products?[^.]{0,60}/i);
++      if (newProductMatch && !purposeBits.some((p) => p.includes(newProductMatch[0].slice(0, 20)))) purposeBits.push(newProductMatch[0].trim());
++      let purpose = purposeBits.join(' · ').slice(0, 220);
++      if (!purpose && type !== 'unspecified') {
++        purpose = type === 'growth'
++          ? 'capacity expansion / new products mentioned but specifics not detailed'
++          : type === 'maintenance'
++          ? 'maintenance / replacement spend'
++          : 'mixed growth + maintenance spend';
++      }
++      if (type !== 'unspecified' || purpose) {
++        capex = { type, purpose: purpose || '—', evidenceQuote: capexQuote || undefined };
++      }
++    }
++
++    // Mixed-reason narrative: collect 1-2 actual positive + 1-2 cautious
++    // snippets from toneSignals, capped at ~120 chars each so the UI stays
++    // compact. Only populated when grade is mixed/cautious/weak (when
++    // grade is very_positive/positive we don't need to defend the call).
++    let mixedReason: NonNullable<typeof forwardLook>['mixedReason'] | undefined;
++    if (hasConcall && (grade === 'mixed' || grade === 'cautious' || grade === 'weak')) {
++      const trim = (s: string) => (s.length > 130 ? s.slice(0, 127).replace(/\s+\S*$/, '') + '…' : s).trim();
++      const positives = (concall!.toneSignals.filter((t) => t.sentiment === 'positive').slice(0, 2)).map((t) => `${t.phrase}: ${trim(t.context)}`);
++      const cautions = (concall!.toneSignals.filter((t) => t.sentiment === 'cautious' || t.sentiment === 'negative').slice(0, 2)).map((t) => `${t.phrase}: ${trim(t.context)}`);
++      if (positives.length > 0 || cautions.length > 0) {
++        mixedReason = { positives, cautions };
++      }
++    }
++
+     if (grade !== 'not_provided') {
+-      forwardLook = { grade, label: labelMap[grade], evidence };
++      forwardLook = { grade, label: labelMap[grade], evidence, capex, mixedReason };
+     }
+   }
+ 
+diff --git a/frontend/src/lib/earnings/snapshot.ts b/frontend/src/lib/earnings/snapshot.ts
+index e443eca..84cbdbb 100644
+--- a/frontend/src/lib/earnings/snapshot.ts
++++ b/frontend/src/lib/earnings/snapshot.ts
+@@ -376,6 +376,21 @@ export interface IndiaExtras {
+       grade: 'very_positive' | 'positive' | 'mixed' | 'cautious' | 'weak' | 'not_provided';
+       label: string;          // human-readable: "STRONG", "POSITIVE", "MIXED", etc.
+       evidence: string;       // short clause: "capacity expansion + new product roadmap"
++      // PATCH 0879 — Capex classification: maintenance keeps the lights on,
++      // growth expands capacity. Analysts want to know which is which because
++      // they have very different valuation implications.
++      capex?: {
++        type: 'growth' | 'maintenance' | 'mixed' | 'unspecified';
++        purpose: string;       // e.g., "greenfield Tarapur ₹210 Cr · new products pipeline"
++        evidenceQuote?: string; // top capex sentence used to classify
++      };
++      // PATCH 0879 — When the overall grade is mixed/cautious, surface the
++      // actual positive vs cautious quotes so the analyst sees WHY it landed
++      // mixed (not just a single-word label).
++      mixedReason?: {
++        positives: string[];   // 1-2 short snippets pulled from concall toneSignals
++        cautions: string[];    // 1-2 short snippets that prevented a fully-positive call
++      };
+     };
+   };
+ 
+-- 
+2.34.1
+

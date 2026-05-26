@@ -376,6 +376,21 @@ export interface IndiaExtras {
       grade: 'very_positive' | 'positive' | 'mixed' | 'cautious' | 'weak' | 'not_provided';
       label: string;          // human-readable: "STRONG", "POSITIVE", "MIXED", etc.
       evidence: string;       // short clause: "capacity expansion + new product roadmap"
+      // PATCH 0879 — Capex classification: maintenance keeps the lights on,
+      // growth expands capacity. Analysts want to know which is which because
+      // they have very different valuation implications.
+      capex?: {
+        type: 'growth' | 'maintenance' | 'mixed' | 'unspecified';
+        purpose: string;       // e.g., "greenfield Tarapur ₹210 Cr · new products pipeline"
+        evidenceQuote?: string; // top capex sentence used to classify
+      };
+      // PATCH 0879 — When the overall grade is mixed/cautious, surface the
+      // actual positive vs cautious quotes so the analyst sees WHY it landed
+      // mixed (not just a single-word label).
+      mixedReason?: {
+        positives: string[];   // 1-2 short snippets pulled from concall toneSignals
+        cautions: string[];    // 1-2 short snippets that prevented a fully-positive call
+      };
     };
   };
 
