@@ -1,0 +1,199 @@
+From 7b5ef0d5dfbc77f02f0d0b99530fa39ef9a26b34 Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Tue, 26 May 2026 10:07:20 +0000
+Subject: [PATCH] patch 0880: tone-signal best-match + boilerplate/TOC +
+ duplicate-value guidance dedup
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Concall AI ToneSignals + Top-Quotes had three remaining noise sources
+that the NGL Fine Chem audit surfaced:
+
+1. captureSignals used .find() to pick the FIRST sentence containing a
+   phrase. For "record" that picked the cover-letter "...kindly take the
+   information on record." line and surfaced it under "↑ record" — a
+   POSITIVE signal label. Now picks the highest-scoring sentence among
+   matches (scoreSentence already hard-rejects boilerplate at -100), and
+   requires the winning score ≥ 1.
+
+2. isBoilerplate missed several Indian cover-letter closings:
+     - "kindly take (the information) on record"
+     - "also being made available on (the Company website)"
+     - "You are requested to (kindly take...)"
+     - "Encl:"
+     - "For COMPANY LIMITED" sign-off lines
+     - inline-bracketed URLs from markdown extraction
+     - "The above presentation"
+
+3. isTableNoise missed TOC fragments like "04 Q4 & FY26 Highlights Pg."
+   New rule: short sentence (<80 chars) with <=2 prose words AND a
+   digit-prefix / Pg / Page / Contents marker is rejected.
+
+Plus a guidance-display dedup in Auto-Val:
+
+4. When extractGuidance attributes the SAME value across 4+ different
+   FYs for the same metric, that pattern is the extractor matching a
+   single number and stamping it on every FY token in the document.
+   Real guidance varies year-over-year. Drop those clusters from the
+   displayed panel. Kills the recurring noise: "Capacity Ramp 10% x 5",
+   "EBITDA 14 Cr x 5", "CAGR 15-50% x 5".
+---
+ .../app/(dashboard)/auto-valuation/engine.ts  | 21 ++++++++-
+ .../app/(dashboard)/auto-valuation/page.tsx   | 16 ++++++-
+ frontend/src/lib/earnings/india-concall.ts    | 45 +++++++++++++++++--
+ 3 files changed, 76 insertions(+), 6 deletions(-)
+
+diff --git a/frontend/src/app/(dashboard)/auto-valuation/engine.ts b/frontend/src/app/(dashboard)/auto-valuation/engine.ts
+index 65392bb..87d106f 100644
+--- a/frontend/src/app/(dashboard)/auto-valuation/engine.ts
++++ b/frontend/src/app/(dashboard)/auto-valuation/engine.ts
+@@ -1466,7 +1466,7 @@ export async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationRepor
+   const _lsales = excelData?.latestSales || 0;
+   const _lebitda = excelData?.latestEBITDA || 0;
+   const _lpat = excelData?.latestPAT || 0;
+-  const guidanceFiltered: GuidanceItem[] = allGuidance.filter((g) => {
++  const _step1: GuidanceItem[] = allGuidance.filter((g) => {
+     // Always keep non-monetary metrics (margins, growth %, days, units, bps)
+     if (g.unit !== '₹ Cr') return true;
+     const v = g.point ?? g.high ?? g.low ?? 0;
+@@ -1480,6 +1480,25 @@ export async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationRepor
+     }
+     return true;
+   });
++  // PATCH 0880 — Duplicate-value dedup. When the extractor finds the same
++  // numeric value attached to 4+ different FYs for the same metric, that's
++  // almost always a single noise-match being attributed to every FY token
++  // found in the document (the NGL Fine Chem case: "Capacity Ramp 10% × 5
++  // years"). Real guidance varies year-over-year. Drop those clusters.
++  const _valueCount = new Map<string, number>();
++  for (const g of _step1) {
++    const v = g.point ?? g.high ?? g.low ?? 0;
++    if (v <= 0) continue;
++    const key = `${g.metric}::${v.toFixed(2)}`;
++    _valueCount.set(key, (_valueCount.get(key) || 0) + 1);
++  }
++  const guidanceFiltered: GuidanceItem[] = _step1.filter((g) => {
++    const v = g.point ?? g.high ?? g.low ?? 0;
++    if (v <= 0) return true;
++    const key = `${g.metric}::${v.toFixed(2)}`;
++    // 4+ identical values for the same metric = noise pattern. Drop all.
++    return (_valueCount.get(key) || 0) < 4;
++  });
+   const guidanceRejectedCount = allGuidance.length - guidanceFiltered.length;
+   if (guidanceRejectedCount > 0) {
+     rationale.push(`Guidance filter: ${guidanceRejectedCount} extractor matches dropped as implausible vs latest reported numbers (page-number noise / wrong-metric matches).`);
+diff --git a/frontend/src/app/(dashboard)/auto-valuation/page.tsx b/frontend/src/app/(dashboard)/auto-valuation/page.tsx
+index 6f11511..96513e4 100644
+--- a/frontend/src/app/(dashboard)/auto-valuation/page.tsx
++++ b/frontend/src/app/(dashboard)/auto-valuation/page.tsx
+@@ -1420,7 +1420,7 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
+   const _lsales = excelData?.latestSales || 0;
+   const _lebitda = excelData?.latestEBITDA || 0;
+   const _lpat = excelData?.latestPAT || 0;
+-  const guidanceFiltered = allGuidance.filter((g) => {
++  const _step1g = allGuidance.filter((g) => {
+     if (g.unit !== '₹ Cr') return true;
+     const v = g.point ?? g.high ?? g.low ?? 0;
+     if (v <= 0) return true;
+@@ -1433,6 +1433,20 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
+     }
+     return true;
+   });
++  // PATCH 0880 — Mirror engine.ts: same-value across 4+ FYs = noise.
++  const _valueCount = new Map<string, number>();
++  for (const g of _step1g) {
++    const v = g.point ?? g.high ?? g.low ?? 0;
++    if (v <= 0) continue;
++    const key = `${g.metric}::${v.toFixed(2)}`;
++    _valueCount.set(key, (_valueCount.get(key) || 0) + 1);
++  }
++  const guidanceFiltered = _step1g.filter((g) => {
++    const v = g.point ?? g.high ?? g.low ?? 0;
++    if (v <= 0) return true;
++    const key = `${g.metric}::${v.toFixed(2)}`;
++    return (_valueCount.get(key) || 0) < 4;
++  });
+   const guidanceRejectedCount = allGuidance.length - guidanceFiltered.length;
+   if (guidanceRejectedCount > 0) {
+     rationale.push(`Guidance filter: ${guidanceRejectedCount} extractor matches dropped as implausible vs latest reported numbers.`);
+diff --git a/frontend/src/lib/earnings/india-concall.ts b/frontend/src/lib/earnings/india-concall.ts
+index 091c76b..e070deb 100644
+--- a/frontend/src/lib/earnings/india-concall.ts
++++ b/frontend/src/lib/earnings/india-concall.ts
+@@ -221,6 +221,14 @@ function isTableNoise(s: string): boolean {
+   // PATCH 0878 — chart-axis stubs from PDF extraction ("Ebitda margin,,,,
+   // Net Profit Margin,,,,,,,,,,,,AVG."). Trailing commas + "AVG" / "MEDIAN".
+   if (/\b(?:AVG\.?|MEDIAN|MIN|MAX)\b\s*$/i.test(s) && /,{3,}/.test(s)) return true;
++  // PATCH 0880 — TOC fragments that slipped through ("04 Q4 & FY26
++  // Highlights Pg."). Hallmark: short sentence (<60 chars), <=2 words
++  // of 3+ chars, and either starts with digits or contains "Pg" / "Page".
++  const wc3 = (s.match(/\b[A-Za-z]{3,}\b/g) || []).length;
++  if (s.length < 80 && wc3 <= 2 && /(?:^\s*\d{1,3}\b|\bPg\.?\b|\bPage\s+\d|\bContents\b|\bIndex\b)/i.test(s)) return true;
++  // PATCH 0880 — Inline-bracketed URLs from markdown extraction ("at
++  // [www.example.com](https://example.com)"). Pure boilerplate noise.
++  if (/\[\s*www\.[^\]]+\]\s*\(https?:\/\/[^)]+\)/i.test(s) && wc3 <= 10) return true;
+ 
+   // Footnote-style sentences that snuck through previously:
+   //   "70 Crs as on 31st March 2026 10 Figures for the previous periods
+@@ -243,6 +251,19 @@ function isTableNoise(s: string): boolean {
+ // Detect cover-letter / regulatory boilerplate sentences
+ function isBoilerplate(s: string): boolean {
+   if (/\b(National Stock Exchange|BSE Limited|Bandra Kurla Complex|P\.J\. Towers|Listing Department|Trading Symbol|Compliance Officer|Membership No\.|Pursuant to Regulation|Yours faithfully|Dear Sir|Subject\s*:|safe harbor|forward looking statements concerning|risks and uncertainties)\b/i.test(s)) return true;
++  // PATCH 0880 — Additional Indian cover-letter phrases that previously
++  // slipped through. The NGL Fine Chem PDF surfaced:
++  //   "The above presentation is also being made available on the
++  //    Company's website at www.nglfinechem.com You are requested to
++  //    kindly take the information on record."
++  // ...which the tone-signal scanner matched on "record" → "↑ record".
++  // Wrong on every dimension. New patterns target the cover-letter
++  // closing language explicitly.
++  if (/\b(?:take (?:the )?information on record|kindly take .{0,40}? on record|on record\b.{0,10}$)/i.test(s)) return true;
++  if (/\b(?:also being made available on|made available on (?:the )?Company['']s website|available on (?:our|the company['']s) website)\b/i.test(s)) return true;
++  if (/\bYou are requested to (?:kindly )?(?:take|note|find)\b/i.test(s)) return true;
++  if (/^\s*Encl(?:osures?|\.|:)?\b/i.test(s)) return true;
++  if (/\bFor (?:and on behalf of\s+)?[A-Z][\w\- ]{2,40}(?:Limited|Ltd\.?)\b\s*$/i.test(s)) return true;
+   // PATCH 0878 — `Sub:` (Indian cover-letter shortform of `Subject:`)
+   // + scrip-code / symbol header line ("Scrip Code: 524774 Symbol: NGLFINE")
+   if (/\bSub\s*:\s*(?:Investor|Outcome|Intimation|Disclosure|Submission|Notice|Update|Press Release)/i.test(s)) return true;
+@@ -783,17 +804,33 @@ export function extractIndiaConcallInsights(
+     if (topQuotes.length >= 4) break;
+   }
+ 
+-  // 2. Tone signals — first match per phrase wins, capped at 12.
++  // 2. Tone signals — find the highest-scoring sentence containing each
++  // phrase, not just the first. PATCH 0880 — previous .find() picked the
++  // FIRST occurrence, which surfaced regulatory cover-letter text ("take
++  // the information on record") under the positive label "record".
++  // Now: pick the sentence with the best scoreSentence among matches.
+   const toneSignals: ConcallToneSignal[] = [];
+   const captureSignals = (
+     phrases: Array<[RegExp, string]>,
+     sentiment: ConcallToneSignal['sentiment'],
+   ) => {
+     for (const [re, label] of phrases) {
+-      const sentence = sentences.find((s) => re.test(s));
+-      if (sentence) {
+-        toneSignals.push({ phrase: label, context: sentence, sentiment });
++      const candidates = sentences.filter((s) => re.test(s));
++      if (candidates.length === 0) continue;
++      // Pick the candidate with the highest informativeness score.
++      // scoreSentence already hard-rejects boilerplate / table-noise /
++      // procedural-disclosure (returns -100), so those won't win.
++      let best = candidates[0];
++      let bestScore = scoreSentence(best);
++      for (let i = 1; i < candidates.length; i++) {
++        const sc = scoreSentence(candidates[i]);
++        if (sc > bestScore) { best = candidates[i]; bestScore = sc; }
+       }
++      // PATCH 0880 — require positive informativeness (≥1) so tone signals
++      // never cite junk sentences even when ALL matching sentences scored
++      // low. If nothing meaningful matched, skip the signal entirely.
++      if (bestScore < 1) continue;
++      toneSignals.push({ phrase: label, context: best, sentiment });
+     }
+   };
+   captureSignals(POSITIVE_PHRASES, 'positive');
+-- 
+2.34.1
+

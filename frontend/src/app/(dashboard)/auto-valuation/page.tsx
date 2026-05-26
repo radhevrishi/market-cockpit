@@ -1420,7 +1420,7 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
   const _lsales = excelData?.latestSales || 0;
   const _lebitda = excelData?.latestEBITDA || 0;
   const _lpat = excelData?.latestPAT || 0;
-  const guidanceFiltered = allGuidance.filter((g) => {
+  const _step1g = allGuidance.filter((g) => {
     if (g.unit !== '₹ Cr') return true;
     const v = g.point ?? g.high ?? g.low ?? 0;
     if (v <= 0) return true;
@@ -1432,6 +1432,20 @@ async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationReport> {
       if (_lpat > 0 && (v > _lpat * 20 || v < _lpat * 0.05)) return false;
     }
     return true;
+  });
+  // PATCH 0880 — Mirror engine.ts: same-value across 4+ FYs = noise.
+  const _valueCount = new Map<string, number>();
+  for (const g of _step1g) {
+    const v = g.point ?? g.high ?? g.low ?? 0;
+    if (v <= 0) continue;
+    const key = `${g.metric}::${v.toFixed(2)}`;
+    _valueCount.set(key, (_valueCount.get(key) || 0) + 1);
+  }
+  const guidanceFiltered = _step1g.filter((g) => {
+    const v = g.point ?? g.high ?? g.low ?? 0;
+    if (v <= 0) return true;
+    const key = `${g.metric}::${v.toFixed(2)}`;
+    return (_valueCount.get(key) || 0) < 4;
   });
   const guidanceRejectedCount = allGuidance.length - guidanceFiltered.length;
   if (guidanceRejectedCount > 0) {

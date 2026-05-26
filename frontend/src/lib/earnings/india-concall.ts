@@ -221,6 +221,14 @@ function isTableNoise(s: string): boolean {
   // PATCH 0878 — chart-axis stubs from PDF extraction ("Ebitda margin,,,,
   // Net Profit Margin,,,,,,,,,,,,AVG."). Trailing commas + "AVG" / "MEDIAN".
   if (/\b(?:AVG\.?|MEDIAN|MIN|MAX)\b\s*$/i.test(s) && /,{3,}/.test(s)) return true;
+  // PATCH 0880 — TOC fragments that slipped through ("04 Q4 & FY26
+  // Highlights Pg."). Hallmark: short sentence (<60 chars), <=2 words
+  // of 3+ chars, and either starts with digits or contains "Pg" / "Page".
+  const wc3 = (s.match(/\b[A-Za-z]{3,}\b/g) || []).length;
+  if (s.length < 80 && wc3 <= 2 && /(?:^\s*\d{1,3}\b|\bPg\.?\b|\bPage\s+\d|\bContents\b|\bIndex\b)/i.test(s)) return true;
+  // PATCH 0880 — Inline-bracketed URLs from markdown extraction ("at
+  // [www.example.com](https://example.com)"). Pure boilerplate noise.
+  if (/\[\s*www\.[^\]]+\]\s*\(https?:\/\/[^)]+\)/i.test(s) && wc3 <= 10) return true;
 
   // Footnote-style sentences that snuck through previously:
   //   "70 Crs as on 31st March 2026 10 Figures for the previous periods
@@ -243,6 +251,19 @@ function isTableNoise(s: string): boolean {
 // Detect cover-letter / regulatory boilerplate sentences
 function isBoilerplate(s: string): boolean {
   if (/\b(National Stock Exchange|BSE Limited|Bandra Kurla Complex|P\.J\. Towers|Listing Department|Trading Symbol|Compliance Officer|Membership No\.|Pursuant to Regulation|Yours faithfully|Dear Sir|Subject\s*:|safe harbor|forward looking statements concerning|risks and uncertainties)\b/i.test(s)) return true;
+  // PATCH 0880 — Additional Indian cover-letter phrases that previously
+  // slipped through. The NGL Fine Chem PDF surfaced:
+  //   "The above presentation is also being made available on the
+  //    Company's website at www.nglfinechem.com You are requested to
+  //    kindly take the information on record."
+  // ...which the tone-signal scanner matched on "record" → "↑ record".
+  // Wrong on every dimension. New patterns target the cover-letter
+  // closing language explicitly.
+  if (/\b(?:take (?:the )?information on record|kindly take .{0,40}? on record|on record\b.{0,10}$)/i.test(s)) return true;
+  if (/\b(?:also being made available on|made available on (?:the )?Company['']s website|available on (?:our|the company['']s) website)\b/i.test(s)) return true;
+  if (/\bYou are requested to (?:kindly )?(?:take|note|find)\b/i.test(s)) return true;
+  if (/^\s*Encl(?:osures?|\.|:)?\b/i.test(s)) return true;
+  if (/\bFor (?:and on behalf of\s+)?[A-Z][\w\- ]{2,40}(?:Limited|Ltd\.?)\b\s*$/i.test(s)) return true;
   // PATCH 0878 — `Sub:` (Indian cover-letter shortform of `Subject:`)
   // + scrip-code / symbol header line ("Scrip Code: 524774 Symbol: NGLFINE")
   if (/\bSub\s*:\s*(?:Investor|Outcome|Intimation|Disclosure|Submission|Notice|Update|Press Release)/i.test(s)) return true;
@@ -783,17 +804,33 @@ export function extractIndiaConcallInsights(
     if (topQuotes.length >= 4) break;
   }
 
-  // 2. Tone signals — first match per phrase wins, capped at 12.
+  // 2. Tone signals — find the highest-scoring sentence containing each
+  // phrase, not just the first. PATCH 0880 — previous .find() picked the
+  // FIRST occurrence, which surfaced regulatory cover-letter text ("take
+  // the information on record") under the positive label "record".
+  // Now: pick the sentence with the best scoreSentence among matches.
   const toneSignals: ConcallToneSignal[] = [];
   const captureSignals = (
     phrases: Array<[RegExp, string]>,
     sentiment: ConcallToneSignal['sentiment'],
   ) => {
     for (const [re, label] of phrases) {
-      const sentence = sentences.find((s) => re.test(s));
-      if (sentence) {
-        toneSignals.push({ phrase: label, context: sentence, sentiment });
+      const candidates = sentences.filter((s) => re.test(s));
+      if (candidates.length === 0) continue;
+      // Pick the candidate with the highest informativeness score.
+      // scoreSentence already hard-rejects boilerplate / table-noise /
+      // procedural-disclosure (returns -100), so those won't win.
+      let best = candidates[0];
+      let bestScore = scoreSentence(best);
+      for (let i = 1; i < candidates.length; i++) {
+        const sc = scoreSentence(candidates[i]);
+        if (sc > bestScore) { best = candidates[i]; bestScore = sc; }
       }
+      // PATCH 0880 — require positive informativeness (≥1) so tone signals
+      // never cite junk sentences even when ALL matching sentences scored
+      // low. If nothing meaningful matched, skip the signal entirely.
+      if (bestScore < 1) continue;
+      toneSignals.push({ phrase: label, context: best, sentiment });
     }
   };
   captureSignals(POSITIVE_PHRASES, 'positive');

@@ -1466,7 +1466,7 @@ export async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationRepor
   const _lsales = excelData?.latestSales || 0;
   const _lebitda = excelData?.latestEBITDA || 0;
   const _lpat = excelData?.latestPAT || 0;
-  const guidanceFiltered: GuidanceItem[] = allGuidance.filter((g) => {
+  const _step1: GuidanceItem[] = allGuidance.filter((g) => {
     // Always keep non-monetary metrics (margins, growth %, days, units, bps)
     if (g.unit !== '₹ Cr') return true;
     const v = g.point ?? g.high ?? g.low ?? 0;
@@ -1479,6 +1479,25 @@ export async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationRepor
       if (_lpat > 0 && (v > _lpat * 20 || v < _lpat * 0.05)) return false;
     }
     return true;
+  });
+  // PATCH 0880 — Duplicate-value dedup. When the extractor finds the same
+  // numeric value attached to 4+ different FYs for the same metric, that's
+  // almost always a single noise-match being attributed to every FY token
+  // found in the document (the NGL Fine Chem case: "Capacity Ramp 10% × 5
+  // years"). Real guidance varies year-over-year. Drop those clusters.
+  const _valueCount = new Map<string, number>();
+  for (const g of _step1) {
+    const v = g.point ?? g.high ?? g.low ?? 0;
+    if (v <= 0) continue;
+    const key = `${g.metric}::${v.toFixed(2)}`;
+    _valueCount.set(key, (_valueCount.get(key) || 0) + 1);
+  }
+  const guidanceFiltered: GuidanceItem[] = _step1.filter((g) => {
+    const v = g.point ?? g.high ?? g.low ?? 0;
+    if (v <= 0) return true;
+    const key = `${g.metric}::${v.toFixed(2)}`;
+    // 4+ identical values for the same metric = noise pattern. Drop all.
+    return (_valueCount.get(key) || 0) < 4;
   });
   const guidanceRejectedCount = allGuidance.length - guidanceFiltered.length;
   if (guidanceRejectedCount > 0) {
