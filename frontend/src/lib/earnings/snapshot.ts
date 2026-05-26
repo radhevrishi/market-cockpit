@@ -463,6 +463,23 @@ export interface IndiaExtras {
       workingCapitalStressFlag: boolean;
       workingCapitalStressQuote: string | null;
     };
+    // PATCH 0881 — Structured capex narrative + management commentary mix.
+    // Used by buildTopLineVerdict to render the institutional 3-line
+    // forward outlook (Capex purpose + Why mixed).
+    capexNarrative?: {
+      amounts: string[];
+      locations: string[];
+      timelines: string[];
+      phases: string[];
+      funding: string[];
+      purpose: string[];
+      type: 'growth' | 'maintenance' | 'mixed' | 'unspecified';
+      topSentence: string | null;
+    };
+    managementMix?: {
+      positives: Array<{ snippet: string; label: string }>;
+      cautions: Array<{ snippet: string; label: string }>;
+    };
   };
 
   // Valuation discipline — sector-aware fair-P/E assessment that gates

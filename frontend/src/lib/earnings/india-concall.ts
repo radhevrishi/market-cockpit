@@ -87,6 +87,25 @@ export interface ConcallRiskProfile {
   workingCapitalStressQuote: string | null;
 }
 
+// PATCH 0881 — Structured capex narrative + management commentary mix.
+// Both populated by analyzeConcall at the end. India-build.ts uses these
+// to render the "Forward outlook" 3-line block (Capex purpose + Why mixed).
+export interface CapexNarrative {
+  amounts: string[];        // e.g. ["₹210 Cr", "₹182.75 Cr invested"]
+  locations: string[];      // e.g. ["Tarapur"]
+  timelines: string[];      // e.g. ["H2FY27 commercial production", "Q2FY27 commissioning"]
+  phases: string[];         // e.g. ["Phase I contributing", "Phase II delayed"]
+  funding: string[];        // e.g. ["debt and internal accrual"]
+  purpose: string[];        // e.g. ["new products in pipeline", "to meet demand"]
+  type: 'growth' | 'maintenance' | 'mixed' | 'unspecified';
+  topSentence: string | null; // best-scoring capex-relevant sentence
+}
+
+export interface ManagementCommentaryMix {
+  positives: Array<{ snippet: string; label: string }>;
+  cautions: Array<{ snippet: string; label: string }>;
+}
+
 export interface ConcallInsights {
   topQuotes: string[];
   toneSignals: ConcallToneSignal[];
@@ -99,6 +118,9 @@ export interface ConcallInsights {
   cautiousCount: number;
   charsAnalyzed: number;
   riskProfile: ConcallRiskProfile;
+  // PATCH 0881 — institutional-grade narrative extracts
+  capexNarrative?: CapexNarrative;
+  managementMix?: ManagementCommentaryMix;
 }
 
 // ── Boilerplate strip — Indian listed-co cover letters and SEBI templates ──
@@ -939,6 +961,18 @@ export function extractIndiaConcallInsights(
   // and the source quote so the UI can show provenance on hover.
   const riskProfile = extractRiskProfile(cleaned, sentences);
 
+  // ── PATCH 0881 — Structured capex narrative ───────────────────────
+  // Scan ALL cleaned sentences (not just keyMentions[0].quote) for the
+  // specifics an institutional analyst wants: ₹ amount, location, FY/HX
+  // timeline, Phase label, funding source, stated purpose.
+  const capexNarrative = extractCapexNarrative(sentences);
+
+  // ── PATCH 0881 — Management commentary mix ─────────────────────────
+  // Find specific positive vs cautious sentences from management commentary
+  // (not just tone-signal first-matches). Each side requires a real verb
+  // + either a number or a topic word, so single-word matches don't surface.
+  const managementMix = extractManagementMix(sentences);
+
   return {
     topQuotes,
     toneSignals: trimmedTone,
@@ -951,6 +985,169 @@ export function extractIndiaConcallInsights(
     cautiousCount,
     charsAnalyzed: text.length,
     riskProfile,
+    capexNarrative,
+    managementMix,
+  };
+}
+
+// ─── PATCH 0881 — Capex narrative extractor ───────────────────────────
+// Scans cleaned sentences for the structured capex specifics that an
+// institutional analyst expects in a "Capex:" line: amount, location,
+// timeline, phase, funding, purpose. Each field is collected as an array
+// because a real capex programme typically has multiple data points (eg
+// "Phase I contributing" + "Phase II H2FY27" + "₹210 Cr greenfield").
+function extractCapexNarrative(sentences: string[]): CapexNarrative {
+  const capexKW = /\b(?:capex|capacity|expansion|greenfield|brownfield|commission(?:ing)?|new\s+(?:plant|facility|line|product)|phase\s+(?:i|ii|iii|iv|1|2|3|4)|debottleneck|backward\s+integrat|forward\s+integrat|capital\s+expenditure)\b/i;
+  const capexSents = sentences.filter((s) => capexKW.test(s)).slice(0, 12);
+
+  const amounts = new Set<string>();
+  const locations = new Set<string>();
+  const timelines = new Set<string>();
+  const phases = new Set<string>();
+  const funding = new Set<string>();
+  const purpose = new Set<string>();
+
+  // Indian-state capital cities + common industrial-cluster names that
+  // commonly appear in capex narratives. Extend as needed.
+  const PLACE_NAMES = /\b(Tarapur|Navi Mumbai|Mumbai|Bengaluru|Bangalore|Chennai|Hyderabad|Pune|Vadodara|Ahmedabad|Surat|Vizag|Visakhapatnam|Hosur|Pithampur|Sanand|Halol|Dahej|Jhagadia|Sricity|Sriperumbudur|Rajkot|Kandla|Mundra|Goa|Dahanu|Silvassa|Daman|Khopoli|Roha|Ratlam|Indore|Mysore|Coimbatore|Karur|Nashik|Aurangabad|Jamnagar|Vapi|Ankleshwar|Hazira|Paradip|Jhargram|Falta|Manesar|Gurugram|Gurgaon|Faridabad|Bhiwadi|Neemrana|Bawal|Sonipat|Panipat|Hisar|Patiala|Mohali|Roorkee|Haridwar|Pantnagar|Rudrapur|Greater Noida|Noida|Sahibabad|Bhopal|Mandideep|Pithampur|Raipur|Bilaspur|Korba|Hosur|Sricity|Bidadi)\b/g;
+
+  for (const s of capexSents) {
+    // Amounts: "₹ 210 Cr", "Rs 182.75 crore", "INR 50 mn"
+    for (const m of s.matchAll(/(?:₹|Rs\.?|INR)\s*([\d,.]+)\s*(crore|cr\.?|lakh|million|mn|billion|bn)?/gi)) {
+      const num = m[1];
+      const unit = (m[2] || 'Cr').replace(/^cr$/i, 'Cr').replace(/^crore$/i, 'Cr');
+      amounts.add(`₹${num} ${unit}`);
+      if (amounts.size >= 4) break;
+    }
+    // Locations
+    for (const m of s.matchAll(PLACE_NAMES)) {
+      locations.add(m[1]);
+      if (locations.size >= 3) break;
+    }
+    // Timelines: FY26 / FY27 / H1FY27 / H2FY27 / Q1FY27 / Q4FY26 (near commercial/commission)
+    for (const m of s.matchAll(/\b((?:H[12]|Q[1-4])?FY\s*\d{2,4})\b/gi)) {
+      timelines.add(m[1].replace(/\s+/g, ''));
+      if (timelines.size >= 4) break;
+    }
+    // Phase: "Phase I", "Phase II", "Phase 1", with optional context
+    for (const m of s.matchAll(/\bPhase\s+(I{1,4}|\d)(?:\s+(?:expansion|commissioning|delayed|completed|contributing|commercial production|operational|commenced))?/gi)) {
+      phases.add(m[0].slice(0, 60));
+      if (phases.size >= 3) break;
+    }
+    // Funding: "funded through debt", "internal accrual", "equity", "QIP", "rights issue"
+    for (const m of s.matchAll(/\b(?:funded\s+(?:through|by|via)|funding\s+through)\s+([\w &]{4,50})/gi)) {
+      funding.add(m[1].trim().replace(/\s+and\s+/g, ' + '));
+      if (funding.size >= 2) break;
+    }
+    if (/\binternal\s+accrual/i.test(s) && funding.size < 2) funding.add('internal accruals');
+    if (/\b(debt\s+(?:financing|raise|funding)|bank\s+(?:loan|borrow))/i.test(s) && funding.size < 2) funding.add('debt');
+    if (/\b(equity\s+(?:raise|infusion)|QIP|rights\s+issue|preferential\s+allotment)/i.test(s) && funding.size < 2) funding.add('equity raise');
+    // Purpose
+    if (/\bfor\s+new\s+products?\b|new\s+products?\s+(?:in\s+)?pipeline/i.test(s)) purpose.add('new products in pipeline');
+    if (/\bto\s+meet\s+(?:the\s+)?(?:growing\s+)?demand/i.test(s)) purpose.add('to meet growing demand');
+    if (/\bdebottleneck/i.test(s)) purpose.add('debottlenecking');
+    if (/\bbackward\s+integrat/i.test(s)) purpose.add('backward integration');
+    if (/\bcapacity\s+expansion/i.test(s) && !purpose.has('capacity expansion')) purpose.add('capacity expansion');
+  }
+
+  // Type classification
+  const allText = capexSents.join(' ').toLowerCase();
+  const growthHit = /\b(greenfield|brownfield|capacity\s+(?:expansion|addition|ramp)|new\s+product|new\s+(?:plant|line|facility|unit)|commission(?:ing)?|expansion|phase\s+(?:i|ii|iii|iv|1|2|3|4)|debottleneck|backward\s+integrat)\b/i.test(allText);
+  const maintHit = /\b(maintenance\s+(?:capex|capital)|replacement\s+capex|refurbish|retrofit|upkeep)\b/i.test(allText);
+  let type: CapexNarrative['type'] = 'unspecified';
+  if (growthHit && maintHit) type = 'mixed';
+  else if (growthHit) type = 'growth';
+  else if (maintHit) type = 'maintenance';
+
+  // Best capex sentence by score (so we can tooltip the highest-signal one)
+  let topSentence: string | null = null;
+  let topSc = -1;
+  for (const s of capexSents) {
+    const sc = scoreSentence(s);
+    if (sc > topSc) { topSc = sc; topSentence = s; }
+  }
+
+  return {
+    amounts: [...amounts],
+    locations: [...locations],
+    timelines: [...timelines],
+    phases: [...phases],
+    funding: [...funding],
+    purpose: [...purpose],
+    type,
+    topSentence,
+  };
+}
+
+// ─── PATCH 0881 — Management commentary mix ───────────────────────────
+// Find specific positive vs cautious sentences from management
+// commentary. Used by buildTopLine's "Why mixed" line. Each side gets
+// up to 2 short, informative snippets — each REQUIRED to contain a
+// real management verb AND either a number or a topic word, so
+// single-word matches like "record" never surface alone.
+function extractManagementMix(sentences: string[]): ManagementCommentaryMix {
+  const POSITIVE_ANCHORS: Array<{ re: RegExp; label: string }> = [
+    { re: /\b(?:record\s+(?:quarter|revenue|order|volume|year)|all[- ]?time\s+high|strongest\s+(?:quarter|year))\b/i, label: 'record print' },
+    { re: /\b(?:third|second|fourth|consecutive)\s+(?:consecutive\s+)?(?:quarter|year)\s+of\s+(?:robust|strong|healthy)?\s*(?:volume|revenue|order|growth)/i, label: 'consecutive growth' },
+    { re: /\b(?:margin|EBITDA|OPM)\s+(?:expansion|expanded|improvement|improved|recovery|recovered)/i, label: 'margin expansion' },
+    { re: /\bguidance\s+(?:raised|upgraded|increased)/i, label: 'guidance raised' },
+    { re: /\b(?:order\s+book|order\s+intake|order\s+inflow)\s+(?:grew|growth|expanded|stood\s+at|reached)/i, label: 'order book growth' },
+    { re: /\b(?:new\s+customer|customer\s+wins?|customer\s+addition|key\s+wins?)/i, label: 'customer wins' },
+    { re: /\b(?:price\s+(?:pass[- ]?through|hike|increase)|realiz?ation\s+improvement)/i, label: 'pricing power' },
+    { re: /\bcommercial\s+production\s+(?:from|in|commenced|began)/i, label: 'commercial production' },
+    { re: /\b(?:contributing\s+meaningfully|operating\s+leverage\s+(?:kicked|playing\s+out))/i, label: 'leverage kicking in' },
+    { re: /\bvolume\s+(?:growth|momentum|expansion)/i, label: 'volume momentum' },
+  ];
+  const CAUTION_ANCHORS: Array<{ re: RegExp; label: string }> = [
+    { re: /\b(?:delay|delayed|deferred|postpone)/i, label: 'delay' },
+    { re: /\b(?:shortage|short\s+supply|labour\s+(?:short|unavailability))/i, label: 'input shortage' },
+    { re: /\b(?:margin\s+(?:compression|contraction|pressure|squeeze)|margin\s+depress)/i, label: 'margin pressure' },
+    { re: /\b(?:headwind|challenging|tough\s+environment|difficult\s+environment)/i, label: 'headwinds' },
+    { re: /\b(?:demand\s+(?:slowdown|weakness|sluggish|moderation)|sluggish\s+demand)/i, label: 'demand slowdown' },
+    { re: /\b(?:freight|raw\s+material|input)\s+(?:cost|price)\s+(?:rose|up|increase|pressure|spike)/i, label: 'input cost spike' },
+    { re: /\b(?:guidance\s+(?:cut|lowered|reduced|trimmed))/i, label: 'guidance cut' },
+    { re: /\b(?:geopolitical|FX|currency)\s+(?:volatility|impact|pressure)/i, label: 'macro pressure' },
+    { re: /\b(?:write[- ]?off|impairment|one[- ]?time\s+(?:charge|loss|provision)|exceptional\s+item)/i, label: 'one-time charge' },
+    { re: /\b(?:competitive\s+(?:intensity|pressure)|price\s+erosion|pricing\s+pressure)/i, label: 'pricing pressure' },
+    { re: /\b(?:mark\s+to\s+market|MTM)\s+(?:loss|provision|impact)/i, label: 'MTM hit' },
+  ];
+  // Each candidate must also pass scoreSentence ≥3 and contain at least one
+  // strong verb OR a number — so generic chatter doesn't get picked.
+  const isInformative = (s: string): boolean => {
+    if (scoreSentence(s) < 3) return false;
+    const hasNum = /\b\d/.test(s);
+    const hasVerb = STRONG_VERBS.test(s);
+    STRONG_VERBS.lastIndex = 0; // global flag reset
+    return hasNum || hasVerb;
+  };
+  const trim = (s: string): string => {
+    const t = s.replace(/\s+/g, ' ').trim();
+    if (t.length <= 160) return t;
+    return t.slice(0, 157).replace(/\s+\S*$/, '') + '…';
+  };
+  const pickBest = (anchors: typeof POSITIVE_ANCHORS, max: number): Array<{ snippet: string; label: string }> => {
+    const out: Array<{ snippet: string; label: string }> = [];
+    const seenLabels = new Set<string>();
+    for (const { re, label } of anchors) {
+      if (seenLabels.has(label)) continue;
+      const candidates = sentences.filter((s) => re.test(s) && isInformative(s));
+      if (candidates.length === 0) continue;
+      // pick highest-scoring
+      let best = candidates[0];
+      let bestSc = scoreSentence(best);
+      for (let i = 1; i < candidates.length; i++) {
+        const sc = scoreSentence(candidates[i]);
+        if (sc > bestSc) { best = candidates[i]; bestSc = sc; }
+      }
+      out.push({ snippet: trim(best), label });
+      seenLabels.add(label);
+      if (out.length >= max) break;
+    }
+    return out;
+  };
+  return {
+    positives: pickBest(POSITIVE_ANCHORS, 2),
+    cautions: pickBest(CAUTION_ANCHORS, 2),
   };
 }
 

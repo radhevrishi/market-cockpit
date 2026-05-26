@@ -1,0 +1,429 @@
+From bd116b2ee1e7463157c75772a65ca6e7b8c3aea8 Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Tue, 26 May 2026 10:17:14 +0000
+Subject: [PATCH] patch 0881: institutional capex narrative + management mix
+ extractor
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Replaces the "specifics not detailed" filler from 0879 with structured
+multi-field extraction so the Capex line carries amount + location +
+timeline + phase + funding + purpose - not adjectives.
+
+extractCapexNarrative scans ALL cleaned sentences (not just the single
+keyMentions quote) for:
+  amounts:   ₹ X Cr / Rs Y crore / INR Z mn (multiple capture)
+  locations: 60+ Indian industrial-cluster names (Tarapur, Vizag, etc)
+  timelines: FY26 / H1FY27 / Q2FY27 / etc
+  phases:    Phase I / Phase II + context word
+  funding:   debt / internal accrual / equity raise / QIP
+  purpose:   new products / debottleneck / capacity expansion / etc
+  type:      growth | maintenance | mixed | unspecified
+  topSentence: highest-scoring capex-relevant sentence
+
+extractManagementMix scans for institutional-quality positive +
+cautious sentences using anchor patterns (record print / consecutive
+growth / margin expansion / guidance raised / order book growth / new
+customers / pricing power / commercial production / leverage kicking
+in / volume momentum versus delay / input shortage / margin pressure
+/ headwinds / demand slowdown / input cost spike / guidance cut /
+macro pressure / one-time charge / pricing pressure / MTM hit).
+Each candidate must also pass scoreSentence>=3 AND contain either a
+number or a strong verb, so generic chatter never surfaces.
+
+buildTopLineVerdict now reads concall.capexNarrative + managementMix
+and stitches them into the Capex line and Why-mixed line, replacing
+the inline single-quote extractor from 0879.
+
+For NGL Fine Chem the Capex line should now read something like:
+  "Capex: GROWTH - Phase I contributing - Phase II - 210 Cr at
+   Tarapur - 182.75 Cr invested - commercial H2FY27 - funded by debt
+   + internal accruals - for new products in pipeline + capacity
+   expansion"
+And the Why-mixed line should pull "consecutive growth" + "commercial
+production" snippets on the positive side, "delay" + "input shortage"
+on the cautious side - the actual concall sentences with numbers,
+not "take the information on record".
+---
+ frontend/src/lib/earnings/india-build.ts   | 101 +++++------
+ frontend/src/lib/earnings/india-concall.ts | 197 +++++++++++++++++++++
+ frontend/src/lib/earnings/snapshot.ts      |  17 ++
+ 3 files changed, 255 insertions(+), 60 deletions(-)
+
+diff --git a/frontend/src/lib/earnings/india-build.ts b/frontend/src/lib/earnings/india-build.ts
+index f673e6d..2898b69 100644
+--- a/frontend/src/lib/earnings/india-build.ts
++++ b/frontend/src/lib/earnings/india-build.ts
+@@ -1338,70 +1338,51 @@ function buildTopLineVerdict(args: {
+       return 'no forward-looking commentary detected';
+     })();
+ 
+-    // PATCH 0879 — Capex classification + mixed-reason narrative.
+-    // Analysts want to know two things at-a-glance:
+-    //   (a) Is the capex MAINTENANCE (keeps lights on) or GROWTH
+-    //       (expands capacity / new products)? Very different valuation
+-    //       implications — growth capex compounding earnings, maintenance
+-    //       capex is a wash.
+-    //   (b) When the call is "mixed", WHY mixed? Show the actual positive
+-    //       + cautious snippets from concall toneSignals so the user
+-    //       doesn't have to scroll for context.
++    // PATCH 0881 — Capex narrative + management commentary mix now come
++    // from the structured extractors in india-concall.ts (capexNarrative
++    // + managementMix). This replaces the inline extraction added in 0879
++    // which only scanned `keyMentions[0].quote` (a single sentence) and
++    // therefore fell back to "specifics not detailed" filler. The new
++    // extractor scans ALL cleaned concall sentences for ₹ amounts,
++    // location names, FY/HX timelines, Phase labels, funding sources,
++    // and stated purpose — and stitches them into a real institutional
++    // capex line.
+     let capex: NonNullable<typeof forwardLook>['capex'] | undefined;
+-    if (hasConcall) {
+-      // Find the capex-related quote from keyMentions, or the highest-
+-      // scoring concall sentence mentioning capex/capacity/expansion.
+-      const capexQuote = (concall?.keyMentions || []).find((m) => m.topic === 'capex' || m.topic === 'capacity')?.quote || '';
+-      // Combine concall text for keyword scanning. topQuotes is a small
+-      // set already filtered for prose quality.
+-      const scanText = ((concall?.topQuotes || []).join(' ') + ' ' + capexQuote).toLowerCase();
+-      // Growth signals — expansion / new product / greenfield / brownfield /
+-      // commissioning / new line / capacity addition / Phase N
+-      const growthKW = /\b(?:greenfield|brownfield|capacity\s+(?:expansion|addition|ramp|scale)|new\s+product|new\s+(?:plant|line|facility|unit)|commission(?:ing)?|expansion|phase\s+(?:i|ii|iii|iv|1|2|3|4)|expanded\s+capacity|debottlenecking|backward\s+integrat|forward\s+integrat)\b/i;
+-      // Maintenance signals — replacement / upgrade / refurbish / retrofit
+-      const maintKW = /\b(?:maintenance\s+(?:capex|capital)|replacement\s+capex|refurbish|retrofit|upkeep|upgrade\s+(?:existing|legacy))\b/i;
+-      const hasGrowth = growthKW.test(scanText);
+-      const hasMaint = maintKW.test(scanText);
+-      let type: NonNullable<NonNullable<typeof forwardLook>['capex']>['type'] = 'unspecified';
+-      if (hasGrowth && hasMaint) type = 'mixed';
+-      else if (hasGrowth) type = 'growth';
+-      else if (hasMaint) type = 'maintenance';
+-      // Purpose: try to extract specific phrases like "₹210 Cr greenfield
+-      // expansion at Tarapur" / "Phase II commercial production from H2FY27".
+-      const purposeBits: string[] = [];
+-      const phaseMatch = capexQuote.match(/Phase\s+(I{1,4}|\d)[^.]{0,80}(?:commercial production|commissioning|completion|H[12]FY\d{2}|Q[1-4]FY\d{2})/i);
+-      if (phaseMatch) purposeBits.push(phaseMatch[0].trim());
+-      const greenfieldMatch = capexQuote.match(/(?:greenfield|brownfield)[^.]{0,80}/i);
+-      if (greenfieldMatch && !purposeBits.some((p) => p.includes(greenfieldMatch[0].slice(0, 20)))) purposeBits.push(greenfieldMatch[0].trim());
+-      const crMatch = capexQuote.match(/₹\s?[\d,.]+\s*Cr(?:ore)?[^.]{0,60}/i);
+-      if (crMatch && !purposeBits.some((p) => p.includes(crMatch[0].slice(0, 20)))) purposeBits.push(crMatch[0].trim());
+-      const newProductMatch = capexQuote.match(/new\s+products?[^.]{0,60}/i);
+-      if (newProductMatch && !purposeBits.some((p) => p.includes(newProductMatch[0].slice(0, 20)))) purposeBits.push(newProductMatch[0].trim());
+-      let purpose = purposeBits.join(' · ').slice(0, 220);
+-      if (!purpose && type !== 'unspecified') {
+-        purpose = type === 'growth'
+-          ? 'capacity expansion / new products mentioned but specifics not detailed'
+-          : type === 'maintenance'
+-          ? 'maintenance / replacement spend'
+-          : 'mixed growth + maintenance spend';
+-      }
+-      if (type !== 'unspecified' || purpose) {
+-        capex = { type, purpose: purpose || '—', evidenceQuote: capexQuote || undefined };
+-      }
++    const cn = concall?.capexNarrative;
++    if (cn && cn.type !== 'unspecified') {
++      // Stitch structured fields into a human-readable purpose string.
++      // Order: phase → amount + greenfield/brownfield + location →
++      // timeline → funding → purpose. Skip empty groups, dedupe.
++      const parts: string[] = [];
++      if (cn.phases.length > 0) parts.push(cn.phases.slice(0, 2).join(' · '));
++      const amountLocBit = (() => {
++        const amt = cn.amounts[0] || '';
++        const loc = cn.locations[0] || '';
++        if (amt && loc) return `${amt} at ${loc}`;
++        if (amt) return amt;
++        if (loc) return `expansion at ${loc}`;
++        return '';
++      })();
++      if (amountLocBit) parts.push(amountLocBit);
++      // Additional amounts (e.g. "invested ₹X till Q4FY26")
++      if (cn.amounts.length > 1) parts.push(`${cn.amounts[1]} invested`);
++      if (cn.timelines.length > 0) parts.push(`commercial ${cn.timelines.slice(0, 2).join(' / ')}`);
++      if (cn.funding.length > 0) parts.push(`funded by ${cn.funding.join(' + ')}`);
++      if (cn.purpose.length > 0) parts.push(`for ${cn.purpose.slice(0, 2).join(' + ')}`);
++      const purpose = parts.join(' · ').slice(0, 300) || '—';
++      capex = { type: cn.type, purpose, evidenceQuote: cn.topSentence || undefined };
+     }
+ 
+-    // Mixed-reason narrative: collect 1-2 actual positive + 1-2 cautious
+-    // snippets from toneSignals, capped at ~120 chars each so the UI stays
+-    // compact. Only populated when grade is mixed/cautious/weak (when
+-    // grade is very_positive/positive we don't need to defend the call).
++    // Mixed-reason narrative — from the structured managementMix extractor.
++    // Each side has up to 2 institutional-quality snippets (real verb +
++    // number or topic word). Skipped entirely when there's nothing to show.
+     let mixedReason: NonNullable<typeof forwardLook>['mixedReason'] | undefined;
+-    if (hasConcall && (grade === 'mixed' || grade === 'cautious' || grade === 'weak')) {
+-      const trim = (s: string) => (s.length > 130 ? s.slice(0, 127).replace(/\s+\S*$/, '') + '…' : s).trim();
+-      const positives = (concall!.toneSignals.filter((t) => t.sentiment === 'positive').slice(0, 2)).map((t) => `${t.phrase}: ${trim(t.context)}`);
+-      const cautions = (concall!.toneSignals.filter((t) => t.sentiment === 'cautious' || t.sentiment === 'negative').slice(0, 2)).map((t) => `${t.phrase}: ${trim(t.context)}`);
+-      if (positives.length > 0 || cautions.length > 0) {
+-        mixedReason = { positives, cautions };
+-      }
++    const mm = concall?.managementMix;
++    if (mm && (grade === 'mixed' || grade === 'cautious' || grade === 'weak') && (mm.positives.length > 0 || mm.cautions.length > 0)) {
++      mixedReason = {
++        positives: mm.positives.map((p) => `${p.label} · ${p.snippet}`),
++        cautions: mm.cautions.map((c) => `${c.label} · ${c.snippet}`),
++      };
+     }
+ 
+     if (grade !== 'not_provided') {
+diff --git a/frontend/src/lib/earnings/india-concall.ts b/frontend/src/lib/earnings/india-concall.ts
+index e070deb..34c993c 100644
+--- a/frontend/src/lib/earnings/india-concall.ts
++++ b/frontend/src/lib/earnings/india-concall.ts
+@@ -87,6 +87,25 @@ export interface ConcallRiskProfile {
+   workingCapitalStressQuote: string | null;
+ }
+ 
++// PATCH 0881 — Structured capex narrative + management commentary mix.
++// Both populated by analyzeConcall at the end. India-build.ts uses these
++// to render the "Forward outlook" 3-line block (Capex purpose + Why mixed).
++export interface CapexNarrative {
++  amounts: string[];        // e.g. ["₹210 Cr", "₹182.75 Cr invested"]
++  locations: string[];      // e.g. ["Tarapur"]
++  timelines: string[];      // e.g. ["H2FY27 commercial production", "Q2FY27 commissioning"]
++  phases: string[];         // e.g. ["Phase I contributing", "Phase II delayed"]
++  funding: string[];        // e.g. ["debt and internal accrual"]
++  purpose: string[];        // e.g. ["new products in pipeline", "to meet demand"]
++  type: 'growth' | 'maintenance' | 'mixed' | 'unspecified';
++  topSentence: string | null; // best-scoring capex-relevant sentence
++}
++
++export interface ManagementCommentaryMix {
++  positives: Array<{ snippet: string; label: string }>;
++  cautions: Array<{ snippet: string; label: string }>;
++}
++
+ export interface ConcallInsights {
+   topQuotes: string[];
+   toneSignals: ConcallToneSignal[];
+@@ -99,6 +118,9 @@ export interface ConcallInsights {
+   cautiousCount: number;
+   charsAnalyzed: number;
+   riskProfile: ConcallRiskProfile;
++  // PATCH 0881 — institutional-grade narrative extracts
++  capexNarrative?: CapexNarrative;
++  managementMix?: ManagementCommentaryMix;
+ }
+ 
+ // ── Boilerplate strip — Indian listed-co cover letters and SEBI templates ──
+@@ -939,6 +961,18 @@ export function extractIndiaConcallInsights(
+   // and the source quote so the UI can show provenance on hover.
+   const riskProfile = extractRiskProfile(cleaned, sentences);
+ 
++  // ── PATCH 0881 — Structured capex narrative ───────────────────────
++  // Scan ALL cleaned sentences (not just keyMentions[0].quote) for the
++  // specifics an institutional analyst wants: ₹ amount, location, FY/HX
++  // timeline, Phase label, funding source, stated purpose.
++  const capexNarrative = extractCapexNarrative(sentences);
++
++  // ── PATCH 0881 — Management commentary mix ─────────────────────────
++  // Find specific positive vs cautious sentences from management commentary
++  // (not just tone-signal first-matches). Each side requires a real verb
++  // + either a number or a topic word, so single-word matches don't surface.
++  const managementMix = extractManagementMix(sentences);
++
+   return {
+     topQuotes,
+     toneSignals: trimmedTone,
+@@ -951,6 +985,169 @@ export function extractIndiaConcallInsights(
+     cautiousCount,
+     charsAnalyzed: text.length,
+     riskProfile,
++    capexNarrative,
++    managementMix,
++  };
++}
++
++// ─── PATCH 0881 — Capex narrative extractor ───────────────────────────
++// Scans cleaned sentences for the structured capex specifics that an
++// institutional analyst expects in a "Capex:" line: amount, location,
++// timeline, phase, funding, purpose. Each field is collected as an array
++// because a real capex programme typically has multiple data points (eg
++// "Phase I contributing" + "Phase II H2FY27" + "₹210 Cr greenfield").
++function extractCapexNarrative(sentences: string[]): CapexNarrative {
++  const capexKW = /\b(?:capex|capacity|expansion|greenfield|brownfield|commission(?:ing)?|new\s+(?:plant|facility|line|product)|phase\s+(?:i|ii|iii|iv|1|2|3|4)|debottleneck|backward\s+integrat|forward\s+integrat|capital\s+expenditure)\b/i;
++  const capexSents = sentences.filter((s) => capexKW.test(s)).slice(0, 12);
++
++  const amounts = new Set<string>();
++  const locations = new Set<string>();
++  const timelines = new Set<string>();
++  const phases = new Set<string>();
++  const funding = new Set<string>();
++  const purpose = new Set<string>();
++
++  // Indian-state capital cities + common industrial-cluster names that
++  // commonly appear in capex narratives. Extend as needed.
++  const PLACE_NAMES = /\b(Tarapur|Navi Mumbai|Mumbai|Bengaluru|Bangalore|Chennai|Hyderabad|Pune|Vadodara|Ahmedabad|Surat|Vizag|Visakhapatnam|Hosur|Pithampur|Sanand|Halol|Dahej|Jhagadia|Sricity|Sriperumbudur|Rajkot|Kandla|Mundra|Goa|Dahanu|Silvassa|Daman|Khopoli|Roha|Ratlam|Indore|Mysore|Coimbatore|Karur|Nashik|Aurangabad|Jamnagar|Vapi|Ankleshwar|Hazira|Paradip|Jhargram|Falta|Manesar|Gurugram|Gurgaon|Faridabad|Bhiwadi|Neemrana|Bawal|Sonipat|Panipat|Hisar|Patiala|Mohali|Roorkee|Haridwar|Pantnagar|Rudrapur|Greater Noida|Noida|Sahibabad|Bhopal|Mandideep|Pithampur|Raipur|Bilaspur|Korba|Hosur|Sricity|Bidadi)\b/g;
++
++  for (const s of capexSents) {
++    // Amounts: "₹ 210 Cr", "Rs 182.75 crore", "INR 50 mn"
++    for (const m of s.matchAll(/(?:₹|Rs\.?|INR)\s*([\d,.]+)\s*(crore|cr\.?|lakh|million|mn|billion|bn)?/gi)) {
++      const num = m[1];
++      const unit = (m[2] || 'Cr').replace(/^cr$/i, 'Cr').replace(/^crore$/i, 'Cr');
++      amounts.add(`₹${num} ${unit}`);
++      if (amounts.size >= 4) break;
++    }
++    // Locations
++    for (const m of s.matchAll(PLACE_NAMES)) {
++      locations.add(m[1]);
++      if (locations.size >= 3) break;
++    }
++    // Timelines: FY26 / FY27 / H1FY27 / H2FY27 / Q1FY27 / Q4FY26 (near commercial/commission)
++    for (const m of s.matchAll(/\b((?:H[12]|Q[1-4])?FY\s*\d{2,4})\b/gi)) {
++      timelines.add(m[1].replace(/\s+/g, ''));
++      if (timelines.size >= 4) break;
++    }
++    // Phase: "Phase I", "Phase II", "Phase 1", with optional context
++    for (const m of s.matchAll(/\bPhase\s+(I{1,4}|\d)(?:\s+(?:expansion|commissioning|delayed|completed|contributing|commercial production|operational|commenced))?/gi)) {
++      phases.add(m[0].slice(0, 60));
++      if (phases.size >= 3) break;
++    }
++    // Funding: "funded through debt", "internal accrual", "equity", "QIP", "rights issue"
++    for (const m of s.matchAll(/\b(?:funded\s+(?:through|by|via)|funding\s+through)\s+([\w &]{4,50})/gi)) {
++      funding.add(m[1].trim().replace(/\s+and\s+/g, ' + '));
++      if (funding.size >= 2) break;
++    }
++    if (/\binternal\s+accrual/i.test(s) && funding.size < 2) funding.add('internal accruals');
++    if (/\b(debt\s+(?:financing|raise|funding)|bank\s+(?:loan|borrow))/i.test(s) && funding.size < 2) funding.add('debt');
++    if (/\b(equity\s+(?:raise|infusion)|QIP|rights\s+issue|preferential\s+allotment)/i.test(s) && funding.size < 2) funding.add('equity raise');
++    // Purpose
++    if (/\bfor\s+new\s+products?\b|new\s+products?\s+(?:in\s+)?pipeline/i.test(s)) purpose.add('new products in pipeline');
++    if (/\bto\s+meet\s+(?:the\s+)?(?:growing\s+)?demand/i.test(s)) purpose.add('to meet growing demand');
++    if (/\bdebottleneck/i.test(s)) purpose.add('debottlenecking');
++    if (/\bbackward\s+integrat/i.test(s)) purpose.add('backward integration');
++    if (/\bcapacity\s+expansion/i.test(s) && !purpose.has('capacity expansion')) purpose.add('capacity expansion');
++  }
++
++  // Type classification
++  const allText = capexSents.join(' ').toLowerCase();
++  const growthHit = /\b(greenfield|brownfield|capacity\s+(?:expansion|addition|ramp)|new\s+product|new\s+(?:plant|line|facility|unit)|commission(?:ing)?|expansion|phase\s+(?:i|ii|iii|iv|1|2|3|4)|debottleneck|backward\s+integrat)\b/i.test(allText);
++  const maintHit = /\b(maintenance\s+(?:capex|capital)|replacement\s+capex|refurbish|retrofit|upkeep)\b/i.test(allText);
++  let type: CapexNarrative['type'] = 'unspecified';
++  if (growthHit && maintHit) type = 'mixed';
++  else if (growthHit) type = 'growth';
++  else if (maintHit) type = 'maintenance';
++
++  // Best capex sentence by score (so we can tooltip the highest-signal one)
++  let topSentence: string | null = null;
++  let topSc = -1;
++  for (const s of capexSents) {
++    const sc = scoreSentence(s);
++    if (sc > topSc) { topSc = sc; topSentence = s; }
++  }
++
++  return {
++    amounts: [...amounts],
++    locations: [...locations],
++    timelines: [...timelines],
++    phases: [...phases],
++    funding: [...funding],
++    purpose: [...purpose],
++    type,
++    topSentence,
++  };
++}
++
++// ─── PATCH 0881 — Management commentary mix ───────────────────────────
++// Find specific positive vs cautious sentences from management
++// commentary. Used by buildTopLine's "Why mixed" line. Each side gets
++// up to 2 short, informative snippets — each REQUIRED to contain a
++// real management verb AND either a number or a topic word, so
++// single-word matches like "record" never surface alone.
++function extractManagementMix(sentences: string[]): ManagementCommentaryMix {
++  const POSITIVE_ANCHORS: Array<{ re: RegExp; label: string }> = [
++    { re: /\b(?:record\s+(?:quarter|revenue|order|volume|year)|all[- ]?time\s+high|strongest\s+(?:quarter|year))\b/i, label: 'record print' },
++    { re: /\b(?:third|second|fourth|consecutive)\s+(?:consecutive\s+)?(?:quarter|year)\s+of\s+(?:robust|strong|healthy)?\s*(?:volume|revenue|order|growth)/i, label: 'consecutive growth' },
++    { re: /\b(?:margin|EBITDA|OPM)\s+(?:expansion|expanded|improvement|improved|recovery|recovered)/i, label: 'margin expansion' },
++    { re: /\bguidance\s+(?:raised|upgraded|increased)/i, label: 'guidance raised' },
++    { re: /\b(?:order\s+book|order\s+intake|order\s+inflow)\s+(?:grew|growth|expanded|stood\s+at|reached)/i, label: 'order book growth' },
++    { re: /\b(?:new\s+customer|customer\s+wins?|customer\s+addition|key\s+wins?)/i, label: 'customer wins' },
++    { re: /\b(?:price\s+(?:pass[- ]?through|hike|increase)|realiz?ation\s+improvement)/i, label: 'pricing power' },
++    { re: /\bcommercial\s+production\s+(?:from|in|commenced|began)/i, label: 'commercial production' },
++    { re: /\b(?:contributing\s+meaningfully|operating\s+leverage\s+(?:kicked|playing\s+out))/i, label: 'leverage kicking in' },
++    { re: /\bvolume\s+(?:growth|momentum|expansion)/i, label: 'volume momentum' },
++  ];
++  const CAUTION_ANCHORS: Array<{ re: RegExp; label: string }> = [
++    { re: /\b(?:delay|delayed|deferred|postpone)/i, label: 'delay' },
++    { re: /\b(?:shortage|short\s+supply|labour\s+(?:short|unavailability))/i, label: 'input shortage' },
++    { re: /\b(?:margin\s+(?:compression|contraction|pressure|squeeze)|margin\s+depress)/i, label: 'margin pressure' },
++    { re: /\b(?:headwind|challenging|tough\s+environment|difficult\s+environment)/i, label: 'headwinds' },
++    { re: /\b(?:demand\s+(?:slowdown|weakness|sluggish|moderation)|sluggish\s+demand)/i, label: 'demand slowdown' },
++    { re: /\b(?:freight|raw\s+material|input)\s+(?:cost|price)\s+(?:rose|up|increase|pressure|spike)/i, label: 'input cost spike' },
++    { re: /\b(?:guidance\s+(?:cut|lowered|reduced|trimmed))/i, label: 'guidance cut' },
++    { re: /\b(?:geopolitical|FX|currency)\s+(?:volatility|impact|pressure)/i, label: 'macro pressure' },
++    { re: /\b(?:write[- ]?off|impairment|one[- ]?time\s+(?:charge|loss|provision)|exceptional\s+item)/i, label: 'one-time charge' },
++    { re: /\b(?:competitive\s+(?:intensity|pressure)|price\s+erosion|pricing\s+pressure)/i, label: 'pricing pressure' },
++    { re: /\b(?:mark\s+to\s+market|MTM)\s+(?:loss|provision|impact)/i, label: 'MTM hit' },
++  ];
++  // Each candidate must also pass scoreSentence ≥3 and contain at least one
++  // strong verb OR a number — so generic chatter doesn't get picked.
++  const isInformative = (s: string): boolean => {
++    if (scoreSentence(s) < 3) return false;
++    const hasNum = /\b\d/.test(s);
++    const hasVerb = STRONG_VERBS.test(s);
++    STRONG_VERBS.lastIndex = 0; // global flag reset
++    return hasNum || hasVerb;
++  };
++  const trim = (s: string): string => {
++    const t = s.replace(/\s+/g, ' ').trim();
++    if (t.length <= 160) return t;
++    return t.slice(0, 157).replace(/\s+\S*$/, '') + '…';
++  };
++  const pickBest = (anchors: typeof POSITIVE_ANCHORS, max: number): Array<{ snippet: string; label: string }> => {
++    const out: Array<{ snippet: string; label: string }> = [];
++    const seenLabels = new Set<string>();
++    for (const { re, label } of anchors) {
++      if (seenLabels.has(label)) continue;
++      const candidates = sentences.filter((s) => re.test(s) && isInformative(s));
++      if (candidates.length === 0) continue;
++      // pick highest-scoring
++      let best = candidates[0];
++      let bestSc = scoreSentence(best);
++      for (let i = 1; i < candidates.length; i++) {
++        const sc = scoreSentence(candidates[i]);
++        if (sc > bestSc) { best = candidates[i]; bestSc = sc; }
++      }
++      out.push({ snippet: trim(best), label });
++      seenLabels.add(label);
++      if (out.length >= max) break;
++    }
++    return out;
++  };
++  return {
++    positives: pickBest(POSITIVE_ANCHORS, 2),
++    cautions: pickBest(CAUTION_ANCHORS, 2),
+   };
+ }
+ 
+diff --git a/frontend/src/lib/earnings/snapshot.ts b/frontend/src/lib/earnings/snapshot.ts
+index 84cbdbb..8bfb113 100644
+--- a/frontend/src/lib/earnings/snapshot.ts
++++ b/frontend/src/lib/earnings/snapshot.ts
+@@ -463,6 +463,23 @@ export interface IndiaExtras {
+       workingCapitalStressFlag: boolean;
+       workingCapitalStressQuote: string | null;
+     };
++    // PATCH 0881 — Structured capex narrative + management commentary mix.
++    // Used by buildTopLineVerdict to render the institutional 3-line
++    // forward outlook (Capex purpose + Why mixed).
++    capexNarrative?: {
++      amounts: string[];
++      locations: string[];
++      timelines: string[];
++      phases: string[];
++      funding: string[];
++      purpose: string[];
++      type: 'growth' | 'maintenance' | 'mixed' | 'unspecified';
++      topSentence: string | null;
++    };
++    managementMix?: {
++      positives: Array<{ snippet: string; label: string }>;
++      cautions: Array<{ snippet: string; label: string }>;
++    };
+   };
+ 
+   // Valuation discipline — sector-aware fair-P/E assessment that gates
+-- 
+2.34.1
+
