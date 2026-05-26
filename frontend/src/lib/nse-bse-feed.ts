@@ -50,6 +50,102 @@ async function readGhBlob(): Promise<GhBlobShape | null> {
   }
 }
 
+// PATCH 0929 — Cloudflare Worker as a primary source for NSE filings.
+// The Worker (mc-scraper.radhev-232.workers.dev) runs every 5 min during
+// IST market hours, fetches NSE corporate-announcements with a persistent
+// cookie session (stable Cloudflare egress IP), and stores filings in
+// Cloudflare KV. Vercel reads from a public Worker endpoint (no auth)
+// served sub-100ms from CF edge.
+//
+// Why this is the right primary:
+//   - Bypasses NSE blocks on Vercel egress IPs (§18.8 50% failure rate)
+//   - No Vercel CPU spent on upstream call
+//   - No Upstash quota burn (CF KV is separate free-tier with 100K reads/day)
+//   - Fresh data within 5 min during market hours
+//
+// Fallback chain:
+//   1. CF Worker (this function)            ← Patch 0929, primary
+//   2. GH-Actions-scraped Upstash blob      ← Patch 0739, secondary
+//   3. Direct NSE live fetch                ← original, last-resort
+const CF_WORKER_URL = process.env.CF_WORKER_URL || 'https://mc-scraper.radhev-232.workers.dev';
+const CF_WORKER_MAX_AGE_MS = 15 * 60 * 1000;  // 15 min — accept slightly stale before falling through
+
+interface CFWorkerResponse {
+  generated_at?: string;
+  count?: number;
+  filings?: Array<Record<string, any>>;
+  cached?: boolean;
+}
+
+/** Normalize the CF Worker's raw NSE filing shape into our FilingRecord. */
+function normalizeCFFiling(raw: any): FilingRecord | null {
+  const symbol = raw.symbol || raw.SYMBOL || '';
+  const subject = String(raw.subject || raw.desc || '').trim();
+  const isoDt = raw.filing_date || raw.an_dt || raw.dt || '';
+  if (!symbol || !subject || !isoDt) return null;
+  // Worker's filing_date is in NSE format ("27-May-2026 00:52:00"). Parse it.
+  const parsed = parseNSEDateTime(isoDt);
+  if (!parsed) return null;
+  const attUrl = raw.attachment_url || raw.attchmntFile || '';
+  const attUrls = attUrl ? [attUrl] : [];
+  return {
+    exchange: 'NSE',
+    symbol: symbol.toUpperCase(),
+    company_name: raw.company || raw.sm_name || symbol,
+    subject,
+    category: raw.category || null,
+    subcategory: null,
+    filing_datetime: parsed,
+    attachment_urls: attUrls,
+    source_url: attUrl || `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(symbol)}`,
+    content_hash: createHash('sha256').update(`NSE|${symbol.toUpperCase()}|${subject.toLowerCase().trim()}|${parsed}|${attUrls.join(',')}`).digest('hex').slice(0, 16),
+  };
+}
+
+/** Parse "27-May-2026 00:52:00" → "2026-05-27T00:52:00Z" */
+function parseNSEDateTime(s: string): string | null {
+  if (!s) return null;
+  // ISO first
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s)) return s;
+  const m = s.match(/^(\d{1,2})[-\s]([A-Za-z]{3,9})[-\s](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if (!m) return null;
+  const months: Record<string, string> = { JAN:'01', FEB:'02', MAR:'03', APR:'04', MAY:'05', JUN:'06', JUL:'07', AUG:'08', SEP:'09', OCT:'10', NOV:'11', DEC:'12' };
+  const mm = months[m[2].slice(0, 3).toUpperCase()];
+  if (!mm) return null;
+  const dd = m[1].padStart(2, '0');
+  const hh = (m[4] || '00').padStart(2, '0');
+  const mn = (m[5] || '00').padStart(2, '0');
+  const ss = (m[6] || '00').padStart(2, '0');
+  return `${m[3]}-${mm}-${dd}T${hh}:${mn}:${ss}Z`;
+}
+
+async function readCFWorkerBlob(signal?: AbortSignal): Promise<FilingRecord[] | null> {
+  if (!CF_WORKER_URL) return null;
+  try {
+    const url = `${CF_WORKER_URL}/api/filings/latest`;
+    const res = await fetch(url, {
+      signal: withDefaultTimeout(signal, 5_000),
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as CFWorkerResponse;
+    if (!Array.isArray(data?.filings) || data.filings.length === 0) return null;
+    // Age check — if Worker hasn't run recently, fall through to fallbacks
+    if (data.generated_at) {
+      const ageMs = Date.now() - new Date(data.generated_at).getTime();
+      if (!Number.isFinite(ageMs) || ageMs > CF_WORKER_MAX_AGE_MS) return null;
+    }
+    const normalized: FilingRecord[] = [];
+    for (const raw of data.filings) {
+      const f = normalizeCFFiling(raw);
+      if (f) normalized.push(f);
+    }
+    return normalized.length > 0 ? normalized : null;
+  } catch {
+    return null;
+  }
+}
+
 function filterBlobToWindow(filings: FilingRecord[], fromIso: string, toIso: string, exchange: 'NSE' | 'BSE'): FilingRecord[] {
   const fromMs = new Date(`${fromIso}T00:00:00Z`).getTime();
   const toMs   = new Date(`${toIso}T23:59:59Z`).getTime();
@@ -144,11 +240,21 @@ export async function fetchNSEAnnouncements(opts: {
       return { filings: [], source: 'NSE_BLOCKED' as const };
     }
 
-    // PATCH 0739 — Try the GH-Actions-scraped blob FIRST. If it's fresh
-    // (< 6h old) and has filings, we never touch NSE — zero Vercel CPU
-    // spent on the upstream call, and we dodge the 50% upstream failure
-    // rate documented in §18.8. If the blob is missing/stale, fall
-    // through to the live fetch path below (unchanged).
+    // PATCH 0929 — Try Cloudflare Worker FIRST. Worker maintains a fresh
+    // NSE-filings blob in CF KV (every 5 min during market hours). Sub-100ms
+    // read, no Vercel CPU spent on NSE upstream, no Upstash burn.
+    try {
+      const cfFilings = await readCFWorkerBlob(opts.signal);
+      if (cfFilings && cfFilings.length > 0) {
+        const filtered = filterBlobToWindow(cfFilings, fromStr, toStr, 'NSE');
+        if (filtered.length > 0) {
+          return { filings: filtered, source: 'NSE_OK' as const };
+        }
+      }
+    } catch { /* fall through to next source */ }
+
+    // PATCH 0739 — Try the GH-Actions-scraped blob NEXT. Older fallback,
+    // kept for when CF Worker is being deployed / cold.
     try {
       const blob = await readGhBlob();
       if (blob?.filings) {
