@@ -2959,6 +2959,81 @@ Source label: ${coverageStats.source}`}
             </div>
           );
         })()}
+        {/* PATCH 0912 — SCHEDULED TODAY panel.
+            User complaint: "see lot of companies in one week reported but
+            you show only few companeis in graded tiers". Root cause: NSE
+            calendar shows ALL scheduled board meetings (118-208/day this
+            week), but graded tiers only include companies that have
+            ACTUALLY FILED + had financials parsed. We surface the gap
+            here so the user sees what's pending vs filed.
+
+            Logic: take calData.by_date[filterDate] (scheduled tickers
+            from hub for the selected date), subtract any ticker already
+            present in any of the 4 graded tiers, render the remainder as
+            clickable NSE filing-page chips. */}
+        {viewMode === 'GRADED' && filterDate && calData?.by_date?.[filterDate] && (() => {
+          const scheduled = calData.by_date[filterDate] || [];
+          const gradedTickers = new Set<string>(
+            TIER_ORDER.flatMap((t) => (view.by_tier[t] || []).map((s) => (s.ticker || '').toUpperCase()))
+          );
+          const pending = scheduled.filter((it) => !gradedTickers.has((it.symbol || '').toUpperCase()));
+          if (pending.length === 0) return null;
+          const copyPending = async (txt: string) => {
+            try { await navigator.clipboard.writeText(txt); } catch {
+              try {
+                const ta = document.createElement('textarea');
+                ta.value = txt; ta.style.position = 'fixed'; ta.style.top = '-1000px';
+                document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+                document.body.removeChild(ta);
+              } catch {}
+            }
+          };
+          return (
+            <div style={{ backgroundColor: '#0D1623', border: '1px solid #1A2540', borderLeft: '4px solid #94A3B8', borderRadius: 12, padding: '14px 18px' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+                <span style={{ fontSize: 16, fontWeight: 800, color: '#94A3B8' }}>📅 SCHEDULED TODAY</span>
+                <span style={{ fontSize: 12, color: '#94A3B8', fontWeight: 700 }}>{pending.length} {pending.length === 1 ? 'company' : 'companies'}</span>
+                <span style={{ fontSize: 10, color: '#6B7A8D' }}>
+                  · board meeting scheduled but financials not yet filed/parsed
+                </span>
+                <span style={{ display: 'inline-flex', gap: 4, marginLeft: 'auto' }}>
+                  <button
+                    onClick={() => copyPending(pending.map((p) => (p.symbol || '').toUpperCase()).join(','))}
+                    title="Copy pending tickers (CSV)"
+                    style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid #22D3EE60', color: '#22D3EE', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+                  >📋 CSV</button>
+                  <button
+                    onClick={() => copyPending(pending.map((p) => `NSE:${(p.symbol || '').toUpperCase()}`).join(','))}
+                    title="Copy as NSE:TICKER for TradingView"
+                    style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid #22D3EE60', color: '#22D3EE', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+                  >📊 TradingView</button>
+                </span>
+              </div>
+              <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 8, lineHeight: 1.5 }}>
+                These companies announced a board meeting for {filterDate} but their results aren&apos;t in the parser yet.
+                Graded tiers below show only filings that have actually been published + parsed. As each company files
+                throughout the day, they&apos;ll move out of this list and into the appropriate grade tier.{' '}
+                <button onClick={() => refetch()} style={{ background: 'transparent', border: 'none', color: '#22D3EE', cursor: 'pointer', fontSize: 11, fontWeight: 700, padding: 0, textDecoration: 'underline' }}>
+                  ↻ Refresh to pull latest filings
+                </button>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {pending.slice(0, 60).map((it) => (
+                  <a key={it.symbol} href={it.source_url} target="_blank" rel="noopener noreferrer"
+                    title={`${it.company || it.symbol} · click to open NSE filing page`}
+                    style={{ fontSize: 10.5, padding: '2px 6px', borderRadius: 3, backgroundColor: '#1E293B', color: '#94A3B8', border: '1px solid #2A3550', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', textDecoration: 'none', fontWeight: 700 }}>
+                    {it.symbol}
+                  </a>
+                ))}
+                {pending.length > 60 && (
+                  <span style={{ fontSize: 10.5, color: '#6B7A8D', padding: '2px 6px' }}>
+                    +{pending.length - 60} more · use 📋 CSV to copy all
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })()}
         {viewMode === 'GRADED' && TIER_ORDER.map((tier) => {
           const stocks = view.by_tier[tier] || [];
           if (stocks.length === 0) return null;
