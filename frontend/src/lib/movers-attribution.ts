@@ -414,31 +414,64 @@ function deriveMoveType(catalystType: CatalystType, indexGroup?: string): MoveTy
 
 // ─── peer-correlation (sector-wide vs stock-specific) ───────────────────
 
+// PATCH 0884 — PeerBucket extended to track per-peer move % and volume
+// multiple, so the peer-sympathy gate can require not just COUNT but
+// MAGNITUDE correlation + volume co-movement (the user's audit ask:
+// "Do NOT declare peer-sympathy unless ≥2 correlated stocks move with
+// same direction, time window, volume co-movement"). The PeerBucket
+// now carries arrays so we can compute median/mean for both pct and
+// volMultiple cheaply at gate time.
+interface PeerBucket {
+  up: number;
+  down: number;
+  tickers: string[];
+  pctsUp: number[];     // change% of same-direction peers (up branch)
+  pctsDown: number[];
+  volsUp: number[];     // volMultiple of same-direction peers (up branch)
+  volsDown: number[];
+}
 interface PeerContext {
-  bySector: Map<string, { up: number; down: number; tickers: string[] }>;
-  byIndustry: Map<string, { up: number; down: number; tickers: string[] }>;
+  bySector: Map<string, PeerBucket>;
+  byIndustry: Map<string, PeerBucket>;
 }
 
 function buildPeerContext(movers: MoverInput[]): PeerContext {
-  const bySector = new Map<string, { up: number; down: number; tickers: string[] }>();
-  const byIndustry = new Map<string, { up: number; down: number; tickers: string[] }>();
+  const empty = (): PeerBucket => ({ up: 0, down: 0, tickers: [], pctsUp: [], pctsDown: [], volsUp: [], volsDown: [] });
+  const bySector = new Map<string, PeerBucket>();
+  const byIndustry = new Map<string, PeerBucket>();
   const PEER_THRESHOLD_PCT = 3;
   for (const m of movers) {
     if (Math.abs(m.changePercent) < PEER_THRESHOLD_PCT) continue;
     const direction = m.changePercent > 0 ? 'up' : 'down';
     const s = (m.sector || '').trim();
     const i = (m.industry || '').trim();
+    const pct = Math.abs(m.changePercent);
+    const vm = typeof m.volMultiple === 'number' && Number.isFinite(m.volMultiple) ? m.volMultiple : undefined;
     if (s) {
-      if (!bySector.has(s)) bySector.set(s, { up: 0, down: 0, tickers: [] });
+      if (!bySector.has(s)) bySector.set(s, empty());
       const e = bySector.get(s)!;
       e[direction]++;
       e.tickers.push(m.ticker);
+      if (direction === 'up') {
+        e.pctsUp.push(pct);
+        if (vm !== undefined) e.volsUp.push(vm);
+      } else {
+        e.pctsDown.push(pct);
+        if (vm !== undefined) e.volsDown.push(vm);
+      }
     }
     if (i && i !== s) {
-      if (!byIndustry.has(i)) byIndustry.set(i, { up: 0, down: 0, tickers: [] });
+      if (!byIndustry.has(i)) byIndustry.set(i, empty());
       const e = byIndustry.get(i)!;
       e[direction]++;
       e.tickers.push(m.ticker);
+      if (direction === 'up') {
+        e.pctsUp.push(pct);
+        if (vm !== undefined) e.volsUp.push(vm);
+      } else {
+        e.pctsDown.push(pct);
+        if (vm !== undefined) e.volsDown.push(vm);
+      }
     }
   }
   return { bySector, byIndustry };
@@ -545,6 +578,14 @@ interface CausalSignal {
   weight: number;   // 0-100; higher = stronger evidence for the move
 }
 
+// PATCH 0884 — Rejected hypotheses surfaced to the consumer so the
+// detail string can show "PRIMARY: <x> · SECONDARY: <y> · REJECTED:
+// <peer-sympathy, ratio 0.45<0.65>" per the user's hypothesis-tier ask.
+export interface HypothesisRejection {
+  hypothesis: string;
+  reason: string;
+}
+
 function inferCausalSignals(
   m: MoverInput,
   ctx: {
@@ -553,9 +594,13 @@ function inferCausalSignals(
     indexPct?: number;
     peerCountSameDir?: number;
     peerTotal?: number;
+    // PATCH 0884 — peer magnitudes + volume multiples of same-direction peers
+    peerPctsSameDir?: number[];
+    peerVolsSameDir?: number[];
     friendlySector: string;
     smallcap: boolean;
     microcap: boolean;
+    rejections?: HypothesisRejection[];     // out-param, hypothesis rejections
   }
 ): CausalSignal[] {
   const signals: CausalSignal[] = [];
@@ -565,20 +610,48 @@ function inferCausalSignals(
   const hi52 = typeof m.pctOf52wHigh === 'number' ? m.pctOf52wHigh : null;
   const mom = typeof m.mom1M === 'number' ? m.mom1M : null;
 
-  // ─── LAYER 2 — Peer sympathy ───
-  // PATCH 0883 — Tightened gate per user audit: "Do NOT declare peer-sympathy
-  // unless ≥2 correlated stocks move with same direction, same time window,
-  // volume co-movement". Previous gate (4 peers, 50% same-dir) was too loose
-  // and produced false "Peer-sympathy momentum" labels for stocks like
-  // BLISSGVS that had no real peer cluster (the rest of pharma was flat).
-  // New gate: ≥2 same-direction peers, sector outperforming index by ≥1pp,
-  // and the rail's own count of same-direction peers must dominate the
-  // opposite direction (sameDir / total ≥ 0.65 not 0.50).
+  const median = (xs: number[]): number => {
+    if (xs.length === 0) return 0;
+    const s = [...xs].sort((a, b) => a - b);
+    const mid = Math.floor(s.length / 2);
+    return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+  };
+
+  // ─── LAYER 2 — Peer sympathy (PATCH 0884 strict gate) ───
+  // Three-pillar validation:
+  //   1. peer count  : ≥2 same-direction peers, ratio ≥0.65
+  //   2. magnitude   : median peer move ≥ 0.35× of this stock's move
+  //                    (so a 20% mover needs peers averaging 7%+)
+  //   3. volume      : ≥50% of same-direction peers have vol ≥1.3× 20D
+  //                    (proves coincident accumulation/distribution)
+  //   + sector outperformance ≥1pp vs index
+  // If ANY pillar fails, reject with explicit reason — engine falls
+  // through to liquidity-vacuum / operator-rotation fallback.
   const peerTotal = ctx.peerTotal || 0;
   const sameDir = ctx.peerCountSameDir || 0;
   const peerRatio = peerTotal > 0 ? sameDir / peerTotal : 0;
   const sectorOutperf = (ctx.sectorPct !== undefined && ctx.indexPct !== undefined) ? Math.abs(ctx.sectorPct - ctx.indexPct) : 0;
-  const peerSympathyConfirmed = peerTotal >= 4 && sameDir >= 2 && peerRatio >= 0.65 && sectorOutperf >= 1.0;
+  const peerPcts = ctx.peerPctsSameDir || [];
+  const peerVols = ctx.peerVolsSameDir || [];
+  const peerMedianPct = median(peerPcts);
+  const volCoMoveCount = peerVols.filter((v) => v >= 1.3).length;
+  const volCoMoveRatio = peerVols.length > 0 ? volCoMoveCount / peerVols.length : 0;
+
+  const peerCountOk     = peerTotal >= 4 && sameDir >= 2 && peerRatio >= 0.65;
+  const peerMagnitudeOk = peerPcts.length === 0 ? true : (peerMedianPct >= 0.35 * absPct);
+  const peerVolumeOk    = peerVols.length === 0 ? true : (volCoMoveRatio >= 0.5);
+  const peerSectorOk    = sectorOutperf >= 1.0;
+  const peerSympathyConfirmed = peerCountOk && peerMagnitudeOk && peerVolumeOk && peerSectorOk;
+
+  // Track rejection reasons for the hypothesis-tier output
+  if (!peerSympathyConfirmed && (peerTotal >= 2 || sameDir >= 1) && ctx.rejections) {
+    const reasons: string[] = [];
+    if (!peerCountOk)     reasons.push(`peer count ${sameDir}/${peerTotal} ratio ${peerRatio.toFixed(2)} < 0.65 floor`);
+    if (!peerMagnitudeOk) reasons.push(`peer median ${peerMedianPct.toFixed(1)}% << this ${absPct.toFixed(1)}%`);
+    if (!peerVolumeOk)    reasons.push(`only ${volCoMoveCount}/${peerVols.length} peers showed vol co-movement (need ≥50%)`);
+    if (!peerSectorOk)    reasons.push(`sector outperformance ${sectorOutperf.toFixed(1)}pp < 1.0pp threshold`);
+    if (reasons.length > 0) ctx.rejections.push({ hypothesis: 'peer-sympathy', reason: reasons.join('; ') });
+  }
   if (peerSympathyConfirmed) {
     const sec = ctx.friendlySector.toLowerCase();
     if (ctx.isUp) {
@@ -796,24 +869,35 @@ type Mechanism =
   | 'MOMENTUM_EXTENSION' | 'LIQUIDITY_VACUUM' | 'PEER_TRANSMISSION'
   | 'OPERATOR_ROTATION' | 'DERIVATIVES';
 
-function fuseCausalNarrative(signals: CausalSignal[], isUp: boolean, smallcap: boolean, microcap: boolean): { label: string; detail: string; topLayer: number; mechanism?: Mechanism } {
-  if (signals.length === 0) {
-    // PATCH 0883 — Even the honest fallback is now a real sentence with a
-    // mechanism hint, not a bare "No confirmed trigger" label.
-    const baseSector = microcap ? 'microcap basket' : smallcap ? 'smallcap basket' : 'name';
-    if (isUp) {
-      return {
-        label: `liquidity expansion in low-float ${baseSector} — no confirmed peer cluster`,
-        detail: 'No filing or news catalyst detected; sector participation does not confirm peer-sympathy. Move likely driven by liquidity expansion in a thin-float name, suggesting retail-driven repricing rather than thematic transmission.',
-        topLayer: 0,
-        mechanism: 'LIQUIDITY_VACUUM',
-      };
+function fuseCausalNarrative(signals: CausalSignal[], isUp: boolean, smallcap: boolean, microcap: boolean, rejections: HypothesisRejection[] = []): { label: string; detail: string; topLayer: number; mechanism?: Mechanism; primary?: string; secondary?: string; rejected?: HypothesisRejection[] } {
+  // PATCH 0884 — Compose hypothesis-tier prefix: PRIMARY / SECONDARY / REJECTED
+  const buildHypothesisStr = (primary: string, secondary?: string): string => {
+    const bits: string[] = [];
+    bits.push(`PRIMARY: ${primary}`);
+    if (secondary) bits.push(`SECONDARY: ${secondary}`);
+    if (rejections.length > 0) {
+      bits.push(`REJECTED: ${rejections.map((r) => `${r.hypothesis} (${r.reason})`).join(' · ')}`);
     }
+    return bits.join(' · ');
+  };
+
+  if (signals.length === 0) {
+    // PATCH 0883/0884 — Honest fallback with mechanism hint AND surfaced
+    // rejection reasons. Now the analyst sees "REJECTED: peer-sympathy
+    // (ratio 0.43 < 0.65 floor)" right inside the detail tooltip.
+    const baseSector = microcap ? 'microcap basket' : smallcap ? 'smallcap basket' : 'name';
+    const primary = isUp
+      ? `liquidity expansion in thin-float ${baseSector}, no confirmed peer cluster`
+      : `liquidity-driven repricing in ${baseSector}, no confirmed catalyst`;
     return {
-      label: `liquidity-driven repricing in ${baseSector} — no confirmed catalyst`,
-      detail: 'No filing or news catalyst detected; sector participation does not confirm sector-wide derisking. Move likely driven by liquidity contraction in a thin-float name.',
+      label: isUp
+        ? `liquidity expansion in low-float ${baseSector} — no confirmed peer cluster`
+        : `liquidity-driven repricing in ${baseSector} — no confirmed catalyst`,
+      detail: buildHypothesisStr(primary),
       topLayer: 0,
       mechanism: 'LIQUIDITY_VACUUM',
+      primary,
+      rejected: rejections,
     };
   }
   const top = signals[0];
@@ -856,11 +940,17 @@ function fuseCausalNarrative(signals: CausalSignal[], isUp: boolean, smallcap: b
     phrases.push(s.phrase);
     if (phrases.length >= 3) break;
   }
+  // PATCH 0884 — Detail string now has hypothesis tiers
+  const primary = phrases[0];
+  const secondary = phrases[1];
   return {
     label,
-    detail: phrases.join('; '),
+    detail: buildHypothesisStr(primary, secondary),
     topLayer: top.layer,
     mechanism: mech,
+    primary,
+    secondary,
+    rejected: rejections,
   };
 }
 
@@ -1223,15 +1313,25 @@ export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttrib
       const indGroup3 = (m.indexGroup || '').toLowerCase();
       const smallcap3 = indGroup3 === 'small' || indGroup3 === 'micro';
       const microcap3 = indGroup3 === 'micro';
+      // PATCH 0884 — pass peer magnitudes + vols so inferCausalSignals can
+      // apply the strict 3-pillar peer-sympathy gate (count + magnitude +
+      // volume co-movement) and record rejection reasons.
+      const peerBucket3 = peerStats || undefined;
+      const peerPctsSameDir3 = isUp ? (peerBucket3?.pctsUp || []) : (peerBucket3?.pctsDown || []);
+      const peerVolsSameDir3 = isUp ? (peerBucket3?.volsUp || []) : (peerBucket3?.volsDown || []);
+      const rejections3: HypothesisRejection[] = [];
       const causalSignals3 = inferCausalSignals(m, {
         isUp,
         sectorPct,
         indexPct,
         peerCountSameDir: peerCountSameDirection,
         peerTotal: total,
+        peerPctsSameDir: peerPctsSameDir3,
+        peerVolsSameDir: peerVolsSameDir3,
         friendlySector,
         smallcap: smallcap3,
         microcap: microcap3,
+        rejections: rejections3,
       });
       // Sector-led IS itself a Layer-2 finding — bump it as a high-weight
       // signal at the top of the list.
@@ -1239,7 +1339,7 @@ export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttrib
         ? `sector-led ${isUp ? 'rally' : 'sell-off'} — ${friendlySector} ${fmtPct(sectorPct)} vs index ${fmtPct(indexPct)} (${peerCountSameDirection}/${total} peers ${isUp ? '↑' : '↓'} >3%)`
         : `broad participation — ${peerCountSameDirection}/${total} peers ${isUp ? '↑' : '↓'} >3% with sector roughly in line${typeof sectorPct === 'number' ? ` (${fmtPct(sectorPct)})` : ''}`;
       causalSignals3.unshift({ layer: 2, phrase: sectorPhrase, weight: isSectorLed ? 75 : 55 });
-      const fused3 = fuseCausalNarrative(causalSignals3, isUp, smallcap3, microcap3);
+      const fused3 = fuseCausalNarrative(causalSignals3, isUp, smallcap3, microcap3, rejections3);
       const label3 = isSectorLed
         ? `Sector-led ${isUp ? 'rally' : 'sell-off'} (${friendlySector})`
         : fused3.label;
@@ -1287,17 +1387,24 @@ export function attributeMovers(opts: AttributeOpts): Record<string, MoverAttrib
     const dlv = typeof m.deliveryPct === 'number' ? m.deliveryPct : null;
     const vm = typeof m.volMultiple === 'number' ? m.volMultiple : null;
 
+    // PATCH 0884 — peer magnitudes + vol multiples + rejection capture
+    const peerPctsSameDir4 = isUp ? (peerStats?.pctsUp || []) : (peerStats?.pctsDown || []);
+    const peerVolsSameDir4 = isUp ? (peerStats?.volsUp || []) : (peerStats?.volsDown || []);
+    const rejections4: HypothesisRejection[] = [];
     const causalSignals = inferCausalSignals(m, {
       isUp,
       sectorPct: sectorAgg?.avgChangePct,
       indexPct: opts.indexAvgChangePct,
       peerCountSameDir: peerCountSameDirection,
       peerTotal: (peerStats?.up || 0) + (peerStats?.down || 0),
+      peerPctsSameDir: peerPctsSameDir4,
+      peerVolsSameDir: peerVolsSameDir4,
       friendlySector,
       smallcap,
       microcap,
+      rejections: rejections4,
     });
-    const fused = fuseCausalNarrative(causalSignals, isUp, smallcap, microcap);
+    const fused = fuseCausalNarrative(causalSignals, isUp, smallcap, microcap, rejections4);
     let moveLabel = fused.label;
     const subtitleParts: string[] = [fused.detail];
     if (feedGap && causalSignals.length === 0) {
