@@ -26,7 +26,7 @@
 // Those are flagged honestly in the disclosure block at the bottom.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import Link from 'next/link';
 // PATCH 0708 — institutional event-attribution engine for the Top Movers panel.
 import {
@@ -543,6 +543,100 @@ export default function HomeDashboard() {
   const [showTier3, setShowTier3] = useState(true);  // PATCH 0625 — default expanded
   const [showInPlay, setShowInPlay] = useState(true);  // PATCH 0620 — In-Play moved to top of Home, default expanded
   const [showQuickAccess, setShowQuickAccess] = useState(true);  // PATCH 0623 — default expanded
+  // PATCH 0904 — surgical retry hook so the Upcoming Earnings "↻ Retry"
+  // button refetches ONLY this panel instead of doing window.location.reload()
+  // (Bug B). Lives at component scope so both the initial useEffect AND the
+  // button onClick can invoke it. Self-contained safeDiag so it doesn't
+  // depend on the parent useEffect closure.
+  const [upcomingRetrying, setUpcomingRetrying] = useState(false);
+  const refetchUpcomingEarnings = useCallback(async () => {
+    setUpcomingRetrying(true);
+    const safeDiag = async <T,>(url: string, timeoutMs = 15_000): Promise<{ data: T | null; error?: string; status?: number }> => {
+      try {
+        const ctl = new AbortController();
+        const t = setTimeout(() => ctl.abort(), timeoutMs);
+        const r = await fetch(url, { cache: 'no-store', signal: ctl.signal });
+        clearTimeout(t);
+        if (!r.ok) return { data: null, error: `http_${r.status}`, status: r.status };
+        try { return { data: await r.json() as T, status: r.status }; }
+        catch { return { data: null, error: 'parse' }; }
+      } catch (e: any) {
+        if (e?.name === 'AbortError') return { data: null, error: 'timeout' };
+        return { data: null, error: 'network' };
+      }
+    };
+    try {
+      const now = new Date();
+      const currentMonth = now.toISOString().slice(0, 7);
+      const nextMonth = (() => {
+        const m = new Date(now); m.setMonth(now.getMonth() + 1);
+        return m.toISOString().slice(0, 7);
+      })();
+      const [ra, rb, rc] = await Promise.all([
+        safeDiag<any>(`/api/market/earnings?market=india&month=${currentMonth}&_=${Date.now()}`, 28_000),
+        safeDiag<any>(`/api/market/earnings?market=india&month=${nextMonth}&_=${Date.now()}`, 28_000),
+        safeDiag<any>(`/api/v1/calendar?days=14&_=${Date.now()}`, 15_000),
+      ]);
+      const aData = ra?.data, bData = rb?.data, cData = rc?.data;
+      const flatten = (d: any): any[] => {
+        if (!d) return [];
+        if (Array.isArray(d)) return d;
+        return d.results || d.items || d.rows || d.data?.results || [];
+      };
+      const flattenCalendar = (d: any): any[] => {
+        if (!d || typeof d !== 'object') return [];
+        const byDate = d.by_date || d.byDate;
+        if (!byDate || typeof byDate !== 'object') return [];
+        const out: any[] = [];
+        for (const [dateStr, items] of Object.entries(byDate)) {
+          if (!Array.isArray(items)) continue;
+          for (const item of items as any[]) {
+            out.push({
+              ticker: item.symbol || item.ticker,
+              company: item.company || item.name,
+              resultDate: dateStr,
+              sector: item.sector,
+            });
+          }
+        }
+        return out;
+      };
+      const all = [...flatten(aData), ...flatten(bData), ...flattenCalendar(cData)];
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const windowEnd = new Date(today); windowEnd.setDate(today.getDate() + 7);
+      const cbSet = (() => { try { return getConvictionTickers(); } catch { return new Set<string>(); } })();
+      let watchlist: string[] = [];
+      try { watchlist = JSON.parse(localStorage.getItem('mc_watchlist_tickers') || '[]') || []; } catch {}
+      const watchSet = new Set(watchlist.map((s: string) => s.toUpperCase().replace(/\.(NS|BO)$/i, '')));
+      const allIn7d = all
+        .filter((e: any) => e?.resultDate && e?.ticker)
+        .map((e: any) => {
+          const dt = new Date(e.resultDate); dt.setHours(0, 0, 0, 0);
+          const daysAhead = Math.round((dt.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+          const sym = (e.ticker || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
+          return {
+            ticker: e.ticker,
+            company: e.company,
+            resultDate: e.resultDate,
+            sector: e.sector,
+            daysAhead,
+            _dt: dt,
+            onCb: cbSet.has(sym),
+            onWatchlist: watchSet.has(sym),
+          };
+        })
+        .filter((e: any) => e._dt >= today && e._dt <= windowEnd);
+      allIn7d.sort((a: any, b: any) => {
+        if (a.onCb !== b.onCb) return a.onCb ? -1 : 1;
+        if (a.onWatchlist !== b.onWatchlist) return a.onWatchlist ? -1 : 1;
+        return a.daysAhead - b.daysAhead;
+      });
+      const upcoming = allIn7d.slice(0, 10);
+      setData((d) => ({ ...d, upcomingEarnings: upcoming } as any));
+    } finally {
+      setUpcomingRetrying(false);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1521,78 +1615,10 @@ export default function HomeDashboard() {
         }
       });
 
-      // PATCH 0775 + 0841 — Upcoming Earnings: fetch CURRENT + NEXT
-      // month from /api/market/earnings, then prioritize CB ∪ Watchlist
-      // names first. P0841 adds graceful fallback + always-set-array so
-      // the panel is never stuck on stale empty state.
-      (async () => {
-        const now = new Date();
-        const currentMonth = now.toISOString().slice(0, 7);
-        const nextMonth = (() => {
-          const m = new Date(now); m.setMonth(now.getMonth() + 1);
-          return m.toISOString().slice(0, 7);
-        })();
-        let aData: any = null;
-        let bData: any = null;
-        let _aErr = ''; let _bErr = '';
-        try {
-          const [ra, rb] = await Promise.all([
-            safeDiag<any>(`/api/market/earnings?market=india&month=${currentMonth}&_=${Date.now()}`, 28_000),
-            safeDiag<any>(`/api/market/earnings?market=india&month=${nextMonth}&_=${Date.now()}`, 28_000),
-          ]);
-          aData = ra?.data; bData = rb?.data;
-          _aErr = String(ra?.error || ra?.status || '');
-          _bErr = String(rb?.error || rb?.status || '');
-          if (!aData?.results?.length && !bData?.results?.length) {
-            // eslint-disable-next-line no-console
-            console.warn('[upcoming-earnings] both months empty:', { currentMonth, nextMonth, _aErr, _bErr });
-          }
-        } catch (e: any) {
-          _aErr = e?.message || 'fetch-throw';
-        }
-        if (cancelled) return;
-        // PATCH 0823 — accept multiple response shapes (.results, .items, .rows, raw array)
-        const flatten = (d: any): any[] => {
-          if (!d) return [];
-          if (Array.isArray(d)) return d;
-          return d.results || d.items || d.rows || d.data?.results || [];
-        };
-        const all = [...flatten(aData), ...flatten(bData)];
-        const today = new Date(); today.setHours(0, 0, 0, 0);
-        const window = new Date(today); window.setDate(today.getDate() + 7);
-        const cbSet = (() => { try { return getConvictionTickers(); } catch { return new Set<string>(); } })();
-        let watchlist: string[] = [];
-        try { watchlist = JSON.parse(localStorage.getItem('mc_watchlist_tickers') || '[]') || []; } catch {}
-        const watchSet = new Set(watchlist.map((s: string) => s.toUpperCase().replace(/\.(NS|BO)$/i, '')));
-
-        const allIn7d = all
-          .filter((e: any) => e?.resultDate && e?.ticker)
-          .map((e: any) => {
-            const dt = new Date(e.resultDate); dt.setHours(0, 0, 0, 0);
-            const daysAhead = Math.round((dt.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-            const sym = (e.ticker || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
-            return {
-              ticker: e.ticker,
-              company: e.company,
-              resultDate: e.resultDate,
-              sector: e.sector,
-              daysAhead,
-              _dt: dt,
-              onCb: cbSet.has(sym),
-              onWatchlist: watchSet.has(sym),
-            };
-          })
-          .filter((e: any) => e._dt >= today && e._dt <= window);
-
-        // Sort: CB first → watchlist second → soonest-date third
-        allIn7d.sort((a: any, b: any) => {
-          if (a.onCb !== b.onCb) return a.onCb ? -1 : 1;
-          if (a.onWatchlist !== b.onWatchlist) return a.onWatchlist ? -1 : 1;
-          return a.daysAhead - b.daysAhead;
-        });
-        const upcoming = allIn7d.slice(0, 10);
-        setData((d) => ({ ...d, upcomingEarnings: upcoming } as any));
-      })();
+      // PATCH 0775 + 0841 + 0904 — Upcoming Earnings: now delegated to the
+      // component-scope `refetchUpcomingEarnings` useCallback so the Retry
+      // button can re-invoke it without window.location.reload() (Bug B).
+      refetchUpcomingEarnings();
 
       // PATCH 0773 — Rating Actions + Order Book fetchers DELETED.
       // Home dashboard no longer renders these panels (see render block
@@ -3146,10 +3172,13 @@ export default function HomeDashboard() {
                   {' '}or <Link href="/earnings-opportunities" style={{ color: '#F59E0B', textDecoration: 'none' }}>EO page →</Link>
                   {' '}to verify which days have filings.
                 </div>
-                {/* PATCH 0841 — manual retry button (full reload triggers cache-busted fetch) */}
-                <button onClick={() => { try { window.location.reload(); } catch {} }}
-                  style={{ marginTop: 8, padding: '4px 10px', fontSize: 10, background: 'transparent', color: '#22D3EE', border: '1px solid #22D3EE', borderRadius: 4, cursor: 'pointer' }}>
-                  ↻ Retry fetch
+                {/* PATCH 0904 — surgical retry. Re-invokes the component-scope
+                    refetchUpcomingEarnings useCallback so ONLY this panel
+                    refreshes instead of doing window.location.reload()
+                    (which blew away every other panel's state too). */}
+                <button onClick={() => { refetchUpcomingEarnings(); }} disabled={upcomingRetrying}
+                  style={{ marginTop: 8, padding: '4px 10px', fontSize: 10, background: 'transparent', color: upcomingRetrying ? '#6B7A8D' : '#22D3EE', border: `1px solid ${upcomingRetrying ? '#6B7A8D' : '#22D3EE'}`, borderRadius: 4, cursor: upcomingRetrying ? 'wait' : 'pointer' }}>
+                  {upcomingRetrying ? '⏳ Retrying…' : '↻ Retry fetch'}
                 </button>
               </div>
             ) : (
