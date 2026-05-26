@@ -1568,6 +1568,9 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
   // crashed if the bench populated while the user was on the tab).
   // USER-REQ — filter state (composable AND)
   const [filters, setFilters] = useState<ConvFilters>(FILTER_DEFAULT);
+  // PATCH 0923 — collapsible Q1-Q4 cheat sheet visibility.
+  // Default OPEN on first mount so the user understands the chips immediately.
+  const [showQuarterCheatSheet, setShowQuarterCheatSheet] = useState(true);
   const toggle = <K extends keyof ConvFilters>(k: K, v: ConvFilters[K]) =>
     setFilters((f) => ({ ...f, [k]: f[k] === v ? null : v } as ConvFilters));
 
@@ -1952,17 +1955,49 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
               border: '1px solid rgba(245,158,11,0.25)',
               borderRadius: 6,
             }}>
-              {/* PATCH 0922 — Inline definitional banner so user never
-                  has to translate Q4 → Jan-Mar quarter → filed Apr-Jun. */}
+              {/* PATCH 0922 + 0923 — Inline definitional banner with
+                  collapsible quarter cheat-sheet table. User wanted the
+                  same table I showed in chat rendered on the page so they
+                  never have to flip between explainer and chips again. */}
               <div style={{ fontSize: 10, color: '#94A3B8', lineHeight: 1.4 }}>
-                <span style={{ color: '#F59E0B', fontWeight: 800 }}>📅 PERIOD</span>
-                <span style={{ marginLeft: 6 }}>
-                  Indian FY: <strong style={{ color: '#E6EDF3' }}>FY26 = Apr 2025 → Mar 2026</strong>.
-                  Quarter chips filter by <strong style={{ color: '#E6EDF3' }}>reporting quarter</strong>
-                  {' '}(what the results cover), NOT filing month.
-                  Q4 dominates right now because we&apos;re in the <strong style={{ color: '#F59E0B' }}>Q4 FY26 filing season</strong>
-                  {' '}(May-Jun 2026 = companies publishing their Jan-Mar 2026 numbers).
-                </span>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+                  <span style={{ color: '#F59E0B', fontWeight: 800 }}>📅 PERIOD</span>
+                  <span>
+                    Indian FY: <strong style={{ color: '#E6EDF3' }}>FY26 = Apr 2025 → Mar 2026</strong>.
+                    Quarter chips filter by <strong style={{ color: '#E6EDF3' }}>reporting quarter</strong>
+                    {' '}(what the results cover), NOT filing month.
+                  </span>
+                  <button
+                    onClick={() => setShowQuarterCheatSheet(v => !v)}
+                    title="Show / hide the Q1-Q4 cheat sheet"
+                    style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 8px', background: 'transparent', border: '1px solid #F59E0B60', color: '#F59E0B', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+                  >
+                    {showQuarterCheatSheet ? '▾' : '▸'} Cheat sheet
+                  </button>
+                </div>
+                {showQuarterCheatSheet && (
+                  <div style={{ marginTop: 6, padding: '6px 8px', background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.35)', borderRadius: 4 }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
+                      <thead>
+                        <tr style={{ borderBottom: '1px solid rgba(245,158,11,0.3)' }}>
+                          <th style={{ textAlign: 'left', padding: '3px 6px', color: '#F59E0B', fontWeight: 800, letterSpacing: '0.3px' }}>Reporting Quarter</th>
+                          <th style={{ textAlign: 'left', padding: '3px 6px', color: '#F59E0B', fontWeight: 800 }}>Period the results cover</th>
+                          <th style={{ textAlign: 'left', padding: '3px 6px', color: '#F59E0B', fontWeight: 800 }}>Companies typically file</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr><td style={{ padding: '2px 6px', color: '#E6EDF3', fontWeight: 800 }}>Q1</td><td style={{ padding: '2px 6px', color: '#94A3B8' }}>Apr–Jun</td><td style={{ padding: '2px 6px', color: '#94A3B8' }}>Jul–Aug</td></tr>
+                        <tr><td style={{ padding: '2px 6px', color: '#E6EDF3', fontWeight: 800 }}>Q2</td><td style={{ padding: '2px 6px', color: '#94A3B8' }}>Jul–Sep</td><td style={{ padding: '2px 6px', color: '#94A3B8' }}>Oct–Nov</td></tr>
+                        <tr><td style={{ padding: '2px 6px', color: '#E6EDF3', fontWeight: 800 }}>Q3</td><td style={{ padding: '2px 6px', color: '#94A3B8' }}>Oct–Dec</td><td style={{ padding: '2px 6px', color: '#94A3B8' }}>Jan–Feb</td></tr>
+                        <tr style={{ background: 'rgba(245,158,11,0.10)' }}>
+                          <td style={{ padding: '2px 6px', color: '#F59E0B', fontWeight: 800 }}>Q4</td>
+                          <td style={{ padding: '2px 6px', color: '#F59E0B' }}>Jan–Mar (also annual)</td>
+                          <td style={{ padding: '2px 6px', color: '#F59E0B', fontWeight: 700 }}>Apr–Jun ← we&apos;re here now</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 700, minWidth: 110 }}>Reporting quarter:</span>
