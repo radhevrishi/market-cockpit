@@ -249,12 +249,38 @@ export type NewsSubType =
   // Catch-all
   | 'NEWS_GENERIC';
 
+// PATCH 0889 — Broadened acquisition leading-verb set so headlines using
+// infinitive forms ("to acquire", "set to acquire", "plans to acquire",
+// "approves acquisition", "agreed to acquire", "definitive agreement to
+// acquire") match. The previous regex only handled the conjugated forms
+// (acquires / acquired / acquiring) and missed every news source covering
+// the Anupam Rasayan -> Bliss GVS deal — every headline used "to acquire".
+const ACQUIRE_VERB = String.raw`(?:acquir(?:es|ed|ing|ition\s+of)|(?:to|will|plans?\s+to|set\s+to|propose[ds]?\s+to|approve[ds]?\s+(?:the\s+)?acquisition\s+of|agreed?\s+to\s+acquire|enter(?:s|ed)?\s+(?:into\s+)?(?:a\s+)?definitive\s+agreement\s+to\s+acquire)\s+(?:up\s+to\s+)?(?:a\s+)?(?:100%\s+(?:of|equity\s+stake)?\s*(?:in)?\s*)?)`;
+
+// PATCH 0889 — Standalone STAKE_PURCHASE detector. Catches any "<N>% stake"
+// or "<N>% equity" reference in a title, regardless of the verb form. This
+// is the safety-net that fires when none of the verb-specific patterns hit
+// (every "Bliss GVS upper circuit as Anupam Rasayan to acquire 43% stake"
+// headline contains "43% stake" plainly).
+const STAKE_PCT_PATTERN = /\b(\d{1,3}(?:\.\d+)?)\s*(?:%|pc|per\s+cent|percent)\s*(?:stake|equity|share(?:holding)?|holding)\b/i;
+
 const NEWS_PATTERNS: Array<{ subType: NewsSubType; type: CatalystType; re: RegExp; format?: (m: RegExpMatchArray, title: string) => string }> = [
   // ── CORPORATE ACTIONS / M&A (specific deals first) ─────────────────────
-  { subType: 'ACQUISITION',     type: 'MNA',         re: /\b(?:acquir(?:es|ed|ing|isition\s+of))\b.{0,80}?(\d{1,3}(?:\.\d+)?)\s*%\s*(?:stake|equity|share|holding)(?:\s+in\s+([A-Z][\w &-]{2,40}))?/i,
+  // PATCH 0889 — Acquisition with explicit "% stake" capture + target name
+  { subType: 'ACQUISITION',     type: 'MNA',         re: new RegExp(`\\b${ACQUIRE_VERB}.{0,80}?(\\d{1,3}(?:\\.\\d+)?)\\s*(?:%|pc|per\\s+cent)\\s*(?:stake|equity|share|holding)(?:\\s+in\\s+([A-Z][\\w &-]{2,40}))?`, 'i'),
     format: (m) => `acquires ${m[1]}% stake${m[2] ? ` in ${m[2].trim()}` : ''}` },
-  { subType: 'ACQUISITION',     type: 'MNA',         re: /\b(?:acquir(?:es|ed|ing)|to acquire)\s+(?:100%\s+of\s+)?([A-Z][\w &-]{2,40})\b/i,
+  // PATCH 0889 — Acquisition with TARGET captured (case-insensitive after
+  // verb; previously required [A-Z] start which missed "Anupam Rasayan to
+  // acquire Bliss GVS for ₹1,370 crore" headlines where the article title
+  // is already title-cased).
+  { subType: 'ACQUISITION',     type: 'MNA',         re: new RegExp(`\\b${ACQUIRE_VERB}([A-Za-z][\\w &.-]{3,40}?)(?:\\s+(?:for|for\\s+₹|for\\s+Rs|at|valued|deal)\\b|\\s*$)`, 'i'),
     format: (m) => `acquires ${m[1].trim()}` },
+  // PATCH 0889 — Final M&A catch-all: any "<N>% stake" pattern in a title
+  // even when the verb form didn't match cleanly. Lower priority than the
+  // two specific patterns above but still better than letting it fall
+  // through to NEWS_GENERIC.
+  { subType: 'ACQUISITION',     type: 'MNA',         re: STAKE_PCT_PATTERN,
+    format: (m) => `${m[1]}% stake transaction` },
   { subType: 'STAKE_SALE',      type: 'MNA',         re: /\b(?:sells|divest|stake sale|hive[- ]off|to\s+sell)\b.{0,40}?(?:stake|holding|share)/i,
     format: () => 'stake sale / divestiture' },
   { subType: 'JV_FORMATION',    type: 'MNA',         re: /\bjoint\s+venture\s+(?:with|formed|signed)|JV\s+(?:with|formed)/i,
