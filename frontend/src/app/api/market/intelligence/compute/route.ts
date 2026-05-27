@@ -2062,14 +2062,23 @@ function classifyEvidenceTier(
   // EXCEPTION: ECONOMIC signals from exchange sources should NOT be auto-suppressed
   // just because their value estimate is heuristic. The underlying event (Order Win,
   // Capex, M&A) is confirmed by the exchange filing; only the value is estimated.
-  if (isHeuristicSuppressed) return 'TIER_D';
   const isExchange = dataSource === 'nse' || dataSource === 'NSE';
   const isEconomic = signalClass === 'ECONOMIC' || signalClass === 'STRATEGIC';
+  // PATCH 0939 — NSE-sourced economic events (Q4 results, M&A, order wins,
+  // capex) are REAL events even when the value extraction is heuristic.
+  // The filing IS the signal; the extracted ₹ amount is auxiliary. Without
+  // this exemption, every Q4 results filing gets tagged TIER_D and hidden
+  // by the gate at line 4460 — which is why the user was only seeing
+  // GOVERNANCE/mgmt-change signals despite 5,968 Financial Results filings
+  // flowing through P0937's expanded keyword filter.
+  // Override: NSE + ECONOMIC/STRATEGIC = TIER_B floor regardless of
+  // isHeuristicSuppressed or low confidenceScore.
+  if (isExchange && isEconomic) {
+    if (confidenceType === 'ACTUAL') return 'TIER_A';
+    return 'TIER_B'; // exchange + economic → trust the EVENT even if value is heuristic
+  }
+  if (isHeuristicSuppressed) return 'TIER_D';
   if (confidenceScore !== undefined && confidenceScore < 50 && confidenceType === 'HEURISTIC') {
-    if (isExchange && isEconomic) {
-      // Exchange-sourced economic signal: downgrade to TIER_C (inferred), not TIER_D (hidden)
-      return 'TIER_C';
-    }
     return 'TIER_D';
   }
 
@@ -3171,12 +3180,12 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   const trackedSet = new Set(allTracked.map(s => s.toUpperCase().trim()));
   const shouldFilterToTracked = allTracked.length > 0;
 
-  // PATCH 0937 — cap raised 100 → 250. With the earnings keyword fix
-  // above, Q4 season floods the material list with ~200-300 results
-  // filings per day. Cap of 100 was choking the pipeline. Scoring is
-  // ~30-50ms per item so 250 ≈ 12s extra wall-clock, well within the
-  // 55s Vercel limit.
-  // Filter announcements, then cap at 250 most recent.
+  // PATCH 0937/0939 — cap 100 → 180. 250 pushed wall-clock to 39s (close
+  // to Vercel 55s limit). 180 gives breathing room while still 2× the
+  // pre-P0937 budget. Combined with the TIER_B floor for NSE economic
+  // events, this surfaces 60-100 Q4 results signals per refresh instead
+  // of the 0 we were getting before P0937 (or the 65 rejected we got
+  // with 250 + old tier gating).
   const filteredAnnAll = allAnnouncements.filter(item => {
     if (!item.symbol || (!item.desc && !item.subject)) return false;
     const sym = (item.symbol || '').toUpperCase().trim();
@@ -3198,9 +3207,9 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   // Sort by date descending and cap at 100 to avoid timeout
   const filteredAnn = filteredAnnAll
     .sort((a, b) => new Date(b.date || '').getTime() - new Date(a.date || '').getTime())
-    .slice(0, 250);
-  if (filteredAnnAll.length > 250) {
-    console.log(`[Compute] Capped announcements: ${filteredAnnAll.length} → 250 (most recent)`);
+    .slice(0, 180);
+  if (filteredAnnAll.length > 180) {
+    console.log(`[Compute] Capped announcements: ${filteredAnnAll.length} → 180 (most recent)`);
   }
 
   debug.nseMaterial = filteredAnn.filter(a => a._source === 'nse').length;
