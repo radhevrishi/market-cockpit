@@ -249,35 +249,68 @@ export interface AIForwardGuidance {
   extracted_at: string;
 }
 
+// PATCH 0949 — AI tier classifier. The LLM returns label ∈ {Positive,Neutral,Negative}
+// which is too coarse to differentiate quality. Use the signed score in [-1, +1]
+// to bucket into 5 tiers so the user can read a card and instantly tell whether
+// the AI verdict is strong, mild, or marginal. Tier governs colour/icon/label;
+// confidence === 'LOW' overrides border to dashed + appends "(low conf)" so we
+// never make a confident-looking badge from a shaky read.
+type AITier = 'EXCELLENT' | 'POSITIVE' | 'NEUTRAL' | 'CAUTIOUS' | 'NEGATIVE';
+
+function aiTier(ai: AIForwardGuidance | null | undefined):
+  | { tier: AITier; color: string; icon: string; label: string }
+  | null {
+  if (!ai) return null;
+  const s = ai.score;
+  if (s >= 0.6)  return { tier: 'EXCELLENT', color: '#10B981', icon: '🚀', label: 'AI-Excellent' };
+  if (s >= 0.2)  return { tier: 'POSITIVE',  color: '#34D399', icon: '▲',  label: 'AI-Positive'  };
+  if (s > -0.2)  return { tier: 'NEUTRAL',   color: '#94A3B8', icon: '●',  label: 'AI-Neutral'   };
+  if (s > -0.6)  return { tier: 'CAUTIOUS',  color: '#F59E0B', icon: '▽',  label: 'AI-Cautious'  };
+  return            { tier: 'NEGATIVE', color: '#EF4444', icon: '⚠',  label: 'AI-Negative' };
+}
+
 function GuidanceBadge({ guidance, score, ai }: { guidance?: string; score?: number; ai?: AIForwardGuidance | null }) {
-  // PATCH 0948 — When AI Forward Guidance is present, OVERRIDE the Screener-derived
-  // label. The AI version is real forward statements from concall transcripts;
-  // the Screener version is just pros/cons keyword scoring. Honestly label which
-  // one is being shown so the user can trust what they're reading.
-  const useAI = !!ai;
-  const labelText = useAI ? ai!.label : guidance;
-  const scoreNum = useAI ? ai!.score : score;
-  if (!labelText) return null;
+  // PATCH 0948/0949 — Two distinct visual tracks so the user can read the chip
+  // and know IMMEDIATELY whether it's the keyword-derived Screener Signal
+  // (historical) or the AI-extracted Forward Guidance (concall transcript).
+  //   • Keyword chip: grey ●/▲/▼ with no robot, no purple, no glow.
+  //   • AI chip:      🤖 prefix + purple left-border accent + 5-tier colour/icon
+  //                   based on score magnitude (EXCELLENT/POSITIVE/NEUTRAL/CAUTIOUS/NEGATIVE),
+  //                   dashed border + "(low conf)" suffix when confidence === 'LOW'.
+  const t = aiTier(ai || null);
+  if (t && ai) {
+    const lowConf = ai.confidence === 'LOW';
+    const tooltip = `Forward Guidance (AI · ${t.label} · score ${ai.score >= 0 ? '+' : ''}${ai.score.toFixed(2)} · ${ai.confidence} confidence · ${ai.source})\n${ai.rationale}${ai.quotes.length > 0 ? '\n\nQuotes:\n• ' + ai.quotes.join('\n• ') : ''}`;
+    return (
+      <span title={tooltip} style={{
+        display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '10px',
+        padding: '2px 7px', borderRadius: '4px',
+        backgroundColor: `${t.color}18`,
+        border: `1px ${lowConf ? 'dashed' : 'solid'} ${t.color}80`,
+        borderLeft: `3px solid #7C3AED`,    // purple accent = AI track signature
+        color: t.color, fontWeight: 700,
+        boxShadow: lowConf ? undefined : `0 0 0 1px ${t.color}25`,
+      }}>
+        🤖 {t.icon} {t.label}: {ai.score >= 0 ? '+' : ''}{ai.score.toFixed(2)}{lowConf ? ' (low conf)' : ''}
+      </span>
+    );
+  }
+  // Keyword fallback (Screener pros/cons score — historical, not forward)
+  if (!guidance) return null;
   const cfg: Record<string, { color: string; icon: string }> = {
     'Positive': { color: '#10B981', icon: '▲' },
-    'Neutral': { color: '#F59E0B', icon: '●' },
+    'Neutral':  { color: '#F59E0B', icon: '●' },
     'Negative': { color: '#EF4444', icon: '▼' },
   };
-  const c = cfg[labelText] || cfg['Neutral'];
-  const sourceLabel = useAI ? 'Forward Guidance' : 'Screener Signal';
-  const tooltip = useAI && ai
-    ? `Forward Guidance (AI · ${ai.confidence} confidence · ${ai.source})\n${ai.rationale}${ai.quotes.length > 0 ? '\n\nQuotes:\n• ' + ai.quotes.join('\n• ') : ''}`
-    : 'Screener pros/cons keyword score — historical balance-sheet signals, NOT forward guidance.';
+  const c = cfg[guidance] || cfg['Neutral'];
   return (
-    <span title={tooltip} style={{
+    <span title="Screener pros/cons keyword score — historical balance-sheet signals, NOT forward guidance. Run AI Guidance for real concall extract." style={{
       display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '10px',
       padding: '2px 7px', borderRadius: '4px',
-      backgroundColor: `${c.color}18`, border: `1px solid ${c.color}${useAI ? '70' : '40'}`,
+      backgroundColor: `${c.color}12`, border: `1px solid ${c.color}40`,
       color: c.color, fontWeight: 600,
-      // AI badges get a subtle glow so the user can see they're trusting real concall extract
-      boxShadow: useAI ? `0 0 0 1px ${c.color}30` : undefined,
     }}>
-      {useAI ? '🤖' : ''}{c.icon} {sourceLabel}: {labelText}{scoreNum !== undefined ? ` (${scoreNum > 0 ? '+' : ''}${scoreNum.toFixed(2)})` : ''}
+      {c.icon} Screener Signal: {guidance}{score !== undefined ? ` (${score > 0 ? '+' : ''}${score.toFixed(2)})` : ''}
     </span>
   );
 }
@@ -1179,8 +1212,18 @@ export default function EarningsPage() {
   });
   const [aiLoading, setAiLoading] = useState(false);
   const [aiStats, setAiStats] = useState<{ cached: number; extracted: number; missing_pdf: number; llm_failed: number; total: number } | null>(null);
+  // PATCH 0949a — per-ticker diagnostics from the worker route, so we can show
+  // *why* each missing/failed ticker failed without scraping Vercel logs.
+  type FGDiag = { ticker: string; outcome: 'cf-error' | 'no-filings' | 'no-attachment' | 'ok'; total_filings_seen?: number; ticker_filings?: number; ticker_with_attachment?: number; matched_preference?: string; subject?: string; url?: string; error?: string; stage?: 'pdf-empty' | 'llm-failed' };
+  const [aiDiagnostics, setAiDiagnostics] = useState<FGDiag[] | null>(null);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [dateTo, setDateTo] = useState(() => new Date().toISOString().slice(0, 10));
   const [guidanceFilter, setGuidanceFilter] = useState<'ALL' | 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL'>('ALL'); // Filter by forward guidance sentiment
+  // PATCH 0949 — AI-tier filter chip. Lets the user narrow the card grid to AI-EXCELLENT/POSITIVE
+  // (or any tier) after running AI Guidance, so the great prints are visually separable from
+  // the also-rans without scrolling all 32 cards. EXTRACTED_ONLY = any AI-classified card.
+  type AIFilterMode = 'ALL' | 'EXTRACTED_ONLY' | 'EXCELLENT' | 'POSITIVE' | 'NEUTRAL' | 'CAUTIOUS' | 'NEGATIVE';
+  const [aiFilter, setAiFilter] = useState<AIFilterMode>('ALL');
   // PATCH 0207 — Day-1 close threshold filter. Multi-select with OR semantics.
   // Empty set = no filter (show all cards regardless of close_move_pct).
   const [dayOneFilters, setDayOneFilters] = useState<Set<DayOneFilter>>(new Set());
@@ -1583,6 +1626,7 @@ export default function EarningsPage() {
       const json = await res.json();
       const newResults: Record<string, AIForwardGuidance> = json?.results || {};
       setAiStats(json?.stats || null);
+      setAiDiagnostics(Array.isArray(json?.diagnostics) ? json.diagnostics : null);
       // Merge into state + LS
       setAiGuidance(prev => {
         const next = { ...prev };
@@ -1799,9 +1843,21 @@ export default function EarningsPage() {
   //    so every filter composes correctly.
   const gapMap = usePostGapData(sortedCards);
   const filteredCards = useMemo(() => {
-    if (dayOneFilters.size === 0) return sortedCards;
-    return sortedCards.filter(c => matchesDayOneFilter(gapMap[c.symbol], dayOneFilters));
-  }, [sortedCards, gapMap, dayOneFilters]);
+    // PATCH 0949 — compose Day-1 filter + AI-tier filter. AI filter is a no-op
+    // until the user runs AI Guidance (aiGuidance map is empty), so default UX
+    // is unchanged. EXTRACTED_ONLY shows any AI-classified card regardless of tier.
+    const dayOneFiltered = dayOneFilters.size === 0
+      ? sortedCards
+      : sortedCards.filter(c => matchesDayOneFilter(gapMap[c.symbol], dayOneFilters));
+    if (aiFilter === 'ALL') return dayOneFiltered;
+    return dayOneFiltered.filter(c => {
+      const ai = aiGuidance[c.symbol.toUpperCase()];
+      if (!ai) return false;
+      if (aiFilter === 'EXTRACTED_ONLY') return true;
+      const t = aiTier(ai);
+      return t?.tier === aiFilter;
+    });
+  }, [sortedCards, gapMap, dayOneFilters, aiFilter, aiGuidance]);
 
   // ── Visible cards: filtered by viewMode + date, but NOT grade ──
   // Used for summary counts so the grade buttons show accurate numbers.
@@ -2372,6 +2428,32 @@ export default function EarningsPage() {
               <Download style={{ width: '14px', height: '14px' }} /> PDF
             </button>
           )}
+          {/* PATCH 0949 — AI tier filter chip. Only shown once there's at least
+              one AI-classified card in state. Lets the user pin the grid to the
+              tier they care about (typically EXCELLENT or POSITIVE) so the
+              great prints are visually separated from the also-rans. */}
+          {Object.keys(aiGuidance).length > 0 && (
+            <select
+              value={aiFilter}
+              onChange={(e) => setAiFilter(e.target.value as AIFilterMode)}
+              title="Filter by AI Forward Guidance tier"
+              style={{
+                backgroundColor: aiFilter === 'ALL' ? '#1A2540' : '#7C3AED20',
+                border: `1px solid ${aiFilter === 'ALL' ? CARD_BORDER : '#7C3AED'}`,
+                color: aiFilter === 'ALL' ? TEXT : '#C4B5FD',
+                padding: '8px 10px', borderRadius: '6px',
+                fontSize: '12px', fontWeight: 700, cursor: 'pointer',
+              }}
+            >
+              <option value="ALL">🤖 AI: All</option>
+              <option value="EXTRACTED_ONLY">🤖 AI: Extracted only</option>
+              <option value="EXCELLENT">🚀 AI-Excellent</option>
+              <option value="POSITIVE">▲ AI-Positive</option>
+              <option value="NEUTRAL">● AI-Neutral</option>
+              <option value="CAUTIOUS">▽ AI-Cautious</option>
+              <option value="NEGATIVE">⚠ AI-Negative</option>
+            </select>
+          )}
           {/* PATCH 0948 — AI Forward Guidance button. Counts qualifying cards
               (EX/ST + d1 >= +2%) from filtered view. Shift-click force-refreshes
               even cached results. Quarter-stable cache means same period never
@@ -2410,7 +2492,9 @@ export default function EarningsPage() {
           </button>
         </div>
       </div>
-      {/* PATCH 0948 — AI stats banner — shows what last AI run produced */}
+      {/* PATCH 0948/0949a — AI stats banner. P0949a adds "diagnostics" toggle
+          so the user can see per-ticker WHY each PDF/LLM step failed without
+          digging through Vercel logs. */}
       {aiStats && (
         <div style={{
           padding: '6px 12px', marginTop: '6px', borderRadius: '6px',
@@ -2418,6 +2502,52 @@ export default function EarningsPage() {
           color: '#C4B5FD', fontSize: '11px', fontWeight: 600,
         }}>
           🤖 AI Guidance: {aiStats.extracted} extracted · {aiStats.cached} from cache · {aiStats.missing_pdf} no concall PDF · {aiStats.llm_failed} LLM-failed · total {aiStats.total}
+          {aiDiagnostics && aiDiagnostics.length > 0 && (
+            <>
+              {' · '}
+              <button
+                onClick={() => setShowDiagnostics(s => !s)}
+                style={{
+                  background: 'transparent', border: '1px solid #7C3AED60',
+                  color: '#C4B5FD', borderRadius: '4px', padding: '1px 6px',
+                  fontSize: '10px', fontWeight: 700, cursor: 'pointer',
+                }}
+              >{showDiagnostics ? 'Hide' : 'Show'} diagnostics ({aiDiagnostics.length})</button>
+            </>
+          )}
+          {showDiagnostics && aiDiagnostics && (
+            <div style={{
+              marginTop: '8px', maxHeight: '260px', overflowY: 'auto',
+              backgroundColor: '#0B1426', border: '1px solid #7C3AED30', borderRadius: '4px',
+              padding: '6px 8px', fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+              fontSize: '10px', color: TEXT_DIM, fontWeight: 500,
+            }}>
+              <div style={{ color: '#C4B5FD', fontWeight: 700, marginBottom: '4px' }}>
+                Per-ticker PDF resolution trace (P0949a):
+              </div>
+              {aiDiagnostics.map((d, i) => {
+                const outcomeColor =
+                  d.outcome === 'ok' && !d.stage ? '#10B981' :
+                  d.outcome === 'cf-error' ? '#EF4444' :
+                  '#F59E0B';
+                const label = d.stage ? `ok→${d.stage}` : d.outcome;
+                const detail =
+                  d.outcome === 'cf-error' ? d.error :
+                  d.outcome === 'no-filings' ? `seen ${d.total_filings_seen} filings, 0 for ticker` :
+                  d.outcome === 'no-attachment' ? `${d.ticker_filings} filings, 0 with attachment` :
+                  d.stage === 'pdf-empty' ? `extracted <200 chars from ${d.subject || d.url}` :
+                  d.stage === 'llm-failed' ? `Haiku returned no JSON for ${d.subject || d.url}` :
+                  `${d.matched_preference} · ${d.subject || ''}`;
+                return (
+                  <div key={i} style={{ display: 'grid', gridTemplateColumns: '80px 110px 1fr', gap: '8px', padding: '1px 0' }}>
+                    <span style={{ color: TEXT, fontWeight: 700 }}>{d.ticker}</span>
+                    <span style={{ color: outcomeColor, fontWeight: 700 }}>{label}</span>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{detail}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

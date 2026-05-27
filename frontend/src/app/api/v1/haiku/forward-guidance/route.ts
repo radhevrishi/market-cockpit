@@ -44,42 +44,102 @@ interface CFFilingItem {
   raw?: any;
 }
 
+// PATCH 0949a — per-ticker diagnostic trace. Surfaced both in console logs
+// (Vercel) AND in the response body so the dashboard can show WHY a ticker
+// returned no concall PDF without us having to grep logs. Possible reasons:
+//   'cf-error'         CF Worker filings endpoint failed (network/timeout/HTTP)
+//   'no-filings'       CF returned filings but none for this ticker
+//   'no-attachment'    Ticker has filings but none with attachment_url
+//   'ok'               Found a usable PDF URL (with preference order)
+export interface PdfLookupDiag {
+  ticker: string;
+  outcome: 'cf-error' | 'no-filings' | 'no-attachment' | 'ok';
+  total_filings_seen?: number;
+  ticker_filings?: number;
+  ticker_with_attachment?: number;
+  matched_preference?: 'transcript' | 'investor-presentation' | 'press-release' | 'fallback';
+  subject?: string;
+  url?: string;
+  error?: string;
+}
+
 // ─── Step 1: Find latest concall PDF URL for a ticker ──────────────────────
-async function findConcallPdfUrl(ticker: string): Promise<{ url: string; source: AIForwardGuidance['source']; subject: string } | null> {
+async function findConcallPdfUrl(ticker: string): Promise<
+  | { url: string; source: AIForwardGuidance['source']; subject: string; diag: PdfLookupDiag }
+  | { url: null; diag: PdfLookupDiag }
+> {
+  const tkr = ticker.toUpperCase();
   try {
-    // Read general filings blob (covers analyst meets / transcripts / investor presentations)
     const res = await fetch(`${CF_WORKER_URL}/api/filings/latest`, { signal: AbortSignal.timeout(6000) });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const diag: PdfLookupDiag = { ticker: tkr, outcome: 'cf-error', error: `HTTP ${res.status}` };
+      console.warn('[FG-DIAG]', diag);
+      return { url: null, diag };
+    }
     const json = await res.json();
     const filings: CFFilingItem[] = (json?.filings || []);
-    const tkr = ticker.toUpperCase();
-    // Filter to this ticker, freshest first
-    const ours = filings
-      .filter(f => (f.symbol || '').toUpperCase() === tkr)
-      .filter(f => !!f.attachment_url)
-      .sort((a, b) => (b.filing_date || '').localeCompare(a.filing_date || ''));
-    if (ours.length === 0) return null;
+    const tickerFilings = filings.filter(f => (f.symbol || '').toUpperCase() === tkr);
+    const withAttachment = tickerFilings.filter(f => !!f.attachment_url);
+    if (tickerFilings.length === 0) {
+      const diag: PdfLookupDiag = {
+        ticker: tkr, outcome: 'no-filings',
+        total_filings_seen: filings.length, ticker_filings: 0,
+      };
+      console.warn('[FG-DIAG]', diag);
+      return { url: null, diag };
+    }
+    if (withAttachment.length === 0) {
+      const diag: PdfLookupDiag = {
+        ticker: tkr, outcome: 'no-attachment',
+        total_filings_seen: filings.length,
+        ticker_filings: tickerFilings.length,
+        ticker_with_attachment: 0,
+      };
+      console.warn('[FG-DIAG]', diag);
+      return { url: null, diag };
+    }
+    const ours = withAttachment.sort((a, b) => (b.filing_date || '').localeCompare(a.filing_date || ''));
 
-    // Preference order — transcript > investor presentation > press release > anything
-    const preferRe = [
-      /transcript|earnings call|conference call|concall/i,
-      /investor presentation|results presentation|q[1-4]\s+presentation/i,
-      /press release/i,
+    const preferences: Array<{ re: RegExp; tag: 'transcript' | 'investor-presentation' | 'press-release' }> = [
+      { re: /transcript|earnings call|conference call|concall/i, tag: 'transcript' },
+      { re: /investor presentation|results presentation|q[1-4]\s+presentation/i, tag: 'investor-presentation' },
+      { re: /press release/i, tag: 'press-release' },
     ];
-    for (const re of preferRe) {
-      const match = ours.find(f => re.test(f.subject || ''));
+    for (const p of preferences) {
+      const match = ours.find(f => p.re.test(f.subject || ''));
       if (match) {
         const source: AIForwardGuidance['source'] =
-          /press release/i.test(match.subject) ? 'press-release' :
-          /investor presentation|results presentation/i.test(match.subject) ? 'investor-presentation' :
-          'concall-transcript';
-        return { url: match.attachment_url!, source, subject: match.subject };
+          p.tag === 'transcript' ? 'concall-transcript' :
+          p.tag === 'investor-presentation' ? 'investor-presentation' : 'press-release';
+        const diag: PdfLookupDiag = {
+          ticker: tkr, outcome: 'ok',
+          total_filings_seen: filings.length,
+          ticker_filings: tickerFilings.length,
+          ticker_with_attachment: ours.length,
+          matched_preference: p.tag,
+          subject: match.subject,
+          url: match.attachment_url!,
+        };
+        console.log('[FG-DIAG]', diag);
+        return { url: match.attachment_url!, source, subject: match.subject, diag };
       }
     }
-    // Fall through: take freshest with any attachment
-    return { url: ours[0].attachment_url!, source: 'press-release', subject: ours[0].subject };
-  } catch {
-    return null;
+    // Fallback: freshest with any attachment (not in any preference bucket)
+    const diag: PdfLookupDiag = {
+      ticker: tkr, outcome: 'ok',
+      total_filings_seen: filings.length,
+      ticker_filings: tickerFilings.length,
+      ticker_with_attachment: ours.length,
+      matched_preference: 'fallback',
+      subject: ours[0].subject,
+      url: ours[0].attachment_url!,
+    };
+    console.log('[FG-DIAG]', diag);
+    return { url: ours[0].attachment_url!, source: 'press-release', subject: ours[0].subject, diag };
+  } catch (e) {
+    const diag: PdfLookupDiag = { ticker: tkr, outcome: 'cf-error', error: (e as Error).message };
+    console.warn('[FG-DIAG]', diag);
+    return { url: null, diag };
   }
 }
 
@@ -187,6 +247,9 @@ export async function POST(req: NextRequest) {
 
   const stats = { cached: 0, extracted: 0, missing_pdf: 0, llm_failed: 0, total: capped.length };
   const results: Record<string, AIForwardGuidance | null> = {};
+  // PATCH 0949a — collect per-ticker diagnostics so the UI can show why each
+  // ticker failed without us having to scrape Vercel logs.
+  const diagnostics: Array<PdfLookupDiag & { stage?: 'pdf-empty' | 'llm-failed' }> = [];
 
   // Process in 4-concurrent batches so Vercel doesn't open 25 simultaneous PDF fetches
   const CONCURRENT = 4;
@@ -208,19 +271,36 @@ export async function POST(req: NextRequest) {
 
       // 2) Find concall PDF
       const lookup = await findConcallPdfUrl(T);
-      if (!lookup) { results[T] = null; stats.missing_pdf++; return; }
+      if (lookup.url === null) {
+        results[T] = null;
+        stats.missing_pdf++;
+        diagnostics.push(lookup.diag);
+        return;
+      }
 
       // 3) Extract PDF text
       let pdfText = '';
       try {
         const ext = await extractFirstPdf([lookup.url]);
         if (ext && ext.text && ext.text.length >= 200) pdfText = ext.text;
-      } catch {}
-      if (!pdfText) { results[T] = null; stats.missing_pdf++; return; }
+      } catch (e) {
+        console.warn('[FG-DIAG] extract error', T, (e as Error).message);
+      }
+      if (!pdfText) {
+        results[T] = null;
+        stats.missing_pdf++;
+        diagnostics.push({ ...lookup.diag, stage: 'pdf-empty' });
+        return;
+      }
 
       // 4) Haiku extract
       const fg = await extractForwardGuidance(T, pdfText, lookup.source, lookup.url, P, apiKey);
-      if (!fg) { results[T] = null; stats.llm_failed++; return; }
+      if (!fg) {
+        results[T] = null;
+        stats.llm_failed++;
+        diagnostics.push({ ...lookup.diag, stage: 'llm-failed' });
+        return;
+      }
 
       // 5) Cache + return
       if (isRedisAvailable()) {
@@ -231,7 +311,7 @@ export async function POST(req: NextRequest) {
     }));
   }
 
-  return NextResponse.json({ results, stats, generated_at: new Date().toISOString() }, {
+  return NextResponse.json({ results, stats, diagnostics, generated_at: new Date().toISOString() }, {
     headers: { 'Cache-Control': 'no-store' },
   });
 }
