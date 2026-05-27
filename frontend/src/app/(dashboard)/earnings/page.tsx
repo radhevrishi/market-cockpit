@@ -1779,23 +1779,63 @@ export default function EarningsPage() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  // PATCH 0948 — AI Forward Guidance fetcher.
+  // PATCH 0948/0955 — AI Forward Guidance fetcher.
   // Builds the qualifying-set from CURRENT filteredCards (post-filter, so
   // user's date / grade / 1D filters all narrow what gets billed),
   // restricts to EXCELLENT/STRONG with D1 close >= +2% (only spend Haiku
   // budget on prints the market already validated), POSTs to the
   // server endpoint, merges results into aiGuidance state + LS.
   //
-  // force=true → bypass server-side KV cache, re-extract from scratch.
+  // P0955 — CLIENT-SIDE CACHE SKIP. Before hitting the API, pre-filter the
+  // qualifying set: skip any ticker that ALREADY has aiGuidance for the SAME
+  // current period (we compare deriveCachePeriod(card.period) to the stored
+  // ai.period). This means:
+  //   • If you click AI Guidance twice in a row → 2nd click sends 0 items, no
+  //     API call at all, no money spent.
+  //   • If you expand universe with 30 qualifying and 28 are already cached
+  //     → only 2 fresh tickers sent to API.
+  //   • If a NEW quarter has dropped (card.period changed) → ticker re-sent
+  //     because period mismatch — correct behaviour, that's a new earnings.
+  //   • Shift-click (force=true) → bypass the client-side skip too, send all
+  //     qualifiers so server force-re-extracts.
+  //
+  // Independent of (and complementary to) the server's year-long KV cache.
+  // Saves the round-trip even when KV caches everything.
   const fetchAIGuidance = useCallback(async (qualifyingCards: EarningsScanCard[], force: boolean) => {
     if (qualifyingCards.length === 0) return;
     setAiLoading(true);
-    setAiStats(null);
     try {
-      const items = qualifyingCards.map(c => ({
-        ticker: c.symbol,
-        period: deriveCachePeriod(c.period),
-      }));
+      // P0955 — client-side cache skip. Build item list excluding any ticker
+      // that already has same-period AI guidance in state. Track what we
+      // skipped so we can report it accurately in the stats banner.
+      let clientCachedCount = 0;
+      const items: Array<{ ticker: string; period: string }> = [];
+      for (const c of qualifyingCards) {
+        const period = deriveCachePeriod(c.period);
+        const cached = aiGuidance[c.symbol.toUpperCase()];
+        if (!force && cached && cached.period === period) {
+          clientCachedCount++;
+          continue;
+        }
+        items.push({ ticker: c.symbol, period });
+      }
+
+      // No fresh tickers to extract — short-circuit, don't hit API at all.
+      if (items.length === 0) {
+        setAiStats({
+          cached: clientCachedCount,
+          extracted: 0,
+          intimation_only: 0,
+          missing_pdf: 0,
+          llm_failed: 0,
+          total: qualifyingCards.length,
+        });
+        setAiDiagnostics(null);
+        console.log(`[AI Guidance] All ${clientCachedCount} qualifying tickers already cached client-side for current quarter — no API call.`);
+        return;
+      }
+
+      setAiStats(null);  // clear stale stats only when we actually call the API
       const res = await fetch('/api/v1/haiku/forward-guidance', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -1808,7 +1848,17 @@ export default function EarningsPage() {
       }
       const json = await res.json();
       const newResults: Record<string, AIForwardGuidance> = json?.results || {};
-      setAiStats(json?.stats || null);
+      // Merge server stats with client-side skip count so 'cached' total
+      // reflects EVERY ticker that didn't bill Haiku (server KV + client LS).
+      const serverStats = json?.stats || { cached: 0, extracted: 0, intimation_only: 0, missing_pdf: 0, llm_failed: 0, total: items.length };
+      setAiStats({
+        cached: (serverStats.cached || 0) + clientCachedCount,
+        extracted: serverStats.extracted || 0,
+        intimation_only: serverStats.intimation_only || 0,
+        missing_pdf: serverStats.missing_pdf || 0,
+        llm_failed: serverStats.llm_failed || 0,
+        total: qualifyingCards.length,
+      });
       setAiDiagnostics(Array.isArray(json?.diagnostics) ? json.diagnostics : null);
       // Merge into state + LS
       setAiGuidance(prev => {
@@ -1827,7 +1877,7 @@ export default function EarningsPage() {
     } finally {
       setAiLoading(false);
     }
-  }, []);
+  }, [aiGuidance]);
 
   // PATCH 0352 — Lazy-load conviction-beats earnings cards. Fires once,
   // when the user first selects the 'conviction' universe or toggles
