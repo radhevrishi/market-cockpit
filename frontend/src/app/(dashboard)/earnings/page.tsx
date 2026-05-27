@@ -911,22 +911,12 @@ const COMMENTARY_COLORS: Record<CommentarySignal, { bg: string; border: string; 
 // CARD COMPONENT
 // ══════════════════════════════════════════════
 
-// PATCH 0956 — derive a human-readable AI eligibility reason so cards that
-// don't qualify can show 'AI gated: D1 +1.4% < +2%' instead of leaving the
-// user to wonder why no AI badge appears. Three states:
-//   'eligible'    — passes both grade + d1 gates (AI should be runnable)
-//   'no-d1-data'  — qualifying grade but D1 close not yet available
-//   'low-d1'      — qualifying grade but D1 < +2%
-//   'low-grade'   — grade is GOOD/OK/BAD (not EX/ST)
-function aiEligibilityReason(card: EarningsScanCard, d1: number | null): { state: 'eligible' | 'no-d1-data' | 'low-d1' | 'low-grade'; reason: string } {
+// PATCH 0956/0958 — eligibility helper. P0958 dropped the D1 gate, so only
+// two states now: 'eligible' (EX/ST grade) and 'low-grade' (GOOD/OK/BAD).
+// Universe filter is the cost lever, not per-card D1.
+function aiEligibilityReason(card: EarningsScanCard): { state: 'eligible' | 'low-grade'; reason: string } {
   if (card.grade !== 'EXCELLENT' && card.grade !== 'STRONG') {
     return { state: 'low-grade', reason: `AI gated: ${card.grade} grade (only EX/ST)` };
-  }
-  if (d1 === null || typeof d1 !== 'number') {
-    return { state: 'no-d1-data', reason: 'AI gated: D1 close not yet available' };
-  }
-  if (d1 < 2) {
-    return { state: 'low-d1', reason: `AI gated: D1 ${d1 >= 0 ? '+' : ''}${d1.toFixed(1)}% < +2%` };
   }
   return { state: 'eligible', reason: '' };
 }
@@ -1122,15 +1112,14 @@ function EarningsCardComponent({ card, postGap, ai }: { card: EarningsScanCard; 
                 knows whether AI is gated or just not extracted yet. Only
                 shown when there's no AI guidance for this card. */}
             {!ai && (() => {
-              const d1 = postGap?.close_move_pct ?? null;
-              const elig = aiEligibilityReason(card, d1);
+              const elig = aiEligibilityReason(card);
               if (elig.state === 'eligible') {
                 return (
                   <span style={{
                     fontSize: '9px', color: '#F59E0B', fontWeight: 600,
                     padding: '1px 6px', borderRadius: '3px',
                     backgroundColor: '#F59E0B15', border: '1px dashed #F59E0B40',
-                  }} title="This card qualifies (EX/ST + D1 ≥ +2%) — click '🤖 AI Guidance' in the toolbar to extract.">
+                  }} title="This card qualifies (EX/ST grade) — click '🤖 AI Guidance' in the toolbar to extract.">
                     🤖 click to extract
                   </span>
                 );
@@ -1138,7 +1127,7 @@ function EarningsCardComponent({ card, postGap, ai }: { card: EarningsScanCard; 
               return (
                 <span style={{
                   fontSize: '9px', color: TEXT_DIM, fontWeight: 500, fontStyle: 'italic',
-                }} title="AI Forward Guidance is gated to EXCELLENT/STRONG grade + D1 close ≥ +2% so we only spend Haiku budget on prints the market already validated.">
+                }} title="AI Forward Guidance only runs on EXCELLENT/STRONG grade cards. Narrow universe (Watchlist/Conviction/Screener) to control cost.">
                   {elig.reason}
                 </span>
               );
@@ -1881,32 +1870,60 @@ export default function EarningsPage() {
       }
 
       setAiStats(null);  // clear stale stats only when we actually call the API
-      const res = await fetch('/api/v1/haiku/forward-guidance', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ items, force }),
-        signal: AbortSignal.timeout(55_000),
-      });
-      if (!res.ok) {
-        console.warn('[AI Guidance] HTTP', res.status);
-        return;
+
+      // PATCH 0958 — client-side batching. Worker caps at 25/request; splitting
+      // into chunks of 25 and firing in parallel covers the full universe
+      // (was: 25 tickers per click, rest silently dropped).
+      const CHUNK = 25;
+      const chunks: typeof items[] = [];
+      for (let i = 0; i < items.length; i += CHUNK) chunks.push(items.slice(i, i + CHUNK));
+
+      const allResults: Record<string, AIForwardGuidance> = {};
+      const allDiagnostics: any[] = [];
+      const aggStats = { cached: 0, extracted: 0, intimation_only: 0, screener_fallback: 0, budget_exceeded: 0, missing_pdf: 0, llm_failed: 0 };
+
+      // Process chunks in waves of 2 parallel to avoid Vercel slamming the
+      // upstream PDF fetchers all at once. Each chunk uses Haiku's own
+      // internal CONCURRENT=4 PDF pipeline.
+      const WAVE = 2;
+      for (let w = 0; w < chunks.length; w += WAVE) {
+        const wave = chunks.slice(w, w + WAVE);
+        const waveResults = await Promise.allSettled(wave.map(chunk =>
+          fetch('/api/v1/haiku/forward-guidance', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ items: chunk, force }),
+            signal: AbortSignal.timeout(55_000),
+          }).then(r => r.ok ? r.json() : null)
+        ));
+        for (const r of waveResults) {
+          if (r.status !== 'fulfilled' || !r.value) continue;
+          const json = r.value;
+          Object.assign(allResults, json?.results || {});
+          if (Array.isArray(json?.diagnostics)) allDiagnostics.push(...json.diagnostics);
+          const s = json?.stats || {};
+          aggStats.cached += s.cached || 0;
+          aggStats.extracted += s.extracted || 0;
+          aggStats.intimation_only += s.intimation_only || 0;
+          aggStats.screener_fallback += s.screener_fallback || 0;
+          aggStats.budget_exceeded += s.budget_exceeded || 0;
+          aggStats.missing_pdf += s.missing_pdf || 0;
+          aggStats.llm_failed += s.llm_failed || 0;
+        }
       }
-      const json = await res.json();
-      const newResults: Record<string, AIForwardGuidance> = json?.results || {};
-      // Merge server stats with client-side skip count so 'cached' total
-      // reflects EVERY ticker that didn't bill Haiku (server KV + client LS).
-      const serverStats = json?.stats || { cached: 0, extracted: 0, intimation_only: 0, screener_fallback: 0, budget_exceeded: 0, missing_pdf: 0, llm_failed: 0, total: items.length };
+
       setAiStats({
-        cached: (serverStats.cached || 0) + clientCachedCount,
-        extracted: serverStats.extracted || 0,
-        intimation_only: serverStats.intimation_only || 0,
-        screener_fallback: serverStats.screener_fallback || 0,
-        budget_exceeded: serverStats.budget_exceeded || 0,
-        missing_pdf: serverStats.missing_pdf || 0,
-        llm_failed: serverStats.llm_failed || 0,
+        cached: aggStats.cached + clientCachedCount,
+        extracted: aggStats.extracted,
+        intimation_only: aggStats.intimation_only,
+        screener_fallback: aggStats.screener_fallback,
+        budget_exceeded: aggStats.budget_exceeded,
+        missing_pdf: aggStats.missing_pdf,
+        llm_failed: aggStats.llm_failed,
         total: qualifyingCards.length,
       });
-      setAiDiagnostics(Array.isArray(json?.diagnostics) ? json.diagnostics : null);
+      setAiDiagnostics(allDiagnostics.length > 0 ? allDiagnostics : null);
+      const newResults = allResults;
       // Merge into state + LS
       setAiGuidance(prev => {
         const next = { ...prev };
@@ -2148,18 +2165,15 @@ export default function EarningsPage() {
     });
   }, [sortedCards, gapMap, dayOneFilters, aiFilters, aiGuidance]);
 
-  // PATCH 0954 — qualifying set for AI Guidance (EX/ST + D1 >= +2%) computed
-  // once at component scope so both the toolbar button and the stats banner
-  // can reference it. Coverage = how many of qualifying already have AI data.
+  // PATCH 0954/0958 — qualifying set for AI Guidance. P0958 dropped the
+  // D1 ≥ +2% gate: it was filtering out 80%+ of EX/ST cards because most
+  // Screener-only tickers don't have post-gap data fetched, and even on
+  // tickers with data, +2% was too restrictive. Universe filter (Watchlist
+  // / Conviction / Screener) is the cost lever now — narrow that to control
+  // spend instead of gating per-card.
   const qualifyingForAI = useMemo(() => {
-    return filteredCards.filter(c => {
-      const g = c.grade;
-      if (g !== 'EXCELLENT' && g !== 'STRONG') return false;
-      const gap = gapMap[c.symbol];
-      const d1 = gap?.close_move_pct ?? null;
-      return typeof d1 === 'number' && d1 >= 2;
-    });
-  }, [filteredCards, gapMap]);
+    return filteredCards.filter(c => c.grade === 'EXCELLENT' || c.grade === 'STRONG');
+  }, [filteredCards]);
 
   // ── Visible cards: filtered by viewMode + date, but NOT grade ──
   // Used for summary counts so the grade buttons show accurate numbers.
