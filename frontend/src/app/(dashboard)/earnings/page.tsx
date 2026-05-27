@@ -1503,19 +1503,27 @@ export default function EarningsPage() {
     setConvictionLoading(true);
     (async () => {
       try {
-        const BATCH_SIZE = 30;
-        const PARALLEL = 3;
-        let newCards: EarningsScanCard[] = [];
+        // PATCH 0942 — Much faster CB scan + progressive render.
+        // Was: 396 tickers / 30 per batch / 3 parallel waves = ~125s wall-clock
+        //      AND no cards visible until everything completed.
+        // Now: 50 per batch / 6 parallel = ~40s, AND cards render after EACH
+        // wave so user sees progress immediately instead of staring at a spinner.
+        const BATCH_SIZE = 50;
+        const PARALLEL = 6;
         const batches: string[][] = [];
         for (let i = 0; i < newTickers.length; i += BATCH_SIZE) batches.push(newTickers.slice(i, i + BATCH_SIZE));
+        // Tag existing cards as conviction immediately — no wait for fetch
+        setCards(prev => prev.map(c => ({ ...c, isConviction: convictionTickersState.has(c.symbol) || c.isConviction })));
+
         for (let w = 0; w < batches.length; w += PARALLEL) {
           const wave = batches.slice(w, w + PARALLEL);
           const results = await Promise.allSettled(
             wave.map(async (batch) => {
               const encoded = batch.map(s => encodeURIComponent(s)).join(',');
-              // PATCH 0716 — added 25s timeout + safe JSON parse.
+              // PATCH 0942 — 18s per-batch (tighter than 25s; 50 tickers per
+              // call usually completes in 6-10s when Screener.in is warm).
               const _ctl = new AbortController();
-              const _timer = setTimeout(() => _ctl.abort(), 25_000);
+              const _timer = setTimeout(() => _ctl.abort(), 18_000);
               try {
                 const res = await fetch(`/api/market/earnings-scan?symbols=${encoded}`, { signal: _ctl.signal });
                 if (!res.ok) return null;
@@ -1524,6 +1532,7 @@ export default function EarningsPage() {
               finally { clearTimeout(_timer); }
             })
           );
+          const waveCards: EarningsScanCard[] = [];
           for (const r of results) {
             if (r.status === 'fulfilled' && r.value) {
               const batchCards = (r.value.cards || []).map(c => ({
@@ -1531,16 +1540,20 @@ export default function EarningsPage() {
                 universeTag: 'conviction' as const,
                 isConviction: true,
               }));
-              newCards = [...newCards, ...batchCards];
+              waveCards.push(...batchCards);
             }
           }
+          // PATCH 0942 — progressive render: push each wave's results
+          // into state immediately so the user sees N more cards appear
+          // every ~10s instead of waiting for the full 40s.
+          if (waveCards.length > 0) {
+            setCards(prev => {
+              const existingSymbols = new Set(prev.map(c => c.symbol));
+              const additions = waveCards.filter(c => !existingSymbols.has(c.symbol));
+              return [...prev, ...additions];
+            });
+          }
         }
-        setCards(prev => {
-          const updated = prev.map(c => ({ ...c, isConviction: convictionTickersState.has(c.symbol) || c.isConviction }));
-          const existingSymbols = new Set(updated.map(c => c.symbol));
-          const additions = newCards.filter(c => !existingSymbols.has(c.symbol));
-          return [...updated, ...additions];
-        });
         setConvictionScanned(true);
       } catch (e) {
         console.error('[Earnings] Conviction lazy-load failed:', e);
