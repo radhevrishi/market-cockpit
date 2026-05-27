@@ -1860,8 +1860,26 @@ export default function AutoValuationPage() {
                 const recColor = s.recommendation === 'BUY' ? '#10B981' : s.recommendation === 'WATCH' ? '#22D3EE' : s.recommendation === 'WAIT' ? '#F59E0B' : s.recommendation === 'AVOID' ? '#EF4444' : '#94A3B8';
                 const ageHours = (Date.now() - new Date(s.savedAt).getTime()) / 3600_000;
                 const ageLabel = ageHours < 1 ? 'just now' : ageHours < 24 ? `${Math.round(ageHours)}h ago` : `${Math.round(ageHours / 24)}d ago`;
+                /*
+                 * PATCH 0965 UX — Auto-valuation saved-entry display label.
+                 * Root cause: rows used the raw ticker as React key and as
+                 * primary text. When the user saves multiple revisions for
+                 * the same ticker (different upload dates) the rows looked
+                 * identical, and any downstream PDF export inherited the
+                 * UUID-like ticker key as its filename ("MTAR" or worse,
+                 * a hex-id when ticker auto-detect failed) instead of a
+                 * human-readable "Company · YYYY-MM-DD" label.
+                 * Fix: build an explicit displayLabel of the form
+                 *   ${company || ticker} · ${YYYY-MM-DD}
+                 * and surface it via title= so any export / share action
+                 * downstream can pick it up; the underlying s.ticker is
+                 * still the storage key (for delete / fetch).
+                 */
+                const savedDate = (s.savedAt || '').slice(0, 10);
+                const primary = (s.company || s.ticker || '').trim();
+                const displayLabel = primary ? `${primary} · ${savedDate}` : `Untitled · ${savedDate}`;
                 return (
-                  <div key={s.ticker} style={{
+                  <div key={s.ticker} title={displayLabel} style={{
                     background: '#0A1422', border: `1px solid ${BORDER}`, borderRadius: 5,
                     padding: '8px 11px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
                   }}>
@@ -1872,7 +1890,7 @@ export default function AutoValuationPage() {
                       {s.ticker}
                     </span>
                     <span style={{ fontSize: 12, color: TEXT, fontWeight: 600, flex: 1, minWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {s.company || '—'}
+                      {s.company || s.ticker || 'Untitled'} <span style={{ color: DIM, fontWeight: 400 }}>· {savedDate}</span>
                     </span>
                     {s.sector && (
                       <span style={{ fontSize: 9, color: '#22D3EE', background: '#22D3EE15', padding: '2px 7px', borderRadius: 3, fontWeight: 700, whiteSpace: 'nowrap' }}>

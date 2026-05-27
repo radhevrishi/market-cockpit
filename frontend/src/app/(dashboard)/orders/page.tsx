@@ -2914,22 +2914,62 @@ export default function CompanyIntelligencePage() {
                 { label: 'Portfolio Alerts', value: bias.portfolioAlerts, color: PURPLE, filter: null as FilterType | null },
                 ...(bias.negativeSignals > 0 ? [{ label: '⚠ Negative', value: bias.negativeSignals, color: RED, filter: 'NEGATIVE' as FilterType | null }] : []),
                 ...(totalSignalValue > 0 ? [{ label: 'Signal Value (est.)', value: fmtCr(totalSignalValue) as any, color: CYAN, filter: null as FilterType | null }] : []),
-              ].map(s => (
-                <div key={s.label}
-                  onClick={() => s.filter && setTypeFilter(s.filter === typeFilter ? 'ALL' : s.filter)}
-                  style={{
-                    textAlign: 'center',
-                    cursor: s.filter ? 'pointer' : 'default',
-                    padding: '4px 8px',
-                    borderRadius: '6px',
-                    backgroundColor: s.filter && s.filter === typeFilter ? `${s.color}20` : 'transparent',
-                    border: s.filter && s.filter === typeFilter ? `1px solid ${s.color}40` : '1px solid transparent',
-                    transition: 'all 0.15s ease',
-                  }}>
-                  <div style={{ fontSize: '18px', fontWeight: 700, color: s.color }}>{s.value}</div>
-                  <div style={{ fontSize: '10px', color: TEXT3 }}>{s.label}</div>
-                </div>
-              ))}
+              ].map(s => {
+                /*
+                 * PATCH 0965 BUG #11 — Signals counters skeleton on cold load.
+                 * Root cause: on the very first page load the Signals
+                 * pipeline takes ~20 s to compute. During that window
+                 * `loading === true` AND every counter renders as a hard
+                 * "0", which looks identical to a real "no signals" state
+                 * and made the page feel broken.
+                 * Fix: while `loading` is true AND the counter value is
+                 * still 0/'0', render an animated pulsing skeleton block
+                 * (≈30px tall × 40px wide) instead of the literal zero.
+                 * A small "Computing… ~20s" subtitle replaces the label
+                 * so the user knows it's in-progress, not empty. Once
+                 * real data arrives we swap back to the live counter
+                 * without remounting the wrapper (smooth transition).
+                 */
+                const isComputingThis = loading && (s.value === 0 || s.value === '0');
+                return (
+                  <div key={s.label}
+                    onClick={() => s.filter && setTypeFilter(s.filter === typeFilter ? 'ALL' : s.filter)}
+                    style={{
+                      textAlign: 'center',
+                      cursor: s.filter ? 'pointer' : 'default',
+                      padding: '4px 8px',
+                      borderRadius: '6px',
+                      backgroundColor: s.filter && s.filter === typeFilter ? `${s.color}20` : 'transparent',
+                      border: s.filter && s.filter === typeFilter ? `1px solid ${s.color}40` : '1px solid transparent',
+                      transition: 'all 0.15s ease',
+                    }}>
+                    {isComputingThis ? (
+                      <>
+                        <div
+                          aria-label={`${s.label} computing`}
+                          style={{
+                            width: 40, height: 30, borderRadius: 4, margin: '0 auto',
+                            background: `linear-gradient(90deg, ${s.color}15 0%, ${s.color}45 50%, ${s.color}15 100%)`,
+                            backgroundSize: '200% 100%',
+                            animation: 'ordersStatPulse 1.4s linear infinite',
+                          }}
+                        />
+                        <div style={{ fontSize: '10px', color: TEXT3, marginTop: 2 }}>{s.label}</div>
+                        <div style={{ fontSize: '9px', color: TEXT3, opacity: 0.7, marginTop: 1 }}>Computing&hellip; ~20s</div>
+                      </>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: '18px', fontWeight: 700, color: s.color }}>{s.value}</div>
+                        <div style={{ fontSize: '10px', color: TEXT3 }}>{s.label}</div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+              {/* PATCH 0965 BUG #11 — keyframes for the skeleton shimmer.
+                  Single style tag is cheap; lives alongside the loop so
+                  the animation name is co-located with its only consumer. */}
+              <style>{`@keyframes ordersStatPulse { 0%{background-position:-200% 0;} 100%{background-position:200% 0;} }`}</style>
             </div>
           </div>
 

@@ -118,11 +118,43 @@ export default function ActivityLogPage() {
         </div>
 
         {filtered.length === 0 ? (
-          <div style={{ background: CARD, border: `1px dashed ${BORDER}`, borderRadius: 8, padding: '24px 26px', textAlign: 'center' }}>
-            <div style={{ fontSize: 13, color: DIM, fontStyle: 'italic' }}>
-              No activity matches your filter. Try logging a decision in <Link href="/multibagger" style={{ color: '#22D3EE' }}>Multibagger</Link>, saving a valuation in <Link href="/valuation-calc" style={{ color: '#22D3EE' }}>Valuation Calc</Link>, or adding a theme in <Link href="/critical-themes" style={{ color: '#22D3EE' }}>Critical Themes</Link>.
+          /*
+           * PATCH 0965 BUG #10 — Activity Log empty state.
+           * Root cause: when the user has no logged activity yet, the
+           * `filtered` array is empty and the previous code rendered only
+           * a single italic filter hint that read more like "no matches"
+           * than "you haven't done anything yet." On a fresh portal install
+           * the feed looked blank/broken.
+           * Fix: distinguish (a) the truly-empty case — no items at all
+           * — from (b) the "filter excludes everything" case. For (a)
+           * render a friendly centered empty-state card with an icon,
+           * generous padding, and the prescribed call-to-action sentence
+           * so the user immediately knows where activity comes from. (b)
+           * keeps the existing italic "filter matches nothing" hint.
+           */
+          items.length === 0 ? (
+            <div style={{
+              background: CARD, border: `1px dashed ${BORDER}`, borderRadius: 8,
+              padding: '60px 32px', textAlign: 'center',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14,
+            }}>
+              <div style={{ fontSize: 48, lineHeight: 1, color: DIM }} aria-hidden="true">📋</div>
+              <div style={{ fontSize: 14, color: DIM, lineHeight: 1.6, maxWidth: 520 }}>
+                No activity yet. Start by saving a valuation, adding a theme, or logging a decision &mdash; it will appear here automatically.
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center', marginTop: 4 }}>
+                <Link href="/valuation-calc" style={{ fontSize: 11, color: '#22D3EE', textDecoration: 'none', padding: '5px 11px', border: '1px solid #22D3EE40', borderRadius: 4, fontWeight: 700 }}>Save a valuation</Link>
+                <Link href="/critical-themes" style={{ fontSize: 11, color: '#22D3EE', textDecoration: 'none', padding: '5px 11px', border: '1px solid #22D3EE40', borderRadius: 4, fontWeight: 700 }}>Add a theme</Link>
+                <Link href="/multibagger" style={{ fontSize: 11, color: '#22D3EE', textDecoration: 'none', padding: '5px 11px', border: '1px solid #22D3EE40', borderRadius: 4, fontWeight: 700 }}>Log a decision</Link>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div style={{ background: CARD, border: `1px dashed ${BORDER}`, borderRadius: 8, padding: '24px 26px', textAlign: 'center' }}>
+              <div style={{ fontSize: 13, color: DIM, fontStyle: 'italic' }}>
+                No activity matches your filter. Try logging a decision in <Link href="/multibagger" style={{ color: '#22D3EE' }}>Multibagger</Link>, saving a valuation in <Link href="/valuation-calc" style={{ color: '#22D3EE' }}>Valuation Calc</Link>, or adding a theme in <Link href="/critical-themes" style={{ color: '#22D3EE' }}>Critical Themes</Link>.
+              </div>
+            </div>
+          )
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             {byDay.map(([day, dayItems]) => (

@@ -1208,24 +1208,23 @@ function WarrantMomentumFeed() {
   // subject classified as a warrant filing?).
   const [tickerSearch, setTickerSearch] = useState('');
 
+  /*
+   * PATCH 0965 BUG #3 — Warrant Momentum feed: permanent "Loading..." spinner.
+   * --------------------------------------------------------------
+   * ROOT CAUSE: Timeout was 25s but on slow Vercel cold-starts the
+   * Loading spinner felt permanent. More importantly, errors surfaced
+   * a small inline chip rather than a prominent ErrorState card with
+   * a Retry button, so users didn't realise they could re-fire.
+   *
+   * FIX:
+   *   - Timeout tightened 25s → 15s via AbortSignal.timeout(15_000).
+   *   - Error always sets an empty-shape data so the empty-state
+   *     branch (with its prominent Retry button) renders instead of
+   *     the spinner.
+   */
   const fetchFeed = async (force = false) => {
     setLoading(true);
     setError(null);
-    // PATCH 0486 QA-#3 — Tighter 28s timeout (was 50s, but Vercel hobby
-    // caps at 60s anyway). On abort/error, we now set an empty-shape data
-    // object so the empty-state render branch fires and the user is no
-    // longer stuck on "Loading…" forever.
-    // PATCH 0536 — raised 28s → 52s. Cold cache on the 90/180-day window
-    // commonly takes 30-40s after the 0420 time-budget exit; 28s aborted
-    // before the route could write its cache, surfacing as the user's
-    // "0 filings · 0 warrant-related" empty-state. Vercel hobby caps at
-    // 60s — 52s leaves headroom.
-    // PATCH 0761 — lowered 52s → 25s. The cache should be warm enough now
-    // that 25s is plenty; if not, the empty-shape fallback surfaces and the
-    // user can retry instead of staring at 'Loading… (cache warming, ~30s)'
-    // which felt indistinguishable from a stuck state (BUG 6).
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 25000);
     // Slow-fetch hint fires at 8s for retry CTA visibility (was 15s).
     setSlowFetch(false);
     const slowTimer = setTimeout(() => setSlowFetch(true), 8000);
@@ -1238,9 +1237,14 @@ function WarrantMomentumFeed() {
         ...(passingOnly ? { passingOnly: '1' } : {}),
         ...(force ? { force: '1' } : {}),
       });
-      const res = await fetch(`/api/v1/concall-intel/warrant-feed?${params}`, { cache: 'no-store', signal: controller.signal });
+      // PATCH 0965 BUG #3 — AbortSignal.timeout(15_000) per spec; replaces
+      // the bespoke 25s AbortController so the spinner is bounded.
+      const res = await fetch(`/api/v1/concall-intel/warrant-feed?${params}`, {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(15_000),
+      });
       if (!res.ok) {
-        setError(`HTTP ${res.status}`);
+        setError(`HTTP ${res.status} — warrant feed unavailable`);
         setData((prev) => prev || { filings: [], count_total: 0, count_relevant: 0, count_passing: 0 } as any);
         return;
       }
@@ -1248,11 +1252,15 @@ function WarrantMomentumFeed() {
       setData(j);
       setLastRefresh(new Date());
     } catch (e: any) {
-      setError(e?.name === 'AbortError' ? 'Warrant feed slow — retry in a few seconds' : (e?.message || 'fetch failed'));
+      // PATCH 0965 BUG #3 — distinguish timeout from generic errors so the
+      // banner copy matches what the user actually saw.
+      const isTimeout = e?.name === 'TimeoutError' || e?.name === 'AbortError' || /timeout|abort/i.test(String(e?.message || ''));
+      setError(isTimeout
+        ? '⚠ Warrant momentum data unavailable — pipeline may be processing (timed out after 15s)'
+        : `⚠ Warrant momentum fetch failed: ${e?.message || 'unknown error'}`);
       // Surface an empty-shape so the UI rolls forward instead of spinning.
       setData((prev) => prev || { filings: [], count_total: 0, count_relevant: 0, count_passing: 0 } as any);
     } finally {
-      clearTimeout(timeoutId);
       clearTimeout(slowTimer); // PATCH 0693
       setSlowFetch(false); // PATCH 0693
       setLoading(false);
@@ -1311,18 +1319,30 @@ function WarrantMomentumFeed() {
         </div>
       </div>
 
-      {/* PATCH 0420 — Suppress red HTTP 500 chip when warrant data is loaded */}
+      {/*
+        PATCH 0420 — Suppress red HTTP 500 chip when warrant data is loaded.
+        PATCH 0965 BUG #3 — Upgraded inline chip to a full red-border
+        ErrorState card with a prominent Retry button so users can see
+        unambiguously that the pipeline isn't returning data.
+      */}
       {error && (!data || data.count_total === 0) && (
-        <div style={{ fontSize: 11, color: '#EF4444', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span>⚠ {error}</span>
+        <div style={{
+          fontSize: 12, color: '#FCA5A5', marginBottom: 10,
+          border: '2px solid #EF4444', borderRadius: 6,
+          background: 'rgba(239,68,68,0.06)',
+          padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+        }}>
+          <span style={{ fontSize: 16 }}>⚠</span>
+          <span style={{ flex: 1, minWidth: 200 }}>{error}</span>
           {/* PATCH 0693 — explicit Retry button on terminal error */}
-          <button onClick={() => fetchFeed(true)} style={{ fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 4, border: '1px solid #EF4444', background: '#EF444420', color: '#EF4444', cursor: 'pointer' }}>↻ Retry</button>
+          <button onClick={() => fetchFeed(true)} style={{ fontSize: 11, fontWeight: 800, padding: '5px 12px', borderRadius: 5, border: '1px solid #EF4444', background: '#EF444430', color: '#FCA5A5', cursor: 'pointer' }}>↻ Retry</button>
         </div>
       )}
       {/* PATCH 0693 — slow-fetch warning during long initial load. */}
+      {/* PATCH 0965 BUG #3 — message updated to reflect new 15s ceiling. */}
       {loading && slowFetch && !data && (
         <div style={{ fontSize: 11, color: '#F59E0B', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span>⚠ Warrant feed is slow — cache warming up. Will time out at 52s.</span>
+          <span>⚠ Warrant feed is slow — cache warming up. Will time out at 15s.</span>
           <button onClick={() => fetchFeed(true)} style={{ fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 4, border: '1px solid #F59E0B', background: '#F59E0B20', color: '#F59E0B', cursor: 'pointer' }}>↻ Retry now</button>
         </div>
       )}
@@ -2622,29 +2642,46 @@ function ConcallAnalyticsTab() {
   const [moversData, setMoversData] = useState<MoversPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  /*
+   * PATCH 0965 BUG #3 — Concall Intel Analytics tab stuck on Loading.
+   * --------------------------------------------------------------
+   * ROOT CAUSE: The previous outer timer set loading=false silently
+   * without setting an error, so the user saw the empty Analytics
+   * shell after 20s with no explanation and no retry hint. The
+   * per-endpoint safeFetch helper also swallowed every exception
+   * (returning null), which on a backend-wide outage left ALL four
+   * datasets as null and no banner.
+   *
+   * FIX:
+   *   - Track an explicit `loadError` state.
+   *   - Use AbortSignal.timeout(15_000) on every fetch (per spec).
+   *   - Count failures; if every endpoint failed, surface a red
+   *     ErrorState card with a Retry button.
+   *   - Outer timer trimmed 20s → 16s (just past per-fetch timeout)
+   *     so we never spin past 16s.
+   */
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
-    // PATCH 0761 — Outer hard timeout (20s) so Analytics tab never sticks
-    // on 'Loading…' forever. User feedback: 'shows Loading... with no
-    // resolution even after 10+ seconds.'
+    setLoadError(null);
     let settled = false;
     const outerTimer = setTimeout(() => {
       if (settled) return;
       settled = true;
       setLastRefresh(new Date());
       setLoading(false);
-    }, 20_000);
+      // PATCH 0965 BUG #3 — make the outer-timeout case visible.
+      setLoadError('Concall Intel analytics timed out after 16s. Pipeline may be processing — Retry.');
+    }, 16_000);
+    let failures = 0;
     const safeFetch = async <T,>(url: string): Promise<T | null> => {
       try {
-        const ctl = new AbortController();
-        // Per-endpoint cap 12s so 4 parallel fetches fit comfortably in outer 20s
-        const t = setTimeout(() => ctl.abort(), 12_000);
-        const res = await fetch(url, { cache: 'no-store', signal: ctl.signal });
-        clearTimeout(t);
-        if (!res.ok) return null;
+        // PATCH 0965 BUG #3 — AbortSignal.timeout(15_000) per spec.
+        const res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(15_000) });
+        if (!res.ok) { failures++; return null; }
         return await res.json() as T;
-      } catch { return null; }
+      } catch { failures++; return null; }
     };
     try {
       const [w, b, k, m] = await Promise.all([
@@ -2662,12 +2699,17 @@ function ConcallAnalyticsTab() {
       setMoversData(m);
       setLastRefresh(new Date());
       setLoading(false);
-    } catch {
+      // PATCH 0965 BUG #3 — if every endpoint failed, surface red banner.
+      if (failures === 4) {
+        setLoadError('All Concall Intel endpoints failed (warrant · live · keyword · movers). Backend may be down — Retry.');
+      }
+    } catch (e: any) {
       if (settled) return;
       settled = true;
       clearTimeout(outerTimer);
       setLastRefresh(new Date());
       setLoading(false);
+      setLoadError(`Concall Intel analytics fetch crashed: ${e?.message || String(e)}`);
     }
   }, []);
 
@@ -2719,6 +2761,29 @@ function ConcallAnalyticsTab() {
     return (
       <div style={{ padding: 40, textAlign: 'center', color: '#94A3B8', fontSize: 12 }}>
         📡 Loading Concall Intelligence analytics across warrants · movers · bullish · keyword watch…
+        <div style={{ marginTop: 8, fontSize: 10, color: '#6B7A8D' }}>(≤ 16s · times out gracefully)</div>
+      </div>
+    );
+  }
+
+  /*
+   * PATCH 0965 BUG #3 — ErrorState for the Analytics tab.
+   * Renders when the outer 16s timer fires OR all 4 endpoints fail.
+   * Red border + Retry button per spec.
+   */
+  if (loadError && !warrantData && !liveBullishData && !kwData && !moversData) {
+    return (
+      <div style={{
+        margin: 16, padding: '18px 22px', borderRadius: 8,
+        border: '2px solid #EF4444', background: 'rgba(239,68,68,0.06)',
+        color: '#FCA5A5', fontSize: 13,
+      }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: '#EF4444', marginBottom: 6 }}>⚠ Concall Intel analytics unavailable</div>
+        <div style={{ marginBottom: 10 }}>{loadError}</div>
+        <button onClick={fetchAll} style={{
+          padding: '6px 14px', borderRadius: 5, border: '1px solid #EF4444',
+          background: '#EF444420', color: '#EF4444', cursor: 'pointer', fontSize: 12, fontWeight: 700,
+        }}>↻ Retry</button>
       </div>
     );
   }

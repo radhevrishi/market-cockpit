@@ -1879,6 +1879,65 @@ function scoreNarrative(d: RawFinancials): EngineOutput & { themeList: typeof NA
 // DISPLAY HELPERS
 // ═════════════════════════════════════════════════════════════════════════════
 
+/*
+ * PATCH 0965 BUG #5 — Wrong currency symbol for Indian stocks.
+ *
+ * Root cause: The Concall AI cards (rendered from earnings-analysis/page.tsx)
+ * hard-coded `$` for per-share values (EPS actual/estimate) and for forward
+ * estimates (FMP Revenue Next Q, FMP EPS Current FY, Analyst Target Price).
+ * For Indian tickers (e.g. KIRLOSKAR.NS) those cells displayed "$10.91"
+ * even though `d.currency === 'INR'` was set correctly by the fetch path.
+ *
+ * Fix: a centralized `formatCurrency(value, ticker, opts)` helper that
+ * inspects the ticker suffix (.NS / .BO → India), and falls back to a
+ * heuristic for bare uppercase symbols typical of NSE (no suffix but
+ * 5-12 uppercase letters → assume Indian). Apply the helper to every
+ * `$`-prefixed financial value in the Concall AI surface — EPS, Revenue,
+ * PAT, Market Cap, and the Analyst Target Price chip.
+ *
+ * For large Indian values (>= 1 Cr = 10_000_000) we render `₹X.X Cr`
+ * automatically; smaller absolute values render as `₹X.XX`. USD values
+ * keep the existing decimals/abbreviation behaviour.
+ *
+ * HEURISTIC (documented): "bare uppercase NSE symbol" = a ticker that has
+ * no exchange suffix, is all uppercase, and is between 4 and 12 chars
+ * (KIRLOSKAR, HDFCBANK, BHARTIARTL etc.). US tickers tend to be 1-4
+ * letters (NVDA, TSLA, AMZN, BRK.B) so the >=5 length boundary keeps the
+ * false-positive rate near zero. When the ticker is empty/unknown we
+ * default to USD (existing behavior).
+ */
+export function formatCurrency(
+  value: number | null | undefined,
+  ticker: string | null | undefined,
+  opts: { decimals?: number; unit?: 'cr' | 'lakh' | 'none'; abbrev?: boolean } = {},
+): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—';
+  const decimals = opts.decimals ?? 2;
+  const t = (ticker || '').toUpperCase();
+  // Suffix-based detection (authoritative).
+  const isIndianSuffix = /(\.NS|\.BO)$/i.test(t);
+  // Fallback heuristic for bare uppercase NSE-style symbols (no suffix).
+  // Length >= 5 keeps US tickers (NVDA, TSLA, AMZN, META, AAPL) safe.
+  const isIndianHeuristic =
+    !isIndianSuffix && /^[A-Z][A-Z0-9&-]{4,11}$/.test(t) && !/\./.test(t);
+  const isIndian = isIndianSuffix || isIndianHeuristic;
+  const sym = isIndian ? '₹' : '$';
+  const abs = Math.abs(value);
+  const neg = value < 0;
+  let body: string;
+  if (isIndian && opts.unit !== 'none' && abs >= 1_00_00_000) {
+    // ≥ 1 Cr in raw rupees → display as Cr
+    body = `${(abs / 1_00_00_000).toFixed(1)} Cr`;
+  } else if (opts.abbrev && abs >= 1e9) {
+    body = `${(abs / 1e9).toFixed(2)}B`;
+  } else if (opts.abbrev && abs >= 1e6) {
+    body = `${(abs / 1e6).toFixed(2)}M`;
+  } else {
+    body = abs.toFixed(decimals);
+  }
+  return neg ? `(${sym}${body})` : `${sym}${body}`;
+}
+
 function n(v: number|null, d: RawFinancials, decimals = 1): string {
   if (v === null) return '—';
   const abs = Math.abs(v);
@@ -3226,8 +3285,22 @@ export default function EarningsAnalysisPage() {
                 {avData?.name || d.company}
               </h1>
               <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+                {/*
+                 * PATCH 0965 BUG #6 — Ticker badge truncates .NS suffix.
+                 * Root cause: the badge inherited an implicit width clamp
+                 * (parent flex row + padding) and the original `whiteSpace`
+                 * wasn't pinned, so long Indian tickers like KIRLOSKAR.NS or
+                 * BHARTIARTL.NS rendered "KIRLOSKAR.N" with the trailing 'S'
+                 * clipped. Pin whiteSpace:'nowrap', overflow:'visible',
+                 * minWidth:'fit-content' so any ticker length displays in full.
+                 */}
                 {(avData?.symbol || d.ticker) && (
-                  <span style={{fontSize:12,fontWeight:800,color:ACCENT,backgroundColor:ACCENT+'18',padding:'2px 9px',borderRadius:4,letterSpacing:'0.5px'}}>
+                  <span style={{
+                    fontSize:12,fontWeight:800,color:ACCENT,backgroundColor:ACCENT+'18',
+                    padding:'2px 9px',borderRadius:4,letterSpacing:'0.5px',
+                    whiteSpace:'nowrap',overflow:'visible',minWidth:'fit-content',
+                    display:'inline-block',
+                  }}>
                     {avData?.symbol || d.ticker}
                   </span>
                 )}
@@ -3236,7 +3309,8 @@ export default function EarningsAnalysisPage() {
                 <span style={{fontSize:10,color:'#2A3B4C'}}>·</span>
                 <span style={{fontSize:10,color:MUTED}}>{d.period} · {d.filingType} · {d.scaleLabel}</span>
                 {avData?.analystTargetPrice && (
-                  <span style={{fontSize:10,color:YELLOW}}>🎯 Target ${avData.analystTargetPrice.toFixed(2)}</span>
+                  /* PATCH 0965 BUG #5 — Analyst Target Price was hardcoded "$". */
+                  <span style={{fontSize:10,color:YELLOW}}>🎯 Target {formatCurrency(avData.analystTargetPrice, avData?.symbol || d.ticker, { decimals: 2 })}</span>
                 )}
               </div>
             </div>
@@ -3361,11 +3435,13 @@ export default function EarningsAnalysisPage() {
                       </td>
                       <td style={{padding:'8px 8px',textAlign:'right',fontSize:F.sm,fontWeight:900,
                         color:latestEpsActual!==null?latestEpsActual>=0?GREEN:RED:d.eps!==null?d.eps>=0?GREEN:RED:MUTED}}>
-                        {(() => { const e=latestEpsActual??d.eps; return e!==null?`${e>=0?'$':'($'}${Math.abs(e).toFixed(2)}${e<0?')':''}`:' —'; })()}
+                        {/* PATCH 0965 BUG #5 — EPS was hardcoded "$"; now uses currency-aware helper. */}
+                        {(() => { const e=latestEpsActual??d.eps; return e!==null?formatCurrency(e, d.ticker, { decimals: 2 }):' —'; })()}
                       </td>
                       {hasEstimates && (
                         <td style={{padding:'8px 8px',textAlign:'right',fontSize:F.xs,color:MUTED}}>
-                          {latestEpsEst!==null?`${latestEpsEst>=0?'$':'($'}${Math.abs(latestEpsEst).toFixed(2)}${latestEpsEst<0?')':''}`:
+                          {/* PATCH 0965 BUG #5 — EPS estimate was hardcoded "$"; now currency-aware. */}
+                          {latestEpsEst!==null?formatCurrency(latestEpsEst, d.ticker, { decimals: 2 }):
                            <span style={{color:'#1e293b'}}>—</span>}
                         </td>
                       )}
@@ -3492,7 +3568,8 @@ export default function EarningsAnalysisPage() {
                       <div style={{fontSize:8,color:MUTED,marginBottom:3,letterSpacing:'0.3px'}}>{eq.fiscalDateEnding?.slice(0,7)}</div>
                       <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',gap:4}}>
                         <span style={{fontSize:13,fontWeight:900,color:sCol,lineHeight:1}}>
-                          {eq.reportedEPS !== null ? (eq.reportedEPS>=0?`$${eq.reportedEPS.toFixed(2)}`:`($${Math.abs(eq.reportedEPS).toFixed(2)})`) : '—'}
+                          {/* PATCH 0965 BUG #5 — Beat/Miss history EPS hardcoded "$". */}
+                          {eq.reportedEPS !== null ? formatCurrency(eq.reportedEPS, d.ticker, { decimals: 2 }) : '—'}
                         </span>
                         {spct !== null && (
                           <span style={{fontSize:9,fontWeight:800,color:sCol}}>
@@ -3501,16 +3578,31 @@ export default function EarningsAnalysisPage() {
                         )}
                       </div>
                       <div style={{fontSize:8,color:MUTED,marginTop:2}}>
-                        EPS est {eq.estimatedEPS !== null ? (eq.estimatedEPS>=0?`$${eq.estimatedEPS.toFixed(2)}`:`($${Math.abs(eq.estimatedEPS).toFixed(2)})`) : '—'}
+                        {/* PATCH 0965 BUG #5 — Beat/Miss EPS estimate hardcoded "$". */}
+                        EPS est {eq.estimatedEPS !== null ? formatCurrency(eq.estimatedEPS, d.ticker, { decimals: 2 }) : '—'}
                       </div>
                       {/* Revenue actual vs estimate — FMP provides this */}
                       {(eq.reportedRevenue !== null || eq.estimatedRevenue !== null) && (
                         <div style={{fontSize:7,color:MUTED,marginTop:1,borderTop:`1px solid ${BORDER}30`,paddingTop:2}}>
-                          <span style={{color:eq.revSurprisePct!==null?surpriseColor(eq.revSurprisePct):MUTED}}>
-                            Rev {eq.reportedRevenue!==null?`$${eq.reportedRevenue.toFixed(0)}M`:'?'}
-                            {eq.estimatedRevenue!==null?` vs est $${eq.estimatedRevenue.toFixed(0)}M`:''}
-                            {eq.revSurprisePct!==null?` (${eq.revSurprisePct>=0?'+':''}${eq.revSurprisePct.toFixed(0)}%)` : ''}
-                          </span>
+                          {/* PATCH 0965 BUG #5 — Revenue actual/est hardcoded "$"+"M".
+                              For Indian tickers the FMP value is in millions of INR; convert
+                              to absolute and let formatCurrency render Cr. */}
+                          {(() => {
+                            const tk = d.ticker || '';
+                            const isIndian = /(\.NS|\.BO)$/i.test(tk);
+                            const renderRev = (v: number | null) => {
+                              if (v === null) return '?';
+                              if (isIndian) return formatCurrency(v * 1e6, tk, { decimals: 0 });
+                              return `$${v.toFixed(0)}M`;
+                            };
+                            return (
+                              <span style={{color:eq.revSurprisePct!==null?surpriseColor(eq.revSurprisePct):MUTED}}>
+                                Rev {renderRev(eq.reportedRevenue)}
+                                {eq.estimatedRevenue!==null?` vs est ${renderRev(eq.estimatedRevenue)}`:''}
+                                {eq.revSurprisePct!==null?` (${eq.revSurprisePct>=0?'+':''}${eq.revSurprisePct.toFixed(0)}%)` : ''}
+                              </span>
+                            );
+                          })()}
                         </div>
                       )}
                     </div>
@@ -3701,10 +3793,12 @@ export default function EarningsAnalysisPage() {
               <div style={{display:'grid',gridTemplateColumns:'140px 1fr 1fr 1fr 1fr',gap:4,padding:'8px 0',borderBottom:`1px solid ${BORDER}20`}}>
                 <div style={{fontSize:F.xs,color:MUTED}}>EPS</div>
                 <div style={{textAlign:'right',fontSize:F.sm,fontWeight:800,color:(() => { const e=latestEpsActual??d.eps; return e!==null?e>=0?GREEN:RED:MUTED; })()}}>
-                  {(() => { const e=latestEpsActual??d.eps; return e!==null?`${e>=0?'$':'($'}${Math.abs(e).toFixed(2)}${e<0?')':''}`:' —'; })()}
+                  {/* PATCH 0965 BUG #5 — EPS hardcoded "$" in legacy view; use currency-aware helper. */}
+                  {(() => { const e=latestEpsActual??d.eps; return e!==null?formatCurrency(e, d.ticker, { decimals: 2 }):' —'; })()}
                 </div>
                 <div style={{textAlign:'right',fontSize:F.xs,color:MUTED}}>
-                  {latestEpsEst!==null?`${latestEpsEst>=0?'$':'($'}${Math.abs(latestEpsEst).toFixed(2)}${latestEpsEst<0?')':''}`:' —'}
+                  {/* PATCH 0965 BUG #5 — EPS estimate hardcoded "$" in legacy view. */}
+                  {latestEpsEst!==null?formatCurrency(latestEpsEst, d.ticker, { decimals: 2 }):' —'}
                 </div>
                 <div style={{textAlign:'right'}}>
                   {epsBM ? <span style={{fontSize:F.xs,fontWeight:800,color:epsBM.col}}>{epsBM.text}</span> : <span style={{fontSize:F.xs,color:MUTED}}>—</span>}
@@ -3818,11 +3912,13 @@ export default function EarningsAnalysisPage() {
                 <div style={{display:'flex',gap:10,alignItems:'baseline',padding:'4px 0'}}>
                   <span style={{fontSize:F.xs,color:MUTED,minWidth:120}}>EPS (Current FY)</span>
                   <span style={{fontSize:F.sm,fontWeight:700,color:TEXT}}>
-                    ${(avData?.epsEstCurrentYear ?? 0).toFixed(2)} est
+                    {/* PATCH 0965 BUG #5 — Forward-EPS hardcoded "$". */}
+                    {formatCurrency(avData?.epsEstCurrentYear ?? 0, avData?.symbol || d.ticker, { decimals: 2 })} est
                     {avData?.numAnalysts ? <span style={{fontSize:9,color:MUTED,marginLeft:6}}>({avData.numAnalysts} analysts)</span> : null}
                   </span>
                   {avData?.analystTargetPrice && (
-                    <span style={{fontSize:F.xs,color:YELLOW,marginLeft:10}}>Price Target: ${avData.analystTargetPrice.toFixed(2)}</span>
+                    /* PATCH 0965 BUG #5 — Price Target hardcoded "$". */
+                    <span style={{fontSize:F.xs,color:YELLOW,marginLeft:10}}>Price Target: {formatCurrency(avData.analystTargetPrice, avData?.symbol || d.ticker, { decimals: 2 })}</span>
                   )}
                 </div>
               )}
@@ -3831,7 +3927,17 @@ export default function EarningsAnalysisPage() {
               {avData?.revenueEstNextQ != null && (
                 <div style={{display:'flex',gap:10,alignItems:'baseline',padding:'4px 0'}}>
                   <span style={{fontSize:F.xs,color:MUTED,minWidth:120}}>Revenue (Next Q)</span>
-                  <span style={{fontSize:F.sm,fontWeight:700,color:TEXT}}>${(avData?.revenueEstNextQ ?? 0).toFixed(0)}M est</span>
+                  {/* PATCH 0965 BUG #5 — Revenue Next Q hardcoded "$"+"M"; for Indian tickers
+                      show as "₹X Cr" using formatCurrency (raw value is in absolute units). */}
+                  <span style={{fontSize:F.sm,fontWeight:700,color:TEXT}}>
+                    {(() => {
+                      const v = avData?.revenueEstNextQ ?? 0;
+                      const tk = avData?.symbol || d.ticker || '';
+                      const isIndian = /(\.NS|\.BO)$/i.test(tk);
+                      if (isIndian) return formatCurrency(v * 1e6, tk, { decimals: 0 }) + ' est';
+                      return `$${v.toFixed(0)}M est`;
+                    })()}
+                  </span>
                   {d.revenue && (avData?.revenueEstNextQ ?? 0) > 0 && (
                     <span style={{fontSize:F.xs,color:MUTED,marginLeft:8}}>
                       implying {(((avData?.revenueEstNextQ ?? 0) / d.revenue - 1) * 100).toFixed(1)}% QoQ

@@ -577,14 +577,31 @@ export default function SpecialSituationsPage() {
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
           {/* PATCH 0252 — Clickable filters. Toggle on click; visual active state. */}
           {/* PATCH 0445 BUG-029 — `loading` prop drives shimmer on cold-load zeros. */}
+          {/*
+            PATCH 0965 UX — Tier 1/2 "why is this 0" tooltips.
+            Root cause: a fresh "Tier 1: 0" with no explanation made
+            users assume the page was broken when in reality it
+            reflects strict eligibility (confirmed ticker + primary
+            source + decay date ≤ 30d). Tooltip surfaces the exact
+            gating criteria so the zero is interpretable at a glance.
+          */}
           <Stat label="Tier 1 (hard catalyst)" value={tier1Count} color="#EF4444" loading={isLoading}
             active={tierFilter === 'TIER_1'}
+            tooltip={tier1Count === 0
+              ? 'Tier 1 requires a confirmed ticker + primary source + decay date within 30 days. 0 events currently qualify these criteria.'
+              : 'Tier 1: confirmed ticker, primary-source filing, decay date within 30 days.'}
             onClick={() => setTierFilter(tierFilter === 'TIER_1' ? 'ALL' : 'TIER_1')} />
           <Stat label="Tier 2 (tradable)" value={tier2Count} color="#F59E0B" loading={isLoading}
             active={tierFilter === 'TIER_2'}
+            tooltip={tier2Count === 0
+              ? 'Tier 2 requires a tradable event (named ticker + recent filing) but does not need a primary source. 0 events currently qualify.'
+              : 'Tier 2: tradable (named ticker + recent filing), primary source not required.'}
             onClick={() => setTierFilter(tierFilter === 'TIER_2' ? 'ALL' : 'TIER_2')} />
           <Stat label={tier3Label} value={tier3Count} color="#6B7A8D" loading={isLoading}
             active={tierFilter === 'WATCHLIST'}
+            tooltip={tier3Label === 'Watchlist'
+              ? 'Watchlist: events older than the tradable window or without a confirmed ticker yet.'
+              : 'Archive: events older than 30 days, kept for pattern reference.'}
             onClick={() => setTierFilter(tierFilter === 'WATCHLIST' ? 'ALL' : 'WATCHLIST')} />
           <span style={{ width: 1, backgroundColor: '#1A2840', margin: '4px 4px' }} />
           {(Object.keys(CAT_META) as Category[]).map((c) => (
@@ -723,12 +740,22 @@ export default function SpecialSituationsPage() {
   );
 }
 
-function Stat({ label, value, color, icon, onClick, active, loading }: { label: string; value: number | string; color: string; icon?: string; onClick?: () => void; active?: boolean; loading?: boolean }) {
+function Stat({ label, value, color, icon, onClick, active, loading, tooltip }: { label: string; value: number | string; color: string; icon?: string; onClick?: () => void; active?: boolean; loading?: boolean; tooltip?: string }) {
   // PATCH 0252 — Clickable Stat boxes. When onClick is supplied, render as
   // button; active state lifts the box visually (fill + bolder border).
   // PATCH 0445 BUG-029 — When loading, render a shimmer skeleton in place
   // of the literal '0' so the cold-load doesn't flash zeros that look like
   // genuine empty results.
+  /*
+   * PATCH 0965 UX — Optional `tooltip` prop.
+   * Root cause: tier counters routinely render "Tier 1: 0" with no
+   * explanation of the gating criteria. Users misread the zero as a
+   * data pipeline failure rather than a strict-eligibility result.
+   * Adding an optional `tooltip` prop lets callers attach a `title=`
+   * with the explicit criteria so the explanation is one hover away.
+   * Rendered as native `title=` so it works on every Stat instance
+   * with no extra DOM cost.
+   */
   const baseStyle: React.CSSProperties = {
     backgroundColor: active ? `${color}25` : '#0A1422',
     border: `1px solid ${active ? color : `${color}30`}`,
@@ -756,7 +783,9 @@ function Stat({ label, value, color, icon, onClick, active, loading }: { label: 
       <div style={{ fontSize: 9.5, color: active ? color : '#6B7A8D', textTransform: 'uppercase', letterSpacing: '0.4px', marginTop: 2, fontWeight: active ? 700 : 500 }}>{label}{active ? ' ✓' : ''}</div>
     </>
   );
-  return onClick ? <button onClick={onClick} style={baseStyle}>{inner}</button> : <div style={baseStyle}>{inner}</div>;
+  return onClick
+    ? <button onClick={onClick} title={tooltip} style={baseStyle}>{inner}</button>
+    : <div title={tooltip} style={baseStyle}>{inner}</div>;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

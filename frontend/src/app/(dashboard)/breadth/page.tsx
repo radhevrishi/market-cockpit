@@ -95,14 +95,49 @@ export default function BreadthPage() {
     } catch { /* silent */ }
   }
 
+  /*
+   * PATCH 0965 BUG #4 — Breadth: "undefined/2362 making higher highs"
+   * --------------------------------------------------------------
+   * ROOT CAUSE: The /api/v1/breadth route has TWO code paths with
+   * DIFFERENT field shapes for the momentum pillar:
+   *   - Broad-universe (BHAVCOPY-backed, ~2369 tickers) returns
+   *       { score, weight, aligned, total }     ← NO makingHigherHighs
+   *   - Basket fallback (25-symbol Yahoo) returns
+   *       { score, weight, makingHigherHighs, total }
+   * The page only read `makingHigherHighs`, so on the broad path
+   * the numerator rendered as the JS string "undefined".
+   *
+   * FIX: Defensive numeric guards on EVERY field we render. Each
+   * pillar field falls back through known aliases, then to a safe
+   * placeholder ('—') when truly missing, so we never emit the
+   * literal word "undefined" again.
+   *
+   * Fields guarded:
+   *   trend.pct50, trend.pct200, trend.newHigh, trend.newLow
+   *   sector.above, sector.total
+   *   momentum.makingHigherHighs (fallback to aligned), momentum.total
+   *   pillars.*.score (already numeric from API; coerced via ?? 0)
+   */
+  const fmt = (v: any): string => (v === null || v === undefined || (typeof v === 'number' && !Number.isFinite(v))) ? '—' : String(v);
+
+  const t = data.pillars.trend || ({} as any);
+  const s = data.pillars.sector || ({} as any);
+  const sc = data.pillars.smallcap || ({} as any);
+  const fl = data.pillars.flow || ({} as any);
+  const m: any = data.pillars.momentum || {};
+
+  // PATCH 0965 BUG #4 — fall through aliases for the momentum numerator.
+  const momNumerator = m.makingHigherHighs ?? m.higherHighs ?? m.higher_highs ?? m.momentum_count ?? m.aligned;
+  const momDenominator = m.total;
+
   const pillars = [
-    { name: 'Trend Breadth',    weight: 35, score: data.pillars.trend.score,    sub: `% >50DMA ${data.pillars.trend.pct50}% · % >200DMA ${data.pillars.trend.pct200}% · ${data.pillars.trend.newHigh} new highs / ${data.pillars.trend.newLow} new lows` },
-    { name: 'Sector Breadth',   weight: 25, score: data.pillars.sector.score,   sub: `${data.pillars.sector.above}/${data.pillars.sector.total} sectors above 50DMA` },
-    { name: 'Smallcap Particip.', weight: 20, score: data.pillars.smallcap.score, sub: 'SMID vs Nifty 1m + smallcap above 200DMA' },
+    { name: 'Trend Breadth',    weight: 35, score: t.score ?? 0,    sub: `% >50DMA ${fmt(t.pct50)}% · % >200DMA ${fmt(t.pct200)}% · ${fmt(t.newHigh)} new highs / ${fmt(t.newLow)} new lows` },
+    { name: 'Sector Breadth',   weight: 25, score: s.score ?? 0,    sub: `${fmt(s.above)}/${fmt(s.total)} sectors above 50DMA` },
+    { name: 'Smallcap Particip.', weight: 20, score: sc.score ?? 0, sub: 'SMID vs Nifty 1m + smallcap above 200DMA' },
     // AUDIT_100 #82 — flag the single-proxy fragility of the flow pillar.
     // The proxy is PSU Bank 1m vs Nifty 1m; not a real DII flow feed.
-    { name: 'Institutional Flow', weight: 10, score: data.pillars.flow.score,   sub: 'PSU Bank vs Nifty 1m (proxy for DII) · ⚠ LOW CONFIDENCE — single proxy' },
-    { name: 'Momentum Breadth',   weight: 10, score: data.pillars.momentum.score, sub: `${data.pillars.momentum.makingHigherHighs}/${data.pillars.momentum.total} making higher highs` },
+    { name: 'Institutional Flow', weight: 10, score: fl.score ?? 0, sub: 'PSU Bank vs Nifty 1m (proxy for DII) · ⚠ LOW CONFIDENCE — single proxy' },
+    { name: 'Momentum Breadth',   weight: 10, score: m.score ?? 0,  sub: `${fmt(momNumerator)}/${fmt(momDenominator)} making higher highs` },
   ];
 
   return (

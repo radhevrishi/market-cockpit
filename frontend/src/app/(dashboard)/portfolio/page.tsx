@@ -82,6 +82,27 @@ const setStoredHoldings = (h: PortfolioHolding[]) => {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(h)); } catch {}
 };
 
+/*
+ * PATCH 0965 BUG #1 — Portfolio CMPs show N/A silently
+ * --------------------------------------------------
+ * ROOT CAUSE: Both fetchStockQuotes and fetchIndividualQuotes used a
+ * try/catch that swallowed every error and returned []. fetchData
+ * therefore NEVER hit its outer catch — the user saw 43 rows of "N/A"
+ * with no banner explaining why, and Best/Worst pinned to the first
+ * alphabetic holding (HFCL) at +0.00%.
+ *
+ * FIX: Bubble fetch failures up to fetchData as typed exceptions so the
+ * outer catch can render a red banner with a Retry button. We also:
+ *   - bump per-request timeout to AbortSignal.timeout(20_000)
+ *   - distinguish "network/timeout" vs "200 with malformed shape"
+ *   - log malformed payloads to console so users can self-diagnose
+ *   - expose `QuotesShapeError` so fetchData can surface a distinct
+ *     "Price data malformed — check console" banner.
+ */
+class QuotesShapeError extends Error {
+  constructor(msg: string) { super(msg); this.name = 'QuotesShapeError'; }
+}
+
 // AUDIT_100 #3 — fetch BOTH India + US bulk feeds and merge.
 // Users hold mixed portfolios (NVDA + RELIANCE in one watchlist).
 // Previously only India quotes were fetched → US holdings showed cmp=0.
@@ -93,21 +114,47 @@ const fetchStockQuotes = async (): Promise<StockQuote[]> => {
     dayLow: s.dayLow || s.price || 0,
   });
   const fetchOne = async (market: 'india' | 'us'): Promise<StockQuote[]> => {
-    const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), 12_000);
-    try {
-      const res = await fetch(`/api/market/quotes?market=${market}`, { signal: ctl.signal });
-      if (!res.ok) return [];
-      // PATCH 0716 — safe JSON parse + array shape guard.
-      let data: any = {};
-      try { data = await res.json(); } catch { return []; }
-      return (Array.isArray(data?.stocks) ? data.stocks : []).map(mapQuote);
-    } catch { return []; }
-    finally { clearTimeout(timer); }
+    // PATCH 0965 BUG #1 — AbortSignal.timeout(20_000) replaces the bespoke
+    // AbortController, and we now THROW rather than return [] on failure
+    // so the caller can render a visible error banner.
+    const res = await fetch(`/api/market/quotes?market=${market}`, {
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) {
+      throw new Error(`/api/market/quotes?market=${market} → HTTP ${res.status}`);
+    }
+    let data: any;
+    try { data = await res.json(); }
+    catch (e) {
+      throw new QuotesShapeError(`market=${market}: response was not valid JSON`);
+    }
+    if (!Array.isArray(data?.stocks)) {
+      // eslint-disable-next-line no-console
+      console.error(`[portfolio] /api/market/quotes?market=${market} returned unexpected shape:`, data);
+      throw new QuotesShapeError(`market=${market}: payload.stocks is not an array`);
+    }
+    return data.stocks.map(mapQuote);
   };
-  // Parallel — independent failures
-  const [india, us] = await Promise.all([fetchOne('india'), fetchOne('us')]);
-  return [...india, ...us];
+  // PATCH 0965 BUG #1 — Promise.allSettled so a single-market outage
+  // doesn't blank both feeds. If BOTH fail we re-throw the first error
+  // so fetchData shows the banner; if at least one succeeds we surface
+  // a non-fatal console warning for the other.
+  const settled = await Promise.allSettled([fetchOne('india'), fetchOne('us')]);
+  const india = settled[0].status === 'fulfilled' ? settled[0].value : null;
+  const us = settled[1].status === 'fulfilled' ? settled[1].value : null;
+  if (india === null && us === null) {
+    const firstReason = settled[0].status === 'rejected' ? settled[0].reason : settled[1].status === 'rejected' ? settled[1].reason : new Error('unknown');
+    throw firstReason instanceof Error ? firstReason : new Error(String(firstReason));
+  }
+  if (india === null && settled[0].status === 'rejected') {
+    // eslint-disable-next-line no-console
+    console.warn('[portfolio] India quotes failed, continuing with US only:', settled[0].reason);
+  }
+  if (us === null && settled[1].status === 'rejected') {
+    // eslint-disable-next-line no-console
+    console.warn('[portfolio] US quotes failed, continuing with India only:', settled[1].reason);
+  }
+  return [...(india ?? []), ...(us ?? [])];
 };
 
 const fetchIndividualQuotes = async (symbols: string[]): Promise<StockQuote[]> => {
@@ -460,9 +507,20 @@ export default function PortfolioPage() {
 
       setLastRefresh(new Date());
       setLoading(false);
-    } catch (e) {
+    } catch (e: any) {
       setLoading(false);
-      setFetchError('Live prices unavailable — showing last known data. NSE API may be down.');
+      // PATCH 0965 BUG #1 — distinguish malformed payload from network/timeout
+      // so the banner tells the user WHY the fetch failed. The fetchStockQuotes
+      // helper now throws (rather than silently returning []) so this branch
+      // actually runs when the quote feed is broken.
+      const stamp = new Date().toLocaleTimeString();
+      if (e?.name === 'QuotesShapeError') {
+        setFetchError(`Price data malformed — check console for /api/market/quotes payload (last attempt ${stamp}).`);
+      } else if (e?.name === 'TimeoutError' || /abort|timeout/i.test(String(e?.message || ''))) {
+        setFetchError(`Price data unavailable — fetch timed out after 20s (last attempt ${stamp}). Click Retry.`);
+      } else {
+        setFetchError(`Price data unavailable — last attempt failed at ${stamp}. ${e?.message ? `(${e.message})` : ''} Click Retry.`);
+      }
       // PATCH 0435 BUG-032 — Always stamp lastRefresh even on error so the
       // header shows "Last refreshed: HH:MM:SS" instead of permanent "—".
       // Indicates last attempt time, not last successful fetch.
@@ -925,13 +983,36 @@ export default function PortfolioPage() {
                   // BUG-03 fix: null/undefined changePercent should be neutral grey, not green/red
                   const hasQuote = r.cmp > 0 && r.changePercent != null;
                   const dayColor = hasQuote ? (r.changePercent >= 0 ? '#10B981' : '#EF4444') : '#64748B';
+                  /*
+                   * PATCH 0965 BUG #1 — per-row STALE indicator.
+                   * Quotes are fetched in one bulk request per refresh cycle,
+                   * so per-row freshness is derived from the page-level
+                   * lastRefresh stamp. If the row HAS a price but the last
+                   * successful refresh was > 5 min ago, we annotate the
+                   * CMP cell with a small "STALE" badge. Rows without a
+                   * quote keep their existing "N/A" treatment.
+                   */
+                  const isStale = hasQuote && lastRefresh
+                    ? (Date.now() - lastRefresh.getTime()) > 5 * 60_000
+                    : false;
                   return (
                     <tr key={r.symbol} style={{ borderBottom: idx < sortedRows.length - 1 ? '1px solid #1A2B3C' : 'none', backgroundColor: idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
                       <td style={{ padding: '10px 12px', color: '#3B82F6', fontWeight: '700' }}>{r.symbol}</td>
                       <td style={{ padding: '10px 12px', color: '#F5F7FA', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
                       <td style={{ padding: '10px 12px', color: '#8BA3C1', fontSize: '11px', maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.sector}</td>
                       <td style={{ padding: '10px 12px', textAlign: 'right', color: '#F5F7FA', fontVariantNumeric: 'tabular-nums' }}>
-                        {r.cmp > 0 ? `₹${r.cmp.toFixed(2)}` : (
+                        {r.cmp > 0 ? (
+                          <span>
+                            ₹{r.cmp.toFixed(2)}
+                            {/* PATCH 0965 BUG #1 — per-row STALE badge when last refresh > 5min ago. */}
+                            {isStale && (
+                              <span
+                                title={`Price last refreshed ${lastRefresh?.toLocaleTimeString()} (> 5 min ago)`}
+                                style={{ marginLeft: 6, display: 'inline-block', padding: '1px 5px', borderRadius: 3, fontSize: 9, fontWeight: 700, backgroundColor: 'rgba(251,191,36,0.15)', color: '#FBBF24', letterSpacing: 0.4 }}
+                              >STALE</span>
+                            )}
+                          </span>
+                        ) : (
                           <span style={{ display: 'inline-block', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '600', backgroundColor: 'rgba(251,191,36,0.1)', color: '#FBBF24' }}>
                             N/A
                           </span>

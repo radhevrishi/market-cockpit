@@ -508,8 +508,22 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
     <div style={{ display: 'flex', height: '100vh', backgroundColor: '#0A0E1A', overflow: 'hidden' }}>
 
       {/* ── Desktop Sidebar ───────────────────────────────────────────── */}
+      {/*
+       * PATCH 0965 UX — Sidebar label truncation.
+       * Root cause: the sidebar was 72px wide and rendered each label
+       * word-by-word at 9px. Long words like "Bottleneck" / "Intelligence"
+       * wrapped *visually* but the per-word block had no overflow handling,
+       * producing the awful "BOTTLENE / INTELLIGE" clipping. The Link
+       * already had a `title=` so a tooltip existed, but the visible text
+       * was unreadable.
+       * Fix: widen the rail from 72px → 96px (still compact) so most
+       * common words fit, AND add `text-overflow: ellipsis` + `overflow:
+       * hidden` to each word span so the rare extra-long word gets a
+       * clean "Intellig…" with the existing title-attr tooltip showing
+       * the full label on hover.
+       */}
       <aside className="desktop-sidebar" style={{
-        width: '72px',
+        width: '96px',
         flexShrink: 0,
         backgroundColor: '#0D1623',
         borderRight: '1px solid #1A2840',
@@ -581,8 +595,23 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
                       WebkitUserSelect: 'none',
                     }}>
                     <div>{item.icon}</div>
-                    <span style={{ textAlign: 'center', lineHeight: '1.2' }}>
-                      {item.label.split(' ').map((w, i) => <div key={i}>{w}</div>)}
+                    {/*
+                     * PATCH 0965 UX — per-word ellipsis. The wider rail
+                     * (96px) fits "Bottleneck" / "Intelligence" but if a
+                     * future label adds a 12+ char word we now clip
+                     * cleanly with an ellipsis instead of mid-letter
+                     * truncation. The `title` on the parent Link still
+                     * exposes the full label on hover.
+                     */}
+                    <span style={{ textAlign: 'center', lineHeight: '1.2', width: '100%' }}>
+                      {item.label.split(' ').map((w, i) => (
+                        <div
+                          key={i}
+                          style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                        >
+                          {w}
+                        </div>
+                      ))}
                     </span>
                   </Link>
                 );

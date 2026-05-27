@@ -214,10 +214,35 @@ export default function HeatmapPage() {
   const [containerSize, setContainerSize] = useState({ w: 1200, h: 680 });
   const containerRef = useRef<HTMLDivElement>(null);
 
+  /*
+   * PATCH 0965 BUG #2 — Heatmap: 0 stocks · 0 up · 0 down when market closed
+   * ----------------------------------------------------------------------
+   * ROOT CAUSE: The three index-scoped /api/market/quotes calls
+   * (nifty50/midcap150/smallcap150) all hit NSE's intraday endpoint.
+   * When the market is closed NSE returns an empty list, so the canvas
+   * resolves to "0 stocks · 0 up · 0 down · avg 0.0%" with no fallback.
+   *
+   * FIX: Three-tier fallback chain inside fetchDaily:
+   *   TIER 1: Try the existing index-scoped quotes (live intraday).
+   *   TIER 2: If a tab returned 0 stocks, fall back to the SAME
+   *           /api/market/quotes endpoint WITHOUT an index — that path
+   *           hits the BHAVCOPY-backed snapshot that /movers also uses,
+   *           which keeps the last-trading-day numbers cached.
+   *   TIER 3: If TIER 2 is also empty, restore the previous successful
+   *           snapshot from localStorage (mc:heatmap-snapshot:v1).
+   *
+   * The UI separately renders a "Market closed · Showing data as of <ts>"
+   * banner (see `fallbackInfo` state below) when any tier > 1 was used,
+   * and an empty-state with market-hours guidance when ALL tiers fail.
+   */
+  const SNAPSHOT_KEY = 'mc:heatmap-snapshot:v1';
+  const [fallbackInfo, setFallbackInfo] = useState<{ tier: 2 | 3; asOf: string } | null>(null);
+
   const fetchDaily = useCallback(async () => {
     try {
       setError(null);
       setIsRefreshing(true);
+      setFallbackInfo(null);
       // PATCH 0517 — Wall-clock timeout on daily-mode fetches. Was spinning
       // indefinitely if /api/market/quotes hung (mirrors fetchEarnings's
       // 30s pattern at line 237). Falls back to honest error instead.
@@ -226,13 +251,96 @@ export default function HeatmapPage() {
       try {
         // PATCH 0544 — Shared quote fetch dedupes with /movers when user
         // toggles inside /market-snapshot within the 60s cache window.
+        // ── TIER 1: live index-scoped intraday quotes ─────────────────
         const [n50Json, mcJson, scJson] = await Promise.all([
           fetchQuotesShared({ market: 'india', index: 'nifty50', signal: ctrl.signal }),
           fetchQuotesShared({ market: 'india', index: 'midcap150', signal: ctrl.signal }),
           fetchQuotesShared({ market: 'india', index: 'smallcap150', signal: ctrl.signal }),
         ]);
-        setDataMap({ nifty50: n50Json as ApiResponse, midcap150: mcJson as ApiResponse, smallcap150: scJson as ApiResponse });
-        setLastUpdated(new Date());
+        const tier1 = {
+          nifty50: n50Json as ApiResponse,
+          midcap150: mcJson as ApiResponse,
+          smallcap150: scJson as ApiResponse,
+        };
+
+        // PATCH 0965 BUG #2 — Empty when ALL three indexes returned no
+        // stocks. Treat as market-closed and trigger fallback chain.
+        const tier1Empty =
+          (!tier1.nifty50?.stocks || tier1.nifty50.stocks.length === 0) &&
+          (!tier1.midcap150?.stocks || tier1.midcap150.stocks.length === 0) &&
+          (!tier1.smallcap150?.stocks || tier1.smallcap150.stocks.length === 0);
+
+        if (!tier1Empty) {
+          setDataMap(tier1);
+          setLastUpdated(new Date());
+          // Persist a snapshot for TIER 3 next time.
+          try {
+            if (typeof window !== 'undefined') {
+              window.localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({
+                ts: Date.now(), data: tier1,
+              }));
+            }
+          } catch { /* quota / private mode — ignore */ }
+          return;
+        }
+
+        // ── TIER 2: BHAVCOPY-backed unscoped quotes (same surface /movers uses) ──
+        // PATCH 0965 BUG #2 — re-issue WITHOUT `index` so the route
+        // returns its broad cached payload instead of the empty NSE
+        // intraday response. We still respect the 25s wall-clock timer.
+        try {
+          const broad = (await fetchQuotesShared({ market: 'india', signal: ctrl.signal })) as ApiResponse;
+          if (broad?.stocks && broad.stocks.length > 0) {
+            // Bucket the broad payload into the three tabs by marketCap so
+            // the existing tab UI keeps working. Heuristic mirrors the
+            // upstream NSE bucket thresholds (large > 20,000 cr; mid > 5,000 cr).
+            const stocksByCap = (predicate: (mc: number) => boolean) =>
+              broad.stocks.filter(s => predicate((s as any).marketCap ?? 0));
+            const mkResp = (stocks: Stock[]): ApiResponse => ({
+              stocks,
+              summary: {
+                total: stocks.length,
+                gainersCount: stocks.filter(s => (s.changePercent ?? 0) > 0).length,
+                losersCount: stocks.filter(s => (s.changePercent ?? 0) < 0).length,
+                avgChange: stocks.length ? stocks.reduce((a, b) => a + (b.changePercent ?? 0), 0) / stocks.length : 0,
+              },
+            });
+            const fallbackMap = {
+              nifty50: mkResp(stocksByCap(mc => mc > 20_000)),
+              midcap150: mkResp(stocksByCap(mc => mc > 5_000 && mc <= 20_000)),
+              smallcap150: mkResp(stocksByCap(mc => mc > 0 && mc <= 5_000)),
+            };
+            setDataMap(fallbackMap);
+            setLastUpdated(new Date());
+            setFallbackInfo({ tier: 2, asOf: new Date().toLocaleDateString('en-IN') });
+            return;
+          }
+        } catch (e) {
+          console.warn('[heatmap] TIER 2 (broad cached quotes) failed:', e);
+        }
+
+        // ── TIER 3: previous successful snapshot from localStorage ─────
+        // PATCH 0965 BUG #2 — last-known-good fallback.
+        try {
+          if (typeof window !== 'undefined') {
+            const raw = window.localStorage.getItem(SNAPSHOT_KEY);
+            if (raw) {
+              const snap = JSON.parse(raw) as { ts: number; data: typeof tier1 };
+              if (snap?.data) {
+                setDataMap(snap.data);
+                setLastUpdated(new Date(snap.ts));
+                setFallbackInfo({ tier: 3, asOf: new Date(snap.ts).toLocaleString('en-IN') });
+                return;
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('[heatmap] TIER 3 (localStorage snapshot) failed:', e);
+        }
+
+        // ── No data anywhere ───────────────────────────────────────────
+        setDataMap({});
+        setError('Market closed. No cached data available. Check back during market hours (9:15 AM – 3:30 PM IST).');
       } finally {
         clearTimeout(timer);
       }
@@ -649,8 +757,28 @@ export default function HeatmapPage() {
 
       {/* Error */}
       {error && !isLoading && (
-        <div style={{ backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', padding: '14px', color: RED, fontSize: '13px', marginBottom: '12px' }}>
-          {error}
+        <div style={{ backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', padding: '14px', color: RED, fontSize: '13px', marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+          <span>{error}</span>
+          <button onClick={fetchDaily} style={{ padding: '5px 12px', borderRadius: 5, border: '1px solid rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.15)', color: RED, cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>↻ Retry</button>
+        </div>
+      )}
+
+      {/*
+        PATCH 0965 BUG #2 — Market-closed fallback banner.
+        Renders only when TIER 2 (BHAVCOPY cache) or TIER 3 (localStorage)
+        was used. Tells the user the data they're staring at isn't live.
+      */}
+      {fallbackInfo && !isLoading && (
+        <div style={{
+          backgroundColor: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)',
+          borderRadius: '8px', padding: '10px 14px', color: AMBER, fontSize: '12px', marginBottom: '12px',
+          display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <span style={{ fontSize: 14 }}>⚠</span>
+          <span>
+            <strong>Market closed</strong> · Showing data as of {fallbackInfo.asOf}
+            {fallbackInfo.tier === 3 && ' (from local cache — refresh during market hours for live data)'}
+          </span>
         </div>
       )}
 

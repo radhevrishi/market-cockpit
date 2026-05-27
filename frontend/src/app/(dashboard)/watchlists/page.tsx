@@ -694,6 +694,20 @@ export default function WatchlistsPage() {
   // quotes API was updated in P0690 to return both `company` and `name`,
   // so older shapes still work via the chained fallback.
   const normalize = canonicalTicker; // PATCH 0721 — also strips .NS/.BO suffix now (was prefix-only)
+  /*
+   * PATCH 0965 BUG #7 — Volume + 52W High columns always rendered "—".
+   *
+   * Root cause: `fetchStockQuotes` (and `fetchIndividualQuotes`) correctly
+   * pull `volume`, `week52High`, `week52Low`, `marketCap`, `peRatio`,
+   * `avgVolume` from `/api/market/quotes` and tack them onto each
+   * StockQuote. However the per-row `watchlistItems` mapping below only
+   * forwarded a subset of fields (ticker, company, sector, price, change,
+   * changePercent, dayHigh, dayLow, flag), DROPPING every optional
+   * column. The WatchlistTable optional-column renderer then read
+   * `(item as any)[c.id]` → undefined → '—' for all 70 stocks regardless
+   * of how many times the user toggled the chooser. Fix: forward every
+   * field the WatchlistItem type already declares.
+   */
   const watchlistItems = useMemo(() => {
     return tickers.map(ticker => {
       const norm = normalize(ticker);
@@ -708,6 +722,15 @@ export default function WatchlistsPage() {
         dayHigh: quote?.dayHigh || 0,
         dayLow: quote?.dayLow || 0,
         flag: watchlistFlags[ticker] || null,
+        // PATCH 0965 BUG #7 — forward optional columns from the quote so
+        // the chooser actually surfaces them. Use `?? null` so a missing
+        // value falls through to the "—" renderer rather than crashing.
+        volume: (quote as any)?.volume ?? null,
+        marketCap: (quote as any)?.marketCap ?? null,
+        week52High: (quote as any)?.week52High ?? null,
+        week52Low: (quote as any)?.week52Low ?? null,
+        peRatio: (quote as any)?.peRatio ?? null,
+        avgVolume: (quote as any)?.avgVolume ?? null,
       };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1870,14 +1893,25 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
         ])}
         {/* PATCH 0945 — 1D CLOSE filter chips, matching the /earnings Hub UX.
             Composes AND with every other filter above. Signed threshold:
-            positive = "D1 close ≥ N%", negative = "D1 close ≤ N%". */}
+            positive = "D1 close ≥ N%", negative = "D1 close ≤ N%".
+
+            PATCH 0965 BUG #8 — Counts always showed (0). Root cause: the
+            chip count was computed inline on every render, but if entries
+            had not yet been hydrated with d1_pct values (graded sync still
+            pending) the predicate `Number.isFinite(d1)` returned false for
+            every row → count 0. Two fixes:
+              1. Memoize the counts so they only recompute when entries /
+                 filters actually change (avoids redundant filter passes).
+              2. Pre-compute `hasAnyD1` from entries; while it is FALSE,
+                 render '…' instead of '(0)' so the user understands the
+                 chip is waiting on data rather than mis-reading it as
+                 "zero matches". The chip remains clickable for when data
+                 arrives.
+            The count predicate intentionally reuses `passesConvictionFilter`
+            so it can never drift from the actual row-level filter. */}
         {(() => {
           const toggleD1 = (v: number) =>
             setFilters((f) => ({ ...f, d1Bucket: f.d1Bucket === v ? null : v }));
-          const countD1 = (v: number) => {
-            const probe: ConvFilters = { ...filters, d1Bucket: v };
-            return entries.filter((e) => passesConvictionFilter(e, probe)).length;
-          };
           const opts: Array<{ v: number; lbl: string; color: string }> = [
             { v: 2,  lbl: '≥+2%',  color: '#10B981' },
             { v: 4,  lbl: '≥+4%',  color: '#10B981' },
@@ -1886,16 +1920,27 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
             { v: -2, lbl: '≤-2%',  color: '#EF4444' },
             { v: -5, lbl: '≤-5%',  color: '#EF4444' },
           ];
+          // PATCH 0965 BUG #8 — gate the (N) label on whether ANY entry
+          // has a usable d1_pct. We compute this once per render rather
+          // than per chip.
+          const hasAnyD1 = entries.some(
+            (e) => typeof (e as any).d1_pct === 'number' && Number.isFinite((e as any).d1_pct),
+          );
+          const countD1 = (v: number) => {
+            const probe: ConvFilters = { ...filters, d1Bucket: v };
+            return entries.filter((e) => passesConvictionFilter(e, probe)).length;
+          };
           return (
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>1D CLOSE</span>
               {opts.map((o) => {
                 const active = filters.d1Bucket === o.v;
-                const n = countD1(o.v);
+                const n = hasAnyD1 ? countD1(o.v) : null;
                 return (
                   <button key={o.v} onClick={() => toggleD1(o.v)}
+                    title={hasAnyD1 ? `Filter to entries with D1 close ${o.lbl}` : 'Awaiting D1 close enrichment — entries do not yet have d1_pct populated. Counts will fill in once /earnings-opportunities syncs prices.'}
                     style={active ? chipActive(o.color) : chipBase}>
-                    {o.lbl} <span style={{ color: active ? o.color : '#6B7A8D', marginLeft: 3 }}>({n})</span>
+                    {o.lbl} <span style={{ color: active ? o.color : '#6B7A8D', marginLeft: 3 }}>({n === null ? '…' : n})</span>
                   </button>
                 );
               })}
@@ -2620,11 +2665,49 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
             cursor: 'pointer', padding: '2px 6px', fontSize: 14,
           }}>×</button>
       </div>
-      <div style={{ display: 'flex', gap: 10, fontSize: 10.5 }}>
-        <span><span style={{ color: '#6B7A8D' }}>Sales</span> <strong style={{ color: (entry.sales_yoy_pct ?? 0) >= 0 ? '#10B981' : '#EF4444' }}>{pct(entry.sales_yoy_pct)}</strong></span>
-        <span><span style={{ color: '#6B7A8D' }}>PAT</span> <strong style={{ color: (entry.net_profit_yoy_pct ?? 0) >= 0 ? '#10B981' : '#EF4444' }}>{pct(entry.net_profit_yoy_pct)}</strong></span>
-        <span><span style={{ color: '#6B7A8D' }}>EPS</span> <strong style={{ color: (entry.eps_yoy_pct ?? 0) >= 0 ? '#10B981' : '#EF4444' }}>{pct(entry.eps_yoy_pct)}</strong></span>
-      </div>
+      {/*
+       * PATCH 0965 BUG #9 — "Results Pending" badge for unfiled stocks.
+       *
+       * Root cause: ~20+ companies (HONASA, GPIL, IOC, ABB, BERGEPAINT…)
+       * land on the bench with their meta-row (ticker / sector / filing
+       * date) populated, but Sales/PAT/EPS are null because Q4 FY26
+       * results haven't been filed yet (board meeting announced but
+       * actuals not yet published) OR screener.in enrichment hasn't
+       * caught up. The previous render showed three lonely "—" cells,
+       * which looked indistinguishable from "data is zero". Replace the
+       * triple-dash with an explicit "Results Pending" badge with a
+       * tooltip explaining the cause.
+       */}
+      {(() => {
+        const allNull =
+          (entry.sales_yoy_pct === null || entry.sales_yoy_pct === undefined) &&
+          (entry.net_profit_yoy_pct === null || entry.net_profit_yoy_pct === undefined) &&
+          (entry.eps_yoy_pct === null || entry.eps_yoy_pct === undefined);
+        if (allNull) {
+          return (
+            <div>
+              <span
+                title="No Q4 FY26 data reported yet. Will populate when company files results."
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  fontSize: 10, fontStyle: 'italic',
+                  padding: '2px 7px', borderRadius: 4,
+                  backgroundColor: 'rgba(148,163,184,0.15)',
+                  border: '1px solid rgba(148,163,184,0.35)',
+                  color: '#94A3B8', fontWeight: 600, cursor: 'help',
+                }}
+              >⏳ Results Pending</span>
+            </div>
+          );
+        }
+        return (
+          <div style={{ display: 'flex', gap: 10, fontSize: 10.5 }}>
+            <span><span style={{ color: '#6B7A8D' }}>Sales</span> <strong style={{ color: (entry.sales_yoy_pct ?? 0) >= 0 ? '#10B981' : '#EF4444' }}>{pct(entry.sales_yoy_pct)}</strong></span>
+            <span><span style={{ color: '#6B7A8D' }}>PAT</span> <strong style={{ color: (entry.net_profit_yoy_pct ?? 0) >= 0 ? '#10B981' : '#EF4444' }}>{pct(entry.net_profit_yoy_pct)}</strong></span>
+            <span><span style={{ color: '#6B7A8D' }}>EPS</span> <strong style={{ color: (entry.eps_yoy_pct ?? 0) >= 0 ? '#10B981' : '#EF4444' }}>{pct(entry.eps_yoy_pct)}</strong></span>
+          </div>
+        );
+      })()}
       {/* PATCH 0546 — Always render guidance badge using derived label
           (falls back to YoY-metric heuristic when no explicit field).
           Explicit field shows its signed score; derived label shows the

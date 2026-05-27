@@ -305,7 +305,25 @@ function SavedValuationsPanel({ onLoad }: { onLoad?: (v: SavedValuation) => void
         <span style={{ fontSize: 10, color: DIM, fontFamily: 'ui-monospace, monospace' }}>persists in your browser</span>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {saved.slice(0, 30).map((v) => (
+        {saved.slice(0, 30).map((v) => {
+          /*
+           * PATCH 0965 UX — Saved-valuation row label.
+           * Root cause: when neither ticker nor company was populated at
+           * save time, the visible row showed only "—" and the internal
+           * UUID id was carried around as the React key + delete handle.
+           * If the user opens the underlying JSON or exports a PDF the
+           * UUID surfaced as the "name" — making rows indistinguishable.
+           * Fix: build a stable user-facing label from
+           *   ${company || ticker} · ${YYYY-MM-DD}
+           * with a sensible "Untitled" fallback. The UUID `v.id` is kept
+           * as React key + the delete handler argument — purely internal.
+           */
+          const dateStr = (v.savedAt || '').slice(0, 10);
+          const primary = (v.company || v.ticker || '').trim();
+          const displayLabel = primary
+            ? `${primary} · ${dateStr}`
+            : `Untitled valuation · ${dateStr}`;
+          return (
           <div key={v.id} style={{
             background: '#0A1422', border: `1px solid ${BORDER}`, borderRadius: 5,
             padding: '8px 10px',
@@ -314,7 +332,7 @@ function SavedValuationsPanel({ onLoad }: { onLoad?: (v: SavedValuation) => void
             <span style={{ fontSize: 11, color: '#22D3EE', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 50 }}>
               {v.calcKind === 'EV_EBITDA' ? 'EV/EB' : v.calcKind}
             </span>
-            <span style={{ fontSize: 12, color: TEXT, fontWeight: 700 }}>{v.ticker || v.company || '—'}</span>
+            <span style={{ fontSize: 12, color: TEXT, fontWeight: 700 }} title={`Saved ${v.savedAt}`}>{displayLabel}</span>
             <span style={{ flex: 1, fontSize: 11, color: '#C9D4E0', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {v.baseSummary}
             </span>
@@ -341,7 +359,8 @@ function SavedValuationsPanel({ onLoad }: { onLoad?: (v: SavedValuation) => void
               borderRadius: 3, cursor: 'pointer', fontWeight: 700,
             }}>×</button>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
