@@ -95,6 +95,13 @@ function isFinancialResultsPath(path: string): boolean {
   return /\/api\/corporate-announcements[^?]*\?[^#]*sub_category=Financial%20Results/i.test(path);
 }
 
+// PATCH 0935-followup — also intercept the bare corp-announcements feed used by
+// the Signals compute pipeline (no sub_category filter). CF Worker scrapes both.
+function isGeneralAnnouncementsPath(path: string): boolean {
+  if (isFinancialResultsPath(path)) return false;
+  return /\/api\/corporate-announcements[^?]*\?[^#]*index=equities/i.test(path);
+}
+
 async function tryCFWorkerResults(): Promise<any[] | null> {
   try {
     const res = await fetch(`${CF_WORKER_URL}/api/results/latest`, {
@@ -112,6 +119,32 @@ async function tryCFWorkerResults(): Promise<any[] | null> {
   }
 }
 
+async function tryCFWorkerFilings(): Promise<any[] | null> {
+  try {
+    const res = await fetch(`${CF_WORKER_URL}/api/filings/latest`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    const filings = (json && Array.isArray(json.filings)) ? json.filings : null;
+    if (!filings || filings.length === 0) return null;
+    return filings.map((r: any) => r.raw || r);
+  } catch {
+    return null;
+  }
+}
+
+// PATCH 0935-followup — combined CF Worker fast-path. For compute, return
+// BOTH general announcements + Financial Results merged (Financial Results
+// dominate by volume, ~5,000 vs ~20, but general adds rating/order/M&A events).
+async function tryCFWorkerCombined(): Promise<any[] | null> {
+  const [res, fil] = await Promise.all([tryCFWorkerResults(), tryCFWorkerFilings()]);
+  const merged: any[] = [];
+  if (Array.isArray(res)) merged.push(...res);
+  if (Array.isArray(fil)) merged.push(...fil);
+  return merged.length > 0 ? merged : null;
+}
+
 export async function nseApiFetch(path: string, cacheTtl = 60000): Promise<any> {
   const cacheKey = `nse:${path}`;
 
@@ -122,15 +155,18 @@ export async function nseApiFetch(path: string, cacheTtl = 60000): Promise<any> 
   // 2) Negative cache — short-circuit a recent failure.
   if (negCacheCheck(cacheKey)) {
     // PATCH 0935 — even when NSE is in negative-cache (blocked Vercel IP),
-    // we can still serve Financial Results from the CF Worker fast-path.
+    // we can still serve from the CF Worker fast-path.
     if (isFinancialResultsPath(path)) {
       const cf = await tryCFWorkerResults();
+      if (cf && cf.length > 0) return cf;
+    } else if (isGeneralAnnouncementsPath(path)) {
+      const cf = await tryCFWorkerCombined();
       if (cf && cf.length > 0) return cf;
     }
     return null;
   }
 
-  // 3) Financial Results — try CF Worker BEFORE hitting NSE directly.
+  // 3) CF Worker fast-path — try BEFORE hitting NSE directly.
   // CF Worker is sub-100ms and runs on a stable IP. If the worker has fresh
   // data, this short-circuits the NSE call entirely and skips the cookie
   // refresh + 10s timeout entirely.
@@ -141,6 +177,16 @@ export async function nseApiFetch(path: string, cacheTtl = 60000): Promise<any> 
       return cf;
     }
     // Fall through to direct NSE call if CF Worker is empty.
+  } else if (isGeneralAnnouncementsPath(path)) {
+    // PATCH 0935-followup — Signals compute calls bare corp-announcements
+    // (no Financial Results filter). Merge BOTH CF Worker sources here so
+    // the compute sees the full picture (~5,700 filings vs the 20 it got
+    // before, when NSE was blocking Vercel).
+    const cf = await tryCFWorkerCombined();
+    if (cf && cf.length > 0) {
+      setCache(cacheKey, cf);
+      return cf;
+    }
   }
 
   // 3) Dedup any concurrent miss — share a single upstream promise.
