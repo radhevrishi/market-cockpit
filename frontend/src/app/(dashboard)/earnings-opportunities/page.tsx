@@ -1675,6 +1675,11 @@ export default function EarningsOpportunitiesPage() {
       sales_yoy_pct: number | null; net_profit_yoy_pct: number | null; eps_yoy_pct: number | null;
       filing_date: string; sector?: string; market_cap_bucket?: string; source_url?: string;
       guidance?: 'Positive' | 'Neutral' | 'Negative'; guidance_score?: number;
+      // PATCH 0945/0947 — fields required by ConvictionEntry; populate at sync.
+      quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+      fiscal_year?: number;
+      d1_pct?: number | null;
+      gap_pct?: number | null;
     }> = [];
     for (const tier of ['BLOCKBUSTER', 'STRONG'] as const) {
       for (const c of (data.by_tier[tier] || [])) {
