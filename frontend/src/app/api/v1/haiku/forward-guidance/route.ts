@@ -24,14 +24,22 @@ const HAIKU_MODEL = 'claude-haiku-4-5-20251001';
 const CACHE_TTL_S = 365 * 24 * 3600;        // 1 year — quarterly results are immutable
 const CF_WORKER_URL = process.env.CF_WORKER_URL || 'https://mc-scraper.radhev-232.workers.dev';
 
+// PATCH 0951 — Extended schema. Adds 'NoGuidance' label so Haiku can honestly
+// say "the PDF had no forward content" instead of fabricating Neutral 0.00.
+// Adds 'numbers' + 'catalysts' so the badge can show institutional-grade
+// specifics inline ("rev +20% FY27 · capex ₹400Cr H2FY27") rather than just
+// a sentiment tier.
 export interface AIForwardGuidance {
-  label: 'Positive' | 'Neutral' | 'Negative';
-  score: number;              // [-1, +1] — signed magnitude
+  label: 'Positive' | 'Neutral' | 'Negative' | 'NoGuidance';
+  score: number;              // [-1, +1] — signed magnitude (0 for NoGuidance)
   confidence: 'HIGH' | 'MEDIUM' | 'LOW';
   rationale: string;          // 1-2 sentence summary
-  quotes: string[];           // up to 4 verbatim forward statements
+  quotes: string[];           // up to 6 verbatim forward statements
+  numbers?: Array<{ metric: string; value: string; period?: string }>;  // hard guidance figures
+  catalysts?: Array<{ event: string; timing?: string }>;                 // forward catalysts with timing
   source: 'concall-transcript' | 'investor-presentation' | 'press-release';
   source_url?: string;
+  source_filename?: string;   // PATCH 0951 — surfaced in UI so user can audit
   period: string;             // 'Q4-FY26' etc — cache invalidates next quarter
   extracted_at: string;       // ISO timestamp
 }
@@ -44,22 +52,26 @@ interface CFFilingItem {
   raw?: any;
 }
 
-// PATCH 0949a — per-ticker diagnostic trace. Surfaced both in console logs
-// (Vercel) AND in the response body so the dashboard can show WHY a ticker
-// returned no concall PDF without us having to grep logs. Possible reasons:
+// PATCH 0949a / 0951 — per-ticker diagnostic trace. Surfaced both in console
+// logs (Vercel) AND in the response body so the dashboard can show WHY a
+// ticker returned no concall PDF without us having to grep logs.
 //   'cf-error'         CF Worker filings endpoint failed (network/timeout/HTTP)
 //   'no-filings'       CF returned filings but none for this ticker
 //   'no-attachment'    Ticker has filings but none with attachment_url
-//   'ok'               Found a usable PDF URL (with preference order)
+//   'intimation-only'  Only intimation / notice / newspaper PDFs exist —
+//                      we refuse to spend Haiku on those (no forward content).
+//   'ok'               Found a usable PDF URL (real transcript/presentation)
 export interface PdfLookupDiag {
   ticker: string;
-  outcome: 'cf-error' | 'no-filings' | 'no-attachment' | 'ok';
+  outcome: 'cf-error' | 'no-filings' | 'no-attachment' | 'intimation-only' | 'ok';
   total_filings_seen?: number;
   ticker_filings?: number;
   ticker_with_attachment?: number;
   matched_preference?: 'transcript' | 'investor-presentation' | 'press-release' | 'fallback';
+  best_score?: number;        // PATCH 0951 — selection algorithm score for audit
   subject?: string;
   url?: string;
+  filename?: string;          // PATCH 0951 — the actual file picked (audit trail)
   error?: string;
 }
 
@@ -96,9 +108,55 @@ async function loadAllFilings(): Promise<CFFilingItem[]> {
   return _filingsInFlight;
 }
 
+// PATCH 0951 — Score-based filing selection. Filename is a far stronger signal
+// than the subject line ("SANSERA_..._Transcript_Final.pdf" is unambiguous;
+// the subject is just the bucket "Analysts/Investor Meet/Con. Call Updates"
+// for both real transcripts AND one-line intimation notices). We score each
+// candidate filing on filename + subject and pick the highest scorer above a
+// threshold; anything below threshold = intimation-only, not worth Haiku.
+interface ScoredFiling {
+  filing: CFFilingItem;
+  score: number;
+  tag: 'transcript' | 'investor-presentation' | 'press-release' | 'fallback';
+  filename: string;
+}
+
+function scoreFiling(f: CFFilingItem): ScoredFiling {
+  const url = f.attachment_url || '';
+  const filename = (url.split('/').pop() || '').toLowerCase();
+  const subject = (f.subject || '').toLowerCase();
+  let score = 0;
+  let tag: ScoredFiling['tag'] = 'fallback';
+
+  // ── Strong positive signals (the filename actually IS what we need) ──
+  if (/transcript/.test(filename))                               { score += 100; tag = 'transcript'; }
+  else if (/investor.{0,3}presentation|earnings.{0,3}presentation|results.{0,3}presentation|investor.{0,3}pres|earnings.{0,3}pres/.test(filename))
+                                                                  { score += 70;  tag = 'investor-presentation'; }
+  else if (/earnings|press.{0,3}release|earnings_release|prerelease|pressrelease/.test(filename))
+                                                                  { score += 50;  tag = 'press-release'; }
+  else if (/results|q[1-4]|fy\d{2}/.test(filename))              { score += 20;  tag = 'press-release'; }
+
+  // ── Strong negative signals (filename screams "skip me") ──
+  if (/intimat|notice|reg.?30|reg-30|reg\s*30|disclosure|signed|invitation/.test(filename)) score -= 200;
+  if (/audio.{0,3}recording|recording/.test(filename))                                     score -= 300;  // audio file, not text
+  if (/newspaper|publication|copy.{0,3}of/.test(filename))                                 score -= 150;
+  if (/^outcome|board.?meeting/.test(filename))                                            score -= 80;
+
+  // ── Subject as a tiebreaker (mild positive only) ──
+  if (/press release/.test(subject))           score += 15;
+  if (/investor presentation/.test(subject))   score += 15;
+  if (/con\.?\s*call|conference call/.test(subject)) score += 5;  // weak — could be intimation
+
+  return { filing: f, score, tag, filename };
+}
+
+// Threshold below which we treat the filing as not-worth-extracting.
+// 0 = "no positive signals found" → almost certainly intimation/notice/junk.
+const FILING_SCORE_THRESHOLD = 1;
+
 // ─── Step 1: Find latest concall PDF URL for a ticker ──────────────────────
 async function findConcallPdfUrl(ticker: string): Promise<
-  | { url: string; source: AIForwardGuidance['source']; subject: string; diag: PdfLookupDiag }
+  | { url: string; source: AIForwardGuidance['source']; subject: string; filename: string; diag: PdfLookupDiag }
   | { url: null; diag: PdfLookupDiag }
 > {
   const tkr = ticker.toUpperCase();
@@ -130,50 +188,50 @@ async function findConcallPdfUrl(ticker: string): Promise<
     console.warn('[FG-DIAG]', diag);
     return { url: null, diag };
   }
-  const ours = withAttachment.sort((a, b) => (b.filing_date || '').localeCompare(a.filing_date || ''));
 
-  // PATCH 0950a — broadened preference regex. NSE's standard subject for
-  // concall material is the exact string
-  //   "Analysts/Institutional Investor Meet/Con. Call Updates"
-  // — the old regex looking for "concall" never matched. Cover the actual
-  // NSE text and the common transcript / call wording side-by-side. Order
-  // remains: transcript > presentation > press release > anything.
-  const preferences: Array<{ re: RegExp; tag: 'transcript' | 'investor-presentation' | 'press-release' }> = [
-    { re: /transcript|earnings\s*call|conference\s*call|concall|con\.?\s*call|analysts?\/institutional\s*investor\s*meet/i, tag: 'transcript' },
-    { re: /investor\s*presentation|results?\s*presentation|q[1-4]\s*presentation|earnings\s*presentation/i, tag: 'investor-presentation' },
-    { re: /press\s*release|outcome\s*of\s*board|board\s*meeting/i, tag: 'press-release' },
-  ];
-  for (const p of preferences) {
-    const match = ours.find(f => p.re.test(f.subject || ''));
-    if (match) {
-      const source: AIForwardGuidance['source'] =
-        p.tag === 'transcript' ? 'concall-transcript' :
-        p.tag === 'investor-presentation' ? 'investor-presentation' : 'press-release';
-      const diag: PdfLookupDiag = {
-        ticker: tkr, outcome: 'ok',
-        total_filings_seen: filings.length,
-        ticker_filings: tickerFilings.length,
-        ticker_with_attachment: ours.length,
-        matched_preference: p.tag,
-        subject: match.subject,
-        url: match.attachment_url!,
-      };
-      console.log('[FG-DIAG]', diag);
-      return { url: match.attachment_url!, source, subject: match.subject, diag };
-    }
+  // Score every candidate, pick highest. Within equal scores, pick freshest.
+  const scored = withAttachment
+    .map(scoreFiling)
+    .sort((a, b) => b.score - a.score || (b.filing.filing_date || '').localeCompare(a.filing.filing_date || ''));
+  const best = scored[0];
+
+  if (best.score < FILING_SCORE_THRESHOLD) {
+    // All candidates look like intimations/notices/audio/newspaper — skip Haiku
+    const diag: PdfLookupDiag = {
+      ticker: tkr, outcome: 'intimation-only',
+      total_filings_seen: filings.length,
+      ticker_filings: tickerFilings.length,
+      ticker_with_attachment: withAttachment.length,
+      best_score: best.score,
+      subject: best.filing.subject,
+      filename: best.filename,
+    };
+    console.warn('[FG-DIAG]', diag);
+    return { url: null, diag };
   }
-  // Fallback: freshest with any attachment (not in any preference bucket)
+
+  const source: AIForwardGuidance['source'] =
+    best.tag === 'transcript' ? 'concall-transcript' :
+    best.tag === 'investor-presentation' ? 'investor-presentation' : 'press-release';
   const diag: PdfLookupDiag = {
     ticker: tkr, outcome: 'ok',
     total_filings_seen: filings.length,
     ticker_filings: tickerFilings.length,
-    ticker_with_attachment: ours.length,
-    matched_preference: 'fallback',
-    subject: ours[0].subject,
-    url: ours[0].attachment_url!,
+    ticker_with_attachment: withAttachment.length,
+    matched_preference: best.tag,
+    best_score: best.score,
+    subject: best.filing.subject,
+    filename: best.filename,
+    url: best.filing.attachment_url!,
   };
   console.log('[FG-DIAG]', diag);
-  return { url: ours[0].attachment_url!, source: 'press-release', subject: ours[0].subject, diag };
+  return {
+    url: best.filing.attachment_url!,
+    source,
+    subject: best.filing.subject,
+    filename: best.filename,
+    diag,
+  };
 }
 
 // ─── Step 2: Extract forward statements via Haiku ──────────────────────────
@@ -182,45 +240,82 @@ async function extractForwardGuidance(
   pdfText: string,
   source: AIForwardGuidance['source'],
   sourceUrl: string,
+  sourceFilename: string,
   period: string,
   apiKey: string,
 ): Promise<AIForwardGuidance | null> {
-  if (!pdfText || pdfText.length < 200) return null;
+  // PATCH 0951 — bumped minimum from 200 to 1200 chars. Anything shorter is
+  // almost certainly an intimation notice (~500 chars of "kindly note...")
+  // and Haiku will just return Neutral 0.00 — pure waste of money. Better
+  // to flag it as "no transcript content" upstream and skip the LLM call.
+  if (!pdfText || pdfText.length < 1200) return null;
 
-  // Trim to first ~12k chars (forward statements are usually in the management
-  // commentary at the top, not in Q&A). Haiku 4.5 input is cheap but PDFs can
-  // be 50-100 pages so we don't need everything.
-  const text = pdfText.slice(0, 12_000);
+  // Trim to first ~14k chars (forward statements are usually in the
+  // management commentary at the top, not in Q&A). Haiku 4.5 input is cheap
+  // but PDFs can be 50-100 pages so we don't need everything.
+  const text = pdfText.slice(0, 14_000);
 
-  const systemPrompt = `You are an institutional equity research analyst extracting FORWARD-LOOKING guidance from an Indian-listed-company concall transcript or investor presentation. Forward guidance = statements about FUTURE performance (next quarter, FY, multi-year). Ignore backward statements about what happened.
+  // PATCH 0951 — Institutional-grade prompt. Three changes vs P0948:
+  //  (1) NoGuidance label — Haiku honestly admits when the PDF has no forward
+  //      content instead of fabricating Neutral 0.00. We pay for honesty.
+  //  (2) Hard "numbers" array — specific guidance figures (%, ₹Cr, MW, units)
+  //      with metric/value/period. This is what a buy-side analyst writes in
+  //      their note. If management didn't give a number, the array is empty.
+  //  (3) Hard "catalysts" array — forward events with timing (Q2 FY27, etc).
+  //      Confidence reflects DATA DENSITY: HIGH only when 2+ specific
+  //      numbers are present, MEDIUM with 1, LOW with directional language
+  //      only, and NoGuidance when there's nothing forward at all.
+  const systemPrompt = `You are a buy-side equity research analyst at a long-only institutional fund. You are reading an Indian-listed-company filing (could be a concall transcript, investor presentation, OR an intimation notice). Your job is to extract ONLY forward-looking management guidance — statements about FUTURE performance — and output a JSON brief that a portfolio manager can paste into a model.
 
-Extract ONLY explicit forward statements such as:
-- Revenue / order book / capacity / volume guidance
-- Margin / profitability guidance
-- Capex / expansion / new plant timing
-- Demand / order pipeline outlook
-- Strategic milestones (regulatory clearance, new geography, product launch)
-- Debt reduction / balance sheet trajectory
+CRITICAL — DISTINGUISH THESE THREE CASES:
+  CASE A — The PDF contains real forward guidance (transcript / presentation / detailed press release):
+           Extract everything. Be specific. Cite numbers verbatim.
+  CASE B — The PDF is short or contains only retrospective commentary on Q-just-ended:
+           Return label="Neutral", LOW confidence, rationale="No forward guidance — commentary backward-looking".
+  CASE C — The PDF is an intimation notice / invitation / regulatory disclosure with NO management commentary at all
+           (e.g. "We hereby intimate that a Q4 FY26 earnings call will be held on May 26 at 4:00 PM IST"):
+           Return label="NoGuidance", score=0, confidence="HIGH" (you are HIGH-confident there is nothing here),
+           rationale="Intimation/notice only — no transcript content".
+           Empty quotes, empty numbers, empty catalysts. Do NOT fabricate.
 
-Classify overall guidance bias:
-- "Positive": management is clearly guiding to growth, margin expansion, or strategic upside
-- "Negative": management is flagging risks, slowdown, margin pressure, headwinds
-- "Neutral": guidance is balanced, in-line with current run-rate, or absent
+WHAT COUNTS AS FORWARD GUIDANCE:
+  - Revenue / order book / capacity / volume targets ("FY27 revenue growth of 18-20%", "order book ₹4,200 Cr at FY-end")
+  - Margin / profitability targets ("EBITDA margin of 22-23% in FY27", "100-150 bps expansion")
+  - Capex commitments with timing ("₹500 Cr capex in FY27 for Pithampur plant, commissioning Q2 FY27")
+  - Demand / pipeline outlook ("auto OEM demand expected to revive H2 FY27", "L1 in tenders worth ₹800 Cr")
+  - Strategic milestones with timing (regulatory clearance, new geography, product launch — all with quarter)
+  - Debt reduction / balance sheet trajectory ("net-debt-free by FY28")
+  - M&A intent / divestment / demerger plans
 
-Score in [-1, +1]:  +0.6 to +1.0 = strong positive · +0.1 to +0.5 = mild positive · -0.1 to +0.1 = neutral · -0.5 to -0.1 = mild negative · -1.0 to -0.6 = strong negative
+IGNORE: retrospective commentary on the quarter just ended, generic macro views, boilerplate.
 
-Output JSON ONLY (no markdown, no commentary). Schema:
+OUTPUT JSON ONLY — no markdown, no preamble. Schema:
 {
-  "label": "Positive|Neutral|Negative",
-  "score": <number in [-1, 1]>,
-  "confidence": "HIGH|MEDIUM|LOW",
-  "rationale": "<one or two sentence summary, max 200 chars>",
-  "quotes": ["<verbatim forward statement 1>", "<verbatim 2>", "<verbatim 3 — up to 4 max>"]
+  "label": "Positive" | "Neutral" | "Negative" | "NoGuidance",
+  "score": <number in [-1, +1], 0 if NoGuidance/Neutral>,
+  "confidence": "HIGH" | "MEDIUM" | "LOW",
+  "rationale": "<one or two sentence institutional summary, max 240 chars>",
+  "quotes": ["<verbatim forward statement 1>", "...", "<up to 6 verbatim>"],
+  "numbers": [{"metric": "Revenue growth", "value": "+18-20%", "period": "FY27"}, {"metric": "EBITDA margin", "value": "22%", "period": "FY27"}],
+  "catalysts": [{"event": "Pithampur plant commissioning", "timing": "Q2 FY27"}, {"event": "USFDA inspection at Hyderabad facility", "timing": "Q3 FY27"}]
 }
 
-confidence = HIGH if multiple explicit forward statements present, MEDIUM if 1-2 forward statements, LOW if guidance is implicit or sparse.`;
+SCORE SCALE:
+  +0.7 to +1.0  strong positive — explicit growth guidance with hard numbers
+  +0.3 to +0.6  mild positive — directional growth language without hard numbers
+  -0.2 to +0.2  neutral — balanced / in-line with run-rate / absent
+  -0.3 to -0.6  mild negative — headwinds / slowdown without disasters
+  -0.7 to -1.0  strong negative — explicit guidance cuts, capex deferral, demand collapse
 
-  const userPrompt = `Ticker: ${ticker}\nPeriod: ${period}\nSource: ${source}\n\n=== CONCALL / PRESENTATION TEXT ===\n${text}`;
+CONFIDENCE — REFLECTS DATA DENSITY, NOT YOUR PERSONAL CERTAINTY:
+  HIGH   = 2+ hard numbers (% / ₹Cr / units) in the "numbers" array
+  MEDIUM = 1 hard number OR multiple directional statements with timing
+  LOW    = only directional adjectives, no specifics
+  HIGH on NoGuidance = you are sure there is nothing forward in this document
+
+If "numbers" array would be empty, omit hard numbers in the rationale too — say "Directional only" rather than inventing figures.`;
+
+  const userPrompt = `Ticker: ${ticker}\nPeriod: ${period}\nSource type: ${source}\nSource filename: ${sourceFilename}\nPDF length: ${pdfText.length} chars\n\n=== FILING TEXT ===\n${text}`;
 
   try {
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
@@ -232,11 +327,11 @@ confidence = HIGH if multiple explicit forward statements present, MEDIUM if 1-2
       },
       body: JSON.stringify({
         model: HAIKU_MODEL,
-        max_tokens: 800,
+        max_tokens: 1400,                  // was 800 — needs room for numbers + catalysts arrays
         system: systemPrompt,
         messages: [{ role: 'user', content: userPrompt }],
       }),
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(25_000),
     });
     if (!resp.ok) return null;
     const data = await resp.json();
@@ -245,16 +340,26 @@ confidence = HIGH if multiple explicit forward statements present, MEDIUM if 1-2
     const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
     let parsed: any;
     try { parsed = JSON.parse(cleaned); } catch { return null; }
-    if (!['Positive', 'Neutral', 'Negative'].includes(parsed.label)) return null;
+    if (!['Positive', 'Neutral', 'Negative', 'NoGuidance'].includes(parsed.label)) return null;
     const score = typeof parsed.score === 'number' ? Math.max(-1, Math.min(1, parsed.score)) : 0;
     return {
       label: parsed.label,
-      score,
+      score: parsed.label === 'NoGuidance' ? 0 : score,
       confidence: ['HIGH', 'MEDIUM', 'LOW'].includes(parsed.confidence) ? parsed.confidence : 'MEDIUM',
-      rationale: String(parsed.rationale || '').slice(0, 240),
-      quotes: Array.isArray(parsed.quotes) ? parsed.quotes.slice(0, 4).map((q: any) => String(q).slice(0, 280)) : [],
+      rationale: String(parsed.rationale || '').slice(0, 280),
+      quotes: Array.isArray(parsed.quotes) ? parsed.quotes.slice(0, 6).map((q: any) => String(q).slice(0, 320)) : [],
+      numbers: Array.isArray(parsed.numbers) ? parsed.numbers.slice(0, 8).map((n: any) => ({
+        metric: String(n?.metric || '').slice(0, 80),
+        value: String(n?.value || '').slice(0, 60),
+        period: n?.period ? String(n.period).slice(0, 30) : undefined,
+      })).filter((n: any) => n.metric && n.value) : [],
+      catalysts: Array.isArray(parsed.catalysts) ? parsed.catalysts.slice(0, 6).map((c: any) => ({
+        event: String(c?.event || '').slice(0, 100),
+        timing: c?.timing ? String(c.timing).slice(0, 30) : undefined,
+      })).filter((c: any) => c.event) : [],
       source,
       source_url: sourceUrl,
+      source_filename: sourceFilename,
       period,
       extracted_at: new Date().toISOString(),
     };
@@ -278,7 +383,11 @@ export async function POST(req: NextRequest) {
   // Hard cap — protect Vercel timeout + Haiku budget. 25 tickers per call.
   const capped = items.slice(0, 25);
 
-  const stats = { cached: 0, extracted: 0, missing_pdf: 0, llm_failed: 0, total: capped.length };
+  // PATCH 0951 — added intimation_only stat. Counts tickers where every
+  // available PDF was an intimation/notice and we deliberately skipped Haiku
+  // (saves cost). User can see this as a distinct outcome rather than lumped
+  // into missing_pdf.
+  const stats = { cached: 0, extracted: 0, intimation_only: 0, missing_pdf: 0, llm_failed: 0, total: capped.length };
   const results: Record<string, AIForwardGuidance | null> = {};
   // PATCH 0949a — collect per-ticker diagnostics so the UI can show why each
   // ticker failed without us having to scrape Vercel logs.
@@ -292,7 +401,11 @@ export async function POST(req: NextRequest) {
       const T = (ticker || '').toUpperCase().trim();
       const P = (period || '').trim() || 'unknown';
       if (!T) { results[ticker] = null; return; }
-      const key = `haiku-fg:v1:${T}:${P}`;
+      // PATCH 0951 — bumped cache key from v1 → v2. New schema includes
+      // numbers + catalysts + NoGuidance label; old v1 results don't have
+      // those fields. Forcing a re-extract is cheap (intimation skip will
+      // catch most of the waste) and gives every ticker the new prompt.
+      const key = `haiku-fg:v2:${T}:${P}`;
 
       // 1) Cache check (skipped if force=true)
       if (!force && isRedisAvailable()) {
@@ -302,11 +415,13 @@ export async function POST(req: NextRequest) {
         } catch {}
       }
 
-      // 2) Find concall PDF
+      // 2) Find concall PDF (returns intimation-only outcome when every
+      //    candidate is a notice/intimation — skip Haiku to save cost).
       const lookup = await findConcallPdfUrl(T);
       if (lookup.url === null) {
         results[T] = null;
-        stats.missing_pdf++;
+        if (lookup.diag.outcome === 'intimation-only') stats.intimation_only++;
+        else stats.missing_pdf++;
         diagnostics.push(lookup.diag);
         return;
       }
@@ -319,15 +434,18 @@ export async function POST(req: NextRequest) {
       } catch (e) {
         console.warn('[FG-DIAG] extract error', T, (e as Error).message);
       }
-      if (!pdfText) {
+      if (!pdfText || pdfText.length < 1200) {
+        // PATCH 0951 — < 1200 chars is intimation-equivalent (even if filename
+        // looked promising, the actual content is too thin). Tag as intimation
+        // outcome so the user sees the honest reason.
         results[T] = null;
-        stats.missing_pdf++;
-        diagnostics.push({ ...lookup.diag, stage: 'pdf-empty' });
+        stats.intimation_only++;
+        diagnostics.push({ ...lookup.diag, outcome: 'intimation-only', stage: 'pdf-empty' });
         return;
       }
 
       // 4) Haiku extract
-      const fg = await extractForwardGuidance(T, pdfText, lookup.source, lookup.url, P, apiKey);
+      const fg = await extractForwardGuidance(T, pdfText, lookup.source, lookup.url, lookup.filename, P, apiKey);
       if (!fg) {
         results[T] = null;
         stats.llm_failed++;

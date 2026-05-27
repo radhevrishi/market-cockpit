@@ -236,15 +236,21 @@ function deriveCachePeriod(periodStr: string | undefined): string {
   return `${Q}-FY${fy.toString().padStart(2, '0')}`;
 }
 
-// PATCH 0948 — AI Forward Guidance interface shared with the server endpoint.
+// PATCH 0948/0951 — AI Forward Guidance interface shared with the server endpoint.
+// P0951 added: 'NoGuidance' label (honest "PDF has nothing forward" signal),
+// numbers/catalysts arrays (institutional-grade specifics), source_filename
+// (audit trail so the user can verify which PDF was read).
 export interface AIForwardGuidance {
-  label: 'Positive' | 'Neutral' | 'Negative';
+  label: 'Positive' | 'Neutral' | 'Negative' | 'NoGuidance';
   score: number;
   confidence: 'HIGH' | 'MEDIUM' | 'LOW';
   rationale: string;
   quotes: string[];
+  numbers?: Array<{ metric: string; value: string; period?: string }>;
+  catalysts?: Array<{ event: string; timing?: string }>;
   source: 'concall-transcript' | 'investor-presentation' | 'press-release';
   source_url?: string;
+  source_filename?: string;
   period: string;
   extracted_at: string;
 }
@@ -255,12 +261,17 @@ export interface AIForwardGuidance {
 // the AI verdict is strong, mild, or marginal. Tier governs colour/icon/label;
 // confidence === 'LOW' overrides border to dashed + appends "(low conf)" so we
 // never make a confident-looking badge from a shaky read.
-type AITier = 'EXCELLENT' | 'POSITIVE' | 'NEUTRAL' | 'CAUTIOUS' | 'NEGATIVE';
+type AITier = 'EXCELLENT' | 'POSITIVE' | 'NEUTRAL' | 'CAUTIOUS' | 'NEGATIVE' | 'NOGUIDANCE';
 
 function aiTier(ai: AIForwardGuidance | null | undefined):
   | { tier: AITier; color: string; icon: string; label: string }
   | null {
   if (!ai) return null;
+  // PATCH 0951 — NoGuidance is its own tier (greyed out, "no forward content").
+  // Honest: better than fabricating Neutral 0.00 on an intimation PDF.
+  if (ai.label === 'NoGuidance') {
+    return { tier: 'NOGUIDANCE', color: '#6B7280', icon: '◌', label: 'No fwd guidance' };
+  }
   const s = ai.score;
   if (s >= 0.6)  return { tier: 'EXCELLENT', color: '#10B981', icon: '🚀', label: 'AI-Excellent' };
   if (s >= 0.2)  return { tier: 'POSITIVE',  color: '#34D399', icon: '▲',  label: 'AI-Positive'  };
@@ -280,18 +291,76 @@ function GuidanceBadge({ guidance, score, ai }: { guidance?: string; score?: num
   const t = aiTier(ai || null);
   if (t && ai) {
     const lowConf = ai.confidence === 'LOW';
-    const tooltip = `Forward Guidance (AI · ${t.label} · score ${ai.score >= 0 ? '+' : ''}${ai.score.toFixed(2)} · ${ai.confidence} confidence · ${ai.source})\n${ai.rationale}${ai.quotes.length > 0 ? '\n\nQuotes:\n• ' + ai.quotes.join('\n• ') : ''}`;
+    const isNoGuidance = ai.label === 'NoGuidance';
+    // PATCH 0951 — institutional-grade chip. Renders the top guidance number
+    // INLINE on the chip face (e.g. "🚀 AI-Excellent +0.78 · Rev +18-20% FY27")
+    // so the PM can read the card without hovering. Hover tooltip then
+    // expands to the full numbers + catalysts + quotes brief.
+    const topNumber = ai.numbers && ai.numbers.length > 0
+      ? `${ai.numbers[0].metric}: ${ai.numbers[0].value}${ai.numbers[0].period ? ` ${ai.numbers[0].period}` : ''}`
+      : null;
+    const tooltipLines: string[] = [];
+    tooltipLines.push(`Forward Guidance (AI · ${t.label} · ${ai.confidence} confidence · ${ai.source})`);
+    if (ai.source_filename) tooltipLines.push(`Source PDF: ${ai.source_filename}`);
+    tooltipLines.push('');
+    tooltipLines.push(ai.rationale || '(no rationale)');
+    if (ai.numbers && ai.numbers.length > 0) {
+      tooltipLines.push('');
+      tooltipLines.push('NUMBERS:');
+      for (const n of ai.numbers) tooltipLines.push(`• ${n.metric}: ${n.value}${n.period ? ` (${n.period})` : ''}`);
+    }
+    if (ai.catalysts && ai.catalysts.length > 0) {
+      tooltipLines.push('');
+      tooltipLines.push('CATALYSTS:');
+      for (const c of ai.catalysts) tooltipLines.push(`• ${c.event}${c.timing ? ` (${c.timing})` : ''}`);
+    }
+    if (ai.quotes && ai.quotes.length > 0) {
+      tooltipLines.push('');
+      tooltipLines.push('QUOTES:');
+      for (const q of ai.quotes) tooltipLines.push(`• ${q}`);
+    }
+    const tooltip = tooltipLines.join('\n');
+
+    // NoGuidance gets a different look — grey, no glow, honest "no content" message.
+    if (isNoGuidance) {
+      return (
+        <span title={tooltip} style={{
+          display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '10px',
+          padding: '2px 7px', borderRadius: '4px',
+          backgroundColor: `${t.color}15`,
+          border: `1px dashed ${t.color}60`,
+          borderLeft: `3px solid #7C3AED`,
+          color: t.color, fontWeight: 600,
+        }}>
+          🤖 {t.icon} {t.label} — only intimation/notice filed
+        </span>
+      );
+    }
+
     return (
       <span title={tooltip} style={{
         display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '10px',
         padding: '2px 7px', borderRadius: '4px',
         backgroundColor: `${t.color}18`,
         border: `1px ${lowConf ? 'dashed' : 'solid'} ${t.color}80`,
-        borderLeft: `3px solid #7C3AED`,    // purple accent = AI track signature
+        borderLeft: `3px solid #7C3AED`,
         color: t.color, fontWeight: 700,
         boxShadow: lowConf ? undefined : `0 0 0 1px ${t.color}25`,
+        maxWidth: '460px',
       }}>
         🤖 {t.icon} {t.label}: {ai.score >= 0 ? '+' : ''}{ai.score.toFixed(2)}{lowConf ? ' (low conf)' : ''}
+        {topNumber && (
+          <span style={{
+            marginLeft: '6px', paddingLeft: '6px', borderLeft: `1px solid ${t.color}60`,
+            color: '#E6EDF3', fontWeight: 600,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>
+            {topNumber}
+            {ai.numbers && ai.numbers.length > 1 && (
+              <span style={{ color: TEXT_DIM, marginLeft: '4px', fontWeight: 500 }}>+{ai.numbers.length - 1} more</span>
+            )}
+          </span>
+        )}
       </span>
     );
   }
@@ -1211,10 +1280,11 @@ export default function EarningsPage() {
     } catch { return {}; }
   });
   const [aiLoading, setAiLoading] = useState(false);
-  const [aiStats, setAiStats] = useState<{ cached: number; extracted: number; missing_pdf: number; llm_failed: number; total: number } | null>(null);
-  // PATCH 0949a — per-ticker diagnostics from the worker route, so we can show
-  // *why* each missing/failed ticker failed without scraping Vercel logs.
-  type FGDiag = { ticker: string; outcome: 'cf-error' | 'no-filings' | 'no-attachment' | 'ok'; total_filings_seen?: number; ticker_filings?: number; ticker_with_attachment?: number; matched_preference?: string; subject?: string; url?: string; error?: string; stage?: 'pdf-empty' | 'llm-failed' };
+  const [aiStats, setAiStats] = useState<{ cached: number; extracted: number; intimation_only?: number; missing_pdf: number; llm_failed: number; total: number } | null>(null);
+  // PATCH 0949a/0951 — per-ticker diagnostics. P0951 adds 'intimation-only'
+  // outcome + filename/best_score fields so the user can see exactly which
+  // PDF was scored highest and why we did or didn't spend Haiku on it.
+  type FGDiag = { ticker: string; outcome: 'cf-error' | 'no-filings' | 'no-attachment' | 'intimation-only' | 'ok'; total_filings_seen?: number; ticker_filings?: number; ticker_with_attachment?: number; matched_preference?: string; best_score?: number; subject?: string; filename?: string; url?: string; error?: string; stage?: 'pdf-empty' | 'llm-failed' };
   const [aiDiagnostics, setAiDiagnostics] = useState<FGDiag[] | null>(null);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [dateTo, setDateTo] = useState(() => new Date().toISOString().slice(0, 10));
@@ -2551,7 +2621,8 @@ export default function EarningsPage() {
           <div style={{ color: '#E6EDF3', fontSize: '12px', fontWeight: 500, marginBottom: '8px' }}>
             Every card still shows the grey <span style={{ color: TEXT_DIM, fontWeight: 700 }}>Screener Signal</span> chip (keyword-derived, historical) — not the purple <span style={{ color: '#C4B5FD', fontWeight: 700 }}>🤖 AI Forward Guidance</span> chip. Reason breakdown:
             <span style={{ marginLeft: '6px', color: '#F87171' }}>
-              {aiStats.missing_pdf > 0 ? `${aiStats.missing_pdf} no concall PDF` : ''}
+              {(aiStats.intimation_only || 0) > 0 ? `${aiStats.intimation_only} intimation-only (no transcript exists — Haiku skipped to save cost)` : ''}
+              {aiStats.missing_pdf > 0 ? ` · ${aiStats.missing_pdf} no PDF` : ''}
               {aiStats.llm_failed > 0 ? ` · ${aiStats.llm_failed} LLM failed` : ''}
             </span>
           </div>
@@ -2576,15 +2647,17 @@ export default function EarningsPage() {
                 const outcomeColor =
                   d.outcome === 'ok' && !d.stage ? '#10B981' :
                   d.outcome === 'cf-error' ? '#EF4444' :
+                  d.outcome === 'intimation-only' ? '#94A3B8' :
                   '#F59E0B';
-                const label = d.stage ? `ok→${d.stage}` : d.outcome;
+                const label = d.stage && d.outcome === 'ok' ? `ok→${d.stage}` : d.outcome;
                 const detail =
                   d.outcome === 'cf-error' ? d.error :
                   d.outcome === 'no-filings' ? `seen ${d.total_filings_seen} filings, 0 for ticker` :
                   d.outcome === 'no-attachment' ? `${d.ticker_filings} filings, 0 with attachment` :
-                  d.stage === 'pdf-empty' ? `extracted <200 chars from ${d.subject || d.url}` :
-                  d.stage === 'llm-failed' ? `Haiku returned no JSON for ${d.subject || d.url}` :
-                  `${d.matched_preference} · ${d.subject || ''}`;
+                  d.outcome === 'intimation-only' ? `${d.ticker_with_attachment} PDFs but all intimation/notice (best score ${d.best_score ?? '?'}) — Haiku skipped → ${d.filename || ''}` :
+                  d.stage === 'pdf-empty' ? `< 1200 chars in ${d.filename || d.url}` :
+                  d.stage === 'llm-failed' ? `Haiku returned no JSON for ${d.filename || d.url}` :
+                  `${d.matched_preference} (score ${d.best_score ?? '?'}) · ${d.filename || ''}`;
                 return (
                   <div key={i} style={{ display: 'grid', gridTemplateColumns: '90px 130px 1fr', gap: '8px', padding: '2px 0' }}>
                     <span style={{ color: TEXT, fontWeight: 700 }}>{d.ticker}</span>
@@ -2603,7 +2676,7 @@ export default function EarningsPage() {
           backgroundColor: '#7C3AED12', border: '1px solid #7C3AED40',
           color: '#C4B5FD', fontSize: '11px', fontWeight: 600,
         }}>
-          🤖 AI Guidance: {aiStats.extracted} extracted · {aiStats.cached} from cache · {aiStats.missing_pdf} no concall PDF · {aiStats.llm_failed} LLM-failed · total {aiStats.total}
+          🤖 AI Guidance: {aiStats.extracted} extracted · {aiStats.cached} from cache · {aiStats.intimation_only || 0} intimation-only (skipped) · {aiStats.missing_pdf} no PDF · {aiStats.llm_failed} LLM-failed · total {aiStats.total}
           {aiDiagnostics && aiDiagnostics.length > 0 && (
             <>
               {' · '}
@@ -2631,15 +2704,17 @@ export default function EarningsPage() {
                 const outcomeColor =
                   d.outcome === 'ok' && !d.stage ? '#10B981' :
                   d.outcome === 'cf-error' ? '#EF4444' :
+                  d.outcome === 'intimation-only' ? '#94A3B8' :
                   '#F59E0B';
-                const label = d.stage ? `ok→${d.stage}` : d.outcome;
+                const label = d.stage && d.outcome === 'ok' ? `ok→${d.stage}` : d.outcome;
                 const detail =
                   d.outcome === 'cf-error' ? d.error :
                   d.outcome === 'no-filings' ? `seen ${d.total_filings_seen} filings, 0 for ticker` :
                   d.outcome === 'no-attachment' ? `${d.ticker_filings} filings, 0 with attachment` :
-                  d.stage === 'pdf-empty' ? `extracted <200 chars from ${d.subject || d.url}` :
-                  d.stage === 'llm-failed' ? `Haiku returned no JSON for ${d.subject || d.url}` :
-                  `${d.matched_preference} · ${d.subject || ''}`;
+                  d.outcome === 'intimation-only' ? `${d.ticker_with_attachment} PDFs but all intimation/notice (best score ${d.best_score ?? '?'}) — Haiku skipped → ${d.filename || ''}` :
+                  d.stage === 'pdf-empty' ? `< 1200 chars in ${d.filename || d.url}` :
+                  d.stage === 'llm-failed' ? `Haiku returned no JSON for ${d.filename || d.url}` :
+                  `${d.matched_preference} (score ${d.best_score ?? '?'}) · ${d.filename || ''}`;
                 return (
                   <div key={i} style={{ display: 'grid', gridTemplateColumns: '80px 110px 1fr', gap: '8px', padding: '1px 0' }}>
                     <span style={{ color: TEXT, fontWeight: 700 }}>{d.ticker}</span>
