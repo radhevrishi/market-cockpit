@@ -37,9 +37,19 @@ export default function BreadthPage() {
   const { data, isLoading, isFetching, dataUpdatedAt, error, refetch } = useQuery<BreadthPayload>({
     queryKey: ['market-breadth'],
     queryFn: async () => {
-      const r = await fetch('/api/v1/breadth');
-      if (!r.ok) throw new Error('breadth fetch failed');
-      return r.json();
+      // PATCH 0966 — Pattern C: add 20s AbortSignal timeout. The breadth
+      // endpoint can hang behind a cold backend; the loading state was
+      // tied to react-query's isLoading with no upstream timeout, so the
+      // spinner stayed up indefinitely waiting on the socket.
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 20_000);
+      try {
+        const r = await fetch('/api/v1/breadth', { signal: ctl.signal });
+        if (!r.ok) throw new Error('breadth fetch failed');
+        return await r.json();
+      } finally {
+        clearTimeout(timer);
+      }
     },
     staleTime: 5 * 60_000,
     refetchInterval: 5 * 60_000,

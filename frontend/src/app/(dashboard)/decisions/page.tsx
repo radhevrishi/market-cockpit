@@ -154,12 +154,16 @@ export default function DecisionsPage() {
 
   // PATCH 0852 — Live-price lookup for buy-the-dip helper on REJECTED entries.
   // Fetch /api/market/quotes once on mount, build a ticker→price map.
+  // PATCH 0966 — Pattern C: add 18s AbortSignal timeout so a hung quotes
+  // endpoint doesn't leave the request dangling; dev-only warn on failure.
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
   useEffect(() => {
     let cancelled = false;
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 18_000);
     (async () => {
       try {
-        const r = await fetch('/api/market/quotes?market=india', { cache: 'no-store' });
+        const r = await fetch('/api/market/quotes?market=india', { cache: 'no-store', signal: ctl.signal });
         if (!r.ok) return;
         const j = await r.json();
         if (cancelled) return;
@@ -168,9 +172,12 @@ export default function DecisionsPage() {
           if (s.ticker && s.price) map[String(s.ticker).toUpperCase()] = Number(s.price);
         }
         setLivePrices(map);
-      } catch {}
+      } catch (err: any) {
+        if (err?.name === 'AbortError') return;
+        if (process.env.NODE_ENV !== 'production') console.warn('[decisions] livePrices fetch failed:', err);
+      } finally { clearTimeout(timer); }
     })();
-    return () => { cancelled = true; };
+    return () => { cancelled = true; clearTimeout(timer); ctl.abort(); };
   }, []);
 
   // PATCH 0856 — News-since-decision feed. Bulk-fetch /api/v1/news once,
@@ -179,11 +186,15 @@ export default function DecisionsPage() {
   // 'I bought at ₹X, here are the N news items that came after — did any
   // contradict my thesis?'.
   const [newsByTicker, setNewsByTicker] = useState<Record<string, Array<{title: string; published_at: string; url?: string; source?: string}>>>({});
+  // PATCH 0966 — Pattern C: news fetch had no timeout; news service is often
+  // the slowest dependency. 20s ceiling + dev-only warn.
   useEffect(() => {
     let cancelled = false;
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 20_000);
     (async () => {
       try {
-        const r = await fetch('/api/v1/news?limit=300', { cache: 'no-store' });
+        const r = await fetch('/api/v1/news?limit=300', { cache: 'no-store', signal: ctl.signal });
         if (!r.ok || cancelled) return;
         const list = await r.json();
         if (!Array.isArray(list) || cancelled) return;
@@ -199,9 +210,12 @@ export default function DecisionsPage() {
           }
         }
         if (!cancelled) setNewsByTicker(map);
-      } catch {}
+      } catch (err: any) {
+        if (err?.name === 'AbortError') return;
+        if (process.env.NODE_ENV !== 'production') console.warn('[decisions] newsByTicker fetch failed:', err);
+      } finally { clearTimeout(timer); }
     })();
-    return () => { cancelled = true; };
+    return () => { cancelled = true; clearTimeout(timer); ctl.abort(); };
   }, []);
 
   // Filtered + sorted rows.

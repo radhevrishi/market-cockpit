@@ -330,13 +330,25 @@ interface FlowRow {
 function AnalyticsView({ marketScope, onJumpToInvestor }: { marketScope: MarketScope; onJumpToInvestor: (id: string) => void }) {
   // PATCH 0493 — Flow Momentum (cross-investor accumulation heatmap)
   const [flowData, setFlowData] = useState<{ rows: FlowRow[]; counts: { total: number; accumulation: number; distribution: number; mixed: number }; cached?: boolean } | null>(null);
+  // PATCH 0966 — Pattern C: flow fetch had no timeout and silently swallowed
+  // errors. If /api/v1/super-investor-flow is down the section just never
+  // appeared (no banner, no spinner). Now: 20s AbortSignal timeout +
+  // dev-only console.warn so future debugging surfaces the failure mode.
   useEffect(() => {
     let alive = true;
-    fetch('/api/v1/super-investor-flow?days=30', { cache: 'no-store' })
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 20_000);
+    fetch('/api/v1/super-investor-flow?days=30', { cache: 'no-store', signal: ctl.signal })
       .then((r) => r.ok ? r.json() : null)
       .then((d) => { if (alive && d) setFlowData(d); })
-      .catch(() => {});
-    return () => { alive = false; };
+      .catch((err) => {
+        if (err?.name === 'AbortError') return;
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn('[super-investors] flow fetch failed:', err);
+        }
+      })
+      .finally(() => clearTimeout(timer));
+    return () => { alive = false; clearTimeout(timer); ctl.abort(); };
   }, []);
 
   // PATCH 0493 — Conviction Delta via client-side snapshot.

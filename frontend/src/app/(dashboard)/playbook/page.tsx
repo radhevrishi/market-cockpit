@@ -8,6 +8,7 @@
 // they're a self-funded research-driven investor running a personal book.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import React from 'react';
 import Link from 'next/link';
 
 const BG = '#0A0E1A';
@@ -322,12 +323,18 @@ export default function PlaybookPage() {
             <div style={{ color: DIM, fontWeight: 800, letterSpacing: '0.5px', fontSize: 11, paddingBottom: 4, borderBottom: `1px solid ${BORDER}` }}>SECTOR</div>
             <div style={{ color: DIM, fontWeight: 800, letterSpacing: '0.5px', fontSize: 11, paddingBottom: 4, borderBottom: `1px solid ${BORDER}` }}>CALCULATOR</div>
             <div style={{ color: DIM, fontWeight: 800, letterSpacing: '0.5px', fontSize: 11, paddingBottom: 4, borderBottom: `1px solid ${BORDER}` }}>MULTIPLE RANGE</div>
+            {/* PATCH 0966 — missing-keys: bare <>…</> fragment inside .map() with
+                inner-div `key` props produced React "each child needs unique key"
+                warnings (and only the fragment-level key actually counts). The
+                inner keys did nothing because they sat on siblings of the
+                fragment. Switch to React.Fragment with the fragment-level key
+                and drop the redundant inner keys. */}
             {SECTOR_PLAYBOOK.map((s) => (
-              <>
-                <div key={s.sector + '-s'} style={{ color: TEXT, fontWeight: 600 }}>{s.emoji} {s.sector}</div>
-                <div key={s.sector + '-c'} style={{ color: '#C9D4E0' }}>{s.calculator}</div>
-                <div key={s.sector + '-m'} style={{ color: '#22D3EE', fontFamily: 'ui-monospace, monospace', fontWeight: 700 }}>{s.multiple}</div>
-              </>
+              <React.Fragment key={s.sector}>
+                <div style={{ color: TEXT, fontWeight: 600 }}>{s.emoji} {s.sector}</div>
+                <div style={{ color: '#C9D4E0' }}>{s.calculator}</div>
+                <div style={{ color: '#22D3EE', fontFamily: 'ui-monospace, monospace', fontWeight: 700 }}>{s.multiple}</div>
+              </React.Fragment>
             ))}
           </div>
         </div>

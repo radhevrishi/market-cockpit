@@ -70,6 +70,10 @@ export default function IPOsPage() {
     inFlightCtlRef.current?.abort();
     const ctl = new AbortController();
     inFlightCtlRef.current = ctl;
+    // PATCH 0966 — Pattern C: 20s safety timeout. Previously the IPO fetch
+    // could hang indefinitely when /api/market/ipos was slow; the spinner
+    // stayed up with no failure path until the user hit Refresh.
+    const timer = setTimeout(() => ctl.abort(), 20_000);
     try {
       // AUDIT_100 #20 — only show the page spinner on initial load. Polling
       // every 5 min was flashing the spinner over present data every poll,
@@ -98,6 +102,7 @@ export default function IPOsPage() {
       setError(err instanceof Error ? err.message : 'An error occurred');
       console.error('Error fetching IPOs:', err);
     } finally {
+      clearTimeout(timer);  // PATCH 0966 — clear abort timer regardless of outcome
       if (mountedRef.current) {
         setLoading(false);
         setIsFetchingState(false);

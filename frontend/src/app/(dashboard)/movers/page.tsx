@@ -204,16 +204,22 @@ export default function MoversPage() {
   }, []);
 
   // Fetch recent earnings for badges
+  // PATCH 0966 — Pattern C: earnings fetches had no AbortSignal timeout, so
+  // a hung backend would leave them pending and the earnings-only filter chip
+  // would never appear. 15s ceiling matches fetchData above.
   const fetchEarnings = useCallback(async () => {
     try {
       const now = new Date();
       const curMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
       const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       const prevMonth = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 15_000);
       const [curRes, prevRes] = await Promise.all([
-        fetch(`/api/market/earnings?market=india&month=${curMonth}`).catch(() => null),
-        fetch(`/api/market/earnings?market=india&month=${prevMonth}`).catch(() => null),
+        fetch(`/api/market/earnings?market=india&month=${curMonth}`, { signal: ctl.signal }).catch(() => null),
+        fetch(`/api/market/earnings?market=india&month=${prevMonth}`, { signal: ctl.signal }).catch(() => null),
       ]);
+      clearTimeout(timer);
       const map = new Map<string, { quality: string; quarter: string }>();
       for (const res of [curRes, prevRes]) {
         if (res && res.ok) {
