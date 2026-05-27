@@ -911,6 +911,26 @@ const COMMENTARY_COLORS: Record<CommentarySignal, { bg: string; border: string; 
 // CARD COMPONENT
 // ══════════════════════════════════════════════
 
+// PATCH 0956 — derive a human-readable AI eligibility reason so cards that
+// don't qualify can show 'AI gated: D1 +1.4% < +2%' instead of leaving the
+// user to wonder why no AI badge appears. Three states:
+//   'eligible'    — passes both grade + d1 gates (AI should be runnable)
+//   'no-d1-data'  — qualifying grade but D1 close not yet available
+//   'low-d1'      — qualifying grade but D1 < +2%
+//   'low-grade'   — grade is GOOD/OK/BAD (not EX/ST)
+function aiEligibilityReason(card: EarningsScanCard, d1: number | null): { state: 'eligible' | 'no-d1-data' | 'low-d1' | 'low-grade'; reason: string } {
+  if (card.grade !== 'EXCELLENT' && card.grade !== 'STRONG') {
+    return { state: 'low-grade', reason: `AI gated: ${card.grade} grade (only EX/ST)` };
+  }
+  if (d1 === null || typeof d1 !== 'number') {
+    return { state: 'no-d1-data', reason: 'AI gated: D1 close not yet available' };
+  }
+  if (d1 < 2) {
+    return { state: 'low-d1', reason: `AI gated: D1 ${d1 >= 0 ? '+' : ''}${d1.toFixed(1)}% < +2%` };
+  }
+  return { state: 'eligible', reason: '' };
+}
+
 function EarningsCardComponent({ card, postGap, ai }: { card: EarningsScanCard; postGap?: { gap_pct: number | null; close_move_pct: number | null; live_move_pct: number | null; is_live: boolean; target_date: string | null; filing_date?: string; filing_date_source?: 'explicit' | 'kv-calendar' | 'detected' }; ai?: AIForwardGuidance | null }) {
   const tagColor = card.universeTag === 'portfolio' ? '#10B981' : card.universeTag === 'both' ? '#8B5CF6' : card.universeTag === 'screener' ? '#F59E0B' : ACCENT;
   const tagLabel = card.universeTag === 'portfolio' ? 'PORTFOLIO' : card.universeTag === 'both' ? 'BOTH' : card.universeTag === 'screener' ? 'SCREENER' : 'WATCHLIST';
@@ -1098,6 +1118,31 @@ function EarningsCardComponent({ card, postGap, ai }: { card: EarningsScanCard; 
             <span style={{ fontSize: '10px', color: TEXT_DIM, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px' }}>Guidance</span>
             <GuidanceBadge guidance={card.guidance} score={card.sentimentScore} ai={ai} />
             <DivergenceBadge divergence={card.divergence} />
+            {/* PATCH 0956 — eligibility hint when there's no AI badge so user
+                knows whether AI is gated or just not extracted yet. Only
+                shown when there's no AI guidance for this card. */}
+            {!ai && (() => {
+              const d1 = postGap?.close_move_pct ?? null;
+              const elig = aiEligibilityReason(card, d1);
+              if (elig.state === 'eligible') {
+                return (
+                  <span style={{
+                    fontSize: '9px', color: '#F59E0B', fontWeight: 600,
+                    padding: '1px 6px', borderRadius: '3px',
+                    backgroundColor: '#F59E0B15', border: '1px dashed #F59E0B40',
+                  }} title="This card qualifies (EX/ST + D1 ≥ +2%) — click '🤖 AI Guidance' in the toolbar to extract.">
+                    🤖 click to extract
+                  </span>
+                );
+              }
+              return (
+                <span style={{
+                  fontSize: '9px', color: TEXT_DIM, fontWeight: 500, fontStyle: 'italic',
+                }} title="AI Forward Guidance is gated to EXCELLENT/STRONG grade + D1 close ≥ +2% so we only spend Haiku budget on prints the market already validated.">
+                  {elig.reason}
+                </span>
+              );
+            })()}
           </div>
           {/* PATCH 0951b — Institutional brief. When AI Forward Guidance has
               extracted hard numbers or catalysts, render them all visibly here
@@ -1378,7 +1423,7 @@ export default function EarningsPage() {
     } catch { return {}; }
   });
   const [aiLoading, setAiLoading] = useState(false);
-  const [aiStats, setAiStats] = useState<{ cached: number; extracted: number; intimation_only?: number; screener_fallback?: number; missing_pdf: number; llm_failed: number; total: number } | null>(null);
+  const [aiStats, setAiStats] = useState<{ cached: number; extracted: number; intimation_only?: number; screener_fallback?: number; budget_exceeded?: number; missing_pdf: number; llm_failed: number; total: number } | null>(null);
   // PATCH 0949a/0951/0953 — per-ticker diagnostics. P0953 adds
   // 'ok-screener-fallback' outcome + fallback_source/fallback_date fields
   // so the audit trail shows which path each ticker took.
@@ -1850,12 +1895,13 @@ export default function EarningsPage() {
       const newResults: Record<string, AIForwardGuidance> = json?.results || {};
       // Merge server stats with client-side skip count so 'cached' total
       // reflects EVERY ticker that didn't bill Haiku (server KV + client LS).
-      const serverStats = json?.stats || { cached: 0, extracted: 0, intimation_only: 0, screener_fallback: 0, missing_pdf: 0, llm_failed: 0, total: items.length };
+      const serverStats = json?.stats || { cached: 0, extracted: 0, intimation_only: 0, screener_fallback: 0, budget_exceeded: 0, missing_pdf: 0, llm_failed: 0, total: items.length };
       setAiStats({
         cached: (serverStats.cached || 0) + clientCachedCount,
         extracted: serverStats.extracted || 0,
         intimation_only: serverStats.intimation_only || 0,
         screener_fallback: serverStats.screener_fallback || 0,
+        budget_exceeded: serverStats.budget_exceeded || 0,
         missing_pdf: serverStats.missing_pdf || 0,
         llm_failed: serverStats.llm_failed || 0,
         total: qualifyingCards.length,
@@ -2890,7 +2936,7 @@ export default function EarningsPage() {
           backgroundColor: '#7C3AED12', border: '1px solid #7C3AED40',
           color: '#C4B5FD', fontSize: '11px', fontWeight: 600,
         }}>
-          🤖 AI Guidance: {aiStats.extracted} extracted{(aiStats.screener_fallback || 0) > 0 ? ` (${aiStats.screener_fallback} via Screener.in fallback)` : ''} · {aiStats.cached} cached · {aiStats.intimation_only || 0} intimation-only · {aiStats.missing_pdf} no PDF · {aiStats.llm_failed} LLM-failed · total {aiStats.total}
+          🤖 AI Guidance: {aiStats.extracted} extracted{(aiStats.screener_fallback || 0) > 0 ? ` (${aiStats.screener_fallback} via Screener.in)` : ''} · {aiStats.cached} cached · {aiStats.intimation_only || 0} intimation-only · {aiStats.missing_pdf} no PDF · {aiStats.llm_failed} LLM-failed{(aiStats.budget_exceeded || 0) > 0 ? ` · ⚠ ${aiStats.budget_exceeded} BUDGET EXCEEDED (Anthropic 429 — wait or top up)` : ''} · total {aiStats.total}
           {aiDiagnostics && aiDiagnostics.length > 0 && (
             <>
               {' · '}

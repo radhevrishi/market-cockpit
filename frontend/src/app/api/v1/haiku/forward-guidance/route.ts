@@ -471,29 +471,70 @@ If "numbers" array would be empty, omit hard numbers in the rationale too — sa
 
   const userPrompt = `Ticker: ${ticker}\nPeriod: ${period}\nSource type: ${source}\nSource filename: ${sourceFilename}\nPDF length: ${pdfText.length} chars\n\n=== FILING TEXT ===\n${text}`;
 
+  // PATCH 0956 — one-shot retry with backoff. Haiku occasionally returns
+  // non-JSON (~1-2% of calls) due to model-side hiccups; one retry recovers
+  // most of these without a meaningful cost increase. Also detects 429
+  // (budget / rate limit) and returns a sentinel so the POST handler can
+  // surface it distinctly from a normal llm-failed.
+  let parsed: any = null;
+  let last429 = false;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: HAIKU_MODEL,
+          max_tokens: 1400,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userPrompt }],
+        }),
+        signal: AbortSignal.timeout(25_000),
+      });
+      if (resp.status === 429) {
+        last429 = true;
+        console.warn(`[FG-DIAG] anthropic 429 (budget/rate limit) for ${ticker}`);
+        break;  // don't retry budget exceeded
+      }
+      if (!resp.ok) {
+        if (attempt === 0) { await new Promise(r => setTimeout(r, 500 + Math.random() * 500)); continue; }
+        break;
+      }
+      const data = await resp.json();
+      const raw = (data?.content || []).map((b: any) => b?.text || '').join('').trim();
+      if (!raw) {
+        if (attempt === 0) { await new Promise(r => setTimeout(r, 500 + Math.random() * 500)); continue; }
+        break;
+      }
+      const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+      try {
+        parsed = JSON.parse(cleaned);
+        break;  // success
+      } catch {
+        if (attempt === 0) {
+          console.warn(`[FG-DIAG] haiku non-JSON for ${ticker} on attempt 1, retrying...`);
+          await new Promise(r => setTimeout(r, 500 + Math.random() * 500));
+          continue;
+        }
+        break;
+      }
+    } catch (e) {
+      if (attempt === 0) { await new Promise(r => setTimeout(r, 500 + Math.random() * 500)); continue; }
+      console.warn(`[FG-DIAG] haiku fetch error for ${ticker}:`, (e as Error).message);
+      break;
+    }
+  }
+  if (last429) {
+    // Sentinel: budget exceeded. Caller distinguishes from llm-failed.
+    return { __budgetExceeded: true } as any;
+  }
+  if (!parsed) return null;
+
   try {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: HAIKU_MODEL,
-        max_tokens: 1400,                  // was 800 — needs room for numbers + catalysts arrays
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userPrompt }],
-      }),
-      signal: AbortSignal.timeout(25_000),
-    });
-    if (!resp.ok) return null;
-    const data = await resp.json();
-    const raw = (data?.content || []).map((b: any) => b?.text || '').join('').trim();
-    if (!raw) return null;
-    const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
-    let parsed: any;
-    try { parsed = JSON.parse(cleaned); } catch { return null; }
     if (!['Positive', 'Neutral', 'Negative', 'NoGuidance'].includes(parsed.label)) return null;
     const score = typeof parsed.score === 'number' ? Math.max(-1, Math.min(1, parsed.score)) : 0;
     return {
@@ -537,11 +578,12 @@ export async function POST(req: NextRequest) {
   // Hard cap — protect Vercel timeout + Haiku budget. 25 tickers per call.
   const capped = items.slice(0, 25);
 
-  // PATCH 0951/0953 — stat tracking.
+  // PATCH 0951/0953/0956 — stat tracking.
   //   intimation_only — every NSE PDF was a notice (Haiku skipped)
   //   screener_fallback — NSE was intimation-only / had nothing, but Screener.in
   //                       had a real transcript and the extraction worked
-  const stats = { cached: 0, extracted: 0, intimation_only: 0, screener_fallback: 0, missing_pdf: 0, llm_failed: 0, total: capped.length };
+  //   budget_exceeded  — Anthropic returned 429 (rate limit / monthly cap)
+  const stats = { cached: 0, extracted: 0, intimation_only: 0, screener_fallback: 0, missing_pdf: 0, llm_failed: 0, budget_exceeded: 0, total: capped.length };
   const results: Record<string, AIForwardGuidance | null> = {};
   // PATCH 0949a — collect per-ticker diagnostics so the UI can show why each
   // ticker failed without us having to scrape Vercel logs.
@@ -620,8 +662,15 @@ export async function POST(req: NextRequest) {
         return;
       }
 
-      // 4) Haiku extract
+      // 4) Haiku extract — with one-shot retry inside (P0956).
       const fg = await extractForwardGuidance(T, pdfText, lookup.source, lookup.url, lookup.filename, P, apiKey);
+      // PATCH 0956 — budget-exceeded sentinel from extractForwardGuidance
+      if (fg && (fg as any).__budgetExceeded) {
+        results[T] = null;
+        stats.budget_exceeded++;
+        diagnostics.push({ ...lookup.diag, stage: 'llm-failed', error: 'Anthropic 429: budget/rate limit exceeded' });
+        return;
+      }
       if (!fg) {
         results[T] = null;
         stats.llm_failed++;
