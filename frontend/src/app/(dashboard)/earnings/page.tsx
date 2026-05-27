@@ -1342,8 +1342,39 @@ export default function EarningsPage() {
   const [aiGuidance, setAiGuidance] = useState<Record<string, AIForwardGuidance>>(() => {
     if (typeof window === 'undefined') return {};
     try {
-      const raw = localStorage.getItem('mc:ai-fg:v1');
-      return raw ? (JSON.parse(raw) || {}) : {};
+      // PATCH 0952 — schema-aligned read with defensive filter.
+      //   1. Prefer v2 (matches server cache key bumped in P0951). Fall
+      //      back to v1 if user has only legacy data, so a fresh deploy
+      //      doesn't make all prior good extractions disappear.
+      //   2. Drop any entry that looks like a Haiku-on-intimation-PDF
+      //      bogus output (Neutral 0.00 LOW conf with no extracted
+      //      numbers) — these were minted by P0950a's call to Haiku on
+      //      1-page intimation notices and are misleading. Filtering them
+      //      out at load means cards revert to the honest keyword chip
+      //      until the user clicks AI Guidance again, at which point
+      //      P0951a's NoGuidance synthetic result will overwrite cleanly.
+      const v2raw = localStorage.getItem('mc:ai-fg:v2');
+      const v1raw = localStorage.getItem('mc:ai-fg:v1');
+      const raw = v2raw || v1raw || '{}';
+      const parsed: Record<string, AIForwardGuidance> = JSON.parse(raw) || {};
+      const filtered: Record<string, AIForwardGuidance> = {};
+      let dropped = 0;
+      for (const [k, v] of Object.entries(parsed)) {
+        if (!v || !v.label) continue;
+        const isBogusNeutralZero = (
+          v.label === 'Neutral' &&
+          Math.abs(v.score) < 0.01 &&
+          v.confidence === 'LOW' &&
+          (!v.numbers || v.numbers.length === 0) &&
+          (!v.catalysts || v.catalysts.length === 0)
+        );
+        if (isBogusNeutralZero) { dropped++; continue; }
+        filtered[k] = v;
+      }
+      if (dropped > 0) {
+        try { console.log(`[AI Guidance] Dropped ${dropped} bogus legacy entries on load (P0952 defensive filter)`); } catch {}
+      }
+      return filtered;
     } catch { return {}; }
   });
   const [aiLoading, setAiLoading] = useState(false);
@@ -1648,6 +1679,10 @@ export default function EarningsPage() {
       setSummary(lastSummary);
       setSource(lastSource);
       setUpdatedAt(lastUpdatedAt);
+      // PATCH 0952 — clear stale "Upstream slow" error if it was set by the
+      // 45s wall-clock timer that fired before data actually arrived. Without
+      // this the red banner persists alongside successful cards forever.
+      setError('');
 
       // Cache for tab switching — per-tab + month-keyed
       _earningsCache.set({
@@ -1781,7 +1816,10 @@ export default function EarningsPage() {
         for (const [ticker, fg] of Object.entries(newResults)) {
           if (fg && fg.label) next[ticker.toUpperCase()] = fg;
         }
-        try { localStorage.setItem('mc:ai-fg:v1', JSON.stringify(next)); } catch {}
+        // PATCH 0952 — write to v2 (matches server cache key bumped in P0951).
+        // Also clean up old v1 so duplicate entries don't accumulate.
+        try { localStorage.setItem('mc:ai-fg:v2', JSON.stringify(next)); } catch {}
+        try { localStorage.removeItem('mc:ai-fg:v1'); } catch {}
         return next;
       });
     } catch (e) {
