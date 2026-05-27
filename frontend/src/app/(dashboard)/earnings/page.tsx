@@ -1182,13 +1182,33 @@ export default function EarningsPage() {
       ]);
       let portfolio: string[] = pData ? (pData.holdings || []).map((h: any) => h.symbol) : [];
       let watchlist: string[] = wData ? (wData.watchlist || []) : [];
-      // Fallback to localStorage if watchlist API failed
-      if (!wData) {
-        try {
-          const stored = localStorage.getItem('mc_watchlist_tickers');
-          if (stored) watchlist = JSON.parse(stored);
-        } catch {}
-      }
+      // PATCH 0946 — localStorage is now ALWAYS a fallback layer, not only
+      // "if API failed". Several user-reported sessions showed Portfolio 0 /
+      // Watchlist 0 even though localStorage had real tickers, because the
+      // API returned empty arrays (chatId mismatch / cold cache) instead of
+      // actually failing. We now merge: API tickers + localStorage tickers
+      // (deduped UPPER). Either source populates the universe.
+      try {
+        const wlStored = localStorage.getItem('mc_watchlist_tickers');
+        if (wlStored) {
+          const lsList: string[] = JSON.parse(wlStored) || [];
+          if (Array.isArray(lsList) && lsList.length > 0) {
+            const merged = new Set([...watchlist, ...lsList].map(s => String(s || '').toUpperCase().trim()).filter(Boolean));
+            watchlist = Array.from(merged);
+          }
+        }
+      } catch {}
+      try {
+        const pfStored = localStorage.getItem('portfolioHoldings');
+        if (pfStored) {
+          const lsList: any[] = JSON.parse(pfStored) || [];
+          const lsSymbols = (Array.isArray(lsList) ? lsList : []).map((h: any) => (h?.ticker || h?.symbol || '').toString().toUpperCase().trim()).filter(Boolean);
+          if (lsSymbols.length > 0) {
+            const merged = new Set([...portfolio.map(s => String(s || '').toUpperCase().trim()), ...lsSymbols].filter(Boolean));
+            portfolio = Array.from(merged);
+          }
+        }
+      } catch {}
 
       setPortfolioSymbols(portfolio);
       setWatchlistSymbols(watchlist);
@@ -1503,15 +1523,12 @@ export default function EarningsPage() {
     setConvictionLoading(true);
     (async () => {
       try {
-        // PATCH 0944 — Right-size CB scan. P0942 used 50/batch with 18s timeout
-        // but the upstream earnings-scan endpoint takes ~4s per ticker on
-        // Screener.in cold path → 50 tickers would need ~200s, aborting after
-        // ~4 tickers per batch (so almost no data came back). Now: 20/batch
-        // with 28s timeout so each batch can actually complete (20 × 4s ≈ 80s
-        // worst case, but Screener cache cuts this to 6-15s typical).
-        // 6 parallel waves still keeps wall-clock around 50-60s for 396 names.
+        // PATCH 0944/0946 — 20/batch with 28s timeout (batches complete reliably
+        // on Screener.in cold path). PARALLEL bumped 6→10 (P0946 per user) to
+        // finish 396 names in ~25-30s instead of ~50-60s. Screener.in tolerates
+        // 10 concurrent on the same client (we tested in /earnings hub scan).
         const BATCH_SIZE = 20;
-        const PARALLEL = 6;
+        const PARALLEL = 10;
         const batches: string[][] = [];
         for (let i = 0; i < newTickers.length; i += BATCH_SIZE) batches.push(newTickers.slice(i, i + BATCH_SIZE));
         // Tag existing cards as conviction immediately — no wait for fetch
