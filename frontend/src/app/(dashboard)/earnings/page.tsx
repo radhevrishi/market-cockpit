@@ -1550,12 +1550,16 @@ export default function EarningsPage() {
     })();
   }, [selectedUniverses, convictionOnly, convictionScanned, convictionLoading, convictionTickersState, cards]);
 
-  // Trigger screener fetch only when user switches to Screener tab
+  // Trigger screener fetch ONLY when user has Screener explicitly selected
+  // in the multi-select universe. PATCH 0941: was firing on viewMode==='screener'
+  // alone — that left the 2364-stock scan stuck in 'forever loading' if the
+  // user had ever clicked Screener once (the chip handler at line 1964 always
+  // calls setViewMode(key) even when toggling OFF, so viewMode stayed stuck).
   useEffect(() => {
-    if (viewMode === 'screener' && !screenerLoaded && !screenerLoading) {
+    if (selectedUniverses.has('screener') && viewMode === 'screener' && !screenerLoaded && !screenerLoading) {
       fetchScreenerEarnings();
     }
-  }, [viewMode, screenerLoaded, screenerLoading, fetchScreenerEarnings]);
+  }, [viewMode, selectedUniverses, screenerLoaded, screenerLoading, fetchScreenerEarnings]);
 
   // Sort and filter
   const sortedCards = useMemo(() => {
@@ -1961,7 +1965,22 @@ export default function EarningsPage() {
           const total = tab?.total ?? 0;
           const on = selectedUniverses.has(key);
           return (
-            <button key={key} onClick={() => { toggleUniverse(key); setViewMode(key); /* keep legacy for some flows */ }}
+            <button key={key} onClick={() => {
+                // PATCH 0941: only setViewMode when ENABLING (not toggling off).
+                // Previously setViewMode(key) always fired, leaving viewMode
+                // stuck on 'screener' after the user un-checked the Screener
+                // chip — which kept the 2364-stock scan running forever.
+                const wasOn = selectedUniverses.has(key);
+                toggleUniverse(key);
+                if (!wasOn) setViewMode(key);
+                else if (viewMode === key) {
+                  // unchecked the chip whose viewMode is active → fall back
+                  const fallback: ViewMode = selectedUniverses.has('portfolio') ? 'portfolio'
+                    : selectedUniverses.has('watchlist') ? 'watchlist'
+                    : selectedUniverses.has('conviction') ? 'conviction' : 'watchlist';
+                  setViewMode(fallback);
+                }
+              }}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 6,
                 padding: '9px 16px', borderRadius: 8,
