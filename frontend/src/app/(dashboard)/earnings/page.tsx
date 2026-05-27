@@ -1378,11 +1378,11 @@ export default function EarningsPage() {
     } catch { return {}; }
   });
   const [aiLoading, setAiLoading] = useState(false);
-  const [aiStats, setAiStats] = useState<{ cached: number; extracted: number; intimation_only?: number; missing_pdf: number; llm_failed: number; total: number } | null>(null);
-  // PATCH 0949a/0951 — per-ticker diagnostics. P0951 adds 'intimation-only'
-  // outcome + filename/best_score fields so the user can see exactly which
-  // PDF was scored highest and why we did or didn't spend Haiku on it.
-  type FGDiag = { ticker: string; outcome: 'cf-error' | 'no-filings' | 'no-attachment' | 'intimation-only' | 'ok'; total_filings_seen?: number; ticker_filings?: number; ticker_with_attachment?: number; matched_preference?: string; best_score?: number; subject?: string; filename?: string; url?: string; error?: string; stage?: 'pdf-empty' | 'llm-failed' };
+  const [aiStats, setAiStats] = useState<{ cached: number; extracted: number; intimation_only?: number; screener_fallback?: number; missing_pdf: number; llm_failed: number; total: number } | null>(null);
+  // PATCH 0949a/0951/0953 — per-ticker diagnostics. P0953 adds
+  // 'ok-screener-fallback' outcome + fallback_source/fallback_date fields
+  // so the audit trail shows which path each ticker took.
+  type FGDiag = { ticker: string; outcome: 'cf-error' | 'no-filings' | 'no-attachment' | 'intimation-only' | 'ok' | 'ok-screener-fallback'; total_filings_seen?: number; ticker_filings?: number; ticker_with_attachment?: number; matched_preference?: string; best_score?: number; subject?: string; filename?: string; url?: string; fallback_source?: 'screener-in'; fallback_date?: string; error?: string; stage?: 'pdf-empty' | 'llm-failed' };
   const [aiDiagnostics, setAiDiagnostics] = useState<FGDiag[] | null>(null);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [dateTo, setDateTo] = useState(() => new Date().toISOString().slice(0, 10));
@@ -1850,11 +1850,12 @@ export default function EarningsPage() {
       const newResults: Record<string, AIForwardGuidance> = json?.results || {};
       // Merge server stats with client-side skip count so 'cached' total
       // reflects EVERY ticker that didn't bill Haiku (server KV + client LS).
-      const serverStats = json?.stats || { cached: 0, extracted: 0, intimation_only: 0, missing_pdf: 0, llm_failed: 0, total: items.length };
+      const serverStats = json?.stats || { cached: 0, extracted: 0, intimation_only: 0, screener_fallback: 0, missing_pdf: 0, llm_failed: 0, total: items.length };
       setAiStats({
         cached: (serverStats.cached || 0) + clientCachedCount,
         extracted: serverStats.extracted || 0,
         intimation_only: serverStats.intimation_only || 0,
+        screener_fallback: serverStats.screener_fallback || 0,
         missing_pdf: serverStats.missing_pdf || 0,
         llm_failed: serverStats.llm_failed || 0,
         total: qualifyingCards.length,
@@ -2852,17 +2853,22 @@ export default function EarningsPage() {
               fontSize: '11px', color: TEXT_DIM, fontWeight: 500,
             }}>
               {aiDiagnostics.map((d, i) => {
+                const isOk = (d.outcome === 'ok' || d.outcome === 'ok-screener-fallback') && !d.stage;
                 const outcomeColor =
-                  d.outcome === 'ok' && !d.stage ? '#10B981' :
+                  isOk ? '#10B981' :
                   d.outcome === 'cf-error' ? '#EF4444' :
                   d.outcome === 'intimation-only' ? '#94A3B8' :
                   '#F59E0B';
-                const label = d.stage && d.outcome === 'ok' ? `ok→${d.stage}` : d.outcome;
+                const label =
+                  d.stage && (d.outcome === 'ok' || d.outcome === 'ok-screener-fallback') ? `${d.outcome}→${d.stage}` :
+                  d.outcome === 'ok-screener-fallback' ? 'ok (Screener.in)' :
+                  d.outcome;
                 const detail =
                   d.outcome === 'cf-error' ? d.error :
                   d.outcome === 'no-filings' ? `seen ${d.total_filings_seen} filings, 0 for ticker` :
                   d.outcome === 'no-attachment' ? `${d.ticker_filings} filings, 0 with attachment` :
                   d.outcome === 'intimation-only' ? `${d.ticker_with_attachment} PDFs but all intimation/notice (best score ${d.best_score ?? '?'}) — Haiku skipped → ${d.filename || ''}` :
+                  d.outcome === 'ok-screener-fallback' ? `NSE had nothing usable → Screener.in ${d.fallback_date || ''}: ${d.filename || ''}` :
                   d.stage === 'pdf-empty' ? `< 1200 chars in ${d.filename || d.url}` :
                   d.stage === 'llm-failed' ? `Haiku returned no JSON for ${d.filename || d.url}` :
                   `${d.matched_preference} (score ${d.best_score ?? '?'}) · ${d.filename || ''}`;
@@ -2884,7 +2890,7 @@ export default function EarningsPage() {
           backgroundColor: '#7C3AED12', border: '1px solid #7C3AED40',
           color: '#C4B5FD', fontSize: '11px', fontWeight: 600,
         }}>
-          🤖 AI Guidance: {aiStats.extracted} extracted · {aiStats.cached} from cache · {aiStats.intimation_only || 0} intimation-only (skipped) · {aiStats.missing_pdf} no PDF · {aiStats.llm_failed} LLM-failed · total {aiStats.total}
+          🤖 AI Guidance: {aiStats.extracted} extracted{(aiStats.screener_fallback || 0) > 0 ? ` (${aiStats.screener_fallback} via Screener.in fallback)` : ''} · {aiStats.cached} cached · {aiStats.intimation_only || 0} intimation-only · {aiStats.missing_pdf} no PDF · {aiStats.llm_failed} LLM-failed · total {aiStats.total}
           {aiDiagnostics && aiDiagnostics.length > 0 && (
             <>
               {' · '}
@@ -2909,17 +2915,22 @@ export default function EarningsPage() {
                 Per-ticker PDF resolution trace (P0949a):
               </div>
               {aiDiagnostics.map((d, i) => {
+                const isOk = (d.outcome === 'ok' || d.outcome === 'ok-screener-fallback') && !d.stage;
                 const outcomeColor =
-                  d.outcome === 'ok' && !d.stage ? '#10B981' :
+                  isOk ? '#10B981' :
                   d.outcome === 'cf-error' ? '#EF4444' :
                   d.outcome === 'intimation-only' ? '#94A3B8' :
                   '#F59E0B';
-                const label = d.stage && d.outcome === 'ok' ? `ok→${d.stage}` : d.outcome;
+                const label =
+                  d.stage && (d.outcome === 'ok' || d.outcome === 'ok-screener-fallback') ? `${d.outcome}→${d.stage}` :
+                  d.outcome === 'ok-screener-fallback' ? 'ok (Screener.in)' :
+                  d.outcome;
                 const detail =
                   d.outcome === 'cf-error' ? d.error :
                   d.outcome === 'no-filings' ? `seen ${d.total_filings_seen} filings, 0 for ticker` :
                   d.outcome === 'no-attachment' ? `${d.ticker_filings} filings, 0 with attachment` :
                   d.outcome === 'intimation-only' ? `${d.ticker_with_attachment} PDFs but all intimation/notice (best score ${d.best_score ?? '?'}) — Haiku skipped → ${d.filename || ''}` :
+                  d.outcome === 'ok-screener-fallback' ? `NSE had nothing usable → Screener.in ${d.fallback_date || ''}: ${d.filename || ''}` :
                   d.stage === 'pdf-empty' ? `< 1200 chars in ${d.filename || d.url}` :
                   d.stage === 'llm-failed' ? `Haiku returned no JSON for ${d.filename || d.url}` :
                   `${d.matched_preference} (score ${d.best_score ?? '?'}) · ${d.filename || ''}`;

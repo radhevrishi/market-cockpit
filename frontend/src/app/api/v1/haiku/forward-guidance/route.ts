@@ -63,7 +63,7 @@ interface CFFilingItem {
 //   'ok'               Found a usable PDF URL (real transcript/presentation)
 export interface PdfLookupDiag {
   ticker: string;
-  outcome: 'cf-error' | 'no-filings' | 'no-attachment' | 'intimation-only' | 'ok';
+  outcome: 'cf-error' | 'no-filings' | 'no-attachment' | 'intimation-only' | 'ok' | 'ok-screener-fallback';
   total_filings_seen?: number;
   ticker_filings?: number;
   ticker_with_attachment?: number;
@@ -72,6 +72,8 @@ export interface PdfLookupDiag {
   subject?: string;
   url?: string;
   filename?: string;          // PATCH 0951 — the actual file picked (audit trail)
+  fallback_source?: 'screener-in';  // PATCH 0953 — which fallback chain rescued it
+  fallback_date?: string;           // PATCH 0953 — date of Screener.in row picked
   error?: string;
 }
 
@@ -154,6 +156,118 @@ function scoreFiling(f: CFFilingItem): ScoredFiling {
 // 0 = "no positive signals found" → almost certainly intimation/notice/junk.
 const FILING_SCORE_THRESHOLD = 1;
 
+// ════════════════════════════════════════════════════════════════════════
+// PATCH 0953 — Screener.in transcript fallback.
+//
+// When NSE has only intimation/notice PDFs for a ticker, Screener.in often
+// has the actual concall transcript (hosted as a BSE archives PDF). We
+// scrape the per-company concall section and pick the freshest UNLOCKED
+// (i.e. accessible <a href>) transcript URL. Locked (<div>) rows are for
+// paid Screener users — we skip those.
+//
+// Architecture mirrors loadAllFilings: module-scope cache, 24h TTL (Screener
+// updates concall lists slowly; transcripts that are up are stable).
+// Race-safe via in-flight Promise per ticker.
+// ════════════════════════════════════════════════════════════════════════
+interface ScreenerInResult {
+  url: string;
+  date: string;  // "May 2026" / "Feb 2026" — for diag display
+}
+const SCREENER_IN_TTL_MS = 24 * 60 * 60 * 1000;  // 24h
+const _screenerInCache = new Map<string, { fetchedAt: number; result: ScreenerInResult | null }>();
+const _screenerInInFlight = new Map<string, Promise<ScreenerInResult | null>>();
+
+async function findConcallFromScreenerIn(ticker: string): Promise<ScreenerInResult | null> {
+  const tkr = ticker.toUpperCase();
+  const now = Date.now();
+  const cached = _screenerInCache.get(tkr);
+  if (cached && now - cached.fetchedAt < SCREENER_IN_TTL_MS) return cached.result;
+  const inFlight = _screenerInInFlight.get(tkr);
+  if (inFlight) return inFlight;
+
+  const p = (async (): Promise<ScreenerInResult | null> => {
+    try {
+      // Try consolidated first (most companies have it), fall back to standalone
+      const urls = [
+        `https://www.screener.in/company/${tkr}/consolidated/`,
+        `https://www.screener.in/company/${tkr}/`,
+      ];
+      let html = '';
+      for (const u of urls) {
+        try {
+          const res = await fetch(u, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+              'Accept': 'text/html,application/xhtml+xml',
+            },
+            signal: AbortSignal.timeout(12_000),
+          });
+          if (res.ok) {
+            html = await res.text();
+            if (html && html.length > 5000) break;
+          }
+        } catch {}
+      }
+      if (!html || html.length < 5000) {
+        console.warn('[FG-DIAG] screener.in fetch empty for', tkr);
+        return null;
+      }
+
+      // Parse: find every date row that has "concall-link" within next 2000 chars.
+      // Each row may have <a href="..."> (accessible) or <div> (locked).
+      const datePositions: Array<{ date: string; idx: number }> = [];
+      const dateRe = /<div[^>]*>([A-Z][a-z]{2,4}\s+20\d{2})<\/div>/g;
+      let m: RegExpExecArray | null;
+      while ((m = dateRe.exec(html)) !== null) {
+        if (html.slice(m.index, m.index + 2000).includes('concall-link')) {
+          datePositions.push({ date: m[1], idx: m.index });
+        }
+      }
+      if (datePositions.length === 0) {
+        console.warn('[FG-DIAG] screener.in no concall rows for', tkr);
+        return null;
+      }
+      // For each row, extract the accessible <a class="concall-link" href="...">
+      const monthIdx: Record<string, number> = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
+      const rows: ScreenerInResult[] = [];
+      for (let i = 0; i < datePositions.length; i++) {
+        const start = datePositions[i].idx;
+        const end = i + 1 < datePositions.length ? datePositions[i + 1].idx : Math.min(start + 2500, html.length);
+        const chunk = html.slice(start, end);
+        const aMatch = chunk.match(/<a[^>]*class="concall-link"[^>]*href="([^"]+)"/);
+        if (aMatch && aMatch[1].toLowerCase().endsWith('.pdf')) {
+          rows.push({ url: aMatch[1], date: datePositions[i].date });
+        }
+      }
+      if (rows.length === 0) {
+        console.warn('[FG-DIAG] screener.in all rows locked for', tkr);
+        return null;
+      }
+      // Sort freshest first (e.g. May 2026 > Feb 2026)
+      rows.sort((a, b) => {
+        const parse = (d: string) => {
+          const [mon, yr] = d.split(/\s+/);
+          return Number(yr) * 12 + (monthIdx[mon] ?? 0);
+        };
+        return parse(b.date) - parse(a.date);
+      });
+      console.log(`[FG-DIAG] screener.in picked ${rows[0].date} for ${tkr}: ${rows[0].url.slice(0, 120)}`);
+      return rows[0];
+    } catch (e) {
+      console.warn('[FG-DIAG] screener.in error for', tkr, (e as Error).message);
+      return null;
+    }
+  })();
+  _screenerInInFlight.set(tkr, p);
+  try {
+    const result = await p;
+    _screenerInCache.set(tkr, { fetchedAt: Date.now(), result });
+    return result;
+  } finally {
+    _screenerInInFlight.delete(tkr);
+  }
+}
+
 // ─── Step 1: Find latest concall PDF URL for a ticker ──────────────────────
 async function findConcallPdfUrl(ticker: string): Promise<
   | { url: string; source: AIForwardGuidance['source']; subject: string; filename: string; diag: PdfLookupDiag }
@@ -170,23 +284,60 @@ async function findConcallPdfUrl(ticker: string): Promise<
   }
   const tickerFilings = filings.filter(f => (f.symbol || '').toUpperCase() === tkr);
   const withAttachment = tickerFilings.filter(f => !!f.attachment_url);
+
+  // PATCH 0953 — Screener.in fallback helper. Used when NSE has nothing
+  // usable (intimation-only or no-filings). Returns Screener.in PDF URL +
+  // diag annotation, or null if Screener.in has nothing either.
+  const tryScreenerInFallback = async (
+    baseDiag: PdfLookupDiag,
+  ): Promise<
+    | { url: string; source: AIForwardGuidance['source']; subject: string; filename: string; diag: PdfLookupDiag }
+    | null
+  > => {
+    const si = await findConcallFromScreenerIn(tkr);
+    if (!si) return null;
+    const filename = (si.url.split('/').pop() || '').toLowerCase();
+    const enrichedDiag: PdfLookupDiag = {
+      ...baseDiag,
+      outcome: 'ok-screener-fallback',
+      matched_preference: 'transcript',
+      fallback_source: 'screener-in',
+      fallback_date: si.date,
+      subject: `Screener.in concall · ${si.date}`,
+      filename,
+      url: si.url,
+    };
+    console.log('[FG-DIAG]', enrichedDiag);
+    return {
+      url: si.url,
+      source: 'concall-transcript',
+      subject: enrichedDiag.subject!,
+      filename,
+      diag: enrichedDiag,
+    };
+  };
+
   if (tickerFilings.length === 0) {
-    const diag: PdfLookupDiag = {
+    const baseDiag: PdfLookupDiag = {
       ticker: tkr, outcome: 'no-filings',
       total_filings_seen: filings.length, ticker_filings: 0,
     };
-    console.warn('[FG-DIAG]', diag);
-    return { url: null, diag };
+    const fb = await tryScreenerInFallback(baseDiag);
+    if (fb) return fb;
+    console.warn('[FG-DIAG]', baseDiag);
+    return { url: null, diag: baseDiag };
   }
   if (withAttachment.length === 0) {
-    const diag: PdfLookupDiag = {
+    const baseDiag: PdfLookupDiag = {
       ticker: tkr, outcome: 'no-attachment',
       total_filings_seen: filings.length,
       ticker_filings: tickerFilings.length,
       ticker_with_attachment: 0,
     };
-    console.warn('[FG-DIAG]', diag);
-    return { url: null, diag };
+    const fb = await tryScreenerInFallback(baseDiag);
+    if (fb) return fb;
+    console.warn('[FG-DIAG]', baseDiag);
+    return { url: null, diag: baseDiag };
   }
 
   // Score every candidate, pick highest. Within equal scores, pick freshest.
@@ -196,8 +347,9 @@ async function findConcallPdfUrl(ticker: string): Promise<
   const best = scored[0];
 
   if (best.score < FILING_SCORE_THRESHOLD) {
-    // All candidates look like intimations/notices/audio/newspaper — skip Haiku
-    const diag: PdfLookupDiag = {
+    // All NSE candidates look like intimations/notices/audio/newspaper.
+    // Try Screener.in fallback before giving up.
+    const baseDiag: PdfLookupDiag = {
       ticker: tkr, outcome: 'intimation-only',
       total_filings_seen: filings.length,
       ticker_filings: tickerFilings.length,
@@ -206,8 +358,10 @@ async function findConcallPdfUrl(ticker: string): Promise<
       subject: best.filing.subject,
       filename: best.filename,
     };
-    console.warn('[FG-DIAG]', diag);
-    return { url: null, diag };
+    const fb = await tryScreenerInFallback(baseDiag);
+    if (fb) return fb;
+    console.warn('[FG-DIAG]', baseDiag);
+    return { url: null, diag: baseDiag };
   }
 
   const source: AIForwardGuidance['source'] =
@@ -383,11 +537,11 @@ export async function POST(req: NextRequest) {
   // Hard cap — protect Vercel timeout + Haiku budget. 25 tickers per call.
   const capped = items.slice(0, 25);
 
-  // PATCH 0951 — added intimation_only stat. Counts tickers where every
-  // available PDF was an intimation/notice and we deliberately skipped Haiku
-  // (saves cost). User can see this as a distinct outcome rather than lumped
-  // into missing_pdf.
-  const stats = { cached: 0, extracted: 0, intimation_only: 0, missing_pdf: 0, llm_failed: 0, total: capped.length };
+  // PATCH 0951/0953 — stat tracking.
+  //   intimation_only — every NSE PDF was a notice (Haiku skipped)
+  //   screener_fallback — NSE was intimation-only / had nothing, but Screener.in
+  //                       had a real transcript and the extraction worked
+  const stats = { cached: 0, extracted: 0, intimation_only: 0, screener_fallback: 0, missing_pdf: 0, llm_failed: 0, total: capped.length };
   const results: Record<string, AIForwardGuidance | null> = {};
   // PATCH 0949a — collect per-ticker diagnostics so the UI can show why each
   // ticker failed without us having to scrape Vercel logs.
@@ -481,6 +635,11 @@ export async function POST(req: NextRequest) {
       }
       results[T] = fg;
       stats.extracted++;
+      // PATCH 0953 — also track that Screener.in fallback rescued this ticker
+      // (NSE had nothing, Screener.in had the real transcript). Visible in
+      // stats banner so the user knows the fallback paid off.
+      if (lookup.diag.outcome === 'ok-screener-fallback') stats.screener_fallback++;
+      diagnostics.push(lookup.diag);
     }));
   }
 
