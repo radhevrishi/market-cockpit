@@ -1393,20 +1393,29 @@ export default function EarningsPage() {
       const parsed: Record<string, AIForwardGuidance> = JSON.parse(raw) || {};
       const filtered: Record<string, AIForwardGuidance> = {};
       let dropped = 0;
+      // PATCH 0960 — Tighter filter. Previous version (P0952) dropped ANY
+      // Neutral-0.00-LOW-no-numbers entry as 'bogus' — but those CAN be
+      // legitimate post-P0951 Haiku outputs (the prompt explicitly allows
+      // honest "no forward content" Neutral results). Result: every page
+      // reload was nuking real extractions, dropping coverage from 34 → 16.
+      // New rule: only drop entries missing source_filename. That field was
+      // introduced in P0951 and is always populated by the modern pipeline,
+      // so its absence is a reliable marker of pre-P0951 legacy garbage.
       for (const [k, v] of Object.entries(parsed)) {
         if (!v || !v.label) continue;
-        const isBogusNeutralZero = (
+        const isLegacyGarbage = (
+          !v.source_filename &&                       // pre-P0951 marker
           v.label === 'Neutral' &&
           Math.abs(v.score) < 0.01 &&
           v.confidence === 'LOW' &&
           (!v.numbers || v.numbers.length === 0) &&
           (!v.catalysts || v.catalysts.length === 0)
         );
-        if (isBogusNeutralZero) { dropped++; continue; }
+        if (isLegacyGarbage) { dropped++; continue; }
         filtered[k] = v;
       }
       if (dropped > 0) {
-        try { console.log(`[AI Guidance] Dropped ${dropped} bogus legacy entries on load (P0952 defensive filter)`); } catch {}
+        try { console.log(`[AI Guidance] Dropped ${dropped} pre-P0951 legacy entries on load (P0960 tightened filter)`); } catch {}
       }
       return filtered;
     } catch { return {}; }
