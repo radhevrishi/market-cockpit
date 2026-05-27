@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { nseApiFetch, fetchStockQuote } from '@/lib/nse';
 import { normalizeTicker } from '@/lib/tickers';
-import { kvGet, kvSet } from '@/lib/kv';
+import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
