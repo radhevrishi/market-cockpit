@@ -609,8 +609,13 @@ export async function POST(req: NextRequest) {
   const force = !!body?.force;
   if (items.length === 0) return NextResponse.json({ error: 'items required' }, { status: 400 });
 
-  // Hard cap — protect Vercel timeout + Haiku budget. 25 tickers per call.
-  const capped = items.slice(0, 25);
+  // PATCH 0961 — hard cap reduced 25 → 8 to keep wall-clock under Vercel's
+  // 55s maxDuration. With internal CONCURRENT=6 below, an 8-ticker request
+  // completes in ~1-2 waves of ~25s each = ~30-50s, well inside budget.
+  // Previously CHUNK=25 × CONCURRENT=4 needed ~6 internal waves = 120-200s
+  // → 504 timeouts → silent null results. That's how 217 tickers became
+  // "only 4 extracted" while still billing Haiku for half of them.
+  const capped = items.slice(0, 8);
 
   // PATCH 0951/0953/0956 — stat tracking.
   //   intimation_only — every NSE PDF was a notice (Haiku skipped)
@@ -623,8 +628,11 @@ export async function POST(req: NextRequest) {
   // ticker failed without us having to scrape Vercel logs.
   const diagnostics: Array<PdfLookupDiag & { stage?: 'pdf-empty' | 'llm-failed' }> = [];
 
-  // Process in 4-concurrent batches so Vercel doesn't open 25 simultaneous PDF fetches
-  const CONCURRENT = 4;
+  // PATCH 0961 — bumped from 4 → 6 to flush an 8-ticker request in ≤2 waves
+  // (was 6-7 waves at CHUNK=25). Combined with capped=8, total wall time
+  // fits under Vercel's 55s. Per-ticker latency is bounded by Haiku call
+  // (~5-15s) + PDF fetch+parse (~2-5s) + optional Screener fallback (~5-8s).
+  const CONCURRENT = 6;
   for (let i = 0; i < capped.length; i += CONCURRENT) {
     const wave = capped.slice(i, i + CONCURRENT);
     await Promise.all(wave.map(async ({ ticker, period }) => {

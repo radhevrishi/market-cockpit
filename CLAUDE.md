@@ -3191,7 +3191,34 @@ these are NOT yet done — flagged as Day-8+ candidates:
 >   into BOTH engine.ts AND page.tsx duplicate copies of buildReport.
 
 ═══════════════════════════════════════════════════════════════════════════
-## AI Forward Guidance — Architecture Reference (P0948 → P0956)
+## AI Forward Guidance — Architecture Reference (P0948 → P0961)
+
+### P0961 — Stop the 217→4 silent batch-timeout bug (May 2026)
+  Symptom: user clicked AI Guidance on 217 qualifying tickers, watched the
+  progress bar tick up, but the post-run banner reported only 4 extracted
+  while the button still said "217 new". Anthropic budget was visibly burned.
+  Root cause: server-side chunk of 25 tickers × internal CONCURRENT=4 took
+  120-200s wall-clock; Vercel killed the function at maxDuration=55s; the
+  client's `r.ok ? r.json() : null` swallowed the 504, Promise.allSettled
+  reported `fulfilled` with `null`, the loop continued, and the failed
+  tickers vanished from the stats. Haiku calls that completed inside the
+  killed function may have cached server-side, but the response never came.
+  Fix (two-sided):
+    Server (route.ts) — `capped = items.slice(0, 8)` (was 25), `CONCURRENT = 6`
+      (was 4). 8 tickers × 6 concurrent ⇒ 1-2 internal waves of ~25s each
+      ⇒ fits comfortably under 55s.
+    Client (page.tsx fetchAIGuidance) — `CHUNK = 8` (was 25), `WAVE = 4`
+      (was 2), `AbortSignal.timeout(65_000)` (was 55_000, +10s slack past
+      Vercel's hard cutoff). Each batch wrapped in try/catch that tags
+      failures with `{ __batchFailed: true, tickers: [...] }` so they're
+      COUNTED (aggStats.batch_failures) and the failed tickers TRACKED
+      (failedTickers[]). Both stats banners now surface `batch_failures`
+      with the exact ticker list, telling the user "click AI Guidance
+      again to retry these (cached ones will be skipped)" — re-runs hit
+      the client-side cache skip for any that did complete server-side
+      before the timeout.
+
+
 ═══════════════════════════════════════════════════════════════════════════
 
 End-to-end system for extracting institutional-grade forward guidance from

@@ -1425,7 +1425,10 @@ export default function EarningsPage() {
   // batches. Shows 'extracting X / Y' on the button so a long run (~3min on
   // a 350-card universe) isn't an opaque spinner.
   const [aiProgress, setAiProgress] = useState<{ done: number; total: number } | null>(null);
-  const [aiStats, setAiStats] = useState<{ cached: number; extracted: number; intimation_only?: number; screener_fallback?: number; budget_exceeded?: number; missing_pdf: number; llm_failed: number; total: number } | null>(null);
+  // PATCH 0961 — added batch_failures + failed_tickers so silent Vercel
+  // 504s (server timed out for an entire chunk) are visible in the banner
+  // instead of vanishing into a null Promise.allSettled value.
+  const [aiStats, setAiStats] = useState<{ cached: number; extracted: number; intimation_only?: number; screener_fallback?: number; budget_exceeded?: number; missing_pdf: number; llm_failed: number; total: number; batch_failures?: number; failed_tickers?: string[] } | null>(null);
   // PATCH 0949a/0951/0953 — per-ticker diagnostics. P0953 adds
   // 'ok-screener-fallback' outcome + fallback_source/fallback_date fields
   // so the audit trail shows which path each ticker took.
@@ -1884,40 +1887,79 @@ export default function EarningsPage() {
 
       setAiStats(null);  // clear stale stats only when we actually call the API
 
-      // PATCH 0958 — client-side batching. Worker caps at 25/request; splitting
-      // into chunks of 25 and firing in parallel covers the full universe
-      // (was: 25 tickers per click, rest silently dropped).
-      const CHUNK = 25;
+      // PATCH 0961 — chunk size dropped 25 → 8 so each server call fits
+      // under Vercel's 55s maxDuration. Server's hard cap was bumped to
+      // match. Wave count raised 2 → 4 so total wall time stays roughly
+      // the same despite the smaller chunks. Most importantly, batch-
+      // level failures (504 / network) are now COUNTED and the failed
+      // tickers TRACKED instead of silently dropped — that's how 217
+      // tickers ended up with only 4 results last run: each 25-ticker
+      // chunk took ~120-200s, every chunk hit Vercel's 55s timeout, the
+      // 504 turned into `null` in Promise.allSettled, and we just moved on.
+      const CHUNK = 8;
       const chunks: typeof items[] = [];
       for (let i = 0; i < items.length; i += CHUNK) chunks.push(items.slice(i, i + CHUNK));
 
       const allResults: Record<string, AIForwardGuidance> = {};
       const allDiagnostics: any[] = [];
-      const aggStats = { cached: 0, extracted: 0, intimation_only: 0, screener_fallback: 0, budget_exceeded: 0, missing_pdf: 0, llm_failed: 0 };
+      const aggStats = { cached: 0, extracted: 0, intimation_only: 0, screener_fallback: 0, budget_exceeded: 0, missing_pdf: 0, llm_failed: 0, batch_failures: 0 };
+      const failedTickers: string[] = [];
 
       // PATCH 0959 — initialize progress now that we know the total work.
       setAiProgress({ done: 0, total: items.length });
 
-      // Process chunks in waves of 2 parallel to avoid Vercel slamming the
-      // upstream PDF fetchers all at once. Each chunk uses Haiku's own
-      // internal CONCURRENT=4 PDF pipeline.
-      const WAVE = 2;
+      // PATCH 0961 — 4 parallel chunks per wave (was 2). Each chunk is now
+      // 8 tickers, so a wave = 32 tickers in ~30-50s. 217 tickers ⇒ ~27
+      // chunks ⇒ ~7 waves ⇒ ~4 min wall time, with the progress indicator
+      // showing live count.
+      const WAVE = 4;
       for (let w = 0; w < chunks.length; w += WAVE) {
         const wave = chunks.slice(w, w + WAVE);
-        const waveResults = await Promise.allSettled(wave.map(chunk =>
-          fetch('/api/v1/haiku/forward-guidance', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ items: chunk, force }),
-            signal: AbortSignal.timeout(55_000),
-          }).then(r => r.ok ? r.json() : null)
-        ));
+        const waveResults = await Promise.allSettled(wave.map(async (chunk) => {
+          try {
+            const r = await fetch('/api/v1/haiku/forward-guidance', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ items: chunk, force }),
+              // PATCH 0961 — 65s timeout: 10s of slack past Vercel's 55s
+              // maxDuration so we don't kill a request that's about to
+              // return. If Vercel itself times out, we get a 504 (handled
+              // below). If our timeout fires, the fetch is aborted and
+              // surfaces as a rejection (also counted as a batch failure).
+              signal: AbortSignal.timeout(65_000),
+            });
+            if (!r.ok) {
+              // 504 (Vercel timeout), 5xx, etc. — record so the user knows.
+              throw new Error(`HTTP ${r.status}`);
+            }
+            return await r.json();
+          } catch (e) {
+            // PATCH 0961 — bubble up as a tagged failure so we can count it
+            // and remember which tickers got lost.
+            return { __batchFailed: true, error: (e as Error).message, tickers: chunk.map(c => c.ticker) };
+          }
+        }));
         let waveProcessed = 0;
         for (let ri = 0; ri < waveResults.length; ri++) {
           waveProcessed += wave[ri].length;
           const r = waveResults[ri];
-          if (r.status !== 'fulfilled' || !r.value) continue;
+          if (r.status !== 'fulfilled' || !r.value) {
+            // Promise outright rejected (extremely rare with the try/catch
+            // above) — still count it.
+            aggStats.batch_failures++;
+            failedTickers.push(...wave[ri].map(c => c.ticker));
+            continue;
+          }
           const json = r.value;
+          if (json.__batchFailed) {
+            // PATCH 0961 — counted, surfaced, and the failed tickers are
+            // kept so the user can retry just those (cache will pick up
+            // any that DID finish server-side before the timeout).
+            aggStats.batch_failures++;
+            failedTickers.push(...(json.tickers || []));
+            console.warn(`[AI Guidance] batch ${ri} (${wave[ri].length} tickers) failed: ${json.error} — tickers: ${(json.tickers || []).join(',')}`);
+            continue;
+          }
           Object.assign(allResults, json?.results || {});
           if (Array.isArray(json?.diagnostics)) allDiagnostics.push(...json.diagnostics);
           const s = json?.stats || {};
@@ -1952,6 +1994,8 @@ export default function EarningsPage() {
         missing_pdf: aggStats.missing_pdf,
         llm_failed: aggStats.llm_failed,
         total: qualifyingCards.length,
+        batch_failures: aggStats.batch_failures,
+        failed_tickers: failedTickers,
       });
       setAiDiagnostics(allDiagnostics.length > 0 ? allDiagnostics : null);
       const newResults = allResults;
@@ -2947,8 +2991,22 @@ export default function EarningsPage() {
               {(aiStats.intimation_only || 0) > 0 ? `${aiStats.intimation_only} intimation-only (no transcript exists — Haiku skipped to save cost)` : ''}
               {aiStats.missing_pdf > 0 ? ` · ${aiStats.missing_pdf} no PDF` : ''}
               {aiStats.llm_failed > 0 ? ` · ${aiStats.llm_failed} LLM failed` : ''}
+              {(aiStats.batch_failures || 0) > 0 ? ` · ⚠ ${aiStats.batch_failures} BATCH TIMEOUTS (Vercel 504 — server didn't finish before 55s cutoff)` : ''}
             </span>
           </div>
+          {(aiStats.batch_failures || 0) > 0 && (aiStats.failed_tickers || []).length > 0 && (
+            <div style={{
+              marginTop: '6px', padding: '8px 10px',
+              backgroundColor: '#1F2937', border: '1px solid #F59E0B60', borderRadius: '6px',
+              fontSize: '11px', color: '#FCD34D', fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+              wordBreak: 'break-word',
+            }}>
+              <div style={{ color: '#FBBF24', fontWeight: 700, marginBottom: '4px' }}>
+                {aiStats.failed_tickers!.length} tickers in timed-out batches — click 🤖 AI Guidance again to retry these (cached ones will be skipped):
+              </div>
+              <div>{aiStats.failed_tickers!.join(', ')}</div>
+            </div>
+          )}
           {aiDiagnostics && aiDiagnostics.length > 0 && (
             <button
               onClick={() => setShowDiagnostics(s => !s)}
@@ -3004,7 +3062,7 @@ export default function EarningsPage() {
           backgroundColor: '#7C3AED12', border: '1px solid #7C3AED40',
           color: '#C4B5FD', fontSize: '11px', fontWeight: 600,
         }}>
-          🤖 AI Guidance: {aiStats.extracted} extracted{(aiStats.screener_fallback || 0) > 0 ? ` (${aiStats.screener_fallback} via Screener.in)` : ''} · {aiStats.cached} cached · {aiStats.intimation_only || 0} intimation-only · {aiStats.missing_pdf} no PDF · {aiStats.llm_failed} LLM-failed{(aiStats.budget_exceeded || 0) > 0 ? ` · ⚠ ${aiStats.budget_exceeded} BUDGET EXCEEDED (Anthropic 429 — wait or top up)` : ''} · total {aiStats.total}
+          🤖 AI Guidance: {aiStats.extracted} extracted{(aiStats.screener_fallback || 0) > 0 ? ` (${aiStats.screener_fallback} via Screener.in)` : ''} · {aiStats.cached} cached · {aiStats.intimation_only || 0} intimation-only · {aiStats.missing_pdf} no PDF · {aiStats.llm_failed} LLM-failed{(aiStats.budget_exceeded || 0) > 0 ? ` · ⚠ ${aiStats.budget_exceeded} BUDGET EXCEEDED (Anthropic 429 — wait or top up)` : ''}{(aiStats.batch_failures || 0) > 0 ? ` · ⚠ ${aiStats.batch_failures} batch timeouts (${(aiStats.failed_tickers || []).length} tickers — click AI Guidance again to retry)` : ''} · total {aiStats.total}
           {aiDiagnostics && aiDiagnostics.length > 0 && (
             <>
               {' · '}
