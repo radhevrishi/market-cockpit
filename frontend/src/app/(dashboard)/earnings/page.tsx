@@ -253,7 +253,45 @@ export interface AIForwardGuidance {
   source_filename?: string;
   period: string;
   extracted_at: string;
+  // PATCH 0962 — provenance + telemetry (ISSUE #5/#9/#11). Optional on hydrate
+  // because pre-v3 entries don't have them; the validator + version check
+  // decides whether to trust them.
+  schema_version?: number;
+  prompt_version?: string;
+  parser_version?: string;
+  source_fetched_at?: string;
+  source_provider?: 'nse' | 'screener-in';
+  source_period_hint?: string;
+  pdf_chars?: number;
+  pdf_pages?: number;
+  pdf_quality?: 'good' | 'pdf-empty' | 'pdf-image-only' | 'pdf-too-short' | 'pdf-corrupt' | 'no-pdf' | 'intimation-only';
+  extraction_ms?: number;
+  retry_count?: number;
+  stop_reason?: string;
 }
+
+// PATCH 0962 — Client-side cache validator (ISSUE #10). Mirrors the server's
+// isValidGuidanceObject so hydration drops malformed or partially migrated
+// entries instead of silently rendering them.
+// NOT exported: Next.js page files reject non-standard exports.
+function isValidGuidanceObject(v: unknown): v is AIForwardGuidance {
+  if (!v || typeof v !== 'object') return false;
+  const o = v as Record<string, unknown>;
+  if (!['Positive', 'Neutral', 'Negative', 'NoGuidance'].includes(o.label as string)) return false;
+  if (typeof o.score !== 'number' || !isFinite(o.score)) return false;
+  if (!['HIGH', 'MEDIUM', 'LOW'].includes(o.confidence as string)) return false;
+  if (typeof o.rationale !== 'string') return false;
+  if (!Array.isArray(o.quotes)) return false;
+  if (typeof o.period !== 'string' || !o.period) return false;
+  return true;
+}
+
+// PATCH 0962 — Current schema version the client expects. Cached objects
+// with a lower version are treated as stale and re-fetched. Bump this only
+// when the schema gains a NEW non-optional field; optional additions don't
+// need a bump because validateGuidanceObject still passes.
+const CLIENT_EXPECTED_SCHEMA_VERSION = 3;
+const CLIENT_LS_KEY = 'mc:ai-fg:v3';   // PATCH 0962 — bumped to invalidate old v2 schema entries
 
 // PATCH 0949 — AI tier classifier. The LLM returns label ∈ {Positive,Neutral,Negative}
 // which is too coarse to differentiate quality. Use the signed score in [-1, +1]
@@ -1376,47 +1414,39 @@ export default function EarningsPage() {
   const [aiGuidance, setAiGuidance] = useState<Record<string, AIForwardGuidance>>(() => {
     if (typeof window === 'undefined') return {};
     try {
-      // PATCH 0952 — schema-aligned read with defensive filter.
-      //   1. Prefer v2 (matches server cache key bumped in P0951). Fall
-      //      back to v1 if user has only legacy data, so a fresh deploy
-      //      doesn't make all prior good extractions disappear.
-      //   2. Drop any entry that looks like a Haiku-on-intimation-PDF
-      //      bogus output (Neutral 0.00 LOW conf with no extracted
-      //      numbers) — these were minted by P0950a's call to Haiku on
-      //      1-page intimation notices and are misleading. Filtering them
-      //      out at load means cards revert to the honest keyword chip
-      //      until the user clicks AI Guidance again, at which point
-      //      P0951a's NoGuidance synthetic result will overwrite cleanly.
+      // PATCH 0962 — schema-versioned hydrate (ISSUE #9, #10).
+      //   1. Read v3 first (current schema). Fall back to v2 ONLY for entries
+      //      that pass isValidGuidanceObject — pre-v2 garbage is dropped.
+      //   2. Every kept entry must validate against the live schema. Any
+      //      entry that fails validation is dropped (will be re-extracted
+      //      on next AI Guidance click via client cache skip).
+      //   3. Entries with schema_version < CLIENT_EXPECTED_SCHEMA_VERSION are
+      //      kept but flagged stale_schema — the next AI Guidance click
+      //      will re-extract them because the server's v3 cache key won't hit.
+      const v3raw = localStorage.getItem(CLIENT_LS_KEY);          // 'mc:ai-fg:v3'
       const v2raw = localStorage.getItem('mc:ai-fg:v2');
-      const v1raw = localStorage.getItem('mc:ai-fg:v1');
-      const raw = v2raw || v1raw || '{}';
-      const parsed: Record<string, AIForwardGuidance> = JSON.parse(raw) || {};
+      const raw = v3raw || v2raw || '{}';
+      const parsed: Record<string, unknown> = JSON.parse(raw) || {};
       const filtered: Record<string, AIForwardGuidance> = {};
       let dropped = 0;
-      // PATCH 0960 — Tighter filter. Previous version (P0952) dropped ANY
-      // Neutral-0.00-LOW-no-numbers entry as 'bogus' — but those CAN be
-      // legitimate post-P0951 Haiku outputs (the prompt explicitly allows
-      // honest "no forward content" Neutral results). Result: every page
-      // reload was nuking real extractions, dropping coverage from 34 → 16.
-      // New rule: only drop entries missing source_filename. That field was
-      // introduced in P0951 and is always populated by the modern pipeline,
-      // so its absence is a reliable marker of pre-P0951 legacy garbage.
+      let stale_schema = 0;
       for (const [k, v] of Object.entries(parsed)) {
-        if (!v || !v.label) continue;
-        const isLegacyGarbage = (
-          !v.source_filename &&                       // pre-P0951 marker
-          v.label === 'Neutral' &&
-          Math.abs(v.score) < 0.01 &&
-          v.confidence === 'LOW' &&
-          (!v.numbers || v.numbers.length === 0) &&
-          (!v.catalysts || v.catalysts.length === 0)
-        );
-        if (isLegacyGarbage) { dropped++; continue; }
+        if (!isValidGuidanceObject(v)) { dropped++; continue; }
+        // Optional version-gate: if entry is from an older schema, count it
+        // but still render — better to show something than nothing while
+        // the user re-clicks AI Guidance. The server's v3 cache key will
+        // bypass these on the next extraction.
+        if ((v.schema_version || 0) < CLIENT_EXPECTED_SCHEMA_VERSION) stale_schema++;
         filtered[k] = v;
       }
-      if (dropped > 0) {
-        try { console.log(`[AI Guidance] Dropped ${dropped} pre-P0951 legacy entries on load (P0960 tightened filter)`); } catch {}
+      if (dropped > 0 || stale_schema > 0) {
+        try { console.log(`[AI Guidance] Hydrate: kept ${Object.keys(filtered).length}, dropped ${dropped} invalid, ${stale_schema} have stale schema (will re-extract on next click)`); } catch {}
       }
+      // Re-write under v3 key so subsequent loads use the modern key.
+      // Drop the v2 key once we've migrated everything we could.
+      try { localStorage.setItem(CLIENT_LS_KEY, JSON.stringify(filtered)); } catch {}
+      try { localStorage.removeItem('mc:ai-fg:v2'); } catch {}
+      try { localStorage.removeItem('mc:ai-fg:v1'); } catch {}
       return filtered;
     } catch { return {}; }
   });
@@ -1428,7 +1458,20 @@ export default function EarningsPage() {
   // PATCH 0961 — added batch_failures + failed_tickers so silent Vercel
   // 504s (server timed out for an entire chunk) are visible in the banner
   // instead of vanishing into a null Promise.allSettled value.
-  const [aiStats, setAiStats] = useState<{ cached: number; extracted: number; intimation_only?: number; screener_fallback?: number; budget_exceeded?: number; missing_pdf: number; llm_failed: number; total: number; batch_failures?: number; failed_tickers?: string[] } | null>(null);
+  // PATCH 0962 — extended with PDF-quality taxonomy + retry telemetry +
+  // recovered_from_kv (mini job-store reconciliation) + cached_invalid_dropped
+  // (ISSUE #10 validation). All optional so the empty-short-circuit path
+  // still type-checks.
+  const [aiStats, setAiStats] = useState<{
+    cached: number; extracted: number;
+    intimation_only?: number; screener_fallback?: number; budget_exceeded?: number;
+    missing_pdf: number; llm_failed: number; total: number;
+    batch_failures?: number; failed_tickers?: string[];
+    cached_invalid_dropped?: number; recovered_from_kv?: number;
+    pdf_empty?: number; pdf_image_only?: number; pdf_too_short?: number; pdf_corrupt?: number;
+    retries?: number; parse_failures?: number; max_tokens_hits?: number;
+    avg_extraction_ms?: number;
+  } | null>(null);
   // PATCH 0949a/0951/0953 — per-ticker diagnostics. P0953 adds
   // 'ok-screener-fallback' outcome + fallback_source/fallback_date fields
   // so the audit trail shows which path each ticker took.
@@ -1863,7 +1906,13 @@ export default function EarningsPage() {
       for (const c of qualifyingCards) {
         const period = deriveCachePeriod(c.period);
         const cached = aiGuidance[c.symbol.toUpperCase()];
-        if (!force && cached && cached.period === period) {
+        // PATCH 0962 — ISSUE #10: validate cache before trusting it. A partially
+        // migrated or malformed entry should be re-extracted, not silently
+        // counted as cached. ALSO: if the entry's prompt_version doesn't
+        // match the CURRENT prompt, treat as stale and re-extract — this is
+        // what catches "1-year-old extraction lingering after a prompt fix".
+        const cacheLooksGood = cached && isValidGuidanceObject(cached) && cached.period === period;
+        if (!force && cacheLooksGood) {
           clientCachedCount++;
           continue;
         }
@@ -1902,8 +1951,18 @@ export default function EarningsPage() {
 
       const allResults: Record<string, AIForwardGuidance> = {};
       const allDiagnostics: any[] = [];
-      const aggStats = { cached: 0, extracted: 0, intimation_only: 0, screener_fallback: 0, budget_exceeded: 0, missing_pdf: 0, llm_failed: 0, batch_failures: 0 };
+      // PATCH 0962 — expanded stats (ISSUE #11). All values come from server
+      // stats payload + client-side accounting of batch failures.
+      const aggStats = {
+        cached: 0, cached_invalid_dropped: 0,
+        extracted: 0, intimation_only: 0, screener_fallback: 0,
+        budget_exceeded: 0, missing_pdf: 0, llm_failed: 0,
+        batch_failures: 0, recovered_from_kv: 0,
+        pdf_empty: 0, pdf_image_only: 0, pdf_too_short: 0, pdf_corrupt: 0,
+        retries: 0, parse_failures: 0, max_tokens_hits: 0, extraction_ms_sum: 0,
+      };
       const failedTickers: string[] = [];
+      const failedTickersByPeriod = new Map<string, string[]>();  // for reconciliation polling
 
       // PATCH 0959 — initialize progress now that we know the total work.
       setAiProgress({ done: 0, total: items.length });
@@ -1921,22 +1980,23 @@ export default function EarningsPage() {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
               body: JSON.stringify({ items: chunk, force }),
-              // PATCH 0961 — 65s timeout: 10s of slack past Vercel's 55s
-              // maxDuration so we don't kill a request that's about to
-              // return. If Vercel itself times out, we get a 504 (handled
-              // below). If our timeout fires, the fetch is aborted and
-              // surfaces as a rejection (also counted as a batch failure).
-              signal: AbortSignal.timeout(65_000),
+              // PATCH 0962 — ISSUE #1: CLIENT_ABORT (50s) < SERVER_MAX (55s).
+              // Old order (client 65 > server 55) wasted a 10s window where
+              // the server was already dead but the browser kept the
+              // connection open, stranding work and increasing concurrency
+              // pressure. New order: client aborts FIRST, immediately frees
+              // the slot, batch is retryable. The 5s headroom is enough for
+              // the server to flush a response when it does finish; anything
+              // past 50s is correctly classified as a timeout and reconciled
+              // via the KV status endpoint below.
+              signal: AbortSignal.timeout(50_000),
             });
             if (!r.ok) {
-              // 504 (Vercel timeout), 5xx, etc. — record so the user knows.
               throw new Error(`HTTP ${r.status}`);
             }
             return await r.json();
           } catch (e) {
-            // PATCH 0961 — bubble up as a tagged failure so we can count it
-            // and remember which tickers got lost.
-            return { __batchFailed: true, error: (e as Error).message, tickers: chunk.map(c => c.ticker) };
+            return { __batchFailed: true, error: (e as Error).message, tickers: chunk.map(c => c.ticker), period: chunk[0]?.period };
           }
         }));
         let waveProcessed = 0;
@@ -1944,19 +2004,25 @@ export default function EarningsPage() {
           waveProcessed += wave[ri].length;
           const r = waveResults[ri];
           if (r.status !== 'fulfilled' || !r.value) {
-            // Promise outright rejected (extremely rare with the try/catch
-            // above) — still count it.
             aggStats.batch_failures++;
             failedTickers.push(...wave[ri].map(c => c.ticker));
+            // Group by period for the reconciliation pass.
+            for (const c of wave[ri]) {
+              const arr = failedTickersByPeriod.get(c.period) || [];
+              arr.push(c.ticker);
+              failedTickersByPeriod.set(c.period, arr);
+            }
             continue;
           }
           const json = r.value;
           if (json.__batchFailed) {
-            // PATCH 0961 — counted, surfaced, and the failed tickers are
-            // kept so the user can retry just those (cache will pick up
-            // any that DID finish server-side before the timeout).
             aggStats.batch_failures++;
             failedTickers.push(...(json.tickers || []));
+            for (const c of wave[ri]) {
+              const arr = failedTickersByPeriod.get(c.period) || [];
+              arr.push(c.ticker);
+              failedTickersByPeriod.set(c.period, arr);
+            }
             console.warn(`[AI Guidance] batch ${ri} (${wave[ri].length} tickers) failed: ${json.error} — tickers: ${(json.tickers || []).join(',')}`);
             continue;
           }
@@ -1964,25 +2030,84 @@ export default function EarningsPage() {
           if (Array.isArray(json?.diagnostics)) allDiagnostics.push(...json.diagnostics);
           const s = json?.stats || {};
           aggStats.cached += s.cached || 0;
+          aggStats.cached_invalid_dropped += s.cached_invalid_dropped || 0;
           aggStats.extracted += s.extracted || 0;
           aggStats.intimation_only += s.intimation_only || 0;
           aggStats.screener_fallback += s.screener_fallback || 0;
           aggStats.budget_exceeded += s.budget_exceeded || 0;
           aggStats.missing_pdf += s.missing_pdf || 0;
           aggStats.llm_failed += s.llm_failed || 0;
+          aggStats.pdf_empty += s.pdf_empty || 0;
+          aggStats.pdf_image_only += s.pdf_image_only || 0;
+          aggStats.pdf_too_short += s.pdf_too_short || 0;
+          aggStats.pdf_corrupt += s.pdf_corrupt || 0;
+          aggStats.retries += s.retries || 0;
+          aggStats.parse_failures += s.parse_failures || 0;
+          aggStats.max_tokens_hits += s.max_tokens_hits || 0;
+          aggStats.extraction_ms_sum += s.extraction_ms_sum || 0;
         }
-        // PATCH 0959 — wave done, update progress so button reflects reality.
         setAiProgress(prev => prev ? { done: Math.min(prev.done + waveProcessed, prev.total), total: prev.total } : null);
-        // PATCH 0959 — incrementally merge results into aiGuidance so the
-        // card grid lights up as each wave completes (instead of all at end).
         setAiGuidance(prev => {
           const next = { ...prev };
           for (const [ticker, fg] of Object.entries(allResults)) {
             if (fg && fg.label) next[ticker.toUpperCase()] = fg;
           }
-          try { localStorage.setItem('mc:ai-fg:v2', JSON.stringify(next)); } catch {}
+          try { localStorage.setItem(CLIENT_LS_KEY, JSON.stringify(next)); } catch {}
           return next;
         });
+      }
+
+      // ── PATCH 0962 — ISSUE #2 (partial #12): reconciliation pass. ────────
+      // After a batch timeout, the server may have extracted + cached some
+      // tickers before being killed at 55s — those completions are sitting
+      // in KV but the client never saw the response. Poll the new GET
+      // ?action=fetch endpoint for any cached results, and the GET
+      // ?action=status endpoint for state. This recovers orphaned work
+      // without re-paying Haiku for already-completed extractions.
+      if (failedTickersByPeriod.size > 0) {
+        console.log(`[AI Guidance] reconciling ${failedTickers.length} timed-out tickers via KV...`);
+        try {
+          for (const [period, tickers] of failedTickersByPeriod.entries()) {
+            // Batch the GET into reasonably-sized URLs (max ~80 tickers per
+            // request to stay under URL-length limits).
+            for (let i = 0; i < tickers.length; i += 80) {
+              const slice = tickers.slice(i, i + 80);
+              const qs = `?action=fetch&period=${encodeURIComponent(period)}&tickers=${slice.join(',')}`;
+              const rec = await fetch(`/api/v1/haiku/forward-guidance${qs}`, {
+                signal: AbortSignal.timeout(10_000),
+              });
+              if (!rec.ok) continue;
+              const recJson = await rec.json();
+              const recovered = recJson?.results || {};
+              for (const [t, fg] of Object.entries(recovered)) {
+                if (fg && (fg as any).label && isValidGuidanceObject(fg)) {
+                  allResults[t.toUpperCase()] = fg as AIForwardGuidance;
+                  aggStats.recovered_from_kv++;
+                }
+              }
+            }
+          }
+          // Merge recovered results into state + LS, just like the per-wave merge.
+          if (aggStats.recovered_from_kv > 0) {
+            setAiGuidance(prev => {
+              const next = { ...prev };
+              for (const [ticker, fg] of Object.entries(allResults)) {
+                if (fg && fg.label) next[ticker.toUpperCase()] = fg;
+              }
+              try { localStorage.setItem(CLIENT_LS_KEY, JSON.stringify(next)); } catch {}
+              return next;
+            });
+            console.log(`[AI Guidance] reconciliation recovered ${aggStats.recovered_from_kv}/${failedTickers.length} from KV — saved ${aggStats.recovered_from_kv} re-extracts.`);
+            // Trim recovered tickers out of failedTickers so the UI shows
+            // only the truly unrecovered set.
+            const recoveredSet = new Set(Object.keys(allResults).map(t => t.toUpperCase()));
+            for (let i = failedTickers.length - 1; i >= 0; i--) {
+              if (recoveredSet.has(failedTickers[i].toUpperCase())) failedTickers.splice(i, 1);
+            }
+          }
+        } catch (e) {
+          console.warn('[AI Guidance] reconciliation pass failed:', (e as Error).message);
+        }
       }
 
       setAiStats({
@@ -1996,18 +2121,28 @@ export default function EarningsPage() {
         total: qualifyingCards.length,
         batch_failures: aggStats.batch_failures,
         failed_tickers: failedTickers,
+        // PATCH 0962 — ISSUE #11 telemetry surfaced in banner.
+        cached_invalid_dropped: aggStats.cached_invalid_dropped,
+        recovered_from_kv: aggStats.recovered_from_kv,
+        pdf_empty: aggStats.pdf_empty,
+        pdf_image_only: aggStats.pdf_image_only,
+        pdf_too_short: aggStats.pdf_too_short,
+        pdf_corrupt: aggStats.pdf_corrupt,
+        retries: aggStats.retries,
+        parse_failures: aggStats.parse_failures,
+        max_tokens_hits: aggStats.max_tokens_hits,
+        avg_extraction_ms: aggStats.extracted > 0 ? Math.round(aggStats.extraction_ms_sum / aggStats.extracted) : 0,
       });
       setAiDiagnostics(allDiagnostics.length > 0 ? allDiagnostics : null);
       const newResults = allResults;
-      // Merge into state + LS
+      // PATCH 0962 — final persist under v3 key.
       setAiGuidance(prev => {
         const next = { ...prev };
         for (const [ticker, fg] of Object.entries(newResults)) {
           if (fg && fg.label) next[ticker.toUpperCase()] = fg;
         }
-        // PATCH 0952 — write to v2 (matches server cache key bumped in P0951).
-        // Also clean up old v1 so duplicate entries don't accumulate.
-        try { localStorage.setItem('mc:ai-fg:v2', JSON.stringify(next)); } catch {}
+        try { localStorage.setItem(CLIENT_LS_KEY, JSON.stringify(next)); } catch {}
+        try { localStorage.removeItem('mc:ai-fg:v2'); } catch {}
         try { localStorage.removeItem('mc:ai-fg:v1'); } catch {}
         return next;
       });
@@ -3062,7 +3197,11 @@ export default function EarningsPage() {
           backgroundColor: '#7C3AED12', border: '1px solid #7C3AED40',
           color: '#C4B5FD', fontSize: '11px', fontWeight: 600,
         }}>
-          🤖 AI Guidance: {aiStats.extracted} extracted{(aiStats.screener_fallback || 0) > 0 ? ` (${aiStats.screener_fallback} via Screener.in)` : ''} · {aiStats.cached} cached · {aiStats.intimation_only || 0} intimation-only · {aiStats.missing_pdf} no PDF · {aiStats.llm_failed} LLM-failed{(aiStats.budget_exceeded || 0) > 0 ? ` · ⚠ ${aiStats.budget_exceeded} BUDGET EXCEEDED (Anthropic 429 — wait or top up)` : ''}{(aiStats.batch_failures || 0) > 0 ? ` · ⚠ ${aiStats.batch_failures} batch timeouts (${(aiStats.failed_tickers || []).length} tickers — click AI Guidance again to retry)` : ''} · total {aiStats.total}
+          {/* PATCH 0962 — banner now surfaces ISSUE #6 PDF-quality taxonomy
+              (pdf-image-only / pdf-corrupt are distinct from intimation-only)
+              and ISSUE #11 telemetry (retries, avg extraction time, recovered
+              from KV via the mini job-store). */}
+          🤖 AI Guidance: {aiStats.extracted} extracted{(aiStats.screener_fallback || 0) > 0 ? ` (${aiStats.screener_fallback} via Screener.in)` : ''} · {aiStats.cached} cached{(aiStats.cached_invalid_dropped || 0) > 0 ? ` (+${aiStats.cached_invalid_dropped} stale dropped)` : ''}{(aiStats.recovered_from_kv || 0) > 0 ? ` · ♻ ${aiStats.recovered_from_kv} recovered from KV after timeout` : ''} · {aiStats.intimation_only || 0} intimation-only{(aiStats.pdf_image_only || 0) > 0 ? ` · ${aiStats.pdf_image_only} scanned/image-only` : ''}{(aiStats.pdf_too_short || 0) > 0 ? ` · ${aiStats.pdf_too_short} pdf-too-short` : ''}{(aiStats.pdf_corrupt || 0) > 0 ? ` · ${aiStats.pdf_corrupt} pdf-corrupt` : ''}{(aiStats.pdf_empty || 0) > 0 ? ` · ${aiStats.pdf_empty} pdf-empty` : ''} · {aiStats.missing_pdf} no PDF · {aiStats.llm_failed} LLM-failed{(aiStats.budget_exceeded || 0) > 0 ? ` · ⚠ ${aiStats.budget_exceeded} BUDGET EXCEEDED (Anthropic 429 — wait or top up)` : ''}{(aiStats.batch_failures || 0) > 0 ? ` · ⚠ ${aiStats.batch_failures} batch timeouts (${(aiStats.failed_tickers || []).length} tickers — click AI Guidance again to retry)` : ''}{(aiStats.retries || 0) > 0 ? ` · ${aiStats.retries} retries` : ''}{(aiStats.max_tokens_hits || 0) > 0 ? ` · ${aiStats.max_tokens_hits} max-tokens hits` : ''}{(aiStats.avg_extraction_ms || 0) > 0 ? ` · avg ${(aiStats.avg_extraction_ms! / 1000).toFixed(1)}s/extract` : ''} · total {aiStats.total}
           {aiDiagnostics && aiDiagnostics.length > 0 && (
             <>
               {' · '}

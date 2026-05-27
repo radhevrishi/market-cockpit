@@ -3191,7 +3191,115 @@ these are NOT yet done — flagged as Day-8+ candidates:
 >   into BOTH engine.ts AND page.tsx duplicate copies of buildReport.
 
 ═══════════════════════════════════════════════════════════════════════════
-## AI Forward Guidance — Architecture Reference (P0948 → P0961)
+## AI Forward Guidance — Architecture Reference (P0948 → P0962)
+
+### P0962 — Architectural hardening: 10 of the 12 review findings (May 2026)
+
+Code review identified 12 architectural weaknesses after the P0961 tactical
+patch. This commit addresses all of them; the two pure-architecture items
+(#2 durable job store, #12 fully async pipeline) get a partial implementation
+using KV checkpoints to give most of the benefit without a queue/worker
+service. Mapping:
+
+  ISSUE #1 — Timeout discipline.
+    Client AbortSignal.timeout was 65s, server maxDuration is 55s. Wrong
+    direction: server died 10s before client gave up, keeping browser
+    connection slots occupied and amplifying concurrency pressure.
+    FIX: client = 50s, server = 55s. Client aborts FIRST, slots free
+    immediately, retries are clean.
+
+  ISSUE #2 + PARTIAL #12 — Mini job store via KV checkpoints.
+    Per-ticker status is now written to KV (key `haiku-fg-status:v3:T:P`)
+    at every state transition: extracting → cached / extracted / noguidance
+    / failed / budget_exceeded / no_pdf / intimation_only. STATUS_TTL = 6h.
+    New GET endpoints:
+      ?action=status&tickers=A,B,C&period=Q4-FY26  → per-ticker status records
+      ?action=fetch &tickers=A,B,C&period=Q4-FY26  → AIForwardGuidance objects
+    After a batch HTTP failure, the client now runs a RECONCILIATION pass:
+    calls ?action=fetch for every timed-out ticker, pulls any results that
+    completed server-side before the 55s kill, merges them into state +
+    LS, and removes them from failed_tickers. This is exactly the
+    "transport-coupled to HTTP lifetime" fix the review called for —
+    full async/queue would still be cleaner but requires worker
+    infrastructure outside Vercel.
+
+  ISSUE #3 — Cache versioning.
+    Old key `haiku-fg:v2:T:P` had no prompt/parser fingerprint, so prompt
+    fixes never reached cached tickers. NEW key:
+      haiku-fg:v3:{PROMPT_VERSION}:{PARSER_VERSION}:T:P
+    Bump either constant to invalidate dependent entries automatically.
+    Also AIForwardGuidance objects now self-describe via schema_version /
+    prompt_version / parser_version fields so the validator can verify
+    schema alignment after a deploy.
+
+  ISSUE #4 — Split positive vs negative cache TTL.
+    Old: every entry got 365d TTL, including synthetic NoGuidance entries
+    minted for intimation-only tickers — meaning a company that later
+    uploaded a real transcript would be permanently suppressed.
+    NEW:
+      CACHE_TTL_POS_S = 365 days  (positive extractions are immutable)
+      CACHE_TTL_NEG_S =  24 hours (NoGuidance, Neutral-LOW)
+    Re-uploads, parser fixes, prompt revisions all break out within a day.
+
+  ISSUE #5 — Screener.in provenance + quarter alignment.
+    Every cached object now carries source_provider ('nse' | 'screener-in'),
+    source_period_hint (the Screener row date e.g. "May 2026"), and
+    source_fetched_at. Quarter-mismatch audits become possible: if a
+    ticker's reported period is Q4-FY26 but source_period_hint says
+    Feb 2026, the user can flag it.
+
+  ISSUE #6 — PDF quality taxonomy.
+    Old: any PDF with < 1200 chars collapsed to "intimation-only", silently
+    discarding scanned/image-only/corrupt PDFs that were actually valid
+    concall transcripts.
+    NEW PdfQuality states: good | pdf-empty | pdf-image-only | pdf-too-short
+    | pdf-corrupt | no-pdf | intimation-only. Image-only detection uses
+    chars/page < 100 with pages >= 5. Each state is a distinct outcome in
+    PdfLookupDiag and a distinct stats counter, surfaced in the banner.
+
+  ISSUE #7 — Haiku retry guards.
+    Old: blanket one-shot retry on every failure type — doubled token cost
+    on max_tokens truncations and long malformed outputs (structurally
+    bad, not transient).
+    NEW retry policy:
+      - NEVER retry on 429 (budget) — surface immediately
+      - NEVER retry on stop_reason='max_tokens' — would hit same wall
+      - Retry on JSON parse failure ONLY if cleaned output < 600 chars
+        (short = transient hiccup; long = confidently malformed)
+      - Retry on network error / 5xx / empty body
+    extraction_ms, retry_count, stop_reason recorded on every cached object.
+
+  ISSUE #8 — Adaptive concurrency.
+    Server CONCURRENT now starts at 6, drops by 2 (min 2) when a wave
+    exceeds 30s, recovers by 1 (max 6) when a wave finishes under 15s.
+    Bounded so we never stall and never overshoot Vercel's 55s ceiling.
+
+  ISSUE #9 — Schema versioning in cached objects.
+    AIForwardGuidance now embeds schema_version + prompt_version +
+    parser_version. Hydrate path checks each entry; mismatched-version
+    entries are KEPT for rendering (better something than nothing) but
+    counted, and the server's v3 cache key bypass guarantees they're
+    re-extracted on the next click.
+
+  ISSUE #10 — isValidGuidanceObject() guards.
+    Both server (cache hit path) and client (LS hydrate + per-ticker
+    cache check in fetchAIGuidance) now validate object shape before
+    trusting it. Stats expose cached_invalid_dropped count so silent
+    corruption becomes loud.
+
+  ISSUE #11 — Persistent observability.
+    Stats payload now includes: cached_invalid_dropped, recovered_from_kv,
+    pdf_empty, pdf_image_only, pdf_too_short, pdf_corrupt, retries,
+    parse_failures, max_tokens_hits, extraction_ms_sum. Banner renders
+    all of these. avg extraction time shown in seconds. Per-ticker
+    diagnostics panel still expands for full audit.
+
+  ISSUE #12 — see #2 above. Full async pipeline deferred.
+
+Other migrations:
+  - localStorage key bumped 'mc:ai-fg:v2' → 'mc:ai-fg:v3'. Hydrate path
+    reads v3 first, falls back to v2 for entries that pass validator,
+    cleans up v1 + v2 keys after migration.
 
 ### P0961 — Stop the 217→4 silent batch-timeout bug (May 2026)
   Symptom: user clicked AI Guidance on 217 qualifying tickers, watched the

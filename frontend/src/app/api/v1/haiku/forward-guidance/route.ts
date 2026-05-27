@@ -21,8 +21,60 @@ export const runtime = 'nodejs';
 export const maxDuration = 55;
 
 const HAIKU_MODEL = 'claude-haiku-4-5-20251001';
-const CACHE_TTL_S = 365 * 24 * 3600;        // 1 year — quarterly results are immutable
 const CF_WORKER_URL = process.env.CF_WORKER_URL || 'https://mc-scraper.radhev-232.workers.dev';
+
+// ════════════════════════════════════════════════════════════════════════════
+// PATCH 0962 — Versioning + split-TTL cache scheme.
+//
+// ISSUE #3: A flat 1-year TTL keyed only on ticker+period meant prompt fixes,
+//           parser improvements, and scoring threshold changes never reached
+//           cached tickers — stale low-quality extractions survived indefinitely.
+//
+// ISSUE #4: Synthetic "NoGuidance" entries (written when only intimation PDFs
+//           exist on NSE) inherited the same 1-year TTL — so a company that
+//           later uploaded a real transcript would be permanently suppressed
+//           from re-extraction until either force=true or year rollover.
+//
+// FIX: Cache key now embeds PROMPT_VERSION + PARSER_VERSION; bump either to
+//      invalidate all dependent entries automatically. Two TTLs: positive
+//      extractions are immutable (1y) while negative/no-pdf entries are
+//      short-lived (24h) so re-uploads can break out of stale state.
+// ════════════════════════════════════════════════════════════════════════════
+const SCHEMA_VERSION = 3;                    // bump if AIForwardGuidance shape changes
+const PROMPT_VERSION = 'p0962-inst-v3';      // bump on system-prompt edits
+const PARSER_VERSION = 'p0962-pdfparse-v3';  // bump on PDF / scoring logic edits
+const CACHE_TTL_POS_S = 365 * 24 * 3600;     // 1 year — quarterly results immutable
+const CACHE_TTL_NEG_S = 24 * 3600;           // 24 hours — re-uploads & worker fixes get retried
+const STATUS_TTL_S = 6 * 3600;               // mini job-store ticker checkpoints (ISSUE #2)
+
+function buildCacheKey(ticker: string, period: string): string {
+  // PATCH 0962 — v3 key includes prompt + parser version so any schema /
+  // prompt evolution auto-invalidates without manual cache purges.
+  return `haiku-fg:v3:${PROMPT_VERSION}:${PARSER_VERSION}:${ticker.toUpperCase()}:${period}`;
+}
+
+function buildStatusKey(ticker: string, period: string): string {
+  // PATCH 0962 — per-ticker mini job-store. Written as the server processes
+  // each ticker; surviving even when Vercel kills the function at 55s, so the
+  // client can reconcile via GET ?action=status after a batch timeout.
+  return `haiku-fg-status:v3:${ticker.toUpperCase()}:${period}`;
+}
+
+// ISSUE #2 — TickerStatus checkpoint. Written WHENEVER the per-ticker state
+// changes during a batch. Survives Vercel function kills so the next client
+// click can recover progress instead of re-paying for completed extractions.
+type TickerStatusKind = 'extracting' | 'cached' | 'extracted' | 'failed' | 'noguidance' | 'budget_exceeded' | 'no_pdf' | 'intimation_only';
+interface TickerStatusRecord {
+  kind: TickerStatusKind;
+  at: string;
+  detail?: string;
+}
+
+async function setTickerStatus(ticker: string, period: string, kind: TickerStatusKind, detail?: string): Promise<void> {
+  if (!isRedisAvailable()) return;
+  try { await kvSet(buildStatusKey(ticker, period), { kind, at: new Date().toISOString(), detail } as TickerStatusRecord, STATUS_TTL_S); }
+  catch {}
+}
 
 // PATCH 0951 — Extended schema. Adds 'NoGuidance' label so Haiku can honestly
 // say "the PDF had no forward content" instead of fabricating Neutral 0.00.
@@ -42,6 +94,53 @@ export interface AIForwardGuidance {
   source_filename?: string;   // PATCH 0951 — surfaced in UI so user can audit
   period: string;             // 'Q4-FY26' etc — cache invalidates next quarter
   extracted_at: string;       // ISO timestamp
+
+  // PATCH 0962 — provenance + observability fields.
+  // ISSUE #5 / #9: every cached object now self-describes its lineage, so the
+  // client can hydrate safely after a deploy and the user can audit which
+  // prompt/parser version produced which extraction.
+  schema_version?: number;          // SCHEMA_VERSION at write time
+  prompt_version?: string;          // PROMPT_VERSION at write time
+  parser_version?: string;          // PARSER_VERSION at write time
+  source_fetched_at?: string;       // when the PDF was downloaded
+  source_provider?: 'nse' | 'screener-in';  // ISSUE #5: explicit fallback provenance
+  source_period_hint?: string;      // e.g. "May 2026" from Screener row — for quarter-alignment audit
+  pdf_chars?: number;               // how much text Haiku actually saw
+  pdf_pages?: number;               // for image-only detection ratio
+  pdf_quality?: PdfQuality;         // ISSUE #6 — taxonomy below
+  // ISSUE #11 — per-extraction telemetry (rolled up into stats by the POST handler)
+  extraction_ms?: number;           // total wall time for Haiku call
+  retry_count?: number;             // 0 or 1 — only retried on JSON parse failure (ISSUE #7)
+  stop_reason?: string;             // anthropic stop_reason — distinguishes max_tokens from end_turn
+}
+
+// ISSUE #6 — PDF quality taxonomy. Previously every problem PDF (image-only,
+// truncated, corrupt) was conflated into "intimation-only", which silently
+// discarded valid transcripts that happened to be scanned. Now each failure
+// mode is a distinct outcome, surfaced in diagnostics, and (where worth it)
+// queued for OCR retry later.
+export type PdfQuality =
+  | 'good'           // text-extractable, length >= 1200 chars
+  | 'pdf-empty'      // 0 chars extracted (parser returned nothing)
+  | 'pdf-image-only' // many pages, near-zero text — scanned/image PDF (would need OCR)
+  | 'pdf-too-short'  // some text but < 1200 chars (likely intimation)
+  | 'pdf-corrupt'    // parser threw / returned FAILED
+  | 'no-pdf'         // no URL to fetch in the first place
+  | 'intimation-only';  // filename-scored as intimation BEFORE PDF fetch (cheapest skip)
+
+// ISSUE #10 — Validator. Cached objects (server or client localStorage) can
+// be partially migrated, schema-mismatched, or truncated. Trust nothing on
+// hydrate — always validate before using as the source of truth.
+export function isValidGuidanceObject(v: unknown): v is AIForwardGuidance {
+  if (!v || typeof v !== 'object') return false;
+  const o = v as Record<string, unknown>;
+  if (!['Positive', 'Neutral', 'Negative', 'NoGuidance'].includes(o.label as string)) return false;
+  if (typeof o.score !== 'number' || !isFinite(o.score)) return false;
+  if (!['HIGH', 'MEDIUM', 'LOW'].includes(o.confidence as string)) return false;
+  if (typeof o.rationale !== 'string') return false;
+  if (!Array.isArray(o.quotes)) return false;
+  if (typeof o.period !== 'string' || !o.period) return false;
+  return true;
 }
 
 interface CFFilingItem {
@@ -63,7 +162,15 @@ interface CFFilingItem {
 //   'ok'               Found a usable PDF URL (real transcript/presentation)
 export interface PdfLookupDiag {
   ticker: string;
-  outcome: 'cf-error' | 'no-filings' | 'no-attachment' | 'intimation-only' | 'ok' | 'ok-screener-fallback';
+  outcome:
+    | 'cf-error' | 'no-filings' | 'no-attachment'
+    | 'intimation-only'      // filename-scored as intimation pre-fetch (saved $)
+    | 'ok' | 'ok-screener-fallback'
+    // PATCH 0962 — ISSUE #6: new post-fetch PDF quality outcomes. Previously
+    // all of these collapsed to "intimation-only" which silently discarded
+    // valid-but-image-based or corrupt PDFs. Now distinct so we know whether
+    // to OCR-retry, ignore, or re-fetch.
+    | 'pdf-empty' | 'pdf-image-only' | 'pdf-too-short' | 'pdf-corrupt';
   total_filings_seen?: number;
   ticker_filings?: number;
   ticker_with_attachment?: number;
@@ -74,6 +181,10 @@ export interface PdfLookupDiag {
   filename?: string;          // PATCH 0951 — the actual file picked (audit trail)
   fallback_source?: 'screener-in';  // PATCH 0953 — which fallback chain rescued it
   fallback_date?: string;           // PATCH 0953 — date of Screener.in row picked
+  // PATCH 0962 — observability fields (ISSUE #11)
+  pdf_chars?: number;
+  pdf_pages?: number;
+  pdf_quality?: PdfQuality;
   error?: string;
 }
 
@@ -389,15 +500,25 @@ async function findConcallPdfUrl(ticker: string): Promise<
 }
 
 // ─── Step 2: Extract forward statements via Haiku ──────────────────────────
-async function extractForwardGuidance(
-  ticker: string,
-  pdfText: string,
-  source: AIForwardGuidance['source'],
-  sourceUrl: string,
-  sourceFilename: string,
-  period: string,
-  apiKey: string,
-): Promise<AIForwardGuidance | null> {
+// PATCH 0962 — extended signature with provenance + pdf telemetry fields so
+// every cached object is self-describing (ISSUE #5, #9, #11).
+interface ExtractionContext {
+  ticker: string;
+  pdfText: string;
+  source: AIForwardGuidance['source'];
+  sourceUrl: string;
+  sourceFilename: string;
+  sourceProvider: 'nse' | 'screener-in';
+  sourcePeriodHint?: string;   // ISSUE #5 — for Screener fallback quarter-alignment audit
+  pdfChars: number;
+  pdfPages?: number;
+  pdfQuality: PdfQuality;
+  period: string;
+  apiKey: string;
+}
+
+async function extractForwardGuidance(ctx: ExtractionContext): Promise<AIForwardGuidance | null> {
+  const { ticker, pdfText, source, sourceUrl, sourceFilename, sourceProvider, sourcePeriodHint, pdfChars, pdfPages, pdfQuality, period, apiKey } = ctx;
   // PATCH 0951 — bumped minimum from 200 to 1200 chars. Anything shorter is
   // almost certainly an intimation notice (~500 chars of "kindly note...")
   // and Haiku will just return Neutral 0.00 — pure waste of money. Better
@@ -471,16 +592,28 @@ If "numbers" array would be empty, omit hard numbers in the rationale too — sa
 
   const userPrompt = `Ticker: ${ticker}\nPeriod: ${period}\nSource type: ${source}\nSource filename: ${sourceFilename}\nPDF length: ${pdfText.length} chars\n\n=== FILING TEXT ===\n${text}`;
 
-  // PATCH 0956 — one-shot retry with backoff. Haiku occasionally returns
-  // non-JSON (~1-2% of calls) due to model-side hiccups; one retry recovers
-  // most of these without a meaningful cost increase. Also detects 429
-  // (budget / rate limit) and returns a sentinel so the POST handler can
-  // surface it distinctly from a normal llm-failed.
+  // ── PATCH 0962 — Cost-guarded retry loop. ISSUE #7. ────────────────────────
+  //   * Retry ONLY on transient failures (network error, 5xx, empty body, OR
+  //     malformed JSON with SHORT completion — short completion suggests a
+  //     mid-thought interruption that a retry can recover).
+  //   * NEVER retry when stop_reason === 'max_tokens' — that's structural
+  //     truncation, the model would just hit the same wall and double cost.
+  //   * NEVER retry on 429 — budget exceeded.
+  //   * NEVER retry when malformed JSON is LONG (>= 600 chars) — model is
+  //     confident but malformed; another call costs full tokens for the same
+  //     mistake.
+  //
+  // Also captures stop_reason + extraction_ms + retry_count for the cached
+  // object (ISSUE #11 telemetry).
   let parsed: any = null;
   let last429 = false;
+  let stopReason: string | undefined;
+  let retryCount = 0;
+  const startMs = Date.now();
   for (let attempt = 0; attempt < 2; attempt++) {
+    let resp: Response | null = null;
     try {
-      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      resp = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
           'x-api-key': apiKey,
@@ -495,49 +628,83 @@ If "numbers" array would be empty, omit hard numbers in the rationale too — sa
         }),
         signal: AbortSignal.timeout(25_000),
       });
-      if (resp.status === 429) {
-        last429 = true;
-        console.warn(`[FG-DIAG] anthropic 429 (budget/rate limit) for ${ticker}`);
-        break;  // don't retry budget exceeded
-      }
-      if (!resp.ok) {
-        if (attempt === 0) { await new Promise(r => setTimeout(r, 500 + Math.random() * 500)); continue; }
-        break;
-      }
-      const data = await resp.json();
-      const raw = (data?.content || []).map((b: any) => b?.text || '').join('').trim();
-      if (!raw) {
-        if (attempt === 0) { await new Promise(r => setTimeout(r, 500 + Math.random() * 500)); continue; }
-        break;
-      }
-      const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
-      try {
-        parsed = JSON.parse(cleaned);
-        break;  // success
-      } catch {
-        if (attempt === 0) {
-          console.warn(`[FG-DIAG] haiku non-JSON for ${ticker} on attempt 1, retrying...`);
-          await new Promise(r => setTimeout(r, 500 + Math.random() * 500));
-          continue;
-        }
-        break;
-      }
     } catch (e) {
-      if (attempt === 0) { await new Promise(r => setTimeout(r, 500 + Math.random() * 500)); continue; }
-      console.warn(`[FG-DIAG] haiku fetch error for ${ticker}:`, (e as Error).message);
+      // Network / abort error — transient, retry once.
+      if (attempt === 0) {
+        retryCount = 1;
+        console.warn(`[FG-DIAG] haiku fetch error for ${ticker} on attempt 1 (will retry):`, (e as Error).message);
+        await new Promise(r => setTimeout(r, 500 + Math.random() * 500));
+        continue;
+      }
+      console.warn(`[FG-DIAG] haiku fetch error for ${ticker} on attempt 2 (giving up):`, (e as Error).message);
+      break;
+    }
+    if (resp.status === 429) {
+      last429 = true;
+      console.warn(`[FG-DIAG] anthropic 429 (budget/rate limit) for ${ticker} — NOT retrying`);
+      break;
+    }
+    if (!resp.ok) {
+      // 5xx / 4xx (not 429) — transient on first attempt, give up on second.
+      if (attempt === 0) {
+        retryCount = 1;
+        await new Promise(r => setTimeout(r, 500 + Math.random() * 500));
+        continue;
+      }
+      break;
+    }
+    const data = await resp.json();
+    stopReason = data?.stop_reason;
+    const raw = (data?.content || []).map((b: any) => b?.text || '').join('').trim();
+    // PATCH 0962 ISSUE #7 — if stop_reason === 'max_tokens', the model hit
+    // its 1400-token cap mid-JSON. Retrying with the same max_tokens would
+    // hit the same wall and double cost. Bail out cleanly.
+    if (stopReason === 'max_tokens') {
+      console.warn(`[FG-DIAG] haiku hit max_tokens for ${ticker} — NOT retrying (would truncate again)`);
+      // Try to salvage partial JSON; if it parses, use it.
+      const salvaged = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+      try { parsed = JSON.parse(salvaged); } catch {}
+      break;
+    }
+    if (!raw) {
+      if (attempt === 0) {
+        retryCount = 1;
+        await new Promise(r => setTimeout(r, 500 + Math.random() * 500));
+        continue;
+      }
+      break;
+    }
+    const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+    try {
+      parsed = JSON.parse(cleaned);
+      break;
+    } catch {
+      // PATCH 0962 ISSUE #7 — retry ONLY when the malformed output is SHORT,
+      // suggesting a transient model hiccup rather than a structural issue.
+      // Long malformed output means the model is confidently wrong; another
+      // call costs full tokens for the same mistake.
+      if (attempt === 0 && cleaned.length < 600) {
+        retryCount = 1;
+        console.warn(`[FG-DIAG] haiku short non-JSON (${cleaned.length} chars) for ${ticker} on attempt 1, retrying...`);
+        await new Promise(r => setTimeout(r, 500 + Math.random() * 500));
+        continue;
+      }
+      console.warn(`[FG-DIAG] haiku non-JSON (${cleaned.length} chars) for ${ticker} — NOT retrying (long output ⇒ structural)`);
       break;
     }
   }
+  const extractionMs = Date.now() - startMs;
   if (last429) {
     // Sentinel: budget exceeded. Caller distinguishes from llm-failed.
-    return { __budgetExceeded: true } as any;
+    return { __budgetExceeded: true, retryCount, extractionMs } as any;
   }
   if (!parsed) return null;
 
   try {
     if (!['Positive', 'Neutral', 'Negative', 'NoGuidance'].includes(parsed.label)) return null;
     const score = typeof parsed.score === 'number' ? Math.max(-1, Math.min(1, parsed.score)) : 0;
-    return {
+    const now = new Date().toISOString();
+    const built: AIForwardGuidance = {
       label: parsed.label,
       score: parsed.label === 'NoGuidance' ? 0 : score,
       confidence: ['HIGH', 'MEDIUM', 'LOW'].includes(parsed.confidence) ? parsed.confidence : 'MEDIUM',
@@ -556,8 +723,24 @@ If "numbers" array would be empty, omit hard numbers in the rationale too — sa
       source_url: sourceUrl,
       source_filename: sourceFilename,
       period,
-      extracted_at: new Date().toISOString(),
+      extracted_at: now,
+      // PATCH 0962 — provenance + telemetry. Every cached object now carries
+      // enough lineage to validate at hydration time (ISSUE #9, #10) and to
+      // power the diagnostics panel without grepping Vercel logs (ISSUE #11).
+      schema_version: SCHEMA_VERSION,
+      prompt_version: PROMPT_VERSION,
+      parser_version: PARSER_VERSION,
+      source_fetched_at: now,
+      source_provider: sourceProvider,
+      source_period_hint: sourcePeriodHint,
+      pdf_chars: pdfChars,
+      pdf_pages: pdfPages,
+      pdf_quality: pdfQuality,
+      extraction_ms: extractionMs,
+      retry_count: retryCount,
+      stop_reason: stopReason,
     };
+    return built;
   } catch {
     return null;
   }
@@ -573,28 +756,41 @@ If "numbers" array would be empty, omit hard numbers in the rationale too — sa
 const _haikuInFlight = new Map<string, Promise<AIForwardGuidance | { __budgetExceeded: true } | null>>();
 
 async function extractForwardGuidanceDedup(
-  ticker: string,
-  pdfText: string,
-  source: AIForwardGuidance['source'],
-  sourceUrl: string,
-  sourceFilename: string,
-  period: string,
-  apiKey: string,
+  ctx: ExtractionContext,
   force: boolean,
 ): Promise<AIForwardGuidance | { __budgetExceeded: true } | null> {
   // force=true means user explicitly wants a fresh call; don't share.
-  if (force) return extractForwardGuidance(ticker, pdfText, source, sourceUrl, sourceFilename, period, apiKey) as any;
-  const key = `haiku-fg:v2:${ticker.toUpperCase()}:${period}`;
+  if (force) return extractForwardGuidance(ctx);
+  const key = buildCacheKey(ctx.ticker, ctx.period);
   const existing = _haikuInFlight.get(key);
   if (existing) {
-    console.log(`[FG-DIAG] dedup hit for ${ticker} (${period}) — sharing in-flight Haiku call`);
+    console.log(`[FG-DIAG] dedup hit for ${ctx.ticker} (${ctx.period}) — sharing in-flight Haiku call`);
     return existing;
   }
-  const p = (extractForwardGuidance(ticker, pdfText, source, sourceUrl, sourceFilename, period, apiKey) as any) as Promise<AIForwardGuidance | { __budgetExceeded: true } | null>;
+  const p = extractForwardGuidance(ctx);
   _haikuInFlight.set(key, p);
   // Cleanup on resolve/reject — keep in-flight only during active call.
   p.finally(() => _haikuInFlight.delete(key));
   return p;
+}
+
+// ─── PDF quality classifier (ISSUE #6) ─────────────────────────────────────
+// Replaces the old "text.length < 1200 → intimation-only" conflation with a
+// taxonomy: scanned PDFs, corrupt PDFs, short PDFs, and missing PDFs are now
+// distinct outcomes. Image-only detection uses chars/page ratio because
+// scanned PDFs have many pages but ~0 extractable text.
+import type { ExtractedPdf } from '@/lib/pdf-text-extractor';
+function classifyPdfQuality(ext: ExtractedPdf | null): { quality: PdfQuality; chars: number; pages?: number } {
+  if (!ext) return { quality: 'no-pdf', chars: 0 };
+  const chars = (ext.text || '').length;
+  const pages = ext.pages;
+  if (ext.source === 'FAILED') return { quality: 'pdf-corrupt', chars, pages };
+  if (chars === 0) return { quality: 'pdf-empty', chars, pages };
+  // Image-only heuristic: 5+ pages, < 100 chars/page average. A real
+  // transcript averages 1500-3000 chars/page; a scanned PDF averages < 50.
+  if (pages && pages >= 5 && chars / pages < 100) return { quality: 'pdf-image-only', chars, pages };
+  if (chars < 1200) return { quality: 'pdf-too-short', chars, pages };
+  return { quality: 'good', chars, pages };
 }
 
 // ─── POST handler ──────────────────────────────────────────────────────────
@@ -609,64 +805,94 @@ export async function POST(req: NextRequest) {
   const force = !!body?.force;
   if (items.length === 0) return NextResponse.json({ error: 'items required' }, { status: 400 });
 
-  // PATCH 0961 — hard cap reduced 25 → 8 to keep wall-clock under Vercel's
-  // 55s maxDuration. With internal CONCURRENT=6 below, an 8-ticker request
-  // completes in ~1-2 waves of ~25s each = ~30-50s, well inside budget.
-  // Previously CHUNK=25 × CONCURRENT=4 needed ~6 internal waves = 120-200s
-  // → 504 timeouts → silent null results. That's how 217 tickers became
-  // "only 4 extracted" while still billing Haiku for half of them.
+  // PATCH 0961 — hard cap 8/req keeps wall time under Vercel's 55s.
   const capped = items.slice(0, 8);
 
-  // PATCH 0951/0953/0956 — stat tracking.
-  //   intimation_only — every NSE PDF was a notice (Haiku skipped)
-  //   screener_fallback — NSE was intimation-only / had nothing, but Screener.in
-  //                       had a real transcript and the extraction worked
-  //   budget_exceeded  — Anthropic returned 429 (rate limit / monthly cap)
-  const stats = { cached: 0, extracted: 0, intimation_only: 0, screener_fallback: 0, missing_pdf: 0, llm_failed: 0, budget_exceeded: 0, total: capped.length };
+  // PATCH 0962 — expanded stats (ISSUE #11). Each new field is also rolled
+  // up by the client into the banner so PDF taxonomy, parse failures, and
+  // retry counts are visible without scraping Vercel logs.
+  const stats = {
+    cached: 0,
+    cached_invalid_dropped: 0,  // ISSUE #10 — schema-mismatched cache entries (dropped, will re-extract)
+    extracted: 0,
+    intimation_only: 0,         // pre-fetch filename-scored skip
+    screener_fallback: 0,
+    missing_pdf: 0,
+    llm_failed: 0,
+    budget_exceeded: 0,
+    // ISSUE #6 — PDF quality taxonomy
+    pdf_empty: 0,
+    pdf_image_only: 0,
+    pdf_too_short: 0,
+    pdf_corrupt: 0,
+    // ISSUE #11 — extraction telemetry
+    retries: 0,
+    parse_failures: 0,           // null returns from extractForwardGuidance (post-retry)
+    max_tokens_hits: 0,          // stop_reason === 'max_tokens'
+    extraction_ms_sum: 0,        // for averaging client-side
+    total: capped.length,
+  };
   const results: Record<string, AIForwardGuidance | null> = {};
   // PATCH 0949a — collect per-ticker diagnostics so the UI can show why each
   // ticker failed without us having to scrape Vercel logs.
   const diagnostics: Array<PdfLookupDiag & { stage?: 'pdf-empty' | 'llm-failed' }> = [];
 
-  // PATCH 0961 — bumped from 4 → 6 to flush an 8-ticker request in ≤2 waves
-  // (was 6-7 waves at CHUNK=25). Combined with capped=8, total wall time
-  // fits under Vercel's 55s. Per-ticker latency is bounded by Haiku call
-  // (~5-15s) + PDF fetch+parse (~2-5s) + optional Screener fallback (~5-8s).
-  const CONCURRENT = 6;
+  // PATCH 0962 — ISSUE #8: adaptive concurrency. Start at 6; if the previous
+  // wave's worst case > 30s, drop concurrency for the next wave so we don't
+  // amplify a slow upstream (Screener.in throttling, NSE pdf giant, etc.).
+  // Recover up to 6 when latencies normalize. Bounded [2, 6] so we never
+  // stall and never overshoot the function timeout.
+  let CONCURRENT = 6;
   for (let i = 0; i < capped.length; i += CONCURRENT) {
+    const waveStart = Date.now();
     const wave = capped.slice(i, i + CONCURRENT);
     await Promise.all(wave.map(async ({ ticker, period }) => {
       const T = (ticker || '').toUpperCase().trim();
       const P = (period || '').trim() || 'unknown';
       if (!T) { results[ticker] = null; return; }
-      // PATCH 0951 — bumped cache key from v1 → v2. New schema includes
-      // numbers + catalysts + NoGuidance label; old v1 results don't have
-      // those fields. Forcing a re-extract is cheap (intimation skip will
-      // catch most of the waste) and gives every ticker the new prompt.
-      const key = `haiku-fg:v2:${T}:${P}`;
+      // PATCH 0962 — v3 key embeds prompt + parser version so a prompt fix
+      // automatically invalidates dependent entries.
+      const key = buildCacheKey(T, P);
 
-      // 1) Cache check (skipped if force=true)
+      // ── ISSUE #2 — checkpoint: mark this ticker as extracting BEFORE we
+      // do anything expensive. The status survives if Vercel kills the
+      // function, so the client can poll via GET ?action=status and learn
+      // the real state instead of treating the whole batch as lost.
+      await setTickerStatus(T, P, 'extracting');
+
+      // 1) Cache check — with VALIDATION (ISSUE #10). A stale or partially
+      //    migrated entry is now dropped and re-extracted instead of being
+      //    silently trusted.
       if (!force && isRedisAvailable()) {
         try {
           const cached = await kvGet<AIForwardGuidance>(key);
-          if (cached) { results[T] = cached; stats.cached++; return; }
+          if (cached) {
+            if (isValidGuidanceObject(cached)) {
+              results[T] = cached;
+              stats.cached++;
+              await setTickerStatus(T, P, 'cached');
+              return;
+            } else {
+              stats.cached_invalid_dropped++;
+              console.warn(`[FG-DIAG] dropping invalid cache entry for ${T} (${P}) — schema mismatch, will re-extract`);
+              // fall through to fresh extract
+            }
+          }
         } catch {}
       }
 
-      // 2) Find concall PDF (returns intimation-only outcome when every
-      //    candidate is a notice/intimation — skip Haiku to save cost).
+      // 2) Find concall PDF
       const lookup = await findConcallPdfUrl(T);
       if (lookup.url === null) {
         if (lookup.diag.outcome === 'intimation-only') {
-          // PATCH 0951a — return a synthetic NoGuidance result so the dashboard
-          // chip flips to grey "No fwd guidance — only intimation filed" and
-          // OVERWRITES any stale Haiku output cached from earlier runs that
-          // used to call Haiku on intimation PDFs and got Neutral 0.00.
+          // ISSUE #4 — synthetic NoGuidance entries now write with SHORT TTL
+          // (24h) instead of 1y. If the company later uploads a real transcript,
+          // the cache will expire and re-extraction picks it up automatically.
           const noGuidance: AIForwardGuidance = {
             label: 'NoGuidance',
             score: 0,
             confidence: 'HIGH',
-            rationale: 'Only intimation/notice PDFs filed on NSE — no transcript content yet to extract. Try again after the company uploads the actual transcript.',
+            rationale: 'Only intimation/notice PDFs filed on NSE — no transcript content yet to extract. Cached for 24h; re-extracts automatically once the company uploads the actual transcript.',
             quotes: [],
             numbers: [],
             catalysts: [],
@@ -674,82 +900,189 @@ export async function POST(req: NextRequest) {
             source_filename: lookup.diag.filename,
             period: P,
             extracted_at: new Date().toISOString(),
+            schema_version: SCHEMA_VERSION,
+            prompt_version: PROMPT_VERSION,
+            parser_version: PARSER_VERSION,
+            source_fetched_at: new Date().toISOString(),
+            source_provider: 'nse',
+            pdf_quality: 'intimation-only',
           };
+          if (isRedisAvailable()) {
+            try { await kvSet(key, noGuidance, CACHE_TTL_NEG_S); } catch {}
+          }
           results[T] = noGuidance;
           stats.intimation_only++;
-          diagnostics.push(lookup.diag);
+          await setTickerStatus(T, P, 'intimation_only');
+          diagnostics.push({ ...lookup.diag, pdf_quality: 'intimation-only' });
           return;
         }
         results[T] = null;
         stats.missing_pdf++;
-        diagnostics.push(lookup.diag);
+        await setTickerStatus(T, P, 'no_pdf', lookup.diag.outcome);
+        diagnostics.push({ ...lookup.diag, pdf_quality: 'no-pdf' });
         return;
       }
 
-      // 3) Extract PDF text
-      let pdfText = '';
-      try {
-        const ext = await extractFirstPdf([lookup.url]);
-        if (ext && ext.text && ext.text.length >= 200) pdfText = ext.text;
-      } catch (e) {
-        console.warn('[FG-DIAG] extract error', T, (e as Error).message);
-      }
-      if (!pdfText || pdfText.length < 1200) {
-        // PATCH 0951 — < 1200 chars is intimation-equivalent (even if filename
-        // looked promising, the actual content is too thin). Tag as intimation
-        // outcome so the user sees the honest reason.
+      // 3) Extract PDF text + classify quality (ISSUE #6).
+      let ext: ExtractedPdf | null = null;
+      try { ext = await extractFirstPdf([lookup.url]); }
+      catch (e) { console.warn('[FG-DIAG] extract error', T, (e as Error).message); }
+      const quality = classifyPdfQuality(ext);
+
+      // Augment diag with PDF telemetry now that we have it.
+      const diagWithPdf: PdfLookupDiag & { stage?: 'pdf-empty' | 'llm-failed' } = {
+        ...lookup.diag,
+        pdf_chars: quality.chars,
+        pdf_pages: quality.pages,
+        pdf_quality: quality.quality,
+      };
+
+      if (quality.quality !== 'good') {
+        // ISSUE #6 — distinct outcomes per failure mode. Each is short-TTL
+        // cached so re-uploads / OCR improvements / parser fixes can recover.
         results[T] = null;
-        stats.intimation_only++;
-        diagnostics.push({ ...lookup.diag, outcome: 'intimation-only', stage: 'pdf-empty' });
+        if (quality.quality === 'pdf-empty')         { stats.pdf_empty++;       diagWithPdf.outcome = 'pdf-empty';      }
+        else if (quality.quality === 'pdf-image-only') { stats.pdf_image_only++; diagWithPdf.outcome = 'pdf-image-only';  }
+        else if (quality.quality === 'pdf-too-short')  { stats.pdf_too_short++;  diagWithPdf.outcome = 'pdf-too-short';   }
+        else if (quality.quality === 'pdf-corrupt')    { stats.pdf_corrupt++;    diagWithPdf.outcome = 'pdf-corrupt';     }
+        await setTickerStatus(T, P, 'no_pdf', quality.quality);
+        diagnostics.push(diagWithPdf);
         return;
       }
 
-      // 4) Haiku extract — with one-shot retry inside (P0956) and
-      //    server-side in-flight dedup (P0957) so concurrent identical
-      //    requests don't bill Haiku twice for the same ticker+period.
-      const fg = await extractForwardGuidanceDedup(T, pdfText, lookup.source, lookup.url, lookup.filename, P, apiKey, force);
-      // PATCH 0956 — budget-exceeded sentinel from extractForwardGuidance
+      // 4) Haiku extract — extended ExtractionContext carries provenance +
+      //    PDF telemetry through to the cached object (ISSUE #5, #9, #11).
+      const sourceProvider: 'nse' | 'screener-in' = lookup.diag.outcome === 'ok-screener-fallback' ? 'screener-in' : 'nse';
+      const sourcePeriodHint = lookup.diag.fallback_date;  // ISSUE #5 — Screener row date for audit
+      const fg = await extractForwardGuidanceDedup({
+        ticker: T,
+        pdfText: ext!.text,
+        source: lookup.source,
+        sourceUrl: lookup.url,
+        sourceFilename: lookup.filename,
+        sourceProvider,
+        sourcePeriodHint,
+        pdfChars: quality.chars,
+        pdfPages: quality.pages,
+        pdfQuality: quality.quality,
+        period: P,
+        apiKey,
+      }, force);
+
       if (fg && (fg as any).__budgetExceeded) {
         results[T] = null;
         stats.budget_exceeded++;
-        diagnostics.push({ ...lookup.diag, stage: 'llm-failed', error: 'Anthropic 429: budget/rate limit exceeded' });
+        stats.retries += (fg as any).retryCount || 0;
+        await setTickerStatus(T, P, 'budget_exceeded');
+        diagnostics.push({ ...diagWithPdf, stage: 'llm-failed', error: 'Anthropic 429: budget/rate limit exceeded' });
         return;
       }
       if (!fg) {
         results[T] = null;
+        stats.parse_failures++;
         stats.llm_failed++;
-        diagnostics.push({ ...lookup.diag, stage: 'llm-failed' });
+        await setTickerStatus(T, P, 'failed');
+        diagnostics.push({ ...diagWithPdf, stage: 'llm-failed' });
         return;
       }
 
-      // 5) Cache + return — narrow type (we already returned above for the
-      // budget-exceeded sentinel and the null case).
+      // 5) Cache + return. Split TTL (ISSUE #4): positive extractions are
+      //    immutable for 1y; NoGuidance / Neutral-LOW write short-TTL so a
+      //    later transcript upload or prompt revision can break out.
       const fgGuidance = fg as AIForwardGuidance;
+      const ttl = (fgGuidance.label === 'NoGuidance' || (fgGuidance.label === 'Neutral' && fgGuidance.confidence === 'LOW'))
+        ? CACHE_TTL_NEG_S
+        : CACHE_TTL_POS_S;
       if (isRedisAvailable()) {
-        try { await kvSet(key, fgGuidance, CACHE_TTL_S); } catch {}
+        try { await kvSet(key, fgGuidance, ttl); } catch {}
       }
       results[T] = fgGuidance;
       stats.extracted++;
-      // PATCH 0953 — also track that Screener.in fallback rescued this ticker
-      // (NSE had nothing, Screener.in had the real transcript). Visible in
-      // stats banner so the user knows the fallback paid off.
-      if (lookup.diag.outcome === 'ok-screener-fallback') stats.screener_fallback++;
-      diagnostics.push(lookup.diag);
+      stats.retries += fgGuidance.retry_count || 0;
+      if (fgGuidance.stop_reason === 'max_tokens') stats.max_tokens_hits++;
+      stats.extraction_ms_sum += fgGuidance.extraction_ms || 0;
+      if (sourceProvider === 'screener-in') stats.screener_fallback++;
+      await setTickerStatus(T, P, fgGuidance.label === 'NoGuidance' ? 'noguidance' : 'extracted');
+      diagnostics.push(diagWithPdf);
     }));
+
+    // ── ISSUE #8 — adaptive concurrency. Measure this wave, tune next one.
+    const waveMs = Date.now() - waveStart;
+    if (waveMs > 30_000 && CONCURRENT > 2) {
+      CONCURRENT = Math.max(2, CONCURRENT - 2);
+      console.log(`[FG-DIAG] adaptive concurrency ↓ ${CONCURRENT} (last wave ${waveMs}ms)`);
+    } else if (waveMs < 15_000 && CONCURRENT < 6) {
+      CONCURRENT = Math.min(6, CONCURRENT + 1);
+      console.log(`[FG-DIAG] adaptive concurrency ↑ ${CONCURRENT} (last wave ${waveMs}ms)`);
+    }
   }
 
-  return NextResponse.json({ results, stats, diagnostics, generated_at: new Date().toISOString() }, {
+  return NextResponse.json({
+    results,
+    stats,
+    diagnostics,
+    generated_at: new Date().toISOString(),
+    // ISSUE #11 — surface server version so client can validate alignment.
+    server_versions: { schema: SCHEMA_VERSION, prompt: PROMPT_VERSION, parser: PARSER_VERSION },
+  }, {
     headers: { 'Cache-Control': 'no-store' },
   });
 }
 
-// ─── GET helper — single-ticker probe for debugging ────────────────────────
+// ─── GET handler — debug probe + status reconciliation ─────────────────────
+//
+// PATCH 0962 (ISSUE #2, partial #12) — mini job-store status endpoint.
+//
+// When a POST batch times out at Vercel's 55s cutoff, the per-ticker
+// extraction may have COMPLETED server-side and even written to KV — but
+// the client never saw the response. Previously those completed-but-orphaned
+// extractions were invisible until the user manually re-ran AI Guidance.
+//
+// GET ?action=status&tickers=A,B,C&period=Q4-FY26 — returns per-ticker
+//   status records from KV (status: 'extracted' | 'noguidance' | 'failed' |
+//   'budget_exceeded' | 'no_pdf' | 'cached' | 'extracting').
+// GET ?action=fetch&tickers=A,B,C&period=Q4-FY26 — returns the actual
+//   AIForwardGuidance objects from KV for any tickers that have one cached.
+//   Client calls this after a batch failure to reconcile orphaned completions.
+// GET ?ticker=X&period=...&force=1 — original single-ticker probe (unchanged).
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
+  const action = url.searchParams.get('action');
+
+  // ── Mini job-store: status reconciliation ──
+  if (action === 'status' || action === 'fetch') {
+    const tickers = (url.searchParams.get('tickers') || '')
+      .split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+    const period = url.searchParams.get('period') || 'unknown';
+    if (tickers.length === 0) return NextResponse.json({ error: 'tickers required' }, { status: 400 });
+    if (!isRedisAvailable()) return NextResponse.json({ error: 'KV unavailable' }, { status: 503 });
+    if (action === 'status') {
+      const out: Record<string, TickerStatusRecord | null> = {};
+      await Promise.all(tickers.map(async t => {
+        try { out[t] = await kvGet<TickerStatusRecord>(buildStatusKey(t, period)); }
+        catch { out[t] = null; }
+      }));
+      return NextResponse.json({ statuses: out, server_versions: { schema: SCHEMA_VERSION, prompt: PROMPT_VERSION, parser: PARSER_VERSION } }, {
+        headers: { 'Cache-Control': 'no-store' },
+      });
+    }
+    // action === 'fetch'
+    const out: Record<string, AIForwardGuidance | null> = {};
+    await Promise.all(tickers.map(async t => {
+      try {
+        const cached = await kvGet<AIForwardGuidance>(buildCacheKey(t, period));
+        out[t] = (cached && isValidGuidanceObject(cached)) ? cached : null;
+      } catch { out[t] = null; }
+    }));
+    return NextResponse.json({ results: out, server_versions: { schema: SCHEMA_VERSION, prompt: PROMPT_VERSION, parser: PARSER_VERSION } }, {
+      headers: { 'Cache-Control': 'no-store' },
+    });
+  }
+
+  // ── Original single-ticker probe ──
   const ticker = (url.searchParams.get('ticker') || '').toUpperCase();
   const period = url.searchParams.get('period') || 'unknown';
-  if (!ticker) return NextResponse.json({ error: 'ticker query required' }, { status: 400 });
-  // Reuse POST flow with one item
+  if (!ticker) return NextResponse.json({ error: 'ticker query required, or use ?action=status / ?action=fetch' }, { status: 400 });
   const fakeReq = {
     json: async () => ({ items: [{ ticker, period }], force: url.searchParams.get('force') === '1' }),
   } as NextRequest;
