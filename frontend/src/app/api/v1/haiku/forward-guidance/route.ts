@@ -131,7 +131,8 @@ export type PdfQuality =
 // ISSUE #10 — Validator. Cached objects (server or client localStorage) can
 // be partially migrated, schema-mismatched, or truncated. Trust nothing on
 // hydrate — always validate before using as the source of truth.
-export function isValidGuidanceObject(v: unknown): v is AIForwardGuidance {
+// NOT exported: Next.js route files only allow GET/POST/etc. as runtime exports.
+function isValidGuidanceObject(v: unknown): v is AIForwardGuidance {
   if (!v || typeof v !== 'object') return false;
   const o = v as Record<string, unknown>;
   if (!['Positive', 'Neutral', 'Negative', 'NoGuidance'].includes(o.label as string)) return false;
