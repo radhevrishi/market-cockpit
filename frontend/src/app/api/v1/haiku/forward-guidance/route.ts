@@ -419,9 +419,31 @@ export async function POST(req: NextRequest) {
       //    candidate is a notice/intimation — skip Haiku to save cost).
       const lookup = await findConcallPdfUrl(T);
       if (lookup.url === null) {
+        if (lookup.diag.outcome === 'intimation-only') {
+          // PATCH 0951a — return a synthetic NoGuidance result so the dashboard
+          // chip flips to grey "No fwd guidance — only intimation filed" and
+          // OVERWRITES any stale Haiku output cached from earlier runs that
+          // used to call Haiku on intimation PDFs and got Neutral 0.00.
+          const noGuidance: AIForwardGuidance = {
+            label: 'NoGuidance',
+            score: 0,
+            confidence: 'HIGH',
+            rationale: 'Only intimation/notice PDFs filed on NSE — no transcript content yet to extract. Try again after the company uploads the actual transcript.',
+            quotes: [],
+            numbers: [],
+            catalysts: [],
+            source: 'press-release',
+            source_filename: lookup.diag.filename,
+            period: P,
+            extracted_at: new Date().toISOString(),
+          };
+          results[T] = noGuidance;
+          stats.intimation_only++;
+          diagnostics.push(lookup.diag);
+          return;
+        }
         results[T] = null;
-        if (lookup.diag.outcome === 'intimation-only') stats.intimation_only++;
-        else stats.missing_pdf++;
+        stats.missing_pdf++;
         diagnostics.push(lookup.diag);
         return;
       }

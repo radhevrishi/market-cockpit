@@ -356,9 +356,6 @@ function GuidanceBadge({ guidance, score, ai }: { guidance?: string; score?: num
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}>
             {topNumber}
-            {ai.numbers && ai.numbers.length > 1 && (
-              <span style={{ color: TEXT_DIM, marginLeft: '4px', fontWeight: 500 }}>+{ai.numbers.length - 1} more</span>
-            )}
           </span>
         )}
       </span>
@@ -1102,6 +1099,76 @@ function EarningsCardComponent({ card, postGap, ai }: { card: EarningsScanCard; 
             <GuidanceBadge guidance={card.guidance} score={card.sentimentScore} ai={ai} />
             <DivergenceBadge divergence={card.divergence} />
           </div>
+          {/* PATCH 0951b — Institutional brief. When AI Forward Guidance has
+              extracted hard numbers or catalysts, render them all visibly here
+              so the user reads the whole brief without hovering. Tooltip
+              remains as a backup but the chip face + this panel together =
+              a complete card-level read. */}
+          {ai && ((ai.numbers && ai.numbers.length > 0) || (ai.catalysts && ai.catalysts.length > 0)) && (
+            <div style={{
+              marginTop: '6px', marginBottom: '6px',
+              padding: '8px 10px', borderRadius: '6px',
+              backgroundColor: '#7C3AED10', border: '1px solid #7C3AED30',
+              borderLeft: '3px solid #7C3AED',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                <span style={{ fontSize: '9px', color: '#C4B5FD', fontWeight: 700, letterSpacing: '0.5px' }}>
+                  🤖 AI FORWARD GUIDANCE
+                </span>
+                <span style={{ fontSize: '9px', color: TEXT_DIM, fontWeight: 500 }}>
+                  {ai.confidence} confidence · {ai.source}{ai.source_filename ? ` · ${ai.source_filename}` : ''}
+                </span>
+              </div>
+              {ai.rationale && (
+                <div style={{ fontSize: '11px', color: TEXT, marginBottom: '6px', lineHeight: 1.45 }}>
+                  {ai.rationale}
+                </div>
+              )}
+              {ai.numbers && ai.numbers.length > 0 && (
+                <div style={{ marginBottom: ai.catalysts && ai.catalysts.length > 0 ? '6px' : 0 }}>
+                  <div style={{ fontSize: '8px', color: TEXT_DIM, fontWeight: 700, letterSpacing: '0.4px', marginBottom: '3px' }}>NUMBERS</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    {ai.numbers.map((n, i) => (
+                      <div key={`n${i}`} style={{ fontSize: '10.5px', color: '#E6EDF3', display: 'flex', gap: '6px', alignItems: 'baseline' }}>
+                        <span style={{ color: '#34D399', fontWeight: 700, flexShrink: 0 }}>📊</span>
+                        <span style={{ color: TEXT_DIM }}>{n.metric}:</span>
+                        <span style={{ color: '#34D399', fontWeight: 700 }}>{n.value}</span>
+                        {n.period && <span style={{ color: TEXT_DIM, fontSize: '9.5px' }}>({n.period})</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {ai.catalysts && ai.catalysts.length > 0 && (
+                <div>
+                  <div style={{ fontSize: '8px', color: TEXT_DIM, fontWeight: 700, letterSpacing: '0.4px', marginBottom: '3px' }}>CATALYSTS</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    {ai.catalysts.map((c, i) => (
+                      <div key={`c${i}`} style={{ fontSize: '10.5px', color: '#E6EDF3', display: 'flex', gap: '6px', alignItems: 'baseline' }}>
+                        <span style={{ color: '#F59E0B', fontWeight: 700, flexShrink: 0 }}>🗓</span>
+                        <span>{c.event}</span>
+                        {c.timing && <span style={{ color: '#F59E0B', fontWeight: 700, fontSize: '9.5px' }}>({c.timing})</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {ai.quotes && ai.quotes.length > 0 && (
+                <details style={{ marginTop: '6px' }}>
+                  <summary style={{ fontSize: '9px', color: '#C4B5FD', fontWeight: 700, letterSpacing: '0.4px', cursor: 'pointer' }}>
+                    {ai.quotes.length} VERBATIM QUOTES ▾
+                  </summary>
+                  <div style={{ marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    {ai.quotes.map((q, i) => (
+                      <div key={`q${i}`} style={{ fontSize: '10px', color: TEXT_DIM, fontStyle: 'italic', borderLeft: '2px solid #7C3AED40', paddingLeft: '8px', lineHeight: 1.4 }}>
+                        “{q}”
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+            </div>
+          )}
           <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '4px' }}>
             <OutlookPill label="Revenue" value={card.revenueOutlook} />
             <OutlookPill label="Margins" value={card.marginOutlook} />
