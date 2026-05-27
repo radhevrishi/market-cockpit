@@ -563,6 +563,40 @@ If "numbers" array would be empty, omit hard numbers in the rationale too — sa
   }
 }
 
+// PATCH 0957 — Server-side in-flight dedup for the Haiku extraction step.
+// Without this, two concurrent identical requests (user double-clicks, two
+// browser tabs open, retry storm during deploy, etc.) BOTH check cache
+// (miss), BOTH do PDF lookup, BOTH call Haiku — duplicate $ for the same
+// data. The Map keys on the same string as the KV cache so the dedup
+// is bulletproof across periods/quarters too. Force=true bypasses dedup
+// because force is explicit re-extraction intent.
+const _haikuInFlight = new Map<string, Promise<AIForwardGuidance | { __budgetExceeded: true } | null>>();
+
+async function extractForwardGuidanceDedup(
+  ticker: string,
+  pdfText: string,
+  source: AIForwardGuidance['source'],
+  sourceUrl: string,
+  sourceFilename: string,
+  period: string,
+  apiKey: string,
+  force: boolean,
+): Promise<AIForwardGuidance | { __budgetExceeded: true } | null> {
+  // force=true means user explicitly wants a fresh call; don't share.
+  if (force) return extractForwardGuidance(ticker, pdfText, source, sourceUrl, sourceFilename, period, apiKey) as any;
+  const key = `haiku-fg:v2:${ticker.toUpperCase()}:${period}`;
+  const existing = _haikuInFlight.get(key);
+  if (existing) {
+    console.log(`[FG-DIAG] dedup hit for ${ticker} (${period}) — sharing in-flight Haiku call`);
+    return existing;
+  }
+  const p = (extractForwardGuidance(ticker, pdfText, source, sourceUrl, sourceFilename, period, apiKey) as any) as Promise<AIForwardGuidance | { __budgetExceeded: true } | null>;
+  _haikuInFlight.set(key, p);
+  // Cleanup on resolve/reject — keep in-flight only during active call.
+  p.finally(() => _haikuInFlight.delete(key));
+  return p;
+}
+
 // ─── POST handler ──────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -662,8 +696,10 @@ export async function POST(req: NextRequest) {
         return;
       }
 
-      // 4) Haiku extract — with one-shot retry inside (P0956).
-      const fg = await extractForwardGuidance(T, pdfText, lookup.source, lookup.url, lookup.filename, P, apiKey);
+      // 4) Haiku extract — with one-shot retry inside (P0956) and
+      //    server-side in-flight dedup (P0957) so concurrent identical
+      //    requests don't bill Haiku twice for the same ticker+period.
+      const fg = await extractForwardGuidanceDedup(T, pdfText, lookup.source, lookup.url, lookup.filename, P, apiKey, force);
       // PATCH 0956 — budget-exceeded sentinel from extractForwardGuidance
       if (fg && (fg as any).__budgetExceeded) {
         results[T] = null;
@@ -678,11 +714,13 @@ export async function POST(req: NextRequest) {
         return;
       }
 
-      // 5) Cache + return
+      // 5) Cache + return — narrow type (we already returned above for the
+      // budget-exceeded sentinel and the null case).
+      const fgGuidance = fg as AIForwardGuidance;
       if (isRedisAvailable()) {
-        try { await kvSet(key, fg, CACHE_TTL_S); } catch {}
+        try { await kvSet(key, fgGuidance, CACHE_TTL_S); } catch {}
       }
-      results[T] = fg;
+      results[T] = fgGuidance;
       stats.extracted++;
       // PATCH 0953 — also track that Screener.in fallback rescued this ticker
       // (NSE had nothing, Screener.in had the real transcript). Visible in
