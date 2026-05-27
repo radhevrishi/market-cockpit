@@ -540,6 +540,22 @@ const ORDER_KEYWORDS = [
   'platform launch', 'technology upgrade', 'digital transformation',
   'global expansion', 'international market', 'export order',
   'market share gain', 'category leader', 'market leadership',
+  // PATCH 0937 — earnings / results terms (CRITICAL: the entire Q4 results
+  // pipeline was being silently dropped because the materiality filter
+  // had no terms matching 'Audited Financial Results' / 'Quarterly Results'
+  // / 'Half-year results' — which is the bulk of NSE filings during May.
+  // User-reported as 'universe big but signals few'. Without these, ~95%
+  // of Q4 filings get filtered out at the keyword gate before scoring.
+  'financial results', 'audited results', 'audited financial', 'unaudited results',
+  'quarterly results', 'quarterly financial', 'half-year results', 'half year results',
+  'annual results', 'consolidated results', 'standalone results',
+  'earnings', 'q1 results', 'q2 results', 'q3 results', 'q4 results',
+  'results for', 'results of', 'results for the quarter',
+  'profit', 'pat', 'profit after tax', 'pbt', 'profit before tax',
+  'revenue', 'topline', 'net revenue', 'total income', 'turnover',
+  'ebitda', 'ebit', 'operating profit', 'operating margin', 'opm',
+  'eps', 'earnings per share',
+  'concall', 'earnings call', 'investor presentation',
 ];
 
 const NOISE_PATTERNS = [
@@ -3155,7 +3171,12 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   const trackedSet = new Set(allTracked.map(s => s.toUpperCase().trim()));
   const shouldFilterToTracked = allTracked.length > 0;
 
-  // Filter announcements, then cap at 100 most recent to stay within 55s Vercel limit
+  // PATCH 0937 — cap raised 100 → 250. With the earnings keyword fix
+  // above, Q4 season floods the material list with ~200-300 results
+  // filings per day. Cap of 100 was choking the pipeline. Scoring is
+  // ~30-50ms per item so 250 ≈ 12s extra wall-clock, well within the
+  // 55s Vercel limit.
+  // Filter announcements, then cap at 250 most recent.
   const filteredAnnAll = allAnnouncements.filter(item => {
     if (!item.symbol || (!item.desc && !item.subject)) return false;
     const sym = (item.symbol || '').toUpperCase().trim();
@@ -3177,9 +3198,9 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   // Sort by date descending and cap at 100 to avoid timeout
   const filteredAnn = filteredAnnAll
     .sort((a, b) => new Date(b.date || '').getTime() - new Date(a.date || '').getTime())
-    .slice(0, 100);
-  if (filteredAnnAll.length > 100) {
-    console.log(`[Compute] Capped announcements: ${filteredAnnAll.length} → 100 (most recent)`);
+    .slice(0, 250);
+  if (filteredAnnAll.length > 250) {
+    console.log(`[Compute] Capped announcements: ${filteredAnnAll.length} → 250 (most recent)`);
   }
 
   debug.nseMaterial = filteredAnn.filter(a => a._source === 'nse').length;
