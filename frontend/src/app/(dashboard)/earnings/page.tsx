@@ -219,21 +219,65 @@ function SourceBadge({ source, confidence }: { source?: string; confidence?: num
   );
 }
 
-function GuidanceBadge({ guidance, score }: { guidance?: string; score?: number }) {
-  if (!guidance) return null;
+// PATCH 0948 — Derive a stable cache period like "Q4-FY26" from the card's
+// "period" string (typically "Mar 2026" / "Jun 2025" / etc — Screener.in
+// publishes quarter-end month + year). Indian FY convention: Apr→Mar.
+function deriveCachePeriod(periodStr: string | undefined): string {
+  if (!periodStr) return 'unknown';
+  const m = String(periodStr).trim().match(/^(\w{3})\s+(\d{4})$/);
+  if (!m) return 'unknown';
+  const month = m[1].toUpperCase();
+  const year = parseInt(m[2], 10);
+  const Q = ({ MAR: 'Q4', JUN: 'Q1', SEP: 'Q2', DEC: 'Q3' } as Record<string, string>)[month];
+  if (!Q) return 'unknown';
+  // FY26 = Apr 2025 → Mar 2026. So Mar 2026 → FY26 = year % 100. Jun/Sep/Dec
+  // of YEAR fall in FY(YEAR+1) since they precede the next March.
+  const fy = Q === 'Q4' ? (year % 100) : ((year + 1) % 100);
+  return `${Q}-FY${fy.toString().padStart(2, '0')}`;
+}
+
+// PATCH 0948 — AI Forward Guidance interface shared with the server endpoint.
+export interface AIForwardGuidance {
+  label: 'Positive' | 'Neutral' | 'Negative';
+  score: number;
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+  rationale: string;
+  quotes: string[];
+  source: 'concall-transcript' | 'investor-presentation' | 'press-release';
+  source_url?: string;
+  period: string;
+  extracted_at: string;
+}
+
+function GuidanceBadge({ guidance, score, ai }: { guidance?: string; score?: number; ai?: AIForwardGuidance | null }) {
+  // PATCH 0948 — When AI Forward Guidance is present, OVERRIDE the Screener-derived
+  // label. The AI version is real forward statements from concall transcripts;
+  // the Screener version is just pros/cons keyword scoring. Honestly label which
+  // one is being shown so the user can trust what they're reading.
+  const useAI = !!ai;
+  const labelText = useAI ? ai!.label : guidance;
+  const scoreNum = useAI ? ai!.score : score;
+  if (!labelText) return null;
   const cfg: Record<string, { color: string; icon: string }> = {
     'Positive': { color: '#10B981', icon: '▲' },
     'Neutral': { color: '#F59E0B', icon: '●' },
     'Negative': { color: '#EF4444', icon: '▼' },
   };
-  const c = cfg[guidance] || cfg['Neutral'];
+  const c = cfg[labelText] || cfg['Neutral'];
+  const sourceLabel = useAI ? 'Forward Guidance' : 'Screener Signal';
+  const tooltip = useAI && ai
+    ? `Forward Guidance (AI · ${ai.confidence} confidence · ${ai.source})\n${ai.rationale}${ai.quotes.length > 0 ? '\n\nQuotes:\n• ' + ai.quotes.join('\n• ') : ''}`
+    : 'Screener pros/cons keyword score — historical balance-sheet signals, NOT forward guidance.';
   return (
-    <span style={{
+    <span title={tooltip} style={{
       display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '10px',
       padding: '2px 7px', borderRadius: '4px',
-      backgroundColor: `${c.color}18`, border: `1px solid ${c.color}40`, color: c.color, fontWeight: 600,
+      backgroundColor: `${c.color}18`, border: `1px solid ${c.color}${useAI ? '70' : '40'}`,
+      color: c.color, fontWeight: 600,
+      // AI badges get a subtle glow so the user can see they're trusting real concall extract
+      boxShadow: useAI ? `0 0 0 1px ${c.color}30` : undefined,
     }}>
-      {c.icon} {guidance}{score !== undefined ? ` (${score > 0 ? '+' : ''}${score.toFixed(2)})` : ''}
+      {useAI ? '🤖' : ''}{c.icon} {sourceLabel}: {labelText}{scoreNum !== undefined ? ` (${scoreNum > 0 ? '+' : ''}${scoreNum.toFixed(2)})` : ''}
     </span>
   );
 }
@@ -768,7 +812,7 @@ const COMMENTARY_COLORS: Record<CommentarySignal, { bg: string; border: string; 
 // CARD COMPONENT
 // ══════════════════════════════════════════════
 
-function EarningsCardComponent({ card, postGap }: { card: EarningsScanCard; postGap?: { gap_pct: number | null; close_move_pct: number | null; live_move_pct: number | null; is_live: boolean; target_date: string | null; filing_date?: string; filing_date_source?: 'explicit' | 'kv-calendar' | 'detected' } }) {
+function EarningsCardComponent({ card, postGap, ai }: { card: EarningsScanCard; postGap?: { gap_pct: number | null; close_move_pct: number | null; live_move_pct: number | null; is_live: boolean; target_date: string | null; filing_date?: string; filing_date_source?: 'explicit' | 'kv-calendar' | 'detected' }; ai?: AIForwardGuidance | null }) {
   const tagColor = card.universeTag === 'portfolio' ? '#10B981' : card.universeTag === 'both' ? '#8B5CF6' : card.universeTag === 'screener' ? '#F59E0B' : ACCENT;
   const tagLabel = card.universeTag === 'portfolio' ? 'PORTFOLIO' : card.universeTag === 'both' ? 'BOTH' : card.universeTag === 'screener' ? 'SCREENER' : 'WATCHLIST';
 
@@ -953,7 +997,7 @@ function EarningsCardComponent({ card, postGap }: { card: EarningsScanCard; post
         <div style={{ padding: '8px 16px 10px', borderTop: `1px solid ${CARD_BORDER}`, backgroundColor: `${HEADER_BG}30` }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '6px' }}>
             <span style={{ fontSize: '10px', color: TEXT_DIM, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px' }}>Guidance</span>
-            <GuidanceBadge guidance={card.guidance} score={card.sentimentScore} />
+            <GuidanceBadge guidance={card.guidance} score={card.sentimentScore} ai={ai} />
             <DivergenceBadge divergence={card.divergence} />
           </div>
           <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '4px' }}>
@@ -1122,6 +1166,19 @@ export default function EarningsPage() {
     const d = new Date(); d.setDate(d.getDate() - 60);
     return d.toISOString().slice(0, 10);
   });
+  // PATCH 0948 — AI Forward Guidance state.
+  // Map of ticker -> AIForwardGuidance, loaded from localStorage on mount,
+  // mutated by the "AI Guidance" button. Persists quarter-stable so a
+  // refresh-all only re-fetches when user explicitly forces.
+  const [aiGuidance, setAiGuidance] = useState<Record<string, AIForwardGuidance>>(() => {
+    if (typeof window === 'undefined') return {};
+    try {
+      const raw = localStorage.getItem('mc:ai-fg:v1');
+      return raw ? (JSON.parse(raw) || {}) : {};
+    } catch { return {}; }
+  });
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiStats, setAiStats] = useState<{ cached: number; extracted: number; missing_pdf: number; llm_failed: number; total: number } | null>(null);
   const [dateTo, setDateTo] = useState(() => new Date().toISOString().slice(0, 10));
   const [guidanceFilter, setGuidanceFilter] = useState<'ALL' | 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL'>('ALL'); // Filter by forward guidance sentiment
   // PATCH 0207 — Day-1 close threshold filter. Multi-select with OR semantics.
@@ -1495,6 +1552,52 @@ export default function EarningsPage() {
   }, [screenerLoaded, portfolioSymbols, watchlistSymbols]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // PATCH 0948 — AI Forward Guidance fetcher.
+  // Builds the qualifying-set from CURRENT filteredCards (post-filter, so
+  // user's date / grade / 1D filters all narrow what gets billed),
+  // restricts to EXCELLENT/STRONG with D1 close >= +2% (only spend Haiku
+  // budget on prints the market already validated), POSTs to the
+  // server endpoint, merges results into aiGuidance state + LS.
+  //
+  // force=true → bypass server-side KV cache, re-extract from scratch.
+  const fetchAIGuidance = useCallback(async (qualifyingCards: EarningsScanCard[], force: boolean) => {
+    if (qualifyingCards.length === 0) return;
+    setAiLoading(true);
+    setAiStats(null);
+    try {
+      const items = qualifyingCards.map(c => ({
+        ticker: c.symbol,
+        period: deriveCachePeriod(c.period),
+      }));
+      const res = await fetch('/api/v1/haiku/forward-guidance', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ items, force }),
+        signal: AbortSignal.timeout(55_000),
+      });
+      if (!res.ok) {
+        console.warn('[AI Guidance] HTTP', res.status);
+        return;
+      }
+      const json = await res.json();
+      const newResults: Record<string, AIForwardGuidance> = json?.results || {};
+      setAiStats(json?.stats || null);
+      // Merge into state + LS
+      setAiGuidance(prev => {
+        const next = { ...prev };
+        for (const [ticker, fg] of Object.entries(newResults)) {
+          if (fg && fg.label) next[ticker.toUpperCase()] = fg;
+        }
+        try { localStorage.setItem('mc:ai-fg:v1', JSON.stringify(next)); } catch {}
+        return next;
+      });
+    } catch (e) {
+      console.warn('[AI Guidance] fetch failed:', (e as Error).message);
+    } finally {
+      setAiLoading(false);
+    }
+  }, []);
 
   // PATCH 0352 — Lazy-load conviction-beats earnings cards. Fires once,
   // when the user first selects the 'conviction' universe or toggles
@@ -2269,6 +2372,35 @@ export default function EarningsPage() {
               <Download style={{ width: '14px', height: '14px' }} /> PDF
             </button>
           )}
+          {/* PATCH 0948 — AI Forward Guidance button. Counts qualifying cards
+              (EX/ST + d1 >= +2%) from filtered view. Shift-click force-refreshes
+              even cached results. Quarter-stable cache means same period never
+              re-bills Haiku. */}
+          {(() => {
+            const qualifying = filteredCards.filter(c => {
+              const g = c.grade;
+              if (g !== 'EXCELLENT' && g !== 'STRONG') return false;
+              const gap = gapMap[c.symbol];
+              const d1 = gap?.close_move_pct ?? null;
+              return typeof d1 === 'number' && d1 >= 2;
+            });
+            if (qualifying.length === 0) return null;
+            return (
+              <button
+                onClick={(e) => fetchAIGuidance(qualifying, e.shiftKey)}
+                disabled={aiLoading}
+                title={`AI Forward Guidance — extracts real concall statements via Haiku for ${qualifying.length} EXCELLENT/STRONG cards with D1 >= +2%. Quarter-cached so same period won't re-bill. Shift-click to force-refresh.`}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '6px',
+                  backgroundColor: aiLoading ? '#1A2540' : '#7C3AED', border: 'none', color: '#fff',
+                  padding: '8px 14px', borderRadius: '6px',
+                  cursor: aiLoading ? 'not-allowed' : 'pointer',
+                  fontSize: '12px', fontWeight: 700, opacity: aiLoading ? 0.6 : 1,
+                }}>
+                {aiLoading ? '🤖 Extracting…' : `🤖 AI Guidance — ${qualifying.length}`}
+              </button>
+            );
+          })()}
           <button onClick={() => fetchData(true)} disabled={loading} style={{
             backgroundColor: ACCENT, border: 'none', color: '#000',
             padding: '8px 16px', borderRadius: '6px', cursor: loading ? 'not-allowed' : 'pointer',
@@ -2278,6 +2410,16 @@ export default function EarningsPage() {
           </button>
         </div>
       </div>
+      {/* PATCH 0948 — AI stats banner — shows what last AI run produced */}
+      {aiStats && (
+        <div style={{
+          padding: '6px 12px', marginTop: '6px', borderRadius: '6px',
+          backgroundColor: '#7C3AED12', border: '1px solid #7C3AED40',
+          color: '#C4B5FD', fontSize: '11px', fontWeight: 600,
+        }}>
+          🤖 AI Guidance: {aiStats.extracted} extracted · {aiStats.cached} from cache · {aiStats.missing_pdf} no concall PDF · {aiStats.llm_failed} LLM-failed · total {aiStats.total}
+        </div>
+      )}
 
       {/* Screener Loading State */}
       {viewMode === 'screener' && screenerLoading && (
@@ -2470,7 +2612,7 @@ export default function EarningsPage() {
           gap-aware filters) compose with the rest of the filter pipeline. */}
       {!loading && !error && filteredCards.length > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: '16px' }}>
-          {filteredCards.map(card => <EarningsCardComponent key={card.symbol} card={card} postGap={gapMap[card.symbol]} />)}
+          {filteredCards.map(card => <EarningsCardComponent key={card.symbol} card={card} postGap={gapMap[card.symbol]} ai={aiGuidance[card.symbol.toUpperCase()] || null} />)}
         </div>
       )}
 
