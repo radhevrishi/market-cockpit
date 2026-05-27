@@ -82,6 +82,36 @@ async function refreshCookies(): Promise<string> {
 // the same path is still within the 90s window, return null immediately
 // without hitting NSE. Otherwise the upstream call runs under an
 // in-flight dedup so N concurrent callers share one fetch.
+// PATCH 0935 — Cloudflare Worker fast-path for Financial Results.
+// NSE blocks Vercel's egress IP intermittently (today's symptom: Earnings Hub
+// shows 0 cards because nseApiFetch('/api/corporate-announcements?…&sub_category=Financial%20Results')
+// times out). The CF Worker runs on a stable IP NSE doesn't block, scrapes
+// the same Financial Results endpoint every 5 min, and serves it via KV.
+// Vercel reads from there first; falls through to the direct NSE call when
+// the CF Worker doesn't have the data (cold cache, new query, etc).
+const CF_WORKER_URL = process.env.CF_WORKER_URL || 'https://mc-scraper.radhev-232.workers.dev';
+
+function isFinancialResultsPath(path: string): boolean {
+  return /\/api\/corporate-announcements[^?]*\?[^#]*sub_category=Financial%20Results/i.test(path);
+}
+
+async function tryCFWorkerResults(): Promise<any[] | null> {
+  try {
+    const res = await fetch(`${CF_WORKER_URL}/api/results/latest`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    const results = (json && Array.isArray(json.results)) ? json.results : null;
+    if (!results || results.length === 0) return null;
+    // CF Worker returns normalized filings with `raw` preserved — expose `raw`
+    // so the rest of the pipeline sees the same shape it would from NSE direct.
+    return results.map((r: any) => r.raw || r);
+  } catch {
+    return null;
+  }
+}
+
 export async function nseApiFetch(path: string, cacheTtl = 60000): Promise<any> {
   const cacheKey = `nse:${path}`;
 
@@ -90,7 +120,28 @@ export async function nseApiFetch(path: string, cacheTtl = 60000): Promise<any> 
   if (cached) return cached;
 
   // 2) Negative cache — short-circuit a recent failure.
-  if (negCacheCheck(cacheKey)) return null;
+  if (negCacheCheck(cacheKey)) {
+    // PATCH 0935 — even when NSE is in negative-cache (blocked Vercel IP),
+    // we can still serve Financial Results from the CF Worker fast-path.
+    if (isFinancialResultsPath(path)) {
+      const cf = await tryCFWorkerResults();
+      if (cf && cf.length > 0) return cf;
+    }
+    return null;
+  }
+
+  // 3) Financial Results — try CF Worker BEFORE hitting NSE directly.
+  // CF Worker is sub-100ms and runs on a stable IP. If the worker has fresh
+  // data, this short-circuits the NSE call entirely and skips the cookie
+  // refresh + 10s timeout entirely.
+  if (isFinancialResultsPath(path)) {
+    const cf = await tryCFWorkerResults();
+    if (cf && cf.length > 0) {
+      setCache(cacheKey, cf);
+      return cf;
+    }
+    // Fall through to direct NSE call if CF Worker is empty.
+  }
 
   // 3) Dedup any concurrent miss — share a single upstream promise.
   return dedupedCall(cacheKey, async () => {
