@@ -667,18 +667,40 @@ async function fetchIndianDataWithCache() {
         // Lower threshold from 100 to 30 — partial result is better than NIFTY-50
         // last-resort which is also Yahoo-dependent.
         if (mergedStocks.length >= 30) {
-          // PATCH 0936 — exclude staleEOD rows from gainers/losers during
-          // Indian market hours. Without this, smallcaps not in Yahoo's
-          // top-500 coverage show YESTERDAY's change% as today's intraday
-          // move (the INDORAMA +20% bug — user-confirmed: was -1.93% on
-          // Yahoo, but BHAVCOPY's "yesterday close vs day-before close" was
-          // being presented as today). After-hours, BHAVCOPY IS today's so
-          // we keep them in the ranking.
+          // ════════════════════════════════════════════════════════════════
+          // PATCH 0963 — Strict staleness gate (INDORAMA +20% regression fix).
+          //
+          // P0936 (morning fix) only filtered staleEOD rows DURING market
+          // hours, with the reasoning "after-hours, BHAVCOPY IS today's so
+          // we keep them in the ranking." That assumption is WRONG between
+          // 15:30 IST (market close) and ~19:00 IST (NSE's BHAVCOPY publish
+          // time). In that window:
+          //   - Market is closed → P0936 filter is OFF
+          //   - NSE hasn't yet published today's BHAVCOPY
+          //   - Worker's blob still contains YESTERDAY's closes
+          //   - INDORAMA's "+20%" is Tuesday's session change, displayed as
+          //     "Wednesday's close" — exactly the bug the user re-reported.
+          //
+          // Also true on:
+          //   - Weekends/holidays when blob is from Friday
+          //   - Window where worker hasn't yet refreshed even after NSE publish
+          //
+          // We CANNOT reliably detect "blob.data is from today's session"
+          // because blob.generatedAt is when the worker RAN, not what
+          // trading day the data represents. There's no per-row tradingDate.
+          //
+          // SAFE RULE: always exclude staleEOD rows from gainers/losers
+          // ranking. A row only enters the ranking if it has independent
+          // freshness verification (Yahoo). The full `stocks` array still
+          // contains all rows so sector views / search are unaffected.
+          // Trade-off: smallcaps without Yahoo coverage don't appear in
+          // /movers — but they were the ones causing the bug, and "top
+          // movers" should be verifiable anyway.
+          // ════════════════════════════════════════════════════════════════
           const { isIndianMarketOpen } = await import('@/lib/market-hours');
           const marketOpen = isIndianMarketOpen();
-          const liveOnly = marketOpen
-            ? mergedStocks.filter((s: any) => !s.staleEOD)
-            : mergedStocks;
+          const liveOnly = mergedStocks.filter((s: any) => !s.staleEOD);
+          const hiddenStaleCount = mergedStocks.length - liveOnly.length;
           const gainers = [...liveOnly].sort((a, b) => b.changePercent - a.changePercent).filter((s: any) => s.changePercent > 0).slice(0, 30);
           const losers  = [...liveOnly].sort((a, b) => a.changePercent - b.changePercent).filter((s: any) => s.changePercent < 0).slice(0, 30);
           return {
@@ -691,11 +713,12 @@ async function fetchIndianDataWithCache() {
               losersCount: losers.length,
               avgChange: mergedStocks.length ? mergedStocks.reduce((s: number, x: any) => s + (x.changePercent || 0), 0) / mergedStocks.length : 0,
               sectors: new Set(mergedStocks.map((s: any) => s.sector)).size,
-              // PATCH 0936 — surface how many rows were hidden because of staleness
-              staleEODHidden: marketOpen ? mergedStocks.filter((s: any) => s.staleEOD).length : 0,
+              // PATCH 0963 — staleEODHidden now always reflects the count,
+              // since the filter is always on regardless of market hours.
+              staleEODHidden: hiddenStaleCount,
             },
             marketHours: { indianOpen: marketOpen },
-            source: `NSE-universe (KV ${universeAgeStr}) + BHAVCOPY/${universeBlob.pricedCount || 0} + Yahoo/${yahooMap.size} + P0936 staleEOD-filter ${marketOpen ? 'ACTIVE' : 'OFF'}`,
+            source: `NSE-universe (KV ${universeAgeStr}) + BHAVCOPY/${universeBlob.pricedCount || 0} + Yahoo/${yahooMap.size} + P0963 staleEOD-filter ALWAYS-ON (hid ${hiddenStaleCount} BHAVCOPY-only rows from movers)`,
             updatedAt: new Date().toISOString(),
           };
         }
