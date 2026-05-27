@@ -1219,11 +1219,22 @@ export default function EarningsPage() {
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [dateTo, setDateTo] = useState(() => new Date().toISOString().slice(0, 10));
   const [guidanceFilter, setGuidanceFilter] = useState<'ALL' | 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL'>('ALL'); // Filter by forward guidance sentiment
-  // PATCH 0949 — AI-tier filter chip. Lets the user narrow the card grid to AI-EXCELLENT/POSITIVE
-  // (or any tier) after running AI Guidance, so the great prints are visually separable from
-  // the also-rans without scrolling all 32 cards. EXTRACTED_ONLY = any AI-classified card.
-  type AIFilterMode = 'ALL' | 'EXTRACTED_ONLY' | 'EXCELLENT' | 'POSITIVE' | 'NEUTRAL' | 'CAUTIOUS' | 'NEGATIVE';
-  const [aiFilter, setAiFilter] = useState<AIFilterMode>('ALL');
+  // PATCH 0949/0950 — AI-tier filter. Multi-select OR semantics (like dayOneFilters)
+  // so the user can pin the grid to e.g. EXCELLENT + POSITIVE together, or
+  // NEGATIVE + CAUTIOUS to triage the at-risk prints. Empty set = no AI filter.
+  // EXTRACTED_ONLY is a meta-chip — when present in the set, only cards that
+  // have any AI guidance (regardless of tier) are kept; combines with tier
+  // chips by OR (so "EXTRACTED_ONLY + NEGATIVE" still includes every extracted
+  // card). Composes downstream of every other filter via filteredCards memo.
+  type AIFilterKey = 'EXTRACTED_ONLY' | 'EXCELLENT' | 'POSITIVE' | 'NEUTRAL' | 'CAUTIOUS' | 'NEGATIVE';
+  const [aiFilters, setAiFilters] = useState<Set<AIFilterKey>>(new Set());
+  const toggleAiFilter = (k: AIFilterKey) => {
+    setAiFilters(prev => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k); else next.add(k);
+      return next;
+    });
+  };
   // PATCH 0207 — Day-1 close threshold filter. Multi-select with OR semantics.
   // Empty set = no filter (show all cards regardless of close_move_pct).
   const [dayOneFilters, setDayOneFilters] = useState<Set<DayOneFilter>>(new Set());
@@ -1843,21 +1854,23 @@ export default function EarningsPage() {
   //    so every filter composes correctly.
   const gapMap = usePostGapData(sortedCards);
   const filteredCards = useMemo(() => {
-    // PATCH 0949 — compose Day-1 filter + AI-tier filter. AI filter is a no-op
-    // until the user runs AI Guidance (aiGuidance map is empty), so default UX
-    // is unchanged. EXTRACTED_ONLY shows any AI-classified card regardless of tier.
+    // PATCH 0949/0950 — compose Day-1 filter + AI multi-tier filter on top of
+    // sortedCards (which itself already encodes universe / grade / date / conviction
+    // / keyword-guidance filters). AI filter is a no-op until the user toggles
+    // any chip — so default UX is unchanged. Within the AI filter the chips OR
+    // together: a card passes if it matches ANY selected chip.
     const dayOneFiltered = dayOneFilters.size === 0
       ? sortedCards
       : sortedCards.filter(c => matchesDayOneFilter(gapMap[c.symbol], dayOneFilters));
-    if (aiFilter === 'ALL') return dayOneFiltered;
+    if (aiFilters.size === 0) return dayOneFiltered;
     return dayOneFiltered.filter(c => {
       const ai = aiGuidance[c.symbol.toUpperCase()];
-      if (!ai) return false;
-      if (aiFilter === 'EXTRACTED_ONLY') return true;
+      if (!ai) return false;                       // every chip requires AI present
+      if (aiFilters.has('EXTRACTED_ONLY')) return true;
       const t = aiTier(ai);
-      return t?.tier === aiFilter;
+      return !!t && aiFilters.has(t.tier as AIFilterKey);
     });
-  }, [sortedCards, gapMap, dayOneFilters, aiFilter, aiGuidance]);
+  }, [sortedCards, gapMap, dayOneFilters, aiFilters, aiGuidance]);
 
   // ── Visible cards: filtered by viewMode + date, but NOT grade ──
   // Used for summary counts so the grade buttons show accurate numbers.
@@ -2428,32 +2441,57 @@ export default function EarningsPage() {
               <Download style={{ width: '14px', height: '14px' }} /> PDF
             </button>
           )}
-          {/* PATCH 0949 — AI tier filter chip. Only shown once there's at least
-              one AI-classified card in state. Lets the user pin the grid to the
-              tier they care about (typically EXCELLENT or POSITIVE) so the
-              great prints are visually separated from the also-rans. */}
-          {Object.keys(aiGuidance).length > 0 && (
-            <select
-              value={aiFilter}
-              onChange={(e) => setAiFilter(e.target.value as AIFilterMode)}
-              title="Filter by AI Forward Guidance tier"
-              style={{
-                backgroundColor: aiFilter === 'ALL' ? '#1A2540' : '#7C3AED20',
-                border: `1px solid ${aiFilter === 'ALL' ? CARD_BORDER : '#7C3AED'}`,
-                color: aiFilter === 'ALL' ? TEXT : '#C4B5FD',
-                padding: '8px 10px', borderRadius: '6px',
-                fontSize: '12px', fontWeight: 700, cursor: 'pointer',
-              }}
-            >
-              <option value="ALL">🤖 AI: All</option>
-              <option value="EXTRACTED_ONLY">🤖 AI: Extracted only</option>
-              <option value="EXCELLENT">🚀 AI-Excellent</option>
-              <option value="POSITIVE">▲ AI-Positive</option>
-              <option value="NEUTRAL">● AI-Neutral</option>
-              <option value="CAUTIOUS">▽ AI-Cautious</option>
-              <option value="NEGATIVE">⚠ AI-Negative</option>
-            </select>
-          )}
+          {/* PATCH 0950 — AI tier filter chips (multi-select). Mirrors the Day-1
+              chip pattern: click a chip to add, click again to remove. Chips OR
+              together within the AI filter, then AND with every other filter
+              (universe, grade, date, conviction, Day-1, keyword Screener Signal).
+              Only rendered once at least one AI-classified card is in state so
+              the toolbar stays clean before the user runs AI Guidance. */}
+          {Object.keys(aiGuidance).length > 0 && (() => {
+            const AI_CHIPS: Array<{ key: AIFilterKey; label: string; color: string; icon: string }> = [
+              { key: 'EXTRACTED_ONLY', label: 'Extracted', color: '#7C3AED', icon: '🤖' },
+              { key: 'EXCELLENT',      label: 'Excellent', color: '#10B981', icon: '🚀' },
+              { key: 'POSITIVE',       label: 'Positive',  color: '#34D399', icon: '▲'  },
+              { key: 'NEUTRAL',        label: 'Neutral',   color: '#94A3B8', icon: '●'  },
+              { key: 'CAUTIOUS',       label: 'Cautious',  color: '#F59E0B', icon: '▽'  },
+              { key: 'NEGATIVE',       label: 'Negative',  color: '#EF4444', icon: '⚠'  },
+            ];
+            return (
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', paddingLeft: '8px', borderLeft: `1px solid ${CARD_BORDER}` }}>
+                <span style={{ fontSize: '10px', color: '#C4B5FD', fontWeight: 700, letterSpacing: '0.5px', marginRight: '4px' }}>AI:</span>
+                {AI_CHIPS.map(f => {
+                  const isActive = aiFilters.has(f.key);
+                  return (
+                    <button
+                      key={f.key}
+                      onClick={() => toggleAiFilter(f.key)}
+                      title={`AI ${f.label}${f.key === 'EXTRACTED_ONLY' ? ' — any AI-classified card' : ''} — toggle to combine`}
+                      style={{
+                        backgroundColor: isActive ? `${f.color}25` : CARD,
+                        border: `1px solid ${isActive ? f.color : CARD_BORDER}`,
+                        color: isActive ? f.color : TEXT_DIM,
+                        padding: '8px 9px', borderRadius: '6px', cursor: 'pointer',
+                        fontSize: '11px', fontWeight: 700,
+                      }}
+                    >{f.icon} {f.label}</button>
+                  );
+                })}
+                {aiFilters.size > 0 && (
+                  <button
+                    onClick={() => setAiFilters(new Set())}
+                    title="Clear AI filter"
+                    style={{
+                      backgroundColor: 'transparent',
+                      border: `1px solid ${CARD_BORDER}`,
+                      color: TEXT_DIM,
+                      padding: '8px 8px', borderRadius: '6px', cursor: 'pointer',
+                      fontSize: '10px', fontWeight: 600,
+                    }}
+                  >clear</button>
+                )}
+              </div>
+            );
+          })()}
           {/* PATCH 0948 — AI Forward Guidance button. Counts qualifying cards
               (EX/ST + d1 >= +2%) from filtered view. Shift-click force-refreshes
               even cached results. Quarter-stable cache means same period never
@@ -2492,10 +2530,74 @@ export default function EarningsPage() {
           </button>
         </div>
       </div>
-      {/* PATCH 0948/0949a — AI stats banner. P0949a adds "diagnostics" toggle
-          so the user can see per-ticker WHY each PDF/LLM step failed without
-          digging through Vercel logs. */}
-      {aiStats && (
+      {/* PATCH 0948/0949a/0950b — AI stats banner. When the run produces ZERO
+          extractions, the card grid won't change at all (every card falls back
+          to the keyword Screener Signal track) — so a thin purple strip is too
+          subtle and the user thinks 'nothing happened'. We escalate the banner
+          to a much louder red callout in that case, with an explicit 'no card
+          changed because...' message and the diagnostics toggle right there. */}
+      {aiStats && aiStats.extracted === 0 && aiStats.cached === 0 && (
+        <div style={{
+          padding: '14px 18px', marginTop: '10px', borderRadius: '8px',
+          backgroundColor: '#EF444415', border: '2px solid #EF4444',
+          color: '#FCA5A5', fontSize: '13px', fontWeight: 600,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
+            <span style={{ fontSize: '18px' }}>⚠</span>
+            <span style={{ fontSize: '14px', fontWeight: 800, color: '#FCA5A5', letterSpacing: '0.3px' }}>
+              AI GUIDANCE RAN — 0 OF {aiStats.total} TICKERS EXTRACTED
+            </span>
+          </div>
+          <div style={{ color: '#E6EDF3', fontSize: '12px', fontWeight: 500, marginBottom: '8px' }}>
+            Every card still shows the grey <span style={{ color: TEXT_DIM, fontWeight: 700 }}>Screener Signal</span> chip (keyword-derived, historical) — not the purple <span style={{ color: '#C4B5FD', fontWeight: 700 }}>🤖 AI Forward Guidance</span> chip. Reason breakdown:
+            <span style={{ marginLeft: '6px', color: '#F87171' }}>
+              {aiStats.missing_pdf > 0 ? `${aiStats.missing_pdf} no concall PDF` : ''}
+              {aiStats.llm_failed > 0 ? ` · ${aiStats.llm_failed} LLM failed` : ''}
+            </span>
+          </div>
+          {aiDiagnostics && aiDiagnostics.length > 0 && (
+            <button
+              onClick={() => setShowDiagnostics(s => !s)}
+              style={{
+                background: '#7C3AED', border: 'none', color: '#fff',
+                borderRadius: '6px', padding: '6px 12px',
+                fontSize: '12px', fontWeight: 700, cursor: 'pointer',
+              }}
+            >{showDiagnostics ? 'Hide' : 'Show'} per-ticker diagnostics ({aiDiagnostics.length})</button>
+          )}
+          {showDiagnostics && aiDiagnostics && (
+            <div style={{
+              marginTop: '10px', maxHeight: '300px', overflowY: 'auto',
+              backgroundColor: '#0B1426', border: '1px solid #7C3AED50', borderRadius: '6px',
+              padding: '8px 10px', fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+              fontSize: '11px', color: TEXT_DIM, fontWeight: 500,
+            }}>
+              {aiDiagnostics.map((d, i) => {
+                const outcomeColor =
+                  d.outcome === 'ok' && !d.stage ? '#10B981' :
+                  d.outcome === 'cf-error' ? '#EF4444' :
+                  '#F59E0B';
+                const label = d.stage ? `ok→${d.stage}` : d.outcome;
+                const detail =
+                  d.outcome === 'cf-error' ? d.error :
+                  d.outcome === 'no-filings' ? `seen ${d.total_filings_seen} filings, 0 for ticker` :
+                  d.outcome === 'no-attachment' ? `${d.ticker_filings} filings, 0 with attachment` :
+                  d.stage === 'pdf-empty' ? `extracted <200 chars from ${d.subject || d.url}` :
+                  d.stage === 'llm-failed' ? `Haiku returned no JSON for ${d.subject || d.url}` :
+                  `${d.matched_preference} · ${d.subject || ''}`;
+                return (
+                  <div key={i} style={{ display: 'grid', gridTemplateColumns: '90px 130px 1fr', gap: '8px', padding: '2px 0' }}>
+                    <span style={{ color: TEXT, fontWeight: 700 }}>{d.ticker}</span>
+                    <span style={{ color: outcomeColor, fontWeight: 700 }}>{label}</span>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{detail}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+      {aiStats && (aiStats.extracted > 0 || aiStats.cached > 0) && (
         <div style={{
           padding: '6px 12px', marginTop: '6px', borderRadius: '6px',
           backgroundColor: '#7C3AED12', border: '1px solid #7C3AED40',
@@ -2620,7 +2722,7 @@ export default function EarningsPage() {
           <span style={{ color: GREEN }}>● Full: {liveSummary.dataQualityBreakdown.full}</span>
           <span style={{ color: YELLOW }}>● Partial: {liveSummary.dataQualityBreakdown.partial}</span>
           <span style={{ color: RED }}>● Price Only: {liveSummary.dataQualityBreakdown.priceOnly}</span>
-          <span>Showing {filteredCards.length} of {visibleCards.length}{viewMode !== 'screener' && visibleCards.length < cards.length ? ` (${cards.length} total)` : ''}{viewMode === 'screener' ? ` (screener universe)` : ''}{dayOneFilters.size > 0 && filteredCards.length < sortedCards.length ? ` · 1d filter trimmed ${sortedCards.length - filteredCards.length}` : ''}</span>
+          <span>Showing {filteredCards.length} of {visibleCards.length}{viewMode !== 'screener' && visibleCards.length < cards.length ? ` (${cards.length} total)` : ''}{viewMode === 'screener' ? ` (screener universe)` : ''}{dayOneFilters.size > 0 && filteredCards.length < sortedCards.length ? ` · 1d filter trimmed ${sortedCards.length - filteredCards.length}` : ''}{aiFilters.size > 0 ? ` · AI filter (${Array.from(aiFilters).join(' OR ')}) active` : ''}</span>
           {/* Data completeness ratio.
               PATCH 0566 — BUG-AUDIT-11: previously divided viewCards by the
               UNIVERSE size (totalRequested) which produced "Data Quality:
@@ -2797,11 +2899,15 @@ export default function EarningsPage() {
             const culpritGrade = !filterGrades.includes('ALL');
             const culpritDayOne = dayOneFilters.size > 0 && sortedCards.length > 0;
             const culpritGuidance = guidanceFilter !== 'ALL';
+            // PATCH 0950 — recognize the AI filter as a possible culprit when
+            // a multi-filter combo over-trims the grid.
+            const culpritAi = aiFilters.size > 0;
             const reasons: string[] = [];
             if (culpritDate) reasons.push(`date range ${dateFrom || '—'} → ${dateTo || '—'}`);
             if (culpritGrade) reasons.push(`grade filter [${filterGrades.join(', ')}]`);
             if (culpritDayOne) reasons.push(`Day-1 close threshold`);
             if (culpritGuidance) reasons.push(`guidance = ${guidanceFilter}`);
+            if (culpritAi) reasons.push(`AI filter [${Array.from(aiFilters).join(' OR ')}]`);
             const reasonLine = reasons.length > 0 ? `Likely cause: ${reasons.join(' AND ')}` : 'Possibly the universe filter — none of your portfolio/watchlist symbols passed.';
             return (
               <>
@@ -2837,6 +2943,12 @@ export default function EarningsPage() {
                       onClick={() => setGuidanceFilter('ALL')}
                       style={{ padding: '8px 14px', background: '#8B5CF615', border: '1px solid #8B5CF660', color: '#8B5CF6', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
                     >Reset guidance → ALL</button>
+                  )}
+                  {culpritAi && (
+                    <button
+                      onClick={() => setAiFilters(new Set())}
+                      style={{ padding: '8px 14px', background: '#7C3AED15', border: '1px solid #7C3AED60', color: '#C4B5FD', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                    >Clear AI filter</button>
                   )}
                 </div>
               </>

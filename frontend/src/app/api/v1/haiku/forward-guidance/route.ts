@@ -63,84 +63,117 @@ export interface PdfLookupDiag {
   error?: string;
 }
 
+// PATCH 0950a — module-scoped in-memory cache for the 8 MB /api/results/latest
+// blob. Keeps a single fetch per AI-Guidance batch instead of re-fetching for
+// every ticker. 5-minute TTL so cron-refreshed worker data is still picked up
+// promptly. Race-safe via the in-flight Promise.
+let _filingsCache: { fetchedAt: number; data: CFFilingItem[] } | null = null;
+let _filingsInFlight: Promise<CFFilingItem[]> | null = null;
+const FILINGS_TTL_MS = 5 * 60 * 1000;
+
+async function loadAllFilings(): Promise<CFFilingItem[]> {
+  const now = Date.now();
+  if (_filingsCache && now - _filingsCache.fetchedAt < FILINGS_TTL_MS) {
+    return _filingsCache.data;
+  }
+  if (_filingsInFlight) return _filingsInFlight;
+  _filingsInFlight = (async () => {
+    try {
+      // PATCH 0950a — endpoint changed from /api/filings/latest (only the 20
+      // freshest NSE corporate-actions filings — none of our universe was
+      // ever in there) to /api/results/latest, which holds the worker's
+      // full ticker-indexed filings archive (~6.6k items / ~1.7k symbols).
+      const res = await fetch(`${CF_WORKER_URL}/api/results/latest`, { signal: AbortSignal.timeout(20_000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      const items: CFFilingItem[] = (json?.results || json?.filings || []);
+      _filingsCache = { fetchedAt: Date.now(), data: items };
+      return items;
+    } finally {
+      _filingsInFlight = null;
+    }
+  })();
+  return _filingsInFlight;
+}
+
 // ─── Step 1: Find latest concall PDF URL for a ticker ──────────────────────
 async function findConcallPdfUrl(ticker: string): Promise<
   | { url: string; source: AIForwardGuidance['source']; subject: string; diag: PdfLookupDiag }
   | { url: null; diag: PdfLookupDiag }
 > {
   const tkr = ticker.toUpperCase();
+  let filings: CFFilingItem[];
   try {
-    const res = await fetch(`${CF_WORKER_URL}/api/filings/latest`, { signal: AbortSignal.timeout(6000) });
-    if (!res.ok) {
-      const diag: PdfLookupDiag = { ticker: tkr, outcome: 'cf-error', error: `HTTP ${res.status}` };
-      console.warn('[FG-DIAG]', diag);
-      return { url: null, diag };
-    }
-    const json = await res.json();
-    const filings: CFFilingItem[] = (json?.filings || []);
-    const tickerFilings = filings.filter(f => (f.symbol || '').toUpperCase() === tkr);
-    const withAttachment = tickerFilings.filter(f => !!f.attachment_url);
-    if (tickerFilings.length === 0) {
-      const diag: PdfLookupDiag = {
-        ticker: tkr, outcome: 'no-filings',
-        total_filings_seen: filings.length, ticker_filings: 0,
-      };
-      console.warn('[FG-DIAG]', diag);
-      return { url: null, diag };
-    }
-    if (withAttachment.length === 0) {
-      const diag: PdfLookupDiag = {
-        ticker: tkr, outcome: 'no-attachment',
-        total_filings_seen: filings.length,
-        ticker_filings: tickerFilings.length,
-        ticker_with_attachment: 0,
-      };
-      console.warn('[FG-DIAG]', diag);
-      return { url: null, diag };
-    }
-    const ours = withAttachment.sort((a, b) => (b.filing_date || '').localeCompare(a.filing_date || ''));
-
-    const preferences: Array<{ re: RegExp; tag: 'transcript' | 'investor-presentation' | 'press-release' }> = [
-      { re: /transcript|earnings call|conference call|concall/i, tag: 'transcript' },
-      { re: /investor presentation|results presentation|q[1-4]\s+presentation/i, tag: 'investor-presentation' },
-      { re: /press release/i, tag: 'press-release' },
-    ];
-    for (const p of preferences) {
-      const match = ours.find(f => p.re.test(f.subject || ''));
-      if (match) {
-        const source: AIForwardGuidance['source'] =
-          p.tag === 'transcript' ? 'concall-transcript' :
-          p.tag === 'investor-presentation' ? 'investor-presentation' : 'press-release';
-        const diag: PdfLookupDiag = {
-          ticker: tkr, outcome: 'ok',
-          total_filings_seen: filings.length,
-          ticker_filings: tickerFilings.length,
-          ticker_with_attachment: ours.length,
-          matched_preference: p.tag,
-          subject: match.subject,
-          url: match.attachment_url!,
-        };
-        console.log('[FG-DIAG]', diag);
-        return { url: match.attachment_url!, source, subject: match.subject, diag };
-      }
-    }
-    // Fallback: freshest with any attachment (not in any preference bucket)
-    const diag: PdfLookupDiag = {
-      ticker: tkr, outcome: 'ok',
-      total_filings_seen: filings.length,
-      ticker_filings: tickerFilings.length,
-      ticker_with_attachment: ours.length,
-      matched_preference: 'fallback',
-      subject: ours[0].subject,
-      url: ours[0].attachment_url!,
-    };
-    console.log('[FG-DIAG]', diag);
-    return { url: ours[0].attachment_url!, source: 'press-release', subject: ours[0].subject, diag };
+    filings = await loadAllFilings();
   } catch (e) {
     const diag: PdfLookupDiag = { ticker: tkr, outcome: 'cf-error', error: (e as Error).message };
     console.warn('[FG-DIAG]', diag);
     return { url: null, diag };
   }
+  const tickerFilings = filings.filter(f => (f.symbol || '').toUpperCase() === tkr);
+  const withAttachment = tickerFilings.filter(f => !!f.attachment_url);
+  if (tickerFilings.length === 0) {
+    const diag: PdfLookupDiag = {
+      ticker: tkr, outcome: 'no-filings',
+      total_filings_seen: filings.length, ticker_filings: 0,
+    };
+    console.warn('[FG-DIAG]', diag);
+    return { url: null, diag };
+  }
+  if (withAttachment.length === 0) {
+    const diag: PdfLookupDiag = {
+      ticker: tkr, outcome: 'no-attachment',
+      total_filings_seen: filings.length,
+      ticker_filings: tickerFilings.length,
+      ticker_with_attachment: 0,
+    };
+    console.warn('[FG-DIAG]', diag);
+    return { url: null, diag };
+  }
+  const ours = withAttachment.sort((a, b) => (b.filing_date || '').localeCompare(a.filing_date || ''));
+
+  // PATCH 0950a — broadened preference regex. NSE's standard subject for
+  // concall material is the exact string
+  //   "Analysts/Institutional Investor Meet/Con. Call Updates"
+  // — the old regex looking for "concall" never matched. Cover the actual
+  // NSE text and the common transcript / call wording side-by-side. Order
+  // remains: transcript > presentation > press release > anything.
+  const preferences: Array<{ re: RegExp; tag: 'transcript' | 'investor-presentation' | 'press-release' }> = [
+    { re: /transcript|earnings\s*call|conference\s*call|concall|con\.?\s*call|analysts?\/institutional\s*investor\s*meet/i, tag: 'transcript' },
+    { re: /investor\s*presentation|results?\s*presentation|q[1-4]\s*presentation|earnings\s*presentation/i, tag: 'investor-presentation' },
+    { re: /press\s*release|outcome\s*of\s*board|board\s*meeting/i, tag: 'press-release' },
+  ];
+  for (const p of preferences) {
+    const match = ours.find(f => p.re.test(f.subject || ''));
+    if (match) {
+      const source: AIForwardGuidance['source'] =
+        p.tag === 'transcript' ? 'concall-transcript' :
+        p.tag === 'investor-presentation' ? 'investor-presentation' : 'press-release';
+      const diag: PdfLookupDiag = {
+        ticker: tkr, outcome: 'ok',
+        total_filings_seen: filings.length,
+        ticker_filings: tickerFilings.length,
+        ticker_with_attachment: ours.length,
+        matched_preference: p.tag,
+        subject: match.subject,
+        url: match.attachment_url!,
+      };
+      console.log('[FG-DIAG]', diag);
+      return { url: match.attachment_url!, source, subject: match.subject, diag };
+    }
+  }
+  // Fallback: freshest with any attachment (not in any preference bucket)
+  const diag: PdfLookupDiag = {
+    ticker: tkr, outcome: 'ok',
+    total_filings_seen: filings.length,
+    ticker_filings: tickerFilings.length,
+    ticker_with_attachment: ours.length,
+    matched_preference: 'fallback',
+    subject: ours[0].subject,
+    url: ours[0].attachment_url!,
+  };
+  console.log('[FG-DIAG]', diag);
+  return { url: ours[0].attachment_url!, source: 'press-release', subject: ours[0].subject, diag };
 }
 
 // ─── Step 2: Extract forward statements via Haiku ──────────────────────────
