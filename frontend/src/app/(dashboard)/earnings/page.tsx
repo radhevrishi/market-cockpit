@@ -3044,11 +3044,68 @@ export default function EarningsPage() {
             const coveredCount = qualifying.filter(c => !!aiGuidance[c.symbol.toUpperCase()]).length;
             const uncoveredCount = qualifying.length - coveredCount;
             const allCovered = uncoveredCount === 0;
+
+            // ─ PATCH 0964 — retryable breakdown + budget-exceeded disable. ─
+            //
+            // User feedback (after 1st run on 291 tickers):
+            //   "what does '109 new' mean? I already ran AI guidance once."
+            //
+            // Old button just said "N new" — opaque about WHY those N are
+            // still missing, and clicking again can waste budget on the
+            // 27 tickers that hit Anthropic 429 last run.
+            //
+            // New rule: derive the breakdown from the LAST aiStats payload,
+            // mapped to actionable categories:
+            //   budget   — Anthropic 429, will succeed once budget resets
+            //   no-PDF   — missing_pdf + pdf_too_short + pdf_empty + pdf_corrupt
+            //              (won't change unless company uploads transcript)
+            //   errors   — llm_failed + batch_failures + parse_failures
+            //              (transient, worth retrying)
+            //   img-only — pdf_image_only (would need OCR; not retryable today)
+            //
+            // Button shows the retryable count + breakdown so the user knows
+            // exactly what clicking will try. Disabled state kicks in only
+            // when MOST uncovered tickers are budget-exceeded (>= 50%) — that
+            // signals "wait, don't burn more failed calls". Other failure
+            // modes never disable.
+            //
+            // CRITICAL: this DOES NOT alter the aiGuidance state itself.
+            // Already-extracted entries persist in mc:ai-fg:v3 localStorage
+            // and stay visible on cards. Only the BUTTON LABEL + DISABLE
+            // STATE change.
+            const s = aiStats;
+            const statsAlign = s && s.total === qualifying.length;  // stats are CURRENT for this universe
+            const budget  = statsAlign ? (s!.budget_exceeded || 0) : 0;
+            const noPdf   = statsAlign ? ((s!.missing_pdf || 0) + (s!.pdf_too_short || 0) + (s!.pdf_empty || 0) + (s!.pdf_corrupt || 0)) : 0;
+            const errors  = statsAlign ? ((s!.llm_failed || 0) + (s!.batch_failures || 0) + (s!.parse_failures || 0)) : 0;
+            const imgOnly = statsAlign ? (s!.pdf_image_only || 0) : 0;
+            const breakdownSum = budget + noPdf + errors + imgOnly;
+            const budgetDominates: boolean = !!statsAlign && uncoveredCount > 0 && budget > 0 && budget >= uncoveredCount * 0.5;
+
             const buttonLabel = aiLoading
               ? (aiProgress ? `🤖 Extracting ${aiProgress.done} / ${aiProgress.total}…` : '🤖 Extracting…')
               : allCovered
                 ? `🤖 ✓ AI ready — all ${qualifying.length} cached`
-                : `🤖 AI Guidance — ${uncoveredCount} new`;
+                : statsAlign && breakdownSum > 0
+                  ? (() => {
+                      // Compose breakdown: "27 budget · 60 no-PDF · 22 errors"
+                      const parts: string[] = [];
+                      if (budget > 0)  parts.push(`${budget} budget`);
+                      if (noPdf > 0)   parts.push(`${noPdf} no-PDF`);
+                      if (errors > 0)  parts.push(`${errors} errors`);
+                      if (imgOnly > 0) parts.push(`${imgOnly} img-only`);
+                      return `🤖 ${uncoveredCount} retryable (${parts.join(' · ')})`;
+                    })()
+                  : `🤖 AI Guidance — ${uncoveredCount} new`;
+            const buttonDisabled = aiLoading || budgetDominates;
+            const buttonTitle = aiLoading
+              ? 'AI extraction in progress…'
+              : budgetDominates
+                ? `Anthropic returned 429 for ${budget} of ${uncoveredCount} tickers. 429 = either RATE LIMIT (RPM cap, resets 1-5min) OR MONTHLY SPEND CAP (resets 1st of next month at midnight UTC). Check console.anthropic.com to see which. The ${coveredCount} already-extracted tickers are CACHED and will NOT be re-billed when you retry — P0955 client cache + P0962 KV cache both skip them.`
+                : statsAlign && breakdownSum > 0
+                  ? `${uncoveredCount} uncovered. Click to retry — ${coveredCount} already-extracted are cache-skipped (no re-bill).${budget > 0 ? ` ${budget} hit Anthropic 429 last run (rate-limit OR monthly cap — check console.anthropic.com).` : ''}${noPdf > 0 ? ` ${noPdf} have no concall PDF (24h short-TTL cache, retries automatically when company uploads).` : ''}${errors > 0 ? ` ${errors} transient errors — usually succeed on retry.` : ''} Shift-click to force-refresh ALL.`
+                  : `AI Forward Guidance — extracts real concall statements via Haiku for ${qualifying.length} qualifying cards. ${coveredCount} already cached (skipped), ${uncoveredCount} need fresh Haiku call. Quarter-cached so same period won't re-bill. Shift-click to force-refresh ALL.`;
+
             return (
               <>
                 {/* Coverage chip — always visible so user tracks AI vs filteredCards */}
@@ -3061,31 +3118,52 @@ export default function EarningsPage() {
                   color: allCovered ? '#10B981' : '#F59E0B',
                   whiteSpace: 'nowrap',
                 }}
-                  title={`${coveredCount} of ${qualifying.length} qualifying cards (EXCELLENT/STRONG + D1 ≥ +2%) have AI Forward Guidance. ${uncoveredCount > 0 ? `${uncoveredCount} still need extraction — click the AI Guidance button.` : 'All qualifying cards covered.'}`}
+                  title={`${coveredCount} of ${qualifying.length} qualifying cards have AI Forward Guidance. ${uncoveredCount > 0 ? `${uncoveredCount} still need extraction — click the AI Guidance button.` : 'All qualifying cards covered.'}`}
                 >
                   🤖 AI: {coveredCount} / {qualifying.length} covered
                 </span>
                 <button
-                  onClick={(e) => fetchAIGuidance(qualifying, e.shiftKey)}
-                  disabled={aiLoading}
-                  title={`AI Forward Guidance — extracts real concall statements via Haiku for ${qualifying.length} EXCELLENT/STRONG cards with D1 >= +2%. ${coveredCount} already cached, ${uncoveredCount} need fresh Haiku call. Quarter-cached so same period won't re-bill. Shift-click to force-refresh ALL.`}
+                  onClick={(e) => { if (!budgetDominates) fetchAIGuidance(qualifying, e.shiftKey); }}
+                  disabled={buttonDisabled}
+                  title={buttonTitle}
                   style={{
                     display: 'inline-flex', alignItems: 'center', gap: '6px',
                     backgroundColor: aiLoading
                       ? '#1A2540'
                       : allCovered
                         ? '#10B981'
-                        : '#7C3AED',
-                    border: !aiLoading && !allCovered ? '2px solid #F59E0B' : 'none',
+                        : budgetDominates
+                          ? '#4B5563'             // PATCH 0964 — grey when budget-blocked
+                          : '#7C3AED',
+                    border: !aiLoading && !allCovered && !budgetDominates ? '2px solid #F59E0B' : 'none',
                     color: '#fff',
                     padding: !aiLoading && !allCovered ? '6px 12px' : '8px 14px',
                     borderRadius: '6px',
-                    cursor: aiLoading ? 'not-allowed' : 'pointer',
-                    fontSize: '12px', fontWeight: 700, opacity: aiLoading ? 0.6 : 1,
-                    boxShadow: !aiLoading && !allCovered ? '0 0 0 1px #F59E0B40' : undefined,
+                    cursor: buttonDisabled ? 'not-allowed' : 'pointer',
+                    fontSize: '12px', fontWeight: 700,
+                    opacity: aiLoading ? 0.6 : (budgetDominates ? 0.7 : 1),
+                    boxShadow: !aiLoading && !allCovered && !budgetDominates ? '0 0 0 1px #F59E0B40' : undefined,
                   }}>
                   {buttonLabel}
                 </button>
+                {/* PATCH 0964 — explicit "wait ~1h" hint when budget-blocked.
+                    Lives next to the button so the user doesn't have to hover
+                    for the tooltip. Shows ONLY when budgetDominates is true. */}
+                {budgetDominates && (
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '6px',
+                    padding: '6px 10px', borderRadius: '6px',
+                    backgroundColor: '#F5970015',
+                    border: '1px solid #F5970060',
+                    fontSize: '11px', fontWeight: 700,
+                    color: '#FBBF24',
+                    whiteSpace: 'nowrap',
+                  }}
+                    title={`Anthropic returned 429 for ${budget} tickers. Could be RATE LIMIT (RPM cap, resets 1-5min) OR your monthly $5 spend cap (resets 1st of next month at midnight UTC). Check console.anthropic.com to confirm which. ${coveredCount} already-extracted are CACHED — they will NOT re-bill when you click again. Button is greyed because clicking RIGHT NOW would just re-hit the same 429 wall.`}
+                  >
+                    ⏳ 429 (rate-limit or $5 cap) — cached entries safe
+                  </span>
+                )}
               </>
             );
           })()}
