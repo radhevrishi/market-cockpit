@@ -2028,6 +2028,10 @@ export default function EarningsPage() {
   //    All downstream consumers (card grid, summary, export toolbar) use this
   //    so every filter composes correctly.
   const gapMap = usePostGapData(sortedCards);
+
+  // PATCH 0954 — qualifying set (EX/ST + D1 >= +2%) hoisted to component
+  // scope so the stats banner can check whether the last AI run's total
+  // still matches what's visible (hides stale stats after universe changes).
   const filteredCards = useMemo(() => {
     // PATCH 0949/0950 — compose Day-1 filter + AI multi-tier filter on top of
     // sortedCards (which itself already encodes universe / grade / date / conviction
@@ -2046,6 +2050,19 @@ export default function EarningsPage() {
       return !!t && aiFilters.has(t.tier as AIFilterKey);
     });
   }, [sortedCards, gapMap, dayOneFilters, aiFilters, aiGuidance]);
+
+  // PATCH 0954 — qualifying set for AI Guidance (EX/ST + D1 >= +2%) computed
+  // once at component scope so both the toolbar button and the stats banner
+  // can reference it. Coverage = how many of qualifying already have AI data.
+  const qualifyingForAI = useMemo(() => {
+    return filteredCards.filter(c => {
+      const g = c.grade;
+      if (g !== 'EXCELLENT' && g !== 'STRONG') return false;
+      const gap = gapMap[c.symbol];
+      const d1 = gap?.close_move_pct ?? null;
+      return typeof d1 === 'number' && d1 >= 2;
+    });
+  }, [filteredCards, gapMap]);
 
   // ── Visible cards: filtered by viewMode + date, but NOT grade ──
   // Used for summary counts so the grade buttons show accurate numbers.
@@ -2667,33 +2684,65 @@ export default function EarningsPage() {
               </div>
             );
           })()}
-          {/* PATCH 0948 — AI Forward Guidance button. Counts qualifying cards
-              (EX/ST + d1 >= +2%) from filtered view. Shift-click force-refreshes
-              even cached results. Quarter-stable cache means same period never
-              re-bills Haiku. */}
+          {/* PATCH 0948/0954 — AI Forward Guidance button + coverage counter.
+              P0954 changes:
+                • Shows 'AI: X / Y covered' chip so user sees coverage at a glance
+                • Button label switches to '🤖 AI Guidance — N new' counting only
+                  uncached qualifiers (so 'AI Guidance — 30' stops misleading when
+                  28 are already cached)
+                • Button styling escalates (amber border, pulse) when there are
+                  uncovered qualifiers — visible CTA after universe expansion
+                • Button still runs the full qualifying set (cache handles the rest)
+              Qualification rule unchanged: EX/ST + D1 >= +2%. Shift-click force-refresh. */}
           {(() => {
-            const qualifying = filteredCards.filter(c => {
-              const g = c.grade;
-              if (g !== 'EXCELLENT' && g !== 'STRONG') return false;
-              const gap = gapMap[c.symbol];
-              const d1 = gap?.close_move_pct ?? null;
-              return typeof d1 === 'number' && d1 >= 2;
-            });
+            const qualifying = qualifyingForAI;
             if (qualifying.length === 0) return null;
+            const coveredCount = qualifying.filter(c => !!aiGuidance[c.symbol.toUpperCase()]).length;
+            const uncoveredCount = qualifying.length - coveredCount;
+            const allCovered = uncoveredCount === 0;
+            const buttonLabel = aiLoading
+              ? '🤖 Extracting…'
+              : allCovered
+                ? `🤖 ✓ AI ready — all ${qualifying.length} cached`
+                : `🤖 AI Guidance — ${uncoveredCount} new`;
             return (
-              <button
-                onClick={(e) => fetchAIGuidance(qualifying, e.shiftKey)}
-                disabled={aiLoading}
-                title={`AI Forward Guidance — extracts real concall statements via Haiku for ${qualifying.length} EXCELLENT/STRONG cards with D1 >= +2%. Quarter-cached so same period won't re-bill. Shift-click to force-refresh.`}
-                style={{
+              <>
+                {/* Coverage chip — always visible so user tracks AI vs filteredCards */}
+                <span style={{
                   display: 'inline-flex', alignItems: 'center', gap: '6px',
-                  backgroundColor: aiLoading ? '#1A2540' : '#7C3AED', border: 'none', color: '#fff',
-                  padding: '8px 14px', borderRadius: '6px',
-                  cursor: aiLoading ? 'not-allowed' : 'pointer',
-                  fontSize: '12px', fontWeight: 700, opacity: aiLoading ? 0.6 : 1,
-                }}>
-                {aiLoading ? '🤖 Extracting…' : `🤖 AI Guidance — ${qualifying.length}`}
-              </button>
+                  padding: '6px 10px', borderRadius: '6px',
+                  backgroundColor: '#7C3AED15',
+                  border: `1px solid ${allCovered ? '#10B98160' : '#F59E0B60'}`,
+                  fontSize: '11px', fontWeight: 700,
+                  color: allCovered ? '#10B981' : '#F59E0B',
+                  whiteSpace: 'nowrap',
+                }}
+                  title={`${coveredCount} of ${qualifying.length} qualifying cards (EXCELLENT/STRONG + D1 ≥ +2%) have AI Forward Guidance. ${uncoveredCount > 0 ? `${uncoveredCount} still need extraction — click the AI Guidance button.` : 'All qualifying cards covered.'}`}
+                >
+                  🤖 AI: {coveredCount} / {qualifying.length} covered
+                </span>
+                <button
+                  onClick={(e) => fetchAIGuidance(qualifying, e.shiftKey)}
+                  disabled={aiLoading}
+                  title={`AI Forward Guidance — extracts real concall statements via Haiku for ${qualifying.length} EXCELLENT/STRONG cards with D1 >= +2%. ${coveredCount} already cached, ${uncoveredCount} need fresh Haiku call. Quarter-cached so same period won't re-bill. Shift-click to force-refresh ALL.`}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '6px',
+                    backgroundColor: aiLoading
+                      ? '#1A2540'
+                      : allCovered
+                        ? '#10B981'
+                        : '#7C3AED',
+                    border: !aiLoading && !allCovered ? '2px solid #F59E0B' : 'none',
+                    color: '#fff',
+                    padding: !aiLoading && !allCovered ? '6px 12px' : '8px 14px',
+                    borderRadius: '6px',
+                    cursor: aiLoading ? 'not-allowed' : 'pointer',
+                    fontSize: '12px', fontWeight: 700, opacity: aiLoading ? 0.6 : 1,
+                    boxShadow: !aiLoading && !allCovered ? '0 0 0 1px #F59E0B40' : undefined,
+                  }}>
+                  {buttonLabel}
+                </button>
+              </>
             );
           })()}
           <button onClick={() => fetchData(true)} disabled={loading} style={{
@@ -2711,7 +2760,11 @@ export default function EarningsPage() {
           subtle and the user thinks 'nothing happened'. We escalate the banner
           to a much louder red callout in that case, with an explicit 'no card
           changed because...' message and the diagnostics toggle right there. */}
-      {aiStats && aiStats.extracted === 0 && aiStats.cached === 0 && (
+      {/* PATCH 0954 — gate stats banners on count match. If filteredCards has
+          changed substantially since the last AI run (e.g. universe expanded
+          from 4 to 30 qualifying), the stats no longer apply to what's on
+          screen and we hide them instead of displaying stale numbers. */}
+      {aiStats && aiStats.total === qualifyingForAI.length && aiStats.extracted === 0 && aiStats.cached === 0 && (
         <div style={{
           padding: '14px 18px', marginTop: '10px', borderRadius: '8px',
           backgroundColor: '#EF444415', border: '2px solid #EF4444',
@@ -2775,7 +2828,7 @@ export default function EarningsPage() {
           )}
         </div>
       )}
-      {aiStats && (aiStats.extracted > 0 || aiStats.cached > 0) && (
+      {aiStats && aiStats.total === qualifyingForAI.length && (aiStats.extracted > 0 || aiStats.cached > 0) && (
         <div style={{
           padding: '6px 12px', marginTop: '6px', borderRadius: '6px',
           backgroundColor: '#7C3AED12', border: '1px solid #7C3AED40',
