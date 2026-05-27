@@ -3189,3 +3189,132 @@ these are NOT yet done — flagged as Day-8+ candidates:
 > - Server-side persistence for Decision Logbook via Auth + DB (BLK-03/04)
 > - Or user uploads more company reports → port any new edge case fix
 >   into BOTH engine.ts AND page.tsx duplicate copies of buildReport.
+
+═══════════════════════════════════════════════════════════════════════════
+## AI Forward Guidance — Architecture Reference (P0948 → P0956)
+═══════════════════════════════════════════════════════════════════════════
+
+End-to-end system for extracting institutional-grade forward guidance from
+Indian-listed-company filings via Claude Haiku 4.5. Lives at:
+  - Backend:  `frontend/src/app/api/v1/haiku/forward-guidance/route.ts`
+  - Frontend: `frontend/src/app/(dashboard)/earnings/page.tsx`
+
+### Qualification gate (who gets AI?)
+  EXCELLENT or STRONG grade AND post-earnings Day-1 close ≥ +2%.
+  Rationale: only spend Haiku on prints the market has already validated.
+  Below-threshold cards render a grey eligibility hint
+  ("AI gated: D1 +1.4% < +2%" or "AI gated: GOOD grade") so user sees WHY.
+
+### Data flow (per ticker, per click)
+  1. CLIENT pre-filter (P0955) — skip tickers already in localStorage
+     aiGuidance map for the SAME current period (`deriveCachePeriod`).
+     If everything cached → no API call.
+  2. SERVER KV cache check (P0948) — key `haiku-fg:v2:{TKR}:{Q}-FY{YY}`,
+     365d TTL. Quarterly results are immutable so refreshes never re-bill
+     within a quarter.
+  3. PDF lookup chain (P0950a → P0951 → P0953):
+     a) NSE primary — fetch `${CF_WORKER_URL}/api/results/latest` (6.6k
+        filings / 1.7k symbols). Score every per-ticker PDF on FILENAME +
+        subject. +100 transcript, +70 investor-presentation, +50 earnings,
+        −200 intimation/notice/reg30, −300 audio recording,
+        −150 newspaper. Pick highest scorer. Score < 1 → intimation-only.
+        Module-cached 5min for the 8 MB results blob.
+     b) Screener.in fallback (P0953) — triggered when NSE returns
+        intimation-only / no-filings / no-attachment. Scrapes
+        `https://www.screener.in/company/{TKR}/consolidated/`, parses
+        `<a class="concall-link" href="*.pdf">` (skipping `<div>` locked
+        rows for paid users), picks freshest accessible URL.
+        Module-cached 24h per ticker.
+     c) If both fail → return NoGuidance synthetic result (P0951a) so
+        chip flips honest grey "🤖 ◌ No fwd guidance — only intimation/
+        notice filed". This OVERWRITES stale state from prior runs.
+  4. PDF text extraction (`extractFirstPdf`). If <1200 chars after
+     extraction → intimation-equivalent, skip Haiku.
+  5. Haiku extraction (P0951 prompt) — institutional schema:
+     `{ label: Positive|Neutral|Negative|NoGuidance, score:[-1,+1],
+        confidence: HIGH|MEDIUM|LOW, rationale, quotes[],
+        numbers[{metric,value,period}], catalysts[{event,timing}] }`.
+     One-shot retry on non-JSON / network error (P0956a). 429 returns
+     budget-exceeded sentinel (P0956b).
+  6. Cache + state merge — KV write (server) + localStorage write
+     (client, key `mc:ai-fg:v2`, P0952 migration from v1 with bogus-
+     entry filter).
+
+### Visual rendering (P0949 → P0951b → P0956c)
+  - GuidanceBadge has TWO distinct tracks:
+    * Keyword Screener Signal — grey `●▲▼` chip, no robot
+    * AI Forward Guidance — `🤖` prefix + purple left-border + 5-tier
+      color (🚀 EXCELLENT score≥0.6, ▲ POSITIVE 0.2-0.6, ● NEUTRAL
+      ±0.2, ▽ CAUTIOUS −0.2 to −0.6, ⚠ NEGATIVE ≤−0.6)
+    * LOW-confidence AI → dashed border + "(low conf)" suffix
+    * NoGuidance → grey `🤖 ◌ No fwd guidance — only intimation filed`
+  - Institutional brief panel (P0951b) under chip shows ALL numbers +
+    catalysts + collapsible quotes inline — no "+N more" hidden text.
+  - Eligibility hint (P0956c) shown next to badge when no AI yet:
+    amber "🤖 click to extract" if eligible, grey italic "AI gated: ..."
+    otherwise.
+
+### Toolbar UX (P0954)
+  - Coverage chip: `🤖 AI: X / Y covered` (green if all, amber if any
+    uncovered).
+  - Smart button: `🤖 AI Guidance — N new` (amber bordered when work
+    pending) or `🤖 ✓ AI ready — all N cached` (green when done).
+  - Multi-select tier filter chips (P0950): Extracted/Excellent/Positive/
+    Neutral/Cautious/Negative — OR within AI, AND with every other
+    filter (universe/grade/date/conviction/Day-1/keyword guidance).
+  - Stats banner hides when filteredCards count ≠ aiStats.total (avoids
+    stale "total 4" after universe expansion to 30).
+
+### Diagnostics outcomes (audit trail via response.diagnostics[])
+  - `ok`                  — NSE found a real PDF, extraction succeeded
+  - `ok-screener-fallback`— Screener.in rescued after NSE failed
+  - `cf-error`            — CF Worker filings endpoint errored
+  - `no-filings`          — CF returned filings but none for ticker
+  - `no-attachment`       — Ticker has filings but none with PDF URL
+  - `intimation-only`     — All NSE PDFs scored below threshold
+  - `pdf-empty` (stage)   — PDF text extracted <1200 chars
+  - `llm-failed` (stage)  — Haiku returned no valid JSON after retry
+  Surfaced in dashboard via "Show diagnostics (N)" toggle in stats
+  banner. Every diagnostic includes filename + best_score + matched
+  preference for full audit.
+
+### Stat fields (response.stats)
+  cached + extracted + intimation_only + screener_fallback + missing_pdf
+  + llm_failed + budget_exceeded = total. Client adds client-side
+  localStorage skips to `cached` so the displayed cached count covers
+  BOTH server KV hits AND client LS skips.
+
+### Cache layer summary
+  - Server KV (Vercel)      key `haiku-fg:v2:{TKR}:{Q}-FY{YY}` TTL 365d
+  - Server in-memory        `_filingsCache` (5m) + `_screenerInCache` (24h)
+  - Client localStorage     `mc:ai-fg:v2` (migrated from v1, bogus-filtered)
+  All bumped to v2 in P0951 (schema gained numbers + catalysts + NoGuidance).
+
+### Known edge cases / unsolved
+  - KPL — Screener.in finds a PDF but Haiku can't parse usable JSON
+    from it even after retry. Honestly reports llm-failed in diagnostics.
+    Most likely cause: PDF is image-based (no OCR) or non-English content.
+    Fix would require OCR layer — out of scope for now.
+  - Tickers with neither NSE nor Screener.in coverage — currently fall
+    through to missing_pdf / no-filings. Could add Tijori / Trendlyne
+    as further fallback layers.
+  - Server KV unavailability — extraction still runs but result isn't
+    cached server-side. Client LS still works.
+
+### Test fixtures (curl, useful for regression)
+```bash
+# NSE Press Release path
+curl 'https://market-cockpit.vercel.app/api/v1/haiku/forward-guidance?ticker=SANSERA&period=Q4-FY26&force=1'
+# NSE Transcript path
+curl '...?ticker=MTARTECH&period=Q4-FY26&force=1'
+# Screener.in fallback path
+curl '...?ticker=SENORES&period=Q4-FY26&force=1'
+curl '...?ticker=PRICOLLTD&period=Q4-FY26&force=1'
+# Unsolved llm-failed
+curl '...?ticker=KPL&period=Q4-FY26&force=1'
+```
+Expected as of P0956 deploy `42a7e36`:
+  SANSERA Positive HIGH +0.72 (6 nums), MTARTECH Positive HIGH +0.85 (7),
+  SENORES Positive HIGH +0.75 (8 via Screener.in),
+  PRICOLLTD Neutral MEDIUM +0.15 (5 via Screener.in),
+  KPL llm-failed (Screener.in found PDF but Haiku parse fails).
