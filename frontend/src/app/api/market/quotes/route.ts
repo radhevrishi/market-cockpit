@@ -558,6 +558,13 @@ async function fetchIndianDataWithCache() {
           let price = 0, prevClose = 0, change = 0, changePercent = 0;
           let volume = 0, marketCap = 0, open = 0, dayHigh = 0, dayLow = 0, yearHigh = 0, yearLow = 0;
           let companyFromYahoo = '';
+          // PATCH 0936 — track whether this row is BHAVCOPY-only (= T-1 EOD
+          // data being shown as live). If the Indian market is open AND we
+          // have no Yahoo live coverage for this ticker, the BHAVCOPY change%
+          // represents YESTERDAY's session — NOT today's. Such rows must be
+          // excluded from gainers/losers ranking so we don't show stale
+          // moves as "today's top gainers" (the INDORAMA +20% bug).
+          let staleEOD = false;
 
           // PATCH 0815 — ALWAYS prefer Yahoo when present (live during
           // market hours, T-1 close otherwise — both fresher than blob).
@@ -582,6 +589,9 @@ async function fetchIndianDataWithCache() {
             companyFromYahoo = liveQ.shortName || '';
           } else if (t.hasPrice && (t.price ?? 0) > 0) {
             // EOD from BHAVCOPY (canonical NSE source) — when market closed
+            // PATCH 0936 — flag as staleEOD. The blob is generated end-of-day
+            // (post 15:30 IST). During the NEXT day's market hours the
+            // BHAVCOPY price/change still represents YESTERDAY's session.
             price = t.price;
             prevClose = t.previousClose || 0;
             change = t.change || 0;
@@ -590,6 +600,7 @@ async function fetchIndianDataWithCache() {
             open = t.open || 0;
             dayHigh = t.dayHigh || 0;
             dayLow = t.dayLow || 0;
+            staleEOD = true;
           } else {
             // Yahoo enrichment for missing prices
             const q = yahooMap.get(t.ticker);
@@ -649,13 +660,27 @@ async function fetchIndianDataWithCache() {
             volMultiple: rs?.volMultiple ?? null,
             mom1M: rs?.mom1M ?? null,
             pctOf52wHigh: rs?.pctOf52wHigh ?? null,
+            // PATCH 0936 — propagate staleEOD flag (set in BHAVCOPY-only branch)
+            staleEOD,
           });
         }
         // Lower threshold from 100 to 30 — partial result is better than NIFTY-50
         // last-resort which is also Yahoo-dependent.
         if (mergedStocks.length >= 30) {
-          const gainers = [...mergedStocks].sort((a, b) => b.changePercent - a.changePercent).filter((s: any) => s.changePercent > 0).slice(0, 30);
-          const losers  = [...mergedStocks].sort((a, b) => a.changePercent - b.changePercent).filter((s: any) => s.changePercent < 0).slice(0, 30);
+          // PATCH 0936 — exclude staleEOD rows from gainers/losers during
+          // Indian market hours. Without this, smallcaps not in Yahoo's
+          // top-500 coverage show YESTERDAY's change% as today's intraday
+          // move (the INDORAMA +20% bug — user-confirmed: was -1.93% on
+          // Yahoo, but BHAVCOPY's "yesterday close vs day-before close" was
+          // being presented as today). After-hours, BHAVCOPY IS today's so
+          // we keep them in the ranking.
+          const { isIndianMarketOpen } = await import('@/lib/market-hours');
+          const marketOpen = isIndianMarketOpen();
+          const liveOnly = marketOpen
+            ? mergedStocks.filter((s: any) => !s.staleEOD)
+            : mergedStocks;
+          const gainers = [...liveOnly].sort((a, b) => b.changePercent - a.changePercent).filter((s: any) => s.changePercent > 0).slice(0, 30);
+          const losers  = [...liveOnly].sort((a, b) => a.changePercent - b.changePercent).filter((s: any) => s.changePercent < 0).slice(0, 30);
           return {
             stocks: mergedStocks,
             gainers,
@@ -666,8 +691,11 @@ async function fetchIndianDataWithCache() {
               losersCount: losers.length,
               avgChange: mergedStocks.length ? mergedStocks.reduce((s: number, x: any) => s + (x.changePercent || 0), 0) / mergedStocks.length : 0,
               sectors: new Set(mergedStocks.map((s: any) => s.sector)).size,
+              // PATCH 0936 — surface how many rows were hidden because of staleness
+              staleEODHidden: marketOpen ? mergedStocks.filter((s: any) => s.staleEOD).length : 0,
             },
-            source: `NSE-universe (KV ${universeAgeStr}) + BHAVCOPY/${universeBlob.pricedCount || 0} + Yahoo/${yahooMap.size} (top-500 + largecaps preferred over EOD)`,
+            marketHours: { indianOpen: marketOpen },
+            source: `NSE-universe (KV ${universeAgeStr}) + BHAVCOPY/${universeBlob.pricedCount || 0} + Yahoo/${yahooMap.size} + P0936 staleEOD-filter ${marketOpen ? 'ACTIVE' : 'OFF'}`,
             updatedAt: new Date().toISOString(),
           };
         }
