@@ -1707,6 +1707,9 @@ export default function EarningsOpportunitiesPage() {
           // PATCH 0911 — explicit quarter + fy from graded payload
           ...(qParsed ? { quarter: qParsed } : {}),
           ...(fyParsed ? { fiscal_year: fyParsed } : {}),
+          // PATCH 0945 — D1 close + gap so CB tab can render and filter
+          d1_pct: typeof (c as any).d1_pct === 'number' ? (c as any).d1_pct : null,
+          gap_pct: typeof (c as any).gap_pct === 'number' ? (c as any).gap_pct : null,
         });
       }
     }

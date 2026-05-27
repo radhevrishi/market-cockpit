@@ -47,6 +47,11 @@ export interface ConvictionEntry {
   // Both optional — old entries fall through to deriveQuarterFY heuristic.
   quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4';
   fiscal_year?: number;
+  // PATCH 0945 — Post-earnings price action carried over from EO graded
+  // payload so the Conviction Beats tab can render + filter on D1 close
+  // (same UX as /earnings Hub). Both nullable for legacy entries.
+  d1_pct?: number | null;       // Day-1 close % vs prior day
+  gap_pct?: number | null;      // Open gap % (open vs prior close)
 }
 
 const LS_KEY = 'mc:conviction-beats:v1';

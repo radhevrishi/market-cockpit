@@ -1145,9 +1145,13 @@ type ConvFilters = {
   // between May 1 and May 15"). Both nullable — either side optional.
   fromDate: string | null;  // YYYY-MM-DD or null
   toDate: string | null;    // YYYY-MM-DD or null
+  // PATCH 0945 — D1 close bucket filter (same chip set as /earnings).
+  // Each value is a SIGNED threshold: positive = "D1 >= N%", negative = "D1 <= N%".
+  // null = no filter.
+  d1Bucket: number | null;
 };
 
-const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null };
+const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null };
 
 // PATCH 0911 — Robust derivation of Indian-FY quarter + fiscal year.
 //
@@ -1323,6 +1327,17 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
     if (DATE_RE.test(fdate)) {
       if (fromOk && fdate < (f.fromDate as string)) return false;
       if (toOk   && fdate > (f.toDate as string))   return false;
+    }
+  }
+  // PATCH 0945 — D1 close bucket filter. Composes AND with all the above.
+  // Positive threshold = require d1 >= N. Negative = require d1 <= N.
+  if (f.d1Bucket != null && Number.isFinite(f.d1Bucket)) {
+    const d1 = (e as any).d1_pct;
+    if (typeof d1 !== 'number' || !Number.isFinite(d1)) return false;
+    if (f.d1Bucket >= 0) {
+      if (d1 < f.d1Bucket) return false;
+    } else {
+      if (d1 > f.d1Bucket) return false;
     }
   }
   return true;
@@ -1830,8 +1845,8 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
               🌊 Sort by PEAD {filters.sortByPead ? '✓' : ''}
             </button>
             <button onClick={() => setFilters(FILTER_DEFAULT)}
-              disabled={filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && !filters.sortByPead}
-              style={{ ...chipBase, opacity: (filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && !filters.sortByPead) ? 0.4 : 1 }}>
+              disabled={filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && !filters.sortByPead}
+              style={{ ...chipBase, opacity: (filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && !filters.sortByPead) ? 0.4 : 1 }}>
               Clear
             </button>
           </div>
@@ -1853,6 +1868,40 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
         {renderChipGroup('PEAD SCORE', '#22D3EE', 'pead', [
           { v: 50, lbl: '≥50' }, { v: 60, lbl: '≥60' }, { v: 70, lbl: '≥70' }, { v: 80, lbl: '≥80' },
         ])}
+        {/* PATCH 0945 — 1D CLOSE filter chips, matching the /earnings Hub UX.
+            Composes AND with every other filter above. Signed threshold:
+            positive = "D1 close ≥ N%", negative = "D1 close ≤ N%". */}
+        {(() => {
+          const toggleD1 = (v: number) =>
+            setFilters((f) => ({ ...f, d1Bucket: f.d1Bucket === v ? null : v }));
+          const countD1 = (v: number) => {
+            const probe: ConvFilters = { ...filters, d1Bucket: v };
+            return entries.filter((e) => passesConvictionFilter(e, probe)).length;
+          };
+          const opts: Array<{ v: number; lbl: string; color: string }> = [
+            { v: 2,  lbl: '≥+2%',  color: '#10B981' },
+            { v: 4,  lbl: '≥+4%',  color: '#10B981' },
+            { v: 7,  lbl: '≥+7%',  color: '#10B981' },
+            { v: 10, lbl: '≥+10%', color: '#10B981' },
+            { v: -2, lbl: '≤-2%',  color: '#EF4444' },
+            { v: -5, lbl: '≤-5%',  color: '#EF4444' },
+          ];
+          return (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>1D CLOSE</span>
+              {opts.map((o) => {
+                const active = filters.d1Bucket === o.v;
+                const n = countD1(o.v);
+                return (
+                  <button key={o.v} onClick={() => toggleD1(o.v)}
+                    style={active ? chipActive(o.color) : chipBase}>
+                    {o.lbl} <span style={{ color: active ? o.color : '#6B7A8D', marginLeft: 3 }}>({n})</span>
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })()}
         {/* USER-REQ — Guidance in Conviction tab. String-keyed values, so
             render inline rather than generalize the number-keyed helper. */}
         {(() => {
