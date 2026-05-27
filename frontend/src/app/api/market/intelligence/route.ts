@@ -442,6 +442,112 @@ function stripJunk(arr: any): any {
   return cleaned;
 }
 
+// PATCH 0940 — Convert an EO graded card into an IntelSignal so it can flow
+// through the existing Signals UI rendering with no schema changes.
+// BLOCKBUSTER → action: 'BUY WATCH', score derived from composite. STRONG →
+// action: 'TRACK'. These are TIER_A (exchange-filed) ECONOMIC signals — we
+// bypass the entire heuristic value-extraction path that was suppressing them.
+function gradedCardToIntelSignal(card: any, tier: string): any {
+  const composite = card?.composite_score || 0;
+  const action = tier === 'BLOCKBUSTER' ? 'BUY WATCH' : 'TRACK';
+  const salesY = card?.sales_yoy_pct;
+  const patY = card?.net_profit_yoy_pct;
+  const epsY = card?.eps_yoy_pct;
+  const d1 = card?.d1_pct;
+  const gap = card?.gap_pct;
+  const fmtP = (lbl: string, v: number | null) => v == null ? '' : `${lbl} ${v >= 0 ? '+' : ''}${Math.round(v)}%`;
+  const headline = `${tier === 'BLOCKBUSTER' ? '⭐ BLOCKBUSTER' : '🟢 STRONG'} ${card?.quarter || 'Q4 FY26'} — ${[fmtP('Sales', salesY), fmtP('PAT', patY), fmtP('EPS', epsY)].filter(Boolean).join(', ')}`;
+  return {
+    symbol: card.ticker,
+    company: card.company || card.ticker,
+    date: card.filing_date || '',
+    source: 'order',
+    eventType: 'Earnings Beat',
+    headline,
+    valueCr: 0,
+    valueUsd: null,
+    mcapCr: null,
+    revenueCr: card?.sales_curr_cr ?? null,
+    impactPct: composite,
+    pctRevenue: composite,
+    pctMcap: null,
+    inferenceUsed: false,
+    client: null, segment: card.sector || null, timeline: null,
+    buyerSeller: null, premiumDiscount: null,
+    lastPrice: card?.price ?? null,
+    impactLevel: tier === 'BLOCKBUSTER' ? 'HIGH' : 'MEDIUM',
+    impactConfidence: 'HIGH',
+    confidenceScore: 92,
+    confidenceType: 'ACTUAL',
+    action,
+    score: composite,
+    timeWeight: 1.0,
+    weightedScore: composite,
+    sentiment: (d1 != null && d1 < -3) ? 'Neutral' : 'Bullish',
+    whyItMatters: card?.narrative || `${card?.quarter || 'Q4'} earnings — composite score ${composite}.`,
+    isNegative: false,
+    earningsBoost: true,
+    isWatchlist: false,
+    isPortfolio: false,
+    valueSource: 'EXACT',
+    dataSource: 'NSE+EO',
+    signalClass: 'ECONOMIC',
+    evidenceTier: 'TIER_A',
+    signalCategory: tier === 'BLOCKBUSTER' ? 'ACTIONABLE' : 'NOTABLE',
+    signalTier: tier === 'BLOCKBUSTER' ? 'TIER1' : 'TIER2',
+    signalTierV7: tier === 'BLOCKBUSTER' ? 'ACTIONABLE' : 'NOTABLE',
+    visibility: 'VISIBLE',
+    eo_tier: tier,
+    eo_caveats: card?.caveat_tags || [],
+    d1_pct: d1, gap_pct: gap,
+    catalystType: 'EARNINGS',
+    catalystStrength: tier === 'BLOCKBUSTER' ? 'STRONG' : 'MODERATE',
+  };
+}
+
+// PATCH 0940 — Merge EO BLOCKBUSTER + STRONG tickers as TIER_A actionable
+// signals. The /v1/earnings/graded pipeline already does the real work of
+// classifying Q4 results filings with YoY + market-reaction gating. Signals
+// compute can't reliably score them on its own (value-extraction lands on
+// heuristic for earnings filings). This wires the two paths together.
+//
+// Reads graded:v8:<today> + graded:v8:<yesterday> from KV (cache-only, no
+// recompute). Async — returns null if KV unavailable or no graded data.
+async function fetchEOSignalsForMerge(): Promise<any[]> {
+  if (!isRedisAvailable()) return [];
+  const now = new Date();
+  const istMs = now.getTime() + (now.getTimezoneOffset() + 330) * 60_000;
+  const today = new Date(istMs).toISOString().slice(0, 10);
+  const yest = new Date(istMs - 86400_000).toISOString().slice(0, 10);
+  const dayBefore = new Date(istMs - 2 * 86400_000).toISOString().slice(0, 10);
+  const out: any[] = [];
+  try {
+    const days = [today, yest, dayBefore];
+    const reads = await Promise.all(days.map(d => kvGet<any>(`graded:v8:${d}`).catch(() => null)));
+    for (let i = 0; i < days.length; i++) {
+      const payload = reads[i];
+      if (!payload?.by_tier) continue;
+      for (const t of ['BLOCKBUSTER', 'STRONG'] as const) {
+        const cards = payload.by_tier[t] || [];
+        for (const c of cards) {
+          out.push(gradedCardToIntelSignal(c, t));
+        }
+      }
+    }
+  } catch {}
+  // Dedup by ticker — newest date wins (which is today since we iterate
+  // [today, yest, dayBefore] order).
+  const seen = new Set<string>();
+  const dedup: any[] = [];
+  for (const s of out) {
+    const k = String(s.symbol || '').toUpperCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    dedup.push(s);
+  }
+  return dedup;
+}
+
 function stripJunkResponse(resp: any): any {
   if (!resp || typeof resp !== 'object') return resp;
   const next = { ...resp };
@@ -2669,7 +2775,21 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
     const cacheKey = `${watchlist.join(',')}|${portfolio.join(',')}|${days}`;
     if (_routeCache && _routeCache.key === cacheKey && (Date.now() - _routeCache.timestamp) < ROUTE_CACHE_TTL) {
       console.log(`[Intelligence] Cache hit (${Date.now() - startTime}ms)`);
-      return NextResponse.json(stripJunkResponse(_routeCache.data));
+      // PATCH 0940 — also inject EO signals into route-cache hits.
+      const cachedData = { ..._routeCache.data };
+      try {
+        const eoSignals = await fetchEOSignalsForMerge();
+        if (eoSignals.length > 0) {
+          const existing = new Set((cachedData.signals || []).map((s: any) => String(s.symbol || '').toUpperCase()));
+          const fresh = eoSignals.filter((s: any) => !existing.has(String(s.symbol || '').toUpperCase()));
+          if (fresh.length > 0) {
+            cachedData.signals = [...fresh, ...(cachedData.signals || [])];
+            cachedData._allSignals = [...fresh, ...(cachedData._allSignals || [])];
+            cachedData._eoInjected = fresh.length;
+          }
+        }
+      } catch {}
+      return NextResponse.json(stripJunkResponse(cachedData));
     }
 
     const watchlistSet = new Set(watchlist);
@@ -3421,13 +3541,27 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
           s.headline = `[STALE] ${s.headline || ''}`;
         }
 
-        return NextResponse.json(stripJunkResponse({
+        // PATCH 0940 — inject EO signals into stale-cache return too.
+        const stalePayload: any = {
           ...cached,
           updatedAt: new Date().toISOString(),
           stale: true,
           staleAgeMinutes: cacheAgeMin,
           debug: searchParams.get('debug') === 'true' ? debug : undefined,
-        }));
+        };
+        try {
+          const eoSignals = await fetchEOSignalsForMerge();
+          if (eoSignals.length > 0) {
+            const existing = new Set((stalePayload.signals || []).map((s: any) => String(s.symbol || '').toUpperCase()));
+            const fresh = eoSignals.filter((s: any) => !existing.has(String(s.symbol || '').toUpperCase()));
+            if (fresh.length > 0) {
+              stalePayload.signals = [...fresh, ...(stalePayload.signals || [])];
+              stalePayload._allSignals = [...fresh, ...(stalePayload._allSignals || [])];
+              stalePayload._eoInjected = fresh.length;
+            }
+          }
+        } catch {}
+        return NextResponse.json(stripJunkResponse(stalePayload));
       }
     }
 
@@ -3435,10 +3569,30 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
     const debugParam = searchParams.get('debug') === 'true';
     const finalResponse = { ...response, debug: debugParam ? debug : undefined };
 
+    // PATCH 0940 — Inject EO graded BLOCKBUSTER + STRONG tickers as TIER_A
+    // actionable / notable signals. These come from the dedicated earnings
+    // grader which already does the YoY+market-reaction analysis Signals
+    // can't do on its own. Sub-100ms KV read; fail-open if cache misses.
+    try {
+      const eoSignals = await fetchEOSignalsForMerge();
+      if (eoSignals.length > 0) {
+        const existing = new Set((finalResponse.signals || []).map((s: any) => String(s.symbol || '').toUpperCase()));
+        const fresh = eoSignals.filter((s: any) => !existing.has(String(s.symbol || '').toUpperCase()));
+        if (fresh.length > 0) {
+          (finalResponse as any).signals = [...fresh, ...(finalResponse.signals || [])];
+          (finalResponse as any)._allSignals = [...fresh, ...((finalResponse as any)._allSignals || [])];
+          (finalResponse as any)._eoInjected = fresh.length;
+          console.log(`[Intelligence] P0940: injected ${fresh.length} EO-graded signals (BLOCKBUSTER+STRONG)`);
+        }
+      }
+    } catch (e) {
+      console.warn('[Intelligence] EO merge failed:', (e as Error).message);
+    }
+
     // Save to route-level cache (BUG-01 fix)
     _routeCache = { key: cacheKey, data: finalResponse, timestamp: Date.now() };
 
-    console.log(`[Intelligence] Done in ${Date.now() - startTime}ms — ${response.signals?.length || 0} signals`);
+    console.log(`[Intelligence] Done in ${Date.now() - startTime}ms — ${(finalResponse as any).signals?.length || 0} signals`);
     return NextResponse.json(stripJunkResponse(finalResponse));
   } catch (error) {
     console.error(`[Intelligence] Fatal error:`, error);
