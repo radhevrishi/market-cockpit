@@ -262,6 +262,42 @@ function gradeRow(row: any): ParsedEarning | null {
   else if (composite >= 35) tier = 'MIXED';
   else tier = 'AVOID';
 
+  // PATCH 0938 — Market-reaction gate (user-reported: POCL +78%/+124% scored
+  // BLOCKBUSTER but stock sold off -6% D1; CARRARO same pattern at -5% D1).
+  //
+  // The grader was purely fundamental — it never looked at how the MARKET
+  // priced the print. A "blockbuster" that gets sold off on D1 is signalling
+  // one of: (a) numbers were already in the price, (b) tax/other-income
+  // skew the market is discounting, (c) guidance disappointed even though
+  // headline numbers beat, (d) margin compression the market noticed first.
+  //
+  // Downgrade ladder based on Day-1 close % (the cleanest signal of market
+  // verdict — gap alone is noisy from pre-market liquidity).
+  //   D1 <= -7%  → cap at MIXED, caveat 'sold off post-results'
+  //   D1 <= -3%  → downgrade BLOCKBUSTER → STRONG, caveat 'market rejected print'
+  //   Gap >= +3 BUT D1 close <= -2% → caveat 'intraday reversal · distribution'
+  //
+  // Logic is one-way (only downgrades). A negative D1 reaction never elevates a tier.
+  const d1Reaction = typeof row?.d1_pct === 'number' ? row.d1_pct : null;
+  const gapReaction = typeof row?.gap_pct === 'number' ? row.gap_pct : null;
+  if (d1Reaction !== null) {
+    if (d1Reaction <= -7) {
+      // Severe rejection — even a true blockbuster gets capped at MIXED.
+      if (tier === 'BLOCKBUSTER' || tier === 'STRONG') tier = 'MIXED';
+      if (!caveat_tags.includes('sold off post-results')) caveat_tags.push('sold off post-results');
+    } else if (d1Reaction <= -3) {
+      // Moderate rejection — downgrade BLOCKBUSTER → STRONG.
+      if (tier === 'BLOCKBUSTER') tier = 'STRONG';
+      if (!caveat_tags.includes('market rejected print')) caveat_tags.push('market rejected print');
+    }
+    // Distribution-day pattern — opened up but closed down.
+    if (gapReaction !== null && gapReaction >= 3 && d1Reaction <= -2) {
+      if (!caveat_tags.includes('intraday reversal · distribution')) {
+        caveat_tags.push('intraday reversal · distribution');
+      }
+    }
+  }
+
   // Narrative
   const co = row.company || row.symbol;
   const q = row.quarter || 'Q4';
