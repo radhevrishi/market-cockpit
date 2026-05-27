@@ -1412,6 +1412,10 @@ export default function EarningsPage() {
     } catch { return {}; }
   });
   const [aiLoading, setAiLoading] = useState(false);
+  // PATCH 0959 — progress indicator while AI extraction runs across multiple
+  // batches. Shows 'extracting X / Y' on the button so a long run (~3min on
+  // a 350-card universe) isn't an opaque spinner.
+  const [aiProgress, setAiProgress] = useState<{ done: number; total: number } | null>(null);
   const [aiStats, setAiStats] = useState<{ cached: number; extracted: number; intimation_only?: number; screener_fallback?: number; budget_exceeded?: number; missing_pdf: number; llm_failed: number; total: number } | null>(null);
   // PATCH 0949a/0951/0953 — per-ticker diagnostics. P0953 adds
   // 'ok-screener-fallback' outcome + fallback_source/fallback_date fields
@@ -1882,6 +1886,9 @@ export default function EarningsPage() {
       const allDiagnostics: any[] = [];
       const aggStats = { cached: 0, extracted: 0, intimation_only: 0, screener_fallback: 0, budget_exceeded: 0, missing_pdf: 0, llm_failed: 0 };
 
+      // PATCH 0959 — initialize progress now that we know the total work.
+      setAiProgress({ done: 0, total: items.length });
+
       // Process chunks in waves of 2 parallel to avoid Vercel slamming the
       // upstream PDF fetchers all at once. Each chunk uses Haiku's own
       // internal CONCURRENT=4 PDF pipeline.
@@ -1896,7 +1903,10 @@ export default function EarningsPage() {
             signal: AbortSignal.timeout(55_000),
           }).then(r => r.ok ? r.json() : null)
         ));
-        for (const r of waveResults) {
+        let waveProcessed = 0;
+        for (let ri = 0; ri < waveResults.length; ri++) {
+          waveProcessed += wave[ri].length;
+          const r = waveResults[ri];
           if (r.status !== 'fulfilled' || !r.value) continue;
           const json = r.value;
           Object.assign(allResults, json?.results || {});
@@ -1910,6 +1920,18 @@ export default function EarningsPage() {
           aggStats.missing_pdf += s.missing_pdf || 0;
           aggStats.llm_failed += s.llm_failed || 0;
         }
+        // PATCH 0959 — wave done, update progress so button reflects reality.
+        setAiProgress(prev => prev ? { done: Math.min(prev.done + waveProcessed, prev.total), total: prev.total } : null);
+        // PATCH 0959 — incrementally merge results into aiGuidance so the
+        // card grid lights up as each wave completes (instead of all at end).
+        setAiGuidance(prev => {
+          const next = { ...prev };
+          for (const [ticker, fg] of Object.entries(allResults)) {
+            if (fg && fg.label) next[ticker.toUpperCase()] = fg;
+          }
+          try { localStorage.setItem('mc:ai-fg:v2', JSON.stringify(next)); } catch {}
+          return next;
+        });
       }
 
       setAiStats({
@@ -1940,6 +1962,7 @@ export default function EarningsPage() {
       console.warn('[AI Guidance] fetch failed:', (e as Error).message);
     } finally {
       setAiLoading(false);
+      setAiProgress(null);
     }
   }, [aiGuidance]);
 
@@ -2051,11 +2074,33 @@ export default function EarningsPage() {
     // PATCH 0198 — Multi-select: source pool = screenerCards (when screener selected
     // alone) OR cards (the normal scan universe). When multiple selected, we use
     // cards plus optionally union with screenerCards.
-    const sourceCards = selectedUniverses.has('screener') && selectedUniverses.size === 1
+    //
+    // PATCH 0959 — Dedupe by symbol. When a ticker exists in both `cards`
+    // (Watchlist / Conviction) AND `screenerCards`, the previous concat
+    // produced two visible rows for the same company. We now keep the FIRST
+    // occurrence (which comes from the user-curated universe with richer
+    // metadata) and merge universe tags so the badge still shows membership
+    // in screener too.
+    const rawSource = selectedUniverses.has('screener') && selectedUniverses.size === 1
       ? screenerCards
       : selectedUniverses.has('screener')
         ? [...cards, ...screenerCards]
         : cards;
+    const seen = new Map<string, EarningsScanCard>();
+    for (const c of rawSource) {
+      const key = (c.symbol || '').toUpperCase().trim();
+      if (!key) continue;
+      const existing = seen.get(key);
+      if (!existing) {
+        seen.set(key, c);
+      } else {
+        // Already kept — merge universeTag so we don't lose the fact that the
+        // ticker is in multiple universes. 'both' is the most inclusive.
+        const mergedTag = (existing.universeTag === c.universeTag) ? existing.universeTag : 'both';
+        seen.set(key, { ...existing, universeTag: mergedTag, isConviction: existing.isConviction || c.isConviction });
+      }
+    }
+    const sourceCards = Array.from(seen.values());
 
     // PATCH 0445 BUG-039 — Defensive grade resolver. The filter previously
     // depended on `c.grade` being exactly one of EXCELLENT/STRONG/GOOD/OK/BAD.
@@ -2812,7 +2857,7 @@ export default function EarningsPage() {
             const uncoveredCount = qualifying.length - coveredCount;
             const allCovered = uncoveredCount === 0;
             const buttonLabel = aiLoading
-              ? '🤖 Extracting…'
+              ? (aiProgress ? `🤖 Extracting ${aiProgress.done} / ${aiProgress.total}…` : '🤖 Extracting…')
               : allCovered
                 ? `🤖 ✓ AI ready — all ${qualifying.length} cached`
                 : `🤖 AI Guidance — ${uncoveredCount} new`;
