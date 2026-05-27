@@ -2243,35 +2243,43 @@ function buildCardFromData(data: ScreenerData, guidanceData?: GuidanceData | nul
     cmp: data.currentPrice,
     isBanking: data.isBanking || false,
     // ── Guidance & Sentiment fields ──
-    // PATCH 0357 — blended scoring. Compute BOTH the keyword-derived
-    // score (when available) and the metrics-derived score (always),
-    // then blend: 0.7 × metrics + 0.3 × keyword. Metrics is the primary
-    // signal because actual earnings deltas are ground truth; keywords
-    // are color commentary. Override safeties below force Negative for
-    // critical-phrase or catastrophic-decline cases.
+    // PATCH 0943 — REVERT P0357 blend per user directive ("we struggled to
+    // have best logic there, want that one only"). Restore pre-May-14
+    // behaviour: keyword-derived score from Screener pros/cons is the
+    // PRIMARY signal. Metrics-derived score is fallback ONLY when no
+    // narrative text is available. This matches the version the user
+    // tested and confirmed worked before.
+    //
+    // Kept from P0357:
+    //   - Critical-phrase override (audit concern / qualified opinion /
+    //     going concern / cash burn / negative cash flow → cap at -0.15)
+    //     because those are safety guards, not the blend itself.
     ...(() => {
-      const metricsResult = guidanceFromMetrics({
-        revYoY: revenueYoY, patYoY, epsYoY,
-        opmExpansion: (latest.opm != null && yoyQ?.opm != null) ? latest.opm - yoyQ.opm : null,
-        patAbsCurr: latest.pat ?? null,
-        patAbsPrev: yoyQ?.pat ?? null,
-      });
       const keywordScore = guidanceData?.sentimentScore;
       const haveKeyword = keywordScore != null && Number.isFinite(keywordScore);
-      let blended = haveKeyword
-        ? 0.7 * metricsResult.sentimentScore + 0.3 * keywordScore!
-        : metricsResult.sentimentScore;
+      let finalScore: number;
+      if (haveKeyword) {
+        // PRIMARY path: pure keyword score from Screener pros/cons text.
+        finalScore = keywordScore!;
+      } else {
+        // FALLBACK only when there's no narrative text to parse.
+        const metricsResult = guidanceFromMetrics({
+          revYoY: revenueYoY, patYoY, epsYoY,
+          opmExpansion: (latest.opm != null && yoyQ?.opm != null) ? latest.opm - yoyQ.opm : null,
+          patAbsCurr: latest.pat ?? null,
+          patAbsPrev: yoyQ?.pat ?? null,
+        });
+        finalScore = metricsResult.sentimentScore;
+      }
 
-      // Critical-phrase override (downside). Audit / qualified-opinion /
-      // going-concern / cash-burn / negative-cash-flow in cons forces
-      // guidance Negative regardless of metrics.
+      // Critical-phrase override (downside safety). Always applied.
       const cons = (guidanceData?.consText || '').toLowerCase();
       const criticalNegativeRe = /(audit concern|qualified opinion|going concern|cash burn|negative cash flow)/;
       if (criticalNegativeRe.test(cons)) {
-        if (blended > -0.15) blended = -0.15;
+        if (finalScore > -0.15) finalScore = -0.15;
       }
 
-      const finalScore = Math.max(-1, Math.min(1, parseFloat(blended.toFixed(3))));
+      finalScore = Math.max(-1, Math.min(1, parseFloat(finalScore.toFixed(3))));
       let finalGuidance: 'Positive' | 'Neutral' | 'Negative';
       if (finalScore > 0.05) finalGuidance = 'Positive';
       else if (finalScore < -0.05) finalGuidance = 'Negative';
