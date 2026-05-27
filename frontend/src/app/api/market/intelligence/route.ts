@@ -2698,10 +2698,29 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             };
           }
 
+          // PATCH 0940 — Inject EO BLOCKBUSTER+STRONG tickers BEFORE the
+          // stripJunk pass on the precomputed-cache hit path (the dominant
+          // path users hit). Without this, the deep fix has no effect since
+          // most requests never reach the fresh-compute branch.
+          let _eoInjectedCount = 0;
+          try {
+            const eoSignals = await fetchEOSignalsForMerge();
+            if (eoSignals.length > 0) {
+              const existing = new Set((responseData.signals || []).map((s: any) => String(s.symbol || '').toUpperCase()));
+              const fresh = eoSignals.filter((s: any) => !existing.has(String(s.symbol || '').toUpperCase()));
+              if (fresh.length > 0) {
+                responseData.signals = [...fresh, ...(responseData.signals || [])];
+                (responseData as any)._allSignals = [...fresh, ...((responseData as any)._allSignals || [])];
+                _eoInjectedCount = fresh.length;
+              }
+            }
+          } catch {}
+
           // PATCH 0833 — strip template-pattern junk from precomputed cache hits
           const _cleaned = stripJunkResponse(responseData);
           return NextResponse.json({
             ..._cleaned,
+            _eoInjected: _eoInjectedCount,
             _meta: {
               source: 'precomputed',
               computedAt: meta.computedAt,
