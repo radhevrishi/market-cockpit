@@ -1503,12 +1503,14 @@ export default function EarningsPage() {
     setConvictionLoading(true);
     (async () => {
       try {
-        // PATCH 0942 — Much faster CB scan + progressive render.
-        // Was: 396 tickers / 30 per batch / 3 parallel waves = ~125s wall-clock
-        //      AND no cards visible until everything completed.
-        // Now: 50 per batch / 6 parallel = ~40s, AND cards render after EACH
-        // wave so user sees progress immediately instead of staring at a spinner.
-        const BATCH_SIZE = 50;
+        // PATCH 0944 — Right-size CB scan. P0942 used 50/batch with 18s timeout
+        // but the upstream earnings-scan endpoint takes ~4s per ticker on
+        // Screener.in cold path → 50 tickers would need ~200s, aborting after
+        // ~4 tickers per batch (so almost no data came back). Now: 20/batch
+        // with 28s timeout so each batch can actually complete (20 × 4s ≈ 80s
+        // worst case, but Screener cache cuts this to 6-15s typical).
+        // 6 parallel waves still keeps wall-clock around 50-60s for 396 names.
+        const BATCH_SIZE = 20;
         const PARALLEL = 6;
         const batches: string[][] = [];
         for (let i = 0; i < newTickers.length; i += BATCH_SIZE) batches.push(newTickers.slice(i, i + BATCH_SIZE));
@@ -1520,10 +1522,12 @@ export default function EarningsPage() {
           const results = await Promise.allSettled(
             wave.map(async (batch) => {
               const encoded = batch.map(s => encodeURIComponent(s)).join(',');
-              // PATCH 0942 — 18s per-batch (tighter than 25s; 50 tickers per
-              // call usually completes in 6-10s when Screener.in is warm).
+              // PATCH 0944 — 28s per-batch. P0942's 18s was too tight when
+              // combined with 50 tickers — Screener.in takes ~4s/ticker on
+              // cold path so batches aborted before yielding data. 28s gives
+              // a 20-ticker batch room to finish (typical 6-15s warm).
               const _ctl = new AbortController();
-              const _timer = setTimeout(() => _ctl.abort(), 18_000);
+              const _timer = setTimeout(() => _ctl.abort(), 28_000);
               try {
                 const res = await fetch(`/api/market/earnings-scan?symbols=${encoded}`, { signal: _ctl.signal });
                 if (!res.ok) return null;
