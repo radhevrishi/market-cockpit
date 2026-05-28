@@ -1570,8 +1570,17 @@ export default function EarningsPage() {
           }
         }
       } catch {}
+      // PATCH 0967 BUG-A — localStorage KEY MISMATCH fix.
+      // The /portfolio page (My Book) stores holdings under 'mc_portfolio_holdings'
+      // (see frontend/src/app/(dashboard)/portfolio/page.tsx line 68 — STORAGE_KEY).
+      // This page was reading the OLD key 'portfolioHoldings' which never matched,
+      // so 43 user holdings never propagated into the Earnings universe → showed
+      // "Portfolio 0" even though My Book had 43 entries.
+      // Fix: read the CANONICAL key first, fall back to the legacy key for any
+      // older sessions that may have written under the old name.
       try {
-        const pfStored = localStorage.getItem('portfolioHoldings');
+        let pfStored = localStorage.getItem('mc_portfolio_holdings');  // canonical key
+        if (!pfStored) pfStored = localStorage.getItem('portfolioHoldings');  // legacy fallback
         if (pfStored) {
           const lsList: any[] = JSON.parse(pfStored) || [];
           const lsSymbols = (Array.isArray(lsList) ? lsList : []).map((h: any) => (h?.ticker || h?.symbol || '').toString().toUpperCase().trim()).filter(Boolean);
@@ -1825,43 +1834,78 @@ export default function EarningsPage() {
         return;
       }
 
-      // Step 2: Fetch earnings in parallel batches (5 concurrent)
-      const BATCH = 30;
-      const PARALLEL = 5;
+      // PATCH 0967 BUG-B — Screener scan was 6+ minutes for 2295 stocks.
+      //
+      // OLD: BATCH=30 × PARALLEL=5 × 25s wave-blocking timeout
+      //   = 77 batches / 5 = 16 waves × 25s worst-case = ~7 min wall time
+      //   = every wave waits for its SLOWEST batch (tail-latency dominates)
+      //
+      // NEW: BATCH=15 × WORKERS=15 in a TRUE WORKER POOL (not waves)
+      //   = 153 batches / 15 workers each pulling next from queue as it
+      //     completes its current batch (no wave blocking, no stalls)
+      //   = typical ~12-15s/batch × ~10 sequential pulls per worker
+      //     ≈ 90-150s total wall time. ~3-5× faster.
+      //
+      // Smaller BATCH (15 vs 30) means each request finishes faster + has
+      // a lower chance of hitting the 25s timeout, so more results land
+      // instead of timing out → silently dropping. Per-batch timeout also
+      // tightened 25s → 20s since smaller batches need less.
+      //
+      // Worker pool: each worker is a long-lived async loop that pulls
+      // batches off a shared cursor until exhausted. No await on a wave
+      // boundary, so a slow batch only stalls ONE worker, not 15.
+      const BATCH = 15;
+      const WORKERS = 15;
       let allScCards: EarningsScanCard[] = [];
       const scBatches: string[][] = [];
       for (let i = 0; i < screenerOnly.length; i += BATCH) {
         scBatches.push(screenerOnly.slice(i, i + BATCH));
       }
 
-      for (let w = 0; w < scBatches.length; w += PARALLEL) {
-        const wave = scBatches.slice(w, w + PARALLEL);
-        const results = await Promise.allSettled(
-          wave.map(async (batch) => {
-            const encoded = batch.map(s => encodeURIComponent(s)).join(',');
-            // PATCH 0467 — 25s per-batch timeout (matches earlier wave)
-            const ctl = new AbortController();
-            const timer = setTimeout(() => ctl.abort(), 25_000);
-            let res: Response;
-            try {
-              res = await fetch(`/api/market/earnings-scan?symbols=${encoded}`, { signal: ctl.signal });
-            } catch { clearTimeout(timer); return null; }
+      // Shared queue cursor — each worker atomically claims next batch.
+      let nextBatchIdx = 0;
+      const claimNext = (): string[] | null => {
+        if (nextBatchIdx >= scBatches.length) return null;
+        return scBatches[nextBatchIdx++];
+      };
+
+      const runWorker = async () => {
+        while (true) {
+          const batch = claimNext();
+          if (!batch) return;
+          const encoded = batch.map(s => encodeURIComponent(s)).join(',');
+          const ctl = new AbortController();
+          const timer = setTimeout(() => ctl.abort(), 20_000);
+          try {
+            const res = await fetch(`/api/market/earnings-scan?symbols=${encoded}`, { signal: ctl.signal });
             clearTimeout(timer);
-            if (!res.ok) return null;
-            return res.json() as Promise<ScanResponse>;
-          })
-        );
-        for (const r of results) {
-          if (r.status === 'fulfilled' && r.value) {
-            const batchCards = (r.value.cards || []).map(c => ({ ...c, universeTag: 'screener' as const }));
+            if (!res.ok) continue;  // skip this batch, keep working
+            const json = (await res.json()) as ScanResponse;
+            const batchCards = (json.cards || []).map(c => ({ ...c, universeTag: 'screener' as const }));
             allScCards = [...allScCards, ...batchCards];
+            // Push to UI immediately so user sees progress every batch (not every wave)
+            setScreenerCards(prev => {
+              const seen = new Set(prev.map(c => c.symbol));
+              const fresh = batchCards.filter(c => !seen.has(c.symbol));
+              return fresh.length > 0 ? [...prev, ...fresh] : prev;
+            });
+          } catch {
+            clearTimeout(timer);
+            // Worker continues with next batch even after a single failure.
           }
         }
-        // Update progress after each wave
-        setScreenerCards(prev => [...prev, ...allScCards.slice(prev.length)]);
-      }
+      };
 
-      setScreenerCards(allScCards);
+      // Spin up the pool and wait for all workers to drain the queue.
+      const workers = Array.from({ length: WORKERS }, () => runWorker());
+      await Promise.all(workers);
+
+      setScreenerCards(prev => {
+        // Final dedup pass — workers are racy on append, so canonicalize once.
+        const map = new Map<string, EarningsScanCard>();
+        for (const c of [...prev, ...allScCards]) map.set(c.symbol, c);
+        return Array.from(map.values());
+      });
       setScreenerLoaded(true);
     } catch (err) {
       console.error('[Screener Earnings]', err);
