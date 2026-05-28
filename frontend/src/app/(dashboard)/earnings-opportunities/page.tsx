@@ -1002,12 +1002,16 @@ export default function EarningsOpportunitiesPage() {
         const cached = readLsCache(resolvedDateForGrading);
         if (cached) return dedupePayloadByCompany(cached as OpportunitiesPayload);
       }
-      // PATCH 0741 + 0842 — Client-side timeout. Was 20s — too aggressive
-      // for past dates that have no LS cache yet (cold backend, big
-      // historical day = 25-40s to grade). Now: 45s for past dates,
-      // 20s for today/yesterday (where backend is always warm).
+      // PATCH 0741 + 0842 + 0968 BUG-D — Client-side timeout.
+      // User reported (May 27 2026 evening): 20s timeout firing on TODAY
+      // with "Server couldn't build data for 2026-05-27: client_timeout_20s".
+      // Today's pipeline is sometimes cold during off-hours (CF Worker idle,
+      // NSE archives endpoint slow). 20s is too aggressive; backend warming
+      // can take 25-30s. Bumping today/yesterday 20s → 40s. Past dates
+      // unchanged at 45s. Total session budget = 45s upstream + 5s slack
+      // = stays well under any sane upper bound.
       const ctrl = new AbortController();
-      const timeoutMs = isPastDate ? 45_000 : 20_000;
+      const timeoutMs = isPastDate ? 45_000 : 40_000;
       const clientTimeout = setTimeout(() => ctrl.abort(), timeoutMs);
       let res: Response;
       try {

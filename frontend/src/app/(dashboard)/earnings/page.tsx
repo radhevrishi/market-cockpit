@@ -960,8 +960,22 @@ function aiEligibilityReason(card: EarningsScanCard): { state: 'eligible' | 'low
 }
 
 function EarningsCardComponent({ card, postGap, ai }: { card: EarningsScanCard; postGap?: { gap_pct: number | null; close_move_pct: number | null; live_move_pct: number | null; is_live: boolean; target_date: string | null; filing_date?: string; filing_date_source?: 'explicit' | 'kv-calendar' | 'detected' }; ai?: AIForwardGuidance | null }) {
-  const tagColor = card.universeTag === 'portfolio' ? '#10B981' : card.universeTag === 'both' ? '#8B5CF6' : card.universeTag === 'screener' ? '#F59E0B' : ACCENT;
-  const tagLabel = card.universeTag === 'portfolio' ? 'PORTFOLIO' : card.universeTag === 'both' ? 'BOTH' : card.universeTag === 'screener' ? 'SCREENER' : 'WATCHLIST';
+  // PATCH 0968 BUG-A — added 'conviction' case. Without it, conviction-tagged
+  // cards (from the lazy conviction-beats fetch path) were falling through to
+  // the default and rendering "WATCHLIST" — falsely implying they were in the
+  // user's watchlist. Conviction is a SEPARATE universe.
+  const tagColor =
+    card.universeTag === 'portfolio'   ? '#10B981' :
+    card.universeTag === 'both'        ? '#8B5CF6' :
+    card.universeTag === 'screener'    ? '#F59E0B' :
+    card.universeTag === 'conviction'  ? '#3B82F6' :  // PATCH 0968 — blue for conviction
+    ACCENT;
+  const tagLabel =
+    card.universeTag === 'portfolio'   ? 'PORTFOLIO' :
+    card.universeTag === 'both'        ? 'BOTH' :
+    card.universeTag === 'screener'    ? 'SCREENER' :
+    card.universeTag === 'conviction'  ? 'CONVICTION' :  // PATCH 0968 — explicit conviction
+    'WATCHLIST';
 
   // Check if data is stale (>6 months old) and cap score at 40 if >4 quarters old
   const staleData = isDataStale(card.period, 6);
@@ -1578,15 +1592,32 @@ export default function EarningsPage() {
       // "Portfolio 0" even though My Book had 43 entries.
       // Fix: read the CANONICAL key first, fall back to the legacy key for any
       // older sessions that may have written under the old name.
+      // PATCH 0968 BUG-C — try ALL known portfolio LS keys.
+      // /portfolio (My Book) writes 'mc_portfolio_holdings'. Older sessions
+      // may have data under 'portfolioHoldings', 'mc_portfolio_tickers', or
+      // 'mc_portfolio_holdings_v1' (the latter two are referenced by
+      // watchlists/page.tsx lines 1660 as legacy keys). Probe all of them
+      // so any user with stale-key data still gets their holdings.
       try {
-        let pfStored = localStorage.getItem('mc_portfolio_holdings');  // canonical key
-        if (!pfStored) pfStored = localStorage.getItem('portfolioHoldings');  // legacy fallback
-        if (pfStored) {
-          const lsList: any[] = JSON.parse(pfStored) || [];
-          const lsSymbols = (Array.isArray(lsList) ? lsList : []).map((h: any) => (h?.ticker || h?.symbol || '').toString().toUpperCase().trim()).filter(Boolean);
+        const KEYS = ['mc_portfolio_holdings', 'portfolioHoldings', 'mc_portfolio_tickers', 'mc_portfolio_holdings_v1'];
+        for (const key of KEYS) {
+          const pfStored = localStorage.getItem(key);
+          if (!pfStored) continue;
+          let lsList: any;
+          try { lsList = JSON.parse(pfStored); } catch { continue; }
+          if (!lsList) continue;
+          // Three accepted shapes: Array<string>, Array<{ticker|symbol}>, Object<ticker, *>
+          let lsSymbols: string[] = [];
+          if (Array.isArray(lsList)) {
+            lsSymbols = lsList.map((h: any) => (typeof h === 'string' ? h : (h?.ticker || h?.symbol || '')).toString().toUpperCase().trim()).filter(Boolean);
+          } else if (typeof lsList === 'object') {
+            lsSymbols = Object.keys(lsList).map(k => k.toUpperCase().trim()).filter(Boolean);
+          }
           if (lsSymbols.length > 0) {
             const merged = new Set([...portfolio.map(s => String(s || '').toUpperCase().trim()), ...lsSymbols].filter(Boolean));
             portfolio = Array.from(merged);
+            console.log(`[Earnings] Portfolio universe: merged ${lsSymbols.length} from LS key '${key}'`);
+            break;  // first key that yields data wins
           }
         }
       } catch {}
@@ -2537,9 +2568,22 @@ export default function EarningsPage() {
     };
   }, [visibleCards]);
 
-  // Show actual card count (with data) vs total requested symbols
-  const portfolioCardCount = visibleCards.filter(c => c.universeTag === 'portfolio' || c.universeTag === 'both').length;
-  const watchlistCardCount = visibleCards.filter(c => c.universeTag === 'watchlist' || c.universeTag === 'both').length;
+  // PATCH 0968 BUG-B — fix Watchlist "10/0" lying chip.
+  //
+  // Old logic counted any card with universeTag === 'watchlist' OR 'both'.
+  // But the dedupe at line 2331 collapses ANY two universes' overlap to
+  // 'both' (e.g. conviction+screener merged together get tag='both'), so
+  // 'both' polluted the watchlist count even when the user has 0 actual
+  // watchlist holdings.
+  //
+  // New rule: a card counts toward Watchlist (or Portfolio) only if its
+  // ACTUAL SYMBOL is in the resolved watchlist (or portfolio) symbol set.
+  // This is the ground truth — universeTag is a render hint, the set is
+  // the truth.
+  const pfSetMembers = new Set(portfolioSymbols.map(s => s.toUpperCase()));
+  const wlSetMembers = new Set(watchlistSymbols.map(s => s.toUpperCase()));
+  const portfolioCardCount = visibleCards.filter(c => pfSetMembers.has((c.symbol || '').toUpperCase())).length;
+  const watchlistCardCount = visibleCards.filter(c => wlSetMembers.has((c.symbol || '').toUpperCase())).length;
   const bothCardCount = visibleCards.length;
 
   // PATCH 0186 — Count of cards in conviction (post-filter, respecting other filters)
