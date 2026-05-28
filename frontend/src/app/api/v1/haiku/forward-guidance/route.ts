@@ -235,6 +235,32 @@ interface ScoredFiling {
   filename: string;
 }
 
+// PATCH 0972 BUG-1 — Stale-filename detector.
+// User reported: BHEL card showed Q4 FY24 concall (filename
+// 'bhel-transcript%20concall%20q4fy24-may21_2024.pdf') used as the Q4 FY26
+// guidance source. The score-based selector picked it because "transcript"
+// in the filename gives +100, but it failed to penalize the explicit
+// "q4fy24" and "_2024" tokens marking it as 2-year-old content.
+//
+// New approach: extract year/quarter tokens from filename. If they're > 1
+// year behind the current calendar year, apply a heavy penalty (-250)
+// that drops the filing below threshold so we fall through to Screener.in
+// or skip the ticker entirely. Catches the BHEL-style case + protects
+// against any future "old transcript with new filename wrapper" issues.
+function detectFilenameYear(filename: string): number | null {
+  // Look for 'fy24', 'fy2024', '_2024_', '_2024.pdf', 'q4fy24'
+  const fyMatch = filename.match(/fy\s*(?:20)?(\d{2})\b/);
+  const yearMatch = filename.match(/(?:^|[\W_])(20[12]\d)(?:[\W_]|$)/);
+  let year: number | null = null;
+  if (yearMatch) year = parseInt(yearMatch[1], 10);
+  if (fyMatch) {
+    const fyYear = 2000 + parseInt(fyMatch[1], 10);
+    // FY year (e.g. fy24 = Apr 2023–Mar 2024) corresponds to calendar year
+    if (year == null || fyYear > year) year = fyYear;
+  }
+  return year;
+}
+
 function scoreFiling(f: CFFilingItem): ScoredFiling {
   const url = f.attachment_url || '';
   const filename = (url.split('/').pop() || '').toLowerCase();
@@ -256,10 +282,28 @@ function scoreFiling(f: CFFilingItem): ScoredFiling {
   if (/newspaper|publication|copy.{0,3}of/.test(filename))                                 score -= 150;
   if (/^outcome|board.?meeting/.test(filename))                                            score -= 80;
 
+  // ── PATCH 0972 BUG-1 — STALE-YEAR penalty. ──
+  // If the filename contains an explicit year/FY token that's > 1 year
+  // behind the current calendar year, this is almost certainly an old
+  // transcript that was misindexed under a new filing. Apply -250 (drops
+  // below threshold so we never feed Haiku stale content). Logged so
+  // diagnostics can audit.
+  const detectedYear = detectFilenameYear(filename);
+  const currentYear = new Date().getUTCFullYear();
+  if (detectedYear != null && detectedYear < currentYear - 1) {
+    score -= 250;
+    console.warn(`[FG-DIAG] STALE FILENAME detected: '${filename}' has year ${detectedYear} vs current ${currentYear} (penalty -250)`);
+  }
+
   // ── Subject as a tiebreaker (mild positive only) ──
   if (/press release/.test(subject))           score += 15;
   if (/investor presentation/.test(subject))   score += 15;
   if (/con\.?\s*call|conference call/.test(subject)) score += 5;  // weak — could be intimation
+
+  // ── PATCH 0972 BUG-1b — Freshness bonus for current-year files. ──
+  // Filenames with current year (2026) get +20 so even when multiple
+  // valid PDFs exist, the freshest one wins.
+  if (detectedYear === currentYear) score += 20;
 
   return { filing: f, score, tag, filename };
 }

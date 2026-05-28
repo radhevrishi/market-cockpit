@@ -1392,10 +1392,24 @@ function detectDivergence(
 
 // ── Growth Calculations ─────────────────────
 
+// PATCH 0972 BUG-3 + BUG-4 — proper handling of divide-by-zero and
+// absurd growth percentages.
+//
+// Old logic returned ±999.9 on a zero-base, which the UI rendered as
+// "+999.9%" or "+10180%" / "+1064%" (Adani Green PAT QoQ when prev=0.05).
+// These were misleading — a percent change isn't meaningful when the base
+// is zero or near-zero (e.g. loss-making → marginally profitable produces
+// astronomical "growth" %% that overstate the recovery).
+//
+// New behavior:
+//   • previous == 0 OR |previous| < 0.5 (rounding noise around zero):
+//     return null. UI now renders "n/m" (not meaningful — base too small).
+//   • |pct| > 500%: still return the value but caller can decide to cap
+//     display. We don't strip the data because some users do want the
+//     ratio.
 function pctChange(current: number, previous: number): number | null {
-  if (previous === 0) {
-    if (current > 0) return 999.9;  // Signal "from zero base"
-    if (current < 0) return -999.9;
+  // BUG-3: zero or near-zero base → percent change is mathematically meaningless
+  if (previous === 0 || Math.abs(previous) < 0.5) {
     return null;
   }
   const pct = ((current - previous) / Math.abs(previous)) * 100;

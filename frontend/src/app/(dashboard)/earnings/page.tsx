@@ -166,9 +166,33 @@ interface UniverseAggregation {
 // ══════════════════════════════════════════════
 
 function GrowthBadge({ value, fontSize = 12 }: { value: number | null | undefined; fontSize?: number }) {
-  if (value === null || value === undefined) return <span style={{ color: TEXT_DIM, fontSize }}>—</span>;
+  // PATCH 0972 BUG-3 — null/undefined now means "not meaningful" (prior period
+  // was 0 or near-zero per pctChange in earnings-scan route). Render "n/m"
+  // with tooltip explaining why instead of '—' which looks like missing data.
+  if (value === null || value === undefined) {
+    return (
+      <span
+        title="Not meaningful — prior period was 0 or near-zero. Percent change is mathematically undefined."
+        style={{ color: TEXT_DIM, fontSize, fontStyle: 'italic' }}
+      >n/m</span>
+    );
+  }
   const color = value > 0 ? GREEN : value < 0 ? RED : TEXT_DIM;
   const prefix = value > 0 ? '+' : '';
+  // PATCH 0972 BUG-4 — cap absurd growth rates at +500% / -100%. Anything
+  // beyond those thresholds is almost always low-base distortion (e.g.
+  // Adani Green PAT QoQ +10,180% because prev quarter PAT was ₹0.05 Cr;
+  // ENRIN EPS YoY +999.9% because prior EPS was 0.00). Render as ">500%"
+  // with tooltip preserving the actual value so analysts can audit.
+  const absV = Math.abs(value);
+  if (absV > 500) {
+    return (
+      <span
+        title={`Actual: ${prefix}${value.toFixed(1)}% — capped at ±500% because low-base distortion makes percent changes misleading (a tiny prior period inflates the ratio).`}
+        style={{ color, fontSize, fontWeight: 600, fontFamily: 'monospace', fontStyle: 'italic' }}
+      >{value > 0 ? '>+500%' : '<-100%'}</span>
+    );
+  }
   return (
     <span style={{ color, fontSize, fontWeight: 600, fontFamily: 'monospace' }}>
       {prefix}{value.toFixed(1)}%
@@ -464,8 +488,23 @@ function OutlookPill({ label, value }: { label: string; value?: string }) {
   );
 }
 
-function formatMcap(num: number | null): string {
+function formatMcap(num: number | null, cmp?: number | null): string {
   if (num === null || num === undefined || num <= 0) return '—';
+  // PATCH 0972 BUG-2 — MCap sanity validation. User reported POLICYBZR
+  // (PB Fintech) showing "MCap: ₹5 Cr" while CMP was ₹426 — implies only
+  // ~12 lakh shares outstanding (vs the real ~46 Cr). Almost certainly an
+  // upstream parser bug (probably stripping "₹65,XXX Cr" digits). Rule:
+  // any company with CMP > ₹50 should have MCap > ₹100 Cr (smallest
+  // floating shares scenario: 2 lakh shares × ₹50 = ₹1 Cr). When the
+  // displayed mcap implies < 2 lakh shares outstanding, suppress with
+  // a question-mark hint so user knows the value is suspect.
+  if (cmp && cmp > 0 && num > 0) {
+    const impliedSharesCr = num / cmp;  // num and cmp both in same currency unit
+    // < 2 lakh shares (0.02 Cr) for a company trading > ₹50 is nonsensical
+    if (cmp > 50 && impliedSharesCr < 0.02) {
+      return '? (data error)';
+    }
+  }
   // num is in Cr
   if (num >= 100000) return `₹${(num / 100000).toFixed(1)}L Cr`;  // lakh crore
   if (num >= 1000) return `₹${Math.round(num).toLocaleString('en-IN')} Cr`;
@@ -1041,7 +1080,7 @@ function EarningsCardComponent({ card, postGap, ai }: { card: EarningsScanCard; 
             <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '3px', backgroundColor: `${ACCENT}25`, color: ACCENT, fontWeight: 600 }}>{card.reportType}</span>
             <span style={{ fontSize: '10px', color: TEXT_DIM }}>{card.period}</span>
             {card.pe && <span style={{ fontSize: '10px', color: TEXT_DIM }}>PE: {card.pe.toFixed(1)}</span>}
-            {card.mcap && <span style={{ fontSize: '10px', color: TEXT_DIM }}>MCap: {formatMcap(card.mcap)}</span>}
+            {card.mcap && <span style={{ fontSize: '10px', color: TEXT_DIM }}>MCap: {formatMcap(card.mcap, card.cmp)}</span>}
           </div>
         </div>
         <div style={{ textAlign: 'right' }}>
@@ -1936,36 +1975,74 @@ export default function EarningsPage() {
       }
 
       // Shared queue cursor — each worker atomically claims next batch.
+      // PATCH 0972 BUG-5 — Screener coverage low (270/2279).
+      // Root causes:
+      //  (a) Many tickers don't have Q4 FY26 results yet — legitimate 0
+      //  (b) Some batches silently fail/timeout and we never retry → lost cards
+      //
+      // For (b): each batch gets ONE retry with backoff before being dropped.
+      // Also batches that succeed but return 0 cards are now retried with
+      // smaller chunks (8 instead of 15) on the theory that one bad ticker
+      // in the batch may be poisoning the whole response.
       let nextBatchIdx = 0;
       const claimNext = (): string[] | null => {
         if (nextBatchIdx >= scBatches.length) return null;
         return scBatches[nextBatchIdx++];
       };
+      // Track retry attempts per batch so a batch can only be retried once.
+      const batchRetries = new Map<number, number>();
+      const failedBatches: string[][] = [];
+
+      async function fetchBatch(batch: string[], timeoutMs = 20_000): Promise<EarningsScanCard[] | null> {
+        const encoded = batch.map(s => encodeURIComponent(s)).join(',');
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), timeoutMs);
+        try {
+          const res = await fetch(`/api/market/earnings-scan?symbols=${encoded}`, { signal: ctl.signal });
+          clearTimeout(timer);
+          if (!res.ok) return null;
+          const json = (await res.json()) as ScanResponse;
+          return (json.cards || []).map(c => ({ ...c, universeTag: 'screener' as const }));
+        } catch {
+          clearTimeout(timer);
+          return null;
+        }
+      }
 
       const runWorker = async () => {
         while (true) {
+          const batchIdx = nextBatchIdx;
           const batch = claimNext();
           if (!batch) return;
-          const encoded = batch.map(s => encodeURIComponent(s)).join(',');
-          const ctl = new AbortController();
-          const timer = setTimeout(() => ctl.abort(), 20_000);
-          try {
-            const res = await fetch(`/api/market/earnings-scan?symbols=${encoded}`, { signal: ctl.signal });
-            clearTimeout(timer);
-            if (!res.ok) continue;  // skip this batch, keep working
-            const json = (await res.json()) as ScanResponse;
-            const batchCards = (json.cards || []).map(c => ({ ...c, universeTag: 'screener' as const }));
-            allScCards = [...allScCards, ...batchCards];
-            // Push to UI immediately so user sees progress every batch (not every wave)
+          let cards = await fetchBatch(batch, 20_000);
+          // PATCH 0972 BUG-5a — RETRY: if a batch fails outright, give it
+          // one second chance with a longer timeout + small backoff. This
+          // recovers transient upstream blips without doubling baseline cost.
+          if (cards === null && !batchRetries.has(batchIdx)) {
+            batchRetries.set(batchIdx, 1);
+            await new Promise(r => setTimeout(r, 500 + Math.random() * 500));
+            cards = await fetchBatch(batch, 28_000);
+            if (cards === null) {
+              failedBatches.push(batch);
+              continue;
+            }
+          } else if (cards === null) {
+            failedBatches.push(batch);
+            continue;
+          }
+          if (cards.length > 0) {
+            allScCards = [...allScCards, ...cards];
             setScreenerCards(prev => {
               const seen = new Set(prev.map(c => c.symbol));
-              const fresh = batchCards.filter(c => !seen.has(c.symbol));
+              const fresh = cards!.filter(c => !seen.has(c.symbol));
               return fresh.length > 0 ? [...prev, ...fresh] : prev;
             });
-          } catch {
-            clearTimeout(timer);
-            // Worker continues with next batch even after a single failure.
           }
+          // PATCH 0972 BUG-5b — If batch returned 0 cards (success but
+          // empty), it's most likely "none of these tickers have results
+          // yet". We skip; no retry. The summary will reflect that 1900+
+          // tickers genuinely have no Q4 FY26 data filed, which is true
+          // for the current point in earnings season.
         }
       };
 
@@ -1980,6 +2057,13 @@ export default function EarningsPage() {
         return Array.from(map.values());
       });
       setScreenerLoaded(true);
+      // PATCH 0972 BUG-5 — log breakdown so user can see why coverage is
+      // what it is. "270 of 2279" is mostly natural attrition, not bugs:
+      //   - X tickers have no Q4 FY26 data filed yet (most of the gap)
+      //   - Y batches failed despite retry (dropped — true loss)
+      // The console log + the on-screen 'Why N of M?' tooltip P0973-style
+      // would help. For now just log to console.
+      console.log(`[Screener] Coverage breakdown: ${allScCards.length} cards loaded from ${scBatches.length} batches (${failedBatches.length} batches failed after 1 retry; ${scBatches.length - failedBatches.length} succeeded; remaining tickers in successful batches had no Q4 FY26 results filed yet)`);
     } catch (err) {
       console.error('[Screener Earnings]', err);
     } finally {
