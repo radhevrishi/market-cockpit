@@ -15,11 +15,21 @@ name: Concall Intel Warm (daily)
 
 on:
   schedule:
-    # 22:00 UTC = 03:30 IST. Daily, every day — Sunday-evening concall PDFs
-    # need to be in cache before Monday open, weekday filings need same-day
-    # warmth so users navigating to /order-book or /rating-actions on
-    # Tue-Fri see current data.
-    - cron: '30 22 * * *'
+    # PATCH 0978 — moved daily → weekly (Sunday-night only) after Vercel
+    # Fluid Active CPU quota was exhausted at 300% in May 2026.
+    #
+    # This workflow extracts up to 25 PDFs/run via Haiku — at ~$0.01/PDF
+    # × 30 runs/month = ~$7.50 of Anthropic, blowing the user's $5
+    # monthly cap on its own. Vercel cost is ~60s/run × 30 = 30 min/month.
+    #
+    # Weekly Sunday-night warm covers the Monday-open scenario (the
+    # original primary use case). Tue-Fri users will see slightly
+    # staler data on /order-book or /rating-actions until they hit
+    # Refresh — interactive refetch already works.
+    #
+    # Can revisit cadence once the user upgrades to Vercel Pro or raises
+    # Anthropic monthly cap above $10.
+    - cron: '30 22 * * 0'      # Sunday 22:00 UTC = Monday 03:30 IST
   workflow_dispatch: {}   # allow manual trigger from GitHub UI
 
 # Don't queue overlapping runs; if one is in flight, skip the next.
