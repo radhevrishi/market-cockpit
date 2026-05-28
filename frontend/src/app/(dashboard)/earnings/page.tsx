@@ -1670,8 +1670,30 @@ export default function EarningsPage() {
         }
       } catch {}
 
-      setPortfolioSymbols(portfolio);
-      setWatchlistSymbols(watchlist);
+      // PATCH 0974 — DON'T WIPE TO 0 on temporary API hiccup.
+      // User repeatedly reports portfolio/watchlist universe going from
+      // populated (43, 70) back to 0 between sessions. Root cause: when
+      // API + LS BOTH return 0 (race condition during deploys, browser
+      // tab opened before /portfolio populates LS, transient API failure)
+      // we were calling setPortfolioSymbols([]) which clears the in-memory
+      // state.
+      // Fix: if the fresh resolve returned 0 but the PREVIOUS state had
+      // values, keep the previous state. Only set to 0 if there is genuinely
+      // no prior data (first load).
+      setPortfolioSymbols(prev => {
+        if (portfolio.length === 0 && prev.length > 0) {
+          console.warn(`[Earnings] Portfolio resolved to 0 but state had ${prev.length} — preserving previous state to avoid wipe-on-hiccup`);
+          return prev;
+        }
+        return portfolio;
+      });
+      setWatchlistSymbols(prev => {
+        if (watchlist.length === 0 && prev.length > 0) {
+          console.warn(`[Earnings] Watchlist resolved to 0 but state had ${prev.length} — preserving previous state to avoid wipe-on-hiccup`);
+          return prev;
+        }
+        return watchlist;
+      });
 
       // PATCH 0969 — visible diagnostic for empty Portfolio/Watchlist universes.
       // User repeatedly reports "Portfolio 0 even though I have 43 holdings".
@@ -2146,7 +2168,11 @@ export default function EarningsPage() {
       // tickers ended up with only 4 results last run: each 25-ticker
       // chunk took ~120-200s, every chunk hit Vercel's 55s timeout, the
       // 504 turned into `null` in Promise.allSettled, and we just moved on.
-      const CHUNK = 8;
+      // PATCH 0973 — dropped CHUNK 8 → 5 matching server-side cap.
+      // User reported 18/18 batches timing out at 50s client / 55s server.
+      // With CHUNK=8 the per-batch wall time was 50-55s (right at the
+      // cutoff). CHUNK=5 gives ~30-40s, comfortable margin.
+      const CHUNK = 5;
       const chunks: typeof items[] = [];
       for (let i = 0; i < items.length; i += CHUNK) chunks.push(items.slice(i, i + CHUNK));
 
@@ -2173,33 +2199,39 @@ export default function EarningsPage() {
       // chunks ⇒ ~7 waves ⇒ ~4 min wall time, with the progress indicator
       // showing live count.
       const WAVE = 4;
+      // PATCH 0973 — per-batch one-shot retry. User saw 18/18 batches
+      // fail with 0 extracted. Each chunk now gets ONE retry on failure
+      // before being declared dead. Retry adds 500-1000ms backoff to let
+      // upstream breathe. Cost: at most 2x slower in worst case, but
+      // recovers transient Vercel hiccups + upstream PDF slowness.
+      async function fetchBatchWithRetry(chunk: Array<{ ticker: string; period: string }>): Promise<any> {
+        const doFetch = async (timeoutMs: number) => {
+          const r = await fetch('/api/v1/haiku/forward-guidance', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ items: chunk, force }),
+            signal: AbortSignal.timeout(timeoutMs),
+          });
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return await r.json();
+        };
+        try {
+          return await doFetch(50_000);  // first try, 50s
+        } catch (e1) {
+          // Backoff then retry once with same timeout (server is the
+          // bottleneck, longer client timeout doesn't help past 55s).
+          await new Promise(r => setTimeout(r, 500 + Math.random() * 500));
+          try {
+            return await doFetch(50_000);
+          } catch (e2) {
+            return { __batchFailed: true, error: `${(e1 as Error).message} → retry: ${(e2 as Error).message}`, tickers: chunk.map(c => c.ticker), period: chunk[0]?.period };
+          }
+        }
+      }
+
       for (let w = 0; w < chunks.length; w += WAVE) {
         const wave = chunks.slice(w, w + WAVE);
-        const waveResults = await Promise.allSettled(wave.map(async (chunk) => {
-          try {
-            const r = await fetch('/api/v1/haiku/forward-guidance', {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ items: chunk, force }),
-              // PATCH 0962 — ISSUE #1: CLIENT_ABORT (50s) < SERVER_MAX (55s).
-              // Old order (client 65 > server 55) wasted a 10s window where
-              // the server was already dead but the browser kept the
-              // connection open, stranding work and increasing concurrency
-              // pressure. New order: client aborts FIRST, immediately frees
-              // the slot, batch is retryable. The 5s headroom is enough for
-              // the server to flush a response when it does finish; anything
-              // past 50s is correctly classified as a timeout and reconciled
-              // via the KV status endpoint below.
-              signal: AbortSignal.timeout(50_000),
-            });
-            if (!r.ok) {
-              throw new Error(`HTTP ${r.status}`);
-            }
-            return await r.json();
-          } catch (e) {
-            return { __batchFailed: true, error: (e as Error).message, tickers: chunk.map(c => c.ticker), period: chunk[0]?.period };
-          }
-        }));
+        const waveResults = await Promise.allSettled(wave.map(fetchBatchWithRetry));
         let waveProcessed = 0;
         for (let ri = 0; ri < waveResults.length; ri++) {
           waveProcessed += wave[ri].length;

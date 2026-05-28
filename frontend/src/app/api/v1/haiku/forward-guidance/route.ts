@@ -850,8 +850,12 @@ export async function POST(req: NextRequest) {
   const force = !!body?.force;
   if (items.length === 0) return NextResponse.json({ error: 'items required' }, { status: 400 });
 
-  // PATCH 0961 — hard cap 8/req keeps wall time under Vercel's 55s.
-  const capped = items.slice(0, 8);
+  // PATCH 0973 — dropped 8 → 5 because P0972 user run saw 18/18 batches
+  // timeout. 8 tickers × CONCURRENT=6 = 1-2 waves, but with PDF fetch (5-10s)
+  // + Screener.in fallback (5-8s) + Haiku call (5-15s) per ticker, wall
+  // time was ~50-55s per batch — right at Vercel's cutoff. Smaller batch
+  // (5) gives ~30-40s wall time, comfortable margin.
+  const capped = items.slice(0, 5);
 
   // PATCH 0962 — expanded stats (ISSUE #11). Each new field is also rolled
   // up by the client into the banner so PDF taxonomy, parse failures, and
