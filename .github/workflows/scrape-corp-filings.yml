@@ -21,13 +21,12 @@ name: Scrape Corp Filings (4×/day)
 
 on:
   schedule:
-    # 4×/day at IST 07:00, 11:30, 16:00, 20:30 (covers pre-open, mid-morning,
-    # close, post-close). 30 min after the india-news scraper so the runs
-    # don't queue and we don't double-load Upstash in the same minute.
-    - cron: '30 1 * * *'    # 07:00 IST
-    - cron: '0 6 * * *'     # 11:30 IST
-    - cron: '30 10 * * *'   # 16:00 IST
-    - cron: '0 15 * * *'    # 20:30 IST
+    # PATCH 0977 — cut 4→2/day due to Vercel fair-use block. Keep pre-open
+    # (07:00) for next-trading-day prep + post-close (20:30) for evening
+    # batch update. Mid-day refreshes dropped — users opening /signals
+    # mid-day will use last-batch data + can manually click Refresh.
+    - cron: '30 1 * * *'    # 07:00 IST — pre-open
+    - cron: '0 15 * * *'    # 20:30 IST — post-close evening batch
   workflow_dispatch: {}
 
 concurrency:

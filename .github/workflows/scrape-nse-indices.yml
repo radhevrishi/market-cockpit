@@ -19,12 +19,11 @@ name: Scrape NSE Indices (4×/day)
 
 on:
   schedule:
-    # 4×/day at IST 06:30, 11:00, 15:30, 20:00
-    # → UTC 01:00, 05:30, 10:00, 14:30
-    - cron: '0 1 * * *'    # 06:30 IST
-    - cron: '30 5 * * *'   # 11:00 IST
-    - cron: '0 10 * * *'   # 15:30 IST
-    - cron: '30 14 * * *'  # 20:00 IST
+    # PATCH 0977 — cut 4→2/day due to Vercel fair-use block.
+    # Keep 11:00 IST (post-open snapshot) + 15:30 IST (close). Drop pre-open
+    # + evening — index levels stable overnight.
+    - cron: '30 5 * * *'   # 11:00 IST — post-open
+    - cron: '0 10 * * *'   # 15:30 IST — close
   workflow_dispatch: {}    # manual trigger from GitHub UI
 
 concurrency:

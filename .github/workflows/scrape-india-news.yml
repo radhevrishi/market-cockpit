@@ -15,12 +15,11 @@ name: Scrape India News (4×/day)
 
 on:
   schedule:
-    # 4×/day at IST 06:30, 11:00, 15:30, 20:00
-    # → UTC 01:00, 05:30, 10:00, 14:30
-    - cron: '0 1 * * *'    # 06:30 IST
-    - cron: '30 5 * * *'   # 11:00 IST
-    - cron: '0 10 * * *'   # 15:30 IST
-    - cron: '30 14 * * *'  # 20:00 IST
+    # PATCH 0977 — cut 4→2/day due to Vercel fair-use block.
+    # Keep morning (06:30 IST) + post-close (20:00 IST). Mid-session
+    # runs dropped — interactive Refresh button still works.
+    - cron: '0 1 * * *'    # 06:30 IST — morning
+    - cron: '30 14 * * *'  # 20:00 IST — evening
   workflow_dispatch: {}    # manual trigger from GitHub UI
 
 concurrency:
