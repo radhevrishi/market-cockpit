@@ -13,14 +13,13 @@ name: Scrape Mover Reasons (hourly during market hours)
 
 on:
   schedule:
-    # Hourly during NSE market hours (09:15-15:30 IST = 03:45-10:00 UTC)
-    # Plus one post-close run at 16:00 IST = 10:30 UTC
-    - cron: '15 4 * * 1-5'   # 09:45 IST
-    - cron: '15 5 * * 1-5'   # 10:45 IST
-    - cron: '15 6 * * 1-5'   # 11:45 IST
-    - cron: '15 7 * * 1-5'   # 12:45 IST
-    - cron: '15 8 * * 1-5'   # 13:45 IST
-    - cron: '15 9 * * 1-5'   # 14:45 IST
+    # PATCH 0975 — cut 8/day → 4/day. Was firing every hour during NSE
+    # market hours which was burning Vercel Hobby-tier function-execution
+    # quota (~30 GB-hr/week from this single workflow). Now: 2 mid-session
+    # snapshots, post-close sweep, evening update. Same operational value
+    # for users (they don't refresh /movers every hour), much less load.
+    - cron: '15 5 * * 1-5'   # 10:45 IST — mid-morning snapshot
+    - cron: '15 8 * * 1-5'   # 13:45 IST — afternoon snapshot
     - cron: '0 11 * * 1-5'   # 16:30 IST — post-close sweep
     - cron: '0 14 * * *'     # 19:30 IST daily — evening update for weekend viewing
   workflow_dispatch: {}
