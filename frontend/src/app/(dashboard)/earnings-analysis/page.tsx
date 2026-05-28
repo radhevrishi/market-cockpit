@@ -1906,7 +1906,10 @@ function scoreNarrative(d: RawFinancials): EngineOutput & { themeList: typeof NA
  * false-positive rate near zero. When the ticker is empty/unknown we
  * default to USD (existing behavior).
  */
-export function formatCurrency(
+// PATCH 0966a — NOT exported. Next.js page files reject non-standard value
+// exports (same constraint we hit on route.ts in P0962a). Function is only
+// used inside this file; module-local works fine.
+function formatCurrency(
   value: number | null | undefined,
   ticker: string | null | undefined,
   opts: { decimals?: number; unit?: 'cr' | 'lakh' | 'none'; abbrev?: boolean } = {},
