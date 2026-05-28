@@ -2897,40 +2897,77 @@ export default function EarningsPage() {
                   <span
                     onClick={async (e) => {
                       e.stopPropagation();
-                      // PATCH 0970 — force a direct API hit + write to LS. This
-                      // is the diagnostic-then-fix path: hit /api/portfolio (or
-                      // /api/watchlist) directly, see what it returns, and if
-                      // there's data, write it to the canonical LS key so the
-                      // next fetchData picks it up. Tells user via alert what
-                      // it found, so they know whether the data is server-side,
-                      // LS-side, or truly missing.
+                      // PATCH 0971 — read BOTH localStorage AND API, use whichever
+                      // has data. The earlier P0970 only checked API and falsely
+                      // told user "Server has 0" even when LS had 43 holdings —
+                      // because /portfolio reads from LS as primary, never synced
+                      // server-side. Fix order: LS first (canonical source for
+                      // this app's design), API as backup, then sync state.
                       try {
-                        const endpoint = key === 'portfolio' ? '/api/portfolio' : '/api/watchlist';
-                        const res = await fetch(`${endpoint}?chatId=${CHAT_ID}&_nocache=${Date.now()}`, { cache: 'no-store' });
-                        if (!res.ok) {
-                          alert(`Server returned HTTP ${res.status}. Click OK to hard-reload the page (bypasses browser cache).`);
-                          window.location.reload();
-                          return;
-                        }
-                        const json = await res.json();
-                        const items: any[] = key === 'portfolio' ? (json?.holdings || []) : (json?.watchlist || []);
-                        if (items.length === 0) {
-                          const msg = `Server has 0 ${key} entries for chatId=${CHAT_ID}.\n\nThis means:\n• Your data hasn't been saved server-side, OR\n• You're on a different chatId than where you saved it.\n\nGo to /${key === 'portfolio' ? 'portfolio' : 'watchlists'} now and add/import — it'll save to both LS and server.`;
-                          alert(msg);
-                          return;
-                        }
-                        // Got data — write to LS so next reload picks it up
+                        // 1) Read all known LS keys
+                        let lsItems: string[] = [];
+                        let foundInKey = '';
                         if (key === 'portfolio') {
-                          localStorage.setItem('mc_portfolio_holdings', JSON.stringify(items));
+                          const KEYS = ['mc_portfolio_holdings', 'portfolioHoldings', 'mc_portfolio_tickers', 'mc_portfolio_holdings_v1'];
+                          for (const k of KEYS) {
+                            const raw = localStorage.getItem(k);
+                            if (!raw) continue;
+                            try {
+                              const arr = JSON.parse(raw);
+                              if (Array.isArray(arr)) {
+                                const syms = arr.map((h: any) => (typeof h === 'string' ? h : (h?.symbol || h?.ticker || '')).toString().toUpperCase().trim()).filter(Boolean);
+                                if (syms.length > 0) { lsItems = syms; foundInKey = k; break; }
+                              } else if (arr && typeof arr === 'object') {
+                                const syms = Object.keys(arr).map(s => s.toUpperCase().trim()).filter(Boolean);
+                                if (syms.length > 0) { lsItems = syms; foundInKey = k; break; }
+                              }
+                            } catch {}
+                          }
                         } else {
-                          const tickers: string[] = items.map((x: any) => typeof x === 'string' ? x : (x.symbol || x.ticker)).filter(Boolean);
-                          localStorage.setItem('mc_watchlist_tickers', JSON.stringify(tickers));
+                          const raw = localStorage.getItem('mc_watchlist_tickers');
+                          if (raw) {
+                            try {
+                              const arr = JSON.parse(raw);
+                              if (Array.isArray(arr)) {
+                                lsItems = arr.map((s: any) => String(s).toUpperCase().trim()).filter(Boolean);
+                                if (lsItems.length > 0) foundInKey = 'mc_watchlist_tickers';
+                              }
+                            } catch {}
+                          }
                         }
-                        alert(`✓ Found ${items.length} ${key} entries on server.\nWritten to localStorage.\nClick OK to reload — they'll appear in the universe.`);
-                        window.location.reload();
+
+                        // 2) Hit API in parallel
+                        const endpoint = key === 'portfolio' ? '/api/portfolio' : '/api/watchlist';
+                        let apiItems: string[] = [];
+                        try {
+                          const res = await fetch(`${endpoint}?chatId=${CHAT_ID}&_nocache=${Date.now()}`, { cache: 'no-store' });
+                          if (res.ok) {
+                            const json = await res.json();
+                            const raw = key === 'portfolio' ? (json?.holdings || []) : (json?.watchlist || []);
+                            apiItems = raw.map((x: any) => (typeof x === 'string' ? x : (x.symbol || x.ticker || '')).toString().toUpperCase().trim()).filter(Boolean);
+                          }
+                        } catch {}
+
+                        // 3) Pick the union — prefer LS when it has data
+                        const merged = Array.from(new Set([...lsItems, ...apiItems]));
+
+                        if (merged.length === 0) {
+                          alert(`Both localStorage AND server are empty for ${key}.\n\nLS keys probed: ${key === 'portfolio' ? '4 keys' : 'mc_watchlist_tickers'}\nAPI /api/${key}?chatId=${CHAT_ID}: 0 items\n\nGo to /${key === 'portfolio' ? 'portfolio' : 'watchlists'} and add some — it'll save and become visible here.`);
+                          return;
+                        }
+
+                        // 4) Got data — directly update state, no reload needed
+                        if (key === 'portfolio') {
+                          setPortfolioSymbols(merged);
+                          // also write back to canonical LS key so next reload finds it
+                          try { localStorage.setItem('mc_portfolio_holdings', JSON.stringify(merged.map(s => ({ symbol: s })))); } catch {}
+                        } else {
+                          setWatchlistSymbols(merged);
+                          try { localStorage.setItem('mc_watchlist_tickers', JSON.stringify(merged)); } catch {}
+                        }
+                        alert(`✓ Loaded ${merged.length} ${key} tickers (LS: ${lsItems.length}${foundInKey ? ` from '${foundInKey}'` : ''}, API: ${apiItems.length}).\n\nUniverse updated. Click Refresh to fetch their earnings.`);
                       } catch (err) {
-                        alert(`Fetch failed: ${(err as Error).message}\n\nClick OK to hard-reload the page.`);
-                        window.location.reload();
+                        alert(`Probe failed: ${(err as Error).message}`);
                       }
                     }}
                     style={{
