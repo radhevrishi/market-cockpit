@@ -1523,6 +1523,15 @@ export default function EarningsPage() {
   const [portfolioSymbols, setPortfolioSymbols] = useState<string[]>([]);
   const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>([]);
   const [failedSymbols, setFailedSymbols] = useState<string[]>([]);
+  // PATCH 0969 — diagnostic for "Portfolio/Watchlist 0" mystery. Populated
+  // by the fetchData loader after both API + LS fallbacks complete. Surfaced
+  // in the universe chip tooltip when count is 0 so the user can see in
+  // real time WHY (api empty? LS empty? both? which keys probed?).
+  const [universeDiag, setUniverseDiag] = useState<{
+    portfolio: { api: number; ls_keys_hit: string[]; resolved: number };
+    watchlist: { api: number; ls_keys_hit: string[]; resolved: number };
+    at: string;
+  } | null>(null);
   // Screener tab: separate universe — loaded on demand, never mixed into portfolio/watchlist
   const [screenerCards, setScreenerCards] = useState<EarningsScanCard[]>([]);
   const [screenerLoading, setScreenerLoading] = useState(false);
@@ -1624,6 +1633,39 @@ export default function EarningsPage() {
 
       setPortfolioSymbols(portfolio);
       setWatchlistSymbols(watchlist);
+
+      // PATCH 0969 — visible diagnostic for empty Portfolio/Watchlist universes.
+      // User repeatedly reports "Portfolio 0 even though I have 43 holdings".
+      // Three possible causes:
+      //   (1) Vercel deploy of the loader fix hasn't reached the browser cache
+      //   (2) localStorage is genuinely empty for this browser/profile
+      //   (3) API returns empty AND none of the 4 LS keys probed hit
+      // We now write a structured diagnostic that the chip tooltip renders so
+      // the user can see in real time WHY the count is 0, and a console.log
+      // so devtools shows the same info.
+      const pfApiCount = pData?.holdings?.length || 0;
+      const wlApiCount = wData?.watchlist?.length || 0;
+      const pfLsKeysSeen: string[] = [];
+      const wlLsKeysSeen: string[] = [];
+      try {
+        for (const k of ['mc_portfolio_holdings', 'portfolioHoldings', 'mc_portfolio_tickers', 'mc_portfolio_holdings_v1']) {
+          const v = localStorage.getItem(k);
+          if (v && v !== '[]' && v !== '{}') pfLsKeysSeen.push(`${k}(${v.length}b)`);
+        }
+        const wv = localStorage.getItem('mc_watchlist_tickers');
+        if (wv && wv !== '[]') wlLsKeysSeen.push(`mc_watchlist_tickers(${wv.length}b)`);
+      } catch {}
+      const diag = {
+        portfolio: {
+          api: pfApiCount, ls_keys_hit: pfLsKeysSeen, resolved: portfolio.length,
+        },
+        watchlist: {
+          api: wlApiCount, ls_keys_hit: wlLsKeysSeen, resolved: watchlist.length,
+        },
+        at: new Date().toLocaleTimeString(),
+      };
+      setUniverseDiag(diag);
+      console.log('[Earnings] Universe load diagnostic:', diag);
 
       // Normalize symbols BEFORE passing to earnings pipeline (BUG-04 fix)
       const normalizeSymbol = (s: string) => s.trim().toUpperCase().replace(/\s+/g, '');
@@ -2794,8 +2836,23 @@ export default function EarningsPage() {
           const count = tab?.count ?? 0;
           const total = tab?.total ?? 0;
           const on = selectedUniverses.has(key);
+          // PATCH 0969 — diagnostic tooltip for Portfolio/Watchlist when count=0.
+          // Stops the "fix didn't deploy" / "data is missing" confusion loop.
+          // Tooltip explicitly tells user: API returned N items, LS keys probed
+          // were [...], resolved to 0 — so they can act (hard refresh, add via
+          // /portfolio, etc) instead of guessing.
+          let diagTitle = `${count} of ${total} loaded`;
+          if (!loading && total === 0 && universeDiag) {
+            if (key === 'portfolio') {
+              const d = universeDiag.portfolio;
+              diagTitle = `PORTFOLIO LOAD DIAGNOSTIC (${universeDiag.at})\nAPI /api/portfolio: ${d.api} holdings\nlocalStorage keys probed (4): hit ${d.ls_keys_hit.length} → [${d.ls_keys_hit.join(', ') || 'none'}]\nResolved universe size: ${d.resolved}\n\nIf you have holdings in My Book that aren't showing here:\n1) Hard-refresh (Cmd+Shift+R) to load the latest bundle\n2) Open /portfolio (My Book) and verify your holdings are visible there\n3) Check DevTools → Application → Local Storage for the keys above`;
+            } else if (key === 'watchlist') {
+              const d = universeDiag.watchlist;
+              diagTitle = `WATCHLIST LOAD DIAGNOSTIC (${universeDiag.at})\nAPI /api/watchlist: ${d.api} tickers\nlocalStorage mc_watchlist_tickers: hit ${d.ls_keys_hit.length} → [${d.ls_keys_hit.join(', ') || 'none'}]\nResolved universe size: ${d.resolved}\n\nIf you have a watchlist that isn't showing here:\n1) Hard-refresh (Cmd+Shift+R) to load the latest bundle\n2) Open /watchlists and verify your watchlist is visible there\n3) Check DevTools → Application → Local Storage for mc_watchlist_tickers`;
+            }
+          }
           return (
-            <button key={key} onClick={() => {
+            <button key={key} title={diagTitle} onClick={() => {
                 // PATCH 0941: only setViewMode when ENABLING (not toggling off).
                 // Previously setViewMode(key) always fired, leaving viewMode
                 // stuck on 'screener' after the user un-checked the Screener
@@ -2832,6 +2889,28 @@ export default function EarningsPage() {
               <span style={{ fontSize: 10.5, opacity: 0.85, fontFamily: 'ui-monospace, monospace' }}>
                 {loading ? '...' : count === total ? count : `${count}/${total}`}
               </span>
+              {/* PATCH 0969 — visible "no data" badge with click-through.
+                  Shows ONLY for Portfolio/Watchlist when total=0 after load
+                  completed. Click opens the source page where user can add. */}
+              {!loading && total === 0 && (key === 'portfolio' || key === 'watchlist') && (
+                <span
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (typeof window !== 'undefined') {
+                      window.location.href = key === 'portfolio' ? '/portfolio' : '/watchlists';
+                    }
+                  }}
+                  style={{
+                    marginLeft: 4, fontSize: 9.5, fontWeight: 800,
+                    padding: '1px 6px', borderRadius: 3,
+                    backgroundColor: '#F59E0B30', border: '1px solid #F59E0B60',
+                    color: '#F59E0B', letterSpacing: '0.3px',
+                  }}
+                  title={`No ${key} data loaded. Click to open the ${key === 'portfolio' ? 'My Book' : 'Watchlist'} page and add tickers (or hard-refresh if you already have them).`}
+                >
+                  ⚠ add →
+                </span>
+              )}
             </button>
           );
         })}
