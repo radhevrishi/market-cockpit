@@ -2889,27 +2889,78 @@ export default function EarningsPage() {
               <span style={{ fontSize: 10.5, opacity: 0.85, fontFamily: 'ui-monospace, monospace' }}>
                 {loading ? '...' : count === total ? count : `${count}/${total}`}
               </span>
-              {/* PATCH 0969 — visible "no data" badge with click-through.
-                  Shows ONLY for Portfolio/Watchlist when total=0 after load
-                  completed. Click opens the source page where user can add. */}
+              {/* PATCH 0969+0970 — when count=0 show actionable buttons.
+                  ⟳ FETCH NOW = hits the API directly, bypasses everything else.
+                  ⚠ add → opens the source page where user can add tickers. */}
               {!loading && total === 0 && (key === 'portfolio' || key === 'watchlist') && (
-                <span
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (typeof window !== 'undefined') {
-                      window.location.href = key === 'portfolio' ? '/portfolio' : '/watchlists';
-                    }
-                  }}
-                  style={{
-                    marginLeft: 4, fontSize: 9.5, fontWeight: 800,
-                    padding: '1px 6px', borderRadius: 3,
-                    backgroundColor: '#F59E0B30', border: '1px solid #F59E0B60',
-                    color: '#F59E0B', letterSpacing: '0.3px',
-                  }}
-                  title={`No ${key} data loaded. Click to open the ${key === 'portfolio' ? 'My Book' : 'Watchlist'} page and add tickers (or hard-refresh if you already have them).`}
-                >
-                  ⚠ add →
-                </span>
+                <>
+                  <span
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      // PATCH 0970 — force a direct API hit + write to LS. This
+                      // is the diagnostic-then-fix path: hit /api/portfolio (or
+                      // /api/watchlist) directly, see what it returns, and if
+                      // there's data, write it to the canonical LS key so the
+                      // next fetchData picks it up. Tells user via alert what
+                      // it found, so they know whether the data is server-side,
+                      // LS-side, or truly missing.
+                      try {
+                        const endpoint = key === 'portfolio' ? '/api/portfolio' : '/api/watchlist';
+                        const res = await fetch(`${endpoint}?chatId=${CHAT_ID}&_nocache=${Date.now()}`, { cache: 'no-store' });
+                        if (!res.ok) {
+                          alert(`Server returned HTTP ${res.status}. Click OK to hard-reload the page (bypasses browser cache).`);
+                          window.location.reload();
+                          return;
+                        }
+                        const json = await res.json();
+                        const items: any[] = key === 'portfolio' ? (json?.holdings || []) : (json?.watchlist || []);
+                        if (items.length === 0) {
+                          const msg = `Server has 0 ${key} entries for chatId=${CHAT_ID}.\n\nThis means:\n• Your data hasn't been saved server-side, OR\n• You're on a different chatId than where you saved it.\n\nGo to /${key === 'portfolio' ? 'portfolio' : 'watchlists'} now and add/import — it'll save to both LS and server.`;
+                          alert(msg);
+                          return;
+                        }
+                        // Got data — write to LS so next reload picks it up
+                        if (key === 'portfolio') {
+                          localStorage.setItem('mc_portfolio_holdings', JSON.stringify(items));
+                        } else {
+                          const tickers: string[] = items.map((x: any) => typeof x === 'string' ? x : (x.symbol || x.ticker)).filter(Boolean);
+                          localStorage.setItem('mc_watchlist_tickers', JSON.stringify(tickers));
+                        }
+                        alert(`✓ Found ${items.length} ${key} entries on server.\nWritten to localStorage.\nClick OK to reload — they'll appear in the universe.`);
+                        window.location.reload();
+                      } catch (err) {
+                        alert(`Fetch failed: ${(err as Error).message}\n\nClick OK to hard-reload the page.`);
+                        window.location.reload();
+                      }
+                    }}
+                    style={{
+                      marginLeft: 4, fontSize: 9.5, fontWeight: 800,
+                      padding: '1px 6px', borderRadius: 3,
+                      backgroundColor: '#10B98130', border: '1px solid #10B98160',
+                      color: '#10B981', letterSpacing: '0.3px', cursor: 'pointer',
+                    }}
+                    title="Hit the server API directly and write any returned data to localStorage. Tells you in an alert what was found. Use this when count=0 to figure out whether the data is missing on server, in another browser, or in stale cache."
+                  >
+                    ⟳ FETCH
+                  </span>
+                  <span
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (typeof window !== 'undefined') {
+                        window.location.href = key === 'portfolio' ? '/portfolio' : '/watchlists';
+                      }
+                    }}
+                    style={{
+                      marginLeft: 4, fontSize: 9.5, fontWeight: 800,
+                      padding: '1px 6px', borderRadius: 3,
+                      backgroundColor: '#F59E0B30', border: '1px solid #F59E0B60',
+                      color: '#F59E0B', letterSpacing: '0.3px', cursor: 'pointer',
+                    }}
+                    title={`No ${key} data loaded. Click to open the ${key === 'portfolio' ? 'My Book' : 'Watchlist'} page.`}
+                  >
+                    add →
+                  </span>
+                </>
               )}
             </button>
           );
