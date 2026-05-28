@@ -595,17 +595,38 @@ export async function GET(req: Request) {
   // didn't bother trying again.
   let hubRes: Response | null = null;
   let hubFailReason: string | null = null;
-  try {
+  // PATCH 0982 — Railway self-fetch loopback fallback.
+  // On Railway, `fetch(<public-URL of self>)` from inside the container
+  // fails immediately with `fetch failed` because the edge layer rejects
+  // the self-loop. We retry the same path via 127.0.0.1:PORT loopback.
+  // No-op on Vercel (different runtime, public self-fetch works there).
+  const _doHubFetch = async (url: string): Promise<Response> => {
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), 25_000);
     try {
-      hubRes = await fetch(hubUrl, { cache: 'no-store', signal: ctl.signal });
+      return await fetch(url, { cache: 'no-store', signal: ctl.signal });
     } finally {
       clearTimeout(timer);
     }
+  };
+  try {
+    hubRes = await _doHubFetch(hubUrl);
   } catch (e: any) {
-    hubFailReason = e?.name === 'AbortError' ? 'hub_timeout_25s' : `hub_throw_${e?.message || 'unknown'}`;
-    hubRes = null;
+    const firstFail = e?.name === 'AbortError' ? 'hub_timeout_25s' : `hub_throw_${e?.message || 'unknown'}`;
+    const port = process.env.PORT;
+    if (port && /^https?:\/\/[^/]+\//.test(hubUrl)) {
+      const loopbackUrl = hubUrl.replace(/^https?:\/\/[^/]+/, `http://127.0.0.1:${port}`);
+      try {
+        hubRes = await _doHubFetch(loopbackUrl);
+        console.log(`[graded] hub public-URL failed (${firstFail}), recovered via loopback`);
+      } catch (e2: any) {
+        hubFailReason = `${firstFail},loopback_also_failed_${e2?.message || 'unknown'}`;
+        hubRes = null;
+      }
+    } else {
+      hubFailReason = firstFail;
+      hubRes = null;
+    }
   }
   if (hubRes && !hubRes.ok) {
     hubFailReason = `hub_http_${hubRes.status}`;

@@ -128,7 +128,21 @@ export async function GET(req: Request) {
       // PATCH 0361 — per-date AbortSignal timeout. If one date hangs we
       // skip it instead of letting it eat the whole 55s function budget.
       const url = `${origin}/api/v1/earnings/graded?date=${date}&refreshMissing=1`;
-      const res = await fetch(url, {
+      // PATCH 0982-backfill — Railway self-fetch loopback fallback
+      const _doBackfillFetch = async (u: string, init: RequestInit) => {
+        try {
+          return await fetch(u, init);
+        } catch (err: any) {
+          const port = process.env.PORT;
+          if (port && /^https?:\/\/[^/]+\//.test(u)) {
+            const loop = u.replace(/^https?:\/\/[^/]+/, `http://127.0.0.1:${port}`);
+            console.log(`[backfill] public-URL fetch failed (${err?.message}), retrying via loopback`);
+            return await fetch(loop, init);
+          }
+          throw err;
+        }
+      };
+      const res = await _doBackfillFetch(url, {
         cache: 'no-store',
         signal: AbortSignal.timeout(PER_DATE_TIMEOUT_MS),
       });
