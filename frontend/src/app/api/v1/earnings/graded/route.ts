@@ -25,6 +25,25 @@
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 
+
+// PATCH 0983 — Railway self-fetch loopback fallback (module-level).
+// graded/route.ts makes TWO self-fetches to /api/v1/earnings/enrich
+// using its own public URL. On Railway these fail like the hub fetch
+// because the edge layer rejects self-loops. Retry via 127.0.0.1:$PORT.
+async function _doEnrichSelfFetch(url: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (err: any) {
+    const port = process.env.PORT;
+    if (port && /^https?:\/\/[^/]+\//.test(url)) {
+      const loop = url.replace(/^https?:\/\/[^/]+/, `http://127.0.0.1:${port}`);
+      console.log(`[graded/enrich] public-URL fetch failed (${err?.message}), retrying via loopback`);
+      return await fetch(loop, init);
+    }
+    throw err;
+  }
+}
+
 export const runtime = 'nodejs';
 export const maxDuration = 30; // PATCH 0818
 // PATCH 0819: removed force-dynamic so Cache-Control headers aren't overridden by Next.js. Query params still force dynamic at runtime.
@@ -465,7 +484,7 @@ export async function GET(req: Request) {
         const chunks: string[][] = [];
         for (let i = 0; i < needTickers.length; i += 40) chunks.push(needTickers.slice(i, i + 40));
         const responses = await Promise.all(chunks.map((ch) =>
-          fetch(`${base.protocol}//${base.host}/api/v1/earnings/enrich?symbols=${ch.join(',')}&filed=${date}&nocache=1`, { cache: 'no-store' })
+          _doEnrichSelfFetch(`${base.protocol}//${base.host}/api/v1/earnings/enrich?symbols=${ch.join(',')}&filed=${date}&nocache=1`, { cache: 'no-store' })
             .then((r) => r.ok ? r.json() : { data: {} })
             .catch(() => ({ data: {} }))
         ));
@@ -787,7 +806,7 @@ export async function GET(req: Request) {
   for (let i = 0; i < symbols.length; i += 40) chunks.push(symbols.slice(i, i + 40));
 
   const enrichResponses = await Promise.all(chunks.map((chunk) =>
-    fetch(`${base.protocol}//${base.host}/api/v1/earnings/enrich?symbols=${chunk.join(',')}&filed=${date}`, { cache: 'no-store' })
+    _doEnrichSelfFetch(`${base.protocol}//${base.host}/api/v1/earnings/enrich?symbols=${chunk.join(',')}&filed=${date}`, { cache: 'no-store' })
       .then((r) => r.ok ? r.json() : { data: {} })
       .catch(() => ({ data: {} }))
   ));
