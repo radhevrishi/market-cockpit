@@ -4355,6 +4355,91 @@ function MbScreenerChips() {
   );
 }
 
+// PATCH 0987/0990 — Multi-confirmed picks: stocks that appear in 2+ uploaded
+// Screener.in CSVs. Classic conviction-by-consensus signal.
+function MultiConfirmedCard({ stocks }: { stocks: any[] }) {
+  const cleanName = (n: string) =>
+    n.replace(/\.(csv|xlsx?|tsv)$/i, '')
+     .replace(/^Screener[._-]+/i, '')
+     .replace(/[_-]+/g, ' ')
+     .trim();
+  const multi = React.useMemo(() => {
+    return stocks
+      .filter((s: any) => Array.isArray(s._screeners) && s._screeners.length >= 2
+                       && s.grade !== 'D'
+                       && (s.redFlagSummary?.critical ?? 0) === 0)
+      .map((s: any) => ({ ...s, _scrCount: s._screeners.length }))
+      .sort((a: any, b: any) => (b._scrCount - a._scrCount) || (b.score - a.score))
+      .slice(0, 15);
+  }, [stocks]);
+
+  const cardStyle: React.CSSProperties = {
+    background: '#0E1822', padding: 14, borderRadius: 8,
+    border: '1px solid #22D3EE40',
+  };
+
+  if (multi.length === 0) {
+    return (
+      <div style={cardStyle}>
+        <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+          🎯 MULTI-CONFIRMED PICKS (0)
+        </div>
+        <div style={{ fontSize: 11, color: '#6B7A8D', lineHeight: 1.5 }}>
+          Stocks appearing in 2+ uploaded Screener.in CSVs land here.{' '}
+          <strong style={{ color: '#94A3B8' }}>Re-upload your screens</strong> to populate —
+          screener membership wasn't tracked before this patch, so existing rows show 0.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={cardStyle}>
+      <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+        🎯 MULTI-CONFIRMED PICKS ({multi.length})
+      </div>
+      <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.45 }}>
+        Stocks that surfaced in 2+ Screener.in screens. Classic conviction-by-consensus.
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+        {multi.map((s: any) => (
+          <a key={s.symbol}
+            href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
+            style={{
+              display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 9px', borderRadius: 4,
+              border: '1px solid #22D3EE30', background: '#22D3EE08', textDecoration: 'none',
+            }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 11, color: '#22D3EE', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 70 }}>
+                {s.symbol.replace(/\.(NS|BO)$/i, '')}
+              </span>
+              <span style={{ flex: 1, fontSize: 11, color: '#E6EDF3', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {s.company || s.symbol}
+              </span>
+              <span style={{
+                fontSize: 10, color: '#22D3EE', fontWeight: 800,
+                padding: '2px 7px', borderRadius: 3, background: '#22D3EE22',
+                fontVariantNumeric: 'tabular-nums',
+              }}>
+                📂 {s._scrCount}
+              </span>
+              <span style={{ fontSize: 11, color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                {s.score} {s.grade}
+              </span>
+            </div>
+            <div style={{
+              fontSize: 9.5, color: '#67E8F9CC', fontStyle: 'italic', lineHeight: 1.35,
+              maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }} title={(s._screeners || []).join(', ')}>
+              In: {(s._screeners || []).map(cleanName).join(' · ')}
+            </div>
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function MultibaggerAnalytics({
   indiaRows,
   onSwitchTab,
