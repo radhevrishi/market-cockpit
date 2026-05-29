@@ -52,6 +52,11 @@ export interface ConvictionEntry {
   // (same UX as /earnings Hub). Both nullable for legacy entries.
   d1_pct?: number | null;       // Day-1 close % vs prior day
   gap_pct?: number | null;      // Open gap % (open vs prior close)
+  // PATCH 1018 — institutional quality flags carried from EO graded payload
+  // so the Conviction Beats tab can filter ⭐ELITE / 🔥PEAD / 💎MULTIBAGGER.
+  is_elite?: boolean;
+  pead_score?: number | null;
+  multibagger_setup?: boolean;
 }
 
 const LS_KEY = 'mc:conviction-beats:v1';
@@ -132,10 +137,21 @@ export function syncFromEarningsOps(entries: Array<SyncEntry>): number {
     const existing = map[bareKey];
     // PATCH 0997 — demotion path: incoming MIXED/AVOID with newer filing date
     // means the stock dropped out of BB/ST. Remove the bare-ticker entry.
+    // PATCH 1018b — ALSO remove the matching composite key (TICKER@Q-FY) for
+    // the SAME quarter being demoted. User report: a stock re-graded from
+    // BLOCKBUSTER → MIXED (e.g. ADSL after the turnaround gate) must vanish
+    // from the bench entirely, not linger under a composite history key.
     if (e.tier === 'MIXED' || e.tier === 'AVOID') {
+      const incQ = (e as any).quarter;
+      const incFY = (e as any).fiscal_year;
       if (existing && e.filing_date >= existing.filing_date) {
         delete map[bareKey];
         count++;
+      }
+      // Remove same-quarter composite entry for this ticker too.
+      if (incQ && incFY) {
+        const cKey = `${ticker}@${incQ}-${incFY}`;
+        if (map[cKey]) { delete map[cKey]; count++; }
       }
       continue;  // never ADD MX/AV to the bench
     }

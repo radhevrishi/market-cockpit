@@ -1151,6 +1151,9 @@ type ConvFilters = {
   eps: number | null;
   pead: number | null;      // USER-REQ — minimum PEAD score (50/60/70/80)
   sortByPead: boolean;
+  // PATCH 1018 — ELITE / MULTIBAGGER quality filters (mirror Earnings Opps)
+  elite: boolean;
+  multibagger: boolean;
   // USER-REQ — Guidance in Conviction tab. null = no filter; specific label
   // means "only entries whose derived guidance matches this label".
   guidance: 'Positive' | 'Negative' | 'Neutral' | null;
@@ -1174,7 +1177,7 @@ type ConvFilters = {
   d1Bucket: number | null;
 };
 
-const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null };
+const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null };
 
 // PATCH 0911 — Robust derivation of Indian-FY quarter + fiscal year.
 //
@@ -1319,6 +1322,9 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
   if (f.pead != null) {
     if (peadScore(e).score < f.pead) return false;
   }
+  // PATCH 1018 — ELITE / MULTIBAGGER quality filters
+  if (f.elite && !(e as any).is_elite) return false;
+  if (f.multibagger && !(e as any).multibagger_setup) return false;
   // PATCH 0546 — fall back to derived guidance from YoY metrics for legacy
   // entries; explicit guidance field always wins when present.
   if (f.guidance != null) {
@@ -1867,8 +1873,17 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
               style={filters.sortByPead ? chipActive('#22D3EE') : chipBase}>
               🌊 Sort by PEAD {filters.sortByPead ? '✓' : ''}
             </button>
+            {/* PATCH 1018 — ELITE / MULTIBAGGER filter chips */}
+            <button onClick={() => setFilters((f) => ({ ...f, elite: !f.elite }))}
+              style={filters.elite ? chipActive('#FCD34D') : chipBase}>
+              ⭐ ELITE only {filters.elite ? '✓' : ''}
+            </button>
+            <button onClick={() => setFilters((f) => ({ ...f, multibagger: !f.multibagger }))}
+              style={filters.multibagger ? chipActive('#67E8F9') : chipBase}>
+              💎 MULTIBAGGER only {filters.multibagger ? '✓' : ''}
+            </button>
             <button onClick={() => setFilters(FILTER_DEFAULT)}
-              disabled={filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && !filters.sortByPead}
+              disabled={filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && !filters.sortByPead && !filters.elite && !filters.multibagger}
               style={{ ...chipBase, opacity: (filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && !filters.sortByPead) ? 0.4 : 1 }}>
               Clear
             </button>

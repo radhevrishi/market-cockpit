@@ -1865,6 +1865,10 @@ export default function EarningsOpportunitiesPage() {
           // PATCH 0945 — D1 close + gap so CB tab can render and filter
           d1_pct: typeof (c as any).d1_pct === 'number' ? (c as any).d1_pct : null,
           gap_pct: typeof (c as any).gap_pct === 'number' ? (c as any).gap_pct : null,
+          // PATCH 1018 — carry institutional quality flags so CB tab can filter
+          is_elite: (c as any).is_elite === true,
+          pead_score: typeof (c as any).pead_score === 'number' ? (c as any).pead_score : null,
+          multibagger_setup: (c as any).multibagger_setup === true,
         });
       }
     }
