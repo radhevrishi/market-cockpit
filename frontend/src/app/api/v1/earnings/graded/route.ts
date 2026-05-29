@@ -676,6 +676,7 @@ export async function GET(req: Request) {
             quarter: c.quarter, sector: e.sector || c.sector,
             market_cap_bucket: e.market_cap_bucket || c.market_cap_bucket,
             market_cap_cr: e.market_cap_cr ?? (c as any).market_cap_cr ?? null,
+            adtv_cr: e.adtv_cr ?? null,  // PATCH 1037 — carry liquidity into grader
             source_url: c.filing_url,
             sales_curr_cr: e.sales_curr_cr, sales_prev_cr: e.sales_prev_cr, sales_yoy_pct: e.sales_yoy_pct,
             pat_curr_cr: e.pat_curr_cr, pat_prev_cr: e.pat_prev_cr, pat_yoy_pct: e.pat_yoy_pct,
@@ -1077,6 +1078,7 @@ export async function GET(req: Request) {
       market_cap_bucket: e.market_cap_bucket ||
         (m.marketCap === 'L' ? 'LARGE' : m.marketCap === 'M' ? 'MID' : m.marketCap === 'S' ? 'SMALL' : m.marketCap === 'Micro' ? 'MICRO' : null),
       market_cap_cr: e.market_cap_cr ?? null,
+      adtv_cr: e.adtv_cr ?? null,  // PATCH 1037 — carry liquidity into grader
       source_url: e.source_url || `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(m.ticker)}`,
       sales_curr_cr: e.sales_curr_cr ?? null, sales_prev_cr: e.sales_prev_cr ?? null,
       sales_yoy_pct: e.sales_yoy_pct ?? null,
