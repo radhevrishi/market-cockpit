@@ -1175,9 +1175,26 @@ type ConvFilters = {
   // Each value is a SIGNED threshold: positive = "D1 >= N%", negative = "D1 <= N%".
   // null = no filter.
   d1Bucket: number | null;
+  // PATCH 1022 — market-cap range filter (uses market_cap_cr in ₹ Cr).
+  cap: 'all' | 'mega' | 'large' | 'mid' | 'small' | 'micro';
 };
 
-const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null };
+const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, cap: 'all' };
+
+// PATCH 1022 — shared market-cap range matcher (value in ₹ Cr). Buckets mirror
+// the enrich-route thresholds. Null market cap never matches a specific range.
+function convCapInRange(cr: number | null | undefined, f: ConvFilters['cap']): boolean {
+  if (f === 'all') return true;
+  if (cr == null || !Number.isFinite(cr)) return false;
+  switch (f) {
+    case 'mega': return cr >= 200_000;
+    case 'large': return cr >= 20_000 && cr < 200_000;
+    case 'mid': return cr >= 5_000 && cr < 20_000;
+    case 'small': return cr >= 500 && cr < 5_000;
+    case 'micro': return cr < 500;
+    default: return true;
+  }
+}
 
 // PATCH 0911 — Robust derivation of Indian-FY quarter + fiscal year.
 //
@@ -1325,6 +1342,8 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
   // PATCH 1018 — ELITE / MULTIBAGGER quality filters
   if (f.elite && !(e as any).is_elite) return false;
   if (f.multibagger && !(e as any).multibagger_setup) return false;
+  // PATCH 1022 — market-cap range filter
+  if (f.cap && f.cap !== 'all' && !convCapInRange((e as any).market_cap_cr, f.cap)) return false;
   // PATCH 0546 — fall back to derived guidance from YoY metrics for legacy
   // entries; explicit guidance field always wins when present.
   if (f.guidance != null) {
@@ -1657,6 +1676,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                 composite_score: c.composite_score,
                 sales_yoy_pct: c.sales_yoy_pct, net_profit_yoy_pct: c.net_profit_yoy_pct, eps_yoy_pct: c.eps_yoy_pct,
                 filing_date: c.filing_date || d, sector: c.sector, market_cap_bucket: c.market_cap_bucket,
+                market_cap_cr: typeof c.market_cap_cr === 'number' ? c.market_cap_cr : null,
                 source_url: c.filing_url,
                 ...(qm ? { quarter: ('Q' + qm[1]) as any } : {}),
                 ...(fm ? { fiscal_year: (parseInt(fm[1], 10) < 50 ? 2000 + parseInt(fm[1], 10) : 1900 + parseInt(fm[1], 10)) } : {}),
@@ -1940,6 +1960,21 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
               style={filters.multibagger ? chipActive('#67E8F9') : chipBase}>
               💎 MULTIBAGGER only {filters.multibagger ? '✓' : ''}
             </button>
+            {/* PATCH 1022 — market-cap range filter */}
+            <select
+              value={filters.cap}
+              onChange={(e) => setFilters((f) => ({ ...f, cap: e.target.value as ConvFilters['cap'] }))}
+              title="Filter by market cap (₹ Cr)"
+              style={filters.cap !== 'all'
+                ? { ...chipActive('#34D399'), cursor: 'pointer' }
+                : { ...chipBase, cursor: 'pointer' }}>
+              <option value="all">🏦 Mkt Cap · All</option>
+              <option value="mega">MEGA ≥ ₹2,00,000 Cr</option>
+              <option value="large">LARGE ₹20k–2L Cr</option>
+              <option value="mid">MID ₹5k–20k Cr</option>
+              <option value="small">SMALL ₹500–5k Cr</option>
+              <option value="micro">MICRO &lt; ₹500 Cr</option>
+            </select>
             {/* PATCH 1019 — Re-validate bench (prune stocks no longer BB/ST) */}
             <button onClick={runRevalidate} disabled={revalidating}
               title="Re-fetch grading for every bench date and prune any stock that dropped out of BLOCKBUSTER/STRONG under current logic (e.g. demoted to MIXED). Takes ~1s per date."
@@ -1955,7 +1990,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
               }}>{revalProgress}</span>
             )}
             <button onClick={() => setFilters(FILTER_DEFAULT)}
-              disabled={filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && !filters.sortByPead && !filters.elite && !filters.multibagger}
+              disabled={filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && !filters.sortByPead && !filters.elite && !filters.multibagger && filters.cap === 'all'}
               style={{ ...chipBase, opacity: (filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && !filters.sortByPead) ? 0.4 : 1 }}>
               Clear
             </button>

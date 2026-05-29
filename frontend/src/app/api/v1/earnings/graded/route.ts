@@ -59,6 +59,7 @@ interface ParsedEarning {
   filing_date: string;
   quarter: string;
   market_cap_bucket?: string;
+  market_cap_cr?: number | null;
   pe?: number | null;
   price?: number | null;
   sales_yoy_pct: number | null;
@@ -322,6 +323,22 @@ function gradeRow(row: any): ParsedEarning | null {
   else if (blockbusterGate && !marginContracting) tier = 'BLOCKBUSTER';
   else if (blockbusterGate && marginContracting) tier = 'STRONG';
   else if (composite >= 68 && mCount >= 1 && caveat_tags.length <= 3 && stage !== 4 && !stillLossMaking && !turnaroundBase && !marginSevereContraction) tier = 'STRONG';  // PATCH 1001/1008/1020 — STRONG excludes loss-makers, turnaround base, AND severe margin contraction
+  // PATCH 1022 — QUALITY STRONG path. A print with solid double-digit sales
+  // growth + strong PAT growth + ACTUALLY EXPANDING margins is STRONG even if
+  // the composite lands a point or two below the 68 floor. User-reported:
+  // ASTRAMICRO (sales +20% / PAT +45% / EPS +44% / OPM +4pp / D1 +10% /
+  // composite 67) was wrongly MIXED purely because composite was 1 pt short.
+  // Requires margins genuinely expanding (opmExp >= +0.5pp) so this never
+  // rescues a contracting-margin name.
+  else if (
+    composite >= 60 &&
+    salesY != null && salesY >= 10 &&
+    patY != null && patY >= 25 &&
+    epsY != null && epsY >= 15 &&
+    opmExp != null && opmExp >= 0.5 &&
+    !stillLossMaking && !turnaroundBase &&
+    caveat_tags.length <= 3 && stage !== 4
+  ) tier = 'STRONG';
   else if (composite >= 35) tier = 'MIXED';
   else tier = 'AVOID';
 
@@ -431,6 +448,7 @@ function gradeRow(row: any): ParsedEarning | null {
     filing_date: row.filing_date,
     quarter: row.quarter || 'Q4',
     market_cap_bucket: row.market_cap_bucket,
+    market_cap_cr: row.market_cap_cr ?? null,
     pe: row.pe ?? null,
     price: row.current_price ?? null,
     sales_yoy_pct: salesY, net_profit_yoy_pct: patY, eps_yoy_pct: epsY,
@@ -644,6 +662,7 @@ export async function GET(req: Request) {
             filing_date: c.filing_date,
             quarter: c.quarter, sector: e.sector || c.sector,
             market_cap_bucket: e.market_cap_bucket || c.market_cap_bucket,
+            market_cap_cr: e.market_cap_cr ?? (c as any).market_cap_cr ?? null,
             source_url: c.filing_url,
             sales_curr_cr: e.sales_curr_cr, sales_prev_cr: e.sales_prev_cr, sales_yoy_pct: e.sales_yoy_pct,
             pat_curr_cr: e.pat_curr_cr, pat_prev_cr: e.pat_prev_cr, pat_yoy_pct: e.pat_yoy_pct,
@@ -1044,6 +1063,7 @@ export async function GET(req: Request) {
       sector: e.sector || m.sector,
       market_cap_bucket: e.market_cap_bucket ||
         (m.marketCap === 'L' ? 'LARGE' : m.marketCap === 'M' ? 'MID' : m.marketCap === 'S' ? 'SMALL' : m.marketCap === 'Micro' ? 'MICRO' : null),
+      market_cap_cr: e.market_cap_cr ?? null,
       source_url: e.source_url || `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(m.ticker)}`,
       sales_curr_cr: e.sales_curr_cr ?? null, sales_prev_cr: e.sales_prev_cr ?? null,
       sales_yoy_pct: e.sales_yoy_pct ?? null,

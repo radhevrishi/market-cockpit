@@ -32,6 +32,9 @@ export interface ConvictionEntry {
   filing_date: string;        // YYYY-MM-DD
   sector?: string;
   market_cap_bucket?: string;
+  // PATCH 1022 — actual market cap in ₹ Cr (from worker/Screener) so the
+  // bench can render the figure + filter by cap range. Null for legacy entries.
+  market_cap_cr?: number | null;
   added_at: string;           // ISO timestamp when first added
   source_url?: string;
   // USER-REQ — Guidance in Conviction tab (optional; missing on pre-0538 entries)

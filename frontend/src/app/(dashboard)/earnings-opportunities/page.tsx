@@ -233,6 +233,7 @@ interface ParsedEarning {
   filing_date: string;
   quarter: string;
   market_cap_bucket?: string;
+  market_cap_cr?: number | null;
   pe?: number | null;
   price?: number | null;
   sales_yoy_pct: number | null;
@@ -267,6 +268,22 @@ interface OpportunitiesPayload {
   by_tier: Record<EarningsTier, ParsedEarning[]>;
   generated_at: string;
   sources_polled: number;
+}
+
+// PATCH 1022 — market-cap range matcher (value in ₹ Cr). Buckets mirror the
+// enrich-route thresholds: MEGA ≥2L Cr, LARGE 20k–2L, MID 5k–20k,
+// SMALL 500–5k, MICRO <500. Null market cap never matches a specific range.
+function capInRange(cr: number | null | undefined, f: 'all' | 'mega' | 'large' | 'mid' | 'small' | 'micro'): boolean {
+  if (f === 'all') return true;
+  if (cr == null || !Number.isFinite(cr)) return false;
+  switch (f) {
+    case 'mega': return cr >= 200_000;
+    case 'large': return cr >= 20_000 && cr < 200_000;
+    case 'mid': return cr >= 5_000 && cr < 20_000;
+    case 'small': return cr >= 500 && cr < 5_000;
+    case 'micro': return cr < 500;
+    default: return true;
+  }
 }
 
 const TIER_META: Record<EarningsTier, { label: string; color: string; icon: string; tagline: string }> = {
@@ -403,6 +420,7 @@ function gradeRow(row: any): ParsedEarning | null {
       filing_date: row.filing_date,
       quarter: row.quarter || 'Q4',
       market_cap_bucket: row.market_cap_bucket,
+      market_cap_cr: row.market_cap_cr ?? null,
       pe: null,
       price: row.current_price ?? null,
       sales_yoy_pct: null,
@@ -725,6 +743,7 @@ function gradeRow(row: any): ParsedEarning | null {
     filing_date: row.filing_date,
     quarter: row.quarter || 'Q4',
     market_cap_bucket: row.market_cap_bucket,
+    market_cap_cr: row.market_cap_cr ?? null,
     pe: row.pe ?? null,
     price: row.current_price ?? null,
     sales_yoy_pct: salesY,
@@ -806,6 +825,7 @@ function useEarningsOpportunitiesJoined(
       sector: m.sector || e.sector,
       market_cap_bucket: e.market_cap_bucket
         || (m.marketCap === 'L' ? 'LARGE' : m.marketCap === 'M' ? 'MID' : m.marketCap === 'S' ? 'SMALL' : m.marketCap === 'Micro' ? 'MICRO' : null),
+      market_cap_cr: e.market_cap_cr ?? null,
       source_url: e.source_url || `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(m.ticker)}`,
       // Financials (from Screener via worker)
       sales_curr_cr: e.sales_curr_cr ?? null,
@@ -871,6 +891,8 @@ export default function EarningsOpportunitiesPage() {
   const [eliteOnly, setEliteOnly] = useState(false);
   const [peadOnly, setPeadOnly] = useState(false);
   const [multibaggerOnly, setMultibaggerOnly] = useState(false);
+  // PATCH 1022 — market-cap range filter (uses market_cap_cr in ₹ Cr)
+  const [capFilter, setCapFilter] = useState<'all' | 'mega' | 'large' | 'mid' | 'small' | 'micro'>('all');
   // PATCH 0498 — Initialize to '' (Latest mode) so auto-walk-back fires
   // from today and lands on the most-recently-populated date. Previously
   // initialized to todayISO() which short-circuited the walk-back.
@@ -1823,7 +1845,7 @@ export default function EarningsOpportunitiesPage() {
       ticker: string; company: string; tier: ConvictionTier;
       composite_score: number;
       sales_yoy_pct: number | null; net_profit_yoy_pct: number | null; eps_yoy_pct: number | null;
-      filing_date: string; sector?: string; market_cap_bucket?: string; source_url?: string;
+      filing_date: string; sector?: string; market_cap_bucket?: string; market_cap_cr?: number | null; source_url?: string;
       guidance?: 'Positive' | 'Neutral' | 'Negative'; guidance_score?: number;
       // PATCH 0945/0947 — fields required by ConvictionEntry; populate at sync.
       quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4';
@@ -1860,6 +1882,7 @@ export default function EarningsOpportunitiesPage() {
           composite_score: c.composite_score,
           sales_yoy_pct: c.sales_yoy_pct, net_profit_yoy_pct: c.net_profit_yoy_pct, eps_yoy_pct: c.eps_yoy_pct,
           filing_date: c.filing_date, sector: c.sector, market_cap_bucket: c.market_cap_bucket,
+          market_cap_cr: (c as any).market_cap_cr ?? null,
           source_url: c.filing_url,
           // USER-REQ — Guidance in Conviction tab
           guidance: g.label, guidance_score: g.score,
@@ -1942,6 +1965,7 @@ export default function EarningsOpportunitiesPage() {
             ticker, company: e.company || ticker, sector: e.sector,
             filing_date: resolvedDateForGrading, quarter: e.quarter || 'Q4',
             market_cap_bucket: e.market_cap_bucket || null,
+            market_cap_cr: e.market_cap_cr ?? null,
             pe: null, price: e.current_price ?? null,
             sales_yoy_pct: null, net_profit_yoy_pct: null, eps_yoy_pct: null,
             sales_curr_cr: null, sales_prev_cr: null,
@@ -1963,6 +1987,7 @@ export default function EarningsOpportunitiesPage() {
           filing_date: resolvedDateForGrading,
           quarter: e.quarter || 'Q4', sector: e.sector,
           market_cap_bucket: e.market_cap_bucket,
+          market_cap_cr: e.market_cap_cr ?? null,
           source_url: e.source_url || `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(ticker)}`,
           sales_curr_cr: e.sales_curr_cr ?? null, sales_prev_cr: e.sales_prev_cr ?? null,
           sales_yoy_pct: e.sales_yoy_pct ?? null,
@@ -2875,6 +2900,25 @@ Source label: ${coverageStats.source}`}
                 {chip(eliteOnly, '#FCD34D', '⭐ ELITE', eliteN, () => { setEliteOnly(v => !v); setPeadOnly(false); setMultibaggerOnly(false); })}
                 {chip(peadOnly, '#F87171', '🔥 PEAD≥70', peadN, () => { setPeadOnly(v => !v); setEliteOnly(false); setMultibaggerOnly(false); })}
                 {chip(multibaggerOnly, '#67E8F9', '💎 MULTIBAGGER', mbN, () => { setMultibaggerOnly(v => !v); setEliteOnly(false); setPeadOnly(false); })}
+                {/* PATCH 1022 — market-cap range selector */}
+                <span style={{ width: 1, height: 14, background: '#1A2540', margin: '0 2px' }} />
+                <select
+                  value={capFilter}
+                  onChange={(e) => setCapFilter(e.target.value as any)}
+                  title="Filter by market cap (₹ Cr)"
+                  style={{
+                    fontSize: 11, fontWeight: 800, padding: '3px 8px', borderRadius: 20, cursor: 'pointer',
+                    border: `1px solid ${capFilter !== 'all' ? '#34D399' : '#34D39950'}`,
+                    backgroundColor: capFilter !== 'all' ? '#34D399' : '#34D39915',
+                    color: capFilter !== 'all' ? '#0A0E1A' : '#34D399',
+                  }}>
+                  <option value="all">🏦 Mkt Cap · All</option>
+                  <option value="mega">MEGA ≥ ₹2,00,000 Cr</option>
+                  <option value="large">LARGE ₹20k–2L Cr</option>
+                  <option value="mid">MID ₹5k–20k Cr</option>
+                  <option value="small">SMALL ₹500–5k Cr</option>
+                  <option value="micro">MICRO &lt; ₹500 Cr</option>
+                </select>
               </>
             );
           })()}
@@ -3367,10 +3411,14 @@ Source label: ${coverageStats.source}`}
           if (eliteOnly) stocks = stocks.filter((s: any) => s.is_elite);
           else if (peadOnly) stocks = stocks.filter((s: any) => (s.pead_score ?? 0) >= 70);
           else if (multibaggerOnly) stocks = stocks.filter((s: any) => s.multibagger_setup);
+          // PATCH 1022 — market-cap range filter (₹ Cr)
+          if (capFilter !== 'all') {
+            stocks = stocks.filter((s: any) => capInRange(s.market_cap_cr, capFilter));
+          }
           if (stocks.length === 0) return null;
           const meta = TIER_META[tier];
           // PATCH 1017 — force-expand tiers when a filter is active so matches show immediately
-          const _filterActive = eliteOnly || peadOnly || multibaggerOnly;
+          const _filterActive = eliteOnly || peadOnly || multibaggerOnly || capFilter !== 'all';
           const isOpen = _filterActive ? true : expanded[tier];
           return (
             <div key={tier} style={{ backgroundColor: '#0D1623', border: '1px solid #1A2540', borderLeft: `4px solid ${meta.color}`, borderRadius: 12 }}>
@@ -3414,8 +3462,13 @@ function fmtPx(v: number | null | undefined): string | null {
   return Math.abs(v) >= 100 ? `₹${Math.round(v)}` : `₹${v.toFixed(2)}`;
 }
 function fmtPct(p: number | null | undefined, digits = 0): string {
-  if (p == null) return '—';
-  return `${p >= 0 ? '+' : ''}${p.toFixed(digits)}%`;
+  if (p == null || !Number.isFinite(p)) return '—';
+  // PATCH 1023 — a sub-1% move rounds to 0 and used to render as the
+  // confusing "-0%" / "+0%" (looked like a data bug). Show "flat" instead so
+  // a genuine ~0% reaction is visually distinct from missing data ("—").
+  const r = Number(p.toFixed(digits));
+  if (r === 0) return 'flat';
+  return `${r > 0 ? '+' : ''}${r.toFixed(digits)}%`;
 }
 
 function EarningsCard({ stock, isFresh }: { stock: ParsedEarning; isFresh?: boolean }) {
@@ -3465,11 +3518,16 @@ function EarningsCard({ stock, isFresh }: { stock: ParsedEarning; isFresh?: bool
             {stock.quarter}
           </span>
         )}
-        {stock.market_cap_bucket && stock.market_cap_bucket !== 'UNKNOWN' && (
+        {(stock.market_cap_bucket && stock.market_cap_bucket !== 'UNKNOWN') || stock.market_cap_cr != null ? (
           <span style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: '#1E293B', border: '1px solid #334155', color: '#94A3B8', fontWeight: 800, letterSpacing: '0.3px' }}>
-            {stock.market_cap_bucket}
+            {stock.market_cap_bucket && stock.market_cap_bucket !== 'UNKNOWN' ? stock.market_cap_bucket : ''}
+            {stock.market_cap_cr != null && (
+              <span style={{ fontWeight: 700, color: '#CBD5E1', marginLeft: (stock.market_cap_bucket && stock.market_cap_bucket !== 'UNKNOWN') ? 5 : 0 }}>
+                ₹{Math.round(stock.market_cap_cr).toLocaleString('en-IN')} Cr
+              </span>
+            )}
           </span>
-        )}
+        ) : null}
         {stock.sector && (
           <span style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: '#0D1623', border: '1px solid #1A2840', color: '#94A3B8' }}>
             {stock.sector}
