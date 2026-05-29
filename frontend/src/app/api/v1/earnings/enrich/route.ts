@@ -267,7 +267,7 @@ async function fetchYahooForSymbol(symbol: string, filedHint?: string): Promise<
     }
     // PATCH 0986 — if filedHint given, find FILING-DATE index using r.timestamp[]
     // so D1 reflects POST-EARNINGS reaction, not today's daily move.
-    const timestamps: number[] = r.timestamp || [];
+    const timestamps: number[] = (r.timestamp as number[] | undefined) || [];  // PATCH 0989
     let filedIdx = -1;
     if (filedHint && timestamps.length === closes.length) {
       // filedHint is YYYY-MM-DD; convert to UTC midnight epoch seconds for fair compare
@@ -290,14 +290,15 @@ async function fetchYahooForSymbol(symbol: string, filedHint?: string): Promise<
     let prevClose: number | null = null;
     if (reactionIdx >= 1) {
       for (let i = reactionIdx - 1; i >= 0 && i >= reactionIdx - 5; i--) {
-        if (closes[i] != null && Number.isFinite(closes[i] as number)) {
-          prevClose = closes[i]!;
+        const c = closes[i];
+        if (c != null && Number.isFinite(c as number)) {
+          prevClose = c as number;  // PATCH 0989 — explicit narrow
           break;
         }
       }
     }
-    const reactionClose = reactionIdx >= 0 ? closes[reactionIdx] : null;
-    const openReaction = reactionIdx >= 0 ? opens[reactionIdx] : null;
+    const reactionClose: number | null = reactionIdx >= 0 ? (closes[reactionIdx] ?? null) : null;  // PATCH 0989
+    const openReaction: number | null = reactionIdx >= 0 ? (opens[reactionIdx] ?? null) : null;  // PATCH 0989
     const gap = (openReaction != null && prevClose != null && prevClose > 0) ? ((openReaction - prevClose) / prevClose) * 100 : null;
     const d1 = (reactionClose != null && prevClose != null && prevClose > 0) ? ((reactionClose - prevClose) / prevClose) * 100 : null;
     // MA helpers
@@ -310,7 +311,7 @@ async function fetchYahooForSymbol(symbol: string, filedHint?: string): Promise<
       for (let i = idx - window + 1; i <= idx; i++) {
         const v = closes[i];
         if (v == null || !Number.isFinite(v as number)) continue;
-        s += v; n++;
+        s += (v as number); n++;  // PATCH 0989 — explicit cast for TS strict
       }
       if (n < Math.ceil(window * 0.8)) return null;
       return s / n;
