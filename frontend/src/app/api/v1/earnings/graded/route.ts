@@ -560,12 +560,21 @@ export async function GET(req: Request) {
         // PATCH 0360 — broadened "missing" criterion. A card with raw
         // sales_curr_cr but no YoY data renders identical to a preview
         // (all dashes), so it should be re-enriched too.
+        // PATCH 1011 — also re-enrich when opm/d1/gap are missing.
+        // Old cached payloads from before Patches 1003/1005 have sales/pat/eps
+        // populated but lack opm_pct + d1_pct + gap_pct. Those cards show
+        // 'screener gap' and prevent ELITE qualification. Detect and refresh.
         const needTickers = allCards
-          .filter((c) =>
-            c.sales_yoy_pct == null &&
-            c.net_profit_yoy_pct == null &&
-            c.eps_yoy_pct == null
-          )
+          .filter((c) => {
+            const noFinancials = c.sales_yoy_pct == null
+                               && c.net_profit_yoy_pct == null
+                               && c.eps_yoy_pct == null;
+            const noMargin = (c as any).opm_pct == null
+                          && (c as any).opm_prev_pct == null;
+            const noPriceAction = c.d1_pct == null && c.gap_pct == null;
+            // Refresh if NO financials OR (has financials but no margin AND no price action)
+            return noFinancials || (noMargin && noPriceAction);
+          })
           .map((c) => c.ticker);
         if (needTickers.length === 0) {
           return NextResponse.json({ ...existing, _cache: 'hit', _refresh: 'no-op (all populated)' }, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } });  // PATCH 0818
