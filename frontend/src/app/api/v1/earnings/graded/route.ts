@@ -438,7 +438,14 @@ function gradeRow(row: any): ParsedEarning | null {
     is_elite: _is_elite,
     pead_score: _pead_score,
     multibagger_setup: _multibagger,
-  };
+    // PATCH 1015 — the actual root cause: gradeRow built the return object
+    // by listing fields explicitly and OMITTED opm_pct / opm_prev_pct. The
+    // row going in HAD these populated from enrich; gradeRow stripped them.
+    // Every previous OPM patch was correct in principle but invisible because
+    // this final return shape never included the field. Fix: include them.
+    opm_pct: row.opm_pct ?? null,
+    opm_prev_pct: row.opm_prev_pct ?? null,
+  } as any;
 }
 
 // ─── Main handler ──────────────────────────────────────────────────────────
