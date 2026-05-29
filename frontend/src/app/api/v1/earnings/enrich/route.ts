@@ -796,6 +796,18 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
         if (out.prev_close == null) out.prev_close = px.prev_close;
         out._price_source = 'nse-bhavcopy';
       }
+      // PATCH 1035 — Liquidity fallback. Yahoo's chart (our median-ADTV source) is
+      // usually IP-blocked on Railway, so derive traded value from the NSE bhavcopy
+      // we already fetched: filing-day turnover (qty × close) in ₹Cr. It's a
+      // conservative thin-float proxy — earnings day is typically the heaviest
+      // volume day, so if even that is thin the stock is genuinely illiquid.
+      if ((out.adtv_cr == null || !Number.isFinite(out.adtv_cr)) && px.volume != null && px.volume > 0) {
+        const _p = (px.current_price ?? out.current_price);
+        if (_p != null && Number.isFinite(_p) && _p > 0) {
+          out.adtv_cr = (px.volume * _p) / 1e7;
+          out._adtv_source = 'nse-bhavcopy';
+        }
+      }
     } catch (e) {
       // Non-fatal — Yahoo fallback may still have populated d1/gap above
     }
