@@ -3475,6 +3475,36 @@ function EarningsCard({ stock, isFresh }: { stock: ParsedEarning; isFresh?: bool
         </div>
       )}
 
+      {/* PATCH 1006 — Institutional badges row */}
+      {((stock as any).is_elite || ((stock as any).pead_score ?? 0) >= 70 || (stock as any).multibagger_setup) && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+          {(stock as any).is_elite && (
+            <span title="ELITE — passes BLOCKBUSTER + all institutional gates" style={{
+              fontSize: 10, fontWeight: 900, letterSpacing: '0.3px',
+              padding: '2px 8px', borderRadius: 4,
+              border: '1px solid #FCD34D', background: '#78350F',
+              color: '#FCD34D',
+            }}>⭐ ELITE</span>
+          )}
+          {typeof (stock as any).pead_score === 'number' && (stock as any).pead_score >= 70 && (
+            <span title="PEAD score — academic post-earnings drift driver" style={{
+              fontSize: 10, fontWeight: 800, letterSpacing: '0.3px',
+              padding: '2px 8px', borderRadius: 4,
+              border: '1px solid #F87171', background: '#7F1D1D',
+              color: '#FCA5A5',
+            }}>🔥 PEAD {(stock as any).pead_score}</span>
+          )}
+          {(stock as any).multibagger_setup && (
+            <span title="MULTIBAGGER SETUP — 6-criterion SQGLP compounder filter" style={{
+              fontSize: 10, fontWeight: 800, letterSpacing: '0.3px',
+              padding: '2px 8px', borderRadius: 4,
+              border: '1px solid #67E8F9', background: '#164E63',
+              color: '#A5F3FC',
+            }}>💎 MULTIBAGGER</span>
+          )}
+        </div>
+      )}
+
       {/* ── Three metric tiles + score ────────────────────────────────────── */}
       {/* PATCH 1003 — 2x3 grid: 4 metrics + score (was 2x2 = 3 metrics + score) */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>

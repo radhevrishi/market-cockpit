@@ -358,6 +358,31 @@ function gradeRow(row: any): ParsedEarning | null {
     methodology_tags.length >= 2 ? ` and ${[...new Set(methodology_tags)].join('/')} all passing.` : '.';
   const narrative = `${head} (${metrics})${flavor}`;
 
+  // PATCH 1006 — compute ELITE / PEAD / MULTIBAGGER flags from available data
+  const _stillLoss = (row?.pat_curr_cr != null && row.pat_curr_cr <= 0) || (row?.eps_curr != null && row.eps_curr <= 0);
+  const _criticalsOrStruct = caveat_tags.filter((t: any) => t === 'low quality' || t === 'ocf divergence' || t === 'optical eps').length;
+  const _is_elite = !!(
+    !_stillLoss && salesY != null && salesY >= 25 && patY != null && patY >= 30
+    && opmExp != null && opmExp >= 1
+    && row?.d1_pct != null && row.d1_pct >= 2
+    && row?.gap_pct != null && row.gap_pct >= 0
+    && _criticalsOrStruct === 0 && stage !== 4 && (rs == null || rs >= 60)
+  );
+  const _sc = (v: number | null | undefined, ranges: [number, number][]): number => {
+    if (v == null || !Number.isFinite(v)) return 0;
+    for (const [thr, pts] of ranges) if (v >= thr) return pts;
+    return 0;
+  };
+  const _d1S = _sc(row?.d1_pct, [[8,100],[5,85],[3,70],[1,50],[0,30],[-2,15]]);
+  const _gapS = _sc(row?.gap_pct, [[3,100],[1,75],[0,55],[-1,30]]);
+  const _surS = _sc(patY, [[100,100],[50,80],[25,60],[10,40],[0,25]]);
+  const _volS = 50;  // placeholder until volume plumbing arrives
+  const _pead = Math.round(_d1S * 0.35 + _gapS * 0.15 + _volS * 0.25 + _surS * 0.25);
+  const _pead_score = Math.max(0, Math.min(100, _pead));
+  const _roce = (row as any)?.roce;
+  const _opm = row?.opm_pct;
+  const _prom = (row as any)?.promoter;
+  const _multibagger = !!(typeof _roce === 'number' && _roce >= 25 && typeof _opm === 'number' && _opm >= 18 && opmExp != null && opmExp > 0 && (typeof _prom !== 'number' || _prom >= 45) && !_stillLoss);
   return {
     ticker: row.symbol,
     company: row.company || row.symbol,
@@ -376,6 +401,10 @@ function gradeRow(row: any): ParsedEarning | null {
     composite_score: Math.round(composite), tier,
     methodology_tags: [...new Set(methodology_tags)], caveat_tags: [...new Set(caveat_tags)],
     narrative, filing_url: row.source_url, source: row.financials_source || 'NSE+BSE',
+    // PATCH 1006
+    is_elite: _is_elite,
+    pead_score: _pead_score,
+    multibagger_setup: _multibagger,
   };
 }
 

@@ -133,6 +133,10 @@ export interface ParsedEarning {
   // Provenance
   filing_url?: string;
   source_article_id?: string;
+  // PATCH 1006 — institutional-quality flags + PEAD academic score
+  is_elite?: boolean;          // passes BB + all institutional gates
+  pead_score?: number | null;  // 0-100, academic post-earnings drift
+  multibagger_setup?: boolean; // 6-criterion SQGLP compounder filter
 }
 
 export type MethodologyTag =
