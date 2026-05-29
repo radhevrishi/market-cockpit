@@ -2397,7 +2397,8 @@ export default function EarningsOpportunitiesPage() {
                 cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4,
               }}>
               🌙 Slow Backfill (60d · 1.5h)
-          )}
+            </button>
+          )}{/* PATCH 1004 — restored missing </button> closing tag */}
           {slowBf?.running && (
             <button
               onClick={stopSlowBackfill}
