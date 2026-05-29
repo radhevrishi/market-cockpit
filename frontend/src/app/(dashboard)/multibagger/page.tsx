@@ -1052,6 +1052,15 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
         ? `+${addedCount} new stocks added · ${totalCount} total`
         : `${arr.length} file${arr.length>1?'s':''} · ${totalCount} stocks`
       );
+      // PATCH 0984 — persist Screener CSV names so MultibaggerAnalytics
+      // can show a compact "N screeners · name1 · name2 · …" chip row.
+      try {
+        const existing: string[] = JSON.parse(localStorage.getItem('mb_excel_files_v1') || '[]');
+        const newNames = arr.map(f => f.name);
+        const merged = Array.from(new Set([...existing, ...newNames]));
+        localStorage.setItem('mb_excel_files_v1', JSON.stringify(merged));
+        window.dispatchEvent(new CustomEvent('mb-files:updated'));
+      } catch {}
     } catch(e:unknown){setParseError(`Error: ${e instanceof Error?e.message:String(e)}`);}
     setLoading(false);
   }
@@ -4151,6 +4160,7 @@ export default function MultibaggerPage() {
     try {
       localStorage.removeItem(STORAGE_KEY);
       localStorage.removeItem(STORAGE_META);
+      localStorage.removeItem('mb_excel_files_v1'); // PATCH 0984
       // PATCH 0453 P1-18 — Audit found cross-tab pages (Rerating, Signals,
       // Earnings Scan) kept showing ghost tickers from a cleared upload
       // because they only listened to the conviction-beats custom event,
@@ -4258,6 +4268,62 @@ interface MbAnalyticsStock {
   grade: string;
   sector?: string;
   market: 'INDIA' | 'USA';
+}
+
+// PATCH 0984 — Compact screener provenance chip row.
+// Shows "N SCREENERS · name1 · name2 · …" at top of Multibagger Analytics
+// so the user can see at a glance which Screener.in exports built this view.
+function MbScreenerChips() {
+  const [files, setFiles] = React.useState<string[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try { return JSON.parse(localStorage.getItem('mb_excel_files_v1') || '[]'); } catch { return []; }
+  });
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const refresh = () => {
+      try { setFiles(JSON.parse(localStorage.getItem('mb_excel_files_v1') || '[]')); } catch {}
+    };
+    window.addEventListener('mb-files:updated', refresh);
+    window.addEventListener('storage', refresh);
+    return () => {
+      window.removeEventListener('mb-files:updated', refresh);
+      window.removeEventListener('storage', refresh);
+    };
+  }, []);
+  if (files.length === 0) return null;
+  const cleanName = (n: string) =>
+    n.replace(/\.(csv|xlsx?|tsv)$/i, '')
+     .replace(/^Screener[._-]+/i, '')
+     .replace(/[_-]+/g, ' ')
+     .replace(/\s+/g, ' ')
+     .trim();
+  return (
+    <div style={{
+      display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6,
+      padding: '6px 10px', borderRadius: 6,
+      border: '1px solid #1E3A5F', background: '#0F1B2D',
+    }}>
+      <span style={{ fontSize: 10, color: '#22D3EE', fontWeight: 800, letterSpacing: '0.5px' }}>
+        📊 {files.length} SCREENER{files.length === 1 ? '' : 'S'}
+      </span>
+      <span style={{ width: 1, height: 12, background: '#1E3A5F' }} />
+      {files.slice(0, 12).map((f, i) => (
+        <span key={f + '_' + i} style={{
+          fontSize: 10, color: '#94A3B8', fontWeight: 600,
+          padding: '2px 7px', borderRadius: 3, background: '#1A2540',
+          fontFamily: 'ui-sans-serif, system-ui',
+          maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }} title={f}>
+          {cleanName(f)}
+        </span>
+      ))}
+      {files.length > 12 && (
+        <span style={{ fontSize: 10, color: '#6B7A8D', fontStyle: 'italic' }}>
+          +{files.length - 12} more
+        </span>
+      )}
+    </div>
+  );
 }
 
 function MultibaggerAnalytics({
@@ -4996,6 +5062,9 @@ function MultibaggerAnalytics({
           );
         })}
       </div>
+
+      {/* PATCH 0984 — compact screener chip row */}
+      <MbScreenerChips />
 
       {/* ── STATS STRIP (PATCH 0548: 10-KPI grid) ───────────────────────── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
