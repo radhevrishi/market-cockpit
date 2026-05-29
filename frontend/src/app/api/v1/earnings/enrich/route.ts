@@ -734,6 +734,51 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     _enriched_at: new Date().toISOString(),
   };
 
+  // PATCH 1005 — OPM compute fallback + sanity clamp.
+  // Many tickers (EIFFL etc.) come back with opm_pct=null even when
+  // operatingProfit + revenue exist in one of the sources. Compute it.
+  // Then clamp to a sane range — |opm| > 100% almost certainly means the
+  // parser ingested operating loss as raw value without dividing by sales.
+  const _opmFrom = (op: any, rev: any): number | null => {
+    if (op == null || rev == null) return null;
+    const n = Number(op);
+    const r = Number(rev);
+    if (!Number.isFinite(n) || !Number.isFinite(r) || r <= 0) return null;
+    return (n / r) * 100;
+  };
+  if (out.opm_pct == null) {
+    // Try worker -> nse -> screener for op_profit + revenue
+    const candidates = [
+      [worker?.operating_profit_curr_cr ?? worker?.opCurr, worker?.sales_curr_cr ?? worker?.revenue],
+      [nse?.op_profit_curr_cr,                              nse?.sales_curr_cr],
+      [screener?.op_profit_curr_cr,                         screener?.sales_curr_cr],
+    ];
+    for (const [op, rev] of candidates) {
+      const v = _opmFrom(op, rev);
+      if (v != null) { out.opm_pct = v; break; }
+    }
+  }
+  if (out.opm_prev_pct == null) {
+    const candidates = [
+      [worker?.operating_profit_prev_cr ?? worker?.opPrev, worker?.sales_prev_cr],
+      [nse?.op_profit_prev_cr,                              nse?.sales_prev_cr],
+      [screener?.op_profit_prev_cr,                         screener?.sales_prev_cr],
+    ];
+    for (const [op, rev] of candidates) {
+      const v = _opmFrom(op, rev);
+      if (v != null) { out.opm_prev_pct = v; break; }
+    }
+  }
+  // Sanity clamp — anything outside reasonable margin range is a parser bug
+  if (out.opm_pct != null && (out.opm_pct > 100 || out.opm_pct < -50)) {
+    console.log(`[enrich] PATCH 1005: opm_pct out-of-range for ${symbol}: ${out.opm_pct} → null`);
+    out.opm_pct = null;
+  }
+  if (out.opm_prev_pct != null && (out.opm_prev_pct > 100 || out.opm_prev_pct < -50)) {
+    console.log(`[enrich] PATCH 1005: opm_prev_pct out-of-range for ${symbol}: ${out.opm_prev_pct} → null`);
+    out.opm_prev_pct = null;
+  }
+
   // PATCH 0369 — If NSE/Screener fetchers didn't give us a real company
   // name (or returned the ticker as the name), resolve via Screener.in
   // search API. Costs one extra HTTP call per missing-name symbol, only

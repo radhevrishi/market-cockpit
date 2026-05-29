@@ -3733,7 +3733,7 @@ function OpmTile({ opm, opmPrev }: { opm: number | null | undefined; opmPrev: nu
         </div>
       </div>
       <div style={{ fontSize: 9, color: '#94A3B8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {hasPrev ? `vs ${(opmPrev as number).toFixed(1)}%` : 'prior n/a'}
+        {hasPrev ? `vs ${(opmPrev as number).toFixed(1)}%` : (hasOpm ? 'prior n/a' : 'screener gap')}
       </div>
     </div>
   );
