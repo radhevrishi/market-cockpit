@@ -369,12 +369,15 @@ function gradeRow(row: any): ParsedEarning | null {
   // PATCH 1006 — compute ELITE / PEAD / MULTIBAGGER flags from available data
   const _stillLoss = (row?.pat_curr_cr != null && row.pat_curr_cr <= 0) || (row?.eps_curr != null && row.eps_curr <= 0);
   const _criticalsOrStruct = caveat_tags.filter((t: any) => t === 'low quality' || t === 'ocf divergence' || t === 'optical eps').length;
+  // PATCH 1009 — Relaxed gates: null = OK (no data, no penalty); only
+  // explicit negative values fail. Top-3 BB fallback added in the response
+  // builder guarantees 1-3 ELITE per busy date even when data is sparse.
   const _is_elite = !!(
     !_stillLoss && salesY != null && salesY >= 25 && patY != null && patY >= 30
-    && opmExp != null && opmExp >= 1
-    && row?.d1_pct != null && row.d1_pct >= 2
-    && row?.gap_pct != null && row.gap_pct >= 0
-    && _criticalsOrStruct === 0 && stage !== 4 && (rs == null || rs >= 60)
+    && (opmExp == null || opmExp >= 0)
+    && (row?.d1_pct == null || row.d1_pct >= -1)
+    && (row?.gap_pct == null || row.gap_pct >= -2)
+    && _criticalsOrStruct === 0 && stage !== 4 && (rs == null || rs >= 50)
     && !(row?.pat_prev_cr != null && row.pat_prev_cr < 0)  // PATCH 1008 — no turnaround base in ELITE
   );
   const _sc = (v: number | null | undefined, ranges: [number, number][]): number => {
@@ -382,16 +385,33 @@ function gradeRow(row: any): ParsedEarning | null {
     for (const [thr, pts] of ranges) if (v >= thr) return pts;
     return 0;
   };
+  // PATCH 1009 — when d1/gap null, redistribute their weight to surprise.
+  // The Bernard-Thomas drift model trusts the price signal most, but without
+  // it we shouldn't tank to 0 — we should fall back to fundamentals (surprise).
+  const _d1Known = row?.d1_pct != null;
+  const _gapKnown = row?.gap_pct != null;
   const _d1S = _sc(row?.d1_pct, [[8,100],[5,85],[3,70],[1,50],[0,30],[-2,15]]);
   const _gapS = _sc(row?.gap_pct, [[3,100],[1,75],[0,55],[-1,30]]);
   const _surS = _sc(patY, [[100,100],[50,80],[25,60],[10,40],[0,25]]);
-  const _volS = 50;  // placeholder until volume plumbing arrives
-  const _pead = Math.round(_d1S * 0.35 + _gapS * 0.15 + _volS * 0.25 + _surS * 0.25);
+  const _salesS = _sc(salesY, [[50,100],[25,80],[15,60],[5,40],[0,25]]);
+  const _volS = 50;
+  // Available signal mix: when d1+gap known, use full PEAD formula.
+  // When missing, fall back to fundamentals-weighted (sales 25% + pat 50% + vol 25%).
+  const _pead = (_d1Known || _gapKnown)
+    ? Math.round(_d1S * 0.35 + _gapS * 0.15 + _volS * 0.25 + _surS * 0.25)
+    : Math.round(_salesS * 0.25 + _surS * 0.50 + _volS * 0.25);
   const _pead_score = Math.max(0, Math.min(100, _pead));
   const _roce = (row as any)?.roce;
   const _opm = row?.opm_pct;
   const _prom = (row as any)?.promoter;
-  const _multibagger = !!(typeof _roce === 'number' && _roce >= 25 && typeof _opm === 'number' && _opm >= 18 && opmExp != null && opmExp > 0 && (typeof _prom !== 'number' || _prom >= 45) && !_stillLoss);
+  // PATCH 1009 — MULTIBAGGER: relaxed. Requires AT LEAST ONE quality signal
+  // (roce or opm or opmExp positive) + not loss-making. Stricter than ELITE
+  // but doesn't require ALL fields populated.
+  const _mbSignals = ((typeof _roce === 'number' && _roce >= 25) ? 1 : 0)
+                   + ((typeof _opm === 'number' && _opm >= 18) ? 1 : 0)
+                   + ((opmExp != null && opmExp >= 1) ? 1 : 0)
+                   + ((typeof _prom === 'number' && _prom >= 45) ? 1 : 0);
+  const _multibagger = !!(_mbSignals >= 2 && !_stillLoss);
   return {
     ticker: row.symbol,
     company: row.company || row.symbol,
