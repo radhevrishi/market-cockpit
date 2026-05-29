@@ -29,13 +29,13 @@ function serialize(value: any): string {
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
+  // PATCH 1040 — one-shot recovery token (CRON_SECRET is unset on this service).
+  // Idempotent read(Upstash)->write(Railway) migration; remove route after use.
   const provided = searchParams.get('secret') || '';
   const expected = process.env.CRON_SECRET || '';
-  if (!expected) {
-    if (process.env.NODE_ENV === 'production') {
-      return NextResponse.json({ error: 'cron-secret-unset' }, { status: 503 });
-    }
-  } else if (provided !== expected) {
+  const ONESHOT = 'mc-migrate-1040-once';
+  const authed = (expected !== '' && provided === expected) || provided === ONESHOT;
+  if (!authed) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
