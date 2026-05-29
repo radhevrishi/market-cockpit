@@ -735,6 +735,27 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     _enriched_at: new Date().toISOString(),
   };
 
+  // PATCH 1016 — NSE Bhavcopy overlay for D1/Gap price reaction.
+  // Yahoo blocks Railway IPs often → D1/Gap missing for most tickers, blocking
+  // ELITE qualification. NSE archives bhavcopy is a static CSV that never
+  // rejects requests and contains every NSE-listed security's OHLCV.
+  // We fetch lazily, cache per-symbol for 90 days.
+  if (filedHint && (out.d1_pct == null || out.gap_pct == null)) {
+    try {
+      const { getPriceReaction } = await import('@/lib/nse-bhavcopy');
+      const px = await getPriceReaction(symbol, filedHint);
+      if (px.d1_pct != null) {
+        out.d1_pct = px.d1_pct;
+        out.gap_pct = px.gap_pct;
+        if (out.current_price == null) out.current_price = px.current_price;
+        if (out.prev_close == null) out.prev_close = px.prev_close;
+        out._price_source = 'nse-bhavcopy';
+      }
+    } catch (e) {
+      // Non-fatal — Yahoo fallback may still have populated d1/gap above
+    }
+  }
+
   // PATCH 1005 — OPM compute fallback + sanity clamp.
   // Many tickers (EIFFL etc.) come back with opm_pct=null even when
   // operatingProfit + revenue exist in one of the sources. Compute it.
