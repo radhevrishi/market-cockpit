@@ -402,6 +402,9 @@ export interface ExcelResult extends ExcelRow {
   triggerBonus: number;     // proxy for turnaround / new engine / inflection
   inflectionSignal: boolean;// early-phase: low→high profit growth
   killSwitch: KSTest[];     // 8-test final kill-switch layer
+  // PATCH 0987 — Screener provenance: file names this stock appeared in.
+  // Populated by upload handler; legacy rows have undefined.
+  _screeners?: string[];
 }
 
 // Sector benchmarks: [p25, median, p75]

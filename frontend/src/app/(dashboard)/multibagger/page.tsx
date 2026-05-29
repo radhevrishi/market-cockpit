@@ -1014,18 +1014,32 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
         }
       }
 
+      // PATCH 0987 — track per-file screener membership.
+      // Same ticker in multiple files now collects ALL file names instead of
+      // being deduped to the first appearance. Stocks in 2+ files surface in
+      // a new "🎯 MULTI-CONFIRMED" card in Analytics.
+      const _screenerMap = new Map<string, string[]>();
+      const _newRowByTicker = new Map<string, ExcelRow>();
       for (const file of arr) {
-        const raw=await parseSingleFile(file,XLSX);
-        if(!raw.length) continue;
-        const cm=buildColMap(raw[0] as Record<string,unknown>);
-        if(!cm['symbol']) continue;
+        const raw = await parseSingleFile(file, XLSX);
+        if (!raw.length) continue;
+        const cm = buildColMap(raw[0] as Record<string, unknown>);
+        if (!cm['symbol']) continue;
         for (const r of raw) {
-          const row=rawRowToExcelRow(r as Record<string,unknown>,cm);
-          if(!row||existingSymbols.has(row.symbol)||seenNew.has(row.symbol)) continue;
-          seenNew.add(row.symbol);
-          newRows.push(row);
+          const row = rawRowToExcelRow(r as Record<string, unknown>, cm);
+          if (!row) continue;
+          // Always record screener membership (even for tickers we already have)
+          const prev = _screenerMap.get(row.symbol) || [];
+          if (!prev.includes(file.name)) prev.push(file.name);
+          _screenerMap.set(row.symbol, prev);
+          // Collect row data only if it's truly new
+          if (!existingSymbols.has(row.symbol) && !_newRowByTicker.has(row.symbol)) {
+            _newRowByTicker.set(row.symbol, row);
+          }
         }
       }
+      for (const sym of _newRowByTicker.keys()) seenNew.add(sym);
+      newRows.push(..._newRowByTicker.values());
 
       if(!newRows.length && rows.length > 0) {
         setParseError(`All stocks in these files already exist in the current dataset (${rows.length} stocks). No new entries added.`);
@@ -1037,8 +1051,23 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
       }
 
       // Score new rows and merge with existing
-      const newScored = newRows.map(r => scoreExcelRow(r));
-      const merged = [...rows, ...newScored].sort((a,b) => b.score - a.score);
+      const newScored = newRows.map(r => {
+        const scored = scoreExcelRow(r);
+        // PATCH 0987 — attach screener membership recorded above
+        const sc = _screenerMap.get(r.symbol) || [];
+        return { ...scored, _screeners: sc };
+      });
+      // PATCH 0987 — also append new screener memberships onto existing rows
+      // (a stock already in dataset that appears in a new screener should grow
+      //  its membership, not stay frozen).
+      const rowsWithUpdatedScreeners = rows.map(r => {
+        const newSources = _screenerMap.get(r.symbol);
+        if (!newSources || newSources.length === 0) return r;
+        const existing = (r as ExcelResult & { _screeners?: string[] })._screeners || [];
+        const merged = Array.from(new Set([...existing, ...newSources]));
+        return { ...r, _screeners: merged };
+      });
+      const merged = [...rowsWithUpdatedScreeners, ...newScored].sort((a, b) => b.score - a.score);
       const allScored = applyForcedRanking(merged);
       setRows(allScored);
       // PATCH 0872 — Pre-upload baseline now captured at the TOP of this
@@ -5242,6 +5271,9 @@ function MultibaggerAnalytics({
           </div>
         </div>
         )}
+
+        {/* PATCH 0987 — MULTI-CONFIRMED screener picks */}
+        <MultiConfirmedCard stocks={stocks} />
 
         {/* AVOID / TRIM */}
         <div style={{ ...cardStyle, borderColor: '#EF444440' }}>
