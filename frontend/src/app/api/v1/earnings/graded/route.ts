@@ -307,13 +307,21 @@ function gradeRow(row: any): ParsedEarning | null {
   // composite both pass. User-reported: 'many companies incorrectly marked
   // as blockbuster' due to revenue magnitude alone without margin support.
   // Unknown OPM (null) → no gate (don't penalize data gaps).
+  // PATCH 1000 / 1020 — graduated margin gate.
+  //   marginContracting (≤ -0.5 pp): mild contraction → blocks BLOCKBUSTER,
+  //     demotes to STRONG. A growth print with a small margin dip is OK as STRONG.
+  //   marginSevereContraction (≤ -1.5 pp): clear contraction → blocks STRONG
+  //     too, caps at MIXED. User: 'if margins are bad it should not be in
+  //     strong or blockbuster' — e.g. VARROC OPM -2pp + optical eps was wrongly STRONG.
   const marginContracting = opmExp != null && opmExp <= -0.5;
+  const marginSevereContraction = opmExp != null && opmExp <= -1.5;
   if (broken && composite < 70) tier = 'AVOID';
   else if (stillLossMaking && blockbusterGate) tier = 'MIXED';  // PATCH 1001 — loss-makers cannot be BB
   else if (turnaroundBase && blockbusterGate) tier = 'MIXED';  // PATCH 1008 — turnaround base cannot be BB
+  else if (blockbusterGate && marginSevereContraction) tier = 'MIXED';  // PATCH 1020 — severe contraction caps at MIXED
   else if (blockbusterGate && !marginContracting) tier = 'BLOCKBUSTER';
   else if (blockbusterGate && marginContracting) tier = 'STRONG';
-  else if (composite >= 68 && mCount >= 1 && caveat_tags.length <= 3 && stage !== 4 && !stillLossMaking && !turnaroundBase) tier = 'STRONG';  // PATCH 1001/1008 — STRONG excludes loss-makers + turnaround base
+  else if (composite >= 68 && mCount >= 1 && caveat_tags.length <= 3 && stage !== 4 && !stillLossMaking && !turnaroundBase && !marginSevereContraction) tier = 'STRONG';  // PATCH 1001/1008/1020 — STRONG excludes loss-makers, turnaround base, AND severe margin contraction
   else if (composite >= 35) tier = 'MIXED';
   else tier = 'AVOID';
 
