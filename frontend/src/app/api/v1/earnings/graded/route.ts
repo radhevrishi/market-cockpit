@@ -189,6 +189,13 @@ function gradeRow(row: any): ParsedEarning | null {
   const stillLossEps = row?.eps_curr != null && row.eps_curr <= 0;
   const stillLossMaking = stillLossPat || stillLossEps;
   if (stillLossMaking) caveat_tags.push('low quality');
+  // PATCH 1008 — Turnaround base: YoY% is mathematically meaningless when
+  // prior was negative. Block BLOCKBUSTER for these even though they show
+  // huge +X% growth (from abs-value division). Story may be valid but
+  // conviction label is not yet earned.
+  const turnaroundBase = (row?.pat_prev_cr != null && row.pat_prev_cr < 0)
+                      || (row?.eps_prev   != null && row.eps_prev   < 0);
+  if (turnaroundBase) caveat_tags.push('low quality');
   if (opmExp != null && opmExp < -1.5) caveat_tags.push('segment mix shift');
   // PATCH 1000 — Margin contraction caveat. Any drop below flat (≤ -0.5 pp)
   // for a stock the grader is otherwise about to call BLOCKBUSTER is a
@@ -303,9 +310,10 @@ function gradeRow(row: any): ParsedEarning | null {
   const marginContracting = opmExp != null && opmExp <= -0.5;
   if (broken && composite < 70) tier = 'AVOID';
   else if (stillLossMaking && blockbusterGate) tier = 'MIXED';  // PATCH 1001 — loss-makers cannot be BB
+  else if (turnaroundBase && blockbusterGate) tier = 'MIXED';  // PATCH 1008 — turnaround base cannot be BB
   else if (blockbusterGate && !marginContracting) tier = 'BLOCKBUSTER';
   else if (blockbusterGate && marginContracting) tier = 'STRONG';
-  else if (composite >= 68 && mCount >= 1 && caveat_tags.length <= 3 && stage !== 4 && !stillLossMaking) tier = 'STRONG';  // PATCH 1001 — STRONG excludes loss-makers
+  else if (composite >= 68 && mCount >= 1 && caveat_tags.length <= 3 && stage !== 4 && !stillLossMaking && !turnaroundBase) tier = 'STRONG';  // PATCH 1001/1008 — STRONG excludes loss-makers + turnaround base
   else if (composite >= 35) tier = 'MIXED';
   else tier = 'AVOID';
 
@@ -367,6 +375,7 @@ function gradeRow(row: any): ParsedEarning | null {
     && row?.d1_pct != null && row.d1_pct >= 2
     && row?.gap_pct != null && row.gap_pct >= 0
     && _criticalsOrStruct === 0 && stage !== 4 && (rs == null || rs >= 60)
+    && !(row?.pat_prev_cr != null && row.pat_prev_cr < 0)  // PATCH 1008 — no turnaround base in ELITE
   );
   const _sc = (v: number | null | undefined, ranges: [number, number][]): number => {
     if (v == null || !Number.isFinite(v)) return 0;
