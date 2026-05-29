@@ -940,7 +940,7 @@ export default function EarningsOpportunitiesPage() {
   // staleTime, React Query never refetched even after the server backfilled
   // the real graded payload. Bumping the prefix invalidates every stale
   // snapshot in one shot. The scrub below removes orphan v8/v7 keys.
-  const LS_PREFIX = 'mc:graded:v9:';
+  const LS_PREFIX = 'mc:graded:v10:';  // PATCH 0992 — bumped v9→v10 to abandon stale empty payloads cached during Railway migration
   if (typeof window !== 'undefined') {
     try {
       const SCRUB_GRADED = 'mc:graded-scrub:v9';
@@ -952,6 +952,28 @@ export default function EarningsOpportunitiesPage() {
       }
     } catch {}
   }
+  // PATCH 0992 — one-time cleanup: purge all stale v9 entries left from
+  // the Railway migration window. Safe to run repeatedly (idempotent flag in LS).
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const FLAG = 'mc:graded:v9-purged';
+      if (localStorage.getItem(FLAG)) return;
+      const toDelete: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && (k.startsWith('mc:graded:v9:') || k.startsWith('mc:graded:v8:'))) {
+          toDelete.push(k);
+        }
+      }
+      toDelete.forEach((k) => localStorage.removeItem(k));
+      localStorage.setItem(FLAG, String(Date.now()));
+      if (toDelete.length > 0) {
+        console.log(`[graded] PATCH 0992: purged ${toDelete.length} stale v8/v9 LS entries`);
+      }
+    } catch {}
+  }, []);
+
   const readLsCache = (date: string): OpportunitiesPayload | undefined => {
     if (!date || typeof window === 'undefined') return undefined;
     try {
@@ -969,6 +991,22 @@ export default function EarningsOpportunitiesPage() {
       } else {
         // Past dates: 7 days fresh. They're immutable on the server side anyway.
         if (ageMs > 7 * 24 * 3600_000) return undefined;
+      }
+      // PATCH 0992 — content validation. A cached payload with ZERO entries
+      // in every tier AND zero candidates_total is treated as stale because
+      // during the Railway migration window the graded endpoint briefly
+      // returned empty payloads for dates that genuinely had data. We can't
+      // distinguish a "real empty day" (e.g. April 28 holiday) from a
+      // "broken cache" reliably from the client, so we err on the side of
+      // refetching — server cost is tiny for empty days (KV hit).
+      const totalGraded = (parsed?.by_tier?.BLOCKBUSTER?.length || 0)
+        + (parsed?.by_tier?.STRONG?.length || 0)
+        + (parsed?.by_tier?.MIXED?.length || 0)
+        + (parsed?.by_tier?.AVOID?.length || 0);
+      const candTotal = parsed?.candidates_total || 0;
+      const hadHubFail = !!parsed?._hub_fail;
+      if (hadHubFail || (totalGraded === 0 && candTotal === 0)) {
+        return undefined;  // force refetch from server
       }
       return parsed;
     } catch { return undefined; }
@@ -1444,6 +1482,7 @@ export default function EarningsOpportunitiesPage() {
           // hydrates from the freshly-rebuilt server payload, not the
           // stale snapshot.
           try {
+            localStorage.removeItem('mc:graded:v10:' + iso);  // PATCH 0992
             localStorage.removeItem('mc:graded:v9:' + iso);
             localStorage.removeItem('mc:graded:v8:' + iso);
           } catch {}
@@ -1489,6 +1528,7 @@ export default function EarningsOpportunitiesPage() {
       // who installed this patch mid-loop don't get stuck on the old version.
       try {
         const monthKeys = monthsToFetch.join(',');
+        localStorage.removeItem('mc:graded:v10:' + resolvedDateForGrading);  // PATCH 0992
         localStorage.removeItem('mc:graded:v9:' + resolvedDateForGrading);
         localStorage.removeItem('mc:graded:v8:' + resolvedDateForGrading);
         localStorage.removeItem('mc:hub:v3:' + monthKeys);
@@ -2536,7 +2576,7 @@ export default function EarningsOpportunitiesPage() {
                 setForceRescanning(true);
                 try {
                   const d = resolvedDateForGrading;
-                  try { localStorage.removeItem('mc:graded:v9:' + d); localStorage.removeItem('mc:graded:v8:' + d); } catch {}
+                  try { localStorage.removeItem('mc:graded:v10:' + d); localStorage.removeItem('mc:graded:v9:' + d); localStorage.removeItem('mc:graded:v8:' + d); } catch {}  // PATCH 0992
                   await Promise.allSettled([
                     fetch(`/api/v1/earnings/today-live?date=${d}&force=1`, { cache: 'no-store' }),
                     fetch(`/api/v1/earnings/graded?date=${d}&force=1&refreshMissing=1`, { cache: 'no-store' }),
@@ -3027,7 +3067,7 @@ Source label: ${coverageStats.source}`}
                             // Force NSE corp-announcements re-pull
                             await fetch(`/api/v1/earnings/nse-announcements?date=${d}&force=1`, { cache: 'no-store' });
                             // Wipe local cache + refetch
-                            try { localStorage.removeItem('mc:graded:v9:' + d); localStorage.removeItem('mc:graded:v8:' + d); } catch {}
+                            try { localStorage.removeItem('mc:graded:v10:' + d); localStorage.removeItem('mc:graded:v9:' + d); localStorage.removeItem('mc:graded:v8:' + d); } catch {}  // PATCH 0992
                             refetch();
                             refetchHub();
                           } catch {}
