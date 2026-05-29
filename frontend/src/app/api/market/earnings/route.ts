@@ -15,6 +15,9 @@ import {
 } from '@/lib/nse';
 // PATCH 0181 — Self-updating earnings calendar (populated by daily Vercel Cron)
 import { getCalendarEntriesInRange } from '@/lib/earnings-week-seed';
+// PATCH 1026 — durable calendar memory (KV) so past months don't go blank
+// when NSE's live feed rolls them out of its recent window.
+import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 
 // PATCH 0819: removed force-dynamic so Cache-Control headers aren't overridden by Next.js. Query params still force dynamic at runtime.
 export const maxDuration = 30; // PATCH 0818
@@ -22,6 +25,71 @@ export const maxDuration = 30; // PATCH 0818
 // ── In-memory cache per month (5 min TTL) ──
 const EARNINGS_ROUTE_CACHE_TTL = 300_000;
 const _earningsRouteCache = new Map<string, { data: any; ts: number }>();
+
+// ── PATCH 1026 — Durable month-snapshot KV memory ──────────────────────────
+// The NSE live feed only serves a recent rolling window, so when a past month
+// (e.g. April queried at end-May) ages out, the live query returns 0 and the
+// calendar goes blank. We persist every non-empty month to KV and, when the
+// live feed comes back empty for a PAST month, recover from (1) that KV
+// snapshot or (2) the per-date graded:v8 caches (90-day TTL) that the graded
+// route already writes for every date the user has visited / backfilled.
+const MONTH_SNAP_KEY = (market: string, month: string) => `earnings-cal-month:v2:${market}:${month}`;
+const MONTH_SNAP_TTL_S = 90 * 24 * 3600; // 90d; overwritten on every non-empty live response
+
+function _bucketToLetter(b?: string): string {
+  const u = (b || '').toUpperCase();
+  if (u === 'MEGA' || u === 'LARGE') return 'L';
+  if (u === 'MID') return 'M';
+  if (u === 'SMALL') return 'S';
+  if (u === 'MICRO') return 'Micro';
+  return '';
+}
+
+// Rebuild a month's calendar from the durable per-date graded caches.
+async function reconstructMonthFromGraded(month: string, expectedQuarter: string): Promise<any[]> {
+  if (!isRedisAvailable()) return [];
+  const [y, m] = month.split('-').map(Number);
+  if (!y || !m) return [];
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const dateKeys: string[] = [];
+  for (let day = 1; day <= last; day++) {
+    const d = new Date(Date.UTC(y, m - 1, day));
+    const dow = d.getUTCDay();
+    if (dow === 0 || dow === 6) continue; // weekdays only
+    dateKeys.push(d.toISOString().slice(0, 10));
+  }
+  // Bounded parallel reads (≈22 weekdays). Only runs for empty past months.
+  const payloads = await Promise.all(
+    dateKeys.map((iso) => kvGet<any>(`graded:v8:${iso}`).catch(() => null))
+  );
+  const byTicker = new Map<string, any>();
+  payloads.forEach((p, i) => {
+    if (!p || !p.by_tier) return;
+    const iso = dateKeys[i];
+    for (const tier of Object.keys(p.by_tier)) {
+      for (const e of (p.by_tier[tier] || [])) {
+        const ticker = e?.ticker;
+        if (!ticker || byTicker.has(ticker)) continue;
+        byTicker.set(ticker, {
+          ticker,
+          company: e.company || ticker,
+          resultDate: e.filing_date || iso,
+          quarter: e.quarter || expectedQuarter,
+          quality: 'Good',
+          sector: e.sector || 'Other',
+          industry: '',
+          marketCap: _bucketToLetter(e.market_cap_bucket),
+          edp: null,
+          cmp: typeof e.price === 'number' ? e.price : null,
+          priceMove: null,
+          timing: 'pre',
+          source: 'KV graded cache (reconstructed)',
+        });
+      }
+    }
+  });
+  return Array.from(byTicker.values());
+}
 
 // =============================================
 // EARNINGS CALENDAR v4 — Strict, Accurate
@@ -1098,7 +1166,33 @@ export async function GET(request: Request) {
       });
     }
 
+    // PATCH 1026 — Durable recovery. If the live feed returned nothing for a
+    // PAST month (NSE rolled it out of its recent window), rebuild from the
+    // KV month snapshot or the per-date graded:v8 caches so the calendar
+    // doesn't go blank. Current month is always authoritative from live.
+    const isPastMonth = !!month && month < new Date().toISOString().slice(0, 7);
+    if (results.length === 0 && isPastMonth && market === 'india' && isRedisAvailable()) {
+      try {
+        let recovered: any[] = [];
+        const snap = await kvGet<any[]>(MONTH_SNAP_KEY(market, month!));
+        if (Array.isArray(snap) && snap.length > 0) {
+          recovered = snap;
+        } else {
+          recovered = await reconstructMonthFromGraded(month!, expectedQuarter);
+          if (recovered.length > 0) {
+            kvSet(MONTH_SNAP_KEY(market, month!), recovered, MONTH_SNAP_TTL_S).catch(() => null);
+          }
+        }
+        if (recovered.length > 0) results = recovered;
+      } catch {}
+    }
+
     results.sort((a, b) => new Date(b.resultDate).getTime() - new Date(a.resultDate).getTime());
+
+    // PATCH 1026 — persist every non-empty month so it can be recovered later.
+    if (results.length > 0 && market === 'india' && month && isRedisAvailable()) {
+      kvSet(MONTH_SNAP_KEY(market, month), results, MONTH_SNAP_TTL_S).catch(() => null);
+    }
 
     const excellentCount = results.filter(r => r.quality === 'Excellent').length;
     const greatCount = results.filter(r => r.quality === 'Great').length;
