@@ -183,6 +183,12 @@ function gradeRow(row: any): ParsedEarning | null {
   }
   if (patY != null && row?.op_profit_yoy_pct != null && patY >= 100 && row.op_profit_yoy_pct < 30) caveat_tags.push('tax distortion');
   if (opmExp != null && opmExp < -1.5) caveat_tags.push('segment mix shift');
+  // PATCH 1000 — Margin contraction caveat. Any drop below flat (≤ -0.5 pp)
+  // for a stock the grader is otherwise about to call BLOCKBUSTER is a
+  // yellow flag — true expansion stories show OPM widening, not narrowing.
+  if (opmExp != null && opmExp <= -0.5 && !caveat_tags.includes('segment mix shift')) {
+    caveat_tags.push('segment mix shift');
+  }
   if (row?.ocf_to_pat_ratio != null) {
     if (row.ocf_to_pat_ratio < 0.6 && (row.pat_annual_cr ?? 0) > 0) caveat_tags.push('ocf divergence');
     if (row.ocf_annual_cr != null && row.ocf_annual_cr < 0 && (row.pat_annual_cr ?? 0) > 0 && !caveat_tags.includes('ocf divergence')) caveat_tags.push('ocf divergence');
@@ -205,7 +211,14 @@ function gradeRow(row: any): ParsedEarning | null {
   };
   let quality = 100;
   for (const tag of caveat_tags) quality -= (caveatPenalty[tag] ?? 8);
-  if (opmExp != null && opmExp >= 3) quality += 8;
+  // PATCH 1000 — margin-expansion ladder (was: only +8 at ≥3 pp).
+  if (opmExp != null) {
+    if (opmExp >= 5) quality += 14;
+    else if (opmExp >= 3) quality += 10;
+    else if (opmExp >= 1) quality += 5;
+    else if (opmExp <= -0.5) quality -= 8;   // explicit contraction penalty
+    else if (opmExp <= -2) quality -= 14;
+  }
   quality = Math.max(0, Math.min(100, quality));
 
   const stageBase = stage === 2 ? 70 : stage === 1 ? 45 : stage === 3 ? 30 : stage === 4 ? 10 : 50;
@@ -275,8 +288,15 @@ function gradeRow(row: any): ParsedEarning | null {
   // double on modest sales growth — Investment & Precision Castings class.
   const bbPathE = marginInflectionLoose && caveat_tags.length <= 2;
   const blockbusterGate = bbPathA || bbPathB || bbPathC || bbPathD || bbPathE;
+  // PATCH 1000 — Hard MARGIN GATE on BLOCKBUSTER. If OPM is KNOWN to be
+  // contracting (opmExp <= -0.5 pp), cap tier at STRONG even if growth and
+  // composite both pass. User-reported: 'many companies incorrectly marked
+  // as blockbuster' due to revenue magnitude alone without margin support.
+  // Unknown OPM (null) → no gate (don't penalize data gaps).
+  const marginContracting = opmExp != null && opmExp <= -0.5;
   if (broken && composite < 70) tier = 'AVOID';
-  else if (blockbusterGate) tier = 'BLOCKBUSTER';
+  else if (blockbusterGate && !marginContracting) tier = 'BLOCKBUSTER';
+  else if (blockbusterGate && marginContracting) tier = 'STRONG';
   else if (composite >= 68 && mCount >= 1 && caveat_tags.length <= 3 && stage !== 4) tier = 'STRONG';
   else if (composite >= 35) tier = 'MIXED';
   else tier = 'AVOID';
