@@ -1568,6 +1568,108 @@ export default function EarningsOpportunitiesPage() {
   // /api/v1/earnings/backfill endpoint, chaining cursor_next until done.
   const [backfilling, setBackfilling] = useState(false);
   const [backfillProgress, setBackfillProgress] = useState<string | null>(null);
+  // PATCH 0999 — Slow Backfill: client-side queue, 80 days × 90s pacing.
+  type SlowBfState = {
+    queue: string[];        // remaining dates (oldest-first)
+    done: string[];         // completed dates
+    failed: string[];       // dates that errored out (we keep going)
+    startedAt: number;      // ms epoch when we kicked off
+    intervalMs: number;     // pace between requests (90_000 default)
+    running: boolean;
+  };
+  const SLOW_BF_KEY = 'mc:slow-backfill:v1';
+  const [slowBf, setSlowBf] = useState<SlowBfState | null>(() => {
+    if (typeof window === 'undefined') return null;
+    try { return JSON.parse(localStorage.getItem(SLOW_BF_KEY) || 'null'); } catch { return null; }
+  });
+  const slowBfPersist = (s: SlowBfState | null) => {
+    setSlowBf(s);
+    if (typeof window === 'undefined') return;
+    try {
+      if (s) localStorage.setItem(SLOW_BF_KEY, JSON.stringify(s));
+      else localStorage.removeItem(SLOW_BF_KEY);
+    } catch {}
+  };
+  // Worker loop. Runs every intervalMs while running=true.
+  useEffect(() => {
+    if (!slowBf?.running || slowBf.queue.length === 0) {
+      if (slowBf?.running && slowBf.queue.length === 0) {
+        // All done — log + clear after a beat so progress chip shows ✓
+        const t = setTimeout(() => slowBfPersist(null), 8_000);
+        return () => clearTimeout(t);
+      }
+      return;
+    }
+    const tick = async () => {
+      if (!slowBf?.running) return;
+      const next = slowBf.queue[0];
+      try {
+        const ctrl = new AbortController();
+        const to = setTimeout(() => ctrl.abort(), 75_000);
+        const res = await fetch(`/api/v1/earnings/graded?date=${next}&force=1&refreshMissing=1`, {
+          cache: 'no-store',
+          signal: ctrl.signal,
+        });
+        clearTimeout(to);
+        const ok = res.ok;
+        slowBfPersist({
+          ...slowBf,
+          queue: slowBf.queue.slice(1),
+          done: ok ? [...slowBf.done, next] : slowBf.done,
+          failed: ok ? slowBf.failed : [...slowBf.failed, next],
+        });
+      } catch {
+        slowBfPersist({
+          ...slowBf,
+          queue: slowBf.queue.slice(1),
+          failed: [...slowBf.failed, next],
+        });
+      }
+    };
+    const id = setTimeout(tick, slowBf.intervalMs);
+    return () => clearTimeout(id);
+  }, [slowBf]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const startSlowBackfill = (days = 80) => {
+    // Build oldest-first list of weekdays, ending yesterday
+    const dates: string[] = [];
+    const cursor = new Date();
+    cursor.setUTCDate(cursor.getUTCDate() - 1);  // start at yesterday
+    while (dates.length < days) {
+      const dow = cursor.getUTCDay();
+      if (dow !== 0 && dow !== 6) {
+        dates.push(cursor.toISOString().slice(0, 10));
+      }
+      cursor.setUTCDate(cursor.getUTCDate() - 1);
+    }
+    dates.reverse();  // oldest first
+    slowBfPersist({
+      queue: dates,
+      done: [],
+      failed: [],
+      startedAt: Date.now(),
+      intervalMs: 90_000,
+      running: true,
+    });
+  };
+  const stopSlowBackfill = () => {
+    if (slowBf) slowBfPersist({ ...slowBf, running: false });
+    setTimeout(() => slowBfPersist(null), 4_000);
+  };
+  const slowBfProgressLabel = (() => {
+    if (!slowBf) return null;
+    const total = slowBf.queue.length + slowBf.done.length + slowBf.failed.length;
+    const completed = slowBf.done.length + slowBf.failed.length;
+    if (slowBf.queue.length === 0) {
+      return `✓ Slow backfill done — ${slowBf.done.length} succeeded, ${slowBf.failed.length} failed`;
+    }
+    const remainingMs = slowBf.queue.length * slowBf.intervalMs;
+    const h = Math.floor(remainingMs / 3600_000);
+    const m = Math.round((remainingMs % 3600_000) / 60_000);
+    const eta = h > 0 ? `${h}h ${m}m` : `${m}m`;
+    return `🌙 ${completed}/${total} · next ${slowBf.queue[0]} · ETA ${eta}`;
+  })();
+
   // PATCH 0362 — Track tickers seen across renders so we can highlight
   // newly-arrived cards as "NEW since last refresh". Persists across the
   // session via window in-memory ref (not localStorage — we want it to
@@ -2269,6 +2371,44 @@ export default function EarningsOpportunitiesPage() {
             <RefreshCw style={{ width: 11, height: 11, animation: backfilling ? 'spin 0.8s linear infinite' : 'none' }} />
             {backfilling ? 'Backfilling…' : 'Backfill 60d'}
           </button>
+          {/* PATCH 0999 — Slow Backfill (80d, ~2h, resumable) */}
+          {!slowBf?.running && (
+            <button
+              onClick={() => startSlowBackfill(80)}
+              title="Politely backfills 80 weekdays over ~2 hours. One request every 90s — never trips Screener rate limits. Resumes if you reload."
+              style={{
+                padding: '4px 10px', borderRadius: 6,
+                border: '1px solid #6366F160', background: '#6366F115',
+                color: '#A5B4FC', fontSize: 11, fontWeight: 700,
+                cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4,
+              }}>
+              🌙 Slow Backfill (80d · 2h)
+            </button>
+          )}
+          {slowBf?.running && (
+            <button
+              onClick={stopSlowBackfill}
+              title="Stop the slow backfill. Already-done dates stay cached."
+              style={{
+                padding: '4px 10px', borderRadius: 6,
+                border: '1px solid #EF444460', background: '#EF444415',
+                color: '#FCA5A5', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+              }}>
+              ⏹ Stop Slow Backfill
+            </button>
+          )}
+          {slowBfProgressLabel && (
+            <span style={{
+              fontSize: 10.5, fontWeight: 700,
+              padding: '3px 8px', borderRadius: 4,
+              backgroundColor: slowBfProgressLabel.startsWith('✓') ? '#10B98118' : '#6366F118',
+              border: `1px solid ${slowBfProgressLabel.startsWith('✓') ? '#10B98140' : '#6366F140'}`,
+              color: slowBfProgressLabel.startsWith('✓') ? '#10B981' : '#A5B4FC',
+              maxWidth: 420, lineHeight: 1.3,
+            }}>
+              {slowBfProgressLabel}
+            </span>
+          )}
           {backfillProgress && (
             <span style={{
               fontSize: 10.5, fontWeight: 700,
