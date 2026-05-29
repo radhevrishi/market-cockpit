@@ -86,7 +86,12 @@ function useMarketEarnings(months: string[]) {
   // written during periods when /api/market/earnings returned empty or sparse
   // hub data (calendar showing "No filings" for most dates even though
   // server has recovered). Older versions are wiped on first load below.
-  const HUB_LS_PREFIX = 'mc:hub:v3:';
+  // PATCH 1029 — bump v3 → v4 to discard every browser's stale-EMPTY hub cache
+  // written while April was blank (NSE had rolled it out of its live window).
+  // An empty results[] array passed the old `parsed.results` truthiness check
+  // and was served as fresh initialData for 15 min, so the calendar kept
+  // showing "No filings" even after the server recovered the month.
+  const HUB_LS_PREFIX = 'mc:hub:v4:';
   const key = months.join(',');
   // PATCH 0453 P1-12 — Audit found this hub-scrub ran on every render
   // (50-200ms cost iterating localStorage). Now runs once per app session
@@ -94,10 +99,10 @@ function useMarketEarnings(months: string[]) {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
-      const SCRUB_HUB = 'mc:hub-scrub:v3';
+      const SCRUB_HUB = 'mc:hub-scrub:v4';
       if (!localStorage.getItem(SCRUB_HUB)) {
         for (const k of Object.keys(localStorage)) {
-          if (k.startsWith('mc:hub:v1:') || k.startsWith('mc:hub:v2:')) localStorage.removeItem(k);
+          if (k.startsWith('mc:hub:v1:') || k.startsWith('mc:hub:v2:') || k.startsWith('mc:hub:v3:')) localStorage.removeItem(k);
         }
         localStorage.setItem(SCRUB_HUB, '1');
       }
@@ -121,7 +126,14 @@ function useMarketEarnings(months: string[]) {
       }
       const payload = { results: all, source: responses[0]?.source || 'NSE + BSE', updatedAt: new Date().toISOString() } as MarketEarningsResponse;
       // PATCH 0545 — debounced LS write (same rationale as writeLsCache below).
-      try { if (typeof window !== 'undefined') debouncedSetItem(HUB_LS_PREFIX + key, JSON.stringify({ ...payload, _cachedAt: Date.now() })); } catch {}
+      // PATCH 1029 — only cache NON-EMPTY hub payloads. Caching an empty result
+      // (e.g. during a transient server-empty window) poisons the calendar for
+      // 15 min on the next visit. If empty, leave any prior good cache in place.
+      try {
+        if (typeof window !== 'undefined' && all.length > 0) {
+          debouncedSetItem(HUB_LS_PREFIX + key, JSON.stringify({ ...payload, _cachedAt: Date.now() }));
+        }
+      } catch {}
       return payload;
     },
     // Aggressive caching: hub data is mostly stable. Refetch only every 15 min for current month, 6h for past.
@@ -142,7 +154,10 @@ function useMarketEarnings(months: string[]) {
         // KV…' spinner on every visit. Now we always return cached data on
         // mount; React Query handles freshness in background. User sees the
         // calendar instantly + the freshness chip on the page shows the age.
-        if (parsed && parsed.results) return parsed;
+        // PATCH 1029 — only serve cached hub data when it actually has rows.
+        // An empty results[] is never worth showing as "instant" data; return
+        // undefined so React Query fetches fresh from the (recovered) server.
+        if (parsed && Array.isArray(parsed.results) && parsed.results.length > 0) return parsed;
       } catch {}
       return undefined;
     },
@@ -157,7 +172,8 @@ function useMarketEarnings(months: string[]) {
         const raw = getItemSync(HUB_LS_PREFIX + key);
         if (!raw) return undefined;
         const p = JSON.parse(raw);
-        if (!p || !p.results) return undefined;
+        // PATCH 1029 — pair with initialData: empty cache → undefined (refetch).
+        if (!p || !Array.isArray(p.results) || p.results.length === 0) return undefined;
         return typeof p._cachedAt === 'number' ? p._cachedAt : 0;
       } catch { return undefined; }
     },
