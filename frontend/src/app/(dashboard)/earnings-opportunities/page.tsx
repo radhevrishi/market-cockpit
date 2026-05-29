@@ -1830,6 +1830,10 @@ export default function EarningsOpportunitiesPage() {
       fiscal_year?: number;
       d1_pct?: number | null;
       gap_pct?: number | null;
+      // PATCH 1018 — institutional quality flags carried to the CB bench
+      is_elite?: boolean;
+      pead_score?: number | null;
+      multibagger_setup?: boolean;
     }> = [];
     for (const tier of ['BLOCKBUSTER', 'STRONG'] as const) {
       for (const c of (data.by_tier[tier] || [])) {

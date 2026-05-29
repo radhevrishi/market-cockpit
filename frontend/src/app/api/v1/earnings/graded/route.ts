@@ -961,13 +961,16 @@ export async function GET(req: Request) {
   const chunks: string[][] = [];
   for (let i = 0; i < symbols.length; i += 40) chunks.push(symbols.slice(i, i + 40));
 
-  // PATCH 1014 — force nocache=1 so graded always gets fresh enrich data.
-  // Previous behavior: graded called enrich WITHOUT nocache → enrich returned
-  // any stale empty entries (transient worker failures got cached for 5min
-  // with source=null + opm=null). Graded then cached that null and propagated.
-  // Fix: bypass enrich's own KV cache. Graded cache still protects perf.
+  // PATCH 1021 — revert Patch 1014's blanket nocache=1 on the MAIN path.
+  // 1014 forced an uncached full enrichment (worker+NSE+Screener+bhavcopy) for
+  // EVERY ticker, so a 100-ticker date blew past the 45s client timeout.
+  // The original 1014 problem (stale empty entries) is already handled by
+  // Patch 1002 (enrich never caches empty/null payloads) + the v6 cache bump
+  // (1013) + gradeRow now emitting opm (1015). So we can safely use the enrich
+  // KV cache here for speed. The refreshMissing path (line ~601) keeps
+  // nocache=1 for targeted, user-triggered re-fetches.
   const enrichResponses = await Promise.all(chunks.map((chunk) =>
-    _doEnrichSelfFetch(`${base.protocol}//${base.host}/api/v1/earnings/enrich?symbols=${chunk.join(',')}&filed=${date}&nocache=1`, { cache: 'no-store' })
+    _doEnrichSelfFetch(`${base.protocol}//${base.host}/api/v1/earnings/enrich?symbols=${chunk.join(',')}&filed=${date}`, { cache: 'no-store' })
       .then((r) => r.ok ? r.json() : { data: {} })
       .catch(() => ({ data: {} }))
   ));
