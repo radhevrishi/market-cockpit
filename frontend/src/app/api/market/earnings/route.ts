@@ -18,6 +18,9 @@ import { getCalendarEntriesInRange } from '@/lib/earnings-week-seed';
 // PATCH 1026 — durable calendar memory (KV) so past months don't go blank
 // when NSE's live feed rolls them out of its recent window.
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
+// PATCH 1030 — eviction-proof static seed for completed past months (Upstash
+// free tier evicts KV under memory pressure; this lives in the deploy bundle).
+import { CALENDAR_SEEDS } from '@/data/calendar-seeds';
 
 // PATCH 0819: removed force-dynamic so Cache-Control headers aren't overridden by Next.js. Query params still force dynamic at runtime.
 export const maxDuration = 30; // PATCH 0818
@@ -1194,6 +1197,33 @@ export async function GET(request: Request) {
         }
         if (recovered.length > 0) results = recovered;
       } catch {}
+    }
+
+    // PATCH 1030 — EVICTION-PROOF SEED. If live + KV both came back empty for a
+    // past month (Upstash evicted the snapshot AND the per-date graded caches),
+    // serve the static seed bundled in the deploy. This can never be evicted,
+    // so a completed month like April never blanks again regardless of KV state.
+    if (results.length === 0 && isPastMonth && market === 'india' && CALENDAR_SEEDS[month!]) {
+      results = CALENDAR_SEEDS[month!].map((r) => ({
+        ticker: r.ticker,
+        company: r.company,
+        resultDate: r.resultDate,
+        quarter: r.quarter,
+        quality: (r.quality as EarningsEvent['quality']) || 'Good',
+        sector: r.sector || 'Other',
+        industry: '',
+        marketCap: r.marketCap || '',
+        edp: null,
+        cmp: null,
+        priceMove: null,
+        timing: 'pre',
+        source: 'Static seed',
+      }));
+      // Re-seed the KV snapshot so the next request can serve it fast (and so
+      // graded/date can read it) — best-effort, ignored if KV is down/full.
+      if (results.length > 0 && isRedisAvailable()) {
+        kvSet(MONTH_SNAP_KEY(market, month!), results, MONTH_SNAP_TTL_S).catch(() => null);
+      }
     }
 
     results.sort((a, b) => new Date(b.resultDate).getTime() - new Date(a.resultDate).getTime());
