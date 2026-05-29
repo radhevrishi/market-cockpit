@@ -261,6 +261,7 @@ interface ParsedEarning {
   pat_prev_cr: number | null;
   eps_curr: number | null;
   eps_prev: number | null;
+  adtv_cr?: number | null;  // PATCH 1034 — liquidity (median ₹Cr/day)
   // PATCH 0150 — price / RS / stage overlay
   gap_pct: number | null;
   d1_pct: number | null;
@@ -742,6 +743,13 @@ function gradeRow(row: any): ParsedEarning | null {
   // ── Narrative ──────────────────────────────────────────────────────────
   const co = row.company || row.symbol;
   const q = row.quarter || 'Q4';
+  // PATCH 1034 — Liquidity / thin-float gate (mirrors server). Demote thin names
+  // out of the top tiers + tag. Missing ADTV is not punished.
+  const _adtv = (typeof row?.adtv_cr === 'number' && Number.isFinite(row.adtv_cr)) ? row.adtv_cr : null;
+  if (_adtv != null && _adtv < 1) {
+    if (tier === 'BLOCKBUSTER' || tier === 'STRONG') tier = 'MIXED';
+    if (!caveat_tags.includes('thin float')) caveat_tags.push('thin float');
+  }
   const fmtP = (lbl: string, v: number | null) => v == null ? '' : `${lbl} ${v >= 0 ? '+' : ''}${Math.round(v)}% YoY`;
   const head =
     tier === 'BLOCKBUSTER' ? `${co} prints a blockbuster ${q}` :
@@ -773,6 +781,7 @@ function gradeRow(row: any): ParsedEarning | null {
     pat_prev_cr: row.pat_prev_cr ?? null,
     eps_curr: row.eps_curr ?? null,
     eps_prev: row.eps_prev ?? null,
+    adtv_cr: _adtv,  // PATCH 1034
     gap_pct: row.gap_pct ?? null,
     d1_pct: row.d1_pct ?? null,
     move_pct: row.move_pct ?? null,
@@ -3597,6 +3606,11 @@ function EarningsCard({ stock, isFresh }: { stock: ParsedEarning; isFresh?: bool
             )}
           </span>
         ) : null}
+        {(stock as any).adtv_cr != null && (
+          <span title="Median daily traded value over ~30 sessions (liquidity / free-float proxy)" style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: '#0D1623', border: `1px solid ${(stock as any).adtv_cr < 1 ? '#7F1D1D' : '#1A2840'}`, color: (stock as any).adtv_cr < 1 ? '#F87171' : '#94A3B8', fontWeight: 700 }}>
+            💧 {(stock as any).adtv_cr >= 1 ? `₹${(stock as any).adtv_cr.toFixed(1)} Cr/d` : `₹${Math.round((stock as any).adtv_cr * 100)} L/d`}{(stock as any).adtv_cr < 1 ? ' · thin' : ''}
+          </span>
+        )}
         {stock.sector && (
           <span style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: '#0D1623', border: '1px solid #1A2840', color: '#94A3B8' }}>
             {stock.sector}
