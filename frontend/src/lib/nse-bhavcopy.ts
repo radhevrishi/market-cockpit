@@ -95,58 +95,73 @@ function parseBhavcopy(csv: string, isoDate: string): Map<string, BhavData> {
 
 const BHAV_TIMEOUT_MS = 12_000;
 
-async function fetchAndCacheBhavcopy(isoDate: string): Promise<Map<string, BhavData>> {
+// PATCH 1016b — memory-safe module-level cache. The 2000-entry Promise.all
+// KV bulk-write in the original Patch 1016 spiked memory and OOM'd Railway.
+// Instead: parse the CSV once per warm container per date, hold the Map in
+// process memory (~1-2 MB), and write ONLY individually-requested symbols to
+// KV (lazy, small). The mem cache is bounded to the 5 most-recent dates.
+const _memCache = new Map<string, Map<string, BhavData>>();
+const _memOrder: string[] = [];
+const MEM_MAX_DATES = 5;
+
+function _memPut(isoDate: string, map: Map<string, BhavData>) {
+  _memCache.set(isoDate, map);
+  _memOrder.push(isoDate);
+  while (_memOrder.length > MEM_MAX_DATES) {
+    const evict = _memOrder.shift();
+    if (evict && evict !== isoDate) _memCache.delete(evict);
+  }
+}
+
+async function fetchBhavcopyMap(isoDate: string): Promise<Map<string, BhavData>> {
+  // In-memory first
+  const mem = _memCache.get(isoDate);
+  if (mem) return mem;
+
   const ddmm = isoToDdmmyyyy(isoDate);
   const url = BHAV_URL(ddmm);
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), BHAV_TIMEOUT_MS);
   try {
     const res = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0',
-        'Accept': 'text/csv,text/plain,*/*',
-      },
+      headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'text/csv,text/plain,*/*' },
       signal: ctrl.signal,
     });
-    if (!res.ok) return new Map();
+    if (!res.ok) { _memPut(isoDate, new Map()); return new Map(); }
     const csv = await res.text();
     const parsed = parseBhavcopy(csv, isoDate);
-    // Bulk-cache every symbol's data (immutable historical → long TTL)
+    _memPut(isoDate, parsed);  // hold in memory, NO bulk KV write
+    // Mark date loaded so cross-container we know it was attempted
     if (isRedisAvailable() && parsed.size > 0) {
-      const writes: Promise<unknown>[] = [];
-      for (const [sym, data] of parsed.entries()) {
-        writes.push(
-          kvSet(`bhav:v1:${isoDate}:${sym}`, data, 90 * 24 * 3600).catch(() => null),
-        );
-      }
-      // Mark date as loaded so we don't re-fetch
-      writes.push(kvSet(`bhav:loaded:${isoDate}`, true, 24 * 3600).catch(() => null));
-      await Promise.all(writes);
+      kvSet(`bhav:loaded:${isoDate}`, true, 24 * 3600).catch(() => null);
     }
     return parsed;
   } catch {
+    _memPut(isoDate, new Map());
     return new Map();
   } finally {
     clearTimeout(t);
   }
 }
 
-/** Get single-symbol bhavcopy data, fetching+caching if needed. */
+/** Get single-symbol bhavcopy data — per-symbol KV cache, then full-map fetch. */
 export async function getBhavForSymbol(symbol: string, isoDate: string): Promise<BhavData | null> {
   const sym = symbol.toUpperCase();
-  // Cache check
+  // 1. Per-symbol KV cache (only symbols actually looked up get written here)
   if (isRedisAvailable()) {
     try {
       const cached = await kvGet<BhavData>(`bhav:v1:${isoDate}:${sym}`);
       if (cached) return cached;
-      // Check if date was already loaded but symbol not in it (e.g. not NSE-listed)
-      const loaded = await kvGet<boolean>(`bhav:loaded:${isoDate}`);
-      if (loaded) return null;
     } catch {}
   }
-  // Fetch full bhavcopy for this date
-  const map = await fetchAndCacheBhavcopy(isoDate);
-  return map.get(sym) || null;
+  // 2. Full-map fetch (in-memory cached per container)
+  const map = await fetchBhavcopyMap(isoDate);
+  const data = map.get(sym) || null;
+  // 3. Lazily write JUST this symbol to KV for cross-container reuse
+  if (data && isRedisAvailable()) {
+    kvSet(`bhav:v1:${isoDate}:${sym}`, data, 90 * 24 * 3600).catch(() => null);
+  }
+  return data;
 }
 
 /**
