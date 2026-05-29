@@ -369,15 +369,19 @@ function gradeRow(row: any): ParsedEarning | null {
   // PATCH 1006 — compute ELITE / PEAD / MULTIBAGGER flags from available data
   const _stillLoss = (row?.pat_curr_cr != null && row.pat_curr_cr <= 0) || (row?.eps_curr != null && row.eps_curr <= 0);
   const _criticalsOrStruct = caveat_tags.filter((t: any) => t === 'low quality' || t === 'ocf divergence' || t === 'optical eps').length;
-  // PATCH 1009 — Relaxed gates: null = OK (no data, no penalty); only
-  // explicit negative values fail. Top-3 BB fallback added in the response
-  // builder guarantees 1-3 ELITE per busy date even when data is sparse.
+  // PATCH 1010 — STRICT ELITE gate. All criteria required; null fails.
   const _is_elite = !!(
-    !_stillLoss && salesY != null && salesY >= 25 && patY != null && patY >= 30
-    && (opmExp == null || opmExp >= 0)
-    && (row?.d1_pct == null || row.d1_pct >= -1)
-    && (row?.gap_pct == null || row.gap_pct >= -2)
-    && _criticalsOrStruct === 0 && stage !== 4 && (rs == null || rs >= 50)
+    !_stillLoss && !turnaroundBase
+    && row?.pat_curr_cr != null && row.pat_curr_cr > 0
+    && row?.eps_curr != null && row.eps_curr > 0
+    && salesY != null && salesY >= 25
+    && patY != null && patY >= 30
+    && opmExp != null && opmExp >= 1
+    && row?.d1_pct != null && row.d1_pct >= 2
+    && row?.gap_pct != null && row.gap_pct >= 0
+    && _criticalsOrStruct === 0
+    && stage !== 4
+    && (rs == null || rs >= 60)
     && !(row?.pat_prev_cr != null && row.pat_prev_cr < 0)  // PATCH 1008 — no turnaround base in ELITE
   );
   const _sc = (v: number | null | undefined, ranges: [number, number][]): number => {
