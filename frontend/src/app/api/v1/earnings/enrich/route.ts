@@ -691,7 +691,7 @@ async function resolveCompanyNameFromScreenerSearch(symbol: string): Promise<str
 async function enrichOne(symbol: string, filedHint?: string, bypassCache = false): Promise<any> {
   // Cache key includes filed date so a new filing busts old cache
   // PATCH 1013 — bumped v5 → v6 to invalidate stale entries lacking opm_pct.
-  const cacheKey = filedHint ? `enrich:v7:${symbol}:${filedHint}` : `enrich:v7:${symbol}`;
+  const cacheKey = filedHint ? `enrich:v8:${symbol}:${filedHint}` : `enrich:v8:${symbol}`;
   if (isRedisAvailable() && !bypassCache) {
     try {
       const cached = await kvGet(cacheKey);
