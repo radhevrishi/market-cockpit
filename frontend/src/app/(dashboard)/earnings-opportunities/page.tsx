@@ -954,7 +954,7 @@ export default function EarningsOpportunitiesPage() {
   }
   // PATCH 0992 — one-time cleanup: purge all stale v9 entries left from
   // the Railway migration window. Safe to run repeatedly (idempotent flag in LS).
-  React.useEffect(() => {
+  useEffect(() => {  // PATCH 0995 — fixed from React.useEffect (no default React import in this file)
     if (typeof window === 'undefined') return;
     try {
       const FLAG = 'mc:graded:v9-purged';
