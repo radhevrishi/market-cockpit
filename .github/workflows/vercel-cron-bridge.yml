@@ -26,6 +26,12 @@ on:
     - cron: '50 4 * * 1-5'     # 04:50 UTC Mon-Fri → watchlist-alert?mode=full
     - cron: '30 5 * * *'       # 05:30 UTC daily   → eo-blockbuster-alert (morning)
     - cron: '30 15 * * *'      # 15:30 UTC daily   → eo-blockbuster-alert (evening)
+    # PATCH 1031 — pre-warm the Earnings Opportunities graded cache (last 7
+    # days) on Railway so the page is always a warm hit (no Hard Refresh).
+    - cron: '0 3 * * *'        # 03:00 UTC daily   → prewarm-earnings (08:30 IST pre-market)
+    - cron: '0 6 * * *'        # 06:00 UTC daily   → prewarm-earnings (11:30 IST mid-session)
+    - cron: '0 11 * * *'       # 11:00 UTC daily   → prewarm-earnings (16:30 IST post-close)
+    - cron: '0 14 * * *'       # 14:00 UTC daily   → prewarm-earnings (19:30 IST evening filings)
   workflow_dispatch:
     inputs:
       endpoint:
@@ -39,6 +45,7 @@ on:
           - watchlist-alert
           - refresh-earnings-calendar
           - eo-blockbuster-alert
+          - prewarm-earnings
 
 concurrency:
   group: vercel-cron-bridge-${{ github.event.schedule || github.event.inputs.endpoint || 'manual' }}
@@ -84,6 +91,10 @@ jobs:
               echo "path=/api/bot/eo-blockbuster-alert" >> "$GITHUB_OUTPUT"
               echo "label=eo-blockbuster-evening" >> "$GITHUB_OUTPUT"
               ;;
+            "0 3 * * *"|"0 6 * * *"|"0 11 * * *"|"0 14 * * *")
+              echo "path=/api/v1/cron/prewarm-earnings" >> "$GITHUB_OUTPUT"
+              echo "label=prewarm-earnings" >> "$GITHUB_OUTPUT"
+              ;;
             *)
               # Manual dispatch path
               case "$INPUT" in
@@ -93,6 +104,7 @@ jobs:
                 watchlist-alert)             echo "path=/api/bot/watchlist-alert?mode=full" >> "$GITHUB_OUTPUT"; echo "label=watchlist-manual" >> "$GITHUB_OUTPUT" ;;
                 refresh-earnings-calendar)   echo "path=/api/v1/cron/refresh-earnings-calendar" >> "$GITHUB_OUTPUT"; echo "label=cal-manual" >> "$GITHUB_OUTPUT" ;;
                 eo-blockbuster-alert)        echo "path=/api/bot/eo-blockbuster-alert" >> "$GITHUB_OUTPUT"; echo "label=eo-manual" >> "$GITHUB_OUTPUT" ;;
+                prewarm-earnings)            echo "path=/api/v1/cron/prewarm-earnings" >> "$GITHUB_OUTPUT"; echo "label=prewarm-manual" >> "$GITHUB_OUTPUT" ;;
                 *)
                   echo "::error title=No route::Unknown schedule and no manual input"
                   exit 1
@@ -104,6 +116,7 @@ jobs:
       - name: Hit Vercel endpoint
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
         run: |
           if [ -z "$CRON_SECRET" ]; then
             echo "::error title=Missing secret::CRON_SECRET not set in repo secrets"
@@ -111,7 +124,12 @@ jobs:
           fi
           PATH_PART="${{ steps.route.outputs.path }}"
           LABEL="${{ steps.route.outputs.label }}"
-          BASE="https://market-cockpit.vercel.app"
+          # PATCH 1031 — app moved off Vercel (account suspended → HTTP 402).
+          # Point every scheduled job at the live Railway deployment, otherwise
+          # NONE of the warming/alert crons reach the running site and the EO
+          # page stays cold (forcing constant manual Hard Refresh / backfill).
+          # Override-able via the CRON_BASE_URL repo secret if the host changes.
+          BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
           # If the path already has ? params, append &secret=; else use ?secret=
           if [[ "$PATH_PART" == *"?"* ]]; then
             URL="$BASE$PATH_PART&secret=$CRON_SECRET"

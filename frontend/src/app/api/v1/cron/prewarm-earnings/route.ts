@@ -99,3 +99,6 @@ export async function GET(req: Request) {
     completed_at: new Date().toISOString(),
   });
 }
+
+// PATCH 1031 — accept POST too (the GitHub cron bridge POSTs). Delegates to GET.
+export async function POST(req: Request) { return GET(req); }

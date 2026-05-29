@@ -45,6 +45,7 @@ jobs:
       - name: Hit /api/v1/cron/concall-intel-warm
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
         run: |
           if [ -z "$CRON_SECRET" ]; then
             echo "::error title=CRON_SECRET missing::Add CRON_SECRET in Settings → Secrets and variables → Actions."
@@ -56,7 +57,7 @@ jobs:
           http_status=$(curl --silent --show-error --max-time 90 \
             --output "$response_file" \
             --write-out "%{http_code}" \
-            "https://market-cockpit.vercel.app/api/v1/cron/concall-intel-warm?secret=${CRON_SECRET}")
+            "${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}/api/v1/cron/concall-intel-warm?secret=${CRON_SECRET}")
           echo "HTTP status: $http_status"
           echo "--- response body ---"
           cat "$response_file"
