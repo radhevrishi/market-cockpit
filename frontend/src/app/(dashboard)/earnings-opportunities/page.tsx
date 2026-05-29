@@ -1598,7 +1598,7 @@ export default function EarningsOpportunitiesPage() {
   const [backfillProgress, setBackfillProgress] = useState<string | null>(null);
   // PATCH 0999 — Slow Backfill: client-side queue, 80 days × 90s pacing.
   type SlowBfState = {
-    queue: string[];        // remaining dates (oldest-first)
+    queue: string[];        // remaining dates (newest-first since Patch 1025)
     done: string[];         // completed dates
     failed: string[];       // dates that errored out (we keep going)
     startedAt: number;      // ms epoch when we kicked off
@@ -1659,7 +1659,14 @@ export default function EarningsOpportunitiesPage() {
   }, [slowBf]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const startSlowBackfill = (days = 80) => {
-    // Build oldest-first list of weekdays, ending yesterday
+    // PATCH 1025 — NEWEST-FIRST ordering. Build weekdays walking back from
+    // yesterday and DO NOT reverse, so the queue is [yesterday, day-before, …].
+    // Previously this reversed to oldest-first, so a 60-80 day backfill spent
+    // its first ~45 min on pre-earnings-season dates (Feb/Mar) that have ZERO
+    // filings — the user saw "backfilling 2026-03-23", navigated there, found
+    // nothing, and reasonably concluded it was broken. Newest-first warms the
+    // recent, data-rich dates the user actually opens FIRST; any empty old
+    // dates fall to the tail where they're harmless (and skippable via Stop).
     const dates: string[] = [];
     const cursor = new Date();
     cursor.setUTCDate(cursor.getUTCDate() - 1);  // start at yesterday
@@ -1670,7 +1677,7 @@ export default function EarningsOpportunitiesPage() {
       }
       cursor.setUTCDate(cursor.getUTCDate() - 1);
     }
-    dates.reverse();  // oldest first
+    // (no reverse — queue stays newest-first)
     slowBfPersist({
       queue: dates,
       done: [],
