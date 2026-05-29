@@ -249,14 +249,34 @@ async function fetchScreenerForSymbol(symbol: string): Promise<any | null> {
 
 // ─── Yahoo fetcher ─────────────────────────────────────────────────────────
 async function fetchYahooForSymbol(symbol: string, filedHint?: string): Promise<any | null> {  // PATCH 0986
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}.NS?range=1y&interval=1d`;
+  // PATCH 0998 — multi-endpoint retry. Yahoo sometimes blocks Railway IPs
+  // on query1. Try query1 → query2 → suffix .BO as last resort. Use a richer
+  // browser UA. range=6mo gives us 120+ trading days — enough for MA50/150
+  // and the filing-date D1 lookback. range=1y was unnecessarily large.
+  const stronger_ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15';
+  const candidates = [
+    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}.NS?range=6mo&interval=1d`,
+    `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}.NS?range=6mo&interval=1d`,
+    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}.BO?range=6mo&interval=1d`,
+  ];
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), YAHOO_TIMEOUT_MS);
+  let r: any = null;
   try {
-    const res = await fetch(url, { headers: { 'User-Agent': UA, 'Accept': 'application/json' }, signal: ctrl.signal });
-    if (!res.ok) return null;
-    const j = await res.json();
-    const r = j?.chart?.result?.[0];
+    for (const url of candidates) {
+      try {
+        const res = await fetch(url, { headers: { 'User-Agent': stronger_ua, 'Accept': 'application/json,*/*' }, signal: ctrl.signal });
+        if (!res.ok) continue;
+        const j = await res.json();
+        const candR = j?.chart?.result?.[0];
+        if (candR && candR.indicators?.quote?.[0]?.close) {
+          r = candR;
+          break;
+        }
+      } catch {
+        // try next endpoint
+      }
+    }
     if (!r) return null;
     const closes: (number | null)[] = r.indicators?.quote?.[0]?.close || [];
     const opens: (number | null)[] = r.indicators?.quote?.[0]?.open || [];
