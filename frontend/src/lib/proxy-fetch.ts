@@ -104,6 +104,27 @@ export async function fetchWorkerStock(symbol: string, timeoutMs = 10000): Promi
     const latest = j.latest;
     const yoy = j.yoy || {};
     const period = String(latest?.date || '');
+    // PATCH 0996 — Worker bug: for some companies (e.g. GAUDIUMIVF) the yoy
+    // field returns the WRONG quarter — Dec 2024 instead of Mar 2025 for a
+    // Mar 2026 latest. This produces inflated YoY % (110%+ Sales / PAT).
+    // Validate yoy.date matches latest.date month with year - 1. If mismatch,
+    // null-out yoy fields so downstream fallback (Screener direct / Yahoo
+    // fundamentals) takes over rather than us shipping wrong data.
+    const yoyMisaligned = (() => {
+      const lat = String(latest?.date || '').trim();
+      const yPer = String(yoy?.date || '').trim();
+      if (!lat || !yPer) return false;
+      const latM = lat.match(/^([A-Za-z]{3})\s+(\d{4})$/);
+      const yM = yPer.match(/^([A-Za-z]{3})\s+(\d{4})$/);
+      if (!latM || !yM) return true;  // unknown format → treat as misaligned
+      return latM[1].toLowerCase() !== yM[1].toLowerCase()
+          || (parseInt(latM[2], 10) - parseInt(yM[2], 10)) !== 1;
+    })();
+    if (yoyMisaligned) {
+      // eslint-disable-next-line no-console
+      console.log(`[worker] PATCH 0996: yoy date misaligned for ${j.symbol}: latest=${latest?.date} yoy=${yoy?.date} — nulling yoy fields`);
+    }
+    const safeYoy = yoyMisaligned ? {} as any : yoy;
     return {
       symbol: j.symbol,
       company: j.name,
@@ -119,17 +140,17 @@ export async function fetchWorkerStock(symbol: string, timeoutMs = 10000): Promi
       debtToEquity: j.debtToEquity,
       // Map quarters → internal field names + crores normalization
       sales_curr_cr: latest.revenue ?? null,
-      sales_prev_cr: yoy.revenue ?? null,
-      sales_yoy_pct: yoyPct(latest.revenue, yoy.revenue),
+      sales_prev_cr: safeYoy.revenue ?? null,
+      sales_yoy_pct: yoyPct(latest.revenue, safeYoy.revenue),
       pat_curr_cr: latest.netProfit ?? null,
-      pat_prev_cr: yoy.netProfit ?? null,
-      pat_yoy_pct: yoyPct(latest.netProfit, yoy.netProfit),
+      pat_prev_cr: safeYoy.netProfit ?? null,
+      pat_yoy_pct: yoyPct(latest.netProfit, safeYoy.netProfit),
       eps_curr: latest.eps ?? null,
-      eps_prev: yoy.eps ?? null,
-      eps_yoy_pct: yoyPct(latest.eps, yoy.eps),
+      eps_prev: safeYoy.eps ?? null,
+      eps_yoy_pct: yoyPct(latest.eps, safeYoy.eps),
       opm_pct: latest.opm ?? null,
-      opm_prev_pct: yoy.opm ?? null,
-      op_profit_yoy_pct: yoyPct(latest.operatingProfit, yoy.operatingProfit),
+      opm_prev_pct: safeYoy.opm ?? null,
+      op_profit_yoy_pct: yoyPct(latest.operatingProfit, safeYoy.operatingProfit),
       period_ended: period,
       latest_quarter_end_iso: monthEndIso(period),
       pe: j.stockPE ?? null,
