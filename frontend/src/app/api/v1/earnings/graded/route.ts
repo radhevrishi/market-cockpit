@@ -182,6 +182,13 @@ function gradeRow(row: any): ParsedEarning | null {
     if (!caveat_tags.includes('optical eps')) caveat_tags.push('optical eps');
   }
   if (patY != null && row?.op_profit_yoy_pct != null && patY >= 100 && row.op_profit_yoy_pct < 30) caveat_tags.push('tax distortion');
+  // PATCH 1001 — Still loss-making gate. Going from bigger loss to smaller
+  // loss inflates YoY % by absolute-value math. The story may be valid
+  // (turnaround) but the conviction label is not earned yet.
+  const stillLossPat = row?.pat_curr_cr != null && row.pat_curr_cr <= 0;
+  const stillLossEps = row?.eps_curr != null && row.eps_curr <= 0;
+  const stillLossMaking = stillLossPat || stillLossEps;
+  if (stillLossMaking) caveat_tags.push('low quality');
   if (opmExp != null && opmExp < -1.5) caveat_tags.push('segment mix shift');
   // PATCH 1000 — Margin contraction caveat. Any drop below flat (≤ -0.5 pp)
   // for a stock the grader is otherwise about to call BLOCKBUSTER is a
@@ -295,9 +302,10 @@ function gradeRow(row: any): ParsedEarning | null {
   // Unknown OPM (null) → no gate (don't penalize data gaps).
   const marginContracting = opmExp != null && opmExp <= -0.5;
   if (broken && composite < 70) tier = 'AVOID';
+  else if (stillLossMaking && blockbusterGate) tier = 'MIXED';  // PATCH 1001 — loss-makers cannot be BB
   else if (blockbusterGate && !marginContracting) tier = 'BLOCKBUSTER';
   else if (blockbusterGate && marginContracting) tier = 'STRONG';
-  else if (composite >= 68 && mCount >= 1 && caveat_tags.length <= 3 && stage !== 4) tier = 'STRONG';
+  else if (composite >= 68 && mCount >= 1 && caveat_tags.length <= 3 && stage !== 4 && !stillLossMaking) tier = 'STRONG';  // PATCH 1001 — STRONG excludes loss-makers
   else if (composite >= 35) tier = 'MIXED';
   else tier = 'AVOID';
 
