@@ -1228,9 +1228,35 @@ export async function GET(request: Request) {
 
     results.sort((a, b) => new Date(b.resultDate).getTime() - new Date(a.resultDate).getTime());
 
-    // PATCH 1026 — persist every non-empty month so it can be recovered later.
-    if (results.length > 0 && market === 'india' && month && isRedisAvailable()) {
-      kvSet(MONTH_SNAP_KEY(market, month), results, MONTH_SNAP_TTL_S).catch(() => null);
+    // PATCH 1038 — Monotonic month snapshot (UNION). NSE's live feed only serves
+    // a recent rolling window, so within the CURRENT month early dates roll off
+    // and the live result shrinks (e.g. only the last ~8 days at end-May).
+    // Previously we OVERWROTE the snapshot with that shrunken set, permanently
+    // losing earlier dates (mid-May filings vanishing at end-May). Now we UNION
+    // the live results with the existing snapshot (dedupe by ticker+resultDate)
+    // so the month only ever grows, SERVE the union so rolled-off dates stay
+    // visible (current AND past months), then persist the union.
+    if (market === 'india' && month && isRedisAvailable()) {
+      try {
+        const prevSnap = await kvGet<any[]>(MONTH_SNAP_KEY(market, month));
+        if (Array.isArray(prevSnap) && prevSnap.length > 0) {
+          const seen = new Set<string>();
+          const union: any[] = [];
+          for (const x of [...results, ...prevSnap]) {
+            const k = `${String((x as any)?.ticker || (x as any)?.symbol || '').toUpperCase()}|${(x as any)?.resultDate || ''}`;
+            if (seen.has(k)) continue;
+            seen.add(k);
+            union.push(x);
+          }
+          if (union.length > results.length) {
+            union.sort((a, b) => new Date(b.resultDate).getTime() - new Date(a.resultDate).getTime());
+            results = union;
+          }
+        }
+        if (results.length > 0) {
+          kvSet(MONTH_SNAP_KEY(market, month), results, MONTH_SNAP_TTL_S).catch(() => null);
+        }
+      } catch {}
     }
 
     const excellentCount = results.filter(r => r.quality === 'Excellent').length;
