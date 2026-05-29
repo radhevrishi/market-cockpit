@@ -19,7 +19,11 @@
  */
 
 import { Redis as UpstashRedis } from '@upstash/redis';
-import IORedis, { Redis as IORedisClient } from 'ioredis';
+import type { Redis as IORedisClient } from 'ioredis';
+
+// ioredis is loaded lazily (server-only) to keep its Node-core deps (net/tls/dns)
+// out of the client bundle. See getRailwayRedis().
+declare const __non_webpack_require__: NodeRequire | undefined;
 
 type Backend = 'railway' | 'upstash' | 'memory';
 
@@ -29,6 +33,8 @@ let upstash: UpstashRedis | null = null;
 // Railway (ioredis / TCP). Cache the client on globalThis so Next.js module
 // re-evaluation / multiple route bundles do not open a new socket each time.
 function getRailwayRedis(): IORedisClient | null {
+  // Never run on the client — ioredis needs Node TCP.
+  if (typeof window !== 'undefined') return null;
   const url =
     process.env.REDIS_URL ||
     process.env.REDIS_PRIVATE_URL ||
@@ -40,7 +46,13 @@ function getRailwayRedis(): IORedisClient | null {
   if (g.__MC_IOREDIS__) return g.__MC_IOREDIS__ as IORedisClient;
 
   try {
-    const client = new IORedis(url, {
+    // Server-only require, hidden from webpack so ioredis is never bundled for the browser.
+    const req: NodeRequire = (typeof __non_webpack_require__ !== 'undefined'
+      ? __non_webpack_require__
+      : require) as NodeRequire;
+    const mod: any = req('ioredis');
+    const Ctor: any = mod && (mod.default || mod);
+    const client: IORedisClient = new Ctor(url, {
       lazyConnect: false,
       maxRetriesPerRequest: 3,
       enableReadyCheck: true,
