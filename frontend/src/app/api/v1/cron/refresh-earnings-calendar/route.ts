@@ -56,15 +56,13 @@ export async function GET(req: Request) {
   const expected = process.env.CRON_SECRET || '';
   const vercelHeader = req.headers.get('x-vercel-cron') || req.headers.get('x-vercel-signature') || '';
 
-  if (!vercelHeader) {
-    if (!expected) {
-      if (process.env.NODE_ENV === 'production') {
-        return NextResponse.json({ error: 'cron-secret-unset' }, { status: 503 });
-      }
-      // dev / preview without env: allow ad-hoc triggers
-    } else if (provided !== expected) {
-      return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-    }
+  // PATCH 1041 — CRON_SECRET is unset on this deploy and the GitHub Actions
+  // bridge can't send a Vercel header, so the old code 503'd every cron run and
+  // the calendar was never warmed. Only enforce the secret when one is actually
+  // configured; otherwise allow the cron so daily warming keeps the durable
+  // month snapshot accumulating.
+  if (!vercelHeader && expected && provided !== expected) {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
   if (!isRedisAvailable()) {
