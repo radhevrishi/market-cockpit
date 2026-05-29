@@ -1175,8 +1175,8 @@ type ConvFilters = {
   // Each value is a SIGNED threshold: positive = "D1 >= N%", negative = "D1 <= N%".
   // null = no filter.
   d1Bucket: number | null;
-  // PATCH 1022 — market-cap range filter (uses market_cap_cr in ₹ Cr).
-  cap: 'all' | 'mega' | 'large' | 'mid' | 'small' | 'micro';
+  // PATCH 1022/1024 — market-cap range filter (uses market_cap_cr in ₹ Cr).
+  cap: 'all' | 'sweet' | 'mega' | 'large' | 'mid' | 'small' | 'micro';
 };
 
 const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, cap: 'all' };
@@ -1187,6 +1187,8 @@ function convCapInRange(cr: number | null | undefined, f: ConvFilters['cap']): b
   if (f === 'all') return true;
   if (cr == null || !Number.isFinite(cr)) return false;
   switch (f) {
+    // PATCH 1024 — user multibagger sweet-spot band ₹5k–50k Cr.
+    case 'sweet': return cr >= 5_000 && cr <= 50_000;
     case 'mega': return cr >= 200_000;
     case 'large': return cr >= 20_000 && cr < 200_000;
     case 'mid': return cr >= 5_000 && cr < 20_000;
@@ -1969,6 +1971,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                 ? { ...chipActive('#34D399'), cursor: 'pointer' }
                 : { ...chipBase, cursor: 'pointer' }}>
               <option value="all">🏦 Mkt Cap · All</option>
+              <option value="sweet">🎯 Multibagger ₹5k–50k Cr</option>
               <option value="mega">MEGA ≥ ₹2,00,000 Cr</option>
               <option value="large">LARGE ₹20k–2L Cr</option>
               <option value="mid">MID ₹5k–20k Cr</option>

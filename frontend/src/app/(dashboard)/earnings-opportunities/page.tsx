@@ -273,10 +273,12 @@ interface OpportunitiesPayload {
 // PATCH 1022 — market-cap range matcher (value in ₹ Cr). Buckets mirror the
 // enrich-route thresholds: MEGA ≥2L Cr, LARGE 20k–2L, MID 5k–20k,
 // SMALL 500–5k, MICRO <500. Null market cap never matches a specific range.
-function capInRange(cr: number | null | undefined, f: 'all' | 'mega' | 'large' | 'mid' | 'small' | 'micro'): boolean {
+function capInRange(cr: number | null | undefined, f: 'all' | 'sweet' | 'mega' | 'large' | 'mid' | 'small' | 'micro'): boolean {
   if (f === 'all') return true;
   if (cr == null || !Number.isFinite(cr)) return false;
   switch (f) {
+    // PATCH 1024 — user multibagger sweet-spot band ₹5k–50k Cr.
+    case 'sweet': return cr >= 5_000 && cr <= 50_000;
     case 'mega': return cr >= 200_000;
     case 'large': return cr >= 20_000 && cr < 200_000;
     case 'mid': return cr >= 5_000 && cr < 20_000;
@@ -892,7 +894,7 @@ export default function EarningsOpportunitiesPage() {
   const [peadOnly, setPeadOnly] = useState(false);
   const [multibaggerOnly, setMultibaggerOnly] = useState(false);
   // PATCH 1022 — market-cap range filter (uses market_cap_cr in ₹ Cr)
-  const [capFilter, setCapFilter] = useState<'all' | 'mega' | 'large' | 'mid' | 'small' | 'micro'>('all');
+  const [capFilter, setCapFilter] = useState<'all' | 'sweet' | 'mega' | 'large' | 'mid' | 'small' | 'micro'>('all');
   // PATCH 0498 — Initialize to '' (Latest mode) so auto-walk-back fires
   // from today and lands on the most-recently-populated date. Previously
   // initialized to todayISO() which short-circuited the walk-back.
@@ -2913,6 +2915,7 @@ Source label: ${coverageStats.source}`}
                     color: capFilter !== 'all' ? '#0A0E1A' : '#34D399',
                   }}>
                   <option value="all">🏦 Mkt Cap · All</option>
+                  <option value="sweet">🎯 Multibagger ₹5k–50k Cr</option>
                   <option value="mega">MEGA ≥ ₹2,00,000 Cr</option>
                   <option value="large">LARGE ₹20k–2L Cr</option>
                   <option value="mid">MID ₹5k–20k Cr</option>
