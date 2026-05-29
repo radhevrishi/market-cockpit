@@ -114,14 +114,31 @@ function compositeKey(ticker: string, q?: string, fy?: number): string {
   return `${ticker.toUpperCase()}@${q}-${fy}`;
 }
 
-/** Batch upsert — used by Earnings Ops on every render */
-export function syncFromEarningsOps(entries: Array<Omit<ConvictionEntry, 'added_at'>>): number {
+/** Batch upsert — used by Earnings Ops on every render.
+ *  PATCH 0997 — Accepts ALL tiers (BB/ST/MX/AV). MX/AV entries act as
+ *  DEMOTION signals: if a newer filing for an already-benched ticker
+ *  arrives graded MX or AV, the bare-ticker bench entry is REMOVED.
+ *  Composite-key historical entries (TICKER@Q3-2026) are preserved.
+ */
+type SyncEntry = Omit<ConvictionEntry, 'added_at' | 'tier'> & {
+  tier: 'BLOCKBUSTER' | 'STRONG' | 'MIXED' | 'AVOID';
+};
+export function syncFromEarningsOps(entries: Array<SyncEntry>): number {
   let count = 0;
   const map = readConvictionBeats();
   for (const e of entries) {
     const ticker = e.ticker.toUpperCase();
     const bareKey = ticker;
     const existing = map[bareKey];
+    // PATCH 0997 — demotion path: incoming MIXED/AVOID with newer filing date
+    // means the stock dropped out of BB/ST. Remove the bare-ticker entry.
+    if (e.tier === 'MIXED' || e.tier === 'AVOID') {
+      if (existing && e.filing_date >= existing.filing_date) {
+        delete map[bareKey];
+        count++;
+      }
+      continue;  // never ADD MX/AV to the bench
+    }
     if (existing) {
       const newerDate = e.filing_date > existing.filing_date;
       const tierUpgrade = e.tier === 'BLOCKBUSTER' && existing.tier === 'STRONG';
