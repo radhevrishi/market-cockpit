@@ -15,6 +15,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
+import { railwaySelfFetch } from '@/lib/railway-self-fetch'; // PATCH 0985
 
 const SNAPSHOT_TTL = 90 * 24 * 60 * 60;  // 90 days
 const SNAPSHOT_KEY = (date: string) => `concall-snapshot:v1:${date}`;
@@ -86,7 +87,7 @@ export async function POST(req: NextRequest) {
 
   // Fetch today's live-feed data
   const origin = new URL(req.url).origin;
-  const r = await fetch(`${origin}/api/v1/concall-intel/live-feed?days=2`, { cache: 'no-store' });
+  const r = await railwaySelfFetch(`${origin}/api/v1/concall-intel/live-feed?days=2`, { cache: 'no-store' });
   if (!r.ok) return NextResponse.json({ error: `live-feed HTTP ${r.status}` }, { status: 502 });
   const data = await r.json();
 
@@ -151,7 +152,7 @@ async function _handleGET(req: NextRequest) {
 
   // Build TODAY's snapshot live (don't write to KV — that's POST's job)
   const origin = new URL(req.url).origin;
-  const r = await fetch(`${origin}/api/v1/concall-intel/live-feed?days=2`, { cache: 'no-store' });
+  const r = await railwaySelfFetch(`${origin}/api/v1/concall-intel/live-feed?days=2`, { cache: 'no-store' });
   if (!r.ok) return NextResponse.json({ error: `live-feed HTTP ${r.status}` }, { status: 502 });
   const data = await r.json();
 

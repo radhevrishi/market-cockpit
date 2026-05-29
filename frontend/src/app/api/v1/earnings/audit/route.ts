@@ -23,6 +23,7 @@
 
 import { NextResponse } from 'next/server';
 import { getCalendarTickersForDate } from '@/lib/earnings-week-seed';
+import { railwaySelfFetch } from '@/lib/railway-self-fetch'; // PATCH 0985
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -54,7 +55,7 @@ export async function GET(req: Request) {
   const base = `${protocol}://${host}`;
   const ourTickers = new Set<string>();
   try {
-    const r = await fetch(`${base}/api/v1/earnings/graded?date=${date}`, { cache: 'no-store' });
+    const r = await railwaySelfFetch(`${base}/api/v1/earnings/graded?date=${date}`, { cache: 'no-store' });
     if (r.ok) {
       const j = await r.json();
       const tiers = ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID'] as const;

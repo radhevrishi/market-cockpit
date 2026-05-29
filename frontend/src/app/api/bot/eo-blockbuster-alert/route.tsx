@@ -26,6 +26,7 @@ import { istNow as _istNow, formatISTTime as _formatISTTime } from '@/lib/market
 import { ImageResponse } from 'next/og';
 import React from 'react';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
+import { railwaySelfFetch } from '@/lib/railway-self-fetch'; // PATCH 0985
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -822,7 +823,7 @@ export async function GET(req: Request) {
   const allCards: GradedCard[] = [];
   for (const date of targetDates) {
     try {
-      const res = await fetch(`${origin}/api/v1/earnings/graded?date=${date}`, {
+      const res = await railwaySelfFetch(`${origin}/api/v1/earnings/graded?date=${date}`, {
         cache: 'no-store',
         signal: AbortSignal.timeout(20_000),
       });

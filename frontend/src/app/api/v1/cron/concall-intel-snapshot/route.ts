@@ -3,6 +3,7 @@
 // after market close + post-call digest window.
 
 import { NextRequest, NextResponse } from 'next/server';
+import { railwaySelfFetch } from '@/lib/railway-self-fetch'; // PATCH 0985
 
 // PATCH 0452 P0-7 — Require CRON_SECRET env; no hardcoded fallback.
 const SECRET = process.env.CRON_SECRET || '';
@@ -20,7 +21,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
   const origin = new URL(req.url).origin;
-  const r = await fetch(`${origin}/api/v1/concall-intel/movers?secret=${SECRET}`, {
+  const r = await railwaySelfFetch(`${origin}/api/v1/concall-intel/movers?secret=${SECRET}`, {
     method: 'POST',
     cache: 'no-store',
   });

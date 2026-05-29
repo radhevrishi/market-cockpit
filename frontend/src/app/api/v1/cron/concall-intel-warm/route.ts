@@ -13,6 +13,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextRequest, NextResponse } from 'next/server';
+import { railwaySelfFetch } from '@/lib/railway-self-fetch'; // PATCH 0985
 
 // PATCH 0452 P0-7 — Audit found hardcoded 'mc-bot-2026' fallback let
 // anyone trigger 60s LLM loops. Require CRON_SECRET env now; bail out
@@ -38,7 +39,7 @@ export async function GET(req: NextRequest) {
 
   // Warm the bullish live-feed (extracts 25 fresh PDFs)
   try {
-    const r = await fetch(`${origin}/api/v1/concall-intel/live-feed?days=7&force=1`, {
+    const r = await railwaySelfFetch(`${origin}/api/v1/concall-intel/live-feed?days=7&force=1`, {
       cache: 'no-store',
       headers: { 'User-Agent': 'MC-Cron-ConcallWarm/1.0' },
     });
@@ -59,7 +60,7 @@ export async function GET(req: NextRequest) {
 
   // Warm the warrant feed
   try {
-    const r = await fetch(`${origin}/api/v1/concall-intel/warrant-feed?days=14&force=1`, {
+    const r = await railwaySelfFetch(`${origin}/api/v1/concall-intel/warrant-feed?days=14&force=1`, {
       cache: 'no-store',
       headers: { 'User-Agent': 'MC-Cron-ConcallWarm/1.0' },
     });
@@ -80,7 +81,7 @@ export async function GET(req: NextRequest) {
 
   // Warm the keyword-watch feed
   try {
-    const r = await fetch(`${origin}/api/v1/concall-intel/keyword-watch?days=14&force=1`, {
+    const r = await railwaySelfFetch(`${origin}/api/v1/concall-intel/keyword-watch?days=14&force=1`, {
       cache: 'no-store',
       headers: { 'User-Agent': 'MC-Cron-ConcallWarm/1.0' },
     });

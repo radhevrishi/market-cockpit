@@ -13,6 +13,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
+import { railwaySelfFetch } from '@/lib/railway-self-fetch'; // PATCH 0985
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -37,7 +38,7 @@ export async function GET(req: Request) {
   let inUniverse: any = null;
   let universeError: string | null = null;
   try {
-    const r = await fetch(`${base}/api/market/earnings?market=india&month=${month}`, { cache: 'no-store' });
+    const r = await railwaySelfFetch(`${base}/api/market/earnings?market=india&month=${month}`, { cache: 'no-store' });
     if (r.ok) {
       const j = await r.json();
       const all = (j?.results || []) as any[];
@@ -61,7 +62,7 @@ export async function GET(req: Request) {
   let enrichment: any = null;
   let enrichmentError: string | null = null;
   try {
-    const r = await fetch(`${base}/api/v1/earnings/enrich?symbols=${rawTicker}&filed=${date}`, { cache: 'no-store' });
+    const r = await railwaySelfFetch(`${base}/api/v1/earnings/enrich?symbols=${rawTicker}&filed=${date}`, { cache: 'no-store' });
     if (r.ok) {
       const j = await r.json();
       const data = (j?.data || {})[rawTicker];
@@ -90,7 +91,7 @@ export async function GET(req: Request) {
   let graded: any = null;
   let gradedError: string | null = null;
   try {
-    const r = await fetch(`${base}/api/v1/earnings/graded?date=${date}`, { cache: 'no-store' });
+    const r = await railwaySelfFetch(`${base}/api/v1/earnings/graded?date=${date}`, { cache: 'no-store' });
     if (r.ok) {
       const j = await r.json();
       const tiers = ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID'] as const;

@@ -17,6 +17,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
+import { railwaySelfFetch } from '@/lib/railway-self-fetch'; // PATCH 0985
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -62,7 +63,7 @@ export async function GET(req: Request) {
     const entry: any = { date };
     try {
       // Step 1: pre-warm today-live (NSE+BSE multi-source)
-      const liveRes = await fetch(`${origin}/api/v1/earnings/today-live?date=${date}&force=1`, {
+      const liveRes = await railwaySelfFetch(`${origin}/api/v1/earnings/today-live?date=${date}&force=1`, {
         cache: 'no-store',
         signal: AbortSignal.timeout(20_000),
       });
@@ -73,7 +74,7 @@ export async function GET(req: Request) {
       }
 
       // Step 2: pre-warm graded payload
-      const gradedRes = await fetch(`${origin}/api/v1/earnings/graded?date=${date}&force=1`, {
+      const gradedRes = await railwaySelfFetch(`${origin}/api/v1/earnings/graded?date=${date}&force=1`, {
         cache: 'no-store',
         signal: AbortSignal.timeout(45_000),
       });

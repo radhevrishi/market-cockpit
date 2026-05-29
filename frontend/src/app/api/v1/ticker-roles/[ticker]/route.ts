@@ -19,6 +19,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
+import { railwaySelfFetch } from '@/lib/railway-self-fetch'; // PATCH 0985
 
 const KEY = (ticker: string) => `ticker-roles:v1:${ticker.toUpperCase()}`;
 const TTL_SECONDS = 24 * 60 * 60;
@@ -79,7 +80,7 @@ export async function GET(
   const origin = req.nextUrl.origin;
   let articles: NewsArticle[] = [];
   try {
-    const res = await fetch(`${origin}/api/v1/news?ticker=${encodeURIComponent(ticker)}&window_days=30`, {
+    const res = await railwaySelfFetch(`${origin}/api/v1/news?ticker=${encodeURIComponent(ticker)}&window_days=30`, {
       headers: { 'Accept': 'application/json' },
       cache: 'no-store',
     });
