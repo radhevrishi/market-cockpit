@@ -45,7 +45,7 @@ async function _doEnrichSelfFetch(url: string, init?: RequestInit): Promise<Resp
 }
 
 export const runtime = 'nodejs';
-export const maxDuration = 30; // PATCH 0818
+export const maxDuration = 90;  // PATCH 0993 — was 30s; dense dates need ~60s enrichment // PATCH 0818
 // PATCH 0819: removed force-dynamic so Cache-Control headers aren't overridden by Next.js. Query params still force dynamic at runtime.
 
 // ─── Types (mirror frontend) ───────────────────────────────────────────────

@@ -33,19 +33,19 @@
 import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 55;
+export const maxDuration = 120;  // PATCH 0993 — Railway has no hard ceiling; dense dates need 60s+ enrichment
 
 // PATCH 0361 — reduced from 6 → 2. A graded?refreshMissing=1 call can
 // take 12-20s per date (30 tickers × ~500ms enrich). 6 dates = 90s, way
 // over Vercel's 55s budget → 504. With 2 dates/batch we're at ~30-40s
 // worst case, leaving comfortable margin. Frontend chains via cursor_next
 // so total wall-time is unchanged (~3 min for 90 weekdays).
-const MAX_DAYS_PER_CALL = 2;
+const MAX_DAYS_PER_CALL = 1;  // PATCH 0993 — single date per call gives dense filing-days the full 60s budget
 
 // Per-date timeout for the internal graded fetch. If a single date hangs,
 // we skip it (return 'error') and the next iteration moves on rather than
 // blocking the whole batch.
-const PER_DATE_TIMEOUT_MS = 22_000;
+const PER_DATE_TIMEOUT_MS = 60_000;  // PATCH 0993 — was 22s (Vercel budget); Railway allows 60s, dense dates need it
 
 function isoNDaysAgo(n: number): string {
   const d = new Date();
