@@ -148,8 +148,18 @@ export async function fetchWorkerStock(symbol: string, timeoutMs = 10000): Promi
       eps_curr: latest.eps ?? null,
       eps_prev: safeYoy.eps ?? null,
       eps_yoy_pct: yoyPct(latest.eps, safeYoy.eps),
-      opm_pct: latest.opm ?? null,
-      opm_prev_pct: safeYoy.opm ?? null,
+      // PATCH 1012 — when worker's opm field is null but operatingProfit + revenue
+      // both exist, compute it: OPM = (op / revenue) * 100. This catches the
+      // ~30% of tickers where the worker has op/revenue but the opm field is empty.
+      // Same fallback for prior year. EBITDA-margin equivalent for these stocks.
+      opm_pct: (latest.opm ?? null) ??
+        (latest.operatingProfit != null && latest.revenue != null && latest.revenue > 0
+          ? (latest.operatingProfit / latest.revenue) * 100
+          : null),
+      opm_prev_pct: (safeYoy.opm ?? null) ??
+        (safeYoy.operatingProfit != null && safeYoy.revenue != null && safeYoy.revenue > 0
+          ? (safeYoy.operatingProfit / safeYoy.revenue) * 100
+          : null),
       op_profit_yoy_pct: yoyPct(latest.operatingProfit, safeYoy.operatingProfit),
       period_ended: period,
       latest_quarter_end_iso: monthEndIso(period),
