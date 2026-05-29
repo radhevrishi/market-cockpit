@@ -2979,8 +2979,28 @@ export default function HomeDashboard() {
                     </div>
                   )}
                   {extremeG.length === 0 && standardG.length === 0 && extremeL.length === 0 && standardL.length === 0 && (
-                    <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic', padding: '4px 0' }}>
-                      No movers ≥ ±5% with ≥5 lakh volume today.
+                    <div>
+                      {/* PATCH 0994 — top 5 fallback when threshold not met */}
+                      <div style={{ fontSize: 9.5, color: '#8DA1B9', fontWeight: 700, marginBottom: 3, marginTop: 4, letterSpacing: '0.3px' }}>
+                        🔘 TOP MOVERS (no ≥5% with vol today — showing top 5)
+                      </div>
+                      {(data.gainers || []).length > 0 && (
+                        <>
+                          <div style={{ fontSize: 9, color: '#10B981', fontWeight: 700, marginTop: 2, marginBottom: 2, letterSpacing: '0.3px' }}>▲ GAINERS</div>
+                          {(data.gainers || []).slice(0, 5).map((g: any) => renderRow(g, 'up'))}
+                        </>
+                      )}
+                      {(data.losers || []).length > 0 && (
+                        <>
+                          <div style={{ fontSize: 9, color: '#EF4444', fontWeight: 700, marginTop: 6, marginBottom: 2, letterSpacing: '0.3px' }}>▼ LOSERS</div>
+                          {(data.losers || []).slice(0, 5).map((l: any) => renderRow(l, 'dn'))}
+                        </>
+                      )}
+                      {(data.gainers || []).length === 0 && (data.losers || []).length === 0 && (
+                        <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic', padding: '4px 0' }}>
+                          Movers feed not loaded yet — try Hard Refresh on /movers.
+                        </div>
+                      )}
                     </div>
                   )}
                   {/* PATCH 0821 — sector breadth + top-3 leaders per sector */}
