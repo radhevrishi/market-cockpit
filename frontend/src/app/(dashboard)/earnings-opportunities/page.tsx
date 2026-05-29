@@ -1417,6 +1417,49 @@ export default function EarningsOpportunitiesPage() {
       .catch(() => {});
   }, [gradedData, resolvedDateForGrading, refetchGraded, todayIso]);
 
+  // PATCH 1027 — HEAVY-DAY AUTO-CONVERGE.
+  // A peak earnings day can have 140-260 filings, but a single enrich pass
+  // only fills ~half (Screener/NSE are rate-limited, so the synchronous graded
+  // build can't fetch them all in one window). Previously the user had to keep
+  // clicking "Refresh N missing" by hand. This loop chips away automatically:
+  // every 45s it re-enriches just the still-missing cards, bounded to 8 rounds,
+  // and STOPS the moment a round adds nothing (those tickers genuinely have no
+  // upstream data) — so it converges a busy day to full coverage on its own
+  // without hammering. Scoped to today + yesterday (the actively-filing dates);
+  // older dates stay on the manual "Refresh N missing" / Slow Backfill path.
+  const convergeRef = useRef<{ date: string; rounds: number; lastMissing: number }>({ date: '', rounds: 0, lastMissing: -1 });
+  useEffect(() => {
+    if (!gradedData?.by_tier || !resolvedDateForGrading) return;
+    const yIso = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10); })();
+    if (resolvedDateForGrading !== todayIso && resolvedDateForGrading !== yIso) return;
+    const allCards = (TIER_ORDER as EarningsTier[])
+      .flatMap((t) => gradedData.by_tier?.[t] || []) as ParsedEarning[];
+    if (allCards.length < 20) return;  // only worth it on heavy days
+    const missing = allCards.filter((c) =>
+      c.sales_yoy_pct == null && c.net_profit_yoy_pct == null && c.eps_yoy_pct == null
+    ).length;
+
+    // Reset per-date counters when the viewed date changes.
+    if (convergeRef.current.date !== resolvedDateForGrading) {
+      convergeRef.current = { date: resolvedDateForGrading, rounds: 0, lastMissing: -1 };
+    }
+    const s = convergeRef.current;
+
+    if (missing === 0) return;                                   // fully enriched
+    if (s.rounds >= 8) return;                                   // safety cap
+    if (s.lastMissing !== -1 && missing >= s.lastMissing) return; // last round made no progress → upstream blocked
+
+    const id = setTimeout(async () => {
+      s.rounds += 1;
+      s.lastMissing = missing;  // snapshot pre-round count for the next progress check
+      try {
+        await fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}&refreshMissing=1&force=1`, { cache: 'no-store' });
+        await refetchGraded();
+      } catch {}
+    }, 45_000);
+    return () => clearTimeout(id);
+  }, [gradedData, resolvedDateForGrading, refetchGraded, todayIso]);
+
   // PATCH 0362 — Track ticker set across renders to highlight new arrivals.
   // Fires whenever the gradedData payload changes. The first time the page
   // loads we just record the baseline set (no badges). On subsequent updates
