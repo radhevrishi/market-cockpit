@@ -10,7 +10,7 @@ import { canonicalTicker } from '@/lib/ticker-normalize'; // PATCH 0721
 import { isPriceSuspect } from '@/lib/nse';
 import { CHAT_ID, BOT_SECRET } from '@/lib/config';
 import {
-  getConvictionList, removeConviction,
+  getConvictionList, removeConviction, syncFromEarningsOps,
   type ConvictionEntry,
 } from '@/lib/conviction-beats';
 import { peadScore, peadColor, peadLabel } from '@/lib/pead-score';
@@ -1623,6 +1623,64 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
   // crashed if the bench populated while the user was on the tab).
   // USER-REQ — filter state (composable AND)
   const [filters, setFilters] = useState<ConvFilters>(FILTER_DEFAULT);
+  // PATCH 1019 — Re-validate bench. Re-fetches graded for every unique
+  // filing date on the bench and re-syncs (all tiers) so any stock that
+  // dropped out of BLOCKBUSTER/STRONG under the current grading logic
+  // (e.g. ADSL after the turnaround gate) gets pruned automatically.
+  const [revalidating, setRevalidating] = useState(false);
+  const [revalProgress, setRevalProgress] = useState<string | null>(null);
+  const runRevalidate = useCallback(async () => {
+    if (revalidating) return;
+    setRevalidating(true);
+    setRevalProgress('Collecting bench dates…');
+    try {
+      // Unique filing dates across the bench
+      const dates = Array.from(new Set(entries.map((e) => e.filing_date).filter(Boolean))).sort();
+      if (dates.length === 0) { setRevalProgress('Bench is empty.'); return; }
+      let prunedTotal = 0;
+      const before = getConvictionList().length;
+      for (let i = 0; i < dates.length; i++) {
+        const d = dates[i];
+        setRevalProgress(`Re-validating ${i + 1}/${dates.length} · ${d}`);
+        try {
+          const res = await fetch(`/api/v1/earnings/graded?date=${d}`, { cache: 'no-store' });
+          if (!res.ok) continue;
+          const j = await res.json();
+          const bt = j?.by_tier || {};
+          const syncEntries: any[] = [];
+          for (const tier of ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID']) {
+            for (const c of (bt[tier] || [])) {
+              const qm = typeof c.quarter === 'string' ? c.quarter.match(/Q([1-4])/i) : null;
+              const fm = typeof c.quarter === 'string' ? c.quarter.match(/FY\s?(\d{2})/i) : null;
+              syncEntries.push({
+                ticker: c.ticker, company: c.company, tier,
+                composite_score: c.composite_score,
+                sales_yoy_pct: c.sales_yoy_pct, net_profit_yoy_pct: c.net_profit_yoy_pct, eps_yoy_pct: c.eps_yoy_pct,
+                filing_date: c.filing_date || d, sector: c.sector, market_cap_bucket: c.market_cap_bucket,
+                source_url: c.filing_url,
+                ...(qm ? { quarter: ('Q' + qm[1]) as any } : {}),
+                ...(fm ? { fiscal_year: (parseInt(fm[1], 10) < 50 ? 2000 + parseInt(fm[1], 10) : 1900 + parseInt(fm[1], 10)) } : {}),
+                d1_pct: typeof c.d1_pct === 'number' ? c.d1_pct : null,
+                gap_pct: typeof c.gap_pct === 'number' ? c.gap_pct : null,
+                is_elite: c.is_elite === true,
+                pead_score: typeof c.pead_score === 'number' ? c.pead_score : null,
+                multibagger_setup: c.multibagger_setup === true,
+              });
+            }
+          }
+          if (syncEntries.length > 0) syncFromEarningsOps(syncEntries);
+        } catch {}
+        // Throttle ~1.2s between dates to respect rate limits
+        await new Promise((r) => setTimeout(r, 1200));
+      }
+      const after = getConvictionList().length;
+      prunedTotal = Math.max(0, before - after);
+      setRevalProgress(`✓ Done — ${prunedTotal} stale ${prunedTotal === 1 ? 'entry' : 'entries'} pruned across ${dates.length} dates.`);
+    } finally {
+      setRevalidating(false);
+      setTimeout(() => setRevalProgress(null), 12_000);
+    }
+  }, [entries, revalidating]);
   // PATCH 0923 — collapsible Q1-Q4 cheat sheet visibility.
   // Default OPEN on first mount so the user understands the chips immediately.
   const [showQuarterCheatSheet, setShowQuarterCheatSheet] = useState(true);
@@ -1882,6 +1940,20 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
               style={filters.multibagger ? chipActive('#67E8F9') : chipBase}>
               💎 MULTIBAGGER only {filters.multibagger ? '✓' : ''}
             </button>
+            {/* PATCH 1019 — Re-validate bench (prune stocks no longer BB/ST) */}
+            <button onClick={runRevalidate} disabled={revalidating}
+              title="Re-fetch grading for every bench date and prune any stock that dropped out of BLOCKBUSTER/STRONG under current logic (e.g. demoted to MIXED). Takes ~1s per date."
+              style={{ ...(revalidating ? chipActive('#A78BFA') : chipBase), cursor: revalidating ? 'wait' : 'pointer' }}>
+              🔄 {revalidating ? 'Re-validating…' : 'Re-validate bench'}
+            </button>
+            {revalProgress && (
+              <span style={{
+                fontSize: 10.5, fontWeight: 700, padding: '3px 8px', borderRadius: 4,
+                backgroundColor: revalProgress.startsWith('✓') ? '#10B98118' : '#A78BFA18',
+                border: `1px solid ${revalProgress.startsWith('✓') ? '#10B98140' : '#A78BFA40'}`,
+                color: revalProgress.startsWith('✓') ? '#10B981' : '#A78BFA',
+              }}>{revalProgress}</span>
+            )}
             <button onClick={() => setFilters(FILTER_DEFAULT)}
               disabled={filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && !filters.sortByPead && !filters.elite && !filters.multibagger}
               style={{ ...chipBase, opacity: (filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && !filters.sortByPead) ? 0.4 : 1 }}>
