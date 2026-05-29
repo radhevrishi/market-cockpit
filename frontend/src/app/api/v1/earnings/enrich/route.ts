@@ -280,6 +280,9 @@ async function fetchYahooForSymbol(symbol: string, filedHint?: string): Promise<
     if (!r) return null;
     const closes: (number | null)[] = r.indicators?.quote?.[0]?.close || [];
     const opens: (number | null)[] = r.indicators?.quote?.[0]?.open || [];
+    const volumes: (number | null)[] = r.indicators?.quote?.[0]?.volume || [];  // PATCH 1034 — liquidity/EP
+    const highs: (number | null)[] = r.indicators?.quote?.[0]?.high || [];
+    const lows: (number | null)[] = r.indicators?.quote?.[0]?.low || [];
     const meta = r.meta || {};
     let lastIdx = -1, lastClose: number | null = null;
     for (let i = closes.length - 1; i >= 0; i--) {
@@ -364,6 +367,47 @@ async function fetchYahooForSymbol(symbol: string, filedHint?: string): Promise<
       meta.fiftyTwoWeekHigh && lastClose >= meta.fiftyTwoWeekHigh * 0.75);
     const hi52 = meta.fiftyTwoWeekHigh ?? null;
     const pctFromHi = (lastClose != null && hi52 != null && hi52 > 0) ? ((lastClose - hi52) / hi52) * 100 : null;
+    // PATCH 1034 — liquidity + volume-signature metrics (institutional).
+    // adtv_cr  : median daily traded value (₹ Cr) over last ~30 sessions —
+    //            free-float/illiquidity proxy. Median so one spike can't mask a thin book.
+    // rvol     : reaction-day volume ÷ 30-day median volume — volume surge (EP/Zanger Layer 9).
+    // atr_pct  : ATR(14) as % of price — volatility, used to size the move in ATR units.
+    const _tv: number[] = [];
+    const _volWindow: number[] = [];
+    for (let i = closes.length - 1; i >= 0 && _tv.length < 30; i--) {
+      const c = closes[i]; const v = volumes[i];
+      if (c != null && v != null && Number.isFinite(c as number) && Number.isFinite(v as number) && (v as number) > 0) {
+        _tv.push((c as number) * (v as number));
+        _volWindow.push(v as number);
+      }
+    }
+    const _median = (arr: number[]): number | null => {
+      if (arr.length < 5) return null;
+      const a = [...arr].sort((x, y) => x - y);
+      const m = Math.floor(a.length / 2);
+      return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+    };
+    const _medTvR = _median(_tv);
+    const adtv_cr: number | null = _medTvR != null ? _medTvR / 1e7 : null;
+    const _medVol = _median(_volWindow);
+    const _reactVol = (reactionIdx >= 0 && volumes[reactionIdx] != null && Number.isFinite(volumes[reactionIdx] as number)) ? (volumes[reactionIdx] as number) : null;
+    const rvol: number | null = (_reactVol != null && _medVol != null && _medVol > 0) ? _reactVol / _medVol : null;
+    // ATR(14) via true range over last valid 14 sessions.
+    let atr_pct: number | null = null;
+    {
+      const trs: number[] = [];
+      for (let i = closes.length - 1; i >= 1 && trs.length < 14; i--) {
+        const h = highs[i], l = lows[i], pc = closes[i - 1];
+        if (h != null && l != null && pc != null && Number.isFinite(h as number) && Number.isFinite(l as number) && Number.isFinite(pc as number)) {
+          const tr = Math.max((h as number) - (l as number), Math.abs((h as number) - (pc as number)), Math.abs((l as number) - (pc as number)));
+          trs.push(tr);
+        }
+      }
+      if (trs.length >= 7 && lastClose != null && lastClose > 0) {
+        const atr = trs.reduce((a, b) => a + b, 0) / trs.length;
+        atr_pct = (atr / lastClose) * 100;
+      }
+    }
     return {
       current_price: lastClose, prev_close: prevClose,
       gap_pct: gap, d1_pct: d1,
@@ -372,6 +416,7 @@ async function fetchYahooForSymbol(symbol: string, filedHint?: string): Promise<
       ma_50: ma50, ma_150: ma150, ma_200: ma200, ma_200_slope_30d: ma200_slope,
       return_12w_pct: ret12w,
       stage, trend_template_passes: trendTemplate,
+      adtv_cr, rvol, atr_pct,  // PATCH 1034
     };
   } catch { return null; }
   finally { clearTimeout(t); }
@@ -646,7 +691,7 @@ async function resolveCompanyNameFromScreenerSearch(symbol: string): Promise<str
 async function enrichOne(symbol: string, filedHint?: string, bypassCache = false): Promise<any> {
   // Cache key includes filed date so a new filing busts old cache
   // PATCH 1013 — bumped v5 → v6 to invalidate stale entries lacking opm_pct.
-  const cacheKey = filedHint ? `enrich:v6:${symbol}:${filedHint}` : `enrich:v6:${symbol}`;
+  const cacheKey = filedHint ? `enrich:v7:${symbol}:${filedHint}` : `enrich:v7:${symbol}`;
   if (isRedisAvailable() && !bypassCache) {
     try {
       const cached = await kvGet(cacheKey);
