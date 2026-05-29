@@ -4545,6 +4545,9 @@ function MultibaggerAnalytics({
     postRunStretched?: boolean;
     earningsProximityDays?: number;
     suggestedMaxPositionPct?: number;
+    // PATCH 0991 — Screener.in CSV file names this stock appeared in.
+    // Powers the 🎯 MULTI-CONFIRMED PICKS card + per-row "📂 N" badge.
+    _screeners?: string[];
   };
   const stocks: AnaStock[] = React.useMemo(() => {
     const stripSym = (s: string) => (s || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
@@ -4569,6 +4572,8 @@ function MultibaggerAnalytics({
         prevScore: prevScoreMap[r.symbol] ?? prevScoreMap[stripSym(r.symbol)],
         marketCapCr: (r as any).marketCapCr as number | undefined,
         redFlagSummary: summary,
+        // PATCH 0991 — pass through screener-file membership for MULTI-CONFIRMED card
+        _screeners: ((r as any)._screeners as string[] | undefined) ?? [],
       };
     });
     const us = (usaRows || []).map((r: any) => ({
@@ -5330,6 +5335,14 @@ function MultibaggerAnalytics({
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <TickerCompanyCell ticker={s.symbol} company={s.company} />
                     <span style={{ fontSize: 11, color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}</span>
+                    {/* PATCH 0991 — screener-membership badge */}
+                    {Array.isArray((s as any)._screeners) && (s as any)._screeners.length >= 2 && (
+                      <span title={(s as any)._screeners.join(', ')} style={{
+                        fontSize: 9, color: '#22D3EE', fontWeight: 800,
+                        padding: '1px 5px', borderRadius: 3, background: '#22D3EE22',
+                        fontVariantNumeric: 'tabular-nums',
+                      }}>📂 {(s as any)._screeners.length}</span>
+                    )}
                     <span style={{ fontSize: 9, color: '#94A3B8', maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sector || '—'}</span>
                   </div>
                   <span style={{ fontSize: 9.5, color: '#10B981CC', fontStyle: 'italic', lineHeight: 1.35 }}>
@@ -6076,6 +6089,8 @@ function MultibaggerAnalytics({
                 <th style={{ padding: '6px 10px', textAlign: 'right', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>SCORE</th>
                 <th style={{ padding: '6px 10px', textAlign: 'right', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>Δ</th>
                 <th style={{ padding: '6px 10px', textAlign: 'center', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>GRADE</th>
+                {/* PATCH 0991 — Screener-count column */}
+                <th title="Number of uploaded Screener.in CSVs this stock appeared in" style={{ padding: '6px 10px', textAlign: 'center', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>📂</th>
                 <th style={{ padding: '6px 10px', textAlign: 'center', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>MKT</th>
               </tr>
             </thead>
@@ -6101,6 +6116,10 @@ function MultibaggerAnalytics({
                     <td style={{ padding: '6px 10px', textAlign: 'right', color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}</td>
                     <td style={{ padding: '6px 10px', textAlign: 'right', color: deltaColor, fontWeight: 700, fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>{deltaSym}</td>
                     <td style={{ padding: '6px 10px', textAlign: 'center', color: s.grade === 'A+' ? '#10B981' : '#22D3EE', fontWeight: 700 }}>{s.grade}</td>
+                    {/* PATCH 0991 — Screener-count cell */}
+                    <td title={Array.isArray((s as any)._screeners) ? (s as any)._screeners.join(', ') : ''} style={{ padding: '6px 10px', textAlign: 'center', fontSize: 11, fontWeight: 700, color: ((s as any)._screeners?.length ?? 0) >= 2 ? '#22D3EE' : '#6B7A8D', fontVariantNumeric: 'tabular-nums' }}>
+                      {((s as any)._screeners?.length ?? 0) >= 1 ? (s as any)._screeners.length : '—'}
+                    </td>
                     <td style={{ padding: '6px 10px', textAlign: 'center', color: s.market === 'INDIA' ? '#10B981' : '#22D3EE', fontSize: 10, fontWeight: 700 }}>{s.market === 'INDIA' ? '🇮🇳' : '🇺🇸'}</td>
                   </tr>
                 );
