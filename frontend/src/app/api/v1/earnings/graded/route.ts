@@ -614,7 +614,30 @@ export async function GET(req: Request) {
         };
         // Write back with same TTL strategy
         const ttl = isPast ? 365 * 24 * 3600 : 5 * 60;
-        try { await kvSet(cacheKey, payload, ttl); } catch {}
+        // PATCH 1002 — guard final cache write too. If the new payload graded
+    // ZERO tickers but a cached version had entries, preserve the cache.
+    try {
+      const _t = (payload as any).by_tier;
+      const _gradedCount = (_t?.BLOCKBUSTER?.length || 0)
+                         + (_t?.STRONG?.length || 0)
+                         + (_t?.MIXED?.length || 0)
+                         + (_t?.AVOID?.length || 0);
+      let _skipWrite = false;
+      if (_gradedCount === 0) {
+        const _prior: any = await kvGet(cacheKey);
+        if (_prior?.by_tier) {
+          const _priorN = (_prior.by_tier.BLOCKBUSTER?.length || 0)
+                        + (_prior.by_tier.STRONG?.length || 0)
+                        + (_prior.by_tier.MIXED?.length || 0)
+                        + (_prior.by_tier.AVOID?.length || 0);
+          if (_priorN > 0) {
+            _skipWrite = true;
+            console.log(`[graded] PATCH 1002: final write blocked — payload empty but cache has ${_priorN} entries`);
+          }
+        }
+      }
+      if (!_skipWrite) await kvSet(cacheKey, payload, ttl);
+    } catch {}
         return NextResponse.json(payload, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } });  // PATCH 0818
       }
     } catch (e) {
@@ -823,7 +846,26 @@ export async function GET(req: Request) {
     if (hubFailReason) {
       empty._hub_fail = hubFailReason;
     } else if (isPast && isRedisAvailable()) {
-      try { await kvSet(cacheKey, empty, 365 * 24 * 3600); } catch {}
+      // PATCH 1002 — don't blow away a good cached payload with empty.
+      // Read existing; if it has entries, keep it (no kvSet).
+      let existingHasData = false;
+      try {
+        const prior: any = await kvGet(cacheKey);
+        if (prior && prior.by_tier) {
+          const n = (prior.by_tier.BLOCKBUSTER?.length || 0)
+                  + (prior.by_tier.STRONG?.length || 0)
+                  + (prior.by_tier.MIXED?.length || 0)
+                  + (prior.by_tier.AVOID?.length || 0);
+          existingHasData = n > 0;
+        }
+      } catch {}
+      // TTL slashed: 1 hour instead of 365 days. If today is legit empty,
+      // we'll re-resolve quickly tomorrow. PATCH 1002.
+      if (!existingHasData) {
+        try { await kvSet(cacheKey, empty, 3600); } catch {}
+      } else {
+        console.log(`[graded] PATCH 1002: kept existing non-empty cache for ${date}, skipped empty overwrite`);
+      }
     }
     return NextResponse.json(empty, { headers: { 'Cache-Control': hubFailReason ? 'no-store' : 's-maxage=300, stale-while-revalidate=900' } });
   }
@@ -975,7 +1017,30 @@ export async function GET(req: Request) {
   // complete view once the hub recovers.
   if (isRedisAvailable() && !hubFailReason) {
     const ttl = isPast ? 365 * 24 * 3600 : 5 * 60;
-    try { await kvSet(cacheKey, payload, ttl); } catch {}
+    // PATCH 1002 — guard final cache write too. If the new payload graded
+    // ZERO tickers but a cached version had entries, preserve the cache.
+    try {
+      const _t = (payload as any).by_tier;
+      const _gradedCount = (_t?.BLOCKBUSTER?.length || 0)
+                         + (_t?.STRONG?.length || 0)
+                         + (_t?.MIXED?.length || 0)
+                         + (_t?.AVOID?.length || 0);
+      let _skipWrite = false;
+      if (_gradedCount === 0) {
+        const _prior: any = await kvGet(cacheKey);
+        if (_prior?.by_tier) {
+          const _priorN = (_prior.by_tier.BLOCKBUSTER?.length || 0)
+                        + (_prior.by_tier.STRONG?.length || 0)
+                        + (_prior.by_tier.MIXED?.length || 0)
+                        + (_prior.by_tier.AVOID?.length || 0);
+          if (_priorN > 0) {
+            _skipWrite = true;
+            console.log(`[graded] PATCH 1002: final write blocked — payload empty but cache has ${_priorN} entries`);
+          }
+        }
+      }
+      if (!_skipWrite) await kvSet(cacheKey, payload, ttl);
+    } catch {}
   }
 
   return NextResponse.json(payload, { headers: { 'Cache-Control': hubFailReason ? 'no-store' : 's-maxage=300, stale-while-revalidate=900' } });
