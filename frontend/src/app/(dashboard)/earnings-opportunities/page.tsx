@@ -867,6 +867,10 @@ type ViewMode = 'CALENDAR' | 'GRADED';
 
 export default function EarningsOpportunitiesPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('CALENDAR');
+  // PATCH 1017 — ELITE-only / PEAD / MULTIBAGGER filters
+  const [eliteOnly, setEliteOnly] = useState(false);
+  const [peadOnly, setPeadOnly] = useState(false);
+  const [multibaggerOnly, setMultibaggerOnly] = useState(false);
   // PATCH 0498 — Initialize to '' (Latest mode) so auto-walk-back fires
   // from today and lands on the most-recently-populated date. Previously
   // initialized to todayISO() which short-circuited the walk-back.
@@ -2843,6 +2847,29 @@ Source label: ${coverageStats.source}`}
               {TIER_META[c.tier].icon} {TIER_META[c.tier].label} {c.n}
             </span>
           ))}
+          {/* PATCH 1017 — ELITE / PEAD / MULTIBAGGER filter chips (clickable toggles) */}
+          {(() => {
+            const allC = TIER_ORDER.flatMap((t) => (view.by_tier[t] || []) as any[]);
+            const eliteN = allC.filter((s) => s.is_elite).length;
+            const peadN = allC.filter((s) => (s.pead_score ?? 0) >= 70).length;
+            const mbN = allC.filter((s) => s.multibagger_setup).length;
+            const chip = (active: boolean, color: string, label: string, n: number, onClick: () => void) => (
+              <button onClick={onClick} style={{
+                fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 20, cursor: 'pointer',
+                border: `1px solid ${color}${active ? '' : '50'}`,
+                backgroundColor: active ? color : `${color}15`,
+                color: active ? '#0A0E1A' : color,
+              }}>{label} {n}</button>
+            );
+            return (
+              <>
+                <span style={{ width: 1, height: 14, background: '#1A2540', margin: '0 2px' }} />
+                {chip(eliteOnly, '#FCD34D', '⭐ ELITE', eliteN, () => { setEliteOnly(v => !v); setPeadOnly(false); setMultibaggerOnly(false); })}
+                {chip(peadOnly, '#F87171', '🔥 PEAD≥70', peadN, () => { setPeadOnly(v => !v); setEliteOnly(false); setMultibaggerOnly(false); })}
+                {chip(multibaggerOnly, '#67E8F9', '💎 MULTIBAGGER', mbN, () => { setMultibaggerOnly(v => !v); setEliteOnly(false); setPeadOnly(false); })}
+              </>
+            );
+          })()}
         </div>
 
         {/* ── Coverage Probe (PATCH 0174) ─────────────────────────────────── */}
@@ -3327,10 +3354,16 @@ Source label: ${coverageStats.source}`}
           );
         })()}
         {viewMode === 'GRADED' && TIER_ORDER.map((tier) => {
-          const stocks = view.by_tier[tier] || [];
+          let stocks = view.by_tier[tier] || [];
+          // PATCH 1017 — apply ELITE / PEAD / MULTIBAGGER filters
+          if (eliteOnly) stocks = stocks.filter((s: any) => s.is_elite);
+          else if (peadOnly) stocks = stocks.filter((s: any) => (s.pead_score ?? 0) >= 70);
+          else if (multibaggerOnly) stocks = stocks.filter((s: any) => s.multibagger_setup);
           if (stocks.length === 0) return null;
           const meta = TIER_META[tier];
-          const isOpen = expanded[tier];
+          // PATCH 1017 — force-expand tiers when a filter is active so matches show immediately
+          const _filterActive = eliteOnly || peadOnly || multibaggerOnly;
+          const isOpen = _filterActive ? true : expanded[tier];
           return (
             <div key={tier} style={{ backgroundColor: '#0D1623', border: '1px solid #1A2540', borderLeft: `4px solid ${meta.color}`, borderRadius: 12 }}>
               <button onClick={() => setExpanded((s) => ({ ...s, [tier]: !s[tier] }))}
