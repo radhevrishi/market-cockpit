@@ -12,7 +12,7 @@ COPY . .
 
 # Build Next.js for production
 ENV NEXT_TELEMETRY_DISABLED=1
-ENV NODE_OPTIONS=--max-old-space-size=2048
+ENV NODE_OPTIONS=--max-old-space-size=4096
 RUN npm run build
 
 EXPOSE 3000
