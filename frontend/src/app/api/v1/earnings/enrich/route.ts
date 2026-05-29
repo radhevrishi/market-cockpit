@@ -248,7 +248,7 @@ async function fetchScreenerForSymbol(symbol: string): Promise<any | null> {
 }
 
 // ─── Yahoo fetcher ─────────────────────────────────────────────────────────
-async function fetchYahooForSymbol(symbol: string): Promise<any | null> {
+async function fetchYahooForSymbol(symbol: string, filedHint?: string): Promise<any | null> {  // PATCH 0986
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}.NS?range=1y&interval=1d`;
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), YAHOO_TIMEOUT_MS);
@@ -265,20 +265,55 @@ async function fetchYahooForSymbol(symbol: string): Promise<any | null> {
     for (let i = closes.length - 1; i >= 0; i--) {
       if (closes[i] != null && Number.isFinite(closes[i] as number)) { lastIdx = i; lastClose = closes[i]!; break; }
     }
-    const prevClose = lastIdx >= 1 ? closes[lastIdx - 1] : null;
-    const openToday = lastIdx >= 0 ? opens[lastIdx] : null;
-    const gap = (openToday != null && prevClose != null && prevClose > 0) ? ((openToday - prevClose) / prevClose) * 100 : null;
-    const d1 = (lastClose != null && prevClose != null && prevClose > 0) ? ((lastClose - prevClose) / prevClose) * 100 : null;
+    // PATCH 0986 — if filedHint given, find FILING-DATE index using r.timestamp[]
+    // so D1 reflects POST-EARNINGS reaction, not today's daily move.
+    const timestamps: number[] = r.timestamp || [];
+    let filedIdx = -1;
+    if (filedHint && timestamps.length === closes.length) {
+      // filedHint is YYYY-MM-DD; convert to UTC midnight epoch seconds for fair compare
+      const filedMs = Date.parse(filedHint);
+      if (!Number.isNaN(filedMs)) {
+        const filedDay = Math.floor(filedMs / 86400_000);
+        // Pick the first close whose date >= filedDay (handles after-hours filings → next trading day)
+        for (let i = 0; i < timestamps.length; i++) {
+          const tsDay = Math.floor((timestamps[i] * 1000) / 86400_000);
+          if (tsDay >= filedDay && closes[i] != null && Number.isFinite(closes[i] as number)) {
+            filedIdx = i;
+            break;
+          }
+        }
+      }
+    }
+    // Reaction index: filedIdx if known, else lastIdx
+    const reactionIdx = filedIdx >= 0 ? filedIdx : lastIdx;
+    // Search backward for first non-null prev close (handles holiday gaps)
+    let prevClose: number | null = null;
+    if (reactionIdx >= 1) {
+      for (let i = reactionIdx - 1; i >= 0 && i >= reactionIdx - 5; i--) {
+        if (closes[i] != null && Number.isFinite(closes[i] as number)) {
+          prevClose = closes[i]!;
+          break;
+        }
+      }
+    }
+    const reactionClose = reactionIdx >= 0 ? closes[reactionIdx] : null;
+    const openReaction = reactionIdx >= 0 ? opens[reactionIdx] : null;
+    const gap = (openReaction != null && prevClose != null && prevClose > 0) ? ((openReaction - prevClose) / prevClose) * 100 : null;
+    const d1 = (reactionClose != null && prevClose != null && prevClose > 0) ? ((reactionClose - prevClose) / prevClose) * 100 : null;
     // MA helpers
     const sma = (window: number, idx: number): number | null => {
+      // PATCH 0986 — skip null closes (Indian-stock holiday gaps).
+      // Require ≥ 80% of window to be valid so MAs survive normal Q4 calendar
+      // (Mahavir Jayanti / Eid / Diwali) instead of returning null forever.
       if (idx < window - 1) return null;
       let s = 0, n = 0;
       for (let i = idx - window + 1; i <= idx; i++) {
         const v = closes[i];
-        if (v == null) return null;
+        if (v == null || !Number.isFinite(v as number)) continue;
         s += v; n++;
       }
-      return n > 0 ? s / n : null;
+      if (n < Math.ceil(window * 0.8)) return null;
+      return s / n;
     };
     const ma50 = sma(50, lastIdx);
     const ma150 = sma(150, lastIdx);
@@ -615,12 +650,12 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   // PATCH 0519 — Worker (indiaearninghub) added as PRIMARY source. Returns
   // pre-parsed Screener financials via Cloudflare's network — never blocked.
   // When Worker returns valid data, we still fetch the others as overlays.
-  const tryVariant = async (sym: string) => {
+  const tryVariant = async (sym: string, filedHint?: string) => {  // PATCH 0986
     const [worker, nse, screener, yahoo, yahooFund] = await Promise.all([
       fetchWorkerStock(sym),
       fetchNseFinancials(sym),
       fetchScreenerForSymbol(sym),
-      fetchYahooForSymbol(sym),
+      fetchYahooForSymbol(sym, filedHint),  // PATCH 0986
       fetchYahooFundamentals(sym),
     ]);
     const anyHit = worker || nse || screener || yahoo || yahooFund;
@@ -633,11 +668,11 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   let worker: any = null, nse: any = null, screener: any = null, yahoo: any = null, yahooFund: any = null;
   if (symVariants.length === 1) {
     // Fast path — no special chars in symbol, no variant fan-out needed
-    const r = await tryVariant(symbol);
+    const r = await tryVariant(symbol, filedHint);  // PATCH 0986
     worker = r.worker; nse = r.nse; screener = r.screener; yahoo = r.yahoo; yahooFund = r.yahooFund;
   } else {
     // Slow path — fan-out to variants in parallel, pick the most-populated.
-    const results = await Promise.all(symVariants.map(tryVariant));
+    const results = await Promise.all(symVariants.map((v) => tryVariant(v, filedHint)));  // PATCH 0986
     // Score each result by how many sources returned non-null (Worker counts double — it's pre-parsed)
     const scored = results.map(r => ({
       ...r,
