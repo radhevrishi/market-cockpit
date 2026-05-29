@@ -946,8 +946,13 @@ export async function GET(req: Request) {
   const chunks: string[][] = [];
   for (let i = 0; i < symbols.length; i += 40) chunks.push(symbols.slice(i, i + 40));
 
+  // PATCH 1014 — force nocache=1 so graded always gets fresh enrich data.
+  // Previous behavior: graded called enrich WITHOUT nocache → enrich returned
+  // any stale empty entries (transient worker failures got cached for 5min
+  // with source=null + opm=null). Graded then cached that null and propagated.
+  // Fix: bypass enrich's own KV cache. Graded cache still protects perf.
   const enrichResponses = await Promise.all(chunks.map((chunk) =>
-    _doEnrichSelfFetch(`${base.protocol}//${base.host}/api/v1/earnings/enrich?symbols=${chunk.join(',')}&filed=${date}`, { cache: 'no-store' })
+    _doEnrichSelfFetch(`${base.protocol}//${base.host}/api/v1/earnings/enrich?symbols=${chunk.join(',')}&filed=${date}&nocache=1`, { cache: 'no-store' })
       .then((r) => r.ok ? r.json() : { data: {} })
       .catch(() => ({ data: {} }))
   ));
