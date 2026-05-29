@@ -489,7 +489,16 @@ export async function GET(request: Request) {
   // Route-level cache check (5 min TTL per month+index combo)
   const cacheKey = `${market}_${month || 'current'}_${indexFilter || 'all'}`;
   const cached = _earningsRouteCache.get(cacheKey);
-  if (!force && cached && Date.now() - cached.ts < EARNINGS_ROUTE_CACHE_TTL) {
+  // PATCH 1028 — never serve an EMPTY cached result for a PAST month. The NSE
+  // live feed returns 0 for past months (rolled out of its window), and that
+  // empty was getting memoised here for 5 min, short-circuiting BEFORE the
+  // Patch-1026 durable recovery could run — so the calendar flickered between
+  // "264 filings" (force=1, recovery ran) and "No filings" (cached empty served).
+  // Past months are immutable, so an empty cache entry for one is never the
+  // truth we want to serve; fall through to live + recovery instead.
+  const _isPastMonthTop = !!month && month < new Date().toISOString().slice(0, 7);
+  const _cachedEmptyPast = _isPastMonthTop && (!cached?.data?.results || cached.data.results.length === 0);
+  if (!force && cached && Date.now() - cached.ts < EARNINGS_ROUTE_CACHE_TTL && !_cachedEmptyPast) {
     return NextResponse.json(cached.data, {
       headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' }, // PATCH 0818
     });
@@ -1233,8 +1242,12 @@ export async function GET(request: Request) {
       updatedAt: new Date().toISOString(),
     };
 
-    // Save to route cache
-    _earningsRouteCache.set(cacheKey, { data: responseData, ts: Date.now() });
+    // Save to route cache — but NEVER memoise an empty result for a past
+    // month (PATCH 1028). That stale empty would short-circuit the durable
+    // recovery on the next request and blank the calendar for 5 min.
+    if (!(_isPastMonthTop && results.length === 0)) {
+      _earningsRouteCache.set(cacheKey, { data: responseData, ts: Date.now() });
+    }
 
     return NextResponse.json(responseData, {
       headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' }, // PATCH 0818
