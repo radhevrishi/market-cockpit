@@ -2385,6 +2385,19 @@ export default function EarningsOpportunitiesPage() {
               🌙 Slow Backfill (80d · 2h)
             </button>
           )}
+          {/* PATCH 1003 — 60d variant of Slow Backfill */}
+          {!slowBf?.running && (
+            <button
+              onClick={() => startSlowBackfill(60)}
+              title="Politely backfills 60 weekdays over ~90 minutes. One request every 90s — never trips Screener rate limits."
+              style={{
+                padding: '4px 10px', borderRadius: 6,
+                border: '1px solid #6366F140', background: '#6366F108',
+                color: '#A5B4FC', fontSize: 11, fontWeight: 700,
+                cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4,
+              }}>
+              🌙 Slow Backfill (60d · 1.5h)
+          )}
           {slowBf?.running && (
             <button
               onClick={stopSlowBackfill}
@@ -3462,11 +3475,13 @@ function EarningsCard({ stock, isFresh }: { stock: ParsedEarning; isFresh?: bool
       )}
 
       {/* ── Three metric tiles + score ────────────────────────────────────── */}
+      {/* PATCH 1003 — 2x3 grid: 4 metrics + score (was 2x2 = 3 metrics + score) */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
         <MetricTile label="SALES YOY"  pct={stock.sales_yoy_pct}      curr={fmtCr(stock.sales_curr_cr)} prev={fmtCr(stock.sales_prev_cr)} />
         <MetricTile label="NET PROFIT" pct={stock.net_profit_yoy_pct} curr={fmtCr(stock.pat_curr_cr)}   prev={fmtCr(stock.pat_prev_cr)} />
         <MetricTile label="EPS YOY"    pct={stock.eps_yoy_pct}        curr={fmtPx(stock.eps_curr)}     prev={fmtPx(stock.eps_prev)} />
-        <div style={{ padding: '6px 10px', backgroundColor: '#0D1623', borderRadius: 6, border: `1px solid ${tierColor}40`, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+        <OpmTile opm={(stock as any).opm_pct} opmPrev={(stock as any).opm_prev_pct} />
+        <div style={{ padding: '6px 10px', backgroundColor: '#0D1623', borderRadius: 6, border: `1px solid ${tierColor}40`, display: 'flex', flexDirection: 'column', justifyContent: 'center', gridColumn: 'span 2' }}>
           <div style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.6px' }}>SCORE</div>
           <div style={{ fontSize: 22, fontWeight: 900, color: tierColor, lineHeight: 1, marginTop: 2 }}>{stock.composite_score}</div>
         </div>
@@ -3686,6 +3701,38 @@ function CalendarView({ data, loading, from, to, onPickDate }: { data: CalendarP
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// PATCH 1003 — OPM (Operating Profit Margin) tile.
+// Displays current OPM % and YoY change in percentage points, color-coded
+// so user can see margin direction at a glance — feeds the margin-gate
+// rule introduced in Patch 1000.
+function OpmTile({ opm, opmPrev }: { opm: number | null | undefined; opmPrev: number | null | undefined }) {
+  const hasOpm = typeof opm === 'number' && Number.isFinite(opm);
+  const hasPrev = typeof opmPrev === 'number' && Number.isFinite(opmPrev);
+  const delta = hasOpm && hasPrev ? (opm as number) - (opmPrev as number) : null;
+  const deltaColor = delta == null ? '#6B7A8D'
+                    : delta >= 1 ? '#10B981'
+                    : delta >= -0.5 ? '#94A3B8'
+                    : '#EF4444';
+  const deltaLabel = delta == null ? '—'
+                    : `${delta >= 0 ? '+' : ''}${delta.toFixed(1)} pp`;
+  return (
+    <div style={{ padding: '6px 10px', backgroundColor: '#0D1623', borderRadius: 6, border: '1px solid #1A2840', display: 'flex', flexDirection: 'column', gap: 1 }}>
+      <div style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.6px' }}>OPM MARGIN</div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+        <div style={{ fontSize: 16, fontWeight: 800, color: hasOpm ? '#E6EDF3' : '#6B7A8D', lineHeight: 1 }}>
+          {hasOpm ? `${(opm as number).toFixed(1)}%` : '—'}
+        </div>
+        <div style={{ fontSize: 11, fontWeight: 700, color: deltaColor }}>
+          {deltaLabel}
+        </div>
+      </div>
+      <div style={{ fontSize: 9, color: '#94A3B8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {hasPrev ? `vs ${(opmPrev as number).toFixed(1)}%` : 'prior n/a'}
       </div>
     </div>
   );
