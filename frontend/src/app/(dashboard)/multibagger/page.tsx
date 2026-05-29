@@ -4586,6 +4586,11 @@ function MultibaggerAnalytics({
     const strongBuy = stocks
       .filter((s) => {
         if (!(s.grade === 'A+' || s.grade === 'A')) return false;
+        // PATCH 0988 — defense in depth (avoid set computed below this hook,
+        // so we re-check the same red-flag conditions here)
+        const crit = s.redFlagSummary?.critical ?? 0;
+        const struc = s.redFlagSummary?.structural ?? 0;
+        if (crit > 0 || struc > 0) return false;
         const cb = isInCb(s.symbol);
         const sectorHot = (sectorAvgLookup[s.sector || 'Unclassified'] ?? 0) >= 60;
         if (!cb && !sectorHot) return false;
@@ -4600,11 +4605,14 @@ function MultibaggerAnalytics({
       })
       .sort((a, b) => b.score - a.score);
 
-    // 📈 RE-RATING — score up ≥5 vs prev, still grade A/A+
+    // 📈 RE-RATING — score up ≥5 vs prev, still grade A/A+ and not flagged
     const rerating = stocks
       .filter((s) => typeof s.prevScore === 'number'
         && (s.score - (s.prevScore as number)) >= 5
-        && (s.grade === 'A+' || s.grade === 'A'))
+        && (s.grade === 'A+' || s.grade === 'A')
+        // PATCH 0988 — exclude flagged stocks even if score jumped
+        && (s.redFlagSummary?.critical ?? 0) === 0
+        && (s.redFlagSummary?.structural ?? 0) === 0)
       .sort((a, b) => (b.score - (b.prevScore as number)) - (a.score - (a.prevScore as number)));
 
     // PATCH 0587 — Split AVOID into TWO buckets per user feedback:
@@ -4786,10 +4794,21 @@ function MultibaggerAnalytics({
     const top3Pct = aRoster.length > 0 ? Math.round((top3Count / aRoster.length) * 100) : 0;
     const concentrationRisk = top3Pct > 60 && aRoster.length >= 8;
 
-    // Top picks expanded to 25
-    const topPicks = [...stocks].sort((a, b) => b.score - a.score).slice(0, 25);
+    // PATCH 0988 — single-classification precedence: AVOID is terminal.
+    // Build a stable Set of AVOID-classified symbols, then EXCLUDE them
+    // from every positive-classification section so the same stock never
+    // appears in both AVOID and BUY/TOP 25/MULTI-CONFIRMED/CONVICTION.
+    const _avoidSyms = new Set(avoid.map((s) => s.symbol));
+    // Top picks expanded to 25 — excludes AVOID
+    const topPicks = [...stocks]
+      .filter((s) => !_avoidSyms.has(s.symbol))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 25);
 
-    const convictionOverlap = stocks.filter((s) => isInCb(s.symbol));
+    // Conviction overlap also excludes AVOID (a flagged stock shouldn't
+    // surface as a "strongest decision-ready candidate" just because the
+    // CB bench has it from an old quarter).
+    const convictionOverlap = stocks.filter((s) => isInCb(s.symbol) && !_avoidSyms.has(s.symbol));
 
     // PATCH 0578 — Operating Leverage Cluster scores. Compute on the raw
     // India rows (which carry the per-row fundamentals the cluster formula
