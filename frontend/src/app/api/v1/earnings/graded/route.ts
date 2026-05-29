@@ -378,6 +378,17 @@ function gradeRow(row: any): ParsedEarning | null {
     }
   }
 
+  // PATCH 1034 — Liquidity / thin-float gate. A name that barely trades can't be
+  // built or exited at size, so it doesn't belong in the top conviction tiers.
+  // Demote (never delete) + tag. Missing ADTV is NOT punished (data gap ≠ illiquid).
+  const _adtv = (typeof row?.adtv_cr === 'number' && Number.isFinite(row.adtv_cr)) ? row.adtv_cr : null;
+  const THIN_ADTV_CR = 1;  // < ₹1 Cr/day median traded value = thin float / illiquid
+  const _thinFloat = _adtv != null && _adtv < THIN_ADTV_CR;
+  if (_thinFloat) {
+    if (tier === 'BLOCKBUSTER' || tier === 'STRONG') tier = 'MIXED';
+    if (!caveat_tags.includes('thin float')) caveat_tags.push('thin float');
+  }
+
   // Narrative
   const co = row.company || row.symbol;
   const q = row.quarter || 'Q4';
@@ -408,6 +419,7 @@ function gradeRow(row: any): ParsedEarning | null {
     && stage !== 4
     && (rs == null || rs >= 60)
     && !(row?.pat_prev_cr != null && row.pat_prev_cr < 0)  // PATCH 1008 — no turnaround base in ELITE
+    && !_thinFloat  // PATCH 1034 — thin float can't be ELITE
   );
   const _sc = (v: number | null | undefined, ranges: [number, number][]): number => {
     if (v == null || !Number.isFinite(v)) return 0;
@@ -449,6 +461,7 @@ function gradeRow(row: any): ParsedEarning | null {
     quarter: row.quarter || 'Q4',
     market_cap_bucket: row.market_cap_bucket,
     market_cap_cr: row.market_cap_cr ?? null,
+    adtv_cr: _adtv,  // PATCH 1034 — liquidity (median ₹Cr/day)
     pe: row.pe ?? null,
     price: row.current_price ?? null,
     sales_yoy_pct: salesY, net_profit_yoy_pct: patY, eps_yoy_pct: epsY,
