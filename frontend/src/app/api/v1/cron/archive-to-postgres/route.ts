@@ -69,7 +69,10 @@ export async function GET(req: Request) {
   const provided = searchParams.get('secret') || '';
   const expected = process.env.CRON_SECRET || '';
   const vercelCron = req.headers.get('x-vercel-cron');
-  if (!vercelCron && !(provided === ONESHOT || (expected !== '' && provided === expected))) {
+  // Allow when: cron header present, one-shot token, matching secret, OR no
+  // CRON_SECRET configured on the server (consistent with the other warming
+  // crons, which run open when unset). Only block a wrong secret when one is set.
+  if (!vercelCron && provided !== ONESHOT && expected !== '' && provided !== expected) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
   if (!dbAvailable()) return NextResponse.json({ error: 'DATABASE_URL not set' }, { status: 503 });
