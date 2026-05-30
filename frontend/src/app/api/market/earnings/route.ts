@@ -553,7 +553,7 @@ export async function GET(request: Request) {
           if (snap.rows.length === 0) {
             // No Postgres record => UNKNOWN (not zero). Never query live for UI.
             return NextResponse.json(
-              { results: [], summary: { total: 0, excellent: 0, great: 0, good: 0, ok: 0, weak: 0, upcoming: 0 }, ..._base, coverage: 'unknown', source: 'Postgres (no record for month)' },
+              { results: [], summary: { total: 0, excellent: 0, great: 0, good: 0, ok: 0, weak: 0, upcoming: 0 }, ..._base, coverage: 'unknown', ingested_from: null, ingested_to: null, source: 'Postgres (no record for month)' },
               { headers: { 'Cache-Control': 's-maxage=120, stale-while-revalidate=600' } },
             );
           }
@@ -569,6 +569,11 @@ export async function GET(request: Request) {
             if (filt.length) pgResults = filt;
           }
           pgResults.sort((a: any, b: any) => new Date(b.resultDate).getTime() - new Date(a.resultDate).getTime());
+          // Ingested window for THIS month = [earliest, latest] captured result date.
+          // Used to distinguish ZERO_FILINGS (inside window) from UNKNOWN (outside).
+          const _dates = pgResults.map((r: any) => String(r?.resultDate || '').slice(0, 10)).filter(Boolean).sort();
+          const ingested_from = _dates.length ? _dates[0] : null;
+          const ingested_to = _dates.length ? _dates[_dates.length - 1] : null;
           const _q = (name: string) => pgResults.filter((r: any) => r.quality === name).length;
           const seedCount = pgResults.filter((r: any) => r.source === 'seed').length;
           const payload = {
@@ -577,6 +582,8 @@ export async function GET(request: Request) {
             ..._base,
             stockUniverse: pgResults.length,
             coverage: 'known',
+            ingested_from,
+            ingested_to,
             source_breakdown: { seed: seedCount, live: pgResults.length - seedCount },
             source: 'Postgres (canonical)',
             generated_at: snap.rows[0].generated_at,
