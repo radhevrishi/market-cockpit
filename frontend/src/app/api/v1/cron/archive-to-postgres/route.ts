@@ -106,6 +106,9 @@ export async function GET(req: Request) {
         rawRows.push([source, `${symbol}:${resultDate}`, symbol, company, 'EARNINGS', resultDate, JSON.stringify(e), cs]);
         evRows.push([symbol, company, fy, fq, resultDate, source]);
       }
+      // Per-date event counts (for explicit ingestion_coverage).
+      const dateCounts = new Map<string, number>();
+      for (const rr of rawRows) { const dd = rr[5]; dateCounts.set(dd, (dateCounts.get(dd) || 0) + 1); }
 
       // Dedupe earnings_events rows within this batch by (symbol, fy, fq) - a single
       // INSERT..ON CONFLICT DO UPDATE cannot touch the same target row twice. Keep last.
@@ -165,6 +168,25 @@ export async function GET(req: Request) {
                                            generated_at = now()`,
         [month, JSON.stringify(events), events.length, companies.size, sources.size]
       );
+
+      // ---- ingestion_coverage (explicit: every date in the captured window is INGESTED) ----
+      const _covDates = [...dateCounts.keys()].sort();
+      if (_covDates.length) {
+        const _src = [...sources][0] || 'NSE';
+        const _covRows: any[][] = [];
+        for (let _d = new Date(_covDates[0] + 'T00:00:00Z'); _d <= new Date(_covDates[_covDates.length - 1] + 'T00:00:00Z'); _d.setUTCDate(_d.getUTCDate() + 1)) {
+          const _ds = _d.toISOString().slice(0, 10);
+          _covRows.push([market, _ds, 'INGESTED', _src, dateCounts.get(_ds) || 0]);
+        }
+        const _v: string[] = []; const _f: any[] = []; let _p = 1;
+        for (const r of _covRows) { _v.push(`($${_p++},$${_p++},$${_p++},$${_p++},$${_p++})`); _f.push(...r); }
+        await pool.query(
+          `INSERT INTO ingestion_coverage (market, cov_date, status, source, events_count)
+           VALUES ${_v.join(',')}
+           ON CONFLICT (market, cov_date) DO UPDATE SET status = 'INGESTED', source = EXCLUDED.source, events_count = EXCLUDED.events_count, captured_at = now()`,
+          _f,
+        );
+      }
 
       report.push({ month, snapshot: events.length, raw_inserted: rawInserted, events_upserted: evUpserted, companies: companies.size, sources: [...sources] });
     }
