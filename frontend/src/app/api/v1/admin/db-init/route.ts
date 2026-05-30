@@ -109,6 +109,16 @@ CREATE TABLE IF NOT EXISTS earnings_consensus (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT earnings_consensus_uniq UNIQUE (symbol, fiscal_year, fiscal_quarter)
 );
+
+CREATE TABLE IF NOT EXISTS ingestion_coverage (
+  market TEXT NOT NULL,
+  cov_date DATE NOT NULL,
+  status TEXT NOT NULL,            -- INGESTED | OUT_OF_WINDOW | FAILED
+  source TEXT,
+  events_count INT NOT NULL DEFAULT 0,
+  captured_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (market, cov_date)
+);
 `;
 
 export async function GET(req: Request) {
