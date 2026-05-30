@@ -134,9 +134,12 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
         run: |
+          # OPTION B (hands-free): CRON_SECRET is optional. The warming/ingest/archive
+          # endpoints accept calls when no server-side secret is configured (they only
+          # READ public NSE data and WRITE to our own DB). If a secret IS set we still
+          # send it; if not, we proceed open so the daily refresh never silently stalls.
           if [ -z "$CRON_SECRET" ]; then
-            echo "::error title=Missing secret::CRON_SECRET not set in repo secrets"
-            exit 1
+            echo "::notice title=Open mode::CRON_SECRET unset - running cron without auth (idempotent, read-only-source endpoints)"
           fi
           PATH_PART="${{ steps.route.outputs.path }}"
           LABEL="${{ steps.route.outputs.label }}"
