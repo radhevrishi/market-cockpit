@@ -18,6 +18,8 @@ import { getCalendarEntriesInRange } from '@/lib/earnings-week-seed';
 // PATCH 1026 — durable calendar memory (KV) so past months don't go blank
 // when NSE's live feed rolls them out of its recent window.
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
+// PHASE 2 — Postgres is the SINGLE SOURCE OF TRUTH for calendar rendering.
+import { getPool, dbAvailable } from '@/lib/db';
 // PATCH 1030 — eviction-proof static seed for completed past months (Upstash
 // free tier evicts KV under memory pressure; this lives in the deploy bundle).
 import { CALENDAR_SEEDS } from '@/data/calendar-seeds';
@@ -524,6 +526,73 @@ export async function GET(request: Request) {
     }
 
     const expectedQuarter = getExpectedQuarter(fromDate);
+
+    // ════════════════════════════════════════════════════════════════════
+    // PHASE 2 — POSTGRES = SINGLE SOURCE OF TRUTH (calendar read path).
+    // The calendar UI reads ONLY from Postgres (calendar_snapshots, the
+    // materialized per-month canonical view). NSE/BSE live + KV are NOT
+    // consulted for rendering. The live-fetch logic below runs ONLY as an
+    // ingestion job, under ?ingest=1. Semantics: a month with NO Postgres
+    // row is "unknown" (coverage:'unknown'), never silently "zero".
+    // ════════════════════════════════════════════════════════════════════
+    const ingestMode = searchParams.get('ingest') === '1';
+    if (!ingestMode && dbAvailable()) {
+      const monthKey = month || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const _base = {
+        quarter: expectedQuarter,
+        dateRange: { from: fromDate.toISOString().split('T')[0], to: toDate.toISOString().split('T')[0] },
+        updatedAt: new Date().toISOString(),
+      };
+      try {
+        const pool = getPool();
+        if (pool) {
+          const snap = await pool.query(
+            'SELECT snapshot_json, event_count, generated_at FROM calendar_snapshots WHERE month = $1',
+            [monthKey],
+          );
+          if (snap.rows.length === 0) {
+            // No Postgres record => UNKNOWN (not zero). Never query live for UI.
+            return NextResponse.json(
+              { results: [], summary: { total: 0, excellent: 0, great: 0, good: 0, ok: 0, weak: 0, upcoming: 0 }, ..._base, coverage: 'unknown', source: 'Postgres (no record for month)' },
+              { headers: { 'Cache-Control': 's-maxage=120, stale-while-revalidate=600' } },
+            );
+          }
+          const rawEvents: any[] = Array.isArray(snap.rows[0].snapshot_json) ? snap.rows[0].snapshot_json : [];
+          let pgResults = rawEvents.map((e: any) => ({
+            ...e,
+            // Lock source semantics: deterministic seed vs live marking.
+            source: /seed/i.test(String(e?.source || '')) ? 'seed' : 'live',
+          }));
+          if (indexFilter) {
+            const fk = indexFilter.toUpperCase().replace(/\s+/g, '');
+            const filt = pgResults.filter((r: any) => Array.isArray(r?.indices) && r.indices.some((x: any) => String(x).toUpperCase().replace(/\s+/g, '') === fk));
+            if (filt.length) pgResults = filt;
+          }
+          pgResults.sort((a: any, b: any) => new Date(b.resultDate).getTime() - new Date(a.resultDate).getTime());
+          const _q = (name: string) => pgResults.filter((r: any) => r.quality === name).length;
+          const seedCount = pgResults.filter((r: any) => r.source === 'seed').length;
+          const payload = {
+            results: pgResults,
+            summary: { total: pgResults.length, excellent: _q('Excellent'), great: _q('Great'), good: _q('Good'), ok: _q('OK'), weak: _q('Weak'), upcoming: _q('Upcoming') },
+            ..._base,
+            stockUniverse: pgResults.length,
+            coverage: 'known',
+            source_breakdown: { seed: seedCount, live: pgResults.length - seedCount },
+            source: 'Postgres (canonical)',
+            generated_at: snap.rows[0].generated_at,
+          };
+          _earningsRouteCache.set(cacheKey, { data: payload, ts: Date.now() });
+          return NextResponse.json(payload, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } });
+        }
+      } catch (e) {
+        // PG read error: surface as unknown rather than silently falling to live.
+        return NextResponse.json(
+          { results: [], summary: { total: 0, excellent: 0, great: 0, good: 0, ok: 0, weak: 0, upcoming: 0 }, ..._base, coverage: 'unknown', source: 'Postgres (read error)', error: String(e) },
+          { status: 200 },
+        );
+      }
+    }
+
 
     const fmt = (d: Date) => {
       const dd = d.getDate().toString().padStart(2, '0');
