@@ -16,7 +16,10 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import toast from 'react-hot-toast';
-import { Copy, Download, ExternalLink } from 'lucide-react';
+import { Copy, Download, ExternalLink, FileSpreadsheet } from 'lucide-react';
+// PATCH 1050 — One-click Excel (.xlsx) export of the full conviction bench.
+// SheetJS is already a dependency (used by /portfolio + screener imports).
+import * as XLSX from 'xlsx';
 
 interface GroupedTickers {
   label: string;        // 'BLOCKBUSTER', 'STRONG', etc.
@@ -271,6 +274,63 @@ export default function TickerExportToolbar({
     toast.success(`Downloaded ${subset.length} rows (${nseCount} NSE + ${bseCount} BSE, ${nameCount} with names) — ready for Screener.in import`);
   };
 
+  // PATCH 1050 — One-click Excel (.xlsx) export of the full bench.
+  //
+  // Unlike the CSV/txt exports (ticker-only), this produces a rich, formatted
+  // workbook with every piece of content we have for the current filtered list:
+  //   #, Ticker, Company, NSE Code, BSE Code, Tier, Conviction, Exchange
+  // Tier + Conviction are derived from the `groups` prop (tier groupings such
+  // as BLOCKBUSTER/STRONG/EXCELLENT plus the 'Conviction' overlay group), so
+  // the sheet reflects exactly what the user sees on screen. Built fully
+  // client-side via SheetJS and downloaded immediately on click.
+  const tierForTicker = (up: string): string => {
+    if (!groups) return '';
+    for (const g of groups) {
+      if (/conviction/i.test(g.label)) continue; // conviction handled as its own column
+      if (g.tickers.some((x) => x.toUpperCase().trim() === up)) return g.label;
+    }
+    return '';
+  };
+
+  const downloadXlsx = (subset: string[], label: string) => {
+    if (subset.length === 0) { toast.error(`No ${label} tickers to export`); return; }
+    const convictionSet = new Set<string>(
+      (groups || [])
+        .filter((g) => /conviction/i.test(g.label))
+        .flatMap((g) => g.tickers.map((t) => t.toUpperCase().trim()))
+    );
+    const header = ['#', 'Ticker', 'Company', 'NSE Code', 'BSE Code', 'Tier', 'Conviction', 'Exchange'];
+    const aoa: (string | number)[][] = [header];
+    subset.forEach((t, i) => {
+      const up = t.toUpperCase().trim();
+      const bare = up.replace(/^(NSE|BSE|NYSE|NASDAQ):/i, '');
+      const isBse = /^\d{6}$/.test(bare);
+      const co = tickerCompanyMap?.[up];
+      const name = co && co.trim() && co.trim().toUpperCase() !== bare ? decodeHtmlEntities(co.trim()) : '';
+      aoa.push([
+        i + 1,
+        bare,
+        name,
+        isBse ? '' : bare,
+        isBse ? bare : '',
+        tierForTicker(up),
+        convictionSet.has(up) ? 'Yes' : 'No',
+        isBse ? 'BSE' : 'NSE',
+      ]);
+    });
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    // Column widths for a clean, readable sheet.
+    ws['!cols'] = [{ wch: 5 }, { wch: 14 }, { wch: 40 }, { wch: 12 }, { wch: 12 }, { wch: 16 }, { wch: 11 }, { wch: 10 }];
+    // Auto-filter across the whole table + freeze the header row.
+    ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: aoa.length - 1, c: header.length - 1 } }) };
+    (ws as any)['!freeze'] = { xSplit: 0, ySplit: 1, topLeftCell: 'A2', activePane: 'bottomLeft', state: 'frozen' };
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Conviction Beats');
+    const fname = `${filenameHint}_${label}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    XLSX.writeFile(wb, fname);
+    toast.success(`Downloaded ${subset.length} rows as Excel (.xlsx)`);
+  };
+
   const btnBase = {
     display: 'inline-flex',
     alignItems: 'center',
@@ -310,6 +370,19 @@ export default function TickerExportToolbar({
       </div>
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        {/* PATCH 1050 — One-click Excel export. Most prominent button: builds a
+            formatted .xlsx of the full bench (ticker, company, NSE/BSE code,
+            tier, conviction) and downloads it immediately. */}
+        <button
+          onClick={() => downloadXlsx(safeTickers, 'All')}
+          disabled={n === 0}
+          title={`Download all ${n} rows as a formatted Excel (.xlsx) — columns: Ticker, Company, NSE/BSE Code, Tier, Conviction. Opens in Excel/Sheets.`}
+          style={{ ...btnBase, border: '1px solid #1D6F42', background: '#1D6F42', color: '#FFFFFF' }}
+        >
+          <FileSpreadsheet style={{ width: 14, height: 14 }} />
+          Download Excel (.xlsx)
+        </button>
+
         <button
           onClick={() => copyTradingView(safeTickers, 'All')}
           disabled={n === 0}
