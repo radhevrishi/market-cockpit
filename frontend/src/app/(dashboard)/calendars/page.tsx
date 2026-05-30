@@ -26,6 +26,10 @@ interface EarningsResponse {
   stockUniverse: number;
   source: string;
   updatedAt: string;
+  // 3-state data contract: distinguish UNKNOWN (never ingested) from ZERO_FILINGS.
+  coverage?: string;            // 'known' | 'unknown' (month-level)
+  ingested_from?: string | null; // earliest captured result date in month
+  ingested_to?: string | null;   // latest captured result date in month
 }
 
 const THEME = {
@@ -431,9 +435,17 @@ export default function CalendarPage() {
                           </div>
                         )}
                         {/* AUDIT_100 #43 — weekday with no results gets a subtle · glyph */}
-                        {!hasResults && !isWeekend && (
-                          <span title="No filings reported" style={{ fontSize: '14px', color: THEME.textSecondary, opacity: 0.4, lineHeight: 1 }}>·</span>
-                        )}
+                        {!hasResults && !isWeekend && (() => {
+                          // MISSING != ZERO. A weekday with no rows is either:
+                          //  - ZERO_FILINGS  : date was inside the ingested window (confirmed no results)
+                          //  - UNKNOWN       : date was never ingested (outside source window) -> NOT zero
+                          const _from = data?.ingested_from || null;
+                          const _to = data?.ingested_to || null;
+                          const _unknown = data?.coverage === 'unknown' || !_from || !_to || cell.dateStr < _from || cell.dateStr > _to;
+                          return _unknown
+                            ? <span title="Data unavailable - this date was never ingested (outside source window). This is NOT zero filings." style={{ fontSize: '9px', fontWeight: 700, color: '#B45309', opacity: 0.85, lineHeight: 1 }}>n/a</span>
+                            : <span title="No filings reported (confirmed - date was ingested)" style={{ fontSize: '14px', color: THEME.textSecondary, opacity: 0.4, lineHeight: 1 }}>·</span>;
+                        })()}
                       </div>
                       {hasResults && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
