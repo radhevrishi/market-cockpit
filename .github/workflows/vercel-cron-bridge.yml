@@ -35,6 +35,9 @@ on:
     # Phase 1 - durable Postgres archive: persist each day's KV snapshot into
     # raw_filings + earnings_events + calendar_snapshots (idempotent, never destructive).
     - cron: '30 19 * * *'      # 19:30 UTC daily   -> archive-to-postgres (after evening filings settle)
+    # Ingestion: refresh the current-month KV snapshot from NSE/BSE (live = ingestion
+    # only). Runs BEFORE the archive cron so archive-to-postgres then persists KV->PG.
+    - cron: '0 18 * * *'       # 18:00 UTC daily   -> hub ingest (current month)
   workflow_dispatch:
     inputs:
       endpoint:
@@ -102,6 +105,10 @@ jobs:
             "30 19 * * *")
               echo "path=/api/v1/cron/archive-to-postgres?months=2" >> "$GITHUB_OUTPUT"
               echo "label=archive-to-postgres" >> "$GITHUB_OUTPUT"
+              ;;
+            "0 18 * * *")
+              echo "path=/api/market/earnings?ingest=1&force=1&month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+              echo "label=hub-ingest" >> "$GITHUB_OUTPUT"
               ;;
             *)
               # Manual dispatch path
