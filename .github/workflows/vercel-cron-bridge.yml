@@ -1,7 +1,7 @@
 name: Vercel Cron Bridge
 
-# ──────────────────────────────────────────────────────────────────────────────
-# PATCH 0799 — Bridge GitHub Actions cron schedules to existing Vercel endpoints.
+# ----------
+# PATCH 0799 - Bridge GitHub Actions cron schedules to existing Vercel endpoints.
 #
 # Vercel Hobby tier allows only 2 cron jobs; we have 7. This workflow lets us
 # keep the existing endpoint code (no refactor) while moving the trigger
@@ -11,27 +11,30 @@ name: Vercel Cron Bridge
 # with CRON_SECRET in the URL. Endpoints already accept this auth pattern.
 #
 # Required secrets:
-#   CRON_SECRET             — same value as Vercel env var (gates the endpoints)
+#   CRON_SECRET             - same value as Vercel env var (gates the endpoints)
 #
 # Schedule routing via github.event.schedule (matches the cron expression):
-# ──────────────────────────────────────────────────────────────────────────────
+# ----------
 
 on:
   schedule:
     # Times in UTC. IST = UTC + 5:30.
-    - cron: '0 1 * * *'        # 01:00 UTC daily   → refresh-earnings-calendar
-    - cron: '0 4 * * 1-5'      # 04:00 UTC Mon-Fri → intelligence/compute
-    - cron: '15 4 * * 1-5'     # 04:15 UTC Mon-Fri → earnings-guidance/ingest
-    - cron: '35 4 * * 1-5'     # 04:35 UTC Mon-Fri → movers-alert?mode=full
-    - cron: '50 4 * * 1-5'     # 04:50 UTC Mon-Fri → watchlist-alert?mode=full
-    - cron: '30 5 * * *'       # 05:30 UTC daily   → eo-blockbuster-alert (morning)
-    - cron: '30 15 * * *'      # 15:30 UTC daily   → eo-blockbuster-alert (evening)
-    # PATCH 1031 — pre-warm the Earnings Opportunities graded cache (last 7
+    - cron: '0 1 * * *'        # 01:00 UTC daily   -> refresh-earnings-calendar
+    - cron: '0 4 * * 1-5'      # 04:00 UTC Mon-Fri -> intelligence/compute
+    - cron: '15 4 * * 1-5'     # 04:15 UTC Mon-Fri -> earnings-guidance/ingest
+    - cron: '35 4 * * 1-5'     # 04:35 UTC Mon-Fri -> movers-alert?mode=full
+    - cron: '50 4 * * 1-5'     # 04:50 UTC Mon-Fri -> watchlist-alert?mode=full
+    - cron: '30 5 * * *'       # 05:30 UTC daily   -> eo-blockbuster-alert (morning)
+    - cron: '30 15 * * *'      # 15:30 UTC daily   -> eo-blockbuster-alert (evening)
+    # PATCH 1031 - pre-warm the Earnings Opportunities graded cache (last 7
     # days) on Railway so the page is always a warm hit (no Hard Refresh).
-    - cron: '0 3 * * *'        # 03:00 UTC daily   → prewarm-earnings (08:30 IST pre-market)
-    - cron: '0 6 * * *'        # 06:00 UTC daily   → prewarm-earnings (11:30 IST mid-session)
-    - cron: '0 11 * * *'       # 11:00 UTC daily   → prewarm-earnings (16:30 IST post-close)
-    - cron: '0 14 * * *'       # 14:00 UTC daily   → prewarm-earnings (19:30 IST evening filings)
+    - cron: '0 3 * * *'        # 03:00 UTC daily   -> prewarm-earnings (08:30 IST pre-market)
+    - cron: '0 6 * * *'        # 06:00 UTC daily   -> prewarm-earnings (11:30 IST mid-session)
+    - cron: '0 11 * * *'       # 11:00 UTC daily   -> prewarm-earnings (16:30 IST post-close)
+    - cron: '0 14 * * *'       # 14:00 UTC daily   -> prewarm-earnings (19:30 IST evening filings)
+    # Phase 1 - durable Postgres archive: persist each day's KV snapshot into
+    # raw_filings + earnings_events + calendar_snapshots (idempotent, never destructive).
+    - cron: '30 19 * * *'      # 19:30 UTC daily   -> archive-to-postgres (after evening filings settle)
   workflow_dispatch:
     inputs:
       endpoint:
@@ -46,6 +49,7 @@ on:
           - refresh-earnings-calendar
           - eo-blockbuster-alert
           - prewarm-earnings
+          - archive-to-postgres
 
 concurrency:
   group: vercel-cron-bridge-${{ github.event.schedule || github.event.inputs.endpoint || 'manual' }}
@@ -95,6 +99,10 @@ jobs:
               echo "path=/api/v1/cron/prewarm-earnings" >> "$GITHUB_OUTPUT"
               echo "label=prewarm-earnings" >> "$GITHUB_OUTPUT"
               ;;
+            "30 19 * * *")
+              echo "path=/api/v1/cron/archive-to-postgres?months=2" >> "$GITHUB_OUTPUT"
+              echo "label=archive-to-postgres" >> "$GITHUB_OUTPUT"
+              ;;
             *)
               # Manual dispatch path
               case "$INPUT" in
@@ -105,6 +113,7 @@ jobs:
                 refresh-earnings-calendar)   echo "path=/api/v1/cron/refresh-earnings-calendar" >> "$GITHUB_OUTPUT"; echo "label=cal-manual" >> "$GITHUB_OUTPUT" ;;
                 eo-blockbuster-alert)        echo "path=/api/bot/eo-blockbuster-alert" >> "$GITHUB_OUTPUT"; echo "label=eo-manual" >> "$GITHUB_OUTPUT" ;;
                 prewarm-earnings)            echo "path=/api/v1/cron/prewarm-earnings" >> "$GITHUB_OUTPUT"; echo "label=prewarm-manual" >> "$GITHUB_OUTPUT" ;;
+                archive-to-postgres)         echo "path=/api/v1/cron/archive-to-postgres?months=2" >> "$GITHUB_OUTPUT"; echo "label=archive-manual" >> "$GITHUB_OUTPUT" ;;
                 *)
                   echo "::error title=No route::Unknown schedule and no manual input"
                   exit 1
@@ -124,7 +133,7 @@ jobs:
           fi
           PATH_PART="${{ steps.route.outputs.path }}"
           LABEL="${{ steps.route.outputs.label }}"
-          # PATCH 1031 — app moved off Vercel (account suspended → HTTP 402).
+          # PATCH 1031 - app moved off Vercel (account suspended -> HTTP 402).
           # Point every scheduled job at the live Railway deployment, otherwise
           # NONE of the warming/alert crons reach the running site and the EO
           # page stays cold (forcing constant manual Hard Refresh / backfill).
@@ -138,19 +147,19 @@ jobs:
           fi
           # Don't print the URL with secret in logs
           SAFE_URL="$BASE$PATH_PART"
-          echo "▶ POST $SAFE_URL  (label=$LABEL)"
-          # Use --max-time 240s — most Vercel functions complete in 10-60s but
+          echo "> POST $SAFE_URL  (label=$LABEL)"
+          # Use --max-time 240s - most Vercel functions complete in 10-60s but
           # earnings-calendar refresh can take longer.
           STATUS=$(curl -s -o /tmp/response.json -w "%{http_code}" -X POST \
             -H 'Content-Type: application/json' \
             --max-time 240 \
             "$URL" || echo "000")
-          echo "← HTTP $STATUS"
+          echo "- HTTP $STATUS"
           head -c 600 /tmp/response.json || true
           echo
           if [ "$STATUS" != "200" ] && [ "$STATUS" != "201" ] && [ "$STATUS" != "202" ] && [ "$STATUS" != "204" ]; then
             echo "::warning title=$LABEL::Vercel returned HTTP $STATUS"
-            # Don't fail the workflow on non-2xx — endpoint may still have done work
+            # Don't fail the workflow on non-2xx - endpoint may still have done work
             exit 0
           fi
           echo "::notice title=$LABEL::Vercel endpoint responded $STATUS"
