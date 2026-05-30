@@ -30,6 +30,7 @@ interface EarningsResponse {
   coverage?: string;            // 'known' | 'unknown' (month-level)
   ingested_from?: string | null; // earliest captured result date in month
   ingested_to?: string | null;   // latest captured result date in month
+  ingested_dates?: string[];     // explicit INGESTED dates (no inference)
 }
 
 const THEME = {
@@ -441,7 +442,13 @@ export default function CalendarPage() {
                           //  - UNKNOWN       : date was never ingested (outside source window) -> NOT zero
                           const _from = data?.ingested_from || null;
                           const _to = data?.ingested_to || null;
-                          const _unknown = data?.coverage === 'unknown' || !_from || !_to || cell.dateStr < _from || cell.dateStr > _to;
+                          const _cov = data?.ingested_dates;
+                          const _useCov = Array.isArray(_cov) && _cov.length > 0;
+                          const _unknown = data?.coverage === 'unknown'
+                            ? true
+                            : _useCov
+                              ? !_cov!.includes(cell.dateStr)
+                              : (!_from || !_to || cell.dateStr < _from || cell.dateStr > _to);
                           return _unknown
                             ? <span title="Data unavailable - this date was never ingested (outside source window). This is NOT zero filings." style={{ fontSize: '9px', fontWeight: 700, color: '#B45309', opacity: 0.85, lineHeight: 1 }}>n/a</span>
                             : <span title="No filings reported (confirmed - date was ingested)" style={{ fontSize: '14px', color: THEME.textSecondary, opacity: 0.4, lineHeight: 1 }}>·</span>;
