@@ -1407,3 +1407,5 @@ export async function GET(request: Request) {
     }, { status: 500 });
   }
 }
+
+export async function POST(request: Request) { return GET(request); }
