@@ -1997,6 +1997,8 @@ export default function HomeDashboard() {
             <Link href="/movers"                 style={navChip('#10B981')}>📈 Movers</Link>
             <Link href="/multibagger"            style={navChip('#10B981')}>🚀 Multibagger</Link>
             <Link href="/portfolio"              style={navChip('#22D3EE')}>💼 My Book</Link>
+            {/* PATCH 1051 — News Feed chip. Alphabetical slot (My Book → News Feed → Playbook). Routes to existing /news page. */}
+            <Link href="/news"                   style={navChip('#A78BFA')}>📰 News Feed</Link>
             {/* PATCH 0776 — 📑 Order Book + 🏛 Rating Actions chips removed (modules deleted). */}
             <Link href="/playbook"               style={navChip('#F59E0B')}>📚 Playbook</Link>
             <Link href="/orders"                 style={navChip('#22D3EE')}>📡 Signals</Link>
