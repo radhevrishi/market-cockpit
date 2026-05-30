@@ -104,9 +104,19 @@ export async function GET(req: Request) {
         evRows.push([symbol, company, fy, fq, resultDate, source]);
       }
 
+      // Dedupe earnings_events rows within this batch by (symbol, fy, fq) - a single
+      // INSERT..ON CONFLICT DO UPDATE cannot touch the same target row twice. Keep last.
+      const evMap = new Map<string, any[]>();
+      for (const r of evRows) evMap.set(`${r[0]}|${r[2]}|${r[3]}`, r);
+      const evDedup = [...evMap.values()];
+      // Dedupe raw rows by checksum too (cosmetic; DO NOTHING already tolerates dups).
+      const rawMap = new Map<string, any[]>();
+      for (const r of rawRows) rawMap.set(r[7], r);
+      const rawDedup = [...rawMap.values()];
+
       let rawInserted = 0, evUpserted = 0;
-      if (rawRows.length) {
-        rawInserted = await chunkedInsert(pool, rawRows, (_o, batch) => {
+      if (rawDedup.length) {
+        rawInserted = await chunkedInsert(pool, rawDedup, (_o, batch) => {
           const vals: string[] = []; const flat: any[] = []; let p = 1;
           for (const r of batch) {
             vals.push(`($${p++},$${p++},$${p++},$${p++},$${p++},$${p++},$${p++}::jsonb,$${p++})`);
@@ -119,8 +129,8 @@ export async function GET(req: Request) {
           };
         });
       }
-      if (evRows.length) {
-        evUpserted = await chunkedInsert(pool, evRows, (_o, batch) => {
+      if (evDedup.length) {
+        evUpserted = await chunkedInsert(pool, evDedup, (_o, batch) => {
           const vals: string[] = []; const flat: any[] = []; let p = 1;
           for (const r of batch) {
             vals.push(`($${p++},$${p++},$${p++},$${p++},$${p++},$${p++})`);
