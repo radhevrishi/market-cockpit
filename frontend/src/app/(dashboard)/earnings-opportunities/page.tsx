@@ -46,6 +46,7 @@ interface CalendarPayload {
   scraped_at?: string;
   total: number;
   by_date: Record<string, CalendarItem[]>;
+  ingested_dates?: string[];
   empty_reason?: string;
 }
 
@@ -75,6 +76,7 @@ type MarketEarningsResponse = {
   quarter?: string;
   source?: string;
   updatedAt?: string;
+  ingested_dates?: string[];
 };
 
 // Hub source — single month or two months stitched
@@ -116,7 +118,9 @@ function useMarketEarnings(months: string[]) {
       );
       const all: MarketEarningsResult[] = [];
       const seen = new Set<string>();
+      const ingestedSet = new Set<string>();
       for (const r of responses) {
+        for (const dd of ((r?.ingested_dates || []) as string[])) ingestedSet.add(dd);
         for (const e of (r?.results || []) as MarketEarningsResult[]) {
           const k = `${e.ticker}|${e.resultDate}`;
           if (seen.has(k)) continue;
@@ -124,7 +128,7 @@ function useMarketEarnings(months: string[]) {
           all.push(e);
         }
       }
-      const payload = { results: all, source: responses[0]?.source || 'NSE + BSE', updatedAt: new Date().toISOString() } as MarketEarningsResponse;
+      const payload = { results: all, source: responses[0]?.source || 'NSE + BSE', updatedAt: new Date().toISOString(), ingested_dates: [...ingestedSet] } as MarketEarningsResponse;
       // PATCH 0545 — debounced LS write (same rationale as writeLsCache below).
       // PATCH 1029 — only cache NON-EMPTY hub payloads. Caching an empty result
       // (e.g. during a transient server-empty window) poisons the calendar for
@@ -237,7 +241,7 @@ function buildCalendarFromHub(hub: MarketEarningsResponse | undefined, fromIso: 
   for (const k of Object.keys(by_date)) {
     by_date[k].sort((a, b) => a.symbol.localeCompare(b.symbol));
   }
-  return { total, by_date };
+  return { total, by_date, ingested_dates: hub?.ingested_dates || [] };
 }
 
 type EarningsTier = 'BLOCKBUSTER' | 'STRONG' | 'MIXED' | 'AVOID';
@@ -3793,6 +3797,8 @@ function CalendarView({ data, loading, from, to, onPickDate }: { data: CalendarP
   }
 
   const byDate = data?.by_date || {};
+  // 3-state: dates NOT in ingested_dates were never captured (source window) => UNKNOWN, not zero.
+  const ingestedSet = new Set<string>(data?.ingested_dates || []);
   // PATCH 0909 — Build a flat de-duped list of all tickers in the visible
   // calendar window so the user can copy them as a single comma-separated
   // string (TradingView-ready) or as NSE: prefixed string (Investing.com / Zerodha).
@@ -3891,7 +3897,11 @@ function CalendarView({ data, loading, from, to, onPickDate }: { data: CalendarP
               </div>
               <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                 {items.length === 0 ? (
-                  <span style={{ fontSize: 10.5, color: '#6B7A8D' }}>No filings</span>
+                  ingestedSet.has(d) ? (
+                    <span title="Ingested for this date - no results filed (confirmed zero)" style={{ fontSize: 10.5, color: '#6B7A8D' }}>No filings</span>
+                  ) : (
+                    <span title="Data unavailable - this date was never ingested (outside NSE source window). Not zero." style={{ fontSize: 10.5, fontWeight: 700, color: '#B45309' }}>Data unavailable</span>
+                  )
                 ) : (expandedDates[d] ? items : items.slice(0, 12)).map((it) => (
                   <a key={it.symbol} href={it.source_url} target="_blank" rel="noopener noreferrer"
                     onClick={(e) => e.stopPropagation()}
