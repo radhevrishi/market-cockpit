@@ -201,3 +201,5 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'archive-failed', message: e?.message || String(e), report }, { status: 500 });
   }
 }
+
+export async function POST(req: Request) { return GET(req); }
