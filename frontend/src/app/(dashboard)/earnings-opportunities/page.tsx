@@ -91,7 +91,7 @@ function useMarketEarnings(months: string[]) {
   // An empty results[] array passed the old `parsed.results` truthiness check
   // and was served as fresh initialData for 15 min, so the calendar kept
   // showing "No filings" even after the server recovered the month.
-  const HUB_LS_PREFIX = 'mc:hub:v4:';
+  const HUB_LS_PREFIX = 'mc:hub:v5:';  // PATCH 1042 — drop stale 'No filings' caches
   const key = months.join(',');
   // PATCH 0453 P1-12 — Audit found this hub-scrub ran on every render
   // (50-200ms cost iterating localStorage). Now runs once per app session
@@ -99,10 +99,10 @@ function useMarketEarnings(months: string[]) {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
-      const SCRUB_HUB = 'mc:hub-scrub:v4';
+      const SCRUB_HUB = 'mc:hub-scrub:v5';  // PATCH 1042
       if (!localStorage.getItem(SCRUB_HUB)) {
         for (const k of Object.keys(localStorage)) {
-          if (k.startsWith('mc:hub:v1:') || k.startsWith('mc:hub:v2:') || k.startsWith('mc:hub:v3:')) localStorage.removeItem(k);
+          if (k.startsWith('mc:hub:v1:') || k.startsWith('mc:hub:v2:') || k.startsWith('mc:hub:v3:') || k.startsWith('mc:hub:v4:')) localStorage.removeItem(k);
         }
         localStorage.setItem(SCRUB_HUB, '1');
       }
@@ -993,13 +993,13 @@ export default function EarningsOpportunitiesPage() {
   // staleTime, React Query never refetched even after the server backfilled
   // the real graded payload. Bumping the prefix invalidates every stale
   // snapshot in one shot. The scrub below removes orphan v8/v7 keys.
-  const LS_PREFIX = 'mc:graded:v10:';  // PATCH 0992 — bumped v9→v10 to abandon stale empty payloads cached during Railway migration
+  const LS_PREFIX = 'mc:graded:v11:';  // PATCH 1042 — bump v10→v11 so liquidity (adtv/thin-float) shows without a Hard Refresh
   if (typeof window !== 'undefined') {
     try {
       const SCRUB_GRADED = 'mc:graded-scrub:v9';
       if (!localStorage.getItem(SCRUB_GRADED)) {
         for (const k of Object.keys(localStorage)) {
-          if (k.startsWith('mc:graded:v7:') || k.startsWith('mc:graded:v8:')) localStorage.removeItem(k);
+          if (k.startsWith('mc:graded:v7:') || k.startsWith('mc:graded:v8:') || k.startsWith('mc:graded:v9:') || k.startsWith('mc:graded:v10:')) localStorage.removeItem(k);
         }
         localStorage.setItem(SCRUB_GRADED, '1');
       }
