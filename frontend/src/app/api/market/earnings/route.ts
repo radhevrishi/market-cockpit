@@ -574,6 +574,17 @@ export async function GET(request: Request) {
           const _dates = pgResults.map((r: any) => String(r?.resultDate || '').slice(0, 10)).filter(Boolean).sort();
           const ingested_from = _dates.length ? _dates[0] : null;
           const ingested_to = _dates.length ? _dates[_dates.length - 1] : null;
+          // Explicit per-date coverage (institutional: no inference). Dates marked
+          // INGESTED in ingestion_coverage are "covered" (0 events => confirmed ZERO);
+          // dates absent are UNKNOWN. Falls back to [from,to] window if table empty.
+          let ingested_dates: string[] = [];
+          try {
+            const cov = await pool.query(
+              "SELECT cov_date::text AS d FROM ingestion_coverage WHERE market = $1 AND status = 'INGESTED' AND substr(cov_date::text,1,7) = $2 ORDER BY cov_date",
+              [market, monthKey],
+            );
+            ingested_dates = cov.rows.map((r: any) => r.d);
+          } catch { ingested_dates = []; }
           const _q = (name: string) => pgResults.filter((r: any) => r.quality === name).length;
           const seedCount = pgResults.filter((r: any) => r.source === 'seed').length;
           const payload = {
@@ -584,6 +595,7 @@ export async function GET(request: Request) {
             coverage: 'known',
             ingested_from,
             ingested_to,
+            ingested_dates,
             source_breakdown: { seed: seedCount, live: pgResults.length - seedCount },
             source: 'Postgres (canonical)',
             generated_at: snap.rows[0].generated_at,
