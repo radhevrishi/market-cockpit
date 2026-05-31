@@ -492,10 +492,39 @@ async function fetchIndianDataWithCache() {
   // proven by /api/market/quote endpoint). Result: 500+ stocks with proper
   // cap labels (Large/Mid/Small) and real last-close % moves.
   let _kvBlobTickers = -1; // PATCH 1008 — diag: -1 = KV path not entered; N = blob tickers read
+  let _kvRawLen = -1;       // PATCH 1009 — diag: length of raw REST value for the universe key
+  let _kvRawErr = '';       // PATCH 1009 — diag: raw REST read error, if any
   if (stocks.length < 600) {
     try {
-      const universeBlob = await kvGet<any>('nse-ticker-universe:v1:latest');
-      const tickers: Array<any> = universeBlob?.tickers || [];
+      let universeBlob: any = await kvGet<any>('nse-ticker-universe:v1:latest');
+      let tickers: Array<any> = universeBlob?.tickers || [];
+      // PATCH 1009 — the @upstash/redis client returns EMPTY for this large
+      // (~700KB) key that the GH scraper writes via raw REST /set/. Confirmed
+      // live via _diag (blobTickers:0) while small KV reads work fine. Fall
+      // back to a DIRECT REST GET + manual JSON parse so we read the blob that
+      // is ALREADY in Redis — no scraper change, no cron wait.
+      if (tickers.length === 0) {
+        try {
+          const _u = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || '';
+          const _tok = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || '';
+          if (_u && _tok) {
+            const _resp = await fetch(`${_u.replace(/\/+$/, '')}/get/nse-ticker-universe:v1:latest`, {
+              headers: { Authorization: `Bearer ${_tok}` }, cache: 'no-store',
+            });
+            const _jj: any = await _resp.json();
+            let _raw: any = _jj?.result;
+            _kvRawLen = typeof _raw === 'string' ? _raw.length : (_raw == null ? 0 : -2);
+            if (typeof _raw === 'string' && _raw.length > 2) {
+              let _parsed: any = JSON.parse(_raw);
+              if (typeof _parsed === 'string') _parsed = JSON.parse(_parsed); // tolerate double-encoding
+              if (_parsed && Array.isArray(_parsed.tickers) && _parsed.tickers.length) {
+                universeBlob = _parsed;
+                tickers = _parsed.tickers;
+              }
+            }
+          }
+        } catch (e) { _kvRawErr = String(e).slice(0, 120); }
+      }
       _kvBlobTickers = tickers.length;
       // PATCH 0798 — also read rolling-stats blob for vol20D/mom1M/52w% enrichment.
       // Optional — engine degrades gracefully if blob missing or stale.
@@ -725,7 +754,7 @@ async function fetchIndianDataWithCache() {
               staleEODHidden: hiddenStaleCount,
             },
             marketHours: { indianOpen: marketOpen },
-            _diag: { path: 'kv-universe', blobTickers: _kvBlobTickers, yahoo: yahooMap.size, mkt: marketOpen ? 'open' : 'closed' },
+            _diag: { path: 'kv-universe', blobTickers: _kvBlobTickers, rawLen: _kvRawLen, yahoo: yahooMap.size, mkt: marketOpen ? 'open' : 'closed' },
             source: `NSE-universe (KV ${universeAgeStr}) + BHAVCOPY/${universeBlob.pricedCount || 0} + Yahoo/${yahooMap.size} + P0963 staleEOD-filter ALWAYS-ON (hid ${hiddenStaleCount} BHAVCOPY-only rows from movers)`,
             updatedAt: new Date().toISOString(),
           };
@@ -776,7 +805,7 @@ async function fetchIndianDataWithCache() {
       avgChange: validStocks.length > 0 ? validStocks.reduce((sum, s) => sum + s.changePercent, 0) / validStocks.length : 0,
       sectors: [...new Set(validStocks.map(s => s.sector))].length,
     },
-    _diag: { path: 'fallback', blobTickers: _kvBlobTickers },
+    _diag: { path: 'fallback', blobTickers: _kvBlobTickers, rawLen: _kvRawLen, rawErr: _kvRawErr },
     source: nifty500Data?.data ? 'NSE India' : 'Yahoo Finance',
     updatedAt: new Date().toISOString(),
   };
