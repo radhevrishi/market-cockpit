@@ -754,7 +754,7 @@ export default function HomeDashboard() {
           });
         setData((d) => ({
           ...d,
-          inPlay: final.slice(0, 10),
+          inPlay: final.slice(0, 15), // PATCH 1012 — 10 -> 15 per user request
           inPlayDiag: { fetched: raw.length, recent: recent.length, clean: clean.length, fellBack: clean.length === 0 && recent.length > 0, error, status },
         } as any));
         setNetLoading((n) => ({ ...n, inPlay: false }));
