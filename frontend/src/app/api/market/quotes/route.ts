@@ -29,9 +29,16 @@ export async function GET(request: Request) {
   // Build cache key based on market and index
   const cacheKey = `quotes:${market}:${index || 'all'}`;
 
+  // PATCH 1019 — market-aware cache TTL. The full ~2,341-stock universe build
+  // is heavy; the old short TTL meant the cache went cold every ~2 min of idle,
+  // forcing a cold rebuild that overran the 30s budget → /movers "fetch timed
+  // out". When NSE is CLOSED (weekend / after-hours) the data is static
+  // last-close, so hold the cache 30 min; when OPEN keep it fresh (90s).
+  let _ttl = RESPONSE_TTL;
+  try { const { isIndianMarketOpen } = await import('@/lib/market-hours'); _ttl = isIndianMarketOpen() ? 90_000 : 1_800_000; } catch {}
   // Check response cache
   const cached = responseCache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < RESPONSE_TTL) {
+  if (cached && Date.now() - cached.ts < _ttl) {
     return NextResponse.json(cached.data, {
       headers: { 'Cache-Control': 's-maxage=30, stale-while-revalidate=60' }, // PATCH 0873 — tightened from 60/300 for live quote freshness
     });
