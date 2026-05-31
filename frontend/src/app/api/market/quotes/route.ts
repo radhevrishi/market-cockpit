@@ -365,16 +365,26 @@ async function fetchIndianDataWithCache() {
   // fails (weekends, rate limiting), we fall through to the KV ticker
   // blob + Vercel-side Yahoo price fetch below.
   // Build dynamic sector map in parallel with stock data
-  const [sectorMap, nifty500Data, midcap250Data, smallcap250Data, microcap250Data, totalMarketData, nseGainers, nseLosers] = await Promise.all([
-    buildDynamicSectorMap(),
-    fetchNifty500().catch(() => null),
-    fetchNiftyMidcap250().catch(() => null),
-    fetchNiftySmallcap250().catch(() => null),
-    fetchNiftyMicrocap250().catch(() => null),
-    fetchNiftyTotalMarket().catch(() => null),
-    fetchGainers().catch(() => null),
-    fetchLosers().catch(() => null),
-  ]);
+  // PATCH 1017 — When NSE is CLOSED (weekend / after-hours), the live NSE
+  // index endpoints return nothing useful AND hang ~15-20s before failing,
+  // which pushed the whole build past Railway's 30s maxDuration → /movers
+  // "fetch timed out". Skip them entirely when closed and go straight to the
+  // KV universe blob (the path we already use). On weekdays we still fetch
+  // live for intraday freshness. Cold build drops from ~25-35s to a few sec.
+  const { isIndianMarketOpen: _isOpenForFetch } = await import('@/lib/market-hours');
+  const _liveOk = _isOpenForFetch();
+  const [sectorMap, nifty500Data, midcap250Data, smallcap250Data, microcap250Data, totalMarketData, nseGainers, nseLosers] = _liveOk
+    ? await Promise.all([
+        buildDynamicSectorMap(),
+        fetchNifty500().catch(() => null),
+        fetchNiftyMidcap250().catch(() => null),
+        fetchNiftySmallcap250().catch(() => null),
+        fetchNiftyMicrocap250().catch(() => null),
+        fetchNiftyTotalMarket().catch(() => null),
+        fetchGainers().catch(() => null),
+        fetchLosers().catch(() => null),
+      ])
+    : [await buildDynamicSectorMap().catch(() => ({})), null, null, null, null, null, null, null];
 
   let stocks: any[] = [];
   const tickerSet = new Set<string>();
