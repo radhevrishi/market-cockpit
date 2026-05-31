@@ -305,10 +305,15 @@ export default function HeatmapPage() {
                 avgChange: stocks.length ? stocks.reduce((a, b) => a + (b.changePercent ?? 0), 0) / stocks.length : 0,
               },
             });
+            // PATCH 1011 — marketCap is 0 on weekend EOD rows (no Yahoo), so
+            // the marketCap buckets came up empty → "0 stocks". Bucket by the
+            // populated cap label (indexGroup: Large/Mid/Small/Micro) instead.
+            const byCap = (caps: string[]) =>
+              broad.stocks.filter(s => caps.includes(String((s as any).indexGroup || '').toLowerCase()));
             const fallbackMap = {
-              nifty50: mkResp(stocksByCap(mc => mc > 20_000)),
-              midcap150: mkResp(stocksByCap(mc => mc > 5_000 && mc <= 20_000)),
-              smallcap150: mkResp(stocksByCap(mc => mc > 0 && mc <= 5_000)),
+              nifty50: mkResp(byCap(['large'])),
+              midcap150: mkResp(byCap(['mid'])),
+              smallcap150: mkResp(byCap(['small', 'micro'])),
             };
             setDataMap(fallbackMap);
             setLastUpdated(new Date());
