@@ -910,7 +910,7 @@ export default function HomeDashboard() {
         // Coverage may be partial (Screener scrape rotates through universe
         // over 1-2 weeks). Missing tickers gracefully return null.
         const extremeTickers = [...gainers, ...losers]
-          .filter((m: any) => Math.abs(m.changePercent || 0) >= 10)
+          .filter((m: any) => Math.abs(m.changePercent || 0) >= 5) // PATCH 1014 — was >=10; match scraper's 5% so 5-10% movers also get real reasons
           .map((m: any) => (m.ticker || '').toUpperCase())
           .filter((t: string) => t.length > 0)
           .slice(0, 30);
