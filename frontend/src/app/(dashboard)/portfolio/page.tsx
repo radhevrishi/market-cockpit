@@ -21,6 +21,8 @@ interface StockQuote {
   changePercent: number;
   dayHigh: number;
   dayLow: number;
+  indexGroup?: string;   // PATCH 1100 — cap bucket (Large/Mid/Small/Micro) from quotes universe
+  marketCap?: number;    // PATCH 1100 — est. market cap (₹, may be 0 on weekends)
 }
 
 interface PortfolioHolding {
@@ -58,6 +60,8 @@ interface PortfolioRow {
   score?: number;
   sectorTrend?: string;
   decision?: string;
+  cap?: string;          // PATCH 1100 — Large/Mid/Small/Micro
+  marketCap?: number;    // PATCH 1100
 }
 
 type SortField = 'symbol' | 'company' | 'sector' | 'entryPrice' | 'quantity' | 'cmp' | 'changePercent' | 'pnlPercent' | 'weight' | 'investedValue' | 'currentValue' | 'score' | 'decision';
@@ -112,6 +116,7 @@ const fetchStockQuotes = async (): Promise<StockQuote[]> => {
     industry: s.industry || '—', price: s.price || 0, change: s.change || 0,
     changePercent: s.changePercent || 0, dayHigh: s.dayHigh || s.price || 0,
     dayLow: s.dayLow || s.price || 0,
+    indexGroup: s.indexGroup || s.cap || '', marketCap: s.marketCap || 0, // PATCH 1100
   });
   const fetchOne = async (market: 'india' | 'us'): Promise<StockQuote[]> => {
     // PATCH 0965 BUG #1 — AbortSignal.timeout(20_000) replaces the bespoke
@@ -179,7 +184,7 @@ const fetchIndividualQuotes = async (symbols: string[]): Promise<StockQuote[]> =
       if (!res.ok) continue;
       const data = await res.json();
       results.push(...(data.stocks || []).map((s: any) => ({
-        ticker: s.ticker, company: s.company || s.ticker, sector: s.sector || '—',
+        ticker: s.ticker, company: s.company || s.ticker, sector: s.sector || '—', indexGroup: s.indexGroup || s.cap || '', marketCap: s.marketCap || 0, // PATCH 1100
         industry: s.industry || '—', price: s.price || 0, change: s.change || 0,
         changePercent: s.changePercent || 0, dayHigh: s.dayHigh || s.price || 0,
         dayLow: s.dayLow || s.price || 0,
@@ -398,6 +403,177 @@ function EditableCell({ value, onSave, type = 'price' }: { value: number; onSave
 
 /* ── Main Page ─────────────────────────────────────────────────────── */
 
+/* ── PATCH 1100 — Market-cap helpers + Portfolio Analytics ──────────── */
+
+const CAP_COLORS: Record<string, string> = { all: '#8BA3C1', large: '#60A5FA', mid: '#A78BFA', small: '#34D399', micro: '#FBBF24', other: '#64748B' };
+
+function normCapBucket(c?: string): 'large' | 'mid' | 'small' | 'micro' | 'other' {
+  const x = (c || '').toLowerCase();
+  if (x === 'large') return 'large';
+  if (x === 'mid') return 'mid';
+  if (x === 'small') return 'small';
+  if (x === 'micro') return 'micro';
+  return 'other';
+}
+
+function capBadge(c?: string) {
+  const b = normCapBucket(c);
+  if (b === 'other') return <span style={{ color: '#64748B', fontSize: 11 }}>—</span>;
+  const col = CAP_COLORS[b];
+  const label = b.charAt(0).toUpperCase() + b.slice(1);
+  return <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 5, fontSize: 10.5, fontWeight: 800, background: `${col}22`, color: col, letterSpacing: '0.3px' }}>{label}</span>;
+}
+
+function PortfolioAnalytics({ rows }: { rows: PortfolioRow[] }) {
+  const fmtRs = (v: number) => '₹' + Math.round(v || 0).toLocaleString('en-IN');
+  const pctTxt = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
+  const totalCur = rows.reduce((a, r) => a + (r.currentValue || 0), 0) || 1;
+  const totalInv = rows.reduce((a, r) => a + (r.investedValue || 0), 0) || 1;
+  const totalPnl = rows.reduce((a, r) => a + (r.pnl || 0), 0);
+  const dayPnl = rows.reduce((a, r) => a + (r.dayPnl || 0), 0);
+
+  // Cap allocation (value-weighted % AND counts)
+  const capOrder: Array<'large' | 'mid' | 'small' | 'micro' | 'other'> = ['large', 'mid', 'small', 'micro', 'other'];
+  const capLabel: Record<string, string> = { large: 'Large cap', mid: 'Mid cap', small: 'Small cap', micro: 'Micro cap', other: 'Unclassified' };
+  const capStats = capOrder.map(k => {
+    const rs = rows.filter(r => normCapBucket(r.cap) === k);
+    const value = rs.reduce((a, r) => a + (r.currentValue || 0), 0);
+    const pnl = rs.reduce((a, r) => a + (r.pnl || 0), 0);
+    const inv = rs.reduce((a, r) => a + (r.investedValue || 0), 0);
+    return { k, count: rs.length, value, pnl, retPct: inv > 0 ? (pnl / inv) * 100 : 0, valPct: (value / totalCur) * 100 };
+  }).filter(x => x.count > 0);
+
+  // Sector allocation
+  const secMap = new Map<string, { value: number; count: number; pnl: number }>();
+  for (const r of rows) {
+    const sec = r.sector && r.sector !== '—' ? r.sector : 'Unclassified';
+    const cur = secMap.get(sec) || { value: 0, count: 0, pnl: 0 };
+    cur.value += r.currentValue || 0; cur.count += 1; cur.pnl += r.pnl || 0;
+    secMap.set(sec, cur);
+  }
+  const sectors = [...secMap.entries()].map(([sector, v]) => ({ sector, ...v, valPct: (v.value / totalCur) * 100 })).sort((a, b) => b.value - a.value);
+
+  // Concentration
+  const byVal = [...rows].sort((a, b) => (b.currentValue || 0) - (a.currentValue || 0));
+  const top5pct = (byVal.slice(0, 5).reduce((a, r) => a + (r.currentValue || 0), 0) / totalCur) * 100;
+  const largest = byVal[0] ? { sym: byVal[0].symbol, pct: ((byVal[0].currentValue || 0) / totalCur) * 100 } : null;
+  const hhi = rows.reduce((a, r) => { const w = (r.currentValue || 0) / totalCur; return a + w * w; }, 0) * 10000; // Herfindahl (0-10000)
+
+  // Performance / risk
+  const priced = rows.filter(r => r.cmp > 0);
+  const winners = priced.filter(r => (r.pnl || 0) > 0);
+  const losers = priced.filter(r => (r.pnl || 0) < 0);
+  const best = [...priced].sort((a, b) => (b.pnlPercent || 0) - (a.pnlPercent || 0))[0];
+  const worst = [...priced].sort((a, b) => (a.pnlPercent || 0) - (b.pnlPercent || 0))[0];
+  const wtdRet = (totalPnl / totalInv) * 100;
+
+  // Quality overlay — Conviction Beats tier + Multibagger score
+  let cbMap: Record<string, any> = {};
+  try { cbMap = JSON.parse(typeof window !== 'undefined' ? (localStorage.getItem('mc:conviction-beats:v1') || '{}') : '{}') || {}; } catch {}
+  const tierOf = (sym: string) => cbMap[(sym || '').toUpperCase()]?.tier as string | undefined;
+  const tierColors: Record<string, string> = { BLOCKBUSTER: '#F59E0B', STRONG: '#10B981', MIXED: '#94A3B8', AVOID: '#EF4444' };
+  const tierCounts: Record<string, number> = {};
+  let onCB = 0;
+  for (const r of rows) { const t = tierOf(r.symbol); if (t) { onCB++; tierCounts[t] = (tierCounts[t] || 0) + 1; } }
+  const scored = rows.filter(r => typeof r.score === 'number');
+  const avgScore = scored.length ? scored.reduce((a, r) => a + (r.score || 0), 0) / scored.length : null;
+
+  const card: any = { background: '#0D1B2E', border: '1px solid #2A3B4C', borderRadius: 12, padding: '16px 18px' };
+  const h: any = { fontSize: 12, fontWeight: 800, color: '#60A5FA', letterSpacing: '0.5px', marginBottom: 12, textTransform: 'uppercase' };
+  const Bar = ({ label, sub, pct, count, color, valueTxt, pnl }: any) => (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 3 }}>
+        <span style={{ color: '#F5F7FA', fontWeight: 700 }}>{label} {count != null && <span style={{ color: '#64748B', fontWeight: 600, fontSize: 11 }}>· {count}</span>}</span>
+        <span style={{ color: '#C9D4E0', fontVariantNumeric: 'tabular-nums' }}>{pct.toFixed(1)}%{valueTxt ? <span style={{ color: '#64748B', marginLeft: 6, fontSize: 11 }}>{valueTxt}</span> : null}{pnl != null ? <span style={{ color: pnl >= 0 ? '#10B981' : '#EF4444', marginLeft: 6, fontSize: 11 }}>{pctTxt(pnl)}</span> : null}</span>
+      </div>
+      <div style={{ height: 7, background: '#1A2B3C', borderRadius: 4, overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${Math.min(100, pct)}%`, background: color, borderRadius: 4 }} />
+      </div>
+      {sub && <div style={{ fontSize: 10, color: '#64748B', marginTop: 2 }}>{sub}</div>}
+    </div>
+  );
+  const Stat = ({ label, value, color, sub }: any) => (
+    <div style={{ ...card, padding: '12px 14px' }}>
+      <div style={{ fontSize: 10, color: '#8BA3C1', fontWeight: 700, letterSpacing: '0.5px' }}>{label}</div>
+      <div style={{ fontSize: 19, fontWeight: 800, color: color || '#F5F7FA', marginTop: 4 }}>{value}</div>
+      {sub && <div style={{ fontSize: 10.5, color: '#64748B', marginTop: 2 }}>{sub}</div>}
+    </div>
+  );
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Headline stats */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
+        <Stat label="CURRENT VALUE" value={fmtRs(totalCur)} />
+        <Stat label="TOTAL P&L" value={`${fmtRs(Math.abs(totalPnl))} (${pctTxt(wtdRet)})`} color={totalPnl >= 0 ? '#10B981' : '#EF4444'} />
+        <Stat label="DAY P&L" value={fmtRs(Math.abs(dayPnl))} color={dayPnl >= 0 ? '#10B981' : '#EF4444'} />
+        <Stat label="WINNERS / LOSERS" value={`${winners.length} / ${losers.length}`} sub={`${priced.length} priced`} />
+        <Stat label="TOP-5 CONCENTRATION" value={`${top5pct.toFixed(0)}%`} sub={largest ? `largest ${largest.sym} ${largest.pct.toFixed(0)}%` : ''} color={top5pct > 60 ? '#FBBF24' : '#F5F7FA'} />
+        <Stat label="DIVERSIFICATION (HHI)" value={Math.round(hhi).toLocaleString('en-IN')} sub={hhi > 2500 ? 'concentrated' : hhi > 1500 ? 'moderate' : 'well spread'} color={hhi > 2500 ? '#FBBF24' : '#34D399'} />
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>
+        {/* Cap allocation */}
+        <div style={card}>
+          <div style={h}>Market-cap allocation</div>
+          {capStats.length === 0 ? <div style={{ fontSize: 12, color: '#64748B' }}>No cap data yet — refresh to pull live quotes.</div> :
+            capStats.map(c => (
+              <Bar key={c.k} label={capLabel[c.k]} count={c.count} pct={c.valPct} color={CAP_COLORS[c.k]} valueTxt={fmtRs(c.value)} pnl={c.retPct} />
+            ))}
+          <div style={{ fontSize: 10, color: '#64748B', marginTop: 4 }}>% = share of current value · count = holdings · last figure = return on that bucket</div>
+        </div>
+
+        {/* Sector allocation */}
+        <div style={card}>
+          <div style={h}>Sector allocation</div>
+          {sectors.slice(0, 10).map(sct => (
+            <Bar key={sct.sector} label={sct.sector} count={sct.count} pct={sct.valPct} color="#22D3EE" valueTxt={fmtRs(sct.value)} pnl={sct.value > 0 ? (sct.pnl / (sct.value - sct.pnl || 1)) * 100 : 0} />
+          ))}
+        </div>
+
+        {/* Performance & risk */}
+        <div style={card}>
+          <div style={h}>Performance &amp; risk</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 12.5 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#8BA3C1' }}>Best performer</span><span style={{ color: '#10B981', fontWeight: 700 }}>{best ? `${best.symbol} ${pctTxt(best.pnlPercent)}` : '—'}</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#8BA3C1' }}>Worst performer</span><span style={{ color: '#EF4444', fontWeight: 700 }}>{worst ? `${worst.symbol} ${pctTxt(worst.pnlPercent)}` : '—'}</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#8BA3C1' }}>Value-weighted return</span><span style={{ color: wtdRet >= 0 ? '#10B981' : '#EF4444', fontWeight: 700 }}>{pctTxt(wtdRet)}</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#8BA3C1' }}>Invested → Current</span><span style={{ color: '#F5F7FA', fontWeight: 700 }}>{fmtRs(totalInv)} → {fmtRs(totalCur)}</span></div>
+            <div style={{ marginTop: 4 }}>
+              <div style={{ fontSize: 11, color: '#8BA3C1', marginBottom: 4 }}>Win rate</div>
+              <div style={{ height: 8, background: '#1A2B3C', borderRadius: 4, overflow: 'hidden', display: 'flex' }}>
+                <div style={{ height: '100%', width: `${priced.length ? (winners.length / priced.length) * 100 : 0}%`, background: '#10B981' }} />
+                <div style={{ height: '100%', flex: 1, background: '#EF4444' }} />
+              </div>
+              <div style={{ fontSize: 10, color: '#64748B', marginTop: 2 }}>{priced.length ? Math.round((winners.length / priced.length) * 100) : 0}% of priced holdings in profit</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Quality overlay */}
+        <div style={card}>
+          <div style={h}>Quality overlay</div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginBottom: 10 }}>
+            <span style={{ color: '#8BA3C1' }}>On Conviction Beats</span>
+            <span style={{ color: '#F59E0B', fontWeight: 800 }}>{onCB} / {rows.length}</span>
+          </div>
+          {Object.keys(tierCounts).length > 0 ? (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+              {Object.entries(tierCounts).sort((a, b) => b[1] - a[1]).map(([t, n]) => (
+                <span key={t} style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 800, background: `${tierColors[t] || '#64748B'}22`, color: tierColors[t] || '#94A3B8' }}>{t} · {n}</span>
+              ))}
+            </div>
+          ) : <div style={{ fontSize: 11.5, color: '#64748B', marginBottom: 10 }}>None of your holdings are on the Conviction Beats bench yet.</div>}
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5 }}>
+            <span style={{ color: '#8BA3C1' }}>Avg quality score</span>
+            <span style={{ color: avgScore != null ? (avgScore >= 70 ? '#10B981' : avgScore >= 50 ? '#FBBF24' : '#EF4444') : '#64748B', fontWeight: 800 }}>{avgScore != null ? avgScore.toFixed(0) : '—'} <span style={{ color: '#64748B', fontWeight: 600, fontSize: 11 }}>({scored.length} scored)</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function PortfolioPage() {
   const [holdings, setHoldings] = useState<PortfolioHolding[]>([]);
   const [quotes, setQuotes] = useState<StockQuote[]>([]);
@@ -414,6 +590,8 @@ export default function PortfolioPage() {
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [viewTab, setViewTab] = useState<'holdings' | 'analytics'>('holdings'); // PATCH 1100
+  const [capFilter, setCapFilter] = useState<'all' | 'large' | 'mid' | 'small' | 'micro'>('all'); // PATCH 1100
 
   // Init: load from API, fallback to localStorage
   useEffect(() => {
@@ -662,7 +840,8 @@ export default function PortfolioPage() {
         investedValue, currentValue, pnl, pnlPercent, dayPnl, notes: h.notes, weight: 0,
         score: signal?.weightedScore ?? fallbackScore,
         sectorTrend: signal?.sectorTrend ?? rrgTone ?? intradayTone ?? positionTone,
-        decision: signal?.action ?? fallbackDecision };
+        decision: signal?.action ?? fallbackDecision,
+        cap: quote?.indexGroup || '', marketCap: quote?.marketCap || 0 }; // PATCH 1100
     });
     // Second pass: weight by current value (proper risk weighting)
     const totalCurrent = rawRows.reduce((s, r) => s + r.currentValue, 0);
@@ -682,6 +861,12 @@ export default function PortfolioPage() {
     });
     return sorted;
   }, [rows, sortField, sortOrder]);
+
+  // PATCH 1100 — cap normalization + cap-filtered view for the holdings table.
+  const displayRows = useMemo(() => {
+    if (capFilter === 'all') return sortedRows;
+    return sortedRows.filter(r => normCapBucket(r.cap) === capFilter);
+  }, [sortedRows, capFilter]);
 
   // AUDIT_100 #28 — bulk CSV import. Pastes / drops a broker-export CSV with
   // columns symbol,price,quantity[,notes]. Header row is optional (auto-detect).
@@ -912,6 +1097,41 @@ export default function PortfolioPage() {
       {/* ── Summary ─────────────────────────────────────────────────── */}
       <PortfolioSummary rows={sortedRows} holdings={holdings} />
 
+      {/* PATCH 1100 — view tabs + market-cap filter */}
+      {!loading && holdings.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', margin: '8px 0 14px' }}>
+          <div style={{ display: 'flex', gap: 4, background: '#0D1B2E', border: '1px solid #2A3B4C', borderRadius: 10, padding: 4 }}>
+            {(['holdings', 'analytics'] as const).map(t => (
+              <button key={t} onClick={() => setViewTab(t)} style={{
+                padding: '7px 16px', border: 'none', borderRadius: 7, cursor: 'pointer', fontSize: 12.5, fontWeight: 800, letterSpacing: '0.3px',
+                background: viewTab === t ? '#1D4ED8' : 'transparent', color: viewTab === t ? '#fff' : '#8BA3C1',
+              }}>{t === 'holdings' ? '\ud83d\udc0b Holdings' : '\ud83d\udcca Analytics'}</button>
+            ))}
+          </div>
+          {viewTab === 'holdings' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 800, letterSpacing: '0.5px' }}>MKT CAP</span>
+              {([['all', 'All'], ['large', 'Large'], ['mid', 'Mid'], ['small', 'Small'], ['micro', 'Micro']] as const).map(([k, lbl]) => {
+                const cnt = k === 'all' ? sortedRows.length : sortedRows.filter(r => normCapBucket(r.cap) === k).length;
+                const active = capFilter === k;
+                const col = CAP_COLORS[k] || '#8BA3C1';
+                return (
+                  <button key={k} onClick={() => setCapFilter(k)} style={{
+                    padding: '5px 11px', borderRadius: 7, cursor: 'pointer', fontSize: 11.5, fontWeight: 700,
+                    border: `1px solid ${active ? col : '#2A3B4C'}`, background: active ? `${col}22` : 'transparent', color: active ? col : '#8BA3C1',
+                  }}>{lbl} <span style={{ opacity: 0.7, fontFamily: 'ui-monospace, monospace', fontSize: 10 }}>{cnt}</span></button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* PATCH 1100 — Analytics view */}
+      {!loading && holdings.length > 0 && viewTab === 'analytics' && (
+        <PortfolioAnalytics rows={sortedRows} />
+      )}
+
       {/* ── Fetch error banner ──────────────────────────────────────── */}
       {fetchError && !loading && (
         <div style={{ backgroundColor: '#1A1212', border: '1px solid #7F1D1D', borderRadius: '10px', padding: '10px 14px', marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
@@ -937,11 +1157,11 @@ export default function PortfolioPage() {
       )}
 
       {/* ── Table ───────────────────────────────────────────────────── */}
-      {!loading && holdings.length > 0 && (
+      {!loading && holdings.length > 0 && viewTab === 'holdings' && (
         <>
           <div style={{ marginBottom: '12px' }}>
             <p style={{ fontSize: '12px', color: '#8BA3C1', margin: 0 }}>
-              {sortedRows.length} holdings · Last refreshed: {lastRefresh ? lastRefresh.toLocaleTimeString() : '—'}
+              {displayRows.length}{capFilter !== 'all' ? ` of ${sortedRows.length}` : ''} holdings · Last refreshed: {lastRefresh ? lastRefresh.toLocaleTimeString() : '—'}
             </p>
           </div>
           <div style={{ overflowX: 'auto', border: '1px solid #2A3B4C', borderRadius: '12px' }}>
@@ -952,6 +1172,7 @@ export default function PortfolioPage() {
                     { key: 'symbol' as SortField, label: 'SYMBOL', align: 'left' },
                     { key: 'company' as SortField, label: 'COMPANY', align: 'left' },
                     { key: 'sector' as SortField, label: 'SECTOR', align: 'left' },
+                    { key: 'symbol' as SortField, label: 'MKT CAP', align: 'left', noSort: true },
                     { key: 'cmp' as SortField, label: 'CMP (₹)', align: 'right' },
                     { key: 'entryPrice' as SortField, label: 'ENTRY (₹)', align: 'right' },
                     { key: 'quantity' as SortField, label: 'QTY', align: 'right' },
@@ -978,7 +1199,7 @@ export default function PortfolioPage() {
                 </tr>
               </thead>
               <tbody>
-                {sortedRows.map((r, idx) => {
+                {displayRows.map((r, idx) => {
                   const pnlColor = r.pnl >= 0 ? '#10B981' : '#EF4444';
                   // BUG-03 fix: null/undefined changePercent should be neutral grey, not green/red
                   const hasQuote = r.cmp > 0 && r.changePercent != null;
@@ -996,10 +1217,11 @@ export default function PortfolioPage() {
                     ? (Date.now() - lastRefresh.getTime()) > 5 * 60_000
                     : false;
                   return (
-                    <tr key={r.symbol} style={{ borderBottom: idx < sortedRows.length - 1 ? '1px solid #1A2B3C' : 'none', backgroundColor: idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
+                    <tr key={r.symbol} style={{ borderBottom: idx < displayRows.length - 1 ? '1px solid #1A2B3C' : 'none', backgroundColor: idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
                       <td style={{ padding: '10px 12px', color: '#3B82F6', fontWeight: '700' }}>{r.symbol}</td>
                       <td style={{ padding: '10px 12px', color: '#F5F7FA', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
                       <td style={{ padding: '10px 12px', color: '#8BA3C1', fontSize: '11px', maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.sector}</td>
+                      <td style={{ padding: '10px 12px' }}>{capBadge(r.cap)}</td>
                       <td style={{ padding: '10px 12px', textAlign: 'right', color: '#F5F7FA', fontVariantNumeric: 'tabular-nums' }}>
                         {r.cmp > 0 ? (
                           <span>
