@@ -983,7 +983,7 @@ export default function HomeDashboard() {
           // Now we ALWAYS fire setData with whatever indices we have, even
           // partial. The Tier-4 fallthrough in attributeMovers labels rows
           // honestly as "no confirmed trigger" instead of leaving "analyzing…".
-          const ENRICH_BUDGET_MS = 15_000;
+          const ENRICH_BUDGET_MS = 30_000; // PATCH 1016 — was 15s; the home fires many concurrent fetches, queueing the graded-earnings calls past 15s so attribution ran with EMPTY earnings (earnings movers lost their reason). 30s lets enrichment win the race.
           let enrichSettled = false;
           const fireAttribution = (
             earningsByTicker: Record<string, any>,
@@ -1037,9 +1037,9 @@ export default function HomeDashboard() {
                   ...p,
                   attrib: watchAttrib?.[canonicalTicker(p.ticker)],
                 }));
-                return { ...d, moversAttrib: attrib, watchlistPulse: enrichedPulses as any } as any;
+                return { ...d, moversAttrib: attrib, moversEarnings: earningsByTicker, watchlistPulse: enrichedPulses as any } as any;
               }
-              return { ...d, moversAttrib: attrib } as any;
+              return { ...d, moversAttrib: attrib, moversEarnings: earningsByTicker } as any;
             });
           };
           // Hard-timeout fallback — fires attribution with empty indices so
@@ -2874,7 +2874,33 @@ export default function HomeDashboard() {
                   }
                   return t.trim() || null;
                 };
+                // PATCH 1016 — EARNINGS CONTINUITY: when this mover reported in the
+                // recent window, lead the reason with the structured earnings
+                // reaction (quarter · sales/PAT YoY · tier · beat/miss read). This
+                // is the earnings logic the user built; it now takes precedence
+                // over the generic news headline / microstructure label for
+                // earnings movers, and degrades gracefully when no earnings on file.
+                const _eq: any = (data as any).moversEarnings?.[tk] || (data as any).moversEarnings?.[canonicalTicker(m.ticker)];
+                let _earningsLead: string | null = null;
+                if (_eq && (typeof _eq.sales_yoy_pct === 'number' || typeof _eq.net_profit_yoy_pct === 'number')) {
+                  const _fmt = (v: any) => typeof v === 'number' ? `${v >= 0 ? '+' : ''}${Math.round(v)}%` : '';
+                  const _q = _eq.quarter ? `${_eq.quarter} ` : '';
+                  const _sales = typeof _eq.sales_yoy_pct === 'number' ? `sales ${_fmt(_eq.sales_yoy_pct)}` : '';
+                  const _pat = typeof _eq.net_profit_yoy_pct === 'number' ? `PAT ${_fmt(_eq.net_profit_yoy_pct)}` : '';
+                  const _tier = _eq.tier ? String(_eq.tier).toUpperCase() : '';
+                  // beat/miss read from PAT-vs-sales divergence + tier
+                  const _s = _eq.sales_yoy_pct, _p = _eq.net_profit_yoy_pct;
+                  let _read = '';
+                  if (typeof _s === 'number' && typeof _p === 'number') {
+                    if (_p >= _s + 8) _read = 'margin expansion';
+                    else if (_p <= _s - 8) _read = 'margin squeeze';
+                    else if (_s >= 5 && _p <= -5) _read = 'operating deleverage';
+                  }
+                  const _verb = pct > 0 ? 'rose on' : pct < 0 ? 'fell on' : 'reported';
+                  _earningsLead = `${_verb} ${_q}earnings · ${[_sales, _pat].filter(Boolean).join(' · ')}${_tier ? ' · ' + _tier : ''}${_read ? ' · ' + _read : ''}`;
+                }
                 const primaryDriverText = (() => {
+                  if (_earningsLead) return _earningsLead;
                   const raw = attr
                     ? (score.primaryDriver + (score.secondaryDriver ? ' · ' + score.secondaryDriver : ''))
                     : null;
