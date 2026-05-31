@@ -48,11 +48,21 @@ const MEM_STORE = (globalThis as any).__MC_KV_STORE__ || new Map<string, string>
  * Get a value from the KV store
  */
 export async function kvGet<T = any>(key: string): Promise<T | null> {
-  // PATCH 1014 — read via raw Upstash REST FIRST. The @upstash/redis client
-  // returns empty for keys the GH scrapers write via raw REST /set/ (it hid
-  // the movers universe, mover-reasons and fundamentals — all stored fine,
-  // just unreadable by the client). Raw REST mirrors exactly how the scrapers
-  // read/write, so it is the reliable path. Falls back to client then memory.
+  // PATCH 1018 — client FIRST (fast for small/cached keys), then a BOUNDED
+  // raw-REST fallback only when the client returns nothing. The previous
+  // raw-REST-primary version added an unbounded HTTP round-trip to every read
+  // and could hang, pushing /api/market/quotes past Railway's 30s maxDuration
+  // (→ "Movers fetch timed out"). Client reads are fast; raw-REST handles the
+  // large blobs the @upstash client returns empty for (universe/mover-reasons).
+  const r = getRedis();
+  if (r) {
+    try {
+      const val = await r.get<T>(key);
+      if (val !== null && val !== undefined) return val;
+    } catch (e) {
+      console.error(`[KV] Redis GET failed for ${key}:`, e);
+    }
+  }
   const _url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
   const _token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
   if (_url && _token) {
@@ -60,6 +70,7 @@ export async function kvGet<T = any>(key: string): Promise<T | null> {
       const resp = await fetch(`${_url.replace(/\/+$/, '')}/get/${encodeURIComponent(key)}`, {
         headers: { Authorization: `Bearer ${_token}` },
         cache: 'no-store',
+        signal: AbortSignal.timeout(8000),
       });
       if (resp.ok) {
         const j: any = await resp.json().catch(() => null);
@@ -72,18 +83,8 @@ export async function kvGet<T = any>(key: string): Promise<T | null> {
           return raw as T;
         }
       }
-    } catch { /* fall through to client / memory */ }
+    } catch { /* fall through to memory */ }
   }
-  const r = getRedis();
-  if (r) {
-    try {
-      const val = await r.get<T>(key);
-      if (val !== null && val !== undefined) return val;
-    } catch (e) {
-      console.error(`[KV] Redis GET failed for ${key}:`, e);
-    }
-  }
-  // Fallback to memory
   const mem = MEM_STORE.get(key);
   if (mem) {
     try { return JSON.parse(mem) as T; } catch { return mem as unknown as T; }
