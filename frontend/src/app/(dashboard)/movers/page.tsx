@@ -161,9 +161,12 @@ export default function MoversPage() {
   const hasActiveFilters = capFilter !== 'All' || sectorFilter !== 'All' || moveTokens.size > 0 || earningsOnly;
 
   const fetchData = useCallback(async () => {
-    // PATCH 0472 — 15s timeout
+    // PATCH 1015 — 15s -> 35s. The full ~2,341-stock universe build takes ~25s
+    // on a cold cache (no Yahoo on weekends; the cost is the blob read + build),
+    // so a 15s abort guaranteed a timeout on the first load. 35s lets the cold
+    // build finish; warm loads return in <1s from the 120s response cache.
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), 15_000);
+    const timer = setTimeout(() => ctl.abort(), 35_000);
     try {
       setError(null);
       setIsRefreshing(true);
@@ -214,7 +217,7 @@ export default function MoversPage() {
       const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       const prevMonth = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
       const ctl = new AbortController();
-      const timer = setTimeout(() => ctl.abort(), 15_000);
+      const timer = setTimeout(() => ctl.abort(), 30_000);
       const [curRes, prevRes] = await Promise.all([
         fetch(`/api/market/earnings?market=india&month=${curMonth}`, { signal: ctl.signal }).catch(() => null),
         fetch(`/api/market/earnings?market=india&month=${prevMonth}`, { signal: ctl.signal }).catch(() => null),
