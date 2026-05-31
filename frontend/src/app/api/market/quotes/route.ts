@@ -587,7 +587,7 @@ async function fetchIndianDataWithCache() {
           } catch { /* Yahoo failure tolerated — we have blob prices */ }
         }
 
-        const mergedStocks: any[] = [];
+        let mergedStocks: any[] = [];
         for (const t of tickers) {
           let price = 0, prevClose = 0, change = 0, changePercent = 0;
           let volume = 0, marketCap = 0, open = 0, dayHigh = 0, dayLow = 0, yearHigh = 0, yearLow = 0;
@@ -735,6 +735,15 @@ async function fetchIndianDataWithCache() {
           const marketOpen = isIndianMarketOpen();
           // PATCH 1008 — show EOD rows when market is CLOSED (weekend/after-hours);
           // only hide stale-as-live during open hours. Restores full universe on weekends.
+          // PATCH 1011 — drop data artifacts from the universe so movers/heatmap
+          // stay clean: rights-entitlement / non-EQ symbols (e.g. FOO-RE3),
+          // sub-rupee penny rows, and impossible single-day moves (>40% = an
+          // ex-date bonus/split/rights adjustment in BHAVCOPY, not a real move).
+          const _ENTITLEMENT = /-(RE|PP|NP|RR|RT|E1|E2|W|WS)\d*$/i;
+          mergedStocks = mergedStocks.filter((s: any) =>
+            s && (s.price ?? 0) >= 1
+            && Math.abs(s.changePercent ?? 0) <= 40
+            && !_ENTITLEMENT.test(s.ticker || ''));
           const liveOnly = marketOpen ? mergedStocks.filter((s: any) => !s.staleEOD) : mergedStocks;
           const hiddenStaleCount = mergedStocks.length - liveOnly.length;
           const gainers = [...liveOnly].sort((a, b) => b.changePercent - a.changePercent).filter((s: any) => s.changePercent > 0).slice(0, 30);
