@@ -323,57 +323,38 @@ function buildSyncState(): Pick<HomeState, 'tier1' | 'tier2' | 'tier3' | 'turnar
     market: r._market,
   } as TierAction);
 
-  const tier1Strict = allRows
-    .filter((r: any) => (r.grade === 'A+' || r.grade === 'A')
-                     && cbSet.has(symKey(r.symbol))
-                     && !decisions[(r.symbol || '').toUpperCase()])
-    .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
-    .map((r: any) => buildTier(r, true));
-
-  // PATCH 0897 — Tier 1 grown 8 → 10 per user request, with explicit
-  // US slot guarantee: reserve at least 2 spots for top-scored US names
-  // when any exist in the universe (most user uploads are India-heavy,
-  // so India would otherwise occupy all 10 even with strong US picks).
-  const TIER1_CAP = 10;
-  const TIER1_US_MIN = 2;
-  let tier1: TierAction[] = tier1Strict.slice(0, TIER1_CAP);
-  // Ensure at least N US names appear when US names exist that qualify.
-  const usaQualified = allRows
-    .filter((r: any) => r._market === 'US'
-                     && (r.grade === 'A+' || r.grade === 'A')
-                     && !decisions[(r.symbol || '').toUpperCase()])
-    .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0));
-  const usaInTier1 = () => tier1.filter(t => (t as any).market === 'US').length;
-  if (usaQualified.length > 0 && usaInTier1() < TIER1_US_MIN) {
-    const haveSyms = new Set(tier1.map(t => symKey(t.symbol)));
-    const usaTopUp = usaQualified
-      .filter((r: any) => !haveSyms.has(symKey(r.symbol)))
-      .slice(0, TIER1_US_MIN - usaInTier1())
-      .map((r: any) => buildTier(r, cbSet.has(symKey(r.symbol))));
-    // Drop the lowest-scoring entries to make room, but never drop ★ cross-confirmed
-    while (tier1.length + usaTopUp.length > TIER1_CAP) {
-      // Find the lowest-scoring non-cbConfirmed entry to drop
-      const dropIdx = tier1
-        .map((t, i) => ({ t, i }))
-        .filter(x => !x.t.cbConfirmed)
-        .sort((a, b) => (a.t.score ?? 0) - (b.t.score ?? 0))[0]?.i ?? -1;
-      if (dropIdx < 0) break;
-      tier1.splice(dropIdx, 1);
-    }
-    tier1 = [...tier1, ...usaTopUp];
-  }
-  // Fill any remaining slots with A-grade non-CB fillers.
-  if (tier1.length < TIER1_CAP) {
-    const haveSyms = new Set(tier1.map(t => symKey(t.symbol)));
-    const fillers = allRows
+  // PATCH 1001 — Tier 1 split into TWO independent top-10 blocks: India and
+  // USA. Each ranks strict cross-confirmed (★ = A-grade + on Conviction Beats
+  // + not in Decision Log) first, then tops up with A-grade non-CB fillers (+).
+  // No cross-market slot reservation needed now that the lists are separate.
+  // Stored as one concatenated array (India first, then USA); the renderer
+  // splits by .market into two DecisionTierBlocks, each renumbered from 1.
+  const TIER1_PER_MARKET = 10;
+  const buildMarketTier1 = (mkt: 'IN' | 'US'): TierAction[] => {
+    const rows = allRows.filter((r: any) => r._market === mkt);
+    const strict = rows
       .filter((r: any) => (r.grade === 'A+' || r.grade === 'A')
-                       && !haveSyms.has(symKey(r.symbol))
+                       && cbSet.has(symKey(r.symbol))
                        && !decisions[(r.symbol || '').toUpperCase()])
       .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
-      .slice(0, TIER1_CAP - tier1.length)
-      .map((r: any) => buildTier(r, false));
-    tier1 = [...tier1, ...fillers];
-  }
+      .map((r: any) => buildTier(r, true));
+    let list = strict.slice(0, TIER1_PER_MARKET);
+    if (list.length < TIER1_PER_MARKET) {
+      const have = new Set(list.map((t: TierAction) => symKey(t.symbol)));
+      const fillers = rows
+        .filter((r: any) => (r.grade === 'A+' || r.grade === 'A')
+                         && !have.has(symKey(r.symbol))
+                         && !decisions[(r.symbol || '').toUpperCase()])
+        .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
+        .slice(0, TIER1_PER_MARKET - list.length)
+        .map((r: any) => buildTier(r, false));
+      list = [...list, ...fillers];
+    }
+    return list;
+  };
+  const tier1India = buildMarketTier1('IN');
+  const tier1Usa = buildMarketTier1('US');
+  const tier1: TierAction[] = [...tier1India, ...tier1Usa];
 
   const tier2 = allRows
     .filter((r: any) => (r.grade === 'A+' || r.grade === 'A') && !tier1.find(t => t.symbol === r.symbol))
@@ -756,7 +737,21 @@ export default function HomeDashboard() {
         // Fallback: if structural filter wiped everything but we DO have
         // recent items, surface them anyway (they at least show the user
         // there's a live feed; the structural items get a small chip).
-        const final = clean.length > 0 ? clean : recent.sort(sortFn);
+        // PATCH 1001 — always fill to 10. Prefer real 24h news (clean), then
+        // backfill with older real news, then 24h structural alerts, then
+        // older structural — de-duplicated — so the panel shows 10 whenever
+        // 10 distinct items exist in the fetched pool.
+        const olderPool = raw.filter((a: any) => !recent.includes(a)).sort(sortFn);
+        const olderClean = olderPool.filter((a: any) => !isStructural(a));
+        const recentStructural = recent.filter((a: any) => isStructural(a));
+        const olderStructural = olderPool.filter((a: any) => isStructural(a));
+        const _seenInPlay = new Set<string>();
+        const final = [...clean, ...olderClean, ...recentStructural, ...olderStructural]
+          .filter((a: any) => {
+            const k = String(a?.id || a?.url || a?.source_url || a?.title || a?.headline || '');
+            if (!k || _seenInPlay.has(k)) return false;
+            _seenInPlay.add(k); return true;
+          });
         setData((d) => ({
           ...d,
           inPlay: final.slice(0, 10),
@@ -884,16 +879,25 @@ export default function HomeDashboard() {
         // missing on weekend BHAVCOPY snapshot, liquid filter would otherwise
         // produce empty list, then user sees 'No movers data' even though the
         // API returned 30 gainers + 30 losers).
-        const gainersLiquid = rawG.slice().filter(liquid)
-          .sort((a: any, b: any) => (b.changePercent || 0) - (a.changePercent || 0));
-        const losersLiquid = rawL.slice().filter(liquid)
-          .sort((a: any, b: any) => (a.changePercent || 0) - (b.changePercent || 0));
-        const gainersAll = rawG.slice()
-          .sort((a: any, b: any) => (b.changePercent || 0) - (a.changePercent || 0));
-        const losersAll = rawL.slice()
-          .sort((a: any, b: any) => (a.changePercent || 0) - (b.changePercent || 0));
-        const gainers = (gainersLiquid.length > 0 ? gainersLiquid : gainersAll).slice(0, 15);
-        const losers = (losersLiquid.length > 0 ? losersLiquid : losersAll).slice(0, 15);
+        // PATCH 1001 — restore small/mid-cap focus + 20 per side. Cascade per
+        // side: small/mid + liquid -> small/mid (any vol) -> liquid -> all.
+        // Large-cap NIFTY-50 names are excluded whenever the indexGroup field
+        // is populated (this panel is for actionable small/mid moves, not index
+        // heavyweights); falls back gracefully when indexGroup is missing.
+        const gSort = (arr: any[]) => arr.slice().sort((a: any, b: any) => (b.changePercent || 0) - (a.changePercent || 0));
+        const lSort = (arr: any[]) => arr.slice().sort((a: any, b: any) => (a.changePercent || 0) - (b.changePercent || 0));
+        const pickSide = (rawArr: any[], sortFn: (x: any[]) => any[]) => {
+          const sm = smallMidOnly(rawArr);
+          const smLiquid = sm.filter(liquid);
+          if (smLiquid.length > 0) return sortFn(smLiquid);
+          if (sm.length > 0) return sortFn(sm);
+          const liq = rawArr.filter(liquid);
+          if (liq.length > 0) return sortFn(liq);
+          return sortFn(rawArr);
+        };
+        const MOVERS_PER_SIDE = 20;
+        const gainers = pickSide(rawG, gSort).slice(0, MOVERS_PER_SIDE);
+        const losers = pickSide(rawL, lSort).slice(0, MOVERS_PER_SIDE);
         setData((d) => ({ ...d, gainers, losers, moversUpdatedAt: j?.updatedAt } as any));
 
         // PATCH 0800 — Fetch Screener fundamentals for EXTREME movers only
@@ -1997,8 +2001,6 @@ export default function HomeDashboard() {
             <Link href="/movers"                 style={navChip('#10B981')}>📈 Movers</Link>
             <Link href="/multibagger"            style={navChip('#10B981')}>🚀 Multibagger</Link>
             <Link href="/portfolio"              style={navChip('#22D3EE')}>💼 My Book</Link>
-            {/* PATCH 1051 — News Feed chip. Alphabetical slot (My Book → News Feed → Playbook). Routes to existing /news page. */}
-            <Link href="/news"                   style={navChip('#A78BFA')}>📰 News Feed</Link>
             {/* PATCH 0776 — 📑 Order Book + 🏛 Rating Actions chips removed (modules deleted). */}
             <Link href="/playbook"               style={navChip('#F59E0B')}>📚 Playbook</Link>
             <Link href="/orders"                 style={navChip('#22D3EE')}>📡 Signals</Link>
@@ -2177,7 +2179,7 @@ export default function HomeDashboard() {
             fontSize: 13, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px',
             display: 'flex', alignItems: 'center', gap: 6, width: '100%',
           }}>
-            {showInPlay ? '▾' : '▸'} 🔥 IN-PLAY NEWS — last 24h ({data.inPlay.length})
+            {showInPlay ? '▾' : '▸'} 🔥 IN-PLAY NEWS — top {data.inPlay.length}
             <span style={{ marginLeft: 'auto', fontSize: 10, color: DIM, fontWeight: 500 }}>
               <Link href="/news" style={{ color: '#22D3EE', textDecoration: 'none' }} onClick={(e) => e.stopPropagation()}>Full feed →</Link>
             </span>
@@ -2231,14 +2233,34 @@ export default function HomeDashboard() {
 
         {/* ═══════════════ TIER 1 — IMMEDIATE ACTION ════════════════════ */}
         {lensedTier1.length > 0 ? (
-          <DecisionTierBlock
-            tier={1}
-            label="IMMEDIATE ACTION"
-            color="#10B981"
-            description="Cross-confirmed (★) = A-grade + on Conviction Beats + not in Decision Log. (+) = A-grade top-up when fewer than 10 cross-confirmed exist. India + USA combined; at least 2 US slots reserved when US A-grade names exist."
-            items={lensedTier1}
-            expanded
-          />
+          (() => {
+            const t1India = lensedTier1.filter((t: TierAction) => (t as any).market !== 'US');
+            const t1Usa = lensedTier1.filter((t: TierAction) => (t as any).market === 'US');
+            return (
+              <>
+                {t1India.length > 0 && (
+                  <DecisionTierBlock
+                    tier={1}
+                    label="IMMEDIATE ACTION · 🇮🇳 INDIA"
+                    color="#10B981"
+                    description="Cross-confirmed (★) = A-grade + on Conviction Beats + not in Decision Log. (+) = A-grade top-up when fewer than 10 cross-confirmed exist. Top 10 India names."
+                    items={t1India}
+                    expanded
+                  />
+                )}
+                {t1Usa.length > 0 && (
+                  <DecisionTierBlock
+                    tier={1}
+                    label="IMMEDIATE ACTION · 🇺🇸 USA"
+                    color="#10B981"
+                    description="Cross-confirmed (★) = A-grade + on Conviction Beats + not in Decision Log. (+) = A-grade top-up when fewer than 10 cross-confirmed exist. Top 10 US names."
+                    items={t1Usa}
+                    expanded
+                  />
+                )}
+              </>
+            );
+          })()
         ) : (
           <div style={{ ...cardStyle, borderColor: '#22D3EE40' }}>
             <div style={{ fontSize: 13, color: TEXT, fontWeight: 700, marginBottom: 4 }}>🎯 Tier 1 — Immediate Action</div>
@@ -2969,13 +2991,13 @@ export default function HomeDashboard() {
                       {standardG.length > 0 && (
                         <>
                           <div style={{ fontSize: 9, color: '#10B981', fontWeight: 700, marginTop: 2, marginBottom: 2 }}>▲ GAINERS</div>
-                          {standardG.slice(0, 8).map((g: any) => renderRow(g, 'up'))}
+                          {standardG.slice(0, 20).map((g: any) => renderRow(g, 'up'))}
                         </>
                       )}
                       {standardL.length > 0 && (
                         <>
                           <div style={{ fontSize: 9, color: '#EF4444', fontWeight: 700, marginTop: 4, marginBottom: 2 }}>▼ LOSERS</div>
-                          {standardL.slice(0, 8).map((l: any) => renderRow(l, 'dn'))}
+                          {standardL.slice(0, 20).map((l: any) => renderRow(l, 'dn'))}
                         </>
                       )}
                     </div>
@@ -2984,18 +3006,18 @@ export default function HomeDashboard() {
                     <div>
                       {/* PATCH 0994 — top 5 fallback when threshold not met */}
                       <div style={{ fontSize: 9.5, color: '#8DA1B9', fontWeight: 700, marginBottom: 3, marginTop: 4, letterSpacing: '0.3px' }}>
-                        🔘 TOP MOVERS (no ≥5% with vol today — showing top 5)
+                        🔘 TOP MOVERS · small/mid cap (no ≥5% with vol today — showing top 20)
                       </div>
                       {(data.gainers || []).length > 0 && (
                         <>
                           <div style={{ fontSize: 9, color: '#10B981', fontWeight: 700, marginTop: 2, marginBottom: 2, letterSpacing: '0.3px' }}>▲ GAINERS</div>
-                          {(data.gainers || []).slice(0, 5).map((g: any) => renderRow(g, 'up'))}
+                          {(data.gainers || []).slice(0, 20).map((g: any) => renderRow(g, 'up'))}
                         </>
                       )}
                       {(data.losers || []).length > 0 && (
                         <>
                           <div style={{ fontSize: 9, color: '#EF4444', fontWeight: 700, marginTop: 6, marginBottom: 2, letterSpacing: '0.3px' }}>▼ LOSERS</div>
-                          {(data.losers || []).slice(0, 5).map((l: any) => renderRow(l, 'dn'))}
+                          {(data.losers || []).slice(0, 20).map((l: any) => renderRow(l, 'dn'))}
                         </>
                       )}
                       {(data.gainers || []).length === 0 && (data.losers || []).length === 0 && (
