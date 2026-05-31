@@ -19,7 +19,7 @@ const responseCache = new Map<string, { data: any; ts: number }>();
 // ticker prices visibly stale (user reported wrong %change on ticker bar).
 // CPU concern from 0818 is acceptable: heatmap is the heavy caller and it
 // uses a lighter sub-endpoint.
-const RESPONSE_TTL = 30_000;
+const RESPONSE_TTL = 120_000; // PATCH 1010 — 30s->120s: the full ~2363-stock universe build is heavy (~25s cold); cache longer so home/movers reuse it instead of recomputing every poll
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
