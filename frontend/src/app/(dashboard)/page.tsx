@@ -2951,82 +2951,35 @@ export default function HomeDashboard() {
                 );
               };
 
-              // Tier split — EXTREME first, then STANDARD. Drop MINOR (<5%).
-              const gainersList = data.gainers || [];
-              const losersList  = data.losers  || [];
-              const extremeG = gainersList.filter((g: any) => moverTier(g.changePercent || 0) === 'EXTREME');
-              const standardG = gainersList.filter((g: any) => moverTier(g.changePercent || 0) === 'STANDARD');
-              const extremeL = losersList.filter((l: any) => moverTier(l.changePercent || 0) === 'EXTREME');
-              const standardL = losersList.filter((l: any) => moverTier(l.changePercent || 0) === 'STANDARD');
-
-              // Sector breadth footer — top 3 advancing + top 3 declining sectors
+              // PATCH 1013 — always show the full top-20 gainers + top-20 losers
+              // (flat list). The old EXTREME/STANDARD tier split hid every name
+              // that moved <5%, so on calm/closed days only a handful showed.
+              // Per-row colour + bucket dot still convey magnitude.
               const sectorMoves = (data as any).sectorRotation;
+              const topG = (data.gainers || []).slice(0, 20);
+              const topL = (data.losers || []).slice(0, 20);
 
               return (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {(extremeG.length > 0 || extremeL.length > 0) && (
-                    <div>
-                      <div style={{ fontSize: 9.5, color: '#EF4444', fontWeight: 800, letterSpacing: '0.5px', marginBottom: 3 }}>
-                        🔴 EXTREME MOVERS (≥ 10%)
+                  <div>
+                    {topG.length > 0 && (
+                      <>
+                        <div style={{ fontSize: 9, color: '#10B981', fontWeight: 700, marginTop: 2, marginBottom: 2, letterSpacing: '0.3px' }}>▲ GAINERS ({topG.length})</div>
+                        {topG.map((g: any) => renderRow(g, 'up'))}
+                      </>
+                    )}
+                    {topL.length > 0 && (
+                      <>
+                        <div style={{ fontSize: 9, color: '#EF4444', fontWeight: 700, marginTop: 6, marginBottom: 2, letterSpacing: '0.3px' }}>▼ LOSERS ({topL.length})</div>
+                        {topL.map((l: any) => renderRow(l, 'dn'))}
+                      </>
+                    )}
+                    {topG.length === 0 && topL.length === 0 && (
+                      <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic', padding: '4px 0' }}>
+                        Movers feed not loaded yet — try Hard Refresh on /movers.
                       </div>
-                      {extremeG.length > 0 && (
-                        <>
-                          <div style={{ fontSize: 9, color: '#10B981', fontWeight: 700, marginTop: 2, marginBottom: 2 }}>▲ GAINERS</div>
-                          {extremeG.map((g: any) => renderRow(g, 'up'))}
-                        </>
-                      )}
-                      {extremeL.length > 0 && (
-                        <>
-                          <div style={{ fontSize: 9, color: '#EF4444', fontWeight: 700, marginTop: 4, marginBottom: 2 }}>▼ LOSERS</div>
-                          {extremeL.map((l: any) => renderRow(l, 'dn'))}
-                        </>
-                      )}
-                    </div>
-                  )}
-                  {(standardG.length > 0 || standardL.length > 0) && (
-                    <div>
-                      <div style={{ fontSize: 9.5, color: '#F59E0B', fontWeight: 800, letterSpacing: '0.5px', marginBottom: 3, marginTop: 4 }}>
-                        🟠 STANDARD MOVERS (5–10%)
-                      </div>
-                      {standardG.length > 0 && (
-                        <>
-                          <div style={{ fontSize: 9, color: '#10B981', fontWeight: 700, marginTop: 2, marginBottom: 2 }}>▲ GAINERS</div>
-                          {standardG.slice(0, 20).map((g: any) => renderRow(g, 'up'))}
-                        </>
-                      )}
-                      {standardL.length > 0 && (
-                        <>
-                          <div style={{ fontSize: 9, color: '#EF4444', fontWeight: 700, marginTop: 4, marginBottom: 2 }}>▼ LOSERS</div>
-                          {standardL.slice(0, 20).map((l: any) => renderRow(l, 'dn'))}
-                        </>
-                      )}
-                    </div>
-                  )}
-                  {extremeG.length === 0 && standardG.length === 0 && extremeL.length === 0 && standardL.length === 0 && (
-                    <div>
-                      {/* PATCH 0994 — top 5 fallback when threshold not met */}
-                      <div style={{ fontSize: 9.5, color: '#8DA1B9', fontWeight: 700, marginBottom: 3, marginTop: 4, letterSpacing: '0.3px' }}>
-                        🔘 TOP MOVERS · small/mid cap (no ≥5% with vol today — showing top 20)
-                      </div>
-                      {(data.gainers || []).length > 0 && (
-                        <>
-                          <div style={{ fontSize: 9, color: '#10B981', fontWeight: 700, marginTop: 2, marginBottom: 2, letterSpacing: '0.3px' }}>▲ GAINERS</div>
-                          {(data.gainers || []).slice(0, 20).map((g: any) => renderRow(g, 'up'))}
-                        </>
-                      )}
-                      {(data.losers || []).length > 0 && (
-                        <>
-                          <div style={{ fontSize: 9, color: '#EF4444', fontWeight: 700, marginTop: 6, marginBottom: 2, letterSpacing: '0.3px' }}>▼ LOSERS</div>
-                          {(data.losers || []).slice(0, 20).map((l: any) => renderRow(l, 'dn'))}
-                        </>
-                      )}
-                      {(data.gainers || []).length === 0 && (data.losers || []).length === 0 && (
-                        <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic', padding: '4px 0' }}>
-                          Movers feed not loaded yet — try Hard Refresh on /movers.
-                        </div>
-                      )}
-                    </div>
-                  )}
+                    )}
+                  </div>
                   {/* PATCH 0821 — sector breadth + top-3 leaders per sector */}
                   {sectorMoves?.topSector && sectorMoves?.bottomSector && (() => {
                     // Derive top-3 leaders from gainers/losers list in each sector
