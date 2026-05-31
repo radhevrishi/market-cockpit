@@ -491,10 +491,12 @@ async function fetchIndianDataWithCache() {
   // We use that ticker list + Yahoo for prices (Vercel→Yahoo works fine,
   // proven by /api/market/quote endpoint). Result: 500+ stocks with proper
   // cap labels (Large/Mid/Small) and real last-close % moves.
-  if (stocks.length < 100) {
+  let _kvBlobTickers = -1; // PATCH 1008 — diag: -1 = KV path not entered; N = blob tickers read
+  if (stocks.length < 600) {
     try {
       const universeBlob = await kvGet<any>('nse-ticker-universe:v1:latest');
       const tickers: Array<any> = universeBlob?.tickers || [];
+      _kvBlobTickers = tickers.length;
       // PATCH 0798 — also read rolling-stats blob for vol20D/mom1M/52w% enrichment.
       // Optional — engine degrades gracefully if blob missing or stale.
       const rollingBlob = await kvGet<any>('nse-rolling-stats:v1:latest').catch(() => null);
@@ -526,14 +528,17 @@ async function fetchIndianDataWithCache() {
         // Top-500-by-turnover + all largecaps gets us comprehensive coverage
         // of every name on /movers, within Vercel's 60s budget.
         const pricedFromBlob = tickers.filter((t: any) => t.hasPrice && (t.price ?? 0) > 0);
-        const topByTurnover = tickers
-          .slice()
-          .sort((a: any, b: any) => (b.turnoverLacs || 0) - (a.turnoverLacs || 0))
-          .slice(0, 500);
-        const liveSyms: string[] = topByTurnover.map((t: any) => `${t.ticker}.NS`);
-        for (const t of tickers) {
-          if ((t.cap || '').toLowerCase() === 'large') liveSyms.push(`${t.ticker}.NS`);
-        }
+        // PATCH 1008 — restore Patch 0790 (embedded BHAVCOPY EOD prices). Patch
+        // 0815's "always Yahoo for top-500-turnover + all largecaps" made every
+        // request fetch ~500 Yahoo quotes, which overran Railway's 30s budget and
+        // collapsed the universe to the 49-name fallback. Now Yahoo is used only
+        // for live freshness on the top-100 largecaps WHEN the market is open;
+        // embedded EOD prices serve everything else (correct on weekends).
+        const { isIndianMarketOpen: _isOpenFn } = await import('@/lib/market-hours');
+        const _mktOpen = _isOpenFn();
+        const liveSyms: string[] = _mktOpen
+          ? tickers.filter((t: any) => (t.cap || '').toLowerCase() === 'large').slice(0, 100).map((t: any) => `${t.ticker}.NS`)
+          : [];
         const unpricedSyms = tickers.filter((t: any) => !t.hasPrice).map((t: any) => `${t.ticker}.NS`);
         // Combine, dedupe, cap.
         const yahooSymsSet = new Set<string>([...liveSyms, ...unpricedSyms]);
@@ -699,7 +704,9 @@ async function fetchIndianDataWithCache() {
           // ════════════════════════════════════════════════════════════════
           const { isIndianMarketOpen } = await import('@/lib/market-hours');
           const marketOpen = isIndianMarketOpen();
-          const liveOnly = mergedStocks.filter((s: any) => !s.staleEOD);
+          // PATCH 1008 — show EOD rows when market is CLOSED (weekend/after-hours);
+          // only hide stale-as-live during open hours. Restores full universe on weekends.
+          const liveOnly = marketOpen ? mergedStocks.filter((s: any) => !s.staleEOD) : mergedStocks;
           const hiddenStaleCount = mergedStocks.length - liveOnly.length;
           const gainers = [...liveOnly].sort((a, b) => b.changePercent - a.changePercent).filter((s: any) => s.changePercent > 0).slice(0, 30);
           const losers  = [...liveOnly].sort((a, b) => a.changePercent - b.changePercent).filter((s: any) => s.changePercent < 0).slice(0, 30);
@@ -718,6 +725,7 @@ async function fetchIndianDataWithCache() {
               staleEODHidden: hiddenStaleCount,
             },
             marketHours: { indianOpen: marketOpen },
+            _diag: { path: 'kv-universe', blobTickers: _kvBlobTickers, yahoo: yahooMap.size, mkt: marketOpen ? 'open' : 'closed' },
             source: `NSE-universe (KV ${universeAgeStr}) + BHAVCOPY/${universeBlob.pricedCount || 0} + Yahoo/${yahooMap.size} + P0963 staleEOD-filter ALWAYS-ON (hid ${hiddenStaleCount} BHAVCOPY-only rows from movers)`,
             updatedAt: new Date().toISOString(),
           };
@@ -768,6 +776,7 @@ async function fetchIndianDataWithCache() {
       avgChange: validStocks.length > 0 ? validStocks.reduce((sum, s) => sum + s.changePercent, 0) / validStocks.length : 0,
       sectors: [...new Set(validStocks.map(s => s.sector))].length,
     },
+    _diag: { path: 'fallback', blobTickers: _kvBlobTickers },
     source: nifty500Data?.data ? 'NSE India' : 'Yahoo Finance',
     updatedAt: new Date().toISOString(),
   };
