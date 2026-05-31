@@ -812,7 +812,7 @@ export default function HomeDashboard() {
       // conviction beats in my watchlist not for all companies. now fix it
       // and make it that way." The /movers full page still shows the broad
       // market — this is just the home dashboard panel filter.
-      safeDiag<any>(`/api/market/quotes?market=india&_=${Date.now()}`, 18_000).then(async ({ data: j }) => {
+      safeDiag<any>(`/api/market/quotes?market=india&_=${Date.now()}`, 30_000).then(async ({ data: j }) => {
         if (cancelled) return;
         // Build the user's universe (UPPER + suffix-stripped tickers).
         const norm = (s: string) => (s || '').toString().toUpperCase().replace(/\.(NS|BO)$/i, '').trim();
@@ -1523,7 +1523,7 @@ export default function HomeDashboard() {
       // PATCH 0622 — Portfolio P&L + Watchlist Pulse + Sector Rotation —
       // all derived from a single quotes fetch which we also use for Movers.
       // The Movers fetch above already runs; we ride on the same /quotes call.
-      safeDiag<any>(`/api/market/quotes?market=india&_=${Date.now()}`, 18_000).then(({ data: j }) => {
+      safeDiag<any>(`/api/market/quotes?market=india&_=${Date.now()}`, 30_000).then(({ data: j }) => {
         if (cancelled) return;
         const stocks: any[] = j?.stocks || [];
         const byTicker = new Map<string, any>();
