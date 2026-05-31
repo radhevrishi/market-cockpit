@@ -491,7 +491,11 @@ async function fetchIndianDataWithCache() {
   // We use that ticker list + Yahoo for prices (Vercel→Yahoo works fine,
   // proven by /api/market/quote endpoint). Result: 500+ stocks with proper
   // cap labels (Large/Mid/Small) and real last-close % moves.
-  if (stocks.length < 100) {
+  // PATCH 1007 — was < 100. A partial live NSE return (100-400 stocks) would
+  // skip the KV universe entirely, collapsing /movers to a handful of large-
+  // caps. A healthy live broad fetch yields ~750; anything materially short
+  // means live is degraded, so prefer the full KV universe (~2370 tickers).
+  if (stocks.length < 600) {
     try {
       const universeBlob = await kvGet<any>('nse-ticker-universe:v1:latest');
       const tickers: Array<any> = universeBlob?.tickers || [];
@@ -699,7 +703,12 @@ async function fetchIndianDataWithCache() {
           // ════════════════════════════════════════════════════════════════
           const { isIndianMarketOpen } = await import('@/lib/market-hours');
           const marketOpen = isIndianMarketOpen();
-          const liveOnly = mergedStocks.filter((s: any) => !s.staleEOD);
+          // PATCH 1007 — staleEOD filter applies ONLY when the market is OPEN.
+          // When NSE is closed (weekend / after-hours), BHAVCOPY EOD IS the
+          // legitimate last-close data and must be shown; hiding it collapsed
+          // the universe to the few Yahoo-covered large-caps. Volume/cap
+          // filters downstream handle quality (restores the 674+ universe).
+          const liveOnly = marketOpen ? mergedStocks.filter((s: any) => !s.staleEOD) : mergedStocks;
           const hiddenStaleCount = mergedStocks.length - liveOnly.length;
           const gainers = [...liveOnly].sort((a, b) => b.changePercent - a.changePercent).filter((s: any) => s.changePercent > 0).slice(0, 30);
           const losers  = [...liveOnly].sort((a, b) => a.changePercent - b.changePercent).filter((s: any) => s.changePercent < 0).slice(0, 30);
@@ -743,6 +752,7 @@ async function fetchIndianDataWithCache() {
         volume: q?.regularMarketVolume || 0,
         marketCap: q?.marketCap || 0,
         previousClose: q?.regularMarketPreviousClose || 0,
+        indexGroup: 'Large', // PATCH 1007 — NIFTY 50 last-resort = large caps; prevents 'all Small' mislabel
       };
     }).filter(s => s.price > 0);
   }
