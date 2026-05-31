@@ -830,8 +830,13 @@ export default function HomeDashboard() {
           ph.forEach((h) => { if (h?.ticker) universe.add(norm(h.ticker)); });
         } catch {}
 
-        const rawG = j?.gainers || [];
-        const rawL = j?.losers || [];
+        // PATCH 1013 — derive movers from the FULL universe (j.stocks), not the
+        // API's pre-sliced top-30. The top-30 by raw % are mostly illiquid micro-
+        // caps that the small/mid + liquidity filter then drops, leaving only a
+        // handful. Filtering the full universe yields a proper 20 per side.
+        const _allStocks: any[] = (j?.stocks && j.stocks.length > 0) ? j.stocks : [ ...(j?.gainers || []), ...(j?.losers || []) ];
+        const rawG = _allStocks.filter((s: any) => (s?.changePercent || 0) > 0);
+        const rawL = _allStocks.filter((s: any) => (s?.changePercent || 0) < 0);
         const inUniverse = (s: any) => universe.has(norm(s?.ticker || s?.symbol || ''));
         const smallMidOnly = (arr: any[]) => arr.filter((s: any) => {
           const g = (s?.indexGroup || '').toLowerCase();
