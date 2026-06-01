@@ -592,6 +592,7 @@ export default function PortfolioPage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [viewTab, setViewTab] = useState<'holdings' | 'analytics'>('holdings'); // PATCH 1100
   const [capFilter, setCapFilter] = useState<'all' | 'large' | 'mid' | 'small' | 'micro'>('all'); // PATCH 1100
+  const [capMap, setCapMap] = useState<Record<string, string>>({}); // PATCH 1101 — ticker -> cap (Large/Mid/Small/Micro)
 
   // Init: load from API, fallback to localStorage
   useEffect(() => {
@@ -841,12 +842,12 @@ export default function PortfolioPage() {
         score: signal?.weightedScore ?? fallbackScore,
         sectorTrend: signal?.sectorTrend ?? rrgTone ?? intradayTone ?? positionTone,
         decision: signal?.action ?? fallbackDecision,
-        cap: quote?.indexGroup || '', marketCap: quote?.marketCap || 0 }; // PATCH 1100
+        cap: capMap[upperSym] || capMap[upperNorm] || quote?.indexGroup || '', marketCap: quote?.marketCap || 0 }; // PATCH 1100/1101
     });
     // Second pass: weight by current value (proper risk weighting)
     const totalCurrent = rawRows.reduce((s, r) => s + r.currentValue, 0);
     return rawRows.map(r => ({ ...r, weight: totalCurrent > 0 ? (r.currentValue / totalCurrent) * 100 : 0 }));
-  }, [holdings, quotes, intelligence, trendMap]);
+  }, [holdings, quotes, intelligence, trendMap, capMap]);
 
   // Sorted rows
   const sortedRows = useMemo(() => {
@@ -867,6 +868,33 @@ export default function PortfolioPage() {
     if (capFilter === 'all') return sortedRows;
     return sortedRows.filter(r => normCapBucket(r.cap) === capFilter);
   }, [sortedRows, capFilter]);
+
+  // PATCH 1101 — Market-cap is the user's #1 requirement and must never be empty.
+  // The per-ticker quote endpoint that prices small/mid holdings returns NO cap,
+  // so we pull cap labels from the FULL NSE universe blob (every ticker carries
+  // indexGroup). The universe can be cold on first hit (returns a 49-name
+  // fallback); retry a few times until it returns the full set, then build a
+  // ticker -> cap map used to tag every holding regardless of how it was priced.
+  useEffect(() => {
+    let cancelled = false;
+    const loadCaps = async (attempt = 0) => {
+      try {
+        const r = await fetch(`/api/market/quotes?market=india&_=${Date.now()}`);
+        const j = await r.json();
+        const st: any[] = Array.isArray(j?.stocks) ? j.stocks : [];
+        const withCap = st.filter(x => x && x.indexGroup);
+        if (withCap.length >= 500) {
+          const m: Record<string, string> = {};
+          for (const x of withCap) m[String(x.ticker || '').toUpperCase()] = x.indexGroup;
+          if (!cancelled) setCapMap(m);
+          return;
+        }
+      } catch { /* fall through to retry */ }
+      if (attempt < 4 && !cancelled) setTimeout(() => loadCaps(attempt + 1), 4000);
+    };
+    loadCaps();
+    return () => { cancelled = true; };
+  }, []);
 
   // AUDIT_100 #28 — bulk CSV import. Pastes / drops a broker-export CSV with
   // columns symbol,price,quantity[,notes]. Header row is optional (auto-detect).
