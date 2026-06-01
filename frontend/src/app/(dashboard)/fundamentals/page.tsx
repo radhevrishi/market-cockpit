@@ -202,6 +202,18 @@ function Dashboard({ data }: { data: Row[] }) {
     return Object.entries(m).sort((a, b) => b[1] - a[1]);
   }, [data]);
 
+  // moving-average position — only renders if the file has DMA columns (CMP vs 50/200-DMA)
+  const hasMA = useMemo(() => data.some((d) => !isNaN(num(d['DMA 50'])) || !isNaN(num(d['DMA 200']))), [data]);
+  const belowMA = (dmaKey: string) => {
+    const v = data.filter((d) => !isNaN(num(d['Current Price'])) && !isNaN(num(d[dmaKey])) && num(d['Current Price']) < num(d[dmaKey]));
+    v.sort((a, b) => ((num(a['Current Price']) - num(a[dmaKey])) / num(a[dmaKey])) - ((num(b['Current Price']) - num(b[dmaKey])) / num(b[dmaKey])));
+    return v;
+  };
+  const below50 = hasMA ? belowMA('DMA 50') : [];
+  const below200 = hasMA ? belowMA('DMA 200') : [];
+  const withMA50 = data.filter((d) => !isNaN(num(d['DMA 50'])) && !isNaN(num(d['Current Price']))).length;
+  const withMA200 = data.filter((d) => !isNaN(num(d['DMA 200'])) && !isNaN(num(d['Current Price']))).length;
+
   return (
     <div>
       {/* KPI strip */}
@@ -294,6 +306,18 @@ function Dashboard({ data }: { data: Row[] }) {
           <Histogram values={col('Profit growth')} color={COL.violet} unit="Profit gr %" />
         </Card>
       </div>
+
+      {/* Moving averages — below 50-DMA / 200-DMA (renders only if file has DMA columns) */}
+      {hasMA && (
+        <div style={grid2}>
+          <Card title={`Below 50-DMA — ${below50.length} of ${withMA50}`} dot={COL.red} hint="trading under the 50-day moving average">
+            <MATable rows={below50} dmaKey="DMA 50" name={name} nse={nse} />
+          </Card>
+          <Card title={`Below 200-DMA — ${below200.length} of ${withMA200}`} dot={COL.red} hint="trading under the 200-day moving average">
+            <MATable rows={below200} dmaKey="DMA 200" name={name} nse={nse} />
+          </Card>
+        </div>
+      )}
 
       <div style={{ marginTop: 28, color: COL.dim, fontSize: 11, borderTop: `1px solid ${COL.line}`, paddingTop: 14 }}>
         All metrics computed in-browser from the loaded file. Headline “avg” is a trimmed mean (extreme top/bottom 5% removed); raw median shown alongside. Quadrant clamps extreme outliers to the axis edge. Blanks excluded.
@@ -399,6 +423,34 @@ function Histogram({ values, color, unit }: { values: number[]; color: string; u
   );
 }
 
+function MATable({ rows, dmaKey, name, nse }: {
+  rows: Row[]; dmaKey: string; name: (d: Row) => string; nse: (d: Row) => string;
+}) {
+  if (!rows.length) return <div style={{ color: COL.dim, fontSize: 12, padding: '8px 2px' }}>None — every stock with data is above this moving average.</div>;
+  return (
+    <table style={tbl}>
+      <thead>
+        <tr><th style={thR}></th><th style={thL}>Company</th><th style={thR}>CMP</th><th style={thR}>{dmaKey}</th><th style={thR}>% vs MA</th></tr>
+      </thead>
+      <tbody>
+        {rows.map((d, i) => {
+          const cmp = num(d['Current Price']); const dma = num(d[dmaKey]);
+          const pct = dma ? ((cmp - dma) / dma) * 100 : NaN;
+          return (
+            <tr key={i}>
+              <td style={tdDim}>{i + 1}</td>
+              <td style={tdL}><b>{name(d)}</b><span style={nseS}>{nse(d)}</span></td>
+              <td style={tdR}>{fmt(cmp, 1)}</td>
+              <td style={tdR}>{fmt(dma, 1)}</td>
+              <td style={{ ...tdR, color: COL.red, fontWeight: 700 }}>{fmt(pct, 1)}%</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
 function Quadrant({ data, name }: { data: Row[]; name: (d: Row) => string }) {
   const W = 760, H = 340, P = 44;
   const CL = 300, CLN = -100;
@@ -436,7 +488,7 @@ function Quadrant({ data, name }: { data: Row[]; name: (d: Row) => string }) {
           ))}
           <text x={W / 2} y={H - 10} fill={COL.muted} fontSize={11} textAnchor="middle">Sales growth % (TTM)</text>
           <text x={14} y={H / 2} fill={COL.muted} fontSize={11} textAnchor="middle" transform={`rotate(-90 14 ${H / 2})`}>Profit growth % (TTM)</text>
-        </svg>
+        </svg>PATCH 1123 - Analyzer: add Below 50-DMA / Below 200-DMA lists (CMP vs DMA columns), renders when present
       </div>
       {off ? <div style={{ color: COL.dim, fontSize: 11, marginTop: 8 }}>{off} stock(s) had growth beyond ±{CL}% and were clamped to the chart edge to keep the quadrant readable.</div> : null}
     </div>
