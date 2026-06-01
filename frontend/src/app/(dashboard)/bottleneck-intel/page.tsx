@@ -829,7 +829,7 @@ function useUSQuotes(enabled = true) {
         return all;
       } catch { return []; }
     },
-    refetchInterval: 300_000 /* PATCH 0818: 60s→5m */, staleTime: 45_000, retry: 1,
+    refetchInterval: 90_000 /* PATCH 0818: 60s→5m */, staleTime: 45_000, retry: 1,
     // AUDIT_100 #94 — gate so the heavy paired-market quote fetch only fires
     // when the Scanner tab is active (where prices actually render).
     enabled,
@@ -2865,7 +2865,7 @@ function useEarningsSignals() {
         return Array.isArray(tickers) && tickers.some((t: string) => typeof t === 'string' && EARNINGS_WATCH.includes(t.toUpperCase()));
       });
     },
-    refetchInterval: 300_000,
+    refetchInterval: 90_000,
     staleTime: 240_000,
     retry: 1,
   });
@@ -2895,7 +2895,7 @@ function useConferenceSignals() {
       }
       return counts;
     },
-    refetchInterval: 300_000, // 5 min
+    refetchInterval: 90_000, // 5 min
     staleTime: 240_000,
     retry: 1,
   });
