@@ -15,6 +15,7 @@ import {
 } from '@/lib/conviction-beats';
 import { peadScore, peadColor, peadLabel } from '@/lib/pead-score';
 import TickerExportToolbar from '@/components/TickerExportToolbar';
+import FundamentalsAnalyzerPage from '../fundamentals/page';
 // PATCH 0557 — BUG-AUDIT-2: backend-degraded banner.
 import DegradedBanner from '@/components/DegradedBanner';
 import {
@@ -534,7 +535,7 @@ export default function WatchlistsPage() {
   const searchParams = useSearchParams();
   const initialTab: 'main' | 'conviction' =
     searchParams?.get('tab') === 'conviction' ? 'conviction' : 'main';
-  const [activeTab, setActiveTab] = useState<'main' | 'conviction'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'main' | 'conviction' | 'fundamentals'>(initialTab);
   // Also react to URL changes mid-session (e.g. user clicks the chip again
   // from another page → SPA nav). Without this, the activeTab state from
   // the first render would stay on whatever tab was active.
@@ -1030,7 +1031,8 @@ export default function WatchlistsPage() {
           📋 My Watchlist
           <span style={{ fontSize: 10, color: '#6B7A8D' }}>{tickers.length}</span>
         </button>
-        <button onClick={() => setActiveTab('conviction')}
+        <button onClick={() => setActiveTab('fundamentals')} style={{ padding: '10px 16px', background: 'none', border: 'none', borderBottom: '2px solid ' + (activeTab === 'fundamentals' ? '#39d0d8' : 'transparent'), color: activeTab === 'fundamentals' ? '#39d0d8' : '#8BA3C1', fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>📈 Fundamentals</button>
+            <button onClick={() => setActiveTab('conviction')}
           style={{
             padding: '10px 16px', background: 'none',
             border: 'none', borderBottom: `2px solid ${activeTab === 'conviction' ? '#F59E0B' : 'transparent'}`,
@@ -1049,7 +1051,7 @@ export default function WatchlistsPage() {
         </button>
       </div>
 
-      {activeTab === 'conviction' ? (
+      {activeTab === 'fundamentals' ? <FundamentalsAnalyzerPage /> : activeTab === 'conviction' ? (
         <ConvictionBeatsPanel entries={convictionEntries} onRemove={(t) => { removeConviction(t); setConvictionEntries(getConvictionList()); }} />
       ) : (
       <>
