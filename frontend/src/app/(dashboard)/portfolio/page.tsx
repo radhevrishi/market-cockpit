@@ -9,6 +9,7 @@ import { CHAT_ID, BOT_SECRET } from '@/lib/config';
 // PATCH 0300 — Shared freshness chip for the quote refresh state.
 import { PanelFreshness } from '@/components/PanelFreshness';
 import FundamentalsAnalyzerPage from '../fundamentals/page';
+import TickerExportToolbar from '@/components/TickerExportToolbar';
 
 /* ── Types ──────────────────────────────────────────────────────────── */
 
@@ -1178,7 +1179,8 @@ export default function PortfolioPage() {
             ))}
           
           </div>
-          {viewTab === 'holdings' && (
+          {viewTab === 'holdings' && holdings.length > 0 && (<div style={{ marginBottom: 12 }}><TickerExportToolbar tickers={displayRows.map((r) => r.symbol)} /></div>)}
+              {viewTab === 'holdings' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 800, letterSpacing: '0.5px' }}>MKT CAP</span>
               {([['all', 'All'], ['large', 'Large'], ['mid', 'Mid'], ['small', 'Small'], ['micro', 'Micro']] as const).map(([k, lbl]) => {
