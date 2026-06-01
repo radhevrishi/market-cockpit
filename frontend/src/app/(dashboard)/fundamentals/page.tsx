@@ -392,6 +392,50 @@ function Dashboard({ data, onRemove, onAdd }: { data: Row[]; onRemove: (key: str
         </div>
       )}
 
+      {/* Must hold / keep — fundamental + technical strength */}
+      {holders.length > 0 && (
+        <div style={{ marginTop: 22 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, margin: '0 0 4px', flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 12, letterSpacing: 1.4, textTransform: 'uppercase', color: COL.dim, fontWeight: 700 }}>Must hold / keep conviction</div>
+            <div style={{ fontSize: 11, color: COL.dim }}>{holders.length} of {data.length} names show fundamental or technical strength · ranked by strength count</div>
+          </div>
+          <Card title={`Keep / accumulate candidates — ${holders.length} strong`} dot={COL.green} hint="more green flags = stronger case to hold / add">
+            <table style={tbl}>
+              <thead><tr>
+                <th style={thR}></th><th style={thL}>Company</th><th style={thR}>#</th>
+                <th style={thL}>Strengths</th><th style={thR}>Profit gr.</th><th style={thR}>Sales gr.</th><th style={thR}>ROCE</th><th style={thR}>D/E</th>
+              </tr></thead>
+              <tbody>
+                {holders.slice(0, 25).map((o, i) => {
+                  const tech = (s: string) => s.indexOf('DMA') >= 0;
+                  return (
+                    <tr key={i}>
+                      <td style={tdDim}>{i + 1}</td>
+                      <td style={tdL}><b>{name(o.d)}</b><span style={nseS}>{nse(o.d)}</span></td>
+                      <td style={{ ...tdR, fontWeight: 700, color: o.flags.length >= 5 ? COL.green : o.flags.length >= 3 ? COL.cyan : COL.muted }}>{o.flags.length}</td>
+                      <td style={{ ...tdL, paddingTop: 7, paddingBottom: 7 }}>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                          {o.flags.map((fl, k) => (
+                            <span key={k} style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap', color: tech(fl) ? COL.cyan : COL.green, background: tech(fl) ? 'rgba(57,208,216,.12)' : 'rgba(63,185,80,.12)', border: `1px solid ${tech(fl) ? 'rgba(57,208,216,.3)' : 'rgba(63,185,80,.3)'}` }}>{fl}</span>
+                          ))}
+                        </div>
+                      </td>
+                      <td style={{ ...tdR, color: pcCol(num(o.d['Profit growth'])) }}>{pctStr(num(o.d['Profit growth']))}</td>
+                      <td style={{ ...tdR, color: pcCol(num(o.d['Sales growth'])) }}>{pctStr(num(o.d['Sales growth']))}</td>
+                      <td style={tdR}>{isNaN(num(o.d['Return on capital employed'])) ? '—' : fmt(num(o.d['Return on capital employed']), 1) + '%'}</td>
+                      <td style={tdR}>{isNaN(num(o.d['Debt to equity'])) ? '—' : fmt(num(o.d['Debt to equity']), 2)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <div style={{ fontSize: 10.5, color: COL.dim, marginTop: 8, lineHeight: 1.5 }}>
+              <span style={{ color: COL.green }}>■</span> fundamental strengths (profit/sales compounding, margin expanding, low debt, strong cash conversion, high ROCE, attractive PEG, promoter adding, zero pledge, strong 1Y return) · <span style={{ color: COL.cyan }}>■</span> technical strengths (above 50/200-DMA). Strengths flag names to <b>hold / accumulate</b> — not automatic buys.
+            </div>
+          </Card>
+        </div>
+      )}
+
       {/* Exit / review triggers — fundamental + technical deterioration */}
       {flagged.length > 0 && (
         <div style={{ marginTop: 22 }}>
@@ -436,49 +480,52 @@ function Dashboard({ data, onRemove, onAdd }: { data: Row[]; onRemove: (key: str
         </div>
       )}
 
-      {/* Must hold / keep — fundamental + technical strength */}
-      {holders.length > 0 && (
-        <div style={{ marginTop: 22 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, margin: '0 0 4px', flexWrap: 'wrap' }}>
-            <div style={{ fontSize: 12, letterSpacing: 1.4, textTransform: 'uppercase', color: COL.dim, fontWeight: 700 }}>Must hold / keep conviction</div>
-            <div style={{ fontSize: 11, color: COL.dim }}>{holders.length} of {data.length} names show fundamental or technical strength · ranked by strength count</div>
-          </div>
-          <Card title={`Keep / accumulate candidates — ${holders.length} strong`} dot={COL.green} hint="more green flags = stronger case to hold / add">
-            <table style={tbl}>
-              <thead><tr>
-                <th style={thR}></th><th style={thL}>Company</th><th style={thR}>#</th>
-                <th style={thL}>Strengths</th><th style={thR}>Profit gr.</th><th style={thR}>Sales gr.</th><th style={thR}>ROCE</th><th style={thR}>D/E</th>
-              </tr></thead>
-              <tbody>
-                {holders.slice(0, 25).map((o, i) => {
-                  const tech = (s: string) => s.indexOf('DMA') >= 0;
-                  return (
-                    <tr key={i}>
-                      <td style={tdDim}>{i + 1}</td>
-                      <td style={tdL}><b>{name(o.d)}</b><span style={nseS}>{nse(o.d)}</span></td>
-                      <td style={{ ...tdR, fontWeight: 700, color: o.flags.length >= 5 ? COL.green : o.flags.length >= 3 ? COL.cyan : COL.muted }}>{o.flags.length}</td>
-                      <td style={{ ...tdL, paddingTop: 7, paddingBottom: 7 }}>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                          {o.flags.map((fl, k) => (
-                            <span key={k} style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap', color: tech(fl) ? COL.cyan : COL.green, background: tech(fl) ? 'rgba(57,208,216,.12)' : 'rgba(63,185,80,.12)', border: `1px solid ${tech(fl) ? 'rgba(57,208,216,.3)' : 'rgba(63,185,80,.3)'}` }}>{fl}</span>
-                          ))}
-                        </div>
-                      </td>
-                      <td style={{ ...tdR, color: pcCol(num(o.d['Profit growth'])) }}>{pctStr(num(o.d['Profit growth']))}</td>
-                      <td style={{ ...tdR, color: pcCol(num(o.d['Sales growth'])) }}>{pctStr(num(o.d['Sales growth']))}</td>
-                      <td style={tdR}>{isNaN(num(o.d['Return on capital employed'])) ? '—' : fmt(num(o.d['Return on capital employed']), 1) + '%'}</td>
-                      <td style={tdR}>{isNaN(num(o.d['Debt to equity'])) ? '—' : fmt(num(o.d['Debt to equity']), 2)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            <div style={{ fontSize: 10.5, color: COL.dim, marginTop: 8, lineHeight: 1.5 }}>
-              <span style={{ color: COL.green }}>■</span> fundamental strengths (profit/sales compounding, margin expanding, low debt, strong cash conversion, high ROCE, attractive PEG, promoter adding, zero pledge, strong 1Y return) · <span style={{ color: COL.cyan }}>■</span> technical strengths (above 50/200-DMA). Strengths flag names to <b>hold / accumulate</b> — not automatic buys.
-            </div>
-          </Card>
-        </div>
-      )}
+      {/* Quality + ROCE */}
+      <div style={grid2}>
+        <Card title="Quality compounders" dot={COL.violet} hint="ROCE + 3Y growth + margins − leverage">
+          <table style={tbl}>
+            <thead><tr><th style={thR}></th><th style={thL}>Company</th><th style={thR}>Score</th><th style={thR}>ROCE</th><th style={thR}>Profit 3Y</th><th style={thR}>D/E</th></tr></thead>
+            <tbody>
+              {quality.map((o, i) => (
+                <tr key={i}>
+                  <td style={tdDim}>{i + 1}</td>
+                  <td style={tdL}><b>{name(o.d)}</b><span style={nseS}>{nse(o.d)}</span></td>
+                  <td style={{ ...tdR, color: COL.blue, fontWeight: 700 }}>{fmt(o.q, 2)}</td>
+                  <td style={tdR}>{fmt(num(o.d['Return on capital employed']), 1)}%</td>
+                  <td style={{ ...tdR, color: pcCol(num(o.d['Profit growth 3Years'])) }}>{pctStr(num(o.d['Profit growth 3Years']))}</td>
+                  <td style={tdR}>{fmt(num(o.d['Debt to equity']), 2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+        <Card title="Top 10 — Return on capital employed" dot={COL.amber} hint="capital efficiency">
+          <LeaderTable rows={leaders('Return on capital employed', 'desc')} valKey="Return on capital employed" unit="%" name={name} nse={nse}
+            extra={[['Profit growth', 'Profit gr.', '%'], ['Debt to equity', 'D/E', 'x']]} />
+        </Card>
+      </div>
+
+      {/* Margin trend — OPM latest quarter vs last year */}
+      <div style={grid2}>
+        <Card title="Top 15 — Margin expansion" dot={COL.green} hint="OPM latest qtr − OPM last year (pp)">
+          <MoverTable rows={marginUp} />
+        </Card>
+        <Card title="Top 15 — Margin compression" dot={COL.red} hint="OPM squeeze vs last year (pp)">
+          <MoverTable rows={marginDn} />
+        </Card>
+      </div>
+
+      {/* Promoter conviction — change in promoter holding over 3 years */}
+      <div style={grid2}>
+        <Card title="Promoter buying — 3Y change" dot={COL.green} hint="rising promoter stake (skin in the game)">
+          <LeaderTable rows={leaders('Change in promoter holding 3Years', 'desc')} valKey="Change in promoter holding 3Years" unit="%" name={name} nse={nse}
+            extra={[['Promoter holding', 'Holding', '%'], ['Pledged percentage', 'Pledge', '%']]} />
+        </Card>
+        <Card title="Promoter reducing — 3Y change" dot={COL.red} hint="falling promoter stake — watch">
+          <LeaderTable rows={leaders('Change in promoter holding 3Years', 'asc')} valKey="Change in promoter holding 3Years" unit="%" name={name} nse={nse}
+            extra={[['Promoter holding', 'Holding', '%'], ['Pledged percentage', 'Pledge', '%']]} />
+        </Card>
+      </div>
 
       {/* KPI strip */}
       <SecTitle>Watchlist averages &amp; medians</SecTitle>
@@ -544,16 +591,6 @@ function Dashboard({ data, onRemove, onAdd }: { data: Row[]; onRemove: (key: str
         </Card>
       </div>
 
-      {/* Margin trend — OPM latest quarter vs last year */}
-      <div style={grid2}>
-        <Card title="Top 15 — Margin expansion" dot={COL.green} hint="OPM latest qtr − OPM last year (pp)">
-          <MoverTable rows={marginUp} />
-        </Card>
-        <Card title="Top 15 — Margin compression" dot={COL.red} hint="OPM squeeze vs last year (pp)">
-          <MoverTable rows={marginDn} />
-        </Card>
-      </div>
-
       {/* Valuation — value vs expensive */}
       <div style={grid2}>
         <Card title={`Re-rating value — PEG ≤ 1 with growth (${cheapGrowth.length})`} dot={COL.violet} hint="cheap relative to earnings growth">
@@ -563,43 +600,6 @@ function Dashboard({ data, onRemove, onAdd }: { data: Row[]; onRemove: (key: str
         <Card title="Top 10 — Richest P/E" dot={COL.amber} hint="priciest on earnings — valuation risk">
           <LeaderTable rows={leaders('Price to Earning', 'desc')} valKey="Price to Earning" unit="x" name={name} nse={nse}
             extra={[['Profit growth', 'Profit gr.', '%'], ['PEG Ratio', 'PEG', 'x']]} />
-        </Card>
-      </div>
-
-      {/* Promoter conviction — change in promoter holding over 3 years */}
-      <div style={grid2}>
-        <Card title="Promoter buying — 3Y change" dot={COL.green} hint="rising promoter stake (skin in the game)">
-          <LeaderTable rows={leaders('Change in promoter holding 3Years', 'desc')} valKey="Change in promoter holding 3Years" unit="%" name={name} nse={nse}
-            extra={[['Promoter holding', 'Holding', '%'], ['Pledged percentage', 'Pledge', '%']]} />
-        </Card>
-        <Card title="Promoter reducing — 3Y change" dot={COL.red} hint="falling promoter stake — watch">
-          <LeaderTable rows={leaders('Change in promoter holding 3Years', 'asc')} valKey="Change in promoter holding 3Years" unit="%" name={name} nse={nse}
-            extra={[['Promoter holding', 'Holding', '%'], ['Pledged percentage', 'Pledge', '%']]} />
-        </Card>
-      </div>
-
-      {/* Quality + ROCE */}
-      <div style={grid2}>
-        <Card title="Quality compounders" dot={COL.violet} hint="ROCE + 3Y growth + margins − leverage">
-          <table style={tbl}>
-            <thead><tr><th style={thR}></th><th style={thL}>Company</th><th style={thR}>Score</th><th style={thR}>ROCE</th><th style={thR}>Profit 3Y</th><th style={thR}>D/E</th></tr></thead>
-            <tbody>
-              {quality.map((o, i) => (
-                <tr key={i}>
-                  <td style={tdDim}>{i + 1}</td>
-                  <td style={tdL}><b>{name(o.d)}</b><span style={nseS}>{nse(o.d)}</span></td>
-                  <td style={{ ...tdR, color: COL.blue, fontWeight: 700 }}>{fmt(o.q, 2)}</td>
-                  <td style={tdR}>{fmt(num(o.d['Return on capital employed']), 1)}%</td>
-                  <td style={{ ...tdR, color: pcCol(num(o.d['Profit growth 3Years'])) }}>{pctStr(num(o.d['Profit growth 3Years']))}</td>
-                  <td style={tdR}>{fmt(num(o.d['Debt to equity']), 2)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-        <Card title="Top 10 — Return on capital employed" dot={COL.amber} hint="capital efficiency">
-          <LeaderTable rows={leaders('Return on capital employed', 'desc')} valKey="Return on capital employed" unit="%" name={name} nse={nse}
-            extra={[['Profit growth', 'Profit gr.', '%'], ['Debt to equity', 'D/E', 'x']]} />
         </Card>
       </div>
 
