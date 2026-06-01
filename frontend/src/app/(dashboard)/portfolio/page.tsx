@@ -8,6 +8,7 @@ import { normalizeTicker } from '@/lib/tickers';
 import { CHAT_ID, BOT_SECRET } from '@/lib/config';
 // PATCH 0300 — Shared freshness chip for the quote refresh state.
 import { PanelFreshness } from '@/components/PanelFreshness';
+import FundamentalsAnalyzerPage from '../fundamentals/page';
 
 /* ── Types ──────────────────────────────────────────────────────────── */
 
@@ -619,7 +620,7 @@ export default function PortfolioPage() {
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [viewTab, setViewTab] = useState<'holdings' | 'analytics'>('holdings'); // PATCH 1100
+  const [viewTab, setViewTab] = useState<'holdings' | 'analytics' | 'fundamentals'>('holdings'); // PATCH 1100
   const [capFilter, setCapFilter] = useState<'all' | 'large' | 'mid' | 'small' | 'micro'>('all'); // PATCH 1100
   const [capMap, setCapMap] = useState<Record<string, string>>({}); // PATCH 1101 — ticker -> cap (Large/Mid/Small/Micro)
 
@@ -1169,12 +1170,13 @@ export default function PortfolioPage() {
       {!loading && holdings.length > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', margin: '8px 0 14px' }}>
           <div style={{ display: 'flex', gap: 4, background: '#0D1B2E', border: '1px solid #2A3B4C', borderRadius: 10, padding: 4 }}>
-            {(['holdings', 'analytics'] as const).map(t => (
+            {(['holdings', 'analytics', 'fundamentals'] as const).map(t => (
               <button key={t} onClick={() => setViewTab(t)} style={{
                 padding: '7px 16px', border: 'none', borderRadius: 7, cursor: 'pointer', fontSize: 12.5, fontWeight: 800, letterSpacing: '0.3px',
                 background: viewTab === t ? '#1D4ED8' : 'transparent', color: viewTab === t ? '#fff' : '#8BA3C1',
-              }}>{t === 'holdings' ? '\ud83d\udc0b Holdings' : '\ud83d\udcca Analytics'}</button>
+              }}>{t === 'holdings' ? '\ud83d\udc0b Holdings' : t === 'analytics' ? '\ud83d\udcca Analytics' : 'Fundamentals'}</button>
             ))}
+          <a href="/fundamentals" style={{ padding: '7px 16px', borderRadius: 7, fontSize: 12.5, fontWeight: 800, letterSpacing: '0.3px', color: '#8BA3C1', textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>📈 Fundamentals ↗</a>
           </div>
           {viewTab === 'holdings' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -1196,7 +1198,8 @@ export default function PortfolioPage() {
       )}
 
       {/* PATCH 1100 — Analytics view */}
-      {!loading && holdings.length > 0 && viewTab === 'analytics' && (
+      {!loading && holdings.length > 0 && viewTab === 'fundamentals' && <FundamentalsAnalyzerPage />}
+        {!loading && holdings.length > 0 && viewTab === 'analytics' && (
         <PortfolioAnalytics rows={sortedRows} onSelectCap={(c) => { setCapFilter(c as any); setViewTab('holdings'); }} />
       )}
 
