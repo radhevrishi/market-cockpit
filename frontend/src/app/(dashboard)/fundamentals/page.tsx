@@ -351,6 +351,9 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
   // PEG re-rating candidates — cheap relative to growth (PEG between 0 and 1, profit growing).
   const cheapGrowth = data.filter((d) => { const p = num(d['PEG Ratio']); const g = num(d['Profit growth']); return !isNaN(p) && p > 0 && p <= 1 && !isNaN(g) && g > 0; })
     .sort((a, b) => num(a['PEG Ratio']) - num(b['PEG Ratio'])).slice(0, 10);
+  // Promoter stake change — only true buying (>0) / true reducing (<0); flat 0% excluded.
+  const promUp = data.filter((d) => num(d['Change in promoter holding 3Years']) > 0).sort((a, b) => num(b['Change in promoter holding 3Years']) - num(a['Change in promoter holding 3Years'])).slice(0, 10);
+  const promDn = data.filter((d) => num(d['Change in promoter holding 3Years']) < 0).sort((a, b) => num(a['Change in promoter holding 3Years']) - num(b['Change in promoter holding 3Years'])).slice(0, 10);
 
   const MoverTable = ({ rows }: { rows: { d: Row; delta: number }[] }) => (
     <table style={tbl}>
@@ -518,12 +521,12 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
 
       {/* Promoter conviction — change in promoter holding over 3 years */}
       <div style={grid2}>
-        <Card title="Promoter buying — 3Y change" dot={COL.green} hint="rising promoter stake (skin in the game)">
-          <LeaderTable rows={leaders('Change in promoter holding 3Years', 'desc')} valKey="Change in promoter holding 3Years" unit="%" name={name} nse={nse}
+        <Card title={`Promoter buying — 3Y change (${promUp.length})`} dot={COL.green} hint="rising promoter stake (skin in the game)">
+          <LeaderTable rows={promUp} valKey="Change in promoter holding 3Years" unit="%" name={name} nse={nse}
             extra={[['Promoter holding', 'Holding', '%'], ['Pledged percentage', 'Pledge', '%']]} />
         </Card>
-        <Card title="Promoter reducing — 3Y change" dot={COL.red} hint="falling promoter stake — watch">
-          <LeaderTable rows={leaders('Change in promoter holding 3Years', 'asc')} valKey="Change in promoter holding 3Years" unit="%" name={name} nse={nse}
+        <Card title={`Promoter reducing — 3Y change (${promDn.length})`} dot={COL.red} hint="falling promoter stake — watch">
+          <LeaderTable rows={promDn} valKey="Change in promoter holding 3Years" unit="%" name={name} nse={nse}
             extra={[['Promoter holding', 'Holding', '%'], ['Pledged percentage', 'Pledge', '%']]} />
         </Card>
       </div>
@@ -647,12 +650,16 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
           </div>
           <div style={{ fontSize: 10.5, color: COL.dim, marginBottom: 10 }}>New tickers are added as placeholders — upload a Screener.in CSV with the same code to fill in their metrics.</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, maxHeight: 240, overflowY: 'auto' }}>
-            {data.map((d, i) => (
-              <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: COL.panel2, border: `1px solid ${COL.line}`, borderRadius: 6, padding: '3px 4px 3px 9px', fontSize: 11.5 }}>
+            {data.map((d, i) => {
+              const noData = isNaN(num(d['Sales growth'])) && isNaN(num(d['Profit growth'])) && isNaN(num(d['Current Price'])) && isNaN(num(d['Return on capital employed']));
+              return (
+              <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: COL.panel2, border: `1px solid ${noData ? COL.amber : COL.line}`, borderRadius: 6, padding: '3px 4px 3px 9px', fontSize: 11.5 }}>
                 <span style={{ color: COL.txt }}>{d['NSE Code'] || d['BSE Code'] || d['Name'] || '?'}</span>
+                {noData ? <span title="No data yet — upload a Screener.in CSV with this code to fill metrics" style={{ color: COL.amber, fontSize: 9.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: .3 }}>no data</span> : null}
                 <button onClick={() => onRemove(rowKey(d))} title="Remove" style={{ background: 'none', border: 'none', color: COL.red, cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: '0 3px' }}>✕</button>
               </span>
-            ))}
+              );
+            })}
           </div>
         </Card>
       </div>
