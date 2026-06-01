@@ -306,6 +306,27 @@ function Dashboard({ data, onRemove }: { data: Row[]; onRemove: (key: string) =>
   };
   const flagged = data.map((d) => ({ d, flags: exitFlags(d) })).filter((o) => o.flags.length > 0).sort((a, b) => b.flags.length - a.flags.length);
 
+  // Fundamental + technical HOLD / KEEP signals — institutional quality checklist (the inverse of exit triggers).
+  const holdFlags = (d: Row): string[] => {
+    const f: string[] = [];
+    const pg = num(d['Profit growth']); if (!isNaN(pg) && pg > 20) f.push('Profit compounding>20');
+    const sg = num(d['Sales growth']); if (!isNaN(sg) && sg > 15) f.push('Sales growth>15');
+    const qpg = num(d['YOY Quarterly profit growth']); if (!isNaN(qpg) && qpg > 20) f.push('Qtr profit accelerating');
+    const pg3 = num(d['Profit growth 3Years']); if (!isNaN(pg3) && pg3 > 20) f.push('3Y profit compounder');
+    const opmL = num(d['OPM latest quarter']); const opmY = num(d['OPM last year']); if (!isNaN(opmL) && !isNaN(opmY) && opmL > opmY + 2) f.push('Margin expanding');
+    const de = num(d['Debt to equity']); if (!isNaN(de) && de < 0.3) f.push('Low debt D/E<0.3');
+    const cfo = num(d['CFO to PAT']); if (!isNaN(cfo) && cfo >= 0.8) f.push('Strong cash conversion');
+    const roce = num(d['Return on capital employed']); if (!isNaN(roce) && roce > 20) f.push('High ROCE>20');
+    const peg = num(d['PEG Ratio']); if (!isNaN(peg) && peg > 0 && peg < 1) f.push('Attractive PEG<1');
+    const chp = num(d['Change in promoter holding 3Years']); if (!isNaN(chp) && chp > 2) f.push('Promoter increasing');
+    const pl = num(d['Pledged percentage']); if (!isNaN(pl) && pl === 0) f.push('Zero pledge');
+    const r1 = num(d['Return over 1year']); if (!isNaN(r1) && r1 > 30) f.push('1Y return>30%');
+    const cmp = num(d['Current Price']); const dma200 = num(d['DMA 200']); if (!isNaN(cmp) && !isNaN(dma200) && cmp > dma200) f.push('Above 200-DMA');
+    const dma50 = num(d['DMA 50']); if (!isNaN(cmp) && !isNaN(dma50) && cmp > dma50) f.push('Above 50-DMA');
+    return f;
+  };
+  const holders = data.map((d) => ({ d, flags: holdFlags(d) })).filter((o) => o.flags.length >= 2).sort((a, b) => b.flags.length - a.flags.length);
+
   // Margin movers — OPM latest quarter vs OPM last year (QoQ-style margin trend).
   const marginMovers = data.map((d) => ({ d, delta: num(d['OPM latest quarter']) - num(d['OPM last year']) })).filter((o) => !isNaN(o.delta));
   const marginUp = [...marginMovers].sort((a, b) => b.delta - a.delta).slice(0, 10);
@@ -492,6 +513,50 @@ function Dashboard({ data, onRemove }: { data: Row[]; onRemove: (key: string) =>
             </table>
             <div style={{ fontSize: 10.5, color: COL.dim, marginTop: 8, lineHeight: 1.5 }}>
               <span style={{ color: COL.red }}>■</span> fundamental triggers (profit/sales shrinking, margin squeeze, high debt, weak cash conversion, low ROCE, rich valuation, promoter selling, pledge) · <span style={{ color: COL.amber }}>■</span> technical triggers (below 50/200-DMA). Triggers flag names to <b>review</b> — not automatic sells.
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* Must hold / keep — fundamental + technical strength */}
+      {holders.length > 0 && (
+        <div style={{ marginTop: 22 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, margin: '0 0 4px', flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 12, letterSpacing: 1.4, textTransform: 'uppercase', color: COL.dim, fontWeight: 700 }}>Must hold / keep conviction</div>
+            <div style={{ fontSize: 11, color: COL.dim }}>{holders.length} of {data.length} names show fundamental or technical strength · ranked by strength count</div>
+          </div>
+          <Card title={`Keep / accumulate candidates — ${holders.length} strong`} dot={COL.green} hint="more green flags = stronger case to hold / add">
+            <table style={tbl}>
+              <thead><tr>
+                <th style={thR}></th><th style={thL}>Company</th><th style={thR}>#</th>
+                <th style={thL}>Strengths</th><th style={thR}>Profit gr.</th><th style={thR}>Sales gr.</th><th style={thR}>ROCE</th><th style={thR}>D/E</th>
+              </tr></thead>
+              <tbody>
+                {holders.slice(0, 25).map((o, i) => {
+                  const tech = (s: string) => s.indexOf('DMA') >= 0;
+                  return (
+                    <tr key={i}>
+                      <td style={tdDim}>{i + 1}</td>
+                      <td style={tdL}><b>{name(o.d)}</b><span style={nseS}>{nse(o.d)}</span></td>
+                      <td style={{ ...tdR, fontWeight: 700, color: o.flags.length >= 5 ? COL.green : o.flags.length >= 3 ? COL.cyan : COL.muted }}>{o.flags.length}</td>
+                      <td style={{ ...tdL, paddingTop: 7, paddingBottom: 7 }}>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                          {o.flags.map((fl, k) => (
+                            <span key={k} style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap', color: tech(fl) ? COL.cyan : COL.green, background: tech(fl) ? 'rgba(57,208,216,.12)' : 'rgba(63,185,80,.12)', border: `1px solid ${tech(fl) ? 'rgba(57,208,216,.3)' : 'rgba(63,185,80,.3)'}` }}>{fl}</span>
+                          ))}
+                        </div>
+                      </td>
+                      <td style={{ ...tdR, color: pcCol(num(o.d['Profit growth'])) }}>{pctStr(num(o.d['Profit growth']))}</td>
+                      <td style={{ ...tdR, color: pcCol(num(o.d['Sales growth'])) }}>{pctStr(num(o.d['Sales growth']))}</td>
+                      <td style={tdR}>{isNaN(num(o.d['Return on capital employed'])) ? '—' : fmt(num(o.d['Return on capital employed']), 1) + '%'}</td>
+                      <td style={tdR}>{isNaN(num(o.d['Debt to equity'])) ? '—' : fmt(num(o.d['Debt to equity']), 2)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <div style={{ fontSize: 10.5, color: COL.dim, marginTop: 8, lineHeight: 1.5 }}>
+              <span style={{ color: COL.green }}>■</span> fundamental strengths (profit/sales compounding, margin expanding, low debt, strong cash conversion, high ROCE, attractive PEG, promoter adding, zero pledge, strong 1Y return) · <span style={{ color: COL.cyan }}>■</span> technical strengths (above 50/200-DMA). Strengths flag names to <b>hold / accumulate</b> — not automatic buys.
             </div>
           </Card>
         </div>
