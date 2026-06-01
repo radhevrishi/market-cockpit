@@ -137,6 +137,21 @@ export default function FundamentalsAnalyzerPage() {
     });
   }, []);
 
+  // Manually add one or many tickers (comma/space separated). Creates placeholder rows
+  // (Name + NSE Code only) that fill with metrics when a matching CSV is later uploaded.
+  const addTickers = useCallback((raw: string) => {
+    const syms = (raw || '').split(/[\s,]+/).map((s) => s.trim().toUpperCase()).filter(Boolean);
+    if (!syms.length) return;
+    setData((prev) => {
+      const map = new Map<string, Row>();
+      prev.forEach((r) => map.set(rowKey(r), r));
+      syms.forEach((s) => { if (!map.has(s)) map.set(s, { 'Name': s, 'NSE Code': s } as Row); });
+      const merged = Array.from(map.values());
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(merged)); } catch {}
+      return merged;
+    });
+  }, []);
+
   // Accept one or many files (multi-select or multi-drop); each merges in.
   const onFile = useCallback((files?: FileList | File[] | null) => {
     if (!files) return;
@@ -204,7 +219,7 @@ export default function FundamentalsAnalyzerPage() {
             <div style={{ color: COL.dim, fontSize: 11.5, marginTop: 8, maxWidth: 720, marginLeft: 'auto', marginRight: 'auto' }}>{SAMPLE_HINT}</div>
           </div>
         ) : (
-          <Dashboard data={data} onRemove={removeRow} />
+          <Dashboard data={data} onRemove={removeRow} onAdd={addTickers} />
         )}
       </div>
     </div>
@@ -215,7 +230,8 @@ const chip: any = { background: '#1b2330', border: `1px solid ${COL.line}`, bord
 const drop: any = { border: `1px dashed ${COL.line2}`, borderRadius: 8, padding: '8px 14px', color: COL.muted, fontSize: 12, cursor: 'pointer', background: COL.panel2 };
 
 // ============================================================================
-function Dashboard({ data, onRemove }: { data: Row[]; onRemove: (key: string) => void }) {
+function Dashboard({ data, onRemove, onAdd }: { data: Row[]; onRemove: (key: string) => void; onAdd: (raw: string) => void }) {
+  const [addVal, setAddVal] = useState('');
   const col = useCallback((k: string) => data.map((d) => num(d[k])), [data]);
   const name = (d: Row) => d['Name'] || '';
   const nse = (d: Row) => d['NSE Code'] || d['BSE Code'] || '';
@@ -329,8 +345,8 @@ function Dashboard({ data, onRemove }: { data: Row[]; onRemove: (key: string) =>
 
   // Margin movers — OPM latest quarter vs OPM last year (QoQ-style margin trend).
   const marginMovers = data.map((d) => ({ d, delta: num(d['OPM latest quarter']) - num(d['OPM last year']) })).filter((o) => !isNaN(o.delta));
-  const marginUp = [...marginMovers].sort((a, b) => b.delta - a.delta).slice(0, 10);
-  const marginDn = [...marginMovers].sort((a, b) => a.delta - b.delta).slice(0, 10);
+  const marginUp = [...marginMovers].sort((a, b) => b.delta - a.delta).slice(0, 15);
+  const marginDn = [...marginMovers].sort((a, b) => a.delta - b.delta).slice(0, 15);
   // PEG re-rating candidates — cheap relative to growth (PEG between 0 and 1, profit growing).
   const cheapGrowth = data.filter((d) => { const p = num(d['PEG Ratio']); const g = num(d['Profit growth']); return !isNaN(p) && p > 0 && p <= 1 && !isNaN(g) && g > 0; })
     .sort((a, b) => num(a['PEG Ratio']) - num(b['PEG Ratio'])).slice(0, 10);
@@ -420,10 +436,10 @@ function Dashboard({ data, onRemove }: { data: Row[]; onRemove: (key: string) =>
 
       {/* Margin trend — OPM latest quarter vs last year */}
       <div style={grid2}>
-        <Card title="Top 10 — Margin expansion" dot={COL.green} hint="OPM latest qtr − OPM last year (pp)">
+        <Card title="Top 15 — Margin expansion" dot={COL.green} hint="OPM latest qtr − OPM last year (pp)">
           <MoverTable rows={marginUp} />
         </Card>
-        <Card title="Top 10 — Margin compression" dot={COL.red} hint="OPM squeeze vs last year (pp)">
+        <Card title="Top 15 — Margin compression" dot={COL.red} hint="OPM squeeze vs last year (pp)">
           <MoverTable rows={marginDn} />
         </Card>
       </div>
@@ -610,7 +626,21 @@ function Dashboard({ data, onRemove }: { data: Row[]; onRemove: (key: string) =>
 
       {/* Manage list — remove individual companies */}
       <div style={{ marginTop: 16 }}>
-        <Card title={`Manage list — ${data.length} stocks`} dot={COL.dim} hint="click ✕ to remove a company">
+        <Card title={`Manage list — ${data.length} stocks`} dot={COL.dim} hint="add tickers or click ✕ to remove">
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+            <input
+              value={addVal}
+              onChange={(e) => setAddVal(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { onAdd(addVal); setAddVal(''); } }}
+              placeholder="Add tickers — e.g. INFY, TCS, RELIANCE (Enter to add)"
+              style={{ flex: 1, minWidth: 260, background: COL.panel2, border: `1px solid ${COL.line2}`, borderRadius: 8, padding: '8px 12px', color: COL.txt, fontSize: 12.5, outline: 'none' }}
+            />
+            <button
+              onClick={() => { onAdd(addVal); setAddVal(''); }}
+              style={{ background: COL.green, border: 'none', borderRadius: 8, padding: '8px 18px', color: '#0a0e14', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}
+            >+ Add</button>
+          </div>
+          <div style={{ fontSize: 10.5, color: COL.dim, marginBottom: 10 }}>New tickers are added as placeholders — upload a Screener.in CSV with the same code to fill in their metrics.</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, maxHeight: 240, overflowY: 'auto' }}>
             {data.map((d, i) => (
               <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: COL.panel2, border: `1px solid ${COL.line}`, borderRadius: 6, padding: '3px 4px 3px 9px', fontSize: 11.5 }}>
