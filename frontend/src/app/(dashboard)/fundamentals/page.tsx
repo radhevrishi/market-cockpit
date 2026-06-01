@@ -91,6 +91,15 @@ export default function FundamentalsAnalyzerPage({ scope = '' }: { scope?: strin
   const [fname, setFname] = useState<string>('');
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string>('');
+  const mcPersist = (k: string, v: string): boolean => {
+    try {
+      localStorage.setItem(k, v);
+      return true;
+    } catch (err) {
+      setError("Couldn't save this list \u2014 it's too large for your browser's storage (about 5MB). Remove some rows or split it into a smaller list, then try again.");
+      return false;
+    }
+  };
 
   // Load saved data on mount (persists across tab switches until Clear)
   useEffect(() => {
@@ -115,11 +124,11 @@ export default function FundamentalsAnalyzerPage({ scope = '' }: { scope?: strin
         prev.forEach((r) => map.set(rowKey(r), r));
         incoming.forEach((r) => map.set(rowKey(r), r)); // new upload overrides existing on same ticker
         const merged = Array.from(map.values());
-        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(merged)); } catch {}
+        try { mcPersist(STORAGE_KEY, JSON.stringify(merged)); } catch {}
         return merged;
       });
       setFname(name);
-      try { localStorage.setItem(STORAGE_NAME, name); } catch {}
+      try { mcPersist(STORAGE_NAME, name); } catch {}
       setError('');
     } catch (e: any) { setError('Could not parse that CSV: ' + (e?.message || e)); }
   }, []);
@@ -133,7 +142,7 @@ export default function FundamentalsAnalyzerPage({ scope = '' }: { scope?: strin
   const removeRow = useCallback((key: string) => {
     setData((prev) => {
       const next = prev.filter((r) => rowKey(r) !== key);
-      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch {}
+      try { mcPersist(STORAGE_KEY, JSON.stringify(next)); } catch {}
       return next;
     });
   }, []);
@@ -148,7 +157,7 @@ export default function FundamentalsAnalyzerPage({ scope = '' }: { scope?: strin
       prev.forEach((r) => map.set(rowKey(r), r));
       syms.forEach((s) => { if (!map.has(s)) map.set(s, { 'Name': s, 'NSE Code': s } as Row); });
       const merged = Array.from(map.values());
-      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(merged)); } catch {}
+      try { mcPersist(STORAGE_KEY, JSON.stringify(merged)); } catch {}
       return merged;
     });
   }, []);
