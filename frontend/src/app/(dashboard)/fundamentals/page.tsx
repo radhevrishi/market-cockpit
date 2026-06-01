@@ -7,7 +7,12 @@
 // fields, not the row count. No external chart deps (inline SVG + CSS bars).
 // ============================================================================
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
+
+const STORAGE_KEY = 'mc:fundamentals:data:v1';
+const STORAGE_NAME = 'mc:fundamentals:name:v1';
+// Identity for de-dup: NSE code, else BSE code, else Name (uppercased).
+const rowKey = (d: Record<string, string>) => ((d['NSE Code'] || d['BSE Code'] || d['Name'] || '').trim().toUpperCase());
 
 type Row = Record<string, string>;
 
@@ -86,19 +91,53 @@ export default function FundamentalsAnalyzerPage() {
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string>('');
 
+  // Load saved data on mount (persists across tab switches until Clear)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length) setData(parsed);
+      }
+      const nm = localStorage.getItem(STORAGE_NAME);
+      if (nm) setFname(nm);
+    } catch {}
+  }, []);
+
+  // Merge new rows into existing — accumulate across uploads, de-dup by ticker, NEW data wins.
   const handleText = useCallback((text: string, name: string) => {
     try {
-      const rows = toObjects(parseCSV(text));
-      if (!rows.length) { setError('No data rows found in that file.'); return; }
-      setData(rows); setFname(name); setError('');
+      const incoming = toObjects(parseCSV(text));
+      if (!incoming.length) { setError('No data rows found in that file.'); return; }
+      setData((prev) => {
+        const map = new Map<string, Row>();
+        prev.forEach((r) => map.set(rowKey(r), r));
+        incoming.forEach((r) => map.set(rowKey(r), r)); // new upload overrides existing on same ticker
+        const merged = Array.from(map.values());
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(merged)); } catch {}
+        return merged;
+      });
+      setFname(name);
+      try { localStorage.setItem(STORAGE_NAME, name); } catch {}
+      setError('');
     } catch (e: any) { setError('Could not parse that CSV: ' + (e?.message || e)); }
   }, []);
 
-  const onFile = useCallback((f?: File | null) => {
-    if (!f) return;
-    const r = new FileReader();
-    r.onload = (ev) => handleText(String(ev.target?.result || ''), f.name);
-    r.readAsText(f);
+  const clearAll = useCallback(() => {
+    setData([]); setFname(''); setError('');
+    try { localStorage.removeItem(STORAGE_KEY); localStorage.removeItem(STORAGE_NAME); } catch {}
+  }, []);
+
+  // Accept one or many files (multi-select or multi-drop); each merges in.
+  const onFile = useCallback((files?: FileList | File[] | null) => {
+    if (!files) return;
+    const arr = Array.from(files as any) as File[];
+    arr.forEach((f) => {
+      if (!f) return;
+      const r = new FileReader();
+      r.onload = (ev) => handleText(String(ev.target?.result || ''), f.name);
+      r.readAsText(f);
+    });
   }, [handleText]);
 
   return (
@@ -117,9 +156,22 @@ export default function FundamentalsAnalyzerPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             {fname ? <span style={chip}>Loaded: <b style={{ color: COL.txt }}>{fname}</b></span> : null}
             {data.length ? <span style={chip}><b style={{ color: COL.txt }}>{data.length}</b> stocks</span> : null}
+            {data.length ? (
+              <button
+                onClick={clearAll}
+                style={{ ...drop, borderColor: COL.line2, background: 'transparent', cursor: 'pointer' }}
+              >✕ Clear list</button>
+            ) : null}
             <label style={{ ...drop, borderColor: COL.line2 }}>
-              ⤓ Upload CSV
-              <input type="file" accept=".csv" style={{ display: 'none' }} onChange={(e) => onFile(e.target.files?.[0])} />
+              ⤓ {data.length ? 'Add / upload CSV(s)' : 'Upload CSV(s)'}
+              <input
+                type="file"
+                accept=".csv"
+                multiple
+                style={{ display: 'none' }}
+                onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
+                onChange={(e) => onFile(e.target.files)}
+              />
             </label>
           </div>
         </div>
@@ -131,7 +183,7 @@ export default function FundamentalsAnalyzerPage() {
           <div
             onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
             onDragLeave={() => setDragging(false)}
-            onDrop={(e) => { e.preventDefault(); setDragging(false); onFile(e.dataTransfer.files?.[0]); }}
+            onDrop={(e) => { e.preventDefault(); setDragging(false); onFile(e.dataTransfer.files); }}
             style={{
               marginTop: 40, border: `2px dashed ${dragging ? COL.cyan : COL.line2}`, borderRadius: 14,
               padding: '60px 24px', textAlign: 'center', background: COL.panel2, transition: '.15s',
@@ -203,16 +255,26 @@ function Dashboard({ data }: { data: Row[] }) {
   }, [data]);
 
   // moving-average position — only renders if the file has DMA columns (CMP vs 50/200-DMA)
+  const [maMode, setMaMode] = useState<'below' | 'above'>('below');
   const hasMA = useMemo(() => data.some((d) => !isNaN(num(d['DMA 50'])) || !isNaN(num(d['DMA 200']))), [data]);
-  const belowMA = (dmaKey: string) => {
-    const v = data.filter((d) => !isNaN(num(d['Current Price'])) && !isNaN(num(d[dmaKey])) && num(d['Current Price']) < num(d[dmaKey]));
-    v.sort((a, b) => ((num(a['Current Price']) - num(a[dmaKey])) / num(a[dmaKey])) - ((num(b['Current Price']) - num(b[dmaKey])) / num(b[dmaKey])));
+  const maList = (dmaKey: string, mode: 'below' | 'above') => {
+    const v = data.filter((d) => {
+      const cmp = num(d['Current Price']); const dma = num(d[dmaKey]);
+      if (isNaN(cmp) || isNaN(dma)) return false;
+      return mode === 'below' ? cmp < dma : cmp >= dma;
+    });
+    v.sort((a, b) => {
+      const da = (num(a['Current Price']) - num(a[dmaKey])) / num(a[dmaKey]);
+      const db = (num(b['Current Price']) - num(b[dmaKey])) / num(b[dmaKey]);
+      return mode === 'below' ? da - db : db - da; // below: most-below first · above: most-above first
+    });
     return v;
   };
-  const below50 = hasMA ? belowMA('DMA 50') : [];
-  const below200 = hasMA ? belowMA('DMA 200') : [];
+  const ma50 = hasMA ? maList('DMA 50', maMode) : [];
+  const ma200 = hasMA ? maList('DMA 200', maMode) : [];
   const withMA50 = data.filter((d) => !isNaN(num(d['DMA 50'])) && !isNaN(num(d['Current Price']))).length;
   const withMA200 = data.filter((d) => !isNaN(num(d['DMA 200'])) && !isNaN(num(d['Current Price']))).length;
+  const maOn = maMode === 'below' ? COL.red : COL.green;
 
   return (
     <div>
@@ -255,6 +317,28 @@ function Dashboard({ data }: { data: Row[] }) {
           <LeaderTable rows={leaders('Profit growth', 'asc')} valKey="Profit growth" unit="%" name={name} nse={nse} />
         </Card>
       </div>
+
+      {/* Moving averages — below/above 50-DMA & 200-DMA (renders only if file has DMA columns) */}
+      {hasMA && (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '22px 0 4px', flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 12, letterSpacing: 1.4, textTransform: 'uppercase', color: COL.dim, fontWeight: 700 }}>Moving averages — price vs DMA</div>
+            <div style={{ display: 'flex', gap: 4, background: COL.panel2, border: `1px solid ${COL.line}`, borderRadius: 8, padding: 3 }}>
+              {(['below', 'above'] as const).map((m) => (
+                <button key={m} onClick={() => setMaMode(m)} style={{ padding: '5px 14px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700, background: maMode === m ? (m === 'below' ? COL.red : COL.green) : 'transparent', color: maMode === m ? '#fff' : COL.muted }}>{m === 'below' ? '↓ Below MA' : '↑ Above MA'}</button>
+              ))}
+            </div>
+          </div>
+          <div style={grid2}>
+            <Card title={`${maMode === 'below' ? 'Below' : 'Above'} 50-DMA — ${ma50.length} of ${withMA50}`} dot={maOn} hint={`price ${maMode === 'below' ? 'under' : 'over'} the 50-day moving average`}>
+              <MATable rows={ma50} dmaKey="DMA 50" name={name} nse={nse} />
+            </Card>
+            <Card title={`${maMode === 'below' ? 'Below' : 'Above'} 200-DMA — ${ma200.length} of ${withMA200}`} dot={maOn} hint={`price ${maMode === 'below' ? 'under' : 'over'} the 200-day moving average`}>
+              <MATable rows={ma200} dmaKey="DMA 200" name={name} nse={nse} />
+            </Card>
+          </div>
+        </div>
+      )}
 
       {/* Growth quadrant */}
       <Card title="Growth quadrant — Sales vs Profit growth (TTM)" dot={COL.cyan} hint="bubble = market cap">
@@ -306,18 +390,6 @@ function Dashboard({ data }: { data: Row[] }) {
           <Histogram values={col('Profit growth')} color={COL.violet} unit="Profit gr %" />
         </Card>
       </div>
-
-      {/* Moving averages — below 50-DMA / 200-DMA (renders only if file has DMA columns) */}
-      {hasMA && (
-        <div style={grid2}>
-          <Card title={`Below 50-DMA — ${below50.length} of ${withMA50}`} dot={COL.red} hint="trading under the 50-day moving average">
-            <MATable rows={below50} dmaKey="DMA 50" name={name} nse={nse} />
-          </Card>
-          <Card title={`Below 200-DMA — ${below200.length} of ${withMA200}`} dot={COL.red} hint="trading under the 200-day moving average">
-            <MATable rows={below200} dmaKey="DMA 200" name={name} nse={nse} />
-          </Card>
-        </div>
-      )}
 
       <div style={{ marginTop: 28, color: COL.dim, fontSize: 11, borderTop: `1px solid ${COL.line}`, paddingTop: 14 }}>
         All metrics computed in-browser from the loaded file. Headline “avg” is a trimmed mean (extreme top/bottom 5% removed); raw median shown alongside. Quadrant clamps extreme outliers to the axis edge. Blanks excluded.
@@ -426,7 +498,7 @@ function Histogram({ values, color, unit }: { values: number[]; color: string; u
 function MATable({ rows, dmaKey, name, nse }: {
   rows: Row[]; dmaKey: string; name: (d: Row) => string; nse: (d: Row) => string;
 }) {
-  if (!rows.length) return <div style={{ color: COL.dim, fontSize: 12, padding: '8px 2px' }}>None — every stock with data is above this moving average.</div>;
+  if (!rows.length) return <div style={{ color: COL.dim, fontSize: 12, padding: '8px 2px' }}>None in this bucket.</div>;
   return (
     <table style={tbl}>
       <thead>
@@ -442,7 +514,7 @@ function MATable({ rows, dmaKey, name, nse }: {
               <td style={tdL}><b>{name(d)}</b><span style={nseS}>{nse(d)}</span></td>
               <td style={tdR}>{fmt(cmp, 1)}</td>
               <td style={tdR}>{fmt(dma, 1)}</td>
-              <td style={{ ...tdR, color: COL.red, fontWeight: 700 }}>{fmt(pct, 1)}%</td>
+              <td style={{ ...tdR, color: pcCol(pct), fontWeight: 700 }}>{pct >= 0 ? '+' : ''}{fmt(pct, 1)}%</td>
             </tr>
           );
         })}
@@ -488,7 +560,7 @@ function Quadrant({ data, name }: { data: Row[]; name: (d: Row) => string }) {
           ))}
           <text x={W / 2} y={H - 10} fill={COL.muted} fontSize={11} textAnchor="middle">Sales growth % (TTM)</text>
           <text x={14} y={H / 2} fill={COL.muted} fontSize={11} textAnchor="middle" transform={`rotate(-90 14 ${H / 2})`}>Profit growth % (TTM)</text>
-        </svg>PATCH 1123 - Analyzer: add Below 50-DMA / Below 200-DMA lists (CMP vs DMA columns), renders when present
+        </svg>
       </div>
       {off ? <div style={{ color: COL.dim, fontSize: 11, marginTop: 8 }}>{off} stock(s) had growth beyond ±{CL}% and were clamped to the chart edge to keep the quadrant readable.</div> : null}
     </div>
