@@ -497,11 +497,6 @@ function Dashboard({ data, onRemove }: { data: Row[]; onRemove: (key: string) =>
         </div>
       )}
 
-      {/* Growth quadrant */}
-      <Card title="Growth quadrant — Sales vs Profit growth (TTM)" dot={COL.cyan} hint="bubble = market cap">
-        <Quadrant data={data} name={name} />
-      </Card>
-
       {/* Quality + ROCE */}
       <div style={grid2}>
         <Card title="Quality compounders" dot={COL.violet} hint="ROCE + 3Y growth + margins − leverage">
