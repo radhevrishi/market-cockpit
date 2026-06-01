@@ -1200,7 +1200,7 @@ export default function PortfolioPage() {
       )}
 
       {/* PATCH 1100 — Analytics view */}
-      {!loading && holdings.length > 0 && viewTab === 'fundamentals' && <FundamentalsAnalyzerPage />}
+      {!loading && holdings.length > 0 && viewTab === 'fundamentals' && <FundamentalsAnalyzerPage scope="portfolio" />}
         {!loading && holdings.length > 0 && viewTab === 'analytics' && (
         <PortfolioAnalytics rows={sortedRows} onSelectCap={(c) => { setCapFilter(c as any); setViewTab('holdings'); }} />
       )}
