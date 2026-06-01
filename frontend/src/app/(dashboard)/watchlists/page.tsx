@@ -1051,7 +1051,7 @@ export default function WatchlistsPage() {
         </button>
       </div>
 
-      {activeTab === 'fundamentals' ? <FundamentalsAnalyzerPage /> : activeTab === 'conviction' ? (
+      {activeTab === 'fundamentals' ? <FundamentalsAnalyzerPage scope="watchlist" /> : activeTab === 'conviction' ? (
         <ConvictionBeatsPanel entries={convictionEntries} onRemove={(t) => { removeConviction(t); setConvictionEntries(getConvictionList()); }} />
       ) : (
       <>
