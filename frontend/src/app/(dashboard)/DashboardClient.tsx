@@ -46,6 +46,7 @@ const NAV_GROUPS: NavGroup[] = [
       // (frontend/src/app/(dashboard)/company-news/** removed). The nav link
       // remained, sending users to a 404. Removed per user request.
       { href: '/news',             label: 'News Feed',          icon: <Newspaper className="w-4 h-4" /> },
+        { href: '/fundamentals', label: 'Fundamentals', icon: <BarChart3 className="w-4 h-4" /> },
     ],
   },
   {
@@ -166,6 +167,7 @@ const NAV: NavItem[] = NAV_GROUPS.flatMap(g => g.items);
 // readers can see the pre-0603 ordering / comments at a glance.
 const _LEGACY_NAV: NavItem[] = [
   { href: '/news',          label: 'News Feed',          icon: <Newspaper className="w-5 h-5" /> },
+        { href: '/fundamentals', label: 'Fundamentals', icon: <BarChart3 className="w-4 h-4" /> },
   // PATCH 0090: heatmap + movers merged into Market Snapshot (toggle inside)
   { href: '/market-snapshot', label: 'Market Snapshot',  icon: <Grid3X3 className="w-5 h-5" /> },
   { href: '/portfolio',     label: 'Portfolio',          icon: <Briefcase className="w-5 h-5" /> },
