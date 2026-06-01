@@ -128,6 +128,15 @@ export default function FundamentalsAnalyzerPage() {
     try { localStorage.removeItem(STORAGE_KEY); localStorage.removeItem(STORAGE_NAME); } catch {}
   }, []);
 
+  // Remove a single company from the loaded list (persists).
+  const removeRow = useCallback((key: string) => {
+    setData((prev) => {
+      const next = prev.filter((r) => rowKey(r) !== key);
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
+
   // Accept one or many files (multi-select or multi-drop); each merges in.
   const onFile = useCallback((files?: FileList | File[] | null) => {
     if (!files) return;
@@ -195,7 +204,7 @@ export default function FundamentalsAnalyzerPage() {
             <div style={{ color: COL.dim, fontSize: 11.5, marginTop: 8, maxWidth: 720, marginLeft: 'auto', marginRight: 'auto' }}>{SAMPLE_HINT}</div>
           </div>
         ) : (
-          <Dashboard data={data} />
+          <Dashboard data={data} onRemove={removeRow} />
         )}
       </div>
     </div>
@@ -206,7 +215,7 @@ const chip: any = { background: '#1b2330', border: `1px solid ${COL.line}`, bord
 const drop: any = { border: `1px dashed ${COL.line2}`, borderRadius: 8, padding: '8px 14px', color: COL.muted, fontSize: 12, cursor: 'pointer', background: COL.panel2 };
 
 // ============================================================================
-function Dashboard({ data }: { data: Row[] }) {
+function Dashboard({ data, onRemove }: { data: Row[]; onRemove: (key: string) => void }) {
   const col = useCallback((k: string) => data.map((d) => num(d[k])), [data]);
   const name = (d: Row) => d['Name'] || '';
   const nse = (d: Row) => d['NSE Code'] || d['BSE Code'] || '';
@@ -388,6 +397,20 @@ function Dashboard({ data }: { data: Row[] }) {
         </Card>
         <Card title="Distribution — Profit growth (TTM)" dot={COL.violet}>
           <Histogram values={col('Profit growth')} color={COL.violet} unit="Profit gr %" />
+        </Card>
+      </div>
+
+      {/* Manage list — remove individual companies */}
+      <div style={{ marginTop: 16 }}>
+        <Card title={`Manage list — ${data.length} stocks`} dot={COL.dim} hint="click ✕ to remove a company">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, maxHeight: 240, overflowY: 'auto' }}>
+            {data.map((d, i) => (
+              <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: COL.panel2, border: `1px solid ${COL.line}`, borderRadius: 6, padding: '3px 4px 3px 9px', fontSize: 11.5 }}>
+                <span style={{ color: COL.txt }}>{d['NSE Code'] || d['BSE Code'] || d['Name'] || '?'}</span>
+                <button onClick={() => onRemove(rowKey(d))} title="Remove" style={{ background: 'none', border: 'none', color: COL.red, cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: '0 3px' }}>✕</button>
+              </span>
+            ))}
+          </div>
         </Card>
       </div>
 
