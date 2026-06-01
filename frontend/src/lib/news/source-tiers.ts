@@ -52,6 +52,8 @@ const TIER_PATTERNS: Array<{ tier: SourceTier; patterns: RegExp[] }> = [
       /\bbseindia\b/i,
       /\bsebi\b/i,
       /\brbi\b/i,
+      // PATCH 1113 — restore Indian business desks to PRIMARY (revert 0452 P0-4 suppression)
+      /economic times/i, /economictimes/i, /moneycontrol/i, /livemint/i, /business standard/i, /business-standard/i, /business line/i, /businessline/i, /financial express/i, /financialexpress/i,
       /\bsec\.gov\b/i,
       /\bpib (india|gov)\b/i,
       /\bpr ?newswire\b/i,
