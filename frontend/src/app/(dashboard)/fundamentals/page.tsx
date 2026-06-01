@@ -220,7 +220,7 @@ export default function FundamentalsAnalyzerPage({ scope = '' }: { scope?: strin
             <div style={{ color: COL.dim, fontSize: 11.5, marginTop: 8, maxWidth: 720, marginLeft: 'auto', marginRight: 'auto' }}>{SAMPLE_HINT}</div>
           </div>
         ) : (
-          <Dashboard data={data} onRemove={removeRow} onAdd={addTickers} />
+          <Dashboard data={data} onRemove={removeRow} onAdd={addTickers} onClear={clearAll} />
         )}
       </div>
     </div>
@@ -231,7 +231,7 @@ const chip: any = { background: '#1b2330', border: `1px solid ${COL.line}`, bord
 const drop: any = { border: `1px dashed ${COL.line2}`, borderRadius: 8, padding: '8px 14px', color: COL.muted, fontSize: 12, cursor: 'pointer', background: COL.panel2 };
 
 // ============================================================================
-function Dashboard({ data, onRemove, onAdd }: { data: Row[]; onRemove: (key: string) => void; onAdd: (raw: string) => void }) {
+function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: (key: string) => void; onAdd: (raw: string) => void; onClear: () => void }) {
   const [addVal, setAddVal] = useState('');
   const col = useCallback((k: string) => data.map((d) => num(d[k])), [data]);
   const name = (d: Row) => d['Name'] || '';
@@ -627,7 +627,7 @@ function Dashboard({ data, onRemove, onAdd }: { data: Row[]; onRemove: (key: str
 
       {/* Manage list — remove individual companies */}
       <div style={{ marginTop: 16 }}>
-        <Card title={`Manage list — ${data.length} stocks`} dot={COL.dim} hint="add tickers or click ✕ to remove">
+        <Card title={`Manage list — ${data.length} stocks`} dot={COL.dim} hint="add tickers · clear all · click ✕ to remove one">
           <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
             <input
               value={addVal}
@@ -640,6 +640,10 @@ function Dashboard({ data, onRemove, onAdd }: { data: Row[]; onRemove: (key: str
               onClick={() => { onAdd(addVal); setAddVal(''); }}
               style={{ background: COL.green, border: 'none', borderRadius: 8, padding: '8px 18px', color: '#0a0e14', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}
             >+ Add</button>
+            <button
+              onClick={() => { if (confirm('Clear all ' + data.length + ' stocks from this list? Upload again to repopulate.')) onClear(); }}
+              style={{ background: 'transparent', border: '1px solid ' + COL.red, borderRadius: 8, padding: '8px 18px', color: COL.red, fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}
+            >✕ Clear all</button>
           </div>
           <div style={{ fontSize: 10.5, color: COL.dim, marginBottom: 10 }}>New tickers are added as placeholders — upload a Screener.in CSV with the same code to fill in their metrics.</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, maxHeight: 240, overflowY: 'auto' }}>
