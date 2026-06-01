@@ -424,7 +424,7 @@ function capBadge(c?: string) {
   return <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 5, fontSize: 10.5, fontWeight: 800, background: `${col}22`, color: col, letterSpacing: '0.3px' }}>{label}</span>;
 }
 
-function PortfolioAnalytics({ rows }: { rows: PortfolioRow[] }) {
+function PortfolioAnalytics({ rows, onSelectCap }: { rows: PortfolioRow[]; onSelectCap?: (cap: string) => void }) {
   const fmtRs = (v: number) => '₹' + Math.round(v || 0).toLocaleString('en-IN');
   const pctTxt = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
   const totalCur = rows.reduce((a, r) => a + (r.currentValue || 0), 0) || 1;
@@ -518,9 +518,11 @@ function PortfolioAnalytics({ rows }: { rows: PortfolioRow[] }) {
           <div style={h}>Market-cap allocation</div>
           {capStats.length === 0 ? <div style={{ fontSize: 12, color: '#64748B' }}>No cap data yet — refresh to pull live quotes.</div> :
             capStats.map(c => (
-              <Bar key={c.k} label={capLabel[c.k]} count={c.count} pct={c.valPct} color={CAP_COLORS[c.k]} valueTxt={fmtRs(c.value)} pnl={c.retPct} />
+              <div key={c.k} onClick={() => onSelectCap?.(c.k)} title={`Show the ${c.count} ${capLabel[c.k]} holding${c.count === 1 ? '' : 's'}`} style={{ cursor: 'pointer' }}>
+                <Bar label={capLabel[c.k]} count={c.count} pct={c.valPct} color={CAP_COLORS[c.k]} valueTxt={fmtRs(c.value)} pnl={c.retPct} />
+              </div>
             ))}
-          <div style={{ fontSize: 10, color: '#64748B', marginTop: 4 }}>% = share of current value · count = holdings · last figure = return on that bucket</div>
+          <div style={{ fontSize: 10, color: '#64748B', marginTop: 4 }}>% = share of current value · count = holdings · last figure = return on that bucket · <span style={{ color: '#60A5FA' }}>click a bar to see those companies</span></div>
         </div>
 
         {/* Sector allocation */}
@@ -548,6 +550,33 @@ function PortfolioAnalytics({ rows }: { rows: PortfolioRow[] }) {
               <div style={{ fontSize: 10, color: '#64748B', marginTop: 2 }}>{priced.length ? Math.round((winners.length / priced.length) * 100) : 0}% of priced holdings in profit</div>
             </div>
           </div>
+        </div>
+
+        {/* Top winners & losers — 10 each */}
+        <div style={card}>
+          <div style={h}>Top winners &amp; losers</div>
+          {(() => {
+            const w = [...priced].filter(r => (r.pnl || 0) > 0).sort((a, b) => (b.pnlPercent || 0) - (a.pnlPercent || 0)).slice(0, 10);
+            const l = [...priced].filter(r => (r.pnl || 0) < 0).sort((a, b) => (a.pnlPercent || 0) - (b.pnlPercent || 0)).slice(0, 10);
+            const Row = ({ r, up }: any) => (
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, padding: '2px 0' }}>
+                <span style={{ color: '#C9D4E0', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 110 }}>{r.symbol}</span>
+                <span style={{ color: up ? '#10B981' : '#EF4444', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{pctTxt(r.pnlPercent || 0)}</span>
+              </div>
+            );
+            return (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                <div>
+                  <div style={{ fontSize: 10, color: '#10B981', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>▲ TOP {w.length} WINNERS</div>
+                  {w.length ? w.map(r => <Row key={r.symbol} r={r} up />) : <div style={{ fontSize: 11, color: '#64748B' }}>No winners</div>}
+                </div>
+                <div>
+                  <div style={{ fontSize: 10, color: '#EF4444', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>▼ TOP {l.length} LOSERS</div>
+                  {l.length ? l.map(r => <Row key={r.symbol} r={r} up={false} />) : <div style={{ fontSize: 11, color: '#64748B' }}>No losers</div>}
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Quality overlay */}
@@ -877,6 +906,17 @@ export default function PortfolioPage() {
   // ticker -> cap map used to tag every holding regardless of how it was priced.
   useEffect(() => {
     let cancelled = false;
+    // PATCH 1102 — cache the cap map locally (6h) so we DON'T re-read the ~1MB
+    // universe on every portfolio open. This was driving up KV read volume.
+    const CACHE_KEY = 'mc:cap-map:v1';
+    const TTL_MS = 6 * 3600 * 1000;
+    try {
+      const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
+      if (cached && cached.map && (Date.now() - (cached.ts || 0)) < TTL_MS && Object.keys(cached.map).length >= 500) {
+        setCapMap(cached.map);
+        return; // fresh local cache — skip the network/KV read entirely
+      }
+    } catch {}
     const loadCaps = async (attempt = 0) => {
       try {
         const r = await fetch(`/api/market/quotes?market=india&_=${Date.now()}`);
@@ -886,7 +926,7 @@ export default function PortfolioPage() {
         if (withCap.length >= 500) {
           const m: Record<string, string> = {};
           for (const x of withCap) m[String(x.ticker || '').toUpperCase()] = x.indexGroup;
-          if (!cancelled) setCapMap(m);
+          if (!cancelled) { setCapMap(m); try { localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), map: m })); } catch {} }
           return;
         }
       } catch { /* fall through to retry */ }
@@ -1157,7 +1197,7 @@ export default function PortfolioPage() {
 
       {/* PATCH 1100 — Analytics view */}
       {!loading && holdings.length > 0 && viewTab === 'analytics' && (
-        <PortfolioAnalytics rows={sortedRows} />
+        <PortfolioAnalytics rows={sortedRows} onSelectCap={(c) => { setCapFilter(c as any); setViewTab('holdings'); }} />
       )}
 
       {/* ── Fetch error banner ──────────────────────────────────────── */}
