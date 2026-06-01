@@ -70,7 +70,7 @@ import { seedTransformational } from '@/lib/news/transformational-seed';
 // blend; users expect <2 min freshness. Force dynamic + tighter
 // Cache-Control restores the freshness contract.
 export const dynamic = 'force-dynamic';
-export const maxDuration = 20; // PATCH 0818 — tighter cap
+export const maxDuration = 30; // PATCH 0818 — tighter cap
 
 // ── RSS Feed Sources ──────────────────────────────────────────────────
 // Each feed gets a `tier` so the BOTTLENECK classifier can require
