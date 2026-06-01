@@ -9,8 +9,6 @@
 
 import { useState, useMemo, useCallback, useEffect } from 'react';
 
-const STORAGE_KEY = 'mc:fundamentals:data:v1';
-const STORAGE_NAME = 'mc:fundamentals:name:v1';
 // Identity for de-dup: NSE code, else BSE code, else Name (uppercased).
 const rowKey = (d: Record<string, string>) => ((d['NSE Code'] || d['BSE Code'] || d['Name'] || '').trim().toUpperCase());
 
@@ -85,7 +83,10 @@ const COL = {
 
 const SAMPLE_HINT = 'Name, NSE Code, Sales growth, Profit growth, Return on capital employed, OPM, Price to Earning, PEG Ratio, Debt to equity …';
 
-export default function FundamentalsAnalyzerPage() {
+export default function FundamentalsAnalyzerPage({ scope = '' }: { scope?: string }) {
+  // Per-tab storage: portfolio & watchlist keep separate saved lists so one never overwrites the other.
+  const STORAGE_KEY = scope ? 'mc:fundamentals:' + scope + ':data:v1' : 'mc:fundamentals:data:v1';
+  const STORAGE_NAME = scope ? 'mc:fundamentals:' + scope + ':name:v1' : 'mc:fundamentals:name:v1';
   const [data, setData] = useState<Row[]>([]);
   const [fname, setFname] = useState<string>('');
   const [dragging, setDragging] = useState(false);
