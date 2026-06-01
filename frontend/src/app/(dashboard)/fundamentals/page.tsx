@@ -370,104 +370,6 @@ function Dashboard({ data, onRemove, onAdd }: { data: Row[]; onRemove: (key: str
 
   return (
     <div>
-      {/* KPI strip */}
-      <SecTitle>Watchlist averages &amp; medians</SecTitle>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(176px,1fr))', gap: 10 }}>
-        {kpiDefs.map(([k, lab, u]) => {
-          const s = stats(col(k));
-          const unit = u === '%' ? '%' : u === 'x' ? 'x' : '';
-          const head = s.trimmed;
-          const cls = u === '%' ? (isNaN(head) ? COL.txt : head >= 0 ? COL.green : COL.red) : COL.blue;
-          return (
-            <div key={k} style={kpiCard}>
-              <div style={{ fontSize: 10.5, letterSpacing: .4, textTransform: 'uppercase', color: COL.muted, marginBottom: 7, fontWeight: 600 }}>
-                {lab}<span style={{ color: COL.dim, fontWeight: 500 }}> · avg</span>
-              </div>
-              <div style={{ fontSize: 23, fontWeight: 700, color: cls }}>{isNaN(head) ? '—' : fmt(head, 1) + unit}</div>
-              <div style={{ fontSize: 11, color: COL.dim, marginTop: 4 }}>median <b style={{ color: COL.muted }}>{isNaN(s.median) ? '—' : fmt(s.median, 1) + unit}</b> · n={s.n}</div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Sales growth leaders */}
-      <div style={grid2}>
-        <Card title="Top 10 — Sales growth (TTM)" dot={COL.green} hint="highest revenue momentum">
-          <LeaderTable rows={leaders('Sales growth', 'desc')} valKey="Sales growth" unit="%" name={name} nse={nse} />
-        </Card>
-        <Card title="Bottom 10 — Sales growth (TTM)" dot={COL.red} hint="weakest / shrinking">
-          <LeaderTable rows={leaders('Sales growth', 'asc')} valKey="Sales growth" unit="%" name={name} nse={nse} />
-        </Card>
-      </div>
-
-      {/* Profit growth leaders */}
-      <div style={grid2}>
-        <Card title="Top 10 — Profit growth (TTM)" dot={COL.green} hint="highest earnings momentum">
-          <LeaderTable rows={leaders('Profit growth', 'desc')} valKey="Profit growth" unit="%" name={name} nse={nse} />
-        </Card>
-        <Card title="Bottom 10 — Profit growth (TTM)" dot={COL.red} hint="earnings under pressure">
-          <LeaderTable rows={leaders('Profit growth', 'asc')} valKey="Profit growth" unit="%" name={name} nse={nse} />
-        </Card>
-      </div>
-
-      {/* Quarterly momentum — YoY quarterly growth (most recent quarter vs year-ago quarter) */}
-      <div style={grid2}>
-        <Card title="Top 10 — Sales growth (YoY Qtr)" dot={COL.green} hint="latest-quarter revenue acceleration">
-          <LeaderTable rows={leaders('YOY Quarterly sales growth', 'desc')} valKey="YOY Quarterly sales growth" unit="%" name={name} nse={nse}
-            extra={[['Sales growth', 'TTM', '%']]} />
-        </Card>
-        <Card title="Top 10 — Profit growth (YoY Qtr)" dot={COL.green} hint="latest-quarter earnings acceleration">
-          <LeaderTable rows={leaders('YOY Quarterly profit growth', 'desc')} valKey="YOY Quarterly profit growth" unit="%" name={name} nse={nse}
-            extra={[['Profit growth', 'TTM', '%']]} />
-        </Card>
-      </div>
-
-      {/* Quarterly momentum — decelerating / contracting */}
-      <div style={grid2}>
-        <Card title="Bottom 10 — Sales growth (YoY Qtr)" dot={COL.red} hint="latest-quarter revenue weakest">
-          <LeaderTable rows={leaders('YOY Quarterly sales growth', 'asc')} valKey="YOY Quarterly sales growth" unit="%" name={name} nse={nse}
-            extra={[['Sales growth', 'TTM', '%']]} />
-        </Card>
-        <Card title="Bottom 10 — Profit growth (YoY Qtr)" dot={COL.red} hint="latest-quarter earnings weakest">
-          <LeaderTable rows={leaders('YOY Quarterly profit growth', 'asc')} valKey="YOY Quarterly profit growth" unit="%" name={name} nse={nse}
-            extra={[['Profit growth', 'TTM', '%']]} />
-        </Card>
-      </div>
-
-      {/* Margin trend — OPM latest quarter vs last year */}
-      <div style={grid2}>
-        <Card title="Top 15 — Margin expansion" dot={COL.green} hint="OPM latest qtr − OPM last year (pp)">
-          <MoverTable rows={marginUp} />
-        </Card>
-        <Card title="Top 15 — Margin compression" dot={COL.red} hint="OPM squeeze vs last year (pp)">
-          <MoverTable rows={marginDn} />
-        </Card>
-      </div>
-
-      {/* Valuation — value vs expensive */}
-      <div style={grid2}>
-        <Card title={`Re-rating value — PEG ≤ 1 with growth (${cheapGrowth.length})`} dot={COL.violet} hint="cheap relative to earnings growth">
-          <LeaderTable rows={cheapGrowth} valKey="PEG Ratio" unit="x" name={name} nse={nse}
-            extra={[['Profit growth', 'Profit gr.', '%'], ['Price to Earning', 'P/E', 'x']]} />
-        </Card>
-        <Card title="Top 10 — Richest P/E" dot={COL.amber} hint="priciest on earnings — valuation risk">
-          <LeaderTable rows={leaders('Price to Earning', 'desc')} valKey="Price to Earning" unit="x" name={name} nse={nse}
-            extra={[['Profit growth', 'Profit gr.', '%'], ['PEG Ratio', 'PEG', 'x']]} />
-        </Card>
-      </div>
-
-      {/* Promoter conviction — change in promoter holding over 3 years */}
-      <div style={grid2}>
-        <Card title="Promoter buying — 3Y change" dot={COL.green} hint="rising promoter stake (skin in the game)">
-          <LeaderTable rows={leaders('Change in promoter holding 3Years', 'desc')} valKey="Change in promoter holding 3Years" unit="%" name={name} nse={nse}
-            extra={[['Promoter holding', 'Holding', '%'], ['Pledged percentage', 'Pledge', '%']]} />
-        </Card>
-        <Card title="Promoter reducing — 3Y change" dot={COL.red} hint="falling promoter stake — watch">
-          <LeaderTable rows={leaders('Change in promoter holding 3Years', 'asc')} valKey="Change in promoter holding 3Years" unit="%" name={name} nse={nse}
-            extra={[['Promoter holding', 'Holding', '%'], ['Pledged percentage', 'Pledge', '%']]} />
-        </Card>
-      </div>
-
       {/* Moving averages — below/above 50-DMA & 200-DMA (renders only if file has DMA columns) */}
       {hasMA && (
         <div>
@@ -577,6 +479,104 @@ function Dashboard({ data, onRemove, onAdd }: { data: Row[]; onRemove: (key: str
           </Card>
         </div>
       )}
+
+      {/* KPI strip */}
+      <SecTitle>Watchlist averages &amp; medians</SecTitle>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(176px,1fr))', gap: 10 }}>
+        {kpiDefs.map(([k, lab, u]) => {
+          const s = stats(col(k));
+          const unit = u === '%' ? '%' : u === 'x' ? 'x' : '';
+          const head = s.trimmed;
+          const cls = u === '%' ? (isNaN(head) ? COL.txt : head >= 0 ? COL.green : COL.red) : COL.blue;
+          return (
+            <div key={k} style={kpiCard}>
+              <div style={{ fontSize: 10.5, letterSpacing: .4, textTransform: 'uppercase', color: COL.muted, marginBottom: 7, fontWeight: 600 }}>
+                {lab}<span style={{ color: COL.dim, fontWeight: 500 }}> · avg</span>
+              </div>
+              <div style={{ fontSize: 23, fontWeight: 700, color: cls }}>{isNaN(head) ? '—' : fmt(head, 1) + unit}</div>
+              <div style={{ fontSize: 11, color: COL.dim, marginTop: 4 }}>median <b style={{ color: COL.muted }}>{isNaN(s.median) ? '—' : fmt(s.median, 1) + unit}</b> · n={s.n}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Sales growth leaders */}
+      <div style={grid2}>
+        <Card title="Top 10 — Sales growth (TTM)" dot={COL.green} hint="highest revenue momentum">
+          <LeaderTable rows={leaders('Sales growth', 'desc')} valKey="Sales growth" unit="%" name={name} nse={nse} />
+        </Card>
+        <Card title="Bottom 10 — Sales growth (TTM)" dot={COL.red} hint="weakest / shrinking">
+          <LeaderTable rows={leaders('Sales growth', 'asc')} valKey="Sales growth" unit="%" name={name} nse={nse} />
+        </Card>
+      </div>
+
+      {/* Profit growth leaders */}
+      <div style={grid2}>
+        <Card title="Top 10 — Profit growth (TTM)" dot={COL.green} hint="highest earnings momentum">
+          <LeaderTable rows={leaders('Profit growth', 'desc')} valKey="Profit growth" unit="%" name={name} nse={nse} />
+        </Card>
+        <Card title="Bottom 10 — Profit growth (TTM)" dot={COL.red} hint="earnings under pressure">
+          <LeaderTable rows={leaders('Profit growth', 'asc')} valKey="Profit growth" unit="%" name={name} nse={nse} />
+        </Card>
+      </div>
+
+      {/* Quarterly momentum — YoY quarterly growth (most recent quarter vs year-ago quarter) */}
+      <div style={grid2}>
+        <Card title="Top 10 — Sales growth (YoY Qtr)" dot={COL.green} hint="latest-quarter revenue acceleration">
+          <LeaderTable rows={leaders('YOY Quarterly sales growth', 'desc')} valKey="YOY Quarterly sales growth" unit="%" name={name} nse={nse}
+            extra={[['Sales growth', 'TTM', '%']]} />
+        </Card>
+        <Card title="Top 10 — Profit growth (YoY Qtr)" dot={COL.green} hint="latest-quarter earnings acceleration">
+          <LeaderTable rows={leaders('YOY Quarterly profit growth', 'desc')} valKey="YOY Quarterly profit growth" unit="%" name={name} nse={nse}
+            extra={[['Profit growth', 'TTM', '%']]} />
+        </Card>
+      </div>
+
+      {/* Quarterly momentum — decelerating / contracting */}
+      <div style={grid2}>
+        <Card title="Bottom 10 — Sales growth (YoY Qtr)" dot={COL.red} hint="latest-quarter revenue weakest">
+          <LeaderTable rows={leaders('YOY Quarterly sales growth', 'asc')} valKey="YOY Quarterly sales growth" unit="%" name={name} nse={nse}
+            extra={[['Sales growth', 'TTM', '%']]} />
+        </Card>
+        <Card title="Bottom 10 — Profit growth (YoY Qtr)" dot={COL.red} hint="latest-quarter earnings weakest">
+          <LeaderTable rows={leaders('YOY Quarterly profit growth', 'asc')} valKey="YOY Quarterly profit growth" unit="%" name={name} nse={nse}
+            extra={[['Profit growth', 'TTM', '%']]} />
+        </Card>
+      </div>
+
+      {/* Margin trend — OPM latest quarter vs last year */}
+      <div style={grid2}>
+        <Card title="Top 15 — Margin expansion" dot={COL.green} hint="OPM latest qtr − OPM last year (pp)">
+          <MoverTable rows={marginUp} />
+        </Card>
+        <Card title="Top 15 — Margin compression" dot={COL.red} hint="OPM squeeze vs last year (pp)">
+          <MoverTable rows={marginDn} />
+        </Card>
+      </div>
+
+      {/* Valuation — value vs expensive */}
+      <div style={grid2}>
+        <Card title={`Re-rating value — PEG ≤ 1 with growth (${cheapGrowth.length})`} dot={COL.violet} hint="cheap relative to earnings growth">
+          <LeaderTable rows={cheapGrowth} valKey="PEG Ratio" unit="x" name={name} nse={nse}
+            extra={[['Profit growth', 'Profit gr.', '%'], ['Price to Earning', 'P/E', 'x']]} />
+        </Card>
+        <Card title="Top 10 — Richest P/E" dot={COL.amber} hint="priciest on earnings — valuation risk">
+          <LeaderTable rows={leaders('Price to Earning', 'desc')} valKey="Price to Earning" unit="x" name={name} nse={nse}
+            extra={[['Profit growth', 'Profit gr.', '%'], ['PEG Ratio', 'PEG', 'x']]} />
+        </Card>
+      </div>
+
+      {/* Promoter conviction — change in promoter holding over 3 years */}
+      <div style={grid2}>
+        <Card title="Promoter buying — 3Y change" dot={COL.green} hint="rising promoter stake (skin in the game)">
+          <LeaderTable rows={leaders('Change in promoter holding 3Years', 'desc')} valKey="Change in promoter holding 3Years" unit="%" name={name} nse={nse}
+            extra={[['Promoter holding', 'Holding', '%'], ['Pledged percentage', 'Pledge', '%']]} />
+        </Card>
+        <Card title="Promoter reducing — 3Y change" dot={COL.red} hint="falling promoter stake — watch">
+          <LeaderTable rows={leaders('Change in promoter holding 3Years', 'asc')} valKey="Change in promoter holding 3Years" unit="%" name={name} nse={nse}
+            extra={[['Promoter holding', 'Holding', '%'], ['Pledged percentage', 'Pledge', '%']]} />
+        </Card>
+      </div>
 
       {/* Quality + ROCE */}
       <div style={grid2}>
