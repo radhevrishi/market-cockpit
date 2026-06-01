@@ -285,6 +285,52 @@ function Dashboard({ data, onRemove }: { data: Row[]; onRemove: (key: string) =>
   const withMA200 = data.filter((d) => !isNaN(num(d['DMA 200'])) && !isNaN(num(d['Current Price']))).length;
   const maOn = maMode === 'below' ? COL.red : COL.green;
 
+  // Fundamental + technical EXIT / REVIEW triggers — institutional deterioration checklist.
+  const exitFlags = (d: Row): string[] => {
+    const f: string[] = [];
+    const pg = num(d['Profit growth']); if (!isNaN(pg) && pg < 0) f.push('Profit shrinking');
+    const sg = num(d['Sales growth']); if (!isNaN(sg) && sg < 0) f.push('Sales shrinking');
+    const qpg = num(d['YOY Quarterly profit growth']); if (!isNaN(qpg) && qpg < 0) f.push('Qtr profit down YoY');
+    const pg3 = num(d['Profit growth 3Years']); if (!isNaN(pg) && !isNaN(pg3) && pg3 > 10 && pg < pg3 * 0.5) f.push('Profit decelerating vs 3Y');
+    const opmL = num(d['OPM latest quarter']); const opmY = num(d['OPM last year']); if (!isNaN(opmL) && !isNaN(opmY) && opmL < opmY - 2) f.push('Margin squeeze');
+    const de = num(d['Debt to equity']); if (!isNaN(de) && de > 1) f.push('High debt D/E>1');
+    const cfo = num(d['CFO to PAT']); if (!isNaN(cfo) && cfo >= 0 && cfo < 0.5) f.push('Weak cash conversion');
+    const roce = num(d['Return on capital employed']); if (!isNaN(roce) && roce < 10) f.push('Low ROCE<10');
+    const peg = num(d['PEG Ratio']); if (!isNaN(peg) && peg > 2) f.push('Expensive PEG>2');
+    const pe = num(d['Price to Earning']); if (!isNaN(pe) && pe > 80) f.push('Rich P/E>80');
+    const chp = num(d['Change in promoter holding 3Years']); if (!isNaN(chp) && chp < -2) f.push('Promoter reducing');
+    const pl = num(d['Pledged percentage']); if (!isNaN(pl) && pl > 15) f.push('High pledge');
+    const cmp = num(d['Current Price']); const dma200 = num(d['DMA 200']); if (!isNaN(cmp) && !isNaN(dma200) && cmp < dma200) f.push('Below 200-DMA');
+    const dma50 = num(d['DMA 50']); if (!isNaN(cmp) && !isNaN(dma50) && cmp < dma50) f.push('Below 50-DMA');
+    return f;
+  };
+  const flagged = data.map((d) => ({ d, flags: exitFlags(d) })).filter((o) => o.flags.length > 0).sort((a, b) => b.flags.length - a.flags.length);
+
+  // Margin movers — OPM latest quarter vs OPM last year (QoQ-style margin trend).
+  const marginMovers = data.map((d) => ({ d, delta: num(d['OPM latest quarter']) - num(d['OPM last year']) })).filter((o) => !isNaN(o.delta));
+  const marginUp = [...marginMovers].sort((a, b) => b.delta - a.delta).slice(0, 10);
+  const marginDn = [...marginMovers].sort((a, b) => a.delta - b.delta).slice(0, 10);
+  // PEG re-rating candidates — cheap relative to growth (PEG between 0 and 1, profit growing).
+  const cheapGrowth = data.filter((d) => { const p = num(d['PEG Ratio']); const g = num(d['Profit growth']); return !isNaN(p) && p > 0 && p <= 1 && !isNaN(g) && g > 0; })
+    .sort((a, b) => num(a['PEG Ratio']) - num(b['PEG Ratio'])).slice(0, 10);
+
+  const MoverTable = ({ rows }: { rows: { d: Row; delta: number }[] }) => (
+    <table style={tbl}>
+      <thead><tr><th style={thR}></th><th style={thL}>Company</th><th style={thR}>OPM now</th><th style={thR}>OPM 1Y</th><th style={thR}>Δ pp</th></tr></thead>
+      <tbody>
+        {rows.map((o, i) => (
+          <tr key={i}>
+            <td style={tdDim}>{i + 1}</td>
+            <td style={tdL}><b>{name(o.d)}</b><span style={nseS}>{nse(o.d)}</span></td>
+            <td style={tdR}>{isNaN(num(o.d['OPM latest quarter'])) ? '—' : fmt(num(o.d['OPM latest quarter']), 1) + '%'}</td>
+            <td style={tdR}>{isNaN(num(o.d['OPM last year'])) ? '—' : fmt(num(o.d['OPM last year']), 1) + '%'}</td>
+            <td style={{ ...tdR, fontWeight: 700, color: pcCol(o.delta) }}>{(o.delta >= 0 ? '+' : '') + fmt(o.delta, 1)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+
   return (
     <div>
       {/* KPI strip */}
@@ -327,6 +373,64 @@ function Dashboard({ data, onRemove }: { data: Row[]; onRemove: (key: string) =>
         </Card>
       </div>
 
+      {/* Quarterly momentum — YoY quarterly growth (most recent quarter vs year-ago quarter) */}
+      <div style={grid2}>
+        <Card title="Top 10 — Sales growth (YoY Qtr)" dot={COL.green} hint="latest-quarter revenue acceleration">
+          <LeaderTable rows={leaders('YOY Quarterly sales growth', 'desc')} valKey="YOY Quarterly sales growth" unit="%" name={name} nse={nse}
+            extra={[['Sales growth', 'TTM', '%']]} />
+        </Card>
+        <Card title="Top 10 — Profit growth (YoY Qtr)" dot={COL.green} hint="latest-quarter earnings acceleration">
+          <LeaderTable rows={leaders('YOY Quarterly profit growth', 'desc')} valKey="YOY Quarterly profit growth" unit="%" name={name} nse={nse}
+            extra={[['Profit growth', 'TTM', '%']]} />
+        </Card>
+      </div>
+
+      {/* Quarterly momentum — decelerating / contracting */}
+      <div style={grid2}>
+        <Card title="Bottom 10 — Sales growth (YoY Qtr)" dot={COL.red} hint="latest-quarter revenue weakest">
+          <LeaderTable rows={leaders('YOY Quarterly sales growth', 'asc')} valKey="YOY Quarterly sales growth" unit="%" name={name} nse={nse}
+            extra={[['Sales growth', 'TTM', '%']]} />
+        </Card>
+        <Card title="Bottom 10 — Profit growth (YoY Qtr)" dot={COL.red} hint="latest-quarter earnings weakest">
+          <LeaderTable rows={leaders('YOY Quarterly profit growth', 'asc')} valKey="YOY Quarterly profit growth" unit="%" name={name} nse={nse}
+            extra={[['Profit growth', 'TTM', '%']]} />
+        </Card>
+      </div>
+
+      {/* Margin trend — OPM latest quarter vs last year */}
+      <div style={grid2}>
+        <Card title="Top 10 — Margin expansion" dot={COL.green} hint="OPM latest qtr − OPM last year (pp)">
+          <MoverTable rows={marginUp} />
+        </Card>
+        <Card title="Top 10 — Margin compression" dot={COL.red} hint="OPM squeeze vs last year (pp)">
+          <MoverTable rows={marginDn} />
+        </Card>
+      </div>
+
+      {/* Valuation — value vs expensive */}
+      <div style={grid2}>
+        <Card title={`Re-rating value — PEG ≤ 1 with growth (${cheapGrowth.length})`} dot={COL.violet} hint="cheap relative to earnings growth">
+          <LeaderTable rows={cheapGrowth} valKey="PEG Ratio" unit="x" name={name} nse={nse}
+            extra={[['Profit growth', 'Profit gr.', '%'], ['Price to Earning', 'P/E', 'x']]} />
+        </Card>
+        <Card title="Top 10 — Richest P/E" dot={COL.amber} hint="priciest on earnings — valuation risk">
+          <LeaderTable rows={leaders('Price to Earning', 'desc')} valKey="Price to Earning" unit="x" name={name} nse={nse}
+            extra={[['Profit growth', 'Profit gr.', '%'], ['PEG Ratio', 'PEG', 'x']]} />
+        </Card>
+      </div>
+
+      {/* Promoter conviction — change in promoter holding over 3 years */}
+      <div style={grid2}>
+        <Card title="Promoter buying — 3Y change" dot={COL.green} hint="rising promoter stake (skin in the game)">
+          <LeaderTable rows={leaders('Change in promoter holding 3Years', 'desc')} valKey="Change in promoter holding 3Years" unit="%" name={name} nse={nse}
+            extra={[['Promoter holding', 'Holding', '%'], ['Pledged percentage', 'Pledge', '%']]} />
+        </Card>
+        <Card title="Promoter reducing — 3Y change" dot={COL.red} hint="falling promoter stake — watch">
+          <LeaderTable rows={leaders('Change in promoter holding 3Years', 'asc')} valKey="Change in promoter holding 3Years" unit="%" name={name} nse={nse}
+            extra={[['Promoter holding', 'Holding', '%'], ['Pledged percentage', 'Pledge', '%']]} />
+        </Card>
+      </div>
+
       {/* Moving averages — below/above 50-DMA & 200-DMA (renders only if file has DMA columns) */}
       {hasMA && (
         <div>
@@ -346,6 +450,50 @@ function Dashboard({ data, onRemove }: { data: Row[]; onRemove: (key: string) =>
               <MATable rows={ma200} dmaKey="DMA 200" name={name} nse={nse} />
             </Card>
           </div>
+        </div>
+      )}
+
+      {/* Exit / review triggers — fundamental + technical deterioration */}
+      {flagged.length > 0 && (
+        <div style={{ marginTop: 22 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, margin: '0 0 4px', flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 12, letterSpacing: 1.4, textTransform: 'uppercase', color: COL.dim, fontWeight: 700 }}>Exit / review triggers</div>
+            <div style={{ fontSize: 11, color: COL.dim }}>{flagged.length} of {data.length} names show fundamental or technical deterioration · ranked by trigger count</div>
+          </div>
+          <Card title={`Sell / trim candidates — ${flagged.length} flagged`} dot={COL.red} hint="more triggers = stronger case to exit / review">
+            <table style={tbl}>
+              <thead><tr>
+                <th style={thR}></th><th style={thL}>Company</th><th style={thR}>#</th>
+                <th style={thL}>Triggers</th><th style={thR}>Profit gr.</th><th style={thR}>Sales gr.</th><th style={thR}>ROCE</th><th style={thR}>D/E</th>
+              </tr></thead>
+              <tbody>
+                {flagged.slice(0, 25).map((o, i) => {
+                  const tech = (s: string) => s.indexOf('DMA') >= 0;
+                  return (
+                    <tr key={i}>
+                      <td style={tdDim}>{i + 1}</td>
+                      <td style={tdL}><b>{name(o.d)}</b><span style={nseS}>{nse(o.d)}</span></td>
+                      <td style={{ ...tdR, fontWeight: 700, color: o.flags.length >= 4 ? COL.red : o.flags.length >= 2 ? COL.amber : COL.muted }}>{o.flags.length}</td>
+                      <td style={{ ...tdL, paddingTop: 7, paddingBottom: 7 }}>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                          {o.flags.map((fl, k) => (
+                            <span key={k} style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap', color: tech(fl) ? COL.amber : COL.red, background: tech(fl) ? 'rgba(210,153,34,.12)' : 'rgba(248,81,73,.12)', border: `1px solid ${tech(fl) ? 'rgba(210,153,34,.3)' : 'rgba(248,81,73,.3)'}` }}>{fl}</span>
+                          ))}
+                        </div>
+                      </td>
+                      <td style={{ ...tdR, color: pcCol(num(o.d['Profit growth'])) }}>{pctStr(num(o.d['Profit growth']))}</td>
+                      <td style={{ ...tdR, color: pcCol(num(o.d['Sales growth'])) }}>{pctStr(num(o.d['Sales growth']))}</td>
+                      <td style={tdR}>{isNaN(num(o.d['Return on capital employed'])) ? '—' : fmt(num(o.d['Return on capital employed']), 1) + '%'}</td>
+                      <td style={tdR}>{isNaN(num(o.d['Debt to equity'])) ? '—' : fmt(num(o.d['Debt to equity']), 2)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <div style={{ fontSize: 10.5, color: COL.dim, marginTop: 8, lineHeight: 1.5 }}>
+              <span style={{ color: COL.red }}>■</span> fundamental triggers (profit/sales shrinking, margin squeeze, high debt, weak cash conversion, low ROCE, rich valuation, promoter selling, pledge) · <span style={{ color: COL.amber }}>■</span> technical triggers (below 50/200-DMA). Triggers flag names to <b>review</b> — not automatic sells.
+            </div>
+          </Card>
         </div>
       )}
 
