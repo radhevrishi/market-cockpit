@@ -1176,7 +1176,7 @@ export default function PortfolioPage() {
                 background: viewTab === t ? '#1D4ED8' : 'transparent', color: viewTab === t ? '#fff' : '#8BA3C1',
               }}>{t === 'holdings' ? '\ud83d\udc0b Holdings' : t === 'analytics' ? '\ud83d\udcca Analytics' : 'Fundamentals'}</button>
             ))}
-          <a href="/fundamentals" style={{ padding: '7px 16px', borderRadius: 7, fontSize: 12.5, fontWeight: 800, letterSpacing: '0.3px', color: '#8BA3C1', textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>📈 Fundamentals ↗</a>
+          
           </div>
           {viewTab === 'holdings' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
