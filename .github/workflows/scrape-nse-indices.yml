@@ -24,6 +24,7 @@ on:
     # + evening — index levels stable overnight.
     - cron: '30 5 * * *'   # 11:00 IST — post-open
     - cron: '0 10 * * *'   # 15:30 IST — close
+    - cron: '0 15 * * 1-5'   # 20:30 IST — after EOD bhavcopy publishes (today's data)
   workflow_dispatch: {}    # manual trigger from GitHub UI
 
 concurrency:
