@@ -3998,6 +3998,42 @@ function USACompare() {
 
 const STORAGE_KEY = 'mb_excel_scored_v2';
 const STORAGE_META = 'mb_excel_meta_v2';
+const MB_IDB_DB = 'mc-mb';
+const MB_IDB_STORE = 'kv';
+function mbIdbOpen(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    try {
+      const req = indexedDB.open(MB_IDB_DB, 1);
+      req.onupgradeneeded = () => { const db = req.result; if (!db.objectStoreNames.contains(MB_IDB_STORE)) db.createObjectStore(MB_IDB_STORE); };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    } catch (e) { reject(e); }
+  });
+}
+function mbIdbSet(key: string, val: string): Promise<void> {
+  return mbIdbOpen().then(db => new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(MB_IDB_STORE, 'readwrite');
+    tx.objectStore(MB_IDB_STORE).put(val, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  })).catch(() => {});
+}
+function mbIdbGet(key: string): Promise<string | null> {
+  return mbIdbOpen().then(db => new Promise<string | null>((resolve) => {
+    const tx = db.transaction(MB_IDB_STORE, 'readonly');
+    const r = tx.objectStore(MB_IDB_STORE).get(key);
+    r.onsuccess = () => resolve((r.result as string) ?? null);
+    r.onerror = () => resolve(null);
+  })).catch(() => null);
+}
+function mbIdbDel(key: string): Promise<void> {
+  return mbIdbOpen().then(db => new Promise<void>((resolve) => {
+    const tx = db.transaction(MB_IDB_STORE, 'readwrite');
+    tx.objectStore(MB_IDB_STORE).delete(key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
+  })).catch(() => {});
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PATCH 0347 — DECISION BAR COMPONENT
@@ -4167,15 +4203,30 @@ export default function MultibaggerPage() {
   });
   // PATCH (assistant): persist India multibagger dataset on every change; initializer above already restores from STORAGE_KEY
   useEffect(() => {
-    try { if (Array.isArray(excelRows) && excelRows.length) localStorage.setItem(STORAGE_KEY, JSON.stringify(excelRows)); } catch {}
+    try { if (Array.isArray(excelRows) && excelRows.length) { const __mb = JSON.stringify(excelRows); mbIdbSet('mb_scored', __mb); try { localStorage.setItem(STORAGE_KEY, __mb); } catch {} } } catch {}
   }, [excelRows]);
+
+  // PATCH: hydrate India dataset from IndexedDB on mount (survives beyond localStorage ~5MB quota)
+  useEffect(() => {
+    let alive = true;
+    mbIdbGet('mb_scored').then((raw) => {
+      if (!alive || !raw) return;
+      try {
+        const parsed = JSON.parse(raw) as ExcelResult[];
+        if (Array.isArray(parsed) && parsed.length) {
+          setExcelRowsState((prev) => (prev && prev.length ? prev : applyForcedRanking(parsed)));
+        }
+      } catch {}
+    });
+    return () => { alive = false; };
+  }, []);
 
   // Wrapper: always applies forced ranking before saving/setting state
   function setExcelRows(rows: ExcelResult[]) {
     const ranked = applyForcedRanking(rows); // sort already done by caller
     setExcelRowsState(ranked);
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(ranked));
+      { const __mbR = JSON.stringify(ranked); mbIdbSet('mb_scored', __mbR); try { localStorage.setItem(STORAGE_KEY, __mbR); } catch {} }
       localStorage.setItem(STORAGE_META, JSON.stringify({
         savedAt: new Date().toISOString(),
         count: ranked.length,
@@ -4194,6 +4245,7 @@ export default function MultibaggerPage() {
       localStorage.removeItem(STORAGE_KEY);
       localStorage.removeItem(STORAGE_META);
       localStorage.removeItem('mb_excel_files_v1'); // PATCH 0984
+      mbIdbDel('mb_scored');
       // PATCH 0453 P1-18 — Audit found cross-tab pages (Rerating, Signals,
       // Earnings Scan) kept showing ghost tickers from a cleared upload
       // because they only listened to the conviction-beats custom event,
