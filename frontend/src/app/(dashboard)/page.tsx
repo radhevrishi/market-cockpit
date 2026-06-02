@@ -2720,7 +2720,7 @@ export default function HomeDashboard() {
                   const d = new Date(ist);
                   // Walk back to most recent weekday
                   while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() - 1);
-                  if (d.toDateString() === ist.toDateString()) d.setDate(d.getDate() - 1);
+                  if (d.toDateString() === ist.toDateString() && (ist.getHours() * 60 + ist.getMinutes()) < 930) d.setDate(d.getDate() - 1); // PATCH: after 15:30 IST the last close IS today
                   while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() - 1);
                   return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()];
                 })();
