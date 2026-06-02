@@ -46,6 +46,7 @@ const NAV_GROUPS: NavGroup[] = [
       // (frontend/src/app/(dashboard)/company-news/** removed). The nav link
       // remained, sending users to a 404. Removed per user request.
       { href: '/news',             label: 'News Feed',          icon: <Newspaper className="w-4 h-4" /> },
+      { href: '/in-play', label: 'Live In Play', icon: <Newspaper className='w-4 h-4' /> },
         { href: '/fundamentals', label: 'Fundamentals', icon: <BarChart3 className="w-4 h-4" /> },
     ],
   },
