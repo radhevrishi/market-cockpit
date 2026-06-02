@@ -65,14 +65,17 @@ export default function InPlayPage() {
       ]);
       const px = buildPx(qIN, qUS);
       base.forEach((it) => { if (it.kind === 'news' || it.kind === 'macro') { const k = (it.ticker || '').toUpperCase(); const q = px[k]; if (q) { it.price = q.price; it.changePct = q.cp; if (it.market === 'GLOBAL') it.market = q.mk; } } });
-      const inCat: Record<string, string> = Object.assign({}, newsMap);
+      const mvA = buildMovers(qIN, 'IN', newsMap).concat(buildMovers(qUS, 'US', newsMap));
+      const mergedA = mvA.concat(base); mergedA.sort((a, b) => b.time - a.time);
+      setItems(mergedA.slice(0, 600)); setAsOf(nowStr());
       if (qIN) {
+        const inCat: Record<string, string> = Object.assign({}, newsMap);
         const tickers = Array.from(new Set([].concat((qIN.gainers || []).slice(0, 18), (qIN.losers || []).slice(0, 18)).map((s: any) => s.ticker).filter(Boolean)));
         await withTimeout(Promise.all(tickers.map(async (t: any) => { const r = await getJSON('/api/v1/news-india/' + encodeURIComponent(t)); const art = r && r.articles && r.articles[0]; if (art && art.title) inCat[String(t).toUpperCase()] = art.title; })), 13000);
+        const mvB = buildMovers(qIN, 'IN', inCat).concat(buildMovers(qUS, 'US', newsMap));
+        const mergedB = mvB.concat(base); mergedB.sort((a, b) => b.time - a.time);
+        setItems(mergedB.slice(0, 600)); setAsOf(nowStr());
       }
-      const mv = buildMovers(qIN, 'IN', inCat).concat(buildMovers(qUS, 'US', newsMap));
-      const merged = mv.concat(base); merged.sort((a, b) => b.time - a.time);
-      setItems(merged.slice(0, 600)); setAsOf(nowStr());
     } catch (e: any) { setErr('Could not load the feed - retrying on next refresh.'); }
     finally { setLoading(false); inFlight.current = false; }
   }, []);
