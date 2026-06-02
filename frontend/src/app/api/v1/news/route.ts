@@ -2885,7 +2885,7 @@ export async function GET(request: Request) {
     if (anomalies) {
       const tickerCount: Record<string, number> = {};
       const themeCount: Record<string, number> = {};
-      const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+      const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
       for (const a of filtered) {
         const ts = new Date(a.published_at || 0).getTime();
         if (ts < cutoff) continue;
