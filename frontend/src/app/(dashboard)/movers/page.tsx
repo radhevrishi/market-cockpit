@@ -166,7 +166,7 @@ export default function MoversPage() {
     // so a 15s abort guaranteed a timeout on the first load. 35s lets the cold
     // build finish; warm loads return in <1s from the 120s response cache.
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), 35_000);
+    const timer = setTimeout(() => ctl.abort(), 60_000);
     try {
       setError(null);
       setIsRefreshing(true);
