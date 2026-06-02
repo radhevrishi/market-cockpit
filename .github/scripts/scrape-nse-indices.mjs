@@ -177,7 +177,7 @@ async function fetchBhavCopy() {
   // Sanity-check date is in 2025-2027 range so we don't accidentally
   // pull a 2019 file.
   const today = new Date();
-  for (let back = 1; back <= 10; back++) {
+  for (let back = 0; back <= 10; back++) {
     const d = new Date(today.getTime() - back * 86400_000);
     const dow = d.getUTCDay();
     if (dow === 0 || dow === 6) continue;
