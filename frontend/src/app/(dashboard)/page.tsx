@@ -2689,6 +2689,7 @@ export default function HomeDashboard() {
               <span style={{ fontSize: 13, fontWeight: 800, color: '#10B981', letterSpacing: '0.4px' }}>
                 📈 TOP MOVERS · TOP LOSERS
               </span>
+              <button onClick={async () => { try { await Promise.all([fetch('/api/market/quotes?market=india&refresh=1', { cache: 'no-store' }), fetch('/api/market/quotes?market=us&refresh=1', { cache: 'no-store' })]); } catch {} if (typeof window !== 'undefined') window.location.reload(); }} title="Force-refresh movers from the latest NSE close" style={{ fontSize: 10, color: '#FBBF24', background: 'transparent', border: '1px solid #FBBF24', borderRadius: 4, padding: '1px 6px', cursor: 'pointer', marginRight: 8 }}>🔄 Refresh</button>
               <Link href="/movers" title="Home shows YOUR universe (Watchlist + Portfolio + CB) first, then fills with broad-market top movers. The /movers page shows the full NSE universe by raw % move." style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
             </div>
             {/* PATCH 0795 — module-level feed-gap banner (replaces per-row repetition) */}
