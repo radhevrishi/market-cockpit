@@ -718,7 +718,7 @@ function LeaderTable({ rows, valKey, unit, name, nse, extra }: {
     <table style={tbl}>
       <thead>
         <tr>
-          <th style={thR}></th><th style={thL}>Company</th><th style={thR}>{unit === 'x' ? 'Value (x)' : 'Value %'}</th>
+          <th style={thR}></th><th style={thL}>Company</th><th style={thR}>{unit === 'x' ? 'Value (x)' : unit === '%' ? 'Value %' : 'Value (' + unit.trim() + ')'}</th>
           {ex.map((e, i) => <th key={i} style={thR}>{e[1]}</th>)}
         </tr>
       </thead>
@@ -729,8 +729,8 @@ function LeaderTable({ rows, valKey, unit, name, nse, extra }: {
             <tr key={i}>
               <td style={tdDim}>{i + 1}</td>
               <td style={tdL}><b>{name(d)}</b><span style={nseS}>{nse(d)}</span></td>
-              <td style={{ ...tdR, fontWeight: 700, color: unit === 'x' ? COL.txt : pcCol(val) }}>
-                {unit === 'x' ? fmt(val, 2) + 'x' : pctStr(val)}
+              <td style={{ ...tdR, fontWeight: 700, color: unit === '%' ? pcCol(val) : COL.txt }}>
+                {unit === 'x' ? fmt(val, 2) + 'x' : unit === '%' ? pctStr(val) : Math.round(val).toLocaleString('en-IN') + unit}
               </td>
               {ex.map((e, j) => {
                 const ev = num(d[e[0]]);
