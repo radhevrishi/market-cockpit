@@ -1,0 +1,2335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crash Buy Strategy Planner</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <style>
+        :root {
+            --bg:#04080f; --bg2:#080e1a; --card:rgba(10,16,30,0.85); --card2:rgba(14,22,38,0.9);
+            --glass:rgba(255,255,255,0.03); --glass2:rgba(255,255,255,0.06);
+            --text:#e8edf5; --text2:#8899bb; --muted:#556688;
+            --border:rgba(77,166,255,0.12); --border2:rgba(77,166,255,0.25);
+            --gold:#ffd700; --green:#00e68a; --red:#ff4d6a; --blue:#4da6ff; --amber:#ffb347;
+            --cyan:#00d4ff; --purple:#a855f7;
+        }
+        *{margin:0;padding:0;box-sizing:border-box;}
+        html{scroll-behavior:smooth;}
+        body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden;position:relative;}
+        body::before{content:'';position:fixed;top:-50%;left:-50%;width:200%;height:200%;background:
+            radial-gradient(circle at 20% 20%,rgba(77,166,255,0.03) 0%,transparent 50%),
+            radial-gradient(circle at 80% 80%,rgba(255,215,0,0.02) 0%,transparent 50%);pointer-events:none;z-index:0;}
+        body::after{content:'';position:fixed;top:0;left:0;right:0;bottom:0;background-image:
+            repeating-linear-gradient(0deg,rgba(255,255,255,0.015) 0px,transparent 1px,transparent 2px,rgba(255,255,255,0.015) 3px),
+            repeating-linear-gradient(90deg,rgba(255,255,255,0.015) 0px,transparent 1px,transparent 2px,rgba(255,255,255,0.015) 3px);
+            pointer-events:none;z-index:0;}
+
+        .container{max-width:1500px;margin:0 auto;padding:10px 16px;position:relative;z-index:1;}
+
+        /* HEADER */
+        .hero{text-align:center;padding:12px 24px;margin-bottom:6px;background:linear-gradient(135deg,rgba(10,16,30,0.95),rgba(14,22,38,0.85));border:1px solid var(--border2);border-radius:18px;position:relative;overflow:hidden;backdrop-filter:blur(12px);}
+        .hero::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,transparent,var(--gold),var(--amber),transparent);}
+        .hero::after{content:'';position:absolute;inset:0;border-radius:18px;border:1px solid rgba(255,215,0,0.1);pointer-events:none;}
+        .hero-title{font-size:36px;font-weight:900;letter-spacing:-1px;background:linear-gradient(135deg,#ffd700,#ffaa00,#ffd700);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:2px;animation:floatSoft 4s ease-in-out infinite;}
+        .hero-sub{color:var(--text2);font-size:17px;font-weight:400;letter-spacing:0.5px;}
+        .hero-tag{display:none;margin-top:6px;padding:6px 16px;background:linear-gradient(135deg,rgba(255,215,0,0.12),rgba(255,179,71,0.08));border:1px solid rgba(255,215,0,0.25);border-radius:24px;font-size:11px;color:var(--gold);font-weight:700;letter-spacing:0.6px;text-transform:uppercase;}
+        .btn-pdf{display:none;margin-top:3px;margin-left:10px;padding:6px 16px;background:linear-gradient(135deg,rgba(255,77,106,0.15),rgba(255,215,0,0.08));border:1px solid rgba(255,77,106,0.35);color:var(--red);border-radius:10px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;transition:all 0.3s ease;letter-spacing:0.3px;}
+        .btn-pdf:hover{background:linear-gradient(135deg,rgba(255,77,106,0.25),rgba(255,215,0,0.15));transform:translateY(-2px);box-shadow:0 8px 24px rgba(255,77,106,0.25);}
+        .btn-fullpdf{display:inline-block;margin-top:6px;padding:10px 24px;background:linear-gradient(135deg,rgba(255,215,0,0.2),rgba(255,179,71,0.12));border:1.5px solid rgba(255,215,0,0.4);color:var(--gold);border-radius:12px;font-size:14px;font-weight:800;cursor:pointer;font-family:inherit;transition:all 0.3s ease;letter-spacing:0.4px;text-transform:uppercase;text-shadow:0 0 12px rgba(255,215,0,0.3);box-shadow:0 4px 16px rgba(255,215,0,0.1);}
+        .btn-fullpdf:hover{background:linear-gradient(135deg,rgba(255,215,0,0.3),rgba(255,179,71,0.2));transform:translateY(-2px);box-shadow:0 8px 28px rgba(255,215,0,0.25);}
+
+        @keyframes floatSoft{0%,100%{transform:translateY(0);} 50%{transform:translateY(-3px);}}
+        @keyframes gradientShift{0%{background-position:0% 50%;} 50%{background-position:100% 50%;} 100%{background-position:0% 50%;}}
+        @keyframes pulseGreen{0%,100%{box-shadow:0 0 0 0 rgba(0,230,138,0.7);} 50%{box-shadow:0 0 0 6px rgba(0,230,138,0);}}
+        .hero-live-badge{position:absolute;top:6px;right:10px;display:flex;align-items:center;gap:4px;padding:3px 8px;background:linear-gradient(135deg,rgba(0,230,138,0.15),rgba(0,230,138,0.08));border:1px solid rgba(0,230,138,0.4);border-radius:20px;font-size:12px;font-weight:800;color:var(--green);letter-spacing:0.4px;text-transform:uppercase;z-index:2;}
+        .hero-live-badge::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulseGreen 2s infinite;}
+
+        /* MARKET TABS */
+        .market-tabs{display:flex;gap:6px;margin-bottom:6px;justify-content:center;}
+        .market-tab{padding:10px 24px;background:linear-gradient(135deg,rgba(10,16,30,0.8),rgba(14,22,38,0.7));border:1px solid var(--border);border-radius:12px;color:var(--text2);font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;transition:all 0.3s;letter-spacing:0.3px;}
+        .market-tab:hover{border-color:var(--border2);color:var(--text);}
+        .market-tab.active{background:linear-gradient(135deg,rgba(255,215,0,0.12),rgba(255,179,71,0.06));border-color:rgba(255,215,0,0.4);color:var(--gold);box-shadow:0 0 20px rgba(255,215,0,0.08);}
+
+        /* CONTROLS BAR */
+        .ctrl-bar{display:flex;gap:5px;margin-bottom:5px;flex-wrap:wrap;align-items:stretch;}
+        .ctrl{flex:1;min-width:140px;background:linear-gradient(135deg,rgba(10,16,30,0.8),rgba(14,22,38,0.7));border:1px solid var(--border);border-radius:12px;padding:10px 14px;display:flex;flex-direction:column;gap:2px;transition:all 0.3s;backdrop-filter:blur(8px);}
+        .ctrl:hover{border-color:var(--border2);box-shadow:0 4px 16px rgba(77,166,255,0.08);}
+        .ctrl-lbl{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:0.8px;font-weight:700;}
+        .ctrl input,.ctrl select{background:transparent;border:none;color:var(--text);font-size:20px;font-weight:700;font-family:inherit;outline:none;width:100%;}
+        .ctrl select{font-size:20px;font-weight:600;cursor:pointer;}
+        .ctrl select option{background:#0a0f1a;color:var(--text);}
+        .ctrl-unit{display:none;font-size:10px;color:var(--muted);font-weight:500;}
+
+        /* KPI STRIP */
+        .kpi-strip{display:grid;grid-template-columns:repeat(6,1fr);gap:4px;margin-bottom:0;}
+        .kpi-card{background:linear-gradient(135deg,rgba(10,16,30,0.9),rgba(14,22,38,0.8));border:1px solid var(--border);border-radius:14px;padding:14px 12px;text-align:center;position:relative;overflow:hidden;transition:all 0.3s ease;backdrop-filter:blur(12px);cursor:default;box-shadow:0 4px 20px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.05);}
+        .kpi-card::before{content:'';position:absolute;inset:0;border-radius:14px;border:1px solid rgba(255,255,255,0.05);pointer-events:none;}
+        .kpi-card:hover{border-color:var(--border2);transform:translateY(-3px);box-shadow:0 12px 32px rgba(0,0,0,0.4);}
+        .kpi-card::after{content:'';position:absolute;bottom:0;left:0;right:0;height:3px;}
+        .kpi-card.gold::after{background:linear-gradient(90deg,transparent,var(--gold),transparent);}
+        .kpi-card.green::after{background:linear-gradient(90deg,transparent,var(--green),transparent);}
+        .kpi-card.red::after{background:linear-gradient(90deg,transparent,var(--red),transparent);}
+        .kpi-card.blue::after{background:linear-gradient(90deg,transparent,var(--blue),transparent);}
+        .kpi-card.amber::after{background:linear-gradient(90deg,transparent,var(--amber),transparent);}
+        .kpi-card.cyan::after{background:linear-gradient(90deg,transparent,var(--cyan),transparent);}
+        .kpi-card.purple::after{background:linear-gradient(90deg,transparent,var(--purple),transparent);}
+        .kpi-num{font-size:28px;font-weight:900;letter-spacing:-0.5px;text-shadow:0 0 20px currentColor;}
+        .kpi-label{font-size:13px;color:var(--text2);text-transform:uppercase;letter-spacing:0.6px;font-weight:700;margin-top:1px;}
+
+        /* ===== STRATEGY 3-COLUMN GRID ===== */
+        .strategy-grid{display:grid;grid-template-columns:270px 1fr 270px;gap:14px;height:calc(100vh - 115px);min-height:500px;}
+        .strat-left,.strat-right{display:flex;flex-direction:column;gap:8px;}
+        .strat-center{display:flex;flex-direction:column;gap:6px;min-width:0;}
+        .panel-box{background:linear-gradient(135deg,rgba(10,16,30,0.9),rgba(14,22,38,0.8));border:1px solid rgba(255,215,0,0.12);border-radius:14px;padding:14px;position:relative;backdrop-filter:blur(12px);box-shadow:0 4px 20px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.05);}
+        .panel-box::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--border2),transparent);}
+        .panel-head{font-size:15px;color:var(--text2);text-transform:uppercase;letter-spacing:0.8px;font-weight:800;margin-bottom:6px;display:flex;align-items:center;gap:6px;}
+        .dot-ind{width:8px;height:8px;border-radius:50%;background:var(--gold);box-shadow:0 0 8px currentColor;flex-shrink:0;}
+
+        .wb-row{display:flex;align-items:center;gap:6px;margin-bottom:4px;font-size:15px;gap:5px;}
+        .wb-label{width:44px;text-align:right;color:var(--text2);font-weight:700;flex-shrink:0;font-size:14px;}
+        .wb-track{flex:1;height:14px;background:rgba(255,255,255,0.04);border-radius:6px;position:relative;overflow:hidden;border:1px solid rgba(255,255,255,0.08);}
+        .wb-invested{height:100%;border-radius:6px 0 0 6px;position:absolute;left:0;top:0;transition:width 0.6s ease;}
+        .wb-projected{height:100%;border-radius:6px;position:absolute;left:0;top:0;transition:width 0.6s ease;}
+        .wb-val{width:52px;font-weight:800;font-size:15px;flex-shrink:0;text-align:right;}
+        .wb-legend{display:flex;gap:10px;justify-content:center;margin-top:4px;font-size:13px;color:var(--text2);}
+        .wb-legend span{display:flex;align-items:center;gap:4px;}
+        .wb-legend-dot{width:7px;height:7px;border-radius:3px;}
+
+        /* Scenarios in right sidebar */
+        .scenario-row{display:flex;flex-direction:column;gap:6px;}
+        .scenario-item{padding:8px;border-radius:8px;position:relative;}
+        .scenario-item.sc-mild{background:rgba(0,230,138,0.06);border:1px solid rgba(0,230,138,0.15);}
+        .scenario-item.sc-deep{background:rgba(255,215,0,0.06);border:1px solid rgba(255,215,0,0.15);}
+        .sc-lbl{font-size:12px;color:var(--muted);text-transform:uppercase;font-weight:800;letter-spacing:0.5px;}
+        .sc-val{font-size:26px;font-weight:900;margin:2px 0;text-shadow:0 0 15px currentColor;}
+        .scenario-item.sc-mild .sc-val{color:var(--green);}
+        .scenario-item.sc-deep .sc-val{color:var(--gold);}
+        .sc-det{font-size:15px;color:var(--text2);}
+
+        /* Index reference grid */
+        .ref-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
+        .ref-item{padding:6px 8px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:6px;text-align:center;}
+        .ref-label{font-size:13px;color:var(--muted);text-transform:uppercase;font-weight:800;letter-spacing:0.4px;}
+        .ref-val{font-size:20px;font-weight:900;margin-top:2px;}
+
+        /* GAUGE */
+        .gauge-wrap{text-align:center;padding:0;}
+        .gauge-svg{width:200px;height:110px;filter:drop-shadow(0 4px 12px rgba(77,166,255,0.1));}
+        .gauge-val{font-size:34px;font-weight:900;letter-spacing:-1px;margin-top:4px;text-shadow:0 0 25px currentColor;}
+        .gauge-lbl{display:none;font-size:9px;color:var(--text2);margin-top:1px;font-weight:700;}
+        .gauge-zone{display:inline-block;padding:5px 14px;border-radius:16px;font-size:15px;font-weight:800;margin-top:3px;text-transform:uppercase;letter-spacing:0.4px;}
+
+        /* STRATEGY TABLE */
+        .tbl-wrap{border:1px solid rgba(255,215,0,0.15);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;background:linear-gradient(135deg,rgba(10,16,30,0.9),rgba(14,22,38,0.8));backdrop-filter:blur(12px);box-shadow:0 0 30px rgba(255,215,0,0.06),0 4px 20px rgba(0,0,0,0.3);min-height:0;}
+        .tbl-scroll{flex:1;overflow-y:auto;overflow-x:auto;scrollbar-width:thin;scrollbar-color:rgba(255,215,0,0.3) transparent;}
+        .tbl-scroll::-webkit-scrollbar{width:6px;height:8px;}
+        .tbl-scroll::-webkit-scrollbar-track{background:transparent;}
+        .tbl-scroll::-webkit-scrollbar-thumb{background:rgba(255,215,0,0.25);border-radius:3px;}
+        .tbl-scroll::-webkit-scrollbar-thumb:hover{background:rgba(255,215,0,0.4);}
+        .tbl-scroll::-webkit-scrollbar-horizontal{height:8px;}
+        .tbl-scroll::-webkit-scrollbar-horizontal::-webkit-scrollbar-thumb{background:rgba(255,215,0,0.25);border-radius:3px;}
+        .tbl-scroll::-webkit-scrollbar-horizontal::-webkit-scrollbar-thumb:hover{background:rgba(255,215,0,0.4);}
+        .tbl-wrap::before{content:'';display:block;height:2px;background:linear-gradient(90deg,transparent,var(--gold),var(--amber),var(--gold),transparent);}
+        .tbl-head{display:flex;justify-content:space-between;align-items:center;padding:8px 14px;border-bottom:1px solid rgba(255,215,0,0.1);background:rgba(255,215,0,0.02);}
+        .tbl-title{font-size:18px;font-weight:800;color:var(--gold);letter-spacing:0.3px;text-shadow:0 0 20px rgba(255,215,0,0.3);}
+        .tbl-actions{display:flex;gap:5px;}
+        .tbl-btn{background:linear-gradient(135deg,rgba(255,255,255,0.06),rgba(255,255,255,0.03));border:1px solid var(--border);color:var(--text2);padding:6px 14px;border-radius:8px;font-size:14px;cursor:pointer;font-family:inherit;font-weight:700;transition:all 0.2s;text-transform:uppercase;letter-spacing:0.3px;}
+        .tbl-btn:hover{border-color:var(--gold);color:var(--gold);box-shadow:0 2px 8px rgba(255,215,0,0.15);}
+
+        table{width:100%;border-collapse:collapse;overflow:auto;min-width:820px;}
+        thead{background:linear-gradient(135deg,rgba(10,16,30,0.98),rgba(6,10,20,0.95));position:sticky;top:0;z-index:2;}
+        th{padding:10px 8px;text-align:center;font-size:13px;color:var(--amber);text-transform:uppercase;letter-spacing:0.6px;font-weight:800;border-bottom:2px solid rgba(255,215,0,0.1);white-space:nowrap;}
+        td{padding:9px 7px;text-align:center;font-size:15px;border-bottom:1px solid rgba(255,255,255,0.04);white-space:nowrap;transition:all 0.2s;}
+        tbody tr{transition:all 0.3s;border-left:3px solid transparent;}
+        tbody tr:hover{background:rgba(255,215,0,0.08);box-shadow:inset 0 0 30px rgba(255,215,0,0.05);border-left-color:var(--gold);}
+        tbody tr:nth-child(even){background:rgba(77,166,255,0.03);}
+        tbody tr.row-triggered{background:rgba(255,77,106,0.1);border-left-color:var(--red);}
+        tbody tr.row-near{background:rgba(255,179,71,0.08);border-left-color:var(--amber);}
+
+        .zone-pill{display:inline-flex;align-items:center;gap:3px;padding:5px 12px;border-radius:8px;font-size:14px;font-weight:800;letter-spacing:0.2px;text-transform:uppercase;text-shadow:0 0 8px currentColor;}
+        .z-safe{background:rgba(0,230,138,0.15);color:var(--green);border:1px solid rgba(0,230,138,0.3);}
+        .z-caution{background:rgba(255,179,71,0.15);color:var(--amber);border:1px solid rgba(255,179,71,0.3);}
+        .z-danger{background:rgba(255,140,66,0.15);color:#ff8c42;border:1px solid rgba(255,140,66,0.3);}
+        .z-crash{background:rgba(255,77,106,0.15);color:var(--red);border:1px solid rgba(255,77,106,0.3);}
+        .z-nuclear{background:rgba(168,85,247,0.15);color:var(--purple);border:1px solid rgba(168,85,247,0.3);}
+
+        .fall-viz{display:flex;align-items:center;gap:6px;justify-content:center;}
+        .fall-track{width:50px;height:5px;background:rgba(255,255,255,0.06);border-radius:4px;overflow:hidden;border:1px solid rgba(255,255,255,0.08);}
+        .fall-fill{height:100%;border-radius:4px;transition:width 0.6s ease;box-shadow:0 0 8px currentColor;}
+        .fall-pct{font-weight:800;font-size:15px;min-width:30px;text-align:right;}
+
+        .deploy-input{background:rgba(255,255,255,0.08);border:1px solid var(--border);color:var(--gold);padding:5px 6px;border-radius:6px;font-size:15px;font-family:inherit;font-weight:800;width:80px;min-width:90px;text-align:right;transition:all 0.2s;}
+        .deploy-input:focus{border-color:var(--gold);outline:none;box-shadow:0 0 10px rgba(255,215,0,0.2);}
+
+        .cagr-val{font-weight:800;font-size:15px;}
+        .val-5y{font-weight:900;font-size:15px;color:var(--green);}
+        .cr-badge{display:inline-block;padding:5px 10px;border-radius:8px;font-weight:900;font-size:14px;letter-spacing:0.3px;text-transform:uppercase;text-shadow:0 0 10px currentColor;}
+        .cr-gold{background:rgba(255,215,0,0.15);color:var(--gold);border:1px solid rgba(255,215,0,0.3);}
+        .cr-green{background:rgba(0,230,138,0.12);color:var(--green);border:1px solid rgba(0,230,138,0.25);}
+        .cr-blue{background:rgba(77,166,255,0.12);color:var(--blue);border:1px solid rgba(77,166,255,0.25);}
+
+        .mult-badge{font-weight:900;font-size:15px;color:var(--amber);}
+
+        .status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:3px;}
+        .dot-hot{background:var(--red);box-shadow:0 0 10px var(--red);animation:blink 1.2s infinite;}
+        .dot-warm{background:var(--amber);box-shadow:0 0 6px var(--amber);}
+        .dot-cold{background:var(--muted);}
+        @keyframes blink{0%,100%{opacity:1;}50%{opacity:0.4;}}
+
+        /* SCENARIOS */
+        .scenarios{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:2px;}
+        .scenario{background:linear-gradient(135deg,rgba(10,16,30,0.8),rgba(14,22,38,0.7));border:1px solid var(--border);border-radius:12px;padding:6px 10px;position:relative;overflow:hidden;backdrop-filter:blur(8px);}
+        .scenario::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;}
+        .scenario.sc-mild::before{background:linear-gradient(90deg,transparent,var(--green),transparent);}
+        .scenario.sc-deep::before{background:linear-gradient(90deg,transparent,var(--gold),transparent);}
+        .scenario::after{content:'';position:absolute;inset:0;border-radius:16px;border:1px solid rgba(255,255,255,0.05);pointer-events:none;}
+        .sc-label{font-size:7px;color:var(--text2);text-transform:uppercase;letter-spacing:0.7px;font-weight:800;margin-bottom:3px;}
+        .sc-val{font-size:16px;font-weight:900;letter-spacing:-1px;}
+        .sc-detail{font-size:8px;color:var(--text2);margin-top:3px;line-height:1.4;}
+        .sc-detail strong{color:var(--text);}
+
+        /* ALERT PANEL */
+        .alert-panel{background:linear-gradient(135deg,rgba(10,16,30,0.9),rgba(14,22,38,0.85));border:1px solid var(--border2);border-radius:16px;padding:20px;margin-bottom:16px;position:relative;overflow:hidden;backdrop-filter:blur(12px);}
+        .alert-panel::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,transparent,var(--cyan),var(--blue),transparent);}
+        .alert-panel::after{content:'';position:absolute;inset:0;border-radius:16px;border:1px solid rgba(0,212,255,0.1);pointer-events:none;}
+        .alert-title{font-size:18px;font-weight:900;color:var(--cyan);margin-bottom:6px;display:flex;align-items:center;gap:10px;letter-spacing:-0.3px;}
+        .alert-desc{font-size:12px;color:var(--text2);margin-bottom:18px;line-height:1.6;}
+
+        .alert-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px;}
+        .alert-field{display:flex;flex-direction:column;gap:6px;}
+        .alert-field label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.8px;font-weight:800;}
+        .alert-field input,.alert-field select{background:rgba(255,255,255,0.06);border:1px solid var(--border);color:var(--text);padding:11px 14px;border-radius:9px;font-size:13px;font-family:inherit;transition:all 0.2s;}
+        .alert-field input:focus{border-color:var(--cyan);outline:none;box-shadow:0 0 14px rgba(0,212,255,0.18);}
+
+        .alert-btns{display:flex;gap:12px;margin-top:8px;flex-wrap:wrap;}
+        .btn-primary{background:linear-gradient(135deg,var(--cyan),var(--blue));color:#fff;border:none;padding:12px 28px;border-radius:10px;font-weight:800;font-size:13px;cursor:pointer;font-family:inherit;transition:all 0.3s;letter-spacing:0.3px;text-transform:uppercase;}
+        .btn-primary:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,212,255,0.3);}
+        .btn-secondary{background:rgba(255,255,255,0.06);border:1px solid var(--border);color:var(--text);padding:12px 28px;border-radius:10px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit;transition:all 0.2s;text-transform:uppercase;}
+        .btn-secondary:hover{border-color:var(--amber);color:var(--amber);}
+        .btn-test{background:linear-gradient(135deg,rgba(255,215,0,0.2),rgba(255,179,71,0.12));border:1.5px solid rgba(255,215,0,0.4);color:var(--gold);padding:12px 28px;border-radius:10px;font-weight:800;font-size:13px;cursor:pointer;font-family:inherit;transition:all 0.3s;text-transform:uppercase;letter-spacing:0.3px;animation:pulse 2s ease-in-out infinite;}
+        .btn-test:hover{background:linear-gradient(135deg,rgba(255,215,0,0.3),rgba(255,179,71,0.2));transform:translateY(-2px);box-shadow:0 8px 24px rgba(255,215,0,0.25);animation:none;}
+        @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,215,0,0.4);} 50%{box-shadow:0 0 0 8px rgba(255,215,0,0);}}
+
+        .alert-status-bar{margin-top:16px;padding:12px 16px;border-radius:10px;font-size:12px;display:flex;align-items:center;gap:8px;font-weight:700;letter-spacing:0.3px;}
+        .as-active{background:rgba(0,230,138,0.12);border:1px solid rgba(0,230,138,0.25);color:var(--green);}
+        .as-inactive{background:rgba(255,77,106,0.08);border:1px solid rgba(255,77,106,0.2);color:var(--text2);}
+
+        /* TEST RESULTS PANEL */
+        .test-results{background:rgba(0,230,138,0.08);border:1px solid rgba(0,230,138,0.25);border-radius:10px;padding:14px;margin-top:12px;font-size:11px;}
+        .test-results-item{display:flex;align-items:center;gap:8px;margin-bottom:6px;font-weight:700;}
+        .test-results-item:last-child{margin-bottom:0;}
+        .result-check{color:var(--green);font-size:14px;}
+        .result-cross{color:var(--red);font-size:14px;}
+
+        /* NOTIFICATION TOAST */
+        .toast-container{position:fixed;top:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:12px;}
+        .toast{background:linear-gradient(135deg,rgba(14,22,38,0.98),rgba(10,16,30,0.98));border:1.5px solid var(--border2);border-radius:14px;padding:18px 22px;min-width:400px;max-width:480px;box-shadow:0 20px 60px rgba(0,0,0,0.6);transform:translateX(120%);transition:transform 0.4s cubic-bezier(0.34,1.56,0.64,1);position:relative;overflow:hidden;backdrop-filter:blur(8px);}
+        .toast.show{transform:translateX(0);}
+        .toast::before{content:'';position:absolute;top:0;left:0;bottom:0;width:4px;}
+        .toast.t-alert::before{background:linear-gradient(180deg,var(--red),#ff3355);}
+        .toast.t-success::before{background:linear-gradient(180deg,var(--green),#00cc66);}
+        .toast.t-info::before{background:linear-gradient(180deg,var(--blue),var(--cyan));}
+        .toast-head{display:flex;align-items:center;gap:10px;margin-bottom:8px;}
+        .toast-icon{font-size:20px;}
+        .toast-title{font-size:14px;font-weight:800;color:var(--text);}
+        .toast-time{margin-left:auto;font-size:10px;color:var(--muted);}
+        .toast-body{font-size:12px;color:var(--text2);line-height:1.6;}
+        .toast-body strong{color:var(--text);}
+        .toast-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;padding:4px;transition:color 0.2s;}
+        .toast-close:hover{color:var(--text);}
+        .toast-progress{position:absolute;bottom:0;left:0;height:3px;background:linear-gradient(90deg,var(--cyan),var(--blue));transition:width linear;}
+
+        /* EMAILJS SETUP */
+        .setup-panel{background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:12px;padding:18px;margin-top:16px;}
+        .setup-panel h4{font-size:13px;color:var(--amber);margin-bottom:10px;font-weight:800;}
+        .setup-steps{font-size:12px;color:var(--text2);line-height:2;}
+        .setup-steps a{color:var(--cyan);text-decoration:none;font-weight:700;}
+        .setup-steps a:hover{text-decoration:underline;}
+        .setup-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:12px;}
+        .setup-input{background:rgba(255,255,255,0.06);border:1px solid var(--border);color:var(--text);padding:10px 12px;border-radius:8px;font-size:12px;font-family:inherit;width:100%;transition:all 0.2s;}
+        .setup-input:focus{border-color:var(--cyan);outline:none;box-shadow:0 0 10px rgba(0,212,255,0.15);}
+        .setup-label{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:0.6px;font-weight:800;margin-bottom:4px;}
+
+        /* TAB NAV */
+        .tab-nav{display:flex;gap:4px;margin-bottom:6px;background:linear-gradient(135deg,rgba(10,16,30,0.8),rgba(14,22,38,0.7));border:1px solid var(--border);border-radius:14px;padding:4px;overflow-x:auto;backdrop-filter:blur(8px);}
+        .tab-btn{flex:1;padding:11px 16px;border:none;background:transparent;color:var(--text2);font-size:15px;font-weight:800;font-family:inherit;cursor:pointer;border-radius:10px;transition:all 0.25s ease;letter-spacing:0.3px;white-space:nowrap;text-align:center;text-transform:uppercase;position:relative;overflow:hidden;}
+        .tab-btn:hover{color:var(--text);background:rgba(255,255,255,0.04);}
+        .tab-btn.active{background:linear-gradient(135deg,rgba(77,166,255,0.15),rgba(0,212,255,0.1));color:var(--cyan);border:1px solid rgba(0,212,255,0.3);box-shadow:0 4px 16px rgba(0,212,255,0.12);}
+        .tab-btn.active::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2.5px;background:linear-gradient(90deg,transparent,var(--cyan),transparent);animation:slideUnderline 0.35s cubic-bezier(0.34,1.56,0.64,1);}
+        @keyframes slideUnderline{from{width:0;left:50%;opacity:0;} to{width:100%;left:0;opacity:1;}}
+        .tab-badge{display:inline-block;margin-left:4px;padding:2px 8px;background:rgba(255,77,106,0.2);color:var(--red);border-radius:6px;font-size:9px;font-weight:800;}
+        .tab-panel{display:none;} .tab-panel.active{display:block;animation:fadeIn 0.3s ease;}
+        @keyframes fadeIn{from{opacity:0;} to{opacity:1;}}
+
+        /* DIP TRACKER */
+        .live-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:14px;}
+        .live-price{display:flex;align-items:baseline;gap:12px;}
+        .live-val{font-size:52px;font-weight:900;letter-spacing:-1px;text-shadow:0 0 30px currentColor;}
+        .live-tag{font-size:13px;padding:7px 16px;border-radius:10px;font-weight:800;letter-spacing:0.3px;text-transform:uppercase;}
+        .live-meta{font-size:13px;color:var(--muted);text-align:right;}
+        .live-meta strong{color:var(--text2);font-weight:700;}
+        .live-refresh{display:inline-flex;align-items:center;gap:5px;padding:10px 18px;background:rgba(255,255,255,0.08);border:1px solid var(--border);color:var(--cyan);border-radius:10px;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit;transition:all 0.3s;text-transform:uppercase;box-shadow:0 2px 12px rgba(0,0,0,0.2);}
+        .live-refresh:hover{border-color:var(--cyan);box-shadow:0 0 12px rgba(0,212,255,0.2);}
+        .live-refresh.spinning span{animation:spin 1s linear infinite;}
+        @keyframes spin{to{transform:rotate(360deg);}}
+
+        .prox-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;margin-bottom:24px;}
+        .prox-card{background:linear-gradient(135deg,rgba(10,16,30,0.9),rgba(14,22,38,0.8));border:1px solid rgba(255,215,0,0.1);border-radius:16px;padding:20px;position:relative;overflow:hidden;transition:all 0.3s;backdrop-filter:blur(12px);box-shadow:0 4px 20px rgba(0,0,0,0.3),inset 0 1px 0 rgba(255,255,255,0.05);}
+        .prox-card:hover{border-color:rgba(255,215,0,0.3);transform:translateY(-3px);box-shadow:0 12px 40px rgba(0,0,0,0.4),0 0 20px rgba(255,215,0,0.08);}
+        .prox-card::before{content:'';position:absolute;top:0;left:0;right:0;height:4px;}
+        .prox-card.pc-triggered::before{background:linear-gradient(90deg,transparent,var(--red),transparent);}
+        .prox-card.pc-triggered{border-color:rgba(255,77,106,0.5);box-shadow:0 4px 20px rgba(255,77,106,0.15),inset 0 1px 0 rgba(255,255,255,0.05);}
+        .prox-card.pc-near::before{background:linear-gradient(90deg,transparent,var(--amber),transparent);}
+        .prox-card.pc-near{border-color:rgba(255,179,71,0.4);box-shadow:0 4px 20px rgba(255,179,71,0.1),inset 0 1px 0 rgba(255,255,255,0.05);}
+        .prox-card.pc-far::before{background:linear-gradient(90deg,transparent,var(--border),transparent);}
+        .prox-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;}
+        .prox-zone{font-size:17px;font-weight:900;}
+        .prox-status{font-size:12px;padding:5px 14px;border-radius:8px;font-weight:800;text-transform:uppercase;letter-spacing:0.4px;}
+        .ps-triggered{background:rgba(255,77,106,0.2);color:var(--red);border:1px solid rgba(255,77,106,0.4);text-shadow:0 0 8px var(--red);}
+        .ps-close{background:rgba(255,179,71,0.15);color:var(--amber);border:1px solid rgba(255,179,71,0.35);text-shadow:0 0 8px var(--amber);}
+        .ps-away{background:rgba(255,255,255,0.06);color:var(--text2);border:1px solid rgba(255,255,255,0.1);}
+        .prox-bar-wrap{margin-bottom:12px;position:relative;}
+        .prox-bar-bg{height:12px;background:rgba(255,255,255,0.05);border-radius:6px;overflow:hidden;position:relative;border:1px solid rgba(255,255,255,0.08);}
+        .prox-bar-fill{height:100%;border-radius:5px;transition:width 0.7s ease;opacity:0.85;}
+        .prox-bar-needle{position:absolute;top:-5px;width:4px;height:22px;background:#fff;border-radius:2px;transition:left 0.7s ease;box-shadow:0 0 6px rgba(255,255,255,0.4);}
+        .prox-stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;font-size:11px;}
+        .prox-stat{text-align:center;}
+        .prox-stat-val{font-size:18px;font-weight:900;margin-bottom:3px;text-shadow:0 0 12px currentColor;}
+        .prox-stat-lbl{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.6px;font-weight:700;}
+        .prox-action{margin-top:12px;display:flex;gap:8px;}
+        .prox-action-btn{flex:1;padding:9px 12px;border-radius:8px;font-size:12px;font-weight:800;cursor:pointer;font-family:inherit;border:1px solid var(--border);background:rgba(255,255,255,0.04);color:var(--text2);transition:all 0.2s;text-align:center;text-transform:uppercase;}
+        .prox-action-btn:hover{border-color:var(--cyan);color:var(--cyan);}
+
+        /* MESSAGE PREVIEW */
+        .msg-preview{background:linear-gradient(135deg,rgba(10,16,30,0.8),rgba(14,22,38,0.7));border:1px solid var(--border);border-radius:16px;padding:18px;margin-bottom:16px;position:relative;overflow:hidden;backdrop-filter:blur(8px);}
+        .msg-preview::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,transparent,var(--amber),var(--gold),transparent);}
+        .msg-preview-title{font-size:14px;font-weight:900;color:var(--amber);margin-bottom:16px;display:flex;align-items:center;gap:10px;letter-spacing:-0.3px;}
+        .msg-tabs{display:flex;gap:8px;margin-bottom:16px;}
+        .msg-tab{padding:8px 16px;border-radius:8px;font-size:11px;font-weight:800;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text2);font-family:inherit;transition:all 0.2s;text-transform:uppercase;}
+        .msg-tab.active{background:rgba(255,179,71,0.12);border-color:rgba(255,179,71,0.3);color:var(--amber);}
+        .msg-box{background:rgba(0,0,0,0.4);border:1px solid var(--border);border-radius:12px;padding:18px;font-size:13px;line-height:1.8;color:var(--text);min-height:100px;font-family:'Inter',sans-serif;}
+        .msg-box .msg-from{font-size:10px;color:var(--muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.6px;font-weight:800;}
+        .msg-box .msg-subject{font-weight:800;color:var(--gold);margin-bottom:8px;font-size:14px;}
+
+        /* TAB NAV */
+        .tab-nav{margin-bottom:5px;padding:3px;gap:3px;}
+        .tab-btn{padding:9px 14px;font-size:12px;}
+
+        /* FOOTER */
+        .footer{text-align:center;padding:8px;color:var(--muted);font-size:12px;margin-top:2px;background:linear-gradient(135deg,rgba(10,16,30,0.9),rgba(14,22,38,0.8));border-radius:12px;border-top:none;}
+
+        /* Responsive overrides for 3-column layout */
+        @media(max-width:1100px){
+            .strategy-grid{grid-template-columns:180px 1fr 180px;}
+        }
+        @media(max-width:900px){
+            .strategy-grid{grid-template-columns:1fr;height:auto;}
+        }
+
+        @media(max-width:900px){
+            .kpi-strip{grid-template-columns:repeat(3,1fr);}
+            .scenarios{grid-template-columns:1fr;}
+            .alert-grid{grid-template-columns:1fr;}
+            .setup-grid{grid-template-columns:1fr;}
+            .prox-grid{grid-template-columns:1fr;}
+            .tab-nav{overflow-x:auto;} .tab-btn{min-width:120px;}
+        }
+        @media(max-width:600px){
+            .kpi-strip{grid-template-columns:repeat(2,1fr);}
+            .ctrl-bar{flex-direction:column;}
+            .viz-row{grid-template-columns:1fr;}
+            .prox-grid{grid-template-columns:1fr;}
+            .live-header{flex-direction:column;align-items:flex-start;}
+            .alert-btns{flex-direction:column;}
+            .alert-btns button{width:100%;}
+            .toast{min-width:320px;}
+        }
+        .deploy-list{display:flex;flex-direction:column;gap:4px;}
+        .deploy-row{display:flex;align-items:center;gap:8px;font-size:16px;}
+        .deploy-row .dr-zone{color:#8899bb;font-size:15px;width:58px;flex-shrink:0;text-align:right;}
+        .deploy-row .dr-bar-wrap{flex:1;height:12px;background:rgba(255,255,255,0.04);border-radius:5px;overflow:hidden;}
+        .deploy-row .dr-bar{height:100%;border-radius:5px;transition:width 0.4s;}
+        .deploy-row .dr-amt{color:#cdd6e8;font-size:15px;width:48px;flex-shrink:0;text-align:right;font-weight:700;}
+        .deploy-total{margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.08);display:flex;justify-content:space-between;align-items:center;font-size:14px;}
+        .deploy-total .dt-lbl{color:#8899bb;font-size:15px;}
+        .deploy-total .dt-val{color:var(--gold);font-weight:800;font-size:22px;}
+    </style>
+</head>
+<body>
+
+<div class="toast-container" id="toastContainer"></div>
+
+<div class="container">
+
+    <!-- HERO -->
+    <div class="hero">
+        <div class="hero-live-badge">🟢 Live</div>
+        <div class="hero-title">Crash Buy Strategy</div>
+        <div class="hero-sub" id="heroSub">Nifty Midcap 50 · Staggered Deployment · 5Y & 10Y Wealth Projection</div>
+        <div class="hero-tag">Only Buy When Index Falls to Your Zones</div>
+        <button class="btn-pdf" onclick="exportPDF()">📋 Download PDF</button>
+        <button class="btn-fullpdf" onclick="exportFullPDF()">📄 Download Full Report PDF</button>
+    </div>
+
+    <!-- MARKET TABS -->
+    <div class="market-tabs">
+        <button class="market-tab active" data-market="india" onclick="switchMarket('india')">🇮🇳 India · Nifty Midcap 50</button>
+        <button class="market-tab" data-market="usa" onclick="switchMarket('usa')">🇺🇸 USA · S&P 500</button>
+    </div>
+
+    <!-- CONTROLS -->
+    <div class="ctrl-bar">
+        <div class="ctrl" style="position:relative;">
+            <div class="ctrl-lbl" id="indexLabel">Nifty Midcap 50 — Current</div>
+            <div style="display:flex;align-items:center;gap:6px;">
+                <input type="number" id="currentIndex" value="16133" step="10" oninput="recalcAll()" style="flex:1;">
+                <button id="btnFetchLive" onclick="fetchAndUpdate()" style="background:linear-gradient(135deg,rgba(0,212,255,0.2),rgba(0,230,138,0.1));border:1.5px solid rgba(0,212,255,0.4);color:var(--cyan);padding:8px 14px;border-radius:8px;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap;transition:all 0.3s;text-transform:uppercase;letter-spacing:0.3px;display:flex;align-items:center;gap:5px;" title="Fetch live index value">
+                    <span id="fetchIcon" style="display:inline-block;">🔄</span> LIVE
+                </button>
+            </div>
+            <div class="ctrl-unit">Live index value (edit or auto-fetch)</div>
+        </div>
+        <div class="ctrl">
+            <div class="ctrl-lbl">Current Portfolio Value</div>
+            <input type="number" id="currentPortfolio" value="4200000" step="50000" oninput="recalcAll()">
+            <div class="ctrl-unit">Your invested capital</div>
+        </div>
+        <div class="ctrl">
+            <div class="ctrl-lbl">Projection</div>
+            <input type="number" id="projYears" value="5" min="3" max="10" oninput="recalcAll()">
+            <div class="ctrl-unit">Years forward</div>
+        </div>
+        <div class="ctrl">
+            <div class="ctrl-lbl">CAGR Assumption</div>
+            <select id="cagrMode" onchange="recalcAll()">
+                <option value="realistic">Conservative (12–21%)</option>
+                <option value="optimistic">Balanced (14–27%)</option>
+                <option value="aggressive" selected>Aggressive (16–32%)</option>
+                <option value="custom">Custom (edit in table)</option>
+            </select>
+            <div class="ctrl-unit">Expected return profile</div>
+        </div>
+        <div class="ctrl">
+            <div class="ctrl-lbl">Portfolio Beta</div>
+            <input type="number" id="betaFactor" value="1.3" min="0.8" max="2.0" step="0.1" oninput="recalcAll()">
+            <div class="ctrl-unit">vs Midcap 50 index</div>
+        </div>
+    </div>
+
+    <!-- TAB NAVIGATION -->
+    <div class="tab-nav">
+        <button class="tab-btn active" onclick="switchTab('strategy')">📊 Strategy Plan</button>
+        <button class="tab-btn" onclick="switchTab('tracker')">🎯 Live Dip Tracker<span class="tab-badge" id="trackerBadge" style="display:none;">0</span></button>
+        <button class="tab-btn" onclick="switchTab('alerts')">🔔 Alerts & Messaging</button>
+    </div>
+
+    <!-- ===================== TAB 1: STRATEGY ===================== -->
+    <div class="tab-panel active" id="tabStrategy">
+    <div class="strategy-grid">
+        <!-- LEFT SIDEBAR: Gauge + Wealth Bars -->
+        <div class="strat-left">
+            <div class="panel-box">
+                <div class="panel-head"><span class="dot-ind" style="background:var(--cyan);"></span>Market Depth</div>
+                <div class="gauge-wrap" id="gaugeWrap"></div>
+            </div>
+            <div class="panel-box" style="flex:1;">
+                <div class="panel-head"><span class="dot-ind"></span>Wealth Projection</div>
+                <div id="wealthBars"></div>
+            </div>
+        </div>
+
+        <!-- CENTER: KPIs + Table -->
+        <div class="strat-center">
+            <div class="kpi-strip" id="kpiStrip"></div>
+            <div class="tbl-wrap" style="flex:1;">
+                <div class="tbl-head">
+                    <div class="tbl-title">Staggered Buy Plan — 10 Zones</div>
+                    <div class="tbl-actions">
+                        <button class="tbl-btn" onclick="addTier()">+ Zone</button>
+                        <button class="tbl-btn" onclick="exportCSV()">CSV</button>
+                        <button class="tbl-btn" onclick="resetDefaults()">Reset</button>
+                        <button class="tbl-btn" onclick="exportPDF()" style="color:var(--red);border-color:rgba(255,77,106,0.3);">PDF</button>
+                    </div>
+                </div>
+                <div class="tbl-scroll">
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width:18px;"></th>
+                            <th>Entry</th>
+                            <th>From ATH</th>
+                            <th>Fresh Deploy</th>
+                            <th>Invested</th>
+                            <th>Mkt Value</th>
+                            <th>CAGR</th>
+                            <th id="thYears5">After 5Y</th>
+                            <th id="thYears10">After 10Y</th>
+                            <th style="width:18px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="strategyBody"></tbody>
+                </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- RIGHT SIDEBAR: Donut + Scenarios + Market Info -->
+        <div class="strat-right">
+            <div class="panel-box" style="flex:1;overflow:hidden;">
+                <div class="panel-head"><span class="dot-ind" style="background:var(--amber);"></span>Deploy Plan</div>
+                <div id="deployList" class="deploy-list"></div>
+                <div class="deploy-total" id="deployTotal"></div>
+            </div>
+            <div class="panel-box" style="flex:1;">
+                <div class="panel-head"><span class="dot-ind" style="background:var(--green);"></span>Scenario Analysis</div>
+                <div class="scenario-row">
+                    <div class="scenario-item sc-mild">
+                        <div class="sc-lbl">Mild (10-15% Fall)</div>
+                        <div class="sc-val" id="mildVal">—</div>
+                        <div class="sc-det" id="mildDetail">—</div>
+                    </div>
+                    <div class="scenario-item sc-deep">
+                        <div class="sc-lbl">Deep Crash (50%+)</div>
+                        <div class="sc-val" id="deepVal">—</div>
+                        <div class="sc-det" id="deepDetail">—</div>
+                    </div>
+                </div>
+                <div style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.06);font-size:10px;color:var(--muted);line-height:1.5;">
+                    Based on 20Y Indian small/mid-cap data. 30-45 stock portfolio with picker alpha.
+                </div>
+            </div>
+            <div class="panel-box" style="flex:1;">
+                <div class="panel-head"><span class="dot-ind" style="background:var(--purple);"></span>Index Reference</div>
+                <div class="ref-grid">
+                    <div class="ref-item"><div class="ref-label">ATH</div><div class="ref-val" style="color:var(--green);">17,564</div></div>
+                    <div class="ref-item"><div class="ref-label">52W Low</div><div class="ref-val" style="color:var(--red);">13,269</div></div>
+                    <div class="ref-item"><div class="ref-label">Ticker</div><div class="ref-val" style="color:var(--cyan);font-size:10px;">^NSEMDCP50</div></div>
+                    <div class="ref-item"><div class="ref-label">Source</div><div class="ref-val" style="color:var(--amber);font-size:10px;">NSE → Yahoo</div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    </div><!-- /tabStrategy -->
+
+    <!-- ===================== TAB 2: DIP TRACKER ===================== -->
+    <div class="tab-panel" id="tabTracker">
+
+    <!-- Live Price Header -->
+    <div class="live-header">
+        <div class="live-price">
+            <div class="live-val" id="liveVal" style="color:var(--cyan);">--</div>
+            <div class="live-tag" id="liveTag" style="background:rgba(0,212,255,0.1);color:var(--cyan);border:1px solid rgba(0,212,255,0.25);">LOADING</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;">
+            <div class="live-meta" id="liveMeta">Fetching live data...</div>
+            <button class="live-refresh" onclick="refreshLive()"><span>🔄</span> Refresh</button>
+        </div>
+    </div>
+
+    <!-- Next Target Banner -->
+    <div style="background:linear-gradient(135deg,rgba(255,215,0,0.08),rgba(255,179,71,0.04));border:1.5px solid rgba(255,215,0,0.35);border-radius:14px;padding:18px 22px;margin-bottom:24px;display:flex;align-items:center;gap:16px;position:relative;overflow:hidden;box-shadow:0 4px 20px rgba(255,215,0,0.08);" id="nextTargetBanner">
+        <div style="font-size:40px;z-index:2;">🎯</div>
+        <div style="z-index:2;">
+            <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:0.8px;font-weight:800;margin-bottom:3px;">Next Buy Target</div>
+            <div style="font-size:26px;font-weight:900;color:var(--gold);text-shadow:0 0 20px rgba(255,215,0,0.4);" id="nextTargetVal">—</div>
+            <div style="font-size:14px;color:var(--text2);margin-top:3px;" id="nextTargetDesc">—</div>
+        </div>
+        <div style="margin-left:auto;text-align:right;z-index:2;">
+            <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:0.8px;font-weight:800;margin-bottom:3px;">Distance to Alert</div>
+            <div style="font-size:30px;font-weight:900;text-shadow:0 0 20px currentColor;" id="nextTargetDist">—</div>
+            <div style="font-size:14px;color:var(--text2);" id="nextTargetPts">—</div>
+        </div>
+    </div>
+
+    <!-- Proximity Cards -->
+    <div class="prox-grid" id="proxGrid"></div>
+
+    </div><!-- /tabTracker -->
+
+    <!-- ===================== TAB 3: ALERTS & MESSAGING ===================== -->
+    <div class="tab-panel" id="tabAlerts">
+
+    <!-- ALERTS -->
+    <div class="alert-panel">
+        <div class="alert-title"><span style="font-size:24px;">🔔</span> Price Alert System</div>
+        <div class="alert-desc">Get notified via <strong>Telegram (mobile push) + email + sound</strong> when Nifty Midcap hits your buy zones. Checks every 5 min during market hours.</div>
+
+        <div class="alert-grid">
+            <div class="alert-field">
+                <label>Email Address</label>
+                <input type="email" id="alertEmail" value="radhev.232@gmail.com">
+            </div>
+            <div class="alert-field">
+                <label>Phone / WhatsApp</label>
+                <input type="tel" id="alertPhone" value="+4917677584499">
+            </div>
+        </div>
+
+        <div class="alert-btns">
+            <button class="btn-primary" id="btnToggleAlert" onclick="toggleAlerts()">🔔 Enable Live Alerts</button>
+            <button class="btn-test" onclick="testAlert()">⚡ Test Alert Now</button>
+            <button class="btn-secondary" onclick="diagnoseEmail()" style="font-size:11px;padding:8px 16px;margin-left:6px;">🔍 Diagnose Email</button>
+        </div>
+
+        <div class="alert-status-bar as-inactive" id="alertStatusBar">
+            <span class="status-dot dot-cold"></span>
+            Alerts inactive — enable to start live monitoring
+        </div>
+
+        <!-- INFO PANEL -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:14px;">
+            <div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.15);border-radius:10px;padding:12px;font-size:10px;color:var(--text2);line-height:1.5;">
+                <div style="font-weight:800;color:var(--cyan);margin-bottom:4px;font-size:11px;">📱 Telegram (Mobile)</div>
+                Instant push to your phone. Free, no server needed. Set up below in 2 min.
+            </div>
+            <div style="background:rgba(0,230,138,0.06);border:1px solid rgba(0,230,138,0.15);border-radius:10px;padding:12px;font-size:10px;color:var(--text2);line-height:1.5;">
+                <div style="font-weight:800;color:var(--green);margin-bottom:4px;font-size:11px;">✉️ Email</div>
+                Sends instantly via Web3Forms API. Arrives on phone via Gmail app too.
+            </div>
+            <div style="background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:10px;padding:12px;font-size:10px;color:var(--text2);line-height:1.5;">
+                <div style="font-weight:800;color:var(--amber);margin-bottom:4px;font-size:11px;">🔊 Sound Alert</div>
+                Plays alarm sound in browser. Always works, even on file:// URLs.
+            </div>
+        </div>
+
+        <!-- EMAIL SETUP — Web3Forms (1 key, instant) + EmailJS (advanced) -->
+        <div id="emailSetup" class="setup-panel" style="margin-top:16px;">
+            <h4 style="display:flex;align-items:center;gap:8px;">✉️ Email Setup — <span id="emailConfigStatus" style="font-size:10px;padding:3px 8px;border-radius:4px;"></span></h4>
+
+            <!-- WEB3FORMS — Primary (simplest) -->
+            <div style="background:rgba(0,230,138,0.04);border:1px solid rgba(0,230,138,0.15);border-radius:10px;padding:16px;margin-bottom:14px;">
+                <div style="font-size:12px;font-weight:800;color:var(--green);margin-bottom:10px;">OPTION 1: Web3Forms (Recommended — 1 Key, 30 Seconds)</div>
+                <div class="setup-steps" style="margin-bottom:12px;font-size:12px;line-height:2;">
+                    <strong style="color:var(--text);">Step 1:</strong> Go to <a href="https://web3forms.com" target="_blank" style="font-size:13px;font-weight:800;">web3forms.com</a> → Enter your email (<strong>radhev.232@gmail.com</strong>) → You'll get an <strong>Access Key</strong> instantly<br>
+                    <strong style="color:var(--text);">Step 2:</strong> Paste the Access Key below and click <strong>Save Key</strong><br>
+                    <strong style="color:var(--text);">Step 3:</strong> Check your email inbox for a <strong>verification email from Web3Forms</strong> → Click the verify link<br>
+                    <strong style="color:var(--text);">Step 4:</strong> Come back here and click <strong>"I Verified My Email"</strong> → Done!
+                </div>
+                <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+                    <div style="flex:1;min-width:200px;">
+                        <div class="setup-label">Web3Forms Access Key</div>
+                        <input class="setup-input" id="w3fKey" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" style="width:100%;font-size:13px;padding:10px;">
+                    </div>
+                    <button class="btn-primary" style="padding:10px 20px;font-size:12px;" onclick="saveW3F()">Save Key</button>
+                    <button onclick="confirmW3FVerification()" style="padding:10px 20px;font-size:12px;font-weight:800;background:linear-gradient(135deg,var(--green),#00b36b);color:#fff;border:none;border-radius:8px;cursor:pointer;font-family:inherit;">✓ I Verified My Email</button>
+                </div>
+                <div id="w3fVerifyReminder" style="margin-top:10px;padding:12px 14px;background:rgba(255,179,71,0.08);border:1px solid rgba(255,179,71,0.2);border-radius:8px;font-size:11px;color:var(--amber);display:none;">
+                    <strong style="font-size:12px;">⚠ IMPORTANT — Don't Skip These!</strong><br>
+                    <span style="color:var(--text);">1. Check your inbox <strong>AND spam/junk folder</strong> for the Web3Forms verification email</span><br>
+                    <span style="color:var(--text);">2. Click the verify link in that email</span><br>
+                    <span style="color:var(--text);">3. Come back here and click the green <strong>"I Verified My Email"</strong> button</span><br>
+                    <span style="color:var(--text);">4. After testing, check <strong>SPAM folder again</strong> — first test emails often go there!</span><br>
+                    <span style="color:var(--cyan);margin-top:4px;display:inline-block;">Still not working? Click <strong>🔍 Diagnose Email</strong> button above to see the raw API response.</span>
+                </div>
+            </div>
+
+            <!-- TELEGRAM BOT — Mobile Push (FREE) -->
+            <div style="background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.15);border-radius:10px;padding:16px;margin-bottom:14px;">
+                <div style="font-size:12px;font-weight:800;color:var(--cyan);margin-bottom:10px;">OPTION 2: Telegram Bot (Mobile Push — FREE, 2 Minutes)</div>
+                <div class="setup-steps" style="margin-bottom:12px;font-size:12px;line-height:2;">
+                    <strong style="color:var(--text);">Step 1:</strong> Open Telegram → search <strong>@BotFather</strong> → send <code style="background:rgba(0,0,0,0.3);padding:2px 5px;border-radius:3px;">/newbot</code> → give it a name → copy the <strong>Bot Token</strong><br>
+                    <strong style="color:var(--text);">Step 2:</strong> Search your new bot in Telegram → send it <code style="background:rgba(0,0,0,0.3);padding:2px 5px;border-radius:3px;">/start</code><br>
+                    <strong style="color:var(--text);">Step 3:</strong> Open <a href="https://api.telegram.org/bot{YOUR_TOKEN}/getUpdates" target="_blank" style="color:var(--cyan);font-weight:800;">api.telegram.org/bot{TOKEN}/getUpdates</a> → find <strong>"chat":{"id":XXXXXXX}</strong> → that's your Chat ID<br>
+                    <strong style="color:var(--text);">Step 4:</strong> Paste both below → click <strong>Save & Test</strong> → you'll get a Telegram message instantly!
+                </div>
+                <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+                    <div style="flex:1;min-width:200px;">
+                        <div class="setup-label">Bot Token</div>
+                        <input class="setup-input" id="tgToken" placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz" style="width:100%;font-size:12px;padding:10px;">
+                    </div>
+                    <div style="min-width:140px;">
+                        <div class="setup-label">Chat ID</div>
+                        <input class="setup-input" id="tgChatId" placeholder="123456789" style="width:100%;font-size:12px;padding:10px;">
+                    </div>
+                    <button onclick="saveTelegram()" style="padding:10px 20px;font-size:12px;font-weight:800;background:linear-gradient(135deg,var(--cyan),var(--blue));color:#fff;border:none;border-radius:8px;cursor:pointer;font-family:inherit;">Save & Test</button>
+                </div>
+                <div id="tgStatus" style="margin-top:8px;font-size:11px;color:var(--muted);"></div>
+            </div>
+
+            <!-- EMAILJS — Advanced option -->
+            <details style="background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:10px;padding:14px;">
+                <summary style="font-size:11px;font-weight:700;color:var(--amber);cursor:pointer;">OPTION 3: EmailJS (Advanced — 3 Keys)</summary>
+                <div class="setup-steps" style="margin-top:10px;">
+                    1. Go to <a href="https://www.emailjs.com" target="_blank">emailjs.com</a> → Sign up free (200 emails/month)<br>
+                    2. Create an Email Service (Gmail/Outlook) → copy <strong>Service ID</strong><br>
+                    3. Create a Template with variables: {{zone}}, {{entry}}, {{current}}, {{deploy}}, {{message}} → copy <strong>Template ID</strong><br>
+                    4. Go to Account → copy <strong>Public Key</strong>
+                </div>
+                <div class="setup-grid" style="margin-top:10px;">
+                    <div>
+                        <div class="setup-label">Service ID</div>
+                        <input class="setup-input" id="ejsService" placeholder="service_xxxxxxx" value="">
+                    </div>
+                    <div>
+                        <div class="setup-label">Template ID</div>
+                        <input class="setup-input" id="ejsTemplate" placeholder="template_xxxxxxx" value="">
+                    </div>
+                    <div>
+                        <div class="setup-label">Public Key</div>
+                        <input class="setup-input" id="ejsPublicKey" placeholder="xxxxxxxxxxxx" value="">
+                    </div>
+                </div>
+                <button class="btn-secondary" style="margin-top:10px;" onclick="saveEmailJS()">Save EmailJS Config</button>
+            </details>
+        </div>
+    </div>
+
+    <!-- MESSAGE PREVIEW -->
+    <div class="msg-preview">
+        <div class="msg-preview-title">📧 Message Preview — See Exactly What Gets Sent</div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:16px;">Select a zone to preview the exact alert message you'll receive on email and phone when that target is hit.</div>
+
+        <div style="display:flex;gap:14px;align-items:center;margin-bottom:16px;flex-wrap:wrap;">
+            <select id="previewZone" onchange="updateMsgPreview()" style="background:rgba(255,255,255,0.08);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:10px;font-size:12px;font-family:inherit;font-weight:700;min-width:180px;">
+            </select>
+            <button class="btn-test" onclick="fireTestForZone()" style="animation:none;">📱 Send Test Now</button>
+            <button class="btn-secondary" onclick="previewBrowserNotif()">🔊 Preview Notification</button>
+        </div>
+
+        <div class="msg-tabs">
+            <button class="msg-tab active" onclick="switchMsgTab('email',this)">✉️ Email</button>
+            <button class="msg-tab" onclick="switchMsgTab('telegram',this)">📱 Telegram</button>
+            <button class="msg-tab" onclick="switchMsgTab('browser',this)">🔔 Browser Push</button>
+        </div>
+
+        <div class="msg-box" id="msgPreviewBox">
+            <div class="msg-from">Loading preview...</div>
+        </div>
+    </div>
+
+    </div><!-- /tabAlerts -->
+
+    <!-- FOOTER -->
+    <div class="footer">
+        Built with precision. <strong>This is a planning tool, not financial advice.</strong> Past performance does not guarantee future results.
+    </div>
+</div>
+
+<script>
+    // ============ MARKET CONFIGS ============
+    let curMarket = 'india';
+
+    const MARKETS = {
+        india: {
+            key: 'india',
+            name: 'Nifty Midcap 50',
+            flag: '🇮🇳',
+            currency: '₹',
+            locale: 'en-IN',
+            ATH: 17564,
+            defaultIndex: 16133,
+            defaultPf: 4200000,
+            defaultBeta: 1.3,
+            deployStep: 100000,
+            gaugeMin: 5000, gaugeMax: 20000,
+            cagrRanges: { realistic:[18,24], optimistic:[19,29], aggressive:[20,34] },
+            cagrLabels: { realistic:'Conservative (18–24%)', optimistic:'Balanced (19–29%)', aggressive:'Aggressive (20–34%)' },
+            tiers: [
+                {zone:"14000–14200", entry:14100, fresh:500000},
+                {zone:"13200–13500", entry:13400, fresh:500000},
+                {zone:"12300–12600", entry:12490, fresh:500000},
+                {zone:"11600–11900", entry:11800, fresh:400000},
+                {zone:"10600–10900", entry:10800, fresh:700000},
+                {zone:"9900–10200",  entry:10070, fresh:400000},
+                {zone:"8900–9200",   entry:9100,  fresh:1000000},
+            ],
+            fmtCurrency: n => '₹'+Math.round(n).toLocaleString('en-IN'),
+            fmtBig: n => (n/100000).toFixed(1)+'L',
+            fmtHuge: n => (n/10000000).toFixed(2),
+            hugeUnit: 'Cr',
+            addTierStep: 800,
+            addTierMinEntry: 5000,
+            addTierDefaultFresh: 500000,
+            gaugeLabels: ['5,000', '20,000'],
+            gaugeName: 'Nifty Midcap 50',
+            gaugeZoneLabel: cur => cur>=14000?'SAFE ZONE':cur>=12000?'CAUTION':cur>=10000?'CORRECTION':cur>=8000?'CRASH':'NUCLEAR',
+            gaugeZoneColor: cur => cur>=14000?'var(--green)':cur>=12000?'var(--amber)':cur>=10000?'#ff8c42':cur>=8000?'var(--red)':'var(--purple)',
+            gaugeZoneBg: cur => cur>=14000?'rgba(0,230,138,0.15)':cur>=12000?'rgba(255,179,71,0.12)':cur>=10000?'rgba(255,140,66,0.12)':cur>=8000?'rgba(255,77,106,0.12)':'rgba(168,85,247,0.12)',
+        },
+        usa: {
+            key: 'usa',
+            name: 'S&P 500',
+            flag: '🇺🇸',
+            currency: '$',
+            locale: 'en-US',
+            ATH: 700,
+            defaultIndex: 685,
+            defaultPf: 12000,
+            defaultBeta: 1.0,
+            deployStep: 1000,
+            gaugeMin: 200, gaugeMax: 800,
+            cagrRanges: { realistic:[14,22], optimistic:[18,28], aggressive:[22,34] },
+            cagrLabels: { realistic:'Conservative (14–22%)', optimistic:'Balanced (18–28%)', aggressive:'Aggressive (22–34%)' },
+            tiers: [
+                {zone:"605–615", entry:612, fresh:8500},
+                {zone:"560–570", entry:565, fresh:8500},
+                {zone:"520–530", entry:525, fresh:5000},
+                {zone:"485–495", entry:490, fresh:5000},
+                {zone:"455–465", entry:460, fresh:6000},
+                {zone:"413–423", entry:418, fresh:6000},
+                {zone:"378–388", entry:383, fresh:7000},
+                {zone:"348–358", entry:353, fresh:7000},
+            ],
+            fmtCurrency: n => '$'+Math.round(n).toLocaleString('en-US'),
+            fmtBig: n => n>=1000000 ? (n/1000000).toFixed(1)+'M' : (n>=1000 ? (n/1000).toFixed(1)+'K' : n.toFixed(0)),
+            fmtHuge: n => (n/1000).toFixed(1),
+            hugeUnit: 'K',
+            addTierStep: 30,
+            addTierMinEntry: 150,
+            addTierDefaultFresh: 5000,
+            gaugeLabels: ['200', '800'],
+            gaugeName: 'S&P 500',
+            gaugeZoneLabel: cur => cur>=620?'SAFE ZONE':cur>=530?'CAUTION':cur>=430?'CORRECTION':cur>=330?'CRASH':'NUCLEAR',
+            gaugeZoneColor: cur => cur>=620?'var(--green)':cur>=530?'var(--amber)':cur>=430?'#ff8c42':cur>=330?'var(--red)':'var(--purple)',
+            gaugeZoneBg: cur => cur>=620?'rgba(0,230,138,0.15)':cur>=530?'rgba(255,179,71,0.12)':cur>=430?'rgba(255,140,66,0.12)':cur>=330?'rgba(255,77,106,0.12)':'rgba(168,85,247,0.12)',
+        }
+    };
+
+    function MKT(){ return MARKETS[curMarket]; }
+
+    const CAGR_MAP = {
+        realistic:  [12,13,14,15,16,17,18,19,20,21],
+        optimistic: [14,15,17,19,21,23,24,25,26,27],
+        aggressive: [16,18,20,22,24,26,28,29,31,32],
+    };
+
+    let ATH = MARKETS.india.ATH;
+
+    let tiers = JSON.parse(JSON.stringify(MARKETS.india.tiers));
+    const defaultTiers = JSON.parse(JSON.stringify(MARKETS.india.tiers));
+    let customCagrs = [...CAGR_MAP.aggressive];
+    let donutInst = null;
+    let alertsOn = false, alertTimer = null, lastTriggered = -1;
+
+    function inp(){
+        return {
+            cur: +document.getElementById('currentIndex').value || 16133,
+            pf: +document.getElementById('currentPortfolio').value || 4200000,
+            yrs: +document.getElementById('projYears').value || 5,
+            mode: document.getElementById('cagrMode').value,
+            beta: +document.getElementById('betaFactor').value || 1.3,
+        };
+    }
+    function cagr(i){
+        const m=inp().mode;
+        if(m==='custom') return customCagrs[i]||20;
+        const ranges = MKT().cagrRanges;
+        const [lo,hi] = ranges[m] || ranges.aggressive;
+        const n = tiers.length;
+        if(n<=1) return lo;
+        return lo + (i/(n-1)) * (hi-lo);
+    }
+    function fmtINR(n){ return MKT().fmtCurrency(n); }
+    function fmtL(n){ return MKT().fmtBig(n); }
+    function fmtCr(n){ return MKT().fmtHuge(n); }
+    function hugeUnit(){ return MKT().hugeUnit; }
+
+    function zoneStyle(f){
+        if(f<18) return {cls:'z-safe',c:'var(--green)',bc:'var(--green)'};
+        if(f<28) return {cls:'z-caution',c:'var(--amber)',bc:'var(--amber)'};
+        if(f<40) return {cls:'z-danger',c:'#ff8c42',bc:'#ff8c42'};
+        if(f<52) return {cls:'z-crash',c:'var(--red)',bc:'var(--red)'};
+        return {cls:'z-nuclear',c:'var(--purple)',bc:'var(--purple)'};
+    }
+
+    // ============ GAUGE SVG ============
+    function renderGauge(cur){
+        const mk = MKT();
+        const maxVal=mk.gaugeMax, minVal=mk.gaugeMin, range=maxVal-minVal;
+        const pct=Math.max(0,Math.min(1,(cur-minVal)/range));
+        const angle=180*pct;
+        const zoneLabel = mk.gaugeZoneLabel(cur);
+        const zoneColor = mk.gaugeZoneColor(cur);
+        const zoneBg = mk.gaugeZoneBg(cur);
+
+        document.getElementById('gaugeWrap').innerHTML = `
+            <svg class="gauge-svg" viewBox="0 0 240 140">
+                <defs>
+                    <linearGradient id="gGrad" x1="0" y1="0" x2="1" y2="0">
+                        <stop offset="0%" stop-color="#a855f7"/>
+                        <stop offset="25%" stop-color="#ff4d6a"/>
+                        <stop offset="50%" stop-color="#ff8c42"/>
+                        <stop offset="75%" stop-color="#ffb347"/>
+                        <stop offset="100%" stop-color="#00e68a"/>
+                    </linearGradient>
+                    <filter id="glow">
+                        <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+                        <feMerge>
+                            <feMergeNode in="coloredBlur"/>
+                            <feMergeNode in="SourceGraphic"/>
+                        </feMerge>
+                    </filter>
+                </defs>
+                <path d="M 30 120 A 95 95 0 0 1 210 120" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width:14 stroke-linecap="round"/>
+                <path d="M 30 120 A 95 95 0 0 1 210 120" fill="none" stroke="url(#gGrad)" stroke-width="14" stroke-linecap="round"
+                      stroke-dasharray="${Math.PI*95}" stroke-dashoffset="${Math.PI*95*(1-pct)}" filter="url(#glow)"/>
+                <line x1="120" y1="120" x2="${120+90*Math.cos(Math.PI*(1-pct))}" y2="${120-90*Math.sin(Math.PI*(1-pct))}"
+                      stroke="white" stroke-width="3" stroke-linecap="round" filter="url(#glow)"/>
+                <circle cx="120" cy="120" r="6" fill="white" filter="url(#glow)"/>
+                <text x="25" y="135" font-size="8" fill="#556688" font-weight="700">${mk.gaugeLabels[0]}</text>
+                <text x="195" y="135" font-size="8" fill="#556688" font-weight="700">${mk.gaugeLabels[1]}</text>
+            </svg>
+            <div class="gauge-val" style="color:${zoneColor};">${cur.toLocaleString()}</div>
+            <div class="gauge-lbl">${mk.gaugeName}</div>
+            <div class="gauge-zone" style="background:${zoneBg};color:${zoneColor};border:1.5px solid ${zoneColor}40;">${zoneLabel}</div>
+        `;
+    }
+
+    // ============ MAIN RECALC ============
+    function recalcAll(){
+        const {cur,pf,yrs,mode,beta} = inp();
+        document.getElementById('thYears5').textContent = `After ${yrs}Y`;
+        document.getElementById('thYears10').textContent = `After ${yrs*2}Y`;
+        let cumF=0, rows=[];
+        let runningCapital = pf; // Cascading total capital (portfolio + all previous fresh)
+        let origPfTracker = pf;  // Track ONLY original portfolio through falls (no fresh added)
+
+        tiers.forEach((t,i)=>{
+            // Index fall from PREVIOUS level to THIS level (cascading step)
+            const prevLevel = i===0 ? cur : tiers[i-1].entry;
+            const stepIndexFall = Math.max(0, (prevLevel - t.entry) / prevLevel * 100);
+            const stepPfFall = Math.min(stepIndexFall * beta, 95);
+
+            // Track original portfolio separately (never gets fresh added)
+            origPfTracker = origPfTracker * (1 - stepPfFall/100);
+
+            // Apply this step's fall to total running capital (includes previous fresh deploys)
+            const capitalAfterFall = runningCapital * (1 - stepPfFall/100);
+
+            // Add fresh deploy at this zone
+            cumF += t.fresh;
+            const total = capitalAfterFall + t.fresh;
+
+            // Overall index fall from ATH (for display) — "From ATH" column
+            const fall = Math.max(0, (ATH - t.entry) / ATH * 100);
+            // TRUE portfolio fall: based on original portfolio only, not including fresh deploys
+            const pfFallPct = Math.max(0, (pf - origPfTracker) / pf * 100);
+            // Distance from current (for proximity detection)
+            const distFromCur = Math.max(0, (cur - t.entry) / cur * 100);
+
+            const totalInvested = pf + cumF; // Always goes up — what you put in
+            const c = cagr(i);
+            const afterY = total * Math.pow(1+c/100, yrs);
+            const afterY10 = total * Math.pow(1+c/100, yrs*2);
+            const mult = afterY / total;
+            const profit = afterY - total;
+            const triggered = t.entry >= cur;
+            const near = !triggered && distFromCur < 3;
+
+            rows.push({...t, i, fall, pfFallPct, pfAtLvl:capitalAfterFall, origPf:origPfTracker, cumF, c, total, totalInvested, afterY, afterY10, mult, profit, triggered, near});
+            runningCapital = total; // Next zone starts from this zone's total
+        });
+
+        // TABLE
+        const tbody = document.getElementById('strategyBody');
+        tbody.innerHTML = rows.map(r=>{
+            const zs = zoneStyle(r.fall);
+            const barW = Math.min(Math.max(r.fall*0.8, 4), 70);
+            const dotCls = r.triggered?'dot-hot':r.near?'dot-warm':'dot-cold';
+            const rowCls = r.triggered?'row-triggered':r.near?'row-near':'';
+            const crVal = +fmtCr(r.afterY);
+            const isINR = curMarket==='india';
+            const crCls = isINR ? (crVal>=2?'cr-gold':crVal>=1?'cr-green':'cr-blue') : (crVal>=80?'cr-gold':crVal>=30?'cr-green':'cr-blue');
+            const cr10Val = +fmtCr(r.afterY10);
+            const cr10Cls = isINR ? (cr10Val>=5?'cr-gold':cr10Val>=2?'cr-green':'cr-blue') : (cr10Val>=200?'cr-gold':cr10Val>=80?'cr-green':'cr-blue');
+            const cagrColor = r.c>=30?'var(--gold)':r.c>=24?'var(--green)':r.c>=18?'var(--blue)':'var(--text2)';
+            const cagrEdit = mode==='custom'?`<input class="deploy-input" type="number" value="${Math.round(r.c)}" min="5" max="50" style="width:60px;color:${cagrColor};" onchange="customCagrs[${r.i}]=+this.value;recalcAll()">%`:`<span style="color:${cagrColor};">${Math.round(r.c)}%</span>`;
+
+            return `<tr class="${rowCls}">
+                <td><span class="status-dot ${dotCls}"></span></td>
+                <td><span class="zone-pill ${zs.cls}">${r.entry.toLocaleString()}</span></td>
+                <td style="font-weight:800;color:${zs.c};text-align:center;font-size:13px;">${r.fall.toFixed(1)}%</td>
+                <td><input class="deploy-input" type="number" value="${r.fresh}" step="${MKT().deployStep}" style="min-width:90px;" onchange="tiers[${r.i}].fresh=+this.value;recalcAll()"></td>
+                <td style="font-weight:800;color:var(--cyan);">${fmtL(r.totalInvested)}</td>
+                <td style="font-weight:900;color:${r.total<r.totalInvested?'var(--red)':'var(--green)'};">${fmtL(r.total)}</td>
+                <td class="cagr-val">${cagrEdit}</td>
+                <td><span class="cr-badge ${crCls}">${fmtCr(r.afterY)} ${hugeUnit()}</span></td>
+                <td><span class="cr-badge ${cr10Cls}">${fmtCr(r.afterY10)} ${hugeUnit()}</span></td>
+                <td><span style="cursor:pointer;color:var(--muted);font-size:14px;" onclick="removeTier(${r.i})" title="Remove">&times;</span></td>
+            </tr>`;
+        }).join('');
+
+        // KPIs
+        const totalFresh = tiers.reduce((s,t)=>s+t.fresh,0);
+        const maxR = rows.length?Math.max(...rows.map(r=>r.afterY)):0;
+        const maxR10 = rows.length?Math.max(...rows.map(r=>r.afterY10)):0;
+        const minR = rows.length?rows[0].afterY:0;
+        const triggered = rows.filter(r=>r.triggered).length;
+        const avgCagr = (rows.reduce((s,r)=>s+r.c*r.fresh,0)/rows.reduce((s,r)=>s+r.fresh,0)).toFixed(1);
+
+        // Calculate key metrics
+        const deepRow = rows[rows.length-1];
+        const maxPfFallPct = deepRow.pfFallPct.toFixed(1);
+        const totalInvestedDeep = deepRow.totalInvested;
+        const mktValueDeep = deepRow.total;
+        const bestReturnOnInvested = ((maxR/totalInvestedDeep - 1)*100).toFixed(0);
+        const unrealizedLoss = ((totalInvestedDeep - mktValueDeep)/totalInvestedDeep*100).toFixed(0);
+
+        document.getElementById('kpiStrip').innerHTML = `
+            <div class="kpi-card gold"><div class="kpi-num" style="color:var(--gold);">${fmtINR(pf)}</div><div class="kpi-label">Current Portfolio</div></div>
+            <div class="kpi-card red"><div class="kpi-num" style="color:var(--red);">-${maxPfFallPct}%</div><div class="kpi-label">Max PF Fall (β${beta})</div></div>
+            <div class="kpi-card amber"><div class="kpi-num" style="color:var(--amber);">${fmtL(totalFresh)}</div><div class="kpi-label">Total Deploy</div></div>
+            <div class="kpi-card blue"><div class="kpi-num" style="color:var(--blue);">${avgCagr}%</div><div class="kpi-label">Avg CAGR</div></div>
+            <div class="kpi-card green"><div class="kpi-num" style="color:var(--green);">${fmtCr(maxR)} ${hugeUnit()}</div><div class="kpi-label">${yrs}Y Best</div></div>
+            <div class="kpi-card cyan"><div class="kpi-num" style="color:var(--cyan);">${fmtCr(maxR10)} ${hugeUnit()}</div><div class="kpi-label">${yrs*2}Y Best</div></div>
+        `;
+
+        // SCENARIOS - enhanced with portfolio impact + 10Y
+        const mild = rows[1]||rows[0];
+        const deep = rows[rows.length-1];
+        const mildTotalInvest = mild.total;
+        const mildProfit = mild.afterY - mildTotalInvest;
+        const deepTotalInvest = deep.total;
+        const deepProfit = deep.afterY - deepTotalInvest;
+        document.getElementById('mildVal').textContent = `${MKT().currency}${fmtCr(mild.afterY)} ${hugeUnit()}`;
+        document.getElementById('mildDetail').innerHTML = `${yrs}Y: ${fmtCr(mild.afterY)} ${hugeUnit()} · ${yrs*2}Y: ${fmtCr(mild.afterY10)} ${hugeUnit()} · ${Math.round(mild.c)}% CAGR`;
+        document.getElementById('deepVal').textContent = `${MKT().currency}${fmtCr(deep.afterY)} ${hugeUnit()}`;
+        document.getElementById('deepDetail').innerHTML = `${yrs}Y: ${fmtCr(deep.afterY)} ${hugeUnit()} · ${yrs*2}Y: ${fmtCr(deep.afterY10)} ${hugeUnit()} · ${Math.round(deep.c)}% CAGR`;
+
+        renderGauge(cur);
+        renderCharts(rows);
+    }
+
+    function renderCharts(rows){
+        const yrs = inp().yrs;
+        const maxVal = Math.max(...rows.map(r=>+fmtCr(r.afterY)));
+        const wb = document.getElementById('wealthBars');
+        wb.innerHTML = rows.map((r,i)=>{
+            const invested = +fmtCr(r.total);
+            const projected = +fmtCr(r.afterY);
+            const invW = Math.max(2, (invested/maxVal)*100);
+            const projW = Math.max(4, (projected/maxVal)*100);
+            const isINR = curMarket==='india';
+            const projColor = isINR ? (projected>=2?'rgba(255,215,0,0.75)':projected>=1.5?'rgba(0,230,138,0.7)':'rgba(77,166,255,0.7)') : (projected>=80?'rgba(255,215,0,0.75)':projected>=30?'rgba(0,230,138,0.7)':'rgba(77,166,255,0.7)');
+            const projBorder = isINR ? (projected>=2?'var(--gold)':projected>=1.5?'var(--green)':'var(--blue)') : (projected>=80?'var(--gold)':projected>=30?'var(--green)':'var(--blue)');
+            return `<div class="wb-row">
+                <div class="wb-label">${r.entry>=10000?(r.entry/1000).toFixed(1)+'K':r.entry.toLocaleString()}</div>
+                <div class="wb-track">
+                    <div class="wb-projected" style="width:${projW}%;background:${projColor};border:1px solid ${projBorder};"></div>
+                    <div class="wb-invested" style="width:${invW}%;background:rgba(77,166,255,0.4);border-right:2px solid var(--blue);"></div>
+                </div>
+                <div class="wb-val" style="color:${projBorder};">${curMarket==='india'?projected.toFixed(1):Math.round(projected)}${hugeUnit()}</div>
+            </div>`;
+        }).join('');
+        wb.innerHTML += `<div class="wb-legend">
+            <span><span class="wb-legend-dot" style="background:rgba(77,166,255,0.5);"></span>Invested</span>
+            <span><span class="wb-legend-dot" style="background:rgba(255,215,0,0.7);"></span>After ${yrs}Y</span>
+        </div>`;
+
+        // Deploy Plan - simple CSS bars
+        const deployColors = ['#00e68a','#4da6ff','#ffb347','#ff8c42','#ff4d6a','#a855f7','#7c4dff','#00d4ff','#ff6e40','#ffd740'];
+        const maxFresh = Math.max(...rows.map(r=>r.fresh));
+        const totalDeploy = rows.reduce((s,r)=>s+r.fresh,0);
+        const dl = document.getElementById('deployList');
+        if(dl){
+            dl.innerHTML = rows.map((r,i) => {
+                const pct = (r.fresh/maxFresh*100).toFixed(0);
+                const amt = fmtL(r.fresh);
+                const zoneLabel = r.entry>=10000?(r.entry/1000).toFixed(1)+'K':r.entry.toLocaleString();
+                return `<div class="deploy-row">
+                    <span class="dr-zone">${zoneLabel}</span>
+                    <div class="dr-bar-wrap"><div class="dr-bar" style="width:${pct}%;background:${deployColors[i%10]};"></div></div>
+                    <span class="dr-amt">${MKT().currency}${amt}</span>
+                </div>`;
+            }).join('');
+        }
+        const dt = document.getElementById('deployTotal');
+        if(dt){
+            dt.innerHTML = `<span class="dt-lbl">Total Deploy</span><span class="dt-val">${MKT().currency}${fmtL(totalDeploy)}</span>`;
+        }
+    }
+
+    // ============ TABLE ACTIONS ============
+    function addTier(){
+        const mk = MKT();
+        const last = tiers[tiers.length-1];
+        const newEntry = Math.max(mk.addTierMinEntry, last.entry - mk.addTierStep);
+        const lo = (newEntry - Math.round(mk.addTierStep/4)), hi = newEntry;
+        tiers.push({zone:`${lo}–${hi}`, entry:newEntry, fresh:mk.addTierDefaultFresh});
+        // Extend all CAGR maps so new tier gets proper CAGR
+        Object.values(CAGR_MAP).forEach(arr => {
+            const lastVal = arr[arr.length-1];
+            const step = arr.length>=2 ? arr[arr.length-1]-arr[arr.length-2] : 2;
+            arr.push(Math.min(50, lastVal + step));
+        });
+        customCagrs.push(Math.min(50, customCagrs[customCagrs.length-1]+2));
+        recalcAll();
+    }
+    function removeTier(i){
+        if(tiers.length<=3) return;
+        tiers.splice(i,1);
+        customCagrs.splice(i,1);
+        recalcAll();
+    }
+    function resetDefaults(){
+        tiers = JSON.parse(JSON.stringify(defaultTiers));
+        customCagrs = [...CAGR_MAP.aggressive];
+        recalcAll();
+    }
+    function switchMarket(key){
+        curMarket = key;
+        const mk = MKT();
+        ATH = mk.ATH;
+        tiers = JSON.parse(JSON.stringify(mk.tiers));
+        customCagrs = Array(tiers.length).fill(20);
+
+        // Update form values
+        document.getElementById('currentIndex').value = mk.defaultIndex;
+        document.getElementById('currentPortfolio').value = mk.defaultPf;
+        document.getElementById('betaFactor').value = mk.defaultBeta;
+        document.getElementById('currentPortfolio').step = mk.key==='usa'?1000:50000;
+        document.getElementById('currentIndex').step = mk.key==='usa'?1:10;
+
+        // Update CAGR dropdown labels
+        const sel = document.getElementById('cagrMode');
+        sel.querySelector('[value="realistic"]').textContent = mk.cagrLabels.realistic;
+        sel.querySelector('[value="optimistic"]').textContent = mk.cagrLabels.optimistic;
+        sel.querySelector('[value="aggressive"]').textContent = mk.cagrLabels.aggressive;
+        sel.value = 'aggressive';
+
+        // Update hero subtitle and index label
+        document.getElementById('heroSub').innerHTML = `${mk.name} · Staggered Deployment · 5Y & 10Y Wealth Projection`;
+        document.getElementById('indexLabel').textContent = `${mk.name} — Current`;
+
+        // Update table title
+        document.querySelector('.tbl-title').textContent = `Staggered Buy Plan — ${tiers.length} Zones`;
+
+        // Update market tab styling
+        document.querySelectorAll('.market-tab').forEach(t => t.classList.remove('active'));
+        document.querySelector(`.market-tab[data-market="${key}"]`).classList.add('active');
+
+        // Update beta label
+        document.querySelector('.ctrl:last-child .ctrl-unit').textContent = `vs ${mk.name} index`;
+
+        recalcAll();
+    }
+    function exportCSV(){
+        const {cur,pf,yrs,beta}=inp();
+        let cumF=0, runCap=pf, origPf=pf;
+        const hu=hugeUnit();
+        const hdr='Zone,Entry,ATH_Fall%,IndexFall%,PF_Fall%,FreshDeploy,TotalInvested,MktValue,CAGR%,After'+yrs+'Y_'+hu+',After'+(yrs*2)+'Y_'+hu+',Profit\n';
+        const body=tiers.map((t,i)=>{
+            const prev=i===0?cur:tiers[i-1].entry;
+            const stepFall=Math.min((prev-t.entry)/prev*100*beta,95);
+            origPf=origPf*(1-stepFall/100);
+            const capAfterFall=runCap*(1-stepFall/100);
+            cumF+=t.fresh;const tot=capAfterFall+t.fresh;
+            const invested=pf+cumF;
+            const athFall=((ATH-t.entry)/ATH*100).toFixed(1);
+            const idxFall=(cur-t.entry)/cur*100;
+            const pfFall=(pf-origPf)/pf*100;
+            const c=cagr(i);const ay=tot*Math.pow(1+c/100,yrs);const ay10=tot*Math.pow(1+c/100,yrs*2);
+            const profit=ay-invested;
+            runCap=tot;
+            return [t.zone,t.entry,athFall,idxFall.toFixed(1),pfFall.toFixed(1),t.fresh,Math.round(invested),Math.round(tot),c,fmtCr(ay),fmtCr(ay10),Math.round(profit)].join(',');
+        }).join('\n');
+        const blob=new Blob(['\uFEFF'+hdr+body],{type:'text/csv'});
+        const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`BuyStrategy_${curMarket.toUpperCase()}_${new Date().toISOString().slice(0,10)}.csv`;a.click();
+    }
+
+    // ============ TOAST SYSTEM ============
+    function showToast(type, title, body, duration=8000){
+        const container = document.getElementById('toastContainer');
+        const toast = document.createElement('div');
+        toast.className = `toast t-${type}`;
+        const icon = type==='alert'?'🚨':type==='success'?'✅':'ℹ️';
+        const now = new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
+        toast.innerHTML = `
+            <button class="toast-close" onclick="this.parentElement.remove()">&times;</button>
+            <div class="toast-head">
+                <span class="toast-icon">${icon}</span>
+                <span class="toast-title">${title}</span>
+                <span class="toast-time">${now}</span>
+            </div>
+            <div class="toast-body">${body}</div>
+            <div class="toast-progress" style="width:100%;"></div>
+        `;
+        container.appendChild(toast);
+        requestAnimationFrame(()=>{ toast.classList.add('show'); });
+
+        const bar = toast.querySelector('.toast-progress');
+        bar.style.transition = `width ${duration}ms linear`;
+        requestAnimationFrame(()=>{ bar.style.width = '0%'; });
+
+        setTimeout(()=>{ toast.classList.remove('show'); setTimeout(()=>toast.remove(), 500); }, duration);
+
+        playAlertSound(type);
+    }
+
+    function playAlertSound(type){
+        try{
+            const ctx = new (window.AudioContext||window.webkitAudioContext)();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain); gain.connect(ctx.destination);
+            if(type==='alert'){
+                osc.type='square'; osc.frequency.value=880; gain.gain.value=0.15;
+                osc.start(); osc.frequency.setValueAtTime(660,ctx.currentTime+0.15);
+                osc.frequency.setValueAtTime(880,ctx.currentTime+0.3);
+                gain.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.6);
+                osc.stop(ctx.currentTime+0.6);
+            } else {
+                osc.type='sine'; osc.frequency.value=600; gain.gain.value=0.1;
+                osc.start(); gain.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.3);
+                osc.stop(ctx.currentTime+0.3);
+            }
+        }catch(e){}
+    }
+
+    // ============ ALERT SYSTEM ============
+    // Nifty Midcap 50 range: 5000-25000 (Mar 2026: ~16133)
+    function isValidMidcapPrice(p){ return p && p > 5000 && p < 25000; }
+
+    async function fetchLive(){
+        // METHOD 1: Yahoo Finance via allorigins (most reliable CORS proxy)
+        try{
+            const r = await fetch('https://api.allorigins.win/get?url=' + encodeURIComponent('https://finance.yahoo.com/quote/%5ENSEMDCP50/'), {signal: AbortSignal.timeout(10000)});
+            const d = await r.json();
+            if(d.contents){
+                // Try multiple patterns Yahoo uses
+                const patterns = [
+                    /"regularMarketPrice":\{"raw":([\d.]+)/,
+                    /data-value="([\d.]+)"[^>]*data-field="regularMarketPrice"/,
+                    /NSEMDCP50[\s\S]*?"regularMarketPrice":([\d.]+)/,
+                    /currentPrice[\s\S]*?"raw":([\d.]+)/,
+                    /fin-streamer[^>]*data-value="([\d.]+)"[^>]*data-symbol="\^NSEMDCP50"/
+                ];
+                for(const p of patterns){
+                    const m = d.contents.match(p);
+                    if(m){ const v=parseFloat(m[1]); if(isValidMidcapPrice(v)) return v; }
+                }
+            }
+        }catch(e){}
+
+        // METHOD 2: Yahoo chart API via proxy
+        const proxies = [
+            url => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
+            url => 'https://corsproxy.io/?' + encodeURIComponent(url),
+            url => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(url),
+        ];
+        for(const proxy of proxies){
+            try{
+                const url = 'https://query1.finance.yahoo.com/v8/finance/chart/%5ENSEMDCP50?interval=1d&range=5d';
+                const r = await fetch(proxy(url), {signal: AbortSignal.timeout(8000)});
+                const d = await r.json();
+                const p = d?.chart?.result?.[0]?.meta?.regularMarketPrice;
+                if(isValidMidcapPrice(p)) return +p.toFixed(2);
+                const closes = d?.chart?.result?.[0]?.indicators?.quote?.[0]?.close;
+                if(closes?.length){
+                    const last = closes.filter(v=>v!=null).pop();
+                    if(isValidMidcapPrice(last)) return +last.toFixed(2);
+                }
+            }catch(e){}
+        }
+
+        // METHOD 3: NSE India API via proxy
+        for(const proxy of proxies){
+            try{
+                const r = await fetch(proxy('https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%20MIDCAP%2050'), {signal: AbortSignal.timeout(8000)});
+                const text = await r.text();
+                try{
+                    const d = JSON.parse(text);
+                    const idx = d?.data?.find(item => item.index === 'NIFTY MIDCAP 50');
+                    const p = idx?.last || idx?.lastPrice || d?.data?.[0]?.last;
+                    if(p && isValidMidcapPrice(+p)) return +p;
+                }catch(e){
+                    const m = text.match(/"last(?:Price)?"\s*:\s*([\d.]+)/);
+                    if(m){ const p=parseFloat(m[1]); if(isValidMidcapPrice(p)) return p; }
+                }
+            }catch(e){}
+        }
+
+        // METHOD 4: Google Finance scrape via proxy
+        try{
+            const r = await fetch('https://api.allorigins.win/get?url=' + encodeURIComponent('https://www.google.com/finance/quote/NIFTY_MIDCAP_50:INDEXNSE'), {signal: AbortSignal.timeout(10000)});
+            const d = await r.json();
+            if(d.contents){
+                const m1 = d.contents.match(/data-last-price="([\d.]+)"/);
+                if(m1){ const p=parseFloat(m1[1]); if(isValidMidcapPrice(p)) return p; }
+                const m2 = d.contents.match(/class="YMlKec fxKbKc">([\d,]+\.?\d*)</);
+                if(m2){ const p=parseFloat(m2[1].replace(/,/g,'')); if(isValidMidcapPrice(p)) return p; }
+            }
+        }catch(e){}
+
+        return null;
+    }
+
+    function toggleAlerts(){
+        alertsOn=!alertsOn;
+        const bar=document.getElementById('alertStatusBar');
+        const btn=document.getElementById('btnToggleAlert');
+        if(alertsOn){
+            bar.className='alert-status-bar as-active';
+            bar.innerHTML='<span class="status-dot dot-hot"></span> <strong>LIVE</strong> — Checking Nifty Midcap every 5 min during market hours (9:15–15:30 IST)';
+            btn.textContent='⏸ Pause Alerts';
+            btn.style.background='linear-gradient(135deg,var(--red),#cc3355)';
+            checkAlerts();
+            alertTimer=setInterval(checkAlerts,5*60*1000);
+            saveAlertConfig();
+            showToast('success','Alerts Enabled','Live monitoring started. Browser notifications + sound + email activated.');
+        }else{
+            bar.className='alert-status-bar as-inactive';
+            bar.innerHTML='<span class="status-dot dot-cold"></span> Alerts paused';
+            btn.innerHTML='🔔 Enable Live Alerts';
+            btn.style.background='';
+            if(alertTimer) clearInterval(alertTimer);
+            showToast('info','Alerts Paused','Live monitoring stopped.');
+        }
+    }
+
+    async function checkAlerts(){
+        if(!alertsOn) return;
+        const now=new Date();
+        const utcH=now.getUTCHours(),utcM=now.getUTCMinutes();
+        const istH=utcH+5+(utcM+30>=60?1:0),istM=(utcM+30)%60;
+        const istMins=istH*60+istM;
+        if(istMins<555||istMins>930||now.getUTCDay()===0||now.getUTCDay()===6) return;
+
+        const price=await fetchLive();
+        if(!price) return;
+        document.getElementById('currentIndex').value=Math.round(price);
+        recalcAll();
+
+        for(let i=0;i<tiers.length;i++){
+            const prox=((price-tiers[i].entry)/price)*100;
+            if(prox<=2.5 && prox>=-1 && i>lastTriggered){
+                lastTriggered=i;
+                fireAlert(tiers[i],price,prox);
+                break;
+            }
+        }
+    }
+
+    async function fireAlert(tier, price, prox){
+        const msg = `Nifty Midcap at <strong>${Math.round(price).toLocaleString()}</strong> — approaching <strong>${tier.zone}</strong> (entry: ${tier.entry.toLocaleString()}). Deploy <strong>${MKT().currency}${fmtL(tier.fresh)}</strong>. Only ${prox.toFixed(1)}% away!`;
+
+        showToast('alert','BUY ZONE ALERT!',msg,15000);
+
+        // Telegram — instant mobile push
+        if(isTelegramConfigured()){
+            sendTelegram(`🚨 <b>BUY ZONE ALERT!</b>\n\nNifty Midcap 50: <b>${Math.round(price).toLocaleString()}</b>\nZone: <b>${tier.zone}</b> (entry: ${tier.entry.toLocaleString()})\nDeploy: <b>${MKT().currency}${fmtL(tier.fresh)}</b>\nProximity: <b>${prox.toFixed(1)}%</b> away\n\n⚡ ACT NOW — Open your broker!`);
+        }
+
+        // Browser notification (if available)
+        try{
+            if(typeof Notification!=='undefined' && Notification.permission==='granted'){
+                new Notification('🚨 BUY ZONE ALERT',{body:`Midcap at ${Math.round(price)} — zone ${tier.zone}. Deploy ${MKT().currency}${fmtL(tier.fresh)}`,tag:'buyzone'});
+            }
+        }catch(e){}
+
+        await sendEmail(tier, price, prox);
+    }
+
+    // ============ EMAIL SYSTEM — Web3Forms + EmailJS ============
+    // Web3Forms: sends email TO the email that created the access key
+    // EmailJS: sends to any email via template
+    // Both use fetch() — instant, no clicks needed
+
+    function isEmailConfigured(){
+        const w3f = localStorage.getItem('w3f_key');
+        const w3fVerified = localStorage.getItem('w3f_verified')==='true';
+        const ejs = localStorage.getItem('ejs_service') && localStorage.getItem('ejs_template') && localStorage.getItem('ejs_key');
+        return !!((w3f && w3fVerified) || ejs);
+    }
+    function updateEmailStatus(){
+        const el = document.getElementById('emailConfigStatus');
+        if(!el) return;
+        const w3f = localStorage.getItem('w3f_key');
+        const w3fVerified = localStorage.getItem('w3f_verified')==='true';
+        const ejs = localStorage.getItem('ejs_service') && localStorage.getItem('ejs_template') && localStorage.getItem('ejs_key');
+        const reminder = document.getElementById('w3fVerifyReminder');
+        if(w3f && w3fVerified){
+            el.textContent = '✓ Web3Forms Verified';
+            el.style.cssText = 'font-size:10px;padding:3px 8px;border-radius:4px;background:rgba(0,230,138,0.1);color:var(--green);border:1px solid rgba(0,230,138,0.2);';
+            if(reminder) reminder.style.display='none';
+        } else if(w3f && !w3fVerified){
+            el.textContent = '⚠ Verify Email First!';
+            el.style.cssText = 'font-size:10px;padding:3px 8px;border-radius:4px;background:rgba(255,179,71,0.1);color:var(--amber);border:1px solid rgba(255,179,71,0.2);animation:pulse 2s infinite;';
+            if(reminder) reminder.style.display='block';
+        } else if(ejs){
+            el.textContent = '✓ EmailJS Active';
+            el.style.cssText = 'font-size:10px;padding:3px 8px;border-radius:4px;background:rgba(0,230,138,0.1);color:var(--green);border:1px solid rgba(0,230,138,0.2);';
+            if(reminder) reminder.style.display='none';
+        } else {
+            el.textContent = '✗ Not Configured';
+            el.style.cssText = 'font-size:10px;padding:3px 8px;border-radius:4px;background:rgba(255,77,106,0.1);color:var(--red);border:1px solid rgba(255,77,106,0.2);';
+            if(reminder) reminder.style.display='none';
+        }
+        // Pre-fill key if saved
+        const keyInput = document.getElementById('w3fKey');
+        if(keyInput && w3f && !keyInput.value) keyInput.value = w3f;
+    }
+
+    async function sendEmailViaAPI(toEmail, subject, bodyText, verbose=false){
+        let lastErr = '';
+        let apiLog = [];
+
+        // Try Web3Forms (sends to the key owner's email)
+        const w3f = localStorage.getItem('w3f_key');
+        const w3fVerified = localStorage.getItem('w3f_verified')==='true';
+        if(w3f && w3fVerified){
+            try{
+                const payload = {
+                    access_key: w3f,
+                    subject: subject,
+                    message: bodyText,
+                    from_name: 'Crash Buy Strategy Planner',
+                    replyto: toEmail,
+                    to: toEmail,
+                };
+                apiLog.push('Web3Forms → POST with key: '+w3f.substring(0,8)+'...');
+                const resp = await fetch('https://api.web3forms.com/submit',{
+                    method:'POST',
+                    headers:{'Content-Type':'application/json','Accept':'application/json'},
+                    body:JSON.stringify(payload)
+                });
+                const data = await resp.json();
+                apiLog.push('Web3Forms Response: '+JSON.stringify(data));
+                if(data.success) return {ok:true, via:'Web3Forms', detail:'API confirmed delivery. Check inbox + spam folder!', log:apiLog};
+                else { lastErr = data.message||'API error: '+JSON.stringify(data); apiLog.push('FAILED: '+lastErr); }
+            }catch(e){ lastErr = e.message; apiLog.push('EXCEPTION: '+e.message); }
+        }
+
+        // Try EmailJS
+        const svc=localStorage.getItem('ejs_service');
+        const tmpl=localStorage.getItem('ejs_template');
+        const key=localStorage.getItem('ejs_key');
+        if(svc && tmpl && key){
+            try{
+                await emailjs.send(svc,tmpl,{
+                    to_email: toEmail,
+                    subject: subject,
+                    message: bodyText,
+                    zone: subject,
+                    entry: '',
+                    current: '',
+                    deploy: '',
+                },key);
+                return {ok:true, via:'EmailJS', detail:'Sent to '+toEmail};
+            }catch(e){
+                lastErr = e.text||e.message||'EmailJS failed';
+            }
+        }
+
+        if(!w3f && !svc) return {ok:false, via:'None', err:'No email service configured. Set up below.', log:apiLog};
+        if(w3f && !w3fVerified) return {ok:false, via:'Web3Forms', err:'Email not verified! Check your inbox for Web3Forms verification email and click the link.', log:apiLog};
+        return {ok:false, via:'API', err:lastErr, log:apiLog};
+    }
+
+    async function sendEmail(tier, price, prox){
+        const email = document.getElementById('alertEmail').value;
+        const subject = `BUY ALERT: Nifty Midcap at ${Math.round(price).toLocaleString()} - Zone ${tier.zone}`;
+        const body = `Nifty Midcap 50 is at ${Math.round(price).toLocaleString()} - approaching zone ${tier.zone} (entry: ${tier.entry.toLocaleString()}).\n\nDeploy Rs.${fmtL(tier.fresh)} fresh capital at this level.\n\nFall from current: ${prox.toFixed?prox.toFixed(1):prox}%\n\n- Crash Buy Strategy Planner`;
+        const result = await sendEmailViaAPI(email, subject, body);
+        if(result.ok){
+            showToast('success','Email Sent!',`Alert sent via ${result.via}. ${result.detail}`);
+        } else {
+            showToast('info','Email Issue',`${result.err}`);
+        }
+        return result;
+    }
+
+    async function testAlert(){
+        const cur=inp().cur;
+        const tier=tiers[0];
+        const emailAddr = document.getElementById('alertEmail').value;
+        let results = [];
+
+        // Check at least one notification method is configured
+        if(!isEmailConfigured() && !isTelegramConfigured()){
+            showToast('alert','No Alerts Configured!','Set up <strong>Telegram</strong> (recommended for mobile) or <strong>Email</strong> below. Telegram takes 2 minutes and gives you instant push notifications on your phone.',12000);
+            document.getElementById('emailSetup').scrollIntoView({behavior:'smooth',block:'center'});
+            return;
+        }
+
+        // 1. Toast + Sound
+        const msg = `<strong>TEST ALERT</strong> — Nifty Midcap at <strong>${cur.toLocaleString()}</strong><br>Zone <strong>${tier.zone}</strong> (entry: ${tier.entry.toLocaleString()})<br>Deploy <strong>${MKT().currency}${fmtL(tier.fresh)}</strong>`;
+        showToast('alert','TEST — Buy Zone Alert!',msg,12000);
+        results.push('<span style="color:var(--green);">✓</span> <strong>Toast + Sound</strong> — Fired');
+
+        // 2. Browser Notification
+        let notifOk = false;
+        const notifPerm = typeof Notification !== 'undefined' ? Notification.permission : 'unsupported';
+        const isFileURL = window.location.protocol === 'file:';
+        if(isFileURL){
+            results.push('<span style="color:var(--amber);">⚠</span> <strong>Browser Notification</strong> — Disabled on file:// URLs. Run <code style="background:rgba(0,0,0,0.3);padding:2px 6px;border-radius:3px;font-size:11px;">python3 -m http.server 8000</code> then open <code style="background:rgba(0,0,0,0.3);padding:2px 6px;border-radius:3px;font-size:11px;">http://localhost:8000</code>');
+        } else if(notifPerm==='granted'){
+            try{
+                new Notification('TEST — Buy Zone Alert',{body:`Midcap at ${cur} — zone ${tier.zone}. Deploy ${MKT().currency}${fmtL(tier.fresh)}.`,icon:'',tag:'test-'+Date.now()});
+                notifOk = true;
+            }catch(e){results.push('<span style="color:var(--red);">✗</span> <strong>Browser Notification</strong> — Error: '+e.message);}
+        } else if(notifPerm==='default'){
+            try{
+                const p = await Notification.requestPermission();
+                if(p==='granted'){
+                    new Notification('TEST — Buy Zone Alert',{body:`Test alert — zone ${tier.zone}`,tag:'test-'+Date.now()});
+                    notifOk = true;
+                }
+            }catch(e){results.push('<span style="color:var(--red);">✗</span> <strong>Browser Notification</strong> — Error: '+e.message);}
+        }
+        if(notifOk){
+            results.push('<span style="color:var(--green);">✓</span> <strong>Browser Notification</strong> — Check your desktop notifications');
+        } else if(notifPerm==='denied'){
+            results.push('<span style="color:var(--red);">✗</span> <strong>Browser Notification</strong> — Blocked by browser. Go to browser settings → Site settings → Notifications → Allow');
+        } else if(notifPerm==='unsupported' && !isFileURL){
+            results.push('<span style="color:var(--amber);">⚠</span> <strong>Browser Notification</strong> — Not supported in this browser');
+        } else if(!isFileURL){
+            results.push('<span style="color:var(--amber);">⚠</span> <strong>Browser Notification</strong> — Permission not granted');
+        }
+
+        // 3. Telegram — instant mobile push
+        if(isTelegramConfigured()){
+            const tgMsg = `🚨 <b>TEST ALERT — Buy Zone!</b>\n\nNifty Midcap 50: <b>${cur.toLocaleString()}</b>\nZone: <b>${tier.zone}</b> (entry: ${tier.entry.toLocaleString()})\nDeploy: <b>${MKT().currency}${fmtL(tier.fresh)}</b>\n\n<i>This is a test. Real alerts fire when targets are hit.</i>`;
+            const tgResult = await sendTelegram(tgMsg);
+            if(tgResult.ok){
+                results.push('<span style="color:var(--green);">✓</span> <strong>Telegram</strong> — Sent! Check your phone now.');
+            } else {
+                results.push(`<span style="color:var(--red);">✗</span> <strong>Telegram</strong> — ${tgResult.err}`);
+            }
+        } else {
+            results.push('<span style="color:var(--amber);">⚠</span> <strong>Telegram</strong> — Not configured. Set up below for mobile push alerts.');
+        }
+
+        // 4. Email — sends instantly via API
+        const subject = `TEST: Nifty Midcap at ${cur.toLocaleString()} - Zone ${tier.zone}`;
+        const body = `TEST ALERT from Crash Buy Strategy Planner\n\nZone: ${tier.zone}\nEntry: ${tier.entry.toLocaleString()}\nDeploy: ${MKT().currency}${fmtL(tier.fresh)}\nCurrent Index: ${cur.toLocaleString()}\n\nThis is what a real buy zone alert looks like.`;
+        if(isEmailConfigured()){
+            const emailResult = await sendEmailViaAPI(emailAddr, subject, body, true);
+            if(emailResult.ok){
+                results.push(`<span style="color:var(--green);">✓</span> <strong>Email (${emailResult.via})</strong> — ${emailResult.detail}`);
+            } else {
+                results.push(`<span style="color:var(--red);">✗</span> <strong>Email</strong> — ${emailResult.err}`);
+            }
+        } else {
+            results.push('<span style="color:var(--amber);">⚠</span> <strong>Email</strong> — Not configured. Set up Web3Forms below.');
+        }
+
+        // Show results
+        setTimeout(()=>{
+            showToast('success','Test Results', results.join('<br>'), 25000);
+        }, 1200);
+    }
+
+    // Dedicated diagnose button — shows raw API response
+    async function diagnoseEmail(){
+        const w3f = localStorage.getItem('w3f_key');
+        const verified = localStorage.getItem('w3f_verified')==='true';
+        const emailAddr = document.getElementById('alertEmail').value;
+        let info = [];
+        info.push(`<strong>Email:</strong> ${emailAddr||'NOT SET'}`);
+        info.push(`<strong>Web3Forms Key:</strong> ${w3f ? w3f.substring(0,8)+'...' : 'NOT SET'}`);
+        info.push(`<strong>W3F Verified Flag:</strong> ${verified ? '✓ YES' : '✗ NO'}`);
+        const ejs = localStorage.getItem('ejs_service');
+        info.push(`<strong>EmailJS:</strong> ${ejs ? 'Configured' : 'Not configured'}`);
+
+        if(w3f){
+            info.push('<br><strong>Sending test to Web3Forms API...</strong>');
+            showToast('info','Diagnosing...', info.join('<br>'), 5000);
+            try{
+                const resp = await fetch('https://api.web3forms.com/submit',{
+                    method:'POST',
+                    headers:{'Content-Type':'application/json','Accept':'application/json'},
+                    body:JSON.stringify({
+                        access_key: w3f,
+                        subject: 'Diagnosis Test — Crash Buy Strategy',
+                        message: 'If you see this email, your setup is working correctly! Timestamp: '+new Date().toISOString(),
+                        from_name: 'Crash Buy Strategy Planner',
+                        to: emailAddr,
+                        replyto: emailAddr,
+                    })
+                });
+                const raw = await resp.text();
+                info.push(`<strong>HTTP Status:</strong> ${resp.status} ${resp.statusText}`);
+                info.push(`<strong>Raw Response:</strong> <code style="color:var(--cyan);word-break:break-all;">${raw}</code>`);
+                try{
+                    const data = JSON.parse(raw);
+                    if(data.success){
+                        info.push(`<br><span style="color:var(--green);font-weight:800;">API says SUCCESS — email should arrive within 1-2 minutes.</span>`);
+                        info.push(`<span style="color:var(--amber);font-weight:800;">→ Check SPAM / JUNK / PROMOTIONS folder!</span>`);
+                        info.push(`<span style="color:var(--text2);">→ If not in spam either, your Web3Forms access key may need re-verification.</span>`);
+                        info.push(`<span style="color:var(--text2);">→ Try: go to web3forms.com → create NEW key → paste it here → verify again.</span>`);
+                    } else {
+                        info.push(`<br><span style="color:var(--red);font-weight:800;">API returned FAILURE: ${data.message||'Unknown error'}</span>`);
+                    }
+                }catch(pe){ info.push('Could not parse JSON: '+pe.message); }
+            }catch(e){
+                info.push(`<strong style="color:var(--red);">Network Error:</strong> ${e.message}`);
+            }
+        }
+        showToast('info','Email Diagnosis Report', info.join('<br>'), 60000);
+    }
+
+    function saveW3F(){
+        const key = document.getElementById('w3fKey').value.trim();
+        if(!key){showToast('info','Missing Key','Paste your Web3Forms Access Key.');return;}
+        localStorage.setItem('w3f_key',key);
+        localStorage.removeItem('w3f_verified');
+        updateEmailStatus();
+        const reminder = document.getElementById('w3fVerifyReminder');
+        if(reminder) reminder.style.display='block';
+        showToast('alert','Almost Done! Verify Your Email!','Web3Forms sent a <strong>verification email</strong> to your inbox. Open it → click the verify link → come back here → click <strong>"I Verified My Email"</strong>.',20000);
+    }
+    function confirmW3FVerification(){
+        localStorage.setItem('w3f_verified','true');
+        updateEmailStatus();
+        showToast('success','Verified! You\'re All Set!','Email alerts fully configured. Click <strong>Test Alert Now</strong> to send a test email instantly.');
+    }
+    function saveEmailJS(){
+        const svc=document.getElementById('ejsService').value.trim();
+        const tmpl=document.getElementById('ejsTemplate').value.trim();
+        const key=document.getElementById('ejsPublicKey').value.trim();
+        if(!svc||!tmpl||!key){showToast('info','Missing Fields','Fill all 3 EmailJS fields.');return;}
+        localStorage.setItem('ejs_service',svc);
+        localStorage.setItem('ejs_template',tmpl);
+        localStorage.setItem('ejs_key',key);
+        emailjs.init(key);
+        updateEmailStatus();
+        showToast('success','EmailJS Saved!','Click <strong>Test Alert Now</strong> to verify email delivery.');
+    }
+
+    // ============ TELEGRAM BOT ============
+    function isTelegramConfigured(){
+        return !!(localStorage.getItem('tg_token') && localStorage.getItem('tg_chat'));
+    }
+    async function sendTelegram(text){
+        const token = localStorage.getItem('tg_token');
+        const chatId = localStorage.getItem('tg_chat');
+        if(!token || !chatId) return {ok:false, err:'Telegram not configured'};
+        try{
+            const resp = await fetch(`https://api.telegram.org/bot${token}/sendMessage`,{
+                method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({chat_id:chatId, text:text, parse_mode:'HTML'})
+            });
+            const data = await resp.json();
+            if(data.ok) return {ok:true, detail:'Message delivered to Telegram'};
+            return {ok:false, err:data.description||'Telegram API error'};
+        }catch(e){
+            return {ok:false, err:e.message};
+        }
+    }
+    async function saveTelegram(){
+        const token = document.getElementById('tgToken').value.trim();
+        const chatId = document.getElementById('tgChatId').value.trim();
+        if(!token||!chatId){showToast('info','Missing Fields','Enter both Bot Token and Chat ID.');return;}
+        localStorage.setItem('tg_token',token);
+        localStorage.setItem('tg_chat',chatId);
+        const statusEl = document.getElementById('tgStatus');
+        statusEl.innerHTML = '<span style="color:var(--amber);">Sending test message...</span>';
+        const result = await sendTelegram('✅ <b>Crash Buy Strategy Planner</b> connected!\n\nYou will receive instant buy zone alerts here on Telegram.\n\nTimestamp: '+new Date().toLocaleString());
+        if(result.ok){
+            statusEl.innerHTML = '<span style="color:var(--green);font-weight:800;">✓ Connected! Check your Telegram — you should see the test message.</span>';
+            showToast('success','Telegram Connected!','Check your Telegram app — you should see the test message right now!');
+        } else {
+            statusEl.innerHTML = '<span style="color:var(--red);font-weight:800;">✗ Failed: '+result.err+'</span>';
+            showToast('alert','Telegram Failed',result.err);
+        }
+        updateTgStatus();
+    }
+    function updateTgStatus(){
+        const el = document.getElementById('tgStatus');
+        if(!el) return;
+        if(isTelegramConfigured()){
+            const existing = el.innerHTML;
+            if(!existing.includes('Connected')) el.innerHTML = '<span style="color:var(--green);font-weight:800;">✓ Telegram configured</span>';
+        }
+        // Pre-fill inputs
+        const t = localStorage.getItem('tg_token')||'';
+        const c = localStorage.getItem('tg_chat')||'';
+        const tInput = document.getElementById('tgToken');
+        const cInput = document.getElementById('tgChatId');
+        if(tInput && t && !tInput.value) tInput.value = t;
+        if(cInput && c && !cInput.value) cInput.value = c;
+    }
+
+    function saveAlertConfig(){
+        localStorage.setItem('buyAlerts',JSON.stringify({
+            on:true, email:document.getElementById('alertEmail').value,
+            phone:document.getElementById('alertPhone').value,
+            tiers:tiers.map(t=>t.entry)
+        }));
+    }
+
+    // ============ TAB SWITCHING ============
+    let activeTab = 'strategy';
+    function switchTab(tab){
+        activeTab = tab;
+        document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
+        document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+        const map = {strategy:'tabStrategy',tracker:'tabTracker',alerts:'tabAlerts'};
+        document.getElementById(map[tab]).classList.add('active');
+        document.querySelectorAll('.tab-btn')[['strategy','tracker','alerts'].indexOf(tab)].classList.add('active');
+        if(tab==='tracker') renderDipTracker();
+        if(tab==='alerts') { populatePreviewDropdown(); updateMsgPreview(); }
+    }
+
+    // ============ LIVE AUTO-FETCH ============
+    let livePrice = null, lastFetchTime = null, liveTimer = null;
+    async function refreshLive(){
+        const btn = document.querySelector('.live-refresh');
+        btn.classList.add('spinning');
+        const price = await fetchLive();
+        btn.classList.remove('spinning');
+        if(price){
+            livePrice = Math.round(price);
+            lastFetchTime = new Date();
+            document.getElementById('currentIndex').value = livePrice;
+            recalcAll();
+            updateLiveDisplay();
+            if(activeTab==='tracker') renderDipTracker();
+            showToast('success','Live Price Updated',`Nifty Midcap 50: <strong>${livePrice.toLocaleString()}</strong>`);
+        } else {
+            showToast('info','Market Closed or Fetch Failed','Using last value ' + MKT().currency + inp().cur.toLocaleString() + '. Auto-retry during market hours (9:15-15:30 IST).');
+            updateLiveDisplay();
+        }
+    }
+    async function fetchAndUpdate(){
+        const btn = document.getElementById('btnFetchLive');
+        const icon = document.getElementById('fetchIcon');
+        btn.style.opacity = '0.6';
+        btn.disabled = true;
+        icon.style.animation = 'spin 1s linear infinite';
+        const price = await fetchLive();
+        icon.style.animation = '';
+        btn.style.opacity = '';
+        btn.disabled = false;
+        if(price){
+            livePrice = Math.round(price);
+            lastFetchTime = new Date();
+            document.getElementById('currentIndex').value = livePrice;
+            recalcAll();
+            updateLiveDisplay();
+            if(activeTab==='tracker') renderDipTracker();
+            showToast('success','Live Price Updated','Nifty Midcap 50: <strong>'+livePrice.toLocaleString()+'</strong>');
+        } else {
+            showToast('info','Market Closed or Fetch Failed','Using '+MKT().currency+inp().cur.toLocaleString()+'. Try during market hours (9:15–15:30 IST).');
+        }
+    }
+    function updateLiveDisplay(){
+        const cur = inp().cur;
+        const val = document.getElementById('liveVal');
+        const tag = document.getElementById('liveTag');
+        const meta = document.getElementById('liveMeta');
+        if(!val) return;
+        val.textContent = cur.toLocaleString();
+        const zl = cur>=14000?'SAFE':cur>=12000?'CAUTION':cur>=10000?'CORRECTION':cur>=8000?'CRASH':'NUCLEAR';
+        const zc = cur>=14000?'var(--green)':cur>=12000?'var(--amber)':cur>=10000?'#ff8c42':cur>=8000?'var(--red)':'var(--purple)';
+        const zbg = cur>=14000?'rgba(0,230,138,0.1)':cur>=12000?'rgba(255,179,71,0.1)':cur>=10000?'rgba(255,140,66,0.1)':cur>=8000?'rgba(255,77,106,0.1)':'rgba(168,85,247,0.1)';
+        val.style.color = zc;
+        tag.textContent = zl;
+        tag.style.cssText = `background:${zbg};color:${zc};border:1px solid ${zc}30;font-size:10px;padding:4px 10px;border-radius:6px;font-weight:700;letter-spacing:0.3px;`;
+        if(lastFetchTime){
+            const ago = Math.round((Date.now()-lastFetchTime)/1000);
+            meta.innerHTML = `<strong>Live</strong> · Updated ${ago<60?ago+'s':Math.round(ago/60)+'m'} ago · Auto-refreshes every 2 min`;
+        } else {
+            meta.innerHTML = `<strong>Manual</strong> · Enter value or click Refresh for live data`;
+        }
+    }
+    function startLivePolling(){
+        refreshLive();
+        liveTimer = setInterval(()=>{
+            const now=new Date();
+            const utcH=now.getUTCHours(),utcM=now.getUTCMinutes();
+            const istH=utcH+5+(utcM+30>=60?1:0);
+            const istMins=istH*60+(utcM+30)%60;
+            if(istMins>=555 && istMins<=930 && now.getUTCDay()!==0 && now.getUTCDay()!==6){
+                refreshLive();
+            } else {
+                updateLiveDisplay();
+            }
+        }, 2*60*1000);
+    }
+
+    // ============ DIP TRACKER ============
+    function renderDipTracker(){
+        const cur = inp().cur;
+        updateLiveDisplay();
+
+        let nextIdx = -1;
+        for(let i=0;i<tiers.length;i++){
+            if(tiers[i].entry < cur){ nextIdx=i; break; }
+        }
+        const ntVal = document.getElementById('nextTargetVal');
+        const ntDesc = document.getElementById('nextTargetDesc');
+        const ntDist = document.getElementById('nextTargetDist');
+        const ntPts = document.getElementById('nextTargetPts');
+        if(nextIdx>=0){
+            const nt = tiers[nextIdx];
+            const pts = cur - nt.entry;
+            const pct = ((cur-nt.entry)/cur*100);
+            const distColor = pct<5?'var(--red)':pct<10?'var(--amber)':pct<20?'var(--blue)':'var(--green)';
+            ntVal.textContent = `${nt.entry.toLocaleString()} · Zone ${nt.zone}`;
+            ntDesc.innerHTML = `Deploy <strong>${fmtL(nt.fresh)}</strong> when index reaches this level · Alert at ${(nt.entry*1.025).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g,',')} (2.5% proximity)`;
+            ntDist.textContent = pct.toFixed(1)+'%';
+            ntDist.style.color = distColor;
+            ntPts.textContent = `${pts.toLocaleString()} points away`;
+        } else {
+            ntVal.textContent = 'All zones triggered!';
+            ntDesc.textContent = 'Index is below all your buy zones — full deployment mode';
+            ntDist.textContent = '0%';
+            ntDist.style.color = 'var(--red)';
+            ntPts.textContent = 'Deploy all capital';
+        }
+
+        const grid = document.getElementById('proxGrid');
+        const maxFall = Math.max(...tiers.map(t=>Math.max(0,(cur-t.entry)/cur*100)),1);
+        const triggered = tiers.filter(t=>t.entry>=cur).length;
+        const badge = document.getElementById('trackerBadge');
+        if(triggered>0) {
+            badge.textContent = triggered;
+            badge.style.display='inline-block';
+        } else {
+            badge.style.display='none';
+        }
+
+        grid.innerHTML = tiers.map((t,i)=>{
+            const fall = Math.max(0,(cur-t.entry)/cur*100);
+            const pts = cur - t.entry;
+            const triggered = t.entry >= cur;
+            const alertDist = triggered ? 0 : ((cur - t.entry*1.025)/cur*100);
+            const proxPct = triggered ? 100 : Math.min(100, (1 - fall/maxFall)*100);
+            const cardCls = triggered?'pc-triggered':fall<5?'pc-near':'pc-far';
+            const statusCls = triggered?'ps-triggered':fall<5?'ps-close':'ps-away';
+            const statusTxt = triggered?'TRIGGERED':fall<3?'VERY CLOSE':fall<8?'APPROACHING':fall<15?'WATCHING':'FAR';
+            const barColor = triggered?'var(--red)':fall<5?'var(--amber)':fall<15?'var(--blue)':'var(--muted)';
+            const barPct = triggered ? 100 : Math.max(2, Math.min(100, (1-fall/60)*100));
+            const c = cagr(i);
+
+            return `<div class="prox-card ${cardCls}">
+                <div class="prox-top">
+                    <div class="prox-zone" style="color:${triggered?'var(--red)':fall<5?'var(--amber)':'var(--text)'};">${t.entry.toLocaleString()}</div>
+                    <span class="prox-status ${statusCls}">${statusTxt}</span>
+                </div>
+                <div class="prox-bar-wrap">
+                    <div class="prox-bar-bg">
+                        <div class="prox-bar-fill" style="width:${barPct}%;background:${barColor};"></div>
+                        <div class="prox-bar-needle" style="left:${barPct}%;background:${barColor};"></div>
+                    </div>
+                </div>
+                <div class="prox-stats">
+                    <div class="prox-stat">
+                        <div class="prox-stat-val" style="color:var(--text);">${t.entry.toLocaleString()}</div>
+                        <div class="prox-stat-lbl">Entry Price</div>
+                    </div>
+                    <div class="prox-stat">
+                        <div class="prox-stat-val" style="color:${triggered?'var(--red)':fall<5?'var(--amber)':'var(--blue)'};">${triggered?'NOW':fall.toFixed(1)+'%'}</div>
+                        <div class="prox-stat-lbl">${triggered?'BUY NOW':'Fall Needed'}</div>
+                    </div>
+                    <div class="prox-stat">
+                        <div class="prox-stat-val" style="color:var(--gold);">${fmtL(t.fresh)}</div>
+                        <div class="prox-stat-lbl">Deploy</div>
+                    </div>
+                </div>
+                <div class="prox-stats" style="margin-top:6px;">
+                    <div class="prox-stat">
+                        <div class="prox-stat-val" style="color:var(--text2);font-size:15px;">${pts>0?pts.toLocaleString()+' pts':'AT LEVEL'}</div>
+                        <div class="prox-stat-lbl">Points Away</div>
+                    </div>
+                    <div class="prox-stat">
+                        <div class="prox-stat-val" style="color:${alertDist<3?'var(--red)':'var(--text2)'};font-size:15px;">${triggered?'LIVE':alertDist.toFixed(1)+'%'}</div>
+                        <div class="prox-stat-lbl">To Alert Zone</div>
+                    </div>
+                    <div class="prox-stat">
+                        <div class="prox-stat-val" style="color:var(--green);font-size:15px;">${Math.round(c)}%</div>
+                        <div class="prox-stat-lbl">Expected CAGR</div>
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    // ============ MESSAGE PREVIEW ============
+    let currentMsgTab = 'email';
+    function populatePreviewDropdown(){
+        const sel = document.getElementById('previewZone');
+        if(!sel) return;
+        sel.innerHTML = tiers.map((t,i)=>`<option value="${i}">${t.entry.toLocaleString()} — ${t.zone} — Deploy ${fmtL(t.fresh)}</option>`).join('');
+    }
+    function switchMsgTab(tab, el){
+        currentMsgTab = tab;
+        document.querySelectorAll('.msg-tab').forEach(t=>t.classList.remove('active'));
+        if(el) el.classList.add('active');
+        updateMsgPreview();
+    }
+    function updateMsgPreview(){
+        const sel = document.getElementById('previewZone');
+        const box = document.getElementById('msgPreviewBox');
+        if(!sel||!box) return;
+        const i = +sel.value || 0;
+        const t = tiers[i];
+        if(!t) return;
+        const cur = inp().cur;
+        const fall = Math.max(0,(cur-t.entry)/cur*100);
+        const email = document.getElementById('alertEmail')?.value || 'your@email.com';
+        const phone = document.getElementById('alertPhone')?.value || '+91XXXXXXXXXX';
+
+        if(currentMsgTab==='email'){
+            box.innerHTML = `
+                <div class="msg-from">TO: ${email}</div>
+                <div class="msg-subject">BUY ZONE ALERT — Nifty Midcap at ${cur.toLocaleString()}</div>
+                <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:10px;">
+                    Nifty Midcap 50 is at <strong>${cur.toLocaleString()}</strong> — approaching zone <strong>${t.zone}</strong> (entry: ${t.entry.toLocaleString()}).<br><br>
+                    Deploy <strong>${fmtL(t.fresh)}</strong> fresh capital at this level.<br><br>
+                    Current fall from your reference: <strong>${fall.toFixed(1)}%</strong><br>
+                    Points away: <strong>${(cur-t.entry).toLocaleString()}</strong><br><br>
+                    <span style="color:var(--muted);font-size:10px;">— Crash Buy Strategy Planner</span>
+                </div>`;
+        } else if(currentMsgTab==='telegram'){
+            box.innerHTML = `
+                <div class="msg-from">TELEGRAM BOT MESSAGE</div>
+                <div style="background:rgba(0,136,204,0.08);border:1px solid rgba(0,136,204,0.2);border-radius:10px;padding:14px;margin-top:8px;font-size:13px;line-height:1.7;">
+                    🚨 <strong>BUY ZONE ALERT!</strong><br><br>
+                    Nifty Midcap 50: <strong>${cur.toLocaleString()}</strong><br>
+                    Zone: <strong>${t.zone}</strong> (entry: ${t.entry.toLocaleString()})<br>
+                    Deploy: <strong>${MKT().currency}${fmtL(t.fresh)}</strong><br>
+                    Proximity: <strong>${fall.toFixed(1)}%</strong> away<br><br>
+                    ⚡ ACT NOW — Open your broker!
+                </div>
+                <div style="margin-top:10px;font-size:10px;color:var(--muted);">This arrives as a push notification on your phone via Telegram. Set up the bot below — takes 2 minutes.</div>`;
+        } else {
+            box.innerHTML = `
+                <div class="msg-from">BROWSER PUSH NOTIFICATION</div>
+                <div style="background:rgba(255,255,255,0.08);border:1px solid var(--border);border-radius:12px;padding:16px;margin-top:8px;display:flex;gap:14px;align-items:flex-start;">
+                    <div style="font-size:28px;">🚨</div>
+                    <div>
+                        <div style="font-weight:900;font-size:14px;margin-bottom:5px;">BUY ZONE ALERT</div>
+                        <div style="font-size:13px;color:var(--text2);">Midcap at ${cur.toLocaleString()} — zone ${t.zone}. Deploy ${fmtL(t.fresh)}. ${fall.toFixed(1)}% away!</div>
+                    </div>
+                </div>
+                <div style="margin-top:10px;font-size:10px;color:var(--muted);">This notification pops up on your desktop/mobile when the browser is open. Requires notification permission.</div>`;
+        }
+    }
+    async function fireTestForZone(){
+        const i = +(document.getElementById('previewZone')?.value || 0);
+        const t = tiers[i];
+        if(!t) return;
+        const cur = inp().cur;
+        const fall = Math.max(0,(cur-t.entry)/cur*100);
+        const emailAddr = document.getElementById('alertEmail').value;
+
+        if(!isEmailConfigured() && !isTelegramConfigured()){
+            showToast('alert','No Alerts Set Up!','Configure Telegram (for mobile) or Email below.',10000);
+            document.getElementById('emailSetup').scrollIntoView({behavior:'smooth',block:'center'});
+            return;
+        }
+
+        let results = [];
+
+        // Toast + Sound
+        showToast('alert','TEST — '+t.entry.toLocaleString(), `<strong>${t.entry.toLocaleString()}</strong> (${t.zone}) — Deploy <strong>${fmtL(t.fresh)}</strong>. Fall: ${fall.toFixed(1)}%.`, 12000);
+        results.push('<span style="color:var(--green);">✓</span> <strong>Toast + Sound</strong> — Fired');
+
+        // Telegram
+        if(isTelegramConfigured()){
+            const tgResult = await sendTelegram(`🚨 <b>TEST — Zone ${t.zone}</b>\n\nEntry: ${t.entry.toLocaleString()}\nDeploy: ${MKT().currency}${fmtL(t.fresh)}\nCurrent: ${cur.toLocaleString()}\nFall: ${fall.toFixed(1)}%`);
+            results.push(tgResult.ok
+                ? '<span style="color:var(--green);">✓</span> <strong>Telegram</strong> — Sent! Check your phone.'
+                : `<span style="color:var(--red);">✗</span> <strong>Telegram</strong> — ${tgResult.err}`);
+        }
+
+        // Email
+        if(isEmailConfigured()){
+            const subject = `TEST: Zone ${t.zone} — Entry ${t.entry.toLocaleString()}`;
+            const body = `TEST from Crash Buy Strategy Planner.\n\nZone: ${t.zone}\nEntry: ${t.entry.toLocaleString()}\nDeploy: ${MKT().currency}${fmtL(t.fresh)}\nCurrent: ${cur.toLocaleString()}\nFall: ${fall.toFixed(1)}%`;
+            const emailResult = await sendEmailViaAPI(emailAddr, subject, body);
+            results.push(emailResult.ok
+                ? `<span style="color:var(--green);">✓</span> <strong>Email (${emailResult.via})</strong> — Sent to ${emailAddr}`
+                : `<span style="color:var(--red);">✗</span> <strong>Email</strong> — ${emailResult.err}`);
+        }
+
+        setTimeout(()=>{ showToast('success','Test Complete', results.join('<br>'), 18000); }, 1200);
+    }
+    function previewBrowserNotif(){
+        if(Notification.permission==='granted'){
+            const i = +(document.getElementById('previewZone')?.value || 0);
+            const t = tiers[i]||tiers[0];
+            const cur = inp().cur;
+            new Notification('Preview — Buy Zone Alert',{body:`Midcap at ${cur.toLocaleString()} — zone ${t.zone}. Deploy ${fmtL(t.fresh)}.`,tag:'preview',silent:false});
+            showToast('success','Notification Sent!','Check your notification center.');
+        } else {
+            Notification.requestPermission().then(p=>{
+                if(p==='granted'){previewBrowserNotif();}
+                else showToast('info','Permission Denied','Enable notifications in browser settings.');
+            });
+        }
+    }
+
+    // ============ PDF EXPORT ============
+    async function exportFullPDF(){
+        const btn = document.querySelector('.btn-fullpdf');
+        const origText = btn.innerHTML;
+        btn.innerHTML = '⏳ Generating Full Report...';
+        btn.disabled = true;
+        btn.style.opacity = '0.6';
+
+        try {
+            const {jsPDF} = window.jspdf;
+            const margin = 8;
+
+            // Helper: capture element with forced width so nothing clips
+            async function snap(el, forceW){
+                const w = forceW || Math.max(el.scrollWidth, el.offsetWidth) + 20;
+                return await html2canvas(el, {
+                    backgroundColor:'#04080f', scale:2, useCORS:true, logging:false,
+                    scrollX:0, scrollY:0, width:w, windowWidth:w,
+                    height: el.scrollHeight + 10, windowHeight: el.scrollHeight + 10,
+                });
+            }
+
+            // Helper: fit canvas onto a jsPDF page (auto adds page, returns pdf)
+            // orient: 'p' portrait, 'l' landscape
+            function addPage(pdf, canvas, orient){
+                const pW = orient==='l' ? 297 : 210;
+                const pH = orient==='l' ? 210 : 297;
+                const cW = pW - margin*2;
+                const cH = pH - margin*2 - 10; // leave room for footer
+                const pxW = canvas.width, pxH = canvas.height;
+                const ratio = pxW / pxH;
+                let fitW = cW, fitH = cW / ratio;
+                if(fitH > cH){ fitH = cH; fitW = cH * ratio; }
+                const x = margin + (cW - fitW)/2;
+                const y = margin;
+                pdf.addImage(canvas.toDataURL('image/png'),'PNG', x, y, fitW, fitH);
+            }
+
+            // Helper: add multi-page sliced content
+            function addSliced(pdf, canvas, orient){
+                const pW = orient==='l' ? 297 : 210;
+                const pH = orient==='l' ? 210 : 297;
+                const cW = pW - margin*2;
+                const cH = pH - margin*2 - 10;
+                const pxW = canvas.width, pxH = canvas.height;
+                const fitW = cW;
+                const fitH = (pxH * fitW) / pxW;
+                if(fitH <= cH){
+                    const x = margin, y = margin + (cH - fitH)/2;
+                    pdf.addImage(canvas.toDataURL('image/png'),'PNG', x, Math.max(margin,y), fitW, fitH);
+                    return;
+                }
+                // Multi-page slice
+                const slicePxH = Math.floor((cH * pxW) / fitW);
+                let srcY = 0, pg = 0;
+                while(srcY < pxH){
+                    if(pg > 0) pdf.addPage([pW, pH], orient);
+                    const thisPx = Math.min(slicePxH, pxH - srcY);
+                    const thisMM = (thisPx * fitW) / pxW;
+                    const tmp = document.createElement('canvas');
+                    tmp.width = pxW; tmp.height = thisPx;
+                    tmp.getContext('2d').drawImage(canvas, 0, srcY, pxW, thisPx, 0, 0, pxW, thisPx);
+                    pdf.addImage(tmp.toDataURL('image/png'),'PNG', margin, margin, fitW, thisMM);
+                    srcY += thisPx; pg++;
+                }
+            }
+
+            // ===== STORE & MODIFY DOM FOR CAPTURE =====
+            const tblScroll = document.querySelector('.tbl-scroll');
+            const tblWrap = document.querySelector('.tbl-wrap');
+            const stratGrid = document.querySelector('.strategy-grid');
+            const kpiEl = document.getElementById('kpiStrip');
+
+            // Save original styles
+            const saved = {
+                tblScrollMax: tblScroll.style.maxHeight,
+                tblScrollOF: tblScroll.style.overflow,
+                tblWrapFlex: tblWrap.style.flex,
+                tblWrapOF: tblWrap.style.overflow,
+                gridH: stratGrid.style.height,
+                gridCols: stratGrid.style.gridTemplateColumns,
+                kpiWrap: kpiEl.style.flexWrap,
+                kpiW: kpiEl.style.width,
+                kpiGrid: kpiEl.style.gridTemplateColumns,
+            };
+
+            // ===== PAGE 1: COVER + KPIs (PORTRAIT) =====
+            const pdf = new jsPDF('p','mm',[210,297]);
+
+            // Cover header
+            pdf.setFillColor(4,8,15);
+            pdf.rect(0,0,210,297,'F');
+            pdf.setFillColor(20,16,10);
+            pdf.rect(0,0,210,42,'F');
+            pdf.setDrawColor(255,215,0);
+            pdf.setLineWidth(1);
+            pdf.line(0,42,210,42);
+            pdf.setFont('helvetica','bold');
+            pdf.setFontSize(30);
+            pdf.setTextColor(255,215,0);
+            pdf.text('Crash Buy Strategy', 105, 18, {align:'center'});
+            pdf.setFontSize(13);
+            pdf.setTextColor(136,153,187);
+            pdf.text('Nifty Midcap 50 · Staggered Deployment · Full Report', 105, 30, {align:'center'});
+            pdf.setFontSize(10);
+            pdf.setTextColor(85,102,136);
+            pdf.text('Generated: '+new Date().toLocaleString('en-IN',{dateStyle:'full',timeStyle:'short'}), 105, 38, {align:'center'});
+
+            // Force KPI to NOT wrap so all 6 cards show
+            kpiEl.style.gridTemplateColumns = 'repeat(6, minmax(160px, 1fr))';
+            kpiEl.style.width = '1100px';
+            await new Promise(r=>setTimeout(r,100));
+            const kpiCanvas = await snap(kpiEl, 1120);
+            // Fit KPI onto page below header
+            const kpiFitW = 194;
+            const kpiFitH = (kpiCanvas.height * kpiFitW) / kpiCanvas.width;
+            pdf.addImage(kpiCanvas.toDataURL('image/png'),'PNG', 8, 48, kpiFitW, Math.min(kpiFitH, 60));
+            // Restore KPI
+            kpiEl.style.gridTemplateColumns = saved.kpiGrid;
+            kpiEl.style.width = saved.kpiW;
+
+            // ===== PAGE 2: STRATEGY TABLE (LANDSCAPE) =====
+            // Expand table fully — remove all overflow/scroll constraints
+            tblScroll.style.maxHeight = 'none';
+            tblScroll.style.overflow = 'visible';
+            tblWrap.style.flex = 'none';
+            tblWrap.style.overflow = 'visible';
+            stratGrid.style.height = 'auto';
+            stratGrid.style.gridTemplateColumns = '1fr';
+            // Force table width wide enough for all columns
+            const table = tblWrap.querySelector('table');
+            const origTblW = table ? table.style.minWidth : '';
+            if(table) table.style.minWidth = '1200px';
+            await new Promise(r=>setTimeout(r,100));
+
+            const tblW = Math.max(tblWrap.scrollWidth, 1220);
+            const tblCanvas = await snap(tblWrap, tblW);
+            pdf.addPage([297,210],'l'); // landscape
+            addSliced(pdf, tblCanvas, 'l');
+
+            // Restore table
+            tblScroll.style.maxHeight = saved.tblScrollMax;
+            tblScroll.style.overflow = saved.tblScrollOF;
+            tblWrap.style.flex = saved.tblWrapFlex;
+            tblWrap.style.overflow = saved.tblWrapOF;
+            stratGrid.style.height = saved.gridH;
+            stratGrid.style.gridTemplateColumns = saved.gridCols;
+            if(table) table.style.minWidth = origTblW;
+
+            // ===== PAGE 3: SIDEBARS (PORTRAIT — side by side) =====
+            pdf.addPage([210,297],'p');
+            pdf.setFillColor(4,8,15);
+            pdf.rect(0,0,210,297,'F');
+            const leftSidebar = document.querySelector('.strat-left');
+            const rightSidebar = document.querySelector('.strat-right');
+            if(leftSidebar){
+                const lc = await snap(leftSidebar);
+                const lW = 92, lH = (lc.height*lW)/lc.width;
+                pdf.addImage(lc.toDataURL('image/png'),'PNG', margin, margin, lW, Math.min(lH,275));
+            }
+            if(rightSidebar){
+                const rc = await snap(rightSidebar);
+                const rW = 92, rH = (rc.height*rW)/rc.width;
+                pdf.addImage(rc.toDataURL('image/png'),'PNG', 110, margin, rW, Math.min(rH,275));
+            }
+
+            // ===== PAGE 4+: DIP TRACKER (PORTRAIT) =====
+            // Show tracker tab, hide strategy tab, trigger render
+            const stratTab = document.getElementById('tabStrategy');
+            const trackerTab = document.getElementById('tabTracker');
+            const alertsTab = document.getElementById('tabAlerts');
+            stratTab.classList.remove('active'); stratTab.style.display = 'none';
+            trackerTab.classList.add('active'); trackerTab.style.display = 'block';
+            // Force render the tracker data with current index
+            if(typeof refreshLive === 'function'){
+                // Just update the tracker UI without fetching (use current value)
+                const cur = inp().cur;
+                document.getElementById('liveVal').textContent = cur.toLocaleString();
+                document.getElementById('liveTag').textContent = 'CURRENT';
+                document.getElementById('liveMeta').textContent = 'Snapshot for PDF export';
+            }
+            // Call the tracker rendering (it reads from tiers + inp)
+            // Manually render proximity cards
+            const cur = inp().cur;
+            const ntVal = document.getElementById('nextTargetVal');
+            const ntDesc = document.getElementById('nextTargetDesc');
+            const ntDist = document.getElementById('nextTargetDist');
+            const ntPts = document.getElementById('nextTargetPts');
+            const liveValEl = document.getElementById('liveVal');
+            liveValEl.textContent = cur.toLocaleString();
+            liveValEl.style.color = 'var(--cyan)';
+            document.getElementById('liveTag').textContent = 'CURRENT';
+            document.getElementById('liveTag').style.cssText = 'font-size:13px;padding:7px 16px;border-radius:10px;font-weight:800;letter-spacing:0.3px;text-transform:uppercase;background:rgba(0,212,255,0.1);color:var(--cyan);border:1px solid rgba(0,212,255,0.25);';
+            document.getElementById('liveMeta').textContent = 'Value at time of PDF export';
+
+            // Find next target
+            let nextTier = null;
+            for(let t of tiers){ if(t.entry < cur){ nextTier = t; break; } }
+            if(nextTier){
+                ntVal.textContent = nextTier.entry.toLocaleString() + ' (' + nextTier.zone + ')';
+                ntDesc.textContent = 'Deploy ' + MKT().currency + fmtL(nextTier.fresh) + ' when index reaches this level';
+                const distPct = ((cur - nextTier.entry)/cur*100);
+                ntDist.textContent = distPct.toFixed(1) + '%';
+                ntDist.style.color = distPct<5 ? 'var(--red)' : 'var(--amber)';
+                ntPts.textContent = (cur - nextTier.entry).toLocaleString() + ' points away';
+            }
+
+            // Render prox grid
+            const grid = document.getElementById('proxGrid');
+            const maxFall = Math.max(...tiers.map(t=>Math.max(0,(cur-t.entry)/cur*100)),1);
+            grid.innerHTML = tiers.map((t,i)=>{
+                const fall = Math.max(0,(cur-t.entry)/cur*100);
+                const pts = cur - t.entry;
+                const trig = t.entry >= cur;
+                const alertDist = trig ? 0 : ((cur - t.entry*1.025)/cur*100);
+                const cardCls = trig?'pc-triggered':fall<5?'pc-near':'pc-far';
+                const statusCls = trig?'ps-triggered':fall<5?'ps-close':'ps-away';
+                const statusTxt = trig?'TRIGGERED':fall<3?'VERY CLOSE':fall<8?'APPROACHING':fall<15?'WATCHING':'FAR';
+                const barColor = trig?'var(--red)':fall<5?'var(--amber)':fall<15?'var(--blue)':'var(--muted)';
+                const barPct = trig ? 100 : Math.max(2, Math.min(100, (1-fall/60)*100));
+                const c = cagr(i);
+                return `<div class="prox-card ${cardCls}">
+                    <div class="prox-top">
+                        <div class="prox-zone" style="color:${trig?'var(--red)':fall<5?'var(--amber)':'var(--text)'};">${t.entry.toLocaleString()}</div>
+                        <span class="prox-status ${statusCls}">${statusTxt}</span>
+                    </div>
+                    <div class="prox-bar-wrap">
+                        <div class="prox-bar-bg">
+                            <div class="prox-bar-fill" style="width:${barPct}%;background:${barColor};"></div>
+                            <div class="prox-bar-needle" style="left:${barPct}%;background:${barColor};"></div>
+                        </div>
+                    </div>
+                    <div class="prox-stats">
+                        <div class="prox-stat"><div class="prox-stat-val" style="color:var(--text);">${t.entry.toLocaleString()}</div><div class="prox-stat-lbl">Entry Price</div></div>
+                        <div class="prox-stat"><div class="prox-stat-val" style="color:${trig?'var(--red)':fall<5?'var(--amber)':'var(--blue)'};">${trig?'NOW':fall.toFixed(1)+'%'}</div><div class="prox-stat-lbl">${trig?'BUY NOW':'Fall Needed'}</div></div>
+                        <div class="prox-stat"><div class="prox-stat-val" style="color:var(--gold);">${fmtL(t.fresh)}</div><div class="prox-stat-lbl">Deploy</div></div>
+                    </div>
+                    <div class="prox-stats" style="margin-top:6px;">
+                        <div class="prox-stat"><div class="prox-stat-val" style="color:var(--text2);font-size:15px;">${pts>0?pts.toLocaleString()+' pts':'AT LEVEL'}</div><div class="prox-stat-lbl">Points Away</div></div>
+                        <div class="prox-stat"><div class="prox-stat-val" style="color:${alertDist<3?'var(--red)':'var(--text2)'};font-size:15px;">${trig?'LIVE':alertDist.toFixed(1)+'%'}</div><div class="prox-stat-lbl">To Alert Zone</div></div>
+                        <div class="prox-stat"><div class="prox-stat-val" style="color:var(--green);font-size:15px;">${Math.round(c)}%</div><div class="prox-stat-lbl">Expected CAGR</div></div>
+                    </div>
+                </div>`;
+            }).join('');
+
+            await new Promise(r=>setTimeout(r,300));
+            const trackerCanvas = await snap(trackerTab, Math.max(trackerTab.scrollWidth,1200));
+            pdf.addPage([210,297],'p');
+            addSliced(pdf, trackerCanvas, 'p');
+
+            // Restore tabs
+            trackerTab.classList.remove('active'); trackerTab.style.display = '';
+            stratTab.classList.add('active'); stratTab.style.display = '';
+
+            // ===== FOOTER on every page =====
+            const totalPages = pdf.getNumberOfPages();
+            for(let p=1; p<=totalPages; p++){
+                pdf.setPage(p);
+                const dims = pdf.internal.pageSize;
+                const pW = dims.getWidth(), pH2 = dims.getHeight();
+                pdf.setDrawColor(255,215,0);
+                pdf.setLineWidth(0.3);
+                pdf.line(margin, pH2-12, pW-margin, pH2-12);
+                pdf.setFontSize(8);
+                pdf.setTextColor(85,102,136);
+                pdf.text('Crash Buy Strategy · Nifty Midcap 50 · This is a planning tool, not financial advice.', margin, pH2-7);
+                pdf.text('Page '+p+' of '+totalPages, pW-margin, pH2-7, {align:'right'});
+            }
+
+            pdf.save('CrashBuyStrategy_FullReport_'+new Date().toISOString().slice(0,10)+'.pdf');
+            showToast('success','Full Report PDF Downloaded!','All tabs exported — Strategy, Dip Tracker, Sidebars — into one PDF.');
+
+        } catch(e) {
+            console.error('PDF Error:', e);
+            showToast('info','PDF Error','Could not generate full report: '+e.message);
+        }
+        btn.innerHTML = origText;
+        btn.disabled = false;
+        btn.style.opacity = '';
+    }
+
+    async function exportPDF(){
+        const btn = document.querySelector('.btn-pdf');
+        const origText = btn.innerHTML;
+        btn.innerHTML = '⏳ Generating PDF...';
+        btn.disabled = true;
+        try {
+            const el = document.querySelector('.container');
+            const canvas = await html2canvas(el, {
+                backgroundColor:'#04080f',
+                scale:2,
+                useCORS:true,
+                logging:false,
+                scrollX:0,
+                scrollY:-window.scrollY,
+                windowWidth:el.scrollWidth,
+                windowHeight:el.scrollHeight
+            });
+            const imgData = canvas.toDataURL('image/png');
+            const {jsPDF} = window.jspdf;
+            const pxW = canvas.width, pxH = canvas.height;
+            const pdfW = 297;
+            const pdfH = (pxH * pdfW) / pxW;
+            const pageH = 210;
+            let pdf;
+            if(pdfH <= pageH){
+                pdf = new jsPDF('l','mm',[pdfW, pdfH]);
+                pdf.addImage(imgData,'PNG',0,0,pdfW,pdfH);
+            } else {
+                pdf = new jsPDF('p','mm',[210, 297]);
+                const fitW = 190;
+                const fitH = (pxH * fitW) / pxW;
+                let yOff = 10;
+                const sliceH = ((297-20) * pxW) / fitW;
+                let srcY = 0;
+                let page = 0;
+                while(srcY < pxH){
+                    if(page > 0) pdf.addPage();
+                    const thisSlice = Math.min(sliceH, pxH - srcY);
+                    const tmpCanvas = document.createElement('canvas');
+                    tmpCanvas.width = pxW;
+                    tmpCanvas.height = thisSlice;
+                    tmpCanvas.getContext('2d').drawImage(canvas, 0, srcY, pxW, thisSlice, 0, 0, pxW, thisSlice);
+                    const sliceImg = tmpCanvas.toDataURL('image/png');
+                    const sliceMMH = (thisSlice * fitW) / pxW;
+                    pdf.addImage(sliceImg,'PNG',10,10,fitW,sliceMMH);
+                    srcY += thisSlice;
+                    page++;
+                }
+            }
+            pdf.save('BuyStrategy_'+new Date().toISOString().slice(0,10)+'.pdf');
+            showToast('success','PDF Downloaded!','Your strategy plan has been exported as PDF.');
+        } catch(e) {
+            showToast('info','PDF Error','Could not generate PDF: '+e.message);
+        }
+        btn.innerHTML = origText;
+        btn.disabled = false;
+    }
+
+    // ============ INIT ============
+    (function init(){
+        // Load Web3Forms key
+        const w3f = localStorage.getItem('w3f_key')||'';
+        if(w3f) document.getElementById('w3fKey').value=w3f;
+
+        // Load EmailJS config
+        const svc=localStorage.getItem('ejs_service')||'';
+        const tmpl=localStorage.getItem('ejs_template')||'';
+        const key=localStorage.getItem('ejs_key')||'';
+        if(svc) document.getElementById('ejsService').value=svc;
+        if(tmpl) document.getElementById('ejsTemplate').value=tmpl;
+        if(key){document.getElementById('ejsPublicKey').value=key;emailjs.init(key);}
+
+        // Load saved alert config
+        try{
+            const s=JSON.parse(localStorage.getItem('buyAlerts'));
+            if(s&&s.email) document.getElementById('alertEmail').value=s.email;
+            if(s&&s.phone) document.getElementById('alertPhone').value=s.phone;
+        }catch(e){}
+
+        if('Notification' in window && Notification.permission==='default'){
+            Notification.requestPermission();
+        }
+
+        updateEmailStatus();
+        updateTgStatus();
+        populatePreviewDropdown();
+        recalcAll();
+        startLivePolling();
+    })();
+</script>
+
+</body>
+</html>
