@@ -1,0 +1,34 @@
+name: Refresh News Feed (hourly)
+
+# Restores scheduled freshness for the main aggregated news feed.
+# The Vercel->Railway migration kept India-news + earnings/bot crons but
+# dropped any periodic trigger for /api/v1/news, whose GET handler scrapes
+# the US/global RSS sources and repopulates KV key news:articles:v39.
+# Without this, the feed only refreshed on user traffic and went stale.
+# Isolated workflow: failures here never affect the other cron jobs.
+
+on:
+  schedule:
+    - cron: '0 * * * *'   # top of every hour (UTC)
+  workflow_dispatch: {}
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Bust news cache and trigger fresh scrape
+        env:
+          BASE: ${{ secrets.CRON_BASE_URL }}
+          SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          # 1) Invalidate the news cache (auth-gated; best-effort)
+          curl -s -m 60 -X POST "$BASE/api/v1/news/refresh" \
+            -H "Authorization: Bearer $SECRET" \
+            -o /dev/null -w "refresh: %{http_code}\n" || true
+          # 2) Trigger the on-demand RSS scrape + repopulate the pool
+          curl -s -m 90 "$BASE/api/v1/news?market=all" \
+            -o /dev/null -w "news-all: %{http_code}\n" || true
+          # 3) Warm the in-play view too
+          curl -s -m 60 "$BASE/api/v1/news/in-play" \
+            -o /dev/null -w "in-play: %{http_code}\n" || true
