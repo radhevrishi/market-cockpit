@@ -36,7 +36,7 @@ export async function GET(request: Request) {
   // out". When NSE is CLOSED (weekend / after-hours) the data is static
   // last-close, so hold the cache 30 min; when OPEN keep it fresh (90s).
   let _ttl = RESPONSE_TTL;
-  try { const { isIndianMarketOpen } = await import('@/lib/market-hours'); _ttl = isIndianMarketOpen() ? 90_000 : 1_800_000; } catch {}
+  try { const { isIndianMarketOpen } = await import('@/lib/market-hours'); _ttl = isIndianMarketOpen() ? 90_000 : 21_600_000 /* PATCH: hold closed-hours cache 6h so it stays warm */; } catch {}
   // Check response cache
   const cached = responseCache.get(cacheKey);
   if (!_forceFresh && cached && Date.now() - cached.ts < _ttl) {
