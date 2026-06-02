@@ -1994,6 +1994,7 @@ export default function HomeDashboard() {
             <Link href="/auto-valuation"         style={navChip('#10B981')}>🤖 Auto-Valuation</Link>
             <Link href="/breadth"                style={navChip('#10B981')}>📊 Breadth</Link>
             <Link href="/buy-strategy" style={navChip('#FFD700')}>🛒 Buy Strategy</Link>
+            <Link href="/in-play" style={navChip('#22D3EE')}>📰 Live In Play</Link>
             <Link href="/earnings-hub?tab=concall" style={navChip('#A78BFA')}>🧠 Concall AI</Link>
             <Link href="/concall-intel"          style={navChip('#A78BFA')}>🎙 Concall Intel</Link>
             {/* PATCH 0910 — User request: surface Conviction Beats + Heatmap
