@@ -25,6 +25,7 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const market = searchParams.get('market') || 'india';
   const index = searchParams.get('index'); // Optional: 'midsmall50' for heatmap
+  const _forceFresh = searchParams.get('refresh') === '1' || searchParams.get('nocache') === '1'; // PATCH: manual force-refresh bypasses in-memory response cache
 
   // Build cache key based on market and index
   const cacheKey = `quotes:${market}:${index || 'all'}`;
@@ -38,7 +39,7 @@ export async function GET(request: Request) {
   try { const { isIndianMarketOpen } = await import('@/lib/market-hours'); _ttl = isIndianMarketOpen() ? 90_000 : 1_800_000; } catch {}
   // Check response cache
   const cached = responseCache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < _ttl) {
+  if (!_forceFresh && cached && Date.now() - cached.ts < _ttl) {
     return NextResponse.json(cached.data, {
       headers: { 'Cache-Control': 's-maxage=30, stale-while-revalidate=60' }, // PATCH 0873 — tightened from 60/300 for live quote freshness
     });
