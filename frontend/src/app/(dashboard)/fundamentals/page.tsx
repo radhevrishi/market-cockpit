@@ -263,10 +263,10 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
     ['Promoter holding', 'Promoter holding', '%'],
   ];
 
-  const leaders = (key: string, dir: 'desc' | 'asc') => {
+  const leaders = (key: string, dir: 'desc' | 'asc', n = 10) => {
     const v = data.filter((d) => !isNaN(num(d[key])));
     v.sort((a, b) => (dir === 'desc' ? num(b[key]) - num(a[key]) : num(a[key]) - num(b[key])));
-    return v.slice(0, 10);
+    return v.slice(0, n);
   };
 
   // quality compounder score
@@ -558,6 +558,16 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
             </div>
           );
         })}
+      </div>
+
+      {/* Market Cap leaders (Top 15 / Bottom 15) */}
+      <div style={grid2}>
+        <Card title="Top 15 — Largest Market Cap">
+          <LeaderTable rows={leaders('Market Capitalization', 'desc', 15)} valKey="Market Capitalization" unit=" Cr" name={name} nse={nse} />
+        </Card>
+        <Card title="Bottom 15 — Smallest Market Cap">
+          <LeaderTable rows={leaders('Market Capitalization', 'asc', 15)} valKey="Market Capitalization" unit=" Cr" name={name} nse={nse} />
+        </Card>
       </div>
 
       {/* Sales growth leaders */}
