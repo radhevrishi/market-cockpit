@@ -4165,6 +4165,10 @@ export default function MultibaggerPage() {
     } catch {}
     return [];
   });
+  // PATCH (assistant): persist India multibagger dataset on every change; initializer above already restores from STORAGE_KEY
+  useEffect(() => {
+    try { if (Array.isArray(excelRows) && excelRows.length) localStorage.setItem(STORAGE_KEY, JSON.stringify(excelRows)); } catch {}
+  }, [excelRows]);
 
   // Wrapper: always applies forced ranking before saving/setting state
   function setExcelRows(rows: ExcelResult[]) {
