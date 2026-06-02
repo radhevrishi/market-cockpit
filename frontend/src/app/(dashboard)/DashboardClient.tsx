@@ -101,6 +101,7 @@ const NAV_GROUPS: NavGroup[] = [
     icon: <Star className="w-5 h-5" />,
     items: [
       { href: '/multibagger',     label: 'Multibagger',           icon: <Star className="w-4 h-4" /> },
+      { href: '/buy-strategy', label: 'Buy Strategy', icon: <Rocket className="w-4 h-4" /> },
       { href: '/valuations',      label: 'Valuations',            icon: <Star className="w-4 h-4" /> },
       { href: '/valuation-calc',  label: 'Valuation Calculators', icon: <Star className="w-4 h-4" /> },
       { href: '/auto-valuation',  label: 'Auto-Valuation',        icon: <Star className="w-4 h-4" /> },
