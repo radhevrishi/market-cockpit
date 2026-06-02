@@ -560,7 +560,7 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
     // Gap 7: % from 52W High — prefer "From 52W High" column (already %) else compute
     pctFrom52wHigh: pctFrom52wHighDirect ??
       ((price!==undefined&&high52w!==undefined&&high52w>0)?
-        Math.round((price-high52w)/high52w*100) : undefined),
+        ((_v)=>(typeof _v==="number"&&_v>=-100&&_v<=20?_v:undefined))(Math.round((price-high52w)/high52w*100)) : undefined),
     // ── ACCELERATION SIGNALS (Framework.docx Core Signal) ────────────────────
     // Compare latest quarter YOY vs historical CAGR to detect trend direction.
     // If recent (YOY) > historical (CAGR): business is ACCELERATING — key buy signal.
