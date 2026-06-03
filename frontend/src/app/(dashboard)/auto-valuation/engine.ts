@@ -88,6 +88,11 @@ export interface AutoValuationReport {
   evResultY2?: CalculatorResult;
   recommendation: 'BUY' | 'WATCH' | 'WAIT' | 'AVOID' | 'NEED_MORE_DATA';
   rationale: string[];
+  // PATCH 1017 — surface market cap on the report so the page header can show
+  // it (the page was reading quote.currentMarketCapCr directly and ignoring the
+  // Excel fallback, leading to 'MCap ₹0 Cr' when Yahoo's chart API didn't
+  // return mcap for the symbol — common for Indian stocks).
+  currentMarketCapCr?: number;
   // PATCH 0664 — per-calc confidence so the UI can dim low-confidence cards
   peConfidence?: 'HIGH' | 'MED' | 'LOW';
   psConfidence?: 'HIGH' | 'MED' | 'LOW';
@@ -1091,6 +1096,33 @@ export async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationRepor
   if (forwardPAT) forwardPAT = Math.round(forwardPAT);
   if (inferredMargin) inferredMargin = Math.round(inferredMargin * 10) / 10;
 
+  // PATCH 1017 — Sector-typed secondary bands for non-preferred metrics.
+  // Without this, when sector is e.g. Auto Components (EV/EBITDA preferred),
+  // the P/E and P/S bands stay at generic 25x / 3.5x — producing the misleading
+  // '+380% P/S upside' for stocks that actually trade at ~1x P/S. Secondary
+  // bands are derived from the preferred multiple's midpoint using empirical
+  // sector conversion ratios.
+  function deriveSecondaryBands(
+    primary: 'PE' | 'PS' | 'EV_EBITDA',
+    primaryMid: number,
+    sec: string
+  ): { PE?: { bear: number; base: number; bull: number }; PS?: { bear: number; base: number; bull: number }; EV_EBITDA?: { bear: number; base: number; bull: number } } {
+    const out: { PE?: any; PS?: any; EV_EBITDA?: any } = {};
+    const rnd = (n: number, d = 1): number => Math.round(n * Math.pow(10, d)) / Math.pow(10, d);
+    if (primary === 'EV_EBITDA') {
+      out.PE = { bear: rnd(primaryMid * 1.0), base: rnd(primaryMid * 1.4), bull: rnd(primaryMid * 1.9) };
+      out.PS = { bear: rnd(primaryMid * 0.08, 2), base: rnd(primaryMid * 0.12, 2), bull: rnd(primaryMid * 0.18, 2) };
+    } else if (primary === 'PE') {
+      const psFactor = /Defence|FMCG|Insurance|Pharma|AI Infra|Rail/i.test(sec) ? 0.22 : 0.14;
+      out.EV_EBITDA = { bear: rnd(primaryMid * 0.50), base: rnd(primaryMid * 0.70), bull: rnd(primaryMid * 0.95) };
+      out.PS = { bear: rnd(primaryMid * psFactor * 0.7, 2), base: rnd(primaryMid * psFactor, 2), bull: rnd(primaryMid * psFactor * 1.6, 2) };
+    } else {
+      out.PE = { bear: rnd(primaryMid * 5), base: rnd(primaryMid * 8), bull: rnd(primaryMid * 15) };
+      out.EV_EBITDA = { bear: rnd(primaryMid * 3), base: rnd(primaryMid * 5), bull: rnd(primaryMid * 8) };
+    }
+    return out;
+  }
+
   // Sector → multiple lookup
   const sectorConf = sector ? SECTOR_CALCULATOR_MAP[sector] : undefined;
   // PATCH 0849 — sector-aware defaults. The old 5/10/18 P/S default was
@@ -1117,6 +1149,11 @@ export async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationRepor
       if (sectorConf.calc === 'PE') defaults.PE = { bear: lo, base: mid, bull: hi };
       if (sectorConf.calc === 'PS') defaults.PS = { bear: lo, base: mid, bull: hi };
       if (sectorConf.calc === 'EV_EBITDA') defaults.EV_EBITDA = { bear: lo, base: mid, bull: hi };
+      // PATCH 1017 — derive secondary bands so all 3 calculators are sector-tuned
+      const secondary = deriveSecondaryBands(sectorConf.calc, mid, sector || '');
+      if (secondary.PE && sectorConf.calc !== 'PE') defaults.PE = secondary.PE;
+      if (secondary.PS && sectorConf.calc !== 'PS') defaults.PS = secondary.PS;
+      if (secondary.EV_EBITDA && sectorConf.calc !== 'EV_EBITDA') defaults.EV_EBITDA = secondary.EV_EBITDA;
     }
   }
 
@@ -1523,6 +1560,8 @@ export async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationRepor
     forwardPATY2: patScenY2.base,
     peResultY2, psResultY2, evResultY2,
     recommendation, rationale,
+    // PATCH 1017 — surface MCap on report (page header was reading quote-only)
+    currentMarketCapCr: currentMarketCapCr || undefined,
     peConfidence, psConfidence, evConfidence,
     peReason, psReason, evReason,
     // PATCH 0851 — institutional chips
