@@ -105,7 +105,12 @@ export default function InPlayPage() {
   useEffect(() => { load(false); }, [load, market]);
   useEffect(() => { const id = setInterval(() => { if (document.visibilityState === 'visible') load(false); }, 60000); return () => clearInterval(id); }, [load]);
 
+  // PATCH 1038 — enforce 30d cutoff client-side. Handoff doc said /api/v1/news has
+  // 30d cutoff but this widget had no client guard. Items older than 30d slip through.
+  const MAX_AGE_MS = 30 * 86_400_000;
+  const _nowMs = Date.now();
   const filtered = items.filter((it) => {
+    if (it.time && (_nowMs - it.time) > MAX_AGE_MS) return false;
     if (market !== 'ALL') { if (market === 'IN' && !(it.market === 'IN' || it.market === 'GLOBAL')) return false; if (market === 'US' && !(it.market === 'US' || it.market === 'GLOBAL')) return false; }
     if (cat === 'STOCKS' && !it.ticker) return false;
     if (cat === 'MOVERS' && it.kind !== 'mover') return false;
