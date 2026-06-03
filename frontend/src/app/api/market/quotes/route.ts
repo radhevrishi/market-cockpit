@@ -15,6 +15,7 @@ export const maxDuration = 30; // PATCH 0818 — 60 → 30, caps CPU per call fo
 
 // Response-level cache (avoids re-assembly on rapid polls)
 const responseCache = new Map<string, { data: any; ts: number }>();
+const inFlightBuilds = new Map<string, Promise<any>>();
 // PATCH 0873 — TTL 120s → 30s. 2-min cache on the live quote bar made
 // ticker prices visibly stale (user reported wrong %change on ticker bar).
 // CPU concern from 0818 is acceptable: heatmap is the heavy caller and it
@@ -45,6 +46,19 @@ export async function GET(request: Request) {
     });
   }
 
+  // PATCH: single-flight coalescing - concurrent cold callers share ONE rebuild (prevents 429 storms)
+  const __sfExisting = inFlightBuilds.get(cacheKey);
+  if (__sfExisting) {
+    try {
+      const __sfShared = await __sfExisting;
+      return NextResponse.json(__sfShared, { headers: { 'Cache-Control': 's-maxage=30, stale-while-revalidate=60' } });
+    } catch { /* owner build failed - fall through and build ourselves */ }
+  }
+  let __sfResolve: (v: any) => void = () => {};
+  let __sfReject: (e: any) => void = () => {};
+  const __sfPromise = new Promise<any>((res, rej) => { __sfResolve = res; __sfReject = rej; });
+  __sfPromise.catch(() => {});
+  inFlightBuilds.set(cacheKey, __sfPromise);
   try {
     let responseData: any;
 
@@ -66,6 +80,7 @@ export async function GET(request: Request) {
 
     // Cache the response before returning
     responseCache.set(cacheKey, { data: responseData, ts: Date.now() });
+    __sfResolve(responseData); inFlightBuilds.delete(cacheKey);
     // Evict old entries if cache grows too large
     if (responseCache.size > 20) {
       const oldest = [...responseCache.entries()].sort((a, b) => a[1].ts - b[1].ts)[0];
@@ -76,6 +91,7 @@ export async function GET(request: Request) {
       headers: { 'Cache-Control': 's-maxage=30, stale-while-revalidate=60' }, // PATCH 0873 — tightened from 60/300 for live quote freshness
     });
   } catch (error) {
+    __sfReject(error); inFlightBuilds.delete(cacheKey);
     console.error('Market quotes error:', error);
     return NextResponse.json({ error: 'Failed to fetch market data', stocks: [], gainers: [], losers: [], summary: { total: 0, gainersCount: 0, losersCount: 0, avgChange: 0, sectors: 0 } }, { status: 500 });
   }
