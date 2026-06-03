@@ -2007,7 +2007,7 @@ export default function HomeDashboard() {
             <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
               <span style={{fontSize:12,fontWeight:800,color:'#A78BFA',letterSpacing:'0.5px'}}>💰 POSITION SIZING</span>
               <span style={{fontSize:11,color:DIM,fontWeight:700}}>Portfolio</span>
-              <span style={{fontSize:13,color:TEXT,fontWeight:800}}>₹</span>
+              <span style={{fontSize:13,color:TEXT,fontWeight:800}}>$</span>
               <input
                 type="number"
                 value={posCalcCapital}
@@ -2023,7 +2023,7 @@ export default function HomeDashboard() {
                 return (
                   <div key={pct} style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'4px 12px',backgroundColor:'#13131a',border:'1px solid rgba(255,255,255,0.12)',borderRadius:6,minWidth:78}}>
                     <span style={{fontSize:10,color:DIM,fontWeight:700}}>{pct}%</span>
-                    <span style={{fontSize:13,color:'#10B981',fontWeight:800}}>₹{amt.toLocaleString('en-IN')}</span>
+                    <span style={{fontSize:13,color:'#10B981',fontWeight:800}}>${amt.toLocaleString('en-US')}</span>
                   </div>
                 );
               })}
