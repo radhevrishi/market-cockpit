@@ -137,30 +137,35 @@ function parseDate(dateStr: string): Date {
   return new Date(dateStr);
 }
 
-// Check if today is a market trading day (Mon-Fri, not a known holiday)
+// PATCH 1013 — IST-aware market hours. Railway runs UTC; the old getHours()
+// check would return open=true at 16:30 IST (= 11:00 UTC) even though NSE
+// closed at 15:30 IST. Now we explicitly shift to IST (+5:30) so the gate
+// matches the actual exchange clock and the last-trading-day rollover is
+// correct around midnight UTC.
 function isMarketOpen(): { open: boolean; lastTradingDay: string } {
   const now = new Date();
-  const day = now.getDay();
-  const isWeekend = day === 0 || day === 6;
-  // Find last working day
-  const d = new Date(now);
-  if (isWeekend || d.getHours() < 9) {
-    // Go back to last weekday
-    while (d.getDay() === 0 || d.getDay() === 6) {
-      d.setDate(d.getDate() - 1);
-    }
-    // If before market open on a weekday, use previous day
-    if (!isWeekend && now.getHours() < 9) {
-      d.setDate(d.getDate() - 1);
-      while (d.getDay() === 0 || d.getDay() === 6) {
-        d.setDate(d.getDate() - 1);
-      }
-    }
+  // Build IST wall-clock view of `now` (India = UTC+5:30, no DST).
+  const ist = new Date(now.getTime() + (5 * 60 + 30) * 60_000);
+  const istDow = ist.getUTCDay();           // 0=Sun..6=Sat on the IST-shifted date
+  const istHour = ist.getUTCHours();
+  const istMin  = ist.getUTCMinutes();
+  const minutesIST = istHour * 60 + istMin;
+  const OPEN_MIN  = 9 * 60 + 15;            // 09:15 IST
+  const CLOSE_MIN = 15 * 60 + 30;           // 15:30 IST
+  const isWeekend = istDow === 0 || istDow === 6;
+  const inSession = !isWeekend && minutesIST >= OPEN_MIN && minutesIST <= CLOSE_MIN;
+  // Last trading day: walk IST-date back to nearest weekday. If today is a
+  // weekend OR before market open, the last trading session was a prior day.
+  const d = new Date(ist.getTime());
+  d.setUTCHours(0, 0, 0, 0);
+  if (isWeekend || minutesIST < OPEN_MIN) {
+    d.setUTCDate(d.getUTCDate() - 1);
+    while (d.getUTCDay() === 0 || d.getUTCDay() === 6) d.setUTCDate(d.getUTCDate() - 1);
   }
-  const dd = d.getDate().toString().padStart(2, '0');
+  const dd = d.getUTCDate().toString().padStart(2, '0');
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const lastDay = `${dd} ${months[d.getMonth()]} ${d.getFullYear()}`;
-  return { open: !isWeekend, lastTradingDay: lastDay };
+  const lastDay = `${dd} ${months[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+  return { open: inSession, lastTradingDay: lastDay };
 }
 
 export async function GET(request: Request) {
