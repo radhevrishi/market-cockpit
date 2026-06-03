@@ -841,8 +841,14 @@ export default function HomeDashboard() {
         // movers) bubble to the top of the home widget even when /movers correctly
         // shows today's gainers. Mirrors the staleEOD filter applied server-side
         // to j.gainers/j.losers (route.ts P1012).
-        const rawG = _allStocks.filter((s: any) => (s?.changePercent || 0) > 0 && !s?.staleEOD);
-        const rawL = _allStocks.filter((s: any) => (s?.changePercent || 0) < 0 && !s?.staleEOD);
+        // PATCH 1034 — mirror server P1012/P1008: only hide staleEOD when market is OPEN.
+        // When closed (after-hours / weekend / holiday), the entire universe is BHAVCOPY-
+        // sourced staleEOD:true rows; filtering them client-side blanks the widget even
+        // though /api/market/quotes correctly returns gainers/losers.
+        const _marketOpen1034 = !!j?.marketHours?.indianOpen;
+        const _allowStale1034 = (s: any) => _marketOpen1034 ? !s?.staleEOD : true;
+        const rawG = _allStocks.filter((s: any) => (s?.changePercent || 0) > 0 && _allowStale1034(s));
+        const rawL = _allStocks.filter((s: any) => (s?.changePercent || 0) < 0 && _allowStale1034(s));
         const inUniverse = (s: any) => universe.has(norm(s?.ticker || s?.symbol || ''));
         const smallMidOnly = (arr: any[]) => arr.filter((s: any) => {
           const g = (s?.indexGroup || '').toLowerCase();
