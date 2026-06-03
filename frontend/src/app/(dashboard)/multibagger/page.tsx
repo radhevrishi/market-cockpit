@@ -4377,7 +4377,7 @@ export default function MultibaggerPage() {
           <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
             <span style={{fontSize:F.sm,fontWeight:800,color:PURPLE,letterSpacing:'0.5px'}}>💰 POSITION SIZING</span>
             <span style={{fontSize:F.xs,color:MUTED,fontWeight:700}}>Portfolio</span>
-            <span style={{fontSize:F.sm,color:TEXT,fontWeight:800}}>₹</span>
+            <span style={{fontSize:F.sm,color:TEXT,fontWeight:800}}>$</span>
             <input
               type="number"
               value={posCalcCapital}
@@ -4388,12 +4388,12 @@ export default function MultibaggerPage() {
             <span style={{fontSize:F.xs,color:`${MUTED}90`}}>· editable, persists</span>
           </div>
           <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
-            {[1, 2.5, 5, 8, 10, 15, 20].map(pct => {
+            {[1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 6, 7, 8, 9, 10, 15, 20].map(pct => {
               const amt = Math.round(posCalcCapital * pct / 100);
               return (
-                <div key={pct} style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'4px 12px',backgroundColor:'#13131a',border:`1px solid ${BORDER}`,borderRadius:6,minWidth:78}}>
+                <div key={pct} style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'4px 8px',backgroundColor:'#13131a',border:`1px solid ${BORDER}`,borderRadius:6,minWidth:62}}>
                   <span style={{fontSize:F.xs,color:MUTED,fontWeight:700}}>{pct}%</span>
-                  <span style={{fontSize:F.sm,color:GREEN,fontWeight:800}}>₹{amt.toLocaleString('en-IN')}</span>
+                  <span style={{fontSize:F.sm,color:GREEN,fontWeight:800}}>${amt.toLocaleString('en-US')}</span>
                 </div>
               );
             })}
