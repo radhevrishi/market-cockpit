@@ -2018,10 +2018,10 @@ export default function HomeDashboard() {
               <span style={{fontSize:10,color:DIM}}>· editable, syncs across pages</span>
             </div>
             <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
-              {[1, 2.5, 5, 8, 10, 15, 20].map(pct => {
+              {[1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 6, 7, 8, 9, 10, 15, 20].map(pct => {
                 const amt = Math.round(posCalcCapital * pct / 100);
                 return (
-                  <div key={pct} style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'4px 12px',backgroundColor:'#13131a',border:'1px solid rgba(255,255,255,0.12)',borderRadius:6,minWidth:78}}>
+                  <div key={pct} style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'4px 8px',backgroundColor:'#13131a',border:'1px solid rgba(255,255,255,0.12)',borderRadius:6,minWidth:62}}>
                     <span style={{fontSize:10,color:DIM,fontWeight:700}}>{pct}%</span>
                     <span style={{fontSize:13,color:'#10B981',fontWeight:800}}>${amt.toLocaleString('en-US')}</span>
                   </div>
