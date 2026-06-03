@@ -243,7 +243,7 @@ export default function ScreenerPage() {
     // PATCH 0466 — 15s timeout. Without this, a hung backend hangs the
     // screener forever and the spinner never resolves.
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), 15_000);
+    const timer = setTimeout(() => ctl.abort(), 25_000); // PATCH 1037
     try {
       const marketParam = market === 'us' ? 'us' : 'india';
       const response = await fetch(`/api/market/quotes?market=${marketParam}`, { signal: ctl.signal });
@@ -275,7 +275,7 @@ export default function ScreenerPage() {
     // AbortController replaces Promise.race + dangling setTimeout.
     // When the timeout fires, the in-flight fetch is actually cancelled (no orphaned request).
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const timeoutId = setTimeout(() => controller.abort(), 25000); // PATCH 1037
 
     try {
       // Fetch current month first — only use previous month as fallback if no results
