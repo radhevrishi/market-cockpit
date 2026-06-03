@@ -2315,7 +2315,11 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                                   Active cap: {cap}{r.score < cap ? '' : ' (binding)'}
                                 </span>
                               )}
-                              {cap === 100 && r.redFlags.length === 0 && (
+                              {/* PATCH 1030: mcap > ₹20kCr forces grade cap at B (multibagger math floor) — surface it honestly */}
+                              {(r.marketCapCr ?? 0) > 20000 && (
+                                <span style={{padding:'2px 8px',borderRadius:4,border:`1px solid ${ORANGE}60`,backgroundColor:`${ORANGE}14`,color:ORANGE,fontWeight:700}}>MCap &gt; ₹20kCr · grade capped at B (multibagger math)</span>
+                              )}
+                              {cap === 100 && r.redFlags.length === 0 && (r.marketCapCr ?? 0) <= 20000 && (
                                 <span style={{padding:'2px 8px',borderRadius:4,color:GREEN,fontWeight:700}}>No red-flag caps active — score is uncapped</span>
                               )}
                             </div>
