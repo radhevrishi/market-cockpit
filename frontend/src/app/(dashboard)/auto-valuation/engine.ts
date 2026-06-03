@@ -922,7 +922,11 @@ export async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationRepor
   const _latestSalesGuard = excelData?.latestSales || 0;
   if (_latestSalesGuard > 0 && revScen.base !== undefined) {
     const _maxPlausible = _latestSalesGuard * 10;  // 10× allows 5-yr peak guidance
-    const _minPlausible = _latestSalesGuard * 0.2; // 5× drop = catastrophic, almost certainly wrong
+    // PATCH 1019 — tightened from 0.2× to 0.5×. The 0.2× bound let Rubicon's
+    // bogus FY29 Revenue ₹500 Cr through (latest ₹1754 → 0.28× ratio passed).
+    // Real forward guidance is virtually never below 50% of latest revenue;
+    // anything lower is almost certainly a unit/metric confusion in the PDF.
+    const _minPlausible = _latestSalesGuard * 0.5;
     if (revScen.base > _maxPlausible || revScen.base < _minPlausible) {
       console.warn(`[auto-val] Guidance sanity-clamp: REVENUE ₹${revScen.base.toFixed(0)} Cr implausible vs latest ₹${_latestSalesGuard.toFixed(0)} Cr — rejecting and falling back.`);
       revScen = {};
@@ -938,11 +942,23 @@ export async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationRepor
     }
   }
   if (excelData?.latestPAT && excelData.latestPAT > 0 && patScen.base !== undefined) {
-    if (patScen.base > excelData.latestPAT * 20 || patScen.base < excelData.latestPAT * 0.05) {
+    // PATCH 1019 — tightened floor 0.05× → 0.4× (extractor noise often grabs
+    // small standalone numbers like '0.5 Cr capex' and tags them as PAT).
+    if (patScen.base > excelData.latestPAT * 20 || patScen.base < excelData.latestPAT * 0.4) {
       console.warn(`[auto-val] Guidance sanity-clamp: PAT ₹${patScen.base.toFixed(0)} Cr implausible vs latest ₹${excelData.latestPAT.toFixed(0)} Cr — rejecting.`);
       patScen = {};
       forwardPAT = undefined;
     }
+  }
+  // PATCH 1019 — cross-validate forward PAT vs forward Revenue. PAT margin
+  // > 50% is essentially impossible for any operating company (even pharma
+  // majors peak at ~25%). Rubicon test: extractor assigned ₹500 Cr to BOTH
+  // Revenue AND PAT, an obvious double-attribution bug. Reject PAT when it
+  // exceeds 50% of forward Revenue (or equals Revenue).
+  if (revScen.base !== undefined && patScen.base !== undefined && patScen.base >= revScen.base * 0.5) {
+    console.warn(`[auto-val] Guidance sanity-clamp: PAT ₹${patScen.base.toFixed(0)} Cr >= 50% of Revenue ₹${revScen.base.toFixed(0)} Cr — almost certainly mis-attributed. Rejecting PAT, falling back to EBITDA→PAT chain.`);
+    patScen = {};
+    forwardPAT = undefined;
   }
 
   // PATCH 0653 — apply guided GROWTH% per scenario to latest sales when
