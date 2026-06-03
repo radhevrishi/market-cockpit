@@ -374,7 +374,12 @@ export function extractGuidance(text: string): GuidanceItem[] {
         switch (pat.metric) {
           case 'EBITDA_MARGIN':
           case 'OPM':
-            return raw >= 3 && raw <= 80;
+            // PATCH 1019 — tightened ceiling 80% → 35%. The 80% bound let
+            // Aditya's '65%' (parsed from 'EBITDA growth 45-65%') through as
+            // an EBITDA margin, producing absurd FY28 forecasts. Real EBITDA
+            // margins virtually never exceed 35% (only pure software / cement
+            // peak go there); anything higher is a growth-rate misclassified.
+            return raw >= 3 && raw <= 35;
           case 'PAT_MARGIN':
             return raw >= 1 && raw <= 60;
           case 'GROWTH':
