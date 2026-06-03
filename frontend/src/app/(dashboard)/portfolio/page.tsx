@@ -99,7 +99,7 @@ const setStoredHoldings = (h: PortfolioHolding[]) => {
  *
  * FIX: Bubble fetch failures up to fetchData as typed exceptions so the
  * outer catch can render a red banner with a Retry button. We also:
- *   - bump per-request timeout to AbortSignal.timeout(20_000)
+ *   - bump per-request timeout to AbortSignal.timeout(45_000)
  *   - distinguish "network/timeout" vs "200 with malformed shape"
  *   - log malformed payloads to console so users can self-diagnose
  *   - expose `QuotesShapeError` so fetchData can surface a distinct
@@ -121,11 +121,11 @@ const fetchStockQuotes = async (): Promise<StockQuote[]> => {
     indexGroup: s.indexGroup || s.cap || '', marketCap: s.marketCap || 0, // PATCH 1100
   });
   const fetchOne = async (market: 'india' | 'us'): Promise<StockQuote[]> => {
-    // PATCH 0965 BUG #1 — AbortSignal.timeout(20_000) replaces the bespoke
+    // PATCH 0965 BUG #1 — AbortSignal.timeout(45_000) replaces the bespoke
     // AbortController, and we now THROW rather than return [] on failure
     // so the caller can render a visible error banner.
     const res = await fetch(`/api/market/quotes?market=${market}`, {
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(45_000),
     });
     if (!res.ok) {
       throw new Error(`/api/market/quotes?market=${market} → HTTP ${res.status}`);
@@ -149,7 +149,12 @@ const fetchStockQuotes = async (): Promise<StockQuote[]> => {
   const settled = await Promise.allSettled([fetchOne('india'), fetchOne('us')]);
   const india = settled[0].status === 'fulfilled' ? settled[0].value : null;
   const us = settled[1].status === 'fulfilled' ? settled[1].value : null;
-  if (india === null && us === null) {
+  // PATCH 1032 — an empty fulfilled array is just as useless as null. Without this,
+  // a slow India feed (rejected by AbortSignal) combined with an empty US feed
+  // silently returns [] and every CMP renders '—' with no banner.
+  const indiaUsable = india && india.length > 0 ? india : null;
+  const usUsable = us && us.length > 0 ? us : null;
+  if (indiaUsable === null && usUsable === null) {
     const firstReason = settled[0].status === 'rejected' ? settled[0].reason : settled[1].status === 'rejected' ? settled[1].reason : new Error('unknown');
     throw firstReason instanceof Error ? firstReason : new Error(String(firstReason));
   }
@@ -161,7 +166,7 @@ const fetchStockQuotes = async (): Promise<StockQuote[]> => {
     // eslint-disable-next-line no-console
     console.warn('[portfolio] US quotes failed, continuing with India only:', settled[1].reason);
   }
-  return [...(india ?? []), ...(us ?? [])];
+  return [...(indiaUsable ?? []), ...(usUsable ?? [])];
 };
 
 const fetchIndividualQuotes = async (symbols: string[]): Promise<StockQuote[]> => {
