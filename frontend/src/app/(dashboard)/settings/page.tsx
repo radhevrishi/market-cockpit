@@ -294,7 +294,7 @@ function ProfileSection() {
     queryKey: ['auth', 'me'],
     queryFn: async () => {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const timeoutId = setTimeout(() => controller.abort(), 20000) // PATCH 1037;
       try {
         const { data } = await api.get('/auth/me', { signal: controller.signal });
         return data;
@@ -429,7 +429,7 @@ function ApiKeysSection() {
     const checkHealth = async () => {
       setIsLoadingHealth(true);
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 5000);
+      const timer = setTimeout(() => controller.abort(), 20000) // PATCH 1037;
       try {
         const { data } = await api.get('/health', { signal: controller.signal });
         parseHealth(data as HealthResponse);
