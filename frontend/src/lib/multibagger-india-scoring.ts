@@ -1177,15 +1177,19 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
   // ── FINANCIAL STRENGTH ────────────────────────────────────────────────────
   if (row.de!==undefined) {
     finS+=sv(row.de,[0.5,1.0,2.0],false); finC++;
-    if (row.de>3.0) redFlags.push({label:`D/E ${row.de.toFixed(2)}× — CRITICAL debt`,severity:'CRITICAL',source:'Fisher'});
-    else if (row.de>2.0) redFlags.push({label:`D/E ${row.de.toFixed(2)}× — high leverage`,severity:'HIGH',source:'Fisher'});
+    // PATCH 1029: banks/insurance/NBFC/AMC/capital-markets/REIT/InvIT carry 5-15× D/E structurally — leverage IS the business model.
+    const _isFinLev1029de = /bank|insurance|finance|capital markets|asset management|reit|invit/.test((row.sector||'').toLowerCase());
+    if (row.de>3.0 && !_isFinLev1029de) redFlags.push({label:`D/E ${row.de.toFixed(2)}× — CRITICAL debt`,severity:'CRITICAL',source:'Fisher'});
+    else if (row.de>2.0 && !_isFinLev1029de) redFlags.push({label:`D/E ${row.de.toFixed(2)}× — high leverage`,severity:'HIGH',source:'Fisher'});
     if (row.de<=0.1 && !_dnaWillLikelyFire) strengths.push(`D/E ${row.de.toFixed(2)}× — debt-free`); // PATCH 0717
   }
   if (row.netDebtEbitda!==undefined) {
     const s = row.netDebtEbitda<0?95:row.netDebtEbitda<0.5?88:row.netDebtEbitda<1.5?72:row.netDebtEbitda<3?45:20;
     finS+=s; finC++;
-    if (row.netDebtEbitda>3.0) redFlags.push({label:`ND/EBITDA ${row.netDebtEbitda.toFixed(1)}× — Fisher FAIL`,severity:'CRITICAL',source:'Fisher'});
-    else if (row.netDebtEbitda>1.5) redFlags.push({label:`ND/EBITDA ${row.netDebtEbitda.toFixed(1)}× — above Fisher threshold`,severity:'HIGH',source:'Fisher'});
+    // PATCH 1029: ND/EBITDA meaningless for banks/insurance (EBITDA doesn't capture net interest income); same exclusion as D/E.
+    const _isFinLev1029nd = /bank|insurance|finance|capital markets|asset management|reit|invit/.test((row.sector||'').toLowerCase());
+    if (row.netDebtEbitda>3.0 && !_isFinLev1029nd) redFlags.push({label:`ND/EBITDA ${row.netDebtEbitda.toFixed(1)}× — Fisher FAIL`,severity:'CRITICAL',source:'Fisher'});
+    else if (row.netDebtEbitda>1.5 && !_isFinLev1029nd) redFlags.push({label:`ND/EBITDA ${row.netDebtEbitda.toFixed(1)}× — above Fisher threshold`,severity:'HIGH',source:'Fisher'});
     if (row.netDebtEbitda<0) strengths.push(`Net cash company`);
   }
   if (row.pledge!==undefined) {
@@ -1205,7 +1209,9 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
   }
   if (row.icr!==undefined) {
     finS+=sv(row.icr,[2,5,10]); finC++;
-    if (row.icr<1.5) redFlags.push({label:`ICR ${row.icr.toFixed(1)}× — dangerously low`,severity:'CRITICAL',source:'Fisher'});
+    // PATCH 1029: banks/insurance/NBFC structurally have low ICR — interest is COGS, not coverage stress.
+    const _isFinLev1029icr = /bank|insurance|finance|capital markets|asset management|reit|invit/.test((row.sector||'').toLowerCase());
+    if (row.icr<1.5 && !_isFinLev1029icr) redFlags.push({label:`ICR ${row.icr.toFixed(1)}× — dangerously low`,severity:'CRITICAL',source:'Fisher'});
   }
 
   // ── VALUATION — (PEG + PE-percentile + MoS) / 3 ──────────────────────────
@@ -1224,11 +1230,17 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
   }
   // PEG: skipped entirely for cyclical sectors — earnings at cycle peak inflate denominator
   if (row.peg!==undefined && row.peg>0 && !cyclical) {
-    const pegScore = row.peg<0.8?92:row.peg<1.0?84:row.peg<1.5?74:row.peg<2.0?58:row.peg<2.5?42:22;
-    valComponents.push(pegScore);
-    if (row.peg<0.8) strengths.push(`PEG ${row.peg.toFixed(2)} — undervalued growth`);
-    if (row.peg>2.5 && !isHighGrowth) risks.push(`PEG ${row.peg.toFixed(2)} — expensive for growth rate`);
-    if (row.peg>2.5 && isHighGrowth)  risks.push(`PEG ${row.peg.toFixed(2)} — high but growth >25% may justify`);
+    // PATCH 1029: PEG < 0.1 is almost always a low-base artifact (SATIN PEG 0.02 = ₹2cr historical PAT exploding to large CAGR denominator). Score neutral, not as "undervalued growth" strength.
+    if (row.peg < 0.1) {
+      valComponents.push(50);
+      risks.push(`PEG ${row.peg.toFixed(2)} — suspect low-base artifact, valuation pillar reset to neutral`);
+    } else {
+      const pegScore = row.peg<0.8?92:row.peg<1.0?84:row.peg<1.5?74:row.peg<2.0?58:row.peg<2.5?42:22;
+      valComponents.push(pegScore);
+      if (row.peg<0.8) strengths.push(`PEG ${row.peg.toFixed(2)} — undervalued growth`);
+      if (row.peg>2.5 && !isHighGrowth) risks.push(`PEG ${row.peg.toFixed(2)} — expensive for growth rate`);
+      if (row.peg>2.5 && isHighGrowth)  risks.push(`PEG ${row.peg.toFixed(2)} — high but growth >25% may justify`);
+    }
   } else if (cyclical && row.peg!==undefined) {
     risks.push(`PEG ${row.peg.toFixed(2)} excluded — cyclical earnings unreliable for growth-adjusted valuation`);
   } else if (row.peg!==undefined && row.peg<=0 && !cyclical) {
