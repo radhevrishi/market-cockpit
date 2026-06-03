@@ -1361,9 +1361,9 @@ export async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationRepor
 
     // ── 1. Margin inflection chip (P0851 #2)
     if (opmList.length >= 4) {
-      const latestQ = opmList[opmList.length - 1];
+      const latestQ = (typeof excelData.opmLatest === 'number') ? excelData.opmLatest : opmList[opmList.length - 1];
       const trailing3 = opmList.slice(-4, -1);
-      const trailingAvg = trailing3.reduce((a, b) => a + b, 0) / trailing3.length;
+      const trailingAvg = (typeof excelData.opmMedian3y === 'number') ? excelData.opmMedian3y : (trailing3.reduce((a, b) => a + b, 0) / trailing3.length);
       const gapPp = latestQ - trailingAvg;
       const direction = gapPp > 2 ? 'EXPANSION' : gapPp < -2 ? 'COMPRESSION' : 'STABLE';
       const interpretation =
