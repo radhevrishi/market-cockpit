@@ -358,8 +358,13 @@ export async function extractExcelFinancials(file: File): Promise<ExcelFinancial
     const clean = arr.filter((x): x is number => typeof x === 'number');
     return clean.slice(-n);
   };
-  const sales5 = lastN(fin.sales, 5);
-  const pat5 = lastN(fin.netProfit, 5);
+  // PATCH 1016 — true 5y CAGR uses 5 INTERVALS = 6 data points (FY21→FY26),
+  // not lastN(5)=5 points / 4 intervals (FY22→FY26). The latter under/over-states
+  // CAGR depending on year-on-year smoothness (Sandhar test: reported 20.2/37.4
+  // when real 5y CAGR is 21.1/28.0). Take 6 points → length-1 = 5 intervals so
+  // the label "5y CAGR" actually means a 5-year span.
+  const sales5 = lastN(fin.sales, 6);
+  const pat5 = lastN(fin.netProfit, 6);
   if (sales5.length >= 2) {
     const first = sales5[0]; const last = sales5[sales5.length - 1];
     if (first > 0 && last > 0) fin.salesCagr5y = (Math.pow(last / first, 1 / (sales5.length - 1)) - 1) * 100;
