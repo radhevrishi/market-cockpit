@@ -352,8 +352,10 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
     de:n(m['de']?row[m['de']]:undefined),
     pledge:n(m['pledge']?row[m['pledge']]:undefined),
     icr:n(m['icr']?row[m['icr']]:undefined),
-    revCagr:n(m['revCagr']?row[m['revCagr']]:n(m['salesGrowth3y']?row[m['salesGrowth3y']]:undefined)),
-    profitCagr:n(m['profitCagr']?row[m['profitCagr']]:undefined),
+    // PATCH 1027: clamp Sales CAGR — abs >200% means base near zero (demerger/restatement)
+    revCagr: (() => { const v = n(m['revCagr']?row[m['revCagr']]:n(m['salesGrowth3y']?row[m['salesGrowth3y']]:undefined)); return (v !== undefined && Math.abs(v) > 200) ? undefined : v; })(),
+    // PATCH 1027: clamp Profit CAGR similar to Sales CAGR
+    profitCagr: (() => { const v = n(m['profitCagr']?row[m['profitCagr']]:undefined); return (v !== undefined && Math.abs(v) > 300) ? undefined : v; })(),
     yoySalesGrowth:n(m['yoySalesGrowth']?row[m['yoySalesGrowth']]:undefined),
     yoyProfitGrowth:n(m['yoyProfitGrowth']?row[m['yoyProfitGrowth']]:undefined),
     epsGrowth:n(m['epsGrowth']?row[m['epsGrowth']]:undefined),
@@ -375,7 +377,14 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
     return1m:n(m['return1m']?row[m['return1m']]:undefined),
     return1w:n(m['return1w']?row[m['return1w']]:undefined),
     // ── New raw fields ──
-    gpm: n(m['gpm']?row[m['gpm']]:undefined),
+    // PATCH 1027: clamp GPM to 0-100%, reject 100% on bank/insurance/exchange (artefact)
+    gpm: (() => {
+      const g = n(m['gpm']?row[m['gpm']]:undefined);
+      if (g === undefined || g < 0 || g > 100) return undefined;
+      const s = String(row[m['sector']??'']??'').toLowerCase();
+      if (g >= 99.5 && /bank|insurance|capital markets|asset management/.test(s)) return undefined;
+      return g;
+    })(),
     roic: n(m['roic']?row[m['roic']]:undefined),
     roce3yr,
     opm3yr,
@@ -581,12 +590,20 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
     get revenueAcceleration() {
       const yoy=n(m['yoySalesGrowth']?row[m['yoySalesGrowth']]:undefined);
       const cagr=n(m['revCagr']?row[m['revCagr']]:undefined);
-      return (yoy!==undefined&&cagr!==undefined)?Math.round(yoy-cagr):undefined;
+      if (yoy===undefined||cagr===undefined) return undefined;
+      const delta = Math.round(yoy-cagr);
+      // PATCH 1027: clamp extreme acceleration values (base-rate issues)
+      if (Math.abs(delta) > 300) return undefined;
+      return delta;
     },
     get profitAcceleration() {
       const yoy=n(m['yoyProfitGrowth']?row[m['yoyProfitGrowth']]:undefined);
       const cagr=n(m['profitCagr']?row[m['profitCagr']]:undefined);
-      return (yoy!==undefined&&cagr!==undefined)?Math.round(yoy-cagr):undefined;
+      if (yoy===undefined||cagr===undefined) return undefined;
+      const delta = Math.round(yoy-cagr);
+      // PATCH 1027: clamp extreme acceleration (low-base distortion)
+      if (Math.abs(delta) > 500) return undefined;
+      return delta;
     },
     get recentOpLev() {
       const yoyP=n(m['yoyProfitGrowth']?row[m['yoyProfitGrowth']]:undefined);
