@@ -308,12 +308,19 @@ export default function HeatmapPage() {
             // PATCH 1011 — marketCap is 0 on weekend EOD rows (no Yahoo), so
             // the marketCap buckets came up empty → "0 stocks". Bucket by the
             // populated cap label (indexGroup: Large/Mid/Small/Micro) instead.
-            const byCap = (caps: string[]) =>
-              broad.stocks.filter(s => caps.includes(String((s as any).indexGroup || '').toLowerCase()));
+            // PATCH 1039 — if indexGroup label is missing/stale, fall back to marketCap thresholds so buckets always populate.
+            const byCap = (caps: string[], mcMin: number, mcMax: number) => {
+              const indexHits = broad.stocks.filter(s => caps.includes(String((s as any).indexGroup || '').toLowerCase()));
+              if (indexHits.length > 0) return indexHits;
+              return broad.stocks.filter((s: any) => {
+                const mc = Number(s.marketCap) || 0;
+                return mc >= mcMin && mc < mcMax;
+              });
+            };
             const fallbackMap = {
-              nifty50: mkResp(byCap(['large'])),
-              midcap150: mkResp(byCap(['mid'])),
-              smallcap150: mkResp(byCap(['small', 'micro'])),
+              nifty50: mkResp(byCap(['large'], 20000, Infinity)),
+              midcap150: mkResp(byCap(['mid'], 5000, 20000)),
+              smallcap150: mkResp(byCap(['small', 'micro'], 0, 5000)),
             };
             setDataMap(fallbackMap);
             setLastUpdated(new Date());
