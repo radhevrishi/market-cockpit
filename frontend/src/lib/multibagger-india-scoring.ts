@@ -946,7 +946,13 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
     const s = row.cfoToPat>=1.0?90:row.cfoToPat>=0.8?78:row.cfoToPat>=0.5?55:row.cfoToPat>=0?32:15;
     qualS+=s; qualC++;
     if (row.cfoToPat>=1.0 && !_dnaWillLikelyFire) strengths.push(`CFO/PAT ${row.cfoToPat.toFixed(2)}x — excellent earnings quality`); // PATCH 0717
-    if (row.cfoToPat<0) { risks.push(`Negative CFO/PAT — earnings not backed by cash`); redFlags.push({label:'Negative cash flow from operations',severity:'HIGH',source:'Fisher'}); }
+    if (row.cfoToPat<0) {
+      risks.push(`Negative CFO/PAT — earnings not backed by cash`);
+      // PATCH 1027: banks/insurance/NBFC operating cash flow is structurally lumpy due to loan disbursements
+      const _s = (row.sector||'').toLowerCase();
+      const _isFin = /bank|insurance|finance|capital markets|asset management/.test(_s);
+      if (!_isFin) redFlags.push({label:'Negative cash flow from operations',severity:'HIGH',source:'Fisher'});
+    }
   }
   if (row.fcfAbsolute!==undefined) {
     const s = row.fcfAbsolute>0?80:50;
@@ -956,7 +962,12 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
   }
   if (row.promoter!==undefined) {
     qualS+=sv(row.promoter,[20,40,60]); qualC++;
-    if (row.promoter<20) redFlags.push({label:`Promoter ${row.promoter.toFixed(0)}% — very low`,severity:'HIGH',source:'MOSL+Fisher'});
+    if (row.promoter<20) {
+      // PATCH 1027: Exchanges (BSE/MCX), PSU banks, widely-held insurance structurally have no promoter
+      const _s2 = (row.sector||'').toLowerCase();
+      const _widelyHeld = /capital markets|insurance|^bank/.test(_s2);
+      if (!_widelyHeld) redFlags.push({label:`Promoter ${row.promoter.toFixed(0)}% — very low`,severity:'HIGH',source:'MOSL+Fisher'});
+    }
     if (row.promoter>=55 && !_dnaWillLikelyFire) strengths.push(`Promoter ${row.promoter.toFixed(0)}% — strong alignment`); // PATCH 0717
   }
 
