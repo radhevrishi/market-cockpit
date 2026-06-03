@@ -1,11 +1,8 @@
-// PATCH 0445 BUG-018 — Reverse the canonical direction. /signals now renders
-// the actual page (was previously redirecting to /orders); /orders becomes
-// the redirect target. The page semantically does corporate signal
-// intelligence, not order management, so /signals is the correct slug.
-// Both URLs continue to render the same content for bookmark compatibility.
-'use client';
-import OrdersPage from '../orders/page';
-
+// PATCH 1037 BUG-018 v2 — /signals + /orders previously double-mounted the same
+// 4,834-line orders component (duplicate /api/market/intelligence and /api/v1/news
+// fires on either URL). Make /signals a server redirect to /orders so the
+// canonical slug renders once. Keeps bookmarks working via the redirect.
+import { redirect } from 'next/navigation';
 export default function SignalsPage() {
-  return <OrdersPage />;
+  redirect('/orders');
 }
