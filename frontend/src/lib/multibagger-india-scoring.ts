@@ -1389,9 +1389,14 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
   // ── FIX #10: TRAJECTORY SCORE — change direction, not just level ───────────
   // "100-baggers are CHANGING companies, not just good companies"
   // Trajectory = (recent - historical) for sales + profit — purely about direction
-  const salesTrajectory  = (row.yoySalesGrowth  ?? 0) - (row.revCagr    ?? 0);
-  const profitTrajectory = (row.yoyProfitGrowth ?? 0) - (row.profitCagr ?? 0);
-  const trajectoryScore  = salesTrajectory + profitTrajectory; // combined pp above historical
+  // PATCH 1028: only compute trajectory when both yoy AND cagr are defined;
+  // PATCH 1027 clamps CAGR to undefined on low-base explosions (Raymond Realty,
+  // IBULLS, etc.). With the old `?? 0` fallback, undefined CAGR became 0, leaving
+  // raw YoY (e.g. 888%) to dominate trajectory — producing T+7502pp nonsense.
+  const salesTrajectory  = (row.yoySalesGrowth  !== undefined && row.revCagr    !== undefined) ? (row.yoySalesGrowth  - row.revCagr)    : 0;
+  const profitTrajectory = (row.yoyProfitGrowth !== undefined && row.profitCagr !== undefined) ? (row.yoyProfitGrowth - row.profitCagr) : 0;
+  // Defense-in-depth: cap final trajectory at ±300pp — anything beyond is base-rate noise
+  const trajectoryScore  = Math.max(-300, Math.min(300, salesTrajectory + profitTrajectory));
   const trajectoryBonus  = trajectoryScore > 40 ? 12 : trajectoryScore > 20 ? 7 : trajectoryScore > 0 ? 3 : trajectoryScore < -30 ? -12 : trajectoryScore < -15 ? -7 : 0;
   if (trajectoryScore > 30) strengths.push(`Strong positive trajectory: +${trajectoryScore.toFixed(0)}pp above historical trend`);
   if (trajectoryScore < -20) risks.push(`Negative trajectory: ${trajectoryScore.toFixed(0)}pp below historical trend`);
