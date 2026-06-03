@@ -597,11 +597,31 @@ async function fetchIndianDataWithCache() {
         // collapsed the universe to the 49-name fallback. Now Yahoo is used only
         // for live freshness on the top-100 largecaps WHEN the market is open;
         // embedded EOD prices serve everything else (correct on weekends).
-        const { isIndianMarketOpen: _isOpenFn } = await import('@/lib/market-hours');
+        const { isIndianMarketOpen: _isOpenFn, istNow: _istNowFn } = await import('@/lib/market-hours');
         const _mktOpen = _isOpenFn();
-        const liveSyms: string[] = _mktOpen
-          ? tickers.filter((t: any) => (t.cap || '').toLowerCase() === 'large').slice(0, 100).map((t: any) => `${t.ticker}.NS`)
+        // PATCH 1012 — post-close window (Mon–Fri 15:30–20:45 IST).
+        // NSE publishes today's BHAVCOPY ~19:00–20:30 IST. Until then the universe
+        // blob still carries T-1 closes, so the board would sit on yesterday's
+        // prices for ~5 hours after market close. Yahoo has today's close
+        // available immediately, so during this window we fetch the top 700 by
+        // turnover — that covers the active large/mid/small names that would
+        // otherwise show up as stale gainers/losers. fetchChart has a 5-min
+        // per-symbol cache (lib/yahoo.ts), so subsequent refreshes finish fast
+        // and accumulate coverage if Yahoo throttles a slab.
+        const _ist = _istNowFn();
+        const _istDow = _ist.getUTCDay();
+        const _istMin = _ist.getUTCHours() * 60 + _ist.getUTCMinutes();
+        const _postClose = _istDow >= 1 && _istDow <= 5
+          && _istMin > (15 * 60 + 30) && _istMin < (20 * 60 + 45);
+        const _wantLive = _mktOpen || _postClose;
+        const _liveTickers: any[] = _wantLive
+          ? (_postClose
+              ? [...tickers]
+                  .sort((a: any, b: any) => (b.turnoverLacs || 0) - (a.turnoverLacs || 0))
+                  .slice(0, 700)
+              : tickers.filter((t: any) => (t.cap || '').toLowerCase() === 'large').slice(0, 100))
           : [];
+        const liveSyms: string[] = _liveTickers.map((t: any) => `${t.ticker}.NS`);
         const unpricedSyms = tickers.filter((t: any) => !t.hasPrice).map((t: any) => `${t.ticker}.NS`);
         // Combine, dedupe, cap.
         const yahooSymsSet = new Set<string>([...liveSyms, ...unpricedSyms]);
@@ -778,7 +798,13 @@ async function fetchIndianDataWithCache() {
             s && (s.price ?? 0) >= 1
             && Math.abs(s.changePercent ?? 0) <= 40
             && !_ENTITLEMENT.test(s.ticker || ''));
-          const liveOnly = marketOpen ? mergedStocks.filter((s: any) => !s.staleEOD) : mergedStocks;
+          // PATCH 1012 — hide stale (T-1 BHAVCOPY) rows from gainers/losers in
+          // the post-close window. Stocks the Yahoo fetch covered (top-700 by
+          // turnover) come through as fresh; the rest stay in the universe count
+          // and sector view but don't pollute the top-30 with yesterday's moves
+          // shown as today's. Honesty rule: never label stale data as live.
+          const _hideStale = marketOpen || _postClose;
+          const liveOnly = _hideStale ? mergedStocks.filter((s: any) => !s.staleEOD) : mergedStocks;
           const hiddenStaleCount = mergedStocks.length - liveOnly.length;
           const gainers = [...liveOnly].sort((a, b) => b.changePercent - a.changePercent).filter((s: any) => s.changePercent > 0).slice(0, 30);
           const losers  = [...liveOnly].sort((a, b) => a.changePercent - b.changePercent).filter((s: any) => s.changePercent < 0).slice(0, 30);
@@ -798,7 +824,7 @@ async function fetchIndianDataWithCache() {
             },
             marketHours: { indianOpen: marketOpen },
             _diag: { path: 'kv-universe', blobTickers: _kvBlobTickers, rawLen: _kvRawLen, yahoo: yahooMap.size, mkt: marketOpen ? 'open' : 'closed' },
-            source: `NSE-universe (KV ${universeAgeStr}) + BHAVCOPY/${universeBlob.pricedCount || 0} + Yahoo/${yahooMap.size} + P0963 staleEOD-filter ALWAYS-ON (hid ${hiddenStaleCount} BHAVCOPY-only rows from movers)`,
+            source: `NSE-universe (KV ${universeAgeStr}) + BHAVCOPY/${universeBlob.pricedCount || 0} + Yahoo/${yahooMap.size} + P1012 staleEOD-filter ${_hideStale ? 'ON' : 'OFF'} (hid ${hiddenStaleCount} stale rows)`,
             updatedAt: new Date().toISOString(),
           };
         }
