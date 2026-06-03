@@ -2272,7 +2272,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                         {METRICS.filter(([field])=>(r[field]!==undefined&&r[field]!==null)).map(([field,label,group])=>{
                           const v=r[field] as number;
                           const isPercent=label.includes('%');
-                          const isX=label.includes('x')||label.includes('x');
+                          const isX=label.includes('x')||field==='peg'; // PATCH 1029: PEG label has no 'x' suffix; treat as multiplier
                           const isCr=label.includes('Cr');
                           return (
                             <div key={String(field)} style={{display:'flex',justifyContent:'space-between',alignItems:'center',fontSize:F.md,padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
