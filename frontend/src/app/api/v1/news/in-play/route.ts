@@ -166,8 +166,11 @@ export async function GET(request: Request) {
       return (b.importance_score || 0) - (a.importance_score || 0);
     });
 
-    // Return top 12 (mix of structural + event)
-    return NextResponse.json(merged.slice(0, 12));
+    // PATCH 1023 — bump from 12 → 50. The dashboard /in-play page wires this
+    // route to populate its top-rank section; 12 items was a placeholder during
+    // initial dev. With sector + sentiment + tier fields, 50 items gives the
+    // user a meaningful catalyst stream.
+    return NextResponse.json(merged.slice(0, 50));
   } catch (error) {
     console.error('[In-Play API] Error:', error);
     return NextResponse.json([]);
