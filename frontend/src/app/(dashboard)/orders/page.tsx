@@ -2528,6 +2528,12 @@ export default function CompanyIntelligencePage() {
       // backend enricher universe stays correct.
       const universeParam = universeFilter === 'ALL' ? '&universe=all' : '';
       const res = await fetch(`/api/market/intelligence?days=${daysFilter}${wlParam}${pfParam}${universeParam}&debug=true`);
+      // PATCH 1041 — guard against HTML/4xx/5xx responses; previously a non-OK body crashed JSON.parse and was swallowed by outer catch with no UI hint.
+      if (!res.ok) {
+        console.warn('[Intelligence] HTTP', res.status, res.statusText);
+        setLoading(false);
+        return;
+      }
       const data = await res.json();
 
       setTop3(_retag(data.top3 || []));
