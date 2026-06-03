@@ -362,7 +362,7 @@ function extractTickers(text: string, region: 'IN'|'US'|'GLOBAL'): string[] {
 
 // ─── Fetch + classify ───────────────────────────────────────────────────────
 
-async function fetchFeedSafe(src: FeedSource, timeoutMs = 8000): Promise<{ src: FeedSource; xml: string } | null> {
+async function fetchFeedSafe(src: FeedSource, timeoutMs = 4500): Promise<{ src: FeedSource; xml: string } | null> {
   try {
     const ac = new AbortController();
     const t = setTimeout(() => ac.abort(), timeoutMs);
@@ -462,7 +462,16 @@ async function buildFeed(): Promise<{
   by_tier: Record<'TIER_1' | 'TIER_2' | 'WATCHLIST' | 'NOISE', number>;
 }> {
   // Fetch all feeds in parallel
-  const fetched = await Promise.all(SOURCES.map((s) => fetchFeedSafe(s)));
+  // PATCH 1033 — cap total fan-out at 20s. Any single slow source returns null instead of pegging the request to the 30s frontend axios ceiling.
+  const FANOUT_BUDGET_MS = 20_000;
+  const fetched = await Promise.all(
+    SOURCES.map((s) =>
+      Promise.race<{ src: FeedSource; xml: string } | null>([
+        fetchFeedSafe(s),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), FANOUT_BUDGET_MS)),
+      ]),
+    ),
+  );
   const sourceStatus: Array<{ name: string; ok: boolean; items?: number }> = [];
   const fresh: FeedItem[] = [];
   const now = Date.now();
