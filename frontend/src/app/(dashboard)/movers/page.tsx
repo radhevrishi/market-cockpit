@@ -110,6 +110,8 @@ function useWindowWidth() {
   return width;
 }
 
+let __moversRetryCount = 0;
+
 export default function MoversPage() {
   const [allStocks, setAllStocks] = useState<Stock[]>([]);
   const [loading, setLoading] = useState(true);
@@ -196,9 +198,10 @@ export default function MoversPage() {
         const sig = (arr: Stock[]) => arr.length + '|' + arr.slice(0, 50).map(s => `${s.ticker}:${s.price}:${s.changePercent}`).join(',');
         return sig(prev) === sig(stocks) ? prev : stocks;
       });
-      setLastUpdated(new Date());
+      setLastUpdated(new Date()); __moversRetryCount = 0;
     } catch (err: any) {
       setError(err?.name === 'AbortError' ? 'Movers fetch timed out' : (err instanceof Error ? err.message : 'Failed to fetch data'));
+      if (allStocks.length === 0 && __moversRetryCount < 3) { __moversRetryCount += 1; setTimeout(() => { fetchData(); }, 2500); }
     } finally {
       clearTimeout(timer);
       setLoading(false);
