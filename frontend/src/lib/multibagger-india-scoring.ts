@@ -230,6 +230,7 @@ export interface ExcelRow {
   roce3yr?: number;      // ROCE 3 years ago → incremental ROCE signal (Gap 1)
   opm3yr?: number;       // OPM 3 years ago — custom Screener ratio (Gap 2)
   opmPrev?: number;      // OPM last year (Screener "OPM last year") → 1yr margin change (Gap 2)
+  opm5y?: number;        // PATCH 1026: OPM 5 years ago (Screener "OPM 5Year") → 5y margin trend proxy
   high52w?: number;      // 52-week High price (Screener "High price") (Gap 7)
 
   // ── PATCH 0317: Additional institutional metrics ─────────────────────────
@@ -2611,7 +2612,7 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
     hasFcfTrend: false,                 // single-year only in Screener default
     hasCustomerConcentration: false,    // not in standard export
     hasFounderTenure: false,            // not in standard export
-    hasGpm5yTrend: false,               // would need custom 5y ratio
+    hasGpm5yTrend: row.opm5y !== undefined,  // PATCH 1026: OPM 5Y as margin-trend proxy
   });
 
   return {
