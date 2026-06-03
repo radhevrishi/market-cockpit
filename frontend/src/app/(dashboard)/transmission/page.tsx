@@ -134,7 +134,7 @@ function ZScoreChips({ commodity }: { commodity: CommodityRow }) {
       try {
         const results = await Promise.all(
           windows.map(w =>
-            fetch(`/api/v1/transmission/zscore/${encodeURIComponent(slug)}?window=${w}&symbol=${sym}`, { signal: ctl.signal })
+            fetch(`/api/v1/transmission/zscore/${encodeURIComponent(slug)}?window=${w}&symbol=${sym}`, { signal: AbortSignal.any([ctl.signal, AbortSignal.timeout(20_000)]) }) // PATCH 1042: 20s safety bound for unbounded fan-out
               .then(r => r.ok ? r.json() : null).catch(() => null)
           )
         );
