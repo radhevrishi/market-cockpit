@@ -1925,6 +1925,10 @@ export default function HomeDashboard() {
   // noon/6pm boundary). Now both render `Good day` initially, then the
   // useEffect updates to the real greeting + clock.
   const [now, setNow] = useState<Date | null>(null);
+  // PATCH 1036 — Position Sizing Calculator on home (shares localStorage key with multibagger)
+  const [posCalcCapital, setPosCalcCapital] = useState<number>(40000);
+  useEffect(() => { try { const s = localStorage.getItem('mc:posCalc:capital'); if (s && Number(s) > 0) setPosCalcCapital(Number(s)); } catch {} }, []);
+  useEffect(() => { try { localStorage.setItem('mc:posCalc:capital', String(posCalcCapital)); } catch {} }, [posCalcCapital]);
   useEffect(() => {
     setNow(new Date());
     const t = setInterval(() => setNow(new Date()), 60_000);
@@ -1998,6 +2002,34 @@ export default function HomeDashboard() {
                   when no live quotes arrived (weekend / cold start). */}
             </div>
           </div>
+          {/* PATCH 1036 — Position Sizing Calculator on home (institutional 1-tap sizing) */}
+          <div style={{display:'flex',alignItems:'center',gap:14,flexWrap:'wrap',padding:'12px 16px',backgroundColor:'rgba(168,85,247,0.06)',border:'1px solid rgba(168,85,247,0.20)',borderRadius:10,marginTop:4}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+              <span style={{fontSize:12,fontWeight:800,color:'#A78BFA',letterSpacing:'0.5px'}}>💰 POSITION SIZING</span>
+              <span style={{fontSize:11,color:DIM,fontWeight:700}}>Portfolio</span>
+              <span style={{fontSize:13,color:TEXT,fontWeight:800}}>₹</span>
+              <input
+                type="number"
+                value={posCalcCapital}
+                onChange={(e)=>setPosCalcCapital(Math.max(0, Number(e.target.value)||0))}
+                style={{width:120,padding:'5px 8px',backgroundColor:'#13131a',border:'1px solid rgba(255,255,255,0.12)',borderRadius:6,color:TEXT,fontSize:13,fontWeight:700,outline:'none'}}
+                aria-label="Portfolio capital"
+              />
+              <span style={{fontSize:10,color:DIM}}>· editable, syncs across pages</span>
+            </div>
+            <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
+              {[1, 2.5, 5, 8, 10, 15, 20].map(pct => {
+                const amt = Math.round(posCalcCapital * pct / 100);
+                return (
+                  <div key={pct} style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'4px 12px',backgroundColor:'#13131a',border:'1px solid rgba(255,255,255,0.12)',borderRadius:6,minWidth:78}}>
+                    <span style={{fontSize:10,color:DIM,fontWeight:700}}>{pct}%</span>
+                    <span style={{fontSize:13,color:'#10B981',fontWeight:800}}>₹{amt.toLocaleString('en-IN')}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
           {/* PATCH 0619/0635 — institutional chip strip. All in one row group,
               uniform pill style, left-aligned, even row gap. */}
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-start', rowGap: 8, alignItems: 'center' }}>
