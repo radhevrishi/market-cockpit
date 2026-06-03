@@ -135,7 +135,8 @@ function buildColMap(sampleRow: Record<string,unknown>): Record<string,string> {
     else if (o==='High price'||o==='52 Week High'||o==='52W High'||o==='52wk High')
       m['high52w']=col;
     // ── GAP 7: % from 52W High — Screener already computes this ("From 52W High") ──
-    else if (o==='From 52W High'||o==='From 52 week high'||o==='from 52W High')
+    // PATCH 1024 — added 'From 52w high' (lowercase 'w'+'high') — actual Screener.in export spelling.
+    else if (o==='From 52W High'||o==='From 52 week high'||o==='from 52W High'||o==='From 52w high'||o==='From 52w High')
       m['pctFrom52wHighDirect']=col;
     // ── GAP 5: EV/EBITDA direct — user added as custom ratio ("EV / EBITDA") ──
     else if (o==='EV / EBITDA'||o==='EV/EBITDA'||o==='Enterprise Value/EBITDA'||o==='EV to EBITDA')
@@ -557,10 +558,21 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
     // opmBase = opm3yr (custom ratio) ?? opmPrev (Screener "OPM last year")
     opmExpansion:(opm_cur!==undefined&&opmBase!==undefined)?
       Math.round((opm_cur-opmBase)*10)/10 : undefined,
-    // Gap 7: % from 52W High — prefer "From 52W High" column (already %) else compute
-    pctFrom52wHigh: pctFrom52wHighDirect ??
-      ((price!==undefined&&high52w!==undefined&&high52w>0)?
-        ((_v)=>(typeof _v==="number"&&_v>=-100&&_v<=20?_v:undefined))(Math.round((price-high52w)/high52w*100)) : undefined),
+    // PATCH 1024 — Screener.in exports this as a FRACTION (0.91 = 91% of high → 9% below).
+    // Convert to signed-percent (-9 = "9% below 52w high") so display + gates work.
+    pctFrom52wHigh: (() => {
+      const raw = pctFrom52wHighDirect;
+      if (typeof raw === 'number') {
+        if (raw >= 0 && raw <= 1.5) return Math.round((raw - 1) * 1000) / 10;
+        if (raw >= -100 && raw <= 20) return raw;
+        return undefined;
+      }
+      if (price !== undefined && high52w !== undefined && high52w > 0) {
+        const v = Math.round((price - high52w) / high52w * 100);
+        return (typeof v === 'number' && v >= -100 && v <= 20) ? v : undefined;
+      }
+      return undefined;
+    })(),
     // ── ACCELERATION SIGNALS (Framework.docx Core Signal) ────────────────────
     // Compare latest quarter YOY vs historical CAGR to detect trend direction.
     // If recent (YOY) > historical (CAGR): business is ACCELERATING — key buy signal.
