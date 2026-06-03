@@ -11,6 +11,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
+import { internalBase } from '@/lib/internal-base';
 import { kvGet, kvSet } from '@/lib/kv';
 import { SUPER_INVESTORS } from '@/lib/super-investors';
 
@@ -65,7 +66,7 @@ export async function GET(request: Request) {
     }
   } catch {}
 
-  const origin = new URL(request.url).origin;
+  const origin = internalBase(request); // PATCH 1013
   const cutoffMs = Date.now() - days * 86_400_000;
 
   // Fan out — fetch news for each investor in parallel (concurrency limited).
