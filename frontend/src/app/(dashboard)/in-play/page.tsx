@@ -59,10 +59,9 @@ export default function InPlayPage() {
       const base = buildNews(news, earn);
       const p1 = base.slice().sort((a, b) => b.time - a.time);
       setItems(p1.slice(0, 500)); setAsOf(nowStr()); setLoading(false);
-      const [qIN, qUS] = await Promise.all([
-        withTimeout(getJSON('/api/market/quotes?market=india' + rp), 38000),
-        withTimeout(getJSON('/api/market/quotes?market=us' + rp), 38000),
-      ]);
+      let __mk = 'US'; try { __mk = localStorage.getItem('mc:inplay:market') || 'US'; } catch {}
+      const qIN = (__mk === 'IN' || __mk === 'ALL') ? await withTimeout(getJSON('/api/market/quotes?market=india' + rp), 38000) : null;
+      const qUS = (__mk === 'US' || __mk === 'ALL') ? await withTimeout(getJSON('/api/market/quotes?market=us' + rp), 38000) : null;
       const px = buildPx(qIN, qUS);
       base.forEach((it) => { if (it.kind === 'news' || it.kind === 'macro') { const k = (it.ticker || '').toUpperCase(); const q = px[k]; if (q) { it.price = q.price; it.changePct = q.cp; if (it.market === 'GLOBAL') it.market = q.mk; } } });
       const mvA = buildMovers(qIN, 'IN', newsMap).concat(buildMovers(qUS, 'US', newsMap));
@@ -80,7 +79,7 @@ export default function InPlayPage() {
     finally { setLoading(false); inFlight.current = false; }
   }, []);
 
-  useEffect(() => { load(false); }, [load]);
+  useEffect(() => { load(false); }, [load, market]);
   useEffect(() => { const id = setInterval(() => { if (document.visibilityState === 'visible') load(false); }, 60000); return () => clearInterval(id); }, [load]);
 
   const filtered = items.filter((it) => {
