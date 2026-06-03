@@ -93,7 +93,6 @@ function buildColMap(sampleRow: Record<string,unknown>): Record<string,string> {
     else if (o==='Industry Group')    {if(!m['sector'])            m['sector']=col;}
     else if (o==='Return on capital employed')                     m['roce']=col;
     else if (o==='Return on equity')                               m['roe']=col;
-    else if (o==='Return on invested capital'){if(!m['roe'])       m['roe']=col;}
     else if (o==='OPM')                                            m['opm']=col;
     else if (o==='CFO to PAT')                                     m['cfoToPat']=col;
     else if (o==='Debt to equity')                                 m['de']=col;
@@ -122,7 +121,7 @@ function buildColMap(sampleRow: Record<string,unknown>): Record<string,string> {
     else if (o==='EPS growth'||o==='EPS Growth')                   m['epsGrowth']=col;
     else if (o==='Pledged percentage'||o==='Pledged Percentage')   m['pledge']=col;
     // ── Kill-switch metrics ──
-    else if (o==='Gross profit margin'||o==='Gross Profit Margin'||o==='GPM'||o==='Gross Margin') m['gpm']=col;
+    else if (o==='Gross profit margin'||o==='Gross Profit Margin'||o==='GPM'||o==='Gross Margin'||o==='GPM latest quarter'||o==='GPM Latest Quarter') m['gpm']=col;
     else if (o==='Return on invested capital'||o==='ROIC'||o==='Return on Invested Capital') m['roic']=col;
     // ── GAP 2: OPM comparison — Screener "OPM last year" or custom "OPM 3Years" ──
     else if (o==='OPM last year'||o==='OPM preceding year')        m['opmPrev']=col;
@@ -330,6 +329,7 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
   const roce3yr=n(m['roce3yr']?row[m['roce3yr']]:undefined);
   const opm3yr=n(m['opm3yr']?row[m['opm3yr']]:undefined);
   const opmPrev=n(m['opmPrev']?row[m['opmPrev']]:undefined);  // Screener "OPM last year"
+  const opm5y=n(m['opm5y']?row[m['opm5y']]:undefined);  // PATCH 1025 5y margin trend
   const high52w=n(m['high52w']?row[m['high52w']]:undefined);  // Screener "High price"
   // Direct columns (user-added custom ratios from Screener):
   const pctFrom52wHighDirect=n(m['pctFrom52wHighDirect']?row[m['pctFrom52wHighDirect']]:undefined);
@@ -623,6 +623,15 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
         dilutionDragPp: d.drag_pp,
       });
     },
+    // PATCH 1025: populate Framework Boundary panel
+    missing_dimensions: buildMissingDimensions({
+      hasGpm: n(m['gpm']?row[m['gpm']]:undefined) !== undefined,
+      hasRoic: n(m['roic']?row[m['roic']]:undefined) !== undefined,
+      hasGpm5yTrend: opm5y !== undefined,
+      hasFcfTrend: false,
+      hasFounderTenure: false,
+      hasCustomerConcentration: false,
+    }),
     get framework_coverage(): FrameworkCoverage {
       // Build a flat object of present field values for the coverage check
       const flat: Record<string, unknown> = {};
