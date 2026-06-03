@@ -101,6 +101,7 @@ export async function fetchQuotesShared(opts: FetchQuotesOpts = {}): Promise<Quo
   const index = opts.index;
   const params = new URLSearchParams({ market });
   if (index) params.set('index', index);
+  if (opts.force) params.set('refresh', '1');
   const url = `/api/market/quotes?${params.toString()}`;
   const ttl = opts.cacheTtlMs ?? DEFAULT_STALE_MS;
 
