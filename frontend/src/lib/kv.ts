@@ -93,13 +93,32 @@ export async function kvGet<T = any>(key: string): Promise<T | null> {
 }
 
 /**
- * Set a value in the KV store with optional TTL (seconds)
+ * Set a value in the KV store with optional TTL (seconds).
+ *
+ * PATCH 1018 — Upstash imposes a 10 MB Max Request Size on the REST API.
+ * Writes larger than that get rejected and the cache silently stays empty,
+ * which makes every subsequent read pay the full recompute cost AND triggers
+ * "Max Request Size limit" alerts to the account owner. The concall-intel
+ * live-feed payload at days=180 is ~12 MB, so this guard is necessary.
+ *
+ * Strategy: skip the REMOTE write if the serialized payload exceeds the safe
+ * threshold (8 MB — keep a 2 MB safety margin below the 10 MB hard cap).
+ * Memory cache is still populated so the current request returns fast; only
+ * the cross-instance KV cache is skipped for over-sized blobs.
  */
+const KV_REMOTE_MAX_BYTES = 8 * 1024 * 1024;  // 8 MB safety cap (Upstash hard limit is 10 MB)
+
 export async function kvSet(key: string, value: any, ttlSeconds?: number): Promise<void> {
   const serialized = typeof value === 'string' ? value : JSON.stringify(value);
 
   // Always update memory store (fast path)
   MEM_STORE.set(key, serialized);
+
+  // PATCH 1018 — skip oversized remote writes (Upstash 10 MB limit)
+  if (serialized.length > KV_REMOTE_MAX_BYTES) {
+    console.warn(`[KV] Skipping remote SET for ${key} — payload ${(serialized.length / 1048576).toFixed(1)} MB > ${(KV_REMOTE_MAX_BYTES / 1048576).toFixed(0)} MB safety cap. (Memory cache still populated.)`);
+    return;
+  }
 
   const r = getRedis();
   if (r) {
