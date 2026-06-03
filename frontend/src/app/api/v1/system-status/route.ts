@@ -6,6 +6,7 @@
 // runs in parallel so total response time is ~5s worst case.
 // ═══════════════════════════════════════════════════════════════════════════
 import { NextResponse } from 'next/server';
+import { internalBase } from '@/lib/internal-base';
 
 export const runtime = 'nodejs';
 export const maxDuration = 15;
@@ -61,7 +62,7 @@ async function probe(p: Probe, origin: string): Promise<any> {
 }
 
 export async function GET(request: Request) {
-  const origin = new URL(request.url).origin;
+  const origin = internalBase(request); // PATCH 1013 — Railway self-fetch fix
   const results = await Promise.all(PROBES.map(p => probe(p, origin)));
   const summary = {
     total: results.length,
