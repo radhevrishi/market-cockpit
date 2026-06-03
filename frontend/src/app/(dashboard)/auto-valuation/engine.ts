@@ -538,10 +538,16 @@ function inferSector(text: string, company?: string): string | undefined {
       [/\bcGMP\b/g, 3],
     ]],
     ['Specialty Chemicals', [
-      [/\bspecialty chemicals?\b/g, 5],
-      [/\bCDMO\b|\bCRDMO\b/g, 4],
-      [/\bagrochem\b|\bcrop protection\b/g, 4],
-      [/\bfluoro(?:chemical|polymer)\b/g, 4],
+      [/\bspecialty\s+chemicals?\b|\bspeciality\s+chemicals?\b/g, 5],
+      [/\bCDMO\b|\bCRDMO\b|\bCMO\b/g, 4],
+      [/\bagrochem\b|\bcrop\s+protection\b/g, 4],
+      [/\bfluoro(?:chemical|polymer|specialt)/g, 4],
+      // PATCH 1021 — Aether case: 'advanced/speciality intermediates', 'contract manufacturing', 'custom synthesis'
+      [/\b(?:advanced|fine|performance|key|speciality)\s+(?:intermediates?|chemicals?)\b/g, 5],
+      [/\bcontract\s+(?:manufacturing|research)\b/g, 4],
+      [/\bcustom\s+synthesis\b/g, 5],
+      [/\bpharma\s+intermediates?\b/g, 4],
+      [/\bAPI\s+(?:and|&)\s+intermediates?\b/gi, 5],
     ]],
     ['Power / Transmission', [
       [/\btransformer\b/g, 4],
