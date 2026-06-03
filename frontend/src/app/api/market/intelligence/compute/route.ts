@@ -5310,9 +5310,13 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   monitorSignals.sort((a, b) => (b.v7RankScore || 0) - (a.v7RankScore || 0));
 
   // Enforce output constraints
-  const MAX_ACTIONABLE = 3;
-  const MAX_NOTABLE = 5;
-  const MAX_MONITOR = 10;
+  // PATCH 1022 — bump caps for the dedicated Signals page. Home rail still
+  // applies its own SHOWN=30 cap in page.tsx, so the home view is unaffected;
+  // the dedicated /signals (/orders) page was throttled to a max of 18 cards
+  // (3+5+10) regardless of how many candidate signals existed in the universe.
+  const MAX_ACTIONABLE = 10;
+  const MAX_NOTABLE = 20;
+  const MAX_MONITOR = 40;
 
   // Overflow: excess actionable → notable, excess notable → monitor
   if (actionableSignals.length > MAX_ACTIONABLE) {
