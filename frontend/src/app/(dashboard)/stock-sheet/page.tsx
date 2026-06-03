@@ -364,7 +364,7 @@ function useTickerQuote(ticker: string) {
       // PATCH 0716 — 10s timeout + safe JSON parse + array guard.
       try {
         const ctl = new AbortController();
-        const timer = setTimeout(() => ctl.abort(), 10_000);
+        const timer = setTimeout(() => ctl.abort(), 20_000); // PATCH 1037
         let r: Response;
         try { r = await fetch(`/api/market/quote?symbols=${encodeURIComponent(t)}`, { cache: 'no-store', signal: ctl.signal }); }
         finally { clearTimeout(timer); }
