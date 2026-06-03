@@ -35,7 +35,7 @@ export async function fetchChart(symbol: string, range = '1d', interval = '1d') 
 
   try {
     const url = `${YF_BASE}/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}&includePrePost=false`;
-    const res = await fetch(url, { headers: HEADERS, next: { revalidate: 300 } });
+    const res = await fetch(url, { headers: HEADERS, next: { revalidate: 300 }, signal: AbortSignal.timeout(10_000) });
     if (!res.ok) return null;
     const json = await res.json();
     const result = json?.chart?.result?.[0];
@@ -126,24 +126,34 @@ export async function fetchQuotesWithFallback(symbols: string[]): Promise<any[]>
 
   if (results.length > 0) return results;
 
-  // Fallback: fetch individually via chart API (slower but more reliable)
-  const promises = symbols.map(async (sym) => {
-    const chart = await fetchChart(sym);
-    if (!chart) return null;
-    return {
-      symbol: chart.symbol,
-      shortName: chart.shortName,
-      regularMarketPrice: chart.regularMarketPrice,
-      regularMarketChange: chart.change,
-      regularMarketChangePercent: chart.changePercent,
-      regularMarketVolume: chart.volume,
-      regularMarketPreviousClose: chart.previousClose,
-      marketCap: 0,
-    };
-  });
-
-  const individual = await Promise.all(promises);
-  return individual.filter(Boolean);
+  // Fallback: fetch individually via chart API (v8 chart — no crumb needed).
+  // PATCH 0964: Yahoo v7 /finance/quote now returns 401 Unauthorized for
+  // every symbol (crumb-gated), so ALL traffic lands here. The old code ran an
+  // unbounded Promise.all over every symbol at once, which Yahoo rate-limited —
+  // only ~20% resolved (the "22 of 100 largecaps" thin-movers bug). Bounded
+  // concurrency (CONC=6 + 120ms slab gap) resolves ~95%+ in a few seconds.
+  const CONC = 6;
+  const GAP_MS = 120;
+  const out: any[] = [];
+  for (let i = 0; i < symbols.length; i += CONC) {
+    const slab = symbols.slice(i, i + CONC);
+    const charts = await Promise.all(slab.map((sym) => fetchChart(sym)));
+    for (const chart of charts) {
+      if (!chart) continue;
+      out.push({
+        symbol: chart.symbol,
+        shortName: chart.shortName,
+        regularMarketPrice: chart.regularMarketPrice,
+        regularMarketChange: chart.change,
+        regularMarketChangePercent: chart.changePercent,
+        regularMarketVolume: chart.volume,
+        regularMarketPreviousClose: chart.previousClose,
+        marketCap: 0,
+      });
+    }
+    if (i + CONC < symbols.length) await new Promise((r) => setTimeout(r, GAP_MS));
+  }
+  return out;
 }
 
 // NIFTY 50 constituents with sectors
