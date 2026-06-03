@@ -835,8 +835,14 @@ export default function HomeDashboard() {
         // caps that the small/mid + liquidity filter then drops, leaving only a
         // handful. Filtering the full universe yields a proper 20 per side.
         const _allStocks: any[] = (j?.stocks && j.stocks.length > 0) ? j.stocks : [ ...(j?.gainers || []), ...(j?.losers || []) ];
-        const rawG = _allStocks.filter((s: any) => (s?.changePercent || 0) > 0);
-        const rawL = _allStocks.filter((s: any) => (s?.changePercent || 0) < 0);
+        // PATCH 1015 — also drop staleEOD rows here. The full universe j.stocks
+        // includes yesterday's BHAVCOPY data (staleEOD:true) during the post-close
+        // window, so without this filter NEWGEN/CONCORDBIO etc. (yesterday's big
+        // movers) bubble to the top of the home widget even when /movers correctly
+        // shows today's gainers. Mirrors the staleEOD filter applied server-side
+        // to j.gainers/j.losers (route.ts P1012).
+        const rawG = _allStocks.filter((s: any) => (s?.changePercent || 0) > 0 && !s?.staleEOD);
+        const rawL = _allStocks.filter((s: any) => (s?.changePercent || 0) < 0 && !s?.staleEOD);
         const inUniverse = (s: any) => universe.has(norm(s?.ticker || s?.symbol || ''));
         const smallMidOnly = (arr: any[]) => arr.filter((s: any) => {
           const g = (s?.indexGroup || '').toLowerCase();
