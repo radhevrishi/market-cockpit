@@ -178,7 +178,7 @@ export default function CompanyIntelPage() {
     // merge + guidance extraction + periodic re-derive across retained docs
     // and exceed 30s. Server route maxDuration also bumped to 60s.)
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), 75_000);
+    const timer = setTimeout(() => ctl.abort(), 25_000); // PATCH 1037: 75s blocked the panel; 25s is ample for warm backend
     try {
       const res = await fetch(`/api/v1/company-intel/${encodeURIComponent(ticker.trim().toUpperCase())}`, {
         method: 'POST',
