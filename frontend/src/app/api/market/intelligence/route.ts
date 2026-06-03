@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { internalBase } from '@/lib/internal-base';
 import { nseApiFetch, fetchStockQuote } from '@/lib/nse';
 import { normalizeTicker } from '@/lib/tickers';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
@@ -1615,7 +1616,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
           if (isStale) {
             // Trigger background recompute (fire-and-forget)
             try {
-              const url = new URL('/api/market/intelligence/compute', request.url);
+              const url = new URL('/api/market/intelligence/compute', internalBase(request)); // PATCH 1013
               fetch(url.toString(), {
                 method: 'GET',
                 signal: AbortSignal.timeout(2000),
@@ -2746,7 +2747,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
     if (!forceRefresh) {
       console.log('[Intelligence] No precomputed data — triggering compute route, returning skeleton');
       try {
-        const computeUrl = new URL('/api/market/intelligence/compute', request.url);
+        const computeUrl = new URL('/api/market/intelligence/compute', internalBase(request)); // PATCH 1013
         fetch(computeUrl.toString(), { method: 'GET' }).catch(() => {});
       } catch {}
       // PATCH 0850 — Honest empty-state diagnostic. When compute keeps
@@ -2757,7 +2758,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
       // items, the whole pipeline is going to produce 0.
       let upstreamHint = '';
       try {
-        const r = await fetch(new URL('/api/v1/concall-intel/live-feed?cacheOnly=1', request.url).toString(), { signal: AbortSignal.timeout(2000) } as any);
+        const r = await fetch(new URL('/api/v1/concall-intel/live-feed?cacheOnly=1', internalBase(request)).toString(), { signal: AbortSignal.timeout(2000) } as any); // PATCH 1013
         if (r.ok) {
           const j = await r.json();
           const upstreamCount = (j?.filings || j?.items || []).length;
