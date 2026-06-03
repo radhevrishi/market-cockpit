@@ -380,6 +380,7 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
     roce3yr,
     opm3yr,
     opmPrev,
+    opm5y,  // PATCH 1026: pass through to scorer
     high52w,
     // ── PATCH 0317: Additional institutional metrics ──
     debtorDays: n(m['debtorDays']?row[m['debtorDays']]:undefined),
