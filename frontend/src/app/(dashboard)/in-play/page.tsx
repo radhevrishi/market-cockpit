@@ -54,9 +54,32 @@ export default function InPlayPage() {
     if (inFlight.current) return; inFlight.current = true; setErr('');
     const rp = force ? '&refresh=1' : '';
     try {
-      const [news, earn] = await Promise.all([ getJSON('/api/v1/news?market=all'), getJSON('/api/market/earnings') ]);
+      // PATCH 1023 — fetch curated In-Play stream (structural alerts + ranked
+      // events) and merge into the feed top. The page was rebuilding from raw
+      // sources and ignoring the curated /api/v1/news/in-play output.
+      const [news, earn, inplayCurated] = await Promise.all([
+        getJSON('/api/v1/news?market=all'),
+        getJSON('/api/market/earnings'),
+        getJSON('/api/v1/news/in-play'),
+      ]);
+      const curatedItems: FeedItem[] = Array.isArray(inplayCurated)
+        ? inplayCurated.map((c: any, i: number) => ({
+            id: 'inplay-' + (c.id || i),
+            time: new Date(c.published_at || Date.now()).getTime() + (Math.round((c.importance_score || 0) * 1000) * 60_000),
+            market: mapRegion(c.region || 'GLOBAL'),
+            ticker: c.primary_ticker || (Array.isArray(c.tickers) && c.tickers[0]) || null,
+            headline: c.headline || c.title || '',
+            body: c.summary || (c.bottleneck_sub_tag ? `Sub-tag: ${c.bottleneck_sub_tag}` : ''),
+            source: c.source_name || c.source || 'In-Play',
+            price: null,
+            changePct: null,
+            kind: 'news' as const,
+          }))
+        : [];
       const newsMap = buildNewsMap(news);
-      const base = buildNews(news, earn);
+      const baseRaw = buildNews(news, earn);
+      // PATCH 1023 — prepend curated In-Play items (structural + ranked events) to base
+      const base = curatedItems.concat(baseRaw);
       const p1 = base.slice().sort((a, b) => b.time - a.time);
       setItems(p1.slice(0, 500)); setAsOf(nowStr()); setLoading(false);
       let __mk = 'US'; try { __mk = localStorage.getItem('mc:inplay:market') || 'US'; } catch {}
