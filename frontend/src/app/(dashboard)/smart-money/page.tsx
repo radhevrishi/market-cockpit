@@ -115,6 +115,8 @@ export default function SmartMoneyPage() {
     // AUDIT_100 #7 — skip poll when tab is hidden
     const interval = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      // PATCH 1040 — skip poll when market is closed (no new deals on NSE after-hours/weekends/holidays). Saves 60s of slow API calls per poll cycle.
+      if (data && data.marketStatus && data.marketStatus.open === false) return;
       fetchData();
     }, 60000);
 
