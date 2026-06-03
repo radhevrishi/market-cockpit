@@ -389,7 +389,10 @@ function LiveBullishFeed() {
   // Full universe is now the default lens; bullish-only is opt-in.
   const [bullishOnly, setBullishOnly] = useState(false);
   const [exchange, setExchange] = useState<'ALL' | 'NSE' | 'BSE'>('ALL');
-  const [days, setDays] = useState(7);
+  // PATCH 1022 — bump default 7→30 days. The 7d window misses the bulk of
+  // Q4 FY26 concalls (April-May 2026 peak) once we're past late-May. Users were
+  // seeing only ~7 filings in the default view when 1500+ exist in the 30d window.
+  const [days, setDays] = useState(30);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   // PATCH 0391 — tier filter chips. Default to ALL TIERS for full-universe view.
   // PATCH 0397 — Added DATA_PENDING to default set.
@@ -399,7 +402,10 @@ function LiveBullishFeed() {
   // investing". So default = actionable signals only (ULTRA, BULLISH,
   // MIXED_POSITIVE, BEARISH). NEUTRAL and DATA_PENDING hidden behind chip
   // toggles for when user wants to inspect the broader universe.
-  const [tierFilter, setTierFilter] = useState<Set<string>>(new Set(['ULTRA_BULLISH', 'BULLISH', 'MIXED_POSITIVE', 'BEARISH']));
+  // PATCH 1022 — include NEUTRAL by default. Excluding it hid filings where the
+  // PDF extractor couldn't parse a numeric anchor — on quiet days that's ~80% of
+  // the queue. User can toggle NEUTRAL off via the tier chips if too noisy.
+  const [tierFilter, setTierFilter] = useState<Set<string>>(new Set(['ULTRA_BULLISH', 'BULLISH', 'MIXED_POSITIVE', 'NEUTRAL', 'BEARISH']));
   const toggleTier = (t: string) => {
     setTierFilter(prev => {
       const next = new Set(prev);
@@ -833,7 +839,7 @@ function LiveBullishFeed() {
       })()}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {filtered.slice(0, 50).map((f, i) => {
+        {filtered.slice(0, 150).map((f, i) => {  /* PATCH 1022 — was 50; show more filings */
           const scoreColor = f.bullish.raw_score >= 8 ? '#10B981' : f.bullish.raw_score >= 5 ? '#22D3EE' : f.bullish.raw_score >= 2 ? '#F59E0B' : '#94A3B8';
           const filingTypeLabel: Record<string, string> = {
             TRANSCRIPT: '📜 Transcript',
