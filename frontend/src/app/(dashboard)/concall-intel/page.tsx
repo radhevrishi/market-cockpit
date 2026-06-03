@@ -2686,8 +2686,8 @@ function ConcallAnalyticsTab() {
     try {
       const [w, b, k, m] = await Promise.all([
         safeFetch<WarrantFeedPayload>('/api/v1/concall-intel/warrant-feed?days=30&threshold=0'),
-        safeFetch<LiveFeedPayload>('/api/v1/concall-intel/live?days=7'),
-        safeFetch<KwWatchPayload>('/api/v1/concall-intel/keyword-watch?days=14'),
+        safeFetch<LiveFeedPayload>('/api/v1/concall-intel/live-feed?days=30'), // PATCH 1014 — was /live (404) + days=7 too narrow post Q4-peak
+        safeFetch<KwWatchPayload>('/api/v1/concall-intel/keyword-watch?days=30'), // PATCH 1014 — widen to 30d
         safeFetch<MoversPayload>('/api/v1/concall-intel/movers'),
       ]);
       if (settled) return;
