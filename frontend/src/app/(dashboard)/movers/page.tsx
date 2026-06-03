@@ -118,6 +118,7 @@ export default function MoversPage() {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [marketOpen, setMarketOpen] = useState(false);
 
   const [capFilter, setCapFilter] = useState<CapFilter>('All');
   const [sectorFilter, setSectorFilter] = useState<string>('All');
@@ -162,7 +163,7 @@ export default function MoversPage() {
 
   const hasActiveFilters = capFilter !== 'All' || sectorFilter !== 'All' || moveTokens.size > 0 || earningsOnly;
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (force = false) => {
     // PATCH 1015 — 15s -> 35s. The full ~2,341-stock universe build takes ~25s
     // on a cold cache (no Yahoo on weekends; the cost is the blob read + build),
     // so a 15s abort guaranteed a timeout on the first load. 35s lets the cold
@@ -174,7 +175,7 @@ export default function MoversPage() {
       setIsRefreshing(true);
       // PATCH 0544 — Shared quote fetch dedupes with /heatmap when user
       // toggles inside /market-snapshot within the 60s cache window.
-      const json = await fetchQuotesShared({ market: 'india', signal: ctl.signal });
+      const json = await fetchQuotesShared({ market: 'india', signal: ctl.signal, force });
 
       const stocks: Stock[] = ((json as { stocks?: Record<string, unknown>[] }).stocks || [])
         .filter(isValidStock)
@@ -199,6 +200,7 @@ export default function MoversPage() {
         return sig(prev) === sig(stocks) ? prev : stocks;
       });
       setLastUpdated(new Date()); __moversRetryCount = 0;
+      setMarketOpen(!!(json as any)?.marketHours?.indianOpen);
     } catch (err: any) {
       setError(err?.name === 'AbortError' ? 'Movers fetch timed out' : (err instanceof Error ? err.message : 'Failed to fetch data'));
       if (allStocks.length === 0 && __moversRetryCount < 3) { __moversRetryCount += 1; setTimeout(() => { fetchData(); }, 2500); }
@@ -555,7 +557,7 @@ export default function MoversPage() {
               {capCounts.large}L · {capCounts.mid}M · {capCounts.small}S
             </span>
           )}
-          <button onClick={fetchData} disabled={isRefreshing} style={{
+          <button onClick={() => fetchData(true)} disabled={isRefreshing} style={{
             padding: '6px 12px', borderRadius: '6px', border: `1px solid ${BORDER}`, backgroundColor: CARD, color: ACCENT,
             cursor: isRefreshing ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px',
             opacity: isRefreshing ? 0.5 : 1, transition: 'all 0.2s',
@@ -745,7 +747,7 @@ export default function MoversPage() {
               <TrendingUp size={15} color={GREEN} />
               <span style={{ fontSize: isMobile ? '13px' : '14px', fontWeight: '600' }}>Top Gainers</span>
               <span style={{ fontSize: '10px', color: GREEN, backgroundColor: 'rgba(16,185,129,0.12)', padding: '2px 6px', borderRadius: '3px', fontWeight: '600' }}>{gainers.length}</span>
-              <span style={{ marginLeft: 'auto', fontSize: '9px', color: GREEN, fontWeight: '700', backgroundColor: 'rgba(16,185,129,0.15)', padding: '2px 8px', borderRadius: '3px' }}>LIVE</span>
+              <span style={{ marginLeft: 'auto', fontSize: '9px', color: GREEN, fontWeight: '700', backgroundColor: 'rgba(16,185,129,0.15)', padding: '2px 8px', borderRadius: '3px' }}>{marketOpen ? 'LIVE' : 'EOD'}</span>
             </div>
             <div style={{ overflowX: 'auto', maxHeight: isMobile ? '400px' : '550px', overflowY: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -771,7 +773,7 @@ export default function MoversPage() {
               <TrendingDown size={15} color={RED} />
               <span style={{ fontSize: isMobile ? '13px' : '14px', fontWeight: '600' }}>Top Losers</span>
               <span style={{ fontSize: '10px', color: RED, backgroundColor: 'rgba(239,68,68,0.12)', padding: '2px 6px', borderRadius: '3px', fontWeight: '600' }}>{losers.length}</span>
-              <span style={{ marginLeft: 'auto', fontSize: '9px', color: RED, fontWeight: '700', backgroundColor: 'rgba(239,68,68,0.15)', padding: '2px 8px', borderRadius: '3px' }}>LIVE</span>
+              <span style={{ marginLeft: 'auto', fontSize: '9px', color: RED, fontWeight: '700', backgroundColor: 'rgba(239,68,68,0.15)', padding: '2px 8px', borderRadius: '3px' }}>{marketOpen ? 'LIVE' : 'EOD'}</span>
             </div>
             <div style={{ overflowX: 'auto', maxHeight: isMobile ? '400px' : '550px', overflowY: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
