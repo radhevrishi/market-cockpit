@@ -107,7 +107,8 @@ const METRIC_PATTERNS: Array<{
   { metric: 'REVENUE',        unit: '₹ Cr', keywords: /(?:revenue|topline|sales|turnover|net sales|gross sales)/i },
   { metric: 'EBITDA',         unit: '₹ Cr', keywords: /(?:ebitda|operating profit)/i },
   { metric: 'PAT',            unit: '₹ Cr', keywords: /(?:PAT|net profit|profit after tax|bottomline|bottom line)/i },
-  { metric: 'EBITDA_MARGIN',  unit: '%',    keywords: /(?:ebitda margin|operating margin|opm)/i },
+  // PATCH 1016 — match tabular 'EBITDA %' / 'EBITDA%' rows (concall decks present margin in tables, not prose)
+  { metric: 'EBITDA_MARGIN',  unit: '%',    keywords: /(?:ebitda\s*%|ebitda\s+margin|operating\s+margin|opm)/i },
   { metric: 'PAT_MARGIN',     unit: '%',    keywords: /(?:pat margin|net margin|net profit margin)/i },
   { metric: 'GROWTH',         unit: '%',    keywords: /(?:revenue growth|topline growth|sales growth|growth rate|grow at)/i },
   { metric: 'CAPEX',          unit: '₹ Cr', keywords: /(?:capex|capital expenditure|capital investment)/i },
