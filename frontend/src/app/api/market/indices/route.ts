@@ -84,6 +84,37 @@ export async function GET(request: Request) {
       });
     }
 
+    // PATCH 1013 — Yahoo fallback for NIFTY 50 / BANK NIFTY / SENSEX when
+    // NSE blocks Railway egress (post-migration regression: nseApiFetch returns
+    // null from datacenter IPs). Yahoo v8 chart works reliably from Railway.
+    // Only fires for symbols that NSE didn't deliver, so it's strictly additive.
+    const hasNifty   = indices.some((i) => i.symbol === 'NIFTY 50');
+    const hasBank    = indices.some((i) => i.symbol === 'BANK NIFTY');
+    const hasSensex  = indices.some((i) => i.symbol === 'SENSEX');
+    const needYahoo: { yf: string; ui: string }[] = [];
+    if (!hasNifty)  needYahoo.push({ yf: '%5ENSEI',    ui: 'NIFTY 50'    });
+    if (!hasBank)   needYahoo.push({ yf: '%5ENSEBANK', ui: 'BANK NIFTY'  });
+    if (!hasSensex) needYahoo.push({ yf: '%5EBSESN',   ui: 'SENSEX'      });
+    if (needYahoo.length > 0) {
+      const yQuotes = await Promise.all(needYahoo.map(async ({ yf, ui }) => {
+        try {
+          const r = await fetch(
+            `https://query1.finance.yahoo.com/v8/finance/chart/${yf}?range=2d&interval=1d`,
+            { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(8000) }
+          );
+          if (!r.ok) return null;
+          const j = await r.json();
+          const m = j?.chart?.result?.[0]?.meta;
+          if (!m || !Number.isFinite(m.regularMarketPrice)) return null;
+          const last = Number(m.regularMarketPrice);
+          const prev = Number(m.chartPreviousClose || m.previousClose || 0);
+          const pct = prev > 0 ? ((last - prev) / prev) * 100 : null;
+          return { symbol: ui, price: last, change_pct: pct, change: prev > 0 ? last - prev : null };
+        } catch { return null; }
+      }));
+      for (const q of yQuotes) if (q) indices.push(q);
+    }
+
     // Static FX placeholder — explicit null so the front-end renders '—'
     // instead of a misleading '+0.00%' (PATCH 0445 BUG-001).
     indices.push(
