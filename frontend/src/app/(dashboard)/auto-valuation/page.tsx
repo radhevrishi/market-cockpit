@@ -2079,7 +2079,7 @@ export default function AutoValuationPage() {
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ fontSize: 18, fontWeight: 800, color: TEXT }}>{report.company || '—'}</div>
                   <div style={{ fontSize: 11, color: DIM, fontFamily: 'ui-monospace, monospace', marginTop: 3 }}>
-                    {report.ticker || '—'} {report.quote ? `· ₹${report.quote.currentPrice?.toLocaleString('en-IN', { maximumFractionDigits: 0 })} · MCap ₹${Math.round(report.quote.currentMarketCapCr || 0).toLocaleString('en-IN')} Cr` : ''}
+                    {report.ticker || '—'} {report.quote ? `· ₹${report.quote.currentPrice?.toLocaleString('en-IN', { maximumFractionDigits: 0 })} · MCap ₹${Math.round(report.currentMarketCapCr || report.quote.currentMarketCapCr || 0).toLocaleString('en-IN')} Cr` : ''}
                   </div>
                   {report.sector && <div style={{ fontSize: 10, color: '#22D3EE', marginTop: 4, fontWeight: 700 }}>{report.sector}</div>}
                 </div>
