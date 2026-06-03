@@ -468,8 +468,47 @@ export function extractGuidance(text: string): GuidanceItem[] {
         // Skip this candidate — extraction would mis-attribute.
         continue;
       }
+      // PATCH 1021 — margin numbers must sit close to the margin keyword.
+      // Without this, "EBITDA growth 45-65% ... EBITDA margin maintained" let
+      // EBITDA_MARGIN's clause swallow the far-away 65% as margin (Aditya).
+      if (pat.metric === 'EBITDA_MARGIN' || pat.metric === 'PAT_MARGIN' || pat.metric === 'OPM') {
+        const _raw = (pctRange?.[0] || pctPoint?.[0] || '');
+        if (_raw) {
+          const _idxInClause = clause.indexOf(_raw);
+          const _absRawIdx = clauseStart + (_idxInClause >= 0 ? _idxInClause : 0);
+          const _dist = Math.abs(_absRawIdx - kwEnd);
+          if (_dist > 40) continue;
+        }
+      }
 
-      for (const fy of fys) {
+      // PATCH 1021 — proximity-aware FY tagging. When the sentence has
+      // multiple FY tokens (Aditya case: "FY26E Earlier 3,900-4,100 Cr vs
+      // FY27E 6,000-6,500 Cr"), the OLD loop pushed the SAME number under
+      // EVERY FY — guaranteeing wrong year-tagging. New behavior: find the
+      // matched number's character position in the sentence, then route the
+      // emit to the SINGLE FY token that sits closest to that number.
+      let _emitFys = fys;
+      try {
+        const _raw = rawMatch || '';
+        if (_raw && fys.length > 1) {
+          const _rawIdx = s.indexOf(_raw);
+          if (_rawIdx >= 0) {
+            const _fyPositions: Array<{ fy: string; pos: number }> = [];
+            const _fyRe = new RegExp(FY_TOKEN.source, 'gi');
+            let _fm: RegExpExecArray | null;
+            while ((_fm = _fyRe.exec(s)) !== null) {
+              const _yr2 = (_fm[0].match(/\d{2,4}/) || [''])[0].slice(-2);
+              if (_yr2) _fyPositions.push({ fy: 'FY' + _yr2, pos: _fm.index });
+            }
+            if (_fyPositions.length > 0) {
+              _fyPositions.sort((a, b) => Math.abs(a.pos - _rawIdx) - Math.abs(b.pos - _rawIdx));
+              const _picked = _fyPositions[0].fy;
+              if (fys.includes(_picked)) _emitFys = [_picked];
+            }
+          }
+        }
+      } catch {}
+      for (const fy of _emitFys) {
         out.push({
           fiscalYear: fy,
           metric: pat.metric,
