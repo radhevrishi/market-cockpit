@@ -852,8 +852,11 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
 
       {/* Click-away for user menu */}
       {userMenu && (
+        // PATCH 1035 — overlay zIndex was 90, sat ABOVE sidebar (z=40), so first sidebar
+        // click was consumed by overlay (just closed menu). Drop to z=30 so overlay stays
+        // BELOW sidebar — first click reaches the <Link> and navigates.
         <div onClick={() => setUserMenu(false)}
-          style={{ position: 'fixed', inset: 0, zIndex: 90 }} />
+          style={{ position: 'fixed', inset: 0, zIndex: 30, background: 'transparent' }} />
       )}
 
       {/* Ticker drilldown drawer */}
