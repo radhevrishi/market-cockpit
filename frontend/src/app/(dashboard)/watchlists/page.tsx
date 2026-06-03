@@ -124,7 +124,7 @@ const fetchStockQuotes = async (market: string = 'india'): Promise<StockQuote[]>
   // refresh loop if /api/market/quotes was slow; AbortController fires at
   // 12s so the page never stalls indefinitely.
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), 12_000);
+  const timer = setTimeout(() => ctl.abort(), 25_000); // PATCH 1037
   try {
     const res = await fetch(`/api/market/quotes?market=${market}`, { signal: ctl.signal });
     if (!res.ok) throw new Error('Failed to fetch quotes');
@@ -169,7 +169,7 @@ const fetchIndividualQuotes = async (symbols: string[]): Promise<StockQuote[]> =
       // PATCH 0464 — per-batch 10s timeout. Without this, a single hung
       // batch could block the whole watchlist refresh.
       const ctl = new AbortController();
-      const timer = setTimeout(() => ctl.abort(), 10_000);
+      const timer = setTimeout(() => ctl.abort(), 25_000); // PATCH 1037
       let res: Response;
       try {
         res = await fetch(`/api/market/quote?symbols=${normalizedBatch.join(',')}`, { signal: ctl.signal });
@@ -599,7 +599,7 @@ export default function WatchlistsPage() {
       // PATCH 0716 — 8s timeout + safe JSON parse + array shape guard.
       try {
         const _syncCtl = new AbortController();
-        const _syncTimer = setTimeout(() => _syncCtl.abort(), 8_000);
+        const _syncTimer = setTimeout(() => _syncCtl.abort(), 25_000); // PATCH 1037
         let syncData: any = {};
         try {
           const syncRes = await fetch(`/api/watchlist?chatId=${CHAT_ID}`, { signal: _syncCtl.signal });
