@@ -960,6 +960,15 @@ export async function buildReport(docs: ParsedDoc[]): Promise<AutoValuationRepor
     patScen = {};
     forwardPAT = undefined;
   }
+  // PATCH 1020 — cross-validate PAT vs EBITDA. PAT > EBITDA is mathematically
+  // impossible (PAT = EBITDA - Dep - Interest - Tax, all subtractions). Gujarat
+  // Pipavav test: extractor gave PAT ₹655 Cr while EBITDA ₹453 Cr — obvious
+  // misclassification (probably picked up a 5y CAGR % or other number).
+  if (ebitdaScen.base !== undefined && patScen.base !== undefined && patScen.base > ebitdaScen.base) {
+    console.warn(`[auto-val] Guidance sanity-clamp: PAT ₹${patScen.base.toFixed(0)} Cr > EBITDA ₹${ebitdaScen.base.toFixed(0)} Cr — impossible. Rejecting PAT, falling back to EBITDA→PAT chain.`);
+    patScen = {};
+    forwardPAT = undefined;
+  }
 
   // PATCH 0653 — apply guided GROWTH% per scenario to latest sales when
   // no absolute revenue guidance was given. Each scenario picks the
