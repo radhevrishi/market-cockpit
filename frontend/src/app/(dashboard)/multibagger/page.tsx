@@ -784,19 +784,21 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
           failed += chunk.length; done += chunk.length;
         } else {
           const json = await r.json();
-          const stocks: any[] = Array.isArray(json?.stocks) ? json.stocks : Array.isArray(json) ? json : [];
-          stocks.forEach(s => {
-            if (!s || !s.ticker) return;
-            const sym = String(s.ticker).toUpperCase();
-            const score = typeof s.score === 'number' ? s.score : 0;
-            const label = (s.label || '').toString().toUpperCase();
+          // PATCH — API returns {results: {TICKER: {label, score, rationale, ...}}} (object map, not array)
+          const resultsMap: Record<string, any> = (json && typeof json === 'object' && json.results && typeof json.results === 'object') ? json.results : {};
+          Object.entries(resultsMap).forEach(([sym, data]) => {
+            if (!data || typeof data !== 'object') return;
+            const d: any = data;
+            const upperSym = sym.toUpperCase();
+            const score = typeof d.score === 'number' ? d.score : 0;
+            const label = (d.label || '').toString().toUpperCase();
             let tier: AiGuidanceEntry['tier'] = 'NOGUIDANCE';
             if (label.includes('EXCELLENT') || score >= 0.7) tier = 'EXCELLENT';
             else if (label.includes('POSITIVE') || score >= 0.25) tier = 'POSITIVE';
             else if (label.includes('CAUTIOUS') || score <= -0.25) tier = 'CAUTIOUS';
             else if (label.includes('NEGATIVE') || score <= -0.7) tier = 'NEGATIVE';
-            else if (typeof s.score === 'number') tier = 'NEUTRAL';
-            newMap[sym] = { score, tier, summary: (s.rationale || s.label || '').toString().slice(0, 300), period: PERIOD, fetchedAt: Date.now() };
+            else if (typeof d.score === 'number') tier = 'NEUTRAL';
+            newMap[upperSym] = { score, tier, summary: (d.rationale || d.label || '').toString().slice(0, 300), period: PERIOD, fetchedAt: Date.now() };
           });
           done += chunk.length;
         }
