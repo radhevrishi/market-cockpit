@@ -744,7 +744,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   }, [aiGuidanceMap]);
 
   // Soft fetch: only fetch tickers with no cache OR cache > 100 days old. Hard refresh: bypass cache, re-fetch all.
-  const fetchAIGuidance = React.useCallback(async (hardRefresh: boolean) => {
+  async function fetchAIGuidance(hardRefresh: boolean) {
     const STALE_MS = 100 * 86_400_000; // 100 days
     const now = Date.now();
     // Resolve current quarter (FY-Indian: Apr-Mar)
@@ -805,7 +805,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
       setAiGuidanceMap({ ...newMap });
     }
     setAiGuidanceLoading(false);
-  }, [aiGuidanceMap, excelRows]);
+  }
 
 
   // PATCH 0272 — Conviction Beats overlay. Subscribes to the institutional
