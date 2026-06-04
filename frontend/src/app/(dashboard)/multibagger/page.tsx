@@ -807,6 +807,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
     setAiGuidanceLoading(false);
   }, [aiGuidanceMap, excelRows]);
 
+
   // PATCH 0272 — Conviction Beats overlay. Subscribes to the institutional
   // bench so we can mark rows that have already passed the BLOCKBUSTER /
   // STRONG earnings filter on /earnings-opportunities. Cross-tab sync via
