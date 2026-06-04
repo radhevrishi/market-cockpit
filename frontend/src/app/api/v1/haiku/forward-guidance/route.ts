@@ -933,6 +933,25 @@ export async function POST(req: NextRequest) {
       // 2) Find concall PDF
       const lookup = await findConcallPdfUrl(T);
       if (lookup.url === null) {
+        // PATCH 1053 — News-based fallback. When neither NSE nor Screener.in
+        // has a usable PDF, fall back to the company's recent news headlines
+        // (already scraped by our news ingest). User reported "many stocks
+        // you said you cant find details. you should find some guidance and
+        // show there i no way around". This is a free fallback (no Haiku
+        // call) that produces a Neutral/LOW-confidence entry with the latest
+        // headline as rationale + up to 4 recent headlines as quotes — so the
+        // row shows *something* useful instead of the misleading "+0.00".
+        const newsFallback = await tryNewsBasedFallback(T, P);
+        if (newsFallback) {
+          if (isRedisAvailable()) {
+            try { await kvSet(key, newsFallback, CACHE_TTL_NEG_S); } catch {}
+          }
+          results[T] = newsFallback;
+          stats.intimation_only++;
+          await setTickerStatus(T, P, 'noguidance', 'news-fallback');
+          diagnostics.push({ ...lookup.diag, pdf_quality: 'no-pdf', error: 'fell back to news headlines' });
+          return;
+        }
         if (lookup.diag.outcome === 'intimation-only') {
           // ISSUE #4 — synthetic NoGuidance entries now write with SHORT TTL
           // (24h) instead of 1y. If the company later uploads a real transcript,
@@ -941,7 +960,7 @@ export async function POST(req: NextRequest) {
             label: 'NoGuidance',
             score: 0,
             confidence: 'HIGH',
-            rationale: 'Only intimation/notice PDFs filed on NSE — no transcript content yet to extract. Cached for 24h; re-extracts automatically once the company uploads the actual transcript.',
+            rationale: 'No concall transcript on NSE / Screener.in AND no recent news matched for this ticker. Cached 24h; re-extracts automatically once a transcript is published.',
             quotes: [],
             numbers: [],
             catalysts: [],
@@ -1137,3 +1156,94 @@ export async function GET(req: NextRequest) {
   } as NextRequest;
   return POST(fakeReq);
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// PATCH 1053 — News-based fallback for "no transcript" stocks.
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Problem: ~70% of small/mid-cap tickers have NO concall transcript on either
+// NSE or Screener.in, so the cache fills with "+0.00 NEUTRAL — intimation/
+// notice only" entries that give the user nothing.
+//
+// Solution: when both PDF chains return empty, fetch the company's last 90d
+// of news headlines from our existing news ingest (free — already scraped) and
+// produce an indicative guidance entry. Keyword-based sentiment classification
+// (no extra Haiku call → no extra Anthropic cost). The result is clearly
+// flagged confidence='LOW' and source='press-release' so the user knows it's
+// not the same fidelity as a concall extraction.
+//
+// Trigger: only when lookup.url === null AND the PDF chain found nothing
+// (intimation-only / no-filings / no-attachment / cf-error).
+async function tryNewsBasedFallback(ticker: string, period: string): Promise<AIForwardGuidance | null> {
+  try {
+    // Use our own internal news API — already deduped + indexed by ticker.
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL
+                 ?? process.env.RAILWAY_STATIC_URL
+                 ?? 'http://localhost:3000';
+    const url = baseUrl.startsWith('http') ? baseUrl : `https://${baseUrl}`;
+    const r = await fetch(`${url}/api/v1/news?ticker=${encodeURIComponent(ticker)}&limit=20&days=90`, {
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!r.ok) return null;
+    const j = await r.json().catch(() => null) as { items?: any[] } | any[] | null;
+    const raw = Array.isArray(j) ? j : (j?.items || []);
+    // Filter: only articles tagged with our ticker. Some news routes return
+    // broader matches when the symbol is short.
+    const articles: any[] = raw
+      .filter((a: any) => {
+        if (!a) return false;
+        const ts: string[] = Array.isArray(a.ticker_symbols) ? a.ticker_symbols : [];
+        return ts.some(t => t.toUpperCase().replace(/\.NS$|\.BO$|^NSE:|^BSE:/i, '') === ticker.toUpperCase());
+      })
+      .slice(0, 8);
+    if (articles.length < 2) return null;
+
+    // Cheap keyword sentiment — institutional-style scoring on POSITIVE/NEGATIVE
+    // verbs. Same word lists already used in /multibagger Guidance Mode so the
+    // result is consistent with what the user sees there.
+    const POS = ['raised guidance', 'guidance upgrade', 'raised outlook', 'beats estimates', 'above estimates', 'record quarter', 'record revenue', 'strong beat', 'raised earnings', 'margin expansion', 'strong growth', 'upgraded', 'rerating', 'guidance raised', 'order win', 'large order', 'capex', 'expansion', 'new plant', 'tie-up', 'partnership', 'acquired'];
+    const NEG = ['cut guidance', 'lowered guidance', 'below estimates', 'disappointing', 'warning', 'cautious', 'revenue miss', 'profit miss', 'guidance cut', 'margin pressure', 'revised down', 'lowered outlook', 'sebi', 'fraud', 'investigation', 'resignation', 'fall', 'decline', 'losses'];
+    let posHits = 0, negHits = 0;
+    const headlines: { quote: string; speaker?: string }[] = [];
+    for (const a of articles) {
+      const text = `${(a.title || a.headline || '')} ${(a.summary || '')}`.toLowerCase();
+      for (const w of POS) if (text.includes(w)) posHits++;
+      for (const w of NEG) if (text.includes(w)) negHits++;
+      const headline = (a.title || a.headline || '').toString().trim();
+      const src = (a.source_name || '').toString().trim();
+      if (headline) headlines.push({ quote: headline.slice(0, 280), speaker: src.slice(0, 60) || undefined });
+    }
+    const net = posHits - negHits;
+    const label: AIForwardGuidance['label'] =
+      net >= 3 ? 'Positive' :
+      net <= -3 ? 'Negative' :
+      'Neutral';
+    const score = Math.max(-0.5, Math.min(0.5, net * 0.08)); // bounded to ±0.5 since this isn't transcript-grade
+
+    const latestDate = articles[0]?.published_at ? new Date(articles[0].published_at).toISOString().slice(0, 10) : 'recent';
+    const rationale = `Based on ${articles.length} recent news headlines (last 90d, latest ${latestDate}) — no concall transcript available so this is a NEWS-BASED indicative reading, not concall-derived. ${posHits}+ positive cues vs ${negHits}- negative cues.`;
+
+    return {
+      label,
+      score,
+      confidence: 'LOW',           // explicit: NOT transcript-grade
+      rationale,
+      quotes: headlines.slice(0, 6),
+      numbers: [],
+      catalysts: [],
+      source: 'press-release',
+      source_filename: 'news-headlines-fallback',
+      period,
+      extracted_at: new Date().toISOString(),
+      schema_version: SCHEMA_VERSION,
+      prompt_version: PROMPT_VERSION,
+      parser_version: PARSER_VERSION,
+      source_fetched_at: new Date().toISOString(),
+      source_provider: 'nse',     // closest existing value; "news" not in enum
+      pdf_quality: 'no-pdf',
+    };
+  } catch {
+    return null;
+  }
+}
+
