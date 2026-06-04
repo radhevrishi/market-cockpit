@@ -727,6 +727,22 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   const [guidanceLoading, setGuidanceLoading] = useState(false);
   const [guidanceScores, setGuidanceScores] = useState<Record<string, number>>({}); // symbol → 0.0-1.0
   const [guidanceArticleCounts, setGuidanceArticleCounts] = useState<Record<string, number>>({});
+  // PATCH 1050 — Haiku AI guidance overlay (separate from news-keyword guidance above)
+  // Cache key: mc:multibagger:ai-guidance:v1 — 100-day TTL per ticker
+  type AiGuidanceEntry = { score: number; tier: 'EXCELLENT'|'POSITIVE'|'NEUTRAL'|'CAUTIOUS'|'NEGATIVE'|'NOGUIDANCE'; summary: string; period: string; fetchedAt: number };
+  const [aiGuidanceMap, setAiGuidanceMap] = useState<Record<string, AiGuidanceEntry>>({});
+  const [aiGuidanceLoading, setAiGuidanceLoading] = useState(false);
+  const [aiGuidanceProgress, setAiGuidanceProgress] = useState({done:0, total:0, failed:0, configMissing:false});
+  const [aiTierFilter, setAiTierFilter] = useState<'ALL'|'EXCELLENT'|'POSITIVE'|'NEUTRAL'|'CAUTIOUS'|'NEGATIVE'|'NOGUIDANCE'>('ALL');
+  // Load cached guidance on mount
+  React.useEffect(() => {
+    try { const raw = localStorage.getItem('mc:multibagger:ai-guidance:v1'); if (raw) setAiGuidanceMap(JSON.parse(raw)); } catch {}
+  }, []);
+  // Persist cache on change
+  React.useEffect(() => {
+    try { localStorage.setItem('mc:multibagger:ai-guidance:v1', JSON.stringify(aiGuidanceMap)); } catch {}
+  }, [aiGuidanceMap]);
+
   // Soft fetch: only fetch tickers with no cache OR cache > 100 days old. Hard refresh: bypass cache, re-fetch all.
   const fetchAIGuidance = React.useCallback(async (hardRefresh: boolean) => {
     const STALE_MS = 100 * 86_400_000; // 100 days
@@ -790,21 +806,6 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
     }
     setAiGuidanceLoading(false);
   }, [aiGuidanceMap, excelRows]);
-  // PATCH 1050 — Haiku AI guidance overlay (separate from news-keyword guidance above)
-  // Cache key: mc:multibagger:ai-guidance:v1 — 100-day TTL per ticker
-  type AiGuidanceEntry = { score: number; tier: 'EXCELLENT'|'POSITIVE'|'NEUTRAL'|'CAUTIOUS'|'NEGATIVE'|'NOGUIDANCE'; summary: string; period: string; fetchedAt: number };
-  const [aiGuidanceMap, setAiGuidanceMap] = useState<Record<string, AiGuidanceEntry>>({});
-  const [aiGuidanceLoading, setAiGuidanceLoading] = useState(false);
-  const [aiGuidanceProgress, setAiGuidanceProgress] = useState({done:0, total:0, failed:0, configMissing:false});
-  const [aiTierFilter, setAiTierFilter] = useState<'ALL'|'EXCELLENT'|'POSITIVE'|'NEUTRAL'|'CAUTIOUS'|'NEGATIVE'|'NOGUIDANCE'>('ALL');
-  // Load cached guidance on mount
-  React.useEffect(() => {
-    try { const raw = localStorage.getItem('mc:multibagger:ai-guidance:v1'); if (raw) setAiGuidanceMap(JSON.parse(raw)); } catch {}
-  }, []);
-  // Persist cache on change
-  React.useEffect(() => {
-    try { localStorage.setItem('mc:multibagger:ai-guidance:v1', JSON.stringify(aiGuidanceMap)); } catch {}
-  }, [aiGuidanceMap]);
 
   // PATCH 0272 — Conviction Beats overlay. Subscribes to the institutional
   // bench so we can mark rows that have already passed the BLOCKBUSTER /
