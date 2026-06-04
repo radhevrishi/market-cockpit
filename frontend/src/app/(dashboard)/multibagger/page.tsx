@@ -1278,15 +1278,15 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
         onClick={()=>fileRef.current?.click()}
         onDragOver={e=>e.preventDefault()}
         onDrop={e=>{e.preventDefault();if(e.dataTransfer.files.length)handleFiles(e.dataTransfer.files);}}
-        style={{marginBottom:20,padding:'32px 24px',border:`2px dashed ${PURPLE}40`,borderRadius:14,textAlign:'center',cursor:'pointer',backgroundColor:`${PURPLE}05`}}
+        style={{marginBottom:12,padding:'8px 14px',border:`1px dashed ${PURPLE}40`,borderRadius:8,cursor:'pointer',backgroundColor:`${PURPLE}05`,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}
       >
-        <div style={{fontSize:40,marginBottom:10}}>{loading?'⏳':'📁'}</div>
-        <div style={{fontSize:F.xl,fontWeight:700,color:PURPLE}}>
-          {loading?'Scoring...'  :fileName?`✅ ${fileName}`:'Click or drag & drop — multiple files OK'}
-        </div>
-        <div style={{fontSize:F.md,color:MUTED,marginTop:6}}>
-          .xlsx · .csv · Screener.in format · all columns auto-detected · duplicates merged
-        </div>
+        <span style={{fontSize:16}}>{loading?'⏳':'📁'}</span>
+        <span style={{fontSize:F.sm,fontWeight:700,color:PURPLE}}>
+          {loading?'Scoring...':fileName?`✅ ${fileName}`:'Click or drop CSV / XLSX'}
+        </span>
+        <span style={{fontSize:F.xs,color:MUTED}}>
+          Screener.in format · auto-detected · duplicates merged
+        </span>
         <input ref={fileRef} type="file" accept=".xlsx,.csv,.xls" multiple style={{display:'none'}}
           onChange={e=>{if(e.target.files?.length)handleFiles(e.target.files);}} />
       </div>
@@ -4218,13 +4218,6 @@ export default function MultibaggerPage() {
   // Turnaround universe respectively. The original 'analytics' tab stays
   // as the cross-market overview (India-led).
   const [activeTab, setActiveTab] = useState<'analytics'|'excel'|'usa'|'usa-analytics'|'turnaround'|'turnaround-analytics'|'usa-checklist'|'checklist'|'capital-alloc'|'reference'>('analytics');
-  // PATCH 1031 — Position Sizing Calculator state (persists in localStorage)
-  const [posCalcCapital, setPosCalcCapital] = useState<number>(() => {
-    if (typeof window === 'undefined') return 40000;
-    const saved = localStorage.getItem('mc:posCalc:capital');
-    return saved && Number(saved) > 0 ? Number(saved) : 40000;
-  });
-  React.useEffect(() => { try { localStorage.setItem('mc:posCalc:capital', String(posCalcCapital)); } catch {} }, [posCalcCapital]);
   React.useEffect(() => {
     const onSwitch = (e: Event) => {
       const ce = e as CustomEvent<{ tab: 'excel' | 'usa' }>;
@@ -4365,36 +4358,6 @@ export default function MultibaggerPage() {
                 <button key={tab.id} onClick={()=>setActiveTab(tab.id)} style={{padding:'12px 22px',border:'none',cursor:'pointer',backgroundColor:'transparent',color:active?PURPLE:MUTED,fontSize:F.md,fontWeight:active?700:400,borderBottom:active?`2px solid ${PURPLE}`:'2px solid transparent',marginBottom:-1,flexShrink:0,transition:'all 0.15s'}}>
                   {tab.label}
                 </button>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      {/* PATCH 1031 — Position Sizing Calculator: institutional 1-tap sizing, visible across all tabs */}
-      <div style={{maxWidth:1800,margin:'0 auto',padding:'14px 24px 0'}}>
-        <div style={{display:'flex',alignItems:'center',gap:14,flexWrap:'wrap',padding:'12px 16px',backgroundColor:'rgba(168,85,247,0.06)',border:'1px solid rgba(168,85,247,0.20)',borderRadius:10}}>
-          <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
-            <span style={{fontSize:F.sm,fontWeight:800,color:PURPLE,letterSpacing:'0.5px'}}>💰 POSITION SIZING</span>
-            <span style={{fontSize:F.xs,color:MUTED,fontWeight:700}}>Portfolio</span>
-            <span style={{fontSize:F.sm,color:TEXT,fontWeight:800}}>$</span>
-            <input
-              type="number"
-              value={posCalcCapital}
-              onChange={(e)=>setPosCalcCapital(Math.max(0, Number(e.target.value)||0))}
-              style={{width:120,padding:'5px 8px',backgroundColor:'#13131a',border:`1px solid ${BORDER}`,borderRadius:6,color:TEXT,fontSize:F.sm,fontWeight:700,outline:'none'}}
-              aria-label="Portfolio capital"
-            />
-            <span style={{fontSize:F.xs,color:`${MUTED}90`}}>· editable, persists</span>
-          </div>
-          <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
-            {[1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 6, 7, 8, 9, 10, 15, 20].map(pct => {
-              const amt = Math.round(posCalcCapital * pct / 100);
-              return (
-                <div key={pct} style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'4px 8px',backgroundColor:'#13131a',border:`1px solid ${BORDER}`,borderRadius:6,minWidth:62}}>
-                  <span style={{fontSize:F.xs,color:MUTED,fontWeight:700}}>{pct}%</span>
-                  <span style={{fontSize:F.sm,color:GREEN,fontWeight:800}}>${amt.toLocaleString('en-US')}</span>
-                </div>
               );
             })}
           </div>
