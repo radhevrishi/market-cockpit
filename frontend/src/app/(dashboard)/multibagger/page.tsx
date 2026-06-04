@@ -1406,40 +1406,25 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
 
   return (
     <div style={{maxWidth:1800,margin:'0 auto',padding:'28px 20px'}}>
-      {/* Header info */}
-      <div style={{marginBottom:20,padding:'18px 20px',backgroundColor:CARD_BG,border:`1px solid ${BORDER}`,borderRadius:12}}>
-        <div style={{fontSize:F.lg,fontWeight:800,color:PURPLE,marginBottom:8}}>
-          📊 Upload Screener.in exports — SQGLP + Fisher + Framework scoring
-        </div>
-        <div style={{fontSize:F.md,color:MUTED,lineHeight:1.8,marginBottom:12}}>
-          Export any Screener.in screen as CSV and upload here. All fields auto-detected. Multiple files merged.
-          New uploads <strong style={{color:GREEN}}>add to existing data</strong> — never replace. Only <strong style={{color:RED}}>Clear All Data</strong> removes it.
-          {rows.length > 0 && <span style={{color:GREEN}}> ✅ {rows.length} stocks currently loaded.</span>}
-          <span style={{color:YELLOW}}> Add these extra columns</span> to unlock full scoring:
-        </div>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(220px,1fr))',gap:8}}>
-          {[
-            {field:'Free Cash Flow',why:'Fisher FCF filter + FCF yield'},
-            {field:'Net Debt',why:'Fisher survival: ND/EBITDA < 1.5'},
-            {field:'EBITDA',why:'ND/EBITDA + EV/EBITDA valuation'},
-            {field:'FII Holding',why:'MOSL SQGLP "S" undiscovered'},
-            {field:'DII Holding',why:'Institutional coverage check'},
-            {field:'Change in promoter holding',why:'Insider trend signal'},
-            {field:'EPS growth',why:'Fisher Twin Engine check'},
-            {field:'OPM last year',why:'Gap 2: 1yr OPM expansion / margin quality'},
-            {field:'From 52W High',why:'Gap 7: % from 52W high (already computed by Screener)'},
-            {field:'High price',why:'Gap 7: 52W high price (Screener standard field)'},
-            {field:'EV / EBITDA',why:'Gap 5: enterprise value vs EBITDA (custom ratio)'},
-            {field:'FCF Yield',why:'Gap 5: FCF as % of market cap (custom ratio)'},
-            {field:'Gross profit margin',why:'Kill-switch: GPM → pricing power & moat test'},
-            {field:'Return on invested capital',why:'Kill-switch: ROIC → capital efficiency & reinvestment engine'},
-          ].map(({field,why})=>(
-            <div key={field} style={{padding:'8px 12px',backgroundColor:CARD2,borderRadius:6,border:`1px solid ${BORDER}`}}>
-              <div style={{fontSize:F.sm,fontWeight:700,color:ACCENT}}>{field}</div>
-              <div style={{fontSize:F.xs,color:MUTED}}>{why}</div>
-            </div>
-          ))}
-        </div>
+      {/* PATCH 1054 — Compact header. Replaces the 14-card "extra columns"
+          grid (read like onboarding marketing) with a single dense status
+          strip + one-line CSV hint. Institutional-style: information density
+          over decorative cards. */}
+      <div style={{marginBottom:16,padding:'10px 14px',backgroundColor:CARD_BG,border:`1px solid ${BORDER}`,borderRadius:10,display:'flex',alignItems:'baseline',gap:14,flexWrap:'wrap',fontVariantNumeric:'tabular-nums'}}>
+        <span style={{fontSize:F.sm,fontWeight:800,color:PURPLE,letterSpacing:0.3}}>MULTIBAGGER ENGINE</span>
+        <span style={{fontSize:F.xs,color:MUTED}}>SQGLP · Fisher 100-Bagger · Framework · auto-merge dedup</span>
+        {rows.length > 0 && (
+          <span style={{fontSize:F.xs,fontWeight:700,color:GREEN,letterSpacing:0.3}}>{rows.length} stocks loaded</span>
+        )}
+        <details style={{marginLeft:'auto',fontSize:F.xs,color:MUTED,cursor:'pointer'}}>
+          <summary style={{listStyle:'none',color:'#22d3ee'}}>+ Optional CSV columns for full scoring</summary>
+          <div style={{marginTop:6,paddingTop:6,borderTop:`1px dashed ${BORDER}`,maxWidth:720,lineHeight:1.55,fontSize:9,color:MUTED}}>
+            <strong style={{color:TEXT}}>Quality:</strong> Gross profit margin · Return on invested capital · OPM last year
+            &nbsp;·&nbsp;<strong style={{color:TEXT}}>Cash:</strong> Free Cash Flow · FCF Yield · Net Debt · EBITDA · EV/EBITDA
+            &nbsp;·&nbsp;<strong style={{color:TEXT}}>Ownership:</strong> FII Holding · DII Holding · Change in promoter holding
+            &nbsp;·&nbsp;<strong style={{color:TEXT}}>Trend:</strong> EPS growth · From 52W High · High price
+          </div>
+        </details>
       </div>
 
       {/* Upload zone */}
@@ -2825,34 +2810,27 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                               })()}
                             </div>
 
-                            {/* PATCH 0066: Missing Dimensions panel — honest signaling
-                                of what the framework CAN'T see for this stock. Shows
-                                which qualitative dimensions (founder tenure, customer
-                                concentration, etc.) need manual verification. */}
+                            {/* PATCH 1054 — Compact dimensions table. Replaces the 5-card
+                                grid with a dense status table — institutional style: status
+                                column, dimension column, one-line explanation. Hint hidden
+                                inside hover-tooltip to avoid visual noise. */}
                             {r.missing_dimensions && r.missing_dimensions.length > 0 && (
-                              <div style={{marginTop:10,padding:'10px 12px',backgroundColor:`${MUTED}08`,border:`1px solid ${MUTED}30`,borderLeft:`3px solid ${MUTED}`,borderRadius:7}}>
-                                <div style={{fontSize:F.xs,fontWeight:700,color:'#94A3B8',marginBottom:6,letterSpacing:'0.4px'}}>
-                                  🔍 FRAMEWORK BOUNDARY — DIMENSIONS NOT MEASURED
+                              <div style={{marginTop:10,padding:'8px 12px',backgroundColor:`${MUTED}05`,border:`1px solid ${MUTED}20`,borderLeft:`3px solid ${MUTED}`,borderRadius:6}}>
+                                <div style={{fontSize:F.xs,fontWeight:700,color:'#94A3B8',marginBottom:6,letterSpacing:0.4,display:'flex',alignItems:'baseline',gap:8}}>
+                                  <span>FRAMEWORK BOUNDARY</span>
+                                  <span style={{color:MUTED,fontSize:9,fontWeight:600}}>· qualitative dimensions outside Screener export · verify manually for high-conviction picks</span>
                                 </div>
-                                <div style={{fontSize:9,color:MUTED,marginBottom:8,lineHeight:1.5}}>
-                                  These qualitative dimensions matter for multibagger outcomes but cannot be measured from Screener export alone. Verify manually for high-conviction picks.
-                                </div>
-                                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(220px,1fr))',gap:6}}>
+                                <div style={{display:'grid',gridTemplateColumns:'auto auto 1fr',rowGap:3,columnGap:10,fontSize:F.xs,lineHeight:1.4}}>
                                   {r.missing_dimensions.map((d, i) => {
                                     const col = d.status === 'MEASURED' ? GREEN : d.status === 'PROXY' ? YELLOW : ORANGE;
-                                    const icon = d.status === 'MEASURED' ? '✓' : d.status === 'PROXY' ? '~' : '?';
+                                    const icon = d.status === 'MEASURED' ? '●' : d.status === 'PROXY' ? '◐' : '○';
+                                    const tip = d.upload_hint && d.status !== 'MEASURED' ? `${d.explanation}\n→ ${d.upload_hint}` : d.explanation;
                                     return (
-                                      <div key={i} style={{padding:'6px 8px',backgroundColor:CARD2,borderRadius:5,fontSize:9,lineHeight:1.4}}>
-                                        <div style={{display:'flex',alignItems:'baseline',gap:4,marginBottom:2}}>
-                                          <span style={{color:col,fontWeight:700}}>{icon}</span>
-                                          <span style={{color:TEXT,fontWeight:700}}>{d.dimension}</span>
-                                          <span style={{color:col,fontSize:8,marginLeft:'auto',fontWeight:700}}>{d.status}</span>
-                                        </div>
-                                        <div style={{color:MUTED,fontSize:9}}>{d.explanation}</div>
-                                        {d.upload_hint && d.status !== 'MEASURED' && (
-                                          <div style={{color:'#22d3ee',fontSize:8,marginTop:3,fontStyle:'italic'}}>→ {d.upload_hint}</div>
-                                        )}
-                                      </div>
+                                      <React.Fragment key={i}>
+                                        <span style={{color:col,fontWeight:700}}>{icon} {d.status}</span>
+                                        <span style={{color:TEXT,fontWeight:600}}>{d.dimension}</span>
+                                        <span title={tip} style={{color:MUTED,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{d.explanation}</span>
+                                      </React.Fragment>
                                     );
                                   })}
                                 </div>
