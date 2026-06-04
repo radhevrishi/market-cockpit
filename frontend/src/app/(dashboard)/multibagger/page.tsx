@@ -695,6 +695,8 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   const [accelOnly, setAccelOnly] = useState(false);
   const [fcfOnly, setFcfOnly] = useState(false);
   const [discoveryOnly, setDiscoveryOnly] = useState(false);
+  // PATCH 1046 — fraud risk filter (lets user verify the fraud detection by isolating flagged stocks)
+  const [fraudFilter, setFraudFilter] = useState<'ALL'|'CLEAN'|'CRITICAL'|'HIGH'|'ANY'>('ALL');
   const [inflectionOnly, setInflectionOnly] = useState(false);
   // P/E and PEG range filters — 'ALL' means no filter
   const [peMax, setPeMax] = useState<'ALL'|15|25|40|60|100>('ALL');
@@ -1163,6 +1165,19 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   // Apply all active filters in order
   let baseRows = goodOnly ? goodCompanies : rows;
   if (bucketFilter !== 'ALL') baseRows = baseRows.filter(r => r.bucket === bucketFilter);
+  // PATCH 1046 — fraud risk filter
+  if (fraudFilter !== 'ALL') {
+    baseRows = baseRows.filter(r => {
+      const fraudFlags = r.redFlags.filter(f => f.source && f.source.startsWith('fraud:'));
+      const hasCrit = fraudFlags.some(f => f.severity === 'CRITICAL');
+      const hasHigh = fraudFlags.some(f => f.severity === 'HIGH');
+      if (fraudFilter === 'CLEAN')    return fraudFlags.length === 0;
+      if (fraudFilter === 'CRITICAL') return hasCrit;
+      if (fraudFilter === 'HIGH')     return hasHigh && !hasCrit;
+      if (fraudFilter === 'ANY')      return fraudFlags.length > 0;
+      return true;
+    });
+  }
   // PATCH 0127 — sector filter: institutional users want to compare within
   // sector (e.g. all Defence stocks ranked together, not all 84 mixed).
   if (sectorFilter !== 'ALL') baseRows = baseRows.filter(r => r.sector === sectorFilter);
@@ -1453,6 +1468,29 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                   ));
               })()}
             </select>
+            <div style={{width:1,background:BORDER,height:20}}/>
+            {/* PATCH 1046 — FRAUD RISK filter chips */}
+            <span style={{fontSize:F.xs,color:MUTED,fontWeight:700,letterSpacing:'0.5px'}}>🛡 FRAUD:</span>
+            {(() => {
+              const fraudCounts = {
+                CLEAN: rows.filter(r => !r.redFlags.some(f => f.source && f.source.startsWith('fraud:'))).length,
+                CRITICAL: rows.filter(r => r.redFlags.some(f => f.source && f.source.startsWith('fraud:') && f.severity === 'CRITICAL')).length,
+                HIGH: rows.filter(r => { const ff = r.redFlags.filter(f => f.source && f.source.startsWith('fraud:')); return ff.some(f => f.severity === 'HIGH') && !ff.some(f => f.severity === 'CRITICAL'); }).length,
+                ANY: rows.filter(r => r.redFlags.some(f => f.source && f.source.startsWith('fraud:'))).length,
+              };
+              const opts: Array<{key:'ALL'|'CLEAN'|'CRITICAL'|'HIGH'|'ANY', label:string, color:string, count:number}> = [
+                {key:'ALL',      label:'All',                   color:MUTED,  count: rows.length},
+                {key:'CLEAN',    label:'✓ Clean only',           color:GREEN,  count: fraudCounts.CLEAN},
+                {key:'ANY',      label:'⚠ Any flag',             color:ORANGE, count: fraudCounts.ANY},
+                {key:'HIGH',     label:'⚠ HIGH risk',            color:ORANGE, count: fraudCounts.HIGH},
+                {key:'CRITICAL', label:'🚨 NEVER BUY (Critical)', color:RED,    count: fraudCounts.CRITICAL},
+              ];
+              return opts.map(o => (
+                <button key={o.key} onClick={()=>setFraudFilter(o.key)} style={{fontSize:F.xs,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${fraudFilter===o.key?o.color+'80':BORDER}`,background:fraudFilter===o.key?o.color+'14':'transparent',color:fraudFilter===o.key?o.color:MUTED,cursor:'pointer'}}>
+                  {o.label} ({o.count})
+                </button>
+              ));
+            })()}
             <div style={{width:1,background:BORDER,height:20}}/>
             <span style={{fontSize:F.xs,color:MUTED,fontWeight:700,letterSpacing:'0.5px'}}>QUICK:</span>
             {[
