@@ -406,6 +406,15 @@ export interface ExcelResult extends ExcelRow {
   // PATCH 0987 — Screener provenance: file names this stock appeared in.
   // Populated by upload handler; legacy rows have undefined.
   _screeners?: string[];
+  // PATCH 1049 — Haiku AI Forward Guidance overlay (from /api/v1/haiku/forward-guidance).
+  // Populated client-side from localStorage cache or on user-triggered fetch.
+  // Distinct from the existing news-keyword guidanceScore (0.0–1.0) on this row —
+  // this is the signed concall-transcript score in [-1, +1] from the earnings pipeline.
+  aiGuidanceScore?: number;
+  aiGuidanceTier?: 'EXCELLENT'|'POSITIVE'|'NEUTRAL'|'CAUTIOUS'|'NEGATIVE'|'NOGUIDANCE'|null;
+  aiGuidanceSummary?: string;
+  aiGuidancePeriod?: string;
+  aiGuidanceFetchedAt?: number; // epoch ms, for cache TTL + stale highlight
 }
 
 // Sector benchmarks: [p25, median, p75]
