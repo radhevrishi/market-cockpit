@@ -2344,6 +2344,41 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                           </div>
                         );
                       })()}
+                      {/* PATCH 1045 — FRAUD RISK panel: counts fraud:* flags from PATCH 1044's computeFraudRiskFlags */}
+                      {(() => {
+                        const fraudFlags = r.redFlags.filter(f => f.source && f.source.startsWith('fraud:'));
+                        const critF = fraudFlags.filter(f => f.severity === 'CRITICAL').length;
+                        const highF = fraudFlags.filter(f => f.severity === 'HIGH').length;
+                        const medF  = fraudFlags.filter(f => f.severity === 'MEDIUM').length;
+                        const fraudScore = Math.min(100, critF*30 + highF*15 + medF*5);
+                        const FRAUD_RULES_TOTAL = 18;
+                        const passed = FRAUD_RULES_TOTAL - fraudFlags.length;
+                        const verdict = critF>=2?'NEVER BUY': critF>=1?'AVOID': highF>=2?'HIGH RISK': highF>=1?'CAUTION': medF>=2?'MINOR FLAGS':'CLEAN';
+                        const color = critF>=1?RED: highF>=1?ORANGE: medF>=1?YELLOW:GREEN;
+                        return (
+                          <div style={{marginTop:14,marginBottom:10,padding:'10px 14px',backgroundColor:`${color}10`,border:`1px solid ${color}40`,borderRadius:8}}>
+                            <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+                              <span style={{fontSize:F.sm,fontWeight:800,color:color,letterSpacing:'0.5px'}}>🛡 FRAUD RISK</span>
+                              <span style={{fontSize:F.md,fontWeight:900,color:color}}>{verdict}</span>
+                              <span style={{fontSize:F.xs,color:MUTED,fontWeight:700}}>Score: <strong style={{color:color}}>{fraudScore}/100</strong></span>
+                              <span style={{fontSize:F.xs,color:MUTED}}>· {passed}/{FRAUD_RULES_TOTAL} fraud checks passed</span>
+                              {critF>0 && <span style={{fontSize:F.xs,padding:'1px 6px',borderRadius:3,backgroundColor:`${RED}20`,color:RED,fontWeight:700}}>{critF} CRITICAL</span>}
+                              {highF>0 && <span style={{fontSize:F.xs,padding:'1px 6px',borderRadius:3,backgroundColor:`${ORANGE}20`,color:ORANGE,fontWeight:700}}>{highF} HIGH</span>}
+                              {medF>0 && <span style={{fontSize:F.xs,padding:'1px 6px',borderRadius:3,backgroundColor:`${YELLOW}20`,color:YELLOW,fontWeight:700}}>{medF} MEDIUM</span>}
+                            </div>
+                            {fraudFlags.length === 0 && (
+                              <div style={{fontSize:F.xs,color:MUTED,marginTop:4}}>✓ No fraud patterns detected: earnings-without-cash, pledge cascade, smart-money exit, operator/shell, ghost ROCE, banking NPA proxy, debtor buildup, rollup proxy, ICR leverage, microcap stretch — all clean.</div>
+                            )}
+                            {fraudFlags.length > 0 && (
+                              <div style={{marginTop:6}}>
+                                {fraudFlags.map((f,i) => (
+                                  <div key={i} style={{fontSize:F.xs,color:f.severity==='CRITICAL'?RED:f.severity==='HIGH'?ORANGE:YELLOW,padding:'2px 0'}}>▸ [{f.severity}] {f.label}</div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                       {/* Analysis */}
                       <div>
                         {r.strengths.length>0&&<>
