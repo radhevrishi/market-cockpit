@@ -895,6 +895,97 @@ export function applyForcedRanking(results: ExcelResult[]): ExcelResult[] {
   });
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// PATCH 1044 — FRAUD RISK DNA LAYER
+// ═══════════════════════════════════════════════════════════════════════════
+// Encodes 6 CRITICAL + 7 HIGH + 5 MEDIUM fraud signatures distilled from 80
+// historical Indian/global fraud cases (Satyam, Manpasand, Vakrangee, DHFL,
+// Wirecard, Luckin, Coffee Day, Zee, Reliance Communications, etc.).
+// Each rule sector-exempted where the metric is structurally meaningless
+// (banks have de > 5 by design, REITs have low FCF by design, etc.).
+// Output is pushed into redFlags BEFORE the hasCritFinal recompute, so the
+// existing cap chain (CRITICAL→38 / 2×HIGH→48 / 1×HIGH→60) does the binding.
+function computeFraudRiskFlags(
+  row: ExcelRow
+): Array<{label:string; severity:'CRITICAL'|'HIGH'|'MEDIUM'; source:string; kind?:'STRUCTURAL'|'CYCLICAL'}> {
+  const flags: Array<{label:string; severity:'CRITICAL'|'HIGH'|'MEDIUM'; source:string; kind?:'STRUCTURAL'|'CYCLICAL'}> = [];
+  const _sector = (row.sector || '').toLowerCase();
+  const _isFinSector = /bank|insurance|finance|capital markets|asset management|reit|invit/.test(_sector);
+  const _isRetailSector = /retail|consumer|trading/.test(_sector);
+  const _isHighGrowthExempt = /tech|software|it services|pharma|biotech|healthcare/.test(_sector);
+  const cfoToPat=row.cfoToPat, profitCagr=row.profitCagr, revCagr=row.revCagr, fcf=row.fcfAbsolute;
+  const pledge=row.pledge, de=row.de, dProm=row.changeInPromoter, promoter=row.promoter;
+  const pe=row.pe, peg=row.peg, pctFrom52w=row.pctFrom52wHigh, mcap=row.marketCapCr;
+  const fpd=row.fiiPlusDii, icr=row.icr, debtorDays=row.debtorDays;
+  const yoySales=row.yoySalesGrowth, yoyProfit=row.yoyProfitGrowth, roce=row.roce, evEbitda=row.evEbitda;
+  const fired: Record<string, boolean> = {};
+  // ── CRITICAL (each caps composite at 38) ──
+  if (!_isFinSector && cfoToPat!==undefined && cfoToPat<0.5 && profitCagr!==undefined && profitCagr>15 && fcf!==undefined && fcf<0) {
+    flags.push({label:`Earnings without cash (CFO/PAT ${cfoToPat.toFixed(2)} · profit CAGR ${profitCagr.toFixed(0)}% · FCF negative)`,severity:'CRITICAL',source:'fraud:C1-earnings-without-cash',kind:'STRUCTURAL'}); fired['C1']=true;
+  }
+  if (pledge!==undefined && pledge>50 && ((de!==undefined && de>1.5) || (dProm!==undefined && dProm<-2))) {
+    flags.push({label:`Pledge cascade (pledge ${pledge.toFixed(0)}% with leverage/exit amplifier)`,severity:'CRITICAL',source:'fraud:C2-pledge-cascade',kind:'STRUCTURAL'}); fired['C2']=true;
+  }
+  if (dProm!==undefined && dProm<-5 && pe!==undefined && pe>40 && pctFrom52w!==undefined && pctFrom52w>-20) {
+    flags.push({label:`Smart-money exit at premium (Δpromoter ${dProm.toFixed(1)}pp · PE ${pe.toFixed(0)} · ${pctFrom52w.toFixed(0)}% from 52w high)`,severity:'CRITICAL',source:'fraud:C3-smart-money-exit',kind:'STRUCTURAL'}); fired['C3']=true;
+  }
+  if (promoter!==undefined && promoter<15 && mcap!==undefined && mcap<1000 && fpd!==undefined && fpd<5) {
+    flags.push({label:`Operator/shell setup (promoter ${promoter.toFixed(0)}% · mcap ₹${mcap.toFixed(0)}Cr · FII+DII ${fpd.toFixed(1)}%)`,severity:'CRITICAL',source:'fraud:C4-operator-shell',kind:'STRUCTURAL'}); fired['C4']=true;
+  }
+  if (!_isFinSector && roce!==undefined && roce>25 && fcf!==undefined && fcf<0 && de!==undefined && de>1.5) {
+    flags.push({label:`Ghost ROCE / leverage trap (ROCE ${roce.toFixed(0)}% claimed · FCF negative · D/E ${de.toFixed(1)})`,severity:'CRITICAL',source:'fraud:C5-ghost-roce',kind:'STRUCTURAL'}); fired['C5']=true;
+  }
+  if (_isFinSector && dProm!==undefined && dProm<-3 && pe!==undefined && pe<15 && pctFrom52w!==undefined && pctFrom52w>-50) {
+    flags.push({label:`Banking NPA proxy (financial sector · Δpromoter ${dProm.toFixed(1)}pp at PE ${pe.toFixed(0)} · only ${pctFrom52w.toFixed(0)}% off high)`,severity:'CRITICAL',source:'fraud:C6-banking-npa-proxy',kind:'STRUCTURAL'}); fired['C6']=true;
+  }
+  // ── HIGH STRUCTURAL (cap at 60 single / 48 double) ──
+  if (!_isFinSector && cfoToPat!==undefined && cfoToPat>=0.5 && cfoToPat<0.8 && profitCagr!==undefined && profitCagr>20) {
+    flags.push({label:`CFO/PAT ${cfoToPat.toFixed(2)} below profit CAGR ${profitCagr.toFixed(0)}% — cash conversion gap`,severity:'HIGH',source:'fraud:H1-cfo-gap',kind:'STRUCTURAL'});
+  }
+  if (pledge!==undefined && pledge>=25 && pledge<=50) {
+    flags.push({label:`Pledge ${pledge.toFixed(0)}% (25–50% danger zone)`,severity:'HIGH',source:'fraud:H2-pledge-mid',kind:'STRUCTURAL'});
+  }
+  if (dProm!==undefined && dProm<=-2 && dProm>-5) {
+    flags.push({label:`Promoter selling ${dProm.toFixed(1)}pp over 3y (sustained distribution)`,severity:'HIGH',source:'fraud:H3-promoter-selling',kind:'STRUCTURAL'});
+  }
+  if (!_isFinSector && !_isRetailSector && debtorDays!==undefined && debtorDays>120) {
+    flags.push({label:`Debtor days ${debtorDays.toFixed(0)} (>120 — receivable buildup / channel stuffing risk)`,severity:'HIGH',source:'fraud:H4-debtor-buildup',kind:'STRUCTURAL'});
+  }
+  if (!_isFinSector && revCagr!==undefined && revCagr>35 && cfoToPat!==undefined && cfoToPat<0.8) {
+    flags.push({label:`Acquirer-rollup proxy (rev CAGR ${revCagr.toFixed(0)}% · CFO/PAT ${cfoToPat.toFixed(2)})`,severity:'HIGH',source:'fraud:H5-rollup',kind:'STRUCTURAL'});
+  }
+  if (!_isFinSector && icr!==undefined && icr<2.0 && de!==undefined && de>1.5) {
+    flags.push({label:`ICR ${icr.toFixed(1)} with D/E ${de.toFixed(1)} (debt service fragile)`,severity:'HIGH',source:'fraud:H6-icr-leverage',kind:'STRUCTURAL'});
+  }
+  if (!_isFinSector && mcap!==undefined && mcap<3000 && yoySales!==undefined && yoySales>60 && cfoToPat!==undefined && cfoToPat<0.7) {
+    flags.push({label:`Microcap aggressive growth without cash (mcap ₹${mcap.toFixed(0)}Cr · YoY sales ${yoySales.toFixed(0)}% · CFO/PAT ${cfoToPat.toFixed(2)})`,severity:'HIGH',source:'fraud:H7-microcap-growth',kind:'STRUCTURAL'});
+  }
+  // ── MEDIUM (−5 each via existing penalty layer) ──
+  if (cfoToPat!==undefined && cfoToPat>=0.8 && cfoToPat<1.0 && yoyProfit!==undefined && yoyProfit>40) {
+    flags.push({label:`CFO/PAT ${cfoToPat.toFixed(2)} with YoY profit ${yoyProfit.toFixed(0)}% (mild cash gap)`,severity:'MEDIUM',source:'fraud:M1-mild-cash-gap'});
+  }
+  if (peg!==undefined && peg>5) {
+    flags.push({label:`PEG ${peg.toFixed(1)} (>5 — valuation detached from growth)`,severity:'MEDIUM',source:'fraud:M2-peg-extreme'});
+  }
+  if (dProm!==undefined && dProm<=-1 && dProm>-2) {
+    flags.push({label:`Promoter mild trim ${dProm.toFixed(1)}pp over 3y`,severity:'MEDIUM',source:'fraud:M3-promoter-trim'});
+  }
+  if (!_isFinSector && icr!==undefined && icr>=2.0 && icr<4.0) {
+    flags.push({label:`ICR ${icr.toFixed(1)} (heavy interest burden)`,severity:'MEDIUM',source:'fraud:M4-icr-burden'});
+  }
+  if (!_isFinSector && !_isHighGrowthExempt && evEbitda!==undefined && evEbitda>40) {
+    flags.push({label:`EV/EBITDA ${evEbitda.toFixed(0)} (>40 outside high-growth sector)`,severity:'MEDIUM',source:'fraud:M5-ev-ebitda-extreme'});
+  }
+  // ── COMPOUND NEVER-BUY guard ──
+  const critFromLayer = flags.filter(f => f.severity === 'CRITICAL').length;
+  const isPledgeExitArchetype = fired['C2'] && fired['C3'];
+  const isPhantomEarningsArchetype = fired['C1'] && fired['C5'];
+  if (isPledgeExitArchetype || isPhantomEarningsArchetype || critFromLayer >= 3) {
+    flags.push({label:'NEVER BUY: Compound fraud-pattern (multiple fraud archetypes firing)',severity:'CRITICAL',source:'fraud:NEVERBUY-compound',kind:'STRUCTURAL'});
+  }
+  return flags;
+}
+
 export function scoreExcelRow(row: ExcelRow): ExcelResult {
   const b = SBENCH[getSectorKey(row.sector)] ?? SBENCH.DEFAULT;
   const cyclical = isCyclicalSector(row.sector);
@@ -2428,6 +2519,8 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
   // Visible symptom: SCORE AUDIT panel showed "2 HIGH structural · cap 48 ·
   // Active cap: 48 (binding)" but the actual score landed at 89. Recompute
   // freshly here over the FINAL redFlags array so caps actually bind.
+  // PATCH 1044 — append fraud risk flags so cap chain binds CRITICAL→38, etc.
+  redFlags.push(...computeFraudRiskFlags(row));
   const hasCritFinal      = redFlags.some(f => f.severity === 'CRITICAL');
   const highStructuralCnt = redFlags.filter(f => f.severity === 'HIGH' && (f.kind ?? 'STRUCTURAL') === 'STRUCTURAL').length;
   const highCyclicalCnt   = redFlags.filter(f => f.severity === 'HIGH' && f.kind === 'CYCLICAL').length;
