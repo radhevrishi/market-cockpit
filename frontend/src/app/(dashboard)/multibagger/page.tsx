@@ -2065,6 +2065,17 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                       <div style={{display:'flex',alignItems:'center',gap:5}}>
                         <span style={{fontSize:F.lg,fontWeight:800,color:hasCrit?RED:r.bucket==='MONITOR'?MUTED:TEXT}}>{r.symbol}</span>
                         {idx<3&&r.bucket!=='MONITOR'&&<span style={{fontSize:F.md}}>⭐</span>}
+                        {/* PATCH 1050 — AI guidance score chip from cache, shows without expanding row */}
+                        {(() => {
+                          const ai = aiGuidanceMap[(r.symbol || '').toUpperCase()];
+                          if (!ai) return null;
+                          const c = ai.tier === 'EXCELLENT' ? '#10B981' : ai.tier === 'POSITIVE' ? '#34D399' : ai.tier === 'NEUTRAL' ? '#94A3B8' : ai.tier === 'CAUTIOUS' ? '#F59E0B' : ai.tier === 'NEGATIVE' ? '#EF4444' : '#6B7280';
+                          const ic = ai.tier === 'EXCELLENT' ? '🚀' : ai.tier === 'POSITIVE' ? '▲' : ai.tier === 'NEUTRAL' ? '●' : ai.tier === 'CAUTIOUS' ? '▽' : ai.tier === 'NEGATIVE' ? '⚠' : '◌';
+                          const days = Math.floor((Date.now() - ai.fetchedAt) / 86_400_000);
+                          return (
+                            <span title={`AI Guidance ${ai.tier} (${ai.score>=0?'+':''}${ai.score.toFixed(2)}) · ${ai.period} · fetched ${days}d ago\n${ai.summary}`} style={{fontSize:9,fontWeight:800,color:c,border:`1px solid ${c}60`,backgroundColor:`${c}14`,padding:'1px 5px',borderRadius:3,letterSpacing:0.3}}>🤖 {ic} {ai.score>=0?'+':''}{ai.score.toFixed(2)}</span>
+                          );
+                        })()}
                         {/* PATCH 0272 — Conviction Beats overlay badge. Amber 🏆 means
                             this ticker is on the institutional Conviction Beats bench
                             (synced from /earnings-opportunities BLOCKBUSTER/STRONG output). */}
