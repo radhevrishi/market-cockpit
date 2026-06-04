@@ -41,8 +41,8 @@ const CF_WORKER_URL = process.env.CF_WORKER_URL || 'https://mc-scraper.radhev-23
 //      short-lived (24h) so re-uploads can break out of stale state.
 // ════════════════════════════════════════════════════════════════════════════
 const SCHEMA_VERSION = 3;                    // bump if AIForwardGuidance shape changes
-const PROMPT_VERSION = 'p0962-inst-v3';      // bump on system-prompt edits
-const PARSER_VERSION = 'p0962-pdfparse-v3';  // bump on PDF / scoring logic edits
+const PROMPT_VERSION = 'p1055-balanced-v1';  // PATCH 1055 — balanced bull/bear prompt + hedge penalty
+const PARSER_VERSION = 'p1055-hedge-v1';     // PATCH 1055 — post-process hedging-language penalty
 const CACHE_TTL_POS_S = 365 * 24 * 3600;     // 1 year — quarterly results immutable
 const CACHE_TTL_NEG_S = 24 * 3600;           // 24 hours — re-uploads & worker fixes get retried
 const STATUS_TTL_S = 6 * 3600;               // mini job-store ticker checkpoints (ISSUE #2)
@@ -620,12 +620,58 @@ OUTPUT JSON ONLY — no markdown, no preamble. Schema:
   "catalysts": [{"event": "Pithampur plant commissioning", "timing": "Q2 FY27"}, {"event": "USFDA inspection at Hyderabad facility", "timing": "Q3 FY27"}]
 }
 
-SCORE SCALE:
-  +0.7 to +1.0  strong positive — explicit growth guidance with hard numbers
-  +0.3 to +0.6  mild positive — directional growth language without hard numbers
-  -0.2 to +0.2  neutral — balanced / in-line with run-rate / absent
-  -0.3 to -0.6  mild negative — headwinds / slowdown without disasters
-  -0.7 to -1.0  strong negative — explicit guidance cuts, capex deferral, demand collapse
+SCORE SCALE — STRICT, NO CHERRY-PICKING:
+  +0.7 to +1.0  STRONG POSITIVE — guidance RAISED with hard numbers AND zero hedging language
+  +0.3 to +0.6  MILD POSITIVE — clear bullish guidance, mostly hard numbers, at most one mild hedge
+   0.0 to +0.2  NEUTRAL+ — bullish statements present BUT cautious/hedging language also present
+  -0.2 to -0.1  NEUTRAL− — guidance maintained but tone is cautious / "subject to conditions"
+  -0.3 to -0.6  MILD NEGATIVE — explicit segment weakness, demand soft, margin pressure
+  -0.7 to -1.0  STRONG NEGATIVE — guidance CUT, capex deferral, demand collapse
+
+🚨 ABSOLUTE RULES — VIOLATE THESE AND THE OUTPUT IS WRONG:
+
+RULE 1 — CAUTIOUS IS NEUTRAL, NEVER POSITIVE.
+  If the management commentary contains ANY of these hedging markers on the
+  near-term (FY+1) outlook, the score CANNOT exceed +0.20 (Neutral+), regardless
+  of how ambitious the multi-year vision is:
+    "cautious", "carefully", "prudent", "realistic", "tempered", "measured",
+    "subject to", "conditional", "if conditions stabilize", "if macro
+    improves", "should conditions", "challenging environment", "challenging
+    times", "demand muted", "demand subdued", "softer demand", "near-term
+    pressure", "short-term pressure", "near-term challenges", "headwinds",
+    "downturn", "slowdown", "deceleration", "decline in", "remained flat",
+    "flat segment", "weakness", "weak demand", "geopolitical uncertainty",
+    "macro uncertainty", "monitor closely", "watching closely",
+    "guidance maintained" (not raised).
+
+RULE 2 — END-MARKET WEAKNESS = NEGATIVE TILT.
+  Any of these end-market signals → score MUST be in the -0.30 to +0.00 band:
+    "sector declined X%", "industry contraction", "segment flat for FY",
+    "margin compression", "mix hurting margins", "operating leverage adverse",
+    "receivables increase", "inventory buildup", "WC days deteriorating".
+
+RULE 3 — RAISED MULTI-YEAR + CAUTIOUS NEAR-TERM = NEUTRAL+, NOT POSITIVE.
+  "FY30 target raised" + "FY27 realistic and cautious" → +0.15, not +0.65.
+  Markets price the near term. FY30 vision is too far to score positive on.
+
+RULE 4 — REGULATORY / OVERHANG = ADDITIONAL -0.10.
+  Tax notice, SEBI enquiry, audit qualification, RPT scrutiny mentioned →
+  subtract another -0.10 from the score.
+
+RULE 5 — BALANCED QUOTES MANDATORY.
+  If any cautious / bearish quote exists in the text, you MUST include at least
+  ONE such quote in "quotes" — alongside the bullish ones. Cherry-picking only
+  the bull lines is incorrect output.
+
+EXAMPLE (Carraro India Q4 FY26): FY30 revenue target ₹3,500-4,000 Cr +
+  FY27 EBITDA margin expansion targeted + Turkey SOP catalyst,
+  BUT "realistic and cautious" FY27 + construction equipment market -2% YoY
+  + gear segment flat + West Asia macro risk.
+  → Bullish forward statements exist (vision, catalysts, EBITDA target)
+  → Strong cautious / hedging language present
+  → END-MARKET WEAKNESS (construction down 2%, gear segment flat)
+  → CORRECT SCORE ≈ +0.05 to +0.15 → LABEL = NEUTRAL (not Positive).
+  Confidence MEDIUM because hard numbers exist but qualified.
 
 CONFIDENCE — REFLECTS DATA DENSITY, NOT YOUR PERSONAL CERTAINTY:
   HIGH   = 2+ hard numbers (% / ₹Cr / units) in the "numbers" array
@@ -747,13 +793,74 @@ If "numbers" array would be empty, omit hard numbers in the rationale too — sa
 
   try {
     if (!['Positive', 'Neutral', 'Negative', 'NoGuidance'].includes(parsed.label)) return null;
-    const score = typeof parsed.score === 'number' ? Math.max(-1, Math.min(1, parsed.score)) : 0;
+    let score = typeof parsed.score === 'number' ? Math.max(-1, Math.min(1, parsed.score)) : 0;
+    let label = parsed.label as AIForwardGuidance['label'];
+
+    // ─────────────────────────────────────────────────────────────────────
+    // PATCH 1055 — DETERMINISTIC HEDGE-LANGUAGE PENALTY PASS.
+    // Even with the strict prompt rules, Haiku still optimistically scores
+    // transcripts that contain heavy hedging. This post-process scans the
+    // rationale + quotes + first 6k of the PDF text for the same hedging
+    // markers listed in the prompt and forces the score down. Anchored to
+    // the user's rule: "if its cautious is neutral not even positive".
+    // ─────────────────────────────────────────────────────────────────────
+    if (label !== 'NoGuidance') {
+      const HEDGE_NEAR_TERM = [
+        'cautious','carefully','prudent','realistic','tempered','measured',
+        'subject to','conditional','if conditions','if macro','should conditions',
+        'challenging environment','challenging times','demand muted','demand subdued',
+        'softer demand','near-term pressure','short-term pressure','near-term challenges',
+        'headwinds','downturn','slowdown','deceleration','remained flat','flat segment',
+        'weakness','weak demand','geopolitical uncertainty','macro uncertainty',
+        'monitor closely','watching closely','guidance maintained',
+      ];
+      const END_MARKET_BEAR = [
+        'sector declined','industry contraction','segment flat for','margin compression',
+        'mix hurting','operating leverage adverse','receivables increase','inventory buildup',
+        'wc days deteriorating','tax notice','sebi','audit qualification','show-cause',
+        'show cause','rpt scrutiny',
+      ];
+      // Scan rationale + quotes + first 6k of PDF for these phrases.
+      const scanText = `${parsed.rationale || ''} ${(Array.isArray(parsed.quotes) ? parsed.quotes.join(' ') : '')} ${(pdfText || '').slice(0, 6000)}`.toLowerCase();
+      let hedgeHits = 0;
+      let bearHits = 0;
+      const hitMarkers: string[] = [];
+      for (const m of HEDGE_NEAR_TERM) {
+        if (scanText.includes(m)) { hedgeHits++; if (hitMarkers.length < 6) hitMarkers.push(m); }
+      }
+      for (const m of END_MARKET_BEAR) {
+        if (scanText.includes(m)) { bearHits++; if (hitMarkers.length < 8) hitMarkers.push('bear:'+m); }
+      }
+      // Penalty schedule (anchored to user rule: cautious is NEUTRAL, not Positive):
+      //   1 hedge       → cap at +0.20 (Neutral+)
+      //   2 hedges      → cap at +0.10
+      //   3+ hedges     → cap at +0.05
+      //   any bear hit  → additional -0.15 each (max -0.45 from bear alone)
+      let cap = 1.0;
+      if (hedgeHits >= 3)      cap = 0.05;
+      else if (hedgeHits >= 2) cap = 0.10;
+      else if (hedgeHits >= 1) cap = 0.20;
+      const bearPenalty = Math.min(0.45, bearHits * 0.15);
+      const preScore = score;
+      score = Math.min(cap, score) - bearPenalty;
+      score = Math.max(-1, Math.min(1, score));
+      // Re-label based on adjusted score, anchored on user rule.
+      if (score >= 0.25) label = 'Positive';
+      else if (score <= -0.25) label = 'Negative';
+      else label = 'Neutral';
+      // Stamp adjustment into rationale prefix so user/audit can see what happened.
+      if (hedgeHits > 0 || bearHits > 0) {
+        const adj = `[Hedge-adjusted: ${hedgeHits} hedge + ${bearHits} bear markers → ${preScore.toFixed(2)}→${score.toFixed(2)}] `;
+        parsed.rationale = (adj + String(parsed.rationale || '')).slice(0, 480);
+      }
+    }
+
     const now = new Date().toISOString();
     const built: AIForwardGuidance = {
-      label: parsed.label,
-      score: parsed.label === 'NoGuidance' ? 0 : score,
+      label,
+      score: label === 'NoGuidance' ? 0 : score,
       confidence: ['HIGH', 'MEDIUM', 'LOW'].includes(parsed.confidence) ? parsed.confidence : 'MEDIUM',
-      rationale: String(parsed.rationale || '').slice(0, 280),
+      rationale: String(parsed.rationale || '').slice(0, 480),
       quotes: Array.isArray(parsed.quotes) ? parsed.quotes.slice(0, 6).map((q: any) => String(q).slice(0, 320)) : [],
       numbers: Array.isArray(parsed.numbers) ? parsed.numbers.slice(0, 8).map((n: any) => ({
         metric: String(n?.metric || '').slice(0, 80),
