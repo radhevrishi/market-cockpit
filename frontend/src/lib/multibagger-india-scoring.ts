@@ -1317,7 +1317,14 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
   // ── VALUATION — (PEG + PE-percentile + MoS) / 3 ──────────────────────────
   // FIX #6: Relax valuation strictness for high-growth companies.
   // All true multibaggers look "expensive" at entry. PEG penalty removed if rev growth >25%.
-  const isHighGrowth = (row.revCagr ?? 0) > 25 || (row.yoySalesGrowth ?? 0) > 25;
+  // PATCH 1051 — Tightened: the isHighGrowth bypass must NOT apply when PEG > 3.
+  // Pre-1051 bug: HARDWYN had revCagr ~50% AND PEG 7.98 → isHighGrowth=true → PE/PEG
+  // extreme-value flags suppressed → scored 55 B+. The bypass should only protect
+  // names where growth justifies the multiple. PEG > 3 means even the growth
+  // doesn't justify the price — don't grant the high-growth pass.
+  const isHighGrowth = ((row.revCagr ?? 0) > 25 || (row.yoySalesGrowth ?? 0) > 25)
+                       && ((row.peg ?? 0) <= 3 || (row.peg ?? 0) <= 0); // PEG≤0 means no PEG data; let it through
+
   const valComponents: number[] = [];
 
   if (row.pe!==undefined) {
@@ -1327,6 +1334,13 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
     if (row.pe > 120 && !isHighGrowth) redFlags.push({label:`P/E ${row.pe.toFixed(0)}× — extreme, not justified by growth`,severity:'MEDIUM',source:'Fisher'});
     if (row.pe > 120 && isHighGrowth) risks.push(`P/E ${row.pe.toFixed(0)}× — high but growth justifies it (growth >25%)`); // note, not a flag
     if (peScore < 35) risks.push(`P/E ${row.pe.toFixed(1)}x — expensive vs sector`);
+    // PATCH 1051 — Bubble-territory PE: ≥200× with PEG > 2.5 (or undefined growth)
+    // and NOT in true high-growth → CRITICAL structural flag (caps composite at 38).
+    // Catches NIBE PE 404×, STLTECH 577×, SEIL 499×, PTCIL 280×, RHETAN 238×, NEOGEN
+    // 172×, POWERINDIA 162×, APOLLO 132×, NETWEB 127×, WOCKPHARMA 123×.
+    if (row.pe >= 200 && !isHighGrowth && ((row.peg ?? 99) > 2.5 || (row.peg ?? 99) <= 0)) {
+      redFlags.push({label:`Bubble PE ${row.pe.toFixed(0)}× + PEG ${(row.peg ?? 0) <= 0 ? 'N/A' : row.peg?.toFixed(1)} — extreme valuation`,severity:'CRITICAL',kind:'STRUCTURAL',source:'Valuation'});
+    }
   }
   // PEG: skipped entirely for cyclical sectors — earnings at cycle peak inflate denominator
   if (row.peg!==undefined && row.peg>0 && !cyclical) {
@@ -1335,11 +1349,29 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
       valComponents.push(50);
       risks.push(`PEG ${row.peg.toFixed(2)} — suspect low-base artifact, valuation pillar reset to neutral`);
     } else {
-      const pegScore = row.peg<0.8?92:row.peg<1.0?84:row.peg<1.5?74:row.peg<2.0?58:row.peg<2.5?42:22;
+      // PATCH 1051 — Steep PEG ladder extension. Pre-1051 the score floor was 22
+      // for any PEG > 2.5 — so PEG 3.4 (HAPPYFORGE), 5.9 (NESTLE), 7.98 (HARDWYN),
+      // 8.31 (GRINDWELL), 8.64 (SAREGAMA), 9.96 (RHETAN), 11.25 (ARFIN), 11.77
+      // (CGPOWER), 16.04 (NIBE), 18.51 (IOLCP), 24.41 (SEIL), 27.53 (ANGELONE)
+      // all collapsed to the same 22 score. Now graded:
+      //   2.5 - 5   → 22 (already-expensive)
+      //   5 - 10    → 10 (severely overvalued vs growth)
+      //   10 - 20   → 4  (bubble territory)
+      //   > 20      → 0  (mathematically impossible to justify)
+      const pegScore = row.peg<0.8?92:row.peg<1.0?84:row.peg<1.5?74:row.peg<2.0?58:row.peg<2.5?42:row.peg<5?22:row.peg<10?10:row.peg<20?4:0;
       valComponents.push(pegScore);
       if (row.peg<0.8) strengths.push(`PEG ${row.peg.toFixed(2)} — undervalued growth`);
       if (row.peg>2.5 && !isHighGrowth) risks.push(`PEG ${row.peg.toFixed(2)} — expensive for growth rate`);
       if (row.peg>2.5 && isHighGrowth)  risks.push(`PEG ${row.peg.toFixed(2)} — high but growth >25% may justify`);
+      // PATCH 1051 — PEG > 5 with no genuine high-growth justification → HIGH
+      // structural flag (caps composite at 60). Severity escalates at PEG > 10
+      // to CRITICAL (caps at 38). Bypass when isHighGrowth (revCagr/yoy > 25%
+      // AND PEG ≤ 3 — see new isHighGrowth definition above).
+      if (row.peg > 10 && !isHighGrowth) {
+        redFlags.push({label:`PEG ${row.peg.toFixed(1)} — bubble valuation`,severity:'CRITICAL',kind:'STRUCTURAL',source:'Valuation'});
+      } else if (row.peg > 5 && !isHighGrowth) {
+        redFlags.push({label:`PEG ${row.peg.toFixed(1)} — severely overvalued for growth`,severity:'HIGH',kind:'STRUCTURAL',source:'Valuation'});
+      }
     }
   } else if (cyclical && row.peg!==undefined) {
     risks.push(`PEG ${row.peg.toFixed(2)} excluded — cyclical earnings unreliable for growth-adjusted valuation`);
