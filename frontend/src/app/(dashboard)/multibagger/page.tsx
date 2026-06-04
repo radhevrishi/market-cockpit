@@ -753,7 +753,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
     const q = m >= 3 && m <= 5 ? 'Q4' : m >= 6 && m <= 8 ? 'Q1' : m >= 9 && m <= 11 ? 'Q2' : 'Q3';
     const PERIOD = `${q}-FY${String(fy).slice(-2)}`;
     // Only the GOOD-filtered subset (existing goodCompanies var, score >= 60)
-    const targets = (typeof goodCompanies !== 'undefined' ? goodCompanies : excelRows.filter((r: any) => r.score >= 60))
+    const targets = (typeof goodCompanies !== 'undefined' ? goodCompanies : rows.filter((r: any) => r.score >= 60))
       .map((r: any) => String(r.symbol || '').toUpperCase()).filter(Boolean);
     const needsFetch = hardRefresh ? targets : targets.filter(t => {
       const e = aiGuidanceMap[t]; return !e || (now - (e.fetchedAt || 0)) > STALE_MS;
@@ -1556,7 +1556,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
             {/* PATCH 1050 — AI GUIDANCE buttons + status + filter chips */}
             {(() => {
               const cachedCount = Object.keys(aiGuidanceMap).length;
-              const goodCount = (typeof goodCompanies !== 'undefined' ? goodCompanies : excelRows.filter((r: any) => r.score >= 60)).length;
+              const goodCount = (typeof goodCompanies !== 'undefined' ? goodCompanies : rows.filter((r: any) => r.score >= 60)).length;
               const oldestFetched = cachedCount > 0 ? Math.min(...Object.values(aiGuidanceMap).map(e => e.fetchedAt || Date.now())) : 0;
               const daysAgo = oldestFetched > 0 ? Math.floor((Date.now() - oldestFetched) / 86_400_000) : 0;
               return (
