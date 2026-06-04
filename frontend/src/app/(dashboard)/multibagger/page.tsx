@@ -727,6 +727,84 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   const [guidanceLoading, setGuidanceLoading] = useState(false);
   const [guidanceScores, setGuidanceScores] = useState<Record<string, number>>({}); // symbol → 0.0-1.0
   const [guidanceArticleCounts, setGuidanceArticleCounts] = useState<Record<string, number>>({});
+  // Soft fetch: only fetch tickers with no cache OR cache > 100 days old. Hard refresh: bypass cache, re-fetch all.
+  const fetchAIGuidance = React.useCallback(async (hardRefresh: boolean) => {
+    const STALE_MS = 100 * 86_400_000; // 100 days
+    const now = Date.now();
+    // Resolve current quarter (FY-Indian: Apr-Mar)
+    const d = new Date(); const m = d.getMonth(); const y = d.getFullYear();
+    const fy = m >= 3 ? y + 1 : y;
+    const q = m >= 3 && m <= 5 ? 'Q4' : m >= 6 && m <= 8 ? 'Q1' : m >= 9 && m <= 11 ? 'Q2' : 'Q3';
+    const PERIOD = `${q}-FY${String(fy).slice(-2)}`;
+    // Only the GOOD-filtered subset (existing goodCompanies var, score >= 60)
+    const targets = (typeof goodCompanies !== 'undefined' ? goodCompanies : excelRows.filter((r: any) => r.score >= 60))
+      .map((r: any) => String(r.symbol || '').toUpperCase()).filter(Boolean);
+    const needsFetch = hardRefresh ? targets : targets.filter(t => {
+      const e = aiGuidanceMap[t]; return !e || (now - (e.fetchedAt || 0)) > STALE_MS;
+    });
+    if (needsFetch.length === 0) { alert('All Good-filter stocks already have fresh AI Guidance cached (< 100 days). Use Hard Refresh if needed.'); return; }
+    if (hardRefresh && !confirm(`Hard Refresh will re-fetch AI Guidance for ${targets.length} stocks (cost ~$${(targets.length * 0.0014).toFixed(2)} of Anthropic credits). Continue?`)) return;
+    setAiGuidanceLoading(true);
+    setAiGuidanceProgress({done: 0, total: needsFetch.length, failed: 0, configMissing: false});
+    const CHUNK = 5;
+    const newMap: Record<string, AiGuidanceEntry> = { ...aiGuidanceMap };
+    let done = 0, failed = 0, configMissing = false;
+    for (let i = 0; i < needsFetch.length; i += CHUNK) {
+      const chunk = needsFetch.slice(i, i + CHUNK).map(t => ({ ticker: t, period: PERIOD }));
+      try {
+        const r = await fetch('/api/v1/haiku/forward-guidance', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ items: chunk, force: hardRefresh }),
+          signal: AbortSignal.timeout(55_000),
+        });
+        if (r.status === 503) {
+          const body = await r.json().catch(() => ({}));
+          if (typeof body?.error === 'string' && /ANTHROPIC_API_KEY/i.test(body.error)) {
+            configMissing = true; failed += chunk.length; done += chunk.length; setAiGuidanceProgress({done, total: needsFetch.length, failed, configMissing});
+            break;
+          }
+          failed += chunk.length; done += chunk.length;
+        } else if (!r.ok) {
+          failed += chunk.length; done += chunk.length;
+        } else {
+          const json = await r.json();
+          const stocks: any[] = Array.isArray(json?.stocks) ? json.stocks : Array.isArray(json) ? json : [];
+          stocks.forEach(s => {
+            if (!s || !s.ticker) return;
+            const sym = String(s.ticker).toUpperCase();
+            const score = typeof s.score === 'number' ? s.score : 0;
+            const label = (s.label || '').toString().toUpperCase();
+            let tier: AiGuidanceEntry['tier'] = 'NOGUIDANCE';
+            if (label.includes('EXCELLENT') || score >= 0.7) tier = 'EXCELLENT';
+            else if (label.includes('POSITIVE') || score >= 0.25) tier = 'POSITIVE';
+            else if (label.includes('CAUTIOUS') || score <= -0.25) tier = 'CAUTIOUS';
+            else if (label.includes('NEGATIVE') || score <= -0.7) tier = 'NEGATIVE';
+            else if (typeof s.score === 'number') tier = 'NEUTRAL';
+            newMap[sym] = { score, tier, summary: (s.rationale || s.label || '').toString().slice(0, 300), period: PERIOD, fetchedAt: Date.now() };
+          });
+          done += chunk.length;
+        }
+      } catch { failed += chunk.length; done += chunk.length; }
+      setAiGuidanceProgress({done, total: needsFetch.length, failed, configMissing});
+      setAiGuidanceMap({ ...newMap });
+    }
+    setAiGuidanceLoading(false);
+  }, [aiGuidanceMap, excelRows]);
+  // PATCH 1050 — Haiku AI guidance overlay (separate from news-keyword guidance above)
+  // Cache key: mc:multibagger:ai-guidance:v1 — 100-day TTL per ticker
+  type AiGuidanceEntry = { score: number; tier: 'EXCELLENT'|'POSITIVE'|'NEUTRAL'|'CAUTIOUS'|'NEGATIVE'|'NOGUIDANCE'; summary: string; period: string; fetchedAt: number };
+  const [aiGuidanceMap, setAiGuidanceMap] = useState<Record<string, AiGuidanceEntry>>({});
+  const [aiGuidanceLoading, setAiGuidanceLoading] = useState(false);
+  const [aiGuidanceProgress, setAiGuidanceProgress] = useState({done:0, total:0, failed:0, configMissing:false});
+  const [aiTierFilter, setAiTierFilter] = useState<'ALL'|'EXCELLENT'|'POSITIVE'|'NEUTRAL'|'CAUTIOUS'|'NEGATIVE'|'NOGUIDANCE'>('ALL');
+  // Load cached guidance on mount
+  React.useEffect(() => {
+    try { const raw = localStorage.getItem('mc:multibagger:ai-guidance:v1'); if (raw) setAiGuidanceMap(JSON.parse(raw)); } catch {}
+  }, []);
+  // Persist cache on change
+  React.useEffect(() => {
+    try { localStorage.setItem('mc:multibagger:ai-guidance:v1', JSON.stringify(aiGuidanceMap)); } catch {}
+  }, [aiGuidanceMap]);
 
   // PATCH 0272 — Conviction Beats overlay. Subscribes to the institutional
   // bench so we can mark rows that have already passed the BLOCKBUSTER /
@@ -1165,6 +1243,10 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   // Apply all active filters in order
   let baseRows = goodOnly ? goodCompanies : rows;
   if (bucketFilter !== 'ALL') baseRows = baseRows.filter(r => r.bucket === bucketFilter);
+  // PATCH 1050 — AI tier filter (uses cached aiGuidanceMap)
+  if (aiTierFilter !== 'ALL') {
+    baseRows = baseRows.filter(r => aiGuidanceMap[(r.symbol || '').toUpperCase()]?.tier === aiTierFilter);
+  }
   // PATCH 1046 — fraud risk filter
   if (fraudFilter !== 'ALL') {
     baseRows = baseRows.filter(r => {
@@ -1469,6 +1551,43 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
               })()}
             </select>
             <div style={{width:1,background:BORDER,height:20}}/>
+            {/* PATCH 1050 — AI GUIDANCE buttons + status + filter chips */}
+            {(() => {
+              const cachedCount = Object.keys(aiGuidanceMap).length;
+              const goodCount = (typeof goodCompanies !== 'undefined' ? goodCompanies : excelRows.filter((r: any) => r.score >= 60)).length;
+              const oldestFetched = cachedCount > 0 ? Math.min(...Object.values(aiGuidanceMap).map(e => e.fetchedAt || Date.now())) : 0;
+              const daysAgo = oldestFetched > 0 ? Math.floor((Date.now() - oldestFetched) / 86_400_000) : 0;
+              return (
+                <>
+                  <span style={{fontSize:F.xs,color:MUTED,fontWeight:700,letterSpacing:'0.5px'}}>🤖 AI GUIDANCE:</span>
+                  <button onClick={()=>fetchAIGuidance(false)} disabled={aiGuidanceLoading || rows.length === 0} title={`Soft fetch: only new tickers or cache > 100 days old. Free if all cached.`} style={{fontSize:F.xs,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${PURPLE}80`,background:`${PURPLE}14`,color:PURPLE,cursor:rows.length===0?'not-allowed':'pointer'}}>
+                    {aiGuidanceLoading ? `⏳ ${aiGuidanceProgress.done}/${aiGuidanceProgress.total}` : `📡 Fetch (gaps only)`}
+                  </button>
+                  <button onClick={()=>fetchAIGuidance(true)} disabled={aiGuidanceLoading || rows.length === 0} title={`Hard refresh: re-fetch ALL ${goodCount} Good-filter stocks. Costs ~$${(goodCount * 0.0014).toFixed(2)}.`} style={{fontSize:F.xs,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${ORANGE}80`,background:`${ORANGE}14`,color:ORANGE,cursor:rows.length===0?'not-allowed':'pointer'}}>
+                    🔄 Hard Refresh
+                  </button>
+                  <span style={{fontSize:F.xs,color:MUTED}}>{cachedCount > 0 ? `${cachedCount} cached · oldest ${daysAgo}d ago` : 'No cache yet'}</span>
+                  {aiGuidanceProgress.configMissing && <span style={{fontSize:F.xs,color:RED,fontWeight:800,padding:'2px 6px',background:`${RED}14`,borderRadius:4}}>🔧 ANTHROPIC_API_KEY not set in Railway</span>}
+                  {/* AI tier filter chips */}
+                  {([
+                    {key:'ALL', label:'All', color:MUTED},
+                    {key:'EXCELLENT', label:'🚀 Excellent', color:'#10B981'},
+                    {key:'POSITIVE', label:'▲ Positive', color:'#34D399'},
+                    {key:'NEUTRAL', label:'● Neutral', color:'#94A3B8'},
+                    {key:'CAUTIOUS', label:'▽ Cautious', color:'#F59E0B'},
+                    {key:'NEGATIVE', label:'⚠ Negative', color:'#EF4444'},
+                  ] as const).map(t => {
+                    const cnt = t.key === 'ALL' ? rows.length : Object.values(aiGuidanceMap).filter(e => e.tier === t.key).length;
+                    return (
+                      <button key={t.key} onClick={()=>setAiTierFilter(t.key as any)} style={{fontSize:F.xs,fontWeight:700,padding:'5px 10px',borderRadius:7,border:`1px solid ${aiTierFilter===t.key?t.color+'80':BORDER}`,background:aiTierFilter===t.key?t.color+'14':'transparent',color:aiTierFilter===t.key?t.color:MUTED,cursor:'pointer'}}>
+                        {t.label} ({cnt})
+                      </button>
+                    );
+                  })}
+                  <div style={{width:1,background:BORDER,height:20}}/>
+                </>
+              );
+            })()}
             {/* PATCH 1046 — FRAUD RISK filter chips */}
             <span style={{fontSize:F.xs,color:MUTED,fontWeight:700,letterSpacing:'0.5px'}}>🛡 FRAUD:</span>
             {(() => {
