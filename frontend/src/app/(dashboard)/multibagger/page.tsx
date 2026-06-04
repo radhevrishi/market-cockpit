@@ -695,6 +695,12 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   const [accelOnly, setAccelOnly] = useState(false);
   const [fcfOnly, setFcfOnly] = useState(false);
   const [discoveryOnly, setDiscoveryOnly] = useState(false);
+  // PATCH 1052 — "Above 50 & 200 DMA" combined-uptrend filter. Most CSV exports
+  // only carry 200 DMA, so when 50 DMA isn't available we fall back to a proxy:
+  // price > 200 DMA AND 1-month return > -3% (positive short-term momentum
+  // implies the price is also above the 50 DMA on most reasonable distributions).
+  // User-requested preset for stacking on top of the Good filter.
+  const [dmaConfirmedOnly, setDmaConfirmedOnly] = useState(false);
   // PATCH 1046 — fraud risk filter (lets user verify the fraud detection by isolating flagged stocks)
   const [fraudFilter, setFraudFilter] = useState<'ALL'|'CLEAN'|'CRITICAL'|'HIGH'|'ANY'>('ALL');
   const [inflectionOnly, setInflectionOnly] = useState(false);
@@ -729,7 +735,23 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   const [guidanceArticleCounts, setGuidanceArticleCounts] = useState<Record<string, number>>({});
   // PATCH 1050 — Haiku AI guidance overlay (separate from news-keyword guidance above)
   // Cache key: mc:multibagger:ai-guidance:v1 — 100-day TTL per ticker
-  type AiGuidanceEntry = { score: number; tier: 'EXCELLENT'|'POSITIVE'|'NEUTRAL'|'CAUTIOUS'|'NEGATIVE'|'NOGUIDANCE'; summary: string; period: string; fetchedAt: number };
+  // PATCH 1052 — Extended entry stores rich content: rationale (full), quotes,
+  // numbers (metric/value/period rows), catalysts (event/timing rows), sourceUrl.
+  type GuidanceQuote = { quote: string; speaker?: string };
+  type GuidanceNumber = { metric?: string; value?: string; period?: string };
+  type GuidanceCatalyst = { event?: string; timing?: string };
+  type AiGuidanceEntry = {
+    score: number;
+    tier: 'EXCELLENT'|'POSITIVE'|'NEUTRAL'|'CAUTIOUS'|'NEGATIVE'|'NOGUIDANCE';
+    summary: string;          // short rationale (300 char) used in hover
+    rationale?: string;       // full rationale (kept for the rich expand panel)
+    quotes?: GuidanceQuote[];
+    numbers?: GuidanceNumber[];
+    catalysts?: GuidanceCatalyst[];
+    sourceUrl?: string;
+    period: string;
+    fetchedAt: number;
+  };
   const [aiGuidanceMap, setAiGuidanceMap] = useState<Record<string, AiGuidanceEntry>>({});
   const [aiGuidanceLoading, setAiGuidanceLoading] = useState(false);
   const [aiGuidanceProgress, setAiGuidanceProgress] = useState({done:0, total:0, failed:0, configMissing:false});
@@ -798,7 +820,29 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
             else if (label.includes('CAUTIOUS') || score <= -0.25) tier = 'CAUTIOUS';
             else if (label.includes('NEGATIVE') || score <= -0.7) tier = 'NEGATIVE';
             else if (typeof d.score === 'number') tier = 'NEUTRAL';
-            newMap[upperSym] = { score, tier, summary: (d.rationale || d.label || '').toString().slice(0, 300), period: PERIOD, fetchedAt: Date.now() };
+            // PATCH 1052 — keep the rich Anthropic-response fields so the row
+            // expansion can show rationale + quotes + numbers + catalysts.
+            const rationale = (d.rationale || d.label || '').toString();
+            const quotes: GuidanceQuote[] = Array.isArray(d.quotes)
+              ? d.quotes.slice(0, 6).map((q: any) => typeof q === 'string'
+                  ? { quote: q.slice(0, 280) }
+                  : { quote: String(q?.quote || q?.text || '').slice(0, 280), speaker: q?.speaker ? String(q.speaker).slice(0, 60) : undefined })
+                .filter((q: any) => q.quote)
+              : [];
+            const numbers: GuidanceNumber[] = Array.isArray(d.numbers)
+              ? d.numbers.slice(0, 8).map((n: any) => typeof n === 'string'
+                  ? { value: n.slice(0, 100) }
+                  : { metric: n?.metric ? String(n.metric).slice(0, 60) : undefined, value: n?.value !== undefined ? String(n.value).slice(0, 60) : undefined, period: n?.period ? String(n.period).slice(0, 30) : undefined })
+                .filter((n: any) => n.metric || n.value)
+              : [];
+            const catalysts: GuidanceCatalyst[] = Array.isArray(d.catalysts)
+              ? d.catalysts.slice(0, 6).map((c: any) => typeof c === 'string'
+                  ? { event: c.slice(0, 140) }
+                  : { event: c?.event ? String(c.event).slice(0, 140) : undefined, timing: c?.timing ? String(c.timing).slice(0, 40) : undefined })
+                .filter((c: any) => c.event)
+              : [];
+            const sourceUrl = (typeof d.source_url === 'string' && d.source_url.startsWith('http')) ? d.source_url : undefined;
+            newMap[upperSym] = { score, tier, summary: rationale.slice(0, 300), rationale: rationale.slice(0, 2000), quotes, numbers, catalysts, sourceUrl, period: PERIOD, fetchedAt: Date.now() };
           });
           done += chunk.length;
         }
@@ -1270,6 +1314,12 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   if (accelOnly)      baseRows = baseRows.filter(r => r.decisionStrip.acceleration.pass);
   if (fcfOnly)        baseRows = baseRows.filter(r => (r.fcfAbsolute ?? -1) > 0 || (r.cfoToPat ?? 0) >= 0.8);
   if (discoveryOnly)   baseRows = baseRows.filter(r => (r.fiiPlusDii ?? 100) < 15);
+  // PATCH 1052 — 50/200 DMA confirmed-uptrend filter. Requires aboveDMA200 > 0
+  // (price above 200 DMA) AND short-term momentum positive (return1m > -3%) as
+  // a proxy for "price above 50 DMA" since most Screener CSV exports only carry
+  // 200 DMA. When applied, narrows the list to stocks in confirmed long-term
+  // and short-term uptrends — the institutional "trend is your friend" preset.
+  if (dmaConfirmedOnly) baseRows = baseRows.filter(r => (r.aboveDMA200 ?? -100) > 0 && (r.return1m ?? -100) > -3);
   if (inflectionOnly)  baseRows = baseRows.filter(r => r.inflectionSignal || r.triggerBonus >= 10);
   // PATCH 0272 — Conviction-only filter. When ON, narrows the universe to
   // tickers already on the Conviction Beats bench (synced from /earnings-opportunities).
@@ -1620,6 +1670,10 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
               {key:'accel',  label:'🚀 Accelerating', active:accelOnly,  toggle:()=>setAccelOnly(v=>!v),  count:rows.filter(r=>r.decisionStrip.acceleration.pass).length},
               {key:'fcf',    label:'💰 FCF+',         active:fcfOnly,    toggle:()=>setFcfOnly(v=>!v),    count:rows.filter(r=>(r.fcfAbsolute??-1)>0||(r.cfoToPat??0)>=0.8).length},
               {key:'disc',    label:'🔍 Discovery <15%', active:discoveryOnly,  toggle:()=>setDiscoveryOnly(v=>!v),  count:rows.filter(r=>(r.fiiPlusDii??100)<15).length},
+      // PATCH 1052 — Combined 50/200 DMA above filter chip. Stacks on top of
+      // any other filter; user explicitly requested as the "always-on combo
+      // when picking the best stocks" preset.
+      {key:'dma',     label:'📈 50/200 DMA ↑',    active:dmaConfirmedOnly, toggle:()=>setDmaConfirmedOnly(v=>!v), count:rows.filter(r=>(r.aboveDMA200??-100)>0 && (r.return1m??-100)>-3).length},
       {key:'inflect', label:'💥 Inflection',     active:inflectionOnly, toggle:()=>setInflectionOnly(v=>!v), count:rows.filter(r=>r.inflectionSignal||r.triggerBonus>=10).length},
       // PATCH 0272 — Conviction-only chip. Counts how many uploaded rows
       // intersect the Conviction Beats bench so users can see at a glance
@@ -2063,7 +2117,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
             return (
               <div key={r.symbol+idx} style={{borderBottom:`1px solid rgba(255,255,255,0.05)`}}>
                 <button onClick={()=>setExpRow(isExp?null:r.symbol)} style={{width:'100%',background:isExp?CARD_BG:'transparent',border:'none',cursor:'pointer',textAlign:'left',padding:'12px 14px'}}>
-                  <div style={{display:'grid',gridTemplateColumns:'130px 130px 65px 65px 96px 86px 120px 1fr 76px',gap:8,alignItems:'center'}}>
+                  <div style={{display:'grid',gridTemplateColumns:'130px 130px 65px 65px 96px 86px 180px 1fr 76px',gap:8,alignItems:'center'}}>
                     {/* Ticker + bucket + accel badge */}
                     <div style={{display:'flex',flexDirection:'column',gap:3}}>
                       <div style={{display:'flex',alignItems:'center',gap:5}}>
@@ -2302,8 +2356,12 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                       );
                     })()}
 
-                    {/* Decision strip */}
-                    <div style={{display:'flex',flexDirection:'column',gap:2}}>
+                    {/* Decision strip — PATCH 1052: institutional-density layout.
+                        Removed the 60px maxWidth + nowrap on the detail span so the
+                        full "+32% vs DMA" / "PEG 0.6" / "FII+DII 28%" text is visible
+                        instead of being chopped to "+32% v..." Layout now uses
+                        column-gap label-and-detail with detail wrapping when needed. */}
+                    <div style={{display:'flex',flexDirection:'column',gap:3,minWidth:0}}>
                       {([
                         {key:'survival',   s:r.decisionStrip.survival},
                         {key:'acceleration',s:r.decisionStrip.acceleration},
@@ -2311,10 +2369,10 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                         {key:'discovery',  s:r.decisionStrip.discovery},
                         {key:'technical',  s:r.decisionStrip.technical},
                       ] as const).map(({key,s})=>(
-                        <div key={key} title={`${s.label}: ${s.detail}`} style={{display:'flex',alignItems:'center',gap:4}}>
-                          <div style={{width:10,height:10,borderRadius:2,backgroundColor:s.pass?GREEN:RED,flexShrink:0}}/>
-                          <span style={{fontSize:10,color:s.pass?`${GREEN}CC`:`${RED}CC`,fontWeight:600}}>{s.label}</span>
-                          <span style={{fontSize:9,color:MUTED,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:60}}>{s.detail}</span>
+                        <div key={key} title={`${s.label}: ${s.detail}`} style={{display:'flex',alignItems:'baseline',gap:4,minWidth:0}}>
+                          <div style={{width:8,height:8,borderRadius:2,backgroundColor:s.pass?GREEN:RED,flexShrink:0,marginTop:3}}/>
+                          <span style={{fontSize:9,color:s.pass?`${GREEN}CC`:`${RED}CC`,fontWeight:700,letterSpacing:0.2,flexShrink:0}}>{s.label}</span>
+                          <span style={{fontSize:9,color:MUTED,wordBreak:'break-word',whiteSpace:'normal',lineHeight:1.25,fontVariantNumeric:'tabular-nums'}}>{s.detail}</span>
                         </div>
                       ))}
                     </div>
@@ -2545,6 +2603,68 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                               <div style={{marginTop:6}}>
                                 {fraudFlags.map((f,i) => (
                                   <div key={i} style={{fontSize:F.xs,color:f.severity==='CRITICAL'?RED:f.severity==='HIGH'?ORANGE:YELLOW,padding:'2px 0'}}>▸ [{f.severity}] {f.label}</div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                      {/* PATCH 1052 — Rich AI Guidance panel. Shows full
+                          rationale, direct quotes, hard numbers (metric/value/period)
+                          and forward catalysts (event/timing) when the row has a
+                          cached entry from the Haiku forward-guidance API.
+                          Hidden when no AI guidance fetched for this ticker. */}
+                      {(() => {
+                        const ai = aiGuidanceMap[(r.symbol || '').toUpperCase()];
+                        if (!ai) return null;
+                        const tierColor = ai.tier === 'EXCELLENT' ? '#10B981' : ai.tier === 'POSITIVE' ? '#34D399' : ai.tier === 'NEUTRAL' ? '#94A3B8' : ai.tier === 'CAUTIOUS' ? '#F59E0B' : ai.tier === 'NEGATIVE' ? '#EF4444' : '#6B7280';
+                        const tierIcon = ai.tier === 'EXCELLENT' ? '🚀' : ai.tier === 'POSITIVE' ? '▲' : ai.tier === 'NEUTRAL' ? '●' : ai.tier === 'CAUTIOUS' ? '▽' : ai.tier === 'NEGATIVE' ? '⚠' : '◌';
+                        const ageDays = Math.floor((Date.now() - ai.fetchedAt) / 86_400_000);
+                        return (
+                          <div style={{marginBottom:12,padding:'10px 12px',backgroundColor:`${tierColor}08`,border:`1px solid ${tierColor}30`,borderLeft:`3px solid ${tierColor}`,borderRadius:7}}>
+                            <div style={{display:'flex',alignItems:'baseline',gap:8,marginBottom:6,flexWrap:'wrap'}}>
+                              <span style={{fontSize:F.sm,fontWeight:800,color:tierColor,letterSpacing:'0.5px'}}>🤖 AI FORWARD GUIDANCE</span>
+                              <span style={{fontSize:F.xs,fontWeight:700,color:tierColor}}>{tierIcon} {ai.tier} · {ai.score >= 0 ? '+' : ''}{ai.score.toFixed(2)}</span>
+                              <span style={{fontSize:F.xs,color:MUTED}}>· {ai.period} · fetched {ageDays}d ago</span>
+                              {ai.sourceUrl && <a href={ai.sourceUrl} target="_blank" rel="noopener noreferrer" style={{fontSize:F.xs,color:'#22d3ee',marginLeft:'auto',textDecoration:'none'}}>↗ Source</a>}
+                            </div>
+                            {(ai.rationale || ai.summary) && (
+                              <div style={{fontSize:F.sm,color:TEXT,lineHeight:1.5,marginBottom:8}}>
+                                {ai.rationale || ai.summary}
+                              </div>
+                            )}
+                            {Array.isArray(ai.numbers) && ai.numbers.length > 0 && (
+                              <div style={{marginTop:8,paddingTop:8,borderTop:`1px dashed ${tierColor}30`}}>
+                                <div style={{fontSize:F.xs,fontWeight:700,color:'#22d3ee',letterSpacing:'0.4px',marginBottom:4}}>📊 NUMBERS</div>
+                                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:6}}>
+                                  {ai.numbers.map((n,i) => (
+                                    <div key={i} style={{fontSize:F.xs,padding:'4px 6px',backgroundColor:CARD2,borderRadius:4,fontVariantNumeric:'tabular-nums'}}>
+                                      {n.metric && <span style={{color:MUTED}}>{n.metric}: </span>}
+                                      {n.value && <span style={{color:TEXT,fontWeight:700}}>{n.value}</span>}
+                                      {n.period && <span style={{color:MUTED,fontSize:9}}> · {n.period}</span>}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            {Array.isArray(ai.catalysts) && ai.catalysts.length > 0 && (
+                              <div style={{marginTop:8,paddingTop:8,borderTop:`1px dashed ${tierColor}30`}}>
+                                <div style={{fontSize:F.xs,fontWeight:700,color:'#F59E0B',letterSpacing:'0.4px',marginBottom:4}}>⚡ FORWARD CATALYSTS</div>
+                                {ai.catalysts.map((c,i) => (
+                                  <div key={i} style={{fontSize:F.xs,color:MUTED,padding:'2px 0',lineHeight:1.4}}>
+                                    › <span style={{color:TEXT}}>{c.event}</span>
+                                    {c.timing && <span style={{color:'#F59E0B',fontWeight:700}}> · {c.timing}</span>}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {Array.isArray(ai.quotes) && ai.quotes.length > 0 && (
+                              <div style={{marginTop:8,paddingTop:8,borderTop:`1px dashed ${tierColor}30`}}>
+                                <div style={{fontSize:F.xs,fontWeight:700,color:'#a78bfa',letterSpacing:'0.4px',marginBottom:4}}>💬 KEY QUOTES (CONCALL)</div>
+                                {ai.quotes.map((q,i) => (
+                                  <div key={i} style={{fontSize:F.xs,color:MUTED,padding:'4px 0',lineHeight:1.45,borderLeft:`2px solid ${tierColor}30`,paddingLeft:8,marginBottom:3,fontStyle:'italic'}}>
+                                    "{q.quote}"{q.speaker && <span style={{color:'#a78bfa',fontStyle:'normal',fontWeight:700}}> — {q.speaker}</span>}
+                                  </div>
                                 ))}
                               </div>
                             )}
