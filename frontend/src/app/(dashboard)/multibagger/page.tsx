@@ -1081,7 +1081,25 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
       newRows.push(..._newRowByTicker.values());
 
       if(!newRows.length && rows.length > 0) {
-        setParseError(`All stocks in these files already exist in the current dataset (${rows.length} stocks). No new entries added.`);
+        // PATCH 1043 — even when no NEW tickers, a re-upload must flush
+        // screener-membership onto existing rows so 🎯 MULTI-CONFIRMED card populates.
+        const rowsWithUpdatedScreeners = rows.map(r => {
+          const newSources = _screenerMap.get(r.symbol);
+          if (!newSources || newSources.length === 0) return r;
+          const existing = (r as ExcelResult & { _screeners?: string[] })._screeners || [];
+          const mergedScr = Array.from(new Set([...existing, ...newSources]));
+          return { ...r, _screeners: mergedScr } as ExcelResult;
+        });
+        const reranked = applyForcedRanking([...rowsWithUpdatedScreeners].sort((a, b) => b.score - a.score));
+        setExcelRows(reranked);
+        try {
+          const existingFiles: string[] = JSON.parse(localStorage.getItem('mb_excel_files_v1') || '[]');
+          const mergedFiles = Array.from(new Set([...existingFiles, ...arr.map(f => f.name)]));
+          localStorage.setItem('mb_excel_files_v1', JSON.stringify(mergedFiles));
+          window.dispatchEvent(new CustomEvent('mb-files:updated'));
+        } catch {}
+        const updatedCount = rowsWithUpdatedScreeners.filter((r, i) => r !== rows[i]).length;
+        setFileName(`Screener membership refreshed on ${updatedCount} existing stocks · ${rows.length} total`);
         setLoading(false); return;
       }
       if(!newRows.length) {
