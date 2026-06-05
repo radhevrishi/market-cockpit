@@ -152,24 +152,19 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const symbols = parseSymbols(symbolsParam);
     const days = Math.max(1, Math.min(365, parseInt(daysParam || '45', 10)));
 
-    // Validate input
+    // PATCH 1058 — Empty symbols (no portfolio AND no watchlist) is a normal
+    // state, not an error. Return 200 with empty events + a _meta hint so the
+    // UI can render an actionable empty-state instead of a 400 toast.
     if (symbols.length === 0) {
       return NextResponse.json(
         {
-          error: 'At least one symbol is required',
           events: [],
-          summary: {
-            total: 0,
-            positive: 0,
-            negative: 0,
-            neutral: 0,
-            operatingLeverage: 0,
-            capexHeavy: 0,
+          _meta: {
+            reason: 'no_portfolio_or_watchlist',
+            hint: 'Add tickers to /portfolio or /watchlists to populate this view',
           },
-          source: 'cache',
-          updatedAt: new Date().toISOString(),
         },
-        { status: 400 }
+        { status: 200 }
       );
     }
 
