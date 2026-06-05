@@ -1065,7 +1065,13 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
     if (row.promoter<20) {
       // PATCH 1027: Exchanges (BSE/MCX), PSU banks, widely-held insurance structurally have no promoter
       const _s2 = (row.sector||'').toLowerCase();
-      const _widelyHeld = /capital markets|insurance|^bank/.test(_s2);
+      // PATCH 1059 — Expand widely-held exemption to ALL financial sectors.
+      // NBFCs, Finance companies, AMCs, REITs, InvITs all structurally have
+      // <20% (or 0%) promoter holding because they're public-investor businesses.
+      // Pre-1059 only `bank|capital markets|insurance` were exempt — NORTHARC
+      // (sector="Finance"), SGFIN (sector="Finance"), AYE (NBFC) all false-
+      // fired this HIGH flag. Now matches the same regex used for D/E and ICR.
+      const _widelyHeld = /capital markets|insurance|^bank|finance|asset management|nbfc|reit|invit/.test(_s2);
       if (!_widelyHeld) redFlags.push({label:`Promoter ${row.promoter.toFixed(0)}% — very low`,severity:'HIGH',source:'MOSL+Fisher'});
     }
     if (row.promoter>=55 && !_dnaWillLikelyFire) strengths.push(`Promoter ${row.promoter.toFixed(0)}% — strong alignment`); // PATCH 0717
@@ -1095,8 +1101,22 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
     qualS += roicScore * 0.8; qualC += 0.8;
     if (roicEffective >= 20) strengths.push(`ROIC ${roicEffective.toFixed(1)}% — well above cost of capital, durable value creation`);
     else if (roicEffective < 10) {
-      risks.push(`ROIC ${roicEffective.toFixed(1)}% — below typical WACC (10%), capital allocation destroying value`);
-      redFlags.push({ label: `ROIC ${roicEffective.toFixed(1)}% — below WACC`, severity: 'HIGH', source: 'Fisher ROIC' });
+      // PATCH 1059 — For financial sectors (banks/NBFCs/AMCs) ROIC is the
+      // wrong metric: their COGS is interest expense, the right metric is
+      // ROE (typically 12-18% for healthy lenders). Use ROE<12 instead of
+      // ROIC<WACC for those sectors. Prevents NORTHARC/MAHABANK/SURYODAY
+      // from getting hit with HIGH structural flag when their fundamentals
+      // are normal NBFC fundamentals, not industrial value destruction.
+      const _isFinROIC = /bank|insurance|finance|capital markets|asset management|nbfc|reit|invit/.test((row.sector||'').toLowerCase());
+      if (_isFinROIC) {
+        if ((row.roe ?? 99) < 12) {
+          risks.push(`ROE ${(row.roe ?? 0).toFixed(1)}% — below healthy-NBFC threshold of 12%`);
+          redFlags.push({ label: `ROE ${(row.roe ?? 0).toFixed(1)}% — below NBFC standard`, severity: 'HIGH', source: 'Fisher ROE-for-finance' });
+        }
+      } else {
+        risks.push(`ROIC ${roicEffective.toFixed(1)}% — below typical WACC (10%), capital allocation destroying value`);
+        redFlags.push({ label: `ROIC ${roicEffective.toFixed(1)}% — below WACC`, severity: 'HIGH', source: 'Fisher ROIC' });
+      }
     }
   }
 
@@ -1615,8 +1635,20 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
     risks.push(`Hard −10: D/E ${row.de.toFixed(2)}x above ${isLikelyEmerging ? 'relaxed ' : ''}sector threshold (${deThreshold.toFixed(1)}x)`);
   }
   if ((row.profitAcceleration ?? 0) < -25) {
-    hardPenalty += 15;
-    risks.push(`Hard −15: Profit deceleration ${row.profitAcceleration?.toFixed(0)}pp — severe collapse`);
+    // PATCH 1059 — Clean cash-conversion shield. When CFO/PAT > 1.0 (excellent
+    // cash conversion) AND CFO is positive, the profit deceleration is most
+    // likely a real one-quarter miss on a genuine compounder (CRAFTSMAN
+    // pattern) rather than a fade. Soften −15 to −8 because the cash IS
+    // converting. Cash-quality is the durability filter the engine trusts
+    // more than reported-profit trajectory.
+    const _cleanCash = (row.cfoToPat ?? 0) > 1.0;
+    if (_cleanCash) {
+      hardPenalty += 8;
+      risks.push(`Soft −8: Profit deceleration ${row.profitAcceleration?.toFixed(0)}pp — but CFO/PAT ${row.cfoToPat?.toFixed(2)} clean cash conversion (penalty halved)`);
+    } else {
+      hardPenalty += 15;
+      risks.push(`Hard −15: Profit deceleration ${row.profitAcceleration?.toFixed(0)}pp — severe collapse`);
+    }
   }
   if (row.opm !== undefined && row.opm < b.opm[0]) {
     hardPenalty += 5;
@@ -1657,11 +1689,20 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
   // ── CAPITAL ALLOCATION QUALITY ───────────────────────────────────────────────
   // Aurum Proptech pattern: strong growth but destroying capital via debt + negative FCF.
   // "Many high-growth stories destroy capital" — Fisher 100-Bagger Ch.4
-  if ((row.fcfAbsolute ?? 0) < 0 && (row.de ?? 0) > 0.7) {
+  // PATCH 1059 — Financial-sector exemption + clean-cash-conversion shield.
+  // Capital-trap and Capital-efficiency penalties were industrial-company
+  // rules being mis-applied to:
+  //   (a) NBFCs/banks where D/E 3-12× is STRUCTURAL not stress
+  //   (b) Compounders with CFO/PAT > 1 in a capex-heavy year (CRAFTSMAN
+  //       has FCF negative because of new-plant capex, not "borrowing to
+  //       fund losses" — the cash IS converting)
+  const _isFinCap = /bank|insurance|finance|capital markets|asset management|nbfc|reit|invit/.test((row.sector||'').toLowerCase());
+  const _cleanCashTrap = (row.cfoToPat ?? 0) > 1.0;
+  if ((row.fcfAbsolute ?? 0) < 0 && (row.de ?? 0) > 0.7 && !_isFinCap && !_cleanCashTrap) {
     hardPenalty += 8;
     risks.push(`Capital trap −8: negative FCF + D/E ${row.de?.toFixed(2)}x — borrowing to fund losses`);
   }
-  if ((row.roce ?? 99) < 12 && (row.de ?? 0) > 0.5) {
+  if ((row.roce ?? 99) < 12 && (row.de ?? 0) > 0.5 && !_isFinCap) {
     hardPenalty += 5;
     risks.push(`Capital efficiency −5: ROCE ${row.roce?.toFixed(0)}% below cost of capital with D/E ${row.de?.toFixed(2)}x`);
   }
@@ -2172,7 +2213,14 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
   }
 
   // (B) INTEREST COVERAGE — below 3× is leverage distress regardless of D/E.
-  if (typeof row.interestCoverage === 'number' && row.interestCoverage > 0) {
+  // PATCH 1059 — Apply the same financial-sector exemption that PATCH 1029
+  // added to the OLD ICR rule (line ~1314). This NEW PATCH 0317 ICR rule
+  // bypassed the exemption entirely — that's why SURYODAY (Banks, ICR 1.2),
+  // MAHABANK (Banks, ICR 1.5), VERTIS, SGFIN all caught CRITICAL/HIGH ICR
+  // flags. For banks/NBFCs/AMCs interest IS the cost of goods sold, not a
+  // coverage stress signal.
+  const _isFinICR = /bank|insurance|finance|capital markets|asset management|nbfc|reit|invit/.test((row.sector||'').toLowerCase());
+  if (typeof row.interestCoverage === 'number' && row.interestCoverage > 0 && !_isFinICR) {
     if (row.interestCoverage < 1.5) {
       redFlags.push({
         label: `ICR ${row.interestCoverage.toFixed(1)}× — distress`,
