@@ -537,6 +537,35 @@ export default function HomeDashboard() {
   const [showTier3, setShowTier3] = useState(true);  // PATCH 0625 — default expanded
   const [showInPlay, setShowInPlay] = useState(true);  // PATCH 0620 — In-Play moved to top of Home, default expanded
   const [showQuickAccess, setShowQuickAccess] = useState(true);  // PATCH 0623 — default expanded
+  // PATCH 1057 — Auto-refresh tick. The main fetch useEffect is wired to
+  // [refreshTick] so it re-runs whenever this counter increments. We tick
+  // every 60s during NSE market hours (09:15–15:30 IST Mon–Fri) and every
+  // 5 minutes outside those hours. User asked: "in hoem screen.automate it
+  // else i am so iritated wih work you doing" — this removes the need to
+  // hard-refresh the page to get fresh MOVERS / SUPER INVESTORS / etc.
+  const [refreshTick, setRefreshTick] = useState(0);
+  const [lastAutoRefreshAt, setLastAutoRefreshAt] = useState<number>(Date.now());
+  useEffect(() => {
+    const isMarketOpen = () => {
+      // Convert local time to IST and check if it's a weekday between 09:15 and 15:30.
+      const now = new Date();
+      const ist = new Date(now.getTime() + (now.getTimezoneOffset() + 330) * 60_000);
+      const day = ist.getUTCDay();        // after the offset add, UTC fields ARE IST
+      const mins = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+      return day >= 1 && day <= 5 && mins >= (9*60+15) && mins <= (15*60+30);
+    };
+    const schedule = () => {
+      const open = isMarketOpen();
+      const delay = open ? 60_000 : 5 * 60_000; // 60s market hours, 5min after-hours
+      return setTimeout(() => {
+        setRefreshTick(t => t + 1);
+        setLastAutoRefreshAt(Date.now());
+      }, delay);
+    };
+    const tid = schedule();
+    return () => clearTimeout(tid);
+  }, [refreshTick]); // re-arms the next tick after each fire
+
   // PATCH 0904 — surgical retry hook so the Upcoming Earnings "↻ Retry"
   // button refetches ONLY this panel instead of doing window.location.reload()
   // (Bug B). Lives at component scope so both the initial useEffect AND the
@@ -1841,7 +1870,12 @@ export default function HomeDashboard() {
       })();
     })();
     return () => { cancelled = true; };
-  }, []);
+    // PATCH 1057 — re-run the entire fetch chain whenever refreshTick changes
+    // (every 60s during market hours, 5min after-hours). Each sub-fetch is
+    // independent so partial failures don't break the others; setState is
+    // per-section so the UI updates smoothly without a full re-render flash.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshTick]);
 
   const activeAlerts = useMemo(() => data.alerts.filter(a => a.enabled), [data.alerts]);
   const portfolioCount = data.portfolio.length;
@@ -2000,6 +2034,27 @@ export default function HomeDashboard() {
                   "still i dont see in this in home tab the newly requested
                   ones" — the conditional rendering here was hiding them
                   when no live quotes arrived (weekend / cold start). */}
+              {/* PATCH 1057 — Auto-refresh status. Shows ticker is alive and
+                  when the next auto-refresh runs. Click to force-refresh now. */}
+              {(() => {
+                const now = Date.now();
+                const ist = (() => { const d = new Date(); const i = new Date(d.getTime() + (d.getTimezoneOffset()+330)*60_000); return i; })();
+                const day = ist.getUTCDay();
+                const mins = ist.getUTCHours()*60 + ist.getUTCMinutes();
+                const marketOpen = day >= 1 && day <= 5 && mins >= (9*60+15) && mins <= (15*60+30);
+                const sinceMs = now - lastAutoRefreshAt;
+                const sinceLabel = sinceMs < 60_000 ? `${Math.floor(sinceMs/1000)}s ago` : `${Math.floor(sinceMs/60_000)}m ago`;
+                const cadence = marketOpen ? '60s' : '5min';
+                const color = marketOpen ? '#10B981' : '#94A3B8';
+                return (
+                  <button
+                    onClick={() => { setRefreshTick(t => t + 1); setLastAutoRefreshAt(Date.now()); }}
+                    title={`Auto-refresh every ${cadence} (${marketOpen ? 'market open' : 'market closed'}). Click to force-refresh now.`}
+                    style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, background: `${color}15`, border: `1px solid ${color}40`, color, fontWeight: 700, cursor: 'pointer' }}>
+                    🔄 Auto · {cadence} · last {sinceLabel}
+                  </button>
+                );
+              })()}
             </div>
           </div>
           {/* PATCH 1036 — Position Sizing Calculator on home (institutional 1-tap sizing) */}
