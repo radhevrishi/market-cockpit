@@ -484,7 +484,9 @@ export default function AIDeskPage() {
   const qc = useQueryClient();
   const morning = useMorningBrief();
   const evening = useEveningBrief();
-  const { data: aiStatus } = useAiStatus();
+  const { data: aiStatus, error: aiStatusError } = useAiStatus();
+  // PATCH 1058 — Degraded mode when /ai/status 404s (backend not provisioned).
+  const aiDeskDegraded = !!aiStatusError;
 
   // Determine AI availability and error status
   const briefHasError = !!(morning.data?.error || evening.data?.error);
@@ -537,6 +539,14 @@ export default function AIDeskPage() {
           </span>
         ) : null}
       </div>
+
+      {/* PATCH 1058 — Degraded banner when /ai/status endpoint isn't deployed. */}
+      {aiDeskDegraded && (
+        <div className="flex items-start gap-3 bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 mb-5">
+          <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+          <p className="text-amber-300 text-sm font-semibold">🟡 AI Desk backend not yet provisioned on this deployment — degraded mode</p>
+        </div>
+      )}
 
       {aiStatus && (!aiStatus.ai_available || briefCreditExhausted) && (
         briefCreditExhausted ? (
