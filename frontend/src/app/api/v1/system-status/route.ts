@@ -18,8 +18,12 @@ interface Probe {
   expectedField?: string;
 }
 
+// PATCH 1058 — /api/v1/earnings/graded requires a ?date= param, otherwise
+// upstream returns 400 and the section gets marked DOWN. Stamp today's
+// ISO yyyy-mm-dd on the probe URL.
+const TODAY_ISO = new Date().toISOString().slice(0, 10);
 const PROBES: Probe[] = [
-  { name: 'EO graded (today)',     url: '/api/v1/earnings/graded',                     category: 'earnings', expectedField: 'by_tier' },
+  { name: 'EO graded (today)',     url: `/api/v1/earnings/graded?date=${TODAY_ISO}`,    category: 'earnings', expectedField: 'by_tier' },
   { name: 'EO calendar',           url: '/api/v1/calendar?days=7',                     category: 'earnings', expectedField: 'buckets' },
   { name: 'Earnings scan',         url: '/api/market/earnings?market=india&month=2026-05', category: 'earnings', expectedField: 'results' },
   { name: 'Quotes (movers)',       url: '/api/market/quotes?market=india',             category: 'movers',   expectedField: 'stocks' },
