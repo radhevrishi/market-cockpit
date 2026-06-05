@@ -2498,7 +2498,14 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                   <div style={{padding:'16px 14px 20px',backgroundColor:`${CARD_BG}CC`,borderTop:`1px solid ${BORDER}`}}>
                     {/* PATCH 0347 — Decision logbook bar (per-stock BUY/WATCH/NEUTRAL/REJECTED + reason) */}
                     <DecisionBar symbol={r.symbol} company={r.company} market="IN" score={r.score} grade={r.grade} currentPrice={(r as any).cmp} bump={bumpDecisions} />
-                    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(240px,1fr))',gap:16}}>
+                    {/* PATCH 1056 — Two-column layout. LEFT = numbers / audit / fraud
+                        (the analytical "facts" column). RIGHT = AI guidance + analysis
+                        + framework (the narrative "judgment" column). Reduces vertical
+                        scroll by ~50% on wide screens; gracefully stacks to 1-col
+                        below 1100px so mobile/narrow windows still work. */}
+                    <div style={{display:'grid',gridTemplateColumns:'minmax(280px, 1fr) minmax(360px, 1.4fr)',gap:18,alignItems:'flex-start'}}>
+                      {/* ═════ LEFT COLUMN — METRICS + SCORE AUDIT + FRAUD RISK ═════ */}
+                      <div style={{display:'flex',flexDirection:'column',gap:14,minWidth:0}}>
                       {/* Metrics by group */}
                       <div>
                         <div style={{fontSize:F.sm,color:MUTED,fontWeight:700,letterSpacing:'0.8px',marginBottom:8}}>ALL METRICS</div>
@@ -2594,6 +2601,9 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                           </div>
                         );
                       })()}
+                      </div>
+                      {/* ═════ RIGHT COLUMN — AI GUIDANCE + STRENGTHS/RISKS + FRAMEWORK ═════ */}
+                      <div style={{display:'flex',flexDirection:'column',gap:14,minWidth:0}}>
                       {/* PATCH 1052 — Rich AI Guidance panel. Shows full
                           rationale, direct quotes, hard numbers (metric/value/period)
                           and forward catalysts (event/timing) when the row has a
@@ -2656,16 +2666,55 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                           </div>
                         );
                       })()}
-                      {/* Analysis */}
+{/* Analysis */}
                       <div>
-                        {r.strengths.length>0&&<>
-                          <div style={{fontSize:F.sm,color:GREEN,fontWeight:700,letterSpacing:'0.8px',marginBottom:6}}>✅ STRENGTHS</div>
-                          {r.strengths.map((s,i)=><div key={i} style={{fontSize:F.md,color:MUTED,padding:'3px 0'}}>› {s}</div>)}
-                        </>}
+                        {r.strengths.length>0&&(() => {
+                          // PATCH 1056 — Strengths grouped by pillar so 17 bullets aren't
+                          // an undifferentiated wall. Heuristic: classify each bullet by
+                          // the metric/keyword it cites. Keeps the engine output untouched
+                          // — purely a display rollup. Pillars match the SQGLP framework.
+                          type Pillar = {key:string;label:string;icon:string;col:string;keys:RegExp};
+                          const PILLARS: Pillar[] = [
+                            {key:'quality', label:'Quality',         icon:'◆', col:'#a78bfa', keys:/roce|roe|opm|gpm|roic|cfo|fcf|cash|moat|incremental/i},
+                            {key:'growth',  label:'Growth & Accel',  icon:'▲', col:'#38bdf8', keys:/cagr|growth|acceler|profit|sales|eps|inflection|breakout|leverage|trajectory|engine/i},
+                            {key:'fin',     label:'Balance Sheet',   icon:'■', col:'#34d399', keys:/debt|pledge|d\/e|leverage|interest|coverage|net cash|debt-free/i},
+                            {key:'ownership',label:'Ownership',      icon:'◉', col:'#f59e0b', keys:/promoter|fii|dii|founder|institution|insider|conviction|ownership|mnc/i},
+                            {key:'value',   label:'Valuation',       icon:'$', col:'#22d3ee', keys:/peg|p\/e|valuation|mos|margin of safety|fcf yield|ev\/ebitda|undervalued/i},
+                            {key:'tech',    label:'Trend / Market',  icon:'~', col:'#10b981', keys:/dma|trend|52w|re-rating|technical|near 52w/i},
+                            {key:'dna',     label:'DNA / Archetype', icon:'◆', col:'#ef4444', keys:/dna|archetype|bagger|page|astral|avanti|caplin|symphony|bajaj|eicher/i},
+                          ];
+                          const groups: Record<string,string[]> = Object.fromEntries(PILLARS.map(p=>[p.key,[]]));
+                          const orphans: string[] = [];
+                          for (const s of r.strengths) {
+                            let placed = false;
+                            for (const p of PILLARS) {
+                              if (p.keys.test(s)) { groups[p.key].push(s); placed = true; break; }
+                            }
+                            if (!placed) orphans.push(s);
+                          }
+                          return (
+                            <>
+                              <div style={{fontSize:F.sm,color:GREEN,fontWeight:700,letterSpacing:'0.8px',marginBottom:6}}>✅ STRENGTHS <span style={{color:MUTED,fontWeight:600,fontSize:F.xs}}>({r.strengths.length})</span></div>
+                              {PILLARS.filter(p=>groups[p.key].length>0).map(p=>(
+                                <div key={p.key} style={{marginBottom:6}}>
+                                  <div style={{fontSize:9,fontWeight:800,color:p.col,letterSpacing:0.4,marginBottom:2}}>{p.icon} {p.label.toUpperCase()} <span style={{color:MUTED,fontWeight:600}}>({groups[p.key].length})</span></div>
+                                  {groups[p.key].map((s,i)=><div key={i} style={{fontSize:F.xs,color:MUTED,padding:'2px 0 2px 14px',lineHeight:1.4}}>› {s}</div>)}
+                                </div>
+                              ))}
+                              {orphans.length>0 && (
+                                <div style={{marginBottom:6}}>
+                                  <div style={{fontSize:9,fontWeight:800,color:'#94A3B8',letterSpacing:0.4,marginBottom:2}}>· OTHER ({orphans.length})</div>
+                                  {orphans.map((s,i)=><div key={i} style={{fontSize:F.xs,color:MUTED,padding:'2px 0 2px 14px',lineHeight:1.4}}>› {s}</div>)}
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
                         {r.risks.length>0&&<>
-                          <div style={{fontSize:F.sm,color:ORANGE,fontWeight:700,letterSpacing:'0.8px',marginTop:12,marginBottom:6}}>⚠️ RISKS</div>
-                          {r.risks.map((s,i)=><div key={i} style={{fontSize:F.md,color:MUTED,padding:'3px 0'}}>› {s}</div>)}
+                          <div style={{fontSize:F.sm,color:ORANGE,fontWeight:700,letterSpacing:'0.8px',marginTop:12,marginBottom:6}}>⚠️ RISKS <span style={{color:MUTED,fontWeight:600,fontSize:F.xs}}>({r.risks.length})</span></div>
+                          {r.risks.map((s,i)=><div key={i} style={{fontSize:F.xs,color:MUTED,padding:'2px 0',lineHeight:1.4}}>› {s}</div>)}
                         </>}
+                        
                         {r.redFlags.length>0&&<>
                           <div style={{fontSize:F.sm,color:RED,fontWeight:700,letterSpacing:'0.8px',marginTop:12,marginBottom:6}}>🚨 RED FLAGS</div>
                           {r.redFlags.map((f,i)=>{
@@ -2889,6 +2938,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                           );
                         })()}
                       </div>
+                      </div>{/* PATCH 1056 — close RIGHT column */}
                     </div>
                     <div style={{fontSize:F.sm,color:MUTED,borderTop:`1px solid ${BORDER}`,paddingTop:8,marginTop:12}}>
                       <span>Sector: {r.sector}</span> · <span>Data: {r.coverage}%</span> ·
