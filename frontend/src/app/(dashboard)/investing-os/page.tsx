@@ -350,8 +350,13 @@ export default function InvestingOSPage() {
   }, [picks]);
 
   const topStyles = ranked.filter((r) => r[1] === (ranked[0]?.[1] || 0)).map((r) => r[0]);
+  const primary = ranked[0]?.[0] || '';
+  const scored = new Set(ranked.filter((r) => r[1] > 0).map((r) => r[0]));
   const styleByLetter = (l: string) => STYLES.find((s) => s.letter === l);
-  const matchedCombos = COMBOS.filter((c) => c.members.every((m) => topStyles.includes(m)));
+  // Surface combos that include the user's top style; rank fully-matched (both members scored) first.
+  const matchedCombos = COMBOS
+    .filter((c) => c.members.includes(primary))
+    .sort((a, b) => (b.members.every((m) => scored.has(m)) ? 1 : 0) - (a.members.every((m) => scored.has(m)) ? 1 : 0));
 
   return (
     <div style={{ background: C.bg, minHeight: '100vh', color: C.txt, fontFamily: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif' }}>
