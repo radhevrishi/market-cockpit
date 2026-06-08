@@ -1238,7 +1238,9 @@ async function fetchAllNews(): Promise<any[]> {
           const title = content.match(/<title>([\s\S]*?)<\/title>/)?.[1]
             ?.replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim() || '';
           const pubDate = content.match(/<pubDate>([\s\S]*?)<\/pubDate>/)?.[1]?.trim() || '';
-          const link = content.match(/<link>([\s\S]*?)<\/link>/)?.[1]?.trim() || '';
+          const link = content.match(/<link>([\s\S]*?)<\/link>/)?.[1]
+            ?.replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim()
+            || content.match(/<link[^>]*href=["']([^"']+)["']/)?.[1]?.trim() || '';
           const desc = content.match(/<description>([\s\S]*?)<\/description>/)?.[1]
             ?.replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').replace(/<[^>]*>/g, '').trim() || '';
 
