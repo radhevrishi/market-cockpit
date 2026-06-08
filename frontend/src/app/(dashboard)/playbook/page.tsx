@@ -111,7 +111,7 @@ const RULES: Rule[] = [
   { n: 16, cat: 'PORTFOLIO', title: 'Cash floor 5%.',
     body: 'Never fully invested. 5% minimum cash for opportunistic adds when setups arrive. Being 100% invested means being 0% prepared. Cash is the ultimate option.' },
   { n: 17, cat: 'PORTFOLIO', title: '20-position ceiling.',
-    body: 'Beyond 20 positions you can no loner track thesis intactness for every name. That\'s diworsification, not diversification. Concentrate into your best ideas; if you can\'t name the catalyst for each holding from memory, you own too many.' },
+    body: 'Beyond 20 positions you can no longer track thesis intactness for every name. That\'s diworsification, not diversification. Concentrate into your best ideas; if you can\'t name the catalyst for each holding from memory, you own too many.' },
 
   { n: 18, cat: 'BEHAVIOR', title: 'Execution window only.',
     body: 'Buy/sell decisions made EOD (after 15:30 IST) or during the weekly review. NO intraday execution, ever. Intraday is the casino layer — the system runs on closes. If you have to ask, the answer is "wait until EOD."' },
@@ -391,7 +391,7 @@ export default function PlaybookPage() {
       }}>
         <span style={{ fontSize: F.h1, fontWeight: 900, color: PURPLE, letterSpacing: 0.5 }}>📖 PLAYBOOK</span>
         <span style={{ fontSize: F.lg, color: TEXT, fontWeight: 700, letterSpacing: 0.4 }}>· INVESTMENT + LIFE OPERATING SYSTEM</span>
-        <span style={{ fontSize: F.sm, color: MUTED, fontWeight: 600 }}>21 investment rules · 5 personal rules · 16 life principles · single page</span>
+        <span style={{ fontSize: F.sm, color: MUTED, fontWeight: 600 }}>21 investment rules · 5 personal rules · 16 life principles · 12 relationship rules · review cadence · single page</span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
           <Pill color={GREEN}  label={`HOLD ${counts.HOLD}`}   />
           <Pill color={YELLOW} label={`WATCH ${counts.WATCH}`} />
