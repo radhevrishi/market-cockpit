@@ -537,6 +537,30 @@ export default function HomeDashboard() {
   const [showTier3, setShowTier3] = useState(true);  // PATCH 0625 — default expanded
   const [showInPlay, setShowInPlay] = useState(true);  // PATCH 0620 — In-Play moved to top of Home, default expanded
   const [showQuickAccess, setShowQuickAccess] = useState(true);  // PATCH 0623 — default expanded
+  // PATCH 1061 — Playbook state-machine counts (HOLD/WATCH/EXIT). Read from
+  // localStorage 'mc:playbook:states:v1' (written by /playbook). Shows a chip
+  // in the header so user knows live portfolio state without leaving home.
+  const [playbookCounts, setPlaybookCounts] = useState<{H:number;W:number;E:number}|null>(null);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('mc:playbook:states:v1');
+      if (!raw) { setPlaybookCounts(null); return; }
+      const arr = JSON.parse(raw);
+      if (!Array.isArray(arr) || arr.length === 0) { setPlaybookCounts(null); return; }
+      const c = { H: 0, W: 0, E: 0 };
+      for (const h of arr) {
+        const pnl = h?.pnlPct ?? 0;
+        const thesis = h?.thesisIntact !== false;
+        const cb = h?.closesBelow50 ?? 0;
+        const abs = !!h?.absorption;
+        if (pnl <= -13) c.E++;
+        else if (!thesis) c.E++;
+        else if (cb >= 3) (abs ? c.W : c.E)++;
+        else c.H++;
+      }
+      setPlaybookCounts(c);
+    } catch { setPlaybookCounts(null); }
+  }, [refreshTick]);
   // PATCH 1057 — Auto-refresh tick. The main fetch useEffect is wired to
   // [refreshTick] so it re-runs whenever this counter increments. We tick
   // every 60s during NSE market hours (09:15–15:30 IST Mon–Fri) and every
@@ -2006,6 +2030,29 @@ export default function HomeDashboard() {
                   💼 P&L {data.portfolioPnl.totalPct >= 0 ? '+' : ''}{data.portfolioPnl.totalPct.toFixed(2)}%
                   {data.portfolioPnl.bestMover && ` · best ${data.portfolioPnl.bestMover.ticker} ${data.portfolioPnl.bestMover.pct >= 0 ? '+' : ''}${data.portfolioPnl.bestMover.pct.toFixed(1)}%`}
                   {data.portfolioPnl.worstMover && ` · worst ${data.portfolioPnl.worstMover.ticker} ${data.portfolioPnl.worstMover.pct.toFixed(1)}%`}
+                </Link>
+              )}
+              {/* PATCH 1061 — Playbook state-machine quick-reference chip.
+                  Reads localStorage from /playbook tab and surfaces HOLD/WATCH/EXIT
+                  counts so the user knows portfolio discipline state at a glance. */}
+              {playbookCounts && (playbookCounts.H + playbookCounts.W + playbookCounts.E) > 0 && (
+                <Link href="/playbook" style={{
+                  fontSize: 10, padding: '2px 8px', borderRadius: 4,
+                  background: playbookCounts.E > 0 ? '#EF444422' : (playbookCounts.W > 0 ? '#F59E0B22' : '#10B98122'),
+                  border: `1px solid ${playbookCounts.E > 0 ? '#EF4444' : (playbookCounts.W > 0 ? '#F59E0B' : '#10B981')}60`,
+                  color: playbookCounts.E > 0 ? '#EF4444' : (playbookCounts.W > 0 ? '#F59E0B' : '#10B981'),
+                  fontWeight: 800, textDecoration: 'none', letterSpacing: 0.3,
+                }} title="Playbook state machine — click for state-machine, decision engine, exit rules">
+                  📖 PLAYBOOK · HOLD {playbookCounts.H} · WATCH {playbookCounts.W} · EXIT {playbookCounts.E}
+                </Link>
+              )}
+              {!playbookCounts && (
+                <Link href="/playbook" style={{
+                  fontSize: 10, padding: '2px 8px', borderRadius: 4,
+                  background: '#A78BFA22', border: '1px solid #A78BFA60', color: '#A78BFA',
+                  fontWeight: 800, textDecoration: 'none', letterSpacing: 0.3,
+                }} title="Open Playbook → set up portfolio state machine (HOLD/WATCH/EXIT) and exit rules">
+                  📖 PLAYBOOK — set up state machine
                 </Link>
               )}
               {/* PATCH 0622 — Sector rotation one-liner */}
