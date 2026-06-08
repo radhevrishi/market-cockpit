@@ -24,7 +24,7 @@ type StyleDef = {
   letter: string; name: string; color: string; rating: Rating;
   money: string; mind: string; focus: string[];
   subs: { tag: string; text: string }[];
-  rule?: string; entry?: string; edge?: string; notes?: string[];
+  rule?: string; entry?: string; edge?: string; notes?: string[]; example?: string;
 };
 
 const STYLES: StyleDef[] = [
@@ -41,10 +41,12 @@ const STYLES: StyleDef[] = [
       { tag: 'GU · Guidance Upgrades', text: 'Confirmation: management raising future outlook, analysts increasing estimates.' },
     ],
     rule: 'BUY: good AI ranking + good guidance + tailwind + management + MAF checklist. SELL: PEG > 2.',
+    example: 'A debt-light small-cap compounding revenue ~30% for 2–3 quarters — still priced as "boring" — re-rates hard once the growth becomes undeniable.',
     notes: [
       'Sell rule: respect 50/200-DMA. If it loses the 50-DMA, watch 3–4 candles — if the prior 1–3 candle low is NOT reached, hold; else exit.',
       'Find fundamentally great stocks in red markets — green on a red day flags gems (e.g. Acutaas, Nebius).',
       'Titan/Gold-type big-TAM stories: keep on the radar always.',
+      'Follow the budget + themes closely — that is where the next tailwind starts; and watch the NEW (new product / branding / segment), then track it early.',
     ],
   },
   {
@@ -61,10 +63,7 @@ const STYLES: StyleDef[] = [
     rule: 'SPIN → hidden value · M&A → control change · TURN → recovery · CAP → efficiency.',
     entry: 'Buy only with a clear catalyst, visible mispricing, and limited downside.',
     edge: 'Others wait for earnings — you act on the event + catalyst. (BUY: good AI ranking = buy.)',
-    notes: [
-      'FII-buying stocks get special focus (Bajaj Consumer & MCX type).',
-      'Follow budget + themes closely; focus on the NEW — new product, new branding, new segment — then watch.',
-    ],
+    example: 'A conglomerate spins off its high-margin division → the freed unit re-rates once its real economics become visible; or an open offer prices the stock above market.',
   },
   {
     letter: 'C', name: 'Earnings / EP Momentum Trader', color: C.lime, rating: 'No edge',
@@ -78,6 +77,7 @@ const STYLES: StyleDef[] = [
     ],
     entry: 'Strong move + volume, breakout confirmation, no immediate rejection.',
     edge: 'Fast-moving alpha, short holding period. Enter on: earnings blockbuster/strong + good guidance + theme OR daily movers/gainers.',
+    example: 'A 30% earnings beat + ~5× average volume → enter immediately on the breakout, no waiting.',
   },
   {
     letter: 'D', name: 'Technical Structure Trader', color: C.blue, rating: 'No edge',
@@ -93,6 +93,7 @@ const STYLES: StyleDef[] = [
     rule: 'Tight base = strong breakout potential. Compression precedes expansion.',
     entry: 'Clean structure, breakout with volume, no choppy price action.',
     edge: 'Ignore narratives — trade pure price structure + momentum confirmation. See charts of India leaders + Stage-2 + volume + theme.',
+    example: 'A tight VCP that breaks out on expanding volume → clean entry, tight stop, controlled risk.',
   },
   {
     letter: 'E', name: 'Supply–Demand / Flow Trader', color: C.cyan, rating: 'Good',
@@ -104,6 +105,8 @@ const STYLES: StyleDef[] = [
     ],
     rule: 'Imbalance = opportunity. Flow beats fundamentals; speed is the edge.',
     edge: 'Profit from liquidity gaps + forced price discovery.',
+    example: 'An export curb or a capacity outage creates a domestic bottleneck → the only listed supplier gaps up on the squeeze.',
+    notes: ['FII-buying flow gets special focus — follow where foreign institutions are accumulating (e.g. Bajaj Consumer, MCX).'],
   },
   {
     letter: 'F', name: 'Trend Follower (Stage-2)', color: C.violet, rating: '',
@@ -117,6 +120,7 @@ const STYLES: StyleDef[] = [
     ],
     rule: 'Trend = signal, strength = confirmation, weak stocks ignored.',
     edge: 'Ride established uptrends, not reversals.',
+    example: 'A relative-strength leader breaks a 12-month base and trends for months — ride the middle, not the turn.',
   },
   {
     letter: 'G', name: 'Re-rating / Multiple Expansion Investor', color: C.teal, rating: '',
@@ -129,6 +133,7 @@ const STYLES: StyleDef[] = [
       { tag: 'Multiple Expansion', text: 'PE re-rates upward, from "cheap" to "quality premium".' },
     ],
     rule: 'Quality improvement → re-rating. Earnings + multiple expansion = outsized returns.',
+    example: 'A hardware firm pivots to recurring / SaaS revenue → the multiple re-rates from ~12× to ~30× as the market recognises the new quality.',
   },
 ];
 const RATING_COLOR: Record<string, string> = { 'Good': C.green, 'Neutral': C.amber, 'No edge': C.red, '': C.dim };
@@ -300,6 +305,11 @@ function StyleCard({ s }: { s: StyleDef }) {
           {s.edge ? <div style={{ fontSize: F.sm, color: C.txt }}><b style={{ color: s.color }}>Edge · </b>{s.edge}</div> : null}
         </div>
       )}
+      {s.example ? (
+        <div style={{ marginTop: 10, fontSize: F.sm, color: C.txt, background: `${s.color}12`, border: `1px solid ${s.color}40`, borderRadius: 8, padding: '8px 11px', lineHeight: 1.5 }}>
+          <b style={{ color: s.color }}>Example · </b>{s.example}
+        </div>
+      ) : null}
       {s.notes && s.notes.length > 0 && (
         <ul style={{ margin: '10px 0 0', paddingLeft: 18 }}>
           {s.notes.map((nt, i) => <li key={i} style={{ fontSize: F.sm, color: C.muted, lineHeight: 1.55, marginBottom: 3 }}>{nt}</li>)}
