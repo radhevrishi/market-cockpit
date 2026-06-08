@@ -35,6 +35,7 @@ const ROSE    = '#fb7185';
 const PEACH   = '#fbbf24';
 const TEAL    = '#2dd4bf';
 const LIME     = '#84cc16';
+const SKY      = '#38bdf8';
 
 const F = { xs: 12, sm: 13, md: 14, lg: 16, h2: 18, h1: 26, ruleNum: 32 };
 
@@ -327,59 +328,126 @@ const RELATIONSHIPS: LifeRule[] = [
 // PEAK PERFORMANCE — reflexes · focus · mastery (cricket · investing · IT)
 // ═══════════════════════════════════════════════════════════════════════════
 const MASTERY: LifeRule[] = [
-  { n: 1, title: 'Train reflexes directly — but anticipation beats raw reaction.',
-    body: 'Reaction speed is trainable, but elite performers win on reading cues early, not faster nerves. A Formula-1 driver reacts in ~0.2s; the edge is anticipation. In cricket you read the bowler\'s wrist and seam; in markets you read price/volume + the pattern before the move; in code you smell the bug before the stack trace.',
+  { n: 1, title: 'Anticipation beats raw reaction — read the cues early.',
+    body: 'The biggest finding in sport science: experts do not react faster, they SEE sooner. World-class cricket batsmen read the bowler\'s hand and arm BEFORE the ball is released; weaker players wait for ball flight (Müller & Abernethy). The same edge applies everywhere — read the setup before the breakout, smell the bug before the stack trace.',
+    actions: [
+      'Temporal-occlusion drill: watch a bowler on video, pause at the instant of release, and call line / length from the arm + wrist alone — a meta-analysis confirms this training accelerates real anticipation.',
+      'Investing: build "if I see X → I do Y" pattern cards so the decision is pre-made.',
+      'IT: learn failure signatures so debugging starts from a hypothesis, not a search.',
+    ] },
+  { n: 2, title: 'Still train raw reflexes — the fast base layer.',
+    body: 'Anticipation sits on top of trainable reaction speed and hand-eye coordination. Build the base so the body is ready when the mind reads the cue.',
     actions: [
       'Reaction-ball drill: catch after the first bounce — 3 sets of 10.',
       'Tennis-ball wall catches, alternating hands; partner ball-drops from shoulder height.',
-      'Cricket: throwdowns / sidearm + slip-catching cradle; react to seam and spin, not just line.',
-      'Reaction-light / aim-trainer apps a few minutes daily for visual-stimulus speed.',
+      'Cricket: throwdowns / sidearm + slip-catching cradle; agility-ladder footwork.',
+      'Reaction-light / aim-trainer apps a few minutes daily.',
     ] },
-  { n: 2, title: 'Read patterns, don\'t just respond.',
-    body: 'The fastest experts pre-load decisions: they have seen the pattern so often the response is pre-decided. Convert raw reaction into recognition — build a library of "if I see X → I do Y" so the moment arrives already solved.',
+  { n: 3, title: 'Quiet Eye — a steady final fixation before you act.',
+    body: 'Elite performers hold a longer, still gaze on the target in the last beat before moving. It is one of the most robust findings in the field — a meta-analysis found large effects on both gaze (d ≈ 1.5) and performance (d ≈ 0.8), and it lowers arousal under pressure. It is trainable.',
     actions: [
-      'Cricket: study bowlers\' release cues and field-setting tells.',
-      'Investing: catalogue chart + tape patterns and what usually follows.',
-      'IT: learn common failure signatures so debugging starts from a hypothesis.',
+      'Cricket: lock a calm, quiet gaze on the ball at release — do not let the eyes dart.',
+      'Pressure moments (a big delivery, a sizing decision): one steady fixation on the single thing that matters before you commit.',
+      'It doubles as a nerve-settler when the stakes are high.',
     ] },
-  { n: 3, title: 'Deep-work blocks are the core skill.',
-    body: 'The biggest enemy of mastery is context-switching. 60–90 min uninterrupted, single task, phone out of reach, notifications off. This is where real research, system design, and skill-building happen. Pairs with Review Cadence + About Me A2.',
-    actions: ['One task to completion — no tab-hopping', 'Phone in another room during the block', 'Two protected deep blocks a day, minimum'] },
-  { n: 4, title: 'Mindfulness trains the attention muscle.',
-    body: '10–20 min/day of breath focus measurably improves sustained attention. While reading, set a timer every few minutes and ask "did my mind wander?" — refocus if yes. Directly upgrades fundamental analysis and long debugging sessions.',
-    actions: ['10–20 min daily breath focus', 'Wander-check timer while reading dense material', 'Label the distraction, return to task — no self-judgement'] },
-  { n: 5, title: 'The deliberate-practice loop (not just hours).',
-    body: 'Expertise comes from a tight loop, not passive repetition: learn ONE concept → apply it immediately → get feedback → correct the error → repeat. Hours of passive reading lose to a few focused loops.',
+  { n: 4, title: 'Protect deep-work blocks ruthlessly.',
+    body: 'A single interruption costs ~23 minutes to fully refocus (Gloria Mark), and "attention residue" leaves part of your mind stuck on the last task (Leroy). Context-switching is the silent killer of research and code quality. 60–90 min, single task, phone in another room, notifications off.',
+    actions: ['One task to completion — no tab-hopping', 'Phone in a DIFFERENT room, not face-down on the desk', 'Two protected deep blocks a day, minimum'] },
+  { n: 5, title: 'Reset focus with the physiological sigh.',
+    body: 'Two short inhales through the nose, one long exhale through the mouth. A 2023 Stanford RCT (Huberman / Spiegel) found this beat mindfulness meditation for lowering cortisol and lifting mood — the fastest real-time way to calm the nervous system.',
+    actions: ['1–3 sighs between deep blocks, or before a big ball / decision', 'Use it the instant anxiety or vertigo spikes', 'Pairs with the Quiet Eye for pressure moments'] },
+  { n: 6, title: 'Mindfulness builds the attention muscle.',
+    body: '10–20 min/day of breath focus measurably improves sustained attention over weeks. While reading dense material, set a timer and ask "did my mind wander?" — refocus without self-judgement.',
+    actions: ['10–20 min daily breath focus', 'Wander-check timer while reading concalls / docs', 'Label the distraction, return to the task'] },
+  { n: 7, title: 'Deliberate practice = mental representations at the edge.',
+    body: 'Ericsson\'s core finding (Peak): expertise is not hours — it is near-maximal effort just BEYOND your current ability, with feedback and reflection, repeated. Its real product is richer mental representations — the detailed internal models that let experts see patterns and plan ahead. A coach or feedback source accelerates this hugely.',
+    actions: ['Practice at the edge of comfort, not inside it', 'Get feedback — a coach, a mentor, or a measured metric', 'Reflect and update after every rep; do not just repeat'] },
+  { n: 8, title: 'Run the tight practice loop.',
+    body: 'Learn ONE concept → apply it immediately → get feedback → correct the error → repeat. A few focused loops beat hours of passive reading.',
     actions: [
       'Cricket: isolate ONE technical flaw per session and drill only that.',
       'Investing: one company / one concall, deeply — then journal the thesis.',
       'IT: read a feature 20 min → build a tiny project → fix errors → teach it back.',
     ] },
-  { n: 6, title: 'Break the skill down, attack the weakest link.',
-    body: 'Split each craft into sub-skills and pinpoint the exact gap — slow footwork, weak valuation, shaky system design — then drill the weakest one. Vague practice improves nothing; targeted practice compounds.',
-    actions: ['List sub-skills for each arena', 'Rate yourself 1–10 per sub-skill monthly', 'Spend most reps on the lowest score'] },
-  { n: 7, title: 'Use the science of fast learning.',
-    body: 'Active recall, spaced repetition, interleaving, and teaching are the highest-yield learning methods. Test yourself instead of rereading; review at increasing intervals; mix related topics; explain to expose gaps.',
-    actions: ['Active recall: quiz yourself, don\'t reread', 'Spaced repetition for facts / formulas / patterns', 'Interleave drills; teach one thing you learned each week'] },
-  { n: 8, title: 'Study the film — yours and the masters\'.',
-    body: 'Observation accelerates everything. Watch experts and, crucially, your OWN footage / record. Look for the if/then decisions behind their actions.',
+  { n: 9, title: 'Break the skill down, attack the weakest link.',
+    body: 'Split each craft into sub-skills, pinpoint the exact gap — slow footwork, weak valuation, shaky system design — and spend most reps there. Targeted practice compounds; vague practice does not.',
+    actions: ['List sub-skills per arena', 'Rate yourself 1–10 on each monthly', 'Most reps on the lowest score'] },
+  { n: 10, title: 'Learn fast: recall, spacing, interleaving, teaching.',
+    body: 'The four highest-yield learning methods in cognitive science. Test yourself instead of rereading; review at increasing intervals; mix related topics; explain to expose gaps.',
+    actions: ['Active recall: quiz yourself, do not reread', 'Spaced repetition for facts / formulas / patterns', 'Interleave drills; teach one thing you learned each week'] },
+  { n: 11, title: 'Study the film — yours and the masters\'.',
+    body: 'Observation accelerates everything. Watch experts and, crucially, your OWN record — looking for the if/then decisions behind their actions.',
     actions: [
       'Cricket: review your dismissals + a great player\'s technique.',
       'Investing: keep a trade journal; review winners and losers monthly (ties to Cadence).',
-      'IT: read excellent codebases and post-mortems.',
+      'IT: read excellent codebases and incident post-mortems.',
     ] },
-  { n: 9, title: 'Make the right action automatic.',
+  { n: 12, title: 'Make the right action automatic.',
     body: 'Repeat the correct rep until it is button-press reflexive — a defensive shot, a position-sizing rule, a refactor pattern. Automaticity frees your attention for judgement under pressure.',
-    actions: ['Drill correct form slowly, then at speed', 'Codify rules so execution needs no deliberation', 'Don\'t practice mistakes — quality reps only'] },
-  { n: 10, title: 'Sleep is the performance multiplier.',
-    body: '7.5–9 hours, non-negotiable. A single poor night measurably slows reaction time and attention — it degrades cricket, trading discipline, and code quality alike. Reinforces About Me A1.',
-    actions: ['Fixed sleep + wake window', 'No screens 1 hour before bed', 'Treat lost sleep as a performance loss, not extra work'] },
-  { n: 11, title: 'Train the body for the brain (and the cricket).',
+    actions: ['Drill correct form slowly, then at speed', 'Codify rules so execution needs no deliberation', 'Quality reps only — do not practice mistakes'] },
+  { n: 13, title: 'Sleep IS practice — skills consolidate overnight.',
+    body: 'Motor skills keep improving AFTER you practice, during sleep: slow-wave sleep early in the night and REM late drive "offline" gains, and the improvement is sleep-dependent, not just time-dependent. Practising hard then sleeping literally makes you better by morning. Naps help too.',
+    actions: ['Fixed sleep + wake window; 7.5–9 h', 'Practise a skill, then protect that night\'s sleep', 'Treat lost sleep as a performance loss, not extra work (reinforces About Me A1)'] },
+  { n: 14, title: 'Train the body for the brain (and the cricket).',
     body: 'Exercise improves blood flow, memory, and processing speed — and is the base for cricket fitness. Strength 3–4×/week, cardio 2–3×, sprint / agility 1–2×.',
     actions: ['Strength 3–4×, cardio 2–3×, sprint / agility 1–2× weekly', 'Agility-ladder + footwork doubles as reflex work', 'Daily 20–30 min movement minimum'] },
-  { n: 12, title: 'Fuel and hydrate for cognition.',
+  { n: 15, title: 'Fuel and hydrate for cognition.',
     body: 'Protein, omega-3s (fish, flax), fruit, vegetables, nuts, and water support reaction time and focus. Limit excess sugar, alcohol, and ultra-processed food. Caffeine helps alertness but too much raises anxiety and cuts concentration.',
-    actions: ['Protein + omega-3 daily; hydrate consistently', 'Cut sugar spikes before deep work / matches', 'Caffeine in moderation — dose, don\'t overdose'] },
+    actions: ['Protein + omega-3 daily; hydrate consistently', 'Cut sugar spikes before deep work / matches', 'Caffeine in moderation — dose, do not overdose'] },
+];
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STRESS & RESILIENCE — handle pressure the evidence-based way
+// ═══════════════════════════════════════════════════════════════════════════
+const STRESS: LifeRule[] = [
+  { n: 1, title: 'The 3-step circuit for any stress spike.',
+    body: 'When stress hits — a red portfolio, a missed task, a kid melting down, a vertigo wave, a bad over — run the same portable circuit: STOP → NAME → CHOOSE. It works because it puts the thinking brain back online before you act.',
+    actions: [
+      'STOP: 1–3 physiological sighs (two inhales, one long exhale).',
+      'NAME: label the feeling — "I feel anxious / angry / ashamed".',
+      'CHOOSE: pick ONE next action you actually control, and do only that.',
+    ] },
+  { n: 2, title: 'Name it to tame it.',
+    body: 'Putting a feeling into words measurably lowers the brain\'s threat response (affect labelling). Naming the emotion — instead of being swept by it — is the fastest cognitive off-ramp from a spiral.',
+    actions: ['Say it plainly: "this is anxiety / frustration / fear"', 'Name the trigger too: "stock down → fear of being wrong"', 'Naming creates the gap between feeling and reaction'] },
+  { n: 3, title: 'The physiological sigh — your fastest reset.',
+    body: 'Two short inhales through the nose, one long exhale through the mouth. A 2023 Stanford RCT found cyclic sighing beat meditation for lowering cortisol and lifting mood in real time. This is your front-line tool for vertigo spikes, market drops, and pre-confrontation nerves.',
+    actions: ['1–3 sighs the instant stress rises', 'Use before reacting to a falling stock or a child', 'Longer exhale than inhale is the active ingredient'] },
+  { n: 4, title: 'Reappraise: stress is mobilisation, not failure.',
+    body: 'Cognitive reappraisal — reframing what a situation means — reliably lowers negative emotion. A racing heart is your body delivering oxygen and focus, not proof you are failing. "I can handle this" changes the physiology, not just the mood.',
+    actions: ['Read stress symptoms as energy / readiness', 'Reframe a falling stck as a known cost of the game, not a verdict on you', 'Ask: "what would I tell a friend in this exact spot?"'] },
+  { n: 5, title: 'Accept the wave — don\'t add a second arrow.',
+    body: 'Acceptance and reappraisal are complementary. Fighting a feeling ("I shouldn\'t feel this") adds a second layer of suffering on top of the first. Let the wave of stress be present; it peaks and passes faster when you stop bracing against it. This is especially true for vertigo — resistance amplifies the sensation.',
+    actions: ['Allow the feeling without judging it', 'Drop the "I shouldn\'t be stressed" story', 'Ride it out — discomfort is not danger'] },
+  { n: 6, title: 'Control what you can; release the rest.',
+    body: 'Most of your stressors — the market, others\' opinions, a child\'s mood, when vertigo strikes — are outside your control. Anxiety lives in the gap between what you want to control and what you can. Pour energy into your actions, preparation, breathing, and next step; let go of the rest. (Reinforces Life L10.)',
+    actions: ['IN your control: prep, reaction, rules, breath, effort', 'NOT in your control: outcomes, others, markets, the past', 'Act on the first list; make peace with the second'] },
+  { n: 7, title: 'Market-drawdown protocol.',
+    body: 'A falling portfolio is a visceral, physical event — loss aversion makes losses hurt about twice as much as equivalent gains, and the urge to sell at the bottom is the most destructive instinct in investing (in 2008 those who sold at peak fear missed the ~400% rally that followed). Your written rules exist precisely so panic never makes the decision.',
+    actions: ['Obey the Playbook exits — no in-the-moment, intraday selling',
+      'Decisions at EOD only; the system runs on closes, not feelings',
+      'Re-read your "enough" (Life L16) — a drawdown does not change the plan'] },
+  { n: 8, title: 'Parenting stress — borrow calm, don\'t broadcast panic.',
+    body: 'A child regulates by borrowing your nervous system (co-regulation) — your calm is literally the tool that settles them. Regulate yourself FIRST: breathe, drop your voice, get your thinking brain back online, then respond. "Naughty" behaviour is usually a child being a child, not an emergency.',
+    actions: ['Breathe and lower your voice before you speak', 'Stay physically close and calm — presence over lecture', 'Repair afterwards; you are modelling regulation, not perfection'] },
+  { n: 9, title: 'Break the vertigo–anxiety loop.',
+    body: 'Vertigo triggers anxiety, and anxiety sharpens the vestibular sensation — a self-feeding loop. You break it at the anxiety end: slow-exhale breathing, sensory grounding, and acceptance rather than fighting the spin. (This is coping — see a doctor for the underlying vestibular cause.)',
+    actions: ['Slow-exhale breathing (4 in, 6 out) when it starts',
+       Grounding: name 5 things you see, 4 you hear, 3 you feel',
+      'Accept the sensation instead of bracing — bracing feeds it'] },
+  { n: 10, title: 'Separate your worth from the outcome.',
+    body: 'A bad over, a red day, a missed task, a shipped bug — these are events, not verdicts on who you are. The missed-task spiral ("I\'m not good enough") is the real damage, not the missed task. Self-compassion — treating yourself like a friend — builds resilience and steadier motivation than self-attack. (Reinforces Life L13.)',
+    actions: ['After a setback: "what went wrong, what did I learn, next step?"',
+      'Ban the "I am not good enough" loop — it is the enemy',
+      'You are not your worst moment of the day'] },
+  { n: 11, title: 'When people misread your intent.',
+    body: 'You can control your actions and your integrity — not how others interpret them. When you mean well and people assume otherwise, the cleanest move is to act with good intent, communicate clearly, and release the need to be understood by everyone. Some will misread you; that is about them, not your worth. (Ties Relationships R12 + Life L10.)',
+    actions: ['Act on intent + clear communication; then let go', 'Do not contort yourself to fix every misperception', 'Keep the people who see you accurately close'] },
+  { n: 12, title: 'Build the buffer so stress lands softer.',
+    body: 'Acute tools handle the spike; the buffer decides how hard it hits. Sleep, exercise, sunlight, real relationships and genuine time off raise your stress threshold. Chronic overload shrinks the buffer — which is why family, cricket, work and markets all feel heavier at once. Rebuild it deliberately.',
+    actions: ['Protect sleep + movement first — they set the baseline',
+      'One real, screen-free connection daily (family counts most)',
+      'Schedule recovery like a task; a rested you handles everything better'] },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -398,7 +466,8 @@ const SECTIONS: Array<{ id: string; label: string; cat?: RuleCat | 'ABOUT' | 'LI
   { id: 'about-me',   label: '🌿 About Me',        cat: 'ABOUT',     range: 'A1–A5', accent: ROSE   },
   { id: 'life-sat',   label: '🌅 Life Satisfaction', cat: 'LIFE',    range: 'L1–L16', accent: PEACH },
   { id: 'relationships', label: '🤝 Relationships',  range: 'R1–R12', accent: TEAL },
-  { id: 'mastery',    label: '🏏 Peak Performance', range: 'M1–M12', accent: LIME },
+  { id: 'mastery',    label: '🏏 Peak Performance', range: 'M1–M15', accent: LIME },
+  { id: 'stress',     label: '🧘 Stress & Resilience', range: 'S1–S12', accent: SKY },
 ];
 
 export default function PlaybookPage() {
@@ -548,20 +617,17 @@ export default function PlaybookPage() {
 
           {/* PEAK PERFORMANCE */}
           <SectionAnchor id="mastery" />
-          <SectionHeader title="PEAK PERFORMANCE — reflexes · focus · mastery" sub="Tuned for cricket · investing · IT — train the engine, not just the hours" color={LIME} />
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
-            {MASTERY.map(r => <LifeCard key={r.n} rule={r} prefix="M" accent={LIME} />)}
-          </div>
-          <div style={{ marginBottom: 24, padding: '14px 18px', backgroundColor: `${LIME}0A`, border: `1px solid ${LIME}40`, borderLeft: `4px solid ${LIME}`, borderRadius: 10 }}>
+          <SectionHeader title="PEAK PERFORMANCE — reflexes · focus · mastery" sub="Evidence-based, tuned for cricket · investing · IT — train the engine, not just the hours" color={LIME} />
+          <div style={{ marginBottom: 16, padding: '14px 18px', backgroundColor: `${LIME}0A`, border: `1px solid ${LIME}40`, borderLeft: `4px solid ${LIME}`, borderRadius: 10 }}>
             <div style={{ fontSize: F.md, fontWeight: 800, color: LIME, letterSpacing: 0.4, marginBottom: 8 }}>📅 THE DAILY PLAN TO WIN</div>
             <ul style={{ margin: 0, paddingLeft: 0, listStyle: 'none' }}>
               {[
                 'Morning: 10 min mindfulness + 20–30 min movement (cardio or strength).',
-                'Reps: 15–30 min reflex / skill drills (reaction ball, footwork, or cricket throwdowns).',
-                'Deep block 1: 60–90 min single-task — research a company or build/ship code. Phone away.',
-                'Deep block 2: 60–90 min — the deliberate-practice loop on ONE weakness.',
+                'Reps: 15–30 min reflex / skill drills (reaction ball, footwork, throwdowns) — finish with one anticipation / quiet-eye rep.',
+                'Deep block 1: 60–90 min single-task — research a company or build / ship code. Phone in another room.',
+                'Deep block 2: 60–90 min — the deliberate-practice loop on ONE weakness, at the edge of your ability, with feedback.',
                 'Evening: review the film (trade journal / your footage / a post-mortem) + active recall.',
-                'Night: 7.5–9 h sleep, no screens the last hour. Consistency compounds into mastery.',
+                'Night: 7.5–9 h sleep, no screens the last hour — sleep consolidates the day\'s skills.',
               ].map((a, i) => (
                 <li key={i} style={{ fontSize: F.md, color: TEXT, lineHeight: 1.55, padding: '4px 0 4px 18px', position: 'relative' }}>
                   <span style={{ position: 'absolute', left: 0, color: LIME, fontWeight: 900 }}>›</span>{a}
@@ -571,6 +637,23 @@ export default function PlaybookPage() {
             <div style={{ fontSize: F.sm, color: MUTED, fontStyle: 'italic', marginTop: 10, lineHeight: 1.5 }}>
               Reflexes, focus and expertise are not talent — they are sleep + physical training + deliberate practice + distraction-free deep work + systematic review, repeated over months. Same engine wins the crease, the screen, and the terminal.
             </div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 24 }}>
+            {MASTERY.map(r => <LifeCard key={r.n} rule={r} prefix="M" accent={LIME} />)}
+          </div>
+
+          {/* STRESS & RESILIENCE */}
+          <SectionAnchor id="stress" />
+          <SectionHeader title="STRESS & RESILIENCE — handle pressure the evidence-based way" sub="Markets · missed tasks · parenting · vertigo · cricket · work · family" color={SKY} />
+          <div style={{ marginBottom: 16, padding: '14px 18px', backgroundColor: `${SKY}0A`, border: `1px solid ${SKY}40`, borderLeft: `4px solid ${SKY}`, borderRadius: 10 }}>
+            <div style={{ fontSize: F.md, fontWeight: 800, color: SKY, letterSpacing: 0.4, marginBottom: 8 }}>🧘 THE ONE CIRCUIT TO REMEMBER</div>
+            <div style={{ fontSize: F.lg, color: TEXT2, fontWeight: 700, lineHeight: 1.5 }}>STOP (sigh) → NAME the feeling → CHOOSE one action you control.</div>
+            <div style={{ fontSize: F.sm, color: MUTED, lineHeight: 1.55, marginTop: 8 }}>
+              The same three steps work for a falling stock, a missed task, a child melting down, a vertigo wave, a tough over, or a hard moment at home. Stress is not the enemy — an unmanaged stress reaction is. You can be calm under pressure and still care deeply.
+            </div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 24 }}>
+            {STRESS.map(r => <LifeCard key={r.n} rule={r} prefix="S" accent={SKY} />)}
           </div>
 
           {/* CLOSING NOTE */}
