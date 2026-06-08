@@ -2156,6 +2156,9 @@ export default function HomeDashboard() {
             <Link href="/portfolio"              style={navChip('#22D3EE')}>💼 My Book</Link>
             {/* PATCH 0776 — 📑 Order Book + 🏛 Rating Actions chips removed (modules deleted). */}
             <Link href="/playbook"               style={navChip('#F59E0B')}>📚 Playbook</Link>
+            {/* PATCH 1063 — deep-link chips into Playbook sub-sections per user request */}
+            <Link href="/playbook#about-me"      style={navChip('#fb7185')}>🌿 About Me</Link>
+            <Link href="/playbook#life-sat"      style={navChip('#fbbf24')}>🌅 Life Sat</Link>
             <Link href="/orders"                 style={navChip('#22D3EE')}>📡 Signals</Link>
             <Link href="/special-situations"     style={navChip('#EF4444')}>🎯 Special Sit</Link>
             <Link href="/strategic-visibility"   style={navChip('#A78BFA')}>⭐ Strategic Vis</Link>
@@ -2391,7 +2394,7 @@ export default function HomeDashboard() {
             const t1Usa = lensedTier1.filter((t: TierAction) => (t as any).market === 'US');
             return (
               <>
-                {t1India.length > 0 && (
+                {t1India.length > 0 ? (
                   <DecisionTierBlock
                     tier={1}
                     label="IMMEDIATE ACTION · 🇮🇳 INDIA"
@@ -2400,6 +2403,17 @@ export default function HomeDashboard() {
                     items={t1India}
                     expanded
                   />
+                ) : (
+                  /* PATCH 1063 — never silently hide India block; show CTA when empty so user can fix */
+                  <div style={{ ...cardStyle, borderColor: '#10B98140', marginBottom: 12 }}>
+                    <div style={{ fontSize: 13, color: TEXT, fontWeight: 800, marginBottom: 4 }}>🎯 TIER 1 — IMMEDIATE ACTION · 🇮🇳 INDIA (0)</div>
+                    <div style={{ fontSize: 11, color: DIM, lineHeight: 1.5 }}>
+                      No India scored data in this browser. Upload your India Multibagger CSV to populate this block.
+                    </div>
+                    <div style={{ marginTop: 8, display: 'flex', gap: 6 }}>
+                      <Link href="/multibagger" style={navChip('#10B981')}>📊 Upload India CSV</Link>
+                    </div>
+                  </div>
                 )}
                 {t1Usa.length > 0 && (
                   <DecisionTierBlock
