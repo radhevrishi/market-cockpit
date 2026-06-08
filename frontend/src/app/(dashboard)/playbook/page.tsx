@@ -1,366 +1,511 @@
 'use client';
+// PATCH 1061 — PLAYBOOK / INVESTMENT OPERATING SYSTEM
+// Institutional-grade discipline tab: live decision-engine + state machine +
+// 4-step daily routine + weekly/quarterly checklists + behavior protocol.
+// NOT a wall of text — every section is a functional widget with structured
+// data, not paragraphs.
+import { useState, useEffect, useMemo } from 'react';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// PLAYBOOK (PATCH 0626) — institutional how-to guide.
-//
-// Step-by-step process for turning the portal's signals into a money-making
-// workflow. Written from the user's seat: they're not a sell-side analyst,
-// they're a self-funded research-driven investor running a personal book.
-// ═══════════════════════════════════════════════════════════════════════════
+const CARD_BG = '#13131a';
+const CARD2 = '#1a1a24';
+const BORDER = 'rgba(255,255,255,0.08)';
+const MUTED = '#94A3B8';
+const TEXT = '#E5E7EB';
+const PURPLE = '#a78bfa';
+const GREEN = '#10b981';
+const YELLOW = '#f59e0b';
+const RED = '#ef4444';
+const CYAN = '#22d3ee';
+const ORANGE = '#f97316';
 
-import React from 'react';
-import Link from 'next/link';
+const F = { xs: 10, sm: 11, md: 12, lg: 13, h1: 16, h2: 14 };
 
-const BG = '#0A0E1A';
-const CARD = '#0D1623';
-const BORDER = '#1A2540';
-const TEXT = '#E6EDF3';
-const DIM = '#8A95A3';
+type State = 'HOLD' | 'WATCH' | 'EXIT';
 
-const STEPS: Array<{
-  num: number;
-  title: string;
-  emoji: string;
-  color: string;
-  body: string;
-  do: string[];
-  surfaces: Array<{ label: string; href: string }>;
-  example?: string;
-}> = [
-  {
-    num: 1,
-    title: 'Refresh your data weekly',
-    emoji: '📥',
-    color: '#22D3EE',
-    body: 'Your Multibagger scorer runs entirely on CSVs you upload. Stale data = stale conviction. Reset every Sunday so the engine sees the latest quarterly numbers.',
-    do: [
-      'Open Screener.in → export your India universe to Excel/CSV → upload on the India sub-tab.',
-      'Open TradingView → export your US universe → upload on the USA sub-tab.',
-      'Watch the Home header — if the "Multibagger upload Nd ago" amber chip is showing, you skipped a week.',
-    ],
-    surfaces: [
-      { label: 'Multibagger →', href: '/multibagger' },
-    ],
-    example: 'Bumping the engine on Sunday means Monday morning Tier 1 already reflects the new quarterly results — no manual ranking needed.',
-  },
-  {
-    num: 2,
-    title: 'Start each morning at Home',
-    emoji: '🌅',
-    color: '#10B981',
-    body: 'Home is a Bloomberg-style ops view. 15 minutes covers everything you need to make decisions for the day.',
-    do: [
-      'Read Tier 1 (cross-confirmed picks — A-grade ∩ Conviction Beats ∩ no decision yet).',
-      'Glance at Bottleneck Pulse — if any theme is red HIGH, click through to the Workbench.',
-      'Read In-Play News + Concall Intel for last 24h catalysts.',
-      'Check Earnings Today and Upcoming Earnings for filings on your bench.',
-      'Note what your Watchlist Pulse + Top Movers are doing.',
-    ],
-    surfaces: [
-      { label: 'Home →', href: '/' },
-    ],
-    example: 'If Tier 1 #1 is ATLANTAELE A-grade and Bottleneck Pulse shows POWER_GRID is HIGH, those two signals reinforce each other — that\'s the day\'s strongest setup.',
-  },
-  {
-    num: 3,
-    title: 'Cross-confirm before sizing',
-    emoji: '🔬',
-    color: '#A78BFA',
-    body: 'A high score alone is not enough. The portal\'s edge is layering multiple independent signals on the same name.',
-    do: [
-      'Open the Stock Sheet for the ticker. Read Fundamental Health + Promoter Trust + Sector KPIs.',
-      'Check Conviction Beats: is the name already on the bench? When did it land?',
-      'Check Super Investors: which marquee investor holds it, at what stake, last disclosed when?',
-      'Open Concall Intel page → search ticker. Read the latest management commentary tone.',
-      'Open Special Situations or Order Book pages → confirm no fresh negative catalyst.',
-    ],
-    surfaces: [
-      { label: 'Stock Sheet →', href: '/stock-sheet' },
-      { label: 'Conviction Beats →', href: '/earnings-opportunities' },
-      { label: 'Super Investors →', href: '/super-investors' },
-      { label: 'Concall Intel →', href: '/concall-intel' },
-    ],
-    example: 'NITTAGELA is A++ in Multibagger + on CB bench + Mukherjea holds 30-Apr disclosure + concall tone "Neutral with positive guidance" + no negative special-sit → strong cross-confirm.',
-  },
-  {
-    num: 4,
-    title: 'Size based on conviction tier',
-    emoji: '💰',
-    color: '#F59E0B',
-    body: 'Position sizing reflects how many independent signals cross-confirm. Never max-size on a single A-grade score alone.',
-    do: [
-      'Tier 1 cross-confirmed (★) — full conviction position (4-6% of book).',
-      'Tier 1 top-up (+) — half position (2-3%).',
-      'Tier 2 watchlist — quarter position (1-2%) while it builds.',
-      'Tier 3 experimental — 0.5-1% scout position to learn.',
-      'USA names: cap at 1.5% (PAYS rule — single-name USA exposure is structurally riskier given quarterly liquidity gaps).',
-    ],
-    surfaces: [
-      { label: 'My Book →', href: '/portfolio' },
-    ],
-    example: 'If your portfolio is ₹50 lakh, a Tier 1 ★ position is ₹2-3 lakh. A Tier 3 scout is ₹25-50k. Never go max on score alone.',
-  },
-  {
-    num: 5,
-    title: 'Use the Valuation Calculators before buying',
-    emoji: '🧮',
-    color: '#22D3EE',
-    body: 'The score tells you "this is a good business". The Valuation tab tells you "is the price OK today?". Always run the calculator before entry.',
-    do: [
-      'Open /valuations → pick the right calculator for the sector (P/S for growth/SaaS, P/E for FMCG/quality, EV/EBITDA for industrials/cyclicals).',
-      'Enter management guidance for FY27/FY28 (look this up in the Concall AI tab under Earnings Hub).',
-      'Read out base / bull / bear case upside in months. If base-case upside is < 25% over 18 months, wait for a better entry.',
-      'Compare against the Stock Sheet 5-year median multiple chip.',
-    ],
-    surfaces: [
-      { label: 'Valuations →', href: '/valuations' },
-      { label: 'Concall AI →', href: '/earnings-hub' },
-    ],
-    example: 'DEEDEV at ₹499 with FY27 PAT guidance ₹100 Cr at 30x P/E = ₹3,000 Cr market cap. Current ₹3,136 Cr. Implied 18-month upside = roughly flat. Wait for a -15% pullback before sizing.',
-  },
-  {
-    num: 6,
-    title: 'Log every decision in the Decision Logbook',
-    emoji: '📒',
-    color: '#A78BFA',
-    body: 'The portal\'s long-term edge compounds when you record WHY you acted. Future-you reads it before re-entering or doubling down.',
-    do: [
-      'On the Stock Sheet, click BUY / WATCH / NEUTRAL / REJECTED and write a one-line reason.',
-      'Bad reasons: "looks good". Good reasons: "FY27 ₹100Cr PAT at 30x P/E = ₹3000Cr; bought at ₹3100Cr trusting CB cross-confirm".',
-      'Decisions persist across CSV re-uploads — your historical record never resets.',
-    ],
-    surfaces: [
-      { label: 'Decision Logbook →', href: '/decisions' },
-    ],
-    example: 'Six months later when you ask "why did I buy DEEDEV?", the log shows your exact thesis. You can audit if it held.',
-  },
-  {
-    num: 7,
-    title: 'Set up News Alerts for what you care about',
-    emoji: '🔔',
-    color: '#EF4444',
-    body: 'You can\'t watch the news feed all day. The alert system fires browser notifications when matches arrive.',
-    do: [
-      'Open /news-alerts → click any Recommended Preset (AI Infra HIGH-only / Power Grid Bottleneck / Order Wins / Rating Upgrade / Marquee PE / Capacity Expansion / Earnings Surprise / Promoter Buying).',
-      'Customize with your own keyword: company name, sector, theme.',
-      'Grant browser notification permission — alerts fire even when the tab is in background.',
-    ],
-    surfaces: [
-      { label: 'News Alerts →', href: '/news-alerts' },
-    ],
-    example: 'Alert "AI Infra HIGH-only" fires when a Nvidia memory bottleneck article hits. You open Bottleneck Workbench → see Indian proxies HBL POWER / KAYNES → check if either is on your bench → size up.',
-  },
-  {
-    num: 8,
-    title: 'Watch your Conviction Beats bench',
-    emoji: '🏆',
-    color: '#F59E0B',
-    body: 'Your CB bench is the institutional shortlist — names that hit BLOCKBUSTER/STRONG on Earnings Opportunities. It auto-populates from your Multibagger upload.',
-    do: [
-      'Open Earnings Opportunities → review the BLOCKBUSTER + STRONG tiers.',
-      'Names auto-add to CB bench when they cross BLOCKBUSTER threshold.',
-      'CB bench drives Tier 1 cross-confirmation on Home. Always know what\'s on it.',
-      'Header chip "🏆 CB N" is always live count.',
-    ],
-    surfaces: [
-      { label: 'Earnings Opportunities →', href: '/earnings-opportunities' },
-      { label: 'Watchlist →', href: '/watchlists' },
-    ],
-  },
-  {
-    num: 9,
-    title: 'Track Special Situations + Order Book + Rating Actions',
-    emoji: '🎯',
-    color: '#EF4444',
-    body: 'Re-rating events come from three sources: (a) merger/acquisition/spinoff filings, (b) large PSU order wins like DEEDEV-style contracts, (c) rating agency upgrades.',
-    do: [
-      'Open /special-situations weekly to spot SAST / preferential / merger-arb / NCLT events.',
-      'Open /order-book to spot LoA / large contract wins; tier-1 PSU customers (HAL/BHEL/NTPC/PGCIL) are the highest signal.',
-      'Open /rating-actions to spot ICRA/CRISIL upgrade catalysts.',
-      'Cross-reference: a name with ALL THREE in one quarter is a setup worth max-sizing.',
-    ],
-    surfaces: [
-      { label: 'Special Situations →', href: '/special-situations' },
-      { label: 'Order Book Intel →', href: '/order-book' },
-      { label: 'Rating Actions →', href: '/rating-actions' },
-    ],
-    example: 'BEL (Bharat Electronics) — Order Book win + Rating Upgrade + on CB bench — would be a 3-source confirmation event.',
-  },
-  {
-    num: 10,
-    title: 'Review weekly + month-end',
-    emoji: '📊',
-    color: '#10B981',
-    body: 'Performance review is what separates a process from gambling.',
-    do: [
-      'Sunday review: read your Decision Log entries from the past week. Did the reasons hold?',
-      'Check Home → Engine consistency chip — has your average score across uploads stayed within ±5 points?',
-      'Check Movers + Portfolio P&L line — what worked / what didn\'t.',
-      'Adjust position sizes if a thesis broke (e.g. promoter sold, USFDA observation).',
-      'End of month: export Decision Log JSON as backup.',
-    ],
-    surfaces: [
-      { label: 'Decision Logbook →', href: '/decisions' },
-      { label: 'My Book →', href: '/portfolio' },
-    ],
-  },
-];
+interface HoldingState {
+  ticker: string;
+  state: State;
+  pnlPct?: number;
+  vsDma50?: number;
+  vsDma200?: number;
+  closesBelow50: number; // 0–3+ consecutive closes below 50DMA
+  absorption: boolean;   // panic-low not revisited for 3–5 sessions
+  thesisIntact: boolean;
+  note?: string;
+  updatedAt: number;
+}
 
-const SECTOR_PLAYBOOK: Array<{ sector: string; calculator: string; multiple: string; emoji: string }> = [
-  { sector: 'Industrial / Capex / Engineering',     calculator: 'P/E or EV/EBITDA on FY27 forward earnings', multiple: 'P/E 25-45x, EV/EBITDA 15-22x', emoji: '🏭' },
-  { sector: 'Defence / PSU',                         calculator: 'P/E on FY27 + Order Book / Revenue ratio', multiple: 'P/E 30-50x (order-book backed)',  emoji: '🛡' },
-  { sector: 'Power / Transmission',                  calculator: 'P/E + EV/EBITDA on capex utilization',     multiple: 'P/E 35-55x, EV/EBITDA 18-28x',    emoji: '⚡' },
-  { sector: 'Pharma / Speciality Chemicals',         calculator: 'P/E + EV/EBITDA + capex roadmap',          multiple: 'P/E 30-45x, EV/EBITDA 20-30x',    emoji: '💊' },
-  { sector: 'Consumer / FMCG / Discretionary',       calculator: 'P/E on stable margin base',                multiple: 'P/E 40-70x (quality)',            emoji: '🛍' },
-  { sector: 'Auto / Auto Components',                calculator: 'P/E + EV/EBITDA on cycle midpoint',        multiple: 'P/E 20-30x, EV/EBITDA 12-18x',    emoji: '🚗' },
-  { sector: 'Financial Services / NBFC',             calculator: 'P/B + ROE',                                multiple: 'P/B 2-5x',                        emoji: '🏦' },
-  { sector: 'IT Services',                           calculator: 'P/E on USD revenue growth',                multiple: 'P/E 20-35x',                      emoji: '💻' },
-  { sector: 'SaaS / Tech (US)',                      calculator: 'P/S + Rule of 40',                         multiple: 'P/S 8-25x (R40 elite)',           emoji: '☁' },
+const STATE_COLOR: Record<State, string> = { HOLD: GREEN, WATCH: YELLOW, EXIT: RED };
+const STATE_ICON: Record<State, string> = { HOLD: '●', WATCH: '◐', EXIT: '✕' };
+
+// Compute the prescribed state per the rule engine. Pure function.
+function classify(h: Pick<HoldingState, 'pnlPct' | 'closesBelow50' | 'absorption' | 'thesisIntact'>): { state: State; reason: string } {
+  // RULE 1 — Capital protection
+  if ((h.pnlPct ?? 0) <= -13) return { state: 'EXIT', reason: 'Rule 1: P&L ≤ −13% capital-protection floor' };
+  // RULE 3 — Thesis broken
+  if (!h.thesisIntact) return { state: 'EXIT', reason: 'Rule 3: fundamental / thesis broken' };
+  // RULE 2 — Trend breakdown
+  if (h.closesBelow50 >= 3) {
+    if (h.absorption) return { state: 'WATCH', reason: '3 closes < 50DMA but panic-low absorbed (institutional demand)' };
+    return { state: 'EXIT', reason: 'Rule 2: 3 closes below 50DMA AND no absorption signal' };
+  }
+  return { state: 'HOLD', reason: 'above 50DMA · no triggers · do nothing' };
+}
+
+// IST time helpers
+function getIST() {
+  const d = new Date();
+  return new Date(d.getTime() + (d.getTimezoneOffset() + 330) * 60_000);
+}
+function isExecutionWindow() {
+  const ist = getIST();
+  const m = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+  // Execution window = after market close 15:30 → 22:00 IST (EOD)
+  return m >= (15 * 60 + 30) && m <= (22 * 60);
+}
+function isWeeklyWindow() {
+  return getIST().getUTCDay() === 0 || getIST().getUTCDay() === 6; // Sat/Sun
+}
+
+const SECTIONS = [
+  { id: 'engine',    label: 'Decision Engine', icon: '⚙' },
+  { id: 'today',     label: 'Today',           icon: '◴' },
+  { id: 'states',    label: 'States',          icon: '◐' },
+  { id: 'exit',      label: 'Exit Rules',      icon: '↗' },
+  { id: 'absorb',    label: 'Absorption',      icon: '◇' },
+  { id: 'weekly',    label: 'Weekly',          icon: '▦' },
+  { id: 'quarterly', label: 'Quarterly',       icon: '▥' },
+  { id: 'behavior',  label: 'Behavior',        icon: '◉' },
 ];
 
 export default function PlaybookPage() {
+  const [holdings, setHoldings] = useState<HoldingState[]>([]);
+  const [activeSection, setActiveSection] = useState<string>('engine');
+
+  // Hydrate state machine: merge saved playbook state with current portfolio
+  useEffect(() => {
+    let saved: HoldingState[] = [];
+    try { saved = JSON.parse(localStorage.getItem('mc:playbook:states:v1') || '[]'); } catch {}
+    let portfolio: string[] = [];
+    try {
+      const port = JSON.parse(localStorage.getItem('mc:portfolio:v3') || localStorage.getItem('mc:portfolio:v2') || localStorage.getItem('mc:portfolio:v1') || '[]');
+      if (Array.isArray(port)) portfolio = port.map((p: any) => (p?.ticker || p?.symbol || '').toUpperCase()).filter(Boolean);
+    } catch {}
+    const savedMap = new Map(saved.map(h => [h.ticker, h]));
+    const merged: HoldingState[] = portfolio.map(t =>
+      savedMap.get(t) || { ticker: t, state: 'HOLD', closesBelow50: 0, absorption: false, thesisIntact: true, updatedAt: Date.now() }
+    );
+    // include any saved tickers no longer in portfolio (in case user wants to retire them)
+    saved.forEach(h => { if (!merged.find(m => m.ticker === h.ticker)) merged.push(h); });
+    setHoldings(merged);
+  }, []);
+
+  function persist(next: HoldingState[]) {
+    setHoldings(next);
+    try { localStorage.setItem('mc:playbook:states:v1', JSON.stringify(next)); } catch {}
+  }
+  function updateHolding(ticker: string, patch: Partial<HoldingState>) {
+    persist(holdings.map(h => h.ticker === ticker ? { ...h, ...patch, updatedAt: Date.now() } : h));
+  }
+
+  const counts = useMemo(() => {
+    const c = { HOLD: 0, WATCH: 0, EXIT: 0 };
+    holdings.forEach(h => { const cls = classify(h); c[cls.state]++; });
+    return c;
+  }, [holdings]);
+
   return (
-    <div style={{ minHeight: '100%', background: BG, color: TEXT, padding: '24px 28px' }}>
-      <div style={{ maxWidth: 1100, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 20 }}>
-
-        <div>
-          <h1 style={{ margin: 0, fontSize: 30, fontWeight: 900, color: TEXT, letterSpacing: '-0.3px' }}>📚 Playbook</h1>
-          <div style={{ marginTop: 6, fontSize: 14, color: DIM, lineHeight: 1.55, maxWidth: 800 }}>
-            The 10-step institutional process for turning Market Cockpit signals into a money-making research workflow.
-            Read it once. Bookmark it. Come back every Sunday for the weekly checklist.
-          </div>
+    <div style={{ maxWidth: 1400, margin: '0 auto', padding: '28px 20px', color: TEXT, fontVariantNumeric: 'tabular-nums' }}>
+      {/* ═════ HEADER ═════ */}
+      <div style={{ marginBottom: 16, padding: '12px 16px', backgroundColor: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, display: 'flex', alignItems: 'baseline', gap: 14, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: F.h1, fontWeight: 900, color: PURPLE, letterSpacing: 0.5 }}>PLAYBOOK</span>
+        <span style={{ fontSize: F.xs, color: MUTED, fontWeight: 700, letterSpacing: 0.4 }}>· INVESTMENT OPERATING SYSTEM</span>
+        <span style={{ fontSize: 9, color: MUTED }}>disciplined trend-follower · state machine · absorption-aware</span>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <Pill color={GREEN} label={`HOLD ${counts.HOLD}`} />
+          <Pill color={YELLOW} label={`WATCH ${counts.WATCH}`} />
+          <Pill color={RED} label={`EXIT ${counts.EXIT}`} />
         </div>
-
-        {/* HOW THIS PORTAL GIVES YOU AN EDGE */}
-        <div style={{
-          background: 'linear-gradient(180deg, #22D3EE12 0%, transparent 100%)',
-          border: '1px solid #22D3EE40',
-          borderRadius: 8,
-          padding: '16px 18px',
-        }}>
-          <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.5px', marginBottom: 8 }}>
-            🎯 WHY THIS WORKS
-          </div>
-          <div style={{ fontSize: 13, color: TEXT, lineHeight: 1.65 }}>
-            Bloomberg-style operating dashboards work because they cross-confirm signals from independent data sources.
-            Multibagger scoring (fundamentals) + Conviction Beats (institutional bench) + Bottleneck Intel (structural themes) +
-            Concall AI (management commentary) + Super Investors (marquee positioning) + Rating Actions / Order Book
-            (re-rating events) — when 3+ of these align on the same name, that's an institutional-grade setup.
-            Acting on one signal alone is gambling. Acting on 3-5 layered signals is research.
-          </div>
-        </div>
-
-        {/* STEPS */}
-        {STEPS.map((s) => (
-          <div key={s.num} style={{
-            background: CARD,
-            border: `1px solid ${BORDER}`,
-            borderLeft: `3px solid ${s.color}`,
-            borderRadius: 8,
-            padding: '18px 20px',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 12, fontWeight: 900, color: s.color, letterSpacing: '1px', minWidth: 50 }}>
-                STEP {s.num}
-              </span>
-              <h2 style={{ margin: 0, fontSize: 19, fontWeight: 800, color: TEXT }}>
-                {s.emoji} {s.title}
-              </h2>
-            </div>
-            <p style={{ margin: '8px 0 12px 0', fontSize: 13.5, color: '#C9D4E0', lineHeight: 1.65 }}>{s.body}</p>
-
-            <div style={{ fontSize: 11, color: DIM, fontWeight: 800, letterSpacing: '0.5px', marginBottom: 6 }}>WHAT TO DO</div>
-            <ul style={{ margin: 0, paddingLeft: 22, fontSize: 13, color: TEXT, lineHeight: 1.7 }}>
-              {s.do.map((d, i) => (
-                <li key={i} style={{ marginBottom: 4 }}>{d}</li>
-              ))}
-            </ul>
-
-            {s.example && (
-              <div style={{
-                marginTop: 12,
-                padding: '10px 14px',
-                background: `${s.color}10`,
-                borderLeft: `3px solid ${s.color}80`,
-                borderRadius: 4,
-                fontSize: 13,
-                color: '#D5DDE5',
-                lineHeight: 1.6,
-                fontStyle: 'italic',
-              }}>
-                Example — {s.example}
-              </div>
-            )}
-
-            <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {s.surfaces.map((surf) => (
-                <Link key={surf.href} href={surf.href} style={{
-                  fontSize: 11,
-                  padding: '4px 10px',
-                  background: `${s.color}22`,
-                  border: `1px solid ${s.color}60`,
-                  borderRadius: 4,
-                  color: s.color,
-                  textDecoration: 'none',
-                  fontWeight: 700,
-                }}>
-                  {surf.label}
-                </Link>
-              ))}
-            </div>
-          </div>
-        ))}
-
-        {/* SECTOR PLAYBOOK TABLE */}
-        <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '18px 20px' }}>
-          <h2 style={{ margin: '0 0 8px 0', fontSize: 19, fontWeight: 800, color: TEXT }}>
-            🧮 Sector → Calculator Lookup
-          </h2>
-          <p style={{ margin: '0 0 14px 0', fontSize: 13, color: DIM, lineHeight: 1.6 }}>
-            Which calculator to use, and what multiple range is institutionally defensible, by sector.
-          </p>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px 14px', fontSize: 12.5 }}>
-            <div style={{ color: DIM, fontWeight: 800, letterSpacing: '0.5px', fontSize: 11, paddingBottom: 4, borderBottom: `1px solid ${BORDER}` }}>SECTOR</div>
-            <div style={{ color: DIM, fontWeight: 800, letterSpacing: '0.5px', fontSize: 11, paddingBottom: 4, borderBottom: `1px solid ${BORDER}` }}>CALCULATOR</div>
-            <div style={{ color: DIM, fontWeight: 800, letterSpacing: '0.5px', fontSize: 11, paddingBottom: 4, borderBottom: `1px solid ${BORDER}` }}>MULTIPLE RANGE</div>
-            {/* PATCH 0966 — missing-keys: bare <>…</> fragment inside .map() with
-                inner-div `key` props produced React "each child needs unique key"
-                warnings (and only the fragment-level key actually counts). The
-                inner keys did nothing because they sat on siblings of the
-                fragment. Switch to React.Fragment with the fragment-level key
-                and drop the redundant inner keys. */}
-            {SECTOR_PLAYBOOK.map((s) => (
-              <React.Fragment key={s.sector}>
-                <div style={{ color: TEXT, fontWeight: 600 }}>{s.emoji} {s.sector}</div>
-                <div style={{ color: '#C9D4E0' }}>{s.calculator}</div>
-                <div style={{ color: '#22D3EE', fontFamily: 'ui-monospace, monospace', fontWeight: 700 }}>{s.multiple}</div>
-              </React.Fragment>
-            ))}
-          </div>
-        </div>
-
-        {/* DANGER ZONE */}
-        <div style={{
-          background: '#EF444415',
-          border: '1px solid #EF444460',
-          borderRadius: 8,
-          padding: '16px 18px',
-        }}>
-          <div style={{ fontSize: 12, fontWeight: 800, color: '#EF4444', letterSpacing: '0.5px', marginBottom: 8 }}>
-            ⚠ COMMON MISTAKES TO AVOID
-          </div>
-          <ul style={{ margin: 0, paddingLeft: 22, fontSize: 13, color: TEXT, lineHeight: 1.75 }}>
-            <li><b>Score-only sizing.</b> A+ alone is not a buy signal. Always cross-confirm with at least one other layer.</li>
-            <li><b>Skipping the Valuation calc.</b> Quality at any price is not a strategy. Run P/E or P/S target before entry.</li>
-            <li><b>Ignoring promoter trust / governance.</b> Read the Promoter Trust chip on Stock Sheet. Low promoter + low DII + microcap = operator stock.</li>
-            <li><b>Acting on stale CSV data.</b> If the amber "Multibagger upload Nd ago" chip is up, re-upload before sizing anything new.</li>
-            <li><b>No Decision Log entry.</b> If you can't write a one-line thesis, you don't understand the position. Don't enter.</li>
-            <li><b>Chasing structural alerts in In-Play.</b> Structural items are filtered out of the main feed for a reason — they're commentary, not actionable catalysts.</li>
-            <li><b>Max-sizing USA names.</b> Single-name USA exposure has structurally larger drawdowns (PAYS rule); cap at 1.5%.</li>
-          </ul>
-        </div>
-
       </div>
+
+      {/* ═════ TAB STRIP ═════ */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 16, flexWrap: 'wrap' }}>
+        {SECTIONS.map(s => {
+          const active = activeSection === s.id;
+          return (
+            <button key={s.id} onClick={() => setActiveSection(s.id)} style={{
+              fontSize: F.xs, fontWeight: 700, padding: '6px 12px', borderRadius: 6, letterSpacing: 0.3,
+              border: `1px solid ${active ? `${PURPLE}60` : BORDER}`,
+              background: active ? `${PURPLE}14` : 'transparent',
+              color: active ? PURPLE : MUTED, cursor: 'pointer',
+            }}>{s.icon} {s.label.toUpperCase()}</button>
+          );
+        })}
+      </div>
+
+      {activeSection === 'engine'    && <DecisionEngineSection holdings={holdings} updateHolding={updateHolding} persist={persist} />}
+      {activeSection === 'today'     && <TodaySection counts={counts} />}
+      {activeSection === 'states'    && <StatesSection />}
+      {activeSection === 'exit'      && <ExitRulesSection />}
+      {activeSection === 'absorb'    && <AbsorptionSection />}
+      {activeSection === 'weekly'    && <WeeklySection />}
+      {activeSection === 'quarterly' && <QuarterlySection />}
+      {activeSection === 'behavior'  && <BehaviorSection />}
+    </div>
+  );
+}
+
+function Pill({ color, label }: { color: string; label: string }) {
+  return <span style={{ fontSize: 9, fontWeight: 800, color, border: `1px solid ${color}40`, backgroundColor: `${color}14`, padding: '2px 8px', borderRadius: 4, letterSpacing: 0.3 }}>{label}</span>;
+}
+
+function SectionCard({ title, accent, children }: { title: string; accent: string; children: React.ReactNode }) {
+  return (
+    <div style={{ marginBottom: 12, padding: '12px 14px', backgroundColor: CARD_BG, border: `1px solid ${BORDER}`, borderLeft: `3px solid ${accent}`, borderRadius: 8 }}>
+      <div style={{ fontSize: F.xs, fontWeight: 800, color: accent, letterSpacing: 0.6, marginBottom: 10 }}>{title}</div>
+      {children}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SECTION 1 — LIVE DECISION ENGINE
+// ═══════════════════════════════════════════════════════════════════════════
+function DecisionEngineSection({ holdings, updateHolding, persist }: { holdings: HoldingState[]; updateHolding: (t: string, p: Partial<HoldingState>) => void; persist: (n: HoldingState[]) => void }) {
+  const [addTicker, setAddTicker] = useState('');
+  if (holdings.length === 0) {
+    return (
+      <SectionCard title="DECISION ENGINE" accent={PURPLE}>
+        <div style={{ fontSize: F.sm, color: MUTED, marginBottom: 10, lineHeight: 1.5 }}>
+          No portfolio detected. Either upload portfolio tickers in <a href="/portfolio" style={{ color: CYAN }}>/portfolio</a>, or add tickers manually below to run the state machine.
+        </div>
+        <ManualAdd addTicker={addTicker} setAddTicker={setAddTicker} onAdd={() => {
+          const t = addTicker.trim().toUpperCase();
+          if (!t) return;
+          persist([...holdings, { ticker: t, state: 'HOLD', closesBelow50: 0, absorption: false, thesisIntact: true, updatedAt: Date.now() }]);
+          setAddTicker('');
+        }} />
+      </SectionCard>
+    );
+  }
+  return (
+    <>
+      <SectionCard title="EXECUTE — DAILY DECISION (5 MIN, EOD ONLY)" accent={PURPLE}>
+        <div style={{ fontSize: F.xs, color: MUTED, marginBottom: 8, lineHeight: 1.5 }}>
+          For each holding, mark the four inputs the engine needs. Engine classifies into HOLD / WATCH / EXIT and tells you the rule that fired.
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(80px,100px) 60px 60px 70px 70px 80px 1fr', gap: 6, fontSize: F.xs, color: MUTED, fontWeight: 700, letterSpacing: 0.3, padding: '4px 6px', borderBottom: `1px solid ${BORDER}` }}>
+          <span>TICKER</span>
+          <span>P&L %</span>
+          <span>3-CLOSE&lt;50</span>
+          <span>ABSORB</span>
+          <span>THESIS</span>
+          <span>STATE</span>
+          <span>REASON · ACTION</span>
+        </div>
+        {holdings.map(h => {
+          const cls = classify(h);
+          return (
+            <div key={h.ticker} style={{ display: 'grid', gridTemplateColumns: 'minmax(80px,100px) 60px 60px 70px 70px 80px 1fr', gap: 6, alignItems: 'center', fontSize: F.xs, padding: '5px 6px', borderBottom: `1px solid ${BORDER}40` }}>
+              <span style={{ fontWeight: 800, color: TEXT, letterSpacing: 0.3 }}>{h.ticker}</span>
+              <input type="number" value={h.pnlPct ?? ''} onChange={e => updateHolding(h.ticker, { pnlPct: e.target.value === '' ? undefined : Number(e.target.value) })} placeholder="—" style={inputStyle()} />
+              <select value={h.closesBelow50} onChange={e => updateHolding(h.ticker, { closesBelow50: Number(e.target.value) })} style={selectStyle()}>
+                <option value={0}>0</option><option value={1}>1</option><option value={2}>2</option><option value={3}>3+</option>
+              </select>
+              <ToggleChip value={h.absorption} onToggle={() => updateHolding(h.ticker, { absorption: !h.absorption })} onLabel="YES" offLabel="NO" onColor={CYAN} offColor={MUTED} />
+              <ToggleChip value={h.thesisIntact} onToggle={() => updateHolding(h.ticker, { thesisIntact: !h.thesisIntact })} onLabel="OK" offLabel="BROKEN" onColor={GREEN} offColor={RED} />
+              <span style={{ fontSize: F.xs, fontWeight: 800, color: STATE_COLOR[cls.state], padding: '2px 6px', borderRadius: 4, backgroundColor: `${STATE_COLOR[cls.state]}14`, border: `1px solid ${STATE_COLOR[cls.state]}40`, textAlign: 'center', letterSpacing: 0.3 }}>{STATE_ICON[cls.state]} {cls.state}</span>
+              <span style={{ fontSize: F.xs, color: MUTED, lineHeight: 1.35 }}>{cls.reason}</span>
+            </div>
+          );
+        })}
+        <ManualAdd addTicker={addTicker} setAddTicker={setAddTicker} onAdd={() => {
+          const t = addTicker.trim().toUpperCase();
+          if (!t || holdings.find(h => h.ticker === t)) { setAddTicker(''); return; }
+          persist([...holdings, { ticker: t, state: 'HOLD', closesBelow50: 0, absorption: false, thesisIntact: true, updatedAt: Date.now() }]);
+          setAddTicker('');
+        }} />
+      </SectionCard>
+      <SectionCard title="DECISION SEQUENCE — EXECUTE IN ORDER" accent={CYAN}>
+        <Step n={1} title="Capital check" body="Any holding ≤ −13% P&L? → EXIT immediately. No exceptions." color={RED} />
+        <Step n={2} title="Trend check" body="3 consecutive closes below 50DMA? If NO → HOLD. If YES → step 3." color={ORANGE} />
+        <Step n={3} title="Absorption check" body="Panic low occurred AND not revisited 3–5 sessions? YES → WATCH. NO → EXIT." color={YELLOW} />
+        <Step n={4} title="Final output" body="Every holding classified into HOLD / WATCH / EXIT. No ambiguity allowed." color={GREEN} />
+      </SectionCard>
+    </>
+  );
+}
+
+function Step({ n, title, body, color }: { n: number; title: string; body: string; color: string }) {
+  return (
+    <div style={{ display: 'flex', gap: 10, padding: '5px 0', alignItems: 'baseline' }}>
+      <span style={{ fontSize: F.xs, fontWeight: 900, color, minWidth: 18 }}>{n}.</span>
+      <span style={{ fontSize: F.sm, fontWeight: 700, color: TEXT, minWidth: 140 }}>{title}</span>
+      <span style={{ fontSize: F.xs, color: MUTED, lineHeight: 1.4 }}>{body}</span>
+    </div>
+  );
+}
+
+function ToggleChip({ value, onToggle, onLabel, offLabel, onColor, offColor }: { value: boolean; onToggle: () => void; onLabel: string; offLabel: string; onColor: string; offColor: string }) {
+  const color = value ? onColor : offColor;
+  return (
+    <button onClick={onToggle} style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, background: `${color}14`, border: `1px solid ${color}50`, color, cursor: 'pointer', letterSpacing: 0.3 }}>{value ? onLabel : offLabel}</button>
+  );
+}
+function inputStyle(): React.CSSProperties {
+  return { fontSize: F.xs, padding: '2px 6px', background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 3, color: TEXT, width: '100%', fontVariantNumeric: 'tabular-nums' };
+}
+function selectStyle(): React.CSSProperties {
+  return { fontSize: F.xs, padding: '2px 4px', background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 3, color: TEXT, fontWeight: 700, cursor: 'pointer' };
+}
+function ManualAdd({ addTicker, setAddTicker, onAdd }: { addTicker: string; setAddTicker: (s: string) => void; onAdd: () => void }) {
+  return (
+    <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8 }}>
+      <input value={addTicker} onChange={e => setAddTicker(e.target.value)} placeholder="ADD TICKER (e.g. NORTHARC)" style={{ ...inputStyle(), width: 220, padding: '4px 8px' }} onKeyDown={e => e.key === 'Enter' && onAdd()} />
+      <button onClick={onAdd} style={{ fontSize: F.xs, fontWeight: 700, padding: '4px 10px', borderRadius: 4, background: `${PURPLE}14`, border: `1px solid ${PURPLE}40`, color: PURPLE, cursor: 'pointer' }}>+ ADD</button>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SECTION 2 — TODAY
+// ═══════════════════════════════════════════════════════════════════════════
+function TodaySection({ counts }: { counts: Record<State, number> }) {
+  const ist = getIST();
+  const inExec = isExecutionWindow();
+  const isWE = isWeeklyWindow();
+  const hh = ist.getUTCHours().toString().padStart(2, '0');
+  const mm = ist.getUTCMinutes().toString().padStart(2, '0');
+  return (
+    <>
+      <SectionCard title={`TIME — ${hh}:${mm} IST`} accent={inExec ? GREEN : (isWE ? CYAN : YELLOW)}>
+        {inExec && <p style={{ margin: 0, fontSize: F.sm, color: GREEN, fontWeight: 700 }}>● Execution window OPEN — 5 min EOD review. Run Decision Engine, classify each holding, log notes.</p>}
+        {!inExec && !isWE && <p style={{ margin: 0, fontSize: F.sm, color: YELLOW, fontWeight: 700 }}>● Off-window. <span style={{ color: MUTED, fontWeight: 600 }}>No intraday checking, no P&L obsession, no X/news interpretation. Ask: "Is there any action in my system right now?" → NO → do nothing.</span></p>}
+        {isWE && <p style={{ margin: 0, fontSize: F.sm, color: CYAN, fontWeight: 700 }}>● Weekly window — 60–90 min portfolio integrity review. See WEEKLY tab.</p>}
+      </SectionCard>
+      <SectionCard title="DAILY ROUTINE (5–10 MIN, EOD ONLY)" accent={PURPLE}>
+        <ChecklistRow label="1. Check closing prices vs 50-DMA for every holding" />
+        <ChecklistRow label="2. Apply Rule 1 capital check (≤ −13% → EXIT)" />
+        <ChecklistRow label="3. Apply Rule 2 trend check (3 closes < 50DMA → escalate)" />
+        <ChecklistRow label="4. Apply Rule 4 absorption check on flagged stocks" />
+        <ChecklistRow label="5. Update Decision Engine state for any change" />
+        <ChecklistRow label="6. Prepare next-day action list (BUY/SELL queue)" />
+      </SectionCard>
+      <SectionCard title="CURRENT PORTFOLIO STATE" accent={CYAN}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10 }}>
+          <StateCount color={GREEN} state="HOLD" n={counts.HOLD} desc="above 50DMA · no triggers · do nothing" />
+          <StateCount color={YELLOW} state="WATCH" n={counts.WATCH} desc="breakdown + absorption · observe 3–5 sessions" />
+          <StateCount color={RED} state="EXIT" n={counts.EXIT} desc="capital floor / breakdown / thesis broken" />
+        </div>
+      </SectionCard>
+    </>
+  );
+}
+function ChecklistRow({ label }: { label: string }) {
+  return <div style={{ fontSize: F.sm, color: MUTED, padding: '4px 0', lineHeight: 1.4 }}>› {label}</div>;
+}
+function StateCount({ color, state, n, desc }: { color: string; state: string; n: number; desc: string }) {
+  return (
+    <div style={{ padding: '10px 12px', backgroundColor: CARD2, border: `1px solid ${color}30`, borderLeft: `3px solid ${color}`, borderRadius: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+        <span style={{ fontSize: 22, fontWeight: 900, color, letterSpacing: 0.5 }}>{n}</span>
+        <span style={{ fontSize: F.xs, fontWeight: 800, color, letterSpacing: 0.4 }}>{state}</span>
+      </div>
+      <div style={{ fontSize: 9, color: MUTED, marginTop: 4, lineHeight: 1.35 }}>{desc}</div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SECTION 3 — STATE MACHINE
+// ═══════════════════════════════════════════════════════════════════════════
+function StatesSection() {
+  return (
+    <>
+      <SectionCard title="STATE MACHINE — every holding is in exactly one state" accent={PURPLE}>
+        <StateRow color={GREEN} state="HOLD" condition="Above 50DMA · no triggers fired" action="Do nothing" />
+        <StateRow color={YELLOW} state="WATCH" condition="3 closes below 50DMA AND panic-low absorbed" action="No EXIT, no ADD. Observe 3–5 sessions. Recovery → HOLD. Continued weakness → EXIT." />
+        <StateRow color={RED} state="EXIT" condition="P&L ≤ −13% OR 3 closes below 50DMA WITHOUT absorption OR thesis broken" action="Sell on next execution window. No exceptions, no negotiation." />
+      </SectionCard>
+      <SectionCard title="TRANSITION DIAGRAM" accent={CYAN}>
+        <pre style={{ fontSize: F.xs, color: MUTED, lineHeight: 1.6, margin: 0, fontFamily: 'ui-monospace, SF Mono, monospace' }}>{`    ┌──────────┐  3-close < 50DMA   ┌─────────┐  recovery > 50DMA  ┌──────────┐
+    │   HOLD   │ ─────w/absorption─→│  WATCH  │ ──────────────────→│   HOLD   │
+    └──────────┘                    └─────────┘                    └──────────┘
+         │                               │
+         │ −13% P&L OR thesis broken     │ continued weakness
+         │ OR 3-close < 50DMA            │ OR new −13% / thesis-broken
+         │ WITHOUT absorption            │
+         ↓                               ↓
+    ┌──────────┐ ←─────────────────────────┘
+    │   EXIT   │
+    └──────────┘`}</pre>
+      </SectionCard>
+    </>
+  );
+}
+function StateRow({ color, state, condition, action }: { color: string; state: string; condition: string; action: string }) {
+  return (
+    <div style={{ padding: '8px 10px', marginBottom: 6, backgroundColor: CARD2, borderLeft: `3px solid ${color}`, borderRadius: 5 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 4 }}>
+        <span style={{ fontSize: F.sm, fontWeight: 900, color, letterSpacing: 0.4 }}>{state}</span>
+        <span style={{ fontSize: F.xs, color: MUTED, fontWeight: 600 }}>{condition}</span>
+      </div>
+      <div style={{ fontSize: F.xs, color: TEXT, lineHeight: 1.4 }}>→ {action}</div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SECTION 4 — EXIT RULES (HARD)
+// ═══════════════════════════════════════════════════════════════════════════
+function ExitRulesSection() {
+  return (
+    <>
+      <SectionCard title="RULE 1 — CAPITAL PROTECTION (ABSOLUTE)" accent={RED}>
+        <div style={{ fontSize: F.lg, fontWeight: 800, color: TEXT, marginBottom: 6 }}>P&L ≤ −13% from cost → EXIT immediately</div>
+        <div style={{ fontSize: F.xs, color: MUTED, lineHeight: 1.5 }}>No exceptions. Not "let me wait one more day". Not "the thesis is still intact". Not "it'll bounce". Exit. The position is failed; preserve capital for the next setup.</div>
+      </SectionCard>
+      <SectionCard title="RULE 2 — TREND BREAKDOWN (STRUCTURAL EXIT)" accent={ORANGE}>
+        <div style={{ fontSize: F.lg, fontWeight: 800, color: TEXT, marginBottom: 6 }}>3 consecutive closes below 50DMA + no absorption → EXIT</div>
+        <div style={{ fontSize: F.xs, color: MUTED, lineHeight: 1.5 }}>The 3-close confirmation prevents whipsaw on one bad day. The absorption check (Rule 4) is the ONLY override — it converts the breakdown into WATCH, not HOLD.</div>
+      </SectionCard>
+      <SectionCard title="RULE 3 — FUNDAMENTAL BREAKDOWN (OVERRIDE)" accent={RED}>
+        <div style={{ fontSize: F.lg, fontWeight: 800, color: TEXT, marginBottom: 6 }}>Earnings deterioration OR thesis broken → EXIT irrespective of price</div>
+        <div style={{ fontSize: F.xs, color: MUTED, lineHeight: 1.5 }}>This overrides everything else. Even if the chart looks fine, even if you're up 30%. The reason you owned it is gone. Position is a different business now; you didn't sign up for this one.</div>
+      </SectionCard>
+    </>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SECTION 5 — ABSORPTION (CONFIRMATION-ONLY)
+// ════════════════════════════════════════════════════════════════════════════
+function AbsorptionSection() {
+  return (
+    <SectionCard title="RULE 4 — PANIC LOW ABSORPTION (CONFIRMATION-ONLY, NOT EXIT TRIGGER)" accent={CYAN}>
+      <div style={{ fontSize: F.sm, color: TEXT, lineHeight: 1.55, marginBottom: 10 }}>
+        Absorption is a <strong style={{ color: CYAN }}>defensive override</strong> — it can prevent a forced exit but never trigger one. It tells you institutional demand absorbed the panic, not that the stock is healthy.
+      </div>
+      <div style={{ fontSize: F.xs, fontWeight: 800, color: MUTED, letterSpacing: 0.4, marginTop: 8, marginBottom: 4 }}>CONDITIONS (all required)</div>
+      <ChecklistRow label="Intraday sharp breakdown occurred — panic low formed" />
+      <ChecklistRow label="That low NOT revisited for 3–5 trading sessions" />
+      <ChecklistRow label="Price stabilizes — no continuous lower-low sequence" />
+      <div style={{ fontSize: F.xs, fontWeight: 800, color: MUTED, letterSpacing: 0.4, marginTop: 12, marginBottom: 4 }}>INTERPRETATION</div>
+      <ChecklistRow label="Selling pressure absorbed at the panic level" />
+      <ChecklistRow label="Institutional demand present at that price" />
+      <ChecklistRow label="Breakdown was a liquidity event, NOT structural damage" />
+      <div style={{ fontSize: F.xs, fontWeight: 800, color: MUTED, letterSpacing: 0.4, marginTop: 12, marginBottom: 4 }}>FUNCTION (this is all it does)</div>
+      <ChecklistRow label="Prevents premature exit under Rule 2 (3-close breakdown)" />
+      <ChecklistRow label="Moves the holding into WATCH state for 3–5 sessions" />
+      <div style={{ fontSize: F.xs, color: RED, lineHeight: 1.4, marginTop: 10, padding: '6px 8px', backgroundColor: `${RED}10`, border: `1px solid ${RED}30`, borderRadius: 4 }}>
+        ⚠ Absorption does <strong>NOT</strong> override Rule 1 (capital protection) or Rule 3 (thesis broken). Those are absolute.
+      </div>
+    </SectionCard>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SECTION 6 — WEEKLY
+// ═══════════════════════════════════════════════════════════════════════
+function WeeklySection() {
+  return (
+    <>
+      <SectionCard title="WEEKLY ROUTINE — ONE FIXED SESSION, 60–90 MIN" accent={PURPLE}>
+        <div style={{ fontSize: F.xs, color: MUTED, lineHeight: 1.5, marginBottom: 8 }}>Purpose: portfolio integrity review. Run on Sat or Sun only — never replaces daily execution.</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <div style={{ fontSize: F.xs, fontWeight: 800, color: GREEN, letterSpacing: 0.4, marginBottom: 6 }}>HOLD STOCKS — per-name check</div>
+            <ChecklistRow label="Thesis intact? (Y/N)" />
+            <ChecklistRow label="Earnings trend intact? (Y/N)" />
+            <ChecklistRow label="Sector tailwind intact? (Y/N)" />
+          </div>
+          <div>
+            <div style={{ fontSize: F.xs, fontWeight: 800, color: YELLOW, letterSpacing: 0.4, marginBottom: 6 }}>WATCH STOCKS — resolve state</div>
+            <ChecklistRow label="Recovery happening? → HOLD" />
+            <ChecklistRow label="Breakdown continuing? → EXIT" />
+          </div>
+        </div>
+      </SectionCard>
+      <SectionCard title="PORTFOLIO-LEVEL CHECK" accent={CYAN}>
+        <ChecklistRow label="Sector concentration risk — any sector > 25% of book?" />
+        <ChecklistRow label="Theme overcrowding — too many names on the same narrative?" />
+        <ChecklistRow label="Single-factor overexposure (rates, crude, AI, defence, etc.)" />
+        <ChecklistRow label="Cash deployment vs setups in waiting" />
+        <ChecklistRow label="Watchlist update — add new setups, retire dead ones" />
+      </SectionCard>
+    </>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SECTION 7 — QUARTERLY
+// ═══════════════════════════════════════════════════════════════════════════
+function QuarterlySection() {
+  return (
+    <>
+      <SectionCard title="QUARTERLY ROUTINE — STRATEGIC RESET (EARNINGS CYCLE)" accent={PURPLE}>
+        <div style={{ fontSize: F.xs, color: MUTED, lineHeight: 1.5, marginBottom: 8 }}>Purpose: fundamental recalibration. Run once after each earnings season closes.</div>
+        <div style={{ fontSize: F.xs, fontWeight: 800, color: TEXT, letterSpacing: 0.4, marginBottom: 6 }}>FOR EVERY STOCK</div>
+        <ChecklistRow label="Revenue + earnings trajectory — accelerating or fading?" />
+        <ChecklistRow label="Margin expansion or contraction?" />
+        <ChecklistRow label="Order book / demand cycle direction" />
+        <ChecklistRow label="Management credibility shift (guidance hit/miss/withdrawn)" />
+        <ChecklistRow label="Valuation vs growth reality (PE/PEG vs CAGR achieved)" />
+        <ChecklistRow label="Capital allocation quality (where did FCF go?)" />
+      </SectionCard>
+      <SectionCard title="FINAL OUTPUT PER STOCK — ONE OF FOUR LABELS" accent={CYAN}>
+        <OutputRow color={GREEN} label="CORE COMPOUNDER" desc="Buy more on weakness. Highest conviction." />
+        <OutputRow color={CYAN}  label="TREND HOLD" desc="Continue holding while trend intact. No additions." />
+        <OutputRow color={YELLOW} label="REDUCE / EXIT ON STRENGTH" desc="Trim into rallies. Replace with better setups." />
+        <OutputRow color={RED}    label="EXIT NOW" desc="Thesis broken or rule fired. Sell on next window." />
+      </SectionCard>
+    </>
+  );
+}
+function OutputRow({ color, label, desc }: { color: string; label: string; desc: string }) {
+  return (
+    <div style={{ padding: '6px 0', display: 'flex', alignItems: 'baseline', gap: 10, borderBottom: `1px solid ${BORDER}` }}>
+      <span style={{ fontSize: F.sm, fontWeight: 800, color, letterSpacing: 0.3, minWidth: 200 }}>{label}</span>
+      <span style={{ fontSize: F.xs, color: MUTED }}>{desc}</span>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SECTION 8 — BEHAVIOR
+// ═══════════════════════════════════════════════════════════════════════════
+function BehaviorSection() {
+  return (
+    <>
+      <SectionCard title="BEHAVIOR PROTOCOL — CRITICAL EDGE LAYER" accent={PURPLE}>
+        <div style={{ fontSize: F.xs, color: MUTED, lineHeight: 1.5, marginBottom: 10 }}>The system fails when behavior fails. These are non-negotiable.</div>
+        <BehaviorRule code="A" title="TIME RESTRICTION" body="Market interaction ONLY: EOD 10 min · Weekly review · Quarterly review. Nothing else." />
+        <BehaviorRule code="B" title="NO INTRADAY ACTION" body="No checking charts during market hours. No reacting to volatility. No 'just one quick look'." />
+        <BehaviorRule code="C" title="X / SOCIAL MEDIA" body="Allowed ONLY during weekly review. Never used for execution decisions. Treat as entertainment, not signal." />
+        <BehaviorRule code="D" title="EMOTIONAL CONTROL PROTOCOL" body={'When the urge to check portfolio strikes: ask "Is there any action in my system right now?" — NO → do nothing. YES → wait until EOD window.'} />
+      </SectionCard>
+      <SectionCard title="ONE-LINE SYSTEM SUMMARY" accent={GREEN}>
+        <div style={{ fontSize: F.sm, color: TEXT, lineHeight: 1.55, fontStyle: 'italic', padding: '6px 10px', borderLeft: `2px solid ${GREEN}`, backgroundColor: `${GREEN}06` }}>
+          "I run a disciplined trend-following portfolio where exits are triggered only by capital loss (−13%), structural breakdown (50-DMA + 3 closes), or fundamental deterioration — while panic-low absorption signals convert breakdowns into WATCH mode instead of forced exits."
+        </div>
+      </SectionCard>
+      <SectionCard title="WHAT YOU NOW HAVE" accent={CYAN}>
+        <ChecklistRow label="A state-machine portfolio system — not a discretionary checklist" />
+        <ChecklistRow label="Not a psychological guideline — a rules engine" />
+        <ChecklistRow label="Not multiple overlapping rules — one operating manual" />
+        <ChecklistRow label="Behaves like a rules engine used in hedge-fund risk desks" />
+      </SectionCard>
+    </>
+  );
+}
+function BehaviorRule({ code, title, body }: { code: string; title: string; body: string }) {
+  return (
+    <div style={{ padding: '6px 0', borderBottom: `1px solid ${BORDER}` }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 3 }}>
+        <span style={{ fontSize: F.xs, fontWeight: 900, color: PURPLE, padding: '1px 6px', borderRadius: 3, backgroundColor: `${PURPLE}15`, border: `1px solid ${PURPLE}40`, letterSpacing: 0.3 }}>RULE {code}</span>
+        <span style={{ fontSize: F.sm, fontWeight: 800, color: TEXT, letterSpacing: 0.3 }}>{title}</span>
+      </div>
+      <div style={{ fontSize: F.xs, color: MUTED, lineHeight: 1.45 }}>{body}</div>
     </div>
   );
 }
