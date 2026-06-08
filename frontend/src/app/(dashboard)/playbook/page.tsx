@@ -34,6 +34,7 @@ const BLUE    = '#60a5fa';
 const ROSE    = '#fb7185';
 const PEACH   = '#fbbf24';
 const TEAL    = '#2dd4bf';
+const LIME     = '#84cc16';
 
 const F = { xs: 12, sm: 13, md: 14, lg: 16, h2: 18, h1: 26, ruleNum: 32 };
 
@@ -322,7 +323,66 @@ const RELATIONSHIPS: LifeRule[] = [
     actions: ['Aim for respect and consistency, not universal approval', 'Do not contort yourself to be liked', 'Invest in the people who match your energy'] },
 ];
 
-// ═══════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// PEAK PERFORMANCE — reflexes · focus · mastery (cricket · investing · IT)
+// ═══════════════════════════════════════════════════════════════════════════
+const MASTERY: LifeRule[] = [
+  { n: 1, title: 'Train reflexes directly — but anticipation beats raw reaction.',
+    body: 'Reaction speed is trainable, but elite performers win on reading cues early, not faster nerves. A Formula-1 driver reacts in ~0.2s; the edge is anticipation. In cricket you read the bowler\'s wrist and seam; in markets you read price/volume + the pattern before the move; in code you smell the bug before the stack trace.',
+    actions: [
+      'Reaction-ball drill: catch after the first bounce — 3 sets of 10.',
+      'Tennis-ball wall catches, alternating hands; partner ball-drops from shoulder height.',
+      'Cricket: throwdowns / sidearm + slip-catching cradle; react to seam and spin, not just line.',
+      'Reaction-light / aim-trainer apps a few minutes daily for visual-stimulus speed.',
+    ] },
+  { n: 2, title: 'Read patterns, don\'t just respond.',
+    body: 'The fastest experts pre-load decisions: they have seen the pattern so often the response is pre-decided. Convert raw reaction into recognition — build a library of "if I see X → I do Y" so the moment arrives already solved.',
+    actions: [
+      'Cricket: study bowlers\' release cues and field-setting tells.',
+      'Investing: catalogue chart + tape patterns and what usually follows.',
+      'IT: learn common failure signatures so debugging starts from a hypothesis.',
+    ] },
+  { n: 3, title: 'Deep-work blocks are the core skill.',
+    body: 'The biggest enemy of mastery is context-switching. 60–90 min uninterrupted, single task, phone out of reach, notifications off. This is where real research, system design, and skill-building happen. Pairs with Review Cadence + About Me A2.',
+    actions: ['One task to completion — no tab-hopping', 'Phone in another room during the block', 'Two protected deep blocks a day, minimum'] },
+  { n: 4, title: 'Mindfulness trains the attention muscle.',
+    body: '10–20 min/day of breath focus measurably improves sustained attention. While reading, set a timer every few minutes and ask "did my mind wander?" — refocus if yes. Directly upgrades fundamental analysis and long debugging sessions.',
+    actions: ['10–20 min daily breath focus', 'Wander-check timer while reading dense material', 'Label the distraction, return to task — no self-judgement'] },
+  { n: 5, title: 'The deliberate-practice loop (not just hours).',
+    body: 'Expertise comes from a tight loop, not passive repetition: learn ONE concept → apply it immediately → get feedback → correct the error → repeat. Hours of passive reading lose to a few focused loops.',
+    actions: [
+      'Cricket: isolate ONE technical flaw per session and drill only that.',
+      'Investing: one company / one concall, deeply — then journal the thesis.',
+      'IT: read a feature 20 min → build a tiny project → fix errors → teach it back.',
+    ] },
+  { n: 6, title: 'Break the skill down, attack the weakest link.',
+    body: 'Split each craft into sub-skills and pinpoint the exact gap — slow footwork, weak valuation, shaky system design — then drill the weakest one. Vague practice improves nothing; targeted practice compounds.',
+    actions: ['List sub-skills for each arena', 'Rate yourself 1–10 per sub-skill monthly', 'Spend most reps on the lowest score'] },
+  { n: 7, title: 'Use the science of fast learning.',
+    body: 'Active recall, spaced repetition, interleaving, and teaching are the highest-yield learning methods. Test yourself instead of rereading; review at increasing intervals; mix related topics; explain to expose gaps.',
+    actions: ['Active recall: quiz yourself, don\'t reread', 'Spaced repetition for facts / formulas / patterns', 'Interleave drills; teach one thing you learned each week'] },
+  { n: 8, title: 'Study the film — yours and the masters\'.',
+    body: 'Observation accelerates everything. Watch experts and, crucially, your OWN footage / record. Look for the if/then decisions behind their actions.',
+    actions: [
+      'Cricket: review your dismissals + a great player\'s technique.',
+      'Investing: keep a trade journal; review winners and losers monthly (ties to Cadence).',
+      'IT: read excellent codebases and post-mortems.',
+    ] },
+  { n: 9, title: 'Make the right action automatic.',
+    body: 'Repeat the correct rep until it is button-press reflexive — a defensive shot, a position-sizing rule, a refactor pattern. Automaticity frees your attention for judgement under pressure.',
+    actions: ['Drill correct form slowly, then at speed', 'Codify rules so execution needs no deliberation', 'Don\'t practice mistakes — quality reps only'] },
+  { n: 10, title: 'Sleep is the performance multiplier.',
+    body: '7.5–9 hours, non-negotiable. A single poor night measurably slows reaction time and attention — it degrades cricket, trading discipline, and code quality alike. Reinforces About Me A1.',
+    actions: ['Fixed sleep + wake window', 'No screens 1 hour before bed', 'Treat lost sleep as a performance loss, not extra work'] },
+  { n: 11, title: 'Train the body for the brain (and the cricket).',
+    body: 'Exercise improves blood flow, memory, and processing speed — and is the base for cricket fitness. Strength 3–4×/week, cardio 2–3×, sprint / agility 1–2×.',
+    actions: ['Strength 3–4×, cardio 2–3×, sprint / agility 1–2× weekly', 'Agility-ladder + footwork doubles as reflex work', 'Daily 20–30 min movement minimum'] },
+  { n: 12, title: 'Fuel and hydrate for cognition.',
+    body: 'Protein, omega-3s (fish, flax), fruit, vegetables, nuts, and water support reaction time and focus. Limit excess sugar, alcohol, and ultra-processed food. Caffeine helps alertness but too much raises anxiety and cuts concentration.',
+    actions: ['Protein + omega-3 daily; hydrate consistently', 'Cut sugar spikes before deep work / matches', 'Caffeine in moderation — dose, don\'t overdose'] },
+];
+
+// ═══════════════════════════════════════════════════════════════════════════
 // SECTIONS (table of contents)
 // ═══════════════════════════════════════════════════════════════════════════
 const SECTIONS: Array<{ id: string; label: string; cat?: RuleCat | 'ABOUT' | 'LIFE'; range?: string; accent?: string }> = [
@@ -338,6 +398,7 @@ const SECTIONS: Array<{ id: string; label: string; cat?: RuleCat | 'ABOUT' | 'LI
   { id: 'about-me',   label: '🌿 About Me',        cat: 'ABOUT',     range: 'A1–A5', accent: ROSE   },
   { id: 'life-sat',   label: '🌅 Life Satisfaction', cat: 'LIFE',    range: 'L1–L16', accent: PEACH },
   { id: 'relationships', label: '🤝 Relationships',  range: 'R1–R12', accent: TEAL },
+  { id: 'mastery',    label: '🏏 Peak Performance', range: 'M1–M12', accent: LIME },
 ];
 
 export default function PlaybookPage() {
@@ -482,6 +543,33 @@ export default function PlaybookPage() {
             </div>
             <div style={{ fontSize: F.sm, color: MUTED, lineHeight: 1.55, marginTop: 8 }}>
               <strong style={{ color: TEAL }}>Vasudhaiva Kutumbakam</strong> — the world is one family — and the Golden Rule found across cultures say the same thing: treat others with the dignity and compassion you would want for yourself. Trustworthy, respectful, kind, dependable and genuinely interested beats charisma, appearance or status every time.
+            </div>
+          </div>
+
+          {/* PEAK PERFORMANCE */}
+          <SectionAnchor id="mastery" />
+          <SectionHeader title="PEAK PERFORMANCE — reflexes · focus · mastery" sub="Tuned for cricket · investing · IT — train the engine, not just the hours" color={LIME} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
+            {MASTERY.map(r => <LifeCard key={r.n} rule={r} prefix="M" accent={LIME} />)}
+          </div>
+          <div style={{ marginBottom: 24, padding: '14px 18px', backgroundColor: `${LIME}0A`, border: `1px solid ${LIME}40`, borderLeft: `4px solid ${LIME}`, borderRadius: 10 }}>
+            <div style={{ fontSize: F.md, fontWeight: 800, color: LIME, letterSpacing: 0.4, marginBottom: 8 }}>📅 THE DAILY PLAN TO WIN</div>
+            <ul style={{ margin: 0, paddingLeft: 0, listStyle: 'none' }}>
+              {[
+                'Morning: 10 min mindfulness + 20–30 min movement (cardio or strength).',
+                'Reps: 15–30 min reflex / skill drills (reaction ball, footwork, or cricket throwdowns).',
+                'Deep block 1: 60–90 min single-task — research a company or build/ship code. Phone away.',
+                'Deep block 2: 60–90 min — the deliberate-practice loop on ONE weakness.',
+                'Evening: review the film (trade journal / your footage / a post-mortem) + active recall.',
+                'Night: 7.5–9 h sleep, no screens the last hour. Consistency compounds into mastery.',
+              ].map((a, i) => (
+                <li key={i} style={{ fontSize: F.md, color: TEXT, lineHeight: 1.55, padding: '4px 0 4px 18px', position: 'relative' }}>
+                  <span style={{ position: 'absolute', left: 0, color: LIME, fontWeight: 900 }}>›</span>{a}
+                </li>
+              ))}
+            </ul>
+            <div style={{ fontSize: F.sm, color: MUTED, fontStyle: 'italic', marginTop: 10, lineHeight: 1.5 }}>
+              Reflexes, focus and expertise are not talent — they are sleep + physical training + deliberate practice + distraction-free deep work + systematic review, repeated over months. Same engine wins the crease, the screen, and the terminal.
             </div>
           </div>
 
