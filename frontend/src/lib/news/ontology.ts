@@ -282,6 +282,51 @@ export interface AnchorScore {
   categories_hit: BottleneckCategory[]; // distinct categories matched
   primary_category: BottleneckCategory;
   entities: Array<{ ticker: string; region: 'IN'|'US'|'GLOBAL'; category: BottleneckCategory }>;
+  // PATCH 1068 — open-vocabulary fallback. Set when an article shows the
+  // theme-INDEPENDENT grammar of a bottleneck (scarcity language + a
+  // structural subject) but matches NONE of the fixed category tokens above.
+  // These are routed to a separate "Emerging structural signals" bucket so
+  // genuinely novel themes surface without polluting the curated tiers.
+  emerging?: boolean;
+  emerging_label?: string;           // best-effort label for the constrained thing
+  scarcity_score?: number;           // strength of the scarcity-language signal
+}
+
+// ─── PATCH 1068: open-vocabulary structural-scarcity detection ─────────────
+// A bottleneck has a recognizable GRAMMAR of scarcity that is independent of
+// the specific technology or material. Detecting that grammar (rather than a
+// fixed token list) lets the engine surface FUTURE themes it has never seen —
+// a new mineral, a new component, a new piece of infrastructure — instead of
+// silently dropping them because no keyword matched.
+const SCARCITY_LANG: RegExp[] = [
+  /\b(shortage|scarcit\w+|sold out|out of stock|undersuppl\w+)\b/i,
+  /\b(supply (crunch|gap|shortfall|constraint|tightness|deficit|squeeze))\b/i,
+  /\b(capacity (constrain\w+|crunch|shortfall|limit\w*|tight|bottleneck))\b/i,
+  /\blead[- ]?times?\b.{0,24}(extend|stretch|blow|ris\w+|long\w*|month|week|quarter)/i,
+  /\b(back ?log|order book)\b.{0,24}(swell|surg\w+|balloon\w*|extend\w*|record|ris\w+|grow\w*)/i,
+  /\b(allocation|rationing|on allocation|quota|export (ban|curb|restrict\w+))\b/i,
+  /\bdemand\b.{0,24}(outstrip\w+|outpac\w+|exceed\w+|overwhelm\w+).{0,12}supply/i,
+  /\b(can(?:no|')?t keep up|unable to meet demand|struggling to meet|cannot meet)\b/i,
+  /\b(binding (constraint|bottleneck)|key bottleneck|critical bottleneck)\b/i,
+  /\b(capex|capacity|production)\b.{0,24}(ramp|expansion|addition|build[- ]?out|doubl\w+)/i,
+  /\b(constrain\w+|chok\w+|tight\w*|strain\w*)\b.{0,24}(supply|capacity|production|output|grid|network)/i,
+  /\b(price\w*)\b.{0,16}(spike|surg\w+|soar\w+|jump\w*|rocket\w*).{0,24}(supply|shortage|demand|tight)/i,
+];
+// Broad "is this an industrial / hard-asset / tech / commodity / infra
+// subject?" gate — intentionally generous so unknown FUTURE themes still pass.
+const STRUCTURAL_SUBJECT = /\b(chip|semiconductor|wafer|fab|foundr\w+|memory|component\w*|equipment|machine\w*|tool\w*|material\w*|mineral\w*|metal\w*|alloy|rare ?earth|battery|cell|module|reactor|fuel|grid|power|electricity|transmission|transformer|turbine|cable|pipe\w*|steel|cement|chemical\w*|polymer|resin|gas|crude|oil|refin\w+|port|freight|container|shipping|logistic\w*|plant|factory|manufactur\w+|production|supply ?chain|fertilis\w+|fertiliz\w+|pharma\w*|vaccine|magnet\w*|silicon|glass|copper|alumin\w+|lithium|cobalt|nickel|uranium|graphite|sand|water|spectrum|bandwidth|satellite|launch|rocket|aircraft|engine|bearing|valve|pump|sensor)\b/i;
+
+function scarcityScore(text: string): number {
+  let s = 0;
+  for (const re of SCARCITY_LANG) { if (re.test(text)) s += 4; }
+  return s;
+}
+// Best-effort short label for the constrained subject (proper-noun phrase in
+// the title, else the leading clause).
+function emergingLabelFrom(title: string): string {
+  const m = title.match(/\b([A-Z][a-zA-Z0-9-]+(?:\s+[A-Z][a-zA-Z0-9-]+){0,2})\b/);
+  const raw = m ? m[1] : (title.split(/[—:|]/)[0] || title);
+  return raw.trim().slice(0, 48);
 }
 
 const TITLE_WEIGHT_MULTIPLIER = 2.0;
@@ -337,6 +382,18 @@ export function scoreAnchor(title: string, desc: string): AnchorScore {
     if (w > maxWeight) { maxWeight = w; primary = c; }
   }
 
+  // PATCH 1068 — open-vocabulary fallback. Only when NO known category fired:
+  // if the article speaks the grammar of scarcity AND has a structural subject,
+  // flag it as an EMERGING theme (separate bucket downstream). This never
+  // overrides a known-category decision, so existing tiers are unaffected.
+  let emerging = false;
+  let emerging_label: string | undefined;
+  const scarcity = scarcityScore(fullLower);
+  if (primary === 'NONE' && scarcity >= 8 && STRUCTURAL_SUBJECT.test(fullLower)) {
+    emerging = true;
+    emerging_label = emergingLabelFrom(title);
+  }
+
   return {
     total,
     title_score: titleScore,
@@ -344,6 +401,9 @@ export function scoreAnchor(title: string, desc: string): AnchorScore {
     categories_hit: categoriesHit,
     primary_category: primary,
     entities,
+    emerging,
+    emerging_label,
+    scarcity_score: scarcity,
   };
 }
 
