@@ -555,7 +555,7 @@ export default function HomeDashboard() {
         const abs = !!h?.absorption;
         if (pnl <= -13) c.E++;
         else if (!thesis) c.E++;
-        else if (cb >= 3) (abs ? c.W : c.E)++;
+        else if (cb >= 3) { if (abs) c.W++; else c.E++; }
         else c.H++;
       }
       setPlaybookCounts(c);
