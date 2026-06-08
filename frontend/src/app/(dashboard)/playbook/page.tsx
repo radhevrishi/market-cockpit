@@ -33,6 +33,7 @@ const ORANGE  = '#f97316';
 const BLUE    = '#60a5fa';
 const ROSE    = '#fb7185';
 const PEACH   = '#fbbf24';
+const TEAL    = '#2dd4bf';
 
 const F = { xs: 12, sm: 13, md: 14, lg: 16, h2: 18, h1: 26, ruleNum: 32 };
 
@@ -238,10 +239,95 @@ const LIFE_SAT: LifeRule[] = [
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
+// REVIEW CADENCE — how often to look at each thing (exactly one rhythm each)
+// ═══════════════════════════════════════════════════════════════════════════
+interface CadenceBucket { freq: string; when: string; accent: string; checks: string[]; note?: string }
+
+const CADENCE: CadenceBucket[] = [
+  { freq: 'DAILY', when: 'ONCE · after 15:30 IST close · ~5 min', accent: CYAN,
+    checks: [
+      'One look at the portfolio — EOD only. Not intraday, not "just checking". One look means one look.',
+      'For each holding, check the 50DMA: did price CLOSE below its 50-day moving average today? If yes, add 1 to its 3-close counter; if it closed back above, reset to 0.',
+      'Run the Decision Engine: did anything hit −13%, 3 closes < 50DMA without absorption, or a broken thesis? Mark the action for the next execution window.',
+      'On a red market day, glance at /movers for names holding green / relative strength (Rule 21). Log them — do not buy.',
+      'Then close the app. The daily job is DETECTION, not action. If nothing fired, you are done.',
+    ],
+    note: 'No second look. The urge to re-check during the day is anxiety, not analysis — apply the "Is there action?" gate (Rule 20).' },
+  { freq: 'WEEKLY', when: 'Weekend review · ~30–45 min', accent: BLUE,
+    checks: [
+      'Sector cap: is any single sector > 25% of book? If breached, trim the oldest names back under the cap (Rule 14).',
+      'Theme cap: is any macro theme (AI / defence / rates-down / crude / renewables) > 30%? Trim if breached (Rule 15).',
+      'Cash floor: still ≥ 5% cash for opportunistic adds? (Rule 16).',
+      'Watchlist: refresh entry triggers; promote any name that printed relative strength 3+ sessions this week.',
+      'Social media / news / Telegram: allowed ONLY now, as entertainment — never as a live signal (Rule 19).',
+      'PERMA self-rating 1–10 on each area; pick one small action to nudge the lowest (About Me A3).',
+    ] },
+  { freq: 'MONTHLY', when: 'Full portfolio audit · ~1–2 hrs', accent: PURPLE,
+    checks: [
+      'Thesis intactness for EVERY holding: can you state its catalyst from memory? If not, it is a candidate to exit (Rule 17).',
+      '20-position ceiling: above 20 names? Concentrate into your best ideas — diworsification is not diversification.',
+      'Position sizing: did any winner grow past 10% of book? Decide trim-vs-let-run on THESIS, never to "rebalance" (Rules 10 & 13).',
+      'Process metrics, not P&L: concalls reviewed, theses updated, journals written (About Me A2).',
+      'Life dashboard: did you hit the daily / weekly wellbeing KPIs this month? (About Me A5).',
+      'Re-read this whole playbook end to end.',
+    ] },
+  { freq: 'QUARTERLY', when: 'Step back · ~half day', accent: PEACH,
+    checks: [
+      'Earnings season: re-underwrite each core holding against the latest results / concall.',
+      'Theme rotation: is a core theme maturing? Plan the rotation before the crowd starts exiting.',
+      'Define "enough" check: re-read your target capital and buffer — still on plan? (Life L16).',
+      'Self-compassion review: what did last quarter teach you, and what is the next concrete step? No self-attack (Life L13).',
+    ] },
+];
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RELATIONSHIPS & CHARACTER — how to be someone people feel better around
+// ═══════════════════════════════════════════════════════════════════════
+const RELATIONSHIPS: LifeRule[] = [
+  { n: 1, title: 'Treat everyone with respect.',
+    body: 'Speak politely even when you disagree. The real test is how you treat people who cannot benefit you — waiters, cleaners, strangers, juniors. Respect is remembered far longer than intelligence, wealth, or status.',
+    actions: ['Say please and thank you, every time', 'Be kind to people who can do nothing for you', 'Disagree with the idea, never belittle the person'] },
+  { n: 2, title: 'Be reliable — keep your word.',
+    body: 'Reliability builds trust, and trust is the foundation every friendship is built on. If you cannot do something, say so honestly instead of disappearing. A dependable "no" beats an unreliable "yes".',
+    actions: ['Keep promises; arrive on time', 'If plans change, communicate early and honestly', 'Under-promise, over-deliver'] },
+  { n: 3, title: 'Listen more than you speak.',
+    body: 'People often like good listeners more than good speakers. Being interesting is less about talking a lot and more about making the other person feel heard. Ask, then actually listen to the answer.',
+    actions: ['Let people finish without interrupting', 'Ask one thoughtful question every conversation', 'Respond to what they said, not what you wanted to say'] },
+  { n: 4, title: 'Show genuine interest in others.',
+    body: 'People enjoy those who make them feel important. Remembering details and following up signals that you care beyond the surface. This is the cheapest, highest-return relationship habit there is.',
+    actions: ['"How did your interview go?" "How is your family?"', 'Remember names, birthdays, important events', 'Follow up on previous conversations'] },
+  { n: 5, title: 'Be the calm in the room.',
+    body: 'People prefer those who bring calm over those who bring drama. Constant complaining, anger, jealousy and gossip push people away even when you are right. Emotional stability is magnetic.',
+    actions: ['Skip the chronic complaining', 'Never speak negatively about people who are absent', 'Regulate first, react second (Life L14)'] },
+  { n: 6, title: 'Help without expecting an immediate return.',
+    body: 'Explain something, share knowledge, support a friend through a hard time. Goodwill compounds quietly over years. But help because it is right — not solely to win approval; people sense the difference.',
+    actions: ['Offer help before being asked', 'Support people in their bad times, not just their good ones', 'Keep no scorecard'] },
+  { n: 7, title: 'Have integrity.',
+    body: 'Integrity is doing the right thing when nobody is watching. Admit mistakes, keep confidences, do not manipulate. Strong character is what turns acquaintances into long-term friends.',
+    actions: ['Own your mistakes openly', 'Do not betray things told in confidence', 'Do not lie for convenience'] },
+  { n: 8, title: 'Have your own goals and interests.',
+    body: 'People are drawn to those with purpose and direction. A full life — skills, reading, exercise, a career, hobbies — gives you positive energy to bring into relationships instead of neediness.',
+    actions: ['Keep building your own thing', 'Bring energy in, do not only take it out', 'Be interesting by being engaged with life'] },
+  { n: 9, title: 'Be positive, but authentic.',
+    body: 'You do not have to fake happiness. Appreciate good things, encourage others, and celebrate their wins instead of competing with them. Genuine positivity is contagious; performed positivity is hollow.',
+    actions: ['Celebrate others\' success sincerely', 'Give compliments only when deserved', 'Encourage without flattery'] },
+  { n: 10, title: 'Be fully present.',
+    body: 'Attention is the rarest gift you can give. Phone away, eyes up, fully there. In a world of half-distracted conversations, undivided attention makes people feel uniquely valued.',
+    actions: ['Put the phone away in conversation', 'Maintain eye contact', 'Do not plan your reply while they are still talking'] },
+  { n: 11, title: 'Repair quickly after friction.',
+    body: 'Every close relationship has conflict; what matters is how fast you repair it. A sincere, early "I was wrong / I am sorry" protects the relationship more than never clashing in the first place.',
+    actions: ['Address tension early, not after it festers', 'Apologise specifically, not vaguely', 'Ask: advice, or just listen? before responding to someone upset'] },
+  { n: 12, title: 'Accept that not everyone will like you.',
+    body: 'No matter how kind or capable you are, some personalities simply will not match yours — and trying to please everyone makes you appear inauthentic. Be respectful and consistent, then let it go.',
+    actions: ['Aim for respect and consistency, not universal approval', 'Do not contort yourself to be liked', 'Invest in the people who match your energy'] },
+];
+
+// ═══════════════════════════════════════════════════════════════════════
 // SECTIONS (table of contents)
 // ═══════════════════════════════════════════════════════════════════════════
 const SECTIONS: Array<{ id: string; label: string; cat?: RuleCat | 'ABOUT' | 'LIFE'; range?: string; accent?: string }> = [
   { id: 'engine',     label: '⚙ Decision Engine' },
+  { id: 'cadence',    label: '🗓 Review Cadence',  accent: CYAN   },
   { id: 'entry',      label: '🟢 Entry Rules',     cat: 'ENTRY',     range: '1–5',   accent: CYAN   },
   { id: 'exit',       label: '🔴 Exit Rules',      cat: 'EXIT',      range: '6–10',  accent: RED    },
   { id: 'position',   label: '🟣 Position',        cat: 'POSITION',  range: '11–13', accent: PURPLE },
@@ -251,6 +337,7 @@ const SECTIONS: Array<{ id: string; label: string; cat?: RuleCat | 'ABOUT' | 'LI
   { id: 'summary',    label: '📜 System Summary',  accent: GREEN },
   { id: 'about-me',   label: '🌿 About Me',        cat: 'ABOUT',     range: 'A1–A5', accent: ROSE   },
   { id: 'life-sat',   label: '🌅 Life Satisfaction', cat: 'LIFE',    range: 'L1–L16', accent: PEACH },
+  { id: 'relationships', label: '🤝 Relationships',  range: 'R1–R12', accent: TEAL },
 ];
 
 export default function PlaybookPage() {
@@ -323,6 +410,16 @@ export default function PlaybookPage() {
             addTicker={addTicker} setAddTicker={setAddTicker} onAdd={addManual}
           />
 
+          {/* REVIEW CADENCE */}
+          <SectionAnchor id="cadence" />
+          <SectionHeader title="REVIEW CADENCE — how often to look" sub="Daily = detect · Weekly = enforce caps · Monthly = audit theses · Quarterly = step back" color={CYAN} />
+          <div style={{ marginBottom: 12, padding: '12px 16px', backgroundColor: `${CYAN}0A`, border: `1px solid ${CYAN}40`, borderLeft: `4px solid ${CYAN}`, borderRadius: 10, fontSize: F.md, color: TEXT, lineHeight: 1.55 }}>
+            Over-checking is a tax on both returns and peace of mind. Every task below has exactly <strong style={{ color: CYAN }}>one</strong> rhythm — do it then, not before. The portfolio gets a quick <strong style={{ color: CYAN }}>daily</strong> detection pass and a full deep audit only <strong style={{ color: CYAN }}>once a month</strong>.
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 24 }}>
+            {CADENCE.map(b => <CadenceCard key={b.freq} bucket={b} />)}
+          </div>
+
           {/* INVESTMENT RULES */}
           {(['ENTRY','EXIT','POSITION','PORTFOLIO','BEHAVIOR','DISCOVERY'] as RuleCat[]).map(cat => {
             const meta = SECTIONS.find(s => s.cat === cat)!;
@@ -371,6 +468,21 @@ export default function PlaybookPage() {
           <SectionHeader title="LIFE SATISFACTION — wellbeing principles" sub="12 evergreen + 4 self-additions (self-compassion · emotion regulation · environment · enough)" color={PEACH} />
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 32 }}>
             {LIFE_SAT.map(r => <LifeCard key={r.n} rule={r} prefix="L" accent={PEACH} />)}
+          </div>
+
+          {/* RELATIONSHIPS & CHARACTER */}
+          <SectionAnchor id="relationships" />
+          <SectionHeader title="RELATIONSHIPS & CHARACTER — how to be someone people feel better around" sub="Respect · reliability · listening · interest · integrity · presence" color={TEAL} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
+            {RELATIONSHIPS.map(r => <LifeCard key={r.n} rule={r} prefix="R" accent={TEAL} />)}
+          </div>
+          <div style={{ marginBottom: 24, padding: '14px 18px', backgroundColor: `${TEAL}08`, border: `1px solid ${TEAL}40`, borderLeft: `4px solid ${TEAL}`, borderRadius: 10 }}>
+            <div style={{ fontSize: F.lg, color: TEXT2, fontStyle: 'italic', lineHeight: 1.6, fontWeight: 600 }}>
+              The short rule: be the kind of person people feel better around after talking to you.
+            </div>
+            <div style={{ fontSize: F.sm, color: MUTED, lineHeight: 1.55, marginTop: 8 }}>
+              <strong style={{ color: TEAL }}>Vasudhaiva Kutumbakam</strong> — the world is one family — and the Golden Rule found across cultures say the same thing: treat others with the dignity and compassion you would want for yourself. Trustworthy, respectful, kind, dependable and genuinely interested beats charisma, appearance or status every time.
+            </div>
           </div>
 
           {/* CLOSING NOTE */}
@@ -468,6 +580,28 @@ function LifeCard({ rule, prefix, accent }: { rule: LifeRule; prefix: string; ac
           </ul>
         )}
       </div>
+    </div>
+  );
+}
+
+function CadenceCard({ bucket }: { bucket: CadenceBucket }) {
+  return (
+    <div style={{ padding: '14px 18px', backgroundColor: CARD_BG, border: `1px solid ${BORDER}`, borderLeft: `4px solid ${bucket.accent}`, borderRadius: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: F.h2, fontWeight: 900, color: bucket.accent, letterSpacing: 0.6 }}>{bucket.freq}</span>
+        <span style={{ fontSize: F.sm, color: MUTED, fontWeight: 700, letterSpacing: 0.3 }}>{bucket.when}</span>
+      </div>
+      <ul style={{ margin: 0, paddingLeft: 0, listStyle: 'none' }}>
+        {bucket.checks.map((c, i) => (
+          <li key={i} style={{ fontSize: F.md, color: TEXT, lineHeight: 1.55, padding: '4px 0 4px 18px', position: 'relative' }}>
+            <span style={{ position: 'absolute', left: 0, color: bucket.accent, fontWeight: 900 }}>›</span>
+            {c}
+          </li>
+        ))}
+      </ul>
+      {bucket.note && (
+        <div style={{ marginTop: 10, fontSize: F.sm, color: bucket.accent, fontStyle: 'italic', fontWeight: 600, lineHeight: 1.5 }}>{bucket.note}</div>
+      )}
     </div>
   );
 }
