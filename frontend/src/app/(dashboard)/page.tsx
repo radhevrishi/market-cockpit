@@ -537,30 +537,6 @@ export default function HomeDashboard() {
   const [showTier3, setShowTier3] = useState(true);  // PATCH 0625 — default expanded
   const [showInPlay, setShowInPlay] = useState(true);  // PATCH 0620 — In-Play moved to top of Home, default expanded
   const [showQuickAccess, setShowQuickAccess] = useState(true);  // PATCH 0623 — default expanded
-  // PATCH 1061 — Playbook state-machine counts (HOLD/WATCH/EXIT). Read from
-  // localStorage 'mc:playbook:states:v1' (written by /playbook). Shows a chip
-  // in the header so user knows live portfolio state without leaving home.
-  const [playbookCounts, setPlaybookCounts] = useState<{H:number;W:number;E:number}|null>(null);
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem('mc:playbook:states:v1');
-      if (!raw) { setPlaybookCounts(null); return; }
-      const arr = JSON.parse(raw);
-      if (!Array.isArray(arr) || arr.length === 0) { setPlaybookCounts(null); return; }
-      const c = { H: 0, W: 0, E: 0 };
-      for (const h of arr) {
-        const pnl = h?.pnlPct ?? 0;
-        const thesis = h?.thesisIntact !== false;
-        const cb = h?.closesBelow50 ?? 0;
-        const abs = !!h?.absorption;
-        if (pnl <= -13) c.E++;
-        else if (!thesis) c.E++;
-        else if (cb >= 3) { if (abs) c.W++; else c.E++; }
-        else c.H++;
-      }
-      setPlaybookCounts(c);
-    } catch { setPlaybookCounts(null); }
-  }, [refreshTick]);
   // PATCH 1057 — Auto-refresh tick. The main fetch useEffect is wired to
   // [refreshTick] so it re-runs whenever this counter increments. We tick
   // every 60s during NSE market hours (09:15–15:30 IST Mon–Fri) and every
@@ -589,6 +565,32 @@ export default function HomeDashboard() {
     const tid = schedule();
     return () => clearTimeout(tid);
   }, [refreshTick]); // re-arms the next tick after each fire
+
+  // PATCH 1061 — Playbook state-machine counts (HOLD/WATCH/EXIT). Read from
+  // localStorage 'mc:playbook:states:v1' (written by /playbook). Shows a chip
+  // in the header so user knows live portfolio state without leaving home.
+  // Placed AFTER refreshTick declaration to avoid TDZ.
+  const [playbookCounts, setPlaybookCounts] = useState<{H:number;W:number;E:number}|null>(null);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('mc:playbook:states:v1');
+      if (!raw) { setPlaybookCounts(null); return; }
+      const arr = JSON.parse(raw);
+      if (!Array.isArray(arr) || arr.length === 0) { setPlaybookCounts(null); return; }
+      const c = { H: 0, W: 0, E: 0 };
+      for (const h of arr) {
+        const pnl = h?.pnlPct ?? 0;
+        const thesis = h?.thesisIntact !== false;
+        const cb = h?.closesBelow50 ?? 0;
+        const abs = !!h?.absorption;
+        if (pnl <= -13) c.E++;
+        else if (!thesis) c.E++;
+        else if (cb >= 3) { if (abs) c.W++; else c.E++; }
+        else c.H++;
+      }
+      setPlaybookCounts(c);
+    } catch { setPlaybookCounts(null); }
+  }, [refreshTick]);
 
   // PATCH 0904 — surgical retry hook so the Upcoming Earnings "↻ Retry"
   // button refetches ONLY this panel instead of doing window.location.reload()
