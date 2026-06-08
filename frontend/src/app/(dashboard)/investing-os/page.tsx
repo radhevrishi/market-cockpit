@@ -17,7 +17,7 @@ const C = {
   green: '#3fb950', red: '#f85149', amber: '#d29922', blue: '#58a6ff',
   violet: '#a78bfa', cyan: '#39d0d8', teal: '#2dd4bf', lime: '#84cc16', orange: '#f0883e',
 };
-const F = { xs: 11, sm: 12, md: 13, base: 14, lg: 16, xl: 20, xxl: 26, hero: 34 };
+const F = { xs: 13, sm: 14.5, md: 16, base: 17, lg: 20, xl: 24, xxl: 32, hero: 40 };
 
 type Rating = 'Good' | 'Neutral' | 'No edge' | '';
 type StyleDef = {
