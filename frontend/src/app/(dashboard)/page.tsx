@@ -280,7 +280,7 @@ function decomposeScore(row: any): Record<string, number> {
 // instant (no network) so we run them up-front and render the Home shell
 // immediately. Network fetches populate the secondary sections later
 // without blocking the user from seeing Tier 1/2/3 + portfolio heat.
-function buildSyncState(): Pick<HomeState, 'tier1' | 'tier2' | 'tier3' | 'turnaroundTier1' | 'changedToday' | 'portfolio' | 'portfolioBySector' | 'staleDataAgeDays' | 'alphaFeedback'> {
+function buildSyncState(indiaOverride?: any[]): Pick<HomeState, 'tier1' | 'tier2' | 'tier3' | 'turnaroundTier1' | 'changedToday' | 'portfolio' | 'portfolioBySector' | 'staleDataAgeDays' | 'alphaFeedback'> {
   if (typeof window === 'undefined') {
     return { tier1: [], tier2: [], tier3: [], turnaroundTier1: [], changedToday: [], portfolio: [], portfolioBySector: [] };
   }
@@ -292,7 +292,7 @@ function buildSyncState(): Pick<HomeState, 'tier1' | 'tier2' | 'tier3' | 'turnar
   // PATCH 0617 — pull BOTH India AND USA rows so Tier 1/2/3 reflect the full
   // multibagger universe, not just one market. Each row carries a _market tag
   // for the per-card chip + stock-sheet routing.
-  const indiaRaw: any[] = (() => {
+  const indiaRaw: any[] = (indiaOverride && indiaOverride.length) ? indiaOverride : (() => {
     try { return JSON.parse(localStorage.getItem('mb_excel_scored_v2') || '[]') || []; } catch { return []; }
   })();
   const usaRaw: any[] = (() => {
@@ -531,6 +531,37 @@ export default function HomeDashboard() {
       } as any));
     }, 15_000);
     return () => clearTimeout(t);
+  }, []);
+  // PATCH 1067 — Home Tier 1 India fix. A full India multibagger universe
+  // exceeds localStorage's ~5MB quota, so the scored CSV is persisted to
+  // IndexedDB (db 'mc-mb' / store 'kv' / key 'mb_scored') and the localStorage
+  // mirror ('mb_excel_scored_v2') write silently fails. The /multibagger page
+  // re-hydrates from IndexedDB so it shows data, but Home only read
+  // localStorage — so Home wrongly showed the "upload CSV" empty state even
+  // though the dataset was present. Read the IndexedDB copy on mount and, if it
+  // holds more than localStorage, rebuild the India Tier blocks from it.
+  useEffect(() => {
+    try {
+      const lsLen = (localStorage.getItem('mb_excel_scored_v2') || '').length;
+      const req = indexedDB.open('mc-mb', 1);
+      req.onsuccess = () => {
+        try {
+          const db = req.result;
+          if (!db.objectStoreNames.contains('kv')) return;
+          const g = db.transaction('kv', 'readonly').objectStore('kv').get('mb_scored');
+          g.onsuccess = () => {
+            try {
+              const raw = g.result as string | undefined;
+              if (!raw || raw.length <= lsLen) return; // localStorage already had >= data
+              const rows = JSON.parse(raw);
+              if (Array.isArray(rows) && rows.length) {
+                setData((prev: HomeState) => ({ ...prev, ...buildSyncState(rows) }));
+              }
+            } catch {}
+          };
+        } catch {}
+      };
+    } catch {}
   }, []);
   // PATCH 0605 — collapse defaults per institutional review
   // ("hide raw news feeds / low-confidence signals / secondary analytics")
@@ -2154,6 +2185,8 @@ export default function HomeDashboard() {
             <Link href="/guidance-extractor"     style={navChip('#A78BFA')}>📋 Guidance</Link>
             <Link href="/heatmap"                style={navChip('#22D3EE')}>🗺 Heatmap</Link>
             <Link href="/movers"                 style={navChip('#10B981')}>📈 Movers</Link>
+            {/* PATCH 1067 — News Feed chip per user request */}
+            <Link href="/news"                   style={navChip('#60A5FA')}>📰 News Feed</Link>
             <Link href="/multibagger"            style={navChip('#10B981')}>🚀 Multibagger</Link>
             <Link href="/portfolio"              style={navChip('#22D3EE')}>💼 My Book</Link>
             {/* PATCH 0776 — 📑 Order Book + 🏛 Rating Actions chips removed (modules deleted). */}
