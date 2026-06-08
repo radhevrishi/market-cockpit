@@ -291,7 +291,7 @@ export default function PlaybookPage() {
     const c = { HOLD: 0, WATCH: 0, EXIT: 0 } as Record<State, number>;
     holdings.forEach(h => { c[classify(h).state]++; });
     return c;
-  }, [ho,dings]);
+  }, [holdings]);
 
   return (
     <div style={{ maxWidth: 1400, margin: '0 auto', padding: '28px 24px', color: TEXT, fontVariantNumeric: 'tabular-nums' }}>
