@@ -433,7 +433,7 @@ const STRESS: LifeRule[] = [
   { n: 9, title: 'Break the vertigo–anxiety loop.',
     body: 'Vertigo triggers anxiety, and anxiety sharpens the vestibular sensation — a self-feeding loop. You break it at the anxiety end: slow-exhale breathing, sensory grounding, and acceptance rather than fighting the spin. (This is coping — see a doctor for the underlying vestibular cause.)',
     actions: ['Slow-exhale breathing (4 in, 6 out) when it starts',
-       Grounding: name 5 things you see, 4 you hear, 3 you feel',
+      'Grounding: name 5 things you see, 4 you hear, 3 you feel',
       'Accept the sensation instead of bracing — bracing feeds it'] },
   { n: 10, title: 'Separate your worth from the outcome.',
     body: 'A bad over, a red day, a missed task, a shipped bug — these are events, not verdicts on who you are. The missed-task spiral ("I\'m not good enough") is the real damage, not the missed task. Self-compassion — treating yourself like a friend — builds resilience and steadier motivation than self-attack. (Reinforces Life L13.)',
