@@ -383,9 +383,6 @@ export default function InvestingOSPage() {
         <div style={{ ...wrap, padding: '30px 16px 26px' }}>
           <div style={{ fontSize: F.xs, fontWeight: 800, color: C.teal, letterSpacing: 1.4, textTransform: 'uppercase' }}>Your investing operating system</div>
           <div style={{ fontSize: F.hero, fontWeight: 900, letterSpacing: 0.2, marginTop: 6, lineHeight: 1.1 }}>Find your edge. Then execute it.</div>
-          <div style={{ fontSize: F.base, color: C.muted, lineHeight: 1.6, marginTop: 12, maxWidth: 860 }}>
-            Pick <b style={{ color: C.txt }}>1–2 edge categories, max</b> — that defines your whole strategy. Most retail failure comes from mixing every style with no edge. Read the styles, lock a primary (and one complementary), then run every buy through the <b style={{ color: C.txt }}>scored checklist</b> and the <b style={{ color: C.txt }}>100-bagger kill-switch</b>. The Edge Finder at the bottom turns your answers into a declared edge.
-          </div>
           {locked && lockedPrimary ? (
             <div style={{ marginTop: 18, background: `${C.green}10`, border: `1px solid ${C.green}59`, borderRadius: 12, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
               <span style={{ fontSize: F.xs, fontWeight: 900, color: C.green, letterSpacing: 0.6 }}>🔒 YOUR EDGE</span>
@@ -395,9 +392,7 @@ export default function InvestingOSPage() {
               <span style={{ fontSize: F.sm, color: C.txt }}>“I make money primarily from <b>{lockedPrimary.money}</b>{lockedSecondary ? <> — with a secondary edge in <b>{lockedSecondary.money}</b></> : null}.”</span>
               <a href="#finder" style={{ marginLeft: 'auto', fontSize: F.xs, color: C.muted, textDecoration: 'none', border: `1px solid ${C.line2}`, borderRadius: 999, padding: '3px 10px' }}>Change ↓</a>
             </div>
-          ) : (
-            <div style={{ marginTop: 16, fontSize: F.sm, color: C.dim }}>No edge locked yet — scroll to the Edge Finder at the bottom to declare one.</div>
-          )}
+          ) : null}
         </div>
       </div>
 
