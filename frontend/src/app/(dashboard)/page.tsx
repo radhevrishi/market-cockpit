@@ -2193,6 +2193,8 @@ export default function HomeDashboard() {
             <Link href="/multibagger"            style={navChip('#10B981')}>🚀 Multibagger</Link>
             <Link href="/portfolio"              style={navChip('#22D3EE')}>💼 My Book</Link>
             {/* PATCH 0776 — 📑 Order Book + 🏛 Rating Actions chips removed (modules deleted). */}
+            {/* PATCH 1122 — Investing OS chip */}
+            <Link href="/investing-os"           style={navChip('#2dd4bf')}>🧠 Investing OS</Link>
             <Link href="/playbook"               style={navChip('#F59E0B')}>📚 Playbook</Link>
             {/* PATCH 1063 — deep-link chips into Playbook sub-sections per user request */}
             <Link href="/playbook#about-me"      style={navChip('#fb7185')}>🌿 About Me</Link>
