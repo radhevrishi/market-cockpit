@@ -83,8 +83,17 @@ const COL = {
 
 const SAMPLE_HINT = 'Name, NSE Code, Sales growth, Profit growth, Return on capital employed, OPM, Price to Earning, PEG Ratio, Debt to equity …';
 
-export default function FundamentalsAnalyzerPage({ scope = '' }: { scope?: string }) {
+export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { scope?: string }) {
   // Per-tab storage: portfolio & watchlist keep separate saved lists so one never overwrites the other.
+  // Scope may also arrive via the ?scope= query param so the home nav can deep-link directly into the
+  // Watchlist (?scope=watchlist) or Portfolio (?scope=portfolio) fundamentals list.
+  let scope = scopeProp;
+  if (!scope && typeof window !== 'undefined') {
+    try {
+      const qp = new URLSearchParams(window.location.search).get('scope');
+      if (qp === 'watchlist' || qp === 'portfolio') scope = qp;
+    } catch {}
+  }
   const STORAGE_KEY = scope ? 'mc:fundamentals:' + scope + ':data:v1' : 'mc:fundamentals:data:v1';
   const STORAGE_NAME = scope ? 'mc:fundamentals:' + scope + ':name:v1' : 'mc:fundamentals:name:v1';
   const [data, setData] = useState<Row[]>([]);
