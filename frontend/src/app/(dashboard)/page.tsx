@@ -2197,6 +2197,7 @@ export default function HomeDashboard() {
             {/* PATCH 1066 — Review Cadence + Relationships deep-link chips per user request */}
             <Link href="/playbook#cadence"       style={navChip('#22D3EE')}>🗓 Cadence</Link>
             <Link href="/playbook#relationships" style={navChip('#2dd4bf')}>🤝 Relationships</Link>
+            <Link href="/playbook#mastery"       style={navChip('#84cc16')}>🏏 Peak Performance</Link>
             <Link href="/orders"                 style={navChip('#22D3EE')}>📡 Signals</Link>
             <Link href="/special-situations"     style={navChip('#EF4444')}>🎯 Special Sit</Link>
             <Link href="/strategic-visibility"   style={navChip('#A78BFA')}>⭐ Strategic Vis</Link>
