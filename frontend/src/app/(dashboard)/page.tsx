@@ -2183,6 +2183,9 @@ export default function HomeDashboard() {
             <Link href="/earnings-opportunities" style={navChip('#F59E0B')}>📅 Earnings Ops</Link>
             <Link href="/earnings"               style={navChip('#F59E0B')}>📊 Earnings Scan</Link>
             <Link href="/guidance-extractor"     style={navChip('#A78BFA')}>📋 Guidance</Link>
+            {/* PATCH 1121 — Watchlist & Portfolio Fundamentals deep-link chips per user request */}
+            <Link href="/fundamentals?scope=watchlist" style={navChip('#2dd4bf')}>🔬 Watchlist Fundamentals</Link>
+            <Link href="/fundamentals?scope=portfolio" style={navChip('#f59e0b')}>🔬 Portfolio Fundamentals</Link>
             <Link href="/heatmap"                style={navChip('#22D3EE')}>🗺 Heatmap</Link>
             <Link href="/movers"                 style={navChip('#10B981')}>📈 Movers</Link>
             {/* PATCH 1067 — News Feed chip per user request */}
