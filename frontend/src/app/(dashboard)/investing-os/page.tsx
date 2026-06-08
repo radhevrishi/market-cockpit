@@ -363,7 +363,7 @@ export default function InvestingOSPage() {
   const lockedPrimary = locked ? byLetter(locked.primary) : null;
   const lockedSecondary = locked && locked.secondary ? byLetter(locked.secondary) : null;
 
-  const wrap = { maxWidth: 1140, margin: '0 auto', padding: '0 16px' } as const;
+  const wrap = { maxWidth: 1680, margin: '0 auto', padding: '0 22px' } as const;
 
   return (
     <div style={{ background: C.bg, minHeight: '100vh', color: C.txt, fontFamily: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif' }}>
@@ -405,7 +405,7 @@ export default function InvestingOSPage() {
 
         {/* 1 · STYLES */}
         <SectionHead id="styles" n={1} title="The 7 Edge Styles (A–G)" sub="Badges show your own self-assessment. Green = your good strategy · Amber = neutral · Red = no edge yet." color={C.blue} />
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(500px, 1fr))', gap: 12, alignItems: 'start' }}>
           {STYLES.map((s) => <StyleCard key={s.letter} s={s} />)}
         </div>
 
