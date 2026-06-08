@@ -152,6 +152,7 @@ const NAV_GROUPS: NavGroup[] = [
     icon: <Bell className="w-5 h-5" />,
     items: [
       { href: '/playbook',         label: 'Playbook',         icon: <BookMarked className="w-4 h-4" /> },
+      { href: '/investing-os', label: 'Investing OS', icon: <Compass className="w-4 h-4" /> },
       { href: '/critical-themes',  label: 'Critical Themes',  icon: <Star className="w-4 h-4" /> },
       { href: '/themes',           label: 'Themes',           icon: <BarChart3 className="w-4 h-4" /> },
       { href: '/news-alerts',  label: 'News Alerts',   icon: <Bell className="w-4 h-4" /> },
