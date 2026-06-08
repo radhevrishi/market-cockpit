@@ -2526,6 +2526,45 @@ export async function GET(request: Request) {
       try { await kvSet(CACHE_KEY, articles, CACHE_TTL); } catch {}
     }
 
+    // PATCH 1069 — Scraper-KV backstop. Server-side RSS fetches from this host
+    // are unreliable (datacenter IP gets rate-limited / blocked), so the live
+    // feed sometimes collapses to just the [STRUCTURAL ALERT] fallbacks. The
+    // GitHub-Actions scraper fetches the Indian feeds from a clean IP and stores
+    // them under 'scraped-india-news:v1:latest'. When the live result is sparse,
+    // merge those scraped items so the feed never shows only placeholders.
+    // Fully wrapped — on any failure it degrades to the existing behavior.
+    try {
+      const realCount = (articles || []).filter((a: any) => !/^\[STRUCTURAL ALERT\]/.test(a?.title || '')).length;
+      if (realCount < 8) {
+        const blob: any = await kvGet<any>('scraped-india-news:v1:latest');
+        const scraped: any[] = Array.isArray(blob) ? blob : (blob?.entries || blob?.items || []);
+        if (Array.isArray(scraped) && scraped.length) {
+          const seen = new Set((articles || []).map((a: any) => (a?.title || '').toLowerCase().slice(0, 60)));
+          const mapped = scraped
+            .filter((s: any) => s && s.title && s.url && !seen.has((s.title || '').toLowerCase().slice(0, 60)))
+            .slice(0, 40)
+            .map((s: any) => {
+              const cl = classifyArticle(s.title, s.snippet || '');
+              const tk = extractTickers(s.title);
+              return {
+                id: `scraped-${Buffer.from(String(s.url)).toString('base64').slice(-20)}`,
+                title: s.title, headline: s.title, summary: s.snippet || '',
+                source_name: s.source || 'India News', source: s.source || 'India News', source_url: s.url,
+                published_at: s.publishedAt || new Date().toISOString(), region: 'IN',
+                article_type: cl.article_type, investment_tier: cl.investment_tier,
+                bottleneck_sub_tag: cl.bottleneck_sub_tag || null, bottleneck_level: cl.bottleneck_level || null,
+                tickers: tk, primary_ticker: tk[0] || null, sentiment: null, importance_score: 0.5,
+              };
+            });
+          if (mapped.length) {
+            const structural = (articles || []).filter((a: any) => /^\[STRUCTURAL ALERT\]/.test(a?.title || ''));
+            const realLive = (articles || []).filter((a: any) => !/^\[STRUCTURAL ALERT\]/.test(a?.title || ''));
+            articles = [...realLive, ...mapped, ...structural];
+          }
+        }
+      }
+    } catch (e) { console.warn('[news] scraper-KV backstop failed (non-fatal):', e); }
+
     // Load persistent bottleneck articles when filtering for BOTTLENECK
     if (type === 'BOTTLENECK') {
       try {
