@@ -2161,6 +2161,9 @@ export default function HomeDashboard() {
             {/* PATCH 1063 — deep-link chips into Playbook sub-sections per user request */}
             <Link href="/playbook#about-me"      style={navChip('#fb7185')}>🌿 About Me</Link>
             <Link href="/playbook#life-sat"      style={navChip('#fbbf24')}>🌅 Life Sat</Link>
+            {/* PATCH 1066 — Review Cadence + Relationships deep-link chips per user request */}
+            <Link href="/playbook#cadence"       style={navChip('#22D3EE')}>🗓 Cadence</Link>
+            <Link href="/playbook#relationships" style={navChip('#2dd4bf')}>🤝 Relationships</Link>
             <Link href="/orders"                 style={navChip('#22D3EE')}>📡 Signals</Link>
             <Link href="/special-situations"     style={navChip('#EF4444')}>🎯 Special Sit</Link>
             <Link href="/strategic-visibility"   style={navChip('#A78BFA')}>⭐ Strategic Vis</Link>
