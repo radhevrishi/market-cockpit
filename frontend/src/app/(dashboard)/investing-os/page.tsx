@@ -181,6 +181,62 @@ const CYCLICAL_PROFIT = ['Inventory normalisation', 'Capacity cuts (supply destr
 const GREEN_FLAGS = ['New product / branding, cost cutting, narrative regime shift, insider buying', 'GAAP profitability, positive FCF in the quarter, order book, ROCE expanding', 'Aggressive new brand / stores, early to adopt new technology', 'Tailwind, PLI-type incentives, budget inclusion, margin expansion', 'Revenue growth > 25%, operating leverage, inflection, disciplined dilution'];
 const RED_FLAGS = ['Bad revenue guidance, decelerating revenue, negative CFO despite profit', 'Margin compression, weak vs competitor comparison', 'Order-to-revenue lag, high customer concentration', 'High valuation + inconsistent execution', 'High PE + unstable earnings, frequent equity dilution'];
 
+// Non-obvious, history-tested edges (heuristics, not textbook basics).
+const EDGE_GROUPS: { title: string; color: string; tips: string[] }[] = [
+  { title: 'Tape & price action', color: C.blue, tips: [
+    'Lose the 50-DMA? Watch 3–4 candles. If the prior 1–3 candle low is NOT undercut, hold — only exit when that low breaks.',
+    'Volume dry-up to a multi-week low inside a base is the tell — the breakout usually fires within days of the quietest day.',
+    'Undercut & rally: a quick poke below a prior low that reclaims it the same / next day is a shakeout, often the lowest-risk entry.',
+    'First pullback to the 10 / 21-EMA after a breakout is buyable; the 3rd+ test of the same average usually fails.',
+    'Three weeks tight (3 weekly closes within ~1–1.5%) = institutions absorbing supply — expect a breakout, not a breakdown.',
+    "Don't chase a momentum name >5% extended above the 21-EMA — let it come back to the line.",
+    'Wide & loose action = no institutional control; tight & quiet = control. Trade the quiet ones.',
+    'A breakout on below-average volume is a trap — demand ~40%+ above-average volume to trust it.',
+  ] },
+  { title: 'Relative strength & leadership', color: C.violet, tips: [
+    'The RS line making a new high BEFORE price ("RS new high") front-runs the price breakout.',
+    "Stocks printing new 52-week highs on the day the index bottoms are the next cycle's leaders — build that list.",
+    'Buy the leader, not the cheap laggard; the laggard is usually cheap for a reason.',
+    'When old leaders break down while the index still holds, distribution has already begun — get defensive.',
+  ] },
+  { title: 'Earnings & momentum', color: C.lime, tips: [
+    '"Beat & raise" drifts higher for weeks; "beat & cut" sells off — the guidance matters more than the beat itself.',
+    'Power Earnings Gap: a >5–10% earnings gap that holds its first-day low and the 10-DMA tends to drift higher for 4–8 weeks.',
+    'Gap-and-crap: a gap up on earnings that closes red on huge volume often marks a local top.',
+    'Late-stage bases (3rd / 4th base after a long run) fail far more often than the 1st / 2nd — respect the base count.',
+  ] },
+  { title: 'Earnings quality / forensic', color: C.red, tips: [
+    'Receivables or inventory growing faster than sales for 2+ quarters = the P&L is flattering reality.',
+    'CFO consistently below PAT (cash conversion < 1) over years = accrual-driven earnings; discount them.',
+    'Open-market promoter / insider buying beats buybacks as a signal — they are spending personal cash.',
+    'Conservative guiders who keep beating (sandbaggers) compound a re-rating; serial over-promisers de-rate.',
+    'Margin expansion + debt reduction together is the strongest, most under-priced turnaround combo.',
+  ] },
+  { title: 'Special situations', color: C.orange, tips: [
+    'Spin-offs get dumped by index / forced sellers for ~3–6 months, then outperform — buy after the forced selling, not on day one.',
+    'Index inclusion → front-run the passive buying; index deletion → the forced selling often marks a washout low.',
+    'In an open offer the stock often trades below the offer price on acceptance-ratio fear — that gap is the edge.',
+    'Demerger "value unlock" is usually mispriced in the weeks around the record date.',
+  ] },
+  { title: 'Cyclicals', color: C.cyan, tips: [
+    'Buy cyclicals on HIGH P/E (trough earnings) and sell on LOW P/E (peak earnings) — the opposite of growth investing.',
+    'The cycle has turned when the weakest, worst-quality player simply stops falling.',
+    'End of channel destocking (channel checks / management commentary) leads the earnings recovery by 1–2 quarters — position before the print.',
+  ] },
+  { title: 'Risk & behaviour', color: C.teal, tips: [
+    'Average UP into winners, never down into losers.',
+    'Sell into strength (climax / exhaustion runs), not into weakness.',
+    'Cap single-name risk with a hard stop (~7–8%); one big loss erases many small wins.',
+    "The market discounts ~6 months ahead — trade the change in the rate of change, not today's headline.",
+    'Your first loss is your cheapest loss — act on the plan, not on hope.',
+  ] },
+  { title: 'Market timing & breadth', color: C.amber, tips: [
+    "Follow-through day: a strong up day on rising volume 4–7 days after a low confirms a new uptrend — don't anticipate it.",
+    'Clusters of distribution days (4–5 high-volume down days in 2–3 weeks) warn of a market top.',
+    'New-high / new-low divergence at index highs = rotting internals even while the index prints highs.',
+  ] },
+];
+
 const KILL_SWITCH: { icon: string; title: string; checks: string[] }[] = [
   { icon: '🧠', title: 'Moat', checks: ['Pricing power present?', 'Switching cost high?', 'Customer concentration < 30%?'] },
   { icon: '🌍', title: 'Market runway', checks: ['TAM supports 5–10x growth?', 'Company share < 10% of industry?', 'Structural tailwind exists?'] },
@@ -253,7 +309,7 @@ const GUIDANCE: { name: string; guide: string }[] = [
 
 const SECTIONS: { id: string; label: string }[] = [
   { id: 'styles', label: '7 Styles' }, { id: 'combos', label: 'Combos' }, { id: 'avoid', label: 'Avoid' },
-  { id: 'cyclical', label: 'Cyclical' }, { id: 'flags', label: 'Green/Red' }, { id: 'bagger', label: '100-Bagger' },
+  { id: 'cyclical', label: 'Cyclical' }, { id: 'flags', label: 'Green/Red' }, { id: 'edges', label: 'Edge Rules' }, { id: 'bagger', label: '100-Bagger' },
   { id: 'checklist', label: 'Buy Checklist' }, { id: 'valuation', label: 'Valuation' }, { id: 'portfolio', label: 'Portfolio' },
   { id: 'investors', label: 'Investors' }, { id: 'guidance', label: 'Guidance' }, { id: 'finder', label: 'Edge Finder' },
 ];
@@ -475,8 +531,26 @@ export default function InvestingOSPage() {
           </div>
         </div>
 
-        {/* 6 · 100-BAGGER (scored) */}
-        <SectionHead id="bagger" n={6} title="100-Bagger Kill-Switch" sub="Tick what passes. Any unchecked box is a flag to dig deeper. Also confirm it's a high-margin business vs peers (India / USA) and do forensic analysis." color={C.violet} />
+        {/* 6 · EDGE RULES */}
+        <SectionHead id="edges" n={6} title="⚡ Edge Rules — the non-obvious tells" sub="Pattern tendencies observed over years, not textbook basics. Treat them as heuristics that tilt the odds, never guarantees." color={C.cyan} />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: 12, alignItems: 'start' }}>
+          {EDGE_GROUPS.map((g, i) => (
+            <div key={i} style={{ background: C.panel, border: `1px solid ${C.line}`, borderLeft: `4px solid ${g.color}`, borderRadius: 12, padding: 14 }}>
+              <div style={{ fontSize: F.md, fontWeight: 800, color: g.color, marginBottom: 8 }}>{g.title}</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                {g.tips.map((t, j) => (
+                  <div key={j} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                    <span style={{ color: g.color, fontSize: F.sm, fontWeight: 900, lineHeight: 1.5 }}>›</span>
+                    <span style={{ fontSize: F.sm, color: C.muted, lineHeight: 1.5 }}>{t}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* 7 · 100-BAGGER (scored) */}
+        <SectionHead id="bagger" n={7} title="100-Bagger Kill-Switch" sub="Tick what passes. Any unchecked box is a flag to dig deeper. Also confirm it's a high-margin business vs peers (India / USA) and do forensic analysis." color={C.violet} />
         <ScoreBar done={baggerDone} total={baggerTotal} color={C.violet} onReset={resetBagger} label="Kill-switch score" />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12, marginTop: 12 }}>
           {KILL_SWITCH.map((t, i) => {
@@ -496,7 +570,7 @@ export default function InvestingOSPage() {
         </div>
 
         {/* 7 · BUY CHECKLIST (scored) */}
-        <SectionHead id="checklist" n={7} title="Stock-Buying Checklist" sub="Run every candidate through these and watch the live score. Don't buy a cheap multiple if the theme is being ignored." color={C.cyan} />
+        <SectionHead id="checklist" n={8} title="Stock-Buying Checklist" sub="Run every candidate through these and watch the live score. Don't buy a cheap multiple if the theme is being ignored." color={C.cyan} />
         <ScoreBar done={buyDone} total={buyTotal} color={C.cyan} onReset={resetBuy} label="Conviction score" />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12, marginTop: 12 }}>
           {BUY_CHECKLIST.map((sec, si) => {
@@ -517,7 +591,7 @@ export default function InvestingOSPage() {
         </div>
 
         {/* 8 · VALUATION */}
-        <SectionHead id="valuation" n={8} title="Valuation Frameworks" color={C.amber} />
+        <SectionHead id="valuation" n={9} title="Valuation Frameworks" color={C.amber} />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
           <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, padding: 14 }}>
             <div style={{ fontSize: F.md, fontWeight: 800, color: C.amber, marginBottom: 8 }}>Growth framework</div>
@@ -544,7 +618,7 @@ export default function InvestingOSPage() {
         </div>
 
         {/* 9 · PORTFOLIO */}
-        <SectionHead id="portfolio" n={9} title="Portfolio Classification" sub="Size positions by bucket. Concentrate quality, keep speculative small." color={C.blue} />
+        <SectionHead id="portfolio" n={10} title="Portfolio Classification" sub="Size positions by bucket. Concentrate quality, keep speculative small." color={C.blue} />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12 }}>
           {PORTFOLIO_BUCKETS.map((b, i) => (
             <div key={i} style={{ background: C.panel, border: `1px solid ${C.line}`, borderTop: `3px solid ${b.color}`, borderRadius: 12, padding: 14 }}>
@@ -561,7 +635,7 @@ export default function InvestingOSPage() {
         </div>
 
         {/* 10 · INVESTORS */}
-        <SectionHead id="investors" n={10} title="Investors To Follow" color={C.lime} />
+        <SectionHead id="investors" n={11} title="Investors To Follow" color={C.lime} />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 10 }}>
           {INVESTORS.map((iv, i) => (
             <div key={i} style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, padding: '10px 13px' }}>
@@ -572,7 +646,7 @@ export default function InvestingOSPage() {
         </div>
 
         {/* 11 · GUIDANCE */}
-        <SectionHead id="guidance" n={11} title="Guidance Watchlist — PAT can double in 2–3 years" sub="20 companies with management guidance pointing to a possible PAT double. Tracking list, not a recommendation — verify each independently." color={C.green} />
+        <SectionHead id="guidance" n={12} title="Guidance Watchlist — PAT can double in 2–3 years" sub="20 companies with management guidance pointing to a possible PAT double. Tracking list, not a recommendation — verify each independently." color={C.green} />
         <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, overflow: 'hidden' }}>
           {GUIDANCE.map((g, i) => (
             <div key={i} style={{ display: 'flex', gap: 12, padding: '9px 14px', alignItems: 'baseline', background: i % 2 ? C.panel2 : 'transparent', borderBottom: i < GUIDANCE.length - 1 ? `1px solid ${C.line}` : 'none' }}>
@@ -584,7 +658,7 @@ export default function InvestingOSPage() {
         </div>
 
         {/* 12 · EDGE FINDER (at the end) */}
-        <SectionHead id="finder" n={12} title="🎯 Edge Finder" sub="Answer honestly. Conviction is weighted highest, then frustration, then horizon. The finder ranks the styles, shows your matched edge in full, and lets you lock it in." color={C.teal} />
+        <SectionHead id="finder" n={13} title="🎯 Edge Finder" sub="Answer honestly. Conviction is weighted highest, then frustration, then horizon. The finder ranks the styles, shows your matched edge in full, and lets you lock it in." color={C.teal} />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
           {FINDER.map((blk, qi) => (
             <div key={qi} style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, padding: 14 }}>
