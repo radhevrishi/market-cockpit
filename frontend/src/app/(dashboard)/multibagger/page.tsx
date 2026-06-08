@@ -109,6 +109,7 @@ function buildColMap(sampleRow: Record<string,unknown>): Record<string,string> {
     else if (o==='Intrinsic Value')                                m['intrinsicValue']=col;
     else if (o==='Current Price')                                  m['price']=col;
     else if (o==='DMA 200')                                        m['dma200']=col;
+    else if (o==='DMA 50' || o==='DMA50')                            m['dma50']=col;  // PATCH 1060 — explicit DMA 50 parse
     else if (o==='Return over 1month')                             m['return1m']=col;
     else if (o==='Return over 1week')                              m['return1w']=col;
     // New fields users may add
@@ -274,6 +275,7 @@ function buildColMap(sampleRow: Record<string,unknown>): Record<string,string> {
     // moving avg' / 'Price to DMA200 ratio'. Patterns now accept any
     // variant with both 200 + DMA in the header text.
     else if (!m['dma200']&&(c.includes('dma200')||c.includes('200dma')||(c.includes('200')&&c.includes('dma'))||(c.includes('200')&&c.includes('movingavg')))) m['dma200']=col;
+    else if (!m['dma50']&&(c.includes('dma50')||c.includes('50dma')||(c.includes('50')&&c.includes('dma'))||(c.includes('50')&&c.includes('movingavg')))) m['dma50']=col;  // PATCH 1060
     else if (!m['fii']&&c.includes('fii')&&!c.includes('change')) m['fii']=col;
     else if (!m['dii']&&c.includes('dii')&&!c.includes('change')) m['dii']=col;
     else if (!m['fcfAbsolute']&&(c.includes('freecash')||c==='fcf')) m['fcfAbsolute']=col;
@@ -318,6 +320,7 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
   const price=n(m['price']?row[m['price']]:undefined);
   const iv=n(m['intrinsicValue']?row[m['intrinsicValue']]:undefined);
   const dma=n(m['dma200']?row[m['dma200']]:undefined);
+  const dma50raw=n(m['dma50']?row[m['dma50']]:undefined);  // PATCH 1060
   const netDebt=n(m['netDebt']?row[m['netDebt']]:undefined);
   const ebitda=n(m['ebitda']?row[m['ebitda']]:undefined);
   const fii=n(m['fii']?row[m['fii']]:undefined);
@@ -369,6 +372,7 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
     intrinsicValue:iv,
     price,
     dma200:dma,
+    dma50:dma50raw,  // PATCH 1060
     fii,
     dii,
     netDebt,
@@ -548,6 +552,7 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
     // Derived
     marginOfSafety:(iv!==undefined&&price!==undefined&&price>0)?Math.round((iv-price)/price*100):undefined,
     aboveDMA200:(dma!==undefined&&price!==undefined&&dma>0)?Math.round((price-dma)/dma*100):undefined,
+    aboveDMA50:(dma50raw!==undefined&&price!==undefined&&dma50raw>0)?Math.round((price-dma50raw)/dma50raw*100):undefined,  // PATCH 1060
     netDebtEbitda:(netDebt!==undefined&&ebitda!==undefined&&ebitda>0)?Math.round(netDebt/ebitda*10)/10:undefined,
     fiiPlusDii:(fii!==undefined&&dii!==undefined)?Math.round((fii+dii)*10)/10:fii!==undefined?fii:undefined,
     opLeverageRatio:(n(m['profitCagr']?row[m['profitCagr']]:undefined)!==undefined&&n(m['revCagr']?row[m['revCagr']]:undefined)!==undefined&&(n(m['revCagr']?row[m['revCagr']]:undefined) as number)>0)?(n(m['profitCagr']?row[m['profitCagr']]:undefined) as number)/(n(m['revCagr']?row[m['revCagr']]:undefined) as number):undefined,
@@ -1319,7 +1324,14 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   // a proxy for "price above 50 DMA" since most Screener CSV exports only carry
   // 200 DMA. When applied, narrows the list to stocks in confirmed long-term
   // and short-term uptrends — the institutional "trend is your friend" preset.
-  if (dmaConfirmedOnly) baseRows = baseRows.filter(r => (r.aboveDMA200 ?? -100) > 0 && (r.return1m ?? -100) > -3);
+  // PATCH 1060 — Use actual aboveDMA50 when CSV has it; fall back to
+  // pctFrom52wHigh > -15 as proxy when 50DMA is missing; relax return1m
+  // requirement (most Screener CSVs ship "Return over 1year" not 1month).
+  if (dmaConfirmedOnly) baseRows = baseRows.filter(r => {
+    const above200 = (r.aboveDMA200 ?? -100) > 0;
+    const above50  = (r as any).aboveDMA50 !== undefined ? ((r as any).aboveDMA50 > 0) : ((r.pctFrom52wHigh ?? -100) > -15);
+    return above200 && above50;
+  });
   if (inflectionOnly)  baseRows = baseRows.filter(r => r.inflectionSignal || r.triggerBonus >= 10);
   // PATCH 0272 — Conviction-only filter. When ON, narrows the universe to
   // tickers already on the Conviction Beats bench (synced from /earnings-opportunities).
@@ -1658,7 +1670,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
       // PATCH 1052 — Combined 50/200 DMA above filter chip. Stacks on top of
       // any other filter; user explicitly requested as the "always-on combo
       // when picking the best stocks" preset.
-      {key:'dma',     label:'📈 50/200 DMA ↑',    active:dmaConfirmedOnly, toggle:()=>setDmaConfirmedOnly(v=>!v), count:rows.filter(r=>(r.aboveDMA200??-100)>0 && (r.return1m??-100)>-3).length},
+      {key:'dma',     label:'📈 50/200 DMA ↑',    active:dmaConfirmedOnly, toggle:()=>setDmaConfirmedOnly(v=>!v), count:rows.filter(r=>{const a200=(r.aboveDMA200??-100)>0; const a50=(r as any).aboveDMA50!==undefined?((r as any).aboveDMA50>0):((r.pctFrom52wHigh??-100)>-15); return a200 && a50;}).length},  // PATCH 1060
       {key:'inflect', label:'💥 Inflection',     active:inflectionOnly, toggle:()=>setInflectionOnly(v=>!v), count:rows.filter(r=>r.inflectionSignal||r.triggerBonus>=10).length},
       // PATCH 0272 — Conviction-only chip. Counts how many uploaded rows
       // intersect the Conviction Beats bench so users can see at a glance
