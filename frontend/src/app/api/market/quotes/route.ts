@@ -659,7 +659,7 @@ async function fetchIndianDataWithCache() {
               const _ltk: any[] = (_lblob && _lblob.tickers) || [];
               if (_ltk.length) {
                 _liveKvAgeMin = Math.round((Date.now() - new Date(_lblob.generatedAt || 0).getTime()) / 60000);
-                if (_liveKvAgeMin >= 0 && _liveKvAgeMin < 45) {
+                if (_liveKvAgeMin >= -5 && _liveKvAgeMin < 45) {
                   for (const _q of _ltk) {
                     const _sym = String(_q.ticker || "").toUpperCase();
                     if (!_sym || yahooMap.has(_sym)) continue;
