@@ -248,6 +248,24 @@ const GUIDE: { title: string; color: string; tag: string; items: string[] }[] = 
   },
 ];
 
+// ---- Transparency: how the 0–100 score is built and how A–E is decided ----
+const WEIGHTS: { k: string; w: number; color: string; desc: string }[] = [
+  { k: 'Earnings trigger', w: 20, color: C.green, desc: 'YoY PAT (60%) + sales (40%). ≥25% is the floor, ≥40% is strong. A profit beat with sales lagging (<10%) is cut ×0.7 — no cost-cut beats.' },
+  { k: 'Acceleration', w: 18, color: C.teal, desc: 'Sequential QoQ trend of PAT & sales over the last 3–4 quarters. Accelerating beats high-but-flat (the HUL lesson).' },
+  { k: 'Multiple cycle', w: 21, color: C.violet, desc: 'PEG band + PE vs its own 5-yr median + vs industry. The single biggest lever — the masterclass says the multiple does ≈60% of the return.' },
+  { k: 'Margin trajectory', w: 11, color: C.cyan, desc: 'OPM latest vs preceding / last-year / 5-yr. Expansion re-rates; material compression (≥1pp on a beat) is penalised.' },
+  { k: 'Chart stage', w: 12, color: C.blue, desc: 'Minervini Stage-2 template — price above 50 & 200-DMA, 50>200, near the 52-wk high. Below the 200-DMA (Stage-4) is penalised.' },
+  { k: 'Earnings quality', w: 10, color: C.gold, desc: 'CFO/PAT (Buffett: <0.6 = sell), ROCE, debt/equity. Cash flow is fact; profit is opinion.' },
+  { k: 'Sponsorship', w: 8, color: C.amber, desc: 'Promoter holding, FII/DII accumulation over 3 years, pledge (penalised).' },
+];
+const CLASSIFY: { k: string; color: string; rule: string }[] = [
+  { k: 'A · Multibagger setup', color: C.green, rule: 'ALL of: YoY PAT ≥40%, acceleration strong, margin expanding, multiple at a discount (cheap vs its history), Stage-2 uptrend, and NO quality/pledge/leverage red flag. The full alignment — buy full size.' },
+  { k: 'B · Hold / watch', color: C.blue, rule: 'The residual — a genuine beat, but not cheap/accelerating enough for A and not deteriorating enough for C/E. Most names land here: hold if owned, don’t chase.' },
+  { k: 'C · Trim / sell', color: C.amber, rule: 'Premium multiple + decelerating (or sub-15%) growth — the market compresses the multiple to the new growth rate. Also catches a moderate profit decline (−10% to −40%) that isn’t avoid-grade.' },
+  { k: 'D · Pullback watch', color: C.cyan, rule: 'Soft quarter (growth <25%) but the trend is intact, the multiple is cheap, and quality is sound. A potential pullback buy in a compounder.' },
+  { k: 'E · Avoid', color: C.red, rule: 'Real deterioration: profit collapsing >40% YoY; OR profit contracting >10% with weak quality / negative ROCE / a veto flag / Stage-4 downtrend; OR a Stage-4 chart with no growth and poor quality.' },
+];
+
 export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?: string }) {
   let scope = scopeProp;
   if (!scope && typeof window !== 'undefined') { try { const qp = new URLSearchParams(window.location.search).get('scope'); if (qp === 'watchlist' || qp === 'portfolio') scope = qp; } catch {} }
@@ -262,6 +280,7 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
   const [q, setQ] = useState('');
   const [minScore, setMinScore] = useState(0);
   const [showGuide, setShowGuide] = useState(false);
+  const [showRules, setShowRules] = useState(false);
   // refs so the async FileReader merge always sees the latest data/files (avoids stale closures)
   const dataRef = useRef<Row[]>([]); const filesRef = useRef<string[]>([]);
   useEffect(() => { dataRef.current = data; }, [data]);
@@ -457,6 +476,41 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
                     </ul>
                   </div>
                 ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        {/* How it's scored & classified — the engine's exact criteria, so an empty bucket is legible */}
+        <div style={{ marginTop: 12, background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, overflow: 'hidden' }}>
+          <button onClick={() => setShowRules((v) => !v)} style={{ width: '100%', cursor: 'pointer', background: 'transparent', border: 'none', color: C.txt, display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', textAlign: 'left' }}>
+            <span style={{ fontSize: F.lg, fontWeight: 800 }}>📐 How the score &amp; A–E scenarios are computed — the exact criteria</span>
+            <span style={{ marginLeft: 'auto', fontSize: F.sm, fontWeight: 800, color: showRules ? C.gold : C.muted }}>{showRules ? 'Hide ▲' : 'Show ▼'}</span>
+          </button>
+          {showRules ? (
+            <div style={{ padding: '0 16px 18px' }}>
+              <div style={{ fontSize: F.md, fontWeight: 800, color: C.txt, marginBottom: 8 }}>The 0–100 score — weighted blend of 7 sub-scores</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(330px, 1fr))', gap: 8, marginBottom: 8 }}>
+                {WEIGHTS.map((w, i) => (
+                  <div key={i} style={{ background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 9, padding: '9px 11px', display: 'flex', gap: 10, alignItems: 'baseline' }}>
+                    <span style={{ fontSize: F.base, fontWeight: 900, color: w.color, minWidth: 38 }}>{w.w}%</span>
+                    <span><b style={{ color: C.txt, fontSize: F.sm }}>{w.k}</b> <span style={{ fontSize: F.xs, color: C.muted, lineHeight: 1.45 }}>— {w.desc}</span></span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ fontSize: F.xs, color: C.dim, lineHeight: 1.55, marginBottom: 16 }}>Then hard red flags <i>multiply</i> the score down: CFO/PAT &lt; 0.6 ×0.7 · pledge &gt; 25% ×0.6 · (debt/equity &gt; 2 with interest-cover &lt; 1.5) ×0.7. Garbage prints (CFO/PAT, OPM, PEG beyond sane bounds) are shown as “n/m” and don’t score.</div>
+
+              <div style={{ fontSize: F.md, fontWeight: 800, color: C.txt, marginBottom: 8 }}>How each stock is labelled A–E (checked in this order)</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {CLASSIFY.map((c, i) => (
+                  <div key={i} style={{ background: C.panel2, border: `1px solid ${c.color}40`, borderLeft: `3px solid ${c.color}`, borderRadius: 8, padding: '9px 12px' }}>
+                    <span style={{ fontSize: F.sm, fontWeight: 800, color: c.color }}>{c.k}</span>
+                    <span style={{ fontSize: F.sm, color: C.muted, lineHeight: 1.5 }}> — {c.rule}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ marginTop: 12, fontSize: F.sm, color: C.muted, background: `${C.amber}10`, border: `1px solid ${C.amber}40`, borderRadius: 8, padding: '10px 12px', lineHeight: 1.55 }}>
+                <b style={{ color: C.amber }}>Why “Avoid” can be 0:</b> E only fires on genuine deterioration. A clean watchlist of beats has no stock with contracting profit + a weakness, so E is correctly empty — that’s the screen working, not a bug. Load a broader list that includes losers and E populates (your earlier 153-name file had Valor −371%, Meesho −56%, Mah. Seamless −57% → all E).
               </div>
             </div>
           ) : null}
