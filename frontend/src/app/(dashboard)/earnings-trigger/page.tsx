@@ -459,22 +459,103 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
       <div style={{ fontSize: F.xs, color: C.muted, marginTop: 2 }}>{label}</div>
     </div>
   );
-  const renderAnalytics = () => (
+  const renderAnalytics = () => {
+    const SW = 760, SH = 380, mL = 50, mR = 18, mT = 18, mB = 38;
+    const pw = SW - mL - mR, ph = SH - mT - mB;
+    const pts = scored.filter((s) => !isNaN(s.qp));
+    const gC = (g: number) => Math.max(-25, Math.min(160, g));
+    const xFor = (m: number) => mL + m * pw;
+    const yFor = (g: number) => mT + ph - ((gC(g) + 25) / 185) * ph;
+    const px = (s: Scored) => xFor(c01(s.subs.multiple));
+    const py = (s: Scored) => yFor(s.qp);
+    const labelPts = [...pts].sort((a, b) => b.composite - a.composite).slice(0, 10);
+    const total = scored.length || 1;
+    const topConv = analytics.A.slice(0, 6);
+    const thesis = (s: Scored) => {
+      const p: string[] = [];
+      if (!isNaN(s.qp)) p.push('PAT ' + s.qp.toFixed(0) + '%');
+      if (s.subs.accel >= 0.6) p.push('accelerating');
+      if (s.notes.includes('Margin expanding')) p.push('margins ↑');
+      if (s.pegNM && s.peg < 1.5) p.push('cheap PEG ' + s.peg.toFixed(2));
+      else if (s.subs.multiple >= 0.6) p.push('PE below history');
+      if (s.stage2) p.push('Stage-2 uptrend');
+      if (!isNaN(s.roce) && s.roce >= 20) p.push('ROCE ' + s.roce.toFixed(0) + '%');
+      return p.slice(0, 5).join(' · ') || 'see 7-factor breakdown';
+    };
+    return (
     <div style={{ marginTop: 16 }}>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
         {kpi('🟢 Buy now (A)', counts.A, C.green)}
-        {kpi('🔵 Pullback buys (D)', counts.D, C.cyan)}
+        {kpi('🔵 Pullback (D)', counts.D, C.cyan)}
         {kpi('🟡 Trim / sell (C)', counts.C, C.amber)}
         {kpi('🔴 Avoid (E)', counts.E, C.red)}
         {kpi('📈 Margin expanding', analytics.marginExp.length, C.teal)}
         {kpi('Median score', analytics.median, C.txt)}
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: 12 }}>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(520px, 2.2fr) minmax(260px, 1fr)', gap: 12, marginBottom: 12 }}>
         <div style={card}>
-          <div style={{ fontSize: F.md, fontWeight: 800, color: C.green, marginBottom: 4 }}>🟢 Buy candidates — Scenario A · {analytics.A.length}</div>
-          <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 6 }}>Beat + accelerating + margin expanding + cheap + Stage-2, no red flag. Highest-probability multibaggers.</div>
-          {analytics.A.length ? analytics.A.slice(0, 12).map((s) => ARow(s, `${isNaN(s.qp) ? '' : s.qp.toFixed(0) + '% · '}PEG ${s.pegNM ? s.peg.toFixed(2) : 'n/m'}`)) : <div style={{ fontSize: F.sm, color: C.dim, padding: '8px 0' }}>None in this set.</div>}
+          <div style={{ fontSize: F.md, fontWeight: 800, color: C.txt }}>Opportunity map — growth × valuation</div>
+          <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 4 }}>Each dot = a stock · colour = scenario · size = score. Top-right (fast-growing AND cheap) is the buy zone.</div>
+          <svg viewBox={`0 0 ${SW} ${SH}`} style={{ width: '100%', height: 'auto', display: 'block' }}>
+            <rect x={xFor(0.6)} y={mT} width={pw * 0.4} height={yFor(40) - mT} fill={`${C.green}12`} />
+            <text x={SW - mR - 4} y={mT + 13} textAnchor="end" fontSize="10" fill={C.green} fontWeight="700">BUY ZONE</text>
+            <line x1={mL} y1={mT} x2={mL} y2={mT + ph} stroke={C.line2} />
+            <line x1={mL} y1={mT + ph} x2={mL + pw} y2={mT + ph} stroke={C.line2} />
+            <line x1={xFor(0.6)} y1={mT} x2={xFor(0.6)} y2={mT + ph} stroke={C.line} strokeDasharray="3 3" />
+            <line x1={mL} y1={yFor(40)} x2={mL + pw} y2={yFor(40)} stroke={C.line} strokeDasharray="3 3" />
+            <line x1={mL} y1={yFor(0)} x2={mL + pw} y2={yFor(0)} stroke={`${C.red}55`} strokeDasharray="2 2" />
+            {pts.map((s, i) => <circle key={i} cx={px(s)} cy={py(s)} r={3 + (s.composite / 100) * 6} fill={SCEN[s.scenario].c} fillOpacity={0.5} stroke={SCEN[s.scenario].c} strokeWidth={0.5} />)}
+            {labelPts.map((s, i) => <text key={'l' + i} x={px(s) + 7} y={py(s) + 3} fontSize="9" fill={C.txt}>{(s.nse || s.name).slice(0, 9)}</text>)}
+            <text x={mL + pw / 2} y={SH - 8} textAnchor="middle" fontSize="10" fill={C.muted}>← richer        valuation (PE-cycle / PEG)        cheaper →</text>
+            <text x={16} y={mT + ph / 2} textAnchor="middle" fontSize="10" fill={C.muted} transform={`rotate(-90 16 ${mT + ph / 2})`}>← slower    YoY PAT growth    faster →</text>
+            <text x={mL - 5} y={yFor(0) + 3} textAnchor="end" fontSize="8" fill={C.dim}>0%</text>
+            <text x={mL - 5} y={yFor(40) + 3} textAnchor="end" fontSize="8" fill={C.dim}>40%</text>
+          </svg>
         </div>
+        <div style={card}>
+          <div style={{ fontSize: F.md, fontWeight: 800, color: C.txt, marginBottom: 8 }}>Scenario funnel</div>
+          {(['A', 'B', 'C', 'D', 'E'] as const).map((k) => { const n = counts[k]; const pct = Math.round((n / total) * 100); return (
+            <div key={k} style={{ marginBottom: 9 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: F.xs, marginBottom: 3 }}>
+                <span style={{ color: SCEN[k].c, fontWeight: 800 }}>{SCEN[k].label}</span>
+                <span style={{ color: C.muted }}>{n} · {pct}%</span>
+              </div>
+              <div style={{ height: 10, background: C.panel2, borderRadius: 5, overflow: 'hidden' }}><div style={{ width: `${pct}%`, height: '100%', background: SCEN[k].c }} /></div>
+            </div>
+          ); })}
+          <div style={{ fontSize: F.xs, color: C.dim, marginTop: 6, lineHeight: 1.5 }}>A = act · B = clean hold · C = trim / red flag · D = pullback buy · E = avoid.</div>
+        </div>
+      </div>
+
+      <div style={{ fontSize: F.md, fontWeight: 800, color: C.green, margin: '4px 0 8px' }}>🎯 Top conviction — act on these now</div>
+      {topConv.length ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(330px, 1fr))', gap: 10, marginBottom: 14 }}>
+          {topConv.map((s) => (
+            <div key={s.nse + s.name} style={{ background: C.panel, border: `1px solid ${C.green}40`, borderLeft: `3px solid ${C.green}`, borderRadius: 10, padding: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: F.xl, fontWeight: 900, color: band(s.composite / 100) }}>{s.composite}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: F.sm, fontWeight: 800, color: C.txt, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</div>
+                  <div style={{ fontSize: 10, color: C.dim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.nse} · {s.industry} · {fmtCr(s.mcap)}</div>
+                </div>
+                <span style={{ fontSize: 9, fontWeight: 800, color: SCEN.A.c, border: `1px solid ${SCEN.A.c}66`, borderRadius: 5, padding: '2px 5px' }}>A</span>
+              </div>
+              <div style={{ display: 'flex', gap: 3, margin: '8px 0' }}>
+                {VARS.map((v) => { const val = s.subs[v.k]; return (
+                  <div key={v.k} title={`${v.label}: ${Math.round(val * 100)}`} style={{ flex: 1, textAlign: 'center' }}>
+                    <div style={{ height: 22, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}><div style={{ width: 10, height: `${Math.max(6, val * 22)}px`, background: v.color, opacity: 0.4 + val * 0.6, borderRadius: 2 }} /></div>
+                    <div style={{ fontSize: 8, color: C.dim, marginTop: 1 }}>{v.label.slice(0, 4)}</div>
+                  </div>
+                ); })}
+              </div>
+              <div style={{ fontSize: F.xs, color: C.muted, lineHeight: 1.45 }}>{thesis(s)}</div>
+            </div>
+          ))}
+        </div>
+      ) : <div style={{ fontSize: F.sm, color: C.dim, marginBottom: 14 }}>No A-grade setups in this set right now — see the C/D lists below.</div>}
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12 }}>
         <div style={card}>
           <div style={{ fontSize: F.md, fontWeight: 800, color: C.red, marginBottom: 4 }}>🔻 Reduce / exit — C + E · {analytics.reduce.length ? counts.C + counts.E : 0}</div>
           <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 6 }}>Lowest scores first — a profit decline, a cash/pledge/leverage red flag, or overpaying for growth (PEG&gt;3).</div>
@@ -522,7 +603,8 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
       </div>
       <div style={{ marginTop: 12, fontSize: F.xs, color: C.dim, lineHeight: 1.6 }}>Quick read: act on <b style={{ color: C.green }}>A</b>, accumulate <b style={{ color: C.cyan }}>D</b> on weakness, reduce <b style={{ color: C.amber }}>C</b>/<b style={{ color: C.red }}>E</b>. Confirm the concall (guidance + sector flow) before buying, and never buy on result day. The toggles above (ignore valuation / CFO-PAT) re-rank this whole dashboard. Not investment advice.</div>
     </div>
-  );
+    );
+  };
 
   return (
     <div style={{ background: C.bg, minHeight: '100vh', color: C.txt, fontFamily: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif' }}>
