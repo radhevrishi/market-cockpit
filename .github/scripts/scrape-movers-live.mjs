@@ -113,7 +113,8 @@ async function main() {
   const out = [];
   let okBatches = 0;
   for (let i = 0; i < batches.length; i++) {
-    const res = await yahooBatch(batches[i], auth);
+    let res = await yahooBatch(batches[i], auth);
+    if (!res.length) { await new Promise((r) => setTimeout(r, 800)); res = await yahooBatch(batches[i], auth); }
     if (res.length) okBatches++;
     for (const q of res) {
       const sym = String(q.symbol || '').replace(/\.NS$/i, '').toUpperCase();
@@ -138,6 +139,10 @@ async function main() {
   }
 
   console.log(`  RESULT: ${out.length} live quotes from ${okBatches}/${batches.length} batches`);
+  if (batches.length && okBatches / batches.length < 0.7) {
+    console.error(`Only ${okBatches}/${batches.length} Yahoo batches succeeded (<70%) — refusing to overwrite KV with partial coverage.`);
+    process.exit(1);
+  }
   if (out.length < 50) {
     console.error(`::error title=Live fetch failed::Only ${out.length} live quotes — Yahoo likely unreachable/blocked from this runner. NOT overwriting KV.`);
     process.exit(1);
