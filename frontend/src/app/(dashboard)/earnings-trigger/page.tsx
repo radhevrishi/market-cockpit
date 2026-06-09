@@ -67,8 +67,12 @@ function scoreRow(d: Row): Scored {
   // margin trajectory so a garbage print can't fake expansion or compression.
   const okM = (x: number) => !isNaN(x) && Math.abs(x) <= 120;
   let margin = 0.4; if (okM(om0) && okM(om1) && om0 > om1) margin += 0.2; if (okM(om0) && okM(omLY) && om0 > omLY) margin += 0.2; if (okM(om0) && okM(om5) && om0 > om5) margin += 0.2;
-  const marginCompression = (okM(om0) && okM(om1) && om0 < om1 && okM(omLY) && om0 < omLY);
+  // Material moves only (≥1pp both sequentially AND vs last year). The masterclass punishes real margin erosion on a beat
+  // (Scenario 2), not 0.2pp quarterly noise — tightening this stops the flag spamming the table and over-stating margins.
+  const marginCompression = (okM(om0) && okM(om1) && okM(omLY) && (om1 - om0 >= 1) && (omLY - om0 >= 1));
+  const marginExpansion = (okM(om0) && okM(om1) && okM(omLY) && (om0 - om1 >= 2) && (om0 - omLY >= 2)); // ≥200bps = the masterclass re-rating signal
   if (marginCompression) margin -= 0.2; margin = c01(margin);
+  if (marginExpansion) notes.push('Margin expanding');
   const peg = f('PEG Ratio'), pe = f('Price to Earning'), pe5 = f('Historical PE 5Years'), ipe = f('Industry PE');
   // PEG is only meaningful with positive earnings AND a sane magnitude. Negative PEG (loss / negative TTM EPS growth)
   // or an extreme PEG (e.g. 25–58 from a near-zero growth denominator, often paired with a 600+ PE) is a data artifact,
@@ -103,7 +107,11 @@ function scoreRow(d: Row): Scored {
   let sponsor = c01(0.55 * promS + 0.45 * c01(flowS));
   if (!isNaN(pledge) && pledge > 10) sponsor *= 0.6; if (!isNaN(pledge) && pledge > 25) sponsor *= 0.5;
 
-  let composite = 100 * (0.20 * trigger + 0.18 * accel + 0.14 * margin + 0.18 * multiple + 0.12 * stage + 0.10 * quality + 0.08 * sponsor);
+  // Weights follow the masterclass hierarchy: earnings growth + ACCELERATION are the trigger (O'Neil: "the single most
+  // important element"), and the PE-multiple cycle does "≈60% of the work" on the eventual return (the entire Losers
+  // chapter is multiple compression). Margin trajectory is a contextual modifier (Nick Sleep: judge reinvestment, not
+  // Q-margins) — weighted below growth and the multiple, so it informs the score without dominating it.
+  let composite = 100 * (0.20 * trigger + 0.18 * accel + 0.21 * multiple + 0.11 * margin + 0.12 * stage + 0.10 * quality + 0.08 * sponsor);
   const flags: string[] = [];
   if (!isNaN(cfo) && cfo < 0.6) { flags.push('CFO/PAT<0.6 earnings quality'); composite *= 0.7; }
   if (!isNaN(pledge) && pledge > 25) { flags.push('High pledge'); composite *= 0.6; }
@@ -231,8 +239,8 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
       <div style={{ ...wrap, padding: '20px 16px 80px' }}>
         <div style={{ fontSize: F.xs, fontWeight: 800, color: C.gold, letterSpacing: 1.2, textTransform: 'uppercase' }}>Why some Q-beats become multibaggers and other beats get punished</div>
         <div style={{ fontSize: F.hero, fontWeight: 900, marginTop: 6, lineHeight: 1.1 }}>Earnings-Trigger Analyzer</div>
-        <div style={{ fontSize: F.base, color: C.muted, lineHeight: 1.6, marginTop: 10, maxWidth: 1000 }}>
-          After results, export your watchlist from Screener.in and drop the CSV below — <b style={{ color: C.txt }}>you can add several files and they merge into one ranking</b>. The engine scores every stock on the institutional earnings-trigger framework and ranks the real setups. A beat alone is not a buy — what converts it is <b style={{ color: C.txt }}>acceleration × margin trajectory × PE-cycle position × chart stage × earnings quality × sponsorship</b>, classified into the five post-earnings scenarios.
+        <div style={{ fontSize: F.base, color: C.muted, lineHeight: 1.55, marginTop: 8, maxWidth: 1180 }}>
+          Export your Screener.in watchlist and drop the CSV(s) below — <b style={{ color: C.txt }}>add several and they merge into one ranking</b>. A beat alone isn't a buy: the engine ranks what converts it — <b style={{ color: C.txt }}>acceleration × PE-cycle × margin × chart stage × quality × sponsorship</b> — into the five post-earnings scenarios (A–E).
         </div>
 
         {/* upload zone */}
@@ -332,7 +340,7 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
                         <span key={j} title={tip} style={{ fontSize: 10, fontWeight: 800, padding: '2px 5px', borderRadius: 5, whiteSpace: 'nowrap', color: v === 'y' ? C.green : v === 'n' ? C.red : C.dim, border: `1px solid ${v === 'y' ? C.green + '55' : v === 'n' ? C.red + '40' : C.line}`, background: v === 'y' ? `${C.green}14` : v === 'n' ? `${C.red}10` : 'transparent' }}>{lab} {v === 'y' ? '✓' : v === 'n' ? '✗' : '–'}</span>
                       ))}
                     </div>
-                    <div style={{ flex: '1 1 200px', padding: '9px 8px', display: 'flex', gap: 4, flexWrap: 'wrap' }}>{s.flags.map((fl, j) => <span key={'f' + j} style={{ fontSize: 10, color: C.red, border: `1px solid ${C.red}40`, background: `${C.red}10`, borderRadius: 5, padding: '1px 5px' }}>{fl}</span>)}{s.notes.map((nt, j) => <span key={'n' + j} style={{ fontSize: 10, color: C.amber, border: `1px solid ${C.amber}40`, background: `${C.amber}10`, borderRadius: 5, padding: '1px 5px' }}>{nt}</span>)}{(!s.flags.length && !s.notes.length) ? <span style={{ fontSize: 10, color: C.dim }}>—</span> : null}</div>
+                    <div style={{ flex: '1 1 200px', padding: '9px 8px', display: 'flex', gap: 4, flexWrap: 'wrap' }}>{s.flags.map((fl, j) => <span key={'f' + j} style={{ fontSize: 10, color: C.red, border: `1px solid ${C.red}40`, background: `${C.red}10`, borderRadius: 5, padding: '1px 5px' }}>{fl}</span>)}{s.notes.map((nt, j) => { const pos = /expanding/i.test(nt); const col = pos ? C.green : C.amber; return <span key={'n' + j} style={{ fontSize: 10, color: col, border: `1px solid ${col}40`, background: `${col}10`, borderRadius: 5, padding: '1px 5px' }}>{nt}</span>; })}{(!s.flags.length && !s.notes.length) ? <span style={{ fontSize: 10, color: C.dim }}>—</span> : null}</div>
                   </div>
                 ))}
                 {!shown.length ? <div style={{ padding: 20, fontSize: F.sm, color: C.muted, textAlign: 'center' }}>No stocks match the current filter.</div> : null}
