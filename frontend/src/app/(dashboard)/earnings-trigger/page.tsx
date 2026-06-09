@@ -427,9 +427,9 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
     const marginExp = scored.filter((s) => s.notes.includes('Margin expanding'));
     const ss = scored.map((s) => s.composite).sort((a, b) => a - b);
     const median = ss.length ? ss[Math.floor(ss.length / 2)] : 0;
-    const cheapGrowth = scored.filter((s) => (s.scenario === 'A' || s.scenario === 'B') && s.pegNM && s.peg > 0 && !isNaN(s.qp) && s.qp >= 25).sort((a, b) => a.peg - b.peg).slice(0, 8);
+    const cheapGrowth = scored.filter((s) => (s.scenario === 'A' || s.scenario === 'B') && s.pegNM && s.peg > 0 && !isNaN(s.qp) && s.qp >= 25 && !s.notes.some((n) => /Low-base/.test(n)) && !(s.mcap > 0 && s.mcap < 150)).sort((a, b) => a.peg - b.peg).slice(0, 8);
     const fastest = [...scored].sort((a, b) => b.subs.accel - a.subs.accel).slice(0, 8);
-    const expanders = scored.filter((s) => okv(s.om0) && okv(s.om1) && s.om0 > s.om1).sort((a, b) => (b.om0 - b.om1) - (a.om0 - a.om1)).slice(0, 8);
+    const expanders = scored.filter((s) => okv(s.om0) && okv(s.om1) && s.om0 > s.om1 && s.om1 >= -10 && s.om0 <= 100 && !s.notes.some((n) => /Low-base/.test(n))).sort((a, b) => (b.om0 - b.om1) - (a.om0 - a.om1)).slice(0, 8);
     const reduce = [...C2, ...E].sort((a, b) => a.composite - b.composite).slice(0, 12);
     const sectorMap: Record<string, number> = {}; scored.forEach((s) => { if (s.scenario === 'A' || s.scenario === 'B') { const k = s.industry || '—'; sectorMap[k] = (sectorMap[k] || 0) + 1; } });
     const sectors = Object.entries(sectorMap).sort((a, b) => b[1] - a[1]).slice(0, 10);
@@ -453,15 +453,10 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
       <span style={{ fontSize: F.sm, fontWeight: 900, color: band(s.composite / 100), width: 24, textAlign: 'right' }}>{s.composite}</span>
     </div>
   );
-  const kpi = (label: string, val: string | number, color: string) => (
-    <div style={{ background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 10, padding: '11px 14px', minWidth: 130, flex: '1 1 130px' }}>
-      <div style={{ fontSize: F.xl, fontWeight: 900, color }}>{val}</div>
-      <div style={{ fontSize: F.xs, color: C.muted, marginTop: 2 }}>{label}</div>
-    </div>
-  );
+  
   const renderAnalytics = () => {
     const total = scored.length || 1;
-    const topConv = analytics.A.slice(0, 6);
+    const topConv = analytics.A.filter((s) => !s.notes.some((n) => /Low-base/.test(n)) && !(s.mcap > 0 && s.mcap < 150)).slice(0, 8);
     const thesis = (s: Scored) => {
       const p: string[] = [];
       if (!isNaN(s.qp)) p.push('PAT ' + s.qp.toFixed(0) + '%');
@@ -481,17 +476,34 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
     const momAll = scored.filter((s) => !isNaN(s.r1y));
     const momLead = [...momAll].sort((a, b) => b.r1y - a.r1y).slice(0, 6);
     const momLag = [...momAll].sort((a, b) => a.r1y - b.r1y).slice(0, 6);
+    const isLowBase = (s: Scored) => s.notes.some((n) => /Low-base/.test(n));
+    const isMicro = (s: Scored) => !isNaN(s.mcap) && s.mcap > 0 && s.mcap < 150;
+    const conflLists: Array<[string, Scored[]]> = [
+      ['cheap', analytics.cheapGrowth], ['accel', analytics.fastest], ['margin', analytics.expanders],
+      ['quality', topQuality], ['chart', chartLeaders], ['sponsor', topSponsor],
+    ];
+    const confluence = scored
+      .map((s) => ({ s, hits: conflLists.filter(([, l]) => l.some((x) => x.nse + x.name === s.nse + s.name)).map(([n]) => n) }))
+      .filter((o) => o.hits.length >= 2 && (o.s.scenario === 'A' || o.s.scenario === 'B') && !isLowBase(o.s) && !isMicro(o.s))
+      .sort((a, b) => b.hits.length - a.hits.length || b.s.composite - a.s.composite)
+      .slice(0, 8);
+    const missingA = (s: Scored) => {
+      const m: string[] = [];
+      if (isNaN(s.qp) || s.qp < 40) m.push('growth<40%');
+      if (s.subs.accel < 0.65) m.push('accel');
+      if (s.subs.margin < 0.6) m.push('margin');
+      if (s.subs.multiple < 0.62) m.push('valuation');
+      if (!s.stage2) m.push('chart');
+      return m;
+    };
+    const nearA = scored
+      .filter((s) => s.scenario === 'B' && s.flags.length === 0 && !isLowBase(s) && !isMicro(s) && missingA(s).length >= 1 && missingA(s).length <= 2)
+      .sort((a, b) => b.composite - a.composite)
+      .slice(0, 8);
     const r1yTag = (s: Scored) => (isNaN(s.r1y) ? '' : (s.r1y >= 0 ? '+' : '') + s.r1y.toFixed(0) + '%');
     return (
     <div style={{ marginTop: 16 }}>
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
-        {kpi('🟢 Buy now (A)', counts.A, C.green)}
-        {kpi('🔵 Pullback (D)', counts.D, C.cyan)}
-        {kpi('🟡 Trim / sell (C)', counts.C, C.amber)}
-        {kpi('🔴 Avoid (E)', counts.E, C.red)}
-        {kpi('📈 Margin expanding', analytics.marginExp.length, C.teal)}
-        {kpi('Median score', analytics.median, C.txt)}
-      </div>
+      
 
       <div style={{ fontSize: F.md, fontWeight: 800, color: C.green, margin: '4px 0 8px' }}>🎯 Top conviction — buy candidates (act on these)</div>
       {topConv.length ? (
@@ -521,6 +533,16 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
       ) : <div style={{ fontSize: F.sm, color: C.dim, marginBottom: 14 }}>No A-grade setups in this set right now — see the C/D lists below.</div>}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12 }}>
+        <div style={card}>
+          <div style={{ fontSize: F.md, fontWeight: 800, color: C.gold, marginBottom: 4 }}>🏆 Confluence — on multiple leader lists</div>
+          <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 6 }}>A/B names on 2+ strength lists at once (cheap growth, acceleration, margin, quality, chart, sponsorship) — the most complete setups in the set.</div>
+          {confluence.length ? confluence.map((o) => ARow(o.s, o.hits.join(' + '))) : <div style={{ fontSize: F.sm, color: C.dim, padding: '8px 0' }}>None right now.</div>}
+        </div>
+        <div style={card}>
+          <div style={{ fontSize: F.md, fontWeight: 800, color: C.blue, marginBottom: 4 }}>🧭 One step from A — upgrade watch</div>
+          <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 6 }}>Clean B-grade names missing ≤2 A-gates — confirm the missing piece in the next print and you're early.</div>
+          {nearA.length ? nearA.map((s) => ARow(s, 'needs ' + missingA(s).join(' + '))) : <div style={{ fontSize: F.sm, color: C.dim, padding: '8px 0' }}>None right now.</div>}
+        </div>
         <div style={card}>
           <div style={{ fontSize: F.md, fontWeight: 800, color: C.red, marginBottom: 4 }}>🔻 Reduce / exit — C + E · {analytics.reduce.length ? counts.C + counts.E : 0}</div>
           <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 6 }}>Lowest scores first — a profit decline, a cash/pledge/leverage red flag, or overpaying for growth (PEG&gt;3).</div>
