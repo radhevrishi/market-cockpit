@@ -9,7 +9,7 @@ import { checkRateLimit } from '@/lib/rateLimit';
 //   - Heavy routes (server-side scrape / file parse / EDGAR XBRL):
 //     30 requests / minute / IP
 //   - Other API routes:
-//     120 requests / minute / IP
+//     300 requests / minute / IP
 //
 // Individual route handlers may apply additional, tighter limits (e.g.
 // watchlist write paths). The middleware is the outermost filter so abusive
@@ -69,7 +69,7 @@ export function middleware(req: NextRequest) {
 
   const ip = clientIp(req);
   const isHeavy = HEAVY_ROUTES.some((p) => path.startsWith(p));
-  const limit = isHeavy ? 30 : 120;
+  const limit = isHeavy ? 30 : 300; // 120 -> 300: home dashboard fires ~20 calls per auto-refresh tick; a couple of tabs + manual refreshes tripped 120 and 429-wiped every panel
   const windowMs = 60_000;
 
   const { allowed, remaining, resetInMs } = checkRateLimit(ip, limit, windowMs);
