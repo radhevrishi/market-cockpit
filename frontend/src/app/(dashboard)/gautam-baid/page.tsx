@@ -833,12 +833,12 @@ export default function GautamBaidPlaybookPage() {
   const go = (id: string) => { setActive(id); save(LS.read, id); try { document.getElementById('baid-top')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch {} };
   const idx = Math.max(0, PARTS.findIndex((p) => p.id === active));
   const part = PARTS[idx];
-  const wrap = { maxWidth: 1680, margin: '0 auto', padding: '0 22px' } as const;
+  const wrap = { maxWidth: 2100, margin: '0 auto', padding: '0 16px' } as const;
 
   return (
     <div style={{ background: C.bg, minHeight: '100vh', color: C.txt, fontFamily: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif' }}>
       <div style={{ position: 'sticky', top: 0, zIndex: 20, background: `${C.bg}f0`, borderBottom: `1px solid ${C.line}`, backdropFilter: 'blur(8px)' }}>
-        <div style={{ ...wrap, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '8px 22px' }}>
+        <div style={{ ...wrap, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '8px 16px' }}>
           <Link href="/" style={{ fontSize: F.sm, color: C.muted, textDecoration: 'none', fontWeight: 700 }}>← Home</Link>
           <span style={{ fontSize: F.md, fontWeight: 900, color: C.gold, letterSpacing: 0.5 }}>📖 THE GAUTAM BAID PLAYBOOK</span>
           <span style={{ marginLeft: 'auto', fontSize: F.sm, color: C.muted }}>Part {part.n} / 20</span>
@@ -846,7 +846,7 @@ export default function GautamBaidPlaybookPage() {
       </div>
 
       <div id="baid-top" style={{ borderBottom: `1px solid ${C.line}`, background: `radial-gradient(900px 240px at 12% -40%, ${C.gold}14, transparent), radial-gradient(700px 220px at 90% -60%, ${C.violet}10, transparent)` }}>
-        <div style={{ ...wrap, padding: '26px 22px 22px' }}>
+        <div style={{ ...wrap, padding: '26px 16px 22px' }}>
           <div style={{ fontSize: F.lg, fontWeight: 800, color: C.gold, letterSpacing: 0.6, textTransform: 'uppercase', whiteSpace: 'nowrap', marginTop: 2 }}>How to think, read markets & compound like one of India’s most disciplined value investors</div>
           <div style={{ marginTop: 12, fontSize: F.sm, color: C.muted, lineHeight: 1.6, maxWidth: 980 }}>
             Read it cover-to-cover once for the full mental model, then keep <b style={{ color: C.txt }}>Parts 5, 7, 9, 10 & 13</b> open as live operating checklists. Re-read quarterly. Don’t try to be him — adopt the disciplines and let your own circle of competence decide the rest.
@@ -854,7 +854,7 @@ export default function GautamBaidPlaybookPage() {
         </div>
       </div>
 
-      <div style={{ ...wrap, padding: '18px 22px 90px', display: 'flex', gap: 22, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+      <div style={{ ...wrap, padding: '18px 16px 90px', display: 'flex', gap: 22, alignItems: 'flex-start', flexWrap: 'wrap' }}>
         {/* nav rail */}
         <div style={{ flex: '1 1 240px', maxWidth: 300, minWidth: 220, position: 'sticky', top: 58 }}>
           {GROUPS.map((g, gi) => (
