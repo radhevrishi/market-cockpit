@@ -93,8 +93,11 @@ export async function GET(request: Request) {
       ];
 
       // Take top 8 event signals (leave room for structural alerts)
+      const seen = new Set<string>();
       const topEvents = allSignals
         .filter((s: any) => s.headline || s.narrative || s.summary)
+        .filter((s: any) => { const k = (s.symbol || '') + '|' + (s.headline || s.narrative || s.summary || ''); if (seen.has(k)) return false; seen.add(k); return true; })
+        .sort((a: any, b: any) => Number(b.weightedScore ?? b.importance_score ?? b.score ?? 0) - Number(a.weightedScore ?? a.importance_score ?? a.score ?? 0))
         .slice(0, 8)
         .map((s: any, idx: number) => ({
           id: `intel-${idx}-${s.symbol || 'mkt'}`,
