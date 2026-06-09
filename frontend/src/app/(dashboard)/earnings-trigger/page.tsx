@@ -50,7 +50,7 @@ type Scored = {
 // ---- THE ENGINE (validated against a 145-stock Screener export) ----
 // ignoreVal = "what would be a multibagger if I ignore valuation?" — drops the PE-cycle factor from the score (renormalising
 // the other six) and removes the valuation gates from A/C, so price-rich names surface and only genuinely weak ones stay low.
-function scoreRow(d: Row, ignoreVal = false): Scored {
+function scoreRow(d: Row, ignoreVal = false, ignoreCfo = false): Scored {
   const f = (k: string) => num(d[k]);
   const qp = f('YOY Quarterly profit growth'), qs = f('YOY Quarterly sales growth');
   const notes: string[] = [];
@@ -102,7 +102,8 @@ function scoreRow(d: Row, ignoreVal = false): Scored {
   let cfoS; if (isNaN(cfo)) cfoS = 0.5; else if (cfo < 0) cfoS = 0.15; else if (cfo < 0.6) cfoS = 0.2; else if (cfo < 0.8) cfoS = 0.5; else if (cfo < 1) cfoS = 0.8; else if (cfo <= 6) cfoS = 1; else cfoS = 0.5;
   const roceS = isNaN(roce) ? 0.3 : c01(roce / 30);
   let deS; if (isNaN(de)) deS = 0.6; else if (de <= 0.3) deS = 1; else if (de <= 0.5) deS = 0.85; else if (de <= 1) deS = 0.6; else if (de <= 2) deS = 0.3; else deS = 0.1;
-  const quality = 0.4 * cfoS + 0.35 * roceS + 0.25 * deS;
+  // ignoreCfo = bull-market mode: drop cash-flow quality (CFO/PAT) from the quality score, judging only on ROCE + balance sheet.
+  const quality = ignoreCfo ? c01((0.35 * roceS + 0.25 * deS) / 0.60) : (0.4 * cfoS + 0.35 * roceS + 0.25 * deS);
   const prom = f('Promoter holding'), dProm = f('Change in promoter holding 3Years'), dFII = f('Change in FII holding 3Years'), dDII = f('Change in DII holding 3Years'), pledge = f('Pledged percentage');
   let promS = prom >= 50 ? 1 : prom >= 35 ? 0.7 : prom >= 20 ? 0.5 : 0.3; if (isNaN(prom)) promS = 0.4;
   const flowS = (dFII > 0 ? 0.5 : 0) + (dDII > 0 ? 0.3 : 0) + (dProm > 0 ? 0.2 : 0);
@@ -117,7 +118,7 @@ function scoreRow(d: Row, ignoreVal = false): Scored {
   const wSum = 0.20 + 0.18 + wMul + 0.11 + 0.12 + 0.10 + 0.08;
   let composite = 100 * (0.20 * trigger + 0.18 * accel + wMul * multiple + 0.11 * margin + 0.12 * stage + 0.10 * quality + 0.08 * sponsor) / wSum;
   const flags: string[] = [];
-  if (!isNaN(cfo) && cfo < 0.6) { flags.push('CFO/PAT<0.6 earnings quality'); composite *= 0.7; }
+  if (!ignoreCfo && !isNaN(cfo) && cfo < 0.6) { flags.push('CFO/PAT<0.6 earnings quality'); composite *= 0.7; }
   if (!isNaN(pledge) && pledge > 25) { flags.push('High pledge'); composite *= 0.6; }
   if (!isNaN(de) && de > 2 && !isNaN(ic) && ic < 1.5) { flags.push('Leveraged + low int-cover'); composite *= 0.7; }
   if (pegMeaningful && peg > 3) flags.push('PEG>3 compression risk');
@@ -314,7 +315,8 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
   const [sort, setSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'composite', dir: 'desc' });
   const [trendUp, setTrendUp] = useState(false);
   const [marginUp, setMarginUp] = useState(false);
-  const [ignoreVal, setIgnoreVal] = useState(false);
+  const [ignoreVal, setIgnoreVal] = useState(false); // independent toggle — drop the valuation factor
+  const [ignoreCfo, setIgnoreCfo] = useState(false); // independent toggle — drop cash-flow quality (CFO/PAT)
   const [fField, setFField] = useState('');
   const [fMin, setFMin] = useState('');
   const [fMax, setFMax] = useState('');
@@ -359,7 +361,7 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
   }, [ingest]);
   const clearAll = () => { setData([]); setFiles([]); try { localStorage.removeItem(KEY); localStorage.removeItem(NKEY); } catch {} };
 
-  const scored = useMemo(() => data.map((d) => scoreRow(d, ignoreVal)).filter((s) => s.name).sort((a, b) => b.composite - a.composite), [data, ignoreVal]);
+  const scored = useMemo(() => data.map((d) => scoreRow(d, ignoreVal, ignoreCfo)).filter((s) => s.name).sort((a, b) => b.composite - a.composite), [data, ignoreVal, ignoreCfo]);
   const counts = useMemo(() => { const m: Record<string, number> = { A: 0, B: 0, C: 0, D: 0, E: 0 }; scored.forEach((s) => m[s.scenario]++); return m; }, [scored]);
   const shown = useMemo(() => {
     const fmin = fMin === '' ? null : parseFloat(fMin);
@@ -452,6 +454,7 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
               <button onClick={() => setTrendUp((v) => !v)} title="Show only stocks trading above BOTH their 50-DMA and 200-DMA (Stage-2 uptrend)" style={{ cursor: 'pointer', fontSize: F.sm, fontWeight: 800, padding: '6px 12px', borderRadius: 999, border: `1px solid ${trendUp ? C.green : C.line2}`, background: trendUp ? `${C.green}1f` : 'transparent', color: trendUp ? C.green : C.muted }}>↑ Above 50 &amp; 200-DMA</button>
               <button onClick={() => setMarginUp((v) => !v)} title="Show only stocks whose latest-quarter OPM rose vs the preceding quarter" style={{ cursor: 'pointer', fontSize: F.sm, fontWeight: 800, padding: '6px 12px', borderRadius: 999, border: `1px solid ${marginUp ? C.cyan : C.line2}`, background: marginUp ? `${C.cyan}1f` : 'transparent', color: marginUp ? C.cyan : C.muted }}>📈 Margins rising</button>
               <button onClick={() => setIgnoreVal((v) => !v)} title="Re-score and re-rank IGNORING valuation: drops the PE-cycle factor and the cheap/PEG gates. Shows which names would be A-grade multibaggers if price didn't matter — and which stay weak even then." style={{ cursor: 'pointer', fontSize: F.sm, fontWeight: 800, padding: '6px 12px', borderRadius: 999, border: `1px solid ${ignoreVal ? C.violet : C.line2}`, background: ignoreVal ? `${C.violet}2a` : 'transparent', color: ignoreVal ? C.violet : C.muted }}>{ignoreVal ? '☑' : '☐'} Ignore valuation</button>
+              <button onClick={() => setIgnoreCfo((v) => !v)} title="Re-score IGNORING cash-flow quality (CFO/PAT): drops it from the quality score and removes the CFO/PAT<0.6 sell flag. What a bull market rewards. Independent of Ignore valuation — tick both to ignore price AND cash." style={{ cursor: 'pointer', fontSize: F.sm, fontWeight: 800, padding: '6px 12px', borderRadius: 999, border: `1px solid ${ignoreCfo ? C.violet : C.line2}`, background: ignoreCfo ? `${C.violet}2a` : 'transparent', color: ignoreCfo ? C.violet : C.muted }}>{ignoreCfo ? '☑' : '☐'} Ignore CFO/PAT</button>
               <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name / sector…" style={{ marginLeft: 'auto', fontSize: F.sm, background: C.panel2, border: `1px solid ${C.line2}`, color: C.txt, borderRadius: 8, padding: '7px 12px', minWidth: 180 }} />
               <label style={{ fontSize: F.xs, color: C.muted, display: 'flex', alignItems: 'center', gap: 6 }}>min score {minScore}<input type="range" min={0} max={90} value={minScore} onChange={(e) => setMinScore(+e.target.value)} /></label>
               <select value={fField} onChange={(e) => setFField(e.target.value)} title="Filter on any numeric field" style={{ fontSize: F.sm, background: C.panel2, border: `1px solid ${C.line2}`, color: fField ? C.txt : C.muted, borderRadius: 8, padding: '7px 10px' }}>
@@ -467,9 +470,9 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
               ) : null}
             </div>
 
-            {ignoreVal ? (
+            {(ignoreVal || ignoreCfo) ? (
               <div style={{ marginTop: 12, fontSize: F.sm, color: C.violet, background: `${C.violet}14`, border: `1px solid ${C.violet}44`, borderRadius: 8, padding: '9px 13px', lineHeight: 1.5 }}>
-                <b>Valuation ignored.</b> Score &amp; A–E are recomputed without the PE-cycle factor and without the cheap/PEG gates — so a great-but-expensive name can now rank A. Read it as: these would be multibaggers <i>if price didn’t matter</i>; anything still low here (or in C/E) is weak on the fundamentals regardless of valuation. The PEG column still shows the price you’d actually pay.
+                <b>Ignoring {[ignoreVal && 'valuation', ignoreCfo && 'cash quality (CFO/PAT)'].filter(Boolean).join(' + ')}.</b> Score &amp; A–E are recomputed with {[ignoreVal && 'the PE-cycle factor + the cheap/PEG gates', ignoreCfo && 'the CFO/PAT quality score + its sell flag'].filter(Boolean).join(' and ')} removed — so names weak on {[ignoreVal && 'price', ignoreCfo && 'cash conversion'].filter(Boolean).join(' / ')} can still rank A (what a bull market rewards). Anything still in C/E is weak on the remaining fundamentals. The PEG &amp; CFO/PAT columns still show the real figures.
               </div>
             ) : null}
 
