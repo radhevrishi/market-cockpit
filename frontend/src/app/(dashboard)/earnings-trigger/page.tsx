@@ -473,6 +473,41 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
       if (!isNaN(s.roce) && s.roce >= 20) p.push('ROCE ' + s.roce.toFixed(0) + '%');
       return p.slice(0, 5).join(' · ') || 'see 7-factor breakdown';
     };
+    const cnt = (f: (s: Scored) => boolean) => scored.filter(f).length;
+    const histRows = [[0, 40], [40, 55], [55, 70], [70, 85], [85, 101]].map(([lo, hi]) => ({ lbl: lo + '–' + (hi === 101 ? 100 : hi), n: cnt((s) => s.composite >= lo && s.composite < hi) }));
+    const factorAvg = VARS.map((v) => ({ label: v.label, color: v.color, avg: scored.length ? scored.reduce((a, s) => a + s.subs[v.k], 0) / scored.length : 0 }));
+    const beatRows = [
+      { lbl: '<0% (miss)', n: cnt((s) => !isNaN(s.qp) && s.qp < 0) },
+      { lbl: '0–25%', n: cnt((s) => !isNaN(s.qp) && s.qp >= 0 && s.qp < 25) },
+      { lbl: '25–40%', n: cnt((s) => !isNaN(s.qp) && s.qp >= 25 && s.qp < 40) },
+      { lbl: '40–100%', n: cnt((s) => !isNaN(s.qp) && s.qp >= 40 && s.qp < 100) },
+      { lbl: '100%+', n: cnt((s) => !isNaN(s.qp) && s.qp >= 100) },
+    ];
+    const pegRows = [
+      { lbl: 'Cheap <1', n: cnt((s) => s.pegNM && s.peg < 1) },
+      { lbl: 'Fair 1–2', n: cnt((s) => s.pegNM && s.peg >= 1 && s.peg < 2) },
+      { lbl: 'Full 2–3', n: cnt((s) => s.pegNM && s.peg >= 2 && s.peg < 3) },
+      { lbl: 'Rich >3', n: cnt((s) => s.pegNM && s.peg >= 3) },
+      { lbl: 'n/m', n: cnt((s) => !s.pegNM) },
+    ];
+    const cfoRows = [
+      { lbl: 'Burn <0', n: cnt((s) => !isNaN(s.cfo) && s.cfo < 0) },
+      { lbl: 'Weak 0–0.6', n: cnt((s) => !isNaN(s.cfo) && s.cfo >= 0 && s.cfo < 0.6) },
+      { lbl: 'OK 0.6–1', n: cnt((s) => !isNaN(s.cfo) && s.cfo >= 0.6 && s.cfo < 1) },
+      { lbl: 'Strong 1–6', n: cnt((s) => !isNaN(s.cfo) && s.cfo >= 1 && s.cfo <= 6) },
+      { lbl: 'n/m', n: cnt((s) => isNaN(s.cfo) || Math.abs(s.cfo) > 6) },
+    ];
+    const momAll = scored.filter((s) => !isNaN(s.r1y));
+    const momLead = [...momAll].sort((a, b) => b.r1y - a.r1y).slice(0, 6);
+    const momLag = [...momAll].sort((a, b) => a.r1y - b.r1y).slice(0, 6);
+    const r1yTag = (s: Scored) => (isNaN(s.r1y) ? '' : (s.r1y >= 0 ? '+' : '') + s.r1y.toFixed(0) + '%');
+    const distBar = (rows: { lbl: string; n: number }[], color: string) => { const mx = Math.max(1, ...rows.map((r) => r.n)); return rows.map((r) => (
+      <div key={r.lbl} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
+        <span style={{ width: 96, fontSize: F.xs, color: C.muted, whiteSpace: 'nowrap' }}>{r.lbl}</span>
+        <div style={{ flex: 1, height: 9, background: C.panel2, borderRadius: 4, overflow: 'hidden' }}><div style={{ width: `${(r.n / mx) * 100}%`, height: '100%', background: color }} /></div>
+        <span style={{ width: 24, textAlign: 'right', fontSize: F.sm, fontWeight: 800, color: C.muted }}>{r.n}</span>
+      </div>
+    )); };
     return (
     <div style={{ marginTop: 16 }}>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
@@ -571,6 +606,44 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
               <span style={{ fontSize: F.sm, fontWeight: 800, color: n > 0 ? C.red : C.dim }}>{n}</span>
             </div>
           ))}
+        </div>
+        <div style={card}>
+          <div style={{ fontSize: F.md, fontWeight: 800, color: C.blue, marginBottom: 8 }}>📊 Score distribution</div>
+          <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 4 }}>Where the cohort's quality sits — a left-heavy set means few real setups.</div>
+          {distBar(histRows, C.blue)}
+        </div>
+        <div style={card}>
+          <div style={{ fontSize: F.md, fontWeight: 800, color: C.txt, marginBottom: 8 }}>🧬 Factor leadership (avg across set)</div>
+          <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 4 }}>Which of the 7 variables is carrying the screen — and which is the weak link.</div>
+          {factorAvg.map((f) => (
+            <div key={f.label} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
+              <span style={{ width: 74, fontSize: F.xs, color: C.muted }}>{f.label}</span>
+              <div style={{ flex: 1, height: 9, background: C.panel2, borderRadius: 4, overflow: 'hidden' }}><div style={{ width: `${f.avg * 100}%`, height: '100%', background: f.color }} /></div>
+              <span style={{ width: 28, textAlign: 'right', fontSize: F.sm, fontWeight: 800, color: C.muted }}>{Math.round(f.avg * 100)}</span>
+            </div>
+          ))}
+        </div>
+        <div style={card}>
+          <div style={{ fontSize: F.md, fontWeight: 800, color: C.green, marginBottom: 8 }}>🚀 Beat magnitude — YoY PAT</div>
+          <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 4 }}>How explosive the beats are. The masterclass floor is ≥25%, ≥40% is the multibagger band.</div>
+          {distBar(beatRows, C.green)}
+        </div>
+        <div style={card}>
+          <div style={{ fontSize: F.md, fontWeight: 800, color: C.violet, marginBottom: 8 }}>🏷️ Valuation spread — PEG</div>
+          <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 4 }}>Where the names sit on price-for-growth. Cheap = re-rating room; rich = compression risk.</div>
+          {distBar(pegRows, C.violet)}
+        </div>
+        <div style={card}>
+          <div style={{ fontSize: F.md, fontWeight: 800, color: C.gold, marginBottom: 8 }}>💵 Earnings quality — CFO/PAT</div>
+          <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 4 }}>Cash backing the profit (Buffett: &lt;0.6 is a sell). Burn / weak = low-quality beats.</div>
+          {distBar(cfoRows, C.gold)}
+        </div>
+        <div style={card}>
+          <div style={{ fontSize: F.md, fontWeight: 800, color: C.txt, marginBottom: 4 }}>📈 1-year price momentum</div>
+          <div style={{ fontSize: F.xs, color: C.green, marginTop: 4, marginBottom: 2 }}>Leaders — already re-rated, don't chase blindly</div>
+          {momLead.map((s) => ARow(s, r1yTag(s)))}
+          <div style={{ fontSize: F.xs, color: C.red, marginTop: 8, marginBottom: 2 }}>Laggards — cheap, or a value trap?</div>
+          {momLag.map((s) => ARow(s, r1yTag(s)))}
         </div>
       </div>
       <div style={{ marginTop: 12, fontSize: F.xs, color: C.dim, lineHeight: 1.6 }}>Quick read: act on <b style={{ color: C.green }}>A</b>, accumulate <b style={{ color: C.cyan }}>D</b> on weakness, reduce <b style={{ color: C.amber }}>C</b>/<b style={{ color: C.red }}>E</b>. Confirm the concall (guidance + sector flow) before buying, and never buy on result day. The toggles above (ignore valuation / CFO-PAT) re-rank this whole dashboard. Not investment advice.</div>
