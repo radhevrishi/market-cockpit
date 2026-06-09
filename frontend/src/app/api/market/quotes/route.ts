@@ -641,6 +641,37 @@ async function fetchIndianDataWithCache() {
           } catch { /* Yahoo failure tolerated — we have blob prices */ }
         }
 
+        // PATCH 1130 - live intraday quotes captured from a clean IP (GitHub Actions),
+        // stored in KV, because Yahoo blocks the server datacenter IP (yahoo:0 above).
+        // Overlay the fresh nse-movers-live blob so movers reflect TODAY, not T-1 EOD.
+        let _liveKvUsed = 0, _liveKvAgeMin = -1;
+        try {
+          const _lu = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || "";
+          const _lt = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || "";
+          if (_lu && _lt) {
+            const _lbase = _lu.charAt(_lu.length - 1) === "/" ? _lu.slice(0, -1) : _lu;
+            const _lr = await fetch(_lbase + "/get/nse-movers-live:v1:latest", { headers: { Authorization: "Bearer " + _lt }, cache: "no-store" });
+            const _lj: any = await _lr.json();
+            let _lraw: any = _lj && _lj.result;
+            if (typeof _lraw === "string" && _lraw.length > 2) {
+              let _lblob: any = JSON.parse(_lraw);
+              if (typeof _lblob === "string") _lblob = JSON.parse(_lblob);
+              const _ltk: any[] = (_lblob && _lblob.tickers) || [];
+              if (_ltk.length) {
+                _liveKvAgeMin = Math.round((Date.now() - new Date(_lblob.generatedAt || 0).getTime()) / 60000);
+                if (_liveKvAgeMin >= 0 && _liveKvAgeMin < 45) {
+                  for (const _q of _ltk) {
+                    const _sym = String(_q.ticker || "").toUpperCase();
+                    if (!_sym || yahooMap.has(_sym)) continue;
+                    yahooMap.set(_sym, { symbol: _sym, regularMarketPrice: _q.price, regularMarketPreviousClose: _q.previousClose, regularMarketChange: _q.change, regularMarketChangePercent: _q.changePercent, regularMarketVolume: _q.volume });
+                    _liveKvUsed++;
+                  }
+                }
+              }
+            }
+          }
+        } catch {}
+        void _liveKvUsed;
         let mergedStocks: any[] = [];
         for (const t of tickers) {
           let price = 0, prevClose = 0, change = 0, changePercent = 0;
