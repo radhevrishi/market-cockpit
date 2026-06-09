@@ -537,9 +537,9 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
 
       <div style={{ ...wrap, padding: '20px 16px 80px' }}>
         <div style={{ fontSize: F.xs, fontWeight: 800, color: C.gold, letterSpacing: 1.2, textTransform: 'uppercase' }}>Why some Q-beats become multibaggers and other beats get punished</div>
-        <div style={{ fontSize: F.hero, fontWeight: 900, marginTop: 6, lineHeight: 1.1 }}>Earnings-Trigger Analyzer</div>
-        <div style={{ fontSize: F.base, color: C.muted, lineHeight: 1.55, marginTop: 8, maxWidth: 1180 }}>
-          A beat alone isn't a buy: the engine ranks what converts it — <b style={{ color: C.txt }}>acceleration × PE-cycle × margin × chart stage × quality × sponsorship</b>.
+        <div style={{ marginTop: 6, display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: F.xl, fontWeight: 900, lineHeight: 1.1, whiteSpace: 'nowrap' }}>Earnings-Trigger Analyzer</span>
+          <span style={{ fontSize: F.sm, color: C.muted, lineHeight: 1.4 }}>A beat alone isn't a buy: the engine ranks what converts it — <b style={{ color: C.txt }}>acceleration × PE-cycle × margin × chart stage × quality × sponsorship</b>.</span>
         </div>
 
         {/* upload zone */}
