@@ -163,6 +163,21 @@ const fmtPct = (n: number) => isNaN(n) ? '—' : (n > 999 ? '>999%' : n < -999 ?
 const fmtOPM = (n: number) => isNaN(n) ? '—' : (Math.abs(n) > 120 ? 'n/m' : n.toFixed(0));
 const fmtCFO = (n: number) => isNaN(n) ? '—' : (Math.abs(n) > 20 ? 'n/m' : n.toFixed(2));
 
+// ---- sort / filter accessors (every column is sortable; every numeric field is filterable) ----
+function getVal(s: Scored, k: string): number | string {
+  switch (k) {
+    case 'name': return (s.name || '').toLowerCase();
+    case 'scenario': return s.scenario;
+    case 'composite': return s.composite;
+    case 'qp': return s.qp; case 'qs': return s.qs;
+    case 'peg': return s.pegNM ? s.peg : NaN;
+    case 'om0': return s.om0; case 'cfo': return s.cfo; case 'roce': return s.roce;
+    case 'r1y': return s.r1y; case 'mcap': return s.mcap;
+    default: return s.composite;
+  }
+}
+const NUMFIELDS: [string, string][] = [['composite', 'Score'], ['qp', 'YoY PAT %'], ['qs', 'YoY Sales %'], ['peg', 'PEG'], ['om0', 'OPM latest'], ['cfo', 'CFO/PAT'], ['roce', 'ROCE %'], ['r1y', '1Y return %'], ['mcap', 'Mkt cap (Cr)']];
+
 const SAMPLE = 'Name, NSE Code, YOY Quarterly profit growth, YOY Quarterly sales growth, PEG Ratio, Price to Earning, Historical PE 5Years, OPM latest quarter, OPM preceding quarter, Profit after tax latest quarter … (a standard Screener.in export — all 62 columns supported)';
 
 // ---- The "do-the-work" checklist: the 2 variables the screen can't read (guidance language + sector flow),
@@ -281,6 +296,11 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
   const [minScore, setMinScore] = useState(0);
   const [showGuide, setShowGuide] = useState(false);
   const [showRules, setShowRules] = useState(false);
+  const [sort, setSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'composite', dir: 'desc' });
+  const [trendUp, setTrendUp] = useState(false);
+  const [fField, setFField] = useState('');
+  const [fMin, setFMin] = useState('');
+  const [fMax, setFMax] = useState('');
   // refs so the async FileReader merge always sees the latest data/files (avoids stale closures)
   const dataRef = useRef<Row[]>([]); const filesRef = useRef<string[]>([]);
   useEffect(() => { dataRef.current = data; }, [data]);
@@ -324,9 +344,30 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
 
   const scored = useMemo(() => data.map(scoreRow).filter((s) => s.name).sort((a, b) => b.composite - a.composite), [data]);
   const counts = useMemo(() => { const m: Record<string, number> = { A: 0, B: 0, C: 0, D: 0, E: 0 }; scored.forEach((s) => m[s.scenario]++); return m; }, [scored]);
-  const shown = useMemo(() => scored.filter((s) => (scenFilter === 'ALL' || s.scenario === scenFilter) && s.composite >= minScore && (!q || (s.name + ' ' + s.nse + ' ' + s.industry).toLowerCase().includes(q.toLowerCase()))), [scored, scenFilter, minScore, q]);
+  const shown = useMemo(() => {
+    const fmin = fMin === '' ? null : parseFloat(fMin);
+    const fmax = fMax === '' ? null : parseFloat(fMax);
+    let arr = scored.filter((s) =>
+      (scenFilter === 'ALL' || s.scenario === scenFilter) &&
+      s.composite >= minScore &&
+      (!q || (s.name + ' ' + s.nse + ' ' + s.industry).toLowerCase().includes(q.toLowerCase())) &&
+      (!trendUp || (s.trend.p50 === 'y' && s.trend.p200 === 'y')));
+    if (fField) {
+      arr = arr.filter((s) => { const v = getVal(s, fField); if (typeof v !== 'number' || isNaN(v)) return false; if (fmin != null && v < fmin) return false; if (fmax != null && v > fmax) return false; return true; });
+    }
+    const dir = sort.dir === 'asc' ? 1 : -1;
+    return [...arr].sort((a, b) => {
+      const va = getVal(a, sort.key), vb = getVal(b, sort.key);
+      if (typeof va === 'string' || typeof vb === 'string') { const sa = String(va), sb = String(vb); return dir * (sa < sb ? -1 : sa > sb ? 1 : 0); }
+      const na = isNaN(va), nb = isNaN(vb); if (na && nb) return 0; if (na) return 1; if (nb) return -1; // NaN/n-a always last
+      return dir * (va - vb);
+    });
+  }, [scored, scenFilter, minScore, q, trendUp, fField, fMin, fMax, sort]);
 
   const wrap = { maxWidth: 2100, margin: '0 auto', padding: '0 16px' } as const;
+  const onSort = (k: string) => setSort((s) => ({ key: k, dir: s.key === k ? (s.dir === 'asc' ? 'desc' : 'asc') : (k === 'name' || k === 'scenario' ? 'asc' : 'desc') }));
+  const sArr = (k: string) => (sort.key === k ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : '');
+  const sStyle = (k: string, base: Record<string, any>): any => ({ ...base, cursor: 'pointer', userSelect: 'none', color: sort.key === k ? C.txt : C.muted });
 
   return (
     <div style={{ background: C.bg, minHeight: '100vh', color: C.txt, fontFamily: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif' }}>
@@ -390,8 +431,20 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
               {(['A', 'B', 'C', 'D', 'E'] as const).map((k) => (
                 <button key={k} onClick={() => setScenFilter(k)} style={{ cursor: 'pointer', fontSize: F.sm, fontWeight: 800, padding: '6px 12px', borderRadius: 999, border: `1px solid ${scenFilter === k ? SCEN[k].c : C.line2}`, background: scenFilter === k ? `${SCEN[k].c}1f` : 'transparent', color: scenFilter === k ? SCEN[k].c : C.muted }} title={SCEN[k].tip}>{SCEN[k].label} · {counts[k]}</button>
               ))}
-              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name / sector…" style={{ marginLeft: 'auto', fontSize: F.sm, background: C.panel2, border: `1px solid ${C.line2}`, color: C.txt, borderRadius: 8, padding: '7px 12px', minWidth: 200 }} />
+              <button onClick={() => setTrendUp((v) => !v)} title="Show only stocks trading above BOTH their 50-DMA and 200-DMA (Stage-2 uptrend)" style={{ cursor: 'pointer', fontSize: F.sm, fontWeight: 800, padding: '6px 12px', borderRadius: 999, border: `1px solid ${trendUp ? C.green : C.line2}`, background: trendUp ? `${C.green}1f` : 'transparent', color: trendUp ? C.green : C.muted }}>↑ Above 50 &amp; 200-DMA</button>
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name / sector…" style={{ marginLeft: 'auto', fontSize: F.sm, background: C.panel2, border: `1px solid ${C.line2}`, color: C.txt, borderRadius: 8, padding: '7px 12px', minWidth: 180 }} />
               <label style={{ fontSize: F.xs, color: C.muted, display: 'flex', alignItems: 'center', gap: 6 }}>min score {minScore}<input type="range" min={0} max={90} value={minScore} onChange={(e) => setMinScore(+e.target.value)} /></label>
+              <select value={fField} onChange={(e) => setFField(e.target.value)} title="Filter on any numeric field" style={{ fontSize: F.sm, background: C.panel2, border: `1px solid ${C.line2}`, color: fField ? C.txt : C.muted, borderRadius: 8, padding: '7px 10px' }}>
+                <option value="">Filter field…</option>
+                {NUMFIELDS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </select>
+              {fField ? (
+                <>
+                  <input type="number" value={fMin} onChange={(e) => setFMin(e.target.value)} placeholder="min" style={{ width: 66, fontSize: F.sm, background: C.panel2, border: `1px solid ${C.line2}`, color: C.txt, borderRadius: 8, padding: '7px 8px' }} />
+                  <input type="number" value={fMax} onChange={(e) => setFMax(e.target.value)} placeholder="max" style={{ width: 66, fontSize: F.sm, background: C.panel2, border: `1px solid ${C.line2}`, color: C.txt, borderRadius: 8, padding: '7px 8px' }} />
+                  <button onClick={() => { setFField(''); setFMin(''); setFMax(''); }} title="Clear field filter" style={{ cursor: 'pointer', fontSize: F.xs, color: C.muted, background: 'transparent', border: `1px solid ${C.line2}`, borderRadius: 999, padding: '6px 10px' }}>✕</button>
+                </>
+              ) : null}
             </div>
 
             {/* leaderboard */}
@@ -399,17 +452,17 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
               <div style={{ minWidth: 1500 }}>
                 <div style={{ display: 'flex', background: C.panel2, borderBottom: `1px solid ${C.line2}`, fontSize: F.xs, fontWeight: 800, color: C.muted, position: 'sticky', top: 0 }}>
                   <div style={{ width: 44, padding: '10px 8px' }}>#</div>
-                  <div style={{ flex: '0 0 220px', padding: '10px 8px' }}>Stock</div>
-                  <div style={{ flex: '0 0 150px', padding: '10px 8px' }}>Scenario</div>
-                  <div style={{ flex: '0 0 110px', padding: '10px 8px' }}>Score</div>
+                  <div onClick={() => onSort('name')} style={sStyle('name', { flex: '0 0 220px', padding: '10px 8px' })}>Stock{sArr('name')}</div>
+                  <div onClick={() => onSort('scenario')} style={sStyle('scenario', { flex: '0 0 150px', padding: '10px 8px' })}>Scenario{sArr('scenario')}</div>
+                  <div onClick={() => onSort('composite')} style={sStyle('composite', { flex: '0 0 110px', padding: '10px 8px' })}>Score{sArr('composite')}</div>
                   <div style={{ flex: '0 0 250px', padding: '10px 8px' }}>7-variable breakdown</div>
-                  <div style={{ flex: '0 0 80px', padding: '10px 8px', textAlign: 'right' }}>YoY PAT</div>
-                  <div style={{ flex: '0 0 80px', padding: '10px 8px', textAlign: 'right' }}>YoY Sales</div>
-                  <div style={{ flex: '0 0 64px', padding: '10px 8px', textAlign: 'right' }}>PEG</div>
-                  <div style={{ flex: '0 0 92px', padding: '10px 8px', textAlign: 'right' }}>OPM q-1→q</div>
-                  <div style={{ flex: '0 0 70px', padding: '10px 8px', textAlign: 'right' }}>CFO/PAT</div>
-                  <div style={{ flex: '0 0 64px', padding: '10px 8px', textAlign: 'right' }}>ROCE</div>
-                  <div style={{ flex: '0 0 68px', padding: '10px 8px', textAlign: 'right' }} title="Price return over the last 1 year">1Y ret</div>
+                  <div onClick={() => onSort('qp')} style={sStyle('qp', { flex: '0 0 80px', padding: '10px 8px', textAlign: 'right' })}>YoY PAT{sArr('qp')}</div>
+                  <div onClick={() => onSort('qs')} style={sStyle('qs', { flex: '0 0 80px', padding: '10px 8px', textAlign: 'right' })}>YoY Sales{sArr('qs')}</div>
+                  <div onClick={() => onSort('peg')} style={sStyle('peg', { flex: '0 0 64px', padding: '10px 8px', textAlign: 'right' })}>PEG{sArr('peg')}</div>
+                  <div onClick={() => onSort('om0')} style={sStyle('om0', { flex: '0 0 92px', padding: '10px 8px', textAlign: 'right' })}>OPM q-1→q{sArr('om0')}</div>
+                  <div onClick={() => onSort('cfo')} style={sStyle('cfo', { flex: '0 0 70px', padding: '10px 8px', textAlign: 'right' })}>CFO/PAT{sArr('cfo')}</div>
+                  <div onClick={() => onSort('roce')} style={sStyle('roce', { flex: '0 0 64px', padding: '10px 8px', textAlign: 'right' })}>ROCE{sArr('roce')}</div>
+                  <div onClick={() => onSort('r1y')} style={sStyle('r1y', { flex: '0 0 68px', padding: '10px 8px', textAlign: 'right' })} title="Price return over the last 1 year">1Y ret{sArr('r1y')}</div>
                   <div style={{ flex: '0 0 152px', padding: '10px 8px' }} title="Minervini Stage-2 trend template: Price &gt; 200-DMA · Price &gt; 50-DMA · 50-DMA &gt; 200-DMA">Stage-2 trend</div>
                   <div style={{ flex: '1 1 200px', padding: '10px 8px' }}>Flags &amp; notes</div>
                 </div>
