@@ -54,10 +54,12 @@ if (!KV_URL || !KV_TOKEN) {
 
 function decodeEntities(s) {
   return String(s)
-    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'")
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(parseInt(n, 10)))
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
     .replace(/&nbsp;/g, ' ')
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)));
+    .replace(/&amp;/g, '&');
 }
 
 function stripHtml(s) {
@@ -203,6 +205,11 @@ async function main() {
     payloadSize = JSON.stringify(payload).length;
   }
 
+  if (!payload.entries || payload.entries.length < 20) {
+    console.error(`Refusing to overwrite KV: only ${payload.entries ? payload.entries.length : 0} entries scraped — keeping previous blob.`);
+    process.exit(1);
+  }
+
   await kvSet(KV_KEY, payload, KV_TTL_SECONDS);
   console.log(`✓ wrote ${KV_KEY} (${finalEntries.length} entries, ${Math.round(payloadSize / 1024)} KB) in ${elapsed}ms`);
 
@@ -249,7 +256,7 @@ async function main() {
   // false-positives from common words slipping past STOP_TOKENS).
   let writtenTickers = 0;
   for (const [ticker, entries] of perTickerIndex) {
-    if (entries.length < 1) continue;
+    if (entries.length < 2) continue;
     // Cap to 20 entries per ticker, newest first
     entries.sort((a, b) => (b.publishedAt || '').localeCompare(a.publishedAt || ''));
     const capped = entries.slice(0, 20);
