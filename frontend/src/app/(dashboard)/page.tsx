@@ -2196,6 +2196,7 @@ export default function HomeDashboard() {
             {/* PATCH 1122 — Investing OS chip */}
             <Link href="/investing-os"           style={navChip('#2dd4bf')}>🧠 Investing OS</Link>
             <Link href="/gautam-baid"            style={navChip('#e3b341')}>📖 Baid Playbook</Link>
+            <Link href="/earnings-trigger"      style={navChip('#f0883e')}>⚡ Earnings Trigger</Link>
             <Link href="/playbook"               style={navChip('#F59E0B')}>📚 Playbook</Link>
             {/* PATCH 1063 — deep-link chips into Playbook sub-sections per user request */}
             <Link href="/playbook#about-me"      style={navChip('#fb7185')}>🌿 About Me</Link>
