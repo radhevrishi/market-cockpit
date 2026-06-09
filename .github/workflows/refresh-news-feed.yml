@@ -26,9 +26,10 @@ jobs:
           curl -s -m 60 -X POST "$BASE/api/v1/news/refresh" \
             -H "Authorization: Bearer $SECRET" \
             -o /dev/null -w "refresh: %{http_code}\n" || true
-          # 2) Trigger the on-demand RSS scrape + repopulate the pool
-          curl -s -m 90 "$BASE/api/v1/news?market=all" \
-            -o /dev/null -w "news-all: %{http_code}\n" || true
+          # 2) Trigger the on-demand RSS scrape + repopulate the pool (must succeed or the job fails)
+          CODE=$(curl -s -m 90 "$BASE/api/v1/news?market=all" -o /dev/null -w "%{http_code}" || echo 000)
+          echo "news-all: $CODE"
+          if [ "$CODE" != "200" ]; then echo "::error::news refresh failed with HTTP $CODE"; exit 1; fi
           # 3) Warm the in-play view too
           curl -s -m 60 "$BASE/api/v1/news/in-play" \
             -o /dev/null -w "in-play: %{http_code}\n" || true
