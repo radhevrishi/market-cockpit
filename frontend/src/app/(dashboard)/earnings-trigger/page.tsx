@@ -320,6 +320,8 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
   const [fField, setFField] = useState('');
   const [fMin, setFMin] = useState('');
   const [fMax, setFMax] = useState('');
+  const [view, setView] = useState<'board' | 'analytics'>('board');
+  const [exportMsg, setExportMsg] = useState('');
   // refs so the async FileReader merge always sees the latest data/files (avoids stale closures)
   const dataRef = useRef<Row[]>([]); const filesRef = useRef<string[]>([]);
   useEffect(() => { dataRef.current = data; }, [data]);
@@ -389,6 +391,139 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
   const sArr = (k: string) => (sort.key === k ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : '');
   const sStyle = (k: string, base: Record<string, any>): any => ({ ...base, cursor: 'pointer', userSelect: 'none', color: sort.key === k ? C.txt : C.muted });
 
+  // ---- exports: operate on the current filtered list (shown) ----
+  const expSyms = shown.map((s) => (s.nse || s.name)).filter(Boolean);
+  const fnum = (n: number) => (isNaN(n) ? '' : +n.toFixed(2));
+  const buildAoa = () => {
+    const head = ['Rank', 'Name', 'NSE', 'Industry', 'Mkt cap (Cr)', 'Scenario', 'Score', 'YoY PAT %', 'YoY Sales %', 'PEG', 'OPM prev', 'OPM latest', 'CFO/PAT', 'ROCE %', '1Y ret %', 'Flags'];
+    const rows = shown.map((s, i) => [i + 1, s.name, s.nse, s.industry, isNaN(s.mcap) ? '' : Math.round(s.mcap), SCEN[s.scenario].label, s.composite, fnum(s.qp), fnum(s.qs), s.pegNM ? +s.peg.toFixed(2) : '', fnum(s.om1), fnum(s.om0), isNaN(s.cfo) ? '' : +s.cfo.toFixed(2), fnum(s.roce), fnum(s.r1y), s.flags.join('; ')]);
+    return [head, ...rows] as (string | number)[][];
+  };
+  const buildCsv = () => buildAoa().map((r) => r.map((v) => { const x = String(v ?? ''); return /[",\n]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x; }).join(',')).join('\n');
+  const dl = (name: string, text: string, mime = 'text/plain;charset=utf-8') => { try { const blob = new Blob([text], { type: mime }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1500); } catch {} };
+  const toast = (m: string) => { setExportMsg(m); setTimeout(() => setExportMsg(''), 2400); };
+  const cp = (text: string, m: string) => { try { navigator.clipboard.writeText(text); toast(m); } catch { toast('Copy blocked by the browser — try Download instead'); } };
+  const dlXlsx = () => {
+    const go = () => { try { const X = (window as any).XLSX; const ws = X.utils.aoa_to_sheet(buildAoa()); const wb = X.utils.book_new(); X.utils.book_append_sheet(wb, ws, 'Earnings Trigger'); X.writeFile(wb, 'earnings-trigger.xlsx'); toast('Excel downloaded (' + shown.length + ' rows)'); } catch { dl('earnings-trigger.csv', buildCsv(), 'text/csv'); toast('Excel lib issue — downloaded CSV instead'); } };
+    if ((window as any).XLSX) return go();
+    const sc = document.createElement('script'); sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'; sc.onload = go; sc.onerror = () => { dl('earnings-trigger.csv', buildCsv(), 'text/csv'); toast('Excel lib blocked — downloaded CSV instead'); }; document.body.appendChild(sc);
+  };
+  const EXPORTS: { label: string; fn: () => void }[] = [
+    { label: 'Download Excel (.xlsx)', fn: dlXlsx },
+    { label: 'Copy for TradingView', fn: () => cp(expSyms.map((s) => 'NSE:' + s.toUpperCase()).join(','), 'Copied ' + expSyms.length + ' as NSE:TICKER for TradingView') },
+    { label: 'Copy CSV', fn: () => cp(buildCsv(), 'Copied CSV — ' + shown.length + ' rows') },
+    { label: 'Download .txt', fn: () => { dl('earnings-trigger-tickers.txt', expSyms.join('\n')); toast('Downloaded ' + expSyms.length + ' tickers (.txt)'); } },
+    { label: 'Open in TradingView', fn: () => { cp(expSyms.map((s) => 'NSE:' + s.toUpperCase()).join(','), 'List copied — paste into a TradingView watchlist'); if (expSyms[0]) window.open('https://www.tradingview.com/chart/?symbol=NSE:' + encodeURIComponent(expSyms[0].toUpperCase()), '_blank'); } },
+    { label: 'Copy for Screener', fn: () => cp(expSyms.join(', '), 'Copied ' + expSyms.length + ' tickers for Screener.in') },
+    { label: 'Open in Screener.in', fn: () => { cp(expSyms.join(', '), 'List copied — paste into a Screener watchlist'); if (expSyms[0]) window.open('https://www.screener.in/company/' + encodeURIComponent(expSyms[0].toUpperCase()) + '/', '_blank'); } },
+    { label: 'Download Screener CSV', fn: () => { dl('earnings-trigger-screener.csv', 'NSE Code\n' + expSyms.join('\n'), 'text/csv'); toast('Downloaded Screener CSV — ' + expSyms.length + ' tickers'); } },
+  ];
+
+  // ---- analytics (decision dashboard) ----
+  const analytics = useMemo(() => {
+    const byScen = (k: string) => scored.filter((s) => s.scenario === k);
+    const okv = (n: number) => !isNaN(n) && Math.abs(n) <= 120;
+    const A = byScen('A'), D = byScen('D'), C2 = byScen('C'), E = byScen('E');
+    const marginExp = scored.filter((s) => s.notes.includes('Margin expanding'));
+    const ss = scored.map((s) => s.composite).sort((a, b) => a - b);
+    const median = ss.length ? ss[Math.floor(ss.length / 2)] : 0;
+    const cheapGrowth = scored.filter((s) => (s.scenario === 'A' || s.scenario === 'B') && s.pegNM && s.peg > 0 && !isNaN(s.qp) && s.qp >= 25).sort((a, b) => a.peg - b.peg).slice(0, 8);
+    const fastest = [...scored].sort((a, b) => b.subs.accel - a.subs.accel).slice(0, 8);
+    const expanders = scored.filter((s) => okv(s.om0) && okv(s.om1) && s.om0 > s.om1).sort((a, b) => (b.om0 - b.om1) - (a.om0 - a.om1)).slice(0, 8);
+    const reduce = [...C2, ...E].sort((a, b) => a.composite - b.composite).slice(0, 12);
+    const sectorMap: Record<string, number> = {}; scored.forEach((s) => { if (s.scenario === 'A' || s.scenario === 'B') { const k = s.industry || '—'; sectorMap[k] = (sectorMap[k] || 0) + 1; } });
+    const sectors = Object.entries(sectorMap).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    const risk: [string, number][] = [
+      ['CFO/PAT < 0.6 (cash)', scored.filter((s) => s.flags.some((f) => /CFO/.test(f))).length],
+      ['PEG > 3 (expensive)', scored.filter((s) => s.flags.some((f) => /PEG/.test(f))).length],
+      ['Margin compressing', scored.filter((s) => s.flags.some((f) => /Margin compressing/.test(f))).length],
+      ['Growth decelerating', scored.filter((s) => s.flags.some((f) => /decel/i.test(f))).length],
+      ['High pledge', scored.filter((s) => s.flags.some((f) => /pledge/i.test(f))).length],
+      ['Leveraged', scored.filter((s) => s.flags.some((f) => /Leveraged/.test(f))).length],
+    ];
+    return { A, D, reduce, marginExp, median, cheapGrowth, fastest, expanders, sectors, risk };
+  }, [scored]);
+
+  const card: any = { background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, padding: 14 };
+  const ARow = (s: Scored, right: string) => (
+    <div key={s.nse + s.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 2px', borderTop: `1px solid ${C.line}` }}>
+      <span title={SCEN[s.scenario].tip} style={{ fontSize: 10, fontWeight: 900, color: SCEN[s.scenario].c, width: 12 }}>{s.scenario}</span>
+      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: F.sm, fontWeight: 700, color: C.txt }}>{s.name}<span style={{ fontSize: 10, color: C.dim, fontWeight: 400 }}> · {s.industry}</span></span>
+      <span style={{ fontSize: F.xs, color: C.muted, width: 104, textAlign: 'right', whiteSpace: 'nowrap' }}>{right}</span>
+      <span style={{ fontSize: F.sm, fontWeight: 900, color: band(s.composite / 100), width: 24, textAlign: 'right' }}>{s.composite}</span>
+    </div>
+  );
+  const kpi = (label: string, val: string | number, color: string) => (
+    <div style={{ background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 10, padding: '11px 14px', minWidth: 130, flex: '1 1 130px' }}>
+      <div style={{ fontSize: F.xl, fontWeight: 900, color }}>{val}</div>
+      <div style={{ fontSize: F.xs, color: C.muted, marginTop: 2 }}>{label}</div>
+    </div>
+  );
+  const renderAnalytics = () => (
+    <div style={{ marginTop: 16 }}>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
+        {kpi('🟢 Buy now (A)', counts.A, C.green)}
+        {kpi('🔵 Pullback buys (D)', counts.D, C.cyan)}
+        {kpi('🟡 Trim / sell (C)', counts.C, C.amber)}
+        {kpi('🔴 Avoid (E)', counts.E, C.red)}
+        {kpi('📈 Margin expanding', analytics.marginExp.length, C.teal)}
+        {kpi('Median score', analytics.median, C.txt)}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: 12 }}>
+        <div style={card}>
+          <div style={{ fontSize: F.md, fontWeight: 800, color: C.green, marginBottom: 4 }}>🟢 Buy candidates — Scenario A · {analytics.A.length}</div>
+          <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 6 }}>Beat + accelerating + margin expanding + cheap + Stage-2, no red flag. Highest-probability multibaggers.</div>
+          {analytics.A.length ? analytics.A.slice(0, 12).map((s) => ARow(s, `${isNaN(s.qp) ? '' : s.qp.toFixed(0) + '% · '}PEG ${s.pegNM ? s.peg.toFixed(2) : 'n/m'}`)) : <div style={{ fontSize: F.sm, color: C.dim, padding: '8px 0' }}>None in this set.</div>}
+        </div>
+        <div style={card}>
+          <div style={{ fontSize: F.md, fontWeight: 800, color: C.red, marginBottom: 4 }}>🔻 Reduce / exit — C + E · {analytics.reduce.length ? counts.C + counts.E : 0}</div>
+          <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 6 }}>Lowest scores first — a profit decline, a cash/pledge/leverage red flag, or overpaying for growth (PEG&gt;3).</div>
+          {analytics.reduce.length ? analytics.reduce.map((s) => ARow(s, (s.flags[0] || '').slice(0, 16))) : <div style={{ fontSize: F.sm, color: C.dim, padding: '8px 0' }}>Nothing flagged for exit.</div>}
+        </div>
+        <div style={card}>
+          <div style={{ fontSize: F.md, fontWeight: 800, color: C.cyan, marginBottom: 4 }}>🔵 Pullback watch — Scenario D · {analytics.D.length}</div>
+          <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 6 }}>Soft quarter but trend intact, cheap, quality sound — a potential pullback buy in a compounder.</div>
+          {analytics.D.length ? analytics.D.slice(0, 10).map((s) => ARow(s, `${isNaN(s.qp) ? '' : s.qp.toFixed(0) + '% · '}PEG ${s.pegNM ? s.peg.toFixed(2) : 'n/m'}`)) : <div style={{ fontSize: F.sm, color: C.dim, padding: '8px 0' }}>None right now.</div>}
+        </div>
+        <div style={card}>
+          <div style={{ fontSize: F.md, fontWeight: 800, color: C.violet, marginBottom: 4 }}>💰 Cheapest growth (lowest PEG, A/B, ≥25% PAT)</div>
+          <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 6 }}>Growing fast and still cheap on PEG — the most re-rating room.</div>
+          {analytics.cheapGrowth.length ? analytics.cheapGrowth.map((s) => ARow(s, `PEG ${s.peg.toFixed(2)} · ${s.qp.toFixed(0)}%`)) : <div style={{ fontSize: F.sm, color: C.dim, padding: '8px 0' }}>None match.</div>}
+        </div>
+        <div style={card}>
+          <div style={{ fontSize: F.md, fontWeight: 800, color: C.teal, marginBottom: 4 }}>⚡ Strongest acceleration</div>
+          <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 6 }}>Sequential QoQ momentum building — the masterclass's #1 multibagger tell.</div>
+          {analytics.fastest.map((s) => ARow(s, `accel ${Math.round(s.subs.accel * 100)} · ${isNaN(s.qp) ? '' : s.qp.toFixed(0) + '%'}`))}
+        </div>
+        <div style={card}>
+          <div style={{ fontSize: F.md, fontWeight: 800, color: C.green, marginBottom: 4 }}>📈 Biggest margin expansion (q-1 → q)</div>
+          <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 6 }}>OPM rising fastest sequentially — operating leverage kicking in.</div>
+          {analytics.expanders.map((s) => ARow(s, `${s.om1.toFixed(0)}→${s.om0.toFixed(0)} (+${(s.om0 - s.om1).toFixed(0)}pp)`))}
+        </div>
+        <div style={card}>
+          <div style={{ fontSize: F.md, fontWeight: 800, color: C.blue, marginBottom: 8 }}>🏭 Where the strength is — sectors (A + B count)</div>
+          {analytics.sectors.length ? analytics.sectors.map(([sec, n]) => { const max = analytics.sectors[0][1] || 1; return (
+            <div key={sec} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
+              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: F.sm, color: C.txt }}>{sec}</span>
+              <div style={{ width: 120, height: 8, background: C.panel2, borderRadius: 4, overflow: 'hidden' }}><div style={{ width: `${(n / max) * 100}%`, height: '100%', background: C.blue }} /></div>
+              <span style={{ fontSize: F.sm, fontWeight: 800, color: C.muted, width: 22, textAlign: 'right' }}>{n}</span>
+            </div>
+          ); }) : <div style={{ fontSize: F.sm, color: C.dim }}>—</div>}
+        </div>
+        <div style={card}>
+          <div style={{ fontSize: F.md, fontWeight: 800, color: C.red, marginBottom: 8 }}>⚑ Risk flags across the set</div>
+          {analytics.risk.map(([lbl, n]) => (
+            <div key={lbl} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 0', borderTop: `1px solid ${C.line}` }}>
+              <span style={{ fontSize: F.sm, color: C.txt }}>{lbl}</span>
+              <span style={{ fontSize: F.sm, fontWeight: 800, color: n > 0 ? C.red : C.dim }}>{n}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div style={{ marginTop: 12, fontSize: F.xs, color: C.dim, lineHeight: 1.6 }}>Quick read: act on <b style={{ color: C.green }}>A</b>, accumulate <b style={{ color: C.cyan }}>D</b> on weakness, reduce <b style={{ color: C.amber }}>C</b>/<b style={{ color: C.red }}>E</b>. Confirm the concall (guidance + sector flow) before buying, and never buy on result day. The toggles above (ignore valuation / CFO-PAT) re-rank this whole dashboard. Not investment advice.</div>
+    </div>
+  );
+
   return (
     <div style={{ background: C.bg, minHeight: '100vh', color: C.txt, fontFamily: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif' }}>
       <div style={{ position: 'sticky', top: 0, zIndex: 20, background: `${C.bg}f0`, borderBottom: `1px solid ${C.line}`, backdropFilter: 'blur(8px)' }}>
@@ -404,7 +539,7 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
         <div style={{ fontSize: F.xs, fontWeight: 800, color: C.gold, letterSpacing: 1.2, textTransform: 'uppercase' }}>Why some Q-beats become multibaggers and other beats get punished</div>
         <div style={{ fontSize: F.hero, fontWeight: 900, marginTop: 6, lineHeight: 1.1 }}>Earnings-Trigger Analyzer</div>
         <div style={{ fontSize: F.base, color: C.muted, lineHeight: 1.55, marginTop: 8, maxWidth: 1180 }}>
-          Export your Screener.in watchlist and drop the CSV(s) below — <b style={{ color: C.txt }}>add several and they merge into one ranking</b>. A beat alone isn't a buy: the engine ranks what converts it — <b style={{ color: C.txt }}>acceleration × PE-cycle × margin × chart stage × quality × sponsorship</b> — into the five post-earnings scenarios (A–E).
+          A beat alone isn't a buy: the engine ranks what converts it — <b style={{ color: C.txt }}>acceleration × PE-cycle × margin × chart stage × quality × sponsorship</b>.
         </div>
 
         {/* upload zone */}
@@ -412,7 +547,7 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
           style={{ marginTop: 18, border: `2px dashed ${dragging ? C.gold : C.line2}`, background: dragging ? `${C.gold}10` : C.panel2, borderRadius: 14, padding: '20px 18px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
           <div style={{ flex: 1, minWidth: 280 }}>
             <div style={{ fontSize: F.md, fontWeight: 800, color: C.txt }}>{data.length ? `Loaded ${data.length} stocks from ${files.length} file${files.length === 1 ? '' : 's'}` : 'Drop your Screener.in CSV(s) here'}</div>
-            <div style={{ fontSize: F.xs, color: C.dim, marginTop: 4, lineHeight: 1.5 }}>{data.length ? 'Drop or choose more exports to add — they merge and de-dupe by ticker, so you can combine several screens into one ranking.' : SAMPLE}</div>
+            {!data.length ? <div style={{ fontSize: F.xs, color: C.dim, marginTop: 4, lineHeight: 1.5 }}>{SAMPLE}</div> : null}
             {files.length ? <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>{files.map((fn, i) => <span key={i} style={{ fontSize: F.xs, color: C.muted, background: C.panel, border: `1px solid ${C.line2}`, borderRadius: 999, padding: '3px 10px' }}>{fn}</span>)}</div> : null}
           </div>
           <label style={{ cursor: 'pointer', fontSize: F.sm, fontWeight: 800, color: '#05231a', background: C.gold, borderRadius: 8, padding: '9px 16px' }}>
@@ -445,6 +580,16 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
           </div>
         ) : (
           <>
+            {/* tab switcher — small, top-left */}
+            <div style={{ marginTop: 16, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+              {(['board', 'analytics'] as const).map((v) => (
+                <button key={v} onClick={() => setView(v)} style={{ cursor: 'pointer', fontSize: F.sm, fontWeight: 800, padding: '6px 14px', borderRadius: 8, border: `1px solid ${view === v ? C.gold : C.line2}`, background: view === v ? `${C.gold}1f` : 'transparent', color: view === v ? C.gold : C.muted }}>{v === 'board' ? '☰ Leaderboard' : '📊 Analytics'}</button>
+              ))}
+              <span style={{ fontSize: F.xs, color: C.dim, marginLeft: 6 }}>{view === 'analytics' ? 'Decision dashboard — buy / trim / avoid at a glance' : scored.length + ' stocks ranked · click any header to sort'}</span>
+            </div>
+
+            {view === 'analytics' ? renderAnalytics() : (
+            <>
             {/* scenario summary + filters */}
             <div style={{ marginTop: 18, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
               <button onClick={() => setScenFilter('ALL')} style={{ cursor: 'pointer', fontSize: F.sm, fontWeight: 800, padding: '6px 12px', borderRadius: 999, border: `1px solid ${scenFilter === 'ALL' ? C.txt : C.line2}`, background: scenFilter === 'ALL' ? C.panel : 'transparent', color: scenFilter === 'ALL' ? C.txt : C.muted }}>All {scored.length}</button>
@@ -470,9 +615,23 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
               ) : null}
             </div>
 
+            {/* export toolbar — current filtered list */}
+            <div style={{ marginTop: 12, background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, padding: '11px 14px' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: F.sm, fontWeight: 900, color: C.gold, letterSpacing: 0.4 }}>EXPORT {shown.length} TICKERS</span>
+                <span style={{ fontSize: F.xs, color: C.dim }}>Copy / download the current filtered list — paste into TradingView, Excel, or anywhere</span>
+                {exportMsg ? <span style={{ fontSize: F.xs, fontWeight: 700, color: C.green, marginLeft: 'auto' }}>✓ {exportMsg}</span> : null}
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+                {EXPORTS.map((e) => (
+                  <button key={e.label} onClick={e.fn} disabled={!shown.length} style={{ cursor: shown.length ? 'pointer' : 'not-allowed', fontSize: F.xs, fontWeight: 700, color: shown.length ? C.txt : C.dim, background: C.panel2, border: `1px solid ${C.line2}`, borderRadius: 8, padding: '7px 11px' }}>{e.label}</button>
+                ))}
+              </div>
+            </div>
+
             {(ignoreVal || ignoreCfo) ? (
-              <div style={{ marginTop: 12, fontSize: F.sm, color: C.violet, background: `${C.violet}14`, border: `1px solid ${C.violet}44`, borderRadius: 8, padding: '9px 13px', lineHeight: 1.5 }}>
-                <b>Ignoring {[ignoreVal && 'valuation', ignoreCfo && 'cash quality (CFO/PAT)'].filter(Boolean).join(' + ')}.</b> Score &amp; A–E are recomputed with {[ignoreVal && 'the PE-cycle factor + the cheap/PEG gates', ignoreCfo && 'the CFO/PAT quality score + its sell flag'].filter(Boolean).join(' and ')} removed — so names weak on {[ignoreVal && 'price', ignoreCfo && 'cash conversion'].filter(Boolean).join(' / ')} can still rank A (what a bull market rewards). Anything still in C/E is weak on the remaining fundamentals. The PEG &amp; CFO/PAT columns still show the real figures.
+              <div style={{ marginTop: 12, fontSize: F.sm, color: C.violet, background: `${C.violet}14`, border: `1px solid ${C.violet}44`, borderRadius: 8, padding: '8px 13px', lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                <b>Ignoring {[ignoreVal && 'valuation', ignoreCfo && 'cash quality (CFO/PAT)'].filter(Boolean).join(' + ')}.</b> Re-ranked with {[ignoreVal && 'PE-cycle/PEG gates', ignoreCfo && 'the CFO/PAT check'].filter(Boolean).join(' & ')} removed — pricey/weak-cash names can now rank A; anything still in C/E is weak on the rest. (PEG &amp; CFO/PAT columns still show the real figures.)
               </div>
             ) : null}
 
@@ -536,6 +695,8 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
             <div style={{ marginTop: 14, fontSize: F.xs, color: C.dim, lineHeight: 1.6 }}>
               Ranking is a quantitative screen of 5 of the masterclass’s 7 variables — it tells you WHERE to do the work, not what to buy. Confirm guidance language + sector flow via the concall, and remember: never buy a new position on result day, never hold past two disappointing quarters. Not investment advice; figures are as per your uploaded sheet.
             </div>
+            </>
+            )}
           </>
         )}
 
