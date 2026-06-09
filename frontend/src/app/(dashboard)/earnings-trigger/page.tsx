@@ -460,15 +460,6 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
     </div>
   );
   const renderAnalytics = () => {
-    const SW = 760, SH = 380, mL = 50, mR = 18, mT = 18, mB = 38;
-    const pw = SW - mL - mR, ph = SH - mT - mB;
-    const pts = scored.filter((s) => !isNaN(s.qp));
-    const gC = (g: number) => Math.max(-25, Math.min(160, g));
-    const xFor = (m: number) => mL + m * pw;
-    const yFor = (g: number) => mT + ph - ((gC(g) + 25) / 185) * ph;
-    const px = (s: Scored) => xFor(c01(s.subs.multiple));
-    const py = (s: Scored) => yFor(s.qp);
-    const labelPts = [...pts].sort((a, b) => b.composite - a.composite).slice(0, 10);
     const total = scored.length || 1;
     const topConv = analytics.A.slice(0, 6);
     const thesis = (s: Scored) => {
@@ -493,28 +484,9 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
         {kpi('Median score', analytics.median, C.txt)}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(520px, 2.2fr) minmax(260px, 1fr)', gap: 12, marginBottom: 12 }}>
+      <div style={{ marginBottom: 12 }}>
         <div style={card}>
-          <div style={{ fontSize: F.md, fontWeight: 800, color: C.txt }}>Opportunity map — growth × valuation</div>
-          <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 4 }}>Each dot = a stock · colour = scenario · size = score. Top-right (fast-growing AND cheap) is the buy zone.</div>
-          <svg viewBox={`0 0 ${SW} ${SH}`} style={{ width: '100%', height: 'auto', display: 'block' }}>
-            <rect x={xFor(0.6)} y={mT} width={pw * 0.4} height={yFor(40) - mT} fill={`${C.green}12`} />
-            <text x={SW - mR - 4} y={mT + 13} textAnchor="end" fontSize="10" fill={C.green} fontWeight="700">BUY ZONE</text>
-            <line x1={mL} y1={mT} x2={mL} y2={mT + ph} stroke={C.line2} />
-            <line x1={mL} y1={mT + ph} x2={mL + pw} y2={mT + ph} stroke={C.line2} />
-            <line x1={xFor(0.6)} y1={mT} x2={xFor(0.6)} y2={mT + ph} stroke={C.line} strokeDasharray="3 3" />
-            <line x1={mL} y1={yFor(40)} x2={mL + pw} y2={yFor(40)} stroke={C.line} strokeDasharray="3 3" />
-            <line x1={mL} y1={yFor(0)} x2={mL + pw} y2={yFor(0)} stroke={`${C.red}55`} strokeDasharray="2 2" />
-            {pts.map((s, i) => <circle key={i} cx={px(s)} cy={py(s)} r={3 + (s.composite / 100) * 6} fill={SCEN[s.scenario].c} fillOpacity={0.5} stroke={SCEN[s.scenario].c} strokeWidth={0.5} />)}
-            {labelPts.map((s, i) => <text key={'l' + i} x={px(s) + 7} y={py(s) + 3} fontSize="9" fill={C.txt}>{(s.nse || s.name).slice(0, 9)}</text>)}
-            <text x={mL + pw / 2} y={SH - 8} textAnchor="middle" fontSize="10" fill={C.muted}>← richer        valuation (PE-cycle / PEG)        cheaper →</text>
-            <text x={16} y={mT + ph / 2} textAnchor="middle" fontSize="10" fill={C.muted} transform={`rotate(-90 16 ${mT + ph / 2})`}>← slower    YoY PAT growth    faster →</text>
-            <text x={mL - 5} y={yFor(0) + 3} textAnchor="end" fontSize="8" fill={C.dim}>0%</text>
-            <text x={mL - 5} y={yFor(40) + 3} textAnchor="end" fontSize="8" fill={C.dim}>40%</text>
-          </svg>
-        </div>
-        <div style={card}>
-          <div style={{ fontSize: F.md, fontWeight: 800, color: C.txt, marginBottom: 8 }}>Scenario funnel</div>
+          <div style={{ fontSize: F.md, fontWeight: 800, color: C.txt, marginBottom: 8 }}>🧭 Decision summary — what the {scored.length} stocks split into</div>
           {(['A', 'B', 'C', 'D', 'E'] as const).map((k) => { const n = counts[k]; const pct = Math.round((n / total) * 100); return (
             <div key={k} style={{ marginBottom: 9 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: F.xs, marginBottom: 3 }}>
