@@ -473,41 +473,15 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
       if (!isNaN(s.roce) && s.roce >= 20) p.push('ROCE ' + s.roce.toFixed(0) + '%');
       return p.slice(0, 5).join(' · ') || 'see 7-factor breakdown';
     };
-    const cnt = (f: (s: Scored) => boolean) => scored.filter(f).length;
-    const histRows = [[0, 40], [40, 55], [55, 70], [70, 85], [85, 101]].map(([lo, hi]) => ({ lbl: lo + '–' + (hi === 101 ? 100 : hi), n: cnt((s) => s.composite >= lo && s.composite < hi) }));
-    const factorAvg = VARS.map((v) => ({ label: v.label, color: v.color, avg: scored.length ? scored.reduce((a, s) => a + s.subs[v.k], 0) / scored.length : 0 }));
-    const beatRows = [
-      { lbl: '<0% (miss)', n: cnt((s) => !isNaN(s.qp) && s.qp < 0) },
-      { lbl: '0–25%', n: cnt((s) => !isNaN(s.qp) && s.qp >= 0 && s.qp < 25) },
-      { lbl: '25–40%', n: cnt((s) => !isNaN(s.qp) && s.qp >= 25 && s.qp < 40) },
-      { lbl: '40–100%', n: cnt((s) => !isNaN(s.qp) && s.qp >= 40 && s.qp < 100) },
-      { lbl: '100%+', n: cnt((s) => !isNaN(s.qp) && s.qp >= 100) },
-    ];
-    const pegRows = [
-      { lbl: 'Cheap <1', n: cnt((s) => s.pegNM && s.peg < 1) },
-      { lbl: 'Fair 1–2', n: cnt((s) => s.pegNM && s.peg >= 1 && s.peg < 2) },
-      { lbl: 'Full 2–3', n: cnt((s) => s.pegNM && s.peg >= 2 && s.peg < 3) },
-      { lbl: 'Rich >3', n: cnt((s) => s.pegNM && s.peg >= 3) },
-      { lbl: 'n/m', n: cnt((s) => !s.pegNM) },
-    ];
-    const cfoRows = [
-      { lbl: 'Burn <0', n: cnt((s) => !isNaN(s.cfo) && s.cfo < 0) },
-      { lbl: 'Weak 0–0.6', n: cnt((s) => !isNaN(s.cfo) && s.cfo >= 0 && s.cfo < 0.6) },
-      { lbl: 'OK 0.6–1', n: cnt((s) => !isNaN(s.cfo) && s.cfo >= 0.6 && s.cfo < 1) },
-      { lbl: 'Strong 1–6', n: cnt((s) => !isNaN(s.cfo) && s.cfo >= 1 && s.cfo <= 6) },
-      { lbl: 'n/m', n: cnt((s) => isNaN(s.cfo) || Math.abs(s.cfo) > 6) },
-    ];
+    const topQuality = [...scored].sort((a, b) => b.subs.quality - a.subs.quality).slice(0, 8);
+    const chartLeaders = [...scored].sort((a, b) => b.subs.stage - a.subs.stage).slice(0, 8);
+    const topSponsor = [...scored].sort((a, b) => b.subs.sponsor - a.subs.sponsor).slice(0, 8);
+    const marginComp = scored.filter((s) => s.flags.some((f) => /Margin compressing/.test(f))).slice(0, 10);
+    const decel = scored.filter((s) => s.flags.some((f) => /decel/i.test(f))).slice(0, 10);
     const momAll = scored.filter((s) => !isNaN(s.r1y));
     const momLead = [...momAll].sort((a, b) => b.r1y - a.r1y).slice(0, 6);
     const momLag = [...momAll].sort((a, b) => a.r1y - b.r1y).slice(0, 6);
     const r1yTag = (s: Scored) => (isNaN(s.r1y) ? '' : (s.r1y >= 0 ? '+' : '') + s.r1y.toFixed(0) + '%');
-    const distBar = (rows: { lbl: string; n: number }[], color: string) => { const mx = Math.max(1, ...rows.map((r) => r.n)); return rows.map((r) => (
-      <div key={r.lbl} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
-        <span style={{ width: 96, fontSize: F.xs, color: C.muted, whiteSpace: 'nowrap' }}>{r.lbl}</span>
-        <div style={{ flex: 1, height: 9, background: C.panel2, borderRadius: 4, overflow: 'hidden' }}><div style={{ width: `${(r.n / mx) * 100}%`, height: '100%', background: color }} /></div>
-        <span style={{ width: 24, textAlign: 'right', fontSize: F.sm, fontWeight: 800, color: C.muted }}>{r.n}</span>
-      </div>
-    )); };
     return (
     <div style={{ marginTop: 16 }}>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
@@ -519,23 +493,7 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
         {kpi('Median score', analytics.median, C.txt)}
       </div>
 
-      <div style={{ marginBottom: 12 }}>
-        <div style={card}>
-          <div style={{ fontSize: F.md, fontWeight: 800, color: C.txt, marginBottom: 8 }}>🧭 Decision summary — what the {scored.length} stocks split into</div>
-          {(['A', 'B', 'C', 'D', 'E'] as const).map((k) => { const n = counts[k]; const pct = Math.round((n / total) * 100); return (
-            <div key={k} style={{ marginBottom: 9 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: F.xs, marginBottom: 3 }}>
-                <span style={{ color: SCEN[k].c, fontWeight: 800 }}>{SCEN[k].label}</span>
-                <span style={{ color: C.muted }}>{n} · {pct}%</span>
-              </div>
-              <div style={{ height: 10, background: C.panel2, borderRadius: 5, overflow: 'hidden' }}><div style={{ width: `${pct}%`, height: '100%', background: SCEN[k].c }} /></div>
-            </div>
-          ); })}
-          <div style={{ fontSize: F.xs, color: C.dim, marginTop: 6, lineHeight: 1.5 }}>A = act · B = clean hold · C = trim / red flag · D = pullback buy · E = avoid.</div>
-        </div>
-      </div>
-
-      <div style={{ fontSize: F.md, fontWeight: 800, color: C.green, margin: '4px 0 8px' }}>🎯 Top conviction — act on these now</div>
+      <div style={{ fontSize: F.md, fontWeight: 800, color: C.green, margin: '4px 0 8px' }}>🎯 Top conviction — buy candidates (act on these)</div>
       {topConv.length ? (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(330px, 1fr))', gap: 10, marginBottom: 14 }}>
           {topConv.map((s) => (
@@ -589,54 +547,29 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
           {analytics.expanders.map((s) => ARow(s, `${s.om1.toFixed(0)}→${s.om0.toFixed(0)} (+${(s.om0 - s.om1).toFixed(0)}pp)`))}
         </div>
         <div style={card}>
-          <div style={{ fontSize: F.md, fontWeight: 800, color: C.blue, marginBottom: 8 }}>🏭 Where the strength is — sectors (A + B count)</div>
-          {analytics.sectors.length ? analytics.sectors.map(([sec, n]) => { const max = analytics.sectors[0][1] || 1; return (
-            <div key={sec} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
-              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: F.sm, color: C.txt }}>{sec}</span>
-              <div style={{ width: 120, height: 8, background: C.panel2, borderRadius: 4, overflow: 'hidden' }}><div style={{ width: `${(n / max) * 100}%`, height: '100%', background: C.blue }} /></div>
-              <span style={{ fontSize: F.sm, fontWeight: 800, color: C.muted, width: 22, textAlign: 'right' }}>{n}</span>
-            </div>
-          ); }) : <div style={{ fontSize: F.sm, color: C.dim }}>—</div>}
+          <div style={{ fontSize: F.md, fontWeight: 800, color: C.gold, marginBottom: 4 }}>🏅 Highest quality (cash + ROCE + balance sheet)</div>
+          <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 6 }}>Best earnings quality — strong CFO/PAT, high ROCE, low debt. The durable compounders.</div>
+          {topQuality.map((s) => ARow(s, `ROCE ${isNaN(s.roce) ? '—' : s.roce.toFixed(0) + '%'} · CFO ${isNaN(s.cfo) ? '—' : s.cfo.toFixed(1)}`))}
         </div>
         <div style={card}>
-          <div style={{ fontSize: F.md, fontWeight: 800, color: C.red, marginBottom: 8 }}>⚑ Risk flags across the set</div>
-          {analytics.risk.map(([lbl, n]) => (
-            <div key={lbl} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 0', borderTop: `1px solid ${C.line}` }}>
-              <span style={{ fontSize: F.sm, color: C.txt }}>{lbl}</span>
-              <span style={{ fontSize: F.sm, fontWeight: 800, color: n > 0 ? C.red : C.dim }}>{n}</span>
-            </div>
-          ))}
+          <div style={{ fontSize: F.md, fontWeight: 800, color: C.blue, marginBottom: 4 }}>🔥 Chart leaders (strongest Stage-2)</div>
+          <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 6 }}>Cleanest uptrends — above 50 &amp; 200-DMA, near the 52-wk high. Momentum on your side.</div>
+          {chartLeaders.map((s) => ARow(s, `1Y ${r1yTag(s) || '—'}`))}
         </div>
         <div style={card}>
-          <div style={{ fontSize: F.md, fontWeight: 800, color: C.blue, marginBottom: 8 }}>📊 Score distribution</div>
-          <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 4 }}>Where the cohort's quality sits — a left-heavy set means few real setups.</div>
-          {distBar(histRows, C.blue)}
+          <div style={{ fontSize: F.md, fontWeight: 800, color: C.amber, marginBottom: 4 }}>🏦 Best sponsorship (promoter + FII/DII)</div>
+          <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 6 }}>High promoter holding, no pledge, smart-money accumulating — the strongest ownership.</div>
+          {topSponsor.map((s) => ARow(s, `Prom ${isNaN(s.prom) ? '—' : s.prom.toFixed(0) + '%'}`))}
         </div>
         <div style={card}>
-          <div style={{ fontSize: F.md, fontWeight: 800, color: C.txt, marginBottom: 8 }}>🧬 Factor leadership (avg across set)</div>
-          <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 4 }}>Which of the 7 variables is carrying the screen — and which is the weak link.</div>
-          {factorAvg.map((f) => (
-            <div key={f.label} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
-              <span style={{ width: 74, fontSize: F.xs, color: C.muted }}>{f.label}</span>
-              <div style={{ flex: 1, height: 9, background: C.panel2, borderRadius: 4, overflow: 'hidden' }}><div style={{ width: `${f.avg * 100}%`, height: '100%', background: f.color }} /></div>
-              <span style={{ width: 28, textAlign: 'right', fontSize: F.sm, fontWeight: 800, color: C.muted }}>{Math.round(f.avg * 100)}</span>
-            </div>
-          ))}
+          <div style={{ fontSize: F.md, fontWeight: 800, color: C.red, marginBottom: 4 }}>⚠️ Margin compressing — trim watch</div>
+          <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 6 }}>Margins eroding ≥1pp — a beat with shrinking margins is what the market punishes.</div>
+          {marginComp.length ? marginComp.map((s) => ARow(s, `OPM ${isNaN(s.om1) ? '—' : s.om1.toFixed(0)}→${isNaN(s.om0) ? '—' : s.om0.toFixed(0)}`)) : <div style={{ fontSize: F.sm, color: C.dim, padding: '8px 0' }}>None compressing materially.</div>}
         </div>
         <div style={card}>
-          <div style={{ fontSize: F.md, fontWeight: 800, color: C.green, marginBottom: 8 }}>🚀 Beat magnitude — YoY PAT</div>
-          <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 4 }}>How explosive the beats are. The masterclass floor is ≥25%, ≥40% is the multibagger band.</div>
-          {distBar(beatRows, C.green)}
-        </div>
-        <div style={card}>
-          <div style={{ fontSize: F.md, fontWeight: 800, color: C.violet, marginBottom: 8 }}>🏷️ Valuation spread — PEG</div>
-          <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 4 }}>Where the names sit on price-for-growth. Cheap = re-rating room; rich = compression risk.</div>
-          {distBar(pegRows, C.violet)}
-        </div>
-        <div style={card}>
-          <div style={{ fontSize: F.md, fontWeight: 800, color: C.gold, marginBottom: 8 }}>💵 Earnings quality — CFO/PAT</div>
-          <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 4 }}>Cash backing the profit (Buffett: &lt;0.6 is a sell). Burn / weak = low-quality beats.</div>
-          {distBar(cfoRows, C.gold)}
+          <div style={{ fontSize: F.md, fontWeight: 800, color: C.amber, marginBottom: 4 }}>🐢 Growth decelerating — watch</div>
+          <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 6 }}>Sequential growth slowing — the market compresses the multiple to the new rate (the Bajaj Finance trap).</div>
+          {decel.length ? decel.map((s) => ARow(s, `${isNaN(s.qp) ? '' : s.qp.toFixed(0) + '%'}`)) : <div style={{ fontSize: F.sm, color: C.dim, padding: '8px 0' }}>None decelerating.</div>}
         </div>
         <div style={card}>
           <div style={{ fontSize: F.md, fontWeight: 800, color: C.txt, marginBottom: 4 }}>📈 1-year price momentum</div>
@@ -663,6 +596,7 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
       </div>
 
       <div style={{ ...wrap, padding: '20px 16px 80px' }}>
+        {(!data.length || view === 'board') ? (<>
         <div style={{ fontSize: F.xs, fontWeight: 800, color: C.gold, letterSpacing: 1.2, textTransform: 'uppercase' }}>Why some Q-beats become multibaggers and other beats get punished</div>
         <div style={{ marginTop: 6, display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
           <span style={{ fontSize: F.xl, fontWeight: 900, lineHeight: 1.1, whiteSpace: 'nowrap' }}>Earnings-Trigger Analyzer</span>
@@ -683,6 +617,7 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
           {data.length ? <button onClick={clearAll} style={{ cursor: 'pointer', fontSize: F.xs, color: C.muted, background: 'transparent', border: `1px solid ${C.line2}`, borderRadius: 999, padding: '6px 12px' }}>Clear all</button> : null}
         </div>
         {error ? <div style={{ marginTop: 10, fontSize: F.sm, color: C.red, background: `${C.red}12`, border: `1px solid ${C.red}40`, borderRadius: 8, padding: '8px 12px' }}>{error}</div> : null}
+        </>) : null}
 
         {!data.length ? (
           <div style={{ marginTop: 22, background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, padding: 18 }}>
