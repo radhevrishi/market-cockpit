@@ -44,7 +44,7 @@ type Scored = {
   composite: number; scenario: string;
   subs: { trigger: number; accel: number; margin: number; multiple: number; stage: number; quality: number; sponsor: number };
   flags: string[]; notes: string[]; trend: { p200: string; p50: string; d5020: string };
-  qp: number; qs: number; peg: number; pegNM: boolean; pe: number; om0: number; om1: number; roce: number; cfo: number; prom: number; pledge: number; stage2: boolean; stage4: boolean;
+  qp: number; qs: number; peg: number; pegNM: boolean; pe: number; om0: number; om1: number; roce: number; cfo: number; prom: number; pledge: number; r1y: number; stage2: boolean; stage4: boolean;
 };
 
 // ---- THE ENGINE (validated against a 145-stock Screener export) ----
@@ -139,7 +139,7 @@ function scoreRow(d: Row): Scored {
     name: (d['Name'] || d['NSE Code'] || '').trim(), nse: (d['NSE Code'] || '').trim(), industry: (d['Industry'] || '').trim(),
     mcap: f('Market Capitalization'), price,
     composite, scenario, subs: { trigger, accel, margin, multiple, stage, quality, sponsor }, flags, notes, trend,
-    qp, qs, peg, pegNM: pegMeaningful, pe, om0, om1, roce, cfo, prom, pledge, stage2, stage4,
+    qp, qs, peg, pegNM: pegMeaningful, pe, om0, om1, roce, cfo, prom, pledge, r1y, stage2, stage4,
   };
 }
 
@@ -377,7 +377,7 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
 
             {/* leaderboard */}
             <div style={{ marginTop: 12, overflowX: 'auto', border: `1px solid ${C.line}`, borderRadius: 12 }}>
-              <div style={{ minWidth: 1432 }}>
+              <div style={{ minWidth: 1500 }}>
                 <div style={{ display: 'flex', background: C.panel2, borderBottom: `1px solid ${C.line2}`, fontSize: F.xs, fontWeight: 800, color: C.muted, position: 'sticky', top: 0 }}>
                   <div style={{ width: 44, padding: '10px 8px' }}>#</div>
                   <div style={{ flex: '0 0 220px', padding: '10px 8px' }}>Stock</div>
@@ -390,6 +390,7 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
                   <div style={{ flex: '0 0 92px', padding: '10px 8px', textAlign: 'right' }}>OPM q-1→q</div>
                   <div style={{ flex: '0 0 70px', padding: '10px 8px', textAlign: 'right' }}>CFO/PAT</div>
                   <div style={{ flex: '0 0 64px', padding: '10px 8px', textAlign: 'right' }}>ROCE</div>
+                  <div style={{ flex: '0 0 68px', padding: '10px 8px', textAlign: 'right' }} title="Price return over the last 1 year">1Y ret</div>
                   <div style={{ flex: '0 0 152px', padding: '10px 8px' }} title="Minervini Stage-2 trend template: Price &gt; 200-DMA · Price &gt; 50-DMA · 50-DMA &gt; 200-DMA">Stage-2 trend</div>
                   <div style={{ flex: '1 1 200px', padding: '10px 8px' }}>Flags &amp; notes</div>
                 </div>
@@ -419,6 +420,7 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
                     <div style={{ flex: '0 0 92px', padding: '9px 8px', textAlign: 'right', fontSize: F.sm, color: (Math.abs(s.om0) <= 120 && Math.abs(s.om1) <= 120) ? (s.om0 > s.om1 ? C.green : s.om0 < s.om1 ? C.red : C.muted) : C.dim }} title={`${isNaN(s.om1) ? '—' : s.om1.toFixed(1)} → ${isNaN(s.om0) ? '—' : s.om0.toFixed(1)} (OPM %)`}>{fmtOPM(s.om1)}→{fmtOPM(s.om0)}</div>
                     <div style={{ flex: '0 0 70px', padding: '9px 8px', textAlign: 'right', fontSize: F.sm, color: isNaN(s.cfo) ? C.dim : (s.cfo < 0 || s.cfo > 6) ? C.amber : s.cfo >= 0.8 ? C.green : s.cfo < 0.6 ? C.red : C.amber }} title={isNaN(s.cfo) ? '' : (Math.abs(s.cfo) > 20 ? 'CFO/PAT ' + s.cfo.toFixed(1) + ' — near-zero PAT distorts this; treated as suspect, not clean quality' : s.cfo.toFixed(2))}>{fmtCFO(s.cfo)}</div>
                     <div style={{ flex: '0 0 64px', padding: '9px 8px', textAlign: 'right', fontSize: F.sm, color: isNaN(s.roce) ? C.dim : s.roce >= 15 ? C.green : C.muted }}>{isNaN(s.roce) ? '—' : s.roce.toFixed(0) + '%'}</div>
+                    <div style={{ flex: '0 0 68px', padding: '9px 8px', textAlign: 'right', fontSize: F.sm, color: isNaN(s.r1y) ? C.dim : s.r1y < 0 ? C.red : C.green }} title={isNaN(s.r1y) ? '' : s.r1y.toFixed(1) + '%'}>{fmtPct(s.r1y)}</div>
                     <div style={{ flex: '0 0 152px', padding: '9px 8px', display: 'flex', gap: 3, alignItems: 'center' }}>
                       {([['P>200', s.trend.p200, 'Price above 200-DMA'], ['P>50', s.trend.p50, 'Price above 50-DMA'], ['50>200', s.trend.d5020, '50-DMA above 200-DMA']] as const).map(([lab, v, tip], j) => (
                         <span key={j} title={tip} style={{ fontSize: 10, fontWeight: 800, padding: '2px 5px', borderRadius: 5, whiteSpace: 'nowrap', color: v === 'y' ? C.green : v === 'n' ? C.red : C.dim, border: `1px solid ${v === 'y' ? C.green + '55' : v === 'n' ? C.red + '40' : C.line}`, background: v === 'y' ? `${C.green}14` : v === 'n' ? `${C.red}10` : 'transparent' }}>{lab} {v === 'y' ? '✓' : v === 'n' ? '✗' : '–'}</span>
