@@ -847,8 +847,7 @@ export default function GautamBaidPlaybookPage() {
 
       <div id="baid-top" style={{ borderBottom: `1px solid ${C.line}`, background: `radial-gradient(900px 240px at 12% -40%, ${C.gold}14, transparent), radial-gradient(700px 220px at 90% -60%, ${C.violet}10, transparent)` }}>
         <div style={{ ...wrap, padding: '26px 22px 22px' }}>
-          <div style={{ fontSize: F.xs, fontWeight: 800, color: C.gold, letterSpacing: 1.4, textTransform: 'uppercase' }}>How to think, read markets & compound like one of India’s most disciplined value investors</div>
-          <div style={{ fontSize: F.hero, fontWeight: 900, letterSpacing: 0.2, marginTop: 6, lineHeight: 1.08 }}>The Gautam Baid Playbook</div>
+          <div style={{ fontSize: F.lg, fontWeight: 800, color: C.gold, letterSpacing: 0.6, textTransform: 'uppercase', whiteSpace: 'nowrap', marginTop: 2 }}>How to think, read markets & compound like one of India’s most disciplined value investors</div>
           <div style={{ marginTop: 12, fontSize: F.sm, color: C.muted, lineHeight: 1.6, maxWidth: 980 }}>
             Read it cover-to-cover once for the full mental model, then keep <b style={{ color: C.txt }}>Parts 5, 7, 9, 10 & 13</b> open as live operating checklists. Re-read quarterly. Don’t try to be him — adopt the disciplines and let your own circle of competence decide the rest.
           </div>
