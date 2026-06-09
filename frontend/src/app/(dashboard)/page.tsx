@@ -2268,6 +2268,31 @@ export default function HomeDashboard() {
             );
           })()}
 
+          {/* 📈 MOVERS CHIP — live top movers feed in the chip row (sibling of HEATMAP) */}
+          {(() => {
+            const g = (data.gainers || []).slice(0, 2);
+            const l = (data.losers || []).slice(0, 1);
+            if (!g.length && !l.length) {
+              return (
+                <Link href="/movers" style={{
+                  fontSize: 12, padding: '4px 10px', borderRadius: 4,
+                  background: '#00E68A15', border: '1px solid #00E68A60', color: '#00E68A',
+                  fontWeight: 800, textDecoration: 'none',
+                }}>📈 MOVERS · loading…</Link>
+              );
+            }
+            const fmt = (m: { ticker: string; changePercent?: number }) => `${m.ticker} ${Number(m.changePercent || 0) >= 0 ? '+' : ''}${Number(m.changePercent || 0).toFixed(1)}%`;
+            return (
+              <Link href="/movers" style={{
+                fontSize: 12, padding: '4px 10px', borderRadius: 4,
+                background: '#00E68A15', border: '1px solid #00E68A60', color: '#00E68A',
+                fontWeight: 800, textDecoration: 'none',
+              }} title="Open full Movers board →">
+                📈 MOVERS · {[...g.map(fmt), ...l.map(fmt)].join(' · ')}
+              </Link>
+            );
+          })()}
+
           {/* 🏆 CONVICTION BEATS CHIP */}
           {(() => {
             const cb = data.convictionLive;
