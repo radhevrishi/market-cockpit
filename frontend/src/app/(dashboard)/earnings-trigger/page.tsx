@@ -44,11 +44,13 @@ type Scored = {
   composite: number; scenario: string;
   subs: { trigger: number; accel: number; margin: number; multiple: number; stage: number; quality: number; sponsor: number };
   flags: string[]; notes: string[]; trend: { p200: string; p50: string; d5020: string };
-  qp: number; qs: number; peg: number; pegNM: boolean; pe: number; om0: number; om1: number; roce: number; cfo: number; prom: number; pledge: number; r1y: number; stage2: boolean; stage4: boolean;
+  qp: number; qs: number; peg: number; pegNM: boolean; pe: number; om0: number; om1: number; roce: number; cfo: number; prom: number; pledge: number; r1y: number; mUp: boolean; stage2: boolean; stage4: boolean;
 };
 
 // ---- THE ENGINE (validated against a 145-stock Screener export) ----
-function scoreRow(d: Row): Scored {
+// ignoreVal = "what would be a multibagger if I ignore valuation?" — drops the PE-cycle factor from the score (renormalising
+// the other six) and removes the valuation gates from A/C, so price-rich names surface and only genuinely weak ones stay low.
+function scoreRow(d: Row, ignoreVal = false): Scored {
   const f = (k: string) => num(d[k]);
   const qp = f('YOY Quarterly profit growth'), qs = f('YOY Quarterly sales growth');
   const notes: string[] = [];
@@ -111,7 +113,9 @@ function scoreRow(d: Row): Scored {
   // important element"), and the PE-multiple cycle does "≈60% of the work" on the eventual return (the entire Losers
   // chapter is multiple compression). Margin trajectory is a contextual modifier (Nick Sleep: judge reinvestment, not
   // Q-margins) — weighted below growth and the multiple, so it informs the score without dominating it.
-  let composite = 100 * (0.20 * trigger + 0.18 * accel + 0.21 * multiple + 0.11 * margin + 0.12 * stage + 0.10 * quality + 0.08 * sponsor);
+  const wMul = ignoreVal ? 0 : 0.21; // ignore valuation → drop the PE-cycle weight and renormalise the rest
+  const wSum = 0.20 + 0.18 + wMul + 0.11 + 0.12 + 0.10 + 0.08;
+  let composite = 100 * (0.20 * trigger + 0.18 * accel + wMul * multiple + 0.11 * margin + 0.12 * stage + 0.10 * quality + 0.08 * sponsor) / wSum;
   const flags: string[] = [];
   if (!isNaN(cfo) && cfo < 0.6) { flags.push('CFO/PAT<0.6 earnings quality'); composite *= 0.7; }
   if (!isNaN(pledge) && pledge > 25) { flags.push('High pledge'); composite *= 0.6; }
@@ -128,20 +132,29 @@ function scoreRow(d: Row): Scored {
   const weak = quality < 0.45 || (!isNaN(roce) && roce < 5) || vetoFlag || stage4;     // corroborating weakness
   const pegHot = pegMeaningful && peg > 3;                                             // paying too much for the growth — compression default
   let scenario;
-  if (!isNaN(qp) && qp >= 40 && accel >= 0.65 && margin >= 0.6 && multiple >= 0.62 && stage2 && !vetoFlag) scenario = 'A';
-  else if (collapse || (decline && weak) || (stage4 && (isNaN(qp) || qp < 10) && quality < 0.5)) scenario = 'E';
-  // C = trim / sell: a premium multiple that's slowing, an outright profit decline, a cash-flow/pledge/leverage red flag
-  // (Buffett: CFO/PAT<0.6 is a sell regardless of the beat), or PEG>3 (overpaying for growth). A red flag is never a "hold".
-  else if ((premium && (decel || (!isNaN(qp) && qp < 15))) || decline || vetoFlag || pegHot) scenario = 'C';
-  else if (discount && !stage4 && quality >= 0.45 && (isNaN(qp) || qp < 25)) scenario = 'D';
-  else scenario = 'B';
+  if (ignoreVal) {
+    // Valuation-blind: A no longer needs a cheap multiple; C fires only on fundamental problems (decline / quality / pledge /
+    // leverage), NOT on "expensive" or PEG>3. So names still scoring low here are weak regardless of price.
+    if (!isNaN(qp) && qp >= 40 && accel >= 0.65 && margin >= 0.6 && stage2 && !vetoFlag) scenario = 'A';
+    else if (collapse || (decline && weak) || (stage4 && (isNaN(qp) || qp < 10) && quality < 0.5)) scenario = 'E';
+    else if (decline || vetoFlag) scenario = 'C';
+    else scenario = 'B';
+  } else {
+    if (!isNaN(qp) && qp >= 40 && accel >= 0.65 && margin >= 0.6 && multiple >= 0.62 && stage2 && !vetoFlag) scenario = 'A';
+    else if (collapse || (decline && weak) || (stage4 && (isNaN(qp) || qp < 10) && quality < 0.5)) scenario = 'E';
+    // C = trim / sell: a premium multiple that's slowing, an outright profit decline, a cash-flow/pledge/leverage red flag
+    // (Buffett: CFO/PAT<0.6 is a sell regardless of the beat), or PEG>3 (overpaying for growth). A red flag is never a "hold".
+    else if ((premium && (decel || (!isNaN(qp) && qp < 15))) || decline || vetoFlag || pegHot) scenario = 'C';
+    else if (discount && !stage4 && quality >= 0.45 && (isNaN(qp) || qp < 25)) scenario = 'D';
+    else scenario = 'B';
+  }
 
   composite = Math.round(c01(composite / 100) * 100);
   return {
     name: (d['Name'] || d['NSE Code'] || '').trim(), nse: (d['NSE Code'] || '').trim(), industry: (d['Industry'] || '').trim(),
     mcap: f('Market Capitalization'), price,
     composite, scenario, subs: { trigger, accel, margin, multiple, stage, quality, sponsor }, flags, notes, trend,
-    qp, qs, peg, pegNM: pegMeaningful, pe, om0, om1, roce, cfo, prom, pledge, r1y, stage2, stage4,
+    qp, qs, peg, pegNM: pegMeaningful, pe, om0, om1, roce, cfo, prom, pledge, r1y, mUp: okM(om0) && okM(om1) && om0 > om1, stage2, stage4,
   };
 }
 
@@ -300,6 +313,8 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
   const [showRules, setShowRules] = useState(false);
   const [sort, setSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'composite', dir: 'desc' });
   const [trendUp, setTrendUp] = useState(false);
+  const [marginUp, setMarginUp] = useState(false);
+  const [ignoreVal, setIgnoreVal] = useState(false);
   const [fField, setFField] = useState('');
   const [fMin, setFMin] = useState('');
   const [fMax, setFMax] = useState('');
@@ -344,7 +359,7 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
   }, [ingest]);
   const clearAll = () => { setData([]); setFiles([]); try { localStorage.removeItem(KEY); localStorage.removeItem(NKEY); } catch {} };
 
-  const scored = useMemo(() => data.map(scoreRow).filter((s) => s.name).sort((a, b) => b.composite - a.composite), [data]);
+  const scored = useMemo(() => data.map((d) => scoreRow(d, ignoreVal)).filter((s) => s.name).sort((a, b) => b.composite - a.composite), [data, ignoreVal]);
   const counts = useMemo(() => { const m: Record<string, number> = { A: 0, B: 0, C: 0, D: 0, E: 0 }; scored.forEach((s) => m[s.scenario]++); return m; }, [scored]);
   const shown = useMemo(() => {
     const fmin = fMin === '' ? null : parseFloat(fMin);
@@ -353,7 +368,8 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
       (scenFilter === 'ALL' || s.scenario === scenFilter) &&
       s.composite >= minScore &&
       (!q || (s.name + ' ' + s.nse + ' ' + s.industry).toLowerCase().includes(q.toLowerCase())) &&
-      (!trendUp || (s.trend.p50 === 'y' && s.trend.p200 === 'y')));
+      (!trendUp || (s.trend.p50 === 'y' && s.trend.p200 === 'y')) &&
+      (!marginUp || s.mUp));
     if (fField) {
       arr = arr.filter((s) => { const v = getVal(s, fField); if (typeof v !== 'number' || isNaN(v)) return false; if (fmin != null && v < fmin) return false; if (fmax != null && v > fmax) return false; return true; });
     }
@@ -364,7 +380,7 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
       const na = isNaN(va), nb = isNaN(vb); if (na && nb) return 0; if (na) return 1; if (nb) return -1; // NaN/n-a always last
       return dir * (va - vb);
     });
-  }, [scored, scenFilter, minScore, q, trendUp, fField, fMin, fMax, sort]);
+  }, [scored, scenFilter, minScore, q, trendUp, marginUp, fField, fMin, fMax, sort]);
 
   const wrap = { maxWidth: 2100, margin: '0 auto', padding: '0 16px' } as const;
   const onSort = (k: string) => setSort((s) => ({ key: k, dir: s.key === k ? (s.dir === 'asc' ? 'desc' : 'asc') : (k === 'name' || k === 'scenario' ? 'asc' : 'desc') }));
@@ -434,6 +450,8 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
                 <button key={k} onClick={() => setScenFilter(k)} style={{ cursor: 'pointer', fontSize: F.sm, fontWeight: 800, padding: '6px 12px', borderRadius: 999, border: `1px solid ${scenFilter === k ? SCEN[k].c : C.line2}`, background: scenFilter === k ? `${SCEN[k].c}1f` : 'transparent', color: scenFilter === k ? SCEN[k].c : C.muted }} title={SCEN[k].tip}>{SCEN[k].label} · {counts[k]}</button>
               ))}
               <button onClick={() => setTrendUp((v) => !v)} title="Show only stocks trading above BOTH their 50-DMA and 200-DMA (Stage-2 uptrend)" style={{ cursor: 'pointer', fontSize: F.sm, fontWeight: 800, padding: '6px 12px', borderRadius: 999, border: `1px solid ${trendUp ? C.green : C.line2}`, background: trendUp ? `${C.green}1f` : 'transparent', color: trendUp ? C.green : C.muted }}>↑ Above 50 &amp; 200-DMA</button>
+              <button onClick={() => setMarginUp((v) => !v)} title="Show only stocks whose latest-quarter OPM rose vs the preceding quarter" style={{ cursor: 'pointer', fontSize: F.sm, fontWeight: 800, padding: '6px 12px', borderRadius: 999, border: `1px solid ${marginUp ? C.cyan : C.line2}`, background: marginUp ? `${C.cyan}1f` : 'transparent', color: marginUp ? C.cyan : C.muted }}>📈 Margins rising</button>
+              <button onClick={() => setIgnoreVal((v) => !v)} title="Re-score and re-rank IGNORING valuation: drops the PE-cycle factor and the cheap/PEG gates. Shows which names would be A-grade multibaggers if price didn't matter — and which stay weak even then." style={{ cursor: 'pointer', fontSize: F.sm, fontWeight: 800, padding: '6px 12px', borderRadius: 999, border: `1px solid ${ignoreVal ? C.violet : C.line2}`, background: ignoreVal ? `${C.violet}2a` : 'transparent', color: ignoreVal ? C.violet : C.muted }}>{ignoreVal ? '☑' : '☐'} Ignore valuation</button>
               <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name / sector…" style={{ marginLeft: 'auto', fontSize: F.sm, background: C.panel2, border: `1px solid ${C.line2}`, color: C.txt, borderRadius: 8, padding: '7px 12px', minWidth: 180 }} />
               <label style={{ fontSize: F.xs, color: C.muted, display: 'flex', alignItems: 'center', gap: 6 }}>min score {minScore}<input type="range" min={0} max={90} value={minScore} onChange={(e) => setMinScore(+e.target.value)} /></label>
               <select value={fField} onChange={(e) => setFField(e.target.value)} title="Filter on any numeric field" style={{ fontSize: F.sm, background: C.panel2, border: `1px solid ${C.line2}`, color: fField ? C.txt : C.muted, borderRadius: 8, padding: '7px 10px' }}>
@@ -448,6 +466,12 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
                 </>
               ) : null}
             </div>
+
+            {ignoreVal ? (
+              <div style={{ marginTop: 12, fontSize: F.sm, color: C.violet, background: `${C.violet}14`, border: `1px solid ${C.violet}44`, borderRadius: 8, padding: '9px 13px', lineHeight: 1.5 }}>
+                <b>Valuation ignored.</b> Score &amp; A–E are recomputed without the PE-cycle factor and without the cheap/PEG gates — so a great-but-expensive name can now rank A. Read it as: these would be multibaggers <i>if price didn’t matter</i>; anything still low here (or in C/E) is weak on the fundamentals regardless of valuation. The PEG column still shows the price you’d actually pay.
+              </div>
+            ) : null}
 
             {/* leaderboard */}
             <div style={{ marginTop: 12, overflowX: 'auto', border: `1px solid ${C.line}`, borderRadius: 12 }}>
