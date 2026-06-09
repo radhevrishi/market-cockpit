@@ -585,15 +585,19 @@ export default function HomeDashboard() {
       const mins = ist.getUTCHours() * 60 + ist.getUTCMinutes();
       return day >= 1 && day <= 5 && mins >= (9*60+15) && mins <= (15*60+30);
     };
+    let tid: ReturnType<typeof setTimeout>;
     const schedule = () => {
       const open = isMarketOpen();
       const delay = open ? 60_000 : 5 * 60_000; // 60s market hours, 5min after-hours
-      return setTimeout(() => {
+      tid = setTimeout(() => {
+        // Don't fire refreshes in hidden/background tabs — multiple open tabs
+        // pile up against the per-IP rate limit and 429 the visible one.
+        if (typeof document !== 'undefined' && document.visibilityState === 'hidden') { schedule(); return; }
         setRefreshTick(t => t + 1);
         setLastAutoRefreshAt(Date.now());
       }, delay);
     };
-    const tid = schedule();
+    schedule();
     return () => clearTimeout(tid);
   }, [refreshTick]); // re-arms the next tick after each fire
 
@@ -838,11 +842,17 @@ export default function HomeDashboard() {
             if (!k || _seenInPlay.has(k)) return false;
             _seenInPlay.add(k); return true;
           });
-        setData((d) => ({
-          ...d,
-          inPlay: final.slice(0, 15), // PATCH 1012 — 10 -> 15 per user request
-          inPlayDiag: { fetched: raw.length, recent: recent.length, clean: clean.length, fellBack: clean.length === 0 && recent.length > 0, error, status },
-        } as any));
+        setData((d) => {
+          // Keep last-good list when a refresh fails (429/timeout/network) — never wipe a working panel with an error state.
+          const keepOld = !!error && final.length === 0 && Array.isArray((d as any).inPlay) && (d as any).inPlay.length > 0;
+          return {
+            ...d,
+            inPlay: keepOld ? (d as any).inPlay : final.slice(0, 15), // PATCH 1012 — 10 -> 15 per user request
+            inPlayDiag: keepOld
+              ? { ...(d as any).inPlayDiag, staleKept: true, lastError: error, status }
+              : { fetched: raw.length, recent: recent.length, clean: clean.length, fellBack: clean.length === 0 && recent.length > 0, error, status },
+          } as any;
+        });
         setNetLoading((n) => ({ ...n, inPlay: false }));
       });
 
@@ -900,6 +910,7 @@ export default function HomeDashboard() {
       // market — this is just the home dashboard panel filter.
       safeDiag<any>(`/api/market/quotes?market=india&_=${Date.now()}`, 30_000).then(async ({ data: j }) => {
         if (cancelled) return;
+        if (!j) return; // failed refresh (429/timeout) — keep the last-good movers/sector data instead of wiping it
         // Build the user's universe (UPPER + suffix-stripped tickers).
         const norm = (s: string) => (s || '').toString().toUpperCase().replace(/\.(NS|BO)$/i, '').trim();
         const universe = new Set<string>();
@@ -2128,7 +2139,7 @@ export default function HomeDashboard() {
                 const color = marketOpen ? '#10B981' : '#94A3B8';
                 return (
                   <button
-                    onClick={() => { setRefreshTick(t => t + 1); setLastAutoRefreshAt(Date.now()); }}
+                    onClick={() => { if (Date.now() - lastAutoRefreshAt < 20_000) return; /* throttle force-refresh: each press fires ~15 API calls and trips the rate limiter */ setRefreshTick(t => t + 1); setLastAutoRefreshAt(Date.now()); }}
                     title={`Auto-refresh every ${cadence} (${marketOpen ? 'market open' : 'market closed'}). Click to force-refresh now.`}
                     style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, background: `${color}15`, border: `1px solid ${color}40`, color, fontWeight: 700, cursor: 'pointer' }}>
                     🔄 Auto · {cadence} · last {sinceLabel}
