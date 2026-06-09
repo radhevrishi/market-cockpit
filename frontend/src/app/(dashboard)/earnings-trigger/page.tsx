@@ -126,11 +126,13 @@ function scoreRow(d: Row): Scored {
   const collapse = !isNaN(qp) && qp < -40 && !(stage2 && quality >= 0.6 && !vetoFlag); // >40% YoY profit drop (unless still pristine Stage-2)
   const decline = !isNaN(qp) && qp < -10;                                              // profit actually contracting YoY
   const weak = quality < 0.45 || (!isNaN(roce) && roce < 5) || vetoFlag || stage4;     // corroborating weakness
+  const pegHot = pegMeaningful && peg > 3;                                             // paying too much for the growth — compression default
   let scenario;
   if (!isNaN(qp) && qp >= 40 && accel >= 0.65 && margin >= 0.6 && multiple >= 0.62 && stage2 && !vetoFlag) scenario = 'A';
   else if (collapse || (decline && weak) || (stage4 && (isNaN(qp) || qp < 10) && quality < 0.5)) scenario = 'E';
-  else if (premium && (decel || (!isNaN(qp) && qp < 15))) scenario = 'C';
-  else if (decline) scenario = 'C';                                                    // moderate decline, not avoid-grade → trim
+  // C = trim / sell: a premium multiple that's slowing, an outright profit decline, a cash-flow/pledge/leverage red flag
+  // (Buffett: CFO/PAT<0.6 is a sell regardless of the beat), or PEG>3 (overpaying for growth). A red flag is never a "hold".
+  else if ((premium && (decel || (!isNaN(qp) && qp < 15))) || decline || vetoFlag || pegHot) scenario = 'C';
   else if (discount && !stage4 && quality >= 0.45 && (isNaN(qp) || qp < 25)) scenario = 'D';
   else scenario = 'B';
 
@@ -146,7 +148,7 @@ function scoreRow(d: Row): Scored {
 const SCEN: Record<string, { c: string; label: string; tip: string }> = {
   A: { c: C.green, label: 'A · Multibagger setup', tip: 'Beat + accelerating + margin expanding + PE at discount + Stage-2. Highest-probability multibagger. Buy full size, hold 18–36m.' },
   B: { c: C.blue, label: 'B · Hold / watch', tip: 'Beat with steady growth or premium multiple. Hold if owned; do not chase. Needs acceleration or a cheaper entry.' },
-  C: { c: C.amber, label: 'C · Trim / sell', tip: 'Decelerating growth at a premium multiple. The market compresses the multiple to the new growth rate. Trim.' },
+  C: { c: C.amber, label: 'C · Trim / sell', tip: 'A reason to be cautious: decelerating growth at a premium, a profit decline, PEG>3 (overpaying for growth), or a cash-flow/pledge/leverage red flag (Buffett: CFO/PAT<0.6 is a sell regardless of the beat). Don\'t chase; trim if owned.' },
   D: { c: C.cyan, label: 'D · Pullback watch', tip: 'Soft quarter but trend intact + multiple compressed + quality sound. A potential pullback buy in a compounder.' },
   E: { c: C.red, label: 'E · Avoid', tip: 'Profit contracting (esp. >40% YoY) or Stage-4 downtrend, with weak quality / negative returns. Capitulation or value-trap zone — avoid or exit; do the work before touching.' },
 };
@@ -275,8 +277,8 @@ const WEIGHTS: { k: string; w: number; color: string; desc: string }[] = [
 ];
 const CLASSIFY: { k: string; color: string; rule: string }[] = [
   { k: 'A · Multibagger setup', color: C.green, rule: 'ALL of: YoY PAT ≥40%, acceleration strong, margin expanding, multiple at a discount (cheap vs its history), Stage-2 uptrend, and NO quality/pledge/leverage red flag. The full alignment — buy full size.' },
-  { k: 'B · Hold / watch', color: C.blue, rule: 'The residual — a genuine beat, but not cheap/accelerating enough for A and not deteriorating enough for C/E. Most names land here: hold if owned, don’t chase.' },
-  { k: 'C · Trim / sell', color: C.amber, rule: 'Premium multiple + decelerating (or sub-15%) growth — the market compresses the multiple to the new growth rate. Also catches a moderate profit decline (−10% to −40%) that isn’t avoid-grade.' },
+  { k: 'B · Hold / watch', color: C.blue, rule: 'A clean beat with NO red flag — just not cheap/accelerating enough for A, not deteriorating enough for E. Hold if owned, don’t chase; needs acceleration or a cheaper entry.' },
+  { k: 'C · Trim / sell', color: C.amber, rule: 'Something is off: a premium multiple that’s slowing (or sub-15% growth), an outright profit decline (−10% to −40%), PEG>3 (overpaying for the growth), or a cash-flow/pledge/leverage red flag — Buffett: CFO/PAT<0.6 is a sell regardless of the beat. A red flag is never a “hold”.' },
   { k: 'D · Pullback watch', color: C.cyan, rule: 'Soft quarter (growth <25%) but the trend is intact, the multiple is cheap, and quality is sound. A potential pullback buy in a compounder.' },
   { k: 'E · Avoid', color: C.red, rule: 'Real deterioration: profit collapsing >40% YoY; OR profit contracting >10% with weak quality / negative ROCE / a veto flag / Stage-4 downtrend; OR a Stage-4 chart with no growth and poor quality.' },
 ];
