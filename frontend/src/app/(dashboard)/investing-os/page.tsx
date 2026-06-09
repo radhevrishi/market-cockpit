@@ -429,7 +429,7 @@ export default function InvestingOSPage() {
   const lockedPrimary = locked ? byLetter(locked.primary) : null;
   const lockedSecondary = locked && locked.secondary ? byLetter(locked.secondary) : null;
 
-  const wrap = { maxWidth: 1680, margin: '0 auto', padding: '0 22px' } as const;
+  const wrap = { maxWidth: 2100, margin: '0 auto', padding: '0 16px' } as const;
 
   return (
     <div style={{ background: C.bg, minHeight: '100vh', color: C.txt, fontFamily: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif' }}>
