@@ -165,6 +165,89 @@ const fmtCFO = (n: number) => isNaN(n) ? '—' : (Math.abs(n) > 20 ? 'n/m' : n.t
 
 const SAMPLE = 'Name, NSE Code, YOY Quarterly profit growth, YOY Quarterly sales growth, PEG Ratio, Price to Earning, Historical PE 5Years, OPM latest quarter, OPM preceding quarter, Profit after tax latest quarter … (a standard Screener.in export — all 62 columns supported)';
 
+// ---- The "do-the-work" checklist: the 2 variables the screen can't read (guidance language + sector flow),
+// the A–E action map, what re-rates the multiple, the traps/discipline, and worked examples. Verbatim from the masterclass.
+const GUIDE: { title: string; color: string; tag: string; items: string[] }[] = [
+  {
+    title: 'Guidance language — read the concall transcript, not the headline', color: C.teal, tag: 'Variable the screen can’t read — listen for these',
+    items: [
+      'Opening tone, verbatim across 4 quarters: “strong” → “satisfactory” is a yellow flag even on identical numbers. Bajaj Finance Q3FY24 added “despite a challenging… environment” → stock −7%.',
+      'Conviction ladder, low→high: “we hope” < “we expect” < “we are targeting” < “we are confident” < “we are committed” < “we will deliver.” A downgrade from “confident” to “expect” is a SELL even if the number is unchanged (HUL 5–7% → 3–5% volume guide → −8%).',
+      'First-time HEDGING words = sell: “subject to monsoon”, “ex-one-time”, “barring headwinds”, “normalize”, “competitive intensity has stepped up” (Asian Paints Q4FY25 → −23% over 12m).',
+      'First-time forward CONFIDENCE = buy: “demand visibility through FY26”, “well placed”, “strong tailwinds” (Apar Q3FY24 → +30% in 3 months).',
+      'Margin guidance: a widening range (18–19% → 17–19%) = falling visibility; a point estimate = highest conviction. Cyient widened 15–17% → 13–17% → −45%.',
+      'Order book: granular (“47 orders, 12 customers, 5 geographies”) = de-risked; one lumpy order = concentration risk. Falling top-5 concentration re-rates.',
+      'Q&A behaviour: short/defensive answers or a repeated dodge on margins = the answer is bad. Promoter personally on the call = strategically important quarter.',
+      'Forward visibility horizon: extending (→ FY27 / FY29) = positive; shortening = negative.',
+      'Transcript word-search: count “challenging / headwind / one-time / lumpy / subject to / normalize” vs last quarter — a jump = deteriorating narrative.',
+    ],
+  },
+  {
+    title: 'Sector flow & pre-Q whisper', color: C.violet, tag: 'Variable the screen can’t read — gather before the print',
+    items: [
+      'Peer concall read-across — read same-sector names that reported earlier (UltraTech for Shree; HDFC Bank for ICICI) and note the deltas.',
+      'Channel checks — call 5–10 dealers/distributors across geographies (not only the friendly ones — confirmation bias).',
+      'Industry data — SIAM/FADA (autos), AIOCD (pharma), GST collections, UPI, cement dispatches.',
+      'Sell-side estimate-revision DIRECTION over the last 30/60/90 days — up = tailwind, down = headwind.',
+      'Block & bulk deals + insider activity in the 5 days pre-result — promoter selling = red flag; FII accumulation = positive.',
+      'Raw-material / commodity moves 4–6 weeks ahead often pre-signal margin pressure.',
+      'AMFI sector positioning vs Nifty-500 weight — overweight = building conviction; underweight = disbelief.',
+    ],
+  },
+  {
+    title: 'After the print — the A→E action map', color: C.gold, tag: 'Match the engine’s scenario to a decision',
+    items: [
+      'A · Multibagger setup — beat + accelerating + margin expanding + PE at a discount + Stage-2. Buy full size; hold 18–36 months.',
+      'B · Hold / watch — beat but steady or premium. Hold if owned, don’t chase; needs acceleration or a cheaper entry.',
+      'C · Trim / sell — decelerating growth at a premium. The market compresses the multiple to the new growth rate. Trim ~50% on the print.',
+      'D · Pullback watch — soft quarter but trend intact + cheap + quality sound. A potential pullback buy in a compounder.',
+      'E · Avoid — profit contracting / Stage-4 downtrend / weak quality. Capitulation or value-trap zone; avoid or exit.',
+      'Reaction read: big beat + small move = BUY (not priced); small beat + big move = TRIM (over-reaction); big miss + big drop = sidelines 1–2 weeks.',
+    ],
+  },
+  {
+    title: 'What re-rates the multiple (≈60% of the return)', color: C.green, tag: 'Watch your watchlist names for these 10',
+    items: [
+      'Capacity utilisation crossing 80% — operating-leverage breakthrough (Polycab 76%→85% drove +200bps).',
+      'Top-5 customer concentration falling below 25% — de-risking (Azad 78%→65% re-rated).',
+      'New geography/customer/product disclosed with a QUANTIFIED revenue number.',
+      'Margin expansion +200 bps YoY for 4 consecutive quarters — structural, not a one-quarter pop (Apar).',
+      'Promoter holding rising / pledge falling to zero — governance re-rating.',
+      'FII above 15% or MF above 10% in a SMID — passive-flow threshold.',
+      'First sell-side coverage initiation (0 → 5 brokers) — information asymmetry collapses.',
+      'Index inclusion (Nifty 500, MSCI, FTSE) or F&O inclusion — passive demand + liquidity premium.',
+      'First dividend / first buyback — capital-return discipline signals maturity.',
+    ],
+  },
+  {
+    title: 'Traps & iron discipline', color: C.red, tag: 'Memorise these — they catch experienced investors',
+    items: [
+      'NEVER buy a new position on result day — wait T+1 to T+5 to absorb the data and the concall.',
+      'NEVER hold past 2 consecutive disappointing quarters — the third won’t save you.',
+      'Trim 33% at +50%, another 33% at +120%, let the last 33% run on a trailing stop.',
+      'One beat in a cyclical can just be a commodity price — you need 3 consecutive beats.',
+      'High-PE compounder miss = 25–30% drawdown (Page Q2FY23 −25% in two sessions). Size accordingly.',
+      'Promoter selling after a beat, or a block deal in the 5 days pre-result = they know something.',
+      'OCF/PAT < 60% for 3 years = receivables-bloated. A margin-led beat with thin volume = unsustainable.',
+      'PEG > 2 = multiple compression is the default outcome; PEG > 3 = distress.',
+      'Don’t buy on “they should accelerate next year” without evidence — that’s hope, not a thesis.',
+    ],
+  },
+  {
+    title: 'Examples — beats that 5×’d vs beats that got punished', color: C.blue, tag: 'Same beat, opposite outcome — pattern-match yours',
+    items: [
+      'WON · MTAR — Q3FY22 revenue +50% / PAT +83%, EBITDA 23%→27%, order book 1.7× sales; re-rated 51×→125× = ~4× in 8 months.',
+      'WON · Polycab — utilisation 76%→85% drove +200bps; multiple 25×→50×; tripled.',
+      'WON · Tanfac — promoter change + utilisation 60%→85% + margin 12%→22%; ~20× in 2 years.',
+      'WON · Apar — premium mix-shift drove 4 quarters of margin expansion; PE 12×→35×; ~20×.',
+      'LOST · HUL — chronic 7–8% growth; each beat confirmed the ceiling; 62×→55×, flat 4 years (acceleration, not the beat, is what matters).',
+      'LOST · Bajaj Finance — record Q3FY24 PAT but AUM guidance 31%→28%; PE 32×→26×; −7% on the day.',
+      'LOST · Asian Paints — revenue beat but “competitive intensity” (Birla Opus); 55×→42×; −12% in a month.',
+      'LOST · DMart — revenue beat but SSSG <8% at 90× PE; multiple compressed 21%.',
+    ],
+  },
+];
+
 export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?: string }) {
   let scope = scopeProp;
   if (!scope && typeof window !== 'undefined') { try { const qp = new URLSearchParams(window.location.search).get('scope'); if (qp === 'watchlist' || qp === 'portfolio') scope = qp; } catch {} }
@@ -178,6 +261,7 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
   const [scenFilter, setScenFilter] = useState<string>('ALL');
   const [q, setQ] = useState('');
   const [minScore, setMinScore] = useState(0);
+  const [showGuide, setShowGuide] = useState(false);
   // refs so the async FileReader merge always sees the latest data/files (avoids stale closures)
   const dataRef = useRef<Row[]>([]); const filesRef = useRef<string[]>([]);
   useEffect(() => { dataRef.current = data; }, [data]);
@@ -351,6 +435,30 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
             </div>
           </>
         )}
+
+        {/* Do-the-work checklist — collapsible, lives below everything so it never disturbs the table/visualisation */}
+        <div style={{ marginTop: 22, background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, overflow: 'hidden' }}>
+          <button onClick={() => setShowGuide((v) => !v)} style={{ width: '100%', cursor: 'pointer', background: 'transparent', border: 'none', color: C.txt, display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', textAlign: 'left' }}>
+            <span style={{ fontSize: F.lg, fontWeight: 800 }}>📋 Do-the-work checklist — guidance, sector flow, re-rating triggers, traps & worked examples</span>
+            <span style={{ marginLeft: 'auto', fontSize: F.sm, fontWeight: 800, color: showGuide ? C.gold : C.muted }}>{showGuide ? 'Hide ▲' : 'Show ▼'}</span>
+          </button>
+          {showGuide ? (
+            <div style={{ padding: '0 16px 18px' }}>
+              <div style={{ fontSize: F.sm, color: C.muted, lineHeight: 1.55, marginBottom: 14 }}>The ranking scores 5 of the 7 variables from your sheet. The two it can’t read — <b style={{ color: C.teal }}>guidance language</b> and <b style={{ color: C.violet }}>sector flow</b> — plus the post-earnings discipline are below. Run this against any name before you act on it.</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12 }}>
+                {GUIDE.map((g, i) => (
+                  <div key={i} style={{ background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 10, padding: 14 }}>
+                    <div style={{ fontSize: F.md, fontWeight: 800, color: g.color, lineHeight: 1.3 }}>{g.title}</div>
+                    <div style={{ fontSize: F.xs, color: C.dim, margin: '3px 0 9px' }}>{g.tag}</div>
+                    <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 7 }}>
+                      {g.items.map((it, j) => <li key={j} style={{ fontSize: F.sm, color: C.muted, lineHeight: 1.5 }}>{it}</li>)}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
   );
