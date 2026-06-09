@@ -1,0 +1,42 @@
+name: Refresh Movers (live intraday)
+
+# THE REAL FIX for stale movers. Railway's datacenter IP is blocked by Yahoo
+# (yahoo:0), so server-side live fetch fails and the route falls back to ~12h
+# old BHAVCOPY/EOD data. GitHub runners have a clean IP that CAN reach Yahoo,
+# so we capture LIVE quotes here and push them to KV (nse-movers-live:v1:latest).
+# The /api/market/quotes route serves this fresh blob during market hours.
+
+on:
+  workflow_dispatch: {}   # manual run button (used to verify)
+  schedule:
+    # Indian market hours 09:15–15:30 IST = 03:45–10:00 UTC, Mon–Fri.
+    # NOTE: GitHub cron is best-effort and may run a few minutes late.
+    - cron: '45,50,55 3 * * 1-5'   # 09:15–09:25 IST
+    - cron: '*/5 4-9 * * 1-5'      # 09:30–15:25 IST (every 5 min)
+    - cron: '0,5 10 * * 1-5'       # 15:30–15:35 IST (close)
+
+concurrency:
+  group: refresh-movers-live
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Capture live movers from clean IP → KV
+        env:
+          UPSTASH_REDIS_REST_URL:   ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+        run: |
+          if [ -z "$UPSTASH_REDIS_REST_URL" ] || [ -z "$UPSTASH_REDIS_REST_TOKEN" ]; then
+            echo "::error title=Missing secrets::Add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          node .github/scripts/scrape-movers-live.mjs
