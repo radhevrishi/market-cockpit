@@ -452,6 +452,7 @@
                     <div class="tbl-actions">
                         <button class="tbl-btn" onclick="addTier()">+ Zone</button>
                         <button class="tbl-btn" onclick="exportCSV()">CSV</button>
+                        <button class="tbl-btn" onclick="savePlan()" style="color:var(--green);">💾 Save</button>
                         <button class="tbl-btn" onclick="resetDefaults()">Reset</button>
                         <button class="tbl-btn" onclick="exportPDF()" style="color:var(--red);border-color:rgba(255,77,106,0.3);">PDF</button>
                     </div>
@@ -942,7 +943,7 @@
 
             return `<tr class="${rowCls}">
                 <td><span class="status-dot ${dotCls}"></span></td>
-                <td><span class="zone-pill ${zs.cls}">${r.entry.toLocaleString()}</span></td>
+                <td><input class="deploy-input" type="number" value="${r.entry}" style="width:84px;min-width:84px;color:${zs.c};font-weight:900;" title="Edit entry level" onchange="editEntry(${r.i}, +this.value)"></td>
                 <td style="font-weight:800;color:${zs.c};text-align:center;font-size:13px;">${r.fall.toFixed(1)}%</td>
                 <td><input class="deploy-input" type="number" value="${r.fresh}" step="${MKT().deployStep}" style="min-width:90px;" onchange="tiers[${r.i}].fresh=+this.value;recalcAll()"></td>
                 <td style="font-weight:800;color:var(--cyan);">${fmtL(r.totalInvested)}</td>
@@ -1067,9 +1068,61 @@
         recalcAll();
     }
     function resetDefaults(){
-        tiers = JSON.parse(JSON.stringify(defaultTiers));
-        customCagrs = [...CAGR_MAP.aggressive];
+        try { localStorage.removeItem(PLAN_KEY()); } catch(e) {}
+        tiers = JSON.parse(JSON.stringify(MKT().tiers));
+        customCagrs = curMarket === 'india' ? [...CAGR_MAP.aggressive] : Array(tiers.length).fill(20);
         recalcAll();
+    }
+    function editEntry(i, val){
+        if (!isFinite(val) || val <= 0) { recalcAll(); return; }
+        tiers[i].entry = Math.round(val);
+        tiers[i].zone = `${Math.round(val * 0.985).toLocaleString()}–${Math.round(val).toLocaleString()}`;
+        recalcAll();
+    }
+    const PLAN_KEY = () => 'mc:buy-strategy:plan:' + curMarket + ':v1';
+    function savePlan(){
+        try {
+            const s = {
+                tiers: tiers, customCagrs: customCagrs,
+                cur: +document.getElementById('currentIndex').value,
+                pf: +document.getElementById('currentPortfolio').value,
+                yrs: +document.getElementById('projYears').value,
+                mode: document.getElementById('cagrMode').value,
+                beta: +document.getElementById('betaFactor').value,
+                savedAt: new Date().toISOString(),
+            };
+            localStorage.setItem(PLAN_KEY(), JSON.stringify(s));
+            showSaveToast('💾 Plan saved — your values will load automatically next time');
+        } catch(e) { alert('Save failed: ' + e.message); }
+    }
+    function loadPlan(){
+        try {
+            const raw = localStorage.getItem(PLAN_KEY());
+            if (!raw) return false;
+            const s = JSON.parse(raw);
+            if (Array.isArray(s.tiers) && s.tiers.length) tiers = s.tiers.map(t => ({ zone: String(t.zone || ''), entry: +t.entry || 0, fresh: +t.fresh || 0 })).filter(t => t.entry > 0);
+            if (Array.isArray(s.customCagrs) && s.customCagrs.length) customCagrs = s.customCagrs.map(Number);
+            while (customCagrs.length < tiers.length) customCagrs.push(customCagrs[customCagrs.length - 1] || 20);
+            if (s.cur) document.getElementById('currentIndex').value = s.cur;
+            if (s.pf) document.getElementById('currentPortfolio').value = s.pf;
+            if (s.yrs) document.getElementById('projYears').value = s.yrs;
+            if (s.mode) document.getElementById('cagrMode').value = s.mode;
+            if (s.beta) document.getElementById('betaFactor').value = s.beta;
+            return true;
+        } catch(e) { return false; }
+    }
+    function showSaveToast(msg){
+        let el = document.getElementById('saveToast');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'saveToast';
+            el.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:rgba(0,230,138,0.95);color:#06281a;font-weight:800;padding:10px 18px;border-radius:10px;z-index:9999;font-size:14px;box-shadow:0 6px 24px rgba(0,0,0,0.4);transition:opacity 0.4s;opacity:0;';
+            document.body.appendChild(el);
+        }
+        el.textContent = msg;
+        el.style.opacity = '1';
+        clearTimeout(window.__stT);
+        window.__stT = setTimeout(() => { el.style.opacity = '0'; }, 2400);
     }
     function switchMarket(key){
         curMarket = key;
@@ -1105,6 +1158,8 @@
 
         // Update beta label
         document.querySelector('.ctrl:last-child .ctrl-unit').textContent = `vs ${mk.name} index`;
+
+        loadPlan();
 
         recalcAll();
     }
@@ -2326,6 +2381,7 @@
         updateEmailStatus();
         updateTgStatus();
         populatePreviewDropdown();
+        loadPlan();
         recalcAll();
         startLivePolling();
     })();
