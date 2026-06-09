@@ -85,6 +85,19 @@ export const maxDuration = 30; // PATCH 0818 — tighter cap
 // tier='retail'   — consumer-tech / hobby sites (Tom's Hardware / Anandtech / retro)
 //                   articles from these can only reach BOTTLENECK if they ALSO
 //                   pass a strict signal gate (CEO quote, named institution).
+
+const decodeEntities = (s: string): string => {
+  const one = (t: string) => t
+    .replace(/&#x([0-9a-fA-F]+);/g, (m, h) => { try { return String.fromCodePoint(parseInt(h, 16)); } catch { return m; } })
+    .replace(/&#(\d+);/g, (m, n) => { try { return String.fromCodePoint(parseInt(n, 10)); } catch { return m; } })
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&');
+  return one(one(s));
+};
+const cleanNewsUrl = (u: string): string => {
+  try { const x = new URL(u); for (const k of [...x.searchParams.keys()]) { if (/^(utm_|feed_item_type$|feed_type$)/i.test(k)) x.searchParams.delete(k); } return x.toString(); } catch { return u; }
+};
+
 const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'primary' | 'secondary' | 'tertiary' | 'editorial' | 'retail' }> = [
   // ── India Feeds ──
   { name: 'ET Markets', url: 'https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms', region: 'IN', tier: 'secondary' },
@@ -114,7 +127,7 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
   { name: 'The Register', url: 'https://www.theregister.com/headlines.atom', region: 'US', tier: 'tertiary' },
   { name: 'Ars Technica', url: 'https://feeds.arstechnica.com/arstechnica/technology-lab', region: 'US', tier: 'tertiary' },
   { name: 'TechCrunch', url: 'https://techcrunch.com/feed/', region: 'US', tier: 'tertiary' },
-  { name: 'SemiWiki', url: 'https://semiwiki.com/feed/', region: 'US', tier: 'secondary' },
+  { name: 'SemiWiki', url: 'https://semiwiki.com/feed/', region: 'US', tier: 'retail' },
   // PATCH 0077: SemiAnalysis — the most important early-caller for AI compute
   // bottlenecks. Dylan Patel called HBM3E + CoWoS shortage 6+ months before
   // Tier-1 media. Adding as 'secondary' tier so it gets full institutional
@@ -1235,14 +1248,10 @@ async function fetchAllNews(): Promise<any[]> {
         while ((match = itemRegex.exec(xml)) !== null && count < 30) {
           count++;
           const content = match[1];
-          const title = content.match(/<title>([\s\S]*?)<\/title>/)?.[1]
-            ?.replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim() || '';
+          const title = decodeEntities(content.match(/<title>([\s\S]*?)<\/title>/)?.[1]?.replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim() || '');
           const pubDate = content.match(/<pubDate>([\s\S]*?)<\/pubDate>/)?.[1]?.trim() || '';
-          const link = content.match(/<link>([\s\S]*?)<\/link>/)?.[1]
-            ?.replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim()
-            || content.match(/<link[^>]*href=["']([^"']+)["']/)?.[1]?.trim() || '';
-          const desc = content.match(/<description>([\s\S]*?)<\/description>/)?.[1]
-            ?.replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').replace(/<[^>]*>/g, '').trim() || '';
+          const link = cleanNewsUrl(decodeEntities(content.match(/<link>([\s\S]*?)<\/link>/)?.[1]?.replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim() || content.match(/<link[^>]*href=["']([^"']+)["']/)?.[1]?.trim() || ''));
+          const desc = decodeEntities(content.match(/<description>([\s\S]*?)<\/description>/)?.[1]?.replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').replace(/<[^>]*>/g, '').trim() || '');
 
           if (!title || title.length < 10) continue;
 
@@ -2587,6 +2596,12 @@ export async function GET(request: Request) {
       } catch {
         // Continue with fresh articles only
       }
+    }
+
+    for (const a of articles as any[]) {
+      if (a.title) a.title = decodeEntities(String(a.title));
+      if (a.source_url) a.source_url = cleanNewsUrl(decodeEntities(String(a.source_url)));
+      if (!a.source_name) { a.source_name = a.source || (() => { try { return new URL(a.source_url || '').hostname.replace(/^www\./, ''); } catch { return 'News'; } })(); }
     }
 
     let filtered = articles;
