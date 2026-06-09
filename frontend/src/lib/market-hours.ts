@@ -7,6 +7,20 @@
 
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000; // +05:30 fixed (no DST in India)
 
+// NSE equity-segment weekday trading holidays (official NSE 2026 circular).
+// Keep in sync each January. Weekend holidays are excluded (weekday check covers them).
+export const NSE_HOLIDAYS = new Set<string>([
+  '2026-01-15', '2026-01-26', '2026-03-03', '2026-03-26', '2026-03-31',
+  '2026-04-03', '2026-04-14', '2026-05-01', '2026-05-28', '2026-06-26',
+  '2026-09-14', '2026-10-02', '2026-10-20', '2026-11-10', '2026-11-24',
+  '2026-12-25',
+]);
+
+/** True when today (IST) is an NSE trading holiday. */
+export function isNseHoliday(now?: Date): boolean {
+  return NSE_HOLIDAYS.has(istToday(now));
+}
+
 /** Current wall-clock as a Date shifted into IST. */
 export function istNow(now?: Date): Date {
   const base = now ?? new Date();
@@ -42,6 +56,7 @@ export function isIndianMarketOpen(now?: Date): boolean {
   const t = istNow(now);
   const dow = t.getUTCDay();
   if (dow === 0 || dow === 6) return false;
+  if (NSE_HOLIDAYS.has(istToday(now))) return false; // exchange holiday
   const minutes = t.getUTCHours() * 60 + t.getUTCMinutes();
   return minutes >= (9 * 60 + 15) && minutes <= (15 * 60 + 30);
 }
