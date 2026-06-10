@@ -212,7 +212,7 @@ export default function IPOsPage() {
           </span>
           {dataSource && (
             <span>
-              Data from {dataSource}. For comprehensive IPO info, visit{' '}
+              {dataSource === 'Fallback' ? 'Primary source unavailable — showing fallback' : `Data from ${dataSource}`}. For comprehensive IPO info, visit{' '}
               <a href="https://www.nseindia.com/market-data/all-upcoming-issues-ipo"
                  target="_blank" rel="noopener noreferrer"
                  style={{ color: '#22D3EE', textDecoration: 'underline' }}>
@@ -658,7 +658,7 @@ export default function IPOsPage() {
             No IPO data available at the moment
           </p>
           <p style={{ margin: 0, fontSize: '12px', marginBottom: 18 }}>
-            Data from {dataSource || 'API'}. Check the exchange calendars directly:
+            {dataSource === 'Fallback' ? 'Primary source unavailable — showing fallback' : `Data from ${dataSource || 'API'}`}. Check the exchange calendars directly:
           </p>
           <div style={{ display: 'inline-flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center' }}>
             <a
