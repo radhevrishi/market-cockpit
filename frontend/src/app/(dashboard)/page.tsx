@@ -2049,7 +2049,7 @@ export default function HomeDashboard() {
             <div style={{ marginTop: 6, fontSize: 12, color: DIM, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', rowGap: 6 }}>
               <span>{now ? now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : '—'}</span>
               <span>·</span>
-              <span>{now ? now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '—:—'}</span>
+              <span>{now ? now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST' : '—:—'}</span>
               {/* PATCH 0622 — Stale-data nudge */}
               {typeof data.staleDataAgeDays === 'number' && data.staleDataAgeDays >= 14 && (
                 <Link href="/multibagger" style={{
@@ -2071,9 +2071,14 @@ export default function HomeDashboard() {
                   color: data.portfolioPnl.totalPct >= 0 ? '#10B981' : '#EF4444',
                   fontWeight: 800, textDecoration: 'none',
                 }} title={`${data.portfolioPnl.covered} of ${data.portfolioPnl.positions} positions matched`}>
-                  💼 P&L {data.portfolioPnl.totalPct >= 0 ? '+' : ''}{data.portfolioPnl.totalPct.toFixed(2)}%
-                  {data.portfolioPnl.bestMover && ` · best ${data.portfolioPnl.bestMover.ticker} ${data.portfolioPnl.bestMover.pct >= 0 ? '+' : ''}${data.portfolioPnl.bestMover.pct.toFixed(1)}%`}
-                  {data.portfolioPnl.worstMover && ` · worst ${data.portfolioPnl.worstMover.ticker} ${data.portfolioPnl.worstMover.pct.toFixed(1)}%`}
+                  {/* Only claim a P&L number when every position has a live price.
+                      With partial coverage the chip read as fake (best and worst
+                      collapsed to the one matched ticker). */}
+                  {data.portfolioPnl.covered >= data.portfolioPnl.positions ? (<>
+                    💼 P&L {data.portfolioPnl.totalPct >= 0 ? '+' : ''}{data.portfolioPnl.totalPct.toFixed(2)}%
+                    {data.portfolioPnl.bestMover && ` · best ${data.portfolioPnl.bestMover.ticker} ${data.portfolioPnl.bestMover.pct >= 0 ? '+' : ''}${data.portfolioPnl.bestMover.pct.toFixed(1)}%`}
+                    {data.portfolioPnl.worstMover && ` · worst ${data.portfolioPnl.worstMover.ticker} ${data.portfolioPnl.worstMover.pct.toFixed(1)}%`}
+                  </>) : (<>💼 P&L — · add live prices in Portfolio</>)}
                 </Link>
               )}
               {/* PATCH 1061 — Playbook state-machine quick-reference chip.
@@ -2716,7 +2721,7 @@ export default function HomeDashboard() {
                     </div>
                   ) : (
                     <div style={{ marginTop: 4, fontSize: 10 }}>
-                      Cache may be cold-starting after migration. Hit <strong>Backfill 60d</strong> on EO page.
+                      No recent filings loaded yet — open Earnings Ops and refresh if this looks wrong.
                     </div>
                   );
                 })()}
