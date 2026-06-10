@@ -11,7 +11,6 @@ import {
 import api from '@/lib/api';
 import TickerDrawer from '@/components/TickerDrawer';
 import GlobalSearch from '@/components/GlobalSearch';
-import { ThemeSwitcher } from '@/components/ThemeSwitcher';
 import { PdfExportButton } from '@/components/PdfExportButton';
 import MarketHours from '@/components/MarketHours';
 // PATCH 0283 — Surface Conviction Beats count in the global header.
@@ -713,7 +712,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
               )}
 
               {/* PATCH 0074: theme cycler + PDF export — visible on every tab */}
-              <ThemeSwitcher compact={false} />
+              {/* ThemeSwitcher removed — light/pro themes were never wired to page styles */}
               <PdfExportButton />
 
               <button
