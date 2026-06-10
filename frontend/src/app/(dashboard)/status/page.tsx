@@ -33,6 +33,8 @@ interface ProbeDef {
   /** Execute the probe and return { ok, status, ms, note?, raw? }. */
   run: () => Promise<ProbeResult>;
   staleAfterMs: number;
+  /** Optional wrapper timeout override (ms) — default 15s. */
+  timeoutMs?: number;
 }
 interface ProbeResult {
   ok: boolean;
@@ -113,14 +115,15 @@ const PROBES: ProbeDef[] = [
   },
   {
     id: 'earnings-enrich',
-    label: 'Earnings · Enrich',
+    timeoutMs: 35_000, // slow on cold cache — completes, just >15s
+    label: 'Earnings · Enrich (slow)',
     description: '/api/v1/earnings/enrich — Screener-backed quarterly enrichment',
     staleAfterMs: 5 * 60_000,
     run: async () => {
       const t0 = performance.now();
       // PATCH 0473 — 30s timeout (enrich can be slow with cold cache)
       const ctl = new AbortController();
-      const timer = setTimeout(() => ctl.abort(), 30_000);
+      const timer = setTimeout(() => ctl.abort(), 35_000);
       try {
         const r = await fetch('/api/v1/earnings/enrich?symbols=RELIANCE', { signal: ctl.signal });
         clearTimeout(timer);
@@ -130,7 +133,7 @@ const PROBES: ProbeDef[] = [
         return { ok: r.ok && has, status: r.status, ms, note: has ? 'data present' : 'no data' };
       } catch (e: any) {
         clearTimeout(timer);
-        return { ok: false, status: 0, ms: Math.round(performance.now() - t0), note: e?.name === 'AbortError' ? 'timeout 30s' : e?.message };
+        return { ok: false, status: 0, ms: Math.round(performance.now() - t0), note: e?.name === 'AbortError' ? 'timeout 35s' : e?.message };
       }
     },
   },
@@ -165,14 +168,15 @@ const PROBES: ProbeDef[] = [
   },
   {
     id: 'earnings-scan',
-    label: 'Earnings · Scan',
+    timeoutMs: 35_000, // slow on cold cache — completes, just >15s
+    label: 'Earnings · Scan (slow)',
     description: '/api/market/earnings-scan — 750-ticker universe Earnings Cards',
     staleAfterMs: 10 * 60_000,
     run: async () => {
       const t0 = performance.now();
       // PATCH 0473 — 20s timeout
       const ctl = new AbortController();
-      const timer = setTimeout(() => ctl.abort(), 20_000);
+      const timer = setTimeout(() => ctl.abort(), 35_000);
       try {
         const r = await fetch('/api/market/earnings-scan?symbols=RELIANCE', { signal: ctl.signal });
         clearTimeout(timer);
@@ -182,7 +186,7 @@ const PROBES: ProbeDef[] = [
         return { ok: r.ok && card?.dataStatus !== 'MISSING', status: r.status, ms, note: card ? `status: ${card.dataStatus}` : 'no card' };
       } catch (e: any) {
         clearTimeout(timer);
-        return { ok: false, status: 0, ms: Math.round(performance.now() - t0), note: e?.name === 'AbortError' ? 'timeout 20s' : e?.message };
+        return { ok: false, status: 0, ms: Math.round(performance.now() - t0), note: e?.name === 'AbortError' ? 'timeout 35s' : e?.message };
       }
     },
   },
@@ -273,10 +277,11 @@ export default function StatusPage() {
     // 15s become TIMEOUT rather than sitting in CHECKING forever.
     let result: ProbeResult;
     try {
+      const capMs = probe.timeoutMs ?? 15000;
       result = await Promise.race<ProbeResult>([
         probe.run(),
         new Promise<ProbeResult>((_, reject) =>
-          setTimeout(() => reject(new Error('Probe timed out after 15s')), 15000),
+          setTimeout(() => reject(new Error('Probe timed out after ' + Math.round(capMs / 1000) + 's')), capMs),
         ),
       ]);
     } catch (err) {
