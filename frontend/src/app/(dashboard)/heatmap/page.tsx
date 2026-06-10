@@ -324,7 +324,7 @@ export default function HeatmapPage() {
             };
             setDataMap(fallbackMap);
             setLastUpdated(new Date());
-            setFallbackInfo({ tier: 2, asOf: new Date().toLocaleDateString('en-IN') });
+            setFallbackInfo({ tier: 2, asOf: new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) });
             return;
           }
         } catch (e) {
@@ -341,7 +341,7 @@ export default function HeatmapPage() {
               if (snap?.data) {
                 setDataMap(snap.data);
                 setLastUpdated(new Date(snap.ts));
-                setFallbackInfo({ tier: 3, asOf: new Date(snap.ts).toLocaleString('en-IN') });
+                setFallbackInfo({ tier: 3, asOf: new Date(snap.ts).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) });
                 return;
               }
             }
@@ -848,7 +848,7 @@ export default function HeatmapPage() {
                       fontFamily="'Inter',system-ui,-apple-system,sans-serif"
                       opacity={getSubTextOpacity(pct)} pointerEvents="none"
                     >
-                      {pct > 0 ? '+' : ''}{pct.toFixed(1)}%
+                      {pct > 0 ? '+' : ''}{(Number(pct.toFixed(1)) || 0).toFixed(1)}%
                     </text>
                   )}
                   {showPrice && (
@@ -983,7 +983,7 @@ export default function HeatmapPage() {
                       fontFamily="'Inter',system-ui,-apple-system,sans-serif"
                       opacity={getSubTextOpacity(pct)} pointerEvents="none"
                     >
-                      {pct > 0 ? '+' : ''}{pct.toFixed(1)}%
+                      {pct > 0 ? '+' : ''}{(Number(pct.toFixed(1)) || 0).toFixed(1)}%
                     </text>
                   )}
                   {showQuality && (
