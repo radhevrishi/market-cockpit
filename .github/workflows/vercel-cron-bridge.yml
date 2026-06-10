@@ -160,7 +160,14 @@ jobs:
           echo "> POST $SAFE_URL  (label=$LABEL)"
           # Use --max-time 240s - most Vercel functions complete in 10-60s but
           # earnings-calendar refresh can take longer.
-          STATUS=$(curl -s -o /tmp/response.json -w "%{http_code}" -X POST \
+          # Bot alert routes (/api/bot/*) send alerts from their GET handler;
+          # their POST handler is the Telegram webhook receiver and no-ops on
+          # cron calls. Use GET for bot paths so alerts actually fire.
+          METHOD="POST"
+          case "$PATH_PART" in
+            /api/bot/*) METHOD="GET" ;;
+          esac
+          STATUS=$(curl -s -o /tmp/response.json -w "%{http_code}" -X "$METHOD" \
             -H 'Content-Type: application/json' \
             --max-time 240 \
             "$URL" || echo "000")
