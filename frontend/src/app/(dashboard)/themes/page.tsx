@@ -8,6 +8,8 @@ import api from '@/lib/api';
 import TickerDrawer from '@/components/TickerDrawer';
 // PATCH 0282 — Shared freshness chip.
 import { PanelFreshness } from '@/components/PanelFreshness';
+// Holiday-aware IST market-hours check for honest as-of labels.
+import { isIndianMarketOpen } from '@/lib/market-hours';
 
 // ── Static theme definitions ──────────────────────────────────────────────────
 
@@ -243,7 +245,7 @@ export default function ThemesPage() {
         <div className="flex items-center gap-3 flex-wrap">
           <h1 className="text-xl font-bold text-white">Thematic Dashboards</h1>
           {/* PATCH 0282 — Live freshness chip from the theme-quotes query. */}
-          <PanelFreshness dataUpdatedAt={quotesUpdatedAt} isFetching={quotesFetching} staleAfterMs={5 * 60_000} />
+          <PanelFreshness dataUpdatedAt={quotesUpdatedAt} isFetching={quotesFetching} staleAfterMs={5 * 60_000} ageOverride={isIndianMarketOpen() ? undefined : 'last close'} />
         </div>
         <p className="text-[#8899AA] text-sm mt-1">
           Pre-built baskets for your focus themes. Click a theme to expand; click any ticker for details.
