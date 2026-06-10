@@ -1,0 +1,13 @@
+name = "mc-alerts"
+main = "index.js"
+compatibility_date = "2026-01-01"
+
+# Always-on buy-zone alerts for the Buy Strategy planner. Runs every 5 min
+# during IST market hours (03:45-10:00 UTC ~= 09:15-15:30 IST), checks the
+# index level against your staggered buy zones, Telegrams you on a hit.
+[triggers]
+crons = ["*/5 3-10 * * 1-5"]
+
+[[kv_namespaces]]
+binding = "KV"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
