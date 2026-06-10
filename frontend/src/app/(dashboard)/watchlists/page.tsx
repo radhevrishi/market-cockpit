@@ -1880,77 +1880,6 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
             )}
           </div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {/* PATCH 0917 — Demo seed button. User feedback: "what i am
-                trying to do here is to populate soem old entries to check
-                if my filters work coretly" — bench only has Q4 FY26 because
-                past graded data isn't available. This button injects 8
-                synthetic DEMO_* entries spanning FY25 Q1-Q4 + FY26 Q1-Q4
-                so the user can verify the Quarter + FY filters work for
-                any period. Click again to remove. */}
-            {(() => {
-              const hasDemo = entries.some((e) => e.ticker.startsWith('DEMO_'));
-              const handleSeed = () => {
-                try {
-                  const raw = localStorage.getItem('mc:conviction-beats:v1');
-                  const map = raw ? JSON.parse(raw) : {};
-                  if (hasDemo) {
-                    for (const k of Object.keys(map)) {
-                      if (k.startsWith('DEMO_')) delete map[k];
-                    }
-                  } else {
-                    // 8 entries: FY25 Q1-Q4 + FY26 Q1-Q4 using filing dates
-                    // that map correctly via deriveQuarterFY heuristic.
-                    const samples = [
-                      // FY25 (Apr 2024 - Mar 2025), filings in 2024-2025
-                      { ticker: 'DEMO_Q1_FY25', fdate: '2024-08-15', q: 'Q1', fy: 2025 },
-                      { ticker: 'DEMO_Q2_FY25', fdate: '2024-11-10', q: 'Q2', fy: 2025 },
-                      { ticker: 'DEMO_Q3_FY25', fdate: '2025-02-08', q: 'Q3', fy: 2025 },
-                      { ticker: 'DEMO_Q4_FY25', fdate: '2025-05-20', q: 'Q4', fy: 2025 },
-                      // FY26 (Apr 2025 - Mar 2026), filings in 2025-2026
-                      { ticker: 'DEMO_Q1_FY26', fdate: '2025-08-12', q: 'Q1', fy: 2026 },
-                      { ticker: 'DEMO_Q2_FY26', fdate: '2025-11-15', q: 'Q2', fy: 2026 },
-                      { ticker: 'DEMO_Q3_FY26', fdate: '2026-02-10', q: 'Q3', fy: 2026 },
-                      { ticker: 'DEMO_Q4_FY26', fdate: '2026-05-22', q: 'Q4', fy: 2026 },
-                    ];
-                    for (const s of samples) {
-                      map[s.ticker] = {
-                        ticker: s.ticker,
-                        company: `[DEMO] ${s.q} FY${s.fy % 100} Test Co`,
-                        tier: 'STRONG',
-                        composite_score: 78,
-                        sales_yoy_pct: 25, net_profit_yoy_pct: 42, eps_yoy_pct: 38,
-                        filing_date: s.fdate,
-                        sector: 'Demo Sector',
-                        market_cap_bucket: 'mid',
-                        added_at: new Date().toISOString(),
-                        guidance: 'Positive',
-                        guidance_score: 0.4,
-                        quarter: s.q,
-                        fiscal_year: s.fy,
-                      };
-                    }
-                  }
-                  localStorage.setItem('mc:conviction-beats:v1', JSON.stringify(map));
-                  window.dispatchEvent(new CustomEvent('conviction-beats:updated'));
-                } catch (e) {
-                  console.warn('[demo-seed] failed:', e);
-                }
-              };
-              return (
-                <button onClick={handleSeed}
-                  title={hasDemo
-                    ? 'Remove the 8 synthetic DEMO_* entries spanning FY25 + FY26 quarters'
-                    : 'Add 8 synthetic DEMO_* entries (FY25 Q1-Q4 + FY26 Q1-Q4) so you can test all the Quarter + FY filter combinations'}
-                  style={{
-                    ...chipBase,
-                    background: hasDemo ? '#EF444415' : '#A78BFA15',
-                    border: `1px solid ${hasDemo ? '#EF444460' : '#A78BFA60'}`,
-                    color: hasDemo ? '#EF4444' : '#A78BFA',
-                  }}>
-                  {hasDemo ? '🧪 Remove demo' : '🧪 Add demo entries'}
-                </button>
-              );
-            })()}
             <button onClick={() => setFilters((f) => ({ ...f, sortByPead: !f.sortByPead }))}
               style={filters.sortByPead ? chipActive('#22D3EE') : chipBase}>
               🌊 Sort by PEAD {filters.sortByPead ? '✓' : ''}
@@ -2331,7 +2260,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                     return (
                       <button key={fy} onClick={() => toggleFY(fy)}
                         style={active ? chipActive('#A78BFA') : chipBase}
-                        title={`FY${fy} = Apr ${fyFull - 1} → Mar ${fyFull} (full Indian fiscal year, all 4 quarters Q1+Q2+Q3+Q4). Click a quarter chip above to narrow further. ${n === 0 ? 'No bench entries for this FY yet — try Add demo entries to test.' : `${n} entr${n === 1 ? 'y' : 'ies'} match.`}`}>
+                        title={`FY${fy} = Apr ${fyFull - 1} → Mar ${fyFull} (full Indian fiscal year, all 4 quarters Q1+Q2+Q3+Q4). Click a quarter chip above to narrow further. ${n === 0 ? 'No bench entries for this FY yet.' : `${n} entr${n === 1 ? 'y' : 'ies'} match.`}`}>
                         FY{fy} <span style={{ fontSize: 9, color: active ? '#A78BFA' : '#94A3B8', marginLeft: 2 }}>(Apr {fyFull - 1}–Mar {fyFull})</span> <span style={{ color: active ? '#A78BFA' : '#6B7A8D', marginLeft: 3, fontWeight: 800 }}>({n})</span>
                       </button>
                     );
@@ -2420,9 +2349,6 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
               We&apos;re in the middle of <strong>Q4 FY26 filing season</strong> (May–Jun 2026 — companies publishing their Jan–Mar 2026 numbers), so {dominantQ[0]} naturally has {dominantQ[1]} of {totalQ} entries ({dominantPct.toFixed(0)}%).
               <div style={{ marginTop: 6, fontSize: 10, color: '#94A3B8' }}>
                 <strong style={{ color: '#E6EDF3' }}>Quarter → date cheat sheet:</strong> Q1 = {qPeriodMap.Q1} · Q2 = {qPeriodMap.Q2} · Q3 = {qPeriodMap.Q3} · Q4 = {qPeriodMap.Q4}
-              </div>
-              <div style={{ marginTop: 4, fontSize: 10, color: '#94A3B8' }}>
-                To test filters on OTHER quarters, click <strong style={{ color: '#A78BFA' }}>🧪 Add demo entries</strong> above to seed 8 synthetic FY25 + FY26 entries across all 4 quarters.
               </div>
             </div>
           );
