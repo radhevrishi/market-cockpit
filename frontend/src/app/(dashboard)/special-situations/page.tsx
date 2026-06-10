@@ -46,7 +46,13 @@ function nextCatalystFor(ev: any): { label: string; daysOut: number | null } | n
     try {
       const dt = new Date(ev.next_catalyst_date);
       const days = Math.round((dt.getTime() - Date.now()) / 86400_000);
-      return { label: `${ev.next_catalyst_label || 'Next catalyst'}: ${dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}`, daysOut: days };
+      const dateStr = dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+      if (days < 0) {
+        // Date already passed — say so instead of showing a stale countdown.
+        const verb = /open/i.test(ev.next_catalyst_label || '') ? 'opened' : 'passed';
+        return { label: `${ev.next_catalyst_label || 'Next catalyst'}: ${verb} ${dateStr}`, daysOut: null };
+      }
+      return { label: `${ev.next_catalyst_label || 'Next catalyst'}: ${dateStr}`, daysOut: days };
     } catch {}
   }
   // Event-type heuristic from typical Indian/US conventions
@@ -1194,19 +1200,31 @@ function CanonicalSection({ meta, color, events, defaultExpanded }: { meta: { la
 // Returns USD or INR amount as a number, plus currency symbol.  Crude but
 // effective: regex catches '$23.50 per share', 'Rs 750', '₹1,250', '750/-'
 // patterns we see in tender / open-offer titles.
-function parseDealPrice(text: string): { amount: number; currency: string } | null {
+function parseDealPrice(text: string): { amount: number; currency: string; unit?: string } | null {
   if (!text) return null;
+  // Keep magnitude tokens (crore / lakh / billion / million) so deal VALUES
+  // like '₹15,000 crore' or '$1 billion' are not shown as bare per-share prices.
+  const magAfter = (src: string, m: RegExpMatchArray): string | undefined => {
+    const rest = src.slice((m.index ?? 0) + m[0].length).trimStart();
+    const mm = rest.match(/^(crores?|crs?\.?|lakhs?|lacs?|billions?|bn\b|millions?|mn\b)/i);
+    if (!mm) return undefined;
+    const r = mm[1].toLowerCase();
+    if (r.startsWith('cr')) return 'Cr';
+    if (r.startsWith('lakh') || r.startsWith('lac')) return 'L';
+    if (r.startsWith('billion') || r === 'bn') return 'B';
+    return 'M';
+  };
   // USD: $XX.XX or USD XX.XX per share
   let m = text.match(/(?:\$|USD\s*)\s*([\d,]+\.?\d*)\s*(?:per\s+share|\/share)?/i);
   if (m) {
     const n = Number(m[1].replace(/,/g, ''));
-    if (Number.isFinite(n) && n > 0 && n < 100000) return { amount: n, currency: '$' };
+    if (Number.isFinite(n) && n > 0 && n < 100000) return { amount: n, currency: '$', unit: magAfter(text, m) };
   }
   // INR: Rs / ₹ / INR
   m = text.match(/(?:rs\.?|₹|inr)\s*([\d,]+\.?\d*)\s*(?:per\s+share|\/-?)?/i);
   if (m) {
     const n = Number(m[1].replace(/,/g, ''));
-    if (Number.isFinite(n) && n > 0 && n < 1000000) return { amount: n, currency: '₹' };
+    if (Number.isFinite(n) && n > 0 && n < 1000000) return { amount: n, currency: '₹', unit: magAfter(text, m) };
   }
   return null;
 }
@@ -1272,7 +1290,7 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
   );
   const cmp = dealQuote?.price ?? null;
   const offer = dealPrice?.amount ?? null;
-  const spreadPct = offer != null && cmp != null && cmp > 0 ? ((offer - cmp) / cmp) * 100 : null;
+  const spreadPct = offer !== null && cmp !== null && cmp > 0 && !dealPrice?.unit ? ((offer - cmp) / cmp) * 100 : null; // a unit means deal VALUE, not a per-share price
   // Crude time-to-close estimate: tender offers typically 30-60d, going-private
   // ~120d, M&A definitive ~180d.  Fallback 60d if no event_type hint.
   const daysToCloseGuess =
@@ -1430,7 +1448,7 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
         {(offer != null || cmp != null) && (
           <div style={{ marginTop: 6, display: 'flex', gap: 12, fontSize: 11, flexWrap: 'wrap', color: '#94A3B8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
             {offer != null && (
-              <span><span style={{ color: '#6B7A8D' }}>Offer:</span> <strong style={{ color: '#E6EDF3' }}>{dealPrice?.currency}{offer.toLocaleString()}</strong></span>
+              <span><span style={{ color: '#6B7A8D' }}>Offer:</span> <strong style={{ color: '#E6EDF3' }}>{dealPrice?.currency}{offer.toLocaleString()}{dealPrice?.unit ? (dealPrice.unit === 'B' || dealPrice.unit === 'M' ? dealPrice.unit : ' ' + dealPrice.unit) : ''}</strong></span>
             )}
             {cmp != null && (
               <span><span style={{ color: '#6B7A8D' }}>CMP:</span> <strong style={{ color: '#E6EDF3' }}>{dealPrice?.currency || (ev.region === 'IN' ? '₹' : '$')}{cmp.toLocaleString()}</strong></span>
