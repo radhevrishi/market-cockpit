@@ -19,7 +19,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem(THEME_STORAGE_KEY) as ThemeName | null;
-      if (saved && saved in THEMES) {
+      // Light/Pro were removed from the UI — only restore a saved dark theme.
+      if (saved && saved in THEMES && saved === 'dark') {
         setThemeState(saved);
       }
     } catch {
