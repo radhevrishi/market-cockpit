@@ -366,7 +366,7 @@ function useTickerQuote(ticker: string) {
         const ctl = new AbortController();
         const timer = setTimeout(() => ctl.abort(), 20_000); // PATCH 1037
         let r: Response;
-        try { r = await fetch(`/api/market/quote?symbols=${encodeURIComponent(t)}`, { cache: 'no-store', signal: ctl.signal }); }
+        try { r = await fetch(`/api/market/quote?symbols=${encodeURIComponent(t.replace(/\.(NS|BO)$/, ''))}`, { cache: 'no-store', signal: ctl.signal }); } // PATCH 1101 — /api/market/quote rejects dotted symbols (it is NSE-first by design); strip .NS/.BO
         finally { clearTimeout(timer); }
         if (!r.ok) return null;
         let json: any = {};
@@ -380,7 +380,7 @@ function useTickerQuote(ticker: string) {
           change_pct: stock.changePercent ?? stock.change_pct,
           currency: stock.currency,
           exchange: stock.exchange,
-          name: stock.name,
+          name: stock.name ?? stock.company,
         };
       } catch {
         return null;
@@ -391,9 +391,9 @@ function useTickerQuote(ticker: string) {
   });
 }
 
-function useTickerNews(ticker: string) {
+function useTickerNews(ticker: string, companyName?: string) {
   return useQuery({
-    queryKey: ['ticker-news', ticker],
+    queryKey: ['ticker-news', ticker, companyName || ''],
     queryFn: async () => {
       if (!ticker) return [] as any[];
       // PATCH 0095: default /news returns ARRAY (not { articles }).  Use
@@ -408,10 +408,10 @@ function useTickerNews(ticker: string) {
       // typically get hits from the India fallback, so the merge is a
       // no-op for them.
       const [primaryRes, indiaRes] = await Promise.allSettled([
-        api.get('/news', { params: { watchlist: ticker } }),
+        api.get('/news', { params: { watchlist: ticker.replace(/\.(NS|BO)$/, '') } }),
         // /api/v1/news-india/<ticker> — direct fetch, this endpoint isn't
         // under the api.get baseURL prefix the way /news is.
-        fetch(`/api/v1/news-india/${encodeURIComponent(ticker)}`, { cache: 'no-store' })
+        fetch(`/api/v1/news-india/${encodeURIComponent(ticker.replace(/\.(NS|BO)$/, ''))}${companyName ? `?company=${encodeURIComponent(companyName)}` : ''}`, { cache: 'no-store' })
           .then((r) => r.ok ? r.json() : { articles: [] })
           .catch(() => ({ articles: [] })),
       ]);
@@ -810,6 +810,37 @@ function buildDecisionMemo(ticker: string, state: SheetState, score: Score): Dec
 
 // ─── UI ─────────────────────────────────────────────────────────────────────
 
+// PATCH 1101 — NSE-first resolution for bare tickers. A bare symbol like
+// LUPIN was treated as US/Global and its news probe returned Netflix
+// "Lupin" articles, which then auto-filled the checklist and Decision Memo.
+// Bare tickers are now checked against the NSE universe (the same
+// /api/market/quotes?market=india payload Home/Movers already use) and
+// resolved as <SYM>.NS when found, falling back to US/Global otherwise.
+let __nseUniversePromise: Promise<Map<string, string> | null> | null = null;
+function loadNseUniverse(): Promise<Map<string, string> | null> {
+  if (!__nseUniversePromise) {
+    __nseUniversePromise = (async () => {
+      try {
+        const r = await fetch('/api/market/quotes?market=india', { cache: 'no-store' });
+        if (!r.ok) { __nseUniversePromise = null; return null; }
+        const j: any = await r.json();
+        const stocks: any[] = Array.isArray(j?.stocks) ? j.stocks : [];
+        if (stocks.length === 0) { __nseUniversePromise = null; return null; }
+        const map = new Map<string, string>();
+        for (const s of stocks) {
+          const t = String(s?.ticker || '').toUpperCase().replace(/\.(NS|BO)$/, '');
+          if (t) map.set(t, String(s?.company || s?.name || ''));
+        }
+        return map;
+      } catch {
+        __nseUniversePromise = null;
+        return null;
+      }
+    })();
+  }
+  return __nseUniversePromise;
+}
+
 function inferRegionFromTicker(t: string): 'IN' | 'GLOBAL' {
   const T = t.toUpperCase();
   return T.endsWith('.NS') || T.endsWith('.BO') ? 'IN' : 'GLOBAL';
@@ -868,8 +899,37 @@ export default function StockSheetPage() {
   }, [activeTicker, searchParams, router]);
 
   const region = useMemo(() => activeTicker ? inferRegionFromTicker(activeTicker) : 'GLOBAL', [activeTicker]);
+  // PATCH 1101 — NSE-first resolution of bare tickers (see loadNseUniverse).
+  const [nseCompany, setNseCompany] = useState<string>('');
+  const [resolvingNse, setResolvingNse] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setNseCompany('');
+    const T = (activeTicker || '').toUpperCase();
+    if (!T) return;
+    const hasNseSuffix = /\.(NS|BO)$/.test(T);
+    if (!hasNseSuffix && T.includes('.')) return; // explicit non-NSE suffix (e.g. BRK.B) — leave as Global
+    const base = T.replace(/\.(NS|BO)$/, '');
+    if (!hasNseSuffix) setResolvingNse(true);
+    loadNseUniverse().then((map) => {
+      if (cancelled) return;
+      if (map && map.has(base)) {
+        setNseCompany(map.get(base) || '');
+        if (!hasNseSuffix) {
+          setActiveTicker(`${base}.NS`);
+          setTickerInput(`${base}.NS`);
+        }
+      }
+      setResolvingNse(false);
+    }).catch(() => { if (!cancelled) setResolvingNse(false); });
+    return () => { cancelled = true; };
+  }, [activeTicker]);
   const { data: quote } = useTickerQuote(activeTicker);
-  const { data: news } = useTickerNews(activeTicker);
+  // PATCH 1101 — hold the news probe while NSE resolution is pending so the
+  // checklist never auto-fills from a misresolved feed (Netflix-Lupin class);
+  // for NSE names pass the company name so common-English-word tickers query
+  // news by company, not by the bare word.
+  const { data: news } = useTickerNews(resolvingNse ? '' : activeTicker, region === 'IN' ? (nseCompany || (quote as any)?.name || '') : '');
   const { data: earningsData } = useTickerEarnings(activeTicker);
 
   // PATCH 0127 — save to Recently Viewed only AFTER at least one data probe
