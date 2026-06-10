@@ -260,7 +260,7 @@ export default function RRGPage() {
             </button>
 
             {/* Source & Live indicator */}
-            {data && (
+            {data && data.sectors.length > 0 && (
               <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <span style={{ fontSize: '11px', color: THEME.textSecondary }}>{data.source}</span>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: `${THEME.green}22`, padding: '4px 10px', borderRadius: '4px', color: THEME.green, fontSize: '12px', fontWeight: '600' }}>
@@ -284,6 +284,15 @@ export default function RRGPage() {
         {loading ? (
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px' }}>
             <Loader size={40} color={THEME.accent} style={{ animation: 'spin 1s linear infinite' }} />
+          </div>
+        ) : data && data.sectors.length === 0 ? (
+          <div style={{ padding: '48px 24px', background: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '12px', textAlign: 'center' }}>
+            <div style={{ fontSize: '16px', fontWeight: 600, color: THEME.textPrimary, marginBottom: '8px' }}>
+              {market === 'global' ? 'US sector data unavailable' : 'Sector data unavailable'}
+            </div>
+            <div style={{ fontSize: '13px', color: THEME.textSecondary }}>
+              {market === 'global' ? 'The US data source is not responding right now. India mode works.' : 'The data source is not responding right now. Try again later.'}
+            </div>
           </div>
         ) : data ? (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '24px' }}>
