@@ -5607,7 +5607,7 @@ async function runLockedCompute(watchlist: string[], portfolio: string[]): Promi
 
 // ==================== AUTO-LOAD SYMBOLS ====================
 
-const DEFAULT_CHAT_ID = '5057319640';
+const DEFAULT_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 
 // Fallback symbols if Redis portfolio/watchlist are empty
 const DEFAULT_TRACKED_SYMBOLS = [
