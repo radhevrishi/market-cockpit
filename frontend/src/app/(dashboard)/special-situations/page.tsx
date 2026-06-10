@@ -1206,12 +1206,12 @@ function parseDealPrice(text: string): { amount: number; currency: string; unit?
   // like '₹15,000 crore' or '$1 billion' are not shown as bare per-share prices.
   const magAfter = (src: string, m: RegExpMatchArray): string | undefined => {
     const rest = src.slice((m.index ?? 0) + m[0].length).trimStart();
-    const mm = rest.match(/^(crores?|crs?\.?|lakhs?|lacs?|billions?|bn\b|millions?|mn\b)/i);
+    const mm = rest.match(/^[-–]?\s*(crores?|crs?\.?|lakhs?|lacs?|billions?|bn\b|b\b|millions?|mn\b|m\b)/i);
     if (!mm) return undefined;
     const r = mm[1].toLowerCase();
     if (r.startsWith('cr')) return 'Cr';
     if (r.startsWith('lakh') || r.startsWith('lac')) return 'L';
-    if (r.startsWith('billion') || r === 'bn') return 'B';
+    if (r.startsWith('b')) return 'B';
     return 'M';
   };
   // USD: $XX.XX or USD XX.XX per share
