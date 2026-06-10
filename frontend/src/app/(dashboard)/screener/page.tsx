@@ -6,6 +6,8 @@ import { Search, Loader } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 // PATCH 0275 — Shared freshness chip helper.
 import { PanelFreshness } from '@/components/PanelFreshness';
+// Holiday-aware IST market-hours check for honest live/last-close labels.
+import { isIndianMarketOpen } from '@/lib/market-hours';
 // PATCH 0276 — Conviction Beats overlay on Screener results.
 import { getConvictionTickers } from '@/lib/conviction-beats';
 
@@ -555,10 +557,10 @@ export default function ScreenerPage() {
               Market Screener
             </h1>
             {/* PATCH 0275 — Shared freshness chip. */}
-            <PanelFreshness dataUpdatedAt={dataUpdatedAt} isFetching={loading} staleAfterMs={10 * 60_000} />
+            <PanelFreshness dataUpdatedAt={dataUpdatedAt} isFetching={loading} staleAfterMs={10 * 60_000} ageOverride={isIndianMarketOpen() ? undefined : 'last close'} />
           </div>
           <p style={{ color: THEME.textSecondary, fontSize: '14px', margin: 0 }}>
-            Real-time stock data powered by NSE India
+            {dataUpdatedAt > 0 && !isIndianMarketOpen() ? 'Last-close stock data from NSE India' : 'Live stock data powered by NSE India'}
           </p>
         </div>
 
