@@ -5,6 +5,7 @@ type FeedItem = { id: string; time: number; market: 'IN' | 'US' | 'GLOBAL'; tick
 
 const COL = { line: '#1e2633', txt: '#e6edf3', mut: '#8b98a9', grn: '#10b981', red: '#ef4444', accent: '#22d3ee', amber: '#fbbf24', chip: '#1b2230' };
 
+const cleanText = (s: string): string => String(s || '').replace(/<[^>]*>/g, ' ').replace(/\]\]>/g, '').replace(/&#x([0-9a-fA-F]+);/g, (m, h) => { try { return String.fromCodePoint(parseInt(h, 16)); } catch { return m; } }).replace(/&#(\d+);/g, (m, n) => { try { return String.fromCodePoint(parseInt(n, 10)); } catch { return m; } }).replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&rsquo;/g, "'").replace(/&lsquo;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
 function pctStr(n: number) { return (n >= 0 ? '+' : '') + n.toFixed(2) + '%'; }
 function priceStr(mk: string, p: number | null) { if (p == null) return ''; return (mk === 'US' ? '$' : 'Rs ') + p.toLocaleString('en-US'); }
 function hhmm(ms: number) { try { return new Date(ms).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }); } catch { return ''; } }
@@ -79,7 +80,8 @@ export default function InPlayPage() {
       const newsMap = buildNewsMap(news);
       const baseRaw = buildNews(news, earn);
       // PATCH 1023 — prepend curated In-Play items (structural + ranked events) to base
-      const base = curatedItems.concat(baseRaw);
+      const __seen = new Set<string>();
+      const base = curatedItems.concat(baseRaw).filter((it) => { const k = (it.ticker || '') + '|' + cleanText(it.headline || '').replace(/^\[[^\]]*\]\s*/, '').toLowerCase(); if (__seen.has(k)) return false; __seen.add(k); return true; });
       const p1 = base.slice().sort((a, b) => b.time - a.time);
       setItems(p1.slice(0, 500)); setAsOf(nowStr()); setLoading(false);
       let __mk = 'US'; try { __mk = localStorage.getItem('mc:inplay:market') || 'US'; } catch {}
@@ -161,8 +163,8 @@ export default function InPlayPage() {
                 <span style={{ display: 'block', fontSize: 9, color: COL.mut, marginTop: 2 }}>{it.market}{it.source ? (' - ' + it.source) : ''}</span>
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: COL.txt }}>{it.headline}{pxlabel ? <span style={{ color: cc, marginLeft: 4, fontWeight: 700 }}>{pxlabel}</span> : null}</div>
-                {view === 'play' && it.body ? <div style={{ fontSize: 12, color: COL.mut, marginTop: 3, lineHeight: 1.45 }}>{it.body}</div> : null}
+                <div style={{ fontSize: 13, fontWeight: 600, color: COL.txt }}>{cleanText(it.headline)}{pxlabel ? <span style={{ color: cc, marginLeft: 4, fontWeight: 700 }}>{pxlabel}</span> : null}</div>
+                {view === 'play' && it.body ? <div style={{ fontSize: 12, color: COL.mut, marginTop: 3, lineHeight: 1.45 }}>{cleanText(it.body)}</div> : null}
               </div>
             </div>
           );
