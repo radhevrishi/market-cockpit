@@ -4,6 +4,8 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { RefreshCw, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, ChevronUp, ChevronDown, Zap } from 'lucide-react';
 // PATCH 0284 — Shared freshness chip.
 import { PanelFreshness } from '@/components/PanelFreshness';
+// Holiday-aware IST market-hours check for honest LIVE/last-close labels.
+import { isIndianMarketOpen } from '@/lib/market-hours';
 // PATCH 0544 — AUDIT #76 shared quote fetch (dedupe + 60s module cache).
 import { fetchQuotesShared } from '@/lib/hooks/useMarketQuotes';
 
@@ -200,7 +202,7 @@ export default function MoversPage() {
         return sig(prev) === sig(stocks) ? prev : stocks;
       });
       setLastUpdated(new Date()); __moversRetryCount = 0;
-      setMarketOpen(!!(json as any)?.marketHours?.indianOpen);
+      setMarketOpen(isIndianMarketOpen());
     } catch (err: any) {
       setError(err?.name === 'AbortError' ? 'Movers fetch timed out' : (err instanceof Error ? err.message : 'Failed to fetch data'));
       if (allStocks.length === 0 && __moversRetryCount < 3) { __moversRetryCount += 1; setTimeout(() => { fetchData(); }, 2500); }
@@ -540,10 +542,11 @@ export default function MoversPage() {
               dataUpdatedAt={lastUpdated ? lastUpdated.getTime() : 0}
               isFetching={isRefreshing}
               staleAfterMs={10 * 60_000}
+              ageOverride={marketOpen ? undefined : 'closed'}
             />
           </div>
           <p style={{ fontSize: '11px', color: TEXT3, margin: '2px 0 0' }}>
-            NIFTY 500 + Midcap 250 + Smallcap 250 — Live from NSE
+            NIFTY 500 + Midcap 250 + Smallcap 250 — {marketOpen ? 'Live from NSE' : 'Last close from NSE'}
             {!isMobile && allStocks.length > 0 && (
               <span style={{ marginLeft: '8px', color: TEXT2 }}>
                 ({capCounts.large} Large · {capCounts.mid} Mid · {capCounts.small} Small)
@@ -747,7 +750,7 @@ export default function MoversPage() {
               <TrendingUp size={15} color={GREEN} />
               <span style={{ fontSize: isMobile ? '13px' : '14px', fontWeight: '600' }}>Top Gainers</span>
               <span style={{ fontSize: '10px', color: GREEN, backgroundColor: 'rgba(16,185,129,0.12)', padding: '2px 6px', borderRadius: '3px', fontWeight: '600' }}>{gainers.length}</span>
-              <span style={{ marginLeft: 'auto', fontSize: '9px', color: GREEN, fontWeight: '700', backgroundColor: 'rgba(16,185,129,0.15)', padding: '2px 8px', borderRadius: '3px' }}>{marketOpen ? 'LIVE' : 'EOD'}</span>
+              <span style={{ marginLeft: 'auto', fontSize: '9px', color: GREEN, fontWeight: '700', backgroundColor: 'rgba(16,185,129,0.15)', padding: '2px 8px', borderRadius: '3px' }}>{marketOpen ? 'LIVE' : 'LAST CLOSE'}</span>
             </div>
             <div style={{ overflowX: 'auto', maxHeight: isMobile ? '400px' : '550px', overflowY: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -773,7 +776,7 @@ export default function MoversPage() {
               <TrendingDown size={15} color={RED} />
               <span style={{ fontSize: isMobile ? '13px' : '14px', fontWeight: '600' }}>Top Losers</span>
               <span style={{ fontSize: '10px', color: RED, backgroundColor: 'rgba(239,68,68,0.12)', padding: '2px 6px', borderRadius: '3px', fontWeight: '600' }}>{losers.length}</span>
-              <span style={{ marginLeft: 'auto', fontSize: '9px', color: RED, fontWeight: '700', backgroundColor: 'rgba(239,68,68,0.15)', padding: '2px 8px', borderRadius: '3px' }}>{marketOpen ? 'LIVE' : 'EOD'}</span>
+              <span style={{ marginLeft: 'auto', fontSize: '9px', color: RED, fontWeight: '700', backgroundColor: 'rgba(239,68,68,0.15)', padding: '2px 8px', borderRadius: '3px' }}>{marketOpen ? 'LIVE' : 'LAST CLOSE'}</span>
             </div>
             <div style={{ overflowX: 'auto', maxHeight: isMobile ? '400px' : '550px', overflowY: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
