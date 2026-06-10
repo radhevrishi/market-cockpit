@@ -492,7 +492,7 @@ function LiveBullishFeed() {
                 {' '}<strong style={{ color: '#94A3B8' }}>{tierCounts.NEUTRAL || 0} ⚪</strong> ·
                 {' '}<strong style={{ color: '#EF4444' }}>{tierCounts.BEARISH || 0} 🔴</strong> ·
                 {' '}<strong style={{ color: '#3B82F6' }}>{tierCounts.DATA_PENDING || 0} 🟦</strong>
-                {' '}· sources: NSE <strong style={{ color: data.sources.nse === 'NSE_OK' ? '#10B981' : '#EF4444' }}>{data.sources.nse}</strong> · BSE <strong style={{ color: data.sources.bse === 'BSE_OK' ? '#10B981' : '#94A3B8' }}>{data.sources.bse}</strong>
+                {' '}· sources: NSE <strong style={{ color: data.sources.nse === 'NSE_OK' ? '#10B981' : '#EF4444' }}>{({NSE_OK:'OK', BSE_EMPTY:'no filings'} as Record<string,string>)[data.sources.nse] || data.sources.nse}</strong> · BSE <strong style={{ color: data.sources.bse === 'BSE_OK' ? '#10B981' : '#94A3B8' }}>{({NSE_OK:'OK', BSE_EMPTY:'no filings'} as Record<string,string>)[data.sources.bse] || data.sources.bse}</strong>
                 {lastRefresh && <> · refreshed {lastRefresh.toLocaleTimeString()}</>}
               </>
             ) : loading ? 'Loading…' : '—'}
