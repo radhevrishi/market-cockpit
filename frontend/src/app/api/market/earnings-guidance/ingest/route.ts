@@ -40,7 +40,7 @@ const META_KEY = 'guidance:meta';
 const STORE_TTL = 86400; // 24 hours
 const EARNINGS_KV_TTL = 21600; // 6 hours for bootstrapped earnings cache
 
-const CHAT_ID = '5057319640';
+const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 
 // ==================== TYPE DEFINITIONS ====================
 
