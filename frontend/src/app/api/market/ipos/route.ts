@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { fetchCurrentIPOs, fetchUpcomingIPOs, fetchPastIPOs } from '@/lib/nse';
 import { rateLimitResponse } from '@/lib/rateLimit';
+import { kvGet, kvSet } from '@/lib/kv';
 
 export const dynamic = 'force-dynamic';
 
@@ -171,7 +172,7 @@ export async function GET(request: Request) {
       finally { clearTimeout(ipoTimer); }
     }
 
-    return NextResponse.json({
+    const payload = {
       ipos,
       summary: {
         open: ipos.filter(i => i.status === 'open').length,
@@ -181,9 +182,27 @@ export async function GET(request: Request) {
       },
       source,
       updatedAt: new Date().toISOString(),
-    });
+    };
+
+    if (ipos.length > 0) {
+      // Remember the last good (non-empty) payload for a week.
+      kvSet('ipos:last-good:v1', payload, 7 * 86400).catch(() => {});
+      return NextResponse.json(payload);
+    }
+
+    // Fresh fetch came back empty — serve the last good copy if available.
+    const cached = await kvGet<any>('ipos:last-good:v1').catch(() => null);
+    if (cached && Array.isArray(cached.ipos) && cached.ipos.length > 0) {
+      return NextResponse.json({ ...cached, stale: true, asOf: cached.updatedAt });
+    }
+
+    return NextResponse.json(payload);
   } catch (error) {
     console.error('IPO fetch error:', error);
+    const cached = await kvGet<any>('ipos:last-good:v1').catch(() => null);
+    if (cached && Array.isArray(cached.ipos) && cached.ipos.length > 0) {
+      return NextResponse.json({ ...cached, stale: true, asOf: cached.updatedAt });
+    }
     return NextResponse.json({
       error: 'Failed to fetch IPO data',
       ipos: [],
