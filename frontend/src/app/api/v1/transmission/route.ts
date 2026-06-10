@@ -17,6 +17,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
+import { kvGet, kvSet } from '@/lib/kv';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -444,7 +445,7 @@ const COMMODITIES: Commodity[] = [
 ];
 
 interface YahooPoint { ts: number; close: number; }
-interface FetchResult { points: YahooPoint[]; source: 'yahoo' | 'fmp' | 'alphavantage'; }
+interface FetchResult { points: YahooPoint[]; source: 'yahoo' | 'fmp' | 'alphavantage' | 'kv'; }
 
 async function fetchFromYahoo(symbol: string): Promise<YahooPoint[] | null> {
   try {
@@ -546,7 +547,19 @@ export async function GET() {
   const t0 = Date.now();
 
   // PATCH 0248 — Multi-source fetcher (Yahoo → FMP → AV with fallback).
-  const seriesArr = await Promise.all(COMMODITIES.map((c) => fetchSeries(c)));
+  // PATCH 0990 — Yahoo blocks Railway's egress IP (HTTP 429), so the live
+  // fan-out below fails. Prefer the 3mo series blob written to KV by the GH
+  // Actions scraper (clean IP); only live-fetch commodities missing from it.
+  let kvSeries: Record<string, Array<{ ts: number; close: number }>> = {};
+  try {
+    const blob = await kvGet<{ series?: Record<string, Array<{ ts: number; close: number }>> }>('commodity-series:v1:latest');
+    if (blob && blob.series) kvSeries = blob.series;
+  } catch { /* KV optional */ }
+  const seriesArr = await Promise.all(COMMODITIES.map(async (c): Promise<FetchResult | null> => {
+    const cached = c.symbol ? kvSeries[c.symbol] : undefined;
+    if (cached && cached.length > 1) return { points: cached, source: 'kv' };
+    return fetchSeries(c);
+  }));
   const out = COMMODITIES.map((c, i) => {
     const fetched = seriesArr[i];
     const pts = fetched?.points || null;
@@ -639,10 +652,28 @@ export async function GET() {
   }
   shocks.sort((a, b) => Math.abs(b.pressure_pp) - Math.abs(a.pressure_pp));
 
-  return NextResponse.json({
+  // PATCH 0990 — last-good cache + honest offline flag. When every live and
+  // KV source fails, serve the most recent good payload (stale: true) instead
+  // of an all-dashes page; if none exists, flag feed_offline for the UI.
+  const fetchedCount = out.filter((c) => c.fetched).length;
+  const respHeaders = { 'Cache-Control': 's-maxage=600, stale-while-revalidate=1800' };
+  const payload = {
     commodities: out,
     top_shocks: shocks.slice(0, 25),
     fetched_at: new Date().toISOString(),
     ms: Date.now() - t0,
-  }, { headers: { 'Cache-Control': 's-maxage=600, stale-while-revalidate=1800' } });
+    stale: false,
+    feed_offline: fetchedCount === 0,
+  };
+  if (fetchedCount > 0) {
+    try { await kvSet('transmission:last-good:v1', payload, 7 * 24 * 60 * 60); } catch { /* best effort */ }
+    return NextResponse.json(payload, { headers: respHeaders });
+  }
+  try {
+    const lastGood = await kvGet<typeof payload>('transmission:last-good:v1');
+    if (lastGood && Array.isArray(lastGood.commodities)) {
+      return NextResponse.json({ ...lastGood, stale: true, feed_offline: false, served_at: new Date().toISOString() }, { headers: respHeaders });
+    }
+  } catch { /* fall through */ }
+  return NextResponse.json(payload, { headers: respHeaders });
 }
