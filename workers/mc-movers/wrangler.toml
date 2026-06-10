@@ -1,0 +1,19 @@
+# mc-movers — live intraday NSE movers scraper (port of the GH Actions
+# "Refresh Movers (live intraday)" workflow, which suffered cron starvation).
+#
+# Secrets (set once with: npx wrangler secret put <NAME>):
+#   UPSTASH_REDIS_REST_URL    — same Upstash REST URL the GH workflow used
+#   UPSTASH_REDIS_REST_TOKEN  — same Upstash REST token
+#   RUN_SECRET                — any long random string; gates GET /run
+# (No TELEGRAM secrets needed. No Workers KV binding — state lives in Upstash,
+#  same keys as before, so the Railway app keeps working unchanged.)
+
+name = "mc-movers"
+main = "index.js"
+compatibility_date = "2026-01-01"
+
+# Every 5 min, 03:00-10:55 UTC (= 08:30-16:25 IST), Mon-Fri.
+# The scheduled handler additionally gates to Mon-Fri 09:15-15:35 IST,
+# so the cron overshooting the session is harmless.
+[triggers]
+crons = ["*/5 3-10 * * 1-5"]
