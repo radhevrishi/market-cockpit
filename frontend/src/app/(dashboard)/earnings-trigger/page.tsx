@@ -702,7 +702,7 @@ export default function EarningsTriggerPage({ scope: scopeProp = '' }: { scope?:
             {/* export toolbar — current filtered list */}
             <div style={{ marginTop: 12, background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, padding: '11px 14px' }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: F.sm, fontWeight: 900, color: C.gold, letterSpacing: 0.4 }}>EXPORT {shown.length} TICKERS</span>
+                <span style={{ fontSize: F.sm, fontWeight: 900, color: C.gold, letterSpacing: 0.4 }}>EXPORT {shown.length} TICKER{shown.length === 1 ? '' : 'S'}</span>
                 <span style={{ fontSize: F.xs, color: C.dim }}>Copy / download the current filtered list — paste into TradingView, Excel, or anywhere</span>
                 {exportMsg ? <span style={{ fontSize: F.xs, fontWeight: 700, color: C.green, marginLeft: 'auto' }}>✓ {exportMsg}</span> : null}
               </div>
