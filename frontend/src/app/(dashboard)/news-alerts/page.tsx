@@ -373,7 +373,7 @@ export default function NewsAlertsPage() {
           <p style={{ fontSize: 13, color: TOKENS.surface.textDim, margin: '0 0 16px', maxWidth: 760 }}>
             Watch the live /news stream from this tab. When a new article matches one of your rules,
             a browser notification + on-screen toast fires. Rules persist locally; cross-channel
-            delivery (Slack/Email/Webhook) is the P1 follow-up.
+            delivery (Slack/Email/Webhook) is coming next.
           </p>
         </div>
         {/* PATCH 0279 — Import / Export controls so rules portable across browsers. */}
@@ -623,7 +623,7 @@ export default function NewsAlertsPage() {
 
       <p style={{ fontSize: 11, color: TOKENS.surface.textMuted, marginTop: 16, lineHeight: 1.6 }}>
         Alerts v0 — fires from this browser tab while it's open. Slack / Email / Webhook delivery
-        and server-side rule evaluation require the proper Alert Rules engine (P1 follow-up).
+        and server-side rule evaluation require the proper Alert Rules engine (coming next).
       </p>
 
       {toasts.length > 0 && (
