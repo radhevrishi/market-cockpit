@@ -22,14 +22,23 @@ jobs:
           BASE: ${{ secrets.CRON_BASE_URL }}
           SECRET: ${{ secrets.CRON_SECRET }}
         run: |
+          # Fallback: the CRON_BASE_URL secret is unset/empty in this repo, which made every curl fail with 000.
+          BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
+          echo "base: $BASE"
           # 1) Invalidate the news cache (auth-gated; best-effort)
           curl -s -m 60 -X POST "$BASE/api/v1/news/refresh" \
             -H "Authorization: Bearer $SECRET" \
             -o /dev/null -w "refresh: %{http_code}\n" || true
-          # 2) Trigger the on-demand RSS scrape + repopulate the pool (must succeed or the job fails)
-          CODE=$(curl -s -m 90 "$BASE/api/v1/news?market=all" -o /dev/null -w "%{http_code}" || echo 000)
-          echo "news-all: $CODE"
-          if [ "$CODE" != "200" ]; then echo "::error::news refresh failed with HTTP $CODE"; exit 1; fi
+          # 2) Trigger the on-demand RSS scrape + repopulate the pool (must succeed or the job fails).
+          # Retry up to 3x with a 20s gap — Railway cold starts and transient 5xx shouldn't page us.
+          CODE=000
+          for i in 1 2 3; do
+            CODE=$(curl -s -m 90 "$BASE/api/v1/news?market=all" -o /dev/null -w "%{http_code}") || CODE=000
+            echo "news-all attempt $i: $CODE"
+            [ "$CODE" = "200" ] && break
+            sleep 20
+          done
+          if [ "$CODE" != "200" ]; then echo "::error::news refresh failed with HTTP $CODE after 3 attempts"; exit 1; fi
           # 3) Warm the in-play view too
           curl -s -m 60 "$BASE/api/v1/news/in-play" \
             -o /dev/null -w "in-play: %{http_code}\n" || true
