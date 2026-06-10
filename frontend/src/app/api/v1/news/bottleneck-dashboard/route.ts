@@ -457,6 +457,20 @@ async function fetchLiveRSSSignals(): Promise<any[]> {
 const PERSISTENT_KEY = 'bottleneck:dashboard:persistent:v7'; // v7: deep tech sub-taxonomy + structural theses
 const PERSISTENT_TTL = 7776000; // 90 days in seconds
 
+function decodeEntitiesDash(s: string): string {
+  return String(s || '')
+    .replace(/&#x([0-9a-fA-F]+);/g, (m, h) => { try { return String.fromCodePoint(parseInt(h, 16)); } catch { return m; } })
+    .replace(/&#(\d+);/g, (m, n) => { try { return String.fromCodePoint(parseInt(n, 10)); } catch { return m; } })
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&rsquo;/g, "'")
+    .replace(/&lsquo;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&');
+}
+
 function isSignalTooOld(date: string | Date, maxDays: number = 90): boolean {
   try {
     const signalDate = new Date(date);
@@ -795,6 +809,18 @@ export async function GET(request: Request) {
       }
       return b.signal_count - a.signal_count;
     });
+
+    // Decode HTML entities in signal/article titles at the response boundary
+    for (const b of buckets as any[]) {
+      for (const sig of (b.signals || []) as any[]) {
+        sig.headline = decodeEntitiesDash(sig.headline || '');
+        if (sig.summary) sig.summary = decodeEntitiesDash(sig.summary);
+        for (const a of (sig.articles || []) as any[]) {
+          if (a && a.title) a.title = decodeEntitiesDash(a.title);
+          if (a && a.headline) a.headline = decodeEntitiesDash(a.headline);
+        }
+      }
+    }
 
     return NextResponse.json({
       success: true,
