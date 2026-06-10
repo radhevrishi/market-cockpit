@@ -818,7 +818,7 @@ function PECalculator() {
         <NumberInput label="Current Market Cap" value={marketCap} onChange={setMarketCap} suffix="₹ Cr" inputRef={marketCapRef} highlight={notInUniverse} ticker={ticker} />
         <NumberInput label="Horizon" value={horizon} onChange={setHorizon} suffix="months" />
         <NumberInput label="Bear P/E" value={bearPE} onChange={setBearPE} suffix="x" />
-        <NumberInput label="Base P/E (3yr median)" value={basePE} onChange={setBasePE} suffix="x" />
+        <NumberInput label="Base P/E (5yr median)" value={basePE} onChange={setBasePE} suffix="x" />
         <NumberInput label="Bull P/E" value={bullPE} onChange={setBullPE} suffix="x" />
       </div>
       <CalcResultDisplay result={result} />
@@ -2851,7 +2851,7 @@ export default function ValuationCalcPage() {
         <SectorLookupPanel />
 
         <div style={{ fontSize: 11, color: DIM, padding: '12px 0', lineHeight: 1.6, fontStyle: 'italic' }}>
-          All calculators run client-side — no data leaves your browser. Edit assumptions freely. Worked examples (Rubicon, Bajaj Consumer, TD Power, Sterlite, Aeroflex, Atlanta Electricals, DEE Dev) ship in <code style={{ background: '#1A2540', padding: '1px 4px', borderRadius: 3 }}>frontend/src/lib/valuation-calculators.ts</code> — load any to see the inputs and tweak.
+          All calculators run client-side — no data leaves your browser. Edit assumptions freely. Worked examples (Rubicon, Bajaj Consumer, TD Power, Sterlite, Aeroflex, Atlanta Electricals, DEE Dev) are built in — load any to see the inputs and tweak.
         </div>
       </div>
     </div>
