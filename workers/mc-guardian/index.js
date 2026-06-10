@@ -6,13 +6,13 @@
 const BASE = 'https://market-cockpit-production.up.railway.app';
 
 const PROBES = [
-  { name: 'home', url: BASE + '/', type: 'html', mustInclude: 'MARKET COCKPIT' },
+  { name: 'home', url: BASE + '/', type: 'html', mustInclude: 'Market Cockpit' },
   { name: 'news-feed', url: BASE + '/api/v1/news?market=all&limit=5', type: 'json',
     check: (j) => (Array.isArray(j) ? j : (j && (j.articles || j.items)) || []).length > 0, desc: 'no articles returned' },
   { name: 'quotes', url: BASE + '/api/market/quotes?market=india', type: 'json',
     check: (j) => (((j && j.stocks) || []).length + ((j && j.gainers) || []).length) > 0, desc: 'no stocks in payload' },
   { name: 'in-play', url: BASE + '/api/v1/news/in-play', type: 'json', check: () => true, desc: 'bad response' },
-  { name: 'mc-scraper', url: 'https://mc-scraper.radhev-232.workers.dev/api/filings/latest', type: 'json', check: () => true, desc: 'bad response' },
+  { name: 'mc-scraper', url: 'https://mc-scraper.radhev-232.workers.dev/api/results/latest', type: 'json', check: () => true, desc: 'bad response' },
 ];
 
 async function probeOne(p) {
