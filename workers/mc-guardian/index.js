@@ -12,7 +12,7 @@ const PROBES = [
   { name: 'quotes', url: BASE + '/api/market/quotes?market=india', type: 'json',
     check: (j) => (((j && j.stocks) || []).length + ((j && j.gainers) || []).length) > 0, desc: 'no stocks in payload' },
   { name: 'in-play', url: BASE + '/api/v1/news/in-play', type: 'json', check: () => true, desc: 'bad response' },
-  { name: 'mc-scraper', url: 'https://mc-scraper.radhev-232.workers.dev/api/results/latest', type: 'json', check: () => true, desc: 'bad response' },
+  { name: 'corp-filings', url: BASE + '/api/market/corporate-orders', type: 'json', check: () => true, desc: 'bad response' }, // workers.dev-to-workers.dev fetches are blocked, so probe the portal route that consumes mc-scraper
 ];
 
 async function probeOne(p) {
