@@ -272,10 +272,10 @@ function PortfolioSummary({ rows, holdings }: { rows: PortfolioRow[]; holdings: 
     { label: 'INVESTED VALUE', value: fmt(totalInvested), color: '#F5F7FA' },
     { label: 'CURRENT VALUE', value: priced.length > 0 ? fmt(totalCurrent) : '—', color: '#F5F7FA' },
     priced.length > 0
-      ? { label: 'TOTAL P&L', value: `${fmt(Math.abs(totalPnl))} (${fmtPct(totalPnlPct)})`, color: totalPnl >= 0 ? '#10B981' : '#EF4444' }
+      ? { label: 'TOTAL P&L', value: `${totalPnl < 0 ? '-' : ''}${fmt(Math.abs(totalPnl))} (${fmtPct(totalPnlPct)})`, color: totalPnl >= 0 ? '#10B981' : '#EF4444' }
       : { label: 'TOTAL P&L', value: '—', sub: 'prices unavailable', color: '#F5F7FA' },
     ...(cagr !== null ? [{ label: 'CAGR', value: fmtPct(cagr), sub: 'annualized return', color: cagr >= 0 ? '#10B981' : '#EF4444' }] : []),
-    { label: 'DAY P&L', value: fmt(Math.abs(dayPnl)), color: dayPnl >= 0 ? '#10B981' : '#EF4444' },
+    { label: 'DAY P&L', value: `${dayPnl < 0 ? '-' : ''}${fmt(Math.abs(dayPnl))}`, color: dayPnl >= 0 ? '#10B981' : '#EF4444' },
     { label: 'HOLDINGS', value: `${rows.length}`, sub: `${gainers} ↑  ${losers} ↓${noData > 0 ? `  ${noData} N/A` : ''}`, color: '#F5F7FA' },
     ...(top ? [{ label: 'TOP SECTOR', value: top.sector, sub: `${top.pct.toFixed(0)}% of portfolio`, color: '#60A5FA' }] : []),
     { label: 'BEST PERFORMER', value: best ? best.symbol : '—', sub: best ? fmtPct(best.pnlPercent) : 'needs 2+ priced holdings', color: '#10B981' },
@@ -1393,7 +1393,7 @@ export default function PortfolioPage() {
                         {r.cmp > 0 ? (
                           <div>
                             <span style={{ color: pnlColor, fontWeight: '600', fontVariantNumeric: 'tabular-nums' }}>
-                              {r.pnl >= 0 ? '+' : ''}{fmt(Math.abs(r.pnl))}
+                              {r.pnl >= 0 ? '+' : '-'}{fmt(Math.abs(r.pnl))}
                             </span>
                             <div style={{ fontSize: '10px', color: pnlColor, fontVariantNumeric: 'tabular-nums' }}>
                               {fmtPct(r.pnlPercent)}
