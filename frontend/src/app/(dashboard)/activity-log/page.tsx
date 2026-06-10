@@ -187,7 +187,7 @@ export default function ActivityLogPage() {
         )}
 
         <div style={{ marginTop: 4, padding: '10px 14px', fontSize: 11, color: DIM, background: CARD, border: `1px solid ${BORDER}`, borderRadius: 6, lineHeight: 1.6 }}>
-          <b style={{ color: TEXT }}>Data sources:</b> <code style={{ background: '#1A2540', padding: '1px 4px', borderRadius: 3 }}>mc:decisions:v1</code>, <code style={{ background: '#1A2540', padding: '1px 4px', borderRadius: 3 }}>mc:saved-valuations:v1</code>, <code style={{ background: '#1A2540', padding: '1px 4px', borderRadius: 3 }}>mc:critical-themes-custom:v1</code>, <code style={{ background: '#1A2540', padding: '1px 4px', borderRadius: 3 }}>mc:news-alerts:v1</code>, <code style={{ background: '#1A2540', padding: '1px 4px', borderRadius: 3 }}>mc:notes:meta:v1</code>, <code style={{ background: '#1A2540', padding: '1px 4px', borderRadius: 3 }}>mb_excel_meta_v2</code>. Cross-tab sync via storage event.
+          <b style={{ color: TEXT }}>Data sources:</b> your decisions, saved valuations and uploads stored in this browser. Cross-tab sync.
         </div>
       </div>
     </div>
