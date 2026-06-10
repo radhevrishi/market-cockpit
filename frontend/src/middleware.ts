@@ -42,6 +42,7 @@ const SLUG_REDIRECTS: Record<string, string> = {
   '/guidance': '/earnings-hub?tab=guidance',
   '/my-book': '/portfolio',
   '/concall-ai': '/earnings-analysis',
+  '/re-rating': '/rerating',
 };
 
 function clientIp(req: NextRequest): string {
@@ -111,5 +112,6 @@ export const config = {
     '/guidance',
     '/my-book',
     '/concall-ai',
+    '/re-rating',
   ],
 };
