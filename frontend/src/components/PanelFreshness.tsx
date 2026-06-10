@@ -25,6 +25,8 @@ export interface PanelFreshnessProps {
   isFetching?: boolean;
   /** Age beyond which the chip turns amber. Default 5 min. */
   staleAfterMs?: number;
+  /** Override the relative-age suffix (e.g. "closed" outside market hours). */
+  ageOverride?: string;
   /** Label prefix. Default "as of". */
   label?: string;
   /** Optional className for layout hooks. */
@@ -44,6 +46,7 @@ export function PanelFreshness({
   dataUpdatedAt,
   isFetching,
   staleAfterMs = 5 * 60_000,
+  ageOverride,
   label = 'as of',
   className,
   style,
@@ -92,7 +95,7 @@ export function PanelFreshness({
       title={`Last successful refresh: ${d.toLocaleString()}\nClick the Refresh button to pull fresh data.`}
       style={{ ...baseStyle, ...(style || {}) }}
     >
-      {isFetching ? '↻ ' : ''}{label} {hhmm} · {ageStr}
+      {isFetching ? '↻ ' : ''}{label} {hhmm} · {ageOverride ?? ageStr}
     </span>
   );
 }
