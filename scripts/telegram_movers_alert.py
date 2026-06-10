@@ -9,6 +9,7 @@ Usage:
 """
 
 import asyncio
+import os
 import sys
 import json
 from datetime import datetime
@@ -18,8 +19,8 @@ import requests
 from telegram import Bot
 
 # ── Config ──────────────────────────────────────────────────────────────
-TOKEN = "8401991707:AAGpZj1UgW4sJdLm7FLhedC2nBwxUtgXFIc"
-CHAT_ID = 5057319640
+TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+CHAT_ID = int(os.environ.get("TELEGRAM_CHAT_ID", "0"))
 API_BASE = "https://market-cockpit.vercel.app/api/market"
 
 # NSE direct endpoints as fallback
