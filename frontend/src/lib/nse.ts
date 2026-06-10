@@ -645,7 +645,7 @@ export async function fetchBseResultsDateRange(fromDate: string, toDate: string)
 // Normalize granular NSE industry names to ~12 broad sectors
 // This keeps the sector count manageable for heatmap, movers, and RRG displays
 export function normalizeSector(industry: string | undefined): string {
-  if (!industry) return 'Other';
+  if (!industry) return 'Unmapped';
   const i = industry.toLowerCase();
 
   // Banking & Finance (banks, NBFC, insurance, asset management, fintech)
@@ -689,7 +689,16 @@ export function normalizeSector(industry: string | undefined): string {
   // Diversified
   if (i.includes('diversified') || i.includes('conglomerate') || i.includes('holding')) return 'Diversified';
 
-  return 'Other';
+  // NSE macro-sector labels — the broad-universe lists (Total Market /
+  // Microcap) often carry only these top-level names, not granular industries.
+  if (i.includes('fast moving consumer goods')) return 'FMCG';
+  if (i.includes('consumer services')) return 'Consumer Services';
+  if (i.includes('utilit')) return 'Energy';
+  if (i.includes('forest material') || i.includes('paper')) return 'Metals & Mining';
+  if (i.includes('services')) return 'Services';
+
+  // Honest label — industry string present but not recognised by any rule.
+  return 'Unmapped';
 }
 
 // ======= DYNAMIC SECTOR MAPPING =======
