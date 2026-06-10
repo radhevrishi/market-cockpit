@@ -238,11 +238,11 @@ export default function BreadthPage() {
               the GH Actions BHAVCOPY scraper. Falls back to a 25-symbol Yahoo
               basket when the blobs are missing or stale. */}
           <span title={data.source ? `Source: ${data.source}` : ''}>
-            {data.scope_label || `Universe · ${data.universe_size} symbols`} · Fetch {(data.ms / 1000).toFixed(1)}s
+            {data.scope_label || `Universe · ${data.universe_size} symbols`} · data: NSE EOD
           </span>
           <div style={{ fontSize: 9, color: '#4A5B6C', marginTop: 4, fontStyle: 'italic' }}>
             {data.scope === 'broad'
-              ? <>scope: full NSE universe (BHAVCOPY-backed) · for per-stock detail see <a href="/movers" style={{ color: '#22D3EE', textDecoration: 'underline' }}>/movers</a></>
+              ? <>scope: full NSE universe · for per-stock detail see <a href="/movers" style={{ color: '#22D3EE', textDecoration: 'underline' }}>/movers</a></>
               : <>scope: curated 25-symbol basket (fallback) · for per-stock detail see <a href="/movers" style={{ color: '#22D3EE', textDecoration: 'underline' }}>/movers</a></>}
           </div>
         </div>
