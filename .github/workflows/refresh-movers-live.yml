@@ -8,12 +8,10 @@ name: Refresh Movers (live intraday)
 
 on:
   workflow_dispatch: {}   # manual run button (used to verify)
-  schedule:
-    # Indian market hours 09:15–15:30 IST = 03:45–10:00 UTC, Mon–Fri.
-    # NOTE: GitHub cron is best-effort and may run a few minutes late.
-    - cron: '45,50,55 3 * * 1-5'   # 09:15–09:25 IST
-    - cron: '*/5 4-9 * * 1-5'      # 09:30–15:25 IST (every 5 min)
-    - cron: '0,5 10 * * 1-5'       # 15:30–15:35 IST (close)
+  # Schedule removed 2026-06-10: live movers scraping now runs on the
+  # Cloudflare Worker cron (workers/mc-movers, */5 3-10 * * 1-5) which is
+  # punctual — GitHub cron starvation fired only ~2 of ~75 expected runs/day.
+  # This workflow remains as a manual backup via the Run workflow button.
 
 concurrency:
   group: refresh-movers-live
