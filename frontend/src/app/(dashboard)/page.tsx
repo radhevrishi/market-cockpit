@@ -944,8 +944,19 @@ export default function HomeDashboard() {
         // though /api/market/quotes correctly returns gainers/losers.
         const _marketOpen1034 = !!j?.marketHours?.indianOpen;
         const _allowStale1034 = (s: any) => _marketOpen1034 ? !s?.staleEOD : true;
-        const rawG = _allStocks.filter((s: any) => (s?.changePercent || 0) > 0 && _allowStale1034(s));
-        const rawL = _allStocks.filter((s: any) => (s?.changePercent || 0) < 0 && _allowStale1034(s));
+        const _rawGAll = _allStocks.filter((s: any) => (s?.changePercent || 0) > 0);
+        const _rawLAll = _allStocks.filter((s: any) => (s?.changePercent || 0) < 0);
+        let rawG = _rawGAll.filter(_allowStale1034);
+        let rawL = _rawLAll.filter(_allowStale1034);
+        // Post-close fallback: once the live KV blob ages out (>45 min after close)
+        // EVERY row is staleEOD:true and the filter above empties the pool, leaving
+        // the MOVERS chip stuck on "loading…" and the panel empty. Those rows are
+        // legitimate last-close data, so if filtering removed everything but rows
+        // exist, fall back to the unfiltered pools.
+        if (rawG.length === 0 && rawL.length === 0 && (_rawGAll.length > 0 || _rawLAll.length > 0)) {
+          rawG = _rawGAll;
+          rawL = _rawLAll;
+        }
         const inUniverse = (s: any) => universe.has(norm(s?.ticker || s?.symbol || ''));
         const smallMidOnly = (arr: any[]) => arr.filter((s: any) => {
           const g = (s?.indexGroup || '').toLowerCase();
@@ -2076,8 +2087,8 @@ export default function HomeDashboard() {
                       collapsed to the one matched ticker). */}
                   {data.portfolioPnl.covered >= data.portfolioPnl.positions ? (<>
                     💼 P&L {data.portfolioPnl.totalPct >= 0 ? '+' : ''}{data.portfolioPnl.totalPct.toFixed(2)}%
-                    {data.portfolioPnl.bestMover && ` · best ${data.portfolioPnl.bestMover.ticker} ${data.portfolioPnl.bestMover.pct >= 0 ? '+' : ''}${data.portfolioPnl.bestMover.pct.toFixed(1)}%`}
-                    {data.portfolioPnl.worstMover && ` · worst ${data.portfolioPnl.worstMover.ticker} ${data.portfolioPnl.worstMover.pct.toFixed(1)}%`}
+                    {data.portfolioPnl.positions >= 2 && data.portfolioPnl.bestMover && ` · best ${data.portfolioPnl.bestMover.ticker} ${data.portfolioPnl.bestMover.pct >= 0 ? '+' : ''}${data.portfolioPnl.bestMover.pct.toFixed(1)}%`}
+                    {data.portfolioPnl.positions >= 2 && data.portfolioPnl.worstMover && ` · worst ${data.portfolioPnl.worstMover.ticker} ${data.portfolioPnl.worstMover.pct >= 0 ? '+' : ''}${data.portfolioPnl.worstMover.pct.toFixed(1)}%`}
                   </>) : (<>💼 P&L — · add live prices in Portfolio</>)}
                 </Link>
               )}
