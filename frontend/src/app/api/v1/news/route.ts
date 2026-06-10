@@ -2846,6 +2846,11 @@ export async function GET(request: Request) {
         const split: any[] = [];
         for (const it of items) {
           const samples = (it.top_samples || []) as any[];
+          // Decode HTML entities persisted in the evidence blob (titles were
+          // recorded raw from RSS, so &#039; etc. leaked into the Top signal line).
+          for (const s of samples) { if (s && s.title) s.title = decodeEntities(String(s.title)); }
+          if (it.label) it.label = decodeEntities(String(it.label));
+          if (it.sub) it.sub = decodeEntities(String(it.sub));
           const tagged = samples.map((s) => ({
             sample: s,
             region: inferRegion({
