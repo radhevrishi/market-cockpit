@@ -201,7 +201,7 @@ const fetchIndividualQuotes = async (symbols: string[]): Promise<StockQuote[]> =
   } catch { return []; }
 };
 
-const fmt = (n: number) => n >= 10000000 ? `${(n / 10000000).toFixed(2)} Cr` : n >= 100000 ? `${(n / 100000).toFixed(2)} L` : `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+const fmt = (n: number) => n >= 10000000 ? `₹${(n / 10000000).toFixed(2)} Cr` : n >= 100000 ? `₹${(n / 100000).toFixed(2)} L` : `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
 const fmtPct = (n: number) => `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
 
 /* ── Helpers ────────────────────────────────────────────────────────── */
@@ -252,29 +252,34 @@ function PortfolioSummary({ rows, holdings }: { rows: PortfolioRow[]; holdings: 
   if (rows.length === 0) return null;
 
   const totalInvested = rows.reduce((s, r) => s + r.investedValue, 0);
-  const totalCurrent = rows.reduce((s, r) => s + r.currentValue, 0);
-  const totalPnl = totalCurrent - totalInvested;
-  const totalPnlPct = totalInvested > 0 ? (totalPnl / totalInvested) * 100 : 0;
+  // Holdings without a live price must not pretend zero P&L — aggregate only priced rows.
+  const priced = rows.filter(r => isFinite(r.cmp) && r.cmp > 0);
+  const pricedInvested = priced.reduce((s, r) => s + r.investedValue, 0);
+  const totalCurrent = priced.reduce((s, r) => s + r.currentValue, 0);
+  const totalPnl = totalCurrent - pricedInvested;
+  const totalPnlPct = pricedInvested > 0 ? (totalPnl / pricedInvested) * 100 : 0;
   const dayPnl = rows.reduce((s, r) => s + r.dayPnl, 0);
   const gainers = rows.filter(r => r.cmp > 0 && r.pnl > 0).length;
   const losers = rows.filter(r => r.cmp > 0 && r.pnl < 0).length;
   const noData = rows.filter(r => r.cmp === 0).length;
 
-  const best = rows.length > 0 ? rows.reduce((a, b) => a.pnlPercent > b.pnlPercent ? a : b) : null;
-  const worst = rows.length > 0 ? rows.reduce((a, b) => a.pnlPercent < b.pnlPercent ? a : b) : null;
+  const best = priced.length >= 2 ? priced.reduce((a, b) => a.pnlPercent > b.pnlPercent ? a : b) : null;
+  const worst = priced.length >= 2 ? priced.reduce((a, b) => a.pnlPercent < b.pnlPercent ? a : b) : null;
   const cagr = computePortfolioCagr(rows, holdings);
   const top = topSector(rows);
 
   const cards = [
     { label: 'INVESTED VALUE', value: fmt(totalInvested), color: '#F5F7FA' },
-    { label: 'CURRENT VALUE', value: fmt(totalCurrent), color: '#F5F7FA' },
-    { label: 'TOTAL P&L', value: `${fmt(Math.abs(totalPnl))} (${fmtPct(totalPnlPct)})`, color: totalPnl >= 0 ? '#10B981' : '#EF4444' },
+    { label: 'CURRENT VALUE', value: priced.length > 0 ? fmt(totalCurrent) : '—', color: '#F5F7FA' },
+    priced.length > 0
+      ? { label: 'TOTAL P&L', value: `${fmt(Math.abs(totalPnl))} (${fmtPct(totalPnlPct)})`, color: totalPnl >= 0 ? '#10B981' : '#EF4444' }
+      : { label: 'TOTAL P&L', value: '—', sub: 'prices unavailable', color: '#F5F7FA' },
     ...(cagr !== null ? [{ label: 'CAGR', value: fmtPct(cagr), sub: 'annualized return', color: cagr >= 0 ? '#10B981' : '#EF4444' }] : []),
     { label: 'DAY P&L', value: fmt(Math.abs(dayPnl)), color: dayPnl >= 0 ? '#10B981' : '#EF4444' },
     { label: 'HOLDINGS', value: `${rows.length}`, sub: `${gainers} ↑  ${losers} ↓${noData > 0 ? `  ${noData} N/A` : ''}`, color: '#F5F7FA' },
     ...(top ? [{ label: 'TOP SECTOR', value: top.sector, sub: `${top.pct.toFixed(0)}% of portfolio`, color: '#60A5FA' }] : []),
-    ...(best ? [{ label: 'BEST PERFORMER', value: best.symbol, sub: fmtPct(best.pnlPercent), color: '#10B981' }] : []),
-    ...(worst ? [{ label: 'WORST PERFORMER', value: worst.symbol, sub: fmtPct(worst.pnlPercent), color: '#EF4444' }] : []),
+    { label: 'BEST PERFORMER', value: best ? best.symbol : '—', sub: best ? fmtPct(best.pnlPercent) : 'needs 2+ priced holdings', color: '#10B981' },
+    { label: 'WORST PERFORMER', value: worst ? worst.symbol : '—', sub: worst ? fmtPct(worst.pnlPercent) : 'needs 2+ priced holdings', color: '#EF4444' },
   ];
 
   return (
@@ -1239,7 +1244,7 @@ export default function PortfolioPage() {
         <>
           <div style={{ marginBottom: '12px' }}>
             <p style={{ fontSize: '12px', color: '#8BA3C1', margin: 0 }}>
-              {displayRows.length}{capFilter !== 'all' ? ` of ${sortedRows.length}` : ''} holdings · Last refreshed: {lastRefresh ? lastRefresh.toLocaleTimeString() : '—'}
+              {displayRows.length}{capFilter !== 'all' ? ` of ${sortedRows.length}` : ''}{displayRows.length === 1 && capFilter === 'all' ? ' holding' : ' holdings'} · Last refreshed: {lastRefresh ? lastRefresh.toLocaleTimeString() : '—'}
             </p>
           </div>
           <div style={{ overflowX: 'auto', border: '1px solid #2A3B4C', borderRadius: '12px' }}>
@@ -1482,7 +1487,7 @@ export default function PortfolioPage() {
       {holdings.length > 0 && (
         <div style={{ marginTop: '24px', padding: '16px', backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '10px', textAlign: 'center' }}>
           <p style={{ fontSize: '12px', color: '#8BA3C1', margin: 0 }}>
-            💼 Portfolio syncs via Redis · Entry price & quantity are editable inline (click to edit)
+            💼 Portfolio synced to your account · Entry price & quantity are editable inline (click to edit)
           </p>
         </div>
       )}
