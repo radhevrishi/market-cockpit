@@ -263,8 +263,10 @@ function scoreRow(r: Row, h: Record<string, string>): Scored {
   add(5, 1, 'Funding source', 7, isNaN(internal) ? null :
     internal > 70 ? 7 : internal >= 40 ? 5 : internal >= 20 ? 3 : 0, isNaN(internal) ? '' : internal.toFixed(0) + '% internal', fundEst);
   // T2 (25)
-  add(6, 2, 'Capacity utilization', 6, isNaN(util) ? null :
-    util > 90 ? 6 : util >= 85 ? 5 : util >= 75 ? 3 : util >= 60 ? 1 : 0, isNaN(util) ? '' : util.toFixed(0) + '%', utilV.est);
+  const utilTele6 = num(r['Util Effective % (est)']);
+  const utilF6 = !isNaN(util) && !utilV.est ? util : !isNaN(utilTele6) ? utilTele6 : util;
+  add(6, 2, 'Capacity utilization', 6, isNaN(utilF6) ? null :
+    utilF6 > 90 ? 6 : utilF6 >= 85 ? 5 : utilF6 >= 75 ? 3 : utilF6 >= 60 ? 1 : 0, isNaN(utilF6) ? '' : utilF6.toFixed(0) + '%', utilV.est || isNaN(util));
   let f7: number | null = null, f7n = '';
   if (country === 'IN') {
     if (!isNaN(promoterV) || !isNaN(pledge)) {
@@ -290,8 +292,8 @@ function scoreRow(r: Row, h: Record<string, string>): Scored {
   add(12, 3, 'Working-capital trend', 3, !wcRaw ? null :
     /stable|improv|s\b|i\b/.test(wcRaw) ? 3 : 0, g('wc') || '');
   add(13, 3, 'Revenue CAGR 3-yr', 3, isNaN(revCagr) ? null :
-    revCagr >= 12 && revCagr <= 25 ? 3 : (revCagr >= 5 && revCagr < 12) || (revCagr > 25 && revCagr <= 35) ? 1 : 0,
-    isNaN(revCagr) ? '' : revCagr.toFixed(0) + '%');
+    revCagr >= 12 && revCagr <= 25 ? 3 : revCagr > 25 && revCagr <= 40 ? 2 : (revCagr >= 5 && revCagr < 12) || revCagr > 40 ? 1 : 0,
+    isNaN(revCagr) ? '' : revCagr.toFixed(0) + '%' + (revCagr > 40 ? ' (hot)' : ''));
   add(14, 3, 'Brownfield vs greenfield', 3, !brownRaw ? null :
     /brown|^y/.test(brownRaw) ? 3 : /hybrid|mix/.test(brownRaw) ? 1 : 0, brownV.v, brownV.est);
   add(15, 3, 'Policy support', 2, !(g('policy') || '').trim() ? null :
@@ -326,7 +328,13 @@ function scoreRow(r: Row, h: Record<string, string>): Scored {
 
   const im = IND_MULT.find(([re]) => re.test(industry) || re.test(sector));
   const mult = im ? im[1] : 1.0;
-  let final = Math.round(base * mult);
+  // v5.3 — score over the MEASURED weight (like the MB lens). Raw points on a
+  // 100-pt scale made ANCHOR/CORE mathematically unreachable: ~25-27 pts
+  // (anchor, promoter, policy, moat, industry…) are never in a Screener
+  // workbook, so the best possible raw score was ~73. Confidence caps and
+  // NEEDS DATA still gate thin evidence; manual fills raise the denominator.
+  const availMaxEarly = factors.reduce((s, f) => s + (f.note === 'no data' ? 0 : f.max), 0);
+  let final = Math.round((availMaxEarly >= 50 ? (base / availMaxEarly) * 100 : base) * mult);
   if (dbCount >= 3) final = Math.min(30, final);
   final = Math.max(0, Math.min(100, final));
 
@@ -507,7 +515,9 @@ type FXCheck = { id: string; label: string; w: number; pts: number | null; detai
 type FXResult = { score: number; grade: string; color: string; flags: string[]; critical: boolean; checks: FXCheck[]; workbook: { row: number; label: string; answer: string }[] };
 type ConcallExtract = {
   utilization: number | null; utilArr: number[]; orderBook: number | null; capexGuidance: number | null;
-  timeline: string[]; anchorPct: number | null; optimism: number; caution: number; tone: number | null;
+  timeline: string[]; anchorPct: number | null;
+  growthNote: string | null; marginNote: string | null; demandNote: string | null; __v?: number;
+  optimism: number; caution: number; tone: number | null;
   quotes: { field: string; match: string; snippet: string }[];
 };
 type ConcallEntry = { id: string; label: string; addedAt: string; chars: number; text: string; extract: ConcallExtract };
@@ -983,52 +993,99 @@ function transcriptSentences(text: string): string[] {
 function extractConcall(text: string): ConcallExtract {
   const sents = transcriptSentences(text);
   const quotes: { field: string; match: string; snippet: string }[] = [];
-  // scan sentences for keyword + number; quote = the full source sentence
-  const scan = (field: string, kw: RegExp, numRe: RegExp, lo = -Infinity, hi = Infinity): number[] => {
-    const vals: number[] = [];
+  // v5.3 — value and quote ALWAYS come from the SAME chosen sentence.
+  // Preference: management statements about the CURRENT state beat analyst
+  // questions and forward projections; "from X% to Y%" reads the DESTINATION.
+  const isQuestion = (s: string) => /\?\s*$/.test(s);
+  const FUTURE = /\bexpect|target|aim|going forward|next (year|fiscal)|by fy|in fy ?'?\d|should (be|reach|go)|can go|where can|will (be|reach|go)\b/i;
+  const CURRENT = /\bcurrent|currently|today|as of now|at present|right now|we are (at|around|running)|stands? at|stand tall|exceeding|of over|enter(ing)? fy ?'?\d+ with\b/i;
+  const PCT_SRC = "(\\d{1,3}(?:\\.\\d+)?)\\s*(?:%|per\\s*cent|percent)";
+  const CR_SRC = "(?:rs\\.?|inr|₹)?\\s*([\\d,]+(?:\\.\\d+)?)\\s*(?:crores?|cr\\b)";
+  type Cand = { n: number; s: string; sc: number };
+  const pick = (
+    field: string, kw: RegExp, numSrc: string, lo: number, hi: number,
+    opts: { lastNum?: boolean; preferMax?: boolean } = {},
+  ): number | null => {
+    const cands: Cand[] = [];
     for (const s of sents) {
-      if (s.length >= 300 || !kw.test(s)) continue;
-      const m = s.match(numRe);
-      if (!m) continue;
-      const n = parseFloat(String(m[1]).replace(/,/g, ''));
-      if (!isFinite(n) || n < lo || n > hi) continue;
-      vals.push(n);
-      quotes.push({ field, match: m[0], snippet: s });
-      if (vals.length >= 12) break;
+      if (s.length > 300 || !kw.test(s)) continue;
+      const re = new RegExp(numSrc, 'gi');
+      const all: number[] = [];
+      let mm: RegExpExecArray | null;
+      while ((mm = re.exec(s))) {
+        const n = parseFloat(String(mm[1]).replace(/,/g, ''));
+        if (isFinite(n) && n >= lo && n <= hi) all.push(n);
+      }
+      if (!all.length) continue;
+      const n = opts.lastNum ? all[all.length - 1] : all[0];
+      let sc = 0;
+      if (CURRENT.test(s)) sc += 2;
+      if (FUTURE.test(s)) sc -= 2;
+      if (isQuestion(s)) sc -= 3;
+      cands.push({ n, s, sc });
+      if (cands.length >= 12) break;
     }
-    return vals;
+    if (!cands.length) return null;
+    cands.sort((a, b) => b.sc - a.sc || (opts.preferMax ? b.n - a.n : 0));
+    const best = cands[0];
+    quotes.push({ field, match: String(best.n), snippet: best.s });
+    return best.n;
   };
-  const utilArr = scan('utilization', /utili[sz]ation|capacity utili/i, /(\d{1,3}(?:\.\d+)?)\s*(?:%|per\s*cent|percent)/i, 1, 100);
-  const obArr = scan('orderBook', /order\s*book|order\s*inflow|open orders/i, /(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d+)?)\s*(?:crores?|cr\b)/i, 1);
-  const cgArr = scan('capexGuidance', /capex|capital expenditure|capital outlay/i, /(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d+)?)\s*(?:crores?|cr\b)/i, 1);
-  const anchorArr = scan('anchorPct', /\b(booked|committed|tied[- ]?up|visibility|contracted)\b/i, /(\d{1,3})\s*(?:%|per\s*cent|percent)/i, 1, 100);
-  // timeline: only sentences with BOTH a commissioning/ramp verb AND a dated period
+  const utilization = pick('utilization', /utili[sz]ation|capacity utili/i, PCT_SRC, 1, 100, { lastNum: true });
+  const utilArr = utilization !== null ? [utilization] : [];
+  const orderBook = pick('orderBook', /order\s*book|order\s*inflow|open orders/i, CR_SRC, 1, 10000000, { preferMax: true });
+  const capexGuidance = pick('capexGuidance', /capex|capital expenditure|capital outlay/i, CR_SRC, 1, 10000000, { preferMax: true });
+  const anchorPct = pick('anchorPct', /\b(booked|committed|tied[- ]?up|visibility|contracted)\b/i, PCT_SRC, 1, 100);
+  // qualitative notes — one best sentence each (growth / margin / demand)
+  const pickNote = (field: string, kw: RegExp): string | null => {
+    let best: { s: string; sc: number } | null = null;
+    for (const s of sents) {
+      if (s.length > 300 || !kw.test(s)) continue;
+      let sc = 0;
+      if (isQuestion(s)) sc -= 3;
+      if (CURRENT.test(s)) sc += 1;
+      if (/\d/.test(s)) sc += 1;
+      if (!best || sc > best.sc) best = { s, sc };
+    }
+    if (!best) return null;
+    quotes.push({ field, match: '', snippet: best.s });
+    return best.s.length > 190 ? best.s.slice(0, 187) + '…' : best.s;
+  };
+  const growthNote = pickNote('growth', /\b(revenue|sales|top ?line|volume) growth\b|\bgrow (at|by|of)\b|growth (guidance|target|of \d)|\bcagr of\b/i);
+  const marginNote = pickNote('margin', /\b(ebitda|gross|operating|pat) margins?\b/i);
+  const demandNote = pickNote('demand', /\bdemand (environment|outlook|scenario|remains|continues|is|has)\b|\border inflows?\b|\benquir|inquir|\bpipeline (remains|is|of)\b/i);
+  // timeline: real commissioning verbs + a dated period; deck headers filtered
   const timeline: string[] = [];
   {
-    const verb = /commission\w*|ramp[- ]?up|ramping|come[s]? on stream|go[- ]?live|operational|stabili[sz]\w+|start production|commercial production/i;
+    const verb = /commission\w*|ramp[- ]?up|ramping|comes? on stream|go[- ]?live|stabili[sz]\w+|start (of )?production|commercial production|commence operations?/i;
     const when = /Q[1-4]\s*(?:of\s*)?FY\s*'?\d{2,4}|H[12]\s*FY\s*'?\d{2,4}|FY\s*'?\d{2,4}|\b(january|february|march|april|may|june|july|august|september|october|november|december)\b[\s,]*\d{4}|quarter ended/i;
     for (const s of sents) {
-      if (s.length >= 300 || !verb.test(s) || !when.test(s)) continue;
+      if (s.length > 300 || !verb.test(s) || !when.test(s)) continue;
+      if (/highlights|agenda|disclaimer|safe harbou?r/i.test(s)) continue;
+      const letters = s.replace(/[^a-zA-Z]/g, '');
+      if (letters && letters.replace(/[^A-Z]/g, '').length / letters.length > 0.45) continue;
       timeline.push(s.length > 220 ? s.slice(0, 217) + '…' : s);
       quotes.push({ field: 'timeline', match: (s.match(when) || [s.slice(0, 40)])[0], snippet: s });
       if (timeline.length >= 3) break;
     }
   }
-  // tone: counted over matched SENTIMENT SENTENCES only (n-counts surfaced in UI)
-  const OPT = /strong demand|robust|healthy order|record (quarter|revenue|order|year|high)|all[- ]?time high|confident|upgrade|ahead of schedule|ramping well|sold out|capacity booked|strong traction|order wins/i;
-  const CAU = /headwind|challenge|delay|deferred|pricing pressure|slowdown|muted|below expectation|postponed|underutili|cost overrun|demand weak|cautious|softness/i;
+  // tone — widened lexicons (v5.3): a full concall scoring 0 positives was a
+  // lexicon gap, not management gloom.
+  const OPT = /strong demand|robust|healthy|record (quarter|revenue|order|year|high|performance)|all[- ]?time high|confident|optimis|encourag|upgrade|ahead of schedule|ramping well|sold out|capacity booked|strong traction|order wins|better than expected|momentum|improv(ed|ing|ement)|highest[- ]ever|doubled|very (good|strong)|strong (growth|quarter|year|performance)/i;
+  const CAU = /headwind|challenge|delay|deferred|deferment|pricing pressure|slowdown|muted|below expectation|postponed|underutili|cost overrun|demand (is |remains )?weak|weak demand|cautious|softness|subdued|uncertain|degrowth|de-?stocking|margin pressure|pressure on (margin|price)/i;
   let optimism = 0, caution = 0;
   for (const s of sents) {
     if (OPT.test(s)) optimism++;
     if (CAU.test(s)) caution++;
   }
   return {
-    utilization: utilArr.length ? utilArr[utilArr.length - 1] : null,
+    utilization,
     utilArr,
-    orderBook: obArr.length ? Math.max(...obArr) : null,
-    capexGuidance: cgArr.length ? Math.max(...cgArr) : null,
+    orderBook,
+    capexGuidance,
     timeline,
-    anchorPct: anchorArr.length ? Math.max(...anchorArr) : null,
+    anchorPct,
+    growthNote, marginNote, demandNote, __v: 3,
     optimism, caution,
     tone: optimism + caution > 0 ? optimism / (optimism + caution) : null,
     quotes,
@@ -1652,7 +1709,23 @@ export default function CapexTrackerPage() {
       const d = localStorage.getItem(KD); const n = localStorage.getItem(KN);
       if (d) { const pr = JSON.parse(d); rowsRef.current = pr; setRows(pr); }
       if (n) { const pf = JSON.parse(n); filesRef.current = pf; setFiles(pf); }
-      const cc = localStorage.getItem(KC); if (cc) { const pc = JSON.parse(cc); concallsRef.current = pc; setConcalls(pc); }
+      const cc = localStorage.getItem(KC); if (cc) {
+        const pc = JSON.parse(cc);
+        // v5.3 — re-extract stored transcripts when the extractor version bumps
+        // (old extracts carried bugs like 'from 30% to 65%' reading 30).
+        try {
+          let changed = false;
+          for (const compKey of Object.keys(pc)) {
+            const arr = pc[compKey];
+            if (!Array.isArray(arr)) continue;
+            for (const e of arr) {
+              if (e && e.text && (!e.extract || e.extract.__v !== 3)) { e.extract = extractConcall(e.text); changed = true; }
+            }
+          }
+          if (changed) localStorage.setItem(KC, JSON.stringify(pc));
+        } catch {}
+        concallsRef.current = pc; setConcalls(pc);
+      }
     } catch {}
   }, []);
 
@@ -2050,7 +2123,7 @@ export default function CapexTrackerPage() {
         {/* ── 21-FACTOR BREAKDOWN ── */}
         <div>
           <SectionHead label="21-factor quality breakdown" color={C.cyan}
-            extra={<span style={{ fontSize: F.xs, color: C.dim, whiteSpace: 'nowrap' }}>base {s.base} × industry {s.mult.toFixed(2)}{s.dbCount >= 3 ? ' → capped 30' : ''} = <b style={{ color: s.decisionColor, fontSize: F.sm }}>{s.final}</b> · measured {s.base}/{s.availMax} ({s.measuredPct}%) · conf {s.confidence}{s.gaps ? ' · ' + s.gaps + ' gaps' : ''}{s.estUsed ? ' · ' + s.estUsed + ' est' : ''}</span>} />
+            extra={<span style={{ fontSize: F.xs, color: C.dim, whiteSpace: 'nowrap' }}>measured {s.base}/{s.availMax} ({s.measuredPct}%) × industry {s.mult.toFixed(2)}{s.dbCount >= 3 ? ' → capped 30' : ''} = <b style={{ color: s.decisionColor, fontSize: F.sm }}>{s.final}</b> · conf {s.confidence}{s.gaps ? ' · ' + s.gaps + ' gaps' : ''}{s.estUsed ? ' · ' + s.estUsed + ' est' : ''}</span>} />
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(330px, 1fr))', columnGap: 18, rowGap: 2 }}>
             {s.factors.map((f) => {
               const nd = f.note === 'no data';
@@ -2631,6 +2704,9 @@ function SignalCards({ ex }: { ex: ConcallExtract }) {
     { icon: '📦', label: 'ORDER BOOK', value: ex.orderBook !== null ? ex.orderBook.toLocaleString() + ' Cr' : null, quote: qFor('orderBook') },
     { icon: '💰', label: 'CAPEX GUIDANCE', value: ex.capexGuidance !== null ? ex.capexGuidance.toLocaleString() + ' Cr' : null, quote: qFor('capexGuidance') },
     { icon: '📅', label: 'TIMELINE', value: ex.timeline.length ? ex.timeline.length + ' dated commitment' + (ex.timeline.length > 1 ? 's' : '') : null, quote: ex.timeline[0] || '' },
+    { icon: '📈', label: 'GROWTH', value: ex.growthNote ? ((ex.growthNote.match(/\d+(?:\.\d+)?\s*%/) || ['noted'])[0]) : null, quote: ex.growthNote || '' },
+    { icon: '📊', label: 'MARGINS', value: ex.marginNote ? ((ex.marginNote.match(/\d+(?:\.\d+)?\s*(?:%|bps|basis points)/i) || ['noted'])[0]) : null, quote: ex.marginNote || '' },
+    { icon: '🛒', label: 'DEMAND', value: ex.demandNote ? 'noted' : null, quote: ex.demandNote || '' },
     { icon: '🎭', label: 'TONE', value: ex.tone !== null ? Math.round(ex.tone * 100) + '% positive' : null, quote: ex.tone !== null ? ex.optimism + ' positive · ' + ex.caution + ' cautious phrases' : '', plain: true },
   ];
   return (
@@ -2733,7 +2809,7 @@ function ModelTab({ card }: { card: any }) {
           <span style={{ color: C.green }}>70-84 CORE BUY</span> · 3-4% · 72%<br />
           <span style={{ color: C.cyan }}>55-69 SATELLITE</span> · 1.5-2.5% · 55% · Q1 confirmation first<br />
           <span style={{ color: C.amber }}>40-54 WATCHLIST</span> · <span style={{ color: C.orange }}>25-39 AVOID</span> · <span style={{ color: C.red }}>0-24 REJECT</span><br />
-          <span style={{ color: C.body }}>LOW confidence ⇒ halve the position. Any (est)-filled factor caps confidence at MEDIUM. ≥10 unmeasured factors ⇒ NEEDS DATA, not a fake AVOID.</span>
+          <span style={{ color: C.body }}>Score = measured points ÷ measured weight × 100 (v5.3) — unmeasurable factors reduce confidence instead of silently zeroing the score. LOW confidence ⇒ halve the position. Any (est)-filled factor caps confidence at MEDIUM. ≥10 unmeasured factors ⇒ NEEDS DATA, not a fake AVOID.</span>
         </div>
       </div>
       <div style={card}>
