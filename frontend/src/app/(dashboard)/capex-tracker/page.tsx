@@ -336,15 +336,15 @@ function scoreRow(r: Row, h: Record<string, string>): Scored {
     isNaN(indGrowth) ? '' : indGrowth.toFixed(1) + 'x GDP');
   add(17, 4, 'Import substitution', 2, yes(g('importSub')) === null ? null : yes(g('importSub')) ? 2 : 0, '');
   add(18, 4, 'Export opportunity', 1, yes(g('exportOpp')) === null ? null : yes(g('exportOpp')) ? 1 : 0, '');
-  // F19 (v5.4) — valuation × growth (was PE-vs-mean only). Max bumped 2→4.
+  // F19 (v5.4) — valuation × growth (was PE-vs-mean only). Max bumped 2→4. revCagr is PERCENT.
   const __peSig = isNaN(peVsMean) ? null : peVsMean < 0.8 ? 2 : peVsMean < 1 ? 1.5 : peVsMean <= 1.5 ? 0.5 : 0;
-  const __growthSig = isNaN(revCagr) ? null : revCagr >= 0.20 ? 1.5 : revCagr >= 0.12 ? 1 : revCagr >= 0.05 ? 0.5 : 0;
+  const __growthSig = isNaN(revCagr) ? null : revCagr >= 20 ? 1.5 : revCagr >= 12 ? 1 : revCagr >= 5 ? 0.5 : 0;
   const __valQualBonus = !isNaN(roce) && roce > 20 ? 0.5 : 0;
   const __valPts = (__peSig === null && __growthSig === null) ? null :
     Math.min(4, (__peSig || 0) + (__growthSig || 0) + __valQualBonus);
   const __valNote = (__peSig === null && __growthSig === null) ? '' :
     (isNaN(peVsMean) ? 'pe?' : peVsMean.toFixed(2) + 'x mean') +
-    ' · rev ' + (isNaN(revCagr) ? '?' : (revCagr * 100).toFixed(0) + '%') +
+    ' · rev ' + (isNaN(revCagr) ? '?' : revCagr.toFixed(0) + '%') +
     (__valQualBonus ? ' · qual+' : '');
   add(19, 4, 'Valuation × growth', 4, __valPts, __valNote);
   add(20, 4, 'Competitive moat', 2, yes(g('moat')) === null ? null : yes(g('moat')) ? 2 : 0, '');
@@ -375,19 +375,19 @@ function scoreRow(r: Row, h: Record<string, string>): Scored {
   add(23, 4, 'Score confidence', 3, __confPts,
     'Verified ' + __verifiedPct + '% · Est ' + __estPct + '% · Unknown ' + __unkPct + '%');
 
-  // F24 (v5.4) — EPS Inflection setup: capex live + utilization tight + revenue growing → upside
+  // F24 (v5.4) — EPS Inflection setup: capex live + utilization tight + revenue growing → upside. revCagr is PERCENT.
   const __utilTight = !isNaN(util) && util > 0 && util < 75 ? (75 - util) / 75 : 0;
   const __capexAlive = !isNaN(capexPct) && capexPct > 15 ? Math.min(1, capexPct / 100) : 0;
-  const __revAlive = !isNaN(revCagr) && revCagr > 0.08 ? Math.min(1, revCagr / 0.30) : 0;
+  const __revAlive = !isNaN(revCagr) && revCagr > 8 ? Math.min(1, revCagr / 30) : 0;
   const __infScore = __utilTight * 0.40 + __capexAlive * 0.30 + __revAlive * 0.30;
   const __infPts = __infScore > 0.55 ? 4 : __infScore > 0.35 ? 2 : __infScore > 0.15 ? 1 : 0;
   const __infMeasured = !isNaN(util) || !isNaN(capexPct) || !isNaN(revCagr);
   add(24, 4, 'EPS inflection setup', 4, __infMeasured ? __infPts : null,
     !__infMeasured ? '' : 'util-room ' + (__utilTight * 100).toFixed(0) + '% · capex ' + (__capexAlive * 100).toFixed(0) + '% · rev ' + (__revAlive * 100).toFixed(0) + '%');
 
-  // F25 (v5.4) — Probability composite (heuristic blend of available factors)
+  // F25 (v5.4) — Probability composite (heuristic blend of available factors). revCagr is PERCENT.
   const __pUp = (!isNaN(roce) ? Math.min(1, roce / 25) : 0) * 0.20 +
-    (!isNaN(revCagr) ? Math.min(1, revCagr / 0.25) : 0) * 0.25 +
+    (!isNaN(revCagr) ? Math.min(1, revCagr / 25) : 0) * 0.25 +
     (!isNaN(peVsMean) ? Math.max(0, 1 - peVsMean) : 0) * 0.15 +
     (!isNaN(ocfYears) ? Math.min(1, ocfYears / 7) : 0) * 0.20 +
     __infScore * 0.20;
