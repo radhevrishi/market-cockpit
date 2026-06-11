@@ -134,6 +134,7 @@ const SIGNAL_FILTERS = [
   { value: 'ALL', label: 'All Signals', icon: '' },
   { value: 'HIGH', label: '🔴 High', icon: '🔴' },
   { value: 'MEDIUM', label: '🟡 Medium', icon: '🟡' },
+  { value: 'LOW', label: '⚪ Low/Noise', icon: '⚪' },
 ] as const;
 
 // Layer classification for institutional hierarchy
@@ -276,6 +277,8 @@ function filterArticles(
     // Signal filter: ALL = show HIGH+MEDIUM (hide noise), HIGH = only tier 1, MEDIUM = only tier 2
     if (signalFilter === 'HIGH' && (a.investment_tier || 0) !== 1) return false;
     if (signalFilter === 'MEDIUM' && (a.investment_tier || 0) !== 2) return false;
+    // PATCH — tier-3 is viewable via the explicit Low/Noise filter
+    if (signalFilter === 'LOW' && (a.investment_tier || 0) !== 3) return false;
     if (signalFilter === 'ALL') {
       // Default: hide noise (tier 3) unless no tier assigned (legacy articles)
       if ((a.investment_tier || 0) === 3) return false;
@@ -562,7 +565,8 @@ const importanceDot = (s: number) =>
 const tierBadge = (tier?: number) => {
   if (tier === 1) return { label: '🔴 HIGH', bg: '#EF444418', color: '#EF4444', border: '#EF444440' };
   if (tier === 2) return { label: '🟡 MEDIUM', bg: '#F59E0B12', color: '#F59E0B', border: '#F59E0B30' };
-  return null; // Tier 3 = NOISE, no badge shown
+  if (tier === 3) return { label: '⚪ LOW', bg: '#6B7B8C12', color: '#8A95A3', border: '#6B7B8C30' }; // visible only in the Low/Noise view
+  return null;
 };
 const typeColor = (t: string) =>
   ({ BOTTLENECK: '#EF4444', EARNINGS: '#10B981', RATING_CHANGE: '#F59E0B', MACRO: '#8B5CF6', GEOPOLITICAL: '#DC2626', TARIFF: '#EA580C', CORPORATE: '#06B6D4', GENERAL: '#4A5B6C' })[t] ?? '#4A5B6C';
@@ -2720,6 +2724,13 @@ export default function NewsFeedPage() {
     return { high, medium };
   }, [articles]);
 
+  // PATCH — tier-3 (noise) count over the same region/type/source scope so the
+  // hidden low-signal stories are discoverable from the signal summary bar.
+  const noiseCount = useMemo(() => {
+    if (!allArticles) return 0;
+    return filterArticles(allArticles, region, earningsSeasonActive ? 'EARNINGS' : articleType, 'LOW', sourceName).length;
+  }, [allArticles, region, articleType, sourceName, earningsSeasonActive]);
+
   const layerArticleMap = useMemo(() => {
     const out: Record<FeedLayer, NewsArticle[]> = {
       MACRO_REGIME: [], STRUCTURAL: [], COMPANY_ALPHA: [], GENERAL: [],
@@ -3716,6 +3727,13 @@ export default function NewsFeedPage() {
           <span style={{ fontSize: '11px', color: '#F59E0B', fontWeight: '600' }}>
             🟡 {tierCounts.medium} Medium
           </span>
+          <button
+            onClick={() => setSignalFilter(signalFilter === 'LOW' ? 'ALL' : 'LOW')}
+            title="Low/Noise (tier-3) stories are hidden from the default feed. Click to view only them; click again to return."
+            style={{ fontSize: '11px', fontWeight: '600', cursor: 'pointer', borderRadius: '6px', padding: '1px 7px', backgroundColor: signalFilter === 'LOW' ? '#8A95A318' : 'transparent', border: `1px solid ${signalFilter === 'LOW' ? '#8A95A360' : 'transparent'}`, color: '#8A95A3' }}
+          >
+            ⚪ {noiseCount} Low
+          </button>
           <span style={{ fontSize: '11px', color: '#4A5B6C' }}>
             {articles.length} total
           </span>
