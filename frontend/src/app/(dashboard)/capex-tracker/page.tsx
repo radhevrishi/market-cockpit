@@ -1,4 +1,5 @@
 'use client';
+import ConcallPro from './ConcallPro';
 
 // ════════════════════════════════════════════════════════════════════════════
 // CAPEX TRACKER v5.0 — Company Intelligence Engine.
@@ -2331,6 +2332,7 @@ export default function CapexTrackerPage() {
         <span onClick={() => setTab('multibagger')} style={pill(tab === 'multibagger', C.violet)}>🚀 Multibagger</span>
         <span onClick={() => setTab('forensics')} style={pill(tab === 'forensics', C.red)}>🔬 Forensics</span>
         <span onClick={() => setTab('concall')} style={pill(tab === 'concall', C.gold)}>🎙 Concall</span>
+        <span onClick={() => setTab('concallpro')} style={pill(tab === 'concallpro', C.gold)} title="Concall reading mastery">🎓 Concall Pro</span>
         <span onClick={() => setTab('verdict')} style={pill(tab === 'verdict', C.orange)}>🧭 Verdict</span>
         <span onClick={() => setTab('model')} style={pill(tab === 'model', C.blue)}>📐 The Model</span>
         <span style={{ flex: 1 }} />
@@ -2754,6 +2756,7 @@ export default function CapexTrackerPage() {
       )}
 
       {/* ═══ 🧭 VERDICT ═══ */}
+      {tab === 'concallpro' && <ConcallPro C={C} />}
       {tab === 'verdict' && scored.length > 0 && (() => {
         const ranked = [...intel].sort((a, b) => (a.verdict.veto === b.verdict.veto ? b.verdict.composite - a.verdict.composite : a.verdict.veto ? 1 : -1));
         const vCounts: Record<string, number> = {};
