@@ -187,8 +187,8 @@ const STAGE_META: Record<string, { color: string; label: string; size: string; n
 };
 
 // ── THE SCORING ENGINE — quality (Ch.12) + timing (Stage A-F) ───────────────
-function scoreRow(r: Row, h: Record<string, string>): Scored {
-  const g = (k: string) => r[h[k]];
+function scoreRow(r: Row, h: Record<string, string>, extras?: Record<string, any>): Scored {
+  const g = (k: string) => (extras && k in extras && extras[k] != null) ? extras[k] : r[h[k]];
   let estUsed = 0;
   // precedence: clean canonical header (manual/editor) → resolved column → '(est)' fill
   const gv = (hkey: string, canonical: string): { v: string; est: boolean } => {
@@ -1971,8 +1971,8 @@ export default function CapexTrackerPage() {
 
   const scored = useMemo(() => {
     if (!rows.length) return [] as Scored[];
-    return rows.map((r) => scoreRow(r, resolveHeaders(Object.keys(r)))).sort((a, b) => b.final - a.final);
-  }, [rows]);
+    return rows.map((r) => { const cc = concalls[r.name]?.slice(-1)[0]?.extract; const extras = cc ? { orderBookCr: cc.orderBook, customerCount: cc.customerCount, exportPct: cc.exportPct, utilization: cc.utilization } : undefined; return scoreRow(r, resolveHeaders(Object.keys(r)), extras); }).sort((a, b) => b.final - a.final);
+  }, [rows, concalls]);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = { 'ANCHOR BUY': 0, 'CORE BUY': 0, SATELLITE: 0, 'NEEDS DATA': 0, WATCHLIST: 0, AVOID: 0, REJECT: 0 };
