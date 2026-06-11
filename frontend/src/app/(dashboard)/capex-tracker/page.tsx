@@ -33,6 +33,8 @@ type Scored = {
   comment: string; action: string; theme: string | null;
   roce: number; de: number; util: number; anchor: number; debtFund: number; ocfYears: number;
   ebitda: number; pledge: number; raw: Row;
+  phase: string; capexToSales: number; cwipRatio: number; capexAccel: number; deChange: number; selfFund: number; watch: string[];
+  measuredPct: number; availMax: number;
 };
 
 // ── flexible header resolution (Appendix B names + common variants) ─────────
@@ -243,12 +245,20 @@ function scoreRow(r: Row, h: Record<string, string>): Scored {
   final = Math.max(0, Math.min(100, final));
 
   // Decision bands (§12.4)
-  const [decision, decisionColor, position, hit] =
+  let [decision, decisionColor, position, hit] =
     final >= 85 ? ['ANCHOR BUY', C.gold, '4-6%', '88%'] :
     final >= 70 ? ['CORE BUY', C.green, '3-4%', '72%'] :
     final >= 55 ? ['SATELLITE', C.cyan, '1.5-2.5%', '55%'] :
     final >= 40 ? ['WATCHLIST', C.amber, '0%', '—'] :
     final >= 25 ? ['AVOID', C.orange, '0%', '—'] : ['REJECT', C.red, '0%', '—'];
+
+  // Missing data is NOT bad data: when ≥8 of 21 factors are unmeasured and no
+  // deal-breaker cap applies, the verdict is "NEEDS DATA" — judged on measured
+  // evidence only — instead of a false AVOID/REJECT.
+  const availMax = factors.reduce((s, f) => s + (f.note === 'no data' ? 0 : f.max), 0);
+  const measuredPct = availMax > 0 ? Math.round((base / availMax) * 100) : 0;
+  const needsData = gaps >= 8 && dbCount < 3 && final < 70;
+  if (needsData) { decision = 'NEEDS DATA'; decisionColor = C.violet; position = '—'; hit = '—'; }
 
   // Confidence (§12.5): data completeness + industry hit-rate proxy (multiplier)
   const filled = 21 - gaps;
@@ -258,6 +268,9 @@ function scoreRow(r: Row, h: Record<string, string>): Scored {
 
   // Action guidance (when to buy / wait / where)
   const action =
+    needsData ? 'INCOMPLETE — measured factors score ' + base + '/' + availMax + ' (' + measuredPct + '% of available evidence' +
+      (measuredPct >= 70 ? ' — looks STRONG so far' : measuredPct >= 50 ? ' — middling so far' : ' — weak so far') +
+      '). Fill the inputs below (anchor %, utilization, funding mix, promoter/pledge) for a real verdict.' :
     final >= 85 ? 'Deploy now (' + position + '). Add on dips. Hit rate ' + hit + '. Monitor quarterly: D/E rise >0.3x or guidance moderation ×2 ⇒ trim 50%.' :
     final >= 70 ? 'Buy now (' + position + '). Hit rate ' + hit + '. Confirm anchor demand on next concall.' :
     final >= 55 ? 'WAIT — buy only after Q1 post-capex confirmation (utilization ramp + no D/E creep). Then ' + position + '.' :
@@ -276,10 +289,23 @@ function scoreRow(r: Row, h: Record<string, string>): Scored {
 
   const th = THEMES.find(([re]) => re.test(industry) || re.test(sector) || re.test(name));
 
+  // ── capex-cycle telemetry (auto-derived for Screener uploads) + Appendix-A monitoring triggers
+  const phase = (r['Capex Phase'] || '').trim();
+  const capexToSales = num(r['Capex/Sales %']);
+  const cwipRatio = num(r['CWIP/NetBlock %']);
+  const capexAccel = num(r['Capex Accel x']);
+  const deChange = num(r['D/E change 2y']);
+  const selfFund = num(r['OCF/Capex 3y %']);
+  const watch: string[] = [];
+  if (deChange > 0.3) watch.push('D/E rose +' + deChange.toFixed(2) + 'x in 2y — Appendix-A construction trigger (>+0.3x = flag)');
+  if (phase === 'BUILDING' && selfFund < 50) watch.push('Building while OCF covers only ' + (isNaN(selfFund) ? '0' : selfFund.toFixed(0)) + '% of capex — funding-stress watch');
+  if (phase === 'BUILDING' && (wcRaw === 'deteriorating' || /deterior/i.test(r['Working Capital Trend'] || ''))) watch.push('WC deteriorating mid-build — the classic failure tell');
+
   return {
     name, sector, industry, country, base, final, decision, decisionColor, dbCount, dbList,
     mult, confidence, position: positionFinal, gaps, factors, comment, action,
     theme: th ? th[1] : null, roce, de, util, anchor, debtFund: debtPct, ocfYears, ebitda, pledge, raw: r,
+    phase, capexToSales, cwipRatio, capexAccel, deChange, selfFund, watch, measuredPct, availMax,
   };
 }
 
@@ -388,16 +414,51 @@ function parseScreenerWorkbook(XLSX: any, wb: any, fname: string): Row | null {
     }
     const npL = at(np, c);
     if (pes.length >= 2 && mcap > 0 && npL > 0) peVsMean = (mcap / npL) / (pes.reduce((a, b) => a + b, 0) / pes.length);
+    // ── CAPEX-CYCLE TELEMETRY (the "tracker" layer) ──────────────────────
+    const recv = rowVals(/^RECEIVABLES/, iBS, iCF);
+    const inv = rowVals(/^INVENTORY/, iBS, iCF);
+    const capexSeries: number[] = [];
+    for (let i = 1; i <= bc; i++) {
+      const v = (at(nb, i) - at(nb, i - 1)) + ((at(cwip, i) || 0) - (at(cwip, i - 1) || 0)) + (at(dep, i) || 0);
+      capexSeries.push(isFinite(v) ? Math.max(0, v) : NaN);
+    }
+    const cl = capexSeries.length;
+    const capexNow = cl ? capexSeries[cl - 1] : NaN;
+    const capexPrevAvg = cl >= 3 ? (capexSeries[cl - 2] + capexSeries[cl - 3]) / 2 : cl >= 2 ? capexSeries[cl - 2] : NaN;
+    const capexAccel = capexPrevAvg > 0 ? capexNow / capexPrevAvg : NaN;
+    const capexToSales = salesL > 0 ? (capexNow / salesL) * 100 : NaN;
+    const cwipRatio = at(nb, bc) > 0 ? ((at(cwip, bc) || 0) / at(nb, bc)) * 100 : NaN;
+    const dePrev = at(bor, bc - 2) / (at(eq, bc - 2) + at(res, bc - 2));
+    const deChange = isFinite(deV) && isFinite(dePrev) ? deV - dePrev : NaN;
+    // WC days now vs 2y ago → auto Working Capital Trend (F12) — user can override
+    const wcDays = (i: number) => ((at(recv, i) || 0) + (at(inv, i) || 0)) / (at(sales, i) || NaN) * 365;
+    const wcNow = wcDays(bc), wcPrev = wcDays(bc - 2);
+    const wcAuto = !isFinite(wcNow) || !isFinite(wcPrev) ? '' : wcNow <= wcPrev * 1.15 ? 'Stable' : 'Deteriorating';
+    // self-funding: last-3y OCF vs last-3y capex (masterclass Metric 9)
+    let ocf3 = 0, cap3 = 0;
+    for (let k = 0; k < 3; k++) { const o = at(ocf, oc - k); const cx = capexSeries[cl - 1 - k]; if (isFinite(o)) ocf3 += o; if (isFinite(cx)) cap3 += cx; }
+    const selfFund = cap3 > 0 ? (ocf3 / cap3) * 100 : NaN;
+    // phase classification
+    const nbGrowth = at(nb, bc - 1) > 0 ? (at(nb, bc) / at(nb, bc - 1) - 1) * 100 : NaN;
+    const phase =
+      !isFinite(capexNow) ? '' :
+      cwipRatio > 15 || capexAccel > 1.6 ? 'BUILDING' :
+      nbGrowth > 30 && cwipRatio < 15 ? 'RAMPING' :
+      capexToSales < 4 ? 'MAINTENANCE' : 'STEADY';
+
     const fx = (n: number, d = 1) => (isFinite(n) ? n.toFixed(d) : '');
     return {
       'Company Name': name, Sector: '', Industry: '', Country: 'IN',
+      'Capex Phase': phase, 'Capex/Sales %': fx(capexToSales), 'CWIP/NetBlock %': fx(cwipRatio),
+      'Capex Accel x': fx(capexAccel, 2), 'D/E change 2y': fx(deChange, 2), 'OCF/Capex 3y %': fx(selfFund, 0),
+      'Working Capital Trend': wcAuto,
       'ROCE 3-yr avg': fx(roce), 'D/E ratio': fx(deV, 2), 'OCF positive years': String(ocfYears),
       'EBITDA Margin %': fx(ebitdaM), 'Revenue CAGR 3-yr %': fx(cagr),
       'Gross Block': fx(gbV, 0), 'CAPEX size Cr': fx(capexEst, 0), 'Annual Revenue': fx(salesL, 0),
       'PE vs 5-yr Mean': fx(peVsMean, 2),
       'Capacity Utilization %': '', 'Anchor Demand %': '', 'Internal funding %': '', 'Debt funding %': '',
       'Promoter Holding %': '', 'Promoter Pledge %': '', 'Founder-CEO Tenure': '', 'Brownfield': '',
-      'Cycle Position': '', 'Cost Overrun History': '', 'Working Capital Trend': '', 'Policy Support': '',
+      'Cycle Position': '', 'Cost Overrun History': '', 'Policy Support': '',
       'Import Substitution': '', 'Export Opportunity': '', 'Competitive Moat': '', 'Prior Capex Success': '',
     };
   } catch { return null; }
@@ -487,7 +548,7 @@ export default function CapexTrackerPage() {
   }, [rows]);
 
   const counts = useMemo(() => {
-    const c: Record<string, number> = { 'ANCHOR BUY': 0, 'CORE BUY': 0, SATELLITE: 0, WATCHLIST: 0, AVOID: 0, REJECT: 0 };
+    const c: Record<string, number> = { 'ANCHOR BUY': 0, 'CORE BUY': 0, SATELLITE: 0, 'NEEDS DATA': 0, WATCHLIST: 0, AVOID: 0, REJECT: 0 };
     scored.forEach((s) => { c[s.decision] = (c[s.decision] || 0) + 1; });
     return c;
   }, [scored]);
@@ -584,15 +645,26 @@ export default function CapexTrackerPage() {
           </div>
         ))}
       </div>
-      <div style={{ marginTop: 8, fontSize: F.sm, color: C.txt }}><span style={{ color: C.dim }}>Base {s.base} × industry {s.mult.toFixed(2)}{s.dbCount >= 3 ? ' → CAPPED 30 (deal-breakers)' : ''} = </span><b>{s.final}</b><span style={{ color: C.dim }}> · confidence {s.confidence}{s.gaps ? ' · ' + s.gaps + ' gaps' : ''}</span></div>
+      <div style={{ marginTop: 8, fontSize: F.sm, color: C.txt }}><span style={{ color: C.dim }}>Base {s.base} × industry {s.mult.toFixed(2)}{s.dbCount >= 3 ? ' → CAPPED 30 (deal-breakers)' : ''} = </span><b>{s.final}</b><span style={{ color: C.dim }}> · measured evidence </span><b style={{ color: s.measuredPct >= 70 ? C.green : s.measuredPct >= 50 ? C.amber : C.red }}>{s.base}/{s.availMax} ({s.measuredPct}%)</b><span style={{ color: C.dim }}> · confidence {s.confidence}{s.gaps ? ' · ' + s.gaps + ' gaps' : ''}</span></div>
+      {(s.phase || !isNaN(s.capexToSales)) && (
+        <div style={{ marginTop: 6, fontSize: F.sm, color: C.txt }}>
+          <span style={{ color: C.orange, fontWeight: 800 }}>🏗 Capex cycle:</span>{' '}
+          {s.phase || '—'}{!isNaN(s.capexToSales) ? ' · capex/sales ' + s.capexToSales.toFixed(1) + '%' : ''}
+          {!isNaN(s.cwipRatio) ? ' · CWIP ' + s.cwipRatio.toFixed(0) + '% of block' : ''}
+          {!isNaN(s.capexAccel) ? ' · spend ' + s.capexAccel.toFixed(1) + 'x prior-2y avg' : ''}
+          {!isNaN(s.deChange) ? ' · ΔD/E 2y ' + (s.deChange >= 0 ? '+' : '') + s.deChange.toFixed(2) : ''}
+          {!isNaN(s.selfFund) ? ' · OCF covers ' + s.selfFund.toFixed(0) + '% of capex (3y)' : ''}
+        </div>
+      )}
+      {s.watch.map((w, i) => <div key={i} style={{ marginTop: 3, fontSize: F.sm, color: C.red }}>🚨 {w}</div>)}
       <div style={{ marginTop: 4, fontSize: F.sm, color: C.amber }}>{s.comment}</div>
       <div style={{ marginTop: 4, fontSize: F.sm, color: C.cyan }}>▶ {s.action}</div>
       <Editor s={s} />
     </div>
   );
 
-  const BAND_ORDER = ['ALL', 'ANCHOR BUY', 'CORE BUY', 'SATELLITE', 'WATCHLIST', 'AVOID', 'REJECT'];
-  const bandColor = (b: string) => b === 'ANCHOR BUY' ? C.gold : b === 'CORE BUY' ? C.green : b === 'SATELLITE' ? C.cyan : b === 'WATCHLIST' ? C.amber : b === 'AVOID' ? C.orange : b === 'REJECT' ? C.red : C.blue;
+  const BAND_ORDER = ['ALL', 'ANCHOR BUY', 'CORE BUY', 'SATELLITE', 'NEEDS DATA', 'WATCHLIST', 'AVOID', 'REJECT'];
+  const bandColor = (b: string) => b === 'ANCHOR BUY' ? C.gold : b === 'CORE BUY' ? C.green : b === 'SATELLITE' ? C.cyan : b === 'NEEDS DATA' ? C.violet : b === 'WATCHLIST' ? C.amber : b === 'AVOID' ? C.orange : b === 'REJECT' ? C.red : C.blue;
 
   const upgradeWatch = useMemo(() => scored.filter((s) => s.decision === 'WATCHLIST' || s.decision === 'SATELLITE')
     .map((s) => ({ s, need: s.factors.filter((f) => f.pts === 0 && f.max >= 4 && f.note !== 'no data').slice(0, 2) }))
@@ -646,6 +718,7 @@ export default function CapexTrackerPage() {
             <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: F.sm }}>
               <thead><tr style={{ borderBottom: '1px solid ' + C.line }}>
                 <TH k="name" label="COMPANY" /><TH k="industry" label="INDUSTRY" />
+                <TH k="phase" label="CAPEX CYCLE" />
                 <TH k="final" label="SCORE" right /><TH k="decision" label="DECISION" />
                 <TH k="confidence" label="CONF" /><TH k="dbCount" label="⛔DB" right />
                 <TH k="roce" label="ROCE%" right /><TH k="de" label="D/E" right />
@@ -685,6 +758,17 @@ export default function CapexTrackerPage() {
               {!(counts[b] || 0) && <div style={{ fontSize: F.sm, color: C.dim, padding: '8px 0' }}>None in this band.</div>}
             </div>
           ))}
+          <div style={card}>
+            <div style={{ fontSize: F.md, fontWeight: 800, color: C.violet, marginBottom: 4 }}>🧩 NEEDS DATA — strong on measured evidence, fill the rest · {counts['NEEDS DATA'] || 0}</div>
+            <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 6 }}>Names judged only on what Screener can prove. % = score on measured factors. Open the row and fill anchor/utilization/funding for the real verdict.</div>
+            {scored.filter((s) => s.decision === 'NEEDS DATA').sort((a, b) => b.measuredPct - a.measuredPct).slice(0, 12).map((s) => (
+              <div key={s.name} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '5px 2px', borderTop: '1px solid ' + C.line, fontSize: F.sm }}>
+                <span><b>{s.name}</b> <span style={{ color: C.muted }}>· {s.gaps} gaps{s.phase ? ' · ' + s.phase : ''}</span></span>
+                <span style={{ fontWeight: 900, color: s.measuredPct >= 70 ? C.green : s.measuredPct >= 50 ? C.amber : C.red }}>{s.measuredPct}% measured</span>
+              </div>
+            ))}
+            {!(counts['NEEDS DATA'] || 0) && <div style={{ fontSize: F.sm, color: C.dim, padding: '8px 0' }}>All names fully scored.</div>}
+          </div>
           <div style={card}>
             <div style={{ fontSize: F.md, fontWeight: 800, color: C.red, marginBottom: 4 }}>⛔ Deal-breaker board</div>
             <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 6 }}>3+ deal-breakers ⇒ score capped at 30. Historically 80%+ default within 5-7 years.</div>
@@ -790,6 +874,11 @@ function FragmentRow({ s, open, toggle, fmt, Row21 }: { s: Scored; open: boolean
       <tr onClick={toggle} style={{ borderBottom: '1px solid ' + C.line, cursor: 'pointer', background: open ? '#16233B' : 'transparent' }}>
         <td style={{ padding: '7px 8px', fontWeight: 800 }}>{s.name} <span style={{ fontSize: 10, color: C.muted }}>{s.country === 'US' ? '🇺🇸' : '🇮🇳'}</span></td>
         <td style={{ padding: '7px 8px', color: C.dim, fontSize: F.xs }}>{s.industry || s.sector}{s.theme ? ' · ' + s.theme : ''}</td>
+        <td style={{ padding: '7px 8px', fontSize: F.xs }}>
+          {s.phase ? <span style={{ fontWeight: 800, color: s.phase === 'BUILDING' ? C.orange : s.phase === 'RAMPING' ? C.green : C.dim }}>{s.phase}</span> : <span style={{ color: C.muted }}>—</span>}
+          {!isNaN(s.capexToSales) && <span style={{ color: C.dim }}> {s.capexToSales.toFixed(0)}%/sales</span>}
+          {s.watch.length > 0 && <span title={s.watch.join(' | ')}> 🚨</span>}
+        </td>
         <td style={{ padding: '7px 8px', textAlign: 'right', fontWeight: 900, color: s.decisionColor, fontSize: F.md }}>{s.final}</td>
         <td style={{ padding: '7px 8px' }}><span style={{ fontSize: 10, fontWeight: 900, padding: '2px 8px', borderRadius: 10, background: s.decisionColor + '22', color: s.decisionColor, border: '1px solid ' + s.decisionColor + '55' }}>{s.decision}</span></td>
         <td style={{ padding: '7px 8px', fontSize: F.xs, color: s.confidence === 'HIGH' ? C.green : s.confidence === 'MEDIUM' ? C.amber : C.red }}>{s.confidence}</td>
@@ -801,7 +890,7 @@ function FragmentRow({ s, open, toggle, fmt, Row21 }: { s: Scored; open: boolean
         <td style={{ padding: '7px 8px', textAlign: 'right', color: s.debtFund > 70 ? C.red : C.txt }}>{fmt(s.debtFund, 0)}</td>
         <td style={{ padding: '7px 8px', fontSize: F.xs, color: C.cyan }}>{s.position}</td>
       </tr>
-      {open && <tr><td colSpan={12} style={{ padding: '0 8px' }}><Row21 s={s} /></td></tr>}
+      {open && <tr><td colSpan={13} style={{ padding: '0 8px' }}><Row21 s={s} /></td></tr>}
     </>
   );
 }
