@@ -280,9 +280,21 @@ function scoreRow(r: Row, h: Record<string, string>): Scored {
   add(7, 2, country === 'IN' ? 'Promoter quality' : 'Founder-CEO', 6, f7, f7n);
   add(8, 2, 'EBITDA margin', 5, isNaN(ebitda) ? null :
     ebitda > 25 ? 5 : ebitda >= 20 ? 4 : ebitda >= 15 ? 3 : ebitda >= 10 ? 1 : 0, isNaN(ebitda) ? '' : ebitda.toFixed(1) + '%');
-  add(9, 2, 'Capex size sweet spot', 4, isNaN(capexPct) ? null :
-    capexPct >= 50 && capexPct <= 150 ? 4 : (capexPct >= 30 && capexPct < 50) || (capexPct > 150 && capexPct <= 200) ? 2 : 0,
-    isNaN(capexPct) ? '' : capexPct.toFixed(0) + '% of gross block');
+  // F9 (v5.4) — sector-aware capex sweet spot
+  const __sectorTxt = ((industry || '') + ' ' + (sector || '')).toLowerCase();
+  let __capexBand: [number, number, number, number, number] = [30, 60, 15, 90, 120];
+  if (/util|\bpower\b|transformer|t&d|substation|smart meter|grid/.test(__sectorTxt)) __capexBand = [100, 300, 50, 400, 500];
+  else if (/solar|wind|renewable|green energy/.test(__sectorTxt)) __capexBand = [80, 200, 40, 300, 350];
+  else if (/pharma|cdmo|cro\b|biolog|special(i?ty)? ?chem/.test(__sectorTxt)) __capexBand = [40, 80, 20, 120, 150];
+  else if (/cement|mining|\bsteel\b|metal/.test(__sectorTxt)) __capexBand = [20, 50, 10, 70, 100];
+  else if (/\bems\b|electronics manufacturing|asset.?light|saas|cloud/.test(__sectorTxt)) __capexBand = [5, 25, 3, 40, 60];
+  const [__bMin, __bMax, __oMin, __oMax, __oHard] = __capexBand;
+  const __capexPts = isNaN(capexPct) ? null :
+    (capexPct >= __bMin && capexPct <= __bMax) ? 4 :
+    (capexPct >= __oMin && capexPct < __bMin) || (capexPct > __bMax && capexPct <= __oMax) ? 2 :
+    capexPct > __oHard ? 0 : 1;
+  add(9, 2, 'Capex size sweet spot', 4, __capexPts,
+    isNaN(capexPct) ? '' : capexPct.toFixed(0) + '% of gross block \u00B7 band ' + __bMin + '-' + __bMax + '%');
   add(10, 2, 'Cost-overrun record', 4, !overrunRaw ? null :
     /^(n|no|none|zero|0)/.test(overrunRaw) ? 4 : /minor|<10/.test(overrunRaw) ? 2 : 0, overrunV.v, overrunV.est);
   // T3 (15)
@@ -308,6 +320,18 @@ function scoreRow(r: Row, h: Record<string, string>): Scored {
   add(20, 4, 'Competitive moat', 2, yes(g('moat')) === null ? null : yes(g('moat')) ? 2 : 0, '');
   const priorYes = yes(priorV.v);
   add(21, 4, 'Prior capex success', 1, priorYes === null ? null : priorYes ? 1 : 0, '', priorV.est);
+
+  // F22 (v5.4) — Promoter Quality composite (capital-allocation discipline)
+  const pqRoceOk = !isNaN(roce) && roce > 18 ? 1 : 0;
+  const pqOcfOk = !isNaN(ocfYears) && ocfYears >= 5 ? 1 : 0;
+  const pqDeOk = !isNaN(de) && de < 0.3 ? 1 : 0;
+  const pqPledgeOk = !isNaN(pledge) && pledge === 0 ? 1 : 0;
+  const pqInternalOk = !isNaN(internal) && internal >= 50 ? 1 : 0;
+  const pqPts = pqRoceOk + pqOcfOk + pqDeOk + pqPledgeOk + pqInternalOk;
+  const pqMeasured = [roce, ocfYears, de, pledge, internal].filter(x => !isNaN(x)).length;
+  add(22, 4, 'Promoter quality', 5,
+    pqMeasured === 0 ? null : pqPts,
+    pqMeasured === 0 ? '' : pqPts + '/5 (ROCE' + (pqRoceOk?'\u2713':'\u00B7') + ' OCF' + (pqOcfOk?'\u2713':'\u00B7') + ' D/E' + (pqDeOk?'\u2713':'\u00B7') + ' pledge' + (pqPledgeOk?'\u2713':'\u00B7') + ' int-fund' + (pqInternalOk?'\u2713':'\u00B7') + ')');
 
   const base = factors.reduce((s, f) => s + f.pts, 0);
   const tiers = [1, 2, 3, 4].map((t) => ({
@@ -1085,7 +1109,7 @@ function extractConcall(text: string): ConcallExtract {
     capexGuidance,
     timeline,
     anchorPct,
-    growthNote, marginNote, demandNote, __v: 3,
+    growthNote, marginNote, demandNote, __v: 4,
     optimism, caution,
     tone: optimism + caution > 0 ? optimism / (optimism + caution) : null,
     quotes,
@@ -2192,7 +2216,7 @@ export default function CapexTrackerPage() {
         + 'table.cxt tbody tr.cxr:hover { background: #15213A; }'}</style>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, flexWrap: 'wrap' }}>
         <Link href="/" style={{ color: C.dim, textDecoration: 'none', fontSize: F.sm }}>← Home</Link>
-        <span style={{ fontSize: F.xl, fontWeight: 900, color: C.orange }}>🏗 CAPEX TRACKER <span style={{ fontSize: F.xs, color: C.dim, fontWeight: 700 }}>v5.3</span></span>
+        <span style={{ fontSize: F.xl, fontWeight: 900, color: C.orange }}>🏗 CAPEX TRACKER <span style={{ fontSize: F.xs, color: C.dim, fontWeight: 700 }}>v5.4</span></span>
         <span style={{ fontSize: F.sm, color: C.body }}>four lenses, one dataset: capex quality × timing · 🚀 multibagger DNA · 🔬 forensics · 🎙 concall → 🧭 one fused verdict</span>
         <span style={{ fontSize: F.xs, color: C.dim }}>{files.length} file{files.length === 1 ? '' : 's'} · {scored.length} companies (saved locally)</span>
       </div>
@@ -2821,7 +2845,7 @@ function ModelTab({ card }: { card: any }) {
           <span style={{ color: C.green }}>70-84 CORE BUY</span> · 3-4% · 72%<br />
           <span style={{ color: C.cyan }}>55-69 SATELLITE</span> · 1.5-2.5% · 55% · Q1 confirmation first<br />
           <span style={{ color: C.amber }}>40-54 WATCHLIST</span> · <span style={{ color: C.orange }}>25-39 AVOID</span> · <span style={{ color: C.red }}>0-24 REJECT</span><br />
-          <span style={{ color: C.body }}>Score = measured points ÷ measured weight × 100 (v5.3) — unmeasurable factors reduce confidence instead of silently zeroing the score. LOW confidence ⇒ halve the position. Any (est)-filled factor caps confidence at MEDIUM. ≥10 unmeasured factors ⇒ NEEDS DATA, not a fake AVOID.</span>
+          <span style={{ color: C.body }}>Score = measured points ÷ measured weight × 100 (v5.4) — unmeasurable factors reduce confidence instead of silently zeroing the score. LOW confidence ⇒ halve the position. Any (est)-filled factor caps confidence at MEDIUM. ≥10 unmeasured factors ⇒ NEEDS DATA, not a fake AVOID.</span>
         </div>
       </div>
       <div style={card}>
