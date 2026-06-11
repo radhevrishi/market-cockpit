@@ -1,7 +1,14 @@
 'use client';
 
 // ════════════════════════════════════════════════════════════════════════════
-// CAPEX TRACKER v4.3 — QUALITY × TIMING engine.
+// CAPEX TRACKER v5.0 — Company Intelligence Engine.
+// Four lenses on ONE dataset: capex QUALITY × TIMING (v4.3 engine, untouched)
+// + 🚀 MULTIBAGGER DNA (12-component SQGLP-style score from 10y workbook data)
+// + 🔬 FORENSICS (12 fraud-checklist checks codified) + 🎙 CONCALL (local
+// transcripts, heuristic extraction → one-click apply to the capex engine)
+// → 🧭 VERDICT (fused ranked call with forensic veto).
+//
+// v4.3 core below — QUALITY × TIMING engine.
 // QUALITY: "The CAPEX Masterclass" (200 cases) Ch.12 verbatim — 21 weighted
 //   factors (100 pts) → industry multiplier → deal-breaker override (3+ of 6
 //   ⇒ cap 30) → ANCHOR/CORE/SATELLITE/WATCHLIST/AVOID/REJECT bands.
@@ -13,7 +20,7 @@
 // telemetry + '(est)' fills; rows merge by company and persist locally.
 // ════════════════════════════════════════════════════════════════════════════
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 
 // ── theme (cockpit dark palette) ────────────────────────────────────────────
@@ -88,6 +95,8 @@ const TELEMETRY_COLS = new Set([
   'Capex Phase', 'Capex/Sales %', 'CWIP/NetBlock %', 'Capex Accel x',
   'D/E change 2y', 'OCF/Capex 3y %', 'Net Debt/EBITDA', 'Capex/PreRev %',
   'Util Effective % (est)', 'NB Growth %', 'Rev YoY %', 'Capex Series', 'Prior Cycle Note',
+  // v5 intelligence columns — JSON blobs, must never win a factor header race
+  'Fin Series', 'Fraud Tab', 'Moat Tab',
 ]);
 
 // non-'(est)' columns win the header race; est columns only match as fallback
@@ -465,6 +474,567 @@ function scoreRow(r: Row, h: Record<string, string>): Scored {
   };
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// v5 INTELLIGENCE LAYER — pure functions over the persisted rows.
+// All series math is null-gap tolerant (Screener exports miss early years);
+// a metric whose inputs are missing is EXCLUDED and its weight removed from
+// the available maximum — same "measured %" philosophy as the 21-factor engine.
+// ════════════════════════════════════════════════════════════════════════════
+
+type Fin = {
+  years: string[]; sales: (number | null)[]; np: (number | null)[]; pbt: (number | null)[];
+  tax: (number | null)[]; oi: (number | null)[]; dep: (number | null)[]; intr: (number | null)[];
+  div: (number | null)[]; eq: (number | null)[]; res: (number | null)[]; bor: (number | null)[];
+  nb: (number | null)[]; cwip: (number | null)[]; cash: (number | null)[]; recv: (number | null)[];
+  inv: (number | null)[]; ocf: (number | null)[]; cfi: (number | null)[]; cff: (number | null)[];
+  shares: (number | null)[]; price: (number | null)[]; mcap: number | null; capex: (number | null)[];
+};
+type MBComp = { id: string; label: string; w: number; pts: number | null; detail: string };
+type MBResult = { score: number; grade: string; color: string; available: number; components: MBComp[]; pe: number; peg: number };
+type FXCheck = { id: string; label: string; w: number; pts: number | null; detail: string; flag?: string };
+type FXResult = { score: number; grade: string; color: string; flags: string[]; critical: boolean; checks: FXCheck[]; workbook: { row: number; label: string; answer: string }[] };
+type ConcallExtract = {
+  utilization: number | null; utilArr: number[]; orderBook: number | null; capexGuidance: number | null;
+  timeline: string[]; anchorPct: number | null; optimism: number; caution: number; tone: number | null;
+  quotes: { field: string; match: string; snippet: string }[];
+};
+type ConcallEntry = { id: string; label: string; addedAt: string; chars: number; text: string; extract: ConcallExtract };
+type CCState = { freshness: 'FRESH' | 'STALE' | 'NONE'; tone: number | null; utilization: number | null };
+type Verdict = { call: string; color: string; why: string; composite: number; note: string; veto: boolean };
+
+const MB_GRADE_COLOR: Record<string, string> = {
+  'A+': '#10b981', A: '#34d399', 'B+': '#f59e0b', B: '#f97316', C: '#fb923c', D: '#ef4444', NR: '#5B6A82',
+};
+const FX_GRADE_COLOR: Record<string, string> = { CLEAN: C.green, WATCH: C.amber, FLAGS: C.orange, AVOID: C.red, NR: C.muted };
+const MB_GRADE_ORDER = ['A+', 'A', 'B+', 'B', 'C', 'D'];
+
+function parseFin(r: Row): Fin | null {
+  try {
+    const f = JSON.parse(r['Fin Series'] || '');
+    if (f && Array.isArray(f.years) && Array.isArray(f.sales)) return f as Fin;
+    return null;
+  } catch { return null; }
+}
+
+// null-safe series helpers (v4.3 conventions)
+const lastNN = (a: (number | null)[]): number => { for (let i = a.length - 1; i >= 0; i--) if (a[i] !== null && a[i] !== undefined) return i; return -1; };
+const firstNN = (a: (number | null)[]): number => { for (let i = 0; i < a.length; i++) if (a[i] !== null && a[i] !== undefined) return i; return -1; };
+const av = (a: (number | null)[] | undefined, i: number): number => (a && i >= 0 && i < a.length && a[i] !== null && a[i] !== undefined ? (a[i] as number) : NaN);
+const lin01 = (x: number, lo: number, hi: number) => Math.max(0, Math.min(1, (x - lo) / (hi - lo)));
+const cagrPct = (a: number, b: number, n: number): number => (isFinite(a) && isFinite(b) && a > 0 && b > 0 && n > 0 ? (Math.pow(a / b, 1 / n) - 1) * 100 : NaN);
+const sumLast = (a: (number | null)[], k: number, end?: number): number => {
+  const e = end ?? lastNN(a); let s = 0; let any = false;
+  for (let i = Math.max(0, e - k + 1); i <= e; i++) { const v = av(a, i); if (isFinite(v)) { s += v; any = true; } }
+  return any ? s : NaN;
+};
+
+// ── 🚀 MULTIBAGGER — 12 components, weights sum 100 ─────────────────────────
+function computeMultibagger(fin: Fin | null, s: Scored, r: Row, fxGrade: string): MBResult {
+  const comps: MBComp[] = [];
+  const add = (id: string, label: string, w: number, pts: number | null, detail: string) =>
+    comps.push({ id, label, w, pts: pts === null ? null : Math.max(0, Math.min(w, pts)), detail });
+  const h = resolveHeaders(Object.keys(r));
+  const fxN = (n: number, d = 1) => (isFinite(n) ? n.toFixed(d) : '—');
+  let pe = NaN, peg = NaN;
+
+  if (fin) {
+    const sales = fin.sales, np = fin.np;
+    const c = lastNN(sales), cn = lastNN(np);
+    // 1 · earnings-growth consistency
+    {
+      let wins = 0, valid = 0;
+      for (let i = Math.max(1, cn - 9); i <= cn; i++) {
+        const a = av(np, i), b = av(np, i - 1);
+        if (!isFinite(a) || !isFinite(b)) continue;
+        valid++;
+        if (a > 0 && b > 0 && a / b - 1 > 0.15) wins++;
+      }
+      add('pat_consist', 'Earnings-growth consistency', 10, valid >= 4 ? Math.min(1, wins / 7) * 10 : null, valid >= 4 ? wins + ' of ' + valid + ' yrs PAT YoY >15%' : 'insufficient PAT history');
+    }
+    // 2 · sales CAGR + acceleration
+    const c3 = cagrPct(av(sales, c), av(sales, c - 3), 3);
+    const c5 = cagrPct(av(sales, c), av(sales, c - 5), 5);
+    const fi = firstNN(sales);
+    const c10 = fi >= 0 && c - fi >= 6 ? cagrPct(av(sales, c), av(sales, fi), c - fi) : NaN;
+    if (isFinite(c3)) {
+      const p7 = 7 * (c3 >= 25 ? 1 : lin01(c3, 8, 25));
+      const bonus = isFinite(c5) && isFinite(c10) && c3 > c5 && c5 > c10 ? 3 : isFinite(c10) && c3 > c10 ? 1.5 : 0;
+      add('sales_cagr', 'Sales CAGR + acceleration', 10, p7 + bonus, '3y ' + fxN(c3) + '% · 5y ' + fxN(c5) + '% · 10y ' + fxN(c10) + '%' + (bonus === 3 ? ' — ACCELERATING' : ''));
+    } else add('sales_cagr', 'Sales CAGR + acceleration', 10, null, 'no 3y sales history');
+    // 3 · ROCE level + trajectory
+    const roceSer: (number | null)[] = fin.eq.map((_, i) => {
+      const ce = av(fin.eq, i) + av(fin.res, i) + (isFinite(av(fin.bor, i)) ? av(fin.bor, i) : 0);
+      const ebit = av(fin.pbt, i) + (isFinite(av(fin.intr, i)) ? av(fin.intr, i) : 0);
+      return isFinite(ce) && ce > 0 && isFinite(ebit) ? (ebit / ce) * 100 : null;
+    });
+    {
+      const rl = lastNN(roceSer);
+      const r3 = roceSer.slice(Math.max(0, rl - 2), rl + 1).filter((v): v is number => v !== null);
+      const rall = roceSer.filter((v): v is number => v !== null);
+      if (r3.length >= 2) {
+        const a3 = r3.reduce((x, y) => x + y, 0) / r3.length;
+        const a10 = rall.reduce((x, y) => x + y, 0) / rall.length;
+        let pts = 7 * (a3 >= 25 ? 1 : lin01(a3, 10, 25)) + (a3 - a10 >= 3 ? 3 : a3 - a10 >= 0 ? 1.5 : 0);
+        let moatNote = '';
+        try {
+          const mt = JSON.parse(r['Moat Tab'] || '');
+          if (mt && mt.avgRoce >= 15 && mt.avgRoic >= 15 && pts < 5) { pts = 5; moatNote = ' · floored 5 (Moat sheet)'; }
+        } catch {}
+        add('roce_traj', 'ROCE level + trajectory', 10, pts, 'avg3 ' + fxN(a3) + '% vs avg10 ' + fxN(a10) + '%' + moatNote);
+      } else add('roce_traj', 'ROCE level + trajectory', 10, null, 'no ROCE history');
+    }
+    // 4 · margin expansion / operating leverage
+    const margSer: (number | null)[] = sales.map((_, i) => {
+      const sl = av(sales, i);
+      const m = (av(fin.pbt, i) + (isFinite(av(fin.intr, i)) ? av(fin.intr, i) : 0) + (isFinite(av(fin.dep, i)) ? av(fin.dep, i) : 0) - (isFinite(av(fin.oi, i)) ? av(fin.oi, i) : 0));
+      return isFinite(m) && isFinite(sl) && sl > 0 ? (m / sl) * 100 : null;
+    });
+    const pc3 = cagrPct(av(np, cn), av(np, cn - 3), 3);
+    {
+      const ml = lastNN(margSer);
+      const m3 = margSer.slice(Math.max(0, ml - 2), ml + 1).filter((v): v is number => v !== null);
+      const mall = margSer.filter((v): v is number => v !== null);
+      if (m3.length >= 2 || (isFinite(pc3) && isFinite(c3))) {
+        let pts = 0; const dd: string[] = [];
+        if (m3.length >= 2) {
+          const dm = m3.reduce((x, y) => x + y, 0) / m3.length - mall.reduce((x, y) => x + y, 0) / mall.length;
+          pts += dm >= 3 ? 4 : dm >= 0 ? 2 : 0;
+          dd.push('Δmargin ' + (dm >= 0 ? '+' : '') + fxN(dm) + 'pp');
+        }
+        if (isFinite(pc3) && isFinite(c3) && pc3 > 0 && c3 > 0) {
+          const rr = pc3 / c3;
+          pts += rr >= 1.3 ? 4 : rr >= 1.0 ? 2 : 0;
+          dd.push('PAT/Sales CAGR3 ' + fxN(rr, 2) + 'x');
+        }
+        add('margin_oplev', 'Margin expansion / op leverage', 8, pts, dd.join(' · '));
+      } else add('margin_oplev', 'Margin expansion / op leverage', 8, null, 'no margin history');
+    }
+    // 5 · reinvestment with self-funding
+    {
+      const cl = lastNN(fin.capex), ol = lastNN(fin.ocf);
+      const cap3 = sumLast(fin.capex, 3, cl), ocf3 = sumLast(fin.ocf, 3, ol);
+      if (isFinite(cap3) && cap3 > 0 && isFinite(ocf3)) {
+        const ratio = ocf3 > 0 ? cap3 / ocf3 : NaN;
+        const sf = num(r['OCF/Capex 3y %']);
+        const sfOk = isFinite(sf) ? sf >= 40 : ocf3 > 0 && cap3 / ocf3 <= 2.5;
+        const pts = isFinite(ratio) && ratio >= 0.4 && ratio <= 1.2 ? 8 : isFinite(ratio) && ratio > 1.2 && ratio <= 2 && sfOk ? 4 : 0;
+        add('reinvest', 'Reinvestment, self-funded', 8, pts, 'capex3 ' + fxN(cap3, 0) + ' / ocf3 ' + fxN(ocf3, 0) + ' = ' + fxN(ratio, 2));
+      } else add('reinvest', 'Reinvestment, self-funded', 8, null, 'no capex/OCF series');
+    }
+    // 6 · share-count discipline (10y)
+    {
+      const sl = lastNN(fin.shares), sf = firstNN(fin.shares);
+      if (sl > sf && sf >= 0) {
+        const dch = (av(fin.shares, sl) / av(fin.shares, sf) - 1) * 100;
+        add('dilution', 'Share-count discipline', 6, dch <= 5 ? 6 : dch <= 20 ? 3 : 0, 'shares ' + fxN(av(fin.shares, sf), 2) + '→' + fxN(av(fin.shares, sl), 2) + ' Cr (' + (dch >= 0 ? '+' : '') + fxN(dch, 0) + '%)');
+      } else add('dilution', 'Share-count discipline', 6, null, 'no share-count series');
+    }
+    // 7 · debt trajectory
+    {
+      const bl = lastNN(fin.eq);
+      const deNow = av(fin.eq, bl) + av(fin.res, bl) > 0 ? (isFinite(av(fin.bor, bl)) ? av(fin.bor, bl) : 0) / (av(fin.eq, bl) + av(fin.res, bl)) : NaN;
+      const de3 = av(fin.eq, bl - 3) + av(fin.res, bl - 3) > 0 ? (isFinite(av(fin.bor, bl - 3)) ? av(fin.bor, bl - 3) : 0) / (av(fin.eq, bl - 3) + av(fin.res, bl - 3)) : NaN;
+      if (isFinite(deNow)) {
+        const pts = deNow <= 0.3 && (!isFinite(de3) || deNow <= de3) ? 6 : deNow <= 0.7 && (!isFinite(de3) || deNow - de3 <= 0.2) ? 3 : 0;
+        add('debt_traj', 'Debt trajectory', 6, pts, 'D/E ' + fxN(deNow, 2) + ' vs 3y-ago ' + fxN(de3, 2));
+      } else add('debt_traj', 'Debt trajectory', 6, null, 'no balance-sheet series');
+    }
+    // 8 · FCF generation years
+    {
+      let fy = 0, fv = 0;
+      const n = fin.years.length;
+      for (let i = Math.max(1, n - 10); i < n; i++) {
+        const o = av(fin.ocf, i), cx = av(fin.capex, i);
+        if (!isFinite(o) || !isFinite(cx)) continue;
+        fv++;
+        if (o - cx > 0) fy++;
+      }
+      add('fcf_years', 'FCF-positive years', 6, fv >= 4 ? Math.min(1, fy / 6) * 6 : null, fv >= 4 ? fy + '/' + fv + ' yrs OCF > capex' : 'insufficient series');
+    }
+    // 9 · CFO→PAT convergence
+    {
+      const cumC = fin.ocf.reduce((a: number, v) => a + (v ?? 0), 0);
+      const cumP = np.reduce((a: number, v) => a + (v ?? 0), 0);
+      if (cumP > 0 && fin.ocf.some((v) => v !== null)) {
+        const rt = cumC / cumP;
+        add('cfo_conv', 'CFO→PAT convergence', 5, rt >= 0.8 ? 5 : rt >= 0.6 ? 2.5 : 0, 'cum-10y CFO/PAT ' + fxN(rt, 2));
+      } else add('cfo_conv', 'CFO→PAT convergence', 5, null, 'no CFO series');
+    }
+    // 10 · size runway
+    {
+      const mc = fin.mcap ?? NaN;
+      if (isFinite(mc) && mc > 0) {
+        const fr = mc >= 500 && mc <= 5000 ? 1 : (mc >= 200 && mc < 500) || (mc > 5000 && mc <= 20000) ? 0.625 : mc < 200 ? 0.5 : mc <= 50000 ? 0.25 : 0;
+        add('runway', 'Size runway', 8, fr * 8, 'mcap ' + fxN(mc, 0) + ' Cr');
+      } else add('runway', 'Size runway', 8, null, 'no market cap');
+    }
+    // 11 · valuation vs growth
+    {
+      const mc = fin.mcap ?? NaN, npL = av(np, cn);
+      pe = isFinite(mc) && npL > 0 ? mc / npL : NaN;
+      peg = isFinite(pe) && isFinite(pc3) && pc3 > 0 ? pe / pc3 : NaN;
+      if (isFinite(pe)) {
+        const p5 = 5 * (isFinite(peg) ? (peg < 1 ? 1 : lin01(2.5 - peg, 0, 1.5)) : 0);
+        const p3 = pe >= 18 && pe <= 40 ? 3 : pe < 18 ? 2 : pe <= 50 ? 1 : 0;
+        add('val_growth', 'Valuation vs growth', 8, p5 + p3, 'PE ' + fxN(pe, 1) + ' · PEG ' + fxN(peg, 2));
+      } else add('val_growth', 'Valuation vs growth', 8, null, 'no PE (loss-making or no mcap)');
+    }
+  } else {
+    (['pat_consist', 'sales_cagr', 'roce_traj', 'margin_oplev', 'reinvest', 'dilution', 'debt_traj', 'fcf_years', 'cfo_conv', 'runway', 'val_growth'] as const)
+      .forEach((id, i) => add(id, ['Earnings-growth consistency', 'Sales CAGR + acceleration', 'ROCE level + trajectory', 'Margin expansion / op leverage', 'Reinvestment, self-funded', 'Share-count discipline', 'Debt trajectory', 'FCF-positive years', 'CFO→PAT convergence', 'Size runway', 'Valuation vs growth'][i], [10, 10, 10, 8, 8, 6, 6, 6, 5, 8, 8][i], null, 'needs Screener workbook'));
+  }
+  // 12 · promoter & moat (manual + workbook) — sub-weights only when measured
+  {
+    const promoter = num(String(r['Promoter Holding %'] ?? r[h['promoter']] ?? ''));
+    const pledge = s.pledge;
+    const moatV = yes(String(r['Competitive Moat'] ?? r[h['moat']] ?? '') || undefined);
+    const polRaw = String(r['Policy Support'] ?? r[h['policy']] ?? '').trim();
+    let subW = 0, pts = 0; const dd: string[] = [];
+    if (isFinite(promoter)) {
+      subW += 4;
+      let pp = promoter >= 55 ? 4 : promoter >= 40 ? 2 : 0;
+      if (isFinite(pledge) && pledge > 5) pp = 0;
+      pts += pp;
+      dd.push('promoter ' + promoter.toFixed(0) + '%' + (isFinite(pledge) && pledge > 5 ? ' · pledge ' + pledge.toFixed(0) + '% ⇒ 0' : ''));
+    }
+    if (moatV !== null) { subW += 2; pts += moatV ? 2 : 0; dd.push('moat ' + (moatV ? 'Y' : 'N')); }
+    if (polRaw) { subW += 1; pts += /none|^n$|^no$/i.test(polRaw) ? 0 : 1; dd.push('policy ' + polRaw.slice(0, 14)); }
+    if (subW > 0) add('promoter_moat', 'Promoter & moat (manual)', subW, pts, dd.join(' · '));
+    else add('promoter_moat', 'Promoter & moat (manual)', 7, null, 'fill promoter/pledge/moat inline');
+  }
+
+  const available = comps.reduce((a, cmp) => a + (cmp.pts === null ? 0 : cmp.w), 0);
+  const total = comps.reduce((a, cmp) => a + (cmp.pts ?? 0), 0);
+  const score = available >= 40 ? Math.round((total / available) * 100) : 0;
+  let grade = available < 40 ? 'NR' : score >= 80 ? 'A+' : score >= 70 ? 'A' : score >= 60 ? 'B+' : score >= 50 ? 'B' : score >= 38 ? 'C' : 'D';
+  // consistency gates (mirrors the /multibagger portal)
+  if (grade !== 'NR') {
+    const cap = (g: string) => { if (MB_GRADE_ORDER.indexOf(grade) < MB_GRADE_ORDER.indexOf(g)) grade = g; };
+    if (fxGrade === 'FLAGS' || fxGrade === 'AVOID') cap('B+');
+    if ((isFinite(s.pledge) && s.pledge > 15) || (isFinite(s.de) && s.de > 1.5)) cap('B');
+  }
+  return { score, grade, color: MB_GRADE_COLOR[grade] || C.muted, available, components: comps, pe, peg };
+}
+
+// ── 🔬 FORENSICS — 12 checks, higher = cleaner ──────────────────────────────
+function computeForensic(fin: Fin | null, r: Row): FXResult {
+  const checks: FXCheck[] = [];
+  const flags: string[] = [];
+  let critical = false;
+  const add = (id: string, label: string, w: number, pts: number | null, detail: string, flag?: string, crit?: boolean) => {
+    checks.push({ id, label, w, pts, detail, flag });
+    if (flag) flags.push(flag);
+    if (crit) critical = true;
+  };
+  const fxN = (n: number, d = 0) => (isFinite(n) ? n.toFixed(d) : '—');
+
+  if (fin) {
+    const sales = fin.sales, np = fin.np;
+    const c = lastNN(sales), cn = lastNN(np), bl = lastNN(fin.eq);
+    // 1 cfo_pat
+    {
+      const cumC = fin.ocf.reduce((a: number, v) => a + (v ?? 0), 0);
+      const cumP = np.reduce((a: number, v) => a + (v ?? 0), 0);
+      if (cumP > 0 && fin.ocf.some((v) => v !== null)) {
+        const rt = cumC / cumP;
+        if (rt >= 0.9) add('cfo_pat', 'Cum 10y CFO/PAT', 14, 14, fxN(rt, 2));
+        else if (rt >= 0.7) add('cfo_pat', 'Cum 10y CFO/PAT', 14, 7, fxN(rt, 2));
+        else add('cfo_pat', 'Cum 10y CFO/PAT', 14, 0, fxN(rt, 2), 'Cum CFO/PAT ' + fxN(rt, 2) + ' — accruals not converting to cash', rt < 0.5);
+      } else add('cfo_pat', 'Cum 10y CFO/PAT', 14, null, 'n/a');
+    }
+    // 2 cfo_ebitda (3y sums)
+    {
+      const ocf3 = sumLast(fin.ocf, 3);
+      let eb3 = 0, ebn = 0;
+      for (let i = Math.max(0, c - 2); i <= c; i++) {
+        const p = av(fin.pbt, i);
+        if (!isFinite(p)) continue;
+        eb3 += p + (isFinite(av(fin.intr, i)) ? av(fin.intr, i) : 0) + (isFinite(av(fin.dep, i)) ? av(fin.dep, i) : 0) - (isFinite(av(fin.oi, i)) ? av(fin.oi, i) : 0);
+        ebn++;
+      }
+      if (ebn > 0 && eb3 > 0 && isFinite(ocf3)) {
+        const rt = ocf3 / eb3;
+        if (rt >= 0.5) add('cfo_ebitda', 'CFO/EBITDA 3y', 8, 8, fxN(rt, 2));
+        else if (rt >= 0.3) add('cfo_ebitda', 'CFO/EBITDA 3y', 8, 4, fxN(rt, 2));
+        else add('cfo_ebitda', 'CFO/EBITDA 3y', 8, 0, fxN(rt, 2), 'CFO/EBITDA ' + fxN(rt, 2) + ' — paper EBITDA');
+      } else add('cfo_ebitda', 'CFO/EBITDA 3y', 8, null, 'n/a');
+    }
+    // 3+4 receivable / inventory days trend
+    const days = (arr: (number | null)[], i: number) => { const a = av(arr, i), sl = av(sales, i); return isFinite(a) && sl > 0 ? (a / sl) * 365 : NaN; };
+    {
+      const dn = days(fin.recv, c), d3 = days(fin.recv, c - 3);
+      if (isFinite(dn) && isFinite(d3) && d3 > 0) {
+        const dch = (dn / d3 - 1) * 100;
+        const rg = av(fin.recv, c) / av(fin.recv, c - 3), sg = av(sales, c) / av(sales, c - 3);
+        if (dch <= 10) add('recv_days', 'Receivable days trend', 10, 10, fxN(d3) + '→' + fxN(dn) + 'd');
+        else if (dch <= 30) add('recv_days', 'Receivable days trend', 10, 5, fxN(d3) + '→' + fxN(dn) + 'd');
+        else if (rg > sg) add('recv_days', 'Receivable days trend', 10, 0, fxN(d3) + '→' + fxN(dn) + 'd', 'Receivable days ' + fxN(d3) + '→' + fxN(dn) + ' — channel stuffing risk');
+        else add('recv_days', 'Receivable days trend', 10, 5, fxN(d3) + '→' + fxN(dn) + 'd (recv ≤ sales growth)');
+      } else add('recv_days', 'Receivable days trend', 10, null, 'n/a');
+    }
+    {
+      const dn = days(fin.inv, c), d3 = days(fin.inv, c - 3);
+      if (isFinite(dn) && isFinite(d3) && d3 > 0) {
+        const dch = (dn / d3 - 1) * 100;
+        if (dch <= 15) add('inv_days', 'Inventory days trend', 6, 6, fxN(d3) + '→' + fxN(dn) + 'd');
+        else if (dch <= 40) add('inv_days', 'Inventory days trend', 6, 3, fxN(d3) + '→' + fxN(dn) + 'd');
+        else add('inv_days', 'Inventory days trend', 6, 0, fxN(d3) + '→' + fxN(dn) + 'd', 'Inventory days ballooning ' + fxN(d3) + '→' + fxN(dn));
+      } else add('inv_days', 'Inventory days trend', 6, null, 'n/a');
+    }
+    // 5 other income / PBT
+    {
+      const oi3 = sumLast(fin.oi, 3, c), pbt3 = sumLast(fin.pbt, 3, c);
+      if (isFinite(pbt3) && pbt3 > 0 && isFinite(oi3)) {
+        const rt = (oi3 / pbt3) * 100;
+        if (rt < 10) add('other_inc', 'Other income / PBT', 8, 8, fxN(rt) + '%');
+        else if (rt <= 25) add('other_inc', 'Other income / PBT', 8, 4, fxN(rt) + '%');
+        else add('other_inc', 'Other income / PBT', 8, 0, fxN(rt) + '%', 'Other income is ' + fxN(rt) + '% of PBT — core P&L weaker than it looks');
+      } else add('other_inc', 'Other income / PBT', 8, null, 'n/a');
+    }
+    // 6 tax rate
+    {
+      const rates: number[] = [];
+      for (let i = Math.max(0, c - 2); i <= c; i++) {
+        const t = av(fin.tax, i), p = av(fin.pbt, i);
+        if (isFinite(t) && p > 0) rates.push((t / p) * 100);
+      }
+      if (rates.length) {
+        const avg = rates.reduce((a, b) => a + b, 0) / rates.length;
+        const low = rates.filter((x) => x < 15).length;
+        if (low >= 2) add('tax_rate', 'Tax / PBT 3y', 8, 0, 'avg ' + fxN(avg) + '%', 'Tax rate ' + fxN(avg) + '% vs ~25% statutory — earnings quality suspect');
+        else if (avg >= 22 && avg <= 35) add('tax_rate', 'Tax / PBT 3y', 8, 8, 'avg ' + fxN(avg) + '%');
+        else add('tax_rate', 'Tax / PBT 3y', 8, 4, 'avg ' + fxN(avg) + '%');
+      } else add('tax_rate', 'Tax / PBT 3y', 8, null, 'n/a');
+    }
+    // 7 cash ↑ with borrowings ↑
+    {
+      const ca = av(fin.cash, bl), cb = av(fin.cash, bl - 3), ba = av(fin.bor, bl), bb = av(fin.bor, bl - 3);
+      const it = av(fin.intr, c);
+      if (isFinite(ca) && cb > 0 && isFinite(ba) && bb > 0) {
+        const cgr = (ca / cb - 1) * 100, bgr = (ba / bb - 1) * 100;
+        const ir = isFinite(it) && ba + bb > 0 ? (it / ((ba + bb) / 2)) * 100 : NaN;
+        if (cgr > 25 && bgr > 25 && ir > 9) add('cash_borrow', 'Cash ↑ with borrowings ↑', 8, 0, 'cash +' + fxN(cgr) + '% · bor +' + fxN(bgr) + '% · int ' + fxN(ir) + '%', 'Cash and debt rising together — cash may not be real');
+        else add('cash_borrow', 'Cash ↑ with borrowings ↑', 8, 8, 'cash ' + (cgr >= 0 ? '+' : '') + fxN(cgr) + '% · bor ' + (bgr >= 0 ? '+' : '') + fxN(bgr) + '%');
+      } else add('cash_borrow', 'Cash ↑ with borrowings ↑', 8, null, 'n/a');
+    }
+    // 8 perpetual CWIP
+    {
+      const nl = lastNN(fin.nb);
+      if (nl >= 0) {
+        let run = 0;
+        for (let i = nl; i >= 0; i--) {
+          const nb = av(fin.nb, i), cw = av(fin.cwip, i);
+          if (!isFinite(nb) || nb <= 0 || !isFinite(cw)) break;
+          if (cw / nb > 0.2) run++; else break;
+        }
+        const pct = isFinite(av(fin.cwip, nl)) && av(fin.nb, nl) > 0 ? (av(fin.cwip, nl) / av(fin.nb, nl)) * 100 : 0;
+        if (run >= 3) add('cwip_stuck', 'Perpetual CWIP', 8, 0, run + 'y >20%', 'CWIP parked ' + fxN(pct) + '% of net block for 3y+ — capitalised costs?');
+        else if (run === 2) add('cwip_stuck', 'Perpetual CWIP', 8, 4, '2y >20%');
+        else add('cwip_stuck', 'Perpetual CWIP', 8, 8, fxN(pct) + '% of NB now');
+      } else add('cwip_stuck', 'Perpetual CWIP', 8, null, 'n/a');
+    }
+    // 9 dilution 5y
+    {
+      const sl = lastNN(fin.shares);
+      let i5 = -1;
+      for (let i = Math.max(0, sl - 5); i < sl; i++) if (fin.shares[i] !== null) { i5 = i; break; }
+      if (sl >= 0 && i5 >= 0) {
+        const dch = (av(fin.shares, sl) / av(fin.shares, i5) - 1) * 100;
+        if (dch <= 5) add('dilution5', 'Dilution 5y', 8, 8, (dch >= 0 ? '+' : '') + fxN(dch) + '%');
+        else if (dch <= 20) add('dilution5', 'Dilution 5y', 8, 4, '+' + fxN(dch) + '%');
+        else add('dilution5', 'Dilution 5y', 8, 0, '+' + fxN(dch) + '%', 'Share count +' + fxN(dch) + '% in 5y — serial diluter', dch > 40);
+      } else add('dilution5', 'Dilution 5y', 8, null, 'n/a');
+    }
+    // 10 dividend sanity (skip if div row empty)
+    {
+      const hasDiv = fin.div.some((v) => v !== null);
+      if (!hasDiv) add('div_sanity', 'Dividend vs OCF', 8, null, 'no dividend row — N/A');
+      else {
+        const ocf3 = sumLast(fin.ocf, 3);
+        const div3 = sumLast(fin.div, 3, cn), pat3 = sumLast(np, 3, cn);
+        const rs: number[] = [];
+        for (let i = Math.max(0, bl - 2); i <= bl; i++) {
+          const ce = av(fin.eq, i) + av(fin.res, i) + (isFinite(av(fin.bor, i)) ? av(fin.bor, i) : 0);
+          const ebit = av(fin.pbt, i) + (isFinite(av(fin.intr, i)) ? av(fin.intr, i) : 0);
+          if (isFinite(ce) && ce > 0 && isFinite(ebit)) rs.push((ebit / ce) * 100);
+        }
+        const roce3 = rs.length ? rs.reduce((a, b) => a + b, 0) / rs.length : NaN;
+        const payout = pat3 > 0 && isFinite(div3) ? (div3 / pat3) * 100 : NaN;
+        if (div3 > 0 && ocf3 < 0) add('div_sanity', 'Dividend vs OCF', 8, 0, 'payout ' + fxN(payout) + '%', 'Dividend paid out of borrowings');
+        else if (div3 > 0 && payout >= 10 && payout <= 60 && ocf3 > 0) add('div_sanity', 'Dividend vs OCF', 8, 8, 'payout ' + fxN(payout) + '% of PAT');
+        else if (!(div3 > 0) && roce3 >= 15) add('div_sanity', 'Dividend vs OCF', 8, 8, 'no dividend · ROCE3 ' + fxN(roce3) + '%');
+        else if (!(div3 > 0)) add('div_sanity', 'Dividend vs OCF', 8, 4, 'no dividend · ROCE3 ' + fxN(roce3) + '%');
+        else add('div_sanity', 'Dividend vs OCF', 8, 4, 'payout ' + fxN(payout) + '% (outside 10-60)');
+      }
+    }
+    // 11 CFO-positive years
+    {
+      let pos = 0, tot = 0;
+      fin.ocf.forEach((v) => { if (v !== null) { tot++; if (v > 0) pos++; } });
+      if (tot >= 5) {
+        if (pos >= 7) add('cfo_years', 'CFO-positive years', 8, 8, pos + '/' + tot);
+        else if (pos >= 5) add('cfo_years', 'CFO-positive years', 8, 4, pos + '/' + tot);
+        else add('cfo_years', 'CFO-positive years', 8, 0, pos + '/' + tot, 'Only ' + pos + '/10 years of positive CFO');
+      } else add('cfo_years', 'CFO-positive years', 8, null, 'n/a');
+    }
+    // 12 depreciation-rate volatility
+    {
+      const drs: number[] = [];
+      fin.dep.forEach((_, i) => { const dp = av(fin.dep, i), nb = av(fin.nb, i); if (isFinite(dp) && nb > 0) drs.push((dp / nb) * 100); });
+      if (drs.length >= 4) {
+        const rng = Math.max(...drs) - Math.min(...drs);
+        if (rng <= 4) add('dep_vol', 'Depreciation-rate volatility', 6, 6, 'range ' + fxN(rng, 1) + 'pp');
+        else if (rng <= 6) add('dep_vol', 'Depreciation-rate volatility', 6, 3, 'range ' + fxN(rng, 1) + 'pp');
+        else add('dep_vol', 'Depreciation-rate volatility', 6, 0, 'range ' + fxN(rng, 1) + 'pp', 'Depreciation rate swings ' + fxN(Math.min(...drs)) + '–' + fxN(Math.max(...drs)) + '% — asset-life games');
+      } else add('dep_vol', 'Depreciation-rate volatility', 6, null, 'n/a');
+    }
+  } else {
+    ([['cfo_pat', 'Cum 10y CFO/PAT', 14], ['cfo_ebitda', 'CFO/EBITDA 3y', 8], ['recv_days', 'Receivable days trend', 10], ['inv_days', 'Inventory days trend', 6], ['other_inc', 'Other income / PBT', 8], ['tax_rate', 'Tax / PBT 3y', 8], ['cash_borrow', 'Cash ↑ with borrowings ↑', 8], ['cwip_stuck', 'Perpetual CWIP', 8], ['dilution5', 'Dilution 5y', 8], ['div_sanity', 'Dividend vs OCF', 8], ['cfo_years', 'CFO-positive years', 8], ['dep_vol', 'Depreciation-rate volatility', 6]] as [string, string, number][])
+      .forEach(([id, label, w]) => add(id, label, w, null, 'needs Screener workbook'));
+  }
+
+  // workbook overlay (user's Fraud checklist answers)
+  let workbook: { row: number; label: string; answer: string }[] = [];
+  try { const ft = JSON.parse(r['Fraud Tab'] || ''); if (Array.isArray(ft)) workbook = ft; } catch {}
+  const adverse = workbook.filter((x) => x.answer === 'adverse').length;
+  const overlayPenalty = Math.min(15, adverse * 3);
+
+  const available = checks.reduce((a, ch) => a + (ch.pts === null ? 0 : ch.w), 0);
+  const total = checks.reduce((a, ch) => a + (ch.pts ?? 0), 0);
+  const raw = available >= 60 ? (total / available) * 100 - overlayPenalty : 0;
+  const score = available >= 60 ? Math.max(0, Math.min(100, Math.round(raw))) : 0;
+  let grade = 'NR';
+  if (available >= 60) {
+    const ORDER = ['CLEAN', 'WATCH', 'FLAGS', 'AVOID'];
+    const sg = score >= 80 ? 'CLEAN' : score >= 60 ? 'WATCH' : score >= 40 ? 'FLAGS' : 'AVOID';
+    const fg = critical || flags.length >= 4 ? 'AVOID' : flags.length >= 2 ? 'FLAGS' : flags.length === 1 ? 'WATCH' : 'CLEAN';
+    grade = ORDER[Math.max(ORDER.indexOf(sg), ORDER.indexOf(fg))];
+  }
+  return { score, grade, color: FX_GRADE_COLOR[grade] || C.muted, flags, critical, checks, workbook };
+}
+
+// ── 🎙 CONCALL — heuristic transcript extraction (pure) ─────────────────────
+function extractConcall(text: string): ConcallExtract {
+  const t = text.replace(/\s+/g, ' ');
+  const quotes: { field: string; match: string; snippet: string }[] = [];
+  const snip = (idx: number, len: number) => t.slice(Math.max(0, idx - 120), Math.min(t.length, idx + len + 120));
+  const run = (field: string, re: RegExp, numGroup = 1): { num: number; unit: string; raw: string }[] => {
+    const out: { num: number; unit: string; raw: string }[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(t)) && out.length < 40) {
+      const n = parseFloat(String(m[numGroup] ?? '').replace(/,/g, ''));
+      if (isFinite(n)) {
+        out.push({ num: n, unit: String(m[numGroup + 1] ?? '').toLowerCase(), raw: m[0] });
+        quotes.push({ field, match: m[0], snippet: snip(m.index, m[0].length) });
+      }
+    }
+    return out;
+  };
+  const utilHits = run('utilization', /utili[sz]ation[^.\d%]{0,50}(\d{1,3}(?:\.\d+)?)\s*%/gi).filter((x) => x.num >= 1 && x.num <= 100);
+  const utilArr = utilHits.map((x) => x.num);
+  const obHits = run('orderBook', /order\s*book[^.\d]{0,50}(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d+)?)\s*(crores?|cr\b|billion|bn|mn|million)/gi);
+  const obCr = obHits.filter((x) => /^cr/.test(x.unit)); // only crore units accepted as values
+  const cgHits = run('capexGuidance', /capex[^.\d]{0,60}(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d+)?)\s*(crores?|cr\b)/gi);
+  const timeline: string[] = [];
+  {
+    const re = /(commission\w*|ramp[- ]?up|come on stream|go[- ]?live|operational|stabili[sz]\w+)[^.]{0,80}?(Q[1-4]\s*FY\s*'?\d{2,4}|H[12]\s*FY\s*'?\d{2,4}|FY\s*'?\d{2,4})/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(t)) && timeline.length < 3) {
+      timeline.push(m[0].slice(0, 140));
+      quotes.push({ field: 'timeline', match: m[0], snippet: snip(m.index, m[0].length) });
+    }
+  }
+  const anchorHits = run('anchorPct', /(booked|committed|tied[- ]?up|visibility|contracted)[^.\d%]{0,50}(\d{1,3})\s*%/gi, 2).filter((x) => x.num >= 1 && x.num <= 100);
+  const OPT = ['strong demand', 'robust', 'healthy order', 'record', 'all[- ]?time high', 'confident', 'upgrade', 'ahead of schedule', 'ramping well', 'sold out', 'capacity booked'];
+  const CAU = ['headwind', 'challenge', 'delay', 'deferred', 'pricing pressure', 'slowdown', 'muted', 'below expectation', 'postponed', 'underutili', 'cost overrun', 'demand weak'];
+  const count = (words: string[]) => words.reduce((n, w) => n + (t.match(new RegExp(w, 'gi'))?.length || 0), 0);
+  const optimism = count(OPT), caution = count(CAU);
+  return {
+    utilization: utilArr.length ? utilArr[utilArr.length - 1] : null,
+    utilArr,
+    orderBook: obCr.length ? Math.max(...obCr.map((x) => x.num)) : null,
+    capexGuidance: cgHits.length ? Math.max(...cgHits.map((x) => x.num)) : null,
+    timeline,
+    anchorPct: anchorHits.length ? Math.max(...anchorHits.map((x) => x.num)) : null,
+    optimism, caution,
+    tone: optimism + caution > 0 ? optimism / (optimism + caution) : null,
+    quotes,
+  };
+}
+
+// ── 🧭 VERDICT — the 11-rule fused call ─────────────────────────────────────
+const VERDICT_COLOR: Record<string, string> = {
+  '☠ DO NOT TOUCH': C.red, '🧩 NEEDS DATA': C.violet, '🔍 FORENSIC REVIEW FIRST': C.orange,
+  '🎯 PRIME': C.gold, '⏳ PRIME SETUP': C.teal, '🌱 COMPOUNDER': C.green, '🏗 CAPEX PLAY': C.cyan,
+  '⚙ CYCLE ONLY': C.blue, '💎 QUALITY HOLD': C.violet, '🗑 DROP': C.muted, '👀 MONITOR': C.amber,
+};
+function computeVerdict(s: Scored, mb: MBResult, fx: FXResult, cc: CCState | null): Verdict {
+  const capexBuy = s.decision === 'ANCHOR BUY' || s.decision === 'CORE BUY';
+  const buyWindow = capexBuy && s.entryShort.startsWith('BUY');
+  const mbOk = mb.grade !== 'NR', fxOk = fx.grade !== 'NR';
+  // composite (renormalized over available parts)
+  const parts: [number, number][] = [[0.40, s.final]];
+  if (mbOk) parts.push([0.35, mb.score]);
+  if (fxOk) parts.push([0.25, fx.score]);
+  let composite = parts.reduce((a, [w, v]) => a + w * v, 0) / parts.reduce((a, [w]) => a + w, 0);
+  if (fx.grade === 'FLAGS') composite -= 15;
+  composite = Math.round(composite * 10) / 10;
+
+  let call = '', why = '';
+  const mbTag = mbOk ? 'MB ' + mb.score + ' (' + mb.grade + ')' : 'MB NR';
+  const fxTag = fxOk ? 'forensic ' + fx.score + ' ' + fx.grade : 'forensic NR';
+  if (fx.grade === 'AVOID' || fx.critical) {
+    call = '☠ DO NOT TOUCH';
+    why = fxTag + (fx.flags.length ? ' — ' + fx.flags[0] : '') + '. Forensic veto — nothing else matters until this clears.';
+  } else if (!fxOk && !mbOk && !parseFin(s.raw)) {
+    call = '🧩 NEEDS DATA';
+    why = 'Capex ' + s.final + ' ' + s.decision + ' — upload the Screener workbook to unlock the multibagger + forensic lenses.';
+  } else if (fx.grade === 'FLAGS') {
+    call = '🔍 FORENSIC REVIEW FIRST';
+    why = fx.flags.slice(0, 2).join(' · ') + ' — resolve these before sizing anything.';
+  } else if (mbOk && mb.score >= 70 && buyWindow) {
+    call = '🎯 PRIME';
+    why = 'Capex inflection with multibagger DNA: ' + s.decision + ' ∩ ' + s.entryShort + ' + ' + mbTag + ' · ' + fxTag + '. Full stage-size entry.';
+  } else if (mbOk && mb.score >= 70 && capexBuy) {
+    call = '⏳ PRIME SETUP';
+    why = mbTag + ' + quality ' + s.decision + ', but entry says ' + s.entryShort + ' — set the alert, enter when the window opens.';
+  } else if (mbOk && mb.score >= 70 && (s.decision === 'SATELLITE' || s.decision === 'WATCHLIST')) {
+    call = '🌱 COMPOUNDER';
+    why = mbTag + ' but capex band only ' + s.decision + ' — accumulate slowly; the capex story is not ripe.';
+  } else if (mbOk && mb.score >= 50 && mb.score < 70 && buyWindow) {
+    call = '🏗 CAPEX PLAY';
+    why = 'Buy window open (' + s.entryShort + ') with mid ' + mbTag + ' — cycle bet at HALF size, exit on the staircase.';
+  } else if (mbOk && mb.score < 50 && buyWindow) {
+    call = '⚙ CYCLE ONLY';
+    why = 'Window open but ' + mbTag + ' — trade the T2→T4 ramp only, hard stops, no marriage.';
+  } else if (mbOk && mb.score >= 70 && fx.grade === 'CLEAN') {
+    call = '💎 QUALITY HOLD';
+    why = mbTag + ' + forensic CLEAN, no capex cycle to time — own it as a compounder.';
+  } else if ((s.decision === 'AVOID' || s.decision === 'REJECT') && (!mbOk || mb.score < 50)) {
+    call = '🗑 DROP';
+    why = 'Capex ' + s.decision + ' (' + s.final + ') + ' + mbTag + ' — free the capital.';
+  } else {
+    call = '👀 MONITOR';
+    why = mbTag + ' · ' + fxTag + ' · capex ' + s.final + ' ' + s.decision + (s.stage === '—' ? ' (no cycle)' : s.stage ? ' (Stage ' + s.stage + ')' : '') + ' — no actionable edge yet.';
+  }
+  // concall modifiers
+  let note = '';
+  if (cc && cc.freshness === 'FRESH' && cc.tone !== null && cc.tone < 0.4) {
+    const DEMOTE: Record<string, string> = {
+      '🎯 PRIME': '⏳ PRIME SETUP', '⏳ PRIME SETUP': '🌱 COMPOUNDER', '🌱 COMPOUNDER': '👀 MONITOR',
+      '🏗 CAPEX PLAY': '👀 MONITOR', '⚙ CYCLE ONLY': '👀 MONITOR', '💎 QUALITY HOLD': '👀 MONITOR',
+    };
+    if (DEMOTE[call]) { call = DEMOTE[call]; note = '· mgmt cautious on last call'; }
+    else note = '· mgmt cautious on last call';
+  } else if (cc && cc.freshness === 'FRESH' && cc.tone !== null && cc.tone >= 0.65 && (cc.utilization ?? 0) >= 75) {
+    note = '· 🔥 ramp confirmed on concall';
+  } else if (!cc || cc.freshness === 'NONE') {
+    note = '· no transcript';
+  }
+  const veto = call === '☠ DO NOT TOUCH';
+  return { call, color: VERDICT_COLOR[call] || C.dim, why, composite, note, veto };
+}
+
 // ── CSV parsing (quote-aware) ───────────────────────────────────────────────
 function parseCSV(text: string): Row[] {
   const rows: string[][] = []; let cur: string[] = []; let cell = ''; let q = false;
@@ -535,7 +1105,11 @@ function parseScreenerWorkbook(XLSX: any, wb: any, fname: string): Row | null {
     const cashBank = rowVals(/^CASH & BANK/, iBS, iCF);
     const recv = rowVals(/^RECEIVABLES/, iBS, iCF);
     const inv = rowVals(/^INVENTORY/, iBS, iCF);
+    const taxRow = rowVals(/^TAX$/, iPL, iQ);
+    const divRow = rowVals(/^DIVIDEND AMOUNT/, iPL, iQ);
     const ocf = rowVals(/^CASH FROM OPER/, iCF, iPrice > 0 ? iPrice : aoa.length);
+    const cfi = rowVals(/^CASH FROM INVEST/, iCF, iPrice > 0 ? iPrice : aoa.length);
+    const cff = rowVals(/^CASH FROM FINANC/, iCF, iPrice > 0 ? iPrice : aoa.length);
     const priceRow = iPrice >= 0 ? (aoa[iPrice] || []).slice(1).map((v: any) => (typeof v === 'number' ? v : null)) : [];
     const shares = rowVals(/^ADJUSTED EQUIT/, iDer, aoa.length);
     const mcapRow = aoa.find((r) => /^MARKET CAPITAL/.test(lab(r)));
@@ -680,11 +1254,56 @@ function parseScreenerWorkbook(XLSX: any, wb: any, fname: string): Row | null {
       'Gross Block': fx(gbV, 0), 'CAPEX size Cr': fx(capexEst, 0), 'Annual Revenue': fx(salesL, 0),
       'PE vs 5-yr Mean': fx(peVsMean, 2),
     };
+    // ── v5: Fin Series — full 10y statement series for MB/forensic lenses ────
+    try {
+      const finN = Math.max(c, bc, oc) + 1;
+      const r2 = (v: number | null | undefined) => (v === null || v === undefined || !isFinite(v) ? null : Math.round(v * 100) / 100);
+      const padTo = (a: (number | null)[]) => Array.from({ length: finN }, (_, i) => r2(i < a.length ? a[i] : null));
+      // capexSeries[k] is the spend in year index k+1 → align to the year axis
+      const capexAligned = Array.from({ length: finN }, (_, i) => (i >= 1 && isFinite(capexSeries[i - 1]) ? Math.round(capexSeries[i - 1] * 100) / 100 : null));
+      const finYears = Array.from({ length: finN }, (_, i) => yr(i));
+      out['Fin Series'] = JSON.stringify({
+        years: finYears, sales: padTo(sales), np: padTo(np), pbt: padTo(pbt), tax: padTo(taxRow),
+        oi: padTo(oi), dep: padTo(dep), intr: padTo(intr), div: padTo(divRow),
+        eq: padTo(eq), res: padTo(res), bor: padTo(bor), nb: padTo(nb), cwip: padTo(cwip),
+        cash: padTo(cashBank), recv: padTo(recv), inv: padTo(inv),
+        ocf: padTo(ocf), cfi: padTo(cfi), cff: padTo(cff),
+        shares: padTo(shares), price: padTo(priceRow), mcap: isFinite(mcap) ? mcap : null, capex: capexAligned,
+      });
+    } catch {}
+    // ── v5: optional workbook overlays (user's analysis template sheets) ─────
+    try {
+      const fws = wb.Sheets['Fraud checklist'];
+      if (fws) {
+        const items: { row: number; label: string; answer: string }[] = [];
+        for (let rI = 8; rI <= 37; rI++) {
+          const labC = fws['B' + rI];
+          const labV = labC && labC.v != null ? String(labC.v).trim() : '';
+          if (!labV) continue;
+          for (const colL of ['C', 'D', 'E', 'F', 'G', 'H', 'I']) {
+            const cell = fws[colL + rI];
+            const ansV = cell && cell.v != null ? String(cell.v).trim() : '';
+            if (!ansV) continue;
+            if (/^(y|yes|true|fail|red|bad|⚠|x)$/i.test(ansV)) items.push({ row: rI, label: labV, answer: 'adverse' });
+            else if (/^(n|no|ok|pass|clean|green|✓)$/i.test(ansV)) items.push({ row: rI, label: labV, answer: 'clean' });
+            break; // only the first non-empty answer cell counts
+          }
+        }
+        if (items.length) out['Fraud Tab'] = JSON.stringify(items);
+      }
+      const mws = wb.Sheets['Moat Assessment Sheet'];
+      if (mws) {
+        const mv = (a: string) => { const cell = mws[a]; return cell && typeof cell.v === 'number' && isFinite(cell.v) ? cell.v : null; };
+        const avgRoe = mv('M9'), avgRoic = mv('M10'), avgRoce = mv('M11');
+        if (avgRoe !== null && avgRoic !== null && avgRoce !== null) out['Moat Tab'] = JSON.stringify({ avgRoe, avgRoic, avgRoce });
+      }
+    } catch {}
     return out;
   } catch { return null; }
 }
 
 const KD = 'mc:capex-tracker:data:v1'; const KN = 'mc:capex-tracker:files:v1';
+const KC = 'mc:capex-tracker:concalls:v1'; // transcripts — survive 'Clear all'
 
 // ── small visual atoms ──────────────────────────────────────────────────────
 const TierBars = ({ s, w = 30 }: { s: Scored; w?: number }) => (
@@ -794,7 +1413,7 @@ const CapexStrip = ({ s }: { s: Scored }) => {
 export default function CapexTrackerPage() {
   const [rows, setRows] = useState<Row[]>([]);
   const [files, setFiles] = useState<string[]>([]);
-  const [tab, setTab] = useState<'board' | 'analytics' | 'model'>('board');
+  const [tab, setTab] = useState<'board' | 'analytics' | 'multibagger' | 'forensics' | 'concall' | 'verdict' | 'model'>('board');
   const [q, setQ] = useState('');
   const [band, setBand] = useState('ALL');
   const [minScore, setMinScore] = useState(0);
@@ -803,11 +1422,21 @@ export default function CapexTrackerPage() {
   const [open, setOpen] = useState<string | null>(null);
   const [msg, setMsg] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+  // v5 state
+  const [concalls, setConcalls] = useState<Record<string, ConcallEntry[]>>({});
+  const [openMB, setOpenMB] = useState<string | null>(null);
+  const [openFX, setOpenFX] = useState<string | null>(null);
+  const [ccCompany, setCcCompany] = useState('');
+  const [ccLabel, setCcLabel] = useState('');
+  const [ccText, setCcText] = useState('');
+  const [ccView, setCcView] = useState<string | null>(null);
+  const ccFileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     try {
       const d = localStorage.getItem(KD); const n = localStorage.getItem(KN);
       if (d) setRows(JSON.parse(d)); if (n) setFiles(JSON.parse(n));
+      const cc = localStorage.getItem(KC); if (cc) setConcalls(JSON.parse(cc));
     } catch {}
   }, []);
 
@@ -874,6 +1503,70 @@ export default function CapexTrackerPage() {
     return c;
   }, [scored]);
 
+  // ── v5: concall store (separate key — survives 'Clear all') ────────────────
+  const ckey = (name: string) => name.trim().toLowerCase();
+  const persistConcalls = (next: Record<string, ConcallEntry[]>): boolean => {
+    const json = JSON.stringify(next);
+    if (json.length > 2_500_000) { setMsg('⚠ Transcript store would exceed 2.5MB — delete old transcripts first. NOT saved.'); return false; }
+    try { localStorage.setItem(KC, json); } catch { setMsg('⚠ Browser storage quota exceeded — transcript NOT saved.'); return false; }
+    setConcalls(next);
+    return true;
+  };
+  const addTranscript = (company: string, label: string, text: string) => {
+    if (!company) { setMsg('Pick a company for the transcript.'); return; }
+    const body = text.trim();
+    if (!body) { setMsg('Paste the transcript text first.'); return; }
+    if (body.length > 300000) { setMsg('⚠ Transcript too large — trim to the management+Q&A section (max 300k chars).'); return; }
+    const k = ckey(company);
+    let list = [...(concalls[k] ?? [])];
+    if (list.length >= 8) {
+      if (!confirm('This company already has 8 transcripts (the cap). Delete the oldest to make room?')) return;
+      list = list.slice(1);
+    }
+    const entry: ConcallEntry = {
+      id: String(Date.now()), label: label.trim() || 'untitled call', addedAt: new Date().toISOString(),
+      chars: body.length, text: body, extract: extractConcall(body),
+    };
+    if (persistConcalls({ ...concalls, [k]: [...list, entry] })) {
+      setMsg('🎙 Saved transcript for ' + company + ' — ' + body.length.toLocaleString() + ' chars, extraction below.');
+      setCcLabel(''); setCcText('');
+    }
+  };
+  const deleteTranscript = (k: string, id: string) => {
+    if (!confirm('Delete this transcript?')) return;
+    const list = (concalls[k] ?? []).filter((e) => e.id !== id);
+    const next = { ...concalls };
+    if (list.length) next[k] = list; else delete next[k];
+    persistConcalls(next);
+  };
+  const clearTranscripts = () => {
+    if (!confirm('Clear ALL saved concall transcripts? (Company data is untouched.)')) return;
+    try { localStorage.removeItem(KC); } catch {}
+    setConcalls({}); setMsg('All transcripts cleared.');
+  };
+  const ccStateFor = (name: string): CCState & { latest: ConcallEntry | null } => {
+    const list = concalls[ckey(name)] ?? [];
+    if (!list.length) return { freshness: 'NONE', tone: null, utilization: null, latest: null };
+    const latest = list[list.length - 1];
+    const ageDays = (Date.now() - +new Date(latest.addedAt)) / 86400000;
+    return {
+      freshness: ageDays < 120 ? 'FRESH' : ageDays <= 365 ? 'STALE' : 'NONE',
+      tone: latest.extract.tone, utilization: latest.extract.utilization, latest,
+    };
+  };
+
+  // ── v5: per-company intelligence (derived, never persisted) ────────────────
+  const intel = useMemo(() => scored.map((s) => {
+    const fin = parseFin(s.raw);
+    const fx = computeForensic(fin, s.raw);
+    const mb = computeMultibagger(fin, s, s.raw, fx.grade);
+    const cc = ccStateFor(s.name);
+    const verdict = computeVerdict(s, mb, fx, cc);
+    return { s, fin, mb, fx, cc, verdict };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [scored, concalls]);
+  const intelByName = useMemo(() => { const m: Record<string, (typeof intel)[number]> = {}; intel.forEach((it) => { m[ckey(it.s.name)] = it; }); return m; }, [intel]);
+
   const visible = useMemo(() => {
     let v = scored.filter((s) => s.final >= minScore);
     if (band !== 'ALL') v = v.filter((s) => s.decision === band);
@@ -925,6 +1618,44 @@ export default function CapexTrackerPage() {
     ['Industry', 'industry', 'num'],
   ];
 
+  // v5: one-click apply of concall-extracted numbers → clean canonical headers
+  // (writes "82 (concall)" — num() reads 82, provenance stays visible, manual-
+  // equivalent so it survives re-uploads exactly like an inline edit)
+  const ConcallChips = ({ s }: { s: Scored }) => {
+    const st = ccStateFor(s.name);
+    if (!st.latest) return null;
+    const ex = st.latest.extract;
+    const sug: { label: string; canonical: string; value: number; quote: string }[] = [];
+    const curUtil = num(String(s.raw['Capacity Utilization %'] ?? ''));
+    if (ex.utilization !== null && (!isFinite(curUtil) || Math.abs(curUtil - ex.utilization) >= 1)) {
+      const q = ex.quotes.find((x) => x.field === 'utilization');
+      sug.push({ label: '🎙 util ' + ex.utilization + '% (concall)', canonical: 'Capacity Utilization %', value: ex.utilization, quote: q ? q.snippet : '' });
+    }
+    const curAnchor = num(String(s.raw['Anchor Demand %'] ?? ''));
+    let anchorSug: number | null = ex.anchorPct;
+    let anchorQ = ex.quotes.find((x) => x.field === 'anchorPct');
+    if (anchorSug === null && ex.orderBook !== null) {
+      const rev = num(String(s.raw['Annual Revenue'] ?? ''));
+      if (isFinite(rev) && rev > 0) { anchorSug = Math.min(100, Math.round((ex.orderBook / rev) * 100)); anchorQ = ex.quotes.find((x) => x.field === 'orderBook'); }
+    }
+    if (anchorSug !== null && (!isFinite(curAnchor) || Math.abs(curAnchor - anchorSug) >= 1)) {
+      sug.push({ label: '🎙 anchor ~' + anchorSug + '% ' + (ex.anchorPct !== null ? '(concall)' : '(order book ÷ revenue)'), canonical: 'Anchor Demand %', value: anchorSug, quote: anchorQ ? anchorQ.snippet : '' });
+    }
+    if (!sug.length) return null;
+    return (
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', margin: '4px 0' }}>
+        <span style={{ fontSize: F.xs, color: C.gold, fontWeight: 800 }}>🎙 from "{st.latest.label}":</span>
+        {sug.map((g) => (
+          <span key={g.canonical} title={g.quote ? '…' + g.quote + '…' : ''} style={{ fontSize: F.xs, padding: '3px 8px', borderRadius: 8, background: C.gold + '14', border: '1px solid ' + C.gold + '55', color: C.gold, fontWeight: 700 }}>
+            {g.label}{' '}
+            <button onClick={(e) => { e.stopPropagation(); updateRow(s.name, g.canonical, g.value + ' (concall)'); setMsg('Applied ' + g.canonical + ' = ' + g.value + ' from the concall — rescored.'); }}
+              style={{ fontSize: 10, fontWeight: 900, padding: '1px 7px', borderRadius: 6, cursor: 'pointer', background: C.gold + '33', border: '1px solid ' + C.gold, color: C.txt }}>Apply</button>
+          </span>
+        ))}
+      </div>
+    );
+  };
+
   // current value precedence mirrors the engine: clean → resolver → (est)
   const Editor = ({ s }: { s: Scored }) => {
     const h = resolveHeaders(Object.keys(s.raw));
@@ -934,6 +1665,7 @@ export default function CapexTrackerPage() {
         <div style={{ fontSize: F.xs, fontWeight: 800, color: C.violet, marginBottom: 6 }}>
           ✍️ FILL / OVERRIDE THE QUALITATIVE FACTORS (auto-saves, rescores instantly — manual entries beat (est) fills)
         </div>
+        <ConcallChips s={s} />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 6 }}>
           {EDIT_FIELDS.map(([canonical, hkey, kind]) => {
             const clean = String(s.raw[canonical] ?? '').trim();
@@ -1064,15 +1796,19 @@ export default function CapexTrackerPage() {
     <div style={{ maxWidth: 2100, margin: '0 auto', padding: '14px 18px', color: C.txt, fontFamily: 'inherit' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, flexWrap: 'wrap' }}>
         <Link href="/" style={{ color: C.dim, textDecoration: 'none', fontSize: F.sm }}>← Home</Link>
-        <span style={{ fontSize: F.xl, fontWeight: 900, color: C.orange }}>🏗 CAPEX TRACKER</span>
-        <span style={{ fontSize: F.sm, color: C.dim }}>quality (200-case masterclass, 21 factors) × timing (250-case Stage A-F arc) → one entry verdict</span>
+        <span style={{ fontSize: F.xl, fontWeight: 900, color: C.orange }}>🏗 CAPEX TRACKER <span style={{ fontSize: F.xs, color: C.muted, fontWeight: 700 }}>v5.0</span></span>
+        <span style={{ fontSize: F.sm, color: C.dim }}>four lenses, one dataset: capex quality × timing · 🚀 multibagger DNA · 🔬 forensics · 🎙 concall → 🧭 one fused verdict</span>
         <span style={{ fontSize: F.xs, color: C.muted }}>{files.length} file{files.length === 1 ? '' : 's'} · {scored.length} companies (saved locally)</span>
       </div>
 
       <div style={{ display: 'flex', gap: 8, margin: '12px 0', flexWrap: 'wrap', alignItems: 'center' }}>
         <span onClick={() => setTab('board')} style={pill(tab === 'board', C.cyan)}>☰ Scoreboard</span>
         <span onClick={() => setTab('analytics')} style={pill(tab === 'analytics', C.green)}>🎯 Decision Board</span>
-        <span onClick={() => setTab('model')} style={pill(tab === 'model', C.violet)}>📐 The Model</span>
+        <span onClick={() => setTab('multibagger')} style={pill(tab === 'multibagger', C.violet)}>🚀 Multibagger</span>
+        <span onClick={() => setTab('forensics')} style={pill(tab === 'forensics', C.red)}>🔬 Forensics</span>
+        <span onClick={() => setTab('concall')} style={pill(tab === 'concall', C.gold)}>🎙 Concall</span>
+        <span onClick={() => setTab('verdict')} style={pill(tab === 'verdict', C.orange)}>🧭 Verdict</span>
+        <span onClick={() => setTab('model')} style={pill(tab === 'model', C.blue)}>📐 The Model</span>
         <span style={{ flex: 1 }} />
         <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls" multiple onChange={(e) => onFiles(e.target.files)} style={{ fontSize: F.xs, color: C.dim }} />
         <button onClick={downloadTemplate} style={{ ...pill(false, C.blue), background: C.panel2 }}>⬇ Input template</button>
@@ -1110,6 +1846,7 @@ export default function CapexTrackerPage() {
                 <TH k="name" label="COMPANY" />
                 <TH k="final" label="SCORE" right /><TH k="decision" label="QUALITY" />
                 <TH k="stage" label="STAGE" /><TH k="base" label="T1·T2·T3·T4" />
+                <th style={{ padding: '7px 8px', whiteSpace: 'nowrap', textAlign: 'left', color: C.dim, fontSize: F.xs, fontWeight: 800 }}>🚀 MB · 🔬 FX</th>
                 <TH k="entryShort" label="ENTRY VERDICT" />
                 <TH k="confidence" label="CONF" /><TH k="dbCount" label="⛔" right />
                 <TH k="roce" label="ROCE%" right /><TH k="de" label="D/E" right />
@@ -1117,9 +1854,16 @@ export default function CapexTrackerPage() {
                 <TH k="anchor" label="ANCHOR%" right />
               </tr></thead>
               <tbody>
-                {visible.map((s) => (
-                  <ScoreRow key={s.name} s={s} open={open === s.name} toggle={() => setOpen(open === s.name ? null : s.name)} fmt={fmt} Detail={Detail} />
-                ))}
+                {visible.map((s) => {
+                  const it = intelByName[ckey(s.name)];
+                  const lens = it ? (
+                    <span style={{ whiteSpace: 'nowrap' }}>
+                      <span title={'Multibagger ' + (it.mb.grade === 'NR' ? 'not rated — upload Screener workbook' : it.mb.score + '/100')} style={{ fontSize: 10, fontWeight: 900, padding: '1px 6px', borderRadius: 7, background: it.mb.color + '22', color: it.mb.color, border: '1px solid ' + it.mb.color + '55' }}>{it.mb.grade}</span>{' '}
+                      <span title={'Forensic ' + (it.fx.grade === 'NR' ? 'not rated' : it.fx.score + '/100 · ' + it.fx.flags.length + ' flags')} style={{ fontSize: 10, fontWeight: 900, padding: '1px 6px', borderRadius: 7, background: it.fx.color + '22', color: it.fx.color, border: '1px solid ' + it.fx.color + '55' }}>{it.fx.grade === 'NR' ? 'NR' : it.fx.score}</span>
+                    </span>
+                  ) : null;
+                  return <ScoreRow key={s.name} s={s} open={open === s.name} toggle={() => setOpen(open === s.name ? null : s.name)} fmt={fmt} Detail={Detail} lens={lens} />;
+                })}
               </tbody>
             </table>
           </div>
@@ -1227,14 +1971,325 @@ export default function CapexTrackerPage() {
         </div>
       )}
 
+      {/* ═══ 🚀 MULTIBAGGER ═══ */}
+      {tab === 'multibagger' && scored.length > 0 && (
+        <>
+          <div style={{ ...card, padding: 0, overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: F.sm }}>
+              <thead><tr style={{ borderBottom: '1px solid ' + C.line }}>
+                {['COMPANY', 'SCORE', 'GRADE', 'TOP DRIVERS', 'WEAKEST', 'MCAP Cr', 'PE', 'PEG'].map((hh, i) => (
+                  <th key={hh} style={{ padding: '7px 8px', whiteSpace: 'nowrap', textAlign: i === 1 || i >= 5 ? 'right' : 'left', color: C.dim, fontSize: F.xs, fontWeight: 800 }}>{hh}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {[...intel].sort((a, b) => (b.mb.grade === 'NR' ? -1 : b.mb.score) - (a.mb.grade === 'NR' ? -1 : a.mb.score)).map(({ s, fin, mb }) => {
+                  const measured = mb.components.filter((cmp) => cmp.pts !== null);
+                  const top3 = [...measured].sort((a, b) => (b.pts! / b.w) - (a.pts! / a.w)).slice(0, 3).filter((cmp) => cmp.pts! > 0);
+                  const weak = [...measured].sort((a, b) => (a.pts! / a.w) - (b.pts! / b.w))[0];
+                  const isOpen = openMB === s.name;
+                  return (
+                    <Fragment key={s.name}>
+                      <tr onClick={() => setOpenMB(isOpen ? null : s.name)} style={{ borderBottom: '1px solid ' + C.line, cursor: 'pointer', background: isOpen ? '#16233B' : 'transparent' }}>
+                        <td style={{ padding: '8px 8px', fontWeight: 800 }}>{s.name}<div style={{ fontSize: 10, color: C.muted, fontWeight: 400 }}>{s.industry || s.sector}</div></td>
+                        <td style={{ padding: '8px 8px', textAlign: 'right' }}>
+                          <span style={{ fontSize: 16, fontWeight: 900, color: mb.color, background: mb.color + '14', border: '1px solid ' + mb.color + '44', borderRadius: 9, padding: '3px 10px' }}>{mb.grade === 'NR' ? '—' : mb.score}</span>
+                        </td>
+                        <td style={{ padding: '8px 8px' }}><span style={{ fontSize: F.xs, fontWeight: 900, padding: '2px 10px', borderRadius: 10, background: mb.color + '22', color: mb.color, border: '1px solid ' + mb.color + '55' }}>{mb.grade}</span></td>
+                        <td style={{ padding: '8px 8px', fontSize: F.xs, color: C.green }}>{mb.grade === 'NR' ? <span style={{ color: C.muted }}>{fin ? 'insufficient series' : 'upload the Screener workbook to unlock multibagger/forensic scores'}</span> : top3.map((cmp) => cmp.label).join(' · ') || '—'}</td>
+                        <td style={{ padding: '8px 8px', fontSize: F.xs, color: C.red }}>{mb.grade !== 'NR' && weak ? weak.label : '—'}</td>
+                        <td style={{ padding: '8px 8px', textAlign: 'right' }}>{fin && fin.mcap ? Math.round(fin.mcap).toLocaleString() : '—'}</td>
+                        <td style={{ padding: '8px 8px', textAlign: 'right' }}>{fmt(mb.pe, 1)}</td>
+                        <td style={{ padding: '8px 8px', textAlign: 'right', color: mb.peg < 1.2 ? C.green : mb.peg > 2 ? C.red : C.txt }}>{fmt(mb.peg, 2)}</td>
+                      </tr>
+                      {isOpen && (
+                        <tr key={s.name + ':d'}><td colSpan={8} style={{ padding: '0 8px' }}>
+                          <div style={{ background: C.panel2, border: '1px solid ' + C.line, borderRadius: 10, padding: 12, margin: '6px 0 10px', display: 'grid', gap: 8 }}>
+                            <div style={{ fontSize: F.xs, fontWeight: 800, color: C.violet }}>
+                              12-COMPONENT MULTIBAGGER BREAKDOWN — measured {mb.available}/100 weight → score <b style={{ color: mb.color }}>{mb.grade === 'NR' ? 'NR' : mb.score}</b>
+                              {mb.grade === 'NR' && <span style={{ color: C.dim, fontWeight: 400 }}> · below the 40-weight floor — {fin ? 'series too thin' : 'upload the Screener workbook'}</span>}
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: 6 }}>
+                              {mb.components.map((cmp) => {
+                                const nd = cmp.pts === null;
+                                const pct = nd ? 0 : cmp.pts! / cmp.w;
+                                const col = nd ? C.muted : pct >= 0.7 ? C.green : pct > 0 ? C.amber : C.red;
+                                return (
+                                  <div key={cmp.id} style={{ background: nd ? C.panel : C.bg, border: '1px solid ' + C.line, borderRadius: 7, padding: '4px 8px' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: F.xs }}>
+                                      <span style={{ color: C.dim }}>{cmp.label}{cmp.detail ? ' · ' + cmp.detail : ''}</span>
+                                      <span style={{ fontWeight: 900, color: col, whiteSpace: 'nowrap' }}>{nd ? 'n/a' : cmp.pts!.toFixed(1) + '/' + cmp.w}</span>
+                                    </div>
+                                    <div style={{ height: 3, borderRadius: 2, background: C.line, marginTop: 3, overflow: 'hidden' }}>
+                                      <div style={{ width: Math.round(pct * 100) + '%', height: '100%', background: col }} />
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </td></tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize: F.xs, color: C.muted, marginTop: 8 }}>
+            Recomputed from the 10-year workbook series (SQGLP-style: growth consistency · ROCE trajectory · operating leverage · self-funded reinvestment · dilution · runway · PEG · promoter). Absolute bands A+ ≥80 … D &lt;38; grade capped at B+ on forensic FLAGS and at B on pledge &gt;15% / D/E &gt;1.5. Click a row for the component bars.
+          </div>
+        </>
+      )}
+
+      {/* ═══ 🔬 FORENSICS ═══ */}
+      {tab === 'forensics' && scored.length > 0 && (
+        <>
+          <div style={{ ...card, padding: 0, overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: F.sm }}>
+              <thead><tr style={{ borderBottom: '1px solid ' + C.line }}>
+                {['COMPANY', 'SCORE', 'GRADE', '🚩 FLAGS', 'WORST FLAG'].map((hh, i) => (
+                  <th key={hh} style={{ padding: '7px 8px', whiteSpace: 'nowrap', textAlign: i === 1 || i === 3 ? 'right' : 'left', color: C.dim, fontSize: F.xs, fontWeight: 800 }}>{hh}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {[...intel].sort((a, b) => (b.fx.grade === 'NR' ? -1 : b.fx.score) - (a.fx.grade === 'NR' ? -1 : a.fx.score)).map(({ s, fin, fx }) => {
+                  const isOpen = openFX === s.name;
+                  return (
+                    <Fragment key={s.name}>
+                      <tr onClick={() => setOpenFX(isOpen ? null : s.name)} style={{ borderBottom: '1px solid ' + C.line, cursor: 'pointer', background: isOpen ? '#16233B' : 'transparent' }}>
+                        <td style={{ padding: '8px 8px', fontWeight: 800 }}>{s.name}<div style={{ fontSize: 10, color: C.muted, fontWeight: 400 }}>{s.industry || s.sector}</div></td>
+                        <td style={{ padding: '8px 8px', textAlign: 'right' }}>
+                          <span style={{ fontSize: 16, fontWeight: 900, color: fx.color, background: fx.color + '14', border: '1px solid ' + fx.color + '44', borderRadius: 9, padding: '3px 10px' }}>{fx.grade === 'NR' ? '—' : fx.score}</span>
+                        </td>
+                        <td style={{ padding: '8px 8px' }}>
+                          <span style={{ fontSize: F.xs, fontWeight: 900, padding: '2px 10px', borderRadius: 10, background: fx.color + '22', color: fx.color, border: '1px solid ' + fx.color + '55', whiteSpace: 'nowrap' }}>{fx.grade}{fx.critical ? ' ☠' : ''}</span>
+                          {fx.grade === 'NR' && <span style={{ fontSize: 10, color: C.muted }}> upload the Screener workbook to unlock</span>}
+                        </td>
+                        <td style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 900, color: fx.flags.length >= 4 ? C.red : fx.flags.length ? C.amber : C.green }}>{fx.grade === 'NR' ? '—' : fx.flags.length}</td>
+                        <td style={{ padding: '8px 8px', fontSize: F.xs, color: C.red }}>{fx.flags[0] || (fx.grade === 'NR' ? '' : '—')}</td>
+                      </tr>
+                      {isOpen && (
+                        <tr key={s.name + ':d'}><td colSpan={5} style={{ padding: '0 8px' }}>
+                          <div style={{ background: C.panel2, border: '1px solid ' + C.line, borderRadius: 10, padding: 12, margin: '6px 0 10px', display: 'grid', gap: 8 }}>
+                            <div style={{ fontSize: F.xs, fontWeight: 800, color: C.red }}>
+                              12 FORENSIC CHECKS (higher = cleaner) — grade is the WORST of score band vs flag count{fx.critical ? ' · ☠ CRITICAL flag present ⇒ AVOID' : ''}
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))', gap: 6 }}>
+                              {fx.checks.map((ch) => {
+                                const nd = ch.pts === null;
+                                const col = nd ? C.muted : ch.pts === ch.w ? C.green : ch.pts! > 0 ? C.amber : C.red;
+                                return (
+                                  <div key={ch.id} style={{ background: nd ? C.panel : C.bg, border: '1px solid ' + C.line, borderRadius: 7, padding: '4px 8px' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: F.xs }}>
+                                      <span style={{ color: C.dim }}><span style={{ color: col }}>●</span> {ch.label} · {ch.detail}</span>
+                                      <span style={{ fontWeight: 900, color: col, whiteSpace: 'nowrap' }}>{nd ? 'n/a' : ch.pts + '/' + ch.w}</span>
+                                    </div>
+                                    {ch.flag && <div style={{ fontSize: F.xs, color: C.red, marginTop: 2 }}>🚩 {ch.flag}</div>}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            {fx.workbook.length > 0 && (
+                              <div style={{ borderTop: '1px dashed ' + C.line, paddingTop: 6 }}>
+                                <div style={{ fontSize: F.xs, fontWeight: 800, color: C.amber }}>FRAUD-CHECKLIST ANSWERS (your workbook) — each adverse −3, cap −15</div>
+                                {fx.workbook.map((wkb) => (
+                                  <div key={wkb.row} style={{ fontSize: F.xs, color: wkb.answer === 'adverse' ? C.red : C.green }}>
+                                    {wkb.answer === 'adverse' ? '⚠' : '✓'} {wkb.label} <span style={{ color: C.muted }}>(row {wkb.row})</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </td></tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize: F.xs, color: C.muted, marginTop: 8 }}>
+            The fraud-checklist tab of your workbook, codified: cash conversion · receivable/inventory games · other-income crutch · tax sanity · phantom cash · stuck CWIP · dilution · dividend funding · depreciation games. CLEAN ≥80 · WATCH 60-79 · FLAGS 40-59 · AVOID &lt;40 — but flags override: 1 flag caps at WATCH, 2-3 at FLAGS, ≥4 or any CRITICAL ⇒ AVOID.
+          </div>
+        </>
+      )}
+
+      {/* ═══ 🎙 CONCALL ═══ */}
+      {tab === 'concall' && scored.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 420px) 1fr', gap: 12, alignItems: 'start' }}>
+          <div style={{ ...card, border: '1px solid ' + C.gold + '55' }}>
+            <div style={{ fontSize: F.md, fontWeight: 800, color: C.gold, marginBottom: 6 }}>➕ Add a transcript</div>
+            <div style={{ display: 'grid', gap: 8 }}>
+              <select value={ccCompany} onChange={(e) => setCcCompany(e.target.value)} style={{ background: C.bg, border: '1px solid ' + C.line, color: C.txt, borderRadius: 6, padding: '6px 8px', fontSize: F.sm }}>
+                <option value="">— pick a company —</option>
+                {scored.map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
+              </select>
+              <input placeholder='label, e.g. "Q2 FY26 — 12 Nov 2025"' value={ccLabel} onChange={(e) => setCcLabel(e.target.value)}
+                style={{ background: C.bg, border: '1px solid ' + C.line, color: C.txt, borderRadius: 6, padding: '6px 8px', fontSize: F.sm }} />
+              <textarea placeholder="paste the management commentary + Q&A here…" value={ccText} onChange={(e) => setCcText(e.target.value)} rows={9}
+                style={{ background: C.bg, border: '1px solid ' + C.line, color: C.txt, borderRadius: 6, padding: '6px 8px', fontSize: F.xs, resize: 'vertical', fontFamily: 'inherit' }} />
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <button onClick={() => addTranscript(ccCompany, ccLabel, ccText)} style={{ ...pill(true, C.gold), border: '1px solid ' + C.gold }}>💾 Save + extract</button>
+                <input ref={ccFileRef} type="file" accept=".txt" style={{ fontSize: F.xs, color: C.dim, maxWidth: 180 }}
+                  onChange={async (e) => { const f = e.target.files?.[0]; if (f) { setCcText(await f.text()); } if (ccFileRef.current) ccFileRef.current.value = ''; }} />
+              </div>
+              <div style={{ fontSize: 10, color: C.muted }}>
+                .txt or paste only · max 300k chars · 8 transcripts per company · stored ONLY in this browser (separate from company data — survives "Clear all").
+                Extraction is heuristic: utilization %, order book (Cr), capex guidance, commissioning timeline, anchor/booked %, tone.
+              </div>
+              {Object.keys(concalls).length > 0 && <button onClick={clearTranscripts} style={{ ...pill(false, C.red), justifySelf: 'start' }}>Clear transcripts</button>}
+            </div>
+          </div>
+          <div style={{ display: 'grid', gap: 12 }}>
+            {intel.filter(({ s }) => (concalls[ckey(s.name)] ?? []).length > 0).map(({ s, cc }) => (
+              <div key={s.name} style={card}>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: F.md, fontWeight: 800 }}>{s.name}</span>
+                  <span style={{ fontSize: F.xs, fontWeight: 800, color: cc.freshness === 'FRESH' ? C.green : cc.freshness === 'STALE' ? C.amber : C.muted }}>
+                    {cc.freshness === 'FRESH' ? '🟢 FRESH' : cc.freshness === 'STALE' ? '🟡 STALE' : '⚪ OLD'}
+                  </span>
+                  {cc.tone !== null && <span style={{ fontSize: F.xs, color: cc.tone >= 0.65 ? C.green : cc.tone < 0.4 ? C.red : C.amber }}>tone {(cc.tone * 100).toFixed(0)}% positive</span>}
+                </div>
+                <ConcallChips s={s} />
+                {(concalls[ckey(s.name)] ?? []).map((en) => {
+                  const isOpen = ccView === en.id;
+                  const ex = en.extract;
+                  return (
+                    <div key={en.id} style={{ borderTop: '1px solid ' + C.line, padding: '6px 0' }}>
+                      <div onClick={() => setCcView(isOpen ? null : en.id)} style={{ display: 'flex', gap: 10, alignItems: 'center', cursor: 'pointer', flexWrap: 'wrap' }}>
+                        <b style={{ fontSize: F.sm }}>{en.label}</b>
+                        <span style={{ fontSize: F.xs, color: C.muted }}>{new Date(en.addedAt).toLocaleDateString()} · {(en.chars / 1000).toFixed(1)}k chars</span>
+                        {ex.tone !== null && (
+                          <span style={{ width: 70, height: 5, borderRadius: 3, background: C.red + '55', overflow: 'hidden', display: 'inline-block' }} title={ex.optimism + ' optimism / ' + ex.caution + ' caution cues'}>
+                            <span style={{ display: 'block', width: (ex.tone * 100) + '%', height: '100%', background: C.green }} />
+                          </span>
+                        )}
+                        <span style={{ fontSize: F.xs, color: C.dim }}>
+                          {ex.utilization !== null && <>util <b style={{ color: C.gold }}>{ex.utilization}%</b> · </>}
+                          {ex.orderBook !== null && <>order book <b style={{ color: C.gold }}>{ex.orderBook.toLocaleString()} Cr</b> · </>}
+                          {ex.capexGuidance !== null && <>capex guide <b style={{ color: C.gold }}>{ex.capexGuidance.toLocaleString()} Cr</b> · </>}
+                          {ex.anchorPct !== null && <>booked <b style={{ color: C.gold }}>{ex.anchorPct}%</b> · </>}
+                          {isOpen ? '▲ close' : '▼ read'}
+                        </span>
+                        <span style={{ flex: 1 }} />
+                        <button onClick={(e) => { e.stopPropagation(); deleteTranscript(ckey(s.name), en.id); }} style={{ ...pill(false, C.red), padding: '2px 8px' }}>✕</button>
+                      </div>
+                      {ex.timeline.length > 0 && <div style={{ fontSize: F.xs, color: C.teal, marginTop: 3 }}>⏱ {ex.timeline.join(' · ')}</div>}
+                      {isOpen && (
+                        <pre style={{ maxHeight: 420, overflowY: 'auto', fontSize: F.xs, whiteSpace: 'pre-wrap', background: C.bg, border: '1px solid ' + C.line, borderRadius: 8, padding: 10, marginTop: 6, color: C.dim, fontFamily: 'inherit' }}>
+                          {markText(en.text, ex.quotes)}
+                        </pre>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+            {!intel.some(({ s }) => (concalls[ckey(s.name)] ?? []).length > 0) && (
+              <div style={{ ...card, textAlign: 'center', padding: 30, color: C.dim, fontSize: F.sm }}>
+                No transcripts yet. Paste a concall on the left — the page extracts utilization, order book, capex guidance and tone, and suggests one-click updates to the capex engine (provenance preserved as "(concall)").
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ═══ 🧭 VERDICT ═══ */}
+      {tab === 'verdict' && scored.length > 0 && (() => {
+        const ranked = [...intel].sort((a, b) => (a.verdict.veto === b.verdict.veto ? b.verdict.composite - a.verdict.composite : a.verdict.veto ? 1 : -1));
+        const vCounts: Record<string, number> = {};
+        ranked.forEach(({ verdict }) => { vCounts[verdict.call] = (vCounts[verdict.call] || 0) + 1; });
+        const top5 = ranked.filter(({ verdict }) => !verdict.veto && verdict.call !== '🧩 NEEDS DATA' && verdict.call !== '🔍 FORENSIC REVIEW FIRST').slice(0, 5);
+        return (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr minmax(300px, 380px)', gap: 12, marginBottom: 12, alignItems: 'start' }}>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignContent: 'flex-start' }}>
+                {Object.entries(vCounts).map(([call, n]) => (
+                  <span key={call} style={{ fontSize: F.xs, padding: '4px 10px', borderRadius: 14, fontWeight: 800, background: (VERDICT_COLOR[call] || C.dim) + '1A', border: '1px solid ' + (VERDICT_COLOR[call] || C.dim) + '66', color: VERDICT_COLOR[call] || C.dim }}>
+                    {call} · {n}
+                  </span>
+                ))}
+              </div>
+              <div style={{ ...card, border: '1px solid ' + C.gold + '66' }}>
+                <div style={{ fontSize: F.sm, fontWeight: 800, color: C.gold, marginBottom: 4 }}>🏆 TOP 5 — highest composite, no vetoes</div>
+                {top5.map(({ s, verdict }, i) => (
+                  <div key={s.name} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: F.sm, padding: '3px 0', borderTop: i ? '1px solid ' + C.line : 'none' }}>
+                    <span><b style={{ color: C.muted }}>{i + 1}.</b> <b>{s.name}</b> <span style={{ fontSize: F.xs, color: verdict.color }}>{verdict.call}</span></span>
+                    <b style={{ color: C.gold }}>{verdict.composite.toFixed(0)}</b>
+                  </div>
+                ))}
+                {!top5.length && <div style={{ fontSize: F.xs, color: C.dim }}>Nothing clears the vetoes yet.</div>}
+              </div>
+            </div>
+            <div style={{ ...card, padding: 0, overflowX: 'auto' }}>
+              <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: F.sm }}>
+                <thead><tr style={{ borderBottom: '1px solid ' + C.line }}>
+                  {['COMPANY', 'COMPOSITE', 'CAPEX', 'STAGE / ENTRY', '🚀 MB', '🔬 FORENSIC', '🎙 CONCALL', 'VERDICT', 'WHY / ACTION'].map((hh, i) => (
+                    <th key={hh} style={{ padding: '7px 8px', whiteSpace: 'nowrap', textAlign: i === 1 ? 'right' : 'left', color: C.dim, fontSize: F.xs, fontWeight: 800 }}>{hh}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {ranked.map(({ s, mb, fx, cc, verdict }) => (
+                    <tr key={s.name} style={{ borderBottom: '1px solid ' + C.line, opacity: verdict.veto ? 0.75 : 1 }}>
+                      <td style={{ padding: '8px 8px', fontWeight: 800 }}>{s.name}<div style={{ fontSize: 10, color: C.muted, fontWeight: 400 }}>{s.industry || s.sector}</div></td>
+                      <td style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 900, color: verdict.veto ? C.muted : C.txt }}>{verdict.composite.toFixed(0)}</td>
+                      <td style={{ padding: '8px 8px', whiteSpace: 'nowrap' }}>
+                        <span style={{ fontSize: 10, fontWeight: 900, padding: '2px 8px', borderRadius: 10, background: s.decisionColor + '22', color: s.decisionColor, border: '1px solid ' + s.decisionColor + '55' }}>{s.decision} {s.final}</span>
+                      </td>
+                      <td style={{ padding: '8px 8px', whiteSpace: 'nowrap' }}><StageChip stage={s.stage} /> <span style={{ fontSize: 10, color: s.entryColor, fontWeight: 700 }}>{s.entryShort}</span></td>
+                      <td style={{ padding: '8px 8px', whiteSpace: 'nowrap' }}>
+                        <span style={{ fontSize: 10, fontWeight: 900, padding: '2px 8px', borderRadius: 10, background: mb.color + '22', color: mb.color, border: '1px solid ' + mb.color + '55' }}>{mb.grade === 'NR' ? 'NR' : mb.score + ' ' + mb.grade}</span>
+                      </td>
+                      <td style={{ padding: '8px 8px', whiteSpace: 'nowrap' }}>
+                        <span style={{ fontSize: 10, fontWeight: 900, padding: '2px 8px', borderRadius: 10, background: fx.color + '22', color: fx.color, border: '1px solid ' + fx.color + '55' }}>{fx.grade === 'NR' ? 'NR' : fx.score + ' ' + fx.grade}</span>
+                        {fx.flags.length > 0 && <span style={{ fontSize: 10, color: C.red }}> {fx.flags.length}🚩</span>}
+                      </td>
+                      <td style={{ padding: '8px 8px', fontSize: F.xs, whiteSpace: 'nowrap', color: cc.freshness === 'FRESH' ? C.green : cc.freshness === 'STALE' ? C.amber : C.muted }}>
+                        {cc.freshness === 'NONE' && !cc.latest ? '—' : (cc.freshness === 'FRESH' ? '🟢' : cc.freshness === 'STALE' ? '🟡' : '⚪') + (cc.tone !== null ? ' ' + (cc.tone! * 100).toFixed(0) + '%+' : '')}
+                      </td>
+                      <td style={{ padding: '8px 8px', whiteSpace: 'nowrap' }}>
+                        <span style={{ fontSize: F.xs, fontWeight: 900, padding: '3px 10px', borderRadius: 10, background: verdict.color + '1E', color: verdict.color, border: '1px solid ' + verdict.color + '66' }}>{verdict.call}</span>
+                      </td>
+                      <td style={{ padding: '8px 8px', fontSize: F.xs, color: C.dim, minWidth: 260 }}>{verdict.why} <span style={{ color: C.muted }}>{verdict.note}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ fontSize: F.xs, color: C.muted, marginTop: 8 }}>
+              Composite = 0.40×capex + 0.35×multibagger + 0.25×forensic (renormalized when a lens is NR) − 15 on forensic FLAGS; forensic AVOID/critical vetoes everything and pins to the bottom. Fresh cautious concalls demote one rung; fresh bullish calls with util ≥75% get the 🔥 tag. Not investment advice.
+            </div>
+          </>
+        );
+      })()}
+
       {/* ═══ MODEL ═══ */}
       {tab === 'model' && <ModelTab card={card} />}
     </div>
   );
 }
 
+// highlight extracted numbers inside the transcript viewer
+function markText(text: string, quotes: { field: string; match: string; snippet: string }[]): any {
+  const marks = Array.from(new Set(quotes.map((q) => q.match))).filter(Boolean).sort((a, b) => b.length - a.length).slice(0, 30);
+  if (!marks.length) return text;
+  try {
+    const re = new RegExp(marks.map((m) => m.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+')).join('|'), 'g');
+    const parts: any[] = [];
+    let lastI = 0; let m: RegExpExecArray | null; let k = 0;
+    while ((m = re.exec(text)) && k < 200) {
+      parts.push(text.slice(lastI, m.index));
+      parts.push(<mark key={'m' + k++} style={{ background: C.gold + '33', color: C.txt, borderRadius: 3 }}>{m[0]}</mark>);
+      lastI = m.index + m[0].length;
+      if (m.index === re.lastIndex) re.lastIndex++;
+    }
+    parts.push(text.slice(lastI));
+    return parts;
+  } catch { return text; }
+}
+
 // scoreboard row + expandable detail
-function ScoreRow({ s, open, toggle, fmt, Detail }: { s: Scored; open: boolean; toggle: () => void; fmt: (n: number, d?: number) => string; Detail: (p: { s: Scored }) => any }) {
+function ScoreRow({ s, open, toggle, fmt, Detail, lens }: { s: Scored; open: boolean; toggle: () => void; fmt: (n: number, d?: number) => string; Detail: (p: { s: Scored }) => any; lens?: any }) {
   return (
     <>
       <tr onClick={toggle} style={{ borderBottom: '1px solid ' + C.line, cursor: 'pointer', background: open ? '#16233B' : 'transparent' }}>
@@ -1248,6 +2303,7 @@ function ScoreRow({ s, open, toggle, fmt, Detail }: { s: Scored; open: boolean; 
         <td style={{ padding: '8px 8px' }}><span style={{ fontSize: 10, fontWeight: 900, padding: '2px 8px', borderRadius: 10, background: s.decisionColor + '22', color: s.decisionColor, border: '1px solid ' + s.decisionColor + '55', whiteSpace: 'nowrap' }}>{s.decision}</span></td>
         <td style={{ padding: '8px 8px' }}><StageChip stage={s.stage} />{s.watch.length > 0 && <span title={s.watch.join(' | ')}> 🚨</span>}{s.sells.length > 0 && <span title={s.sells.join(' | ')}> 📤</span>}</td>
         <td style={{ padding: '8px 8px' }}><TierBars s={s} /></td>
+        <td style={{ padding: '8px 8px' }}>{lens ?? <span style={{ color: C.muted, fontSize: F.xs }}>—</span>}</td>
         <td style={{ padding: '8px 8px', fontSize: F.xs, fontWeight: 800, color: s.entryColor, whiteSpace: 'nowrap' }}>{s.entryShort}</td>
         <td style={{ padding: '8px 8px', fontSize: F.xs, color: s.confidence === 'HIGH' ? C.green : s.confidence === 'MEDIUM' ? C.amber : C.red }}>{s.confidence}</td>
         <td style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 900, color: s.dbCount >= 3 ? C.red : s.dbCount ? C.amber : C.muted }}>{s.dbCount || '—'}</td>
@@ -1257,7 +2313,7 @@ function ScoreRow({ s, open, toggle, fmt, Detail }: { s: Scored; open: boolean; 
         <td style={{ padding: '8px 8px', textAlign: 'right' }}>{fmt(s.util, 0)}</td>
         <td style={{ padding: '8px 8px', textAlign: 'right' }}>{fmt(s.anchor, 0)}</td>
       </tr>
-      {open && <tr><td colSpan={13} style={{ padding: '0 8px' }}><Detail s={s} /></td></tr>}
+      {open && <tr><td colSpan={14} style={{ padding: '0 8px' }}><Detail s={s} /></td></tr>}
     </>
   );
 }
@@ -1350,6 +2406,27 @@ function ModelTab({ card }: { card: any }) {
         <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.8 }}>
           Screener workbooks → quantitative factors + telemetry (phase, capex/sales, CWIP ratio, spend accel, ΔD/E, OCF self-funding, Net Debt/EBITDA, cycle-capex/pre-revenue, prior-cycle delivery, utilization proxies — all marked (est) where inferred).<br />
           Stage = commissioning telemetry × effective utilization × inflection status. <b>Entry verdict = quality band ∩ stage</b>, with the Stage-F never-chase override and the proven-executor exception for Stage A. Manual inline edits always overwrite estimates and rescore instantly.
+        </div>
+      </div>
+      <div style={card}>
+        <div style={{ fontSize: F.md, fontWeight: 800, color: '#A78BFA', marginBottom: 6 }}>11 · 🚀 MULTIBAGGER SCORE — 12 components, 100 pts (v5)</div>
+        <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.8 }}>
+          Recomputed from the 10y workbook series (SQGLP checklist + multibagger-checklist thresholds): earnings consistency 10 (PAT YoY &gt;15% in 7+ yrs) · sales CAGR + acceleration 10 (≥25% 3y; cagr3&gt;cagr5&gt;cagr10 bonus) · ROCE level+trajectory 10 (avg3 ≥25, rising vs 10y) · margin/op-leverage 8 · self-funded reinvestment 8 (capex/OCF 0.4-1.2x) · dilution 6 (≤+5% 10y) · debt trajectory 6 (D/E ≤0.3 and falling) · FCF years 6 · CFO→PAT 5 (cum ≥0.8) · size runway 8 (500-5,000 Cr sweet spot) · PEG/PE 8 (PEG &lt;1; PE 18-40 entry band) · promoter≥55%/pledge≤5%/moat 7.<br />
+          <span style={{ color: C.dim }}>Score = pts ÷ measured weight × 100 (NR below 40 weight). Absolute bands: A+ ≥80 · A 70 · B+ 60 · B 50 · C 38 · D. Consistency gates: forensic FLAGS caps at B+; pledge &gt;15% or D/E &gt;1.5 caps at B.</span>
+        </div>
+      </div>
+      <div style={card}>
+        <div style={{ fontSize: F.md, fontWeight: 800, color: C.red, marginBottom: 6 }}>12 · 🔬 FORENSIC SCORE — 12 checks, higher = cleaner (v5)</div>
+        <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.8 }}>
+          Cum CFO/PAT 14 (≥0.9 clean; &lt;0.5 CRITICAL) · CFO/EBITDA 8 · receivable-days trend 10 (channel stuffing) · inventory days 6 · other-income/PBT 8 (&gt;25% = crutch) · tax rate 8 (chronic &lt;15% = suspect) · cash↑+debt↑ 8 (phantom cash) · perpetual CWIP 8 (&gt;20% of NB 3y+) · dilution 5y 8 (&gt;40% CRITICAL) · dividend vs OCF 8 · CFO-positive years 8 · depreciation-rate volatility 6. Workbook fraud-checklist answers overlay −3 each (cap −15).<br />
+          <span style={{ color: C.dim }}>Grade = WORST of score band (CLEAN ≥80 · WATCH 60 · FLAGS 40 · AVOID) vs flag count (1 flag ≤WATCH · 2-3 ≤FLAGS · ≥4 or CRITICAL ⇒ AVOID).</span>
+        </div>
+      </div>
+      <div style={card}>
+        <div style={{ fontSize: F.md, fontWeight: 800, color: C.orange, marginBottom: 6 }}>13 · 🧭 VERDICT — the fusion matrix (v5)</div>
+        <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.8 }}>
+          First match wins: ① forensic AVOID/critical ⇒ <b style={{ color: C.red }}>☠ DO NOT TOUCH</b> (vetoes everything) · ② no data ⇒ 🧩 NEEDS DATA · ③ forensic FLAGS ⇒ 🔍 REVIEW FIRST · ④ MB ≥70 ∩ buy window ⇒ <b style={{ color: C.gold }}>🎯 PRIME</b> · ⑤ MB ≥70 ∩ capex-buy band, window shut ⇒ ⏳ PRIME SETUP · ⑥ MB ≥70, capex not ripe ⇒ 🌱 COMPOUNDER · ⑦ MB 50-69 ∩ window ⇒ 🏗 CAPEX PLAY (half size) · ⑧ MB &lt;50 ∩ window ⇒ ⚙ CYCLE ONLY · ⑨ MB ≥70 + CLEAN, no cycle ⇒ 💎 QUALITY HOLD · ⑩ capex AVOID/REJECT + MB &lt;50 ⇒ 🗑 DROP · ⑪ else 👀 MONITOR.<br />
+          <span style={{ color: C.dim }}>Composite rank = 0.40 capex + 0.35 MB + 0.25 forensic (renormalized; −15 on FLAGS). Concall modifiers: fresh cautious call demotes one rung; fresh bullish + util ≥75% tags 🔥 ramp confirmed.</span>
         </div>
       </div>
     </div>
