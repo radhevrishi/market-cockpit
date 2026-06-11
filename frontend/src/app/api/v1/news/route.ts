@@ -2488,7 +2488,10 @@ async function fetchAllNews(): Promise<any[]> {
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const region = searchParams.get('region') || 'ALL';
+    // PATCH — accept market=india|in|us|usa as an alias for region (external
+    // callers were passing it and being silently ignored).
+    const marketAlias = (searchParams.get('market') || '').toLowerCase();
+    const region = searchParams.get('region') || (marketAlias === 'india' || marketAlias === 'in' ? 'IN' : marketAlias === 'us' || marketAlias === 'usa' ? 'US' : 'ALL');
     const search = searchParams.get('search') || '';
     const type = searchParams.get('type') || '';
     // Phase 2.6: watchlist-weighted ranking. Frontend passes a comma-
