@@ -26,11 +26,23 @@ import Link from 'next/link';
 // ── theme (cockpit dark palette) ────────────────────────────────────────────
 const C = {
   bg: '#0B1220', panel: '#101A2C', panel2: '#0D1623', line: '#1A2540',
-  txt: '#E6EDF7', dim: '#8B98AC', muted: '#5B6A82',
+  txt: '#E6EDF7', body: '#AEBBD0', dim: '#8B98AC', muted: '#5B6A82',
   green: '#00E68A', red: '#FF4D6A', amber: '#FFB347', blue: '#4DA6FF',
   cyan: '#22D3EE', violet: '#A78BFA', gold: '#FFD700', teal: '#2DD4BF', orange: '#F0883E',
 };
+// contrast contract: C.txt = data/values · C.body = any full sentence or explanation
+// (readable on the dark bg) · C.dim = SHORT labels only · C.muted = true de-emphasis
+// (placeholders, separators, captions) — never sentences, never below 11px for words.
 const F = { xs: 11, sm: 12.5, md: 14, lg: 17, xl: 24 };
+
+// section header used across every detail panel — small caps, letter-spaced, accent
+const SectionHead = ({ label, color, extra }: { label: string; color: string; extra?: any }) => (
+  <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8 }}>
+    <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1.4, color, textTransform: 'uppercase' as const, whiteSpace: 'nowrap' }}>{label}</span>
+    <span style={{ flex: 1, borderBottom: '1px solid ' + C.line, transform: 'translateY(-3px)' }} />
+    {extra}
+  </div>
+);
 
 // ── data model ──────────────────────────────────────────────────────────────
 type Row = Record<string, string>;
@@ -551,16 +563,27 @@ function computeMultibagger(fin: Fin | null, s: Scored, r: Row, fxGrade: string)
       }
       add('pat_consist', 'Earnings-growth consistency', 10, valid >= 4 ? Math.min(1, wins / 7) * 10 : null, valid >= 4 ? wins + ' of ' + valid + ' yrs PAT YoY >15%' : 'insufficient PAT history');
     }
-    // 2 · sales CAGR + acceleration
+    // 2 · sales CAGR + acceleration — BLENDED horizons (v5.2 recalibration).
+    // A single soft 3y print must not zero a 20%+ long-horizon grower:
+    // g = max(cagr3, 0.8×cagr5, 0.7×cagr10) → 8 pts linear from 5% (0) to 25% (full);
+    // +2 acceleration bonus when cagr3>cagr5>cagr10 (capped at weight);
+    // hard 3y deceleration (cagr3 < cagr5 − 8pp) caps the component at 60%.
     const c3 = cagrPct(av(sales, c), av(sales, c - 3), 3);
     const c5 = cagrPct(av(sales, c), av(sales, c - 5), 5);
     const fi = firstNN(sales);
     const c10 = fi >= 0 && c - fi >= 6 ? cagrPct(av(sales, c), av(sales, fi), c - fi) : NaN;
-    if (isFinite(c3)) {
-      const p7 = 7 * (c3 >= 25 ? 1 : lin01(c3, 8, 25));
-      const bonus = isFinite(c5) && isFinite(c10) && c3 > c5 && c5 > c10 ? 3 : isFinite(c10) && c3 > c10 ? 1.5 : 0;
-      add('sales_cagr', 'Sales CAGR + acceleration', 10, p7 + bonus, '3y ' + fxN(c3) + '% · 5y ' + fxN(c5) + '% · 10y ' + fxN(c10) + '%' + (bonus === 3 ? ' — ACCELERATING' : ''));
-    } else add('sales_cagr', 'Sales CAGR + acceleration', 10, null, 'no 3y sales history');
+    const gBlend = Math.max(isFinite(c3) ? c3 : -Infinity, isFinite(c5) ? 0.8 * c5 : -Infinity, isFinite(c10) ? 0.7 * c10 : -Infinity);
+    if (isFinite(gBlend) && gBlend > -Infinity) {
+      let gp = 8 * lin01(gBlend, 5, 25);
+      const accel = isFinite(c3) && isFinite(c5) && isFinite(c10) && c3 > c5 && c5 > c10;
+      const accelHalf = !accel && isFinite(c3) && isFinite(c10) && c3 > c10; // 3y still above the 10y trend
+      const decel = isFinite(c3) && isFinite(c5) && c3 < c5 - 8;
+      if (accel) gp = Math.min(10, gp + 2);
+      else if (accelHalf) gp = Math.min(10, gp + 1);
+      if (decel) gp = Math.min(gp, 0.6 * 10);
+      add('sales_cagr', 'Sales CAGR + acceleration', 10, gp,
+        '3y ' + fxN(c3) + '% · 5y ' + fxN(c5) + '% · 10y ' + fxN(c10) + '% → blended ' + fxN(gBlend) + '%' + (accel ? ' — ACCELERATING' : decel ? ' — 3y decelerating (capped)' : ''));
+    } else add('sales_cagr', 'Sales CAGR + acceleration', 10, null, 'no sales history');
     // 3 · ROCE level + trajectory
     const roceSer: (number | null)[] = fin.eq.map((_, i) => {
       const ce = av(fin.eq, i) + av(fin.res, i) + (isFinite(av(fin.bor, i)) ? av(fin.bor, i) : 0);
@@ -668,15 +691,27 @@ function computeMultibagger(fin: Fin | null, s: Scored, r: Row, fxGrade: string)
         add('runway', 'Size runway', 8, fr * 8, 'mcap ' + fxN(mc, 0) + ' Cr');
       } else add('runway', 'Size runway', 8, null, 'no market cap');
     }
-    // 11 · valuation vs growth
+    // 11 · valuation vs growth — PEG on the BLENDED growth rate (v5.2):
+    // g = blended PAT CAGR (max of 3y, 0.8×5y, 0.7×10y) where available, else the
+    // blended sales g. If g < 5% PEG is not meaningful → 'n/m', score the PE band only.
     {
       const mc = fin.mcap ?? NaN, npL = av(np, cn);
       pe = isFinite(mc) && npL > 0 ? mc / npL : NaN;
-      peg = isFinite(pe) && isFinite(pc3) && pc3 > 0 ? pe / pc3 : NaN;
+      const pc5 = cagrPct(av(np, cn), av(np, cn - 5), 5);
+      const fnp = firstNN(np);
+      const pc10 = fnp >= 0 && cn - fnp >= 6 ? cagrPct(av(np, cn), av(np, fnp), cn - fnp) : NaN;
+      const gPat = Math.max(isFinite(pc3) ? pc3 : -Infinity, isFinite(pc5) ? 0.8 * pc5 : -Infinity, isFinite(pc10) ? 0.7 * pc10 : -Infinity);
+      const gEff = isFinite(gPat) && gPat > -Infinity ? gPat : (isFinite(gBlend) && gBlend > -Infinity ? gBlend : NaN);
+      peg = isFinite(pe) && isFinite(gEff) && gEff >= 5 ? pe / gEff : NaN;
       if (isFinite(pe)) {
-        const p5 = 5 * (isFinite(peg) ? (peg < 1 ? 1 : lin01(2.5 - peg, 0, 1.5)) : 0);
         const p3 = pe >= 18 && pe <= 40 ? 3 : pe < 18 ? 2 : pe <= 50 ? 1 : 0;
-        add('val_growth', 'Valuation vs growth', 8, p5 + p3, 'PE ' + fxN(pe, 1) + ' · PEG ' + fxN(peg, 2));
+        if (isFinite(peg)) {
+          const p5 = 5 * (peg < 1 ? 1 : lin01(2.5 - peg, 0, 1.5));
+          add('val_growth', 'Valuation vs growth', 8, p5 + p3, 'PE ' + fxN(pe, 1) + ' · PEG ' + fxN(peg, 2) + ' (g ' + fxN(gEff) + '%)');
+        } else {
+          // growth too weak/absent for a meaningful PEG — judge the PE band alone
+          add('val_growth', 'Valuation vs growth', 3, p3, 'PE ' + fxN(pe, 1) + ' · PEG n/m (g ' + (isFinite(gEff) ? fxN(gEff) + '% <5' : '—') + ') — PE band only');
+        }
       } else add('val_growth', 'Valuation vs growth', 8, null, 'no PE (loss-making or no mcap)');
     }
   } else {
@@ -913,49 +948,87 @@ function computeForensic(fin: Fin | null, r: Row): FXResult {
   return { score, grade, color: FX_GRADE_COLOR[grade] || C.muted, flags, critical, checks, workbook };
 }
 
-// ── 🎙 CONCALL — heuristic transcript extraction (pure) ─────────────────────
-function extractConcall(text: string): ConcallExtract {
-  const t = text.replace(/\s+/g, ' ');
-  const quotes: { field: string; match: string; snippet: string }[] = [];
-  const snip = (idx: number, len: number) => t.slice(Math.max(0, idx - 120), Math.min(t.length, idx + len + 120));
-  const run = (field: string, re: RegExp, numGroup = 1): { num: number; unit: string; raw: string }[] => {
-    const out: { num: number; unit: string; raw: string }[] = [];
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(t)) && out.length < 40) {
-      const n = parseFloat(String(m[numGroup] ?? '').replace(/,/g, ''));
-      if (isFinite(n)) {
-        out.push({ num: n, unit: String(m[numGroup + 1] ?? '').toLowerCase(), raw: m[0] });
-        quotes.push({ field, match: m[0], snippet: snip(m.index, m[0].length) });
-      }
+// ── 🎙 CONCALL — heuristic transcript extraction (pure, SENTENCE-scoped) ────
+// v5.2 hardening: every signal is read from a single qualifying SENTENCE, never
+// from a raw character window. Agenda headers ("OPERATIONAL HIGHLIGHTS …"),
+// table-of-contents lines and shouty fragments are filtered out up front:
+// a sentence qualifies only if it has ≥4 words, ≤60% uppercase letters and
+// (for numeric signals) is shorter than 300 chars and carries keyword + number.
+const upperFrac = (s: string): number => {
+  const letters = s.replace(/[^A-Za-z]/g, '');
+  if (!letters.length) return 1;
+  return letters.replace(/[^A-Z]/g, '').length / letters.length;
+};
+// "Rs. 312 crores", "Mr. Sharma", initials etc. must not split a sentence
+const ABBR_END = /(?:\b(?:rs|mr|mrs|ms|dr|no|nos|vs|st|jr|sr|inc|ltd|pvt|approx)\.|\b[A-Za-z]\.)$/i;
+function transcriptSentences(text: string): string[] {
+  const out: string[] = [];
+  for (const line of text.split(/[\r\n]+/)) {
+    const parts = line.replace(/([.!?])\s+/g, '$1\u0001').split('\u0001');
+    const merged: string[] = [];
+    for (const p of parts) {
+      if (merged.length && ABBR_END.test(merged[merged.length - 1].trim())) merged[merged.length - 1] += ' ' + p;
+      else merged.push(p);
     }
-    return out;
-  };
-  const utilHits = run('utilization', /utili[sz]ation[^.\d%]{0,50}(\d{1,3}(?:\.\d+)?)\s*(?:%|percent|per\s*cent)/gi).filter((x) => x.num >= 1 && x.num <= 100);
-  const utilArr = utilHits.map((x) => x.num);
-  const obHits = run('orderBook', /order\s*book[^.\d]{0,50}(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d+)?)\s*(crores?|cr\b|billion|bn|mn|million)/gi);
-  const obCr = obHits.filter((x) => /^cr/.test(x.unit)); // only crore units accepted as values
-  const cgHits = run('capexGuidance', /capex[^.\d]{0,60}(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d+)?)\s*(crores?|cr\b)/gi);
-  const timeline: string[] = [];
-  {
-    const re = /(commission\w*|ramp[- ]?up|come on stream|go[- ]?live|operational|stabili[sz]\w+)[^.]{0,80}?(Q[1-4]\s*FY\s*'?\d{2,4}|H[12]\s*FY\s*'?\d{2,4}|FY\s*'?\d{2,4})/gi;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(t)) && timeline.length < 3) {
-      timeline.push(m[0].slice(0, 140));
-      quotes.push({ field: 'timeline', match: m[0], snippet: snip(m.index, m[0].length) });
+    for (const part of merged) {
+      const sn = part.replace(/\s+/g, ' ').trim();
+      if (!sn) continue;
+      if (sn.split(' ').length < 4) continue; // fragments / page numbers / headers
+      if (upperFrac(sn) > 0.6) continue; // ALL-CAPS agenda lines are never signals
+      out.push(sn);
     }
   }
-  const anchorHits = run('anchorPct', /(booked|committed|tied[- ]?up|visibility|contracted)[^.\d%]{0,50}(\d{1,3})\s*(?:%|percent|per\s*cent)/gi, 2).filter((x) => x.num >= 1 && x.num <= 100);
-  const OPT = ['strong demand', 'robust', 'healthy order', 'record', 'all[- ]?time high', 'confident', 'upgrade', 'ahead of schedule', 'ramping well', 'sold out', 'capacity booked'];
-  const CAU = ['headwind', 'challenge', 'delay', 'deferred', 'pricing pressure', 'slowdown', 'muted', 'below expectation', 'postponed', 'underutili', 'cost overrun', 'demand weak'];
-  const count = (words: string[]) => words.reduce((n, w) => n + (t.match(new RegExp(w, 'gi'))?.length || 0), 0);
-  const optimism = count(OPT), caution = count(CAU);
+  return out;
+}
+function extractConcall(text: string): ConcallExtract {
+  const sents = transcriptSentences(text);
+  const quotes: { field: string; match: string; snippet: string }[] = [];
+  // scan sentences for keyword + number; quote = the full source sentence
+  const scan = (field: string, kw: RegExp, numRe: RegExp, lo = -Infinity, hi = Infinity): number[] => {
+    const vals: number[] = [];
+    for (const s of sents) {
+      if (s.length >= 300 || !kw.test(s)) continue;
+      const m = s.match(numRe);
+      if (!m) continue;
+      const n = parseFloat(String(m[1]).replace(/,/g, ''));
+      if (!isFinite(n) || n < lo || n > hi) continue;
+      vals.push(n);
+      quotes.push({ field, match: m[0], snippet: s });
+      if (vals.length >= 12) break;
+    }
+    return vals;
+  };
+  const utilArr = scan('utilization', /utili[sz]ation|capacity utili/i, /(\d{1,3}(?:\.\d+)?)\s*(?:%|per\s*cent|percent)/i, 1, 100);
+  const obArr = scan('orderBook', /order\s*book|order\s*inflow|open orders/i, /(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d+)?)\s*(?:crores?|cr\b)/i, 1);
+  const cgArr = scan('capexGuidance', /capex|capital expenditure|capital outlay/i, /(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d+)?)\s*(?:crores?|cr\b)/i, 1);
+  const anchorArr = scan('anchorPct', /\b(booked|committed|tied[- ]?up|visibility|contracted)\b/i, /(\d{1,3})\s*(?:%|per\s*cent|percent)/i, 1, 100);
+  // timeline: only sentences with BOTH a commissioning/ramp verb AND a dated period
+  const timeline: string[] = [];
+  {
+    const verb = /commission\w*|ramp[- ]?up|ramping|come[s]? on stream|go[- ]?live|operational|stabili[sz]\w+|start production|commercial production/i;
+    const when = /Q[1-4]\s*(?:of\s*)?FY\s*'?\d{2,4}|H[12]\s*FY\s*'?\d{2,4}|FY\s*'?\d{2,4}|\b(january|february|march|april|may|june|july|august|september|october|november|december)\b[\s,]*\d{4}|quarter ended/i;
+    for (const s of sents) {
+      if (s.length >= 300 || !verb.test(s) || !when.test(s)) continue;
+      timeline.push(s.length > 220 ? s.slice(0, 217) + '…' : s);
+      quotes.push({ field: 'timeline', match: (s.match(when) || [s.slice(0, 40)])[0], snippet: s });
+      if (timeline.length >= 3) break;
+    }
+  }
+  // tone: counted over matched SENTIMENT SENTENCES only (n-counts surfaced in UI)
+  const OPT = /strong demand|robust|healthy order|record (quarter|revenue|order|year|high)|all[- ]?time high|confident|upgrade|ahead of schedule|ramping well|sold out|capacity booked|strong traction|order wins/i;
+  const CAU = /headwind|challenge|delay|deferred|pricing pressure|slowdown|muted|below expectation|postponed|underutili|cost overrun|demand weak|cautious|softness/i;
+  let optimism = 0, caution = 0;
+  for (const s of sents) {
+    if (OPT.test(s)) optimism++;
+    if (CAU.test(s)) caution++;
+  }
   return {
     utilization: utilArr.length ? utilArr[utilArr.length - 1] : null,
     utilArr,
-    orderBook: obCr.length ? Math.max(...obCr.map((x) => x.num)) : null,
-    capexGuidance: cgHits.length ? Math.max(...cgHits.map((x) => x.num)) : null,
+    orderBook: obArr.length ? Math.max(...obArr) : null,
+    capexGuidance: cgArr.length ? Math.max(...cgArr) : null,
     timeline,
-    anchorPct: anchorHits.length ? Math.max(...anchorHits.map((x) => x.num)) : null,
+    anchorPct: anchorArr.length ? Math.max(...anchorArr) : null,
     optimism, caution,
     tone: optimism + caution > 0 ? optimism / (optimism + caution) : null,
     quotes,
@@ -966,7 +1039,7 @@ function extractConcall(text: string): ConcallExtract {
 const VERDICT_COLOR: Record<string, string> = {
   '☠ DO NOT TOUCH': C.red, '🧩 NEEDS DATA': C.violet, '🔍 FORENSIC REVIEW FIRST': C.orange,
   '🎯 PRIME': C.gold, '⏳ PRIME SETUP': C.teal, '🌱 COMPOUNDER': C.green, '🏗 CAPEX PLAY': C.cyan,
-  '⚙ CYCLE ONLY': C.blue, '💎 QUALITY HOLD': C.violet, '🗑 DROP': C.muted, '👀 MONITOR': C.amber,
+  '⚙ CYCLE ONLY': C.blue, '💎 QUALITY HOLD': C.violet, '🗑 DROP': C.dim, '👀 MONITOR': C.amber,
 };
 function computeVerdict(s: Scored, mb: MBResult, fx: FXResult, cc: CCState | null): Verdict {
   const capexBuy = s.decision === 'ANCHOR BUY' || s.decision === 'CORE BUY';
@@ -1131,17 +1204,27 @@ async function extractPptxText(buf: ArrayBuffer): Promise<string> {
   return parts.join('\n');
 }
 
-// label: quarter/FY pattern from the filename (else the first 2k of the text), else upload date
+// period detection: quarter/FY tokens from filename AND the first 3KB of text.
+// Handles "Q4 & FY26", "Q2FY25", "Q1 and FY 2026", "quarter ended March 2026".
+function findPeriod(s: string): string | null {
+  const head = s.slice(0, 3072);
+  const q = head.match(/Q([1-4])\s*(?:and|&)?[\s_\-]*(?:FY)?[\s_\-'&]*((?:20)?\d{2})\b/i);
+  if (q) return 'Q' + q[1] + (/(and|&)/i.test(q[0].slice(2)) ? ' & ' : ' ') + 'FY' + (q[2].length === 4 ? q[2].slice(2) : q[2]);
+  const qe = head.match(/quarter\s+(?:and\s+\w+\s+)?ended\s+([A-Za-z]+)[\s,]+(\d{4})/i);
+  if (qe) {
+    const map: Record<string, [string, number]> = { jun: ['Q1', 1], sep: ['Q2', 1], dec: ['Q3', 1], mar: ['Q4', 0] };
+    const hit = map[qe[1].toLowerCase().slice(0, 3)];
+    if (hit) return hit[0] + ' FY' + String((parseInt(qe[2], 10) + hit[1]) % 100).padStart(2, '0');
+    return 'Quarter ended ' + qe[1] + ' ' + qe[2];
+  }
+  const fy = head.match(/FY[\s_\-']*((?:20)?\d{2})\b/i);
+  if (fy) return 'FY' + (fy[1].length === 4 ? fy[1].slice(2) : fy[1]);
+  return null;
+}
+// label: period derived from filename tokens AND the text head — never "untitled"
 function transcriptLabel(fname: string, textHead: string): string {
-  const base = fname.replace(/\.(pdf|pptx?|txt)$/i, '');
-  const find = (s: string): string | null => {
-    const q = s.match(/Q([1-4])[\s_\-]*(?:FY)?[\s_\-']*((?:20)?\d{2})/i);
-    if (q) return 'Q' + q[1] + ' FY' + (q[2].length === 4 ? q[2].slice(2) : q[2]);
-    const fy = s.match(/FY[\s_\-']*((?:20)?\d{2})/i);
-    if (fy) return 'FY' + (fy[1].length === 4 ? fy[1].slice(2) : fy[1]);
-    return null;
-  };
-  const d = find(base) || find(textHead.slice(0, 2000));
+  const base = fname.replace(/\.(pdf|pptx?|txt)$/i, '').replace(/[-_]+/g, ' ').trim();
+  const d = findPeriod(base) || findPeriod(textHead);
   return d ? d + ' · ' + base : base + ' · ' + new Date().toLocaleDateString();
 }
 
@@ -1413,7 +1496,7 @@ const TierBars = ({ s, w = 30 }: { s: Scored; w?: number }) => (
       const col = pct >= 0.7 ? C.green : pct >= 0.4 ? C.amber : C.red;
       return (
         <div key={t.label} style={{ width: w }}>
-          <div style={{ fontSize: 8, color: C.muted, textAlign: 'center', lineHeight: '8px' }}>{t.label}</div>
+          <div style={{ fontSize: 9, color: C.dim, textAlign: 'center', lineHeight: '10px' }}>{t.label}</div>
           <div style={{ height: 5, borderRadius: 3, background: C.line, overflow: 'hidden' }}>
             <div style={{ width: Math.round(pct * 100) + '%', height: '100%', background: col }} />
           </div>
@@ -1437,7 +1520,9 @@ const StageChip = ({ stage, big }: { stage: string; big?: boolean }) => {
   );
 };
 
-// T0→T5 timeline with the company's current position marked
+// T0→T5 horizontal stepper — fixed-height nodes (dot + stage + lag), connector
+// lines between them, nowrap + horizontal scroll on overflow. Never collapses
+// into a vertical run. Current position gets a ring in the band color.
 const Timeline = ({ s }: { s: Scored }) => {
   const noCycle = s.stage === '—';
   const m = s.stage && !noCycle ? STAGE_META[s.stage] : null;
@@ -1446,65 +1531,80 @@ const Timeline = ({ s }: { s: Scored }) => {
     ['T3', 'Earnings inflect'], ['T4', 'Recognition'], ['T5', 'Peak / new capex'],
   ];
   const lags = ['12-24m', '6-12m', '6-12m', '6-12m', '12-24m'];
-  const pct = m ? (m.pos / 5) * 100 : -10;
+  const pos = m ? m.pos : -1; // fractional 0..5
+  const curIdx = m ? Math.min(5, Math.floor(pos)) : -1;
   return (
-    <div style={{ background: C.bg, border: '1px solid ' + C.line, borderRadius: 10, padding: '14px 16px 8px', opacity: noCycle ? 0.45 : 1 }}>
-      <div style={{ position: 'relative', height: 4, background: C.line, borderRadius: 2, margin: '12px 6px 4px' }}>
-        <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: pct + '%', background: 'linear-gradient(90deg,' + C.violet + ',' + (m ? m.color : C.cyan) + ')', borderRadius: 2 }} />
-        {m && (
-          <div style={{ position: 'absolute', left: 'calc(' + pct + '% - 9px)', top: -7 }}>
-            <div style={{ width: 18, height: 18, borderRadius: '50%', background: m.color, border: '3px solid ' + C.bg, boxShadow: '0 0 8px ' + m.color }} />
-          </div>
-        )}
-        {T.map(([t], i) => (
-          <div key={t} style={{ position: 'absolute', left: 'calc(' + (i / 5) * 100 + '% - 1px)', top: -3, width: 2, height: 10, background: C.muted }} />
-        ))}
-      </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9.5, color: C.dim, margin: '8px 0 2px' }}>
-        {T.map(([t, lbl], i) => (
-          <div key={t} style={{ textAlign: i === 0 ? 'left' : i === 5 ? 'right' : 'center', width: '16.6%' }}>
-            <b style={{ color: C.txt }}>{t}</b> {lbl}
-            {i < 5 && <div style={{ color: C.muted, fontSize: 8.5 }}>→ {lags[i]}</div>}
-          </div>
-        ))}
+    <div style={{ background: C.bg, border: '1px solid ' + C.line, borderRadius: 10, padding: '14px 16px 12px' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', flexWrap: 'nowrap', overflowX: 'auto', paddingBottom: 2, opacity: noCycle ? 0.55 : 1 }}>
+        {T.map(([t, lbl], i) => {
+          const done = m !== null && i <= pos;
+          const isCur = i === curIdx;
+          const dotCol = isCur ? m!.color : done ? m!.color + 'AA' : C.line;
+          return (
+            <Fragment key={t}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 92, flexShrink: 0 }}>
+                <div style={{
+                  width: 14, height: 14, borderRadius: '50%', marginTop: 4, boxSizing: 'border-box',
+                  background: done || isCur ? dotCol : C.panel2,
+                  border: '2px solid ' + (done || isCur ? dotCol : C.dim),
+                  boxShadow: isCur ? '0 0 0 4px ' + m!.color + '33, 0 0 10px ' + m!.color + '88' : 'none',
+                }} />
+                <div style={{ fontSize: F.xs, fontWeight: 800, marginTop: 7, whiteSpace: 'nowrap', color: isCur ? m!.color : done ? C.txt : C.dim }}>
+                  {t} <span style={{ fontWeight: isCur ? 800 : 600 }}>{lbl}</span>
+                </div>
+                {isCur && <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: 0.8, color: m!.color, marginTop: 2 }}>● STAGE {s.stage}</div>}
+              </div>
+              {i < 5 && (
+                <div style={{ flex: 1, minWidth: 36, display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 10 }}>
+                  <div style={{ height: 2, width: '100%', borderRadius: 1, background: m && i < pos ? m.color + '88' : C.line }} />
+                  <div style={{ fontSize: 10, color: C.dim, marginTop: 5, whiteSpace: 'nowrap' }}>{lags[i]}</div>
+                </div>
+              )}
+            </Fragment>
+          );
+        })}
       </div>
       {m && (
-        <div style={{ marginTop: 8, fontSize: F.xs, color: m.color, fontWeight: 700 }}>
-          ● Stage {s.stage} — {m.label} <span style={{ color: C.dim, fontWeight: 400 }}>· {m.note} · framework size {m.size}</span>
+        <div style={{ marginTop: 10, fontSize: F.sm, lineHeight: 1.55, borderLeft: '3px solid ' + m.color, background: m.color + '0D', borderRadius: '0 8px 8px 0', padding: '8px 12px' }}>
+          <b style={{ color: m.color }}>Stage {s.stage} — {m.label}</b>{' '}
+          <span style={{ color: C.body }}>{m.note}</span>{' '}
+          <span style={{ color: C.body }}>· framework size {m.size}</span>
         </div>
       )}
       {!m && (
-        <div style={{ marginTop: 8, fontSize: F.xs, color: C.muted }}>
+        <div style={{ marginTop: 10, fontSize: F.sm, lineHeight: 1.55, borderLeft: '3px solid ' + C.blue, background: C.blue + '0D', borderRadius: '0 8px 8px 0', padding: '8px 12px', color: C.body }}>
           {noCycle
-            ? 'NO MAJOR CYCLE — capex is routine/serial-brownfield scale, so the T0→T5 arc does not apply. Re-arm on a real capex announcement.'
-            : 'No active capex cycle in the telemetry — nothing to place on the arc yet.'}
+            ? <><b style={{ color: C.blue }}>NO MAJOR CYCLE</b> — capex is running at routine, serial-brownfield scale, so the T0→T5 multibagger arc does not apply to this name. Judge it as a steady compounder and re-arm the timeline on a real capex announcement.</>
+            : <><b style={{ color: C.blue }}>NO ACTIVE CYCLE IN TELEMETRY</b> — nothing to place on the arc yet; the stepper arms when commissioning telemetry appears.</>}
         </div>
       )}
     </div>
   );
 };
 
-// year-by-year capex strip (clean bars, not a wall of text)
+// year-by-year capex strip — aligned mini-bars: value on top, bar sized by
+// value, year label underneath. Fixed lane heights keep the row perfectly level.
 const CapexStrip = ({ s }: { s: Scored }) => {
   const ser = s.capexSeries.filter((d) => d.y);
   if (!ser.length) return null;
   const mx = Math.max(...ser.map((d) => d.v), 1);
   return (
-    <div style={{ background: C.bg, border: '1px solid ' + C.line, borderRadius: 10, padding: '10px 12px' }}>
-      <div style={{ fontSize: F.xs, fontWeight: 800, color: C.orange, marginBottom: 6 }}>CAPEX BY YEAR (Cr, derived from ΔNB + ΔCWIP + Dep)</div>
-      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 64 }}>
+    <div style={{ background: C.bg, border: '1px solid ' + C.line, borderRadius: 10, padding: '10px 14px 12px' }}>
+      <SectionHead label="Capex by year" color={C.orange} extra={<span style={{ fontSize: 10, color: C.dim, whiteSpace: 'nowrap' }}>Cr · ΔNB + ΔCWIP + Dep</span>} />
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
         {ser.map((d, i) => {
           const lastN = i >= ser.length - 1;
           return (
-            <div key={d.y + i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }} title={d.y + ': ' + d.v + ' Cr'}>
-              <div style={{ fontSize: 8.5, color: lastN ? C.orange : C.muted, fontWeight: lastN ? 800 : 400 }}>{d.v >= 1000 ? (d.v / 1000).toFixed(1) + 'k' : d.v}</div>
-              <div style={{ width: '70%', maxWidth: 26, height: Math.max(2, Math.round((d.v / mx) * 42)), background: lastN ? C.orange : C.blue + '88', borderRadius: '3px 3px 0 0' }} />
-              <div style={{ fontSize: 8.5, color: C.muted }}>{d.y}</div>
+            <div key={d.y + i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }} title={d.y + ': ' + d.v + ' Cr'}>
+              <div style={{ fontSize: 10.5, fontVariantNumeric: 'tabular-nums', color: lastN ? C.orange : C.body, fontWeight: lastN ? 800 : 600, marginBottom: 3 }}>{d.v >= 1000 ? (d.v / 1000).toFixed(1) + 'k' : d.v}</div>
+              <div style={{ width: '72%', maxWidth: 30, height: Math.max(3, Math.round((d.v / mx) * 52)), background: lastN ? C.orange : C.blue + '77', borderRadius: '3px 3px 0 0' }} />
+              <div style={{ width: '100%', borderTop: '1px solid ' + C.line, marginTop: 0 }} />
+              <div style={{ fontSize: 10, color: lastN ? C.dim : C.muted, fontWeight: lastN ? 700 : 400, marginTop: 3 }}>{d.y}</div>
             </div>
           );
         })}
       </div>
-      {s.cycleNote && <div style={{ marginTop: 6, fontSize: F.xs, color: s.cycleNote.includes('DELIVERED ✓') ? C.green : s.cycleNote.includes('BORDERLINE') ? C.amber : C.red }}>🕰 {s.cycleNote}</div>}
+      {s.cycleNote && <div style={{ marginTop: 8, fontSize: F.sm, color: s.cycleNote.includes('DELIVERED ✓') ? C.green : s.cycleNote.includes('BORDERLINE') ? C.amber : C.red }}>🕰 {s.cycleNote}</div>}
     </div>
   );
 };
@@ -1689,8 +1789,12 @@ export default function CapexTrackerPage() {
       if (!confirm('This company already has 8 transcripts (the cap). Delete the oldest to make room?')) return;
       list = list.slice(1);
     }
+    // never "untitled": derive period from the text head, else "{Company short} · {date}"
+    const coShort = company.split(/\s+/).slice(0, 2).join(' ');
+    const period = findPeriod(body);
+    const autoLabel = (period ? period + ' · ' : '') + coShort + (period ? '' : ' · ' + new Date().toLocaleDateString());
     const entry: ConcallEntry = {
-      id: uid(), label: label.trim() || 'untitled call', addedAt: new Date().toISOString(),
+      id: uid(), label: label.trim() || autoLabel, addedAt: new Date().toISOString(),
       chars: body.length, text: body, extract: extractConcall(body),
     };
     if (persistConcalls({ ...concallsRef.current, [k]: [...list, entry] })) {
@@ -1745,7 +1849,7 @@ export default function CapexTrackerPage() {
 
   const setSort = (k: string) => { if (sortKey === k) setSortDir((d) => (d === 1 ? -1 : 1)); else { setSortKey(k); setSortDir(-1); } };
   const fmt = (n: number, d = 1) => (isNaN(n) ? '—' : n.toFixed(d));
-  const card: any = { background: C.panel, border: '1px solid ' + C.line, borderRadius: 12, padding: 14 };
+  const card: any = { background: C.panel, border: '1px solid ' + C.line, borderRadius: 12, padding: 16 };
   const pill = (active: boolean, color: string): any => ({
     fontSize: F.xs, padding: '4px 10px', borderRadius: 14, cursor: 'pointer', fontWeight: 800,
     background: active ? color + '26' : C.panel2, border: '1px solid ' + (active ? color : C.line), color: active ? color : C.dim,
@@ -1823,123 +1927,152 @@ export default function CapexTrackerPage() {
     );
   };
 
-  // current value precedence mirrors the engine: clean → resolver → (est)
+  // current value precedence mirrors the engine: clean → resolver → (est).
+  // Inputs are grouped under DEMAND / OWNERSHIP / PROJECT / CONTEXT mini-headers
+  // with one uniform 28px control height and ≥11px labels.
+  const EDIT_GROUPS: [string, string[]][] = [
+    ['Demand', ['Capacity Utilization %', 'Anchor Demand %']],
+    ['Ownership', ['Promoter Holding %', 'Promoter Pledge %']],
+    ['Project', ['Internal funding %', 'Brownfield', 'Cycle Position', 'Cost Overrun History', 'Working Capital Trend', 'Prior Capex Success']],
+    ['Context', ['Policy Support', 'PE vs 5-yr Mean', 'Import Substitution', 'Export Opportunity', 'Competitive Moat', 'Industry']],
+  ];
   const Editor = ({ s }: { s: Scored }) => {
     const h = resolveHeaders(Object.keys(s.raw));
-    const inputStyle: any = { background: C.bg, border: '1px solid ' + C.line, color: C.txt, borderRadius: 6, padding: '3px 6px', fontSize: F.xs, width: '100%' };
+    const inputStyle: any = { background: C.bg, border: '1px solid ' + C.line, color: C.txt, borderRadius: 6, padding: '0 8px', fontSize: F.xs, width: '100%', height: 28, boxSizing: 'border-box' };
+    const renderField = (canonical: string) => {
+      const tuple = EDIT_FIELDS.find(([cn]) => cn === canonical);
+      if (!tuple) return null;
+      const [, hkey, kind] = tuple;
+      const clean = String(s.raw[canonical] ?? '').trim();
+      const col = h[hkey];
+      const resolved = col && col !== canonical + ' (est)' ? String(s.raw[col] ?? '').trim() : '';
+      const est = String(s.raw[canonical + ' (est)'] ?? '').trim();
+      const cur = clean || resolved || est;
+      const isEst = !clean && !resolved && !!est;
+      return (
+        <label key={canonical} style={{ fontSize: 11, fontWeight: 600, color: isEst ? C.amber : C.body, display: 'grid', gap: 3 }}>
+          <span>{canonical}{isEst ? ' · est' : ''}</span>
+          {kind === 'num' ? (
+            <input defaultValue={cur} onBlur={(e) => { if (e.target.value !== cur) updateRow(s.name, canonical, e.target.value); }} style={inputStyle} />
+          ) : (
+            <select value={cur} onChange={(e) => updateRow(s.name, canonical, e.target.value)} style={inputStyle}>
+              {(kind as string[]).map((o) => <option key={o} value={o}>{o || '—'}</option>)}
+              {cur && !(kind as string[]).includes(cur) && <option value={cur}>{cur}</option>}
+            </select>
+          )}
+        </label>
+      );
+    };
     return (
-      <div style={{ marginTop: 10, borderTop: '1px dashed ' + C.line, paddingTop: 8 }}>
-        <div style={{ fontSize: F.xs, fontWeight: 800, color: C.violet, marginBottom: 6 }}>
-          ✍️ FILL / OVERRIDE THE QUALITATIVE FACTORS (auto-saves, rescores instantly — manual entries beat (est) fills)
-        </div>
+      <div style={{ marginTop: 2, borderTop: '1px dashed ' + C.line, paddingTop: 10 }}>
+        <SectionHead label="✍️ Editor" color={C.violet} extra={<span style={{ fontSize: 10, color: C.dim, whiteSpace: 'nowrap' }}>auto-saves · rescores instantly · manual beats (est)</span>} />
         <ConcallChips s={s} />
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 6 }}>
-          {EDIT_FIELDS.map(([canonical, hkey, kind]) => {
-            const clean = String(s.raw[canonical] ?? '').trim();
-            const col = h[hkey];
-            const resolved = col && col !== canonical + ' (est)' ? String(s.raw[col] ?? '').trim() : '';
-            const est = String(s.raw[canonical + ' (est)'] ?? '').trim();
-            const cur = clean || resolved || est;
-            const isEst = !clean && !resolved && !!est;
-            return (
-              <label key={canonical} style={{ fontSize: 10, color: isEst ? C.amber : C.dim }}>
-                {canonical}{isEst ? ' · est' : ''}
-                {kind === 'num' ? (
-                  <input defaultValue={cur} onBlur={(e) => { if (e.target.value !== cur) updateRow(s.name, canonical, e.target.value); }} style={inputStyle} />
-                ) : (
-                  <select value={cur} onChange={(e) => updateRow(s.name, canonical, e.target.value)} style={inputStyle}>
-                    {(kind as string[]).map((o) => <option key={o} value={o}>{o || '—'}</option>)}
-                    {cur && !(kind as string[]).includes(cur) && <option value={cur}>{cur}</option>}
-                  </select>
-                )}
-              </label>
-            );
-          })}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14, alignItems: 'start' }}>
+          {EDIT_GROUPS.map(([g, fields]) => (
+            <div key={g}>
+              <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.4, color: C.dim, textTransform: 'uppercase' as const, borderBottom: '1px solid ' + C.line, paddingBottom: 3, marginBottom: 7 }}>{g}</div>
+              <div style={{ display: 'grid', gap: 7 }}>{fields.map(renderField)}</div>
+            </div>
+          ))}
         </div>
       </div>
     );
   };
 
-  // ── expanded detail: entry banner → timeline → telemetry → factors → editor ─
+  // ── expanded detail: VERDICT → TIMELINE → TELEMETRY → CAPEX BY YEAR →
+  //    21-FACTOR BREAKDOWN → TRIGGERS → EDITOR, one section-header style ──────
   const Detail = ({ s }: { s: Scored }) => {
     const chip = (txt: string, col: string): any => ({
-      fontSize: F.xs, padding: '3px 9px', borderRadius: 8, fontWeight: 700,
-      background: col + '14', border: '1px solid ' + col + '44', color: col, whiteSpace: 'nowrap' as const,
+      fontSize: F.xs, padding: '4px 10px', borderRadius: 8, fontWeight: 700, lineHeight: 1.45,
+      background: col + '14', border: '1px solid ' + col + '44', color: col,
     });
     const tile = (label: string, val: string, col: string) => (
-      <div style={{ background: C.bg, border: '1px solid ' + C.line, borderRadius: 8, padding: '6px 10px', minWidth: 96 }}>
-        <div style={{ fontSize: 9, color: C.muted, fontWeight: 700, letterSpacing: 0.4 }}>{label}</div>
-        <div style={{ fontSize: F.md, fontWeight: 900, color: col }}>{val}</div>
+      <div key={label} style={{ background: C.bg, border: '1px solid ' + C.line, borderRadius: 8, padding: '8px 10px 7px', display: 'grid', gap: 3, alignContent: 'start' }}>
+        <div style={{ fontSize: 10, color: C.dim, fontWeight: 700, letterSpacing: 0.7, whiteSpace: 'nowrap' }}>{label}</div>
+        <div style={{ fontSize: 16, fontWeight: 900, color: col, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1 }}>{val}</div>
       </div>
     );
     return (
-      <div style={{ background: C.panel2, border: '1px solid ' + C.line, borderRadius: 10, padding: 12, margin: '6px 0 10px', display: 'grid', gap: 10 }}>
-        {/* ENTRY VERDICT banner */}
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', background: s.entryColor + '10', border: '1px solid ' + s.entryColor + '55', borderRadius: 10, padding: '10px 14px' }}>
-          <div style={{ fontSize: 30, fontWeight: 900, color: s.decisionColor, lineHeight: 1 }}>{s.final}</div>
-          <div style={{ display: 'grid', gap: 2 }}>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <span style={{ fontSize: F.xs, fontWeight: 900, padding: '2px 10px', borderRadius: 10, background: s.decisionColor + '22', color: s.decisionColor, border: '1px solid ' + s.decisionColor + '55' }}>{s.decision}</span>
-              <StageChip stage={s.stage} />
-              <span style={{ fontSize: F.xs, color: C.dim }}>{s.stageLabel}</span>
-            </div>
-            <div style={{ fontSize: F.sm, color: s.entryColor, fontWeight: 700 }}>{s.entry}</div>
-          </div>
-        </div>
-        <Timeline s={s} />
-        {/* telemetry tiles + cross-checks */}
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {s.phase && tile('PHASE', s.phase, s.phase === 'BUILDING' ? C.orange : s.phase === 'RAMPING' ? C.green : C.dim)}
-          {!isNaN(s.capexToSales) && tile('CAPEX/SALES', s.capexToSales.toFixed(1) + '%', C.txt)}
-          {!isNaN(s.cwipRatio) && tile('CWIP/BLOCK', s.cwipRatio.toFixed(0) + '%', s.cwipRatio > 30 ? C.amber : C.txt)}
-          {!isNaN(s.capexAccel) && tile('SPEND ACCEL', s.capexAccel.toFixed(1) + 'x', s.capexAccel > 1.6 ? C.orange : C.txt)}
-          {!isNaN(s.netDebtEbitda) && tile('NET DEBT/EBITDA', s.netDebtEbitda < 0 ? 'net cash' : s.netDebtEbitda.toFixed(2) + 'x', s.netDebtEbitda > 2 ? C.red : C.green)}
-          {!isNaN(s.capexPreRev) && tile('CYCLE CAPEX/PRE-REV', s.capexPreRev.toFixed(0) + '%', s.capexPreRev >= 30 && s.capexPreRev <= 60 ? C.green : s.capexPreRev > 100 ? C.red : C.amber)}
-          {!isNaN(s.utilEff) && tile('EFF. UTIL (est)', s.utilEff.toFixed(0) + '%', s.utilEff > 90 ? C.red : s.utilEff >= 30 && s.utilEff < 70 ? C.gold : C.txt)}
-          {!isNaN(s.selfFund) && tile('OCF/CAPEX 3Y', s.selfFund.toFixed(0) + '%', s.selfFund >= 70 ? C.green : s.selfFund >= 40 ? C.amber : C.red)}
-          {!isNaN(s.deChange) && tile('ΔD/E 2Y', (s.deChange >= 0 ? '+' : '') + s.deChange.toFixed(2), s.deChange > 0.3 ? C.red : C.txt)}
-        </div>
-        {!isNaN(s.capexPreRev) && (
-          <div style={{ fontSize: F.xs, color: C.dim, marginTop: -4 }}>
-            Framework sweet spot: cycle capex 30-60% of pre-capex revenue.{' '}
-            <b style={{ color: s.capexPreRev >= 30 && s.capexPreRev <= 60 ? C.green : s.capexPreRev > 100 ? C.red : C.amber }}>
-              {s.capexPreRev < 30 ? 'Below 30% — lever too small for multibagger math.' : s.capexPreRev <= 60 ? 'IN the sweet spot.' : s.capexPreRev <= 100 ? 'Above 60% — execution + leverage risk rising.' : 'Way above — bet-the-company build.'}
-            </b>{' '}Net Debt/EBITDA rule: &lt;2x clean at peak capex; &gt;3x for 2 quarters = mechanical reject.
-          </div>
-        )}
-        {(s.watch.length > 0 || s.sells.length > 0) && (
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {s.watch.map((w, i) => <span key={'w' + i} style={chip('🚨 ' + w, C.red)}>🚨 {w}</span>)}
-            {s.sells.map((w, i) => <span key={'s' + i} style={chip('📤 ' + w, C.amber)}>📤 {w}</span>)}
-          </div>
-        )}
-        <CapexStrip s={s} />
-        {/* 21 factors grouped by tier with fill bars */}
+      <div style={{ background: C.panel2, border: '1px solid ' + C.line, borderRadius: 10, padding: 16, margin: '6px 0 10px', display: 'grid', gap: 14 }}>
+        {/* ── VERDICT ── */}
         <div>
-          <div style={{ fontSize: F.xs, fontWeight: 800, color: C.cyan, marginBottom: 6 }}>
-            21-FACTOR QUALITY BREAKDOWN — base {s.base} × industry {s.mult.toFixed(2)}{s.dbCount >= 3 ? ' → CAPPED 30 (deal-breakers)' : ''} = <b style={{ color: s.decisionColor }}>{s.final}</b>
-            <span style={{ color: C.dim, fontWeight: 400 }}> · measured {s.base}/{s.availMax} ({s.measuredPct}%) · confidence {s.confidence}{s.gaps ? ' · ' + s.gaps + ' gaps' : ''}{s.estUsed ? ' · ' + s.estUsed + ' est' : ''}</span>
+          <SectionHead label="Verdict" color={s.entryColor} />
+          <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap', background: s.entryColor + '10', border: '1px solid ' + s.entryColor + '55', borderRadius: 10, padding: '12px 16px' }}>
+            <div style={{ fontSize: 34, fontWeight: 900, color: s.decisionColor, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>{s.final}</div>
+            <div style={{ display: 'grid', gap: 4, flex: 1, minWidth: 260 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: F.xs, fontWeight: 900, padding: '2px 10px', borderRadius: 10, background: s.decisionColor + '22', color: s.decisionColor, border: '1px solid ' + s.decisionColor + '55' }}>{s.decision}</span>
+                <StageChip stage={s.stage} />
+                <span style={{ fontSize: F.xs, fontWeight: 700, color: C.dim, letterSpacing: 0.5 }}>{s.stageLabel}</span>
+              </div>
+              <div style={{ fontSize: F.sm, color: s.entryColor, fontWeight: 700, lineHeight: 1.5 }}>{s.entry}</div>
+            </div>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: 6 }}>
+        </div>
+        {/* ── TIMELINE ── */}
+        <div>
+          <SectionHead label="Timeline — T0→T5 arc" color={C.violet} />
+          <Timeline s={s} />
+        </div>
+        {/* ── TELEMETRY ── */}
+        <div>
+          <SectionHead label="Telemetry" color={C.cyan} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(132px, 1fr))', gap: 8 }}>
+            {s.phase ? tile('PHASE', s.phase, s.phase === 'BUILDING' ? C.orange : s.phase === 'RAMPING' ? C.green : C.txt) : null}
+            {!isNaN(s.capexToSales) && tile('CAPEX / SALES', s.capexToSales.toFixed(1) + '%', C.txt)}
+            {!isNaN(s.cwipRatio) && tile('CWIP / BLOCK', s.cwipRatio.toFixed(0) + '%', s.cwipRatio > 30 ? C.amber : C.txt)}
+            {!isNaN(s.capexAccel) && tile('SPEND ACCEL', s.capexAccel.toFixed(1) + 'x', s.capexAccel > 1.6 ? C.orange : C.txt)}
+            {!isNaN(s.netDebtEbitda) && tile('NET DEBT / EBITDA', s.netDebtEbitda < 0 ? 'net cash' : s.netDebtEbitda.toFixed(2) + 'x', s.netDebtEbitda > 2 ? C.red : C.green)}
+            {!isNaN(s.capexPreRev) && tile('CYCLE CAPEX / PRE-REV', s.capexPreRev.toFixed(0) + '%', s.capexPreRev >= 30 && s.capexPreRev <= 60 ? C.green : s.capexPreRev > 100 ? C.red : C.amber)}
+            {!isNaN(s.utilEff) && tile('EFF. UTIL (EST)', s.utilEff.toFixed(0) + '%', s.utilEff > 90 ? C.red : s.utilEff >= 30 && s.utilEff < 70 ? C.gold : C.txt)}
+            {!isNaN(s.selfFund) && tile('OCF / CAPEX 3Y', s.selfFund.toFixed(0) + '%', s.selfFund >= 70 ? C.green : s.selfFund >= 40 ? C.amber : C.red)}
+            {!isNaN(s.deChange) && tile('Δ D/E 2Y', (s.deChange >= 0 ? '+' : '') + s.deChange.toFixed(2), s.deChange > 0.3 ? C.red : C.txt)}
+          </div>
+          {!isNaN(s.capexPreRev) && (
+            <div style={{ fontSize: F.sm, color: C.body, lineHeight: 1.6, marginTop: 8 }}>
+              Framework sweet spot: cycle capex 30-60% of pre-capex revenue.{' '}
+              <b style={{ color: s.capexPreRev >= 30 && s.capexPreRev <= 60 ? C.green : s.capexPreRev > 100 ? C.red : C.amber }}>
+                {s.capexPreRev < 30 ? 'Below 30% — lever too small for multibagger math.' : s.capexPreRev <= 60 ? 'IN the sweet spot.' : s.capexPreRev <= 100 ? 'Above 60% — execution + leverage risk rising.' : 'Way above — bet-the-company build.'}
+              </b>{' '}Net Debt/EBITDA rule: &lt;2x clean at peak capex; &gt;3x for 2 quarters = mechanical reject.
+            </div>
+          )}
+        </div>
+        {/* ── CAPEX BY YEAR ── */}
+        <CapexStrip s={s} />
+        {/* ── 21-FACTOR BREAKDOWN ── */}
+        <div>
+          <SectionHead label="21-factor quality breakdown" color={C.cyan}
+            extra={<span style={{ fontSize: F.xs, color: C.dim, whiteSpace: 'nowrap' }}>base {s.base} × industry {s.mult.toFixed(2)}{s.dbCount >= 3 ? ' → capped 30' : ''} = <b style={{ color: s.decisionColor, fontSize: F.sm }}>{s.final}</b> · measured {s.base}/{s.availMax} ({s.measuredPct}%) · conf {s.confidence}{s.gaps ? ' · ' + s.gaps + ' gaps' : ''}{s.estUsed ? ' · ' + s.estUsed + ' est' : ''}</span>} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(330px, 1fr))', columnGap: 18, rowGap: 2 }}>
             {s.factors.map((f) => {
               const nd = f.note === 'no data';
               const pct = f.max ? f.pts / f.max : 0;
               const col = nd ? C.muted : pct >= 0.7 ? C.green : pct > 0 ? C.amber : C.red;
               return (
-                <div key={f.id} style={{ background: nd ? C.panel : C.bg, border: '1px solid ' + C.line, borderRadius: 7, padding: '4px 8px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: F.xs }}>
-                    <span style={{ color: C.dim }}><b style={{ color: C.muted }}>T{f.tier}</b> F{f.id} {f.label}{f.note && !nd ? ' · ' + f.note : ''}</span>
-                    <span style={{ fontWeight: 900, color: col }}>{nd ? 'n/a' : f.pts + '/' + f.max}</span>
-                  </div>
-                  <div style={{ height: 3, borderRadius: 2, background: C.line, marginTop: 3, overflow: 'hidden' }}>
-                    <div style={{ width: Math.round(pct * 100) + '%', height: '100%', background: col }} />
-                  </div>
+                <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 2px', borderBottom: '1px solid ' + C.line, fontSize: F.xs, fontStyle: nd ? 'italic' : 'normal', opacity: nd ? 0.75 : 1 }}>
+                  <span style={{ color: nd ? C.dim : C.txt, fontWeight: 600, whiteSpace: 'nowrap' }}><span style={{ color: C.muted, fontWeight: 700 }}>T{f.tier}·F{f.id}</span> {f.label}</span>
+                  <span style={{ color: C.dim, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.note}>{!nd && f.note ? f.note : nd ? 'no data' : ''}</span>
+                  <span style={{ width: 38, height: 4, borderRadius: 2, background: C.line, overflow: 'hidden', flexShrink: 0 }}>
+                    <span style={{ display: 'block', width: Math.round(pct * 100) + '%', height: '100%', background: col }} />
+                  </span>
+                  <span style={{ fontWeight: 900, color: col, fontVariantNumeric: 'tabular-nums', width: 42, textAlign: 'right', flexShrink: 0 }}>{nd ? 'n/a' : f.pts + '/' + f.max}</span>
                 </div>
               );
             })}
           </div>
+          <div style={{ fontSize: F.sm, color: C.amber, lineHeight: 1.55, marginTop: 8 }}>{s.comment}</div>
         </div>
-        <div style={{ fontSize: F.sm, color: C.amber }}>{s.comment}</div>
+        {/* ── TRIGGERS ── */}
+        {(s.watch.length > 0 || s.sells.length > 0) && (
+          <div>
+            <SectionHead label="Triggers" color={C.red} />
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {s.watch.map((w, i) => <span key={'w' + i} style={chip('🚨 ' + w, C.red)}>🚨 {w}</span>)}
+              {s.sells.map((w, i) => <span key={'s' + i} style={chip('📤 ' + w, C.amber)}>📤 {w}</span>)}
+            </div>
+          </div>
+        )}
+        {/* ── EDITOR ── */}
         <Editor s={s} />
       </div>
     );
@@ -1961,11 +2094,14 @@ export default function CapexTrackerPage() {
 
   return (
     <div style={{ maxWidth: 2100, margin: '0 auto', padding: '14px 18px', color: C.txt, fontFamily: 'inherit' }}>
+      <style>{'table.cxt { font-variant-numeric: tabular-nums; } '
+        + 'table.cxt thead th { background: ' + C.panel2 + '; position: sticky; top: 0; z-index: 2; } '
+        + 'table.cxt tbody tr.cxr:hover { background: #15213A; }'}</style>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, flexWrap: 'wrap' }}>
         <Link href="/" style={{ color: C.dim, textDecoration: 'none', fontSize: F.sm }}>← Home</Link>
-        <span style={{ fontSize: F.xl, fontWeight: 900, color: C.orange }}>🏗 CAPEX TRACKER <span style={{ fontSize: F.xs, color: C.muted, fontWeight: 700 }}>v5.1</span></span>
-        <span style={{ fontSize: F.sm, color: C.dim }}>four lenses, one dataset: capex quality × timing · 🚀 multibagger DNA · 🔬 forensics · 🎙 concall → 🧭 one fused verdict</span>
-        <span style={{ fontSize: F.xs, color: C.muted }}>{files.length} file{files.length === 1 ? '' : 's'} · {scored.length} companies (saved locally)</span>
+        <span style={{ fontSize: F.xl, fontWeight: 900, color: C.orange }}>🏗 CAPEX TRACKER <span style={{ fontSize: F.xs, color: C.dim, fontWeight: 700 }}>v5.2</span></span>
+        <span style={{ fontSize: F.sm, color: C.body }}>four lenses, one dataset: capex quality × timing · 🚀 multibagger DNA · 🔬 forensics · 🎙 concall → 🧭 one fused verdict</span>
+        <span style={{ fontSize: F.xs, color: C.dim }}>{files.length} file{files.length === 1 ? '' : 's'} · {scored.length} companies (saved locally)</span>
       </div>
 
       <div style={{ display: 'flex', gap: 8, margin: '12px 0', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -1986,7 +2122,7 @@ export default function CapexTrackerPage() {
       {!scored.length && (
         <div style={{ ...card, textAlign: 'center', padding: 40 }}>
           <div style={{ fontSize: F.lg, fontWeight: 800 }}>Upload your capex universe (Screener.in Excel/CSV) — concall PDFs/PPTX can ride in the same pick</div>
-          <div style={{ fontSize: F.sm, color: C.dim, marginTop: 8, maxWidth: 780, margin: '8px auto' }}>
+          <div style={{ fontSize: F.sm, color: C.body, lineHeight: 1.65, marginTop: 8, maxWidth: 780, margin: '8px auto' }}>
             Screener workbooks are mined automatically: quantitative factors, capex telemetry, prior-cycle history, stage classification — with (est) fills for what the statements imply.
             Concall transcripts (.pdf / .pptx / .txt) are parsed in this browser and auto-attached to the matching company; unmatched ones park in the 🎙 Concall tab for one-click assignment.
             Qualitative edges (anchor %, promoter/pledge, policy) are yours to fill inline. Data persists in this browser; re-upload any time to refresh — nothing is lost unless you press Clear all.
@@ -2009,7 +2145,7 @@ export default function CapexTrackerPage() {
             <input type="range" min={0} max={100} value={minScore} onChange={(e) => setMinScore(+e.target.value)} />
           </div>
           <div style={{ ...card, padding: 0, overflowX: 'auto' }}>
-            <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: F.sm }}>
+            <table className="cxt" style={{ borderCollapse: 'collapse', width: '100%', fontSize: F.sm }}>
               <thead><tr style={{ borderBottom: '1px solid ' + C.line }}>
                 <TH k="name" label="COMPANY" />
                 <TH k="final" label="SCORE" right /><TH k="decision" label="QUALITY" />
@@ -2035,7 +2171,7 @@ export default function CapexTrackerPage() {
               </tbody>
             </table>
           </div>
-          <div style={{ fontSize: F.xs, color: C.muted, marginTop: 8 }}>
+          <div style={{ fontSize: F.sm, color: C.body, marginTop: 8, lineHeight: 1.6 }}>
             Click any row: T0→T5 timeline, capex-by-year strip, 21-factor bars, telemetry, inline editor. Quality = masterclass score; Stage = where on the utilization arc; the entry verdict is the intersection. Not investment advice.
           </div>
         </>
@@ -2046,10 +2182,10 @@ export default function CapexTrackerPage() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: 12 }}>
           <div style={{ ...card, border: '1px solid ' + C.gold + '66' }}>
             <div style={{ fontSize: F.md, fontWeight: 800, color: C.gold, marginBottom: 4 }}>🎯 BUY NOW — quality ∩ stage · {buyNow.length}</div>
-            <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 6 }}>ANCHOR/CORE quality AND Stage B/C/D — both models agree. Stage C is the modal winner entry (~55% of 250-case winners).</div>
+            <div style={{ fontSize: F.sm, color: C.body, marginBottom: 6, lineHeight: 1.55 }}>ANCHOR/CORE quality AND Stage B/C/D — both models agree. Stage C is the modal winner entry (~55% of 250-case winners).</div>
             {buyNow.map((s) => (
               <div key={s.name} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '5px 2px', borderTop: '1px solid ' + C.line, fontSize: F.sm, alignItems: 'center' }}>
-                <span><b>{s.name}</b> <StageChip stage={s.stage} /> <span style={{ color: C.muted }}>{s.industry || s.sector}</span></span>
+                <span><b>{s.name}</b> <StageChip stage={s.stage} /> <span style={{ color: C.dim }}>{s.industry || s.sector}</span></span>
                 <span style={{ fontWeight: 900, color: bandColor(s.decision), whiteSpace: 'nowrap' }}>{s.final}{s.confidence === 'LOW' ? ' ⚠' : ''}</span>
               </div>
             ))}
@@ -2057,10 +2193,10 @@ export default function CapexTrackerPage() {
           </div>
           <div style={card}>
             <div style={{ fontSize: F.md, fontWeight: 800, color: C.blue, marginBottom: 4 }}>⏳ RIGHT QUALITY, WRONG STAGE · {wrongStage.length}</div>
-            <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 6 }}>Masterclass quality clears but the timing window isn't open — too early (A), too late (E/F) or no cycle. Watch for Stage B/C.</div>
+            <div style={{ fontSize: F.sm, color: C.body, marginBottom: 6, lineHeight: 1.55 }}>Masterclass quality clears but the timing window isn't open — too early (A), too late (E/F) or no cycle. Watch for Stage B/C.</div>
             {wrongStage.map((s) => (
               <div key={s.name} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '5px 2px', borderTop: '1px solid ' + C.line, fontSize: F.sm, alignItems: 'center' }}>
-                <span><b>{s.name}</b> <StageChip stage={s.stage} /> <span style={{ color: C.muted, fontSize: F.xs }}>{s.entryShort}</span></span>
+                <span><b>{s.name}</b> <StageChip stage={s.stage} /> <span style={{ color: C.dim, fontSize: F.xs }}>{s.entryShort}</span></span>
                 <span style={{ fontWeight: 900, color: bandColor(s.decision) }}>{s.final}</span>
               </div>
             ))}
@@ -2071,7 +2207,7 @@ export default function CapexTrackerPage() {
               <div style={{ fontSize: F.md, fontWeight: 800, color: bandColor(b), marginBottom: 4 }}>
                 {b === 'ANCHOR BUY' ? '🥇' : b === 'CORE BUY' ? '🟢' : '🛰'} {b} · {counts[b] || 0}
               </div>
-              <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 6 }}>
+              <div style={{ fontSize: F.sm, color: C.body, marginBottom: 6, lineHeight: 1.55 }}>
                 {b === 'ANCHOR BUY' ? '85-100 · 4-6% position · 88% historical hit rate' : b === 'CORE BUY' ? '70-84 · 3-4% · 72% hit rate · verify anchor on concall' : '55-69 · wait for Q1 post-capex confirmation, then 1.5-2.5% · 55%'}
               </div>
               {scored.filter((s) => s.decision === b).slice(0, 10).map((s) => (
@@ -2085,7 +2221,7 @@ export default function CapexTrackerPage() {
           ))}
           <div style={card}>
             <div style={{ fontSize: F.md, fontWeight: 800, color: C.red, marginBottom: 4 }}>⛔ Deal-breaker board</div>
-            <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 6 }}>3+ deal-breakers ⇒ score capped at 30. Historically 80%+ default within 5-7 years.</div>
+            <div style={{ fontSize: F.sm, color: C.body, marginBottom: 6, lineHeight: 1.55 }}>3+ deal-breakers ⇒ score capped at 30. Historically 80%+ default within 5-7 years.</div>
             {scored.filter((s) => s.dbCount > 0).sort((a, b) => b.dbCount - a.dbCount).slice(0, 12).map((s) => (
               <div key={s.name} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '5px 2px', borderTop: '1px solid ' + C.line, fontSize: F.sm }}>
                 <span><b>{s.name}</b> <span style={{ color: C.red, fontSize: F.xs }}>{s.dbList.join(' · ')}</span></span>
@@ -2096,10 +2232,10 @@ export default function CapexTrackerPage() {
           </div>
           <div style={card}>
             <div style={{ fontSize: F.md, fontWeight: 800, color: C.violet, marginBottom: 4 }}>🧩 NEEDS DATA — judged on measured evidence only · {counts['NEEDS DATA'] || 0}</div>
-            <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 6 }}>% = score on factors Screener can prove. Open the row, fill anchor/promoter/pledge for the real verdict.</div>
+            <div style={{ fontSize: F.sm, color: C.body, marginBottom: 6, lineHeight: 1.55 }}>% = score on factors Screener can prove. Open the row, fill anchor/promoter/pledge for the real verdict.</div>
             {scored.filter((s) => s.decision === 'NEEDS DATA').sort((a, b) => b.measuredPct - a.measuredPct).slice(0, 12).map((s) => (
               <div key={s.name} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '5px 2px', borderTop: '1px solid ' + C.line, fontSize: F.sm }}>
-                <span><b>{s.name}</b> <span style={{ color: C.muted }}>· {s.gaps} gaps{s.stage ? ' · Stage ' + s.stage : ''}</span></span>
+                <span><b>{s.name}</b> <span style={{ color: C.dim }}>· {s.gaps} gaps{s.stage ? ' · Stage ' + s.stage : ''}</span></span>
                 <span style={{ fontWeight: 900, color: s.measuredPct >= 70 ? C.green : s.measuredPct >= 50 ? C.amber : C.red }}>{s.measuredPct}% measured</span>
               </div>
             ))}
@@ -2107,18 +2243,18 @@ export default function CapexTrackerPage() {
           </div>
           <div style={card}>
             <div style={{ fontSize: F.md, fontWeight: 800, color: C.amber, marginBottom: 4 }}>📈 Upgrade watch — what would change the call</div>
-            <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 6 }}>Watchlist/Satellite names and the exact factors holding them back.</div>
+            <div style={{ fontSize: F.sm, color: C.body, marginBottom: 6, lineHeight: 1.55 }}>Watchlist/Satellite names and the exact factors holding them back.</div>
             {upgradeWatch.map(({ s, need }) => (
               <div key={s.name} style={{ padding: '5px 2px', borderTop: '1px solid ' + C.line, fontSize: F.sm }}>
                 <b>{s.name}</b> <span style={{ fontWeight: 900, color: C.amber }}>{s.final}</span>
-                <span style={{ color: C.dim }}> — needs: {need.length ? need.map((f) => f.label).join(' + ') : 'data gaps filled'}</span>
+                <span style={{ color: C.body }}> — needs: {need.length ? need.map((f) => f.label).join(' + ') : 'data gaps filled'}</span>
               </div>
             ))}
             {!upgradeWatch.length && <div style={{ fontSize: F.sm, color: C.dim, padding: '8px 0' }}>Nothing on watch.</div>}
           </div>
           <div style={card}>
             <div style={{ fontSize: F.md, fontWeight: 800, color: C.violet, marginBottom: 4 }}>🔮 2026-2030 theme map (Masterclass Ch.11 Tier-1)</div>
-            <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 6 }}>Your names matched to the highest-probability forward themes.</div>
+            <div style={{ fontSize: F.sm, color: C.body, marginBottom: 6, lineHeight: 1.55 }}>Your names matched to the highest-probability forward themes.</div>
             {scored.filter((s) => s.theme).slice(0, 12).map((s) => (
               <div key={s.name} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '5px 2px', borderTop: '1px solid ' + C.line, fontSize: F.sm }}>
                 <span><b>{s.name}</b> <span style={{ color: C.violet }}>{s.theme}</span></span>
@@ -2143,7 +2279,7 @@ export default function CapexTrackerPage() {
       {tab === 'multibagger' && scored.length > 0 && (
         <>
           <div style={{ ...card, padding: 0, overflowX: 'auto' }}>
-            <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: F.sm }}>
+            <table className="cxt" style={{ borderCollapse: 'collapse', width: '100%', fontSize: F.sm }}>
               <thead><tr style={{ borderBottom: '1px solid ' + C.line }}>
                 {['COMPANY', 'SCORE', 'GRADE', 'TOP DRIVERS', 'WEAKEST', 'MCAP Cr', 'PE', 'PEG'].map((hh, i) => (
                   <th key={hh} style={{ padding: '7px 8px', whiteSpace: 'nowrap', textAlign: i === 1 || i >= 5 ? 'right' : 'left', color: C.dim, fontSize: F.xs, fontWeight: 800 }}>{hh}</th>
@@ -2157,13 +2293,13 @@ export default function CapexTrackerPage() {
                   const isOpen = openMB === s.name;
                   return (
                     <Fragment key={s.name}>
-                      <tr onClick={() => setOpenMB(isOpen ? null : s.name)} style={{ borderBottom: '1px solid ' + C.line, cursor: 'pointer', background: isOpen ? '#16233B' : 'transparent' }}>
-                        <td style={{ padding: '8px 8px', fontWeight: 800 }}>{s.name}<div style={{ fontSize: 10, color: C.muted, fontWeight: 400 }}>{s.industry || s.sector}</div></td>
+                      <tr className="cxr" onClick={() => setOpenMB(isOpen ? null : s.name)} style={{ borderBottom: '1px solid ' + C.line, cursor: 'pointer', background: isOpen ? '#16233B' : undefined }}>
+                        <td style={{ padding: '8px 8px', fontWeight: 800 }}>{s.name}<div style={{ fontSize: 10.5, color: C.dim, fontWeight: 400 }}>{s.industry || s.sector}</div></td>
                         <td style={{ padding: '8px 8px', textAlign: 'right' }}>
                           <span style={{ fontSize: 16, fontWeight: 900, color: mb.color, background: mb.color + '14', border: '1px solid ' + mb.color + '44', borderRadius: 9, padding: '3px 10px' }}>{mb.grade === 'NR' ? '—' : mb.score}</span>
                         </td>
                         <td style={{ padding: '8px 8px' }}><span style={{ fontSize: F.xs, fontWeight: 900, padding: '2px 10px', borderRadius: 10, background: mb.color + '22', color: mb.color, border: '1px solid ' + mb.color + '55' }}>{mb.grade}</span></td>
-                        <td style={{ padding: '8px 8px', fontSize: F.xs, color: C.green }}>{mb.grade === 'NR' ? <span style={{ color: C.muted }}>{fin ? 'insufficient series' : 'upload the Screener workbook to unlock multibagger/forensic scores'}</span> : top3.map((cmp) => cmp.label).join(' · ') || '—'}</td>
+                        <td style={{ padding: '8px 8px', fontSize: F.xs, color: C.green }}>{mb.grade === 'NR' ? <span style={{ color: C.dim }}>{fin ? 'insufficient series' : 'upload the Screener workbook to unlock multibagger/forensic scores'}</span> : top3.map((cmp) => cmp.label).join(' · ') || '—'}</td>
                         <td style={{ padding: '8px 8px', fontSize: F.xs, color: C.red }}>{mb.grade !== 'NR' && weak ? weak.label : '—'}</td>
                         <td style={{ padding: '8px 8px', textAlign: 'right' }}>{fin && fin.mcap ? Math.round(fin.mcap).toLocaleString() : '—'}</td>
                         <td style={{ padding: '8px 8px', textAlign: 'right' }}>{fmt(mb.pe, 1)}</td>
@@ -2184,7 +2320,7 @@ export default function CapexTrackerPage() {
                                 return (
                                   <div key={cmp.id} style={{ background: nd ? C.panel : C.bg, border: '1px solid ' + C.line, borderRadius: 7, padding: '4px 8px' }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: F.xs }}>
-                                      <span style={{ color: C.dim }}>{cmp.label}{cmp.detail ? ' · ' + cmp.detail : ''}</span>
+                                      <span style={{ color: C.body }}>{cmp.label}{cmp.detail ? ' · ' + cmp.detail : ''}</span>
                                       <span style={{ fontWeight: 900, color: col, whiteSpace: 'nowrap' }}>{nd ? 'n/a' : cmp.pts!.toFixed(1) + '/' + cmp.w}</span>
                                     </div>
                                     <div style={{ height: 3, borderRadius: 2, background: C.line, marginTop: 3, overflow: 'hidden' }}>
@@ -2203,8 +2339,8 @@ export default function CapexTrackerPage() {
               </tbody>
             </table>
           </div>
-          <div style={{ fontSize: F.xs, color: C.muted, marginTop: 8 }}>
-            Recomputed from the 10-year workbook series (SQGLP-style: growth consistency · ROCE trajectory · operating leverage · self-funded reinvestment · dilution · runway · PEG · promoter). Absolute bands A+ ≥80 … D &lt;38; grade capped at B+ on forensic FLAGS and at B on pledge &gt;15% / D/E &gt;1.5. Click a row for the component bars.
+          <div style={{ fontSize: F.sm, color: C.body, marginTop: 8, lineHeight: 1.6 }}>
+            Recomputed from the 10-year workbook series (SQGLP-style: growth consistency · ROCE trajectory · operating leverage · self-funded reinvestment · dilution · runway · PEG · promoter). Growth and PEG use blended 3y/5y/10y horizons (v5.2). Absolute bands A+ ≥80 … D &lt;38; grade capped at B+ on forensic FLAGS and at B on pledge &gt;15% / D/E &gt;1.5. Click a row for the component bars.
           </div>
         </>
       )}
@@ -2213,7 +2349,7 @@ export default function CapexTrackerPage() {
       {tab === 'forensics' && scored.length > 0 && (
         <>
           <div style={{ ...card, padding: 0, overflowX: 'auto' }}>
-            <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: F.sm }}>
+            <table className="cxt" style={{ borderCollapse: 'collapse', width: '100%', fontSize: F.sm }}>
               <thead><tr style={{ borderBottom: '1px solid ' + C.line }}>
                 {['COMPANY', 'SCORE', 'GRADE', '🚩 FLAGS', 'WORST FLAG'].map((hh, i) => (
                   <th key={hh} style={{ padding: '7px 8px', whiteSpace: 'nowrap', textAlign: i === 1 || i === 3 ? 'right' : 'left', color: C.dim, fontSize: F.xs, fontWeight: 800 }}>{hh}</th>
@@ -2224,14 +2360,14 @@ export default function CapexTrackerPage() {
                   const isOpen = openFX === s.name;
                   return (
                     <Fragment key={s.name}>
-                      <tr onClick={() => setOpenFX(isOpen ? null : s.name)} style={{ borderBottom: '1px solid ' + C.line, cursor: 'pointer', background: isOpen ? '#16233B' : 'transparent' }}>
-                        <td style={{ padding: '8px 8px', fontWeight: 800 }}>{s.name}<div style={{ fontSize: 10, color: C.muted, fontWeight: 400 }}>{s.industry || s.sector}</div></td>
+                      <tr className="cxr" onClick={() => setOpenFX(isOpen ? null : s.name)} style={{ borderBottom: '1px solid ' + C.line, cursor: 'pointer', background: isOpen ? '#16233B' : undefined }}>
+                        <td style={{ padding: '8px 8px', fontWeight: 800 }}>{s.name}<div style={{ fontSize: 10.5, color: C.dim, fontWeight: 400 }}>{s.industry || s.sector}</div></td>
                         <td style={{ padding: '8px 8px', textAlign: 'right' }}>
                           <span style={{ fontSize: 16, fontWeight: 900, color: fx.color, background: fx.color + '14', border: '1px solid ' + fx.color + '44', borderRadius: 9, padding: '3px 10px' }}>{fx.grade === 'NR' ? '—' : fx.score}</span>
                         </td>
                         <td style={{ padding: '8px 8px' }}>
                           <span style={{ fontSize: F.xs, fontWeight: 900, padding: '2px 10px', borderRadius: 10, background: fx.color + '22', color: fx.color, border: '1px solid ' + fx.color + '55', whiteSpace: 'nowrap' }}>{fx.grade}{fx.critical ? ' ☠' : ''}</span>
-                          {fx.grade === 'NR' && <span style={{ fontSize: 10, color: C.muted }}> upload the Screener workbook to unlock</span>}
+                          {fx.grade === 'NR' && <span style={{ fontSize: F.xs, color: C.dim }}> upload the Screener workbook to unlock</span>}
                         </td>
                         <td style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 900, color: fx.flags.length >= 4 ? C.red : fx.flags.length ? C.amber : C.green }}>{fx.grade === 'NR' ? '—' : fx.flags.length}</td>
                         <td style={{ padding: '8px 8px', fontSize: F.xs, color: C.red }}>{fx.flags[0] || (fx.grade === 'NR' ? '' : '—')}</td>
@@ -2249,7 +2385,7 @@ export default function CapexTrackerPage() {
                                 return (
                                   <div key={ch.id} style={{ background: nd ? C.panel : C.bg, border: '1px solid ' + C.line, borderRadius: 7, padding: '4px 8px' }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: F.xs }}>
-                                      <span style={{ color: C.dim }}><span style={{ color: col }}>●</span> {ch.label} · {ch.detail}</span>
+                                      <span style={{ color: C.body }}><span style={{ color: col }}>●</span> {ch.label} · {ch.detail}</span>
                                       <span style={{ fontWeight: 900, color: col, whiteSpace: 'nowrap' }}>{nd ? 'n/a' : ch.pts + '/' + ch.w}</span>
                                     </div>
                                     {ch.flag && <div style={{ fontSize: F.xs, color: C.red, marginTop: 2 }}>🚩 {ch.flag}</div>}
@@ -2262,7 +2398,7 @@ export default function CapexTrackerPage() {
                                 <div style={{ fontSize: F.xs, fontWeight: 800, color: C.amber }}>FRAUD-CHECKLIST ANSWERS (your workbook) — each adverse −3, cap −15</div>
                                 {fx.workbook.map((wkb) => (
                                   <div key={wkb.row} style={{ fontSize: F.xs, color: wkb.answer === 'adverse' ? C.red : C.green }}>
-                                    {wkb.answer === 'adverse' ? '⚠' : '✓'} {wkb.label} <span style={{ color: C.muted }}>(row {wkb.row})</span>
+                                    {wkb.answer === 'adverse' ? '⚠' : '✓'} {wkb.label} <span style={{ color: C.dim }}>(row {wkb.row})</span>
                                   </div>
                                 ))}
                               </div>
@@ -2276,7 +2412,7 @@ export default function CapexTrackerPage() {
               </tbody>
             </table>
           </div>
-          <div style={{ fontSize: F.xs, color: C.muted, marginTop: 8 }}>
+          <div style={{ fontSize: F.sm, color: C.body, marginTop: 8, lineHeight: 1.6 }}>
             The fraud-checklist tab of your workbook, codified: cash conversion · receivable/inventory games · other-income crutch · tax sanity · phantom cash · stuck CWIP · dilution · dividend funding · depreciation games. CLEAN ≥80 · WATCH 60-79 · FLAGS 40-59 · AVOID &lt;40 — but flags override: 1 flag caps at WATCH, 2-3 at FLAGS, ≥4 or any CRITICAL ⇒ AVOID.
           </div>
         </>
@@ -2310,9 +2446,9 @@ export default function CapexTrackerPage() {
                     if (ccFileRef.current) ccFileRef.current.value = '';
                   }} />
               </div>
-              <div style={{ fontSize: 10, color: C.muted }}>
+              <div style={{ fontSize: F.sm, color: C.body, lineHeight: 1.6 }}>
                 .pdf / .pptx / .txt or paste (legacy .ppt → export as PDF first) · max 300k chars · 8 transcripts per company · stored ONLY in this browser (separate from company data — survives "Clear all").
-                Extraction is heuristic: utilization %, order book (Cr), capex guidance, commissioning timeline, anchor/booked %, tone. Tip: drop PDFs straight on the main upload — they auto-attach by company name.
+                Extraction is sentence-scoped and heuristic: utilization %, order book (Cr), capex guidance, commissioning timeline, anchor/booked %, tone. Tip: drop PDFs straight on the main upload — they auto-attach by company name.
               </div>
               {Object.keys(concalls).length > 0 && <button onClick={clearTranscripts} style={{ ...pill(false, C.red), justifySelf: 'start' }}>Clear transcripts</button>}
             </div>
@@ -2321,11 +2457,11 @@ export default function CapexTrackerPage() {
             {(concalls[KU] ?? []).length > 0 && (
               <div style={{ ...card, border: '1px solid ' + C.amber + '88' }}>
                 <div style={{ fontSize: F.md, fontWeight: 800, color: C.amber, marginBottom: 4 }}>📎 UNASSIGNED uploads · {(concalls[KU] ?? []).length}</div>
-                <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 6 }}>These files matched zero (or several) stored companies. Pick the company and Assign — extraction is already done and applies instantly.</div>
+                <div style={{ fontSize: F.sm, color: C.body, marginBottom: 6, lineHeight: 1.55 }}>These files matched zero (or several) stored companies. Pick the company and Assign — extraction is already done and applies instantly.</div>
                 {(concalls[KU] ?? []).map((en) => (
                   <div key={en.id} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', borderTop: '1px solid ' + C.line, padding: '6px 0' }}>
                     <b style={{ fontSize: F.sm }}>{en.label}</b>
-                    <span style={{ fontSize: F.xs, color: C.muted }}>{new Date(en.addedAt).toLocaleDateString()} · {(en.chars / 1000).toFixed(1)}k chars</span>
+                    <span style={{ fontSize: F.xs, color: C.dim }}>{new Date(en.addedAt).toLocaleDateString()} · {(en.chars / 1000).toFixed(1)}k chars</span>
                     <span style={{ fontSize: F.xs, color: C.dim }}>
                       {en.extract.utilization !== null && <>util <b style={{ color: C.gold }}>{en.extract.utilization}%</b> · </>}
                       {en.extract.orderBook !== null && <>order book <b style={{ color: C.gold }}>{en.extract.orderBook.toLocaleString()} Cr</b></>}
@@ -2359,25 +2495,25 @@ export default function CapexTrackerPage() {
                     <div key={en.id} style={{ borderTop: '1px solid ' + C.line, padding: '6px 0' }}>
                       <div onClick={() => setCcView(isOpen ? null : en.id)} style={{ display: 'flex', gap: 10, alignItems: 'center', cursor: 'pointer', flexWrap: 'wrap' }}>
                         <b style={{ fontSize: F.sm }}>{en.label}</b>
-                        <span style={{ fontSize: F.xs, color: C.muted }}>{new Date(en.addedAt).toLocaleDateString()} · {(en.chars / 1000).toFixed(1)}k chars</span>
+                        <span style={{ fontSize: F.xs, color: C.dim }}>{new Date(en.addedAt).toLocaleDateString()} · {(en.chars / 1000).toFixed(1)}k chars</span>
                         {ex.tone !== null && (
-                          <span style={{ width: 70, height: 5, borderRadius: 3, background: C.red + '55', overflow: 'hidden', display: 'inline-block' }} title={ex.optimism + ' optimism / ' + ex.caution + ' caution cues'}>
+                          <span style={{ width: 70, height: 5, borderRadius: 3, background: C.red + '55', overflow: 'hidden', display: 'inline-block' }} title={ex.optimism + ' positive / ' + ex.caution + ' cautious sentences'}>
                             <span style={{ display: 'block', width: (ex.tone * 100) + '%', height: '100%', background: C.green }} />
                           </span>
                         )}
-                        <span style={{ fontSize: F.xs, color: C.dim }}>
-                          {ex.utilization !== null && <>util <b style={{ color: C.gold }}>{ex.utilization}%</b> · </>}
-                          {ex.orderBook !== null && <>order book <b style={{ color: C.gold }}>{ex.orderBook.toLocaleString()} Cr</b> · </>}
-                          {ex.capexGuidance !== null && <>capex guide <b style={{ color: C.gold }}>{ex.capexGuidance.toLocaleString()} Cr</b> · </>}
-                          {ex.anchorPct !== null && <>booked <b style={{ color: C.gold }}>{ex.anchorPct}%</b> · </>}
-                          {isOpen ? '▲ close' : '▼ read'}
-                        </span>
+                        {ex.anchorPct !== null && <span style={{ fontSize: F.xs, color: C.dim }}>booked <b style={{ color: C.gold }}>{ex.anchorPct}%</b></span>}
+                        <span style={{ fontSize: F.xs, fontWeight: 700, color: C.dim }}>{isOpen ? '▲ close transcript' : '▼ read transcript'}</span>
                         <span style={{ flex: 1 }} />
                         <button onClick={(e) => { e.stopPropagation(); deleteTranscript(ckey(s.name), en.id); }} style={{ ...pill(false, C.red), padding: '2px 8px' }}>✕</button>
                       </div>
-                      {ex.timeline.length > 0 && <div style={{ fontSize: F.xs, color: C.teal, marginTop: 3 }}>⏱ {ex.timeline.join(' · ')}</div>}
+                      <SignalCards ex={ex} />
+                      {ex.timeline.length > 1 && (
+                        <div style={{ fontSize: F.xs, color: C.teal, lineHeight: 1.6, marginTop: 2 }}>
+                          {ex.timeline.slice(1).map((tl, ti) => <div key={ti}>📅 <i style={{ color: C.body }}>“{tl}”</i></div>)}
+                        </div>
+                      )}
                       {isOpen && (
-                        <pre style={{ maxHeight: 420, overflowY: 'auto', fontSize: F.xs, whiteSpace: 'pre-wrap', background: C.bg, border: '1px solid ' + C.line, borderRadius: 8, padding: 10, marginTop: 6, color: C.dim, fontFamily: 'inherit' }}>
+                        <pre style={{ maxHeight: 420, overflowY: 'auto', fontSize: F.sm, lineHeight: 1.6, whiteSpace: 'pre-wrap', background: C.bg, border: '1px solid ' + C.line, borderRadius: 8, padding: 12, marginTop: 6, color: C.body, fontFamily: 'inherit' }}>
                           {markText(en.text, ex.quotes)}
                         </pre>
                       )}
@@ -2387,7 +2523,7 @@ export default function CapexTrackerPage() {
               </div>
             ))}
             {!intel.some(({ s }) => (concalls[ckey(s.name)] ?? []).length > 0) && !(concalls[KU] ?? []).length && (
-              <div style={{ ...card, textAlign: 'center', padding: 30, color: C.dim, fontSize: F.sm }}>
+              <div style={{ ...card, textAlign: 'center', padding: 30, color: C.body, fontSize: F.sm, lineHeight: 1.65 }}>
                 No transcripts yet. Upload the concall PDF/PPTX on the main file picker (it auto-attaches by company name) or paste it on the left — the page extracts utilization, order book, capex guidance and tone, and suggests one-click updates to the capex engine (provenance preserved as "(concall)").
               </div>
             )}
@@ -2423,7 +2559,7 @@ export default function CapexTrackerPage() {
               </div>
             </div>
             <div style={{ ...card, padding: 0, overflowX: 'auto' }}>
-              <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: F.sm }}>
+              <table className="cxt" style={{ borderCollapse: 'collapse', width: '100%', fontSize: F.sm }}>
                 <thead><tr style={{ borderBottom: '1px solid ' + C.line }}>
                   {['COMPANY', 'COMPOSITE', 'CAPEX', 'STAGE / ENTRY', '🚀 MB', '🔬 FORENSIC', '🎙 CONCALL', 'VERDICT', 'WHY / ACTION'].map((hh, i) => (
                     <th key={hh} style={{ padding: '7px 8px', whiteSpace: 'nowrap', textAlign: i === 1 ? 'right' : 'left', color: C.dim, fontSize: F.xs, fontWeight: 800 }}>{hh}</th>
@@ -2431,9 +2567,9 @@ export default function CapexTrackerPage() {
                 </tr></thead>
                 <tbody>
                   {ranked.map(({ s, mb, fx, cc, verdict }) => (
-                    <tr key={s.name} style={{ borderBottom: '1px solid ' + C.line, opacity: verdict.veto ? 0.75 : 1 }}>
-                      <td style={{ padding: '8px 8px', fontWeight: 800 }}>{s.name}<div style={{ fontSize: 10, color: C.muted, fontWeight: 400 }}>{s.industry || s.sector}</div></td>
-                      <td style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 900, color: verdict.veto ? C.muted : C.txt }}>{verdict.composite.toFixed(0)}</td>
+                    <tr className="cxr" key={s.name} style={{ borderBottom: '1px solid ' + C.line, opacity: verdict.veto ? 0.75 : 1 }}>
+                      <td style={{ padding: '8px 8px', fontWeight: 800 }}>{s.name}<div style={{ fontSize: 10.5, color: C.dim, fontWeight: 400 }}>{s.industry || s.sector}</div></td>
+                      <td style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 900, fontSize: 19, fontVariantNumeric: 'tabular-nums', color: verdict.veto ? C.muted : C.txt }}>{verdict.composite.toFixed(0)}</td>
                       <td style={{ padding: '8px 8px', whiteSpace: 'nowrap' }}>
                         <span style={{ fontSize: 10, fontWeight: 900, padding: '2px 8px', borderRadius: 10, background: s.decisionColor + '22', color: s.decisionColor, border: '1px solid ' + s.decisionColor + '55' }}>{s.decision} {s.final}</span>
                       </td>
@@ -2451,13 +2587,13 @@ export default function CapexTrackerPage() {
                       <td style={{ padding: '8px 8px', whiteSpace: 'nowrap' }}>
                         <span style={{ fontSize: F.xs, fontWeight: 900, padding: '3px 10px', borderRadius: 10, background: verdict.color + '1E', color: verdict.color, border: '1px solid ' + verdict.color + '66' }}>{verdict.call}</span>
                       </td>
-                      <td style={{ padding: '8px 8px', fontSize: F.xs, color: C.dim, minWidth: 260 }}>{verdict.why} <span style={{ color: C.muted }}>{verdict.note}</span></td>
+                      <td style={{ padding: '8px 8px', fontSize: F.sm, color: C.body, lineHeight: 1.55, minWidth: 300 }}>{verdict.why} <span style={{ color: C.body }}>{verdict.note}</span></td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            <div style={{ fontSize: F.xs, color: C.muted, marginTop: 8 }}>
+            <div style={{ fontSize: F.sm, color: C.body, marginTop: 8, lineHeight: 1.6 }}>
               Composite = 0.40×capex + 0.35×multibagger + 0.25×forensic (renormalized when a lens is NR) − 15 on forensic FLAGS; forensic AVOID/critical vetoes everything and pins to the bottom. Fresh cautious concalls demote one rung; fresh bullish calls with util ≥75% get the 🔥 tag. Not investment advice.
             </div>
           </>
@@ -2466,6 +2602,42 @@ export default function CapexTrackerPage() {
 
       {/* ═══ MODEL ═══ */}
       {tab === 'model' && <ModelTab card={card} />}
+    </div>
+  );
+}
+
+// 🎙 uniform signal cards — one per extraction channel; value big, source
+// sentence quoted in italic body text; channels with no finding stay visible
+// as a dim "not mentioned" so the reader knows the extractor looked.
+function SignalCards({ ex }: { ex: ConcallExtract }) {
+  const qFor = (f: string) => ex.quotes.find((q) => q.field === f)?.snippet || '';
+  const clip = (s: string) => (s.length > 190 ? s.slice(0, 187) + '…' : s);
+  const cards: { icon: string; label: string; value: string | null; quote: string; plain?: boolean }[] = [
+    { icon: '🏭', label: 'UTILIZATION', value: ex.utilization !== null ? ex.utilization + '%' : null, quote: qFor('utilization') },
+    { icon: '📦', label: 'ORDER BOOK', value: ex.orderBook !== null ? ex.orderBook.toLocaleString() + ' Cr' : null, quote: qFor('orderBook') },
+    { icon: '💰', label: 'CAPEX GUIDANCE', value: ex.capexGuidance !== null ? ex.capexGuidance.toLocaleString() + ' Cr' : null, quote: qFor('capexGuidance') },
+    { icon: '📅', label: 'TIMELINE', value: ex.timeline.length ? ex.timeline.length + ' dated commitment' + (ex.timeline.length > 1 ? 's' : '') : null, quote: ex.timeline[0] || '' },
+    { icon: '🎭', label: 'TONE', value: ex.tone !== null ? Math.round(ex.tone * 100) + '% positive' : null, quote: ex.tone !== null ? ex.optimism + ' positive · ' + ex.caution + ' cautious phrases' : '', plain: true },
+  ];
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8, margin: '8px 0 4px' }}>
+      {cards.map((cd) => (
+        <div key={cd.label} style={{ background: C.bg, border: '1px solid ' + (cd.value ? C.gold + '40' : C.line), borderRadius: 8, padding: '9px 11px', display: 'grid', gap: 5, alignContent: 'start' }}>
+          <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.1, color: cd.value ? C.gold : C.dim }}>{cd.icon} {cd.label}</div>
+          {cd.value ? (
+            <>
+              <div style={{ fontSize: 17, fontWeight: 900, color: C.txt, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1 }}>{cd.value}</div>
+              {cd.quote && (
+                <div style={{ fontSize: F.xs, fontStyle: 'italic', color: C.body, lineHeight: 1.55 }}>
+                  {cd.plain ? cd.quote : '“' + clip(cd.quote) + '”'}
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={{ fontSize: F.xs, color: C.muted, fontStyle: 'italic' }}>not mentioned</div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -2493,10 +2665,10 @@ function markText(text: string, quotes: { field: string; match: string; snippet:
 function ScoreRow({ s, open, toggle, fmt, Detail, lens }: { s: Scored; open: boolean; toggle: () => void; fmt: (n: number, d?: number) => string; Detail: (p: { s: Scored }) => any; lens?: any }) {
   return (
     <>
-      <tr onClick={toggle} style={{ borderBottom: '1px solid ' + C.line, cursor: 'pointer', background: open ? '#16233B' : 'transparent' }}>
+      <tr className="cxr" onClick={toggle} style={{ borderBottom: '1px solid ' + C.line, cursor: 'pointer', background: open ? '#16233B' : undefined }}>
         <td style={{ padding: '8px 8px', fontWeight: 800 }}>
           {s.name} <span style={{ fontSize: 10, color: C.muted }}>{s.country === 'US' ? '🇺🇸' : '🇮🇳'}</span>
-          <div style={{ fontSize: 10, color: C.muted, fontWeight: 400 }}>{s.industry || s.sector}{s.theme ? ' · ' + s.theme : ''}</div>
+          <div style={{ fontSize: 10.5, color: C.dim, fontWeight: 400 }}>{s.industry || s.sector}{s.theme ? ' · ' + s.theme : ''}</div>
         </td>
         <td style={{ padding: '8px 8px', textAlign: 'right' }}>
           <span style={{ fontSize: 16, fontWeight: 900, color: s.decisionColor, background: s.decisionColor + '14', border: '1px solid ' + s.decisionColor + '44', borderRadius: 9, padding: '3px 10px' }}>{s.final}</span>
@@ -2530,14 +2702,14 @@ function ModelTab({ card }: { card: any }) {
           <b>Tier 2 (25):</b> Utilization 6 · Promoter/Founder 6 · EBITDA 5 · Capex sweet-spot 4 · Overrun record 4<br />
           <b>Tier 3 (15):</b> Cycle timing 4 · WC trend 3 · Rev CAGR 3 · Brownfield 3 · Policy 2<br />
           <b>Tier 4 (10):</b> Industry growth 2 · Import-sub 2 · Export 1 · Valuation 2 · Moat 2 · Prior capex 1<br />
-          <span style={{ color: C.dim }}>× industry multiplier: Defence 1.10 · SpecChem 1.08 · CDMO 1.06 · Consumer 1.05 · Cement/PEB 1.03 · Renewables 1.02 · Semis/EMS 1.00 · Banks 0.95 · RE 0.85 · Telecom 0.75 · Airlines 0.70 · Merchant power/Steel 0.65</span>
+          <span style={{ color: C.body }}>× industry multiplier: Defence 1.10 · SpecChem 1.08 · CDMO 1.06 · Consumer 1.05 · Cement/PEB 1.03 · Renewables 1.02 · Semis/EMS 1.00 · Banks 0.95 · RE 0.85 · Telecom 0.75 · Airlines 0.70 · Merchant power/Steel 0.65</span>
         </div>
       </div>
       <div style={card}>
         <div style={{ fontSize: F.md, fontWeight: 800, color: C.red, marginBottom: 6 }}>2 · DEAL BREAKERS (any 3 ⇒ score capped at 30)</div>
         <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.8 }}>
           DB1 D/E &gt;1.5x · DB2 OCF negative/below maintenance · DB3 pledge &gt;30% / material RPT · DB4 debt-funding &gt;70% · DB5 anchor &lt;25% of new capacity · DB6 ROCE below cost of debt.<br />
-          <span style={{ color: C.dim }}>In 38 of 40 India failures, ≥4 of 8 red flags were visible in audited financials TWO YEARS before the announcement. The information was never the problem — discipline was.</span>
+          <span style={{ color: C.body }}>In 38 of 40 India failures, ≥4 of 8 red flags were visible in audited financials TWO YEARS before the announcement. The information was never the problem — discipline was.</span>
         </div>
       </div>
       <div style={card}>
@@ -2547,14 +2719,14 @@ function ModelTab({ card }: { card: any }) {
           <span style={{ color: C.green }}>70-84 CORE BUY</span> · 3-4% · 72%<br />
           <span style={{ color: C.cyan }}>55-69 SATELLITE</span> · 1.5-2.5% · 55% · Q1 confirmation first<br />
           <span style={{ color: C.amber }}>40-54 WATCHLIST</span> · <span style={{ color: C.orange }}>25-39 AVOID</span> · <span style={{ color: C.red }}>0-24 REJECT</span><br />
-          <span style={{ color: C.dim }}>LOW confidence ⇒ halve the position. Any (est)-filled factor caps confidence at MEDIUM. ≥10 unmeasured factors ⇒ NEEDS DATA, not a fake AVOID.</span>
+          <span style={{ color: C.body }}>LOW confidence ⇒ halve the position. Any (est)-filled factor caps confidence at MEDIUM. ≥10 unmeasured factors ⇒ NEEDS DATA, not a fake AVOID.</span>
         </div>
       </div>
       <div style={card}>
         <div style={{ fontSize: F.md, fontWeight: 800, color: C.violet, marginBottom: 6 }}>4 · TIMING — the T0→T5 arc (Framework, ~250 cases)</div>
         <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.8 }}>
           T0 announce → <b>12-24m</b> → T1 commission → <b>6-12m</b> → T2 util rises → <b>6-12m</b> → T3 GAAP earnings inflect → <b>6-12m</b> → T4 street recognition → <b>12-24m</b> → T5 peak (new mega-capex announced).<br />
-          <span style={{ color: C.dim }}>The institutional alpha window is the 6-18 months BEFORE T3 — execution visible, inflection not yet printed. Entries after T4 are systematically penalized.</span>
+          <span style={{ color: C.body }}>The institutional alpha window is the 6-18 months BEFORE T3 — execution visible, inflection not yet printed. Entries after T4 are systematically penalized.</span>
         </div>
       </div>
       <div style={card}>
@@ -2565,11 +2737,11 @@ function ModelTab({ card }: { card: any }) {
             return (
               <div key={st} style={{ display: 'flex', gap: 8, alignItems: 'baseline', borderTop: '1px solid ' + C.line, padding: '4px 0' }}>
                 <span style={{ fontWeight: 900, color: m.color, minWidth: 16 }}>{st}</span>
-                <span style={{ color: C.txt }}><b style={{ color: m.color }}>{m.label}</b> · size {m.size} <span style={{ color: C.dim }}>— {m.note}</span></span>
+                <span style={{ color: C.txt }}><b style={{ color: m.color }}>{m.label}</b> · size {m.size} <span style={{ color: C.body }}>— {m.note}</span></span>
               </div>
             );
           })}
-          <div style={{ color: C.dim, marginTop: 4 }}>Optimal-entry distribution across winners: C ≈55% · B ≈20% · D ≈20% · A only for proven executors · F net-negative.</div>
+          <div style={{ color: C.body, marginTop: 4 }}>Optimal-entry distribution across winners: C ≈55% · B ≈20% · D ≈20% · A only for proven executors · F net-negative.</div>
         </div>
       </div>
       <div style={card}>
@@ -2599,7 +2771,7 @@ function ModelTab({ card }: { card: any }) {
           (B) Demand visibility BEFORE commitment (anchor &gt;40% of new capacity) — 81%.<br />
           (C) Balance-sheet shock capacity (D/E &lt;1.0) — 79%.<br />
           All three present ⇒ 85%+ success. All three absent ⇒ 80%+ failure.<br />
-          <span style={{ color: C.dim }}>Asymmetries: brownfield 72% vs greenfield 51% · internal-funded 76% vs debt-funded 41% · &gt;85% util 74% vs &lt;70% 43% · domestic 68% vs cross-border M&A 37%.</span>
+          <span style={{ color: C.body }}>Asymmetries: brownfield 72% vs greenfield 51% · internal-funded 76% vs debt-funded 41% · &gt;85% util 74% vs &lt;70% 43% · domestic 68% vs cross-border M&A 37%.</span>
         </div>
       </div>
       <div style={card}>
@@ -2612,22 +2784,22 @@ function ModelTab({ card }: { card: any }) {
       <div style={card}>
         <div style={{ fontSize: F.md, fontWeight: 800, color: '#A78BFA', marginBottom: 6 }}>11 · 🚀 MULTIBAGGER SCORE — 12 components, 100 pts (v5)</div>
         <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.8 }}>
-          Recomputed from the 10y workbook series (SQGLP checklist + multibagger-checklist thresholds): earnings consistency 10 (PAT YoY &gt;15% in 7+ yrs) · sales CAGR + acceleration 10 (≥25% 3y; cagr3&gt;cagr5&gt;cagr10 bonus) · ROCE level+trajectory 10 (avg3 ≥25, rising vs 10y) · margin/op-leverage 8 · self-funded reinvestment 8 (capex/OCF 0.4-1.2x) · dilution 6 (≤+5% 10y) · debt trajectory 6 (D/E ≤0.3 and falling) · FCF years 6 · CFO→PAT 5 (cum ≥0.8) · size runway 8 (500-5,000 Cr sweet spot) · PEG/PE 8 (PEG &lt;1; PE 18-40 entry band) · promoter≥55%/pledge≤5%/moat 7.<br />
-          <span style={{ color: C.dim }}>Score = pts ÷ measured weight × 100 (NR below 40 weight). Absolute bands: A+ ≥80 · A 70 · B+ 60 · B 50 · C 38 · D. Consistency gates: forensic FLAGS caps at B+; pledge &gt;15% or D/E &gt;1.5 caps at B.</span>
+          Recomputed from the 10y workbook series (SQGLP checklist + multibagger-checklist thresholds): earnings consistency 10 (PAT YoY &gt;15% in 7+ yrs) · <b>sales CAGR + acceleration 10 — blended horizons: g = max(cagr3, 0.8×cagr5, 0.7×cagr10), full at ≥25% scaling to 0 at ≤5%; +2 bonus when cagr3&gt;cagr5&gt;cagr10; a 3y print &gt;8pp below the 5y caps the component at 60% (one soft year cannot zero a long-horizon grower)</b> · ROCE level+trajectory 10 (avg3 ≥25, rising vs 10y) · margin/op-leverage 8 · self-funded reinvestment 8 (capex/OCF 0.4-1.2x) · dilution 6 (≤+5% 10y) · debt trajectory 6 (D/E ≤0.3 and falling) · FCF years 6 · CFO→PAT 5 (cum ≥0.8) · size runway 8 (500-5,000 Cr sweet spot) · <b>PEG/PE 8 — PEG uses the blended PAT growth (max of 3y, 0.8×5y, 0.7×10y; sales-blend fallback); PEG &lt;1 full, PE 18-40 entry band; growth &lt;5% ⇒ PEG shown n/m and only the PE band (weight 3) is scored</b> · promoter≥55%/pledge≤5%/moat 7.<br />
+          <span style={{ color: C.body }}>Score = pts ÷ measured weight × 100 (NR below 40 weight). Absolute bands: A+ ≥80 · A 70 · B+ 60 · B 50 · C 38 · D. Consistency gates: forensic FLAGS caps at B+; pledge &gt;15% or D/E &gt;1.5 caps at B.</span>
         </div>
       </div>
       <div style={card}>
         <div style={{ fontSize: F.md, fontWeight: 800, color: C.red, marginBottom: 6 }}>12 · 🔬 FORENSIC SCORE — 12 checks, higher = cleaner (v5)</div>
         <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.8 }}>
           Cum CFO/PAT 14 (≥0.9 clean; &lt;0.5 CRITICAL) · CFO/EBITDA 8 · receivable-days trend 10 (channel stuffing) · inventory days 6 · other-income/PBT 8 (&gt;25% = crutch) · tax rate 8 (chronic &lt;15% = suspect) · cash↑+debt↑ 8 (phantom cash) · perpetual CWIP 8 (&gt;20% of NB 3y+) · dilution 5y 8 (&gt;40% CRITICAL) · dividend vs OCF 8 · CFO-positive years 8 · depreciation-rate volatility 6. Workbook fraud-checklist answers overlay −3 each (cap −15).<br />
-          <span style={{ color: C.dim }}>Grade = WORST of score band (CLEAN ≥80 · WATCH 60 · FLAGS 40 · AVOID) vs flag count (1 flag ≤WATCH · 2-3 ≤FLAGS · ≥4 or CRITICAL ⇒ AVOID).</span>
+          <span style={{ color: C.body }}>Grade = WORST of score band (CLEAN ≥80 · WATCH 60 · FLAGS 40 · AVOID) vs flag count (1 flag ≤WATCH · 2-3 ≤FLAGS · ≥4 or CRITICAL ⇒ AVOID).</span>
         </div>
       </div>
       <div style={card}>
         <div style={{ fontSize: F.md, fontWeight: 800, color: C.orange, marginBottom: 6 }}>13 · 🧭 VERDICT — the fusion matrix (v5)</div>
         <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.8 }}>
           First match wins: ① forensic AVOID/critical ⇒ <b style={{ color: C.red }}>☠ DO NOT TOUCH</b> (vetoes everything) · ② no data ⇒ 🧩 NEEDS DATA · ③ forensic FLAGS ⇒ 🔍 REVIEW FIRST · ④ MB ≥70 ∩ buy window ⇒ <b style={{ color: C.gold }}>🎯 PRIME</b> · ⑤ MB ≥70 ∩ capex-buy band, window shut ⇒ ⏳ PRIME SETUP · ⑥ MB ≥70, capex not ripe ⇒ 🌱 COMPOUNDER · ⑦ MB 50-69 ∩ window ⇒ 🏗 CAPEX PLAY (half size) · ⑧ MB &lt;50 ∩ window ⇒ ⚙ CYCLE ONLY · ⑨ MB ≥70 + CLEAN, no cycle ⇒ 💎 QUALITY HOLD · ⑩ capex AVOID/REJECT + MB &lt;50 ⇒ 🗑 DROP · ⑪ else 👀 MONITOR.<br />
-          <span style={{ color: C.dim }}>Composite rank = 0.40 capex + 0.35 MB + 0.25 forensic (renormalized; −15 on FLAGS). Concall modifiers: fresh cautious call demotes one rung; fresh bullish + util ≥75% tags 🔥 ramp confirmed.</span>
+          <span style={{ color: C.body }}>Composite rank = 0.40 capex + 0.35 MB + 0.25 forensic (renormalized; −15 on FLAGS). Concall modifiers: fresh cautious call demotes one rung; fresh bullish + util ≥75% tags 🔥 ramp confirmed.</span>
         </div>
       </div>
     </div>
