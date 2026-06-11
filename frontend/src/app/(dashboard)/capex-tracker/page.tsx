@@ -1,5 +1,6 @@
 'use client';
 import ConcallPro from './ConcallPro';
+import { classifyTranscriptV2 } from './concallClassifierV2';
 
 // ════════════════════════════════════════════════════════════════════════════
 // CAPEX TRACKER v5.0 — Company Intelligence Engine.
@@ -2730,6 +2731,7 @@ export default function CapexTrackerPage() {
                         <span style={{ flex: 1 }} />
                         <button onClick={(e) => { e.stopPropagation(); deleteTranscript(ckey(s.name), en.id); }} style={{ ...pill(false, C.red), padding: '2px 8px' }}>✕</button>
                       </div>
+                      <HandbookChip text={en.text} />
                       <SignalCards ex={ex} />
                       {ex.timeline.length > 1 && (
                         <div style={{ fontSize: F.xs, color: C.teal, lineHeight: 1.6, marginTop: 2 }}>
@@ -2840,6 +2842,35 @@ export default function CapexTrackerPage() {
 // 🎙 uniform signal cards — one per extraction channel; value big, source
 // sentence quoted in italic body text; channels with no finding stay visible
 // as a dim "not mentioned" so the reader knows the extractor looked.
+function HandbookChip({ text }: { text: string }) {
+  const [r, setR] = useState<any>(null);
+  useEffect(() => {
+    let cancel = false;
+    try {
+      const result = classifyTranscriptV2(text);
+      if (!cancel) setR(result);
+    } catch (e) { /* ignore */ }
+    return () => { cancel = true; };
+  }, [text]);
+  if (!r) return null;
+  const bandColors: Record<string, string> = {
+    'ANCHOR BUY': '#00E68A', 'CORE BUY': '#22D3EE', 'SATELLITE': '#A78BFA',
+    'WATCHLIST': '#FFB347', 'AVOID': '#FF4D6A', 'REJECT': '#FF4D6A',
+  };
+  const col = bandColors[r.band] || '#AEBBD0';
+  return (
+    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', margin: '4px 0', padding: '4px 0', borderTop: '1px dashed #2A3654', borderBottom: '1px dashed #2A3654', fontSize: 11 }}>
+      <span style={{ fontWeight: 800, color: '#FFD700' }}>📘 Handbook</span>
+      <span style={{ fontWeight: 900, color: col, padding: '2px 8px', borderRadius: 8, background: col + '1A', border: '1px solid ' + col + '55' }}>{r.scorecardTotal}/100 {r.band}</span>
+      {r.sectorGuess && <span style={{ color: '#AEBBD0' }}>sector: <b style={{ color: '#22D3EE' }}>{r.sectorGuess}</b> <span style={{ color: '#8B98AC' }}>({String(r.sectorConfidence).toLowerCase()})</span></span>}
+      <span style={{ color: '#00E68A' }}>+{r.toneScore.positive}</span>
+      <span style={{ color: '#FFB347' }}>⚠{r.toneScore.cautious}</span>
+      <span style={{ color: '#FF4D6A' }}>🚩{r.toneScore.redFlag}</span>
+      <span style={{ color: '#8B98AC' }}>{r.totalSentences} sent</span>
+    </div>
+  );
+}
+
 function SignalCards({ ex }: { ex: ConcallExtract }) {
   const qFor = (f: string) => ex.quotes.find((q) => q.field === f)?.snippet || '';
   const clip = (s: string) => (s.length > 190 ? s.slice(0, 187) + '…' : s);
