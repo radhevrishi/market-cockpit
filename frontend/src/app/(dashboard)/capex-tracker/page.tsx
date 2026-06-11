@@ -1794,6 +1794,7 @@ export default function CapexTrackerPage() {
   const [ccLabel, setCcLabel] = useState('');
   const [ccText, setCcText] = useState('');
   const [ccView, setCcView] = useState<string | null>(null);
+  const [allOpen, setAllOpen] = useState(false);
   const [assignSel, setAssignSel] = useState<Record<string, string>>({});
   const ccFileRef = useRef<HTMLInputElement>(null);
 
@@ -2298,6 +2299,7 @@ export default function CapexTrackerPage() {
         <span onClick={() => setTab('verdict')} style={pill(tab === 'verdict', C.orange)}>🧭 Verdict</span>
         <span onClick={() => setTab('model')} style={pill(tab === 'model', C.blue)}>📐 The Model</span>
         <span style={{ flex: 1 }} />
+        <span onClick={() => setAllOpen(o => !o)} style={pill(allOpen, C.amber)} title="Toggle expand all rows across every tab">⇕ {allOpen ? 'Collapse' : 'Expand'} all</span>
         <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,.pdf,.pptx,.ppt,.txt" multiple onChange={(e) => onFiles(e.target.files)} style={{ fontSize: F.xs, color: C.dim }} />
         <button onClick={downloadTemplate} style={{ ...pill(false, C.blue), background: C.panel2 }}>⬇ Input template</button>
         {rows.length > 0 && <button onClick={clearAll} style={{ ...pill(false, C.red) }}>Clear all</button>}
@@ -2351,7 +2353,7 @@ export default function CapexTrackerPage() {
                       <span title={'Forensic ' + (it.fx.grade === 'NR' ? 'not rated' : it.fx.score + '/100 · ' + it.fx.flags.length + ' flags')} style={{ fontSize: 10, fontWeight: 900, padding: '1px 6px', borderRadius: 7, background: it.fx.color + '22', color: it.fx.color, border: '1px solid ' + it.fx.color + '55' }}>{it.fx.grade === 'NR' ? 'NR' : it.fx.score}</span>
                     </span>
                   ) : null;
-                  return <ScoreRow key={s.name} s={s} open={open === s.name} toggle={() => setOpen(open === s.name ? null : s.name)} fmt={fmt} Detail={Detail} lens={lens} veto={it ? it.fx.grade === 'AVOID' || it.fx.critical : false} />;
+                  return <ScoreRow key={s.name} s={s} open={open === s.name || allOpen} toggle={() => setOpen(open === s.name ? null : s.name)} fmt={fmt} Detail={Detail} lens={lens} veto={it ? it.fx.grade === 'AVOID' || it.fx.critical : false} />;
                 })}
               </tbody>
             </table>
@@ -2475,7 +2477,7 @@ export default function CapexTrackerPage() {
                   const measured = mb.components.filter((cmp) => cmp.pts !== null);
                   const top3 = [...measured].sort((a, b) => (b.pts! / b.w) - (a.pts! / a.w)).slice(0, 3).filter((cmp) => cmp.pts! > 0);
                   const weak = [...measured].sort((a, b) => (a.pts! / a.w) - (b.pts! / b.w))[0];
-                  const isOpen = openMB === s.name;
+                  const isOpen = openMB === s.name || allOpen;
                   return (
                     <Fragment key={s.name}>
                       <tr className="cxr" onClick={() => setOpenMB(isOpen ? null : s.name)} style={{ borderBottom: '1px solid ' + C.line, cursor: 'pointer', background: isOpen ? '#16233B' : undefined }}>
@@ -2542,7 +2544,7 @@ export default function CapexTrackerPage() {
               </tr></thead>
               <tbody>
                 {[...intel].sort((a, b) => (b.fx.grade === 'NR' ? -1 : b.fx.score) - (a.fx.grade === 'NR' ? -1 : a.fx.score)).map(({ s, fin, fx }) => {
-                  const isOpen = openFX === s.name;
+                  const isOpen = openFX === s.name || allOpen;
                   return (
                     <Fragment key={s.name}>
                       <tr className="cxr" onClick={() => setOpenFX(isOpen ? null : s.name)} style={{ borderBottom: '1px solid ' + C.line, cursor: 'pointer', background: isOpen ? '#16233B' : undefined }}>
