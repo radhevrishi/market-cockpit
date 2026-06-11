@@ -1123,11 +1123,11 @@ function extractConcall(text: string): ConcallExtract {
     quotes.push({ field, match: String(best.n), snippet: best.s });
     return best.n;
   };
-  const utilization = pick('utilization', /utili[sz]ation|capacity utili/i, PCT_SRC, 1, 100, { lastNum: true });
+  const utilization = pick('utilization', /utili[sz]ation\s+(?:of|at|is|was|stands?\s+at|came\s+(?:down\s+)?(?:to|from)|increased\s+to|reached|hit|operating\s+at)?\s*(?:at\s+|about\s+|around\s+|approximately\s+)?\d|capacity\s+utili[sz]ation/i, PCT_SRC, 1, 100, { lastNum: true });
   const utilArr = utilization !== null ? [utilization] : [];
   const orderBook = pick('orderBook', /order\s*book|order\s*inflow|open orders/i, CR_SRC, 1, 10000000, { preferMax: true });
-  const capexGuidance = pick('capexGuidance', /capex|capital expenditure|capital outlay/i, CR_SRC, 1, 10000000, { preferMax: true });
-  const anchorPct = pick('anchorPct', /\b(booked|committed|tied[- ]?up|visibility|contracted)\b/i, PCT_SRC, 1, 100);
+  const capexGuidance = pick('capexGuidance', /\bcapex\b|capital\s+expenditure|capital\s+outlay|capex\s+(?:of|guidance|plan|spend|outlay|programme)|\bspend(?:ing)?\s+(?:on\s+)?capex|\bcapex\s+spend/i, CR_SRC, 1, 10000000, { preferMax: true });
+  const anchorPct = pick('anchorPct', /\b(booked|committed|tied[- ]?up|visibility|contracted|covered\s+by\s+orders|order\s+book|backlog)\b|export\s+(share|mix|revenue|sales)/i, PCT_SRC, 1, 100);
   // qualitative notes — one best sentence each (growth / margin / demand)
   const pickNote = (field: string, kw: RegExp): string | null => {
     let best: { s: string; sc: number } | null = null;
