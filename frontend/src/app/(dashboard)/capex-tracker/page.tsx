@@ -1614,6 +1614,14 @@ export default function CapexTrackerPage() {
   const [rows, setRows] = useState<Row[]>([]);
   const [files, setFiles] = useState<string[]>([]);
   const [tab, setTab] = useState<'board' | 'analytics' | 'multibagger' | 'forensics' | 'concall' | 'verdict' | 'model'>('board');
+  // PATCH — hydrate tab from the tab URL param (home 🧭 Verdict chip deep link).
+  // Mount-effect (not useState initializer) to avoid SSR hydration mismatch.
+  useEffect(() => {
+    try {
+      const p = new URLSearchParams(window.location.search).get('tab');
+      if (p && ['board','analytics','multibagger','forensics','concall','verdict','model'].includes(p)) setTab(p as any);
+    } catch { /* noop */ }
+  }, []);
   const [q, setQ] = useState('');
   const [band, setBand] = useState('ALL');
   const [minScore, setMinScore] = useState(0);
