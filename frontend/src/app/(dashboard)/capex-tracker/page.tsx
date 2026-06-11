@@ -338,21 +338,22 @@ function scoreRow(r: Row, h: Record<string, string>): Scored {
   const uEff = !isNaN(util) ? util : utilEff;
   const activeBuild = phase === 'BUILDING' || phase === 'RAMPING' || capexAccel > 1.5 || cwipRatio > 15;
   const commissioned = nbGrowth > 25; // block just jumped — CWIP rolled into Net Block
+  // Pre-commissioning the NEW capacity is offline by definition ⇒ Stage A no
+  // matter how hot the OLD assets run (that heat is F6's job). Utilization
+  // maps to B-F only AFTER a commissioning event (Net Block jump).
   let stage = '';
   if (isFinite(capexToSales) || isFinite(cwipRatio) || !isNaN(uEff)) {
-    if (cwipRatio > 30 && !commissioned) stage = 'A';
-    else if (commissioned || (activeBuild && cwipRatio <= 30)) {
-      if (!commissioned && !activeBuild) stage = '';
-      else if (isNaN(uEff)) stage = commissioned ? 'B' : 'A';
-      else if (uEff < 30) stage = commissioned ? 'B' : 'A';
+    if (commissioned) {
+      if (isNaN(uEff) || uEff < 30) stage = 'B';
       else if (uEff < 50) stage = 'C';
       else if (uEff < 70) stage = 'D';
       else if (uEff <= 90) stage = 'E';
       else stage = 'F';
-    } else if (!isNaN(uEff) && uEff > 90 && revYoY > 20) stage = 'F';
+    } else if (activeBuild) stage = 'A';
+    else if (!isNaN(uEff) && uEff > 90 && revYoY > 20) stage = 'F';
   }
   // earnings inflection already printed + high util ⇒ F regardless
-  if (!isNaN(uEff) && uEff > 70 && revYoY > 25 && capexAccel < 1.2 && stage && stage >= 'D') stage = 'F';
+  if (!isNaN(uEff) && uEff > 70 && revYoY > 25 && capexAccel < 1.2 && (stage === 'D' || stage === 'E')) stage = 'F';
   const sm = stage ? STAGE_META[stage] : null;
   const stageLabel = sm ? sm.label : 'NO ACTIVE CYCLE DETECTED';
 
