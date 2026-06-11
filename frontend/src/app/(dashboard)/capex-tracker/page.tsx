@@ -930,7 +930,7 @@ function extractConcall(text: string): ConcallExtract {
     }
     return out;
   };
-  const utilHits = run('utilization', /utili[sz]ation[^.\d%]{0,50}(\d{1,3}(?:\.\d+)?)\s*%/gi).filter((x) => x.num >= 1 && x.num <= 100);
+  const utilHits = run('utilization', /utili[sz]ation[^.\d%]{0,50}(\d{1,3}(?:\.\d+)?)\s*(?:%|percent|per\s*cent)/gi).filter((x) => x.num >= 1 && x.num <= 100);
   const utilArr = utilHits.map((x) => x.num);
   const obHits = run('orderBook', /order\s*book[^.\d]{0,50}(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d+)?)\s*(crores?|cr\b|billion|bn|mn|million)/gi);
   const obCr = obHits.filter((x) => /^cr/.test(x.unit)); // only crore units accepted as values
@@ -944,7 +944,7 @@ function extractConcall(text: string): ConcallExtract {
       quotes.push({ field: 'timeline', match: m[0], snippet: snip(m.index, m[0].length) });
     }
   }
-  const anchorHits = run('anchorPct', /(booked|committed|tied[- ]?up|visibility|contracted)[^.\d%]{0,50}(\d{1,3})\s*%/gi, 2).filter((x) => x.num >= 1 && x.num <= 100);
+  const anchorHits = run('anchorPct', /(booked|committed|tied[- ]?up|visibility|contracted)[^.\d%]{0,50}(\d{1,3})\s*(?:%|percent|per\s*cent)/gi, 2).filter((x) => x.num >= 1 && x.num <= 100);
   const OPT = ['strong demand', 'robust', 'healthy order', 'record', 'all[- ]?time high', 'confident', 'upgrade', 'ahead of schedule', 'ramping well', 'sold out', 'capacity booked'];
   const CAU = ['headwind', 'challenge', 'delay', 'deferred', 'pricing pressure', 'slowdown', 'muted', 'below expectation', 'postponed', 'underutili', 'cost overrun', 'demand weak'];
   const count = (words: string[]) => words.reduce((n, w) => n + (t.match(new RegExp(w, 'gi'))?.length || 0), 0);
@@ -1062,6 +1062,105 @@ function loadSheetJS(): Promise<any> {
     document.head.appendChild(s);
   });
 }
+
+// ── v5.1: transcript file ingestion (PDF / PPTX / TXT, all in-browser) ─────
+function loadPdfJs(): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const w = window as any;
+    if (w.pdfjsLib) return resolve(w.pdfjsLib);
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    s.onload = () => {
+      try { w.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; } catch {}
+      resolve(w.pdfjsLib);
+    };
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+}
+
+function loadJSZip(): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const w = window as any;
+    if (w.JSZip) return resolve(w.JSZip);
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+    s.onload = () => resolve(w.JSZip); s.onerror = reject;
+    document.head.appendChild(s);
+  });
+}
+
+const TRANSCRIPT_CAP = 300000; // same 300k-char cap as the paste path
+const capTranscript = (raw: string): string =>
+  raw.length > TRANSCRIPT_CAP ? raw.slice(0, TRANSCRIPT_CAP - 60) + '\n\n[… truncated at the 300k-char transcript cap]' : raw;
+
+async function extractPdfText(buf: ArrayBuffer): Promise<string> {
+  const pdfjs = await loadPdfJs();
+  const doc = await pdfjs.getDocument({ data: buf }).promise;
+  let out = '';
+  for (let p = 1; p <= doc.numPages; p++) {
+    const page = await doc.getPage(p);
+    const tc = await page.getTextContent();
+    out += (tc.items || []).map((it: any) => (it && typeof it.str === 'string' ? it.str : '')).join(' ') + '\n';
+    if (out.length > TRANSCRIPT_CAP * 2) break; // far past the cap — stop reading pages
+  }
+  try { doc.destroy(); } catch {}
+  return out;
+}
+
+async function extractPptxText(buf: ArrayBuffer): Promise<string> {
+  const JSZip = await loadJSZip();
+  const zip = await JSZip.loadAsync(buf);
+  const slides = Object.keys(zip.files)
+    .filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))
+    .sort((a, b) => parseInt(a.replace(/\D+/g, ''), 10) - parseInt(b.replace(/\D+/g, ''), 10));
+  if (!slides.length) throw new Error('no slides found inside the file — is it a valid .pptx?');
+  const unesc = (s: string) => s
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(+d)).replace(/&amp;/g, '&');
+  const parts: string[] = [];
+  for (const nm of slides) {
+    const xml: string = await zip.files[nm].async('string');
+    const texts: string[] = [];
+    const re = /<a:t(?:\s[^>]*)?>([\s\S]*?)<\/a:t>/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(xml))) texts.push(unesc(m[1]));
+    if (texts.length) parts.push(texts.join(' '));
+  }
+  return parts.join('\n');
+}
+
+// label: quarter/FY pattern from the filename (else the first 2k of the text), else upload date
+function transcriptLabel(fname: string, textHead: string): string {
+  const base = fname.replace(/\.(pdf|pptx?|txt)$/i, '');
+  const find = (s: string): string | null => {
+    const q = s.match(/Q([1-4])[\s_\-]*(?:FY)?[\s_\-']*((?:20)?\d{2})/i);
+    if (q) return 'Q' + q[1] + ' FY' + (q[2].length === 4 ? q[2].slice(2) : q[2]);
+    const fy = s.match(/FY[\s_\-']*((?:20)?\d{2})/i);
+    if (fy) return 'FY' + (fy[1].length === 4 ? fy[1].slice(2) : fy[1]);
+    return null;
+  };
+  const d = find(base) || find(textHead.slice(0, 2000));
+  return d ? d + ' · ' + base : base + ' · ' + new Date().toLocaleDateString();
+}
+
+// auto-attach: match stored company names token-wise against filename + transcript head
+const CO_STOP = new Set(['ltd', 'limited', 'india', 'indian', 'industries', 'industry', 'technologies', 'technology', 'tech', 'company', 'corporation', 'corp', 'private', 'pvt', 'the', 'and', 'group', 'enterprises', 'international', 'solutions', 'systems', 'products', 'services', 'inc', 'plc']);
+function matchCompanies(names: string[], fname: string, textHead: string): string[] {
+  const norm = (s: string) => ' ' + s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim() + ' ';
+  const hay = norm(fname) + norm(textHead);
+  const out: string[] = [];
+  for (const name of names) {
+    const all = norm(name).trim().split(' ').filter(Boolean);
+    const sig = all.filter((tk) => tk.length >= 3 && !CO_STOP.has(tk) && !/^\d+$/.test(tk));
+    const probe = (sig.length ? sig : all)[0];
+    if (probe && hay.indexOf(' ' + probe + ' ') >= 0) out.push(name);
+  }
+  return out;
+}
+
+const uid = () => String(Date.now()) + '-' + Math.random().toString(36).slice(2, 7);
 
 const TEMPLATE_HEADERS = 'Company Name,Sector,Industry,Country,ROCE 3-yr avg,Capacity Utilization %,D/E ratio,OCF positive years,FCF 3-yr,Internal funding %,Debt funding %,CAPEX size Cr,Gross Block,Annual Revenue,Anchor Demand %,Promoter Holding %,Promoter Pledge %,Founder-CEO Tenure,EBITDA Margin %,Revenue CAGR 3-yr %,Brownfield,Cycle Position,Cost Overrun History,Working Capital Trend,Policy Support,PE vs 5-yr Mean,Import Substitution,Export Opportunity,Competitive Moat,Prior Capex Success';
 const TEMPLATE_SAMPLE = 'Interarch Building,Industrials,PEB / Building Products,IN,28,88,0.04,5,120,90,10,400,650,1300,65,60,0,,14,22,Brownfield,Mid,No,Stable,Indirect,0.9,N,Y,Y,Y';
@@ -1304,6 +1403,7 @@ function parseScreenerWorkbook(XLSX: any, wb: any, fname: string): Row | null {
 
 const KD = 'mc:capex-tracker:data:v1'; const KN = 'mc:capex-tracker:files:v1';
 const KC = 'mc:capex-tracker:concalls:v1'; // transcripts — survive 'Clear all'
+const KU = '__unassigned__'; // bucket key inside KC for uploads that matched 0 or 2+ companies
 
 // ── small visual atoms ──────────────────────────────────────────────────────
 const TierBars = ({ s, w = 30 }: { s: Scored; w?: number }) => (
@@ -1430,19 +1530,21 @@ export default function CapexTrackerPage() {
   const [ccLabel, setCcLabel] = useState('');
   const [ccText, setCcText] = useState('');
   const [ccView, setCcView] = useState<string | null>(null);
+  const [assignSel, setAssignSel] = useState<Record<string, string>>({});
   const ccFileRef = useRef<HTMLInputElement>(null);
 
   // refs mirror rows/files so multi-file uploads (an awaited loop) never merge
   // against a stale closure — file 2 must see file 1's rows, not the initial state
   const rowsRef = useRef<Row[]>([]);
   const filesRef = useRef<string[]>([]);
+  const concallsRef = useRef<Record<string, ConcallEntry[]>>({}); // same staleness guard for transcript batches
 
   useEffect(() => {
     try {
       const d = localStorage.getItem(KD); const n = localStorage.getItem(KN);
       if (d) { const pr = JSON.parse(d); rowsRef.current = pr; setRows(pr); }
       if (n) { const pf = JSON.parse(n); filesRef.current = pf; setFiles(pf); }
-      const cc = localStorage.getItem(KC); if (cc) setConcalls(JSON.parse(cc));
+      const cc = localStorage.getItem(KC); if (cc) { const pc = JSON.parse(cc); concallsRef.current = pc; setConcalls(pc); }
     } catch {}
   }, []);
 
@@ -1486,12 +1588,68 @@ export default function CapexTrackerPage() {
           const ws = wb.Sheets[wb.SheetNames[0]];
           const json: Row[] = XLSX.utils.sheet_to_json(ws, { raw: false, defval: '' });
           mergeRows(json.map((r) => { const o: Row = {}; Object.keys(r).forEach((k) => { o[String(k).trim()] = String((r as any)[k] ?? '').trim(); }); return o; }), f.name);
+        } else if (/\.(pdf|pptx|ppt|txt)$/i.test(f.name)) {
+          await onTranscriptFile(f); // concall pipeline — mixed picks (xlsx + pdf) both route correctly
         } else {
           mergeRows(parseCSV(await f.text()), f.name);
         }
       } catch (e: any) { setMsg('Failed to read ' + f.name + ': ' + (e?.message || e)); }
     }
     if (fileRef.current) fileRef.current.value = '';
+  };
+
+  // ── v5.1: transcript file → extract text → auto-attach to a company ───────
+  const attachMsg = (company: string, en: ConcallEntry): string => {
+    const ex = en.extract; const sig: string[] = [];
+    if (ex.utilization !== null) sig.push('utilization ' + ex.utilization + '% detected');
+    if (ex.orderBook !== null) sig.push('order book ' + ex.orderBook.toLocaleString() + ' Cr');
+    if (ex.capexGuidance !== null) sig.push('capex guide ' + ex.capexGuidance.toLocaleString() + ' Cr');
+    if (ex.tone !== null) sig.push('tone ' + Math.round(ex.tone * 100) + '% positive');
+    return '🎙 Transcript attached to ' + company + ' ("' + en.label + '")' +
+      (sig.length ? ' · ' + sig.join(' · ') + ' — Apply chips ready on the 🎙 Concall tab.' : ' · no numeric signals found — open the 🎙 Concall tab to review.');
+  };
+  const onTranscriptFile = async (f: File) => {
+    if (/\.ppt$/i.test(f.name)) {
+      setMsg('⚠ ' + f.name + ' is a legacy binary .ppt that browsers cannot parse — export it as PDF (or .pptx) and re-upload. The rest of the batch continues.');
+      return;
+    }
+    const raw = (/\.pdf$/i.test(f.name) ? await extractPdfText(await f.arrayBuffer())
+      : /\.pptx$/i.test(f.name) ? await extractPptxText(await f.arrayBuffer())
+      : await f.text()).trim();
+    if (!raw) { setMsg('⚠ No text found in ' + f.name + (/\.pdf$/i.test(f.name) ? ' — likely a scanned/image-only PDF. ' : ' — ') + 'paste the text on the 🎙 Concall tab instead.'); return; }
+    const body = capTranscript(raw);
+    const names = rowsRef.current.map((r) => { const h = resolveHeaders(Object.keys(r)); return (r[h['name']] || '').trim(); }).filter(Boolean);
+    const matches = matchCompanies(names, f.name, body.slice(0, 2048));
+    const entry: ConcallEntry = {
+      id: uid(), label: transcriptLabel(f.name, body), addedAt: new Date().toISOString(),
+      chars: body.length, text: body, extract: extractConcall(body),
+    };
+    if (matches.length === 1) {
+      const k = ckey(matches[0]);
+      const list = concallsRef.current[k] ?? [];
+      if (list.length >= 8) { setMsg('⚠ ' + matches[0] + ' already has 8 transcripts (the cap) — delete one on the 🎙 Concall tab, then re-upload ' + f.name + '.'); return; }
+      if (persistConcalls({ ...concallsRef.current, [k]: [...list, entry] })) setMsg(attachMsg(matches[0], entry));
+    } else {
+      const pool = concallsRef.current[KU] ?? [];
+      if (pool.length >= 12) { setMsg('⚠ 12 transcripts already parked in UNASSIGNED — assign or delete some on the 🎙 Concall tab first.'); return; }
+      if (persistConcalls({ ...concallsRef.current, [KU]: [...pool, entry] })) {
+        setMsg('🎙 ' + f.name + ' parsed (' + body.length.toLocaleString() + ' chars) but ' +
+          (matches.length === 0 ? 'no stored company matched' : matches.length + ' companies matched (' + matches.slice(0, 3).join(', ') + (matches.length > 3 ? '…' : '') + ')') +
+          ' — parked in UNASSIGNED on the 🎙 Concall tab; pick the company there.');
+      }
+    }
+  };
+  const assignUnassigned = (id: string, company: string) => {
+    if (!company) { setMsg('Pick a company to assign this transcript to.'); return; }
+    const pool = concallsRef.current[KU] ?? [];
+    const en = pool.find((e) => e.id === id); if (!en) return;
+    const k = ckey(company);
+    const list = concallsRef.current[k] ?? [];
+    if (list.length >= 8) { setMsg('⚠ ' + company + ' already has 8 transcripts (the cap) — delete one first.'); return; }
+    const next = { ...concallsRef.current, [k]: [...list, en] };
+    const rest = pool.filter((e) => e.id !== id);
+    if (rest.length) next[KU] = rest; else delete next[KU];
+    if (persistConcalls(next)) setMsg(attachMsg(company, en));
   };
 
   const clearAll = () => {
@@ -1516,6 +1674,7 @@ export default function CapexTrackerPage() {
     const json = JSON.stringify(next);
     if (json.length > 2_500_000) { setMsg('⚠ Transcript store would exceed 2.5MB — delete old transcripts first. NOT saved.'); return false; }
     try { localStorage.setItem(KC, json); } catch { setMsg('⚠ Browser storage quota exceeded — transcript NOT saved.'); return false; }
+    concallsRef.current = next;
     setConcalls(next);
     return true;
   };
@@ -1525,30 +1684,31 @@ export default function CapexTrackerPage() {
     if (!body) { setMsg('Paste the transcript text first.'); return; }
     if (body.length > 300000) { setMsg('⚠ Transcript too large — trim to the management+Q&A section (max 300k chars).'); return; }
     const k = ckey(company);
-    let list = [...(concalls[k] ?? [])];
+    let list = [...(concallsRef.current[k] ?? [])];
     if (list.length >= 8) {
       if (!confirm('This company already has 8 transcripts (the cap). Delete the oldest to make room?')) return;
       list = list.slice(1);
     }
     const entry: ConcallEntry = {
-      id: String(Date.now()), label: label.trim() || 'untitled call', addedAt: new Date().toISOString(),
+      id: uid(), label: label.trim() || 'untitled call', addedAt: new Date().toISOString(),
       chars: body.length, text: body, extract: extractConcall(body),
     };
-    if (persistConcalls({ ...concalls, [k]: [...list, entry] })) {
+    if (persistConcalls({ ...concallsRef.current, [k]: [...list, entry] })) {
       setMsg('🎙 Saved transcript for ' + company + ' — ' + body.length.toLocaleString() + ' chars, extraction below.');
       setCcLabel(''); setCcText('');
     }
   };
   const deleteTranscript = (k: string, id: string) => {
     if (!confirm('Delete this transcript?')) return;
-    const list = (concalls[k] ?? []).filter((e) => e.id !== id);
-    const next = { ...concalls };
+    const list = (concallsRef.current[k] ?? []).filter((e) => e.id !== id);
+    const next = { ...concallsRef.current };
     if (list.length) next[k] = list; else delete next[k];
     persistConcalls(next);
   };
   const clearTranscripts = () => {
     if (!confirm('Clear ALL saved concall transcripts? (Company data is untouched.)')) return;
     try { localStorage.removeItem(KC); } catch {}
+    concallsRef.current = {};
     setConcalls({}); setMsg('All transcripts cleared.');
   };
   const ccStateFor = (name: string): CCState & { latest: ConcallEntry | null } => {
@@ -1803,7 +1963,7 @@ export default function CapexTrackerPage() {
     <div style={{ maxWidth: 2100, margin: '0 auto', padding: '14px 18px', color: C.txt, fontFamily: 'inherit' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, flexWrap: 'wrap' }}>
         <Link href="/" style={{ color: C.dim, textDecoration: 'none', fontSize: F.sm }}>← Home</Link>
-        <span style={{ fontSize: F.xl, fontWeight: 900, color: C.orange }}>🏗 CAPEX TRACKER <span style={{ fontSize: F.xs, color: C.muted, fontWeight: 700 }}>v5.0</span></span>
+        <span style={{ fontSize: F.xl, fontWeight: 900, color: C.orange }}>🏗 CAPEX TRACKER <span style={{ fontSize: F.xs, color: C.muted, fontWeight: 700 }}>v5.1</span></span>
         <span style={{ fontSize: F.sm, color: C.dim }}>four lenses, one dataset: capex quality × timing · 🚀 multibagger DNA · 🔬 forensics · 🎙 concall → 🧭 one fused verdict</span>
         <span style={{ fontSize: F.xs, color: C.muted }}>{files.length} file{files.length === 1 ? '' : 's'} · {scored.length} companies (saved locally)</span>
       </div>
@@ -1817,7 +1977,7 @@ export default function CapexTrackerPage() {
         <span onClick={() => setTab('verdict')} style={pill(tab === 'verdict', C.orange)}>🧭 Verdict</span>
         <span onClick={() => setTab('model')} style={pill(tab === 'model', C.blue)}>📐 The Model</span>
         <span style={{ flex: 1 }} />
-        <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls" multiple onChange={(e) => onFiles(e.target.files)} style={{ fontSize: F.xs, color: C.dim }} />
+        <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,.pdf,.pptx,.ppt,.txt" multiple onChange={(e) => onFiles(e.target.files)} style={{ fontSize: F.xs, color: C.dim }} />
         <button onClick={downloadTemplate} style={{ ...pill(false, C.blue), background: C.panel2 }}>⬇ Input template</button>
         {rows.length > 0 && <button onClick={clearAll} style={{ ...pill(false, C.red) }}>Clear all</button>}
       </div>
@@ -1825,9 +1985,10 @@ export default function CapexTrackerPage() {
 
       {!scored.length && (
         <div style={{ ...card, textAlign: 'center', padding: 40 }}>
-          <div style={{ fontSize: F.lg, fontWeight: 800 }}>Upload your capex universe (Screener.in Excel exports or CSV)</div>
+          <div style={{ fontSize: F.lg, fontWeight: 800 }}>Upload your capex universe (Screener.in Excel/CSV) — concall PDFs/PPTX can ride in the same pick</div>
           <div style={{ fontSize: F.sm, color: C.dim, marginTop: 8, maxWidth: 780, margin: '8px auto' }}>
             Screener workbooks are mined automatically: quantitative factors, capex telemetry, prior-cycle history, stage classification — with (est) fills for what the statements imply.
+            Concall transcripts (.pdf / .pptx / .txt) are parsed in this browser and auto-attached to the matching company; unmatched ones park in the 🎙 Concall tab for one-click assignment.
             Qualitative edges (anchor %, promoter/pledge, policy) are yours to fill inline. Data persists in this browser; re-upload any time to refresh — nothing is lost unless you press Clear all.
           </div>
         </div>
@@ -2137,17 +2298,50 @@ export default function CapexTrackerPage() {
                 style={{ background: C.bg, border: '1px solid ' + C.line, color: C.txt, borderRadius: 6, padding: '6px 8px', fontSize: F.xs, resize: 'vertical', fontFamily: 'inherit' }} />
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                 <button onClick={() => addTranscript(ccCompany, ccLabel, ccText)} style={{ ...pill(true, C.gold), border: '1px solid ' + C.gold }}>💾 Save + extract</button>
-                <input ref={ccFileRef} type="file" accept=".txt" style={{ fontSize: F.xs, color: C.dim, maxWidth: 180 }}
-                  onChange={async (e) => { const f = e.target.files?.[0]; if (f) { setCcText(await f.text()); } if (ccFileRef.current) ccFileRef.current.value = ''; }} />
+                <input ref={ccFileRef} type="file" accept=".txt,.pdf,.pptx,.ppt" style={{ fontSize: F.xs, color: C.dim, maxWidth: 180 }}
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0];
+                    if (f) {
+                      try {
+                        if (/\.ppt$/i.test(f.name)) setMsg('⚠ Legacy binary .ppt cannot be parsed in the browser — export it as PDF (or .pptx) and upload that.');
+                        else setCcText(capTranscript((/\.pdf$/i.test(f.name) ? await extractPdfText(await f.arrayBuffer()) : /\.pptx$/i.test(f.name) ? await extractPptxText(await f.arrayBuffer()) : await f.text()).trim()));
+                      } catch (err: any) { setMsg('Failed to read ' + f.name + ': ' + (err?.message || err)); }
+                    }
+                    if (ccFileRef.current) ccFileRef.current.value = '';
+                  }} />
               </div>
               <div style={{ fontSize: 10, color: C.muted }}>
-                .txt or paste only · max 300k chars · 8 transcripts per company · stored ONLY in this browser (separate from company data — survives "Clear all").
-                Extraction is heuristic: utilization %, order book (Cr), capex guidance, commissioning timeline, anchor/booked %, tone.
+                .pdf / .pptx / .txt or paste (legacy .ppt → export as PDF first) · max 300k chars · 8 transcripts per company · stored ONLY in this browser (separate from company data — survives "Clear all").
+                Extraction is heuristic: utilization %, order book (Cr), capex guidance, commissioning timeline, anchor/booked %, tone. Tip: drop PDFs straight on the main upload — they auto-attach by company name.
               </div>
               {Object.keys(concalls).length > 0 && <button onClick={clearTranscripts} style={{ ...pill(false, C.red), justifySelf: 'start' }}>Clear transcripts</button>}
             </div>
           </div>
           <div style={{ display: 'grid', gap: 12 }}>
+            {(concalls[KU] ?? []).length > 0 && (
+              <div style={{ ...card, border: '1px solid ' + C.amber + '88' }}>
+                <div style={{ fontSize: F.md, fontWeight: 800, color: C.amber, marginBottom: 4 }}>📎 UNASSIGNED uploads · {(concalls[KU] ?? []).length}</div>
+                <div style={{ fontSize: F.xs, color: C.dim, marginBottom: 6 }}>These files matched zero (or several) stored companies. Pick the company and Assign — extraction is already done and applies instantly.</div>
+                {(concalls[KU] ?? []).map((en) => (
+                  <div key={en.id} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', borderTop: '1px solid ' + C.line, padding: '6px 0' }}>
+                    <b style={{ fontSize: F.sm }}>{en.label}</b>
+                    <span style={{ fontSize: F.xs, color: C.muted }}>{new Date(en.addedAt).toLocaleDateString()} · {(en.chars / 1000).toFixed(1)}k chars</span>
+                    <span style={{ fontSize: F.xs, color: C.dim }}>
+                      {en.extract.utilization !== null && <>util <b style={{ color: C.gold }}>{en.extract.utilization}%</b> · </>}
+                      {en.extract.orderBook !== null && <>order book <b style={{ color: C.gold }}>{en.extract.orderBook.toLocaleString()} Cr</b></>}
+                    </span>
+                    <span style={{ flex: 1 }} />
+                    <select value={assignSel[en.id] ?? ''} onChange={(e) => setAssignSel({ ...assignSel, [en.id]: e.target.value })}
+                      style={{ background: C.bg, border: '1px solid ' + C.line, color: C.txt, borderRadius: 6, padding: '4px 6px', fontSize: F.xs, maxWidth: 220 }}>
+                      <option value="">— pick company —</option>
+                      {scored.map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
+                    </select>
+                    <button onClick={() => assignUnassigned(en.id, assignSel[en.id] ?? '')} style={{ ...pill(true, C.amber), border: '1px solid ' + C.amber }}>Assign</button>
+                    <button onClick={() => deleteTranscript(KU, en.id)} style={{ ...pill(false, C.red), padding: '2px 8px' }}>✕</button>
+                  </div>
+                ))}
+              </div>
+            )}
             {intel.filter(({ s }) => (concalls[ckey(s.name)] ?? []).length > 0).map(({ s, cc }) => (
               <div key={s.name} style={card}>
                 <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
@@ -2192,9 +2386,9 @@ export default function CapexTrackerPage() {
                 })}
               </div>
             ))}
-            {!intel.some(({ s }) => (concalls[ckey(s.name)] ?? []).length > 0) && (
+            {!intel.some(({ s }) => (concalls[ckey(s.name)] ?? []).length > 0) && !(concalls[KU] ?? []).length && (
               <div style={{ ...card, textAlign: 'center', padding: 30, color: C.dim, fontSize: F.sm }}>
-                No transcripts yet. Paste a concall on the left — the page extracts utilization, order book, capex guidance and tone, and suggests one-click updates to the capex engine (provenance preserved as "(concall)").
+                No transcripts yet. Upload the concall PDF/PPTX on the main file picker (it auto-attaches by company name) or paste it on the left — the page extracts utilization, order book, capex guidance and tone, and suggests one-click updates to the capex engine (provenance preserved as "(concall)").
               </div>
             )}
           </div>
