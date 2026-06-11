@@ -2332,8 +2332,7 @@ export default function CapexTrackerPage() {
         <span onClick={() => setTab('multibagger')} style={pill(tab === 'multibagger', C.violet)}>🚀 Multibagger</span>
         <span onClick={() => setTab('forensics')} style={pill(tab === 'forensics', C.red)}>🔬 Forensics</span>
         <span onClick={() => setTab('concall')} style={pill(tab === 'concall', C.gold)}>🎙 Concall</span>
-        <span onClick={() => setTab('concallpro')} style={pill(tab === 'concallpro', C.gold)} title="Concall reading mastery — keywords, structure, red flags">🎓 Concall Pro</span>
-        <span onClick={() => setTab('verdict')} style={pill(tab === 'verdict', C.orange)}>🧭 Verdict</span>
+                <span onClick={() => setTab('verdict')} style={pill(tab === 'verdict', C.orange)}>🧭 Verdict</span>
         <span onClick={() => setTab('model')} style={pill(tab === 'model', C.blue)}>📐 The Model</span>
         <span style={{ flex: 1 }} />
         <span onClick={() => setAllOpen(o => !o)} style={pill(allOpen, C.amber)} title="Toggle expand all rows across every tab">⇕ {allOpen ? 'Collapse' : 'Expand'} all</span>
@@ -2756,143 +2755,8 @@ export default function CapexTrackerPage() {
       )}
 
       {/* ═══ 🧭 VERDICT ═══ */}
-      {tab === 'concallpro' && (
-        <div style={{padding:'14px 4px', maxWidth: 1180, margin: '0 auto'}}>
-          <div style={{fontSize:20, fontWeight:700, color:C.gold, marginBottom:4}}>🎓 Concall Pro — read like a champion</div>
-          <div style={{fontSize:12, color:C.dim, marginBottom:6}}>One-page reference. The pattern that wins: <b style={{color:C.body}}>prepare → skim structure → ctrl+F power keywords → mine the Q&A → extract 12 numbers → check 8 red flags → write a 3-bullet update.</b></div>
 
-          <div style={{fontSize:14, fontWeight:700, color:C.cyan, marginTop:18, marginBottom:8, borderBottom: '1px solid ' + C.muted, paddingBottom:4}}>① BEFORE YOU READ (5 min)</div>
-          <div style={{padding:10, background:'rgba(174,187,208,0.04)', border:'1px solid '+C.muted, borderRadius:6, marginBottom:8, fontSize:12, color:C.body, lineHeight:1.55}}>
-            <div><b style={{color:C.gold}}>1.</b> Open the <b>previous quarter's transcript</b> first. What did they GUIDE? What KPIs were promised? Concall judging = guidance vs delivery.</div>
-            <div style={{marginTop:6}}><b style={{color:C.gold}}>2.</b> Pull the <b>investor presentation</b> alongside — slide-by-slide narrative is the same story management will tell.</div>
-            <div style={{marginTop:6}}><b style={{color:C.gold}}>3.</b> Note <b>consensus EPS &amp; rev estimates</b> and the <b>3 things the bulls believe</b> + <b>3 things the bears worry about</b>. The call resolves those.</div>
-            <div style={{marginTop:6, fontSize:11, color:C.dim, fontStyle:'italic'}}>Why: 80% of value is whether the call validated / disrupted your prior. Without a prior, every fact looks important.</div>
-          </div>
-
-          <div style={{fontSize:14, fontWeight:700, color:C.cyan, marginTop:18, marginBottom:8, borderBottom: '1px solid ' + C.muted, paddingBottom:4}}>② ANATOMY OF A CONCALL — read in this order</div>
-          <div style={{padding:10, background:'rgba(174,187,208,0.04)', border:'1px solid '+C.muted, borderRadius:6, marginBottom:8, fontSize:12, color:C.body, lineHeight:1.55}}>
-            <div><b style={{color:C.gold}}>A. Opening monologue (CEO/CFO, ~10 min):</b> the narrative they want printed. Note repeated phrases — those are slogans / strategy pillars.</div>
-            <div style={{marginTop:6}}><b style={{color:C.gold}}>B. Segment commentary:</b> which segment is the hero? Which gets a single line? Single-line segments hide deceleration.</div>
-            <div style={{marginTop:6}}><b style={{color:C.gold}}>C. Forward guidance:</b> the only forward-looking number that's auditable. Note conviction words ("we expect" vs "we are targeting" vs "we are confident").</div>
-            <div style={{marginTop:6}}><b style={{color:C.gold}}>D. Q&amp;A (60-70% of value!):</b> management gets tested here. <b>Long answers = uncertainty</b>. <b>2-3 follow-ups on the same topic = real concern</b>. <b>Deflection = issue</b>.</div>
-            <div style={{marginTop:6, fontSize:11, color:C.dim, fontStyle:'italic'}}>Pro tip: skim opening → JUMP to Q&amp;A → come back to segments only if Q&amp;A surfaced something.</div>
-          </div>
-
-          <div style={{fontSize:14, fontWeight:700, color:C.cyan, marginTop:18, marginBottom:8, borderBottom: '1px solid ' + C.muted, paddingBottom:4}}>③ POWER KEYWORDS — ctrl+F these every time</div>
-          <div style={{display:'grid', gridTemplateColumns:'repeat(2, 1fr)', gap:8}}>
-            {[
-              ['🏗 Capacity & Capex', ['utilization','capex','commission','expansion','brownfield','greenfield','debottleneck','MW','MT','tonnes','kgs','installed','operational by']],
-              ['📦 Demand & Pipeline', ['order book','backlog','pipeline','enquir','RFQ','RFP','tender','book-to-bill','marquee customer','design win','repeat order']],
-              ['💰 Margins & Pricing', ['EBITDA margin','operating margin','gross margin','pricing','pricing power','pass-through','raw material','operating leverage','realization','mix']],
-              ['🔮 Guidance & Outlook', ['guidance','expect','target','outlook','visibility','FY27','FY28','medium-term','steady state','structural']],
-              ['💸 Balance Sheet & Funding', ['debt','net cash','D/E','QIP','fundraise','working capital','receivable days','inventory days','interest cost','contingent liability']],
-              ['🚩 Risks & Red Flags', ['one-off','exceptional','deferred','delay','challenging','headwind','lumpy','provision','write-off','related party','auditor']],
-            ].map(([title, kws]) => (
-              <div key={title as string} style={{padding:10, background:'rgba(174,187,208,0.04)', border:'1px solid '+C.muted, borderRadius:6, fontSize:12, color:C.body, lineHeight:1.55}}>
-                <div style={{fontWeight:700, color:C.cyan, marginBottom:6}}>{title as string}</div>
-                {(kws as string[]).map(k => (<span key={k} style={{display:'inline-block', padding:'2px 8px', margin:'2px 4px 2px 0', background:'rgba(255,215,0,0.10)', border:'1px solid '+C.gold, borderRadius:10, fontSize:11, color:C.gold}}>{k}</span>))}
-              </div>
-            ))}
-          </div>
-
-          <div style={{fontSize:14, fontWeight:700, color:C.cyan, marginTop:18, marginBottom:8, borderBottom: '1px solid ' + C.muted, paddingBottom:4}}>④ SECTOR-SPECIFIC DECKS — ctrl+F these by sector</div>
-          <div style={{display:'grid', gridTemplateColumns:'repeat(2, 1fr)', gap:8}}>
-            {[
-              ['Pharma / CDMO / API', 'FDA approval · USFDA cleared · EUGMP · WHO-GMP · ANDA filings · DMF · China+1 · captive · backward-integration', '483 · warning letter · import alert · OAI · recall · patent cliff · price erosion'],
-              ['Solar / Renewables', 'PLI · ALMM · RPO · safeguard duty · BCD · order book MW · battery storage · domestic content', 'China dumping · polysilicon spike · module price erosion · curtailment · DISCOM payments'],
-              ['T&D / Power Equipment', 'smart meter · RDSS · data center · transmission line · transformer · substation · battery storage', 'DISCOM payment delay · subsidy backlog · execution slippage · L1 vs L1+5%'],
-              ['Capital Goods / Defense / Railways', 'order book · book-to-bill · indigenization · Make in India · iDEX · Kavach · Vande Bharat · L1', 'tender delay · L1 walk-away · provisioning · execution risk · cost over-run'],
-              ['Auto-Ancillary / EMS', 'EV ramp · design win · premium model · OEM Tier-1 · content per vehicle · BOM enrichment', 'customer concentration · OEM destocking · model phase-out · receivable stretch'],
-              ['Specialty Chem / Agrochem', 'China+1 · destocking ended · inventory normalization · innovator partnership · multi-year contract', 'inventory overhang · price erosion · oil-linked volatility · environmental fine'],
-              ['Food / FMCG / Egg', 'feed cost down · EU import demand · premiumization · A&P leverage · distribution expansion', 'feed cost spike · FX weakness · channel destocking · ASP cut'],
-              ['Steel / Cement / Bulk Commodities', 'utilization >85% · price hike sustained · China discipline · iron-ore down', 'China capacity restart · price collapse · spread compression · debt funded expansion'],
-            ].map(([title, tail, red]) => (
-              <div key={title} style={{padding:10, background:'rgba(174,187,208,0.04)', border:'1px solid '+C.muted, borderRadius:6, fontSize:12, color:C.body, lineHeight:1.55}}>
-                <b style={{color:C.green}}>{title}</b><br/>
-                <span style={{fontSize:11, color:C.dim, fontStyle:'italic'}}>tailwinds:</span> {tail}<br/>
-                <span style={{fontSize:11, color:C.dim, fontStyle:'italic'}}>red flags:</span> {red}
-              </div>
-            ))}
-          </div>
-
-          <div style={{fontSize:14, fontWeight:700, color:C.cyan, marginTop:18, marginBottom:8, borderBottom: '1px solid ' + C.muted, paddingBottom:4}}>⑤ PHRASES THAT TELL THE TRUTH — tone lexicon</div>
-          <div style={{display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:8}}>
-            <div style={{padding:10, background:'rgba(0,230,138,0.05)', border:'1px solid '+C.green, borderRadius:6, fontSize:12, color:C.body, lineHeight:1.55}}>
-              <div style={{fontWeight:700, color:C.green, marginBottom:6}}>✅ POSITIVE conviction</div>
-              <div style={{fontSize:11, color:C.dim, fontStyle:'italic'}}>"in line with our plan" · "ahead of guidance" · "exceeded our internal target" · "strong pricing held" · "robust demand environment" · "fully booked" · "we are confident" · "structural shift" · "multi-year visibility"</div>
-            </div>
-            <div style={{padding:10, background:'rgba(255,179,71,0.05)', border:'1px solid '+C.amber, borderRadius:6, fontSize:12, color:C.body, lineHeight:1.55}}>
-              <div style={{fontWeight:700, color:C.amber, marginBottom:6}}>⚠ CAUTIOUS hedging</div>
-              <div style={{fontSize:11, color:C.dim, fontStyle:'italic'}}>"we will see how it plays out" · "remains to be seen" · "watching closely" · "near-term cautious" · "lumpy quarter" · "back-ended" · "second-half loaded" · "Q1 was a wash" · "monitoring the situation"</div>
-            </div>
-            <div style={{padding:10, background:'rgba(255,77,106,0.05)', border:'1px solid '+C.red, borderRadius:6, fontSize:12, color:C.body, lineHeight:1.55}}>
-              <div style={{fontWeight:700, color:C.red, marginBottom:6}}>🚩 RED FLAG spin</div>
-              <div style={{fontSize:11, color:C.dim, fontStyle:'italic'}}>"challenging quarter" · "weaker than expected" · "deferred" · "one-time" · "exceptional item" · "transition phase" · "investing for future" · "structural rationalization" · "course correction" · "tactical pricing"</div>
-            </div>
-          </div>
-
-          <div style={{fontSize:14, fontWeight:700, color:C.cyan, marginTop:18, marginBottom:8, borderBottom: '1px solid ' + C.muted, paddingBottom:4}}>⑥ THE 12 NUMBERS TO ALWAYS EXTRACT</div>
-          <div style={{padding:10, background:'rgba(174,187,208,0.04)', border:'1px solid '+C.muted, borderRadius:6, marginBottom:8, fontSize:12, color:C.body, lineHeight:1.55}}>
-            <ol style={{margin:0, paddingLeft:18, lineHeight:1.7}}>
-              <li><b>Current util %</b> (vs last call's util%)</li>
-              <li><b>Order book in Cr</b> (vs annual revenue → book-to-bill)</li>
-              <li><b>Capex spend this year + next year</b></li>
-              <li><b>Capacity now → after expansion</b> (in physical units)</li>
-              <li><b>Commissioning timeline</b> (specific quarter)</li>
-              <li><b>EBITDA margin guidance</b> (steady state vs current)</li>
-              <li><b>Revenue guidance</b> (FY+1 and FY+2)</li>
-              <li><b>Net debt or net cash</b></li>
-              <li><b>Top customer concentration %</b></li>
-              <li><b>Export %</b></li>
-              <li><b>Funding source for capex</b> (internal vs debt vs QIP)</li>
-              <li><b>Raw material trend</b> (pricing power test)</li>
-            </ol>
-          </div>
-
-          <div style={{fontSize:14, fontWeight:700, color:C.cyan, marginTop:18, marginBottom:8, borderBottom: '1px solid ' + C.muted, paddingBottom:4}}>⑦ 8 RED-FLAG PATTERNS — pick these out fast</div>
-          <div style={{padding:10, background:'rgba(174,187,208,0.04)', border:'1px solid '+C.muted, borderRadius:6, marginBottom:8, fontSize:12, color:C.body, lineHeight:1.55}}>
-            <div><b style={{color:C.red}}>1. Receivable days creep.</b> 60 → 75 → 90 over 3 calls = channel stuffing or distress.</div>
-            <div style={{marginTop:4}}><b style={{color:C.red}}>2. Inventory build with flat sales.</b> Demand is softer than narrative.</div>
-            <div style={{marginTop:4}}><b style={{color:C.red}}>3. One-off / exceptional more than once a year.</b> Recurring "one-off" is just operating reality.</div>
-            <div style={{marginTop:4}}><b style={{color:C.red}}>4. Segmental reporting change.</b> Often hides a deceleration.</div>
-            <div style={{marginTop:4}}><b style={{color:C.red}}>5. CWIP perpetually stuck at &gt;10% of net block.</b> Capex isn't being commissioned — earnings printing is delayed.</div>
-            <div style={{marginTop:4}}><b style={{color:C.red}}>6. Subsidiary or related-party transaction expansion.</b> Look for "interco" or "RPT" in the financials.</div>
-            <div style={{marginTop:4}}><b style={{color:C.red}}>7. Management refuses to give margin guidance.</b> Either margin is at risk OR they were burnt last time.</div>
-            <div style={{marginTop:4}}><b style={{color:C.red}}>8. CFO change / auditor change in the year.</b> Always investigate.</div>
-          </div>
-
-          <div style={{fontSize:14, fontWeight:700, color:C.cyan, marginTop:18, marginBottom:8, borderBottom: '1px solid ' + C.muted, paddingBottom:4}}>⑧ Q&amp;A READING STRATEGY — where the real call lives</div>
-          <div style={{padding:10, background:'rgba(174,187,208,0.04)', border:'1px solid '+C.muted, borderRadius:6, marginBottom:8, fontSize:12, color:C.body, lineHeight:1.55}}>
-            <div><b style={{color:C.cyan}}>Long answer rule:</b> if management spends &gt;300 words answering, they're either uncertain or it's a topic they CARE about. Either way — flag it.</div>
-            <div style={{marginTop:6}}><b style={{color:C.cyan}}>Repeat-question rule:</b> the same analyst asking 2-3 follow-ups means the original answer didn't satisfy. The PE/HF analyst knows.</div>
-            <div style={{marginTop:6}}><b style={{color:C.cyan}}>Deflection rule:</b> "we don't disclose that" / "we'll come back to you offline" / pivots to a different metric = the question hit a sore spot.</div>
-            <div style={{marginTop:6}}><b style={{color:C.cyan}}>Question quality rule:</b> note who asks. Long-only buy-side (Fidelity, T.Rowe, Prima, ICICI Pru AMC, HDFC AMC) ≠ small broker analyst. Buy-side questions probe thesis.</div>
-            <div style={{marginTop:6}}><b style={{color:C.cyan}}>Last question rule:</b> the moderator often saves the toughest question for last. Read backwards.</div>
-          </div>
-
-          <div style={{fontSize:14, fontWeight:700, color:C.cyan, marginTop:18, marginBottom:8, borderBottom: '1px solid ' + C.muted, paddingBottom:4}}>⑨ THE 60-SECOND SKIM — when you're short on time</div>
-          <div style={{padding:10, background:'rgba(174,187,208,0.04)', border:'1px solid '+C.muted, borderRadius:6, marginBottom:8, fontSize:12, color:C.body, lineHeight:1.55}}>
-            <div><b style={{color:C.gold}}>Step 1 (10s):</b> ctrl+F → <b>"guidance"</b>. Read those 3-5 sentences.</div>
-            <div style={{marginTop:4}}><b style={{color:C.gold}}>Step 2 (15s):</b> ctrl+F → <b>"order book"</b> or <b>"backlog"</b>. Note the number.</div>
-            <div style={{marginTop:4}}><b style={{color:C.gold}}>Step 3 (15s):</b> ctrl+F → <b>"utilization"</b>. Compare to last call.</div>
-            <div style={{marginTop:4}}><b style={{color:C.gold}}>Step 4 (10s):</b> ctrl+F → <b>"capex"</b>. Total spend + timeline.</div>
-            <div style={{marginTop:4}}><b style={{color:C.gold}}>Step 5 (10s):</b> ctrl+F → <b>"margin"</b>. Direction + steady state.</div>
-            <div style={{marginTop:8, fontSize:11, color:C.dim, fontStyle:'italic'}}>Five searches, one minute, 80% of the signal.</div>
-          </div>
-
-          <div style={{fontSize:14, fontWeight:700, color:C.cyan, marginTop:18, marginBottom:8, borderBottom: '1px solid ' + C.muted, paddingBottom:4}}>⑩ AFTER THE CALL — close the loop</div>
-          <div style={{padding:10, background:'rgba(174,187,208,0.04)', border:'1px solid '+C.muted, borderRadius:6, marginBottom:8, fontSize:12, color:C.body, lineHeight:1.55}}>
-            <div><b style={{color:C.gold}}>1.</b> Write your <b>3-bullet thesis update</b>: confirmed / weakened / pivoted. Max 15 words each.</div>
-            <div style={{marginTop:6}}><b style={{color:C.gold}}>2.</b> Pick <b>1-2 KPIs to track next quarter</b> (e.g., "util above 75%", "order book &gt; 1.5x revenue").</div>
-            <div style={{marginTop:6}}><b style={{color:C.gold}}>3.</b> Set the <b>next catalyst date</b> in your calendar — commissioning, results, regulatory milestone.</div>
-          </div>
-
-          <div style={{marginTop:18, padding:10, background:'rgba(255,215,0,0.06)', border:'1px solid '+C.gold, borderRadius:6, fontSize:11.5, color:C.dim, lineHeight:1.55, fontStyle:'italic'}}>
-            <b style={{color:C.gold, fontStyle:'normal'}}>💎 THE CHAMPION'S MINDSET:</b> Most readers skim the opening monologue, miss the Q&amp;A, and call it done. The 10% who win on concalls do the opposite: skim the opening, READ the Q&amp;A line-by-line, hunt the conviction words, count the qualifiers. The market prices the headlines instantly; you make money on the second derivative — what management is REALLY telling you, and what their tone is REALLY saying.
-          </div>
-        </div>
-      )}
-            {tab === 'verdict' && scored.length > 0 && (() => {
+      {tab === 'verdict' && scored.length > 0 && (() => {
         const ranked = [...intel].sort((a, b) => (a.verdict.veto === b.verdict.veto ? b.verdict.composite - a.verdict.composite : a.verdict.veto ? 1 : -1));
         const vCounts: Record<string, number> = {};
         ranked.forEach(({ verdict }) => { vCounts[verdict.call] = (vCounts[verdict.call] || 0) + 1; });
