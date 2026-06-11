@@ -1972,7 +1972,6 @@ export default function CapexTrackerPage() {
     setConcalls({});
     setMsg('All data and transcripts cleared.');
   };
-  };
 
   const scored = useMemo(() => {
     if (!rows.length) return [] as Scored[];
@@ -2332,7 +2331,7 @@ export default function CapexTrackerPage() {
         <span onClick={() => setTab('multibagger')} style={pill(tab === 'multibagger', C.violet)}>🚀 Multibagger</span>
         <span onClick={() => setTab('forensics')} style={pill(tab === 'forensics', C.red)}>🔬 Forensics</span>
         <span onClick={() => setTab('concall')} style={pill(tab === 'concall', C.gold)}>🎙 Concall</span>
-                <span onClick={() => setTab('verdict')} style={pill(tab === 'verdict', C.orange)}>🧭 Verdict</span>
+        <span onClick={() => setTab('verdict')} style={pill(tab === 'verdict', C.orange)}>🧭 Verdict</span>
         <span onClick={() => setTab('model')} style={pill(tab === 'model', C.blue)}>📐 The Model</span>
         <span style={{ flex: 1 }} />
         <span onClick={() => setAllOpen(o => !o)} style={pill(allOpen, C.amber)} title="Toggle expand all rows across every tab">⇕ {allOpen ? 'Collapse' : 'Expand'} all</span>
@@ -2755,7 +2754,6 @@ export default function CapexTrackerPage() {
       )}
 
       {/* ═══ 🧭 VERDICT ═══ */}
-
       {tab === 'verdict' && scored.length > 0 && (() => {
         const ranked = [...intel].sort((a, b) => (a.verdict.veto === b.verdict.veto ? b.verdict.composite - a.verdict.composite : a.verdict.veto ? 1 : -1));
         const vCounts: Record<string, number> = {};
