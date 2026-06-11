@@ -751,7 +751,7 @@ function computeMultibagger(fin: Fin | null, s: Scored, r: Row, fxGrade: string)
       const sl = lastNN(fin.shares), sf = firstNN(fin.shares);
       if (sl > sf && sf >= 0) {
         const dch = (av(fin.shares, sl) / av(fin.shares, sf) - 1) * 100;
-        add('dilution', 'Share-count discipline', 6, dch <= 5 ? 6 : dch <= 20 ? 3 : 0, 'shares ' + fxN(av(fin.shares, sf), 2) + '→' + fxN(av(fin.shares, sl), 2) + ' Cr (' + (dch >= 0 ? '+' : '') + fxN(dch, 0) + '%)');
+        add('dilution', 'Share-count discipline', 6, dch <= 5 ? 6 : dch <= 20 ? 3 : dch <= 50 ? 1 : 2, 'shares ' + fxN(av(fin.shares, sf), 2) + '→' + fxN(av(fin.shares, sl), 2) + ' Cr (' + (dch >= 0 ? '+' : '') + fxN(dch, 0) + '%' + (dch > 50 ? ' · likely bonus/IPO — partial credit' : '') + ')');
       } else add('dilution', 'Share-count discipline', 6, null, 'no share-count series');
     }
     // 7 · debt trajectory
