@@ -254,8 +254,29 @@ function scoreRow(r: Row, h: Record<string, string>): Scored {
   // T1 (50)
   add(1, 1, 'Pre-CAPEX ROCE/ROIC', 12, isNaN(roce) ? null :
     roce >= 20 ? 12 : roce >= 15 ? 9 : roce >= 10 ? 6 : roce >= 5 ? 3 : 0, isNaN(roce) ? '' : roce.toFixed(1) + '%');
-  add(2, 1, 'Anchor demand visibility', 12, isNaN(anchor) ? null :
-    anchor > 60 ? 12 : anchor >= 40 ? 9 : anchor >= 20 ? 6 : anchor >= 10 ? 3 : 0, isNaN(anchor) ? '' : anchor.toFixed(0) + '% covered');
+  // F2 (v5.4-ext) — concall-fallback anchor when no manual value (Critique #2)
+  // Uses g('orderBookCr' | 'bookToBill' | 'customerCount' | 'exportPct') if extractor populates them.
+  // When those fields aren't on the row, all NaN → falls back to original anchor behavior (no regression).
+  const __cobk = num(g('orderBookCr'));
+  const __cb2b = num(g('bookToBill'));
+  const __ccust = num(g('customerCount'));
+  const __cexp = num(g('exportPct'));
+  let __synAnchor = anchor;
+  let __synEst = false;
+  if (isNaN(anchor) && (!isNaN(__cb2b) || !isNaN(__cobk) || !isNaN(__ccust) || !isNaN(__cexp))) {
+    let __syn = 30;
+    if (!isNaN(__cb2b)) __syn = Math.min(85, Math.round(30 + __cb2b * 25));
+    else if (!isNaN(__cobk) && __cobk > 0) __syn = 45;
+    if (!isNaN(__ccust) && __ccust >= 100) __syn = Math.min(85, __syn + 10);
+    if (!isNaN(__cexp) && __cexp >= 30) __syn = Math.min(85, __syn + 5);
+    __synAnchor = __syn;
+    __synEst = true;
+  }
+  const __f2Pts = isNaN(__synAnchor) ? null :
+    __synAnchor > 60 ? 12 : __synAnchor >= 40 ? 9 : __synAnchor >= 20 ? 6 : __synAnchor >= 10 ? 3 : 0;
+  const __f2Note = isNaN(__synAnchor) ? '' :
+    __synAnchor.toFixed(0) + '% covered' + (__synEst ? ' (synth)' : '');
+  add(2, 1, 'Anchor demand visibility', 12, __f2Pts, __f2Note, __synEst);
   add(3, 1, 'D/E at announcement', 11, isNaN(de) ? null :
     de < 0.3 ? 11 : de < 0.5 ? 9 : de < 1.0 ? 7 : de < 1.5 ? 4 : 0, isNaN(de) ? '' : de.toFixed(2) + 'x');
   add(4, 1, 'OCF status', 8, isNaN(ocfYears) ? null :
