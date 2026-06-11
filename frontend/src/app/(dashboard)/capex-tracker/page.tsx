@@ -1940,7 +1940,7 @@ export default function CapexTrackerPage() {
       const k = ckey(matches[0]);
       const list = concallsRef.current[k] ?? [];
       if (list.length >= 8) { setMsg('⚠ ' + matches[0] + ' already has 8 transcripts (the cap) — delete one on the 🎙 Concall tab, then re-upload ' + f.name + '.'); return; }
-      if (persistConcalls({ ...concallsRef.current, [k]: [...list, entry] })) setMsg(attachMsg(matches[0], entry));
+      if (persistConcalls({ ...concallsRef.current, [k]: [...list.filter((e) => e.chars !== entry.chars || e.text.slice(0, 200) !== entry.text.slice(0, 200)), entry] })) setMsg(attachMsg(matches[0], entry));
     } else {
       const pool = concallsRef.current[KU] ?? [];
       if (pool.length >= 12) { setMsg('⚠ 12 transcripts already parked in UNASSIGNED — assign or delete some on the 🎙 Concall tab first.'); return; }
@@ -1965,8 +1965,13 @@ export default function CapexTrackerPage() {
   };
 
   const clearAll = () => {
-    if (!confirm('Clear ALL saved capex data? This cannot be undone.')) return;
-    persist([], []); setMsg('All data cleared.');
+    if (!confirm('Clear ALL saved capex data AND transcripts? This cannot be undone.')) return;
+    persist([], []);
+    try { localStorage.removeItem(KC); } catch {}
+    concallsRef.current = {};
+    setConcalls({});
+    setMsg('All data and transcripts cleared.');
+  };
   };
 
   const scored = useMemo(() => {
@@ -2009,7 +2014,7 @@ export default function CapexTrackerPage() {
       id: uid(), label: label.trim() || autoLabel, addedAt: new Date().toISOString(),
       chars: body.length, text: body, extract: extractConcall(body),
     };
-    if (persistConcalls({ ...concallsRef.current, [k]: [...list, entry] })) {
+    if (persistConcalls({ ...concallsRef.current, [k]: [...list.filter((e) => e.chars !== entry.chars || e.text.slice(0, 200) !== entry.text.slice(0, 200)), entry] })) {
       setMsg('🎙 Saved transcript for ' + company + ' — ' + body.length.toLocaleString() + ' chars, extraction below.');
       setCcLabel(''); setCcText('');
     }
