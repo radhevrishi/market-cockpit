@@ -354,6 +354,32 @@ function scoreRow(r: Row, h: Record<string, string>): Scored {
   add(23, 4, 'Score confidence', 3, __confPts,
     'Verified ' + __verifiedPct + '% · Est ' + __estPct + '% · Unknown ' + __unkPct + '%');
 
+  // F24 (v5.4) — EPS Inflection setup: capex live + utilization tight + revenue growing → upside
+  const __utilTight = !isNaN(util) && util > 0 && util < 75 ? (75 - util) / 75 : 0;
+  const __capexAlive = !isNaN(capexPct) && capexPct > 15 ? Math.min(1, capexPct / 100) : 0;
+  const __revAlive = !isNaN(revCagr) && revCagr > 0.08 ? Math.min(1, revCagr / 0.30) : 0;
+  const __infScore = __utilTight * 0.40 + __capexAlive * 0.30 + __revAlive * 0.30;
+  const __infPts = __infScore > 0.55 ? 4 : __infScore > 0.35 ? 2 : __infScore > 0.15 ? 1 : 0;
+  const __infMeasured = !isNaN(util) || !isNaN(capexPct) || !isNaN(revCagr);
+  add(24, 4, 'EPS inflection setup', 4, __infMeasured ? __infPts : null,
+    !__infMeasured ? '' : 'util-room ' + (__utilTight * 100).toFixed(0) + '% · capex ' + (__capexAlive * 100).toFixed(0) + '% · rev ' + (__revAlive * 100).toFixed(0) + '%');
+
+  // F25 (v5.4) — Probability composite (heuristic blend of available factors)
+  const __pUp = (!isNaN(roce) ? Math.min(1, roce / 25) : 0) * 0.20 +
+    (!isNaN(revCagr) ? Math.min(1, revCagr / 0.25) : 0) * 0.25 +
+    (!isNaN(peVsMean) ? Math.max(0, 1 - peVsMean) : 0) * 0.15 +
+    (!isNaN(ocfYears) ? Math.min(1, ocfYears / 7) : 0) * 0.20 +
+    __infScore * 0.20;
+  const __pFail = (!isNaN(de) ? Math.min(1, de / 1.5) : 0.5) * 0.35 +
+    (!isNaN(ocfYears) && ocfYears <= 0 ? 1 : 0) * 0.25 +
+    (!isNaN(pledge) ? Math.min(1, pledge / 30) : 0) * 0.25 +
+    (!isNaN(anchor) && anchor < 25 ? 1 : 0) * 0.15;
+  const __probRaw = Math.round(3 * (__pUp - __pFail / 2 + 0.5));
+  const __probMeasured = !isNaN(roce) || !isNaN(de) || !isNaN(revCagr);
+  add(25, 4, 'Probability composite', 3,
+    __probMeasured ? Math.max(0, Math.min(3, __probRaw)) : null,
+    __probMeasured ? ('P-up ' + Math.round(__pUp * 100) + '% · P-fail ' + Math.round(__pFail * 100) + '%') : '');
+
   const base = factors.reduce((s, f) => s + f.pts, 0);
   const tiers = [1, 2, 3, 4].map((t) => ({
     label: 'T' + t,
