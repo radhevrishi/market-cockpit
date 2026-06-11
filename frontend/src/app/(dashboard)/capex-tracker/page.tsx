@@ -1144,8 +1144,8 @@ function extractConcall(text: string): ConcallExtract {
     return best.s.length > 190 ? best.s.slice(0, 187) + '…' : best.s;
   };
   const growthNote = pickNote('growth', /\b(revenue|sales|top ?line|volume) growth\b|\bgrow (at|by|of)\b|growth (guidance|target|of \d)|\bcagr of\b/i);
-  const marginNote = pickNote('margin', /\b(ebitda|gross|operating|pat) margins?\b/i);
-  const demandNote = pickNote('demand', /\bdemand (environment|outlook|scenario|remains|continues|is|has)\b|\border inflows?\b|\benquir|inquir|\bpipeline (remains|is|of)\b/i);
+  const marginNote = pickNote('margin', /^(?!.*\b(currency|forex|FX|one[-\s]?off|other income|exceptional|hedg|translation)\b).*\b(ebitda|gross|operating|pat) margins?\b/i);
+  const demandNote = pickNote('demand', /\bdemand\s+(for|in|environment|outlook|scenario|remains|continues|is|has|will|stays|looks|seems|picking|increased|grew|grow|growing|softening|weakening|recover|recovering)\b|\b(higher|strong|robust|weak|soft|tight|sluggish|healthy|steady) demand\b|\bdemand growth\b|\border inflows?\b|\benquir|inquir|\bpipeline (remains|is|of)\b/i);
   // timeline: real commissioning verbs + a dated period; deck headers filtered
   const timeline: string[] = [];
   {
