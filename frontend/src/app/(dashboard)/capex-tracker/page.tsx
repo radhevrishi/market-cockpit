@@ -1988,7 +1988,7 @@ export default function CapexTrackerPage() {
     });
     const tile = (label: string, val: string, col: string) => (
       <div key={label} style={{ background: C.bg, border: '1px solid ' + C.line, borderRadius: 8, padding: '8px 10px 7px', display: 'grid', gap: 3, alignContent: 'start' }}>
-        <div style={{ fontSize: 10, color: C.dim, fontWeight: 700, letterSpacing: 0.7, whiteSpace: 'nowrap' }}>{label}</div>
+        <div style={{ fontSize: 10, color: C.dim, fontWeight: 700, letterSpacing: 0.7, lineHeight: 1.3 }}>{label}</div>
         <div style={{ fontSize: 16, fontWeight: 900, color: col, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1 }}>{val}</div>
       </div>
     );
@@ -2539,13 +2539,19 @@ export default function CapexTrackerPage() {
         const top5 = ranked.filter(({ verdict }) => !verdict.veto && verdict.call !== '🧩 NEEDS DATA' && verdict.call !== '🔍 FORENSIC REVIEW FIRST').slice(0, 5);
         return (
           <>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr minmax(300px, 380px)', gap: 12, marginBottom: 12, alignItems: 'start' }}>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignContent: 'flex-start' }}>
-                {Object.entries(vCounts).map(([call, n]) => (
-                  <span key={call} style={{ fontSize: F.xs, padding: '4px 10px', borderRadius: 14, fontWeight: 800, background: (VERDICT_COLOR[call] || C.dim) + '1A', border: '1px solid ' + (VERDICT_COLOR[call] || C.dim) + '66', color: VERDICT_COLOR[call] || C.dim }}>
-                    {call} · {n}
-                  </span>
-                ))}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr minmax(300px, 380px)', gap: 12, marginBottom: 12, alignItems: 'stretch' }}>
+              <div style={card}>
+                <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1.4, color: C.orange, textTransform: 'uppercase' as const, marginBottom: 8 }}>Call distribution</div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignContent: 'flex-start' }}>
+                  {Object.entries(vCounts).map(([call, n]) => (
+                    <span key={call} style={{ fontSize: F.xs, padding: '4px 10px', borderRadius: 14, fontWeight: 800, background: (VERDICT_COLOR[call] || C.dim) + '1A', border: '1px solid ' + (VERDICT_COLOR[call] || C.dim) + '66', color: VERDICT_COLOR[call] || C.dim }}>
+                      {call} · {n}
+                    </span>
+                  ))}
+                </div>
+                <div style={{ fontSize: F.sm, color: C.body, lineHeight: 1.6, marginTop: 10 }}>
+                  One fused call per name: capex quality × timing, multibagger DNA and forensics, with the forensic veto on top. Composite ranks the table; the WHY column is the action line.
+                </div>
               </div>
               <div style={{ ...card, border: '1px solid ' + C.gold + '66' }}>
                 <div style={{ fontSize: F.sm, fontWeight: 800, color: C.gold, marginBottom: 4 }}>🏆 TOP 5 — highest composite, no vetoes</div>
