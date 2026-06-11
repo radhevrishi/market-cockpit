@@ -312,6 +312,96 @@ function loadSheetJS(): Promise<any> {
 }
 
 const TEMPLATE_HEADERS = 'Company Name,Sector,Industry,Country,ROCE 3-yr avg,Capacity Utilization %,D/E ratio,OCF positive years,FCF 3-yr,Internal funding %,Debt funding %,CAPEX size Cr,Gross Block,Annual Revenue,Anchor Demand %,Promoter Holding %,Promoter Pledge %,Founder-CEO Tenure,EBITDA Margin %,Revenue CAGR 3-yr %,Brownfield,Cycle Position,Cost Overrun History,Working Capital Trend,Policy Support,PE vs 5-yr Mean,Import Substitution,Export Opportunity,Competitive Moat,Prior Capex Success';
+
+// ── Screener.in workbook parser ─────────────────────────────────────────────
+// Detects the standard Screener Excel export ("Data Sheet" with COMPANY NAME
+// in A1 and metric rows across year columns) and derives the quantitative
+// factors automatically. Qualitative factors (anchor %, utilization, pledge…)
+// stay blank for inline editing.
+function parseScreenerWorkbook(XLSX: any, wb: any, fname: string): Row | null {
+  try {
+    const sheetName = wb.SheetNames.includes('Data Sheet') ? 'Data Sheet' : wb.SheetNames[0];
+    const aoa: any[][] = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, raw: true, defval: null });
+    const lab = (r: any[]) => String((r && r[0]) ?? '').trim().toUpperCase();
+    const findIdx = (re: RegExp, from = 0) => aoa.findIndex((r, i) => i >= from && re.test(lab(r)));
+    const iName = findIdx(/^COMPANY NAME/);
+    if (iName < 0) return null;
+    const name = String(aoa[iName][1] ?? '').trim() || fname.replace(/\.(xlsx|xls)$/i, '');
+    const iPL = findIdx(/^PROFIT/); const iQ = findIdx(/^QUARTERS/, iPL + 1);
+    const iBS = findIdx(/^BALANCE/); const iCF = findIdx(/^CASH FLOW/);
+    const iPrice = findIdx(/^PRICE/ , iCF + 1); const iDer = findIdx(/^DERIVED/);
+    const rowVals = (re: RegExp, from: number, to: number): (number | null)[] => {
+      for (let i = Math.max(0, from); i < (to > 0 ? to : aoa.length); i++) {
+        if (re.test(lab(aoa[i]))) return (aoa[i] || []).slice(1).map((v: any) => (typeof v === 'number' && isFinite(v) ? v : null));
+      }
+      return [];
+    };
+    const sales = rowVals(/^SALES$/, iPL, iQ);
+    const pbt = rowVals(/^PROFIT BEFORE/, iPL, iQ);
+    const dep = rowVals(/^DEPRECIATION/, iPL, iQ);
+    const intr = rowVals(/^INTEREST/, iPL, iQ);
+    const oi = rowVals(/^OTHER INCOME/, iPL, iQ);
+    const np = rowVals(/^NET PROFIT/, iPL, iQ);
+    const eq = rowVals(/^EQUITY SHARE C/, iBS, iCF);
+    const res = rowVals(/^RESERVES/, iBS, iCF);
+    const bor = rowVals(/^BORROWINGS/, iBS, iCF);
+    const nb = rowVals(/^NET BLOCK/, iBS, iCF);
+    const cwip = rowVals(/^CAPITAL WORK/, iBS, iCF);
+    const ocf = rowVals(/^CASH FROM OPER/, iCF, iPrice > 0 ? iPrice : aoa.length);
+    const priceRow = iPrice >= 0 ? (aoa[iPrice] || []).slice(1).map((v: any) => (typeof v === 'number' ? v : null)) : [];
+    const shares = rowVals(/^ADJUSTED EQUIT/, iDer, aoa.length);
+    const mcapRow = aoa.find((r) => /^MARKET CAPITAL/.test(lab(r)));
+    const priceNow = aoa.find((r) => /^CURRENT PRICE/.test(lab(r)));
+    const mcap = mcapRow && typeof mcapRow[1] === 'number' ? mcapRow[1] : NaN;
+    void priceNow;
+    const last = (a: (number | null)[]) => { for (let i = a.length - 1; i >= 0; i--) if (a[i] !== null) return i; return -1; };
+    const c = last(sales); if (c < 0) return null;
+    const at = (a: (number | null)[], i: number) => (i >= 0 && a[i] !== null ? (a[i] as number) : NaN);
+    const salesL = at(sales, c);
+    // EBITDA margin (latest): PBT + Interest + Dep − Other Income
+    const ebitdaM = ((at(pbt, c) + at(intr, c) + at(dep, c) - (at(oi, c) || 0)) / salesL) * 100;
+    // Rev CAGR 3-yr
+    const s3 = at(sales, c - 3);
+    const cagr = s3 > 0 ? (Math.pow(salesL / s3, 1 / 3) - 1) * 100 : NaN;
+    // D/E latest + ROCE 3-yr avg (EBIT / capital employed)
+    const bc = last(eq.length ? eq : res);
+    const deV = at(bor, bc) / (at(eq, bc) + at(res, bc));
+    const roces: number[] = [];
+    for (let k = 0; k < 3; k++) {
+      const i = bc - k; const ce = at(eq, i) + at(res, i) + (at(bor, i) || 0);
+      const ebit = at(pbt, i) + (at(intr, i) || 0);
+      if (isFinite(ce) && ce > 0 && isFinite(ebit)) roces.push((ebit / ce) * 100);
+    }
+    const roce = roces.length ? roces.reduce((a, b) => a + b, 0) / roces.length : NaN;
+    // OCF positive streak from latest backward
+    let ocfYears = 0; const oc = last(ocf);
+    for (let i = oc; i >= 0; i--) { const v = ocf[i]; if (v !== null && v > 0) ocfYears++; else if (v !== null) break; }
+    // Gross block proxy + capex estimate (ΔNB + ΔCWIP + Dep)
+    const gbV = (at(nb, bc) || 0) + (at(cwip, bc) || 0);
+    const capexEst = Math.max(0, (at(nb, bc) - at(nb, bc - 1)) + (at(cwip, bc) - at(cwip, bc - 1)) + (at(dep, c) || 0));
+    // PE vs historical mean
+    let peVsMean = NaN;
+    const pes: number[] = [];
+    for (let i = 0; i < priceRow.length; i++) {
+      const p = priceRow[i]; const n = at(np, i); const sh = at(shares, i);
+      if (p && n > 0 && sh > 0) pes.push((p * sh) / n);
+    }
+    const npL = at(np, c);
+    if (pes.length >= 2 && mcap > 0 && npL > 0) peVsMean = (mcap / npL) / (pes.reduce((a, b) => a + b, 0) / pes.length);
+    const fx = (n: number, d = 1) => (isFinite(n) ? n.toFixed(d) : '');
+    return {
+      'Company Name': name, Sector: '', Industry: '', Country: 'IN',
+      'ROCE 3-yr avg': fx(roce), 'D/E ratio': fx(deV, 2), 'OCF positive years': String(ocfYears),
+      'EBITDA Margin %': fx(ebitdaM), 'Revenue CAGR 3-yr %': fx(cagr),
+      'Gross Block': fx(gbV, 0), 'CAPEX size Cr': fx(capexEst, 0), 'Annual Revenue': fx(salesL, 0),
+      'PE vs 5-yr Mean': fx(peVsMean, 2),
+      'Capacity Utilization %': '', 'Anchor Demand %': '', 'Internal funding %': '', 'Debt funding %': '',
+      'Promoter Holding %': '', 'Promoter Pledge %': '', 'Founder-CEO Tenure': '', 'Brownfield': '',
+      'Cycle Position': '', 'Cost Overrun History': '', 'Working Capital Trend': '', 'Policy Support': '',
+      'Import Substitution': '', 'Export Opportunity': '', 'Competitive Moat': '', 'Prior Capex Success': '',
+    };
+  } catch { return null; }
+}
 const TEMPLATE_SAMPLE = 'Interarch Building,Industrials,PEB / Building Products,IN,28,88,0.04,5,120,90,10,400,650,1300,65,60,0,,14,22,Brownfield,Mid,No,Stable,Indirect,0.9,N,Y,Y,Y';
 
 const KD = 'mc:capex-tracker:data:v1'; const KN = 'mc:capex-tracker:files:v1';
@@ -345,7 +435,7 @@ export default function CapexTrackerPage() {
   const mergeRows = (incoming: Row[], fname: string) => {
     if (!incoming.length) { setMsg('No data rows found in ' + fname); return; }
     const h = resolveHeaders(Object.keys(incoming[0]));
-    if (!h['name']) { setMsg('Could not find a Company Name column in ' + fname + ' — download the template below.'); return; }
+    if (!h['name']) { setMsg('Could not read ' + fname + ': plain tables need a Company Name column (Screener.in Excel exports are auto-detected). Download the template for the flat format.'); return; }
     const key = (r: Row, hh: Record<string, string>) => (r[hh['name']] || '').trim().toLowerCase();
     const existingH = rows.length ? resolveHeaders(Object.keys(rows[0])) : h;
     const merged = [...rows];
@@ -353,7 +443,12 @@ export default function CapexTrackerPage() {
     for (const inc of incoming) {
       const k = key(inc, h); if (!k) continue;
       const idx = merged.findIndex((r) => key(r, resolveHeaders(Object.keys(r))) === k);
-      if (idx >= 0) { merged[idx] = inc; updated++; } else { merged.push(inc); added++; }
+      if (idx >= 0) {
+        // field-level merge: incoming non-empty values overwrite; your manual
+        // inputs and older values are preserved when the new file is blank there
+        const patch = Object.fromEntries(Object.entries(inc).filter(([, v]) => String(v ?? '').trim() !== ''));
+        merged[idx] = { ...merged[idx], ...patch }; updated++;
+      } else { merged.push(inc); added++; }
     }
     void existingH;
     persist(merged, [...files.filter((f) => f !== fname), fname]);
@@ -367,6 +462,9 @@ export default function CapexTrackerPage() {
         if (/\.(xlsx|xls)$/i.test(f.name)) {
           const XLSX = await loadSheetJS();
           const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
+          // Screener.in export? (Data Sheet with COMPANY NAME) → derive metrics for one company
+          const screener = parseScreenerWorkbook(XLSX, wb, f.name);
+          if (screener) { mergeRows([screener], f.name); continue; }
           const ws = wb.Sheets[wb.SheetNames[0]];
           const json: Row[] = XLSX.utils.sheet_to_json(ws, { raw: false, defval: '' });
           mergeRows(json.map((r) => { const o: Row = {}; Object.keys(r).forEach((k) => { o[String(k).trim()] = String((r as any)[k] ?? '').trim(); }); return o; }), f.name);
@@ -421,6 +519,61 @@ export default function CapexTrackerPage() {
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'capex-tracker-template.csv'; a.click();
   };
 
+  // write a manual input back into the company's row (canonical header,
+  // or the file's own matching column if one exists) and persist
+  const updateRow = (name: string, canonical: string, hkey: string, value: string) => {
+    const next = rows.map((r) => {
+      const h = resolveHeaders(Object.keys(r));
+      if ((r[h['name']] || '').trim().toLowerCase() !== name.trim().toLowerCase()) return r;
+      const target = h[hkey] || canonical;
+      return { ...r, [target]: value };
+    });
+    persist(next, files);
+  };
+
+  const EDIT_FIELDS: [string, string, 'num' | string[]][] = [
+    ['Capacity Utilization %', 'util', 'num'], ['Anchor Demand %', 'anchor', 'num'],
+    ['Internal funding %', 'internalPct', 'num'], ['Promoter Holding %', 'promoter', 'num'],
+    ['Promoter Pledge %', 'pledge', 'num'], ['PE vs 5-yr Mean', 'peVsMean', 'num'],
+    ['Brownfield', 'brownfield', ['', 'Brownfield', 'Hybrid', 'Greenfield']],
+    ['Cycle Position', 'cycle', ['', 'Mid', 'Early', 'Peak']],
+    ['Cost Overrun History', 'overrun', ['', 'No', 'Minor <10%', 'Yes >20%']],
+    ['Working Capital Trend', 'wc', ['', 'Stable', 'Improving', 'Deteriorating']],
+    ['Policy Support', 'policy', ['', 'PLI/Mandate', 'Indirect', 'None']],
+    ['Import Substitution', 'importSub', ['', 'Y', 'N']], ['Export Opportunity', 'exportOpp', ['', 'Y', 'N']],
+    ['Competitive Moat', 'moat', ['', 'Y', 'N']], ['Prior Capex Success', 'mgmtHistory', ['', 'Y', 'N']],
+    ['Industry', 'industry', 'num'],
+  ];
+
+  const Editor = ({ s }: { s: Scored }) => {
+    const h = resolveHeaders(Object.keys(s.raw));
+    const inputStyle: any = { background: C.bg, border: '1px solid ' + C.line, color: C.txt, borderRadius: 6, padding: '3px 6px', fontSize: F.xs, width: '100%' };
+    return (
+      <div style={{ marginTop: 10, borderTop: '1px dashed ' + C.line, paddingTop: 8 }}>
+        <div style={{ fontSize: F.xs, fontWeight: 800, color: C.violet, marginBottom: 6 }}>
+          ✍️ FILL THE QUALITATIVE FACTORS (auto-saves, rescores instantly — these are where the masterclass alpha lives)
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 6 }}>
+          {EDIT_FIELDS.map(([canonical, hkey, kind]) => {
+            const cur = (h[hkey] ? s.raw[h[hkey]] : s.raw[canonical]) || '';
+            return (
+              <label key={canonical} style={{ fontSize: 10, color: C.dim }}>
+                {canonical}
+                {kind === 'num' ? (
+                  <input defaultValue={cur} onBlur={(e) => { if (e.target.value !== cur) updateRow(s.name, canonical, hkey, e.target.value); }} style={inputStyle} />
+                ) : (
+                  <select value={cur} onChange={(e) => updateRow(s.name, canonical, hkey, e.target.value)} style={inputStyle}>
+                    {(kind as string[]).map((o) => <option key={o} value={o}>{o || '—'}</option>)}
+                  </select>
+                )}
+              </label>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   const Row21 = ({ s }: { s: Scored }) => (
     <div style={{ background: C.panel2, border: '1px solid ' + C.line, borderRadius: 10, padding: 12, margin: '6px 0 10px' }}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 6 }}>
@@ -434,6 +587,7 @@ export default function CapexTrackerPage() {
       <div style={{ marginTop: 8, fontSize: F.sm, color: C.txt }}><span style={{ color: C.dim }}>Base {s.base} × industry {s.mult.toFixed(2)}{s.dbCount >= 3 ? ' → CAPPED 30 (deal-breakers)' : ''} = </span><b>{s.final}</b><span style={{ color: C.dim }}> · confidence {s.confidence}{s.gaps ? ' · ' + s.gaps + ' gaps' : ''}</span></div>
       <div style={{ marginTop: 4, fontSize: F.sm, color: C.amber }}>{s.comment}</div>
       <div style={{ marginTop: 4, fontSize: F.sm, color: C.cyan }}>▶ {s.action}</div>
+      <Editor s={s} />
     </div>
   );
 
