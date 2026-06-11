@@ -254,6 +254,22 @@ export default function MoversPage() {
     }, 60000);
     return () => clearInterval(i);
   }, [fetchData]);
+  // PATCH — immediate refetch when the tab becomes visible again with stale
+  // data (laptop reopen / overnight tab). The 60s poll above is visibility-
+  // gated, so without this a tab hidden since yesterday shows day-old movers
+  // for up to 60s after return — and indefinitely if the tick was missed.
+  useEffect(() => {
+    const onVis = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      fetchData();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onVis);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', onVis);
+    };
+  }, [fetchData]);
 
   const filtered = useMemo(() => {
     // PATCH 0796 — volume filter: only consider stocks with ≥5 lakh shares
@@ -542,7 +558,7 @@ export default function MoversPage() {
               dataUpdatedAt={lastUpdated ? lastUpdated.getTime() : 0}
               isFetching={isRefreshing}
               staleAfterMs={10 * 60_000}
-              ageOverride={marketOpen ? undefined : 'closed'}
+              ageOverride={marketOpen ? undefined : (lastUpdated && Date.now() - lastUpdated.getTime() < 18 * 3600_000 ? 'closed' : undefined)}
             />
           </div>
           <p style={{ fontSize: '11px', color: TEXT3, margin: '2px 0 0' }}>
