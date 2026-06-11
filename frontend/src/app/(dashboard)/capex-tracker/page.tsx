@@ -611,6 +611,7 @@ type ConcallExtract = {
   growthNote: string | null; marginNote: string | null; demandNote: string | null; __v?: number;
   optimism: number; caution: number; tone: number | null;
   quotes: { field: string; match: string; snippet: string }[];
+  customerCount: number | null; exportPct: number | null; pliMentioned: boolean;
 };
 type ConcallEntry = { id: string; label: string; addedAt: string; chars: number; text: string; extract: ConcallExtract };
 type CCState = { freshness: 'FRESH' | 'STALE' | 'NONE'; tone: number | null; utilization: number | null };
@@ -1123,8 +1124,35 @@ function extractConcall(text: string): ConcallExtract {
     quotes.push({ field, match: String(best.n), snippet: best.s });
     return best.n;
   };
-  const utilization = pick('utilization', /utili[sz]ation\s+(?:of|at|is|was|stands?\s+at|came\s+(?:down\s+)?(?:to|from)|increased\s+to|reached|hit|operating\s+at)?\s*(?:at\s+|about\s+|around\s+|approximately\s+)?\d|capacity\s+utili[sz]ation/i, PCT_SRC, 1, 100, { lastNum: true });
-  const utilArr = utilization !== null ? [utilization] : [];
+  // util (v5.4-deep) — proximity regex: % must be within 60 chars of "utilization". Median for robustness.
+  let utilization: number | null = null;
+  const utilArr: number[] = [];
+  for (const sm of text.matchAll(/utili[sz]ation[^.?!\n]{0,60}?(\d{1,2}(?:\.\d+)?)\s*%/gi)) {
+    const v = parseFloat(sm[1]);
+    if (v > 0 && v <= 100) utilArr.push(v);
+  }
+  if (utilArr.length) {
+    const sorted = [...utilArr].sort((a, b) => a - b);
+    utilization = sorted[Math.floor(sorted.length / 2)];
+  }
+  // exportPct (v5.4-deep) — proximity regex for export % of revenue/sales
+  let exportPct: number | null = null;
+  {
+    const cands: number[] = [];
+    for (const sm of text.matchAll(/export[^.?!\n]{0,40}?(\d{1,3}(?:\.\d+)?)\s*%/gi)) {
+      const v = parseFloat(sm[1]);
+      if (v > 0 && v <= 100) cands.push(v);
+    }
+    if (cands.length) { cands.sort((a, b) => a - b); exportPct = cands[Math.floor(cands.length / 2)]; }
+  }
+  // customerCount (v5.4-deep) — total customer / OEM / Tier-1 count
+  let customerCount: number | null = null;
+  {
+    const m = text.match(/(\d{2,4})\s*\+?\s*(?:OEMs?|Tier[\-\s]?1s?|marquee\s+customers?|customers?|clients?)\b/i);
+    if (m) customerCount = parseInt(m[1], 10);
+  }
+  // pliMentioned (v5.4-deep)
+  const pliMentioned = /\bPLI\b|production[\s-]linked\s+incentive/i.test(text);
   const orderBook = pick('orderBook', /order\s*book|order\s*inflow|open orders/i, CR_SRC, 1, 10000000, { preferMax: true });
   const capexGuidance = pick('capexGuidance', /\bcapex\b|capital\s+expenditure|capital\s+outlay|capex\s+(?:of|guidance|plan|spend|outlay|programme)|\bspend(?:ing)?\s+(?:on\s+)?capex|\bcapex\s+spend/i, CR_SRC, 1, 10000000, { preferMax: true });
   const anchorPct = pick('anchorPct', /\b(booked|committed|tied[- ]?up|visibility|contracted|covered\s+by\s+orders|order\s+book|backlog)\b|export\s+(share|mix|revenue|sales)/i, PCT_SRC, 1, 100);
@@ -1181,6 +1209,9 @@ function extractConcall(text: string): ConcallExtract {
     optimism, caution,
     tone: optimism + caution > 0 ? optimism / (optimism + caution) : null,
     quotes,
+      customerCount,
+    exportPct,
+    pliMentioned,
   };
 }
 
