@@ -1100,7 +1100,8 @@ const VERDICT_COLOR: Record<string, string> = {
 };
 function computeVerdict(s: Scored, mb: MBResult, fx: FXResult, cc: CCState | null): Verdict {
   const capexBuy = s.decision === 'ANCHOR BUY' || s.decision === 'CORE BUY';
-  const buyWindow = capexBuy && s.entryShort.startsWith('BUY');
+  // 'EARLY OK (PROVEN)' is a legitimate open window — the Stage-A proven-executor exception.
+  const buyWindow = capexBuy && (s.entryShort.startsWith('BUY') || s.entryShort.startsWith('EARLY OK'));
   const mbOk = mb.grade !== 'NR', fxOk = fx.grade !== 'NR';
   // composite (renormalized over available parts)
   const parts: [number, number][] = [[0.40, s.final]];
@@ -1125,6 +1126,12 @@ function computeVerdict(s: Scored, mb: MBResult, fx: FXResult, cc: CCState | nul
   } else if (mbOk && mb.score >= 70 && buyWindow) {
     call = '🎯 PRIME';
     why = 'Capex inflection with multibagger DNA: ' + s.decision + ' ∩ ' + s.entryShort + ' + ' + mbTag + ' · ' + fxTag + '. Full stage-size entry.';
+  } else if (mbOk && mb.score >= 70 && capexBuy && s.stage === '—') {
+    call = '🌱 COMPOUNDER';
+    why = mbTag + ' + quality ' + s.decision + ' but no capex cycle to time — compounder position; track for a T0 announcement.';
+  } else if (mbOk && mb.score >= 70 && capexBuy && s.stage === 'F') {
+    call = '💎 QUALITY HOLD';
+    why = mbTag + ' + quality ' + s.decision + ' but Stage F — the inflection has printed; never chase. Re-engage at the next T0.';
   } else if (mbOk && mb.score >= 70 && capexBuy) {
     call = '⏳ PRIME SETUP';
     why = mbTag + ' + quality ' + s.decision + ', but entry says ' + s.entryShort + ' — set the alert, enter when the window opens.';
@@ -2162,7 +2169,12 @@ export default function CapexTrackerPage() {
   const BAND_ORDER = ['ALL', 'ANCHOR BUY', 'CORE BUY', 'SATELLITE', 'NEEDS DATA', 'WATCHLIST', 'AVOID', 'REJECT'];
   const bandColor = (b: string) => b === 'ANCHOR BUY' ? C.gold : b === 'CORE BUY' ? C.green : b === 'SATELLITE' ? C.cyan : b === 'NEEDS DATA' ? C.violet : b === 'WATCHLIST' ? C.amber : b === 'AVOID' ? C.orange : b === 'REJECT' ? C.red : C.blue;
 
-  const buyNow = useMemo(() => scored.filter((s) => (s.decision === 'ANCHOR BUY' || s.decision === 'CORE BUY') && (s.stage === 'B' || s.stage === 'C' || s.stage === 'D')), [scored]);
+  const buyNow = useMemo(() => scored.filter((s) => {
+    if (!((s.decision === 'ANCHOR BUY' || s.decision === 'CORE BUY') && (s.stage === 'B' || s.stage === 'C' || s.stage === 'D'))) return false;
+    // forensic veto reaches the decision board — a ☠ name is never a BUY NOW
+    const it = intelByName[ckey(s.name)];
+    return !(it && (it.fx.grade === 'AVOID' || it.fx.critical));
+  }), [scored, intelByName]);
   const wrongStage = useMemo(() => scored.filter((s) => (s.decision === 'ANCHOR BUY' || s.decision === 'CORE BUY') && !(s.stage === 'B' || s.stage === 'C' || s.stage === 'D')), [scored]);
   // 'needs:' must only list factors the owner can actually fill/verify —
   // F2 anchor, F6 utilization, F7 promoter, F15 policy, F16 industry growth,
@@ -2180,7 +2192,7 @@ export default function CapexTrackerPage() {
         + 'table.cxt tbody tr.cxr:hover { background: #15213A; }'}</style>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, flexWrap: 'wrap' }}>
         <Link href="/" style={{ color: C.dim, textDecoration: 'none', fontSize: F.sm }}>← Home</Link>
-        <span style={{ fontSize: F.xl, fontWeight: 900, color: C.orange }}>🏗 CAPEX TRACKER <span style={{ fontSize: F.xs, color: C.dim, fontWeight: 700 }}>v5.2</span></span>
+        <span style={{ fontSize: F.xl, fontWeight: 900, color: C.orange }}>🏗 CAPEX TRACKER <span style={{ fontSize: F.xs, color: C.dim, fontWeight: 700 }}>v5.3</span></span>
         <span style={{ fontSize: F.sm, color: C.body }}>four lenses, one dataset: capex quality × timing · 🚀 multibagger DNA · 🔬 forensics · 🎙 concall → 🧭 one fused verdict</span>
         <span style={{ fontSize: F.xs, color: C.dim }}>{files.length} file{files.length === 1 ? '' : 's'} · {scored.length} companies (saved locally)</span>
       </div>
@@ -2247,7 +2259,7 @@ export default function CapexTrackerPage() {
                       <span title={'Forensic ' + (it.fx.grade === 'NR' ? 'not rated' : it.fx.score + '/100 · ' + it.fx.flags.length + ' flags')} style={{ fontSize: 10, fontWeight: 900, padding: '1px 6px', borderRadius: 7, background: it.fx.color + '22', color: it.fx.color, border: '1px solid ' + it.fx.color + '55' }}>{it.fx.grade === 'NR' ? 'NR' : it.fx.score}</span>
                     </span>
                   ) : null;
-                  return <ScoreRow key={s.name} s={s} open={open === s.name} toggle={() => setOpen(open === s.name ? null : s.name)} fmt={fmt} Detail={Detail} lens={lens} />;
+                  return <ScoreRow key={s.name} s={s} open={open === s.name} toggle={() => setOpen(open === s.name ? null : s.name)} fmt={fmt} Detail={Detail} lens={lens} veto={it ? it.fx.grade === 'AVOID' || it.fx.critical : false} />;
                 })}
               </tbody>
             </table>
@@ -2752,7 +2764,7 @@ function markText(text: string, quotes: { field: string; match: string; snippet:
 }
 
 // scoreboard row + expandable detail
-function ScoreRow({ s, open, toggle, fmt, Detail, lens }: { s: Scored; open: boolean; toggle: () => void; fmt: (n: number, d?: number) => string; Detail: (p: { s: Scored }) => any; lens?: any }) {
+function ScoreRow({ s, open, toggle, fmt, Detail, lens, veto }: { s: Scored; open: boolean; toggle: () => void; fmt: (n: number, d?: number) => string; Detail: (p: { s: Scored }) => any; lens?: any; veto?: boolean }) {
   return (
     <>
       <tr className="cxr" onClick={toggle} style={{ borderBottom: '1px solid ' + C.line, cursor: 'pointer', background: open ? '#16233B' : undefined }}>
@@ -2767,7 +2779,7 @@ function ScoreRow({ s, open, toggle, fmt, Detail, lens }: { s: Scored; open: boo
         <td style={{ padding: '8px 8px' }}><StageChip stage={s.stage} />{s.watch.length > 0 && <span title={s.watch.join(' | ')}> 🚨</span>}{s.sells.length > 0 && <span title={s.sells.join(' | ')}> 📤</span>}</td>
         <td style={{ padding: '8px 8px' }}><TierBars s={s} /></td>
         <td style={{ padding: '8px 8px' }}>{lens ?? <span style={{ color: C.muted, fontSize: F.xs }}>—</span>}</td>
-        <td style={{ padding: '8px 8px', fontSize: F.xs, fontWeight: 800, color: s.entryColor, whiteSpace: 'nowrap' }}>{s.entryShort}</td>
+        <td style={{ padding: '8px 8px', fontSize: F.xs, fontWeight: 800, color: veto ? C.red : s.entryColor, whiteSpace: 'nowrap' }} title={veto ? 'Forensic AVOID/critical — entry blocked regardless of capex quality' : undefined}>{veto ? '☠ FORENSIC VETO' : s.entryShort}</td>
         <td style={{ padding: '8px 8px', fontSize: F.xs, color: s.confidence === 'HIGH' ? C.green : s.confidence === 'MEDIUM' ? C.amber : C.red }}>{s.confidence}</td>
         <td style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 900, color: s.dbCount >= 3 ? C.red : s.dbCount ? C.amber : C.muted }}>{s.dbCount || '—'}</td>
         <td style={{ padding: '8px 8px', textAlign: 'right' }}>{fmt(s.roce)}</td>
