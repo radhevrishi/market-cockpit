@@ -1432,15 +1432,22 @@ export default function CapexTrackerPage() {
   const [ccView, setCcView] = useState<string | null>(null);
   const ccFileRef = useRef<HTMLInputElement>(null);
 
+  // refs mirror rows/files so multi-file uploads (an awaited loop) never merge
+  // against a stale closure — file 2 must see file 1's rows, not the initial state
+  const rowsRef = useRef<Row[]>([]);
+  const filesRef = useRef<string[]>([]);
+
   useEffect(() => {
     try {
       const d = localStorage.getItem(KD); const n = localStorage.getItem(KN);
-      if (d) setRows(JSON.parse(d)); if (n) setFiles(JSON.parse(n));
+      if (d) { const pr = JSON.parse(d); rowsRef.current = pr; setRows(pr); }
+      if (n) { const pf = JSON.parse(n); filesRef.current = pf; setFiles(pf); }
       const cc = localStorage.getItem(KC); if (cc) setConcalls(JSON.parse(cc));
     } catch {}
   }, []);
 
   const persist = (r: Row[], f: string[]) => {
+    rowsRef.current = r; filesRef.current = f;
     setRows(r); setFiles(f);
     try { localStorage.setItem(KD, JSON.stringify(r)); localStorage.setItem(KN, JSON.stringify(f)); } catch {}
   };
@@ -1450,7 +1457,7 @@ export default function CapexTrackerPage() {
     const h = resolveHeaders(Object.keys(incoming[0]));
     if (!h['name']) { setMsg('Could not read ' + fname + ': plain tables need a Company Name column (Screener.in Excel exports are auto-detected). Download the template for the flat format.'); return; }
     const key = (r: Row, hh: Record<string, string>) => (r[hh['name']] || '').trim().toLowerCase();
-    const merged = [...rows];
+    const merged = [...rowsRef.current];
     let updated = 0, added = 0;
     for (const inc of incoming) {
       const k = key(inc, h); if (!k) continue;
@@ -1463,7 +1470,7 @@ export default function CapexTrackerPage() {
         merged[idx] = { ...merged[idx], ...patch }; updated++;
       } else { merged.push(inc); added++; }
     }
-    persist(merged, [...files.filter((f) => f !== fname), fname]);
+    persist(merged, [...filesRef.current.filter((f) => f !== fname), fname]);
     setMsg('Loaded ' + fname + ': ' + added + ' added · ' + updated + ' updated · ' + merged.length + ' total (saved — survives reloads)');
   };
 
