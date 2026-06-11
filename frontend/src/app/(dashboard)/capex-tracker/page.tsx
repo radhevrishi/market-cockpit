@@ -334,8 +334,13 @@ function scoreRow(r: Row, h: Record<string, string>): Scored {
   const cycleNote = (r['Prior Cycle Note'] || '').trim();
 
   // ── STAGE A-F classification (Framework Phase 2 + 5) ──────────────────────
-  // effective current utilization: manual util → asset-sweat proxy
-  const uEff = !isNaN(util) ? util : utilEff;
+  // stage input: MANUAL utilization → asset-sweat proxy (utilEff). The F6
+  // '(est)' announcement heuristic is deliberately excluded — it floors at 65
+  // and would misplace freshly-commissioned plants up the arc.
+  const utilManualStr = String(r['Capacity Utilization %'] ?? '').trim() ||
+    (h['util'] && !/\(est\)/i.test(h['util']) ? String(r[h['util']] ?? '').trim() : '');
+  const utilManual = num(utilManualStr);
+  const uEff = !isNaN(utilManual) ? utilManual : !isNaN(utilEff) ? utilEff : util;
   const activeBuild = phase === 'BUILDING' || phase === 'RAMPING' || capexAccel > 1.5 || cwipRatio > 15;
   const commissioned = nbGrowth > 25; // block just jumped — CWIP rolled into Net Block
   // Pre-commissioning the NEW capacity is offline by definition ⇒ Stage A no
