@@ -315,8 +315,17 @@ function scoreRow(r: Row, h: Record<string, string>): Scored {
     isNaN(indGrowth) ? '' : indGrowth.toFixed(1) + 'x GDP');
   add(17, 4, 'Import substitution', 2, yes(g('importSub')) === null ? null : yes(g('importSub')) ? 2 : 0, '');
   add(18, 4, 'Export opportunity', 1, yes(g('exportOpp')) === null ? null : yes(g('exportOpp')) ? 1 : 0, '');
-  add(19, 4, 'Valuation vs 5-yr mean', 2, isNaN(peVsMean) ? null :
-    peVsMean < 1 ? 2 : peVsMean <= 1.5 ? 1 : 0, isNaN(peVsMean) ? '' : peVsMean.toFixed(2) + 'x mean');
+  // F19 (v5.4) — valuation × growth (was PE-vs-mean only). Max bumped 2→4.
+  const __peSig = isNaN(peVsMean) ? null : peVsMean < 0.8 ? 2 : peVsMean < 1 ? 1.5 : peVsMean <= 1.5 ? 0.5 : 0;
+  const __growthSig = isNaN(revCagr) ? null : revCagr >= 0.20 ? 1.5 : revCagr >= 0.12 ? 1 : revCagr >= 0.05 ? 0.5 : 0;
+  const __valQualBonus = !isNaN(roce) && roce > 20 ? 0.5 : 0;
+  const __valPts = (__peSig === null && __growthSig === null) ? null :
+    Math.min(4, (__peSig || 0) + (__growthSig || 0) + __valQualBonus);
+  const __valNote = (__peSig === null && __growthSig === null) ? '' :
+    (isNaN(peVsMean) ? 'pe?' : peVsMean.toFixed(2) + 'x mean') +
+    ' · rev ' + (isNaN(revCagr) ? '?' : (revCagr * 100).toFixed(0) + '%') +
+    (__valQualBonus ? ' · qual+' : '');
+  add(19, 4, 'Valuation × growth', 4, __valPts, __valNote);
   add(20, 4, 'Competitive moat', 2, yes(g('moat')) === null ? null : yes(g('moat')) ? 2 : 0, '');
   const priorYes = yes(priorV.v);
   add(21, 4, 'Prior capex success', 1, priorYes === null ? null : priorYes ? 1 : 0, '', priorV.est);
@@ -332,6 +341,18 @@ function scoreRow(r: Row, h: Record<string, string>): Scored {
   add(22, 4, 'Promoter quality', 5,
     pqMeasured === 0 ? null : pqPts,
     pqMeasured === 0 ? '' : pqPts + '/5 (ROCE' + (pqRoceOk?'\u2713':'\u00B7') + ' OCF' + (pqOcfOk?'\u2713':'\u00B7') + ' D/E' + (pqDeOk?'\u2713':'\u00B7') + ' pledge' + (pqPledgeOk?'\u2713':'\u00B7') + ' int-fund' + (pqInternalOk?'\u2713':'\u00B7') + ')');
+
+  // F23 (v5.4) — Score confidence: % of total weight where data was Verified vs Estimated vs Unknown
+  const __totalMax = factors.reduce((s, f) => s + f.max, 0);
+  const __unknownMax = factors.reduce((s, f) => s + (f.note === 'no data' ? f.max : 0), 0);
+  const __estimatedMax = factors.reduce((s, f) => s + (typeof f.note === 'string' && f.note.endsWith(' (est)') ? f.max : 0), 0);
+  const __verifiedMax = Math.max(0, __totalMax - __unknownMax - __estimatedMax);
+  const __verifiedPct = __totalMax > 0 ? Math.round(__verifiedMax / __totalMax * 100) : 0;
+  const __estPct = __totalMax > 0 ? Math.round(__estimatedMax / __totalMax * 100) : 0;
+  const __unkPct = Math.max(0, 100 - __verifiedPct - __estPct);
+  const __confPts = Math.round(3 * __verifiedPct / 100);
+  add(23, 4, 'Score confidence', 3, __confPts,
+    'Verified ' + __verifiedPct + '% · Est ' + __estPct + '% · Unknown ' + __unkPct + '%');
 
   const base = factors.reduce((s, f) => s + f.pts, 0);
   const tiers = [1, 2, 3, 4].map((t) => ({
