@@ -1,7 +1,7 @@
 'use client';
 
 // ════════════════════════════════════════════════════════════════════════════
-// CAPEX TRACKER v4 — QUALITY × TIMING engine.
+// CAPEX TRACKER v4.3 — QUALITY × TIMING engine.
 // QUALITY: "The CAPEX Masterclass" (200 cases) Ch.12 verbatim — 21 weighted
 //   factors (100 pts) → industry multiplier → deal-breaker override (3+ of 6
 //   ⇒ cap 30) → ANCHOR/CORE/SATELLITE/WATCHLIST/AVOID/REJECT bands.
@@ -54,7 +54,8 @@ const HEADERS: [string, RegExp][] = [
   ['roic', /roic/i],
   ['util', /utili[sz]ation/i],
   ['de', /^d\/?e( ratio)?$|debt.?to.?equity/i],
-  ['ocf', /ocf/i],
+  // exact-shape only: must NOT match telemetry like 'OCF/Capex 3y %'
+  ['ocf', /^ocf ?(positive)? ?(years|status|yrs|3-? ?yr)?$/i],
   ['fcf', /fcf/i],
   ['internalPct', /internal/i],
   ['debtPct', /debt ?%|% ?debt|debt.?fund/i],
@@ -80,12 +81,22 @@ const HEADERS: [string, RegExp][] = [
   ['industryGrowth', /industry.?growth/i],
 ];
 
+// Parser TELEMETRY columns are read by exact name in scoreRow and must NEVER
+// enter the header race — a loose factor regex matching one of these silently
+// corrupts scores (e.g. /ocf/ once read 'OCF/Capex 3y %' as the OCF streak).
+const TELEMETRY_COLS = new Set([
+  'Capex Phase', 'Capex/Sales %', 'CWIP/NetBlock %', 'Capex Accel x',
+  'D/E change 2y', 'OCF/Capex 3y %', 'Net Debt/EBITDA', 'Capex/PreRev %',
+  'Util Effective % (est)', 'NB Growth %', 'Rev YoY %', 'Capex Series', 'Prior Cycle Note',
+]);
+
 // non-'(est)' columns win the header race; est columns only match as fallback
 function resolveHeaders(cols: string[]): Record<string, string> {
   const map: Record<string, string> = {};
   const ordered = [...cols.filter((c) => !/\(est\)/i.test(c)), ...cols.filter((c) => /\(est\)/i.test(c))];
   for (const col of ordered) {
     const c = col.trim();
+    if (TELEMETRY_COLS.has(c)) continue;
     for (const [key, re] of HEADERS) {
       if (!map[key] && re.test(c)) { map[key] = col; break; }
     }
@@ -150,6 +161,8 @@ const STAGE_META: Record<string, { color: string; label: string; size: string; n
     note: 'Operating leverage mostly exhausted. Enter only with a 30%+ valuation cushion to the prior cycle peak.' },
   F: { color: '#FF4D6A', label: '>90% / INFLECTION PRINTED', size: '0%', pos: 4.6,
     note: 'The documented ANTI-PATTERN. Stage F entries are net NEGATIVE in the 250-case data (Tatva, Anupam, Wolfspeed post-print). Do not chase.' },
+  '—': { color: '#8B98AC', label: 'NO MAJOR CYCLE', size: '—', pos: 0,
+    note: 'Cycle capex below 25% of pre-capex revenue with no spend acceleration — serial-brownfield steady compounder. The Stage A-F multibagger arc does not apply; judge on quality and wait for a real cycle.' },
 };
 
 // ── THE SCORING ENGINE — quality (Ch.12) + timing (Stage A-F) ───────────────
@@ -182,7 +195,8 @@ function scoreRow(r: Row, h: Record<string, string>): Scored {
   const roce = !isNaN(num(g('roce'))) ? num(g('roce')) : num(g('roic'));
   const anchor = num(g('anchor'));
   const de = num(g('de'));
-  const ocfRaw = g('ocf');
+  // exact parser field first — never let a fuzzy header match feed the streak
+  const ocfRaw = String(r['OCF positive years'] ?? '').trim() || g('ocf');
   let ocfYears = num(ocfRaw);
   if (isNaN(ocfYears)) { const b = yes(ocfRaw); ocfYears = b === true ? 4 : b === false ? -1 : NaN; }
   const fundI = gv('internalPct', 'Internal funding %');
@@ -224,7 +238,7 @@ function scoreRow(r: Row, h: Record<string, string>): Scored {
   add(3, 1, 'D/E at announcement', 11, isNaN(de) ? null :
     de < 0.3 ? 11 : de < 0.5 ? 9 : de < 1.0 ? 7 : de < 1.5 ? 4 : 0, isNaN(de) ? '' : de.toFixed(2) + 'x');
   add(4, 1, 'OCF status', 8, isNaN(ocfYears) ? null :
-    ocfYears >= 5 ? 8 : ocfYears >= 3 ? 6 : ocfYears >= 1 ? 3 : 0, isNaN(ocfYears) ? '' : ocfYears < 0 ? 'negative' : ocfYears + 'y positive');
+    ocfYears >= 5 ? 8 : ocfYears >= 3 ? 6 : ocfYears >= 1 ? 3 : 0, isNaN(ocfYears) ? '' : ocfYears < 0 ? 'negative' : Math.min(Math.round(ocfYears), 10) + 'y positive');
   add(5, 1, 'Funding source', 7, isNaN(internal) ? null :
     internal > 70 ? 7 : internal >= 40 ? 5 : internal >= 20 ? 3 : 0, isNaN(internal) ? '' : internal.toFixed(0) + '% internal', fundEst);
   // T2 (25)
@@ -359,6 +373,10 @@ function scoreRow(r: Row, h: Record<string, string>): Scored {
   }
   // earnings inflection already printed + high util ⇒ F regardless
   if (!isNaN(uEff) && uEff > 70 && revYoY > 25 && capexAccel < 1.2 && (stage === 'D' || stage === 'E')) stage = 'F';
+  // NO MAJOR CYCLE: cycle capex <25% of pre-capex revenue AND no spend
+  // acceleration ⇒ steady serial-brownfield compounder, Stage A-F N/A.
+  const noMajorCycle = isFinite(capexPreRev) && capexPreRev < 25 && !(capexAccel >= 1.5);
+  if (noMajorCycle) stage = '—';
   const sm = stage ? STAGE_META[stage] : null;
   const stageLabel = sm ? sm.label : 'NO ACTIVE CYCLE DETECTED';
 
@@ -386,6 +404,10 @@ function scoreRow(r: Row, h: Record<string, string>): Scored {
   } else if (quality === 'NEEDS') {
     entry = '🧩 Verdict pending data — ' + measuredPct + '% on measured evidence' + (stage ? ' · telemetry reads Stage ' + stage : '') + '. Fill anchor %, promoter/pledge and utilization below for the real call.';
     entryColor = C.violet; entryShort = 'FILL DATA';
+  } else if (stage === '—') {
+    entry = '⚪ No discrete capex cycle underway (capex ' + (isFinite(capexPreRev) ? capexPreRev.toFixed(0) : '?') + '% of pre-capex revenue, below the 30-60% multibagger sweet spot' + (isFinite(capexAccel) ? '; spend accel ' + capexAccel.toFixed(1) + 'x' : '') + ') — judge as a steady compounder on the ' + decision + ' quality band; track for a real cycle announcement.';
+    entryColor = quality === 'ANCHOR' || quality === 'CORE' ? C.blue : quality === 'SAT' ? C.cyan : C.amber;
+    entryShort = quality === 'ANCHOR' || quality === 'CORE' ? 'STEADY COMPOUNDER' : quality === 'SAT' ? 'COMPOUNDER — MID QUALITY' : 'NO CYCLE — WATCH';
   } else if (stage === 'F') {
     entry = '🚫 DO NOT CHASE — Stage F (earnings inflection already printed). Net-negative cohort in the 250-case data.' + (sells.length ? ' ' + sells[0] : '') + (quality === 'ANCHOR' || quality === 'CORE' ? ' If already holding: run the staircase exit (⅓ per sell signal).' : '');
     entryColor = C.red; entryShort = 'DO NOT CHASE';
@@ -611,8 +633,13 @@ function parseScreenerWorkbook(XLSX: any, wb: any, fname: string): Row | null {
         const salesB = at(sales, bi); const salesA = at(sales, Math.min(bc, bi + 2));
         if (before !== null && after !== null && after !== undefined) {
           const delivered = after >= before - 2 && salesA > salesB;
-          priorEst = delivered ? 'Y' : 'N';
-          lastCycleNote = 'Prior cycle ' + yr(bi) + ' (' + capexSeries[i].toFixed(0) + ' Cr, ' + (capexSeries[i] / prevAvg).toFixed(1) + 'x avg): ROCE ' + before.toFixed(0) + '%→' + after.toFixed(0) + '%, sales ' + salesB.toFixed(0) + '→' + salesA.toFixed(0) + ' ⇒ ' + (delivered ? 'DELIVERED ✓' : 'DID NOT DELIVER ✗');
+          // calibration: small ROCE dips (within 4pts) or strong sales delivery
+          // (≥1.25x) despite a ROCE dip are BORDERLINE, not failures.
+          const borderline = !delivered &&
+            ((after >= before - 4 && after < before - 2) ||
+             (after < before - 2 && salesB > 0 && salesA / salesB >= 1.25));
+          priorEst = delivered ? 'Y' : borderline ? '' : 'N';
+          lastCycleNote = 'Prior cycle ' + yr(bi) + ' (' + capexSeries[i].toFixed(0) + ' Cr, ' + (capexSeries[i] / prevAvg).toFixed(1) + 'x avg): ROCE ' + before.toFixed(0) + '%→' + after.toFixed(0) + '%, sales ' + salesB.toFixed(0) + '→' + salesA.toFixed(0) + ' ⇒ ' + (delivered ? 'DELIVERED ✓' : borderline ? 'BORDERLINE ~' : 'DID NOT DELIVER ✗');
           break;
         }
       }
@@ -693,7 +720,8 @@ const StageChip = ({ stage, big }: { stage: string; big?: boolean }) => {
 
 // T0→T5 timeline with the company's current position marked
 const Timeline = ({ s }: { s: Scored }) => {
-  const m = s.stage ? STAGE_META[s.stage] : null;
+  const noCycle = s.stage === '—';
+  const m = s.stage && !noCycle ? STAGE_META[s.stage] : null;
   const T = [
     ['T0', 'Announced'], ['T1', 'Commissioned'], ['T2', 'Util rising'],
     ['T3', 'Earnings inflect'], ['T4', 'Recognition'], ['T5', 'Peak / new capex'],
@@ -701,7 +729,7 @@ const Timeline = ({ s }: { s: Scored }) => {
   const lags = ['12-24m', '6-12m', '6-12m', '6-12m', '12-24m'];
   const pct = m ? (m.pos / 5) * 100 : -10;
   return (
-    <div style={{ background: C.bg, border: '1px solid ' + C.line, borderRadius: 10, padding: '14px 16px 8px' }}>
+    <div style={{ background: C.bg, border: '1px solid ' + C.line, borderRadius: 10, padding: '14px 16px 8px', opacity: noCycle ? 0.45 : 1 }}>
       <div style={{ position: 'relative', height: 4, background: C.line, borderRadius: 2, margin: '12px 6px 4px' }}>
         <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: pct + '%', background: 'linear-gradient(90deg,' + C.violet + ',' + (m ? m.color : C.cyan) + ')', borderRadius: 2 }} />
         {m && (
@@ -726,7 +754,13 @@ const Timeline = ({ s }: { s: Scored }) => {
           ● Stage {s.stage} — {m.label} <span style={{ color: C.dim, fontWeight: 400 }}>· {m.note} · framework size {m.size}</span>
         </div>
       )}
-      {!m && <div style={{ marginTop: 8, fontSize: F.xs, color: C.muted }}>No active capex cycle in the telemetry — nothing to place on the arc yet.</div>}
+      {!m && (
+        <div style={{ marginTop: 8, fontSize: F.xs, color: C.muted }}>
+          {noCycle
+            ? 'NO MAJOR CYCLE — capex is routine/serial-brownfield scale, so the T0→T5 arc does not apply. Re-arm on a real capex announcement.'
+            : 'No active capex cycle in the telemetry — nothing to place on the arc yet.'}
+        </div>
+      )}
     </div>
   );
 };
@@ -751,7 +785,7 @@ const CapexStrip = ({ s }: { s: Scored }) => {
           );
         })}
       </div>
-      {s.cycleNote && <div style={{ marginTop: 6, fontSize: F.xs, color: s.cycleNote.includes('DELIVERED ✓') ? C.green : C.amber }}>🕰 {s.cycleNote}</div>}
+      {s.cycleNote && <div style={{ marginTop: 6, fontSize: F.xs, color: s.cycleNote.includes('DELIVERED ✓') ? C.green : s.cycleNote.includes('BORDERLINE') ? C.amber : C.red }}>🕰 {s.cycleNote}</div>}
     </div>
   );
 };
@@ -960,7 +994,7 @@ export default function CapexTrackerPage() {
           {!isNaN(s.capexToSales) && tile('CAPEX/SALES', s.capexToSales.toFixed(1) + '%', C.txt)}
           {!isNaN(s.cwipRatio) && tile('CWIP/BLOCK', s.cwipRatio.toFixed(0) + '%', s.cwipRatio > 30 ? C.amber : C.txt)}
           {!isNaN(s.capexAccel) && tile('SPEND ACCEL', s.capexAccel.toFixed(1) + 'x', s.capexAccel > 1.6 ? C.orange : C.txt)}
-          {!isNaN(s.netDebtEbitda) && tile('NET DEBT/EBITDA', s.netDebtEbitda.toFixed(2) + 'x', s.netDebtEbitda > 2 ? C.red : C.green)}
+          {!isNaN(s.netDebtEbitda) && tile('NET DEBT/EBITDA', s.netDebtEbitda < 0 ? 'net cash' : s.netDebtEbitda.toFixed(2) + 'x', s.netDebtEbitda > 2 ? C.red : C.green)}
           {!isNaN(s.capexPreRev) && tile('CYCLE CAPEX/PRE-REV', s.capexPreRev.toFixed(0) + '%', s.capexPreRev >= 30 && s.capexPreRev <= 60 ? C.green : s.capexPreRev > 100 ? C.red : C.amber)}
           {!isNaN(s.utilEff) && tile('EFF. UTIL (est)', s.utilEff.toFixed(0) + '%', s.utilEff > 90 ? C.red : s.utilEff >= 30 && s.utilEff < 70 ? C.gold : C.txt)}
           {!isNaN(s.selfFund) && tile('OCF/CAPEX 3Y', s.selfFund.toFixed(0) + '%', s.selfFund >= 70 ? C.green : s.selfFund >= 40 ? C.amber : C.red)}
@@ -1017,9 +1051,14 @@ export default function CapexTrackerPage() {
 
   const buyNow = useMemo(() => scored.filter((s) => (s.decision === 'ANCHOR BUY' || s.decision === 'CORE BUY') && (s.stage === 'B' || s.stage === 'C' || s.stage === 'D')), [scored]);
   const wrongStage = useMemo(() => scored.filter((s) => (s.decision === 'ANCHOR BUY' || s.decision === 'CORE BUY') && !(s.stage === 'B' || s.stage === 'C' || s.stage === 'D')), [scored]);
+  // 'needs:' must only list factors the owner can actually fill/verify —
+  // F2 anchor, F6 utilization, F7 promoter, F15 policy, F16 industry growth,
+  // F17 import-sub, F20 moat. Never structural ones (capex size, valuation,
+  // revenue CAGR, cycle timing) the owner cannot change by research.
+  const ACTIONABLE_FACTORS = useMemo(() => new Set([2, 6, 7, 15, 16, 17, 20]), []);
   const upgradeWatch = useMemo(() => scored.filter((s) => s.decision === 'WATCHLIST' || s.decision === 'SATELLITE')
-    .map((s) => ({ s, need: s.factors.filter((f) => f.pts === 0 && f.max >= 4 && f.note !== 'no data').slice(0, 2) }))
-    .sort((a, b) => b.s.final - a.s.final).slice(0, 10), [scored]);
+    .map((s) => ({ s, need: s.factors.filter((f) => ACTIONABLE_FACTORS.has(f.id) && f.pts === 0).slice(0, 2) }))
+    .sort((a, b) => b.s.final - a.s.final).slice(0, 10), [scored, ACTIONABLE_FACTORS]);
 
   return (
     <div style={{ maxWidth: 2100, margin: '0 auto', padding: '14px 18px', color: C.txt, fontFamily: 'inherit' }}>
@@ -1214,7 +1253,7 @@ function ScoreRow({ s, open, toggle, fmt, Detail }: { s: Scored; open: boolean; 
         <td style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 900, color: s.dbCount >= 3 ? C.red : s.dbCount ? C.amber : C.muted }}>{s.dbCount || '—'}</td>
         <td style={{ padding: '8px 8px', textAlign: 'right' }}>{fmt(s.roce)}</td>
         <td style={{ padding: '8px 8px', textAlign: 'right' }}>{fmt(s.de, 2)}</td>
-        <td style={{ padding: '8px 8px', textAlign: 'right', color: s.netDebtEbitda > 2 ? C.red : C.txt }}>{fmt(s.netDebtEbitda, 2)}</td>
+        <td style={{ padding: '8px 8px', textAlign: 'right', color: s.netDebtEbitda > 2 ? C.red : s.netDebtEbitda < 0 ? C.green : C.txt }}>{s.netDebtEbitda < 0 ? 'net cash' : fmt(s.netDebtEbitda, 2)}</td>
         <td style={{ padding: '8px 8px', textAlign: 'right' }}>{fmt(s.util, 0)}</td>
         <td style={{ padding: '8px 8px', textAlign: 'right' }}>{fmt(s.anchor, 0)}</td>
       </tr>
