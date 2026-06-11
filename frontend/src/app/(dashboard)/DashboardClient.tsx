@@ -6,7 +6,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   BarChart3, Newspaper, Calendar, Briefcase, Compass, Bell, Settings, LogOut, ChevronDown, BookMarked, Search,
-  TrendingUp, Grid3X3, RefreshCw, Filter, Globe, Rocket, Shield, LineChart, Star, Microscope,
+  TrendingUp, Grid3X3, RefreshCw, Filter, Globe, Rocket, Shield, LineChart, Star, Microscope, Factory,
 } from 'lucide-react';
 import api from '@/lib/api';
 import TickerDrawer from '@/components/TickerDrawer';
@@ -102,6 +102,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/multibagger',     label: 'Multibagger',           icon: <Star className="w-4 h-4" /> },
       { href: '/buy-strategy', label: 'Buy Strategy', icon: <Rocket className="w-4 h-4" /> },
+      { href: '/capex-tracker', label: 'Capex Tracker', icon: <Factory className="w-4 h-4" /> },
       { href: '/valuations',      label: 'Valuations',            icon: <Star className="w-4 h-4" /> },
       { href: '/valuation-calc',  label: 'Valuation Calculators', icon: <Star className="w-4 h-4" /> },
       { href: '/auto-valuation',  label: 'Auto-Valuation',        icon: <Star className="w-4 h-4" /> },
