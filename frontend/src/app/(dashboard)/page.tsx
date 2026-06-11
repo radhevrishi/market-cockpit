@@ -2219,6 +2219,8 @@ export default function HomeDashboard() {
             <Link href="/news"                   style={navChip('#60A5FA')}>📰 News Feed</Link>
             <Link href="/multibagger"            style={navChip('#10B981')}>🚀 Multibagger</Link>
             <Link href="/capex-tracker"          style={navChip('#F0883E')}>🏗 Capex Tracker</Link>
+            {/* PATCH — 🧭 Verdict deep link: combined capex+MB+forensic+concall verdict tab */}
+            <Link href="/capex-tracker?tab=verdict" style={navChip('#A78BFA')}>🧭 Verdict</Link>
             <Link href="/portfolio"              style={navChip('#22D3EE')}>💼 My Book</Link>
             {/* PATCH 0776 — 📑 Order Book + 🏛 Rating Actions chips removed (modules deleted). */}
             {/* PATCH 1122 — Investing OS chip */}
