@@ -2218,6 +2218,7 @@ export default function HomeDashboard() {
             {/* PATCH 1067 — News Feed chip per user request */}
             <Link href="/news"                   style={navChip('#60A5FA')}>📰 News Feed</Link>
             <Link href="/multibagger"            style={navChip('#10B981')}>🚀 Multibagger</Link>
+            <Link href="/capex-tracker"          style={navChip('#F0883E')}>🏗 Capex Tracker</Link>
             <Link href="/portfolio"              style={navChip('#22D3EE')}>💼 My Book</Link>
             {/* PATCH 0776 — 📑 Order Book + 🏛 Rating Actions chips removed (modules deleted). */}
             {/* PATCH 1122 — Investing OS chip */}
