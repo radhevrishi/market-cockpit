@@ -483,7 +483,11 @@ function scoreRow(r: Row, h: Record<string, string>, extras?: Record<string, any
   const utilManual = num(utilManualStr);
   const uEff = !isNaN(utilManual) ? utilManual : !isNaN(utilEff) ? utilEff : util;
   const activeBuild = phase === 'BUILDING' || phase === 'RAMPING' || capexAccel > 1.5 || cwipRatio > 15;
-  const commissioned = nbGrowth > 25; // block just jumped — CWIP rolled into Net Block
+  // v5.4.2 — commissioning detection broadened (Yasho audit):
+  // Catch POST-commissioning state too: CWIP drained from a peak + prior cycle detected.
+  // Previous logic (nbGrowth > 25) only flagged the YEAR of jump, missed the +1y ramp window.
+  const cwipDrainedPostCycle = !isNaN(cwipRatio) && cwipRatio < 8 && cycleNote && cycleNote.length > 0 && capexAccel < 1.5;
+  const commissioned = nbGrowth > 25 || cwipDrainedPostCycle; // block jumped recently OR CWIP just drained from a real cycle
   // Pre-commissioning the NEW capacity is offline by definition ⇒ Stage A no
   // matter how hot the OLD assets run (that heat is F6's job). Utilization
   // maps to B-F only AFTER a commissioning event (Net Block jump).
