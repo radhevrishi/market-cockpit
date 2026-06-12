@@ -1,6 +1,7 @@
 'use client';
 import ConcallPro from './ConcallPro';
 import { classifyTranscriptV2 } from './concallClassifierV2';
+import MultibaggerStrips from './MultibaggerStrips';
 
 // ════════════════════════════════════════════════════════════════════════════
 // CAPEX TRACKER v5.0 — Company Intelligence Engine.
@@ -2635,6 +2636,7 @@ export default function CapexTrackerPage() {
       {/* ═══ 🚀 MULTIBAGGER ═══ */}
       {tab === 'multibagger' && scored.length > 0 && (
         <>
+          {intel[0]?.fin && <MultibaggerStrips fin={intel[0].fin} />}
           <div style={{ ...card, padding: 0, overflowX: 'auto' }}>
             <table className="cxt" style={{ borderCollapse: 'collapse', width: '100%', fontSize: F.sm }}>
               <thead><tr style={{ borderBottom: '1px solid ' + C.line }}>
