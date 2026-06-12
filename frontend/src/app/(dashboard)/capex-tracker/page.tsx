@@ -1600,7 +1600,7 @@ function parseScreenerWorkbook(XLSX: any, wb: any, fname: string): Row | null {
           const borderline = !delivered &&
             ((after >= before - 4 && after < before - 2) ||
              (after < before - 2 && salesB > 0 && salesA / salesB >= 1.25));
-          priorEst = delivered ? 'Y' : borderline ? '' : 'N';
+          priorEst = delivered ? 'Y' : borderline ? 'Borderline' : 'N';
           lastCycleNote = 'Prior cycle ' + yr(bi) + ' (' + capexSeries[i].toFixed(0) + ' Cr, ' + (capexSeries[i] / prevAvg).toFixed(1) + 'x avg): ROCE ' + before.toFixed(0) + '%→' + after.toFixed(0) + '%, sales ' + salesB.toFixed(0) + '→' + salesA.toFixed(0) + ' ⇒ ' + (delivered ? 'DELIVERED ✓' : borderline ? 'BORDERLINE ~' : 'DID NOT DELIVER ✗');
           break;
         }
