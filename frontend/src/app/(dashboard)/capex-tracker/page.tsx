@@ -2636,7 +2636,6 @@ export default function CapexTrackerPage() {
       {/* ═══ 🚀 MULTIBAGGER ═══ */}
       {tab === 'multibagger' && scored.length > 0 && (
         <>
-          {intel[0]?.fin && <MultibaggerStrips fin={intel[0].fin} />}
           <div style={{ ...card, padding: 0, overflowX: 'auto' }}>
             <table className="cxt" style={{ borderCollapse: 'collapse', width: '100%', fontSize: F.sm }}>
               <thead><tr style={{ borderBottom: '1px solid ' + C.line }}>
@@ -2667,6 +2666,7 @@ export default function CapexTrackerPage() {
                       {isOpen && (
                         <tr key={s.name + ':d'}><td colSpan={8} style={{ padding: '0 8px' }}>
                           <div style={{ background: C.panel2, border: '1px solid ' + C.line, borderRadius: 10, padding: 12, margin: '6px 0 10px', display: 'grid', gap: 8 }}>
+                            <MultibaggerStrips fin={fin} name={s.name} mbScore={mb.score} mbGrade={mb.grade} />
                             <div style={{ fontSize: F.xs, fontWeight: 800, color: C.violet }}>
                               12-COMPONENT MULTIBAGGER BREAKDOWN — measured {mb.available}/100 weight → score <b style={{ color: mb.color }}>{mb.grade === 'NR' ? 'NR' : mb.score}</b>
                               {mb.grade === 'NR' && <span style={{ color: C.dim, fontWeight: 400 }}> · below the 40-weight floor — {fin ? 'series too thin' : 'upload the Screener workbook'}</span>}
