@@ -176,13 +176,13 @@ const STAGE_META: Record<string, { color: string; label: string; size: string; n
     note: 'Highest return when it works, worst hit rate. Only for proven executors with net-cash sheets (HEICO, Mazagon, Jubilant archetype).' },
   B: { color: '#00E68A', label: 'JUST COMMISSIONED', size: '1.5-2.5%', pos: 1.5,
     note: 'Strongest hit-rate × multiple combo (~20% of optimal entries). Plant live, consensus has not modeled the ramp (Astral ’13, Deepak ’18, Symphony ’11).' },
-  C: { color: '#FFD700', label: '~40% UTILIZATION — MODAL ENTRY', size: '2-3.5%', pos: 2.2,
-    note: 'THE modal optimal entry — ~55% of winners. Depreciation visible, GAAP not yet inflected, consensus extrapolates the depressed margin. This is the alpha window.' },
-  D: { color: '#22D3EE', label: '~60% UTIL — SECOND CHANCE', size: '1.5-2.5%', pos: 2.8,
+  C: { color: '#FFD700', label: '~40% UTILIZATION (est) — MODAL ENTRY IF QUALITY HOLDS', size: '2-3.5%', pos: 2.2,
+    note: 'THE modal optimal entry — ~55% of winners. Depreciation visible, GAAP not yet inflected, consensus extrapolates the depressed margin. Potential alpha window — but only if utilization ramps successfully AND leverage normalizes.' },
+  D: { color: '#22D3EE', label: '~60% UTIL (est) — SECOND CHANCE', size: '1.5-2.5%', pos: 2.8,
     note: 'Second-chance entry (~20% of optimal). Typically 5-10x but the multiple has expanded — pair with a temporary sector overhang.' },
-  E: { color: '#FFB347', label: '70-90% — LATE', size: '0.5-1%', pos: 3.6,
+  E: { color: '#FFB347', label: '70-90% UTIL (est) — LATE', size: '0.5-1%', pos: 3.6,
     note: 'Operating leverage mostly exhausted. Enter only with a 30%+ valuation cushion to the prior cycle peak.' },
-  F: { color: '#FF4D6A', label: '>90% / INFLECTION PRINTED', size: '0%', pos: 4.6,
+  F: { color: '#FF4D6A', label: '>90% UTIL (est) / INFLECTION PRINTED', size: '0%', pos: 4.6,
     note: 'The documented ANTI-PATTERN. Stage F entries are net NEGATIVE in the 250-case data (Tatva, Anupam, Wolfspeed post-print). Do not chase.' },
   '—': { color: '#8B98AC', label: 'NO MAJOR CYCLE', size: '—', pos: 0,
     note: 'Cycle capex below 25% of pre-capex revenue with no spend acceleration — serial-brownfield steady compounder. The Stage A-F multibagger arc does not apply; judge on quality and wait for a real cycle.' },
@@ -534,8 +534,13 @@ function scoreRow(r: Row, h: Record<string, string>, extras?: Record<string, any
   const proven = priorYes === true;
   let entry = '', entryColor = C.dim, entryShort = '';
   if (quality === 'BAD') {
-    entry = '⛔ NO ENTRY at any stage — quality band ' + decision + ' (' + (dbCount ? dbCount + ' deal-breakers; ' : '') + 'capital-impairment cohort). Stage is irrelevant when quality fails.';
-    entryColor = C.red; entryShort = 'NO ENTRY';
+    // v5.4.4 — distinguish leverage-driven AVOID (potentially recoverable) from deep capital-impairment (chronic)
+    const leverageDriven = isFinite(netDebtEbitda) && netDebtEbitda > 3 && dbCount <= 2 && (roce > 5);
+    const labelTag = leverageDriven
+      ? 'leverage-driven AVOID — re-evaluate when Net Debt/EBITDA drops below 2.5x AND ROCE recovers above 12%'
+      : 'capital-impairment cohort';
+    entry = '⛔ NO ENTRY at current risk profile — quality band ' + decision + ' (' + (dbCount ? dbCount + ' deal-breakers; ' : '') + labelTag + '). Stage window may be open but quality is below the safety floor.';
+    entryColor = C.red; entryShort = leverageDriven ? 'NO ENTRY · LEVERAGE' : 'NO ENTRY';
   } else if (quality === 'NEEDS') {
     entry = '🧩 Verdict pending data — ' + measuredPct + '% on measured evidence' + (stage ? ' · telemetry reads Stage ' + stage : '') + '. Fill anchor %, promoter/pledge and utilization below for the real call.';
     entryColor = C.violet; entryShort = 'FILL DATA';
@@ -1768,13 +1773,26 @@ const Timeline = ({ s }: { s: Scored }) => {
           );
         })}
       </div>
-      {m && (
-        <div style={{ marginTop: 10, fontSize: F.sm, lineHeight: 1.55, borderLeft: '3px solid ' + m.color, background: m.color + '0D', borderRadius: '0 8px 8px 0', padding: '8px 12px' }}>
-          <b style={{ color: m.color }}>Stage {s.stage} — {m.label}</b>{' '}
-          <span style={{ color: C.body }}>{m.note}</span>{' '}
-          <span style={{ color: C.body }}>· framework size {m.size}</span>
-        </div>
-      )}
+      {m && (() => {
+        const qualityBad = s.final < 40;
+        const qualityWatch = s.final >= 40 && s.final < 55;
+        const stageOpen = s.stage === 'B' || s.stage === 'C' || s.stage === 'D';
+        const showConditional = stageOpen && (qualityBad || qualityWatch);
+        return (
+          <>
+            {showConditional && (
+              <div style={{ marginTop: 10, fontSize: F.sm, lineHeight: 1.55, borderLeft: '3px solid ' + C.amber, background: C.amber + '0D', borderRadius: '0 8px 8px 0', padding: '8px 12px' }}>
+                <b style={{ color: C.amber }}>⚠ Stage {s.stage} window IS open</b> <span style={{ color: C.body }}>— but quality score {s.final} is below the safety floor. The alpha window is conditional: realizes <b>only if</b> utilization ramps successfully AND leverage normalizes AND ROCE recovers. Treat as <b>high-risk speculative</b> rather than core buy.</span>
+              </div>
+            )}
+            <div style={{ marginTop: 10, fontSize: F.sm, lineHeight: 1.55, borderLeft: '3px solid ' + m.color, background: m.color + '0D', borderRadius: '0 8px 8px 0', padding: '8px 12px' }}>
+              <b style={{ color: m.color }}>Stage {s.stage} — {m.label}</b>{' '}
+              <span style={{ color: C.body }}>{m.note}</span>{' '}
+              <span style={{ color: C.body }}>· framework size {m.size}</span>
+            </div>
+          </>
+        );
+      })()}
       {!m && (
         <div style={{ marginTop: 10, fontSize: F.sm, lineHeight: 1.55, borderLeft: '3px solid ' + C.blue, background: C.blue + '0D', borderRadius: '0 8px 8px 0', padding: '8px 12px', color: C.body }}>
           {noCycle
