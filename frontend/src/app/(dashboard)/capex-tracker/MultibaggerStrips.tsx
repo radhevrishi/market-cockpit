@@ -1,14 +1,13 @@
 // ============================================================
-// MultibaggerStrips.tsx — v3
-// One-view per-company panel inside the 🚀 Multibagger tab:
-//   1. Capex by year (ΔNB + ΔCWIP + Dep)
-//   2. Net Block by year
-//   3. CWIP by year
-//   4. Quality of Growth (Revenue + OPM trajectory)
-//   5. Balance Sheet Stress (ND/EBITDA · IntCov · WC days · CFO/PAT)
-//   6. ROCE Path (ROCE + Incremental ROCE + Capital allocation grade)
-//   7. Management Credibility (placeholder)
-// v3 changes: shrink bars (50→32 px max), tighter spacing, add 3 capex strips
+// MultibaggerStrips.tsx — v4 (Institutional Format)
+// One-view per-company panel rendered inside the 🚀 Multibagger tab.
+// v4 fixes:
+//   - TRUE OPM (= OP / Sales where OP = PBT + Interest + Depreciation - OtherIncome)
+//     matches Screener.in exactly
+//   - TRUE Gross Margin (= (Sales - RM - ChgInv) / Sales) when chgInv extracted
+//     falls back to (Sales - RM) / Sales if chgInv missing
+//   - Cleaner institutional format: monospace numbers, threshold lines,
+//     section dividers, tighter type scale
 // ============================================================
 
 import React from 'react';
@@ -31,43 +30,55 @@ type Fin = {
   cash: (number | null)[];
   recv: (number | null)[];
   inv: (number | null)[];
-  rm: (number | null)[];
+  rm?: (number | null)[];
+  chgInv?: (number | null)[];
   ocf: (number | null)[];
   cfi: (number | null)[];
   cff: (number | null)[];
   shares: (number | null)[];
 };
 
-const FLAG = {
+// Institutional palette — Bloomberg/FactSet-style
+const C = {
+  bg: '#0a0e1a',
+  card: '#0f1421',
+  divider: '#1a2233',
+  text: '#d8dee9',
+  textDim: '#7c8ba1',
+  textMuted: '#5a677d',
+  white: '#f4f6fa',
   green: '#1d9e75',
+  greenDim: '#0f6e56',
   amber: '#ef9f27',
+  amberDim: '#ba7517',
   red: '#e24b4a',
-  deepred: '#a32d2d',
-  gray: '#6b7a8f',
-  empty: '#1f2a3a',
+  redDim: '#a32d2d',
+  blue: '#4d8fcc',
+  purple: '#A78BFA',
   capex: '#f08e3a',
   nb: '#1d9e75',
   cwip: '#ef9f27',
+  threshold: '#3a4660',
 };
 
-const BAR_MAX = 32; // shrunk from 50 — more compact
+const BAR_MAX = 30;
+const MONO: React.CSSProperties = { fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace' };
 
 const n = (v: number | null | undefined): number => (v == null || !isFinite(v as number) ? 0 : (v as number));
 function bandLow(v: number, greenAt: number, amberAt: number): string {
-  if (v <= greenAt) return FLAG.green;
-  if (v <= amberAt) return FLAG.amber;
-  if (v <= amberAt + 1) return FLAG.red;
-  return FLAG.deepred;
+  if (v <= greenAt) return C.green;
+  if (v <= amberAt) return C.amber;
+  if (v <= amberAt + 1) return C.red;
+  return C.redDim;
 }
 function bandHigh(v: number, greenAt: number, amberAt: number): string {
-  if (v >= greenAt) return FLAG.green;
-  if (v >= amberAt) return FLAG.amber;
-  if (v >= amberAt - 1) return FLAG.red;
-  return FLAG.deepred;
+  if (v >= greenAt) return C.green;
+  if (v >= amberAt) return C.amber;
+  if (v >= amberAt - 1) return C.red;
+  return C.redDim;
 }
 function fmtCr(v: number): string {
   if (Math.abs(v) >= 1000) return (v / 1000).toFixed(1) + 'k';
-  if (Math.abs(v) >= 100) return v.toFixed(0);
   return v.toFixed(0);
 }
 
@@ -76,12 +87,12 @@ type Bar = { year: string; value: number; display: string; color: string; live?:
 function StripRow({ bars, cap }: { bars: Bar[]; cap?: number }) {
   const max = Math.max(...bars.map((b) => Math.min(Math.abs(b.value), cap ?? Infinity)), 1);
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, padding: '2px 0', minHeight: 40 }}>
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, padding: '2px 0', minHeight: 44 }}>
       {bars.map((b, i) => {
         const v = Math.min(Math.abs(b.value), cap ?? Infinity);
         return (
           <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
-            <span style={{ fontSize: 10, color: b.live ? '#fff' : '#cdd6e0', fontWeight: b.live ? 500 : 400 }}>
+            <span style={{ ...MONO, fontSize: 10, color: b.live ? C.white : C.text, fontWeight: b.live ? 600 : 400 }}>
               {b.display}
             </span>
             <div
@@ -89,10 +100,10 @@ function StripRow({ bars, cap }: { bars: Bar[]; cap?: number }) {
                 width: '70%',
                 height: Math.max(3, (v / max) * BAR_MAX),
                 background: b.color,
-                borderRadius: '2px 2px 0 0',
+                borderRadius: '1px 1px 0 0',
               }}
             />
-            <span style={{ fontSize: 9, color: b.live ? '#cdd6e0' : '#6b7a8f', fontWeight: b.live ? 500 : 400 }}>
+            <span style={{ ...MONO, fontSize: 9, color: b.live ? C.text : C.textMuted, fontWeight: b.live ? 500 : 400 }}>
               {b.year}
             </span>
           </div>
@@ -102,17 +113,42 @@ function StripRow({ bars, cap }: { bars: Bar[]; cap?: number }) {
   );
 }
 
-function Header({ title, sub, color }: { title: string; sub: string; color: string }) {
+function SectionHead({
+  title,
+  color,
+  metric,
+  sub,
+}: {
+  title: string;
+  color: string;
+  metric?: string;
+  sub?: string;
+}) {
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 2 }}>
-      <span style={{ fontSize: 10, fontWeight: 500, letterSpacing: 0.5, color }}>{title}</span>
-      <span style={{ fontSize: 9, color: '#6b7a8f' }}>{sub}</span>
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 2, marginTop: 2 }}>
+      <span
+        style={{
+          fontSize: 10,
+          fontWeight: 600,
+          letterSpacing: 1.2,
+          color,
+          textTransform: 'uppercase',
+        }}
+      >
+        {title}
+      </span>
+      <span style={{ fontSize: 9, color: C.textMuted, letterSpacing: 0.3 }}>
+        {metric}
+        {metric && sub ? ' · ' : ''}
+        {sub}
+      </span>
     </div>
   );
 }
+
 function SubLabel({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ fontSize: 9, color: '#9aa6b8', marginTop: 1 }}>
+    <div style={{ fontSize: 9, color: C.textDim, marginTop: 2, letterSpacing: 0.3 }}>
       {children}
     </div>
   );
@@ -126,14 +162,14 @@ interface Props {
 }
 
 const MultibaggerStrips: React.FC<Props> = ({ fin, name, mbScore, mbGrade }) => {
-  // Keep only years where sales > 0 (skip empty placeholders)
+  // Drop empty placeholder years (where sales == 0)
   const keep: number[] = [];
   for (let i = 0; i < fin.years.length; i++) {
     if ((fin.sales[i] ?? 0) > 0) keep.push(i);
   }
   if (keep.length === 0) {
     return (
-      <div style={{ padding: 10, fontSize: 11, color: '#6b7a8f', fontStyle: 'italic' }}>
+      <div style={{ padding: 10, fontSize: 11, color: C.textMuted, fontStyle: 'italic' }}>
         No revenue years available.
       </div>
     );
@@ -148,6 +184,7 @@ const MultibaggerStrips: React.FC<Props> = ({ fin, name, mbScore, mbGrade }) => 
   const pbt = pick(fin.pbt);
   const intr = pick(fin.intr);
   const dep = pick(fin.dep);
+  const oi = pick(fin.oi);
   const bor = pick(fin.bor);
   const cash = pick(fin.cash);
   const recv = pick(fin.recv);
@@ -158,49 +195,63 @@ const MultibaggerStrips: React.FC<Props> = ({ fin, name, mbScore, mbGrade }) => 
   const nb = pick(fin.nb);
   const cwip = pick(fin.cwip);
   const rm = fin.rm ? pick(fin.rm) : sales.map(() => 0);
+  const chgInv = fin.chgInv ? pick(fin.chgInv) : sales.map(() => 0);
   const hasRm = rm.some((v) => v > 0);
+  const hasChgInv = chgInv.some((v) => v !== 0);
 
-  // CAPEX = ΔNB + ΔCWIP + Dep (per existing engine identity)
+  // Capex = ΔNB + ΔCWIP + Dep
   const capex = yrs.map((_, i) => {
     if (i === 0) return 0;
     return (nb[i] - nb[i - 1]) + (cwip[i] - cwip[i - 1]) + dep[i];
   });
 
-  const ebit = pbt.map((p, i) => p + intr[i]);
-  const ebitda = ebit.map((e, i) => e + dep[i]);
+  // Derived
+  const ebit = pbt.map((p, i) => p + intr[i]); // EBIT = PBT + Interest
+  const ebitda = ebit.map((e, i) => e + dep[i]); // EBITDA = EBIT + Depreciation
+  // OP = PBT + Interest + Depreciation - Other Income  (this matches Screener's "Operating Profit")
+  const op = pbt.map((p, i) => p + intr[i] + dep[i] - oi[i]);
   const capEmp = eq.map((e, i) => e + res[i] + bor[i]);
   const netDebt = bor.map((b, i) => b - cash[i]);
 
-  // Quality of Growth — revenue, Gross Margin (from raw material), OPM (EBIT margin)
-  // True GM = (Sales - Raw Material) / Sales × 100 — only computed if rm series is present
-  const grossMargin = sales.map((s, i) => (s > 0 && hasRm ? ((s - rm[i]) / s) * 100 : 0));
+  // Margins
+  const opm = sales.map((s, i) => (s > 0 ? (op[i] / s) * 100 : 0)); // TRUE OPM
   const ebitdaMargin = sales.map((s, i) => (s > 0 ? (ebitda[i] / s) * 100 : 0));
-  const opm = sales.map((s, i) => (s > 0 ? (ebit[i] / s) * 100 : 0));
+  // True GM = (Sales - RM - ChgInv) / Sales
+  const grossMargin = sales.map((s, i) =>
+    s > 0 && hasRm ? ((s - rm[i] - chgInv[i]) / s) * 100 : 0
+  );
+
+  const gmLabel = hasRm
+    ? hasChgInv
+      ? 'Gross Margin % (Sales − RM − ΔInv)'
+      : 'Gross Margin % (Sales − RM)'
+    : 'EBITDA margin % (GM proxy)';
+  const gmSeries = hasRm ? grossMargin : ebitdaMargin;
+  const marginColor = (i: number, series: number[]): string => {
+    if (i === 0) return C.textMuted;
+    const d = series[i] - series[i - 1];
+    if (d >= -0.5) return C.green;
+    if (d >= -2) return C.amber;
+    return C.red;
+  };
+
   const qogBars: Bar[] = yrs.map((y, i) => {
     const revG = i > 0 && sales[i - 1] > 0 ? ((sales[i] - sales[i - 1]) / sales[i - 1]) * 100 : 0;
     const omd = i > 0 ? opm[i] - opm[i - 1] : 0;
-    let color = FLAG.gray;
+    let color: string = C.textMuted;
     if (revG > 0) {
-      if (omd >= -0.5) color = FLAG.green;
-      else if (omd >= -2) color = FLAG.amber;
-      else color = FLAG.red;
+      if (omd >= -0.5) color = C.green;
+      else if (omd >= -2) color = C.amber;
+      else color = C.red;
     }
     return { year: y, value: sales[i], display: fmtCr(sales[i]), color, live: i === last };
   });
-  // Margin delta thresholds: green if stable/up, amber if -2pp, red if more
-  const marginColor = (i: number, series: number[]): string => {
-    if (i === 0) return FLAG.gray;
-    const d = series[i] - series[i - 1];
-    if (d >= -0.5) return FLAG.green;
-    if (d >= -2) return FLAG.amber;
-    return FLAG.red;
-  };
 
   // Balance Sheet Stress
   const ndEbitda = netDebt.map((nd, i) => (ebitda[i] > 0 ? nd / ebitda[i] : 0));
   const intCovBars: Bar[] = ebit.map((e, i) => {
     const hasInt = intr[i] > 0.5;
-    if (!hasInt) return { year: yrs[i], value: 10, display: 'n/d', color: FLAG.green, live: i === last };
+    if (!hasInt) return { year: yrs[i], value: 10, display: 'n/d', color: C.green, live: i === last };
     const v = e / intr[i];
     return { year: yrs[i], value: Math.min(v, 15), display: v.toFixed(1), color: bandHigh(v, 3, 2), live: i === last };
   });
@@ -212,7 +263,7 @@ const MultibaggerStrips: React.FC<Props> = ({ fin, name, mbScore, mbGrade }) => 
     return patSum !== 0 ? (cfoSum / patSum) * 100 : null;
   });
 
-  // ROCE Path
+  // ROCE
   const roce = ebit.map((e, i) => (capEmp[i] > 0 ? (e / capEmp[i]) * 100 : 0));
   const incrWindows: { label: string; value: number }[] = [];
   for (let i = 3; i < yrs.length; i++) {
@@ -225,100 +276,116 @@ const MultibaggerStrips: React.FC<Props> = ({ fin, name, mbScore, mbGrade }) => 
   const trend = (recent3[recent3.length - 1] ?? 0) - (recent3[0] ?? 0);
   const capGrade =
     recentAvg >= 15 && trend >= 0
-      ? { g: 'A', c: FLAG.green, note: 'High and rising ROCE, sensible capex' }
+      ? { g: 'A', c: C.green, note: 'High and rising ROCE, sensible capex' }
       : recentAvg >= 10
-      ? { g: 'B', c: FLAG.amber, note: 'Decent ROCE, neutral trend' }
-      : { g: 'C', c: FLAG.deepred, note: 'ROCE falling with heavy capex — wealth-destroying flag' };
+      ? { g: 'B', c: C.amber, note: 'Decent ROCE, neutral trend' }
+      : { g: 'C', c: C.redDim, note: 'ROCE falling — wealth-destroying flag' };
 
-  const section: React.CSSProperties = {
-    paddingBottom: 6,
-    borderBottom: '0.5px solid #1f2a3a',
-    marginBottom: 6,
+  const sectionStyle: React.CSSProperties = {
+    paddingBottom: 8,
+    borderBottom: `0.5px solid ${C.divider}`,
+    marginBottom: 8,
   };
 
   return (
     <div
       style={{
-        background: '#0b1220',
-        color: '#cdd6e0',
-        padding: 10,
-        borderRadius: 8,
+        background: C.bg,
+        color: C.text,
+        padding: 12,
+        border: `0.5px solid ${C.divider}`,
+        borderRadius: 4,
         marginTop: 8,
         marginBottom: 4,
         fontSize: 11,
         fontFamily: 'inherit',
       }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
-        <span style={{ fontSize: 11, fontWeight: 600, color: '#A78BFA' }}>
-          🚀 ONE-VIEW{name ? ` — ${name}` : ''}
-        </span>
-        <span style={{ fontSize: 10, color: '#6b7a8f' }}>
-          {mbGrade ? `MB ${mbGrade}` : ''}{mbScore != null ? ` · ${mbScore.toFixed(0)}` : ''}
-        </span>
+      {/* Panel header — institutional ticker-strip style */}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'baseline',
+          paddingBottom: 6,
+          marginBottom: 8,
+          borderBottom: `0.5px solid ${C.divider}`,
+        }}
+      >
+        <div>
+          <span style={{ fontSize: 10, color: C.textMuted, letterSpacing: 1.5, marginRight: 8 }}>
+            ONE-VIEW
+          </span>
+          <span style={{ fontSize: 12, fontWeight: 600, color: C.white, letterSpacing: 0.5 }}>
+            {name ?? 'top company'}
+          </span>
+        </div>
+        <div style={{ ...MONO, fontSize: 10, color: C.textDim }}>
+          {mbGrade ? `MB ${mbGrade}` : ''}
+          {mbScore != null ? `  ·  ${mbScore.toFixed(0)}` : ''}
+          {`  ·  ${yrs[0]}—${yrs[last]}`}
+        </div>
       </div>
 
-      {/* 1. CAPEX BY YEAR */}
-      <section style={section}>
-        <Header title="CAPEX BY YEAR" sub="Cr · ΔNB + ΔCWIP + Dep" color={FLAG.capex} />
+      {/* === CAPITAL DEPLOYMENT === */}
+      <div style={{ ...sectionStyle }}>
+        <SectionHead title="Capex by Year" color={C.capex} metric="₹ Cr" sub="ΔNB + ΔCWIP + Dep" />
         <StripRow
           bars={capex.map((v, i) => ({
             year: yrs[i],
             value: v,
             display: fmtCr(v),
-            color: FLAG.capex,
+            color: C.capex,
             live: i === last,
           }))}
         />
-      </section>
+      </div>
 
-      {/* 2. FIXED ASSETS (NET BLOCK) BY YEAR */}
-      <section style={section}>
-        <Header title="FIXED ASSETS (NET BLOCK) BY YEAR" sub="Cr · gross blocks commissioned" color={FLAG.nb} />
+      <div style={{ ...sectionStyle }}>
+        <SectionHead title="Fixed Assets (Net Block)" color={C.nb} metric="₹ Cr" sub="gross blocks commissioned" />
         <StripRow
           bars={nb.map((v, i) => ({
             year: yrs[i],
             value: v,
             display: fmtCr(v),
-            color: FLAG.nb,
+            color: C.nb,
             live: i === last,
           }))}
         />
-      </section>
+      </div>
 
-      {/* 3. CWIP BY YEAR */}
-      <section style={section}>
-        <Header title="CWIP BY YEAR" sub="Cr · projects under construction (build → drain = commissioning)" color={FLAG.cwip} />
+      <div style={{ ...sectionStyle }}>
+        <SectionHead title="CWIP by Year" color={C.cwip} metric="₹ Cr" sub="build → drain = commissioning" />
         <StripRow
           bars={cwip.map((v, i) => ({
             year: yrs[i],
             value: v,
             display: fmtCr(v),
-            color: FLAG.cwip,
+            color: C.cwip,
             live: i === last,
           }))}
         />
-      </section>
+      </div>
 
-      {/* 4. QUALITY OF GROWTH — revenue + EBITDA margin + OPM as three stacked bar strips */}
-      <section style={section}>
-        <Header title="QUALITY OF GROWTH BY YEAR" sub="Revenue + EBITDA margin (GM proxy) + OPM trajectory" color="#10b981" />
+      {/* === QUALITY OF GROWTH === */}
+      <div style={{ ...sectionStyle }}>
+        <SectionHead title="Quality of Growth" color={C.green} metric="Revenue + GM + OPM" sub="green=clean, red=margin compression" />
 
-        <SubLabel><b style={{ color: '#cdd6e0' }}>Revenue (₹ Cr)</b> · bar color = OPM-delta flag</SubLabel>
+        <SubLabel><b style={{ color: C.text }}>Revenue (₹ Cr)</b> · bar color = OPM-delta flag</SubLabel>
         <StripRow bars={qogBars} />
 
-        <SubLabel><b style={{ color: '#cdd6e0' }}>{hasRm ? 'Gross Margin % (Sales − Raw Material)' : 'EBITDA margin % (GM proxy)'}</b> · stable/up = green, falling = red</SubLabel>
+        <SubLabel><b style={{ color: C.text }}>{gmLabel}</b> · stable/up = green</SubLabel>
         <StripRow
-          bars={(hasRm ? grossMargin : ebitdaMargin).map((v, i) => ({
+          bars={gmSeries.map((v, i) => ({
             year: yrs[i],
             value: v,
             display: v.toFixed(0),
-            color: marginColor(i, hasRm ? grossMargin : ebitdaMargin),
+            color: marginColor(i, gmSeries),
             live: i === last,
           }))}
         />
 
-        <SubLabel><b style={{ color: '#cdd6e0' }}>OPM % (EBIT / Sales)</b> · operating margin trajectory</SubLabel>
+        <SubLabel><b style={{ color: C.text }}>OPM % (OP / Sales)</b> · OP = PBT + Intr + Dep − OI · matches Screener</SubLabel>
         <StripRow
           bars={opm.map((v, i) => ({
             year: yrs[i],
@@ -328,13 +395,13 @@ const MultibaggerStrips: React.FC<Props> = ({ fin, name, mbScore, mbGrade }) => 
             live: i === last,
           }))}
         />
-      </section>
+      </div>
 
-      {/* 5. BALANCE SHEET STRESS */}
-      <section style={section}>
-        <Header title="BALANCE SHEET STRESS BY YEAR" sub="ND/EBITDA · Int Cov · WC days · CFO/PAT 3y" color={FLAG.red} />
+      {/* === BALANCE SHEET STRESS === */}
+      <div style={{ ...sectionStyle }}>
+        <SectionHead title="Balance Sheet Stress" color={C.red} metric="ND/EBITDA · IC · WC · CFO/PAT" sub="hard guardrails" />
 
-        <SubLabel><b style={{ color: '#cdd6e0' }}>Net Debt / EBITDA (x)</b> · green ≤2 · amber 2-3 · red &gt;3</SubLabel>
+        <SubLabel><b style={{ color: C.text }}>Net Debt / EBITDA (×)</b> · grn ≤2 · amb 2-3 · red &gt;3</SubLabel>
         <StripRow
           bars={ndEbitda.map((v, i) => ({
             year: yrs[i],
@@ -345,10 +412,10 @@ const MultibaggerStrips: React.FC<Props> = ({ fin, name, mbScore, mbGrade }) => 
           }))}
         />
 
-        <SubLabel><b style={{ color: '#cdd6e0' }}>Interest Coverage (x)</b> · green ≥3 · n/d = no debt</SubLabel>
+        <SubLabel><b style={{ color: C.text }}>Interest Coverage (×)</b> · grn ≥3 · n/d = no debt</SubLabel>
         <StripRow bars={intCovBars} />
 
-        <SubLabel><b style={{ color: '#cdd6e0' }}>WC days</b> · receivables + inventory</SubLabel>
+        <SubLabel><b style={{ color: C.text }}>Working Capital days</b> · receivables + inventory</SubLabel>
         <StripRow
           bars={wcDays.map((v, i) => ({
             year: yrs[i],
@@ -359,23 +426,24 @@ const MultibaggerStrips: React.FC<Props> = ({ fin, name, mbScore, mbGrade }) => 
           }))}
         />
 
-        <SubLabel><b style={{ color: '#cdd6e0' }}>CFO / PAT % (3y rolling)</b> · green ≥70 · red &lt;50</SubLabel>
+        <SubLabel><b style={{ color: C.text }}>CFO / PAT % (3y rolling)</b> · grn ≥70 · red &lt;50</SubLabel>
         <StripRow
           cap={200}
           bars={cfoPat3yArr.map((v, i) => ({
             year: yrs[i],
             value: v ?? 0,
             display: v === null ? '—' : v.toFixed(0),
-            color: v === null ? FLAG.empty : bandHigh(v, 70, 50),
+            color: v === null ? C.divider : bandHigh(v, 70, 50),
             live: i === last,
           }))}
         />
-      </section>
+      </div>
 
-      {/* 6. ROCE PATH */}
-      <section style={section}>
-        <Header title="ROCE PATH & REINVESTMENT SKILL" sub="3-5y ROCE + incremental ROCE per cycle" color="#A78BFA" />
-        <SubLabel><b style={{ color: '#cdd6e0' }}>ROCE %</b> · green ≥15 · red &lt;10</SubLabel>
+      {/* === ROCE PATH === */}
+      <div style={{ ...sectionStyle }}>
+        <SectionHead title="ROCE Path & Reinvestment Skill" color={C.purple} metric="ROCE + Incremental ROCE" sub="3-5y trajectory" />
+
+        <SubLabel><b style={{ color: C.text }}>ROCE %</b> · grn ≥15 · red &lt;10 (wealth-destroying)</SubLabel>
         <StripRow
           bars={roce.map((v, i) => ({
             year: yrs[i],
@@ -386,7 +454,7 @@ const MultibaggerStrips: React.FC<Props> = ({ fin, name, mbScore, mbGrade }) => 
           }))}
         />
 
-        <SubLabel><b style={{ color: '#cdd6e0' }}>Incremental ROCE per 3y window</b> · ΔEBIT / ΔCapEmp</SubLabel>
+        <SubLabel><b style={{ color: C.text }}>Incremental ROCE per cycle</b> · ΔEBIT / ΔCapEmp (3y)</SubLabel>
         <StripRow
           cap={100}
           bars={incrWindows.map((w, i) => ({
@@ -398,19 +466,21 @@ const MultibaggerStrips: React.FC<Props> = ({ fin, name, mbScore, mbGrade }) => 
           }))}
         />
 
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, marginTop: 4 }}>
-          <span style={{ color: capGrade.c }}>● Capital Allocation: <b>{capGrade.g}</b></span>
-          <span style={{ color: '#9aa6b8' }}>{capGrade.note}</span>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, marginTop: 6 }}>
+          <span style={{ color: capGrade.c, fontWeight: 600, letterSpacing: 0.5 }}>
+            ● CAPITAL ALLOCATION: {capGrade.g}
+          </span>
+          <span style={{ color: C.textDim }}>{capGrade.note}</span>
         </div>
-      </section>
+      </div>
 
-      {/* 7. MGMT */}
-      <section>
-        <Header title="MANAGEMENT CREDIBILITY" sub="Guidance · Pledge/holding · Disclosure" color="#d4537e" />
-        <div style={{ padding: '4px 0', fontSize: 10, color: '#6b7a8f', fontStyle: 'italic' }}>
-          Auto-populates from concallClassifierV2 (beat/meet/miss) + AR shareholding scrape. Stub until wired.
+      {/* === MANAGEMENT === */}
+      <div>
+        <SectionHead title="Management Credibility" color={C.blue} metric="Guidance · Pledge · Disclosure" sub="stub" />
+        <div style={{ padding: '4px 0', fontSize: 9, color: C.textMuted, fontStyle: 'italic' }}>
+          Auto-populates from concallClassifierV2 (beat/meet/miss) + AR shareholding scrape.
         </div>
-      </section>
+      </div>
     </div>
   );
 };
