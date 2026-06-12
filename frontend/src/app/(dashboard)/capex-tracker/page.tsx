@@ -2,6 +2,7 @@
 import ConcallPro from './ConcallPro';
 import { classifyTranscriptV2 } from './concallClassifierV2';
 import MultibaggerStrips from './MultibaggerStrips';
+import CapexPlaybook from './CapexPlaybook';
 
 // ════════════════════════════════════════════════════════════════════════════
 // CAPEX TRACKER v5.0 — Company Intelligence Engine.
@@ -2466,6 +2467,7 @@ export default function CapexTrackerPage() {
         <span onClick={() => setTab('board')} style={pill(tab === 'board', C.cyan)}>☰ Scoreboard</span>
         <span onClick={() => setTab('analytics')} style={pill(tab === 'analytics', C.green)}>🎯 Decision Board</span>
         <span onClick={() => setTab('multibagger')} style={pill(tab === 'multibagger', C.violet)}>🚀 Multibagger</span>
+        <span onClick={() => setTab('playbook')} style={pill(tab === 'playbook', C.violet)}>📚 Playbook</span>
         <span onClick={() => setTab('forensics')} style={pill(tab === 'forensics', C.red)}>🔬 Forensics</span>
         <span onClick={() => setTab('concall')} style={pill(tab === 'concall', C.gold)}>🎙 Concall</span>
         <span onClick={() => setTab('concallpro')} style={pill(tab === 'concallpro', C.gold)} title="Concall reading mastery">🎓 Concall Pro</span>
@@ -2634,6 +2636,9 @@ export default function CapexTrackerPage() {
           </div>
         </div>
       )}
+
+      {/* ═══ 📚 PLAYBOOK ═══ */}
+      {tab === 'playbook' && <CapexPlaybook />}
 
       {/* ═══ 🚀 MULTIBAGGER ═══ */}
       {tab === 'multibagger' && scored.length > 0 && (
