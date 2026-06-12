@@ -257,11 +257,12 @@ const MultibaggerStrips: React.FC<Props> = ({ fin, name, mbScore, mbGrade }) => 
     return { year: yrs[i], value: Math.min(v, 15), display: v.toFixed(1), color: bandHigh(v, 3, 2), live: i === last };
   });
   const wcDays = sales.map((s, i) => (s > 0 ? ((recv[i] + inv[i]) / s) * 365 : 0));
+  // CFO/PAT 3y rolling ratio (e.g. 0.67, 1.05, 2.23) — financial-analyst convention
   const cfoPat3yArr: (number | null)[] = yrs.map((_, i) => {
     if (i < 2) return null;
     const cfoSum = ocf[i] + ocf[i - 1] + ocf[i - 2];
     const patSum = np[i] + np[i - 1] + np[i - 2];
-    return patSum !== 0 ? (cfoSum / patSum) * 100 : null;
+    return patSum !== 0 ? cfoSum / patSum : null;
   });
 
   // ROCE
@@ -440,14 +441,14 @@ const MultibaggerStrips: React.FC<Props> = ({ fin, name, mbScore, mbGrade }) => 
           }))}
         />
 
-        <SubLabel><b style={{ color: C.text }}>CFO / PAT % (3y rolling)</b> · grn ≥70 · red &lt;50</SubLabel>
+        <SubLabel><b style={{ color: C.text }}>CFO / PAT (3y rolling ratio)</b> · grn ≥0.7 · amb 0.5-0.7 · red &lt;0.5</SubLabel>
         <StripRow
-          cap={200}
+          cap={3}
           bars={cfoPat3yArr.map((v, i) => ({
             year: yrs[i],
             value: v ?? 0,
-            display: v === null ? '—' : v.toFixed(0),
-            color: v === null ? C.divider : bandHigh(v, 70, 50),
+            display: v === null ? '—' : v.toFixed(2),
+            color: v === null ? C.divider : bandHigh(v, 0.7, 0.5),
             live: i === last,
           }))}
         />
