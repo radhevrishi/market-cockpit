@@ -60,7 +60,7 @@ type Scored = {
   phase: string; capexToSales: number; cwipRatio: number; capexAccel: number; deChange: number; selfFund: number;
   netDebtEbitda: number; capexPreRev: number; utilEff: number; nbGrowth: number; revYoY: number;
   stage: string; stageLabel: string; entry: string; entryColor: string; entryShort: string;
-  capexSeries: { y: string; v: number }[]; cycleNote: string;
+  capexSeries: { y: string; v: number }[]; nbSeries: { y: string; v: number }[]; cwipSeries: { y: string; v: number }[]; cycleNote: string;
   watch: string[]; sells: string[]; measuredPct: number; availMax: number;
   tiers: { label: string; pts: number; max: number }[];
 };
@@ -108,7 +108,7 @@ const HEADERS: [string, RegExp][] = [
 const TELEMETRY_COLS = new Set([
   'Capex Phase', 'Capex/Sales %', 'CWIP/NetBlock %', 'Capex Accel x',
   'D/E change 2y', 'OCF/Capex 3y %', 'Net Debt/EBITDA', 'Capex/PreRev %',
-  'Util Effective % (est)', 'NB Growth %', 'Rev YoY %', 'Capex Series', 'Prior Cycle Note',
+  'Util Effective % (est)', 'NB Growth %', 'Rev YoY %', 'Capex Series', 'NB Series', 'CWIP Series', 'Prior Cycle Note',
   // v5 intelligence columns — JSON blobs, must never win a factor header race
   'Fin Series', 'Fraud Tab', 'Moat Tab',
 ]);
@@ -472,6 +472,10 @@ function scoreRow(r: Row, h: Record<string, string>, extras?: Record<string, any
   const revYoY = num(r['Rev YoY %']);
   let capexSeries: { y: string; v: number }[] = [];
   try { const cs = JSON.parse(r['Capex Series'] || '[]'); if (Array.isArray(cs)) capexSeries = cs; } catch {}
+  let nbSeries: { y: string; v: number }[] = [];
+  try { const cs = JSON.parse(r['NB Series'] || '[]'); if (Array.isArray(cs)) nbSeries = cs; } catch {}
+  let cwipSeries: { y: string; v: number }[] = [];
+  try { const cs = JSON.parse(r['CWIP Series'] || '[]'); if (Array.isArray(cs)) cwipSeries = cs; } catch {}
   const cycleNote = (r['Prior Cycle Note'] || '').trim();
 
   // ── STAGE A-F classification (Framework Phase 2 + 5) ──────────────────────
@@ -591,7 +595,7 @@ function scoreRow(r: Row, h: Record<string, string>, extras?: Record<string, any
     theme: th ? th[1] : null, roce, de, util: uEff, anchor, debtFund: debtPct, ocfYears, ebitda, pledge, raw: r,
     phase, capexToSales, cwipRatio, capexAccel, deChange, selfFund,
     netDebtEbitda, capexPreRev, utilEff, nbGrowth, revYoY,
-    stage, stageLabel, entry, entryColor, entryShort, capexSeries, cycleNote,
+    stage, stageLabel, entry, entryColor, entryShort, capexSeries, nbSeries, cwipSeries, cycleNote,
     watch, sells, measuredPct, availMax, tiers,
   };
 }
@@ -1614,6 +1618,9 @@ function parseScreenerWorkbook(XLSX: any, wb: any, fname: string): Row | null {
     for (let i = bc; i >= Math.max(0, bc - 2); i--) { if (((at(cwip, i) || 0) / (at(nb, i) || 1)) > 0.2) cwipStuck++; }
     const overrunEst = cwipStuck >= 3 ? 'Minor <10%' : 'No';
     const seriesJson = JSON.stringify(capexSeries.map((v, i) => ({ y: yr(i + 1), v: isFinite(v) ? Math.round(v) : 0 })));
+    // v5.4.3 — also stash Net Block + CWIP series so the detail panel can show commissioning visually
+    const nbSeriesJson = JSON.stringify(Array.from({ length: bc + 1 }, (_, i) => ({ y: yr(i), v: isFinite(at(nb, i)) ? Math.round(at(nb, i)) : 0 })));
+    const cwipSeriesJson = JSON.stringify(Array.from({ length: bc + 1 }, (_, i) => ({ y: yr(i), v: isFinite(at(cwip, i) || 0) ? Math.round(at(cwip, i) || 0) : 0 })));
 
     const fx = (n: number, d = 1) => (isFinite(n) ? n.toFixed(d) : '');
     const out: Row = {
@@ -1622,7 +1629,7 @@ function parseScreenerWorkbook(XLSX: any, wb: any, fname: string): Row | null {
       'Capex Accel x': fx(capexAccel, 2), 'D/E change 2y': fx(deChange, 2), 'OCF/Capex 3y %': fx(selfFund, 0),
       'Net Debt/EBITDA': fx(ndEbitda, 2), 'Capex/PreRev %': fx(capexPreRev, 0),
       'Util Effective % (est)': fx(utilEff, 0), 'NB Growth %': fx(nbGrowth, 0), 'Rev YoY %': fx(revYoY, 0),
-      'Capex Series': seriesJson, 'Prior Cycle Note': lastCycleNote,
+      'Capex Series': seriesJson, 'NB Series': nbSeriesJson, 'CWIP Series': cwipSeriesJson, 'Prior Cycle Note': lastCycleNote,
       'Internal funding % (est)': fx(internalEst, 0), 'Debt funding % (est)': fx(debtEst, 0),
       'Capacity Utilization % (est)': fx(utilEst, 0), 'Cycle Position (est)': cycleEst,
       'Cost Overrun History (est)': overrunEst, 'Prior Capex Success (est)': priorEst,
@@ -1801,6 +1808,52 @@ const CapexStrip = ({ s }: { s: Scored }) => {
           );
         })}
       </div>
+      {(() => {
+        const nbS = (s.nbSeries || []).filter((d) => d.y);
+        if (!nbS.length) return null;
+        const nbMx = Math.max(...nbS.map((d) => d.v), 1);
+        return (
+          <div style={{ marginTop: 12 }}>
+            <SectionHead label="Fixed Assets (Net Block) by year" color={C.teal} extra={<span style={{ fontSize: 10, color: C.dim, whiteSpace: 'nowrap' }}>Cr · gross blocks commissioned</span>} />
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
+              {nbS.map((d, i) => {
+                const lastN = i >= nbS.length - 1;
+                return (
+                  <div key={d.y + i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }} title={d.y + ': ' + d.v + ' Cr'}>
+                    <div style={{ fontSize: 10.5, fontVariantNumeric: 'tabular-nums', color: lastN ? C.teal : C.body, fontWeight: lastN ? 800 : 600, marginBottom: 3 }}>{d.v >= 1000 ? (d.v / 1000).toFixed(1) + 'k' : d.v}</div>
+                    <div style={{ width: '72%', maxWidth: 30, height: Math.max(3, Math.round((d.v / nbMx) * 52)), background: lastN ? C.teal : C.teal + '55', borderRadius: '3px 3px 0 0' }} />
+                    <div style={{ width: '100%', borderTop: '1px solid ' + C.line, marginTop: 0 }} />
+                    <div style={{ fontSize: 10, color: lastN ? C.dim : C.muted, fontWeight: lastN ? 700 : 400, marginTop: 3 }}>{d.y}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+      {(() => {
+        const cwS = (s.cwipSeries || []).filter((d) => d.y);
+        if (!cwS.length) return null;
+        const cwMx = Math.max(...cwS.map((d) => d.v), 1);
+        return (
+          <div style={{ marginTop: 12 }}>
+            <SectionHead label="CWIP by year" color={C.amber} extra={<span style={{ fontSize: 10, color: C.dim, whiteSpace: 'nowrap' }}>Cr · projects under construction (build → drain = commissioning)</span>} />
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
+              {cwS.map((d, i) => {
+                const lastN = i >= cwS.length - 1;
+                return (
+                  <div key={d.y + i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }} title={d.y + ': ' + d.v + ' Cr'}>
+                    <div style={{ fontSize: 10.5, fontVariantNumeric: 'tabular-nums', color: lastN ? C.amber : C.body, fontWeight: lastN ? 800 : 600, marginBottom: 3 }}>{d.v >= 1000 ? (d.v / 1000).toFixed(1) + 'k' : d.v}</div>
+                    <div style={{ width: '72%', maxWidth: 30, height: Math.max(3, Math.round((d.v / cwMx) * 52)), background: lastN ? C.amber : C.amber + '55', borderRadius: '3px 3px 0 0' }} />
+                    <div style={{ width: '100%', borderTop: '1px solid ' + C.line, marginTop: 0 }} />
+                    <div style={{ fontSize: 10, color: lastN ? C.dim : C.muted, fontWeight: lastN ? 700 : 400, marginTop: 3 }}>{d.y}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
       {s.cycleNote && <div style={{ marginTop: 8, fontSize: F.sm, color: s.cycleNote.includes('DELIVERED ✓') ? C.green : s.cycleNote.includes('BORDERLINE') ? C.amber : C.red }}>🕰 {s.cycleNote}</div>}
     </div>
   );
