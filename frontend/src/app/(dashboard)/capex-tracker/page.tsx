@@ -207,7 +207,29 @@ function scoreRow(r: Row, h: Record<string, string>, extras?: Record<string, any
   };
   const name = (g('name') || '').trim() || 'Unknown';
   const sector = (g('sector') || '').trim();
-  const industry = (g('industry') || sector).trim();
+  let industry = (g('industry') || sector).trim();
+  // v5.4.6 — when Excel doesn't carry Industry/Sector, infer from company-name patterns.
+  // Catches the Yasho-style "INDUSTRIES" + chem signal, plus Pharma/Lifesci/Solar/Cement/etc.
+  if (!industry) {
+    const NM = name.toUpperCase();
+    const inferred =
+      /\bPHARMA(?:CEUTICAL)?|\bLIFE\s*SCI|\bDRUGS?\b|\bAPI\b/.test(NM) ? 'Pharma/CDMO' :
+      /\b(SOLAR|RENEWABLE|GREEN ENERGY|ENERGIES)\b/.test(NM) ? 'Renewables/Solar' :
+      /\b(POWER|ELECTRIC(?:AL)?|TRANSFORMER|TRANSMISSION|GRID)\b/.test(NM) ? 'T&D/Power Equipment' :
+      /\b(STEEL|CEMENT|IRON|METAL|MINING|ALUMINIUM)\b/.test(NM) ? 'Steel/Cement/Bulk' :
+      /\b(BANK|FINANCE|NBFC|FINSERV|CAPITAL)\b/.test(NM) ? 'Banks/NBFC' :
+      /\b(CHEM(?:ICAL)?|SPECIAL(?:ITY|TY))\b/.test(NM) ? 'Specialty Chemicals' :
+      /\b(BIMETAL|FORG(?:E|INGS)|BEARING|SPRING|ANCILLAR(?:Y|IES)|MOTORS?|AUTO)\b/.test(NM) ? 'Auto-Ancillary' :
+      /\b(ELECTRONICS|SEMICONDUCTOR|EMS)\b/.test(NM) ? 'EMS/Electronics' :
+      /\b(EGG|FOOD|BEVERAGE|DAIRY|POULTRY)\b/.test(NM) ? 'Food/FMCG' :
+      /\b(DEFEN[CS]E|AEROSPACE|SHIP|ARMS)\b/.test(NM) ? 'Defence/Aerospace' :
+      /\b(RAIL|WAGON|LOCO|METRO)\b/.test(NM) ? 'Railways' :
+      /\b(IT|SOFTWARE|TECH(?:NOLOG|NOLOGIES))\b/.test(NM) ? 'IT Services' :
+      /\b(INDUSTR(?:Y|IES))\b/.test(NM) ? 'Specialty Chemicals' : // common Indian SME default for "X INDUSTRIES"
+      /\b(ENGINEERING|MACHINERY|EQUIPMENTS?)\b/.test(NM) ? 'Capital Goods' :
+      '';
+    if (inferred) industry = inferred;
+  }
   const countryRaw = (g('country') || '').trim().toUpperCase();
   const promoterV = num(g('promoter'));
   const tenureV = num(g('tenure'));
@@ -524,8 +546,11 @@ function scoreRow(r: Row, h: Record<string, string>, extras?: Record<string, any
   else if (netDebtEbitda > 2) watch.push('Net Debt/EBITDA ' + netDebtEbitda.toFixed(1) + 'x — above the 2x clean-sheet line at peak capex');
   if (capexPreRev > 100) watch.push('Cycle capex ≈' + capexPreRev.toFixed(0) + '% of pre-capex revenue — far above the 30-60% sweet spot (bet-the-company territory)');
   const sells: string[] = [];
-  if (!isNaN(uEff) && uEff > 90) sells.push('Utilization >90% — operating leverage exhausted (sell signal 1)');
-  if (!isNaN(uEff) && uEff > 85 && capexAccel > 1.5) sells.push('High util + NEW larger capex cycle announced — T5 distribution zone (sell signal 2)');
+  // v5.4.7 — sell signals 1 & 2 are POST-CYCLE distribution signals (Stage E/F only).
+  // For Stage A (new build) or B/C/D (ramp), high util + new capex = demand-pull growth, not exhaustion.
+  const postCyclePeak = stage === 'E' || stage === 'F';
+  if (!isNaN(uEff) && uEff > 90 && postCyclePeak) sells.push('Utilization >90% — operating leverage exhausted (sell signal 1)');
+  if (!isNaN(uEff) && uEff > 85 && capexAccel > 1.5 && postCyclePeak) sells.push('High util + NEW larger capex cycle announced — T5 distribution zone (sell signal 2)');
   if (peVsMean > 1.5) sells.push('Multiple above prior-cycle peak (PE ' + peVsMean.toFixed(1) + 'x own mean) — sell signal 5');
   if (!isNaN(roce) && roce > 35) sells.push('ROCE ' + roce.toFixed(0) + '% prints above the 35-40% mean-reversion band — sell signal 4');
 
