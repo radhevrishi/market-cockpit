@@ -58,6 +58,7 @@ const C = {
   capex: '#f08e3a',
   nb: '#1d9e75',
   cwip: '#ef9f27',
+  dep: '#4d8fcc',
   threshold: '#3a4660',
 };
 
@@ -362,6 +363,19 @@ const MultibaggerStrips: React.FC<Props> = ({ fin, name, mbScore, mbGrade }) => 
             value: v,
             display: fmtCr(v),
             color: C.cwip,
+            live: i === last,
+          }))}
+        />
+      </div>
+
+      <div style={{ ...sectionStyle }}>
+        <SectionHead title="Depreciation by Year" color={C.dep} metric="₹ Cr" sub="capacity-cost burden after commissioning" />
+        <StripRow
+          bars={dep.map((v, i) => ({
+            year: yrs[i],
+            value: v,
+            display: fmtCr(v),
+            color: C.dep,
             live: i === last,
           }))}
         />
