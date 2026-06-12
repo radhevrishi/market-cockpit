@@ -660,7 +660,7 @@ type Fin = {
   tax: (number | null)[]; oi: (number | null)[]; dep: (number | null)[]; intr: (number | null)[];
   div: (number | null)[]; eq: (number | null)[]; res: (number | null)[]; bor: (number | null)[];
   nb: (number | null)[]; cwip: (number | null)[]; cash: (number | null)[]; recv: (number | null)[];
-  inv: (number | null)[]; rm: (number | null)[]; ocf: (number | null)[]; cfi: (number | null)[]; cff: (number | null)[];
+  inv: (number | null)[]; rm: (number | null)[]; chgInv: (number | null)[]; ocf: (number | null)[]; cfi: (number | null)[]; cff: (number | null)[];
   shares: (number | null)[]; price: (number | null)[]; mcap: number | null; capex: (number | null)[];
 };
 type MBComp = { id: string; label: string; w: number; pts: number | null; detail: string };
@@ -1537,6 +1537,7 @@ function parseScreenerWorkbook(XLSX: any, wb: any, fname: string): Row | null {
     const recv = rowVals(/^RECEIVABLES/, iBS, iCF);
     const inv = rowVals(/^INVENTORY/, iBS, iCF);
     const rm = rowVals(/^RAW MATERIAL/, iPL, iQ);
+    const chgInv = rowVals(/^CHANGE IN/, iPL, iQ);
     const taxRow = rowVals(/^TAX$/, iPL, iQ);
     const divRow = rowVals(/^DIVIDEND AMOUNT/, iPL, iQ);
     const ocf = rowVals(/^CASH FROM OPER/, iCF, iPrice > 0 ? iPrice : aoa.length);
@@ -1712,7 +1713,7 @@ function parseScreenerWorkbook(XLSX: any, wb: any, fname: string): Row | null {
         years: finYears, sales: padTo(sales), np: padTo(np), pbt: padTo(pbt), tax: padTo(taxRow),
         oi: padTo(oi), dep: padTo(dep), intr: padTo(intr), div: padTo(divRow),
         eq: padTo(eq), res: padTo(res), bor: padTo(bor), nb: padTo(nb), cwip: padTo(cwip),
-        cash: padTo(cashBank), recv: padTo(recv), inv: padTo(inv), rm: padTo(rm),
+        cash: padTo(cashBank), recv: padTo(recv), inv: padTo(inv), rm: padTo(rm), chgInv: padTo(chgInv),
         ocf: padTo(ocf), cfi: padTo(cfi), cff: padTo(cff),
         shares: padTo(shares), price: padTo(priceRow), mcap: isFinite(mcap) ? mcap : null, capex: capexAligned,
       });
