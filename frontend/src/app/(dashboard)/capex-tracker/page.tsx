@@ -100,6 +100,8 @@ const HEADERS: [string, RegExp][] = [
   ['moat', /moat|competitive/i],
   ['mgmtHistory', /track.?record|execution.?history|prior.?capex/i],
   ['industryGrowth', /industry.?growth/i],
+  ['ndTrend', /nd\/?ebitda trend|^trend nd/i],
+  ['wealthDestroying', /^wealth destroying$/i],
 ];
 
 // Parser TELEMETRY columns are read by exact name in scoreRow and must NEVER
@@ -108,7 +110,7 @@ const HEADERS: [string, RegExp][] = [
 const TELEMETRY_COLS = new Set([
   'Capex Phase', 'Capex/Sales %', 'CWIP/NetBlock %', 'Capex Accel x',
   'D/E change 2y', 'OCF/Capex 3y %', 'Net Debt/EBITDA', 'Capex/PreRev %',
-  'Util Effective % (est)', 'NB Growth %', 'Rev YoY %', 'Capex Series', 'NB Series', 'CWIP Series', 'Prior Cycle Note',
+  'Util Effective % (est)', 'NB Growth %', 'Rev YoY %', 'Capex Series', 'NB Series', 'CWIP Series', 'Prior Cycle Note', 'ND/EBITDA Trend', 'Wealth Destroying',
   // v5 intelligence columns — JSON blobs, must never win a factor header race
   'Fin Series', 'Fraud Tab', 'Moat Tab',
 ]);
@@ -542,8 +544,23 @@ function scoreRow(r: Row, h: Record<string, string>, extras?: Record<string, any
   if (deChange > 0.3) watch.push('D/E rose +' + deChange.toFixed(2) + 'x in 2y — Appendix-A construction trigger (>+0.3x = flag)');
   if (phase === 'BUILDING' && selfFund < 50) watch.push('Building while OCF covers only ' + (isNaN(selfFund) ? '0' : selfFund.toFixed(0)) + '% of capex — funding-stress watch');
   if (phase === 'BUILDING' && /deterior/i.test(g('wc') || '')) watch.push('WC deteriorating mid-build — the classic failure tell');
-  if (netDebtEbitda > 3) watch.push('Net Debt/EBITDA ' + netDebtEbitda.toFixed(1) + 'x > 3x — MECHANICAL REJECT rule (Framework M6) if it persists 2 quarters');
-  else if (netDebtEbitda > 2) watch.push('Net Debt/EBITDA ' + netDebtEbitda.toFixed(1) + 'x — above the 2x clean-sheet line at peak capex');
+  // v5.4.8 — debt trajectory awareness: rising to 3x is bearish, falling to 3x is recovery
+  const ndTrendV = num(g('ndTrend'));
+  const trendStr = isFinite(ndTrendV) && Math.abs(ndTrendV) > 0.1
+    ? (ndTrendV > 0 ? ' · trending UP +' + ndTrendV.toFixed(2) + 'x YoY (bearish)' : ' · trending DOWN ' + ndTrendV.toFixed(2) + 'x YoY (deleveraging ✓)')
+    : '';
+  if (netDebtEbitda > 3) {
+    if (isFinite(ndTrendV) && ndTrendV < -0.3) {
+      watch.push('Net Debt/EBITDA ' + netDebtEbitda.toFixed(1) + 'x > 3x BUT actively deleveraging (' + ndTrendV.toFixed(2) + 'x YoY) — recovery path; re-evaluate next 2 quarters');
+    } else {
+      watch.push('Net Debt/EBITDA ' + netDebtEbitda.toFixed(1) + 'x > 3x' + trendStr + ' — MECHANICAL REJECT rule (Framework M6) if it persists 2 quarters');
+    }
+  } else if (netDebtEbitda > 2) {
+    watch.push('Net Debt/EBITDA ' + netDebtEbitda.toFixed(1) + 'x' + trendStr + ' — above the 2x clean-sheet line at peak capex');
+  }
+  // v5.4.8 — wealth destruction trigger: ROCE < 10% (≈WACC) for 2 consecutive years
+  const wd = g('wealthDestroying');
+  if (wd === 'Y') watch.push('ROCE < cost of capital (~10% WACC proxy) for 2 consecutive years — wealth destruction in progress');
   if (capexPreRev > 100) watch.push('Cycle capex ≈' + capexPreRev.toFixed(0) + '% of pre-capex revenue — far above the 30-60% sweet spot (bet-the-company territory)');
   const sells: string[] = [];
   // v5.4.7 — sell signals 1 & 2 are POST-CYCLE distribution signals (Stage E/F only).
@@ -1586,6 +1603,11 @@ function parseScreenerWorkbook(XLSX: any, wb: any, fname: string): Row | null {
     // ── Framework cross-checks ───────────────────────────────────────────────
     const netDebt = at(bor, bc) - (at(cashBank, bc) || 0);
     const ndEbitda = isFinite(netDebt) && ebitdaCr > 0 ? netDebt / ebitdaCr : NaN;
+    // v5.4.8 — trajectory: prior-year ND/EBITDA so we know if it's rising or falling
+    const ebitdaPrev = at(pbt, bc - 1) + (at(intr, bc - 1) || 0) + (at(dep, bc - 1) || 0);
+    const netDebtPrev = at(bor, bc - 1) - (at(cashBank, bc - 1) || 0);
+    const ndEbitdaPrev = isFinite(netDebtPrev) && ebitdaPrev > 0 ? netDebtPrev / ebitdaPrev : NaN;
+    const ndTrend = isFinite(ndEbitda) && isFinite(ndEbitdaPrev) ? ndEbitda - ndEbitdaPrev : NaN;
     // cycle capex vs pre-capex revenue (30-60% sweet spot): trailing build window
     const baseVals = capexSeries.slice(0, Math.max(0, cl - 3)).filter((v) => isFinite(v));
     const baseline = baseVals.length ? baseVals.sort((a, b) => a - b)[Math.floor(baseVals.length / 2)] : NaN;
@@ -1609,6 +1631,10 @@ function parseScreenerWorkbook(XLSX: any, wb: any, fname: string): Row | null {
       const ce = at(eq, i) + at(res, i) + (at(bor, i) || 0); const ebit = at(pbt, i) + (at(intr, i) || 0);
       roceSeries.push(isFinite(ce) && ce > 0 && isFinite(ebit) ? (ebit / ce) * 100 : null);
     }
+    // v5.4.8 — ROIC vs WACC: India mid-cap WACC ~10-12%. Flag persistent ROCE < 10% as wealth destruction.
+    const roceLast = roceSeries[bc] ?? NaN;
+    const rocePrev = roceSeries[bc - 1] ?? NaN;
+    const wealthDestroying = isFinite(roceLast) && isFinite(rocePrev) && roceLast < 10 && rocePrev < 10;
     let priorEst = ''; let lastCycleNote = '';
     for (let i = cl - 3; i >= 2; i--) {
       const prevAvg = ((capexSeries[i - 1] || 0) + (capexSeries[i - 2] || 0)) / 2;
@@ -1657,7 +1683,9 @@ function parseScreenerWorkbook(XLSX: any, wb: any, fname: string): Row | null {
       'Company Name': name, Country: 'IN',
       'Capex Phase': phase, 'Capex/Sales %': fx(capexToSales), 'CWIP/NetBlock %': fx(cwipRatio),
       'Capex Accel x': fx(capexAccel, 2), 'D/E change 2y': fx(deChange, 2), 'OCF/Capex 3y %': fx(selfFund, 0),
-      'Net Debt/EBITDA': fx(ndEbitda, 2), 'Capex/PreRev %': fx(capexPreRev, 0),
+      'Net Debt/EBITDA': fx(ndEbitda, 2),
+      'ND/EBITDA Trend': isFinite(ndTrend) ? fx(ndTrend, 2) : '',
+      'Wealth Destroying': wealthDestroying ? 'Y' : 'N', 'Capex/PreRev %': fx(capexPreRev, 0),
       'Util Effective % (est)': fx(utilEff, 0), 'NB Growth %': fx(nbGrowth, 0), 'Rev YoY %': fx(revYoY, 0),
       'Capex Series': seriesJson, 'NB Series': nbSeriesJson, 'CWIP Series': cwipSeriesJson, 'Prior Cycle Note': lastCycleNote,
       'Internal funding % (est)': fx(internalEst, 0), 'Debt funding % (est)': fx(debtEst, 0),
