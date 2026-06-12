@@ -377,13 +377,17 @@ function scoreRow(r: Row, h: Record<string, string>, extras?: Record<string, any
   add(23, 4, 'Score confidence', 3, __confPts,
     'Verified ' + __verifiedPct + '% · Est ' + __estPct + '% · Unknown ' + __unkPct + '%');
 
-  // F24 (v5.4) — EPS Inflection setup: capex live + utilization tight + revenue growing → upside. revCagr is PERCENT.
-  const __utilTight = !isNaN(util) && util > 0 && util < 75 ? (75 - util) / 75 : 0;
-  const __capexAlive = !isNaN(capexPct) && capexPct > 15 ? Math.min(1, capexPct / 100) : 0;
-  const __revAlive = !isNaN(revCagr) && revCagr > 8 ? Math.min(1, revCagr / 30) : 0;
+  // F24 (v5.4.1) — EPS Inflection setup. Fixes (Yasho audit):
+  // 1) use utilF6 (telemetry-fallback) instead of raw util so F6 and F24 agree when manual is (est)
+  // 2) capex partial credit from any positive capexPct (not just >15)
+  // 3) rev partial credit from any positive revCagr (not just >8%)
+  const __f24Util = (!isNaN(utilF6) && utilF6 > 0) ? utilF6 : (!isNaN(util) ? util : NaN);
+  const __utilTight = !isNaN(__f24Util) && __f24Util > 0 && __f24Util < 75 ? (75 - __f24Util) / 75 : 0;
+  const __capexAlive = !isNaN(capexPct) && capexPct > 0 ? Math.min(1, capexPct / 30) : 0;
+  const __revAlive = !isNaN(revCagr) && revCagr > 0 ? Math.min(1, revCagr / 20) : 0;
   const __infScore = __utilTight * 0.40 + __capexAlive * 0.30 + __revAlive * 0.30;
   const __infPts = __infScore > 0.55 ? 4 : __infScore > 0.35 ? 2 : __infScore > 0.15 ? 1 : 0;
-  const __infMeasured = !isNaN(util) || !isNaN(capexPct) || !isNaN(revCagr);
+  const __infMeasured = !isNaN(__f24Util) || !isNaN(capexPct) || !isNaN(revCagr);
   add(24, 4, 'EPS inflection setup', 4, __infMeasured ? __infPts : null,
     !__infMeasured ? '' : 'util-room ' + (__utilTight * 100).toFixed(0) + '% · capex ' + (__capexAlive * 100).toFixed(0) + '% · rev ' + (__revAlive * 100).toFixed(0) + '%');
 
