@@ -31,6 +31,7 @@ type Fin = {
   cash: (number | null)[];
   recv: (number | null)[];
   inv: (number | null)[];
+  rm: (number | null)[];
   ocf: (number | null)[];
   cfi: (number | null)[];
   cff: (number | null)[];
@@ -156,6 +157,8 @@ const MultibaggerStrips: React.FC<Props> = ({ fin, name, mbScore, mbGrade }) => 
   const res = pick(fin.res);
   const nb = pick(fin.nb);
   const cwip = pick(fin.cwip);
+  const rm = fin.rm ? pick(fin.rm) : sales.map(() => 0);
+  const hasRm = rm.some((v) => v > 0);
 
   // CAPEX = ΔNB + ΔCWIP + Dep (per existing engine identity)
   const capex = yrs.map((_, i) => {
@@ -168,7 +171,9 @@ const MultibaggerStrips: React.FC<Props> = ({ fin, name, mbScore, mbGrade }) => 
   const capEmp = eq.map((e, i) => e + res[i] + bor[i]);
   const netDebt = bor.map((b, i) => b - cash[i]);
 
-  // Quality of Growth — revenue, EBITDA margin (gross proxy), OPM (EBIT margin)
+  // Quality of Growth — revenue, Gross Margin (from raw material), OPM (EBIT margin)
+  // True GM = (Sales - Raw Material) / Sales × 100 — only computed if rm series is present
+  const grossMargin = sales.map((s, i) => (s > 0 && hasRm ? ((s - rm[i]) / s) * 100 : 0));
   const ebitdaMargin = sales.map((s, i) => (s > 0 ? (ebitda[i] / s) * 100 : 0));
   const opm = sales.map((s, i) => (s > 0 ? (ebit[i] / s) * 100 : 0));
   const qogBars: Bar[] = yrs.map((y, i) => {
@@ -302,13 +307,13 @@ const MultibaggerStrips: React.FC<Props> = ({ fin, name, mbScore, mbGrade }) => 
         <SubLabel><b style={{ color: '#cdd6e0' }}>Revenue (₹ Cr)</b> · bar color = OPM-delta flag</SubLabel>
         <StripRow bars={qogBars} />
 
-        <SubLabel><b style={{ color: '#cdd6e0' }}>EBITDA margin % (GM proxy)</b> · stable/up = green, falling = red</SubLabel>
+        <SubLabel><b style={{ color: '#cdd6e0' }}>{hasRm ? 'Gross Margin % (Sales − Raw Material)' : 'EBITDA margin % (GM proxy)'}</b> · stable/up = green, falling = red</SubLabel>
         <StripRow
-          bars={ebitdaMargin.map((v, i) => ({
+          bars={(hasRm ? grossMargin : ebitdaMargin).map((v, i) => ({
             year: yrs[i],
             value: v,
             display: v.toFixed(0),
-            color: marginColor(i, ebitdaMargin),
+            color: marginColor(i, hasRm ? grossMargin : ebitdaMargin),
             live: i === last,
           }))}
         />
