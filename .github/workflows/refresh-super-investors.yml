@@ -1,0 +1,61 @@
+name: Refresh Super Investor Holdings (6h)
+
+# Calls /api/v1/cron/refresh-super-investors every 6 hours to keep the KV
+# cache populated. Without this, the KV entries expire after 6 h and the
+# read endpoint flips back to source="static" and the freshness chip turns
+# amber. With this cron, the chip stays cyan ("live · …") between scrapes.
+#
+# Isolated workflow: failures here never affect the other cron jobs.
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'    # every 6 h on the hour (UTC)
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force overwrite KV even if fresh (1 = yes)'
+        required: false
+        default: '0'
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Hit refresh endpoint
+        id: main
+        env:
+          BASE: ${{ secrets.CRON_BASE_URL }}
+          SECRET: ${{ secrets.CRON_SECRET }}
+          FORCE: ${{ github.event.inputs.force || '0' }}
+        run: |
+          BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
+          echo "base: $BASE  force: $FORCE"
+          CODE=000
+          for i in 1 2 3; do
+            CODE=$(curl -s -m 60 -X POST "$BASE/api/v1/cron/refresh-super-investors?secret=$SECRET&force=$FORCE" \
+              -o /tmp/superinv.json -w "%{http_code}") || CODE=000
+            echo "attempt $i: HTTP $CODE"
+            [ "$CODE" = "200" ] && break
+            sleep 15
+          done
+          if [ "$CODE" != "200" ]; then
+            echo "::error::refresh failed with HTTP $CODE after 3 attempts"
+            cat /tmp/superinv.json || true
+            exit 1
+          fi
+          echo "==response=="
+          cat /tmp/superinv.json | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(f\"written={d.get('written')} skipped={d.get('skipped')} fetchedAt={d.get('fetchedAt')}\")" || true
+
+      - name: Heartbeat (always run)
+        if: always()
+        env:
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
+          OK="true"
+          if [[ "${{ steps.main.outcome }}" != "success" ]]; then OK="false"; fi
+          curl -s --max-time 15 -X POST "$BASE/api/v1/cron/heartbeat" \
+            -H 'Content-Type: application/json' \
+            -d "{\"name\":\"refresh-super-investors\",\"phase\":\"end\",\"ok\":$OK,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -o /dev/null -w "heartbeat %{http_code}\n" || true
