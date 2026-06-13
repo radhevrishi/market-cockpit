@@ -945,7 +945,7 @@ function computeForensic(fin: Fin | null, r: Row): FXResult {
     }
     // 2 cfo_ebitda (3y sums)
     {
-      const ocf3 = sumLast(fin.ocf, 3);
+      const ocf3 = sumLast(fin.ocf, 3, c);
       let eb3 = 0, ebn = 0;
       for (let i = Math.max(0, c - 2); i <= c; i++) {
         const p = av(fin.pbt, i);
@@ -963,10 +963,10 @@ function computeForensic(fin: Fin | null, r: Row): FXResult {
     // 3+4 receivable / inventory days trend
     const days = (arr: (number | null)[], i: number) => { const a = av(arr, i), sl = av(sales, i); return isFinite(a) && sl > 0 ? (a / sl) * 365 : NaN; };
     {
-      const dn = days(fin.recv, c), d3 = days(fin.recv, c - 3);
+      const e = firstNN(fin.recv); const dn = days(fin.recv, c), d3 = days(fin.recv, e);
       if (isFinite(dn) && isFinite(d3) && d3 > 0) {
         const dch = (dn / d3 - 1) * 100;
-        const rg = av(fin.recv, c) / av(fin.recv, c - 3), sg = av(sales, c) / av(sales, c - 3);
+        const rg = av(fin.recv, c) / av(fin.recv, e), sg = av(sales, c) / av(sales, e);
         if (dch <= 10) add('recv_days', 'Receivable days trend', 10, 10, fxN(d3) + '→' + fxN(dn) + 'd');
         else if (dch <= 30) add('recv_days', 'Receivable days trend', 10, 5, fxN(d3) + '→' + fxN(dn) + 'd');
         else if (rg > sg) add('recv_days', 'Receivable days trend', 10, 0, fxN(d3) + '→' + fxN(dn) + 'd', 'Receivable days ' + fxN(d3) + '→' + fxN(dn) + ' — channel stuffing risk');
@@ -974,7 +974,7 @@ function computeForensic(fin: Fin | null, r: Row): FXResult {
       } else add('recv_days', 'Receivable days trend', 10, null, 'n/a');
     }
     {
-      const dn = days(fin.inv, c), d3 = days(fin.inv, c - 3);
+      const e = firstNN(fin.inv); const dn = days(fin.inv, c), d3 = days(fin.inv, e);
       if (isFinite(dn) && isFinite(d3) && d3 > 0) {
         const dch = (dn / d3 - 1) * 100;
         if (dch <= 15) add('inv_days', 'Inventory days trend', 6, 6, fxN(d3) + '→' + fxN(dn) + 'd');
@@ -984,9 +984,9 @@ function computeForensic(fin: Fin | null, r: Row): FXResult {
     }
     // 5 other income / PBT
     {
-      const oi3 = sumLast(fin.oi, 3, c), pbt3 = sumLast(fin.pbt, 3, c);
-      if (isFinite(pbt3) && pbt3 > 0 && isFinite(oi3)) {
-        const rt = (oi3 / pbt3) * 100;
+      const oiL = av(fin.oi, c), pbtL = av(fin.pbt, c);
+      if (isFinite(pbtL) && pbtL > 0 && isFinite(oiL)) {
+        const rt = (oiL / pbtL) * 100;
         if (rt < 10) add('other_inc', 'Other income / PBT', 8, 8, fxN(rt) + '%');
         else if (rt <= 25) add('other_inc', 'Other income / PBT', 8, 4, fxN(rt) + '%');
         else add('other_inc', 'Other income / PBT', 8, 0, fxN(rt) + '%', 'Other income is ' + fxN(rt) + '% of PBT — core P&L weaker than it looks');
@@ -1038,7 +1038,7 @@ function computeForensic(fin: Fin | null, r: Row): FXResult {
     {
       const sl = lastNN(fin.shares);
       let i5 = -1;
-      for (let i = Math.max(0, sl - 5); i < sl; i++) if (fin.shares[i] !== null) { i5 = i; break; }
+      for (let i = sl - 1; i >= Math.max(0, sl - 5); i--) if (fin.shares[i] !== null) i5 = i;
       if (sl >= 0 && i5 >= 0) {
         const dch = (av(fin.shares, sl) / av(fin.shares, i5) - 1) * 100;
         if (dch <= 5) add('dilution5', 'Dilution 5y', 8, 8, (dch >= 0 ? '+' : '') + fxN(dch) + '%');
@@ -1051,7 +1051,7 @@ function computeForensic(fin: Fin | null, r: Row): FXResult {
       const hasDiv = fin.div.some((v) => v !== null);
       if (!hasDiv) add('div_sanity', 'Dividend vs OCF', 8, null, 'no dividend row — N/A');
       else {
-        const ocf3 = sumLast(fin.ocf, 3);
+        const ocf3 = sumLast(fin.ocf, 3, c);
         const div3 = sumLast(fin.div, 3, cn), pat3 = sumLast(np, 3, cn);
         const rs: number[] = [];
         for (let i = Math.max(0, bl - 2); i <= bl; i++) {
