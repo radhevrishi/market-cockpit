@@ -29,24 +29,49 @@ const NEGATIVE_TONE_RE = /\b(soft|sluggish|challenging|head[- ]wind|pressure|des
 const DEFENSIVE_RE = /\b(temporary|transitory|one[- ]time|short[- ]term|long[- ]term story|patient|consistent with our|fully aware|monitoring|appropriate action|prudent|moderate(?:d|s|)? our outlook)\b/gi;
 
 const GUIDANCE_PATTERNS = [
-  // "We expect / guide / target X% Y growth"
-  { kind: 'expect',  re: /\b(?:we expect|expecting|guidance|target(?:ing|ed)?|aim(?:ing)? for)\b[^.]{4,140}\b(\d{1,3}(?:\.\d+)?)\s*%/gi },
-  // "raised our guidance from X to Y"
-  { kind: 'raise',   re: /\b(raised|upgrade(?:d)?|increased)\s+(?:our\s+)?guidance\b[^.]{0,80}\b(\d{1,3}(?:\.\d+)?)\s*%/gi },
-  // "lower / cut / reduced guidance to X%"
-  { kind: 'cut',     re: /\b(lower(?:ed)?|cut|reduce(?:d)?|moderat(?:e|ed))\s+(?:our\s+)?(?:guidance|outlook|expectation)\b[^.]{0,80}\b(\d{1,3}(?:\.\d+)?)\s*%/gi },
-  // "withdrew guidance"
+  // ── PATCH 1057 — broader phrasing. Indian concalls rarely use "we expect X%";
+  // they say "we will be able to grow somewhere around X%", "aiming to achieve
+  // 15-20%", "endeavour to maintain", "guided towards X", etc. Old patterns
+  // matched 0 items on real transcripts (e.g. Anand Rathi Q4 FY26).
+  //
+  // Pattern philosophy: trigger word ANYWHERE in the sentence + a number with
+  // %, currency, or bps suffix. Snippet shown to user proves the match.
+
+  // "we expect / target / aim / guide / endeavour / aiming to / trying to" → N% (or N% to M%)
+  { kind: 'expect',  re: /\b(?:we\s+(?:expect|will|are|aim|target|guide|guided|aiming|trying|endeavour(?:ing)?)|expecting|expect\s+to|guidance|target(?:ing|ed)?|aim(?:ing)?\s+(?:for|to)|guid(?:e|ed|ing|ance)\s+(?:to|towards|on|for)?|trying\s+to\s+(?:achieve|reach|grow)|endeavour(?:ing)?\s+to|going\s+to\s+(?:grow|achieve|reach))\b[^.]{2,180}\b(\d{1,3}(?:\.\d+)?(?:\s*(?:to|[-\u2013])\s*\d{1,3}(?:\.\d+)?)?)\s*%/gi },
+
+  // "grow / scale / expand / increase" + N% (descriptive growth)
+  { kind: 'growth',  re: /\b(?:grow(?:n|th|ing)?|scale|expand(?:ing|ed)?|increase(?:d|s)?|deliver(?:ing)?|achieve)\b[^.]{0,80}?\b(\d{1,3}(?:\.\d+)?(?:\s*(?:to|[-\u2013])\s*\d{1,3}(?:\.\d+)?)?)\s*%/gi },
+
+  // raised / upgraded
+  { kind: 'raise',   re: /\b(rais(?:e|ed|ing)|upgrad(?:e|ed)|increased)\s+(?:our\s+)?(?:guidance|outlook|target|expectation)\b[^.]{0,80}\b(\d{1,3}(?:\.\d+)?)\s*%/gi },
+
+  // cut / lowered / moderated
+  { kind: 'cut',     re: /\b(lower(?:ed)?|cut|reduc(?:e|ed)|moderat(?:e|ed))\s+(?:our\s+)?(?:guidance|outlook|expectation|target)\b[^.]{0,80}\b(\d{1,3}(?:\.\d+)?)\s*%/gi },
+
+  // withdrew
   { kind: 'withdraw', re: /\b(withdr(?:aw|ew)|suspend(?:ed|ing)?)\s+(?:our\s+)?(guidance|outlook)\b[^.]{0,80}/gi },
-  // PATCH 0513 — bps guidance patterns. Indian concall transcripts often
-  // express margin guidance in basis points rather than %:
-  //   "EBITDA margin to expand 300 bps"
-  //   "OPM expansion of 250 bps"
-  //   "we expect 400 bps margin improvement"
-  //   "margins up 350 bps over next 2 years"
-  // Stored with kind='margin_bps' so the consumer renders as e.g. '300 bps'.
-  { kind: 'margin_bps', re: /\b(?:EBITDA|operating|gross|net|OPM)\s*margin\s*(?:to\s+(?:rise|expand|improve)|expansion|improvement|gain|uplift|up)\s*(?:of|by)?\s*[~]?\s*(\d{2,4})(?:\s*[-–]\s*\d{2,4})?\s*bps/gi },
-  { kind: 'margin_bps', re: /\b(?:we\s+expect|target(?:ing)?|guidance|aim(?:ing)?)\b[^.]{4,80}\b(\d{2,4})\s*bps/gi },
+
+  // margin guidance in bps
+  { kind: 'margin_bps', re: /\b(?:EBITDA|operating|gross|net|OPM)\s*margin[s]?\s*(?:to\s+(?:rise|expand|improve)|expansion|improvement|gain|uplift|up)\s*(?:of|by)?\s*[~]?\s*(\d{2,4})(?:\s*[-\u2013]\s*\d{2,4})?\s*bps/gi },
+  { kind: 'margin_bps', re: /\b(?:we\s+expect|target(?:ing)?|guidance|aim(?:ing)?|guide(?:d)?)\b[^.]{4,100}\b(\d{2,4})\s*bps/gi },
   { kind: 'margin_bps', re: /\b(\d{2,4})\s*bps\s*(?:margin|OPM)\s*(?:expansion|improvement|gain|increase)/gi },
+
+  // ── PATCH 1057: currency-quantum targets — "MTF book of \u20B9 15,000 million by FY26"
+  // "\u20B9X crore / Rs X cr / X million by FYxx | financial year"
+  { kind: 'currency_target', re: /(?:\u20B9|Rs\.?|INR)\s*([\d,]+(?:\.\d+)?)\s*(crore|cr|million|mn|billion|bn|lakh|lakhs|lac)\b[^.]{0,120}?\b(?:by|in|target(?:ing)?|aim|guid(?:e|ed|ance|ing)|FY(?:20)?\d{2}|financial\s+year|next\s+\d+|over\s+the\s+next)/gi },
+
+  // "book size of \u20B9X" / "capacity of X MW" — quantum targets
+  { kind: 'quantum',  re: /\b(?:capacity|MTF\s+book|book\s+size|order\s+book|backlog|capex|AUM)\b[^.]{0,80}?(?:\u20B9|Rs\.?|INR)\s*([\d,]+(?:\.\d+)?)\s*(crore|cr|million|mn|lakh|lakhs|lac)/gi },
+
+  // "by FY27 / in FY26" + numerical
+  { kind: 'fy_target', re: /\b(?:by|in)\s+(?:FY(?:20)?\d{2}|financial\s+year[\s'\"]*\d{2,4}|\d{4})\b[^.]{0,120}?\b(\d{1,5}(?:[.,]\d+)?)\s*(%|crore|cr|million|mn|MW|GW)/gi },
+
+  // leverage / debt-equity targets — "debt equity ratio of X / restrict to 1.5"
+  { kind: 'leverage', re: /\b(?:debt[\s-]?equity\s+ratio|D[/\\]E\s+ratio|leverage\s+ratio|net\s+debt[/\\]EBITDA)\b[^.]{0,80}?\b(\d+(?:\.\d+)?)\b/gi },
+
+  // mix / split targets — "split of 50-50 / 60-40 mix"
+  { kind: 'mix',     re: /\b(?:split|mix|share|ratio)\s+of\s+(\d{1,3}\s*[-\u2013:]\s*\d{1,3})\b/gi },
 ];
 
 const NUMBER_PATTERN = /\b(revenue|sales|EBITDA|margin|PAT|profit|order book|backlog|ARR|GMV|EPS|capex|capacity|utilis?ation)\b[^.]{0,80}\b(\d{1,5}(?:[.,]\d+)?)\s*(?:%|crore|cr|bps|million|billion|MW|GW|tons|tonnes)\b/gi;
@@ -95,12 +120,35 @@ function extractGuidance(text: string): Array<{ kind: string; pct: string | null
       const snippetKey = snippet.trim().toLowerCase().slice(0, 80);
       if (seenSnippets.has(snippetKey)) continue;
       seenSnippets.add(snippetKey);
-      const pctStr = m[2] || m[1] || null;
+      // PATCH 1057 — kinds with currency/units have number in m[1], unit in m[2]
+      const isCurrency = g.kind === 'currency_target' || g.kind === 'quantum';
+      const isFyTarget = g.kind === 'fy_target';
+      const isLeverage = g.kind === 'leverage';
+      const isMix = g.kind === 'mix';
+      let pctStr: string | null;
+      if (isCurrency) {
+        pctStr = m[1] && m[2] ? `${m[1]} ${m[2]}` : null;
+      } else if (isFyTarget) {
+        pctStr = m[1] && m[2] ? `${m[1]} ${m[2]}` : null;
+      } else if (isLeverage) {
+        pctStr = m[1] || null;
+      } else if (isMix) {
+        pctStr = m[1] || null;
+      } else {
+        pctStr = m[2] || m[1] || null;
+      }
       // PATCH 0513 — bps kinds render as 'N bps', not 'N%'
       const isBps = g.kind === 'margin_bps';
       out.push({
         kind: g.kind,
-        pct: pctStr ? (isBps ? `${pctStr} bps` : `${pctStr}%`) : null,
+        pct: pctStr ? (
+          isBps ? `${pctStr} bps` :
+          isCurrency ? `\u20B9${pctStr}` :
+          isFyTarget ? pctStr :
+          isLeverage ? `D/E ${pctStr}` :
+          isMix ? pctStr :
+          `${pctStr}%`
+        ) : null,
         snippet: snippet.trim(),
       });
       if (out.length >= 20) break;
