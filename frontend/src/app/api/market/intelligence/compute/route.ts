@@ -5677,7 +5677,13 @@ export async function GET(request: Request) {
     }
     // Auto-load portfolio + watchlist from Redis (or use defaults)
     const { watchlist, portfolio } = await autoLoadSymbols();
-    const result = await runLockedCompute(watchlist, portfolio);
+    // PATCH 1057: race the compute pipeline against a 40s budget so we always
+    // return JSON within Vercel's 55s window. Prior: 30s+ then HTTP 000.
+    const TIMEOUT_MS = 40_000;
+    const timeoutPromise = new Promise<{ ok: false; degraded: true; error: string }>((resolve) =>
+      setTimeout(() => resolve({ ok: false, degraded: true, error: `compute timeout after ${TIMEOUT_MS}ms — try ?clearLock=1` }), TIMEOUT_MS)
+    );
+    const result = await Promise.race([runLockedCompute(watchlist, portfolio), timeoutPromise]);
     return NextResponse.json(result);
   } catch (error) {
     console.error('[Compute] Error:', error);
@@ -5692,7 +5698,12 @@ export async function POST(request: Request) {
     const watchlist = (body.watchlist || []).map((s: string) => normalizeTicker(s)).filter(Boolean);
     const portfolio = (body.portfolio || []).map((s: string) => normalizeTicker(s)).filter(Boolean);
 
-    const result = await runLockedCompute(watchlist, portfolio);
+    // PATCH 1057: same 40s race so POST never returns 000.
+    const TIMEOUT_MS = 40_000;
+    const timeoutPromise = new Promise<{ ok: false; degraded: true; error: string }>((resolve) =>
+      setTimeout(() => resolve({ ok: false, degraded: true, error: `compute timeout after ${TIMEOUT_MS}ms` }), TIMEOUT_MS)
+    );
+    const result = await Promise.race([runLockedCompute(watchlist, portfolio), timeoutPromise]);
     return NextResponse.json(result);
   } catch (error) {
     console.error('[Compute] Error:', error);
