@@ -30,13 +30,24 @@ function cacheKey(url: string): string {
   return `${CACHE_KEY_PREFIX}:${h}`;
 }
 
+// PATCH 1057: wrap inner fetch with 1 retry + 500ms backoff for transient
+// NSE archive timeouts. Cache check stays outside the retry loop.
 export async function extractPdfText(url: string, opts: { signal?: AbortSignal } = {}): Promise<ExtractedPdf> {
-  // KV cache first
+  // KV cache check (no retry needed for cache hit)
   if (isRedisAvailable()) {
     const cached = await kvGet<ExtractedPdf>(cacheKey(url));
     if (cached) return { ...cached, source: 'CACHE' };
   }
+  // Try once; if FAILED with a fetch-related reason, retry once after 500ms.
+  let result = await _extractPdfInner(url, opts);
+  if (result.source === 'FAILED' && /HTTP \d|abort|timeout|fetch|network/i.test(result.failure_reason || '')) {
+    await new Promise((r) => setTimeout(r, 500));
+    result = await _extractPdfInner(url, opts);
+  }
+  return result;
+}
 
+async function _extractPdfInner(url: string, opts: { signal?: AbortSignal } = {}): Promise<ExtractedPdf> {
   // Fetch the PDF
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
