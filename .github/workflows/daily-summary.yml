@@ -1,0 +1,51 @@
+name: Daily 22:00 IST market digest
+
+# Hits /api/v1/cron/daily-summary every weekday at 22:00 IST (16:30 UTC).
+# Composes a single Telegram digest from existing endpoints — breadth,
+# top movers, special situations — using the alert dispatcher pipeline.
+
+on:
+  schedule:
+    - cron: '30 16 * * 1-5'    # Mon-Fri 16:30 UTC = 22:00 IST
+  workflow_dispatch: {}
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Hit daily-summary endpoint
+        id: main
+        env:
+          BASE: ${{ secrets.CRON_BASE_URL }}
+          SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
+          echo "base: $BASE"
+          CODE=000
+          for i in 1 2 3; do
+            CODE=$(curl -s -m 60 -X POST "$BASE/api/v1/cron/daily-summary?secret=$SECRET" \
+              -o /tmp/digest.json -w "%{http_code}") || CODE=000
+            echo "attempt $i: HTTP $CODE"
+            [ "$CODE" = "200" ] && break
+            sleep 15
+          done
+          if [ "$CODE" != "200" ]; then
+            echo "::error::digest failed with HTTP $CODE after 3 attempts"
+            cat /tmp/digest.json || true
+            exit 1
+          fi
+          cat /tmp/digest.json | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print('body length:', len(d.get('body',''))); print('dispatch:', d.get('dispatch'))" || true
+
+      - name: Heartbeat (always run)
+        if: always()
+        env:
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
+          OK="true"
+          if [[ "${{ steps.main.outcome }}" != "success" ]]; then OK="false"; fi
+          curl -s --max-time 15 -X POST "$BASE/api/v1/cron/heartbeat" \
+            -H 'Content-Type: application/json' \
+            -d "{\"name\":\"daily-summary\",\"phase\":\"end\",\"ok\":$OK,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -o /dev/null -w "heartbeat %{http_code}\n" || true
