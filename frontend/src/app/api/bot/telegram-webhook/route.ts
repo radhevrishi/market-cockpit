@@ -423,6 +423,82 @@ async function dispatchCommand(
     return;
   }
 
+  // PATCH 1073 — /portfolio, /news <ticker>, /scorecard <ticker>
+  // Lightweight on-demand commands wired into existing dashboard endpoints.
+  // Each command is fail-soft: if the backend returns an error we send a
+  // single message explaining and bail rather than rethrowing.
+  if (lower === 'portfolio') {
+    try {
+      const r = await fetch(`${API_BASE}/api/v1/portfolio?secret=${SECRET}`, { cache: 'no-store', signal: AbortSignal.timeout(30_000) });
+      if (!r.ok) { await sendMessage(chatId, `⚠️ Portfolio: HTTP ${r.status}`); return; }
+      const j: any = await r.json().catch(() => ({}));
+      const positions: any[] = Array.isArray(j.positions) ? j.positions : Array.isArray(j.rows) ? j.rows : [];
+      if (positions.length === 0) {
+        await sendMessage(chatId, '📦 No open positions found.');
+        return;
+      }
+      const top = positions.slice(0, 8);
+      const lines = ['<b>💼 Portfolio — top 8</b>'];
+      for (const p of top) {
+        const tk = String(p.ticker || p.symbol || '').toUpperCase();
+        const pnl = typeof p.pnlPct === 'number' ? p.pnlPct : Number(p.pnl_pct || 0);
+        const sign = pnl >= 0 ? '+' : '';
+        lines.push(`<code>${tk.padEnd(12, ' ')}</code> ${sign}${pnl.toFixed(2)}%`);
+      }
+      await sendMessage(chatId, lines.join('\n'));
+    } catch (e: any) {
+      await sendMessage(chatId, `⚠️ Portfolio error: ${String(e?.message || e).slice(0, 200)}`);
+    }
+    return;
+  }
+
+  if (lower === 'news') {
+    // Original update message has the full "/news SHAILY" — pluck the ticker.
+    const fullText = String(originalUpdate?.message?.text || cmd || '');
+    const arg = fullText.split(/\s+/).slice(1).join(' ').trim();
+    if (!arg) {
+      await sendMessage(chatId, '📰 Usage: <code>/news TICKER</code>  (e.g. <code>/news SHAILY</code>)');
+      return;
+    }
+    try {
+      const r = await fetch(`${API_BASE}/api/v1/news?query=${encodeURIComponent(arg)}&limit=5`, { cache: 'no-store', signal: AbortSignal.timeout(20_000) });
+      if (!r.ok) { await sendMessage(chatId, `⚠️ News: HTTP ${r.status}`); return; }
+      const j: any = await r.json().catch(() => ([]));
+      const items: any[] = Array.isArray(j) ? j : (j.articles || []);
+      if (items.length === 0) {
+        await sendMessage(chatId, `📰 No recent news for <b>${arg.toUpperCase()}</b>.`);
+        return;
+      }
+      const lines = [`<b>📰 News — ${arg.toUpperCase()}</b>`];
+      for (const a of items.slice(0, 5)) {
+        const title = String(a.title || '').slice(0, 120);
+        const url = String(a.url || '#');
+        lines.push(`• <a href="${url}">${title}</a>`);
+      }
+      await sendMessage(chatId, lines.join('\n'), { disable_web_page_preview: true });
+    } catch (e: any) {
+      await sendMessage(chatId, `⚠️ News error: ${String(e?.message || e).slice(0, 200)}`);
+    }
+    return;
+  }
+
+  if (lower === 'scorecard' || lower === 'sheet' || lower === 'stock') {
+    const fullText = String(originalUpdate?.message?.text || cmd || '');
+    const arg = fullText.split(/\s+/).slice(1).join(' ').trim().toUpperCase();
+    if (!arg) {
+      await sendMessage(chatId, `🎯 Usage: <code>/scorecard TICKER</code>`);
+      return;
+    }
+    // No dedicated API yet — link to the stock sheet on the portal.
+    const url = `${API_BASE}/stock-sheet?ticker=${encodeURIComponent(arg)}`;
+    await sendMessage(
+      chatId,
+      `<b>🎯 ${arg} scorecard</b>\n<a href="${url}">Open on portal</a>`,
+      { disable_web_page_preview: false },
+    );
+    return;
+  }
+
   // Unknown command
   await sendMessage(chatId, `❓ Unknown command: /${lower}\n\nSend /menu or /help for available commands.`);
 }
