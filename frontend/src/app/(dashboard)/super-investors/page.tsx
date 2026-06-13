@@ -22,6 +22,7 @@ import {
   buildSimilarityPairs, concentrationStats, crossStyleDivergence,
   type InvestorStyle, type SuperInvestor, type LifecycleStage, type Sector,
 } from '@/lib/super-investors';
+import { HoldingsFreshnessChip } from '@/components/holdings-freshness-chip';
 
 const BG = '#0A0E1A';
 const PANEL = '#0D1623';
@@ -1116,6 +1117,7 @@ function InvestorDetail({
               ↗ Trendlyne page
             </a>
           )}
+          <HoldingsFreshnessChip investorId={investor.id} />
         </div>
         <p style={{ color: '#CBD5E1', fontSize: 13, lineHeight: 1.55, margin: 0, maxWidth: 760 }}>
           {investor.shortBio}
