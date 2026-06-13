@@ -48,6 +48,16 @@ interface HoldingState {
   closesBelow50: number;
   absorption: boolean;
   thesisIntact: boolean;
+  /** PATCH 1067 — Once `closesBelow50 >= 3`, the trader records whether the
+   *  NEXT (4th) candle closed green. A green 4th candle means momentum tried
+   *  to reverse — we defer the exit instead of forcing it. */
+  fourthCandleGreen?: boolean;
+  /** PATCH 1067 — After the 3-close confirmation, the trader tracks whether
+   *  any subsequent close has broken below the lowest low of the three
+   *  breakdown candles. While that low watermark is intact, the market is
+   *  absorbing supply at the same level — keep holding. The moment a close
+   *  takes out that low, the breakdown is real and we exit. */
+  brokeBelowBreakdownLow?: boolean;
   note?: string;
   updatedAt: number;
 }
@@ -55,12 +65,29 @@ interface HoldingState {
 const STATE_COLOR: Record<State, string> = { HOLD: GREEN, WATCH: YELLOW, EXIT: RED };
 const STATE_ICON:  Record<State, string> = { HOLD: '●', WATCH: '◐', EXIT: '✕' };
 
-function classify(h: Pick<HoldingState, 'pnlPct' | 'closesBelow50' | 'absorption' | 'thesisIntact'>): { state: State; reason: string } {
-  if ((h.pnlPct ?? 0) <= -13) return { state: 'EXIT',  reason: 'Rule 6: P&L ≤ −13% capital-protection floor' };
-  if (!h.thesisIntact)        return { state: 'EXIT',  reason: 'Rule 8: thesis broken — fundamental override' };
+function classify(
+  h: Pick<HoldingState, 'pnlPct' | 'closesBelow50' | 'absorption' | 'thesisIntact' | 'fourthCandleGreen' | 'brokeBelowBreakdownLow'>,
+): { state: State; reason: string } {
+  // Rule 6 — Capital-protection floor (absolute).
+  if ((h.pnlPct ?? 0) <= -13) return { state: 'EXIT', reason: 'Rule 6: P&L ≤ −13% capital-protection floor' };
+  // Rule 8 — Fundamental break.
+  if (!h.thesisIntact)        return { state: 'EXIT', reason: 'Rule 8: thesis broken — fundamental override' };
+
   if (h.closesBelow50 >= 3) {
+    // Rule 9 — Absorption override (existing, highest precedence).
     if (h.absorption)         return { state: 'WATCH', reason: 'Rule 9: 3 closes < 50DMA but panic-low absorbed' };
-    return { state: 'EXIT',   reason: 'Rule 7: 3 closes below 50DMA AND no absorption signal' };
+
+    // PATCH 1067 — Rule 7 refinement: defer the exit when the next candle
+    // showed a green reversal, OR when the breakdown-low watermark is still
+    // intact. Both are evidence the breakdown hasn't yet been confirmed.
+    if (h.fourthCandleGreen === true) {
+      return { state: 'WATCH', reason: 'Rule 7 deferred: 4th candle closed green — momentum reversal, holding' };
+    }
+    if (h.brokeBelowBreakdownLow === false) {
+      return { state: 'WATCH', reason: 'Rule 7 deferred: breakdown low watermark intact — supply being absorbed, holding' };
+    }
+    // Fall through to exit only when all overrides have failed.
+    return { state: 'EXIT', reason: 'Rule 7: 3 closes < 50DMA · 4th candle not green · low watermark taken out' };
   }
   return { state: 'HOLD', reason: 'above 50DMA · no triggers · do nothing' };
 }
@@ -91,7 +118,7 @@ const RULES: Rule[] = [
   { n: 6,  cat: 'EXIT', title: 'Rule 1 — Capital protection (ABSOLUTE).',
     body: 'P&L ≤ −13% from cost → EXIT on next execution window. No exceptions. Not "let me wait one more day." Not "the thesis is still intact." Not "it\'ll bounce." Capital preserved is capital deployed in the next setup.' },
   { n: 7,  cat: 'EXIT', title: 'Rule 2 — Trend breakdown.',
-    body: '3 consecutive closes below the 50DMA → EXIT, unless Rule 9 (absorption) fires. The 3-close confirmation prevents whipsaw on one bad day. Absorption is the ONLY override and converts breakdown to WATCH, never to HOLD.' },
+    body: '3 consecutive closes below the 50DMA puts the position on notice. Exit only when the 4th candle fails to close green AND a subsequent session takes out the lowest low of the three breakdown candles. If the 4th candle is green, OR the breakdown-low watermark stays intact, the position keeps trading on the WATCH list — the market is still absorbing supply at this level. Absorption override (Rule 9) remains the highest-precedence reprieve.' },
   { n: 8,  cat: 'EXIT', title: 'Rule 3 — Fundamental break.',
     body: 'Thesis broken (guidance withdrawn, key driver gone, management credibility destroyed, regulatory shift) → EXIT immediately, irrespective of price. The reason you owned it is gone — you didn\'t sign up for this new business.' },
   { n: 9,  cat: 'EXIT', title: 'Rule 4 — Absorption override (defensive only).',
@@ -249,7 +276,7 @@ const CADENCE: CadenceBucket[] = [
   { freq: 'DAILY', when: 'ONCE · after 15:30 IST close · ~5 min', accent: CYAN,
     checks: [
       'One look at the portfolio — EOD only. Not intraday, not "just checking". One look means one look.',
-      'For each holding, check the 50DMA: did price CLOSE below its 50-day moving average today? If yes, add 1 to its 3-close counter; if it closed back above, reset to 0.',
+      'For each holding, check the 50DMA: did price CLOSE below its 50-day moving average today? If yes, add 1 to its 3-close counter; if it closed back above, reset to 0. When the counter hits 3, also flag the lowest low across those three sessions, and on the 4th day note whether the candle closed green. From then on, only treat the breakdown as confirmed if the close eventually breaks BELOW the 3-session low — until that happens, the position keeps holding.',
       'Run the Decision Engine: did anything hit −13%, 3 closes < 50DMA without absorption, or a broken thesis? Mark the action for the next execution window.',
       'On a red market day, glance at /movers for names holding green / relative strength (Rule 21). Log them — do not buy.',
       'Then close the app. The daily job is DETECTION, not action. If nothing fired, you are done.',
@@ -484,7 +511,7 @@ export default function PlaybookPage() {
     } catch {}
     const savedMap = new Map(saved.map(h => [h.ticker, h]));
     const merged: HoldingState[] = portfolio.map(t =>
-      savedMap.get(t) || { ticker: t, state: 'HOLD' as State, closesBelow50: 0, absorption: false, thesisIntact: true, updatedAt: Date.now() }
+      savedMap.get(t) || { ticker: t, state: 'HOLD' as State, closesBelow50: 0, absorption: false, thesisIntact: true, fourthCandleGreen: undefined, brokeBelowBreakdownLow: undefined, updatedAt: Date.now() }
     );
     saved.forEach(h => { if (!merged.find(m => m.ticker === h.ticker)) merged.push(h); });
     setHoldings(merged);
@@ -500,7 +527,7 @@ export default function PlaybookPage() {
   function addManual() {
     const t = addTicker.trim().toUpperCase();
     if (!t || holdings.find(h => h.ticker === t)) { setAddTicker(''); return; }
-    persist([...holdings, { ticker: t, state: 'HOLD', closesBelow50: 0, absorption: false, thesisIntact: true, updatedAt: Date.now() }]);
+    persist([...holdings, { ticker: t, state: 'HOLD', closesBelow50: 0, absorption: false, thesisIntact: true, fourthCandleGreen: undefined, brokeBelowBreakdownLow: undefined, updatedAt: Date.now() }]);
     setAddTicker('');
   }
 
@@ -796,17 +823,17 @@ function DecisionEngineCard({ holdings, updateHolding, persist, addTicker, setAd
         For each holding mark the four inputs the engine needs. Engine classifies into HOLD / WATCH / EXIT and tells you the rule that fired. Run this at EOD.
       </div>
       <div style={{
-        display: 'grid', gridTemplateColumns: 'minmax(90px,110px) 70px 70px 80px 80px 90px 1fr',
+        display: 'grid', gridTemplateColumns: 'minmax(90px,110px) 70px 70px 80px 80px 80px 80px 90px 1fr',
         gap: 8, fontSize: F.xs, color: MUTED, fontWeight: 800, letterSpacing: 0.4,
         padding: '6px 8px', borderBottom: `1px solid ${BORDER}`,
       }}>
-        <span>TICKER</span><span>P&amp;L %</span><span>3-CLOSE&lt;50</span><span>ABSORB</span><span>THESIS</span><span>STATE</span><span>REASON · ACTION</span>
+        <span>TICKER</span><span>P&amp;L %</span><span>3-CLOSE&lt;50</span><span>ABSORB</span><span>4TH GREEN</span><span>LOW BROKEN</span><span>THESIS</span><span>STATE</span><span>REASON · ACTION</span>
       </div>
       {holdings.map(h => {
         const cls = classify(h);
         return (
           <div key={h.ticker} style={{
-            display: 'grid', gridTemplateColumns: 'minmax(90px,110px) 70px 70px 80px 80px 90px 1fr',
+            display: 'grid', gridTemplateColumns: 'minmax(90px,110px) 70px 70px 80px 80px 80px 80px 90px 1fr',
             gap: 8, alignItems: 'center', fontSize: F.sm, padding: '8px', borderBottom: `1px solid ${BORDER}60`,
           }}>
             <span style={{ fontWeight: 800, color: TEXT2, letterSpacing: 0.3 }}>{h.ticker}</span>
@@ -815,6 +842,18 @@ function DecisionEngineCard({ holdings, updateHolding, persist, addTicker, setAd
               <option value={0}>0</option><option value={1}>1</option><option value={2}>2</option><option value={3}>3+</option>
             </select>
             <ToggleChip value={h.absorption}   onToggle={() => updateHolding(h.ticker, { absorption:   !h.absorption })}   onLabel="YES" offLabel="NO"     onColor={CYAN}  offColor={MUTED} />
+            <TriToggleChip
+              value={h.fourthCandleGreen}
+              onCycle={() => updateHolding(h.ticker, { fourthCandleGreen: cycleTri(h.fourthCandleGreen) })}
+              onLabel="GREEN" offLabel="RED" naLabel="N/A"
+              onColor={GREEN} offColor={RED} naColor={MUTED}
+            />
+            <TriToggleChip
+              value={h.brokeBelowBreakdownLow}
+              onCycle={() => updateHolding(h.ticker, { brokeBelowBreakdownLow: cycleTri(h.brokeBelowBreakdownLow) })}
+              onLabel="YES" offLabel="NO" naLabel="N/A"
+              onColor={RED} offColor={GREEN} naColor={MUTED}
+            />
             <ToggleChip value={h.thesisIntact} onToggle={() => updateHolding(h.ticker, { thesisIntact: !h.thesisIntact })} onLabel="OK"  offLabel="BROKEN" onColor={GREEN} offColor={RED} />
             <span style={{ fontSize: F.sm, fontWeight: 800, color: STATE_COLOR[cls.state], padding: '4px 8px', borderRadius: 5, textAlign: 'center', letterSpacing: 0.4, backgroundColor: `${STATE_COLOR[cls.state]}18`, border: `1px solid ${STATE_COLOR[cls.state]}40` }}>{STATE_ICON[cls.state]} {cls.state}</span>
             <span style={{ fontSize: F.xs, color: MUTED, lineHeight: 1.4 }}>{cls.reason}</span>
@@ -838,6 +877,42 @@ function ManualAdd({ addTicker, setAddTicker, onAdd }: { addTicker: string; setA
 function ToggleChip({ value, onToggle, onLabel, offLabel, onColor, offColor }: { value: boolean; onToggle: () => void; onLabel: string; offLabel: string; onColor: string; offColor: string }) {
   const c = value ? onColor : offColor;
   return (<button onClick={onToggle} style={{ fontSize: F.xs, fontWeight: 800, padding: '4px 8px', borderRadius: 4, background: `${c}18`, border: `1px solid ${c}50`, color: c, cursor: 'pointer', letterSpacing: 0.3 }}>{value ? onLabel : offLabel}</button>);
+}
+
+// PATCH 1067 — Tri-state chip cycler. Cycles between three states each click:
+//   undefined (N/A) → true (YES/GREEN) → false (NO/RED) → undefined.
+// Tracks a *deferred* observation: until the trader actually sees the 4th
+// candle / the breakdown-low test, the field stays undefined and Rule 7
+// leaves the state at WATCH. Once they record a value, classify() uses it.
+export function cycleTri(v: boolean | undefined): boolean | undefined {
+  if (v === undefined) return true;
+  if (v === true) return false;
+  return undefined;
+}
+
+function TriToggleChip({
+  value, onCycle, onLabel, offLabel, naLabel, onColor, offColor, naColor,
+}: {
+  value: boolean | undefined;
+  onCycle: () => void;
+  onLabel: string; offLabel: string; naLabel: string;
+  onColor: string; offColor: string; naColor: string;
+}) {
+  const c = value === true ? onColor : value === false ? offColor : naColor;
+  const label = value === true ? onLabel : value === false ? offLabel : naLabel;
+  return (
+    <button
+      onClick={onCycle}
+      title={`Click to cycle: ${naLabel} → ${onLabel} → ${offLabel} → ${naLabel}`}
+      style={{
+        fontSize: F.xs, fontWeight: 800, padding: '4px 8px', borderRadius: 4,
+        background: `${c}18`, border: `1px solid ${c}50`, color: c,
+        cursor: 'pointer', letterSpacing: 0.3,
+      }}
+    >
+      {label}
+    </button>
+  );
 }
 
 function inputStyle(): React.CSSProperties {
