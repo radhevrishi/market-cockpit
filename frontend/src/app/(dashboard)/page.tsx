@@ -2476,11 +2476,44 @@ export default function HomeDashboard() {
             <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
               {data.inPlay.map((n, i) => {
                 const title = n.title || n.headline || '(no headline)';
+                // PATCH 1057: render IST timestamp + relative "Xm ago" chip per article
+                // so the user knows when each item landed without leaving the page.
+                const pubIso = n.published_at;
+                let istChip = '';
+                let relAge = '';
+                if (pubIso) {
+                  try {
+                    const d = new Date(pubIso);
+                    if (!isNaN(d.getTime())) {
+                      // IST = UTC+5:30, formatted as "13 Jun · 3:33 PM"
+                      const istParts = d.toLocaleString('en-IN', {
+                        timeZone: 'Asia/Kolkata',
+                        day: '2-digit', month: 'short',
+                        hour: 'numeric', minute: '2-digit',
+                        hour12: true,
+                      });
+                      istChip = istParts.replace(',', ' ·');
+                      const ageSec = Math.round((Date.now() - d.getTime()) / 1000);
+                      relAge = ageSec < 60 ? `${ageSec}s` :
+                               ageSec < 3600 ? `${Math.round(ageSec / 60)}m` :
+                               ageSec < 86400 ? `${Math.round(ageSec / 3600)}h` :
+                               `${Math.round(ageSec / 86400)}d`;
+                    }
+                  } catch { /* swallow */ }
+                }
                 return (
                   <a key={(n.id || '') + i} href={n.url || n.source_url || '#'} target="_blank" rel="noopener noreferrer"
                     style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
                     <span style={{ fontSize: 11, color: DIM, fontWeight: 700, minWidth: 22 }}>{i + 1}</span>
                     <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: TEXT, fontWeight: 500, lineHeight: 1.4 }}>{title}</span>
+                    {istChip && (
+                      <span
+                        title={`Published ${istChip} IST · ${relAge} ago`}
+                        style={{ fontSize: 9, color: '#7AA2D8', whiteSpace: 'nowrap', fontFamily: 'ui-monospace, monospace', minWidth: 100, textAlign: 'right' }}
+                      >
+                        {istChip}{relAge ? ` · ${relAge}` : ''}
+                      </span>
+                    )}
                     <span style={{ fontSize: 9, color: DIM, whiteSpace: 'nowrap' }}>{n.source_name || n.source || '—'}</span>
                   </a>
                 );
