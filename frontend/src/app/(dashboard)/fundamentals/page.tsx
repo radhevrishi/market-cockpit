@@ -796,6 +796,41 @@ function Histogram({ values, color, unit }: { values: number[]; color: string; u
   );
 }
 
+// PATCH 1069 — Build a TradingView chart URL from a raw NSE/BSE symbol. We
+// reuse the heuristic from TickerExportToolbar: 6-digit pure-numeric ⇒ BSE
+// scrip code, alphabetic ⇒ NSE. Returns null when there's no usable symbol.
+function tvUrlFor(raw: string): string | null {
+  const t = (raw || '').toUpperCase().trim();
+  const bare = t.replace(/^(NSE|BSE|NYSE|NASDAQ):/i, '');
+  if (!bare) return null;
+  const sym = /^\d{6}$/.test(bare) ? `BSE:${bare}` : `NSE:${bare}`;
+  return `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(sym)}`;
+}
+
+function ChartLink({ symbol }: { symbol: string }) {
+  const url = tvUrlFor(symbol);
+  if (!url) return null;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={`Open ${symbol} on TradingView (check candles, MAs)`}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 4,
+        padding: '2px 8px', fontSize: 11, fontWeight: 800,
+        border: '1px solid #22D3EE60', borderRadius: 4,
+        background: '#22D3EE12', color: '#22D3EE',
+        textDecoration: 'none', cursor: 'pointer', letterSpacing: 0.3,
+        whiteSpace: 'nowrap',
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      📈 Chart
+    </a>
+  );
+}
+
 function MATable({ rows, dmaKey, name, nse }: {
   rows: Row[]; dmaKey: string; name: (d: Row) => string; nse: (d: Row) => string;
 }) {
@@ -803,19 +838,21 @@ function MATable({ rows, dmaKey, name, nse }: {
   return (
     <table style={tbl}>
       <thead>
-        <tr><th style={thR}></th><th style={thL}>Company</th><th style={thR}>CMP</th><th style={thR}>{dmaKey}</th><th style={thR}>% vs MA</th></tr>
+        <tr><th style={thR}></th><th style={thL}>Company</th><th style={thR}>CMP</th><th style={thR}>{dmaKey}</th><th style={thR}>% vs MA</th><th style={thR}>Chart</th></tr>
       </thead>
       <tbody>
         {rows.map((d, i) => {
           const cmp = num(d['Current Price']); const dma = num(d[dmaKey]);
           const pct = dma ? ((cmp - dma) / dma) * 100 : NaN;
+          const sym = nse(d);
           return (
             <tr key={i}>
               <td style={tdDim}>{i + 1}</td>
-              <td style={tdL}><b>{name(d)}</b><span style={nseS}>{nse(d)}</span></td>
+              <td style={tdL}><b>{name(d)}</b><span style={nseS}>{sym}</span></td>
               <td style={tdR}>{fmt(cmp, 1)}</td>
               <td style={tdR}>{fmt(dma, 1)}</td>
               <td style={{ ...tdR, color: pcCol(pct), fontWeight: 700 }}>{pct >= 0 ? '+' : ''}{fmt(pct, 1)}%</td>
+              <td style={tdR}><ChartLink symbol={sym} /></td>
             </tr>
           );
         })}
