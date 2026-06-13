@@ -1,0 +1,44 @@
+name: Refresh Special Situations (15-min, market hours)
+
+# 10y-ops Section 7.3 + PATCH 1057: keep the Transformational Contracts feed
+# warm so new PSU/NSE/BSE orders flow into the rolling 90d KV ledger within
+# 15 min of RSS publication — without requiring the user to visit the page.
+
+on:
+  schedule:
+    # Every 15 min during IST market hours (08:30 IST → 18:00 IST = 03:00 → 12:30 UTC)
+    - cron: '*/15 3-12 * * 1-5'
+    # Off-hours: hourly to keep ledger warm
+    - cron: '0 13-23 * * *'
+    - cron: '0 0-2 * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: refresh-special-situations
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Warm Special Situations feed
+        id: main
+        env:
+          BASE: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
+          curl -fsS --max-time 90 "$BASE/api/v1/special-situations/feed?refresh=1" -o /dev/null -w "feed %{http_code}\n"
+
+      - name: Heartbeat (always run)
+        if: always()
+        env:
+          BASE: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
+          OK="true"
+          if [[ "${{ steps.main.outcome }}" != "success" ]]; then OK="false"; fi
+          curl -s --max-time 15 -X POST "$BASE/api/v1/cron/heartbeat" \
+            -H 'Content-Type: application/json' \
+            -d "{\"name\":\"refresh-special-situations\",\"phase\":\"end\",\"ok\":$OK,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -o /dev/null -w "heartbeat %{http_code}\n" || true
