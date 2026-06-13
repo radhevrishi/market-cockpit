@@ -1,0 +1,176 @@
+name: Scrape Super Investor holdings from Trendlyne (every 6h)
+
+# Why this exists:
+#   PATCH 1068b's in-Railway fetch of Trendlyne returns 404 for every
+#   request — the egress IP appears to be blocked/geofenced. This workflow
+#   runs the scrape from a GitHub Actions runner (different IP pool that
+#   Trendlyne does serve) and POSTs the parsed holdings to the existing
+#   ingest endpoint, which writes them to KV exactly the same way as the
+#   Railway-side cron would. Outcome: the per-investor freshness chip
+#   reports `source: "kv"` with real scraped data instead of static-fallback.
+#
+#   The fallback chain stays intact: when this workflow fails, the
+#   refresh-super-investors cron (also 6h, but server-side) still pumps
+#   the static list into KV so the chip stays cyan.
+
+on:
+  schedule:
+    - cron: '15 */6 * * *'    # every 6h at :15 (offset from the Railway cron at :00)
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Max investors to scrape this run (debug)'
+        required: false
+        default: '24'
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout (for the roster + parser)
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Scrape Trendlyne + POST to ingest
+        id: main
+        env:
+          BASE: ${{ secrets.CRON_BASE_URL }}
+          SECRET: ${{ secrets.CRON_SECRET }}
+          LIMIT: ${{ github.event.inputs.limit || '24' }}
+        run: |
+          BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
+          python3 - <<'PY'
+          import json, os, re, sys, time, urllib.parse, urllib.request
+
+          BASE = os.environ.get('BASE', 'https://market-cockpit-production.up.railway.app')
+          SECRET = os.environ.get('SECRET', '')
+          LIMIT = int(os.environ.get('LIMIT', '24'))
+          UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+
+          def http_get(url, timeout=30):
+              req = urllib.request.Request(url, headers={'User-Agent': UA, 'Accept-Language': 'en-US,en;q=0.9'})
+              with urllib.request.urlopen(req, timeout=timeout) as r:
+                  return r.read().decode('utf-8', errors='replace')
+
+          def http_post(url, payload, timeout=30):
+              data = json.dumps(payload).encode('utf-8')
+              req = urllib.request.Request(url, data=data, method='POST',
+                  headers={'Content-Type': 'application/json'})
+              with urllib.request.urlopen(req, timeout=timeout) as r:
+                  return r.status, r.read().decode('utf-8', errors='replace')
+
+          # ── 1. Pull the curated roster from the repo ───────────────────
+          # We don't want to maintain a duplicate list in YAML, so we parse
+          # the names + ids out of the static lib file.
+          with open('frontend/src/lib/super-investors.ts', encoding='utf-8') as f:
+              tslib = f.read()
+          # Match the id / name fields inside SUPER_INVESTORS entries.
+          roster = re.findall(r"id: '([a-z0-9-]+)'[\s\S]{0,600}?name: '([^']+)'", tslib)
+          print(f'roster: {len(roster)} investors')
+
+          # ── 2. Fetch the listing once, map name → slug url ─────────────
+          listing_html = http_get('https://trendlyne.com/portfolio/superstar-shareholders/index/')
+          slug_re = re.compile(r'href="(/portfolio/superstar-shareholders/\d+/latest/([a-z0-9-]+)/)"')
+          STOPWORDS = {'and','family','associates','sons','huf','the','portfolio'}
+          def toks(s):
+              s = s.lower().replace('&', ' ')
+              return [t for t in re.split(r'[^a-z0-9]+', s) if t and len(t) >= 2 and t not in STOPWORDS]
+          entries = []
+          seen = set()
+          for m in slug_re.finditer(listing_html):
+              url, slug = m.group(1), m.group(2).replace('-portfolio', '')
+              if slug in seen: continue
+              seen.add(slug)
+              entries.append({'url': url, 'tokens': toks(slug)})
+          print(f'listing entries: {len(entries)}')
+
+          def find_url(name):
+              want = toks(name)
+              if not want: return None
+              best = None
+              for e in entries:
+                  if not all(t in e['tokens'] for t in want): continue
+                  score = len(want) - 0.1 * max(0, len(e['tokens']) - len(want))
+                  if not best or score > best[1]:
+                      best = (e['url'], score)
+              return best[0] if best else None
+
+          # ── 3. Scrape per investor + batch POST ─────────────────────────
+          stock_row_re = re.compile(
+              r'class="nolb stockrow"[^>]+href="https?://trendlyne\.com/equity/share-holding/\d+/([A-Z0-9&]+)/[^"]+"[^>]*>([^<]+)<',
+              re.M,
+          )
+          pct_re = re.compile(
+              r'<td[^>]*class="\s*[^"]*bg-superstar-[^"]*"[^>]*data-order=[\d.]+[^>]*>\s*([\d.]+)%',
+              re.S,
+          )
+
+          batch = []
+          for i, (inv_id, inv_name) in enumerate(roster[:LIMIT]):
+              url = find_url(inv_name)
+              if not url:
+                  print(f'  {inv_id:30s}  no match on Trendlyne listing — skip')
+                  continue
+              try:
+                  html = http_get('https://trendlyne.com' + url)
+              except Exception as e:
+                  print(f'  {inv_id:30s}  fetch error: {e}')
+                  continue
+              holdings = []
+              for m in stock_row_re.finditer(html):
+                  ticker = m.group(1).upper().strip()
+                  company = re.sub(r'\s+', ' ', m.group(2)).strip()
+                  if not ticker or any(h['ticker'] == ticker for h in holdings): continue
+                  # Find the first percentage after this row.
+                  slice_ = html[m.start(): m.start() + 4000]
+                  pm = pct_re.search(slice_)
+                  stake = None
+                  if pm:
+                      try: stake = float(pm.group(1))
+                      except: pass
+                  holdings.append({
+                      'ticker': ticker,
+                      'company': company,
+                      'stakePct': stake,
+                      'disclosedOn': time.strftime('%Y-%m-%d'),
+                      'tier': 'BSE_1PCT',
+                      'exchange': 'NSE',
+                  })
+              if not holdings:
+                  print(f'  {inv_id:30s}  scraped 0 rows — skip')
+                  continue
+              batch.append({
+                  'id': inv_id,
+                  'scrapedAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                  'holdings': holdings,
+              })
+              print(f'  {inv_id:30s}  scraped {len(holdings):2d} rows')
+              time.sleep(2.5)  # gentle pacing
+
+          if not batch:
+              print('No batch to send — bailing without POSTing.')
+              sys.exit(0)
+          # ── 4. POST batch to ingest ─────────────────────────────────────
+          target = f'{BASE}/api/v1/super-investor-holdings/ingest?secret={urllib.parse.quote(SECRET)}'
+          code, body = http_post(target, {'batch': batch})
+          print('ingest:', code, body[:400])
+          sys.exit(0 if code == 200 else 1)
+          PY
+
+      - name: Heartbeat (always run)
+        if: always()
+        env:
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
+          OK="true"
+          if [[ "${{ steps.main.outcome }}" != "success" ]]; then OK="false"; fi
+          curl -s --max-time 15 -X POST "$BASE/api/v1/cron/heartbeat" \
+            -H 'Content-Type: application/json' \
+            -d "{\"name\":\"scrape-super-investors\",\"phase\":\"end\",\"ok\":$OK,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -o /dev/null -w "heartbeat %{http_code}\n" || true
