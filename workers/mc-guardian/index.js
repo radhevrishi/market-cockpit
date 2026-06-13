@@ -18,7 +18,7 @@ function makeProbes(BASE) { return [
   { name: 'corp-filings', url: BASE + '/api/market/corporate-orders', type: 'json', check: () => true, desc: 'bad response' }, // workers.dev-to-workers.dev fetches are blocked, so probe the portal route that consumes mc-scraper
   // 10y-ops Section 7.3: cron-runs heartbeat health. Any cron silent for >25h becomes stale_count>0.
   // The body lists which cron names went stale so the alert is actionable.
-  { name: 'cron-heartbeats', url: BASE + '/api/v1/cron/health', type: 'json',
+  { name: 'cron-heartbeats', url: BASE + '/api/v1/cron/heartbeat', type: 'json',
     check: (j) => !j || j.stale_count === 0,
     desc: 'stale cron heartbeats',
     detail: (j) => {
