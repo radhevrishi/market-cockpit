@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.database import init_db, AsyncSessionLocal
 from app.core.config import settings
-from app.api.v1 import auth, portfolio, news, calendar, alerts, ai, market, watchlists
+from app.api.v1 import auth, portfolio, news, calendar, alerts, ai, market, watchlists, cron
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +130,8 @@ app.include_router(alerts.router,    prefix="/api/v1")
 app.include_router(ai.router,        prefix="/api/v1")
 app.include_router(market.router,      prefix="/api/v1")
 app.include_router(watchlists.router,  prefix="/api/v1")
+# 10y-ops Section 7.3: cron heartbeat router (anon, idempotent)
+app.include_router(cron.router,        prefix="/api/v1")
 
 
 @app.get("/health", tags=["health"])
