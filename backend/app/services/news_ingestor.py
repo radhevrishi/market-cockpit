@@ -55,7 +55,7 @@ async def _translate_text(text: str, client: "httpx.AsyncClient") -> str:
                     "content-type": "application/json",
                 },
                 json={
-                    "model": "claude-haiku-4-5-20251001",
+                    "model": "claude-haiku-4-5",
                     "max_tokens": 300,
                     "messages": [{"role": "user", "content": f"Translate this Hindi text to English. Return ONLY the English translation, nothing else:\n\n{text}"}],
                 },

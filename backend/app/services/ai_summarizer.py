@@ -104,7 +104,7 @@ Provide a concise 2-3 paragraph morning brief covering:
 Be conversational but professional. Focus on actionable insights."""
 
             response = _get_anthropic().messages.create(
-                model="claude-haiku-4-5-20251001",
+                model="claude-haiku-4-5",
                 max_tokens=800,
                 messages=[{"role": "user", "content": prompt}]
             )
@@ -161,7 +161,7 @@ Provide a concise 2-3 paragraph evening brief covering:
 Be conversational but professional. Focus on actionable insights."""
 
             response = _get_anthropic().messages.create(
-                model="claude-haiku-4-5-20251001",
+                model="claude-haiku-4-5",
                 max_tokens=800,
                 messages=[{"role": "user", "content": prompt}]
             )
@@ -211,7 +211,7 @@ Provide a 2-3 paragraph explanation covering:
 Be analytical and evidence-based."""
             
             response = _get_anthropic().messages.create(
-                model="claude-haiku-4-5-20251001",
+                model="claude-haiku-4-5",
                 max_tokens=500,
                 messages=[{"role": "user", "content": prompt}]
             )
@@ -254,7 +254,7 @@ Focus on:
 Format as a professional investment memo with clear sections."""
             
             response = _get_anthropic().messages.create(
-                model="claude-haiku-4-5-20251001",
+                model="claude-haiku-4-5",
                 max_tokens=800,
                 messages=[{"role": "user", "content": prompt}]
             )
@@ -293,7 +293,7 @@ You have knowledge of their portfolio:
 Be conversational, helpful, and evidence-based. Provide actionable insights when relevant."""
             
             response = _get_anthropic().messages.create(
-                model="claude-haiku-4-5-20251001",
+                model="claude-haiku-4-5",
                 max_tokens=800,
                 system=system_prompt,
                 messages=[{"role": "user", "content": message}]
