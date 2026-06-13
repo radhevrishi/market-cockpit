@@ -130,6 +130,7 @@ jobs:
           esac
 
       - name: Hit Vercel endpoint
+        id: hit
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
@@ -143,6 +144,7 @@ jobs:
           fi
           PATH_PART="${{ steps.route.outputs.path }}"
           LABEL="${{ steps.route.outputs.label }}"
+          echo "label=$LABEL" >> "$GITHUB_OUTPUT" 
           # PATCH 1031 - app moved off Vercel (account suspended -> HTTP 402).
           # Point every scheduled job at the live Railway deployment, otherwise
           # NONE of the warming/alert crons reach the running site and the EO
@@ -172,6 +174,7 @@ jobs:
             --max-time 240 \
             "$URL" || echo "000")
           echo "- HTTP $STATUS"
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT" 
           head -c 600 /tmp/response.json || true
           echo
           if [ "$STATUS" != "200" ] && [ "$STATUS" != "201" ] && [ "$STATUS" != "202" ] && [ "$STATUS" != "204" ]; then
@@ -181,3 +184,25 @@ jobs:
             exit 0
           fi
           echo "::notice title=$LABEL::Vercel endpoint responded $STATUS"
+
+      - name: Heartbeat (always run)
+        if: always()
+        env:
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          # 10y-ops Section 7.3: POST heartbeat so mc-guardian detects silent stops.
+          # Heartbeat name = the route label (one row per endpoint). Best-effort.
+          BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
+          LABEL="${{ steps.hit.outputs.label }}"
+          STATUS="${{ steps.hit.outputs.status }}"
+          # name fallback: if route step never ran (workflow_dispatch with no schedule), use "vercel-cron-bridge"
+          if [ -z "$LABEL" ]; then LABEL="vercel-cron-bridge"; fi
+          OK="false"
+          # 2xx counts as ok; 4xx/5xx flag the run as failed for guardian
+          if [[ "$STATUS" == 2* ]]; then OK="true"; fi
+          # If the step was skipped (no matching schedule), don't write a misleading heartbeat
+          if [[ "${{ steps.hit.outcome }}" == "skipped" ]]; then exit 0; fi
+          curl -s --max-time 15 -X POST "$BASE/api/v1/cron/heartbeat" \
+            -H 'Content-Type: application/json' \
+            -d "{\"name\":\"$LABEL\",\"phase\":\"end\",\"ok\":$OK,\"exit_code\":$STATUS,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -o /dev/null -w "heartbeat %{http_code}\n" || true
