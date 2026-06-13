@@ -176,7 +176,8 @@ jobs:
           echo
           if [ "$STATUS" != "200" ] && [ "$STATUS" != "201" ] && [ "$STATUS" != "202" ] && [ "$STATUS" != "204" ]; then
             echo "::warning title=$LABEL::Vercel returned HTTP $STATUS"
-            # Don't fail the workflow on non-2xx - endpoint may still have done work
+            # 10y-ops: fail only on 5xx so silent host suspensions surface; tolerate 4xx (endpoint may still have done work)
+            if [[ "$STATUS" == 5* ]]; then exit 1; fi
             exit 0
           fi
           echo "::notice title=$LABEL::Vercel endpoint responded $STATUS"

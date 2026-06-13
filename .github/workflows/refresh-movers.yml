@@ -23,5 +23,5 @@ jobs:
       - name: Force-refresh movers (India + USA)
         run: |
           BASE="https://market-cockpit-production.up.railway.app"
-          curl -fsS "$BASE/api/market/quotes?market=india&refresh=1" -o /dev/null -w "india %{http_code}\n" || true
-          curl -fsS "$BASE/api/market/quotes?market=us&refresh=1" -o /dev/null -w "us %{http_code}\n" || true
+          curl -fsS --max-time 60 "$BASE/api/market/quotes?market=india&refresh=1" -o /dev/null -w "india %{http_code}\n"
+          curl -fsS --max-time 60 "$BASE/api/market/quotes?market=us&refresh=1" -o /dev/null -w "us %{http_code}\n"
