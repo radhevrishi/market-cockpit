@@ -1,6 +1,6 @@
-// PATCH 0726 — Alert dispatcher infrastructure (Slack / SMTP / webhook).
+// PATCH 1058 — Alert dispatcher infrastructure (Slack / SMTP / webhook / Telegram).
 //
-// Reads env vars at call time and routes an AlertPayload to up to three
+// Reads env vars at call time and routes an AlertPayload to up to four
 // channels. Each channel independently:
 //   - returns 'skipped' when its env vars are missing (no log noise),
 //   - returns 'sent' on success,
@@ -13,6 +13,8 @@
 //                                                installed; gracefully skips
 //                                                when the dep is missing)
 //   GENERIC_WEBHOOK_URL                        - POST raw AlertPayload JSON
+//   TELEGRAM_BOT_TOKEN (or TELEGRAM_BOT_TOKEN_ALERTS / _EARNINGS) +
+//   TELEGRAM_CHAT_ID (or TELEGRAM_CHAT_ID_ALERTS / _EARNINGS) - Telegram Bot API
 //
 // Each channel call uses an 8s AbortController timeout so a stuck endpoint
 // never wedges the dispatcher.
@@ -34,6 +36,7 @@ export interface DispatchResult {
   slack: 'sent' | 'skipped' | 'error';
   email: 'sent' | 'skipped' | 'error';
   webhook: 'sent' | 'skipped' | 'error';
+  telegram: 'sent' | 'skipped' | 'error';
   errors?: Record<string, string>;
 }
 
@@ -204,13 +207,112 @@ async function dispatchWebhook(
 }
 
 // ────────────────────────────────────────────────────────────────────────
+// TELEGRAM (PATCH 1058 — added in HANDOFF4)
+// ────────────────────────────────────────────────────────────────────────
+// Resolves token + chat from the same env-var fallbacks the per-channel
+// bot routes use, so this dispatcher works out of the box if you've
+// already configured TELEGRAM_BOT_TOKEN_EARNINGS or TELEGRAM_BOT_TOKEN
+// for the existing /api/bot/* endpoints.
+//
+// Precedence (first non-empty wins):
+//   token:  TELEGRAM_BOT_TOKEN_ALERTS → TELEGRAM_BOT_TOKEN_EARNINGS → TELEGRAM_BOT_TOKEN
+//   chat:   TELEGRAM_CHAT_ID_ALERTS  → TELEGRAM_CHAT_ID_EARNINGS  → TELEGRAM_CHAT_ID
+//
+// Message uses MarkdownV2 with all reserved chars escaped (Telegram rejects
+// unescaped `_`, `*`, `[`, `]`, `(`, `)`, `~`, `` ` ``, `>`, `#`, `+`, `-`,
+// `=`, `|`, `{`, `}`, `.`, `!`).
+function escapeMdV2(s: string): string {
+  return s.replace(/[_*\[\]()~`>#+\-=|{}.!\\]/g, (m) => `\\${m}`);
+}
+
+async function dispatchTelegram(
+  payload: AlertPayload,
+): Promise<'sent' | 'skipped' | 'error'> {
+  const token =
+    process.env.TELEGRAM_BOT_TOKEN_ALERTS ||
+    process.env.TELEGRAM_BOT_TOKEN_EARNINGS ||
+    process.env.TELEGRAM_BOT_TOKEN ||
+    '';
+  const chat =
+    process.env.TELEGRAM_CHAT_ID_ALERTS ||
+    process.env.TELEGRAM_CHAT_ID_EARNINGS ||
+    process.env.TELEGRAM_CHAT_ID ||
+    '';
+  if (!token || !chat) return 'skipped';
+
+  const { rule, article } = payload;
+  const title = article.title || '(no title)';
+  const sourceLine = [article.source, article.published_at].filter(Boolean).join(' · ');
+  const tickerLine = article.ticker_symbols?.length
+    ? article.ticker_symbols.join(', ')
+    : '';
+  const importance =
+    typeof article.importance_score === 'number'
+      ? String(article.importance_score)
+      : '';
+
+  // Build MarkdownV2 message body. Each user-supplied string is escaped;
+  // formatting characters (`*`, `_`, link syntax) are written raw outside
+  // the escaped runs.
+  const lines: string[] = [];
+  lines.push(`🚨 *${escapeMdV2(rule.name)}*`);
+  lines.push('');
+  lines.push(`*${escapeMdV2(title)}*`);
+  if (article.url) {
+    // Inline link: [text](url) — escape link text but keep URL raw (Telegram
+    // only requires `)` and `\` to be escaped inside link URLs).
+    const linkText = escapeMdV2(article.source || 'open article');
+    const safeUrl = article.url.replace(/[)\\]/g, (m) => `\\${m}`);
+    lines.push(`[${linkText}](${safeUrl})`);
+  }
+  if (sourceLine) lines.push(`_${escapeMdV2(sourceLine)}_`);
+  if (tickerLine) lines.push(`\`${escapeMdV2(tickerLine)}\``);
+  if (importance) lines.push(`Importance: *${escapeMdV2(importance)}*`);
+  lines.push('');
+  lines.push(`_triggered ${escapeMdV2(payload.triggeredAt)}_`);
+  const text = lines.join('\n').slice(0, 4000); // Telegram caps at 4096
+
+  const url = `https://api.telegram.org/bot${token}/sendMessage`;
+  const body = {
+    chat_id: chat,
+    text,
+    parse_mode: 'MarkdownV2',
+    disable_web_page_preview: false,
+  };
+
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), CHANNEL_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      throw new Error(`telegram ${res.status}: ${txt.slice(0, 200)}`);
+    }
+    // Telegram returns { ok: true, result: {...} } even on 200; fail closed
+    // if ok=false.
+    const j: any = await res.json().catch(() => ({}));
+    if (j && j.ok === false) {
+      throw new Error(`telegram ok=false: ${String(j.description || '').slice(0, 200)}`);
+    }
+    return 'sent';
+  } finally {
+    clearTimeout(id);
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────
 // PUBLIC API
 // ────────────────────────────────────────────────────────────────────────
 export async function dispatchAlert(payload: AlertPayload): Promise<DispatchResult> {
   const errors: Record<string, string> = {};
 
   const settle = async (
-    name: 'slack' | 'email' | 'webhook',
+    name: 'slack' | 'email' | 'webhook' | 'telegram',
     fn: () => Promise<'sent' | 'skipped' | 'error'>,
   ): Promise<'sent' | 'skipped' | 'error'> => {
     try {
@@ -221,13 +323,14 @@ export async function dispatchAlert(payload: AlertPayload): Promise<DispatchResu
     }
   };
 
-  const [slack, email, webhook] = await Promise.all([
+  const [slack, email, webhook, telegram] = await Promise.all([
     settle('slack', () => dispatchSlack(payload)),
     settle('email', () => dispatchEmail(payload)),
     settle('webhook', () => dispatchWebhook(payload)),
+    settle('telegram', () => dispatchTelegram(payload)),
   ]);
 
-  const result: DispatchResult = { slack, email, webhook };
+  const result: DispatchResult = { slack, email, webhook, telegram };
   if (Object.keys(errors).length > 0) result.errors = errors;
   return result;
 }
