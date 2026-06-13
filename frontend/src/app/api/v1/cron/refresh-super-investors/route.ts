@@ -78,52 +78,74 @@ async function check(secret: string | null): Promise<NextResponse | null> {
   return null;
 }
 
-// ── Listing page: investor display name → portfolio URL ─────────────────
+// ── Listing page: investor slug → portfolio URL ───────────────────────
 //
-// The Trendlyne listing contains anchors like:
-//   <a href="/portfolio/superstar-shareholders/53746/latest/ashish-kacholia-portfolio/">
-//     Ashish Kacholia
-//   </a>
-// Build a normalised map { 'ashishkacholia': '/portfolio/.../ashish-kacholia-portfolio/' }
-function normaliseName(s: string): string {
+// Trendlyne's display names diverge from the static roster ('Vijay Kedia' vs
+// 'Vijay Kishanlal Kedia', 'Mukul Agrawal' vs 'Mukul Mahavir Agrawal'), so
+// matching by normalised full name misses obvious cases. We instead key the
+// listing by SLUG and use token-overlap matching at lookup time: an investor
+// whose name tokens are all present in some slug wins.
+const STOPWORDS = new Set(['and', 'family', 'associates', 'sons', 'huf', 'the']);
+
+function tokens(s: string): string[] {
   return s
     .toLowerCase()
-    .replace(/and\s+associates?/g, '')
-    .replace(/and\s+family/g, '')
-    .replace(/[^a-z0-9]/g, '');
+    .replace(/&/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(' ')
+    .filter((t) => t && t.length >= 2 && !STOPWORDS.has(t));
 }
 
-async function fetchListingMap(): Promise<Record<string, string>> {
-  const cacheKey = 'superinv:listing:v1';
+interface ListingEntry { slug: string; url: string; tokens: string[] }
+
+async function fetchListing(): Promise<ListingEntry[]> {
+  const cacheKey = 'superinv:listing:v2';
   try {
-    const cached = await kvGet<{ at: string; map: Record<string, string> }>(cacheKey);
-    if (cached && cached.map && Object.keys(cached.map).length > 0) {
+    const cached = await kvGet<{ at: string; entries: ListingEntry[] }>(cacheKey);
+    if (cached && Array.isArray(cached.entries) && cached.entries.length > 0) {
       const ageMs = Date.now() - new Date(cached.at).getTime();
-      if (ageMs < LISTING_TTL_SECONDS * 1000) return cached.map;
+      if (ageMs < LISTING_TTL_SECONDS * 1000) return cached.entries;
     }
   } catch {}
 
-  const map: Record<string, string> = {};
+  const entries: ListingEntry[] = [];
+  const seen = new Set<string>();
   try {
     const r = await fetch(LISTING_URL, { headers: { 'user-agent': UA, 'accept-language': 'en-US,en;q=0.9' } });
-    if (!r.ok) return map;
+    if (!r.ok) return entries;
     const html = await r.text();
-    // Match anchors that point at the portfolio page + capture the visible name.
-    const re = /href="(\/portfolio\/superstar-shareholders\/\d+\/latest\/[a-z0-9-]+\/)"[^>]*>\s*([A-Za-z][A-Za-z .&'-]+?)\s*</g;
+    const re = /href="(\/portfolio\/superstar-shareholders\/\d+\/latest\/([a-z0-9-]+)\/)"/g;
     let m: RegExpExecArray | null;
     while ((m = re.exec(html))) {
       const url = m[1];
-      const name = m[2].trim();
-      if (!name || name.length < 3) continue;
-      map[normaliseName(name)] = url;
+      const slug = m[2].replace(/-portfolio$/, '');
+      if (seen.has(slug)) continue;
+      seen.add(slug);
+      entries.push({ slug, url, tokens: tokens(slug) });
     }
     try {
-      await kvSet(cacheKey, { at: new Date().toISOString(), map }, LISTING_TTL_SECONDS);
+      await kvSet(cacheKey, { at: new Date().toISOString(), entries }, LISTING_TTL_SECONDS);
     } catch {}
-  } catch (e) {
-    // Network blip — return empty map so callers fall back to static.
+  } catch {
+    // Network blip — return empty so callers fall back to static.
   }
-  return map;
+  return entries;
+}
+
+function findListingUrl(entries: ListingEntry[], investorName: string): string | null {
+  const want = tokens(investorName);
+  if (want.length === 0) return null;
+  let best: { url: string; score: number } | null = null;
+  for (const e of entries) {
+    // Every token of the investor's name must appear in the slug to qualify.
+    const allPresent = want.every((t) => e.tokens.includes(t));
+    if (!allPresent) continue;
+    // Score = matching tokens − extra tokens in the slug (prefer tight matches).
+    const extra = e.tokens.length - want.length;
+    const score = want.length - 0.1 * Math.max(0, extra);
+    if (!best || score > best.score) best = { url: e.url, score };
+  }
+  return best ? best.url : null;
 }
 
 // ── Per-investor page: extract holdings table ─────────────────────────
@@ -196,7 +218,7 @@ async function refresh(force: boolean): Promise<{
   const fetchedAt = new Date().toISOString();
   const results: RefreshRow[] = [];
 
-  const listing = await fetchListingMap();
+  const listing = await fetchListing();
 
   for (const inv of SUPER_INVESTORS) {
     // Skip-when-fresh guard — unchanged from PATCH 1066.
@@ -214,8 +236,7 @@ async function refresh(force: boolean): Promise<{
     }
 
     // 1) Try Trendlyne scrape.
-    const key = normaliseName(inv.name);
-    const portfolioUrl = listing[key];
+    const portfolioUrl = findListingUrl(listing, inv.name);
     let scraped: ScrapedHolding[] = [];
     if (portfolioUrl) {
       try {
