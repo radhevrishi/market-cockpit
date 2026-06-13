@@ -201,7 +201,9 @@ export default function CriticalThemesPage() {
       const articles: any[] = Array.isArray(newsRes) ? newsRes : (newsRes?.articles || []);
 
       // 2. Quotes for India leaders (one shot)
-      const qRes = await safeJson<any>(`/api/market/quotes?market=india&_=${Date.now()}`, 18_000);
+      // PATCH 1057: bumped 18s → 25s + 1 retry on failure (leader-momentum blanks were 18s timeouts)
+      let qRes = await safeJson<any>(`/api/market/quotes?market=india&_=${Date.now()}`, 25_000);
+      if (!qRes) qRes = await safeJson<any>(`/api/market/quotes?market=india&_=${Date.now()}`, 25_000);
       if (cancelled) return;
       const indiaQuotes: any[] = qRes?.stocks || [];
       const quotesByTicker = new Map<string, any>();
@@ -211,7 +213,7 @@ export default function CriticalThemesPage() {
       }
 
       // 3. Bottleneck dashboard
-      const bnRes = await safeJson<any>(`/api/v1/news/bottleneck-dashboard?_=${Date.now()}`, 18_000);
+      const bnRes = await safeJson<any>(`/api/v1/news/bottleneck-dashboard?_=${Date.now()}`, 22_000);  // PATCH 1057: bumped 18s → 22s
       if (cancelled) return;
       const bottleneckBuckets: any[] = bnRes?.buckets || [];
       const activeThemeKeywords = bottleneckBuckets
