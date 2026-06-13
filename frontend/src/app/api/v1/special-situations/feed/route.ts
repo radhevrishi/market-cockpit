@@ -225,11 +225,19 @@ function decodeXmlEntities(s: string): string {
 }
 
 function stripCdataAndHtml(s: string): string {
-  return s
+  let r = s
     .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
     .replace(/<[^>]+>/g, ' ')                  // strip inline HTML
     .replace(/\s+/g, ' ')
     .trim();
+  // PATCH 1057: residual CDATA wrappers leaked into link/title strings (the
+  // "<![CDATA[https://..." that appeared in the Antares/Urenco HALEUC row).
+  // If the result still has angle/square brackets in something that looks like
+  // a URL, strip them — they came from nested CDATA markers, not real syntax.
+  if (r.startsWith('http') && /[<>\[\]]/.test(r)) {
+    r = r.replace(/[<>\[\]]/g, '');
+  }
+  return r;
 }
 
 function parseRSS(xml: string): Array<{ title: string; link: string; pubDate: string; description?: string }> {
