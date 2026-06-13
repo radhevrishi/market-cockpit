@@ -1,0 +1,66 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Market Cockpit — 10-year self-maintenance config. Weekly bumps, automerge patches, minor versions go to PR.",
+  "extends": [
+    "config:recommended",
+    ":semanticCommitTypeAll(chore)",
+    ":dependencyDashboard"
+  ],
+  "timezone": "Asia/Kolkata",
+  "schedule": ["before 5am on Monday"],
+  "labels": ["dependencies", "renovate"],
+  "rangeStrategy": "bump",
+  "packageRules": [
+    {
+      "description": "Auto-merge patch updates for trusted packages",
+      "matchUpdateTypes": ["patch", "pin", "digest"],
+      "matchCurrentVersion": "!/^0/",
+      "automerge": true,
+      "automergeType": "branch"
+    },
+    {
+      "description": "Group all minor + major into one weekly PR per workspace",
+      "matchUpdateTypes": ["minor", "major"],
+      "groupName": "weekly dependency updates",
+      "schedule": ["before 5am on Monday"]
+    },
+    {
+      "description": "Pin Node to LTS only — never bump to odd majors mid-year",
+      "matchPackageNames": ["node"],
+      "allowedVersions": "/^(20|22|24)\\./"
+    },
+    {
+      "description": "Anthropic SDK — never auto-bump major, models change behaviour",
+      "matchPackageNames": ["anthropic", "@anthropic-ai/sdk"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
+      "description": "GitHub Actions — pin major versions to avoid silent migrations",
+      "matchManagers": ["github-actions"],
+      "pinDigests": true
+    },
+    {
+      "description": "Python — backend deps grouped",
+      "matchManagers": ["pip_requirements"],
+      "groupName": "python backend deps",
+      "schedule": ["before 5am on Monday"]
+    },
+    {
+      "description": "Skip yfinance/screener-style fragile scrapers — manual review",
+      "matchPackageNames": ["yfinance", "yahoo-fin", "yahooquery"],
+      "automerge": false,
+      "labels": ["dependencies", "renovate", "manual-review-required"]
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "schedule": ["at any time"]
+  },
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 5am on Monday"]
+  },
+  "prConcurrentLimit": 3,
+  "prHourlyLimit": 4
+}
