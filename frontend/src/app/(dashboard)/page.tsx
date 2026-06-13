@@ -2486,13 +2486,17 @@ export default function HomeDashboard() {
                     const d = new Date(pubIso);
                     if (!isNaN(d.getTime())) {
                       // IST = UTC+5:30, formatted as "13 Jun · 3:33 PM"
-                      const istParts = d.toLocaleString('en-IN', {
+                      // PATCH 1057b: use Intl.DateTimeFormat.formatToParts for atomic
+                      // browser-portable formatting (avoids locale-string variance).
+                      const fmt = new Intl.DateTimeFormat('en-IN', {
                         timeZone: 'Asia/Kolkata',
                         day: '2-digit', month: 'short',
                         hour: 'numeric', minute: '2-digit',
                         hour12: true,
                       });
-                      istChip = istParts.replace(',', ' ·');
+                      const parts = fmt.formatToParts(d);
+                      const get = (t: string) => parts.find((p) => p.type === t)?.value || '';
+                      istChip = `${get('day')} ${get('month')} · ${get('hour')}:${get('minute')} ${get('dayPeriod')}`.replace(/\s+/g, ' ').trim();
                       const ageSec = Math.round((Date.now() - d.getTime()) / 1000);
                       relAge = ageSec < 60 ? `${ageSec}s` :
                                ageSec < 3600 ? `${Math.round(ageSec / 60)}m` :
