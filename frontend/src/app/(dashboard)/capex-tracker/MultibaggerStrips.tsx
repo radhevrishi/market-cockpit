@@ -197,6 +197,80 @@ interface Props {
 }
 
 const MultibaggerStrips: React.FC<Props> = ({ fin, name, mbScore, mbGrade }) => {
+  // ─── Management Credibility — read transcripts from localStorage ───
+  const concallData = useMemo(() => {
+    if (typeof window === 'undefined' || !name) return null;
+    try {
+      const raw = window.localStorage.getItem(CONCALL_STORAGE_KEY);
+      if (!raw) return null;
+      const map: Record<string, Array<{ id: string; label: string; addedAt: string; chars: number; text: string; extract: any }>> = JSON.parse(raw);
+      // Match case-insensitively
+      const keys = Object.keys(map);
+      const target = name.trim().toUpperCase();
+      const key = keys.find((k) => k.trim().toUpperCase() === target);
+      if (!key || !map[key]?.length) return null;
+      const entries = [...map[key]].sort((a, b) => (a.addedAt > b.addedAt ? -1 : 1)); // latest first
+      const latest = entries[0];
+      const ex = latest.extract || {};
+      // Disclosure checks — 5 fields
+      const disclosure = [
+        { k: 'Util %', ok: ex.utilization != null },
+        { k: 'Capex ₹', ok: ex.capexGuidance != null },
+        { k: 'Timeline', ok: Array.isArray(ex.timeline) && ex.timeline.length > 0 },
+        { k: 'Order book', ok: ex.orderBook != null },
+        { k: 'Growth/Margin notes', ok: !!ex.growthNote || !!ex.marginNote || !!ex.demandNote },
+      ];
+      const discScore = disclosure.filter((d) => d.ok).length;
+      // Tone — quick heuristic across raw text
+      const tone = tonePct(latest.text || '');
+      // Specificity — does mgmt give precise numbers + dates?
+      const specBits = [
+        ex.utilization != null,
+        ex.capexGuidance != null,
+        Array.isArray(ex.timeline) && ex.timeline.length > 0,
+      ];
+      const spec = specBits.filter(Boolean).length; // 0-3
+      const specTag = spec >= 3 ? 'HIGH' : spec >= 2 ? 'MED' : 'LOW';
+      const specColor = spec >= 3 ? C.green : spec >= 2 ? C.amber : C.red;
+      // Tone color
+      const toneColor = tone == null ? C.textMuted : tone >= 55 ? C.green : tone >= 40 ? C.amber : C.red;
+      // Disclosure color
+      const discColor = discScore >= 4 ? C.green : discScore >= 3 ? C.amber : C.red;
+      // Overall management grade
+      let mgmtGrade = 'C';
+      let mgmtColor = C.red;
+      if (discScore >= 4 && spec >= 2 && (tone == null || tone >= 45)) {
+        mgmtGrade = 'A';
+        mgmtColor = C.green;
+      } else if (discScore >= 3 && spec >= 2) {
+        mgmtGrade = 'B';
+        mgmtColor = C.amber;
+      }
+      return {
+        label: latest.label,
+        concallCount: entries.length,
+        disclosure,
+        discScore,
+        discColor,
+        tone,
+        toneColor,
+        spec,
+        specTag,
+        specColor,
+        utilization: ex.utilization,
+        capexGuidance: ex.capexGuidance,
+        timeline: Array.isArray(ex.timeline) ? ex.timeline : [],
+        growthNote: ex.growthNote,
+        marginNote: ex.marginNote,
+        demandNote: ex.demandNote,
+        mgmtGrade,
+        mgmtColor,
+      };
+    } catch {
+      return null;
+    }
+  }, [name]);
+
   // Drop empty placeholder years (where sales == 0)
   const keep: number[] = [];
   for (let i = 0; i < fin.years.length; i++) {
@@ -529,10 +603,96 @@ const MultibaggerStrips: React.FC<Props> = ({ fin, name, mbScore, mbGrade }) => 
 
       {/* === MANAGEMENT === */}
       <div>
-        <SectionHead title="Management Credibility" color={C.blue} metric="Guidance · Pledge · Disclosure" sub="stub" />
-        <div style={{ padding: '4px 0', fontSize: 9, color: C.textMuted, fontStyle: 'italic' }}>
-          Auto-populates from concallClassifierV2 (beat/meet/miss) + AR shareholding scrape.
-        </div>
+        <SectionHead
+          title="Management Credibility"
+          color={C.blue}
+          metric={concallData ? `${concallData.concallCount} concall${concallData.concallCount > 1 ? 's' : ''} analyzed` : 'Concall · Pledge · Disclosure'}
+          sub={concallData ? concallData.label : 'no concall — upload via 🎙 tab'}
+        />
+        {concallData ? (
+          <>
+            {/* Header row: management grade */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', marginBottom: 4 }}>
+              <span style={{ fontSize: 10, color: C.textDim }}>Overall grade</span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: concallData.mgmtColor, letterSpacing: 0.5 }}>
+                {concallData.mgmtGrade}
+              </span>
+            </div>
+
+            {/* 3-cell metric strip: disclosure / tone / specificity */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 6 }}>
+              <div style={{ border: `0.5px solid ${concallData.discColor}`, padding: '4px 6px', borderRadius: 3, background: 'rgba(255,255,255,0.02)' }}>
+                <div style={{ fontSize: 9, color: C.textMuted, letterSpacing: 0.3 }}>DISCLOSURE</div>
+                <div style={{ ...MONO, fontSize: 13, fontWeight: 600, color: concallData.discColor, marginTop: 1 }}>
+                  {concallData.discScore}/5
+                </div>
+                <div style={{ fontSize: 9, color: C.textDim, marginTop: 1 }}>KPIs disclosed</div>
+              </div>
+              <div style={{ border: `0.5px solid ${concallData.toneColor}`, padding: '4px 6px', borderRadius: 3, background: 'rgba(255,255,255,0.02)' }}>
+                <div style={{ fontSize: 9, color: C.textMuted, letterSpacing: 0.3 }}>TONE</div>
+                <div style={{ ...MONO, fontSize: 13, fontWeight: 600, color: concallData.toneColor, marginTop: 1 }}>
+                  {concallData.tone == null ? '—' : `${concallData.tone.toFixed(0)}%`}
+                </div>
+                <div style={{ fontSize: 9, color: C.textDim, marginTop: 1 }}>positive vs cautious</div>
+              </div>
+              <div style={{ border: `0.5px solid ${concallData.specColor}`, padding: '4px 6px', borderRadius: 3, background: 'rgba(255,255,255,0.02)' }}>
+                <div style={{ fontSize: 9, color: C.textMuted, letterSpacing: 0.3 }}>SPECIFICITY</div>
+                <div style={{ ...MONO, fontSize: 13, fontWeight: 600, color: concallData.specColor, marginTop: 1 }}>
+                  {concallData.specTag}
+                </div>
+                <div style={{ fontSize: 9, color: C.textDim, marginTop: 1 }}>numbers + dates</div>
+              </div>
+            </div>
+
+            {/* Disclosed-KPI chips */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
+              {concallData.disclosure.map((d, i) => (
+                <span
+                  key={i}
+                  style={{
+                    ...MONO,
+                    fontSize: 9,
+                    padding: '1px 6px',
+                    borderRadius: 2,
+                    background: d.ok ? 'rgba(29,158,117,0.10)' : 'rgba(124,139,161,0.06)',
+                    color: d.ok ? C.green : C.textMuted,
+                    border: `0.5px solid ${d.ok ? 'rgba(29,158,117,0.35)' : C.divider}`,
+                    letterSpacing: 0.3,
+                  }}
+                >
+                  {d.ok ? '✓' : '·'} {d.k}
+                </span>
+              ))}
+            </div>
+
+            {/* Extracted KPI values */}
+            <div style={{ fontSize: 10, color: C.textDim, lineHeight: 1.7 }}>
+              {concallData.utilization != null && (
+                <span style={{ marginRight: 10 }}>
+                  <b style={{ color: C.text }}>Util:</b> <span style={MONO}>{concallData.utilization}%</span>
+                </span>
+              )}
+              {concallData.capexGuidance != null && (
+                <span style={{ marginRight: 10 }}>
+                  <b style={{ color: C.text }}>Capex:</b> <span style={MONO}>₹{concallData.capexGuidance} Cr</span>
+                </span>
+              )}
+              {concallData.timeline.length > 0 && (
+                <span style={{ marginRight: 10 }}>
+                  <b style={{ color: C.text }}>Timeline:</b> {concallData.timeline.slice(0, 2).join(', ')}
+                </span>
+              )}
+            </div>
+
+            <div style={{ fontSize: 9, color: C.textMuted, fontStyle: 'italic', marginTop: 6 }}>
+              Promoter holding/pledge + guidance-vs-delivery (beat/meet/miss) require AR scrape + multi-quarter concall history — not yet wired.
+            </div>
+          </>
+        ) : (
+          <div style={{ padding: '4px 0', fontSize: 10, color: C.textMuted, fontStyle: 'italic' }}>
+            No concall transcript for this company. Upload via the 🎙 Concall tab to unlock disclosure + tone + specificity scores.
+          </div>
+        )}
       </div>
     </div>
   );
