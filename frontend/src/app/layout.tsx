@@ -3,6 +3,7 @@ import { Providers } from '@/app/providers';
 import '@/app/globals.css';
 import '@/styles/design-system.css';
 import { ToastProvider, CommandPalette } from '@/components/design-system';
+import { BottomNav } from '@/components/bottom-nav';
 
 export const metadata: Metadata = {
   title: 'Market Cockpit — Bloomberg-lite for India + US Markets',
@@ -25,9 +26,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="manifest" href="/manifest.json" />
       </head>
       <body className="font-sans antialiased" style={{
-        // Theme-aware via ThemeContext, which sets --mc-bg / --mc-text on
-        // <html> data-theme. Hardcoded values used as fallback before
-        // hydration so the very first paint isn't a white flash.
         backgroundColor: 'var(--mc-bg, #0A0E1A)',
         color: 'var(--mc-text, #F5F7FA)',
         fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
@@ -36,6 +34,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <ToastProvider>
             <CommandPalette />
             {children}
+            <BottomNav />
           </ToastProvider>
         </Providers>
       </body>
