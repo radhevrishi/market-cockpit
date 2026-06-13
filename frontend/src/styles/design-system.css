@@ -1,0 +1,295 @@
+/* ─────────────────────────────────────────────────────────────────────────
+ *  DESIGN SYSTEM — PATCH 1060 (HANDOFF4)
+ *  Foundation layer that addresses DESIGN_AUDIT.md items #3, #6, #8.
+ *
+ *  Goals
+ *    1. Promote inline hex to CSS variables (#3 — CSS variable system).
+ *    2. Add a real print stylesheet for investor reports (#6).
+ *    3. Add tab fade keyframes for instant-snap tabs (#8).
+ *    4. Hook into lib/design-tokens.ts naming so a future Tailwind token-*
+ *       bridge can use the same names.
+ *
+ *  Backwards-compat note
+ *    The five legacy vars in globals.css (`--background`, `--foreground`,
+ *    `--card`, `--border`, `--accent`) still work. The new vars below are
+ *    *additive*; nothing is renamed. New code SHOULD use the new vars; old
+ *    code can migrate incrementally with the codemod in scripts/.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* ── Surface (background) — three distinct blacks from audit ──────── */
+  --mc-bg-0: #0A0E1A;      /* page bg */
+  --mc-bg-1: #0F1828;      /* card */
+  --mc-bg-2: #111B35;      /* alt card / panel header */
+  --mc-bg-3: #172234;      /* table header */
+  --mc-bg-4: #1A2540;      /* panel header active */
+
+  /* ── Border (four distinct from audit) ────────────────────────────── */
+  --mc-border-0: #1A2540;  /* primary border */
+  --mc-border-1: #1E2D45;  /* tailwind border legacy */
+  --mc-border-2: #2D3E5F;  /* strong border */
+  --mc-border-3: #172234;  /* subtle border */
+
+  /* ── Text (5 levels from audit) ───────────────────────────────────── */
+  --mc-text-0: #F5F7FA;    /* primary */
+  --mc-text-1: #E6EDF3;    /* card text */
+  --mc-text-2: #CBD5E1;    /* secondary */
+  --mc-text-3: #94A3B8;    /* muted */
+  --mc-text-4: #6B7A8D;    /* dimmest */
+
+  /* ── Semantic — direction of move ─────────────────────────────────── */
+  --mc-bullish:   #10B981;
+  --mc-bullish-2: #2EA043;    /* secondary green from audit */
+  --mc-bearish:   #EF4444;
+  --mc-bearish-2: #DC2626;    /* critical red */
+
+  /* ── Severity / status ────────────────────────────────────────────── */
+  --mc-warn: #F59E0B;
+  --mc-err:  #EF4444;
+  --mc-info: #3B82F6;
+
+  /* ── Accent (the three blues + cyan) ──────────────────────────────── */
+  --mc-accent:        #0F7ABF;
+  --mc-accent-light:  #1E8FD4;
+  --mc-accent-dark:   #0A5A99;
+  --mc-cyan:          #22D3EE;
+  --mc-saffron:       #FF9933;
+
+  /* ── State (lifecycle — mirrors lib/design-tokens.ts state.*) ─────── */
+  --mc-state-live:        #22D3EE;
+  --mc-state-warm:        #5EEAD4;
+  --mc-state-stale:       #F59E0B;
+  --mc-state-persistent:  #A78BFA;
+  --mc-state-archived:    #475569;
+
+  /* ── Typography scale ─────────────────────────────────────────────── */
+  --mc-text-h1: 22px;
+  --mc-text-h2: 17px;
+  --mc-text-h3: 14px;
+  --mc-text-body: 13px;
+  --mc-text-sm: 12px;
+  --mc-text-xs: 11px;
+  --mc-text-chip: 10px;
+  --mc-lh-tight: 1.2;
+  --mc-lh-base:  1.45;
+  --mc-lh-loose: 1.6;
+
+  /* ── Spacing 4px base unit (audit #spacing) ───────────────────────── */
+  --mc-space-1: 4px;
+  --mc-space-2: 8px;
+  --mc-space-3: 12px;
+  --mc-space-4: 16px;
+  --mc-space-5: 20px;
+  --mc-space-6: 24px;
+  --mc-space-7: 28px;
+  --mc-space-8: 32px;
+
+  /* ── Radii ────────────────────────────────────────────────────────── */
+  --mc-radius-sm: 4px;
+  --mc-radius:    6px;
+  --mc-radius-lg: 8px;
+  --mc-radius-xl: 12px;
+
+  /* ── Animation durations ──────────────────────────────────────────── */
+  --mc-dur-fast:  120ms;
+  --mc-dur-base:  180ms;
+  --mc-dur-slow:  280ms;
+
+  /* ── Theme bridge (read by layout.tsx fallback styles) ────────────── */
+  --mc-bg:   var(--mc-bg-0);
+  --mc-text: var(--mc-text-0);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ *  Animations — DESIGN_AUDIT #8 (tab fade)
+ * ───────────────────────────────────────────────────────────────────────── */
+@keyframes mc-fade-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes mc-fade-in-fast {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Default-on for any panel that wraps tab content */
+.mc-tab-panel,
+[data-mc-tab-panel] {
+  animation: mc-fade-in var(--mc-dur-base) ease-out;
+}
+
+/* Stagger helper for table-skeleton rows (DESIGN_AUDIT #stagger) */
+@keyframes mc-pulse-soft {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
+}
+.mc-skeleton-row {
+  animation: mc-pulse-soft 1.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+.mc-skeleton-row[data-row="0"] { animation-delay: 0ms;  }
+.mc-skeleton-row[data-row="1"] { animation-delay: 80ms; }
+.mc-skeleton-row[data-row="2"] { animation-delay: 160ms; }
+.mc-skeleton-row[data-row="3"] { animation-delay: 240ms; }
+.mc-skeleton-row[data-row="4"] { animation-delay: 320ms; }
+.mc-skeleton-row[data-row="5"] { animation-delay: 400ms; }
+.mc-skeleton-row[data-row="6"] { animation-delay: 480ms; }
+.mc-skeleton-row[data-row="7"] { animation-delay: 560ms; }
+.mc-skeleton-row[data-row="8"] { animation-delay: 640ms; }
+.mc-skeleton-row[data-row="9"] { animation-delay: 720ms; }
+
+/* Respect users who don't want motion (Bloomberg-trader pref + a11y) */
+@media (prefers-reduced-motion: reduce) {
+  .mc-tab-panel,
+  [data-mc-tab-panel],
+  .mc-skeleton-row {
+    animation: none !important;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ *  Touch targets — DESIGN_AUDIT #responsive
+ *  ≥44px clickable hit-area on small screens. Wrap any small button/icon
+ *  with class="mc-tap" or include the [data-mc-tap] attribute.
+ * ───────────────────────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .mc-tap,
+  [data-mc-tap] {
+    min-height: 44px;
+    min-width: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ *  Toast system styling — works in tandem with Toast.tsx provider
+ * ───────────────────────────────────────────────────────────────────────── */
+.mc-toast-region {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+.mc-toast {
+  pointer-events: auto;
+  min-width: 280px;
+  max-width: 420px;
+  background: var(--mc-bg-2);
+  color: var(--mc-text-1);
+  border: 1px solid var(--mc-border-0);
+  border-left: 3px solid var(--mc-accent);
+  border-radius: var(--mc-radius);
+  padding: 10px 14px;
+  font-size: var(--mc-text-sm);
+  line-height: var(--mc-lh-base);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  animation: mc-fade-in var(--mc-dur-base) ease-out;
+}
+.mc-toast--ok   { border-left-color: var(--mc-bullish); }
+.mc-toast--warn { border-left-color: var(--mc-warn); }
+.mc-toast--err  { border-left-color: var(--mc-err); }
+.mc-toast--info { border-left-color: var(--mc-info); }
+
+/* ─────────────────────────────────────────────────────────────────────────
+ *  Tooltip styling — paired with Tooltip.tsx component
+ * ───────────────────────────────────────────────────────────────────────── */
+.mc-tooltip-trigger {
+  border-bottom: 1px dotted var(--mc-text-4);
+  cursor: help;
+}
+.mc-tooltip-bubble {
+  position: absolute;
+  z-index: 1000;
+  max-width: 320px;
+  background: var(--mc-bg-3);
+  color: var(--mc-text-1);
+  border: 1px solid var(--mc-border-2);
+  border-radius: var(--mc-radius);
+  padding: 8px 10px;
+  font-size: var(--mc-text-xs);
+  line-height: var(--mc-lh-base);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  animation: mc-fade-in-fast var(--mc-dur-fast) ease-out;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ *  PRINT STYLESHEET — DESIGN_AUDIT #6 (high business impact)
+ *  Investor reports, earnings grids, capex tables — print cleanly.
+ * ───────────────────────────────────────────────────────────────────────── */
+@media print {
+  :root {
+    color-scheme: light;
+  }
+  html, body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-size: 11pt;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  /* Hide chrome that doesn't belong on paper */
+  header,
+  nav,
+  aside,
+  .sidebar,
+  .filter-row,
+  [data-mc-no-print],
+  .mc-no-print,
+  button,
+  .mc-toast-region {
+    display: none !important;
+  }
+  /* Make tables print well */
+  table,
+  [role="table"],
+  [data-mc-table] {
+    page-break-inside: avoid;
+    break-inside: avoid;
+    border-collapse: collapse;
+    width: 100%;
+  }
+  thead { display: table-header-group; }
+  tfoot { display: table-footer-group; }
+  th, td {
+    border: 1px solid #888 !important;
+    padding: 4px 6px !important;
+    background: white !important;
+    color: black !important;
+  }
+  th { background: #eeeeee !important; }
+  /* Cards become outlined blocks */
+  .card,
+  [data-mc-card] {
+    background: white !important;
+    color: black !important;
+    border: 1px solid #888 !important;
+    box-shadow: none !important;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  /* Print URLs after links so paper readers can find sources */
+  a[href^="http"]::after {
+    content: " (" attr(href) ")";
+    font-size: 9pt;
+    color: #444;
+  }
+  a { color: #000 !important; text-decoration: underline; }
+  h1 { font-size: 18pt; margin: 0 0 12pt 0; }
+  h2 { font-size: 14pt; margin: 16pt 0 8pt 0; }
+  h3 { font-size: 12pt; margin: 12pt 0 6pt 0; }
+  @page {
+    size: A4 portrait;
+    margin: 1.5cm;
+  }
+  @page :first { margin-top: 1cm; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ *  End design-system.css
+ * ───────────────────────────────────────────────────────────────────────── */
