@@ -5,7 +5,13 @@
 // Secrets: ALERT_SECRET, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID.
 // Endpoints: GET / (help+state) · GET /zones · POST /zones · GET /check (manual run).
 
-const PORTAL = 'https://market-cockpit-production.up.railway.app';
+// 10y-ops Section 7.3: portal URL is env-overridable. When migrating off
+// Railway, set PORTAL_URL via `wrangler secret put PORTAL_URL` — no code change.
+const PORTAL_FALLBACK = 'https://market-cockpit-production.up.railway.app';
+
+function getPortal(env) {
+  return (env && env.PORTAL_URL) || PORTAL_FALLBACK;
+}
 
 function istNowParts() {
   const t = new Date(Date.now() + 5.5 * 3600 * 1000);
@@ -32,9 +38,9 @@ async function priceFromYahoo(symbol) {
   } catch { return null; }
 }
 
-async function priceFromPortal(matchRe) {
+async function priceFromPortal(env, matchRe) {
   try {
-    const r = await fetch(PORTAL + '/api/market/indices', { signal: AbortSignal.timeout(15000) });
+    const r = await fetch(getPortal(env) + '/api/market/indices', { signal: AbortSignal.timeout(15000) });
     if (!r.ok) return null;
     const j = await r.json().catch(() => null);
     const pools = [];
@@ -70,7 +76,7 @@ async function check(env, manual) {
   const cfg = await env.KV.get('alerts:config:india', 'json');
   if (!cfg || !Array.isArray(cfg.zones) || cfg.zones.length === 0) return { skipped: 'no zones configured — POST /zones' };
   const name = cfg.name || 'Nifty Midcap 50';
-  let price = await priceFromPortal(new RegExp(cfg.match || 'midcap', 'i'));
+  let price = await priceFromPortal(env, new RegExp(cfg.match || 'midcap', 'i'));
   let source = 'portal';
   if (!price) { price = await priceFromYahoo(cfg.symbol || '^NSEMDCP50'); source = 'yahoo'; }
   if (!price) {
@@ -92,7 +98,7 @@ async function check(env, manual) {
   }
   if (fired.length) {
     await tg(env, '🎯 BUY ZONE HIT — ' + name + ' at ' + price.toLocaleString('en-IN') + '\n' +
-      fired.map((z) => '• ' + (z.label || z.entry)).join('\n') + '\n' + PORTAL + '/buy-strategy');
+      fired.map((z) => '• ' + (z.label || z.entry)).join('\n') + '\n' + getPortal(env) + '/buy-strategy');
   }
   state.lastPrice = price; state.lastSource = source; state.lastAt = new Date().toISOString();
   await env.KV.put('alerts:state:india', JSON.stringify(state));
