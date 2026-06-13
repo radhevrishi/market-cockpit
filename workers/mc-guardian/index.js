@@ -13,6 +13,17 @@ const PROBES = [
     check: (j) => (((j && j.stocks) || []).length + ((j && j.gainers) || []).length) > 0, desc: 'no stocks in payload' },
   { name: 'in-play', url: BASE + '/api/v1/news/in-play', type: 'json', check: () => true, desc: 'bad response' },
   { name: 'corp-filings', url: BASE + '/api/market/corporate-orders', type: 'json', check: () => true, desc: 'bad response' }, // workers.dev-to-workers.dev fetches are blocked, so probe the portal route that consumes mc-scraper
+  // 10y-ops Section 7.3: cron-runs heartbeat health. Any cron silent for >25h becomes stale_count>0.
+  // The body lists which cron names went stale so the alert is actionable.
+  { name: 'cron-heartbeats', url: BASE + '/api/v1/cron/health', type: 'json',
+    check: (j) => !j || j.stale_count === 0,
+    desc: 'stale cron heartbeats',
+    detail: (j) => {
+      if (!j || !Array.isArray(j.rows)) return '';
+      const stale = j.rows.filter((r) => r.stale).map((r) => r.name);
+      return stale.length ? ' (' + stale.join(', ') + ')' : '';
+    },
+  },
 ];
 
 async function probeOne(p) {
@@ -24,7 +35,7 @@ async function probeOne(p) {
     if (p.type === 'json') {
       const j = await r.json().catch(() => null);
       if (!j) return { name: p.name, ok: false, why: 'invalid JSON', ms };
-      if (p.check && !p.check(j)) return { name: p.name, ok: false, why: p.desc || 'check failed', ms };
+      if (p.check && !p.check(j)) return { name: p.name, ok: false, why: (p.desc || 'check failed') + (p.detail ? p.detail(j) : ''), ms };
     } else {
       const t = await r.text();
       if (p.mustInclude && !t.includes(p.mustInclude)) return { name: p.name, ok: false, why: 'marker missing', ms };
