@@ -21,7 +21,10 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Force-refresh movers (India + USA)
+        env:
+          BASE: ${{ secrets.CRON_BASE_URL }}
         run: |
-          BASE="https://market-cockpit-production.up.railway.app"
+          # 10y-ops: override-able via CRON_BASE_URL repo secret; fallback to live Railway host so workflow never silently breaks if the secret is unset.
+          BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
           curl -fsS --max-time 60 "$BASE/api/market/quotes?market=india&refresh=1" -o /dev/null -w "india %{http_code}\n"
           curl -fsS --max-time 60 "$BASE/api/market/quotes?market=us&refresh=1" -o /dev/null -w "us %{http_code}\n"
