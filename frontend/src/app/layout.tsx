@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
 import { Providers } from '@/app/providers';
 import '@/app/globals.css';
+import '@/styles/design-system.css';
+import { ToastProvider, CommandPalette } from '@/components/design-system';
 
 export const metadata: Metadata = {
   title: 'Market Cockpit — Bloomberg-lite for India + US Markets',
@@ -31,7 +33,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
       }}>
         <Providers>
-          {children}
+          <ToastProvider>
+            <CommandPalette />
+            {children}
+          </ToastProvider>
         </Providers>
       </body>
     </html>
