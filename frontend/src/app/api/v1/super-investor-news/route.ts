@@ -490,7 +490,24 @@ function extractMove(article: NewsArticle, investorName: string): StakeMove | nu
 // ── Handler ──────────────────────────────────────────────────────────────
 export async function GET(request: Request): Promise<NextResponse<ResponseShape>> {
   const { searchParams } = new URL(request.url);
-  const query = (searchParams.get('query') || '').trim();
+  // PATCH 1070 — accept ?investorId=… as an alias for ?query=… so the
+  // freshness-chip + page UI doesn't have to know the investor's display
+  // name. The handler looks the name up from the static SUPER_INVESTORS
+  // roster and uses that as the search query.
+  let query = (searchParams.get('query') || '').trim();
+  if (!query) {
+    const investorId = (searchParams.get('investorId') || '').trim();
+    if (investorId) {
+      try {
+        const { SUPER_INVESTORS } = await import('@/lib/super-investors');
+        const inv = SUPER_INVESTORS.find((x) => x.id === investorId);
+        if (inv) query = inv.newsQuery || inv.name;
+      } catch {
+        // Lib import failure should never block the handler; fall through
+        // to the empty-query response below.
+      }
+    }
+  }
   if (!query) {
     return NextResponse.json({ articles: [], moves: [], sources: [], cached: false, query: '' });
   }
