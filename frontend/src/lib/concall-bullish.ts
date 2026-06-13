@@ -576,7 +576,11 @@ function classifyTier(positive: number, weightedNeg: number, fatal: boolean, mgm
 
 export function scoreBullish(text: string): BullishScore {
   const t = text || '';
-  if (t.length < 40) return emptyScore();
+  // PATCH 1057: raised from 40 → 80. Most LIVE intimation filings (1-2pg meeting
+  // notices) extract only the SUBJECT line when their tiny PDF body can't be
+  // parsed in time. Subject-only is rarely diagnostic — score below 80 chars
+  // returns DATA_PENDING tier so UI can show "data pending" instead of misleading 0.0.
+  if (t.length < 80) return emptyScore('DATA_PENDING');
 
   let raw = 0;
   const tagSet = new Set<string>();

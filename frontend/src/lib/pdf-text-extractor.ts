@@ -13,7 +13,7 @@ import { sanitizePdfText } from '@/lib/pdf-sanitizer';
 const CACHE_TTL = 30 * 24 * 60 * 60;  // 30 days
 const CACHE_KEY_PREFIX = 'pdf-text:v2';   // v2: post-sanitization
 const MAX_TEXT_BYTES = 80_000;        // Cap extracted text size
-const FETCH_TIMEOUT_MS = 7000;        // Per-PDF fetch budget
+const FETCH_TIMEOUT_MS = 10000;       // PATCH 1057: was 7000, raised for slow NSE archive PDFs
 const MAX_PDF_BYTES = 5 * 1024 * 1024; // 5MB cap — skip huge PDFs
 
 export interface ExtractedPdf {
