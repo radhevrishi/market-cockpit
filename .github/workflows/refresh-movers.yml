@@ -21,6 +21,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Force-refresh movers (India + USA)
+        id: refresh
         env:
           BASE: ${{ secrets.CRON_BASE_URL }}
         run: |
@@ -28,3 +29,18 @@ jobs:
           BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
           curl -fsS --max-time 60 "$BASE/api/market/quotes?market=india&refresh=1" -o /dev/null -w "india %{http_code}\n"
           curl -fsS --max-time 60 "$BASE/api/market/quotes?market=us&refresh=1" -o /dev/null -w "us %{http_code}\n"
+
+      - name: Heartbeat (always run)
+        if: always()
+        env:
+          BASE: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          # 10y-ops Section 7.3: POST heartbeat so mc-guardian detects silent stops.
+          # Best-effort — never fail the workflow because the heartbeat endpoint is down.
+          BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
+          OK="true"
+          if [[ "${{ steps.refresh.outcome }}" != "success" ]]; then OK="false"; fi
+          curl -s --max-time 15 -X POST "$BASE/api/v1/cron/heartbeat" \
+            -H 'Content-Type: application/json' \
+            -d "{\"name\":\"refresh-movers\",\"phase\":\"end\",\"ok\":$OK,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -o /dev/null -w "heartbeat %{http_code}\n" || true
