@@ -10,7 +10,41 @@
 //     section dividers, tighter type scale
 // ============================================================
 
-import React from 'react';
+import React, { useMemo } from 'react';
+
+// ── Concall data lookup (reads from localStorage; no parser dependency) ──
+// The capex-tracker stores transcripts at this key as
+// Record<companyName, ConcallEntry[]> where ConcallEntry.extract has
+// utilization / orderBook / capexGuidance / timeline / growthNote / marginNote / demandNote
+const CONCALL_STORAGE_KEY = 'mc:capex-tracker:concalls:v1';
+
+// Tiny tone heuristic — counts positive vs cautious phrasing in raw text
+const POSITIVE_WORDS = [
+  'strong', 'robust', 'healthy', 'accelerating', 'momentum', 'traction',
+  'expanding', 'growth', 'optimistic', 'confident', 'on track', 'target',
+  'beat', 'exceeded', 'record', 'strategic', 'tailwind',
+];
+const CAUTIOUS_WORDS = [
+  'challenging', 'headwind', 'slowdown', 'uncertain', 'delay', 'declined',
+  'weak', 'pressure', 'volatile', 'soft', 'cautious', 'watchful',
+  'monitor', 'subdued', 'muted', 'miss', 'missed',
+];
+function tonePct(text: string): number | null {
+  if (!text) return null;
+  const t = text.toLowerCase();
+  let pos = 0, caut = 0;
+  for (const w of POSITIVE_WORDS) {
+    const re = new RegExp('\\b' + w + '\\b', 'g');
+    pos += (t.match(re) || []).length;
+  }
+  for (const w of CAUTIOUS_WORDS) {
+    const re = new RegExp('\\b' + w + '\\b', 'g');
+    caut += (t.match(re) || []).length;
+  }
+  const total = pos + caut;
+  if (total === 0) return null;
+  return (pos / total) * 100;
+}
 
 type Fin = {
   years: string[];
@@ -250,11 +284,15 @@ const MultibaggerStrips: React.FC<Props> = ({ fin, name, mbScore, mbGrade }) => 
 
   // Balance Sheet Stress
   const ndEbitda = netDebt.map((nd, i) => (ebitda[i] > 0 ? nd / ebitda[i] : 0));
+  // IC: only "n/d" when interest is effectively zero (< 0.05 Cr).
+  // Otherwise compute real coverage even when value is huge (small interest = strong signal, don't hide it).
   const intCovBars: Bar[] = ebit.map((e, i) => {
-    const hasInt = intr[i] > 0.5;
+    const hasInt = intr[i] >= 0.05;
     if (!hasInt) return { year: yrs[i], value: 10, display: 'n/d', color: C.green, live: i === last };
     const v = e / intr[i];
-    return { year: yrs[i], value: Math.min(v, 15), display: v.toFixed(1), color: bandHigh(v, 3, 2), live: i === last };
+    // Display: 1 decimal up to 99, then integer; cap visual at 20 but show real number
+    const disp = v >= 100 ? v.toFixed(0) : v.toFixed(1);
+    return { year: yrs[i], value: Math.min(v, 20), display: disp, color: bandHigh(v, 3, 2), live: i === last };
   });
   const wcDays = sales.map((s, i) => (s > 0 ? ((recv[i] + inv[i]) / s) * 365 : 0));
   // CFO/PAT 3y rolling ratio (e.g. 0.67, 1.05, 2.23) — financial-analyst convention
