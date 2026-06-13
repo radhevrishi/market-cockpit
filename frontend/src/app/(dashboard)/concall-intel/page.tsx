@@ -129,9 +129,65 @@ export default function ConcallIntelPage() {
   return (
     <div style={{ padding: '20px 24px', backgroundColor: '#0A0E1A', minHeight: '100%', color: '#E6EDF3' }}>
       <h1 style={{ fontSize: 22, fontWeight: 900, margin: 0, marginBottom: 6 }}>🎙️ Concall Intelligence v3</h1>
-      <p style={{ fontSize: 12, color: '#94A3B8', margin: 0, marginBottom: 14 }}>
+      <p style={{ fontSize: 12, color: '#94A3B8', margin: 0, marginBottom: 10 }}>
         🔥 LIVE bullish NSE/BSE concall + investor-presentation filings (auto-poll). ⬇️ Plus manual transcript / PDF analyser below.
       </p>
+
+      {/* PATCH 1057 — The Earnings Blockbuster checklist. The 13 dimensions
+          that compound into a multibagger. Use this row as the mental model
+          while reading any concall. Order = importance (Guidance + Margins
+          are the leading indicators; Valuation gates entry; Promoter Quality
+          gates everything). */}
+      <div style={{
+        background: 'linear-gradient(90deg, rgba(46,160,67,0.08) 0%, rgba(245,158,11,0.06) 100%)',
+        border: '1px solid #1A2540',
+        borderLeft: '3px solid #2EA043',
+        borderRadius: 6,
+        padding: '8px 12px',
+        marginBottom: 14,
+        fontSize: 11,
+        color: '#CBD5E1',
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: 6,
+        lineHeight: 1.7,
+      }}>
+        <span style={{ fontWeight: 800, color: '#2EA043', letterSpacing: 0.3 }}>📌 EARNINGS BLOCKBUSTER CHECKLIST</span>
+        <span style={{ color: '#475569', margin: '0 4px' }}>›</span>
+        {[
+          ['Good Guidance', '#2EA043'],
+          ['Margins ↑', '#2EA043'],
+          ['Theme', '#3B82F6'],
+          ['Concall Tone', '#3B82F6'],
+          ['Capex Cycle', '#F59E0B'],
+          ['Pricing Power', '#F59E0B'],
+          ['CFO/PAT ≥ 0.8', '#2EA043'],
+          ['ROCE ≥ 18%', '#2EA043'],
+          ['Low Leverage', '#94A3B8'],
+          ['Moat', '#94A3B8'],
+          ['Valuation Gate', '#EF4444'],
+          ['Promoter Quality', '#94A3B8'],
+          ['Operating Leverage', '#F59E0B'],
+        ].map(([label, color], i) => (
+          <span
+            key={i}
+            style={{
+              border: `1px solid ${color}55`,
+              background: `${color}15`,
+              color: color,
+              padding: '2px 8px',
+              borderRadius: 3,
+              fontWeight: 600,
+              fontSize: 10,
+              letterSpacing: 0.2,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {label}
+          </span>
+        ))}
+      </div>
 
       {/* PATCH 0592 — Tab rail */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, borderBottom: '1px solid #1A2540', paddingBottom: 6 }}>
