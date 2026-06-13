@@ -18,6 +18,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Bust news cache and trigger fresh scrape
+        id: main
         env:
           BASE: ${{ secrets.CRON_BASE_URL }}
           SECRET: ${{ secrets.CRON_SECRET }}
@@ -42,3 +43,17 @@ jobs:
           # 3) Warm the in-play view too
           curl -s -m 60 "$BASE/api/v1/news/in-play" \
             -o /dev/null -w "in-play: %{http_code}\n" || true
+
+      - name: Heartbeat (always run)
+        if: always()
+        env:
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          # 10y-ops Section 7.3: POST heartbeat so mc-guardian detects silent stops.
+          BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
+          OK="true"
+          if [[ "${{ steps.main.outcome }}" != "success" ]]; then OK="false"; fi
+          curl -s --max-time 15 -X POST "$BASE/api/v1/cron/heartbeat" \
+            -H 'Content-Type: application/json' \
+            -d "{\"name\":\"refresh-news-feed\",\"phase\":\"end\",\"ok\":$OK,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -o /dev/null -w "heartbeat %{http_code}\n" || true
