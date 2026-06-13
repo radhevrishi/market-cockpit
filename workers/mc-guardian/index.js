@@ -3,9 +3,12 @@
 // (no repeat spam). State lives in KV. Manual run: GET /run. Status: GET /.
 // Secrets (wrangler secret put ...): TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID.
 
-const BASE = 'https://market-cockpit-production.up.railway.app';
+// 10y-ops Section 7.3: portal URL is env-overridable. When migrating off
+// Railway, set PORTAL_URL via `wrangler secret put PORTAL_URL` — no code change.
+const BASE_FALLBACK = 'https://market-cockpit-production.up.railway.app';
+function getBase(env) { return (env && env.PORTAL_URL) || BASE_FALLBACK; }
 
-const PROBES = [
+function makeProbes(BASE) { return [
   { name: 'home', url: BASE + '/', type: 'html', mustInclude: 'Market Cockpit' },
   { name: 'news-feed', url: BASE + '/api/v1/news?market=all&limit=5', type: 'json',
     check: (j) => (Array.isArray(j) ? j : (j && (j.articles || j.items)) || []).length > 0, desc: 'no articles returned' },
@@ -24,7 +27,7 @@ const PROBES = [
       return stale.length ? ' (' + stale.join(', ') + ')' : '';
     },
   },
-];
+]; }
 
 async function probeOne(p) {
   const t0 = Date.now();
@@ -59,6 +62,8 @@ async function tg(env, text) {
 }
 
 async function run(env) {
+  const BASE = getBase(env);
+  const PROBES = makeProbes(BASE);
   const results = await Promise.all(PROBES.map(probeOne));
   const failures = results.filter((r) => !r.ok);
   const prev = (await env.KV.get('guardian:state', 'json')) || { failing: [] };
