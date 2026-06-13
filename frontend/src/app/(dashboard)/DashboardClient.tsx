@@ -155,6 +155,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/investing-os', label: 'Investing OS', icon: <Compass className="w-4 h-4" /> },
       { href: '/gautam-baid', label: 'Baid Playbook', icon: <BookMarked className="w-4 h-4" /> },
       { href: '/earnings-trigger', label: 'Earnings Trigger', icon: <TrendingUp className="w-4 h-4" /> },
+      { href: '/earnings-trigger-masterclass', label: 'ET Masterclass', icon: <BookMarked className="w-4 h-4" /> },
       { href: '/critical-themes',  label: 'Critical Themes',  icon: <Star className="w-4 h-4" /> },
       { href: '/themes',           label: 'Themes',           icon: <BarChart3 className="w-4 h-4" /> },
       { href: '/news-alerts',  label: 'News Alerts',   icon: <Bell className="w-4 h-4" /> },
