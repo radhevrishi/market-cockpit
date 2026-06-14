@@ -2,6 +2,8 @@
 import ConcallPro from './ConcallPro';
 import { classifyTranscriptV2 } from './concallClassifierV2';
 import MultibaggerStrips from './MultibaggerStrips';
+// PATCH 1080 — Turnaround scoring view (per-company panel).
+import TurnaroundStrips from './TurnaroundStrips';
 import CapexPlaybook from './CapexPlaybook';
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2674,6 +2676,8 @@ export default function CapexTrackerPage() {
                         <tr key={s.name + ':d'}><td colSpan={8} style={{ padding: '0 8px' }}>
                           <div style={{ background: C.panel2, border: '1px solid ' + C.line, borderRadius: 10, padding: 12, margin: '6px 0 10px', display: 'grid', gap: 8 }}>
                             <MultibaggerStrips fin={fin} name={s.name} mbScore={mb.score} mbGrade={mb.grade} />
+                            {/* PATCH 1080 — Turnaround scorecard (consumes the same Fin series) */}
+                            <TurnaroundStrips fin={fin} name={s.name} />
                             <div style={{ fontSize: F.xs, fontWeight: 800, color: C.violet }}>
                               12-COMPONENT MULTIBAGGER BREAKDOWN — measured {mb.available}/100 weight → score <b style={{ color: mb.color }}>{mb.grade === 'NR' ? 'NR' : mb.score}</b>
                               {mb.grade === 'NR' && <span style={{ color: C.dim, fontWeight: 400 }}> · below the 40-weight floor — {fin ? 'series too thin' : 'upload the Screener workbook'}</span>}
