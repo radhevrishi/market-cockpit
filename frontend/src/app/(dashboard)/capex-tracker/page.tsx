@@ -2755,7 +2755,11 @@ export default function CapexTrackerPage() {
           { id: 'watch', label: '👀 WATCH — stabilisation or marginal grade', sub: 'Decline decelerating, no position yet', color: C.amber,
             rows: take((x) => x.ta!.action === 'WATCH') },
           // PATCH 1080c — HEALTHY = cash-generative compounder, not a turnaround setup.
-          { id: 'healthy', label: '🏥 HEALTHY — not a turnaround (cash compounders)', sub: 'No distress episode in the window — different framework (Multibagger DNA) is more relevant', color: C.cyan,
+          // PATCH 1081 NICE-TO-HAVE 2 — split into A/B-grade compounders and C-grade
+          // so the high-quality ones surface first.
+          { id: 'healthy_ab', label: '🏥 HEALTHY-AB — premium cash compounders', sub: 'A or B grade · no distress episode · use Multibagger DNA for entry call', color: C.cyan,
+            rows: take((x) => x.ta!.action === 'HEALTHY' && (x.ta!.grade === 'A' || x.ta!.grade === 'B')) },
+          { id: 'healthy_c', label: '🏥 HEALTHY-C — steady but marginal score', sub: 'C grade · no distress but turnaround framework not the right lens', color: C.cyan,
             rows: take((x) => x.ta!.action === 'HEALTHY') },
           { id: 'avoid', label: '⛔ AVOID — survival gate FAIL', sub: 'Capital impairment risk — thesis dead-on-arrival', color: C.red,
             rows: take((x) => x.ta!.action === 'AVOID') },

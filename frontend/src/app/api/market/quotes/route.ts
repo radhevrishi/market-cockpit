@@ -27,6 +27,33 @@ export async function GET(request: Request) {
   const market = searchParams.get('market') || 'india';
   const index = searchParams.get('index'); // Optional: 'midsmall50' for heatmap
   const _forceFresh = searchParams.get('refresh') === '1' || searchParams.get('nocache') === '1'; // PATCH: manual force-refresh bypasses in-memory response cache
+  // PATCH 1081 — optional field projection. Callers that only need the ribbon's
+  // {symbol, price, change} can pass ?fields=symbol,price,change to shrink the
+  // 1 MB payload to ~80 KB. Backward-compatible: when fields is absent the full
+  // shape is returned. Limit is supported similarly for top-N ranking pages.
+  const fieldsParam = searchParams.get('fields');
+  const limitParam = searchParams.get('limit');
+  const allowFields = fieldsParam ? new Set(fieldsParam.split(',').map((f) => f.trim()).filter(Boolean)) : null;
+  const limitN = limitParam ? Math.max(1, Math.min(2500, Number(limitParam))) : null;
+  function projectAndLimit(data: any): any {
+    if (!data || typeof data !== 'object') return data;
+    let out = data;
+    if (Array.isArray(out)) {
+      out = out.map((row) => allowFields ? Object.fromEntries(Object.entries(row).filter(([k]) => allowFields.has(k))) : row);
+      if (limitN != null) out = out.slice(0, limitN);
+      return out;
+    }
+    // Object shape (e.g. { stocks: [...], gainers: [...], losers: [...], summary: {...} })
+    const projected: any = {};
+    for (const [k, v] of Object.entries(out)) {
+      projected[k] = Array.isArray(v)
+        ? (limitN != null && (k === 'stocks' || k === 'gainers' || k === 'losers') ? v.slice(0, limitN) : v).map((row: any) => allowFields && row && typeof row === 'object'
+            ? Object.fromEntries(Object.entries(row).filter(([rk]) => allowFields.has(rk)))
+            : row)
+        : v;
+    }
+    return projected;
+  }
 
   // Build cache key based on market and index
   const cacheKey = `quotes:${market}:${index || 'all'}`;
@@ -41,8 +68,8 @@ export async function GET(request: Request) {
   // Check response cache
   const cached = responseCache.get(cacheKey);
   if (!_forceFresh && cached && Date.now() - cached.ts < _ttl) {
-    return NextResponse.json(cached.data, {
-      headers: { 'Cache-Control': 's-maxage=30, stale-while-revalidate=60' }, // PATCH 0873 — tightened from 60/300 for live quote freshness
+    return NextResponse.json(projectAndLimit(cached.data), {
+      headers: { 'Cache-Control': 's-maxage=30, stale-while-revalidate=60', 'X-Projection': allowFields || limitN != null ? '1' : '0' },
     });
   }
 
@@ -51,7 +78,7 @@ export async function GET(request: Request) {
   if (__sfExisting) {
     try {
       const __sfShared = await __sfExisting;
-      return NextResponse.json(__sfShared, { headers: { 'Cache-Control': 's-maxage=30, stale-while-revalidate=60' } });
+      return NextResponse.json(projectAndLimit(__sfShared), { headers: { 'Cache-Control': 's-maxage=30, stale-while-revalidate=60' } });
     } catch { /* owner build failed - fall through and build ourselves */ }
   }
   let __sfResolve: (v: any) => void = () => {};
@@ -87,8 +114,8 @@ export async function GET(request: Request) {
       responseCache.delete(oldest[0]);
     }
 
-    return NextResponse.json(responseData, {
-      headers: { 'Cache-Control': 's-maxage=30, stale-while-revalidate=60' }, // PATCH 0873 — tightened from 60/300 for live quote freshness
+    return NextResponse.json(projectAndLimit(responseData), {
+      headers: { 'Cache-Control': 's-maxage=30, stale-while-revalidate=60' },
     });
   } catch (error) {
     __sfReject(error); inFlightBuilds.delete(cacheKey);

@@ -387,11 +387,24 @@ function buildRedFlags(d: DerivedSeries, fin: Fin): RedFlag[] {
     tripped: isFinite(d.equity[li]) && d.equity[li] < 0,
     reason: 'Equity base eroded below zero' });
 
+  // PATCH 1081 NICE-TO-HAVE 3 — IPO detection. If shares jumped > 50% in a SINGLE
+  // year (vs gradual creep over 3y), it's an IPO not dilution. Suppress trap and
+  // surface as informational.
   const sharesArr = (fin.shares || []).map((v) => n(v));
   const liAll = lastFiniteIndex(sharesArr);
+  let ipoYear: string | null = null;
+  for (let i = 1; i <= liAll; i++) {
+    if (isFinite(sharesArr[i]) && isFinite(sharesArr[i - 1]) && sharesArr[i - 1] > 0) {
+      const jump = (sharesArr[i] / sharesArr[i - 1]) - 1;
+      if (jump > 0.5) { ipoYear = fin.years[i] || null; break; }
+    }
+  }
   if (liAll >= 3 && isFinite(sharesArr[liAll - 3]) && sharesArr[liAll - 3] > 0) {
     const dilut = ((sharesArr[liAll] / sharesArr[liAll - 3]) - 1) * 100;
-    flags.push({ id: 'dilution', label: 'Heavy equity dilution', tripped: dilut > 50, reason: 'Share count up > 50% over 3y' });
+    const isIPODilution = ipoYear != null;
+    flags.push({ id: 'dilution', label: isIPODilution ? `Heavy equity dilution (IPO ${ipoYear} — informational)` : 'Heavy equity dilution',
+      tripped: dilut > 50 && !isIPODilution,
+      reason: isIPODilution ? `Single-year share-count jump in ${ipoYear} = IPO, not gradual dilution` : 'Share count up > 50% over 3y (gradual)' });
   } else {
     flags.push({ id: 'dilution', label: 'Heavy equity dilution', tripped: false, reason: 'Share-count history thin' });
   }

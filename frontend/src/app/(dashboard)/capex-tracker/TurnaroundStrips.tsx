@@ -189,6 +189,19 @@ const TurnaroundStrips: React.FC<Props> = ({ fin, name }) => {
               OPM trough · {result.troughYearByMetric.opm} · {result.yearsSinceTrough}y ago
             </div>
           )}
+          {/* PATCH 1081 NICE-TO-HAVE 1 — surface workbook-data gaps to user. */}
+          {(() => {
+            const lastYear = d.years[d.years.length - 1];
+            const gaps: string[] = [];
+            if (!isFinite(d.cfo[d.years.length - 1])) gaps.push('Cash Flow row');
+            if (!isFinite(d.receivableDays[d.years.length - 1])) gaps.push('Receivables');
+            if (!isFinite(d.inventoryDays[d.years.length - 1])) gaps.push('Inventory');
+            return gaps.length > 0 ? (
+              <div style={{ fontSize: 9, marginTop: 2, color: C.amber, fontStyle: 'italic' }}>
+                ⚠ Missing in {lastYear} workbook: {gaps.join(' · ')} — some gates show NA
+              </div>
+            ) : null;
+          })()}
         </div>
       </div>
 
