@@ -5,11 +5,11 @@ import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-// PATCH 1079 — TickerTape ribbon site-wide (HANDOFF §6)
-import { TickerTape } from '@/components/portal-widgets';
   BarChart3, Newspaper, Calendar, Briefcase, Compass, Bell, Settings, LogOut, ChevronDown, BookMarked, Search,
   TrendingUp, Grid3X3, RefreshCw, Filter, Globe, Rocket, Shield, LineChart, Star, Microscope, Factory,
 } from 'lucide-react';
+// PATCH 1079 — TickerTape ribbon site-wide (HANDOFF §6)
+import { TickerTape } from '@/components/portal-widgets';
 import api from '@/lib/api';
 import TickerDrawer from '@/components/TickerDrawer';
 import GlobalSearch from '@/components/GlobalSearch';
