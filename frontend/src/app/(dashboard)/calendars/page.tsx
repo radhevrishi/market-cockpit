@@ -417,7 +417,7 @@ export default function CalendarPage() {
 
                   return (
                     <div key={idx} style={{
-                      backgroundColor: isToday ? '#0F7ABF10' : THEME.background,
+                      backgroundColor: isToday ? 'color-mix(in srgb, var(--mc-accent) 6%, transparent)' : THEME.background,
                       border: isToday ? `2px solid ${THEME.accent}` : `1px solid ${THEME.border}`,
                       borderRadius: '6px',
                       padding: '6px',

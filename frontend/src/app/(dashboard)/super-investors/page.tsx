@@ -480,7 +480,7 @@ function AnalyticsView({ marketScope, onJumpToInvestor }: { marketScope: MarketS
       {data.conc.total > 0 && (
         <div style={{
           padding: '10px 14px', borderRadius: 6,
-          border: `1px solid ${data.conc.top5Pct > 50 ? '#EF444460' : data.conc.top5Pct > 35 ? '#F59E0B60' : '#10B98140'}`,
+          border: `1px solid ${data.conc.top5Pct > 50 ? 'color-mix(in srgb, var(--mc-bearish) 38%, transparent)' : data.conc.top5Pct > 35 ? 'color-mix(in srgb, var(--mc-warn) 38%, transparent)' : 'color-mix(in srgb, var(--mc-bullish) 25%, transparent)'}`,
           backgroundColor: `${data.conc.top5Pct > 50 ? 'var(--mc-bearish)' : data.conc.top5Pct > 35 ? 'var(--mc-warn)' : 'var(--mc-bullish)'}10`,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -1156,7 +1156,7 @@ function InvestorDetail({
       {investor.notes && (
         <div style={{
           marginTop: 20, padding: 12, borderRadius: 6,
-          backgroundColor: '#F59E0B10', border: '1px solid #F59E0B30',
+          backgroundColor: 'color-mix(in srgb, var(--mc-warn) 6%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 19%, transparent)',
           fontSize: 12, color: '#FCD34D', lineHeight: 1.5,
         }}>
           <strong style={{ color: 'var(--mc-warn)' }}>Note · </strong>{investor.notes}
@@ -1186,7 +1186,7 @@ function HoldingsTable({ investor, marketScope }: { investor: SuperInvestor; mar
       {/* PATCH 0486 — Data-quality + disclosure-lag honesty banner */}
       <div style={{
         padding: '10px 12px', marginBottom: 12, borderRadius: 6,
-        border: '1px solid #F59E0B40', backgroundColor: '#F59E0B10',
+        border: '1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)', backgroundColor: 'color-mix(in srgb, var(--mc-warn) 6%, transparent)',
         fontSize: 11, color: '#FCD34D', lineHeight: 1.5,
       }}>
         <strong style={{ color: 'var(--mc-warn)' }}>⚠ Disclosure-lag warning · </strong>
@@ -1413,7 +1413,7 @@ function NewsPanel({ query, investorName }: { query: string; investorName: strin
         <span style={{
           fontSize: 10, fontWeight: 800, letterSpacing: '0.5px',
           color: 'var(--mc-bullish)',
-          border: '1px solid #10B98150', backgroundColor: '#10B98115',
+          border: '1px solid color-mix(in srgb, var(--mc-bullish) 31%, transparent)', backgroundColor: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)',
           padding: '3px 8px', borderRadius: 3,
         }}>
           ● LIVE
@@ -1521,7 +1521,7 @@ function NewsPanel({ query, investorName }: { query: string; investorName: strin
       {error && !loading && (
         <div style={{
           padding: 12, color: 'var(--mc-bearish)', fontSize: 12,
-          border: '1px solid #EF444440', borderRadius: 4, backgroundColor: '#EF444410',
+          border: '1px solid color-mix(in srgb, var(--mc-bearish) 25%, transparent)', borderRadius: 4, backgroundColor: 'color-mix(in srgb, var(--mc-bearish) 6%, transparent)',
         }}>
           Could not load news ({error}). Try the global news feed for fallback coverage.
         </div>

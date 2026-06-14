@@ -35,7 +35,7 @@ function CbBadge({ ticker, convictionSet }: { ticker: string; convictionSet: Set
       title="On Conviction Beats bench (BLOCKBUSTER/STRONG earnings)"
       style={{
         marginLeft: 6, fontSize: 9, fontWeight: 800, color: 'var(--mc-warn)',
-        border: '1px solid #F59E0B60', backgroundColor: 'rgba(245,158,11,0.10)',
+        border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', backgroundColor: 'rgba(245,158,11,0.10)',
         padding: '1px 5px', borderRadius: 3, letterSpacing: 0.3,
       }}
     >🏆 CB</span>
@@ -909,7 +909,7 @@ export default function RerratingPage() {
               style={{
                 padding: '3px 8px', borderRadius: 4, fontSize: 10, fontWeight: 700,
                 border: `1px solid ${universeChoice === 'AUTO' ? 'var(--mc-accent)' : 'var(--mc-bg-4)'}`,
-                background: universeChoice === 'AUTO' ? '#0F7ABF20' : 'transparent',
+                background: universeChoice === 'AUTO' ? 'color-mix(in srgb, var(--mc-accent) 13%, transparent)' : 'transparent',
                 color: universeChoice === 'AUTO' ? '#38A9E8' : 'var(--mc-text-3)',
                 cursor: 'pointer',
               }}
@@ -932,7 +932,7 @@ export default function RerratingPage() {
               const isActive = region === r.v;
               return (
                 <button key={r.v} onClick={() => setRegion(r.v as 'ALL' | 'IN' | 'GLOBAL')}
-                  style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 700, border: isActive ? '1px solid #38A9E860' : '1px solid var(--mc-bg-4)', backgroundColor: isActive ? '#0F7ABF20' : 'transparent', color: isActive ? '#38A9E8' : 'var(--mc-text-4)', cursor: 'pointer' }}>
+                  style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 700, border: isActive ? '1px solid #38A9E860' : '1px solid var(--mc-bg-4)', backgroundColor: isActive ? 'color-mix(in srgb, var(--mc-accent) 13%, transparent)' : 'transparent', color: isActive ? '#38A9E8' : 'var(--mc-text-4)', cursor: 'pointer' }}>
                   {r.label}
                 </button>
               );

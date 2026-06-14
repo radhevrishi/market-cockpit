@@ -280,7 +280,7 @@ export default function TickerSearch({
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--mc-info)' }}>{sug.ticker}</span>
                     {isExisting && (
-                      <span style={{ fontSize: '9px', padding: '1px 6px', borderRadius: '3px', backgroundColor: '#4A5B6C20', color: 'var(--mc-text-4)', fontWeight: 600 }}>ADDED</span>
+                      <span style={{ fontSize: '9px', padding: '1px 6px', borderRadius: '3px', backgroundColor: 'color-mix(in srgb, var(--mc-text-4) 13%, transparent)', color: 'var(--mc-text-4)', fontWeight: 600 }}>ADDED</span>
                     )}
                   </div>
                   <div style={{ fontSize: '12px', color: 'var(--mc-text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

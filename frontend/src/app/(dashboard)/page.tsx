@@ -2079,7 +2079,7 @@ export default function HomeDashboard() {
               {typeof data.staleDataAgeDays === 'number' && data.staleDataAgeDays >= 14 && (
                 <Link href="/multibagger" style={{
                   fontSize: 10, padding: '2px 8px', borderRadius: 4,
-                  background: data.staleDataAgeDays >= 30 ? '#EF444422' : '#F59E0B22',
+                  background: data.staleDataAgeDays >= 30 ? 'color-mix(in srgb, var(--mc-bearish) 13%, transparent)' : 'color-mix(in srgb, var(--mc-warn) 13%, transparent)',
                   border: `1px solid ${data.staleDataAgeDays >= 30 ? 'var(--mc-bearish)' : 'var(--mc-warn)'}60`,
                   color: data.staleDataAgeDays >= 30 ? 'var(--mc-bearish)' : 'var(--mc-warn)',
                   fontWeight: 800, textDecoration: 'none',
@@ -2091,7 +2091,7 @@ export default function HomeDashboard() {
               {data.portfolioPnl && (
                 <Link href="/portfolio" style={{
                   fontSize: 10, padding: '2px 8px', borderRadius: 4,
-                  background: data.portfolioPnl.totalPct >= 0 ? '#10B98122' : '#EF444422',
+                  background: data.portfolioPnl.totalPct >= 0 ? 'color-mix(in srgb, var(--mc-bullish) 13%, transparent)' : 'color-mix(in srgb, var(--mc-bearish) 13%, transparent)',
                   border: `1px solid ${data.portfolioPnl.totalPct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'}60`,
                   color: data.portfolioPnl.totalPct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)',
                   fontWeight: 800, textDecoration: 'none',
@@ -2112,7 +2112,7 @@ export default function HomeDashboard() {
               {playbookCounts && (playbookCounts.H + playbookCounts.W + playbookCounts.E) > 0 && (
                 <Link href="/playbook" style={{
                   fontSize: 10, padding: '2px 8px', borderRadius: 4,
-                  background: playbookCounts.E > 0 ? '#EF444422' : (playbookCounts.W > 0 ? '#F59E0B22' : '#10B98122'),
+                  background: playbookCounts.E > 0 ? 'color-mix(in srgb, var(--mc-bearish) 13%, transparent)' : (playbookCounts.W > 0 ? 'color-mix(in srgb, var(--mc-warn) 13%, transparent)' : 'color-mix(in srgb, var(--mc-bullish) 13%, transparent)'),
                   border: `1px solid ${playbookCounts.E > 0 ? 'var(--mc-bearish)' : (playbookCounts.W > 0 ? 'var(--mc-warn)' : 'var(--mc-bullish)')}60`,
                   color: playbookCounts.E > 0 ? 'var(--mc-bearish)' : (playbookCounts.W > 0 ? 'var(--mc-warn)' : 'var(--mc-bullish)'),
                   fontWeight: 800, textDecoration: 'none', letterSpacing: 0.3,
@@ -2123,7 +2123,7 @@ export default function HomeDashboard() {
               {!playbookCounts && (
                 <Link href="/playbook" style={{
                   fontSize: 10, padding: '2px 8px', borderRadius: 4,
-                  background: '#A78BFA22', border: '1px solid #A78BFA60', color: 'var(--mc-state-persistent)',
+                  background: 'color-mix(in srgb, var(--mc-state-persistent) 13%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-state-persistent) 38%, transparent)', color: 'var(--mc-state-persistent)',
                   fontWeight: 800, textDecoration: 'none', letterSpacing: 0.3,
                 }} title="Open Playbook → set up portfolio state machine (HOLD/WATCH/EXIT) and exit rules">
                   📖 PLAYBOOK — set up state machine
@@ -2133,7 +2133,7 @@ export default function HomeDashboard() {
               {data.sectorRotation?.topSector && data.sectorRotation?.bottomSector && (
                 <Link href="/movers" style={{
                   fontSize: 10, padding: '2px 8px', borderRadius: 4,
-                  background: '#22D3EE15', border: '1px solid #22D3EE40', color: 'var(--mc-cyan)',
+                  background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', color: 'var(--mc-cyan)',
                   fontWeight: 700, textDecoration: 'none',
                 }}>
                   🔄 {data.sectorRotation.topSector.sector} {data.sectorRotation.topSector.pct >= 0 ? '+' : ''}{data.sectorRotation.topSector.pct.toFixed(1)}% leading · {data.sectorRotation.bottomSector.sector} {data.sectorRotation.bottomSector.pct.toFixed(1)}% lagging
@@ -2143,7 +2143,7 @@ export default function HomeDashboard() {
               {data.alphaFeedback && (
                 <span style={{
                   fontSize: 10, padding: '2px 8px', borderRadius: 4,
-                  background: '#A78BFA15', border: '1px solid #A78BFA40', color: 'var(--mc-state-persistent)',
+                  background: 'color-mix(in srgb, var(--mc-state-persistent) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-state-persistent) 25%, transparent)', color: 'var(--mc-state-persistent)',
                   fontWeight: 700,
                 }} title={`${data.alphaFeedback.held} of ${data.alphaFeedback.sample} A-grade names held A grade across uploads`}>
                   🔁 Engine consistency: avg {data.alphaFeedback.avgScoreBefore.toFixed(0)} → {data.alphaFeedback.avgScoreNow.toFixed(0)} ({data.alphaFeedback.held}/{data.alphaFeedback.sample} held A)
@@ -2286,7 +2286,7 @@ export default function HomeDashboard() {
               return (
                 <Link href="/heatmap" style={{
                   fontSize: 12, padding: '4px 10px', borderRadius: 4,
-                  background: '#22D3EE15', border: '1px solid #22D3EE60', color: 'var(--mc-cyan)',
+                  background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)',
                   fontWeight: 800, textDecoration: 'none',
                 }}>🗺 HEATMAP · loading sectors…</Link>
               );
@@ -2295,7 +2295,7 @@ export default function HomeDashboard() {
               return (
                 <Link href="/heatmap" style={{
                   fontSize: 12, padding: '4px 10px', borderRadius: 4,
-                  background: '#22D3EE15', border: '1px solid #22D3EE60', color: 'var(--mc-cyan)',
+                  background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)',
                   fontWeight: 800, textDecoration: 'none',
                 }}>🗺 HEATMAP · no sector data · Open →</Link>
               );
@@ -2304,7 +2304,7 @@ export default function HomeDashboard() {
             return (
               <Link href="/heatmap" style={{
                 fontSize: 12, padding: '4px 10px', borderRadius: 4,
-                background: '#22D3EE15', border: '1px solid #22D3EE60', color: 'var(--mc-cyan)',
+                background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)',
                 fontWeight: 800, textDecoration: 'none',
               }} title="Open full Sector Heatmap →">
                 🗺 HEATMAP · {top3.map(s => `${s.sector} ${s.pct >= 0 ? '+' : ''}${s.pct.toFixed(1)}%`).join(' · ')}
@@ -2344,7 +2344,7 @@ export default function HomeDashboard() {
               return (
                 <Link href="/watchlists?tab=conviction" style={{
                   fontSize: 12, padding: '4px 10px', borderRadius: 4,
-                  background: '#F59E0B15', border: '1px solid #F59E0B60', color: 'var(--mc-warn)',
+                  background: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', color: 'var(--mc-warn)',
                   fontWeight: 800, textDecoration: 'none',
                 }}>🏆 BEATS · loading bench…</Link>
               );
@@ -2353,7 +2353,7 @@ export default function HomeDashboard() {
               return (
                 <Link href="/earnings-opportunities" style={{
                   fontSize: 12, padding: '4px 10px', borderRadius: 4,
-                  background: '#F59E0B15', border: '1px solid #F59E0B60', color: 'var(--mc-warn)',
+                  background: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', color: 'var(--mc-warn)',
                   fontWeight: 800, textDecoration: 'none',
                 }}>🏆 BEATS · empty bench · populate from EO →</Link>
               );
@@ -2363,7 +2363,7 @@ export default function HomeDashboard() {
               return (
                 <Link href="/watchlists?tab=conviction" style={{
                   fontSize: 12, padding: '4px 10px', borderRadius: 4,
-                  background: '#F59E0B15', border: '1px solid #F59E0B60', color: 'var(--mc-warn)',
+                  background: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', color: 'var(--mc-warn)',
                   fontWeight: 800, textDecoration: 'none',
                 }} title={`${cb.length} names on bench · no live quotes (NSE closed?)`}>
                   🏆 BEATS ({cb.length}) · no live quotes · {cb.slice(0, 4).map(c => c.ticker).join(' · ')}
@@ -2374,7 +2374,7 @@ export default function HomeDashboard() {
             return (
               <Link href="/watchlists?tab=conviction" style={{
                 fontSize: 12, padding: '4px 10px', borderRadius: 4,
-                background: '#F59E0B15', border: '1px solid #F59E0B60', color: 'var(--mc-warn)',
+                background: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', color: 'var(--mc-warn)',
                 fontWeight: 800, textDecoration: 'none',
               }} title={`${cb.length} names on bench · sorted by today's abs move`}>
                 🏆 BEATS ({cb.length}) · {top4.map(c => `${c.ticker} ${(c.changePercent as number) >= 0 ? '+' : ''}${(c.changePercent as number).toFixed(1)}%`).join(' · ')}
@@ -2412,7 +2412,7 @@ export default function HomeDashboard() {
                     fontSize: 10,
                     padding: '3px 9px',
                     border: isActive ? '1px solid var(--mc-cyan)' : '1px solid var(--mc-bg-4)',
-                    background: isActive ? '#22D3EE22' : 'transparent',
+                    background: isActive ? 'color-mix(in srgb, var(--mc-cyan) 13%, transparent)' : 'transparent',
                     color: isActive ? 'var(--mc-cyan)' : TEXT,
                     fontWeight: 700,
                     letterSpacing: '0.3px',
@@ -2426,7 +2426,7 @@ export default function HomeDashboard() {
                   <button
                     onClick={() => removeCustomLens(l.id)}
                     title="Delete this lens"
-                    style={{ fontSize: 10, padding: '3px 5px', border: '1px solid #EF444440', background: 'transparent', color: 'var(--mc-bearish)', borderRadius: 4, cursor: 'pointer' }}
+                    style={{ fontSize: 10, padding: '3px 5px', border: '1px solid color-mix(in srgb, var(--mc-bearish) 25%, transparent)', background: 'transparent', color: 'var(--mc-bearish)', borderRadius: 4, cursor: 'pointer' }}
                   >×</button>
                 )}
               </span>
@@ -2434,7 +2434,7 @@ export default function HomeDashboard() {
           })}
           <button
             onClick={addCustomLens}
-            style={{ fontSize: 10, padding: '3px 9px', border: '1px dashed #22D3EE60', background: 'transparent', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+            style={{ fontSize: 10, padding: '3px 9px', border: '1px dashed color-mix(in srgb, var(--mc-cyan) 38%, transparent)', background: 'transparent', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
             title="Add a custom sector-keyword lens"
           >+ NEW LENS</button>
           {activeLens.mode !== 'all' && (
@@ -2475,14 +2475,14 @@ export default function HomeDashboard() {
               )}
               <button
                 onClick={() => { window.location.reload(); }}
-                style={{ marginTop: 8, fontSize: 10, padding: '4px 10px', border: '1px solid #22D3EE60', background: 'transparent', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+                style={{ marginTop: 8, fontSize: 10, padding: '4px 10px', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', background: 'transparent', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
               >
                 🔄 RETRY
               </button>
             </div>
           )}
           {showInPlay && !netLoading.inPlay && data.inPlay.length > 0 && data.inPlayDiag?.fellBack && (
-            <div style={{ fontSize: 10, color: 'var(--mc-warn)', marginTop: 6, padding: '4px 8px', background: '#F59E0B15', border: '1px solid #F59E0B40', borderRadius: 4 }}>
+            <div style={{ fontSize: 10, color: 'var(--mc-warn)', marginTop: 6, padding: '4px 8px', background: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)', borderRadius: 4 }}>
               ⚠ Only structural alerts available in last 24h — showing them anyway so the feed isn't empty.
             </div>
           )}
@@ -2558,7 +2558,7 @@ export default function HomeDashboard() {
                   />
                 ) : (
                   /* PATCH 1063 — never silently hide India block; show CTA when empty so user can fix */
-                  <div style={{ ...cardStyle, borderColor: '#10B98140', marginBottom: 12 }}>
+                  <div style={{ ...cardStyle, borderColor: 'color-mix(in srgb, var(--mc-bullish) 25%, transparent)', marginBottom: 12 }}>
                     <div style={{ fontSize: 13, color: TEXT, fontWeight: 800, marginBottom: 4 }}>🎯 TIER 1 — IMMEDIATE ACTION · 🇮🇳 INDIA (0)</div>
                     <div style={{ fontSize: 11, color: DIM, lineHeight: 1.5 }}>
                       No India scored data in this browser. Upload your India Multibagger CSV to populate this block.
@@ -2582,7 +2582,7 @@ export default function HomeDashboard() {
             );
           })()
         ) : (
-          <div style={{ ...cardStyle, borderColor: '#22D3EE40' }}>
+          <div style={{ ...cardStyle, borderColor: 'color-mix(in srgb, var(--mc-cyan) 25%, transparent)' }}>
             <div style={{ fontSize: 13, color: TEXT, fontWeight: 700, marginBottom: 4 }}>🎯 Tier 1 — Immediate Action</div>
             <div style={{ fontSize: 11, color: DIM, lineHeight: 1.5 }}>
               No candidates yet. Upload a Screener.in CSV on Multibagger and add names to Conviction Beats from
@@ -2616,14 +2616,14 @@ export default function HomeDashboard() {
           // state message in place of the candidate grid.
           <div style={{
             ...cardStyle,
-            borderColor: '#F59E0B70',
-            background: 'linear-gradient(180deg, #F59E0B14 0%, transparent 100%)',
+            borderColor: 'color-mix(in srgb, var(--mc-warn) 44%, transparent)',
+            background: 'linear-gradient(180deg, color-mix(in srgb, var(--mc-warn) 8%, transparent) 0%, transparent 100%)',
           }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
               <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--mc-warn)', letterSpacing: '0.4px' }}>
                 🎯 TIER 1 — TURNAROUND BUY-ZONE (0)
               </span>
-              <span style={{ fontSize: 10, color: 'var(--mc-warn)', background: '#F59E0B22', padding: '2px 7px', borderRadius: 3, fontWeight: 700 }}>
+              <span style={{ fontSize: 10, color: 'var(--mc-warn)', background: 'color-mix(in srgb, var(--mc-warn) 13%, transparent)', padding: '2px 7px', borderRadius: 3, fontWeight: 700 }}>
                 ACTION NOW
               </span>
               <Link href="/multibagger?tab=turnaround" style={{ fontSize: 11, color: 'var(--mc-warn)', textDecoration: 'none', marginLeft: 'auto' }}>Open →</Link>
@@ -2634,8 +2634,8 @@ export default function HomeDashboard() {
             <div style={{
               padding: '14px 16px',
               borderRadius: 6,
-              border: '1px solid #F59E0B40',
-              background: '#F59E0B10',
+              border: '1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)',
+              background: 'color-mix(in srgb, var(--mc-warn) 6%, transparent)',
               fontSize: 12,
               color: TEXT,
               lineHeight: 1.55,
@@ -2744,7 +2744,7 @@ export default function HomeDashboard() {
                         {tix.length > 0 && (
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
                             {tix.map((t: string) => (
-                              <span key={t} style={{ fontSize: 9, color: 'var(--mc-cyan)', background: '#22D3EE15', padding: '1px 5px', borderRadius: 3, fontWeight: 600 }}>
+                              <span key={t} style={{ fontSize: 9, color: 'var(--mc-cyan)', background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', padding: '1px 5px', borderRadius: 3, fontWeight: 600 }}>
                                 {t}
                               </span>
                             ))}
@@ -2884,7 +2884,7 @@ export default function HomeDashboard() {
             ) : data.stratVis.length === 0 ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic', lineHeight: 1.5 }}>
                 No transformational news in window. Backend may have cold-started.
-                <button onClick={() => window.location.reload()} style={{ marginLeft: 8, fontSize: 10, padding: '3px 9px', background: 'transparent', border: '1px solid #22D3EE60', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}>
+                <button onClick={() => window.location.reload()} style={{ marginLeft: 8, fontSize: 10, padding: '3px 9px', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}>
                   🔄 RETRY
                 </button>
               </div>
@@ -3014,7 +3014,7 @@ export default function HomeDashboard() {
               return (
                 <div style={{
                   fontSize: 10, color: 'var(--mc-warn)', padding: '4px 6px',
-                  background: '#F59E0B11', border: '1px solid #F59E0B22',
+                  background: 'color-mix(in srgb, var(--mc-warn) 7%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 13%, transparent)',
                   borderRadius: 3, marginBottom: 6, lineHeight: 1.4,
                 }}>
                   ⚠ Some scans incomplete · confidence reduced for movers without confirmed triggers
@@ -3285,7 +3285,7 @@ export default function HomeDashboard() {
                     {mq?.liquidityRisk === 'HIGH' && (
                       <span style={{
                         fontSize: 8, fontWeight: 800, padding: '1px 4px', borderRadius: 2, letterSpacing: 0.2, flexShrink: 0,
-                        background: '#EF444422', color: 'var(--mc-bearish)',
+                        background: 'color-mix(in srgb, var(--mc-bearish) 13%, transparent)', color: 'var(--mc-bearish)',
                       }} title="Thin turnover — not tradable in real size">
                         ⌀
                       </span>
@@ -3553,16 +3553,16 @@ export default function HomeDashboard() {
                       {/* PATCH 0902 — FILED vs REPORTED replaces DIRECT vs NEWS for clarity */}
                       {ev.tradeability === 'DIRECT_TRADE' ? (
                         <span title="Filed event — exchange-disclosed structured filing (OFS / buyback / open offer / scheme)"
-                          style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, letterSpacing: 0.4, background: '#10B98122', color: 'var(--mc-bullish)', flexShrink: 0 }}>
+                          style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, letterSpacing: 0.4, background: 'color-mix(in srgb, var(--mc-bullish) 13%, transparent)', color: 'var(--mc-bullish)', flexShrink: 0 }}>
                           FILED
                         </span>
                       ) : (
                         <span title="Reported in news — verify against filing before sizing"
-                          style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, letterSpacing: 0.4, background: '#A78BFA22', color: 'var(--mc-state-persistent)', flexShrink: 0 }}>
+                          style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, letterSpacing: 0.4, background: 'color-mix(in srgb, var(--mc-state-persistent) 13%, transparent)', color: 'var(--mc-state-persistent)', flexShrink: 0 }}>
                           REPORTED
                         </span>
                       )}
-                      <span style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, flexShrink: 0, color: market === 'US' ? '#F87171' : 'var(--mc-cyan)', background: market === 'US' ? '#F8717122' : '#22D3EE22' }}>
+                      <span style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, flexShrink: 0, color: market === 'US' ? '#F87171' : 'var(--mc-cyan)', background: market === 'US' ? '#F8717122' : 'color-mix(in srgb, var(--mc-cyan) 13%, transparent)' }}>
                         {market === 'US' ? '🇺🇸 US' : '🇮🇳 IN'}
                       </span>
                       <span style={{ fontSize: 12, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 78, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -3577,7 +3577,7 @@ export default function HomeDashboard() {
                       {dealValue && (
                         <span style={{
                           fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 3, letterSpacing: 0.2, flexShrink: 0,
-                          color: 'var(--mc-warn)', background: '#FBBF2415', fontFamily: 'ui-monospace, monospace',
+                          color: 'var(--mc-warn)', background: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', fontFamily: 'ui-monospace, monospace',
                         }} title="Deal value extracted from headline">
                           {dealValue}
                         </span>
@@ -3589,7 +3589,7 @@ export default function HomeDashboard() {
                         {headline}
                       </span>
                       {ev.expected_alpha && (
-                        <span style={{ fontSize: 9, color: 'var(--mc-bullish)', fontWeight: 700, padding: '2px 5px', borderRadius: 3, background: '#10B98122', flexShrink: 0 }}>
+                        <span style={{ fontSize: 9, color: 'var(--mc-bullish)', fontWeight: 700, padding: '2px 5px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-bullish) 13%, transparent)', flexShrink: 0 }}>
                           {ev.expected_alpha}
                         </span>
                       )}
@@ -3774,11 +3774,11 @@ export default function HomeDashboard() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {tt.india.map((t) => (
                       <Link key={t.id} href={`/critical-themes`} style={{ textDecoration: 'none', color: 'inherit' }}>
-                        <div style={{ background: 'var(--mc-bg-4)', border: '1px solid #22D3EE30', borderRadius: 5, padding: '7px 9px' }}>
+                        <div style={{ background: 'var(--mc-bg-4)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 19%, transparent)', borderRadius: 5, padding: '7px 9px' }}>
                           <div style={{ fontSize: 12, fontWeight: 700, color: TEXT, marginBottom: 3 }}>{t.emoji} {t.name}</div>
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
                             {t.leaders.slice(0, 4).map((l) => (
-                              <span key={l.ticker} style={{ fontSize: 9, color: 'var(--mc-cyan)', background: '#22D3EE15', padding: '1px 5px', borderRadius: 3, fontWeight: 600 }}>{l.ticker}</span>
+                              <span key={l.ticker} style={{ fontSize: 9, color: 'var(--mc-cyan)', background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', padding: '1px 5px', borderRadius: 3, fontWeight: 600 }}>{l.ticker}</span>
                             ))}
                           </div>
                         </div>
@@ -3864,7 +3864,7 @@ export default function HomeDashboard() {
                   {lensedTier3.map((a, i) => (
                     <Link key={a.symbol + i} href={a.href} style={{
                       display: 'flex', alignItems: 'flex-start', gap: 6, padding: '6px 8px', borderRadius: 4,
-                      border: '1px solid #94A3B830', background: '#94A3B808', textDecoration: 'none',
+                      border: '1px solid color-mix(in srgb, var(--mc-text-3) 19%, transparent)', background: 'color-mix(in srgb, var(--mc-text-3) 3%, transparent)', textDecoration: 'none',
                     }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 11, color: TEXT, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.company || a.symbol}</div>
@@ -4037,7 +4037,7 @@ function DecisionTierBlock({
                     {a.company || a.symbol}
                     {/* PATCH 0617 — market flag chip (IN/US) */}
                     {a.market && (
-                      <span style={{ fontSize: 9, fontWeight: 800, padding: '1px 5px', borderRadius: 3, color: a.market === 'US' ? '#F87171' : 'var(--mc-cyan)', background: a.market === 'US' ? '#F8717122' : '#22D3EE22' }}>
+                      <span style={{ fontSize: 9, fontWeight: 800, padding: '1px 5px', borderRadius: 3, color: a.market === 'US' ? '#F87171' : 'var(--mc-cyan)', background: a.market === 'US' ? '#F8717122' : 'color-mix(in srgb, var(--mc-cyan) 13%, transparent)' }}>
                         {a.market === 'US' ? '🇺🇸 US' : '🇮🇳 IN'}
                       </span>
                     )}
@@ -4056,7 +4056,7 @@ function DecisionTierBlock({
                   <span title="Cross-confirmed: on Conviction Beats bench" style={{ fontSize: 12, color: 'var(--mc-warn)', fontWeight: 800 }}>★</span>
                 )}
                 {tier === 1 && a.cbConfirmed === false && (
-                  <span title="A-grade top-up: not yet on Conviction Beats bench" style={{ fontSize: 10, color: 'var(--mc-text-3)', background: '#94A3B822', padding: '1px 5px', borderRadius: 3, fontWeight: 700 }}>+</span>
+                  <span title="A-grade top-up: not yet on Conviction Beats bench" style={{ fontSize: 10, color: 'var(--mc-text-3)', background: 'color-mix(in srgb, var(--mc-text-3) 13%, transparent)', padding: '1px 5px', borderRadius: 3, fontWeight: 700 }}>+</span>
                 )}
               </div>
               {!condensed && (
@@ -4189,7 +4189,7 @@ function HomeValuationQuickCheck() {
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
         <button onClick={autoFill} disabled={loading} style={{
-          fontSize: 10, padding: '4px 10px', background: '#10B98115', border: '1px solid #10B98150',
+          fontSize: 10, padding: '4px 10px', background: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 31%, transparent)',
           color: 'var(--mc-bullish)', borderRadius: 3, cursor: loading ? 'wait' : 'pointer', fontWeight: 800,
         }}>
           {loading ? '⏳ FETCHING…' : '🔄 AUTO-FILL FROM LIVE QUOTE'}

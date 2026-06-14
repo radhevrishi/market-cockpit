@@ -680,7 +680,7 @@ export default function ScreenerPage() {
                   width: '100%', padding: '8px 12px',
                   background: convictionOnly ? 'rgba(245,158,11,0.10)' : THEME.background,
                   color: convictionOnly ? 'var(--mc-warn)' : THEME.textPrimary,
-                  border: `1px solid ${convictionOnly ? '#F59E0B60' : THEME.border}`,
+                  border: `1px solid ${convictionOnly ? 'color-mix(in srgb, var(--mc-warn) 38%, transparent)' : THEME.border}`,
                   borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 700,
                   letterSpacing: '0.4px',
                 }}
@@ -953,7 +953,7 @@ export default function ScreenerPage() {
                                   title="On Conviction Beats bench (BLOCKBUSTER/STRONG earnings)"
                                   style={{
                                     fontSize: 9, fontWeight: 800, color: 'var(--mc-warn)',
-                                    border: '1px solid #F59E0B60',
+                                    border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)',
                                     backgroundColor: 'rgba(245,158,11,0.10)',
                                     padding: '1px 5px', borderRadius: 3, letterSpacing: 0.3,
                                   }}
@@ -1137,7 +1137,7 @@ export default function ScreenerPage() {
                                   title="On Conviction Beats bench (BLOCKBUSTER/STRONG earnings)"
                                   style={{
                                     fontSize: 9, fontWeight: 800, color: 'var(--mc-warn)',
-                                    border: '1px solid #F59E0B60',
+                                    border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)',
                                     backgroundColor: 'rgba(245,158,11,0.10)',
                                     padding: '1px 5px', borderRadius: 3, letterSpacing: 0.3,
                                   }}

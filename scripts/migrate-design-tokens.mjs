@@ -108,8 +108,13 @@ function rewriteRange(src, conflicts, stats) {
     const target = HEX_TO_VAR.get(key);
     if (!target) return match;
     if (alpha) {
-      conflicts.push({ hex: key, alpha, suggestion: target, full: `${hex6}${alpha}` });
-      return match;
+      // PATCH 1081d — alpha-channel migration via color-mix(). Modern browsers
+      // (Chrome 111+, Safari 16.4+, Firefox 113+) support this. Converts the
+      // hex+alpha pair to color-mix(in srgb, var(--mc-...) NN%, transparent).
+      const a255 = parseInt(alpha, 16);
+      const pct = Math.round((a255 / 255) * 100);
+      stats.set(key, (stats.get(key) || 0) + 1);
+      return `color-mix(in srgb, ${target} ${pct}%, transparent)`;
     }
     stats.set(key, (stats.get(key) || 0) + 1);
     return target;

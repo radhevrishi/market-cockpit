@@ -98,7 +98,7 @@ class StockSheetErrorBoundary extends Component<{ children: ReactNode }, { hasEr
           <div style={{ fontSize: 11, color: 'var(--mc-text-3)', marginBottom: 8 }}>
             One section returned an unexpected payload shape. The header above is still usable; try a different ticker or click reset.
           </div>
-          <button onClick={this.reset} style={{ padding: '4px 12px', fontSize: 11, fontWeight: 700, borderRadius: 4, border: '1px solid #EF444460', backgroundColor: '#EF444420', color: 'var(--mc-bearish)', cursor: 'pointer' }}>
+          <button onClick={this.reset} style={{ padding: '4px 12px', fontSize: 11, fontWeight: 700, borderRadius: 4, border: '1px solid color-mix(in srgb, var(--mc-bearish) 38%, transparent)', backgroundColor: 'color-mix(in srgb, var(--mc-bearish) 13%, transparent)', color: 'var(--mc-bearish)', cursor: 'pointer' }}>
             Reset
           </button>
         </div>
@@ -1017,15 +1017,15 @@ export default function StockSheetPage() {
               }}
             />
           </div>
-          <button type="submit" style={{ padding: '10px 18px', borderRadius: 8, border: '1px solid #22D3EE60', backgroundColor: '#22D3EE20', color: 'var(--mc-cyan)', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+          <button type="submit" style={{ padding: '10px 18px', borderRadius: 8, border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', backgroundColor: 'color-mix(in srgb, var(--mc-cyan) 13%, transparent)', color: 'var(--mc-cyan)', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
             Run sheet
           </button>
           {activeTicker && (
             <>
-              <button type="button" onClick={handleSave} style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid #10B98160', backgroundColor: '#10B98120', color: 'var(--mc-bullish)', fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <button type="button" onClick={handleSave} style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid color-mix(in srgb, var(--mc-bullish) 38%, transparent)', backgroundColor: 'color-mix(in srgb, var(--mc-bullish) 13%, transparent)', color: 'var(--mc-bullish)', fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                 <Save style={{ width: 14, height: 14 }} />Save
               </button>
-              <button type="button" onClick={handleDelete} style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid #EF444460', backgroundColor: '#EF444420', color: 'var(--mc-bearish)', fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <button type="button" onClick={handleDelete} style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid color-mix(in srgb, var(--mc-bearish) 38%, transparent)', backgroundColor: 'color-mix(in srgb, var(--mc-bearish) 13%, transparent)', color: 'var(--mc-bearish)', fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                 <Trash2 style={{ width: 14, height: 14 }} />Delete
               </button>
               <button type="button" onClick={() => window.print()} style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid var(--mc-bg-4)', backgroundColor: 'transparent', color: 'var(--mc-text-3)', fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -1040,7 +1040,7 @@ export default function StockSheetPage() {
             <span style={{ fontSize: 11, color: 'var(--mc-text-4)' }}>SAVED:</span>
             {savedList.map((t) => (
               <button key={t} onClick={() => { setTickerInput(t); setActiveTicker(t); }}
-                style={{ padding: '3px 10px', borderRadius: 4, border: t === activeTicker ? '1px solid #22D3EE60' : '1px solid var(--mc-bg-4)', backgroundColor: t === activeTicker ? '#22D3EE15' : 'var(--mc-bg-0)', color: t === activeTicker ? 'var(--mc-cyan)' : 'var(--mc-text-3)', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                style={{ padding: '3px 10px', borderRadius: 4, border: t === activeTicker ? '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)' : '1px solid var(--mc-bg-4)', backgroundColor: t === activeTicker ? 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)' : 'var(--mc-bg-0)', color: t === activeTicker ? 'var(--mc-cyan)' : 'var(--mc-text-3)', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
                 {t}
               </button>
             ))}
@@ -1098,7 +1098,7 @@ export default function StockSheetPage() {
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {recentList.map((t) => (
                     <button key={t} onClick={() => { setTickerInput(t); setActiveTicker(t); }}
-                      style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid #22D3EE40', backgroundColor: '#22D3EE15', color: 'var(--mc-cyan)', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                      style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', backgroundColor: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', color: 'var(--mc-cyan)', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
                       {t}
                     </button>
                   ))}
@@ -1113,7 +1113,7 @@ export default function StockSheetPage() {
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {savedList.map((t) => (
                     <button key={t} onClick={() => { setTickerInput(t); setActiveTicker(t); }}
-                      style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid #10B98140', backgroundColor: '#10B98115', color: 'var(--mc-bullish)', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                      style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid color-mix(in srgb, var(--mc-bullish) 25%, transparent)', backgroundColor: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', color: 'var(--mc-bullish)', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
                       {t}
                     </button>
                   ))}
@@ -1144,7 +1144,7 @@ export default function StockSheetPage() {
               <span style={{ fontSize: 22, fontWeight: 900, color: 'var(--mc-text-0)', letterSpacing: '0.5px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
                 {activeTicker}
               </span>
-              <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 4, backgroundColor: region === 'IN' ? '#FBBF2420' : '#22D3EE20', color: region === 'IN' ? 'var(--mc-warn)' : 'var(--mc-cyan)', border: `1px solid ${region === 'IN' ? '#FBBF2440' : '#22D3EE40'}` }}>
+              <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 4, backgroundColor: region === 'IN' ? 'color-mix(in srgb, var(--mc-warn) 13%, transparent)' : 'color-mix(in srgb, var(--mc-cyan) 13%, transparent)', color: region === 'IN' ? 'var(--mc-warn)' : 'var(--mc-cyan)', border: `1px solid ${region === 'IN' ? 'color-mix(in srgb, var(--mc-warn) 25%, transparent)' : 'color-mix(in srgb, var(--mc-cyan) 25%, transparent)'}` }}>
                 {region === 'IN' ? '🇮🇳 India' : '🌐 Global'}
               </span>
               {(() => {
@@ -1176,7 +1176,7 @@ export default function StockSheetPage() {
               <div style={{ width: `${score.alignment_pct}%`, height: '100%', backgroundColor: VERDICT_COLOR[score.verdict], transition: 'width 0.3s' }} />
             </div>
             {score.disqualifiers.length > 0 && (
-              <div style={{ marginTop: 10, padding: 10, borderRadius: 6, backgroundColor: '#EF444415', border: '1px solid #EF444440', color: '#FCA5A5', fontSize: 12 }}>
+              <div style={{ marginTop: 10, padding: 10, borderRadius: 6, backgroundColor: 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bearish) 25%, transparent)', color: '#FCA5A5', fontSize: 12 }}>
                 <strong style={{ color: 'var(--mc-bearish)' }}>Disqualifiers:</strong> {safeText(score.disqualifiers.map((d) => safeText(d)).join(' · '))}
               </div>
             )}

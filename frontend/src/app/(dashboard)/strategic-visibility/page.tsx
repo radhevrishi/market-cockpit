@@ -399,7 +399,7 @@ export default function StrategicVisibilityPage() {
         <header style={{ marginBottom: 18 }}>
           <h1 style={{ fontSize: 22, fontWeight: 800, color: 'var(--mc-text-0)', margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
             🌟 <span style={{ background: 'linear-gradient(90deg,var(--mc-state-persistent),var(--mc-cyan))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Transformational Contracts</span>
-            <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--mc-cyan)', backgroundColor: '#22D3EE10', border: '1px solid #22D3EE40', padding: '3px 8px', borderRadius: 4, letterSpacing: '0.4px' }}>
+            <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--mc-cyan)', backgroundColor: 'color-mix(in srgb, var(--mc-cyan) 6%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', padding: '3px 8px', borderRadius: 4, letterSpacing: '0.4px' }}>
               ROLLING {windowDays}D LEDGER
             </span>
             {/* PATCH 0274 — Freshness chip. Turns amber if the 5-min refresh stalls. */}
@@ -431,8 +431,8 @@ export default function StrategicVisibilityPage() {
                 style={{
                   fontSize: 10, fontWeight: 700,
                   color: windowDays === d ? 'var(--mc-cyan)' : 'var(--mc-text-4)',
-                  backgroundColor: windowDays === d ? '#22D3EE15' : 'transparent',
-                  border: `1px solid ${windowDays === d ? '#22D3EE60' : 'var(--mc-border-1)'}`,
+                  backgroundColor: windowDays === d ? 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)' : 'transparent',
+                  border: `1px solid ${windowDays === d ? 'color-mix(in srgb, var(--mc-cyan) 38%, transparent)' : 'var(--mc-border-1)'}`,
                   borderRadius: 4, padding: '4px 10px', cursor: 'pointer',
                   letterSpacing: '0.4px',
                 }}
@@ -471,8 +471,8 @@ export default function StrategicVisibilityPage() {
                 style={{
                   fontSize: 10, fontWeight: 700,
                   color: regionFilter === r ? 'var(--mc-bullish)' : 'var(--mc-text-4)',
-                  backgroundColor: regionFilter === r ? '#10B98115' : 'transparent',
-                  border: `1px solid ${regionFilter === r ? '#10B98160' : 'var(--mc-border-1)'}`,
+                  backgroundColor: regionFilter === r ? 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)' : 'transparent',
+                  border: `1px solid ${regionFilter === r ? 'color-mix(in srgb, var(--mc-bullish) 38%, transparent)' : 'var(--mc-border-1)'}`,
                   borderRadius: 4, padding: '4px 10px', cursor: 'pointer',
                   letterSpacing: '0.4px',
                 }}
@@ -499,8 +499,8 @@ export default function StrategicVisibilityPage() {
                 style={{
                   fontSize: 10, fontWeight: 700,
                   color: sortMode === s ? 'var(--mc-warn)' : 'var(--mc-text-4)',
-                  backgroundColor: sortMode === s ? '#F59E0B15' : 'transparent',
-                  border: `1px solid ${sortMode === s ? '#F59E0B60' : 'var(--mc-border-1)'}`,
+                  backgroundColor: sortMode === s ? 'color-mix(in srgb, var(--mc-warn) 8%, transparent)' : 'transparent',
+                  border: `1px solid ${sortMode === s ? 'color-mix(in srgb, var(--mc-warn) 38%, transparent)' : 'var(--mc-border-1)'}`,
                   borderRadius: 4, padding: '4px 10px', cursor: 'pointer',
                   letterSpacing: '0.4px',
                 }}
@@ -617,7 +617,7 @@ export default function StrategicVisibilityPage() {
               {regionFilter !== 'ALL' && (
                 <button
                   onClick={() => setRegionFilter('ALL')}
-                  style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-bullish)', backgroundColor: '#10B98115', border: '1px solid #10B98160', borderRadius: 4, padding: '6px 14px', cursor: 'pointer' }}
+                  style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-bullish)', backgroundColor: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 38%, transparent)', borderRadius: 4, padding: '6px 14px', cursor: 'pointer' }}
                 >
                   Show all regions
                 </button>
@@ -625,7 +625,7 @@ export default function StrategicVisibilityPage() {
               {windowDays < 730 && (
                 <button
                   onClick={() => setWindowDays(730)}
-                  style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-cyan)', backgroundColor: '#22D3EE15', border: '1px solid #22D3EE60', borderRadius: 4, padding: '6px 14px', cursor: 'pointer' }}
+                  style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-cyan)', backgroundColor: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', borderRadius: 4, padding: '6px 14px', cursor: 'pointer' }}
                 >
                   Switch to 2-year window
                 </button>
@@ -660,7 +660,7 @@ export default function StrategicVisibilityPage() {
                     {/* Top row: ticker + signal quality + flags */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
                       {(a.ticker_symbols ?? []).slice(0, 3).map(t => (
-                        <span key={t} style={{ fontSize: 10, fontWeight: 700, color: '#38A9E8', backgroundColor: '#0F7ABF20', padding: '2px 6px', borderRadius: 4, border: '1px solid #0F7ABF40' }}>
+                        <span key={t} style={{ fontSize: 10, fontWeight: 700, color: '#38A9E8', backgroundColor: 'color-mix(in srgb, var(--mc-accent) 13%, transparent)', padding: '2px 6px', borderRadius: 4, border: '1px solid color-mix(in srgb, var(--mc-accent) 25%, transparent)' }}>
                           {t}
                         </span>
                       ))}
@@ -820,7 +820,7 @@ export default function StrategicVisibilityPage() {
                                 : a.working_capital_intensity_pct >= 20 ? 'var(--mc-cyan)'
                                 : 'var(--mc-bullish)',
                               border: `1px solid ${a.working_capital_intensity_pct >= 70 ? 'var(--mc-bearish)' : a.working_capital_intensity_pct >= 40 ? 'var(--mc-warn)' : 'var(--mc-cyan)'}40`,
-                              backgroundColor: a.working_capital_intensity_pct >= 70 ? '#EF444410' : a.working_capital_intensity_pct >= 40 ? '#F59E0B10' : '#22D3EE10',
+                              backgroundColor: a.working_capital_intensity_pct >= 70 ? 'color-mix(in srgb, var(--mc-bearish) 6%, transparent)' : a.working_capital_intensity_pct >= 40 ? 'color-mix(in srgb, var(--mc-warn) 6%, transparent)' : 'color-mix(in srgb, var(--mc-cyan) 6%, transparent)',
                               padding: '2px 6px', borderRadius: 3,
                             }}
                           >
@@ -831,7 +831,7 @@ export default function StrategicVisibilityPage() {
                     )}
                     {/* PATCH 0072: IMPLIED SECONDARY DEMAND — capex propagation */}
                     {a.implied_secondary_demand && a.implied_secondary_demand.lines.length > 0 && (
-                      <div style={{ fontSize: 10, color: 'var(--mc-text-3)', backgroundColor: 'var(--mc-bg-0)', border: '1px solid #22D3EE30', borderRadius: 6, padding: '6px 8px', marginBottom: 6, lineHeight: 1.5 }}>
+                      <div style={{ fontSize: 10, color: 'var(--mc-text-3)', backgroundColor: 'var(--mc-bg-0)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 19%, transparent)', borderRadius: 6, padding: '6px 8px', marginBottom: 6, lineHeight: 1.5 }}>
                         <div style={{ marginBottom: 4 }}>
                           <strong style={{ color: 'var(--mc-cyan)', letterSpacing: '0.4px' }}>↪ IMPLIED SECONDARY DEMAND</strong>
                           <span style={{ marginLeft: 6, color: 'var(--mc-text-3)' }}>

@@ -450,8 +450,8 @@ function DivergenceBadge({ divergence }: { divergence?: string }) {
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '9px',
       padding: '2px 6px', borderRadius: '4px',
-      backgroundColor: isStrongWeak ? '#EF444418' : '#10B98118',
-      border: `1px solid ${isStrongWeak ? '#EF444440' : '#10B98140'}`,
+      backgroundColor: isStrongWeak ? 'color-mix(in srgb, var(--mc-bearish) 9%, transparent)' : 'color-mix(in srgb, var(--mc-bullish) 9%, transparent)',
+      border: `1px solid ${isStrongWeak ? 'color-mix(in srgb, var(--mc-bearish) 25%, transparent)' : 'color-mix(in srgb, var(--mc-bullish) 25%, transparent)'}`,
       color: isStrongWeak ? 'var(--mc-bearish)' : 'var(--mc-bullish)', fontWeight: 700, letterSpacing: '0.3px',
     }}>
       ⚡ {isStrongWeak ? 'DIVERGENCE: Strong Earnings + Weak Guidance' : 'DIVERGENCE: Weak Earnings + Strong Guidance'}
@@ -465,7 +465,7 @@ function StaleBadge({ quarterStr }: { quarterStr: string }) {
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '9px',
       padding: '2px 6px', borderRadius: '4px',
-      backgroundColor: '#EF444415', border: '1px solid #EF444440',
+      backgroundColor: 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bearish) 25%, transparent)',
       color: 'var(--mc-bearish)', fontWeight: 700, letterSpacing: '0.3px',
     }}>
       ⚠ STALE
@@ -1209,7 +1209,7 @@ function EarningsCardComponent({ card, postGap, ai }: { card: EarningsScanCard; 
                   <span style={{
                     fontSize: '9px', color: 'var(--mc-warn)', fontWeight: 600,
                     padding: '1px 6px', borderRadius: '3px',
-                    backgroundColor: '#F59E0B15', border: '1px dashed #F59E0B40',
+                    backgroundColor: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', border: '1px dashed color-mix(in srgb, var(--mc-warn) 25%, transparent)',
                   }} title="This card qualifies (EX/ST grade) — click '🤖 AI Guidance' in the toolbar to extract.">
                     🤖 click to extract
                   </span>
@@ -1303,10 +1303,10 @@ function EarningsCardComponent({ card, postGap, ai }: { card: EarningsScanCard; 
           {((card.keyPhrasesPositive && card.keyPhrasesPositive.length > 0) || (card.keyPhrasesNegative && card.keyPhrasesNegative.length > 0)) && (
             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '4px' }}>
               {(card.keyPhrasesPositive || []).map((p, i) => (
-                <span key={`p${i}`} style={{ fontSize: '8px', padding: '1px 5px', borderRadius: '3px', backgroundColor: '#10B98115', color: 'var(--mc-bullish)', border: '1px solid #10B98130' }}>{p}</span>
+                <span key={`p${i}`} style={{ fontSize: '8px', padding: '1px 5px', borderRadius: '3px', backgroundColor: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', color: 'var(--mc-bullish)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 19%, transparent)' }}>{p}</span>
               ))}
               {(card.keyPhrasesNegative || []).map((p, i) => (
-                <span key={`n${i}`} style={{ fontSize: '8px', padding: '1px 5px', borderRadius: '3px', backgroundColor: '#EF444415', color: 'var(--mc-bearish)', border: '1px solid #EF444430' }}>{p}</span>
+                <span key={`n${i}`} style={{ fontSize: '8px', padding: '1px 5px', borderRadius: '3px', backgroundColor: 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)', color: 'var(--mc-bearish)', border: '1px solid color-mix(in srgb, var(--mc-bearish) 19%, transparent)' }}>{p}</span>
               ))}
             </div>
           )}
@@ -3089,7 +3089,7 @@ export default function EarningsPage() {
                     style={{
                       marginLeft: 4, fontSize: 9.5, fontWeight: 800,
                       padding: '1px 6px', borderRadius: 3,
-                      backgroundColor: '#10B98130', border: '1px solid #10B98160',
+                      backgroundColor: 'color-mix(in srgb, var(--mc-bullish) 19%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 38%, transparent)',
                       color: 'var(--mc-bullish)', letterSpacing: '0.3px', cursor: 'pointer',
                     }}
                     title="Hit the server API directly and write any returned data to localStorage. Tells you in an alert what was found. Use this when count=0 to figure out whether the data is missing on server, in another browser, or in stale cache."
@@ -3106,7 +3106,7 @@ export default function EarningsPage() {
                     style={{
                       marginLeft: 4, fontSize: 9.5, fontWeight: 800,
                       padding: '1px 6px', borderRadius: 3,
-                      backgroundColor: '#F59E0B30', border: '1px solid #F59E0B60',
+                      backgroundColor: 'color-mix(in srgb, var(--mc-warn) 19%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)',
                       color: 'var(--mc-warn)', letterSpacing: '0.3px', cursor: 'pointer',
                     }}
                     title={`No ${key} data loaded. Click to open the ${key === 'portfolio' ? 'My Book' : 'Watchlist'} page.`}
@@ -3126,7 +3126,7 @@ export default function EarningsPage() {
             display: 'inline-flex', alignItems: 'center', gap: 6,
             padding: '8px 14px', borderRadius: 8,
             border: `1px solid ${convictionOnly ? 'var(--mc-warn)' : CARD_BORDER}`,
-            backgroundColor: convictionOnly ? '#F59E0B22' : CARD,
+            backgroundColor: convictionOnly ? 'color-mix(in srgb, var(--mc-warn) 13%, transparent)' : CARD,
             color: convictionOnly ? 'var(--mc-warn)' : TEXT,
             fontSize: 12, fontWeight: 700, cursor: 'pointer',
           }}>
@@ -3484,7 +3484,7 @@ export default function EarningsPage() {
                   display: 'inline-flex', alignItems: 'center', gap: '6px',
                   padding: '6px 10px', borderRadius: '6px',
                   backgroundColor: '#7C3AED15',
-                  border: `1px solid ${allCovered ? '#10B98160' : '#F59E0B60'}`,
+                  border: `1px solid ${allCovered ? 'color-mix(in srgb, var(--mc-bullish) 38%, transparent)' : 'color-mix(in srgb, var(--mc-warn) 38%, transparent)'}`,
                   fontSize: '11px', fontWeight: 700,
                   color: allCovered ? 'var(--mc-bullish)' : 'var(--mc-warn)',
                   whiteSpace: 'nowrap',
@@ -3513,7 +3513,7 @@ export default function EarningsPage() {
                     cursor: buttonDisabled ? 'not-allowed' : 'pointer',
                     fontSize: '12px', fontWeight: 700,
                     opacity: aiLoading ? 0.6 : (budgetDominates ? 0.7 : 1),
-                    boxShadow: !aiLoading && !allCovered && !budgetDominates ? '0 0 0 1px #F59E0B40' : undefined,
+                    boxShadow: !aiLoading && !allCovered && !budgetDominates ? '0 0 0 1px color-mix(in srgb, var(--mc-warn) 25%, transparent)' : undefined,
                   }}>
                   {buttonLabel}
                 </button>
@@ -3560,7 +3560,7 @@ export default function EarningsPage() {
       {aiStats && aiStats.total === qualifyingForAI.length && aiStats.extracted === 0 && aiStats.cached === 0 && (
         <div style={{
           padding: '14px 18px', marginTop: '10px', borderRadius: '8px',
-          backgroundColor: '#EF444415', border: '2px solid var(--mc-bearish)',
+          backgroundColor: 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)', border: '2px solid var(--mc-bearish)',
           color: '#FCA5A5', fontSize: '13px', fontWeight: 600,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
@@ -3581,7 +3581,7 @@ export default function EarningsPage() {
           {(aiStats.batch_failures || 0) > 0 && (aiStats.failed_tickers || []).length > 0 && (
             <div style={{
               marginTop: '6px', padding: '8px 10px',
-              backgroundColor: '#1F2937', border: '1px solid #F59E0B60', borderRadius: '6px',
+              backgroundColor: '#1F2937', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', borderRadius: '6px',
               fontSize: '11px', color: '#FCD34D', fontFamily: 'ui-monospace, SFMono-Regular, monospace',
               wordBreak: 'break-word',
             }}>
@@ -3977,25 +3977,25 @@ export default function EarningsPage() {
                         setDateFrom(d.toISOString().slice(0, 10));
                         setDateTo(new Date().toISOString().slice(0, 10));
                       }}
-                      style={{ padding: '8px 14px', background: '#22D3EE15', border: '1px solid #22D3EE60', color: 'var(--mc-cyan)', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                      style={{ padding: '8px 14px', background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
                     >🗓 Expand to last 12 months</button>
                   )}
                   {culpritGrade && (
                     <button
                       onClick={() => setFilterGrades(['ALL'])}
-                      style={{ padding: '8px 14px', background: '#10B98115', border: '1px solid #10B98160', color: 'var(--mc-bullish)', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                      style={{ padding: '8px 14px', background: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 38%, transparent)', color: 'var(--mc-bullish)', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
                     >Reset grade → ALL</button>
                   )}
                   {culpritDayOne && (
                     <button
                       onClick={() => setDayOneFilters(new Set())}
-                      style={{ padding: '8px 14px', background: '#F59E0B15', border: '1px solid #F59E0B60', color: 'var(--mc-warn)', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                      style={{ padding: '8px 14px', background: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', color: 'var(--mc-warn)', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
                     >Clear Day-1 threshold</button>
                   )}
                   {culpritGuidance && (
                     <button
                       onClick={() => setGuidanceFilter('ALL')}
-                      style={{ padding: '8px 14px', background: '#8B5CF615', border: '1px solid #8B5CF660', color: 'var(--mc-state-persistent)', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                      style={{ padding: '8px 14px', background: 'color-mix(in srgb, var(--mc-state-persistent) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-state-persistent) 38%, transparent)', color: 'var(--mc-state-persistent)', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
                     >Reset guidance → ALL</button>
                   )}
                   {culpritAi && (

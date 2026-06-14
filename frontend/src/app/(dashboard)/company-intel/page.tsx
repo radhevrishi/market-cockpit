@@ -425,7 +425,7 @@ export default function CompanyIntelPage() {
                   <button onClick={submit} disabled={uploading || !ticker.trim() || text.trim().length < 30}
                     style={{
                       padding: '8px 16px', borderRadius: 6, border: 'none',
-                      background: uploading ? '#22D3EE60' : 'var(--mc-cyan)',
+                      background: uploading ? 'color-mix(in srgb, var(--mc-cyan) 38%, transparent)' : 'var(--mc-cyan)',
                       color: '#000', fontWeight: 800, cursor: uploading ? 'wait' : 'pointer',
                       fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6,
                       opacity: (!ticker.trim() || text.trim().length < 30) ? 0.5 : 1,
@@ -439,9 +439,9 @@ export default function CompanyIntelPage() {
                 {uploadResult && (
                   <div style={{
                     padding: '8px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600,
-                    background: uploadResult.startsWith('✓') ? '#10B98118' : '#EF444418',
+                    background: uploadResult.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 9%, transparent)' : 'color-mix(in srgb, var(--mc-bearish) 9%, transparent)',
                     color: uploadResult.startsWith('✓') ? 'var(--mc-bullish)' : 'var(--mc-bearish)',
-                    border: `1px solid ${uploadResult.startsWith('✓') ? '#10B98140' : '#EF444440'}`,
+                    border: `1px solid ${uploadResult.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 25%, transparent)' : 'color-mix(in srgb, var(--mc-bearish) 25%, transparent)'}`,
                   }}>
                     {uploadResult}
                   </div>
@@ -466,7 +466,7 @@ export default function CompanyIntelPage() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {preview.map((g, i) => (
                     <div key={i} title={g.quote}
-                      style={{ padding: '8px 10px', borderLeft: '3px solid #22D3EE60', background: 'var(--mc-bg-0)', borderRadius: 4 }}>
+                      style={{ padding: '8px 10px', borderLeft: '3px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', background: 'var(--mc-bg-0)', borderRadius: 4 }}>
                       <div style={{ fontSize: 10, color: ACCENT, fontWeight: 700, letterSpacing: '0.4px', marginBottom: 3 }}>
                         {categoryLabel(g.category)}{g.year ? ` · ${g.year}` : ''}
                       </div>
@@ -496,18 +496,18 @@ export default function CompanyIntelPage() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {capacityPreview.map((m, i) => (
                       <div key={i} title={m.raw}
-                        style={{ padding: '7px 10px', borderLeft: '3px solid #10B98160', background: 'var(--mc-bg-0)', borderRadius: 4 }}>
+                        style={{ padding: '7px 10px', borderLeft: '3px solid color-mix(in srgb, var(--mc-bullish) 38%, transparent)', background: 'var(--mc-bg-0)', borderRadius: 4 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
                           <span style={{ fontSize: 13, color: 'var(--mc-cyan)', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
                             {m.currentPct}%{m.targetPct ? ` → ${m.targetPct}%` : ''}
                           </span>
                           {m.plantOrSegment && (
-                            <span style={{ fontSize: 10, color: 'var(--mc-state-persistent)', fontWeight: 700, padding: '1px 6px', borderRadius: 3, background: '#A78BFA15', border: '1px solid #A78BFA30' }}>
+                            <span style={{ fontSize: 10, color: 'var(--mc-state-persistent)', fontWeight: 700, padding: '1px 6px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-state-persistent) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-state-persistent) 19%, transparent)' }}>
                               {m.plantOrSegment}
                             </span>
                           )}
                           {m.horizon && (
-                            <span style={{ fontSize: 10, color: 'var(--mc-warn)', fontWeight: 700, padding: '1px 6px', borderRadius: 3, background: '#F59E0B15', border: '1px solid #F59E0B30' }}>
+                            <span style={{ fontSize: 10, color: 'var(--mc-warn)', fontWeight: 700, padding: '1px 6px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 19%, transparent)' }}>
                               by {m.horizon}
                             </span>
                           )}
@@ -555,7 +555,7 @@ export default function CompanyIntelPage() {
                     setDrillCorpus(null);
                     loadIndex();
                   }}
-                  style={{ padding: '8px 12px', borderRadius: 6, border: `1px solid #EF444460`, background: '#EF444415', color: 'var(--mc-bearish)', fontSize: 12, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                  style={{ padding: '8px 12px', borderRadius: 6, border: `1px solid color-mix(in srgb, var(--mc-bearish) 38%, transparent)`, background: 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)', color: 'var(--mc-bearish)', fontSize: 12, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}
                 >
                   <Trash2 size={11} /> Reset
                 </button>
@@ -582,7 +582,7 @@ export default function CompanyIntelPage() {
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                       {drillCorpus.guidance.map((g, i) => (
-                        <div key={i} style={{ padding: '8px 10px', borderLeft: '3px solid #10B98160', background: 'var(--mc-bg-0)', borderRadius: 4 }}>
+                        <div key={i} style={{ padding: '8px 10px', borderLeft: '3px solid color-mix(in srgb, var(--mc-bullish) 38%, transparent)', background: 'var(--mc-bg-0)', borderRadius: 4 }}>
                           <div style={{ fontSize: 10, color: 'var(--mc-bullish)', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 3 }}>
                             {categoryLabel(g.category)}{g.year ? ` · ${g.year}` : ''}
                           </div>

@@ -1,4 +1,6 @@
 'use client';
+// PATCH 1081d — Acronym tooltips on table headers.
+import { AutoAcronyms } from '@/components/bottom-nav';
 
 import React, { useState, useMemo, useCallback, useEffect, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -1339,19 +1341,19 @@ function EmergingThemes({ articles }: { articles: NewsArticle[] }) {
     <div style={{ marginBottom: '20px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
         <span style={{ fontSize: '10px', fontWeight: '700', letterSpacing: '1px', color: 'var(--mc-text-4)' }}>🔍 LIVE THEME DETECTION</span>
-        {newThemes.length > 0 && <span style={{ fontSize: '9px', fontWeight: '700', color: 'var(--mc-warn)', backgroundColor: '#F59E0B14', border: '1px solid #F59E0B30', padding: '1px 7px', borderRadius: '3px' }}>{newThemes.length} NEW themes not in framework</span>}
+        {newThemes.length > 0 && <span style={{ fontSize: '9px', fontWeight: '700', color: 'var(--mc-warn)', backgroundColor: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 19%, transparent)', padding: '1px 7px', borderRadius: '3px' }}>{newThemes.length} NEW themes not in framework</span>}
         <span style={{ fontSize: '10px', color: 'var(--mc-text-4)', marginLeft: 'auto' }}>auto-detected from live news · not hardcoded</span>
       </div>
       <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
         {themes.map(t => {
           const isExp = expanded === t.id;
           return (
-            <div key={t.id} style={{ borderRadius: '8px', overflow: 'hidden', border: `1px solid ${t.isNew ? '#F59E0B40' : t.color + '30'}` }}>
+            <div key={t.id} style={{ borderRadius: '8px', overflow: 'hidden', border: `1px solid ${t.isNew ? 'color-mix(in srgb, var(--mc-warn) 25%, transparent)' : t.color + '30'}` }}>
               <button
                 onClick={() => setExpanded(isExp ? null : t.id)}
                 style={{
                   display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 12px',
-                  background: isExp ? t.color + '18' : t.isNew ? '#F59E0B08' : 'transparent',
+                  background: isExp ? t.color + '18' : t.isNew ? 'color-mix(in srgb, var(--mc-warn) 3%, transparent)' : 'transparent',
                   border: 'none', cursor: 'pointer',
                 }}
               >
@@ -1359,12 +1361,12 @@ function EmergingThemes({ articles }: { articles: NewsArticle[] }) {
                 <div style={{ textAlign: 'left' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                     <span style={{ fontSize: '11px', fontWeight: '700', color: t.isNew ? 'var(--mc-warn)' : 'var(--mc-text-2)' }}>{t.label}</span>
-                    {t.isNew && <span style={{ fontSize: '8px', fontWeight: '800', color: 'var(--mc-warn)', border: '1px solid #F59E0B40', padding: '0 4px', borderRadius: '3px' }}>NEW</span>}
-                    {!t.isNew && <span style={{ fontSize: '8px', color: 'var(--mc-text-4)', border: '1px solid #1A284030', padding: '0 4px', borderRadius: '3px' }}>IN FRAMEWORK</span>}
+                    {t.isNew && <span style={{ fontSize: '8px', fontWeight: '800', color: 'var(--mc-warn)', border: '1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)', padding: '0 4px', borderRadius: '3px' }}>NEW</span>}
+                    {!t.isNew && <span style={{ fontSize: '8px', color: 'var(--mc-text-4)', border: '1px solid color-mix(in srgb, var(--mc-bg-4) 19%, transparent)', padding: '0 4px', borderRadius: '3px' }}>IN FRAMEWORK</span>}
                     {t.weekCount >= 3 && <span style={{ fontSize: '9px', color: 'var(--mc-bearish)' }}>🔥</span>}
                     {/* Promotion badge: appears when seen 3+ sessions */}
                     {t.isNew && (themeSeen[t.id] ?? 0) >= 3 && (
-                      <span style={{ fontSize: '8px', fontWeight: '800', color: 'var(--mc-state-persistent)', border: '1px solid #8B5CF640', padding: '0 4px', borderRadius: '3px', cursor: 'help' }}
+                      <span style={{ fontSize: '8px', fontWeight: '800', color: 'var(--mc-state-persistent)', border: '1px solid color-mix(in srgb, var(--mc-state-persistent) 25%, transparent)', padding: '0 4px', borderRadius: '3px', cursor: 'help' }}
                         title={`Seen ${themeSeen[t.id]} sessions — candidate for formal taxonomy`}>
                         🚀 PROMOTE
                       </span>
@@ -1381,7 +1383,7 @@ function EmergingThemes({ articles }: { articles: NewsArticle[] }) {
                     </div>
                   ))}
                   {t.isNew && (
-                    <div style={{ marginTop: '6px', padding: '6px 10px', backgroundColor: '#F59E0B08', border: '1px solid #F59E0B20', borderRadius: '4px' }}>
+                    <div style={{ marginTop: '6px', padding: '6px 10px', backgroundColor: 'color-mix(in srgb, var(--mc-warn) 3%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 13%, transparent)', borderRadius: '4px' }}>
                       <div style={{ fontSize: '10px', color: 'var(--mc-warn)', marginBottom: '3px' }}>⭐ Not in framework watchlist — potential new bottleneck class</div>
                       {(themeSeen[t.id] ?? 0) >= 3 ? (
                         <div style={{ fontSize: '10px', color: 'var(--mc-state-persistent)', marginTop: '3px', fontWeight: '700' }}>
@@ -1466,7 +1468,7 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
     <div style={{ padding: '20px' }}>
       {/* ── WHAT CHANGED — session-over-session delta ── */}
       {changes.length > 0 && (
-        <div style={{ marginBottom: '16px', padding: '12px 16px', backgroundColor: '#060E1A', border: '1px solid #8B5CF620', borderRadius: '10px' }}>
+        <div style={{ marginBottom: '16px', padding: '12px 16px', backgroundColor: '#060E1A', border: '1px solid color-mix(in srgb, var(--mc-state-persistent) 13%, transparent)', borderRadius: '10px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
             <span style={{ fontSize: '10px', fontWeight: '800', color: 'var(--mc-state-persistent)', letterSpacing: '1px' }}>🔄 WHAT CHANGED</span>
             <span style={{ fontSize: '10px', color: 'var(--mc-text-4)' }}>since last session</span>
@@ -1496,7 +1498,7 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
         );
         if (activeParents.length === 0) return null;
         return (
-          <div style={{ marginBottom: '14px', padding: '10px 14px', backgroundColor: '#060E1A', border: '1px solid #1A284030', borderRadius: '8px' }}>
+          <div style={{ marginBottom: '14px', padding: '10px 14px', backgroundColor: '#060E1A', border: '1px solid color-mix(in srgb, var(--mc-bg-4) 19%, transparent)', borderRadius: '8px' }}>
             <div style={{ fontSize: '10px', color: 'var(--mc-text-4)', fontWeight: '700', letterSpacing: '0.8px', marginBottom: '8px' }}>📐 THEME HIERARCHY — active parent groups (prevents overlap confusion)</div>
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               {activeParents.map(p => (
@@ -1520,7 +1522,7 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
         const maxWeek = Math.max(1, ...weekValues); // always >= 1 so we never divide by 0
         try {
           return (
-            <div style={{ marginBottom: '20px', padding: '14px 16px', backgroundColor: '#060E1A', border: '1px solid #1A284030', borderRadius: '12px' }}>
+            <div style={{ marginBottom: '20px', padding: '14px 16px', backgroundColor: '#060E1A', border: '1px solid color-mix(in srgb, var(--mc-bg-4) 19%, transparent)', borderRadius: '12px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
                 <span style={{ fontSize: '10px', fontWeight: '800', color: 'var(--mc-state-persistent)', letterSpacing: '1px' }}>📊 CONVICTION MATRIX</span>
                 <span style={{ fontSize: '10px', color: 'var(--mc-text-4)' }}>velocity × severity → lifecycle state · click to inspect</span>
@@ -1629,7 +1631,7 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
                     {(b.key_tickers?.length ?? 0) > 0 && (
                       <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                         {(b.key_tickers ?? []).slice(0, 8).map(t => (
-                          <span key={t} style={{ fontSize: '9px', fontWeight: '700', padding: '1px 5px', borderRadius: '3px', backgroundColor: '#0F7ABF14', color: 'var(--mc-accent)', border: '1px solid #0F7ABF25' }}>{t}</span>
+                          <span key={t} style={{ fontSize: '9px', fontWeight: '700', padding: '1px 5px', borderRadius: '3px', backgroundColor: 'color-mix(in srgb, var(--mc-accent) 8%, transparent)', color: 'var(--mc-accent)', border: '1px solid color-mix(in srgb, var(--mc-accent) 15%, transparent)' }}>{t}</span>
                         ))}
                       </div>
                     )}
@@ -1717,7 +1719,7 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
         return staleBuckets.length > 0 && !activeBucket ? (
           <>
             {showFreshnessWarning && (
-              <div style={{ marginBottom: 8, padding: '8px 12px', backgroundColor: '#F59E0B15', border: '1px solid #F59E0B40', borderRadius: 6, display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
+              <div style={{ marginBottom: 8, padding: '8px 12px', backgroundColor: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)', borderRadius: 6, display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
                 <span style={{ fontWeight: 700, color: 'var(--mc-warn)' }}>⚠ DATA FRESHNESS WARNING</span>
                 <span style={{ color: 'var(--mc-text-2)' }}>
                   {staleBuckets.length} of {sorted.length} themes ({stalePct.toFixed(0)}%) have 0 articles this week and last.
@@ -1765,7 +1767,7 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
           const isAccel = vel?.trend === '🔥';
           const isFading = vel?.trend === '📉';
           return (
-            <div key={b.bucket_id} style={{ backgroundColor: sty.bg || 'var(--mc-bg-1)', border: `1px solid ${isAccel ? '#F59E0B60' : sty.border}`, borderRadius: '12px', overflow: 'hidden', boxShadow: isExp ? sty.glow : isAccel ? '0 0 12px #F59E0B18' : 'none' }}>
+            <div key={b.bucket_id} style={{ backgroundColor: sty.bg || 'var(--mc-bg-1)', border: `1px solid ${isAccel ? 'color-mix(in srgb, var(--mc-warn) 38%, transparent)' : sty.border}`, borderRadius: '12px', overflow: 'hidden', boxShadow: isExp ? sty.glow : isAccel ? '0 0 12px color-mix(in srgb, var(--mc-warn) 9%, transparent)' : 'none' }}>
               <button onClick={() => setExpBucket(isExp ? null : b.bucket_id)} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '14px 16px' }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
                   <span style={{ fontSize: '22px', flexShrink: 0 }}>{b.severity_icon || '🔹'}</span>
@@ -1860,7 +1862,7 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
                     </div>
                     {b.key_tickers?.length > 0 && (
                       <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                        {b.key_tickers.slice(0, 8).map(t => <span key={t} style={{ fontSize: '10px', fontWeight: '600', color: 'var(--mc-accent)', backgroundColor: '#0F7ABF14', border: '1px solid #0F7ABF30', padding: '1px 6px', borderRadius: '4px' }}>${t}</span>)}
+                        {b.key_tickers.slice(0, 8).map(t => <span key={t} style={{ fontSize: '10px', fontWeight: '600', color: 'var(--mc-accent)', backgroundColor: 'color-mix(in srgb, var(--mc-accent) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-accent) 19%, transparent)', padding: '1px 6px', borderRadius: '4px' }}>${t}</span>)}
                         {b.key_tickers.length > 8 && <span style={{ fontSize: '10px', color: 'var(--mc-text-4)' }}>+{b.key_tickers.length - 8}</span>}
                       </div>
                     )}
@@ -1874,7 +1876,7 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
                     const sk = `${b.bucket_id}-${si}`;
                     const se = expSignal === sk;
                     return (
-                      <div key={si} style={{ borderBottom: si < Math.min(b.signals.length,5)-1 ? '1px solid #1A284030' : 'none' }}>
+                      <div key={si} style={{ borderBottom: si < Math.min(b.signals.length,5)-1 ? '1px solid color-mix(in srgb, var(--mc-bg-4) 19%, transparent)' : 'none' }}>
                         <button onClick={() => setExpSignal(se ? null : sk)} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '10px 16px', display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
                           <Zap className="w-3 h-3" style={{ color: sty.badge, flexShrink: 0, marginTop: '2px' }} />
                           <div style={{ flex: 1, minWidth: 0 }}>
@@ -1915,7 +1917,7 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
 // ── Criteria check helper ─────────────────────────────────────────────────────
 function CriteriaCheck({ pass, label }: { pass: boolean; label: string }) {
   return (
-    <span title={label} style={{ fontSize: '10px', display: 'inline-flex', alignItems: 'center', gap: '2px', color: pass ? 'var(--mc-bullish)' : '#EF444480', whiteSpace: 'nowrap' }}>
+    <span title={label} style={{ fontSize: '10px', display: 'inline-flex', alignItems: 'center', gap: '2px', color: pass ? 'var(--mc-bullish)' : 'color-mix(in srgb, var(--mc-bearish) 50%, transparent)', whiteSpace: 'nowrap' }}>
       {pass ? '✅' : '❌'} {label}
     </span>
   );
@@ -2055,7 +2057,7 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
   return (
     <div style={{ padding: '20px' }}>
       {/* Data transparency banner */}
-      <div style={{ marginBottom: '14px', padding: '10px 14px', backgroundColor: '#0F7ABF08', border: '1px solid #0F7ABF20', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+      <div style={{ marginBottom: '14px', padding: '10px 14px', backgroundColor: 'color-mix(in srgb, var(--mc-accent) 3%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-accent) 13%, transparent)', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
         <Zap className="w-3 h-3" style={{ color: 'var(--mc-accent)', flexShrink: 0 }} />
         <span style={{ fontSize: '11px', color: 'var(--mc-text-4)' }}>
           <strong style={{ color: 'var(--mc-accent)' }}>Watchlist</strong> from Serenity framework doc ·&nbsp;
@@ -2070,7 +2072,7 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
         {/* View toggle */}
         <div style={{ display: 'flex', gap: '0', backgroundColor: '#060E1A', border: '1px solid var(--mc-bg-4)', borderRadius: '8px', overflow: 'hidden' }}>
           {(['universe', 'live'] as const).map(m => (
-            <button key={m} onClick={() => setViewMode(m)} style={{ padding: '6px 14px', background: viewMode === m ? '#0F7ABF20' : 'transparent', border: 'none', cursor: 'pointer', color: viewMode === m ? 'var(--mc-accent)' : 'var(--mc-text-4)', fontSize: '11px', fontWeight: viewMode === m ? '700' : '400' }}>
+            <button key={m} onClick={() => setViewMode(m)} style={{ padding: '6px 14px', background: viewMode === m ? 'color-mix(in srgb, var(--mc-accent) 13%, transparent)' : 'transparent', border: 'none', cursor: 'pointer', color: viewMode === m ? 'var(--mc-accent)' : 'var(--mc-text-4)', fontSize: '11px', fontWeight: viewMode === m ? '700' : '400' }}>
               {m === 'live' ? `📡 Live Discovery (${liveExtra.length}) · ${liveExtra.filter(r => !r.inUniverse).length} new` : `🔬 Framework Anchors (${enriched.length})`}
             </button>
           ))}
@@ -2079,12 +2081,12 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
         {viewMode === 'universe' && (
           <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
             {multibaggers.length > 0 && (
-              <div style={{ padding: '5px 12px', borderRadius: '7px', border: '1px solid #F59E0B30', backgroundColor: '#F59E0B08', fontSize: '11px', color: 'var(--mc-warn)', fontWeight: '600' }}>
+              <div style={{ padding: '5px 12px', borderRadius: '7px', border: '1px solid color-mix(in srgb, var(--mc-warn) 19%, transparent)', backgroundColor: 'color-mix(in srgb, var(--mc-warn) 3%, transparent)', fontSize: '11px', color: 'var(--mc-warn)', fontWeight: '600' }}>
                 ⭐ {multibaggers.length} potential multibaggers
               </div>
             )}
             {withLiveSignal.length > 0 && (
-              <div style={{ padding: '5px 12px', borderRadius: '7px', border: '1px solid #10B98130', backgroundColor: '#10B98108', fontSize: '11px', color: 'var(--mc-bullish)', fontWeight: '600' }}>
+              <div style={{ padding: '5px 12px', borderRadius: '7px', border: '1px solid color-mix(in srgb, var(--mc-bullish) 19%, transparent)', backgroundColor: 'color-mix(in srgb, var(--mc-bullish) 3%, transparent)', fontSize: '11px', color: 'var(--mc-bullish)', fontWeight: '600' }}>
                 📡 {withLiveSignal.length} with live signal
               </div>
             )}
@@ -2109,8 +2111,8 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
             }}
             title="Open these tickers in Multibagger and rank by composite score"
             style={{
-              padding: '5px 12px', borderRadius: 7, border: '1px solid #8B5CF660',
-              background: '#8B5CF615', color: 'var(--mc-state-persistent)',
+              padding: '5px 12px', borderRadius: 7, border: '1px solid color-mix(in srgb, var(--mc-state-persistent) 38%, transparent)',
+              background: 'color-mix(in srgb, var(--mc-state-persistent) 8%, transparent)', color: 'var(--mc-state-persistent)',
               fontSize: 11, fontWeight: 700, cursor: 'pointer',
               display: 'inline-flex', alignItems: 'center', gap: 4,
             }}
@@ -2166,8 +2168,8 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
             const check4 = s.val_tier <= 4;
             const checksPass = [check1, check2, check3, check4].filter(Boolean).length;
             return (
-              <div key={s.ticker} style={{ borderBottom: '1px solid #1A284018' }}>
-                <button onClick={() => setExpRow(isExp ? null : s.ticker)} style={{ width: '100%', background: isExp ? '#0D162340' : idx % 2 === 1 ? '#060E1A14' : 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', padding: '9px 12px' }}>
+              <div key={s.ticker} style={{ borderBottom: '1px solid color-mix(in srgb, var(--mc-bg-4) 9%, transparent)' }}>
+                <button onClick={() => setExpRow(isExp ? null : s.ticker)} style={{ width: '100%', background: isExp ? 'color-mix(in srgb, var(--mc-bg-1) 25%, transparent)' : idx % 2 === 1 ? '#060E1A14' : 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', padding: '9px 12px' }}>
                   <div style={{ display: 'grid', gridTemplateColumns: '44px 110px 1fr 160px 90px 70px', gap: '8px', alignItems: 'center' }}>
                     {/* Score */}
                     <ScoreGauge score={s.score} />
@@ -2177,9 +2179,9 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
                       {isMultibagger && <span title="Potential multibagger — high score + small cap" style={{ fontSize: '13px' }}>⭐</span>}
                       <span style={{ fontSize: '12px', fontWeight: '800', color: 'var(--mc-text-0)' }}>{s.ticker.replace(/\d+$/, '')}</span>
                       {ef && <span title={`${ef.label} listed`} style={{ fontSize: '12px' }}>{ef.flag}</span>}
-                      {s.is_small_cap && <span style={{ fontSize: '8px', color: 'var(--mc-warn)', border: '1px solid #F59E0B40', padding: '0 3px', borderRadius: '3px', fontWeight: '700' }}>SC</span>}
-                      {s.is_serenity_pick && <span title="Serenity explicitly mentioned this stock" style={{ fontSize: '8px', color: 'var(--mc-state-persistent)', border: '1px solid #8B5CF640', padding: '0 3px', borderRadius: '3px', fontWeight: '700' }}>S✓</span>}
-                      {s.evidence_count > 0 && <span style={{ fontSize: '8px', color: 'var(--mc-bullish)', border: '1px solid #10B98140', padding: '0 3px', borderRadius: '3px', fontWeight: '700' }}>📡{s.evidence_count}</span>}
+                      {s.is_small_cap && <span style={{ fontSize: '8px', color: 'var(--mc-warn)', border: '1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)', padding: '0 3px', borderRadius: '3px', fontWeight: '700' }}>SC</span>}
+                      {s.is_serenity_pick && <span title="Serenity explicitly mentioned this stock" style={{ fontSize: '8px', color: 'var(--mc-state-persistent)', border: '1px solid color-mix(in srgb, var(--mc-state-persistent) 25%, transparent)', padding: '0 3px', borderRadius: '3px', fontWeight: '700' }}>S✓</span>}
+                      {s.evidence_count > 0 && <span style={{ fontSize: '8px', color: 'var(--mc-bullish)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 25%, transparent)', padding: '0 3px', borderRadius: '3px', fontWeight: '700' }}>📡{s.evidence_count}</span>}
                       {s.velocity.trend === '🔥' && <span title={`${s.velocity.week} articles this week vs ${s.velocity.prev} prior week`} style={{ fontSize: '9px', color: 'var(--mc-warn)', fontWeight: '700' }}>🔥</span>}
                       {s.velocity.trend === '📉' && <span style={{ fontSize: '9px', color: 'var(--mc-text-4)' }}>📉</span>}
                     </div>
@@ -2191,7 +2193,7 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
                         <span style={{ fontSize: '11px', color: 'var(--mc-text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sub_tag.replace(/_/g,' ').toLowerCase().replace(/\b\w/g,c=>c.toUpperCase())}</span>
                       </div>
                       <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                        {s.key_customers.slice(0,3).map(c => <span key={c} style={{ fontSize: '9px', color: 'var(--mc-accent)', backgroundColor: '#0F7ABF14', padding: '0 4px', borderRadius: '3px' }}>→{c}</span>)}
+                        {s.key_customers.slice(0,3).map(c => <span key={c} style={{ fontSize: '9px', color: 'var(--mc-accent)', backgroundColor: 'color-mix(in srgb, var(--mc-accent) 8%, transparent)', padding: '0 4px', borderRadius: '3px' }}>→{c}</span>)}
                       </div>
                     </div>
 
@@ -2232,7 +2234,7 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
                     <div style={{ marginBottom: '10px' }}>
                       <p style={{ fontSize: '10px', color: 'var(--mc-text-4)', fontWeight: '700', letterSpacing: '0.8px', margin: '0 0 6px' }}>SUPPLIES → (key customers)</p>
                       <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                        {s.key_customers.map(c => <span key={c} style={{ fontSize: '11px', color: 'var(--mc-accent)', backgroundColor: '#0F7ABF14', border: '1px solid #0F7ABF30', padding: '2px 8px', borderRadius: '5px', fontWeight: '600' }}>{c}</span>)}
+                        {s.key_customers.map(c => <span key={c} style={{ fontSize: '11px', color: 'var(--mc-accent)', backgroundColor: 'color-mix(in srgb, var(--mc-accent) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-accent) 19%, transparent)', padding: '2px 8px', borderRadius: '5px', fontWeight: '600' }}>{c}</span>)}
                       </div>
                     </div>
 
@@ -2241,7 +2243,7 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
                       <div style={{ marginBottom: '10px' }}>
                         <p style={{ fontSize: '10px', color: 'var(--mc-text-4)', fontWeight: '700', letterSpacing: '0.8px', margin: '0 0 6px' }}>📡 LIVE EVIDENCE ({s.evidence_count} articles)</p>
                         {s.headlines.map((h, i) => (
-                          <div key={i} style={{ display: 'flex', gap: '6px', alignItems: 'flex-start', padding: '7px 10px', marginBottom: '4px', backgroundColor: '#060E1A', borderRadius: '6px', border: '1px solid #10B98120' }}>
+                          <div key={i} style={{ display: 'flex', gap: '6px', alignItems: 'flex-start', padding: '7px 10px', marginBottom: '4px', backgroundColor: '#060E1A', borderRadius: '6px', border: '1px solid color-mix(in srgb, var(--mc-bullish) 13%, transparent)' }}>
                             <Zap className="w-3 h-3" style={{ color: 'var(--mc-bullish)', flexShrink: 0, marginTop: '2px' }} />
                             <span style={{ fontSize: '11px', color: 'var(--mc-text-2)', lineHeight: '1.45' }}>{h}</span>
                           </div>
@@ -2291,9 +2293,9 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
               return (
                 <div key={r.symbol} style={{
                   display: 'grid', gridTemplateColumns: '60px 100px 1fr 170px 80px', gap: '8px',
-                  padding: '10px 12px', borderBottom: '1px solid #1A284018', alignItems: 'center',
-                  backgroundColor: isNew ? '#F59E0B06' : i % 2 === 1 ? '#060E1A14' : 'transparent',
-                  borderLeft: isNew ? '2px solid #F59E0B40' : sigs.length > 0 ? '2px solid #10B98140' : '2px solid transparent',
+                  padding: '10px 12px', borderBottom: '1px solid color-mix(in srgb, var(--mc-bg-4) 9%, transparent)', alignItems: 'center',
+                  backgroundColor: isNew ? 'color-mix(in srgb, var(--mc-warn) 2%, transparent)' : i % 2 === 1 ? '#060E1A14' : 'transparent',
+                  borderLeft: isNew ? '2px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)' : sigs.length > 0 ? '2px solid color-mix(in srgb, var(--mc-bullish) 25%, transparent)' : '2px solid transparent',
                 }}>
                   {/* Signal count + velocity */}
                   <div>
@@ -2327,7 +2329,7 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
                   </div>
 
                   {/* Status badge */}
-                  <span style={{ fontSize: '9px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', textAlign: 'center', color: isNew ? 'var(--mc-warn)' : 'var(--mc-bullish)', backgroundColor: isNew ? '#F59E0B14' : '#10B98114', border: `1px solid ${isNew ? '#F59E0B30' : '#10B98130'}` }}>
+                  <span style={{ fontSize: '9px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', textAlign: 'center', color: isNew ? 'var(--mc-warn)' : 'var(--mc-bullish)', backgroundColor: isNew ? 'color-mix(in srgb, var(--mc-warn) 8%, transparent)' : 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', border: `1px solid ${isNew ? 'color-mix(in srgb, var(--mc-warn) 19%, transparent)' : 'color-mix(in srgb, var(--mc-bullish) 19%, transparent)'}` }}>
                     {isNew ? '🆕 NEW PICK' : '✓ TRACKED'}
                   </span>
 
@@ -2409,7 +2411,7 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
             <div>
               <p style={{ fontSize: '10px', color: 'var(--mc-bullish)', fontWeight: '700', letterSpacing: '1px', margin: '0 0 10px' }}>🏆 WINNERS</p>
               {entry.winners.map(w => (
-                <div key={w.ticker} style={{ display: 'flex', gap: '8px', marginBottom: '8px', padding: '8px 12px', backgroundColor: '#10B98108', border: '1px solid #10B98120', borderRadius: '8px' }}>
+                <div key={w.ticker} style={{ display: 'flex', gap: '8px', marginBottom: '8px', padding: '8px 12px', backgroundColor: 'color-mix(in srgb, var(--mc-bullish) 3%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 13%, transparent)', borderRadius: '8px' }}>
                   <span style={{ fontSize: '12px', fontWeight: '800', color: 'var(--mc-bullish)', minWidth: '52px' }}>{w.ticker}</span>
                   <span style={{ fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.4' }}>{w.thesis}</span>
                 </div>
@@ -2419,7 +2421,7 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
               <div>
                 <p style={{ fontSize: '10px', color: 'var(--mc-bearish)', fontWeight: '700', letterSpacing: '1px', margin: '0 0 10px' }}>⚠️ RISKS / LOSERS</p>
                 {entry.losers.map(l => (
-                  <div key={l.ticker} style={{ display: 'flex', gap: '8px', marginBottom: '8px', padding: '8px 12px', backgroundColor: '#EF444408', border: '1px solid #EF444420', borderRadius: '8px' }}>
+                  <div key={l.ticker} style={{ display: 'flex', gap: '8px', marginBottom: '8px', padding: '8px 12px', backgroundColor: 'color-mix(in srgb, var(--mc-bearish) 3%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bearish) 13%, transparent)', borderRadius: '8px' }}>
                     <span style={{ fontSize: '12px', fontWeight: '800', color: 'var(--mc-bearish)', minWidth: '52px' }}>{l.ticker}</span>
                     <span style={{ fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.4' }}>{l.thesis}</span>
                   </div>
@@ -2456,7 +2458,7 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
               </p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '8px' }}>
                 {entry.contradictions.map((c, i) => (
-                  <div key={i} style={{ display: 'flex', gap: '8px', padding: '8px 12px', backgroundColor: '#F59E0B06', border: '1px solid #F59E0B20', borderRadius: '6px', fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.5' }}>
+                  <div key={i} style={{ display: 'flex', gap: '8px', padding: '8px 12px', backgroundColor: 'color-mix(in srgb, var(--mc-warn) 2%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 13%, transparent)', borderRadius: '6px', fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.5' }}>
                     <span style={{ color: 'var(--mc-warn)', flexShrink: 0, marginTop: '1px' }}>⚠</span>
                     {c}
                   </div>
@@ -2492,7 +2494,7 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
               </p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '8px' }}>
                 {entry.india_plays.map(p => (
-                  <div key={p.ticker} style={{ display: 'flex', gap: '10px', padding: '8px 12px', backgroundColor: '#F9731608', border: '1px solid #F9731620', borderRadius: '8px' }}>
+                  <div key={p.ticker} style={{ display: 'flex', gap: '10px', padding: '8px 12px', backgroundColor: 'color-mix(in srgb, var(--mc-warn) 3%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 13%, transparent)', borderRadius: '8px' }}>
                     <div style={{ flexShrink: 0 }}>
                       <span style={{ fontSize: '12px', fontWeight: '800', color: 'var(--mc-warn)' }}>{p.ticker}</span>
                       <span style={{ fontSize: '9px', color: 'var(--mc-text-4)', marginLeft: '4px' }}>{p.exchange}</span>
@@ -2522,7 +2524,7 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
                 {entry.chokepoints.map(cp => {
                   const qcfg = QUAL_STAGE_CONFIG[cp.qual_stage];
                   return (
-                    <div key={cp.ticker} style={{ padding: '12px 14px', backgroundColor: 'var(--mc-bg-1)', border: `1px solid #8B5CF620`, borderLeft: '3px solid var(--mc-state-persistent)', borderRadius: '8px' }}>
+                    <div key={cp.ticker} style={{ padding: '12px 14px', backgroundColor: 'var(--mc-bg-1)', border: `1px solid color-mix(in srgb, var(--mc-state-persistent) 13%, transparent)`, borderLeft: '3px solid var(--mc-state-persistent)', borderRadius: '8px' }}>
                       {/* Company header */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px', flexWrap: 'wrap' }}>
                         <span style={{ fontSize: '14px', fontWeight: '800', color: 'var(--mc-text-0)' }}>{cp.ticker}</span>
@@ -2530,7 +2532,7 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
                         <span style={{ fontSize: '9px', fontWeight: '700', color: 'var(--mc-text-4)', border: '1px solid var(--mc-bg-4)', padding: '1px 5px', borderRadius: '3px' }}>T{cp.tier}</span>
                         <span title={qcfg.desc} style={{ fontSize: '9px', fontWeight: '700', color: qcfg.color, backgroundColor: qcfg.color + '18', border: `1px solid ${qcfg.color}40`, padding: '1px 6px', borderRadius: '3px', cursor: 'help' }}>{qcfg.label}</span>
                         {cp.public_competitors <= 2 && (
-                          <span style={{ fontSize: '9px', fontWeight: '700', color: 'var(--mc-bearish)', backgroundColor: '#EF444414', border: '1px solid #EF444430', padding: '1px 6px', borderRadius: '3px' }}>🔒 {cp.public_competitors === 0 ? 'MONOPOLY' : cp.public_competitors === 1 ? 'DUOPOLY' : '3 competitors'}</span>
+                          <span style={{ fontSize: '9px', fontWeight: '700', color: 'var(--mc-bearish)', backgroundColor: 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bearish) 19%, transparent)', padding: '1px 6px', borderRadius: '3px' }}>🔒 {cp.public_competitors === 0 ? 'MONOPOLY' : cp.public_competitors === 1 ? 'DUOPOLY' : '3 competitors'}</span>
                         )}
                       </div>
                       <p style={{ fontSize: '11px', color: 'var(--mc-text-3)', margin: '0 0 6px', lineHeight: '1.5' }}>{cp.monopoly_basis}</p>
@@ -2538,7 +2540,7 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
                       {cp.customers.length > 0 && (
                         <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '6px' }}>
                           <span style={{ fontSize: '9px', color: 'var(--mc-text-4)' }}>→</span>
-                          {cp.customers.map(c => <span key={c} style={{ fontSize: '10px', color: 'var(--mc-accent)', backgroundColor: '#0F7ABF12', border: '1px solid #0F7ABF25', padding: '1px 6px', borderRadius: '4px' }}>{c}</span>)}
+                          {cp.customers.map(c => <span key={c} style={{ fontSize: '10px', color: 'var(--mc-accent)', backgroundColor: 'color-mix(in srgb, var(--mc-accent) 7%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-accent) 15%, transparent)', padding: '1px 6px', borderRadius: '4px' }}>{c}</span>)}
                         </div>
                       )}
                       {/* Evidence types */}
@@ -2562,27 +2564,27 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
               <p style={{ fontSize: '10px', color: 'var(--mc-accent)', fontWeight: '800', letterSpacing: '1.2px', margin: '0 0 12px' }}>🗺️ COVERAGE COMPLETENESS — who's in the chain?</p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px' }}>
                 {entry.coverage.confirmed_public.length > 0 && (
-                  <div style={{ padding: '10px 14px', backgroundColor: '#10B98108', border: '1px solid #10B98120', borderRadius: '8px' }}>
+                  <div style={{ padding: '10px 14px', backgroundColor: 'color-mix(in srgb, var(--mc-bullish) 3%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 13%, transparent)', borderRadius: '8px' }}>
                     <p style={{ fontSize: '9px', color: 'var(--mc-bullish)', fontWeight: '700', margin: '0 0 6px' }}>✅ CONFIRMED PUBLIC ({entry.coverage.confirmed_public.length})</p>
                     <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                      {entry.coverage.confirmed_public.map(t => <span key={t} style={{ fontSize: '10px', color: 'var(--mc-bullish)', fontWeight: '600', backgroundColor: '#10B98112', border: '1px solid #10B98130', padding: '1px 6px', borderRadius: '4px' }}>{t}</span>)}
+                      {entry.coverage.confirmed_public.map(t => <span key={t} style={{ fontSize: '10px', color: 'var(--mc-bullish)', fontWeight: '600', backgroundColor: 'color-mix(in srgb, var(--mc-bullish) 7%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 19%, transparent)', padding: '1px 6px', borderRadius: '4px' }}>{t}</span>)}
                     </div>
                   </div>
                 )}
                 {entry.coverage.known_private.length > 0 && (
-                  <div style={{ padding: '10px 14px', backgroundColor: '#F59E0B08', border: '1px solid #F59E0B20', borderRadius: '8px' }}>
+                  <div style={{ padding: '10px 14px', backgroundColor: 'color-mix(in srgb, var(--mc-warn) 3%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 13%, transparent)', borderRadius: '8px' }}>
                     <p style={{ fontSize: '9px', color: 'var(--mc-warn)', fontWeight: '700', margin: '0 0 6px' }}>🏢 KNOWN PRIVATE ({entry.coverage.known_private.length})</p>
                     {entry.coverage.known_private.map((t, i) => <div key={i} style={{ fontSize: '10px', color: 'var(--mc-text-3)', padding: '2px 0' }}>{t}</div>)}
                   </div>
                 )}
                 {entry.coverage.likely_missing.length > 0 && (
-                  <div style={{ padding: '10px 14px', backgroundColor: '#EF444408', border: '1px solid #EF444420', borderRadius: '8px' }}>
+                  <div style={{ padding: '10px 14px', backgroundColor: 'color-mix(in srgb, var(--mc-bearish) 3%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bearish) 13%, transparent)', borderRadius: '8px' }}>
                     <p style={{ fontSize: '9px', color: 'var(--mc-bearish)', fontWeight: '700', margin: '0 0 6px' }}>🔍 LIKELY MISSING — research candidates</p>
                     {entry.coverage.likely_missing.map((t, i) => <div key={i} style={{ fontSize: '10px', color: 'var(--mc-text-3)', padding: '2px 0', lineHeight: '1.4' }}>{t}</div>)}
                   </div>
                 )}
                 {entry.coverage.uncovered_nodes.length > 0 && (
-                  <div style={{ padding: '10px 14px', backgroundColor: '#8B5CF608', border: '1px solid #8B5CF620', borderRadius: '8px' }}>
+                  <div style={{ padding: '10px 14px', backgroundColor: 'color-mix(in srgb, var(--mc-state-persistent) 3%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-state-persistent) 13%, transparent)', borderRadius: '8px' }}>
                     <p style={{ fontSize: '9px', color: 'var(--mc-state-persistent)', fontWeight: '700', margin: '0 0 6px' }}>⚪ UNCOVERED NODES — no confirmed company</p>
                     {entry.coverage.uncovered_nodes.map((t, i) => <div key={i} style={{ fontSize: '10px', color: 'var(--mc-text-4)', padding: '2px 0', lineHeight: '1.4' }}>{t}</div>)}
                   </div>
@@ -2598,7 +2600,7 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
                 ⏱ VALUATION & TIMING — when is the asymmetric entry?
               </p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '10px' }}>
-                <div style={{ padding: '10px 14px', backgroundColor: '#F59E0B08', border: '1px solid #F59E0B20', borderRadius: '8px' }}>
+                <div style={{ padding: '10px 14px', backgroundColor: 'color-mix(in srgb, var(--mc-warn) 3%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 13%, transparent)', borderRadius: '8px' }}>
                   <p style={{ fontSize: '10px', color: 'var(--mc-warn)', fontWeight: '700', margin: '0 0 6px' }}>📍 QUALIFICATION STAGE → SIZE</p>
                   <div style={{ fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.6' }}>
                     <div>🟣 Design Win → position 1-2% (pre-revenue, high risk)</div>
@@ -2607,7 +2609,7 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
                     <div>🔵 Volume → only enter on dips (fully priced, reduce size)</div>
                   </div>
                 </div>
-                <div style={{ padding: '10px 14px', backgroundColor: '#0F7ABF08', border: '1px solid #0F7ABF20', borderRadius: '8px' }}>
+                <div style={{ padding: '10px 14px', backgroundColor: 'color-mix(in srgb, var(--mc-accent) 3%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-accent) 13%, transparent)', borderRadius: '8px' }}>
                   <p style={{ fontSize: '10px', color: 'var(--mc-accent)', fontWeight: '700', margin: '0 0 6px' }}>📊 ENTRY TRIGGERS TO WATCH</p>
                   <div style={{ fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.6' }}>
                     <div>→ Earnings call explicitly names hyperscaler customer</div>
@@ -2617,7 +2619,7 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
                     <div>→ Institutional 13F first appearance (&lt;3 holders)</div>
                   </div>
                 </div>
-                <div style={{ padding: '10px 14px', backgroundColor: '#EF444408', border: '1px solid #EF444420', borderRadius: '8px' }}>
+                <div style={{ padding: '10px 14px', backgroundColor: 'color-mix(in srgb, var(--mc-bearish) 3%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bearish) 13%, transparent)', borderRadius: '8px' }}>
                   <p style={{ fontSize: '10px', color: 'var(--mc-bearish)', fontWeight: '700', margin: '0 0 6px' }}>🚨 EXIT / REDUCE TRIGGERS</p>
                   <div style={{ fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.6' }}>
                     <div>→ New public competitor qualifies at same customer</div>
@@ -2637,7 +2639,7 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
             {entry.chokepoints?.map(cp => (
               <a key={cp.ticker}
                 href={`https://finance.yahoo.com/quote/${cp.ticker}`} target="_blank" rel="noopener noreferrer"
-                style={{ fontSize: '10px', fontWeight: '700', color: 'var(--mc-accent)', backgroundColor: '#0F7ABF12', border: '1px solid #0F7ABF30', padding: '4px 10px', borderRadius: '5px', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                style={{ fontSize: '10px', fontWeight: '700', color: 'var(--mc-accent)', backgroundColor: 'color-mix(in srgb, var(--mc-accent) 7%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-accent) 19%, transparent)', padding: '4px 10px', borderRadius: '5px', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
                 📈 {cp.ticker}
               </a>
             ))}
@@ -2751,7 +2753,7 @@ function GeoOverlay({ articles, isLoading }: { articles: NewsArticle[]; isLoadin
 
   return (
     <div style={{ padding: '20px' }}>
-      <div style={{ marginBottom: '16px', padding: '12px 16px', backgroundColor: '#EF444408', border: '1px solid #EF444428', borderRadius: '10px' }}>
+      <div style={{ marginBottom: '16px', padding: '12px 16px', backgroundColor: 'color-mix(in srgb, var(--mc-bearish) 3%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bearish) 16%, transparent)', borderRadius: '10px' }}>
         <p style={{ fontSize: '12px', color: 'var(--mc-bearish)', fontWeight: '700', margin: '0 0 4px' }}>⚠️ Geopolitical Accelerant — Model 29</p>
         <p style={{ fontSize: '11px', color: 'var(--mc-text-3)', margin: 0, lineHeight: '1.5' }}>
           Geopolitical disruption = accelerant to upstream supply chain bottleneck positions. When supply chains become more fragile globally, chokepoint companies become MORE valuable.
@@ -2776,7 +2778,7 @@ function GeoOverlay({ articles, isLoading }: { articles: NewsArticle[]; isLoadin
       {/* Mechanism filter — auto-classified from article text */}
       <div style={{ display: 'flex', gap: '5px', marginBottom: '16px', flexWrap: 'wrap' }}>
         <span style={{ fontSize: '10px', color: 'var(--mc-text-4)', fontWeight: '700', alignSelf: 'center', letterSpacing: '0.5px' }}>MECHANISM:</span>
-        <button onClick={() => setMechFilter('ALL')} style={{ padding: '3px 10px', borderRadius: '6px', border: `1px solid ${mechFilter === 'ALL' ? '#0F7ABF60' : 'var(--mc-bg-4)'}`, cursor: 'pointer', backgroundColor: mechFilter === 'ALL' ? '#0F7ABF14' : 'transparent', color: mechFilter === 'ALL' ? 'var(--mc-accent)' : 'var(--mc-text-4)', fontSize: '10px', fontWeight: '600' }}>ALL</button>
+        <button onClick={() => setMechFilter('ALL')} style={{ padding: '3px 10px', borderRadius: '6px', border: `1px solid ${mechFilter === 'ALL' ? 'color-mix(in srgb, var(--mc-accent) 38%, transparent)' : 'var(--mc-bg-4)'}`, cursor: 'pointer', backgroundColor: mechFilter === 'ALL' ? 'color-mix(in srgb, var(--mc-accent) 8%, transparent)' : 'transparent', color: mechFilter === 'ALL' ? 'var(--mc-accent)' : 'var(--mc-text-4)', fontSize: '10px', fontWeight: '600' }}>ALL</button>
         {Object.entries(GEO_MECHANISMS).filter(([k]) => (mechCounts[k] ?? 0) > 0).map(([k, m]) => (
           <button key={k} onClick={() => setMechFilter(k === mechFilter ? 'ALL' : k)} style={{ padding: '3px 10px', borderRadius: '6px', border: `1px solid ${mechFilter === k ? m.color + '60' : 'var(--mc-bg-4)'}`, cursor: 'pointer', backgroundColor: mechFilter === k ? m.color + '14' : 'transparent', color: mechFilter === k ? m.color : 'var(--mc-text-4)', fontSize: '10px', fontWeight: '600' }}>
             {m.icon} {m.label} ({mechCounts[k]})
@@ -2817,7 +2819,7 @@ function GeoOverlay({ articles, isLoading }: { articles: NewsArticle[]; isLoadin
             )}
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
               <span style={{ fontSize: '10px', color: 'var(--mc-text-4)' }}>{a.source_name} · {timeAgo(a.published_at)}</span>
-              {tickers.slice(0, 4).map(t => <span key={t} style={{ fontSize: '10px', color: 'var(--mc-accent)', fontWeight: '600', backgroundColor: '#0F7ABF14', padding: '1px 5px', borderRadius: '3px' }}>${t}</span>)}
+              {tickers.slice(0, 4).map(t => <span key={t} style={{ fontSize: '10px', color: 'var(--mc-accent)', fontWeight: '600', backgroundColor: 'color-mix(in srgb, var(--mc-accent) 8%, transparent)', padding: '1px 5px', borderRadius: '3px' }}>${t}</span>)}
               <a href={url} target="_blank" rel="noopener noreferrer" style={{ marginLeft: 'auto', color: 'var(--mc-text-4)' }}><ExternalLink className="w-3 h-3" /></a>
             </div>
           </div>
@@ -2921,7 +2923,7 @@ function ConferenceCalendar() {
 
   return (
     <div style={{ padding: '20px' }}>
-      <div style={{ marginBottom: '16px', padding: '12px 16px', backgroundColor: '#0F7ABF08', border: '1px solid #0F7ABF28', borderRadius: '10px' }}>
+      <div style={{ marginBottom: '16px', padding: '12px 16px', backgroundColor: 'color-mix(in srgb, var(--mc-accent) 3%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-accent) 16%, transparent)', borderRadius: '10px' }}>
         <p style={{ fontSize: '12px', color: 'var(--mc-accent)', fontWeight: '700', margin: '0 0 3px' }}>📅 Frontrun Conferences — Model 22</p>
         <p style={{ fontSize: '11px', color: 'var(--mc-text-3)', margin: 0 }}>Position 4–6 weeks BEFORE each conference. A single Jensen Huang slide on CPO sends photonics names up 20–50% in a day. The day after is too late.</p>
       </div>
@@ -2937,14 +2939,14 @@ function ConferenceCalendar() {
             past:     { bg: '#4A5B6C14', border: '#1A2840',   badge: '#4A5B6C', label: 'PAST' },
           }[status];
           return (
-            <div key={conf.name} style={{ padding: '16px', border: `1px solid ${isHot ? '#EF444440' : statusStyle.border}`, borderRadius: '12px', backgroundColor: statusStyle.bg, boxShadow: isHot ? '0 0 12px #EF444414' : 'none' }}>
+            <div key={conf.name} style={{ padding: '16px', border: `1px solid ${isHot ? 'color-mix(in srgb, var(--mc-bearish) 25%, transparent)' : statusStyle.border}`, borderRadius: '12px', backgroundColor: statusStyle.bg, boxShadow: isHot ? '0 0 12px color-mix(in srgb, var(--mc-bearish) 8%, transparent)' : 'none' }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '8px', gap: '8px' }}>
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px', flexWrap: 'wrap' }}>
                     <span style={{ fontSize: '14px', fontWeight: '800', color: 'var(--mc-text-0)' }}>{conf.name}</span>
                     <span style={{ fontSize: '9px', fontWeight: '700', letterSpacing: '0.8px', color: statusStyle.badge, backgroundColor: statusStyle.badge + '20', padding: '2px 6px', borderRadius: '3px' }}>{statusStyle.label}</span>
                     {liveSignals > 0 && (
-                      <span style={{ fontSize: '9px', fontWeight: '700', color: isHot ? 'var(--mc-bearish)' : 'var(--mc-bullish)', backgroundColor: isHot ? '#EF444414' : '#10B98114', border: `1px solid ${isHot ? '#EF444430' : '#10B98130'}`, padding: '2px 6px', borderRadius: '3px' }}>
+                      <span style={{ fontSize: '9px', fontWeight: '700', color: isHot ? 'var(--mc-bearish)' : 'var(--mc-bullish)', backgroundColor: isHot ? 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)' : 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', border: `1px solid ${isHot ? 'color-mix(in srgb, var(--mc-bearish) 19%, transparent)' : 'color-mix(in srgb, var(--mc-bullish) 19%, transparent)'}`, padding: '2px 6px', borderRadius: '3px' }}>
                         {isHot ? '🔥' : '📡'} {liveSignals} live article{liveSignals !== 1 ? 's' : ''}
                       </span>
                     )}
@@ -2961,7 +2963,7 @@ function ConferenceCalendar() {
                 {conf.tags.map(t => <span key={t} style={{ fontSize: '9px', fontWeight: '700', color: TAG_COLORS[t] ?? 'var(--mc-text-4)', border: `1px solid ${(TAG_COLORS[t] ?? 'var(--mc-text-4)') + '40'}`, padding: '1px 6px', borderRadius: '3px' }}>{t}</span>)}
               </div>
               {status === 'soon' && (
-                <div style={{ marginTop: '10px', padding: '8px 10px', backgroundColor: '#F59E0B12', border: '1px solid #F59E0B28', borderRadius: '6px' }}>
+                <div style={{ marginTop: '10px', padding: '8px 10px', backgroundColor: 'color-mix(in srgb, var(--mc-warn) 7%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 16%, transparent)', borderRadius: '6px' }}>
                   <p style={{ fontSize: '11px', color: 'var(--mc-warn)', fontWeight: '600', margin: 0 }}>🎯 Entry window open — build positions now</p>
                 </div>
               )}
@@ -2972,7 +2974,7 @@ function ConferenceCalendar() {
 
       {/* ── Earnings Catalyst Engine ── */}
       <div style={{ marginTop: '28px' }}>
-        <div style={{ marginBottom: '14px', padding: '10px 16px', backgroundColor: '#10B98108', border: '1px solid #10B98128', borderRadius: '10px' }}>
+        <div style={{ marginBottom: '14px', padding: '10px 16px', backgroundColor: 'color-mix(in srgb, var(--mc-bullish) 3%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 16%, transparent)', borderRadius: '10px' }}>
           <p style={{ fontSize: '12px', color: 'var(--mc-bullish)', fontWeight: '700', margin: '0 0 2px' }}>📊 Earnings Catalyst Engine — Live</p>
           <p style={{ fontSize: '11px', color: 'var(--mc-text-4)', margin: 0 }}>
             Recent earnings news for Serenity universe stocks. These are the qualification→ramp→visible order cycles that confirm or break theses. Auto-fetched from live news.
@@ -2994,13 +2996,13 @@ function ConferenceCalendar() {
               const qualSignal = ['design win','qual','qualification','ramp'].some(kw => text.includes(kw));
               const backlogSignal = ['backlog','lead time','allocation','sold out'].some(kw => text.includes(kw));
               return (
-                <div key={a.id || i} style={{ padding: '10px 14px', backgroundColor: 'var(--mc-bg-1)', border: `1px solid ${positive ? '#10B98128' : negative ? '#EF444420' : 'var(--mc-bg-4)'}`, borderRadius: '8px', borderLeft: `3px solid ${sentColor}` }}>
+                <div key={a.id || i} style={{ padding: '10px 14px', backgroundColor: 'var(--mc-bg-1)', border: `1px solid ${positive ? 'color-mix(in srgb, var(--mc-bullish) 16%, transparent)' : negative ? 'color-mix(in srgb, var(--mc-bearish) 13%, transparent)' : 'var(--mc-bg-4)'}`, borderRadius: '8px', borderLeft: `3px solid ${sentColor}` }}>
                   <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '5px', flexWrap: 'wrap' }}>
-                    {tickers.slice(0,3).map((t: string) => <span key={t} style={{ fontSize: '11px', fontWeight: '800', color: 'var(--mc-accent)', backgroundColor: '#0F7ABF14', padding: '1px 7px', borderRadius: '4px' }}>{t}</span>)}
-                    {positive && <span style={{ fontSize: '9px', color: 'var(--mc-bullish)', fontWeight: '700', backgroundColor: '#10B98114', padding: '1px 6px', borderRadius: '3px' }}>↑ BEAT / RAISED</span>}
-                    {negative && <span style={{ fontSize: '9px', color: 'var(--mc-bearish)', fontWeight: '700', backgroundColor: '#EF444414', padding: '1px 6px', borderRadius: '3px' }}>↓ MISS / CUT</span>}
-                    {qualSignal && <span style={{ fontSize: '9px', color: 'var(--mc-state-persistent)', fontWeight: '700', backgroundColor: '#8B5CF614', padding: '1px 6px', borderRadius: '3px' }}>🎯 QUAL SIGNAL</span>}
-                    {backlogSignal && <span style={{ fontSize: '9px', color: 'var(--mc-warn)', fontWeight: '700', backgroundColor: '#F59E0B14', padding: '1px 6px', borderRadius: '3px' }}>⏱️ BACKLOG SIGNAL</span>}
+                    {tickers.slice(0,3).map((t: string) => <span key={t} style={{ fontSize: '11px', fontWeight: '800', color: 'var(--mc-accent)', backgroundColor: 'color-mix(in srgb, var(--mc-accent) 8%, transparent)', padding: '1px 7px', borderRadius: '4px' }}>{t}</span>)}
+                    {positive && <span style={{ fontSize: '9px', color: 'var(--mc-bullish)', fontWeight: '700', backgroundColor: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', padding: '1px 6px', borderRadius: '3px' }}>↑ BEAT / RAISED</span>}
+                    {negative && <span style={{ fontSize: '9px', color: 'var(--mc-bearish)', fontWeight: '700', backgroundColor: 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)', padding: '1px 6px', borderRadius: '3px' }}>↓ MISS / CUT</span>}
+                    {qualSignal && <span style={{ fontSize: '9px', color: 'var(--mc-state-persistent)', fontWeight: '700', backgroundColor: 'color-mix(in srgb, var(--mc-state-persistent) 8%, transparent)', padding: '1px 6px', borderRadius: '3px' }}>🎯 QUAL SIGNAL</span>}
+                    {backlogSignal && <span style={{ fontSize: '9px', color: 'var(--mc-warn)', fontWeight: '700', backgroundColor: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', padding: '1px 6px', borderRadius: '3px' }}>⏱️ BACKLOG SIGNAL</span>}
                     <span style={{ fontSize: '10px', color: 'var(--mc-text-4)', marginLeft: 'auto' }}>{timeAgo(a.published_at)}</span>
                   </div>
                   <a href={url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
@@ -3067,7 +3069,7 @@ function SupplyChainMap({ dashboard, articles }: { dashboard?: BnDashboard; arti
 
   return (
     <div style={{ padding: '20px' }}>
-      <div style={{ marginBottom: '16px', padding: '12px 16px', backgroundColor: '#8B5CF608', border: '1px solid #8B5CF628', borderRadius: '10px' }}>
+      <div style={{ marginBottom: '16px', padding: '12px 16px', backgroundColor: 'color-mix(in srgb, var(--mc-state-persistent) 3%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-state-persistent) 16%, transparent)', borderRadius: '10px' }}>
         <p style={{ fontSize: '12px', color: 'var(--mc-state-persistent)', fontWeight: '700', margin: '0 0 3px' }}>🗺️ AI Infrastructure Value Chain — Models 01, 05, 18</p>
         <p style={{ fontSize: '11px', color: 'var(--mc-text-3)', margin: 0 }}>The further upstream from the hyped name, the less investor competition. Monopolistic positioning increases as you go further upstream. Active bottlenecks highlighted.</p>
       </div>
@@ -3088,7 +3090,7 @@ function SupplyChainMap({ dashboard, articles }: { dashboard?: BnDashboard; arti
               <div style={{
                 padding: '14px 18px', borderRadius: '10px',
                 backgroundColor: isActive ? tier.color + '12' : 'var(--mc-bg-1)',
-                border: `1px solid ${isActive ? tier.color + '60' : vel?.trend === '🔥' ? '#F59E0B40' : 'var(--mc-bg-4)'}`,
+                border: `1px solid ${isActive ? tier.color + '60' : vel?.trend === '🔥' ? 'color-mix(in srgb, var(--mc-warn) 25%, transparent)' : 'var(--mc-bg-4)'}`,
                 boxShadow: isActive ? `0 0 14px ${tier.color}18` : 'none',
                 transition: 'all 0.2s',
                 display: 'flex', alignItems: 'center', gap: '14px',
@@ -3105,12 +3107,12 @@ function SupplyChainMap({ dashboard, articles }: { dashboard?: BnDashboard; arti
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
                     <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--mc-text-0)' }}>{tier.label}</span>
                     {isActive && (
-                      <span style={{ fontSize: '9px', fontWeight: '700', color: 'var(--mc-bearish)', backgroundColor: '#EF444420', border: '1px solid #EF444440', padding: '2px 7px', borderRadius: '3px', letterSpacing: '0.8px' }}>
+                      <span style={{ fontSize: '9px', fontWeight: '700', color: 'var(--mc-bearish)', backgroundColor: 'color-mix(in srgb, var(--mc-bearish) 13%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bearish) 25%, transparent)', padding: '2px 7px', borderRadius: '3px', letterSpacing: '0.8px' }}>
                         ⚡ ACTIVE BOTTLENECK{isSharedBucket ? ' (shared)' : ''}
                       </span>
                     )}
                     {vel?.trend === '🔥' && !isActive && <span style={{ fontSize: '9px', color: 'var(--mc-warn)', fontWeight: '700' }}>🔥 Rising</span>}
-                    {evData && evData.count > 0 && <span style={{ fontSize: '9px', color: 'var(--mc-bullish)', backgroundColor: '#10B98114', padding: '1px 5px', borderRadius: '3px' }}>📡 {evData.count} live</span>}
+                    {evData && evData.count > 0 && <span style={{ fontSize: '9px', color: 'var(--mc-bullish)', backgroundColor: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', padding: '1px 5px', borderRadius: '3px' }}>📡 {evData.count} live</span>}
                   </div>
                   <p style={{ fontSize: '11px', color: 'var(--mc-text-4)', margin: '0 0 4px' }}>{tier.sub}</p>
                   {tier.lens && (
@@ -3236,7 +3238,7 @@ function SerenityChecklist({ enriched }: { enriched: EnrichedStock[] }) {
 
   return (
     <div style={{ padding: '20px' }}>
-      <div style={{ marginBottom: '16px', padding: '12px 16px', backgroundColor: '#0F7ABF08', border: '1px solid #0F7ABF28', borderRadius: '10px' }}>
+      <div style={{ marginBottom: '16px', padding: '12px 16px', backgroundColor: 'color-mix(in srgb, var(--mc-accent) 3%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-accent) 16%, transparent)', borderRadius: '10px' }}>
         <p style={{ fontSize: '12px', color: 'var(--mc-accent)', fontWeight: '700', margin: '0 0 3px' }}>📋 Serenity Research Checklist — Framework Part V</p>
         <p style={{ fontSize: '11px', color: 'var(--mc-text-3)', margin: 0 }}>Complete ALL items before committing capital. Never commit more than 0.5% of portfolio without at least 5 primary source confirmations. Saved locally on your device.</p>
       </div>
@@ -3246,10 +3248,10 @@ function SerenityChecklist({ enriched }: { enriched: EnrichedStock[] }) {
         <input value={symbol} onChange={e => setSymbol(e.target.value.toUpperCase())} onKeyDown={e => e.key === 'Enter' && addSymbol()}
           placeholder="Add ticker… (e.g. COHR)" maxLength={10}
           style={{ flex: '0 0 160px', padding: '8px 12px', backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: '8px', color: 'var(--mc-text-0)', fontSize: '13px', fontWeight: '600', outline: 'none' }} />
-        <button onClick={addSymbol} style={{ padding: '8px 14px', backgroundColor: '#0F7ABF20', border: '1px solid #0F7ABF40', borderRadius: '8px', color: 'var(--mc-accent)', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>Add</button>
+        <button onClick={addSymbol} style={{ padding: '8px 14px', backgroundColor: 'color-mix(in srgb, var(--mc-accent) 13%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-accent) 25%, transparent)', borderRadius: '8px', color: 'var(--mc-accent)', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>Add</button>
         {savedSymbols.map(s => (
-          <div key={s} style={{ display: 'flex', alignItems: 'center', gap: '0', borderRadius: '8px', border: `1px solid ${activeSymbol === s ? '#0F7ABF60' : 'var(--mc-bg-4)'}`, overflow: 'hidden' }}>
-            <button onClick={() => loadSymbol(s)} style={{ padding: '6px 12px', background: activeSymbol === s ? '#0F7ABF20' : 'transparent', border: 'none', cursor: 'pointer', color: activeSymbol === s ? 'var(--mc-accent)' : 'var(--mc-text-3)', fontSize: '12px', fontWeight: '700' }}>{s}</button>
+          <div key={s} style={{ display: 'flex', alignItems: 'center', gap: '0', borderRadius: '8px', border: `1px solid ${activeSymbol === s ? 'color-mix(in srgb, var(--mc-accent) 38%, transparent)' : 'var(--mc-bg-4)'}`, overflow: 'hidden' }}>
+            <button onClick={() => loadSymbol(s)} style={{ padding: '6px 12px', background: activeSymbol === s ? 'color-mix(in srgb, var(--mc-accent) 13%, transparent)' : 'transparent', border: 'none', cursor: 'pointer', color: activeSymbol === s ? 'var(--mc-accent)' : 'var(--mc-text-3)', fontSize: '12px', fontWeight: '700' }}>{s}</button>
             <button onClick={() => removeSymbol(s)} style={{ padding: '6px 8px', background: 'none', border: 'none', borderLeft: '1px solid var(--mc-bg-4)', cursor: 'pointer', color: 'var(--mc-text-4)', fontSize: '11px' }}>×</button>
           </div>
         ))}
@@ -3279,10 +3281,10 @@ function SerenityChecklist({ enriched }: { enriched: EnrichedStock[] }) {
                 const isAuto = !!auto;
                 return (
                   <div key={item.id}>
-                    <button onClick={() => !isAuto && toggleCheck(item.id)} style={{ width: '100%', textAlign: 'left', display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '10px 14px', marginBottom: isAuto && auto.note ? '0' : '4px', backgroundColor: isChecked ? '#10B98108' : 'var(--mc-bg-1)', border: `1px solid ${isChecked ? '#10B98128' : 'var(--mc-bg-4)'}`, borderRadius: isAuto && auto.note ? '8px 8px 0 0' : '8px', cursor: isAuto ? 'default' : 'pointer', transition: 'all 0.15s' }}>
+                    <button onClick={() => !isAuto && toggleCheck(item.id)} style={{ width: '100%', textAlign: 'left', display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '10px 14px', marginBottom: isAuto && auto.note ? '0' : '4px', backgroundColor: isChecked ? 'color-mix(in srgb, var(--mc-bullish) 3%, transparent)' : 'var(--mc-bg-1)', border: `1px solid ${isChecked ? 'color-mix(in srgb, var(--mc-bullish) 16%, transparent)' : 'var(--mc-bg-4)'}`, borderRadius: isAuto && auto.note ? '8px 8px 0 0' : '8px', cursor: isAuto ? 'default' : 'pointer', transition: 'all 0.15s' }}>
                       {isChecked ? <CheckSquare className="w-4 h-4" style={{ color: isAuto ? '#06B6D4' : 'var(--mc-bullish)', flexShrink: 0, marginTop: '1px' }} /> : <Square className="w-4 h-4" style={{ color: 'var(--mc-text-4)', flexShrink: 0, marginTop: '1px' }} />}
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <span style={{ fontSize: '12px', color: isChecked ? (isAuto ? '#06B6D4' : 'var(--mc-bullish)') : 'var(--mc-text-2)', lineHeight: '1.4', textDecoration: isChecked ? 'line-through' : 'none', textDecorationColor: isAuto ? '#06B6D460' : '#10B98160' }}>{item.label}</span>
+                        <span style={{ fontSize: '12px', color: isChecked ? (isAuto ? '#06B6D4' : 'var(--mc-bullish)') : 'var(--mc-text-2)', lineHeight: '1.4', textDecoration: isChecked ? 'line-through' : 'none', textDecorationColor: isAuto ? '#06B6D460' : 'color-mix(in srgb, var(--mc-bullish) 38%, transparent)' }}>{item.label}</span>
                         {isAuto && <span style={{ fontSize: '9px', color: '#06B6D4', backgroundColor: '#06B6D414', border: '1px solid #06B6D430', padding: '0 5px', borderRadius: '3px', marginLeft: '8px', fontWeight: '600' }}>AUTO</span>}
                       </div>
                     </button>

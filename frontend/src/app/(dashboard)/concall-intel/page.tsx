@@ -205,7 +205,7 @@ export default function ConcallIntelPage() {
                 fontSize: 12, fontWeight: 800, letterSpacing: '0.3px',
                 padding: '6px 14px', borderRadius: 6,
                 border: `1px solid ${isActive ? 'var(--mc-cyan)' : 'var(--mc-bg-4)'}`,
-                background: isActive ? '#22D3EE22' : 'transparent',
+                background: isActive ? 'color-mix(in srgb, var(--mc-cyan) 13%, transparent)' : 'transparent',
                 color: isActive ? 'var(--mc-cyan)' : 'var(--mc-text-3)',
                 cursor: 'pointer',
               }}
@@ -262,7 +262,7 @@ export default function ConcallIntelPage() {
           style={{ width: '100%', padding: '8px 10px', backgroundColor: 'var(--mc-bg-0)', border: '1px solid var(--mc-bg-4)', borderRadius: 6, color: 'var(--mc-text-1)', fontSize: 12, outline: 'none', fontFamily: 'ui-sans-serif, system-ui', resize: 'vertical' }} />
         <div style={{ marginTop: 10, display: 'flex', gap: 10 }}>
           <button onClick={() => analyze(false)} disabled={loading || (!pdfUrl.trim() && transcript.trim().length < 200)}
-            style={{ padding: '8px 16px', backgroundColor: loading ? '#22D3EE40' : 'var(--mc-cyan)', color: 'var(--mc-bg-0)', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 800, cursor: loading ? 'wait' : 'pointer' }}>
+            style={{ padding: '8px 16px', backgroundColor: loading ? 'color-mix(in srgb, var(--mc-cyan) 25%, transparent)' : 'var(--mc-cyan)', color: 'var(--mc-bg-0)', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 800, cursor: loading ? 'wait' : 'pointer' }}>
             {loading ? 'Analysing…' : 'Analyse Concall'}
           </button>
           {/* AUDIT_100 #61 — Force re-analyze bypasses the corpus cache. */}
@@ -333,7 +333,7 @@ export default function ConcallIntelPage() {
               </div>
             )}
             {result.red_flags.length > 0 && (
-              <div style={{ backgroundColor: 'var(--mc-bg-0)', border: '1px solid #EF444440', borderLeft: '3px solid var(--mc-bearish)', borderRadius: 8, padding: '12px 14px' }}>
+              <div style={{ backgroundColor: 'var(--mc-bg-0)', border: '1px solid color-mix(in srgb, var(--mc-bearish) 25%, transparent)', borderLeft: '3px solid var(--mc-bearish)', borderRadius: 8, padding: '12px 14px' }}>
                 <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-bearish)', letterSpacing: '0.4px', marginBottom: 8 }}>⚠ RED FLAGS</div>
                 {result.red_flags.map((f, i) => (
                   <div key={i} style={{ fontSize: 12, padding: '4px 0', color: 'var(--mc-text-1)' }}>· {f}</div>
@@ -534,7 +534,7 @@ function LiveBullishFeed() {
   }, [data]);
 
   return (
-    <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid #F59E0B30', borderLeft: '4px solid var(--mc-warn)', borderRadius: 10, padding: '14px 18px', marginBottom: 14 }}>
+    <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid color-mix(in srgb, var(--mc-warn) 19%, transparent)', borderLeft: '4px solid var(--mc-warn)', borderRadius: 10, padding: '14px 18px', marginBottom: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
         <div>
           <div style={{ fontSize: 14, fontWeight: 900, color: 'var(--mc-warn)', letterSpacing: '0.4px' }}>🔥 LIVE BULLISH FEED — NSE / BSE concall + presentation filings</div>
@@ -578,11 +578,11 @@ function LiveBullishFeed() {
           })()}
         </div>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button onClick={() => setBullishOnly(v => !v)} style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5, border: `1px solid ${bullishOnly ? 'var(--mc-bullish)' : 'var(--mc-bg-4)'}`, background: bullishOnly ? '#10B98120' : 'transparent', color: bullishOnly ? 'var(--mc-bullish)' : 'var(--mc-text-3)', cursor: 'pointer' }}>
+          <button onClick={() => setBullishOnly(v => !v)} style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5, border: `1px solid ${bullishOnly ? 'var(--mc-bullish)' : 'var(--mc-bg-4)'}`, background: bullishOnly ? 'color-mix(in srgb, var(--mc-bullish) 13%, transparent)' : 'transparent', color: bullishOnly ? 'var(--mc-bullish)' : 'var(--mc-text-3)', cursor: 'pointer' }}>
             ★ Bullish only {bullishOnly ? '✓' : ''}
           </button>
           {(['ALL', 'NSE', 'BSE'] as const).map(e => (
-            <button key={e} onClick={() => setExchange(e)} style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5, border: `1px solid ${exchange === e ? 'var(--mc-cyan)' : 'var(--mc-bg-4)'}`, background: exchange === e ? '#22D3EE20' : 'transparent', color: exchange === e ? 'var(--mc-cyan)' : 'var(--mc-text-3)', cursor: 'pointer' }}>
+            <button key={e} onClick={() => setExchange(e)} style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5, border: `1px solid ${exchange === e ? 'var(--mc-cyan)' : 'var(--mc-bg-4)'}`, background: exchange === e ? 'color-mix(in srgb, var(--mc-cyan) 13%, transparent)' : 'transparent', color: exchange === e ? 'var(--mc-cyan)' : 'var(--mc-text-3)', cursor: 'pointer' }}>
               {e}
             </button>
           ))}
@@ -598,7 +598,7 @@ function LiveBullishFeed() {
             <option value={90}>90 days</option>
             <option value={180}>180 days</option>
           </select>
-          <button onClick={() => fetchFeed(true)} disabled={loading} style={{ fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 5, border: '1px solid var(--mc-cyan)', background: '#22D3EE20', color: 'var(--mc-cyan)', cursor: loading ? 'wait' : 'pointer' }}>
+          <button onClick={() => fetchFeed(true)} disabled={loading} style={{ fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 5, border: '1px solid var(--mc-cyan)', background: 'color-mix(in srgb, var(--mc-cyan) 13%, transparent)', color: 'var(--mc-cyan)', cursor: loading ? 'wait' : 'pointer' }}>
             {loading ? '…' : '↻ Refresh'}
           </button>
         </div>
@@ -697,7 +697,7 @@ function LiveBullishFeed() {
           return b.companies.length - a.companies.length;
         });
         return (
-          <div style={{ marginBottom: 14, padding: 14, background: 'linear-gradient(135deg, #EF444415, #F59E0B10)', border: '1px solid #EF444460', borderRadius: 10 }}>
+          <div style={{ marginBottom: 14, padding: 14, background: 'linear-gradient(135deg, color-mix(in srgb, var(--mc-bearish) 8%, transparent), color-mix(in srgb, var(--mc-warn) 6%, transparent))', border: '1px solid color-mix(in srgb, var(--mc-bearish) 38%, transparent)', borderRadius: 10 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
               <div style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-bearish)', letterSpacing: '0.5px' }}>
                 🚨 SUPPLY-CHAIN BOTTLENECKS DETECTED — {detected.length} filing{detected.length === 1 ? '' : 's'} across {groupArr.length} component{groupArr.length === 1 ? '' : 's'}{ungrouped.length > 0 ? ` + ${ungrouped.length} unmapped` : ''}
@@ -764,7 +764,7 @@ function LiveBullishFeed() {
           any single filing — these are the themes the broader market is
           about to discover. */}
       {data && (data as any).theme_clusters && (data as any).theme_clusters.length > 0 && (
-        <div style={{ marginBottom: 14, padding: 14, background: 'linear-gradient(135deg, #06B6D420, #A78BFA10)', border: '1px solid #06B6D470', borderRadius: 10 }}>
+        <div style={{ marginBottom: 14, padding: 14, background: 'linear-gradient(135deg, #06B6D420, color-mix(in srgb, var(--mc-state-persistent) 6%, transparent))', border: '1px solid #06B6D470', borderRadius: 10 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 }}>
             <div style={{ fontSize: 13, fontWeight: 900, color: '#06B6D4', letterSpacing: '0.5px' }}>
               🌐 CROSS-COMPANY THEME CLUSTERS — institutional cross-confirmation across the window
@@ -805,7 +805,7 @@ function LiveBullishFeed() {
                       <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--mc-text-3)', marginBottom: 3 }}>★ READ-THROUGH BENEFICIARIES (verify independently)</div>
                       <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
                         {tc.beneficiaries.slice(0, 10).map((b: string) => (
-                          <span key={b} style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, background: '#10B98120', color: 'var(--mc-bullish)', border: '1px solid #10B98140' }}>{b}</span>
+                          <span key={b} style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-bullish) 13%, transparent)', color: 'var(--mc-bullish)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 25%, transparent)' }}>{b}</span>
                         ))}
                       </div>
                     </div>
@@ -848,7 +848,7 @@ function LiveBullishFeed() {
           .slice(0, 10);
         if (ranked.length === 0) {
           return (
-            <div style={{ marginBottom: 12, padding: 16, background: 'linear-gradient(135deg, #10B98110, #22D3EE10)', border: '1px solid var(--mc-bg-4)', borderRadius: 10, textAlign: 'center' }}>
+            <div style={{ marginBottom: 12, padding: 16, background: 'linear-gradient(135deg, color-mix(in srgb, var(--mc-bullish) 6%, transparent), color-mix(in srgb, var(--mc-cyan) 6%, transparent))', border: '1px solid var(--mc-bg-4)', borderRadius: 10, textAlign: 'center' }}>
               <div style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-text-3)', letterSpacing: '0.5px', marginBottom: 4 }}>
                 ★ TOP RANKED — institutional shortlist
               </div>
@@ -862,7 +862,7 @@ function LiveBullishFeed() {
           );
         }
         return (
-          <div style={{ marginBottom: 12, padding: 12, background: 'linear-gradient(135deg, #10B98110, #22D3EE10)', border: '1px solid #10B98150', borderRadius: 10 }}>
+          <div style={{ marginBottom: 12, padding: 12, background: 'linear-gradient(135deg, color-mix(in srgb, var(--mc-bullish) 6%, transparent), color-mix(in srgb, var(--mc-cyan) 6%, transparent))', border: '1px solid color-mix(in srgb, var(--mc-bullish) 31%, transparent)', borderRadius: 10 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
               <div style={{ fontSize: 12, fontWeight: 900, color: 'var(--mc-bullish)', letterSpacing: '0.5px' }}>★ TOP {ranked.length} RANKED — institutional shortlist (by composite: 0.5×Quality + 0.3×Cycle + 0.2×Sentiment)</div>
               <div style={{ fontSize: 10, color: 'var(--mc-text-3)', fontWeight: 600 }}>· window: last {days} day{days === 1 ? '' : 's'}</div>
@@ -882,9 +882,9 @@ function LiveBullishFeed() {
                     <div style={{ fontSize: 10, color: 'var(--mc-text-3)', marginBottom: 4 }}>{r.company_name}</div>
                     <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', fontSize: 8 }}>
                       <span style={{ padding: '1px 5px', borderRadius: 3, background: `${tierColor}20`, color: tierColor, fontWeight: 800 }}>{r.bullish.tier?.replace('_', ' ')}</span>
-                      <span style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: 'var(--mc-bullish)' }}>Mgmt {r.bullish.components.management_confidence.toFixed(1)}</span>
-                      <span style={{ padding: '1px 5px', borderRadius: 3, background: '#22D3EE15', color: 'var(--mc-cyan)' }}>Biz {r.bullish.components.business_evidence.toFixed(1)}</span>
-                      {(r.bullish.components.blockers || 0) > 0 && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#EF444415', color: 'var(--mc-bearish)' }}>Risk {r.bullish.components.blockers.toFixed(1)}</span>}
+                      <span style={{ padding: '1px 5px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', color: 'var(--mc-bullish)' }}>Mgmt {r.bullish.components.management_confidence.toFixed(1)}</span>
+                      <span style={{ padding: '1px 5px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', color: 'var(--mc-cyan)' }}>Biz {r.bullish.components.business_evidence.toFixed(1)}</span>
+                      {(r.bullish.components.blockers || 0) > 0 && <span style={{ padding: '1px 5px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)', color: 'var(--mc-bearish)' }}>Risk {r.bullish.components.blockers.toFixed(1)}</span>}
                     </div>
                   </div>
                 );
@@ -908,7 +908,7 @@ function LiveBullishFeed() {
             PRESS_RELEASE: '📰 Press Release',
           };
           return (
-            <div key={f.symbol + '-' + i} style={{ padding: '10px 12px', background: 'var(--mc-bg-0)', border: `1px solid ${f.is_high_bullish ? '#10B98140' : 'var(--mc-bg-4)'}`, borderLeft: `3px solid ${scoreColor}`, borderRadius: 6 }}>
+            <div key={f.symbol + '-' + i} style={{ padding: '10px 12px', background: 'var(--mc-bg-0)', border: `1px solid ${f.is_high_bullish ? 'color-mix(in srgb, var(--mc-bullish) 25%, transparent)' : 'var(--mc-bg-4)'}`, borderLeft: `3px solid ${scoreColor}`, borderRadius: 6 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, marginBottom: 4 }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
                   <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-text-1)' }}>{f.symbol || f.company_name}</span>
@@ -931,10 +931,10 @@ function LiveBullishFeed() {
                     return <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: `${t.color}20`, color: t.color, fontWeight: 800, border: `1px solid ${t.color}` }}>{t.label}</span>;
                   })()}
                   {f.bullish.fatal_blockers && f.bullish.fatal_blockers.length > 0 && (
-                    <span title={`Fatal blockers: ${f.bullish.fatal_blockers.join(', ')}`} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#EF444425', color: 'var(--mc-bearish)', fontWeight: 800, border: '1px solid var(--mc-bearish)' }}>☠ FATAL</span>
+                    <span title={`Fatal blockers: ${f.bullish.fatal_blockers.join(', ')}`} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-bearish) 15%, transparent)', color: 'var(--mc-bearish)', fontWeight: 800, border: '1px solid var(--mc-bearish)' }}>☠ FATAL</span>
                   )}
-                  {f.scored_from === 'PDF' && <span title={`Scored from extracted PDF text${f.pdf_pages ? ` (${f.pdf_pages}p)` : ''}`} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#22D3EE15', color: 'var(--mc-cyan)', fontWeight: 700 }}>📄 PDF</span>}
-                  {f.scored_from === 'SUBJECT' && f.pdf_failure_reason && <span title={`PDF extraction failed: ${f.pdf_failure_reason}`} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#94A3B815', color: 'var(--mc-text-3)', fontWeight: 700 }}>📝 subject only</span>}
+                  {f.scored_from === 'PDF' && <span title={`Scored from extracted PDF text${f.pdf_pages ? ` (${f.pdf_pages}p)` : ''}`} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', color: 'var(--mc-cyan)', fontWeight: 700 }}>📄 PDF</span>}
+                  {f.scored_from === 'SUBJECT' && f.pdf_failure_reason && <span title={`PDF extraction failed: ${f.pdf_failure_reason}`} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-text-3) 8%, transparent)', color: 'var(--mc-text-3)', fontWeight: 700 }}>📝 subject only</span>}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                   {/* PATCH 0398 — Composite is the primary score now per
@@ -958,20 +958,20 @@ function LiveBullishFeed() {
               {f.bullish.tags.length > 0 && (
                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 4 }}>
                   {f.bullish.tags.map((t, j) => (
-                    <span key={j} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: 'var(--mc-bullish)', fontWeight: 700 }}>{t}</span>
+                    <span key={j} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', color: 'var(--mc-bullish)', fontWeight: 700 }}>{t}</span>
                   ))}
                 </div>
               )}
               {f.bullish.red_flags.length > 0 && (
                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 4 }}>
                   {f.bullish.red_flags.map((t, j) => (
-                    <span key={j} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#EF444415', color: 'var(--mc-bearish)', fontWeight: 700 }}>⚠ {t}</span>
+                    <span key={j} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)', color: 'var(--mc-bearish)', fontWeight: 700 }}>⚠ {t}</span>
                   ))}
                 </div>
               )}
               {/* PATCH 0407 — Bottleneck + sympathy beneficiary read-through */}
               {(f as any).bottleneck && (f as any).bottleneck.detected && (
-                <div style={{ marginTop: 6, padding: '8px 10px', background: 'linear-gradient(135deg, #F59E0B15, #EF444415)', border: `1px solid ${(f as any).bottleneck.critical ? 'var(--mc-bearish)' : 'var(--mc-warn)'}60`, borderRadius: 5 }}>
+                <div style={{ marginTop: 6, padding: '8px 10px', background: 'linear-gradient(135deg, color-mix(in srgb, var(--mc-warn) 8%, transparent), color-mix(in srgb, var(--mc-bearish) 8%, transparent))', border: `1px solid ${(f as any).bottleneck.critical ? 'var(--mc-bearish)' : 'var(--mc-warn)'}60`, borderRadius: 5 }}>
                   <div style={{ fontSize: 10, fontWeight: 800, color: (f as any).bottleneck.critical ? 'var(--mc-bearish)' : 'var(--mc-warn)', letterSpacing: '0.5px', marginBottom: 4 }}>
                     {(f as any).bottleneck.critical ? '🚨 CRITICAL BOTTLENECK DETECTED' : '⚠ BOTTLENECK DETECTED'}
                     {(f as any).bottleneck.components.length > 0 && (
@@ -990,7 +990,7 @@ function LiveBullishFeed() {
                       </div>
                       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                         {((f as any).bottleneck.beneficiaries as string[]).slice(0, 8).map((b: string) => (
-                          <span key={b} style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, background: '#10B98120', color: 'var(--mc-bullish)', border: '1px solid #10B98140' }}>{b}</span>
+                          <span key={b} style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-bullish) 13%, transparent)', color: 'var(--mc-bullish)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 25%, transparent)' }}>{b}</span>
                         ))}
                       </div>
                       {(f as any).bottleneck.sectors && (f as any).bottleneck.sectors.length > 0 && (
@@ -1046,7 +1046,7 @@ function LiveBullishFeed() {
                         <span style={{ color: 'var(--mc-bullish)', fontWeight: 700, marginRight: 4 }}>WHY BULLISH:</span>
                         <div style={{ marginLeft: 0, marginTop: 2 }}>
                           {bull.slice(0, 4).map((e, k) => (
-                            <div key={k} style={{ color: 'var(--mc-text-2)', padding: '1px 0' }}>› <span style={{ color: '#10B98180', fontWeight: 700 }}>[{e.tag}]</span> &ldquo;{e.text}&rdquo;</div>
+                            <div key={k} style={{ color: 'var(--mc-text-2)', padding: '1px 0' }}>› <span style={{ color: 'color-mix(in srgb, var(--mc-bullish) 50%, transparent)', fontWeight: 700 }}>[{e.tag}]</span> &ldquo;{e.text}&rdquo;</div>
                           ))}
                         </div>
                       </div>
@@ -1056,7 +1056,7 @@ function LiveBullishFeed() {
                         <span style={{ color: 'var(--mc-bearish)', fontWeight: 700, marginRight: 4 }}>RISKS:</span>
                         <div style={{ marginLeft: 0, marginTop: 2 }}>
                           {bear.slice(0, 3).map((e, k) => (
-                            <div key={k} style={{ color: 'var(--mc-text-2)', padding: '1px 0' }}>› <span style={{ color: '#EF444480', fontWeight: 700 }}>[{e.tag}{e.negated ? ' — negated' : ''}]</span> &ldquo;{e.text}&rdquo;</div>
+                            <div key={k} style={{ color: 'var(--mc-text-2)', padding: '1px 0' }}>› <span style={{ color: 'color-mix(in srgb, var(--mc-bearish) 50%, transparent)', fontWeight: 700 }}>[{e.tag}{e.negated ? ' — negated' : ''}]</span> &ldquo;{e.text}&rdquo;</div>
                           ))}
                         </div>
                       </div>
@@ -1071,7 +1071,7 @@ function LiveBullishFeed() {
                   reads + a story-vs-numbers split so users can spot the
                   "strong story / weak earnings" mismatch class. */}
               {(f as any).earnings_delta && (
-                <div style={{ marginTop: 6, padding: '7px 9px', background: 'linear-gradient(135deg, #06B6D410, #A78BFA08)', border: '1px solid #06B6D440', borderRadius: 4 }}>
+                <div style={{ marginTop: 6, padding: '7px 9px', background: 'linear-gradient(135deg, #06B6D410, color-mix(in srgb, var(--mc-state-persistent) 3%, transparent))', border: '1px solid #06B6D440', borderRadius: 4 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
                     <span style={{ fontSize: 10, fontWeight: 800, color: '#06B6D4', letterSpacing: '0.4px' }}>
                       💡 EARNINGS DELTA · <span style={{ color:
@@ -1102,10 +1102,10 @@ function LiveBullishFeed() {
                   {/* Narrative vs Financial split — review item 4.5 */}
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 9 }}>
                     <span style={{ color: 'var(--mc-text-3)', fontWeight: 700 }}>NARR vs FIN:</span>
-                    <span title="Narrative strength: story quality (tag breadth + forward language)" style={{ padding: '1px 6px', borderRadius: 3, background: '#A78BFA15', color: 'var(--mc-state-persistent)', fontWeight: 800 }}>
+                    <span title="Narrative strength: story quality (tag breadth + forward language)" style={{ padding: '1px 6px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-state-persistent) 8%, transparent)', color: 'var(--mc-state-persistent)', fontWeight: 800 }}>
                       📖 {(f as any).earnings_delta.narrative_strength.toFixed(1)}/10
                     </span>
-                    <span title="Financial strength: actual numbers + concrete guidance + composite score" style={{ padding: '1px 6px', borderRadius: 3, background: '#22D3EE15', color: 'var(--mc-cyan)', fontWeight: 800 }}>
+                    <span title="Financial strength: actual numbers + concrete guidance + composite score" style={{ padding: '1px 6px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', color: 'var(--mc-cyan)', fontWeight: 800 }}>
                       💰 {(f as any).earnings_delta.financial_strength.toFixed(1)}/10
                     </span>
                     {Math.abs((f as any).earnings_delta.narrative_strength - (f as any).earnings_delta.financial_strength) >= 3 && (
@@ -1134,39 +1134,39 @@ function LiveBullishFeed() {
                 {/* PATCH 0401 — Sector overlay chip + signals */}
                 {f.sector_overlay && f.sector_overlay.sector !== 'UNKNOWN' && (
                   <div style={{ marginBottom: 4, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', fontSize: 9 }}>
-                    <span title={`Sector confidence: ${f.sector_overlay.sector_confidence}/10`} style={{ padding: '1px 6px', borderRadius: 3, background: '#A78BFA20', color: 'var(--mc-state-persistent)', fontWeight: 800 }}>
+                    <span title={`Sector confidence: ${f.sector_overlay.sector_confidence}/10`} style={{ padding: '1px 6px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-state-persistent) 13%, transparent)', color: 'var(--mc-state-persistent)', fontWeight: 800 }}>
                       🏷 {f.sector_overlay.sector.replace('_', ' ')}
                     </span>
                     {f.sector_overlay.overlay_score !== 0 && (
-                      <span title="Sector overlay adjusts base score by +/-3 based on sector-specific signals" style={{ padding: '1px 6px', borderRadius: 3, background: f.sector_overlay.overlay_score > 0 ? '#10B98120' : '#EF444420', color: f.sector_overlay.overlay_score > 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: 800 }}>
+                      <span title="Sector overlay adjusts base score by +/-3 based on sector-specific signals" style={{ padding: '1px 6px', borderRadius: 3, background: f.sector_overlay.overlay_score > 0 ? 'color-mix(in srgb, var(--mc-bullish) 13%, transparent)' : 'color-mix(in srgb, var(--mc-bearish) 13%, transparent)', color: f.sector_overlay.overlay_score > 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: 800 }}>
                         overlay {f.sector_overlay.overlay_score > 0 ? '+' : ''}{f.sector_overlay.overlay_score.toFixed(1)}
                       </span>
                     )}
                     {f.sector_overlay.positive_signals.slice(0, 3).map((s, j) => (
-                      <span key={j} title="Sector positive signal" style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: 'var(--mc-bullish)', fontWeight: 700 }}>✓ {s}</span>
+                      <span key={j} title="Sector positive signal" style={{ padding: '1px 5px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', color: 'var(--mc-bullish)', fontWeight: 700 }}>✓ {s}</span>
                     ))}
                     {f.sector_overlay.negative_signals.slice(0, 2).map((s, j) => (
-                      <span key={j} title="Sector negative signal" style={{ padding: '1px 5px', borderRadius: 3, background: '#EF444415', color: 'var(--mc-bearish)', fontWeight: 700 }}>✗ {s}</span>
+                      <span key={j} title="Sector negative signal" style={{ padding: '1px 5px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)', color: 'var(--mc-bearish)', fontWeight: 700 }}>✗ {s}</span>
                     ))}
                   </div>
                 )}
                 {/* PATCH 0397 — 3-LAYER score bars (Quality / Cycle / Sentiment) */}
                 {(f.bullish.components as any).quality_score != null && (
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', fontSize: 9, marginBottom: 4 }}>
-                    <span title="Quality layer: margin stability + cash flow + deleveraging" style={{ padding: '1px 6px', borderRadius: 3, background: '#22D3EE20', color: 'var(--mc-cyan)', fontWeight: 800 }}>Q {((f.bullish.components as any).quality_score ?? 0).toFixed(1)}/10</span>
-                    <span title="Cycle layer: order book + capacity + demand + new customer + capex" style={{ padding: '1px 6px', borderRadius: 3, background: '#A78BFA20', color: 'var(--mc-state-persistent)', fontWeight: 800 }}>C {((f.bullish.components as any).cycle_score ?? 0).toFixed(1)}/10</span>
-                    <span title="Sentiment layer: guidance + management tone + outlook" style={{ padding: '1px 6px', borderRadius: 3, background: '#F59E0B20', color: 'var(--mc-warn)', fontWeight: 800 }}>S {((f.bullish.components as any).sentiment_score ?? 0).toFixed(1)}/10</span>
+                    <span title="Quality layer: margin stability + cash flow + deleveraging" style={{ padding: '1px 6px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-cyan) 13%, transparent)', color: 'var(--mc-cyan)', fontWeight: 800 }}>Q {((f.bullish.components as any).quality_score ?? 0).toFixed(1)}/10</span>
+                    <span title="Cycle layer: order book + capacity + demand + new customer + capex" style={{ padding: '1px 6px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-state-persistent) 13%, transparent)', color: 'var(--mc-state-persistent)', fontWeight: 800 }}>C {((f.bullish.components as any).cycle_score ?? 0).toFixed(1)}/10</span>
+                    <span title="Sentiment layer: guidance + management tone + outlook" style={{ padding: '1px 6px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-warn) 13%, transparent)', color: 'var(--mc-warn)', fontWeight: 800 }}>S {((f.bullish.components as any).sentiment_score ?? 0).toFixed(1)}/10</span>
                     <span style={{ fontSize: 9, color: 'var(--mc-text-4)', fontStyle: 'italic', alignSelf: 'center' }}>composite = 0.5×Q + 0.3×C + 0.2×S</span>
                   </div>
                 )}
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', fontSize: 9 }}>
-                  <span title="Sum of bullish combo points before penalties" style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: 'var(--mc-bullish)', fontWeight: 700 }}>Positive {(f.bullish.components.positive_score ?? f.bullish.raw_score).toFixed(1)}</span>
-                  <span title="Management confidence pillar (Guidance + Demand + Margin + Outlook)" style={{ padding: '1px 5px', borderRadius: 3, background: '#22D3EE15', color: 'var(--mc-cyan)', fontWeight: 700 }}>Mgmt {f.bullish.components.management_confidence.toFixed(1)}</span>
-                  <span title="Business evidence pillar (Order Book + Capacity + Customer + Capex + etc.)" style={{ padding: '1px 5px', borderRadius: 3, background: '#A78BFA15', color: 'var(--mc-state-persistent)', fontWeight: 700 }}>Biz {f.bullish.components.business_evidence.toFixed(1)}</span>
-                  <span title="Total blocker weight (LOW + MEDIUM + FATAL) — deduped per tag" style={{ padding: '1px 5px', borderRadius: 3, background: f.bullish.components.blockers > 0 ? '#EF444415' : '#94A3B815', color: f.bullish.components.blockers > 0 ? 'var(--mc-bearish)' : 'var(--mc-text-3)', fontWeight: 700 }}>Risk -{f.bullish.components.blockers.toFixed(1)}</span>
-                  {(f.bullish.components.blocker_severity_fatal ?? 0) > 0 && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#EF444430', color: 'var(--mc-bearish)', fontWeight: 800 }}>FATAL -{(f.bullish.components.blocker_severity_fatal ?? 0).toFixed(1)}</span>}
-                  {(f.bullish.components.blocker_severity_medium ?? 0) > 0 && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#F59E0B15', color: 'var(--mc-warn)', fontWeight: 700 }}>MED -{(f.bullish.components.blocker_severity_medium ?? 0).toFixed(1)}</span>}
-                  {(f.bullish.components.blocker_severity_low ?? 0) > 0 && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#94A3B815', color: 'var(--mc-text-3)', fontWeight: 700 }}>LOW -{(f.bullish.components.blocker_severity_low ?? 0).toFixed(1)}</span>}
+                  <span title="Sum of bullish combo points before penalties" style={{ padding: '1px 5px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', color: 'var(--mc-bullish)', fontWeight: 700 }}>Positive {(f.bullish.components.positive_score ?? f.bullish.raw_score).toFixed(1)}</span>
+                  <span title="Management confidence pillar (Guidance + Demand + Margin + Outlook)" style={{ padding: '1px 5px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', color: 'var(--mc-cyan)', fontWeight: 700 }}>Mgmt {f.bullish.components.management_confidence.toFixed(1)}</span>
+                  <span title="Business evidence pillar (Order Book + Capacity + Customer + Capex + etc.)" style={{ padding: '1px 5px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-state-persistent) 8%, transparent)', color: 'var(--mc-state-persistent)', fontWeight: 700 }}>Biz {f.bullish.components.business_evidence.toFixed(1)}</span>
+                  <span title="Total blocker weight (LOW + MEDIUM + FATAL) — deduped per tag" style={{ padding: '1px 5px', borderRadius: 3, background: f.bullish.components.blockers > 0 ? 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)' : 'color-mix(in srgb, var(--mc-text-3) 8%, transparent)', color: f.bullish.components.blockers > 0 ? 'var(--mc-bearish)' : 'var(--mc-text-3)', fontWeight: 700 }}>Risk -{f.bullish.components.blockers.toFixed(1)}</span>
+                  {(f.bullish.components.blocker_severity_fatal ?? 0) > 0 && <span style={{ padding: '1px 5px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-bearish) 19%, transparent)', color: 'var(--mc-bearish)', fontWeight: 800 }}>FATAL -{(f.bullish.components.blocker_severity_fatal ?? 0).toFixed(1)}</span>}
+                  {(f.bullish.components.blocker_severity_medium ?? 0) > 0 && <span style={{ padding: '1px 5px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', color: 'var(--mc-warn)', fontWeight: 700 }}>MED -{(f.bullish.components.blocker_severity_medium ?? 0).toFixed(1)}</span>}
+                  {(f.bullish.components.blocker_severity_low ?? 0) > 0 && <span style={{ padding: '1px 5px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-text-3) 8%, transparent)', color: 'var(--mc-text-3)', fontWeight: 700 }}>LOW -{(f.bullish.components.blocker_severity_low ?? 0).toFixed(1)}</span>}
                 </div>
                 <div style={{ fontSize: 9, color: 'var(--mc-text-4)', marginTop: 3, fontStyle: 'italic' }}>
                   Formula: positive − (blockers × 0.65) · blockers deduped per tag · ULTRA requires 0 red flags · score capped at 6 without earnings anchor
@@ -1342,7 +1342,7 @@ function WarrantMomentumFeed() {
   }, [days, passingOnly]);
 
   return (
-    <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid #A78BFA40', borderLeft: '4px solid var(--mc-state-persistent)', borderRadius: 10, padding: '14px 18px', marginBottom: 14, marginTop: 14 }}>
+    <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid color-mix(in srgb, var(--mc-state-persistent) 25%, transparent)', borderLeft: '4px solid var(--mc-state-persistent)', borderRadius: 10, padding: '14px 18px', marginBottom: 14, marginTop: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
         <div>
           <div style={{ fontSize: 14, fontWeight: 900, color: 'var(--mc-state-persistent)', letterSpacing: '0.4px' }}>🚀 WARRANT MOMENTUM — promoter warrants + post-breakout + business momentum</div>
@@ -1363,7 +1363,7 @@ function WarrantMomentumFeed() {
             placeholder="🔍 ticker (STLTECH...)"
             style={{ fontSize: 11, padding: '4px 8px', borderRadius: 5, border: `1px solid ${tickerSearch ? 'var(--mc-cyan)' : 'var(--mc-bg-4)'}`, background: 'var(--mc-bg-0)', color: 'var(--mc-text-1)', width: 160, outline: 'none' }}
           />
-          <button onClick={() => setPassingOnly(v => !v)} style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5, border: `1px solid ${passingOnly ? 'var(--mc-bullish)' : 'var(--mc-bg-4)'}`, background: passingOnly ? '#10B98120' : 'transparent', color: passingOnly ? 'var(--mc-bullish)' : 'var(--mc-text-3)', cursor: 'pointer' }}>
+          <button onClick={() => setPassingOnly(v => !v)} style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5, border: `1px solid ${passingOnly ? 'var(--mc-bullish)' : 'var(--mc-bg-4)'}`, background: passingOnly ? 'color-mix(in srgb, var(--mc-bullish) 13%, transparent)' : 'transparent', color: passingOnly ? 'var(--mc-bullish)' : 'var(--mc-text-3)', cursor: 'pointer' }}>
             ★ High conviction only {passingOnly ? '✓' : ''}
           </button>
           <select value={days} onChange={(e) => setDays(parseInt(e.target.value))} style={{ fontSize: 11, padding: '4px 8px', borderRadius: 5, border: '1px solid var(--mc-bg-4)', background: 'var(--mc-bg-0)', color: 'var(--mc-text-1)' }}>
@@ -1375,7 +1375,7 @@ function WarrantMomentumFeed() {
             <option value={90}>90 days</option>
             <option value={180}>180 days</option>
           </select>
-          <button onClick={() => fetchFeed(true)} disabled={loading} style={{ fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 5, border: '1px solid var(--mc-state-persistent)', background: '#A78BFA20', color: 'var(--mc-state-persistent)', cursor: loading ? 'wait' : 'pointer' }}>
+          <button onClick={() => fetchFeed(true)} disabled={loading} style={{ fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 5, border: '1px solid var(--mc-state-persistent)', background: 'color-mix(in srgb, var(--mc-state-persistent) 13%, transparent)', color: 'var(--mc-state-persistent)', cursor: loading ? 'wait' : 'pointer' }}>
             {loading ? '…' : '↻ Refresh'}
           </button>
         </div>
@@ -1397,7 +1397,7 @@ function WarrantMomentumFeed() {
           <span style={{ fontSize: 16 }}>⚠</span>
           <span style={{ flex: 1, minWidth: 200 }}>{error}</span>
           {/* PATCH 0693 — explicit Retry button on terminal error */}
-          <button onClick={() => fetchFeed(true)} style={{ fontSize: 11, fontWeight: 800, padding: '5px 12px', borderRadius: 5, border: '1px solid var(--mc-bearish)', background: '#EF444430', color: '#FCA5A5', cursor: 'pointer' }}>↻ Retry</button>
+          <button onClick={() => fetchFeed(true)} style={{ fontSize: 11, fontWeight: 800, padding: '5px 12px', borderRadius: 5, border: '1px solid var(--mc-bearish)', background: 'color-mix(in srgb, var(--mc-bearish) 19%, transparent)', color: '#FCA5A5', cursor: 'pointer' }}>↻ Retry</button>
         </div>
       )}
       {/* PATCH 0693 — slow-fetch warning during long initial load. */}
@@ -1405,7 +1405,7 @@ function WarrantMomentumFeed() {
       {loading && slowFetch && !data && (
         <div style={{ fontSize: 11, color: 'var(--mc-warn)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
           <span>⚠ Warrant feed is slow — cache warming up. Will time out at 15s.</span>
-          <button onClick={() => fetchFeed(true)} style={{ fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 4, border: '1px solid var(--mc-warn)', background: '#F59E0B20', color: 'var(--mc-warn)', cursor: 'pointer' }}>↻ Retry now</button>
+          <button onClick={() => fetchFeed(true)} style={{ fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 4, border: '1px solid var(--mc-warn)', background: 'color-mix(in srgb, var(--mc-warn) 13%, transparent)', color: 'var(--mc-warn)', cursor: 'pointer' }}>↻ Retry now</button>
         </div>
       )}
       {error && data && data.count_total > 0 && (
@@ -1431,7 +1431,7 @@ function WarrantMomentumFeed() {
           onClick={() => setPassingOnly(false)}
           style={{
             fontSize: 11, fontWeight: 700, padding: '6px 12px', borderRadius: 5,
-            border: '1px solid var(--mc-warn)', background: '#F59E0B20', color: 'var(--mc-warn)',
+            border: '1px solid var(--mc-warn)', background: 'color-mix(in srgb, var(--mc-warn) 13%, transparent)', color: 'var(--mc-warn)',
             cursor: 'pointer', marginTop: 6,
           }}
         >
@@ -1455,7 +1455,7 @@ function WarrantMomentumFeed() {
           (r.company_name || '').toUpperCase().includes(q)
         );
         return (
-          <div style={{ marginBottom: 12, padding: 12, background: 'var(--mc-bg-0)', border: '1px solid #22D3EE60', borderRadius: 8 }}>
+          <div style={{ marginBottom: 12, padding: 12, background: 'var(--mc-bg-0)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', borderRadius: 8 }}>
             <div style={{ fontSize: 12, fontWeight: 900, color: 'var(--mc-cyan)', marginBottom: 8 }}>
               🔍 COVERAGE PROBE: {q} — {matches.length} filing{matches.length === 1 ? '' : 's'} in last {days} days
             </div>
@@ -1552,10 +1552,10 @@ function WarrantMomentumFeed() {
                         </div>
                         <div style={{ fontSize: 9, color: 'var(--mc-text-3)', marginBottom: 4 }}>{r.company_name}</div>
                         <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', fontSize: 8, marginBottom: 3 }}>
-                          <span title="Funding quality (promoter intent + capital use + premium)" style={{ padding: '1px 4px', borderRadius: 3, background: '#10B98115', color: 'var(--mc-bullish)' }}>F {(w.funding_quality ?? 0).toFixed(1)}</span>
-                          <span title="Balance sheet (inverse of distress)" style={{ padding: '1px 4px', borderRadius: 3, background: '#22D3EE15', color: 'var(--mc-cyan)' }}>BS {(w.balance_sheet ?? 0).toFixed(1)}</span>
-                          <span title="Business trajectory (concall + 90d + 52w-high)" style={{ padding: '1px 4px', borderRadius: 3, background: '#A78BFA15', color: 'var(--mc-state-persistent)' }}>BT {(w.business_trajectory ?? 0).toFixed(1)}</span>
-                          <span title="Dilution penalty (scaled from dilution %)" style={{ padding: '1px 4px', borderRadius: 3, background: '#EF444415', color: 'var(--mc-bearish)' }}>−D {(w.dilution_penalty ?? 0).toFixed(1)}</span>
+                          <span title="Funding quality (promoter intent + capital use + premium)" style={{ padding: '1px 4px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', color: 'var(--mc-bullish)' }}>F {(w.funding_quality ?? 0).toFixed(1)}</span>
+                          <span title="Balance sheet (inverse of distress)" style={{ padding: '1px 4px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', color: 'var(--mc-cyan)' }}>BS {(w.balance_sheet ?? 0).toFixed(1)}</span>
+                          <span title="Business trajectory (concall + 90d + 52w-high)" style={{ padding: '1px 4px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-state-persistent) 8%, transparent)', color: 'var(--mc-state-persistent)' }}>BT {(w.business_trajectory ?? 0).toFixed(1)}</span>
+                          <span title="Dilution penalty (scaled from dilution %)" style={{ padding: '1px 4px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)', color: 'var(--mc-bearish)' }}>−D {(w.dilution_penalty ?? 0).toFixed(1)}</span>
                         </div>
                         <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', fontSize: 8 }}>
                           {r.conviction.capital_use && r.conviction.capital_use !== 'UNKNOWN' && (
@@ -1565,7 +1565,7 @@ function WarrantMomentumFeed() {
                             <span style={{ padding: '1px 4px', borderRadius: 3, background: 'var(--mc-bg-4)', color: 'var(--mc-text-2)' }}>{r.conviction.promoter_intent.replace(/_/g, ' ')}</span>
                           )}
                           {r.conviction.dilution_pct != null && (
-                            <span style={{ padding: '1px 4px', borderRadius: 3, background: r.conviction.dilution_pct >= 15 ? '#EF444425' : 'var(--mc-bg-4)', color: r.conviction.dilution_pct >= 15 ? 'var(--mc-bearish)' : 'var(--mc-text-3)' }}>Dil {r.conviction.dilution_pct.toFixed(1)}%</span>
+                            <span style={{ padding: '1px 4px', borderRadius: 3, background: r.conviction.dilution_pct >= 15 ? 'color-mix(in srgb, var(--mc-bearish) 15%, transparent)' : 'var(--mc-bg-4)', color: r.conviction.dilution_pct >= 15 ? 'var(--mc-bearish)' : 'var(--mc-text-3)' }}>Dil {r.conviction.dilution_pct.toFixed(1)}%</span>
                           )}
                           {r.details.total_size_cr != null && (
                             <span style={{ padding: '1px 4px', borderRadius: 3, background: 'var(--mc-bg-4)', color: 'var(--mc-text-2)' }}>₹{r.details.total_size_cr.toFixed(0)}Cr</span>
@@ -1601,7 +1601,7 @@ function WarrantMomentumFeed() {
           : `⚠ WARRANT EVENT SCANNER — no Tier 1 alpha in window · best-of-rest ranking`;
         const headerColor = isActionable ? '#10B981' : '#F59E0B';
         return (
-          <div style={{ marginBottom: 12, padding: 12, background: `linear-gradient(135deg, ${headerColor}10, #22D3EE10)`, border: `1px solid ${headerColor}50`, borderRadius: 10 }}>
+          <div style={{ marginBottom: 12, padding: 12, background: `linear-gradient(135deg, ${headerColor}10, color-mix(in srgb, var(--mc-cyan) 6%, transparent))`, border: `1px solid ${headerColor}50`, borderRadius: 10 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
               <div style={{ fontSize: 12, fontWeight: 900, color: headerColor, letterSpacing: '0.5px' }}>{headerLabel}</div>
               <div style={{ fontSize: 10, color: 'var(--mc-text-3)', fontWeight: 600 }}>· window: last {days} day{days === 1 ? '' : 's'}</div>
@@ -1634,12 +1634,12 @@ function WarrantMomentumFeed() {
                         return <span title={r.conviction.tier_rationale || ''} style={{ padding: '1px 5px', borderRadius: 3, background: `${tColor}25`, color: tColor, fontWeight: 900 }}>{tLbl}</span>;
                       })()}
                       <span style={{ padding: '1px 5px', borderRadius: 3, background: `${color}20`, color, fontWeight: 800 }}>{r.warrant_type.replace(/_/g, ' ')}</span>
-                      {r.conviction.passes_gate && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98125', color: 'var(--mc-bullish)', fontWeight: 800 }}>★ GATE</span>}
+                      {r.conviction.passes_gate && <span style={{ padding: '1px 5px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-bullish) 15%, transparent)', color: 'var(--mc-bullish)', fontWeight: 800 }}>★ GATE</span>}
                       {prem != null && <span style={{ padding: '1px 5px', borderRadius: 3, background: 'var(--mc-bg-4)', color: prem >= 0 ? 'var(--mc-bullish)' : prem >= -10 ? 'var(--mc-warn)' : 'var(--mc-bearish)' }}>{prem >= 0 ? '+' : ''}{prem.toFixed(1)}% vs CMP</span>}
                       {r.details.total_size_cr != null && <span style={{ padding: '1px 5px', borderRadius: 3, background: 'var(--mc-bg-4)', color: 'var(--mc-text-2)' }}>₹{r.details.total_size_cr.toFixed(0)}Cr</span>}
-                      {r.details.promoter_participation_pct != null && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: 'var(--mc-bullish)' }}>Promo {r.details.promoter_participation_pct.toFixed(0)}%</span>}
+                      {r.details.promoter_participation_pct != null && <span style={{ padding: '1px 5px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', color: 'var(--mc-bullish)' }}>Promo {r.details.promoter_participation_pct.toFixed(0)}%</span>}
                       {r.conviction.distress_probability != null && r.conviction.distress_probability >= 0.3 && (
-                        <span title="Distress probability" style={{ padding: '1px 5px', borderRadius: 3, background: '#EF444415', color: 'var(--mc-bearish)', fontWeight: 700 }}>
+                        <span title="Distress probability" style={{ padding: '1px 5px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)', color: 'var(--mc-bearish)', fontWeight: 700 }}>
                           Distress {(r.conviction.distress_probability * 100).toFixed(0)}%
                         </span>
                       )}
@@ -1658,14 +1658,14 @@ function WarrantMomentumFeed() {
           const premium = f.conviction.premium_pct;
           const premiumColor = premium == null ? '#94A3B8' : premium >= 0 ? '#10B981' : premium >= -10 ? '#F59E0B' : '#EF4444';
           return (
-            <div key={f.symbol + '-' + i} style={{ padding: '10px 12px', background: 'var(--mc-bg-0)', border: `1px solid ${f.conviction.passes_gate ? '#10B98140' : 'var(--mc-bg-4)'}`, borderLeft: `3px solid ${cvColor}`, borderRadius: 6 }}>
+            <div key={f.symbol + '-' + i} style={{ padding: '10px 12px', background: 'var(--mc-bg-0)', border: `1px solid ${f.conviction.passes_gate ? 'color-mix(in srgb, var(--mc-bullish) 25%, transparent)' : 'var(--mc-bg-4)'}`, borderLeft: `3px solid ${cvColor}`, borderRadius: 6 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, marginBottom: 4 }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
                   <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-text-1)' }}>{f.symbol || f.company_name}</span>
                   {f.symbol && <span style={{ fontSize: 11, color: 'var(--mc-text-3)' }}>{f.company_name}</span>}
                   <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'var(--mc-bg-4)', color: 'var(--mc-text-3)', fontWeight: 700 }}>{f.exchange}</span>
                   <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: `${cvColor}20`, color: cvColor, fontWeight: 700 }}>{f.warrant_type.replace(/_/g, ' ')}</span>
-                  {f.conviction.passes_gate && <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#10B98125', color: 'var(--mc-bullish)', fontWeight: 800, border: '1px solid var(--mc-bullish)' }}>★ PASSES GATE</span>}
+                  {f.conviction.passes_gate && <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-bullish) 15%, transparent)', color: 'var(--mc-bullish)', fontWeight: 800, border: '1px solid var(--mc-bullish)' }}>★ PASSES GATE</span>}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                   <span style={{ fontSize: 16, fontWeight: 900, color: cvColor }}>{f.conviction.conviction.toFixed(1)}</span>
@@ -1771,12 +1771,12 @@ function WarrantMomentumFeed() {
               <div style={{ marginTop: 6, padding: '6px 8px', background: '#13131a', border: '1px solid var(--mc-bg-4)', borderRadius: 4 }}>
                 <div style={{ fontSize: 9, color: 'var(--mc-text-3)', fontWeight: 700, marginBottom: 3, letterSpacing: '0.4px' }}>SCORE DECOMPOSITION (raw {f.conviction.raw_score.toFixed(1)} / 10)</div>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', fontSize: 9 }}>
-                  <span title="Promoter / promoter-group participation (0-3, MANDATORY)" style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: 'var(--mc-bullish)', fontWeight: 700 }}>Promoter {f.conviction.components.promoter_participation.toFixed(1)}/3</span>
-                  <span title="Issue price vs CMP. Premium = good (+3), -10% OK (+1), deeper discount = bad" style={{ padding: '1px 5px', borderRadius: 3, background: '#22D3EE15', color: 'var(--mc-cyan)', fontWeight: 700 }}>Pricing {f.conviction.components.pricing_premium >= 0 ? '+' : ''}{f.conviction.components.pricing_premium.toFixed(1)}</span>
-                  <span title="Near 52w high or strong 90d perf = +2; weak structure = -" style={{ padding: '1px 5px', borderRadius: 3, background: '#A78BFA15', color: 'var(--mc-state-persistent)', fontWeight: 700 }}>Breakout {f.conviction.components.breakout_relative_strength.toFixed(1)}/2</span>
-                  <span title="Concall bullish score: ≥6 = +2; 4-6 = +1; <2 = negative" style={{ padding: '1px 5px', borderRadius: 3, background: '#F59E0B15', color: 'var(--mc-warn)', fontWeight: 700 }}>Momentum {f.conviction.components.business_momentum.toFixed(1)}/2</span>
-                  {f.conviction.components.history_boost > 0 && <span title="Prior warrants rallied ≥25% = boost" style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: 'var(--mc-bullish)', fontWeight: 700 }}>History +{f.conviction.components.history_boost.toFixed(1)}</span>}
-                  {f.conviction.components.governance_penalty < 0 && <span title="Microcap / pledge / dilution pattern penalty" style={{ padding: '1px 5px', borderRadius: 3, background: '#EF444415', color: 'var(--mc-bearish)', fontWeight: 700 }}>Govern {f.conviction.components.governance_penalty.toFixed(1)}</span>}
+                  <span title="Promoter / promoter-group participation (0-3, MANDATORY)" style={{ padding: '1px 5px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', color: 'var(--mc-bullish)', fontWeight: 700 }}>Promoter {f.conviction.components.promoter_participation.toFixed(1)}/3</span>
+                  <span title="Issue price vs CMP. Premium = good (+3), -10% OK (+1), deeper discount = bad" style={{ padding: '1px 5px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', color: 'var(--mc-cyan)', fontWeight: 700 }}>Pricing {f.conviction.components.pricing_premium >= 0 ? '+' : ''}{f.conviction.components.pricing_premium.toFixed(1)}</span>
+                  <span title="Near 52w high or strong 90d perf = +2; weak structure = -" style={{ padding: '1px 5px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-state-persistent) 8%, transparent)', color: 'var(--mc-state-persistent)', fontWeight: 700 }}>Breakout {f.conviction.components.breakout_relative_strength.toFixed(1)}/2</span>
+                  <span title="Concall bullish score: ≥6 = +2; 4-6 = +1; <2 = negative" style={{ padding: '1px 5px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', color: 'var(--mc-warn)', fontWeight: 700 }}>Momentum {f.conviction.components.business_momentum.toFixed(1)}/2</span>
+                  {f.conviction.components.history_boost > 0 && <span title="Prior warrants rallied ≥25% = boost" style={{ padding: '1px 5px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', color: 'var(--mc-bullish)', fontWeight: 700 }}>History +{f.conviction.components.history_boost.toFixed(1)}</span>}
+                  {f.conviction.components.governance_penalty < 0 && <span title="Microcap / pledge / dilution pattern penalty" style={{ padding: '1px 5px', borderRadius: 3, background: 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)', color: 'var(--mc-bearish)', fontWeight: 700 }}>Govern {f.conviction.components.governance_penalty.toFixed(1)}</span>}
                 </div>
                 <div style={{ fontSize: 9, color: 'var(--mc-text-4)', marginTop: 3, fontStyle: 'italic' }}>
                   Gate (≥ 8/10): A) promoter present · B) pricing ≥ -10% · C) no critical governance · D) breakout OR momentum present
@@ -1796,7 +1796,7 @@ function WarrantMomentumFeed() {
                         { lbl: 'CMP', ok: (f.conviction as any).diagnostics.cmp_found },
                         { lbl: 'Momentum', ok: (f.conviction as any).diagnostics.momentum_found },
                       ].map((d, j) => (
-                        <span key={j} style={{ fontSize: 8, padding: '1px 5px', borderRadius: 3, background: d.ok ? '#10B98115' : '#EF444415', color: d.ok ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: 700 }}>
+                        <span key={j} style={{ fontSize: 8, padding: '1px 5px', borderRadius: 3, background: d.ok ? 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)' : 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)', color: d.ok ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: 700 }}>
                           {d.ok ? '✓' : '✗'} {d.lbl}
                         </span>
                       ))}
@@ -1950,7 +1950,7 @@ function KeywordWatchFeed() {
   }, [catalog]);
 
   return (
-    <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid #22D3EE40', borderLeft: '4px solid var(--mc-cyan)', borderRadius: 10, padding: '14px 18px', marginBottom: 14, marginTop: 14 }}>
+    <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', borderLeft: '4px solid var(--mc-cyan)', borderRadius: 10, padding: '14px 18px', marginBottom: 14, marginTop: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
         <div>
           <div style={{ fontSize: 14, fontWeight: 900, color: 'var(--mc-cyan)', letterSpacing: '0.4px' }}>🔎 KEYWORD WATCH — scan every concall for theme / risk / regulatory phrases</div>
@@ -1969,7 +1969,7 @@ function KeywordWatchFeed() {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button onClick={() => setShowCatalog(v => !v)} style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5, border: '1px solid var(--mc-cyan)', background: '#22D3EE20', color: 'var(--mc-cyan)', cursor: 'pointer' }}>
+          <button onClick={() => setShowCatalog(v => !v)} style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5, border: '1px solid var(--mc-cyan)', background: 'color-mix(in srgb, var(--mc-cyan) 13%, transparent)', color: 'var(--mc-cyan)', cursor: 'pointer' }}>
             {showCatalog ? '▲ Hide keywords' : '▼ Edit watchlist'}
           </button>
           <select value={days} onChange={(e) => setDays(parseInt(e.target.value))} style={{ fontSize: 11, padding: '4px 8px', borderRadius: 5, border: '1px solid var(--mc-bg-4)', background: 'var(--mc-bg-0)', color: 'var(--mc-text-1)' }}>
@@ -1981,7 +1981,7 @@ function KeywordWatchFeed() {
             <option value={90}>90 days</option>
             <option value={180}>180 days</option>
           </select>
-          <button onClick={() => fetchFeed(true)} disabled={loading} style={{ fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 5, border: '1px solid var(--mc-cyan)', background: '#22D3EE20', color: 'var(--mc-cyan)', cursor: loading ? 'wait' : 'pointer' }}>
+          <button onClick={() => fetchFeed(true)} disabled={loading} style={{ fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 5, border: '1px solid var(--mc-cyan)', background: 'color-mix(in srgb, var(--mc-cyan) 13%, transparent)', color: 'var(--mc-cyan)', cursor: loading ? 'wait' : 'pointer' }}>
             {loading ? '…' : '↻ Refresh'}
           </button>
         </div>
@@ -1997,13 +1997,13 @@ function KeywordWatchFeed() {
         );
         if (catalog.length === 0 && totalCount === 0 && !loading) {
           return (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, padding: '8px 12px', background: 'var(--mc-bg-0)', border: '1px dashed #22D3EE60', borderRadius: 6 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, padding: '8px 12px', background: 'var(--mc-bg-0)', border: '1px dashed color-mix(in srgb, var(--mc-cyan) 38%, transparent)', borderRadius: 6 }}>
               <span style={{ fontSize: 11, color: 'var(--mc-cyan)', fontWeight: 700 }}>
                 Add keywords to start monitoring concalls
               </span>
               <button
                 onClick={() => setShowCatalog(true)}
-                style={{ fontSize: 10, fontWeight: 800, padding: '3px 10px', borderRadius: 5, border: '1px solid var(--mc-cyan)', background: '#22D3EE20', color: 'var(--mc-cyan)', cursor: 'pointer' }}
+                style={{ fontSize: 10, fontWeight: 800, padding: '3px 10px', borderRadius: 5, border: '1px solid var(--mc-cyan)', background: 'color-mix(in srgb, var(--mc-cyan) 13%, transparent)', color: 'var(--mc-cyan)', cursor: 'pointer' }}
               >
                 ▼ Edit watchlist
               </button>
@@ -2241,7 +2241,7 @@ function MoversPanel() {
   };
 
   return (
-    <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid #A78BFA40', borderLeft: '4px solid var(--mc-state-persistent)', borderRadius: 10, padding: '14px 18px', marginBottom: 14 }}>
+    <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid color-mix(in srgb, var(--mc-state-persistent) 25%, transparent)', borderLeft: '4px solid var(--mc-state-persistent)', borderRadius: 10, padding: '14px 18px', marginBottom: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
         <div>
           <div style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-state-persistent)', letterSpacing: '0.4px' }}>📈 MOVERS — daily delta vs last snapshot</div>
@@ -2374,7 +2374,7 @@ function WarrantAnalytics({ data }: { data: WarrantFeedPayload }) {
   );
 
   return (
-    <div style={{ background: 'var(--mc-bg-1)', border: '1px dashed #22D3EE40', borderRadius: 8, padding: '10px 12px', marginBottom: 14 }}>
+    <div style={{ background: 'var(--mc-bg-1)', border: '1px dashed color-mix(in srgb, var(--mc-cyan) 25%, transparent)', borderRadius: 8, padding: '10px 12px', marginBottom: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
         <button
           onClick={() => setExpanded(v => !v)}
@@ -2386,7 +2386,7 @@ function WarrantAnalytics({ data }: { data: WarrantFeedPayload }) {
         >
           {expanded ? '▾' : '▸'} 📊 WARRANT ANALYTICS
         </button>
-        <span style={{ fontSize: 10, color: 'var(--mc-cyan)', background: '#22D3EE22', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>
+        <span style={{ fontSize: 10, color: 'var(--mc-cyan)', background: 'color-mix(in srgb, var(--mc-cyan) 13%, transparent)', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>
           {total} filings · avg score {avgScore}/10 · {promoterRate}% promoter-subscribed
         </span>
       </div>
@@ -2408,7 +2408,7 @@ function WarrantAnalytics({ data }: { data: WarrantFeedPayload }) {
             if (!lowExtraction) return null;
             return (
               <div style={{
-                background: '#EF444412', border: '1px solid #EF444440',
+                background: 'color-mix(in srgb, var(--mc-bearish) 7%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bearish) 25%, transparent)',
                 borderRadius: 4, padding: '8px 12px',
               }}>
                 <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-bearish)', marginBottom: 3 }}>
@@ -2844,7 +2844,7 @@ function ConcallAnalyticsTab() {
         <div style={{ marginBottom: 10 }}>{loadError}</div>
         <button onClick={fetchAll} style={{
           padding: '6px 14px', borderRadius: 5, border: '1px solid var(--mc-bearish)',
-          background: '#EF444420', color: 'var(--mc-bearish)', cursor: 'pointer', fontSize: 12, fontWeight: 700,
+          background: 'color-mix(in srgb, var(--mc-bearish) 13%, transparent)', color: 'var(--mc-bearish)', cursor: 'pointer', fontSize: 12, fontWeight: 700,
         }}>↻ Retry</button>
       </div>
     );
@@ -2901,7 +2901,7 @@ function ConcallAnalyticsTab() {
           {lastRefresh && <span>as of {lastRefresh.toLocaleTimeString()}</span>}
           <button onClick={fetchAll} disabled={loading} style={{
             fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 4,
-            border: '1px solid var(--mc-cyan)', background: '#22D3EE15', color: 'var(--mc-cyan)', cursor: loading ? 'wait' : 'pointer',
+            border: '1px solid var(--mc-cyan)', background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', color: 'var(--mc-cyan)', cursor: loading ? 'wait' : 'pointer',
           }}>↻ Refresh all</button>
         </div>
       </div>
@@ -2915,7 +2915,7 @@ function ConcallAnalyticsTab() {
           / cross-source-confirmation / signal-persistence — not as a
           probability. */}
       <div style={{
-        background: 'linear-gradient(90deg, #1E2D4530 0%, var(--mc-bg-1) 100%)',
+        background: 'linear-gradient(90deg, color-mix(in srgb, var(--mc-border-1) 19%, transparent) 0%, var(--mc-bg-1) 100%)',
         border: '1px solid var(--mc-border-1)',
         borderLeft: '3px solid var(--mc-warn)',
         borderRadius: 6, padding: '10px 14px',
@@ -3099,7 +3099,7 @@ function ConcallAnalyticsTab() {
                   <a key={f.symbol + i} href={f.source_url} target="_blank" rel="noopener noreferrer" style={{
                     display: 'flex', flexDirection: 'column', gap: 2,
                     padding: '6px 8px', borderRadius: 4,
-                    border: '1px solid #F59E0B30', background: '#F59E0B08',
+                    border: '1px solid color-mix(in srgb, var(--mc-warn) 19%, transparent)', background: 'color-mix(in srgb, var(--mc-warn) 3%, transparent)',
                     textDecoration: 'none',
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -3128,7 +3128,7 @@ function ConcallAnalyticsTab() {
             📈 DAILY MOVERS — {moversHasReference ? `vs ${moversData.reference_date}` : 'first snapshot today (no prior reference yet)'}
           </div>
           {!moversHasReference && (
-            <div style={{ fontSize: 11, color: 'var(--mc-text-3)', marginBottom: 8, lineHeight: 1.5, padding: '6px 10px', background: '#F59E0B12', border: '1px solid #F59E0B40', borderRadius: 4 }}>
+            <div style={{ fontSize: 11, color: 'var(--mc-text-3)', marginBottom: 8, lineHeight: 1.5, padding: '6px 10px', background: 'color-mix(in srgb, var(--mc-warn) 7%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)', borderRadius: 4 }}>
               ⚠ Big Jumps and Lost Momentum will populate after the next cron snapshot. Until then only New Entries
               (top filings discovered today) is meaningful.
             </div>
@@ -3172,7 +3172,7 @@ function ConcallAnalyticsTab() {
                   <div key={m.symbol + i} style={{
                     display: 'flex', alignItems: 'center', gap: 6,
                     padding: '5px 8px', borderRadius: 4,
-                    border: '1px solid #22D3EE25', background: '#22D3EE08',
+                    border: '1px solid color-mix(in srgb, var(--mc-cyan) 15%, transparent)', background: 'color-mix(in srgb, var(--mc-cyan) 3%, transparent)',
                   }}>
                     <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 700, minWidth: 22 }}>#{m.rank_today}</span>
                     <div style={{ flex: 1, minWidth: 0 }}>
@@ -3201,7 +3201,7 @@ function ConcallAnalyticsTab() {
             <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-warn)', letterSpacing: '0.4px' }}>
               🎯 CROSS-STREAM EVIDENCE CONVERGENCE ({crossStream.length})
             </div>
-            <span style={{ fontSize: 9, color: 'var(--mc-warn)', background: '#F59E0B22', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>EVIDENCE-DENSITY</span>
+            <span style={{ fontSize: 9, color: 'var(--mc-warn)', background: 'color-mix(in srgb, var(--mc-warn) 13%, transparent)', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>EVIDENCE-DENSITY</span>
           </div>
           <div style={{ fontSize: 11, color: 'var(--mc-text-3)', marginBottom: 8, lineHeight: 1.5 }}>
             Tickers mentioned in <strong style={{ color: 'var(--mc-text-1)' }}>≥ 2 independent streams</strong> simultaneously
@@ -3247,7 +3247,7 @@ function ConcallAnalyticsTab() {
             <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-bullish)', letterSpacing: '0.4px' }}>
               📦 PORTFOLIO BASKET SCAFFOLD
             </div>
-            <span style={{ fontSize: 9, color: 'var(--mc-bullish)', background: '#10B98122', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>STARTING STRUCTURE</span>
+            <span style={{ fontSize: 9, color: 'var(--mc-bullish)', background: 'color-mix(in srgb, var(--mc-bullish) 13%, transparent)', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>STARTING STRUCTURE</span>
           </div>
           <div style={{ fontSize: 11, color: 'var(--mc-text-3)', marginBottom: 8, lineHeight: 1.5 }}>
             A starting structure derived from cross-stream evidence — <strong>not a recommendation</strong>.

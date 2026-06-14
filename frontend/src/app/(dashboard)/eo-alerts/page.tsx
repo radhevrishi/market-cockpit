@@ -106,7 +106,7 @@ export default function EOAlertsPage() {
           {lastResult.newBB.length > 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {lastResult.newBB.map(b => (
-                <div key={b.ticker} style={{ fontSize: 12, padding: '6px 10px', background: '#10B98115', borderLeft: '3px solid var(--mc-bullish)', borderRadius: 4 }}>
+                <div key={b.ticker} style={{ fontSize: 12, padding: '6px 10px', background: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', borderLeft: '3px solid var(--mc-bullish)', borderRadius: 4 }}>
                   <strong>{b.ticker}</strong> — sales {Math.round(b.sales_yoy_pct || 0)}% · PAT {Math.round(b.net_profit_yoy_pct || 0)}% · EPS {Math.round(b.eps_yoy_pct || 0)}% · score {b.composite_score}
                 </div>
               ))}
@@ -118,12 +118,12 @@ export default function EOAlertsPage() {
       )}
 
       {permission === 'unsupported' && (
-        <div style={{ padding: 12, background: '#F59E0B15', border: '1px solid #F59E0B55', borderRadius: 6, color: 'var(--mc-warn)', fontSize: 12, marginTop: 12 }}>
+        <div style={{ padding: 12, background: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 33%, transparent)', borderRadius: 6, color: 'var(--mc-warn)', fontSize: 12, marginTop: 12 }}>
           ⚠ Your browser does not support Web Notifications. Try Chrome / Edge / Safari.
         </div>
       )}
       {permission === 'denied' && (
-        <div style={{ padding: 12, background: '#EF444415', border: '1px solid #EF444455', borderRadius: 6, color: 'var(--mc-bearish)', fontSize: 12, marginTop: 12 }}>
+        <div style={{ padding: 12, background: 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bearish) 33%, transparent)', borderRadius: 6, color: 'var(--mc-bearish)', fontSize: 12, marginTop: 12 }}>
           ⚠ Notifications are blocked. Re-enable in your browser site settings, then refresh.
         </div>
       )}

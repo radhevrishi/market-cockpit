@@ -6,6 +6,8 @@ import MultibaggerStrips from './MultibaggerStrips';
 import TurnaroundStrips from './TurnaroundStrips';
 // PATCH 1080b — pure scorer reused for the top-level Turnaround tab ranking.
 import { scoreTurnaround, type TurnaroundResult } from '@/lib/turnaround-scoring';
+// PATCH 1081d — Acronym tooltips on table headers (HANDOFF §10 item E).
+import { AutoAcronyms } from '@/components/bottom-nav';
 import CapexPlaybook from './CapexPlaybook';
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2654,7 +2656,7 @@ export default function CapexTrackerPage() {
             <table className="cxt" style={{ borderCollapse: 'collapse', width: '100%', fontSize: F.sm }}>
               <thead><tr style={{ borderBottom: '1px solid ' + C.line }}>
                 {['COMPANY', 'SCORE', 'GRADE', 'TOP DRIVERS', 'WEAKEST', 'MCAP Cr', 'PE', 'PEG'].map((hh, i) => (
-                  <th key={hh} style={{ padding: '7px 8px', whiteSpace: 'nowrap', textAlign: i === 1 || i >= 5 ? 'right' : 'left', color: C.dim, fontSize: F.xs, fontWeight: 800 }}>{hh}</th>
+                  <th key={hh} style={{ padding: '7px 8px', whiteSpace: 'nowrap', textAlign: i === 1 || i >= 5 ? 'right' : 'left', color: C.dim, fontSize: F.xs, fontWeight: 800 }}><AutoAcronyms text={hh} /></th>
                 ))}
               </tr></thead>
               <tbody>
@@ -2783,7 +2785,7 @@ export default function CapexTrackerPage() {
                 <table className="cxt" style={{ borderCollapse: 'collapse', width: '100%', fontSize: F.sm }}>
                   <thead><tr style={{ borderBottom: '1px solid ' + C.line }}>
                     {['COMPANY', 'GRADE', 'SCORE', 'PHASE', 'ARCHETYPE', 'TROUGH', 'GATES', '🚩 TRAPS', 'MCAP Cr'].map((hh, i) => (
-                      <th key={hh} style={{ padding: '7px 8px', whiteSpace: 'nowrap', textAlign: i === 2 || i === 8 ? 'right' : 'left', color: C.dim, fontSize: F.xs, fontWeight: 800 }}>{hh}</th>
+                      <th key={hh} style={{ padding: '7px 8px', whiteSpace: 'nowrap', textAlign: i === 2 || i === 8 ? 'right' : 'left', color: C.dim, fontSize: F.xs, fontWeight: 800 }}><AutoAcronyms text={hh} /></th>
                     ))}
                   </tr></thead>
                   <tbody>

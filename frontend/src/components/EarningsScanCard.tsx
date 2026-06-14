@@ -186,7 +186,7 @@ function DivergenceBadge({ divergence }: { divergence?: string }) {
   if (!divergence || divergence === 'None') return null;
   const isStrongWeak = divergence === 'StrongEarnings_WeakGuidance';
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '9px', padding: '2px 6px', borderRadius: '4px', backgroundColor: isStrongWeak ? '#EF444418' : '#10B98118', border: `1px solid ${isStrongWeak ? '#EF444440' : '#10B98140'}`, color: isStrongWeak ? 'var(--mc-bearish)' : 'var(--mc-bullish)', fontWeight: 700, letterSpacing: '0.3px' }}>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '9px', padding: '2px 6px', borderRadius: '4px', backgroundColor: isStrongWeak ? 'color-mix(in srgb, var(--mc-bearish) 9%, transparent)' : 'color-mix(in srgb, var(--mc-bullish) 9%, transparent)', border: `1px solid ${isStrongWeak ? 'color-mix(in srgb, var(--mc-bearish) 25%, transparent)' : 'color-mix(in srgb, var(--mc-bullish) 25%, transparent)'}`, color: isStrongWeak ? 'var(--mc-bearish)' : 'var(--mc-bullish)', fontWeight: 700, letterSpacing: '0.3px' }}>
       ⚡ {isStrongWeak ? 'DIVERGENCE: Strong Earnings + Weak Guidance' : 'DIVERGENCE: Weak Earnings + Strong Guidance'}
     </span>
   );
@@ -195,7 +195,7 @@ function DivergenceBadge({ divergence }: { divergence?: string }) {
 function StaleBadge({ quarterStr }: { quarterStr: string }) {
   if (!isDataStale(quarterStr, 6)) return null;
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '9px', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#EF444415', border: '1px solid #EF444440', color: 'var(--mc-bearish)', fontWeight: 700, letterSpacing: '0.3px' }}>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '9px', padding: '2px 6px', borderRadius: '4px', backgroundColor: 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bearish) 25%, transparent)', color: 'var(--mc-bearish)', fontWeight: 700, letterSpacing: '0.3px' }}>
       ⚠ STALE
     </span>
   );
@@ -564,10 +564,10 @@ export function EarningsCardComponent({ card, postGap }: { card: EarningsScanCar
           {((card.keyPhrasesPositive && card.keyPhrasesPositive.length > 0) || (card.keyPhrasesNegative && card.keyPhrasesNegative.length > 0)) && (
             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '4px' }}>
               {(card.keyPhrasesPositive || []).map((p, i) => (
-                <span key={`p${i}`} style={{ fontSize: '8px', padding: '1px 5px', borderRadius: '3px', backgroundColor: '#10B98115', color: 'var(--mc-bullish)', border: '1px solid #10B98130' }}>{p}</span>
+                <span key={`p${i}`} style={{ fontSize: '8px', padding: '1px 5px', borderRadius: '3px', backgroundColor: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', color: 'var(--mc-bullish)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 19%, transparent)' }}>{p}</span>
               ))}
               {(card.keyPhrasesNegative || []).map((p, i) => (
-                <span key={`n${i}`} style={{ fontSize: '8px', padding: '1px 5px', borderRadius: '3px', backgroundColor: '#EF444415', color: 'var(--mc-bearish)', border: '1px solid #EF444430' }}>{p}</span>
+                <span key={`n${i}`} style={{ fontSize: '8px', padding: '1px 5px', borderRadius: '3px', backgroundColor: 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)', color: 'var(--mc-bearish)', border: '1px solid color-mix(in srgb, var(--mc-bearish) 19%, transparent)' }}>{p}</span>
               ))}
             </div>
           )}

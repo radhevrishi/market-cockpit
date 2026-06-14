@@ -146,7 +146,7 @@ async function generateEarningsImage(card: CardFromAPI): Promise<ArrayBuffer> {
             <div style={{ display: 'flex', gap: '8px', marginTop: '4px', alignItems: 'center' }}>
               <span style={{
                 padding: '1px 6px', borderRadius: '3px', fontSize: '11px',
-                background: '#0F7ABF20', color: 'var(--mc-accent)',
+                background: 'color-mix(in srgb, var(--mc-accent) 13%, transparent)', color: 'var(--mc-accent)',
               }}>{card.reportType}</span>
               <span style={{ fontSize: '11px', color: 'var(--mc-text-3)' }}>{card.period}</span>
               {exRet !== null && (

@@ -1815,7 +1815,7 @@ export default function AutoValuationPage() {
 
         {/* Upload */}
         <div style={{
-          background: CARD, border: `2px dashed #22D3EE60`, borderRadius: 8, padding: '28px 24px',
+          background: CARD, border: `2px dashed color-mix(in srgb, var(--mc-cyan) 38%, transparent)`, borderRadius: 8, padding: '28px 24px',
           textAlign: 'center',
         }}>
           <input
@@ -1893,7 +1893,7 @@ export default function AutoValuationPage() {
                       {s.company || s.ticker || 'Untitled'} <span style={{ color: DIM, fontWeight: 400 }}>· {savedDate}</span>
                     </span>
                     {s.sector && (
-                      <span style={{ fontSize: 9, color: 'var(--mc-cyan)', background: '#22D3EE15', padding: '2px 7px', borderRadius: 3, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                      <span style={{ fontSize: 9, color: 'var(--mc-cyan)', background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', padding: '2px 7px', borderRadius: 3, fontWeight: 700, whiteSpace: 'nowrap' }}>
                         {s.sector}
                       </span>
                     )}
@@ -1921,11 +1921,11 @@ export default function AutoValuationPage() {
                       );
                     })()}
                     <button onClick={() => handleLoadSaved(s)} style={{
-                      fontSize: 10, padding: '4px 10px', background: '#22D3EE15', border: '1px solid #22D3EE50',
+                      fontSize: 10, padding: '4px 10px', background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 31%, transparent)',
                       color: 'var(--mc-cyan)', borderRadius: 3, cursor: 'pointer', fontWeight: 800,
                     }}>OPEN</button>
                     <label htmlFor={`add-${s.ticker}`} style={{
-                      fontSize: 10, padding: '4px 10px', background: '#F59E0B15', border: '1px solid #F59E0B50',
+                      fontSize: 10, padding: '4px 10px', background: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 31%, transparent)',
                       color: 'var(--mc-warn)', borderRadius: 3, cursor: 'pointer', fontWeight: 800,
                     }}>+ DOCS</label>
                     <input id={`add-${s.ticker}`} type="file" multiple accept=".xlsx,.xls,.pdf"
@@ -1973,7 +1973,7 @@ export default function AutoValuationPage() {
                         alert('Failed to log decision: ' + (e?.message || 'unknown'));
                       }
                     }} style={{
-                      fontSize: 10, padding: '4px 8px', background: '#22D3EE15', border: '1px solid #22D3EE50',
+                      fontSize: 10, padding: '4px 8px', background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 31%, transparent)',
                       color: 'var(--mc-cyan)', borderRadius: 3, cursor: 'pointer', fontWeight: 800,
                     }} title="Bridge to Decision Log — writes BUY/WATCH/REJECTED with Auto-Val rationale">+ DECISION</button>
                     <button onClick={() => {
@@ -1994,11 +1994,11 @@ export default function AutoValuationPage() {
                       saveAutoValuation({ ...s, sector: recomputedSector, savedAt: new Date().toISOString() });
                       refreshSaved();
                     }} style={{
-                      fontSize: 10, padding: '4px 8px', background: '#A78BFA15', border: '1px solid #A78BFA50',
+                      fontSize: 10, padding: '4px 8px', background: 'color-mix(in srgb, var(--mc-state-persistent) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-state-persistent) 31%, transparent)',
                       color: 'var(--mc-state-persistent)', borderRadius: 3, cursor: 'pointer', fontWeight: 800,
                     }} title="Re-infer sector from latest classification rules — no re-upload needed">↻ RECOMP</button>
                     <button onClick={() => handleClearSaved(s.ticker)} style={{
-                      fontSize: 10, padding: '4px 8px', background: '#EF444415', border: '1px solid #EF444450',
+                      fontSize: 10, padding: '4px 8px', background: 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bearish) 31%, transparent)',
                       color: 'var(--mc-bearish)', borderRadius: 3, cursor: 'pointer', fontWeight: 800,
                     }}>× CLEAR</button>
                   </div>
@@ -2060,13 +2060,13 @@ export default function AutoValuationPage() {
                   <div style={{ fontSize: 11, color: DIM, fontWeight: 800, letterSpacing: '0.5px' }}>RECOMMENDATION</div>
                   {/* PATCH 0843 — Saved indicator + Clear attachments button */}
                   {report.ticker && savedList.find(s => s.ticker === report.ticker) && (
-                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '4px 10px', background: '#10B98115', border: '1px solid #10B98155', borderRadius: 4, marginBottom: 6 }}>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '4px 10px', background: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 33%, transparent)', borderRadius: 4, marginBottom: 6 }}>
                       <span style={{ fontSize: 10, color: 'var(--mc-bullish)', fontWeight: 700 }}>
                         ✓ SAVED · this report is persisted; reload anytime
                       </span>
                       {docs.length > 0 && (
                         <button onClick={handleClearAttachments}
-                          style={{ marginLeft: 4, padding: '2px 8px', fontSize: 10, background: 'transparent', color: 'var(--mc-bullish)', border: '1px solid #10B98155', borderRadius: 3, cursor: 'pointer' }}>
+                          style={{ marginLeft: 4, padding: '2px 8px', fontSize: 10, background: 'transparent', color: 'var(--mc-bullish)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 33%, transparent)', borderRadius: 3, cursor: 'pointer' }}>
                           ↻ Clear attachments (keep report)
                         </button>
                       )}
@@ -2103,14 +2103,14 @@ export default function AutoValuationPage() {
                   const m = DECISION_META[priorDecision.status];
                   chips.push(<span key="dec" title={`Prior decision: ${priorDecision.status} on ${priorDecision.date.slice(0,10)} — ${priorDecision.reason || ''}`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: `${m.color}25`, color: m.color, border: `1px solid ${m.color}60`, borderRadius: 3 }}>{m.emoji} PRIOR: {priorDecision.status}</span>);
                 }
-                if (isOnCB) chips.push(<span key="cb" style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#F59E0B25', color: 'var(--mc-warn)', border: '1px solid #F59E0B60', borderRadius: 3 }}>🏆 CB</span>);
-                if (mi?.fired) chips.push(<span key="mi" title={mi.interpretation} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#10B98125', color: 'var(--mc-bullish)', border: '1px solid #10B98160', borderRadius: 3 }}>⚡ MARGIN INFLECTION +{mi.gapPp.toFixed(1)}pp</span>);
-                else if (mi?.direction === 'COMPRESSION') chips.push(<span key="mi" title={mi.interpretation} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#EF444425', color: 'var(--mc-bearish)', border: '1px solid #EF444460', borderRadius: 3 }}>▼ MARGIN COMPRESSION {mi.gapPp.toFixed(1)}pp</span>);
-                if (fp && (fp.severity === 'HIGH' || fp.severity === 'CRITICAL')) chips.push(<span key="fp" title={fp.flags.join(' · ')} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#EF444425', color: 'var(--mc-bearish)', border: '1px solid #EF444460', borderRadius: 3 }}>🚨 PUMP {fp.pumpScore}/11</span>);
-                else if (fp && fp.severity === 'WATCH') chips.push(<span key="fp" title={fp.flags.join(' · ')} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#F59E0B25', color: 'var(--mc-warn)', border: '1px solid #F59E0B60', borderRadius: 3 }}>⚠ PUMP WATCH {fp.pumpScore}</span>);
-                else if (fp && fp.severity === 'CLEAN') chips.push(<span key="fp" style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', background: '#22D3EE15', color: 'var(--mc-cyan)', border: '1px solid #22D3EE40', borderRadius: 3 }}>✓ FORENSIC CLEAN</span>);
-                if (sa && sa.state === 'ACCELERATING') chips.push(<span key="sa" title={`Latest YoY ${sa.latestYoY.toFixed(0)}% vs 5y CAGR ${sa.cagr5y.toFixed(0)}%`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#10B98125', color: 'var(--mc-bullish)', border: '1px solid #10B98160', borderRadius: 3 }}>⇑ SALES ACCEL +{sa.delta.toFixed(0)}pp</span>);
-                else if (sa && sa.state === 'DECELERATING') chips.push(<span key="sa" title={`Latest YoY ${sa.latestYoY.toFixed(0)}% vs 5y CAGR ${sa.cagr5y.toFixed(0)}%`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#F59E0B25', color: 'var(--mc-warn)', border: '1px solid #F59E0B60', borderRadius: 3 }}>⇓ SALES DECEL {sa.delta.toFixed(0)}pp</span>);
+                if (isOnCB) chips.push(<span key="cb" style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: 'color-mix(in srgb, var(--mc-warn) 15%, transparent)', color: 'var(--mc-warn)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', borderRadius: 3 }}>🏆 CB</span>);
+                if (mi?.fired) chips.push(<span key="mi" title={mi.interpretation} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: 'color-mix(in srgb, var(--mc-bullish) 15%, transparent)', color: 'var(--mc-bullish)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 38%, transparent)', borderRadius: 3 }}>⚡ MARGIN INFLECTION +{mi.gapPp.toFixed(1)}pp</span>);
+                else if (mi?.direction === 'COMPRESSION') chips.push(<span key="mi" title={mi.interpretation} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: 'color-mix(in srgb, var(--mc-bearish) 15%, transparent)', color: 'var(--mc-bearish)', border: '1px solid color-mix(in srgb, var(--mc-bearish) 38%, transparent)', borderRadius: 3 }}>▼ MARGIN COMPRESSION {mi.gapPp.toFixed(1)}pp</span>);
+                if (fp && (fp.severity === 'HIGH' || fp.severity === 'CRITICAL')) chips.push(<span key="fp" title={fp.flags.join(' · ')} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: 'color-mix(in srgb, var(--mc-bearish) 15%, transparent)', color: 'var(--mc-bearish)', border: '1px solid color-mix(in srgb, var(--mc-bearish) 38%, transparent)', borderRadius: 3 }}>🚨 PUMP {fp.pumpScore}/11</span>);
+                else if (fp && fp.severity === 'WATCH') chips.push(<span key="fp" title={fp.flags.join(' · ')} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: 'color-mix(in srgb, var(--mc-warn) 15%, transparent)', color: 'var(--mc-warn)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', borderRadius: 3 }}>⚠ PUMP WATCH {fp.pumpScore}</span>);
+                else if (fp && fp.severity === 'CLEAN') chips.push(<span key="fp" style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', color: 'var(--mc-cyan)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', borderRadius: 3 }}>✓ FORENSIC CLEAN</span>);
+                if (sa && sa.state === 'ACCELERATING') chips.push(<span key="sa" title={`Latest YoY ${sa.latestYoY.toFixed(0)}% vs 5y CAGR ${sa.cagr5y.toFixed(0)}%`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: 'color-mix(in srgb, var(--mc-bullish) 15%, transparent)', color: 'var(--mc-bullish)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 38%, transparent)', borderRadius: 3 }}>⇑ SALES ACCEL +{sa.delta.toFixed(0)}pp</span>);
+                else if (sa && sa.state === 'DECELERATING') chips.push(<span key="sa" title={`Latest YoY ${sa.latestYoY.toFixed(0)}% vs 5y CAGR ${sa.cagr5y.toFixed(0)}%`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: 'color-mix(in srgb, var(--mc-warn) 15%, transparent)', color: 'var(--mc-warn)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', borderRadius: 3 }}>⇓ SALES DECEL {sa.delta.toFixed(0)}pp</span>);
                 if (dna) { const dnaColor = dna.matched >= 5 ? '#10B981' : dna.matched >= 3 ? '#22D3EE' : '#94A3B8'; chips.push(<span key="dna" title={`500-bagger DNA: ${dna.criteria.join(' · ')}`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: `${dnaColor}25`, color: dnaColor, border: `1px solid ${dnaColor}60`, borderRadius: 3 }}>🧬 DNA {dna.matched}/6</span>); }
                 // PATCH 0855 — Smart-money overlay
                 const sm = smartMoneyByTicker[ticker];
@@ -2268,7 +2268,7 @@ export default function AutoValuationPage() {
               </div>
 
               {overrideResult && (
-                <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px dashed #F59E0B40' }}>
+                <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px dashed color-mix(in srgb, var(--mc-warn) 25%, transparent)' }}>
                   <div style={{ fontSize: 11, color: 'var(--mc-warn)', fontWeight: 800, marginBottom: 8 }}>
                     ✓ OVERRIDE SCENARIO — Revenue ₹{overrideResult.revenue.toLocaleString('en-IN')} Cr · EBITDA ₹{overrideResult.ebitda.toLocaleString('en-IN')} Cr · PAT ₹{overrideResult.pat.toLocaleString('en-IN')} Cr
                   </div>

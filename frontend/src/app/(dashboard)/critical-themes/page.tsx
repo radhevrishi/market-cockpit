@@ -78,7 +78,7 @@ function ThemeBlock({ t, signal, dynamicRank }: { t: CriticalTheme; signal?: Liv
         {signal && (
           <>
             <span title="News articles in last 30 days matching theme keywords"
-                  style={{ fontSize: 9, color: 'var(--mc-cyan)', background: '#22D3EE15', padding: '2px 6px', borderRadius: 3, fontWeight: 700 }}>
+                  style={{ fontSize: 9, color: 'var(--mc-cyan)', background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', padding: '2px 6px', borderRadius: 3, fontWeight: 700 }}>
               📰 {signal.newsHeat} news
             </span>
             <span title="Avg leader-stock change last 7 days" style={{
@@ -89,7 +89,7 @@ function ThemeBlock({ t, signal, dynamicRank }: { t: CriticalTheme; signal?: Liv
               📈 {signal.leaderMomentum >= 0 ? '+' : ''}{signal.leaderMomentum.toFixed(1)}%
             </span>
             {signal.bottleneckBoost > 0 && (
-              <span style={{ fontSize: 9, color: 'var(--mc-warn)', background: '#F59E0B15', padding: '2px 6px', borderRadius: 3, fontWeight: 700 }}>
+              <span style={{ fontSize: 9, color: 'var(--mc-warn)', background: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', padding: '2px 6px', borderRadius: 3, fontWeight: 700 }}>
                 ⚠ bottleneck active
               </span>
             )}
@@ -416,8 +416,8 @@ export default function CriticalThemesPage() {
         {/* PATCH 0631 — EMERGING THEMES (news-derived suggestions) */}
         {emerging.length > 0 && (
           <div style={{
-            background: 'linear-gradient(180deg, #F59E0B12 0%, transparent 100%)',
-            border: '1px solid #F59E0B40',
+            background: 'linear-gradient(180deg, color-mix(in srgb, var(--mc-warn) 7%, transparent) 0%, transparent 100%)',
+            border: '1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)',
             borderRadius: 8, padding: '16px 18px',
           }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
@@ -432,12 +432,12 @@ export default function CriticalThemesPage() {
               {emerging.slice(0, 12).map((e) => (
                 <div key={e.keyword} style={{
                   display: 'flex', alignItems: 'center', gap: 4,
-                  background: 'var(--mc-bg-4)', border: '1px solid #F59E0B30', borderRadius: 4, padding: '4px 8px',
+                  background: 'var(--mc-bg-4)', border: '1px solid color-mix(in srgb, var(--mc-warn) 19%, transparent)', borderRadius: 4, padding: '4px 8px',
                 }}>
                   <span style={{ fontSize: 12, color: TEXT, fontWeight: 600 }}>{e.keyword}</span>
                   <span style={{ fontSize: 9, color: DIM }}>· {e.articleCount} news</span>
                   <button onClick={() => promoteEmerging(e, 'IN')} title="Promote to India theme"
-                    style={{ marginLeft: 4, fontSize: 9, padding: '1px 5px', background: '#22D3EE22', border: '1px solid #22D3EE60', color: 'var(--mc-cyan)', borderRadius: 3, cursor: 'pointer', fontWeight: 800 }}>
+                    style={{ marginLeft: 4, fontSize: 9, padding: '1px 5px', background: 'color-mix(in srgb, var(--mc-cyan) 13%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)', borderRadius: 3, cursor: 'pointer', fontWeight: 800 }}>
                     ✚ IN
                   </button>
                   <button onClick={() => promoteEmerging(e, 'US')} title="Promote to USA theme"
@@ -451,11 +451,11 @@ export default function CriticalThemesPage() {
         )}
 
         {/* PATCH 0631 — CUSTOM THEME ADD */}
-        <div style={{ background: CARD, border: `1px dashed #22D3EE40`, borderRadius: 8, padding: '14px 16px' }}>
+        <div style={{ background: CARD, border: `1px dashed color-mix(in srgb, var(--mc-cyan) 25%, transparent)`, borderRadius: 8, padding: '14px 16px' }}>
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
             <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.5px' }}>➕ ADD YOUR OWN THEME</span>
             <button onClick={() => setShowAddForm(v => !v)} style={{
-              fontSize: 11, padding: '5px 12px', background: '#22D3EE15', border: '1px solid #22D3EE50',
+              fontSize: 11, padding: '5px 12px', background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 31%, transparent)',
               color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 800,
             }}>
               {showAddForm ? 'CANCEL' : 'NEW THEME'}
@@ -513,7 +513,7 @@ export default function CriticalThemesPage() {
                     <span style={{ color: TEXT, fontWeight: 600 }}>{t.emoji} {t.name}</span>
                     <span style={{ fontSize: 9, color: DIM }}>· {t.region}</span>
                     <button onClick={() => { deleteCustomTheme(t.id); setCustomTick(x => x + 1); }} title="Delete"
-                      style={{ fontSize: 10, padding: '0 4px', background: 'transparent', border: '1px solid #EF444460', color: 'var(--mc-bearish)', borderRadius: 3, cursor: 'pointer', marginLeft: 4 }}>
+                      style={{ fontSize: 10, padding: '0 4px', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-bearish) 38%, transparent)', color: 'var(--mc-bearish)', borderRadius: 3, cursor: 'pointer', marginLeft: 4 }}>
                       ×
                     </button>
                   </span>

@@ -311,9 +311,9 @@ export function ConcallUploadModal({
                               : mutedColor,
                       background:
                         f.status === 'parsed'
-                          ? '#10b98120'
+                          ? 'color-mix(in srgb, var(--mc-bullish) 13%, transparent)'
                           : f.status === 'error'
-                            ? '#fb923c20'
+                            ? 'color-mix(in srgb, var(--mc-warn) 13%, transparent)'
                             : f.status === 'parsing'
                               ? `${accentColor}20`
                               : `${mutedColor}20`,

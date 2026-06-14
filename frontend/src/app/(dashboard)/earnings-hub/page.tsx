@@ -116,8 +116,8 @@ export default function EarningsHubPage() {
                 gap: 6,
                 padding: '6px 12px',
                 borderRadius: 8,
-                border: isActive ? '1px solid #10B98160' : '1px solid var(--mc-bg-4)',
-                backgroundColor: isActive ? '#10B98120' : 'transparent',
+                border: isActive ? '1px solid color-mix(in srgb, var(--mc-bullish) 38%, transparent)' : '1px solid var(--mc-bg-4)',
+                backgroundColor: isActive ? 'color-mix(in srgb, var(--mc-bullish) 13%, transparent)' : 'transparent',
                 color: isActive ? 'var(--mc-bullish)' : 'var(--mc-text-3)',
                 fontSize: 12,
                 fontWeight: 700,
@@ -140,7 +140,7 @@ export default function EarningsHubPage() {
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 5,
               padding: '5px 10px', borderRadius: 8,
-              border: '1px solid #F59E0B60', backgroundColor: 'rgba(245,158,11,0.10)',
+              border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', backgroundColor: 'rgba(245,158,11,0.10)',
               color: 'var(--mc-warn)', fontSize: 11, fontWeight: 800, letterSpacing: '0.4px',
               cursor: 'pointer', marginLeft: 8,
             }}

@@ -80,6 +80,26 @@ export const ACRONYMS: Record<string, AcronymEntry> = {
   NSE: { label: 'NSE', long: 'National Stock Exchange of India' },
   BSE: { label: 'BSE', long: 'Bombay Stock Exchange' },
   AIF: { label: 'AIF', long: 'Alternative Investment Fund', hint: 'SEBI-regulated pooled vehicle; disclosure tier on this portal.' },
+
+  // PATCH 1081d — additional financial terms most-used in data tables / labels
+  MCAP: { label: 'MCAP', long: 'Market Capitalization', hint: 'Shares outstanding × CMP. ₹ Cr in India.' },
+  CMP: { label: 'CMP', long: 'Current Market Price', hint: 'Spot price right now.' },
+  NPM: { label: 'NPM', long: 'Net Profit Margin', hint: 'PAT / Sales. After-tax profitability.' },
+  FY: { label: 'FY', long: 'Fiscal Year', hint: 'Apr-Mar in India. FY26 = year ending Mar-2026.' },
+  TTM: { label: 'TTM', long: 'Trailing Twelve Months', hint: 'Sum of last 4 reported quarters.' },
+  FII: { label: 'FII', long: 'Foreign Institutional Investor', hint: 'Overseas fund / pension / SWF flows.' },
+  DII: { label: 'DII', long: 'Domestic Institutional Investor', hint: 'Indian mutual fund, insurance, pension fund flows.' },
+  PLI: { label: 'PLI', long: 'Production-Linked Incentive', hint: 'Govt subsidy paid per ₹ of incremental sales of approved goods.' },
+  CDMO: { label: 'CDMO', long: 'Contract Development & Manufacturing Organization', hint: 'Pharma outsourced R&D + manufacturing partner (Sai, Suven, Syngene).' },
+  EMS: { label: 'EMS', long: 'Electronic Manufacturing Services', hint: 'Contract manufacturer of PCBs, modules, finished electronics (Dixon, Kaynes).' },
+  EPC: { label: 'EPC', long: 'Engineering · Procurement · Construction', hint: 'Turnkey project contracts (L&T, KEC, Patel Eng).' },
+  IPO: { label: 'IPO', long: 'Initial Public Offering', hint: 'First listing of a company on the stock exchange.' },
+  IRR: { label: 'IRR', long: 'Internal Rate of Return', hint: 'Discount rate that makes NPV of cash flows = 0.' },
+  DCF: { label: 'DCF', long: 'Discounted Cash Flow', hint: 'Sum of future FCF discounted to today.' },
+  NAV: { label: 'NAV', long: 'Net Asset Value', hint: 'Total assets − total liabilities, per share.' },
+  MFI: { label: 'MFI', long: 'Mutual-Fund / Institutional', hint: 'Institutional money — domestic mutual funds + insurance + pension flows.' },
+  PMD: { label: 'PMD', long: 'Permanent Margin Destruction', hint: 'Turnaround trap: last 3y OPM all > 500bps below historical peak.' },
+  HEALTHY: { label: 'HEALTHY', long: 'Healthy compounder', hint: 'Turnaround scoring bucket: cash-generative, never had a distress episode — use Multibagger DNA framework instead.' },
 };
 
 // Accept aliases / display forms users actually type

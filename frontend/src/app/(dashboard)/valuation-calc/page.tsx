@@ -54,7 +54,7 @@ function SaveValuationBar({ calcKind, result, onLoaded }: {
   return (
     <div style={{
       marginTop: 14, padding: '10px 12px',
-      background: '#10B98112', border: '1px solid #10B98140', borderRadius: 6,
+      background: 'color-mix(in srgb, var(--mc-bullish) 7%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 25%, transparent)', borderRadius: 6,
       display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
     }}>
       <input
@@ -203,7 +203,7 @@ function ValuationAnalyticsPanel() {
           {Object.entries(byKind).map(([k, n]) => (
             <span key={k} style={{
               fontSize: 12, padding: '5px 11px',
-              background: '#22D3EE15', border: '1px solid #22D3EE40',
+              background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)',
               color: 'var(--mc-cyan)', borderRadius: 4, fontWeight: 800, fontFamily: 'ui-monospace, monospace',
             }}>
               {k === 'EV_EBITDA' ? 'EV/EBITDA' : k}: {n}
@@ -221,7 +221,7 @@ function ValuationAnalyticsPanel() {
             <div key={e.v.id} style={{ background: 'var(--mc-bg-0)', borderRadius: 5, padding: '8px 12px', display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 14, color: 'var(--mc-bullish)', fontWeight: 900, minWidth: 24 }}>#{i + 1}</span>
               <span style={{ fontSize: 13, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace, monospace' }}>{e.v.ticker || e.v.company || '—'}</span>
-              <span style={{ fontSize: 10, color: 'var(--mc-cyan)', background: '#22D3EE15', padding: '2px 7px', borderRadius: 3, fontWeight: 800 }}>
+              <span style={{ fontSize: 10, color: 'var(--mc-cyan)', background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', padding: '2px 7px', borderRadius: 3, fontWeight: 800 }}>
                 {e.v.calcKind === 'EV_EBITDA' ? 'EV/EBITDA' : e.v.calcKind}
               </span>
               <span style={{ flex: 1, fontSize: 11, color: 'var(--mc-text-2)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -243,7 +243,7 @@ function ValuationAnalyticsPanel() {
           {worstRisk.map((e) => (
             <div key={e.v.id} style={{ background: 'var(--mc-bg-0)', borderRadius: 5, padding: '8px 12px', display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 13, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace, monospace' }}>{e.v.ticker || e.v.company || '—'}</span>
-              <span style={{ fontSize: 10, color: 'var(--mc-bearish)', background: '#EF444415', padding: '2px 7px', borderRadius: 3, fontWeight: 800 }}>
+              <span style={{ fontSize: 10, color: 'var(--mc-bearish)', background: 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)', padding: '2px 7px', borderRadius: 3, fontWeight: 800 }}>
                 {e.v.calcKind === 'EV_EBITDA' ? 'EV/EBITDA' : e.v.calcKind}
               </span>
               <span style={{ flex: 1, fontSize: 11, color: 'var(--mc-text-2)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -350,12 +350,12 @@ function SavedValuationsPanel({ onLoad }: { onLoad?: (v: SavedValuation) => void
               onLoad?.(v);
             }} style={{
               fontSize: 10, padding: '3px 8px',
-              background: '#22D3EE15', border: '1px solid #22D3EE50', color: 'var(--mc-cyan)',
+              background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 31%, transparent)', color: 'var(--mc-cyan)',
               borderRadius: 3, cursor: 'pointer', fontWeight: 700,
             }}>EDIT</button>
             <button onClick={() => { if (confirm(`Delete saved valuation for ${v.ticker || '—'}?`)) deleteValuation(v.id); }} style={{
               fontSize: 10, padding: '3px 8px',
-              background: '#EF444415', border: '1px solid #EF444450', color: 'var(--mc-bearish)',
+              background: 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bearish) 31%, transparent)', color: 'var(--mc-bearish)',
               borderRadius: 3, cursor: 'pointer', fontWeight: 700,
             }}>×</button>
           </div>
@@ -373,7 +373,7 @@ function CalcResultDisplay({ result, calcKind }: { result: CalculatorResult; cal
     <div style={{ marginTop: 18 }}>
       {showSanity && (
         <div style={{
-          background: '#F59E0B15', border: '1px solid #F59E0B60', borderRadius: 6,
+          background: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', borderRadius: 6,
           padding: '10px 14px', marginBottom: 10, fontSize: 12, color: TEXT, lineHeight: 1.55,
         }}>
           ⚠ <b style={{ color: 'var(--mc-warn)' }}>Sanity check:</b> base-case upside is {baseUpside.toFixed(0)}% — that&apos;s unusual.
@@ -383,7 +383,7 @@ function CalcResultDisplay({ result, calcKind }: { result: CalculatorResult; cal
         </div>
       )}
       <div style={{
-        background: '#22D3EE12', border: '1px solid #22D3EE40', borderRadius: 6,
+        background: 'color-mix(in srgb, var(--mc-cyan) 7%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', borderRadius: 6,
         padding: '12px 14px', marginBottom: 12, fontSize: 13, color: TEXT, lineHeight: 1.6,
       }}>
         <b style={{ color: 'var(--mc-cyan)' }}>📊 Base case:</b> {result.baseSummary}
@@ -485,7 +485,7 @@ function TickerCombo({ value, onChange, onSelect, market = 'india' }: {
         <div style={{
           position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
           marginTop: 4, maxHeight: 280, overflowY: 'auto',
-          background: CARD, border: `1px solid #22D3EE60`, borderRadius: 4,
+          background: CARD, border: `1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)`, borderRadius: 4,
           boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
         }}>
           {hits.map((h) => (
@@ -555,7 +555,7 @@ function AutoFillBtn({ ticker, market, onFill, currentPrice, onNotInUniverse }: 
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
       <button onClick={handleClick} disabled={loading} style={{
         fontSize: 11, padding: '5px 12px',
-        background: '#10B98115', border: '1px solid #10B98150',
+        background: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 31%, transparent)',
         color: 'var(--mc-bullish)', borderRadius: 4, cursor: loading ? 'wait' : 'pointer', fontWeight: 800,
       }}>
         {loading ? '⏳ Fetching…' : '🔄 Auto-fill price + market cap'}
@@ -1183,7 +1183,7 @@ function SectorLookupPanel() {
                       {sector}
                     </td>
                     <td style={{ padding: '12px 12px', borderBottom: `1px solid ${BORDER}`, verticalAlign: 'top' }}>
-                      <span style={{ fontSize: 11, color: 'var(--mc-cyan)', background: '#22D3EE15', border: '1px solid #22D3EE40', padding: '3px 9px', borderRadius: 4, fontFamily: 'ui-monospace, monospace', fontWeight: 800, whiteSpace: 'nowrap' }}>
+                      <span style={{ fontSize: 11, color: 'var(--mc-cyan)', background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', padding: '3px 9px', borderRadius: 4, fontFamily: 'ui-monospace, monospace', fontWeight: 800, whiteSpace: 'nowrap' }}>
                         {conf.calc === 'EV_EBITDA' ? 'EV / EBITDA' : conf.calc === 'PS' ? 'P / S' : 'P / E'}
                       </span>
                     </td>
@@ -1768,7 +1768,7 @@ function MethodCard({ m, idx }: { m: GuidanceMethod; idx: number }) {
                 </tbody>
               </table>
 
-              <div style={{ marginTop: 12, padding: '10px 12px', background: '#10B98115', border: '1px solid #10B98140', borderRadius: 4 }}>
+              <div style={{ marginTop: 12, padding: '10px 12px', background: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 25%, transparent)', borderRadius: 4 }}>
                 <div style={{ fontSize: 11, color: 'var(--mc-bullish)', fontWeight: 800, marginBottom: 3 }}>FAIR VALUE → {m.worked.fairValue}</div>
                 <div style={{ fontSize: 12, color: TEXT }}>{m.worked.upside}</div>
               </div>
@@ -1790,7 +1790,7 @@ function MethodCard({ m, idx }: { m: GuidanceMethod; idx: number }) {
                   {matches.map((ex, i) => (
                     <a key={i} href={`#${exSlug(ex.company)}`} style={{
                       fontSize: 11, padding: '4px 10px',
-                      background: '#10B98115', border: '1px solid #10B98140',
+                      background: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 25%, transparent)',
                       color: 'var(--mc-bullish)', borderRadius: 4, fontWeight: 700,
                       textDecoration: 'none', whiteSpace: 'nowrap',
                     }}>
@@ -2345,7 +2345,7 @@ function PracticeExampleCard({ ex }: { ex: PracticeExample }) {
           </div>
 
           {ex.note && (
-            <div style={{ marginTop: 10, fontSize: 11, color: 'var(--mc-warn)', fontStyle: 'italic', padding: '6px 10px', background: '#F59E0B10', borderRadius: 3 }}>
+            <div style={{ marginTop: 10, fontSize: 11, color: 'var(--mc-warn)', fontStyle: 'italic', padding: '6px 10px', background: 'color-mix(in srgb, var(--mc-warn) 6%, transparent)', borderRadius: 3 }}>
               💡 {ex.note}
             </div>
           )}
@@ -2435,7 +2435,7 @@ function DCFCalculator() {
         <NumberInput label="Shares Outstanding" value={shares} onChange={setShares} suffix="Cr" />
         <NumberInput label="Current Market Cap" value={mcap} onChange={setMcap} suffix="₹ Cr" />
       </div>
-      <div style={{ padding: '12px 14px', background: '#10B98115', border: '1px solid #10B98140', borderRadius: 4 }}>
+      <div style={{ padding: '12px 14px', background: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 25%, transparent)', borderRadius: 4 }}>
         <div style={{ fontSize: 11, color: 'var(--mc-bullish)', fontWeight: 800, marginBottom: 4 }}>
           FAIR VALUE → ₹{Math.round(result.fairMcap).toLocaleString('en-IN')} Cr
           {' '}(₹{Math.round(result.perShare).toLocaleString('en-IN')}/share)
@@ -2626,7 +2626,7 @@ function SumOfPartsCalculator() {
         <NumberInput label="Conglomerate Discount" value={discount} onChange={setDiscount} suffix="%" />
         <NumberInput label="Current Market Cap" value={mcap} onChange={setMcap} suffix="₹ Cr" />
       </div>
-      <div style={{ padding: '12px 14px', background: '#10B98115', border: '1px solid #10B98140', borderRadius: 4 }}>
+      <div style={{ padding: '12px 14px', background: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 25%, transparent)', borderRadius: 4 }}>
         <div style={{ fontSize: 11, color: 'var(--mc-bullish)', fontWeight: 800, marginBottom: 4 }}>
           Gross EV ₹{Math.round(gross).toLocaleString('en-IN')} − discount ₹{Math.round(conglomDiscount).toLocaleString('en-IN')} = EV ₹{Math.round(ev).toLocaleString('en-IN')} Cr
         </div>
@@ -2668,11 +2668,11 @@ function DividendDiscountCalculator() {
         <NumberInput label="Current Share Price" value={currentPrice} onChange={setCurrentPrice} suffix="₹" />
       </div>
       {fairPrice === 0 ? (
-        <div style={{ padding: '12px 14px', background: '#EF444415', border: '1px solid #EF444440', borderRadius: 4, fontSize: 12, color: 'var(--mc-bearish)' }}>
+        <div style={{ padding: '12px 14px', background: 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bearish) 25%, transparent)', borderRadius: 4, fontSize: 12, color: 'var(--mc-bearish)' }}>
           ⚠ Required return ({requiredReturn}%) must exceed growth ({growth}%) for Gordon Growth to converge.
         </div>
       ) : (
-        <div style={{ padding: '12px 14px', background: '#10B98115', border: '1px solid #10B98140', borderRadius: 4 }}>
+        <div style={{ padding: '12px 14px', background: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 25%, transparent)', borderRadius: 4 }}>
           <div style={{ fontSize: 11, color: 'var(--mc-bullish)', fontWeight: 800, marginBottom: 4 }}>
             Fair Value ₹{Math.round(fairPrice).toLocaleString('en-IN')}/share · Current yield {yieldPct.toFixed(2)}%
           </div>
@@ -2772,7 +2772,7 @@ function LearnTab() {
       </div>
 
       {/* Footer — meta-lessons */}
-      <div style={{ background: '#1A1F33', border: '1px solid #F59E0B40', borderRadius: 8, padding: '16px 18px', marginTop: 8 }}>
+      <div style={{ background: '#1A1F33', border: '1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)', borderRadius: 8, padding: '16px 18px', marginTop: 8 }}>
         <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-warn)', marginBottom: 8 }}>⚖️ INSTITUTIONAL LESSONS</div>
         <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: TEXT, lineHeight: 1.7 }}>
           <li><b>Always pick the multiple your stock ACTUALLY trades at</b> (5-yr median), not the sector average. Premium names trade above sector, value names below.</li>

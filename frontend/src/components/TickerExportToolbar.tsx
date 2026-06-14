@@ -349,15 +349,15 @@ export default function TickerExportToolbar({
       display: 'flex', flexDirection: 'column', gap: 10,
       padding: compact ? '10px 14px' : '14px 18px',
       backgroundColor: 'var(--mc-bg-1)',
-      border: '2px solid #22D3EE40',
+      border: '2px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)',
       borderRadius: 12,
-      boxShadow: '0 0 0 1px #22D3EE15',
+      boxShadow: '0 0 0 1px color-mix(in srgb, var(--mc-cyan) 8%, transparent)',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <div style={{
           display: 'inline-flex', alignItems: 'center', gap: 6,
           padding: '4px 10px', borderRadius: 6,
-          backgroundColor: '#22D3EE22', border: '1px solid #22D3EE60',
+          backgroundColor: 'color-mix(in srgb, var(--mc-cyan) 13%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)',
         }}>
           <Copy style={{ width: 13, height: 13, color: 'var(--mc-cyan)' }} />
           <span style={{ fontSize: 12, fontWeight: 900, color: 'var(--mc-cyan)', letterSpacing: '0.6px' }}>
@@ -417,7 +417,7 @@ export default function TickerExportToolbar({
           onClick={() => openInTradingView(safeTickers)}
           disabled={n === 0}
           title="Open first ticker in TradingView chart + copy full list for paste into a new watchlist"
-          style={{ ...btnBase, border: '1px solid var(--mc-bullish)', background: '#10B98120', color: 'var(--mc-bullish)' }}
+          style={{ ...btnBase, border: '1px solid var(--mc-bullish)', background: 'color-mix(in srgb, var(--mc-bullish) 13%, transparent)', color: 'var(--mc-bullish)' }}
         >
           <ExternalLink style={{ width: 14, height: 14 }} />
           Open in TradingView
@@ -431,7 +431,7 @@ export default function TickerExportToolbar({
           onClick={() => copyForScreener(safeTickers, 'All')}
           disabled={n === 0}
           title={`Copy ${n} tickers as bare comma-separated symbols — paste into a Screener.in watchlist`}
-          style={{ ...btnBase, border: '1px solid var(--mc-state-persistent)', background: '#A78BFA20', color: 'var(--mc-state-persistent)' }}
+          style={{ ...btnBase, border: '1px solid var(--mc-state-persistent)', background: 'color-mix(in srgb, var(--mc-state-persistent) 13%, transparent)', color: 'var(--mc-state-persistent)' }}
         >
           <Copy style={{ width: 14, height: 14 }} />
           Copy for Screener
@@ -442,7 +442,7 @@ export default function TickerExportToolbar({
           title={n === 1
             ? `Open ${safeTickers[0]} on Screener.in`
             : `Copy ${n} tickers + open Screener.in watchlist page`}
-          style={{ ...btnBase, border: '1px solid var(--mc-state-persistent)', background: '#A78BFA15', color: 'var(--mc-state-persistent)' }}
+          style={{ ...btnBase, border: '1px solid var(--mc-state-persistent)', background: 'color-mix(in srgb, var(--mc-state-persistent) 8%, transparent)', color: 'var(--mc-state-persistent)' }}
         >
           <ExternalLink style={{ width: 14, height: 14 }} />
           {n === 1 ? 'Open on Screener' : 'Open in Screener.in'}
@@ -454,7 +454,7 @@ export default function TickerExportToolbar({
           onClick={() => downloadScreenerCsv(safeTickers, 'All')}
           disabled={n === 0}
           title={`Download ${n} rows as CSV — columns: Name, Ticker. Use as backup when Screener.in is slow or as portable list.`}
-          style={{ ...btnBase, border: '1px solid var(--mc-state-persistent)', background: '#A78BFA10', color: 'var(--mc-state-persistent)' }}
+          style={{ ...btnBase, border: '1px solid var(--mc-state-persistent)', background: 'color-mix(in srgb, var(--mc-state-persistent) 6%, transparent)', color: 'var(--mc-state-persistent)' }}
         >
           <Download style={{ width: 14, height: 14 }} />
           Download Screener CSV

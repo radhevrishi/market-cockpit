@@ -1093,8 +1093,8 @@ export default function NewsCard({ article, onTickerClick }: Props) {
             <div
               className="mt-2 px-3 py-2 rounded border text-[10px]"
               style={{
-                backgroundColor: '#22D3EE08',
-                borderColor: '#22D3EE40',
+                backgroundColor: 'color-mix(in srgb, var(--mc-cyan) 3%, transparent)',
+                borderColor: 'color-mix(in srgb, var(--mc-cyan) 25%, transparent)',
                 color: 'var(--mc-text-2)',
               }}
             >

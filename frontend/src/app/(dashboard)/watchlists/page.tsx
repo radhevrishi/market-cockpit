@@ -400,7 +400,7 @@ function WatchlistTable({
                 onClick={() => setChooserOpen(o => !o)}
                 title="Configure columns"
                 style={{
-                  background: chooserOpen ? '#0F7ABF30' : 'transparent',
+                  background: chooserOpen ? 'color-mix(in srgb, var(--mc-accent) 19%, transparent)' : 'transparent',
                   border: `1px solid ${chooserOpen ? 'var(--mc-cyan)' : 'var(--mc-border-2)'}`,
                   borderRadius: 6, color: chooserOpen ? 'var(--mc-cyan)' : 'var(--mc-text-3)',
                   cursor: 'pointer', padding: '4px 9px', fontSize: '10px', fontWeight: 700,
@@ -1045,7 +1045,7 @@ export default function WatchlistsPage() {
           <span style={{
             fontSize: 10, fontWeight: 800,
             padding: '1px 6px', borderRadius: 8,
-            backgroundColor: convictionCount > 0 ? '#F59E0B22' : 'var(--mc-bg-2)',
+            backgroundColor: convictionCount > 0 ? 'color-mix(in srgb, var(--mc-warn) 13%, transparent)' : 'var(--mc-bg-2)',
             color: convictionCount > 0 ? 'var(--mc-warn)' : 'var(--mc-text-4)',
           }}>{convictionCount}</span>
         </button>
@@ -1806,7 +1806,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
         </p>
         <a href="/earnings-opportunities" style={{
           display: 'inline-block', padding: '8px 16px',
-          backgroundColor: '#F59E0B15', border: '1px solid #F59E0B60',
+          backgroundColor: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)',
           borderRadius: 6, color: 'var(--mc-warn)', fontSize: 12, fontWeight: 700,
           textDecoration: 'none',
         }}>Open Earnings Opportunities →</a>
@@ -1873,7 +1873,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                 title="Resets every filter (Sales/PAT/EPS/OP-Lev/PEAD/Guidance/Quarter/FY/date range)"
                 style={{
                   padding: '3px 9px', fontSize: 10, fontWeight: 800,
-                  background: '#F59E0B22', border: '1px solid #F59E0B80',
+                  background: 'color-mix(in srgb, var(--mc-warn) 13%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 50%, transparent)',
                   color: 'var(--mc-warn)', borderRadius: 4, cursor: 'pointer',
                 }}
               >⚠ 0 match — Reset all filters</button>
@@ -1918,8 +1918,8 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
             {revalProgress && (
               <span style={{
                 fontSize: 10.5, fontWeight: 700, padding: '3px 8px', borderRadius: 4,
-                backgroundColor: revalProgress.startsWith('✓') ? '#10B98118' : '#A78BFA18',
-                border: `1px solid ${revalProgress.startsWith('✓') ? '#10B98140' : '#A78BFA40'}`,
+                backgroundColor: revalProgress.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 9%, transparent)' : 'color-mix(in srgb, var(--mc-state-persistent) 9%, transparent)',
+                border: `1px solid ${revalProgress.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 25%, transparent)' : 'color-mix(in srgb, var(--mc-state-persistent) 25%, transparent)'}`,
                 color: revalProgress.startsWith('✓') ? 'var(--mc-bullish)' : 'var(--mc-state-persistent)',
               }}>{revalProgress}</span>
             )}
@@ -2180,7 +2180,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                   <button
                     onClick={() => setShowQuarterCheatSheet(v => !v)}
                     title="Show / hide the Q1-Q4 cheat sheet"
-                    style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 8px', background: 'transparent', border: '1px solid #F59E0B60', color: 'var(--mc-warn)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+                    style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 8px', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', color: 'var(--mc-warn)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
                   >
                     {showQuarterCheatSheet ? '▾' : '▸'} Cheat sheet
                   </button>
@@ -2404,7 +2404,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
             // PATCH 0540 — When PEAD sort is active, render a single
             // top-down sorted grid; grouping by tier would break the
             // sort signal the user just asked for.
-            <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid #22D3EE40', borderLeft: '4px solid var(--mc-cyan)', borderRadius: 12, padding: '14px 18px' }}>
+            <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', borderLeft: '4px solid var(--mc-cyan)', borderRadius: 12, padding: '14px 18px' }}>
               <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-cyan)', marginBottom: 10, letterSpacing: '0.5px' }}>
                 🌊 PEAD-SORTED · {hubFilteredList.length}
               </div>
@@ -2431,7 +2431,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
             return (
               <>
                 {bb.length > 0 && (
-                  <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid #F59E0B40', borderLeft: '4px solid var(--mc-warn)', borderRadius: 12, padding: '14px 18px' }}>
+                  <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)', borderLeft: '4px solid var(--mc-warn)', borderRadius: 12, padding: '14px 18px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
                       <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-warn)', letterSpacing: '0.5px' }}>
                         ⭐ BLOCKBUSTER · {bb.length}
@@ -2449,7 +2449,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                   </div>
                 )}
                 {st.length > 0 && (
-                  <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid #10B98140', borderLeft: '4px solid var(--mc-bullish)', borderRadius: 12, padding: '14px 18px' }}>
+                  <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 25%, transparent)', borderLeft: '4px solid var(--mc-bullish)', borderRadius: 12, padding: '14px 18px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
                       <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-bullish)', letterSpacing: '0.5px' }}>
                         🟢 STRONG · {st.length}
@@ -2476,7 +2476,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
           {blockbusters.length > 0 && (
             <div style={{
               backgroundColor: 'var(--mc-bg-1)',
-              border: '1px solid #F59E0B40', borderLeft: '4px solid var(--mc-warn)',
+              border: '1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)', borderLeft: '4px solid var(--mc-warn)',
               borderRadius: 12, padding: '14px 18px',
             }}>
               <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-warn)', marginBottom: 10, letterSpacing: '0.5px' }}>
@@ -2490,7 +2490,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
           {strongs.length > 0 && (
             <div style={{
               backgroundColor: 'var(--mc-bg-1)',
-              border: '1px solid #10B98140', borderLeft: '4px solid var(--mc-bullish)',
+              border: '1px solid color-mix(in srgb, var(--mc-bullish) 25%, transparent)', borderLeft: '4px solid var(--mc-bullish)',
               borderRadius: 12, padding: '14px 18px',
             }}>
               <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-bullish)', marginBottom: 10, letterSpacing: '0.5px' }}>

@@ -521,7 +521,7 @@ function GuidanceCard({ event, expanded, onToggle, compact, isConviction }: { ev
               title="On Conviction Beats bench (BLOCKBUSTER/STRONG earnings)"
               style={{
                 fontSize: 10, fontWeight: 800, color: 'var(--mc-warn)',
-                border: '1px solid #F59E0B60', backgroundColor: 'rgba(245,158,11,0.10)',
+                border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', backgroundColor: 'rgba(245,158,11,0.10)',
                 padding: '1px 5px', borderRadius: 3, letterSpacing: 0.3,
               }}
             >🏆 CB</span>

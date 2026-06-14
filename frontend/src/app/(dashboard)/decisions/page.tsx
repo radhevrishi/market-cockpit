@@ -308,7 +308,7 @@ export default function DecisionsPage() {
             onClick={() => setShowAdd(true)}
             style={{
               marginLeft: 'auto', padding: '6px 12px', borderRadius: 6,
-              background: '#10B98115', border: '1px solid #10B98160', color: 'var(--mc-bullish)',
+              background: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 38%, transparent)', color: 'var(--mc-bullish)',
               fontSize: 12, fontWeight: 700, cursor: 'pointer',
               display: 'inline-flex', alignItems: 'center', gap: 6,
             }}
@@ -321,7 +321,7 @@ export default function DecisionsPage() {
             disabled={rows.length === 0}
             style={{
               padding: '6px 12px', borderRadius: 6,
-              background: '#22D3EE15', border: '1px solid #22D3EE60', color: 'var(--mc-cyan)',
+              background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)',
               fontSize: 12, fontWeight: 700, cursor: rows.length ? 'pointer' : 'not-allowed',
               display: 'inline-flex', alignItems: 'center', gap: 6,
               opacity: rows.length ? 1 : 0.4,
@@ -415,7 +415,7 @@ export default function DecisionsPage() {
                         <button key={m} onClick={() => setAddMarket(m)} style={{
                           flex: 1, padding: '6px 10px', borderRadius: 5,
                           border: `1px solid ${addMarket === m ? 'var(--mc-cyan)' : BORDER}`,
-                          background: addMarket === m ? '#22D3EE20' : 'transparent',
+                          background: addMarket === m ? 'color-mix(in srgb, var(--mc-cyan) 13%, transparent)' : 'transparent',
                           color: addMarket === m ? 'var(--mc-cyan)' : DIM,
                           fontSize: 12, fontWeight: 700, cursor: 'pointer',
                         }}>{m}</button>
@@ -461,7 +461,7 @@ export default function DecisionsPage() {
                   <button onClick={submitNewDecision} disabled={!addSymbol.trim()} style={{
                     flex: 2, padding: '8px 12px', borderRadius: 5,
                     border: '1px solid var(--mc-bullish)',
-                    background: addSymbol.trim() ? '#10B98125' : 'transparent',
+                    background: addSymbol.trim() ? 'color-mix(in srgb, var(--mc-bullish) 15%, transparent)' : 'transparent',
                     color: addSymbol.trim() ? 'var(--mc-bullish)' : DIM,
                     fontSize: 12, fontWeight: 700, cursor: addSymbol.trim() ? 'pointer' : 'not-allowed',
                   }}>Save Decision</button>
@@ -503,7 +503,7 @@ export default function DecisionsPage() {
                 style={{
                   padding: '6px 12px', borderRadius: 6,
                   border: `1px solid ${isActive ? 'var(--mc-state-persistent)' : BORDER}`,
-                  background: isActive ? '#8B5CF620' : 'transparent',
+                  background: isActive ? 'color-mix(in srgb, var(--mc-state-persistent) 13%, transparent)' : 'transparent',
                   color: isActive ? 'var(--mc-state-persistent)' : DIM,
                   fontSize: 12, fontWeight: 700, cursor: 'pointer',
                 }}
@@ -541,7 +541,7 @@ export default function DecisionsPage() {
                 style={{
                   padding: '5px 10px', borderRadius: 5,
                   border: `1px solid ${isActive ? 'var(--mc-cyan)' : BORDER}`,
-                  background: isActive ? '#22D3EE20' : 'transparent',
+                  background: isActive ? 'color-mix(in srgb, var(--mc-cyan) 13%, transparent)' : 'transparent',
                   color: isActive ? 'var(--mc-cyan)' : DIM,
                   fontSize: 11, fontWeight: 700, cursor: 'pointer',
                 }}
@@ -564,7 +564,7 @@ export default function DecisionsPage() {
               </p>
               <button onClick={() => setShowAdd(true)} style={{
                 marginTop: 14, padding: '8px 18px', borderRadius: 6,
-                background: '#10B98115', border: '1px solid #10B98160', color: 'var(--mc-bullish)',
+                background: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 38%, transparent)', color: 'var(--mc-bullish)',
                 fontSize: 12, fontWeight: 700, cursor: 'pointer',
               }}>+ Add Your First Decision</button>
             </div>
@@ -700,7 +700,7 @@ export default function DecisionsPage() {
                           const dropPct = ((live - d.priceAtDecision) / d.priceAtDecision) * 100;
                           if (dropPct > -25) return null;  // only fire when price fell ≥25%
                           return (
-                            <div style={{ marginTop: 4, fontSize: 10, fontWeight: 800, color: 'var(--mc-bullish)', background: '#10B98115', border: '1px solid #10B98140', borderRadius: 3, padding: '3px 7px', display: 'inline-block', fontStyle: 'normal' }} title={`Rejected at ₹${d.priceAtDecision.toFixed(0)}, now ₹${live.toFixed(0)} — fundamentals unchanged?`}>
+                            <div style={{ marginTop: 4, fontSize: 10, fontWeight: 800, color: 'var(--mc-bullish)', background: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 25%, transparent)', borderRadius: 3, padding: '3px 7px', display: 'inline-block', fontStyle: 'normal' }} title={`Rejected at ₹${d.priceAtDecision.toFixed(0)}, now ₹${live.toFixed(0)} — fundamentals unchanged?`}>
                               ⤴ RE-EVALUATE? · {dropPct.toFixed(0)}% since reject
                             </div>
                           );
@@ -728,7 +728,7 @@ export default function DecisionsPage() {
                           return (
                             <div style={{ marginTop: 4, fontSize: 10, fontStyle: 'normal' }}>
                               <span title={tooltipText}
-                                style={{ color: 'var(--mc-cyan)', background: '#22D3EE15', border: '1px solid #22D3EE40', padding: '2px 6px', borderRadius: 3, fontWeight: 800 }}>
+                                style={{ color: 'var(--mc-cyan)', background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', padding: '2px 6px', borderRadius: 3, fontWeight: 800 }}>
                                 📰 {fresh.length} news since decision
                               </span>
                               {fresh[0]?.url ? (

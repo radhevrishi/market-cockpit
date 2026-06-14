@@ -2460,14 +2460,14 @@ export default function EarningsOpportunitiesPage() {
             href="https://www.nseindia.com/companies-listing/corporate-filings-financial-results"
             target="_blank" rel="noopener noreferrer"
             title="Open NSE's official corporate-filings page in a new tab to verify the full universe of filings for any date"
-            style={{ fontSize: 10, padding: '4px 10px', borderRadius: 6, border: '1px solid #94A3B860', background: 'transparent', color: 'var(--mc-text-3)', fontWeight: 700, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+            style={{ fontSize: 10, padding: '4px 10px', borderRadius: 6, border: '1px solid color-mix(in srgb, var(--mc-text-3) 38%, transparent)', background: 'transparent', color: 'var(--mc-text-3)', fontWeight: 700, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}
           >🔗 NSE official ↗</a>
           <button onClick={() => refetch()} disabled={hardRefreshing}
             title="Hard refresh — busts cache, re-fetches NSE/BSE feeds, pulls in newly-filed tickers (works for any date including weekends)"
             style={{
               padding: '4px 10px', borderRadius: 6,
-              border: '1px solid #22D3EE60',
-              background: hardRefreshing ? '#22D3EE30' : '#22D3EE15',
+              border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)',
+              background: hardRefreshing ? 'color-mix(in srgb, var(--mc-cyan) 19%, transparent)' : 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)',
               color: 'var(--mc-cyan)',
               fontSize: 11, fontWeight: 700,
               cursor: hardRefreshing ? 'not-allowed' : 'pointer',
@@ -2485,7 +2485,7 @@ export default function EarningsOpportunitiesPage() {
             onClick={runBackfill}
             disabled={backfilling}
             title="One-time fill of the last 60 weekdays. Chains 2-date batches with retry. Once done, past-date pages serve from cache instantly with no Refresh needed."
-            style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #A78BFA60', background: backfilling ? '#A78BFA30' : '#A78BFA15', color: 'var(--mc-state-persistent)', fontSize: 11, fontWeight: 700, cursor: backfilling ? 'wait' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, opacity: backfilling ? 0.8 : 1 }}>
+            style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid color-mix(in srgb, var(--mc-state-persistent) 38%, transparent)', background: backfilling ? 'color-mix(in srgb, var(--mc-state-persistent) 19%, transparent)' : 'color-mix(in srgb, var(--mc-state-persistent) 8%, transparent)', color: 'var(--mc-state-persistent)', fontSize: 11, fontWeight: 700, cursor: backfilling ? 'wait' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, opacity: backfilling ? 0.8 : 1 }}>
             <RefreshCw style={{ width: 11, height: 11, animation: backfilling ? 'spin 0.8s linear infinite' : 'none' }} />
             {backfilling ? 'Backfilling…' : 'Backfill 60d'}
           </button>
@@ -2523,7 +2523,7 @@ export default function EarningsOpportunitiesPage() {
               title="Stop the slow backfill. Already-done dates stay cached."
               style={{
                 padding: '4px 10px', borderRadius: 6,
-                border: '1px solid #EF444460', background: '#EF444415',
+                border: '1px solid color-mix(in srgb, var(--mc-bearish) 38%, transparent)', background: 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)',
                 color: '#FCA5A5', fontSize: 11, fontWeight: 700, cursor: 'pointer',
               }}>
               ⏹ Stop Slow Backfill
@@ -2533,8 +2533,8 @@ export default function EarningsOpportunitiesPage() {
             <span style={{
               fontSize: 10.5, fontWeight: 700,
               padding: '3px 8px', borderRadius: 4,
-              backgroundColor: slowBfProgressLabel.startsWith('✓') ? '#10B98118' : '#6366F118',
-              border: `1px solid ${slowBfProgressLabel.startsWith('✓') ? '#10B98140' : '#6366F140'}`,
+              backgroundColor: slowBfProgressLabel.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 9%, transparent)' : '#6366F118',
+              border: `1px solid ${slowBfProgressLabel.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 25%, transparent)' : '#6366F140'}`,
               color: slowBfProgressLabel.startsWith('✓') ? 'var(--mc-bullish)' : '#A5B4FC',
               maxWidth: 420, lineHeight: 1.3,
             }}>
@@ -2545,8 +2545,8 @@ export default function EarningsOpportunitiesPage() {
             <span style={{
               fontSize: 10.5, fontWeight: 700,
               padding: '3px 8px', borderRadius: 4,
-              backgroundColor: backfillProgress.startsWith('✓') ? '#10B98118' : backfillProgress.startsWith('⚠') ? '#EF444418' : '#A78BFA18',
-              border: `1px solid ${backfillProgress.startsWith('✓') ? '#10B98140' : backfillProgress.startsWith('⚠') ? '#EF444440' : '#A78BFA40'}`,
+              backgroundColor: backfillProgress.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 9%, transparent)' : backfillProgress.startsWith('⚠') ? 'color-mix(in srgb, var(--mc-bearish) 9%, transparent)' : 'color-mix(in srgb, var(--mc-state-persistent) 9%, transparent)',
+              border: `1px solid ${backfillProgress.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 25%, transparent)' : backfillProgress.startsWith('⚠') ? 'color-mix(in srgb, var(--mc-bearish) 25%, transparent)' : 'color-mix(in srgb, var(--mc-state-persistent) 25%, transparent)'}`,
               color: backfillProgress.startsWith('✓') ? 'var(--mc-bullish)' : backfillProgress.startsWith('⚠') ? 'var(--mc-bearish)' : 'var(--mc-state-persistent)',
               maxWidth: 480, lineHeight: 1.3,
             }}>
@@ -2570,8 +2570,8 @@ export default function EarningsOpportunitiesPage() {
                   display: 'inline-flex', alignItems: 'center', gap: 5,
                   fontSize: 10.5, fontWeight: 700,
                   padding: '3px 9px', borderRadius: 4,
-                  backgroundColor: inMarketHours ? '#10B98118' : '#94A3B815',
-                  border: `1px solid ${inMarketHours ? '#10B98160' : '#94A3B840'}`,
+                  backgroundColor: inMarketHours ? 'color-mix(in srgb, var(--mc-bullish) 9%, transparent)' : 'color-mix(in srgb, var(--mc-text-3) 8%, transparent)',
+                  border: `1px solid ${inMarketHours ? 'color-mix(in srgb, var(--mc-bullish) 38%, transparent)' : 'color-mix(in srgb, var(--mc-text-3) 25%, transparent)'}`,
                   color: inMarketHours ? 'var(--mc-bullish)' : 'var(--mc-text-3)',
                   fontFamily: 'ui-monospace, monospace',
                 }}>
@@ -2628,8 +2628,8 @@ export default function EarningsOpportunitiesPage() {
                     title={`Fetch financials for ${missing} cards that don't have data yet — works on past dates too (weekend filings, etc.)`}
                     style={{
                       padding: '4px 10px', borderRadius: 6,
-                      border: '1px solid #F59E0B60',
-                      background: refreshing ? '#F59E0B30' : '#F59E0B15',
+                      border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)',
+                      background: refreshing ? 'color-mix(in srgb, var(--mc-warn) 19%, transparent)' : 'color-mix(in srgb, var(--mc-warn) 8%, transparent)',
                       color: 'var(--mc-warn)',
                       fontSize: 11,
                       cursor: refreshing ? 'not-allowed' : 'pointer',
@@ -2645,8 +2645,8 @@ export default function EarningsOpportunitiesPage() {
                   <span style={{
                     fontSize: 10.5, fontWeight: 700,
                     padding: '3px 8px', borderRadius: 4,
-                    backgroundColor: refreshFeedback.startsWith('✓') ? '#10B98118' : '#EF444418',
-                    border: `1px solid ${refreshFeedback.startsWith('✓') ? '#10B98140' : '#EF444440'}`,
+                    backgroundColor: refreshFeedback.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 9%, transparent)' : 'color-mix(in srgb, var(--mc-bearish) 9%, transparent)',
+                    border: `1px solid ${refreshFeedback.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 25%, transparent)' : 'color-mix(in srgb, var(--mc-bearish) 25%, transparent)'}`,
                     color: refreshFeedback.startsWith('✓') ? 'var(--mc-bullish)' : 'var(--mc-bearish)',
                     maxWidth: 480, lineHeight: 1.3,
                   }}>
@@ -2680,7 +2680,7 @@ export default function EarningsOpportunitiesPage() {
               Every Indian filing graded into one of four conviction tiers — from <strong style={{ color: 'var(--mc-warn)' }}>BLOCKBUSTER</strong> through <strong style={{ color: 'var(--mc-bullish)' }}>STRONG</strong>, <strong style={{ color: '#FACC15' }}>MIXED</strong>, and <strong style={{ color: 'var(--mc-bearish)' }}>AVOID</strong>.
             </div>
             <button onClick={() => setShowAbout((s) => !s)}
-              style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #22D3EE60', background: '#22D3EE15', color: 'var(--mc-cyan)', fontSize: 11, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+              style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', color: 'var(--mc-cyan)', fontSize: 11, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
               How it works {showAbout ? '▴' : '▾'}
             </button>
           </div>
@@ -2706,14 +2706,14 @@ export default function EarningsOpportunitiesPage() {
               7 days ago. User feedback: "now only posible to go one day
               back liek that make it eay edtion or selecting directyl
               needed date by calendar option". */}
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: `1px solid ${isStaleView ? '#F59E0B60' : 'var(--mc-bg-4)'}`, borderRadius: 8, padding: '2px 4px 2px 12px', backgroundColor: 'var(--mc-bg-0)', flexWrap: 'wrap' }}>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: `1px solid ${isStaleView ? 'color-mix(in srgb, var(--mc-warn) 38%, transparent)' : 'var(--mc-bg-4)'}`, borderRadius: 8, padding: '2px 4px 2px 12px', backgroundColor: 'var(--mc-bg-0)', flexWrap: 'wrap' }}>
             <span style={{ fontSize: 11, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.4px' }}>FILING DATE</span>
             <span style={{ fontSize: 12, color: 'var(--mc-cyan)', fontWeight: 700 }}>· {filingDateLabel}</span>
             {isStaleView && (
               <span style={{
                 fontSize: 9.5, fontWeight: 800, color: 'var(--mc-warn)',
                 padding: '1px 6px', borderRadius: 3,
-                backgroundColor: '#F59E0B22', border: '1px solid #F59E0B60',
+                backgroundColor: 'color-mix(in srgb, var(--mc-warn) 13%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)',
                 display: 'inline-flex', alignItems: 'center', gap: 3,
                 marginLeft: 6,
               }}>
@@ -2730,7 +2730,7 @@ export default function EarningsOpportunitiesPage() {
             <button onClick={() => shiftDate(1)} title="Next trading day"
               style={{ padding: '6px 10px', background: 'none', border: 'none', color: 'var(--mc-text-3)', fontSize: 14, cursor: 'pointer' }}>→</button>
             {/* PATCH 0916 — Inline calendar picker inside the FILING DATE box */}
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 8px', border: '1px solid #22D3EE40', borderRadius: 5, backgroundColor: '#22D3EE10', cursor: 'pointer', marginLeft: 4 }}
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 8px', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', borderRadius: 5, backgroundColor: 'color-mix(in srgb, var(--mc-cyan) 6%, transparent)', cursor: 'pointer', marginLeft: 4 }}
               title="Click to open a calendar — jump to any date (past or future)">
               <CalendarIcon style={{ width: 12, height: 12, color: 'var(--mc-cyan)' }} />
               <span style={{ fontSize: 10, color: 'var(--mc-cyan)', fontWeight: 800, letterSpacing: '0.3px' }}>PICK DATE</span>
@@ -2816,7 +2816,7 @@ export default function EarningsOpportunitiesPage() {
               onClick={() => setFilterDate(sparseDayHint.date)}
               style={{
                 padding: '6px 12px', borderRadius: 8,
-                border: '1px solid #F59E0B60', backgroundColor: '#F59E0B15',
+                border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', backgroundColor: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)',
                 color: 'var(--mc-warn)', fontSize: 11, fontWeight: 700,
                 cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
               }}
@@ -2862,8 +2862,8 @@ export default function EarningsOpportunitiesPage() {
               title="Force re-scan NSE + BSE for this date. Bypasses all caches. Works on any date including weekends."
               style={{
                 padding: '6px 14px', borderRadius: 8,
-                border: '1px solid #10B98180',
-                backgroundColor: forceRescanning ? '#10B98130' : '#10B98115',
+                border: '1px solid color-mix(in srgb, var(--mc-bullish) 50%, transparent)',
+                backgroundColor: forceRescanning ? 'color-mix(in srgb, var(--mc-bullish) 19%, transparent)' : 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)',
                 color: 'var(--mc-bullish)', fontSize: 11, fontWeight: 800, cursor: forceRescanning ? 'wait' : 'pointer',
                 letterSpacing: '0.3px', display: 'inline-flex', alignItems: 'center', gap: 6,
               }}
@@ -2910,8 +2910,8 @@ export default function EarningsOpportunitiesPage() {
               title="Download all 4 tiers (BLOCKBUSTER/STRONG/MIXED/AVOID) as CSV for this date"
               style={{
                 padding: '6px 12px', borderRadius: 8,
-                border: '1px solid #F59E0B80',
-                backgroundColor: '#F59E0B15',
+                border: '1px solid color-mix(in srgb, var(--mc-warn) 50%, transparent)',
+                backgroundColor: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)',
                 color: 'var(--mc-warn)', fontSize: 11, fontWeight: 800, cursor: 'pointer',
                 letterSpacing: '0.3px', display: 'inline-flex', alignItems: 'center', gap: 6,
               }}
@@ -2930,8 +2930,8 @@ Total after dedup: ${coverageStats.total}
 Source label: ${coverageStats.source}`}
               style={{
                 padding: '4px 10px', borderRadius: 6,
-                border: `1px solid ${coverageStats.total >= 10 ? '#10B98140' : coverageStats.total > 0 ? '#F59E0B40' : '#EF444440'}`,
-                backgroundColor: coverageStats.total >= 10 ? '#10B98110' : coverageStats.total > 0 ? '#F59E0B10' : '#EF444410',
+                border: `1px solid ${coverageStats.total >= 10 ? 'color-mix(in srgb, var(--mc-bullish) 25%, transparent)' : coverageStats.total > 0 ? 'color-mix(in srgb, var(--mc-warn) 25%, transparent)' : 'color-mix(in srgb, var(--mc-bearish) 25%, transparent)'}`,
+                backgroundColor: coverageStats.total >= 10 ? 'color-mix(in srgb, var(--mc-bullish) 6%, transparent)' : coverageStats.total > 0 ? 'color-mix(in srgb, var(--mc-warn) 6%, transparent)' : 'color-mix(in srgb, var(--mc-bearish) 6%, transparent)',
                 color: coverageStats.total >= 10 ? 'var(--mc-bullish)' : coverageStats.total > 0 ? 'var(--mc-warn)' : 'var(--mc-bearish)',
                 fontSize: 10.5, fontWeight: 700, fontFamily: 'monospace',
                 cursor: 'help',
@@ -2950,7 +2950,7 @@ Source label: ${coverageStats.source}`}
           {(view as any)?._hub_fail && (
             <span
               title={`Earnings hub was unreachable (${(view as any)._hub_fail}). Showing live NSE filings only. Retry in a moment to get the full list.`}
-              style={{ fontSize: 10, padding: '3px 8px', borderRadius: 4, background: '#F59E0B20', border: '1px solid #F59E0B60', color: 'var(--mc-warn)', fontWeight: 800 }}
+              style={{ fontSize: 10, padding: '3px 8px', borderRadius: 4, background: 'color-mix(in srgb, var(--mc-warn) 13%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', color: 'var(--mc-warn)', fontWeight: 800 }}
             >⚠ upstream degraded · partial list</span>
           )}
           {counts.map((c) => (
@@ -3037,8 +3037,8 @@ Source label: ${coverageStats.source}`}
               onClick={runCoverageProbe}
               disabled={!probeTicker.trim() || probing || !resolvedDateForGrading}
               style={{
-                padding: '5px 14px', borderRadius: 6, border: '1px solid #22D3EE60',
-                backgroundColor: probing ? '#22D3EE30' : '#22D3EE15',
+                padding: '5px 14px', borderRadius: 6, border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)',
+                backgroundColor: probing ? 'color-mix(in srgb, var(--mc-cyan) 19%, transparent)' : 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)',
                 color: 'var(--mc-cyan)', fontSize: 11, fontWeight: 700,
                 cursor: probing ? 'wait' : (probeTicker.trim() ? 'pointer' : 'not-allowed'),
                 opacity: probeTicker.trim() ? 1 : 0.5,
@@ -3051,8 +3051,8 @@ Source label: ${coverageStats.source}`}
               disabled={!probeTicker.trim() || !resolvedDateForGrading}
               title="Bypass NSE/BSE universe entirely — fetch financials direct from Screener via /enrich and inject this ticker into the page. Persists in localStorage."
               style={{
-                padding: '5px 14px', borderRadius: 6, border: '1px solid #10B98160',
-                backgroundColor: '#10B98115',
+                padding: '5px 14px', borderRadius: 6, border: '1px solid color-mix(in srgb, var(--mc-bullish) 38%, transparent)',
+                backgroundColor: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)',
                 color: 'var(--mc-bullish)', fontSize: 11, fontWeight: 700,
                 cursor: probeTicker.trim() ? 'pointer' : 'not-allowed',
                 opacity: probeTicker.trim() ? 1 : 0.5,
@@ -3065,8 +3065,8 @@ Source label: ${coverageStats.source}`}
               disabled={auditing || !resolvedDateForGrading}
               title="Validate this date's coverage against the EarningsPulse Week Ahead reference list (May 12–18 seeded). Shows missing tickers — diagnostic only, does NOT auto-inject."
               style={{
-                padding: '5px 14px', borderRadius: 6, border: '1px solid #F59E0B60',
-                backgroundColor: auditing ? '#F59E0B30' : '#F59E0B15',
+                padding: '5px 14px', borderRadius: 6, border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)',
+                backgroundColor: auditing ? 'color-mix(in srgb, var(--mc-warn) 19%, transparent)' : 'color-mix(in srgb, var(--mc-warn) 8%, transparent)',
                 color: 'var(--mc-warn)', fontSize: 11, fontWeight: 700,
                 cursor: auditing ? 'wait' : 'pointer',
               }}
@@ -3110,8 +3110,8 @@ Source label: ${coverageStats.source}`}
                             title="Click to load into probe for diagnosis"
                             style={{
                               padding: '2px 8px', fontSize: 10, fontWeight: 700,
-                              borderRadius: 4, backgroundColor: '#EF444418',
-                              border: '1px solid #EF444440', color: 'var(--mc-bearish)',
+                              borderRadius: 4, backgroundColor: 'color-mix(in srgb, var(--mc-bearish) 9%, transparent)',
+                              border: '1px solid color-mix(in srgb, var(--mc-bearish) 25%, transparent)', color: 'var(--mc-bearish)',
                               fontFamily: 'ui-monospace, monospace', cursor: 'pointer',
                             }}
                           >
@@ -3143,8 +3143,8 @@ Source label: ${coverageStats.source}`}
                 <span style={{
                   display: 'inline-flex', alignItems: 'center', gap: 4,
                   padding: '2px 8px', fontSize: 10, fontWeight: 800,
-                  borderRadius: 4, backgroundColor: '#22D3EE15',
-                  border: '1px solid #22D3EE40', color: 'var(--mc-cyan)',
+                  borderRadius: 4, backgroundColor: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)',
+                  border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', color: 'var(--mc-cyan)',
                   letterSpacing: '0.4px',
                 }}>
                   🤖 AUTO-DISCOVERED: {autoFillTickers.length}
@@ -3159,8 +3159,8 @@ Source label: ${coverageStats.source}`}
                     <span key={t} style={{
                       display: 'inline-flex', alignItems: 'center', gap: 4,
                       padding: '2px 4px 2px 8px', fontSize: 10, fontWeight: 700,
-                      borderRadius: 4, backgroundColor: '#10B98118',
-                      border: '1px solid #10B98140', color: 'var(--mc-bullish)',
+                      borderRadius: 4, backgroundColor: 'color-mix(in srgb, var(--mc-bullish) 9%, transparent)',
+                      border: '1px solid color-mix(in srgb, var(--mc-bullish) 25%, transparent)', color: 'var(--mc-bullish)',
                       fontFamily: 'ui-monospace, monospace',
                     }}>
                       {t}
@@ -3207,8 +3207,8 @@ Source label: ${coverageStats.source}`}
                         }}
                         style={{
                           padding: '4px 10px', borderRadius: 6,
-                          border: '1px solid #10B98160',
-                          backgroundColor: '#10B98115',
+                          border: '1px solid color-mix(in srgb, var(--mc-bullish) 38%, transparent)',
+                          backgroundColor: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)',
                           color: 'var(--mc-bullish)', fontSize: 10.5, fontWeight: 800,
                           cursor: 'pointer', whiteSpace: 'nowrap',
                         }}
@@ -3271,11 +3271,11 @@ Source label: ${coverageStats.source}`}
       {/* ── Tab toggle ──────────────────────────────────────────────────── */}
       <div style={{ padding: '10px 24px', borderBottom: '1px solid var(--mc-bg-4)', backgroundColor: 'var(--mc-bg-0)', display: 'flex', gap: 6 }}>
         <button onClick={() => setViewMode('CALENDAR')}
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 6, border: `1px solid ${viewMode === 'CALENDAR' ? '#22D3EE60' : 'var(--mc-border-1)'}`, backgroundColor: viewMode === 'CALENDAR' ? '#22D3EE15' : 'transparent', color: viewMode === 'CALENDAR' ? 'var(--mc-cyan)' : 'var(--mc-text-3)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 6, border: `1px solid ${viewMode === 'CALENDAR' ? 'color-mix(in srgb, var(--mc-cyan) 38%, transparent)' : 'var(--mc-border-1)'}`, backgroundColor: viewMode === 'CALENDAR' ? 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)' : 'transparent', color: viewMode === 'CALENDAR' ? 'var(--mc-cyan)' : 'var(--mc-text-3)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
           <Grid3X3 style={{ width: 12, height: 12 }} /> Calendar
         </button>
         <button onClick={() => setViewMode('GRADED')}
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 6, border: `1px solid ${viewMode === 'GRADED' ? '#22D3EE60' : 'var(--mc-border-1)'}`, backgroundColor: viewMode === 'GRADED' ? '#22D3EE15' : 'transparent', color: viewMode === 'GRADED' ? 'var(--mc-cyan)' : 'var(--mc-text-3)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 6, border: `1px solid ${viewMode === 'GRADED' ? 'color-mix(in srgb, var(--mc-cyan) 38%, transparent)' : 'var(--mc-border-1)'}`, backgroundColor: viewMode === 'GRADED' ? 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)' : 'transparent', color: viewMode === 'GRADED' ? 'var(--mc-cyan)' : 'var(--mc-text-3)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
           <FileText style={{ width: 12, height: 12 }} /> Graded Tiers
         </button>
         <span style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--mc-text-4)', alignSelf: 'center' }}>
@@ -3298,7 +3298,7 @@ Source label: ${coverageStats.source}`}
           <div style={{ color: 'var(--mc-text-4)', fontSize: 13, padding: 40, textAlign: 'center' }}>Fetching live results from BSE/NSE + 12 Indian results feeds…</div>
         )}
         {viewMode === 'GRADED' && error && (
-          <div style={{ color: 'var(--mc-bearish)', fontSize: 13, padding: 40, textAlign: 'center', backgroundColor: 'var(--mc-bg-1)', border: '1px solid #EF444440', borderRadius: 10 }}>
+          <div style={{ color: 'var(--mc-bearish)', fontSize: 13, padding: 40, textAlign: 'center', backgroundColor: 'var(--mc-bg-1)', border: '1px solid color-mix(in srgb, var(--mc-bearish) 25%, transparent)', borderRadius: 10 }}>
             Error fetching earnings pipeline. Retry in a moment.
           </div>
         )}
@@ -3356,12 +3356,12 @@ Source label: ${coverageStats.source}`}
                     {rankedDates.map(([d, count], i) => (
                       <button key={d} onClick={() => setFilterDate(d)} style={{
                         padding: '8px 14px', borderRadius: 6,
-                        border: `1px solid ${i === 0 ? '#10B98180' : '#22D3EE40'}`,
-                        backgroundColor: i === 0 ? '#10B98115' : '#22D3EE08',
+                        border: `1px solid ${i === 0 ? 'color-mix(in srgb, var(--mc-bullish) 50%, transparent)' : 'color-mix(in srgb, var(--mc-cyan) 25%, transparent)'}`,
+                        backgroundColor: i === 0 ? 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)' : 'color-mix(in srgb, var(--mc-cyan) 3%, transparent)',
                         color: i === 0 ? 'var(--mc-bullish)' : 'var(--mc-cyan)',
                         fontSize: 12, fontWeight: 700, cursor: 'pointer',
                       }}>
-                        → {fmtDate(d)} <span style={{ color: i === 0 ? '#10B98199' : '#22D3EE99', fontWeight: 500 }}>({count} filings)</span>
+                        → {fmtDate(d)} <span style={{ color: i === 0 ? 'color-mix(in srgb, var(--mc-bullish) 60%, transparent)' : 'color-mix(in srgb, var(--mc-cyan) 60%, transparent)', fontWeight: 500 }}>({count} filings)</span>
                       </button>
                     ))}
                   </div>
@@ -3389,7 +3389,7 @@ Source label: ${coverageStats.source}`}
                         }}
                         style={{
                           padding: '8px 16px', borderRadius: 6,
-                          border: '1px solid var(--mc-bullish)', backgroundColor: '#10B98115',
+                          border: '1px solid var(--mc-bullish)', backgroundColor: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)',
                           color: 'var(--mc-bullish)', fontSize: 12, fontWeight: 800, cursor: 'pointer',
                           letterSpacing: '0.3px',
                         }}
@@ -3400,7 +3400,7 @@ Source label: ${coverageStats.source}`}
                     <button onClick={() => setFilterDate('')} style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid var(--mc-bg-4)', backgroundColor: 'transparent', color: 'var(--mc-text-3)', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
                       Auto-pick latest
                     </button>
-                    <a href="https://www.nseindia.com/companies-listing/corporate-filings-financial-results" target="_blank" rel="noopener noreferrer" style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #F59E0B40', backgroundColor: '#F59E0B10', color: 'var(--mc-warn)', fontSize: 11, fontWeight: 700, textDecoration: 'none', cursor: 'pointer' }}>
+                    <a href="https://www.nseindia.com/companies-listing/corporate-filings-financial-results" target="_blank" rel="noopener noreferrer" style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)', backgroundColor: 'color-mix(in srgb, var(--mc-warn) 6%, transparent)', color: 'var(--mc-warn)', fontSize: 11, fontWeight: 700, textDecoration: 'none', cursor: 'pointer' }}>
                       NSE Filings →
                     </a>
                   </div>
@@ -3453,12 +3453,12 @@ Source label: ${coverageStats.source}`}
                   <button
                     onClick={() => copyPending(pending.map((p) => (p.symbol || '').toUpperCase()).join(','))}
                     title="Copy pending tickers (CSV)"
-                    style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid #22D3EE60', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+                    style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
                   >📋 CSV</button>
                   <button
                     onClick={() => copyPending(pending.map((p) => `NSE:${(p.symbol || '').toUpperCase()}`).join(','))}
                     title="Copy as NSE:TICKER for TradingView"
-                    style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid #22D3EE60', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+                    style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
                   >📊 TradingView</button>
                 </span>
               </div>
@@ -3645,7 +3645,7 @@ function EarningsCard({ stock, isFresh }: { stock: ParsedEarning; isFresh?: bool
           {stock.rs_rating != null && (
             <span style={{
               padding: '1px 6px', borderRadius: 3,
-              backgroundColor: stock.rs_rating >= 80 ? '#10B98115' : stock.rs_rating >= 50 ? '#F59E0B15' : '#EF444415',
+              backgroundColor: stock.rs_rating >= 80 ? 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)' : stock.rs_rating >= 50 ? 'color-mix(in srgb, var(--mc-warn) 8%, transparent)' : 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)',
               color:           stock.rs_rating >= 80 ? 'var(--mc-bullish)'    : stock.rs_rating >= 50 ? 'var(--mc-warn)'    : 'var(--mc-bearish)',
               border: '1px solid currentColor', fontWeight: 700,
             }}>RS {stock.rs_rating}</span>
@@ -3653,7 +3653,7 @@ function EarningsCard({ stock, isFresh }: { stock: ParsedEarning; isFresh?: bool
           {stock.stage != null && (
             <span style={{
               padding: '1px 6px', borderRadius: 3,
-              backgroundColor: stock.stage === 2 ? '#10B98115' : stock.stage === 4 ? '#EF444415' : '#6B7A8D15',
+              backgroundColor: stock.stage === 2 ? 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)' : stock.stage === 4 ? 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)' : 'color-mix(in srgb, var(--mc-text-4) 8%, transparent)',
               color:           stock.stage === 2 ? 'var(--mc-bullish)'    : stock.stage === 4 ? 'var(--mc-bearish)'    : 'var(--mc-text-3)',
               border: '1px solid currentColor', fontWeight: 700,
             }}>Stage {stock.stage}</span>
@@ -3713,10 +3713,10 @@ function EarningsCard({ stock, isFresh }: { stock: ParsedEarning; isFresh?: bool
       {(stock.methodology_tags.length > 0 || stock.caveat_tags.length > 0) && (
         <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 5 }}>
           {stock.methodology_tags.map((t) => (
-            <span key={t} style={{ fontSize: 9.5, padding: '1px 7px', borderRadius: 3, backgroundColor: '#10B98115', color: 'var(--mc-bullish)', border: '1px solid #10B98140', fontWeight: 700 }}>✓ {t}</span>
+            <span key={t} style={{ fontSize: 9.5, padding: '1px 7px', borderRadius: 3, backgroundColor: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', color: 'var(--mc-bullish)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 25%, transparent)', fontWeight: 700 }}>✓ {t}</span>
           ))}
           {stock.caveat_tags.map((t) => (
-            <span key={t} style={{ fontSize: 9.5, padding: '1px 7px', borderRadius: 3, backgroundColor: '#F59E0B15', color: 'var(--mc-warn)', border: '1px solid #F59E0B40', fontWeight: 700 }}>⚠ {t}</span>
+            <span key={t} style={{ fontSize: 9.5, padding: '1px 7px', borderRadius: 3, backgroundColor: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', color: 'var(--mc-warn)', border: '1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)', fontWeight: 700 }}>⚠ {t}</span>
           ))}
         </div>
       )}
@@ -3779,7 +3779,7 @@ function CalendarView({ data, loading, from, to, onPickDate }: { data: CalendarP
   }
   if (data?.empty_reason === 'scraper_has_not_run_yet') {
     return (
-      <div style={{ color: 'var(--mc-text-3)', fontSize: 13, padding: 30, backgroundColor: 'var(--mc-bg-1)', border: '1px solid #F59E0B40', borderRadius: 10 }}>
+      <div style={{ color: 'var(--mc-text-3)', fontSize: 13, padding: 30, backgroundColor: 'var(--mc-bg-1)', border: '1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)', borderRadius: 10 }}>
         <div style={{ fontSize: 24, marginBottom: 10 }}>⏳</div>
         <strong style={{ color: 'var(--mc-warn)' }}>Scraper has not run yet.</strong>
         <p style={{ marginTop: 8, lineHeight: 1.6 }}>
@@ -3839,17 +3839,17 @@ function CalendarView({ data, loading, from, to, onPickDate }: { data: CalendarP
             <button
               onClick={() => copyToClipboard(allTickers.join(','), 'plain CSV')}
               title="Copy all tickers (CSV — Excel-friendly)"
-              style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid #22D3EE60', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+              style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
             >📋 CSV ({allTickers.length})</button>
             <button
               onClick={() => copyToClipboard(allTickers.map(t => `NSE:${t}`).join(','), 'TradingView')}
               title="Copy as NSE:TICKER,NSE:TICKER (TradingView watchlist import format)"
-              style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid #22D3EE60', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+              style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
             >📊 TradingView</button>
             <button
               onClick={() => copyToClipboard(allTickers.join('\n'), 'one per line')}
               title="Copy one ticker per line"
-              style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid #22D3EE60', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+              style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
             >↓ Lines</button>
           </span>
         )}
@@ -3869,7 +3869,7 @@ function CalendarView({ data, loading, from, to, onPickDate }: { data: CalendarP
               style={{
                 padding: '10px 12px',
                 backgroundColor: 'var(--mc-bg-0)',
-                border: `1px solid ${isToday ? '#22D3EE40' : 'var(--mc-bg-4)'}`,
+                border: `1px solid ${isToday ? 'color-mix(in srgb, var(--mc-cyan) 25%, transparent)' : 'var(--mc-bg-4)'}`,
                 borderRadius: 8,
                 cursor: items.length > 0 ? 'pointer' : 'default',
                 opacity: items.length === 0 ? 0.5 : 1,
@@ -3887,7 +3887,7 @@ function CalendarView({ data, loading, from, to, onPickDate }: { data: CalendarP
                         copyToClipboard(day, `${weekday} ${dayLabel}`);
                       }}
                       title={`Copy ${items.length} tickers filing ${weekday} ${dayLabel}`}
-                      style={{ fontSize: 9, padding: '1px 5px', background: 'transparent', border: '1px solid #22D3EE40', color: 'var(--mc-cyan)', borderRadius: 3, cursor: 'pointer', fontWeight: 700 }}
+                      style={{ fontSize: 9, padding: '1px 5px', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', color: 'var(--mc-cyan)', borderRadius: 3, cursor: 'pointer', fontWeight: 700 }}
                     >📋</button>
                   )}
                   {items.length > 0 && (
@@ -3906,7 +3906,7 @@ function CalendarView({ data, loading, from, to, onPickDate }: { data: CalendarP
                   <a key={it.symbol} href={it.source_url} target="_blank" rel="noopener noreferrer"
                     onClick={(e) => e.stopPropagation()}
                     title={`${it.company} · ${it.quarter || ''}`}
-                    style={{ fontSize: 10, padding: '1px 5px', borderRadius: 3, backgroundColor: '#0F7ABF15', color: '#38A9E8', border: '1px solid #0F7ABF40', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', textDecoration: 'none', fontWeight: 700 }}>
+                    style={{ fontSize: 10, padding: '1px 5px', borderRadius: 3, backgroundColor: 'color-mix(in srgb, var(--mc-accent) 8%, transparent)', color: '#38A9E8', border: '1px solid color-mix(in srgb, var(--mc-accent) 25%, transparent)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', textDecoration: 'none', fontWeight: 700 }}>
                     {it.symbol}
                   </a>
                 ))}
@@ -3916,7 +3916,7 @@ function CalendarView({ data, loading, from, to, onPickDate }: { data: CalendarP
                       e.stopPropagation();
                       setExpandedDates((s) => ({ ...s, [d]: !s[d] }));
                     }}
-                    style={{ fontSize: 10, color: 'var(--mc-cyan)', background: 'transparent', border: '1px solid #22D3EE40', padding: '1px 6px', borderRadius: 3, cursor: 'pointer', fontWeight: 700 }}>
+                    style={{ fontSize: 10, color: 'var(--mc-cyan)', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', padding: '1px 6px', borderRadius: 3, cursor: 'pointer', fontWeight: 700 }}>
                     {expandedDates[d] ? '− show less' : `+${items.length - 12} more`}
                   </button>
                 )}

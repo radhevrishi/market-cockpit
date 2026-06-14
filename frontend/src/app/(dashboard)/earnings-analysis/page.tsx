@@ -3181,7 +3181,7 @@ export default function EarningsAnalysisPage() {
               borderRadius: 4,
               background: isIndia ? 'rgba(251,191,36,0.15)' : 'rgba(125,211,252,0.10)',
               color: isIndia ? 'var(--mc-warn)' : '#7dd3fc',
-              border: `1px solid ${isIndia ? '#fbbf2440' : '#7dd3fc40'}`,
+              border: `1px solid ${isIndia ? 'color-mix(in srgb, var(--mc-warn) 25%, transparent)' : '#7dd3fc40'}`,
               fontWeight: 700,
               letterSpacing: 0.6,
               textTransform: 'uppercase',
@@ -4131,7 +4131,7 @@ export default function EarningsAnalysisPage() {
         display:'flex', alignItems:'center', justifyContent:'space-between', gap:14,
         marginBottom:20, padding:'14px 18px',
         background: CARD2,
-        border:'1px solid #22D3EE60', borderRadius:10,
+        border:'1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', borderRadius:10,
         textDecoration:'none', cursor:'pointer',
       }}>
         <div style={{display:'flex',alignItems:'center',gap:14}}>

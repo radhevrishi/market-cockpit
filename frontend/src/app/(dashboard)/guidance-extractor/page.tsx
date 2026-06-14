@@ -58,7 +58,7 @@ export default function GuidanceExtractorPage() {
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
             <span style={{ fontSize: 12, fontWeight: 800, color: DIM, letterSpacing: '0.5px' }}>PASTE CONCALL / PPT TEXT</span>
             <button onClick={() => setText(EXAMPLE)} style={{
-              fontSize: 11, padding: '4px 10px', border: '1px solid #22D3EE50', background: '#22D3EE15',
+              fontSize: 11, padding: '4px 10px', border: '1px solid color-mix(in srgb, var(--mc-cyan) 31%, transparent)', background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)',
               color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700,
             }}>
               Load DEE Dev example
@@ -111,8 +111,8 @@ export default function GuidanceExtractorPage() {
 
             <div style={{
               padding: '12px 16px',
-              background: '#10B98115',
-              border: '1px solid #10B98140',
+              background: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--mc-bullish) 25%, transparent)',
               borderRadius: 6,
               fontSize: 13, color: TEXT, lineHeight: 1.65,
             }}>

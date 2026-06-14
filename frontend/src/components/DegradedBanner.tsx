@@ -65,7 +65,7 @@ export default function DegradedBanner({
       className={className}
       role="alert"
       style={{
-        backgroundColor: '#F59E0B15',
+        backgroundColor: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)',
         border: '1px solid var(--mc-warn)',
         borderRadius: 10,
         padding: '10px 14px',

@@ -291,7 +291,7 @@ function DrilldownPanel({ commodity, onClose }: { commodity: CommodityRow; onClo
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                   {imp.sample_tickers.map(t => (
-                    <span key={t} style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 3, backgroundColor: '#0F7ABF18', color: '#38A9E8', ...NUM }}>{t}</span>
+                    <span key={t} style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 3, backgroundColor: 'color-mix(in srgb, var(--mc-accent) 9%, transparent)', color: '#38A9E8', ...NUM }}>{t}</span>
                   ))}
                 </div>
                 {imp.note && <div style={{ fontSize: 10, color: TOKENS.surface.textMuted, marginTop: 6, fontStyle: 'italic' }}>{imp.note}</div>}
@@ -446,7 +446,7 @@ function ScenarioLab({ commodities }: { commodities: CommodityRow[] }) {
                     <div style={{ fontSize: 11, fontWeight: 700 }}>{s.sector}</div>
                     <div style={{ display: 'flex', gap: 3, marginTop: 2 }}>
                       {s.tickers.map(t => (
-                        <span key={t} style={{ fontSize: 9, fontWeight: 700, padding: '0 5px', borderRadius: 3, backgroundColor: '#0F7ABF18', color: '#38A9E8', ...NUM }}>{t}</span>
+                        <span key={t} style={{ fontSize: 9, fontWeight: 700, padding: '0 5px', borderRadius: 3, backgroundColor: 'color-mix(in srgb, var(--mc-accent) 9%, transparent)', color: '#38A9E8', ...NUM }}>{t}</span>
                       ))}
                     </div>
                   </div>
@@ -731,7 +731,7 @@ export default function TransmissionPage() {
                       </div>
                       <div style={{ fontSize: 10, color: TOKENS.surface.textDim, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                         {s.tickers.slice(0, 6).map(t => (
-                          <span key={t} style={{ padding: '0 5px', borderRadius: 3, backgroundColor: '#0F7ABF18', color: '#38A9E8', ...NUM, fontWeight: 700 }}>{t}</span>
+                          <span key={t} style={{ padding: '0 5px', borderRadius: 3, backgroundColor: 'color-mix(in srgb, var(--mc-accent) 9%, transparent)', color: '#38A9E8', ...NUM, fontWeight: 700 }}>{t}</span>
                         ))}
                       </div>
                     </div>
@@ -779,8 +779,8 @@ export default function TransmissionPage() {
                         title={`Equity proxy — uses ${c.proxy_via} stock to give directional signal. No free spot-price feed available for this commodity.`}
                         style={{
                           fontSize: 8, fontWeight: 700, padding: '1px 5px', borderRadius: 3,
-                          backgroundColor: '#F59E0B15', color: 'var(--mc-warn)',
-                          border: '1px solid #F59E0B40', letterSpacing: '0.3px',
+                          backgroundColor: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', color: 'var(--mc-warn)',
+                          border: '1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)', letterSpacing: '0.3px',
                         }}
                       >via {c.proxy_via}</span>
                     )}
@@ -790,9 +790,9 @@ export default function TransmissionPage() {
                         title={`Price feed: ${c.price_source === 'yahoo' ? 'Yahoo Finance' : c.price_source === 'fmp' ? 'Financial Modeling Prep (fallback)' : 'Alpha Vantage (fallback)'}`}
                         style={{
                           fontSize: 8, fontWeight: 700, padding: '1px 4px', borderRadius: 3,
-                          backgroundColor: c.price_source === 'yahoo' ? 'var(--mc-bg-4)' : c.price_source === 'fmp' ? '#22D3EE15' : '#A78BFA15',
+                          backgroundColor: c.price_source === 'yahoo' ? 'var(--mc-bg-4)' : c.price_source === 'fmp' ? 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)' : 'color-mix(in srgb, var(--mc-state-persistent) 8%, transparent)',
                           color: c.price_source === 'yahoo' ? TOKENS.surface.textMuted : c.price_source === 'fmp' ? 'var(--mc-cyan)' : 'var(--mc-state-persistent)',
-                          border: `1px solid ${c.price_source === 'yahoo' ? TOKENS.surface.cardBorder : c.price_source === 'fmp' ? '#22D3EE40' : '#A78BFA40'}`,
+                          border: `1px solid ${c.price_source === 'yahoo' ? TOKENS.surface.cardBorder : c.price_source === 'fmp' ? 'color-mix(in srgb, var(--mc-cyan) 25%, transparent)' : 'color-mix(in srgb, var(--mc-state-persistent) 25%, transparent)'}`,
                           letterSpacing: '0.3px', textTransform: 'uppercase',
                         }}
                       >{c.price_source === 'yahoo' ? 'y' : c.price_source === 'fmp' ? 'fmp' : 'av'}</span>

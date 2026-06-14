@@ -66,7 +66,7 @@ export function CompanyIntelGuidance({ ticker, compact = false }: { ticker?: str
     return (
       <div style={{
         padding: 12, fontSize: 11, color: 'var(--mc-warn)',
-        border: '1px solid #FBBF2440', borderRadius: 6, background: 'rgba(251,191,36,0.06)',
+        border: '1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)', borderRadius: 6, background: 'rgba(251,191,36,0.06)',
         display: 'flex', alignItems: 'center', gap: 10,
       }}>
         <span>Company intelligence unavailable</span>
@@ -116,7 +116,7 @@ export function CompanyIntelGuidance({ ticker, compact = false }: { ticker?: str
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {items.map((g, i) => (
-          <div key={i} title={g.quote} style={{ padding: '5px 8px', borderLeft: '2px solid #10B98160', background: 'rgba(16,185,129,0.04)', borderRadius: 3 }}>
+          <div key={i} title={g.quote} style={{ padding: '5px 8px', borderLeft: '2px solid color-mix(in srgb, var(--mc-bullish) 38%, transparent)', background: 'rgba(16,185,129,0.04)', borderRadius: 3 }}>
             <span style={{ fontSize: 9, color: 'var(--mc-bullish)', fontWeight: 700, letterSpacing: '0.3px', marginRight: 6 }}>
               {categoryLabel(g.category)}{g.year ? ` · ${g.year}` : ''}
             </span>

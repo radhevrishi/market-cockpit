@@ -182,7 +182,7 @@ export default function InlineValuationPanel() {
             </span>
             <span style={{ fontSize: 18, fontWeight: 800, color: recColor(report.recommendation) }}>{report.recommendation}</span>
             {report.company && <span style={{ fontSize: 12, fontWeight: 700, color: TEXT }}>{report.company}</span>}
-            {report.sector && <span style={{ fontSize: 10, color: 'var(--mc-cyan)', background: '#22D3EE15', padding: '2px 8px', borderRadius: 3 }}>{report.sector}</span>}
+            {report.sector && <span style={{ fontSize: 10, color: 'var(--mc-cyan)', background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', padding: '2px 8px', borderRadius: 3 }}>{report.sector}</span>}
           </div>
 
           {/* PATCH 0851 — Institutional chip strip — prior decision + CB membership +
@@ -208,20 +208,20 @@ export default function InlineValuationPanel() {
             }
             if (isOnCB) {
               chips.push(
-                <span key="cb" title="On Conviction Beats bench" style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#F59E0B25', color: 'var(--mc-warn)', border: '1px solid #F59E0B60', borderRadius: 3 }}>
+                <span key="cb" title="On Conviction Beats bench" style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: 'color-mix(in srgb, var(--mc-warn) 15%, transparent)', color: 'var(--mc-warn)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', borderRadius: 3 }}>
                   🏆 CB
                 </span>
               );
             }
             if (mi?.fired) {
               chips.push(
-                <span key="mi" title={mi.interpretation} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#10B98125', color: 'var(--mc-bullish)', border: '1px solid #10B98160', borderRadius: 3 }}>
+                <span key="mi" title={mi.interpretation} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: 'color-mix(in srgb, var(--mc-bullish) 15%, transparent)', color: 'var(--mc-bullish)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 38%, transparent)', borderRadius: 3 }}>
                   ⚡ MARGIN INFLECTION +{mi.gapPp.toFixed(1)}pp
                 </span>
               );
             } else if (mi?.direction === 'COMPRESSION') {
               chips.push(
-                <span key="mi" title={mi.interpretation} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#EF444425', color: 'var(--mc-bearish)', border: '1px solid #EF444460', borderRadius: 3 }}>
+                <span key="mi" title={mi.interpretation} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: 'color-mix(in srgb, var(--mc-bearish) 15%, transparent)', color: 'var(--mc-bearish)', border: '1px solid color-mix(in srgb, var(--mc-bearish) 38%, transparent)', borderRadius: 3 }}>
                   ▼ MARGIN COMPRESSION {mi.gapPp.toFixed(1)}pp
                 </span>
               );
@@ -229,32 +229,32 @@ export default function InlineValuationPanel() {
             if (fp && (fp.severity === 'HIGH' || fp.severity === 'CRITICAL')) {
               chips.push(
                 <span key="fp" title={`Forensic pump score ${fp.pumpScore}/11 — ${fp.flags.join(' · ')}`}
-                  style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#EF444425', color: 'var(--mc-bearish)', border: '1px solid #EF444460', borderRadius: 3 }}>
+                  style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: 'color-mix(in srgb, var(--mc-bearish) 15%, transparent)', color: 'var(--mc-bearish)', border: '1px solid color-mix(in srgb, var(--mc-bearish) 38%, transparent)', borderRadius: 3 }}>
                   🚨 PUMP {fp.pumpScore}/11
                 </span>
               );
             } else if (fp && fp.severity === 'WATCH') {
               chips.push(
-                <span key="fp" title={fp.flags.join(' · ')} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#F59E0B25', color: 'var(--mc-warn)', border: '1px solid #F59E0B60', borderRadius: 3 }}>
+                <span key="fp" title={fp.flags.join(' · ')} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: 'color-mix(in srgb, var(--mc-warn) 15%, transparent)', color: 'var(--mc-warn)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', borderRadius: 3 }}>
                   ⚠ PUMP WATCH {fp.pumpScore}
                 </span>
               );
             } else if (fp && fp.severity === 'CLEAN') {
               chips.push(
-                <span key="fp" title="No forensic pump flags detected" style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', background: '#22D3EE15', color: 'var(--mc-cyan)', border: '1px solid #22D3EE40', borderRadius: 3 }}>
+                <span key="fp" title="No forensic pump flags detected" style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', color: 'var(--mc-cyan)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', borderRadius: 3 }}>
                   ✓ FORENSIC CLEAN
                 </span>
               );
             }
             if (sa && sa.state === 'ACCELERATING') {
               chips.push(
-                <span key="sa" title={`Latest YoY ${sa.latestYoY.toFixed(0)}% vs 5y CAGR ${sa.cagr5y.toFixed(0)}% (+${sa.delta.toFixed(0)}pp)`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#10B98125', color: 'var(--mc-bullish)', border: '1px solid #10B98160', borderRadius: 3 }}>
+                <span key="sa" title={`Latest YoY ${sa.latestYoY.toFixed(0)}% vs 5y CAGR ${sa.cagr5y.toFixed(0)}% (+${sa.delta.toFixed(0)}pp)`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: 'color-mix(in srgb, var(--mc-bullish) 15%, transparent)', color: 'var(--mc-bullish)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 38%, transparent)', borderRadius: 3 }}>
                   ⇑ SALES ACCEL +{sa.delta.toFixed(0)}pp
                 </span>
               );
             } else if (sa && sa.state === 'DECELERATING') {
               chips.push(
-                <span key="sa" title={`Latest YoY ${sa.latestYoY.toFixed(0)}% vs 5y CAGR ${sa.cagr5y.toFixed(0)}% (${sa.delta.toFixed(0)}pp)`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#F59E0B25', color: 'var(--mc-warn)', border: '1px solid #F59E0B60', borderRadius: 3 }}>
+                <span key="sa" title={`Latest YoY ${sa.latestYoY.toFixed(0)}% vs 5y CAGR ${sa.cagr5y.toFixed(0)}% (${sa.delta.toFixed(0)}pp)`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: 'color-mix(in srgb, var(--mc-warn) 15%, transparent)', color: 'var(--mc-warn)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', borderRadius: 3 }}>
                   ⇓ SALES DECEL {sa.delta.toFixed(0)}pp
                 </span>
               );
@@ -305,7 +305,7 @@ export default function InlineValuationPanel() {
             return (
               <div style={{
                 marginBottom: 12, padding: '10px 12px',
-                background: 'var(--mc-bg-0)', border: `1px solid #A78BFA40`,
+                background: 'var(--mc-bg-0)', border: `1px solid color-mix(in srgb, var(--mc-state-persistent) 25%, transparent)`,
                 borderLeft: '3px solid var(--mc-state-persistent)', borderRadius: 5,
               }}>
                 <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--mc-state-persistent)', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6 }}>
@@ -368,7 +368,7 @@ export default function InlineValuationPanel() {
             }
             if (drivers.length === 0) return null;
             return (
-              <div style={{ padding: 10, background: '#F59E0B10', border: '1px solid #F59E0B40', borderLeft: '3px solid var(--mc-warn)', borderRadius: 5, marginBottom: 12 }}>
+              <div style={{ padding: 10, background: 'color-mix(in srgb, var(--mc-warn) 6%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)', borderLeft: '3px solid var(--mc-warn)', borderRadius: 5, marginBottom: 12 }}>
                 <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--mc-warn)', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6 }}>
                   ⚠ Editorial-Quant gap detected — why
                 </div>

@@ -576,7 +576,7 @@ export default function SmartMoneyPage() {
                             fontWeight: '600',
                             padding: '4px 8px',
                             borderRadius: '4px',
-                            backgroundColor: deal.quality === 'Institutional' ? '#10B98120' : '#EF444420',
+                            backgroundColor: deal.quality === 'Institutional' ? 'color-mix(in srgb, var(--mc-bullish) 13%, transparent)' : 'color-mix(in srgb, var(--mc-bearish) 13%, transparent)',
                             color: deal.quality === 'Institutional' ? THEME.green : THEME.red,
                             cursor: 'help',
                           }}

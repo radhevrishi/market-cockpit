@@ -1438,7 +1438,7 @@ function SignalCard({ sig, horizonColor }: { sig: ExtractedSignal; horizonColor:
   const c = sig.positive ? '#10b981' : '#ef4444';
   const originBadge = sig.origin === 'SECTOR' ? '🌍' : sig.origin === 'DERIVED' ? '🔮' : '🏢';
   return (
-    <div style={{padding:'10px 12px',backgroundColor:sig.positive?'#10b98108':'#ef444408',border:`1px solid ${sig.positive?'#10b98120':'#ef444420'}`,borderLeft:`3px solid ${c}`,borderRadius:7}}>
+    <div style={{padding:'10px 12px',backgroundColor:sig.positive?'color-mix(in srgb, var(--mc-bullish) 3%, transparent)':'color-mix(in srgb, var(--mc-bearish) 3%, transparent)',border:`1px solid ${sig.positive?'color-mix(in srgb, var(--mc-bullish) 13%, transparent)':'color-mix(in srgb, var(--mc-bearish) 13%, transparent)'}`,borderLeft:`3px solid ${c}`,borderRadius:7}}>
       <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:5,flexWrap:'wrap'}}>
         {/* Signal label + subject together — the key fix */}
         <span style={{fontSize:11,fontWeight:800,color:c}}>
@@ -1452,7 +1452,7 @@ function SignalCard({ sig, horizonColor }: { sig: ExtractedSignal; horizonColor:
         <span style={{fontSize:9,color:'var(--mc-text-4)',fontStyle:'italic'}}>{sig.temporality}</span>
         <span style={{fontSize:9,fontWeight:700,color:horizonColor(sig.horizon),border:`1px solid ${horizonColor(sig.horizon)}40`,padding:'1px 5px',borderRadius:3}}>{sig.horizon}</span>
         {sig.numerical && (
-          <span style={{fontSize:10,fontWeight:800,color:'var(--mc-warn)',border:'1px solid #F59E0B40',padding:'2px 7px',borderRadius:3}}>
+          <span style={{fontSize:10,fontWeight:800,color:'var(--mc-warn)',border:'1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)',padding:'2px 7px',borderRadius:3}}>
             ₹{sig.numerical.value}{sig.numerical.unit}{sig.numerical.timing?` · ${sig.numerical.timing}`:''}
           </span>
         )}
@@ -1464,7 +1464,7 @@ function SignalCard({ sig, horizonColor }: { sig: ExtractedSignal; horizonColor:
           "{sig.text}"
         </div>
       ) : (
-        <div style={{fontSize:10,color:'var(--mc-warn)',padding:'4px 8px',backgroundColor:'#F59E0B08',borderRadius:4,marginBottom:4}}>
+        <div style={{fontSize:10,color:'var(--mc-warn)',padding:'4px 8px',backgroundColor:'color-mix(in srgb, var(--mc-warn) 3%, transparent)',borderRadius:4,marginBottom:4}}>
           ⚠ No traceable evidence sentence — do not act on this signal
         </div>
       )}
@@ -1888,7 +1888,7 @@ function ConcallIntelligence() {
             <button onClick={()=>setShowAlphaOnly(v=>!v)} style={{fontSize:11,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${showAlphaOnly?ACCENT2+'60':BORDER}`,background:showAlphaOnly?`${ACCENT2}18`:'transparent',color:showAlphaOnly?ACCENT2:TEXT3,cursor:'pointer'}}>
               ⭐ Alpha Only ({summaries.filter(s=>s.alphaCount>0).length})
             </button>
-            <button onClick={()=>setShowManualInput(v=>!v)} style={{fontSize:11,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${showManualInput?'#F59E0B60':BORDER}`,background:showManualInput?`#F59E0B18`:'transparent',color:showManualInput?'var(--mc-warn)':TEXT3,cursor:'pointer'}}>
+            <button onClick={()=>setShowManualInput(v=>!v)} style={{fontSize:11,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${showManualInput?'color-mix(in srgb, var(--mc-warn) 38%, transparent)':BORDER}`,background:showManualInput?`color-mix(in srgb, var(--mc-warn) 9%, transparent)`:'transparent',color:showManualInput?'var(--mc-warn)':TEXT3,cursor:'pointer'}}>
               📝 Paste Concall
             </button>
             <button onClick={fetchConcallData} disabled={loading} style={{fontSize:11,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${BORDER}`,background:'transparent',color:TEXT3,cursor:'pointer'}}>
@@ -1937,9 +1937,9 @@ function ConcallIntelligence() {
                   <span style={{fontSize:9,fontWeight:700,color:TEXT3,letterSpacing:'0.5px'}}>SECTORS WITH SIGNALS:</span>
                   {sectorEntries.map(([sec,data])=>(
                     <span key={sec} style={{fontSize:9,fontWeight:700,padding:'3px 8px',borderRadius:5,
-                      backgroundColor: data.improving > 0 ? '#10b98114' : 'var(--mc-bg-4)',
+                      backgroundColor: data.improving > 0 ? 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)' : 'var(--mc-bg-4)',
                       color: data.improving > 0 ? 'var(--mc-bullish)' : TEXT3,
-                      border: `1px solid ${data.improving > 0 ? '#10b98130' : 'var(--mc-bg-4)'}`,
+                      border: `1px solid ${data.improving > 0 ? 'color-mix(in srgb, var(--mc-bullish) 19%, transparent)' : 'var(--mc-bg-4)'}`,
                     }}>
                       {sec} · {data.alpha} signals{data.improving>0?` · ${data.improving}↑`:''}
                     </span>
@@ -1953,7 +1953,7 @@ function ConcallIntelligence() {
 
       {/* ── Manual Concall Input — paste transcript / highlight text ── */}
       {showManualInput && (
-        <div style={{marginBottom:14,padding:'14px 16px',backgroundColor:'#F59E0B08',border:'1px solid #F59E0B30',borderRadius:10}}>
+        <div style={{marginBottom:14,padding:'14px 16px',backgroundColor:'color-mix(in srgb, var(--mc-warn) 3%, transparent)',border:'1px solid color-mix(in srgb, var(--mc-warn) 19%, transparent)',borderRadius:10}}>
           <div style={{fontSize:11,fontWeight:800,color:'var(--mc-warn)',marginBottom:8}}>
             📝 PASTE CONCALL HIGHLIGHTS — add transcript-level signals not in news articles
           </div>
@@ -1982,8 +1982,8 @@ function ConcallIntelligence() {
           {/* Inline status feedback — replaces alert() */}
           {manualParseStatus && (
             <div style={{marginTop:8,padding:'8px 12px',borderRadius:7,
-              backgroundColor: manualParseStatus.type==='ok'?'#10b98114':manualParseStatus.type==='warn'?'#f59e0b14':'#ef444414',
-              border:`1px solid ${manualParseStatus.type==='ok'?'#10b98130':manualParseStatus.type==='warn'?'#f59e0b30':'#ef444430'}`,
+              backgroundColor: manualParseStatus.type==='ok'?'color-mix(in srgb, var(--mc-bullish) 8%, transparent)':manualParseStatus.type==='warn'?'color-mix(in srgb, var(--mc-warn) 8%, transparent)':'color-mix(in srgb, var(--mc-bearish) 8%, transparent)',
+              border:`1px solid ${manualParseStatus.type==='ok'?'color-mix(in srgb, var(--mc-bullish) 19%, transparent)':manualParseStatus.type==='warn'?'color-mix(in srgb, var(--mc-warn) 19%, transparent)':'color-mix(in srgb, var(--mc-bearish) 19%, transparent)'}`,
               color: manualParseStatus.type==='ok'?'var(--mc-bullish)':manualParseStatus.type==='warn'?'var(--mc-warn)':'var(--mc-bearish)',
               fontSize:11, fontWeight:600,
             }}>
@@ -2100,7 +2100,7 @@ function ConcallIntelligence() {
                 </div>
 
                 {/* ── ROW 2: Signal evidence OR article headline — THE KEY INFO ROW ── */}
-                <div style={{borderTop:'1px solid #1A284030',paddingTop:6}}>
+                <div style={{borderTop:'1px solid color-mix(in srgb, var(--mc-bg-4) 19%, transparent)',paddingTop:6}}>
                   {s.alphaCount > 0 && bestSig ? (
                     // HAS SIGNALS: show the best signal with evidence text
                     <div style={{display:'flex',gap:8,alignItems:'flex-start'}}>
@@ -2109,8 +2109,8 @@ function ConcallIntelligence() {
                         fontSize:8,fontWeight:800,flexShrink:0,marginTop:1,
                         padding:'1px 6px',borderRadius:4,
                         color:bestSig.positive?'var(--mc-bullish)':'var(--mc-bearish)',
-                        backgroundColor:(bestSig.positive?'#10b98114':'#ef444414'),
-                        border:`1px solid ${bestSig.positive?'#10b98130':'#ef444430'}`,
+                        backgroundColor:(bestSig.positive?'color-mix(in srgb, var(--mc-bullish) 8%, transparent)':'color-mix(in srgb, var(--mc-bearish) 8%, transparent)'),
+                        border:`1px solid ${bestSig.positive?'color-mix(in srgb, var(--mc-bullish) 19%, transparent)':'color-mix(in srgb, var(--mc-bearish) 19%, transparent)'}`,
                         whiteSpace:'nowrap',
                       }}>
                         {bestSig.positive?'↑':'↓'} {(bestSig.subject||bestSig.type.replace(/_/g,' ')).slice(0,20)}
@@ -2125,7 +2125,7 @@ function ConcallIntelligence() {
                       </div>
                       {/* Negative signal warning if any */}
                       {bestNegSig && (
-                        <span style={{fontSize:8,fontWeight:700,flexShrink:0,padding:'1px 5px',borderRadius:3,color:'var(--mc-bearish)',backgroundColor:'#ef444410',border:'1px solid #ef444425'}}>
+                        <span style={{fontSize:8,fontWeight:700,flexShrink:0,padding:'1px 5px',borderRadius:3,color:'var(--mc-bearish)',backgroundColor:'color-mix(in srgb, var(--mc-bearish) 6%, transparent)',border:'1px solid color-mix(in srgb, var(--mc-bearish) 15%, transparent)'}}>
                           ⚠ {(bestNegSig.subject||bestNegSig.type).replace(/_/g,' ').slice(0,12)}
                         </span>
                       )}
@@ -2190,7 +2190,7 @@ function ConcallIntelligence() {
                         }}
                         style={{
                           fontSize: 11, fontWeight: 700, padding: '6px 14px', borderRadius: 7,
-                          border: '1px solid #10b98140', backgroundColor: '#10b98115',
+                          border: '1px solid color-mix(in srgb, var(--mc-bullish) 25%, transparent)', backgroundColor: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)',
                           color: 'var(--mc-bullish)', cursor: 'pointer',
                         }}
                       >
@@ -2225,7 +2225,7 @@ function ConcallIntelligence() {
                             ))}
                           </div>
                           {s.alphaCount === 0 && (
-                            <div style={{marginTop:8,padding:'6px 8px',backgroundColor:'#F59E0B08',border:'1px solid #F59E0B20',borderRadius:5}}>
+                            <div style={{marginTop:8,padding:'6px 8px',backgroundColor:'color-mix(in srgb, var(--mc-warn) 3%, transparent)',border:'1px solid color-mix(in srgb, var(--mc-warn) 13%, transparent)',borderRadius:5}}>
                               <span style={{fontSize:9,color:'var(--mc-warn)'}}>💡 To extract signals: paste the earnings call transcript in "📝 Paste Concall" above → instant signal extraction.</span>
                             </div>
                           )}
@@ -2241,7 +2241,7 @@ function ConcallIntelligence() {
                             This can happen when: (1) the company uses a different name in press coverage,
                             (2) no significant news in 30 days, or (3) stock is too small for mainstream coverage.
                           </div>
-                          <div style={{marginTop:8,padding:'6px 8px',backgroundColor:'#0F7ABF08',border:'1px solid #0F7ABF20',borderRadius:5}}>
+                          <div style={{marginTop:8,padding:'6px 8px',backgroundColor:'color-mix(in srgb, var(--mc-accent) 3%, transparent)',border:'1px solid color-mix(in srgb, var(--mc-accent) 13%, transparent)',borderRadius:5}}>
                             <span style={{fontSize:9,color:'var(--mc-accent)'}}>💡 Use "📝 Paste Concall" above to directly paste earnings call highlights for this company.</span>
                           </div>
                         </div>
@@ -2249,7 +2249,7 @@ function ConcallIntelligence() {
 
                       {/* ── SIGNAL STACK (composite across articles) ── */}
                       {(s as any).composite && (s as any).composite.length > 0 && (
-                        <div style={{marginBottom:14,padding:'12px 14px',backgroundColor:'#0A0F1A',border:'1px solid #8B5CF620',borderRadius:8}}>
+                        <div style={{marginBottom:14,padding:'12px 14px',backgroundColor:'#0A0F1A',border:'1px solid color-mix(in srgb, var(--mc-state-persistent) 13%, transparent)',borderRadius:8}}>
                           <div style={{fontSize:10,fontWeight:800,color:ACCENT2,letterSpacing:'1px',marginBottom:8}}>📊 SIGNAL STACK — composite view across all articles</div>
                           <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
                             {(s as any).composite.map((c: CompositeSignal, ci: number) => {
@@ -2267,7 +2267,7 @@ function ConcallIntelligence() {
 
                       {/* ── WHY IT MATTERS ── */}
                       {(s as any).whyItMatters && (
-                        <div style={{marginBottom:14,padding:'10px 14px',backgroundColor:'#F59E0B08',border:'1px solid #F59E0B20',borderRadius:8}}>
+                        <div style={{marginBottom:14,padding:'10px 14px',backgroundColor:'color-mix(in srgb, var(--mc-warn) 3%, transparent)',border:'1px solid color-mix(in srgb, var(--mc-warn) 13%, transparent)',borderRadius:8}}>
                           <div style={{fontSize:9,fontWeight:800,color:'var(--mc-warn)',marginBottom:4}}>💡 WHY THIS MATTERS FOR YOUR POSITION</div>
                           <div style={{fontSize:11,color:'var(--mc-text-2)',lineHeight:1.5}}>{(s as any).whyItMatters}</div>
                         </div>
@@ -2275,7 +2275,7 @@ function ConcallIntelligence() {
 
                       {/* ── MISSED BY MARKET ── */}
                       {(s as any).missedByMarket && (
-                        <div style={{marginBottom:14,padding:'10px 14px',backgroundColor:'#8B5CF608',border:'1px solid #8B5CF630',borderRadius:8}}>
+                        <div style={{marginBottom:14,padding:'10px 14px',backgroundColor:'color-mix(in srgb, var(--mc-state-persistent) 3%, transparent)',border:'1px solid color-mix(in srgb, var(--mc-state-persistent) 19%, transparent)',borderRadius:8}}>
                           <div style={{fontSize:10,fontWeight:800,color:'var(--mc-state-persistent)',marginBottom:4}}>🔍 POTENTIALLY MISSED BY MARKET</div>
                           <div style={{fontSize:11,color:'var(--mc-text-3)'}}>Strong alpha signals ({s.alphaCount}) found but only {s.articleCount} article(s) — low coverage suggests market hasn't fully priced this yet. Verify independently before acting.</div>
                         </div>

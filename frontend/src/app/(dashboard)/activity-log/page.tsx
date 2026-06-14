@@ -97,7 +97,7 @@ export default function ActivityLogPage() {
               <button key={f.id} onClick={() => setKind(f.id)} style={{
                 fontSize: 11,
                 padding: '5px 11px',
-                background: kind === f.id ? '#22D3EE22' : 'transparent',
+                background: kind === f.id ? 'color-mix(in srgb, var(--mc-cyan) 13%, transparent)' : 'transparent',
                 border: `1px solid ${kind === f.id ? 'var(--mc-cyan)' : 'var(--mc-bg-4)'}`,
                 color: kind === f.id ? 'var(--mc-cyan)' : TEXT,
                 borderRadius: 4, cursor: 'pointer', fontWeight: 700,
@@ -143,9 +143,9 @@ export default function ActivityLogPage() {
                 No activity yet. Start by saving a valuation, adding a theme, or logging a decision &mdash; it will appear here automatically.
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center', marginTop: 4 }}>
-                <Link href="/valuation-calc" style={{ fontSize: 11, color: 'var(--mc-cyan)', textDecoration: 'none', padding: '5px 11px', border: '1px solid #22D3EE40', borderRadius: 4, fontWeight: 700 }}>Save a valuation</Link>
-                <Link href="/critical-themes" style={{ fontSize: 11, color: 'var(--mc-cyan)', textDecoration: 'none', padding: '5px 11px', border: '1px solid #22D3EE40', borderRadius: 4, fontWeight: 700 }}>Add a theme</Link>
-                <Link href="/multibagger" style={{ fontSize: 11, color: 'var(--mc-cyan)', textDecoration: 'none', padding: '5px 11px', border: '1px solid #22D3EE40', borderRadius: 4, fontWeight: 700 }}>Log a decision</Link>
+                <Link href="/valuation-calc" style={{ fontSize: 11, color: 'var(--mc-cyan)', textDecoration: 'none', padding: '5px 11px', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', borderRadius: 4, fontWeight: 700 }}>Save a valuation</Link>
+                <Link href="/critical-themes" style={{ fontSize: 11, color: 'var(--mc-cyan)', textDecoration: 'none', padding: '5px 11px', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', borderRadius: 4, fontWeight: 700 }}>Add a theme</Link>
+                <Link href="/multibagger" style={{ fontSize: 11, color: 'var(--mc-cyan)', textDecoration: 'none', padding: '5px 11px', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', borderRadius: 4, fontWeight: 700 }}>Log a decision</Link>
               </div>
             </div>
           ) : (
