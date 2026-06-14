@@ -83,10 +83,6 @@ import { calculatePE, fetchQuoteAutofill, type QuoteAutoFill } from '@/lib/valua
 // PATCH 0888 — Authoritative ticker→long-form-name map for news search
 // PATCH 0901 — Reverse map for Super Investors flow rows (company-name → ticker)
 import { NSE_TICKER_NAMES as _NSE_TICKER_NAMES, resolveCompanyToTicker } from '@/lib/nse-ticker-names';
-// PATCH 1079 — HANDOFF §6 wire-ups: portal-widgets bundle drop-in.
-import { PDFExportButton, FIIDIIFlowTile, MacroCalendarTile } from '@/components/portal-widgets';
-// PATCH 1081b — MFI concentration tile (HANDOFF §10 item G).
-import { MFIConcentrationTile } from '@/components/MFIConcentrationTile';
 
 const BG = '#0A0E1A';
 const CARD = '#0D1623';
@@ -2056,16 +2052,6 @@ export default function HomeDashboard() {
   return (
     <div style={{ minHeight: '100%', background: BG, color: TEXT, padding: '20px 24px' }}>
       <div style={{ maxWidth: 1400, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
-
-        {/* PATCH 1079 + 1081b — Portal-widgets row: FII/DII, MFI concentration, macro calendar, PDF export. */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12, alignItems: 'start' }}>
-          <FIIDIIFlowTile />
-          <MFIConcentrationTile days={90} limit={10} />
-          <MacroCalendarTile />
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-end' }}>
-            <PDFExportButton />
-          </div>
-        </div>
 
         {/* HEADER */}
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
