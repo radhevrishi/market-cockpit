@@ -219,7 +219,7 @@ export default function BreadthPage() {
           >
             {data.regime} <span style={{ fontSize: 12, opacity: 0.5 }}>→</span>
           </a>
-          <div style={{ fontSize: 13, color: '#C9D4E0', marginBottom: 8, marginTop: 6 }}>{data.regime_desc}</div>
+          <div style={{ fontSize: 13, color: 'var(--mc-text-2)', marginBottom: 8, marginTop: 6 }}>{data.regime_desc}</div>
           <div style={{ fontSize: 11, color: 'var(--mc-text-3)' }}>
             Suggested cash allocation: <strong style={{ color: 'var(--mc-text-1)' }}>{data.suggested_cash_pct}%</strong>
           </div>
@@ -254,7 +254,7 @@ export default function BreadthPage() {
           const color = p.score >= 70 ? '#10B981' : p.score >= 50 ? '#FBBF24' : p.score >= 30 ? '#F59E0B' : '#EF4444';
           return (
             <div key={p.name} style={{
-              backgroundColor: '#0A1422',
+              backgroundColor: 'var(--mc-bg-0)',
               border: `1px solid ${color}30`,
               borderLeft: `3px solid ${color}`,
               borderRadius: 8, padding: '12px 14px',
@@ -274,9 +274,9 @@ export default function BreadthPage() {
       </div>
 
       {/* ── Score-modifier guide ────────────────────────────────────── */}
-      <div style={{ marginTop: 18, backgroundColor: '#0A1422', border: '1px solid var(--mc-bg-4)', borderRadius: 8, padding: '12px 16px' }}>
+      <div style={{ marginTop: 18, backgroundColor: 'var(--mc-bg-0)', border: '1px solid var(--mc-bg-4)', borderRadius: 8, padding: '12px 16px' }}>
         <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.4px', marginBottom: 8 }}>HOW BREADTH MODIFIES STOCK SCORES</div>
-        <div style={{ fontSize: 11.5, color: '#C9D4E0', lineHeight: 1.7 }}>
+        <div style={{ fontSize: 11.5, color: 'var(--mc-text-2)', lineHeight: 1.7 }}>
           <p style={{ margin: '0 0 4px' }}><strong style={{ color: 'var(--mc-bullish)' }}>80+ Expansion:</strong> aggressively reward acceleration (Earnings Ops boosts magnitude weight, Re-rating loosens trend bar).</p>
           <p style={{ margin: '0 0 4px' }}><strong style={{ color: 'var(--mc-cyan)' }}>60-79 Healthy Bull:</strong> normal scoring; methodology pills weighted as default.</p>
           <p style={{ margin: '0 0 4px' }}><strong style={{ color: 'var(--mc-warn)' }}>40-59 Transitional:</strong> penalize weak balance sheets (FCF, debt, OCF/PAT) more heavily; demote low-quality earnings.</p>

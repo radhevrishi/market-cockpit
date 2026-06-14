@@ -125,7 +125,7 @@ export default function SystemStatusPage() {
                   <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--mc-text-1)' }}>{p.name}</div>
                   <span style={{ fontSize: 9, color: COLOR[p.status], fontWeight: 800, padding: '2px 6px', background: `${COLOR[p.status]}22`, borderRadius: 3 }}>{p.status}</span>
                 </div>
-                <div style={{ fontSize: 10, color: '#8A95A3', marginTop: 4 }}>
+                <div style={{ fontSize: 10, color: 'var(--mc-text-3)', marginTop: 4 }}>
                   {p.latencyMs}ms{p.recordCount !== undefined && ` · ${p.recordCount} records`}
                   {p.httpCode !== 200 && p.httpCode != null && ` · HTTP ${p.httpCode}`}
                   {p.error && ` · ${p.error.slice(0, 30)}`}

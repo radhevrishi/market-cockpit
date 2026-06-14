@@ -502,9 +502,9 @@ export default function DecisionsPage() {
                 onClick={() => setMarketFilter(m)}
                 style={{
                   padding: '6px 12px', borderRadius: 6,
-                  border: `1px solid ${isActive ? '#8B5CF6' : BORDER}`,
+                  border: `1px solid ${isActive ? 'var(--mc-state-persistent)' : BORDER}`,
                   background: isActive ? '#8B5CF620' : 'transparent',
-                  color: isActive ? '#8B5CF6' : DIM,
+                  color: isActive ? 'var(--mc-state-persistent)' : DIM,
                   fontSize: 12, fontWeight: 700, cursor: 'pointer',
                 }}
               >
@@ -580,7 +580,7 @@ export default function DecisionsPage() {
               <div style={{ background: CARD, border: `1px dashed ${BORDER}`, borderRadius: 8, overflow: 'hidden' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                   <thead>
-                    <tr style={{ background: '#0A1422', borderBottom: `1px solid ${BORDER}` }}>
+                    <tr style={{ background: 'var(--mc-bg-0)', borderBottom: `1px solid ${BORDER}` }}>
                       <th style={th}>STATUS</th>
                       <th style={th}>SYMBOL</th>
                       <th style={th}>MKT</th>
@@ -632,7 +632,7 @@ export default function DecisionsPage() {
           <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, overflow: 'hidden' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
-                <tr style={{ background: '#0A1422', borderBottom: `1px solid ${BORDER}` }}>
+                <tr style={{ background: 'var(--mc-bg-0)', borderBottom: `1px solid ${BORDER}` }}>
                   <th style={th}>STATUS</th>
                   <th style={th}>SYMBOL</th>
                   <th style={th}>MKT</th>
@@ -754,7 +754,7 @@ export default function DecisionsPage() {
                                 <button onClick={() => { clearDecision(d.symbol); toast.dismiss(t.id); toast.success(`${d.symbol} removed`); }}
                                   style={{ padding: '4px 10px', background: 'var(--mc-bearish)', color: '#fff', borderRadius: 4, border: 0, cursor: 'pointer', fontSize: 12 }}>Delete</button>
                                 <button onClick={() => toast.dismiss(t.id)}
-                                  style={{ padding: '4px 10px', background: 'transparent', color: 'var(--mc-text-3)', borderRadius: 4, border: '1px solid #2A3B4C', cursor: 'pointer', fontSize: 12 }}>Cancel</button>
+                                  style={{ padding: '4px 10px', background: 'transparent', color: 'var(--mc-text-3)', borderRadius: 4, border: '1px solid var(--mc-border-2)', cursor: 'pointer', fontSize: 12 }}>Cancel</button>
                               </div>
                             ), { duration: 8000 });
                           }}

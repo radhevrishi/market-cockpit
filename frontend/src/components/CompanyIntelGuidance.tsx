@@ -57,7 +57,7 @@ export function CompanyIntelGuidance({ ticker, compact = false }: { ticker?: str
 
   if (!ticker) return null;
   if (loading) return (
-    <div style={{ padding: 12, fontSize: 11, color: '#8A95A3', fontStyle: 'italic' }}>
+    <div style={{ padding: 12, fontSize: 11, color: 'var(--mc-text-3)', fontStyle: 'italic' }}>
       Loading company intelligence…
     </div>
   );
@@ -65,7 +65,7 @@ export function CompanyIntelGuidance({ ticker, compact = false }: { ticker?: str
   if (errored) {
     return (
       <div style={{
-        padding: 12, fontSize: 11, color: '#FBBF24',
+        padding: 12, fontSize: 11, color: 'var(--mc-warn)',
         border: '1px solid #FBBF2440', borderRadius: 6, background: 'rgba(251,191,36,0.06)',
         display: 'flex', alignItems: 'center', gap: 10,
       }}>
@@ -74,7 +74,7 @@ export function CompanyIntelGuidance({ ticker, compact = false }: { ticker?: str
           onClick={() => setReloadKey(k => k + 1)}
           style={{
             marginLeft: 'auto', padding: '3px 10px', fontSize: 10, fontWeight: 700,
-            color: 'var(--mc-bg-0)', background: '#FBBF24', border: 'none', borderRadius: 4,
+            color: 'var(--mc-bg-0)', background: 'var(--mc-warn)', border: 'none', borderRadius: 4,
             cursor: 'pointer', letterSpacing: '0.4px',
           }}
         >
@@ -86,7 +86,7 @@ export function CompanyIntelGuidance({ ticker, compact = false }: { ticker?: str
   if (!corpus || !corpus.guidance || corpus.guidance.length === 0) {
     return (
       <div style={{
-        padding: 12, fontSize: 11, color: '#8A95A3',
+        padding: 12, fontSize: 11, color: 'var(--mc-text-3)',
         border: '1px dashed var(--mc-bg-4)', borderRadius: 6, background: 'rgba(34,211,238,0.04)',
       }}>
         No uploaded transcripts for <strong style={{ color: 'var(--mc-cyan)' }}>{ticker}</strong>.
@@ -102,7 +102,7 @@ export function CompanyIntelGuidance({ ticker, compact = false }: { ticker?: str
   const items = compact ? corpus.guidance.slice(0, 5) : corpus.guidance;
 
   return (
-    <div style={{ padding: compact ? 10 : 14, background: '#0A1422', border: '1px solid var(--mc-bg-4)', borderRadius: 6 }}>
+    <div style={{ padding: compact ? 10 : 14, background: 'var(--mc-bg-0)', border: '1px solid var(--mc-bg-4)', borderRadius: 6 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: compact ? 6 : 10 }}>
         <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--mc-bullish)', letterSpacing: '0.5px' }}>
           📈 STORED GUIDANCE

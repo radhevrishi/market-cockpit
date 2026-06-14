@@ -713,7 +713,7 @@ function MetricRow({ line, scaleLabel }: { line: MetricLine; scaleLabel: string 
             title="No analyst consensus available — surprise computed vs prior quarter actual (proxy). Treat surprise = sequential growth, not a true beat/miss vs street."
             style={{
               fontSize: 9,
-              color: '#fb923c',
+              color: 'var(--mc-warn)',
               background: 'rgba(251,146,60,0.12)',
               border: '1px solid rgba(251,146,60,0.35)',
               padding: '1px 5px',
@@ -734,7 +734,7 @@ function MetricRow({ line, scaleLabel }: { line: MetricLine; scaleLabel: string 
       <td style={{ padding: '8px 12px', textAlign: 'right', fontSize: 12, color: surpColor, fontFamily: MONO, fontVariantNumeric: 'tabular-nums', fontWeight: 700 }}>
         {surprise}
         {line.estimateSource === 'prior_quarter_proxy' && line.surprisePct !== null && (
-          <span title="vs prior quarter (no consensus available)" style={{ fontSize: 9, color: '#fb923c', marginLeft: 4 }}>*</span>
+          <span title="vs prior quarter (no consensus available)" style={{ fontSize: 9, color: 'var(--mc-warn)', marginLeft: 4 }}>*</span>
         )}
       </td>
       <td style={{ padding: '8px 12px', textAlign: 'right', fontSize: 12, color: yoyColor(line.yoyPct ?? line.yoyBps), fontFamily: MONO, fontVariantNumeric: 'tabular-nums' }}>

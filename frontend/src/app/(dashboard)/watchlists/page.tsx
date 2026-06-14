@@ -224,21 +224,21 @@ function SummaryBar({ items }: { items: WatchlistItem[] }) {
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '20px' }}>
-      <div style={{ backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '12px', padding: '16px' }}>
+      <div style={{ backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-2)', borderRadius: '12px', padding: '16px' }}>
         <div style={{ fontSize: '11px', color: 'var(--mc-text-3)', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.5px' }}>TOTAL STOCKS</div>
         <div style={{ fontSize: '24px', fontWeight: '700', color: 'var(--mc-text-0)' }}>{items.length}</div>
       </div>
-      <div style={{ backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '12px', padding: '16px' }}>
+      <div style={{ backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-2)', borderRadius: '12px', padding: '16px' }}>
         <div style={{ fontSize: '11px', color: 'var(--mc-text-3)', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.5px' }}>AVG. CHANGE</div>
         <div style={{ fontSize: '24px', fontWeight: '700', color: avgChange >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>
           {avgChange >= 0 ? '+' : ''}{avgChange.toFixed(2)}%
         </div>
       </div>
-      <div style={{ backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '12px', padding: '16px' }}>
+      <div style={{ backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-2)', borderRadius: '12px', padding: '16px' }}>
         <div style={{ fontSize: '11px', color: 'var(--mc-text-3)', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.5px' }}>GAINERS</div>
         <div style={{ fontSize: '24px', fontWeight: '700', color: 'var(--mc-bullish)' }}>{gainers}</div>
       </div>
-      <div style={{ backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '12px', padding: '16px' }}>
+      <div style={{ backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-2)', borderRadius: '12px', padding: '16px' }}>
         <div style={{ fontSize: '11px', color: 'var(--mc-text-3)', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.5px' }}>LOSERS</div>
         <div style={{ fontSize: '24px', fontWeight: '700', color: 'var(--mc-bearish)' }}>{losers}</div>
       </div>
@@ -341,10 +341,10 @@ function WatchlistTable({
   }
 
   return (
-    <div style={{ overflowX: 'auto', border: '1px solid #2A3B4C', borderRadius: '12px' }}>
+    <div style={{ overflowX: 'auto', border: '1px solid var(--mc-border-2)', borderRadius: '12px' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
         <thead>
-          <tr style={{ borderBottom: '1px solid #2A3B4C', backgroundColor: '#0D1B2E' }}>
+          <tr style={{ borderBottom: '1px solid var(--mc-border-2)', backgroundColor: 'var(--mc-bg-1)' }}>
             <th style={{ padding: '12px 8px', textAlign: 'center', fontSize: '10px', fontWeight: '700', color: 'var(--mc-text-3)', letterSpacing: '0.5px', cursor: 'pointer', width: '40px' }} onClick={() => onSort('flag')}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center' }}>
                 Flag <SortIcon field="flag" />
@@ -401,7 +401,7 @@ function WatchlistTable({
                 title="Configure columns"
                 style={{
                   background: chooserOpen ? '#0F7ABF30' : 'transparent',
-                  border: `1px solid ${chooserOpen ? 'var(--mc-cyan)' : '#2A3B4C'}`,
+                  border: `1px solid ${chooserOpen ? 'var(--mc-cyan)' : 'var(--mc-border-2)'}`,
                   borderRadius: 6, color: chooserOpen ? 'var(--mc-cyan)' : 'var(--mc-text-3)',
                   cursor: 'pointer', padding: '4px 9px', fontSize: '10px', fontWeight: 700,
                 }}
@@ -409,7 +409,7 @@ function WatchlistTable({
               {chooserOpen && (
                 <div style={{
                   position: 'absolute', top: '100%', right: 8, marginTop: 4, zIndex: 50,
-                  minWidth: 200, padding: 8, background: '#0D1B2E', border: '1px solid #2A3B4C',
+                  minWidth: 200, padding: 8, background: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-2)',
                   borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
                 }}>
                   <div style={{ fontSize: 10, color: 'var(--mc-text-3)', marginBottom: 6, letterSpacing: '0.4px' }}>SHOW COLUMNS</div>
@@ -431,7 +431,7 @@ function WatchlistTable({
           {items.map((item, idx) => {
             const isPositive = item.changePercent >= 0;
             return (
-              <tr key={item.ticker} data-watchlist-ticker={item.ticker} style={{ borderBottom: idx < items.length - 1 ? '1px solid #1A2B3C' : 'none', backgroundColor: idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
+              <tr key={item.ticker} data-watchlist-ticker={item.ticker} style={{ borderBottom: idx < items.length - 1 ? '1px solid var(--mc-bg-2)' : 'none', backgroundColor: idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
                 <td style={{ padding: '8px 8px', textAlign: 'center', width: '40px' }}>
                   <button
                     onClick={() => onToggleFlag?.(item.ticker)}
@@ -452,7 +452,7 @@ function WatchlistTable({
                   {!item.price || item.price === 0 ? (
                     <span style={{ color: 'var(--mc-text-4)' }} title="Price unavailable — quote not returned by data source">—</span>
                   ) : isPriceSuspect(item.ticker, item.price) ? (
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: '#FBBF24' }} title="Suspect price - may be incorrect or stale">
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: 'var(--mc-warn)' }} title="Suspect price - may be incorrect or stale">
                       <AlertTriangle style={{ width: '12px', height: '12px' }} />
                       ₹{item.price.toFixed(2)}
                     </span>
@@ -973,8 +973,8 @@ export default function WatchlistsPage() {
               display: 'inline-flex',
               alignItems: 'center',
               gap: '6px',
-              backgroundColor: '#1A2B3C',
-              border: '1px solid #2A3B4C',
+              backgroundColor: 'var(--mc-bg-2)',
+              border: '1px solid var(--mc-border-2)',
               borderRadius: '10px',
               padding: '10px 14px',
               color: 'var(--mc-text-3)',
@@ -998,8 +998,8 @@ export default function WatchlistsPage() {
               display: 'inline-flex',
               alignItems: 'center',
               gap: '6px',
-              backgroundColor: '#1A2B3C',
-              border: '1px solid #2A3B4C',
+              backgroundColor: 'var(--mc-bg-2)',
+              border: '1px solid var(--mc-border-2)',
               borderRadius: '10px',
               padding: '10px 14px',
               color: 'var(--mc-text-3)',
@@ -1019,7 +1019,7 @@ export default function WatchlistsPage() {
       </div>
 
       {/* ── Tab switcher (PATCH 0186) ──────────────────────────────────────── */}
-      <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid #2A3B4C', marginBottom: '20px' }}>
+      <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--mc-border-2)', marginBottom: '20px' }}>
         <button onClick={() => setActiveTab('main')}
           style={{
             padding: '10px 16px', background: 'none',
@@ -1045,7 +1045,7 @@ export default function WatchlistsPage() {
           <span style={{
             fontSize: 10, fontWeight: 800,
             padding: '1px 6px', borderRadius: 8,
-            backgroundColor: convictionCount > 0 ? '#F59E0B22' : '#1A2B3C',
+            backgroundColor: convictionCount > 0 ? '#F59E0B22' : 'var(--mc-bg-2)',
             color: convictionCount > 0 ? 'var(--mc-warn)' : 'var(--mc-text-4)',
           }}>{convictionCount}</span>
         </button>
@@ -1080,8 +1080,8 @@ export default function WatchlistsPage() {
               key={i}
               style={{
                 height: '48px',
-                backgroundColor: '#1A2B3C',
-                border: '1px solid #2A3B4C',
+                backgroundColor: 'var(--mc-bg-2)',
+                border: '1px solid var(--mc-border-2)',
                 borderRadius: '10px',
                 animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
               }}
@@ -1114,7 +1114,7 @@ export default function WatchlistsPage() {
 
       {/* ── Telegram Sync Info ────────────────────────────────────────────── */}
       {tickers.length > 0 && (
-        <div style={{ marginTop: '24px', padding: '16px', backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '10px', textAlign: 'center' }}>
+        <div style={{ marginTop: '24px', padding: '16px', backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-2)', borderRadius: '10px', textAlign: 'center' }}>
           <p style={{ fontSize: '12px', color: 'var(--mc-text-3)', margin: 0 }}>
             💬 Your watchlist syncs with <span style={{ fontWeight: '600', color: 'var(--mc-info)' }}>@mc_watchlist_pulse_bot</span>
           </p>
@@ -1794,7 +1794,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
     return (
       <div style={{
         padding: '40px 24px', textAlign: 'center',
-        backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: 12,
+        backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-2)', borderRadius: 12,
       }}>
         <div style={{ fontSize: 32, marginBottom: 10 }}>🏆</div>
         <h3 style={{ fontSize: 15, fontWeight: 700, color: 'var(--mc-text-0)', margin: '0 0 6px' }}>
@@ -1855,7 +1855,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
       {/* USER-REQ — composable filter chips (Op-leverage / Sales / PAT / EPS YoY)
           + PEAD sort toggle. Renders at TOP of the Conviction Beats tab. */}
       <div style={{
-        padding: '10px 14px', backgroundColor: '#0A1422',
+        padding: '10px 14px', backgroundColor: 'var(--mc-bg-0)',
         border: '1px solid var(--mc-bg-4)', borderRadius: 8,
         display: 'flex', flexDirection: 'column', gap: 8,
       }}>
@@ -2281,7 +2281,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                     setFilters((f) => ({ ...f, fromDate: ok ? v : null }));
                   }}
                   title="Filter to entries with filing_date on or AFTER this date (inclusive). This is the actual day the result was filed with NSE/BSE — different from the reporting quarter."
-                  style={{ background: '#0A1422', border: '1px solid #2A3550', color: 'var(--mc-cyan)', fontSize: 11, fontWeight: 700, padding: '3px 6px', borderRadius: 4, outline: 'none', cursor: 'pointer' }}
+                  style={{ background: 'var(--mc-bg-0)', border: '1px solid #2A3550', color: 'var(--mc-cyan)', fontSize: 11, fontWeight: 700, padding: '3px 6px', borderRadius: 4, outline: 'none', cursor: 'pointer' }}
                 />
                 <span style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 700 }}>TO:</span>
                 <input
@@ -2293,7 +2293,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                     setFilters((f) => ({ ...f, toDate: ok ? v : null }));
                   }}
                   title="Filter to entries with filing_date on or BEFORE this date (inclusive)."
-                  style={{ background: '#0A1422', border: '1px solid #2A3550', color: 'var(--mc-cyan)', fontSize: 11, fontWeight: 700, padding: '3px 6px', borderRadius: 4, outline: 'none', cursor: 'pointer' }}
+                  style={{ background: 'var(--mc-bg-0)', border: '1px solid #2A3550', color: 'var(--mc-cyan)', fontSize: 11, fontWeight: 700, padding: '3px 6px', borderRadius: 4, outline: 'none', cursor: 'pointer' }}
                 />
                 {(filters.quarter || filters.fy != null || filters.fromDate || filters.toDate) && (
                   <button
@@ -2308,7 +2308,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
         })()}
       </div>
       <div style={{
-        padding: '10px 14px', backgroundColor: '#0A1422',
+        padding: '10px 14px', backgroundColor: 'var(--mc-bg-0)',
         border: '1px solid var(--mc-bg-4)', borderRadius: 8,
         fontSize: 11.5, color: 'var(--mc-text-3)', lineHeight: 1.5,
       }}>
@@ -2394,7 +2394,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
 
           {/* Card grid */}
           {hubFilteredList.length === 0 && !richLoading && (
-            <div style={{ padding: 24, textAlign: 'center', color: 'var(--mc-text-3)', backgroundColor: 'var(--mc-bg-1)', border: '1px dashed #2A3B4C', borderRadius: 10 }}>
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--mc-text-3)', backgroundColor: 'var(--mc-bg-1)', border: '1px dashed var(--mc-border-2)', borderRadius: 10 }}>
               {enrichedList.length === 0
                 ? 'No enriched cards yet — fetch may still be running. Try again in a moment.'
                 : 'No cards match the current hub filters. Adjust filters above.'}
@@ -2413,7 +2413,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                   <div key={c.symbol} style={{ position: 'relative' }}>
                     <EarningsCardComponent card={c} />
                     <button onClick={() => onRemove(c.symbol)} title="Remove from Conviction Beats"
-                      style={{ position: 'absolute', top: 8, right: 8, background: '#0A1422', border: '1px solid #2A3B4C', color: 'var(--mc-text-3)', cursor: 'pointer', padding: '3px 7px', fontSize: 12, borderRadius: 4 }}>×</button>
+                      style={{ position: 'absolute', top: 8, right: 8, background: 'var(--mc-bg-0)', border: '1px solid var(--mc-border-2)', color: 'var(--mc-text-3)', cursor: 'pointer', padding: '3px 7px', fontSize: 12, borderRadius: 4 }}>×</button>
                   </div>
                 ))}
               </div>
@@ -2442,7 +2442,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                         <div key={c.symbol} style={{ position: 'relative' }}>
                           <EarningsCardComponent card={c} />
                           <button onClick={() => onRemove(c.symbol)} title="Remove from Conviction Beats"
-                            style={{ position: 'absolute', top: 8, right: 8, background: '#0A1422', border: '1px solid #2A3B4C', color: 'var(--mc-text-3)', cursor: 'pointer', padding: '3px 7px', fontSize: 12, borderRadius: 4 }}>×</button>
+                            style={{ position: 'absolute', top: 8, right: 8, background: 'var(--mc-bg-0)', border: '1px solid var(--mc-border-2)', color: 'var(--mc-text-3)', cursor: 'pointer', padding: '3px 7px', fontSize: 12, borderRadius: 4 }}>×</button>
                         </div>
                       ))}
                     </div>
@@ -2460,7 +2460,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                         <div key={c.symbol} style={{ position: 'relative' }}>
                           <EarningsCardComponent card={c} />
                           <button onClick={() => onRemove(c.symbol)} title="Remove from Conviction Beats"
-                            style={{ position: 'absolute', top: 8, right: 8, background: '#0A1422', border: '1px solid #2A3B4C', color: 'var(--mc-text-3)', cursor: 'pointer', padding: '3px 7px', fontSize: 12, borderRadius: 4 }}>×</button>
+                            style={{ position: 'absolute', top: 8, right: 8, background: 'var(--mc-bg-0)', border: '1px solid var(--mc-border-2)', color: 'var(--mc-text-3)', cursor: 'pointer', padding: '3px 7px', fontSize: 12, borderRadius: 4 }}>×</button>
                         </div>
                       ))}
                     </div>
@@ -2591,7 +2591,7 @@ function HubFilterRail({
 
   return (
     <div style={{
-      padding: '10px 14px', backgroundColor: '#0A1422',
+      padding: '10px 14px', backgroundColor: 'var(--mc-bg-0)',
       border: '1px solid var(--mc-bg-4)', borderRadius: 8,
       display: 'flex', flexDirection: 'column', gap: 8,
     }}>
@@ -2687,7 +2687,7 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
     `Op-leverage +${pead.op_leverage_bonus}, Quality +${pead.quality_signal}, Tier +${pead.tier_bonus}, decay ×${pead.drift_decay}`;
   return (
     <div style={{
-      padding: '10px 12px', backgroundColor: '#0A1422',
+      padding: '10px 12px', backgroundColor: 'var(--mc-bg-0)',
       border: '1px solid var(--mc-bg-4)', borderLeft: `3px solid ${tierColor}`,
       borderRadius: 8, display: 'flex', flexDirection: 'column', gap: 6,
     }}>

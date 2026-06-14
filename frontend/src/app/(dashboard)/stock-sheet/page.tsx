@@ -89,7 +89,7 @@ class StockSheetErrorBoundary extends Component<{ children: ReactNode }, { hasEr
   render() {
     if (this.state.hasError) {
       return (
-        <div style={{ margin: 18, padding: 16, backgroundColor: '#0D1B2E', border: '1px solid var(--mc-bearish)', borderRadius: 10, color: '#FCA5A5', fontSize: 13, lineHeight: 1.55 }}>
+        <div style={{ margin: 18, padding: 16, backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bearish)', borderRadius: 10, color: '#FCA5A5', fontSize: 13, lineHeight: 1.55 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, marginBottom: 6, color: 'var(--mc-bearish)' }}>
             <AlertTriangle style={{ width: 16, height: 16 }} />
             Stock Sheet — render error
@@ -994,7 +994,7 @@ export default function StockSheetPage() {
     <StockSheetErrorBoundary>
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--mc-bg-0)' }}>
       {/* ── Header ─────────────────────────────────────────────────── */}
-      <div style={{ backgroundColor: '#0D1B2E', borderBottom: '1px solid var(--mc-border-1)', padding: '14px 20px', flexShrink: 0 }}>
+      <div style={{ backgroundColor: 'var(--mc-bg-1)', borderBottom: '1px solid var(--mc-border-1)', padding: '14px 20px', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
           <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.6px' }}>
             🧠 SINGLE-STOCK SHEET
@@ -1011,7 +1011,7 @@ export default function StockSheetPage() {
               placeholder="Enter ticker (e.g. LEU, NBIS, RELIANCE.NS, POWERGRID.NS)"
               style={{
                 width: '100%', padding: '10px 12px 10px 34px',
-                backgroundColor: '#0A1422', border: '1px solid var(--mc-bg-4)',
+                backgroundColor: 'var(--mc-bg-0)', border: '1px solid var(--mc-bg-4)',
                 borderRadius: 8, color: 'var(--mc-text-1)', fontSize: 14, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
                 outline: 'none',
               }}
@@ -1028,7 +1028,7 @@ export default function StockSheetPage() {
               <button type="button" onClick={handleDelete} style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid #EF444460', backgroundColor: '#EF444420', color: 'var(--mc-bearish)', fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                 <Trash2 style={{ width: 14, height: 14 }} />Delete
               </button>
-              <button type="button" onClick={() => window.print()} style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid var(--mc-bg-4)', backgroundColor: 'transparent', color: '#8A95A3', fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <button type="button" onClick={() => window.print()} style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid var(--mc-bg-4)', backgroundColor: 'transparent', color: 'var(--mc-text-3)', fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                 <FileDown style={{ width: 14, height: 14 }} />Print / PDF
               </button>
             </>
@@ -1040,7 +1040,7 @@ export default function StockSheetPage() {
             <span style={{ fontSize: 11, color: 'var(--mc-text-4)' }}>SAVED:</span>
             {savedList.map((t) => (
               <button key={t} onClick={() => { setTickerInput(t); setActiveTicker(t); }}
-                style={{ padding: '3px 10px', borderRadius: 4, border: t === activeTicker ? '1px solid #22D3EE60' : '1px solid var(--mc-bg-4)', backgroundColor: t === activeTicker ? '#22D3EE15' : '#0A1422', color: t === activeTicker ? 'var(--mc-cyan)' : '#8A95A3', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                style={{ padding: '3px 10px', borderRadius: 4, border: t === activeTicker ? '1px solid #22D3EE60' : '1px solid var(--mc-bg-4)', backgroundColor: t === activeTicker ? '#22D3EE15' : 'var(--mc-bg-0)', color: t === activeTicker ? 'var(--mc-cyan)' : 'var(--mc-text-3)', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
                 {t}
               </button>
             ))}
@@ -1066,7 +1066,7 @@ export default function StockSheetPage() {
 
             {/* PATCH 0114 — IMP-11: Top from Multibagger upload (if any) */}
             {mbTopList.length > 0 && (
-              <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderRadius: 10, padding: 14, marginBottom: 14 }}>
+              <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)', borderRadius: 10, padding: 14, marginBottom: 14 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
                   <div>
                     <div style={{ fontSize: 12, color: '#FACC15', fontWeight: 800, letterSpacing: '0.6px' }}>⭐ FROM YOUR MULTIBAGGER UPLOAD</div>
@@ -1080,7 +1080,7 @@ export default function StockSheetPage() {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 8 }}>
                   {mbTopList.map((p) => (
                     <button key={p.symbol} onClick={() => { setTickerInput(p.symbol); setActiveTicker(p.symbol); }}
-                      style={{ textAlign: 'left', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--mc-bg-4)', backgroundColor: '#0A1422', color: 'var(--mc-text-1)', cursor: 'pointer', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                      style={{ textAlign: 'left', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--mc-bg-4)', backgroundColor: 'var(--mc-bg-0)', color: 'var(--mc-text-1)', cursor: 'pointer', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
                       <div style={{ fontSize: 13, fontWeight: 700, color: '#FACC15' }}>{p.symbol}</div>
                       <div style={{ fontSize: 10, color: 'var(--mc-text-4)', marginTop: 2 }}>
                         {p.score ? `score ${p.score.toFixed(1)}` : ''}{p.opmExpansion ? ` · Δ OPM ${p.opmExpansion.toFixed(1)}pp` : ''}{p.epsGrowth ? ` · EPS ${p.epsGrowth.toFixed(0)}%` : ''}
@@ -1093,7 +1093,7 @@ export default function StockSheetPage() {
 
             {/* PATCH 0114 — IMP-11: Recently viewed */}
             {recentList.length > 0 && (
-              <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderRadius: 10, padding: 14, marginBottom: 14 }}>
+              <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)', borderRadius: 10, padding: 14, marginBottom: 14 }}>
                 <div style={{ fontSize: 12, color: 'var(--mc-cyan)', fontWeight: 800, letterSpacing: '0.6px', marginBottom: 8 }}>🕒 RECENTLY VIEWED</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {recentList.map((t) => (
@@ -1108,7 +1108,7 @@ export default function StockSheetPage() {
 
             {/* PATCH 0114 — IMP-11: Saved sheets shortcut (when blank) */}
             {savedList.length > 0 && (
-              <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderRadius: 10, padding: 14, marginBottom: 14 }}>
+              <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)', borderRadius: 10, padding: 14, marginBottom: 14 }}>
                 <div style={{ fontSize: 12, color: 'var(--mc-bullish)', fontWeight: 800, letterSpacing: '0.6px', marginBottom: 8 }}>💾 SAVED SHEETS</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {savedList.map((t) => (
@@ -1122,12 +1122,12 @@ export default function StockSheetPage() {
             )}
 
             {/* PATCH 0114 — IMP-11: Examples (always shown) */}
-            <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderRadius: 10, padding: 14 }}>
-              <div style={{ fontSize: 12, color: '#8A95A3', fontWeight: 800, letterSpacing: '0.6px', marginBottom: 8 }}>🚀 START WITH AN EXAMPLE</div>
+            <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)', borderRadius: 10, padding: 14 }}>
+              <div style={{ fontSize: 12, color: 'var(--mc-text-3)', fontWeight: 800, letterSpacing: '0.6px', marginBottom: 8 }}>🚀 START WITH AN EXAMPLE</div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 8 }}>
                 {EXAMPLE_TICKERS.map((e) => (
                   <button key={e.sym} onClick={() => { setTickerInput(e.sym); setActiveTicker(e.sym); }}
-                    style={{ textAlign: 'left', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--mc-bg-4)', backgroundColor: '#0A1422', color: 'var(--mc-text-1)', cursor: 'pointer' }}>
+                    style={{ textAlign: 'left', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--mc-bg-4)', backgroundColor: 'var(--mc-bg-0)', color: 'var(--mc-text-1)', cursor: 'pointer' }}>
                     <div style={{ fontSize: 13, fontWeight: 700, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{e.sym}</div>
                     <div style={{ fontSize: 10, color: 'var(--mc-text-4)', marginTop: 2 }}>{e.label}</div>
                   </button>
@@ -1139,12 +1139,12 @@ export default function StockSheetPage() {
       ) : (
         <div style={{ flex: 1, overflowY: 'auto', padding: '14px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
           {/* Scorecard */}
-          <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderLeft: `4px solid ${VERDICT_COLOR[score.verdict]}`, borderRadius: 12, padding: '14px 18px' }}>
+          <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)', borderLeft: `4px solid ${VERDICT_COLOR[score.verdict]}`, borderRadius: 12, padding: '14px 18px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 22, fontWeight: 900, color: 'var(--mc-text-0)', letterSpacing: '0.5px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
                 {activeTicker}
               </span>
-              <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 4, backgroundColor: region === 'IN' ? '#FBBF2420' : '#22D3EE20', color: region === 'IN' ? '#FBBF24' : 'var(--mc-cyan)', border: `1px solid ${region === 'IN' ? '#FBBF2440' : '#22D3EE40'}` }}>
+              <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 4, backgroundColor: region === 'IN' ? '#FBBF2420' : '#22D3EE20', color: region === 'IN' ? 'var(--mc-warn)' : 'var(--mc-cyan)', border: `1px solid ${region === 'IN' ? '#FBBF2440' : '#22D3EE40'}` }}>
                 {region === 'IN' ? '🇮🇳 India' : '🌐 Global'}
               </span>
               {(() => {
@@ -1194,7 +1194,7 @@ export default function StockSheetPage() {
             const sectionNo = sectionAns.filter((s) => s === 'NO').length;
             const isOpen = openSections[sec.id] ?? false;
             return (
-              <div key={sec.id} style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderLeft: `3px solid ${sec.color}`, borderRadius: 12 }}>
+              <div key={sec.id} style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)', borderLeft: `3px solid ${sec.color}`, borderRadius: 12 }}>
                 <button
                   onClick={() => setOpenSections((s) => ({ ...s, [sec.id]: !s[sec.id] }))}
                   style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '12px 18px', background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', textAlign: 'left' }}
@@ -1217,11 +1217,11 @@ export default function StockSheetPage() {
                         const ans = state[c.id];
                         const isAuto = ans?.evidence?.startsWith('[auto]');
                         return (
-                          <div key={c.id} style={{ padding: '8px 10px', backgroundColor: '#0A1422', borderRadius: 6, border: '1px solid var(--mc-bg-4)' }}>
+                          <div key={c.id} style={{ padding: '8px 10px', backgroundColor: 'var(--mc-bg-0)', borderRadius: 6, border: '1px solid var(--mc-bg-4)' }}>
                             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap' }}>
                               <span style={{ flex: 1, fontSize: 13, color: 'var(--mc-text-1)', lineHeight: 1.5, minWidth: 240 }}>
                                 {c.label}
-                                {c.weight === 3 && <span style={{ color: '#FBBF24', fontSize: 10, marginLeft: 6 }}>★ heavy</span>}
+                                {c.weight === 3 && <span style={{ color: 'var(--mc-warn)', fontSize: 10, marginLeft: 6 }}>★ heavy</span>}
                                 {c.disqualifying && <span style={{ color: 'var(--mc-bearish)', fontSize: 10, marginLeft: 6 }}>⚠ disqualifying</span>}
                                 {c.polarity === 'NEGATIVE' && <span style={{ color: 'var(--mc-text-3)', fontSize: 10, marginLeft: 6 }}>(YES = bad)</span>}
                                 {isAuto && <span style={{ color: 'var(--mc-cyan)', fontSize: 10, marginLeft: 6 }}>auto-filled</span>}
@@ -1240,7 +1240,7 @@ export default function StockSheetPage() {
                                       onClick={() => handleAnswer(c.id, isPicked ? null : sig)}
                                       style={{
                                         padding: '3px 10px', borderRadius: 4,
-                                        border: isPicked ? `1px solid ${colorBy[sig]}80` : '1px solid #2A3B4C',
+                                        border: isPicked ? `1px solid ${colorBy[sig]}80` : '1px solid var(--mc-border-2)',
                                         backgroundColor: isPicked ? `${colorBy[sig]}25` : 'transparent',
                                         color: isPicked ? colorBy[sig] : 'var(--mc-text-4)',
                                         fontSize: 11, fontWeight: 800, letterSpacing: '0.4px', cursor: 'pointer',
@@ -1269,7 +1269,7 @@ export default function StockSheetPage() {
           })}
 
           {/* ─── PATCH 0118 — IMP-12: Section 17 Decision Memo ─────── */}
-          <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderLeft: '3px solid var(--mc-cyan)', borderRadius: 12, padding: '14px 18px' }}>
+          <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)', borderLeft: '3px solid var(--mc-cyan)', borderRadius: 12, padding: '14px 18px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.4px' }}>
                 🧾 17. DECISION MEMO
@@ -1280,15 +1280,15 @@ export default function StockSheetPage() {
               </span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <div style={{ padding: '10px 12px', backgroundColor: '#0A1422', borderRadius: 6, border: '1px solid var(--mc-bg-4)' }}>
+              <div style={{ padding: '10px 12px', backgroundColor: 'var(--mc-bg-0)', borderRadius: 6, border: '1px solid var(--mc-bg-4)' }}>
                 <div style={{ fontSize: 10, color: 'var(--mc-bullish)', fontWeight: 800, letterSpacing: '0.6px', marginBottom: 4 }}>① THESIS</div>
                 <div style={{ fontSize: 12, color: 'var(--mc-text-1)', lineHeight: 1.65 }}>{safeText(memo.thesis)}</div>
               </div>
-              <div style={{ padding: '10px 12px', backgroundColor: '#0A1422', borderRadius: 6, border: '1px solid var(--mc-bg-4)' }}>
+              <div style={{ padding: '10px 12px', backgroundColor: 'var(--mc-bg-0)', borderRadius: 6, border: '1px solid var(--mc-bg-4)' }}>
                 <div style={{ fontSize: 10, color: 'var(--mc-bearish)', fontWeight: 800, letterSpacing: '0.6px', marginBottom: 4 }}>② KEY RISKS</div>
                 <div style={{ fontSize: 12, color: 'var(--mc-text-1)', lineHeight: 1.65 }}>{safeText(memo.risks)}</div>
               </div>
-              <div style={{ padding: '10px 12px', backgroundColor: '#0A1422', borderRadius: 6, border: '1px solid var(--mc-bg-4)' }}>
+              <div style={{ padding: '10px 12px', backgroundColor: 'var(--mc-bg-0)', borderRadius: 6, border: '1px solid var(--mc-bg-4)' }}>
                 <div style={{ fontSize: 10, color: '#FACC15', fontWeight: 800, letterSpacing: '0.6px', marginBottom: 4 }}>③ CATALYST PATH</div>
                 <div style={{ fontSize: 12, color: 'var(--mc-text-1)', lineHeight: 1.65 }}>{safeText(memo.catalystPath)}</div>
               </div>
@@ -1297,7 +1297,7 @@ export default function StockSheetPage() {
                   const txt = `# ${activeTicker} — Decision Memo\n\n**${memo.alignmentLabel}**\n\n## Thesis\n${memo.thesis}\n\n## Key Risks\n${memo.risks}\n\n## Catalyst Path\n${memo.catalystPath}\n`;
                   try { navigator.clipboard.writeText(txt); } catch {}
                 }}
-                style={{ alignSelf: 'flex-start', padding: '5px 12px', borderRadius: 4, border: '1px solid var(--mc-bg-4)', backgroundColor: 'transparent', color: '#8A95A3', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
+                style={{ alignSelf: 'flex-start', padding: '5px 12px', borderRadius: 4, border: '1px solid var(--mc-bg-4)', backgroundColor: 'transparent', color: 'var(--mc-text-3)', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
               >
                 Copy memo as Markdown
               </button>

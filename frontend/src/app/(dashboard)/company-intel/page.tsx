@@ -308,7 +308,7 @@ export default function CompanyIntelPage() {
                   <div style={{ background: CARD, border: `1px dashed ${BORDER}`, borderRadius: 8, overflow: 'hidden' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                       <thead>
-                        <tr style={{ background: '#0A1422', borderBottom: `1px solid ${BORDER}` }}>
+                        <tr style={{ background: 'var(--mc-bg-0)', borderBottom: `1px solid ${BORDER}` }}>
                           <th style={th}>TICKER</th>
                           <th style={th}>COMPANY</th>
                           <th style={th}>GROWTH GUIDANCE</th>
@@ -339,7 +339,7 @@ export default function CompanyIntelPage() {
               <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, overflow: 'hidden' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                   <thead>
-                    <tr style={{ background: '#0A1422', borderBottom: `1px solid ${BORDER}` }}>
+                    <tr style={{ background: 'var(--mc-bg-0)', borderBottom: `1px solid ${BORDER}` }}>
                       <th style={th}>TICKER</th>
                       <th style={th}>COMPANY</th>
                       <th style={th}>GROWTH GUIDANCE</th>
@@ -466,7 +466,7 @@ export default function CompanyIntelPage() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {preview.map((g, i) => (
                     <div key={i} title={g.quote}
-                      style={{ padding: '8px 10px', borderLeft: '3px solid #22D3EE60', background: '#0A1422', borderRadius: 4 }}>
+                      style={{ padding: '8px 10px', borderLeft: '3px solid #22D3EE60', background: 'var(--mc-bg-0)', borderRadius: 4 }}>
                       <div style={{ fontSize: 10, color: ACCENT, fontWeight: 700, letterSpacing: '0.4px', marginBottom: 3 }}>
                         {categoryLabel(g.category)}{g.year ? ` · ${g.year}` : ''}
                       </div>
@@ -496,7 +496,7 @@ export default function CompanyIntelPage() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {capacityPreview.map((m, i) => (
                       <div key={i} title={m.raw}
-                        style={{ padding: '7px 10px', borderLeft: '3px solid #10B98160', background: '#0A1422', borderRadius: 4 }}>
+                        style={{ padding: '7px 10px', borderLeft: '3px solid #10B98160', background: 'var(--mc-bg-0)', borderRadius: 4 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
                           <span style={{ fontSize: 13, color: 'var(--mc-cyan)', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
                             {m.currentPct}%{m.targetPct ? ` → ${m.targetPct}%` : ''}
@@ -582,7 +582,7 @@ export default function CompanyIntelPage() {
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                       {drillCorpus.guidance.map((g, i) => (
-                        <div key={i} style={{ padding: '8px 10px', borderLeft: '3px solid #10B98160', background: '#0A1422', borderRadius: 4 }}>
+                        <div key={i} style={{ padding: '8px 10px', borderLeft: '3px solid #10B98160', background: 'var(--mc-bg-0)', borderRadius: 4 }}>
                           <div style={{ fontSize: 10, color: 'var(--mc-bullish)', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 3 }}>
                             {categoryLabel(g.category)}{g.year ? ` · ${g.year}` : ''}
                           </div>
@@ -605,7 +605,7 @@ export default function CompanyIntelPage() {
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                       {drillCorpus.documents.slice().reverse().map((d) => (
-                        <div key={d.id} style={{ padding: '8px 10px', background: '#0A1422', borderRadius: 4, border: `1px solid ${BORDER}` }}>
+                        <div key={d.id} style={{ padding: '8px 10px', background: 'var(--mc-bg-0)', borderRadius: 4, border: `1px solid ${BORDER}` }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                             <span style={{ fontSize: 10, color: ACCENT, fontWeight: 700, letterSpacing: '0.4px' }}>
                               {d.kind.replace(/_/g, ' ').toUpperCase()}

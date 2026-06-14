@@ -229,8 +229,8 @@ export default function TickerSearch({
           placeholder={placeholder}
           style={{
             width: '100%',
-            backgroundColor: '#1A2B3C',
-            border: '1px solid #2A3B4C',
+            backgroundColor: 'var(--mc-bg-2)',
+            border: '1px solid var(--mc-border-2)',
             borderRadius: '10px',
             padding: '12px 16px 12px 38px',
             color: 'var(--mc-text-0)',
@@ -254,7 +254,7 @@ export default function TickerSearch({
       {showDropdown && (
         <div ref={dropdownRef} style={{
           position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
-          backgroundColor: '#0D1B2E', border: '1px solid #2A3B4C', borderRadius: '10px',
+          backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-2)', borderRadius: '10px',
           marginTop: '4px', maxHeight: '320px', overflowY: 'auto',
           boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
         }}>
@@ -268,7 +268,7 @@ export default function TickerSearch({
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   padding: '10px 14px', cursor: isExisting ? 'default' : 'pointer',
-                  backgroundColor: isSelected ? '#1A2B3C' : 'transparent',
+                  backgroundColor: isSelected ? 'var(--mc-bg-2)' : 'transparent',
                   borderBottom: idx < suggestions.length - 1 ? '1px solid var(--mc-bg-4)' : 'none',
                   transition: 'background-color 0.15s',
                   opacity: isExisting ? 0.5 : 1,

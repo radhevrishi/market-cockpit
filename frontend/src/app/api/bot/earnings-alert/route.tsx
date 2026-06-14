@@ -148,7 +148,7 @@ async function generateEarningsImage(card: CardFromAPI): Promise<ArrayBuffer> {
                 padding: '1px 6px', borderRadius: '3px', fontSize: '11px',
                 background: '#0F7ABF20', color: 'var(--mc-accent)',
               }}>{card.reportType}</span>
-              <span style={{ fontSize: '11px', color: '#8899AA' }}>{card.period}</span>
+              <span style={{ fontSize: '11px', color: 'var(--mc-text-3)' }}>{card.period}</span>
               {exRet !== null && (
                 <span style={{
                   padding: '1px 6px', borderRadius: '3px', fontSize: '10px',
@@ -159,7 +159,7 @@ async function generateEarningsImage(card: CardFromAPI): Promise<ArrayBuffer> {
             </div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-            <span style={{ fontSize: '13px', color: '#8899AA' }}>{card.resultDate}</span>
+            <span style={{ fontSize: '13px', color: 'var(--mc-text-3)' }}>{card.resultDate}</span>
             <span style={{ fontSize: '11px', color: 'var(--mc-accent)' }}>Score: {card.qualityScore}/100</span>
           </div>
         </div>
@@ -169,7 +169,7 @@ async function generateEarningsImage(card: CardFromAPI): Promise<ArrayBuffer> {
           <>
             <div style={{
               display: 'flex', padding: '8px 20px', background: '#0A1628',
-              fontSize: '11px', color: '#8899AA', fontWeight: 500,
+              fontSize: '11px', color: 'var(--mc-text-3)', fontWeight: 500,
             }}>
               <span style={{ flex: '1' }}></span>
               <span style={{ width: '80px', textAlign: 'right' }}>YoY</span>
@@ -213,7 +213,7 @@ async function generateEarningsImage(card: CardFromAPI): Promise<ArrayBuffer> {
               flex: 1, background: '#0A1628', borderRadius: '8px', padding: '12px',
               border: '1px solid var(--mc-bg-4)', textAlign: 'center',
             }}>
-              <div style={{ fontSize: '11px', color: '#8899AA', marginBottom: '4px' }}>Price Move</div>
+              <div style={{ fontSize: '11px', color: 'var(--mc-text-3)', marginBottom: '4px' }}>Price Move</div>
               <div style={{
                 fontSize: '22px', fontWeight: 700,
                 color: card.price.changePct > 0 ? '#00C853' : card.price.changePct < 0 ? '#F44336' : '#E8ECF1',
@@ -223,7 +223,7 @@ async function generateEarningsImage(card: CardFromAPI): Promise<ArrayBuffer> {
               flex: 1, background: '#0A1628', borderRadius: '8px', padding: '12px',
               border: '1px solid var(--mc-bg-4)', textAlign: 'center',
             }}>
-              <div style={{ fontSize: '11px', color: '#8899AA', marginBottom: '4px' }}>vs Nifty 50</div>
+              <div style={{ fontSize: '11px', color: 'var(--mc-text-3)', marginBottom: '4px' }}>vs Nifty 50</div>
               <div style={{
                 fontSize: '22px', fontWeight: 700,
                 color: (exRet ?? 0) > 0 ? '#00C853' : (exRet ?? 0) < 0 ? '#F44336' : '#E8ECF1',
@@ -233,7 +233,7 @@ async function generateEarningsImage(card: CardFromAPI): Promise<ArrayBuffer> {
               flex: 1, background: '#0A1628', borderRadius: '8px', padding: '12px',
               border: '1px solid var(--mc-bg-4)', textAlign: 'center',
             }}>
-              <div style={{ fontSize: '11px', color: '#8899AA', marginBottom: '4px' }}>CMP</div>
+              <div style={{ fontSize: '11px', color: 'var(--mc-text-3)', marginBottom: '4px' }}>CMP</div>
               <div style={{ fontSize: '20px', fontWeight: 700, color: '#E8ECF1' }}>
                 ₹{card.price.cmp.toLocaleString('en-IN')}
               </div>
@@ -245,7 +245,7 @@ async function generateEarningsImage(card: CardFromAPI): Promise<ArrayBuffer> {
         <div style={{
           display: 'flex', justifyContent: 'space-between', padding: '10px 20px',
           borderTop: '1px solid var(--mc-bg-4)', background: '#0A1628',
-          fontSize: '11px', color: '#8899AA',
+          fontSize: '11px', color: 'var(--mc-text-3)',
         }}>
           <span>Market Cockpit</span>
           <div style={{ display: 'flex', gap: '16px' }}>

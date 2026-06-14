@@ -1213,7 +1213,7 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
           )}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '17px', color: '#6A7B8C', fontWeight: '500' }}>{source}</span>
-            <span style={{ fontSize: '17px', color: '#2A3B4C' }}>·</span>
+            <span style={{ fontSize: '17px', color: 'var(--mc-border-2)' }}>·</span>
             <span style={{ fontSize: '17px', color: 'var(--mc-text-4)' }}>{timeAgo(article.published_at)}</span>
             {url && url !== '#' && (
               <ExternalLink style={{ width: '11px', height: '11px', color: '#3A4B5C' }} />
@@ -1324,7 +1324,7 @@ function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: ()
       onClick={onClose}
     >
       <div
-        style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderRadius: '0px', width: '100%', maxWidth: '700px', height: '100vh', maxHeight: '100vh', overflowY: 'auto', padding: '20px 16px' }}
+        style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)', borderRadius: '0px', width: '100%', maxWidth: '700px', height: '100vh', maxHeight: '100vh', overflowY: 'auto', padding: '20px 16px' }}
         className="article-detail-panel"
         onClick={e => e.stopPropagation()}
       >
@@ -1372,7 +1372,7 @@ function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: ()
         {/* Source & time */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
           <span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--mc-accent)' }}>{source}</span>
-          <span style={{ fontSize: '12px', color: '#2A3B4C' }}>·</span>
+          <span style={{ fontSize: '12px', color: 'var(--mc-border-2)' }}>·</span>
           <span style={{ fontSize: '12px', color: 'var(--mc-text-4)' }}>{timeAgo(article.published_at)}</span>
         </div>
 
@@ -1408,7 +1408,7 @@ function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: ()
         {article.summary ? (
           <div style={{ borderTop: '1px solid var(--mc-border-1)', paddingTop: '20px', marginBottom: '20px' }}>
             <p style={{ fontSize: '10px', fontWeight: '600', color: 'var(--mc-text-4)', margin: '0 0 10px', letterSpacing: '0.5px' }}>SUMMARY</p>
-            <p style={{ fontSize: '14px', color: '#C9D4E0', margin: 0, lineHeight: '1.7' }}>
+            <p style={{ fontSize: '14px', color: 'var(--mc-text-2)', margin: 0, lineHeight: '1.7' }}>
               {article.summary}
             </p>
           </div>
@@ -1445,7 +1445,7 @@ function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: ()
                   padding: '3px 8px', borderRadius: 4, fontSize: 10, fontWeight: 700,
                   fontFamily: 'ui-monospace, monospace',
                 }}>{v.glyph} {v.label}</span>
-                <span style={{ fontSize: 11, color: '#8A95A3' }}>{v.description}</span>
+                <span style={{ fontSize: 11, color: 'var(--mc-text-3)' }}>{v.description}</span>
               </div>
             );
           })()}
@@ -1454,14 +1454,14 @@ function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: ()
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
               <span style={{ fontSize: 10, color: '#6B7B8C', fontWeight: 600, minWidth: 88 }}>CORROBORATED</span>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 11, color: '#C9D4E0', marginBottom: 4 }}>
+                <div style={{ fontSize: 11, color: 'var(--mc-text-2)', marginBottom: 4 }}>
                   By {(article as any).also_reported_by_count} other source{(article as any).also_reported_by_count === 1 ? '' : 's'}:
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                   {(((article as any).also_reported_sources || []) as string[]).map((s, i) => (
                     <span key={`${s}-${i}`} style={{
-                      backgroundColor: '#0A1422', border: '1px solid var(--mc-border-1)',
-                      borderRadius: 4, padding: '2px 6px', fontSize: 10, color: '#8A95A3',
+                      backgroundColor: 'var(--mc-bg-0)', border: '1px solid var(--mc-border-1)',
+                      borderRadius: 4, padding: '2px 6px', fontSize: 10, color: 'var(--mc-text-3)',
                     }}>{s}</span>
                   ))}
                 </div>
@@ -1471,7 +1471,7 @@ function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: ()
           {/* Severity contributors (what fields drove the rank) */}
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
             <span style={{ fontSize: 10, color: '#6B7B8C', fontWeight: 600, minWidth: 88 }}>WHY RANKED</span>
-            <div style={{ flex: 1, fontSize: 11, color: '#C9D4E0', fontFamily: 'ui-monospace, monospace', lineHeight: 1.6 }}>
+            <div style={{ flex: 1, fontSize: 11, color: 'var(--mc-text-2)', fontFamily: 'ui-monospace, monospace', lineHeight: 1.6 }}>
               <div>  importance: {article.importance_score ?? '—'} / 5</div>
               {article.bottleneck_level && <div>  bottleneck:  {article.bottleneck_level.replace(/_/g, ' ')}</div>}
               {(article as any).investment_tier && <div>  tier:        {(article as any).investment_tier}</div>}
@@ -1495,7 +1495,7 @@ function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: ()
             return (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ fontSize: 10, color: '#6B7B8C', fontWeight: 600, minWidth: 88 }}>LIFECYCLE</span>
-                <span style={{ fontSize: 11, color: '#C9D4E0' }}>
+                <span style={{ fontSize: 11, color: 'var(--mc-text-2)' }}>
                   {bucket} · published {article.published_at ? new Date(article.published_at).toLocaleString() : '—'}
                 </span>
               </div>
@@ -1519,7 +1519,7 @@ function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: ()
             placeholder="Thesis, decision rationale, ticker tags, follow-ups…  (Markdown supported. Local to this browser until Notebooks server-side ships.)"
             style={{
               width: '100%', minHeight: 96, resize: 'vertical',
-              backgroundColor: '#0A1422', border: '1px solid var(--mc-border-1)',
+              backgroundColor: 'var(--mc-bg-0)', border: '1px solid var(--mc-border-1)',
               borderRadius: 6, padding: '8px 10px', color: 'var(--mc-text-0)',
               fontSize: 12, fontFamily: 'ui-monospace, monospace',
               lineHeight: 1.5, outline: 'none',
@@ -1655,7 +1655,7 @@ function BottleneckDashboard({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
       {/* Summary bar */}
-      <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderRadius: '12px', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+      <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)', borderRadius: '12px', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
         <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--mc-bearish)', letterSpacing: '0.5px' }}>BOTTLENECK INTELLIGENCE</span>
         <span style={{ fontSize: '11px', color: 'var(--mc-text-4)' }}>
           {filteredBuckets.length} categories · {filteredBuckets.reduce((s, b) => s + b.signal_count, 0)} signals · {filteredBuckets.reduce((s, b) => s + b.article_count, 0)} evidence articles
@@ -1735,7 +1735,7 @@ function BottleneckDashboard({
             {isExpanded && (
               <div style={{ borderTop: '1px solid var(--mc-border-1)', padding: '4px 0' }}>
                 {/* Description */}
-                <p style={{ fontSize: '12px', color: '#6B7280', margin: '10px 18px 12px', lineHeight: '1.5' }}>
+                <p style={{ fontSize: '12px', color: 'var(--mc-text-4)', margin: '10px 18px 12px', lineHeight: '1.5' }}>
                   {bucket.description}
                 </p>
 
@@ -1743,7 +1743,7 @@ function BottleneckDashboard({
                   const signalKey = `${bucket.bucket_id}-${idx}`;
                   const signalExpanded = expandedSignals.has(signalKey);
                   return (
-                    <div key={signalKey} style={{ margin: '0 12px 8px', backgroundColor: '#0D1B2E', borderRadius: '10px', border: '1px solid var(--mc-bg-4)' }}>
+                    <div key={signalKey} style={{ margin: '0 12px 8px', backgroundColor: 'var(--mc-bg-1)', borderRadius: '10px', border: '1px solid var(--mc-bg-4)' }}>
                       {/* Signal header */}
                       <div
                         onClick={() => toggleSignal(signalKey)}
@@ -1805,7 +1805,7 @@ function BottleneckDashboard({
                               rel="noopener noreferrer"
                               style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 0', textDecoration: 'none', borderBottom: aidx < signal.articles.length - 1 ? '1px solid #15213a' : 'none' }}
                             >
-                              <span style={{ fontSize: '11px', color: '#C9D4E0', flex: 1 }}>
+                              <span style={{ fontSize: '11px', color: 'var(--mc-text-2)', flex: 1 }}>
                                 {/* PATCH 0267 — defend against null headline */}
                                 {decodeHtml((art.headline || '')).slice(0, 90)}{(art.headline || '').length > 90 ? '…' : ''}
                               </span>
@@ -2013,7 +2013,7 @@ function BottleneckDrilldown({
         onClick={onClose}
       >
         <div
-          style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', width: '100%', maxWidth: '700px', height: '100vh', overflowY: 'auto', padding: '20px 16px' }}
+          style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)', width: '100%', maxWidth: '700px', height: '100vh', overflowY: 'auto', padding: '20px 16px' }}
           onClick={e => e.stopPropagation()}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
@@ -2022,7 +2022,7 @@ function BottleneckDrilldown({
               <X style={{ width: '18px', height: '18px' }} />
             </button>
           </div>
-          <p style={{ fontSize: '13px', color: '#8A95A3' }}>No drilldown available for this category yet.</p>
+          <p style={{ fontSize: '13px', color: 'var(--mc-text-3)' }}>No drilldown available for this category yet.</p>
         </div>
       </div>
     );
@@ -2034,7 +2034,7 @@ function BottleneckDrilldown({
       onClick={onClose}
     >
       <div
-        style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', width: '100%', maxWidth: '720px', height: '100vh', overflowY: 'auto', padding: '20px 16px' }}
+        style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)', width: '100%', maxWidth: '720px', height: '100vh', overflowY: 'auto', padding: '20px 16px' }}
         onClick={e => e.stopPropagation()}
       >
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '4px' }}>
@@ -2055,18 +2055,18 @@ function BottleneckDrilldown({
         {/* Why it's a bottleneck */}
         <section style={{ marginBottom: '18px' }}>
           <p style={{ fontSize: '10px', fontWeight: '700', color: 'var(--mc-bearish)', margin: '0 0 8px', letterSpacing: '0.5px' }}>WHY IT'S A BOTTLENECK</p>
-          <p style={{ fontSize: '13px', color: '#C9D4E0', lineHeight: '1.6', margin: 0 }}>{entry.why}</p>
+          <p style={{ fontSize: '13px', color: 'var(--mc-text-2)', lineHeight: '1.6', margin: 0 }}>{entry.why}</p>
         </section>
 
         {/* Supply vs Demand */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '18px' }}>
           <div style={{ backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-1)', borderRadius: '10px', padding: '12px' }}>
             <p style={{ fontSize: '10px', fontWeight: '700', color: 'var(--mc-warn)', margin: '0 0 6px', letterSpacing: '0.5px' }}>SUPPLY</p>
-            <p style={{ fontSize: '12px', color: '#C9D4E0', lineHeight: '1.55', margin: 0 }}>{entry.supply}</p>
+            <p style={{ fontSize: '12px', color: 'var(--mc-text-2)', lineHeight: '1.55', margin: 0 }}>{entry.supply}</p>
           </div>
           <div style={{ backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-1)', borderRadius: '10px', padding: '12px' }}>
             <p style={{ fontSize: '10px', fontWeight: '700', color: 'var(--mc-bullish)', margin: '0 0 6px', letterSpacing: '0.5px' }}>DEMAND</p>
-            <p style={{ fontSize: '12px', color: '#C9D4E0', lineHeight: '1.55', margin: 0 }}>{entry.demand}</p>
+            <p style={{ fontSize: '12px', color: 'var(--mc-text-2)', lineHeight: '1.55', margin: 0 }}>{entry.demand}</p>
           </div>
         </div>
 
@@ -2080,7 +2080,7 @@ function BottleneckDrilldown({
                   <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--mc-bullish)', backgroundColor: '#10B98120', padding: '2px 7px', borderRadius: '4px', flexShrink: 0, minWidth: '70px', textAlign: 'center' }}>
                     {w.ticker}
                   </span>
-                  <span style={{ fontSize: '12px', color: '#C9D4E0', lineHeight: '1.45' }}>{w.thesis}</span>
+                  <span style={{ fontSize: '12px', color: 'var(--mc-text-2)', lineHeight: '1.45' }}>{w.thesis}</span>
                 </div>
               ))}
             </div>
@@ -2097,7 +2097,7 @@ function BottleneckDrilldown({
                   <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--mc-bearish)', backgroundColor: '#EF444420', padding: '2px 7px', borderRadius: '4px', flexShrink: 0, minWidth: '70px', textAlign: 'center' }}>
                     {l.ticker}
                   </span>
-                  <span style={{ fontSize: '12px', color: '#C9D4E0', lineHeight: '1.45' }}>{l.thesis}</span>
+                  <span style={{ fontSize: '12px', color: 'var(--mc-text-2)', lineHeight: '1.45' }}>{l.thesis}</span>
                 </div>
               ))}
             </div>
@@ -2113,7 +2113,7 @@ function BottleneckDrilldown({
                 <button
                   key={a.id}
                   onClick={() => onSelectArticle(a)}
-                  style={{ textAlign: 'left', background: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-1)', borderRadius: '8px', padding: '10px 12px', cursor: 'pointer', color: '#C9D4E0', fontSize: '12px', lineHeight: '1.45' }}
+                  style={{ textAlign: 'left', background: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-1)', borderRadius: '8px', padding: '10px 12px', cursor: 'pointer', color: 'var(--mc-text-2)', fontSize: '12px', lineHeight: '1.45' }}
                 >
                   <div style={{ fontWeight: '600', color: '#E8EDF2', marginBottom: '3px' }}>{getTitle(a)}</div>
                   <div style={{ fontSize: '10px', color: 'var(--mc-text-4)' }}>{getSource(a)} · {timeAgo(a.published_at)}</div>
@@ -2271,7 +2271,7 @@ function SavedViewsControl() {
         <div
           style={{
             position: 'absolute', top: '100%', right: 0, marginTop: 6, zIndex: 50,
-            backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderRadius: 8,
+            backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)', borderRadius: 8,
             padding: 6, minWidth: 280, maxWidth: 360, maxHeight: 320, overflowY: 'auto',
             boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
           }}
@@ -2831,7 +2831,7 @@ export default function NewsFeedPage() {
 
       {/* ── MARKET BIAS HEADER ────────────────────────────────────────── */}
       {marketBias && !isLoading && (
-        <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderRadius: '12px', padding: '10px 14px', marginBottom: '10px' }}>
+        <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)', borderRadius: '12px', padding: '10px 14px', marginBottom: '10px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap', marginBottom: marketBias.hotTickers.length > 0 ? '8px' : '0' }}>
             {/* Bias pill */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
@@ -2852,10 +2852,10 @@ export default function NewsFeedPage() {
               <span style={{ color: 'var(--mc-text-4)' }}>→{marketBias.neutral}</span>
               <span style={{ color: 'var(--mc-text-4)' }}>·</span>
               <span style={{ color: 'var(--mc-bearish)', fontWeight: '700' }}>↓{marketBias.bearish}</span>
-              <span style={{ color: '#2A3B4C', marginLeft: '4px' }}>|</span>
+              <span style={{ color: 'var(--mc-border-2)', marginLeft: '4px' }}>|</span>
               <span style={{ color: 'var(--mc-text-4)' }}>{marketBias.total} stories</span>
               {marketBias.highImpact > 0 && (
-                <><span style={{ color: '#2A3B4C', marginLeft: '4px' }}>|</span>
+                <><span style={{ color: 'var(--mc-border-2)', marginLeft: '4px' }}>|</span>
                 <span style={{ color: 'var(--mc-bearish)', fontWeight: '700' }}>{marketBias.highImpact} HIGH signal</span></>
               )}
             </div>
@@ -2920,7 +2920,7 @@ export default function NewsFeedPage() {
       {/* ── IN PLAY TODAY bar ─────────────────────────────────────────── */}
       {!inPlayLoading && (
         <div
-          style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderRadius: '12px', padding: '10px 12px', marginBottom: '12px', overflowX: 'auto', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '10px' }}
+          style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)', borderRadius: '12px', padding: '10px 12px', marginBottom: '12px', overflowX: 'auto', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '10px' }}
           className="scrollbar-hide mobile-scroll"
         >
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '10px', fontWeight: '700', color: 'var(--mc-warn)', flexShrink: 0 }}>
@@ -2950,7 +2950,7 @@ export default function NewsFeedPage() {
                       )}
                     </span>
                   )}
-                  <span style={{ fontSize: '11px', color: '#C9D4E0' }}>
+                  <span style={{ fontSize: '11px', color: 'var(--mc-text-2)' }}>
                     {getTitle(art).slice(0, 70)}{getTitle(art).length > 70 ? '…' : ''}
                   </span>
                   <span style={{ fontSize: '10px', color: 'var(--mc-text-4)' }}>{getSource(art)}</span>
@@ -2981,13 +2981,13 @@ export default function NewsFeedPage() {
 
       {/* Loading shimmer for IN PLAY bar */}
       {inPlayLoading && (
-        <div style={{ height: '36px', backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderRadius: '12px', marginBottom: '16px' }} className="animate-shimmer" />
+        <div style={{ height: '36px', backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)', borderRadius: '12px', marginBottom: '16px' }} className="animate-shimmer" />
       )}
 
       {/* ── PHASE 1.3: MUST READ — Curated top 5 ─────────────────────── */}
       {mustRead && mustRead.length > 0 && (
         <div style={{
-          backgroundColor: '#0F1B2E', border: '1px solid #2A3B4C',
+          backgroundColor: '#0F1B2E', border: '1px solid var(--mc-border-2)',
           borderLeft: '3px solid var(--mc-warn)', borderRadius: '12px',
           padding: '12px 14px', marginBottom: '12px',
         }}>
@@ -3048,8 +3048,8 @@ export default function NewsFeedPage() {
               persistent-bottleneck panel above. ── */}
       {transformationalPreview && transformationalPreview.count > 0 && (
         <div style={{
-          backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)',
-          borderLeft: '4px solid #8B5CF6',
+          backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)',
+          borderLeft: '4px solid var(--mc-state-persistent)',
           borderRadius: '14px', padding: '16px 20px', marginBottom: '16px',
         }}>
           <button
@@ -3062,7 +3062,7 @@ export default function NewsFeedPage() {
             }}
           >
             {/* PATCH 0085: section header 10 → 15 */}
-            <span style={{ fontSize: '15px', fontWeight: 700, color: '#8B5CF6', letterSpacing: '0.8px' }}>
+            <span style={{ fontSize: '15px', fontWeight: 700, color: 'var(--mc-state-persistent)', letterSpacing: '0.8px' }}>
               🌟 TRANSFORMATIONAL CONTRACTS
             </span>
             <span style={{ fontSize: '13px', color: 'var(--mc-text-4)' }}>
@@ -3095,7 +3095,7 @@ export default function NewsFeedPage() {
                   rel="noopener noreferrer"
                   style={{
                     // PATCH 0085: card padding 8/10 → 14/18, radius 8 → 12
-                    backgroundColor: '#0A1422', border: '1px solid var(--mc-bg-4)',
+                    backgroundColor: 'var(--mc-bg-0)', border: '1px solid var(--mc-bg-4)',
                     borderRadius: 12, padding: '14px 18px',
                     textDecoration: 'none', color: 'inherit',
                   }}
@@ -3121,7 +3121,7 @@ export default function NewsFeedPage() {
                       </span>
                     )}
                     {a.strategic_visibility.flags.includes('STRATEGIC_CHOKEPOINT') && (
-                      <span style={{ fontSize: 14, fontWeight: 700, color: '#8B5CF6' }}>🔒</span>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--mc-state-persistent)' }}>🔒</span>
                     )}
                     {a.strategic_visibility.flags.includes('POLICY_BACKED') && (
                       <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--mc-cyan)' }}>🧭</span>
@@ -3148,7 +3148,7 @@ export default function NewsFeedPage() {
       {/* ── PHASE 1.5: FORWARD CALENDAR — collapsible ────────────────── */}
       {calendar && (calendar.tomorrow.length + calendar.this_week.length + calendar.this_month.length) > 0 && (
         <div style={{
-          backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)',
+          backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)',
           borderRadius: '12px', padding: '10px 12px', marginBottom: '12px',
         }}>
           <button
@@ -3176,7 +3176,7 @@ export default function NewsFeedPage() {
             <div style={{ marginTop: '10px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
               {(['tomorrow', 'this_week', 'this_month'] as const).map(bucket => (
                 <div key={bucket}>
-                  <div style={{ fontSize: '10px', fontWeight: 700, color: '#8899AA', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: '6px' }}>
+                  <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--mc-text-3)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: '6px' }}>
                     {bucket === 'tomorrow' ? '⏰ Tomorrow' : bucket === 'this_week' ? '📅 This Week' : '🗓️ This Month'}
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '180px', overflowY: 'auto' }}>
@@ -3187,11 +3187,11 @@ export default function NewsFeedPage() {
                         borderLeft: `2px solid ${ev.importance === 'high' ? 'var(--mc-bearish)' : 'var(--mc-text-4)'}`,
                       }}>
                         <div style={{ display: 'flex', gap: '6px', alignItems: 'baseline' }}>
-                          <span style={{ color: '#8899AA', fontFamily: 'monospace', flexShrink: 0 }}>
+                          <span style={{ color: 'var(--mc-text-3)', fontFamily: 'monospace', flexShrink: 0 }}>
                             {ev.date.slice(5)}
                           </span>
                           {ev.region && (
-                            <span style={{ color: ev.region === 'IN' ? '#fbbf24' : '#7dd3fc', fontSize: '9px' }}>
+                            <span style={{ color: ev.region === 'IN' ? 'var(--mc-warn)' : '#7dd3fc', fontSize: '9px' }}>
                               {ev.region === 'IN' ? '🇮🇳' : ev.region === 'US' ? '🇺🇸' : '🌐'}
                             </span>
                           )}
@@ -3217,7 +3217,7 @@ export default function NewsFeedPage() {
       {/* ── PATCH 0050: EMERGING STRESS SIGNALS — institutional anomaly box ── */}
       {anomalies && ((anomalies.themes_v2?.length || 0) > 0 || (anomalies.tickers_v2?.length || 0) > 0) && (
         <div style={{
-          backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)',
+          backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)',
           borderLeft: '3px solid var(--mc-bearish)',
           borderRadius: '12px', padding: '12px 14px', marginBottom: '12px',
         }}>
@@ -3238,7 +3238,7 @@ export default function NewsFeedPage() {
                 </span>
                 <strong style={{ color: 'var(--mc-text-0)' }}>{t.display_name}</strong>
                 <span style={{ color: 'var(--mc-text-4)', marginLeft: '6px' }}>×{t.count} (baseline ~{t.baseline_count})</span>
-                <div style={{ color: '#8899AA', marginLeft: '24px', marginTop: '2px', fontSize: '10px' }}>
+                <div style={{ color: 'var(--mc-text-3)', marginLeft: '24px', marginTop: '2px', fontSize: '10px' }}>
                   → {t.why_it_matters}
                 </div>
               </div>
@@ -3312,25 +3312,25 @@ export default function NewsFeedPage() {
         <div className="scrollbar-hide mobile-scroll" style={{ display: 'flex', gap: '8px', alignItems: 'center', overflowX: 'auto', paddingBottom: '4px', position: 'relative', zIndex: 20 }}>
           <input
             value={search} onChange={e => setSearch(e.target.value)} placeholder="Search news…"
-            style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderRadius: '8px', padding: '7px 12px', color: 'var(--mc-text-0)', fontSize: '14px', minWidth: '160px', width: '200px', outline: 'none', flexShrink: 0 }}
+            style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)', borderRadius: '8px', padding: '7px 12px', color: 'var(--mc-text-0)', fontSize: '14px', minWidth: '160px', width: '200px', outline: 'none', flexShrink: 0 }}
           />
           <button
             onClick={() => { setArticleType(articleType === 'BOTTLENECK' ? 'ALL' : 'BOTTLENECK'); setBottleneckLevel('ALL'); setBottleneckCategory('ALL'); setStructuralOnly(false); }}
-            style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: articleType === 'BOTTLENECK' ? '#EF444420' : 'var(--mc-bg-2)', border: `1px solid ${articleType === 'BOTTLENECK' ? 'var(--mc-bearish)' : 'var(--mc-border-1)'}`, borderRadius: '8px', padding: '7px 12px', color: articleType === 'BOTTLENECK' ? 'var(--mc-bearish)' : '#8A95A3', fontSize: '12px', fontWeight: '600', cursor: 'pointer', flexShrink: 0, minHeight: '36px' }}
+            style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: articleType === 'BOTTLENECK' ? '#EF444420' : 'var(--mc-bg-2)', border: `1px solid ${articleType === 'BOTTLENECK' ? 'var(--mc-bearish)' : 'var(--mc-border-1)'}`, borderRadius: '8px', padding: '7px 12px', color: articleType === 'BOTTLENECK' ? 'var(--mc-bearish)' : 'var(--mc-text-3)', fontSize: '12px', fontWeight: '600', cursor: 'pointer', flexShrink: 0, minHeight: '36px' }}
             title="Show critical bottleneck news (GPU, Memory, Photonics, Power, etc.)"
           >
             BOTTLENECKS
           </button>
           <button
             onClick={() => setRegion(region === 'IN' ? 'ALL' : 'IN')}
-            style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: region === 'IN' ? '#0F7ABF20' : 'var(--mc-bg-2)', border: `1px solid ${region === 'IN' ? 'var(--mc-accent)' : 'var(--mc-border-1)'}`, borderRadius: '8px', padding: '7px 12px', color: region === 'IN' ? 'var(--mc-accent)' : '#8A95A3', fontSize: '12px', fontWeight: '600', cursor: 'pointer', flexShrink: 0, minHeight: '36px' }}
+            style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: region === 'IN' ? '#0F7ABF20' : 'var(--mc-bg-2)', border: `1px solid ${region === 'IN' ? 'var(--mc-accent)' : 'var(--mc-border-1)'}`, borderRadius: '8px', padding: '7px 12px', color: region === 'IN' ? 'var(--mc-accent)' : 'var(--mc-text-3)', fontSize: '12px', fontWeight: '600', cursor: 'pointer', flexShrink: 0, minHeight: '36px' }}
             title="Show only India news"
           >
             🇮🇳 India
           </button>
           <button
             onClick={() => setRegion(region === 'US' ? 'ALL' : 'US')}
-            style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: region === 'US' ? '#0F7ABF20' : 'var(--mc-bg-2)', border: `1px solid ${region === 'US' ? 'var(--mc-accent)' : 'var(--mc-border-1)'}`, borderRadius: '8px', padding: '7px 12px', color: region === 'US' ? 'var(--mc-accent)' : '#8A95A3', fontSize: '12px', fontWeight: '600', cursor: 'pointer', flexShrink: 0, minHeight: '36px' }}
+            style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: region === 'US' ? '#0F7ABF20' : 'var(--mc-bg-2)', border: `1px solid ${region === 'US' ? 'var(--mc-accent)' : 'var(--mc-border-1)'}`, borderRadius: '8px', padding: '7px 12px', color: region === 'US' ? 'var(--mc-accent)' : 'var(--mc-text-3)', fontSize: '12px', fontWeight: '600', cursor: 'pointer', flexShrink: 0, minHeight: '36px' }}
             title="Show only US news"
           >
             🇺🇸 US
@@ -3372,7 +3372,7 @@ export default function NewsFeedPage() {
               <div style={{ display: 'flex', gap: '6px' }}>
                 {REGIONS.map(r => (
                   <button key={r} onClick={() => setRegion(r)}
-                    style={{ padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', border: `1px solid ${region === r ? 'var(--mc-accent)' : 'var(--mc-border-1)'}`, backgroundColor: region === r ? '#0F7ABF20' : 'transparent', color: region === r ? 'var(--mc-accent)' : '#8A95A3' }}>
+                    style={{ padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', border: `1px solid ${region === r ? 'var(--mc-accent)' : 'var(--mc-border-1)'}`, backgroundColor: region === r ? '#0F7ABF20' : 'transparent', color: region === r ? 'var(--mc-accent)' : 'var(--mc-text-3)' }}>
                     {r === 'IN' ? '🇮🇳 India' : r === 'US' ? '🇺🇸 US' : 'All'}
                   </button>
                 ))}
@@ -3383,7 +3383,7 @@ export default function NewsFeedPage() {
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                 {TYPES.map(t => (
                   <button key={t} onClick={() => setArticleType(t)}
-                    style={{ padding: '5px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '600', cursor: 'pointer', border: `1px solid ${articleType === t ? 'var(--mc-accent)' : 'var(--mc-border-1)'}`, backgroundColor: articleType === t ? '#0F7ABF20' : 'transparent', color: articleType === t ? 'var(--mc-accent)' : '#8A95A3' }}>
+                    style={{ padding: '5px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '600', cursor: 'pointer', border: `1px solid ${articleType === t ? 'var(--mc-accent)' : 'var(--mc-border-1)'}`, backgroundColor: articleType === t ? '#0F7ABF20' : 'transparent', color: articleType === t ? 'var(--mc-accent)' : 'var(--mc-text-3)' }}>
                     {t === 'ALL' ? 'All' : t.replace(/_/g, ' ')}
                   </button>
                 ))}
@@ -3393,7 +3393,7 @@ export default function NewsFeedPage() {
             <div>
               <p style={{ fontSize: '10px', fontWeight: '600', color: 'var(--mc-text-4)', margin: '0 0 8px', letterSpacing: '0.5px' }}>EARNINGS SEASON</p>
               <button onClick={() => setEarningsSeasonActive(v => !v)}
-                style={{ padding: '5px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer', border: `1px solid ${earningsSeasonActive ? 'var(--mc-bullish)' : 'var(--mc-border-1)'}`, backgroundColor: earningsSeasonActive ? '#10B98120' : 'transparent', color: earningsSeasonActive ? 'var(--mc-bullish)' : '#8A95A3' }}
+                style={{ padding: '5px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer', border: `1px solid ${earningsSeasonActive ? 'var(--mc-bullish)' : 'var(--mc-border-1)'}`, backgroundColor: earningsSeasonActive ? '#10B98120' : 'transparent', color: earningsSeasonActive ? 'var(--mc-bullish)' : 'var(--mc-text-3)' }}
                 title="Filter to Q4 FY26 results window (Apr 1 → Jul 31 2026), category locked to EARNINGS">
                 📊 Q4 FY26 Earnings {earningsSeasonActive ? '✓' : ''}
               </button>
@@ -3409,7 +3409,7 @@ export default function NewsFeedPage() {
                   { v: 'RR',  label: '↗ RR · Re-rating',     color: '#A78BFA' },
                 ] as const).map((s) => (
                   <button key={s.v} onClick={() => setStrategyFilter(s.v as any)}
-                    style={{ padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer', border: `1px solid ${strategyFilter === s.v ? s.color : 'var(--mc-border-1)'}`, backgroundColor: strategyFilter === s.v ? s.color + '20' : 'transparent', color: strategyFilter === s.v ? s.color : '#8A95A3' }}
+                    style={{ padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer', border: `1px solid ${strategyFilter === s.v ? s.color : 'var(--mc-border-1)'}`, backgroundColor: strategyFilter === s.v ? s.color + '20' : 'transparent', color: strategyFilter === s.v ? s.color : 'var(--mc-text-3)' }}
                     title={`Show only articles tagged ${s.label}`}>
                     {s.label}
                   </button>
@@ -3421,7 +3421,7 @@ export default function NewsFeedPage() {
               <div style={{ display: 'flex', gap: '6px' }}>
                 {SIGNAL_FILTERS.map(s => (
                   <button key={s.value} onClick={() => setSignalFilter(s.value)}
-                    style={{ padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', border: `1px solid ${signalFilter === s.value ? 'var(--mc-accent)' : 'var(--mc-border-1)'}`, backgroundColor: signalFilter === s.value ? '#0F7ABF20' : 'transparent', color: signalFilter === s.value ? 'var(--mc-accent)' : '#8A95A3' }}>
+                    style={{ padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', border: `1px solid ${signalFilter === s.value ? 'var(--mc-accent)' : 'var(--mc-border-1)'}`, backgroundColor: signalFilter === s.value ? '#0F7ABF20' : 'transparent', color: signalFilter === s.value ? 'var(--mc-accent)' : 'var(--mc-text-3)' }}>
                     {s.label}
                   </button>
                 ))}
@@ -3432,7 +3432,7 @@ export default function NewsFeedPage() {
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                 {SOURCES.map(s => (
                   <button key={s} onClick={() => setSourceName(s)}
-                    style={{ padding: '5px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '600', cursor: 'pointer', border: `1px solid ${sourceName === s ? 'var(--mc-accent)' : 'var(--mc-border-1)'}`, backgroundColor: sourceName === s ? '#0F7ABF20' : 'transparent', color: sourceName === s ? 'var(--mc-accent)' : '#8A95A3' }}>
+                    style={{ padding: '5px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '600', cursor: 'pointer', border: `1px solid ${sourceName === s ? 'var(--mc-accent)' : 'var(--mc-border-1)'}`, backgroundColor: sourceName === s ? '#0F7ABF20' : 'transparent', color: sourceName === s ? 'var(--mc-accent)' : 'var(--mc-text-3)' }}>
                     {s === 'ALL' ? 'All' : s}
                   </button>
                 ))}
@@ -3499,7 +3499,7 @@ export default function NewsFeedPage() {
           {/* Sticky header+filter bar */}
           <div style={{
             position: 'sticky', top: 0, zIndex: 10,
-            backgroundColor: '#0D1B2E', border: '1px solid #EF444440', borderRadius: '12px',
+            backgroundColor: 'var(--mc-bg-1)', border: '1px solid #EF444440', borderRadius: '12px',
             padding: '12px 16px', marginBottom: '10px',
             backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
             boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
@@ -3517,7 +3517,7 @@ export default function NewsFeedPage() {
                     fontSize: '10px', fontWeight: '600', padding: '4px 9px', borderRadius: '6px', cursor: 'pointer',
                     border: `1px solid ${sortBy === 'impact' ? '#F59E0B60' : 'var(--mc-border-1)'}`,
                     backgroundColor: sortBy === 'impact' ? '#F59E0B15' : 'transparent',
-                    color: sortBy === 'impact' ? 'var(--mc-warn)' : '#8A95A3',
+                    color: sortBy === 'impact' ? 'var(--mc-warn)' : 'var(--mc-text-3)',
                   }}
                   title="Toggle sort order"
                 >
@@ -3530,7 +3530,7 @@ export default function NewsFeedPage() {
                     fontSize: '10px', fontWeight: '600', padding: '4px 9px', borderRadius: '6px', cursor: 'pointer',
                     border: `1px solid ${structuralOnly ? '#8B5CF660' : 'var(--mc-border-1)'}`,
                     backgroundColor: structuralOnly ? '#8B5CF615' : 'transparent',
-                    color: structuralOnly ? '#8B5CF6' : '#8A95A3',
+                    color: structuralOnly ? 'var(--mc-state-persistent)' : 'var(--mc-text-3)',
                   }}
                   title="Show only structural (non-news) signals"
                 >
@@ -3568,7 +3568,7 @@ export default function NewsFeedPage() {
                       cursor: 'pointer',
                       border: `1px solid ${isActive ? lvl.color : 'var(--mc-border-1)'}`,
                       backgroundColor: isActive ? lvl.bg : 'transparent',
-                      color: isActive ? lvl.color : '#8A95A3',
+                      color: isActive ? lvl.color : 'var(--mc-text-3)',
                       transition: 'all 0.15s ease',
                     }}
                   >
@@ -3622,9 +3622,9 @@ export default function NewsFeedPage() {
                       display: 'flex', alignItems: 'center', gap: '4px',
                       padding: '4px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '600',
                       cursor: 'pointer',
-                      border: `1px solid ${isActive ? '#8B5CF6' : 'var(--mc-border-1)'}`,
+                      border: `1px solid ${isActive ? 'var(--mc-state-persistent)' : 'var(--mc-border-1)'}`,
                       backgroundColor: isActive ? '#8B5CF615' : 'transparent',
-                      color: isActive ? '#8B5CF6' : '#8A95A3',
+                      color: isActive ? 'var(--mc-state-persistent)' : 'var(--mc-text-3)',
                     }}
                   >
                     {cat.icon && <span style={{ fontSize: '9px' }}>{cat.icon}</span>}
@@ -3633,7 +3633,7 @@ export default function NewsFeedPage() {
                       fontSize: '9px', fontWeight: '700',
                       padding: '1px 4px', borderRadius: '3px',
                       backgroundColor: isActive ? '#8B5CF620' : '#1E2D4580',
-                      color: isActive ? '#8B5CF6' : 'var(--mc-text-4)',
+                      color: isActive ? 'var(--mc-state-persistent)' : 'var(--mc-text-4)',
                     }}>
                       {count}
                     </span>
@@ -3651,19 +3651,19 @@ export default function NewsFeedPage() {
                 display: 'flex', alignItems: 'center', gap: '10px', width: '100%',
                 backgroundColor: '#8B5CF610', border: '1px solid #8B5CF640',
                 borderRadius: '10px', padding: '10px 14px', marginBottom: '10px',
-                cursor: 'pointer', textAlign: 'left', color: '#C9D4E0',
+                cursor: 'pointer', textAlign: 'left', color: 'var(--mc-text-2)',
               }}
             >
               <span style={{ fontSize: '20px' }}>{BOTTLENECK_DRILLDOWN[bottleneckCategory].icon}</span>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: '12px', fontWeight: '700', color: '#8B5CF6' }}>
+                <div style={{ fontSize: '12px', fontWeight: '700', color: 'var(--mc-state-persistent)' }}>
                   {BOTTLENECK_DRILLDOWN[bottleneckCategory].label} · Analysis
                 </div>
-                <div style={{ fontSize: '10px', color: '#8A95A3' }}>
+                <div style={{ fontSize: '10px', color: 'var(--mc-text-3)' }}>
                   Click for supply/demand breakdown and listed companies impacted
                 </div>
               </div>
-              <ChevronRight style={{ width: '14px', height: '14px', color: '#8B5CF6' }} />
+              <ChevronRight style={{ width: '14px', height: '14px', color: 'var(--mc-state-persistent)' }} />
             </button>
           )}
 
@@ -3718,7 +3718,7 @@ export default function NewsFeedPage() {
 
       {/* ── Signal summary bar ─────────────────────────────────────── */}
       {!isLoading && articles?.length > 0 && !showBottleneckDashboard && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px', padding: '8px 12px', backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderRadius: '10px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px', padding: '8px 12px', backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)', borderRadius: '10px', flexWrap: 'wrap' }}>
           <span style={{ fontSize: '10px', fontWeight: '700', color: '#6A7B8C', letterSpacing: '0.5px' }}>SIGNALS</span>
           <span style={{ fontSize: '11px', color: 'var(--mc-bearish)', fontWeight: '600' }}>
             {/* PATCH 0720 — read from memoized tierCounts */}
@@ -3730,7 +3730,7 @@ export default function NewsFeedPage() {
           <button
             onClick={() => setSignalFilter(signalFilter === 'LOW' ? 'ALL' : 'LOW')}
             title="Low/Noise (tier-3) stories are hidden from the default feed. Click to view only them; click again to return."
-            style={{ fontSize: '11px', fontWeight: '600', cursor: 'pointer', borderRadius: '6px', padding: '1px 7px', backgroundColor: signalFilter === 'LOW' ? '#8A95A318' : 'transparent', border: `1px solid ${signalFilter === 'LOW' ? '#8A95A360' : 'transparent'}`, color: '#8A95A3' }}
+            style={{ fontSize: '11px', fontWeight: '600', cursor: 'pointer', borderRadius: '6px', padding: '1px 7px', backgroundColor: signalFilter === 'LOW' ? '#8A95A318' : 'transparent', border: `1px solid ${signalFilter === 'LOW' ? '#8A95A360' : 'transparent'}`, color: 'var(--mc-text-3)' }}
           >
             ⚪ {noiseCount} Low
           </button>
@@ -3916,7 +3916,7 @@ export default function NewsFeedPage() {
 
         return (
         <div style={{
-          backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)',
+          backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)',
           borderLeft: '4px solid var(--mc-bearish)',
           // PATCH 0085: doubled padding so the section breathes at larger card sizes
           borderRadius: '14px', padding: '16px 20px', marginBottom: '16px',
@@ -3945,9 +3945,9 @@ export default function NewsFeedPage() {
                 title={`${totalLatest} bottleneck${totalLatest === 1 ? '' : 's'} first detected in the last 10 days. They surface at the top of each region panel for 10 days, then drop back into normal confidence/structural ranking.`}
                 style={{
                   fontSize: 12, fontWeight: 800, letterSpacing: '0.5px',
-                  color: '#0A1422',
-                  border: '1px solid #FBBF24',
-                  backgroundColor: '#FBBF24',
+                  color: 'var(--mc-bg-0)',
+                  border: '1px solid var(--mc-warn)',
+                  backgroundColor: 'var(--mc-warn)',
                   padding: '2px 8px', borderRadius: 4,
                   display: 'inline-flex', alignItems: 'center', gap: 5,
                 }}
@@ -4009,9 +4009,9 @@ export default function NewsFeedPage() {
                           style={{
                             marginLeft: 'auto',
                             fontSize: 11, fontWeight: 700, letterSpacing: '0.4px',
-                            color: '#0A1422',
-                            backgroundColor: '#FBBF24',
-                            border: '1px solid #FBBF24',
+                            color: 'var(--mc-bg-0)',
+                            backgroundColor: 'var(--mc-warn)',
+                            border: '1px solid var(--mc-warn)',
                             padding: '2px 8px', borderRadius: 4,
                           }}
                         >
@@ -4034,7 +4034,7 @@ export default function NewsFeedPage() {
                 return (
                   // PATCH 0085: card padding 8/10 → 14/18, radius 8 → 12
                   <div key={b.node} style={{
-                    backgroundColor: '#0A1422', border: '1px solid var(--mc-bg-4)',
+                    backgroundColor: 'var(--mc-bg-0)', border: '1px solid var(--mc-bg-4)',
                     borderRadius: 12, padding: '14px 18px',
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
@@ -4043,7 +4043,7 @@ export default function NewsFeedPage() {
                         {showLabel}
                       </span>
                       {b.is_structural && (
-                        <span style={{ fontSize: 11, fontWeight: 700, color: '#8B5CF6', border: '1px solid #8B5CF640', backgroundColor: '#8B5CF610', padding: '2px 6px', borderRadius: 4 }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-state-persistent)', border: '1px solid #8B5CF640', backgroundColor: '#8B5CF610', padding: '2px 6px', borderRadius: 4 }}>
                           STRUCTURAL
                         </span>
                       )}
@@ -4053,9 +4053,9 @@ export default function NewsFeedPage() {
                           title={`First detected ${b.first_seen_age_days ?? '?'} day${b.first_seen_age_days === 1 ? '' : 's'} ago. Surfaces at top of panel for the first 10 days, then drops to confidence/structural ranking.`}
                           style={{
                             fontSize: 11, fontWeight: 800, letterSpacing: '0.4px',
-                            color: '#0A1422',
-                            backgroundColor: '#FBBF24',
-                            border: '1px solid #FBBF24',
+                            color: 'var(--mc-bg-0)',
+                            backgroundColor: 'var(--mc-warn)',
+                            border: '1px solid var(--mc-warn)',
                             padding: '2px 7px', borderRadius: 4,
                             display: 'inline-flex', alignItems: 'center', gap: 4,
                           }}

@@ -285,10 +285,10 @@ function PortfolioSummary({ rows, holdings }: { rows: PortfolioRow[]; holdings: 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '20px' }}>
       {cards.map(c => (
-        <div key={c.label} style={{ backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '12px', padding: '16px' }}>
+        <div key={c.label} style={{ backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-2)', borderRadius: '12px', padding: '16px' }}>
           <div style={{ fontSize: '10px', color: 'var(--mc-text-3)', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.5px' }}>{c.label}</div>
           <div style={{ fontSize: '20px', fontWeight: '700', color: c.color }}>{c.value}</div>
-          {c.sub && <div style={{ fontSize: '11px', color: '#64748B', marginTop: '2px' }}>{c.sub}</div>}
+          {c.sub && <div style={{ fontSize: '11px', color: 'var(--mc-text-4)', marginTop: '2px' }}>{c.sub}</div>}
         </div>
       ))}
     </div>
@@ -332,7 +332,7 @@ function AddHoldingForm({ onAdd, onCancel, quotes }: { onAdd: (h: PortfolioHoldi
   };
 
   return (
-    <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #2A3B4C', borderRadius: '12px', padding: '20px', marginBottom: '20px' }}>
+    <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-2)', borderRadius: '12px', padding: '20px', marginBottom: '20px' }}>
       <div style={{ fontSize: '14px', fontWeight: '700', color: 'var(--mc-text-0)', marginBottom: '16px' }}>Add Holding</div>
       <div style={{ marginBottom: '12px' }}>
         <label style={{ fontSize: '11px', color: 'var(--mc-text-3)', fontWeight: '600', display: 'block', marginBottom: '4px' }}>SEARCH STOCK</label>
@@ -374,7 +374,7 @@ function AddHoldingForm({ onAdd, onCancel, quotes }: { onAdd: (h: PortfolioHoldi
         </div>
       </div>
       <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-        <button onClick={onCancel} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #2A3B4C', backgroundColor: 'transparent', color: 'var(--mc-text-3)', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>Cancel</button>
+        <button onClick={onCancel} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--mc-border-2)', backgroundColor: 'transparent', color: 'var(--mc-text-3)', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>Cancel</button>
         <button onClick={handleSubmit} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', backgroundColor: 'var(--mc-bullish)', color: 'white', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>Add to Portfolio</button>
       </div>
     </div>
@@ -399,7 +399,7 @@ function EditableCell({ value, onSave, type = 'price' }: { value: number; onSave
     <span style={{ display: 'inline-flex', gap: '2px', alignItems: 'center' }}>
       {/* PATCH 0454 P2-29 — inputMode='decimal' for mobile keyboard. */}
       <input type="number" inputMode={type === 'qty' ? 'numeric' : 'decimal'} value={val} onChange={e => setVal(e.target.value)}
-        style={{ width: '80px', padding: '2px 6px', backgroundColor: '#1A2B3C', border: '1px solid var(--mc-info)', borderRadius: '4px', color: 'var(--mc-text-0)', fontSize: '12px', outline: 'none' }}
+        style={{ width: '80px', padding: '2px 6px', backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-info)', borderRadius: '4px', color: 'var(--mc-text-0)', fontSize: '12px', outline: 'none' }}
         onKeyDown={e => { if (e.key === 'Enter') { onSave(Number(val)); setEditing(false); } if (e.key === 'Escape') setEditing(false); }}
         autoFocus
       />
@@ -430,7 +430,7 @@ function normCapBucket(c?: string): 'large' | 'mid' | 'small' | 'micro' | 'other
 
 function capBadge(c?: string) {
   const b = normCapBucket(c);
-  if (b === 'other') return <span style={{ color: '#64748B', fontSize: 11 }}>—</span>;
+  if (b === 'other') return <span style={{ color: 'var(--mc-text-4)', fontSize: 11 }}>—</span>;
   const col = CAP_COLORS[b];
   const label = b.charAt(0).toUpperCase() + b.slice(1);
   return <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 5, fontSize: 10.5, fontWeight: 800, background: `${col}22`, color: col, letterSpacing: '0.3px' }}>{label}</span>;
@@ -495,20 +495,20 @@ function PortfolioAnalytics({ rows, onSelectCap }: { rows: PortfolioRow[]; onSel
   const Bar = ({ label, sub, pct, count, color, valueTxt, pnl }: any) => (
     <div style={{ marginBottom: 10 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 3 }}>
-        <span style={{ color: 'var(--mc-text-0)', fontWeight: 700 }}>{label} {count != null && <span style={{ color: '#64748B', fontWeight: 600, fontSize: 11 }}>· {count}</span>}</span>
-        <span style={{ color: '#C9D4E0', fontVariantNumeric: 'tabular-nums' }}>{pct.toFixed(1)}%{valueTxt ? <span style={{ color: '#64748B', marginLeft: 6, fontSize: 11 }}>{valueTxt}</span> : null}{pnl != null ? <span style={{ color: pnl >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)', marginLeft: 6, fontSize: 11 }}>{pctTxt(pnl)}</span> : null}</span>
+        <span style={{ color: 'var(--mc-text-0)', fontWeight: 700 }}>{label} {count != null && <span style={{ color: 'var(--mc-text-4)', fontWeight: 600, fontSize: 11 }}>· {count}</span>}</span>
+        <span style={{ color: 'var(--mc-text-2)', fontVariantNumeric: 'tabular-nums' }}>{pct.toFixed(1)}%{valueTxt ? <span style={{ color: 'var(--mc-text-4)', marginLeft: 6, fontSize: 11 }}>{valueTxt}</span> : null}{pnl != null ? <span style={{ color: pnl >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)', marginLeft: 6, fontSize: 11 }}>{pctTxt(pnl)}</span> : null}</span>
       </div>
-      <div style={{ height: 7, background: '#1A2B3C', borderRadius: 4, overflow: 'hidden' }}>
+      <div style={{ height: 7, background: 'var(--mc-bg-2)', borderRadius: 4, overflow: 'hidden' }}>
         <div style={{ height: '100%', width: `${Math.min(100, pct)}%`, background: color, borderRadius: 4 }} />
       </div>
-      {sub && <div style={{ fontSize: 10, color: '#64748B', marginTop: 2 }}>{sub}</div>}
+      {sub && <div style={{ fontSize: 10, color: 'var(--mc-text-4)', marginTop: 2 }}>{sub}</div>}
     </div>
   );
   const Stat = ({ label, value, color, sub }: any) => (
     <div style={{ ...card, padding: '12px 14px' }}>
       <div style={{ fontSize: 10, color: 'var(--mc-text-3)', fontWeight: 700, letterSpacing: '0.5px' }}>{label}</div>
       <div style={{ fontSize: 19, fontWeight: 800, color: color || 'var(--mc-text-0)', marginTop: 4 }}>{value}</div>
-      {sub && <div style={{ fontSize: 10.5, color: '#64748B', marginTop: 2 }}>{sub}</div>}
+      {sub && <div style={{ fontSize: 10.5, color: 'var(--mc-text-4)', marginTop: 2 }}>{sub}</div>}
     </div>
   );
 
@@ -528,13 +528,13 @@ function PortfolioAnalytics({ rows, onSelectCap }: { rows: PortfolioRow[]; onSel
         {/* Cap allocation */}
         <div style={card}>
           <div style={h}>Market-cap allocation</div>
-          {capStats.length === 0 ? <div style={{ fontSize: 12, color: '#64748B' }}>No cap data yet — refresh to pull live quotes.</div> :
+          {capStats.length === 0 ? <div style={{ fontSize: 12, color: 'var(--mc-text-4)' }}>No cap data yet — refresh to pull live quotes.</div> :
             capStats.map(c => (
               <div key={c.k} onClick={() => onSelectCap?.(c.k)} title={`Show the ${c.count} ${capLabel[c.k]} holding${c.count === 1 ? '' : 's'}`} style={{ cursor: 'pointer' }}>
                 <Bar label={capLabel[c.k]} count={c.count} pct={c.valPct} color={CAP_COLORS[c.k]} valueTxt={fmtRs(c.value)} pnl={c.retPct} />
               </div>
             ))}
-          <div style={{ fontSize: 10, color: '#64748B', marginTop: 4 }}>% = share of current value · count = holdings · last figure = return on that bucket · <span style={{ color: '#60A5FA' }}>click a bar to see those companies</span></div>
+          <div style={{ fontSize: 10, color: 'var(--mc-text-4)', marginTop: 4 }}>% = share of current value · count = holdings · last figure = return on that bucket · <span style={{ color: '#60A5FA' }}>click a bar to see those companies</span></div>
         </div>
 
         {/* Sector allocation */}
@@ -555,11 +555,11 @@ function PortfolioAnalytics({ rows, onSelectCap }: { rows: PortfolioRow[]; onSel
             <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'var(--mc-text-3)' }}>Invested → Current</span><span style={{ color: 'var(--mc-text-0)', fontWeight: 700 }}>{fmtRs(totalInv)} → {fmtRs(totalCur)}</span></div>
             <div style={{ marginTop: 4 }}>
               <div style={{ fontSize: 11, color: 'var(--mc-text-3)', marginBottom: 4 }}>Win rate</div>
-              <div style={{ height: 8, background: '#1A2B3C', borderRadius: 4, overflow: 'hidden', display: 'flex' }}>
+              <div style={{ height: 8, background: 'var(--mc-bg-2)', borderRadius: 4, overflow: 'hidden', display: 'flex' }}>
                 <div style={{ height: '100%', width: `${priced.length ? (winners.length / priced.length) * 100 : 0}%`, background: 'var(--mc-bullish)' }} />
                 <div style={{ height: '100%', flex: 1, background: 'var(--mc-bearish)' }} />
               </div>
-              <div style={{ fontSize: 10, color: '#64748B', marginTop: 2 }}>{priced.length ? Math.round((winners.length / priced.length) * 100) : 0}% of priced holdings in profit</div>
+              <div style={{ fontSize: 10, color: 'var(--mc-text-4)', marginTop: 2 }}>{priced.length ? Math.round((winners.length / priced.length) * 100) : 0}% of priced holdings in profit</div>
             </div>
           </div>
         </div>
@@ -572,7 +572,7 @@ function PortfolioAnalytics({ rows, onSelectCap }: { rows: PortfolioRow[]; onSel
             const l = [...priced].filter(r => (r.pnl || 0) < 0).sort((a, b) => (a.pnlPercent || 0) - (b.pnlPercent || 0)).slice(0, 10);
             const Row = ({ r, up }: any) => (
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, padding: '2px 0' }}>
-                <span style={{ color: '#C9D4E0', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 110 }}>{r.symbol}</span>
+                <span style={{ color: 'var(--mc-text-2)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 110 }}>{r.symbol}</span>
                 <span style={{ color: up ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{pctTxt(r.pnlPercent || 0)}</span>
               </div>
             );
@@ -580,11 +580,11 @@ function PortfolioAnalytics({ rows, onSelectCap }: { rows: PortfolioRow[]; onSel
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                 <div>
                   <div style={{ fontSize: 10, color: 'var(--mc-bullish)', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>▲ TOP {w.length} WINNERS</div>
-                  {w.length ? w.map(r => <Row key={r.symbol} r={r} up />) : <div style={{ fontSize: 11, color: '#64748B' }}>No winners</div>}
+                  {w.length ? w.map(r => <Row key={r.symbol} r={r} up />) : <div style={{ fontSize: 11, color: 'var(--mc-text-4)' }}>No winners</div>}
                 </div>
                 <div>
                   <div style={{ fontSize: 10, color: 'var(--mc-bearish)', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>▼ TOP {l.length} LOSERS</div>
-                  {l.length ? l.map(r => <Row key={r.symbol} r={r} up={false} />) : <div style={{ fontSize: 11, color: '#64748B' }}>No losers</div>}
+                  {l.length ? l.map(r => <Row key={r.symbol} r={r} up={false} />) : <div style={{ fontSize: 11, color: 'var(--mc-text-4)' }}>No losers</div>}
                 </div>
               </div>
             );
@@ -601,13 +601,13 @@ function PortfolioAnalytics({ rows, onSelectCap }: { rows: PortfolioRow[]; onSel
           {Object.keys(tierCounts).length > 0 ? (
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
               {Object.entries(tierCounts).sort((a, b) => b[1] - a[1]).map(([t, n]) => (
-                <span key={t} style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 800, background: `${tierColors[t] || '#64748B'}22`, color: tierColors[t] || 'var(--mc-text-3)' }}>{t} · {n}</span>
+                <span key={t} style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 800, background: `${tierColors[t] || 'var(--mc-text-4)'}22`, color: tierColors[t] || 'var(--mc-text-3)' }}>{t} · {n}</span>
               ))}
             </div>
-          ) : <div style={{ fontSize: 11.5, color: '#64748B', marginBottom: 10 }}>None of your holdings are on the Conviction Beats bench yet.</div>}
+          ) : <div style={{ fontSize: 11.5, color: 'var(--mc-text-4)', marginBottom: 10 }}>None of your holdings are on the Conviction Beats bench yet.</div>}
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5 }}>
             <span style={{ color: 'var(--mc-text-3)' }}>Avg quality score</span>
-            <span style={{ color: avgScore != null ? (avgScore >= 70 ? 'var(--mc-bullish)' : avgScore >= 50 ? '#FBBF24' : 'var(--mc-bearish)') : '#64748B', fontWeight: 800 }}>{avgScore != null ? avgScore.toFixed(0) : '—'} <span style={{ color: '#64748B', fontWeight: 600, fontSize: 11 }}>({scored.length} scored)</span></span>
+            <span style={{ color: avgScore != null ? (avgScore >= 70 ? 'var(--mc-bullish)' : avgScore >= 50 ? 'var(--mc-warn)' : 'var(--mc-bearish)') : 'var(--mc-text-4)', fontWeight: 800 }}>{avgScore != null ? avgScore.toFixed(0) : '—'} <span style={{ color: 'var(--mc-text-4)', fontWeight: 600, fontSize: 11 }}>({scored.length} scored)</span></span>
           </div>
         </div>
       </div>
@@ -1134,7 +1134,7 @@ export default function PortfolioPage() {
             title="Import a CSV: symbol,price,quantity[,notes]"
             style={{
               display: 'inline-flex', alignItems: 'center', gap: '6px',
-              backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '10px',
+              backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-2)', borderRadius: '10px',
               padding: '10px 14px', color: 'var(--mc-text-3)', cursor: 'pointer',
               fontSize: '13px', fontWeight: '600',
             }}
@@ -1154,7 +1154,7 @@ export default function PortfolioPage() {
           />
           <button onClick={fetchData} disabled={isRefreshing} style={{
             display: 'inline-flex', alignItems: 'center', gap: '6px',
-            backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '10px',
+            backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-2)', borderRadius: '10px',
             padding: '10px 14px', color: 'var(--mc-text-3)', cursor: isRefreshing ? 'not-allowed' : 'pointer',
             fontSize: '13px', fontWeight: '600', opacity: isRefreshing ? 0.6 : 1,
           }}>
@@ -1162,7 +1162,7 @@ export default function PortfolioPage() {
           </button>
           <button onClick={handleExportXLSX} disabled={sortedRows.length === 0} style={{
             display: 'inline-flex', alignItems: 'center', gap: '6px',
-            backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '10px',
+            backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-2)', borderRadius: '10px',
             padding: '10px 14px', color: 'var(--mc-text-3)', cursor: sortedRows.length === 0 ? 'not-allowed' : 'pointer',
             fontSize: '13px', fontWeight: '600', opacity: sortedRows.length === 0 ? 0.4 : 1,
           }}>
@@ -1180,7 +1180,7 @@ export default function PortfolioPage() {
       {/* PATCH 1100 — view tabs + market-cap filter */}
       {!loading && holdings.length > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', margin: '8px 0 14px' }}>
-          <div style={{ display: 'flex', gap: 4, background: '#0D1B2E', border: '1px solid #2A3B4C', borderRadius: 10, padding: 4 }}>
+          <div style={{ display: 'flex', gap: 4, background: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-2)', borderRadius: 10, padding: 4 }}>
             {(['holdings', 'analytics', 'fundamentals'] as const).map(t => (
               <button key={t} onClick={() => setViewTab(t)} style={{
                 padding: '7px 16px', border: 'none', borderRadius: 7, cursor: 'pointer', fontSize: 12.5, fontWeight: 800, letterSpacing: '0.3px',
@@ -1200,7 +1200,7 @@ export default function PortfolioPage() {
                 return (
                   <button key={k} onClick={() => setCapFilter(k)} style={{
                     padding: '5px 11px', borderRadius: 7, cursor: 'pointer', fontSize: 11.5, fontWeight: 700,
-                    border: `1px solid ${active ? col : '#2A3B4C'}`, background: active ? `${col}22` : 'transparent', color: active ? col : 'var(--mc-text-3)',
+                    border: `1px solid ${active ? col : 'var(--mc-border-2)'}`, background: active ? `${col}22` : 'transparent', color: active ? col : 'var(--mc-text-3)',
                   }}>{lbl} <span style={{ opacity: 0.7, fontFamily: 'ui-monospace, monospace', fontSize: 10 }}>{cnt}</span></button>
                 );
               })}
@@ -1229,11 +1229,11 @@ export default function PortfolioPage() {
       {loading && holdings.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           {[1, 2, 3, 4, 5].map(i => (
-            <div key={i} style={{ height: '44px', backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '10px', animation: 'pulse 2s cubic-bezier(0.4,0,0.6,1) infinite', display: 'flex', alignItems: 'center', padding: '0 16px', gap: '12px' }}>
-              <div style={{ width: '60px', height: '14px', backgroundColor: '#2A3B4C', borderRadius: '4px' }} />
-              <div style={{ flex: 1, height: '10px', backgroundColor: '#2A3B4C', borderRadius: '4px' }} />
-              <div style={{ width: '50px', height: '14px', backgroundColor: '#2A3B4C', borderRadius: '4px' }} />
-              <div style={{ width: '50px', height: '14px', backgroundColor: '#2A3B4C', borderRadius: '4px' }} />
+            <div key={i} style={{ height: '44px', backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-2)', borderRadius: '10px', animation: 'pulse 2s cubic-bezier(0.4,0,0.6,1) infinite', display: 'flex', alignItems: 'center', padding: '0 16px', gap: '12px' }}>
+              <div style={{ width: '60px', height: '14px', backgroundColor: 'var(--mc-border-2)', borderRadius: '4px' }} />
+              <div style={{ flex: 1, height: '10px', backgroundColor: 'var(--mc-border-2)', borderRadius: '4px' }} />
+              <div style={{ width: '50px', height: '14px', backgroundColor: 'var(--mc-border-2)', borderRadius: '4px' }} />
+              <div style={{ width: '50px', height: '14px', backgroundColor: 'var(--mc-border-2)', borderRadius: '4px' }} />
             </div>
           ))}
         </div>
@@ -1247,10 +1247,10 @@ export default function PortfolioPage() {
               {displayRows.length}{capFilter !== 'all' ? ` of ${sortedRows.length}` : ''}{displayRows.length === 1 && capFilter === 'all' ? ' holding' : ' holdings'} · Last refreshed: {lastRefresh ? lastRefresh.toLocaleTimeString() : '—'}
             </p>
           </div>
-          <div style={{ overflowX: 'auto', border: '1px solid #2A3B4C', borderRadius: '12px' }}>
+          <div style={{ overflowX: 'auto', border: '1px solid var(--mc-border-2)', borderRadius: '12px' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
               <thead>
-                <tr style={{ borderBottom: '1px solid #2A3B4C', backgroundColor: '#0D1B2E' }}>
+                <tr style={{ borderBottom: '1px solid var(--mc-border-2)', backgroundColor: 'var(--mc-bg-1)' }}>
                   {[
                     { key: 'symbol' as SortField, label: 'SYMBOL', align: 'left' },
                     { key: 'company' as SortField, label: 'COMPANY', align: 'left' },
@@ -1300,7 +1300,7 @@ export default function PortfolioPage() {
                     ? (Date.now() - lastRefresh.getTime()) > 5 * 60_000
                     : false;
                   return (
-                    <tr key={r.symbol} style={{ borderBottom: idx < displayRows.length - 1 ? '1px solid #1A2B3C' : 'none', backgroundColor: idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
+                    <tr key={r.symbol} style={{ borderBottom: idx < displayRows.length - 1 ? '1px solid var(--mc-bg-2)' : 'none', backgroundColor: idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
                       <td style={{ padding: '10px 12px', color: 'var(--mc-info)', fontWeight: '700' }}>{r.symbol}</td>
                       <td style={{ padding: '10px 12px', color: 'var(--mc-text-0)', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
                       <td style={{ padding: '10px 12px', color: 'var(--mc-text-3)', fontSize: '11px', maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.sector}</td>
@@ -1313,12 +1313,12 @@ export default function PortfolioPage() {
                             {isStale && (
                               <span
                                 title={`Price last refreshed ${lastRefresh?.toLocaleTimeString()} (> 5 min ago)`}
-                                style={{ marginLeft: 6, display: 'inline-block', padding: '1px 5px', borderRadius: 3, fontSize: 9, fontWeight: 700, backgroundColor: 'rgba(251,191,36,0.15)', color: '#FBBF24', letterSpacing: 0.4 }}
+                                style={{ marginLeft: 6, display: 'inline-block', padding: '1px 5px', borderRadius: 3, fontSize: 9, fontWeight: 700, backgroundColor: 'rgba(251,191,36,0.15)', color: 'var(--mc-warn)', letterSpacing: 0.4 }}
                               >STALE</span>
                             )}
                           </span>
                         ) : (
-                          <span style={{ display: 'inline-block', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '600', backgroundColor: 'rgba(251,191,36,0.1)', color: '#FBBF24' }}>
+                          <span style={{ display: 'inline-block', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '600', backgroundColor: 'rgba(251,191,36,0.1)', color: 'var(--mc-warn)' }}>
                             N/A
                           </span>
                         )}
@@ -1407,7 +1407,7 @@ export default function PortfolioPage() {
                           <span style={{
                             display: 'inline-block', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '600',
                             backgroundColor: r.score >= 70 ? 'rgba(16,185,129,0.1)' : r.score >= 40 ? 'rgba(251,191,36,0.1)' : 'rgba(100,116,139,0.1)',
-                            color: r.score >= 70 ? 'var(--mc-bullish)' : r.score >= 40 ? '#FBBF24' : '#64748B',
+                            color: r.score >= 70 ? 'var(--mc-bullish)' : r.score >= 40 ? 'var(--mc-warn)' : 'var(--mc-text-4)',
                             fontVariantNumeric: 'tabular-nums',
                           }}>
                             {r.score.toFixed(0)}
@@ -1420,7 +1420,7 @@ export default function PortfolioPage() {
                           <span style={{
                             display: 'inline-block', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '600',
                             backgroundColor: r.sectorTrend === 'Bullish' ? 'rgba(16,185,129,0.1)' : r.sectorTrend === 'Bearish' ? 'rgba(239,68,68,0.1)' : 'rgba(251,191,36,0.1)',
-                            color: r.sectorTrend === 'Bullish' ? 'var(--mc-bullish)' : r.sectorTrend === 'Bearish' ? 'var(--mc-bearish)' : '#FBBF24',
+                            color: r.sectorTrend === 'Bullish' ? 'var(--mc-bullish)' : r.sectorTrend === 'Bearish' ? 'var(--mc-bearish)' : 'var(--mc-warn)',
                           }}>
                             {r.sectorTrend}
                           </span>
@@ -1432,7 +1432,7 @@ export default function PortfolioPage() {
                           <span style={{
                             display: 'inline-block', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '600',
                             backgroundColor: r.decision === 'BUY' ? 'rgba(16,185,129,0.15)' : r.decision === 'ADD' ? 'rgba(5,150,105,0.15)' : r.decision === 'HOLD' ? 'rgba(251,191,36,0.15)' : r.decision === 'TRIM' ? 'rgba(249,115,22,0.15)' : r.decision === 'EXIT' ? 'rgba(239,68,68,0.15)' : 'rgba(100,116,139,0.15)',
-                            color: r.decision === 'BUY' ? 'var(--mc-bullish)' : r.decision === 'ADD' ? '#059669' : r.decision === 'HOLD' ? '#FBBF24' : r.decision === 'TRIM' ? '#F97316' : r.decision === 'EXIT' ? 'var(--mc-bearish)' : '#64748B',
+                            color: r.decision === 'BUY' ? 'var(--mc-bullish)' : r.decision === 'ADD' ? '#059669' : r.decision === 'HOLD' ? 'var(--mc-warn)' : r.decision === 'TRIM' ? 'var(--mc-warn)' : r.decision === 'EXIT' ? 'var(--mc-bearish)' : 'var(--mc-text-4)',
                           }}>
                             {r.decision}
                           </span>
@@ -1485,7 +1485,7 @@ export default function PortfolioPage() {
 
       {/* ── Sync Info ───────────────────────────────────────────────── */}
       {holdings.length > 0 && (
-        <div style={{ marginTop: '24px', padding: '16px', backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '10px', textAlign: 'center' }}>
+        <div style={{ marginTop: '24px', padding: '16px', backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-2)', borderRadius: '10px', textAlign: 'center' }}>
           <p style={{ fontSize: '12px', color: 'var(--mc-text-3)', margin: 0 }}>
             💼 Portfolio synced to your account · Entry price & quantity are editable inline (click to edit)
           </p>

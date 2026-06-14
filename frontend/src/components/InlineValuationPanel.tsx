@@ -138,7 +138,7 @@ export default function InlineValuationPanel() {
       {!hasFiles && (
         <label htmlFor="inline-val-files" style={{
           display: 'block', padding: '18px 16px', textAlign: 'center', cursor: 'pointer',
-          background: '#0A1422', border: `2px dashed ${BORDER}`, borderRadius: 8,
+          background: 'var(--mc-bg-0)', border: `2px dashed ${BORDER}`, borderRadius: 8,
           fontSize: 13, color: TEXT, marginBottom: 14,
         }}>
           <input id="inline-val-files" type="file" multiple accept=".xlsx,.xls,.pdf"
@@ -173,7 +173,7 @@ export default function InlineValuationPanel() {
 
       {/* Report */}
       {report && (
-        <div style={{ background: '#0A1422', border: `1px solid ${BORDER}`, borderRadius: 8, padding: '14px 16px' }}>
+        <div style={{ background: 'var(--mc-bg-0)', border: `1px solid ${BORDER}`, borderRadius: 8, padding: '14px 16px' }}>
           {/* Quant verdict — explicitly framed as 'quant says X' so the reader
               compares it against the editorial recommendation banner above. */}
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
@@ -305,7 +305,7 @@ export default function InlineValuationPanel() {
             return (
               <div style={{
                 marginBottom: 12, padding: '10px 12px',
-                background: '#0A1422', border: `1px solid #A78BFA40`,
+                background: 'var(--mc-bg-0)', border: `1px solid #A78BFA40`,
                 borderLeft: '3px solid var(--mc-state-persistent)', borderRadius: 5,
               }}>
                 <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--mc-state-persistent)', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6 }}>
@@ -493,7 +493,7 @@ export default function InlineValuationPanel() {
             const blendColor = blended.valuationContribution > 0 ? '#10B981' : blended.valuationContribution < 0 ? '#EF4444' : '#94A3B8';
             return (
               <div style={{
-                marginTop: 12, padding: '10px 12px', background: '#0A1422',
+                marginTop: 12, padding: '10px 12px', background: 'var(--mc-bg-0)',
                 border: `1px solid ${blendColor}40`, borderLeft: `3px solid ${blendColor}`,
                 borderRadius: 5, fontSize: 11, color: TEXT, lineHeight: 1.6,
               }}>

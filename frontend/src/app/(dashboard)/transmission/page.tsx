@@ -162,7 +162,7 @@ function ZScoreChips({ commodity }: { commodity: CommodityRow }) {
     return TOKENS.semantic.bearish.solid;                 // extreme low → capitulation
   };
   return (
-    <div style={{ marginBottom: 18, backgroundColor: '#0A1422', border: `1px solid ${TOKENS.surface.cardBorder}`, borderRadius: 6, padding: '10px 14px' }}>
+    <div style={{ marginBottom: 18, backgroundColor: 'var(--mc-bg-0)', border: `1px solid ${TOKENS.surface.cardBorder}`, borderRadius: 6, padding: '10px 14px' }}>
       <div style={{ fontSize: 10, color: TOKENS.surface.textMuted, fontWeight: 700, marginBottom: 8, letterSpacing: '0.5px' }}>
         STATISTICAL CONTEXT  ·  current price vs historical distribution
       </div>
@@ -239,14 +239,14 @@ function DrilldownPanel({ commodity, onClose }: { commodity: CommodityRow; onClo
             { label: '1m', value: pct(commodity.change_1m), tone: (commodity.change_1m ?? 0) >= 0 ? TOKENS.semantic.bullish.solid : TOKENS.semantic.bearish.solid },
             { label: '3m', value: pct(commodity.change_3m), tone: (commodity.change_3m ?? 0) >= 0 ? TOKENS.semantic.bullish.solid : TOKENS.semantic.bearish.solid },
           ] as const).map(k => (
-            <div key={k.label} style={{ backgroundColor: '#0A1422', border: `1px solid ${TOKENS.surface.cardBorder}`, borderRadius: 6, padding: '8px 10px' }}>
+            <div key={k.label} style={{ backgroundColor: 'var(--mc-bg-0)', border: `1px solid ${TOKENS.surface.cardBorder}`, borderRadius: 6, padding: '8px 10px' }}>
               <div style={{ fontSize: 9, color: TOKENS.surface.textMuted, fontWeight: 700, letterSpacing: '0.5px' }}>{k.label.toUpperCase()}</div>
               <div style={{ fontSize: 14, fontWeight: 800, color: k.tone, marginTop: 2, ...NUM }}>{k.value}</div>
             </div>
           ))}
         </div>
         {commodity.sparkline && commodity.sparkline.length > 1 && (
-          <div style={{ marginBottom: 18, backgroundColor: '#0A1422', border: `1px solid ${TOKENS.surface.cardBorder}`, borderRadius: 6, padding: '10px 14px' }}>
+          <div style={{ marginBottom: 18, backgroundColor: 'var(--mc-bg-0)', border: `1px solid ${TOKENS.surface.cardBorder}`, borderRadius: 6, padding: '10px 14px' }}>
             <div style={{ fontSize: 10, color: TOKENS.surface.textMuted, fontWeight: 700, marginBottom: 6, letterSpacing: '0.5px' }}>LAST 60 DAYS</div>
             <Sparkline data={commodity.sparkline} color={TOKENS.surface.accent} width={680} height={70} />
           </div>
@@ -268,7 +268,7 @@ function DrilldownPanel({ commodity, onClose }: { commodity: CommodityRow; onClo
             const col = pp == null ? TOKENS.surface.textMuted : pp > 0 ? TOKENS.semantic.bullish.solid : TOKENS.semantic.bearish.solid;
             return (
               <div key={i} style={{
-                backgroundColor: '#0A1422', border: `1px solid ${TOKENS.surface.cardBorder}`,
+                backgroundColor: 'var(--mc-bg-0)', border: `1px solid ${TOKENS.surface.cardBorder}`,
                 borderLeft: `3px solid ${col}`,
                 borderRadius: 6, padding: '10px 14px',
               }}>
@@ -399,7 +399,7 @@ function ScenarioLab({ commodities }: { commodities: CommodityRow[] }) {
         <div style={{ display: 'flex', gap: 6, marginBottom: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <span style={{ fontSize: 10, color: TOKENS.surface.textMuted, fontWeight: 700 }}>SAVED:</span>
           {savedScenarios.map(s => (
-            <span key={s.ts} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', border: `1px solid ${TOKENS.surface.cardBorder}`, borderRadius: 4, backgroundColor: '#0A1422' }}>
+            <span key={s.ts} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', border: `1px solid ${TOKENS.surface.cardBorder}`, borderRadius: 4, backgroundColor: 'var(--mc-bg-0)' }}>
               <button onClick={() => loadScenario(s)} title={`Restore: ${s.label} (${s.base})`} style={{ background: 'none', border: 'none', color: TOKENS.surface.text, fontSize: 10, fontWeight: 700, cursor: 'pointer', padding: 0 }}>{s.label}</button>
               <button onClick={() => deleteScenario(s.ts)} title="Forget this scenario" style={{ background: 'none', border: 'none', color: TOKENS.semantic.bearish.solid, fontSize: 11, cursor: 'pointer', padding: '0 2px' }}>×</button>
             </span>
@@ -441,7 +441,7 @@ function ScenarioLab({ commodities }: { commodities: CommodityRow[] }) {
             {sectorAgg.slice(0, 10).map(s => {
               const col = s.pressure > 0 ? TOKENS.semantic.bullish.solid : TOKENS.semantic.bearish.solid;
               return (
-                <div key={s.sector} style={{ display: 'grid', gridTemplateColumns: '1fr 80px', gap: 8, alignItems: 'center', padding: '4px 8px', borderRadius: 4, backgroundColor: '#0A1422', border: `1px solid ${col}30`, borderLeft: `3px solid ${col}` }}>
+                <div key={s.sector} style={{ display: 'grid', gridTemplateColumns: '1fr 80px', gap: 8, alignItems: 'center', padding: '4px 8px', borderRadius: 4, backgroundColor: 'var(--mc-bg-0)', border: `1px solid ${col}30`, borderLeft: `3px solid ${col}` }}>
                   <div>
                     <div style={{ fontSize: 11, fontWeight: 700 }}>{s.sector}</div>
                     <div style={{ display: 'flex', gap: 3, marginTop: 2 }}>
@@ -656,13 +656,13 @@ export default function TransmissionPage() {
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 10, color: TOKENS.surface.textMuted, fontWeight: 700, marginBottom: 4 }}>SECTOR CONTAINS</div>
           <input value={sectorSearch} onChange={e => setSectorSearch(e.target.value)} placeholder="e.g. Cement"
-            style={{ width: '100%', fontSize: 11, padding: '5px 8px', borderRadius: 4, backgroundColor: '#0A1422', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.text, fontFamily: 'inherit' }}
+            style={{ width: '100%', fontSize: 11, padding: '5px 8px', borderRadius: 4, backgroundColor: 'var(--mc-bg-0)', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.text, fontFamily: 'inherit' }}
           />
         </div>
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 10, color: TOKENS.surface.textMuted, fontWeight: 700, marginBottom: 4 }}>TICKER CONTAINS</div>
           <input value={tickerSearch} onChange={e => setTickerSearch(e.target.value)} placeholder="e.g. RELIANCE"
-            style={{ width: '100%', fontSize: 11, padding: '5px 8px', borderRadius: 4, backgroundColor: '#0A1422', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.text, fontFamily: 'inherit', textTransform: 'uppercase' }}
+            style={{ width: '100%', fontSize: 11, padding: '5px 8px', borderRadius: 4, backgroundColor: 'var(--mc-bg-0)', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.text, fontFamily: 'inherit', textTransform: 'uppercase' }}
           />
         </div>
         <div style={{ marginBottom: 12 }}>
@@ -721,7 +721,7 @@ export default function TransmissionPage() {
                 const col = s.pressure_pp > 0 ? TOKENS.semantic.bullish.solid : TOKENS.semantic.bearish.solid;
                 return (
                   <div key={i} style={{
-                    padding: '8px 12px', backgroundColor: '#0A1422',
+                    padding: '8px 12px', backgroundColor: 'var(--mc-bg-0)',
                     border: `1px solid ${col}30`, borderLeft: `3px solid ${col}`,
                     borderRadius: 6, display: 'flex', alignItems: 'center', gap: 10,
                   }}>

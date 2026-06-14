@@ -1095,7 +1095,7 @@ export default function NewsCard({ article, onTickerClick }: Props) {
               style={{
                 backgroundColor: '#22D3EE08',
                 borderColor: '#22D3EE40',
-                color: '#C9D4E0',
+                color: 'var(--mc-text-2)',
               }}
             >
               <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--mc-cyan)', letterSpacing: '0.4px', marginBottom: 6 }}>
@@ -1106,12 +1106,12 @@ export default function NewsCard({ article, onTickerClick }: Props) {
                   <span
                     key={`${src}-${i}`}
                     style={{
-                      backgroundColor: '#0D1B2E',
+                      backgroundColor: 'var(--mc-bg-1)',
                       border: '1px solid var(--mc-border-1)',
                       borderRadius: 4,
                       padding: '2px 6px',
                       fontSize: 10,
-                      color: '#8A95A3',
+                      color: 'var(--mc-text-3)',
                     }}
                   >{src}</span>
                 ))}

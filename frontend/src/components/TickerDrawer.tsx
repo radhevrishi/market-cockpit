@@ -190,20 +190,20 @@ export default function TickerDrawer({ symbol, exchange, onClose }: TickerDrawer
           {qLoading ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {[1, 2, 3].map(i => (
-                <div key={i} style={{ height: i === 1 ? '36px' : '18px', backgroundColor: '#1A2B3C', borderRadius: '6px' }} className="animate-shimmer" />
+                <div key={i} style={{ height: i === 1 ? '36px' : '18px', backgroundColor: 'var(--mc-bg-2)', borderRadius: '6px' }} className="animate-shimmer" />
               ))}
             </div>
           ) : qError ? (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', padding: '12px 0' }}>
               <AlertCircle style={{ width: '20px', height: '20px', color: 'var(--mc-bearish)' }} />
-              <p style={{ fontSize: '13px', color: '#8A95A3', margin: 0 }}>Could not load quote for {symbol}</p>
+              <p style={{ fontSize: '13px', color: 'var(--mc-text-3)', margin: 0 }}>Could not load quote for {symbol}</p>
               <button onClick={() => qRefetch()} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: 'var(--mc-accent)', background: 'none', border: 'none', cursor: 'pointer' }}>
                 <RefreshCw style={{ width: '12px', height: '12px' }} /> Retry
               </button>
             </div>
           ) : quote ? (
             <>
-              <p style={{ fontSize: '12px', color: '#8A95A3', margin: '0 0 4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayName}</p>
+              <p style={{ fontSize: '12px', color: 'var(--mc-text-3)', margin: '0 0 4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayName}</p>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', marginBottom: '12px' }}>
                 <span style={{ fontSize: '28px', fontWeight: '800', color: 'var(--mc-text-0)', letterSpacing: '-1px' }}>
                   {fmt(quote.price)}
@@ -225,9 +225,9 @@ export default function TickerDrawer({ symbol, exchange, onClose }: TickerDrawer
                   { label: 'Mkt Cap', value: quote.market_cap ? (quote.market_cap >= 1e12 ? `$${(quote.market_cap / 1e12).toFixed(1)}T` : quote.market_cap >= 1e9 ? `$${(quote.market_cap / 1e9).toFixed(1)}B` : `$${(quote.market_cap / 1e6).toFixed(0)}M`) : '—' },
                   { label: 'P/E', value: quote.pe_ratio != null ? fmt(quote.pe_ratio, 1) : '—' },
                 ].map(({ label, value }) => (
-                  <div key={label} style={{ backgroundColor: '#0D1B2E', borderRadius: '8px', padding: '8px 10px' }}>
+                  <div key={label} style={{ backgroundColor: 'var(--mc-bg-1)', borderRadius: '8px', padding: '8px 10px' }}>
                     <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--mc-text-4)', margin: '0 0 3px', letterSpacing: '0.5px' }}>{label}</p>
-                    <p style={{ fontSize: '12px', color: '#C9D4E0', margin: 0, fontVariantNumeric: 'tabular-nums' }}>{value}</p>
+                    <p style={{ fontSize: '12px', color: 'var(--mc-text-2)', margin: 0, fontVariantNumeric: 'tabular-nums' }}>{value}</p>
                   </div>
                 ))}
               </div>
@@ -241,7 +241,7 @@ export default function TickerDrawer({ symbol, exchange, onClose }: TickerDrawer
 
           {nLoading ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {[1, 2, 3].map(i => <div key={i} style={{ height: '52px', backgroundColor: '#1A2B3C', borderRadius: '8px' }} className="animate-shimmer" />)}
+              {[1, 2, 3].map(i => <div key={i} style={{ height: '52px', backgroundColor: 'var(--mc-bg-2)', borderRadius: '8px' }} className="animate-shimmer" />)}
             </div>
           ) : !filteredNews.length ? (
             /* PATCH 0692 — honest empty-state: only show 'no news' when the
@@ -258,7 +258,7 @@ export default function TickerDrawer({ symbol, exchange, onClose }: TickerDrawer
                   <a
                     key={n.id}
                     href={url} target="_blank" rel="noopener noreferrer"
-                    style={{ display: 'block', padding: '10px 12px', backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderRadius: '10px', textDecoration: 'none', transition: 'border-color 0.15s' }}
+                    style={{ display: 'block', padding: '10px 12px', backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)', borderRadius: '10px', textDecoration: 'none', transition: 'border-color 0.15s' }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
                       {(() => {
@@ -271,7 +271,7 @@ export default function TickerDrawer({ symbol, exchange, onClose }: TickerDrawer
                       })()}
                       <span style={{ fontSize: '10px', color: 'var(--mc-text-4)', marginLeft: 'auto', flexShrink: 0 }}>{timeAgo(n.published_at)}</span>
                     </div>
-                    <p style={{ fontSize: '12px', color: '#C9D4E0', margin: 0, lineHeight: '1.4' }}>
+                    <p style={{ fontSize: '12px', color: 'var(--mc-text-2)', margin: 0, lineHeight: '1.4' }}>
                       {title.slice(0, 100)}{title.length > 100 ? '…' : ''}
                     </p>
                     {src && <p style={{ fontSize: '10px', color: 'var(--mc-text-4)', margin: '4px 0 0', display: 'flex', alignItems: 'center', gap: '3px' }}>{src} <ExternalLink style={{ width: '8px', height: '8px' }} /></p>}

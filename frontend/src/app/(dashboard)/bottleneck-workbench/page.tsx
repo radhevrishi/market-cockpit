@@ -414,7 +414,7 @@ export default function BottleneckWorkbenchPage() {
                       title="Heuristic role classification — ticker_roles pipeline pending"
                       style={{
                         display: 'inline-flex', alignItems: 'center', gap: 4,
-                        backgroundColor: '#0A1422', border: `1px solid ${TOKENS.surface.cardBorder}`,
+                        backgroundColor: 'var(--mc-bg-0)', border: `1px solid ${TOKENS.surface.cardBorder}`,
                         borderRadius: 5, padding: '3px 8px',
                         fontSize: 11, fontWeight: 700,
                         fontFamily: 'ui-monospace, monospace',
@@ -438,7 +438,7 @@ export default function BottleneckWorkbenchPage() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {bucket.signals.map(s => (
                   <div key={s.id} style={{
-                    backgroundColor: '#0A1422', border: `1px solid ${TOKENS.surface.cardBorder}`,
+                    backgroundColor: 'var(--mc-bg-0)', border: `1px solid ${TOKENS.surface.cardBorder}`,
                     borderLeft: `2px solid ${TOKENS.severity.high.solid}`,
                     borderRadius: 8, padding: '10px 14px',
                   }}>
@@ -501,7 +501,7 @@ export default function BottleneckWorkbenchPage() {
                         gap: 10, alignItems: 'center',
                         textDecoration: 'none', color: 'inherit',
                         padding: '8px 10px', borderRadius: 6,
-                        backgroundColor: '#0A1422',
+                        backgroundColor: 'var(--mc-bg-0)',
                         border: `1px solid ${TOKENS.surface.cardBorder}`,
                       }}
                     >

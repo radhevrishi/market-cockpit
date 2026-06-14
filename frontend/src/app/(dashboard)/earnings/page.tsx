@@ -3527,7 +3527,7 @@ export default function EarningsPage() {
                     backgroundColor: '#F5970015',
                     border: '1px solid #F5970060',
                     fontSize: '11px', fontWeight: 700,
-                    color: '#FBBF24',
+                    color: 'var(--mc-warn)',
                     whiteSpace: 'nowrap',
                   }}
                     title={`Anthropic returned 429 for ${budget} tickers. Could be RATE LIMIT (RPM cap, resets 1-5min) OR your monthly $5 spend cap (resets 1st of next month at midnight UTC). Check console.anthropic.com to confirm which. ${coveredCount} already-extracted are CACHED — they will NOT re-bill when you click again. Button is greyed because clicking RIGHT NOW would just re-hit the same 429 wall.`}
@@ -3585,7 +3585,7 @@ export default function EarningsPage() {
               fontSize: '11px', color: '#FCD34D', fontFamily: 'ui-monospace, SFMono-Regular, monospace',
               wordBreak: 'break-word',
             }}>
-              <div style={{ color: '#FBBF24', fontWeight: 700, marginBottom: '4px' }}>
+              <div style={{ color: 'var(--mc-warn)', fontWeight: 700, marginBottom: '4px' }}>
                 {aiStats.failed_tickers!.length} tickers in timed-out batches — click 🤖 AI Guidance again to retry these (cached ones will be skipped):
               </div>
               <div>{aiStats.failed_tickers!.join(', ')}</div>
@@ -3995,7 +3995,7 @@ export default function EarningsPage() {
                   {culpritGuidance && (
                     <button
                       onClick={() => setGuidanceFilter('ALL')}
-                      style={{ padding: '8px 14px', background: '#8B5CF615', border: '1px solid #8B5CF660', color: '#8B5CF6', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                      style={{ padding: '8px 14px', background: '#8B5CF615', border: '1px solid #8B5CF660', color: 'var(--mc-state-persistent)', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
                     >Reset guidance → ALL</button>
                   )}
                   {culpritAi && (

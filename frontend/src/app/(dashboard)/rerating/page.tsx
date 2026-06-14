@@ -854,7 +854,7 @@ export default function RerratingPage() {
       {/* PATCH 0557 — backend-degraded banner. */}
       <div style={{ padding: '0 18px' }}><DegradedBanner /></div>
       {/* ── Header ─────────────────────────────────────────────────── */}
-      <div style={{ backgroundColor: '#0D1B2E', borderBottom: '1px solid var(--mc-border-1)', borderLeft: `4px solid ${activeMeta.color}`, padding: '14px 18px', flexShrink: 0 }}>
+      <div style={{ backgroundColor: 'var(--mc-bg-1)', borderBottom: '1px solid var(--mc-border-1)', borderLeft: `4px solid ${activeMeta.color}`, padding: '14px 18px', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
           <span style={{ fontSize: 15, fontWeight: 800, color: activeMeta.color, letterSpacing: '0.6px' }}>
             ⚖️ RE-RATING SCREENER
@@ -869,7 +869,7 @@ export default function RerratingPage() {
           <select
             value={universeChoice}
             onChange={(e) => setUniverseChoice(e.target.value as UniverseChoice)}
-            style={{ padding: '3px 8px', fontSize: 11, fontWeight: 700, borderRadius: 4, border: '1px solid var(--mc-bg-4)', backgroundColor: '#0A1422', color: 'var(--mc-text-1)', cursor: 'pointer' }}
+            style={{ padding: '3px 8px', fontSize: 11, fontWeight: 700, borderRadius: 4, border: '1px solid var(--mc-bg-4)', backgroundColor: 'var(--mc-bg-0)', color: 'var(--mc-text-1)', cursor: 'pointer' }}
           >
             <option value="AUTO">🎯 My Universe (MB + Portfolio + Watchlist + CB)</option>
             <option value="MULTIBAGGER">📊 Multibagger Upload only</option>
@@ -897,7 +897,7 @@ export default function RerratingPage() {
                     padding: '3px 8px', borderRadius: 4, fontSize: 10, fontWeight: 700,
                     border: `1px solid ${isActive ? c.color : 'var(--mc-bg-4)'}`,
                     background: isActive ? `${c.color}20` : 'transparent',
-                    color: isActive ? c.color : '#8A95A3',
+                    color: isActive ? c.color : 'var(--mc-text-3)',
                     cursor: 'pointer',
                   }}
                 >{c.label}</button>
@@ -910,7 +910,7 @@ export default function RerratingPage() {
                 padding: '3px 8px', borderRadius: 4, fontSize: 10, fontWeight: 700,
                 border: `1px solid ${universeChoice === 'AUTO' ? 'var(--mc-accent)' : 'var(--mc-bg-4)'}`,
                 background: universeChoice === 'AUTO' ? '#0F7ABF20' : 'transparent',
-                color: universeChoice === 'AUTO' ? '#38A9E8' : '#8A95A3',
+                color: universeChoice === 'AUTO' ? '#38A9E8' : 'var(--mc-text-3)',
                 cursor: 'pointer',
               }}
             >🎯 ALL MINE</button>
@@ -920,7 +920,7 @@ export default function RerratingPage() {
               value={customCsv}
               onChange={(e) => setCustomCsv(e.target.value)}
               placeholder="POWERGRID.NS, NTPC.NS, ..."
-              style={{ padding: '3px 8px', fontSize: 11, borderRadius: 4, border: '1px solid var(--mc-bg-4)', backgroundColor: '#0A1422', color: 'var(--mc-text-1)', width: 240 }}
+              style={{ padding: '3px 8px', fontSize: 11, borderRadius: 4, border: '1px solid var(--mc-bg-4)', backgroundColor: 'var(--mc-bg-0)', color: 'var(--mc-text-1)', width: 240 }}
             />
           )}
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
@@ -945,7 +945,7 @@ export default function RerratingPage() {
             const isActive = active === id;
             return (
               <button key={id} onClick={() => setActive(id)}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 14px', borderRadius: 8, border: isActive ? `1px solid ${color}80` : '1px solid var(--mc-bg-4)', backgroundColor: isActive ? `${color}18` : 'transparent', color: isActive ? color : '#8A95A3', fontSize: 13, fontWeight: 700, letterSpacing: '0.4px', cursor: 'pointer' }}>
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 14px', borderRadius: 8, border: isActive ? `1px solid ${color}80` : '1px solid var(--mc-bg-4)', backgroundColor: isActive ? `${color}18` : 'transparent', color: isActive ? color : 'var(--mc-text-3)', fontSize: 13, fontWeight: 700, letterSpacing: '0.4px', cursor: 'pointer' }}>
                 <Icon style={{ width: 16, height: 16 }} />
                 {label.toUpperCase()}
               </button>
@@ -1057,7 +1057,7 @@ function MarginExpansionPanel({ rows, loading, color, convictionSet }: { rows: M
   if (loading) return <Loader label="Loading earnings-scan…" />;
   if (rows.length === 0) return <Empty label="No margin-expansion candidates in the universe yet. Add tickers to portfolio / watchlist or wait for next earnings cycle." />;
   return (
-    <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderLeft: `3px solid ${color}`, borderRadius: 12, padding: '14px 18px' }}>
+    <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)', borderLeft: `3px solid ${color}`, borderRadius: 12, padding: '14px 18px' }}>
       <div style={{ fontSize: 13, fontWeight: 800, color, letterSpacing: '0.5px', marginBottom: 10 }}>
         📊 MARGIN EXPANSION RANKING
         <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--mc-text-4)', fontWeight: 500 }}>Δ OPM (basis points) over last 4 quarters · click headers to sort</span>
@@ -1111,14 +1111,14 @@ function ModelShiftPanel({ rows, loading, color, convictionSet }: { rows: ModelS
   if (loading) return <Loader label="Loading 180-day news universe…" />;
   if (rows.length === 0) return <Empty label="No model-shift signals in the last 90 days. Concept-detection regex matches SaaS / recurring / platform / ARR / NRR / land-and-expand." />;
   return (
-    <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderLeft: `3px solid ${color}`, borderRadius: 12, padding: '14px 18px' }}>
+    <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)', borderLeft: `3px solid ${color}`, borderRadius: 12, padding: '14px 18px' }}>
       <div style={{ fontSize: 13, fontWeight: 800, color, letterSpacing: '0.5px', marginBottom: 10 }}>
         🔁 MODEL SHIFT CANDIDATES
         <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--mc-text-4)', fontWeight: 500 }}>Recent (90d) vs prior (90-180d) mention frequency for SaaS / recurring / platform language</span>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {rows.map((r) => (
-          <div key={r.ticker} style={{ padding: '10px 14px', backgroundColor: '#0A1422', border: '1px solid var(--mc-bg-4)', borderRadius: 8 }}>
+          <div key={r.ticker} style={{ padding: '10px 14px', backgroundColor: 'var(--mc-bg-0)', border: '1px solid var(--mc-bg-4)', borderRadius: 8 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
               <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 14, fontWeight: 800, color: 'var(--mc-text-1)' }}>
                 {r.ticker}<CbBadge ticker={r.ticker} convictionSet={convictionSet} />
@@ -1130,7 +1130,7 @@ function ModelShiftPanel({ rows, loading, color, convictionSet }: { rows: ModelS
                 {r.jump_pct > 0 ? '+' : ''}{r.jump_pct}% jump
               </span>
               {r.most_recent_age_days != null && r.most_recent_age_days <= 14 && (
-                <span style={{ fontSize: 10, fontWeight: 800, color: '#0A1422', backgroundColor: '#FBBF24', padding: '1px 6px', borderRadius: 3 }}>🆕 {r.most_recent_age_days}d</span>
+                <span style={{ fontSize: 10, fontWeight: 800, color: 'var(--mc-bg-0)', backgroundColor: 'var(--mc-warn)', padding: '1px 6px', borderRadius: 3 }}>🆕 {r.most_recent_age_days}d</span>
               )}
             </div>
             {r.most_recent_headline && (
@@ -1185,7 +1185,7 @@ function MultipleExpansionPanel({ rows, loading, color, convictionSet }: { rows:
   if (loading) return <Loader label="Loading quotes + earnings…" />;
   if (rows.length === 0) return <Empty label="No multiple-expansion candidates yet. Need positive EPS YoY + valid P/E ratio in your universe." />;
   return (
-    <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderLeft: `3px solid ${color}`, borderRadius: 12, padding: '14px 18px' }}>
+    <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)', borderLeft: `3px solid ${color}`, borderRadius: 12, padding: '14px 18px' }}>
       <div style={{ fontSize: 13, fontWeight: 800, color, letterSpacing: '0.5px', marginBottom: 10 }}>
         🚀 MULTIPLE EXPANSION RANKING
         <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--mc-text-4)', fontWeight: 500 }}>Lowest PEG (P/E ÷ EPS YoY %) · click headers to sort</span>
@@ -1239,5 +1239,5 @@ function Loader({ label }: { label: string }) {
   return <div style={{ color: 'var(--mc-text-4)', fontSize: 13, padding: 24 }}>{label}</div>;
 }
 function Empty({ label }: { label: string }) {
-  return <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderRadius: 12, padding: 24, textAlign: 'center', color: 'var(--mc-text-4)', fontSize: 13 }}>{label}</div>;
+  return <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)', borderRadius: 12, padding: 24, textAlign: 'center', color: 'var(--mc-text-4)', fontSize: 13 }}>{label}</div>;
 }

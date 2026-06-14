@@ -57,7 +57,7 @@ export default function MarketSnapshotPage() {
       {/* Tab bar */}
       <div
         style={{
-          backgroundColor: '#0D1B2E',
+          backgroundColor: 'var(--mc-bg-1)',
           borderBottom: '1px solid var(--mc-border-1)',
           padding: '10px 16px',
           display: 'flex',
@@ -86,7 +86,7 @@ export default function MarketSnapshotPage() {
                 borderRadius: 8,
                 border: isActive ? '1px solid #0F7ABF60' : '1px solid var(--mc-bg-4)',
                 backgroundColor: isActive ? '#0F7ABF20' : 'transparent',
-                color: isActive ? '#38A9E8' : '#8A95A3',
+                color: isActive ? '#38A9E8' : 'var(--mc-text-3)',
                 fontSize: 12,
                 fontWeight: 700,
                 letterSpacing: '0.4px',

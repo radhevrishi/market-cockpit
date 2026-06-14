@@ -85,7 +85,7 @@ export function ValuationStrip({ row, onClick, compact = true }: Props) {
       <div style={{ color, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
         FV {formatINR(c.fairValueBase)}
       </div>
-      <div style={{ fontSize: 10, color: '#64748B', fontVariantNumeric: 'tabular-nums' }}>
+      <div style={{ fontSize: 10, color: 'var(--mc-text-4)', fontVariantNumeric: 'tabular-nums' }}>
         Range {formatINR(c.fairValueBear ?? 0)} – {formatINR(c.fairValueBull ?? 0)}
       </div>
       <div style={{ fontSize: 10, fontVariantNumeric: 'tabular-nums' }}>

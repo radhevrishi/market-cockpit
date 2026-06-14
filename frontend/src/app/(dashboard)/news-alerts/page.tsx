@@ -276,7 +276,7 @@ export default function NewsAlertsPage() {
           Delete
         </button>
         <button onClick={() => toast.dismiss(t.id)}
-          style={{ padding: '4px 10px', background: 'transparent', color: 'var(--mc-text-3)', borderRadius: 4, border: '1px solid #2A3B4C', cursor: 'pointer', fontSize: 12 }}>
+          style={{ padding: '4px 10px', background: 'transparent', color: 'var(--mc-text-3)', borderRadius: 4, border: '1px solid var(--mc-border-2)', cursor: 'pointer', fontSize: 12 }}>
           Cancel
         </button>
       </div>
@@ -435,7 +435,7 @@ export default function NewsAlertsPage() {
               exactly what a fired alert looks like before they grant permission. */}
           <div style={{
             flex: '1 1 100%', marginTop: 6, padding: '10px 12px',
-            backgroundColor: '#0A1422', borderRadius: 6,
+            backgroundColor: 'var(--mc-bg-0)', borderRadius: 6,
             border: '1px dashed var(--mc-border-1)', display: 'flex', gap: 10, alignItems: 'flex-start',
           }}>
             <div style={{ fontSize: 18, lineHeight: 1 }}>🔔</div>
@@ -444,7 +444,7 @@ export default function NewsAlertsPage() {
                 MARKET COCKPIT · just now (preview)
               </div>
               <div style={{ fontSize: 13, fontWeight: 700 }}>Alert: AI Infrastructure · HIGH severity</div>
-              <div style={{ fontSize: 12, color: '#C9D4E0', marginTop: 2 }}>
+              <div style={{ fontSize: 12, color: 'var(--mc-text-2)', marginTop: 2 }}>
                 Nvidia memory costs soar 485% as HBM supply remains constrained — Indian transmission proxies surface…
               </div>
             </div>
@@ -553,12 +553,12 @@ export default function NewsAlertsPage() {
             placeholder="Rule name (e.g. 'AI Infrastructure · HIGH only')"
             value={draft.name || ''}
             onChange={e => setDraft({ ...draft, name: e.target.value })}
-            style={{ gridColumn: '1 / -1', backgroundColor: '#0A1422', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.text, borderRadius: 6, padding: '8px 10px', fontSize: 13 }}
+            style={{ gridColumn: '1 / -1', backgroundColor: 'var(--mc-bg-0)', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.text, borderRadius: 6, padding: '8px 10px', fontSize: 13 }}
           />
           <select
             value={draft.conditions?.article_type || ''}
             onChange={e => setDraft({ ...draft, conditions: { ...draft.conditions, article_type: e.target.value || undefined } })}
-            style={{ backgroundColor: '#0A1422', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.text, borderRadius: 6, padding: '8px 10px', fontSize: 13 }}
+            style={{ backgroundColor: 'var(--mc-bg-0)', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.text, borderRadius: 6, padding: '8px 10px', fontSize: 13 }}
           >
             <option value="">Any article type</option>
             <option value="BOTTLENECK">BOTTLENECK</option>
@@ -572,7 +572,7 @@ export default function NewsAlertsPage() {
           <select
             value={draft.conditions?.region || 'ALL'}
             onChange={e => setDraft({ ...draft, conditions: { ...draft.conditions, region: e.target.value as any } })}
-            style={{ backgroundColor: '#0A1422', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.text, borderRadius: 6, padding: '8px 10px', fontSize: 13 }}
+            style={{ backgroundColor: 'var(--mc-bg-0)', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.text, borderRadius: 6, padding: '8px 10px', fontSize: 13 }}
           >
             <option value="ALL">Any region</option>
             <option value="IN">India only</option>
@@ -582,24 +582,24 @@ export default function NewsAlertsPage() {
             placeholder="Ticker substring (e.g. HAL, BEL)"
             value={draft.conditions?.ticker || ''}
             onChange={e => setDraft({ ...draft, conditions: { ...draft.conditions, ticker: e.target.value || undefined } })}
-            style={{ backgroundColor: '#0A1422', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.text, borderRadius: 6, padding: '8px 10px', fontSize: 13 }}
+            style={{ backgroundColor: 'var(--mc-bg-0)', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.text, borderRadius: 6, padding: '8px 10px', fontSize: 13 }}
           />
           <input
             placeholder="Theme substring (e.g. memory_storage)"
             value={draft.conditions?.theme_substring || ''}
             onChange={e => setDraft({ ...draft, conditions: { ...draft.conditions, theme_substring: e.target.value || undefined } })}
-            style={{ backgroundColor: '#0A1422', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.text, borderRadius: 6, padding: '8px 10px', fontSize: 13 }}
+            style={{ backgroundColor: 'var(--mc-bg-0)', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.text, borderRadius: 6, padding: '8px 10px', fontSize: 13 }}
           />
           <input
             placeholder="Headline contains…"
             value={draft.conditions?.headline_substring || ''}
             onChange={e => setDraft({ ...draft, conditions: { ...draft.conditions, headline_substring: e.target.value || undefined } })}
-            style={{ backgroundColor: '#0A1422', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.text, borderRadius: 6, padding: '8px 10px', fontSize: 13 }}
+            style={{ backgroundColor: 'var(--mc-bg-0)', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.text, borderRadius: 6, padding: '8px 10px', fontSize: 13 }}
           />
           <select
             value={draft.conditions?.min_importance ?? ''}
             onChange={e => setDraft({ ...draft, conditions: { ...draft.conditions, min_importance: e.target.value ? Number(e.target.value) : undefined } })}
-            style={{ backgroundColor: '#0A1422', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.text, borderRadius: 6, padding: '8px 10px', fontSize: 13 }}
+            style={{ backgroundColor: 'var(--mc-bg-0)', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.text, borderRadius: 6, padding: '8px 10px', fontSize: 13 }}
           >
             <option value="">Any importance</option>
             <option value="5">≥ 5 (critical)</option>

@@ -426,7 +426,7 @@ export default function MoversPage() {
           <span style={{
             fontSize: '8px', fontWeight: '600', padding: '1px 4px', borderRadius: '2px',
             backgroundColor: stock.cap === 'Large' ? 'rgba(99,102,241,0.15)' : stock.cap === 'Mid' ? 'rgba(59,130,246,0.15)' : 'rgba(234,179,8,0.15)',
-            color: stock.cap === 'Large' ? '#818CF8' : stock.cap === 'Mid' ? '#60A5FA' : '#FBBF24',
+            color: stock.cap === 'Large' ? '#818CF8' : stock.cap === 'Mid' ? '#60A5FA' : 'var(--mc-warn)',
           }}>{stock.cap === 'Large' ? 'LRG' : stock.cap === 'Mid' ? 'MID' : 'SML'}</span>
         </div>
       </td>
@@ -465,7 +465,7 @@ export default function MoversPage() {
           <span style={{
             fontSize: '9px', fontWeight: '600', padding: '2px 6px', borderRadius: '3px',
             backgroundColor: stock.cap === 'Large' ? 'rgba(99,102,241,0.15)' : stock.cap === 'Mid' ? 'rgba(59,130,246,0.15)' : 'rgba(234,179,8,0.15)',
-            color: stock.cap === 'Large' ? '#818CF8' : stock.cap === 'Mid' ? '#60A5FA' : '#FBBF24',
+            color: stock.cap === 'Large' ? '#818CF8' : stock.cap === 'Mid' ? '#60A5FA' : 'var(--mc-warn)',
           }}>{stock.cap === 'Large' ? 'LRG' : stock.cap === 'Mid' ? 'MID' : 'SML'}</span>
           {stock.marketCap > 0 && (
             <span style={{ fontSize: 9, color: TEXT3, fontVariantNumeric: 'tabular-nums' }}>

@@ -72,6 +72,32 @@ const HEX_TO_VAR = new Map([
   ['#FF9933', 'var(--mc-saffron)'],
   ['#5EEAD4', 'var(--mc-state-warm)'],
   ['#A78BFA', 'var(--mc-state-persistent)'],
+
+  // PATCH 1081b — actual dark-theme palette used across the codebase. Mapped to
+  // closest existing --mc-* var (see frontend/src/styles/design-system.css).
+  ['#0A1422', 'var(--mc-bg-0)'],         // dark navy page bg
+  ['#0D1B2E', 'var(--mc-bg-1)'],         // card alt
+  ['#1A2B3C', 'var(--mc-bg-2)'],         // panel header
+  ['#1E293B', 'var(--mc-bg-3)'],         // table header
+  ['#2A3B4C', 'var(--mc-border-2)'],     // strong border
+  ['#C9D4E0', 'var(--mc-text-2)'],       // secondary text
+  ['#8A95A3', 'var(--mc-text-3)'],       // muted text
+  ['#64748B', 'var(--mc-text-4)'],       // dimmest text
+  ['#FBBF24', 'var(--mc-warn)'],         // amber accent (alias)
+  ['#8B5CF6', 'var(--mc-state-persistent)'],  // violet (alias)
+  ['#5B6A82', 'var(--mc-text-4)'],
+  ['#8899AA', 'var(--mc-text-3)'],
+  ['#7d8590', 'var(--mc-text-3)'],
+  ['#484f58', 'var(--mc-text-4)'],
+  ['#1c232c', 'var(--mc-bg-2)'],
+  ['#161B22', 'var(--mc-bg-1)'],
+  ['#0d1117', 'var(--mc-bg-0)'],
+  ['#22C55E', 'var(--mc-bullish)'],
+  ['#16A34A', 'var(--mc-bullish-2)'],
+  ['#F97316', 'var(--mc-warn)'],
+  ['#FB923C', 'var(--mc-warn)'],
+  ['#9CA3AF', 'var(--mc-text-3)'],
+  ['#6B7280', 'var(--mc-text-4)'],
 ]);
 
 const HEX_RE = /(#[0-9A-Fa-f]{6})([0-9A-Fa-f]{2})?(?=[^0-9A-Fa-f]|$)/g;

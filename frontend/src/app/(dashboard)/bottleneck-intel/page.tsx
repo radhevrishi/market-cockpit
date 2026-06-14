@@ -1226,7 +1226,7 @@ function ScoreGauge({ score }: { score: number }) {
       {showFormula && (
         <div onClick={e => e.stopPropagation()} style={{
           position: 'absolute', top: '44px', left: 0, zIndex: 100,
-          backgroundColor: '#0D1B2E', border: '1px solid var(--mc-bg-4)', borderRadius: '10px',
+          backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: '10px',
           padding: '14px 16px', width: '300px', boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
@@ -1235,8 +1235,8 @@ function ScoreGauge({ score }: { score: number }) {
           </div>
           {SCORE_FORMULA_LINES.map(({ label, detail }) => (
             <div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', padding: '4px 0', borderBottom: '1px solid var(--mc-bg-4)' }}>
-              <span style={{ fontSize: '10px', color: '#8A95A3', flexShrink: 0, minWidth: '120px' }}>{label}</span>
-              <span style={{ fontSize: '10px', color: '#C9D4E0', textAlign: 'right' }}>{detail}</span>
+              <span style={{ fontSize: '10px', color: 'var(--mc-text-3)', flexShrink: 0, minWidth: '120px' }}>{label}</span>
+              <span style={{ fontSize: '10px', color: 'var(--mc-text-2)', textAlign: 'right' }}>{detail}</span>
             </div>
           ))}
           <p style={{ fontSize: '9px', color: 'var(--mc-text-4)', marginTop: '8px' }}>Score = sum of all bonuses − failed check penalties, capped at 100. Click score ring again to dismiss.</p>
@@ -1358,13 +1358,13 @@ function EmergingThemes({ articles }: { articles: NewsArticle[] }) {
                 <span style={{ fontSize: '14px' }}>{t.icon}</span>
                 <div style={{ textAlign: 'left' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    <span style={{ fontSize: '11px', fontWeight: '700', color: t.isNew ? 'var(--mc-warn)' : '#C9D4E0' }}>{t.label}</span>
+                    <span style={{ fontSize: '11px', fontWeight: '700', color: t.isNew ? 'var(--mc-warn)' : 'var(--mc-text-2)' }}>{t.label}</span>
                     {t.isNew && <span style={{ fontSize: '8px', fontWeight: '800', color: 'var(--mc-warn)', border: '1px solid #F59E0B40', padding: '0 4px', borderRadius: '3px' }}>NEW</span>}
                     {!t.isNew && <span style={{ fontSize: '8px', color: 'var(--mc-text-4)', border: '1px solid #1A284030', padding: '0 4px', borderRadius: '3px' }}>IN FRAMEWORK</span>}
                     {t.weekCount >= 3 && <span style={{ fontSize: '9px', color: 'var(--mc-bearish)' }}>🔥</span>}
                     {/* Promotion badge: appears when seen 3+ sessions */}
                     {t.isNew && (themeSeen[t.id] ?? 0) >= 3 && (
-                      <span style={{ fontSize: '8px', fontWeight: '800', color: '#8B5CF6', border: '1px solid #8B5CF640', padding: '0 4px', borderRadius: '3px', cursor: 'help' }}
+                      <span style={{ fontSize: '8px', fontWeight: '800', color: 'var(--mc-state-persistent)', border: '1px solid #8B5CF640', padding: '0 4px', borderRadius: '3px', cursor: 'help' }}
                         title={`Seen ${themeSeen[t.id]} sessions — candidate for formal taxonomy`}>
                         🚀 PROMOTE
                       </span>
@@ -1376,7 +1376,7 @@ function EmergingThemes({ articles }: { articles: NewsArticle[] }) {
               {isExp && (
                 <div style={{ padding: '8px 12px', backgroundColor: '#060E1A', borderTop: `1px solid ${t.color}20` }}>
                   {t.headlines.map((h, i) => (
-                    <div key={i} style={{ fontSize: '11px', color: '#8A95A3', padding: '3px 0', borderBottom: i < t.headlines.length - 1 ? '1px solid var(--mc-bg-4)' : 'none', lineHeight: '1.4' }}>
+                    <div key={i} style={{ fontSize: '11px', color: 'var(--mc-text-3)', padding: '3px 0', borderBottom: i < t.headlines.length - 1 ? '1px solid var(--mc-bg-4)' : 'none', lineHeight: '1.4' }}>
                       › {h}
                     </div>
                   ))}
@@ -1384,7 +1384,7 @@ function EmergingThemes({ articles }: { articles: NewsArticle[] }) {
                     <div style={{ marginTop: '6px', padding: '6px 10px', backgroundColor: '#F59E0B08', border: '1px solid #F59E0B20', borderRadius: '4px' }}>
                       <div style={{ fontSize: '10px', color: 'var(--mc-warn)', marginBottom: '3px' }}>⭐ Not in framework watchlist — potential new bottleneck class</div>
                       {(themeSeen[t.id] ?? 0) >= 3 ? (
-                        <div style={{ fontSize: '10px', color: '#8B5CF6', marginTop: '3px', fontWeight: '700' }}>
+                        <div style={{ fontSize: '10px', color: 'var(--mc-state-persistent)', marginTop: '3px', fontWeight: '700' }}>
                           🚀 Seen {themeSeen[t.id]} sessions — ready for formal taxonomy inclusion
                           {promotedMsg === t.id && <span style={{ marginLeft: '8px', color: 'var(--mc-bullish)' }}>✓ Added to watchlist!</span>}
                         </div>
@@ -1468,7 +1468,7 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
       {changes.length > 0 && (
         <div style={{ marginBottom: '16px', padding: '12px 16px', backgroundColor: '#060E1A', border: '1px solid #8B5CF620', borderRadius: '10px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
-            <span style={{ fontSize: '10px', fontWeight: '800', color: '#8B5CF6', letterSpacing: '1px' }}>🔄 WHAT CHANGED</span>
+            <span style={{ fontSize: '10px', fontWeight: '800', color: 'var(--mc-state-persistent)', letterSpacing: '1px' }}>🔄 WHAT CHANGED</span>
             <span style={{ fontSize: '10px', color: 'var(--mc-text-4)' }}>since last session</span>
           </div>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
@@ -1477,7 +1477,7 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
                 <span style={{ fontWeight: '700', color: c.color }}>
                   {c.type === 'NEW' ? '🆕' : c.type === 'UPGRADED' ? '⬆️' : c.type === 'DOWNGRADED' ? '⬇️' : c.type === 'RISING' ? '📈' : '📉'} {c.type}
                 </span>
-                <span style={{ color: '#C9D4E0', marginLeft: '6px' }}>{c.label}</span>
+                <span style={{ color: 'var(--mc-text-2)', marginLeft: '6px' }}>{c.label}</span>
                 <span style={{ color: 'var(--mc-text-4)', marginLeft: '6px' }}>{c.detail}</span>
               </div>
             ))}
@@ -1522,7 +1522,7 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
           return (
             <div style={{ marginBottom: '20px', padding: '14px 16px', backgroundColor: '#060E1A', border: '1px solid #1A284030', borderRadius: '12px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
-                <span style={{ fontSize: '10px', fontWeight: '800', color: '#8B5CF6', letterSpacing: '1px' }}>📊 CONVICTION MATRIX</span>
+                <span style={{ fontSize: '10px', fontWeight: '800', color: 'var(--mc-state-persistent)', letterSpacing: '1px' }}>📊 CONVICTION MATRIX</span>
                 <span style={{ fontSize: '10px', color: 'var(--mc-text-4)' }}>velocity × severity → lifecycle state · click to inspect</span>
                 <div style={{ display: 'flex', gap: '5px', marginLeft: 'auto', flexWrap: 'wrap' }}>
                   {([
@@ -1625,7 +1625,7 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
                       <span style={{ fontSize: '9px', color: invest.color, fontWeight: '700' }}>{invest.label}</span>
                       <span style={{ fontSize: '9px', color: 'var(--mc-text-4)', marginLeft: 'auto', textAlign: 'right' }}>Reasoning: {invest.reasoning}</span>
                     </div>
-                    <p style={{ fontSize: '11px', color: '#8A95A3', margin: '0 0 8px', lineHeight: '1.5' }}>{lc.desc}</p>
+                    <p style={{ fontSize: '11px', color: 'var(--mc-text-3)', margin: '0 0 8px', lineHeight: '1.5' }}>{lc.desc}</p>
                     {(b.key_tickers?.length ?? 0) > 0 && (
                       <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                         {(b.key_tickers ?? []).slice(0, 8).map(t => (
@@ -1719,10 +1719,10 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
             {showFreshnessWarning && (
               <div style={{ marginBottom: 8, padding: '8px 12px', backgroundColor: '#F59E0B15', border: '1px solid #F59E0B40', borderRadius: 6, display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
                 <span style={{ fontWeight: 700, color: 'var(--mc-warn)' }}>⚠ DATA FRESHNESS WARNING</span>
-                <span style={{ color: '#C9D4E0' }}>
+                <span style={{ color: 'var(--mc-text-2)' }}>
                   {staleBuckets.length} of {sorted.length} themes ({stalePct.toFixed(0)}%) have 0 articles this week and last.
                 </span>
-                <span style={{ color: '#8A95A3', fontStyle: 'italic' }}>
+                <span style={{ color: 'var(--mc-text-3)', fontStyle: 'italic' }}>
                   Could mean: news pipeline lag, theme rolled off, or genuinely quiet. Verify before drawing conviction.
                 </span>
               </div>
@@ -1731,7 +1731,7 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
               <button
                 onClick={() => setShowStale(v => !v)}
                 style={{
-                  fontSize: 10, fontWeight: 700, color: '#8A95A3',
+                  fontSize: 10, fontWeight: 700, color: 'var(--mc-text-3)',
                   padding: '4px 10px', borderRadius: 6,
                   border: '1px solid var(--mc-bg-4)', backgroundColor: showStale ? 'var(--mc-bg-4)' : 'transparent',
                   cursor: 'pointer', letterSpacing: '0.5px',
@@ -1805,8 +1805,8 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
                       )}
                     </p>
                     <div style={{ display: 'flex', gap: '14px', marginBottom: '8px' }}>
-                      <span style={{ fontSize: '11px', color: '#8A95A3' }}><span style={{ color: sty.badge, fontWeight: '700', fontSize: '15px' }}>{b.signal_count}</span> signals</span>
-                      <span style={{ fontSize: '11px', color: '#8A95A3' }}><span style={{ fontWeight: '600', color: '#C9D4E0' }}>{b.article_count}</span> articles</span>
+                      <span style={{ fontSize: '11px', color: 'var(--mc-text-3)' }}><span style={{ color: sty.badge, fontWeight: '700', fontSize: '15px' }}>{b.signal_count}</span> signals</span>
+                      <span style={{ fontSize: '11px', color: 'var(--mc-text-3)' }}><span style={{ fontWeight: '600', color: 'var(--mc-text-2)' }}>{b.article_count}</span> articles</span>
                       {vel && <span style={{ fontSize: '11px', color: isAccel ? 'var(--mc-warn)' : 'var(--mc-text-4)' }}>{vel.week} this wk</span>}
                       {/* PATCH 0445 BUG-015 — Per-theme last-article timestamp.
                           Lets the user verify why a theme is STALE — is it
@@ -1878,7 +1878,7 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
                         <button onClick={() => setExpSignal(se ? null : sk)} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '10px 16px', display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
                           <Zap className="w-3 h-3" style={{ color: sty.badge, flexShrink: 0, marginTop: '2px' }} />
                           <div style={{ flex: 1, minWidth: 0 }}>
-                            <p style={{ fontSize: '12px', color: '#C9D4E0', margin: 0, lineHeight: '1.4', textAlign: 'left' }}>{sig.headline}</p>
+                            <p style={{ fontSize: '12px', color: 'var(--mc-text-2)', margin: 0, lineHeight: '1.4', textAlign: 'left' }}>{sig.headline}</p>
                             <div style={{ display: 'flex', gap: '8px', marginTop: '3px', flexWrap: 'wrap' }}>
                               <span style={{ fontSize: '10px', color: 'var(--mc-text-4)' }}>{sig.evidence_count} evidence</span>
                               {sig.latest_at && <span style={{ fontSize: '10px', color: 'var(--mc-text-4)' }}>{timeAgo(sig.latest_at)}</span>}
@@ -1889,11 +1889,11 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
                         </button>
                         {se && (
                           <div style={{ padding: '0 16px 12px 36px' }}>
-                            {sig.summary && <p style={{ fontSize: '11px', color: '#8A95A3', lineHeight: '1.5', margin: '0 0 8px' }}>{sig.summary}</p>}
+                            {sig.summary && <p style={{ fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.5', margin: '0 0 8px' }}>{sig.summary}</p>}
                             {sig.articles?.slice(0, 3).map((art, ai) => (
                               <a key={ai} href={cleanUrl(art.source_url)} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'flex-start', gap: '6px', padding: '6px 8px', marginBottom: '4px', backgroundColor: '#060E1A', borderRadius: '6px', textDecoration: 'none', border: '1px solid var(--mc-bg-4)' }}>
                                 <ExternalLink className="w-3 h-3" style={{ color: 'var(--mc-text-4)', flexShrink: 0, marginTop: '2px' }} />
-                                <div><p style={{ fontSize: '11px', color: '#C9D4E0', margin: 0, lineHeight: '1.3' }}>{art.headline}</p><p style={{ fontSize: '10px', color: 'var(--mc-text-4)', margin: '2px 0 0' }}>{art.source_name} · {timeAgo(art.published_at)}</p></div>
+                                <div><p style={{ fontSize: '11px', color: 'var(--mc-text-2)', margin: 0, lineHeight: '1.3' }}>{art.headline}</p><p style={{ fontSize: '10px', color: 'var(--mc-text-4)', margin: '2px 0 0' }}>{art.source_name} · {timeAgo(art.published_at)}</p></div>
                               </a>
                             ))}
                           </div>
@@ -2178,7 +2178,7 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
                       <span style={{ fontSize: '12px', fontWeight: '800', color: 'var(--mc-text-0)' }}>{s.ticker.replace(/\d+$/, '')}</span>
                       {ef && <span title={`${ef.label} listed`} style={{ fontSize: '12px' }}>{ef.flag}</span>}
                       {s.is_small_cap && <span style={{ fontSize: '8px', color: 'var(--mc-warn)', border: '1px solid #F59E0B40', padding: '0 3px', borderRadius: '3px', fontWeight: '700' }}>SC</span>}
-                      {s.is_serenity_pick && <span title="Serenity explicitly mentioned this stock" style={{ fontSize: '8px', color: '#8B5CF6', border: '1px solid #8B5CF640', padding: '0 3px', borderRadius: '3px', fontWeight: '700' }}>S✓</span>}
+                      {s.is_serenity_pick && <span title="Serenity explicitly mentioned this stock" style={{ fontSize: '8px', color: 'var(--mc-state-persistent)', border: '1px solid #8B5CF640', padding: '0 3px', borderRadius: '3px', fontWeight: '700' }}>S✓</span>}
                       {s.evidence_count > 0 && <span style={{ fontSize: '8px', color: 'var(--mc-bullish)', border: '1px solid #10B98140', padding: '0 3px', borderRadius: '3px', fontWeight: '700' }}>📡{s.evidence_count}</span>}
                       {s.velocity.trend === '🔥' && <span title={`${s.velocity.week} articles this week vs ${s.velocity.prev} prior week`} style={{ fontSize: '9px', color: 'var(--mc-warn)', fontWeight: '700' }}>🔥</span>}
                       {s.velocity.trend === '📉' && <span style={{ fontSize: '9px', color: 'var(--mc-text-4)' }}>📉</span>}
@@ -2188,7 +2188,7 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
                     <div style={{ minWidth: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '2px' }}>
                         {ti && <span style={{ fontSize: '9px', fontWeight: '700', color: ti.color, border: `1px solid ${ti.color}40`, padding: '1px 4px', borderRadius: '3px', flexShrink: 0 }}>T{ti.tier}</span>}
-                        <span style={{ fontSize: '11px', color: '#8A95A3', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sub_tag.replace(/_/g,' ').toLowerCase().replace(/\b\w/g,c=>c.toUpperCase())}</span>
+                        <span style={{ fontSize: '11px', color: 'var(--mc-text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sub_tag.replace(/_/g,' ').toLowerCase().replace(/\b\w/g,c=>c.toUpperCase())}</span>
                       </div>
                       <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                         {s.key_customers.slice(0,3).map(c => <span key={c} style={{ fontSize: '9px', color: 'var(--mc-accent)', backgroundColor: '#0F7ABF14', padding: '0 4px', borderRadius: '3px' }}>→{c}</span>)}
@@ -2205,7 +2205,7 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
                     </div>
 
                     {/* Market cap */}
-                    <span style={{ fontSize: '11px', color: s.is_small_cap ? 'var(--mc-warn)' : '#C9D4E0', fontWeight: s.is_small_cap ? '700' : '400' }}>{fmtCap(s.market_cap)}</span>
+                    <span style={{ fontSize: '11px', color: s.is_small_cap ? 'var(--mc-warn)' : 'var(--mc-text-2)', fontWeight: s.is_small_cap ? '700' : '400' }}>{fmtCap(s.market_cap)}</span>
 
                     {/* Price */}
                     <div>{s.price ? <><span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--mc-text-0)' }}>${s.price.toFixed(2)}</span>{cp !== 0 && <div style={{ fontSize: '10px', color: cp >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{cp >= 0 ? '+' : ''}{cp.toFixed(2)}%</div>}</> : <span style={{ fontSize: '10px', color: 'var(--mc-text-4)' }}>—</span>}</div>
@@ -2216,7 +2216,7 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
                 {isExp && (
                   <div style={{ padding: '12px 14px 16px 60px', backgroundColor: '#060E1A30', borderTop: '1px solid var(--mc-bg-4)' }}>
                     <div style={{ display: 'flex', gap: '10px', marginBottom: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
-                      <span style={{ fontSize: '12px', fontWeight: '700', color: '#C9D4E0' }}>{s.name}</span>
+                      <span style={{ fontSize: '12px', fontWeight: '700', color: 'var(--mc-text-2)' }}>{s.name}</span>
                       {s.quote_name && s.quote_name !== s.name && <span style={{ fontSize: '11px', color: 'var(--mc-text-4)' }}>{s.quote_name}</span>}
                       <span style={{ fontSize: '11px', color: 'var(--mc-text-4)' }}>{s.exchange}</span>
                       {ti && <span style={{ fontSize: '11px', color: ti.color }}>{ti.label}</span>}
@@ -2224,8 +2224,8 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
 
                     {/* Serenity thesis */}
                     <div style={{ padding: '10px 12px', backgroundColor: '#060E1A', border: '1px solid var(--mc-bg-4)', borderRadius: '8px', marginBottom: '10px' }}>
-                      <p style={{ fontSize: '10px', color: '#8B5CF6', fontWeight: '700', letterSpacing: '0.8px', margin: '0 0 6px' }}>🔬 SERENITY THESIS</p>
-                      <p style={{ fontSize: '12px', color: '#C9D4E0', lineHeight: '1.6', margin: 0 }}>{s.serenity_note}</p>
+                      <p style={{ fontSize: '10px', color: 'var(--mc-state-persistent)', fontWeight: '700', letterSpacing: '0.8px', margin: '0 0 6px' }}>🔬 SERENITY THESIS</p>
+                      <p style={{ fontSize: '12px', color: 'var(--mc-text-2)', lineHeight: '1.6', margin: 0 }}>{s.serenity_note}</p>
                     </div>
 
                     {/* Key customers */}
@@ -2243,7 +2243,7 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
                         {s.headlines.map((h, i) => (
                           <div key={i} style={{ display: 'flex', gap: '6px', alignItems: 'flex-start', padding: '7px 10px', marginBottom: '4px', backgroundColor: '#060E1A', borderRadius: '6px', border: '1px solid #10B98120' }}>
                             <Zap className="w-3 h-3" style={{ color: 'var(--mc-bullish)', flexShrink: 0, marginTop: '2px' }} />
-                            <span style={{ fontSize: '11px', color: '#C9D4E0', lineHeight: '1.45' }}>{h}</span>
+                            <span style={{ fontSize: '11px', color: 'var(--mc-text-2)', lineHeight: '1.45' }}>{h}</span>
                           </div>
                         ))}
                         {s.latest_at && <p style={{ fontSize: '10px', color: 'var(--mc-text-4)', margin: '4px 0 0' }}>Last signal: {timeAgo(s.latest_at)}</p>}
@@ -2297,7 +2297,7 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
                 }}>
                   {/* Signal count + velocity */}
                   <div>
-                    <span style={{ fontSize: '15px', fontWeight: '800', color: isHot ? 'var(--mc-warn)' : '#C9D4E0', display: 'block' }}>{r.evidence_count}</span>
+                    <span style={{ fontSize: '15px', fontWeight: '800', color: isHot ? 'var(--mc-warn)' : 'var(--mc-text-2)', display: 'block' }}>{r.evidence_count}</span>
                     {isHot && <span style={{ fontSize: '9px', color: 'var(--mc-warn)' }}>🔥{r.velocity_week}wk</span>}
                   </div>
 
@@ -2367,7 +2367,7 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
               transition: 'all 0.15s',
             }}>
               <div style={{ fontSize: '24px', marginBottom: '6px' }}>{e.icon}</div>
-              <div style={{ fontSize: '12px', fontWeight: '700', color: isAct ? 'var(--mc-text-0)' : '#C9D4E0', marginBottom: '4px' }}>{e.label}</div>
+              <div style={{ fontSize: '12px', fontWeight: '700', color: isAct ? 'var(--mc-text-0)' : 'var(--mc-text-2)', marginBottom: '4px' }}>{e.label}</div>
               {tier && <div style={{ fontSize: '10px', color: tier.color, fontWeight: '600' }}>{tier.label}</div>}
             </button>
           );
@@ -2389,17 +2389,17 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
             {/* Why section */}
             <div style={{ padding: '16px 20px', borderRight: '1px solid var(--mc-bg-4)' }}>
               <p style={{ fontSize: '10px', color: 'var(--mc-text-4)', fontWeight: '700', letterSpacing: '1px', margin: '0 0 8px' }}>WHY IT'S A BOTTLENECK</p>
-              <p style={{ fontSize: '12px', color: '#C9D4E0', lineHeight: '1.6', margin: 0 }}>{entry.why}</p>
+              <p style={{ fontSize: '12px', color: 'var(--mc-text-2)', lineHeight: '1.6', margin: 0 }}>{entry.why}</p>
             </div>
             {/* Supply / Demand */}
             <div style={{ padding: '16px 20px' }}>
               <div style={{ marginBottom: '14px' }}>
                 <p style={{ fontSize: '10px', color: 'var(--mc-bearish)', fontWeight: '700', letterSpacing: '1px', margin: '0 0 6px' }}>SUPPLY CONSTRAINT</p>
-                <p style={{ fontSize: '12px', color: '#C9D4E0', lineHeight: '1.6', margin: 0 }}>{entry.supply}</p>
+                <p style={{ fontSize: '12px', color: 'var(--mc-text-2)', lineHeight: '1.6', margin: 0 }}>{entry.supply}</p>
               </div>
               <div>
                 <p style={{ fontSize: '10px', color: 'var(--mc-bullish)', fontWeight: '700', letterSpacing: '1px', margin: '0 0 6px' }}>DEMAND DRIVER</p>
-                <p style={{ fontSize: '12px', color: '#C9D4E0', lineHeight: '1.6', margin: 0 }}>{entry.demand}</p>
+                <p style={{ fontSize: '12px', color: 'var(--mc-text-2)', lineHeight: '1.6', margin: 0 }}>{entry.demand}</p>
               </div>
             </div>
           </div>
@@ -2411,7 +2411,7 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
               {entry.winners.map(w => (
                 <div key={w.ticker} style={{ display: 'flex', gap: '8px', marginBottom: '8px', padding: '8px 12px', backgroundColor: '#10B98108', border: '1px solid #10B98120', borderRadius: '8px' }}>
                   <span style={{ fontSize: '12px', fontWeight: '800', color: 'var(--mc-bullish)', minWidth: '52px' }}>{w.ticker}</span>
-                  <span style={{ fontSize: '11px', color: '#8A95A3', lineHeight: '1.4' }}>{w.thesis}</span>
+                  <span style={{ fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.4' }}>{w.thesis}</span>
                 </div>
               ))}
             </div>
@@ -2421,7 +2421,7 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
                 {entry.losers.map(l => (
                   <div key={l.ticker} style={{ display: 'flex', gap: '8px', marginBottom: '8px', padding: '8px 12px', backgroundColor: '#EF444408', border: '1px solid #EF444420', borderRadius: '8px' }}>
                     <span style={{ fontSize: '12px', fontWeight: '800', color: 'var(--mc-bearish)', minWidth: '52px' }}>{l.ticker}</span>
-                    <span style={{ fontSize: '11px', color: '#8A95A3', lineHeight: '1.4' }}>{l.thesis}</span>
+                    <span style={{ fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.4' }}>{l.thesis}</span>
                   </div>
                 ))}
               </div>
@@ -2432,15 +2432,15 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
           <div style={{ padding: '0 20px 16px', borderTop: '1px solid var(--mc-bg-4)', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px', paddingTop: '16px' }}>
             <div>
               <p style={{ fontSize: '10px', color: 'var(--mc-bullish)', fontWeight: '700', letterSpacing: '1px', margin: '0 0 8px' }}>✅ WHAT CONFIRMS THESIS</p>
-              {entry.confirms.map((c, i) => <div key={i} style={{ display: 'flex', gap: '6px', marginBottom: '5px', fontSize: '11px', color: '#8A95A3', lineHeight: '1.4' }}><span style={{ color: 'var(--mc-bullish)', flexShrink: 0 }}>›</span>{c}</div>)}
+              {entry.confirms.map((c, i) => <div key={i} style={{ display: 'flex', gap: '6px', marginBottom: '5px', fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.4' }}><span style={{ color: 'var(--mc-bullish)', flexShrink: 0 }}>›</span>{c}</div>)}
             </div>
             <div>
               <p style={{ fontSize: '10px', color: 'var(--mc-bearish)', fontWeight: '700', letterSpacing: '1px', margin: '0 0 8px' }}>❌ WHAT BREAKS THESIS</p>
-              {entry.breaks.map((b, i) => <div key={i} style={{ display: 'flex', gap: '6px', marginBottom: '5px', fontSize: '11px', color: '#8A95A3', lineHeight: '1.4' }}><span style={{ color: 'var(--mc-bearish)', flexShrink: 0 }}>›</span>{b}</div>)}
+              {entry.breaks.map((b, i) => <div key={i} style={{ display: 'flex', gap: '6px', marginBottom: '5px', fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.4' }}><span style={{ color: 'var(--mc-bearish)', flexShrink: 0 }}>›</span>{b}</div>)}
             </div>
             <div>
               <p style={{ fontSize: '10px', color: 'var(--mc-warn)', fontWeight: '700', letterSpacing: '1px', margin: '0 0 8px' }}>📊 WATCH THESE KPIs</p>
-              {entry.watch_kpi.map((k, i) => <div key={i} style={{ display: 'flex', gap: '6px', marginBottom: '5px', fontSize: '11px', color: '#8A95A3', lineHeight: '1.4' }}><span style={{ color: 'var(--mc-warn)', flexShrink: 0 }}>›</span>{k}</div>)}
+              {entry.watch_kpi.map((k, i) => <div key={i} style={{ display: 'flex', gap: '6px', marginBottom: '5px', fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.4' }}><span style={{ color: 'var(--mc-warn)', flexShrink: 0 }}>›</span>{k}</div>)}
             </div>
           </div>
 
@@ -2456,7 +2456,7 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
               </p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '8px' }}>
                 {entry.contradictions.map((c, i) => (
-                  <div key={i} style={{ display: 'flex', gap: '8px', padding: '8px 12px', backgroundColor: '#F59E0B06', border: '1px solid #F59E0B20', borderRadius: '6px', fontSize: '11px', color: '#8A95A3', lineHeight: '1.5' }}>
+                  <div key={i} style={{ display: 'flex', gap: '8px', padding: '8px 12px', backgroundColor: '#F59E0B06', border: '1px solid #F59E0B20', borderRadius: '6px', fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.5' }}>
                     <span style={{ color: 'var(--mc-warn)', flexShrink: 0, marginTop: '1px' }}>⚠</span>
                     {c}
                   </div>
@@ -2472,10 +2472,10 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
                 🔗 CAUSAL CHAIN — second-order investment ideas
               </p>
               {entry.causal_chain.map((chain, i) => (
-                <div key={i} style={{ fontSize: '11px', color: '#C9D4E0', lineHeight: '1.6', padding: '10px 14px', backgroundColor: '#06B6D408', border: '1px solid #06B6D420', borderRadius: '8px', marginBottom: '6px' }}>
+                <div key={i} style={{ fontSize: '11px', color: 'var(--mc-text-2)', lineHeight: '1.6', padding: '10px 14px', backgroundColor: '#06B6D408', border: '1px solid #06B6D420', borderRadius: '8px', marginBottom: '6px' }}>
                   {chain.split('→').map((step, si, arr) => (
                     <span key={si}>
-                      <span style={{ color: si === 0 ? 'var(--mc-bearish)' : si === arr.length-1 ? 'var(--mc-bullish)' : '#C9D4E0', fontWeight: si === 0 || si === arr.length-1 ? '700' : '400' }}>{step.trim()}</span>
+                      <span style={{ color: si === 0 ? 'var(--mc-bearish)' : si === arr.length-1 ? 'var(--mc-bullish)' : 'var(--mc-text-2)', fontWeight: si === 0 || si === arr.length-1 ? '700' : '400' }}>{step.trim()}</span>
                       {si < arr.length-1 && <span style={{ color: '#06B6D4', margin: '0 6px' }}>→</span>}
                     </span>
                   ))}
@@ -2487,17 +2487,17 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
           {/* India-listed plays — separate from US plays */}
           {entry.india_plays && entry.india_plays.length > 0 && (
             <div style={{ padding: '14px 20px 16px', borderTop: '1px solid var(--mc-bg-4)' }}>
-              <p style={{ fontSize: '10px', color: '#F97316', fontWeight: '700', letterSpacing: '1px', margin: '0 0 10px' }}>
+              <p style={{ fontSize: '10px', color: 'var(--mc-warn)', fontWeight: '700', letterSpacing: '1px', margin: '0 0 10px' }}>
                 🇮🇳 INDIA-LISTED PLAYS (NSE/BSE)
               </p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '8px' }}>
                 {entry.india_plays.map(p => (
                   <div key={p.ticker} style={{ display: 'flex', gap: '10px', padding: '8px 12px', backgroundColor: '#F9731608', border: '1px solid #F9731620', borderRadius: '8px' }}>
                     <div style={{ flexShrink: 0 }}>
-                      <span style={{ fontSize: '12px', fontWeight: '800', color: '#F97316' }}>{p.ticker}</span>
+                      <span style={{ fontSize: '12px', fontWeight: '800', color: 'var(--mc-warn)' }}>{p.ticker}</span>
                       <span style={{ fontSize: '9px', color: 'var(--mc-text-4)', marginLeft: '4px' }}>{p.exchange}</span>
                     </div>
-                    <span style={{ fontSize: '11px', color: '#8A95A3', lineHeight: '1.4' }}>{p.thesis}</span>
+                    <span style={{ fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.4' }}>{p.thesis}</span>
                   </div>
                 ))}
               </div>
@@ -2511,7 +2511,7 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
           {entry.chokepoints && entry.chokepoints.length > 0 && (
             <div style={{ padding: '16px 20px', borderTop: '1px solid var(--mc-bg-4)', backgroundColor: '#0A0F1A' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-                <p style={{ fontSize: '10px', color: '#8B5CF6', fontWeight: '800', letterSpacing: '1.2px', margin: 0 }}>🎯 CHOKEPOINT INTELLIGENCE — exact public companies at the bottleneck</p>
+                <p style={{ fontSize: '10px', color: 'var(--mc-state-persistent)', fontWeight: '800', letterSpacing: '1.2px', margin: 0 }}>🎯 CHOKEPOINT INTELLIGENCE — exact public companies at the bottleneck</p>
                 {entry.theme_family && (
                   <span style={{ fontSize: '9px', color: 'var(--mc-text-4)', border: '1px solid var(--mc-bg-4)', padding: '1px 6px', borderRadius: '10px' }}>
                     family: {entry.theme_family}
@@ -2522,7 +2522,7 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
                 {entry.chokepoints.map(cp => {
                   const qcfg = QUAL_STAGE_CONFIG[cp.qual_stage];
                   return (
-                    <div key={cp.ticker} style={{ padding: '12px 14px', backgroundColor: 'var(--mc-bg-1)', border: `1px solid #8B5CF620`, borderLeft: '3px solid #8B5CF6', borderRadius: '8px' }}>
+                    <div key={cp.ticker} style={{ padding: '12px 14px', backgroundColor: 'var(--mc-bg-1)', border: `1px solid #8B5CF620`, borderLeft: '3px solid var(--mc-state-persistent)', borderRadius: '8px' }}>
                       {/* Company header */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px', flexWrap: 'wrap' }}>
                         <span style={{ fontSize: '14px', fontWeight: '800', color: 'var(--mc-text-0)' }}>{cp.ticker}</span>
@@ -2533,7 +2533,7 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
                           <span style={{ fontSize: '9px', fontWeight: '700', color: 'var(--mc-bearish)', backgroundColor: '#EF444414', border: '1px solid #EF444430', padding: '1px 6px', borderRadius: '3px' }}>🔒 {cp.public_competitors === 0 ? 'MONOPOLY' : cp.public_competitors === 1 ? 'DUOPOLY' : '3 competitors'}</span>
                         )}
                       </div>
-                      <p style={{ fontSize: '11px', color: '#8A95A3', margin: '0 0 6px', lineHeight: '1.5' }}>{cp.monopoly_basis}</p>
+                      <p style={{ fontSize: '11px', color: 'var(--mc-text-3)', margin: '0 0 6px', lineHeight: '1.5' }}>{cp.monopoly_basis}</p>
                       {/* Confirmed customers */}
                       {cp.customers.length > 0 && (
                         <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '6px' }}>
@@ -2572,18 +2572,18 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
                 {entry.coverage.known_private.length > 0 && (
                   <div style={{ padding: '10px 14px', backgroundColor: '#F59E0B08', border: '1px solid #F59E0B20', borderRadius: '8px' }}>
                     <p style={{ fontSize: '9px', color: 'var(--mc-warn)', fontWeight: '700', margin: '0 0 6px' }}>🏢 KNOWN PRIVATE ({entry.coverage.known_private.length})</p>
-                    {entry.coverage.known_private.map((t, i) => <div key={i} style={{ fontSize: '10px', color: '#8A95A3', padding: '2px 0' }}>{t}</div>)}
+                    {entry.coverage.known_private.map((t, i) => <div key={i} style={{ fontSize: '10px', color: 'var(--mc-text-3)', padding: '2px 0' }}>{t}</div>)}
                   </div>
                 )}
                 {entry.coverage.likely_missing.length > 0 && (
                   <div style={{ padding: '10px 14px', backgroundColor: '#EF444408', border: '1px solid #EF444420', borderRadius: '8px' }}>
                     <p style={{ fontSize: '9px', color: 'var(--mc-bearish)', fontWeight: '700', margin: '0 0 6px' }}>🔍 LIKELY MISSING — research candidates</p>
-                    {entry.coverage.likely_missing.map((t, i) => <div key={i} style={{ fontSize: '10px', color: '#8A95A3', padding: '2px 0', lineHeight: '1.4' }}>{t}</div>)}
+                    {entry.coverage.likely_missing.map((t, i) => <div key={i} style={{ fontSize: '10px', color: 'var(--mc-text-3)', padding: '2px 0', lineHeight: '1.4' }}>{t}</div>)}
                   </div>
                 )}
                 {entry.coverage.uncovered_nodes.length > 0 && (
                   <div style={{ padding: '10px 14px', backgroundColor: '#8B5CF608', border: '1px solid #8B5CF620', borderRadius: '8px' }}>
-                    <p style={{ fontSize: '9px', color: '#8B5CF6', fontWeight: '700', margin: '0 0 6px' }}>⚪ UNCOVERED NODES — no confirmed company</p>
+                    <p style={{ fontSize: '9px', color: 'var(--mc-state-persistent)', fontWeight: '700', margin: '0 0 6px' }}>⚪ UNCOVERED NODES — no confirmed company</p>
                     {entry.coverage.uncovered_nodes.map((t, i) => <div key={i} style={{ fontSize: '10px', color: 'var(--mc-text-4)', padding: '2px 0', lineHeight: '1.4' }}>{t}</div>)}
                   </div>
                 )}
@@ -2600,7 +2600,7 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '10px' }}>
                 <div style={{ padding: '10px 14px', backgroundColor: '#F59E0B08', border: '1px solid #F59E0B20', borderRadius: '8px' }}>
                   <p style={{ fontSize: '10px', color: 'var(--mc-warn)', fontWeight: '700', margin: '0 0 6px' }}>📍 QUALIFICATION STAGE → SIZE</p>
-                  <div style={{ fontSize: '11px', color: '#8A95A3', lineHeight: '1.6' }}>
+                  <div style={{ fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.6' }}>
                     <div>🟣 Design Win → position 1-2% (pre-revenue, high risk)</div>
                     <div>🟡 Qualifying → position 2-4% (revenue possible, mid conviction)</div>
                     <div>🟢 Ramping → position 3-6% (revenue confirmed, high conviction)</div>
@@ -2609,7 +2609,7 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
                 </div>
                 <div style={{ padding: '10px 14px', backgroundColor: '#0F7ABF08', border: '1px solid #0F7ABF20', borderRadius: '8px' }}>
                   <p style={{ fontSize: '10px', color: 'var(--mc-accent)', fontWeight: '700', margin: '0 0 6px' }}>📊 ENTRY TRIGGERS TO WATCH</p>
-                  <div style={{ fontSize: '11px', color: '#8A95A3', lineHeight: '1.6' }}>
+                  <div style={{ fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.6' }}>
                     <div>→ Earnings call explicitly names hyperscaler customer</div>
                     <div>→ Design win language: "selected," "qualified," "awarded"</div>
                     <div>→ Lead time expansion news / backlog increase</div>
@@ -2619,7 +2619,7 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
                 </div>
                 <div style={{ padding: '10px 14px', backgroundColor: '#EF444408', border: '1px solid #EF444420', borderRadius: '8px' }}>
                   <p style={{ fontSize: '10px', color: 'var(--mc-bearish)', fontWeight: '700', margin: '0 0 6px' }}>🚨 EXIT / REDUCE TRIGGERS</p>
-                  <div style={{ fontSize: '11px', color: '#8A95A3', lineHeight: '1.6' }}>
+                  <div style={{ fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.6' }}>
                     <div>→ New public competitor qualifies at same customer</div>
                     <div>→ Management sells &gt;10% of holdings</div>
                     <div>→ Customer explicitly names alternative supplier</div>
@@ -2673,7 +2673,7 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
                   <a key={i} href={url} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', padding: '8px 10px', marginBottom: '6px', backgroundColor: '#060E1A', borderRadius: '8px', textDecoration: 'none', border: '1px solid var(--mc-bg-4)' }}>
                     <ExternalLink className="w-3 h-3" style={{ color: 'var(--mc-text-4)', flexShrink: 0, marginTop: '2px' }} />
                     <div>
-                      <p style={{ fontSize: '12px', color: '#C9D4E0', margin: 0, lineHeight: '1.35' }}>{a.title || a.headline}</p>
+                      <p style={{ fontSize: '12px', color: 'var(--mc-text-2)', margin: 0, lineHeight: '1.35' }}>{a.title || a.headline}</p>
                       <p style={{ fontSize: '10px', color: 'var(--mc-text-4)', margin: '3px 0 0' }}>{a.source_name} · {timeAgo(a.published_at)}</p>
                     </div>
                   </a>
@@ -2753,7 +2753,7 @@ function GeoOverlay({ articles, isLoading }: { articles: NewsArticle[]; isLoadin
     <div style={{ padding: '20px' }}>
       <div style={{ marginBottom: '16px', padding: '12px 16px', backgroundColor: '#EF444408', border: '1px solid #EF444428', borderRadius: '10px' }}>
         <p style={{ fontSize: '12px', color: 'var(--mc-bearish)', fontWeight: '700', margin: '0 0 4px' }}>⚠️ Geopolitical Accelerant — Model 29</p>
-        <p style={{ fontSize: '11px', color: '#8A95A3', margin: 0, lineHeight: '1.5' }}>
+        <p style={{ fontSize: '11px', color: 'var(--mc-text-3)', margin: 0, lineHeight: '1.5' }}>
           Geopolitical disruption = accelerant to upstream supply chain bottleneck positions. When supply chains become more fragile globally, chokepoint companies become MORE valuable.
         </p>
       </div>
@@ -2803,9 +2803,9 @@ function GeoOverlay({ articles, isLoading }: { articles: NewsArticle[]; isLoadin
               {sentiment && sentiment !== 'NEUTRAL' && <span style={{ fontSize: '9px', color: sentColor, fontWeight: '700', marginLeft: 'auto' }}>{sentiment === 'BULLISH' ? '↑' : '↓'} {sentiment}</span>}
             </div>
             <a href={url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
-              <p style={{ fontSize: '13px', color: '#C9D4E0', margin: '0 0 6px', lineHeight: '1.4', fontWeight: '500' }}>{a.title || a.headline}</p>
+              <p style={{ fontSize: '13px', color: 'var(--mc-text-2)', margin: '0 0 6px', lineHeight: '1.4', fontWeight: '500' }}>{a.title || a.headline}</p>
             </a>
-            {a.summary && <p style={{ fontSize: '11px', color: '#8A95A3', margin: '0 0 8px', lineHeight: '1.5' }}>{a.summary}</p>}
+            {a.summary && <p style={{ fontSize: '11px', color: 'var(--mc-text-3)', margin: '0 0 8px', lineHeight: '1.5' }}>{a.summary}</p>}
             {mech && mech.layers.length > 0 && (
               <div style={{ display: 'flex', gap: '4px', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap' }}>
                 <span style={{ fontSize: '9px', color: 'var(--mc-text-4)', fontWeight: '600' }}>CHAIN IMPACT →</span>
@@ -2923,7 +2923,7 @@ function ConferenceCalendar() {
     <div style={{ padding: '20px' }}>
       <div style={{ marginBottom: '16px', padding: '12px 16px', backgroundColor: '#0F7ABF08', border: '1px solid #0F7ABF28', borderRadius: '10px' }}>
         <p style={{ fontSize: '12px', color: 'var(--mc-accent)', fontWeight: '700', margin: '0 0 3px' }}>📅 Frontrun Conferences — Model 22</p>
-        <p style={{ fontSize: '11px', color: '#8A95A3', margin: 0 }}>Position 4–6 weeks BEFORE each conference. A single Jensen Huang slide on CPO sends photonics names up 20–50% in a day. The day after is too late.</p>
+        <p style={{ fontSize: '11px', color: 'var(--mc-text-3)', margin: 0 }}>Position 4–6 weeks BEFORE each conference. A single Jensen Huang slide on CPO sends photonics names up 20–50% in a day. The day after is too late.</p>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '12px' }}>
@@ -2949,13 +2949,13 @@ function ConferenceCalendar() {
                       </span>
                     )}
                   </div>
-                  <span style={{ fontSize: '12px', color: '#8A95A3', fontWeight: '600' }}>{conf.date}</span>
+                  <span style={{ fontSize: '12px', color: 'var(--mc-text-3)', fontWeight: '600' }}>{conf.date}</span>
                 </div>
                 {conf.url && status !== 'past' && (
                   <a href={conf.url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--mc-text-4)', flexShrink: 0 }}><ExternalLink className="w-3.5 h-3.5" /></a>
                 )}
               </div>
-              <p style={{ fontSize: '12px', color: '#C9D4E0', fontWeight: '600', margin: '0 0 6px' }}>{conf.theme}</p>
+              <p style={{ fontSize: '12px', color: 'var(--mc-text-2)', fontWeight: '600', margin: '0 0 6px' }}>{conf.theme}</p>
               <p style={{ fontSize: '11px', color: 'var(--mc-text-4)', margin: '0 0 10px', lineHeight: '1.5' }}>{conf.relevance}</p>
               <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                 {conf.tags.map(t => <span key={t} style={{ fontSize: '9px', fontWeight: '700', color: TAG_COLORS[t] ?? 'var(--mc-text-4)', border: `1px solid ${(TAG_COLORS[t] ?? 'var(--mc-text-4)') + '40'}`, padding: '1px 6px', borderRadius: '3px' }}>{t}</span>)}
@@ -2999,12 +2999,12 @@ function ConferenceCalendar() {
                     {tickers.slice(0,3).map((t: string) => <span key={t} style={{ fontSize: '11px', fontWeight: '800', color: 'var(--mc-accent)', backgroundColor: '#0F7ABF14', padding: '1px 7px', borderRadius: '4px' }}>{t}</span>)}
                     {positive && <span style={{ fontSize: '9px', color: 'var(--mc-bullish)', fontWeight: '700', backgroundColor: '#10B98114', padding: '1px 6px', borderRadius: '3px' }}>↑ BEAT / RAISED</span>}
                     {negative && <span style={{ fontSize: '9px', color: 'var(--mc-bearish)', fontWeight: '700', backgroundColor: '#EF444414', padding: '1px 6px', borderRadius: '3px' }}>↓ MISS / CUT</span>}
-                    {qualSignal && <span style={{ fontSize: '9px', color: '#8B5CF6', fontWeight: '700', backgroundColor: '#8B5CF614', padding: '1px 6px', borderRadius: '3px' }}>🎯 QUAL SIGNAL</span>}
+                    {qualSignal && <span style={{ fontSize: '9px', color: 'var(--mc-state-persistent)', fontWeight: '700', backgroundColor: '#8B5CF614', padding: '1px 6px', borderRadius: '3px' }}>🎯 QUAL SIGNAL</span>}
                     {backlogSignal && <span style={{ fontSize: '9px', color: 'var(--mc-warn)', fontWeight: '700', backgroundColor: '#F59E0B14', padding: '1px 6px', borderRadius: '3px' }}>⏱️ BACKLOG SIGNAL</span>}
                     <span style={{ fontSize: '10px', color: 'var(--mc-text-4)', marginLeft: 'auto' }}>{timeAgo(a.published_at)}</span>
                   </div>
                   <a href={url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
-                    <p style={{ fontSize: '12px', color: '#C9D4E0', margin: '0 0 3px', lineHeight: '1.4', fontWeight: '500' }}>{a.title || a.headline}</p>
+                    <p style={{ fontSize: '12px', color: 'var(--mc-text-2)', margin: '0 0 3px', lineHeight: '1.4', fontWeight: '500' }}>{a.title || a.headline}</p>
                   </a>
                   <span style={{ fontSize: '10px', color: 'var(--mc-text-4)' }}>{a.source_name}</span>
                 </div>
@@ -3068,8 +3068,8 @@ function SupplyChainMap({ dashboard, articles }: { dashboard?: BnDashboard; arti
   return (
     <div style={{ padding: '20px' }}>
       <div style={{ marginBottom: '16px', padding: '12px 16px', backgroundColor: '#8B5CF608', border: '1px solid #8B5CF628', borderRadius: '10px' }}>
-        <p style={{ fontSize: '12px', color: '#8B5CF6', fontWeight: '700', margin: '0 0 3px' }}>🗺️ AI Infrastructure Value Chain — Models 01, 05, 18</p>
-        <p style={{ fontSize: '11px', color: '#8A95A3', margin: 0 }}>The further upstream from the hyped name, the less investor competition. Monopolistic positioning increases as you go further upstream. Active bottlenecks highlighted.</p>
+        <p style={{ fontSize: '12px', color: 'var(--mc-state-persistent)', fontWeight: '700', margin: '0 0 3px' }}>🗺️ AI Infrastructure Value Chain — Models 01, 05, 18</p>
+        <p style={{ fontSize: '11px', color: 'var(--mc-text-3)', margin: 0 }}>The further upstream from the hyped name, the less investor competition. Monopolistic positioning increases as you go further upstream. Active bottlenecks highlighted.</p>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -3138,10 +3138,10 @@ function SupplyChainMap({ dashboard, articles }: { dashboard?: BnDashboard; arti
 
       <div style={{ marginTop: '20px', padding: '14px 16px', backgroundColor: '#060E1A', border: '1px solid var(--mc-bg-4)', borderRadius: '10px' }}>
         <p style={{ fontSize: '11px', color: 'var(--mc-text-4)', fontWeight: '700', letterSpacing: '0.8px', margin: '0 0 8px' }}>SERENITY'S DEMAND CHAIN (Model 18)</p>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', fontSize: '11px', color: '#8A95A3' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', fontSize: '11px', color: 'var(--mc-text-3)' }}>
           {['Raw InP/GaAs crystal', 'Substrate wafer', 'Laser chip', 'CPO module', 'NVL72 rack', 'AI factory', 'Hyperscaler capex'].map((s, i, arr) => (
             <span key={s} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span style={{ color: '#C9D4E0' }}>{s}</span>
+              <span style={{ color: 'var(--mc-text-2)' }}>{s}</span>
               {i < arr.length - 1 && <span style={{ color: 'var(--mc-accent)' }}>→</span>}
             </span>
           ))}
@@ -3238,7 +3238,7 @@ function SerenityChecklist({ enriched }: { enriched: EnrichedStock[] }) {
     <div style={{ padding: '20px' }}>
       <div style={{ marginBottom: '16px', padding: '12px 16px', backgroundColor: '#0F7ABF08', border: '1px solid #0F7ABF28', borderRadius: '10px' }}>
         <p style={{ fontSize: '12px', color: 'var(--mc-accent)', fontWeight: '700', margin: '0 0 3px' }}>📋 Serenity Research Checklist — Framework Part V</p>
-        <p style={{ fontSize: '11px', color: '#8A95A3', margin: 0 }}>Complete ALL items before committing capital. Never commit more than 0.5% of portfolio without at least 5 primary source confirmations. Saved locally on your device.</p>
+        <p style={{ fontSize: '11px', color: 'var(--mc-text-3)', margin: 0 }}>Complete ALL items before committing capital. Never commit more than 0.5% of portfolio without at least 5 primary source confirmations. Saved locally on your device.</p>
       </div>
 
       {/* Add ticker + saved tickers */}
@@ -3249,7 +3249,7 @@ function SerenityChecklist({ enriched }: { enriched: EnrichedStock[] }) {
         <button onClick={addSymbol} style={{ padding: '8px 14px', backgroundColor: '#0F7ABF20', border: '1px solid #0F7ABF40', borderRadius: '8px', color: 'var(--mc-accent)', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>Add</button>
         {savedSymbols.map(s => (
           <div key={s} style={{ display: 'flex', alignItems: 'center', gap: '0', borderRadius: '8px', border: `1px solid ${activeSymbol === s ? '#0F7ABF60' : 'var(--mc-bg-4)'}`, overflow: 'hidden' }}>
-            <button onClick={() => loadSymbol(s)} style={{ padding: '6px 12px', background: activeSymbol === s ? '#0F7ABF20' : 'transparent', border: 'none', cursor: 'pointer', color: activeSymbol === s ? 'var(--mc-accent)' : '#8A95A3', fontSize: '12px', fontWeight: '700' }}>{s}</button>
+            <button onClick={() => loadSymbol(s)} style={{ padding: '6px 12px', background: activeSymbol === s ? '#0F7ABF20' : 'transparent', border: 'none', cursor: 'pointer', color: activeSymbol === s ? 'var(--mc-accent)' : 'var(--mc-text-3)', fontSize: '12px', fontWeight: '700' }}>{s}</button>
             <button onClick={() => removeSymbol(s)} style={{ padding: '6px 8px', background: 'none', border: 'none', borderLeft: '1px solid var(--mc-bg-4)', cursor: 'pointer', color: 'var(--mc-text-4)', fontSize: '11px' }}>×</button>
           </div>
         ))}
@@ -3282,7 +3282,7 @@ function SerenityChecklist({ enriched }: { enriched: EnrichedStock[] }) {
                     <button onClick={() => !isAuto && toggleCheck(item.id)} style={{ width: '100%', textAlign: 'left', display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '10px 14px', marginBottom: isAuto && auto.note ? '0' : '4px', backgroundColor: isChecked ? '#10B98108' : 'var(--mc-bg-1)', border: `1px solid ${isChecked ? '#10B98128' : 'var(--mc-bg-4)'}`, borderRadius: isAuto && auto.note ? '8px 8px 0 0' : '8px', cursor: isAuto ? 'default' : 'pointer', transition: 'all 0.15s' }}>
                       {isChecked ? <CheckSquare className="w-4 h-4" style={{ color: isAuto ? '#06B6D4' : 'var(--mc-bullish)', flexShrink: 0, marginTop: '1px' }} /> : <Square className="w-4 h-4" style={{ color: 'var(--mc-text-4)', flexShrink: 0, marginTop: '1px' }} />}
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <span style={{ fontSize: '12px', color: isChecked ? (isAuto ? '#06B6D4' : 'var(--mc-bullish)') : '#C9D4E0', lineHeight: '1.4', textDecoration: isChecked ? 'line-through' : 'none', textDecorationColor: isAuto ? '#06B6D460' : '#10B98160' }}>{item.label}</span>
+                        <span style={{ fontSize: '12px', color: isChecked ? (isAuto ? '#06B6D4' : 'var(--mc-bullish)') : 'var(--mc-text-2)', lineHeight: '1.4', textDecoration: isChecked ? 'line-through' : 'none', textDecorationColor: isAuto ? '#06B6D460' : '#10B98160' }}>{item.label}</span>
                         {isAuto && <span style={{ fontSize: '9px', color: '#06B6D4', backgroundColor: '#06B6D414', border: '1px solid #06B6D430', padding: '0 5px', borderRadius: '3px', marginLeft: '8px', fontWeight: '600' }}>AUTO</span>}
                       </div>
                     </button>

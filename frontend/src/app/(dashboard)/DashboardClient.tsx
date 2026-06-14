@@ -672,8 +672,8 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
                 style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '6px', transition: 'background-color 0.15s' }}
                 title={`View ${m.symbol} details`}
               >
-                <span style={{ fontSize: '11px', fontWeight: '600', color: '#C9D4E0' }}>{m.symbol}</span>
-                {m.price !== '—' && <span style={{ fontSize: '11px', color: '#8A95A3', fontVariantNumeric: 'tabular-nums' }}>{m.price}</span>}
+                <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--mc-text-2)' }}>{m.symbol}</span>
+                {m.price !== '—' && <span style={{ fontSize: '11px', color: 'var(--mc-text-3)', fontVariantNumeric: 'tabular-nums' }}>{m.price}</span>}
                 <span style={{ fontSize: '11px', fontWeight: '700', color: m.change === '—' || m.change === '...' ? 'var(--mc-text-4)' : m.up ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontVariantNumeric: 'tabular-nums' }}>{m.change}</span>
               </button>
             ))}
@@ -741,7 +741,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
               {/* User menu — hidden on mobile, accessible via bottom nav */}
               <div className="desktop-user-menu" style={{ position: 'relative' }}>
                 <button onClick={() => setUserMenu(v => !v)}
-                  style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'none', border: '1px solid var(--mc-bg-4)', borderRadius: '10px', padding: '6px 12px', cursor: 'pointer', color: '#C9D4E0' }}>
+                  style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'none', border: '1px solid var(--mc-bg-4)', borderRadius: '10px', padding: '6px 12px', cursor: 'pointer', color: 'var(--mc-text-2)' }}>
                   <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--mc-accent), #06B6D4)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '700', color: 'white' }}>
                     {(userProfile?.display_name || 'R').charAt(0).toUpperCase()}
                   </div>
@@ -756,7 +756,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
                       <p style={{ fontSize: '11px', color: 'var(--mc-text-4)', margin: 0 }}>Active Investor</p>
                     </div>
                     <div style={{ padding: '6px 0' }}>
-                      <Link href="/settings" style={{ display: 'block', padding: '8px 16px', fontSize: '13px', color: '#C9D4E0', textDecoration: 'none' }}>⚙️ Settings</Link>
+                      <Link href="/settings" style={{ display: 'block', padding: '8px 16px', fontSize: '13px', color: 'var(--mc-text-2)', textDecoration: 'none' }}>⚙️ Settings</Link>
                       <button onClick={handleSignOut} style={{ width: '100%', textAlign: 'left', padding: '8px 16px', fontSize: '13px', color: 'var(--mc-bearish)', background: 'none', border: 'none', cursor: 'pointer', borderTop: '1px solid var(--mc-bg-4)' }}>
                         🚪 Sign Out
                       </button>

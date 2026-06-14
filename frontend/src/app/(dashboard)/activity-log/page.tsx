@@ -112,7 +112,7 @@ export default function ActivityLogPage() {
             placeholder="Filter by ticker / text…"
             style={{
               marginLeft: 'auto', minWidth: 200, fontSize: 11, padding: '5px 10px',
-              background: '#0A1422', color: TEXT, border: `1px solid ${BORDER}`, borderRadius: 4,
+              background: 'var(--mc-bg-0)', color: TEXT, border: `1px solid ${BORDER}`, borderRadius: 4,
             }}
           />
         </div>

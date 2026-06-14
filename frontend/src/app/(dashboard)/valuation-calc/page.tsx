@@ -63,7 +63,7 @@ function SaveValuationBar({ calcKind, result, onLoaded }: {
         placeholder="Optional note (e.g. 'mgmt FY27 guidance · cross-confirmed by CB')"
         style={{
           flex: 1, minWidth: 240,
-          background: '#0A1422', color: TEXT, border: `1px solid ${BORDER}`,
+          background: 'var(--mc-bg-0)', color: TEXT, border: `1px solid ${BORDER}`,
           padding: '6px 10px', borderRadius: 4, fontSize: 12,
         }}
       />
@@ -218,13 +218,13 @@ function ValuationAnalyticsPanel() {
         <div style={{ fontSize: 11, color: DIM, marginBottom: 10 }}>Highest expected CAGR across your saved valuations</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {topConviction.map((e, i) => (
-            <div key={e.v.id} style={{ background: '#0A1422', borderRadius: 5, padding: '8px 12px', display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+            <div key={e.v.id} style={{ background: 'var(--mc-bg-0)', borderRadius: 5, padding: '8px 12px', display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 14, color: 'var(--mc-bullish)', fontWeight: 900, minWidth: 24 }}>#{i + 1}</span>
               <span style={{ fontSize: 13, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace, monospace' }}>{e.v.ticker || e.v.company || '—'}</span>
               <span style={{ fontSize: 10, color: 'var(--mc-cyan)', background: '#22D3EE15', padding: '2px 7px', borderRadius: 3, fontWeight: 800 }}>
                 {e.v.calcKind === 'EV_EBITDA' ? 'EV/EBITDA' : e.v.calcKind}
               </span>
-              <span style={{ flex: 1, fontSize: 11, color: '#C9D4E0', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <span style={{ flex: 1, fontSize: 11, color: 'var(--mc-text-2)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {e.v.baseSummary}
               </span>
               <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-bullish)', fontVariantNumeric: 'tabular-nums' }}>
@@ -241,12 +241,12 @@ function ValuationAnalyticsPanel() {
         <div style={{ fontSize: 11, color: DIM, marginBottom: 10 }}>Maximum drawdown if multiples compress to bear scenario</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {worstRisk.map((e) => (
-            <div key={e.v.id} style={{ background: '#0A1422', borderRadius: 5, padding: '8px 12px', display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+            <div key={e.v.id} style={{ background: 'var(--mc-bg-0)', borderRadius: 5, padding: '8px 12px', display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 13, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace, monospace' }}>{e.v.ticker || e.v.company || '—'}</span>
               <span style={{ fontSize: 10, color: 'var(--mc-bearish)', background: '#EF444415', padding: '2px 7px', borderRadius: 3, fontWeight: 800 }}>
                 {e.v.calcKind === 'EV_EBITDA' ? 'EV/EBITDA' : e.v.calcKind}
               </span>
-              <span style={{ flex: 1, fontSize: 11, color: '#C9D4E0', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <span style={{ flex: 1, fontSize: 11, color: 'var(--mc-text-2)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {e.v.notes || e.v.baseSummary}
               </span>
               <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-bearish)', fontVariantNumeric: 'tabular-nums' }}>
@@ -271,7 +271,7 @@ function ValuationAnalyticsPanel() {
             <>
               <div key={e.v.id+'-t'} style={{ color: TEXT, fontWeight: 700, fontFamily: 'ui-monospace, monospace' }}>{e.v.ticker || '—'}</div>
               <div key={e.v.id+'-c'} style={{ color: 'var(--mc-cyan)', fontFamily: 'ui-monospace, monospace' }}>{e.v.calcKind === 'EV_EBITDA' ? 'EVE' : e.v.calcKind}</div>
-              <div key={e.v.id+'-s'} style={{ color: '#C9D4E0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.v.baseSummary.slice(0, 90)}</div>
+              <div key={e.v.id+'-s'} style={{ color: 'var(--mc-text-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.v.baseSummary.slice(0, 90)}</div>
               <div key={e.v.id+'-1'} style={{ color: sigColor(e.bear?.upsidePct || 0), fontWeight: 800, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{(e.bear?.upsidePct ?? 0).toFixed(0)}%</div>
               <div key={e.v.id+'-2'} style={{ color: sigColor(e.base!.upsidePct || 0), fontWeight: 800, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{(e.base!.upsidePct ?? 0).toFixed(0)}%</div>
               <div key={e.v.id+'-3'} style={{ color: sigColor(e.bull?.upsidePct || 0), fontWeight: 800, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{(e.bull?.upsidePct ?? 0).toFixed(0)}%</div>
@@ -325,7 +325,7 @@ function SavedValuationsPanel({ onLoad }: { onLoad?: (v: SavedValuation) => void
             : `Untitled valuation · ${dateStr}`;
           return (
           <div key={v.id} style={{
-            background: '#0A1422', border: `1px solid ${BORDER}`, borderRadius: 5,
+            background: 'var(--mc-bg-0)', border: `1px solid ${BORDER}`, borderRadius: 5,
             padding: '8px 10px',
             display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap',
           }}>
@@ -333,7 +333,7 @@ function SavedValuationsPanel({ onLoad }: { onLoad?: (v: SavedValuation) => void
               {v.calcKind === 'EV_EBITDA' ? 'EV/EB' : v.calcKind}
             </span>
             <span style={{ fontSize: 12, color: TEXT, fontWeight: 700 }} title={`Saved ${v.savedAt}`}>{displayLabel}</span>
-            <span style={{ flex: 1, fontSize: 11, color: '#C9D4E0', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            <span style={{ flex: 1, fontSize: 11, color: 'var(--mc-text-2)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {v.baseSummary}
             </span>
             {v.notes && (
@@ -476,7 +476,7 @@ function TickerCombo({ value, onChange, onSelect, market = 'india' }: {
         autoComplete="off"
         style={{
           width: '100%', boxSizing: 'border-box',
-          background: '#0A1422', color: TEXT, border: `1px solid ${BORDER}`,
+          background: 'var(--mc-bg-0)', color: TEXT, border: `1px solid ${BORDER}`,
           padding: '7px 10px', borderRadius: 4, fontSize: 13, fontWeight: 600,
           fontFamily: 'ui-monospace, monospace',
         }}
@@ -585,7 +585,7 @@ function NumberInput({ label, value, onChange, suffix, inputRef, highlight, help
           onChange={(e) => onChange(Number(e.target.value))}
           title={highlight ? 'Not in live price feed — enter current market cap from Screener.in or moneycontrol.' : undefined}
           style={{
-            background: '#0A1422', color: TEXT,
+            background: 'var(--mc-bg-0)', color: TEXT,
             border: `1px solid ${highlight ? 'var(--mc-warn)' : BORDER}`,
             padding: '7px 10px', borderRadius: 4, fontSize: 13, fontFamily: 'ui-monospace, monospace',
             width: 130, fontWeight: 600,
@@ -1177,7 +1177,7 @@ function SectorLookupPanel() {
                 <React.Fragment key={sector}>
                   <tr
                     onClick={() => setOpenSector(isOpen ? null : sector)}
-                    style={{ background: i % 2 === 0 ? '#0A1422' : 'var(--mc-bg-1)', cursor: scenario ? 'pointer' : 'default' }}>
+                    style={{ background: i % 2 === 0 ? 'var(--mc-bg-0)' : 'var(--mc-bg-1)', cursor: scenario ? 'pointer' : 'default' }}>
                     <td style={{ padding: '12px 14px', fontSize: 13, color: TEXT, fontWeight: 700, borderBottom: `1px solid ${BORDER}`, verticalAlign: 'top' }}>
                       {scenario && (<span style={{ marginRight: 6, color: 'var(--mc-cyan)', fontSize: 11, fontWeight: 800 }}>{isOpen ? '▼' : '▶'}</span>)}
                       {sector}
@@ -1187,7 +1187,7 @@ function SectorLookupPanel() {
                         {conf.calc === 'EV_EBITDA' ? 'EV / EBITDA' : conf.calc === 'PS' ? 'P / S' : 'P / E'}
                       </span>
                     </td>
-                    <td style={{ padding: '12px 14px', fontSize: 12, color: '#C9D4E0', borderBottom: `1px solid ${BORDER}`, verticalAlign: 'top', lineHeight: 1.5 }}>
+                    <td style={{ padding: '12px 14px', fontSize: 12, color: 'var(--mc-text-2)', borderBottom: `1px solid ${BORDER}`, verticalAlign: 'top', lineHeight: 1.5 }}>
                       {conf.multipleHint}
                     </td>
                     <td style={{ padding: '12px 14px', borderBottom: `1px solid ${BORDER}`, verticalAlign: 'top' }}>
@@ -2519,7 +2519,7 @@ function PBCalculator() {
           { label: 'BASE', val: base, color: '#22D3EE' },
           { label: 'BULL', val: bull, color: '#10B981' },
         ].map((c) => (
-          <div key={c.label} style={{ padding: '10px 12px', background: '#0A1422', border: `1px solid ${c.color}50`, borderRadius: 4 }}>
+          <div key={c.label} style={{ padding: '10px 12px', background: 'var(--mc-bg-0)', border: `1px solid ${c.color}50`, borderRadius: 4 }}>
             <div style={{ fontSize: 9, color: c.color, fontWeight: 800, letterSpacing: '1px' }}>{c.label}</div>
             <div style={{ fontSize: 13, color: TEXT, fontWeight: 800, fontVariantNumeric: 'tabular-nums', marginTop: 2 }}>
               ₹{Math.round(c.val).toLocaleString('en-IN')} Cr
@@ -2612,7 +2612,7 @@ function SumOfPartsCalculator() {
           <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr auto', gap: 8, alignItems: 'center' }}>
             <input type="text" value={s.name} onChange={(e) => s.setName(e.target.value)}
               placeholder="Segment name"
-              style={{ background: '#0A1422', color: TEXT, border: `1px solid ${BORDER}`, padding: '7px 10px', borderRadius: 4, fontSize: 12 }} />
+              style={{ background: 'var(--mc-bg-0)', color: TEXT, border: `1px solid ${BORDER}`, padding: '7px 10px', borderRadius: 4, fontSize: 12 }} />
             <NumberInput label="" value={s.rev} onChange={s.setRev} suffix="₹ Cr" />
             <NumberInput label="" value={s.mult} onChange={s.setMult} suffix="x" />
             <span style={{ fontSize: 12, color: s.color, fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 110, textAlign: 'right' }}>

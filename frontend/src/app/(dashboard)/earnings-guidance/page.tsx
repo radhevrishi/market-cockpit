@@ -424,7 +424,7 @@ export default function EarningsGuidancePage() {
                 onClick={() => { setPollStopped(true); setComputing(false); }}
                 style={{
                   padding: '6px 16px', borderRadius: '6px', border: `1px solid var(--mc-text-4)`,
-                  background: 'transparent', color: '#8899AA', cursor: 'pointer', fontSize: '12px',
+                  background: 'transparent', color: 'var(--mc-text-3)', cursor: 'pointer', fontSize: '12px',
                 }}
               >
                 Stop auto-refresh

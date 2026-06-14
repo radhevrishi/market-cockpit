@@ -314,7 +314,7 @@ export function IndiaInstitutionalReport({
                     title={fwd.capex.evidenceQuote || ''}
                   >
                     <span style={{ color: 'var(--mc-state-persistent)' }}>⚙ Capex:</span>{' '}
-                    <strong style={{ color: fwd.capex.type === 'growth' ? GREEN : fwd.capex.type === 'maintenance' ? '#fbbf24' : '#fb923c' }}>
+                    <strong style={{ color: fwd.capex.type === 'growth' ? GREEN : fwd.capex.type === 'maintenance' ? 'var(--mc-warn)' : 'var(--mc-warn)' }}>
                       {fwd.capex.type.toUpperCase()}
                     </strong>
                     {fwd.capex.purpose && fwd.capex.purpose !== '—' && (
@@ -335,7 +335,7 @@ export function IndiaInstitutionalReport({
                       <span style={{ color: FAINT }}>  ·  </span>
                     )}
                     {fwd.mixedReason.cautions.length > 0 && (
-                      <span><span style={{ color: '#fb923c' }}>⚠</span> {fwd.mixedReason.cautions.join(' · ')}</span>
+                      <span><span style={{ color: 'var(--mc-warn)' }}>⚠</span> {fwd.mixedReason.cautions.join(' · ')}</span>
                     )}
                   </div>
                 )}

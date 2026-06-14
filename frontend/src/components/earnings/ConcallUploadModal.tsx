@@ -305,7 +305,7 @@ export function ConcallUploadModal({
                         f.status === 'parsed'
                           ? 'var(--mc-bullish)'
                           : f.status === 'error'
-                            ? '#fb923c'
+                            ? 'var(--mc-warn)'
                             : f.status === 'parsing'
                               ? accentColor
                               : mutedColor,
@@ -366,7 +366,7 @@ export function ConcallUploadModal({
         </div>
 
         {globalError && (
-          <div style={{ marginTop: 8, fontSize: 11, color: '#fb923c' }}>
+          <div style={{ marginTop: 8, fontSize: 11, color: 'var(--mc-warn)' }}>
             ⚠ {globalError}
           </div>
         )}

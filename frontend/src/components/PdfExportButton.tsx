@@ -144,7 +144,7 @@ export function PdfExportButton({ compact = false }: { compact?: boolean }) {
         display: 'flex', alignItems: 'center', gap: '6px',
         background: 'none', border: '1px solid var(--mc-bg-4)', borderRadius: '10px',
         padding: '6px 10px', cursor: busy ? 'wait' : 'pointer',
-        color: busy ? 'var(--mc-text-4)' : '#C9D4E0',
+        color: busy ? 'var(--mc-text-4)' : 'var(--mc-text-2)',
         minHeight: '36px',
         fontSize: '12px',
         fontWeight: 600,

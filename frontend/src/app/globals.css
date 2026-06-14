@@ -55,7 +55,7 @@ body {
     @apply bg-[#1A2847] hover:bg-[#243355] text-[var(--mc-text-0)] border border-[var(--mc-border-1)];
   }
   .input {
-    @apply bg-[var(--mc-bg-0)] border border-[var(--mc-border-1)] rounded-lg px-3 py-2 text-[var(--mc-text-0)] placeholder-[#6B7280] focus:outline-none focus:border-[var(--mc-accent)];
+    @apply bg-[var(--mc-bg-0)] border border-[var(--mc-border-1)] rounded-lg px-3 py-2 text-[var(--mc-text-0)] placeholder-[var(--mc-text-4)] focus:outline-none focus:border-[var(--mc-accent)];
   }
   .gradient-text {
     @apply bg-gradient-to-r from-[var(--mc-accent)] to-[#06B6D4] bg-clip-text text-transparent;
@@ -303,11 +303,11 @@ html[data-theme="light"] [style*="#060e1a"],
 html[data-theme="light"] [style*="rgb(6, 14, 26)"] {
   background-color: #f0f3f7 !important;
 }
-/* Header bg var(--mc-bg-1), #0D1B2E → light panel */
+/* Header bg var(--mc-bg-1), var(--mc-bg-1) → light panel */
 html[data-theme="light"] [style*="var(--mc-bg-1)"],
 html[data-theme="light"] [style*="var(--mc-bg-1)"],
-html[data-theme="light"] [style*="#0D1B2E"],
-html[data-theme="light"] [style*="#0d1b2e"],
+html[data-theme="light"] [style*="var(--mc-bg-1)"],
+html[data-theme="light"] [style*="var(--mc-bg-1)"],
 html[data-theme="light"] [style*="var(--mc-bg-2)"],
 html[data-theme="light"] [style*="var(--mc-bg-2)"],
 html[data-theme="light"] [style*="rgb(13, 22, 35)"],
@@ -316,21 +316,21 @@ html[data-theme="light"] [style*="rgb(17, 27, 53)"] {
   background-color: #f7f8fa !important;
   border-color: rgba(0,0,0,0.08) !important;
 }
-/* Inner panel var(--mc-bg-4), var(--mc-border-1), #1A2B3C, #2A3B4C, var(--mc-bg-4), #0A1422, #0A1628 etc */
+/* Inner panel var(--mc-bg-4), var(--mc-border-1), var(--mc-bg-2), var(--mc-border-2), var(--mc-bg-4), var(--mc-bg-0), #0A1628 etc */
 html[data-theme="light"] [style*="var(--mc-bg-4)"],
 html[data-theme="light"] [style*="var(--mc-bg-4)"],
 html[data-theme="light"] [style*="var(--mc-border-1)"],
 html[data-theme="light"] [style*="var(--mc-border-1)"],
-html[data-theme="light"] [style*="#1A2B3C"],
-html[data-theme="light"] [style*="#1a2b3c"],
-html[data-theme="light"] [style*="#1e293b"],
-html[data-theme="light"] [style*="#1E293B"],
-html[data-theme="light"] [style*="#2A3B4C"],
-html[data-theme="light"] [style*="#2a3b4c"],
+html[data-theme="light"] [style*="var(--mc-bg-2)"],
+html[data-theme="light"] [style*="var(--mc-bg-2)"],
+html[data-theme="light"] [style*="var(--mc-bg-3)"],
+html[data-theme="light"] [style*="var(--mc-bg-3)"],
+html[data-theme="light"] [style*="var(--mc-border-2)"],
+html[data-theme="light"] [style*="var(--mc-border-2)"],
 html[data-theme="light"] [style*="var(--mc-bg-4)"],
 html[data-theme="light"] [style*="var(--mc-bg-4)"],
-html[data-theme="light"] [style*="#0A1422"],
-html[data-theme="light"] [style*="#0a1422"],
+html[data-theme="light"] [style*="var(--mc-bg-0)"],
+html[data-theme="light"] [style*="var(--mc-bg-0)"],
 html[data-theme="light"] [style*="#0A1628"],
 html[data-theme="light"] [style*="#0a1628"],
 html[data-theme="light"] [style*="rgb(26, 40, 64)"],
@@ -348,13 +348,13 @@ html[data-theme="light"] [style*="rgb(245, 247, 250)"],
 html[data-theme="light"] [style*="rgb(230, 237, 243)"] {
   color: #0f172a !important;
 }
-/* Muted text var(--mc-text-3), var(--mc-text-4), #8A95A3 → mid-slate */
+/* Muted text var(--mc-text-3), var(--mc-text-4), var(--mc-text-3) → mid-slate */
 html[data-theme="light"] [style*="var(--mc-text-3)"],
 html[data-theme="light"] [style*="var(--mc-text-3)"],
 html[data-theme="light"] [style*="var(--mc-text-4)"],
 html[data-theme="light"] [style*="var(--mc-text-4)"],
-html[data-theme="light"] [style*="#8A95A3"],
-html[data-theme="light"] [style*="#8a95a3"],
+html[data-theme="light"] [style*="var(--mc-text-3)"],
+html[data-theme="light"] [style*="var(--mc-text-3)"],
 html[data-theme="light"] [style*="rgb(148, 163, 184)"],
 html[data-theme="light"] [style*="rgb(107, 122, 141)"] {
   color: var(--mc-text-4) !important;
@@ -363,12 +363,12 @@ html[data-theme="light"] [style*="rgb(107, 122, 141)"] {
    These were near-invisible on white in patch 0075. */
 html[data-theme="light"] [style*="var(--mc-text-4)"],
 html[data-theme="light"] [style*="var(--mc-text-4)"],
-html[data-theme="light"] [style*="#C9D4E0"],
-html[data-theme="light"] [style*="#c9d4e0"],
+html[data-theme="light"] [style*="var(--mc-text-2)"],
+html[data-theme="light"] [style*="var(--mc-text-2)"],
 html[data-theme="light"] [style*="var(--mc-text-3)"],
 html[data-theme="light"] [style*="var(--mc-text-3)"],
-html[data-theme="light"] [style*="#8A95A3"],
-html[data-theme="light"] [style*="#8a95a3"],
+html[data-theme="light"] [style*="var(--mc-text-3)"],
+html[data-theme="light"] [style*="var(--mc-text-3)"],
 html[data-theme="light"] [style*="#7d8590"],
 html[data-theme="light"] [style*="#7D8590"],
 html[data-theme="light"] [style*="var(--mc-text-4)"],
@@ -405,7 +405,7 @@ html[data-theme="light"] [style*="var(--mc-text-2)"] {
 
 /* ─── PROFESSIONAL THEME — Bloomberg-terminal black + orange + monospace ── */
 /* PATCH 0076: Make Pro VISIBLY distinct from Dark.
-   Dark = grey-blue panels (#0d1117, #161b22). Professional = pure black bg
+   Dark = grey-blue panels (#0d1117, var(--mc-bg-1)). Professional = pure black bg
    with orange-tinted borders, all blue accents flipped to orange/amber,
    monospace font everywhere. */
 
@@ -430,11 +430,11 @@ html[data-theme="professional"] [style*="#060e1a"] {
 /* Panels → very dark grey with orange-tinted border */
 html[data-theme="professional"] [style*="var(--mc-bg-1)"],
 html[data-theme="professional"] [style*="var(--mc-bg-1)"],
-html[data-theme="professional"] [style*="#0D1B2E"],
-html[data-theme="professional"] [style*="#0d1b2e"],
+html[data-theme="professional"] [style*="var(--mc-bg-1)"],
+html[data-theme="professional"] [style*="var(--mc-bg-1)"],
 html[data-theme="professional"] [style*="var(--mc-bg-2)"],
 html[data-theme="professional"] [style*="var(--mc-bg-2)"],
-html[data-theme="professional"] [style*="#161b22"],
+html[data-theme="professional"] [style*="var(--mc-bg-1)"],
 html[data-theme="professional"] [style*="#1c232c"] {
   background-color: #0a0a0a !important;
   border-color: rgba(255,165,0,0.18) !important;
@@ -444,18 +444,18 @@ html[data-theme="professional"] [style*="var(--mc-bg-4)"],
 html[data-theme="professional"] [style*="var(--mc-bg-4)"],
 html[data-theme="professional"] [style*="var(--mc-border-1)"],
 html[data-theme="professional"] [style*="var(--mc-border-1)"],
-html[data-theme="professional"] [style*="#1A2B3C"],
-html[data-theme="professional"] [style*="#1a2b3c"],
-html[data-theme="professional"] [style*="#2A3B4C"],
-html[data-theme="professional"] [style*="#2a3b4c"],
+html[data-theme="professional"] [style*="var(--mc-bg-2)"],
+html[data-theme="professional"] [style*="var(--mc-bg-2)"],
+html[data-theme="professional"] [style*="var(--mc-border-2)"],
+html[data-theme="professional"] [style*="var(--mc-border-2)"],
 html[data-theme="professional"] [style*="var(--mc-bg-4)"],
 html[data-theme="professional"] [style*="var(--mc-bg-4)"],
-html[data-theme="professional"] [style*="#0A1422"],
-html[data-theme="professional"] [style*="#0a1422"],
+html[data-theme="professional"] [style*="var(--mc-bg-0)"],
+html[data-theme="professional"] [style*="var(--mc-bg-0)"],
 html[data-theme="professional"] [style*="#0A1628"],
 html[data-theme="professional"] [style*="#0a1628"],
-html[data-theme="professional"] [style*="#1e293b"],
-html[data-theme="professional"] [style*="#1E293B"] {
+html[data-theme="professional"] [style*="var(--mc-bg-3)"],
+html[data-theme="professional"] [style*="var(--mc-bg-3)"] {
   background-color: #0f0f0f !important;
   border-color: rgba(255,165,0,0.30) !important;
   color: #e8e8e8 !important;
@@ -479,8 +479,8 @@ html[data-theme="professional"] [style*="#38BDF8"] {
   border-color: #ffa500 !important;
 }
 /* Purple → amber (Bloomberg uses orange/amber spectrum, not purple) */
-html[data-theme="professional"] [style*="#8B5CF6"],
-html[data-theme="professional"] [style*="#8b5cf6"],
+html[data-theme="professional"] [style*="var(--mc-state-persistent)"],
+html[data-theme="professional"] [style*="var(--mc-state-persistent)"],
 html[data-theme="professional"] [style*="#6366F1"],
 html[data-theme="professional"] [style*="#6366f1"] {
   color: #ffcc00 !important;
@@ -498,12 +498,12 @@ html[data-theme="professional"] [style*="var(--mc-text-3)"],
 html[data-theme="professional"] [style*="var(--mc-text-3)"],
 html[data-theme="professional"] [style*="var(--mc-text-2)"],
 html[data-theme="professional"] [style*="var(--mc-text-2)"],
-html[data-theme="professional"] [style*="#C9D4E0"],
-html[data-theme="professional"] [style*="#c9d4e0"],
+html[data-theme="professional"] [style*="var(--mc-text-2)"],
+html[data-theme="professional"] [style*="var(--mc-text-2)"],
 html[data-theme="professional"] [style*="var(--mc-text-3)"],
 html[data-theme="professional"] [style*="var(--mc-text-3)"],
-html[data-theme="professional"] [style*="#8A95A3"],
-html[data-theme="professional"] [style*="#8a95a3"],
+html[data-theme="professional"] [style*="var(--mc-text-3)"],
+html[data-theme="professional"] [style*="var(--mc-text-3)"],
 html[data-theme="professional"] [style*="var(--mc-text-4)"],
 html[data-theme="professional"] [style*="var(--mc-text-4)"] {
   color: #aaaa88 !important;
@@ -854,8 +854,8 @@ html[data-theme="professional"] footer {
 }
 
 /* Panels in pro: very dark grey with orange-tinted border */
-html[data-theme="professional"] [style*="#0D1B2E"],
-html[data-theme="professional"] [style*="#0d1b2e"],
+html[data-theme="professional"] [style*="var(--mc-bg-1)"],
+html[data-theme="professional"] [style*="var(--mc-bg-1)"],
 html[data-theme="professional"] [style*="var(--mc-bg-1)"],
 html[data-theme="professional"] [style*="var(--mc-bg-1)"],
 html[data-theme="professional"] [style*="var(--mc-bg-2)"],
@@ -864,14 +864,14 @@ html[data-theme="professional"] [style*="var(--mc-bg-4)"],
 html[data-theme="professional"] [style*="var(--mc-bg-4)"],
 html[data-theme="professional"] [style*="var(--mc-border-1)"],
 html[data-theme="professional"] [style*="var(--mc-border-1)"],
-html[data-theme="professional"] [style*="#1A2B3C"],
-html[data-theme="professional"] [style*="#1a2b3c"],
+html[data-theme="professional"] [style*="var(--mc-bg-2)"],
+html[data-theme="professional"] [style*="var(--mc-bg-2)"],
 html[data-theme="professional"] [style*="#0a0a0f"],
 html[data-theme="professional"] [style*="#0A0A0F"],
 html[data-theme="professional"] [style*="#13131a"],
 html[data-theme="professional"] [style*="#13131A"],
 html[data-theme="professional"] [style*="#191926"],
-html[data-theme="professional"] [style*="#161b22"],
+html[data-theme="professional"] [style*="var(--mc-bg-1)"],
 html[data-theme="professional"] [style*="#1c232c"] {
   background-color: #0a0a0a !important;
   border: 1px solid rgba(255,165,0,0.30) !important;
@@ -893,8 +893,8 @@ html[data-theme="professional"] [style*="#38bdf8"],
 html[data-theme="professional"] [style*="#38BDF8"],
 html[data-theme="professional"] [style*="var(--mc-state-persistent)"],
 html[data-theme="professional"] [style*="var(--mc-state-persistent)"],
-html[data-theme="professional"] [style*="#8B5CF6"],
-html[data-theme="professional"] [style*="#8b5cf6"] {
+html[data-theme="professional"] [style*="var(--mc-state-persistent)"],
+html[data-theme="professional"] [style*="var(--mc-state-persistent)"] {
   color: #ffa500 !important;
   border-color: rgba(255,165,0,0.40) !important;
 }
@@ -912,15 +912,15 @@ html[data-theme="professional"] [style*="var(--mc-text-3)"],
 html[data-theme="professional"] [style*="var(--mc-text-3)"],
 html[data-theme="professional"] [style*="var(--mc-text-2)"],
 html[data-theme="professional"] [style*="var(--mc-text-2)"],
-html[data-theme="professional"] [style*="#C9D4E0"],
-html[data-theme="professional"] [style*="#c9d4e0"],
+html[data-theme="professional"] [style*="var(--mc-text-2)"],
+html[data-theme="professional"] [style*="var(--mc-text-2)"],
 html[data-theme="professional"] [style*="var(--mc-text-3)"],
 html[data-theme="professional"] [style*="var(--mc-text-3)"],
-html[data-theme="professional"] [style*="#8A95A3"],
-html[data-theme="professional"] [style*="#8a95a3"],
+html[data-theme="professional"] [style*="var(--mc-text-3)"],
+html[data-theme="professional"] [style*="var(--mc-text-3)"],
 html[data-theme="professional"] [style*="var(--mc-text-4)"],
 html[data-theme="professional"] [style*="var(--mc-text-4)"],
-html[data-theme="professional"] [style*="#64748b"] {
+html[data-theme="professional"] [style*="var(--mc-text-4)"] {
   color: #998866 !important;
 }
 html[data-theme="professional"] [style*="var(--mc-text-4)"],

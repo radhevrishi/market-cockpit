@@ -397,7 +397,7 @@ export default function TickerExportToolbar({
           onClick={() => copyCsv(safeTickers, 'All')}
           disabled={n === 0}
           title={`Copy ${n} tickers as plain comma-separated list (no prefix) — for Excel, sheets, or other tools`}
-          style={{ ...btnBase, border: '1px solid var(--mc-bg-4)', background: '#0A1422', color: '#C9D4E0' }}
+          style={{ ...btnBase, border: '1px solid var(--mc-bg-4)', background: 'var(--mc-bg-0)', color: 'var(--mc-text-2)' }}
         >
           <Copy style={{ width: 14, height: 14 }} />
           Copy CSV
@@ -407,7 +407,7 @@ export default function TickerExportToolbar({
           onClick={() => downloadTxt(safeTickers, 'All')}
           disabled={n === 0}
           title={`Download ${n} tickers as .txt file (with ${exchange}: prefix)`}
-          style={{ ...btnBase, border: '1px solid var(--mc-bg-4)', background: '#0A1422', color: '#C9D4E0' }}
+          style={{ ...btnBase, border: '1px solid var(--mc-bg-4)', background: 'var(--mc-bg-0)', color: 'var(--mc-text-2)' }}
         >
           <Download style={{ width: 14, height: 14 }} />
           Download .txt

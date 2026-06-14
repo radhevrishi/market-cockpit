@@ -75,7 +75,7 @@ export default function EOAlertsPage() {
                 {enabled && permission === 'granted' ? '✓ ACTIVE — polling every 30 min' : 'INACTIVE'}
               </span>
             </div>
-            <div style={{ fontSize: 11, color: '#8A95A3' }}>
+            <div style={{ fontSize: 11, color: 'var(--mc-text-3)' }}>
               Browser permission: <strong>{permission}</strong>
             </div>
           </div>
@@ -112,7 +112,7 @@ export default function EOAlertsPage() {
               ))}
             </div>
           ) : (
-            <div style={{ fontSize: 11, color: '#8A95A3', fontStyle: 'italic' }}>No new BBs since last check.</div>
+            <div style={{ fontSize: 11, color: 'var(--mc-text-3)', fontStyle: 'italic' }}>No new BBs since last check.</div>
           )}
         </div>
       )}

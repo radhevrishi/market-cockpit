@@ -60,14 +60,14 @@ export class ErrorBoundary extends React.Component<Props, State> {
               onClick={() => window.location.reload()}
               style={{
                 padding: '8px 18px', borderRadius: '8px', cursor: 'pointer',
-                backgroundColor: 'transparent', border: '1px solid var(--mc-border-1)', color: '#8A95A3',
+                backgroundColor: 'transparent', border: '1px solid var(--mc-border-1)', color: 'var(--mc-text-3)',
                 fontSize: '13px',
               }}
             >
               Reload page
             </button>
           </div>
-          <p style={{ fontSize: '10px', color: '#2A3B4C', marginTop: '16px' }}>
+          <p style={{ fontSize: '10px', color: 'var(--mc-border-2)', marginTop: '16px' }}>
             Open browser console (F12) for technical details
           </p>
         </div>

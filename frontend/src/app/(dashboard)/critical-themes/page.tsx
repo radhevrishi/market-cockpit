@@ -468,7 +468,7 @@ export default function CriticalThemesPage() {
             <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
               <label style={{ fontSize: 11, color: DIM, fontWeight: 700, display: 'flex', flexDirection: 'column', gap: 3 }}>
                 Region
-                <select value={draftRegion} onChange={e => setDraftRegion(e.target.value as ThemeRegion)} style={{ background: '#0A1422', color: TEXT, border: `1px solid ${BORDER}`, padding: '6px 8px', borderRadius: 4, fontSize: 12 }}>
+                <select value={draftRegion} onChange={e => setDraftRegion(e.target.value as ThemeRegion)} style={{ background: 'var(--mc-bg-0)', color: TEXT, border: `1px solid ${BORDER}`, padding: '6px 8px', borderRadius: 4, fontSize: 12 }}>
                   <option value="IN">🇮🇳 INDIA</option>
                   <option value="US">🇺🇸 USA</option>
                 </select>
@@ -476,22 +476,22 @@ export default function CriticalThemesPage() {
               <label style={{ fontSize: 11, color: DIM, fontWeight: 700, display: 'flex', flexDirection: 'column', gap: 3 }}>
                 Theme name
                 <input value={draftName} onChange={e => setDraftName(e.target.value)} placeholder="e.g. Quantum Computing"
-                  style={{ background: '#0A1422', color: TEXT, border: `1px solid ${BORDER}`, padding: '6px 8px', borderRadius: 4, fontSize: 12 }} />
+                  style={{ background: 'var(--mc-bg-0)', color: TEXT, border: `1px solid ${BORDER}`, padding: '6px 8px', borderRadius: 4, fontSize: 12 }} />
               </label>
               <label style={{ fontSize: 11, color: DIM, fontWeight: 700, display: 'flex', flexDirection: 'column', gap: 3, gridColumn: '1 / -1' }}>
                 Why (structural driver)
                 <textarea value={draftWhy} onChange={e => setDraftWhy(e.target.value)} placeholder="2-3 lines on macro / policy / tech driver"
-                  rows={2} style={{ background: '#0A1422', color: TEXT, border: `1px solid ${BORDER}`, padding: '6px 8px', borderRadius: 4, fontSize: 12, resize: 'vertical', fontFamily: 'inherit' }} />
+                  rows={2} style={{ background: 'var(--mc-bg-0)', color: TEXT, border: `1px solid ${BORDER}`, padding: '6px 8px', borderRadius: 4, fontSize: 12, resize: 'vertical', fontFamily: 'inherit' }} />
               </label>
               <label style={{ fontSize: 11, color: DIM, fontWeight: 700, display: 'flex', flexDirection: 'column', gap: 3 }}>
                 Leader tickers (comma-separated)
                 <input value={draftLeaders} onChange={e => setDraftLeaders(e.target.value)} placeholder="HAL, BEL, BDL"
-                  style={{ background: '#0A1422', color: TEXT, border: `1px solid ${BORDER}`, padding: '6px 8px', borderRadius: 4, fontSize: 12 }} />
+                  style={{ background: 'var(--mc-bg-0)', color: TEXT, border: `1px solid ${BORDER}`, padding: '6px 8px', borderRadius: 4, fontSize: 12 }} />
               </label>
               <label style={{ fontSize: 11, color: DIM, fontWeight: 700, display: 'flex', flexDirection: 'column', gap: 3 }}>
                 Search keywords (drives news heat)
                 <input value={draftKeywords} onChange={e => setDraftKeywords(e.target.value)} placeholder="quantum, cryogenic, qubit, IonQ"
-                  style={{ background: '#0A1422', color: TEXT, border: `1px solid ${BORDER}`, padding: '6px 8px', borderRadius: 4, fontSize: 12 }} />
+                  style={{ background: 'var(--mc-bg-0)', color: TEXT, border: `1px solid ${BORDER}`, padding: '6px 8px', borderRadius: 4, fontSize: 12 }} />
               </label>
               <button onClick={submitCustomTheme} disabled={!draftName.trim()} style={{
                 gridColumn: '1 / -1', marginTop: 4,

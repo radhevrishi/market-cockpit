@@ -398,7 +398,7 @@ export default function StrategicVisibilityPage() {
       <div style={{ maxWidth: 1400, margin: '0 auto' }}>
         <header style={{ marginBottom: 18 }}>
           <h1 style={{ fontSize: 22, fontWeight: 800, color: 'var(--mc-text-0)', margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
-            🌟 <span style={{ background: 'linear-gradient(90deg,#8B5CF6,var(--mc-cyan))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Transformational Contracts</span>
+            🌟 <span style={{ background: 'linear-gradient(90deg,var(--mc-state-persistent),var(--mc-cyan))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Transformational Contracts</span>
             <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--mc-cyan)', backgroundColor: '#22D3EE10', border: '1px solid #22D3EE40', padding: '3px 8px', borderRadius: 4, letterSpacing: '0.4px' }}>
               ROLLING {windowDays}D LEDGER
             </span>
@@ -513,10 +513,10 @@ export default function StrategicVisibilityPage() {
 
         {/* Inclusion criteria pinned at top */}
         <div style={{
-          backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderLeft: '3px solid #8B5CF6',
+          backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)', borderLeft: '3px solid var(--mc-state-persistent)',
           borderRadius: 10, padding: '10px 14px', marginBottom: 16,
         }}>
-          <div style={{ fontSize: 10, color: '#8B5CF6', fontWeight: 700, letterSpacing: '0.8px', marginBottom: 6 }}>
+          <div style={{ fontSize: 10, color: 'var(--mc-state-persistent)', fontWeight: 700, letterSpacing: '0.8px', marginBottom: 6 }}>
             INCLUSION CRITERIA — only articles meeting ALL of A + B + C qualify
           </div>
           <div style={{ fontSize: 11, color: 'var(--mc-text-3)', lineHeight: 1.6 }}>
@@ -534,7 +534,7 @@ export default function StrategicVisibilityPage() {
           if (!insight.headline) return null;
           return (
             <div style={{
-              backgroundColor: '#0D1B2E',
+              backgroundColor: 'var(--mc-bg-1)',
               border: `1px solid ${insight.accent}40`,
               borderLeft: `3px solid ${insight.accent}`,
               borderRadius: 10,
@@ -589,7 +589,7 @@ export default function StrategicVisibilityPage() {
             {Array.from({ length: 6 }).map((_, i) => (
               <div key={i} style={{
                 height: 60,
-                background: 'linear-gradient(90deg, #0D1B2E 0%, var(--mc-bg-4) 50%, #0D1B2E 100%)',
+                background: 'linear-gradient(90deg, var(--mc-bg-1) 0%, var(--mc-bg-4) 50%, var(--mc-bg-1) 100%)',
                 backgroundSize: '200% 100%',
                 animation: `svShimmer 1.4s linear infinite ${i * 0.08}s`,
                 borderRadius: 8,
@@ -601,7 +601,7 @@ export default function StrategicVisibilityPage() {
         )}
 
         {!isLoading && articles.length === 0 && (
-          <div style={{ padding: 60, textAlign: 'center', color: 'var(--mc-text-4)', backgroundColor: '#0D1B2E', borderRadius: 10, border: '1px solid var(--mc-border-1)' }}>
+          <div style={{ padding: 60, textAlign: 'center', color: 'var(--mc-text-4)', backgroundColor: 'var(--mc-bg-1)', borderRadius: 10, border: '1px solid var(--mc-border-1)' }}>
             <div style={{ fontSize: 32, marginBottom: 8 }}>📭</div>
             <div style={{ fontSize: 14, color: 'var(--mc-text-3)', marginBottom: 4 }}>
               {regionFilter !== 'ALL'
@@ -650,8 +650,8 @@ export default function StrategicVisibilityPage() {
                     target="_blank"
                     rel="noopener noreferrer"
                     style={{
-                      backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)',
-                      borderLeft: `3px solid ${sv.flags.includes('MCAP_GRADE') ? 'var(--mc-warn)' : sv.flags.includes('STRATEGIC_CHOKEPOINT') ? '#8B5CF6' : 'var(--mc-cyan)'}`,
+                      backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)',
+                      borderLeft: `3px solid ${sv.flags.includes('MCAP_GRADE') ? 'var(--mc-warn)' : sv.flags.includes('STRATEGIC_CHOKEPOINT') ? 'var(--mc-state-persistent)' : 'var(--mc-cyan)'}`,
                       borderRadius: 10, padding: '10px 12px',
                       textDecoration: 'none', color: 'inherit',
                       transition: 'border-color 0.15s',
@@ -831,7 +831,7 @@ export default function StrategicVisibilityPage() {
                     )}
                     {/* PATCH 0072: IMPLIED SECONDARY DEMAND — capex propagation */}
                     {a.implied_secondary_demand && a.implied_secondary_demand.lines.length > 0 && (
-                      <div style={{ fontSize: 10, color: 'var(--mc-text-3)', backgroundColor: '#0A1422', border: '1px solid #22D3EE30', borderRadius: 6, padding: '6px 8px', marginBottom: 6, lineHeight: 1.5 }}>
+                      <div style={{ fontSize: 10, color: 'var(--mc-text-3)', backgroundColor: 'var(--mc-bg-0)', border: '1px solid #22D3EE30', borderRadius: 6, padding: '6px 8px', marginBottom: 6, lineHeight: 1.5 }}>
                         <div style={{ marginBottom: 4 }}>
                           <strong style={{ color: 'var(--mc-cyan)', letterSpacing: '0.4px' }}>↪ IMPLIED SECONDARY DEMAND</strong>
                           <span style={{ marginLeft: 6, color: 'var(--mc-text-3)' }}>
@@ -865,7 +865,7 @@ export default function StrategicVisibilityPage() {
                     )}
                     {/* PATCH 0067: SECOND-ORDER EFFECTS */}
                     {a.sv_second_order && ((a.sv_second_order.beneficiaries?.length ?? 0) > 0 || (a.sv_second_order.risk?.length ?? 0) > 0) && (
-                      <div style={{ fontSize: 10, color: 'var(--mc-text-3)', backgroundColor: '#0A1422', border: '1px solid var(--mc-bg-4)', borderRadius: 6, padding: '6px 8px', marginBottom: 6, lineHeight: 1.5 }}>
+                      <div style={{ fontSize: 10, color: 'var(--mc-text-3)', backgroundColor: 'var(--mc-bg-0)', border: '1px solid var(--mc-bg-4)', borderRadius: 6, padding: '6px 8px', marginBottom: 6, lineHeight: 1.5 }}>
                         {(a.sv_second_order.beneficiaries?.length ?? 0) > 0 && (
                           <div style={{ marginBottom: 3 }}>
                             <strong style={{ color: 'var(--mc-bullish)' }}>↗ DOWNSTREAM BENEFICIARIES:</strong>{' '}

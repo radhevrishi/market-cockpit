@@ -1968,7 +1968,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                   }
                   doc.save(`multibagger-${new Date().toISOString().slice(0,10)}.pdf`);
                 }}
-                style={{ fontSize:F.xs, fontWeight:700, padding:'5px 12px', borderRadius:7, cursor:'pointer', border:`1px solid ${BORDER}`, background:'transparent', color:'#f97316' }}
+                style={{ fontSize:F.xs, fontWeight:700, padding:'5px 12px', borderRadius:7, cursor:'pointer', border:`1px solid ${BORDER}`, background:'transparent', color:'var(--mc-warn)' }}
               >⬇ PDF</button>
             )}
 
@@ -2139,7 +2139,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
             <span style={{color:guidanceMode?'var(--mc-warn)':MUTED}}>GUIDANCE{!guidanceMode&&<span style={{fontSize:9,fontWeight:400}}> ↑📡</span>}</span>
             <span>DECISION STRIP</span>
             <span onClick={()=>handleSort('revenueAcceleration')} style={{cursor:'pointer',userSelect:'none',color:sortField==='revenueAcceleration'?GREEN:MUTED}}>SQGLP PILLARS{sortIcon('revenueAcceleration')}</span>
-            <span onClick={()=>handleSort('marketCapCr')} style={{cursor:'pointer',userSelect:'none',color:sortField==='marketCapCr'?'#f97316':MUTED}}>COV{sortIcon('marketCapCr')}</span>
+            <span onClick={()=>handleSort('marketCapCr')} style={{cursor:'pointer',userSelect:'none',color:sortField==='marketCapCr'?'var(--mc-warn)':MUTED}}>COV{sortIcon('marketCapCr')}</span>
           </div>
 
           {filtered.map((r,idx)=>{
@@ -2891,12 +2891,12 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                                     </div>
                                     <div style={{fontSize:F.xs,color:MUTED,lineHeight:1.4,marginBottom:4}}>{c.note}</div>
                                     {c.missing.length > 0 && c.missing.length <= 6 && (
-                                      <div style={{fontSize:9,color:'#64748b',lineHeight:1.4}}>
+                                      <div style={{fontSize:9,color:'var(--mc-text-4)',lineHeight:1.4}}>
                                         Missing: {c.missing.join(', ')}
                                       </div>
                                     )}
                                     {c.missing.length > 6 && (
-                                      <div style={{fontSize:9,color:'#64748b',lineHeight:1.4}}>
+                                      <div style={{fontSize:9,color:'var(--mc-text-4)',lineHeight:1.4}}>
                                         Missing {c.missing.length} fields incl. {c.missing.slice(0,3).join(', ')}…
                                       </div>
                                     )}
@@ -4547,7 +4547,7 @@ function DecisionBar({ symbol, company, market, score, grade, currentPrice, bump
   return (
     <div style={{
       marginBottom: 12, padding: '10px 14px',
-      backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: 8,
+      backgroundColor: '#0f172a', border: '1px solid var(--mc-bg-3)', borderRadius: 8,
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
         <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.7px', color: '#38bdf8' }}>
@@ -4560,7 +4560,7 @@ function DecisionBar({ symbol, company, market, score, grade, currentPrice, bump
             <button key={s} onClick={() => apply(s)}
               style={{
                 fontSize: 11, fontWeight: 800, padding: '5px 11px', borderRadius: 6, cursor: 'pointer',
-                border: `1px solid ${active ? meta.color + 'AA' : '#1e293b'}`,
+                border: `1px solid ${active ? meta.color + 'AA' : 'var(--mc-bg-3)'}`,
                 background: active ? `${meta.color}25` : 'transparent',
                 color: active ? meta.color : 'var(--mc-text-3)',
               }}>
@@ -4571,7 +4571,7 @@ function DecisionBar({ symbol, company, market, score, grade, currentPrice, bump
         {status && (
           <button onClick={onClear} style={{
             fontSize: 10, padding: '4px 9px', borderRadius: 5, cursor: 'pointer',
-            border: '1px solid #1e293b', background: 'transparent', color: 'var(--mc-text-3)', marginLeft: 'auto',
+            border: '1px solid var(--mc-bg-3)', background: 'transparent', color: 'var(--mc-text-3)', marginLeft: 'auto',
           }} title="Remove this decision">
             ✕ Clear
           </button>
@@ -4587,7 +4587,7 @@ function DecisionBar({ symbol, company, market, score, grade, currentPrice, bump
           placeholder="Why? Add your reason — saved permanently even if you clear the list"
           style={{
             flex: 1, fontSize: 12, padding: '7px 10px', borderRadius: 6,
-            background: '#0a1124', border: '1px solid #1e293b', color: '#e2e8f0', outline: 'none',
+            background: '#0a1124', border: '1px solid var(--mc-bg-3)', color: '#e2e8f0', outline: 'none',
           }}
         />
         <button onClick={onSaveReason}
@@ -4599,7 +4599,7 @@ function DecisionBar({ symbol, company, market, score, grade, currentPrice, bump
         </button>
       </div>
       {existing && (
-        <div style={{ marginTop: 6, fontSize: 10, color: '#64748b' }}>
+        <div style={{ marginTop: 6, fontSize: 10, color: 'var(--mc-text-4)' }}>
           Decision recorded when score was <strong style={{ color: 'var(--mc-text-3)' }}>{existing.scoreAtDecision ?? '—'} {existing.gradeAtDecision ?? ''}</strong>.
           This persists even after you clear your upload — useful as a personal logbook.
         </div>
@@ -5672,7 +5672,7 @@ function MultibaggerAnalytics({
 
   if (stats.total === 0) {
     return (
-      <div style={{ padding: 30, textAlign: 'center', color: '#8A95A3' }}>
+      <div style={{ padding: 30, textAlign: 'center', color: 'var(--mc-text-3)' }}>
         <div style={{ fontSize: 36, marginBottom: 12 }}>📊</div>
         <p style={{ margin: 0, fontWeight: 700, color: 'var(--mc-text-1)' }}>No Multibagger data uploaded yet</p>
         <p style={{ margin: '8px 0 16px', fontSize: 12, lineHeight: 1.5, maxWidth: 480, marginLeft: 'auto', marginRight: 'auto' }}>
@@ -5756,7 +5756,7 @@ function MultibaggerAnalytics({
         </div>
         <div style={cardStyle}>
           <div style={labelStyle}>Sectors represented</div>
-          <div style={{ fontSize: 22, fontWeight: 900, color: '#8B5CF6', fontVariantNumeric: 'tabular-nums' }}>{stats.sectorRanked.length}</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--mc-state-persistent)', fontVariantNumeric: 'tabular-nums' }}>{stats.sectorRanked.length}</div>
         </div>
         <div style={cardStyle}>
           <div style={labelStyle}>New since last upload</div>
@@ -6598,7 +6598,7 @@ function MultibaggerAnalytics({
               {/* PATCH 0585 — COMPANY first, TICKER second per user feedback.
                   Company name is the primary identity; ticker is the small
                   accessory for power-users. Score column kept right. */}
-              <tr style={{ backgroundColor: '#0A1422' }}>
+              <tr style={{ backgroundColor: 'var(--mc-bg-0)' }}>
                 <th style={{ padding: '6px 10px', textAlign: 'left', color: 'var(--mc-text-4)', fontSize: 10, fontWeight: 700 }}>RANK</th>
                 <th style={{ padding: '6px 10px', textAlign: 'left', color: 'var(--mc-text-4)', fontSize: 10, fontWeight: 700 }}>COMPANY</th>
                 <th style={{ padding: '6px 10px', textAlign: 'left', color: 'var(--mc-text-4)', fontSize: 10, fontWeight: 700 }}>TICKER</th>
@@ -6906,13 +6906,13 @@ function TurnaroundCompare() {
           <strong style={{ color: 'var(--mc-cyan)' }}>How to use:</strong>
           <ol style={{ marginTop: 8, paddingLeft: 22 }}>
             <li>Build a Screener.in custom screen (e.g. "PAT growth &gt; 50%" or "Loss making years &gt; 0 AND latest qtr PAT &gt; 0")</li>
-            <li>Export columns to CSV — see <strong style={{ color: '#FBBF24' }}>📚 Required Fields</strong> below</li>
+            <li>Export columns to CSV — see <strong style={{ color: 'var(--mc-warn)' }}>📚 Required Fields</strong> below</li>
             <li>Upload here — every row gets scored across 7 dimensions and classified into a stage</li>
             <li>BUY-ZONE = Early-Shoots + Pattern stages. These are the alpha entries before consensus arrives.</li>
             <li>Expand any row to paste concall narrative (unlocks 15-pt Concall dimension)</li>
           </ol>
           <details style={{ marginTop: 12 }}>
-            <summary style={{ cursor: 'pointer', color: '#FBBF24', fontWeight: 700 }}>📚 Screener.in column names (use these exact strings in 'Edit Columns')</summary>
+            <summary style={{ cursor: 'pointer', color: 'var(--mc-warn)', fontWeight: 700 }}>📚 Screener.in column names (use these exact strings in 'Edit Columns')</summary>
             <div style={{ marginTop: 10, fontSize: F.xs, lineHeight: 1.6 }}>
               <p><strong style={{ color: 'var(--mc-bullish)' }}>✅ AVAILABLE in Screener — add these (engine-critical):</strong></p>
               <ul style={{ margin: '4px 0 8px 18px', padding: 0 }}>
@@ -6955,10 +6955,10 @@ function TurnaroundCompare() {
               return (
                 <div style={{ marginBottom: 14, padding: '10px 14px', backgroundColor: '#22D3EE12', border: '1px solid #22D3EE40', borderRadius: 8 }}>
                   <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-cyan)', marginBottom: 4 }}>💡 Heads-up — most of your uploaded rows aren&apos;t turnarounds</div>
-                  <div style={{ fontSize: 11, color: '#C9D4E0', lineHeight: 1.5 }}>
+                  <div style={{ fontSize: 11, color: 'var(--mc-text-2)', lineHeight: 1.5 }}>
                     {nonTurnaroundCount} of {rows.length} rows are quality/growth compounders or neutral — not turnaround setups. Only <strong style={{ color: 'var(--mc-warn)' }}>{turnaroundCount}</strong> rows match the turnaround pattern (TURNAROUND / WAIT / VALUE-TRAP / DECLINING).
                     <br />
-                    <strong>What to do:</strong> Click <code style={{ background: '#0A1422', padding: '1px 5px', borderRadius: 3, color: 'var(--mc-warn)' }}>🔄 Turnaround</code> in the ARCHETYPE filter above to see only real turnaround candidates. The quality/growth ones belong on the <strong>🇮🇳 India Multibagger</strong> tab.
+                    <strong>What to do:</strong> Click <code style={{ background: 'var(--mc-bg-0)', padding: '1px 5px', borderRadius: 3, color: 'var(--mc-warn)' }}>🔄 Turnaround</code> in the ARCHETYPE filter above to see only real turnaround candidates. The quality/growth ones belong on the <strong>🇮🇳 India Multibagger</strong> tab.
                   </div>
                 </div>
               );
@@ -7059,7 +7059,7 @@ function TurnaroundCompare() {
             <button onClick={() => setShowOnlyHighConcall(v => !v)} style={{ fontSize: F.xs, fontWeight: 700, padding: '5px 10px', borderRadius: 6, border: `1px solid ${showOnlyHighConcall ? 'var(--mc-state-persistent)' : BORDER}`, background: showOnlyHighConcall ? '#A78BFA20' : 'transparent', color: showOnlyHighConcall ? 'var(--mc-state-persistent)' : MUTED, cursor: 'pointer' }}>
               🎙 High Concall {showOnlyHighConcall ? '✓' : ''}
             </button>
-            <button onClick={() => setShowLossRecovery(v => !v)} style={{ fontSize: F.xs, fontWeight: 700, padding: '5px 10px', borderRadius: 6, border: `1px solid ${showLossRecovery ? '#FBBF24' : BORDER}`, background: showLossRecovery ? '#FBBF2420' : 'transparent', color: showLossRecovery ? '#FBBF24' : MUTED, cursor: 'pointer' }}>
+            <button onClick={() => setShowLossRecovery(v => !v)} style={{ fontSize: F.xs, fontWeight: 700, padding: '5px 10px', borderRadius: 6, border: `1px solid ${showLossRecovery ? 'var(--mc-warn)' : BORDER}`, background: showLossRecovery ? '#FBBF2420' : 'transparent', color: showLossRecovery ? 'var(--mc-warn)' : MUTED, cursor: 'pointer' }}>
               💎 Loss→Profit recovery {showLossRecovery ? '✓' : ''}
             </button>
             {/* PATCH 0386 — Expand All / Collapse All toggle */}
@@ -7070,7 +7070,7 @@ function TurnaroundCompare() {
           </div>
 
           {/* PATCH 0381 — Institutional filter row (Best/Type/Phase per playbook) */}
-          <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center', padding: '8px 10px', background: '#0A1422', border: `1px solid #F59E0B40`, borderRadius: 8 }}>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center', padding: '8px 10px', background: 'var(--mc-bg-0)', border: `1px solid #F59E0B40`, borderRadius: 8 }}>
             <span style={{ fontSize: F.xs, color: 'var(--mc-warn)', fontWeight: 800, letterSpacing: '0.5px', marginRight: 4 }}>★ INSTITUTIONAL:</span>
             <button
               onClick={() => setShowBestOnly(v => !v)}
@@ -7132,7 +7132,7 @@ function TurnaroundCompare() {
                 </div>
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                   {best.map(b => (
-                    <div key={b.symbol} style={{ flex: '1 1 240px', minWidth: 240, padding: 10, background: '#0A1422', border: '1px solid #F59E0B40', borderRadius: 8 }}>
+                    <div key={b.symbol} style={{ flex: '1 1 240px', minWidth: 240, padding: 10, background: 'var(--mc-bg-0)', border: '1px solid #F59E0B40', borderRadius: 8 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
                         <div style={{ fontSize: 14, fontWeight: 900, color: '#F8FAFC' }}>{b.symbol}</div>
                         <div style={{ fontSize: 16, fontWeight: 900, color: 'var(--mc-warn)' }}>{b.totalScore.toFixed(0)}</div>
@@ -7254,7 +7254,7 @@ function TurnaroundCompare() {
                         <div style={{ color: r.pe != null ? TEXT : MUTED }}>PE {r.pe?.toFixed(0) ?? '—'}</div>
                         <div>ROCE {r.roce?.toFixed(0) ?? '—'}</div>
                       </div>
-                      <div style={{ fontSize: 10, color: r.coverage >= 70 ? GREEN : r.coverage >= 50 ? '#FBBF24' : 'var(--mc-bearish)', textAlign: 'center', fontWeight: 700 }}>
+                      <div style={{ fontSize: 10, color: r.coverage >= 70 ? GREEN : r.coverage >= 50 ? 'var(--mc-warn)' : 'var(--mc-bearish)', textAlign: 'center', fontWeight: 700 }}>
                         {r.coverage}%
                       </div>
                     </div>
@@ -7268,13 +7268,13 @@ function TurnaroundCompare() {
                         <div style={{ fontSize: 11, fontWeight: 900, color: r.archetypeColor, letterSpacing: '0.4px', marginBottom: 3 }}>
                           {r.archetypeLabel} — verdict
                         </div>
-                        <div style={{ fontSize: 11, color: '#C9D4E0', lineHeight: 1.5 }}>{r.archetypeNote}</div>
+                        <div style={{ fontSize: 11, color: 'var(--mc-text-2)', lineHeight: 1.5 }}>{r.archetypeNote}</div>
                       </div>
 
                       {/* PATCH 0381 — Institutional panel: Type / Phase / Survival / Killers / Position */}
-                      <div style={{ marginBottom: 12, padding: '12px', background: '#0A1422', border: '1px solid #F59E0B30', borderRadius: 6 }}>
+                      <div style={{ marginBottom: 12, padding: '12px', background: 'var(--mc-bg-0)', border: '1px solid #F59E0B30', borderRadius: 6 }}>
                         <div style={{ fontSize: 11, fontWeight: 900, color: 'var(--mc-warn)', letterSpacing: '0.5px', marginBottom: 8 }}>★ INSTITUTIONAL PLAYBOOK READING</div>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, fontSize: 11, color: '#C9D4E0' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, fontSize: 11, color: 'var(--mc-text-2)' }}>
                           <div>
                             <div style={{ fontSize: 9, fontWeight: 800, color: MUTED, letterSpacing: '0.4px', marginBottom: 4 }}>TURNAROUND TYPE (Ch.1)</div>
                             <div style={{ fontWeight: 800, color: r.turnaroundType === 'CYCLICAL' ? 'var(--mc-bullish)' : r.turnaroundType === 'OPERATIONAL' ? 'var(--mc-warn)' : r.turnaroundType === 'DISTRESSED' ? 'var(--mc-bearish)' : 'var(--mc-text-3)', marginBottom: 2 }}>{r.turnaroundType}</div>
@@ -7283,7 +7283,7 @@ function TurnaroundCompare() {
                           <div>
                             <div style={{ fontSize: 9, fontWeight: 800, color: MUTED, letterSpacing: '0.4px', marginBottom: 4 }}>PHASE (Ch.2)</div>
                             <div style={{ fontWeight: 800, color: r.phase === 3 ? 'var(--mc-bullish)' : r.phase === 4 ? 'var(--mc-cyan)' : r.phase === 2 ? 'var(--mc-state-persistent)' : 'var(--mc-bearish)', marginBottom: 2 }}>{r.phaseLabel}</div>
-                            <div style={{ fontSize: 10, color: MUTED }}>Action: <strong style={{ color: '#C9D4E0' }}>{r.phaseAction}</strong></div>
+                            <div style={{ fontSize: 10, color: MUTED }}>Action: <strong style={{ color: 'var(--mc-text-2)' }}>{r.phaseAction}</strong></div>
                           </div>
                           <div>
                             <div style={{ fontSize: 9, fontWeight: 800, color: MUTED, letterSpacing: '0.4px', marginBottom: 4 }}>SURVIVAL FILTER (Ch.4) — {r.survivalScore}/8</div>
@@ -7317,7 +7317,7 @@ function TurnaroundCompare() {
                             ⚠ DATA COVERAGE {r.coverage}% — {r.missingFields.length} fields missing
                           </div>
                           <div style={{ fontSize: 10, color: MUTED, lineHeight: 1.5 }}>
-                            Not in this CSV: <strong style={{ color: '#C9D4E0' }}>{r.missingFields.join(' · ')}</strong>
+                            Not in this CSV: <strong style={{ color: 'var(--mc-text-2)' }}>{r.missingFields.join(' · ')}</strong>
                           </div>
                         </div>
                       )}
@@ -7326,7 +7326,7 @@ function TurnaroundCompare() {
                         <div>
                           <div style={{ fontSize: 10, color: 'var(--mc-bullish)', fontWeight: 800, letterSpacing: '0.5px', marginBottom: 6 }}>📈 INFLECTION SIGNALS</div>
                           {r.inflectionSignals.length > 0 ? r.inflectionSignals.map((s, i) => (
-                            <div key={i} style={{ fontSize: 11, color: '#C9D4E0', padding: '2px 0' }}>› {s}</div>
+                            <div key={i} style={{ fontSize: 11, color: 'var(--mc-text-2)', padding: '2px 0' }}>› {s}</div>
                           )) : <div style={{ fontSize: 11, color: MUTED, fontStyle: 'italic' }}>No earnings inflection detected yet</div>}
                         </div>
                         {/* Quarterly trail */}
@@ -7346,7 +7346,7 @@ function TurnaroundCompare() {
                             value={concallMap[r.symbol] || ''}
                             onChange={(e) => updateConcall(r.symbol, e.target.value)}
                             placeholder="Paste recent concall transcript / Q&A / management commentary. Engine auto-detects institutional phrases (capacity expansion, margin recovery, deleveraging, demand recovery, etc.) and scores up to 15 points."
-                            style={{ width: '100%', minHeight: 90, padding: '6px 9px', backgroundColor: '#0A1422', border: '1px solid var(--mc-bg-4)', borderRadius: 4, color: 'var(--mc-text-1)', fontSize: 11, outline: 'none', resize: 'vertical', fontFamily: 'inherit' }}
+                            style={{ width: '100%', minHeight: 90, padding: '6px 9px', backgroundColor: 'var(--mc-bg-0)', border: '1px solid var(--mc-bg-4)', borderRadius: 4, color: 'var(--mc-text-1)', fontSize: 11, outline: 'none', resize: 'vertical', fontFamily: 'inherit' }}
                           />
                           <div style={{ fontSize: 10, color: MUTED, marginTop: 4 }}>
                             Concall score: <span style={{ color: r.concallScore >= 8 ? 'var(--mc-bullish)' : r.concallScore >= 4 ? 'var(--mc-warn)' : MUTED, fontWeight: 700 }}>{r.concallScore.toFixed(1)} / 15</span>
@@ -7360,19 +7360,19 @@ function TurnaroundCompare() {
                         <div>
                           <div style={{ fontSize: 10, color: 'var(--mc-bullish)', fontWeight: 800, marginBottom: 5 }}>✅ STRENGTHS</div>
                           {r.strengths.length > 0 ? r.strengths.map((s, i) => (
-                            <div key={i} style={{ fontSize: 11, color: '#C9D4E0', padding: '2px 0' }}>› {s}</div>
+                            <div key={i} style={{ fontSize: 11, color: 'var(--mc-text-2)', padding: '2px 0' }}>› {s}</div>
                           )) : <div style={{ fontSize: 11, color: MUTED, fontStyle: 'italic' }}>No notable strengths captured yet</div>}
                         </div>
                         <div>
                           <div style={{ fontSize: 10, color: 'var(--mc-bearish)', fontWeight: 800, marginBottom: 5 }}>⚠️ RISKS</div>
                           {r.risks.length > 0 ? r.risks.map((s, i) => (
-                            <div key={i} style={{ fontSize: 11, color: '#C9D4E0', padding: '2px 0' }}>› {s}</div>
+                            <div key={i} style={{ fontSize: 11, color: 'var(--mc-text-2)', padding: '2px 0' }}>› {s}</div>
                           )) : <div style={{ fontSize: 11, color: MUTED, fontStyle: 'italic' }}>No specific risks flagged</div>}
                         </div>
                       </div>
 
                       {/* PATCH 0386 — SIX-FACTOR MASTER CHECKLIST (playbook Ch.5) */}
-                      <div style={{ marginTop: 14, padding: 12, background: '#0A1422', border: `1px solid #A78BFA40`, borderRadius: 6 }}>
+                      <div style={{ marginTop: 14, padding: 12, background: 'var(--mc-bg-0)', border: `1px solid #A78BFA40`, borderRadius: 6 }}>
                         <div style={{ fontSize: 11, fontWeight: 900, color: 'var(--mc-state-persistent)', letterSpacing: '0.5px', marginBottom: 8 }}>📋 SIX-FACTOR MASTER CHECKLIST (Ch.5)</div>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, fontSize: 11 }}>
                           {(() => {
@@ -7387,7 +7387,7 @@ function TurnaroundCompare() {
                             return factors.map((f, i) => (
                               <div key={i} style={{ padding: '8px 10px', background: '#13131a', border: `1px solid ${f.pass ? '#10B98140' : '#94A3B840'}`, borderRadius: 5 }}>
                                 <div style={{ fontSize: 10, fontWeight: 700, color: f.pass ? 'var(--mc-bullish)' : 'var(--mc-text-3)', marginBottom: 2 }}>{f.pass ? '✓' : '○'} {f.name}</div>
-                                <div style={{ fontSize: 13, fontWeight: 900, color: f.pass ? 'var(--mc-bullish)' : '#C9D4E0' }}>{f.score}</div>
+                                <div style={{ fontSize: 13, fontWeight: 900, color: f.pass ? 'var(--mc-bullish)' : 'var(--mc-text-2)' }}>{f.score}</div>
                                 <div style={{ fontSize: 9, color: MUTED, marginTop: 1, lineHeight: 1.3 }}>{f.note}</div>
                               </div>
                             ));
@@ -7396,7 +7396,7 @@ function TurnaroundCompare() {
                       </div>
 
                       {/* PATCH 0386 — ENTRY / EXIT STAGING (playbook Ch.6) */}
-                      <div style={{ marginTop: 14, padding: 12, background: '#0A1422', border: `1px solid #10B98140`, borderRadius: 6 }}>
+                      <div style={{ marginTop: 14, padding: 12, background: 'var(--mc-bg-0)', border: `1px solid #10B98140`, borderRadius: 6 }}>
                         <div style={{ fontSize: 11, fontWeight: 900, color: 'var(--mc-bullish)', letterSpacing: '0.5px', marginBottom: 8 }}>🎯 ENTRY & EXIT STAGING (Ch.6)</div>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, fontSize: 11 }}>
                           {(() => {
@@ -7410,7 +7410,7 @@ function TurnaroundCompare() {
                             return stages.map((s, i) => (
                               <div key={i} style={{ padding: '8px 10px', background: s.active ? '#10B98115' : '#13131a', border: `1px solid ${s.active ? 'var(--mc-bullish)' : '#94A3B840'}`, borderRadius: 5 }}>
                                 <div style={{ fontSize: 10, fontWeight: 800, color: s.active ? 'var(--mc-bullish)' : MUTED, marginBottom: 3 }}>{s.label}{s.active ? ' · ACTIVE' : ''}</div>
-                                <div style={{ fontSize: 14, fontWeight: 900, color: s.active ? 'var(--mc-bullish)' : '#C9D4E0' }}>{s.pct}% of portfolio</div>
+                                <div style={{ fontSize: 14, fontWeight: 900, color: s.active ? 'var(--mc-bullish)' : 'var(--mc-text-2)' }}>{s.pct}% of portfolio</div>
                                 <div style={{ fontSize: 9, color: MUTED, marginTop: 2, lineHeight: 1.4 }}>{s.trigger}</div>
                               </div>
                             ));
@@ -7418,14 +7418,14 @@ function TurnaroundCompare() {
                         </div>
                         <div style={{ marginTop: 10, padding: '8px 10px', background: '#EF444412', border: '1px solid #EF444440', borderRadius: 5 }}>
                           <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--mc-bearish)', marginBottom: 4 }}>🚪 EXIT TRIGGERS</div>
-                          <div style={{ fontSize: 10, color: '#C9D4E0', lineHeight: 1.5 }}>
+                          <div style={{ fontSize: 10, color: 'var(--mc-text-2)', lineHeight: 1.5 }}>
                             <strong>TRIM</strong> when stock up 100%+ and valuation approaching normalised fair value · <strong>SELL</strong> if thesis broken, material new negative, management credibility destroyed · <strong>IMMEDIATE EXIT</strong> on covenant breach, surprise maturity, CCC downgrade, accounting restatement, key contract loss
                           </div>
                         </div>
                       </div>
 
                       {/* PATCH 0386 — ALL METRICS table (matches Multibagger India depth) */}
-                      <details style={{ marginTop: 14, padding: 12, background: '#0A1422', border: `1px solid ${BORDER}`, borderRadius: 6 }}>
+                      <details style={{ marginTop: 14, padding: 12, background: 'var(--mc-bg-0)', border: `1px solid ${BORDER}`, borderRadius: 6 }}>
                         <summary style={{ cursor: 'pointer', fontSize: 11, fontWeight: 900, color: 'var(--mc-cyan)', letterSpacing: '0.5px' }}>📐 ALL METRICS (click to expand raw data)</summary>
                         <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14 }}>
                           {(() => {
@@ -7490,7 +7490,7 @@ function TurnaroundCompare() {
                                   return (
                                     <div key={j} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, padding: '2px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
                                       <span style={{ color: MUTED }}>{k}</span>
-                                      <span style={{ color: display === '—' ? MUTED : '#C9D4E0', fontWeight: 700 }}>{display}</span>
+                                      <span style={{ color: display === '—' ? MUTED : 'var(--mc-text-2)', fontWeight: 700 }}>{display}</span>
                                     </div>
                                   );
                                 })}
@@ -7880,7 +7880,7 @@ function CapitalAllocationPanel() {
           {loading ? 'Analysing…' : 'Analyse'}
         </button>
       </div>
-      {error && <div style={{ color: '#fb923c', fontSize: 12, marginBottom: 12 }}>WARN: {error}</div>}
+      {error && <div style={{ color: 'var(--mc-warn)', fontSize: 12, marginBottom: 12 }}>WARN: {error}</div>}
       {analysis && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div style={{ background: '#13131a', border: '1px solid rgba(255,255,255,0.06)', borderLeft: `3px solid ${PURPLE}`, borderRadius: 8, padding: 14 }}>
@@ -7889,7 +7889,7 @@ function CapitalAllocationPanel() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 14 }}>
               <div>
                 <div style={{ fontSize: 10, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.6, fontWeight: 700 }}>Capital Allocation Score</div>
-                <div style={{ fontSize: 36, fontWeight: 800, fontFamily: 'ui-monospace,monospace', color: analysis.overall.score >= 70 ? 'var(--mc-bullish)' : analysis.overall.score >= 50 ? '#fbbf24' : '#fb923c' }}>
+                <div style={{ fontSize: 36, fontWeight: 800, fontFamily: 'ui-monospace,monospace', color: analysis.overall.score >= 70 ? 'var(--mc-bullish)' : analysis.overall.score >= 50 ? 'var(--mc-warn)' : 'var(--mc-warn)' }}>
                   {analysis.overall.score}<span style={{ fontSize: 14, color: MUTED }}>/100</span>
                 </div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: TEXT }}>Grade {analysis.overall.grade}</div>
@@ -7909,7 +7909,7 @@ function CapitalAllocationPanel() {
               <div style={{ minWidth: 180 }}>
                 <div style={{ fontSize: 10, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.6, fontWeight: 700 }}>{row.title}</div>
                 <div style={{ fontSize: 18, fontWeight: 800, color: TEXT, fontFamily: 'ui-monospace,monospace' }}>{row.value}</div>
-                {row.grade && <div style={{ fontSize: 11, fontWeight: 700, color: row.grade === 'A' ? 'var(--mc-bullish)' : row.grade === 'F' ? 'var(--mc-bearish)' : '#fbbf24' }}>Grade {row.grade}</div>}
+                {row.grade && <div style={{ fontSize: 11, fontWeight: 700, color: row.grade === 'A' ? 'var(--mc-bullish)' : row.grade === 'F' ? 'var(--mc-bearish)' : 'var(--mc-warn)' }}>Grade {row.grade}</div>}
               </div>
               <div style={{ flex: 1, fontSize: 12, color: TEXT, lineHeight: 1.5 }}>{row.body}</div>
             </div>

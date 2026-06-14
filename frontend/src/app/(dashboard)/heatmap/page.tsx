@@ -756,7 +756,7 @@ export default function HeatmapPage() {
           }}>
             {Array.from({ length: 56 }).map((_, i) => (
               <div key={i} style={{
-                background: `linear-gradient(90deg, #0A1422 0%, var(--mc-bg-4) 50%, #0A1422 100%)`,
+                background: `linear-gradient(90deg, var(--mc-bg-0) 0%, var(--mc-bg-4) 50%, var(--mc-bg-0) 100%)`,
                 backgroundSize: '200% 100%',
                 animation: `hmShimmer 1.4s linear infinite ${(i % 8) * 0.05}s`,
                 borderRadius: 4,
@@ -907,7 +907,7 @@ export default function HeatmapPage() {
                   {hoveredDailyStock.changePercent > 0 ? '+' : ''}{hoveredDailyStock.changePercent.toFixed(2)}%
                 </span>
               </div>
-              <div style={{ fontSize: '11px', color: '#8A95A3', marginBottom: '10px', lineHeight: '1.3' }}>{hoveredDailyStock.company}</div>
+              <div style={{ fontSize: '11px', color: 'var(--mc-text-3)', marginBottom: '10px', lineHeight: '1.3' }}>{hoveredDailyStock.company}</div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px 16px', fontSize: '11px' }}>
                 <span style={{ color: TEXT3 }}>Price</span>
                 <span style={{ color: TEXT1, textAlign: 'right', fontWeight: '600' }}>{'\u20B9'}{hoveredDailyStock.price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
@@ -916,9 +916,9 @@ export default function HeatmapPage() {
                   {hoveredDailyStock.change > 0 ? '+' : ''}{hoveredDailyStock.change.toFixed(2)}
                 </span>
                 <span style={{ color: TEXT3 }}>Sector</span>
-                <span style={{ color: '#C9D4E0', textAlign: 'right' }}>{hoveredDailyStock.sector}</span>
+                <span style={{ color: 'var(--mc-text-2)', textAlign: 'right' }}>{hoveredDailyStock.sector}</span>
                 <span style={{ color: TEXT3 }}>Volume</span>
-                <span style={{ color: '#C9D4E0', textAlign: 'right' }}>
+                <span style={{ color: 'var(--mc-text-2)', textAlign: 'right' }}>
                   {hoveredDailyStock.volume >= 1e7 ? (hoveredDailyStock.volume / 1e7).toFixed(1) + 'Cr'
                     : hoveredDailyStock.volume >= 1e5 ? (hoveredDailyStock.volume / 1e5).toFixed(1) + 'L'
                     : hoveredDailyStock.volume.toLocaleString('en-IN')}
@@ -1042,7 +1042,7 @@ export default function HeatmapPage() {
                   {(hoveredEarningsResult.priceMove || 0) > 0 ? '+' : ''}{(hoveredEarningsResult.priceMove || 0).toFixed(1)}%
                 </span>
               </div>
-              <div style={{ fontSize: '11px', color: '#8A95A3', marginBottom: '10px', lineHeight: '1.3' }}>{hoveredEarningsResult.company}</div>
+              <div style={{ fontSize: '11px', color: 'var(--mc-text-3)', marginBottom: '10px', lineHeight: '1.3' }}>{hoveredEarningsResult.company}</div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px 16px', fontSize: '11px' }}>
                 <span style={{ color: TEXT3 }}>Quality</span>
                 <span style={{
@@ -1055,17 +1055,17 @@ export default function HeatmapPage() {
                   {hoveredEarningsResult.quality}
                 </span>
                 <span style={{ color: TEXT3 }}>Quarter</span>
-                <span style={{ color: '#C9D4E0', textAlign: 'right' }}>{hoveredEarningsResult.quarter}</span>
+                <span style={{ color: 'var(--mc-text-2)', textAlign: 'right' }}>{hoveredEarningsResult.quarter}</span>
                 <span style={{ color: TEXT3 }}>Result Date</span>
-                <span style={{ color: '#C9D4E0', textAlign: 'right' }}>{hoveredEarningsResult.resultDate}</span>
+                <span style={{ color: 'var(--mc-text-2)', textAlign: 'right' }}>{hoveredEarningsResult.resultDate}</span>
                 <span style={{ color: TEXT3 }}>CMP</span>
                 <span style={{ color: TEXT1, textAlign: 'right', fontWeight: '600' }}>
                   {hoveredEarningsResult.cmp ? `\u20B9${hoveredEarningsResult.cmp.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '--'}
                 </span>
                 <span style={{ color: TEXT3 }}>Sector</span>
-                <span style={{ color: '#C9D4E0', textAlign: 'right' }}>{hoveredEarningsResult.sector || '--'}</span>
+                <span style={{ color: 'var(--mc-text-2)', textAlign: 'right' }}>{hoveredEarningsResult.sector || '--'}</span>
                 <span style={{ color: TEXT3 }}>Cap</span>
-                <span style={{ color: '#C9D4E0', textAlign: 'right' }}>
+                <span style={{ color: 'var(--mc-text-2)', textAlign: 'right' }}>
                   {hoveredEarningsResult.marketCap === 'L' ? 'Large' : hoveredEarningsResult.marketCap === 'M' ? 'Mid' : hoveredEarningsResult.marketCap === 'S' ? 'Small' : hoveredEarningsResult.marketCap}
                 </span>
               </div>

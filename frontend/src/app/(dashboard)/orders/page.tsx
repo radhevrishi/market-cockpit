@@ -1443,7 +1443,7 @@ function SignalCard({ sig, horizonColor }: { sig: ExtractedSignal; horizonColor:
         {/* Signal label + subject together — the key fix */}
         <span style={{fontSize:11,fontWeight:800,color:c}}>
           {sig.positive?'↑':'↓'} {sig.type.replace(/_/g,' ')}:&nbsp;
-          <span style={{fontWeight:600,color:'#C9D4E0'}}>{sig.subject}</span>
+          <span style={{fontWeight:600,color:'var(--mc-text-2)'}}>{sig.subject}</span>
         </span>
         {sig.dupCount && sig.dupCount > 1 && (
           <span style={{fontSize:8,color:'var(--mc-text-4)',border:'1px solid var(--mc-bg-4)',padding:'0 4px',borderRadius:3}}>×{sig.dupCount} merged</span>
@@ -1460,7 +1460,7 @@ function SignalCard({ sig, horizonColor }: { sig: ExtractedSignal; horizonColor:
       </div>
       {/* Evidence sentence — MANDATORY. If missing, flag it */}
       {sig.text && sig.text.length >= 15 ? (
-        <div style={{fontSize:11,color:'#C9D4E0',lineHeight:1.6,backgroundColor:'#060E1A',padding:'6px 10px',borderRadius:5,borderLeft:'2px solid var(--mc-text-4)',marginBottom:4}}>
+        <div style={{fontSize:11,color:'var(--mc-text-2)',lineHeight:1.6,backgroundColor:'#060E1A',padding:'6px 10px',borderRadius:5,borderLeft:'2px solid var(--mc-text-4)',marginBottom:4}}>
           "{sig.text}"
         </div>
       ) : (
@@ -1963,7 +1963,7 @@ function ConcallIntelligence() {
           <div style={{display:'flex',gap:8,marginBottom:8,flexWrap:'wrap'}}>
             <input value={manualSymbol} onChange={e=>setManualSymbol(e.target.value.toUpperCase())}
               placeholder="NSE Symbol (e.g. QPOWER)"
-              style={{padding:'7px 12px',backgroundColor:'#0D1B2E',border:`1px solid ${BORDER}`,borderRadius:7,color:TEXT1,fontSize:12,width:180}}/>
+              style={{padding:'7px 12px',backgroundColor:'var(--mc-bg-1)',border:`1px solid ${BORDER}`,borderRadius:7,color:TEXT1,fontSize:12,width:180}}/>
             <button onClick={processManualInput} style={{padding:'7px 16px',borderRadius:7,border:'none',backgroundColor:'var(--mc-warn)',color:'#000',fontWeight:800,fontSize:12,cursor:'pointer'}}>
               Extract Signals →
             </button>
@@ -1974,7 +1974,7 @@ function ConcallIntelligence() {
           <textarea value={manualInput} onChange={e=>setManualInput(e.target.value)}
             placeholder="Paste concall transcript highlights here...&#10;Example:&#10;'Insulator demand remains robust and we are operating at full capacity. We expect ₹300 crore order in the next few weeks. New capacity will go live in Q4 FY26. Commodity costs are being passed to customers so no near-term margin pressure.'"
             rows={6}
-            style={{width:'100%',backgroundColor:'#0D1B2E',border:`1px solid ${BORDER}`,borderRadius:8,padding:'10px 12px',color:TEXT1,fontSize:12,resize:'vertical',boxSizing:'border-box',lineHeight:1.6}}
+            style={{width:'100%',backgroundColor:'var(--mc-bg-1)',border:`1px solid ${BORDER}`,borderRadius:8,padding:'10px 12px',color:TEXT1,fontSize:12,resize:'vertical',boxSizing:'border-box',lineHeight:1.6}}
           />
           <div style={{fontSize:10,color:'var(--mc-text-4)',marginTop:6}}>
             💡 Signals extracted from this input are tagged as COMPANY origin with highest confidence. They are NOT from news articles — they are from management statements.
@@ -2018,7 +2018,7 @@ function ConcallIntelligence() {
 
           return (
             <div key={s.symbol} style={{
-              backgroundColor:'#0D1B2E',
+              backgroundColor:'var(--mc-bg-1)',
               border:`1px solid ${borderColor}50`,
               borderLeft:`3px solid ${borderColor}`,
               borderRadius:10, overflow:'hidden',
@@ -2066,7 +2066,7 @@ function ConcallIntelligence() {
 
                   {/* Company + Sector */}
                   <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:11,fontWeight:600,color:'#C9D4E0',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.company}</div>
+                    <div style={{fontSize:11,fontWeight:600,color:'var(--mc-text-2)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.company}</div>
                     <div style={{fontSize:8,color:'var(--mc-text-4)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.sector||'—'}</div>
                   </div>
 
@@ -2117,7 +2117,7 @@ function ConcallIntelligence() {
                         {topNumerical?` ₹${topNumerical.value}Cr`:''}
                       </span>
                       {/* Evidence text — the actual signal sentence */}
-                      <div style={{flex:1,fontSize:10,color:'#8A95A3',lineHeight:1.4,overflow:'hidden',display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',textOverflow:'ellipsis'}}>
+                      <div style={{flex:1,fontSize:10,color:'var(--mc-text-3)',lineHeight:1.4,overflow:'hidden',display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',textOverflow:'ellipsis'}}>
                         {bestSig.text && bestSig.text.length > 8
                           ? `"${bestSig.text.slice(0,120)}${bestSig.text.length>120?'…':'"'}`
                           : topHeadline?.title?.slice(0,100) || 'Expand for details'
@@ -2135,7 +2135,7 @@ function ConcallIntelligence() {
                     <div style={{display:'flex',gap:8,alignItems:'flex-start'}}>
                       <span style={{fontSize:8,flexShrink:0,color:'#334155',marginTop:1}}>📰</span>
                       <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:10,color:'#64748B',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                        <div style={{fontSize:10,color:'var(--mc-text-4)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
                           {topHeadline.title.slice(0,100)}{topHeadline.title.length>100?'…':''}
                         </div>
                         <div style={{fontSize:8,color:'#334155',marginTop:1}}>
@@ -2176,7 +2176,7 @@ function ConcallIntelligence() {
                       <div style={{marginBottom:8,color:'var(--mc-text-3)',fontWeight:600}}>
                         {s.articleCount === 0 ? '📭 No coverage in 30D window' : `📰 ${s.articleCount} article${s.articleCount !== 1 ? 's' : ''} found, but none matched a forward-looking management signal`}
                       </div>
-                      <div style={{color:'#64748B',fontSize:10,lineHeight:1.5,marginBottom:10}}>
+                      <div style={{color:'var(--mc-text-4)',fontSize:10,lineHeight:1.5,marginBottom:10}}>
                         Concall Intel processes earnings news AND optional concall transcripts. News headlines often use past tense
                         ('reported', 'achieved') which makes them low-confidence signals. <strong style={{color:'var(--mc-text-3)'}}>For a high-fidelity read</strong>, paste
                         the latest earnings call transcript (Q4 / Q3 of FY26). Manual transcripts give 5–10× more actionable signals than news-only coverage.
@@ -2203,7 +2203,7 @@ function ConcallIntelligence() {
                       {/* ── ARTICLE HEADLINES (always shown when articles exist) ── */}
                       {(s as any).recentHeadlines?.length > 0 && (
                         <div style={{marginBottom:14,padding:'10px 12px',backgroundColor:'#060E1A',border:'1px solid var(--mc-bg-4)',borderRadius:8}}>
-                          <div style={{fontSize:9,fontWeight:800,color:'#64748B',letterSpacing:'1px',marginBottom:8}}>
+                          <div style={{fontSize:9,fontWeight:800,color:'var(--mc-text-4)',letterSpacing:'1px',marginBottom:8}}>
                             📰 RECENT NEWS ({s.articleCount} article{s.articleCount!==1?'s':''} found for {s.company})
                             {s.alphaCount === 0 && <span style={{color:'var(--mc-warn)',marginLeft:6}}>— no actionable management signals detected yet</span>}
                           </div>
@@ -2237,7 +2237,7 @@ function ConcallIntelligence() {
                         <div style={{marginBottom:14,padding:'10px 12px',backgroundColor:'#060E1A',border:'1px solid var(--mc-bg-4)',borderRadius:8}}>
                           <div style={{fontSize:9,fontWeight:800,color:'#334155',marginBottom:6}}>📭 NO NEWS FOUND IN LAST 30 DAYS</div>
                           <div style={{fontSize:10,color:'var(--mc-text-4)',lineHeight:1.6}}>
-                            No articles matching <strong style={{color:'#64748B'}}>{s.company}</strong> in the news database.
+                            No articles matching <strong style={{color:'var(--mc-text-4)'}}>{s.company}</strong> in the news database.
                             This can happen when: (1) the company uses a different name in press coverage,
                             (2) no significant news in 30 days, or (3) stock is too small for mainstream coverage.
                           </div>
@@ -2269,15 +2269,15 @@ function ConcallIntelligence() {
                       {(s as any).whyItMatters && (
                         <div style={{marginBottom:14,padding:'10px 14px',backgroundColor:'#F59E0B08',border:'1px solid #F59E0B20',borderRadius:8}}>
                           <div style={{fontSize:9,fontWeight:800,color:'var(--mc-warn)',marginBottom:4}}>💡 WHY THIS MATTERS FOR YOUR POSITION</div>
-                          <div style={{fontSize:11,color:'#C9D4E0',lineHeight:1.5}}>{(s as any).whyItMatters}</div>
+                          <div style={{fontSize:11,color:'var(--mc-text-2)',lineHeight:1.5}}>{(s as any).whyItMatters}</div>
                         </div>
                       )}
 
                       {/* ── MISSED BY MARKET ── */}
                       {(s as any).missedByMarket && (
                         <div style={{marginBottom:14,padding:'10px 14px',backgroundColor:'#8B5CF608',border:'1px solid #8B5CF630',borderRadius:8}}>
-                          <div style={{fontSize:10,fontWeight:800,color:'#8B5CF6',marginBottom:4}}>🔍 POTENTIALLY MISSED BY MARKET</div>
-                          <div style={{fontSize:11,color:'#8A95A3'}}>Strong alpha signals ({s.alphaCount}) found but only {s.articleCount} article(s) — low coverage suggests market hasn't fully priced this yet. Verify independently before acting.</div>
+                          <div style={{fontSize:10,fontWeight:800,color:'var(--mc-state-persistent)',marginBottom:4}}>🔍 POTENTIALLY MISSED BY MARKET</div>
+                          <div style={{fontSize:11,color:'var(--mc-text-3)'}}>Strong alpha signals ({s.alphaCount}) found but only {s.articleCount} article(s) — low coverage suggests market hasn't fully priced this yet. Verify independently before acting.</div>
                         </div>
                       )}
 
@@ -2314,7 +2314,7 @@ function ConcallIntelligence() {
                                       </div>
                                       {sd && <div style={{fontSize:10,color:'var(--mc-accent)',marginBottom:4}}>→ {sd.impact}</div>}
                                       {sig.text && sig.text.length >= 15 ? (
-                                        <div style={{fontSize:11,color:'#8A95A3',lineHeight:1.5,backgroundColor:'#060E1A',padding:'5px 9px',borderRadius:5,borderLeft:'2px solid #06b6d430',marginBottom:3}}>
+                                        <div style={{fontSize:11,color:'var(--mc-text-3)',lineHeight:1.5,backgroundColor:'#060E1A',padding:'5px 9px',borderRadius:5,borderLeft:'2px solid #06b6d430',marginBottom:3}}>
                                           "{sig.text}"
                                         </div>
                                       ) : (
@@ -2346,7 +2346,7 @@ function ConcallIntelligence() {
                           <div style={{fontSize:10,fontWeight:800,color:TEXT3,letterSpacing:'1px',marginBottom:6}}>📰 NOISE SIGNALS — 1-5D relevance only</div>
                           <div style={{display:'flex',flexDirection:'column',gap:4}}>
                             {s.signals.filter(sig=>!sig.isAlpha).map((sig,i)=>(
-                              <div key={i} style={{padding:'7px 10px',backgroundColor:'var(--mc-bg-4)',borderRadius:6,fontSize:10,color:'#8A95A3'}}>
+                              <div key={i} style={{padding:'7px 10px',backgroundColor:'var(--mc-bg-4)',borderRadius:6,fontSize:10,color:'var(--mc-text-3)'}}>
                                 <span style={{fontWeight:600,color:sig.positive?'var(--mc-bullish)':'var(--mc-bearish)'}}>{sig.type.replace(/_/g,' ')}</span>: {sig.text.slice(0,80)}...
                               </div>
                             ))}
@@ -2887,7 +2887,7 @@ export default function CompanyIntelligencePage() {
       }}>
         <span>Materiality: <span style={{ color: GREEN }}>■75+</span> <span style={{ color: 'var(--mc-info)' }}>■60</span> <span style={{ color: 'var(--mc-warn)' }}>■45</span> <span style={{ color: TEXT3 }}>■&lt;45</span></span>
         <span>Conf: <span style={{ color: GREEN }}>70+</span> <span style={{ color: YELLOW }}>50+</span> <span style={{ color: ORANGE }}>&lt;50</span></span>
-        <span>Evidence: <span style={{ color: '#059669' }}>A</span>=Filed <span style={{ color: '#D97706' }}>B</span>=Likely <span style={{ color: 'var(--mc-bearish-2)' }}>C</span>=Probable <span style={{ color: '#6B7280' }}>D</span>=Weak</span>
+        <span>Evidence: <span style={{ color: '#059669' }}>A</span>=Filed <span style={{ color: '#D97706' }}>B</span>=Likely <span style={{ color: 'var(--mc-bearish-2)' }}>C</span>=Probable <span style={{ color: 'var(--mc-text-4)' }}>D</span>=Weak</span>
         <span><span style={{ color: PURPLE }}>PF</span>=Portfolio <span style={{ color: ACCENT }}>WL</span>=Watchlist <span style={{ color: 'var(--mc-warn)' }}>CB</span>=Conviction Beats <span style={{ color: 'var(--mc-warn)' }}>EST</span>=Estimated</span>
       </div>
 
@@ -3073,7 +3073,7 @@ export default function CompanyIntelligencePage() {
 
       {/* ── #20: CROSS-UNIVERSE OVERLAP — highest conviction zone ── */}
       {overlapSignals.length > 0 && typeFilter === 'ALL' && universeFilter === 'ALL' && (
-        <div style={{ marginBottom: '16px', padding: '14px 16px', backgroundColor: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.25)', borderLeft: '3px solid #8b5cf6', borderRadius: '10px' }}>
+        <div style={{ marginBottom: '16px', padding: '14px 16px', backgroundColor: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.25)', borderLeft: '3px solid var(--mc-state-persistent)', borderRadius: '10px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
             <span style={{ fontSize: '12px', fontWeight: 800, color: 'var(--mc-state-persistent)', letterSpacing: '1px' }}>⭐ CROSS-UNIVERSE OVERLAP</span>
             <span style={{ fontSize: '11px', color: TEXT3 }}>Stocks with signals in 2+ tracked universes — highest conviction</span>
@@ -3403,7 +3403,7 @@ export default function CompanyIntelligencePage() {
                   {s.isNegative && <span style={{ fontSize: '9px', color: RED, fontWeight: 700, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(239,68,68,0.12)' }}>⚠ NEGATIVE</span>}
                   {s.signalClass && s.signalClass !== 'COMPLIANCE' && (
                     <span style={{ fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '2px',
-                      color: s.signalClass === 'ECONOMIC' ? 'var(--mc-bullish)' : s.signalClass === 'STRATEGIC' ? '#8B5CF6' : 'var(--mc-warn)',
+                      color: s.signalClass === 'ECONOMIC' ? 'var(--mc-bullish)' : s.signalClass === 'STRATEGIC' ? 'var(--mc-state-persistent)' : 'var(--mc-warn)',
                       backgroundColor: s.signalClass === 'ECONOMIC' ? 'rgba(16,185,129,0.1)' : s.signalClass === 'STRATEGIC' ? 'rgba(139,92,246,0.1)' : 'rgba(245,158,11,0.1)',
                     }}>{s.signalClass}</span>
                   )}
@@ -3653,7 +3653,7 @@ export default function CompanyIntelligencePage() {
                     )}
                     {s.signalClass && s.signalClass !== 'COMPLIANCE' && (
                       <span style={{ fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '2px',
-                        color: s.signalClass === 'ECONOMIC' ? 'var(--mc-bullish)' : s.signalClass === 'STRATEGIC' ? '#8B5CF6' : 'var(--mc-warn)',
+                        color: s.signalClass === 'ECONOMIC' ? 'var(--mc-bullish)' : s.signalClass === 'STRATEGIC' ? 'var(--mc-state-persistent)' : 'var(--mc-warn)',
                         backgroundColor: s.signalClass === 'ECONOMIC' ? 'rgba(16,185,129,0.1)' : s.signalClass === 'STRATEGIC' ? 'rgba(139,92,246,0.1)' : 'rgba(245,158,11,0.1)',
                       }}>{s.signalClass}</span>
                     )}
@@ -3672,7 +3672,7 @@ export default function CompanyIntelligencePage() {
                   <div style={{ display: 'flex', gap: '8px', marginTop: '4px', alignItems: 'center' }}>
                     {s.signalTier && (
                       <span style={{ fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
-                        color: s.signalTier === 'TIER1_VERIFIED' ? 'var(--mc-bullish)' : '#64748B',
+                        color: s.signalTier === 'TIER1_VERIFIED' ? 'var(--mc-bullish)' : 'var(--mc-text-4)',
                         backgroundColor: s.signalTier === 'TIER1_VERIFIED' ? 'rgba(16,185,129,0.1)' : 'rgba(100,116,139,0.06)',
                       }}>{s.signalTier === 'TIER1_VERIFIED' ? '✓ VERIFIED' : '~ INFERRED'}</span>
                     )}
@@ -4111,7 +4111,7 @@ export default function CompanyIntelligencePage() {
                   {s.signalTier && (
                     <span style={{
                       fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
-                      color: s.signalTier === 'TIER1_VERIFIED' ? 'var(--mc-bullish)' : '#64748B',
+                      color: s.signalTier === 'TIER1_VERIFIED' ? 'var(--mc-bullish)' : 'var(--mc-text-4)',
                       backgroundColor: s.signalTier === 'TIER1_VERIFIED' ? 'rgba(16,185,129,0.1)' : 'rgba(100,116,139,0.06)',
                     }}>
                       {s.signalTier === 'TIER1_VERIFIED' ? '✓ VERIFIED' : '~ INFERRED'}
@@ -4127,7 +4127,7 @@ export default function CompanyIntelligencePage() {
                   {s.catalystStrength && (
                     <span style={{
                       fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
-                      color: s.catalystStrength === 'STRONG' ? 'var(--mc-bullish)' : s.catalystStrength === 'MODERATE' ? 'var(--mc-warn)' : '#64748B',
+                      color: s.catalystStrength === 'STRONG' ? 'var(--mc-bullish)' : s.catalystStrength === 'MODERATE' ? 'var(--mc-warn)' : 'var(--mc-text-4)',
                       backgroundColor: s.catalystStrength === 'STRONG' ? 'rgba(16,185,129,0.1)' : s.catalystStrength === 'MODERATE' ? 'rgba(245,158,11,0.1)' : 'rgba(100,116,139,0.06)',
                     }}>
                       {s.catalystStrength === 'STRONG' ? '⚡ STRONG' : s.catalystStrength === 'MODERATE' ? '◆ MOD' : '○ WEAK'}
@@ -4136,7 +4136,7 @@ export default function CompanyIntelligencePage() {
                   {/* Evidence tier badge */}
                   {s.evidenceTier && (
                     <span style={{ fontSize: '7px', fontWeight: 700, padding: '1px 3px', borderRadius: '2px',
-                      color: s.evidenceTier === 'TIER_A' ? '#059669' : s.evidenceTier === 'TIER_B' ? '#D97706' : s.evidenceTier === 'TIER_D' ? '#6B7280' : 'var(--mc-bearish-2)',
+                      color: s.evidenceTier === 'TIER_A' ? '#059669' : s.evidenceTier === 'TIER_B' ? '#D97706' : s.evidenceTier === 'TIER_D' ? 'var(--mc-text-4)' : 'var(--mc-bearish-2)',
                       backgroundColor: s.evidenceTier === 'TIER_A' ? 'rgba(5,150,105,0.08)' : s.evidenceTier === 'TIER_B' ? 'rgba(217,119,6,0.08)' : s.evidenceTier === 'TIER_D' ? 'rgba(107,114,128,0.08)' : 'rgba(220,38,38,0.08)',
                     }}>
                       {s.evidenceTier === 'TIER_A' ? 'A' : s.evidenceTier === 'TIER_B' ? 'B' : s.evidenceTier === 'TIER_D' ? 'D' : 'C'}
@@ -4349,7 +4349,7 @@ export default function CompanyIntelligencePage() {
                         {s.signalTier && (
                           <span style={{
                             fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
-                            color: s.signalTier === 'TIER1_VERIFIED' ? 'var(--mc-bullish)' : '#64748B',
+                            color: s.signalTier === 'TIER1_VERIFIED' ? 'var(--mc-bullish)' : 'var(--mc-text-4)',
                             backgroundColor: s.signalTier === 'TIER1_VERIFIED' ? 'rgba(16,185,129,0.1)' : 'rgba(100,116,139,0.06)',
                           }}>
                             {s.signalTier === 'TIER1_VERIFIED' ? '✓ VERIFIED' : '~ INFERRED'}
@@ -4365,7 +4365,7 @@ export default function CompanyIntelligencePage() {
                         {s.catalystStrength && (
                           <span style={{
                             fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
-                            color: s.catalystStrength === 'STRONG' ? 'var(--mc-bullish)' : s.catalystStrength === 'MODERATE' ? 'var(--mc-warn)' : '#64748B',
+                            color: s.catalystStrength === 'STRONG' ? 'var(--mc-bullish)' : s.catalystStrength === 'MODERATE' ? 'var(--mc-warn)' : 'var(--mc-text-4)',
                             backgroundColor: s.catalystStrength === 'STRONG' ? 'rgba(16,185,129,0.1)' : s.catalystStrength === 'MODERATE' ? 'rgba(245,158,11,0.1)' : 'rgba(100,116,139,0.06)',
                           }}>
                             {s.catalystStrength === 'STRONG' ? '⚡ STRONG' : s.catalystStrength === 'MODERATE' ? '◆ MOD' : '○ WEAK'}
@@ -4570,7 +4570,7 @@ export default function CompanyIntelligencePage() {
                         {s.signalTier && (
                           <span style={{
                             fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
-                            color: s.signalTier === 'TIER1_VERIFIED' ? 'var(--mc-bullish)' : '#64748B',
+                            color: s.signalTier === 'TIER1_VERIFIED' ? 'var(--mc-bullish)' : 'var(--mc-text-4)',
                             backgroundColor: s.signalTier === 'TIER1_VERIFIED' ? 'rgba(16,185,129,0.1)' : 'rgba(100,116,139,0.06)',
                           }}>
                             {s.signalTier === 'TIER1_VERIFIED' ? '✓ VERIFIED' : '~ INFERRED'}
@@ -4586,7 +4586,7 @@ export default function CompanyIntelligencePage() {
                         {s.catalystStrength && (
                           <span style={{
                             fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
-                            color: s.catalystStrength === 'STRONG' ? 'var(--mc-bullish)' : s.catalystStrength === 'MODERATE' ? 'var(--mc-warn)' : '#64748B',
+                            color: s.catalystStrength === 'STRONG' ? 'var(--mc-bullish)' : s.catalystStrength === 'MODERATE' ? 'var(--mc-warn)' : 'var(--mc-text-4)',
                             backgroundColor: s.catalystStrength === 'STRONG' ? 'rgba(16,185,129,0.1)' : s.catalystStrength === 'MODERATE' ? 'rgba(245,158,11,0.1)' : 'rgba(100,116,139,0.06)',
                           }}>
                             {s.catalystStrength === 'STRONG' ? '⚡ STRONG' : s.catalystStrength === 'MODERATE' ? '◆ MOD' : '○ WEAK'}
@@ -4721,7 +4721,7 @@ export default function CompanyIntelligencePage() {
                     )}
                     {s.signalClass && s.signalClass !== 'COMPLIANCE' && (
                       <span style={{ fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '2px',
-                        color: s.signalClass === 'ECONOMIC' ? 'var(--mc-bullish)' : s.signalClass === 'STRATEGIC' ? '#8B5CF6' : 'var(--mc-warn)',
+                        color: s.signalClass === 'ECONOMIC' ? 'var(--mc-bullish)' : s.signalClass === 'STRATEGIC' ? 'var(--mc-state-persistent)' : 'var(--mc-warn)',
                         backgroundColor: s.signalClass === 'ECONOMIC' ? 'rgba(16,185,129,0.1)' : s.signalClass === 'STRATEGIC' ? 'rgba(139,92,246,0.1)' : 'rgba(245,158,11,0.1)',
                       }}>{s.signalClass}</span>
                     )}
@@ -4779,7 +4779,7 @@ export default function CompanyIntelligencePage() {
                   {s.segment && <span style={{ fontSize: '9px', color: TEXT3 }}>{s.segment}</span>}
                   {s.evidenceTier && (
                     <span style={{ fontSize: '7px', fontWeight: 700, padding: '1px 3px', borderRadius: '2px',
-                      color: s.evidenceTier === 'TIER_A' ? '#059669' : s.evidenceTier === 'TIER_B' ? '#D97706' : s.evidenceTier === 'TIER_C' ? 'var(--mc-bearish-2)' : '#6B7280',
+                      color: s.evidenceTier === 'TIER_A' ? '#059669' : s.evidenceTier === 'TIER_B' ? '#D97706' : s.evidenceTier === 'TIER_C' ? 'var(--mc-bearish-2)' : 'var(--mc-text-4)',
                       backgroundColor: s.evidenceTier === 'TIER_A' ? 'rgba(5,150,105,0.08)' : s.evidenceTier === 'TIER_B' ? 'rgba(217,119,6,0.08)' : s.evidenceTier === 'TIER_C' ? 'rgba(220,38,38,0.08)' : 'rgba(107,114,128,0.08)',
                     }}>{s.evidenceTier.replace('TIER_', '')}</span>
                   )}

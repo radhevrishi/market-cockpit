@@ -3114,9 +3114,9 @@ export default function EarningsAnalysisPage() {
   // ── Loading UI ──────────────────────────────────────────────────────────
   const LoadingUI = () => (
     <div style={{textAlign:'center',padding:'40px 20px'}}>
-      <div style={{width:56,height:56,borderRadius:'50%',border:`4px solid #1e293b`,borderTopColor:ACCENT,animation:'spin 0.9s linear infinite',margin:'0 auto 20px'}}/>
+      <div style={{width:56,height:56,borderRadius:'50%',border:`4px solid var(--mc-bg-3)`,borderTopColor:ACCENT,animation:'spin 0.9s linear infinite',margin:'0 auto 20px'}}/>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-      <div style={{width:'100%',maxWidth:360,height:6,backgroundColor:'#1e293b',borderRadius:3,overflow:'hidden',margin:'0 auto 12px'}}>
+      <div style={{width:'100%',maxWidth:360,height:6,backgroundColor:'var(--mc-bg-3)',borderRadius:3,overflow:'hidden',margin:'0 auto 12px'}}>
         <div style={{height:'100%',width:`${loadingPct}%`,background:`linear-gradient(90deg,${ACCENT},${PURPLE})`,borderRadius:3,transition:'width 0.3s'}}/>
       </div>
       <div style={{fontSize:F.md,fontWeight:600,color:ACCENT,marginBottom:4}}>{loadingMsg||'Processing…'}</div>
@@ -3180,7 +3180,7 @@ export default function EarningsAnalysisPage() {
               padding: '4px 10px',
               borderRadius: 4,
               background: isIndia ? 'rgba(251,191,36,0.15)' : 'rgba(125,211,252,0.10)',
-              color: isIndia ? '#fbbf24' : '#7dd3fc',
+              color: isIndia ? 'var(--mc-warn)' : '#7dd3fc',
               border: `1px solid ${isIndia ? '#fbbf2440' : '#7dd3fc40'}`,
               fontWeight: 700,
               letterSpacing: 0.6,
@@ -3307,9 +3307,9 @@ export default function EarningsAnalysisPage() {
                     {avData?.symbol || d.ticker}
                   </span>
                 )}
-                {avData?.sector && <><span style={{fontSize:10,color:MUTED}}>{avData.sector}</span><span style={{color:'#2A3B4C',fontSize:10}}>›</span></>}
+                {avData?.sector && <><span style={{fontSize:10,color:MUTED}}>{avData.sector}</span><span style={{color:'var(--mc-border-2)',fontSize:10}}>›</span></>}
                 {avData?.industry && <span style={{fontSize:10,color:MUTED}}>{avData.industry}</span>}
-                <span style={{fontSize:10,color:'#2A3B4C'}}>·</span>
+                <span style={{fontSize:10,color:'var(--mc-border-2)'}}>·</span>
                 <span style={{fontSize:10,color:MUTED}}>{d.period} · {d.filingType} · {d.scaleLabel}</span>
                 {avData?.analystTargetPrice && (
                   /* PATCH 0965 BUG #5 — Analyst Target Price was hardcoded "$". */
@@ -3397,13 +3397,13 @@ export default function EarningsAnalysisPage() {
                       </td>
                       <td style={{padding:'8px 8px',textAlign:'right',fontSize:F.sm,fontWeight:900,color:TEXT}}>{n(d.revenue,d)}</td>
                       {hasEstimates && (
-                        <td style={{padding:'8px 8px',textAlign:'right',fontSize:F.xs,color:revEstNum?MUTED:'#1e293b'}}>
+                        <td style={{padding:'8px 8px',textAlign:'right',fontSize:F.xs,color:revEstNum?MUTED:'var(--mc-bg-3)'}}>
                           {revEstNum !== null ? (
                             <span title={avData?.dataSource === 'FMP' ? 'Source: Financial Modeling Prep' : 'Manual override'}>
                               {n(revEstNum, d)}
                               {avData?.dataSource === 'FMP' && <span style={{fontSize:7,color:'#60a5fa',marginLeft:3}}>FMP</span>}
                             </span>
-                          ) : <span style={{color:'#1e293b'}}>—</span>}
+                          ) : <span style={{color:'var(--mc-bg-3)'}}>—</span>}
                         </td>
                       )}
                       {hasEstimates && (
@@ -3414,7 +3414,7 @@ export default function EarningsAnalysisPage() {
                               ? <span style={{fontSize:8,color:surpriseColor(fmpRevSurprise),marginLeft:4}}>({fmpRevSurprise>=0?'+':''}{fmpRevSurprise.toFixed(1)}% rev surprise)</span>
                               : null;
                             return bm ? <span style={{fontSize:F.xs,fontWeight:800,color:bm.col}}>{bm.text}{fmpS}</span> : null;
-                          })() : <span style={{color:'#1e293b',fontSize:9}}>—</span>}
+                          })() : <span style={{color:'var(--mc-bg-3)',fontSize:9}}>—</span>}
                         </td>
                       )}
                       <td style={{padding:'8px 8px',textAlign:'right'}}>
@@ -3445,12 +3445,12 @@ export default function EarningsAnalysisPage() {
                         <td style={{padding:'8px 8px',textAlign:'right',fontSize:F.xs,color:MUTED}}>
                           {/* PATCH 0965 BUG #5 — EPS estimate was hardcoded "$"; now currency-aware. */}
                           {latestEpsEst!==null?formatCurrency(latestEpsEst, d.ticker, { decimals: 2 }):
-                           <span style={{color:'#1e293b'}}>—</span>}
+                           <span style={{color:'var(--mc-bg-3)'}}>—</span>}
                         </td>
                       )}
                       {hasEstimates && (
                         <td style={{padding:'8px 8px',textAlign:'right'}}>
-                          {epsBM?<span style={{fontSize:F.xs,fontWeight:800,color:epsBM.col}}>{epsBM.text}</span>:<span style={{color:'#1e293b',fontSize:9}}>—</span>}
+                          {epsBM?<span style={{fontSize:F.xs,fontWeight:800,color:epsBM.col}}>{epsBM.text}</span>:<span style={{color:'var(--mc-bg-3)',fontSize:9}}>—</span>}
                         </td>
                       )}
                       <td style={{padding:'8px 8px',textAlign:'right'}}>
@@ -3477,12 +3477,12 @@ export default function EarningsAnalysisPage() {
                       </td>
                       {hasEstimates && (
                         <td style={{padding:'8px 8px',textAlign:'right',fontSize:F.xs,color:MUTED}}>
-                          {gmEstNum?`${gmEstNum.toFixed(1)}%`:<span style={{color:'#1e293b'}}>—</span>}
+                          {gmEstNum?`${gmEstNum.toFixed(1)}%`:<span style={{color:'var(--mc-bg-3)'}}>—</span>}
                         </td>
                       )}
                       {hasEstimates && (
                         <td style={{padding:'8px 8px',textAlign:'right'}}>
-                          {gmEstNum&&d.grossMargin!==null?(() => { const delta=d.grossMargin-gmEstNum; const c=delta>=0?GREEN:RED; return <span style={{fontSize:F.xs,fontWeight:800,color:c}}>{delta>=0?'↑':'↓'} {Math.abs(delta).toFixed(1)}pp</span>; })():<span style={{color:'#1e293b',fontSize:9}}>—</span>}
+                          {gmEstNum&&d.grossMargin!==null?(() => { const delta=d.grossMargin-gmEstNum; const c=delta>=0?GREEN:RED; return <span style={{fontSize:F.xs,fontWeight:800,color:c}}>{delta>=0?'↑':'↓'} {Math.abs(delta).toFixed(1)}pp</span>; })():<span style={{color:'var(--mc-bg-3)',fontSize:9}}>—</span>}
                         </td>
                       )}
                       <td style={{padding:'8px 8px',textAlign:'right',fontSize:F.xs,color:MUTED}}>—</td>
@@ -3658,7 +3658,7 @@ export default function EarningsAnalysisPage() {
                   <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:3}}>
                     <span style={{fontSize:11,fontWeight:800,color:config.color,letterSpacing:'0.8px'}}>{config.title}</span>
                     {/* Confidence bar */}
-                    <div style={{flex:1,maxWidth:120,height:4,backgroundColor:'#1e293b',borderRadius:2,overflow:'hidden'}}>
+                    <div style={{flex:1,maxWidth:120,height:4,backgroundColor:'var(--mc-bg-3)',borderRadius:2,overflow:'hidden'}}>
                       <div style={{height:'100%',width:`${pc}%`,backgroundColor:config.color,borderRadius:2}}/>
                     </div>
                     <span style={{fontSize:9,color:config.color,fontWeight:700}}>{pc}% confidence</span>
@@ -4015,7 +4015,7 @@ export default function EarningsAnalysisPage() {
               {/* Overall score */}
               <div style={{textAlign:'center',flexShrink:0}}>
                 <div style={{fontSize:40,fontWeight:900,color:r.color,lineHeight:1}}>{r.score}</div>
-                <div style={{width:64,height:4,backgroundColor:'#1e293b',borderRadius:2,margin:'6px 0 2px',overflow:'hidden'}}>
+                <div style={{width:64,height:4,backgroundColor:'var(--mc-bg-3)',borderRadius:2,margin:'6px 0 2px',overflow:'hidden'}}>
                   <div style={{height:'100%',width:`${r.score}%`,backgroundColor:r.color,borderRadius:2}}/>
                 </div>
                 <div style={{fontSize:8,color:MUTED,letterSpacing:'0.5px'}}>REACTION SCORE</div>
@@ -4043,7 +4043,7 @@ export default function EarningsAnalysisPage() {
                     <div key={label} style={{display:'flex',alignItems:'center',gap:8}}>
                       <span style={{fontSize:8,color:MUTED,width:140,flexShrink:0}}>{label}</span>
                       <span style={{fontSize:8,color:'#334155',width:28,flexShrink:0}}>{weight}%</span>
-                      <div style={{flex:1,height:4,backgroundColor:'#1e293b',borderRadius:2,overflow:'hidden'}}>
+                      <div style={{flex:1,height:4,backgroundColor:'var(--mc-bg-3)',borderRadius:2,overflow:'hidden'}}>
                         <div style={{height:'100%',width:`${Math.min(100,eng.score)}%`,backgroundColor:eng.color,borderRadius:2,opacity:0.7}}/>
                       </div>
                       <span style={{fontSize:8,fontWeight:700,color:eng.color,width:24,textAlign:'right'}}>{eng.grade}</span>
@@ -4266,7 +4266,7 @@ export default function EarningsAnalysisPage() {
           {mode === 'paste' && (
             <div>
               <div style={{fontSize:F.sm,color:MUTED,marginBottom:8}}>
-                Open PDF → <kbd style={{background:'#1e293b',padding:'1px 5px',borderRadius:3,fontSize:10}}>Ctrl+A</kbd> → <kbd style={{background:'#1e293b',padding:'1px 5px',borderRadius:3,fontSize:10}}>Ctrl+C</kbd> → paste:
+                Open PDF → <kbd style={{background:'var(--mc-bg-3)',padding:'1px 5px',borderRadius:3,fontSize:10}}>Ctrl+A</kbd> → <kbd style={{background:'var(--mc-bg-3)',padding:'1px 5px',borderRadius:3,fontSize:10}}>Ctrl+C</kbd> → paste:
               </div>
               <textarea value={pasteText} onChange={e=>setPasteText(e.target.value)} rows={14}
                 placeholder={`Paste any earnings document text here.\n\nExample (SEC 10-K):\nRevenue: Product $30,498,162 $20,867,800\n32,215,500 24,558,809\nGross profit 15,982,483 622,924\nNet income 5,087,694 (13,634,333)\n\nExample (Indian ₹ Cr):\nRevenue from Operations 2,345 1,983\nEBITDA 668 534\nPAT 345 267`}

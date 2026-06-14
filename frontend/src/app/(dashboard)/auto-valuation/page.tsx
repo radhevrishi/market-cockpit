@@ -1500,14 +1500,14 @@ function CalcResultMini({ label, result, confidence, reason }: { label: string; 
       {/* PATCH 0678 — explicit reason for the confidence level. User asked
           for "why MED/LOW" to be visible, not hidden behind a tooltip. */}
       {reason && (
-        <div style={{ marginBottom: 8, padding: '6px 10px', background: `${confColor}10`, borderLeft: `2px solid ${confColor}`, borderRadius: 3, fontSize: 10.5, color: '#C9D4E0', lineHeight: 1.5 }}>
+        <div style={{ marginBottom: 8, padding: '6px 10px', background: `${confColor}10`, borderLeft: `2px solid ${confColor}`, borderRadius: 3, fontSize: 10.5, color: 'var(--mc-text-2)', lineHeight: 1.5 }}>
           <strong style={{ color: confColor, marginRight: 4 }}>Why {confidence}:</strong>{reason}
         </div>
       )}
-      <div style={{ fontSize: 11, color: '#C9D4E0', marginBottom: 8, lineHeight: 1.5 }}>{result.baseSummary}</div>
+      <div style={{ fontSize: 11, color: 'var(--mc-text-2)', marginBottom: 8, lineHeight: 1.5 }}>{result.baseSummary}</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
         {result.cases.map((c) => (
-          <div key={c.label} style={{ background: '#0A1422', border: `1px solid ${c.color}50`, borderRadius: 4, padding: '8px 10px' }}>
+          <div key={c.label} style={{ background: 'var(--mc-bg-0)', border: `1px solid ${c.color}50`, borderRadius: 4, padding: '8px 10px' }}>
             <div style={{ fontSize: 9, fontWeight: 800, color: c.color, letterSpacing: '1px' }}>{c.label}</div>
             <div style={{ fontSize: 14, fontWeight: 900, color: TEXT, marginTop: 2, fontVariantNumeric: 'tabular-nums' }}>
               ₹{Math.round(c.marketCapCr).toLocaleString('en-IN')} Cr
@@ -1880,7 +1880,7 @@ export default function AutoValuationPage() {
                 const displayLabel = primary ? `${primary} · ${savedDate}` : `Untitled · ${savedDate}`;
                 return (
                   <div key={s.ticker} title={displayLabel} style={{
-                    background: '#0A1422', border: `1px solid ${BORDER}`, borderRadius: 5,
+                    background: 'var(--mc-bg-0)', border: `1px solid ${BORDER}`, borderRadius: 5,
                     padding: '8px 11px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
                   }}>
                     <span style={{ fontSize: 11, color: recColor, fontWeight: 900, background: `${recColor}22`, padding: '2px 7px', borderRadius: 3, letterSpacing: '0.5px', minWidth: 50, textAlign: 'center' }}>
@@ -2014,7 +2014,7 @@ export default function AutoValuationPage() {
             <div style={{ fontSize: 12, fontWeight: 800, color: DIM, letterSpacing: '0.5px', marginBottom: 8 }}>UPLOADED ({docs.length})</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               {docs.map((d, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px', background: '#0A1422', borderRadius: 4 }}>
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px', background: 'var(--mc-bg-0)', borderRadius: 4 }}>
                   <span style={{ fontSize: 10, color: d.type === 'excel' ? 'var(--mc-bullish)' : 'var(--mc-cyan)', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 40 }}>
                     {d.type === 'excel' ? 'XLSX' : d.type === 'pdf' ? 'PDF' : '?'}
                   </span>

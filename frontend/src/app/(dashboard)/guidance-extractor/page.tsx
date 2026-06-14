@@ -71,7 +71,7 @@ export default function GuidanceExtractorPage() {
             rows={10}
             style={{
               width: '100%', boxSizing: 'border-box',
-              background: '#0A1422', color: TEXT,
+              background: 'var(--mc-bg-0)', color: TEXT,
               border: `1px solid ${BORDER}`, borderRadius: 4,
               padding: '10px 12px', fontSize: 12.5, fontFamily: 'ui-monospace, monospace',
               lineHeight: 1.55, resize: 'vertical',

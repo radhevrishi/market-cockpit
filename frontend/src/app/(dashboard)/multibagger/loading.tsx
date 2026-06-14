@@ -49,12 +49,12 @@ export default function MultibaggerLoading() {
           <div key={i} style={{
             display: 'flex', gap: 12, padding: '10px 14px',
             borderBottom: i < 11 ? '1px solid var(--mc-bg-4)' : 'none',
-            background: i % 2 === 0 ? '#0A1422' : 'var(--mc-bg-1)',
+            background: i % 2 === 0 ? 'var(--mc-bg-0)' : 'var(--mc-bg-1)',
           }}>
             {[80, 200, 60, 60, 60, 80, 60, 100].map((w, j) => (
               <div key={j} style={{
                 height: 14, width: w,
-                background: 'linear-gradient(90deg, var(--mc-bg-4) 0%, #2A3B4C 50%, var(--mc-bg-4) 100%)',
+                background: 'linear-gradient(90deg, var(--mc-bg-4) 0%, var(--mc-border-2) 50%, var(--mc-bg-4) 100%)',
                 backgroundSize: '200% 100%',
                 animation: `mb-shimmer 1.4s linear infinite ${i * 0.03}s`,
                 borderRadius: 3,
