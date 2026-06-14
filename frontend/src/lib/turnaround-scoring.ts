@@ -234,25 +234,31 @@ function buildGates(d: DerivedSeries): SurvivalGate[] {
   if (li < 0) return [];
   const gates: SurvivalGate[] = [];
 
-  // PATCH 1080c FIX 5 — when EBITDA <= 0 the ratio is meaningless (negative/negative
+  // PATCH 1080c+d FIX 5 — when EBITDA <= 0 the ratio is meaningless (negative/negative
   // gives a fake "positive" ratio). Fall back to absolute net-debt assessment.
+  // PATCH 1080d (BUG B) — when in fallback mode, relabel the row so the user knows
+  // the value is ₹ Cr absolute, not a x-multiple.
   const ndE = d.netDebtToEbitda[li];
   const ebitdaLatest = d.ebitda[li];
   const netDebtLatest = d.netDebt[li];
   let ndeStatus: GateStatus; let ndeReason: string; let ndeValue: number | null;
+  let ndeLabel = 'Net Debt / EBITDA';
+  let ndeThresh = '< 4x green · < 6x ok · > 8x fail';
   if (!isFinite(ebitdaLatest) || ebitdaLatest <= 0) {
-    // EBITDA negative/zero — the ratio is uninformative. Judge by abs net-debt sign.
+    // EBITDA negative/zero — switch the label so the user knows we are reporting ₹ Cr.
+    ndeLabel = 'Net Debt absolute (EBITDA negative — ratio not meaningful)';
+    ndeThresh = '₹ Cr (negative = net cash · positive = operations cannot service debt)';
     ndeValue = isFinite(netDebtLatest) ? +netDebtLatest.toFixed(0) : null;
     if (!isFinite(netDebtLatest)) { ndeStatus = 'NA'; ndeReason = 'EBITDA <= 0 and net debt missing'; }
-    else if (netDebtLatest <= 0) { ndeStatus = 'WARN'; ndeReason = 'EBITDA negative but net cash positive — runway depends on operations'; }
-    else { ndeStatus = 'FAIL'; ndeReason = 'EBITDA negative AND net debt positive — operations cannot service debt'; }
+    else if (netDebtLatest <= 0) { ndeStatus = 'WARN'; ndeReason = 'EBITDA negative but net cash positive — runway depends on operations recovery'; }
+    else { ndeStatus = 'FAIL'; ndeReason = `EBITDA negative AND net debt ${netDebtLatest.toFixed(0)} Cr positive — operations cannot service debt`; }
   } else if (!isFinite(ndE)) { ndeStatus = 'NA'; ndeValue = null; ndeReason = 'Net debt missing'; }
   else { ndeValue = +ndE.toFixed(2);
     ndeStatus = ndE <= 4 ? 'PASS' : ndE <= 6 ? 'WARN' : ndE > 10 ? 'FAIL' : 'WARN';
     ndeReason = ndE <= 4 ? 'Manageable leverage' : ndE > 10 ? 'Capital structure dangerously stretched' : 'Elevated but workable';
   }
-  gates.push({ id: 'nd_ebitda', label: 'Net Debt / EBITDA',
-    value: ndeValue, thresholdText: '< 4x green · < 6x ok · > 8x fail · neg EBITDA → judged on abs net debt',
+  gates.push({ id: 'nd_ebitda', label: ndeLabel,
+    value: ndeValue, thresholdText: ndeThresh,
     status: ndeStatus, reason: ndeReason });
 
   const ic = d.interestCoverage[li];
@@ -316,14 +322,28 @@ function buildGates(d: DerivedSeries): SurvivalGate[] {
     thresholdText: '≤ -25% green · FAIL only if up >25% AND D/E > 1.5',
     status: d3yStatus, reason: d3yReason });
 
+  // PATCH 1080d (BUG C) — hair-trigger FAIL on CFO/PAT = -0.02 killed companies
+  // whose CFO was effectively zero in latest year (AXISCADES, OBSC). FAIL only on
+  // meaningful cash drainage (< -0.5) and average-window check: if CFO/PAT was
+  // positive on average, the latest-year dip is a working-capital blip not distress.
   const cp = d.cfoOverPat[li];
-  gates.push({
-    id: 'cfo_pat', label: 'CFO / PAT (earnings quality)',
+  const cpWindow = d.cfoOverPat.slice(0, li + 1).filter(isFinite);
+  const cpAvg = cpWindow.length > 0 ? cpWindow.reduce((a, b) => a + b, 0) / cpWindow.length : NaN;
+  let cpStatus: GateStatus; let cpReason: string;
+  if (!isFinite(cp)) { cpStatus = 'NA'; cpReason = 'CFO or PAT missing'; }
+  else if (cp >= 0.8) { cpStatus = 'PASS'; cpReason = 'Cash-backed earnings'; }
+  else if (cp >= 0.5) { cpStatus = 'WARN'; cpReason = 'Quality gap'; }
+  else if (cp >= -0.2) { cpStatus = 'WARN'; cpReason = 'CFO near zero — working-capital blip'; }
+  else if (cp < -0.5) { cpStatus = 'FAIL'; cpReason = `Cash flow contradicts reported profit (${cp.toFixed(2)})`; }
+  else { cpStatus = 'WARN'; cpReason = 'Mild CFO weakness'; }
+  // Downgrade to WARN if the latest-year fail is an outlier vs the multi-year average
+  if (cpStatus === 'FAIL' && isFinite(cpAvg) && cpAvg > 0.5) {
+    cpStatus = 'WARN'; cpReason = `Latest CFO/PAT ${cp.toFixed(2)} but window average ${cpAvg.toFixed(2)} — likely transient`;
+  }
+  gates.push({ id: 'cfo_pat', label: 'CFO / PAT (earnings quality)',
     value: isFinite(cp) ? +cp.toFixed(2) : null,
-    thresholdText: '≥ 0.8 green · ≥ 0.5 ok · < 0 fail',
-    status: !isFinite(cp) ? 'NA' : cp >= 0.8 ? 'PASS' : cp >= 0.5 ? 'WARN' : cp >= 0 ? 'WARN' : 'FAIL',
-    reason: !isFinite(cp) ? 'CFO or PAT missing' : cp < 0 ? 'Cash flow contradicts reported profit' : cp >= 0.8 ? 'Cash-backed earnings' : 'Quality gap',
-  });
+    thresholdText: '≥ 0.8 green · ≥ 0.5 ok · < -0.5 fail · transient blips → WARN',
+    status: cpStatus, reason: cpReason });
 
   const de = d.debtToEquity[li];
   gates.push({

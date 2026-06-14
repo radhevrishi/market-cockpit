@@ -2739,20 +2739,28 @@ export default function CapexTrackerPage() {
           if (p !== 0) return p;
           return b.ta!.totalScore - a.ta!.totalScore;
         });
+        // PATCH 1080d (BUG A) — mutually exclusive buckets: each company appears in
+        // exactly one bucket. We assign to the first matching bucket in priority order.
+        const used = new Set<string>();
+        const take = (pred: (x: typeof rows[number]) => boolean) => {
+          const picked = rows.filter((x) => !used.has(x.it.s.name) && pred(x));
+          picked.forEach((x) => used.add(x.it.s.name));
+          return picked;
+        };
         const buckets: { id: string; label: string; sub: string; rows: typeof rows; color: string }[] = [
           { id: 'best', label: '🏆 BEST TURNAROUNDS — A-grade · Phase 3 / Phase 4', sub: 'Inflection or re-rating with all gates clear', color: C.green,
-            rows: rows.filter((x) => x.ta!.action === 'BUY' || (x.ta!.thesisAlive && x.ta!.grade === 'A' && (x.ta!.phase === 'PHASE_3_INFLECTION' || x.ta!.phase === 'PHASE_4_RE_RATING'))) },
+            rows: take((x) => x.ta!.action === 'BUY' || (x.ta!.thesisAlive && x.ta!.grade === 'A' && (x.ta!.phase === 'PHASE_3_INFLECTION' || x.ta!.phase === 'PHASE_4_RE_RATING'))) },
           { id: 'starter', label: '🟢 STARTER — A/B grade · early inflection', sub: 'Building the position, not full size yet', color: C.amber,
-            rows: rows.filter((x) => x.ta!.action === 'STARTER') },
+            rows: take((x) => x.ta!.action === 'STARTER') },
           { id: 'watch', label: '👀 WATCH — stabilisation or marginal grade', sub: 'Decline decelerating, no position yet', color: C.amber,
-            rows: rows.filter((x) => x.ta!.action === 'WATCH') },
+            rows: take((x) => x.ta!.action === 'WATCH') },
           // PATCH 1080c — HEALTHY = cash-generative compounder, not a turnaround setup.
           { id: 'healthy', label: '🏥 HEALTHY — not a turnaround (cash compounders)', sub: 'No distress episode in the window — different framework (Multibagger DNA) is more relevant', color: C.cyan,
-            rows: rows.filter((x) => x.ta!.action === 'HEALTHY') },
+            rows: take((x) => x.ta!.action === 'HEALTHY') },
           { id: 'avoid', label: '⛔ AVOID — survival gate FAIL', sub: 'Capital impairment risk — thesis dead-on-arrival', color: C.red,
-            rows: rows.filter((x) => x.ta!.action === 'AVOID') },
+            rows: take((x) => x.ta!.action === 'AVOID') },
           { id: 'skip', label: '— SKIP — thin score, no edge', sub: 'Different opportunity better', color: C.muted,
-            rows: rows.filter((x) => x.ta!.action === 'SKIP') },
+            rows: take((x) => x.ta!.action === 'SKIP') },
         ];
         return (
           <>
