@@ -2,8 +2,10 @@
 import ConcallPro from './ConcallPro';
 import { classifyTranscriptV2 } from './concallClassifierV2';
 import MultibaggerStrips from './MultibaggerStrips';
-// PATCH 1080 — Turnaround scoring view (per-company panel).
+// PATCH 1080 — Turnaround scoring view (per-company panel + top-level tab).
 import TurnaroundStrips from './TurnaroundStrips';
+// PATCH 1080b — pure scorer reused for the top-level Turnaround tab ranking.
+import { scoreTurnaround, type TurnaroundResult } from '@/lib/turnaround-scoring';
 import CapexPlaybook from './CapexPlaybook';
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1940,13 +1942,13 @@ const CapexStrip = ({ s }: { s: Scored }) => {
 export default function CapexTrackerPage() {
   const [rows, setRows] = useState<Row[]>([]);
   const [files, setFiles] = useState<string[]>([]);
-  const [tab, setTab] = useState<'board' | 'analytics' | 'multibagger' | 'forensics' | 'concall' | 'verdict' | 'model'>('board');
+  const [tab, setTab] = useState<'board' | 'analytics' | 'multibagger' | 'turnaround' | 'forensics' | 'concall' | 'verdict' | 'model' | 'playbook' | 'concallpro'>('board');
   // PATCH — hydrate tab from the tab URL param (home 🧭 Verdict chip deep link).
   // Mount-effect (not useState initializer) to avoid SSR hydration mismatch.
   useEffect(() => {
     try {
       const p = new URLSearchParams(window.location.search).get('tab');
-      if (p && ['board','analytics','multibagger','forensics','concall','verdict','model'].includes(p)) setTab(p as any);
+      if (p && ['board','analytics','multibagger','turnaround','forensics','concall','verdict','model','playbook','concallpro'].includes(p)) setTab(p as any);
     } catch { /* noop */ }
   }, []);
   const [q, setQ] = useState('');
@@ -2189,7 +2191,9 @@ export default function CapexTrackerPage() {
     const mb = computeMultibagger(fin, s, s.raw, fx.grade);
     const cc = ccStateFor(s.name);
     const verdict = computeVerdict(s, mb, fx, cc);
-    return { s, fin, mb, fx, cc, verdict };
+    // PATCH 1080b — turnaround result available to every tab/row.
+    const ta = scoreTurnaround(fin as any, s.name);
+    return { s, fin, mb, fx, cc, verdict, ta };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [scored, concalls]);
   const intelByName = useMemo(() => { const m: Record<string, (typeof intel)[number]> = {}; intel.forEach((it) => { m[ckey(it.s.name)] = it; }); return m; }, [intel]);
@@ -2469,6 +2473,7 @@ export default function CapexTrackerPage() {
         <span onClick={() => setTab('board')} style={pill(tab === 'board', C.cyan)}>☰ Scoreboard</span>
         <span onClick={() => setTab('analytics')} style={pill(tab === 'analytics', C.green)}>🎯 Decision Board</span>
         <span onClick={() => setTab('multibagger')} style={pill(tab === 'multibagger', C.violet)}>🚀 Multibagger</span>
+        <span onClick={() => setTab('turnaround')} style={pill(tab === 'turnaround', C.amber)} title="Turnaround scoring — Phase/Archetype/Score from the 10y workbook">🔄 Turnaround</span>
         <span onClick={() => setTab('playbook')} style={pill(tab === 'playbook', C.violet)}>📚 Playbook</span>
         <span onClick={() => setTab('forensics')} style={pill(tab === 'forensics', C.red)}>🔬 Forensics</span>
         <span onClick={() => setTab('concall')} style={pill(tab === 'concall', C.gold)}>🎙 Concall</span>
@@ -2714,6 +2719,104 @@ export default function CapexTrackerPage() {
           </div>
         </>
       )}
+
+      {/* ═══ 🔄 TURNAROUND (PATCH 1080b) — full ranking of every uploaded company ═══ */}
+      {tab === 'turnaround' && scored.length > 0 && (() => {
+        const rows = intel
+          .map((it) => ({ it, ta: it.ta as TurnaroundResult | null }))
+          .filter((x) => x.ta != null);
+        const gradeRank: Record<string, number> = { A: 4, B: 3, C: 2, D: 1, NR: 0 };
+        const phaseRank: Record<string, number> = {
+          PHASE_3_INFLECTION: 4, PHASE_4_RE_RATING: 3, PHASE_2_STABILISATION: 2,
+          PHASE_1_COLLAPSE: 1, UNCLASSIFIED: 0,
+        };
+        rows.sort((a, b) => {
+          // Best first: thesisAlive desc, gradeRank desc, phaseRank desc, totalScore desc
+          if (a.ta!.thesisAlive !== b.ta!.thesisAlive) return a.ta!.thesisAlive ? -1 : 1;
+          const g = (gradeRank[b.ta!.grade] || 0) - (gradeRank[a.ta!.grade] || 0);
+          if (g !== 0) return g;
+          const p = (phaseRank[b.ta!.phase] || 0) - (phaseRank[a.ta!.phase] || 0);
+          if (p !== 0) return p;
+          return b.ta!.totalScore - a.ta!.totalScore;
+        });
+        const buckets: { id: string; label: string; sub: string; rows: typeof rows; color: string }[] = [
+          { id: 'best', label: '🏆 BEST TURNAROUNDS — A-grade · Phase 3 / Phase 4', sub: 'Inflection or re-rating with all gates clear', color: C.green,
+            rows: rows.filter((x) => x.ta!.thesisAlive && x.ta!.grade === 'A' && (x.ta!.phase === 'PHASE_3_INFLECTION' || x.ta!.phase === 'PHASE_4_RE_RATING')) },
+          { id: 'starter', label: '🟢 STARTER — A/B grade · early inflection', sub: 'Building the position, not full size yet', color: C.amber,
+            rows: rows.filter((x) => x.ta!.thesisAlive && x.ta!.action === 'STARTER' && !(x.ta!.grade === 'A' && (x.ta!.phase === 'PHASE_3_INFLECTION' || x.ta!.phase === 'PHASE_4_RE_RATING'))) },
+          { id: 'watch', label: '👀 WATCH — Phase 2 stabilisation', sub: 'Decline decelerating, no position yet', color: C.amber,
+            rows: rows.filter((x) => x.ta!.thesisAlive && x.ta!.action === 'WATCH') },
+          { id: 'avoid', label: '⛔ AVOID — survival gate FAIL', sub: 'Capital impairment risk — thesis dead-on-arrival', color: C.red,
+            rows: rows.filter((x) => !x.ta!.thesisAlive) },
+          { id: 'skip', label: '— SKIP — thin score, no edge', sub: 'Different opportunity better', color: C.muted,
+            rows: rows.filter((x) => x.ta!.action === 'SKIP') },
+        ];
+        return (
+          <>
+            <div style={{ ...card, padding: 12, marginBottom: 10 }}>
+              <div style={{ fontSize: F.md, fontWeight: 800, color: C.amber, marginBottom: 4 }}>🔄 Turnaround Scorecard — every company ranked</div>
+              <div style={{ fontSize: F.xs, color: C.body, lineHeight: 1.5 }}>
+                Six-section Playbook score /42 + phase classifier (Collapse → Stabilisation → Inflection → Re-rating) + archetype (Cyclical / Operational / Distressed) + 6 survival gates + 10-killer trap radar. Best candidates surface at the top. Click any row for the full per-company strips.
+              </div>
+            </div>
+            {buckets.map((b) => b.rows.length === 0 ? null : (
+              <div key={b.id} style={{ ...card, padding: 0, marginBottom: 10, overflowX: 'auto', borderColor: b.color + '55' }}>
+                <div style={{ padding: '8px 12px', borderBottom: '1px solid ' + C.line, background: b.color + '10' }}>
+                  <div style={{ fontSize: F.sm, fontWeight: 800, color: b.color }}>{b.label} <span style={{ color: C.body }}>· {b.rows.length}</span></div>
+                  <div style={{ fontSize: F.xs, color: C.dim, marginTop: 2 }}>{b.sub}</div>
+                </div>
+                <table className="cxt" style={{ borderCollapse: 'collapse', width: '100%', fontSize: F.sm }}>
+                  <thead><tr style={{ borderBottom: '1px solid ' + C.line }}>
+                    {['COMPANY', 'GRADE', 'SCORE', 'PHASE', 'ARCHETYPE', 'TROUGH', 'GATES', '🚩 TRAPS', 'MCAP Cr'].map((hh, i) => (
+                      <th key={hh} style={{ padding: '7px 8px', whiteSpace: 'nowrap', textAlign: i === 2 || i === 8 ? 'right' : 'left', color: C.dim, fontSize: F.xs, fontWeight: 800 }}>{hh}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>
+                    {b.rows.map(({ it, ta }) => {
+                      const isOpen = openMB === it.s.name || allOpen;
+                      const passes = ta!.gates.filter((g) => g.status === 'PASS').length;
+                      const fails = ta!.gateFailCount;
+                      const warns = ta!.gates.filter((g) => g.status === 'WARN').length;
+                      const traps = ta!.redFlagTrippedCount;
+                      return (
+                        <Fragment key={it.s.name}>
+                          <tr className="cxr" onClick={() => setOpenMB(isOpen ? null : it.s.name)} style={{ borderBottom: '1px solid ' + C.line, cursor: 'pointer', background: isOpen ? '#16233B' : undefined }}>
+                            <td style={{ padding: '8px 8px', fontWeight: 800 }}>{it.s.name}<div style={{ fontSize: 10.5, color: C.dim, fontWeight: 400 }}>{it.s.industry || it.s.sector}</div></td>
+                            <td style={{ padding: '8px 8px' }}><span style={{ fontSize: F.xs, fontWeight: 900, padding: '2px 10px', borderRadius: 10, background: ta!.gradeColor + '22', color: ta!.gradeColor, border: '1px solid ' + ta!.gradeColor + '55' }}>{ta!.grade}</span></td>
+                            <td style={{ padding: '8px 8px', textAlign: 'right' }}>
+                              <span style={{ fontSize: 14, fontWeight: 900, color: ta!.gradeColor }}>{ta!.totalScore.toFixed(0)}<span style={{ color: C.dim, fontSize: 11, fontWeight: 600 }}>/{ta!.totalMax}</span></span>
+                            </td>
+                            <td style={{ padding: '8px 8px', fontSize: F.xs, color: ta!.phaseColor, fontWeight: 800 }}>{ta!.phaseLabel}</td>
+                            <td style={{ padding: '8px 8px', fontSize: F.xs, color: C.body }}>{ta!.archetypeLabel.split(' · ')[0]}</td>
+                            <td style={{ padding: '8px 8px', fontSize: F.xs, color: C.dim }}>{ta!.troughYearByMetric.opm ? `${ta!.troughYearByMetric.opm.slice(-4)} · ${ta!.yearsSinceTrough}y ago` : '—'}</td>
+                            <td style={{ padding: '8px 8px', fontSize: F.xs }}>
+                              <span style={{ color: C.green }}>{passes}P</span>
+                              <span style={{ color: C.amber, marginLeft: 4 }}>{warns}W</span>
+                              <span style={{ color: C.red, marginLeft: 4, fontWeight: fails > 0 ? 900 : 400 }}>{fails}F</span>
+                            </td>
+                            <td style={{ padding: '8px 8px', fontSize: F.xs, color: traps > 0 ? C.red : C.dim, fontWeight: traps > 0 ? 800 : 400 }}>{traps > 0 ? `${traps}/10` : '0/10'}</td>
+                            <td style={{ padding: '8px 8px', textAlign: 'right' }}>{it.fin && it.fin.mcap ? Math.round(it.fin.mcap).toLocaleString() : '—'}</td>
+                          </tr>
+                          {isOpen && (
+                            <tr key={it.s.name + ':td'}><td colSpan={9} style={{ padding: '0 8px' }}>
+                              <div style={{ background: C.panel2, border: '1px solid ' + C.line, borderRadius: 10, padding: 12, margin: '6px 0 10px' }}>
+                                <TurnaroundStrips fin={it.fin} name={it.s.name} />
+                              </div>
+                            </td></tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+            <div style={{ fontSize: F.xs, color: C.dim, marginTop: 4, lineHeight: 1.6 }}>
+              Scoring framework synthesised from <i>Indian_Turnaround_Research</i> + <i>Turnaround Investor Master Playbook</i> §VIII. Sort priority: thesis-alive (no gate FAIL) → letter grade → phase → composite score. Click any company for the 11-tile per-row breakdown.
+            </div>
+          </>
+        );
+      })()}
 
       {/* ═══ 🔬 FORENSICS ═══ */}
       {tab === 'forensics' && scored.length > 0 && (
