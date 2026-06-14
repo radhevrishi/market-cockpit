@@ -415,7 +415,7 @@ async function generateSummaryImage(
   const element = (
     <div style={{ display: 'flex', flexDirection: 'column', width: `${W}px`, height: `${totalH}px`, backgroundColor: BG, fontFamily: 'system-ui, sans-serif' }}>
       {/* Accent bar */}
-      <div style={{ display: 'flex', width: '100%', height: `${ACCENT_H}px`, background: 'linear-gradient(90deg, #F59E0B 0%, #22C55E 100%)' }} />
+      <div style={{ display: 'flex', width: '100%', height: `${ACCENT_H}px`, background: 'linear-gradient(90deg, var(--mc-warn) 0%, #22C55E 100%)' }} />
 
       {/* Header */}
       <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', paddingLeft: '24px', paddingRight: '24px', height: `${HEADER_H}px`, backgroundColor: BG, borderBottom: `1px solid ${BORDER}` }}>

@@ -2446,13 +2446,13 @@ export default function EarningsOpportunitiesPage() {
   })();
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: '#0A0E1A' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--mc-bg-0)' }}>
       {/* ── Header ──────────────────────────────────────────────────────── */}
-      <div style={{ padding: '20px 24px 14px', borderBottom: '1px solid #1A2540', backgroundColor: '#0D1623' }}>
+      <div style={{ padding: '20px 24px 14px', borderBottom: '1px solid var(--mc-bg-4)', backgroundColor: 'var(--mc-bg-1)' }}>
         {/* PATCH 0557 — backend-degraded banner. */}
         <DegradedBanner />
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
-          <h1 style={{ fontSize: 22, fontWeight: 900, color: '#E6EDF3', margin: 0 }}>Earnings Opportunities</h1>
+          <h1 style={{ fontSize: 22, fontWeight: 900, color: 'var(--mc-text-1)', margin: 0 }}>Earnings Opportunities</h1>
           {/* PATCH 0915 — Direct link to NSE's official calendar so user can
               verify the universe vs our aggregator. User feedback: hub
               shows 93 filings for the date but NSE's calendar shows 118+. */}
@@ -2460,7 +2460,7 @@ export default function EarningsOpportunitiesPage() {
             href="https://www.nseindia.com/companies-listing/corporate-filings-financial-results"
             target="_blank" rel="noopener noreferrer"
             title="Open NSE's official corporate-filings page in a new tab to verify the full universe of filings for any date"
-            style={{ fontSize: 10, padding: '4px 10px', borderRadius: 6, border: '1px solid #94A3B860', background: 'transparent', color: '#94A3B8', fontWeight: 700, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+            style={{ fontSize: 10, padding: '4px 10px', borderRadius: 6, border: '1px solid #94A3B860', background: 'transparent', color: 'var(--mc-text-3)', fontWeight: 700, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}
           >🔗 NSE official ↗</a>
           <button onClick={() => refetch()} disabled={hardRefreshing}
             title="Hard refresh — busts cache, re-fetches NSE/BSE feeds, pulls in newly-filed tickers (works for any date including weekends)"
@@ -2468,7 +2468,7 @@ export default function EarningsOpportunitiesPage() {
               padding: '4px 10px', borderRadius: 6,
               border: '1px solid #22D3EE60',
               background: hardRefreshing ? '#22D3EE30' : '#22D3EE15',
-              color: '#22D3EE',
+              color: 'var(--mc-cyan)',
               fontSize: 11, fontWeight: 700,
               cursor: hardRefreshing ? 'not-allowed' : 'pointer',
               display: 'inline-flex', alignItems: 'center', gap: 4,
@@ -2485,7 +2485,7 @@ export default function EarningsOpportunitiesPage() {
             onClick={runBackfill}
             disabled={backfilling}
             title="One-time fill of the last 60 weekdays. Chains 2-date batches with retry. Once done, past-date pages serve from cache instantly with no Refresh needed."
-            style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #A78BFA60', background: backfilling ? '#A78BFA30' : '#A78BFA15', color: '#A78BFA', fontSize: 11, fontWeight: 700, cursor: backfilling ? 'wait' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, opacity: backfilling ? 0.8 : 1 }}>
+            style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #A78BFA60', background: backfilling ? '#A78BFA30' : '#A78BFA15', color: 'var(--mc-state-persistent)', fontSize: 11, fontWeight: 700, cursor: backfilling ? 'wait' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, opacity: backfilling ? 0.8 : 1 }}>
             <RefreshCw style={{ width: 11, height: 11, animation: backfilling ? 'spin 0.8s linear infinite' : 'none' }} />
             {backfilling ? 'Backfilling…' : 'Backfill 60d'}
           </button>
@@ -2535,7 +2535,7 @@ export default function EarningsOpportunitiesPage() {
               padding: '3px 8px', borderRadius: 4,
               backgroundColor: slowBfProgressLabel.startsWith('✓') ? '#10B98118' : '#6366F118',
               border: `1px solid ${slowBfProgressLabel.startsWith('✓') ? '#10B98140' : '#6366F140'}`,
-              color: slowBfProgressLabel.startsWith('✓') ? '#10B981' : '#A5B4FC',
+              color: slowBfProgressLabel.startsWith('✓') ? 'var(--mc-bullish)' : '#A5B4FC',
               maxWidth: 420, lineHeight: 1.3,
             }}>
               {slowBfProgressLabel}
@@ -2547,7 +2547,7 @@ export default function EarningsOpportunitiesPage() {
               padding: '3px 8px', borderRadius: 4,
               backgroundColor: backfillProgress.startsWith('✓') ? '#10B98118' : backfillProgress.startsWith('⚠') ? '#EF444418' : '#A78BFA18',
               border: `1px solid ${backfillProgress.startsWith('✓') ? '#10B98140' : backfillProgress.startsWith('⚠') ? '#EF444440' : '#A78BFA40'}`,
-              color: backfillProgress.startsWith('✓') ? '#10B981' : backfillProgress.startsWith('⚠') ? '#EF4444' : '#A78BFA',
+              color: backfillProgress.startsWith('✓') ? 'var(--mc-bullish)' : backfillProgress.startsWith('⚠') ? 'var(--mc-bearish)' : 'var(--mc-state-persistent)',
               maxWidth: 480, lineHeight: 1.3,
             }}>
               {backfillProgress}
@@ -2572,11 +2572,11 @@ export default function EarningsOpportunitiesPage() {
                   padding: '3px 9px', borderRadius: 4,
                   backgroundColor: inMarketHours ? '#10B98118' : '#94A3B815',
                   border: `1px solid ${inMarketHours ? '#10B98160' : '#94A3B840'}`,
-                  color: inMarketHours ? '#10B981' : '#94A3B8',
+                  color: inMarketHours ? 'var(--mc-bullish)' : 'var(--mc-text-3)',
                   fontFamily: 'ui-monospace, monospace',
                 }}>
                 {inMarketHours
-                  ? <><span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: 3, backgroundColor: '#10B981', animation: 'pulse 1.5s ease-in-out infinite' }} /> LIVE · auto-refresh 4m · last {minutesAgo}m ago</>
+                  ? <><span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: 3, backgroundColor: 'var(--mc-bullish)', animation: 'pulse 1.5s ease-in-out infinite' }} /> LIVE · auto-refresh 4m · last {minutesAgo}m ago</>
                   : <>● MARKET CLOSED · manual refresh only</>
                 }
                 <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.35} }`}</style>
@@ -2630,7 +2630,7 @@ export default function EarningsOpportunitiesPage() {
                       padding: '4px 10px', borderRadius: 6,
                       border: '1px solid #F59E0B60',
                       background: refreshing ? '#F59E0B30' : '#F59E0B15',
-                      color: '#F59E0B',
+                      color: 'var(--mc-warn)',
                       fontSize: 11,
                       cursor: refreshing ? 'not-allowed' : 'pointer',
                       display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 700,
@@ -2647,7 +2647,7 @@ export default function EarningsOpportunitiesPage() {
                     padding: '3px 8px', borderRadius: 4,
                     backgroundColor: refreshFeedback.startsWith('✓') ? '#10B98118' : '#EF444418',
                     border: `1px solid ${refreshFeedback.startsWith('✓') ? '#10B98140' : '#EF444440'}`,
-                    color: refreshFeedback.startsWith('✓') ? '#10B981' : '#EF4444',
+                    color: refreshFeedback.startsWith('✓') ? 'var(--mc-bullish)' : 'var(--mc-bearish)',
                     maxWidth: 480, lineHeight: 1.3,
                   }}>
                     {refreshFeedback}
@@ -2664,7 +2664,7 @@ export default function EarningsOpportunitiesPage() {
             // PATCH 0715 — centralized via isIndianMarketOpen (lib/market-hours).
             const isMarketOpen = isIndianMarketOpenLocal();
             return (
-              <span style={{ marginLeft: 'auto', fontSize: 11, color: '#6B7A8D' }}>
+              <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--mc-text-4)' }}>
                 {isMarketOpen
                   ? `Live · ${view.sources_polled} sources polling`
                   : `Market closed · historical data only · ${view.sources_polled} sources polled`}
@@ -2673,26 +2673,26 @@ export default function EarningsOpportunitiesPage() {
           })()}
         </div>
 
-        <div style={{ backgroundColor: '#0A1422', border: '1px solid #1A2840', borderRadius: 8, padding: '10px 14px', marginBottom: 14 }}>
+        <div style={{ backgroundColor: '#0A1422', border: '1px solid var(--mc-bg-4)', borderRadius: 8, padding: '10px 14px', marginBottom: 14 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-            <div style={{ fontSize: 12, color: '#94A3B8', lineHeight: 1.55 }}>
+            <div style={{ fontSize: 12, color: 'var(--mc-text-3)', lineHeight: 1.55 }}>
               Yesterday's earnings, scored overnight — find the exceptional setups before the market opens.<br/>
-              Every Indian filing graded into one of four conviction tiers — from <strong style={{ color: '#F59E0B' }}>BLOCKBUSTER</strong> through <strong style={{ color: '#10B981' }}>STRONG</strong>, <strong style={{ color: '#FACC15' }}>MIXED</strong>, and <strong style={{ color: '#EF4444' }}>AVOID</strong>.
+              Every Indian filing graded into one of four conviction tiers — from <strong style={{ color: 'var(--mc-warn)' }}>BLOCKBUSTER</strong> through <strong style={{ color: 'var(--mc-bullish)' }}>STRONG</strong>, <strong style={{ color: '#FACC15' }}>MIXED</strong>, and <strong style={{ color: 'var(--mc-bearish)' }}>AVOID</strong>.
             </div>
             <button onClick={() => setShowAbout((s) => !s)}
-              style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #22D3EE60', background: '#22D3EE15', color: '#22D3EE', fontSize: 11, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+              style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #22D3EE60', background: '#22D3EE15', color: 'var(--mc-cyan)', fontSize: 11, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
               How it works {showAbout ? '▴' : '▾'}
             </button>
           </div>
           {showAbout && (
-            <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #1A2840', fontSize: 11.5, color: '#94A3B8', lineHeight: 1.7 }}>
+            <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--mc-bg-4)', fontSize: 11.5, color: 'var(--mc-text-3)', lineHeight: 1.7 }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
-                <div><strong style={{ color: '#F59E0B' }}>⭐ BLOCKBUSTER</strong><br/>Exceptional fit on multiple lenses, clean earnings quality, technically primed. Rare — typically 0–3 names per day.</div>
-                <div><strong style={{ color: '#10B981' }}>🟢 STRONG</strong><br/>High-conviction with clear pass on the strongest lenses; no material quality concerns.</div>
+                <div><strong style={{ color: 'var(--mc-warn)' }}>⭐ BLOCKBUSTER</strong><br/>Exceptional fit on multiple lenses, clean earnings quality, technically primed. Rare — typically 0–3 names per day.</div>
+                <div><strong style={{ color: 'var(--mc-bullish)' }}>🟢 STRONG</strong><br/>High-conviction with clear pass on the strongest lenses; no material quality concerns.</div>
                 <div><strong style={{ color: '#FACC15' }}>🟡 MIXED</strong><br/>Some lenses pass, some fail; or optically strong results shadowed by quality flags.</div>
-                <div><strong style={{ color: '#EF4444' }}>🔴 AVOID</strong><br/>Multiple weakness signals or material quality flags dominate.</div>
+                <div><strong style={{ color: 'var(--mc-bearish)' }}>🔴 AVOID</strong><br/>Multiple weakness signals or material quality flags dominate.</div>
               </div>
-              <div style={{ marginTop: 10, fontSize: 10.5, color: '#6B7A8D', fontStyle: 'italic' }}>
+              <div style={{ marginTop: 10, fontSize: 10.5, color: 'var(--mc-text-4)', fontStyle: 'italic' }}>
                 Educational only. Not investment advice. Server pipeline fetches BSE/NSE results announcements + Indian results RSS feeds. Parser accuracy depends on RSS title richness.
               </div>
             </div>
@@ -2706,12 +2706,12 @@ export default function EarningsOpportunitiesPage() {
               7 days ago. User feedback: "now only posible to go one day
               back liek that make it eay edtion or selecting directyl
               needed date by calendar option". */}
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: `1px solid ${isStaleView ? '#F59E0B60' : '#1A2840'}`, borderRadius: 8, padding: '2px 4px 2px 12px', backgroundColor: '#0A1422', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 11, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.4px' }}>FILING DATE</span>
-            <span style={{ fontSize: 12, color: '#22D3EE', fontWeight: 700 }}>· {filingDateLabel}</span>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: `1px solid ${isStaleView ? '#F59E0B60' : 'var(--mc-bg-4)'}`, borderRadius: 8, padding: '2px 4px 2px 12px', backgroundColor: '#0A1422', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.4px' }}>FILING DATE</span>
+            <span style={{ fontSize: 12, color: 'var(--mc-cyan)', fontWeight: 700 }}>· {filingDateLabel}</span>
             {isStaleView && (
               <span style={{
-                fontSize: 9.5, fontWeight: 800, color: '#F59E0B',
+                fontSize: 9.5, fontWeight: 800, color: 'var(--mc-warn)',
                 padding: '1px 6px', borderRadius: 3,
                 backgroundColor: '#F59E0B22', border: '1px solid #F59E0B60',
                 display: 'inline-flex', alignItems: 'center', gap: 3,
@@ -2719,26 +2719,26 @@ export default function EarningsOpportunitiesPage() {
               }}>
                 <span style={{
                   display: 'inline-block', width: 7, height: 7, borderRadius: '50%',
-                  backgroundColor: '#F59E0B', animation: 'pulse 1s infinite',
+                  backgroundColor: 'var(--mc-warn)', animation: 'pulse 1s infinite',
                 }} />
                 LOADING
                 <style>{`@keyframes pulse { 0%,100%{opacity:1}50%{opacity:.3} }`}</style>
               </span>
             )}
             <button onClick={() => shiftDate(-1)} title="Previous trading day"
-              style={{ padding: '6px 10px', background: 'none', border: 'none', color: '#94A3B8', fontSize: 14, cursor: 'pointer' }}>←</button>
+              style={{ padding: '6px 10px', background: 'none', border: 'none', color: 'var(--mc-text-3)', fontSize: 14, cursor: 'pointer' }}>←</button>
             <button onClick={() => shiftDate(1)} title="Next trading day"
-              style={{ padding: '6px 10px', background: 'none', border: 'none', color: '#94A3B8', fontSize: 14, cursor: 'pointer' }}>→</button>
+              style={{ padding: '6px 10px', background: 'none', border: 'none', color: 'var(--mc-text-3)', fontSize: 14, cursor: 'pointer' }}>→</button>
             {/* PATCH 0916 — Inline calendar picker inside the FILING DATE box */}
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 8px', border: '1px solid #22D3EE40', borderRadius: 5, backgroundColor: '#22D3EE10', cursor: 'pointer', marginLeft: 4 }}
               title="Click to open a calendar — jump to any date (past or future)">
-              <CalendarIcon style={{ width: 12, height: 12, color: '#22D3EE' }} />
-              <span style={{ fontSize: 10, color: '#22D3EE', fontWeight: 800, letterSpacing: '0.3px' }}>PICK DATE</span>
+              <CalendarIcon style={{ width: 12, height: 12, color: 'var(--mc-cyan)' }} />
+              <span style={{ fontSize: 10, color: 'var(--mc-cyan)', fontWeight: 800, letterSpacing: '0.3px' }}>PICK DATE</span>
               <input
                 type="date"
                 value={effectiveDate}
                 onChange={(e) => { if (e.target.value) setFilterDate(e.target.value); }}
-                style={{ background: 'transparent', border: 'none', color: '#22D3EE', fontSize: 11, fontWeight: 700, outline: 'none', cursor: 'pointer', width: 110, padding: 0 }}
+                style={{ background: 'transparent', border: 'none', color: 'var(--mc-cyan)', fontSize: 11, fontWeight: 700, outline: 'none', cursor: 'pointer', width: 110, padding: 0 }}
               />
             </label>
             {/* PATCH 0916 — Quick-jump shortcuts */}
@@ -2748,7 +2748,7 @@ export default function EarningsOpportunitiesPage() {
                 setFilterDate(today.toISOString().slice(0, 10));
               }}
               title="Jump to today"
-              style={{ padding: '4px 8px', background: 'transparent', border: '1px solid #1A2840', color: '#94A3B8', fontSize: 10, fontWeight: 700, borderRadius: 4, cursor: 'pointer' }}
+              style={{ padding: '4px 8px', background: 'transparent', border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-3)', fontSize: 10, fontWeight: 700, borderRadius: 4, cursor: 'pointer' }}
             >Today</button>
             <button
               onClick={() => {
@@ -2758,7 +2758,7 @@ export default function EarningsOpportunitiesPage() {
                 setFilterDate(d.toISOString().slice(0, 10));
               }}
               title="Jump to most recent trading day before today"
-              style={{ padding: '4px 8px', background: 'transparent', border: '1px solid #1A2840', color: '#94A3B8', fontSize: 10, fontWeight: 700, borderRadius: 4, cursor: 'pointer' }}
+              style={{ padding: '4px 8px', background: 'transparent', border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-3)', fontSize: 10, fontWeight: 700, borderRadius: 4, cursor: 'pointer' }}
             >Yesterday</button>
             <button
               onClick={() => {
@@ -2766,7 +2766,7 @@ export default function EarningsOpportunitiesPage() {
                 setFilterDate(d.toISOString().slice(0, 10));
               }}
               title="Jump to 7 days ago"
-              style={{ padding: '4px 8px', background: 'transparent', border: '1px solid #1A2840', color: '#94A3B8', fontSize: 10, fontWeight: 700, borderRadius: 4, cursor: 'pointer' }}
+              style={{ padding: '4px 8px', background: 'transparent', border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-3)', fontSize: 10, fontWeight: 700, borderRadius: 4, cursor: 'pointer' }}
             >−7d</button>
           </div>
           {/* PATCH 0736 — surface server timeout / date mismatch so user
@@ -2817,7 +2817,7 @@ export default function EarningsOpportunitiesPage() {
               style={{
                 padding: '6px 12px', borderRadius: 8,
                 border: '1px solid #F59E0B60', backgroundColor: '#F59E0B15',
-                color: '#F59E0B', fontSize: 11, fontWeight: 700,
+                color: 'var(--mc-warn)', fontSize: 11, fontWeight: 700,
                 cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
               }}
               title="The previous date with filings — click to view"
@@ -2825,15 +2825,15 @@ export default function EarningsOpportunitiesPage() {
               ← {sparseDayHint.label} had {sparseDayHint.count} filings
             </button>
           )}
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', border: '1px solid #1A2840', borderRadius: 8, backgroundColor: '#0A1422', cursor: 'pointer' }}>
-            <CalendarIcon style={{ width: 12, height: 12, color: '#94A3B8' }} />
-            <span style={{ fontSize: 11, color: '#94A3B8', fontWeight: 600 }}>Jump to</span>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', border: '1px solid var(--mc-bg-4)', borderRadius: 8, backgroundColor: '#0A1422', cursor: 'pointer' }}>
+            <CalendarIcon style={{ width: 12, height: 12, color: 'var(--mc-text-3)' }} />
+            <span style={{ fontSize: 11, color: 'var(--mc-text-3)', fontWeight: 600 }}>Jump to</span>
             <input type="date" value={filterDate} onChange={(e) => setFilterDate(e.target.value)}
-              style={{ background: 'transparent', border: 'none', color: '#22D3EE', fontSize: 12, fontWeight: 700, outline: 'none', cursor: 'pointer' }} />
+              style={{ background: 'transparent', border: 'none', color: 'var(--mc-cyan)', fontSize: 12, fontWeight: 700, outline: 'none', cursor: 'pointer' }} />
           </label>
           {filterDate && (
             <button onClick={() => setFilterDate('')} title="Show latest available"
-              style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid #1A2840', backgroundColor: 'transparent', color: '#8A95A3', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+              style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid var(--mc-bg-4)', backgroundColor: 'transparent', color: '#8A95A3', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
               ↩ Latest
             </button>
           )}
@@ -2864,7 +2864,7 @@ export default function EarningsOpportunitiesPage() {
                 padding: '6px 14px', borderRadius: 8,
                 border: '1px solid #10B98180',
                 backgroundColor: forceRescanning ? '#10B98130' : '#10B98115',
-                color: '#10B981', fontSize: 11, fontWeight: 800, cursor: forceRescanning ? 'wait' : 'pointer',
+                color: 'var(--mc-bullish)', fontSize: 11, fontWeight: 800, cursor: forceRescanning ? 'wait' : 'pointer',
                 letterSpacing: '0.3px', display: 'inline-flex', alignItems: 'center', gap: 6,
               }}
             >
@@ -2912,7 +2912,7 @@ export default function EarningsOpportunitiesPage() {
                 padding: '6px 12px', borderRadius: 8,
                 border: '1px solid #F59E0B80',
                 backgroundColor: '#F59E0B15',
-                color: '#F59E0B', fontSize: 11, fontWeight: 800, cursor: 'pointer',
+                color: 'var(--mc-warn)', fontSize: 11, fontWeight: 800, cursor: 'pointer',
                 letterSpacing: '0.3px', display: 'inline-flex', alignItems: 'center', gap: 6,
               }}
             >
@@ -2932,7 +2932,7 @@ Source label: ${coverageStats.source}`}
                 padding: '4px 10px', borderRadius: 6,
                 border: `1px solid ${coverageStats.total >= 10 ? '#10B98140' : coverageStats.total > 0 ? '#F59E0B40' : '#EF444440'}`,
                 backgroundColor: coverageStats.total >= 10 ? '#10B98110' : coverageStats.total > 0 ? '#F59E0B10' : '#EF444410',
-                color: coverageStats.total >= 10 ? '#10B981' : coverageStats.total > 0 ? '#F59E0B' : '#EF4444',
+                color: coverageStats.total >= 10 ? 'var(--mc-bullish)' : coverageStats.total > 0 ? 'var(--mc-warn)' : 'var(--mc-bearish)',
                 fontSize: 10.5, fontWeight: 700, fontFamily: 'monospace',
                 cursor: 'help',
               }}
@@ -2940,7 +2940,7 @@ Source label: ${coverageStats.source}`}
               NSE {coverageStats.nse} · BSE {coverageStats.bse} · merged {coverageStats.total}
             </span>
           )}
-          <span style={{ marginLeft: 'auto', fontSize: 11, color: '#6B7A8D' }}
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--mc-text-4)' }}
             title="Graded = filings that have actually been published AND parsed. Calendar = SCHEDULED filings (some may not have filed yet, some filed too recently for our parser to pick up). Mismatch is expected near filing day.">
             {view.candidates_total} graded · {view.raw_items_total} earnings articles found
           </span>
@@ -2950,7 +2950,7 @@ Source label: ${coverageStats.source}`}
           {(view as any)?._hub_fail && (
             <span
               title={`Earnings hub was unreachable (${(view as any)._hub_fail}). Showing live NSE filings only. Retry in a moment to get the full list.`}
-              style={{ fontSize: 10, padding: '3px 8px', borderRadius: 4, background: '#F59E0B20', border: '1px solid #F59E0B60', color: '#F59E0B', fontWeight: 800 }}
+              style={{ fontSize: 10, padding: '3px 8px', borderRadius: 4, background: '#F59E0B20', border: '1px solid #F59E0B60', color: 'var(--mc-warn)', fontWeight: 800 }}
             >⚠ upstream degraded · partial list</span>
           )}
           {counts.map((c) => (
@@ -2972,17 +2972,17 @@ Source label: ${coverageStats.source}`}
                 fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 20, cursor: 'pointer',
                 border: `1px solid ${color}${active ? '' : '50'}`,
                 backgroundColor: active ? color : `${color}15`,
-                color: active ? '#0A0E1A' : color,
+                color: active ? 'var(--mc-bg-0)' : color,
               }}>{label} {n}</button>
             );
             return (
               <>
-                <span style={{ width: 1, height: 14, background: '#1A2540', margin: '0 2px' }} />
+                <span style={{ width: 1, height: 14, background: 'var(--mc-bg-4)', margin: '0 2px' }} />
                 {chip(eliteOnly, '#FCD34D', '⭐ ELITE', eliteN, () => { setEliteOnly(v => !v); setPeadOnly(false); setMultibaggerOnly(false); })}
                 {chip(peadOnly, '#F87171', '🔥 PEAD≥70', peadN, () => { setPeadOnly(v => !v); setEliteOnly(false); setMultibaggerOnly(false); })}
                 {chip(multibaggerOnly, '#67E8F9', '💎 MULTIBAGGER', mbN, () => { setMultibaggerOnly(v => !v); setEliteOnly(false); setPeadOnly(false); })}
                 {/* PATCH 1022 — market-cap range selector */}
-                <span style={{ width: 1, height: 14, background: '#1A2540', margin: '0 2px' }} />
+                <span style={{ width: 1, height: 14, background: 'var(--mc-bg-4)', margin: '0 2px' }} />
                 <select
                   value={capFilter}
                   onChange={(e) => setCapFilter(e.target.value as any)}
@@ -2991,7 +2991,7 @@ Source label: ${coverageStats.source}`}
                     fontSize: 11, fontWeight: 800, padding: '3px 8px', borderRadius: 20, cursor: 'pointer',
                     border: `1px solid ${capFilter !== 'all' ? '#34D399' : '#34D39950'}`,
                     backgroundColor: capFilter !== 'all' ? '#34D399' : '#34D39915',
-                    color: capFilter !== 'all' ? '#0A0E1A' : '#34D399',
+                    color: capFilter !== 'all' ? 'var(--mc-bg-0)' : '#34D399',
                   }}>
                   <option value="all">🏦 Mkt Cap · All</option>
                   <option value="sweet">🎯 Multibagger ₹5k–50k Cr</option>
@@ -3009,11 +3009,11 @@ Source label: ${coverageStats.source}`}
         {/* ── Coverage Probe (PATCH 0174) ─────────────────────────────────── */}
         <div style={{
           marginTop: 10, padding: '10px 14px',
-          backgroundColor: '#0A1422', border: '1px solid #1A2840', borderRadius: 8,
+          backgroundColor: '#0A1422', border: '1px solid var(--mc-bg-4)', borderRadius: 8,
           display: 'flex', flexDirection: 'column', gap: 6,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.6px' }}>
+            <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.6px' }}>
               🔍 COVERAGE PROBE
             </span>
             <span style={{ fontSize: 10.5, color: '#8A95A3' }}>
@@ -3027,8 +3027,8 @@ Source label: ${coverageStats.source}`}
               placeholder="e.g. SYRMA, ATLANTAELE, MCX"
               style={{
                 flex: 1, minWidth: 180,
-                padding: '5px 10px', backgroundColor: '#0D1623',
-                border: '1px solid #1A2840', borderRadius: 6, color: '#E6EDF3',
+                padding: '5px 10px', backgroundColor: 'var(--mc-bg-1)',
+                border: '1px solid var(--mc-bg-4)', borderRadius: 6, color: 'var(--mc-text-1)',
                 fontSize: 11.5, fontWeight: 700, fontFamily: 'ui-monospace, monospace',
                 letterSpacing: '0.5px', outline: 'none',
               }}
@@ -3039,7 +3039,7 @@ Source label: ${coverageStats.source}`}
               style={{
                 padding: '5px 14px', borderRadius: 6, border: '1px solid #22D3EE60',
                 backgroundColor: probing ? '#22D3EE30' : '#22D3EE15',
-                color: '#22D3EE', fontSize: 11, fontWeight: 700,
+                color: 'var(--mc-cyan)', fontSize: 11, fontWeight: 700,
                 cursor: probing ? 'wait' : (probeTicker.trim() ? 'pointer' : 'not-allowed'),
                 opacity: probeTicker.trim() ? 1 : 0.5,
               }}
@@ -3053,7 +3053,7 @@ Source label: ${coverageStats.source}`}
               style={{
                 padding: '5px 14px', borderRadius: 6, border: '1px solid #10B98160',
                 backgroundColor: '#10B98115',
-                color: '#10B981', fontSize: 11, fontWeight: 700,
+                color: 'var(--mc-bullish)', fontSize: 11, fontWeight: 700,
                 cursor: probeTicker.trim() ? 'pointer' : 'not-allowed',
                 opacity: probeTicker.trim() ? 1 : 0.5,
               }}
@@ -3067,7 +3067,7 @@ Source label: ${coverageStats.source}`}
               style={{
                 padding: '5px 14px', borderRadius: 6, border: '1px solid #F59E0B60',
                 backgroundColor: auditing ? '#F59E0B30' : '#F59E0B15',
-                color: '#F59E0B', fontSize: 11, fontWeight: 700,
+                color: 'var(--mc-warn)', fontSize: 11, fontWeight: 700,
                 cursor: auditing ? 'wait' : 'pointer',
               }}
             >
@@ -3079,27 +3079,27 @@ Source label: ${coverageStats.source}`}
           {auditResult && (
             <div style={{
               marginTop: 4, padding: '8px 12px',
-              backgroundColor: '#0D1623', border: '1px solid #1A2840', borderRadius: 6,
+              backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 6,
               fontSize: 11, color: '#C9D4E0', lineHeight: 1.5,
             }}>
               {auditResult.error ? (
-                <span style={{ color: '#EF4444' }}>⚠ {auditResult.error}</span>
+                <span style={{ color: 'var(--mc-bearish)' }}>⚠ {auditResult.error}</span>
               ) : auditResult.expected_total === 0 ? (
-                <span style={{ color: '#6B7A8D', fontSize: 10.5 }}>{auditResult.note}</span>
+                <span style={{ color: 'var(--mc-text-4)', fontSize: 10.5 }}>{auditResult.note}</span>
               ) : (
                 <>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6, flexWrap: 'wrap' }}>
                     <span style={{
                       fontSize: 11, fontWeight: 800,
-                      color: auditResult.gap === 0 ? '#10B981' : '#F59E0B',
+                      color: auditResult.gap === 0 ? 'var(--mc-bullish)' : 'var(--mc-warn)',
                     }}>
                       {auditResult.gap === 0 ? '✓' : '⚠'} Coverage: {auditResult.matched}/{auditResult.expected_total} ({auditResult.coverage_pct}%)
                     </span>
-                    <span style={{ fontSize: 10, color: '#6B7A8D' }}>{auditResult.note}</span>
+                    <span style={{ fontSize: 10, color: 'var(--mc-text-4)' }}>{auditResult.note}</span>
                   </div>
                   {auditResult.missing && auditResult.missing.length > 0 && (
                     <div style={{ marginTop: 4 }}>
-                      <div style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+                      <div style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
                         MISSING ({auditResult.missing.length}):
                       </div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
@@ -3111,7 +3111,7 @@ Source label: ${coverageStats.source}`}
                             style={{
                               padding: '2px 8px', fontSize: 10, fontWeight: 700,
                               borderRadius: 4, backgroundColor: '#EF444418',
-                              border: '1px solid #EF444440', color: '#EF4444',
+                              border: '1px solid #EF444440', color: 'var(--mc-bearish)',
                               fontFamily: 'ui-monospace, monospace', cursor: 'pointer',
                             }}
                           >
@@ -3123,10 +3123,10 @@ Source label: ${coverageStats.source}`}
                   )}
                   {auditResult.we_have && auditResult.we_have.length > 0 && auditResult.we_have.length <= 30 && (
                     <details style={{ marginTop: 6 }}>
-                      <summary style={{ fontSize: 10, color: '#6B7A8D', cursor: 'pointer' }}>
+                      <summary style={{ fontSize: 10, color: 'var(--mc-text-4)', cursor: 'pointer' }}>
                         ✓ {auditResult.we_have.length} matched
                       </summary>
-                      <div style={{ marginTop: 4, fontSize: 9.5, color: '#10B981', fontFamily: 'ui-monospace, monospace' }}>
+                      <div style={{ marginTop: 4, fontSize: 9.5, color: 'var(--mc-bullish)', fontFamily: 'ui-monospace, monospace' }}>
                         {auditResult.we_have.join(', ')}
                       </div>
                     </details>
@@ -3144,7 +3144,7 @@ Source label: ${coverageStats.source}`}
                   display: 'inline-flex', alignItems: 'center', gap: 4,
                   padding: '2px 8px', fontSize: 10, fontWeight: 800,
                   borderRadius: 4, backgroundColor: '#22D3EE15',
-                  border: '1px solid #22D3EE40', color: '#22D3EE',
+                  border: '1px solid #22D3EE40', color: 'var(--mc-cyan)',
                   letterSpacing: '0.4px',
                 }}>
                   🤖 AUTO-DISCOVERED: {autoFillTickers.length}
@@ -3152,7 +3152,7 @@ Source label: ${coverageStats.source}`}
               )}
               {userForceIncludeForDate.length > 0 && (
                 <>
-                  <span style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.4px' }}>
+                  <span style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.4px' }}>
                     MANUALLY ADDED:
                   </span>
                   {userForceIncludeForDate.map((t) => (
@@ -3160,13 +3160,13 @@ Source label: ${coverageStats.source}`}
                       display: 'inline-flex', alignItems: 'center', gap: 4,
                       padding: '2px 4px 2px 8px', fontSize: 10, fontWeight: 700,
                       borderRadius: 4, backgroundColor: '#10B98118',
-                      border: '1px solid #10B98140', color: '#10B981',
+                      border: '1px solid #10B98140', color: 'var(--mc-bullish)',
                       fontFamily: 'ui-monospace, monospace',
                     }}>
                       {t}
                       <button onClick={() => removeForceInclude(t)} title="Remove"
                         style={{
-                          background: 'none', border: 'none', color: '#10B981',
+                          background: 'none', border: 'none', color: 'var(--mc-bullish)',
                           cursor: 'pointer', padding: '0 4px', fontSize: 12, lineHeight: 1,
                         }}>×</button>
                     </span>
@@ -3181,19 +3181,19 @@ Source label: ${coverageStats.source}`}
           {probeResult && (
             <div style={{
               marginTop: 4, padding: '10px 12px',
-              backgroundColor: '#0D1623', border: '1px solid #1A2840', borderRadius: 6,
+              backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 6,
               fontSize: 11, color: '#C9D4E0', lineHeight: 1.5,
             }}>
               {probeResult.error ? (
-                <span style={{ color: '#EF4444' }}>⚠ {probeResult.error}</span>
+                <span style={{ color: 'var(--mc-bearish)' }}>⚠ {probeResult.error}</span>
               ) : (
                 <>
                   <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 8 }}>
                     <div style={{
                       flex: 1,
                       fontSize: 11.5, fontWeight: 800,
-                      color: probeResult.diagnosis?.startsWith('✓') ? '#10B981' :
-                             probeResult.diagnosis?.startsWith('⚠') ? '#F59E0B' : '#EF4444',
+                      color: probeResult.diagnosis?.startsWith('✓') ? 'var(--mc-bullish)' :
+                             probeResult.diagnosis?.startsWith('⚠') ? 'var(--mc-warn)' : 'var(--mc-bearish)',
                     }}>
                       {probeResult.diagnosis}
                     </div>
@@ -3209,7 +3209,7 @@ Source label: ${coverageStats.source}`}
                           padding: '4px 10px', borderRadius: 6,
                           border: '1px solid #10B98160',
                           backgroundColor: '#10B98115',
-                          color: '#10B981', fontSize: 10.5, fontWeight: 800,
+                          color: 'var(--mc-bullish)', fontSize: 10.5, fontWeight: 800,
                           cursor: 'pointer', whiteSpace: 'nowrap',
                         }}
                       >
@@ -3218,43 +3218,43 @@ Source label: ${coverageStats.source}`}
                     )}
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-                    <div style={{ padding: '6px 8px', backgroundColor: '#0A1422', borderRadius: 4, borderLeft: `3px solid ${probeResult.layers?.universe?.found ? '#10B981' : '#EF4444'}` }}>
-                      <div style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.4px' }}>L1 · UNIVERSE</div>
+                    <div style={{ padding: '6px 8px', backgroundColor: '#0A1422', borderRadius: 4, borderLeft: `3px solid ${probeResult.layers?.universe?.found ? 'var(--mc-bullish)' : 'var(--mc-bearish)'}` }}>
+                      <div style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.4px' }}>L1 · UNIVERSE</div>
                       <div style={{ fontSize: 10.5, marginTop: 2 }}>
                         {probeResult.layers?.universe?.found ? (
-                          <span style={{ color: '#10B981' }}>
+                          <span style={{ color: 'var(--mc-bullish)' }}>
                             ✓ Found{probeResult.layers.universe.exact === false ? ` (date ${probeResult.layers.universe.resultDate})` : ''}
                           </span>
                         ) : (
-                          <span style={{ color: '#EF4444' }}>
+                          <span style={{ color: 'var(--mc-bearish)' }}>
                             ✗ Not in /api/market/earnings (NSE/BSE feeds for {probeResult.date?.slice(0, 7)} have {probeResult.layers?.universe?.totalInMonth ?? '?'} companies)
                           </span>
                         )}
                       </div>
                     </div>
-                    <div style={{ padding: '6px 8px', backgroundColor: '#0A1422', borderRadius: 4, borderLeft: `3px solid ${probeResult.layers?.enrichment?.found && probeResult.layers?.enrichment?.sales_yoy_pct != null ? '#10B981' : '#F59E0B'}` }}>
-                      <div style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.4px' }}>L2 · ENRICHMENT</div>
+                    <div style={{ padding: '6px 8px', backgroundColor: '#0A1422', borderRadius: 4, borderLeft: `3px solid ${probeResult.layers?.enrichment?.found && probeResult.layers?.enrichment?.sales_yoy_pct != null ? 'var(--mc-bullish)' : 'var(--mc-warn)'}` }}>
+                      <div style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.4px' }}>L2 · ENRICHMENT</div>
                       <div style={{ fontSize: 10.5, marginTop: 2 }}>
                         {probeResult.layers?.enrichment?.found && probeResult.layers?.enrichment?.sales_yoy_pct != null ? (
-                          <span style={{ color: '#10B981' }}>
+                          <span style={{ color: 'var(--mc-bullish)' }}>
                             ✓ Rev {probeResult.layers.enrichment.sales_yoy_pct >= 0 ? '+' : ''}{Math.round(probeResult.layers.enrichment.sales_yoy_pct)}% · PAT {probeResult.layers.enrichment.pat_yoy_pct >= 0 ? '+' : ''}{Math.round(probeResult.layers.enrichment.pat_yoy_pct)}% · EPS {probeResult.layers.enrichment.eps_yoy_pct >= 0 ? '+' : ''}{Math.round(probeResult.layers.enrichment.eps_yoy_pct)}%
                           </span>
                         ) : (
-                          <span style={{ color: '#F59E0B' }}>
+                          <span style={{ color: 'var(--mc-warn)' }}>
                             ⚠ Screener/NSE financials missing
                           </span>
                         )}
                       </div>
                     </div>
-                    <div style={{ padding: '6px 8px', backgroundColor: '#0A1422', borderRadius: 4, borderLeft: `3px solid ${probeResult.layers?.graded?.found ? '#10B981' : '#EF4444'}` }}>
-                      <div style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.4px' }}>L3 · GRADED</div>
+                    <div style={{ padding: '6px 8px', backgroundColor: '#0A1422', borderRadius: 4, borderLeft: `3px solid ${probeResult.layers?.graded?.found ? 'var(--mc-bullish)' : 'var(--mc-bearish)'}` }}>
+                      <div style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.4px' }}>L3 · GRADED</div>
                       <div style={{ fontSize: 10.5, marginTop: 2 }}>
                         {probeResult.layers?.graded?.found ? (
-                          <span style={{ color: '#10B981' }}>
+                          <span style={{ color: 'var(--mc-bullish)' }}>
                             ✓ {probeResult.layers.graded.tier} · score {probeResult.layers.graded.score}
                           </span>
                         ) : (
-                          <span style={{ color: '#EF4444' }}>
+                          <span style={{ color: 'var(--mc-bearish)' }}>
                             ✗ Not in graded payload ({probeResult.layers?.graded?.total ?? 0} cards on this date)
                           </span>
                         )}
@@ -3269,16 +3269,16 @@ Source label: ${coverageStats.source}`}
       </div>
 
       {/* ── Tab toggle ──────────────────────────────────────────────────── */}
-      <div style={{ padding: '10px 24px', borderBottom: '1px solid #1A2540', backgroundColor: '#0A1422', display: 'flex', gap: 6 }}>
+      <div style={{ padding: '10px 24px', borderBottom: '1px solid var(--mc-bg-4)', backgroundColor: '#0A1422', display: 'flex', gap: 6 }}>
         <button onClick={() => setViewMode('CALENDAR')}
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 6, border: `1px solid ${viewMode === 'CALENDAR' ? '#22D3EE60' : '#1E2D45'}`, backgroundColor: viewMode === 'CALENDAR' ? '#22D3EE15' : 'transparent', color: viewMode === 'CALENDAR' ? '#22D3EE' : '#8A95A3', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 6, border: `1px solid ${viewMode === 'CALENDAR' ? '#22D3EE60' : 'var(--mc-border-1)'}`, backgroundColor: viewMode === 'CALENDAR' ? '#22D3EE15' : 'transparent', color: viewMode === 'CALENDAR' ? 'var(--mc-cyan)' : '#8A95A3', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
           <Grid3X3 style={{ width: 12, height: 12 }} /> Calendar
         </button>
         <button onClick={() => setViewMode('GRADED')}
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 6, border: `1px solid ${viewMode === 'GRADED' ? '#22D3EE60' : '#1E2D45'}`, backgroundColor: viewMode === 'GRADED' ? '#22D3EE15' : 'transparent', color: viewMode === 'GRADED' ? '#22D3EE' : '#8A95A3', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 6, border: `1px solid ${viewMode === 'GRADED' ? '#22D3EE60' : 'var(--mc-border-1)'}`, backgroundColor: viewMode === 'GRADED' ? '#22D3EE15' : 'transparent', color: viewMode === 'GRADED' ? 'var(--mc-cyan)' : '#8A95A3', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
           <FileText style={{ width: 12, height: 12 }} /> Graded Tiers
         </button>
-        <span style={{ marginLeft: 'auto', fontSize: 10.5, color: '#6B7A8D', alignSelf: 'center' }}>
+        <span style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--mc-text-4)', alignSelf: 'center' }}>
           {viewMode === 'CALENDAR' ? `${calRange.from} → ${calRange.to} · ${calData?.total ?? 0} filings` : `${view.candidates_total} graded`}
         </span>
       </div>
@@ -3295,10 +3295,10 @@ Source label: ${coverageStats.source}`}
           <CalendarView data={calData} loading={calLoading} from={calRange.from} to={calRange.to} onPickDate={(d) => { setFilterDate(d); setViewMode('GRADED'); }} />
         )}
         {viewMode === 'GRADED' && isLoading && view.candidates_total === 0 && (
-          <div style={{ color: '#6B7A8D', fontSize: 13, padding: 40, textAlign: 'center' }}>Fetching live results from BSE/NSE + 12 Indian results feeds…</div>
+          <div style={{ color: 'var(--mc-text-4)', fontSize: 13, padding: 40, textAlign: 'center' }}>Fetching live results from BSE/NSE + 12 Indian results feeds…</div>
         )}
         {viewMode === 'GRADED' && error && (
-          <div style={{ color: '#EF4444', fontSize: 13, padding: 40, textAlign: 'center', backgroundColor: '#0D1623', border: '1px solid #EF444440', borderRadius: 10 }}>
+          <div style={{ color: 'var(--mc-bearish)', fontSize: 13, padding: 40, textAlign: 'center', backgroundColor: 'var(--mc-bg-1)', border: '1px solid #EF444440', borderRadius: 10 }}>
             Error fetching earnings pipeline. Retry in a moment.
           </div>
         )}
@@ -3338,18 +3338,18 @@ Source label: ${coverageStats.source}`}
             return `${dow} ${dt.getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][dt.getUTCMonth()]}`;
           };
           return (
-            <div style={{ color: '#94A3B8', fontSize: 13, padding: '36px 28px', textAlign: 'center', backgroundColor: '#0D1623', border: '1px solid #1A2840', borderRadius: 10 }}>
+            <div style={{ color: 'var(--mc-text-3)', fontSize: 13, padding: '36px 28px', textAlign: 'center', backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 10 }}>
               <div style={{ fontSize: 40, marginBottom: 10 }}>📭</div>
-              <div style={{ fontSize: 16, fontWeight: 700, color: '#E6EDF3', marginBottom: 4 }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--mc-text-1)', marginBottom: 4 }}>
                 No earnings filings for {filingDateLabel}
               </div>
-              <div style={{ fontSize: 12, color: '#6B7A8D', marginBottom: 14, lineHeight: 1.5 }}>
+              <div style={{ fontSize: 12, color: 'var(--mc-text-4)', marginBottom: 14, lineHeight: 1.5 }}>
                 NSE + BSE corporate-actions pipeline polled. No Q4 results announced for this date.
-                {lastScraped && <><br/><span style={{ fontSize: 10.5, color: '#4A5B6C' }}>📡 Calendar last refreshed: <strong style={{ color: '#94A3B8' }}>{lastScraped}</strong></span></>}
+                {lastScraped && <><br/><span style={{ fontSize: 10.5, color: 'var(--mc-text-4)' }}>📡 Calendar last refreshed: <strong style={{ color: 'var(--mc-text-3)' }}>{lastScraped}</strong></span></>}
               </div>
               {rankedDates.length > 0 && (
                 <>
-                  <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 8, fontWeight: 700, letterSpacing: '0.3px' }}>
+                  <div style={{ fontSize: 11, color: 'var(--mc-text-3)', marginBottom: 8, fontWeight: 700, letterSpacing: '0.3px' }}>
                     📅 BUSIEST RECENT DATES
                   </div>
                   <div style={{ marginTop: 4, display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
@@ -3358,7 +3358,7 @@ Source label: ${coverageStats.source}`}
                         padding: '8px 14px', borderRadius: 6,
                         border: `1px solid ${i === 0 ? '#10B98180' : '#22D3EE40'}`,
                         backgroundColor: i === 0 ? '#10B98115' : '#22D3EE08',
-                        color: i === 0 ? '#10B981' : '#22D3EE',
+                        color: i === 0 ? 'var(--mc-bullish)' : 'var(--mc-cyan)',
                         fontSize: 12, fontWeight: 700, cursor: 'pointer',
                       }}>
                         → {fmtDate(d)} <span style={{ color: i === 0 ? '#10B98199' : '#22D3EE99', fontWeight: 500 }}>({count} filings)</span>
@@ -3389,22 +3389,22 @@ Source label: ${coverageStats.source}`}
                         }}
                         style={{
                           padding: '8px 16px', borderRadius: 6,
-                          border: '1px solid #10B981', backgroundColor: '#10B98115',
-                          color: '#10B981', fontSize: 12, fontWeight: 800, cursor: 'pointer',
+                          border: '1px solid var(--mc-bullish)', backgroundColor: '#10B98115',
+                          color: 'var(--mc-bullish)', fontSize: 12, fontWeight: 800, cursor: 'pointer',
                           letterSpacing: '0.3px',
                         }}
                       >
                         🔄 FORCE NSE/BSE RE-SCAN THIS DATE
                       </button>
                     )}
-                    <button onClick={() => setFilterDate('')} style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #1A2840', backgroundColor: 'transparent', color: '#8A95A3', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+                    <button onClick={() => setFilterDate('')} style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid var(--mc-bg-4)', backgroundColor: 'transparent', color: '#8A95A3', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
                       Auto-pick latest
                     </button>
-                    <a href="https://www.nseindia.com/companies-listing/corporate-filings-financial-results" target="_blank" rel="noopener noreferrer" style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #F59E0B40', backgroundColor: '#F59E0B10', color: '#F59E0B', fontSize: 11, fontWeight: 700, textDecoration: 'none', cursor: 'pointer' }}>
+                    <a href="https://www.nseindia.com/companies-listing/corporate-filings-financial-results" target="_blank" rel="noopener noreferrer" style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #F59E0B40', backgroundColor: '#F59E0B10', color: 'var(--mc-warn)', fontSize: 11, fontWeight: 700, textDecoration: 'none', cursor: 'pointer' }}>
                       NSE Filings →
                     </a>
                   </div>
-                  <div style={{ marginTop: 10, fontSize: 10.5, color: '#F59E0B', fontStyle: 'italic' }}>
+                  <div style={{ marginTop: 10, fontSize: 10.5, color: 'var(--mc-warn)', fontStyle: 'italic' }}>
                     💡 Companies DO file on weekends during peak earnings season. Hit ‘Force re-scan’ if you believe this date should have filings — bypasses all caches and re-polls NSE+BSE directly.
                   </div>
                 </>
@@ -3442,31 +3442,31 @@ Source label: ${coverageStats.source}`}
             }
           };
           return (
-            <div style={{ backgroundColor: '#0D1623', border: '1px solid #1A2540', borderLeft: '4px solid #94A3B8', borderRadius: 12, padding: '14px 18px' }}>
+            <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderLeft: '4px solid var(--mc-text-3)', borderRadius: 12, padding: '14px 18px' }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
-                <span style={{ fontSize: 16, fontWeight: 800, color: '#94A3B8' }}>📅 SCHEDULED TODAY</span>
-                <span style={{ fontSize: 12, color: '#94A3B8', fontWeight: 700 }}>{pending.length} {pending.length === 1 ? 'company' : 'companies'}</span>
-                <span style={{ fontSize: 10, color: '#6B7A8D' }}>
+                <span style={{ fontSize: 16, fontWeight: 800, color: 'var(--mc-text-3)' }}>📅 SCHEDULED TODAY</span>
+                <span style={{ fontSize: 12, color: 'var(--mc-text-3)', fontWeight: 700 }}>{pending.length} {pending.length === 1 ? 'company' : 'companies'}</span>
+                <span style={{ fontSize: 10, color: 'var(--mc-text-4)' }}>
                   · board meeting scheduled but financials not yet filed/parsed
                 </span>
                 <span style={{ display: 'inline-flex', gap: 4, marginLeft: 'auto' }}>
                   <button
                     onClick={() => copyPending(pending.map((p) => (p.symbol || '').toUpperCase()).join(','))}
                     title="Copy pending tickers (CSV)"
-                    style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid #22D3EE60', color: '#22D3EE', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+                    style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid #22D3EE60', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
                   >📋 CSV</button>
                   <button
                     onClick={() => copyPending(pending.map((p) => `NSE:${(p.symbol || '').toUpperCase()}`).join(','))}
                     title="Copy as NSE:TICKER for TradingView"
-                    style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid #22D3EE60', color: '#22D3EE', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+                    style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid #22D3EE60', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
                   >📊 TradingView</button>
                 </span>
               </div>
-              <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 8, lineHeight: 1.5 }}>
+              <div style={{ fontSize: 11, color: 'var(--mc-text-3)', marginBottom: 8, lineHeight: 1.5 }}>
                 These companies announced a board meeting for {filterDate} but their results aren&apos;t in the parser yet.
                 Graded tiers below show only filings that have actually been published + parsed. As each company files
                 throughout the day, they&apos;ll move out of this list and into the appropriate grade tier.{' '}
-                <button onClick={() => refetch()} style={{ background: 'transparent', border: 'none', color: '#22D3EE', cursor: 'pointer', fontSize: 11, fontWeight: 700, padding: 0, textDecoration: 'underline' }}>
+                <button onClick={() => refetch()} style={{ background: 'transparent', border: 'none', color: 'var(--mc-cyan)', cursor: 'pointer', fontSize: 11, fontWeight: 700, padding: 0, textDecoration: 'underline' }}>
                   ↻ Refresh to pull latest filings
                 </button>
               </div>
@@ -3474,12 +3474,12 @@ Source label: ${coverageStats.source}`}
                 {pending.slice(0, 60).map((it) => (
                   <a key={it.symbol} href={it.source_url} target="_blank" rel="noopener noreferrer"
                     title={`${it.company || it.symbol} · click to open NSE filing page`}
-                    style={{ fontSize: 10.5, padding: '2px 6px', borderRadius: 3, backgroundColor: '#1E293B', color: '#94A3B8', border: '1px solid #2A3550', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', textDecoration: 'none', fontWeight: 700 }}>
+                    style={{ fontSize: 10.5, padding: '2px 6px', borderRadius: 3, backgroundColor: '#1E293B', color: 'var(--mc-text-3)', border: '1px solid #2A3550', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', textDecoration: 'none', fontWeight: 700 }}>
                     {it.symbol}
                   </a>
                 ))}
                 {pending.length > 60 && (
-                  <span style={{ fontSize: 10.5, color: '#6B7A8D', padding: '2px 6px' }}>
+                  <span style={{ fontSize: 10.5, color: 'var(--mc-text-4)', padding: '2px 6px' }}>
                     +{pending.length - 60} more · use 📋 CSV to copy all
                   </span>
                 )}
@@ -3503,13 +3503,13 @@ Source label: ${coverageStats.source}`}
           const _filterActive = eliteOnly || peadOnly || multibaggerOnly || capFilter !== 'all';
           const isOpen = _filterActive ? true : expanded[tier];
           return (
-            <div key={tier} style={{ backgroundColor: '#0D1623', border: '1px solid #1A2540', borderLeft: `4px solid ${meta.color}`, borderRadius: 12 }}>
+            <div key={tier} style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderLeft: `4px solid ${meta.color}`, borderRadius: 12 }}>
               <button onClick={() => setExpanded((s) => ({ ...s, [tier]: !s[tier] }))}
                 style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', color: 'inherit' }}>
-                {isOpen ? <ChevronDown style={{ width: 16, height: 16, color: '#6B7A8D' }} /> : <ChevronRight style={{ width: 16, height: 16, color: '#6B7A8D' }} />}
+                {isOpen ? <ChevronDown style={{ width: 16, height: 16, color: 'var(--mc-text-4)' }} /> : <ChevronRight style={{ width: 16, height: 16, color: 'var(--mc-text-4)' }} />}
                 <span style={{ fontSize: 16, fontWeight: 800, color: meta.color }}>{meta.icon} {meta.label}</span>
-                <span style={{ fontSize: 12, color: '#94A3B8' }}>{stocks.length} {stocks.length === 1 ? 'company' : 'companies'}</span>
-                <span style={{ fontSize: 11, color: '#6B7A8D' }}>· {meta.tagline}</span>
+                <span style={{ fontSize: 12, color: 'var(--mc-text-3)' }}>{stocks.length} {stocks.length === 1 ? 'company' : 'companies'}</span>
+                <span style={{ fontSize: 11, color: 'var(--mc-text-4)' }}>· {meta.tagline}</span>
               </button>
               {isOpen && (
                 <div style={{ padding: '0 18px 16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 12 }}>
@@ -3565,15 +3565,15 @@ function EarningsCard({ stock, isFresh }: { stock: ParsedEarning; isFresh?: bool
   return (
     <div style={{
       backgroundColor: '#0A1422',
-      border: '1px solid #1A2840',
+      border: '1px solid var(--mc-bg-4)',
       borderLeft: `3px solid ${tierColor}`,
       borderRadius: 10,
       padding: '12px 14px',
     }}>
       {/* ── Header: COMPANY + pill row ────────────────────────────────────── */}
-      <div style={{ fontSize: 14, fontWeight: 800, color: '#E6EDF3', lineHeight: 1.2, marginBottom: 4 }}>
+      <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--mc-text-1)', lineHeight: 1.2, marginBottom: 4 }}>
         {stock.company}
-        <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 600, marginLeft: 6, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+        <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 600, marginLeft: 6, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
           {stock.ticker}
         </span>
         {/* PATCH 0362 — NEW badge: card arrived since last auto-refresh */}
@@ -3582,7 +3582,7 @@ function EarningsCard({ stock, isFresh }: { stock: ParsedEarning; isFresh?: bool
             style={{
               marginLeft: 8, padding: '1px 7px', borderRadius: 4,
               fontSize: 9, fontWeight: 900, letterSpacing: '0.5px',
-              backgroundColor: '#10B981', color: '#0A0E1A',
+              backgroundColor: 'var(--mc-bullish)', color: 'var(--mc-bg-0)',
               animation: 'pulse 1.5s ease-in-out infinite',
             }}>
             ⚡ NEW
@@ -3591,32 +3591,32 @@ function EarningsCard({ stock, isFresh }: { stock: ParsedEarning; isFresh?: bool
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', fontSize: 10.5, marginBottom: 8 }}>
         {stock.pe != null && (
-          <span style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: '#0D1623', border: '1px solid #1A2840', color: '#C9D4E0', fontWeight: 700 }}>
+          <span style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', color: '#C9D4E0', fontWeight: 700 }}>
             PE {stock.pe.toFixed(1)}
           </span>
         )}
         {stock.quarter && (
-          <span style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: '#0D1623', border: '1px solid #1A2840', color: '#94A3B8', fontWeight: 700 }}>
+          <span style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-3)', fontWeight: 700 }}>
             {stock.quarter}
           </span>
         )}
         {(stock.market_cap_bucket && stock.market_cap_bucket !== 'UNKNOWN') || stock.market_cap_cr != null ? (
-          <span style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: '#1E293B', border: '1px solid #334155', color: '#94A3B8', fontWeight: 800, letterSpacing: '0.3px' }}>
+          <span style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: '#1E293B', border: '1px solid #334155', color: 'var(--mc-text-3)', fontWeight: 800, letterSpacing: '0.3px' }}>
             {stock.market_cap_bucket && stock.market_cap_bucket !== 'UNKNOWN' ? stock.market_cap_bucket : ''}
             {stock.market_cap_cr != null && (
-              <span style={{ fontWeight: 700, color: '#CBD5E1', marginLeft: (stock.market_cap_bucket && stock.market_cap_bucket !== 'UNKNOWN') ? 5 : 0 }}>
+              <span style={{ fontWeight: 700, color: 'var(--mc-text-2)', marginLeft: (stock.market_cap_bucket && stock.market_cap_bucket !== 'UNKNOWN') ? 5 : 0 }}>
                 ₹{Math.round(stock.market_cap_cr).toLocaleString('en-IN')} Cr
               </span>
             )}
           </span>
         ) : null}
         {(stock as any).adtv_cr != null && (
-          <span title="Median daily traded value over ~30 sessions (liquidity / free-float proxy)" style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: '#0D1623', border: `1px solid ${(stock as any).adtv_cr < 1 ? '#7F1D1D' : '#1A2840'}`, color: (stock as any).adtv_cr < 1 ? '#F87171' : '#94A3B8', fontWeight: 700 }}>
+          <span title="Median daily traded value over ~30 sessions (liquidity / free-float proxy)" style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-1)', border: `1px solid ${(stock as any).adtv_cr < 1 ? '#7F1D1D' : 'var(--mc-bg-4)'}`, color: (stock as any).adtv_cr < 1 ? '#F87171' : 'var(--mc-text-3)', fontWeight: 700 }}>
             💧 {(stock as any).adtv_cr >= 1 ? `₹${(stock as any).adtv_cr.toFixed(1)} Cr/d` : `₹${Math.round((stock as any).adtv_cr * 100)} L/d`}{(stock as any).adtv_cr < 1 ? ' · thin' : ''}
           </span>
         )}
         {stock.sector && (
-          <span style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: '#0D1623', border: '1px solid #1A2840', color: '#94A3B8' }}>
+          <span style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-3)' }}>
             {stock.sector}
           </span>
         )}
@@ -3624,7 +3624,7 @@ function EarningsCard({ stock, isFresh }: { stock: ParsedEarning; isFresh?: bool
           <span style={{ fontSize: 12 }}>{timing}</span>
         )}
         {stock.price != null && (
-          <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 800, color: '#E6EDF3' }}>
+          <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 800, color: 'var(--mc-text-1)' }}>
             {fmtPx(stock.price)}
           </span>
         )}
@@ -3632,21 +3632,21 @@ function EarningsCard({ stock, isFresh }: { stock: ParsedEarning; isFresh?: bool
 
       {/* ── Intraday move + RS + Stage row ────────────────────────────────── */}
       {(stock.gap_pct != null || stock.d1_pct != null || stock.move_pct != null || stock.rs_rating != null || stock.stage != null) && (
-        <div style={{ display: 'flex', gap: 10, fontSize: 10, color: '#94A3B8', marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 10, fontSize: 10, color: 'var(--mc-text-3)', marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           {stock.move_pct != null && (
-            <span>Move <strong style={{ color: stock.move_pct >= 0 ? '#10B981' : '#EF4444' }}>{fmtPct(stock.move_pct)}</strong></span>
+            <span>Move <strong style={{ color: stock.move_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(stock.move_pct)}</strong></span>
           )}
           {stock.gap_pct != null && (
-            <span>Gap <strong style={{ color: stock.gap_pct >= 0 ? '#10B981' : '#EF4444' }}>{fmtPct(stock.gap_pct)}</strong></span>
+            <span>Gap <strong style={{ color: stock.gap_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(stock.gap_pct)}</strong></span>
           )}
           {stock.d1_pct != null && (
-            <span>D1 <strong style={{ color: stock.d1_pct >= 0 ? '#10B981' : '#EF4444' }}>{fmtPct(stock.d1_pct)}</strong></span>
+            <span>D1 <strong style={{ color: stock.d1_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(stock.d1_pct)}</strong></span>
           )}
           {stock.rs_rating != null && (
             <span style={{
               padding: '1px 6px', borderRadius: 3,
               backgroundColor: stock.rs_rating >= 80 ? '#10B98115' : stock.rs_rating >= 50 ? '#F59E0B15' : '#EF444415',
-              color:           stock.rs_rating >= 80 ? '#10B981'    : stock.rs_rating >= 50 ? '#F59E0B'    : '#EF4444',
+              color:           stock.rs_rating >= 80 ? 'var(--mc-bullish)'    : stock.rs_rating >= 50 ? 'var(--mc-warn)'    : 'var(--mc-bearish)',
               border: '1px solid currentColor', fontWeight: 700,
             }}>RS {stock.rs_rating}</span>
           )}
@@ -3654,7 +3654,7 @@ function EarningsCard({ stock, isFresh }: { stock: ParsedEarning; isFresh?: bool
             <span style={{
               padding: '1px 6px', borderRadius: 3,
               backgroundColor: stock.stage === 2 ? '#10B98115' : stock.stage === 4 ? '#EF444415' : '#6B7A8D15',
-              color:           stock.stage === 2 ? '#10B981'    : stock.stage === 4 ? '#EF4444'    : '#94A3B8',
+              color:           stock.stage === 2 ? 'var(--mc-bullish)'    : stock.stage === 4 ? 'var(--mc-bearish)'    : 'var(--mc-text-3)',
               border: '1px solid currentColor', fontWeight: 700,
             }}>Stage {stock.stage}</span>
           )}
@@ -3698,14 +3698,14 @@ function EarningsCard({ stock, isFresh }: { stock: ParsedEarning; isFresh?: bool
         <MetricTile label="NET PROFIT" pct={stock.net_profit_yoy_pct} curr={fmtCr(stock.pat_curr_cr)}   prev={fmtCr(stock.pat_prev_cr)} />
         <MetricTile label="EPS YOY"    pct={stock.eps_yoy_pct}        curr={fmtPx(stock.eps_curr)}     prev={fmtPx(stock.eps_prev)} />
         <OpmTile opm={(stock as any).opm_pct} opmPrev={(stock as any).opm_prev_pct} />
-        <div style={{ padding: '6px 10px', backgroundColor: '#0D1623', borderRadius: 6, border: `1px solid ${tierColor}40`, display: 'flex', flexDirection: 'column', justifyContent: 'center', gridColumn: 'span 2' }}>
-          <div style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.6px' }}>SCORE</div>
+        <div style={{ padding: '6px 10px', backgroundColor: 'var(--mc-bg-1)', borderRadius: 6, border: `1px solid ${tierColor}40`, display: 'flex', flexDirection: 'column', justifyContent: 'center', gridColumn: 'span 2' }}>
+          <div style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.6px' }}>SCORE</div>
           <div style={{ fontSize: 22, fontWeight: 900, color: tierColor, lineHeight: 1, marginTop: 2 }}>{stock.composite_score}</div>
         </div>
       </div>
 
       {/* ── Brief narrative ───────────────────────────────────────────────── */}
-      <div style={{ marginTop: 8, fontSize: 11, color: '#C9D4E0', lineHeight: 1.5, fontStyle: 'italic', backgroundColor: '#0D1623', border: '1px solid #1A2840', borderRadius: 6, padding: '6px 9px' }}>
+      <div style={{ marginTop: 8, fontSize: 11, color: '#C9D4E0', lineHeight: 1.5, fontStyle: 'italic', backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 6, padding: '6px 9px' }}>
         📝 {stock.narrative}
       </div>
 
@@ -3713,10 +3713,10 @@ function EarningsCard({ stock, isFresh }: { stock: ParsedEarning; isFresh?: bool
       {(stock.methodology_tags.length > 0 || stock.caveat_tags.length > 0) && (
         <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 5 }}>
           {stock.methodology_tags.map((t) => (
-            <span key={t} style={{ fontSize: 9.5, padding: '1px 7px', borderRadius: 3, backgroundColor: '#10B98115', color: '#10B981', border: '1px solid #10B98140', fontWeight: 700 }}>✓ {t}</span>
+            <span key={t} style={{ fontSize: 9.5, padding: '1px 7px', borderRadius: 3, backgroundColor: '#10B98115', color: 'var(--mc-bullish)', border: '1px solid #10B98140', fontWeight: 700 }}>✓ {t}</span>
           ))}
           {stock.caveat_tags.map((t) => (
-            <span key={t} style={{ fontSize: 9.5, padding: '1px 7px', borderRadius: 3, backgroundColor: '#F59E0B15', color: '#F59E0B', border: '1px solid #F59E0B40', fontWeight: 700 }}>⚠ {t}</span>
+            <span key={t} style={{ fontSize: 9.5, padding: '1px 7px', borderRadius: 3, backgroundColor: '#F59E0B15', color: 'var(--mc-warn)', border: '1px solid #F59E0B40', fontWeight: 700 }}>⚠ {t}</span>
           ))}
         </div>
       )}
@@ -3727,12 +3727,12 @@ function EarningsCard({ stock, isFresh }: { stock: ParsedEarning; isFresh?: bool
           /get-quotes/equity URL into stock.filing_url which redirects to
           a generic quote page, not the financial-results filings page.
           Generating at render time means stale caches don't poison the link. */}
-      <div style={{ marginTop: 8, paddingTop: 7, borderTop: '1px solid #1A2840' }}>
+      <div style={{ marginTop: 8, paddingTop: 7, borderTop: '1px solid var(--mc-bg-4)' }}>
         <a
           href={`https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(stock.ticker)}`}
           target="_blank" rel="noopener noreferrer"
           title="Open NSE financial-results filings filter for this ticker"
-          style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
           <ExternalLink style={{ width: 10, height: 10 }} /> 📄 NSE Filings · {stock.ticker}
         </a>
         {' '}
@@ -3740,7 +3740,7 @@ function EarningsCard({ stock, isFresh }: { stock: ParsedEarning; isFresh?: bool
           href={`https://www.bseindia.com/corporates/ann.html?scrip=${encodeURIComponent(stock.ticker)}`}
           target="_blank" rel="noopener noreferrer"
           title="Open BSE corporate announcements filter for this ticker"
-          style={{ fontSize: 10, color: '#94A3B8', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4, marginLeft: 10 }}>
+          style={{ fontSize: 10, color: 'var(--mc-text-3)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4, marginLeft: 10 }}>
           <ExternalLink style={{ width: 10, height: 10 }} /> 📄 BSE
         </a>
       </div>
@@ -3769,9 +3769,9 @@ function CalendarView({ data, loading, from, to, onPickDate }: { data: CalendarP
     // (which is the typical case after first visit). Reaching this state
     // means no cache exists yet; show a more honest message + skeleton.
     return (
-      <div style={{ color: '#6B7A8D', fontSize: 13, padding: 40, textAlign: 'center' }}>
+      <div style={{ color: 'var(--mc-text-4)', fontSize: 13, padding: 40, textAlign: 'center' }}>
         <div style={{ marginBottom: 8 }}>Fetching the earnings calendar for the first time…</div>
-        <div style={{ fontSize: 11, color: '#4A5B6C' }}>
+        <div style={{ fontSize: 11, color: 'var(--mc-text-4)' }}>
           This is a one-time fetch per month. Subsequent visits hit cache instantly.
         </div>
       </div>
@@ -3779,9 +3779,9 @@ function CalendarView({ data, loading, from, to, onPickDate }: { data: CalendarP
   }
   if (data?.empty_reason === 'scraper_has_not_run_yet') {
     return (
-      <div style={{ color: '#94A3B8', fontSize: 13, padding: 30, backgroundColor: '#0D1623', border: '1px solid #F59E0B40', borderRadius: 10 }}>
+      <div style={{ color: 'var(--mc-text-3)', fontSize: 13, padding: 30, backgroundColor: 'var(--mc-bg-1)', border: '1px solid #F59E0B40', borderRadius: 10 }}>
         <div style={{ fontSize: 24, marginBottom: 10 }}>⏳</div>
-        <strong style={{ color: '#F59E0B' }}>Scraper has not run yet.</strong>
+        <strong style={{ color: 'var(--mc-warn)' }}>Scraper has not run yet.</strong>
         <p style={{ marginTop: 8, lineHeight: 1.6 }}>
           The NSE Earnings Calendar GitHub Action needs to run at least once to populate the KV cache. Either:
         </p>
@@ -3789,7 +3789,7 @@ function CalendarView({ data, loading, from, to, onPickDate }: { data: CalendarP
           <li>Wait for the next 30-minute cron tick (runs 03:00–13:00 UTC on weekdays)</li>
           <li>Trigger manually: GitHub repo → Actions → "NSE Earnings Calendar Scrape" → Run workflow</li>
         </ol>
-        <p style={{ marginTop: 8, fontSize: 11, color: '#6B7A8D' }}>
+        <p style={{ marginTop: 8, fontSize: 11, color: 'var(--mc-text-4)' }}>
           Make sure these GitHub repo secrets are set: <code>UPSTASH_REDIS_REST_URL</code>, <code>UPSTASH_REDIS_REST_TOKEN</code>.
         </p>
       </div>
@@ -3829,32 +3829,32 @@ function CalendarView({ data, loading, from, to, onPickDate }: { data: CalendarP
     }
   };
   return (
-    <div style={{ backgroundColor: '#0D1623', border: '1px solid #1A2540', borderRadius: 10, padding: '14px 18px' }}>
+    <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 10, padding: '14px 18px' }}>
       <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <h2 style={{ margin: 0, fontSize: 14, fontWeight: 800, color: '#E6EDF3', letterSpacing: '0.4px' }}>📅 NSE EARNINGS CALENDAR</h2>
-        <span style={{ fontSize: 11, color: '#6B7A8D' }}>{from} → {to} · {Object.values(byDate).reduce((a, b) => a + b.length, 0)} filings</span>
+        <h2 style={{ margin: 0, fontSize: 14, fontWeight: 800, color: 'var(--mc-text-1)', letterSpacing: '0.4px' }}>📅 NSE EARNINGS CALENDAR</h2>
+        <span style={{ fontSize: 11, color: 'var(--mc-text-4)' }}>{from} → {to} · {Object.values(byDate).reduce((a, b) => a + b.length, 0)} filings</span>
         {/* PATCH 0909 — Copy-all-tickers controls */}
         {allTickers.length > 0 && (
           <span style={{ display: 'inline-flex', gap: 4, marginLeft: 4 }}>
             <button
               onClick={() => copyToClipboard(allTickers.join(','), 'plain CSV')}
               title="Copy all tickers (CSV — Excel-friendly)"
-              style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid #22D3EE60', color: '#22D3EE', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+              style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid #22D3EE60', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
             >📋 CSV ({allTickers.length})</button>
             <button
               onClick={() => copyToClipboard(allTickers.map(t => `NSE:${t}`).join(','), 'TradingView')}
               title="Copy as NSE:TICKER,NSE:TICKER (TradingView watchlist import format)"
-              style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid #22D3EE60', color: '#22D3EE', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+              style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid #22D3EE60', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
             >📊 TradingView</button>
             <button
               onClick={() => copyToClipboard(allTickers.join('\n'), 'one per line')}
               title="Copy one ticker per line"
-              style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid #22D3EE60', color: '#22D3EE', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+              style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid #22D3EE60', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
             >↓ Lines</button>
           </span>
         )}
         {data?.scraped_at && (
-          <span style={{ marginLeft: 'auto', fontSize: 10, color: '#6B7A8D' }}>scraped {new Date(data.scraped_at).toLocaleString('en-IN')}</span>
+          <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--mc-text-4)' }}>scraped {new Date(data.scraped_at).toLocaleString('en-IN')}</span>
         )}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 10 }}>
@@ -3869,13 +3869,13 @@ function CalendarView({ data, loading, from, to, onPickDate }: { data: CalendarP
               style={{
                 padding: '10px 12px',
                 backgroundColor: '#0A1422',
-                border: `1px solid ${isToday ? '#22D3EE40' : '#1A2840'}`,
+                border: `1px solid ${isToday ? '#22D3EE40' : 'var(--mc-bg-4)'}`,
                 borderRadius: 8,
                 cursor: items.length > 0 ? 'pointer' : 'default',
                 opacity: items.length === 0 ? 0.5 : 1,
               }}>
               <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 6 }}>
-                <span style={{ fontSize: 11, fontWeight: 700, color: isToday ? '#22D3EE' : '#94A3B8' }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: isToday ? 'var(--mc-cyan)' : 'var(--mc-text-3)' }}>
                   {weekday} {dayLabel}
                 </span>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
@@ -3887,18 +3887,18 @@ function CalendarView({ data, loading, from, to, onPickDate }: { data: CalendarP
                         copyToClipboard(day, `${weekday} ${dayLabel}`);
                       }}
                       title={`Copy ${items.length} tickers filing ${weekday} ${dayLabel}`}
-                      style={{ fontSize: 9, padding: '1px 5px', background: 'transparent', border: '1px solid #22D3EE40', color: '#22D3EE', borderRadius: 3, cursor: 'pointer', fontWeight: 700 }}
+                      style={{ fontSize: 9, padding: '1px 5px', background: 'transparent', border: '1px solid #22D3EE40', color: 'var(--mc-cyan)', borderRadius: 3, cursor: 'pointer', fontWeight: 700 }}
                     >📋</button>
                   )}
                   {items.length > 0 && (
-                    <span style={{ fontSize: 11, fontWeight: 800, color: '#F59E0B' }}>{items.length}</span>
+                    <span style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-warn)' }}>{items.length}</span>
                   )}
                 </span>
               </div>
               <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                 {items.length === 0 ? (
                   ingestedSet.has(d) ? (
-                    <span title="Ingested for this date - no results filed (confirmed zero)" style={{ fontSize: 10.5, color: '#6B7A8D' }}>No filings</span>
+                    <span title="Ingested for this date - no results filed (confirmed zero)" style={{ fontSize: 10.5, color: 'var(--mc-text-4)' }}>No filings</span>
                   ) : (
                     <span title="Data unavailable - this date was never ingested (outside NSE source window). Not zero." style={{ fontSize: 10.5, fontWeight: 700, color: '#B45309' }}>Data unavailable</span>
                   )
@@ -3916,7 +3916,7 @@ function CalendarView({ data, loading, from, to, onPickDate }: { data: CalendarP
                       e.stopPropagation();
                       setExpandedDates((s) => ({ ...s, [d]: !s[d] }));
                     }}
-                    style={{ fontSize: 10, color: '#22D3EE', background: 'transparent', border: '1px solid #22D3EE40', padding: '1px 6px', borderRadius: 3, cursor: 'pointer', fontWeight: 700 }}>
+                    style={{ fontSize: 10, color: 'var(--mc-cyan)', background: 'transparent', border: '1px solid #22D3EE40', padding: '1px 6px', borderRadius: 3, cursor: 'pointer', fontWeight: 700 }}>
                     {expandedDates[d] ? '− show less' : `+${items.length - 12} more`}
                   </button>
                 )}
@@ -3944,17 +3944,17 @@ function OpmTile({ opm, opmPrev }: { opm: number | null | undefined; opmPrev: nu
   const deltaLabel = delta == null ? '—'
                     : `${delta >= 0 ? '+' : ''}${delta.toFixed(1)} pp`;
   return (
-    <div style={{ padding: '6px 10px', backgroundColor: '#0D1623', borderRadius: 6, border: '1px solid #1A2840', display: 'flex', flexDirection: 'column', gap: 1 }}>
-      <div style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.6px' }}>OPM MARGIN</div>
+    <div style={{ padding: '6px 10px', backgroundColor: 'var(--mc-bg-1)', borderRadius: 6, border: '1px solid var(--mc-bg-4)', display: 'flex', flexDirection: 'column', gap: 1 }}>
+      <div style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.6px' }}>OPM MARGIN</div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-        <div style={{ fontSize: 16, fontWeight: 800, color: hasOpm ? '#E6EDF3' : '#6B7A8D', lineHeight: 1 }}>
+        <div style={{ fontSize: 16, fontWeight: 800, color: hasOpm ? 'var(--mc-text-1)' : 'var(--mc-text-4)', lineHeight: 1 }}>
           {hasOpm ? `${(opm as number).toFixed(1)}%` : '—'}
         </div>
         <div style={{ fontSize: 11, fontWeight: 700, color: deltaColor }}>
           {deltaLabel}
         </div>
       </div>
-      <div style={{ fontSize: 9, color: '#94A3B8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+      <div style={{ fontSize: 9, color: 'var(--mc-text-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
         {hasPrev ? `vs ${(opmPrev as number).toFixed(1)}%` : (hasOpm ? 'prior n/a' : 'screener gap')}
       </div>
     </div>
@@ -3965,11 +3965,11 @@ function MetricTile({ label, pct, curr, prev }: { label: string; pct: number | n
   const color = pct == null ? '#6B7A8D' : pct >= 0 ? '#10B981' : '#EF4444';
   const pctLabel = pct == null ? '—' : `${pct >= 0 ? '+' : ''}${pct.toFixed(0)}%`;
   return (
-    <div style={{ padding: '8px 10px', backgroundColor: '#0D1623', borderRadius: 6, border: '1px solid #1A2840' }}>
-      <div style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.6px' }}>{label}</div>
+    <div style={{ padding: '8px 10px', backgroundColor: 'var(--mc-bg-1)', borderRadius: 6, border: '1px solid var(--mc-bg-4)' }}>
+      <div style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.6px' }}>{label}</div>
       <div style={{ fontSize: 18, fontWeight: 900, color, marginTop: 2, lineHeight: 1 }}>{pctLabel}</div>
       {(curr || prev) && (
-        <div style={{ fontSize: 10, color: '#6B7A8D', marginTop: 2, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+        <div style={{ fontSize: 10, color: 'var(--mc-text-4)', marginTop: 2, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
           {curr || '—'}{prev && ` vs ${prev}`}
         </div>
       )}

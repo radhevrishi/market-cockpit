@@ -286,7 +286,7 @@ function PortfolioSummary({ rows, holdings }: { rows: PortfolioRow[]; holdings: 
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '20px' }}>
       {cards.map(c => (
         <div key={c.label} style={{ backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '12px', padding: '16px' }}>
-          <div style={{ fontSize: '10px', color: '#8BA3C1', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.5px' }}>{c.label}</div>
+          <div style={{ fontSize: '10px', color: 'var(--mc-text-3)', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.5px' }}>{c.label}</div>
           <div style={{ fontSize: '20px', fontWeight: '700', color: c.color }}>{c.value}</div>
           {c.sub && <div style={{ fontSize: '11px', color: '#64748B', marginTop: '2px' }}>{c.sub}</div>}
         </div>
@@ -333,9 +333,9 @@ function AddHoldingForm({ onAdd, onCancel, quotes }: { onAdd: (h: PortfolioHoldi
 
   return (
     <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #2A3B4C', borderRadius: '12px', padding: '20px', marginBottom: '20px' }}>
-      <div style={{ fontSize: '14px', fontWeight: '700', color: '#F5F7FA', marginBottom: '16px' }}>Add Holding</div>
+      <div style={{ fontSize: '14px', fontWeight: '700', color: 'var(--mc-text-0)', marginBottom: '16px' }}>Add Holding</div>
       <div style={{ marginBottom: '12px' }}>
-        <label style={{ fontSize: '11px', color: '#8BA3C1', fontWeight: '600', display: 'block', marginBottom: '4px' }}>SEARCH STOCK</label>
+        <label style={{ fontSize: '11px', color: 'var(--mc-text-3)', fontWeight: '600', display: 'block', marginBottom: '4px' }}>SEARCH STOCK</label>
         <TickerSearch
           onSelect={(ticker, sug) => {
             setSymbol(ticker);
@@ -349,33 +349,33 @@ function AddHoldingForm({ onAdd, onCancel, quotes }: { onAdd: (h: PortfolioHoldi
           clearOnSelect={false}
         />
         {symbol && (
-          <div style={{ marginTop: '6px', fontSize: '12px', color: '#10B981', fontWeight: 600 }}>
+          <div style={{ marginTop: '6px', fontSize: '12px', color: 'var(--mc-bullish)', fontWeight: 600 }}>
             Selected: {symbol} {company && company !== symbol ? `— ${company}` : ''}
           </div>
         )}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px', marginBottom: '12px' }}>
         <div>
-          <label style={{ fontSize: '11px', color: '#8BA3C1', fontWeight: '600', display: 'block', marginBottom: '4px' }}>ENTRY PRICE (₹)</label>
+          <label style={{ fontSize: '11px', color: 'var(--mc-text-3)', fontWeight: '600', display: 'block', marginBottom: '4px' }}>ENTRY PRICE (₹)</label>
           {/* PATCH 0454 P2-29 — inputMode='decimal' so mobile users get the
               numeric keyboard instead of the full keyboard. */}
           <input type="number" inputMode="decimal" value={entryPrice} onChange={e => setEntryPrice(e.target.value)} placeholder="1250.00" style={inputStyle}
             onKeyDown={e => e.key === 'Enter' && handleSubmit()} />
         </div>
         <div>
-          <label style={{ fontSize: '11px', color: '#8BA3C1', fontWeight: '600', display: 'block', marginBottom: '4px' }}>QUANTITY</label>
+          <label style={{ fontSize: '11px', color: 'var(--mc-text-3)', fontWeight: '600', display: 'block', marginBottom: '4px' }}>QUANTITY</label>
           <input type="number" inputMode="numeric" value={quantity} onChange={e => setQuantity(e.target.value)} placeholder="100" style={inputStyle}
             onKeyDown={e => e.key === 'Enter' && handleSubmit()} />
         </div>
         <div>
-          <label style={{ fontSize: '11px', color: '#8BA3C1', fontWeight: '600', display: 'block', marginBottom: '4px' }}>NOTES (optional)</label>
+          <label style={{ fontSize: '11px', color: 'var(--mc-text-3)', fontWeight: '600', display: 'block', marginBottom: '4px' }}>NOTES (optional)</label>
           <input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Long-term hold" style={inputStyle}
             onKeyDown={e => e.key === 'Enter' && handleSubmit()} />
         </div>
       </div>
       <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-        <button onClick={onCancel} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #2A3B4C', backgroundColor: 'transparent', color: '#8BA3C1', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>Cancel</button>
-        <button onClick={handleSubmit} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', backgroundColor: '#10B981', color: 'white', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>Add to Portfolio</button>
+        <button onClick={onCancel} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #2A3B4C', backgroundColor: 'transparent', color: 'var(--mc-text-3)', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>Cancel</button>
+        <button onClick={handleSubmit} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', backgroundColor: 'var(--mc-bullish)', color: 'white', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>Add to Portfolio</button>
       </div>
     </div>
   );
@@ -389,7 +389,7 @@ function EditableCell({ value, onSave, type = 'price' }: { value: number; onSave
 
   if (!editing) {
     return (
-      <span style={{ cursor: 'pointer', borderBottom: '1px dashed #4A5B6C' }} onClick={() => { setVal(String(value)); setEditing(true); }}>
+      <span style={{ cursor: 'pointer', borderBottom: '1px dashed var(--mc-text-4)' }} onClick={() => { setVal(String(value)); setEditing(true); }}>
         {type === 'price' ? `₹${value.toFixed(2)}` : String(Math.round(value))}
       </span>
     );
@@ -399,14 +399,14 @@ function EditableCell({ value, onSave, type = 'price' }: { value: number; onSave
     <span style={{ display: 'inline-flex', gap: '2px', alignItems: 'center' }}>
       {/* PATCH 0454 P2-29 — inputMode='decimal' for mobile keyboard. */}
       <input type="number" inputMode={type === 'qty' ? 'numeric' : 'decimal'} value={val} onChange={e => setVal(e.target.value)}
-        style={{ width: '80px', padding: '2px 6px', backgroundColor: '#1A2B3C', border: '1px solid #3B82F6', borderRadius: '4px', color: '#F5F7FA', fontSize: '12px', outline: 'none' }}
+        style={{ width: '80px', padding: '2px 6px', backgroundColor: '#1A2B3C', border: '1px solid var(--mc-info)', borderRadius: '4px', color: 'var(--mc-text-0)', fontSize: '12px', outline: 'none' }}
         onKeyDown={e => { if (e.key === 'Enter') { onSave(Number(val)); setEditing(false); } if (e.key === 'Escape') setEditing(false); }}
         autoFocus
       />
-      <button onClick={() => { onSave(Number(val)); setEditing(false); }} style={{ background: 'none', border: 'none', color: '#10B981', cursor: 'pointer', padding: '2px' }}>
+      <button onClick={() => { onSave(Number(val)); setEditing(false); }} style={{ background: 'none', border: 'none', color: 'var(--mc-bullish)', cursor: 'pointer', padding: '2px' }}>
         <Check style={{ width: '12px', height: '12px' }} />
       </button>
-      <button onClick={() => setEditing(false)} style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', padding: '2px' }}>
+      <button onClick={() => setEditing(false)} style={{ background: 'none', border: 'none', color: 'var(--mc-bearish)', cursor: 'pointer', padding: '2px' }}>
         <X style={{ width: '12px', height: '12px' }} />
       </button>
     </span>
@@ -495,8 +495,8 @@ function PortfolioAnalytics({ rows, onSelectCap }: { rows: PortfolioRow[]; onSel
   const Bar = ({ label, sub, pct, count, color, valueTxt, pnl }: any) => (
     <div style={{ marginBottom: 10 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 3 }}>
-        <span style={{ color: '#F5F7FA', fontWeight: 700 }}>{label} {count != null && <span style={{ color: '#64748B', fontWeight: 600, fontSize: 11 }}>· {count}</span>}</span>
-        <span style={{ color: '#C9D4E0', fontVariantNumeric: 'tabular-nums' }}>{pct.toFixed(1)}%{valueTxt ? <span style={{ color: '#64748B', marginLeft: 6, fontSize: 11 }}>{valueTxt}</span> : null}{pnl != null ? <span style={{ color: pnl >= 0 ? '#10B981' : '#EF4444', marginLeft: 6, fontSize: 11 }}>{pctTxt(pnl)}</span> : null}</span>
+        <span style={{ color: 'var(--mc-text-0)', fontWeight: 700 }}>{label} {count != null && <span style={{ color: '#64748B', fontWeight: 600, fontSize: 11 }}>· {count}</span>}</span>
+        <span style={{ color: '#C9D4E0', fontVariantNumeric: 'tabular-nums' }}>{pct.toFixed(1)}%{valueTxt ? <span style={{ color: '#64748B', marginLeft: 6, fontSize: 11 }}>{valueTxt}</span> : null}{pnl != null ? <span style={{ color: pnl >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)', marginLeft: 6, fontSize: 11 }}>{pctTxt(pnl)}</span> : null}</span>
       </div>
       <div style={{ height: 7, background: '#1A2B3C', borderRadius: 4, overflow: 'hidden' }}>
         <div style={{ height: '100%', width: `${Math.min(100, pct)}%`, background: color, borderRadius: 4 }} />
@@ -506,8 +506,8 @@ function PortfolioAnalytics({ rows, onSelectCap }: { rows: PortfolioRow[]; onSel
   );
   const Stat = ({ label, value, color, sub }: any) => (
     <div style={{ ...card, padding: '12px 14px' }}>
-      <div style={{ fontSize: 10, color: '#8BA3C1', fontWeight: 700, letterSpacing: '0.5px' }}>{label}</div>
-      <div style={{ fontSize: 19, fontWeight: 800, color: color || '#F5F7FA', marginTop: 4 }}>{value}</div>
+      <div style={{ fontSize: 10, color: 'var(--mc-text-3)', fontWeight: 700, letterSpacing: '0.5px' }}>{label}</div>
+      <div style={{ fontSize: 19, fontWeight: 800, color: color || 'var(--mc-text-0)', marginTop: 4 }}>{value}</div>
       {sub && <div style={{ fontSize: 10.5, color: '#64748B', marginTop: 2 }}>{sub}</div>}
     </div>
   );
@@ -549,15 +549,15 @@ function PortfolioAnalytics({ rows, onSelectCap }: { rows: PortfolioRow[]; onSel
         <div style={card}>
           <div style={h}>Performance &amp; risk</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 12.5 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#8BA3C1' }}>Best performer</span><span style={{ color: '#10B981', fontWeight: 700 }}>{best ? `${best.symbol} ${pctTxt(best.pnlPercent)}` : '—'}</span></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#8BA3C1' }}>Worst performer</span><span style={{ color: '#EF4444', fontWeight: 700 }}>{worst ? `${worst.symbol} ${pctTxt(worst.pnlPercent)}` : '—'}</span></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#8BA3C1' }}>Value-weighted return</span><span style={{ color: wtdRet >= 0 ? '#10B981' : '#EF4444', fontWeight: 700 }}>{pctTxt(wtdRet)}</span></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#8BA3C1' }}>Invested → Current</span><span style={{ color: '#F5F7FA', fontWeight: 700 }}>{fmtRs(totalInv)} → {fmtRs(totalCur)}</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'var(--mc-text-3)' }}>Best performer</span><span style={{ color: 'var(--mc-bullish)', fontWeight: 700 }}>{best ? `${best.symbol} ${pctTxt(best.pnlPercent)}` : '—'}</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'var(--mc-text-3)' }}>Worst performer</span><span style={{ color: 'var(--mc-bearish)', fontWeight: 700 }}>{worst ? `${worst.symbol} ${pctTxt(worst.pnlPercent)}` : '—'}</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'var(--mc-text-3)' }}>Value-weighted return</span><span style={{ color: wtdRet >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: 700 }}>{pctTxt(wtdRet)}</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'var(--mc-text-3)' }}>Invested → Current</span><span style={{ color: 'var(--mc-text-0)', fontWeight: 700 }}>{fmtRs(totalInv)} → {fmtRs(totalCur)}</span></div>
             <div style={{ marginTop: 4 }}>
-              <div style={{ fontSize: 11, color: '#8BA3C1', marginBottom: 4 }}>Win rate</div>
+              <div style={{ fontSize: 11, color: 'var(--mc-text-3)', marginBottom: 4 }}>Win rate</div>
               <div style={{ height: 8, background: '#1A2B3C', borderRadius: 4, overflow: 'hidden', display: 'flex' }}>
-                <div style={{ height: '100%', width: `${priced.length ? (winners.length / priced.length) * 100 : 0}%`, background: '#10B981' }} />
-                <div style={{ height: '100%', flex: 1, background: '#EF4444' }} />
+                <div style={{ height: '100%', width: `${priced.length ? (winners.length / priced.length) * 100 : 0}%`, background: 'var(--mc-bullish)' }} />
+                <div style={{ height: '100%', flex: 1, background: 'var(--mc-bearish)' }} />
               </div>
               <div style={{ fontSize: 10, color: '#64748B', marginTop: 2 }}>{priced.length ? Math.round((winners.length / priced.length) * 100) : 0}% of priced holdings in profit</div>
             </div>
@@ -573,17 +573,17 @@ function PortfolioAnalytics({ rows, onSelectCap }: { rows: PortfolioRow[]; onSel
             const Row = ({ r, up }: any) => (
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, padding: '2px 0' }}>
                 <span style={{ color: '#C9D4E0', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 110 }}>{r.symbol}</span>
-                <span style={{ color: up ? '#10B981' : '#EF4444', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{pctTxt(r.pnlPercent || 0)}</span>
+                <span style={{ color: up ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{pctTxt(r.pnlPercent || 0)}</span>
               </div>
             );
             return (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                 <div>
-                  <div style={{ fontSize: 10, color: '#10B981', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>▲ TOP {w.length} WINNERS</div>
+                  <div style={{ fontSize: 10, color: 'var(--mc-bullish)', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>▲ TOP {w.length} WINNERS</div>
                   {w.length ? w.map(r => <Row key={r.symbol} r={r} up />) : <div style={{ fontSize: 11, color: '#64748B' }}>No winners</div>}
                 </div>
                 <div>
-                  <div style={{ fontSize: 10, color: '#EF4444', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>▼ TOP {l.length} LOSERS</div>
+                  <div style={{ fontSize: 10, color: 'var(--mc-bearish)', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>▼ TOP {l.length} LOSERS</div>
                   {l.length ? l.map(r => <Row key={r.symbol} r={r} up={false} />) : <div style={{ fontSize: 11, color: '#64748B' }}>No losers</div>}
                 </div>
               </div>
@@ -595,19 +595,19 @@ function PortfolioAnalytics({ rows, onSelectCap }: { rows: PortfolioRow[]; onSel
         <div style={card}>
           <div style={h}>Quality overlay</div>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginBottom: 10 }}>
-            <span style={{ color: '#8BA3C1' }}>On Conviction Beats</span>
-            <span style={{ color: '#F59E0B', fontWeight: 800 }}>{onCB} / {rows.length}</span>
+            <span style={{ color: 'var(--mc-text-3)' }}>On Conviction Beats</span>
+            <span style={{ color: 'var(--mc-warn)', fontWeight: 800 }}>{onCB} / {rows.length}</span>
           </div>
           {Object.keys(tierCounts).length > 0 ? (
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
               {Object.entries(tierCounts).sort((a, b) => b[1] - a[1]).map(([t, n]) => (
-                <span key={t} style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 800, background: `${tierColors[t] || '#64748B'}22`, color: tierColors[t] || '#94A3B8' }}>{t} · {n}</span>
+                <span key={t} style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 800, background: `${tierColors[t] || '#64748B'}22`, color: tierColors[t] || 'var(--mc-text-3)' }}>{t} · {n}</span>
               ))}
             </div>
           ) : <div style={{ fontSize: 11.5, color: '#64748B', marginBottom: 10 }}>None of your holdings are on the Conviction Beats bench yet.</div>}
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5 }}>
-            <span style={{ color: '#8BA3C1' }}>Avg quality score</span>
-            <span style={{ color: avgScore != null ? (avgScore >= 70 ? '#10B981' : avgScore >= 50 ? '#FBBF24' : '#EF4444') : '#64748B', fontWeight: 800 }}>{avgScore != null ? avgScore.toFixed(0) : '—'} <span style={{ color: '#64748B', fontWeight: 600, fontSize: 11 }}>({scored.length} scored)</span></span>
+            <span style={{ color: 'var(--mc-text-3)' }}>Avg quality score</span>
+            <span style={{ color: avgScore != null ? (avgScore >= 70 ? 'var(--mc-bullish)' : avgScore >= 50 ? '#FBBF24' : 'var(--mc-bearish)') : '#64748B', fontWeight: 800 }}>{avgScore != null ? avgScore.toFixed(0) : '—'} <span style={{ color: '#64748B', fontWeight: 600, fontSize: 11 }}>({scored.length} scored)</span></span>
           </div>
         </div>
       </div>
@@ -1109,7 +1109,7 @@ export default function PortfolioPage() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#F5F7FA', margin: 0 }}>Portfolio</h1>
+            <h1 style={{ fontSize: '24px', fontWeight: '700', color: 'var(--mc-text-0)', margin: 0 }}>Portfolio</h1>
             {/* PATCH 0300 — Quote freshness chip from existing lastRefresh state. */}
             <PanelFreshness
               dataUpdatedAt={lastRefresh ? lastRefresh.getTime() : 0}
@@ -1118,12 +1118,12 @@ export default function PortfolioPage() {
               label="quotes"
             />
           </div>
-          <p style={{ fontSize: '12px', color: '#8BA3C1', margin: '4px 0 0' }}>Active holdings · Capital deployed · P&L tracking</p>
+          <p style={{ fontSize: '12px', color: 'var(--mc-text-3)', margin: '4px 0 0' }}>Active holdings · Capital deployed · P&L tracking</p>
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
           <button onClick={() => setShowAdd(!showAdd)} style={{
             display: 'inline-flex', alignItems: 'center', gap: '6px',
-            backgroundColor: '#10B981', border: 'none', borderRadius: '10px',
+            backgroundColor: 'var(--mc-bullish)', border: 'none', borderRadius: '10px',
             padding: '10px 16px', color: 'white', cursor: 'pointer', fontSize: '13px', fontWeight: '600',
           }}>
             <Plus style={{ width: '14px', height: '14px' }} /> Add Holding
@@ -1135,7 +1135,7 @@ export default function PortfolioPage() {
             style={{
               display: 'inline-flex', alignItems: 'center', gap: '6px',
               backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '10px',
-              padding: '10px 14px', color: '#8BA3C1', cursor: 'pointer',
+              padding: '10px 14px', color: 'var(--mc-text-3)', cursor: 'pointer',
               fontSize: '13px', fontWeight: '600',
             }}
           >
@@ -1155,7 +1155,7 @@ export default function PortfolioPage() {
           <button onClick={fetchData} disabled={isRefreshing} style={{
             display: 'inline-flex', alignItems: 'center', gap: '6px',
             backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '10px',
-            padding: '10px 14px', color: '#8BA3C1', cursor: isRefreshing ? 'not-allowed' : 'pointer',
+            padding: '10px 14px', color: 'var(--mc-text-3)', cursor: isRefreshing ? 'not-allowed' : 'pointer',
             fontSize: '13px', fontWeight: '600', opacity: isRefreshing ? 0.6 : 1,
           }}>
             <RefreshCw style={{ width: '14px', height: '14px' }} /> Refresh
@@ -1163,7 +1163,7 @@ export default function PortfolioPage() {
           <button onClick={handleExportXLSX} disabled={sortedRows.length === 0} style={{
             display: 'inline-flex', alignItems: 'center', gap: '6px',
             backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '10px',
-            padding: '10px 14px', color: '#8BA3C1', cursor: sortedRows.length === 0 ? 'not-allowed' : 'pointer',
+            padding: '10px 14px', color: 'var(--mc-text-3)', cursor: sortedRows.length === 0 ? 'not-allowed' : 'pointer',
             fontSize: '13px', fontWeight: '600', opacity: sortedRows.length === 0 ? 0.4 : 1,
           }}>
             <Download style={{ width: '14px', height: '14px' }} /> Export
@@ -1184,7 +1184,7 @@ export default function PortfolioPage() {
             {(['holdings', 'analytics', 'fundamentals'] as const).map(t => (
               <button key={t} onClick={() => setViewTab(t)} style={{
                 padding: '7px 16px', border: 'none', borderRadius: 7, cursor: 'pointer', fontSize: 12.5, fontWeight: 800, letterSpacing: '0.3px',
-                background: viewTab === t ? '#1D4ED8' : 'transparent', color: viewTab === t ? '#fff' : '#8BA3C1',
+                background: viewTab === t ? '#1D4ED8' : 'transparent', color: viewTab === t ? '#fff' : 'var(--mc-text-3)',
               }}>{t === 'holdings' ? '\ud83d\udc0b Holdings' : t === 'analytics' ? '\ud83d\udcca Analytics' : 'Fundamentals'}</button>
             ))}
           
@@ -1192,7 +1192,7 @@ export default function PortfolioPage() {
           {viewTab === 'holdings' && holdings.length > 0 && (<div style={{ marginBottom: 12 }}><TickerExportToolbar tickers={displayRows.map((r) => r.symbol)} /></div>)}
               {viewTab === 'holdings' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 800, letterSpacing: '0.5px' }}>MKT CAP</span>
+              <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 800, letterSpacing: '0.5px' }}>MKT CAP</span>
               {([['all', 'All'], ['large', 'Large'], ['mid', 'Mid'], ['small', 'Small'], ['micro', 'Micro']] as const).map(([k, lbl]) => {
                 const cnt = k === 'all' ? sortedRows.length : sortedRows.filter(r => normCapBucket(r.cap) === k).length;
                 const active = capFilter === k;
@@ -1200,7 +1200,7 @@ export default function PortfolioPage() {
                 return (
                   <button key={k} onClick={() => setCapFilter(k)} style={{
                     padding: '5px 11px', borderRadius: 7, cursor: 'pointer', fontSize: 11.5, fontWeight: 700,
-                    border: `1px solid ${active ? col : '#2A3B4C'}`, background: active ? `${col}22` : 'transparent', color: active ? col : '#8BA3C1',
+                    border: `1px solid ${active ? col : '#2A3B4C'}`, background: active ? `${col}22` : 'transparent', color: active ? col : 'var(--mc-text-3)',
                   }}>{lbl} <span style={{ opacity: 0.7, fontFamily: 'ui-monospace, monospace', fontSize: 10 }}>{cnt}</span></button>
                 );
               })}
@@ -1243,7 +1243,7 @@ export default function PortfolioPage() {
       {!loading && holdings.length > 0 && viewTab === 'holdings' && (
         <>
           <div style={{ marginBottom: '12px' }}>
-            <p style={{ fontSize: '12px', color: '#8BA3C1', margin: 0 }}>
+            <p style={{ fontSize: '12px', color: 'var(--mc-text-3)', margin: 0 }}>
               {displayRows.length}{capFilter !== 'all' ? ` of ${sortedRows.length}` : ''}{displayRows.length === 1 && capFilter === 'all' ? ' holding' : ' holdings'} · Last refreshed: {lastRefresh ? lastRefresh.toLocaleTimeString() : '—'}
             </p>
           </div>
@@ -1272,7 +1272,7 @@ export default function PortfolioPage() {
                     // AUDIT_100 #8 — stable composite key on table headers.
                     <th key={`${col.key}|${col.label}|${i}`} onClick={() => !col.noSort && handleSort(col.key)} style={{
                       padding: '10px 12px', textAlign: col.align as any, fontSize: '10px', fontWeight: '700',
-                      color: '#8BA3C1', letterSpacing: '0.5px', cursor: col.noSort ? 'default' : 'pointer', whiteSpace: 'nowrap',
+                      color: 'var(--mc-text-3)', letterSpacing: '0.5px', cursor: col.noSort ? 'default' : 'pointer', whiteSpace: 'nowrap',
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: col.align === 'right' ? 'flex-end' : 'flex-start', gap: '4px' }}>
                         {col.label} {!col.noSort && <SortIcon field={col.key} />}
@@ -1301,11 +1301,11 @@ export default function PortfolioPage() {
                     : false;
                   return (
                     <tr key={r.symbol} style={{ borderBottom: idx < displayRows.length - 1 ? '1px solid #1A2B3C' : 'none', backgroundColor: idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
-                      <td style={{ padding: '10px 12px', color: '#3B82F6', fontWeight: '700' }}>{r.symbol}</td>
-                      <td style={{ padding: '10px 12px', color: '#F5F7FA', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
-                      <td style={{ padding: '10px 12px', color: '#8BA3C1', fontSize: '11px', maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.sector}</td>
+                      <td style={{ padding: '10px 12px', color: 'var(--mc-info)', fontWeight: '700' }}>{r.symbol}</td>
+                      <td style={{ padding: '10px 12px', color: 'var(--mc-text-0)', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
+                      <td style={{ padding: '10px 12px', color: 'var(--mc-text-3)', fontSize: '11px', maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.sector}</td>
                       <td style={{ padding: '10px 12px' }}>{capBadge(r.cap)}</td>
-                      <td style={{ padding: '10px 12px', textAlign: 'right', color: '#F5F7FA', fontVariantNumeric: 'tabular-nums' }}>
+                      <td style={{ padding: '10px 12px', textAlign: 'right', color: 'var(--mc-text-0)', fontVariantNumeric: 'tabular-nums' }}>
                         {r.cmp > 0 ? (
                           <span>
                             ₹{r.cmp.toFixed(2)}
@@ -1323,10 +1323,10 @@ export default function PortfolioPage() {
                           </span>
                         )}
                       </td>
-                      <td style={{ padding: '10px 12px', textAlign: 'right', color: '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>
+                      <td style={{ padding: '10px 12px', textAlign: 'right', color: 'var(--mc-text-3)', fontVariantNumeric: 'tabular-nums' }}>
                         <EditableCell value={r.entryPrice} onSave={v => handleUpdateField(r.symbol, 'entryPrice', v)} />
                       </td>
-                      <td style={{ padding: '10px 12px', textAlign: 'right', color: '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>
+                      <td style={{ padding: '10px 12px', textAlign: 'right', color: 'var(--mc-text-3)', fontVariantNumeric: 'tabular-nums' }}>
                         <EditableCell value={r.quantity} onSave={v => handleUpdateField(r.symbol, 'quantity', v)} type="qty" />
                       </td>
                       {/* PATCH 0455 TIER1-D — Rebalancing overlay. Read
@@ -1367,7 +1367,7 @@ export default function PortfolioPage() {
                             }
                           } catch {}
                           if (recommendedMax === undefined) {
-                            return <span style={{ color: '#8BA3C1' }}>{r.weight.toFixed(1)}%</span>;
+                            return <span style={{ color: 'var(--mc-text-3)' }}>{r.weight.toFixed(1)}%</span>;
                           }
                           const overweight = r.weight > recommendedMax * 2;
                           const warn = r.weight > recommendedMax && !overweight;
@@ -1376,17 +1376,17 @@ export default function PortfolioPage() {
                             <div title={`Recommended max ${recommendedMax}% (per Multibagger sizing). You're at ${r.weight.toFixed(1)}%.`}
                               style={{ color }}>
                               {r.weight.toFixed(1)}%
-                              <div style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 600 }}>
+                              <div style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 600 }}>
                                 {overweight ? `⚠ ${(r.weight / recommendedMax).toFixed(1)}× max` : warn ? `⚠ over ${recommendedMax}%` : `✓ ≤ ${recommendedMax}%`}
                               </div>
                             </div>
                           );
                         })()}
                       </td>
-                      <td style={{ padding: '10px 12px', textAlign: 'right', color: '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>
+                      <td style={{ padding: '10px 12px', textAlign: 'right', color: 'var(--mc-text-3)', fontVariantNumeric: 'tabular-nums' }}>
                         {fmt(r.investedValue)}
                       </td>
-                      <td style={{ padding: '10px 12px', textAlign: 'right', color: '#F5F7FA', fontVariantNumeric: 'tabular-nums' }}>
+                      <td style={{ padding: '10px 12px', textAlign: 'right', color: 'var(--mc-text-0)', fontVariantNumeric: 'tabular-nums' }}>
                         {r.cmp > 0 ? fmt(r.currentValue) : '—'}
                       </td>
                       <td style={{ padding: '10px 12px', textAlign: 'right' }}>
@@ -1407,7 +1407,7 @@ export default function PortfolioPage() {
                           <span style={{
                             display: 'inline-block', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '600',
                             backgroundColor: r.score >= 70 ? 'rgba(16,185,129,0.1)' : r.score >= 40 ? 'rgba(251,191,36,0.1)' : 'rgba(100,116,139,0.1)',
-                            color: r.score >= 70 ? '#10B981' : r.score >= 40 ? '#FBBF24' : '#64748B',
+                            color: r.score >= 70 ? 'var(--mc-bullish)' : r.score >= 40 ? '#FBBF24' : '#64748B',
                             fontVariantNumeric: 'tabular-nums',
                           }}>
                             {r.score.toFixed(0)}
@@ -1420,7 +1420,7 @@ export default function PortfolioPage() {
                           <span style={{
                             display: 'inline-block', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '600',
                             backgroundColor: r.sectorTrend === 'Bullish' ? 'rgba(16,185,129,0.1)' : r.sectorTrend === 'Bearish' ? 'rgba(239,68,68,0.1)' : 'rgba(251,191,36,0.1)',
-                            color: r.sectorTrend === 'Bullish' ? '#10B981' : r.sectorTrend === 'Bearish' ? '#EF4444' : '#FBBF24',
+                            color: r.sectorTrend === 'Bullish' ? 'var(--mc-bullish)' : r.sectorTrend === 'Bearish' ? 'var(--mc-bearish)' : '#FBBF24',
                           }}>
                             {r.sectorTrend}
                           </span>
@@ -1432,7 +1432,7 @@ export default function PortfolioPage() {
                           <span style={{
                             display: 'inline-block', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '600',
                             backgroundColor: r.decision === 'BUY' ? 'rgba(16,185,129,0.15)' : r.decision === 'ADD' ? 'rgba(5,150,105,0.15)' : r.decision === 'HOLD' ? 'rgba(251,191,36,0.15)' : r.decision === 'TRIM' ? 'rgba(249,115,22,0.15)' : r.decision === 'EXIT' ? 'rgba(239,68,68,0.15)' : 'rgba(100,116,139,0.15)',
-                            color: r.decision === 'BUY' ? '#10B981' : r.decision === 'ADD' ? '#059669' : r.decision === 'HOLD' ? '#FBBF24' : r.decision === 'TRIM' ? '#F97316' : r.decision === 'EXIT' ? '#EF4444' : '#64748B',
+                            color: r.decision === 'BUY' ? 'var(--mc-bullish)' : r.decision === 'ADD' ? '#059669' : r.decision === 'HOLD' ? '#FBBF24' : r.decision === 'TRIM' ? '#F97316' : r.decision === 'EXIT' ? 'var(--mc-bearish)' : '#64748B',
                           }}>
                             {r.decision}
                           </span>
@@ -1452,7 +1452,7 @@ export default function PortfolioPage() {
                       </td>
                       <td style={{ padding: '10px 12px', textAlign: 'right' }}>
                         <button onClick={() => handleRemove(r.symbol)} title="Remove from portfolio"
-                          style={{ background: 'none', border: 'none', color: '#4A5B6C', cursor: 'pointer', padding: '4px', borderRadius: '4px' }}
+                          style={{ background: 'none', border: 'none', color: 'var(--mc-text-4)', cursor: 'pointer', padding: '4px', borderRadius: '4px' }}
                           onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.1)'; e.currentTarget.style.color = '#EF4444'; }}
                           onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = '#4A5B6C'; }}>
                           <Trash2 style={{ width: '14px', height: '14px' }} />
@@ -1471,11 +1471,11 @@ export default function PortfolioPage() {
       {!loading && holdings.length === 0 && (
         <div style={{ textAlign: 'center', padding: '60px 20px' }}>
           <div style={{ fontSize: '48px', marginBottom: '16px' }}>💼</div>
-          <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#F5F7FA', margin: '0 0 8px' }}>Your portfolio is empty</h2>
-          <p style={{ fontSize: '14px', color: '#8BA3C1', margin: '0 0 24px' }}>Add your holdings with entry price and quantity to track P&L in real-time.</p>
+          <h2 style={{ fontSize: '18px', fontWeight: '700', color: 'var(--mc-text-0)', margin: '0 0 8px' }}>Your portfolio is empty</h2>
+          <p style={{ fontSize: '14px', color: 'var(--mc-text-3)', margin: '0 0 24px' }}>Add your holdings with entry price and quantity to track P&L in real-time.</p>
           <button onClick={() => setShowAdd(true)} style={{
             display: 'inline-flex', alignItems: 'center', gap: '6px',
-            backgroundColor: '#10B981', border: 'none', borderRadius: '10px',
+            backgroundColor: 'var(--mc-bullish)', border: 'none', borderRadius: '10px',
             padding: '12px 24px', color: 'white', cursor: 'pointer', fontSize: '14px', fontWeight: '600',
           }}>
             <Plus style={{ width: '16px', height: '16px' }} /> Add Your First Holding
@@ -1486,7 +1486,7 @@ export default function PortfolioPage() {
       {/* ── Sync Info ───────────────────────────────────────────────── */}
       {holdings.length > 0 && (
         <div style={{ marginTop: '24px', padding: '16px', backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '10px', textAlign: 'center' }}>
-          <p style={{ fontSize: '12px', color: '#8BA3C1', margin: 0 }}>
+          <p style={{ fontSize: '12px', color: 'var(--mc-text-3)', margin: 0 }}>
             💼 Portfolio synced to your account · Entry price & quantity are editable inline (click to edit)
           </p>
         </div>

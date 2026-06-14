@@ -3003,7 +3003,7 @@ function HandbookChip({ text }: { text: string }) {
     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', margin: '4px 0', padding: '4px 0', borderTop: '1px dashed #2A3654', borderBottom: '1px dashed #2A3654', fontSize: 11 }}>
       <span style={{ fontWeight: 800, color: '#FFD700' }}>📘 Handbook</span>
       <span style={{ fontWeight: 900, color: col, padding: '2px 8px', borderRadius: 8, background: col + '1A', border: '1px solid ' + col + '55' }}>{r.scorecardTotal}/100 {r.band}</span>
-      {r.sectorGuess && <span style={{ color: '#AEBBD0' }}>sector: <b style={{ color: '#22D3EE' }}>{r.sectorGuess}</b> <span style={{ color: '#8B98AC' }}>({String(r.sectorConfidence).toLowerCase()})</span></span>}
+      {r.sectorGuess && <span style={{ color: '#AEBBD0' }}>sector: <b style={{ color: 'var(--mc-cyan)' }}>{r.sectorGuess}</b> <span style={{ color: '#8B98AC' }}>({String(r.sectorConfidence).toLowerCase()})</span></span>}
       <span style={{ color: '#00E68A' }}>+{r.toneScore.positive}</span>
       <span style={{ color: '#FFB347' }}>⚠{r.toneScore.cautious}</span>
       <span style={{ color: '#FF4D6A' }}>🚩{r.toneScore.redFlag}</span>
@@ -3188,7 +3188,7 @@ function ModelTab({ card }: { card: any }) {
         </div>
       </div>
       <div style={card}>
-        <div style={{ fontSize: F.md, fontWeight: 800, color: '#A78BFA', marginBottom: 6 }}>11 · 🚀 MULTIBAGGER SCORE — 12 components, 100 pts (v5)</div>
+        <div style={{ fontSize: F.md, fontWeight: 800, color: 'var(--mc-state-persistent)', marginBottom: 6 }}>11 · 🚀 MULTIBAGGER SCORE — 12 components, 100 pts (v5)</div>
         <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.8 }}>
           Recomputed from the 10y workbook series (SQGLP checklist + multibagger-checklist thresholds): earnings consistency 10 (PAT YoY &gt;15% in 7+ yrs) · <b>sales CAGR + acceleration 10 — blended horizons: g = max(cagr3, 0.8×cagr5, 0.7×cagr10), full at ≥25% scaling to 0 at ≤5%; +2 bonus when cagr3&gt;cagr5&gt;cagr10; a 3y print &gt;8pp below the 5y caps the component at 60% (one soft year cannot zero a long-horizon grower)</b> · ROCE level+trajectory 10 (avg3 ≥25, rising vs 10y) · margin/op-leverage 8 · self-funded reinvestment 8 (capex/OCF 0.4-1.2x) · dilution 6 (≤+5% 10y) · debt trajectory 6 (D/E ≤0.3 and falling) · FCF years 6 · CFO→PAT 5 (cum ≥0.8) · size runway 8 (500-5,000 Cr sweet spot) · <b>PEG/PE 8 — PEG uses the blended PAT growth (max of 3y, 0.8×5y, 0.7×10y; sales-blend fallback); PEG &lt;1 full, PE 18-40 entry band; growth &lt;5% ⇒ PEG shown n/m and only the PE band (weight 3) is scored</b> · promoter≥55%/pledge≤5%/moat 7.<br />
           <span style={{ color: C.body }}>Score = pts ÷ measured weight × 100 (NR below 40 weight). Absolute bands: A+ ≥80 · A 70 · B+ 60 · B 50 · C 38 · D. Consistency gates: forensic FLAGS caps at B+; pledge &gt;15% or D/E &gt;1.5 caps at B.</span>

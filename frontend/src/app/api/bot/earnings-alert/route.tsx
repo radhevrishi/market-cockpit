@@ -120,14 +120,14 @@ async function generateEarningsImage(card: CardFromAPI): Promise<ArrayBuffer> {
     (
       <div style={{
         display: 'flex', flexDirection: 'column', width: '600px',
-        background: '#0D1623', color: '#E8ECF1', fontFamily: 'system-ui',
+        background: 'var(--mc-bg-1)', color: '#E8ECF1', fontFamily: 'system-ui',
         borderRadius: '12px', overflow: 'hidden',
         border: `2px solid ${card.gradeColor}`,
       }}>
         {/* Header */}
         <div style={{
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          padding: '14px 20px', borderBottom: '1px solid #1A2540',
+          padding: '14px 20px', borderBottom: '1px solid var(--mc-bg-4)',
         }}>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -146,7 +146,7 @@ async function generateEarningsImage(card: CardFromAPI): Promise<ArrayBuffer> {
             <div style={{ display: 'flex', gap: '8px', marginTop: '4px', alignItems: 'center' }}>
               <span style={{
                 padding: '1px 6px', borderRadius: '3px', fontSize: '11px',
-                background: '#0F7ABF20', color: '#0F7ABF',
+                background: '#0F7ABF20', color: 'var(--mc-accent)',
               }}>{card.reportType}</span>
               <span style={{ fontSize: '11px', color: '#8899AA' }}>{card.period}</span>
               {exRet !== null && (
@@ -160,7 +160,7 @@ async function generateEarningsImage(card: CardFromAPI): Promise<ArrayBuffer> {
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
             <span style={{ fontSize: '13px', color: '#8899AA' }}>{card.resultDate}</span>
-            <span style={{ fontSize: '11px', color: '#0F7ABF' }}>Score: {card.qualityScore}/100</span>
+            <span style={{ fontSize: '11px', color: 'var(--mc-accent)' }}>Score: {card.qualityScore}/100</span>
           </div>
         </div>
 
@@ -179,7 +179,7 @@ async function generateEarningsImage(card: CardFromAPI): Promise<ArrayBuffer> {
             {rows.map((row, i) => (
               <div key={i} style={{
                 display: 'flex', padding: '8px 20px', alignItems: 'center',
-                borderTop: '1px solid #1A2540',
+                borderTop: '1px solid var(--mc-bg-4)',
                 background: i % 2 === 0 ? 'transparent' : '#0A162810',
               }}>
                 <span style={{ flex: '1', fontSize: '13px', fontWeight: 500 }}>{row.label}</span>
@@ -211,7 +211,7 @@ async function generateEarningsImage(card: CardFromAPI): Promise<ArrayBuffer> {
           }}>
             <div style={{
               flex: 1, background: '#0A1628', borderRadius: '8px', padding: '12px',
-              border: '1px solid #1A2540', textAlign: 'center',
+              border: '1px solid var(--mc-bg-4)', textAlign: 'center',
             }}>
               <div style={{ fontSize: '11px', color: '#8899AA', marginBottom: '4px' }}>Price Move</div>
               <div style={{
@@ -221,7 +221,7 @@ async function generateEarningsImage(card: CardFromAPI): Promise<ArrayBuffer> {
             </div>
             <div style={{
               flex: 1, background: '#0A1628', borderRadius: '8px', padding: '12px',
-              border: '1px solid #1A2540', textAlign: 'center',
+              border: '1px solid var(--mc-bg-4)', textAlign: 'center',
             }}>
               <div style={{ fontSize: '11px', color: '#8899AA', marginBottom: '4px' }}>vs Nifty 50</div>
               <div style={{
@@ -231,7 +231,7 @@ async function generateEarningsImage(card: CardFromAPI): Promise<ArrayBuffer> {
             </div>
             <div style={{
               flex: 1, background: '#0A1628', borderRadius: '8px', padding: '12px',
-              border: '1px solid #1A2540', textAlign: 'center',
+              border: '1px solid var(--mc-bg-4)', textAlign: 'center',
             }}>
               <div style={{ fontSize: '11px', color: '#8899AA', marginBottom: '4px' }}>CMP</div>
               <div style={{ fontSize: '20px', fontWeight: 700, color: '#E8ECF1' }}>
@@ -244,7 +244,7 @@ async function generateEarningsImage(card: CardFromAPI): Promise<ArrayBuffer> {
         {/* Footer */}
         <div style={{
           display: 'flex', justifyContent: 'space-between', padding: '10px 20px',
-          borderTop: '1px solid #1A2540', background: '#0A1628',
+          borderTop: '1px solid var(--mc-bg-4)', background: '#0A1628',
           fontSize: '11px', color: '#8899AA',
         }}>
           <span>Market Cockpit</span>

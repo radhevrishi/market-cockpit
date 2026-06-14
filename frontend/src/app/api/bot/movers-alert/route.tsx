@@ -648,7 +648,7 @@ async function generateStreetPulseCard(
       }}
     >
       {/* Accent bar */}
-      <div style={{ display: 'flex', width: '100%', height: `${ACCENT_H}px`, background: 'linear-gradient(90deg, #3B82F6 0%, #60A5FA 100%)' }} />
+      <div style={{ display: 'flex', width: '100%', height: `${ACCENT_H}px`, background: 'linear-gradient(90deg, var(--mc-info) 0%, #60A5FA 100%)' }} />
 
       {/* Header */}
       <div

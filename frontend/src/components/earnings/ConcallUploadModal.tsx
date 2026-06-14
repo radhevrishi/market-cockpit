@@ -303,7 +303,7 @@ export function ConcallUploadModal({
                       textTransform: 'uppercase',
                       color:
                         f.status === 'parsed'
-                          ? '#10b981'
+                          ? 'var(--mc-bullish)'
                           : f.status === 'error'
                             ? '#fb923c'
                             : f.status === 'parsing'

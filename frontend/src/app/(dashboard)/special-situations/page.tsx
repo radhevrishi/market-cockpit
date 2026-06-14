@@ -560,14 +560,14 @@ export default function SpecialSituationsPage() {
   const tier3Label = canonicalEvents.length > 0 ? 'Watchlist' : 'Archive';
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: '#0A0E1A' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--mc-bg-0)' }}>
       {/* ── Hero ─────────────────────────────────────────────────────────── */}
-      <div style={{ backgroundColor: '#0D1B2E', borderBottom: '1px solid #1E2D45', padding: '14px 18px', flexShrink: 0 }}>
+      <div style={{ backgroundColor: '#0D1B2E', borderBottom: '1px solid var(--mc-border-1)', padding: '14px 18px', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
           <span style={{ fontSize: 16, fontWeight: 800, color: '#FBBF24', letterSpacing: '0.5px' }}>
             ⚡ SPECIAL SITUATIONS
           </span>
-          <span style={{ fontSize: 11, color: '#6B7A8D' }}>
+          <span style={{ fontSize: 11, color: 'var(--mc-text-4)' }}>
             Fully automated · Live RSS discovery · Algorithmic tiering · No hardcoded events
           </span>
           <span
@@ -609,14 +609,14 @@ export default function SpecialSituationsPage() {
               ? 'Watchlist: events older than the tradable window or without a confirmed ticker yet.'
               : 'Archive: events older than 30 days, kept for pattern reference.'}
             onClick={() => setTierFilter(tierFilter === 'WATCHLIST' ? 'ALL' : 'WATCHLIST')} />
-          <span style={{ width: 1, backgroundColor: '#1A2840', margin: '4px 4px' }} />
+          <span style={{ width: 1, backgroundColor: 'var(--mc-bg-4)', margin: '4px 4px' }} />
           {(Object.keys(CAT_META) as Category[]).map((c) => (
             <Stat key={c} label={CAT_META[c].label} value={catCounts[c]} color={CAT_META[c].color} icon={CAT_META[c].icon} loading={isLoading}
               active={catFilterSet.has(c)}
               onClick={() => toggleCat(c)} />
           ))}
           {anyFilterActive && (
-            <button onClick={clearFilters} style={{ marginLeft: 6, alignSelf: 'center', backgroundColor: 'transparent', border: '1px solid #1A2840', color: '#8A95A3', borderRadius: 5, padding: '4px 10px', fontSize: 11, cursor: 'pointer', fontWeight: 600 }}>Clear filters ×</button>
+            <button onClick={clearFilters} style={{ marginLeft: 6, alignSelf: 'center', backgroundColor: 'transparent', border: '1px solid var(--mc-bg-4)', color: '#8A95A3', borderRadius: 5, padding: '4px 10px', fontSize: 11, cursor: 'pointer', fontWeight: 600 }}>Clear filters ×</button>
           )}
           {/* AUDIT_100 #32 — show-monitored toggle. Surfaces the items the user
               previously flagged so they can audit / restore their bench. */}
@@ -627,23 +627,23 @@ export default function SpecialSituationsPage() {
               style={{
                 marginLeft: 6, alignSelf: 'center',
                 backgroundColor: monitoredOnly ? 'rgba(148,163,184,0.15)' : 'transparent',
-                border: `1px solid ${monitoredOnly ? '#94A3B8' : '#1A2840'}`,
-                color: monitoredOnly ? '#E6EDF3' : '#94A3B8',
+                border: `1px solid ${monitoredOnly ? 'var(--mc-text-3)' : 'var(--mc-bg-4)'}`,
+                color: monitoredOnly ? 'var(--mc-text-1)' : 'var(--mc-text-3)',
                 borderRadius: 5, padding: '4px 10px', fontSize: 11, cursor: 'pointer', fontWeight: 600,
               }}
             >◯ {monitoredOnly ? 'Showing monitored' : 'Show monitored'} ({monitoredCount})</button>
           )}
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center' }}>
-            <span style={{ fontSize: 11, color: '#6B7A8D', marginRight: 6 }}>Region:</span>
+            <span style={{ fontSize: 11, color: 'var(--mc-text-4)', marginRight: 6 }}>Region:</span>
             {(['ALL','IN','US','GLOBAL'] as const).map((r) => {
               const isA = region === r;
               return (
-                <button key={r} onClick={() => setRegion(r)} style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 700, border: isA ? '1px solid #38A9E860' : '1px solid #1A2840', backgroundColor: isA ? '#0F7ABF20' : 'transparent', color: isA ? '#38A9E8' : '#6B7A8D', cursor: 'pointer' }}>
+                <button key={r} onClick={() => setRegion(r)} style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 700, border: isA ? '1px solid #38A9E860' : '1px solid var(--mc-bg-4)', backgroundColor: isA ? '#0F7ABF20' : 'transparent', color: isA ? '#38A9E8' : 'var(--mc-text-4)', cursor: 'pointer' }}>
                   {r === 'IN' ? '🇮🇳 IN' : r === 'US' ? '🇺🇸 US' : r === 'GLOBAL' ? '🌐 GL' : 'ALL'}
                 </button>
               );
             })}
-            <button onClick={() => refetch()} disabled={isFetching} style={{ marginLeft: 8, padding: '4px 12px', fontSize: 11, fontWeight: 700, borderRadius: 6, border: '1px solid #1A2840', color: '#8A95A3', cursor: isFetching ? 'not-allowed' : 'pointer', backgroundColor: 'transparent', opacity: isFetching ? 0.5 : 1 }}>
+            <button onClick={() => refetch()} disabled={isFetching} style={{ marginLeft: 8, padding: '4px 12px', fontSize: 11, fontWeight: 700, borderRadius: 6, border: '1px solid var(--mc-bg-4)', color: '#8A95A3', cursor: isFetching ? 'not-allowed' : 'pointer', backgroundColor: 'transparent', opacity: isFetching ? 0.5 : 1 }}>
               {isFetching ? 'Refreshing…' : '↻ Refresh'}
             </button>
           </div>
@@ -661,12 +661,12 @@ export default function SpecialSituationsPage() {
               <span style={{ fontSize: 11, fontWeight: 800, color: '#38A9E8', letterSpacing: '0.4px' }}>
                 📋 INSTITUTIONAL COVERAGE — 9 alpha categories
                 {coverageFilterSet.size > 0 && (
-                  <span style={{ marginLeft: 8, color: '#10B981', fontSize: 10 }}>
+                  <span style={{ marginLeft: 8, color: 'var(--mc-bullish)', fontSize: 10 }}>
                     · filtering on {coverageFilterSet.size} bucket{coverageFilterSet.size === 1 ? '' : 's'}
                   </span>
                 )}
               </span>
-              <span style={{ fontSize: 9, color: '#6B7A8D', fontStyle: 'italic' }}>
+              <span style={{ fontSize: 9, color: 'var(--mc-text-4)', fontStyle: 'italic' }}>
                 click bucket to filter list · empty = no events in window OR detector gap
               </span>
             </div>
@@ -699,7 +699,7 @@ export default function SpecialSituationsPage() {
                       textAlign: 'left',
                     }}
                   >
-                    <span style={{ fontSize: 10, color: isActive ? '#FFFFFF' : (has ? '#E6EDF3' : '#6B7A8D'), fontWeight: isActive ? 800 : 500 }}>
+                    <span style={{ fontSize: 10, color: isActive ? '#FFFFFF' : (has ? 'var(--mc-text-1)' : 'var(--mc-text-4)'), fontWeight: isActive ? 800 : 500 }}>
                       {isActive ? '✓ ' : ''}{b.emoji} {b.bucket}
                     </span>
                     <span style={{ fontSize: 11, fontWeight: 800, color }}>{b.count}</span>
@@ -711,12 +711,12 @@ export default function SpecialSituationsPage() {
         )}
 
         {/* Tab nav */}
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', paddingTop: 10, borderTop: '1px solid #1A2840' }}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', paddingTop: 10, borderTop: '1px solid var(--mc-bg-4)' }}>
           {TABS.map(({ id, label }) => {
             const isA = active === id;
             return (
               <button key={id} onClick={() => setActive(id)}
-                style={{ padding: '7px 14px', borderRadius: 6, fontSize: 12, fontWeight: 700, letterSpacing: '0.4px', border: isA ? '1px solid #FBBF2460' : '1px solid #1A2840', backgroundColor: isA ? '#FBBF2418' : 'transparent', color: isA ? '#FBBF24' : '#8A95A3', cursor: 'pointer' }}>
+                style={{ padding: '7px 14px', borderRadius: 6, fontSize: 12, fontWeight: 700, letterSpacing: '0.4px', border: isA ? '1px solid #FBBF2460' : '1px solid var(--mc-bg-4)', backgroundColor: isA ? '#FBBF2418' : 'transparent', color: isA ? '#FBBF24' : '#8A95A3', cursor: 'pointer' }}>
                 {label}
               </button>
             );
@@ -779,14 +779,14 @@ function Stat({ label, value, color, icon, onClick, active, loading, tooltip }: 
         backgroundSize: '200% 100%',
         animation: 'specsitShim 1.4s linear infinite',
       }} />
-      <div style={{ fontSize: 9.5, color: '#6B7A8D', textTransform: 'uppercase', letterSpacing: '0.4px', marginTop: 6, fontWeight: 500 }}>{label}</div>
+      <div style={{ fontSize: 9.5, color: 'var(--mc-text-4)', textTransform: 'uppercase', letterSpacing: '0.4px', marginTop: 6, fontWeight: 500 }}>{label}</div>
       <style>{`@keyframes specsitShim { 0%{background-position:-200% 0;} 100%{background-position:200% 0;} }`}</style>
     </>
   );
   const inner = (loading && (value === 0 || value === '0')) ? shimmer : (
     <>
       <div style={{ fontSize: 18, fontWeight: 800, color, lineHeight: 1.1 }}>{icon ? `${icon} ` : ''}{value}</div>
-      <div style={{ fontSize: 9.5, color: active ? color : '#6B7A8D', textTransform: 'uppercase', letterSpacing: '0.4px', marginTop: 2, fontWeight: active ? 700 : 500 }}>{label}{active ? ' ✓' : ''}</div>
+      <div style={{ fontSize: 9.5, color: active ? color : 'var(--mc-text-4)', textTransform: 'uppercase', letterSpacing: '0.4px', marginTop: 2, fontWeight: active ? 700 : 500 }}>{label}{active ? ' ✓' : ''}</div>
     </>
   );
   return onClick
@@ -1059,7 +1059,7 @@ function BestRiskRewardBoard({ events }: { events: CanonicalEvent[] }) {
         <span style={{ fontSize: 13, fontWeight: 900, color: '#FBBF24', letterSpacing: '0.5px' }}>
           🏆 BEST RISK / REWARD
         </span>
-        <span style={{ fontSize: 10, color: '#6B7A8D' }}>
+        <span style={{ fontSize: 10, color: 'var(--mc-text-4)' }}>
           ranked by probability-weighted annualized IRR · arb events first · catalyst-score fallback for non-arb
         </span>
       </div>
@@ -1071,7 +1071,7 @@ function BestRiskRewardBoard({ events }: { events: CanonicalEvent[] }) {
             <div key={ev.event_id}
               style={{
                 backgroundColor: '#0D1B2E',
-                border: '1px solid #1E2D45',
+                border: '1px solid var(--mc-border-1)',
                 borderLeft: `3px solid ${a.lifecycleColor}`,
                 borderRadius: 8, padding: '10px 12px',
                 display: 'flex', flexDirection: 'column', gap: 6,
@@ -1092,7 +1092,7 @@ function BestRiskRewardBoard({ events }: { events: CanonicalEvent[] }) {
                   </span>
                 )}
               </div>
-              <div style={{ fontSize: 11.5, color: '#E6EDF3', lineHeight: 1.35, overflow: 'hidden',
+              <div style={{ fontSize: 11.5, color: 'var(--mc-text-1)', lineHeight: 1.35, overflow: 'hidden',
                 display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
                 {ev.primary_filing.title}
               </div>
@@ -1105,14 +1105,14 @@ function BestRiskRewardBoard({ events }: { events: CanonicalEvent[] }) {
                   </span>
                 )}
                 {a.spreadPct != null && (
-                  <span style={{ color: a.spreadPct >= 0 ? '#10B981' : '#EF4444', fontWeight: 700 }}>
+                  <span style={{ color: a.spreadPct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: 700 }}>
                     sp {a.spreadPct >= 0 ? '+' : ''}{a.spreadPct.toFixed(1)}%
                   </span>
                 )}
                 <span style={{ color: a.probabilityColor, fontWeight: 700 }} title={`Deal probability: ${a.probabilityLabel}`}>
                   P {a.probability}%
                 </span>
-                <span style={{ color: '#94A3B8' }}>~{a.daysToClose}d</span>
+                <span style={{ color: 'var(--mc-text-3)' }}>~{a.daysToClose}d</span>
                 <span style={{ color: a.lifecycleColor, fontWeight: 700, padding: '0 4px',
                   border: `1px solid ${a.lifecycleColor}40`, borderRadius: 3 }}
                   title={LIFECYCLE_CONFIG[a.lifecycleState].description}>
@@ -1137,10 +1137,10 @@ function AllSituationsCanonical({ isLoading, error, tier1, tier2, watchlist }: {
     return () => clearTimeout(t);
   }, [isLoading]);
   if (isLoading) return (
-    <div style={{ color: '#6B7A8D', fontSize: 12, padding: 14 }}>
+    <div style={{ color: 'var(--mc-text-4)', fontSize: 12, padding: 14 }}>
       Loading event-intelligence pipeline…
       {slow && (
-        <div style={{ marginTop: 6, color: '#F59E0B', fontSize: 11 }}>
+        <div style={{ marginTop: 6, color: 'var(--mc-warn)', fontSize: 11 }}>
           ⏳ RSS fetch taking longer than expected. Click the Refresh button (top-right) to retry.
         </div>
       )}
@@ -1150,7 +1150,7 @@ function AllSituationsCanonical({ isLoading, error, tier1, tier2, watchlist }: {
   if (error) {
     const msg = (error as any)?.message || String(error || 'unknown');
     return (
-      <div style={{ color: '#EF4444', fontSize: 12, padding: 14, lineHeight: 1.5 }}>
+      <div style={{ color: 'var(--mc-bearish)', fontSize: 12, padding: 14, lineHeight: 1.5 }}>
         ⚠ Failed to load event-intelligence pipeline: <code style={{ color: '#FCA5A5' }}>{msg}</code>.
         <div style={{ color: '#8A95A3', marginTop: 4 }}>Try ↻ Refresh now or check System Status.</div>
       </div>
@@ -1158,8 +1158,8 @@ function AllSituationsCanonical({ isLoading, error, tier1, tier2, watchlist }: {
   }
   if (!tier1.length && !tier2.length && !watchlist.length) {
     return (
-      <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: 10, padding: 24, color: '#6B7A8D', fontSize: 13, textAlign: 'center' }}>
-        <AlertTriangle style={{ width: 20, height: 20, marginBottom: 8, color: '#F59E0B' }} />
+      <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderRadius: 10, padding: 24, color: 'var(--mc-text-4)', fontSize: 13, textAlign: 'center' }}>
+        <AlertTriangle style={{ width: 20, height: 20, marginBottom: 8, color: 'var(--mc-warn)' }} />
         <div>No canonical events yet — RSS pipeline still warming up.</div>
         <div style={{ fontSize: 11, marginTop: 4 }}>The event-intelligence engine collapses amendments under one event, scores catalysts (+30 definitive / -20 amendment), filters fund housekeeping, and auto-generates "why tradable" blocks.</div>
       </div>
@@ -1184,12 +1184,12 @@ function CanonicalSection({ meta, color, events, defaultExpanded }: { meta: { la
     <div>
       <button onClick={() => setCollapsed(!collapsed)} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', borderLeft: `3px solid ${color}`, paddingLeft: 12, marginBottom: 8 }}>
         <div style={{ fontSize: 14, fontWeight: 800, color, letterSpacing: '0.4px' }}>{collapsed ? '▸' : '▾'} {meta.label} · {events.length}</div>
-        <div style={{ fontSize: 11, color: '#6B7A8D', marginTop: 2 }}>{meta.tagline}</div>
+        <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginTop: 2 }}>{meta.tagline}</div>
       </button>
       {!collapsed && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {events.slice(0, 30).map((e) => <CanonicalEventCard key={e.event_id} ev={e} />)}
-          {events.length > 30 && <div style={{ fontSize: 11, color: '#6B7A8D', textAlign: 'center' }}>Showing 30 of {events.length}.</div>}
+          {events.length > 30 && <div style={{ fontSize: 11, color: 'var(--mc-text-4)', textAlign: 'center' }}>Showing 30 of {events.length}.</div>}
         </div>
       )}
     </div>
@@ -1310,20 +1310,20 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
   return (
     <div style={{
       backgroundColor: rejection ? '#1A0E10' : '#0D1B2E',
-      border: `1px solid ${rejection ? '#EF444440' : '#1E2D45'}`,
-      borderLeft: `3px solid ${rejection ? '#EF4444' : meta.color}`,
+      border: `1px solid ${rejection ? '#EF444440' : 'var(--mc-border-1)'}`,
+      borderLeft: `3px solid ${rejection ? 'var(--mc-bearish)' : meta.color}`,
       borderRadius: 10,
       opacity: rejection ? 0.85 : 1,
     }}>
       {/* PATCH 0167/0254 — 'MONITOR' chip (was 'REJECTED' — softer, institutional). */}
       {rejection && (
         <div style={{ padding: '8px 16px 0', display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
-          <span style={{ color: '#94A3B8', fontWeight: 800, letterSpacing: '0.4px' }}>◯ MONITOR</span>
+          <span style={{ color: 'var(--mc-text-3)', fontWeight: 800, letterSpacing: '0.4px' }}>◯ MONITOR</span>
           <span style={{ color: '#C9D4E0', flex: 1, fontStyle: 'italic' }}>{rejection.reason}</span>
-          <span style={{ color: '#6B7A8D', fontSize: 10 }}>{new Date(rejection.ts).toLocaleDateString('en-IN')}</span>
+          <span style={{ color: 'var(--mc-text-4)', fontSize: 10 }}>{new Date(rejection.ts).toLocaleDateString('en-IN')}</span>
           <button onClick={(e) => { e.stopPropagation(); deleteRejection(); }}
             title="Remove monitor flag"
-            style={{ padding: '2px 6px', borderRadius: 3, border: '1px solid #94A3B860', background: 'transparent', color: '#94A3B8', cursor: 'pointer', fontWeight: 700, fontSize: 11 }}>
+            style={{ padding: '2px 6px', borderRadius: 3, border: '1px solid #94A3B860', background: 'transparent', color: 'var(--mc-text-3)', cursor: 'pointer', fontWeight: 700, fontSize: 11 }}>
             ✕
           </button>
         </div>
@@ -1333,8 +1333,8 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
           <input autoFocus value={draftReason} onChange={(e) => setDraftReason(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') saveRejection(); if (e.key === 'Escape') setShowRejectInput(false); }}
             placeholder="Reason for monitoring (e.g. await filing, no spread, low confidence)…  Enter to save, Esc to cancel"
-            style={{ flex: 1, padding: '4px 8px', backgroundColor: '#0D1623', border: '1px solid #94A3B840', borderRadius: 4, color: '#E6EDF3', fontSize: 11, outline: 'none' }} />
-          <button onClick={saveRejection} style={{ padding: '4px 10px', borderRadius: 4, border: '1px solid #94A3B860', background: '#94A3B815', color: '#94A3B8', fontSize: 11, cursor: 'pointer', fontWeight: 700 }}>Save</button>
+            style={{ flex: 1, padding: '4px 8px', backgroundColor: 'var(--mc-bg-1)', border: '1px solid #94A3B840', borderRadius: 4, color: 'var(--mc-text-1)', fontSize: 11, outline: 'none' }} />
+          <button onClick={saveRejection} style={{ padding: '4px 10px', borderRadius: 4, border: '1px solid #94A3B860', background: '#94A3B815', color: 'var(--mc-text-3)', fontSize: 11, cursor: 'pointer', fontWeight: 700 }}>Save</button>
         </div>
       )}
       <button onClick={() => setExpanded((s) => !s)} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '12px 16px' }}>
@@ -1342,11 +1342,11 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
           <span style={{ fontSize: 11, fontWeight: 800, color: meta.color, padding: '2px 8px', borderRadius: 4, backgroundColor: `${meta.color}18`, border: `1px solid ${meta.color}40` }}>
             {meta.icon} {ev.event_type.replace(/_/g, ' ')}
           </span>
-          <span style={{ fontSize: 11, fontWeight: 700, color: ev.region === 'IN' ? '#FBBF24' : '#22D3EE' }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: ev.region === 'IN' ? '#FBBF24' : 'var(--mc-cyan)' }}>
             {ev.region === 'IN' ? '🇮🇳' : ev.region === 'US' ? '🇺🇸' : '🌐'}
           </span>
           {ev.target_name && (
-            <span style={{ fontSize: 13, fontWeight: 700, color: '#E6EDF3' }}>{ev.target_name}</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--mc-text-1)' }}>{ev.target_name}</span>
           )}
           {ev.tickers.slice(0, 4).map((t) => (
             <span key={t} style={{ fontSize: 11, fontWeight: 700, color: '#38A9E8', backgroundColor: '#0F7ABF20', border: '1px solid #0F7ABF40', padding: '1px 6px', borderRadius: 3, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
@@ -1354,7 +1354,7 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
             </span>
           ))}
           {ev.amendment_count > 0 && (
-            <span style={{ fontSize: 10, fontWeight: 700, color: '#F59E0B', padding: '1px 7px', borderRadius: 3, backgroundColor: '#F59E0B18', border: '1px solid #F59E0B40' }}>
+            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--mc-warn)', padding: '1px 7px', borderRadius: 3, backgroundColor: '#F59E0B18', border: '1px solid #F59E0B40' }}>
               + {ev.amendment_count} amendment{ev.amendment_count > 1 ? 's' : ''}
             </span>
           )}
@@ -1367,13 +1367,13 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
             if (!n || n < 2) return null;
             return (
               <span title={`Corroborated by ${n} sources: ${(srcs || []).join(', ')}`}
-                style={{ fontSize: 10, fontWeight: 700, color: '#22D3EE', padding: '1px 7px', borderRadius: 3, backgroundColor: '#22D3EE18', border: '1px solid #22D3EE40' }}>
+                style={{ fontSize: 10, fontWeight: 700, color: 'var(--mc-cyan)', padding: '1px 7px', borderRadius: 3, backgroundColor: '#22D3EE18', border: '1px solid #22D3EE40' }}>
                 ×{n} sources
               </span>
             );
           })()}
           {ev.lifecycle && ev.lifecycle !== 'unknown' && (
-            <span style={{ fontSize: 10, fontWeight: 700, color: '#94A3B8', padding: '1px 6px', borderRadius: 3, backgroundColor: '#1A2840' }}>
+            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--mc-text-3)', padding: '1px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-4)' }}>
               {ev.lifecycle}
             </span>
           )}
@@ -1404,7 +1404,7 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
               🇮🇳 {indiaSubcat}
             </span>
           )}
-          <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 11, color: '#6B7A8D' }}>
+          <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--mc-text-4)' }}>
             <span title="Catalyst score (decay-adjusted)">Score {ev.catalyst_score.decay_score.toFixed(0)}</span>
             {/* PATCH 0254 — Source-tier badge (PRIMARY/SPECIALIST/SECONDARY/AGGREGATOR) */}
             {(() => {
@@ -1433,31 +1433,31 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
         </div>
         {/* PATCH 0258 — Next-catalyst chip on its own line for visibility */}
         {nextCat && (
-          <div style={{ marginTop: 4, marginBottom: 6, fontSize: 11, color: '#94A3B8', fontFamily: 'ui-monospace, monospace' }}>
-            <span style={{ color: '#22D3EE', fontWeight: 700, marginRight: 6 }}>→</span>
+          <div style={{ marginTop: 4, marginBottom: 6, fontSize: 11, color: 'var(--mc-text-3)', fontFamily: 'ui-monospace, monospace' }}>
+            <span style={{ color: 'var(--mc-cyan)', fontWeight: 700, marginRight: 6 }}>→</span>
             <span>{nextCat.label}</span>
             {nextCat.daysOut !== null && nextCat.daysOut >= 0 && (
-              <span style={{ marginLeft: 8, fontSize: 10, color: '#6B7A8D' }}>· {nextCat.daysOut}d away</span>
+              <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--mc-text-4)' }}>· {nextCat.daysOut}d away</span>
             )}
           </div>
         )}
         <div style={{ display: 'none' }}>{/* placeholder to keep JSX shape from previous code */}
         </div>
-        <div style={{ fontSize: 13, color: '#E6EDF3', fontWeight: 500, lineHeight: 1.4 }}>{ev.primary_filing.title}</div>
+        <div style={{ fontSize: 13, color: 'var(--mc-text-1)', fontWeight: 500, lineHeight: 1.4 }}>{ev.primary_filing.title}</div>
         {/* PATCH 0128 — Inline deal spread / annualized return strip */}
         {(offer != null || cmp != null) && (
-          <div style={{ marginTop: 6, display: 'flex', gap: 12, fontSize: 11, flexWrap: 'wrap', color: '#94A3B8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+          <div style={{ marginTop: 6, display: 'flex', gap: 12, fontSize: 11, flexWrap: 'wrap', color: 'var(--mc-text-3)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
             {offer != null && (
-              <span><span style={{ color: '#6B7A8D' }}>Offer:</span> <strong style={{ color: '#E6EDF3' }}>{dealPrice?.currency}{offer.toLocaleString()}{dealPrice?.unit ? (dealPrice.unit === 'B' || dealPrice.unit === 'M' ? dealPrice.unit : ' ' + dealPrice.unit) : ''}</strong></span>
+              <span><span style={{ color: 'var(--mc-text-4)' }}>Offer:</span> <strong style={{ color: 'var(--mc-text-1)' }}>{dealPrice?.currency}{offer.toLocaleString()}{dealPrice?.unit ? (dealPrice.unit === 'B' || dealPrice.unit === 'M' ? dealPrice.unit : ' ' + dealPrice.unit) : ''}</strong></span>
             )}
             {cmp != null && (
-              <span><span style={{ color: '#6B7A8D' }}>CMP:</span> <strong style={{ color: '#E6EDF3' }}>{dealPrice?.currency || (ev.region === 'IN' ? '₹' : '$')}{cmp.toLocaleString()}</strong></span>
+              <span><span style={{ color: 'var(--mc-text-4)' }}>CMP:</span> <strong style={{ color: 'var(--mc-text-1)' }}>{dealPrice?.currency || (ev.region === 'IN' ? '₹' : '$')}{cmp.toLocaleString()}</strong></span>
             )}
             {spreadPct != null && (
-              <span><span style={{ color: '#6B7A8D' }}>Spread:</span> <strong style={{ color: spreadPct >= 0 ? '#10B981' : '#EF4444' }}>{spreadPct >= 0 ? '+' : ''}{spreadPct.toFixed(2)}%</strong></span>
+              <span><span style={{ color: 'var(--mc-text-4)' }}>Spread:</span> <strong style={{ color: spreadPct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{spreadPct >= 0 ? '+' : ''}{spreadPct.toFixed(2)}%</strong></span>
             )}
             {annualizedPct != null && (
-              <span title={`Assumes ${daysToCloseGuess}d close`}><span style={{ color: '#6B7A8D' }}>Ann:</span> <strong style={{ color: annualizedPct >= 0 ? '#22D3EE' : '#EF4444' }}>{annualizedPct >= 0 ? '+' : ''}{annualizedPct.toFixed(1)}%/yr</strong></span>
+              <span title={`Assumes ${daysToCloseGuess}d close`}><span style={{ color: 'var(--mc-text-4)' }}>Ann:</span> <strong style={{ color: annualizedPct >= 0 ? 'var(--mc-cyan)' : 'var(--mc-bearish)' }}>{annualizedPct >= 0 ? '+' : ''}{annualizedPct.toFixed(1)}%/yr</strong></span>
             )}
             {/* PATCH 0447 IMP-2 — Break-price downside. When the deal fails,
                 the stock typically reverts to its pre-announcement standalone
@@ -1469,12 +1469,12 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
               const breakLoss = ((breakPrice - cmp) / cmp) * 100;
               return (
                 <span title={`If deal fails: stock typically reverts to standalone value ≈ ₹${breakPrice.toFixed(2)} (estimated -${Math.abs(breakLoss).toFixed(1)}% from CMP). Heuristic = CMP − 1.5× current spread.`}
-                  style={{ color: '#6B7A8D' }}>
-                  Break: <strong style={{ color: '#EF4444' }}>{breakLoss.toFixed(1)}%</strong>
+                  style={{ color: 'var(--mc-text-4)' }}>
+                  Break: <strong style={{ color: 'var(--mc-bearish)' }}>{breakLoss.toFixed(1)}%</strong>
                 </span>
               );
             })()}
-            <span style={{ color: '#6B7A8D' }}>~{daysToCloseGuess}d est. close</span>
+            <span style={{ color: 'var(--mc-text-4)' }}>~{daysToCloseGuess}d est. close</span>
           </div>
         )}
         {/* PATCH 0353 — Institutional analytics chip strip. Always rendered
@@ -1502,21 +1502,21 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
           )}
           {!analytics.expectedIRR && analytics.hasPlaybook && (
             <span title="Non-arb event — using catalyst-score as EV proxy"
-              style={{ color: '#94A3B8', fontWeight: 700, padding: '1px 6px', borderRadius: 3,
+              style={{ color: 'var(--mc-text-3)', fontWeight: 700, padding: '1px 6px', borderRadius: 3,
                 border: '1px solid #94A3B840', backgroundColor: '#94A3B812' }}>
               EV n/a (non-arb)
             </span>
           )}
         </div>
         {!expanded && (
-          <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 4, fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ fontSize: 11, color: 'var(--mc-text-3)', marginTop: 4, fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ flex: 1 }}>{ev.tradability_rationale}</span>
             {!rejection && !showRejectInput && (
               <span
                 role="button"
                 onClick={(e) => { e.stopPropagation(); setShowRejectInput(true); }}
                 title="Mark as Monitor — defers acting on this event without deleting it"
-                style={{ fontSize: 10, padding: '1px 7px', borderRadius: 3, border: '1px solid #94A3B860', color: '#94A3B8', cursor: 'pointer', fontWeight: 700, letterSpacing: '0.4px' }}>
+                style={{ fontSize: 10, padding: '1px 7px', borderRadius: 3, border: '1px solid #94A3B860', color: 'var(--mc-text-3)', cursor: 'pointer', fontWeight: 700, letterSpacing: '0.4px' }}>
                 ◯ MONITOR
               </span>
             )}
@@ -1532,77 +1532,77 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
             const pb = getPlaybook(ev.event_type);
             if (!pb) return null;
             return (
-              <div style={{ backgroundColor: '#0A1422', border: '1px solid #1A2840', borderLeft: '3px solid #8B5CF6', borderRadius: 6, padding: '10px 14px' }}>
+              <div style={{ backgroundColor: '#0A1422', border: '1px solid var(--mc-bg-4)', borderLeft: '3px solid #8B5CF6', borderRadius: 6, padding: '10px 14px' }}>
                 <div style={{ fontSize: 12, fontWeight: 800, color: '#8B5CF6', letterSpacing: '0.4px', marginBottom: 8 }}>
                   📐 PLAYBOOK — {pb.label}
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8, marginBottom: 8 }}>
-                  <div style={{ backgroundColor: '#0D1623', padding: '6px 10px', borderRadius: 4 }}>
-                    <div style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.5px' }}>AVG CLOSE</div>
-                    <div style={{ fontSize: 13, fontWeight: 800, color: '#E6EDF3' }}>{pb.avg_close_days}d</div>
-                    <div style={{ fontSize: 9, color: '#6B7A8D' }}>p25–p75: {pb.close_days_range[0]}–{pb.close_days_range[1]}d</div>
+                  <div style={{ backgroundColor: 'var(--mc-bg-1)', padding: '6px 10px', borderRadius: 4 }}>
+                    <div style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.5px' }}>AVG CLOSE</div>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-text-1)' }}>{pb.avg_close_days}d</div>
+                    <div style={{ fontSize: 9, color: 'var(--mc-text-4)' }}>p25–p75: {pb.close_days_range[0]}–{pb.close_days_range[1]}d</div>
                   </div>
-                  <div style={{ backgroundColor: '#0D1623', padding: '6px 10px', borderRadius: 4 }}>
-                    <div style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.5px' }}>SUCCESS RATE</div>
-                    <div style={{ fontSize: 13, fontWeight: 800, color: pb.success_rate_pct >= 90 ? '#10B981' : pb.success_rate_pct >= 75 ? '#FBBF24' : '#EF4444' }}>
+                  <div style={{ backgroundColor: 'var(--mc-bg-1)', padding: '6px 10px', borderRadius: 4 }}>
+                    <div style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.5px' }}>SUCCESS RATE</div>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: pb.success_rate_pct >= 90 ? 'var(--mc-bullish)' : pb.success_rate_pct >= 75 ? '#FBBF24' : 'var(--mc-bearish)' }}>
                       {pb.success_rate_pct}%
                     </div>
                   </div>
-                  <div style={{ backgroundColor: '#0D1623', padding: '6px 10px', borderRadius: 4 }}>
-                    <div style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.5px' }}>TYPICAL SPREAD</div>
-                    <div style={{ fontSize: 13, fontWeight: 800, color: '#22D3EE' }}>{pb.typical_spread_pct >= 0 ? '+' : ''}{pb.typical_spread_pct}%</div>
+                  <div style={{ backgroundColor: 'var(--mc-bg-1)', padding: '6px 10px', borderRadius: 4 }}>
+                    <div style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.5px' }}>TYPICAL SPREAD</div>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-cyan)' }}>{pb.typical_spread_pct >= 0 ? '+' : ''}{pb.typical_spread_pct}%</div>
                   </div>
-                  <div style={{ backgroundColor: '#0D1623', padding: '6px 10px', borderRadius: 4 }}>
-                    <div style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.5px' }}>RETAIL OVERHANG</div>
-                    <div style={{ fontSize: 13, fontWeight: 800, color: pb.retail_overhang === 'YES' ? '#10B981' : pb.retail_overhang === 'SOMETIMES' ? '#FBBF24' : '#6B7A8D' }}>
+                  <div style={{ backgroundColor: 'var(--mc-bg-1)', padding: '6px 10px', borderRadius: 4 }}>
+                    <div style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.5px' }}>RETAIL OVERHANG</div>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: pb.retail_overhang === 'YES' ? 'var(--mc-bullish)' : pb.retail_overhang === 'SOMETIMES' ? '#FBBF24' : 'var(--mc-text-4)' }}>
                       {pb.retail_overhang === 'YES' ? 'YES — arb capture' : pb.retail_overhang}
                     </div>
                   </div>
                 </div>
                 <div style={{ fontSize: 11, color: '#C9D4E0', lineHeight: 1.5, marginBottom: 6 }}>
-                  <strong style={{ color: '#22D3EE' }}>Tactics:</strong> {pb.tactics}
+                  <strong style={{ color: 'var(--mc-cyan)' }}>Tactics:</strong> {pb.tactics}
                 </div>
                 {pb.failure_modes.length > 0 && (
-                  <div style={{ fontSize: 10, color: '#94A3B8', lineHeight: 1.5 }}>
-                    <strong style={{ color: '#EF4444' }}>Failure modes:</strong> {pb.failure_modes.join(' · ')}
+                  <div style={{ fontSize: 10, color: 'var(--mc-text-3)', lineHeight: 1.5 }}>
+                    <strong style={{ color: 'var(--mc-bearish)' }}>Failure modes:</strong> {pb.failure_modes.join(' · ')}
                   </div>
                 )}
               </div>
             );
           })()}
           {/* Why tradable */}
-          <div style={{ backgroundColor: '#0A1422', border: '1px solid #1A2840', borderRadius: 6, padding: '10px 14px' }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px', marginBottom: 6 }}>WHY TRADABLE</div>
+          <div style={{ backgroundColor: '#0A1422', border: '1px solid var(--mc-bg-4)', borderRadius: 6, padding: '10px 14px' }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.4px', marginBottom: 6 }}>WHY TRADABLE</div>
             <div style={{ fontSize: 11.5, color: '#C9D4E0', lineHeight: 1.6 }}>
-              <p style={{ margin: '0 0 6px' }}><strong style={{ color: '#10B981' }}>What happened:</strong> {ev.why_tradable.what_happened}</p>
+              <p style={{ margin: '0 0 6px' }}><strong style={{ color: 'var(--mc-bullish)' }}>What happened:</strong> {ev.why_tradable.what_happened}</p>
               <p style={{ margin: '0 0 6px' }}><strong style={{ color: '#FBBF24' }}>What matters:</strong> {ev.why_tradable.what_matters}</p>
-              <p style={{ margin: '0 0 6px' }}><strong style={{ color: '#22D3EE' }}>What to watch:</strong> {ev.why_tradable.what_to_watch}</p>
-              <p style={{ margin: 0 }}><strong style={{ color: '#EF4444' }}>What breaks thesis:</strong> {ev.why_tradable.what_breaks_thesis}</p>
+              <p style={{ margin: '0 0 6px' }}><strong style={{ color: 'var(--mc-cyan)' }}>What to watch:</strong> {ev.why_tradable.what_to_watch}</p>
+              <p style={{ margin: 0 }}><strong style={{ color: 'var(--mc-bearish)' }}>What breaks thesis:</strong> {ev.why_tradable.what_breaks_thesis}</p>
             </div>
           </div>
           {/* Catalyst score breakdown */}
-          <div style={{ backgroundColor: '#0A1422', border: '1px solid #1A2840', borderRadius: 6, padding: '10px 14px' }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px', marginBottom: 6 }}>
+          <div style={{ backgroundColor: '#0A1422', border: '1px solid var(--mc-bg-4)', borderRadius: 6, padding: '10px 14px' }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.4px', marginBottom: 6 }}>
               CATALYST SCORE — raw {ev.catalyst_score.raw_score} · decay-adjusted {ev.catalyst_score.decay_score.toFixed(1)}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 11 }}>
               {/* AUDIT_100 #8 — stable key (label) instead of array index. */}
               {ev.catalyst_score.components.map((c) => (
-                <div key={`${c.label}-${c.pts}`} style={{ color: c.pts > 0 ? '#10B981' : '#EF4444' }}>{c.label}</div>
+                <div key={`${c.label}-${c.pts}`} style={{ color: c.pts > 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{c.label}</div>
               ))}
             </div>
           </div>
           {/* Filings list */}
           {ev.filings.length > 1 && (
-            <div style={{ backgroundColor: '#0A1422', border: '1px solid #1A2840', borderRadius: 6, padding: '10px 14px' }}>
-              <div style={{ fontSize: 12, fontWeight: 800, color: '#94A3B8', letterSpacing: '0.4px', marginBottom: 6 }}>ALL FILINGS ({ev.filings.length})</div>
+            <div style={{ backgroundColor: '#0A1422', border: '1px solid var(--mc-bg-4)', borderRadius: 6, padding: '10px 14px' }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-text-3)', letterSpacing: '0.4px', marginBottom: 6 }}>ALL FILINGS ({ev.filings.length})</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {ev.filings.map((f, i) => (
                   <a key={f.id} href={f.link} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: '#C9D4E0', textDecoration: 'none', display: 'flex', gap: 6, alignItems: 'baseline' }}>
-                    <span style={{ color: '#6B7A8D', minWidth: 16 }}>{i + 1}.</span>
+                    <span style={{ color: 'var(--mc-text-4)', minWidth: 16 }}>{i + 1}.</span>
                     <span style={{ flex: 1 }}>{f.title}</span>
-                    <span style={{ color: '#6B7A8D', fontSize: 10 }}>{f.source} · {f.age_hours < 24 ? `${f.age_hours}h` : `${Math.round(f.age_hours / 24)}d`}</span>
-                    <ExternalLink style={{ width: 10, height: 10, color: '#6B7A8D' }} />
+                    <span style={{ color: 'var(--mc-text-4)', fontSize: 10 }}>{f.source} · {f.age_hours < 24 ? `${f.age_hours}h` : `${Math.round(f.age_hours / 24)}d`}</span>
+                    <ExternalLink style={{ width: 10, height: 10, color: 'var(--mc-text-4)' }} />
                   </a>
                 ))}
               </div>
@@ -1615,12 +1615,12 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
 }
 
 function AllSituations({ isLoading, error, tier1, tier2, archive }: { isLoading: boolean; error: any; tier1: ScoredEvent[]; tier2: ScoredEvent[]; archive: ScoredEvent[] }) {
-  if (isLoading) return <div style={{ color: '#6B7A8D', fontSize: 12, padding: 14 }}>Loading live RSS feeds…</div>;
+  if (isLoading) return <div style={{ color: 'var(--mc-text-4)', fontSize: 12, padding: 14 }}>Loading live RSS feeds…</div>;
   // PATCH 0714 — surface error message + retry hint so users can diagnose.
   if (error) {
     const msg = (error as any)?.message || String(error || 'unknown');
     return (
-      <div style={{ color: '#EF4444', fontSize: 12, padding: 14, lineHeight: 1.5 }}>
+      <div style={{ color: 'var(--mc-bearish)', fontSize: 12, padding: 14, lineHeight: 1.5 }}>
         ⚠ Failed to load corporate-action feed: <code style={{ color: '#FCA5A5' }}>{msg}</code>.
         <div style={{ color: '#8A95A3', marginTop: 4 }}>Try ↻ Refresh now or check System Status.</div>
       </div>
@@ -1629,8 +1629,8 @@ function AllSituations({ isLoading, error, tier1, tier2, archive }: { isLoading:
 
   if (!tier1.length && !tier2.length && !archive.length) {
     return (
-      <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: 10, padding: 24, color: '#6B7A8D', fontSize: 13, textAlign: 'center' }}>
-        <AlertTriangle style={{ width: 20, height: 20, marginBottom: 8, color: '#F59E0B' }} />
+      <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderRadius: 10, padding: 24, color: 'var(--mc-text-4)', fontSize: 13, textAlign: 'center' }}>
+        <AlertTriangle style={{ width: 20, height: 20, marginBottom: 8, color: 'var(--mc-warn)' }} />
         <div>No corporate-action events in the live RSS pull yet.</div>
         <div style={{ fontSize: 11, marginTop: 4 }}>The /api/v1/special-situations/feed endpoint refreshes every 30 min — stories will surface as classifiers fire on incoming RSS items.</div>
       </div>
@@ -1654,12 +1654,12 @@ function TierSection({ meta, events, defaultCollapsed }: { meta: { label: string
         <div style={{ fontSize: 14, fontWeight: 800, color: meta.color, letterSpacing: '0.4px' }}>
           {collapsed ? '▸' : '▾'} {meta.label} · {events.length}
         </div>
-        <div style={{ fontSize: 11, color: '#6B7A8D', marginTop: 2 }}>{meta.tagline}</div>
+        <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginTop: 2 }}>{meta.tagline}</div>
       </button>
       {!collapsed && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {events.slice(0, 50).map((e) => <EventRow key={e.id} ev={e} />)}
-          {events.length > 50 && <div style={{ fontSize: 11, color: '#6B7A8D', textAlign: 'center' }}>Showing 50 of {events.length}.</div>}
+          {events.length > 50 && <div style={{ fontSize: 11, color: 'var(--mc-text-4)', textAlign: 'center' }}>Showing 50 of {events.length}.</div>}
         </div>
       )}
     </div>
@@ -1671,12 +1671,12 @@ function EventRow({ ev }: { ev: ScoredEvent }) {
   const fresh = ev.freshness === 'TODAY' || ev.freshness === 'THIS_WEEK';
   const ageLabel = ev.age_hours < 24 ? `${ev.age_hours}h` : `${Math.round(ev.age_hours / 24)}d`;
   return (
-    <a href={ev.link} target="_blank" rel="noopener noreferrer" style={{ display: 'block', backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderLeft: `3px solid ${meta.color}`, borderRadius: 10, padding: '12px 16px', textDecoration: 'none', color: 'inherit' }}>
+    <a href={ev.link} target="_blank" rel="noopener noreferrer" style={{ display: 'block', backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderLeft: `3px solid ${meta.color}`, borderRadius: 10, padding: '12px 16px', textDecoration: 'none', color: 'inherit' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
         <span style={{ fontSize: 11, fontWeight: 800, color: meta.color, padding: '2px 8px', borderRadius: 4, backgroundColor: `${meta.color}18`, border: `1px solid ${meta.color}40` }}>
           {meta.icon} {meta.label}
         </span>
-        <span style={{ fontSize: 11, fontWeight: 700, color: ev.region === 'IN' ? '#FBBF24' : '#22D3EE' }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: ev.region === 'IN' ? '#FBBF24' : 'var(--mc-cyan)' }}>
           {ev.region === 'IN' ? '🇮🇳' : ev.region === 'US' ? '🇺🇸' : '🌐'}
         </span>
         {ev.tickers.slice(0, 5).map((t) => (
@@ -1689,15 +1689,15 @@ function EventRow({ ev }: { ev: ScoredEvent }) {
             🆕 {ageLabel}
           </span>
         )}
-        <span style={{ fontSize: 10, color: '#6B7A8D' }}>Score {ev.score}/100</span>
-        <span style={{ marginLeft: 'auto', fontSize: 11, color: '#6B7A8D', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+        <span style={{ fontSize: 10, color: 'var(--mc-text-4)' }}>Score {ev.score}/100</span>
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--mc-text-4)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
           {ev.source}
           <ExternalLink style={{ width: 11, height: 11 }} />
         </span>
       </div>
-      <div style={{ fontSize: 13, color: '#E6EDF3', fontWeight: 500, lineHeight: 1.5 }}>{ev.title}</div>
+      <div style={{ fontSize: 13, color: 'var(--mc-text-1)', fontWeight: 500, lineHeight: 1.5 }}>{ev.title}</div>
       {ev.description && (
-        <div style={{ fontSize: 11, color: '#6B7A8D', lineHeight: 1.55, marginTop: 6 }}>
+        <div style={{ fontSize: 11, color: 'var(--mc-text-4)', lineHeight: 1.55, marginTop: 6 }}>
           {ev.description.slice(0, 200)}{ev.description.length > 200 ? '…' : ''}
         </div>
       )}
@@ -1740,11 +1740,11 @@ function TimingRules() {
 
 function RuleCard({ title, color, entries }: { title: string; color: string; entries: Array<{ phase: string; text: string }> }) {
   return (
-    <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderLeft: `3px solid ${color}`, borderRadius: 12, padding: '14px 18px' }}>
+    <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderLeft: `3px solid ${color}`, borderRadius: 12, padding: '14px 18px' }}>
       <div style={{ fontSize: 14, fontWeight: 800, color, letterSpacing: '0.4px', marginBottom: 12 }}>{title}</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {entries.map((e, i) => (
-          <div key={i} style={{ backgroundColor: '#0A1422', border: '1px solid #1A2840', borderRadius: 6, padding: '10px 14px' }}>
+          <div key={i} style={{ backgroundColor: '#0A1422', border: '1px solid var(--mc-bg-4)', borderRadius: 6, padding: '10px 14px' }}>
             <div style={{ fontSize: 12, fontWeight: 800, color: '#FBBF24', letterSpacing: '0.4px', marginBottom: 4 }}>{e.phase}</div>
             <div style={{ fontSize: 12, color: '#C9D4E0', lineHeight: 1.55 }}>{e.text}</div>
           </div>
@@ -1761,8 +1761,8 @@ function RuleCard({ title, color, entries }: { title: string; color: string; ent
 function Playbook() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderLeft: '3px solid #22D3EE', borderRadius: 12, padding: '14px 18px' }}>
-        <div style={{ fontSize: 14, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px', marginBottom: 14 }}>Universal J-Curve — All Spin-offs / Demergers</div>
+      <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderLeft: '3px solid var(--mc-cyan)', borderRadius: 12, padding: '14px 18px' }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.4px', marginBottom: 14 }}>Universal J-Curve — All Spin-offs / Demergers</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8 }}>
           <JCell phase="Day 1 – Month 3"  ret="−8 to −15%"        note="Forced selling · Index exclusion · ETF dumps" color="#EF4444" />
           <JCell phase="Month 3 – 9"      ret="Recovery"           note="Management refocuses · Cost cuts visible · Analyst coverage starts" color="#F59E0B" />
@@ -1770,7 +1770,7 @@ function Playbook() {
           <JCell phase="Month 24 – 36"    ret="+28% above market"  note="Peak rerating · M&A premium possible" color="#10B981" />
           <JCell phase="Month 36+"        ret="Diverges"           note="Winners compound · Losers plateau · Review thesis" color="#94A3B8" />
         </div>
-        <div style={{ marginTop: 10, fontSize: 11, color: '#6B7A8D', lineHeight: 1.5 }}>
+        <div style={{ marginTop: 10, fontSize: 11, color: 'var(--mc-text-4)', lineHeight: 1.5 }}>
           Source: Purdue 36-year spin-off study (1965-2000) + 2007-2017 replication study (249 spin-offs). Average spin-off outperforms parent +22% Y1, +28.5% Y3. But 38% deliver negative returns Y1 — selection matters.
         </div>
       </div>
@@ -1802,23 +1802,23 @@ function JCell({ phase, ret, note, color }: { phase: string; ret: string; note: 
     <div style={{ backgroundColor: '#0A1422', border: `1px solid ${color}40`, borderRadius: 6, padding: '10px 12px' }}>
       <div style={{ fontSize: 11, fontWeight: 800, color: '#FBBF24', letterSpacing: '0.4px', marginBottom: 4 }}>{phase}</div>
       <div style={{ fontSize: 14, fontWeight: 800, color, marginBottom: 4 }}>{ret}</div>
-      <div style={{ fontSize: 10.5, color: '#6B7A8D', lineHeight: 1.45 }}>{note}</div>
+      <div style={{ fontSize: 10.5, color: 'var(--mc-text-4)', lineHeight: 1.45 }}>{note}</div>
     </div>
   );
 }
 
 function PGrid({ title, color, items }: { title: string; color: string; items: Array<{ sym: string; label: string; text: string }> }) {
   return (
-    <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderLeft: `3px solid ${color}`, borderRadius: 12, padding: '14px 18px' }}>
+    <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderLeft: `3px solid ${color}`, borderRadius: 12, padding: '14px 18px' }}>
       <div style={{ fontSize: 14, fontWeight: 800, color, letterSpacing: '0.4px', marginBottom: 12 }}>{title}</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {items.map((it, i) => (
-          <div key={i} style={{ backgroundColor: '#0A1422', border: '1px solid #1A2840', borderRadius: 6, padding: '10px 14px' }}>
+          <div key={i} style={{ backgroundColor: '#0A1422', border: '1px solid var(--mc-bg-4)', borderRadius: 6, padding: '10px 14px' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
               <span style={{ color, fontWeight: 800, fontSize: 14 }}>{it.sym}</span>
-              <span style={{ fontSize: 13, fontWeight: 700, color: '#E6EDF3' }}>{it.label}</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--mc-text-1)' }}>{it.label}</span>
             </div>
-            <div style={{ fontSize: 11.5, color: '#94A3B8', lineHeight: 1.55, paddingLeft: 22 }}>{it.text}</div>
+            <div style={{ fontSize: 11.5, color: 'var(--mc-text-3)', lineHeight: 1.55, paddingLeft: 22 }}>{it.text}</div>
           </div>
         ))}
       </div>
@@ -1912,18 +1912,18 @@ function SimpleArbCalc() {
     probability: probability / 100,
   }), [offerPrice, spotPrice, closeDate, probability]);
   return (
-    <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderLeft: '3px solid #22D3EE', borderRadius: 12, padding: '14px 18px' }}>
-      <div style={{ fontSize: 14, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px', marginBottom: 12 }}>📐 SIMPLE MERGER-ARB CALCULATOR</div>
+    <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderLeft: '3px solid var(--mc-cyan)', borderRadius: 12, padding: '14px 18px' }}>
+      <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.4px', marginBottom: 12 }}>📐 SIMPLE MERGER-ARB CALCULATOR</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 8, marginBottom: 14 }}>
         <NumIn label="Offer price" value={offerPrice} onChange={setOfferPrice} step={1} />
         <NumIn label="Spot price (CMP)" value={spotPrice} onChange={setSpotPrice} step={1} />
         <div>
-          <div style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.5px', marginBottom: 4 }}>EXPECTED CLOSE</div>
+          <div style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.5px', marginBottom: 4 }}>EXPECTED CLOSE</div>
           <input
             type="date"
             value={closeDate}
             onChange={(e) => setCloseDate(e.target.value)}
-            style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid #1E2D45', backgroundColor: '#060E1A', color: '#E6EDF3', fontSize: 13 }}
+            style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid var(--mc-border-1)', backgroundColor: '#060E1A', color: 'var(--mc-text-1)', fontSize: 13 }}
           />
         </div>
         <NumIn label="Probability %" value={probability} onChange={setProbability} step={5} />
@@ -1938,7 +1938,7 @@ function SimpleArbCalc() {
           <KV label="Tightness" value={m.tightness} color={m.tightnessColor} />
         </div>
       ) : (
-        <div style={{ fontSize: 12, color: '#6B7A8D' }}>Provide valid offer, spot, and close date.</div>
+        <div style={{ fontSize: 12, color: 'var(--mc-text-4)' }}>Provide valid offer, spot, and close date.</div>
       )}
     </div>
   );
@@ -1960,7 +1960,7 @@ function AcceptanceCalc() {
   const m = useMemo(() => computeAcceptance({ totalShares, buybackShares, smallReservePct, buybackPrice, cmp, promoterStakePct, promoterPct, publicPct, smallPositionINR, largePositionINR, monthsToComplete }), [totalShares, buybackShares, smallReservePct, buybackPrice, cmp, promoterStakePct, promoterPct, publicPct, smallPositionINR, largePositionINR, monthsToComplete]);
 
   return (
-    <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderLeft: '3px solid #FBBF24', borderRadius: 12, padding: '14px 18px' }}>
+    <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderLeft: '3px solid #FBBF24', borderRadius: 12, padding: '14px 18px' }}>
       <div style={{ fontSize: 14, fontWeight: 800, color: '#FBBF24', letterSpacing: '0.4px', marginBottom: 12 }}>📊 INDIAN TENDER BUYBACK CALCULATOR</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 8, marginBottom: 14 }}>
         <NumIn label="Total shares outstanding" value={totalShares} onChange={setTotalShares} />
@@ -2003,7 +2003,7 @@ function FloatingCalc() {
   const [targetCmp, setTargetCmp] = useState(489);
   const m = useMemo(() => computeFloating({ statedPrice, cashPct, stockSharesPerTarget, acquirerCmp, targetCmp }), [statedPrice, cashPct, stockSharesPerTarget, acquirerCmp, targetCmp]);
   return (
-    <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderLeft: '3px solid #FBBF24', borderRadius: 12, padding: '14px 18px' }}>
+    <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderLeft: '3px solid #FBBF24', borderRadius: 12, padding: '14px 18px' }}>
       <div style={{ fontSize: 14, fontWeight: 800, color: '#FBBF24', letterSpacing: '0.4px', marginBottom: 12 }}>💰 FLOATING-DEAL CALCULATOR (Stock + Cash Merger Arb)</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 8, marginBottom: 14 }}>
         <NumIn label="Stated price ($)" value={statedPrice} onChange={setStatedPrice} step={1} />
@@ -2026,8 +2026,8 @@ function FloatingCalc() {
 function NumIn({ label, value, onChange, step }: { label: string; value: number; onChange: (v: number) => void; step?: number }) {
   return (
     <div>
-      <div style={{ fontSize: 10, color: '#6B7A8D', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 3 }}>{label}</div>
-      <input type="number" value={value} step={step ?? 'any'} onChange={(e) => onChange(Number(e.target.value))} style={{ width: '100%', padding: '6px 10px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, border: '1px solid #1A2840', backgroundColor: '#0A1422', color: '#E6EDF3', borderRadius: 4, outline: 'none' }} />
+      <div style={{ fontSize: 10, color: 'var(--mc-text-4)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 3 }}>{label}</div>
+      <input type="number" value={value} step={step ?? 'any'} onChange={(e) => onChange(Number(e.target.value))} style={{ width: '100%', padding: '6px 10px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, border: '1px solid var(--mc-bg-4)', backgroundColor: '#0A1422', color: 'var(--mc-text-1)', borderRadius: 4, outline: 'none' }} />
     </div>
   );
 }
@@ -2040,9 +2040,9 @@ function ResultCard({ title, color, rows }: { title: string; color: string; rows
         <tbody>
           {rows.map(([k, v]) => (
             // AUDIT_100 #8 — stable key (label) so React doesn't snap state across rows
-            <tr key={String(k)} style={{ borderTop: '1px solid #1A2840' }}>
-              <td style={{ padding: '5px 0', color: '#94A3B8' }}>{k}</td>
-              <td style={{ padding: '5px 0', color: '#E6EDF3', textAlign: 'right', fontWeight: 700, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{v}</td>
+            <tr key={String(k)} style={{ borderTop: '1px solid var(--mc-bg-4)' }}>
+              <td style={{ padding: '5px 0', color: 'var(--mc-text-3)' }}>{k}</td>
+              <td style={{ padding: '5px 0', color: 'var(--mc-text-1)', textAlign: 'right', fontWeight: 700, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{v}</td>
             </tr>
           ))}
         </tbody>
@@ -2054,10 +2054,10 @@ function ResultCard({ title, color, rows }: { title: string; color: string; rows
 function KV({ label, value, hint, color, highlight }: { label: string; value: string; hint?: string; color?: string; highlight?: boolean }) {
   const c = color || '#E6EDF3';
   return (
-    <div style={{ backgroundColor: '#0A1422', border: highlight ? '1px solid #FBBF2440' : '1px solid #1A2840', borderRadius: 6, padding: '8px 12px' }}>
-      <div style={{ fontSize: 10, color: '#6B7A8D', textTransform: 'uppercase', letterSpacing: '0.4px' }}>{label}</div>
+    <div style={{ backgroundColor: '#0A1422', border: highlight ? '1px solid #FBBF2440' : '1px solid var(--mc-bg-4)', borderRadius: 6, padding: '8px 12px' }}>
+      <div style={{ fontSize: 10, color: 'var(--mc-text-4)', textTransform: 'uppercase', letterSpacing: '0.4px' }}>{label}</div>
       <div style={{ fontSize: 14, color: c, fontWeight: 800, marginTop: 3, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{value}</div>
-      {hint && <div style={{ fontSize: 10, color: '#6B7A8D', marginTop: 2, fontStyle: 'italic' }}>{hint}</div>}
+      {hint && <div style={{ fontSize: 10, color: 'var(--mc-text-4)', marginTop: 2, fontStyle: 'italic' }}>{hint}</div>}
     </div>
   );
 }
@@ -2067,8 +2067,8 @@ function KV({ label, value, hint, color, highlight }: { label: string; value: st
 // ═══════════════════════════════════════════════════════════════════════════
 
 function DiscoverScanner({ feed, isLoading, error, refetch, isFetching, region, setRegion }: { feed?: LiveFeedResp; isLoading: boolean; error: any; refetch: () => any; isFetching: boolean; region: 'ALL'|'IN'|'US'|'GLOBAL'; setRegion: (r: 'ALL'|'IN'|'US'|'GLOBAL') => void }) {
-  if (isLoading) return <div style={{ color: '#6B7A8D', fontSize: 12, padding: 14 }}>Loading…</div>;
-  if (error)     return <div style={{ color: '#EF4444', fontSize: 12, padding: 14 }}>Failed to load.</div>;
+  if (isLoading) return <div style={{ color: 'var(--mc-text-4)', fontSize: 12, padding: 14 }}>Loading…</div>;
+  if (error)     return <div style={{ color: 'var(--mc-bearish)', fontSize: 12, padding: 14 }}>Failed to load.</div>;
   if (!feed)     return null;
 
   const filterReg = (items: LiveFeedItem[]) =>
@@ -2076,12 +2076,12 @@ function DiscoverScanner({ feed, isLoading, error, refetch, isFetching, region, 
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderLeft: '3px solid #22D3EE', borderRadius: 12, padding: '14px 18px' }}>
-        <div style={{ fontSize: 14, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px', marginBottom: 8 }}>🔴 LIVE FEED — Raw Discovery</div>
-        <div style={{ fontSize: 11, color: '#6B7A8D', lineHeight: 1.55, marginBottom: 8 }}>
+      <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderLeft: '3px solid var(--mc-cyan)', borderRadius: 12, padding: '14px 18px' }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.4px', marginBottom: 8 }}>🔴 LIVE FEED — Raw Discovery</div>
+        <div style={{ fontSize: 11, color: 'var(--mc-text-4)', lineHeight: 1.55, marginBottom: 8 }}>
           14 RSS feeds (ET / Livemint / BS / NDTV / Reuters / MarketWatch / SeekingAlpha / CNBC / Yahoo) hit directly with corporate-action classifiers. {feed.total} matches · {feed.source_status.filter((s)=>s.ok).length}/{feed.source_status.length} sources OK.
         </div>
-        <button onClick={() => refetch()} disabled={isFetching} style={{ padding: '4px 12px', fontSize: 11, fontWeight: 700, borderRadius: 6, border: '1px solid #1A2840', backgroundColor: 'transparent', color: '#8A95A3', cursor: isFetching ? 'not-allowed' : 'pointer' }}>
+        <button onClick={() => refetch()} disabled={isFetching} style={{ padding: '4px 12px', fontSize: 11, fontWeight: 700, borderRadius: 6, border: '1px solid var(--mc-bg-4)', backgroundColor: 'transparent', color: '#8A95A3', cursor: isFetching ? 'not-allowed' : 'pointer' }}>
           {isFetching ? 'Refreshing…' : '↻ Refresh now'}
         </button>
       </div>
@@ -2092,22 +2092,22 @@ function DiscoverScanner({ feed, isLoading, error, refetch, isFetching, region, 
         const items = filterReg(feed.by_category[cat] || []);
         const meta = CAT_META[cat];
         return (
-          <div key={cat} style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderLeft: `3px solid ${meta.color}`, borderRadius: 12, padding: '12px 16px' }}>
+          <div key={cat} style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderLeft: `3px solid ${meta.color}`, borderRadius: 12, padding: '12px 16px' }}>
             <div style={{ fontSize: 13, fontWeight: 800, color: meta.color, letterSpacing: '0.4px', marginBottom: 8 }}>{meta.icon} {meta.label} · {items.length}</div>
             {items.length === 0 ? (
-              <div style={{ fontSize: 11, color: '#6B7A8D' }}>No matches{region !== 'ALL' && <> for {region}</>}.</div>
+              <div style={{ fontSize: 11, color: 'var(--mc-text-4)' }}>No matches{region !== 'ALL' && <> for {region}</>}.</div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {items.slice(0, 12).map((it) => (
-                  <a key={it.id} href={it.link} target="_blank" rel="noopener noreferrer" style={{ display: 'block', backgroundColor: '#0A1422', border: '1px solid #1A2840', borderRadius: 6, padding: '8px 12px', textDecoration: 'none', color: 'inherit' }}>
+                  <a key={it.id} href={it.link} target="_blank" rel="noopener noreferrer" style={{ display: 'block', backgroundColor: '#0A1422', border: '1px solid var(--mc-bg-4)', borderRadius: 6, padding: '8px 12px', textDecoration: 'none', color: 'inherit' }}>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 4 }}>
                       <span style={{ fontSize: 10 }}>{it.region === 'IN' ? '🇮🇳' : it.region === 'US' ? '🇺🇸' : '🌐'}</span>
                       {it.tickers.slice(0, 4).map((t) => (
                         <span key={t} style={{ fontSize: 10, fontWeight: 700, color: '#38A9E8', backgroundColor: '#0F7ABF20', border: '1px solid #0F7ABF40', padding: '1px 6px', borderRadius: 3, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{t}</span>
                       ))}
-                      <span style={{ marginLeft: 'auto', fontSize: 10, color: '#6B7A8D' }}>{it.source} · {it.age_hours < 24 ? `${it.age_hours}h` : `${Math.round(it.age_hours/24)}d`}</span>
+                      <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--mc-text-4)' }}>{it.source} · {it.age_hours < 24 ? `${it.age_hours}h` : `${Math.round(it.age_hours/24)}d`}</span>
                     </div>
-                    <div style={{ fontSize: 12, color: '#E6EDF3', lineHeight: 1.45 }}>{it.title}</div>
+                    <div style={{ fontSize: 12, color: 'var(--mc-text-1)', lineHeight: 1.45 }}>{it.title}</div>
                   </a>
                 ))}
               </div>
@@ -2117,11 +2117,11 @@ function DiscoverScanner({ feed, isLoading, error, refetch, isFetching, region, 
       })}
 
       {/* Source health */}
-      <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: 12, padding: '10px 14px' }}>
-        <div style={{ fontSize: 11, color: '#6B7A8D', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 6 }}>RSS source health</div>
+      <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderRadius: 12, padding: '10px 14px' }}>
+        <div style={{ fontSize: 11, color: 'var(--mc-text-4)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 6 }}>RSS source health</div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
           {feed.source_status.map((s) => (
-            <span key={s.name} title={s.ok ? `${s.items ?? 0} items` : 'Failed'} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 3, color: s.ok ? '#10B981' : '#EF4444', backgroundColor: s.ok ? '#10B98115' : '#EF444415', border: `1px solid ${s.ok ? '#10B98140' : '#EF444440'}` }}>
+            <span key={s.name} title={s.ok ? `${s.items ?? 0} items` : 'Failed'} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 3, color: s.ok ? 'var(--mc-bullish)' : 'var(--mc-bearish)', backgroundColor: s.ok ? '#10B98115' : '#EF444415', border: `1px solid ${s.ok ? '#10B98140' : '#EF444440'}` }}>
               {s.ok ? '✓' : '✗'} {s.name}{s.ok && s.items != null ? ` (${s.items})` : ''}
             </span>
           ))}
@@ -2312,7 +2312,7 @@ function SpecsitAnalytics({ events, isLoading }: { events: CanonicalEvent[]; isL
     return (
       <div style={{ padding: 30, textAlign: 'center', color: '#8A95A3' }}>
         <div style={{ fontSize: 36, marginBottom: 12 }}>📊</div>
-        <p style={{ margin: 0, fontWeight: 700, color: '#E6EDF3' }}>No events to analyze yet</p>
+        <p style={{ margin: 0, fontWeight: 700, color: 'var(--mc-text-1)' }}>No events to analyze yet</p>
         <p style={{ margin: '8px 0 0', fontSize: 12, lineHeight: 1.5, maxWidth: 480, marginLeft: 'auto', marginRight: 'auto' }}>
           The live RSS feed hasn't produced canonical events for analytics yet.
           Switch to "Discover (raw RSS)" to inspect source health.
@@ -2342,10 +2342,10 @@ function SpecsitAnalytics({ events, isLoading }: { events: CanonicalEvent[]; isL
         ].filter(Boolean).join('\n')}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+          <span style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-text-1)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
             {primaryTicker || (e.ev.target_name || '—')}
           </span>
-          <span style={{ fontSize: 9, color: '#94A3B8', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <span style={{ fontSize: 9, color: 'var(--mc-text-3)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {e.ev.target_name || ''}
           </span>
           <span style={{
@@ -2357,18 +2357,18 @@ function SpecsitAnalytics({ events, isLoading }: { events: CanonicalEvent[]; isL
           </span>
           {extra}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9, color: '#94A3B8' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9, color: 'var(--mc-text-3)' }}>
           <span>{e.ev.event_type?.replace(/_/g, ' ')}</span>
-          <span style={{ color: '#1A2540' }}>·</span>
+          <span style={{ color: 'var(--mc-bg-4)' }}>·</span>
           <span>{e.tier}</span>
           {e.catalyst && (
             <>
-              <span style={{ color: '#1A2540' }}>·</span>
-              <span style={{ color: '#F59E0B' }}>{e.catalyst.daysOut != null ? `${e.catalyst.daysOut}d` : 'catalyst pending'}</span>
+              <span style={{ color: 'var(--mc-bg-4)' }}>·</span>
+              <span style={{ color: 'var(--mc-warn)' }}>{e.catalyst.daysOut != null ? `${e.catalyst.daysOut}d` : 'catalyst pending'}</span>
             </>
           )}
-          <span style={{ color: '#1A2540' }}>·</span>
-          <span style={{ color: (e.sourceTier && TIER_VISUAL[e.sourceTier]?.tone.solid) || '#6B7A8D' }}>{e.sourceTier || 'UNK'}</span>
+          <span style={{ color: 'var(--mc-bg-4)' }}>·</span>
+          <span style={{ color: (e.sourceTier && TIER_VISUAL[e.sourceTier]?.tone.solid) || 'var(--mc-text-4)' }}>{e.sourceTier || 'UNK'}</span>
         </div>
       </a>
     );
@@ -2381,55 +2381,55 @@ function SpecsitAnalytics({ events, isLoading }: { events: CanonicalEvent[]; isL
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
         <div style={cardStyle}>
           <div style={labelStyle}>Total events</div>
-          <div style={{ fontSize: 22, fontWeight: 900, color: '#22D3EE', fontVariantNumeric: 'tabular-nums' }}>{enriched.length}</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--mc-cyan)', fontVariantNumeric: 'tabular-nums' }}>{enriched.length}</div>
         </div>
         <div style={cardStyle}>
           <div style={labelStyle}>Tradable</div>
-          <div style={{ fontSize: 22, fontWeight: 900, color: '#10B981', fontVariantNumeric: 'tabular-nums' }}>{tradableCount}</div>
-          <div style={{ fontSize: 10, color: '#6B7A8D' }}>{enriched.length ? Math.round((tradableCount / enriched.length) * 100) : 0}% pass quality bar</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--mc-bullish)', fontVariantNumeric: 'tabular-nums' }}>{tradableCount}</div>
+          <div style={{ fontSize: 10, color: 'var(--mc-text-4)' }}>{enriched.length ? Math.round((tradableCount / enriched.length) * 100) : 0}% pass quality bar</div>
         </div>
         <div style={cardStyle}>
           <div style={labelStyle}>Tier-1 hard catalyst</div>
-          <div style={{ fontSize: 22, fontWeight: 900, color: '#EF4444', fontVariantNumeric: 'tabular-nums' }}>{tier1Count}</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--mc-bearish)', fontVariantNumeric: 'tabular-nums' }}>{tier1Count}</div>
         </div>
         <div style={cardStyle}>
           <div style={labelStyle}>Avg probability</div>
-          <div style={{ fontSize: 22, fontWeight: 900, color: '#22D3EE', fontVariantNumeric: 'tabular-nums' }}>{avgProb}</div>
-          <div style={{ fontSize: 10, color: '#6B7A8D' }}>across all events</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--mc-cyan)', fontVariantNumeric: 'tabular-nums' }}>{avgProb}</div>
+          <div style={{ fontSize: 10, color: 'var(--mc-text-4)' }}>across all events</div>
         </div>
         <div style={cardStyle}>
           <div style={labelStyle}>Avg age</div>
-          <div style={{ fontSize: 22, fontWeight: 900, color: '#A78BFA', fontVariantNumeric: 'tabular-nums' }}>{avgAge}d</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--mc-state-persistent)', fontVariantNumeric: 'tabular-nums' }}>{avgAge}d</div>
         </div>
         <div style={cardStyle}>
           <div style={labelStyle}>Regions</div>
-          <div style={{ fontSize: 14, fontWeight: 800, color: '#E6EDF3' }}>🇮🇳 {inEvents} · 🇺🇸 {usEvents}</div>
+          <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--mc-text-1)' }}>🇮🇳 {inEvents} · 🇺🇸 {usEvents}</div>
         </div>
         <div style={cardStyle}>
           <div style={labelStyle}>Surface (post-filter)</div>
-          <div style={{ fontSize: 22, fontWeight: 900, color: '#10B981', fontVariantNumeric: 'tabular-nums' }}>{surface.length}</div>
-          <div style={{ fontSize: 10, color: '#6B7A8D' }}>{noiseDropped} filtered as noise</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--mc-bullish)', fontVariantNumeric: 'tabular-nums' }}>{surface.length}</div>
+          <div style={{ fontSize: 10, color: 'var(--mc-text-4)' }}>{noiseDropped} filtered as noise</div>
         </div>
       </div>
 
       {/* ── 🎯 BEST RISK/REWARD ─────────────────────────────────────────── */}
       <div style={{ ...cardStyle, borderColor: '#F59E0B40', background: 'linear-gradient(180deg, #F59E0B10 0%, transparent 100%)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-          <div style={{ fontSize: 13, color: '#F59E0B', fontWeight: 800, letterSpacing: '0.4px' }}>
+          <div style={{ fontSize: 13, color: 'var(--mc-warn)', fontWeight: 800, letterSpacing: '0.4px' }}>
             🎯 BEST RISK / REWARD ({ranked.slice(0, 12).length})
           </div>
-          <span style={{ fontSize: 10, color: '#F59E0B', background: '#F59E0B22', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>
+          <span style={{ fontSize: 10, color: 'var(--mc-warn)', background: '#F59E0B22', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>
             EV-RANKED
           </span>
         </div>
-        <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.5 }}>
+        <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 10, lineHeight: 1.5 }}>
           EV proxy = catalyst-score × probability × (365 ÷ days-to-catalyst). Higher = sooner + higher conviction.
           When a deal carries a real offer/spot spread, use the Acceptance / Deal Math tab to get the exact IRR.
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(310px, 1fr))', gap: 6 }}>
           {ranked.slice(0, 12).map((e, i) => (
             <EventRow key={e.ev.event_id + i} e={e} accent="#F59E0B" extra={
-              <span style={{ fontSize: 9, color: '#F59E0B', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+              <span style={{ fontSize: 9, color: 'var(--mc-warn)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
                 EV {Math.round(e.evScore)}
               </span>
             } />
@@ -2440,17 +2440,17 @@ function SpecsitAnalytics({ events, isLoading }: { events: CanonicalEvent[]; isL
       {/* ── ⚠ BREAK-RISK FLAGS ──────────────────────────────────────────── */}
       {breakRisk.length > 0 && (
         <div style={{ ...cardStyle, borderColor: '#EF444440' }}>
-          <div style={{ fontSize: 13, color: '#EF4444', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>
+          <div style={{ fontSize: 13, color: 'var(--mc-bearish)', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>
             ⚠ BREAK-RISK FLAGS ({breakRisk.length})
           </div>
-          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.5 }}>
+          <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 10, lineHeight: 1.5 }}>
             Low-probability deals (regulatory hurdles / rumor-tier / stalled past expected close).
             Spread-positive trades here often have asymmetric downside if the deal breaks — size accordingly.
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(310px, 1fr))', gap: 6 }}>
             {breakRisk.map((e, i) => (
               <EventRow key={e.ev.event_id + i} e={e} accent="#EF4444" extra={
-                <span style={{ fontSize: 9, color: '#EF4444', fontWeight: 800 }}>{e.prob.label}</span>
+                <span style={{ fontSize: 9, color: 'var(--mc-bearish)', fontWeight: 800 }}>{e.prob.label}</span>
               } />
             ))}
           </div>
@@ -2459,10 +2459,10 @@ function SpecsitAnalytics({ events, isLoading }: { events: CanonicalEvent[]; isL
 
       {/* ── 🕒 CATALYST TIMELINE ───────────────────────────────────────── */}
       <div style={cardStyle}>
-        <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>
+        <div style={{ fontSize: 13, color: 'var(--mc-cyan)', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>
           🕒 CATALYST TIMELINE
         </div>
-        <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.5 }}>
+        <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 10, lineHeight: 1.5 }}>
           Hard catalysts grouped by time-to-event. Earliest deals get scaled position first (capital efficiency).
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(290px, 1fr))', gap: 12 }}>
@@ -2471,10 +2471,10 @@ function SpecsitAnalytics({ events, isLoading }: { events: CanonicalEvent[]; isL
             { key: 'next60', label: 'NEXT 31-60 DAYS',  color: '#F59E0B', items: timeline.next60 },
             { key: 'next90', label: 'NEXT 61-90 DAYS',  color: '#22D3EE', items: timeline.next90 },
           ] as const).map((b) => (
-            <div key={b.key} style={{ border: '1px solid #1A2540', borderRadius: 4, padding: '8px 10px' }}>
+            <div key={b.key} style={{ border: '1px solid var(--mc-bg-4)', borderRadius: 4, padding: '8px 10px' }}>
               <div style={{ fontSize: 11, color: b.color, fontWeight: 800, marginBottom: 6 }}>{b.label} ({b.items.length})</div>
               {b.items.length === 0 ? (
-                <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic' }}>No catalysts in window.</div>
+                <div style={{ fontSize: 11, color: 'var(--mc-text-3)', fontStyle: 'italic' }}>No catalysts in window.</div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                   {b.items.slice(0, 6).map((e, i) => (
@@ -2489,10 +2489,10 @@ function SpecsitAnalytics({ events, isLoading }: { events: CanonicalEvent[]; isL
 
       {/* ── 📊 CATEGORY DISTRIBUTION ──────────────────────────────────── */}
       <div style={cardStyle}>
-        <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>
+        <div style={{ fontSize: 13, color: 'var(--mc-cyan)', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>
           📊 CATEGORY DISTRIBUTION
         </div>
-        <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10 }}>
+        <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 10 }}>
           What event types dominate today's pipeline. Tradable-share + avg probability per type tells you which buckets are quality vs noise.
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -2503,13 +2503,13 @@ function SpecsitAnalytics({ events, isLoading }: { events: CanonicalEvent[]; isL
             const tone = t.avgProb >= 70 ? '#10B981' : t.avgProb >= 50 ? '#22D3EE' : t.avgProb >= 35 ? '#F59E0B' : '#EF4444';
             return (
               <div key={t.type} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ fontSize: 11, color: '#6B7A8D', fontWeight: 700, minWidth: 170, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.type.replace(/_/g, ' ')}</span>
-                <span style={{ fontSize: 11, color: '#94A3B8', minWidth: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{t.count}</span>
-                <div style={{ flex: 1, height: 8, background: '#1A2540', borderRadius: 4, overflow: 'hidden' }}>
+                <span style={{ fontSize: 11, color: 'var(--mc-text-4)', fontWeight: 700, minWidth: 170, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.type.replace(/_/g, ' ')}</span>
+                <span style={{ fontSize: 11, color: 'var(--mc-text-3)', minWidth: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{t.count}</span>
+                <div style={{ flex: 1, height: 8, background: 'var(--mc-bg-4)', borderRadius: 4, overflow: 'hidden' }}>
                   <div style={{ width: `${widthPct}%`, height: '100%', background: tone }} />
                 </div>
                 <span style={{ fontSize: 10, color: tone, fontWeight: 700, minWidth: 70, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>P {t.avgProb}</span>
-                <span style={{ fontSize: 10, color: '#6B7A8D', minWidth: 90, textAlign: 'right' }}>{tradablePct}% tradable</span>
+                <span style={{ fontSize: 10, color: 'var(--mc-text-4)', minWidth: 90, textAlign: 'right' }}>{tradablePct}% tradable</span>
               </div>
             );
           })}
@@ -2518,10 +2518,10 @@ function SpecsitAnalytics({ events, isLoading }: { events: CanonicalEvent[]; isL
 
       {/* ── 🏛 SOURCE TIER MIX ─────────────────────────────────────────── */}
       <div style={cardStyle}>
-        <div style={{ fontSize: 13, color: '#A78BFA', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>
+        <div style={{ fontSize: 13, color: 'var(--mc-state-persistent)', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>
           🏛 SOURCE TIER MIX
         </div>
-        <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.5 }}>
+        <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 10, lineHeight: 1.5 }}>
           PRIMARY = exchange filings / regulators (highest confidence).
           AGGREGATOR = reprints + blogs (lowest). Institutional desks ignore aggregator-only events.
         </div>
@@ -2546,10 +2546,10 @@ function SpecsitAnalytics({ events, isLoading }: { events: CanonicalEvent[]; isL
 
       {/* ── 🎯 POSITION SIZING ─────────────────────────────────────────── */}
       <div style={cardStyle}>
-        <div style={{ fontSize: 13, color: '#10B981', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>
+        <div style={{ fontSize: 13, color: 'var(--mc-bullish)', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>
           🎯 POSITION SIZING SUGGESTIONS
         </div>
-        <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.5 }}>
+        <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 10, lineHeight: 1.5 }}>
           Allocation tier per event. <strong>Core</strong> = binding/approved with high probability.
           <strong> Tactical</strong> = mid-conviction with hard catalyst.
           <strong> Optionality</strong> = lottery-ticket / lower probability.
@@ -2567,16 +2567,16 @@ function SpecsitAnalytics({ events, isLoading }: { events: CanonicalEvent[]; isL
                 <span style={{ fontSize: 12, color: b.color, fontWeight: 800 }}>{b.label}</span>
                 <span style={{ fontSize: 11, color: b.color, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>({b.items.length})</span>
               </div>
-              <div style={{ fontSize: 10, color: '#6B7A8D', marginBottom: 8 }}>{b.hint}</div>
+              <div style={{ fontSize: 10, color: 'var(--mc-text-4)', marginBottom: 8 }}>{b.hint}</div>
               {b.items.length === 0 ? (
-                <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic' }}>—</div>
+                <div style={{ fontSize: 11, color: 'var(--mc-text-3)', fontStyle: 'italic' }}>—</div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                   {b.items.slice(0, 6).map((e, i) => (
                     <EventRow key={e.ev.event_id + i} e={e} accent={b.color} />
                   ))}
                   {b.items.length > 6 && (
-                    <div style={{ fontSize: 10, color: '#6B7A8D', fontStyle: 'italic' }}>+ {b.items.length - 6} more</div>
+                    <div style={{ fontSize: 10, color: 'var(--mc-text-4)', fontStyle: 'italic' }}>+ {b.items.length - 6} more</div>
                   )}
                 </div>
               )}
@@ -2588,10 +2588,10 @@ function SpecsitAnalytics({ events, isLoading }: { events: CanonicalEvent[]; isL
       {/* ── 🚫 QUALITY FILTER TRANSPARENCY ─────────────────────────────── */}
       {noiseDropped > 0 && (
         <div style={cardStyle}>
-          <div style={{ fontSize: 13, color: '#94A3B8', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>
+          <div style={{ fontSize: 13, color: 'var(--mc-text-3)', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>
             🚫 NOISE FILTERED ({noiseDropped})
           </div>
-          <div style={{ fontSize: 11, color: '#6B7A8D', lineHeight: 1.5 }}>
+          <div style={{ fontSize: 11, color: 'var(--mc-text-4)', lineHeight: 1.5 }}>
             Surfaced events ({surface.length}) pass: <strong>is_tradable</strong> + at-least-one-ticker
             + probability ≥ 35 + non-microcap-noise. The remaining {noiseDropped} events failed one or more
             gates — review them on the All Situations tab if you want to see what was filtered out.
@@ -2600,11 +2600,11 @@ function SpecsitAnalytics({ events, isLoading }: { events: CanonicalEvent[]; isL
       )}
 
       {/* ── 📚 INSTITUTIONAL GAPS (transparent disclosure) ─────────────── */}
-      <div style={{ ...cardStyle, borderColor: '#1A2540' }}>
-        <div style={{ fontSize: 12, color: '#6B7A8D', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 6 }}>
+      <div style={{ ...cardStyle, borderColor: 'var(--mc-bg-4)' }}>
+        <div style={{ fontSize: 12, color: 'var(--mc-text-4)', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 6 }}>
           📚 KNOWN INSTITUTIONAL GAPS (this view, today)
         </div>
-        <ul style={{ margin: 0, paddingLeft: 18, fontSize: 11, color: '#94A3B8', lineHeight: 1.6 }}>
+        <ul style={{ margin: 0, paddingLeft: 18, fontSize: 11, color: 'var(--mc-text-3)', lineHeight: 1.6 }}>
           <li><strong>No real spread engine yet</strong> — payloads don&apos;t carry offerPrice/spotPrice. Use the Acceptance/Deal Math tab to enter terms manually and get IRR / annualized return / break-downside.</li>
           <li><strong>No quantitative break-risk model</strong> — break-risk shown is rule-based (regulatory hurdles + age past expected close). Bayesian failure-rate per category needs the historical backtest layer.</li>
           <li><strong>No ADV / liquidity yet on this surface</strong> — &quot;Avoid&quot; bucket catches no-ticker / non-tradable. Per-row liquidity gating arrives when /api/market/quotes is wired into the events.</li>

@@ -66,11 +66,11 @@ export default function DegradedBanner({
       role="alert"
       style={{
         backgroundColor: '#F59E0B15',
-        border: '1px solid #F59E0B',
+        border: '1px solid var(--mc-warn)',
         borderRadius: 10,
         padding: '10px 14px',
         margin: '8px 0 12px',
-        color: '#F59E0B',
+        color: 'var(--mc-warn)',
         fontSize: 13,
         fontWeight: 600,
         display: 'flex',
@@ -85,9 +85,9 @@ export default function DegradedBanner({
         style={{
           marginLeft: 'auto',
           background: 'transparent',
-          border: '1px solid #F59E0B',
+          border: '1px solid var(--mc-warn)',
           borderRadius: 6,
-          color: '#F59E0B',
+          color: 'var(--mc-warn)',
           fontSize: 11,
           padding: '3px 8px',
           cursor: 'pointer',

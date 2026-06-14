@@ -272,11 +272,11 @@ export default function NewsAlertsPage() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span>Delete this alert rule?</span>
         <button onClick={() => { setRules(rs => rs.filter(r => r.id !== id)); toast.dismiss(t.id); toast.success('Rule deleted'); }}
-          style={{ padding: '4px 10px', background: '#EF4444', color: '#fff', borderRadius: 4, border: 0, cursor: 'pointer', fontSize: 12 }}>
+          style={{ padding: '4px 10px', background: 'var(--mc-bearish)', color: '#fff', borderRadius: 4, border: 0, cursor: 'pointer', fontSize: 12 }}>
           Delete
         </button>
         <button onClick={() => toast.dismiss(t.id)}
-          style={{ padding: '4px 10px', background: 'transparent', color: '#94A3B8', borderRadius: 4, border: '1px solid #2A3B4C', cursor: 'pointer', fontSize: 12 }}>
+          style={{ padding: '4px 10px', background: 'transparent', color: 'var(--mc-text-3)', borderRadius: 4, border: '1px solid #2A3B4C', cursor: 'pointer', fontSize: 12 }}>
           Cancel
         </button>
       </div>
@@ -436,11 +436,11 @@ export default function NewsAlertsPage() {
           <div style={{
             flex: '1 1 100%', marginTop: 6, padding: '10px 12px',
             backgroundColor: '#0A1422', borderRadius: 6,
-            border: '1px dashed #1E2D45', display: 'flex', gap: 10, alignItems: 'flex-start',
+            border: '1px dashed var(--mc-border-1)', display: 'flex', gap: 10, alignItems: 'flex-start',
           }}>
             <div style={{ fontSize: 18, lineHeight: 1 }}>🔔</div>
-            <div style={{ flex: 1, fontFamily: 'system-ui', color: '#E6EDF3' }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: '#94A3B8', letterSpacing: '0.3px', marginBottom: 2 }}>
+            <div style={{ flex: 1, fontFamily: 'system-ui', color: 'var(--mc-text-1)' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-text-3)', letterSpacing: '0.3px', marginBottom: 2 }}>
                 MARKET COCKPIT · just now (preview)
               </div>
               <div style={{ fontSize: 13, fontWeight: 700 }}>Alert: AI Infrastructure · HIGH severity</div>

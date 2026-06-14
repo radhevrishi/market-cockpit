@@ -11,6 +11,9 @@
 // ============================================================
 
 import React, { useMemo } from 'react';
+// PATCH 1079 — HANDOFF §6 wire-up: promoter-trajectory + asset-rich detail.
+import { PromoterStrip } from '@/components/promoter-trajectory';
+import { AssetRichDetailCard, type AssetRichStock } from '@/components/asset-rich-filter';
 
 // ── Concall data lookup (reads from localStorage; no parser dependency) ──
 // The capex-tracker stores transcripts at this key as
@@ -194,9 +197,14 @@ interface Props {
   name?: string;
   mbScore?: number;
   mbGrade?: string;
+  // PATCH 1079 — optional wire-ups from HANDOFF §6.
+  promoterHistory?: number[];   // chronological promoter-holding %
+  promoterLabels?: string[];    // matching labels (e.g. quarter strings)
+  pledgePct?: number;
+  assetRich?: AssetRichStock;   // when provided, AssetRichDetailCard renders
 }
 
-const MultibaggerStrips: React.FC<Props> = ({ fin, name, mbScore, mbGrade }) => {
+const MultibaggerStrips: React.FC<Props> = ({ fin, name, mbScore, mbGrade, promoterHistory, promoterLabels, pledgePct, assetRich }) => {
   // ─── Management Credibility — read transcripts from localStorage ───
   const concallData = useMemo(() => {
     if (typeof window === 'undefined' || !name) return null;
@@ -493,6 +501,21 @@ const MultibaggerStrips: React.FC<Props> = ({ fin, name, mbScore, mbGrade }) => 
           }))}
         />
       </div>
+
+      {/* PATCH 1079 — Promoter trajectory (HANDOFF §6 wire-up). Renders only when data passed. */}
+      {Array.isArray(promoterHistory) && promoterHistory.length > 0 && (
+        <div style={{ ...sectionStyle }}>
+          <SectionHead title="Promoter Holding" color={C.green} metric="%" sub="trajectory: rising = aligned, falling = exit risk" />
+          <PromoterStrip history={promoterHistory} labels={promoterLabels} pledgePct={pledgePct} />
+        </div>
+      )}
+
+      {/* PATCH 1079 — Asset-rich detail card (HANDOFF §6 wire-up). Renders only when data passed. */}
+      {assetRich && (
+        <div style={{ ...sectionStyle }}>
+          <AssetRichDetailCard stock={assetRich} title="Asset-Rich Verdict" />
+        </div>
+      )}
 
       {/* === QUALITY OF GROWTH === */}
       <div style={{ ...sectionStyle }}>

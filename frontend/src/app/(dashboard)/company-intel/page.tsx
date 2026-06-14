@@ -425,7 +425,7 @@ export default function CompanyIntelPage() {
                   <button onClick={submit} disabled={uploading || !ticker.trim() || text.trim().length < 30}
                     style={{
                       padding: '8px 16px', borderRadius: 6, border: 'none',
-                      background: uploading ? '#22D3EE60' : '#22D3EE',
+                      background: uploading ? '#22D3EE60' : 'var(--mc-cyan)',
                       color: '#000', fontWeight: 800, cursor: uploading ? 'wait' : 'pointer',
                       fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6,
                       opacity: (!ticker.trim() || text.trim().length < 30) ? 0.5 : 1,
@@ -440,7 +440,7 @@ export default function CompanyIntelPage() {
                   <div style={{
                     padding: '8px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600,
                     background: uploadResult.startsWith('✓') ? '#10B98118' : '#EF444418',
-                    color: uploadResult.startsWith('✓') ? '#10B981' : '#EF4444',
+                    color: uploadResult.startsWith('✓') ? 'var(--mc-bullish)' : 'var(--mc-bearish)',
                     border: `1px solid ${uploadResult.startsWith('✓') ? '#10B98140' : '#EF444440'}`,
                   }}>
                     {uploadResult}
@@ -483,13 +483,13 @@ export default function CompanyIntelPage() {
                   setup (current → target utilization) at the same time. */}
               {capacityPreview.length > 0 && (
                 <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px dashed ${BORDER}` }}>
-                  <h4 style={{ margin: '0 0 8px', fontSize: 13, color: '#10B981', fontWeight: 800, letterSpacing: '0.3px' }}>
+                  <h4 style={{ margin: '0 0 8px', fontSize: 13, color: 'var(--mc-bullish)', fontWeight: 800, letterSpacing: '0.3px' }}>
                     🏭 Capacity utilization ({capacityPreview.length} mention{capacityPreview.length === 1 ? '' : 's'})
                   </h4>
                   {(capacitySummary.avgCurrent !== undefined || capacitySummary.peakTarget !== undefined) && (
                     <div style={{ fontSize: 11, color: DIM, marginBottom: 8 }}>
-                      {capacitySummary.avgCurrent !== undefined && <>Avg current: <strong style={{ color: '#22D3EE' }}>{capacitySummary.avgCurrent}%</strong></>}
-                      {capacitySummary.peakTarget !== undefined && <> · Peak target: <strong style={{ color: '#10B981' }}>{capacitySummary.peakTarget}%</strong></>}
+                      {capacitySummary.avgCurrent !== undefined && <>Avg current: <strong style={{ color: 'var(--mc-cyan)' }}>{capacitySummary.avgCurrent}%</strong></>}
+                      {capacitySummary.peakTarget !== undefined && <> · Peak target: <strong style={{ color: 'var(--mc-bullish)' }}>{capacitySummary.peakTarget}%</strong></>}
                       {capacitySummary.longestHorizon && <> · By {capacitySummary.longestHorizon}</>}
                     </div>
                   )}
@@ -498,16 +498,16 @@ export default function CompanyIntelPage() {
                       <div key={i} title={m.raw}
                         style={{ padding: '7px 10px', borderLeft: '3px solid #10B98160', background: '#0A1422', borderRadius: 4 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
-                          <span style={{ fontSize: 13, color: '#22D3EE', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
+                          <span style={{ fontSize: 13, color: 'var(--mc-cyan)', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
                             {m.currentPct}%{m.targetPct ? ` → ${m.targetPct}%` : ''}
                           </span>
                           {m.plantOrSegment && (
-                            <span style={{ fontSize: 10, color: '#A78BFA', fontWeight: 700, padding: '1px 6px', borderRadius: 3, background: '#A78BFA15', border: '1px solid #A78BFA30' }}>
+                            <span style={{ fontSize: 10, color: 'var(--mc-state-persistent)', fontWeight: 700, padding: '1px 6px', borderRadius: 3, background: '#A78BFA15', border: '1px solid #A78BFA30' }}>
                               {m.plantOrSegment}
                             </span>
                           )}
                           {m.horizon && (
-                            <span style={{ fontSize: 10, color: '#F59E0B', fontWeight: 700, padding: '1px 6px', borderRadius: 3, background: '#F59E0B15', border: '1px solid #F59E0B30' }}>
+                            <span style={{ fontSize: 10, color: 'var(--mc-warn)', fontWeight: 700, padding: '1px 6px', borderRadius: 3, background: '#F59E0B15', border: '1px solid #F59E0B30' }}>
                               by {m.horizon}
                             </span>
                           )}
@@ -555,7 +555,7 @@ export default function CompanyIntelPage() {
                     setDrillCorpus(null);
                     loadIndex();
                   }}
-                  style={{ padding: '8px 12px', borderRadius: 6, border: `1px solid #EF444460`, background: '#EF444415', color: '#EF4444', fontSize: 12, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                  style={{ padding: '8px 12px', borderRadius: 6, border: `1px solid #EF444460`, background: '#EF444415', color: 'var(--mc-bearish)', fontSize: 12, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}
                 >
                   <Trash2 size={11} /> Reset
                 </button>
@@ -583,7 +583,7 @@ export default function CompanyIntelPage() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                       {drillCorpus.guidance.map((g, i) => (
                         <div key={i} style={{ padding: '8px 10px', borderLeft: '3px solid #10B98160', background: '#0A1422', borderRadius: 4 }}>
-                          <div style={{ fontSize: 10, color: '#10B981', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 3 }}>
+                          <div style={{ fontSize: 10, color: 'var(--mc-bullish)', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 3 }}>
                             {categoryLabel(g.category)}{g.year ? ` · ${g.year}` : ''}
                           </div>
                           <div style={{ fontSize: 13, color: TEXT, fontWeight: 600, marginBottom: 3 }}>{g.text}</div>

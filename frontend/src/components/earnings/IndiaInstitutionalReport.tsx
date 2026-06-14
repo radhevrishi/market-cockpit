@@ -212,7 +212,7 @@ export function IndiaInstitutionalReport({
 
       {/* ── STALENESS BANNER — red warning when source data is > 9 months old ── */}
       {ix.staleness?.isStale && (
-        <div style={{ marginTop: 14, marginBottom: 4, background: '#7f1d1d', border: '1px solid #ef4444', borderRadius: 6, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ marginTop: 14, marginBottom: 4, background: '#7f1d1d', border: '1px solid var(--mc-bearish)', borderRadius: 6, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontSize: 18 }}>⚠</span>
           <div style={{ flex: 1, color: '#fecaca', fontSize: 12, lineHeight: 1.5 }}>
             <strong style={{ color: '#fef2f2', fontSize: 13 }}>STALE DATA WARNING</strong>
@@ -313,7 +313,7 @@ export function IndiaInstitutionalReport({
                     style={{ fontSize: 11, color: MUTED, marginTop: 3, fontWeight: 500 }}
                     title={fwd.capex.evidenceQuote || ''}
                   >
-                    <span style={{ color: '#a78bfa' }}>⚙ Capex:</span>{' '}
+                    <span style={{ color: 'var(--mc-state-persistent)' }}>⚙ Capex:</span>{' '}
                     <strong style={{ color: fwd.capex.type === 'growth' ? GREEN : fwd.capex.type === 'maintenance' ? '#fbbf24' : '#fb923c' }}>
                       {fwd.capex.type.toUpperCase()}
                     </strong>
@@ -327,7 +327,7 @@ export function IndiaInstitutionalReport({
                     analyst sees the underlying signal mix at a glance. */}
                 {fwd.mixedReason && (fwd.mixedReason.positives.length > 0 || fwd.mixedReason.cautions.length > 0) && (
                   <div style={{ fontSize: 11, color: MUTED, marginTop: 3, fontWeight: 500, lineHeight: 1.55 }}>
-                    <span style={{ color: '#a78bfa' }}>↔ Why {fwd.label.toLowerCase()}:</span>{' '}
+                    <span style={{ color: 'var(--mc-state-persistent)' }}>↔ Why {fwd.label.toLowerCase()}:</span>{' '}
                     {fwd.mixedReason.positives.length > 0 && (
                       <span><span style={{ color: GREEN }}>⬆</span> {fwd.mixedReason.positives.join(' · ')}</span>
                     )}

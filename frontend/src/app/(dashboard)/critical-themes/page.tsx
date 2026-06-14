@@ -72,24 +72,24 @@ function ThemeBlock({ t, signal, dynamicRank }: { t: CriticalTheme; signal?: Liv
         <span style={{ fontSize: 10, color: accent, background: `${accent}22`, padding: '2px 8px', borderRadius: 3, fontWeight: 800, letterSpacing: '0.5px' }}>
           RANK #{dynamicRank}
         </span>
-        <span style={{ fontSize: 9, color: DIM, background: '#1A2540', padding: '2px 6px', borderRadius: 3, fontWeight: 700, letterSpacing: '0.3px' }}>
+        <span style={{ fontSize: 9, color: DIM, background: 'var(--mc-bg-4)', padding: '2px 6px', borderRadius: 3, fontWeight: 700, letterSpacing: '0.3px' }}>
           editorial #{t.priorityRank}
         </span>
         {signal && (
           <>
             <span title="News articles in last 30 days matching theme keywords"
-                  style={{ fontSize: 9, color: '#22D3EE', background: '#22D3EE15', padding: '2px 6px', borderRadius: 3, fontWeight: 700 }}>
+                  style={{ fontSize: 9, color: 'var(--mc-cyan)', background: '#22D3EE15', padding: '2px 6px', borderRadius: 3, fontWeight: 700 }}>
               📰 {signal.newsHeat} news
             </span>
             <span title="Avg leader-stock change last 7 days" style={{
-              fontSize: 9, color: signal.leaderMomentum >= 0 ? '#10B981' : '#EF4444',
-              background: (signal.leaderMomentum >= 0 ? '#10B981' : '#EF4444') + '15',
+              fontSize: 9, color: signal.leaderMomentum >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)',
+              background: (signal.leaderMomentum >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)') + '15',
               padding: '2px 6px', borderRadius: 3, fontWeight: 700,
             }}>
               📈 {signal.leaderMomentum >= 0 ? '+' : ''}{signal.leaderMomentum.toFixed(1)}%
             </span>
             {signal.bottleneckBoost > 0 && (
-              <span style={{ fontSize: 9, color: '#F59E0B', background: '#F59E0B15', padding: '2px 6px', borderRadius: 3, fontWeight: 700 }}>
+              <span style={{ fontSize: 9, color: 'var(--mc-warn)', background: '#F59E0B15', padding: '2px 6px', borderRadius: 3, fontWeight: 700 }}>
                 ⚠ bottleneck active
               </span>
             )}
@@ -125,12 +125,12 @@ function ThemeBlock({ t, signal, dynamicRank }: { t: CriticalTheme; signal?: Liv
         <span style={{ color: '#FCA5A5' }}>{t.bearCase}</span>
 
         <span style={{ color: DIM, fontWeight: 800, letterSpacing: '0.5px' }}>BULL</span>
-        <span style={{ color: '#10B981' }}>{t.bullCase}</span>
+        <span style={{ color: 'var(--mc-bullish)' }}>{t.bullCase}</span>
 
         {signal?.topArticleTitle && (
           <>
             <span style={{ color: DIM, fontWeight: 800, letterSpacing: '0.5px' }}>NEWS</span>
-            <span style={{ color: '#22D3EE', fontSize: 12, fontStyle: 'italic' }} title={signal.topArticleTitle}>
+            <span style={{ color: 'var(--mc-cyan)', fontSize: 12, fontStyle: 'italic' }} title={signal.topArticleTitle}>
               {signal.topArticleTitle.slice(0, 140)}{signal.topArticleTitle.length > 140 ? '…' : ''}
             </span>
           </>
@@ -352,7 +352,7 @@ export default function CriticalThemesPage() {
           <div>
             <h1 style={{ margin: 0, fontSize: 28, fontWeight: 900, color: TEXT }}>🔥 Critical Themes</h1>
             <div style={{ marginTop: 4, fontSize: 13, color: DIM, lineHeight: 1.55 }}>
-              Choke-point themes for the next 10+ years — editorially curated, <b style={{ color: '#22D3EE' }}>dynamically ranked</b> using live news heat + leader momentum + bottleneck overlay.
+              Choke-point themes for the next 10+ years — editorially curated, <b style={{ color: 'var(--mc-cyan)' }}>dynamically ranked</b> using live news heat + leader momentum + bottleneck overlay.
             </div>
           </div>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -365,9 +365,9 @@ export default function CriticalThemesPage() {
               <button key={v} onClick={() => setView(v)} style={{
                 fontSize: 12,
                 padding: '6px 14px',
-                background: view === v ? (v === 'US' ? '#F87171' : v === 'IN' ? '#22D3EE' : '#A78BFA') : 'transparent',
-                border: `1px solid ${view === v ? (v === 'US' ? '#F87171' : v === 'IN' ? '#22D3EE' : '#A78BFA') : '#1E2D45'}`,
-                color: view === v ? '#0A0E1A' : TEXT,
+                background: view === v ? (v === 'US' ? '#F87171' : v === 'IN' ? 'var(--mc-cyan)' : 'var(--mc-state-persistent)') : 'transparent',
+                border: `1px solid ${view === v ? (v === 'US' ? '#F87171' : v === 'IN' ? 'var(--mc-cyan)' : 'var(--mc-state-persistent)') : 'var(--mc-border-1)'}`,
+                color: view === v ? 'var(--mc-bg-0)' : TEXT,
                 borderRadius: 4,
                 cursor: 'pointer',
                 fontWeight: 800,
@@ -422,7 +422,7 @@ export default function CriticalThemesPage() {
           }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
               <div>
-                <span style={{ fontSize: 13, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.5px' }}>✨ EMERGING THEMES — auto-detected from news</span>
+                <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-warn)', letterSpacing: '0.5px' }}>✨ EMERGING THEMES — auto-detected from news</span>
                 <div style={{ fontSize: 11, color: DIM, marginTop: 4 }}>
                   High-frequency keyword pairs in last-30d news that don&apos;t match any curated theme. Click ✚ to promote to a custom theme.
                 </div>
@@ -432,12 +432,12 @@ export default function CriticalThemesPage() {
               {emerging.slice(0, 12).map((e) => (
                 <div key={e.keyword} style={{
                   display: 'flex', alignItems: 'center', gap: 4,
-                  background: '#1A2540', border: '1px solid #F59E0B30', borderRadius: 4, padding: '4px 8px',
+                  background: 'var(--mc-bg-4)', border: '1px solid #F59E0B30', borderRadius: 4, padding: '4px 8px',
                 }}>
                   <span style={{ fontSize: 12, color: TEXT, fontWeight: 600 }}>{e.keyword}</span>
                   <span style={{ fontSize: 9, color: DIM }}>· {e.articleCount} news</span>
                   <button onClick={() => promoteEmerging(e, 'IN')} title="Promote to India theme"
-                    style={{ marginLeft: 4, fontSize: 9, padding: '1px 5px', background: '#22D3EE22', border: '1px solid #22D3EE60', color: '#22D3EE', borderRadius: 3, cursor: 'pointer', fontWeight: 800 }}>
+                    style={{ marginLeft: 4, fontSize: 9, padding: '1px 5px', background: '#22D3EE22', border: '1px solid #22D3EE60', color: 'var(--mc-cyan)', borderRadius: 3, cursor: 'pointer', fontWeight: 800 }}>
                     ✚ IN
                   </button>
                   <button onClick={() => promoteEmerging(e, 'US')} title="Promote to USA theme"
@@ -453,10 +453,10 @@ export default function CriticalThemesPage() {
         {/* PATCH 0631 — CUSTOM THEME ADD */}
         <div style={{ background: CARD, border: `1px dashed #22D3EE40`, borderRadius: 8, padding: '14px 16px' }}>
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-            <span style={{ fontSize: 13, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.5px' }}>➕ ADD YOUR OWN THEME</span>
+            <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.5px' }}>➕ ADD YOUR OWN THEME</span>
             <button onClick={() => setShowAddForm(v => !v)} style={{
               fontSize: 11, padding: '5px 12px', background: '#22D3EE15', border: '1px solid #22D3EE50',
-              color: '#22D3EE', borderRadius: 4, cursor: 'pointer', fontWeight: 800,
+              color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 800,
             }}>
               {showAddForm ? 'CANCEL' : 'NEW THEME'}
             </button>
@@ -495,8 +495,8 @@ export default function CriticalThemesPage() {
               </label>
               <button onClick={submitCustomTheme} disabled={!draftName.trim()} style={{
                 gridColumn: '1 / -1', marginTop: 4,
-                fontSize: 12, padding: '8px 14px', background: '#22D3EE', border: 'none',
-                color: '#0A0E1A', borderRadius: 4, cursor: draftName.trim() ? 'pointer' : 'not-allowed', fontWeight: 800,
+                fontSize: 12, padding: '8px 14px', background: 'var(--mc-cyan)', border: 'none',
+                color: 'var(--mc-bg-0)', borderRadius: 4, cursor: draftName.trim() ? 'pointer' : 'not-allowed', fontWeight: 800,
                 opacity: draftName.trim() ? 1 : 0.5,
               }}>
                 ➕ ADD THEME
@@ -509,11 +509,11 @@ export default function CriticalThemesPage() {
               <div style={{ fontSize: 11, color: DIM, fontWeight: 700, marginBottom: 6 }}>YOUR CUSTOM THEMES</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                 {loadCustomThemes().map(t => (
-                  <span key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 4, background: '#1A2540', borderRadius: 4, padding: '4px 8px', fontSize: 12 }}>
+                  <span key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'var(--mc-bg-4)', borderRadius: 4, padding: '4px 8px', fontSize: 12 }}>
                     <span style={{ color: TEXT, fontWeight: 600 }}>{t.emoji} {t.name}</span>
                     <span style={{ fontSize: 9, color: DIM }}>· {t.region}</span>
                     <button onClick={() => { deleteCustomTheme(t.id); setCustomTick(x => x + 1); }} title="Delete"
-                      style={{ fontSize: 10, padding: '0 4px', background: 'transparent', border: '1px solid #EF444460', color: '#EF4444', borderRadius: 3, cursor: 'pointer', marginLeft: 4 }}>
+                      style={{ fontSize: 10, padding: '0 4px', background: 'transparent', border: '1px solid #EF444460', color: 'var(--mc-bearish)', borderRadius: 3, cursor: 'pointer', marginLeft: 4 }}>
                       ×
                     </button>
                   </span>
@@ -529,14 +529,14 @@ export default function CriticalThemesPage() {
           background: CARD, border: `1px solid ${BORDER}`, borderRadius: 6,
           lineHeight: 1.65,
         }}>
-          <b style={{ color: TEXT }}>How dynamic ranking works:</b> each theme starts with an editorial prior (priorityRank in <code style={{ background: '#1A2540', padding: '1px 4px', borderRadius: 3 }}>lib/critical-themes.ts</code>) and gets re-scored every load using:
+          <b style={{ color: TEXT }}>How dynamic ranking works:</b> each theme starts with an editorial prior (priorityRank in <code style={{ background: 'var(--mc-bg-4)', padding: '1px 4px', borderRadius: 3 }}>lib/critical-themes.ts</code>) and gets re-scored every load using:
           <ul style={{ margin: '6px 0 0 22px', padding: 0 }}>
-            <li><b>News heat</b> — count of last-30d articles matching the theme&apos;s <code style={{ background: '#1A2540', padding: '1px 4px', borderRadius: 3 }}>searchKeywords</code> (max 30 pts)</li>
+            <li><b>News heat</b> — count of last-30d articles matching the theme&apos;s <code style={{ background: 'var(--mc-bg-4)', padding: '1px 4px', borderRadius: 3 }}>searchKeywords</code> (max 30 pts)</li>
             <li><b>Leader momentum</b> — avg weekly % change of the theme&apos;s leader stocks from /api/market/quotes (max 30 pts, India only)</li>
             <li><b>Bottleneck overlay</b> — +15 if any HIGH-severity bottleneck bucket overlaps the theme keywords</li>
             <li><b>Editorial prior</b> — base 25 pts for priorityRank #1, falling 2.5 pts per rank</li>
           </ul>
-          Themes auto-resort on every page load — top of the list = strongest signal RIGHT NOW. Themes themselves stay editorial (human judgment); ranking and news context update live. To add or edit a theme: append to <code style={{ background: '#1A2540', padding: '1px 4px', borderRadius: 3 }}>lib/critical-themes.ts</code> — the page picks it up automatically.
+          Themes auto-resort on every page load — top of the list = strongest signal RIGHT NOW. Themes themselves stay editorial (human judgment); ranking and news context update live. To add or edit a theme: append to <code style={{ background: 'var(--mc-bg-4)', padding: '1px 4px', borderRadius: 3 }}>lib/critical-themes.ts</code> — the page picks it up automatically.
         </div>
       </div>
     </div>

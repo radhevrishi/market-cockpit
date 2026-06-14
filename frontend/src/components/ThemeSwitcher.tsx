@@ -32,7 +32,7 @@ export function ThemeSwitcher({ compact = false }: { compact?: boolean }) {
           padding: '10px 4px',
           background: 'none',
           border: 'none',
-          color: '#6B7A8D',
+          color: 'var(--mc-text-4)',
           cursor: 'pointer',
           fontSize: 9,
         }}

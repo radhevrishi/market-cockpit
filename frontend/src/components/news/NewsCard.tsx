@@ -1098,7 +1098,7 @@ export default function NewsCard({ article, onTickerClick }: Props) {
                 color: '#C9D4E0',
               }}
             >
-              <div style={{ fontSize: 9, fontWeight: 700, color: '#22D3EE', letterSpacing: '0.4px', marginBottom: 6 }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--mc-cyan)', letterSpacing: '0.4px', marginBottom: 6 }}>
                 CORROBORATED BY {((article as any).also_reported_sources as string[]).length} OTHER SOURCE{((article as any).also_reported_sources as string[]).length === 1 ? '' : 'S'}
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -1107,7 +1107,7 @@ export default function NewsCard({ article, onTickerClick }: Props) {
                     key={`${src}-${i}`}
                     style={{
                       backgroundColor: '#0D1B2E',
-                      border: '1px solid #1E2D45',
+                      border: '1px solid var(--mc-border-1)',
                       borderRadius: 4,
                       padding: '2px 6px',
                       fontSize: 10,
@@ -1116,7 +1116,7 @@ export default function NewsCard({ article, onTickerClick }: Props) {
                   >{src}</span>
                 ))}
               </div>
-              <div style={{ fontSize: 9, color: '#4A5B6C', marginTop: 6, lineHeight: 1.4 }}>
+              <div style={{ fontSize: 9, color: 'var(--mc-text-4)', marginTop: 6, lineHeight: 1.4 }}>
                 Higher corroboration = lower probability of a one-off / fabricated story.
                 Click '+ N sources' again to collapse.
               </div>

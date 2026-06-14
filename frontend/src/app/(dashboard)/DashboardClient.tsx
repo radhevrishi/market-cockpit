@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+// PATCH 1079 — TickerTape ribbon site-wide (HANDOFF §6)
+import { TickerTape } from '@/components/portal-widgets';
   BarChart3, Newspaper, Calendar, Briefcase, Compass, Bell, Settings, LogOut, ChevronDown, BookMarked, Search,
   TrendingUp, Grid3X3, RefreshCw, Filter, Globe, Rocket, Shield, LineChart, Star, Microscope, Factory,
 } from 'lucide-react';
@@ -469,10 +471,10 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
   // Don't render anything until auth is verified
   if (!authChecked) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', backgroundColor: '#0A0E1A' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', backgroundColor: 'var(--mc-bg-0)' }}>
         <div style={{ textAlign: 'center' }}>
-          <div style={{ width: '40px', height: '40px', border: '3px solid #1A2840', borderTopColor: '#0F7ABF', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 16px' }} />
-          <p style={{ color: '#4A5B6C', fontSize: '13px' }}>Loading...</p>
+          <div style={{ width: '40px', height: '40px', border: '3px solid var(--mc-bg-4)', borderTopColor: 'var(--mc-accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 16px' }} />
+          <p style={{ color: 'var(--mc-text-4)', fontSize: '13px' }}>Loading...</p>
           <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         </div>
       </div>
@@ -513,7 +515,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
   };
 
   return (
-    <div style={{ display: 'flex', height: '100vh', backgroundColor: '#0A0E1A', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', height: '100vh', backgroundColor: 'var(--mc-bg-0)', overflow: 'hidden' }}>
 
       {/* ── Desktop Sidebar ───────────────────────────────────────────── */}
       {/*
@@ -533,19 +535,19 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
       <aside className="desktop-sidebar" style={{
         width: '96px',
         flexShrink: 0,
-        backgroundColor: '#0D1623',
-        borderRight: '1px solid #1A2840',
+        backgroundColor: 'var(--mc-bg-1)',
+        borderRight: '1px solid var(--mc-bg-4)',
         display: 'flex',
         flexDirection: 'column',
         position: 'relative',
         zIndex: 40,
       }}>
         {/* Logo */}
-        <div style={{ padding: '16px 0', textAlign: 'center', borderBottom: '1px solid #1A2840' }}>
+        <div style={{ padding: '16px 0', textAlign: 'center', borderBottom: '1px solid var(--mc-bg-4)' }}>
           <div style={{
             width: '36px',
             height: '36px',
-            background: 'linear-gradient(135deg, #0F7ABF, #06B6D4)',
+            background: 'linear-gradient(135deg, var(--mc-accent), #06B6D4)',
             borderRadius: '10px',
             display: 'inline-flex',
             alignItems: 'center',
@@ -564,11 +566,11 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
               {/* Group divider — first group has no top border */}
               {gi > 0 && (
                 <div style={{
-                  borderTop: '1px solid #1A2840',
+                  borderTop: '1px solid var(--mc-bg-4)',
                   margin: '6px 12px 4px',
                   paddingTop: 6,
                   fontSize: 8,
-                  color: '#4A5B6C',
+                  color: 'var(--mc-text-4)',
                   fontWeight: 700,
                   letterSpacing: '0.5px',
                   textAlign: 'center',
@@ -594,11 +596,11 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
                       cursor: 'pointer',
                       transition: 'all 0.15s',
                       backgroundColor: active ? 'rgba(15,122,191,0.18)' : 'transparent',
-                      color: active ? '#0F7ABF' : '#6B7A8D',
+                      color: active ? 'var(--mc-accent)' : 'var(--mc-text-4)',
                       fontSize: '9px',
                       fontWeight: active ? '600' : '400',
                       letterSpacing: '0.3px',
-                      borderLeft: active ? '2px solid #0F7ABF' : '2px solid transparent',
+                      borderLeft: active ? '2px solid var(--mc-accent)' : '2px solid transparent',
                       userSelect: 'none',
                       WebkitUserSelect: 'none',
                     }}>
@@ -638,14 +640,14 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
 
         {/* Top Bar */}
-        <header style={{ backgroundColor: '#0D1623', borderBottom: '1px solid #1A2840', flexShrink: 0 }}>
+        <header style={{ backgroundColor: 'var(--mc-bg-1)', borderBottom: '1px solid var(--mc-bg-4)', flexShrink: 0 }}>
 
           {/* Markets ticker — horizontal scroll on mobile */}
           <div
             style={{
               height: '36px',
               backgroundColor: '#060E1A',
-              borderBottom: '1px solid #1A2840',
+              borderBottom: '1px solid var(--mc-bg-4)',
               display: 'flex',
               alignItems: 'center',
               paddingLeft: '12px',
@@ -660,9 +662,9 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
               // Show animated skeleton pills while market data loads
               MARKETS_FALLBACK.map(m => (
                 <div key={m.symbol} style={{ display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0, padding: '4px 4px' }}>
-                  <span style={{ fontSize: '11px', fontWeight: '600', color: '#4A5B6C' }}>{m.symbol}</span>
-                  <div style={{ width: '42px', height: '12px', backgroundColor: '#1A2840', borderRadius: '4px', animation: 'shimmer 1.5s infinite' }} />
-                  <div style={{ width: '38px', height: '12px', backgroundColor: '#1A2840', borderRadius: '4px', animation: 'shimmer 1.5s infinite 0.2s' }} />
+                  <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--mc-text-4)' }}>{m.symbol}</span>
+                  <div style={{ width: '42px', height: '12px', backgroundColor: 'var(--mc-bg-4)', borderRadius: '4px', animation: 'shimmer 1.5s infinite' }} />
+                  <div style={{ width: '38px', height: '12px', backgroundColor: 'var(--mc-bg-4)', borderRadius: '4px', animation: 'shimmer 1.5s infinite 0.2s' }} />
                 </div>
               ))
             ) : markets.map(m => (
@@ -674,7 +676,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
               >
                 <span style={{ fontSize: '11px', fontWeight: '600', color: '#C9D4E0' }}>{m.symbol}</span>
                 {m.price !== '—' && <span style={{ fontSize: '11px', color: '#8A95A3', fontVariantNumeric: 'tabular-nums' }}>{m.price}</span>}
-                <span style={{ fontSize: '11px', fontWeight: '700', color: m.change === '—' || m.change === '...' ? '#4A5B6C' : m.up ? '#10B981' : '#EF4444', fontVariantNumeric: 'tabular-nums' }}>{m.change}</span>
+                <span style={{ fontSize: '11px', fontWeight: '700', color: m.change === '—' || m.change === '...' ? 'var(--mc-text-4)' : m.up ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontVariantNumeric: 'tabular-nums' }}>{m.change}</span>
               </button>
             ))}
           </div>
@@ -682,10 +684,10 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
           {/* Header row — compact on mobile */}
           <div style={{ height: '48px', padding: '0 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontSize: '15px', fontWeight: '700', background: 'linear-gradient(90deg, #0F7ABF, #06B6D4)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+              <span style={{ fontSize: '15px', fontWeight: '700', background: 'linear-gradient(90deg, var(--mc-accent), #06B6D4)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
                 MARKET COCKPIT
               </span>
-              <span className="desktop-header-subtitle" style={{ fontSize: '11px', color: '#4A5B6C' }}>Bloomberg-lite · India + US</span>
+              <span className="desktop-header-subtitle" style={{ fontSize: '11px', color: 'var(--mc-text-4)' }}>Bloomberg-lite · India + US</span>
             </div>
 
             {/* Market hours + Theme + PDF + Search + User */}
@@ -706,7 +708,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
                     padding: '5px 10px', borderRadius: 8,
                     border: '1px solid rgba(245,158,11,0.4)',
                     backgroundColor: 'rgba(245,158,11,0.10)',
-                    color: '#F59E0B', fontSize: 11, fontWeight: 800,
+                    color: 'var(--mc-warn)', fontSize: 11, fontWeight: 800,
                     letterSpacing: '0.4px', textDecoration: 'none',
                     fontVariantNumeric: 'tabular-nums',
                   }}
@@ -724,11 +726,11 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
                   alignItems: 'center',
                   gap: '8px',
                   background: 'none',
-                  border: '1px solid #1A2840',
+                  border: '1px solid var(--mc-bg-4)',
                   borderRadius: '10px',
                   padding: '6px 10px',
                   cursor: 'pointer',
-                  color: '#6B7A8D',
+                  color: 'var(--mc-text-4)',
                   minHeight: '36px',
                   minWidth: '36px',
                   justifyContent: 'center',
@@ -741,23 +743,23 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
               {/* User menu — hidden on mobile, accessible via bottom nav */}
               <div className="desktop-user-menu" style={{ position: 'relative' }}>
                 <button onClick={() => setUserMenu(v => !v)}
-                  style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'none', border: '1px solid #1A2840', borderRadius: '10px', padding: '6px 12px', cursor: 'pointer', color: '#C9D4E0' }}>
-                  <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'linear-gradient(135deg, #0F7ABF, #06B6D4)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '700', color: 'white' }}>
+                  style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'none', border: '1px solid var(--mc-bg-4)', borderRadius: '10px', padding: '6px 12px', cursor: 'pointer', color: '#C9D4E0' }}>
+                  <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--mc-accent), #06B6D4)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '700', color: 'white' }}>
                     {(userProfile?.display_name || 'R').charAt(0).toUpperCase()}
                   </div>
                   <span style={{ fontSize: '13px' }}>{userProfile?.display_name || 'User'}</span>
-                  <ChevronDown className="w-3 h-3" style={{ color: '#4A5B6C' }} />
+                  <ChevronDown className="w-3 h-3" style={{ color: 'var(--mc-text-4)' }} />
                 </button>
 
                 {userMenu && (
-                  <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 6px)', width: '180px', backgroundColor: '#111B35', border: '1px solid #1A2840', borderRadius: '12px', boxShadow: '0 20px 40px rgba(0,0,0,0.5)', zIndex: 100, overflow: 'hidden' }}>
-                    <div style={{ padding: '12px 16px', borderBottom: '1px solid #1A2840' }}>
-                      <p style={{ fontSize: '13px', fontWeight: '600', color: '#F5F7FA', margin: 0 }}>{userProfile?.display_name || 'User'}</p>
-                      <p style={{ fontSize: '11px', color: '#4A5B6C', margin: 0 }}>Active Investor</p>
+                  <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 6px)', width: '180px', backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-bg-4)', borderRadius: '12px', boxShadow: '0 20px 40px rgba(0,0,0,0.5)', zIndex: 100, overflow: 'hidden' }}>
+                    <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--mc-bg-4)' }}>
+                      <p style={{ fontSize: '13px', fontWeight: '600', color: 'var(--mc-text-0)', margin: 0 }}>{userProfile?.display_name || 'User'}</p>
+                      <p style={{ fontSize: '11px', color: 'var(--mc-text-4)', margin: 0 }}>Active Investor</p>
                     </div>
                     <div style={{ padding: '6px 0' }}>
                       <Link href="/settings" style={{ display: 'block', padding: '8px 16px', fontSize: '13px', color: '#C9D4E0', textDecoration: 'none' }}>⚙️ Settings</Link>
-                      <button onClick={handleSignOut} style={{ width: '100%', textAlign: 'left', padding: '8px 16px', fontSize: '13px', color: '#EF4444', background: 'none', border: 'none', cursor: 'pointer', borderTop: '1px solid #1A2840' }}>
+                      <button onClick={handleSignOut} style={{ width: '100%', textAlign: 'left', padding: '8px 16px', fontSize: '13px', color: 'var(--mc-bearish)', background: 'none', border: 'none', cursor: 'pointer', borderTop: '1px solid var(--mc-bg-4)' }}>
                         🚪 Sign Out
                       </button>
                     </div>
@@ -768,8 +770,11 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
           </div>
         </header>
 
+        {/* PATCH 1079 — TickerTape ribbon (HANDOFF §6 wire-up) */}
+        <TickerTape />
+
         {/* Page content — add bottom padding on mobile for bottom nav */}
-        <main className="mobile-main-content" style={{ flex: 1, overflowY: 'auto', backgroundColor: '#0A0E1A' }}>
+        <main className="mobile-main-content" style={{ flex: 1, overflowY: 'auto', backgroundColor: 'var(--mc-bg-0)' }}>
           {children}
         </main>
       </div>
@@ -784,8 +789,8 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
           left: 0,
           right: 0,
           height: '56px',
-          backgroundColor: '#0D1623',
-          borderTop: '1px solid #1A2840',
+          backgroundColor: 'var(--mc-bg-1)',
+          borderTop: '1px solid var(--mc-bg-4)',
           zIndex: 50,
           alignItems: 'center',
           justifyContent: 'space-around',
@@ -804,7 +809,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
                 gap: '2px',
                 padding: '6px 12px',
                 textDecoration: 'none',
-                color: active ? '#0F7ABF' : '#6B7A8D',
+                color: active ? 'var(--mc-accent)' : 'var(--mc-text-4)',
                 fontSize: '10px',
                 fontWeight: active ? '600' : '400',
                 minWidth: '56px',
@@ -824,7 +829,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
             gap: '2px',
             padding: '6px 12px',
             textDecoration: 'none',
-            color: pathname?.startsWith('/settings') ? '#0F7ABF' : '#6B7A8D',
+            color: pathname?.startsWith('/settings') ? 'var(--mc-accent)' : 'var(--mc-text-4)',
             fontSize: '10px',
             minWidth: '56px',
             minHeight: '44px',
@@ -842,7 +847,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
             padding: '6px 12px',
             background: 'none',
             border: 'none',
-            color: '#6B7A8D',
+            color: 'var(--mc-text-4)',
             fontSize: '10px',
             cursor: 'pointer',
             minWidth: '56px',

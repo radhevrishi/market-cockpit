@@ -126,7 +126,7 @@ export function PdfExportButton({ compact = false }: { compact?: boolean }) {
         style={{
           width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px',
           padding: '10px 4px', background: 'none', border: 'none',
-          color: busy ? '#4A5B6C' : '#6B7A8D', cursor: busy ? 'wait' : 'pointer', fontSize: '9px',
+          color: busy ? 'var(--mc-text-4)' : 'var(--mc-text-4)', cursor: busy ? 'wait' : 'pointer', fontSize: '9px',
         }}
       >
         <FileDown className="w-4 h-4" />
@@ -142,9 +142,9 @@ export function PdfExportButton({ compact = false }: { compact?: boolean }) {
       title="Export this page as PDF"
       style={{
         display: 'flex', alignItems: 'center', gap: '6px',
-        background: 'none', border: '1px solid #1A2840', borderRadius: '10px',
+        background: 'none', border: '1px solid var(--mc-bg-4)', borderRadius: '10px',
         padding: '6px 10px', cursor: busy ? 'wait' : 'pointer',
-        color: busy ? '#4A5B6C' : '#C9D4E0',
+        color: busy ? 'var(--mc-text-4)' : '#C9D4E0',
         minHeight: '36px',
         fontSize: '12px',
         fontWeight: 600,

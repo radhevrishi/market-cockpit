@@ -683,9 +683,9 @@ export default function MoversPage() {
                 title="Limit movers to symbols that recently reported earnings"
                 style={{
                   padding: '5px 10px', borderRadius: '8px',
-                  border: `1px solid ${earningsOnly ? '#F59E0B' : BORDER}`,
+                  border: `1px solid ${earningsOnly ? 'var(--mc-warn)' : BORDER}`,
                   backgroundColor: earningsOnly ? 'rgba(245,158,11,0.12)' : CARD,
-                  color: earningsOnly ? '#F59E0B' : TEXT3, fontSize: '11px',
+                  color: earningsOnly ? 'var(--mc-warn)' : TEXT3, fontSize: '11px',
                   cursor: 'pointer', fontWeight: 600, flexShrink: 0, whiteSpace: 'nowrap',
                 }}
               >📊 Earnings only ({earningsTickers.size})</button>
@@ -730,7 +730,7 @@ export default function MoversPage() {
       {/* Loading */}
       {loading && (
         <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '300px' }}>
-          <div style={{ width: '36px', height: '36px', border: '3px solid #1A2840', borderTop: `3px solid ${ACCENT}`, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+          <div style={{ width: '36px', height: '36px', border: '3px solid var(--mc-bg-4)', borderTop: `3px solid ${ACCENT}`, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
         </div>
       )}
 
@@ -745,10 +745,10 @@ export default function MoversPage() {
       )}
       {/* Empty state when data fails entirely */}
       {!loading && !error && allStocks.length === 0 && (
-        <div style={{ backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '12px', padding: '48px 20px', textAlign: 'center', marginBottom: '16px' }}>
+        <div style={{ backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-1)', borderRadius: '12px', padding: '48px 20px', textAlign: 'center', marginBottom: '16px' }}>
           <div style={{ fontSize: '32px', marginBottom: '12px' }}>📊</div>
-          <p style={{ fontSize: '14px', fontWeight: '600', color: '#F5F7FA', margin: '0 0 6px' }}>No market data available</p>
-          <p style={{ fontSize: '12px', color: '#4A5B6C', margin: '0 0 16px' }}>NSE data may be unavailable outside market hours or the backend is not running.</p>
+          <p style={{ fontSize: '14px', fontWeight: '600', color: 'var(--mc-text-0)', margin: '0 0 6px' }}>No market data available</p>
+          <p style={{ fontSize: '12px', color: 'var(--mc-text-4)', margin: '0 0 16px' }}>NSE data may be unavailable outside market hours or the backend is not running.</p>
         </div>
       )}
 

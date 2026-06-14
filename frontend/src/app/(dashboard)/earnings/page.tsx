@@ -414,7 +414,7 @@ function GuidanceBadge({ guidance, score, ai }: { guidance?: string; score?: num
         {topNumber && (
           <span style={{
             marginLeft: '6px', paddingLeft: '6px', borderLeft: `1px solid ${t.color}60`,
-            color: '#E6EDF3', fontWeight: 600,
+            color: 'var(--mc-text-1)', fontWeight: 600,
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}>
             {topNumber}
@@ -452,7 +452,7 @@ function DivergenceBadge({ divergence }: { divergence?: string }) {
       padding: '2px 6px', borderRadius: '4px',
       backgroundColor: isStrongWeak ? '#EF444418' : '#10B98118',
       border: `1px solid ${isStrongWeak ? '#EF444440' : '#10B98140'}`,
-      color: isStrongWeak ? '#EF4444' : '#10B981', fontWeight: 700, letterSpacing: '0.3px',
+      color: isStrongWeak ? 'var(--mc-bearish)' : 'var(--mc-bullish)', fontWeight: 700, letterSpacing: '0.3px',
     }}>
       ⚡ {isStrongWeak ? 'DIVERGENCE: Strong Earnings + Weak Guidance' : 'DIVERGENCE: Weak Earnings + Strong Guidance'}
     </span>
@@ -466,7 +466,7 @@ function StaleBadge({ quarterStr }: { quarterStr: string }) {
       display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '9px',
       padding: '2px 6px', borderRadius: '4px',
       backgroundColor: '#EF444415', border: '1px solid #EF444440',
-      color: '#EF4444', fontWeight: 700, letterSpacing: '0.3px',
+      color: 'var(--mc-bearish)', fontWeight: 700, letterSpacing: '0.3px',
     }}>
       ⚠ STALE
     </span>
@@ -1207,7 +1207,7 @@ function EarningsCardComponent({ card, postGap, ai }: { card: EarningsScanCard; 
               if (elig.state === 'eligible') {
                 return (
                   <span style={{
-                    fontSize: '9px', color: '#F59E0B', fontWeight: 600,
+                    fontSize: '9px', color: 'var(--mc-warn)', fontWeight: 600,
                     padding: '1px 6px', borderRadius: '3px',
                     backgroundColor: '#F59E0B15', border: '1px dashed #F59E0B40',
                   }} title="This card qualifies (EX/ST grade) — click '🤖 AI Guidance' in the toolbar to extract.">
@@ -1254,7 +1254,7 @@ function EarningsCardComponent({ card, postGap, ai }: { card: EarningsScanCard; 
                   <div style={{ fontSize: '8px', color: TEXT_DIM, fontWeight: 700, letterSpacing: '0.4px', marginBottom: '3px' }}>NUMBERS</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                     {ai.numbers.map((n, i) => (
-                      <div key={`n${i}`} style={{ fontSize: '10.5px', color: '#E6EDF3', display: 'flex', gap: '6px', alignItems: 'baseline' }}>
+                      <div key={`n${i}`} style={{ fontSize: '10.5px', color: 'var(--mc-text-1)', display: 'flex', gap: '6px', alignItems: 'baseline' }}>
                         <span style={{ color: '#34D399', fontWeight: 700, flexShrink: 0 }}>📊</span>
                         <span style={{ color: TEXT_DIM }}>{n.metric}:</span>
                         <span style={{ color: '#34D399', fontWeight: 700 }}>{n.value}</span>
@@ -1269,10 +1269,10 @@ function EarningsCardComponent({ card, postGap, ai }: { card: EarningsScanCard; 
                   <div style={{ fontSize: '8px', color: TEXT_DIM, fontWeight: 700, letterSpacing: '0.4px', marginBottom: '3px' }}>CATALYSTS</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                     {ai.catalysts.map((c, i) => (
-                      <div key={`c${i}`} style={{ fontSize: '10.5px', color: '#E6EDF3', display: 'flex', gap: '6px', alignItems: 'baseline' }}>
-                        <span style={{ color: '#F59E0B', fontWeight: 700, flexShrink: 0 }}>🗓</span>
+                      <div key={`c${i}`} style={{ fontSize: '10.5px', color: 'var(--mc-text-1)', display: 'flex', gap: '6px', alignItems: 'baseline' }}>
+                        <span style={{ color: 'var(--mc-warn)', fontWeight: 700, flexShrink: 0 }}>🗓</span>
                         <span>{c.event}</span>
-                        {c.timing && <span style={{ color: '#F59E0B', fontWeight: 700, fontSize: '9.5px' }}>({c.timing})</span>}
+                        {c.timing && <span style={{ color: 'var(--mc-warn)', fontWeight: 700, fontSize: '9.5px' }}>({c.timing})</span>}
                       </div>
                     ))}
                   </div>
@@ -1303,10 +1303,10 @@ function EarningsCardComponent({ card, postGap, ai }: { card: EarningsScanCard; 
           {((card.keyPhrasesPositive && card.keyPhrasesPositive.length > 0) || (card.keyPhrasesNegative && card.keyPhrasesNegative.length > 0)) && (
             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '4px' }}>
               {(card.keyPhrasesPositive || []).map((p, i) => (
-                <span key={`p${i}`} style={{ fontSize: '8px', padding: '1px 5px', borderRadius: '3px', backgroundColor: '#10B98115', color: '#10B981', border: '1px solid #10B98130' }}>{p}</span>
+                <span key={`p${i}`} style={{ fontSize: '8px', padding: '1px 5px', borderRadius: '3px', backgroundColor: '#10B98115', color: 'var(--mc-bullish)', border: '1px solid #10B98130' }}>{p}</span>
               ))}
               {(card.keyPhrasesNegative || []).map((p, i) => (
-                <span key={`n${i}`} style={{ fontSize: '8px', padding: '1px 5px', borderRadius: '3px', backgroundColor: '#EF444415', color: '#EF4444', border: '1px solid #EF444430' }}>{p}</span>
+                <span key={`n${i}`} style={{ fontSize: '8px', padding: '1px 5px', borderRadius: '3px', backgroundColor: '#EF444415', color: 'var(--mc-bearish)', border: '1px solid #EF444430' }}>{p}</span>
               ))}
             </div>
           )}
@@ -2924,7 +2924,7 @@ export default function EarningsPage() {
               })(),
               color: (() => {
                 const mins = Math.floor((Date.now() - new Date(updatedAt).getTime()) / 60000);
-                return mins < 5 ? '#10B981' : mins < 30 ? '#FFD600' : '#EF4444';
+                return mins < 5 ? 'var(--mc-bullish)' : mins < 30 ? '#FFD600' : 'var(--mc-bearish)';
               })(),
             }}>
               {(() => {
@@ -2995,10 +2995,10 @@ export default function EarningsPage() {
               }}>
               <span style={{
                 width: 14, height: 14, borderRadius: 3,
-                border: `1.5px solid ${on ? meta.accent : '#4A5B6C'}`,
+                border: `1.5px solid ${on ? meta.accent : 'var(--mc-text-4)'}`,
                 background: on ? meta.accent : 'transparent',
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 10, color: on ? '#0A0E1A' : 'transparent', fontWeight: 900,
+                fontSize: 10, color: on ? 'var(--mc-bg-0)' : 'transparent', fontWeight: 900,
               }}>{on ? '✓' : ''}</span>
               <span>{meta.emoji}</span>
               <span>{meta.label}</span>
@@ -3090,7 +3090,7 @@ export default function EarningsPage() {
                       marginLeft: 4, fontSize: 9.5, fontWeight: 800,
                       padding: '1px 6px', borderRadius: 3,
                       backgroundColor: '#10B98130', border: '1px solid #10B98160',
-                      color: '#10B981', letterSpacing: '0.3px', cursor: 'pointer',
+                      color: 'var(--mc-bullish)', letterSpacing: '0.3px', cursor: 'pointer',
                     }}
                     title="Hit the server API directly and write any returned data to localStorage. Tells you in an alert what was found. Use this when count=0 to figure out whether the data is missing on server, in another browser, or in stale cache."
                   >
@@ -3107,7 +3107,7 @@ export default function EarningsPage() {
                       marginLeft: 4, fontSize: 9.5, fontWeight: 800,
                       padding: '1px 6px', borderRadius: 3,
                       backgroundColor: '#F59E0B30', border: '1px solid #F59E0B60',
-                      color: '#F59E0B', letterSpacing: '0.3px', cursor: 'pointer',
+                      color: 'var(--mc-warn)', letterSpacing: '0.3px', cursor: 'pointer',
                     }}
                     title={`No ${key} data loaded. Click to open the ${key === 'portfolio' ? 'My Book' : 'Watchlist'} page.`}
                   >
@@ -3125,9 +3125,9 @@ export default function EarningsPage() {
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 6,
             padding: '8px 14px', borderRadius: 8,
-            border: `1px solid ${convictionOnly ? '#F59E0B' : CARD_BORDER}`,
+            border: `1px solid ${convictionOnly ? 'var(--mc-warn)' : CARD_BORDER}`,
             backgroundColor: convictionOnly ? '#F59E0B22' : CARD,
-            color: convictionOnly ? '#F59E0B' : TEXT,
+            color: convictionOnly ? 'var(--mc-warn)' : TEXT,
             fontSize: 12, fontWeight: 700, cursor: 'pointer',
           }}>
           <Award style={{ width: 13, height: 13 }} />
@@ -3135,8 +3135,8 @@ export default function EarningsPage() {
           <span style={{
             fontSize: 10, fontWeight: 800,
             padding: '1px 5px', borderRadius: 3,
-            backgroundColor: convictionOnly ? '#F59E0B' : '#1A2840',
-            color: convictionOnly ? '#000' : '#6B7A8D',
+            backgroundColor: convictionOnly ? 'var(--mc-warn)' : 'var(--mc-bg-4)',
+            color: convictionOnly ? '#000' : 'var(--mc-text-4)',
           }}>{convictionTickersState.size}</span>
         </button>
 
@@ -3341,7 +3341,7 @@ export default function EarningsPage() {
           {cards.length > 0 && (
             <button onClick={handleDownloadPDF} style={{
               display: 'inline-flex', alignItems: 'center', gap: '6px',
-              backgroundColor: '#1A2540', border: `1px solid ${CARD_BORDER}`, color: TEXT,
+              backgroundColor: 'var(--mc-bg-4)', border: `1px solid ${CARD_BORDER}`, color: TEXT,
               padding: '8px 14px', borderRadius: '6px', cursor: 'pointer',
               fontSize: '12px', fontWeight: 600, transition: 'all 0.2s',
             }}>
@@ -3486,7 +3486,7 @@ export default function EarningsPage() {
                   backgroundColor: '#7C3AED15',
                   border: `1px solid ${allCovered ? '#10B98160' : '#F59E0B60'}`,
                   fontSize: '11px', fontWeight: 700,
-                  color: allCovered ? '#10B981' : '#F59E0B',
+                  color: allCovered ? 'var(--mc-bullish)' : 'var(--mc-warn)',
                   whiteSpace: 'nowrap',
                 }}
                   title={`${coveredCount} of ${qualifying.length} qualifying cards have AI Forward Guidance. ${uncoveredCount > 0 ? `${uncoveredCount} still need extraction — click the AI Guidance button.` : 'All qualifying cards covered.'}`}
@@ -3500,13 +3500,13 @@ export default function EarningsPage() {
                   style={{
                     display: 'inline-flex', alignItems: 'center', gap: '6px',
                     backgroundColor: aiLoading
-                      ? '#1A2540'
+                      ? 'var(--mc-bg-4)'
                       : allCovered
-                        ? '#10B981'
+                        ? 'var(--mc-bullish)'
                         : budgetDominates
                           ? '#4B5563'             // PATCH 0964 — grey when budget-blocked
                           : '#7C3AED',
-                    border: !aiLoading && !allCovered && !budgetDominates ? '2px solid #F59E0B' : 'none',
+                    border: !aiLoading && !allCovered && !budgetDominates ? '2px solid var(--mc-warn)' : 'none',
                     color: '#fff',
                     padding: !aiLoading && !allCovered ? '6px 12px' : '8px 14px',
                     borderRadius: '6px',
@@ -3560,7 +3560,7 @@ export default function EarningsPage() {
       {aiStats && aiStats.total === qualifyingForAI.length && aiStats.extracted === 0 && aiStats.cached === 0 && (
         <div style={{
           padding: '14px 18px', marginTop: '10px', borderRadius: '8px',
-          backgroundColor: '#EF444415', border: '2px solid #EF4444',
+          backgroundColor: '#EF444415', border: '2px solid var(--mc-bearish)',
           color: '#FCA5A5', fontSize: '13px', fontWeight: 600,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
@@ -3569,7 +3569,7 @@ export default function EarningsPage() {
               AI GUIDANCE RAN — 0 OF {aiStats.total} TICKERS EXTRACTED
             </span>
           </div>
-          <div style={{ color: '#E6EDF3', fontSize: '12px', fontWeight: 500, marginBottom: '8px' }}>
+          <div style={{ color: 'var(--mc-text-1)', fontSize: '12px', fontWeight: 500, marginBottom: '8px' }}>
             Every card still shows the grey <span style={{ color: TEXT_DIM, fontWeight: 700 }}>Screener Signal</span> chip (keyword-derived, historical) — not the purple <span style={{ color: '#C4B5FD', fontWeight: 700 }}>🤖 AI Forward Guidance</span> chip. Reason breakdown:
             <span style={{ marginLeft: '6px', color: '#F87171' }}>
               {(aiStats.intimation_only || 0) > 0 ? `${aiStats.intimation_only} intimation-only (no transcript exists — Haiku skipped to save cost)` : ''}
@@ -3756,14 +3756,14 @@ export default function EarningsPage() {
         }}>
           <span style={{ fontSize: '10px', color: TEXT_DIM, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Forward Guidance</span>
           <span style={{ fontSize: '12px', color: TEXT_DIM }}>{liveSummary.guidanceCoverage} of {liveSummary.total} covered</span>
-          <span style={{ fontSize: '12px', color: '#10B981', fontWeight: 600 }}>▲ Positive: {liveSummary.guidancePositive}</span>
-          <span style={{ fontSize: '12px', color: '#F59E0B', fontWeight: 600 }}>● Neutral: {liveSummary.guidanceNeutral}</span>
-          <span style={{ fontSize: '12px', color: '#EF4444', fontWeight: 600 }}>▼ Negative: {liveSummary.guidanceNegative}</span>
-          <span style={{ fontSize: '12px', color: liveSummary.avgSentiment > 0 ? '#10B981' : liveSummary.avgSentiment < 0 ? '#EF4444' : TEXT_DIM, fontWeight: 700 }}>
+          <span style={{ fontSize: '12px', color: 'var(--mc-bullish)', fontWeight: 600 }}>▲ Positive: {liveSummary.guidancePositive}</span>
+          <span style={{ fontSize: '12px', color: 'var(--mc-warn)', fontWeight: 600 }}>● Neutral: {liveSummary.guidanceNeutral}</span>
+          <span style={{ fontSize: '12px', color: 'var(--mc-bearish)', fontWeight: 600 }}>▼ Negative: {liveSummary.guidanceNegative}</span>
+          <span style={{ fontSize: '12px', color: liveSummary.avgSentiment > 0 ? 'var(--mc-bullish)' : liveSummary.avgSentiment < 0 ? 'var(--mc-bearish)' : TEXT_DIM, fontWeight: 700 }}>
             Avg Sentiment: {liveSummary.avgSentiment > 0 ? '+' : ''}{liveSummary.avgSentiment.toFixed(3)}
           </span>
           {liveSummary.divergences > 0 && (
-            <span style={{ fontSize: '11px', color: '#F59E0B', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '3px' }}>
+            <span style={{ fontSize: '11px', color: 'var(--mc-warn)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '3px' }}>
               ⚡ {liveSummary.divergences} Divergence{liveSummary.divergences > 1 ? 's' : ''}
             </span>
           )}
@@ -3965,7 +3965,7 @@ export default function EarningsPage() {
             const reasonLine = reasons.length > 0 ? `Likely cause: ${reasons.join(' AND ')}` : 'Possibly the universe filter — none of your portfolio/watchlist symbols passed.';
             return (
               <>
-                <p style={{ margin: '0 0 8px', fontSize: '16px', fontWeight: 500, color: '#E6EDF3' }}>
+                <p style={{ margin: '0 0 8px', fontSize: '16px', fontWeight: 500, color: 'var(--mc-text-1)' }}>
                   {total} cards loaded · {passedUniverse} passed universe · 0 visible
                 </p>
                 <p style={{ margin: '0 0 12px', fontSize: '13px' }}>{reasonLine}</p>
@@ -3977,19 +3977,19 @@ export default function EarningsPage() {
                         setDateFrom(d.toISOString().slice(0, 10));
                         setDateTo(new Date().toISOString().slice(0, 10));
                       }}
-                      style={{ padding: '8px 14px', background: '#22D3EE15', border: '1px solid #22D3EE60', color: '#22D3EE', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                      style={{ padding: '8px 14px', background: '#22D3EE15', border: '1px solid #22D3EE60', color: 'var(--mc-cyan)', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
                     >🗓 Expand to last 12 months</button>
                   )}
                   {culpritGrade && (
                     <button
                       onClick={() => setFilterGrades(['ALL'])}
-                      style={{ padding: '8px 14px', background: '#10B98115', border: '1px solid #10B98160', color: '#10B981', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                      style={{ padding: '8px 14px', background: '#10B98115', border: '1px solid #10B98160', color: 'var(--mc-bullish)', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
                     >Reset grade → ALL</button>
                   )}
                   {culpritDayOne && (
                     <button
                       onClick={() => setDayOneFilters(new Set())}
-                      style={{ padding: '8px 14px', background: '#F59E0B15', border: '1px solid #F59E0B60', color: '#F59E0B', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                      style={{ padding: '8px 14px', background: '#F59E0B15', border: '1px solid #F59E0B60', color: 'var(--mc-warn)', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
                     >Clear Day-1 threshold</button>
                   )}
                   {culpritGuidance && (

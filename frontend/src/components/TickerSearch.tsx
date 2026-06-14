@@ -217,7 +217,7 @@ export default function TickerSearch({
       <div style={{ position: 'relative' }}>
         <Search style={{
           position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)',
-          width: '16px', height: '16px', color: '#4A5B6C', pointerEvents: 'none',
+          width: '16px', height: '16px', color: 'var(--mc-text-4)', pointerEvents: 'none',
         }} />
         <input
           ref={inputRef}
@@ -233,7 +233,7 @@ export default function TickerSearch({
             border: '1px solid #2A3B4C',
             borderRadius: '10px',
             padding: '12px 16px 12px 38px',
-            color: '#F5F7FA',
+            color: 'var(--mc-text-0)',
             fontSize: '14px',
             outline: 'none',
             transition: 'all 0.2s',
@@ -244,7 +244,7 @@ export default function TickerSearch({
         />
         {query && (
           <button onClick={() => { setQuery(''); setSuggestions([]); setShowDropdown(false); inputRef.current?.focus(); }}
-            style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#4A5B6C', cursor: 'pointer', padding: '4px' }}>
+            style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--mc-text-4)', cursor: 'pointer', padding: '4px' }}>
             <X style={{ width: '14px', height: '14px' }} />
           </button>
         )}
@@ -269,7 +269,7 @@ export default function TickerSearch({
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   padding: '10px 14px', cursor: isExisting ? 'default' : 'pointer',
                   backgroundColor: isSelected ? '#1A2B3C' : 'transparent',
-                  borderBottom: idx < suggestions.length - 1 ? '1px solid #1A2540' : 'none',
+                  borderBottom: idx < suggestions.length - 1 ? '1px solid var(--mc-bg-4)' : 'none',
                   transition: 'background-color 0.15s',
                   opacity: isExisting ? 0.5 : 1,
                 }}
@@ -278,42 +278,42 @@ export default function TickerSearch({
               >
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontSize: '14px', fontWeight: 700, color: '#3B82F6' }}>{sug.ticker}</span>
+                    <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--mc-info)' }}>{sug.ticker}</span>
                     {isExisting && (
-                      <span style={{ fontSize: '9px', padding: '1px 6px', borderRadius: '3px', backgroundColor: '#4A5B6C20', color: '#4A5B6C', fontWeight: 600 }}>ADDED</span>
+                      <span style={{ fontSize: '9px', padding: '1px 6px', borderRadius: '3px', backgroundColor: '#4A5B6C20', color: 'var(--mc-text-4)', fontWeight: 600 }}>ADDED</span>
                     )}
                   </div>
-                  <div style={{ fontSize: '12px', color: '#8BA3C1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <div style={{ fontSize: '12px', color: 'var(--mc-text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {sug.company}
-                    {sug.sector !== '—' && <span style={{ color: '#4A5B6C' }}> · {sug.sector}</span>}
+                    {sug.sector !== '—' && <span style={{ color: 'var(--mc-text-4)' }}> · {sug.sector}</span>}
                   </div>
                 </div>
                 <div style={{ textAlign: 'right', marginLeft: '12px', flexShrink: 0 }}>
                   {sug.price > 0 ? (
                     <>
-                      <div style={{ fontSize: '13px', fontWeight: 600, color: '#F5F7FA', fontVariantNumeric: 'tabular-nums' }}>
+                      <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--mc-text-0)', fontVariantNumeric: 'tabular-nums' }}>
                         ₹{sug.price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                       </div>
                       <div style={{
                         fontSize: '11px', fontWeight: 600, fontVariantNumeric: 'tabular-nums',
-                        color: sug.changePercent >= 0 ? '#10B981' : '#EF4444',
+                        color: sug.changePercent >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)',
                       }}>
                         {sug.changePercent >= 0 ? '+' : ''}{sug.changePercent.toFixed(2)}%
                       </div>
                     </>
                   ) : (
-                    <div style={{ fontSize: '11px', color: '#4A5B6C' }}>—</div>
+                    <div style={{ fontSize: '11px', color: 'var(--mc-text-4)' }}>—</div>
                   )}
                 </div>
               </div>
             );
           }) : (
-            <div style={{ padding: '16px', textAlign: 'center', color: '#4A5B6C', fontSize: '13px' }}>
+            <div style={{ padding: '16px', textAlign: 'center', color: 'var(--mc-text-4)', fontSize: '13px' }}>
               {searching ? 'Searching...' : query.trim().length >= 2 ? 'No matches found. Press Enter to add manually.' : 'Type at least 2 characters...'}
             </div>
           )}
           {allowBulk && suggestions.length > 0 && (
-            <div style={{ padding: '8px 14px', borderTop: '1px solid #1A2540', fontSize: '11px', color: '#4A5B6C', textAlign: 'center' }}>
+            <div style={{ padding: '8px 14px', borderTop: '1px solid var(--mc-bg-4)', fontSize: '11px', color: 'var(--mc-text-4)', textAlign: 'center' }}>
               Tip: Paste comma-separated tickers for bulk add
             </div>
           )}

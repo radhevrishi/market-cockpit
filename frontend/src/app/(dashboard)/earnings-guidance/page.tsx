@@ -411,7 +411,7 @@ export default function EarningsGuidancePage() {
           )}
           {computing && !pollStopped && (
             <div style={{ marginTop: '20px' }}>
-              <div style={{ width: '200px', height: '4px', backgroundColor: '#1A2540', borderRadius: '2px', margin: '0 auto 14px', overflow: 'hidden' }}>
+              <div style={{ width: '200px', height: '4px', backgroundColor: 'var(--mc-bg-4)', borderRadius: '2px', margin: '0 auto 14px', overflow: 'hidden' }}>
                 <div style={{
                   height: '100%', backgroundColor: ACCENT, borderRadius: '2px',
                   animation: 'progress-bar 2s linear infinite',
@@ -423,7 +423,7 @@ export default function EarningsGuidancePage() {
               <button
                 onClick={() => { setPollStopped(true); setComputing(false); }}
                 style={{
-                  padding: '6px 16px', borderRadius: '6px', border: `1px solid #4A5B6C`,
+                  padding: '6px 16px', borderRadius: '6px', border: `1px solid var(--mc-text-4)`,
                   background: 'transparent', color: '#8899AA', cursor: 'pointer', fontSize: '12px',
                 }}
               >
@@ -520,7 +520,7 @@ function GuidanceCard({ event, expanded, onToggle, compact, isConviction }: { ev
             <span
               title="On Conviction Beats bench (BLOCKBUSTER/STRONG earnings)"
               style={{
-                fontSize: 10, fontWeight: 800, color: '#F59E0B',
+                fontSize: 10, fontWeight: 800, color: 'var(--mc-warn)',
                 border: '1px solid #F59E0B60', backgroundColor: 'rgba(245,158,11,0.10)',
                 padding: '1px 5px', borderRadius: 3, letterSpacing: 0.3,
               }}
@@ -528,7 +528,7 @@ function GuidanceCard({ event, expanded, onToggle, compact, isConviction }: { ev
           )}
           <span style={{ color: TEXT_DIM, fontSize: '12px' }}>{event.companyName}</span>
           <span style={{
-            backgroundColor: '#1A2540', padding: '2px 8px', borderRadius: '4px',
+            backgroundColor: 'var(--mc-bg-4)', padding: '2px 8px', borderRadius: '4px',
             fontSize: '10px', color: TEXT_DIM, fontWeight: 600,
           }}>{event.eventType}</span>
         </div>

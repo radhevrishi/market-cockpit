@@ -739,11 +739,11 @@ export default function HeatmapPage() {
       {isLoading && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minHeight: '500px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{ width: 18, height: 18, border: `2px solid #1A2840`, borderTop: `2px solid ${ACCENT}`, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+            <div style={{ width: 18, height: 18, border: `2px solid var(--mc-bg-4)`, borderTop: `2px solid ${ACCENT}`, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
             <span style={{ fontSize: 12, color: '#E2E8F0', fontWeight: 700, letterSpacing: '0.4px' }}>
               {isEarningsMode ? 'Loading post-earnings cohort…' : 'Loading daily heatmap…'}
             </span>
-            <span style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic' }}>
+            <span style={{ fontSize: 11, color: 'var(--mc-text-3)', fontStyle: 'italic' }}>
               ≤30s · times out gracefully
             </span>
           </div>
@@ -756,7 +756,7 @@ export default function HeatmapPage() {
           }}>
             {Array.from({ length: 56 }).map((_, i) => (
               <div key={i} style={{
-                background: `linear-gradient(90deg, #0A1422 0%, #1A2840 50%, #0A1422 100%)`,
+                background: `linear-gradient(90deg, #0A1422 0%, var(--mc-bg-4) 50%, #0A1422 100%)`,
                 backgroundSize: '200% 100%',
                 animation: `hmShimmer 1.4s linear infinite ${(i % 8) * 0.05}s`,
                 borderRadius: 4,

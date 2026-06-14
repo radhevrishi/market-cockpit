@@ -115,10 +115,10 @@ export default function InlineValuationPanel() {
   const hasFiles = docs.length > 0;
 
   return (
-    <div style={{ marginTop: 32, padding: '20px 22px', background: '#0d1623', border: `1px solid ${BORDER}`, borderRadius: 12 }}>
+    <div style={{ marginTop: 32, padding: '20px 22px', background: 'var(--mc-bg-1)', border: `1px solid ${BORDER}`, borderRadius: 12 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6, flexWrap: 'wrap', gap: 6 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#22D3EE', letterSpacing: 0.5, textTransform: 'uppercase' }}>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: 0.5, textTransform: 'uppercase' }}>
             🎯 Valuation Triangulation
           </h2>
           <span style={{ fontSize: 10, color: DIM, fontStyle: 'italic' }}>
@@ -157,10 +157,10 @@ export default function InlineValuationPanel() {
         <div style={{ marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 4 }}>
           {docs.map((d, i) => (
             <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: BG, border: `1px solid ${BORDER}`, borderRadius: 4, fontSize: 11 }}>
-              <span style={{ fontWeight: 700, color: d.type === 'excel' ? '#10B981' : '#22D3EE', minWidth: 40 }}>{d.type === 'excel' ? 'XLSX' : 'PDF'}</span>
+              <span style={{ fontWeight: 700, color: d.type === 'excel' ? 'var(--mc-bullish)' : 'var(--mc-cyan)', minWidth: 40 }}>{d.type === 'excel' ? 'XLSX' : 'PDF'}</span>
               <span style={{ color: TEXT, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.name}</span>
               <span style={{ color: DIM, fontSize: 10 }}>{Math.round(d.size / 1024)} KB</span>
-              <span style={{ color: d.status === 'done' ? '#10B981' : d.status === 'error' ? '#EF4444' : '#F59E0B' }}>
+              <span style={{ color: d.status === 'done' ? 'var(--mc-bullish)' : d.status === 'error' ? 'var(--mc-bearish)' : 'var(--mc-warn)' }}>
                 {d.status === 'done' ? '✓' : d.status === 'error' ? '✗' : '⏳'}
               </span>
               <span style={{ color: DIM, fontSize: 10, fontStyle: 'italic' }}>{d.message || ''}</span>
@@ -169,7 +169,7 @@ export default function InlineValuationPanel() {
         </div>
       )}
 
-      {building && <div style={{ fontSize: 12, color: '#F59E0B', textAlign: 'center', padding: 10 }}>⏳ Building valuation report…</div>}
+      {building && <div style={{ fontSize: 12, color: 'var(--mc-warn)', textAlign: 'center', padding: 10 }}>⏳ Building valuation report…</div>}
 
       {/* Report */}
       {report && (
@@ -182,7 +182,7 @@ export default function InlineValuationPanel() {
             </span>
             <span style={{ fontSize: 18, fontWeight: 800, color: recColor(report.recommendation) }}>{report.recommendation}</span>
             {report.company && <span style={{ fontSize: 12, fontWeight: 700, color: TEXT }}>{report.company}</span>}
-            {report.sector && <span style={{ fontSize: 10, color: '#22D3EE', background: '#22D3EE15', padding: '2px 8px', borderRadius: 3 }}>{report.sector}</span>}
+            {report.sector && <span style={{ fontSize: 10, color: 'var(--mc-cyan)', background: '#22D3EE15', padding: '2px 8px', borderRadius: 3 }}>{report.sector}</span>}
           </div>
 
           {/* PATCH 0851 — Institutional chip strip — prior decision + CB membership +
@@ -208,20 +208,20 @@ export default function InlineValuationPanel() {
             }
             if (isOnCB) {
               chips.push(
-                <span key="cb" title="On Conviction Beats bench" style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#F59E0B25', color: '#F59E0B', border: '1px solid #F59E0B60', borderRadius: 3 }}>
+                <span key="cb" title="On Conviction Beats bench" style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#F59E0B25', color: 'var(--mc-warn)', border: '1px solid #F59E0B60', borderRadius: 3 }}>
                   🏆 CB
                 </span>
               );
             }
             if (mi?.fired) {
               chips.push(
-                <span key="mi" title={mi.interpretation} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#10B98125', color: '#10B981', border: '1px solid #10B98160', borderRadius: 3 }}>
+                <span key="mi" title={mi.interpretation} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#10B98125', color: 'var(--mc-bullish)', border: '1px solid #10B98160', borderRadius: 3 }}>
                   ⚡ MARGIN INFLECTION +{mi.gapPp.toFixed(1)}pp
                 </span>
               );
             } else if (mi?.direction === 'COMPRESSION') {
               chips.push(
-                <span key="mi" title={mi.interpretation} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#EF444425', color: '#EF4444', border: '1px solid #EF444460', borderRadius: 3 }}>
+                <span key="mi" title={mi.interpretation} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#EF444425', color: 'var(--mc-bearish)', border: '1px solid #EF444460', borderRadius: 3 }}>
                   ▼ MARGIN COMPRESSION {mi.gapPp.toFixed(1)}pp
                 </span>
               );
@@ -229,32 +229,32 @@ export default function InlineValuationPanel() {
             if (fp && (fp.severity === 'HIGH' || fp.severity === 'CRITICAL')) {
               chips.push(
                 <span key="fp" title={`Forensic pump score ${fp.pumpScore}/11 — ${fp.flags.join(' · ')}`}
-                  style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#EF444425', color: '#EF4444', border: '1px solid #EF444460', borderRadius: 3 }}>
+                  style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#EF444425', color: 'var(--mc-bearish)', border: '1px solid #EF444460', borderRadius: 3 }}>
                   🚨 PUMP {fp.pumpScore}/11
                 </span>
               );
             } else if (fp && fp.severity === 'WATCH') {
               chips.push(
-                <span key="fp" title={fp.flags.join(' · ')} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#F59E0B25', color: '#F59E0B', border: '1px solid #F59E0B60', borderRadius: 3 }}>
+                <span key="fp" title={fp.flags.join(' · ')} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#F59E0B25', color: 'var(--mc-warn)', border: '1px solid #F59E0B60', borderRadius: 3 }}>
                   ⚠ PUMP WATCH {fp.pumpScore}
                 </span>
               );
             } else if (fp && fp.severity === 'CLEAN') {
               chips.push(
-                <span key="fp" title="No forensic pump flags detected" style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', background: '#22D3EE15', color: '#22D3EE', border: '1px solid #22D3EE40', borderRadius: 3 }}>
+                <span key="fp" title="No forensic pump flags detected" style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', background: '#22D3EE15', color: 'var(--mc-cyan)', border: '1px solid #22D3EE40', borderRadius: 3 }}>
                   ✓ FORENSIC CLEAN
                 </span>
               );
             }
             if (sa && sa.state === 'ACCELERATING') {
               chips.push(
-                <span key="sa" title={`Latest YoY ${sa.latestYoY.toFixed(0)}% vs 5y CAGR ${sa.cagr5y.toFixed(0)}% (+${sa.delta.toFixed(0)}pp)`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#10B98125', color: '#10B981', border: '1px solid #10B98160', borderRadius: 3 }}>
+                <span key="sa" title={`Latest YoY ${sa.latestYoY.toFixed(0)}% vs 5y CAGR ${sa.cagr5y.toFixed(0)}% (+${sa.delta.toFixed(0)}pp)`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#10B98125', color: 'var(--mc-bullish)', border: '1px solid #10B98160', borderRadius: 3 }}>
                   ⇑ SALES ACCEL +{sa.delta.toFixed(0)}pp
                 </span>
               );
             } else if (sa && sa.state === 'DECELERATING') {
               chips.push(
-                <span key="sa" title={`Latest YoY ${sa.latestYoY.toFixed(0)}% vs 5y CAGR ${sa.cagr5y.toFixed(0)}% (${sa.delta.toFixed(0)}pp)`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#F59E0B25', color: '#F59E0B', border: '1px solid #F59E0B60', borderRadius: 3 }}>
+                <span key="sa" title={`Latest YoY ${sa.latestYoY.toFixed(0)}% vs 5y CAGR ${sa.cagr5y.toFixed(0)}% (${sa.delta.toFixed(0)}pp)`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#F59E0B25', color: 'var(--mc-warn)', border: '1px solid #F59E0B60', borderRadius: 3 }}>
                   ⇓ SALES DECEL {sa.delta.toFixed(0)}pp
                 </span>
               );
@@ -306,9 +306,9 @@ export default function InlineValuationPanel() {
               <div style={{
                 marginBottom: 12, padding: '10px 12px',
                 background: '#0A1422', border: `1px solid #A78BFA40`,
-                borderLeft: '3px solid #A78BFA', borderRadius: 5,
+                borderLeft: '3px solid var(--mc-state-persistent)', borderRadius: 5,
               }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: '#A78BFA', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--mc-state-persistent)', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6 }}>
                   📋 Forward Guidance Extracted ({report.guidance.length})
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
@@ -316,12 +316,12 @@ export default function InlineValuationPanel() {
                     const items = byMetric.get(metric)!;
                     return (
                       <div key={metric} style={{ background: BG, border: `1px solid ${BORDER}`, borderRadius: 4, padding: '6px 8px' }}>
-                        <div style={{ fontSize: 9, fontWeight: 800, color: '#A78BFA', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
+                        <div style={{ fontSize: 9, fontWeight: 800, color: 'var(--mc-state-persistent)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
                           {metricLabel(metric as any)}
                         </div>
                         {items.slice(0, 8).map((g, i) => (
                           <div key={i} title={g.rawPhrase} style={{ fontSize: 11, color: TEXT, fontFamily: 'ui-monospace, monospace', lineHeight: 1.55, display: 'flex', gap: 6 }}>
-                            <span style={{ color: '#22D3EE', fontWeight: 700, minWidth: 38 }}>{g.fiscalYear || '—'}</span>
+                            <span style={{ color: 'var(--mc-cyan)', fontWeight: 700, minWidth: 38 }}>{g.fiscalYear || '—'}</span>
                             <span>{formatGuidanceValue(g)}</span>
                           </div>
                         ))}
@@ -334,7 +334,7 @@ export default function InlineValuationPanel() {
                 </div>
                 {report.forwardYear && (
                   <div style={{ marginTop: 8, fontSize: 10, color: DIM, fontStyle: 'italic' }}>
-                    Used <b style={{ color: '#22D3EE' }}>{report.forwardYear}</b> as the base forward year for the projection above.
+                    Used <b style={{ color: 'var(--mc-cyan)' }}>{report.forwardYear}</b> as the base forward year for the projection above.
                   </div>
                 )}
               </div>
@@ -368,8 +368,8 @@ export default function InlineValuationPanel() {
             }
             if (drivers.length === 0) return null;
             return (
-              <div style={{ padding: 10, background: '#F59E0B10', border: '1px solid #F59E0B40', borderLeft: '3px solid #F59E0B', borderRadius: 5, marginBottom: 12 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: '#F59E0B', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6 }}>
+              <div style={{ padding: 10, background: '#F59E0B10', border: '1px solid #F59E0B40', borderLeft: '3px solid var(--mc-warn)', borderRadius: 5, marginBottom: 12 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--mc-warn)', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6 }}>
                   ⚠ Editorial-Quant gap detected — why
                 </div>
                 <ul style={{ margin: '0 0 0 18px', padding: 0, fontSize: 11, color: TEXT, lineHeight: 1.55 }}>
@@ -399,9 +399,9 @@ export default function InlineValuationPanel() {
                       onClick={() => setYear(y)}
                       style={{
                         padding: '4px 10px', fontSize: 11, fontWeight: 700,
-                        background: active ? '#22D3EE' : 'transparent',
-                        color: active ? '#0A0E1A' : (disabled ? DIM : TEXT),
-                        border: `1px solid ${active ? '#22D3EE' : BORDER}`,
+                        background: active ? 'var(--mc-cyan)' : 'transparent',
+                        color: active ? 'var(--mc-bg-0)' : (disabled ? DIM : TEXT),
+                        border: `1px solid ${active ? 'var(--mc-cyan)' : BORDER}`,
                         borderRadius: 4, cursor: disabled ? 'not-allowed' : 'pointer',
                         opacity: disabled ? 0.4 : 1,
                       }}
@@ -421,7 +421,7 @@ export default function InlineValuationPanel() {
                       style={{
                         padding: '4px 10px', fontSize: 11, fontWeight: 700,
                         background: active ? c : 'transparent',
-                        color: active ? '#0A0E1A' : TEXT,
+                        color: active ? 'var(--mc-bg-0)' : TEXT,
                         border: `1px solid ${active ? c : BORDER}`,
                         borderRadius: 4, cursor: 'pointer',
                       }}
@@ -453,7 +453,7 @@ export default function InlineValuationPanel() {
               return (
                 <div key={i} style={{ padding: 10, background: BG, border: `1px solid ${color}50`, borderRadius: 4 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                    <span style={{ fontSize: 11, fontWeight: 800, color: '#22D3EE' }}>{c.label}</span>
+                    <span style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-cyan)' }}>{c.label}</span>
                     {c.conf && <span style={{ fontSize: 9, color, fontWeight: 800 }}>{c.conf}</span>}
                   </div>
                   <div style={{ fontSize: 14, fontWeight: 800, color: TEXT, marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>
@@ -517,7 +517,7 @@ export default function InlineValuationPanel() {
           })()}
 
           <div style={{ marginTop: 10, fontSize: 10, color: DIM, fontStyle: 'italic', textAlign: 'center' }}>
-            For full breakdown (bear/base/bull · FY27/FY28 toggle · override panel · save-bench) → <a href="/auto-valuation" style={{ color: '#22D3EE', textDecoration: 'none', borderBottom: '1px dotted #22D3EE' }}>open Auto-Val full page</a>
+            For full breakdown (bear/base/bull · FY27/FY28 toggle · override panel · save-bench) → <a href="/auto-valuation" style={{ color: 'var(--mc-cyan)', textDecoration: 'none', borderBottom: '1px dotted var(--mc-cyan)' }}>open Auto-Val full page</a>
           </div>
         </div>
       )}

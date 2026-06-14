@@ -98,8 +98,8 @@ export default function ActivityLogPage() {
                 fontSize: 11,
                 padding: '5px 11px',
                 background: kind === f.id ? '#22D3EE22' : 'transparent',
-                border: `1px solid ${kind === f.id ? '#22D3EE' : '#1A2540'}`,
-                color: kind === f.id ? '#22D3EE' : TEXT,
+                border: `1px solid ${kind === f.id ? 'var(--mc-cyan)' : 'var(--mc-bg-4)'}`,
+                color: kind === f.id ? 'var(--mc-cyan)' : TEXT,
                 borderRadius: 4, cursor: 'pointer', fontWeight: 700,
               }}>
                 {f.label} <span style={{ color: DIM, marginLeft: 3 }}>{n}</span>
@@ -143,15 +143,15 @@ export default function ActivityLogPage() {
                 No activity yet. Start by saving a valuation, adding a theme, or logging a decision &mdash; it will appear here automatically.
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center', marginTop: 4 }}>
-                <Link href="/valuation-calc" style={{ fontSize: 11, color: '#22D3EE', textDecoration: 'none', padding: '5px 11px', border: '1px solid #22D3EE40', borderRadius: 4, fontWeight: 700 }}>Save a valuation</Link>
-                <Link href="/critical-themes" style={{ fontSize: 11, color: '#22D3EE', textDecoration: 'none', padding: '5px 11px', border: '1px solid #22D3EE40', borderRadius: 4, fontWeight: 700 }}>Add a theme</Link>
-                <Link href="/multibagger" style={{ fontSize: 11, color: '#22D3EE', textDecoration: 'none', padding: '5px 11px', border: '1px solid #22D3EE40', borderRadius: 4, fontWeight: 700 }}>Log a decision</Link>
+                <Link href="/valuation-calc" style={{ fontSize: 11, color: 'var(--mc-cyan)', textDecoration: 'none', padding: '5px 11px', border: '1px solid #22D3EE40', borderRadius: 4, fontWeight: 700 }}>Save a valuation</Link>
+                <Link href="/critical-themes" style={{ fontSize: 11, color: 'var(--mc-cyan)', textDecoration: 'none', padding: '5px 11px', border: '1px solid #22D3EE40', borderRadius: 4, fontWeight: 700 }}>Add a theme</Link>
+                <Link href="/multibagger" style={{ fontSize: 11, color: 'var(--mc-cyan)', textDecoration: 'none', padding: '5px 11px', border: '1px solid #22D3EE40', borderRadius: 4, fontWeight: 700 }}>Log a decision</Link>
               </div>
             </div>
           ) : (
             <div style={{ background: CARD, border: `1px dashed ${BORDER}`, borderRadius: 8, padding: '24px 26px', textAlign: 'center' }}>
               <div style={{ fontSize: 13, color: DIM, fontStyle: 'italic' }}>
-                No activity matches your filter. Try logging a decision in <Link href="/multibagger" style={{ color: '#22D3EE' }}>Multibagger</Link>, saving a valuation in <Link href="/valuation-calc" style={{ color: '#22D3EE' }}>Valuation Calc</Link>, or adding a theme in <Link href="/critical-themes" style={{ color: '#22D3EE' }}>Critical Themes</Link>.
+                No activity matches your filter. Try logging a decision in <Link href="/multibagger" style={{ color: 'var(--mc-cyan)' }}>Multibagger</Link>, saving a valuation in <Link href="/valuation-calc" style={{ color: 'var(--mc-cyan)' }}>Valuation Calc</Link>, or adding a theme in <Link href="/critical-themes" style={{ color: 'var(--mc-cyan)' }}>Critical Themes</Link>.
               </div>
             </div>
           )

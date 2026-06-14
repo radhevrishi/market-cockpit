@@ -9,6 +9,8 @@ import { Skeleton, TableRowSkeleton } from '@/components/ui/Skeleton';
 import { timeAgo } from '@/lib/utils';
 // PATCH 0282 — Shared freshness chip.
 import { PanelFreshness } from '@/components/PanelFreshness';
+// PATCH 1079 — Watchlist alerts composer (wired from HANDOFF §6)
+import { WatchlistAlertsComposer } from '@/components/portal-widgets';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -359,6 +361,9 @@ export default function AlertsPage() {
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-5">
       {showCreate && <CreateAlertModal onClose={() => setShowCreate(false)} />}
+
+      {/* PATCH 1079 — Watchlist-alerts composer (HANDOFF §6 wire-up) */}
+      <WatchlistAlertsComposer />
 
       {/* Header */}
       <div className="flex items-center justify-between">

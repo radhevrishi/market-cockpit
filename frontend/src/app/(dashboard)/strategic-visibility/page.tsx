@@ -394,45 +394,45 @@ export default function StrategicVisibilityPage() {
   }, [data?.articles]);
 
   return (
-    <div style={{ minHeight: '100%', backgroundColor: '#0A0E1A', padding: '20px 24px' }}>
+    <div style={{ minHeight: '100%', backgroundColor: 'var(--mc-bg-0)', padding: '20px 24px' }}>
       <div style={{ maxWidth: 1400, margin: '0 auto' }}>
         <header style={{ marginBottom: 18 }}>
-          <h1 style={{ fontSize: 22, fontWeight: 800, color: '#F5F7FA', margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
-            🌟 <span style={{ background: 'linear-gradient(90deg,#8B5CF6,#22D3EE)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Transformational Contracts</span>
-            <span style={{ fontSize: 10, fontWeight: 600, color: '#22D3EE', backgroundColor: '#22D3EE10', border: '1px solid #22D3EE40', padding: '3px 8px', borderRadius: 4, letterSpacing: '0.4px' }}>
+          <h1 style={{ fontSize: 22, fontWeight: 800, color: 'var(--mc-text-0)', margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
+            🌟 <span style={{ background: 'linear-gradient(90deg,#8B5CF6,var(--mc-cyan))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Transformational Contracts</span>
+            <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--mc-cyan)', backgroundColor: '#22D3EE10', border: '1px solid #22D3EE40', padding: '3px 8px', borderRadius: 4, letterSpacing: '0.4px' }}>
               ROLLING {windowDays}D LEDGER
             </span>
             {/* PATCH 0274 — Freshness chip. Turns amber if the 5-min refresh stalls. */}
             <PanelFreshness dataUpdatedAt={dataUpdatedAt} isFetching={isFetching} staleAfterMs={10 * 60_000} />
           </h1>
-          <p style={{ fontSize: 12, color: '#6B7A8D', margin: '4px 0 0', lineHeight: 1.5 }}>
+          <p style={{ fontSize: 12, color: 'var(--mc-text-4)', margin: '4px 0 0', lineHeight: 1.5 }}>
             Multi-year frameworks · hyperscaler commitments · sovereign programs · transformational revenue locks.
             Persisted to KV with a {windowDays}-day rolling window — independent of the live news feed.
           </p>
           {/* AUDIT_100 #45 / #84 — one-line legend so users know what the chips rank.
               Funding 5 = financial close (most certain), 1 = press release only.
               Execution ladder: Announced → Signed → Fin close → Power secured → Under constr → Operational. */}
-          <p style={{ fontSize: 10.5, color: '#4A5B6C', margin: '6px 0 0', lineHeight: 1.5 }}>
-            <span style={{ color: '#94A3B8', fontWeight: 700 }}>LEGEND:</span>{' '}
-            <span style={{ color: '#10B981' }}>FUNDING 5 = financial close</span> →{' '}
-            <span style={{ color: '#22D3EE' }}>4 binding</span> →{' '}
-            <span style={{ color: '#F59E0B' }}>3 signed LOI</span> →{' '}
-            <span style={{ color: '#EF4444' }}>2 mou</span> →{' '}
-            <span style={{ color: '#6B7A8D' }}>1 press release</span>{' '}
-            · <span style={{ color: '#94A3B8' }}>EXEC ladder:</span> Announced → Signed → Fin close → Power secured → Under constr. → Operational
+          <p style={{ fontSize: 10.5, color: 'var(--mc-text-4)', margin: '6px 0 0', lineHeight: 1.5 }}>
+            <span style={{ color: 'var(--mc-text-3)', fontWeight: 700 }}>LEGEND:</span>{' '}
+            <span style={{ color: 'var(--mc-bullish)' }}>FUNDING 5 = financial close</span> →{' '}
+            <span style={{ color: 'var(--mc-cyan)' }}>4 binding</span> →{' '}
+            <span style={{ color: 'var(--mc-warn)' }}>3 signed LOI</span> →{' '}
+            <span style={{ color: 'var(--mc-bearish)' }}>2 mou</span> →{' '}
+            <span style={{ color: 'var(--mc-text-4)' }}>1 press release</span>{' '}
+            · <span style={{ color: 'var(--mc-text-3)' }}>EXEC ladder:</span> Announced → Signed → Fin close → Power secured → Under constr. → Operational
           </p>
           {/* PATCH 0068 + 0070: window selector with 1Y / 2Y options */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 10, color: '#4A5B6C', fontWeight: 700, letterSpacing: '0.5px' }}>WINDOW:</span>
+            <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.5px' }}>WINDOW:</span>
             {[30, 90, 180, 365, 730].map((d) => (
               <button
                 key={d}
                 onClick={() => setWindowDays(d as 30 | 90 | 180 | 365 | 730)}
                 style={{
                   fontSize: 10, fontWeight: 700,
-                  color: windowDays === d ? '#22D3EE' : '#6B7A8D',
+                  color: windowDays === d ? 'var(--mc-cyan)' : 'var(--mc-text-4)',
                   backgroundColor: windowDays === d ? '#22D3EE15' : 'transparent',
-                  border: `1px solid ${windowDays === d ? '#22D3EE60' : '#1E2D45'}`,
+                  border: `1px solid ${windowDays === d ? '#22D3EE60' : 'var(--mc-border-1)'}`,
                   borderRadius: 4, padding: '4px 10px', cursor: 'pointer',
                   letterSpacing: '0.4px',
                 }}
@@ -441,18 +441,18 @@ export default function StrategicVisibilityPage() {
               </button>
             ))}
             {data?.total_in_ledger !== undefined && data.total_in_ledger > articles.length && (
-              <span style={{ fontSize: 10, color: '#F59E0B', marginLeft: 8, fontWeight: 700 }}>
+              <span style={{ fontSize: 10, color: 'var(--mc-warn)', marginLeft: 8, fontWeight: 700 }}>
                 {articles.length} in window · {data.total_in_ledger} total in ledger ·{' '}
                 <button
                   onClick={() => setWindowDays(730)}
-                  style={{ fontSize: 10, fontWeight: 700, color: '#22D3EE', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+                  style={{ fontSize: 10, fontWeight: 700, color: 'var(--mc-cyan)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
                 >
                   expand to 2Y
                 </button>
               </span>
             )}
             {data?.summary?.oldest_in_window_at && (
-              <span style={{ fontSize: 10, color: '#4A5B6C', marginLeft: 8 }}>
+              <span style={{ fontSize: 10, color: 'var(--mc-text-4)', marginLeft: 8 }}>
                 Oldest in window: {new Date(data.summary.oldest_in_window_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
               </span>
             )}
@@ -463,16 +463,16 @@ export default function StrategicVisibilityPage() {
               like the region had no data when really we hadn't fetched
               yet. The skeleton shimmer matches the rest of the page. */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 10, color: '#4A5B6C', fontWeight: 700, letterSpacing: '0.5px' }}>REGION:</span>
+            <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.5px' }}>REGION:</span>
             {(['ALL', 'IN', 'US'] as const).map((r) => (
               <button
                 key={r}
                 onClick={() => setRegionFilter(r)}
                 style={{
                   fontSize: 10, fontWeight: 700,
-                  color: regionFilter === r ? '#10B981' : '#6B7A8D',
+                  color: regionFilter === r ? 'var(--mc-bullish)' : 'var(--mc-text-4)',
                   backgroundColor: regionFilter === r ? '#10B98115' : 'transparent',
-                  border: `1px solid ${regionFilter === r ? '#10B98160' : '#1E2D45'}`,
+                  border: `1px solid ${regionFilter === r ? '#10B98160' : 'var(--mc-border-1)'}`,
                   borderRadius: 4, padding: '4px 10px', cursor: 'pointer',
                   letterSpacing: '0.4px',
                 }}
@@ -482,25 +482,25 @@ export default function StrategicVisibilityPage() {
                   <span style={{
                     display: 'inline-block', marginLeft: 5, width: 18, height: 8,
                     verticalAlign: 'middle', borderRadius: 3,
-                    background: 'linear-gradient(90deg, #1A2840 0%, #2A3B55 50%, #1A2840 100%)',
+                    background: 'linear-gradient(90deg, var(--mc-bg-4) 0%, #2A3B55 50%, var(--mc-bg-4) 100%)',
                     backgroundSize: '200% 100%',
                     animation: 'svShimmer 1.4s linear infinite',
                   }} aria-label="loading count" />
                 ) : (
-                  <span style={{ marginLeft: 5, color: '#4A5B6C', fontWeight: 400 }}>{regionCounts[r]}</span>
+                  <span style={{ marginLeft: 5, color: 'var(--mc-text-4)', fontWeight: 400 }}>{regionCounts[r]}</span>
                 )}
               </button>
             ))}
-            <span style={{ fontSize: 10, color: '#4A5B6C', fontWeight: 700, letterSpacing: '0.5px', marginLeft: 12 }}>SORT:</span>
+            <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.5px', marginLeft: 12 }}>SORT:</span>
             {(['rank', 'recent'] as const).map((s) => (
               <button
                 key={s}
                 onClick={() => setSortMode(s)}
                 style={{
                   fontSize: 10, fontWeight: 700,
-                  color: sortMode === s ? '#F59E0B' : '#6B7A8D',
+                  color: sortMode === s ? 'var(--mc-warn)' : 'var(--mc-text-4)',
                   backgroundColor: sortMode === s ? '#F59E0B15' : 'transparent',
-                  border: `1px solid ${sortMode === s ? '#F59E0B60' : '#1E2D45'}`,
+                  border: `1px solid ${sortMode === s ? '#F59E0B60' : 'var(--mc-border-1)'}`,
                   borderRadius: 4, padding: '4px 10px', cursor: 'pointer',
                   letterSpacing: '0.4px',
                 }}
@@ -513,18 +513,18 @@ export default function StrategicVisibilityPage() {
 
         {/* Inclusion criteria pinned at top */}
         <div style={{
-          backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderLeft: '3px solid #8B5CF6',
+          backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderLeft: '3px solid #8B5CF6',
           borderRadius: 10, padding: '10px 14px', marginBottom: 16,
         }}>
           <div style={{ fontSize: 10, color: '#8B5CF6', fontWeight: 700, letterSpacing: '0.8px', marginBottom: 6 }}>
             INCLUSION CRITERIA — only articles meeting ALL of A + B + C qualify
           </div>
-          <div style={{ fontSize: 11, color: '#94A3B8', lineHeight: 1.6 }}>
-            <strong style={{ color: '#E6EDF3' }}>A. Size:</strong> ≥$300M firm contract OR ≥10× backlog OR ≥20% LTM rev OR ≥10% mcap. Auto-include: 10y+ deal ≥30% mcap. India PSU path: ≥₹500 cr from NTPC / PGCIL / SECI / HAL / BEL with ≥3y visibility.<br/>
-            <strong style={{ color: '#E6EDF3' }}>B. Theme:</strong> AI Infra / Energy Transition / Defense / Semi Supply Chain / Sovereign Program / Hyperscaler Lease / Quantum / Power.<br/>
-            <strong style={{ color: '#E6EDF3' }}>C. Duration:</strong> ≥3y firm visibility (prefer ≥5–10y) with Tier-1 counterparty (Hyperscaler / Gov / Top-3 Utility). Generic "hyperscaler" / "investment-grade tenant" accepted with lease/take-or-pay structure.<br/>
-            <strong style={{ color: '#E6EDF3' }}>Capacity inference:</strong> ≥100MW AI campus + ≥10y → implicit ≥$200M (industry benchmark $20M/MW/y).<br/>
-            <strong style={{ color: '#E6EDF3' }}>Overrides:</strong> 🔒 Chokepoint (sole producer + ≥5y policy-backed) · 🧭 Strategic Program (≥$300M + ≥5y national framework).
+          <div style={{ fontSize: 11, color: 'var(--mc-text-3)', lineHeight: 1.6 }}>
+            <strong style={{ color: 'var(--mc-text-1)' }}>A. Size:</strong> ≥$300M firm contract OR ≥10× backlog OR ≥20% LTM rev OR ≥10% mcap. Auto-include: 10y+ deal ≥30% mcap. India PSU path: ≥₹500 cr from NTPC / PGCIL / SECI / HAL / BEL with ≥3y visibility.<br/>
+            <strong style={{ color: 'var(--mc-text-1)' }}>B. Theme:</strong> AI Infra / Energy Transition / Defense / Semi Supply Chain / Sovereign Program / Hyperscaler Lease / Quantum / Power.<br/>
+            <strong style={{ color: 'var(--mc-text-1)' }}>C. Duration:</strong> ≥3y firm visibility (prefer ≥5–10y) with Tier-1 counterparty (Hyperscaler / Gov / Top-3 Utility). Generic "hyperscaler" / "investment-grade tenant" accepted with lease/take-or-pay structure.<br/>
+            <strong style={{ color: 'var(--mc-text-1)' }}>Capacity inference:</strong> ≥100MW AI campus + ≥10y → implicit ≥$200M (industry benchmark $20M/MW/y).<br/>
+            <strong style={{ color: 'var(--mc-text-1)' }}>Overrides:</strong> 🔒 Chokepoint (sole producer + ≥5y policy-backed) · 🧭 Strategic Program (≥$300M + ≥5y national framework).
           </div>
         </div>
 
@@ -549,10 +549,10 @@ export default function StrategicVisibilityPage() {
                 <div style={{ fontSize: 9, fontWeight: 700, color: insight.accent, letterSpacing: '0.8px', marginBottom: 3 }}>
                   MACRO PATTERN — derived from current ledger distribution
                 </div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: '#F5F7FA', marginBottom: 4 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--mc-text-0)', marginBottom: 4 }}>
                   {insight.headline}
                 </div>
-                <div style={{ fontSize: 11, color: '#94A3B8', lineHeight: 1.5 }}>
+                <div style={{ fontSize: 11, color: 'var(--mc-text-3)', lineHeight: 1.5 }}>
                   {insight.sub}
                 </div>
               </div>
@@ -567,13 +567,13 @@ export default function StrategicVisibilityPage() {
               const n = articles.filter(a => a.strategic_visibility.flags.includes(f)).length;
               if (n === 0) return null;
               return (
-                <div key={f} style={{ fontSize: 11, color: '#94A3B8' }}>
+                <div key={f} style={{ fontSize: 11, color: 'var(--mc-text-3)' }}>
                   <span style={{ color: FLAG_COLOR[f], fontWeight: 700 }}>{n}</span>
                   <span style={{ marginLeft: 4 }}>{FLAG_LABEL[f]}</span>
                 </div>
               );
             })}
-            <div style={{ marginLeft: 'auto', fontSize: 11, color: '#6B7A8D' }}>
+            <div style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--mc-text-4)' }}>
               {articles.length} qualifying signals
             </div>
           </div>
@@ -583,13 +583,13 @@ export default function StrategicVisibilityPage() {
           /* PATCH 0445 BUG-030 — Shimmer skeleton rows instead of single
              centred "Computing…" line so cold-load feels populated. */
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{ fontSize: 12, color: '#6B7A8D', marginBottom: 6 }}>
+            <div style={{ fontSize: 12, color: 'var(--mc-text-4)', marginBottom: 6 }}>
               📡 Computing strategic visibility…
             </div>
             {Array.from({ length: 6 }).map((_, i) => (
               <div key={i} style={{
                 height: 60,
-                background: 'linear-gradient(90deg, #0D1B2E 0%, #1A2840 50%, #0D1B2E 100%)',
+                background: 'linear-gradient(90deg, #0D1B2E 0%, var(--mc-bg-4) 50%, #0D1B2E 100%)',
                 backgroundSize: '200% 100%',
                 animation: `svShimmer 1.4s linear infinite ${i * 0.08}s`,
                 borderRadius: 8,
@@ -601,9 +601,9 @@ export default function StrategicVisibilityPage() {
         )}
 
         {!isLoading && articles.length === 0 && (
-          <div style={{ padding: 60, textAlign: 'center', color: '#6B7A8D', backgroundColor: '#0D1B2E', borderRadius: 10, border: '1px solid #1E2D45' }}>
+          <div style={{ padding: 60, textAlign: 'center', color: 'var(--mc-text-4)', backgroundColor: '#0D1B2E', borderRadius: 10, border: '1px solid var(--mc-border-1)' }}>
             <div style={{ fontSize: 32, marginBottom: 8 }}>📭</div>
-            <div style={{ fontSize: 14, color: '#94A3B8', marginBottom: 4 }}>
+            <div style={{ fontSize: 14, color: 'var(--mc-text-3)', marginBottom: 4 }}>
               {regionFilter !== 'ALL'
                 ? `No ${regionFilter} contracts in the rolling ${windowDays}-day window.`
                 : `No transformational contracts in the rolling ${windowDays}-day ledger yet.`}
@@ -617,7 +617,7 @@ export default function StrategicVisibilityPage() {
               {regionFilter !== 'ALL' && (
                 <button
                   onClick={() => setRegionFilter('ALL')}
-                  style={{ fontSize: 11, fontWeight: 700, color: '#10B981', backgroundColor: '#10B98115', border: '1px solid #10B98160', borderRadius: 4, padding: '6px 14px', cursor: 'pointer' }}
+                  style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-bullish)', backgroundColor: '#10B98115', border: '1px solid #10B98160', borderRadius: 4, padding: '6px 14px', cursor: 'pointer' }}
                 >
                   Show all regions
                 </button>
@@ -625,7 +625,7 @@ export default function StrategicVisibilityPage() {
               {windowDays < 730 && (
                 <button
                   onClick={() => setWindowDays(730)}
-                  style={{ fontSize: 11, fontWeight: 700, color: '#22D3EE', backgroundColor: '#22D3EE15', border: '1px solid #22D3EE60', borderRadius: 4, padding: '6px 14px', cursor: 'pointer' }}
+                  style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-cyan)', backgroundColor: '#22D3EE15', border: '1px solid #22D3EE60', borderRadius: 4, padding: '6px 14px', cursor: 'pointer' }}
                 >
                   Switch to 2-year window
                 </button>
@@ -637,8 +637,8 @@ export default function StrategicVisibilityPage() {
         {/* Theme-grouped cards */}
         {!isLoading && Object.entries(grouped).map(([theme, items]) => (
           <section key={theme} style={{ marginBottom: 26 }}>
-            <h2 style={{ fontSize: 14, fontWeight: 700, color: '#22D3EE', margin: '0 0 10px', letterSpacing: '0.5px' }}>
-              {THEME_LABEL[theme] || theme} <span style={{ color: '#4A5B6C', fontWeight: 400, marginLeft: 6 }}>({items.length})</span>
+            <h2 style={{ fontSize: 14, fontWeight: 700, color: 'var(--mc-cyan)', margin: '0 0 10px', letterSpacing: '0.5px' }}>
+              {THEME_LABEL[theme] || theme} <span style={{ color: 'var(--mc-text-4)', fontWeight: 400, marginLeft: 6 }}>({items.length})</span>
             </h2>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: 12 }}>
               {items.map(a => {
@@ -650,8 +650,8 @@ export default function StrategicVisibilityPage() {
                     target="_blank"
                     rel="noopener noreferrer"
                     style={{
-                      backgroundColor: '#0D1B2E', border: '1px solid #1E2D45',
-                      borderLeft: `3px solid ${sv.flags.includes('MCAP_GRADE') ? '#F59E0B' : sv.flags.includes('STRATEGIC_CHOKEPOINT') ? '#8B5CF6' : '#22D3EE'}`,
+                      backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)',
+                      borderLeft: `3px solid ${sv.flags.includes('MCAP_GRADE') ? 'var(--mc-warn)' : sv.flags.includes('STRATEGIC_CHOKEPOINT') ? '#8B5CF6' : 'var(--mc-cyan)'}`,
                       borderRadius: 10, padding: '10px 12px',
                       textDecoration: 'none', color: 'inherit',
                       transition: 'border-color 0.15s',
@@ -670,9 +670,9 @@ export default function StrategicVisibilityPage() {
                           title="Signal source quality — A: company filing, B: Tier-1 media, C: industry/specialist, D: speculative/single-source"
                           style={{
                             fontSize: 9, fontWeight: 700,
-                            color: SQ_COLOR[a.sv_signal_quality_tier] || '#94A3B8',
-                            border: `1px solid ${SQ_COLOR[a.sv_signal_quality_tier] || '#94A3B8'}40`,
-                            backgroundColor: `${SQ_COLOR[a.sv_signal_quality_tier] || '#94A3B8'}10`,
+                            color: SQ_COLOR[a.sv_signal_quality_tier] || 'var(--mc-text-3)',
+                            border: `1px solid ${SQ_COLOR[a.sv_signal_quality_tier] || 'var(--mc-text-3)'}40`,
+                            backgroundColor: `${SQ_COLOR[a.sv_signal_quality_tier] || 'var(--mc-text-3)'}10`,
                             padding: '2px 5px', borderRadius: 3,
                           }}
                         >
@@ -680,38 +680,38 @@ export default function StrategicVisibilityPage() {
                         </span>
                       )}
                       {sv.flags.map(f => (
-                        <span key={f} style={{ fontSize: 9, fontWeight: 700, color: FLAG_COLOR[f] || '#94A3B8' }}>
+                        <span key={f} style={{ fontSize: 9, fontWeight: 700, color: FLAG_COLOR[f] || 'var(--mc-text-3)' }}>
                           {FLAG_LABEL[f] || f}
                         </span>
                       ))}
-                      <span style={{ marginLeft: 'auto', fontSize: 10, color: '#4A5B6C', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.2 }}>
-                        <span style={{ color: '#94A3B8', fontWeight: 700 }}>
+                      <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--mc-text-4)', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.2 }}>
+                        <span style={{ color: 'var(--mc-text-3)', fontWeight: 700 }}>
                           {a.published_at ? new Date(a.published_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
                         </span>
-                        <span style={{ color: '#4A5B6C', fontSize: 9 }}>{fmtAge(a.published_at)}</span>
+                        <span style={{ color: 'var(--mc-text-4)', fontSize: 9 }}>{fmtAge(a.published_at)}</span>
                       </span>
                     </div>
                     {/* Headline */}
-                    <div style={{ fontSize: 12, fontWeight: 600, color: '#F5F7FA', lineHeight: 1.4, marginBottom: 8 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--mc-text-0)', lineHeight: 1.4, marginBottom: 8 }}>
                       {a.title}
                     </div>
                     {/* Metadata grid (4 cells × 2 rows when capacity / dependency present) */}
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4, fontSize: 10, color: '#94A3B8', marginBottom: 6 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4, fontSize: 10, color: 'var(--mc-text-3)', marginBottom: 6 }}>
                       <div>
-                        <div style={{ color: '#4A5B6C' }}>VALUE</div>
-                        <div style={{ color: '#E6EDF3', fontWeight: 700 }}>{fmtMoney(sv.contract_value_usd_m)}</div>
+                        <div style={{ color: 'var(--mc-text-4)' }}>VALUE</div>
+                        <div style={{ color: 'var(--mc-text-1)', fontWeight: 700 }}>{fmtMoney(sv.contract_value_usd_m)}</div>
                       </div>
                       <div>
-                        <div style={{ color: '#4A5B6C' }}>VISIBILITY</div>
-                        <div style={{ color: '#E6EDF3', fontWeight: 700 }}>{sv.visibility_years ? `${sv.visibility_years}y` : '—'}</div>
+                        <div style={{ color: 'var(--mc-text-4)' }}>VISIBILITY</div>
+                        <div style={{ color: 'var(--mc-text-1)', fontWeight: 700 }}>{sv.visibility_years ? `${sv.visibility_years}y` : '—'}</div>
                       </div>
                       <div>
-                        <div style={{ color: '#4A5B6C' }}>COUNTERPARTY</div>
-                        <div style={{ color: '#E6EDF3', fontWeight: 700 }}>{sv.counterparty_name ?? COUNTERPARTY_LABEL[sv.counterparty_tier] ?? '—'}</div>
+                        <div style={{ color: 'var(--mc-text-4)' }}>COUNTERPARTY</div>
+                        <div style={{ color: 'var(--mc-text-1)', fontWeight: 700 }}>{sv.counterparty_name ?? COUNTERPARTY_LABEL[sv.counterparty_tier] ?? '—'}</div>
                       </div>
                       <div>
-                        <div style={{ color: '#4A5B6C' }}>% MCAP</div>
-                        <div style={{ color: sv.pct_of_mcap && sv.pct_of_mcap >= 30 ? '#10B981' : '#E6EDF3', fontWeight: 700 }}>
+                        <div style={{ color: 'var(--mc-text-4)' }}>% MCAP</div>
+                        <div style={{ color: sv.pct_of_mcap && sv.pct_of_mcap >= 30 ? 'var(--mc-bullish)' : 'var(--mc-text-1)', fontWeight: 700 }}>
                           {sv.pct_of_mcap !== undefined ? `${sv.pct_of_mcap}%` : '—'}
                         </div>
                       </div>
@@ -719,14 +719,14 @@ export default function StrategicVisibilityPage() {
                       {(a.sv_capacity_reserved || a.sv_dependency_score) && (
                         <>
                           <div style={{ gridColumn: 'span 2' }}>
-                            <div style={{ color: '#4A5B6C' }}>CAPACITY RESERVED</div>
-                            <div style={{ color: a.sv_capacity_reserved ? '#10B981' : '#4A5B6C', fontWeight: 700 }}>
+                            <div style={{ color: 'var(--mc-text-4)' }}>CAPACITY RESERVED</div>
+                            <div style={{ color: a.sv_capacity_reserved ? 'var(--mc-bullish)' : 'var(--mc-text-4)', fontWeight: 700 }}>
                               {a.sv_capacity_reserved ? fmtCapacity(a.sv_capacity_reserved) : '—'}
                             </div>
                           </div>
                           <div style={{ gridColumn: 'span 2' }}>
-                            <div style={{ color: '#4A5B6C' }}>
-                              DEPENDENCY <span style={{ color: '#6B7A8D', fontWeight: 400 }}>(1–5)</span>
+                            <div style={{ color: 'var(--mc-text-4)' }}>
+                              DEPENDENCY <span style={{ color: 'var(--mc-text-4)', fontWeight: 400 }}>(1–5)</span>
                             </div>
                             <div
                               title={a.sv_dependency_rationale || ''}
@@ -745,13 +745,13 @@ export default function StrategicVisibilityPage() {
                     </div>
                     {/* PATCH 0072: institutional dimensions strip */}
                     {(a.funding_confidence || a.execution_status || a.revenue_profile) && (
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6, marginBottom: 6, paddingTop: 6, borderTop: '1px solid #1A2840' }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6, marginBottom: 6, paddingTop: 6, borderTop: '1px solid var(--mc-bg-4)' }}>
                         {a.funding_confidence != null && (
                           <span
                             title={a.funding_confidence_rationale || ''}
                             style={{
                               fontSize: 9, fontWeight: 700,
-                              color: FUNDING_COLOR[a.funding_confidence] || '#94A3B8',
+                              color: FUNDING_COLOR[a.funding_confidence] || 'var(--mc-text-3)',
                               border: `1px solid ${FUNDING_COLOR[a.funding_confidence]}40`,
                               backgroundColor: `${FUNDING_COLOR[a.funding_confidence]}10`,
                               padding: '2px 6px', borderRadius: 3,
@@ -764,7 +764,7 @@ export default function StrategicVisibilityPage() {
                           <span
                             style={{
                               fontSize: 9, fontWeight: 700,
-                              color: EXEC_COLOR[a.execution_status] || '#94A3B8',
+                              color: EXEC_COLOR[a.execution_status] || 'var(--mc-text-3)',
                               border: `1px solid ${EXEC_COLOR[a.execution_status]}40`,
                               backgroundColor: `${EXEC_COLOR[a.execution_status]}10`,
                               padding: '2px 6px', borderRadius: 3,
@@ -778,7 +778,7 @@ export default function StrategicVisibilityPage() {
                             title={`${a.revenue_profile_rationale || ''} · EBITDA ${a.revenue_profile_ebitda_band || '—'} · Cash ${a.revenue_profile_cash_conversion || '—'} · WC ${a.revenue_profile_working_capital || '—'}`}
                             style={{
                               fontSize: 9, fontWeight: 700,
-                              color: REVENUE_COLOR[a.revenue_profile] || '#94A3B8',
+                              color: REVENUE_COLOR[a.revenue_profile] || 'var(--mc-text-3)',
                               border: `1px solid ${REVENUE_COLOR[a.revenue_profile]}40`,
                               backgroundColor: `${REVENUE_COLOR[a.revenue_profile]}10`,
                               padding: '2px 6px', borderRadius: 3,
@@ -786,7 +786,7 @@ export default function StrategicVisibilityPage() {
                           >
                             PROFILE: {REVENUE_LABEL[a.revenue_profile] || a.revenue_profile}
                             {a.revenue_profile_ebitda_band && (
-                              <span style={{ marginLeft: 4, color: '#94A3B8', fontWeight: 400 }}>
+                              <span style={{ marginLeft: 4, color: 'var(--mc-text-3)', fontWeight: 400 }}>
                                 · {a.revenue_profile_ebitda_band}
                               </span>
                             )}
@@ -807,7 +807,7 @@ export default function StrategicVisibilityPage() {
                           >
                             🔒 {a.chokepoint_label || 'CHOKEPOINT'}
                             <span style={{ marginLeft: 4, letterSpacing: '1px' }}>{chokepointSevDots(a.chokepoint_severity)}</span>
-                            <span style={{ marginLeft: 3, color: '#94A3B8', fontWeight: 400 }}>{a.chokepoint_severity}/5</span>
+                            <span style={{ marginLeft: 3, color: 'var(--mc-text-3)', fontWeight: 400 }}>{a.chokepoint_severity}/5</span>
                           </span>
                         )}
                         {a.working_capital_intensity_pct != null && (
@@ -815,11 +815,11 @@ export default function StrategicVisibilityPage() {
                             title={`Working capital intensity ${a.working_capital_intensity_pct}% — 0 = annuity / 100 = milestone-paid extreme`}
                             style={{
                               fontSize: 9, fontWeight: 700,
-                              color: a.working_capital_intensity_pct >= 70 ? '#EF4444'
-                                : a.working_capital_intensity_pct >= 40 ? '#F59E0B'
-                                : a.working_capital_intensity_pct >= 20 ? '#22D3EE'
-                                : '#10B981',
-                              border: `1px solid ${a.working_capital_intensity_pct >= 70 ? '#EF4444' : a.working_capital_intensity_pct >= 40 ? '#F59E0B' : '#22D3EE'}40`,
+                              color: a.working_capital_intensity_pct >= 70 ? 'var(--mc-bearish)'
+                                : a.working_capital_intensity_pct >= 40 ? 'var(--mc-warn)'
+                                : a.working_capital_intensity_pct >= 20 ? 'var(--mc-cyan)'
+                                : 'var(--mc-bullish)',
+                              border: `1px solid ${a.working_capital_intensity_pct >= 70 ? 'var(--mc-bearish)' : a.working_capital_intensity_pct >= 40 ? 'var(--mc-warn)' : 'var(--mc-cyan)'}40`,
                               backgroundColor: a.working_capital_intensity_pct >= 70 ? '#EF444410' : a.working_capital_intensity_pct >= 40 ? '#F59E0B10' : '#22D3EE10',
                               padding: '2px 6px', borderRadius: 3,
                             }}
@@ -831,19 +831,19 @@ export default function StrategicVisibilityPage() {
                     )}
                     {/* PATCH 0072: IMPLIED SECONDARY DEMAND — capex propagation */}
                     {a.implied_secondary_demand && a.implied_secondary_demand.lines.length > 0 && (
-                      <div style={{ fontSize: 10, color: '#94A3B8', backgroundColor: '#0A1422', border: '1px solid #22D3EE30', borderRadius: 6, padding: '6px 8px', marginBottom: 6, lineHeight: 1.5 }}>
+                      <div style={{ fontSize: 10, color: 'var(--mc-text-3)', backgroundColor: '#0A1422', border: '1px solid #22D3EE30', borderRadius: 6, padding: '6px 8px', marginBottom: 6, lineHeight: 1.5 }}>
                         <div style={{ marginBottom: 4 }}>
-                          <strong style={{ color: '#22D3EE', letterSpacing: '0.4px' }}>↪ IMPLIED SECONDARY DEMAND</strong>
-                          <span style={{ marginLeft: 6, color: '#94A3B8' }}>
+                          <strong style={{ color: 'var(--mc-cyan)', letterSpacing: '0.4px' }}>↪ IMPLIED SECONDARY DEMAND</strong>
+                          <span style={{ marginLeft: 6, color: 'var(--mc-text-3)' }}>
                             {a.implied_secondary_demand.basis_mw}MW basis ·{' '}
-                            <strong style={{ color: '#10B981' }}>~${(a.implied_secondary_demand.total_secondary_demand_usd_m / 1000).toFixed(1)}B</strong> total capex propagation
+                            <strong style={{ color: 'var(--mc-bullish)' }}>~${(a.implied_secondary_demand.total_secondary_demand_usd_m / 1000).toFixed(1)}B</strong> total capex propagation
                           </span>
                         </div>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '3px 10px' }}>
                           {a.implied_secondary_demand.lines.map((line, i) => (
                             <div key={i} style={{ fontSize: 9, lineHeight: 1.4 }}>
-                              <span style={{ color: '#CBD5E1' }}>{line.category}</span>
-                              <span style={{ marginLeft: 4, color: '#10B981', fontWeight: 700 }}>
+                              <span style={{ color: 'var(--mc-text-2)' }}>{line.category}</span>
+                              <span style={{ marginLeft: 4, color: 'var(--mc-bullish)', fontWeight: 700 }}>
                                 ~${((line.est_usd_per_mw_k * a.implied_secondary_demand!.basis_mw) / 1000).toFixed(0)}M
                               </span>
                               {line.beneficiary_tickers && line.beneficiary_tickers.length > 0 && (
@@ -858,33 +858,33 @@ export default function StrategicVisibilityPage() {
                     )}
                     {/* PATCH 0067: WHY THIS MATTERS — institutional 1-liner */}
                     {a.sv_why_this_matters && (
-                      <div style={{ fontSize: 10, color: '#94A3B8', borderTop: '1px solid #1A2840', paddingTop: 6, marginBottom: 6, lineHeight: 1.5 }}>
-                        <strong style={{ color: '#F59E0B', letterSpacing: '0.4px' }}>WHY THIS MATTERS:</strong>{' '}
-                        <span style={{ color: '#CBD5E1' }}>{a.sv_why_this_matters}</span>
+                      <div style={{ fontSize: 10, color: 'var(--mc-text-3)', borderTop: '1px solid var(--mc-bg-4)', paddingTop: 6, marginBottom: 6, lineHeight: 1.5 }}>
+                        <strong style={{ color: 'var(--mc-warn)', letterSpacing: '0.4px' }}>WHY THIS MATTERS:</strong>{' '}
+                        <span style={{ color: 'var(--mc-text-2)' }}>{a.sv_why_this_matters}</span>
                       </div>
                     )}
                     {/* PATCH 0067: SECOND-ORDER EFFECTS */}
                     {a.sv_second_order && ((a.sv_second_order.beneficiaries?.length ?? 0) > 0 || (a.sv_second_order.risk?.length ?? 0) > 0) && (
-                      <div style={{ fontSize: 10, color: '#94A3B8', backgroundColor: '#0A1422', border: '1px solid #1A2840', borderRadius: 6, padding: '6px 8px', marginBottom: 6, lineHeight: 1.5 }}>
+                      <div style={{ fontSize: 10, color: 'var(--mc-text-3)', backgroundColor: '#0A1422', border: '1px solid var(--mc-bg-4)', borderRadius: 6, padding: '6px 8px', marginBottom: 6, lineHeight: 1.5 }}>
                         {(a.sv_second_order.beneficiaries?.length ?? 0) > 0 && (
                           <div style={{ marginBottom: 3 }}>
-                            <strong style={{ color: '#10B981' }}>↗ DOWNSTREAM BENEFICIARIES:</strong>{' '}
-                            <span style={{ color: '#CBD5E1' }}>{a.sv_second_order.beneficiaries.join(' · ')}</span>
+                            <strong style={{ color: 'var(--mc-bullish)' }}>↗ DOWNSTREAM BENEFICIARIES:</strong>{' '}
+                            <span style={{ color: 'var(--mc-text-2)' }}>{a.sv_second_order.beneficiaries.join(' · ')}</span>
                           </div>
                         )}
                         {(a.sv_second_order.risk?.length ?? 0) > 0 && (
                           <div>
-                            <strong style={{ color: '#EF4444' }}>↘ AT-RISK:</strong>{' '}
-                            <span style={{ color: '#CBD5E1' }}>{a.sv_second_order.risk.join(' · ')}</span>
+                            <strong style={{ color: 'var(--mc-bearish)' }}>↘ AT-RISK:</strong>{' '}
+                            <span style={{ color: 'var(--mc-text-2)' }}>{a.sv_second_order.risk.join(' · ')}</span>
                           </div>
                         )}
                       </div>
                     )}
                     {/* WHY IT QUALIFIES (engine reason) */}
-                    <div style={{ fontSize: 10, color: '#22D3EE', borderTop: '1px solid #1A2840', paddingTop: 6 }}>
-                      <strong style={{ color: '#22D3EE' }}>QUALIFIES:</strong> <span style={{ color: '#94A3B8' }}>{sv.reason}</span>
+                    <div style={{ fontSize: 10, color: 'var(--mc-cyan)', borderTop: '1px solid var(--mc-bg-4)', paddingTop: 6 }}>
+                      <strong style={{ color: 'var(--mc-cyan)' }}>QUALIFIES:</strong> <span style={{ color: 'var(--mc-text-3)' }}>{sv.reason}</span>
                     </div>
-                    <div style={{ marginTop: 4, fontSize: 9, color: '#4A5B6C' }}>
+                    <div style={{ marginTop: 4, fontSize: 9, color: 'var(--mc-text-4)' }}>
                       {a.source_name}
                     </div>
                   </a>

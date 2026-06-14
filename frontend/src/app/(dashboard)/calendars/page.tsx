@@ -234,7 +234,7 @@ export default function CalendarPage() {
               count is filter-driven vs genuinely empty. */}
           {indexFilter !== 'All' && (
             <span style={{
-              fontSize: 11, fontWeight: 700, color: '#F59E0B',
+              fontSize: 11, fontWeight: 700, color: 'var(--mc-warn)',
               border: '1px solid rgba(245,158,11,0.4)',
               backgroundColor: 'rgba(245,158,11,0.10)',
               padding: '3px 10px', borderRadius: 6, letterSpacing: '0.4px',
@@ -257,10 +257,10 @@ export default function CalendarPage() {
             {data.summary.total} <span style={{ fontSize: '12px', color: THEME.textSecondary, fontWeight: '500' }}>RESULTS</span>
           </div>
           <div style={{ width: '1px', height: '24px', backgroundColor: THEME.border }} />
-          {(data.summary.excellent || 0) > 0 && <div style={{ fontSize: '12px' }}><span style={{ color: '#10B981', fontWeight: '600' }}>Excellent: {data.summary.excellent}</span></div>}
+          {(data.summary.excellent || 0) > 0 && <div style={{ fontSize: '12px' }}><span style={{ color: 'var(--mc-bullish)', fontWeight: '600' }}>Excellent: {data.summary.excellent}</span></div>}
           {(data.summary.great || 0) > 0 && <div style={{ fontSize: '12px' }}><span style={{ color: '#34D399', fontWeight: '600' }}>Great: {data.summary.great}</span></div>}
-          <div style={{ fontSize: '12px' }}><span style={{ color: '#3B82F6', fontWeight: '600' }}>Good: {data.summary.good}</span></div>
-          {(data.summary.ok || 0) > 0 && <div style={{ fontSize: '12px' }}><span style={{ color: '#F59E0B', fontWeight: '600' }}>OK: {data.summary.ok}</span></div>}
+          <div style={{ fontSize: '12px' }}><span style={{ color: 'var(--mc-info)', fontWeight: '600' }}>Good: {data.summary.good}</span></div>
+          {(data.summary.ok || 0) > 0 && <div style={{ fontSize: '12px' }}><span style={{ color: 'var(--mc-warn)', fontWeight: '600' }}>OK: {data.summary.ok}</span></div>}
           <div style={{ fontSize: '12px' }}><span style={{ color: THEME.red, fontWeight: '600' }}>Weak: {data.summary.weak}</span></div>
           {data.summary.upcoming > 0 && <div style={{ fontSize: '12px' }}><span style={{ color: '#6366F1', fontWeight: '600' }}>Upcoming: {data.summary.upcoming}</span></div>}
           <div style={{ width: '1px', height: '24px', backgroundColor: THEME.border }} />
@@ -268,10 +268,10 @@ export default function CalendarPage() {
 
           {/* Quality bar */}
           <div style={{ flex: 1, height: '6px', backgroundColor: THEME.border, borderRadius: '3px', overflow: 'hidden', display: 'flex' }}>
-            {(data.summary.excellent || 0) > 0 && <div style={{ width: `${((data.summary.excellent || 0) / data.summary.total) * 100}%`, backgroundColor: '#10B981', height: '100%' }} />}
+            {(data.summary.excellent || 0) > 0 && <div style={{ width: `${((data.summary.excellent || 0) / data.summary.total) * 100}%`, backgroundColor: 'var(--mc-bullish)', height: '100%' }} />}
             {(data.summary.great || 0) > 0 && <div style={{ width: `${((data.summary.great || 0) / data.summary.total) * 100}%`, backgroundColor: '#34D399', height: '100%' }} />}
-            {data.summary.good > 0 && <div style={{ width: `${(data.summary.good / data.summary.total) * 100}%`, backgroundColor: '#3B82F6', height: '100%' }} />}
-            {(data.summary.ok || 0) > 0 && <div style={{ width: `${((data.summary.ok || 0) / data.summary.total) * 100}%`, backgroundColor: '#F59E0B', height: '100%' }} />}
+            {data.summary.good > 0 && <div style={{ width: `${(data.summary.good / data.summary.total) * 100}%`, backgroundColor: 'var(--mc-info)', height: '100%' }} />}
+            {(data.summary.ok || 0) > 0 && <div style={{ width: `${((data.summary.ok || 0) / data.summary.total) * 100}%`, backgroundColor: 'var(--mc-warn)', height: '100%' }} />}
             {data.summary.weak > 0 && <div style={{ width: `${(data.summary.weak / data.summary.total) * 100}%`, backgroundColor: THEME.red, height: '100%' }} />}
           </div>
         </div>

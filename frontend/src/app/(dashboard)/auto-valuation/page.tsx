@@ -1490,7 +1490,7 @@ function CalcResultMini({ label, result, confidence, reason }: { label: string; 
   return (
     <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 6, padding: '14px 16px', opacity: cardOpacity }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-        <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.5px' }}>{label}</div>
+        <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.5px' }}>{label}</div>
         {confidence && (
           <span style={{ fontSize: 9, padding: '2px 7px', background: `${confColor}20`, color: confColor, border: `1px solid ${confColor}50`, borderRadius: 3, fontWeight: 800, letterSpacing: '0.5px' }}>
             {confidence} CONFIDENCE
@@ -1810,7 +1810,7 @@ export default function AutoValuationPage() {
               Drop your financial sheet + concall PDFs. The portal extracts historical financials, forward guidance, current quote — then runs P/E + P/S + EV/EBITDA automatically and tells you BUY / WATCH / WAIT / AVOID. No manual entry.
             </div>
           </div>
-          <Link href="/valuation-calc" style={{ fontSize: 11, color: '#22D3EE', textDecoration: 'none' }}>Open manual calculator →</Link>
+          <Link href="/valuation-calc" style={{ fontSize: 11, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open manual calculator →</Link>
         </div>
 
         {/* Upload */}
@@ -1833,7 +1833,7 @@ export default function AutoValuationPage() {
           />
           <label htmlFor="auto-val-files" style={{
             display: 'inline-block', fontSize: 13, padding: '10px 22px',
-            background: '#22D3EE', border: 'none', color: '#0A0E1A',
+            background: 'var(--mc-cyan)', border: 'none', color: 'var(--mc-bg-0)',
             borderRadius: 6, cursor: 'pointer', fontWeight: 800, letterSpacing: '0.3px',
           }}>
             ➕ ADD FILES — Excel (financial workbook) + PDFs (concall / investor PPT)
@@ -1845,15 +1845,15 @@ export default function AutoValuationPage() {
 
         {/* PATCH 0649 — Saved Companies panel */}
         {savedList.length > 0 && (
-          <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderLeft: '3px solid #10B981', borderRadius: 8, padding: '14px 16px' }}>
+          <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderLeft: '3px solid var(--mc-bullish)', borderRadius: 8, padding: '14px 16px' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: '#10B981', letterSpacing: '0.4px' }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-bullish)', letterSpacing: '0.4px' }}>
                 💾 SAVED COMPANIES ({savedList.length})
               </span>
               <span style={{ fontSize: 10, color: DIM, fontStyle: 'italic' }}>persists in browser · auto-saved on each report</span>
             </div>
             <div style={{ fontSize: 11, color: DIM, marginBottom: 10, lineHeight: 1.5 }}>
-              Reports you&apos;ve already generated. Click <b style={{ color: '#22D3EE' }}>Open</b> to view without re-uploading. <b style={{ color: '#F59E0B' }}>Add docs</b> appends new files (e.g. next quarter&apos;s PDFs). <b style={{ color: '#EF4444' }}>Clear</b> wipes and lets you start fresh.
+              Reports you&apos;ve already generated. Click <b style={{ color: 'var(--mc-cyan)' }}>Open</b> to view without re-uploading. <b style={{ color: 'var(--mc-warn)' }}>Add docs</b> appends new files (e.g. next quarter&apos;s PDFs). <b style={{ color: 'var(--mc-bearish)' }}>Clear</b> wipes and lets you start fresh.
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {savedList.map((s) => {
@@ -1893,12 +1893,12 @@ export default function AutoValuationPage() {
                       {s.company || s.ticker || 'Untitled'} <span style={{ color: DIM, fontWeight: 400 }}>· {savedDate}</span>
                     </span>
                     {s.sector && (
-                      <span style={{ fontSize: 9, color: '#22D3EE', background: '#22D3EE15', padding: '2px 7px', borderRadius: 3, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                      <span style={{ fontSize: 9, color: 'var(--mc-cyan)', background: '#22D3EE15', padding: '2px 7px', borderRadius: 3, fontWeight: 700, whiteSpace: 'nowrap' }}>
                         {s.sector}
                       </span>
                     )}
                     {s.forwardYear && (
-                      <span style={{ fontSize: 9, color: '#A78BFA', fontFamily: 'ui-monospace, monospace', whiteSpace: 'nowrap' }}>
+                      <span style={{ fontSize: 9, color: 'var(--mc-state-persistent)', fontFamily: 'ui-monospace, monospace', whiteSpace: 'nowrap' }}>
                         {s.forwardYear}: ₹{s.forwardPAT ?? '?'} Cr PAT
                       </span>
                     )}
@@ -1922,11 +1922,11 @@ export default function AutoValuationPage() {
                     })()}
                     <button onClick={() => handleLoadSaved(s)} style={{
                       fontSize: 10, padding: '4px 10px', background: '#22D3EE15', border: '1px solid #22D3EE50',
-                      color: '#22D3EE', borderRadius: 3, cursor: 'pointer', fontWeight: 800,
+                      color: 'var(--mc-cyan)', borderRadius: 3, cursor: 'pointer', fontWeight: 800,
                     }}>OPEN</button>
                     <label htmlFor={`add-${s.ticker}`} style={{
                       fontSize: 10, padding: '4px 10px', background: '#F59E0B15', border: '1px solid #F59E0B50',
-                      color: '#F59E0B', borderRadius: 3, cursor: 'pointer', fontWeight: 800,
+                      color: 'var(--mc-warn)', borderRadius: 3, cursor: 'pointer', fontWeight: 800,
                     }}>+ DOCS</label>
                     <input id={`add-${s.ticker}`} type="file" multiple accept=".xlsx,.xls,.pdf"
                       onChange={(e) => {
@@ -1974,7 +1974,7 @@ export default function AutoValuationPage() {
                       }
                     }} style={{
                       fontSize: 10, padding: '4px 8px', background: '#22D3EE15', border: '1px solid #22D3EE50',
-                      color: '#22D3EE', borderRadius: 3, cursor: 'pointer', fontWeight: 800,
+                      color: 'var(--mc-cyan)', borderRadius: 3, cursor: 'pointer', fontWeight: 800,
                     }} title="Bridge to Decision Log — writes BUY/WATCH/REJECTED with Auto-Val rationale">+ DECISION</button>
                     <button onClick={() => {
                       // PATCH 0751 — Recompute. Re-runs sector inference on the
@@ -1995,11 +1995,11 @@ export default function AutoValuationPage() {
                       refreshSaved();
                     }} style={{
                       fontSize: 10, padding: '4px 8px', background: '#A78BFA15', border: '1px solid #A78BFA50',
-                      color: '#A78BFA', borderRadius: 3, cursor: 'pointer', fontWeight: 800,
+                      color: 'var(--mc-state-persistent)', borderRadius: 3, cursor: 'pointer', fontWeight: 800,
                     }} title="Re-infer sector from latest classification rules — no re-upload needed">↻ RECOMP</button>
                     <button onClick={() => handleClearSaved(s.ticker)} style={{
                       fontSize: 10, padding: '4px 8px', background: '#EF444415', border: '1px solid #EF444450',
-                      color: '#EF4444', borderRadius: 3, cursor: 'pointer', fontWeight: 800,
+                      color: 'var(--mc-bearish)', borderRadius: 3, cursor: 'pointer', fontWeight: 800,
                     }}>× CLEAR</button>
                   </div>
                 );
@@ -2015,7 +2015,7 @@ export default function AutoValuationPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               {docs.map((d, i) => (
                 <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px', background: '#0A1422', borderRadius: 4 }}>
-                  <span style={{ fontSize: 10, color: d.type === 'excel' ? '#10B981' : '#22D3EE', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 40 }}>
+                  <span style={{ fontSize: 10, color: d.type === 'excel' ? 'var(--mc-bullish)' : 'var(--mc-cyan)', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 40 }}>
                     {d.type === 'excel' ? 'XLSX' : d.type === 'pdf' ? 'PDF' : '?'}
                   </span>
                   {/* PATCH 0758 — fall back to ticker-based label when the
@@ -2033,7 +2033,7 @@ export default function AutoValuationPage() {
                     })()}
                   </span>
                   <span style={{ fontSize: 10, color: DIM }}>{(d.size / 1024).toFixed(0)} KB</span>
-                  <span style={{ fontSize: 10, color: d.status === 'done' ? '#10B981' : d.status === 'error' ? '#EF4444' : '#F59E0B', fontWeight: 700 }}>
+                  <span style={{ fontSize: 10, color: d.status === 'done' ? 'var(--mc-bullish)' : d.status === 'error' ? 'var(--mc-bearish)' : 'var(--mc-warn)', fontWeight: 700 }}>
                     {d.status === 'parsing' ? '⏳ parsing…' : d.status === 'done' ? '✓ ' + (d.message || 'done') : '✗ ' + (d.message || 'error')}
                   </span>
                 </div>
@@ -2061,12 +2061,12 @@ export default function AutoValuationPage() {
                   {/* PATCH 0843 — Saved indicator + Clear attachments button */}
                   {report.ticker && savedList.find(s => s.ticker === report.ticker) && (
                     <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '4px 10px', background: '#10B98115', border: '1px solid #10B98155', borderRadius: 4, marginBottom: 6 }}>
-                      <span style={{ fontSize: 10, color: '#10B981', fontWeight: 700 }}>
+                      <span style={{ fontSize: 10, color: 'var(--mc-bullish)', fontWeight: 700 }}>
                         ✓ SAVED · this report is persisted; reload anytime
                       </span>
                       {docs.length > 0 && (
                         <button onClick={handleClearAttachments}
-                          style={{ marginLeft: 4, padding: '2px 8px', fontSize: 10, background: 'transparent', color: '#10B981', border: '1px solid #10B98155', borderRadius: 3, cursor: 'pointer' }}>
+                          style={{ marginLeft: 4, padding: '2px 8px', fontSize: 10, background: 'transparent', color: 'var(--mc-bullish)', border: '1px solid #10B98155', borderRadius: 3, cursor: 'pointer' }}>
                           ↻ Clear attachments (keep report)
                         </button>
                       )}
@@ -2081,7 +2081,7 @@ export default function AutoValuationPage() {
                   <div style={{ fontSize: 11, color: DIM, fontFamily: 'ui-monospace, monospace', marginTop: 3 }}>
                     {(() => { const _price = report.quote?.currentPrice; const _mcap = report.currentMarketCapCr || report.quote?.currentMarketCapCr || 0; const _ticker = report.ticker || '—'; const _priceStr = _price ? ` · ₹${_price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : ''; const _mcapStr = _mcap > 0 ? ` · MCap ₹${Math.round(_mcap).toLocaleString('en-IN')} Cr` : ''; return `${_ticker}${_priceStr}${_mcapStr}`; })()}
                   </div>
-                  {report.sector && <div style={{ fontSize: 10, color: '#22D3EE', marginTop: 4, fontWeight: 700 }}>{report.sector}</div>}
+                  {report.sector && <div style={{ fontSize: 10, color: 'var(--mc-cyan)', marginTop: 4, fontWeight: 700 }}>{report.sector}</div>}
                 </div>
               </div>
               <ul style={{ margin: '12px 0 0 22px', padding: 0, fontSize: 12.5, color: TEXT, lineHeight: 1.65 }}>
@@ -2103,14 +2103,14 @@ export default function AutoValuationPage() {
                   const m = DECISION_META[priorDecision.status];
                   chips.push(<span key="dec" title={`Prior decision: ${priorDecision.status} on ${priorDecision.date.slice(0,10)} — ${priorDecision.reason || ''}`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: `${m.color}25`, color: m.color, border: `1px solid ${m.color}60`, borderRadius: 3 }}>{m.emoji} PRIOR: {priorDecision.status}</span>);
                 }
-                if (isOnCB) chips.push(<span key="cb" style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#F59E0B25', color: '#F59E0B', border: '1px solid #F59E0B60', borderRadius: 3 }}>🏆 CB</span>);
-                if (mi?.fired) chips.push(<span key="mi" title={mi.interpretation} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#10B98125', color: '#10B981', border: '1px solid #10B98160', borderRadius: 3 }}>⚡ MARGIN INFLECTION +{mi.gapPp.toFixed(1)}pp</span>);
-                else if (mi?.direction === 'COMPRESSION') chips.push(<span key="mi" title={mi.interpretation} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#EF444425', color: '#EF4444', border: '1px solid #EF444460', borderRadius: 3 }}>▼ MARGIN COMPRESSION {mi.gapPp.toFixed(1)}pp</span>);
-                if (fp && (fp.severity === 'HIGH' || fp.severity === 'CRITICAL')) chips.push(<span key="fp" title={fp.flags.join(' · ')} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#EF444425', color: '#EF4444', border: '1px solid #EF444460', borderRadius: 3 }}>🚨 PUMP {fp.pumpScore}/11</span>);
-                else if (fp && fp.severity === 'WATCH') chips.push(<span key="fp" title={fp.flags.join(' · ')} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#F59E0B25', color: '#F59E0B', border: '1px solid #F59E0B60', borderRadius: 3 }}>⚠ PUMP WATCH {fp.pumpScore}</span>);
-                else if (fp && fp.severity === 'CLEAN') chips.push(<span key="fp" style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', background: '#22D3EE15', color: '#22D3EE', border: '1px solid #22D3EE40', borderRadius: 3 }}>✓ FORENSIC CLEAN</span>);
-                if (sa && sa.state === 'ACCELERATING') chips.push(<span key="sa" title={`Latest YoY ${sa.latestYoY.toFixed(0)}% vs 5y CAGR ${sa.cagr5y.toFixed(0)}%`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#10B98125', color: '#10B981', border: '1px solid #10B98160', borderRadius: 3 }}>⇑ SALES ACCEL +{sa.delta.toFixed(0)}pp</span>);
-                else if (sa && sa.state === 'DECELERATING') chips.push(<span key="sa" title={`Latest YoY ${sa.latestYoY.toFixed(0)}% vs 5y CAGR ${sa.cagr5y.toFixed(0)}%`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#F59E0B25', color: '#F59E0B', border: '1px solid #F59E0B60', borderRadius: 3 }}>⇓ SALES DECEL {sa.delta.toFixed(0)}pp</span>);
+                if (isOnCB) chips.push(<span key="cb" style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#F59E0B25', color: 'var(--mc-warn)', border: '1px solid #F59E0B60', borderRadius: 3 }}>🏆 CB</span>);
+                if (mi?.fired) chips.push(<span key="mi" title={mi.interpretation} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#10B98125', color: 'var(--mc-bullish)', border: '1px solid #10B98160', borderRadius: 3 }}>⚡ MARGIN INFLECTION +{mi.gapPp.toFixed(1)}pp</span>);
+                else if (mi?.direction === 'COMPRESSION') chips.push(<span key="mi" title={mi.interpretation} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#EF444425', color: 'var(--mc-bearish)', border: '1px solid #EF444460', borderRadius: 3 }}>▼ MARGIN COMPRESSION {mi.gapPp.toFixed(1)}pp</span>);
+                if (fp && (fp.severity === 'HIGH' || fp.severity === 'CRITICAL')) chips.push(<span key="fp" title={fp.flags.join(' · ')} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#EF444425', color: 'var(--mc-bearish)', border: '1px solid #EF444460', borderRadius: 3 }}>🚨 PUMP {fp.pumpScore}/11</span>);
+                else if (fp && fp.severity === 'WATCH') chips.push(<span key="fp" title={fp.flags.join(' · ')} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#F59E0B25', color: 'var(--mc-warn)', border: '1px solid #F59E0B60', borderRadius: 3 }}>⚠ PUMP WATCH {fp.pumpScore}</span>);
+                else if (fp && fp.severity === 'CLEAN') chips.push(<span key="fp" style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', background: '#22D3EE15', color: 'var(--mc-cyan)', border: '1px solid #22D3EE40', borderRadius: 3 }}>✓ FORENSIC CLEAN</span>);
+                if (sa && sa.state === 'ACCELERATING') chips.push(<span key="sa" title={`Latest YoY ${sa.latestYoY.toFixed(0)}% vs 5y CAGR ${sa.cagr5y.toFixed(0)}%`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#10B98125', color: 'var(--mc-bullish)', border: '1px solid #10B98160', borderRadius: 3 }}>⇑ SALES ACCEL +{sa.delta.toFixed(0)}pp</span>);
+                else if (sa && sa.state === 'DECELERATING') chips.push(<span key="sa" title={`Latest YoY ${sa.latestYoY.toFixed(0)}% vs 5y CAGR ${sa.cagr5y.toFixed(0)}%`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: '#F59E0B25', color: 'var(--mc-warn)', border: '1px solid #F59E0B60', borderRadius: 3 }}>⇓ SALES DECEL {sa.delta.toFixed(0)}pp</span>);
                 if (dna) { const dnaColor = dna.matched >= 5 ? '#10B981' : dna.matched >= 3 ? '#22D3EE' : '#94A3B8'; chips.push(<span key="dna" title={`500-bagger DNA: ${dna.criteria.join(' · ')}`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: `${dnaColor}25`, color: dnaColor, border: `1px solid ${dnaColor}60`, borderRadius: 3 }}>🧬 DNA {dna.matched}/6</span>); }
                 // PATCH 0855 — Smart-money overlay
                 const sm = smartMoneyByTicker[ticker];
@@ -2162,9 +2162,9 @@ export default function AutoValuationPage() {
                       key={y}
                       onClick={() => setViewYear(y)}
                       style={{
-                        background: active ? '#22D3EE' : 'transparent',
+                        background: active ? 'var(--mc-cyan)' : 'transparent',
                         color: active ? '#0a0a0f' : DIM,
-                        border: `1px solid ${active ? '#22D3EE' : BORDER}`,
+                        border: `1px solid ${active ? 'var(--mc-cyan)' : BORDER}`,
                         borderRadius: 5,
                         padding: '5px 12px',
                         fontSize: 11,
@@ -2176,7 +2176,7 @@ export default function AutoValuationPage() {
                   );
                 })}
                 {viewYear === 'Y2' && (
-                  <span style={{ marginLeft: 8, color: '#F59E0B', fontSize: 10, fontStyle: 'italic' }}>
+                  <span style={{ marginLeft: 8, color: 'var(--mc-warn)', fontSize: 10, fontStyle: 'italic' }}>
                     Year-2 = growth applied one more year. Rev ₹{report.forwardRevenueY2?.toLocaleString('en-IN') || '?'} Cr · PAT ₹{report.forwardPATY2?.toLocaleString('en-IN') || '?'} Cr.
                   </span>
                 )}
@@ -2191,7 +2191,7 @@ export default function AutoValuationPage() {
             {/* PATCH 0662 — Manual Override Panel. When extractor misses guidance,
                 let user plug in correct values and recompute. */}
             <div style={{ background: '#1A1F33', border: `1px solid ${BORDER}`, borderRadius: 8, padding: '14px 16px' }}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.5px', marginBottom: 4 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-warn)', letterSpacing: '0.5px', marginBottom: 4 }}>
                 🛠 OVERRIDE INPUTS — adjust when the extractor missed something
               </div>
               <div style={{ fontSize: 11, color: DIM, marginBottom: 12, lineHeight: 1.5 }}>
@@ -2253,8 +2253,8 @@ export default function AutoValuationPage() {
                   const ev = mcap > 0 ? calculateEvEbitda({ ...baseInput, forwardEBITDACr: Math.round(ebitda), bearMultiple: evBase * 0.75, baseMultiple: evBase, bullMultiple: evBase * 1.4 }) : undefined;
                   setOverrideResult({ revenue: Math.round(rev), ebitda: Math.round(ebitda), pat: Math.round(pat), pe, ps, ev });
                 }} style={{
-                  fontSize: 12, padding: '8px 16px', background: '#F59E0B', border: 'none',
-                  color: '#0A0E1A', borderRadius: 5, cursor: 'pointer', fontWeight: 800,
+                  fontSize: 12, padding: '8px 16px', background: 'var(--mc-warn)', border: 'none',
+                  color: 'var(--mc-bg-0)', borderRadius: 5, cursor: 'pointer', fontWeight: 800,
                 }}>↻ RECALCULATE WITH OVERRIDES</button>
                 {overrideResult && (
                   <button onClick={() => {
@@ -2269,7 +2269,7 @@ export default function AutoValuationPage() {
 
               {overrideResult && (
                 <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px dashed #F59E0B40' }}>
-                  <div style={{ fontSize: 11, color: '#F59E0B', fontWeight: 800, marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, color: 'var(--mc-warn)', fontWeight: 800, marginBottom: 8 }}>
                     ✓ OVERRIDE SCENARIO — Revenue ₹{overrideResult.revenue.toLocaleString('en-IN')} Cr · EBITDA ₹{overrideResult.ebitda.toLocaleString('en-IN')} Cr · PAT ₹{overrideResult.pat.toLocaleString('en-IN')} Cr
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12 }}>
@@ -2296,8 +2296,8 @@ export default function AutoValuationPage() {
                 });
                 alert('Saved to your valuation bench ✓');
               }} style={{
-                fontSize: 12, padding: '10px 18px', background: '#10B981', border: 'none',
-                color: '#0A0E1A', borderRadius: 6, cursor: 'pointer', fontWeight: 800,
+                fontSize: 12, padding: '10px 18px', background: 'var(--mc-bullish)', border: 'none',
+                color: 'var(--mc-bg-0)', borderRadius: 6, cursor: 'pointer', fontWeight: 800,
                 alignSelf: 'flex-start',
               }}>
                 💾 SAVE TO VALUATION BENCH
@@ -2307,16 +2307,16 @@ export default function AutoValuationPage() {
             {/* Forward guidance extracted */}
             {report.guidance.length > 0 && (
               <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '14px 16px' }}>
-                <div style={{ fontSize: 13, fontWeight: 800, color: '#A78BFA', letterSpacing: '0.5px', marginBottom: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-state-persistent)', letterSpacing: '0.5px', marginBottom: 8 }}>
                   📋 GUIDANCE EXTRACTED ({report.guidance.length})
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {report.guidance.slice(0, 20).map((g, i) => (
                     <span key={i} title={g.rawPhrase} style={{
-                      fontSize: 11, padding: '4px 9px', background: '#1A2540', borderRadius: 4,
+                      fontSize: 11, padding: '4px 9px', background: 'var(--mc-bg-4)', borderRadius: 4,
                       color: TEXT, fontFamily: 'ui-monospace, monospace', fontWeight: 600,
                     }}>
-                      <b style={{ color: '#22D3EE' }}>{g.fiscalYear}</b> · {metricLabel(g.metric)} · {formatGuidanceValue(g)}
+                      <b style={{ color: 'var(--mc-cyan)' }}>{g.fiscalYear}</b> · {metricLabel(g.metric)} · {formatGuidanceValue(g)}
                     </span>
                   ))}
                 </div>
@@ -2326,7 +2326,7 @@ export default function AutoValuationPage() {
             {/* Historical (from Excel) */}
             {report.excelData && (
               <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '14px 16px' }}>
-                <div style={{ fontSize: 13, fontWeight: 800, color: '#10B981', letterSpacing: '0.5px', marginBottom: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-bullish)', letterSpacing: '0.5px', marginBottom: 8 }}>
                   📊 HISTORICAL FINANCIALS (from {report.excelData.source})
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8, marginBottom: 8 }}>
@@ -2340,10 +2340,10 @@ export default function AutoValuationPage() {
                     <div><div style={{ fontSize: 9, color: DIM, fontWeight: 800 }}>5YR AVG OPM</div><div style={{ fontSize: 14, color: TEXT, fontWeight: 800 }}>{report.excelData.opmAvg.toFixed(1)}%</div></div>
                   )}
                   {report.excelData.salesCagr5y !== undefined && (
-                    <div><div style={{ fontSize: 9, color: DIM, fontWeight: 800 }}>5YR SALES CAGR</div><div style={{ fontSize: 14, color: '#10B981', fontWeight: 800 }}>{report.excelData.salesCagr5y.toFixed(1)}%</div></div>
+                    <div><div style={{ fontSize: 9, color: DIM, fontWeight: 800 }}>5YR SALES CAGR</div><div style={{ fontSize: 14, color: 'var(--mc-bullish)', fontWeight: 800 }}>{report.excelData.salesCagr5y.toFixed(1)}%</div></div>
                   )}
                   {report.excelData.patCagr5y !== undefined && (
-                    <div><div style={{ fontSize: 9, color: DIM, fontWeight: 800 }}>5YR PAT CAGR</div><div style={{ fontSize: 14, color: '#10B981', fontWeight: 800 }}>{report.excelData.patCagr5y.toFixed(1)}%</div></div>
+                    <div><div style={{ fontSize: 9, color: DIM, fontWeight: 800 }}>5YR PAT CAGR</div><div style={{ fontSize: 14, color: 'var(--mc-bullish)', fontWeight: 800 }}>{report.excelData.patCagr5y.toFixed(1)}%</div></div>
                   )}
                 </div>
                 <div style={{ fontSize: 10, color: DIM }}>Parsed {report.excelData.fyLabels.length} fiscal-year columns.</div>

@@ -83,6 +83,8 @@ import { calculatePE, fetchQuoteAutofill, type QuoteAutoFill } from '@/lib/valua
 // PATCH 0888 — Authoritative ticker→long-form-name map for news search
 // PATCH 0901 — Reverse map for Super Investors flow rows (company-name → ticker)
 import { NSE_TICKER_NAMES as _NSE_TICKER_NAMES, resolveCompanyToTicker } from '@/lib/nse-ticker-names';
+// PATCH 1079 — HANDOFF §6 wire-ups: portal-widgets bundle drop-in.
+import { PDFExportButton, FIIDIIFlowTile, MacroCalendarTile } from '@/components/portal-widgets';
 
 const BG = '#0A0E1A';
 const CARD = '#0D1623';
@@ -2053,6 +2055,16 @@ export default function HomeDashboard() {
     <div style={{ minHeight: '100%', background: BG, color: TEXT, padding: '20px 24px' }}>
       <div style={{ maxWidth: 1400, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
+        {/* PATCH 1079 — Portal-widgets bundle (HANDOFF §6 wire-up).
+            Top-of-dashboard utility row: FII/DII flow, macro calendar, PDF export. */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12, alignItems: 'start' }}>
+          <FIIDIIFlowTile />
+          <MacroCalendarTile />
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-end' }}>
+            <PDFExportButton />
+          </div>
+        </div>
+
         {/* HEADER */}
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
           <div>
@@ -2066,8 +2078,8 @@ export default function HomeDashboard() {
                 <Link href="/multibagger" style={{
                   fontSize: 10, padding: '2px 8px', borderRadius: 4,
                   background: data.staleDataAgeDays >= 30 ? '#EF444422' : '#F59E0B22',
-                  border: `1px solid ${data.staleDataAgeDays >= 30 ? '#EF4444' : '#F59E0B'}60`,
-                  color: data.staleDataAgeDays >= 30 ? '#EF4444' : '#F59E0B',
+                  border: `1px solid ${data.staleDataAgeDays >= 30 ? 'var(--mc-bearish)' : 'var(--mc-warn)'}60`,
+                  color: data.staleDataAgeDays >= 30 ? 'var(--mc-bearish)' : 'var(--mc-warn)',
                   fontWeight: 800, textDecoration: 'none',
                 }}>
                   ⚠ Multibagger upload {data.staleDataAgeDays}d ago — re-upload to refresh scoring
@@ -2078,8 +2090,8 @@ export default function HomeDashboard() {
                 <Link href="/portfolio" style={{
                   fontSize: 10, padding: '2px 8px', borderRadius: 4,
                   background: data.portfolioPnl.totalPct >= 0 ? '#10B98122' : '#EF444422',
-                  border: `1px solid ${data.portfolioPnl.totalPct >= 0 ? '#10B981' : '#EF4444'}60`,
-                  color: data.portfolioPnl.totalPct >= 0 ? '#10B981' : '#EF4444',
+                  border: `1px solid ${data.portfolioPnl.totalPct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'}60`,
+                  color: data.portfolioPnl.totalPct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)',
                   fontWeight: 800, textDecoration: 'none',
                 }} title={`${data.portfolioPnl.covered} of ${data.portfolioPnl.positions} positions matched`}>
                   {/* Only claim a P&L number when every position has a live price.
@@ -2099,8 +2111,8 @@ export default function HomeDashboard() {
                 <Link href="/playbook" style={{
                   fontSize: 10, padding: '2px 8px', borderRadius: 4,
                   background: playbookCounts.E > 0 ? '#EF444422' : (playbookCounts.W > 0 ? '#F59E0B22' : '#10B98122'),
-                  border: `1px solid ${playbookCounts.E > 0 ? '#EF4444' : (playbookCounts.W > 0 ? '#F59E0B' : '#10B981')}60`,
-                  color: playbookCounts.E > 0 ? '#EF4444' : (playbookCounts.W > 0 ? '#F59E0B' : '#10B981'),
+                  border: `1px solid ${playbookCounts.E > 0 ? 'var(--mc-bearish)' : (playbookCounts.W > 0 ? 'var(--mc-warn)' : 'var(--mc-bullish)')}60`,
+                  color: playbookCounts.E > 0 ? 'var(--mc-bearish)' : (playbookCounts.W > 0 ? 'var(--mc-warn)' : 'var(--mc-bullish)'),
                   fontWeight: 800, textDecoration: 'none', letterSpacing: 0.3,
                 }} title="Playbook state machine — click for state-machine, decision engine, exit rules">
                   📖 PLAYBOOK · HOLD {playbookCounts.H} · WATCH {playbookCounts.W} · EXIT {playbookCounts.E}
@@ -2109,7 +2121,7 @@ export default function HomeDashboard() {
               {!playbookCounts && (
                 <Link href="/playbook" style={{
                   fontSize: 10, padding: '2px 8px', borderRadius: 4,
-                  background: '#A78BFA22', border: '1px solid #A78BFA60', color: '#A78BFA',
+                  background: '#A78BFA22', border: '1px solid #A78BFA60', color: 'var(--mc-state-persistent)',
                   fontWeight: 800, textDecoration: 'none', letterSpacing: 0.3,
                 }} title="Open Playbook → set up portfolio state machine (HOLD/WATCH/EXIT) and exit rules">
                   📖 PLAYBOOK — set up state machine
@@ -2119,7 +2131,7 @@ export default function HomeDashboard() {
               {data.sectorRotation?.topSector && data.sectorRotation?.bottomSector && (
                 <Link href="/movers" style={{
                   fontSize: 10, padding: '2px 8px', borderRadius: 4,
-                  background: '#22D3EE15', border: '1px solid #22D3EE40', color: '#22D3EE',
+                  background: '#22D3EE15', border: '1px solid #22D3EE40', color: 'var(--mc-cyan)',
                   fontWeight: 700, textDecoration: 'none',
                 }}>
                   🔄 {data.sectorRotation.topSector.sector} {data.sectorRotation.topSector.pct >= 0 ? '+' : ''}{data.sectorRotation.topSector.pct.toFixed(1)}% leading · {data.sectorRotation.bottomSector.sector} {data.sectorRotation.bottomSector.pct.toFixed(1)}% lagging
@@ -2129,7 +2141,7 @@ export default function HomeDashboard() {
               {data.alphaFeedback && (
                 <span style={{
                   fontSize: 10, padding: '2px 8px', borderRadius: 4,
-                  background: '#A78BFA15', border: '1px solid #A78BFA40', color: '#A78BFA',
+                  background: '#A78BFA15', border: '1px solid #A78BFA40', color: 'var(--mc-state-persistent)',
                   fontWeight: 700,
                 }} title={`${data.alphaFeedback.held} of ${data.alphaFeedback.sample} A-grade names held A grade across uploads`}>
                   🔁 Engine consistency: avg {data.alphaFeedback.avgScoreBefore.toFixed(0)} → {data.alphaFeedback.avgScoreNow.toFixed(0)} ({data.alphaFeedback.held}/{data.alphaFeedback.sample} held A)
@@ -2167,7 +2179,7 @@ export default function HomeDashboard() {
           {/* PATCH 1036 — Position Sizing Calculator on home (institutional 1-tap sizing) */}
           <div style={{display:'flex',alignItems:'center',gap:14,flexWrap:'wrap',padding:'12px 16px',backgroundColor:'rgba(168,85,247,0.06)',border:'1px solid rgba(168,85,247,0.20)',borderRadius:10,marginTop:4}}>
             <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
-              <span style={{fontSize:12,fontWeight:800,color:'#A78BFA',letterSpacing:'0.5px'}}>💰 POSITION SIZING</span>
+              <span style={{fontSize:12,fontWeight:800,color:'var(--mc-state-persistent)',letterSpacing:'0.5px'}}>💰 POSITION SIZING</span>
               <span style={{fontSize:11,color:DIM,fontWeight:700}}>Portfolio</span>
               <span style={{fontSize:13,color:TEXT,fontWeight:800}}>$</span>
               <input
@@ -2185,7 +2197,7 @@ export default function HomeDashboard() {
                 return (
                   <div key={pct} style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'4px 8px',backgroundColor:'#13131a',border:'1px solid rgba(255,255,255,0.12)',borderRadius:6,minWidth:62}}>
                     <span style={{fontSize:10,color:DIM,fontWeight:700}}>{pct}%</span>
-                    <span style={{fontSize:13,color:'#10B981',fontWeight:800}}>${amt.toLocaleString('en-US')}</span>
+                    <span style={{fontSize:13,color:'var(--mc-bullish)',fontWeight:800}}>${amt.toLocaleString('en-US')}</span>
                   </div>
                 );
               })}
@@ -2261,8 +2273,8 @@ export default function HomeDashboard() {
           gap: 8,
           flexWrap: 'wrap',
           padding: '8px 12px',
-          background: '#0D1623',
-          border: '1px solid #1A2540',
+          background: 'var(--mc-bg-1)',
+          border: '1px solid var(--mc-bg-4)',
           borderRadius: 6,
         }}>
           {/* 🗺 HEATMAP CHIP */}
@@ -2272,7 +2284,7 @@ export default function HomeDashboard() {
               return (
                 <Link href="/heatmap" style={{
                   fontSize: 12, padding: '4px 10px', borderRadius: 4,
-                  background: '#22D3EE15', border: '1px solid #22D3EE60', color: '#22D3EE',
+                  background: '#22D3EE15', border: '1px solid #22D3EE60', color: 'var(--mc-cyan)',
                   fontWeight: 800, textDecoration: 'none',
                 }}>🗺 HEATMAP · loading sectors…</Link>
               );
@@ -2281,7 +2293,7 @@ export default function HomeDashboard() {
               return (
                 <Link href="/heatmap" style={{
                   fontSize: 12, padding: '4px 10px', borderRadius: 4,
-                  background: '#22D3EE15', border: '1px solid #22D3EE60', color: '#22D3EE',
+                  background: '#22D3EE15', border: '1px solid #22D3EE60', color: 'var(--mc-cyan)',
                   fontWeight: 800, textDecoration: 'none',
                 }}>🗺 HEATMAP · no sector data · Open →</Link>
               );
@@ -2290,7 +2302,7 @@ export default function HomeDashboard() {
             return (
               <Link href="/heatmap" style={{
                 fontSize: 12, padding: '4px 10px', borderRadius: 4,
-                background: '#22D3EE15', border: '1px solid #22D3EE60', color: '#22D3EE',
+                background: '#22D3EE15', border: '1px solid #22D3EE60', color: 'var(--mc-cyan)',
                 fontWeight: 800, textDecoration: 'none',
               }} title="Open full Sector Heatmap →">
                 🗺 HEATMAP · {top3.map(s => `${s.sector} ${s.pct >= 0 ? '+' : ''}${s.pct.toFixed(1)}%`).join(' · ')}
@@ -2330,7 +2342,7 @@ export default function HomeDashboard() {
               return (
                 <Link href="/watchlists?tab=conviction" style={{
                   fontSize: 12, padding: '4px 10px', borderRadius: 4,
-                  background: '#F59E0B15', border: '1px solid #F59E0B60', color: '#F59E0B',
+                  background: '#F59E0B15', border: '1px solid #F59E0B60', color: 'var(--mc-warn)',
                   fontWeight: 800, textDecoration: 'none',
                 }}>🏆 BEATS · loading bench…</Link>
               );
@@ -2339,7 +2351,7 @@ export default function HomeDashboard() {
               return (
                 <Link href="/earnings-opportunities" style={{
                   fontSize: 12, padding: '4px 10px', borderRadius: 4,
-                  background: '#F59E0B15', border: '1px solid #F59E0B60', color: '#F59E0B',
+                  background: '#F59E0B15', border: '1px solid #F59E0B60', color: 'var(--mc-warn)',
                   fontWeight: 800, textDecoration: 'none',
                 }}>🏆 BEATS · empty bench · populate from EO →</Link>
               );
@@ -2349,7 +2361,7 @@ export default function HomeDashboard() {
               return (
                 <Link href="/watchlists?tab=conviction" style={{
                   fontSize: 12, padding: '4px 10px', borderRadius: 4,
-                  background: '#F59E0B15', border: '1px solid #F59E0B60', color: '#F59E0B',
+                  background: '#F59E0B15', border: '1px solid #F59E0B60', color: 'var(--mc-warn)',
                   fontWeight: 800, textDecoration: 'none',
                 }} title={`${cb.length} names on bench · no live quotes (NSE closed?)`}>
                   🏆 BEATS ({cb.length}) · no live quotes · {cb.slice(0, 4).map(c => c.ticker).join(' · ')}
@@ -2360,7 +2372,7 @@ export default function HomeDashboard() {
             return (
               <Link href="/watchlists?tab=conviction" style={{
                 fontSize: 12, padding: '4px 10px', borderRadius: 4,
-                background: '#F59E0B15', border: '1px solid #F59E0B60', color: '#F59E0B',
+                background: '#F59E0B15', border: '1px solid #F59E0B60', color: 'var(--mc-warn)',
                 fontWeight: 800, textDecoration: 'none',
               }} title={`${cb.length} names on bench · sorted by today's abs move`}>
                 🏆 BEATS ({cb.length}) · {top4.map(c => `${c.ticker} ${(c.changePercent as number) >= 0 ? '+' : ''}${(c.changePercent as number).toFixed(1)}%`).join(' · ')}
@@ -2382,8 +2394,8 @@ export default function HomeDashboard() {
           gap: 8,
           flexWrap: 'wrap',
           padding: '6px 10px',
-          background: '#0D1623',
-          border: '1px solid #1A2540',
+          background: 'var(--mc-bg-1)',
+          border: '1px solid var(--mc-bg-4)',
           borderRadius: 6,
         }}>
           <span style={{ fontSize: 10, color: DIM, fontWeight: 700, letterSpacing: '0.5px', marginRight: 4 }}>LENS</span>
@@ -2397,9 +2409,9 @@ export default function HomeDashboard() {
                   style={{
                     fontSize: 10,
                     padding: '3px 9px',
-                    border: isActive ? '1px solid #22D3EE' : '1px solid #1A2540',
+                    border: isActive ? '1px solid var(--mc-cyan)' : '1px solid var(--mc-bg-4)',
                     background: isActive ? '#22D3EE22' : 'transparent',
-                    color: isActive ? '#22D3EE' : TEXT,
+                    color: isActive ? 'var(--mc-cyan)' : TEXT,
                     fontWeight: 700,
                     letterSpacing: '0.3px',
                     borderRadius: 4,
@@ -2412,7 +2424,7 @@ export default function HomeDashboard() {
                   <button
                     onClick={() => removeCustomLens(l.id)}
                     title="Delete this lens"
-                    style={{ fontSize: 10, padding: '3px 5px', border: '1px solid #EF444440', background: 'transparent', color: '#EF4444', borderRadius: 4, cursor: 'pointer' }}
+                    style={{ fontSize: 10, padding: '3px 5px', border: '1px solid #EF444440', background: 'transparent', color: 'var(--mc-bearish)', borderRadius: 4, cursor: 'pointer' }}
                   >×</button>
                 )}
               </span>
@@ -2420,7 +2432,7 @@ export default function HomeDashboard() {
           })}
           <button
             onClick={addCustomLens}
-            style={{ fontSize: 10, padding: '3px 9px', border: '1px dashed #22D3EE60', background: 'transparent', color: '#22D3EE', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+            style={{ fontSize: 10, padding: '3px 9px', border: '1px dashed #22D3EE60', background: 'transparent', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
             title="Add a custom sector-keyword lens"
           >+ NEW LENS</button>
           {activeLens.mode !== 'all' && (
@@ -2434,12 +2446,12 @@ export default function HomeDashboard() {
         <div style={cardStyle}>
           <button onClick={() => setShowInPlay(v => !v)} style={{
             background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
-            fontSize: 13, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px',
+            fontSize: 13, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.4px',
             display: 'flex', alignItems: 'center', gap: 6, width: '100%',
           }}>
             {showInPlay ? '▾' : '▸'} 🔥 IN-PLAY NEWS — top {data.inPlay.length}
             <span style={{ marginLeft: 'auto', fontSize: 10, color: DIM, fontWeight: 500 }}>
-              <Link href="/news" style={{ color: '#22D3EE', textDecoration: 'none' }} onClick={(e) => e.stopPropagation()}>Full feed →</Link>
+              <Link href="/news" style={{ color: 'var(--mc-cyan)', textDecoration: 'none' }} onClick={(e) => e.stopPropagation()}>Full feed →</Link>
             </span>
           </button>
           {netLoading.inPlay && !showInPlay && (
@@ -2461,14 +2473,14 @@ export default function HomeDashboard() {
               )}
               <button
                 onClick={() => { window.location.reload(); }}
-                style={{ marginTop: 8, fontSize: 10, padding: '4px 10px', border: '1px solid #22D3EE60', background: 'transparent', color: '#22D3EE', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+                style={{ marginTop: 8, fontSize: 10, padding: '4px 10px', border: '1px solid #22D3EE60', background: 'transparent', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
               >
                 🔄 RETRY
               </button>
             </div>
           )}
           {showInPlay && !netLoading.inPlay && data.inPlay.length > 0 && data.inPlayDiag?.fellBack && (
-            <div style={{ fontSize: 10, color: '#F59E0B', marginTop: 6, padding: '4px 8px', background: '#F59E0B15', border: '1px solid #F59E0B40', borderRadius: 4 }}>
+            <div style={{ fontSize: 10, color: 'var(--mc-warn)', marginTop: 6, padding: '4px 8px', background: '#F59E0B15', border: '1px solid #F59E0B40', borderRadius: 4 }}>
               ⚠ Only structural alerts available in last 24h — showing them anyway so the feed isn't empty.
             </div>
           )}
@@ -2507,13 +2519,13 @@ export default function HomeDashboard() {
                 }
                 return (
                   <a key={(n.id || '') + i} href={n.url || n.source_url || '#'} target="_blank" rel="noopener noreferrer"
-                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid var(--mc-bg-4)' }}>
                     <span style={{ fontSize: 11, color: DIM, fontWeight: 700, minWidth: 22 }}>{i + 1}</span>
                     <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: TEXT, fontWeight: 500, lineHeight: 1.4 }}>{title}</span>
                     {istChip && (
                       <span
                         title={`Published ${istChip} IST · ${relAge} ago`}
-                        style={{ fontSize: 9, color: '#7AA2D8', whiteSpace: 'nowrap', fontFamily: 'ui-monospace, monospace', minWidth: 100, textAlign: 'right' }}
+                        style={{ fontSize: 9, color: 'var(--mc-text-3)', whiteSpace: 'nowrap', fontFamily: 'ui-monospace, monospace', minWidth: 100, textAlign: 'right' }}
                       >
                         {istChip}{relAge ? ` · ${relAge}` : ''}
                       </span>
@@ -2606,15 +2618,15 @@ export default function HomeDashboard() {
             background: 'linear-gradient(180deg, #F59E0B14 0%, transparent 100%)',
           }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
-              <span style={{ fontSize: 14, fontWeight: 900, color: '#F59E0B', letterSpacing: '0.4px' }}>
+              <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--mc-warn)', letterSpacing: '0.4px' }}>
                 🎯 TIER 1 — TURNAROUND BUY-ZONE (0)
               </span>
-              <span style={{ fontSize: 10, color: '#F59E0B', background: '#F59E0B22', padding: '2px 7px', borderRadius: 3, fontWeight: 700 }}>
+              <span style={{ fontSize: 10, color: 'var(--mc-warn)', background: '#F59E0B22', padding: '2px 7px', borderRadius: 3, fontWeight: 700 }}>
                 ACTION NOW
               </span>
-              <Link href="/multibagger?tab=turnaround" style={{ fontSize: 11, color: '#F59E0B', textDecoration: 'none', marginLeft: 'auto' }}>Open →</Link>
+              <Link href="/multibagger?tab=turnaround" style={{ fontSize: 11, color: 'var(--mc-warn)', textDecoration: 'none', marginLeft: 'auto' }}>Open →</Link>
             </div>
-            <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 10, lineHeight: 1.45 }}>
+            <div style={{ fontSize: 11, color: 'var(--mc-text-3)', marginBottom: 10, lineHeight: 1.45 }}>
               Top turnaround setups from your /multibagger Turnarounds upload (top 5 by total score). Different playbook than the IMMEDIATE ACTION list above — these are INFLECTION setups, not sustained-quality compounders.
             </div>
             <div style={{
@@ -2626,10 +2638,10 @@ export default function HomeDashboard() {
               color: TEXT,
               lineHeight: 1.55,
             }}>
-              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6, color: '#F59E0B' }}>📭 No turnaround candidates uploaded yet</div>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6, color: 'var(--mc-warn)' }}>📭 No turnaround candidates uploaded yet</div>
               <div style={{ color: DIM }}>
                 Upload a turnaround Screener CSV on the{' '}
-                <Link href="/multibagger?tab=turnaround" style={{ color: '#F59E0B', textDecoration: 'underline' }}>🔄 Turnarounds tab</Link>{' '}
+                <Link href="/multibagger?tab=turnaround" style={{ color: 'var(--mc-warn)', textDecoration: 'underline' }}>🔄 Turnarounds tab</Link>{' '}
                 of the Multibagger page. The engine scores 7 dimensions (earnings reversal · operational reset · balance-sheet repair · concall quality · sector tailwind · governance · valuation set-up) and ranks the top 5 here in the same Tier 1 card layout.
               </div>
             </div>
@@ -2638,9 +2650,9 @@ export default function HomeDashboard() {
 
         {/* ═══════════════ WHAT CHANGED TODAY ═══════════════════════════ */}
         {data.changedToday.length > 0 && (
-          <div style={{ ...cardStyle, borderLeft: '3px solid #22D3EE' }}>
+          <div style={{ ...cardStyle, borderLeft: '3px solid var(--mc-cyan)' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px' }}>📊 WHAT CHANGED TODAY ({data.changedToday.length})</span>
+              <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.4px' }}>📊 WHAT CHANGED TODAY ({data.changedToday.length})</span>
               <span style={{ fontSize: 10, color: DIM }}>Score deltas ≥5 pts vs prior upload</span>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 6 }}>
@@ -2683,14 +2695,14 @@ export default function HomeDashboard() {
               portal's thesis. Each theme links to the workbench.            */}
           <div style={cardStyle}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: '#EF4444', letterSpacing: '0.4px' }}>📡 BOTTLENECK PULSE</span>
-              <Link href="/bottleneck-workbench" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open Workbench →</Link>
+              <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-bearish)', letterSpacing: '0.4px' }}>📡 BOTTLENECK PULSE</span>
+              <Link href="/bottleneck-workbench" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open Workbench →</Link>
             </div>
             {netLoading.bottleneck ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Scanning active bottlenecks…</div>
             ) : data.bottleneck.length === 0 ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>
-                No active bottlenecks today. <Link href="/news?lifecycle=PERSISTENT" style={{ color: '#22D3EE' }}>Browse structural feed →</Link>
+                No active bottlenecks today. <Link href="/news?lifecycle=PERSISTENT" style={{ color: 'var(--mc-cyan)' }}>Browse structural feed →</Link>
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -2710,7 +2722,7 @@ export default function HomeDashboard() {
                       style={{ textDecoration: 'none', color: 'inherit' }}
                     >
                       <div style={{
-                        background: '#1A2540',
+                        background: 'var(--mc-bg-4)',
                         border: `1px solid ${sevColor}40`,
                         borderRadius: 5,
                         padding: '6px 8px',
@@ -2730,7 +2742,7 @@ export default function HomeDashboard() {
                         {tix.length > 0 && (
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
                             {tix.map((t: string) => (
-                              <span key={t} style={{ fontSize: 9, color: '#22D3EE', background: '#22D3EE15', padding: '1px 5px', borderRadius: 3, fontWeight: 600 }}>
+                              <span key={t} style={{ fontSize: 9, color: 'var(--mc-cyan)', background: '#22D3EE15', padding: '1px 5px', borderRadius: 3, fontWeight: 600 }}>
                                 {t}
                               </span>
                             ))}
@@ -2750,17 +2762,17 @@ export default function HomeDashboard() {
           {/* EARNINGS — PATCH 0606: shows today or last working day with explicit label */}
           <div style={cardStyle}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.4px' }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-warn)', letterSpacing: '0.4px' }}>
                 📅 EARNINGS {data.earningsLabel.toUpperCase()} ({data.earningsToday.length})
               </span>
-              <Link href="/earnings-opportunities" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>View all →</Link>
+              <Link href="/earnings-opportunities" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>View all →</Link>
             </div>
             {netLoading.earnings ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading earnings…</div>
             ) : data.earningsToday.length === 0 ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic', lineHeight: 1.5 }}>
                 No BLOCKBUSTER/STRONG filings in last 3 trading days.
-                <Link href="/earnings-opportunities" style={{ color: '#22D3EE' }}> Open Earnings Ops →</Link>
+                <Link href="/earnings-opportunities" style={{ color: 'var(--mc-cyan)' }}> Open Earnings Ops →</Link>
                 {(() => {
                   // PATCH 0750 — weekend honest hint + Backfill nudge for cold KV.
                   const d = new Date();
@@ -2794,7 +2806,7 @@ export default function HomeDashboard() {
                     const date = c._date as string | undefined;
                     return (
                       <Link key={c.ticker} href={`/stock-sheet?ticker=${encodeURIComponent(c.ticker)}`}
-                        style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                        style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid var(--mc-bg-4)' }}>
                         <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.company || c.ticker}</span>
                         {multiDay && date && (
                           <span style={{ fontSize: 9, color: DIM, fontFamily: 'ui-monospace, monospace' }}>{fmtDay(date)}</span>
@@ -2813,12 +2825,12 @@ export default function HomeDashboard() {
 
         {/* ═══════════════ PATCH 0617 — CONCALL INTELLIGENCE SUMMARY ═════ */}
         {data.concallHits && data.concallHits.length > 0 && (
-          <div style={{ ...cardStyle, borderLeft: '3px solid #A78BFA' }}>
+          <div style={{ ...cardStyle, borderLeft: '3px solid var(--mc-state-persistent)' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: '#A78BFA', letterSpacing: '0.4px' }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-state-persistent)', letterSpacing: '0.4px' }}>
                 🎙 CONCALL INTELLIGENCE — last 14d ({data.concallHits.length})
               </span>
-              <Link href="/concall-intel" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Full Intel →</Link>
+              <Link href="/concall-intel" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Full Intel →</Link>
             </div>
             <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
               Most-recent management commentary catalysts — earnings calls + analyst meets surfaced via the live feed
@@ -2832,8 +2844,8 @@ export default function HomeDashboard() {
                 const cleanTier = (h.tier || '').replace(/_/g, ' ').slice(0, 18);
                 return (
                   <Link key={(h.ticker || '') + i} href={`/stock-sheet?ticker=${encodeURIComponent((h.ticker || '').replace(/\.(NS|BO)$/i, ''))}`}
-                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
-                    <span style={{ fontSize: 10, color: '#A78BFA', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 60 }}>
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid var(--mc-bg-4)' }}>
+                    <span style={{ fontSize: 10, color: 'var(--mc-state-persistent)', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 60 }}>
                       {(h.ticker || '').replace(/\.(NS|BO)$/i, '').slice(0, 8)}
                     </span>
                     <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -2855,12 +2867,12 @@ export default function HomeDashboard() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12 }}>
 
           {/* STRATEGIC VISIBILITY — latest transformational events */}
-          <div style={{ ...cardStyle, borderLeft: '3px solid #F59E0B' }}>
+          <div style={{ ...cardStyle, borderLeft: '3px solid var(--mc-warn)' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.4px' }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-warn)', letterSpacing: '0.4px' }}>
                 ⭐ STRATEGIC VISIBILITY ({data.stratVis?.length || 0})
               </span>
-              <Link href="/strategic-visibility" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
+              <Link href="/strategic-visibility" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open →</Link>
             </div>
             <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
               Transformational catalysts — multi-quarter visibility events
@@ -2870,7 +2882,7 @@ export default function HomeDashboard() {
             ) : data.stratVis.length === 0 ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic', lineHeight: 1.5 }}>
                 No transformational news in window. Backend may have cold-started.
-                <button onClick={() => window.location.reload()} style={{ marginLeft: 8, fontSize: 10, padding: '3px 9px', background: 'transparent', border: '1px solid #22D3EE60', color: '#22D3EE', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}>
+                <button onClick={() => window.location.reload()} style={{ marginLeft: 8, fontSize: 10, padding: '3px 9px', background: 'transparent', border: '1px solid #22D3EE60', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}>
                   🔄 RETRY
                 </button>
               </div>
@@ -2882,8 +2894,8 @@ export default function HomeDashboard() {
                   const target = s.source_url ? '_blank' : undefined;
                   return (
                     <a key={(s.id || '') + i} href={href} target={target} rel={target ? 'noopener noreferrer' : undefined}
-                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
-                      <span style={{ fontSize: 9, color: '#F59E0B', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 56 }}>
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid var(--mc-bg-4)' }}>
+                      <span style={{ fontSize: 9, color: 'var(--mc-warn)', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 56 }}>
                         {(ticker || '').toString().replace(/\.(NS|BO)$/i, '').slice(0, 8) || '—'}
                       </span>
                       <span title={s.title || s.headline || ''}
@@ -2899,12 +2911,12 @@ export default function HomeDashboard() {
           </div>
 
           {/* SUPER INVESTORS — PATCH 0624: combined flow + static roster */}
-          <div style={{ ...cardStyle, borderLeft: '3px solid #A78BFA' }}>
+          <div style={{ ...cardStyle, borderLeft: '3px solid var(--mc-state-persistent)' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: '#A78BFA', letterSpacing: '0.4px' }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-state-persistent)', letterSpacing: '0.4px' }}>
                 🦅 SUPER INVESTORS — holdings + flow ({data.superInvestors?.length || 0})
               </span>
-              <Link href="/super-investors" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open Tracker →</Link>
+              <Link href="/super-investors" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open Tracker →</Link>
             </div>
             <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
               Marquee-investor positions (live flow + most-recent BSE 1%+ disclosures)
@@ -2951,8 +2963,8 @@ export default function HomeDashboard() {
                   return (
                     <Link key={(r.ticker || '') + i} href={linkHref}
                       title={isRealTicker ? `Open ${resolvedTicker} stock sheet` : 'No NSE ticker found — open Super Investors tracker'}
-                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
-                      <span style={{ fontSize: 9, color: isRealTicker ? '#A78BFA' : '#3F4D63', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 70, textAlign: 'left' }}>
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid var(--mc-bg-4)' }}>
+                      <span style={{ fontSize: 9, color: isRealTicker ? 'var(--mc-state-persistent)' : '#3F4D63', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 70, textAlign: 'left' }}>
                         {isRealTicker ? resolvedTicker.slice(0, 10) : '—'}
                       </span>
                       <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -2962,7 +2974,7 @@ export default function HomeDashboard() {
                         {investorShort}
                       </span>
                       {typeof r.stakePct === 'number' && (
-                        <span style={{ fontSize: 9, color: '#A78BFA', fontWeight: 800, fontVariantNumeric: 'tabular-nums', minWidth: 36, textAlign: 'right' }}>
+                        <span style={{ fontSize: 9, color: 'var(--mc-state-persistent)', fontWeight: 800, fontVariantNumeric: 'tabular-nums', minWidth: 36, textAlign: 'right' }}>
                           {r.stakePct.toFixed(1)}%
                         </span>
                       )}
@@ -2984,13 +2996,13 @@ export default function HomeDashboard() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12 }}>
 
           {/* TOP 5 MOVERS + TOP 5 LOSERS (India) */}
-          <div style={{ ...cardStyle, borderLeft: '3px solid #10B981' }}>
+          <div style={{ ...cardStyle, borderLeft: '3px solid var(--mc-bullish)' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: '#10B981', letterSpacing: '0.4px' }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-bullish)', letterSpacing: '0.4px' }}>
                 📈 TOP MOVERS · TOP LOSERS
               </span>
               <button onClick={async () => { try { await Promise.all([fetch('/api/market/quotes?market=india&refresh=1', { cache: 'no-store' }), fetch('/api/market/quotes?market=us&refresh=1', { cache: 'no-store' })]); } catch {} if (typeof window !== 'undefined') window.location.reload(); }} title="Force-refresh movers from the latest NSE close" style={{ fontSize: 10, color: '#FBBF24', background: 'transparent', border: '1px solid #FBBF24', borderRadius: 4, padding: '1px 6px', cursor: 'pointer', marginRight: 8 }}>🔄 Refresh</button>
-              <Link href="/movers" title="Home shows YOUR universe (Watchlist + Portfolio + CB) first, then fills with broad-market top movers. The /movers page shows the full NSE universe by raw % move." style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
+              <Link href="/movers" title="Home shows YOUR universe (Watchlist + Portfolio + CB) first, then fills with broad-market top movers. The /movers page shows the full NSE universe by raw % move." style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open →</Link>
             </div>
             {/* PATCH 0795 — module-level feed-gap banner (replaces per-row repetition) */}
             {(() => {
@@ -2999,7 +3011,7 @@ export default function HomeDashboard() {
               if (gapCount === 0 || attrs.length === 0) return null;
               return (
                 <div style={{
-                  fontSize: 10, color: '#F59E0B', padding: '4px 6px',
+                  fontSize: 10, color: 'var(--mc-warn)', padding: '4px 6px',
                   background: '#F59E0B11', border: '1px solid #F59E0B22',
                   borderRadius: 3, marginBottom: 6, lineHeight: 1.4,
                 }}>
@@ -3039,7 +3051,7 @@ export default function HomeDashboard() {
                  Movers page deeplink, but don't pre-emptively hide the list
                  just because market is closed (P0735's behaviour). */
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic', padding: '8px 6px', lineHeight: 1.5 }}>
-                No movers data available right now. <Link href="/movers" style={{ color: '#22D3EE', textDecoration: 'none' }}>Open full Movers page →</Link>
+                No movers data available right now. <Link href="/movers" style={{ color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open full Movers page →</Link>
               </div>
             ) : (() => {
               // PATCH 0796 — tiered movers display:
@@ -3213,9 +3225,9 @@ export default function HomeDashboard() {
                 return (
                   <Link key={tk} href={`/stock-sheet?ticker=${encodeURIComponent(m.ticker)}`}
                     title={tooltip}
-                    style={{ display: 'flex', alignItems: 'baseline', gap: 6, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                    style={{ display: 'flex', alignItems: 'baseline', gap: 6, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid var(--mc-bg-4)' }}>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                    {inUniverse && <span style={{ fontSize: 10, color: '#22D3EE', flexShrink: 0 }} title="In your Watchlist/Portfolio/CB">👁</span>}
+                    {inUniverse && <span style={{ fontSize: 10, color: 'var(--mc-cyan)', flexShrink: 0 }} title="In your Watchlist/Portfolio/CB">👁</span>}
                     <span style={{ fontSize: 11, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 84, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.ticker}</span>
                     <span style={{ fontSize: 11, color: c, fontWeight: 800, fontVariantNumeric: 'tabular-nums', minWidth: 52, textAlign: 'right' }}>
                       {pos === 'up' ? '+' : ''}{pct.toFixed(1)}%
@@ -3271,7 +3283,7 @@ export default function HomeDashboard() {
                     {mq?.liquidityRisk === 'HIGH' && (
                       <span style={{
                         fontSize: 8, fontWeight: 800, padding: '1px 4px', borderRadius: 2, letterSpacing: 0.2, flexShrink: 0,
-                        background: '#EF444422', color: '#EF4444',
+                        background: '#EF444422', color: 'var(--mc-bearish)',
                       }} title="Thin turnover — not tradable in real size">
                         ⌀
                       </span>
@@ -3297,13 +3309,13 @@ export default function HomeDashboard() {
                   <div>
                     {topG.length > 0 && (
                       <>
-                        <div style={{ fontSize: 9, color: '#10B981', fontWeight: 700, marginTop: 2, marginBottom: 2, letterSpacing: '0.3px' }}>▲ GAINERS ({topG.length})</div>
+                        <div style={{ fontSize: 9, color: 'var(--mc-bullish)', fontWeight: 700, marginTop: 2, marginBottom: 2, letterSpacing: '0.3px' }}>▲ GAINERS ({topG.length})</div>
                         {topG.map((g: any) => renderRow(g, 'up'))}
                       </>
                     )}
                     {topL.length > 0 && (
                       <>
-                        <div style={{ fontSize: 9, color: '#EF4444', fontWeight: 700, marginTop: 6, marginBottom: 2, letterSpacing: '0.3px' }}>▼ LOSERS ({topL.length})</div>
+                        <div style={{ fontSize: 9, color: 'var(--mc-bearish)', fontWeight: 700, marginTop: 6, marginBottom: 2, letterSpacing: '0.3px' }}>▼ LOSERS ({topL.length})</div>
                         {topL.map((l: any) => renderRow(l, 'dn'))}
                       </>
                     )}
@@ -3337,19 +3349,19 @@ export default function HomeDashboard() {
                     return (
                       <div style={{
                         fontSize: 9.5, color: DIM, padding: '4px 6px', marginTop: 4,
-                        borderTop: '1px solid #1A2540', lineHeight: 1.6,
+                        borderTop: '1px solid var(--mc-bg-4)', lineHeight: 1.6,
                       }}>
                         <div>
                           <span style={{ color: '#8DA1B9', fontWeight: 700 }}>Sector breadth:</span>{' '}
-                          <span style={{ color: '#10B981' }}>{topSec} {sectorMoves.topSector.pct >= 0 ? '+' : ''}{sectorMoves.topSector.pct.toFixed(1)}%</span>
+                          <span style={{ color: 'var(--mc-bullish)' }}>{topSec} {sectorMoves.topSector.pct >= 0 ? '+' : ''}{sectorMoves.topSector.pct.toFixed(1)}%</span>
                           {' · '}
-                          <span style={{ color: '#EF4444' }}>{botSec} {sectorMoves.bottomSector.pct.toFixed(1)}%</span>
+                          <span style={{ color: 'var(--mc-bearish)' }}>{botSec} {sectorMoves.bottomSector.pct.toFixed(1)}%</span>
                         </div>
                         {(topLeaders.length > 0 || botLaggards.length > 0) && (
-                          <div style={{ fontSize: 9, color: '#6B7A8D', marginTop: 1 }}>
-                            {topLeaders.length > 0 && <>▲ leaders: <span style={{ color: '#94A3B8' }}>{topLeaders.join(', ')}</span></>}
+                          <div style={{ fontSize: 9, color: 'var(--mc-text-4)', marginTop: 1 }}>
+                            {topLeaders.length > 0 && <>▲ leaders: <span style={{ color: 'var(--mc-text-3)' }}>{topLeaders.join(', ')}</span></>}
                             {topLeaders.length > 0 && botLaggards.length > 0 && ' · '}
-                            {botLaggards.length > 0 && <>▼ laggards: <span style={{ color: '#94A3B8' }}>{botLaggards.join(', ')}</span></>}
+                            {botLaggards.length > 0 && <>▼ laggards: <span style={{ color: 'var(--mc-text-3)' }}>{botLaggards.join(', ')}</span></>}
                           </div>
                         )}
                       </div>
@@ -3361,12 +3373,12 @@ export default function HomeDashboard() {
           </div>
 
           {/* SIGNALS — high-importance corporate news (PATCH 0865 — institutional font sizing) */}
-          <div style={{ ...cardStyle, borderLeft: '3px solid #22D3EE', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ ...cardStyle, borderLeft: '3px solid var(--mc-cyan)', display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
-              <span style={{ fontSize: 15, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px' }}>
+              <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.4px' }}>
                 📡 SIGNALS ({data.signals?.length || 0})
               </span>
-              <Link href="/orders" style={{ fontSize: 12, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
+              <Link href="/orders" style={{ fontSize: 12, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open →</Link>
             </div>
             <div style={{ fontSize: 11.5, color: DIM, marginBottom: 8 }}>
               High-importance corporate actions and re-rating triggers · 👁 = in your universe
@@ -3397,9 +3409,9 @@ export default function HomeDashboard() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1, minHeight: 0 }}>
                   {items.map((s: any, i: number) => (
                     <a key={(s.id || '') + i} href={(s as any).url || (s as any).source_url || '#'} target="_blank" rel="noopener noreferrer"
-                      style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 7px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
-                      {s._inUniverse && <span title="In your Watchlist/Portfolio/CB" style={{ fontSize: 13, color: '#22D3EE', flexShrink: 0 }}>👁</span>}
-                      <span style={{ fontSize: 11.5, color: '#22D3EE', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 68 }}>
+                      style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 7px', textDecoration: 'none', borderBottom: '1px solid var(--mc-bg-4)' }}>
+                      {s._inUniverse && <span title="In your Watchlist/Portfolio/CB" style={{ fontSize: 13, color: 'var(--mc-cyan)', flexShrink: 0 }}>👁</span>}
+                      <span style={{ fontSize: 11.5, color: 'var(--mc-cyan)', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 68 }}>
                         {(s._ticker || '').slice(0, 8) || '—'}
                       </span>
                       <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.4 }}>{s.title || s.headline}</span>
@@ -3407,7 +3419,7 @@ export default function HomeDashboard() {
                     </a>
                   ))}
                   {data.signals.length > SHOWN && (
-                    <Link href="/orders" style={{ fontSize: 12, color: '#22D3EE', textAlign: 'center', padding: '8px 0', textDecoration: 'none', fontWeight: 700, marginTop: 6 }}>
+                    <Link href="/orders" style={{ fontSize: 12, color: 'var(--mc-cyan)', textAlign: 'center', padding: '8px 0', textDecoration: 'none', fontWeight: 700, marginTop: 6 }}>
                       + {data.signals.length - SHOWN} more · Open Signals page →
                     </Link>
                   )}
@@ -3418,21 +3430,21 @@ export default function HomeDashboard() {
         </div>
 
         {/* ═══════════════ PATCH 0806 — SPECIAL SITUATIONS (below Signals) ═══════════ */}
-        <div style={{ ...cardStyle, borderLeft: '3px solid #EF4444' }}>
+        <div style={{ ...cardStyle, borderLeft: '3px solid var(--mc-bearish)' }}>
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
-            <span style={{ fontSize: 13, fontWeight: 800, color: '#EF4444', letterSpacing: '0.4px' }}>
+            <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-bearish)', letterSpacing: '0.4px' }}>
               🎯 SPECIAL SITUATIONS ({(data as any).specialSituations?.length || 0})
             </span>
-            <Link href="/special-situations" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
+            <Link href="/special-situations" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open →</Link>
           </div>
           <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
-            OFS · buybacks · open offers · mergers · demergers · rights · preferential — equity-linked only · law precedents pushed to <Link href="/special-situations" style={{ color: '#22D3EE' }}>full page</Link>
+            OFS · buybacks · open offers · mergers · demergers · rights · preferential — equity-linked only · law precedents pushed to <Link href="/special-situations" style={{ color: 'var(--mc-cyan)' }}>full page</Link>
           </div>
           {!(data as any).specialSituations ? (
             <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
           ) : (data as any).specialSituations.length === 0 ? (
             <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>
-              No active situations in feed. <Link href="/special-situations" style={{ color: '#22D3EE' }}>Browse all →</Link>
+              No active situations in feed. <Link href="/special-situations" style={{ color: 'var(--mc-cyan)' }}>Browse all →</Link>
             </div>
           ) : (() => {
             // PATCH 0902 — institutional event-type taxonomy with full
@@ -3534,21 +3546,21 @@ export default function HomeDashboard() {
                         ev.expected_alpha ? `Expected alpha: ${ev.expected_alpha}` : '',
                         dealValue ? `Deal value: ${dealValue}` : '',
                       ].filter(Boolean).join('\n')}
-                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
-                      {inUniverse && <span style={{ fontSize: 11, color: '#22D3EE', flexShrink: 0 }} title="In your Watchlist/Portfolio/CB">👁</span>}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', textDecoration: 'none', borderBottom: '1px solid var(--mc-bg-4)' }}>
+                      {inUniverse && <span style={{ fontSize: 11, color: 'var(--mc-cyan)', flexShrink: 0 }} title="In your Watchlist/Portfolio/CB">👁</span>}
                       {/* PATCH 0902 — FILED vs REPORTED replaces DIRECT vs NEWS for clarity */}
                       {ev.tradeability === 'DIRECT_TRADE' ? (
                         <span title="Filed event — exchange-disclosed structured filing (OFS / buyback / open offer / scheme)"
-                          style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, letterSpacing: 0.4, background: '#10B98122', color: '#10B981', flexShrink: 0 }}>
+                          style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, letterSpacing: 0.4, background: '#10B98122', color: 'var(--mc-bullish)', flexShrink: 0 }}>
                           FILED
                         </span>
                       ) : (
                         <span title="Reported in news — verify against filing before sizing"
-                          style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, letterSpacing: 0.4, background: '#A78BFA22', color: '#A78BFA', flexShrink: 0 }}>
+                          style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, letterSpacing: 0.4, background: '#A78BFA22', color: 'var(--mc-state-persistent)', flexShrink: 0 }}>
                           REPORTED
                         </span>
                       )}
-                      <span style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, flexShrink: 0, color: market === 'US' ? '#F87171' : '#22D3EE', background: market === 'US' ? '#F8717122' : '#22D3EE22' }}>
+                      <span style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, flexShrink: 0, color: market === 'US' ? '#F87171' : 'var(--mc-cyan)', background: market === 'US' ? '#F8717122' : '#22D3EE22' }}>
                         {market === 'US' ? '🇺🇸 US' : '🇮🇳 IN'}
                       </span>
                       <span style={{ fontSize: 12, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 78, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -3575,12 +3587,12 @@ export default function HomeDashboard() {
                         {headline}
                       </span>
                       {ev.expected_alpha && (
-                        <span style={{ fontSize: 9, color: '#10B981', fontWeight: 700, padding: '2px 5px', borderRadius: 3, background: '#10B98122', flexShrink: 0 }}>
+                        <span style={{ fontSize: 9, color: 'var(--mc-bullish)', fontWeight: 700, padding: '2px 5px', borderRadius: 3, background: '#10B98122', flexShrink: 0 }}>
                           {ev.expected_alpha}
                         </span>
                       )}
                       <span style={{ fontSize: 10, color: DIM, whiteSpace: 'nowrap', flexShrink: 0 }}>
-                        {daysSince}{nextCatalyst && <> · <span style={{ color: '#F59E0B' }}>{nextCatalyst}</span></>}
+                        {daysSince}{nextCatalyst && <> · <span style={{ color: 'var(--mc-warn)' }}>{nextCatalyst}</span></>}
                       </span>
                     </Link>
                   );
@@ -3593,12 +3605,12 @@ export default function HomeDashboard() {
         {/* ═══════════════ PATCH 0622 — TWO-COL: WATCHLIST PULSE + UPCOMING EARNINGS ═ */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12 }}>
           {/* WATCHLIST PULSE — PATCH 0774 — cap filter + attribution */}
-          <div style={{ ...cardStyle, borderLeft: '3px solid #22D3EE' }}>
+          <div style={{ ...cardStyle, borderLeft: '3px solid var(--mc-cyan)' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px' }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.4px' }}>
                 👁 WATCHLIST PULSE ({data.watchlistPulse?.length || 0})
               </span>
-              <Link href="/watchlists" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open →</Link>
+              <Link href="/watchlists" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open →</Link>
             </div>
             <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
               {_isIndianMarketOpen()
@@ -3634,12 +3646,12 @@ export default function HomeDashboard() {
                   const smartLineW = (mqW?.smartMoney || [])[0];
                   return (
                     <Link key={w.ticker} href={`/stock-sheet?ticker=${encodeURIComponent(w.ticker)}`}
-                      style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                      style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid var(--mc-bg-4)' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ fontSize: 10, color: '#22D3EE', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 70 }}>{w.ticker}</span>
+                        <span style={{ fontSize: 10, color: 'var(--mc-cyan)', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 70 }}>{w.ticker}</span>
                         <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{w.company || w.ticker}</span>
                         {(w as any).cap && <span style={{ fontSize: 8, color: '#8DA1B9', fontWeight: 700, padding: '1px 4px', border: '1px solid #2A3550', borderRadius: 3 }}>{((w as any).cap || '').toUpperCase()}</span>}
-                        <span style={{ fontSize: 11, color: w.changePercent >= 0 ? '#10B981' : '#EF4444', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
+                        <span style={{ fontSize: 11, color: w.changePercent >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
                           {w.changePercent >= 0 ? '+' : ''}{w.changePercent.toFixed(1)}%
                         </span>
                         {/* PATCH 0821 — Q + continuation chips */}
@@ -3656,12 +3668,12 @@ export default function HomeDashboard() {
                       </div>
                       {label && (
                         <div style={{ fontSize: 10, color: DIM, paddingLeft: 76, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {label}{conf && <span style={{ marginLeft: 6, fontSize: 8, color: conf === 'HIGH' ? '#10B981' : conf === 'MEDIUM' ? '#F59E0B' : '#6B7A8D', fontWeight: 700 }}>{conf}</span>}
+                          {label}{conf && <span style={{ marginLeft: 6, fontSize: 8, color: conf === 'HIGH' ? 'var(--mc-bullish)' : conf === 'MEDIUM' ? 'var(--mc-warn)' : 'var(--mc-text-4)', fontWeight: 700 }}>{conf}</span>}
                         </div>
                       )}
                       {/* PATCH 0821 — smart-money signal */}
                       {smartLineW && (
-                        <div style={{ fontSize: 9, color: '#94A3B8', paddingLeft: 76, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        <div style={{ fontSize: 9, color: 'var(--mc-text-3)', paddingLeft: 76, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                           {smartLineW}
                         </div>
                       )}
@@ -3673,12 +3685,12 @@ export default function HomeDashboard() {
           </div>
 
           {/* UPCOMING EARNINGS — next 5 days, CB-first */}
-          <div style={{ ...cardStyle, borderLeft: '3px solid #F59E0B' }}>
+          <div style={{ ...cardStyle, borderLeft: '3px solid var(--mc-warn)' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.4px' }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-warn)', letterSpacing: '0.4px' }}>
                 ⏭ UPCOMING EARNINGS — next 7d ({data.upcomingEarnings?.length || 0})
               </span>
-              <Link href="/calendars" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Calendar →</Link>
+              <Link href="/calendars" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Calendar →</Link>
             </div>
             <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
               Conviction Beats (★) + Watchlist (👁) names reporting first
@@ -3695,10 +3707,10 @@ export default function HomeDashboard() {
                 <div style={{ marginBottom: 6 }}>
                   📭 No upcoming filings parsed in next 7 days.
                 </div>
-                <div style={{ fontSize: 10, color: '#6B7A8D' }}>
+                <div style={{ fontSize: 10, color: 'var(--mc-text-4)' }}>
                   Could be a real quiet week, or the calendar refresh cron is degraded.
-                  Check the <Link href="/calendars" style={{ color: '#22D3EE', textDecoration: 'none' }}>full Calendar →</Link>
-                  {' '}or <Link href="/earnings-opportunities" style={{ color: '#F59E0B', textDecoration: 'none' }}>EO page →</Link>
+                  Check the <Link href="/calendars" style={{ color: 'var(--mc-cyan)', textDecoration: 'none' }}>full Calendar →</Link>
+                  {' '}or <Link href="/earnings-opportunities" style={{ color: 'var(--mc-warn)', textDecoration: 'none' }}>EO page →</Link>
                   {' '}to verify which days have filings.
                 </div>
                 {/* PATCH 0904 — surgical retry. Re-invokes the component-scope
@@ -3706,7 +3718,7 @@ export default function HomeDashboard() {
                     refreshes instead of doing window.location.reload()
                     (which blew away every other panel's state too). */}
                 <button onClick={() => { refetchUpcomingEarnings(); }} disabled={upcomingRetrying}
-                  style={{ marginTop: 8, padding: '4px 10px', fontSize: 10, background: 'transparent', color: upcomingRetrying ? '#6B7A8D' : '#22D3EE', border: `1px solid ${upcomingRetrying ? '#6B7A8D' : '#22D3EE'}`, borderRadius: 4, cursor: upcomingRetrying ? 'wait' : 'pointer' }}>
+                  style={{ marginTop: 8, padding: '4px 10px', fontSize: 10, background: 'transparent', color: upcomingRetrying ? 'var(--mc-text-4)' : 'var(--mc-cyan)', border: `1px solid ${upcomingRetrying ? 'var(--mc-text-4)' : 'var(--mc-cyan)'}`, borderRadius: 4, cursor: upcomingRetrying ? 'wait' : 'pointer' }}>
                   {upcomingRetrying ? '⏳ Retrying…' : '↻ Retry fetch'}
                 </button>
               </div>
@@ -3714,15 +3726,15 @@ export default function HomeDashboard() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 {data.upcomingEarnings.slice(0, 6).map((e) => (
                   <Link key={e.ticker} href={`/stock-sheet?ticker=${encodeURIComponent(e.ticker)}`}
-                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid var(--mc-bg-4)' }}>
                     <span style={{ fontSize: 9, color: DIM, fontFamily: 'ui-monospace, monospace', minWidth: 50 }}>
                       {e.daysAhead === 0 ? 'today' : e.daysAhead === 1 ? 'tomorrow' : `+${e.daysAhead}d`}
                     </span>
                     <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {e.company || e.ticker}
                     </span>
-                    {e.onCb && <span style={{ fontSize: 10, color: '#F59E0B' }}>★</span>}
-                    {e.onWatchlist && <span style={{ fontSize: 10, color: '#22D3EE' }}>👁</span>}
+                    {e.onCb && <span style={{ fontSize: 10, color: 'var(--mc-warn)' }}>★</span>}
+                    {e.onWatchlist && <span style={{ fontSize: 10, color: 'var(--mc-cyan)' }}>👁</span>}
                   </Link>
                 ))}
               </div>
@@ -3744,27 +3756,27 @@ export default function HomeDashboard() {
         {(() => {
           const tt = getTopThemesForHome();
           return (
-            <div style={{ ...cardStyle, borderLeft: '3px solid #EF4444' }}>
+            <div style={{ ...cardStyle, borderLeft: '3px solid var(--mc-bearish)' }}>
               <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
-                <span style={{ fontSize: 13, fontWeight: 800, color: '#EF4444', letterSpacing: '0.4px' }}>
+                <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-bearish)', letterSpacing: '0.4px' }}>
                   🔥 CRITICAL THEMES — top {tt.india.length + tt.us.length} ({tt.india.length} IN · {tt.us.length} US)
                 </span>
-                <Link href="/critical-themes" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open all →</Link>
+                <Link href="/critical-themes" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open all →</Link>
               </div>
               <div style={{ fontSize: 10, color: DIM, marginBottom: 8 }}>
                 Choke-point themes for 10+ year horizon · monopoly · policy-backed · governance-filtered
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 12 }}>
                 <div>
-                  <div style={{ fontSize: 11, fontWeight: 800, color: '#22D3EE', marginBottom: 6, letterSpacing: '0.5px' }}>🇮🇳 INDIA</div>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-cyan)', marginBottom: 6, letterSpacing: '0.5px' }}>🇮🇳 INDIA</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {tt.india.map((t) => (
                       <Link key={t.id} href={`/critical-themes`} style={{ textDecoration: 'none', color: 'inherit' }}>
-                        <div style={{ background: '#1A2540', border: '1px solid #22D3EE30', borderRadius: 5, padding: '7px 9px' }}>
+                        <div style={{ background: 'var(--mc-bg-4)', border: '1px solid #22D3EE30', borderRadius: 5, padding: '7px 9px' }}>
                           <div style={{ fontSize: 12, fontWeight: 700, color: TEXT, marginBottom: 3 }}>{t.emoji} {t.name}</div>
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
                             {t.leaders.slice(0, 4).map((l) => (
-                              <span key={l.ticker} style={{ fontSize: 9, color: '#22D3EE', background: '#22D3EE15', padding: '1px 5px', borderRadius: 3, fontWeight: 600 }}>{l.ticker}</span>
+                              <span key={l.ticker} style={{ fontSize: 9, color: 'var(--mc-cyan)', background: '#22D3EE15', padding: '1px 5px', borderRadius: 3, fontWeight: 600 }}>{l.ticker}</span>
                             ))}
                           </div>
                         </div>
@@ -3777,7 +3789,7 @@ export default function HomeDashboard() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {tt.us.map((t) => (
                       <Link key={t.id} href={`/critical-themes`} style={{ textDecoration: 'none', color: 'inherit' }}>
-                        <div style={{ background: '#1A2540', border: '1px solid #F8717130', borderRadius: 5, padding: '7px 9px' }}>
+                        <div style={{ background: 'var(--mc-bg-4)', border: '1px solid #F8717130', borderRadius: 5, padding: '7px 9px' }}>
                           <div style={{ fontSize: 12, fontWeight: 700, color: TEXT, marginBottom: 3 }}>{t.emoji} {t.name}</div>
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
                             {t.leaders.slice(0, 4).map((l) => (
@@ -3795,10 +3807,10 @@ export default function HomeDashboard() {
         })()}
 
         {/* ═══════════════ AI INFRASTRUCTURE TRANSMISSION ═══════════════ */}
-        <div style={{ ...cardStyle, borderLeft: '3px solid #A78BFA' }}>
+        <div style={{ ...cardStyle, borderLeft: '3px solid var(--mc-state-persistent)' }}>
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
-            <span style={{ fontSize: 13, fontWeight: 800, color: '#A78BFA', letterSpacing: '0.4px' }}>🏗 AI INFRASTRUCTURE TRANSMISSION</span>
-            <Link href="/bottleneck-intel" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Full Intel →</Link>
+            <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-state-persistent)', letterSpacing: '0.4px' }}>🏗 AI INFRASTRUCTURE TRANSMISSION</span>
+            <Link href="/bottleneck-intel" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Full Intel →</Link>
           </div>
           <div style={{ fontSize: 10, color: DIM, marginBottom: 8 }}>
             Bottleneck cascade — click any link to open Workbench with India-listed proxies + counter-thesis
@@ -3819,7 +3831,7 @@ export default function HomeDashboard() {
                   fontSize: 11, fontWeight: 800, color: n.color, padding: '5px 10px', borderRadius: 5,
                   border: `1px solid ${n.color}40`, background: `${n.color}10`, textDecoration: 'none',
                 }}>{n.label}</Link>
-                {i < arr.length - 1 && <span style={{ color: '#4A5B6C', fontSize: 14 }}>→</span>}
+                {i < arr.length - 1 && <span style={{ color: 'var(--mc-text-4)', fontSize: 14 }}>→</span>}
               </span>
             ))}
           </div>
@@ -3830,7 +3842,7 @@ export default function HomeDashboard() {
           <div style={cardStyle}>
             <button onClick={() => setShowTier3(v => !v)} style={{
               background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
-              fontSize: 13, fontWeight: 800, color: '#94A3B8', letterSpacing: '0.4px',
+              fontSize: 13, fontWeight: 800, color: 'var(--mc-text-3)', letterSpacing: '0.4px',
               display: 'flex', alignItems: 'center', gap: 6, width: '100%',
             }}>
               {showTier3 ? '▾' : '▸'} 🧪 TIER 3 — EXPERIMENTAL / NARRATIVE ({lensedTier3.length})
@@ -3857,13 +3869,13 @@ export default function HomeDashboard() {
                         <div style={{ fontSize: 9, color: DIM }}>{a.symbol} · {a.sector}</div>
                         {/* PATCH 0866 — show thesis snippet so Tier 3 card doesn't render bare */}
                         {(a as any).thesis && (
-                          <div style={{ fontSize: 9.5, color: '#94A3B8', marginTop: 3, lineHeight: 1.4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                          <div style={{ fontSize: 9.5, color: 'var(--mc-text-3)', marginTop: 3, lineHeight: 1.4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
                             title={(a as any).thesis}>
                             {(a as any).thesis}
                           </div>
                         )}
                       </div>
-                      <span style={{ fontSize: 10, color: '#94A3B8', fontWeight: 700, flexShrink: 0 }}>{a.score}{a.grade}</span>
+                      <span style={{ fontSize: 10, color: 'var(--mc-text-3)', fontWeight: 700, flexShrink: 0 }}>{a.score}{a.grade}</span>
                     </Link>
                   ))}
                 </div>
@@ -3876,17 +3888,17 @@ export default function HomeDashboard() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12 }}>
           <div style={cardStyle}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: '#EF4444', letterSpacing: '0.4px' }}>⚠ ALERTS ({activeAlerts.length} active)</span>
-              <Link href="/news-alerts" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Manage →</Link>
+              <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-bearish)', letterSpacing: '0.4px' }}>⚠ ALERTS ({activeAlerts.length} active)</span>
+              <Link href="/news-alerts" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Manage →</Link>
             </div>
             {activeAlerts.length === 0 ? (
               <div style={{ fontSize: 11, color: DIM, lineHeight: 1.5 }}>
-                No alert rules configured. <Link href="/news-alerts" style={{ color: '#22D3EE' }}>Set up alerts →</Link>
+                No alert rules configured. <Link href="/news-alerts" style={{ color: 'var(--mc-cyan)' }}>Set up alerts →</Link>
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 {activeAlerts.slice(0, 5).map((a) => (
-                  <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, padding: '3px 0', borderBottom: '1px solid #1A2540' }}>
+                  <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, padding: '3px 0', borderBottom: '1px solid var(--mc-bg-4)' }}>
                     <span style={{ color: TEXT, fontWeight: 600 }}>{a.name}</span>
                     <span style={{ color: DIM, fontSize: 10 }}>{a.lastFiredAt ? `fired ${timeAgo(a.lastFiredAt)}` : 'pending'}</span>
                   </div>
@@ -3897,8 +3909,8 @@ export default function HomeDashboard() {
 
           <div style={cardStyle}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: '#A78BFA', letterSpacing: '0.4px' }}>🏗 ACTIVE BOTTLENECK THEMES</span>
-              <Link href="/bottleneck-intel" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Open Intel →</Link>
+              <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-state-persistent)', letterSpacing: '0.4px' }}>🏗 ACTIVE BOTTLENECK THEMES</span>
+              <Link href="/bottleneck-intel" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open Intel →</Link>
             </div>
             {netLoading.bottleneck ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading bottleneck themes…</div>
@@ -3910,7 +3922,7 @@ export default function HomeDashboard() {
                   const color = b.severity_color || ((b.severity_label || '').toLowerCase() === 'high' ? '#EF4444' : '#F59E0B');
                   return (
                     <Link key={b.bucket_id} href={`/bottleneck-workbench?theme=${encodeURIComponent(b.bucket_id)}`}
-                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid #1A2540' }}>
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid var(--mc-bg-4)' }}>
                       <span style={{ fontSize: 14 }}>{b.severity_icon || '⚡'}</span>
                       <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.label}</span>
                       <span style={{ fontSize: 9, color, fontWeight: 700, padding: '1px 5px', borderRadius: 3, background: `${color}22` }}>{b.severity_label || 'WATCH'}</span>
@@ -3968,12 +3980,12 @@ export default function HomeDashboard() {
         </div>
 
         {/* INSTITUTIONAL DISCLOSURE */}
-        <div style={{ fontSize: 10, color: '#6B7A8D', lineHeight: 1.7, padding: '0 4px' }}>
-          <strong style={{ color: '#94A3B8' }}>Calibration:</strong> Tier 1 = cross-confirmed (A-grade ∩ CB ∩ untagged).
+        <div style={{ fontSize: 10, color: 'var(--mc-text-4)', lineHeight: 1.7, padding: '0 4px' }}>
+          <strong style={{ color: 'var(--mc-text-3)' }}>Calibration:</strong> Tier 1 = cross-confirmed (A-grade ∩ CB ∩ untagged).
           Tier 2 = A-grade not yet on bench. Tier 3 = B+ on bench (experimental). All scores are evidence-density
           (heuristic regex + lexicon over filings + news), NOT realized-alpha probabilities. Score breakdown visible
           on hover. Risk / horizon / trigger are sector heuristics.{' '}
-          <strong style={{ color: '#94A3B8' }}>Not shipped (infrastructure-blocked):</strong> market-implied confirmation
+          <strong style={{ color: 'var(--mc-text-3)' }}>Not shipped (infrastructure-blocked):</strong> market-implied confirmation
           (RS / volume / earnings revisions), realized-alpha feedback loop, factor-overlap analysis, institutional
           ownership changes. Cross-reference source data before sizing.
         </div>
@@ -4006,7 +4018,7 @@ function DecisionTierBlock({
           {tier === 1 ? 'ACTION NOW' : tier === 2 ? 'WATCH' : 'EXPERIMENTAL'}
         </span>
       </div>
-      <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 10, lineHeight: 1.45 }}>{description}</div>
+      <div style={{ fontSize: 11, color: 'var(--mc-text-3)', marginBottom: 10, lineHeight: 1.45 }}>{description}</div>
       {expanded && (
         <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${condensed ? 260 : 320}px, 1fr))`, gap: 10 }}>
           {items.map((a, i) => (
@@ -4023,26 +4035,26 @@ function DecisionTierBlock({
                     {a.company || a.symbol}
                     {/* PATCH 0617 — market flag chip (IN/US) */}
                     {a.market && (
-                      <span style={{ fontSize: 9, fontWeight: 800, padding: '1px 5px', borderRadius: 3, color: a.market === 'US' ? '#F87171' : '#22D3EE', background: a.market === 'US' ? '#F8717122' : '#22D3EE22' }}>
+                      <span style={{ fontSize: 9, fontWeight: 800, padding: '1px 5px', borderRadius: 3, color: a.market === 'US' ? '#F87171' : 'var(--mc-cyan)', background: a.market === 'US' ? '#F8717122' : '#22D3EE22' }}>
                         {a.market === 'US' ? '🇺🇸 US' : '🇮🇳 IN'}
                       </span>
                     )}
                   </div>
-                  <div style={{ fontSize: 11, color: '#94A3B8', fontFamily: 'ui-monospace, monospace', fontWeight: 600, marginTop: 2 }}>
+                  <div style={{ fontSize: 11, color: 'var(--mc-text-3)', fontFamily: 'ui-monospace, monospace', fontWeight: 600, marginTop: 2 }}>
                     {a.symbol}{a.sector ? ` · ${a.sector}` : ''}
                   </div>
                 </div>
                 {a.score != null && (
-                  <span style={{ fontSize: condensed ? 13 : 16, color: '#10B981', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
+                  <span style={{ fontSize: condensed ? 13 : 16, color: 'var(--mc-bullish)', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
                     {a.score}{a.grade || ''}
                   </span>
                 )}
                 {/* PATCH 0611 — cbConfirmed glyph so Tier-1 top-ups (non-CB A-grade) are obvious */}
                 {tier === 1 && a.cbConfirmed === true && (
-                  <span title="Cross-confirmed: on Conviction Beats bench" style={{ fontSize: 12, color: '#F59E0B', fontWeight: 800 }}>★</span>
+                  <span title="Cross-confirmed: on Conviction Beats bench" style={{ fontSize: 12, color: 'var(--mc-warn)', fontWeight: 800 }}>★</span>
                 )}
                 {tier === 1 && a.cbConfirmed === false && (
-                  <span title="A-grade top-up: not yet on Conviction Beats bench" style={{ fontSize: 10, color: '#94A3B8', background: '#94A3B822', padding: '1px 5px', borderRadius: 3, fontWeight: 700 }}>+</span>
+                  <span title="A-grade top-up: not yet on Conviction Beats bench" style={{ fontSize: 10, color: 'var(--mc-text-3)', background: '#94A3B822', padding: '1px 5px', borderRadius: 3, fontWeight: 700 }}>+</span>
                 )}
               </div>
               {!condensed && (
@@ -4055,7 +4067,7 @@ function DecisionTierBlock({
                     <span style={{ color: DIM, fontWeight: 700 }}>Horizon</span>
                     <span style={{ color: TEXT }}>{a.horizon}</span>
                     <span style={{ color: DIM, fontWeight: 700 }}>Trigger</span>
-                    <span style={{ color: '#22D3EE' }}>{a.trigger}</span>
+                    <span style={{ color: 'var(--mc-cyan)' }}>{a.trigger}</span>
                   </div>
                   {a.scoreBreakdown && (
                     <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap', fontSize: 11 }}>
@@ -4136,12 +4148,12 @@ function HomeValuationQuickCheck() {
   }), [ticker, mcap, horizon, pat, pe, price]);
 
   return (
-    <div style={{ ...cardStyle, borderLeft: '3px solid #22D3EE' }}>
+    <div style={{ ...cardStyle, borderLeft: '3px solid var(--mc-cyan)' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
-        <span style={{ fontSize: 13, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px' }}>
+        <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.4px' }}>
           🧮 VALUATION QUICK-CHECK
         </span>
-        <Link href="/valuation-calc" style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>Full calculator →</Link>
+        <Link href="/valuation-calc" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Full calculator →</Link>
       </div>
       <div style={{ fontSize: 10, color: DIM, marginBottom: 10 }}>
         Quick P/E-based target. Enter ticker + forward PAT + target P/E. Auto-fills current price + market cap from /api/market/quotes.
@@ -4150,38 +4162,38 @@ function HomeValuationQuickCheck() {
         <label style={{ fontSize: 10, color: DIM, fontWeight: 700, display: 'flex', flexDirection: 'column', gap: 2 }}>
           TICKER
           <input value={ticker} onChange={e => { setTicker(e.target.value.toUpperCase()); setAutoFilled(false); }}
-            style={{ background: '#0A1422', color: TEXT, border: '1px solid #1A2540', padding: '4px 7px', borderRadius: 3, fontSize: 12, fontWeight: 600, fontFamily: 'ui-monospace, monospace' }} />
+            style={{ background: '#0A1422', color: TEXT, border: '1px solid var(--mc-bg-4)', padding: '4px 7px', borderRadius: 3, fontSize: 12, fontWeight: 600, fontFamily: 'ui-monospace, monospace' }} />
         </label>
         <label style={{ fontSize: 10, color: DIM, fontWeight: 700, display: 'flex', flexDirection: 'column', gap: 2 }}>
           FY27 PAT (₹ Cr)
           <input type="number" value={pat} onChange={e => setPat(Number(e.target.value))}
-            style={{ background: '#0A1422', color: TEXT, border: '1px solid #1A2540', padding: '4px 7px', borderRadius: 3, fontSize: 12, fontWeight: 600, fontFamily: 'ui-monospace, monospace' }} />
+            style={{ background: '#0A1422', color: TEXT, border: '1px solid var(--mc-bg-4)', padding: '4px 7px', borderRadius: 3, fontSize: 12, fontWeight: 600, fontFamily: 'ui-monospace, monospace' }} />
         </label>
         <label style={{ fontSize: 10, color: DIM, fontWeight: 700, display: 'flex', flexDirection: 'column', gap: 2 }}>
           BASE P/E
           <input type="number" value={pe} onChange={e => setPe(Number(e.target.value))}
-            style={{ background: '#0A1422', color: TEXT, border: '1px solid #1A2540', padding: '4px 7px', borderRadius: 3, fontSize: 12, fontWeight: 600, fontFamily: 'ui-monospace, monospace' }} />
+            style={{ background: '#0A1422', color: TEXT, border: '1px solid var(--mc-bg-4)', padding: '4px 7px', borderRadius: 3, fontSize: 12, fontWeight: 600, fontFamily: 'ui-monospace, monospace' }} />
         </label>
         <label style={{ fontSize: 10, color: DIM, fontWeight: 700, display: 'flex', flexDirection: 'column', gap: 2 }}>
           MARKET CAP (₹ Cr)
           <input type="number" value={mcap} onChange={e => setMcap(Number(e.target.value))}
-            style={{ background: '#0A1422', color: TEXT, border: '1px solid #1A2540', padding: '4px 7px', borderRadius: 3, fontSize: 12, fontWeight: 600, fontFamily: 'ui-monospace, monospace' }} />
+            style={{ background: '#0A1422', color: TEXT, border: '1px solid var(--mc-bg-4)', padding: '4px 7px', borderRadius: 3, fontSize: 12, fontWeight: 600, fontFamily: 'ui-monospace, monospace' }} />
         </label>
         <label style={{ fontSize: 10, color: DIM, fontWeight: 700, display: 'flex', flexDirection: 'column', gap: 2 }}>
           HORIZON (months)
           <input type="number" value={horizon} onChange={e => setHorizon(Number(e.target.value))}
-            style={{ background: '#0A1422', color: TEXT, border: '1px solid #1A2540', padding: '4px 7px', borderRadius: 3, fontSize: 12, fontWeight: 600, fontFamily: 'ui-monospace, monospace' }} />
+            style={{ background: '#0A1422', color: TEXT, border: '1px solid var(--mc-bg-4)', padding: '4px 7px', borderRadius: 3, fontSize: 12, fontWeight: 600, fontFamily: 'ui-monospace, monospace' }} />
         </label>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
         <button onClick={autoFill} disabled={loading} style={{
           fontSize: 10, padding: '4px 10px', background: '#10B98115', border: '1px solid #10B98150',
-          color: '#10B981', borderRadius: 3, cursor: loading ? 'wait' : 'pointer', fontWeight: 800,
+          color: 'var(--mc-bullish)', borderRadius: 3, cursor: loading ? 'wait' : 'pointer', fontWeight: 800,
         }}>
           {loading ? '⏳ FETCHING…' : '🔄 AUTO-FILL FROM LIVE QUOTE'}
         </button>
         {price && (
-          <span style={{ fontSize: 10, color: '#10B981', fontFamily: 'ui-monospace, monospace', fontWeight: 700 }}>
+          <span style={{ fontSize: 10, color: 'var(--mc-bullish)', fontFamily: 'ui-monospace, monospace', fontWeight: 700 }}>
             ✓ live price ₹{price.toLocaleString('en-IN', { maximumFractionDigits: 1 })} {autoFilled ? '(auto-filled)' : ''}
           </span>
         )}

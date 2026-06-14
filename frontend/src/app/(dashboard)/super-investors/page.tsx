@@ -481,12 +481,12 @@ function AnalyticsView({ marketScope, onJumpToInvestor }: { marketScope: MarketS
         <div style={{
           padding: '10px 14px', borderRadius: 6,
           border: `1px solid ${data.conc.top5Pct > 50 ? '#EF444460' : data.conc.top5Pct > 35 ? '#F59E0B60' : '#10B98140'}`,
-          backgroundColor: `${data.conc.top5Pct > 50 ? '#EF4444' : data.conc.top5Pct > 35 ? '#F59E0B' : '#10B981'}10`,
+          backgroundColor: `${data.conc.top5Pct > 50 ? 'var(--mc-bearish)' : data.conc.top5Pct > 35 ? 'var(--mc-warn)' : 'var(--mc-bullish)'}10`,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <span style={{
               fontSize: 11, fontWeight: 800, letterSpacing: '0.4px',
-              color: data.conc.top5Pct > 50 ? '#EF4444' : data.conc.top5Pct > 35 ? '#F59E0B' : '#10B981',
+              color: data.conc.top5Pct > 50 ? 'var(--mc-bearish)' : data.conc.top5Pct > 35 ? 'var(--mc-warn)' : 'var(--mc-bullish)',
             }}>
               {data.conc.top5Pct > 50 ? '⚠ HIGH' : data.conc.top5Pct > 35 ? '◐ MED' : '✓ LOW'} CONCENTRATION
             </span>
@@ -520,7 +520,7 @@ function AnalyticsView({ marketScope, onJumpToInvestor }: { marketScope: MarketS
                   }}>{s.tag}</span>
                   <span style={{ color: TEXT, fontWeight: 600, fontSize: 13 }}>{s.title}</span>
                 </div>
-                <div style={{ color: '#CBD5E1', fontSize: 12, lineHeight: 1.5 }}>{s.body}</div>
+                <div style={{ color: 'var(--mc-text-2)', fontSize: 12, lineHeight: 1.5 }}>{s.body}</div>
               </div>
             ))}
           </div>
@@ -571,11 +571,11 @@ function AnalyticsView({ marketScope, onJumpToInvestor }: { marketScope: MarketS
                         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
                         textDecoration: 'none',
                       }}>
-                        {b.exchange ? <span style={{ color: '#22D3EE', fontWeight: 500, fontSize: 10 }}>{b.exchange}:</span> : null}{b.ticker}
+                        {b.exchange ? <span style={{ color: 'var(--mc-cyan)', fontWeight: 500, fontSize: 10 }}>{b.exchange}:</span> : null}{b.ticker}
                       </a>
                     </td>
                     <td style={tdStyle}>{b.company}</td>
-                    <td style={{ ...tdStyle, textAlign: 'right', color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                    <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--mc-bullish)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
                       {b.stakePct.toFixed(1)}%
                     </td>
                   </tr>
@@ -614,10 +614,10 @@ function AnalyticsView({ marketScope, onJumpToInvestor }: { marketScope: MarketS
                     // AUDIT_100 #8 — stable composite key on flow rows so child state survives re-sort.
                     <tr key={row.company || row.ticker || i} style={{ borderTop: `1px solid ${BORDER}` }}>
                       <td style={tdStyle}>{row.company}</td>
-                      <td style={{ ...tdStyle, textAlign: 'center', color: '#10B981', fontWeight: 700 }}>+{row.addCount}</td>
-                      <td style={{ ...tdStyle, textAlign: 'center', color: '#EF4444', fontWeight: 700 }}>-{row.exitCount}</td>
+                      <td style={{ ...tdStyle, textAlign: 'center', color: 'var(--mc-bullish)', fontWeight: 700 }}>+{row.addCount}</td>
+                      <td style={{ ...tdStyle, textAlign: 'center', color: 'var(--mc-bearish)', fontWeight: 700 }}>-{row.exitCount}</td>
                       <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 800,
-                        color: row.netActions > 0 ? '#10B981' : row.netActions < 0 ? '#EF4444' : MUTED,
+                        color: row.netActions > 0 ? 'var(--mc-bullish)' : row.netActions < 0 ? 'var(--mc-bearish)' : MUTED,
                         fontVariantNumeric: 'tabular-nums',
                       }}>
                         {row.netActions > 0 ? '+' : ''}{row.netActions}
@@ -672,7 +672,7 @@ function AnalyticsView({ marketScope, onJumpToInvestor }: { marketScope: MarketS
                           fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
                           textDecoration: 'none',
                         }}>
-                          {p.exchange ? <span style={{ color: '#22D3EE', fontWeight: 500, fontSize: 10 }}>{p.exchange}:</span> : null}{p.ticker}
+                          {p.exchange ? <span style={{ color: 'var(--mc-cyan)', fontWeight: 500, fontSize: 10 }}>{p.exchange}:</span> : null}{p.ticker}
                         </a>
                       </td>
                       <td style={tdStyle}>{p.company}</td>
@@ -685,10 +685,10 @@ function AnalyticsView({ marketScope, onJumpToInvestor }: { marketScope: MarketS
                           {iv.name}
                         </button>
                       </td>
-                      <td style={{ ...tdStyle, textAlign: 'right', color: '#10B981', fontVariantNumeric: 'tabular-nums' }}>
+                      <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--mc-bullish)', fontVariantNumeric: 'tabular-nums' }}>
                         {iv.stakePct != null ? `${iv.stakePct.toFixed(1)}%` : '—'}
                       </td>
-                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, color: '#22D3EE', fontVariantNumeric: 'tabular-nums' }}>
+                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, color: 'var(--mc-cyan)', fontVariantNumeric: 'tabular-nums' }}>
                         {p.styleAdjustedConviction}
                       </td>
                     </tr>
@@ -749,7 +749,7 @@ function AnalyticsView({ marketScope, onJumpToInvestor }: { marketScope: MarketS
               <div key={s.sector} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <span style={{ fontSize: 11, color: TEXT, fontWeight: 600, minWidth: 170 }}>{s.sector}</span>
                 <span style={{ fontSize: 10, color: MUTED, minWidth: 30, textAlign: 'right' }}>{s.count}</span>
-                <div style={{ flex: 1, height: 10, background: '#1A2540', borderRadius: 4, overflow: 'hidden' }}>
+                <div style={{ flex: 1, height: 10, background: 'var(--mc-bg-4)', borderRadius: 4, overflow: 'hidden' }}>
                   <div style={{ width: `${pct}%`, height: '100%', background: tone }} />
                 </div>
                 <span style={{ fontSize: 11, color: tone, fontWeight: 700, minWidth: 60, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
@@ -777,7 +777,7 @@ function AnalyticsView({ marketScope, onJumpToInvestor }: { marketScope: MarketS
                 <span style={{ fontSize: 16 }}>{meta.icon}</span>
                 <span style={{ fontSize: 11, color: meta.color, fontWeight: 700, minWidth: 200 }}>{meta.label}</span>
                 <span style={{ fontSize: 11, color: MUTED, minWidth: 30, textAlign: 'right' }}>{count}</span>
-                <div style={{ flex: 1, height: 8, background: '#1A2540', borderRadius: 4, overflow: 'hidden' }}>
+                <div style={{ flex: 1, height: 8, background: 'var(--mc-bg-4)', borderRadius: 4, overflow: 'hidden' }}>
                   <div style={{ width: `${pct}%`, height: '100%', background: meta.color }} />
                 </div>
                 <span style={{ fontSize: 10, color: MUTED, minWidth: 40, textAlign: 'right' }}>{pct}%</span>
@@ -820,7 +820,7 @@ function AnalyticsView({ marketScope, onJumpToInvestor }: { marketScope: MarketS
                         }}>{pair.b.name}</button>
                       </td>
                       <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 800,
-                        color: pair.sim >= 0.4 ? '#10B981' : pair.sim >= 0.2 ? '#22D3EE' : '#94A3B8',
+                        color: pair.sim >= 0.4 ? 'var(--mc-bullish)' : pair.sim >= 0.2 ? 'var(--mc-cyan)' : 'var(--mc-text-3)',
                         fontVariantNumeric: 'tabular-nums',
                       }}>
                         {pair.sim.toFixed(2)}
@@ -852,7 +852,7 @@ function AnalyticsView({ marketScope, onJumpToInvestor }: { marketScope: MarketS
                     color: meta.color, minWidth: 180,
                   }}>{meta.label}</span>
                   <span style={{ fontSize: 11, color: MUTED, minWidth: 24 }}>{count}</span>
-                  <div style={{ flex: 1, height: 8, background: '#1A2540', borderRadius: 4, overflow: 'hidden' }}>
+                  <div style={{ flex: 1, height: 8, background: 'var(--mc-bg-4)', borderRadius: 4, overflow: 'hidden' }}>
                     <div style={{ width: `${pct}%`, height: '100%', background: meta.color }} />
                   </div>
                   <span style={{ fontSize: 11, color: MUTED, minWidth: 40, textAlign: 'right' }}>{pct.toFixed(0)}%</span>
@@ -915,21 +915,21 @@ function ConsensusTable({ rows, onJumpToInvestor, convictionDelta = {} }: { rows
                   fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
                   textDecoration: 'none',
                 }}>
-                  {p.exchange ? <span style={{ color: '#22D3EE', fontWeight: 500 }}>{p.exchange}:</span> : null}{p.ticker}
+                  {p.exchange ? <span style={{ color: 'var(--mc-cyan)', fontWeight: 500 }}>{p.exchange}:</span> : null}{p.ticker}
                 </a>
               </td>
               <td style={tdStyle}>{p.company}</td>
-              <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 800, color: '#10B981' }}>
+              <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 800, color: 'var(--mc-bullish)' }}>
                 {p.investors.length}
               </td>
               {/* PATCH 0491 v4 — Conviction column (style-adjusted) + PATCH 0493 delta chip */}
               <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} title={`Style-adjusted weighted conviction across ${p.investors.length} holders. Base ${p.aggregateConviction} × style mix.`}>
                 <span style={{
                   fontSize: 12, fontWeight: 800,
-                  color: p.styleAdjustedConviction >= 220 ? '#10B981'
-                       : p.styleAdjustedConviction >= 130 ? '#22D3EE'
-                       : p.styleAdjustedConviction >= 70  ? '#F59E0B'
-                       : '#94A3B8',
+                  color: p.styleAdjustedConviction >= 220 ? 'var(--mc-bullish)'
+                       : p.styleAdjustedConviction >= 130 ? 'var(--mc-cyan)'
+                       : p.styleAdjustedConviction >= 70  ? 'var(--mc-warn)'
+                       : 'var(--mc-text-3)',
                 }}>
                   {p.styleAdjustedConviction}
                 </span>
@@ -937,7 +937,7 @@ function ConsensusTable({ rows, onJumpToInvestor, convictionDelta = {} }: { rows
                 {convictionDelta[p.ticker.toUpperCase()] !== undefined && convictionDelta[p.ticker.toUpperCase()] !== 0 && (
                   <span title="Change vs prior daily snapshot" style={{
                     marginLeft: 5, fontSize: 10, fontWeight: 700,
-                    color: convictionDelta[p.ticker.toUpperCase()] > 0 ? '#10B981' : '#EF4444',
+                    color: convictionDelta[p.ticker.toUpperCase()] > 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)',
                   }}>
                     {convictionDelta[p.ticker.toUpperCase()] > 0 ? '▲' : '▼'}{Math.abs(convictionDelta[p.ticker.toUpperCase()])}
                   </span>
@@ -1119,7 +1119,7 @@ function InvestorDetail({
           )}
           <HoldingsFreshnessChip investorId={investor.id} />
         </div>
-        <p style={{ color: '#CBD5E1', fontSize: 13, lineHeight: 1.55, margin: 0, maxWidth: 760 }}>
+        <p style={{ color: 'var(--mc-text-2)', fontSize: 13, lineHeight: 1.55, margin: 0, maxWidth: 760 }}>
           {investor.shortBio}
         </p>
       </div>
@@ -1159,7 +1159,7 @@ function InvestorDetail({
           backgroundColor: '#F59E0B10', border: '1px solid #F59E0B30',
           fontSize: 12, color: '#FCD34D', lineHeight: 1.5,
         }}>
-          <strong style={{ color: '#F59E0B' }}>Note · </strong>{investor.notes}
+          <strong style={{ color: 'var(--mc-warn)' }}>Note · </strong>{investor.notes}
         </div>
       )}
     </div>
@@ -1189,7 +1189,7 @@ function HoldingsTable({ investor, marketScope }: { investor: SuperInvestor; mar
         border: '1px solid #F59E0B40', backgroundColor: '#F59E0B10',
         fontSize: 11, color: '#FCD34D', lineHeight: 1.5,
       }}>
-        <strong style={{ color: '#F59E0B' }}>⚠ Disclosure-lag warning · </strong>
+        <strong style={{ color: 'var(--mc-warn)' }}>⚠ Disclosure-lag warning · </strong>
         Indian BSE ≥1% filings and AIF disclosures are backward-looking (typically 1–2 quarters
         old — March 2026 data shown in May 2026 means real positions may have shifted). For US
         13F filings (Pabrai etc.) the lag is ~45 days post quarter-end. Use the <strong>📰 News & Interviews</strong> tab
@@ -1230,7 +1230,7 @@ function HoldingsTable({ investor, marketScope }: { investor: SuperInvestor; mar
                         textDecoration: 'none',
                       }}
                     >
-                      {h.exchange ? <span style={{ color: '#22D3EE', fontWeight: 500, fontSize: 10 }}>{h.exchange}:</span> : null}{h.ticker}
+                      {h.exchange ? <span style={{ color: 'var(--mc-cyan)', fontWeight: 500, fontSize: 10 }}>{h.exchange}:</span> : null}{h.ticker}
                     </a>
                   </td>
                   <td style={tdStyle}>{h.company}</td>
@@ -1412,7 +1412,7 @@ function NewsPanel({ query, investorName }: { query: string; investorName: strin
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
         <span style={{
           fontSize: 10, fontWeight: 800, letterSpacing: '0.5px',
-          color: '#10B981',
+          color: 'var(--mc-bullish)',
           border: '1px solid #10B98150', backgroundColor: '#10B98115',
           padding: '3px 8px', borderRadius: 3,
         }}>
@@ -1431,7 +1431,7 @@ function NewsPanel({ query, investorName }: { query: string; investorName: strin
       {moves.length > 0 && (
         <div style={{ marginBottom: 16 }}>
           <div style={{
-            fontSize: 12, color: '#22D3EE', fontWeight: 700, letterSpacing: '0.5px',
+            fontSize: 12, color: 'var(--mc-cyan)', fontWeight: 700, letterSpacing: '0.5px',
             marginBottom: 8,
           }}>
             🔁 RECENT MOVES — DETECTED FROM HEADLINES ({moves.length})
@@ -1520,7 +1520,7 @@ function NewsPanel({ query, investorName }: { query: string; investorName: strin
       )}
       {error && !loading && (
         <div style={{
-          padding: 12, color: '#EF4444', fontSize: 12,
+          padding: 12, color: 'var(--mc-bearish)', fontSize: 12,
           border: '1px solid #EF444440', borderRadius: 4, backgroundColor: '#EF444410',
         }}>
           Could not load news ({error}). Try the global news feed for fallback coverage.

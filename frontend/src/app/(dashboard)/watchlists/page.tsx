@@ -225,22 +225,22 @@ function SummaryBar({ items }: { items: WatchlistItem[] }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '20px' }}>
       <div style={{ backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '12px', padding: '16px' }}>
-        <div style={{ fontSize: '11px', color: '#8BA3C1', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.5px' }}>TOTAL STOCKS</div>
-        <div style={{ fontSize: '24px', fontWeight: '700', color: '#F5F7FA' }}>{items.length}</div>
+        <div style={{ fontSize: '11px', color: 'var(--mc-text-3)', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.5px' }}>TOTAL STOCKS</div>
+        <div style={{ fontSize: '24px', fontWeight: '700', color: 'var(--mc-text-0)' }}>{items.length}</div>
       </div>
       <div style={{ backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '12px', padding: '16px' }}>
-        <div style={{ fontSize: '11px', color: '#8BA3C1', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.5px' }}>AVG. CHANGE</div>
-        <div style={{ fontSize: '24px', fontWeight: '700', color: avgChange >= 0 ? '#10B981' : '#EF4444' }}>
+        <div style={{ fontSize: '11px', color: 'var(--mc-text-3)', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.5px' }}>AVG. CHANGE</div>
+        <div style={{ fontSize: '24px', fontWeight: '700', color: avgChange >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>
           {avgChange >= 0 ? '+' : ''}{avgChange.toFixed(2)}%
         </div>
       </div>
       <div style={{ backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '12px', padding: '16px' }}>
-        <div style={{ fontSize: '11px', color: '#8BA3C1', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.5px' }}>GAINERS</div>
-        <div style={{ fontSize: '24px', fontWeight: '700', color: '#10B981' }}>{gainers}</div>
+        <div style={{ fontSize: '11px', color: 'var(--mc-text-3)', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.5px' }}>GAINERS</div>
+        <div style={{ fontSize: '24px', fontWeight: '700', color: 'var(--mc-bullish)' }}>{gainers}</div>
       </div>
       <div style={{ backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '12px', padding: '16px' }}>
-        <div style={{ fontSize: '11px', color: '#8BA3C1', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.5px' }}>LOSERS</div>
-        <div style={{ fontSize: '24px', fontWeight: '700', color: '#EF4444' }}>{losers}</div>
+        <div style={{ fontSize: '11px', color: 'var(--mc-text-3)', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.5px' }}>LOSERS</div>
+        <div style={{ fontSize: '24px', fontWeight: '700', color: 'var(--mc-bearish)' }}>{losers}</div>
       </div>
     </div>
   );
@@ -252,8 +252,8 @@ function EmptyState() {
   return (
     <div style={{ textAlign: 'center', padding: '60px 20px' }}>
       <div style={{ fontSize: '48px', marginBottom: '16px' }}>📊</div>
-      <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#F5F7FA', margin: '0 0 8px' }}>Your watchlist is empty</h2>
-      <p style={{ fontSize: '14px', color: '#8BA3C1', margin: '0 0 24px' }}>Add stock tickers to start tracking them. Popular tickers: RELIANCE, TCS, HDFCBANK, INFY, ICICIBANK</p>
+      <h2 style={{ fontSize: '18px', fontWeight: '700', color: 'var(--mc-text-0)', margin: '0 0 8px' }}>Your watchlist is empty</h2>
+      <p style={{ fontSize: '14px', color: 'var(--mc-text-3)', margin: '0 0 24px' }}>Add stock tickers to start tracking them. Popular tickers: RELIANCE, TCS, HDFCBANK, INFY, ICICIBANK</p>
       {/* PATCH 0303 — Cross-link the institutional channels users can populate
           the watchlist from, so the empty state never feels like a dead end. */}
       <div style={{ display: 'flex', justifyContent: 'center', gap: 14, flexWrap: 'wrap', marginBottom: 14 }}>
@@ -264,7 +264,7 @@ function EmptyState() {
             padding: '6px 12px', borderRadius: 8,
             border: '1px solid rgba(245,158,11,0.4)',
             backgroundColor: 'rgba(245,158,11,0.10)',
-            color: '#F59E0B', fontSize: 12, fontWeight: 700,
+            color: 'var(--mc-warn)', fontSize: 12, fontWeight: 700,
             textDecoration: 'none',
           }}
         >🏆 Auto-populate from Conviction Beats →</a>
@@ -275,12 +275,12 @@ function EmptyState() {
             padding: '6px 12px', borderRadius: 8,
             border: '1px solid rgba(15,122,191,0.4)',
             backgroundColor: 'rgba(15,122,191,0.10)',
-            color: '#0F7ABF', fontSize: 12, fontWeight: 700,
+            color: 'var(--mc-accent)', fontSize: 12, fontWeight: 700,
             textDecoration: 'none',
           }}
         >🔍 Find tickers in Screener →</a>
       </div>
-      <p style={{ fontSize: '12px', color: '#4A5B6C', margin: 0 }}>💬 Your watchlist syncs with @mc_watchlist_pulse_bot</p>
+      <p style={{ fontSize: '12px', color: 'var(--mc-text-4)', margin: 0 }}>💬 Your watchlist syncs with @mc_watchlist_pulse_bot</p>
     </div>
   );
 }
@@ -345,55 +345,55 @@ function WatchlistTable({
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
         <thead>
           <tr style={{ borderBottom: '1px solid #2A3B4C', backgroundColor: '#0D1B2E' }}>
-            <th style={{ padding: '12px 8px', textAlign: 'center', fontSize: '10px', fontWeight: '700', color: '#8BA3C1', letterSpacing: '0.5px', cursor: 'pointer', width: '40px' }} onClick={() => onSort('flag')}>
+            <th style={{ padding: '12px 8px', textAlign: 'center', fontSize: '10px', fontWeight: '700', color: 'var(--mc-text-3)', letterSpacing: '0.5px', cursor: 'pointer', width: '40px' }} onClick={() => onSort('flag')}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center' }}>
                 Flag <SortIcon field="flag" />
               </div>
             </th>
-            <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '10px', fontWeight: '700', color: '#8BA3C1', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort('ticker')}>
+            <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '10px', fontWeight: '700', color: 'var(--mc-text-3)', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort('ticker')}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 Ticker <SortIcon field="ticker" />
               </div>
             </th>
-            <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '10px', fontWeight: '700', color: '#8BA3C1', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort('company')}>
+            <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '10px', fontWeight: '700', color: 'var(--mc-text-3)', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort('company')}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 Company <SortIcon field="company" />
               </div>
             </th>
-            <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '10px', fontWeight: '700', color: '#8BA3C1', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort('sector')}>
+            <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '10px', fontWeight: '700', color: 'var(--mc-text-3)', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort('sector')}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 Sector <SortIcon field="sector" />
               </div>
             </th>
-            <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '10px', fontWeight: '700', color: '#8BA3C1', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort('price')}>
+            <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '10px', fontWeight: '700', color: 'var(--mc-text-3)', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort('price')}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' }}>
                 CMP (₹) <SortIcon field="price" />
               </div>
             </th>
-            <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '10px', fontWeight: '700', color: '#8BA3C1', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort('changePercent')}>
+            <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '10px', fontWeight: '700', color: 'var(--mc-text-3)', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort('changePercent')}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' }}>
                 Change% <SortIcon field="changePercent" />
               </div>
             </th>
-            <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '10px', fontWeight: '700', color: '#8BA3C1', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort('dayHigh')}>
+            <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '10px', fontWeight: '700', color: 'var(--mc-text-3)', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort('dayHigh')}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' }}>
                 Day High <SortIcon field="dayHigh" />
               </div>
             </th>
-            <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '10px', fontWeight: '700', color: '#8BA3C1', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort('dayLow')}>
+            <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '10px', fontWeight: '700', color: 'var(--mc-text-3)', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort('dayLow')}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' }}>
                 Day Low <SortIcon field="dayLow" />
               </div>
             </th>
             {/* PATCH 0442 BUG-020 — Optional columns rendered based on chooser state */}
             {OPTIONAL_COLS.filter(c => activeCols.has(c.id)).map(c => (
-              <th key={c.id} style={{ padding: '12px 16px', textAlign: 'right', fontSize: '10px', fontWeight: '700', color: '#8BA3C1', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort(c.id as SortField)}>
+              <th key={c.id} style={{ padding: '12px 16px', textAlign: 'right', fontSize: '10px', fontWeight: '700', color: 'var(--mc-text-3)', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort(c.id as SortField)}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' }}>
                   {c.label} <SortIcon field={c.id as SortField} />
                 </div>
               </th>
             ))}
-            <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '10px', fontWeight: '700', color: '#8BA3C1', letterSpacing: '0.5px', position: 'relative' }}>
+            <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '10px', fontWeight: '700', color: 'var(--mc-text-3)', letterSpacing: '0.5px', position: 'relative' }}>
               {/* PATCH 0442 BUG-027 — Working column chooser. Click to toggle
                   popover; select Volume / 52W / Mcap / PE / Avg Vol columns. */}
               <button
@@ -401,8 +401,8 @@ function WatchlistTable({
                 title="Configure columns"
                 style={{
                   background: chooserOpen ? '#0F7ABF30' : 'transparent',
-                  border: `1px solid ${chooserOpen ? '#22D3EE' : '#2A3B4C'}`,
-                  borderRadius: 6, color: chooserOpen ? '#22D3EE' : '#8BA3C1',
+                  border: `1px solid ${chooserOpen ? 'var(--mc-cyan)' : '#2A3B4C'}`,
+                  borderRadius: 6, color: chooserOpen ? 'var(--mc-cyan)' : 'var(--mc-text-3)',
                   cursor: 'pointer', padding: '4px 9px', fontSize: '10px', fontWeight: 700,
                 }}
               >⚙ Columns ({activeCols.size})</button>
@@ -412,14 +412,14 @@ function WatchlistTable({
                   minWidth: 200, padding: 8, background: '#0D1B2E', border: '1px solid #2A3B4C',
                   borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
                 }}>
-                  <div style={{ fontSize: 10, color: '#8BA3C1', marginBottom: 6, letterSpacing: '0.4px' }}>SHOW COLUMNS</div>
+                  <div style={{ fontSize: 10, color: 'var(--mc-text-3)', marginBottom: 6, letterSpacing: '0.4px' }}>SHOW COLUMNS</div>
                   {OPTIONAL_COLS.map(c => (
                     <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 4px', cursor: 'pointer', borderRadius: 4 }}>
                       <input type="checkbox" checked={activeCols.has(c.id)} onChange={() => toggleCol(c.id)} />
-                      <span style={{ fontSize: 11, color: '#F5F7FA' }}>{c.label}</span>
+                      <span style={{ fontSize: 11, color: 'var(--mc-text-0)' }}>{c.label}</span>
                     </label>
                   ))}
-                  <div style={{ fontSize: 9, color: '#4A5B6C', marginTop: 6, fontStyle: 'italic' }}>
+                  <div style={{ fontSize: 9, color: 'var(--mc-text-4)', marginTop: 6, fontStyle: 'italic' }}>
                     Data may be — when source doesn&apos;t return the field
                   </div>
                 </div>
@@ -441,16 +441,16 @@ function WatchlistTable({
                     {item.flag || '⚪'}
                   </button>
                 </td>
-                <td style={{ padding: '12px 16px', color: '#3B82F6', fontWeight: '700' }}>{item.ticker}</td>
-                <td style={{ padding: '12px 16px', color: '#F5F7FA', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <td style={{ padding: '12px 16px', color: 'var(--mc-info)', fontWeight: '700' }}>{item.ticker}</td>
+                <td style={{ padding: '12px 16px', color: 'var(--mc-text-0)', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {item.company}
                 </td>
-                <td style={{ padding: '12px 16px', color: '#8BA3C1', fontSize: '12px' }}>{item.sector}</td>
-                <td style={{ padding: '12px 16px', textAlign: 'right', color: '#F5F7FA', fontVariantNumeric: 'tabular-nums' }}>
+                <td style={{ padding: '12px 16px', color: 'var(--mc-text-3)', fontSize: '12px' }}>{item.sector}</td>
+                <td style={{ padding: '12px 16px', textAlign: 'right', color: 'var(--mc-text-0)', fontVariantNumeric: 'tabular-nums' }}>
                   {/* PATCH 0559 — BUG-AUDIT-4: when quote came back null/0 render
                       a muted em-dash with a tooltip instead of ₹0.00. */}
                   {!item.price || item.price === 0 ? (
-                    <span style={{ color: '#4A5B6C' }} title="Price unavailable — quote not returned by data source">—</span>
+                    <span style={{ color: 'var(--mc-text-4)' }} title="Price unavailable — quote not returned by data source">—</span>
                   ) : isPriceSuspect(item.ticker, item.price) ? (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: '#FBBF24' }} title="Suspect price - may be incorrect or stale">
                       <AlertTriangle style={{ width: '12px', height: '12px' }} />
@@ -463,19 +463,19 @@ function WatchlistTable({
                 <td style={{ padding: '12px 16px', textAlign: 'right' }}>
                   {/* PATCH 0559 — also blank pct chip when no live price. */}
                   {!item.price || item.price === 0 ? (
-                    <span style={{ color: '#4A5B6C' }} title="Change unavailable">—</span>
+                    <span style={{ color: 'var(--mc-text-4)' }} title="Change unavailable">—</span>
                   ) : (
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 8px', borderRadius: '6px', backgroundColor: isPositive ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)', color: isPositive ? '#10B981' : '#EF4444', fontWeight: '600', fontVariantNumeric: 'tabular-nums', fontSize: '12px' }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 8px', borderRadius: '6px', backgroundColor: isPositive ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)', color: isPositive ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: '600', fontVariantNumeric: 'tabular-nums', fontSize: '12px' }}>
                       {isPositive ? <TrendingUp style={{ width: '11px', height: '11px' }} /> : <TrendingDown style={{ width: '11px', height: '11px' }} />}
                       {isPositive ? '+' : ''}{item.changePercent.toFixed(2)}%
                     </span>
                   )}
                 </td>
-                <td style={{ padding: '12px 16px', textAlign: 'right', color: '#F5F7FA', fontVariantNumeric: 'tabular-nums', fontSize: '12px' }}>
-                  {item.dayHigh ? `₹${item.dayHigh.toFixed(2)}` : <span style={{ color: '#4A5B6C' }}>—</span>}
+                <td style={{ padding: '12px 16px', textAlign: 'right', color: 'var(--mc-text-0)', fontVariantNumeric: 'tabular-nums', fontSize: '12px' }}>
+                  {item.dayHigh ? `₹${item.dayHigh.toFixed(2)}` : <span style={{ color: 'var(--mc-text-4)' }}>—</span>}
                 </td>
-                <td style={{ padding: '12px 16px', textAlign: 'right', color: '#F5F7FA', fontVariantNumeric: 'tabular-nums', fontSize: '12px' }}>
-                  {item.dayLow ? `₹${item.dayLow.toFixed(2)}` : <span style={{ color: '#4A5B6C' }}>—</span>}
+                <td style={{ padding: '12px 16px', textAlign: 'right', color: 'var(--mc-text-0)', fontVariantNumeric: 'tabular-nums', fontSize: '12px' }}>
+                  {item.dayLow ? `₹${item.dayLow.toFixed(2)}` : <span style={{ color: 'var(--mc-text-4)' }}>—</span>}
                 </td>
                 {/* PATCH 0442 BUG-020 — Optional column cells */}
                 {OPTIONAL_COLS.filter(c => activeCols.has(c.id)).map(c => {
@@ -488,7 +488,7 @@ function WatchlistTable({
                     else txt = `₹${val.toFixed(2)}`;
                   }
                   return (
-                    <td key={c.id} style={{ padding: '12px 16px', textAlign: 'right', color: txt === '—' ? '#4A5B6C' : '#F5F7FA', fontVariantNumeric: 'tabular-nums', fontSize: '12px' }}>
+                    <td key={c.id} style={{ padding: '12px 16px', textAlign: 'right', color: txt === '—' ? 'var(--mc-text-4)' : 'var(--mc-text-0)', fontVariantNumeric: 'tabular-nums', fontSize: '12px' }}>
                       {txt}
                     </td>
                   );
@@ -497,7 +497,7 @@ function WatchlistTable({
                   <button
                     onClick={() => onRemove(item.ticker)}
                     title="Remove from watchlist"
-                    style={{ background: 'none', border: 'none', color: '#4A5B6C', cursor: 'pointer', padding: '4px 8px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: '6px', transition: 'all 0.2s' }}
+                    style={{ background: 'none', border: 'none', color: 'var(--mc-text-4)', cursor: 'pointer', padding: '4px 8px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: '6px', transition: 'all 0.2s' }}
                     onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.1)'; e.currentTarget.style.color = '#EF4444'; }}
                     onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = '#4A5B6C'; }}
                   >
@@ -961,8 +961,8 @@ export default function WatchlistsPage() {
       {/* ── Header ────────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
         <div>
-          <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#F5F7FA', margin: '0 0 4px' }}>Watchlist</h1>
-          <p style={{ fontSize: '12px', color: '#8BA3C1', margin: 0 }}>Tracking universe · Observation only · No P&L</p>
+          <h1 style={{ fontSize: '24px', fontWeight: '700', color: 'var(--mc-text-0)', margin: '0 0 4px' }}>Watchlist</h1>
+          <p style={{ fontSize: '12px', color: 'var(--mc-text-3)', margin: 0 }}>Tracking universe · Observation only · No P&L</p>
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
           <button
@@ -977,7 +977,7 @@ export default function WatchlistsPage() {
               border: '1px solid #2A3B4C',
               borderRadius: '10px',
               padding: '10px 14px',
-              color: '#8BA3C1',
+              color: 'var(--mc-text-3)',
               cursor: isRefreshing ? 'not-allowed' : 'pointer',
               fontSize: '13px',
               fontWeight: '600',
@@ -1002,7 +1002,7 @@ export default function WatchlistsPage() {
               border: '1px solid #2A3B4C',
               borderRadius: '10px',
               padding: '10px 14px',
-              color: '#8BA3C1',
+              color: 'var(--mc-text-3)',
               cursor: sortedItems.length === 0 ? 'not-allowed' : 'pointer',
               fontSize: '13px',
               fontWeight: '600',
@@ -1023,20 +1023,20 @@ export default function WatchlistsPage() {
         <button onClick={() => setActiveTab('main')}
           style={{
             padding: '10px 16px', background: 'none',
-            border: 'none', borderBottom: `2px solid ${activeTab === 'main' ? '#22D3EE' : 'transparent'}`,
-            color: activeTab === 'main' ? '#22D3EE' : '#8BA3C1',
+            border: 'none', borderBottom: `2px solid ${activeTab === 'main' ? 'var(--mc-cyan)' : 'transparent'}`,
+            color: activeTab === 'main' ? 'var(--mc-cyan)' : 'var(--mc-text-3)',
             fontSize: 13, fontWeight: 700, cursor: 'pointer',
             display: 'inline-flex', alignItems: 'center', gap: 6,
           }}>
           📋 My Watchlist
-          <span style={{ fontSize: 10, color: '#6B7A8D' }}>{tickers.length}</span>
+          <span style={{ fontSize: 10, color: 'var(--mc-text-4)' }}>{tickers.length}</span>
         </button>
-        <button onClick={() => setActiveTab('fundamentals')} style={{ padding: '10px 16px', background: 'none', border: 'none', borderBottom: '2px solid ' + (activeTab === 'fundamentals' ? '#39d0d8' : 'transparent'), color: activeTab === 'fundamentals' ? '#39d0d8' : '#8BA3C1', fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>📈 Fundamentals</button>
+        <button onClick={() => setActiveTab('fundamentals')} style={{ padding: '10px 16px', background: 'none', border: 'none', borderBottom: '2px solid ' + (activeTab === 'fundamentals' ? '#39d0d8' : 'transparent'), color: activeTab === 'fundamentals' ? '#39d0d8' : 'var(--mc-text-3)', fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>📈 Fundamentals</button>
             <button onClick={() => setActiveTab('conviction')}
           style={{
             padding: '10px 16px', background: 'none',
-            border: 'none', borderBottom: `2px solid ${activeTab === 'conviction' ? '#F59E0B' : 'transparent'}`,
-            color: activeTab === 'conviction' ? '#F59E0B' : '#8BA3C1',
+            border: 'none', borderBottom: `2px solid ${activeTab === 'conviction' ? 'var(--mc-warn)' : 'transparent'}`,
+            color: activeTab === 'conviction' ? 'var(--mc-warn)' : 'var(--mc-text-3)',
             fontSize: 13, fontWeight: 700, cursor: 'pointer',
             display: 'inline-flex', alignItems: 'center', gap: 6,
           }}>
@@ -1046,7 +1046,7 @@ export default function WatchlistsPage() {
             fontSize: 10, fontWeight: 800,
             padding: '1px 6px', borderRadius: 8,
             backgroundColor: convictionCount > 0 ? '#F59E0B22' : '#1A2B3C',
-            color: convictionCount > 0 ? '#F59E0B' : '#6B7A8D',
+            color: convictionCount > 0 ? 'var(--mc-warn)' : 'var(--mc-text-4)',
           }}>{convictionCount}</span>
         </button>
       </div>
@@ -1094,7 +1094,7 @@ export default function WatchlistsPage() {
       {!loading && tickers.length > 0 && (
         <div>
           <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <p style={{ fontSize: '12px', color: '#8BA3C1', margin: 0 }}>
+            <p style={{ fontSize: '12px', color: 'var(--mc-text-3)', margin: 0 }}>
               {sortedItems.length} stocks · Last refreshed: {lastRefresh ? lastRefresh.toLocaleTimeString() : '—'}
             </p>
           </div>
@@ -1115,8 +1115,8 @@ export default function WatchlistsPage() {
       {/* ── Telegram Sync Info ────────────────────────────────────────────── */}
       {tickers.length > 0 && (
         <div style={{ marginTop: '24px', padding: '16px', backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '10px', textAlign: 'center' }}>
-          <p style={{ fontSize: '12px', color: '#8BA3C1', margin: 0 }}>
-            💬 Your watchlist syncs with <span style={{ fontWeight: '600', color: '#3B82F6' }}>@mc_watchlist_pulse_bot</span>
+          <p style={{ fontSize: '12px', color: 'var(--mc-text-3)', margin: 0 }}>
+            💬 Your watchlist syncs with <span style={{ fontWeight: '600', color: 'var(--mc-info)' }}>@mc_watchlist_pulse_bot</span>
           </p>
         </div>
       )}
@@ -1797,17 +1797,17 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
         backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: 12,
       }}>
         <div style={{ fontSize: 32, marginBottom: 10 }}>🏆</div>
-        <h3 style={{ fontSize: 15, fontWeight: 700, color: '#F5F7FA', margin: '0 0 6px' }}>
+        <h3 style={{ fontSize: 15, fontWeight: 700, color: 'var(--mc-text-0)', margin: '0 0 6px' }}>
           Conviction Beats — empty
         </h3>
-        <p style={{ fontSize: 12, color: '#8BA3C1', margin: '0 0 12px', lineHeight: 1.5 }}>
-          This bench auto-fills with stocks that print BLOCKBUSTER or STRONG earnings in <strong style={{ color: '#22D3EE' }}>/earnings-opportunities</strong>.
+        <p style={{ fontSize: 12, color: 'var(--mc-text-3)', margin: '0 0 12px', lineHeight: 1.5 }}>
+          This bench auto-fills with stocks that print BLOCKBUSTER or STRONG earnings in <strong style={{ color: 'var(--mc-cyan)' }}>/earnings-opportunities</strong>.
           <br />Visit that page after a day of filings; this list will populate automatically.
         </p>
         <a href="/earnings-opportunities" style={{
           display: 'inline-block', padding: '8px 16px',
           backgroundColor: '#F59E0B15', border: '1px solid #F59E0B60',
-          borderRadius: 6, color: '#F59E0B', fontSize: 12, fontWeight: 700,
+          borderRadius: 6, color: 'var(--mc-warn)', fontSize: 12, fontWeight: 700,
           textDecoration: 'none',
         }}>Open Earnings Opportunities →</a>
       </div>
@@ -1836,14 +1836,14 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
     options: Array<{ v: number; lbl: string }>,
   ) => (
     <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
-      <span style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>{label}</span>
+      <span style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>{label}</span>
       {options.map((o) => {
         const active = filters[k] === o.v;
         const n = countWith(k, o.v);
         return (
           <button key={o.v} onClick={() => toggle(k, o.v as any)}
             style={active ? chipActive(color) : chipBase}>
-            {o.lbl} <span style={{ color: active ? color : '#6B7A8D', marginLeft: 3 }}>({n})</span>
+            {o.lbl} <span style={{ color: active ? color : 'var(--mc-text-4)', marginLeft: 3 }}>({n})</span>
           </button>
         );
       })}
@@ -1856,13 +1856,13 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
           + PEAD sort toggle. Renders at TOP of the Conviction Beats tab. */}
       <div style={{
         padding: '10px 14px', backgroundColor: '#0A1422',
-        border: '1px solid #1A2840', borderRadius: 8,
+        border: '1px solid var(--mc-bg-4)', borderRadius: 8,
         display: 'flex', flexDirection: 'column', gap: 8,
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-          <div style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', letterSpacing: '0.4px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-text-1)', letterSpacing: '0.4px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span>FILTERS</span>
-            <span style={{ color: '#6B7A8D', fontWeight: 600 }}>· {filteredEntries.length} of {entries.length}</span>
+            <span style={{ color: 'var(--mc-text-4)', fontWeight: 600 }}>· {filteredEntries.length} of {entries.length}</span>
             {/* PATCH 0919 — Safety-net "0 results" hint. When the bench is
                 non-empty but no entries pass the filter, surface a prominent
                 Reset button so the user isn't stuck wondering which chip is
@@ -1874,7 +1874,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                 style={{
                   padding: '3px 9px', fontSize: 10, fontWeight: 800,
                   background: '#F59E0B22', border: '1px solid #F59E0B80',
-                  color: '#F59E0B', borderRadius: 4, cursor: 'pointer',
+                  color: 'var(--mc-warn)', borderRadius: 4, cursor: 'pointer',
                 }}
               >⚠ 0 match — Reset all filters</button>
             )}
@@ -1912,7 +1912,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
             {/* PATCH 1019 — Re-validate bench (prune stocks no longer BB/ST) */}
             <button onClick={runRevalidate} disabled={revalidating}
               title="Re-fetch grading for every bench date and prune any stock that dropped out of BLOCKBUSTER/STRONG under current logic (e.g. demoted to MIXED). Takes ~1s per date."
-              style={{ ...(revalidating ? chipActive('#A78BFA') : chipBase), cursor: revalidating ? 'wait' : 'pointer' }}>
+              style={{ ...(revalidating ? chipActive('var(--mc-state-persistent)') : chipBase), cursor: revalidating ? 'wait' : 'pointer' }}>
               🔄 {revalidating ? 'Re-validating…' : 'Re-validate bench'}
             </button>
             {revalProgress && (
@@ -1920,7 +1920,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                 fontSize: 10.5, fontWeight: 700, padding: '3px 8px', borderRadius: 4,
                 backgroundColor: revalProgress.startsWith('✓') ? '#10B98118' : '#A78BFA18',
                 border: `1px solid ${revalProgress.startsWith('✓') ? '#10B98140' : '#A78BFA40'}`,
-                color: revalProgress.startsWith('✓') ? '#10B981' : '#A78BFA',
+                color: revalProgress.startsWith('✓') ? 'var(--mc-bullish)' : 'var(--mc-state-persistent)',
               }}>{revalProgress}</span>
             )}
             <button onClick={() => setFilters(FILTER_DEFAULT)}
@@ -1988,7 +1988,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
           };
           return (
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>1D CLOSE</span>
+              <span style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>1D CLOSE</span>
               {opts.map((o) => {
                 const active = filters.d1Bucket === o.v;
                 const n = hasAnyD1 ? countD1(o.v) : null;
@@ -1996,7 +1996,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                   <button key={o.v} onClick={() => toggleD1(o.v)}
                     title={hasAnyD1 ? `Filter to entries with D1 close ${o.lbl}` : 'Awaiting D1 close enrichment — entries do not yet have d1_pct populated. Counts will fill in once /earnings-opportunities syncs prices.'}
                     style={active ? chipActive(o.color) : chipBase}>
-                    {o.lbl} <span style={{ color: active ? o.color : '#6B7A8D', marginLeft: 3 }}>({n === null ? '…' : n})</span>
+                    {o.lbl} <span style={{ color: active ? o.color : 'var(--mc-text-4)', marginLeft: 3 }}>({n === null ? '…' : n})</span>
                   </button>
                 );
               })}
@@ -2019,14 +2019,14 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
           ];
           return (
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>GUIDANCE</span>
+              <span style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>GUIDANCE</span>
               {opts.map((o) => {
                 const active = filters.guidance === o.v;
                 const n = countGuidance(o.v);
                 return (
                   <button key={o.v} onClick={() => toggleGuidance(o.v)}
                     style={active ? chipActive(o.color) : chipBase}>
-                    {o.lbl} <span style={{ color: active ? o.color : '#6B7A8D', marginLeft: 3 }}>({n})</span>
+                    {o.lbl} <span style={{ color: active ? o.color : 'var(--mc-text-4)', marginLeft: 3 }}>({n})</span>
                   </button>
                 );
               })}
@@ -2169,34 +2169,34 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                   collapsible quarter cheat-sheet table. User wanted the
                   same table I showed in chat rendered on the page so they
                   never have to flip between explainer and chips again. */}
-              <div style={{ fontSize: 10, color: '#94A3B8', lineHeight: 1.4 }}>
+              <div style={{ fontSize: 10, color: 'var(--mc-text-3)', lineHeight: 1.4 }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
-                  <span style={{ color: '#F59E0B', fontWeight: 800 }}>📅 PERIOD</span>
+                  <span style={{ color: 'var(--mc-warn)', fontWeight: 800 }}>📅 PERIOD</span>
                   <span>
-                    Indian FY: <strong style={{ color: '#E6EDF3' }}>FY26 = Apr 2025 → Mar 2026</strong>.
-                    Quarter chips filter by <strong style={{ color: '#E6EDF3' }}>reporting quarter</strong>
+                    Indian FY: <strong style={{ color: 'var(--mc-text-1)' }}>FY26 = Apr 2025 → Mar 2026</strong>.
+                    Quarter chips filter by <strong style={{ color: 'var(--mc-text-1)' }}>reporting quarter</strong>
                     {' '}(what the results cover), NOT filing month.
                   </span>
                   <button
                     onClick={() => setShowQuarterCheatSheet(v => !v)}
                     title="Show / hide the Q1-Q4 cheat sheet"
-                    style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 8px', background: 'transparent', border: '1px solid #F59E0B60', color: '#F59E0B', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+                    style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 8px', background: 'transparent', border: '1px solid #F59E0B60', color: 'var(--mc-warn)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
                   >
                     {showQuarterCheatSheet ? '▾' : '▸'} Cheat sheet
                   </button>
                 </div>
                 {showQuarterCheatSheet && (
                   <div style={{ marginTop: 6, padding: '6px 8px', background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.35)', borderRadius: 4 }}>
-                    <div style={{ fontSize: 9.5, color: '#94A3B8', marginBottom: 4 }}>
-                      Showing for <strong style={{ color: '#F59E0B' }}>FY{ctxFY}</strong> (Apr {ctxFYFull - 1} → Mar {ctxFYFull})
-                      {filters.fy == null && <span style={{ marginLeft: 4, color: '#6B7A8D' }}>· default · switch YEAR chip below to shift</span>}
+                    <div style={{ fontSize: 9.5, color: 'var(--mc-text-3)', marginBottom: 4 }}>
+                      Showing for <strong style={{ color: 'var(--mc-warn)' }}>FY{ctxFY}</strong> (Apr {ctxFYFull - 1} → Mar {ctxFYFull})
+                      {filters.fy == null && <span style={{ marginLeft: 4, color: 'var(--mc-text-4)' }}>· default · switch YEAR chip below to shift</span>}
                     </div>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
                       <thead>
                         <tr style={{ borderBottom: '1px solid rgba(245,158,11,0.3)' }}>
-                          <th style={{ textAlign: 'left', padding: '3px 6px', color: '#F59E0B', fontWeight: 800, letterSpacing: '0.3px' }}>Reporting Quarter</th>
-                          <th style={{ textAlign: 'left', padding: '3px 6px', color: '#F59E0B', fontWeight: 800 }}>Period the results cover</th>
-                          <th style={{ textAlign: 'left', padding: '3px 6px', color: '#F59E0B', fontWeight: 800 }}>Companies typically file</th>
+                          <th style={{ textAlign: 'left', padding: '3px 6px', color: 'var(--mc-warn)', fontWeight: 800, letterSpacing: '0.3px' }}>Reporting Quarter</th>
+                          <th style={{ textAlign: 'left', padding: '3px 6px', color: 'var(--mc-warn)', fontWeight: 800 }}>Period the results cover</th>
+                          <th style={{ textAlign: 'left', padding: '3px 6px', color: 'var(--mc-warn)', fontWeight: 800 }}>Companies typically file</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -2214,9 +2214,9 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                           const isCurrent = isCtxFYCurrent && row.q === currentFilingQuarter;
                           return (
                             <tr key={row.q} style={isCurrent ? { background: 'rgba(245,158,11,0.10)' } : undefined}>
-                              <td style={{ padding: '2px 6px', color: isCurrent ? '#F59E0B' : '#E6EDF3', fontWeight: 800 }}>{row.q} FY{ctxFY}</td>
-                              <td style={{ padding: '2px 6px', color: isCurrent ? '#F59E0B' : '#94A3B8' }}>{row.period}</td>
-                              <td style={{ padding: '2px 6px', color: isCurrent ? '#F59E0B' : '#94A3B8', fontWeight: isCurrent ? 700 : undefined }}>
+                              <td style={{ padding: '2px 6px', color: isCurrent ? 'var(--mc-warn)' : 'var(--mc-text-1)', fontWeight: 800 }}>{row.q} FY{ctxFY}</td>
+                              <td style={{ padding: '2px 6px', color: isCurrent ? 'var(--mc-warn)' : 'var(--mc-text-3)' }}>{row.period}</td>
+                              <td style={{ padding: '2px 6px', color: isCurrent ? 'var(--mc-warn)' : 'var(--mc-text-3)', fontWeight: isCurrent ? 700 : undefined }}>
                                 {row.filed}{isCurrent ? ' ← we\'re here now' : ''}
                               </td>
                             </tr>
@@ -2228,8 +2228,8 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                 )}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 700, minWidth: 110 }}>Reporting quarter:</span>
-                <span style={{ fontSize: 9, color: '#94A3B8', fontStyle: 'italic' }}>
+                <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 700, minWidth: 110 }}>Reporting quarter:</span>
+                <span style={{ fontSize: 9, color: 'var(--mc-text-3)', fontStyle: 'italic' }}>
                   ({filters.fy != null ? `FY${ctxFY}` : `FY${ctxFY} default`})
                 </span>
               {quarters.map((q) => {
@@ -2245,14 +2245,14 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                   <button key={q} onClick={() => toggleQ(q)}
                     style={active ? chipActive('#F59E0B') : chipBase}
                     title={`${qFyLabel} = ${meta.reports} · ${meta.filed}. Click to filter the bench to entries reporting this fiscal quarter, regardless of when they were filed. (Calendar years shown reflect ${filters.fy != null ? `your selected FY${ctxFY}` : `the current default FY${ctxFY}`}; if you switch the YEAR chip below, these labels will shift.)`}>
-                    {qFyLabel} <span style={{ fontSize: 9, color: active ? '#F59E0B' : '#94A3B8', marginLeft: 2 }}>({periodTag})</span> <span style={{ color: active ? '#F59E0B' : '#6B7A8D', marginLeft: 3, fontWeight: 800 }}>({n})</span>
+                    {qFyLabel} <span style={{ fontSize: 9, color: active ? 'var(--mc-warn)' : 'var(--mc-text-3)', marginLeft: 2 }}>({periodTag})</span> <span style={{ color: active ? 'var(--mc-warn)' : 'var(--mc-text-4)', marginLeft: 3, fontWeight: 800 }}>({n})</span>
                   </button>
                 );
               })}
               </div>
               {presentFY.length > 0 && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 700, minWidth: 110 }}>Fiscal year:</span>
+                  <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 700, minWidth: 110 }}>Fiscal year:</span>
                   {presentFY.map((fy) => {
                     const active = filters.fy === fy;
                     const n = countFY(fy);
@@ -2261,7 +2261,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                       <button key={fy} onClick={() => toggleFY(fy)}
                         style={active ? chipActive('#A78BFA') : chipBase}
                         title={`FY${fy} = Apr ${fyFull - 1} → Mar ${fyFull} (full Indian fiscal year, all 4 quarters Q1+Q2+Q3+Q4). Click a quarter chip above to narrow further. ${n === 0 ? 'No bench entries for this FY yet.' : `${n} entr${n === 1 ? 'y' : 'ies'} match.`}`}>
-                        FY{fy} <span style={{ fontSize: 9, color: active ? '#A78BFA' : '#94A3B8', marginLeft: 2 }}>(Apr {fyFull - 1}–Mar {fyFull})</span> <span style={{ color: active ? '#A78BFA' : '#6B7A8D', marginLeft: 3, fontWeight: 800 }}>({n})</span>
+                        FY{fy} <span style={{ fontSize: 9, color: active ? 'var(--mc-state-persistent)' : 'var(--mc-text-3)', marginLeft: 2 }}>(Apr {fyFull - 1}–Mar {fyFull})</span> <span style={{ color: active ? 'var(--mc-state-persistent)' : 'var(--mc-text-4)', marginLeft: 3, fontWeight: 800 }}>({n})</span>
                       </button>
                     );
                   })}
@@ -2270,8 +2270,8 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
               {/* PATCH 0918 + 0922 — Filing-date range filter, own row,
                   clearly labeled distinct from reporting-quarter chips. */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 700, minWidth: 110 }}>Filing date range:</span>
-                <span style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700 }}>FROM:</span>
+                <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 700, minWidth: 110 }}>Filing date range:</span>
+                <span style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 700 }}>FROM:</span>
                 <input
                   type="date"
                   value={filters.fromDate || ''}
@@ -2281,9 +2281,9 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                     setFilters((f) => ({ ...f, fromDate: ok ? v : null }));
                   }}
                   title="Filter to entries with filing_date on or AFTER this date (inclusive). This is the actual day the result was filed with NSE/BSE — different from the reporting quarter."
-                  style={{ background: '#0A1422', border: '1px solid #2A3550', color: '#22D3EE', fontSize: 11, fontWeight: 700, padding: '3px 6px', borderRadius: 4, outline: 'none', cursor: 'pointer' }}
+                  style={{ background: '#0A1422', border: '1px solid #2A3550', color: 'var(--mc-cyan)', fontSize: 11, fontWeight: 700, padding: '3px 6px', borderRadius: 4, outline: 'none', cursor: 'pointer' }}
                 />
-                <span style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700 }}>TO:</span>
+                <span style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 700 }}>TO:</span>
                 <input
                   type="date"
                   value={filters.toDate || ''}
@@ -2293,7 +2293,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                     setFilters((f) => ({ ...f, toDate: ok ? v : null }));
                   }}
                   title="Filter to entries with filing_date on or BEFORE this date (inclusive)."
-                  style={{ background: '#0A1422', border: '1px solid #2A3550', color: '#22D3EE', fontSize: 11, fontWeight: 700, padding: '3px 6px', borderRadius: 4, outline: 'none', cursor: 'pointer' }}
+                  style={{ background: '#0A1422', border: '1px solid #2A3550', color: 'var(--mc-cyan)', fontSize: 11, fontWeight: 700, padding: '3px 6px', borderRadius: 4, outline: 'none', cursor: 'pointer' }}
                 />
                 {(filters.quarter || filters.fy != null || filters.fromDate || filters.toDate) && (
                   <button
@@ -2309,12 +2309,12 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
       </div>
       <div style={{
         padding: '10px 14px', backgroundColor: '#0A1422',
-        border: '1px solid #1A2840', borderRadius: 8,
-        fontSize: 11.5, color: '#8BA3C1', lineHeight: 1.5,
+        border: '1px solid var(--mc-bg-4)', borderRadius: 8,
+        fontSize: 11.5, color: 'var(--mc-text-3)', lineHeight: 1.5,
       }}>
         <div>
           Institutional bench of high-quality post-earnings setups.
-          Auto-populated from <strong style={{ color: '#22D3EE' }}>Earnings Opportunities</strong> whenever a stock prints BLOCKBUSTER or STRONG.
+          Auto-populated from <strong style={{ color: 'var(--mc-cyan)' }}>Earnings Opportunities</strong> whenever a stock prints BLOCKBUSTER or STRONG.
           Removed entries don't auto-readd — use × to permanently prune.
         </div>
         {/* PATCH 0918 — Explain why bench is heavily skewed toward current quarter.
@@ -2344,11 +2344,11 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
             Q4: 'Jan–Mar results · annual (filed Apr–Jun)',
           };
           return (
-            <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.3)', borderRadius: 4, fontSize: 11, color: '#A78BFA', lineHeight: 1.6 }}>
+            <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.3)', borderRadius: 4, fontSize: 11, color: 'var(--mc-state-persistent)', lineHeight: 1.6 }}>
               ℹ️ <strong>Why is {dominantQ[0]} so dominant?</strong> Bench auto-populates only when a stock is GRADED (filed + parsed + tiered) — not when its board meeting is scheduled.
               We&apos;re in the middle of <strong>Q4 FY26 filing season</strong> (May–Jun 2026 — companies publishing their Jan–Mar 2026 numbers), so {dominantQ[0]} naturally has {dominantQ[1]} of {totalQ} entries ({dominantPct.toFixed(0)}%).
-              <div style={{ marginTop: 6, fontSize: 10, color: '#94A3B8' }}>
-                <strong style={{ color: '#E6EDF3' }}>Quarter → date cheat sheet:</strong> Q1 = {qPeriodMap.Q1} · Q2 = {qPeriodMap.Q2} · Q3 = {qPeriodMap.Q3} · Q4 = {qPeriodMap.Q4}
+              <div style={{ marginTop: 6, fontSize: 10, color: 'var(--mc-text-3)' }}>
+                <strong style={{ color: 'var(--mc-text-1)' }}>Quarter → date cheat sheet:</strong> Q1 = {qPeriodMap.Q1} · Q2 = {qPeriodMap.Q2} · Q3 = {qPeriodMap.Q3} · Q4 = {qPeriodMap.Q4}
               </div>
             </div>
           );
@@ -2394,7 +2394,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
 
           {/* Card grid */}
           {hubFilteredList.length === 0 && !richLoading && (
-            <div style={{ padding: 24, textAlign: 'center', color: '#8BA3C1', backgroundColor: '#0D1623', border: '1px dashed #2A3B4C', borderRadius: 10 }}>
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--mc-text-3)', backgroundColor: 'var(--mc-bg-1)', border: '1px dashed #2A3B4C', borderRadius: 10 }}>
               {enrichedList.length === 0
                 ? 'No enriched cards yet — fetch may still be running. Try again in a moment.'
                 : 'No cards match the current hub filters. Adjust filters above.'}
@@ -2404,8 +2404,8 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
             // PATCH 0540 — When PEAD sort is active, render a single
             // top-down sorted grid; grouping by tier would break the
             // sort signal the user just asked for.
-            <div style={{ backgroundColor: '#0D1623', border: '1px solid #22D3EE40', borderLeft: '4px solid #22D3EE', borderRadius: 12, padding: '14px 18px' }}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: '#22D3EE', marginBottom: 10, letterSpacing: '0.5px' }}>
+            <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid #22D3EE40', borderLeft: '4px solid var(--mc-cyan)', borderRadius: 12, padding: '14px 18px' }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-cyan)', marginBottom: 10, letterSpacing: '0.5px' }}>
                 🌊 PEAD-SORTED · {hubFilteredList.length}
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: 12 }}>
@@ -2413,7 +2413,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                   <div key={c.symbol} style={{ position: 'relative' }}>
                     <EarningsCardComponent card={c} />
                     <button onClick={() => onRemove(c.symbol)} title="Remove from Conviction Beats"
-                      style={{ position: 'absolute', top: 8, right: 8, background: '#0A1422', border: '1px solid #2A3B4C', color: '#8BA3C1', cursor: 'pointer', padding: '3px 7px', fontSize: 12, borderRadius: 4 }}>×</button>
+                      style={{ position: 'absolute', top: 8, right: 8, background: '#0A1422', border: '1px solid #2A3B4C', color: 'var(--mc-text-3)', cursor: 'pointer', padding: '3px 7px', fontSize: 12, borderRadius: 4 }}>×</button>
                   </div>
                 ))}
               </div>
@@ -2431,9 +2431,9 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
             return (
               <>
                 {bb.length > 0 && (
-                  <div style={{ backgroundColor: '#0D1623', border: '1px solid #F59E0B40', borderLeft: '4px solid #F59E0B', borderRadius: 12, padding: '14px 18px' }}>
+                  <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid #F59E0B40', borderLeft: '4px solid var(--mc-warn)', borderRadius: 12, padding: '14px 18px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                      <div style={{ fontSize: 13, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.5px' }}>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-warn)', letterSpacing: '0.5px' }}>
                         ⭐ BLOCKBUSTER · {bb.length}
                       </div>
                     </div>
@@ -2442,16 +2442,16 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                         <div key={c.symbol} style={{ position: 'relative' }}>
                           <EarningsCardComponent card={c} />
                           <button onClick={() => onRemove(c.symbol)} title="Remove from Conviction Beats"
-                            style={{ position: 'absolute', top: 8, right: 8, background: '#0A1422', border: '1px solid #2A3B4C', color: '#8BA3C1', cursor: 'pointer', padding: '3px 7px', fontSize: 12, borderRadius: 4 }}>×</button>
+                            style={{ position: 'absolute', top: 8, right: 8, background: '#0A1422', border: '1px solid #2A3B4C', color: 'var(--mc-text-3)', cursor: 'pointer', padding: '3px 7px', fontSize: 12, borderRadius: 4 }}>×</button>
                         </div>
                       ))}
                     </div>
                   </div>
                 )}
                 {st.length > 0 && (
-                  <div style={{ backgroundColor: '#0D1623', border: '1px solid #10B98140', borderLeft: '4px solid #10B981', borderRadius: 12, padding: '14px 18px' }}>
+                  <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid #10B98140', borderLeft: '4px solid var(--mc-bullish)', borderRadius: 12, padding: '14px 18px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                      <div style={{ fontSize: 13, fontWeight: 800, color: '#10B981', letterSpacing: '0.5px' }}>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-bullish)', letterSpacing: '0.5px' }}>
                         🟢 STRONG · {st.length}
                       </div>
                     </div>
@@ -2460,7 +2460,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
                         <div key={c.symbol} style={{ position: 'relative' }}>
                           <EarningsCardComponent card={c} />
                           <button onClick={() => onRemove(c.symbol)} title="Remove from Conviction Beats"
-                            style={{ position: 'absolute', top: 8, right: 8, background: '#0A1422', border: '1px solid #2A3B4C', color: '#8BA3C1', cursor: 'pointer', padding: '3px 7px', fontSize: 12, borderRadius: 4 }}>×</button>
+                            style={{ position: 'absolute', top: 8, right: 8, background: '#0A1422', border: '1px solid #2A3B4C', color: 'var(--mc-text-3)', cursor: 'pointer', padding: '3px 7px', fontSize: 12, borderRadius: 4 }}>×</button>
                         </div>
                       ))}
                     </div>
@@ -2475,11 +2475,11 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
         <>
           {blockbusters.length > 0 && (
             <div style={{
-              backgroundColor: '#0D1623',
-              border: '1px solid #F59E0B40', borderLeft: '4px solid #F59E0B',
+              backgroundColor: 'var(--mc-bg-1)',
+              border: '1px solid #F59E0B40', borderLeft: '4px solid var(--mc-warn)',
               borderRadius: 12, padding: '14px 18px',
             }}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: '#F59E0B', marginBottom: 10, letterSpacing: '0.5px' }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-warn)', marginBottom: 10, letterSpacing: '0.5px' }}>
                 ⭐ BLOCKBUSTER · {blockbusters.length}
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 }}>
@@ -2489,11 +2489,11 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
           )}
           {strongs.length > 0 && (
             <div style={{
-              backgroundColor: '#0D1623',
-              border: '1px solid #10B98140', borderLeft: '4px solid #10B981',
+              backgroundColor: 'var(--mc-bg-1)',
+              border: '1px solid #10B98140', borderLeft: '4px solid var(--mc-bullish)',
               borderRadius: 12, padding: '14px 18px',
             }}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: '#10B981', marginBottom: 10, letterSpacing: '0.5px' }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-bullish)', marginBottom: 10, letterSpacing: '0.5px' }}>
                 🟢 STRONG · {strongs.length}
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 }}>
@@ -2592,11 +2592,11 @@ function HubFilterRail({
   return (
     <div style={{
       padding: '10px 14px', backgroundColor: '#0A1422',
-      border: '1px solid #1A2840', borderRadius: 8,
+      border: '1px solid var(--mc-bg-4)', borderRadius: 8,
       display: 'flex', flexDirection: 'column', gap: 8,
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-        <div style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', letterSpacing: '0.4px' }}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-text-1)', letterSpacing: '0.4px' }}>
           HUB FILTERS
         </div>
         <button onClick={() => setFilters(HUB_FILTER_DEFAULT)}
@@ -2605,33 +2605,33 @@ function HubFilterRail({
       </div>
       {/* GRADE */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>GRADE</span>
+        <span style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>GRADE</span>
         {gradeCfg.map(g => {
           const active = filters.grades.has(g.v);
           return (
             <button key={g.v} onClick={() => toggleGrade(g.v)}
               style={active ? chipActive(g.color) : chipBase}>
-              {g.v} <span style={{ color: active ? g.color : '#6B7A8D', marginLeft: 3 }}>({countGradeChip(g.v as any)})</span>
+              {g.v} <span style={{ color: active ? g.color : 'var(--mc-text-4)', marginLeft: 3 }}>({countGradeChip(g.v as any)})</span>
             </button>
           );
         })}
       </div>
       {/* SCORE */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>SCORE</span>
+        <span style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>SCORE</span>
         {[60, 75, 85].map(v => {
           const active = filters.scoreMin === v;
           return (
             <button key={v} onClick={() => setFilters(f => ({ ...f, scoreMin: f.scoreMin === v ? null : v }))}
               style={active ? chipActive('#22D3EE') : chipBase}>
-              ≥{v} <span style={{ color: active ? '#22D3EE' : '#6B7A8D', marginLeft: 3 }}>({countScoreChip(v)})</span>
+              ≥{v} <span style={{ color: active ? 'var(--mc-cyan)' : 'var(--mc-text-4)', marginLeft: 3 }}>({countScoreChip(v)})</span>
             </button>
           );
         })}
       </div>
       {/* AUDIENCE */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>AUDIENCE</span>
+        <span style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>AUDIENCE</span>
         {([
           { v: 'PORTFOLIO', color: '#10B981' },
           { v: 'WATCHLIST', color: '#0F7ABF' },
@@ -2642,14 +2642,14 @@ function HubFilterRail({
           return (
             <button key={o.v} onClick={() => toggleAudience(o.v as any)}
               style={active ? chipActive(o.color) : chipBase}>
-              {o.v} <span style={{ color: active ? o.color : '#6B7A8D', marginLeft: 3 }}>({countAudienceChip(o.v as any)})</span>
+              {o.v} <span style={{ color: active ? o.color : 'var(--mc-text-4)', marginLeft: 3 }}>({countAudienceChip(o.v as any)})</span>
             </button>
           );
         })}
       </div>
       {/* DATA QUALITY */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>QUALITY</span>
+        <span style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>QUALITY</span>
         {([
           { v: 'FULL', color: '#00C853', lbl: 'Full' },
           { v: 'PARTIAL', color: '#FFD600', lbl: 'Partial' },
@@ -2659,17 +2659,17 @@ function HubFilterRail({
           return (
             <button key={o.v} onClick={() => toggleDq(o.v as any)}
               style={active ? chipActive(o.color) : chipBase}>
-              {o.lbl} <span style={{ color: active ? o.color : '#6B7A8D', marginLeft: 3 }}>({countDqChip(o.v as any)})</span>
+              {o.lbl} <span style={{ color: active ? o.color : 'var(--mc-text-4)', marginLeft: 3 }}>({countDqChip(o.v as any)})</span>
             </button>
           );
         })}
       </div>
       {/* DIVERGENCE */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>FLAGS</span>
+        <span style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>FLAGS</span>
         <button onClick={() => setFilters(f => ({ ...f, divergenceOnly: !f.divergenceOnly }))}
           style={filters.divergenceOnly ? chipActive('#F59E0B') : chipBase}>
-          ⚡ Divergence Only <span style={{ color: filters.divergenceOnly ? '#F59E0B' : '#6B7A8D', marginLeft: 3 }}>({countDivergenceChip()})</span>
+          ⚡ Divergence Only <span style={{ color: filters.divergenceOnly ? 'var(--mc-warn)' : 'var(--mc-text-4)', marginLeft: 3 }}>({countDivergenceChip()})</span>
         </button>
       </div>
     </div>
@@ -2688,19 +2688,19 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
   return (
     <div style={{
       padding: '10px 12px', backgroundColor: '#0A1422',
-      border: '1px solid #1A2840', borderLeft: `3px solid ${tierColor}`,
+      border: '1px solid var(--mc-bg-4)', borderLeft: `3px solid ${tierColor}`,
       borderRadius: 8, display: 'flex', flexDirection: 'column', gap: 6,
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 6 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: '#E6EDF3', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {entry.company}
           </div>
-          <div style={{ fontSize: 10, fontFamily: 'ui-monospace, monospace', color: '#8BA3C1', display: 'flex', gap: 6 }}>
+          <div style={{ fontSize: 10, fontFamily: 'ui-monospace, monospace', color: 'var(--mc-text-3)', display: 'flex', gap: 6 }}>
             <span style={{ fontWeight: 700 }}>{entry.ticker}</span>
-            <span style={{ color: '#6B7A8D' }}>·</span>
+            <span style={{ color: 'var(--mc-text-4)' }}>·</span>
             <span>filed {entry.filing_date}</span>
-            {entry.sector && (<><span style={{ color: '#6B7A8D' }}>·</span><span>{entry.sector}</span></>)}
+            {entry.sector && (<><span style={{ color: 'var(--mc-text-4)' }}>·</span><span>{entry.sector}</span></>)}
           </div>
         </div>
         <div style={{
@@ -2714,7 +2714,7 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
         }}>PEAD {pead.score}</div>
         <button onClick={() => onRemove(entry.ticker)} title="Remove from Conviction Beats"
           style={{
-            background: 'none', border: 'none', color: '#6B7A8D',
+            background: 'none', border: 'none', color: 'var(--mc-text-4)',
             cursor: 'pointer', padding: '2px 6px', fontSize: 14,
           }}>×</button>
       </div>
@@ -2747,7 +2747,7 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
                   padding: '2px 7px', borderRadius: 4,
                   backgroundColor: 'rgba(148,163,184,0.15)',
                   border: '1px solid rgba(148,163,184,0.35)',
-                  color: '#94A3B8', fontWeight: 600, cursor: 'help',
+                  color: 'var(--mc-text-3)', fontWeight: 600, cursor: 'help',
                 }}
               >⏳ Results Pending</span>
             </div>
@@ -2755,9 +2755,9 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
         }
         return (
           <div style={{ display: 'flex', gap: 10, fontSize: 10.5 }}>
-            <span><span style={{ color: '#6B7A8D' }}>Sales</span> <strong style={{ color: (entry.sales_yoy_pct ?? 0) >= 0 ? '#10B981' : '#EF4444' }}>{pct(entry.sales_yoy_pct)}</strong></span>
-            <span><span style={{ color: '#6B7A8D' }}>PAT</span> <strong style={{ color: (entry.net_profit_yoy_pct ?? 0) >= 0 ? '#10B981' : '#EF4444' }}>{pct(entry.net_profit_yoy_pct)}</strong></span>
-            <span><span style={{ color: '#6B7A8D' }}>EPS</span> <strong style={{ color: (entry.eps_yoy_pct ?? 0) >= 0 ? '#10B981' : '#EF4444' }}>{pct(entry.eps_yoy_pct)}</strong></span>
+            <span><span style={{ color: 'var(--mc-text-4)' }}>Sales</span> <strong style={{ color: (entry.sales_yoy_pct ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{pct(entry.sales_yoy_pct)}</strong></span>
+            <span><span style={{ color: 'var(--mc-text-4)' }}>PAT</span> <strong style={{ color: (entry.net_profit_yoy_pct ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{pct(entry.net_profit_yoy_pct)}</strong></span>
+            <span><span style={{ color: 'var(--mc-text-4)' }}>EPS</span> <strong style={{ color: (entry.eps_yoy_pct ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{pct(entry.eps_yoy_pct)}</strong></span>
           </div>
         );
       })()}
@@ -2794,7 +2794,7 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
       })()}
       {entry.source_url && (
         <a href={entry.source_url} target="_blank" rel="noreferrer"
-          style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>
+          style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>
           📄 Filing →
         </a>
       )}

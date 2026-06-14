@@ -276,12 +276,12 @@ function DrilldownPanel({ commodity, onClose }: { commodity: CommodityRow; onClo
                   <span style={{ fontSize: 13, fontWeight: 700 }}>{imp.sign === 1 ? '⬆' : '⬇'} {imp.sector}</span>
                   <span style={{ fontSize: 10, color: TOKENS.surface.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{imp.sensitivity}</span>
                   {imp.pass_through_lag && (
-                    <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 6px', borderRadius: 4, backgroundColor: '#1A2540', color: TOKENS.surface.textDim }}>
+                    <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 6px', borderRadius: 4, backgroundColor: 'var(--mc-bg-4)', color: TOKENS.surface.textDim }}>
                       lag: {imp.pass_through_lag}
                     </span>
                   )}
                   {imp.pricing_power && (
-                    <span title="Sector's ability to pass cost through to end-customer" style={{ fontSize: 9, fontWeight: 700, padding: '1px 6px', borderRadius: 4, backgroundColor: '#1A2540', color: TOKENS.surface.textDim }}>
+                    <span title="Sector's ability to pass cost through to end-customer" style={{ fontSize: 9, fontWeight: 700, padding: '1px 6px', borderRadius: 4, backgroundColor: 'var(--mc-bg-4)', color: TOKENS.surface.textDim }}>
                       pass: {imp.pricing_power}
                     </span>
                   )}
@@ -779,7 +779,7 @@ export default function TransmissionPage() {
                         title={`Equity proxy — uses ${c.proxy_via} stock to give directional signal. No free spot-price feed available for this commodity.`}
                         style={{
                           fontSize: 8, fontWeight: 700, padding: '1px 5px', borderRadius: 3,
-                          backgroundColor: '#F59E0B15', color: '#F59E0B',
+                          backgroundColor: '#F59E0B15', color: 'var(--mc-warn)',
                           border: '1px solid #F59E0B40', letterSpacing: '0.3px',
                         }}
                       >via {c.proxy_via}</span>
@@ -790,8 +790,8 @@ export default function TransmissionPage() {
                         title={`Price feed: ${c.price_source === 'yahoo' ? 'Yahoo Finance' : c.price_source === 'fmp' ? 'Financial Modeling Prep (fallback)' : 'Alpha Vantage (fallback)'}`}
                         style={{
                           fontSize: 8, fontWeight: 700, padding: '1px 4px', borderRadius: 3,
-                          backgroundColor: c.price_source === 'yahoo' ? '#1A2540' : c.price_source === 'fmp' ? '#22D3EE15' : '#A78BFA15',
-                          color: c.price_source === 'yahoo' ? TOKENS.surface.textMuted : c.price_source === 'fmp' ? '#22D3EE' : '#A78BFA',
+                          backgroundColor: c.price_source === 'yahoo' ? 'var(--mc-bg-4)' : c.price_source === 'fmp' ? '#22D3EE15' : '#A78BFA15',
+                          color: c.price_source === 'yahoo' ? TOKENS.surface.textMuted : c.price_source === 'fmp' ? 'var(--mc-cyan)' : 'var(--mc-state-persistent)',
                           border: `1px solid ${c.price_source === 'yahoo' ? TOKENS.surface.cardBorder : c.price_source === 'fmp' ? '#22D3EE40' : '#A78BFA40'}`,
                           letterSpacing: '0.3px', textTransform: 'uppercase',
                         }}
@@ -802,7 +802,7 @@ export default function TransmissionPage() {
                     {c.last != null ? `${c.last.toLocaleString()} ${c.unit}` : (
                       // AUDIT_100 #73 — flag manual-feed rows as low-confidence so users
                       // know the value (when present elsewhere) is potentially stale.
-                      <span title="No free spot-price feed available — value is set manually and may be days/weeks stale. Treat as directional only." style={{ color: '#F59E0B', fontStyle: 'italic', cursor: 'help' }}>⚠ manual feed (stale risk)</span>
+                      <span title="No free spot-price feed available — value is set manually and may be days/weeks stale. Treat as directional only." style={{ color: 'var(--mc-warn)', fontStyle: 'italic', cursor: 'help' }}>⚠ manual feed (stale risk)</span>
                     )}
                   </span>
                 </div>
@@ -823,7 +823,7 @@ export default function TransmissionPage() {
                     const pp = horizon === '3m' ? imp.margin_pressure_pp_3m : imp.margin_pressure_pp_1m;
                     const col = pp == null ? TOKENS.surface.textMuted : pp > 0 ? TOKENS.semantic.bullish.solid : TOKENS.semantic.bearish.solid;
                     return (
-                      <div key={idx} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, backgroundColor: '#0D1623', display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div key={idx} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, backgroundColor: 'var(--mc-bg-1)', display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span style={{ flex: 1, color: TOKENS.surface.text }}>
                           {imp.sign === 1 ? '⬆' : '⬇'} {imp.sector}
                           <span style={{ fontSize: 9, color: TOKENS.surface.textMuted, marginLeft: 6 }}>· {imp.sensitivity}</span>

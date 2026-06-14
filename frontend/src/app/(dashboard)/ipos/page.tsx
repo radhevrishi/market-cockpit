@@ -215,13 +215,13 @@ export default function IPOsPage() {
               {dataSource === 'Fallback' ? 'Primary source unavailable — showing fallback' : `Data from ${dataSource}`}. For comprehensive IPO info, visit{' '}
               <a href="https://www.nseindia.com/market-data/all-upcoming-issues-ipo"
                  target="_blank" rel="noopener noreferrer"
-                 style={{ color: '#22D3EE', textDecoration: 'underline' }}>
+                 style={{ color: 'var(--mc-cyan)', textDecoration: 'underline' }}>
                 NSE
               </a>
               {' / '}
               <a href="https://www.bseindia.com/markets/PublicIssues/IPOIssues_new.aspx"
                  target="_blank" rel="noopener noreferrer"
-                 style={{ color: '#22D3EE', textDecoration: 'underline' }}>
+                 style={{ color: 'var(--mc-cyan)', textDecoration: 'underline' }}>
                 BSE
               </a>
               {' '}directly.
@@ -492,16 +492,16 @@ export default function IPOsPage() {
                     marginBottom: '12px', padding: '8px 12px', borderRadius: 6,
                     border: '1px solid rgba(245,158,11,0.30)',
                     backgroundColor: 'rgba(245,158,11,0.08)',
-                    color: '#F59E0B', fontSize: 12, lineHeight: 1.5,
+                    color: 'var(--mc-warn)', fontSize: 12, lineHeight: 1.5,
                   }}>
                     ⚠ Some fields are still TBA — RHP often lists them late. <a
                       href={`https://www.nseindia.com/market-data/all-upcoming-issues-ipo`}
                       target="_blank" rel="noopener noreferrer"
-                      style={{ color: '#F59E0B', textDecoration: 'underline', fontWeight: 700 }}
+                      style={{ color: 'var(--mc-warn)', textDecoration: 'underline', fontWeight: 700 }}
                     >Check NSE →</a> · <a
                       href={`https://www.bseindia.com/markets/PublicIssues/IPOIssues_new.aspx`}
                       target="_blank" rel="noopener noreferrer"
-                      style={{ color: '#F59E0B', textDecoration: 'underline', fontWeight: 700 }}
+                      style={{ color: 'var(--mc-warn)', textDecoration: 'underline', fontWeight: 700 }}
                     >BSE →</a>
                   </div>
                 ) : null;
@@ -668,7 +668,7 @@ export default function IPOsPage() {
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 6,
                 padding: '10px 18px', borderRadius: 8,
-                background: '#22D3EE', color: '#000', fontWeight: 700, fontSize: 13,
+                background: 'var(--mc-cyan)', color: '#000', fontWeight: 700, fontSize: 13,
                 textDecoration: 'none', letterSpacing: '0.4px',
               }}
             >🏦 NSE IPO Calendar →</a>
@@ -679,7 +679,7 @@ export default function IPOsPage() {
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 6,
                 padding: '10px 18px', borderRadius: 8,
-                background: '#F59E0B', color: '#000', fontWeight: 700, fontSize: 13,
+                background: 'var(--mc-warn)', color: '#000', fontWeight: 700, fontSize: 13,
                 textDecoration: 'none', letterSpacing: '0.4px',
               }}
             >🏛 BSE IPO Calendar →</a>

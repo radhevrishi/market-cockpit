@@ -348,7 +348,7 @@ export default function TickerExportToolbar({
     <div style={{
       display: 'flex', flexDirection: 'column', gap: 10,
       padding: compact ? '10px 14px' : '14px 18px',
-      backgroundColor: '#0D1623',
+      backgroundColor: 'var(--mc-bg-1)',
       border: '2px solid #22D3EE40',
       borderRadius: 12,
       boxShadow: '0 0 0 1px #22D3EE15',
@@ -359,12 +359,12 @@ export default function TickerExportToolbar({
           padding: '4px 10px', borderRadius: 6,
           backgroundColor: '#22D3EE22', border: '1px solid #22D3EE60',
         }}>
-          <Copy style={{ width: 13, height: 13, color: '#22D3EE' }} />
-          <span style={{ fontSize: 12, fontWeight: 900, color: '#22D3EE', letterSpacing: '0.6px' }}>
+          <Copy style={{ width: 13, height: 13, color: 'var(--mc-cyan)' }} />
+          <span style={{ fontSize: 12, fontWeight: 900, color: 'var(--mc-cyan)', letterSpacing: '0.6px' }}>
             EXPORT {n} TICKER{n === 1 ? '' : 'S'}
           </span>
         </div>
-        <span style={{ fontSize: 11, color: '#8BA3C1', flex: 1 }}>
+        <span style={{ fontSize: 11, color: 'var(--mc-text-3)', flex: 1 }}>
           Copy/download the current filtered list — paste into TradingView, Excel, or anywhere
         </span>
       </div>
@@ -387,7 +387,7 @@ export default function TickerExportToolbar({
           onClick={() => copyTradingView(safeTickers, 'All')}
           disabled={n === 0}
           title={`Copy all ${n} tickers with ${exchange}: prefix — paste directly into TradingView watchlist`}
-          style={{ ...btnBase, border: '1px solid #22D3EE', background: '#22D3EE', color: '#0A0E1A' }}
+          style={{ ...btnBase, border: '1px solid var(--mc-cyan)', background: 'var(--mc-cyan)', color: 'var(--mc-bg-0)' }}
         >
           <Copy style={{ width: 14, height: 14 }} />
           Copy for TradingView
@@ -397,7 +397,7 @@ export default function TickerExportToolbar({
           onClick={() => copyCsv(safeTickers, 'All')}
           disabled={n === 0}
           title={`Copy ${n} tickers as plain comma-separated list (no prefix) — for Excel, sheets, or other tools`}
-          style={{ ...btnBase, border: '1px solid #1A2840', background: '#0A1422', color: '#C9D4E0' }}
+          style={{ ...btnBase, border: '1px solid var(--mc-bg-4)', background: '#0A1422', color: '#C9D4E0' }}
         >
           <Copy style={{ width: 14, height: 14 }} />
           Copy CSV
@@ -407,7 +407,7 @@ export default function TickerExportToolbar({
           onClick={() => downloadTxt(safeTickers, 'All')}
           disabled={n === 0}
           title={`Download ${n} tickers as .txt file (with ${exchange}: prefix)`}
-          style={{ ...btnBase, border: '1px solid #1A2840', background: '#0A1422', color: '#C9D4E0' }}
+          style={{ ...btnBase, border: '1px solid var(--mc-bg-4)', background: '#0A1422', color: '#C9D4E0' }}
         >
           <Download style={{ width: 14, height: 14 }} />
           Download .txt
@@ -417,7 +417,7 @@ export default function TickerExportToolbar({
           onClick={() => openInTradingView(safeTickers)}
           disabled={n === 0}
           title="Open first ticker in TradingView chart + copy full list for paste into a new watchlist"
-          style={{ ...btnBase, border: '1px solid #10B981', background: '#10B98120', color: '#10B981' }}
+          style={{ ...btnBase, border: '1px solid var(--mc-bullish)', background: '#10B98120', color: 'var(--mc-bullish)' }}
         >
           <ExternalLink style={{ width: 14, height: 14 }} />
           Open in TradingView
@@ -431,7 +431,7 @@ export default function TickerExportToolbar({
           onClick={() => copyForScreener(safeTickers, 'All')}
           disabled={n === 0}
           title={`Copy ${n} tickers as bare comma-separated symbols — paste into a Screener.in watchlist`}
-          style={{ ...btnBase, border: '1px solid #A78BFA', background: '#A78BFA20', color: '#A78BFA' }}
+          style={{ ...btnBase, border: '1px solid var(--mc-state-persistent)', background: '#A78BFA20', color: 'var(--mc-state-persistent)' }}
         >
           <Copy style={{ width: 14, height: 14 }} />
           Copy for Screener
@@ -442,7 +442,7 @@ export default function TickerExportToolbar({
           title={n === 1
             ? `Open ${safeTickers[0]} on Screener.in`
             : `Copy ${n} tickers + open Screener.in watchlist page`}
-          style={{ ...btnBase, border: '1px solid #A78BFA', background: '#A78BFA15', color: '#A78BFA' }}
+          style={{ ...btnBase, border: '1px solid var(--mc-state-persistent)', background: '#A78BFA15', color: 'var(--mc-state-persistent)' }}
         >
           <ExternalLink style={{ width: 14, height: 14 }} />
           {n === 1 ? 'Open on Screener' : 'Open in Screener.in'}
@@ -454,7 +454,7 @@ export default function TickerExportToolbar({
           onClick={() => downloadScreenerCsv(safeTickers, 'All')}
           disabled={n === 0}
           title={`Download ${n} rows as CSV — columns: Name, Ticker. Use as backup when Screener.in is slow or as portable list.`}
-          style={{ ...btnBase, border: '1px solid #A78BFA', background: '#A78BFA10', color: '#A78BFA' }}
+          style={{ ...btnBase, border: '1px solid var(--mc-state-persistent)', background: '#A78BFA10', color: 'var(--mc-state-persistent)' }}
         >
           <Download style={{ width: 14, height: 14 }} />
           Download Screener CSV
@@ -465,9 +465,9 @@ export default function TickerExportToolbar({
       {groups && groups.length > 0 && groups.some((g) => g.tickers.length > 0) && (
         <div style={{
           display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
-          paddingTop: 6, borderTop: '1px dashed #1A2840',
+          paddingTop: 6, borderTop: '1px dashed var(--mc-bg-4)',
         }}>
-          <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.4px', marginRight: 2 }}>
+          <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.4px', marginRight: 2 }}>
             COPY BY TIER (TradingView fmt):
           </span>
           {groups.map((g) => {

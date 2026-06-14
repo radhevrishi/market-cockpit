@@ -15,6 +15,35 @@ import { internalBase } from '@/lib/internal-base';
 import { kvGet, kvSet } from '@/lib/kv';
 import { SUPER_INVESTORS } from '@/lib/super-investors';
 
+// PATCH 1078 — open issue B from HANDOFF_FULL §10:
+// super-investor-flow rows previously stored the company name in the
+// `ticker` slot ("display name; real ticker only known via static map").
+// Now we build a normalized company→ticker lookup from the SUPER_INVESTORS
+// roster (~109 ticker/company pairs across the static portfolio map) and
+// resolve `move.company` to the real ticker when we have one. Falls back to
+// the company string if no match — so the row is never empty.
+const _normalizeCo = (s: string) =>
+  (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\b(ltd|limited|industries|corp|corporation|company|co|plc|inc|the|pvt|private)\b/g, ' ').replace(/\s+/g, ' ').trim();
+const COMPANY_TO_TICKER: Map<string, string> = (() => {
+  const m = new Map<string, string>();
+  for (const inv of SUPER_INVESTORS) {
+    for (const h of (inv.holdings || [])) {
+      if (!h || typeof h !== 'object') continue;
+      const t = (h as { ticker?: string }).ticker;
+      const c = (h as { company?: string }).company;
+      if (!t || !c) continue;
+      const key = _normalizeCo(c);
+      if (key && !m.has(key)) m.set(key, t);
+    }
+  }
+  return m;
+})();
+function resolveTicker(company: string | undefined): string {
+  if (!company) return '';
+  return COMPANY_TO_TICKER.get(_normalizeCo(company)) || company;
+}
+
+
 // PATCH 0819: removed force-dynamic so Cache-Control headers aren't overridden by Next.js. Query params still force dynamic at runtime.
 export const runtime = 'nodejs';
 export const maxDuration = 30; // PATCH 0818
@@ -123,7 +152,7 @@ export async function GET(request: Request) {
     if (!key || key.length < 3) continue;
     if (!byCo.has(key)) {
       byCo.set(key, {
-        ticker: move.company,         // display name; real ticker only known via static map
+        ticker: resolveTicker(move.company), // PATCH 1078 — resolved via SUPER_INVESTORS roster; falls back to company name
         company: move.company,
         addCount: 0, exitCount: 0, netActions: 0,
         totalSignalScore: 0,

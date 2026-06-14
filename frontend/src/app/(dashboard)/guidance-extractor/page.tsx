@@ -59,7 +59,7 @@ export default function GuidanceExtractorPage() {
             <span style={{ fontSize: 12, fontWeight: 800, color: DIM, letterSpacing: '0.5px' }}>PASTE CONCALL / PPT TEXT</span>
             <button onClick={() => setText(EXAMPLE)} style={{
               fontSize: 11, padding: '4px 10px', border: '1px solid #22D3EE50', background: '#22D3EE15',
-              color: '#22D3EE', borderRadius: 4, cursor: 'pointer', fontWeight: 700,
+              color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700,
             }}>
               Load DEE Dev example
             </button>
@@ -87,11 +87,11 @@ export default function GuidanceExtractorPage() {
           <>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12 }}>
               {byYear.map(([fy, items]) => (
-                <div key={fy} style={{ background: CARD, border: `1px solid ${BORDER}`, borderLeft: '3px solid #22D3EE', borderRadius: 8, padding: '14px 16px' }}>
-                  <div style={{ fontSize: 18, fontWeight: 900, color: '#22D3EE', marginBottom: 8 }}>{fy}</div>
+                <div key={fy} style={{ background: CARD, border: `1px solid ${BORDER}`, borderLeft: '3px solid var(--mc-cyan)', borderRadius: 8, padding: '14px 16px' }}>
+                  <div style={{ fontSize: 18, fontWeight: 900, color: 'var(--mc-cyan)', marginBottom: 8 }}>{fy}</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {items.map((g, i) => (
-                      <div key={i} style={{ background: '#1A2540', borderRadius: 5, padding: '8px 10px' }}>
+                      <div key={i} style={{ background: 'var(--mc-bg-4)', borderRadius: 5, padding: '8px 10px' }}>
                         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
                           <span style={{ fontSize: 11, fontWeight: 800, color: metricColor(g.metric), letterSpacing: '0.4px' }}>{metricLabel(g.metric).toUpperCase()}</span>
                           <span style={{ fontSize: 16, fontWeight: 900, color: TEXT, fontVariantNumeric: 'tabular-nums' }}>{formatGuidanceValue(g)}</span>
@@ -100,7 +100,7 @@ export default function GuidanceExtractorPage() {
                           {g.rawPhrase.slice(0, 140)}{g.rawPhrase.length > 140 ? '…' : ''}
                         </div>
                         <div style={{ marginTop: 4, fontSize: 9, color: DIM, fontFamily: 'ui-monospace, monospace' }}>
-                          confidence: <span style={{ color: g.confidence === 'high' ? '#10B981' : g.confidence === 'medium' ? '#F59E0B' : '#EF4444' }}>{g.confidence}</span>
+                          confidence: <span style={{ color: g.confidence === 'high' ? 'var(--mc-bullish)' : g.confidence === 'medium' ? 'var(--mc-warn)' : 'var(--mc-bearish)' }}>{g.confidence}</span>
                         </div>
                       </div>
                     ))}
@@ -116,7 +116,7 @@ export default function GuidanceExtractorPage() {
               borderRadius: 6,
               fontSize: 13, color: TEXT, lineHeight: 1.65,
             }}>
-              <b style={{ color: '#10B981' }}>→ Next step:</b> Copy any year's numbers into the <a href="/valuation-calc" style={{ color: '#22D3EE', textDecoration: 'underline' }}>Valuation Calculator</a> to project bull/base/bear market-cap targets and annualized upside.
+              <b style={{ color: 'var(--mc-bullish)' }}>→ Next step:</b> Copy any year's numbers into the <a href="/valuation-calc" style={{ color: 'var(--mc-cyan)', textDecoration: 'underline' }}>Valuation Calculator</a> to project bull/base/bear market-cap targets and annualized upside.
             </div>
           </>
         ) : text.trim().length > 0 ? (

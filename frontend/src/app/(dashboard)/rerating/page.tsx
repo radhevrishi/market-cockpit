@@ -34,7 +34,7 @@ function CbBadge({ ticker, convictionSet }: { ticker: string; convictionSet: Set
     <span
       title="On Conviction Beats bench (BLOCKBUSTER/STRONG earnings)"
       style={{
-        marginLeft: 6, fontSize: 9, fontWeight: 800, color: '#F59E0B',
+        marginLeft: 6, fontSize: 9, fontWeight: 800, color: 'var(--mc-warn)',
         border: '1px solid #F59E0B60', backgroundColor: 'rgba(245,158,11,0.10)',
         padding: '1px 5px', borderRadius: 3, letterSpacing: 0.3,
       }}
@@ -850,17 +850,17 @@ export default function RerratingPage() {
   const activeMeta = TABS.find((t) => t.id === active) || TABS[0];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: '#0A0E1A' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--mc-bg-0)' }}>
       {/* PATCH 0557 — backend-degraded banner. */}
       <div style={{ padding: '0 18px' }}><DegradedBanner /></div>
       {/* ── Header ─────────────────────────────────────────────────── */}
-      <div style={{ backgroundColor: '#0D1B2E', borderBottom: '1px solid #1E2D45', borderLeft: `4px solid ${activeMeta.color}`, padding: '14px 18px', flexShrink: 0 }}>
+      <div style={{ backgroundColor: '#0D1B2E', borderBottom: '1px solid var(--mc-border-1)', borderLeft: `4px solid ${activeMeta.color}`, padding: '14px 18px', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
           <span style={{ fontSize: 15, fontWeight: 800, color: activeMeta.color, letterSpacing: '0.6px' }}>
             ⚖️ RE-RATING SCREENER
           </span>
-          <span style={{ fontSize: 12, color: '#4A5B6C' }}>Margin Expansion · Model Shift · Multiple Expansion</span>
-          <span style={{ fontSize: 11, color: '#6B7A8D' }}>Universe: {universeSource}</span>
+          <span style={{ fontSize: 12, color: 'var(--mc-text-4)' }}>Margin Expansion · Model Shift · Multiple Expansion</span>
+          <span style={{ fontSize: 11, color: 'var(--mc-text-4)' }}>Universe: {universeSource}</span>
           {/* PATCH 0108 — BUG-02: universe selector */}
           {/* PATCH 0448 — Universe chip rail. Multi-select feel via dropdown
               for now (extension hooks below). Default 'AUTO' unions MB +
@@ -869,7 +869,7 @@ export default function RerratingPage() {
           <select
             value={universeChoice}
             onChange={(e) => setUniverseChoice(e.target.value as UniverseChoice)}
-            style={{ padding: '3px 8px', fontSize: 11, fontWeight: 700, borderRadius: 4, border: '1px solid #1A2840', backgroundColor: '#0A1422', color: '#E6EDF3', cursor: 'pointer' }}
+            style={{ padding: '3px 8px', fontSize: 11, fontWeight: 700, borderRadius: 4, border: '1px solid var(--mc-bg-4)', backgroundColor: '#0A1422', color: 'var(--mc-text-1)', cursor: 'pointer' }}
           >
             <option value="AUTO">🎯 My Universe (MB + Portfolio + Watchlist + CB)</option>
             <option value="MULTIBAGGER">📊 Multibagger Upload only</option>
@@ -895,7 +895,7 @@ export default function RerratingPage() {
                   title={`Limit universe to ${c.label} only`}
                   style={{
                     padding: '3px 8px', borderRadius: 4, fontSize: 10, fontWeight: 700,
-                    border: `1px solid ${isActive ? c.color : '#1A2840'}`,
+                    border: `1px solid ${isActive ? c.color : 'var(--mc-bg-4)'}`,
                     background: isActive ? `${c.color}20` : 'transparent',
                     color: isActive ? c.color : '#8A95A3',
                     cursor: 'pointer',
@@ -908,7 +908,7 @@ export default function RerratingPage() {
               title="Union of all 4 personal universes (MB + Portfolio + Watchlist + Conviction Beats)"
               style={{
                 padding: '3px 8px', borderRadius: 4, fontSize: 10, fontWeight: 700,
-                border: `1px solid ${universeChoice === 'AUTO' ? '#0F7ABF' : '#1A2840'}`,
+                border: `1px solid ${universeChoice === 'AUTO' ? 'var(--mc-accent)' : 'var(--mc-bg-4)'}`,
                 background: universeChoice === 'AUTO' ? '#0F7ABF20' : 'transparent',
                 color: universeChoice === 'AUTO' ? '#38A9E8' : '#8A95A3',
                 cursor: 'pointer',
@@ -920,7 +920,7 @@ export default function RerratingPage() {
               value={customCsv}
               onChange={(e) => setCustomCsv(e.target.value)}
               placeholder="POWERGRID.NS, NTPC.NS, ..."
-              style={{ padding: '3px 8px', fontSize: 11, borderRadius: 4, border: '1px solid #1A2840', backgroundColor: '#0A1422', color: '#E6EDF3', width: 240 }}
+              style={{ padding: '3px 8px', fontSize: 11, borderRadius: 4, border: '1px solid var(--mc-bg-4)', backgroundColor: '#0A1422', color: 'var(--mc-text-1)', width: 240 }}
             />
           )}
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
@@ -932,7 +932,7 @@ export default function RerratingPage() {
               const isActive = region === r.v;
               return (
                 <button key={r.v} onClick={() => setRegion(r.v as 'ALL' | 'IN' | 'GLOBAL')}
-                  style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 700, border: isActive ? '1px solid #38A9E860' : '1px solid #1A2840', backgroundColor: isActive ? '#0F7ABF20' : 'transparent', color: isActive ? '#38A9E8' : '#6B7A8D', cursor: 'pointer' }}>
+                  style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 700, border: isActive ? '1px solid #38A9E860' : '1px solid var(--mc-bg-4)', backgroundColor: isActive ? '#0F7ABF20' : 'transparent', color: isActive ? '#38A9E8' : 'var(--mc-text-4)', cursor: 'pointer' }}>
                   {r.label}
                 </button>
               );
@@ -945,7 +945,7 @@ export default function RerratingPage() {
             const isActive = active === id;
             return (
               <button key={id} onClick={() => setActive(id)}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 14px', borderRadius: 8, border: isActive ? `1px solid ${color}80` : '1px solid #1A2840', backgroundColor: isActive ? `${color}18` : 'transparent', color: isActive ? color : '#8A95A3', fontSize: 13, fontWeight: 700, letterSpacing: '0.4px', cursor: 'pointer' }}>
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 14px', borderRadius: 8, border: isActive ? `1px solid ${color}80` : '1px solid var(--mc-bg-4)', backgroundColor: isActive ? `${color}18` : 'transparent', color: isActive ? color : '#8A95A3', fontSize: 13, fontWeight: 700, letterSpacing: '0.4px', cursor: 'pointer' }}>
                 <Icon style={{ width: 16, height: 16 }} />
                 {label.toUpperCase()}
               </button>
@@ -953,7 +953,7 @@ export default function RerratingPage() {
           })}
         </div>
 
-        <div style={{ marginTop: 10, fontSize: 12, color: '#94A3B8', lineHeight: 1.5 }}>
+        <div style={{ marginTop: 10, fontSize: 12, color: 'var(--mc-text-3)', lineHeight: 1.5 }}>
           {activeMeta.tagline}
         </div>
       </div>
@@ -1047,7 +1047,7 @@ function MarginExpansionPanel({ rows, loading, color, convictionSet }: { rows: M
   const sortIndicator = (col: typeof sortBy) => sortBy === col ? (sortAsc ? ' ▲' : ' ▼') : '';
   const sortableTh = (col: typeof sortBy, label: string) => (
     <th
-      style={{ ...th(), cursor: 'pointer', userSelect: 'none', color: sortBy === col ? color : '#6B7A8D' }}
+      style={{ ...th(), cursor: 'pointer', userSelect: 'none', color: sortBy === col ? color : 'var(--mc-text-4)' }}
       onClick={() => handleSort(col)}
       title={`Sort by ${label}`}
     >
@@ -1057,15 +1057,15 @@ function MarginExpansionPanel({ rows, loading, color, convictionSet }: { rows: M
   if (loading) return <Loader label="Loading earnings-scan…" />;
   if (rows.length === 0) return <Empty label="No margin-expansion candidates in the universe yet. Add tickers to portfolio / watchlist or wait for next earnings cycle." />;
   return (
-    <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderLeft: `3px solid ${color}`, borderRadius: 12, padding: '14px 18px' }}>
+    <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderLeft: `3px solid ${color}`, borderRadius: 12, padding: '14px 18px' }}>
       <div style={{ fontSize: 13, fontWeight: 800, color, letterSpacing: '0.5px', marginBottom: 10 }}>
         📊 MARGIN EXPANSION RANKING
-        <span style={{ marginLeft: 8, fontSize: 11, color: '#6B7A8D', fontWeight: 500 }}>Δ OPM (basis points) over last 4 quarters · click headers to sort</span>
+        <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--mc-text-4)', fontWeight: 500 }}>Δ OPM (basis points) over last 4 quarters · click headers to sort</span>
       </div>
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
-            <tr style={{ color: '#6B7A8D', textAlign: 'left' }}>
+            <tr style={{ color: 'var(--mc-text-4)', textAlign: 'left' }}>
               <th style={th()}>#</th>
               {sortableTh('ticker', 'Ticker')}
               {sortableTh('delta', 'Δ OPM (bps)')}
@@ -1084,17 +1084,17 @@ function MarginExpansionPanel({ rows, loading, color, convictionSet }: { rows: M
                   const t = String(r.ticker).replace(/\.(NS|BO)$/i, '');
                   if (typeof window !== 'undefined') window.location.href = `/stock-sheet?ticker=${encodeURIComponent(t)}`;
                 }}
-                style={{ borderTop: '1px solid #1A2840', cursor: 'pointer' }}
+                style={{ borderTop: '1px solid var(--mc-bg-4)', cursor: 'pointer' }}
                 title="Click to open Stock Sheet"
               >
                 <td style={td()}>{i + 1}</td>
                 <td style={tdMono()}>{r.ticker}<CbBadge ticker={r.ticker} convictionSet={convictionSet} /></td>
-                <td style={{ ...td(), color: r.delta_opm_bps > 0 ? '#10B981' : '#EF4444', fontWeight: 700 }}>
+                <td style={{ ...td(), color: r.delta_opm_bps > 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: 700 }}>
                   {r.delta_opm_bps > 0 ? '+' : ''}{r.delta_opm_bps}
                 </td>
                 <td style={td()}>{r.latest_opm != null ? r.latest_opm.toFixed(2) + '%' : '—'}</td>
                 <td style={td()}>{r.oldest_opm != null ? r.oldest_opm.toFixed(2) + '%' : '—'}</td>
-                <td style={{ ...td(), color: (r.latest_rev_yoy ?? 0) >= 0 ? '#10B981' : '#EF4444' }}>
+                <td style={{ ...td(), color: (r.latest_rev_yoy ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>
                   {r.latest_rev_yoy != null ? (r.latest_rev_yoy >= 0 ? '+' : '') + r.latest_rev_yoy.toFixed(1) + '%' : '—'}
                 </td>
                 <td style={td()}>{r.quarters}</td>
@@ -1111,22 +1111,22 @@ function ModelShiftPanel({ rows, loading, color, convictionSet }: { rows: ModelS
   if (loading) return <Loader label="Loading 180-day news universe…" />;
   if (rows.length === 0) return <Empty label="No model-shift signals in the last 90 days. Concept-detection regex matches SaaS / recurring / platform / ARR / NRR / land-and-expand." />;
   return (
-    <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderLeft: `3px solid ${color}`, borderRadius: 12, padding: '14px 18px' }}>
+    <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderLeft: `3px solid ${color}`, borderRadius: 12, padding: '14px 18px' }}>
       <div style={{ fontSize: 13, fontWeight: 800, color, letterSpacing: '0.5px', marginBottom: 10 }}>
         🔁 MODEL SHIFT CANDIDATES
-        <span style={{ marginLeft: 8, fontSize: 11, color: '#6B7A8D', fontWeight: 500 }}>Recent (90d) vs prior (90-180d) mention frequency for SaaS / recurring / platform language</span>
+        <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--mc-text-4)', fontWeight: 500 }}>Recent (90d) vs prior (90-180d) mention frequency for SaaS / recurring / platform language</span>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {rows.map((r) => (
-          <div key={r.ticker} style={{ padding: '10px 14px', backgroundColor: '#0A1422', border: '1px solid #1A2840', borderRadius: 8 }}>
+          <div key={r.ticker} style={{ padding: '10px 14px', backgroundColor: '#0A1422', border: '1px solid var(--mc-bg-4)', borderRadius: 8 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-              <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 14, fontWeight: 800, color: '#E6EDF3' }}>
+              <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 14, fontWeight: 800, color: 'var(--mc-text-1)' }}>
                 {r.ticker}<CbBadge ticker={r.ticker} convictionSet={convictionSet} />
               </span>
-              <span style={{ fontSize: 11, color: '#94A3B8' }}>
-                Recent <span style={{ color: '#10B981', fontWeight: 800 }}>×{r.recent_count}</span> · Prior ×{r.prior_count}
+              <span style={{ fontSize: 11, color: 'var(--mc-text-3)' }}>
+                Recent <span style={{ color: 'var(--mc-bullish)', fontWeight: 800 }}>×{r.recent_count}</span> · Prior ×{r.prior_count}
               </span>
-              <span style={{ fontSize: 11, fontWeight: 700, color: r.jump_pct > 50 ? '#10B981' : r.jump_pct > 0 ? '#F59E0B' : '#6B7A8D' }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: r.jump_pct > 50 ? 'var(--mc-bullish)' : r.jump_pct > 0 ? 'var(--mc-warn)' : 'var(--mc-text-4)' }}>
                 {r.jump_pct > 0 ? '+' : ''}{r.jump_pct}% jump
               </span>
               {r.most_recent_age_days != null && r.most_recent_age_days <= 14 && (
@@ -1134,7 +1134,7 @@ function ModelShiftPanel({ rows, loading, color, convictionSet }: { rows: ModelS
               )}
             </div>
             {r.most_recent_headline && (
-              <div style={{ fontSize: 11, color: '#6B7A8D', lineHeight: 1.45, marginTop: 4 }}>
+              <div style={{ fontSize: 11, color: 'var(--mc-text-4)', lineHeight: 1.45, marginTop: 4 }}>
                 "{r.most_recent_headline.slice(0, 180)}{r.most_recent_headline.length > 180 ? '…' : ''}"
               </div>
             )}
@@ -1175,7 +1175,7 @@ function MultipleExpansionPanel({ rows, loading, color, convictionSet }: { rows:
   const sortIndicator = (col: typeof sortBy) => sortBy === col ? (sortAsc ? ' ▲' : ' ▼') : '';
   const sortableTh = (col: typeof sortBy, label: string) => (
     <th
-      style={{ ...th(), cursor: 'pointer', userSelect: 'none', color: sortBy === col ? color : '#6B7A8D' }}
+      style={{ ...th(), cursor: 'pointer', userSelect: 'none', color: sortBy === col ? color : 'var(--mc-text-4)' }}
       onClick={() => handleSort(col)}
       title={`Sort by ${label}`}
     >
@@ -1185,15 +1185,15 @@ function MultipleExpansionPanel({ rows, loading, color, convictionSet }: { rows:
   if (loading) return <Loader label="Loading quotes + earnings…" />;
   if (rows.length === 0) return <Empty label="No multiple-expansion candidates yet. Need positive EPS YoY + valid P/E ratio in your universe." />;
   return (
-    <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderLeft: `3px solid ${color}`, borderRadius: 12, padding: '14px 18px' }}>
+    <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderLeft: `3px solid ${color}`, borderRadius: 12, padding: '14px 18px' }}>
       <div style={{ fontSize: 13, fontWeight: 800, color, letterSpacing: '0.5px', marginBottom: 10 }}>
         🚀 MULTIPLE EXPANSION RANKING
-        <span style={{ marginLeft: 8, fontSize: 11, color: '#6B7A8D', fontWeight: 500 }}>Lowest PEG (P/E ÷ EPS YoY %) · click headers to sort</span>
+        <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--mc-text-4)', fontWeight: 500 }}>Lowest PEG (P/E ÷ EPS YoY %) · click headers to sort</span>
       </div>
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
-            <tr style={{ color: '#6B7A8D', textAlign: 'left' }}>
+            <tr style={{ color: 'var(--mc-text-4)', textAlign: 'left' }}>
               <th style={th()}>#</th>
               {sortableTh('ticker', 'Ticker')}
               {sortableTh('pe', 'P/E')}
@@ -1211,14 +1211,14 @@ function MultipleExpansionPanel({ rows, loading, color, convictionSet }: { rows:
                   const t = String(r.ticker).replace(/\.(NS|BO)$/i, '');
                   if (typeof window !== 'undefined') window.location.href = `/stock-sheet?ticker=${encodeURIComponent(t)}`;
                 }}
-                style={{ borderTop: '1px solid #1A2840', cursor: 'pointer' }}
+                style={{ borderTop: '1px solid var(--mc-bg-4)', cursor: 'pointer' }}
                 title="Click to open Stock Sheet"
               >
                 <td style={td()}>{i + 1}</td>
                 <td style={tdMono()}>{r.ticker}<CbBadge ticker={r.ticker} convictionSet={convictionSet} /></td>
                 <td style={td()}>{r.pe != null ? r.pe.toFixed(1) : '—'}</td>
-                <td style={{ ...td(), color: '#10B981' }}>{r.eps_yoy != null ? '+' + r.eps_yoy.toFixed(1) + '%' : '—'}</td>
-                <td style={{ ...td(), color: r.peg != null && r.peg < 1.0 ? '#10B981' : r.peg != null && r.peg < 1.5 ? '#F59E0B' : '#94A3B8', fontWeight: 700 }}>
+                <td style={{ ...td(), color: 'var(--mc-bullish)' }}>{r.eps_yoy != null ? '+' + r.eps_yoy.toFixed(1) + '%' : '—'}</td>
+                <td style={{ ...td(), color: r.peg != null && r.peg < 1.0 ? 'var(--mc-bullish)' : r.peg != null && r.peg < 1.5 ? 'var(--mc-warn)' : 'var(--mc-text-3)', fontWeight: 700 }}>
                   {r.peg != null ? r.peg.toFixed(2) : '—'}
                 </td>
                 <td style={td()}>{r.latest_opm != null ? r.latest_opm.toFixed(2) + '%' : '—'}</td>
@@ -1236,8 +1236,8 @@ function td(): React.CSSProperties { return { padding: '8px 10px', color: '#C9D4
 function tdMono(): React.CSSProperties { return { ...td(), fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', color: '#E6EDF3', fontWeight: 700 }; }
 
 function Loader({ label }: { label: string }) {
-  return <div style={{ color: '#6B7A8D', fontSize: 13, padding: 24 }}>{label}</div>;
+  return <div style={{ color: 'var(--mc-text-4)', fontSize: 13, padding: 24 }}>{label}</div>;
 }
 function Empty({ label }: { label: string }) {
-  return <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: 12, padding: 24, textAlign: 'center', color: '#6B7A8D', fontSize: 13 }}>{label}</div>;
+  return <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderRadius: 12, padding: 24, textAlign: 'center', color: 'var(--mc-text-4)', fontSize: 13 }}>{label}</div>;
 }

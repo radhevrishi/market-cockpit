@@ -59,19 +59,19 @@ export default function EOAlertsPage() {
   };
 
   return (
-    <div style={{ padding: 20, color: '#E6EDF3', maxWidth: 900, fontFamily: 'system-ui' }}>
+    <div style={{ padding: 20, color: 'var(--mc-text-1)', maxWidth: 900, fontFamily: 'system-ui' }}>
       <h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 12 }}>🔔 EO Alerts</h1>
-      <p style={{ color: '#94A3B8', fontSize: 13, marginBottom: 24 }}>
+      <p style={{ color: 'var(--mc-text-3)', fontSize: 13, marginBottom: 24 }}>
         Browser-push notifications when new BLOCKBUSTER earnings land. Zero infra cost — uses the standard Web Notifications API.
         Tab needs to be open for polling to run (every 30 min). Add to Home Screen on mobile for background polling.
       </p>
 
-      <div style={{ padding: 16, background: '#0D1623', border: '1px solid #1A2540', borderRadius: 8, marginBottom: 16 }}>
+      <div style={{ padding: 16, background: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 8, marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
             <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>
               Status: {' '}
-              <span style={{ color: enabled && permission === 'granted' ? '#10B981' : '#94A3B8' }}>
+              <span style={{ color: enabled && permission === 'granted' ? 'var(--mc-bullish)' : 'var(--mc-text-3)' }}>
                 {enabled && permission === 'granted' ? '✓ ACTIVE — polling every 30 min' : 'INACTIVE'}
               </span>
             </div>
@@ -82,18 +82,18 @@ export default function EOAlertsPage() {
           <div style={{ display: 'flex', gap: 8 }}>
             {!enabled && (
               <button onClick={enable} disabled={permission === 'unsupported'}
-                style={{ padding: '8px 16px', background: '#0F7ABF', color: '#fff', border: 'none', borderRadius: 6, fontWeight: 700, cursor: 'pointer' }}>
+                style={{ padding: '8px 16px', background: 'var(--mc-accent)', color: '#fff', border: 'none', borderRadius: 6, fontWeight: 700, cursor: 'pointer' }}>
                 Enable alerts
               </button>
             )}
             {enabled && (
               <button onClick={disable}
-                style={{ padding: '8px 16px', background: '#1A2540', color: '#E6EDF3', border: '1px solid #2A3550', borderRadius: 6, fontWeight: 700, cursor: 'pointer' }}>
+                style={{ padding: '8px 16px', background: 'var(--mc-bg-4)', color: 'var(--mc-text-1)', border: '1px solid #2A3550', borderRadius: 6, fontWeight: 700, cursor: 'pointer' }}>
                 Disable
               </button>
             )}
             <button onClick={testPoll} disabled={polling || !enabled}
-              style={{ padding: '8px 16px', background: 'transparent', color: '#22D3EE', border: '1px solid #22D3EE', borderRadius: 6, fontWeight: 700, cursor: 'pointer' }}>
+              style={{ padding: '8px 16px', background: 'transparent', color: 'var(--mc-cyan)', border: '1px solid var(--mc-cyan)', borderRadius: 6, fontWeight: 700, cursor: 'pointer' }}>
               {polling ? '...' : 'Test now'}
             </button>
           </div>
@@ -101,12 +101,12 @@ export default function EOAlertsPage() {
       </div>
 
       {lastResult && (
-        <div style={{ padding: 14, background: '#0D1623', border: '1px solid #1A2540', borderRadius: 8 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#94A3B8', marginBottom: 8 }}>Last poll: {lastResult.checked} BBs scanned · {lastResult.newBB.length} new</div>
+        <div style={{ padding: 14, background: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 8 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-text-3)', marginBottom: 8 }}>Last poll: {lastResult.checked} BBs scanned · {lastResult.newBB.length} new</div>
           {lastResult.newBB.length > 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {lastResult.newBB.map(b => (
-                <div key={b.ticker} style={{ fontSize: 12, padding: '6px 10px', background: '#10B98115', borderLeft: '3px solid #10B981', borderRadius: 4 }}>
+                <div key={b.ticker} style={{ fontSize: 12, padding: '6px 10px', background: '#10B98115', borderLeft: '3px solid var(--mc-bullish)', borderRadius: 4 }}>
                   <strong>{b.ticker}</strong> — sales {Math.round(b.sales_yoy_pct || 0)}% · PAT {Math.round(b.net_profit_yoy_pct || 0)}% · EPS {Math.round(b.eps_yoy_pct || 0)}% · score {b.composite_score}
                 </div>
               ))}
@@ -118,12 +118,12 @@ export default function EOAlertsPage() {
       )}
 
       {permission === 'unsupported' && (
-        <div style={{ padding: 12, background: '#F59E0B15', border: '1px solid #F59E0B55', borderRadius: 6, color: '#F59E0B', fontSize: 12, marginTop: 12 }}>
+        <div style={{ padding: 12, background: '#F59E0B15', border: '1px solid #F59E0B55', borderRadius: 6, color: 'var(--mc-warn)', fontSize: 12, marginTop: 12 }}>
           ⚠ Your browser does not support Web Notifications. Try Chrome / Edge / Safari.
         </div>
       )}
       {permission === 'denied' && (
-        <div style={{ padding: 12, background: '#EF444415', border: '1px solid #EF444455', borderRadius: 6, color: '#EF4444', fontSize: 12, marginTop: 12 }}>
+        <div style={{ padding: 12, background: '#EF444415', border: '1px solid #EF444455', borderRadius: 6, color: 'var(--mc-bearish)', fontSize: 12, marginTop: 12 }}>
           ⚠ Notifications are blocked. Re-enable in your browser site settings, then refresh.
         </div>
       )}

@@ -31,7 +31,7 @@ type Tab = 'heatmap' | 'movers';
 
 function PanelLoader({ label }: { label: string }) {
   return (
-    <div style={{ padding: 24, color: '#6B7A8D', fontSize: 12 }}>
+    <div style={{ padding: 24, color: 'var(--mc-text-4)', fontSize: 12 }}>
       Loading {label}…
     </div>
   );
@@ -58,7 +58,7 @@ export default function MarketSnapshotPage() {
       <div
         style={{
           backgroundColor: '#0D1B2E',
-          borderBottom: '1px solid #1E2D45',
+          borderBottom: '1px solid var(--mc-border-1)',
           padding: '10px 16px',
           display: 'flex',
           alignItems: 'center',
@@ -66,7 +66,7 @@ export default function MarketSnapshotPage() {
           flexShrink: 0,
         }}
       >
-        <span style={{ fontSize: 13, fontWeight: 700, color: '#22D3EE', letterSpacing: '0.6px', marginRight: 12 }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--mc-cyan)', letterSpacing: '0.6px', marginRight: 12 }}>
           📊 MARKET SNAPSHOT
         </span>
         {([
@@ -84,7 +84,7 @@ export default function MarketSnapshotPage() {
                 gap: 6,
                 padding: '6px 12px',
                 borderRadius: 8,
-                border: isActive ? '1px solid #0F7ABF60' : '1px solid #1A2840',
+                border: isActive ? '1px solid #0F7ABF60' : '1px solid var(--mc-bg-4)',
                 backgroundColor: isActive ? '#0F7ABF20' : 'transparent',
                 color: isActive ? '#38A9E8' : '#8A95A3',
                 fontSize: 12,
@@ -99,7 +99,7 @@ export default function MarketSnapshotPage() {
             </button>
           );
         })}
-        <span style={{ marginLeft: 'auto', fontSize: 11, color: '#4A5B6C' }}>
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--mc-text-4)' }}>
           Same data — different lens. Heatmap = sector treemap · Movers = top gainers / losers grid.
         </span>
       </div>

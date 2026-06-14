@@ -166,27 +166,27 @@ export default function TickerDrawer({ symbol, exchange, onClose }: TickerDrawer
       {/* Drawer panel */}
       <div style={{
         position: 'fixed', right: 0, top: 0, bottom: 0, width: '380px', maxWidth: '95vw',
-        backgroundColor: '#111B35', borderLeft: '1px solid #1E2D45',
+        backgroundColor: 'var(--mc-bg-2)', borderLeft: '1px solid var(--mc-border-1)',
         zIndex: 301, overflowY: 'auto', display: 'flex', flexDirection: 'column',
         boxShadow: '-20px 0 60px rgba(0,0,0,0.5)',
       }}>
 
         {/* Header */}
-        <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid #1E2D45', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexShrink: 0 }}>
+        <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid var(--mc-border-1)', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexShrink: 0 }}>
           <div>
-            <p style={{ fontSize: '20px', fontWeight: '800', color: '#F5F7FA', margin: '0 0 2px', letterSpacing: '-0.5px' }}>{symbol}</p>
-            <p style={{ fontSize: '12px', color: '#4A5B6C', margin: 0 }}>{exchangeLabel}</p>
+            <p style={{ fontSize: '20px', fontWeight: '800', color: 'var(--mc-text-0)', margin: '0 0 2px', letterSpacing: '-0.5px' }}>{symbol}</p>
+            <p style={{ fontSize: '12px', color: 'var(--mc-text-4)', margin: 0 }}>{exchangeLabel}</p>
           </div>
           <button
             onClick={onClose}
-            style={{ background: 'none', border: 'none', color: '#4A5B6C', cursor: 'pointer', padding: '4px', marginTop: '2px' }}
+            style={{ background: 'none', border: 'none', color: 'var(--mc-text-4)', cursor: 'pointer', padding: '4px', marginTop: '2px' }}
           >
             <X style={{ width: '18px', height: '18px' }} />
           </button>
         </div>
 
         {/* Quote section */}
-        <div style={{ padding: '20px', borderBottom: '1px solid #1E2D45', flexShrink: 0 }}>
+        <div style={{ padding: '20px', borderBottom: '1px solid var(--mc-border-1)', flexShrink: 0 }}>
           {qLoading ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {[1, 2, 3].map(i => (
@@ -195,9 +195,9 @@ export default function TickerDrawer({ symbol, exchange, onClose }: TickerDrawer
             </div>
           ) : qError ? (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', padding: '12px 0' }}>
-              <AlertCircle style={{ width: '20px', height: '20px', color: '#EF4444' }} />
+              <AlertCircle style={{ width: '20px', height: '20px', color: 'var(--mc-bearish)' }} />
               <p style={{ fontSize: '13px', color: '#8A95A3', margin: 0 }}>Could not load quote for {symbol}</p>
-              <button onClick={() => qRefetch()} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: '#0F7ABF', background: 'none', border: 'none', cursor: 'pointer' }}>
+              <button onClick={() => qRefetch()} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: 'var(--mc-accent)', background: 'none', border: 'none', cursor: 'pointer' }}>
                 <RefreshCw style={{ width: '12px', height: '12px' }} /> Retry
               </button>
             </div>
@@ -205,14 +205,14 @@ export default function TickerDrawer({ symbol, exchange, onClose }: TickerDrawer
             <>
               <p style={{ fontSize: '12px', color: '#8A95A3', margin: '0 0 4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayName}</p>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', marginBottom: '12px' }}>
-                <span style={{ fontSize: '28px', fontWeight: '800', color: '#F5F7FA', letterSpacing: '-1px' }}>
+                <span style={{ fontSize: '28px', fontWeight: '800', color: 'var(--mc-text-0)', letterSpacing: '-1px' }}>
                   {fmt(quote.price)}
                 </span>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '14px', fontWeight: '600', color: up ? '#10B981' : '#EF4444' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '14px', fontWeight: '600', color: up ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>
                   {up ? <TrendingUp style={{ width: '14px', height: '14px' }} /> : <TrendingDown style={{ width: '14px', height: '14px' }} />}
                   {up ? '+' : ''}{fmt(quote.change)} ({up ? '+' : ''}{fmt(quote.change_pct)}%)
                 </span>
-                <span style={{ fontSize: '11px', color: '#4A5B6C' }}>{quote.currency ?? 'USD'}</span>
+                <span style={{ fontSize: '11px', color: 'var(--mc-text-4)' }}>{quote.currency ?? 'USD'}</span>
               </div>
 
               {/* Stats grid */}
@@ -226,7 +226,7 @@ export default function TickerDrawer({ symbol, exchange, onClose }: TickerDrawer
                   { label: 'P/E', value: quote.pe_ratio != null ? fmt(quote.pe_ratio, 1) : '—' },
                 ].map(({ label, value }) => (
                   <div key={label} style={{ backgroundColor: '#0D1B2E', borderRadius: '8px', padding: '8px 10px' }}>
-                    <p style={{ fontSize: '9px', fontWeight: '600', color: '#4A5B6C', margin: '0 0 3px', letterSpacing: '0.5px' }}>{label}</p>
+                    <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--mc-text-4)', margin: '0 0 3px', letterSpacing: '0.5px' }}>{label}</p>
                     <p style={{ fontSize: '12px', color: '#C9D4E0', margin: 0, fontVariantNumeric: 'tabular-nums' }}>{value}</p>
                   </div>
                 ))}
@@ -237,7 +237,7 @@ export default function TickerDrawer({ symbol, exchange, onClose }: TickerDrawer
 
         {/* News section */}
         <div style={{ padding: '16px 20px', flex: 1 }}>
-          <p style={{ fontSize: '11px', fontWeight: '600', color: '#4A5B6C', margin: '0 0 12px', letterSpacing: '0.5px' }}>RECENT NEWS</p>
+          <p style={{ fontSize: '11px', fontWeight: '600', color: 'var(--mc-text-4)', margin: '0 0 12px', letterSpacing: '0.5px' }}>RECENT NEWS</p>
 
           {nLoading ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -247,7 +247,7 @@ export default function TickerDrawer({ symbol, exchange, onClose }: TickerDrawer
             /* PATCH 0692 — honest empty-state: only show 'no news' when the
                 ticker/company filter matched zero, instead of showing unrelated
                 global news. */
-            <p style={{ fontSize: '12px', color: '#4A5B6C', fontStyle: 'italic' }}>No recent news for {symbol}</p>
+            <p style={{ fontSize: '12px', color: 'var(--mc-text-4)', fontStyle: 'italic' }}>No recent news for {symbol}</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {filteredNews.map(n => {
@@ -258,7 +258,7 @@ export default function TickerDrawer({ symbol, exchange, onClose }: TickerDrawer
                   <a
                     key={n.id}
                     href={url} target="_blank" rel="noopener noreferrer"
-                    style={{ display: 'block', padding: '10px 12px', backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: '10px', textDecoration: 'none', transition: 'border-color 0.15s' }}
+                    style={{ display: 'block', padding: '10px 12px', backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderRadius: '10px', textDecoration: 'none', transition: 'border-color 0.15s' }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
                       {(() => {
@@ -269,12 +269,12 @@ export default function TickerDrawer({ symbol, exchange, onClose }: TickerDrawer
                           </span>
                         ) : null;
                       })()}
-                      <span style={{ fontSize: '10px', color: '#4A5B6C', marginLeft: 'auto', flexShrink: 0 }}>{timeAgo(n.published_at)}</span>
+                      <span style={{ fontSize: '10px', color: 'var(--mc-text-4)', marginLeft: 'auto', flexShrink: 0 }}>{timeAgo(n.published_at)}</span>
                     </div>
                     <p style={{ fontSize: '12px', color: '#C9D4E0', margin: 0, lineHeight: '1.4' }}>
                       {title.slice(0, 100)}{title.length > 100 ? '…' : ''}
                     </p>
-                    {src && <p style={{ fontSize: '10px', color: '#4A5B6C', margin: '4px 0 0', display: 'flex', alignItems: 'center', gap: '3px' }}>{src} <ExternalLink style={{ width: '8px', height: '8px' }} /></p>}
+                    {src && <p style={{ fontSize: '10px', color: 'var(--mc-text-4)', margin: '4px 0 0', display: 'flex', alignItems: 'center', gap: '3px' }}>{src} <ExternalLink style={{ width: '8px', height: '8px' }} /></p>}
                   </a>
                 );
               })}

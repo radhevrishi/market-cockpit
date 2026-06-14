@@ -74,7 +74,7 @@ export function CompanyIntelGuidance({ ticker, compact = false }: { ticker?: str
           onClick={() => setReloadKey(k => k + 1)}
           style={{
             marginLeft: 'auto', padding: '3px 10px', fontSize: 10, fontWeight: 700,
-            color: '#0A0E1A', background: '#FBBF24', border: 'none', borderRadius: 4,
+            color: 'var(--mc-bg-0)', background: '#FBBF24', border: 'none', borderRadius: 4,
             cursor: 'pointer', letterSpacing: '0.4px',
           }}
         >
@@ -87,11 +87,11 @@ export function CompanyIntelGuidance({ ticker, compact = false }: { ticker?: str
     return (
       <div style={{
         padding: 12, fontSize: 11, color: '#8A95A3',
-        border: '1px dashed #1A2540', borderRadius: 6, background: 'rgba(34,211,238,0.04)',
+        border: '1px dashed var(--mc-bg-4)', borderRadius: 6, background: 'rgba(34,211,238,0.04)',
       }}>
-        No uploaded transcripts for <strong style={{ color: '#22D3EE' }}>{ticker}</strong>.
+        No uploaded transcripts for <strong style={{ color: 'var(--mc-cyan)' }}>{ticker}</strong>.
         Add concall / PPT text via{' '}
-        <Link href={`/company-intel`} style={{ color: '#22D3EE', textDecoration: 'underline' }}>
+        <Link href={`/company-intel`} style={{ color: 'var(--mc-cyan)', textDecoration: 'underline' }}>
           Company Intelligence
         </Link>{' '}
         — guidance will surface here automatically.
@@ -102,29 +102,29 @@ export function CompanyIntelGuidance({ ticker, compact = false }: { ticker?: str
   const items = compact ? corpus.guidance.slice(0, 5) : corpus.guidance;
 
   return (
-    <div style={{ padding: compact ? 10 : 14, background: '#0A1422', border: '1px solid #1A2540', borderRadius: 6 }}>
+    <div style={{ padding: compact ? 10 : 14, background: '#0A1422', border: '1px solid var(--mc-bg-4)', borderRadius: 6 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: compact ? 6 : 10 }}>
-        <span style={{ fontSize: 10, fontWeight: 700, color: '#10B981', letterSpacing: '0.5px' }}>
+        <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--mc-bullish)', letterSpacing: '0.5px' }}>
           📈 STORED GUIDANCE
         </span>
-        <span style={{ fontSize: 10, color: '#6B7A8D' }}>
+        <span style={{ fontSize: 10, color: 'var(--mc-text-4)' }}>
           {corpus.guidance.length} items · {corpus.documents.length} docs · updated {new Date(corpus.updated_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
         </span>
-        <Link href={`/company-intel`} style={{ marginLeft: 'auto', fontSize: 10, color: '#22D3EE', textDecoration: 'none', fontWeight: 600 }}>
+        <Link href={`/company-intel`} style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none', fontWeight: 600 }}>
           full corpus →
         </Link>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {items.map((g, i) => (
           <div key={i} title={g.quote} style={{ padding: '5px 8px', borderLeft: '2px solid #10B98160', background: 'rgba(16,185,129,0.04)', borderRadius: 3 }}>
-            <span style={{ fontSize: 9, color: '#10B981', fontWeight: 700, letterSpacing: '0.3px', marginRight: 6 }}>
+            <span style={{ fontSize: 9, color: 'var(--mc-bullish)', fontWeight: 700, letterSpacing: '0.3px', marginRight: 6 }}>
               {categoryLabel(g.category)}{g.year ? ` · ${g.year}` : ''}
             </span>
-            <span style={{ fontSize: 12, color: '#E6EDF3', fontWeight: 600 }}>{g.text}</span>
+            <span style={{ fontSize: 12, color: 'var(--mc-text-1)', fontWeight: 600 }}>{g.text}</span>
           </div>
         ))}
         {compact && corpus.guidance.length > 5 && (
-          <Link href={`/company-intel`} style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'underline', marginTop: 4 }}>
+          <Link href={`/company-intel`} style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'underline', marginTop: 4 }}>
             +{corpus.guidance.length - 5} more guidance items →
           </Link>
         )}

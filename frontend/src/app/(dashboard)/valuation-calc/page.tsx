@@ -69,13 +69,13 @@ function SaveValuationBar({ calcKind, result, onLoaded }: {
       />
       <button onClick={handleSave} style={{
         fontSize: 12, padding: '6px 14px',
-        background: '#10B981', border: 'none', color: '#0A0E1A',
+        background: 'var(--mc-bullish)', border: 'none', color: 'var(--mc-bg-0)',
         borderRadius: 4, cursor: 'pointer', fontWeight: 800,
       }}>
         💾 SAVE VALUATION
       </button>
       {savedId && (
-        <span style={{ fontSize: 10, color: '#10B981', fontWeight: 700 }}>
+        <span style={{ fontSize: 10, color: 'var(--mc-bullish)', fontWeight: 700 }}>
           ✓ saved
         </span>
       )}
@@ -145,7 +145,7 @@ function ValuationAnalyticsPanel() {
       <div style={{ background: CARD, border: `1px dashed ${BORDER}`, borderRadius: 8, padding: '20px 22px', textAlign: 'center' }}>
         <div style={{ fontSize: 14, color: TEXT, fontWeight: 700, marginBottom: 8 }}>📊 Valuation Analytics</div>
         <div style={{ fontSize: 12, color: DIM, fontStyle: 'italic', lineHeight: 1.6 }}>
-          No saved valuations yet. Run a calculator → click <b style={{ color: '#10B981' }}>💾 SAVE VALUATION</b> on the result.<br />
+          No saved valuations yet. Run a calculator → click <b style={{ color: 'var(--mc-bullish)' }}>💾 SAVE VALUATION</b> on the result.<br />
           Once you have 5+ saved runs, this tab will surface aggregated insights: avg upside, top conviction, worst risk, calculator mix.
         </div>
       </div>
@@ -175,21 +175,21 @@ function ValuationAnalyticsPanel() {
         </div>
         <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 6, padding: '12px 14px' }}>
           <div style={{ fontSize: 10, color: DIM, fontWeight: 800, letterSpacing: '0.5px' }}>BULL CASE AVG</div>
-          <div style={{ fontSize: 22, fontWeight: 900, color: '#10B981', marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>
+          <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--mc-bullish)', marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>
             +{avgBullUpside.toFixed(0)}%
           </div>
           <div style={{ fontSize: 10, color: DIM, marginTop: 2 }}>book-wide best-case</div>
         </div>
         <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 6, padding: '12px 14px' }}>
           <div style={{ fontSize: 10, color: DIM, fontWeight: 800, letterSpacing: '0.5px' }}>BEAR CASE AVG</div>
-          <div style={{ fontSize: 22, fontWeight: 900, color: '#EF4444', marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>
+          <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--mc-bearish)', marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>
             {avgBearUpside >= 0 ? '+' : ''}{avgBearUpside.toFixed(0)}%
           </div>
           <div style={{ fontSize: 10, color: DIM, marginTop: 2 }}>downside if multiples compress</div>
         </div>
         <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 6, padding: '12px 14px' }}>
           <div style={{ fontSize: 10, color: DIM, fontWeight: 800, letterSpacing: '0.5px' }}>BUY-READY</div>
-          <div style={{ fontSize: 22, fontWeight: 900, color: '#10B981', marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>
+          <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--mc-bullish)', marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>
             {buyReady.length}/{enriched.length}
           </div>
           <div style={{ fontSize: 10, color: DIM, marginTop: 2 }}>base upside ≥ 25%</div>
@@ -204,7 +204,7 @@ function ValuationAnalyticsPanel() {
             <span key={k} style={{
               fontSize: 12, padding: '5px 11px',
               background: '#22D3EE15', border: '1px solid #22D3EE40',
-              color: '#22D3EE', borderRadius: 4, fontWeight: 800, fontFamily: 'ui-monospace, monospace',
+              color: 'var(--mc-cyan)', borderRadius: 4, fontWeight: 800, fontFamily: 'ui-monospace, monospace',
             }}>
               {k === 'EV_EBITDA' ? 'EV/EBITDA' : k}: {n}
             </span>
@@ -213,21 +213,21 @@ function ValuationAnalyticsPanel() {
       </div>
 
       {/* Top conviction */}
-      <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderLeft: '3px solid #10B981', borderRadius: 6, padding: '14px 16px' }}>
-        <div style={{ fontSize: 13, fontWeight: 800, color: '#10B981', letterSpacing: '0.5px', marginBottom: 4 }}>🏆 TOP CONVICTION (by annualized base-case)</div>
+      <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderLeft: '3px solid var(--mc-bullish)', borderRadius: 6, padding: '14px 16px' }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-bullish)', letterSpacing: '0.5px', marginBottom: 4 }}>🏆 TOP CONVICTION (by annualized base-case)</div>
         <div style={{ fontSize: 11, color: DIM, marginBottom: 10 }}>Highest expected CAGR across your saved valuations</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {topConviction.map((e, i) => (
             <div key={e.v.id} style={{ background: '#0A1422', borderRadius: 5, padding: '8px 12px', display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 14, color: '#10B981', fontWeight: 900, minWidth: 24 }}>#{i + 1}</span>
+              <span style={{ fontSize: 14, color: 'var(--mc-bullish)', fontWeight: 900, minWidth: 24 }}>#{i + 1}</span>
               <span style={{ fontSize: 13, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace, monospace' }}>{e.v.ticker || e.v.company || '—'}</span>
-              <span style={{ fontSize: 10, color: '#22D3EE', background: '#22D3EE15', padding: '2px 7px', borderRadius: 3, fontWeight: 800 }}>
+              <span style={{ fontSize: 10, color: 'var(--mc-cyan)', background: '#22D3EE15', padding: '2px 7px', borderRadius: 3, fontWeight: 800 }}>
                 {e.v.calcKind === 'EV_EBITDA' ? 'EV/EBITDA' : e.v.calcKind}
               </span>
               <span style={{ flex: 1, fontSize: 11, color: '#C9D4E0', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {e.v.baseSummary}
               </span>
-              <span style={{ fontSize: 13, fontWeight: 900, color: '#10B981', fontVariantNumeric: 'tabular-nums' }}>
+              <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-bullish)', fontVariantNumeric: 'tabular-nums' }}>
                 {e.base!.annualizedPct >= 0 ? '+' : ''}{e.base!.annualizedPct.toFixed(0)}% CAGR
               </span>
             </div>
@@ -236,20 +236,20 @@ function ValuationAnalyticsPanel() {
       </div>
 
       {/* Worst risk */}
-      <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderLeft: '3px solid #EF4444', borderRadius: 6, padding: '14px 16px' }}>
-        <div style={{ fontSize: 13, fontWeight: 800, color: '#EF4444', letterSpacing: '0.5px', marginBottom: 4 }}>⚠ WORST DOWNSIDE (by bear-case)</div>
+      <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderLeft: '3px solid var(--mc-bearish)', borderRadius: 6, padding: '14px 16px' }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-bearish)', letterSpacing: '0.5px', marginBottom: 4 }}>⚠ WORST DOWNSIDE (by bear-case)</div>
         <div style={{ fontSize: 11, color: DIM, marginBottom: 10 }}>Maximum drawdown if multiples compress to bear scenario</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {worstRisk.map((e) => (
             <div key={e.v.id} style={{ background: '#0A1422', borderRadius: 5, padding: '8px 12px', display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 13, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace, monospace' }}>{e.v.ticker || e.v.company || '—'}</span>
-              <span style={{ fontSize: 10, color: '#EF4444', background: '#EF444415', padding: '2px 7px', borderRadius: 3, fontWeight: 800 }}>
+              <span style={{ fontSize: 10, color: 'var(--mc-bearish)', background: '#EF444415', padding: '2px 7px', borderRadius: 3, fontWeight: 800 }}>
                 {e.v.calcKind === 'EV_EBITDA' ? 'EV/EBITDA' : e.v.calcKind}
               </span>
               <span style={{ flex: 1, fontSize: 11, color: '#C9D4E0', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {e.v.notes || e.v.baseSummary}
               </span>
-              <span style={{ fontSize: 13, fontWeight: 900, color: '#EF4444', fontVariantNumeric: 'tabular-nums' }}>
+              <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-bearish)', fontVariantNumeric: 'tabular-nums' }}>
                 {(e.bear?.upsidePct ?? 0).toFixed(0)}%
               </span>
             </div>
@@ -270,7 +270,7 @@ function ValuationAnalyticsPanel() {
           {enriched.map(e => (
             <>
               <div key={e.v.id+'-t'} style={{ color: TEXT, fontWeight: 700, fontFamily: 'ui-monospace, monospace' }}>{e.v.ticker || '—'}</div>
-              <div key={e.v.id+'-c'} style={{ color: '#22D3EE', fontFamily: 'ui-monospace, monospace' }}>{e.v.calcKind === 'EV_EBITDA' ? 'EVE' : e.v.calcKind}</div>
+              <div key={e.v.id+'-c'} style={{ color: 'var(--mc-cyan)', fontFamily: 'ui-monospace, monospace' }}>{e.v.calcKind === 'EV_EBITDA' ? 'EVE' : e.v.calcKind}</div>
               <div key={e.v.id+'-s'} style={{ color: '#C9D4E0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.v.baseSummary.slice(0, 90)}</div>
               <div key={e.v.id+'-1'} style={{ color: sigColor(e.bear?.upsidePct || 0), fontWeight: 800, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{(e.bear?.upsidePct ?? 0).toFixed(0)}%</div>
               <div key={e.v.id+'-2'} style={{ color: sigColor(e.base!.upsidePct || 0), fontWeight: 800, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{(e.base!.upsidePct ?? 0).toFixed(0)}%</div>
@@ -294,7 +294,7 @@ function SavedValuationsPanel({ onLoad }: { onLoad?: (v: SavedValuation) => void
   if (saved.length === 0) {
     return (
       <div style={{ background: CARD, border: `1px dashed ${BORDER}`, borderRadius: 8, padding: '14px 16px', fontSize: 12, color: DIM, fontStyle: 'italic' }}>
-        💾 No saved valuations yet. Run a calculator and click <b style={{ color: '#10B981' }}>SAVE VALUATION</b> to persist it here for later review.
+        💾 No saved valuations yet. Run a calculator and click <b style={{ color: 'var(--mc-bullish)' }}>SAVE VALUATION</b> to persist it here for later review.
       </div>
     );
   }
@@ -329,7 +329,7 @@ function SavedValuationsPanel({ onLoad }: { onLoad?: (v: SavedValuation) => void
             padding: '8px 10px',
             display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap',
           }}>
-            <span style={{ fontSize: 11, color: '#22D3EE', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 50 }}>
+            <span style={{ fontSize: 11, color: 'var(--mc-cyan)', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 50 }}>
               {v.calcKind === 'EV_EBITDA' ? 'EV/EB' : v.calcKind}
             </span>
             <span style={{ fontSize: 12, color: TEXT, fontWeight: 700 }} title={`Saved ${v.savedAt}`}>{displayLabel}</span>
@@ -350,12 +350,12 @@ function SavedValuationsPanel({ onLoad }: { onLoad?: (v: SavedValuation) => void
               onLoad?.(v);
             }} style={{
               fontSize: 10, padding: '3px 8px',
-              background: '#22D3EE15', border: '1px solid #22D3EE50', color: '#22D3EE',
+              background: '#22D3EE15', border: '1px solid #22D3EE50', color: 'var(--mc-cyan)',
               borderRadius: 3, cursor: 'pointer', fontWeight: 700,
             }}>EDIT</button>
             <button onClick={() => { if (confirm(`Delete saved valuation for ${v.ticker || '—'}?`)) deleteValuation(v.id); }} style={{
               fontSize: 10, padding: '3px 8px',
-              background: '#EF444415', border: '1px solid #EF444450', color: '#EF4444',
+              background: '#EF444415', border: '1px solid #EF444450', color: 'var(--mc-bearish)',
               borderRadius: 3, cursor: 'pointer', fontWeight: 700,
             }}>×</button>
           </div>
@@ -376,17 +376,17 @@ function CalcResultDisplay({ result, calcKind }: { result: CalculatorResult; cal
           background: '#F59E0B15', border: '1px solid #F59E0B60', borderRadius: 6,
           padding: '10px 14px', marginBottom: 10, fontSize: 12, color: TEXT, lineHeight: 1.55,
         }}>
-          ⚠ <b style={{ color: '#F59E0B' }}>Sanity check:</b> base-case upside is {baseUpside.toFixed(0)}% — that&apos;s unusual.
+          ⚠ <b style={{ color: 'var(--mc-warn)' }}>Sanity check:</b> base-case upside is {baseUpside.toFixed(0)}% — that&apos;s unusual.
           Common causes: (1) current market cap not yet auto-filled — click 🔄 above to pull live data;
           (2) forward revenue / PAT input is much larger than current scale — verify the FY27/FY28 guidance is realistic;
-          (3) multiple band may be too generous for the sector. Adjust inputs or open <a href="/playbook" style={{ color: '#22D3EE' }}>Playbook</a> for sector-appropriate ranges.
+          (3) multiple band may be too generous for the sector. Adjust inputs or open <a href="/playbook" style={{ color: 'var(--mc-cyan)' }}>Playbook</a> for sector-appropriate ranges.
         </div>
       )}
       <div style={{
         background: '#22D3EE12', border: '1px solid #22D3EE40', borderRadius: 6,
         padding: '12px 14px', marginBottom: 12, fontSize: 13, color: TEXT, lineHeight: 1.6,
       }}>
-        <b style={{ color: '#22D3EE' }}>📊 Base case:</b> {result.baseSummary}
+        <b style={{ color: 'var(--mc-cyan)' }}>📊 Base case:</b> {result.baseSummary}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
         {result.cases.map((c) => (
@@ -501,7 +501,7 @@ function TickerCombo({ value, onChange, onSelect, market = 'india' }: {
               onMouseEnter={(e) => e.currentTarget.style.background = '#1A2540'}
               onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
             >
-              <span style={{ fontSize: 11, color: '#22D3EE', fontFamily: 'ui-monospace, monospace', fontWeight: 800, minWidth: 80 }}>
+              <span style={{ fontSize: 11, color: 'var(--mc-cyan)', fontFamily: 'ui-monospace, monospace', fontWeight: 800, minWidth: 80 }}>
                 {h.ticker}
               </span>
               <span style={{ flex: 1, fontSize: 11, color: TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -509,7 +509,7 @@ function TickerCombo({ value, onChange, onSelect, market = 'india' }: {
               </span>
               {h.sector && <span style={{ fontSize: 9, color: DIM, whiteSpace: 'nowrap' }}>{h.sector}</span>}
               {h.price && (
-                <span style={{ fontSize: 10, color: '#10B981', fontFamily: 'ui-monospace, monospace', fontWeight: 700, minWidth: 50, textAlign: 'right' }}>
+                <span style={{ fontSize: 10, color: 'var(--mc-bullish)', fontFamily: 'ui-monospace, monospace', fontWeight: 700, minWidth: 50, textAlign: 'right' }}>
                   ₹{h.price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                 </span>
               )}
@@ -556,16 +556,16 @@ function AutoFillBtn({ ticker, market, onFill, currentPrice, onNotInUniverse }: 
       <button onClick={handleClick} disabled={loading} style={{
         fontSize: 11, padding: '5px 12px',
         background: '#10B98115', border: '1px solid #10B98150',
-        color: '#10B981', borderRadius: 4, cursor: loading ? 'wait' : 'pointer', fontWeight: 800,
+        color: 'var(--mc-bullish)', borderRadius: 4, cursor: loading ? 'wait' : 'pointer', fontWeight: 800,
       }}>
         {loading ? '⏳ Fetching…' : '🔄 Auto-fill price + market cap'}
       </button>
       {currentPrice && (
         <span style={{ fontSize: 11, color: DIM, fontFamily: 'ui-monospace, monospace' }}>
-          live price: <b style={{ color: '#10B981' }}>{market === 'us' ? '$' : '₹'}{currentPrice.toLocaleString('en-IN', { maximumFractionDigits: 1 })}</b>
+          live price: <b style={{ color: 'var(--mc-bullish)' }}>{market === 'us' ? '$' : '₹'}{currentPrice.toLocaleString('en-IN', { maximumFractionDigits: 1 })}</b>
         </span>
       )}
-      {error && <span style={{ fontSize: 10, color: '#F59E0B' }}>{error}</span>}
+      {error && <span style={{ fontSize: 10, color: 'var(--mc-warn)' }}>{error}</span>}
     </div>
   );
 }
@@ -586,7 +586,7 @@ function NumberInput({ label, value, onChange, suffix, inputRef, highlight, help
           title={highlight ? 'Not in live price feed — enter current market cap from Screener.in or moneycontrol.' : undefined}
           style={{
             background: '#0A1422', color: TEXT,
-            border: `1px solid ${highlight ? '#F59E0B' : BORDER}`,
+            border: `1px solid ${highlight ? 'var(--mc-warn)' : BORDER}`,
             padding: '7px 10px', borderRadius: 4, fontSize: 13, fontFamily: 'ui-monospace, monospace',
             width: 130, fontWeight: 600,
             boxShadow: highlight ? '0 0 0 2px rgba(245,158,11,0.15)' : undefined,
@@ -595,7 +595,7 @@ function NumberInput({ label, value, onChange, suffix, inputRef, highlight, help
         {suffix && <span style={{ fontSize: 11, color: DIM }}>{suffix}</span>}
       </div>
       {highlight && (
-        <div style={{ marginTop: 4, fontSize: 10, color: '#F59E0B', lineHeight: 1.5 }}>
+        <div style={{ marginTop: 4, fontSize: 10, color: 'var(--mc-warn)', lineHeight: 1.5 }}>
           {helper || 'Not in live price feed — enter current market cap from Screener.in or moneycontrol.'}
           {ticker && (
             <>
@@ -604,7 +604,7 @@ function NumberInput({ label, value, onChange, suffix, inputRef, highlight, help
                 href={`https://www.screener.in/company/${encodeURIComponent(ticker.toUpperCase())}/`}
                 target="_blank"
                 rel="noopener noreferrer"
-                style={{ color: '#F59E0B', textDecoration: 'underline', fontWeight: 700 }}
+                style={{ color: 'var(--mc-warn)', textDecoration: 'underline', fontWeight: 700 }}
               >
                 Look up on Screener.in →
               </a>
@@ -685,9 +685,9 @@ function PSCalculator() {
         if (q.sharesOutstandingCr) setShares(q.sharesOutstandingCr);
       }} />
       {/* PATCH 0673 — what-to-enter hint */}
-      <div style={{ marginBottom: 10, padding: '8px 12px', background: '#1A2540', borderLeft: '3px solid #22D3EE', borderRadius: 3, fontSize: 11.5, color: TEXT, lineHeight: 1.55 }}>
-        <div><strong style={{ color: '#22D3EE' }}>What to enter:</strong> Forward revenue (₹ Cr) from management guidance or your own projection. Bear/Base/Bull P/S multiples — Base should be the stock's 5-yr median P/S (Screener shows this), not sector average.</div>
-        <div style={{ marginTop: 4 }}><strong style={{ color: '#F59E0B' }}>Tip:</strong> Best for SaaS, growth, capex-heavy names where PAT is volatile but topline visibility is clean. Don't use for cyclicals at peak revenue (multiple compresses).</div>
+      <div style={{ marginBottom: 10, padding: '8px 12px', background: 'var(--mc-bg-4)', borderLeft: '3px solid var(--mc-cyan)', borderRadius: 3, fontSize: 11.5, color: TEXT, lineHeight: 1.55 }}>
+        <div><strong style={{ color: 'var(--mc-cyan)' }}>What to enter:</strong> Forward revenue (₹ Cr) from management guidance or your own projection. Bear/Base/Bull P/S multiples — Base should be the stock's 5-yr median P/S (Screener shows this), not sector average.</div>
+        <div style={{ marginTop: 4 }}><strong style={{ color: 'var(--mc-warn)' }}>Tip:</strong> Best for SaaS, growth, capex-heavy names where PAT is volatile but topline visibility is clean. Don't use for cyclicals at peak revenue (multiple compresses).</div>
       </div>
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 11, color: DIM, alignSelf: 'center', marginRight: 4, fontWeight: 700 }}>EXAMPLES</span>
@@ -787,9 +787,9 @@ function PECalculator() {
         if (q.sharesOutstandingCr) setShares(q.sharesOutstandingCr);
       }} />
       {/* PATCH 0673 — what-to-enter hint */}
-      <div style={{ marginBottom: 10, padding: '8px 12px', background: '#1A2540', borderLeft: '3px solid #22D3EE', borderRadius: 3, fontSize: 11.5, color: TEXT, lineHeight: 1.55 }}>
-        <div><strong style={{ color: '#22D3EE' }}>What to enter:</strong> Forward PAT (₹ Cr) from concall guidance or Bloomberg consensus. Bear/Base/Bull P/E — Base should be the stock&apos;s 5-yr trailing median P/E (Screener → Stock → &ldquo;Median PE&rdquo;), not sector average.</div>
-        <div style={{ marginTop: 4 }}><strong style={{ color: '#F59E0B' }}>Tip:</strong> Best for FMCG, quality compounders, financials. Don't use for capex-heavy capital goods (PAT lags), pre-revenue tech (no earnings), or cyclicals at trough (PAT mis-states earning power).</div>
+      <div style={{ marginBottom: 10, padding: '8px 12px', background: 'var(--mc-bg-4)', borderLeft: '3px solid var(--mc-cyan)', borderRadius: 3, fontSize: 11.5, color: TEXT, lineHeight: 1.55 }}>
+        <div><strong style={{ color: 'var(--mc-cyan)' }}>What to enter:</strong> Forward PAT (₹ Cr) from concall guidance or Bloomberg consensus. Bear/Base/Bull P/E — Base should be the stock&apos;s 5-yr trailing median P/E (Screener → Stock → &ldquo;Median PE&rdquo;), not sector average.</div>
+        <div style={{ marginTop: 4 }}><strong style={{ color: 'var(--mc-warn)' }}>Tip:</strong> Best for FMCG, quality compounders, financials. Don't use for capex-heavy capital goods (PAT lags), pre-revenue tech (no earnings), or cyclicals at trough (PAT mis-states earning power).</div>
       </div>
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 11, color: DIM, alignSelf: 'center', marginRight: 4, fontWeight: 700 }}>EXAMPLES</span>
@@ -884,9 +884,9 @@ function EvEbitdaCalculator() {
         if (q.sharesOutstandingCr) setShares(q.sharesOutstandingCr);
       }} />
       {/* PATCH 0673 — what-to-enter hint */}
-      <div style={{ marginBottom: 10, padding: '8px 12px', background: '#1A2540', borderLeft: '3px solid #22D3EE', borderRadius: 3, fontSize: 11.5, color: TEXT, lineHeight: 1.55 }}>
-        <div><strong style={{ color: '#22D3EE' }}>What to enter:</strong> Forward EBITDA (₹ Cr) from guidance — usually mgmt gives margin %, multiply by forward revenue. Net Debt = Total Debt − Cash (from balance sheet). Bear/Base/Bull multiple — Base = stock's 5-yr median EV/EBITDA.</div>
-        <div style={{ marginTop: 4 }}><strong style={{ color: '#F59E0B' }}>Tip:</strong> Best for cyclicals, industrials, leveraged businesses where PAT is distorted by depreciation/interest. Apply 12-18× for cyclicals, 18-25× for premium industrials, 25-35× for niche precision/chemistry premium names.</div>
+      <div style={{ marginBottom: 10, padding: '8px 12px', background: 'var(--mc-bg-4)', borderLeft: '3px solid var(--mc-cyan)', borderRadius: 3, fontSize: 11.5, color: TEXT, lineHeight: 1.55 }}>
+        <div><strong style={{ color: 'var(--mc-cyan)' }}>What to enter:</strong> Forward EBITDA (₹ Cr) from guidance — usually mgmt gives margin %, multiply by forward revenue. Net Debt = Total Debt − Cash (from balance sheet). Bear/Base/Bull multiple — Base = stock's 5-yr median EV/EBITDA.</div>
+        <div style={{ marginTop: 4 }}><strong style={{ color: 'var(--mc-warn)' }}>Tip:</strong> Best for cyclicals, industrials, leveraged businesses where PAT is distorted by depreciation/interest. Apply 12-18× for cyclicals, 18-25× for premium industrials, 25-35× for niche precision/chemistry premium names.</div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
@@ -1094,21 +1094,21 @@ function SectorScenarioRow({ sector, scenario }: { sector: string; scenario: Sec
   const upside = ((fairMcap / scenario.currentMcap) - 1) * 100;
   const color = upside >= 25 ? '#10B981' : upside >= 0 ? '#22D3EE' : upside >= -25 ? '#F59E0B' : '#EF4444';
   return (
-    <tr style={{ background: '#0A0E1A' }}>
+    <tr style={{ background: 'var(--mc-bg-0)' }}>
       <td colSpan={4} style={{ padding: '12px 18px', borderBottom: `1px solid ${BORDER}` }}>
-        <div style={{ background: '#0D1623', borderLeft: '3px solid #22D3EE', borderRadius: 4, padding: '12px 14px' }}>
+        <div style={{ background: 'var(--mc-bg-1)', borderLeft: '3px solid var(--mc-cyan)', borderRadius: 4, padding: '12px 14px' }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 13, fontWeight: 800, color: '#22D3EE' }}>SCENARIO →</span>
+            <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-cyan)' }}>SCENARIO →</span>
             <span style={{ fontSize: 13, fontWeight: 800, color: TEXT }}>{scenario.ticker}</span>
             <span style={{ fontSize: 11, color: DIM }}>({scenario.company})</span>
           </div>
           <div style={{ fontSize: 11.5, color: TEXT, lineHeight: 1.6, marginBottom: 10 }}>
-            <strong style={{ color: '#F59E0B' }}>Why this multiple:</strong> {scenario.rationale}
+            <strong style={{ color: 'var(--mc-warn)' }}>Why this multiple:</strong> {scenario.rationale}
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, marginBottom: 8 }}>
             <tbody>
               <tr style={{ borderBottom: `1px solid ${BORDER}` }}>
-                <td style={{ padding: '5px 0', color: DIM, width: 200 }}>{scenario.driverLabel} <span style={{ color: '#F59E0B' }}>~</span></td>
+                <td style={{ padding: '5px 0', color: DIM, width: 200 }}>{scenario.driverLabel} <span style={{ color: 'var(--mc-warn)' }}>~</span></td>
                 <td style={{ padding: '5px 0', textAlign: 'right', color: TEXT, fontWeight: 700, fontFamily: 'ui-monospace, monospace' }}>₹{scenario.driverValue.toLocaleString('en-IN')} Cr</td>
               </tr>
               <tr style={{ borderBottom: `1px solid ${BORDER}` }}>
@@ -1117,17 +1117,17 @@ function SectorScenarioRow({ sector, scenario }: { sector: string; scenario: Sec
               </tr>
               {scenario.netDebt !== undefined && (
                 <tr style={{ borderBottom: `1px solid ${BORDER}` }}>
-                  <td style={{ padding: '5px 0', color: DIM }}>Net debt <span style={{ color: '#F59E0B' }}>~</span></td>
+                  <td style={{ padding: '5px 0', color: DIM }}>Net debt <span style={{ color: 'var(--mc-warn)' }}>~</span></td>
                   <td style={{ padding: '5px 0', textAlign: 'right', color: TEXT, fontWeight: 700, fontFamily: 'ui-monospace, monospace' }}>₹{scenario.netDebt.toLocaleString('en-IN')} Cr</td>
                 </tr>
               )}
               <tr style={{ borderBottom: `1px solid ${BORDER}` }}>
-                <td style={{ padding: '5px 0', color: DIM }}>Current market cap <span style={{ color: '#F59E0B' }}>~</span></td>
+                <td style={{ padding: '5px 0', color: DIM }}>Current market cap <span style={{ color: 'var(--mc-warn)' }}>~</span></td>
                 <td style={{ padding: '5px 0', textAlign: 'right', color: TEXT, fontWeight: 700, fontFamily: 'ui-monospace, monospace' }}>₹{scenario.currentMcap.toLocaleString('en-IN')} Cr</td>
               </tr>
               <tr style={{ borderBottom: `1px solid ${BORDER}` }}>
                 <td style={{ padding: '5px 0', color: TEXT, fontWeight: 700 }}>Fair value calc</td>
-                <td style={{ padding: '5px 0', textAlign: 'right', color: '#22D3EE', fontWeight: 800, fontFamily: 'ui-monospace, monospace' }}>{stepCalc}</td>
+                <td style={{ padding: '5px 0', textAlign: 'right', color: 'var(--mc-cyan)', fontWeight: 800, fontFamily: 'ui-monospace, monospace' }}>{stepCalc}</td>
               </tr>
             </tbody>
           </table>
@@ -1157,12 +1157,12 @@ function SectorLookupPanel() {
       </h2>
       <div style={{ fontSize: 11, color: DIM, marginBottom: 12, lineHeight: 1.5 }}>
         Match your name&apos;s sector → use the listed calculator → benchmark against the multiple hint.{' '}
-        <strong style={{ color: '#22D3EE' }}>Click any sector row</strong> to see a real-time worked scenario with a representative company (TTM driver, multiple, fair value, upside).
+        <strong style={{ color: 'var(--mc-cyan)' }}>Click any sector row</strong> to see a real-time worked scenario with a representative company (TTM driver, multiple, fair value, upside).
       </div>
       <div style={{ overflow: 'auto', border: `1px solid ${BORDER}`, borderRadius: 6 }}>
         <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: 12 }}>
           <thead>
-            <tr style={{ background: '#1A2540' }}>
+            <tr style={{ background: 'var(--mc-bg-4)' }}>
               <th style={{ textAlign: 'left', padding: '10px 14px', fontSize: 11, fontWeight: 800, color: DIM, letterSpacing: '0.5px', borderBottom: `1px solid ${BORDER}` }}>SECTOR</th>
               <th style={{ textAlign: 'left', padding: '10px 12px', fontSize: 11, fontWeight: 800, color: DIM, letterSpacing: '0.5px', borderBottom: `1px solid ${BORDER}`, width: 110 }}>CALCULATOR</th>
               <th style={{ textAlign: 'left', padding: '10px 14px', fontSize: 11, fontWeight: 800, color: DIM, letterSpacing: '0.5px', borderBottom: `1px solid ${BORDER}`, width: 280 }}>MULTIPLE RANGE</th>
@@ -1177,13 +1177,13 @@ function SectorLookupPanel() {
                 <React.Fragment key={sector}>
                   <tr
                     onClick={() => setOpenSector(isOpen ? null : sector)}
-                    style={{ background: i % 2 === 0 ? '#0A1422' : '#0D1623', cursor: scenario ? 'pointer' : 'default' }}>
+                    style={{ background: i % 2 === 0 ? '#0A1422' : 'var(--mc-bg-1)', cursor: scenario ? 'pointer' : 'default' }}>
                     <td style={{ padding: '12px 14px', fontSize: 13, color: TEXT, fontWeight: 700, borderBottom: `1px solid ${BORDER}`, verticalAlign: 'top' }}>
-                      {scenario && (<span style={{ marginRight: 6, color: '#22D3EE', fontSize: 11, fontWeight: 800 }}>{isOpen ? '▼' : '▶'}</span>)}
+                      {scenario && (<span style={{ marginRight: 6, color: 'var(--mc-cyan)', fontSize: 11, fontWeight: 800 }}>{isOpen ? '▼' : '▶'}</span>)}
                       {sector}
                     </td>
                     <td style={{ padding: '12px 12px', borderBottom: `1px solid ${BORDER}`, verticalAlign: 'top' }}>
-                      <span style={{ fontSize: 11, color: '#22D3EE', background: '#22D3EE15', border: '1px solid #22D3EE40', padding: '3px 9px', borderRadius: 4, fontFamily: 'ui-monospace, monospace', fontWeight: 800, whiteSpace: 'nowrap' }}>
+                      <span style={{ fontSize: 11, color: 'var(--mc-cyan)', background: '#22D3EE15', border: '1px solid #22D3EE40', padding: '3px 9px', borderRadius: 4, fontFamily: 'ui-monospace, monospace', fontWeight: 800, whiteSpace: 'nowrap' }}>
                         {conf.calc === 'EV_EBITDA' ? 'EV / EBITDA' : conf.calc === 'PS' ? 'P / S' : 'P / E'}
                       </span>
                     </td>
@@ -1195,7 +1195,7 @@ function SectorLookupPanel() {
                         {conf.examples.map((ex) => (
                           <span key={ex} style={{
                             fontSize: 11, padding: '3px 8px',
-                            background: '#1A2540', border: '1px solid #2A3A55',
+                            background: 'var(--mc-bg-4)', border: '1px solid #2A3A55',
                             color: TEXT, borderRadius: 4, fontWeight: 600,
                             fontFamily: 'ui-monospace, monospace',
                             whiteSpace: 'nowrap',
@@ -1699,7 +1699,7 @@ function MethodCard({ m, idx }: { m: GuidanceMethod; idx: number }) {
         padding: '14px 18px', textAlign: 'left', cursor: 'pointer',
         display: 'flex', alignItems: 'center', gap: 10,
       }}>
-        <span style={{ fontSize: 11, color: '#22D3EE', fontWeight: 800, minWidth: 40, fontFamily: 'ui-monospace, monospace' }}>#{String(idx + 1).padStart(2, '0')}</span>
+        <span style={{ fontSize: 11, color: 'var(--mc-cyan)', fontWeight: 800, minWidth: 40, fontFamily: 'ui-monospace, monospace' }}>#{String(idx + 1).padStart(2, '0')}</span>
         <span style={{ fontSize: 20 }}>{m.emoji}</span>
         <span style={{ fontSize: 14, fontWeight: 800, color: TEXT, flex: 1 }}>{m.title}</span>
         <span style={{ fontSize: 14, color: DIM }}>{open ? '−' : '+'}</span>
@@ -1713,8 +1713,8 @@ function MethodCard({ m, idx }: { m: GuidanceMethod; idx: number }) {
             <div style={{ fontSize: 11, fontWeight: 800, color: DIM, letterSpacing: '0.5px', marginBottom: 6 }}>REAL EXAMPLES FROM INDIAN COMPANIES</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
               {m.examples.map((e, i) => (
-                <div key={i} style={{ fontSize: 12, padding: '6px 10px', background: '#1A2540', borderLeft: '3px solid #22D3EE', borderRadius: 3 }}>
-                  <span style={{ fontWeight: 800, color: '#22D3EE', marginRight: 8 }}>{e.company}:</span>
+                <div key={i} style={{ fontSize: 12, padding: '6px 10px', background: 'var(--mc-bg-4)', borderLeft: '3px solid var(--mc-cyan)', borderRadius: 3 }}>
+                  <span style={{ fontWeight: 800, color: 'var(--mc-cyan)', marginRight: 8 }}>{e.company}:</span>
                   <span style={{ color: TEXT, fontStyle: 'italic' }}>"{e.quote}"</span>
                 </div>
               ))}
@@ -1741,7 +1741,7 @@ function MethodCard({ m, idx }: { m: GuidanceMethod; idx: number }) {
 
           {/* Worked example */}
           <div style={{ marginBottom: 8 }}>
-            <div style={{ fontSize: 11, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.5px', marginBottom: 6 }}>WORKED EXAMPLE — {m.worked.company.toUpperCase()}</div>
+            <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-warn)', letterSpacing: '0.5px', marginBottom: 6 }}>WORKED EXAMPLE — {m.worked.company.toUpperCase()}</div>
             <div style={{ background: '#1A1F33', border: `1px solid ${BORDER}`, borderRadius: 4, padding: '12px 14px' }}>
               <div style={{ fontSize: 11, fontWeight: 800, color: DIM, marginBottom: 5 }}>INPUTS</div>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, marginBottom: 10 }}>
@@ -1762,14 +1762,14 @@ function MethodCard({ m, idx }: { m: GuidanceMethod; idx: number }) {
                     <tr key={i} style={{ borderBottom: `1px solid ${BORDER}` }}>
                       <td style={{ padding: '6px 8px 6px 0', color: TEXT, fontWeight: 700 }}>{s.label}</td>
                       <td style={{ padding: '6px 8px', color: DIM, fontFamily: 'ui-monospace, monospace', fontSize: 11 }}>{s.calc}</td>
-                      <td style={{ padding: '6px 0', textAlign: 'right', color: '#22D3EE', fontWeight: 800, fontFamily: 'ui-monospace, monospace' }}>{s.result}</td>
+                      <td style={{ padding: '6px 0', textAlign: 'right', color: 'var(--mc-cyan)', fontWeight: 800, fontFamily: 'ui-monospace, monospace' }}>{s.result}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
 
               <div style={{ marginTop: 12, padding: '10px 12px', background: '#10B98115', border: '1px solid #10B98140', borderRadius: 4 }}>
-                <div style={{ fontSize: 11, color: '#10B981', fontWeight: 800, marginBottom: 3 }}>FAIR VALUE → {m.worked.fairValue}</div>
+                <div style={{ fontSize: 11, color: 'var(--mc-bullish)', fontWeight: 800, marginBottom: 3 }}>FAIR VALUE → {m.worked.fairValue}</div>
                 <div style={{ fontSize: 12, color: TEXT }}>{m.worked.upside}</div>
               </div>
             </div>
@@ -1783,7 +1783,7 @@ function MethodCard({ m, idx }: { m: GuidanceMethod; idx: number }) {
             if (matches.length === 0) return null;
             return (
               <div style={{ marginTop: 12, marginBottom: 8 }}>
-                <div style={{ fontSize: 11, fontWeight: 800, color: '#10B981', letterSpacing: '0.5px', marginBottom: 6 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-bullish)', letterSpacing: '0.5px', marginBottom: 6 }}>
                   → JUMP TO PRACTICE EXAMPLE ({matches.length})
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
@@ -1791,7 +1791,7 @@ function MethodCard({ m, idx }: { m: GuidanceMethod; idx: number }) {
                     <a key={i} href={`#${exSlug(ex.company)}`} style={{
                       fontSize: 11, padding: '4px 10px',
                       background: '#10B98115', border: '1px solid #10B98140',
-                      color: '#10B981', borderRadius: 4, fontWeight: 700,
+                      color: 'var(--mc-bullish)', borderRadius: 4, fontWeight: 700,
                       textDecoration: 'none', whiteSpace: 'nowrap',
                     }}>
                       {ex.company.replace(/ Ltd$/, '').replace(/ Industries$/, '')} ↓
@@ -1805,7 +1805,7 @@ function MethodCard({ m, idx }: { m: GuidanceMethod; idx: number }) {
           {/* Tips */}
           {m.tips && m.tips.length > 0 && (
             <div style={{ marginTop: 12 }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: '#A78BFA', letterSpacing: '0.5px', marginBottom: 6 }}>TIPS</div>
+              <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-state-persistent)', letterSpacing: '0.5px', marginBottom: 6 }}>TIPS</div>
               <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: TEXT, lineHeight: 1.65 }}>
                 {m.tips.map((t, i) => <li key={i}>{t}</li>)}
               </ul>
@@ -2307,8 +2307,8 @@ function PracticeExampleCard({ ex }: { ex: PracticeExample }) {
       </button>
       {open && (
         <div style={{ padding: '0 14px 14px 14px' }}>
-          <div style={{ background: '#1A2540', borderLeft: '3px solid #22D3EE', padding: '8px 12px', borderRadius: 3, marginBottom: 12, fontSize: 12 }}>
-            <span style={{ fontWeight: 800, color: '#22D3EE', marginRight: 8 }}>Management quote:</span>
+          <div style={{ background: 'var(--mc-bg-4)', borderLeft: '3px solid var(--mc-cyan)', padding: '8px 12px', borderRadius: 3, marginBottom: 12, fontSize: 12 }}>
+            <span style={{ fontWeight: 800, color: 'var(--mc-cyan)', marginRight: 8 }}>Management quote:</span>
             <span style={{ color: TEXT, fontStyle: 'italic' }}>"{ex.guidance}"</span>
           </div>
 
@@ -2318,7 +2318,7 @@ function PracticeExampleCard({ ex }: { ex: PracticeExample }) {
               {ex.inputs.map((inp, i) => (
                 <tr key={i} style={{ borderBottom: i === ex.inputs.length - 1 ? 'none' : `1px solid ${BORDER}` }}>
                   <td style={{ padding: '4px 8px 4px 0', color: DIM }}>
-                    {inp.label}{inp.approx && <span style={{ color: '#F59E0B', marginLeft: 4, fontSize: 10 }}>~</span>}
+                    {inp.label}{inp.approx && <span style={{ color: 'var(--mc-warn)', marginLeft: 4, fontSize: 10 }}>~</span>}
                   </td>
                   <td style={{ padding: '4px 0', textAlign: 'right', color: TEXT, fontWeight: 700, fontFamily: 'ui-monospace, monospace' }}>{inp.value}</td>
                 </tr>
@@ -2333,7 +2333,7 @@ function PracticeExampleCard({ ex }: { ex: PracticeExample }) {
                 <tr key={i} style={{ borderBottom: `1px solid ${BORDER}` }}>
                   <td style={{ padding: '5px 8px 5px 0', color: TEXT, fontWeight: 700 }}>{s.label}</td>
                   <td style={{ padding: '5px 8px', color: DIM, fontFamily: 'ui-monospace, monospace', fontSize: 11 }}>{s.calc}</td>
-                  <td style={{ padding: '5px 0', textAlign: 'right', color: '#22D3EE', fontWeight: 800, fontFamily: 'ui-monospace, monospace' }}>{s.result}</td>
+                  <td style={{ padding: '5px 0', textAlign: 'right', color: 'var(--mc-cyan)', fontWeight: 800, fontFamily: 'ui-monospace, monospace' }}>{s.result}</td>
                 </tr>
               ))}
             </tbody>
@@ -2345,7 +2345,7 @@ function PracticeExampleCard({ ex }: { ex: PracticeExample }) {
           </div>
 
           {ex.note && (
-            <div style={{ marginTop: 10, fontSize: 11, color: '#F59E0B', fontStyle: 'italic', padding: '6px 10px', background: '#F59E0B10', borderRadius: 3 }}>
+            <div style={{ marginTop: 10, fontSize: 11, color: 'var(--mc-warn)', fontStyle: 'italic', padding: '6px 10px', background: '#F59E0B10', borderRadius: 3 }}>
               💡 {ex.note}
             </div>
           )}
@@ -2383,9 +2383,9 @@ function MethodSection({
         <span style={{ fontSize: 22 }}>{emoji}</span>
         <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: TEXT }}>{title}</h3>
       </div>
-      <div style={{ marginBottom: 10, padding: '8px 12px', background: '#1A2540', borderLeft: '3px solid #22D3EE', borderRadius: 3, fontSize: 11.5, color: TEXT, lineHeight: 1.55 }}>
-        <div><strong style={{ color: '#22D3EE' }}>What to enter:</strong> {whatToEnter}</div>
-        <div style={{ marginTop: 4 }}><strong style={{ color: '#F59E0B' }}>Tip:</strong> {tip}</div>
+      <div style={{ marginBottom: 10, padding: '8px 12px', background: 'var(--mc-bg-4)', borderLeft: '3px solid var(--mc-cyan)', borderRadius: 3, fontSize: 11.5, color: TEXT, lineHeight: 1.55 }}>
+        <div><strong style={{ color: 'var(--mc-cyan)' }}>What to enter:</strong> {whatToEnter}</div>
+        <div style={{ marginTop: 4 }}><strong style={{ color: 'var(--mc-warn)' }}>Tip:</strong> {tip}</div>
       </div>
       {children}
     </div>
@@ -2436,11 +2436,11 @@ function DCFCalculator() {
         <NumberInput label="Current Market Cap" value={mcap} onChange={setMcap} suffix="₹ Cr" />
       </div>
       <div style={{ padding: '12px 14px', background: '#10B98115', border: '1px solid #10B98140', borderRadius: 4 }}>
-        <div style={{ fontSize: 11, color: '#10B981', fontWeight: 800, marginBottom: 4 }}>
+        <div style={{ fontSize: 11, color: 'var(--mc-bullish)', fontWeight: 800, marginBottom: 4 }}>
           FAIR VALUE → ₹{Math.round(result.fairMcap).toLocaleString('en-IN')} Cr
           {' '}(₹{Math.round(result.perShare).toLocaleString('en-IN')}/share)
         </div>
-        <div style={{ fontSize: 12, color: result.upside >= 0 ? '#10B981' : '#EF4444', fontWeight: 700 }}>
+        <div style={{ fontSize: 12, color: result.upside >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: 700 }}>
           Upside: {result.upside >= 0 ? '+' : ''}{result.upside.toFixed(0)}%
         </div>
         <div style={{ marginTop: 6, fontSize: 10, color: DIM }}>
@@ -2627,13 +2627,13 @@ function SumOfPartsCalculator() {
         <NumberInput label="Current Market Cap" value={mcap} onChange={setMcap} suffix="₹ Cr" />
       </div>
       <div style={{ padding: '12px 14px', background: '#10B98115', border: '1px solid #10B98140', borderRadius: 4 }}>
-        <div style={{ fontSize: 11, color: '#10B981', fontWeight: 800, marginBottom: 4 }}>
+        <div style={{ fontSize: 11, color: 'var(--mc-bullish)', fontWeight: 800, marginBottom: 4 }}>
           Gross EV ₹{Math.round(gross).toLocaleString('en-IN')} − discount ₹{Math.round(conglomDiscount).toLocaleString('en-IN')} = EV ₹{Math.round(ev).toLocaleString('en-IN')} Cr
         </div>
-        <div style={{ fontSize: 11, color: '#10B981', fontWeight: 800, marginBottom: 4 }}>
+        <div style={{ fontSize: 11, color: 'var(--mc-bullish)', fontWeight: 800, marginBottom: 4 }}>
           Equity = ₹{Math.round(equity).toLocaleString('en-IN')} Cr (after net debt)
         </div>
-        <div style={{ fontSize: 12, color: upside >= 0 ? '#10B981' : '#EF4444', fontWeight: 700 }}>
+        <div style={{ fontSize: 12, color: upside >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: 700 }}>
           Upside: {upside >= 0 ? '+' : ''}{upside.toFixed(0)}%
         </div>
       </div>
@@ -2668,15 +2668,15 @@ function DividendDiscountCalculator() {
         <NumberInput label="Current Share Price" value={currentPrice} onChange={setCurrentPrice} suffix="₹" />
       </div>
       {fairPrice === 0 ? (
-        <div style={{ padding: '12px 14px', background: '#EF444415', border: '1px solid #EF444440', borderRadius: 4, fontSize: 12, color: '#EF4444' }}>
+        <div style={{ padding: '12px 14px', background: '#EF444415', border: '1px solid #EF444440', borderRadius: 4, fontSize: 12, color: 'var(--mc-bearish)' }}>
           ⚠ Required return ({requiredReturn}%) must exceed growth ({growth}%) for Gordon Growth to converge.
         </div>
       ) : (
         <div style={{ padding: '12px 14px', background: '#10B98115', border: '1px solid #10B98140', borderRadius: 4 }}>
-          <div style={{ fontSize: 11, color: '#10B981', fontWeight: 800, marginBottom: 4 }}>
+          <div style={{ fontSize: 11, color: 'var(--mc-bullish)', fontWeight: 800, marginBottom: 4 }}>
             Fair Value ₹{Math.round(fairPrice).toLocaleString('en-IN')}/share · Current yield {yieldPct.toFixed(2)}%
           </div>
-          <div style={{ fontSize: 12, color: upside >= 0 ? '#10B981' : '#EF4444', fontWeight: 700 }}>
+          <div style={{ fontSize: 12, color: upside >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: 700 }}>
             Upside: {upside >= 0 ? '+' : ''}{upside.toFixed(0)}%
           </div>
         </div>
@@ -2722,7 +2722,7 @@ function LearnTab() {
 
       {/* Master pattern table */}
       <div style={{ background: '#1A1F33', border: `1px solid ${BORDER}`, borderRadius: 8, padding: '14px 16px' }}>
-        <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.5px', marginBottom: 10 }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.5px', marginBottom: 10 }}>
           THE 12 GUIDANCE PATTERNS
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 8 }}>
@@ -2753,7 +2753,7 @@ function LearnTab() {
       {/* PATCH 0659 — Practice Examples — 20 real company calculations */}
       <div style={{ background: '#1A1F33', border: `1px solid ${BORDER}`, borderRadius: 8, padding: '16px 18px', marginTop: 12 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 4 }}>
-          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#22D3EE' }}>
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: 'var(--mc-cyan)' }}>
             📊 Practice Examples — 20 Companies, Live Calculations
           </h3>
           <span style={{ fontSize: 10, color: DIM, fontFamily: 'ui-monospace, monospace' }}>tilde (~) marks approximate inputs</span>
@@ -2773,7 +2773,7 @@ function LearnTab() {
 
       {/* Footer — meta-lessons */}
       <div style={{ background: '#1A1F33', border: '1px solid #F59E0B40', borderRadius: 8, padding: '16px 18px', marginTop: 8 }}>
-        <div style={{ fontSize: 13, fontWeight: 800, color: '#F59E0B', marginBottom: 8 }}>⚖️ INSTITUTIONAL LESSONS</div>
+        <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-warn)', marginBottom: 8 }}>⚖️ INSTITUTIONAL LESSONS</div>
         <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: TEXT, lineHeight: 1.7 }}>
           <li><b>Always pick the multiple your stock ACTUALLY trades at</b> (5-yr median), not the sector average. Premium names trade above sector, value names below.</li>
           <li><b>For ranges, base-case = midpoint</b>, but discount the upper bound by 20% — most managements miss their stretch.</li>
@@ -2825,8 +2825,8 @@ export default function ValuationCalcPage() {
               fontSize: 13, padding: '10px 18px',
               background: 'transparent',
               border: 'none',
-              borderBottom: tab === t.id ? '2px solid #22D3EE' : '2px solid transparent',
-              color: tab === t.id ? '#22D3EE' : DIM,
+              borderBottom: tab === t.id ? '2px solid var(--mc-cyan)' : '2px solid transparent',
+              color: tab === t.id ? 'var(--mc-cyan)' : DIM,
               cursor: 'pointer',
               fontWeight: 700,
             }}>

@@ -40,7 +40,7 @@ export function ValuationStrip({ row, onClick, compact = true }: Props) {
 
   if (c.verdict === 'INSUFFICIENT_DATA' || c.fairValueBase === undefined) {
     return (
-      <div style={{ fontSize: 10, color: '#475569', fontFamily: 'system-ui', lineHeight: 1.3 }} title="Not enough data for valuation models">
+      <div style={{ fontSize: 10, color: 'var(--mc-text-4)', fontFamily: 'system-ui', lineHeight: 1.3 }} title="Not enough data for valuation models">
         FV: insufficient data
       </div>
     );
@@ -55,7 +55,7 @@ export function ValuationStrip({ row, onClick, compact = true }: Props) {
       <div
         onClick={() => onClick?.(report)}
         style={{
-          fontSize: 10, color: '#94a3b8', fontFamily: 'system-ui', lineHeight: 1.35,
+          fontSize: 10, color: 'var(--mc-text-3)', fontFamily: 'system-ui', lineHeight: 1.35,
           cursor: onClick ? 'pointer' : 'default',
         }}
         title={`Bull ${formatINR(c.fairValueBull ?? 0)} · Base ${formatINR(c.fairValueBase)} · Bear ${formatINR(c.fairValueBear ?? 0)}\n${c.modelsBuy}/${c.modelsApplicable} models say BUY`}
@@ -65,7 +65,7 @@ export function ValuationStrip({ row, onClick, compact = true }: Props) {
         </div>
         <div style={{ fontSize: 9, fontVariantNumeric: 'tabular-nums' }}>
           <span style={{ color }}>{verdictIcon} {mos >= 0 ? '+' : ''}{mos.toFixed(0)}%</span>
-          <span style={{ color: '#475569' }}> · {c.modelsBuy}/{c.modelsApplicable}</span>
+          <span style={{ color: 'var(--mc-text-4)' }}> · {c.modelsBuy}/{c.modelsApplicable}</span>
         </div>
       </div>
     );
@@ -76,9 +76,9 @@ export function ValuationStrip({ row, onClick, compact = true }: Props) {
     <div
       onClick={() => onClick?.(report)}
       style={{
-        fontSize: 11, color: '#94a3b8', fontFamily: 'system-ui', lineHeight: 1.4,
+        fontSize: 11, color: 'var(--mc-text-3)', fontFamily: 'system-ui', lineHeight: 1.4,
         cursor: onClick ? 'pointer' : 'default',
-        background: '#0b1220', border: '1px solid #1A2540', borderRadius: 6,
+        background: '#0b1220', border: '1px solid var(--mc-bg-4)', borderRadius: 6,
         padding: '5px 8px',
       }}
     >
@@ -90,7 +90,7 @@ export function ValuationStrip({ row, onClick, compact = true }: Props) {
       </div>
       <div style={{ fontSize: 10, fontVariantNumeric: 'tabular-nums' }}>
         <span style={{ color }}>{verdictIcon} {mos >= 0 ? '+' : ''}{mos.toFixed(0)}% MoS</span>
-        <span style={{ color: '#475569' }}> · {c.modelsBuy}/{c.modelsApplicable} ✓</span>
+        <span style={{ color: 'var(--mc-text-4)' }}> · {c.modelsBuy}/{c.modelsApplicable} ✓</span>
       </div>
     </div>
   );

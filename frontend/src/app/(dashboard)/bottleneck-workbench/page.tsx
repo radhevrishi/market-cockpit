@@ -566,10 +566,10 @@ function BottleneckIntelOverlay({ themeId, label }: { themeId: string; label?: s
         <div style={{
           backgroundColor: TOKENS.surface.card,
           border: `1px solid ${TOKENS.surface.cardBorder}`,
-          borderLeft: `3px solid #22D3EE`,
+          borderLeft: `3px solid var(--mc-cyan)`,
           borderRadius: 10, padding: '12px 16px',
         }}>
-          <div style={{ fontSize: 11, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.5px', marginBottom: 8 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.5px', marginBottom: 8 }}>
             📐 QUANTIFICATION
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 10 }}>
@@ -588,7 +588,7 @@ function BottleneckIntelOverlay({ themeId, label }: { themeId: string; label?: s
                   {q.baseline}
                 </div>
                 <div style={{
-                  fontSize: 11, color: '#10B981', fontWeight: 600, lineHeight: 1.4,
+                  fontSize: 11, color: 'var(--mc-bullish)', fontWeight: 600, lineHeight: 1.4,
                   padding: '4px 8px', borderRadius: 4, background: 'rgba(16, 185, 129, 0.08)',
                   border: '1px solid rgba(16, 185, 129, 0.25)',
                 }}>
@@ -610,10 +610,10 @@ function BottleneckIntelOverlay({ themeId, label }: { themeId: string; label?: s
         <div style={{
           backgroundColor: TOKENS.surface.card,
           border: `1px solid ${TOKENS.surface.cardBorder}`,
-          borderLeft: `3px solid #F59E0B`,
+          borderLeft: `3px solid var(--mc-warn)`,
           borderRadius: 10, padding: '12px 16px',
         }}>
-          <div style={{ fontSize: 11, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.5px', marginBottom: 6 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-warn)', letterSpacing: '0.5px', marginBottom: 6 }}>
             ⚠ COUNTER-THESIS · DE-BOTTLENECK RISK
           </div>
           <div style={{ fontSize: 10.5, color: TOKENS.surface.textMuted, marginBottom: 8, lineHeight: 1.5 }}>
@@ -654,10 +654,10 @@ function BottleneckIntelOverlay({ themeId, label }: { themeId: string; label?: s
         <div style={{
           backgroundColor: TOKENS.surface.card,
           border: `1px solid ${TOKENS.surface.cardBorder}`,
-          borderLeft: `3px solid #10B981`,
+          borderLeft: `3px solid var(--mc-bullish)`,
           borderRadius: 10, padding: '12px 16px',
         }}>
-          <div style={{ fontSize: 11, fontWeight: 800, color: '#10B981', letterSpacing: '0.5px', marginBottom: 8 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-bullish)', letterSpacing: '0.5px', marginBottom: 8 }}>
             🇮🇳 INDIA-LISTED PROXIES ({theme.inProxies.length})
           </div>
           <div style={{ fontSize: 10.5, color: TOKENS.surface.textMuted, marginBottom: 10, lineHeight: 1.5 }}>

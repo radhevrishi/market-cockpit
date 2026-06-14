@@ -47,7 +47,7 @@ const TABS: ReadonlyArray<{
 
 function PanelLoader({ label }: { label: string }) {
   return (
-    <div style={{ padding: 24, color: '#6B7A8D', fontSize: 12 }}>
+    <div style={{ padding: 24, color: 'var(--mc-text-4)', fontSize: 12 }}>
       Loading {label}…
     </div>
   );
@@ -92,7 +92,7 @@ export default function EarningsHubPage() {
       <div
         style={{
           backgroundColor: '#0D1B2E',
-          borderBottom: '1px solid #1E2D45',
+          borderBottom: '1px solid var(--mc-border-1)',
           padding: '10px 16px',
           display: 'flex',
           alignItems: 'center',
@@ -101,7 +101,7 @@ export default function EarningsHubPage() {
           flexShrink: 0,
         }}
       >
-        <span style={{ fontSize: 13, fontWeight: 700, color: '#10B981', letterSpacing: '0.6px', marginRight: 12 }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--mc-bullish)', letterSpacing: '0.6px', marginRight: 12 }}>
           📈 EARNINGS HUB
         </span>
         {TABS.map(({ id, label, Icon }) => {
@@ -116,9 +116,9 @@ export default function EarningsHubPage() {
                 gap: 6,
                 padding: '6px 12px',
                 borderRadius: 8,
-                border: isActive ? '1px solid #10B98160' : '1px solid #1A2840',
+                border: isActive ? '1px solid #10B98160' : '1px solid var(--mc-bg-4)',
                 backgroundColor: isActive ? '#10B98120' : 'transparent',
-                color: isActive ? '#10B981' : '#8A95A3',
+                color: isActive ? 'var(--mc-bullish)' : '#8A95A3',
                 fontSize: 12,
                 fontWeight: 700,
                 letterSpacing: '0.4px',
@@ -141,12 +141,12 @@ export default function EarningsHubPage() {
               display: 'inline-flex', alignItems: 'center', gap: 5,
               padding: '5px 10px', borderRadius: 8,
               border: '1px solid #F59E0B60', backgroundColor: 'rgba(245,158,11,0.10)',
-              color: '#F59E0B', fontSize: 11, fontWeight: 800, letterSpacing: '0.4px',
+              color: 'var(--mc-warn)', fontSize: 11, fontWeight: 800, letterSpacing: '0.4px',
               cursor: 'pointer', marginLeft: 8,
             }}
           >🏆 CB {convictionCount}</button>
         )}
-        <span style={{ marginLeft: 'auto', fontSize: 11, color: '#4A5B6C', maxWidth: 480, textAlign: 'right' }}>
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--mc-text-4)', maxWidth: 480, textAlign: 'right' }}>
           {activeMeta.tagline}
         </span>
       </div>

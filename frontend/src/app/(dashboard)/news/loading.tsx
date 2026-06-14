@@ -9,7 +9,7 @@ export default function Loading() {
   });
   const card: any = { background: panel, border: '1px solid ' + line, borderRadius: 10, padding: 14, marginBottom: 12 };
   return (
-    <div style={{ background: bg, minHeight: '100vh', padding: '24px 22px', color: '#e6edf3' }}>
+    <div style={{ background: bg, minHeight: '100vh', padding: '24px 22px', color: 'var(--mc-text-1)' }}>
       <style>{'@keyframes mcskel{0%{background-position:200% 0}100%{background-position:-200% 0}}'}</style>
       <div style={{ maxWidth: 1480, margin: '0 auto' }}>
         <div style={{ ...bar('260px', 26), marginBottom: 10 }} />

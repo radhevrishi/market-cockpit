@@ -820,7 +820,7 @@ function ChartLink({ symbol }: { symbol: string }) {
         display: 'inline-flex', alignItems: 'center', gap: 4,
         padding: '2px 8px', fontSize: 11, fontWeight: 800,
         border: '1px solid #22D3EE60', borderRadius: 4,
-        background: '#22D3EE12', color: '#22D3EE',
+        background: '#22D3EE12', color: 'var(--mc-cyan)',
         textDecoration: 'none', cursor: 'pointer', letterSpacing: 0.3,
         whiteSpace: 'nowrap',
       }}

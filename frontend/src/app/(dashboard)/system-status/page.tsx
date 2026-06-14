@@ -46,7 +46,7 @@ export default function SystemStatusPage() {
   }, []);
 
   if (!data) {
-    return <div style={{ padding: 30, color: '#94A3B8' }}>{loading ? '📡 Probing endpoints…' : 'Failed to load'}</div>;
+    return <div style={{ padding: 30, color: 'var(--mc-text-3)' }}>{loading ? '📡 Probing endpoints…' : 'Failed to load'}</div>;
   }
 
   const byCategory: Record<string, ProbeResult[]> = {};
@@ -56,13 +56,13 @@ export default function SystemStatusPage() {
   }
 
   return (
-    <div style={{ padding: 20, color: '#E6EDF3', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+    <div style={{ padding: 20, color: 'var(--mc-text-1)', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 16 }}>
         <h1 style={{ fontSize: 22, fontWeight: 800, margin: 0 }}>📡 System Status</h1>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
           <PanelFreshness dataUpdatedAt={updatedAt} staleAfterMs={120_000} />
           <button onClick={fetchStatus} disabled={loading}
-            style={{ padding: '6px 14px', fontSize: 12, borderRadius: 5, border: '1px solid #1A2540', background: loading ? '#1A2540' : '#0F7ABF', color: '#fff', fontWeight: 600, cursor: loading ? 'wait' : 'pointer' }}>
+            style={{ padding: '6px 14px', fontSize: 12, borderRadius: 5, border: '1px solid var(--mc-bg-4)', background: loading ? 'var(--mc-bg-4)' : 'var(--mc-accent)', color: '#fff', fontWeight: 600, cursor: loading ? 'wait' : 'pointer' }}>
             {loading ? '...' : '↻ Re-probe'}
           </button>
         </div>
@@ -87,25 +87,25 @@ export default function SystemStatusPage() {
 
       {/* PATCH 0853 — Signals compute/filter/universe version stamps */}
       {data.signalsVersions && (
-        <div style={{ marginBottom: 22, padding: '10px 14px', background: '#0D1623', border: '1px solid #1A2540', borderRadius: 6 }}>
-          <div style={{ fontSize: 10, color: '#94A3B8', fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 6 }}>
+        <div style={{ marginBottom: 22, padding: '10px 14px', background: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 6 }}>
+          <div style={{ fontSize: 10, color: 'var(--mc-text-3)', fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 6 }}>
             Signals build stamp
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, fontSize: 12, color: '#E2E8F0', fontFamily: 'ui-monospace, monospace' }}>
-            <span><span style={{ color: '#94A3B8' }}>compute:</span> <b>v{data.signalsVersions.computeVersion}</b></span>
-            <span><span style={{ color: '#94A3B8' }}>filter:</span> <b>v{data.signalsVersions.filterVersion}</b></span>
-            <span><span style={{ color: '#94A3B8' }}>universe:</span> <b>{data.signalsVersions.universeVersion}</b></span>
-            <span><span style={{ color: '#94A3B8' }}>last compute:</span> <b style={{ color: typeof data.signalsVersions.computedAgeMin === 'number' && data.signalsVersions.computedAgeMin > 60 ? '#EF4444' : '#10B981' }}>
+            <span><span style={{ color: 'var(--mc-text-3)' }}>compute:</span> <b>v{data.signalsVersions.computeVersion}</b></span>
+            <span><span style={{ color: 'var(--mc-text-3)' }}>filter:</span> <b>v{data.signalsVersions.filterVersion}</b></span>
+            <span><span style={{ color: 'var(--mc-text-3)' }}>universe:</span> <b>{data.signalsVersions.universeVersion}</b></span>
+            <span><span style={{ color: 'var(--mc-text-3)' }}>last compute:</span> <b style={{ color: typeof data.signalsVersions.computedAgeMin === 'number' && data.signalsVersions.computedAgeMin > 60 ? 'var(--mc-bearish)' : 'var(--mc-bullish)' }}>
               {data.signalsVersions.computedAgeMin == null ? '—' : `${data.signalsVersions.computedAgeMin}m ago`}
             </b></span>
-            <span><span style={{ color: '#94A3B8' }}>signals:</span> <b>{data.signalsVersions.signalCount}</b></span>
+            <span><span style={{ color: 'var(--mc-text-3)' }}>signals:</span> <b>{data.signalsVersions.signalCount}</b></span>
             {data.signalsVersions.signalHashShort && (
-              <span><span style={{ color: '#94A3B8' }}>hash:</span> <b>{data.signalsVersions.signalHashShort}</b></span>
+              <span><span style={{ color: 'var(--mc-text-3)' }}>hash:</span> <b>{data.signalsVersions.signalHashShort}</b></span>
             )}
           </div>
           {typeof data.signalsVersions.computedAgeMin === 'number' && data.signalsVersions.computedAgeMin > 60 && (
-            <div style={{ marginTop: 8, fontSize: 11, color: '#F59E0B' }}>
-              ⚠ Last compute is older than 1 hour — cron may have stalled. Try <code style={{ background: '#1A2540', padding: '1px 4px', borderRadius: 2 }}>/api/market/intelligence/compute?clearLock=1</code>
+            <div style={{ marginTop: 8, fontSize: 11, color: 'var(--mc-warn)' }}>
+              ⚠ Last compute is older than 1 hour — cron may have stalled. Try <code style={{ background: 'var(--mc-bg-4)', padding: '1px 4px', borderRadius: 2 }}>/api/market/intelligence/compute?clearLock=1</code>
             </div>
           )}
         </div>
@@ -114,15 +114,15 @@ export default function SystemStatusPage() {
       {/* Probes by category */}
       {Object.entries(byCategory).map(([cat, probes]) => (
         <div key={cat} style={{ marginBottom: 20 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>{cat}</div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-text-3)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>{cat}</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 }}>
             {probes.map((p) => (
               <div key={p.name} style={{
-                padding: 10, background: '#0D1623', border: `1px solid ${COLOR[p.status]}55`,
+                padding: 10, background: 'var(--mc-bg-1)', border: `1px solid ${COLOR[p.status]}55`,
                 borderLeft: `4px solid ${COLOR[p.status]}`, borderRadius: 6,
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: '#E6EDF3' }}>{p.name}</div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--mc-text-1)' }}>{p.name}</div>
                   <span style={{ fontSize: 9, color: COLOR[p.status], fontWeight: 800, padding: '2px 6px', background: `${COLOR[p.status]}22`, borderRadius: 3 }}>{p.status}</span>
                 </div>
                 <div style={{ fontSize: 10, color: '#8A95A3', marginTop: 4 }}>
@@ -136,7 +136,7 @@ export default function SystemStatusPage() {
         </div>
       ))}
 
-      <div style={{ fontSize: 10, color: '#6B7A8D', marginTop: 16, fontStyle: 'italic' }}>
+      <div style={{ fontSize: 10, color: 'var(--mc-text-4)', marginTop: 16, fontStyle: 'italic' }}>
         Probes refresh every 30s. Cached at edge for 60s. Built {new Date(data.generated_at).toLocaleString('en-IN')}.
       </div>
     </div>

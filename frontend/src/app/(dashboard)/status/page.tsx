@@ -245,7 +245,7 @@ function uptimePct(arr: ProbeHistoryEntry[]): number {
   return Math.round((okCount / arr.length) * 1000) / 10;
 }
 function Sparkline({ data, color, fail }: { data: ProbeHistoryEntry[]; color: string; fail: string }) {
-  if (!data.length) return <span style={{ fontSize: 9, color: '#4A5B6C', fontFamily: 'ui-monospace, monospace' }}>no history</span>;
+  if (!data.length) return <span style={{ fontSize: 9, color: 'var(--mc-text-4)', fontFamily: 'ui-monospace, monospace' }}>no history</span>;
   const w = 80, h = 14;
   const cellW = Math.max(2, Math.floor(w / Math.max(1, data.length)));
   return (
@@ -427,7 +427,7 @@ export default function StatusPage() {
             }}
             title="Force-run earnings calendar + guidance ingest + concall warmer crons"
             style={{
-              backgroundColor: '#F59E0B',
+              backgroundColor: 'var(--mc-warn)',
               border: 'none', color: '#000',
               borderRadius: 6, padding: '6px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
             }}

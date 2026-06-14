@@ -345,7 +345,7 @@ function PanelStaleStrip({
         backgroundColor: '#F59E0B14',
         border: '1px solid #F59E0B40',
         borderRadius: 8,
-        color: '#F59E0B',
+        color: 'var(--mc-warn)',
         fontSize: 11, fontWeight: 600,
       }}
       title={`This panel's data is from ${d.toLocaleString()} — refresh to pull fresh.`}
@@ -357,8 +357,8 @@ function PanelStaleStrip({
           style={{
             marginLeft: 'auto',
             backgroundColor: 'transparent',
-            border: '1px solid #F59E0B',
-            color: '#F59E0B',
+            border: '1px solid var(--mc-warn)',
+            color: 'var(--mc-warn)',
             borderRadius: 5, padding: '3px 10px', fontSize: 10, fontWeight: 700, cursor: 'pointer',
             letterSpacing: '0.3px',
           }}
@@ -822,9 +822,9 @@ function ReadingListButton({ id }: { id: string }) {
       onClick={(e) => { e.preventDefault(); e.stopPropagation(); setMarked(toggleReadingList(id)); }}
       style={{
         background: marked ? '#22D3EE15' : 'none',
-        border: `1px solid ${marked ? '#22D3EE60' : '#1E2D45'}`,
+        border: `1px solid ${marked ? '#22D3EE60' : 'var(--mc-border-1)'}`,
         borderRadius: '10px',
-        color: marked ? '#22D3EE' : '#4A5B6C',
+        color: marked ? 'var(--mc-cyan)' : 'var(--mc-text-4)',
         cursor: 'pointer', padding: '10px', flexShrink: 0,
         display: 'flex', alignItems: 'center', minWidth: '40px', minHeight: '40px',
         justifyContent: 'center', fontSize: 14,
@@ -898,9 +898,9 @@ function WatchlistButton({ ticker }: { ticker: string | null | undefined }) {
       title={inList ? `${upper} is in your Watchlist — click to remove` : `Add ${upper} to your Watchlist`}
       style={{
         background: inList ? '#10B98115' : 'none',
-        border: `1px solid ${inList ? '#10B98160' : '#1E2D45'}`,
+        border: `1px solid ${inList ? '#10B98160' : 'var(--mc-border-1)'}`,
         borderRadius: '10px',
-        color: inList ? '#10B981' : '#4A5B6C',
+        color: inList ? 'var(--mc-bullish)' : 'var(--mc-text-4)',
         cursor: 'pointer', padding: '6px 10px', flexShrink: 0,
         display: 'inline-flex', alignItems: 'center', minHeight: '32px',
         justifyContent: 'center', fontSize: 11, fontWeight: 700, letterSpacing: '0.3px',
@@ -965,14 +965,14 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
     <CardWrapper
       {...cardProps}
       className="news-card"
-      style={{ display: 'block', backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '14px', padding: '16px', cursor: 'pointer', transition: 'border-color 0.15s, background-color 0.15s', opacity: (isStale && !isPersistent && !isStructural) ? 0.55 : 1, textDecoration: 'none', color: 'inherit' }}
+      style={{ display: 'block', backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-1)', borderRadius: '14px', padding: '16px', cursor: 'pointer', transition: 'border-color 0.15s, background-color 0.15s', opacity: (isStale && !isPersistent && !isStructural) ? 0.55 : 1, textDecoration: 'none', color: 'inherit' }}
       onClick={handleCardClick}
     >
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
         <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: importanceDot(article.importance_score), flexShrink: 0, marginTop: '7px' }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '18px', color: '#4A5B6C' }}>{regionFlag(article.region)}</span>
+            <span style={{ fontSize: '18px', color: 'var(--mc-text-4)' }}>{regionFlag(article.region)}</span>
             <span style={{
               fontSize: '10px', fontWeight: '600', padding: '3px 8px', borderRadius: '5px',
               backgroundColor: typeColor(article.article_type) + '22',
@@ -1022,7 +1022,7 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
               return (
                 <span title={tip} style={{
                   fontSize: '9px', fontWeight: '800', padding: '3px 7px', borderRadius: '5px',
-                  backgroundColor: '#22D3EE15', color: '#22D3EE',
+                  backgroundColor: '#22D3EE15', color: 'var(--mc-cyan)',
                   border: '1px solid #22D3EE40', letterSpacing: '0.3px',
                   cursor: 'help', fontFamily: 'ui-monospace, monospace',
                 }}>
@@ -1041,7 +1041,7 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
               </span>
             )}
             {symbols.slice(0, 3).map(t => (
-              <span key={t} style={{ fontSize: '10px', fontWeight: '700', padding: '3px 8px', borderRadius: '5px', backgroundColor: '#0F7ABF18', color: '#0F7ABF', border: '1px solid #0F7ABF30' }}>
+              <span key={t} style={{ fontSize: '10px', fontWeight: '700', padding: '3px 8px', borderRadius: '5px', backgroundColor: '#0F7ABF18', color: 'var(--mc-accent)', border: '1px solid #0F7ABF30' }}>
                 {t}
               </span>
             ))}
@@ -1103,20 +1103,20 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
                 ].filter(Boolean).join(' · ');
                 if (lab) chips.push(
                   <span key="oq" title={`Order-book quality signals: ${lab}`}
-                    style={{ fontSize: '9px', fontWeight: '700', padding: '3px 7px', borderRadius: '5px', backgroundColor: '#0F7ABF15', color: '#22D3EE', border: '1px solid #0F7ABF40', letterSpacing: '0.3px' }}>
+                    style={{ fontSize: '9px', fontWeight: '700', padding: '3px 7px', borderRadius: '5px', backgroundColor: '#0F7ABF15', color: 'var(--mc-cyan)', border: '1px solid #0F7ABF40', letterSpacing: '0.3px' }}>
                     📋 {lab}
                   </span>
                 );
               }
               if (ann.noise.isListicle) chips.push(
                 <span key="lst" title="Aggregator listicle — '5 stocks to watch'-style headline. Heavy noise penalty applied to ranking."
-                  style={{ fontSize: '9px', fontWeight: '700', padding: '3px 7px', borderRadius: '5px', backgroundColor: '#94A3B815', color: '#94A3B8', border: '1px solid #94A3B840', letterSpacing: '0.3px' }}>
+                  style={{ fontSize: '9px', fontWeight: '700', padding: '3px 7px', borderRadius: '5px', backgroundColor: '#94A3B815', color: 'var(--mc-text-3)', border: '1px solid #94A3B840', letterSpacing: '0.3px' }}>
                   📋 LISTICLE
                 </span>
               );
               if (ann.noise.isSpeculation) chips.push(
                 <span key="spc" title="Speculative headline — 'could acquire' / 'in talks' / 'reportedly'. Penalty applied to ranking."
-                  style={{ fontSize: '9px', fontWeight: '700', padding: '3px 7px', borderRadius: '5px', backgroundColor: '#F59E0B15', color: '#F59E0B', border: '1px solid #F59E0B40', letterSpacing: '0.3px' }}>
+                  style={{ fontSize: '9px', fontWeight: '700', padding: '3px 7px', borderRadius: '5px', backgroundColor: '#F59E0B15', color: 'var(--mc-warn)', border: '1px solid #F59E0B40', letterSpacing: '0.3px' }}>
                   💭 SPECULATION
                 </span>
               );
@@ -1161,20 +1161,20 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
                             <span key={i} style={{
                               position: 'absolute', left: `${left}%`, top: 0,
                               width: 1.5, height: 8,
-                              background: '#10B981',
+                              background: 'var(--mc-bullish)',
                               transform: 'translateX(-50%)',
                             }} />
                           );
                         })}
                       </span>
-                      <span style={{ fontSize: 8, color: '#10B981', fontWeight: 700 }}>{spanLabel}</span>
+                      <span style={{ fontSize: 8, color: 'var(--mc-bullish)', fontWeight: 700 }}>{spanLabel}</span>
                     </span>
                   );
                 };
                 chips.push(
                   <span key="cl"
                     title={`This event also reported by ${clusterSize - 1} other source${clusterSize === 2 ? '' : 's'} — clustered under one master article.`}
-                    style={{ display: 'inline-flex', alignItems: 'center', fontSize: '9px', fontWeight: '700', padding: '3px 7px', borderRadius: '5px', backgroundColor: '#10B98115', color: '#10B981', border: '1px solid #10B98140', letterSpacing: '0.3px' }}>
+                    style={{ display: 'inline-flex', alignItems: 'center', fontSize: '9px', fontWeight: '700', padding: '3px 7px', borderRadius: '5px', backgroundColor: '#10B98115', color: 'var(--mc-bullish)', border: '1px solid #10B98140', letterSpacing: '0.3px' }}>
                     🔗 +{clusterSize - 1} sources
                     {renderTimeline()}
                   </span>
@@ -1207,14 +1207,14 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
           </div>
           <p style={{ fontSize: '17px', fontWeight: '600', color: '#E8EDF2', margin: '0 0 4px', lineHeight: '1.55' }}>{title}</p>
           {article.impact_statement && (
-            <p style={{ fontSize: '18px', color: '#F59E0B', margin: '0 0 6px', lineHeight: '1.5', fontWeight: '500', fontStyle: 'italic' }}>
+            <p style={{ fontSize: '18px', color: 'var(--mc-warn)', margin: '0 0 6px', lineHeight: '1.5', fontWeight: '500', fontStyle: 'italic' }}>
               Impact: {article.impact_statement}
             </p>
           )}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '17px', color: '#6A7B8C', fontWeight: '500' }}>{source}</span>
             <span style={{ fontSize: '17px', color: '#2A3B4C' }}>·</span>
-            <span style={{ fontSize: '17px', color: '#4A5B6C' }}>{timeAgo(article.published_at)}</span>
+            <span style={{ fontSize: '17px', color: 'var(--mc-text-4)' }}>{timeAgo(article.published_at)}</span>
             {url && url !== '#' && (
               <ExternalLink style={{ width: '11px', height: '11px', color: '#3A4B5C' }} />
             )}
@@ -1234,7 +1234,7 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
             destroyed app state by hard-navigating away. */}
         <button
           onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSelect(article); }}
-          style={{ background: 'none', border: '1px solid #1E2D45', borderRadius: '10px', color: '#4A5B6C', cursor: 'pointer', padding: '10px', flexShrink: 0, display: 'flex', alignItems: 'center', minWidth: '40px', minHeight: '40px', justifyContent: 'center' }}
+          style={{ background: 'none', border: '1px solid var(--mc-border-1)', borderRadius: '10px', color: 'var(--mc-text-4)', cursor: 'pointer', padding: '10px', flexShrink: 0, display: 'flex', alignItems: 'center', minWidth: '40px', minHeight: '40px', justifyContent: 'center' }}
           title="View details (opens drawer — does not leave app)"
         >
           <ChevronRight style={{ width: '14px', height: '14px' }} />
@@ -1324,20 +1324,20 @@ function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: ()
       onClick={onClose}
     >
       <div
-        style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: '0px', width: '100%', maxWidth: '700px', height: '100vh', maxHeight: '100vh', overflowY: 'auto', padding: '20px 16px' }}
+        style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderRadius: '0px', width: '100%', maxWidth: '700px', height: '100vh', maxHeight: '100vh', overflowY: 'auto', padding: '20px 16px' }}
         className="article-detail-panel"
         onClick={e => e.stopPropagation()}
       >
         {/* Close button */}
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#4A5B6C', cursor: 'pointer', fontSize: '18px', padding: '4px 8px' }}>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--mc-text-4)', cursor: 'pointer', fontSize: '18px', padding: '4px 8px' }}>
             <X style={{ width: '18px', height: '18px' }} />
           </button>
         </div>
 
         {/* Tags row */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '10px', color: '#4A5B6C' }}>{regionFlag(article.region)}</span>
+          <span style={{ fontSize: '10px', color: 'var(--mc-text-4)' }}>{regionFlag(article.region)}</span>
           <span style={{
             fontSize: '10px', fontWeight: '600', padding: '3px 8px', borderRadius: '5px',
             backgroundColor: typeColor(article.article_type) + '22',
@@ -1365,21 +1365,21 @@ function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: ()
         </div>
 
         {/* Headline */}
-        <h2 style={{ fontSize: '20px', fontWeight: '700', color: '#F5F7FA', margin: '0 0 12px', lineHeight: '1.4' }}>
+        <h2 style={{ fontSize: '20px', fontWeight: '700', color: 'var(--mc-text-0)', margin: '0 0 12px', lineHeight: '1.4' }}>
           {title}
         </h2>
 
         {/* Source & time */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
-          <span style={{ fontSize: '12px', fontWeight: '600', color: '#0F7ABF' }}>{source}</span>
+          <span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--mc-accent)' }}>{source}</span>
           <span style={{ fontSize: '12px', color: '#2A3B4C' }}>·</span>
-          <span style={{ fontSize: '12px', color: '#4A5B6C' }}>{timeAgo(article.published_at)}</span>
+          <span style={{ fontSize: '12px', color: 'var(--mc-text-4)' }}>{timeAgo(article.published_at)}</span>
         </div>
 
         {/* Bottleneck themes */}
         {article.themes && article.themes.length > 0 && (
           <div style={{ marginBottom: '16px' }}>
-            <p style={{ fontSize: '10px', fontWeight: '600', color: '#4A5B6C', margin: '0 0 8px', letterSpacing: '0.5px' }}>BOTTLENECK CATEGORIES</p>
+            <p style={{ fontSize: '10px', fontWeight: '600', color: 'var(--mc-text-4)', margin: '0 0 8px', letterSpacing: '0.5px' }}>BOTTLENECK CATEGORIES</p>
             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
               {article.themes.map(th => (
                 <span key={th} style={{ fontSize: '11px', fontWeight: '700', padding: '4px 10px', borderRadius: '6px', backgroundColor: '#EF444418', color: '#F87171', border: '1px solid #EF444430' }}>
@@ -1393,10 +1393,10 @@ function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: ()
         {/* Tickers */}
         {symbols.length > 0 && (
           <div style={{ marginBottom: '20px' }}>
-            <p style={{ fontSize: '10px', fontWeight: '600', color: '#4A5B6C', margin: '0 0 8px', letterSpacing: '0.5px' }}>RELATED TICKERS</p>
+            <p style={{ fontSize: '10px', fontWeight: '600', color: 'var(--mc-text-4)', margin: '0 0 8px', letterSpacing: '0.5px' }}>RELATED TICKERS</p>
             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
               {symbols.map(t => (
-                <span key={t} style={{ fontSize: '11px', fontWeight: '700', padding: '4px 10px', borderRadius: '6px', backgroundColor: '#0F7ABF18', color: '#0F7ABF', border: '1px solid #0F7ABF30' }}>
+                <span key={t} style={{ fontSize: '11px', fontWeight: '700', padding: '4px 10px', borderRadius: '6px', backgroundColor: '#0F7ABF18', color: 'var(--mc-accent)', border: '1px solid #0F7ABF30' }}>
                   {t}
                 </span>
               ))}
@@ -1406,15 +1406,15 @@ function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: ()
 
         {/* Summary */}
         {article.summary ? (
-          <div style={{ borderTop: '1px solid #1E2D45', paddingTop: '20px', marginBottom: '20px' }}>
-            <p style={{ fontSize: '10px', fontWeight: '600', color: '#4A5B6C', margin: '0 0 10px', letterSpacing: '0.5px' }}>SUMMARY</p>
+          <div style={{ borderTop: '1px solid var(--mc-border-1)', paddingTop: '20px', marginBottom: '20px' }}>
+            <p style={{ fontSize: '10px', fontWeight: '600', color: 'var(--mc-text-4)', margin: '0 0 10px', letterSpacing: '0.5px' }}>SUMMARY</p>
             <p style={{ fontSize: '14px', color: '#C9D4E0', margin: 0, lineHeight: '1.7' }}>
               {article.summary}
             </p>
           </div>
         ) : (
-          <div style={{ borderTop: '1px solid #1E2D45', paddingTop: '20px', marginBottom: '20px' }}>
-            <p style={{ fontSize: '13px', color: '#4A5B6C', fontStyle: 'italic', margin: 0 }}>
+          <div style={{ borderTop: '1px solid var(--mc-border-1)', paddingTop: '20px', marginBottom: '20px' }}>
+            <p style={{ fontSize: '13px', color: 'var(--mc-text-4)', fontStyle: 'italic', margin: 0 }}>
               No summary available for this article.
             </p>
           </div>
@@ -1426,9 +1426,9 @@ function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: ()
             classifier feature traces + cross-article corroboration timeline)
             lands once the SignalEvidence schema is in place. */}
         <div style={{
-          marginTop: 20, paddingTop: 16, borderTop: '1px solid #1E2D45',
+          marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--mc-border-1)',
         }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#22D3EE', letterSpacing: '0.6px', marginBottom: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-cyan)', letterSpacing: '0.6px', marginBottom: 10 }}>
             EVIDENCE & PROVENANCE
           </div>
           {/* Source tier */}
@@ -1460,7 +1460,7 @@ function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: ()
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                   {(((article as any).also_reported_sources || []) as string[]).map((s, i) => (
                     <span key={`${s}-${i}`} style={{
-                      backgroundColor: '#0A1422', border: '1px solid #1E2D45',
+                      backgroundColor: '#0A1422', border: '1px solid var(--mc-border-1)',
                       borderRadius: 4, padding: '2px 6px', fontSize: 10, color: '#8A95A3',
                     }}>{s}</span>
                   ))}
@@ -1504,9 +1504,9 @@ function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: ()
         </div>
 
         {/* PATCH 0233 — Thesis Notebook v0 (per-article notes, localStorage) */}
-        <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid #1E2D45' }}>
+        <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--mc-border-1)' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: '#22D3EE', letterSpacing: '0.6px' }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-cyan)', letterSpacing: '0.6px' }}>
               📝 ANALYST NOTE
             </span>
             <span style={{ fontSize: 9, color: '#6B7B8C', fontFamily: 'ui-monospace, monospace' }}>
@@ -1519,8 +1519,8 @@ function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: ()
             placeholder="Thesis, decision rationale, ticker tags, follow-ups…  (Markdown supported. Local to this browser until Notebooks server-side ships.)"
             style={{
               width: '100%', minHeight: 96, resize: 'vertical',
-              backgroundColor: '#0A1422', border: '1px solid #1E2D45',
-              borderRadius: 6, padding: '8px 10px', color: '#F5F7FA',
+              backgroundColor: '#0A1422', border: '1px solid var(--mc-border-1)',
+              borderRadius: 6, padding: '8px 10px', color: 'var(--mc-text-0)',
               fontSize: 12, fontFamily: 'ui-monospace, monospace',
               lineHeight: 1.5, outline: 'none',
             }}
@@ -1531,7 +1531,7 @@ function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: ()
               <button
                 onClick={() => { if (window.confirm('Delete this note?')) setNoteText(''); }}
                 style={{
-                  marginLeft: 'auto', background: 'none', border: '1px solid #1E2D45',
+                  marginLeft: 'auto', background: 'none', border: '1px solid var(--mc-border-1)',
                   color: '#6B7B8C', borderRadius: 4, padding: '2px 8px',
                   fontSize: 10, cursor: 'pointer',
                 }}
@@ -1546,7 +1546,7 @@ function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: ()
             href={url} target="_blank" rel="noopener noreferrer"
             style={{
               display: 'inline-flex', alignItems: 'center', gap: '6px',
-              fontSize: '12px', fontWeight: '600', color: '#0F7ABF', textDecoration: 'none',
+              fontSize: '12px', fontWeight: '600', color: 'var(--mc-accent)', textDecoration: 'none',
               padding: '8px 16px', borderRadius: '8px', border: '1px solid #0F7ABF40',
               backgroundColor: '#0F7ABF10', marginTop: 16,
             }}
@@ -1626,7 +1626,7 @@ function BottleneckDashboard({
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
         {[1, 2, 3].map(i => (
-          <div key={i} style={{ height: '100px', backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '14px' }} className="animate-shimmer" />
+          <div key={i} style={{ height: '100px', backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-1)', borderRadius: '14px' }} className="animate-shimmer" />
         ))}
       </div>
     );
@@ -1636,18 +1636,18 @@ function BottleneckDashboard({
     return (
       <div style={{ textAlign: 'center', padding: '60px 20px' }}>
         <p style={{ fontSize: '32px', marginBottom: '12px' }}>🔍</p>
-        <p style={{ fontSize: '15px', fontWeight: '600', color: '#F5F7FA', margin: '0 0 8px' }}>No active bottleneck signals</p>
-        <p style={{ fontSize: '13px', color: '#4A5B6C', margin: 0 }}>Bottleneck signals will appear when supply-chain constraint articles are detected</p>
+        <p style={{ fontSize: '15px', fontWeight: '600', color: 'var(--mc-text-0)', margin: '0 0 8px' }}>No active bottleneck signals</p>
+        <p style={{ fontSize: '13px', color: 'var(--mc-text-4)', margin: 0 }}>Bottleneck signals will appear when supply-chain constraint articles are detected</p>
       </div>
     );
   }
 
   if (!filteredBuckets.length) {
     return (
-      <div style={{ textAlign: 'center', padding: '40px 20px', backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '12px' }}>
+      <div style={{ textAlign: 'center', padding: '40px 20px', backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-1)', borderRadius: '12px' }}>
         <p style={{ fontSize: '28px', marginBottom: '10px' }}>🔎</p>
-        <p style={{ fontSize: '14px', fontWeight: '600', color: '#F5F7FA', margin: '0 0 6px' }}>No dashboard buckets match current filters</p>
-        <p style={{ fontSize: '12px', color: '#4A5B6C', margin: 0 }}>Try clearing the level or category filter to see the full intelligence grid.</p>
+        <p style={{ fontSize: '14px', fontWeight: '600', color: 'var(--mc-text-0)', margin: '0 0 6px' }}>No dashboard buckets match current filters</p>
+        <p style={{ fontSize: '12px', color: 'var(--mc-text-4)', margin: 0 }}>Try clearing the level or category filter to see the full intelligence grid.</p>
       </div>
     );
   }
@@ -1655,9 +1655,9 @@ function BottleneckDashboard({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
       {/* Summary bar */}
-      <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: '12px', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '11px', fontWeight: '700', color: '#EF4444', letterSpacing: '0.5px' }}>BOTTLENECK INTELLIGENCE</span>
-        <span style={{ fontSize: '11px', color: '#4A5B6C' }}>
+      <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderRadius: '12px', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--mc-bearish)', letterSpacing: '0.5px' }}>BOTTLENECK INTELLIGENCE</span>
+        <span style={{ fontSize: '11px', color: 'var(--mc-text-4)' }}>
           {filteredBuckets.length} categories · {filteredBuckets.reduce((s, b) => s + b.signal_count, 0)} signals · {filteredBuckets.reduce((s, b) => s + b.article_count, 0)} evidence articles
         </span>
         <div style={{ display: 'flex', gap: '6px', marginLeft: 'auto' }}>
@@ -1678,7 +1678,7 @@ function BottleneckDashboard({
       {filteredBuckets.map(bucket => {
         const isExpanded = expandedBuckets.has(bucket.bucket_id);
         return (
-          <div key={bucket.bucket_id} style={{ backgroundColor: '#111B35', border: `1px solid ${bucket.severity >= 4 ? bucket.severity_color + '40' : '#1E2D45'}`, borderRadius: '14px', overflow: 'hidden' }}>
+          <div key={bucket.bucket_id} style={{ backgroundColor: 'var(--mc-bg-2)', border: `1px solid ${bucket.severity >= 4 ? bucket.severity_color + '40' : 'var(--mc-border-1)'}`, borderRadius: '14px', overflow: 'hidden' }}>
             {/* Bucket header */}
             <div
               onClick={() => toggleBucket(bucket.bucket_id)}
@@ -1691,7 +1691,7 @@ function BottleneckDashboard({
 
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: '14px', fontWeight: '700', color: '#F5F7FA' }}>{bucket.label}</span>
+                  <span style={{ fontSize: '14px', fontWeight: '700', color: 'var(--mc-text-0)' }}>{bucket.label}</span>
                   <span style={{
                     fontSize: '9px', fontWeight: '700', padding: '2px 8px', borderRadius: '4px',
                     backgroundColor: bucket.severity_color + '20', color: bucket.severity_color,
@@ -1701,11 +1701,11 @@ function BottleneckDashboard({
                   </span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: '11px', color: '#4A5B6C' }}>
+                  <span style={{ fontSize: '11px', color: 'var(--mc-text-4)' }}>
                     {bucket.signal_count} signal{bucket.signal_count !== 1 ? 's' : ''} · {bucket.article_count} article{bucket.article_count !== 1 ? 's' : ''}
                   </span>
                   {bucket.key_tickers.slice(0, 4).map(t => (
-                    <span key={t} style={{ fontSize: '9px', fontWeight: '700', padding: '1px 5px', borderRadius: '3px', backgroundColor: '#0F7ABF15', color: '#0F7ABF', border: '1px solid #0F7ABF25' }}>
+                    <span key={t} style={{ fontSize: '9px', fontWeight: '700', padding: '1px 5px', borderRadius: '3px', backgroundColor: '#0F7ABF15', color: 'var(--mc-accent)', border: '1px solid #0F7ABF25' }}>
                       {t}
                     </span>
                   ))}
@@ -1717,7 +1717,7 @@ function BottleneckDashboard({
                   onClick={(e) => { e.stopPropagation(); onOpenDrilldown(bucket.bucket_id); }}
                   style={{
                     fontSize: '10px', fontWeight: '700', padding: '5px 9px', borderRadius: '6px', cursor: 'pointer',
-                    border: '1px solid #8B5CF640', backgroundColor: '#8B5CF615', color: '#A78BFA',
+                    border: '1px solid #8B5CF640', backgroundColor: '#8B5CF615', color: 'var(--mc-state-persistent)',
                     flexShrink: 0, letterSpacing: '0.3px',
                   }}
                   title="Open supply/demand drilldown"
@@ -1726,14 +1726,14 @@ function BottleneckDashboard({
                 </button>
               )}
               {isExpanded
-                ? <ChevronDown style={{ width: '16px', height: '16px', color: '#4A5B6C', flexShrink: 0 }} />
-                : <ChevronRight style={{ width: '16px', height: '16px', color: '#4A5B6C', flexShrink: 0 }} />
+                ? <ChevronDown style={{ width: '16px', height: '16px', color: 'var(--mc-text-4)', flexShrink: 0 }} />
+                : <ChevronRight style={{ width: '16px', height: '16px', color: 'var(--mc-text-4)', flexShrink: 0 }} />
               }
             </div>
 
             {/* Expanded: show signals */}
             {isExpanded && (
-              <div style={{ borderTop: '1px solid #1E2D45', padding: '4px 0' }}>
+              <div style={{ borderTop: '1px solid var(--mc-border-1)', padding: '4px 0' }}>
                 {/* Description */}
                 <p style={{ fontSize: '12px', color: '#6B7280', margin: '10px 18px 12px', lineHeight: '1.5' }}>
                   {bucket.description}
@@ -1743,7 +1743,7 @@ function BottleneckDashboard({
                   const signalKey = `${bucket.bucket_id}-${idx}`;
                   const signalExpanded = expandedSignals.has(signalKey);
                   return (
-                    <div key={signalKey} style={{ margin: '0 12px 8px', backgroundColor: '#0D1B2E', borderRadius: '10px', border: '1px solid #1a2840' }}>
+                    <div key={signalKey} style={{ margin: '0 12px 8px', backgroundColor: '#0D1B2E', borderRadius: '10px', border: '1px solid var(--mc-bg-4)' }}>
                       {/* Signal header */}
                       <div
                         onClick={() => toggleSignal(signalKey)}
@@ -1768,16 +1768,16 @@ function BottleneckDashboard({
                             </p>
                           )}
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                            <span style={{ fontSize: '10px', color: '#4A5B6C' }}>
+                            <span style={{ fontSize: '10px', color: 'var(--mc-text-4)' }}>
                               {signal.sources.join(', ')}
                             </span>
                             {signal.evidence_count > 1 && (
-                              <span style={{ fontSize: '10px', fontWeight: '600', color: '#F59E0B', backgroundColor: '#F59E0B15', padding: '1px 6px', borderRadius: '3px' }}>
+                              <span style={{ fontSize: '10px', fontWeight: '600', color: 'var(--mc-warn)', backgroundColor: '#F59E0B15', padding: '1px 6px', borderRadius: '3px' }}>
                                 +{signal.evidence_count - 1} related
                               </span>
                             )}
                             {signal.tickers.slice(0, 3).map(t => (
-                              <span key={t} style={{ fontSize: '9px', fontWeight: '700', padding: '1px 5px', borderRadius: '3px', backgroundColor: '#0F7ABF12', color: '#0F7ABF', border: '1px solid #0F7ABF20' }}>
+                              <span key={t} style={{ fontSize: '9px', fontWeight: '700', padding: '1px 5px', borderRadius: '3px', backgroundColor: '#0F7ABF12', color: 'var(--mc-accent)', border: '1px solid #0F7ABF20' }}>
                                 {t}
                               </span>
                             ))}
@@ -1788,15 +1788,15 @@ function BottleneckDashboard({
                         </div>
                         {signal.evidence_count > 1 && (
                           signalExpanded
-                            ? <ChevronDown style={{ width: '14px', height: '14px', color: '#4A5B6C', flexShrink: 0, marginTop: '2px' }} />
-                            : <ChevronRight style={{ width: '14px', height: '14px', color: '#4A5B6C', flexShrink: 0, marginTop: '2px' }} />
+                            ? <ChevronDown style={{ width: '14px', height: '14px', color: 'var(--mc-text-4)', flexShrink: 0, marginTop: '2px' }} />
+                            : <ChevronRight style={{ width: '14px', height: '14px', color: 'var(--mc-text-4)', flexShrink: 0, marginTop: '2px' }} />
                         )}
                       </div>
 
                       {/* Expanded: evidence articles */}
                       {signalExpanded && signal.evidence_count > 1 && (
-                        <div style={{ borderTop: '1px solid #1a2840', padding: '8px 14px 10px', paddingLeft: '30px' }}>
-                          <p style={{ fontSize: '9px', fontWeight: '600', color: '#4A5B6C', margin: '0 0 6px', letterSpacing: '0.5px' }}>EVIDENCE ARTICLES</p>
+                        <div style={{ borderTop: '1px solid var(--mc-bg-4)', padding: '8px 14px 10px', paddingLeft: '30px' }}>
+                          <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--mc-text-4)', margin: '0 0 6px', letterSpacing: '0.5px' }}>EVIDENCE ARTICLES</p>
                           {signal.articles.map((art, aidx) => (
                             <a
                               key={aidx}
@@ -1809,7 +1809,7 @@ function BottleneckDashboard({
                                 {/* PATCH 0267 — defend against null headline */}
                                 {decodeHtml((art.headline || '')).slice(0, 90)}{(art.headline || '').length > 90 ? '…' : ''}
                               </span>
-                              <span style={{ fontSize: '10px', color: '#4A5B6C', flexShrink: 0 }}>{art.source_name}</span>
+                              <span style={{ fontSize: '10px', color: 'var(--mc-text-4)', flexShrink: 0 }}>{art.source_name}</span>
                               <ExternalLink style={{ width: '10px', height: '10px', color: '#3A4B5C', flexShrink: 0 }} />
                             </a>
                           ))}
@@ -2013,12 +2013,12 @@ function BottleneckDrilldown({
         onClick={onClose}
       >
         <div
-          style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', width: '100%', maxWidth: '700px', height: '100vh', overflowY: 'auto', padding: '20px 16px' }}
+          style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', width: '100%', maxWidth: '700px', height: '100vh', overflowY: 'auto', padding: '20px 16px' }}
           onClick={e => e.stopPropagation()}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <h2 style={{ fontSize: '16px', color: '#F5F7FA', margin: 0 }}>{subTag.replace(/_/g, ' ')}</h2>
-            <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#4A5B6C', cursor: 'pointer' }}>
+            <h2 style={{ fontSize: '16px', color: 'var(--mc-text-0)', margin: 0 }}>{subTag.replace(/_/g, ' ')}</h2>
+            <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--mc-text-4)', cursor: 'pointer' }}>
               <X style={{ width: '18px', height: '18px' }} />
             </button>
           </div>
@@ -2034,11 +2034,11 @@ function BottleneckDrilldown({
       onClick={onClose}
     >
       <div
-        style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', width: '100%', maxWidth: '720px', height: '100vh', overflowY: 'auto', padding: '20px 16px' }}
+        style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', width: '100%', maxWidth: '720px', height: '100vh', overflowY: 'auto', padding: '20px 16px' }}
         onClick={e => e.stopPropagation()}
       >
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '4px' }}>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#4A5B6C', cursor: 'pointer' }}>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--mc-text-4)', cursor: 'pointer' }}>
             <X style={{ width: '18px', height: '18px' }} />
           </button>
         </div>
@@ -2047,25 +2047,25 @@ function BottleneckDrilldown({
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
           <div style={{ fontSize: '32px' }}>{entry.icon}</div>
           <div>
-            <div style={{ fontSize: '10px', fontWeight: '700', color: '#EF4444', letterSpacing: '0.8px', marginBottom: '2px' }}>STRUCTURAL BOTTLENECK</div>
-            <h2 style={{ fontSize: '22px', fontWeight: '700', color: '#F5F7FA', margin: 0 }}>{entry.label}</h2>
+            <div style={{ fontSize: '10px', fontWeight: '700', color: 'var(--mc-bearish)', letterSpacing: '0.8px', marginBottom: '2px' }}>STRUCTURAL BOTTLENECK</div>
+            <h2 style={{ fontSize: '22px', fontWeight: '700', color: 'var(--mc-text-0)', margin: 0 }}>{entry.label}</h2>
           </div>
         </div>
 
         {/* Why it's a bottleneck */}
         <section style={{ marginBottom: '18px' }}>
-          <p style={{ fontSize: '10px', fontWeight: '700', color: '#EF4444', margin: '0 0 8px', letterSpacing: '0.5px' }}>WHY IT'S A BOTTLENECK</p>
+          <p style={{ fontSize: '10px', fontWeight: '700', color: 'var(--mc-bearish)', margin: '0 0 8px', letterSpacing: '0.5px' }}>WHY IT'S A BOTTLENECK</p>
           <p style={{ fontSize: '13px', color: '#C9D4E0', lineHeight: '1.6', margin: 0 }}>{entry.why}</p>
         </section>
 
         {/* Supply vs Demand */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '18px' }}>
-          <div style={{ backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '10px', padding: '12px' }}>
-            <p style={{ fontSize: '10px', fontWeight: '700', color: '#F59E0B', margin: '0 0 6px', letterSpacing: '0.5px' }}>SUPPLY</p>
+          <div style={{ backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-1)', borderRadius: '10px', padding: '12px' }}>
+            <p style={{ fontSize: '10px', fontWeight: '700', color: 'var(--mc-warn)', margin: '0 0 6px', letterSpacing: '0.5px' }}>SUPPLY</p>
             <p style={{ fontSize: '12px', color: '#C9D4E0', lineHeight: '1.55', margin: 0 }}>{entry.supply}</p>
           </div>
-          <div style={{ backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '10px', padding: '12px' }}>
-            <p style={{ fontSize: '10px', fontWeight: '700', color: '#10B981', margin: '0 0 6px', letterSpacing: '0.5px' }}>DEMAND</p>
+          <div style={{ backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-1)', borderRadius: '10px', padding: '12px' }}>
+            <p style={{ fontSize: '10px', fontWeight: '700', color: 'var(--mc-bullish)', margin: '0 0 6px', letterSpacing: '0.5px' }}>DEMAND</p>
             <p style={{ fontSize: '12px', color: '#C9D4E0', lineHeight: '1.55', margin: 0 }}>{entry.demand}</p>
           </div>
         </div>
@@ -2073,11 +2073,11 @@ function BottleneckDrilldown({
         {/* Winners */}
         {entry.winners.length > 0 && (
           <section style={{ marginBottom: '16px' }}>
-            <p style={{ fontSize: '10px', fontWeight: '700', color: '#10B981', margin: '0 0 8px', letterSpacing: '0.5px' }}>▲ LISTED COMPANIES — WINNERS</p>
+            <p style={{ fontSize: '10px', fontWeight: '700', color: 'var(--mc-bullish)', margin: '0 0 8px', letterSpacing: '0.5px' }}>▲ LISTED COMPANIES — WINNERS</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               {entry.winners.map(w => (
                 <div key={w.ticker} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '8px 10px', backgroundColor: '#10B98108', border: '1px solid #10B98130', borderRadius: '8px' }}>
-                  <span style={{ fontSize: '11px', fontWeight: '700', color: '#10B981', backgroundColor: '#10B98120', padding: '2px 7px', borderRadius: '4px', flexShrink: 0, minWidth: '70px', textAlign: 'center' }}>
+                  <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--mc-bullish)', backgroundColor: '#10B98120', padding: '2px 7px', borderRadius: '4px', flexShrink: 0, minWidth: '70px', textAlign: 'center' }}>
                     {w.ticker}
                   </span>
                   <span style={{ fontSize: '12px', color: '#C9D4E0', lineHeight: '1.45' }}>{w.thesis}</span>
@@ -2090,11 +2090,11 @@ function BottleneckDrilldown({
         {/* Losers */}
         {entry.losers.length > 0 && (
           <section style={{ marginBottom: '16px' }}>
-            <p style={{ fontSize: '10px', fontWeight: '700', color: '#EF4444', margin: '0 0 8px', letterSpacing: '0.5px' }}>▼ LISTED COMPANIES — UNDER PRESSURE</p>
+            <p style={{ fontSize: '10px', fontWeight: '700', color: 'var(--mc-bearish)', margin: '0 0 8px', letterSpacing: '0.5px' }}>▼ LISTED COMPANIES — UNDER PRESSURE</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               {entry.losers.map(l => (
                 <div key={l.ticker} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '8px 10px', backgroundColor: '#EF444408', border: '1px solid #EF444430', borderRadius: '8px' }}>
-                  <span style={{ fontSize: '11px', fontWeight: '700', color: '#EF4444', backgroundColor: '#EF444420', padding: '2px 7px', borderRadius: '4px', flexShrink: 0, minWidth: '70px', textAlign: 'center' }}>
+                  <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--mc-bearish)', backgroundColor: '#EF444420', padding: '2px 7px', borderRadius: '4px', flexShrink: 0, minWidth: '70px', textAlign: 'center' }}>
                     {l.ticker}
                   </span>
                   <span style={{ fontSize: '12px', color: '#C9D4E0', lineHeight: '1.45' }}>{l.thesis}</span>
@@ -2106,17 +2106,17 @@ function BottleneckDrilldown({
 
         {/* Related articles */}
         {relatedArticles.length > 0 && (
-          <section style={{ borderTop: '1px solid #1E2D45', paddingTop: '16px' }}>
-            <p style={{ fontSize: '10px', fontWeight: '700', color: '#4A5B6C', margin: '0 0 10px', letterSpacing: '0.5px' }}>RECENT EVIDENCE ({relatedArticles.length})</p>
+          <section style={{ borderTop: '1px solid var(--mc-border-1)', paddingTop: '16px' }}>
+            <p style={{ fontSize: '10px', fontWeight: '700', color: 'var(--mc-text-4)', margin: '0 0 10px', letterSpacing: '0.5px' }}>RECENT EVIDENCE ({relatedArticles.length})</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               {relatedArticles.map(a => (
                 <button
                   key={a.id}
                   onClick={() => onSelectArticle(a)}
-                  style={{ textAlign: 'left', background: '#111B35', border: '1px solid #1E2D45', borderRadius: '8px', padding: '10px 12px', cursor: 'pointer', color: '#C9D4E0', fontSize: '12px', lineHeight: '1.45' }}
+                  style={{ textAlign: 'left', background: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-1)', borderRadius: '8px', padding: '10px 12px', cursor: 'pointer', color: '#C9D4E0', fontSize: '12px', lineHeight: '1.45' }}
                 >
                   <div style={{ fontWeight: '600', color: '#E8EDF2', marginBottom: '3px' }}>{getTitle(a)}</div>
-                  <div style={{ fontSize: '10px', color: '#4A5B6C' }}>{getSource(a)} · {timeAgo(a.published_at)}</div>
+                  <div style={{ fontSize: '10px', color: 'var(--mc-text-4)' }}>{getSource(a)} · {timeAgo(a.published_at)}</div>
                 </button>
               ))}
             </div>
@@ -2249,8 +2249,8 @@ function SavedViewsControl() {
         title={alreadySaved ? `Already saved as "${alreadySaved.name}"` : isDefault ? 'Apply filters first, then save the view' : 'Save the current filter combination as a named view'}
         style={{
           backgroundColor: alreadySaved ? '#22D3EE20' : 'transparent',
-          border: `1px solid ${alreadySaved ? '#22D3EE' : '#1E2D45'}`,
-          color: alreadySaved ? '#22D3EE' : '#6B7B8C',
+          border: `1px solid ${alreadySaved ? 'var(--mc-cyan)' : 'var(--mc-border-1)'}`,
+          color: alreadySaved ? 'var(--mc-cyan)' : '#6B7B8C',
           borderRadius: 5, padding: '4px 8px', cursor: isDefault ? 'not-allowed' : 'pointer',
           fontSize: 10, fontWeight: 700, letterSpacing: '0.4px',
           opacity: isDefault ? 0.5 : 1,
@@ -2261,8 +2261,8 @@ function SavedViewsControl() {
         title={`${views.length} saved view${views.length === 1 ? '' : 's'}`}
         style={{
           backgroundColor: open ? '#22D3EE20' : 'transparent',
-          border: `1px solid ${open ? '#22D3EE' : '#1E2D45'}`,
-          color: open ? '#22D3EE' : '#6B7B8C',
+          border: `1px solid ${open ? 'var(--mc-cyan)' : 'var(--mc-border-1)'}`,
+          color: open ? 'var(--mc-cyan)' : '#6B7B8C',
           borderRadius: 5, padding: '4px 8px', cursor: 'pointer',
           fontSize: 10, fontWeight: 700, letterSpacing: '0.4px',
         }}
@@ -2271,7 +2271,7 @@ function SavedViewsControl() {
         <div
           style={{
             position: 'absolute', top: '100%', right: 0, marginTop: 6, zIndex: 50,
-            backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: 8,
+            backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderRadius: 8,
             padding: 6, minWidth: 280, maxWidth: 360, maxHeight: 320, overflowY: 'auto',
             boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
           }}
@@ -2288,7 +2288,7 @@ function SavedViewsControl() {
                   style={{
                     flex: 1, textAlign: 'left',
                     backgroundColor: 'transparent', border: 'none',
-                    color: '#F5F7FA', fontSize: 12, fontWeight: 500,
+                    color: 'var(--mc-text-0)', fontSize: 12, fontWeight: 500,
                     cursor: 'pointer', padding: '4px 6px',
                   }}
                   title={`Apply view\n${v.query || '(default)'}`}
@@ -2299,7 +2299,7 @@ function SavedViewsControl() {
                   </div>
                 </button>
                 <button onClick={() => onRename(v)} title="Rename" style={{ background: 'none', border: 'none', color: '#6B7B8C', fontSize: 11, cursor: 'pointer', padding: '2px 4px' }}>✎</button>
-                <button onClick={() => onDelete(v)} title="Delete" style={{ background: 'none', border: 'none', color: '#EF4444', fontSize: 12, cursor: 'pointer', padding: '2px 4px' }}>✕</button>
+                <button onClick={() => onDelete(v)} title="Delete" style={{ background: 'none', border: 'none', color: 'var(--mc-bearish)', fontSize: 12, cursor: 'pointer', padding: '2px 4px' }}>✕</button>
               </div>
             ))
           )}
@@ -2831,32 +2831,32 @@ export default function NewsFeedPage() {
 
       {/* ── MARKET BIAS HEADER ────────────────────────────────────────── */}
       {marketBias && !isLoading && (
-        <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: '12px', padding: '10px 14px', marginBottom: '10px' }}>
+        <div style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderRadius: '12px', padding: '10px 14px', marginBottom: '10px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap', marginBottom: marketBias.hotTickers.length > 0 ? '8px' : '0' }}>
             {/* Bias pill */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
-              <span style={{ fontSize: '10px', fontWeight: '700', color: '#4A5B6C', letterSpacing: '0.5px' }}>TODAY</span>
+              <span style={{ fontSize: '10px', fontWeight: '700', color: 'var(--mc-text-4)', letterSpacing: '0.5px' }}>TODAY</span>
               <span style={{
                 fontSize: '11px', fontWeight: '800', padding: '3px 10px', borderRadius: '6px',
                 backgroundColor: marketBias.bias === 'Bullish' ? '#10B98120' : marketBias.bias === 'Bearish' ? '#EF444420' : '#F59E0B14',
-                color: marketBias.bias === 'Bullish' ? '#10B981' : marketBias.bias === 'Bearish' ? '#EF4444' : '#F59E0B',
+                color: marketBias.bias === 'Bullish' ? 'var(--mc-bullish)' : marketBias.bias === 'Bearish' ? 'var(--mc-bearish)' : 'var(--mc-warn)',
                 border: `1px solid ${marketBias.bias === 'Bullish' ? '#10B98130' : marketBias.bias === 'Bearish' ? '#EF444430' : '#F59E0B30'}`,
               }}>
                 {marketBias.bias === 'Bullish' ? '↑' : marketBias.bias === 'Bearish' ? '↓' : '→'} {marketBias.bias}
               </span>
             </div>
             {/* Sentiment bars */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '10px', color: '#4A5B6C', flexShrink: 0 }}>
-              <span style={{ color: '#10B981', fontWeight: '700' }}>↑{marketBias.bullish}</span>
-              <span style={{ color: '#4A5B6C' }}>·</span>
-              <span style={{ color: '#4A5B6C' }}>→{marketBias.neutral}</span>
-              <span style={{ color: '#4A5B6C' }}>·</span>
-              <span style={{ color: '#EF4444', fontWeight: '700' }}>↓{marketBias.bearish}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '10px', color: 'var(--mc-text-4)', flexShrink: 0 }}>
+              <span style={{ color: 'var(--mc-bullish)', fontWeight: '700' }}>↑{marketBias.bullish}</span>
+              <span style={{ color: 'var(--mc-text-4)' }}>·</span>
+              <span style={{ color: 'var(--mc-text-4)' }}>→{marketBias.neutral}</span>
+              <span style={{ color: 'var(--mc-text-4)' }}>·</span>
+              <span style={{ color: 'var(--mc-bearish)', fontWeight: '700' }}>↓{marketBias.bearish}</span>
               <span style={{ color: '#2A3B4C', marginLeft: '4px' }}>|</span>
-              <span style={{ color: '#4A5B6C' }}>{marketBias.total} stories</span>
+              <span style={{ color: 'var(--mc-text-4)' }}>{marketBias.total} stories</span>
               {marketBias.highImpact > 0 && (
                 <><span style={{ color: '#2A3B4C', marginLeft: '4px' }}>|</span>
-                <span style={{ color: '#EF4444', fontWeight: '700' }}>{marketBias.highImpact} HIGH signal</span></>
+                <span style={{ color: 'var(--mc-bearish)', fontWeight: '700' }}>{marketBias.highImpact} HIGH signal</span></>
               )}
             </div>
             {/* Dominant type */}
@@ -2871,15 +2871,15 @@ export default function NewsFeedPage() {
               </span>
             )}
             {/* Live indicator */}
-            <span style={{ marginLeft: 'auto', fontSize: '9px', color: '#4A5B6C', flexShrink: 0 }}>
-              <span style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#10B981', marginRight: '4px', animation: 'pulse 2s infinite' }} />
+            <span style={{ marginLeft: 'auto', fontSize: '9px', color: 'var(--mc-text-4)', flexShrink: 0 }}>
+              <span style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', backgroundColor: 'var(--mc-bullish)', marginRight: '4px', animation: 'pulse 2s infinite' }} />
               24H INTELLIGENCE
             </span>
           </div>
           {/* Hot Tickers strip */}
           {marketBias.hotTickers.length > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflowX: 'auto', paddingBottom: '2px' }} className="scrollbar-hide">
-              <span style={{ fontSize: '9px', fontWeight: '700', color: '#4A5B6C', letterSpacing: '0.5px', flexShrink: 0 }}>HOT:</span>
+              <span style={{ fontSize: '9px', fontWeight: '700', color: 'var(--mc-text-4)', letterSpacing: '0.5px', flexShrink: 0 }}>HOT:</span>
               {marketBias.hotTickers.map(({ ticker, count }) => (
                 <button
                   key={ticker}
@@ -2887,7 +2887,7 @@ export default function NewsFeedPage() {
                   style={{
                     fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '5px',
                     backgroundColor: count >= 5 ? '#EF444418' : count >= 3 ? '#F59E0B14' : '#0F7ABF14',
-                    color: count >= 5 ? '#EF4444' : count >= 3 ? '#F59E0B' : '#0F7ABF',
+                    color: count >= 5 ? 'var(--mc-bearish)' : count >= 3 ? 'var(--mc-warn)' : 'var(--mc-accent)',
                     border: `1px solid ${count >= 5 ? '#EF444430' : count >= 3 ? '#F59E0B30' : '#0F7ABF30'}`,
                     cursor: 'pointer', flexShrink: 0, transition: 'opacity 0.15s',
                   }}
@@ -2920,10 +2920,10 @@ export default function NewsFeedPage() {
       {/* ── IN PLAY TODAY bar ─────────────────────────────────────────── */}
       {!inPlayLoading && (
         <div
-          style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: '12px', padding: '10px 12px', marginBottom: '12px', overflowX: 'auto', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '10px' }}
+          style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderRadius: '12px', padding: '10px 12px', marginBottom: '12px', overflowX: 'auto', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '10px' }}
           className="scrollbar-hide mobile-scroll"
         >
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '10px', fontWeight: '700', color: '#F59E0B', flexShrink: 0 }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '10px', fontWeight: '700', color: 'var(--mc-warn)', flexShrink: 0 }}>
             <Zap style={{ width: '10px', height: '10px' }} /> IN PLAY TODAY
           </span>
           {/* PATCH 0212 — freshness indicator */}
@@ -2943,7 +2943,7 @@ export default function NewsFeedPage() {
                   style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', marginRight: '12px', cursor: 'pointer', verticalAlign: 'middle', flexShrink: 0, textDecoration: 'none', color: 'inherit' }}
                 >
                   {syms[0] && (
-                    <span style={{ fontSize: '10px', fontWeight: '700', backgroundColor: '#EF444420', color: '#EF4444', padding: '1px 5px', borderRadius: '4px', border: '1px solid #EF444440' }}>
+                    <span style={{ fontSize: '10px', fontWeight: '700', backgroundColor: '#EF444420', color: 'var(--mc-bearish)', padding: '1px 5px', borderRadius: '4px', border: '1px solid #EF444440' }}>
                       {syms[0]}
                       {mentionCount && mentionCount > 1 && (
                         <span style={{ marginLeft: 4, fontSize: 9, opacity: 0.85, fontWeight: 600 }}>×{mentionCount}</span>
@@ -2953,7 +2953,7 @@ export default function NewsFeedPage() {
                   <span style={{ fontSize: '11px', color: '#C9D4E0' }}>
                     {getTitle(art).slice(0, 70)}{getTitle(art).length > 70 ? '…' : ''}
                   </span>
-                  <span style={{ fontSize: '10px', color: '#4A5B6C' }}>{getSource(art)}</span>
+                  <span style={{ fontSize: '10px', color: 'var(--mc-text-4)' }}>{getSource(art)}</span>
                 </a>
               );
             })
@@ -2972,7 +2972,7 @@ export default function NewsFeedPage() {
               >Retry</button>
             </span>
           ) : (
-            <span style={{ fontSize: '11px', color: '#4A5B6C', fontStyle: 'italic' }}>
+            <span style={{ fontSize: '11px', color: 'var(--mc-text-4)', fontStyle: 'italic' }}>
               No high-importance stories in the last 12 hours
             </span>
           )}
@@ -2981,21 +2981,21 @@ export default function NewsFeedPage() {
 
       {/* Loading shimmer for IN PLAY bar */}
       {inPlayLoading && (
-        <div style={{ height: '36px', backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: '12px', marginBottom: '16px' }} className="animate-shimmer" />
+        <div style={{ height: '36px', backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderRadius: '12px', marginBottom: '16px' }} className="animate-shimmer" />
       )}
 
       {/* ── PHASE 1.3: MUST READ — Curated top 5 ─────────────────────── */}
       {mustRead && mustRead.length > 0 && (
         <div style={{
           backgroundColor: '#0F1B2E', border: '1px solid #2A3B4C',
-          borderLeft: '3px solid #F59E0B', borderRadius: '12px',
+          borderLeft: '3px solid var(--mc-warn)', borderRadius: '12px',
           padding: '12px 14px', marginBottom: '12px',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
-            <span style={{ fontSize: '10px', fontWeight: 700, color: '#F59E0B', letterSpacing: '0.8px' }}>
+            <span style={{ fontSize: '10px', fontWeight: 700, color: 'var(--mc-warn)', letterSpacing: '0.8px' }}>
               ★ MUST READ
             </span>
-            <span style={{ fontSize: '10px', color: '#4A5B6C' }}>
+            <span style={{ fontSize: '10px', color: 'var(--mc-text-4)' }}>
               Top 10 institutional reads — US + India mix · consequence × source × ticker × recency
             </span>
           </div>
@@ -3018,7 +3018,7 @@ export default function NewsFeedPage() {
                     textDecoration: 'none', color: 'inherit',
                   }}
                 >
-                  <span style={{ fontSize: '10px', fontWeight: 700, color: '#F59E0B', minWidth: '14px' }}>
+                  <span style={{ fontSize: '10px', fontWeight: 700, color: 'var(--mc-warn)', minWidth: '14px' }}>
                     {idx + 1}
                   </span>
                   {syms[0] && (
@@ -3026,7 +3026,7 @@ export default function NewsFeedPage() {
                       {syms[0]}
                     </span>
                   )}
-                  <span style={{ fontSize: '12px', color: '#E6EDF3', flex: 1, lineHeight: 1.4 }}>
+                  <span style={{ fontSize: '12px', color: 'var(--mc-text-1)', flex: 1, lineHeight: 1.4 }}>
                     {getTitle(art)}
                   </span>
                   {(art as any).specific_impact?.label && (
@@ -3034,7 +3034,7 @@ export default function NewsFeedPage() {
                       {(art as any).specific_impact.label}
                     </span>
                   )}
-                  <span style={{ fontSize: '10px', color: '#4A5B6C', flexShrink: 0 }}>{time}</span>
+                  <span style={{ fontSize: '10px', color: 'var(--mc-text-4)', flexShrink: 0 }}>{time}</span>
                 </a>
               );
             })}
@@ -3048,7 +3048,7 @@ export default function NewsFeedPage() {
               persistent-bottleneck panel above. ── */}
       {transformationalPreview && transformationalPreview.count > 0 && (
         <div style={{
-          backgroundColor: '#0D1B2E', border: '1px solid #1E2D45',
+          backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)',
           borderLeft: '4px solid #8B5CF6',
           borderRadius: '14px', padding: '16px 20px', marginBottom: '16px',
         }}>
@@ -3065,14 +3065,14 @@ export default function NewsFeedPage() {
             <span style={{ fontSize: '15px', fontWeight: 700, color: '#8B5CF6', letterSpacing: '0.8px' }}>
               🌟 TRANSFORMATIONAL CONTRACTS
             </span>
-            <span style={{ fontSize: '13px', color: '#4A5B6C' }}>
+            <span style={{ fontSize: '13px', color: 'var(--mc-text-4)' }}>
               {transformationalPreview.total_in_ledger || transformationalPreview.count} qualifying contracts in last {transformationalPreview.window_days || 180} days
             </span>
             <a
               href="/strategic-visibility"
               onClick={(e) => e.stopPropagation()}
               style={{
-                marginLeft: 8, fontSize: '13px', fontWeight: 700, color: '#22D3EE',
+                marginLeft: 8, fontSize: '13px', fontWeight: 700, color: 'var(--mc-cyan)',
                 textDecoration: 'none', backgroundColor: '#22D3EE15',
                 border: '1px solid #22D3EE40', borderRadius: 5, padding: '3px 10px',
                 letterSpacing: '0.4px',
@@ -3080,7 +3080,7 @@ export default function NewsFeedPage() {
             >
               FULL LEDGER →
             </a>
-            <span style={{ fontSize: '13px', color: '#4A5B6C', marginLeft: 'auto' }}>
+            <span style={{ fontSize: '13px', color: 'var(--mc-text-4)', marginLeft: 'auto' }}>
               {showTransformational ? '▼ collapse' : '▶ expand'}
             </span>
           </button>
@@ -3095,7 +3095,7 @@ export default function NewsFeedPage() {
                   rel="noopener noreferrer"
                   style={{
                     // PATCH 0085: card padding 8/10 → 14/18, radius 8 → 12
-                    backgroundColor: '#0A1422', border: '1px solid #1A2840',
+                    backgroundColor: '#0A1422', border: '1px solid var(--mc-bg-4)',
                     borderRadius: 12, padding: '14px 18px',
                     textDecoration: 'none', color: 'inherit',
                   }}
@@ -3109,14 +3109,14 @@ export default function NewsFeedPage() {
                     ))}
                     {a.strategic_visibility.contract_value_usd_m && (
                       // PATCH 0085: $ value 9 → 14
-                      <span style={{ fontSize: 14, fontWeight: 700, color: '#10B981' }}>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--mc-bullish)' }}>
                         {a.strategic_visibility.contract_value_usd_m >= 1000
                           ? `$${(a.strategic_visibility.contract_value_usd_m / 1000).toFixed(1)}B`
                           : `$${a.strategic_visibility.contract_value_usd_m.toFixed(0)}M`}
                       </span>
                     )}
                     {a.strategic_visibility.visibility_years && (
-                      <span style={{ fontSize: 14, fontWeight: 700, color: '#F59E0B' }}>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--mc-warn)' }}>
                         {a.strategic_visibility.visibility_years}y
                       </span>
                     )}
@@ -3124,18 +3124,18 @@ export default function NewsFeedPage() {
                       <span style={{ fontSize: 14, fontWeight: 700, color: '#8B5CF6' }}>🔒</span>
                     )}
                     {a.strategic_visibility.flags.includes('POLICY_BACKED') && (
-                      <span style={{ fontSize: 14, fontWeight: 700, color: '#22D3EE' }}>🧭</span>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--mc-cyan)' }}>🧭</span>
                     )}
-                    <span style={{ marginLeft: 'auto', fontSize: 12, color: '#94A3B8', fontWeight: 600 }}>
+                    <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--mc-text-3)', fontWeight: 600 }}>
                       {a.published_at ? new Date(a.published_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '—'}
                     </span>
                   </div>
                   {/* PATCH 0085: title 11 → 16 */}
-                  <div style={{ fontSize: 16, color: '#E6EDF3', lineHeight: 1.4, fontWeight: 500 }}>
+                  <div style={{ fontSize: 16, color: 'var(--mc-text-1)', lineHeight: 1.4, fontWeight: 500 }}>
                     {a.title}
                   </div>
                   {/* PATCH 0085: counterparty meta 9 → 13 */}
-                  <div style={{ fontSize: 13, color: '#6B7A8D', marginTop: 8 }}>
+                  <div style={{ fontSize: 13, color: 'var(--mc-text-4)', marginTop: 8 }}>
                     {a.strategic_visibility.counterparty_name || '—'} · {a.source_name}
                   </div>
                 </a>
@@ -3148,7 +3148,7 @@ export default function NewsFeedPage() {
       {/* ── PHASE 1.5: FORWARD CALENDAR — collapsible ────────────────── */}
       {calendar && (calendar.tomorrow.length + calendar.this_week.length + calendar.this_month.length) > 0 && (
         <div style={{
-          backgroundColor: '#0D1B2E', border: '1px solid #1E2D45',
+          backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)',
           borderRadius: '12px', padding: '10px 12px', marginBottom: '12px',
         }}>
           <button
@@ -3160,13 +3160,13 @@ export default function NewsFeedPage() {
               color: 'inherit', textAlign: 'left',
             }}
           >
-            <span style={{ fontSize: '10px', fontWeight: 700, color: '#10B981', letterSpacing: '0.8px' }}>
+            <span style={{ fontSize: '10px', fontWeight: 700, color: 'var(--mc-bullish)', letterSpacing: '0.8px' }}>
               📅 FORWARD CALENDAR
             </span>
-            <span style={{ fontSize: '10px', color: '#4A5B6C' }}>
+            <span style={{ fontSize: '10px', color: 'var(--mc-text-4)' }}>
               Tomorrow: {calendar.tomorrow.length} · This week: {calendar.this_week.length} · This month: {calendar.this_month.length}
             </span>
-            <span style={{ fontSize: '10px', color: '#4A5B6C', marginLeft: 'auto' }}>
+            <span style={{ fontSize: '10px', color: 'var(--mc-text-4)', marginLeft: 'auto' }}>
               {/* PATCH 0435 BUG-022/034 — distinct label so user can tell these
                   two stacked expand controls apart */}
               {showCalendar ? '▼ Hide Calendar' : '▶ Show Calendar'}
@@ -3184,7 +3184,7 @@ export default function NewsFeedPage() {
                       <div key={i} style={{
                         fontSize: '10px', padding: '4px 6px', borderRadius: '4px',
                         backgroundColor: ev.importance === 'high' ? 'rgba(239, 68, 68, 0.08)' : 'rgba(255,255,255,0.03)',
-                        borderLeft: `2px solid ${ev.importance === 'high' ? '#EF4444' : '#4A5B6C'}`,
+                        borderLeft: `2px solid ${ev.importance === 'high' ? 'var(--mc-bearish)' : 'var(--mc-text-4)'}`,
                       }}>
                         <div style={{ display: 'flex', gap: '6px', alignItems: 'baseline' }}>
                           <span style={{ color: '#8899AA', fontFamily: 'monospace', flexShrink: 0 }}>
@@ -3195,14 +3195,14 @@ export default function NewsFeedPage() {
                               {ev.region === 'IN' ? '🇮🇳' : ev.region === 'US' ? '🇺🇸' : '🌐'}
                             </span>
                           )}
-                          <span style={{ color: '#E6EDF3', lineHeight: 1.3 }}>
+                          <span style={{ color: 'var(--mc-text-1)', lineHeight: 1.3 }}>
                             {ev.title}
                           </span>
                         </div>
                       </div>
                     ))}
                     {(calendar[bucket] || []).length === 0 && (
-                      <span style={{ fontSize: '10px', color: '#4A5B6C', fontStyle: 'italic' }}>
+                      <span style={{ fontSize: '10px', color: 'var(--mc-text-4)', fontStyle: 'italic' }}>
                         Nothing scheduled
                       </span>
                     )}
@@ -3217,12 +3217,12 @@ export default function NewsFeedPage() {
       {/* ── PATCH 0050: EMERGING STRESS SIGNALS — institutional anomaly box ── */}
       {anomalies && ((anomalies.themes_v2?.length || 0) > 0 || (anomalies.tickers_v2?.length || 0) > 0) && (
         <div style={{
-          backgroundColor: '#0D1B2E', border: '1px solid #1E2D45',
-          borderLeft: '3px solid #EF4444',
+          backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)',
+          borderLeft: '3px solid var(--mc-bearish)',
           borderRadius: '12px', padding: '12px 14px', marginBottom: '12px',
         }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', marginBottom: '8px' }}>
-            <span style={{ fontSize: '11px', fontWeight: 700, color: '#EF4444', letterSpacing: '0.8px' }}>
+            <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--mc-bearish)', letterSpacing: '0.8px' }}>
               🚨 {anomalies.section_title || 'Emerging Stress Signals'}
             </span>
             <span style={{ fontSize: '10px', color: '#6677AA' }}>
@@ -3236,8 +3236,8 @@ export default function NewsFeedPage() {
                 <span style={{ color: stateColor, fontWeight: 700, marginRight: '6px' }}>
                   {t.deviation === 'DOMINANT' ? '●●●' : t.deviation === 'ESCALATING' ? '●●' : '●'}
                 </span>
-                <strong style={{ color: '#F5F7FA' }}>{t.display_name}</strong>
-                <span style={{ color: '#4A5B6C', marginLeft: '6px' }}>×{t.count} (baseline ~{t.baseline_count})</span>
+                <strong style={{ color: 'var(--mc-text-0)' }}>{t.display_name}</strong>
+                <span style={{ color: 'var(--mc-text-4)', marginLeft: '6px' }}>×{t.count} (baseline ~{t.baseline_count})</span>
                 <div style={{ color: '#8899AA', marginLeft: '24px', marginTop: '2px', fontSize: '10px' }}>
                   → {t.why_it_matters}
                 </div>
@@ -3245,14 +3245,14 @@ export default function NewsFeedPage() {
             );
           })}
           {(anomalies.tickers_v2 || []).slice(0, 5).length > 0 && (
-            <div style={{ marginTop: '8px', paddingTop: '6px', borderTop: '1px solid #1E2D45' }}>
+            <div style={{ marginTop: '8px', paddingTop: '6px', borderTop: '1px solid var(--mc-border-1)' }}>
               <span style={{ fontSize: '10px', color: '#6677AA', marginRight: '8px' }}>Names clustering:</span>
               {(anomalies.tickers_v2 || []).slice(0, 5).map((tk: any) => {
                 const tkColor = tk.deviation === 'DOMINANT' ? '#EF4444' : tk.deviation === 'ESCALATING' ? '#F59E0B' : '#10B981';
                 return (
                   <span key={tk.display_name} style={{ marginRight: '10px', fontSize: '10px' }}>
                     <strong style={{ color: tkColor }}>{tk.display_name}</strong>
-                    <span style={{ color: '#4A5B6C' }}> ×{tk.count}</span>
+                    <span style={{ color: 'var(--mc-text-4)' }}> ×{tk.count}</span>
                   </span>
                 );
               })}
@@ -3265,7 +3265,7 @@ export default function NewsFeedPage() {
       <div style={{ marginBottom: '12px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <h1 style={{ fontSize: '15px', fontWeight: '700', color: '#F5F7FA', margin: 0 }}>News Feed</h1>
+            <h1 style={{ fontSize: '15px', fontWeight: '700', color: 'var(--mc-text-0)', margin: 0 }}>News Feed</h1>
             {/* PATCH 0212 — consolidated freshness indicator */}
             <PanelFreshness dataUpdatedAt={dataUpdatedAt} isFetching={isLoading} staleAfterMs={5 * 60_000} />
           </div>
@@ -3293,7 +3293,7 @@ export default function NewsFeedPage() {
                 title={f.hint}
                 style={{
                   backgroundColor: active ? f.bg : 'transparent',
-                  border: `1px solid ${active ? f.border : '#1E2D45'}`,
+                  border: `1px solid ${active ? f.border : 'var(--mc-border-1)'}`,
                   color: active ? f.text : '#6B7B8C',
                   borderRadius: 5, padding: '4px 8px', cursor: 'pointer',
                   fontSize: 10, fontWeight: 700, letterSpacing: '0.4px',
@@ -3312,42 +3312,42 @@ export default function NewsFeedPage() {
         <div className="scrollbar-hide mobile-scroll" style={{ display: 'flex', gap: '8px', alignItems: 'center', overflowX: 'auto', paddingBottom: '4px', position: 'relative', zIndex: 20 }}>
           <input
             value={search} onChange={e => setSearch(e.target.value)} placeholder="Search news…"
-            style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: '8px', padding: '7px 12px', color: '#F5F7FA', fontSize: '14px', minWidth: '160px', width: '200px', outline: 'none', flexShrink: 0 }}
+            style={{ backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderRadius: '8px', padding: '7px 12px', color: 'var(--mc-text-0)', fontSize: '14px', minWidth: '160px', width: '200px', outline: 'none', flexShrink: 0 }}
           />
           <button
             onClick={() => { setArticleType(articleType === 'BOTTLENECK' ? 'ALL' : 'BOTTLENECK'); setBottleneckLevel('ALL'); setBottleneckCategory('ALL'); setStructuralOnly(false); }}
-            style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: articleType === 'BOTTLENECK' ? '#EF444420' : '#111B35', border: `1px solid ${articleType === 'BOTTLENECK' ? '#EF4444' : '#1E2D45'}`, borderRadius: '8px', padding: '7px 12px', color: articleType === 'BOTTLENECK' ? '#EF4444' : '#8A95A3', fontSize: '12px', fontWeight: '600', cursor: 'pointer', flexShrink: 0, minHeight: '36px' }}
+            style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: articleType === 'BOTTLENECK' ? '#EF444420' : 'var(--mc-bg-2)', border: `1px solid ${articleType === 'BOTTLENECK' ? 'var(--mc-bearish)' : 'var(--mc-border-1)'}`, borderRadius: '8px', padding: '7px 12px', color: articleType === 'BOTTLENECK' ? 'var(--mc-bearish)' : '#8A95A3', fontSize: '12px', fontWeight: '600', cursor: 'pointer', flexShrink: 0, minHeight: '36px' }}
             title="Show critical bottleneck news (GPU, Memory, Photonics, Power, etc.)"
           >
             BOTTLENECKS
           </button>
           <button
             onClick={() => setRegion(region === 'IN' ? 'ALL' : 'IN')}
-            style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: region === 'IN' ? '#0F7ABF20' : '#111B35', border: `1px solid ${region === 'IN' ? '#0F7ABF' : '#1E2D45'}`, borderRadius: '8px', padding: '7px 12px', color: region === 'IN' ? '#0F7ABF' : '#8A95A3', fontSize: '12px', fontWeight: '600', cursor: 'pointer', flexShrink: 0, minHeight: '36px' }}
+            style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: region === 'IN' ? '#0F7ABF20' : 'var(--mc-bg-2)', border: `1px solid ${region === 'IN' ? 'var(--mc-accent)' : 'var(--mc-border-1)'}`, borderRadius: '8px', padding: '7px 12px', color: region === 'IN' ? 'var(--mc-accent)' : '#8A95A3', fontSize: '12px', fontWeight: '600', cursor: 'pointer', flexShrink: 0, minHeight: '36px' }}
             title="Show only India news"
           >
             🇮🇳 India
           </button>
           <button
             onClick={() => setRegion(region === 'US' ? 'ALL' : 'US')}
-            style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: region === 'US' ? '#0F7ABF20' : '#111B35', border: `1px solid ${region === 'US' ? '#0F7ABF' : '#1E2D45'}`, borderRadius: '8px', padding: '7px 12px', color: region === 'US' ? '#0F7ABF' : '#8A95A3', fontSize: '12px', fontWeight: '600', cursor: 'pointer', flexShrink: 0, minHeight: '36px' }}
+            style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: region === 'US' ? '#0F7ABF20' : 'var(--mc-bg-2)', border: `1px solid ${region === 'US' ? 'var(--mc-accent)' : 'var(--mc-border-1)'}`, borderRadius: '8px', padding: '7px 12px', color: region === 'US' ? 'var(--mc-accent)' : '#8A95A3', fontSize: '12px', fontWeight: '600', cursor: 'pointer', flexShrink: 0, minHeight: '36px' }}
             title="Show only US news"
           >
             🇺🇸 US
           </button>
           <button
             onClick={(e) => { e.stopPropagation(); e.preventDefault(); setShowFilters(f => !f); }}
-            style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: showFilters ? '#0F7ABF' : '#111B35', border: `1px solid ${showFilters ? '#0F7ABF' : '#1E2D45'}`, borderRadius: '8px', padding: '7px 12px', color: '#F5F7FA', fontSize: '12px', cursor: 'pointer', flexShrink: 0, minHeight: '36px', position: 'relative', zIndex: 21 }}
+            style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: showFilters ? 'var(--mc-accent)' : 'var(--mc-bg-2)', border: `1px solid ${showFilters ? 'var(--mc-accent)' : 'var(--mc-border-1)'}`, borderRadius: '8px', padding: '7px 12px', color: 'var(--mc-text-0)', fontSize: '12px', cursor: 'pointer', flexShrink: 0, minHeight: '36px', position: 'relative', zIndex: 21 }}
           >
             <Filter style={{ width: '12px', height: '12px' }} /> Filters
             {(region !== 'ALL' || articleType !== 'ALL' || signalFilter !== 'ALL' || sourceName !== 'ALL' || search) && (
-              <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#F59E0B', display: 'inline-block', marginLeft: '2px' }} />
+              <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: 'var(--mc-warn)', display: 'inline-block', marginLeft: '2px' }} />
             )}
           </button>
           <button
             onClick={handleRefresh}
             disabled={isRefreshing}
-            style={{ backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '8px', padding: '7px 10px', color: isRefreshing ? '#0F7ABF' : '#4A5B6C', cursor: isRefreshing ? 'wait' : 'pointer', opacity: isRefreshing ? 0.7 : 1, flexShrink: 0, minHeight: '36px', minWidth: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            style={{ backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-1)', borderRadius: '8px', padding: '7px 10px', color: isRefreshing ? 'var(--mc-accent)' : 'var(--mc-text-4)', cursor: isRefreshing ? 'wait' : 'pointer', opacity: isRefreshing ? 0.7 : 1, flexShrink: 0, minHeight: '36px', minWidth: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
             title={isRefreshing ? 'Fetching latest news from sources…' : 'Refresh news from RSS feeds'}
           >
             <RefreshCw style={{ width: '12px', height: '12px', animation: isRefreshing ? 'spin 1s linear infinite' : 'none' }} />
@@ -3357,33 +3357,33 @@ export default function NewsFeedPage() {
 
       {/* ── Filter panel ─────────────────────────────────────────────── */}
       {showFilters && (
-        <div ref={filterPanelRef} style={{ backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '14px', padding: '14px', marginBottom: '12px', position: 'relative' }}>
+        <div ref={filterPanelRef} style={{ backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-1)', borderRadius: '14px', padding: '14px', marginBottom: '12px', position: 'relative' }}>
           {/* Close button */}
           <button
             onClick={() => setShowFilters(false)}
-            style={{ position: 'absolute', top: '10px', right: '10px', background: 'none', border: 'none', color: '#4A5B6C', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            style={{ position: 'absolute', top: '10px', right: '10px', background: 'none', border: 'none', color: 'var(--mc-text-4)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
             title="Close filters (Esc)"
           >
             <X style={{ width: '14px', height: '14px' }} />
           </button>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
             <div>
-              <p style={{ fontSize: '10px', fontWeight: '600', color: '#4A5B6C', margin: '0 0 8px', letterSpacing: '0.5px' }}>REGION</p>
+              <p style={{ fontSize: '10px', fontWeight: '600', color: 'var(--mc-text-4)', margin: '0 0 8px', letterSpacing: '0.5px' }}>REGION</p>
               <div style={{ display: 'flex', gap: '6px' }}>
                 {REGIONS.map(r => (
                   <button key={r} onClick={() => setRegion(r)}
-                    style={{ padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', border: `1px solid ${region === r ? '#0F7ABF' : '#1E2D45'}`, backgroundColor: region === r ? '#0F7ABF20' : 'transparent', color: region === r ? '#0F7ABF' : '#8A95A3' }}>
+                    style={{ padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', border: `1px solid ${region === r ? 'var(--mc-accent)' : 'var(--mc-border-1)'}`, backgroundColor: region === r ? '#0F7ABF20' : 'transparent', color: region === r ? 'var(--mc-accent)' : '#8A95A3' }}>
                     {r === 'IN' ? '🇮🇳 India' : r === 'US' ? '🇺🇸 US' : 'All'}
                   </button>
                 ))}
               </div>
             </div>
             <div>
-              <p style={{ fontSize: '10px', fontWeight: '600', color: '#4A5B6C', margin: '0 0 8px', letterSpacing: '0.5px' }}>CATEGORY</p>
+              <p style={{ fontSize: '10px', fontWeight: '600', color: 'var(--mc-text-4)', margin: '0 0 8px', letterSpacing: '0.5px' }}>CATEGORY</p>
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                 {TYPES.map(t => (
                   <button key={t} onClick={() => setArticleType(t)}
-                    style={{ padding: '5px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '600', cursor: 'pointer', border: `1px solid ${articleType === t ? '#0F7ABF' : '#1E2D45'}`, backgroundColor: articleType === t ? '#0F7ABF20' : 'transparent', color: articleType === t ? '#0F7ABF' : '#8A95A3' }}>
+                    style={{ padding: '5px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '600', cursor: 'pointer', border: `1px solid ${articleType === t ? 'var(--mc-accent)' : 'var(--mc-border-1)'}`, backgroundColor: articleType === t ? '#0F7ABF20' : 'transparent', color: articleType === t ? 'var(--mc-accent)' : '#8A95A3' }}>
                     {t === 'ALL' ? 'All' : t.replace(/_/g, ' ')}
                   </button>
                 ))}
@@ -3391,16 +3391,16 @@ export default function NewsFeedPage() {
             </div>
             {/* PATCH 0121 — IMP-08: Q4 FY26 Earnings Season quick filter */}
             <div>
-              <p style={{ fontSize: '10px', fontWeight: '600', color: '#4A5B6C', margin: '0 0 8px', letterSpacing: '0.5px' }}>EARNINGS SEASON</p>
+              <p style={{ fontSize: '10px', fontWeight: '600', color: 'var(--mc-text-4)', margin: '0 0 8px', letterSpacing: '0.5px' }}>EARNINGS SEASON</p>
               <button onClick={() => setEarningsSeasonActive(v => !v)}
-                style={{ padding: '5px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer', border: `1px solid ${earningsSeasonActive ? '#10B981' : '#1E2D45'}`, backgroundColor: earningsSeasonActive ? '#10B98120' : 'transparent', color: earningsSeasonActive ? '#10B981' : '#8A95A3' }}
+                style={{ padding: '5px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer', border: `1px solid ${earningsSeasonActive ? 'var(--mc-bullish)' : 'var(--mc-border-1)'}`, backgroundColor: earningsSeasonActive ? '#10B98120' : 'transparent', color: earningsSeasonActive ? 'var(--mc-bullish)' : '#8A95A3' }}
                 title="Filter to Q4 FY26 results window (Apr 1 → Jul 31 2026), category locked to EARNINGS">
                 📊 Q4 FY26 Earnings {earningsSeasonActive ? '✓' : ''}
               </button>
             </div>
             {/* PATCH 0129 — Strategy filter ([MB] / [BN] / [RR]) */}
             <div>
-              <p style={{ fontSize: '10px', fontWeight: '600', color: '#4A5B6C', margin: '0 0 8px', letterSpacing: '0.5px' }}>STRATEGY</p>
+              <p style={{ fontSize: '10px', fontWeight: '600', color: 'var(--mc-text-4)', margin: '0 0 8px', letterSpacing: '0.5px' }}>STRATEGY</p>
               <div style={{ display: 'flex', gap: 6 }}>
                 {([
                   { v: 'ALL', label: 'All', color: '#8A95A3' },
@@ -3409,7 +3409,7 @@ export default function NewsFeedPage() {
                   { v: 'RR',  label: '↗ RR · Re-rating',     color: '#A78BFA' },
                 ] as const).map((s) => (
                   <button key={s.v} onClick={() => setStrategyFilter(s.v as any)}
-                    style={{ padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer', border: `1px solid ${strategyFilter === s.v ? s.color : '#1E2D45'}`, backgroundColor: strategyFilter === s.v ? s.color + '20' : 'transparent', color: strategyFilter === s.v ? s.color : '#8A95A3' }}
+                    style={{ padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer', border: `1px solid ${strategyFilter === s.v ? s.color : 'var(--mc-border-1)'}`, backgroundColor: strategyFilter === s.v ? s.color + '20' : 'transparent', color: strategyFilter === s.v ? s.color : '#8A95A3' }}
                     title={`Show only articles tagged ${s.label}`}>
                     {s.label}
                   </button>
@@ -3417,22 +3417,22 @@ export default function NewsFeedPage() {
               </div>
             </div>
             <div>
-              <p style={{ fontSize: '10px', fontWeight: '600', color: '#4A5B6C', margin: '0 0 8px', letterSpacing: '0.5px' }}>SIGNAL STRENGTH</p>
+              <p style={{ fontSize: '10px', fontWeight: '600', color: 'var(--mc-text-4)', margin: '0 0 8px', letterSpacing: '0.5px' }}>SIGNAL STRENGTH</p>
               <div style={{ display: 'flex', gap: '6px' }}>
                 {SIGNAL_FILTERS.map(s => (
                   <button key={s.value} onClick={() => setSignalFilter(s.value)}
-                    style={{ padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', border: `1px solid ${signalFilter === s.value ? '#0F7ABF' : '#1E2D45'}`, backgroundColor: signalFilter === s.value ? '#0F7ABF20' : 'transparent', color: signalFilter === s.value ? '#0F7ABF' : '#8A95A3' }}>
+                    style={{ padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', border: `1px solid ${signalFilter === s.value ? 'var(--mc-accent)' : 'var(--mc-border-1)'}`, backgroundColor: signalFilter === s.value ? '#0F7ABF20' : 'transparent', color: signalFilter === s.value ? 'var(--mc-accent)' : '#8A95A3' }}>
                     {s.label}
                   </button>
                 ))}
               </div>
             </div>
             <div>
-              <p style={{ fontSize: '10px', fontWeight: '600', color: '#4A5B6C', margin: '0 0 8px', letterSpacing: '0.5px' }}>SOURCE</p>
+              <p style={{ fontSize: '10px', fontWeight: '600', color: 'var(--mc-text-4)', margin: '0 0 8px', letterSpacing: '0.5px' }}>SOURCE</p>
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                 {SOURCES.map(s => (
                   <button key={s} onClick={() => setSourceName(s)}
-                    style={{ padding: '5px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '600', cursor: 'pointer', border: `1px solid ${sourceName === s ? '#0F7ABF' : '#1E2D45'}`, backgroundColor: sourceName === s ? '#0F7ABF20' : 'transparent', color: sourceName === s ? '#0F7ABF' : '#8A95A3' }}>
+                    style={{ padding: '5px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '600', cursor: 'pointer', border: `1px solid ${sourceName === s ? 'var(--mc-accent)' : 'var(--mc-border-1)'}`, backgroundColor: sourceName === s ? '#0F7ABF20' : 'transparent', color: sourceName === s ? 'var(--mc-accent)' : '#8A95A3' }}>
                     {s === 'ALL' ? 'All' : s}
                   </button>
                 ))}
@@ -3459,7 +3459,7 @@ export default function NewsFeedPage() {
               setLifecycleFilter('LIVE_WARM');
               setSortBy('impact');
             }}
-            style={{ marginTop: '12px', fontSize: '11px', color: '#4A5B6C', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+            style={{ marginTop: '12px', fontSize: '11px', color: 'var(--mc-text-4)', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
           >
             <X style={{ width: '10px', height: '10px' }} /> Clear filters
           </button>
@@ -3472,7 +3472,7 @@ export default function NewsFeedPage() {
           UI is frozen. */}
       {(error || newsTimeout) && !isLoading && (
         <div style={{ backgroundColor: '#1a0a0a', border: '1px solid #7f1d1d', borderRadius: '12px', padding: '14px 16px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <AlertCircle style={{ width: '16px', height: '16px', color: '#EF4444' }} />
+          <AlertCircle style={{ width: '16px', height: '16px', color: 'var(--mc-bearish)' }} />
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <span style={{ fontSize: '13px', color: '#fca5a5' }}>
               {newsTimeout && !error
@@ -3486,7 +3486,7 @@ export default function NewsFeedPage() {
           <button
             onClick={() => { setNewsTimeout(false); refetch(); handleRefresh(); }}
             disabled={isRefreshing}
-            style={{ marginLeft: 'auto', background: 'none', border: '1px solid #EF4444', borderRadius: 6, padding: '4px 12px', color: '#EF4444', cursor: isRefreshing ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 700 }}
+            style={{ marginLeft: 'auto', background: 'none', border: '1px solid var(--mc-bearish)', borderRadius: 6, padding: '4px 12px', color: 'var(--mc-bearish)', cursor: isRefreshing ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 700 }}
           >
             {isRefreshing ? 'Refreshing…' : '↻ Retry'}
           </button>
@@ -3505,8 +3505,8 @@ export default function NewsFeedPage() {
             boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '10px' }}>
-              <span style={{ fontSize: '12px', fontWeight: '700', color: '#EF4444', letterSpacing: '0.5px' }}>BOTTLENECK ARTICLES</span>
-              <span style={{ fontSize: '11px', color: '#4A5B6C' }}>
+              <span style={{ fontSize: '12px', fontWeight: '700', color: 'var(--mc-bearish)', letterSpacing: '0.5px' }}>BOTTLENECK ARTICLES</span>
+              <span style={{ fontSize: '11px', color: 'var(--mc-text-4)' }}>
                 {articles.length} articles{region !== 'ALL' ? ` · ${region === 'IN' ? '🇮🇳 India' : '🇺🇸 US'}` : ''}
               </span>
               <div style={{ display: 'flex', gap: '6px', marginLeft: 'auto', alignItems: 'center' }}>
@@ -3515,9 +3515,9 @@ export default function NewsFeedPage() {
                   onClick={() => setSortBy(sortBy === 'impact' ? 'time' : 'impact')}
                   style={{
                     fontSize: '10px', fontWeight: '600', padding: '4px 9px', borderRadius: '6px', cursor: 'pointer',
-                    border: `1px solid ${sortBy === 'impact' ? '#F59E0B60' : '#1E2D45'}`,
+                    border: `1px solid ${sortBy === 'impact' ? '#F59E0B60' : 'var(--mc-border-1)'}`,
                     backgroundColor: sortBy === 'impact' ? '#F59E0B15' : 'transparent',
-                    color: sortBy === 'impact' ? '#F59E0B' : '#8A95A3',
+                    color: sortBy === 'impact' ? 'var(--mc-warn)' : '#8A95A3',
                   }}
                   title="Toggle sort order"
                 >
@@ -3528,7 +3528,7 @@ export default function NewsFeedPage() {
                   onClick={() => setStructuralOnly(v => !v)}
                   style={{
                     fontSize: '10px', fontWeight: '600', padding: '4px 9px', borderRadius: '6px', cursor: 'pointer',
-                    border: `1px solid ${structuralOnly ? '#8B5CF660' : '#1E2D45'}`,
+                    border: `1px solid ${structuralOnly ? '#8B5CF660' : 'var(--mc-border-1)'}`,
                     backgroundColor: structuralOnly ? '#8B5CF615' : 'transparent',
                     color: structuralOnly ? '#8B5CF6' : '#8A95A3',
                   }}
@@ -3566,7 +3566,7 @@ export default function NewsFeedPage() {
                       display: 'flex', alignItems: 'center', gap: '4px',
                       padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '600',
                       cursor: 'pointer',
-                      border: `1px solid ${isActive ? lvl.color : '#1E2D45'}`,
+                      border: `1px solid ${isActive ? lvl.color : 'var(--mc-border-1)'}`,
                       backgroundColor: isActive ? lvl.bg : 'transparent',
                       color: isActive ? lvl.color : '#8A95A3',
                       transition: 'all 0.15s ease',
@@ -3578,7 +3578,7 @@ export default function NewsFeedPage() {
                       fontSize: '9px', fontWeight: '700',
                       padding: '1px 5px', borderRadius: '4px',
                       backgroundColor: isActive ? `${lvl.color}20` : '#1E2D4580',
-                      color: isActive ? lvl.color : '#4A5B6C',
+                      color: isActive ? lvl.color : 'var(--mc-text-4)',
                       marginLeft: '2px',
                     }}>
                       {count}
@@ -3622,7 +3622,7 @@ export default function NewsFeedPage() {
                       display: 'flex', alignItems: 'center', gap: '4px',
                       padding: '4px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '600',
                       cursor: 'pointer',
-                      border: `1px solid ${isActive ? '#8B5CF6' : '#1E2D45'}`,
+                      border: `1px solid ${isActive ? '#8B5CF6' : 'var(--mc-border-1)'}`,
                       backgroundColor: isActive ? '#8B5CF615' : 'transparent',
                       color: isActive ? '#8B5CF6' : '#8A95A3',
                     }}
@@ -3633,7 +3633,7 @@ export default function NewsFeedPage() {
                       fontSize: '9px', fontWeight: '700',
                       padding: '1px 4px', borderRadius: '3px',
                       backgroundColor: isActive ? '#8B5CF620' : '#1E2D4580',
-                      color: isActive ? '#8B5CF6' : '#4A5B6C',
+                      color: isActive ? '#8B5CF6' : 'var(--mc-text-4)',
                     }}>
                       {count}
                     </span>
@@ -3669,17 +3669,17 @@ export default function NewsFeedPage() {
 
           {/* Articles list OR empty state */}
           {articles.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '48px 20px', backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '12px' }}>
+            <div style={{ textAlign: 'center', padding: '48px 20px', backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-1)', borderRadius: '12px' }}>
               <p style={{ fontSize: '28px', marginBottom: '10px' }}>🔎</p>
-              <p style={{ fontSize: '14px', fontWeight: '600', color: '#F5F7FA', margin: '0 0 6px' }}>
+              <p style={{ fontSize: '14px', fontWeight: '600', color: 'var(--mc-text-0)', margin: '0 0 6px' }}>
                 No bottleneck articles match your filters
               </p>
-              <p style={{ fontSize: '12px', color: '#4A5B6C', margin: '0 0 14px', lineHeight: '1.5' }}>
+              <p style={{ fontSize: '12px', color: 'var(--mc-text-4)', margin: '0 0 14px', lineHeight: '1.5' }}>
                 Try clearing the level, category, or structural-only filters.
               </p>
               <button
                 onClick={() => { setBottleneckLevel('ALL'); setBottleneckCategory('ALL'); setStructuralOnly(false); }}
-                style={{ backgroundColor: '#0F7ABF', color: 'white', border: 'none', borderRadius: '8px', padding: '7px 14px', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}
+                style={{ backgroundColor: 'var(--mc-accent)', color: 'white', border: 'none', borderRadius: '8px', padding: '7px 14px', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}
               >
                 Reset Bottleneck Filters
               </button>
@@ -3691,7 +3691,7 @@ export default function NewsFeedPage() {
           )}
 
           {articles.length > 0 && (
-            <div style={{ textAlign: 'center', padding: '12px 0 4px', fontSize: '11px', color: '#4A5B6C' }}>
+            <div style={{ textAlign: 'center', padding: '12px 0 4px', fontSize: '11px', color: 'var(--mc-text-4)' }}>
               Showing {articles.length} bottleneck articles
               {bottleneckLevel !== 'ALL' ? ` · Level: ${bottleneckLevel.replace(/_/g, ' ')}` : ''}
               {bottleneckCategory !== 'ALL' ? ` · Category: ${bottleneckCategory.replace(/_/g, ' ')}` : ''}
@@ -3718,13 +3718,13 @@ export default function NewsFeedPage() {
 
       {/* ── Signal summary bar ─────────────────────────────────────── */}
       {!isLoading && articles?.length > 0 && !showBottleneckDashboard && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px', padding: '8px 12px', backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: '10px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px', padding: '8px 12px', backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)', borderRadius: '10px', flexWrap: 'wrap' }}>
           <span style={{ fontSize: '10px', fontWeight: '700', color: '#6A7B8C', letterSpacing: '0.5px' }}>SIGNALS</span>
-          <span style={{ fontSize: '11px', color: '#EF4444', fontWeight: '600' }}>
+          <span style={{ fontSize: '11px', color: 'var(--mc-bearish)', fontWeight: '600' }}>
             {/* PATCH 0720 — read from memoized tierCounts */}
             🔴 {tierCounts.high} High
           </span>
-          <span style={{ fontSize: '11px', color: '#F59E0B', fontWeight: '600' }}>
+          <span style={{ fontSize: '11px', color: 'var(--mc-warn)', fontWeight: '600' }}>
             🟡 {tierCounts.medium} Medium
           </span>
           <button
@@ -3734,7 +3734,7 @@ export default function NewsFeedPage() {
           >
             ⚪ {noiseCount} Low
           </button>
-          <span style={{ fontSize: '11px', color: '#4A5B6C' }}>
+          <span style={{ fontSize: '11px', color: 'var(--mc-text-4)' }}>
             {articles.length} total
           </span>
           {/* PATCH 0227 — Visible sort chip with click-to-toggle. Previously
@@ -3745,7 +3745,7 @@ export default function NewsFeedPage() {
             style={{ marginLeft: 'auto', fontSize: '10px', fontWeight: '700', cursor: 'pointer', borderRadius: '6px', padding: '3px 9px',
               backgroundColor: sortBy === 'impact' ? '#F59E0B15' : '#22D3EE15',
               border: `1px solid ${sortBy === 'impact' ? '#F59E0B60' : '#22D3EE60'}`,
-              color: sortBy === 'impact' ? '#F59E0B' : '#22D3EE',
+              color: sortBy === 'impact' ? 'var(--mc-warn)' : 'var(--mc-cyan)',
               letterSpacing: '0.4px',
             }}
             title={sortBy === 'impact'
@@ -3757,7 +3757,7 @@ export default function NewsFeedPage() {
           {/* Layer grouping toggle */}
           <button
             onClick={() => setGroupByLayer(g => !g)}
-            style={{ fontSize: '10px', fontWeight: '600', color: groupByLayer ? '#0F7ABF' : '#4A5B6C', background: 'none', border: `1px solid ${groupByLayer ? '#0F7ABF40' : '#1E2D45'}`, borderRadius: '6px', padding: '3px 8px', cursor: 'pointer' }}
+            style={{ fontSize: '10px', fontWeight: '600', color: groupByLayer ? 'var(--mc-accent)' : 'var(--mc-text-4)', background: 'none', border: `1px solid ${groupByLayer ? '#0F7ABF40' : 'var(--mc-border-1)'}`, borderRadius: '6px', padding: '3px 8px', cursor: 'pointer' }}
           >
             {groupByLayer ? 'Grouped' : 'Timeline'}
           </button>
@@ -3768,13 +3768,13 @@ export default function NewsFeedPage() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         {isLoading ? (
           Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} style={{ height: '80px', backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '14px' }} className="animate-shimmer" />
+            <div key={i} style={{ height: '80px', backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-1)', borderRadius: '14px' }} className="animate-shimmer" />
           ))
         ) : !articles?.length ? (
           <div style={{ textAlign: 'center', padding: '60px 20px' }}>
             <p style={{ fontSize: '32px', marginBottom: '12px' }}>📰</p>
-            <p style={{ fontSize: '15px', fontWeight: '600', color: '#F5F7FA', margin: '0 0 8px' }}>No articles match your filters</p>
-            <p style={{ fontSize: '13px', color: '#4A5B6C', margin: '0 0 16px' }}>
+            <p style={{ fontSize: '15px', fontWeight: '600', color: 'var(--mc-text-0)', margin: '0 0 8px' }}>No articles match your filters</p>
+            <p style={{ fontSize: '13px', color: 'var(--mc-text-4)', margin: '0 0 16px' }}>
               {/* PATCH 0215 — explicit guidance about which filter likely caused this */}
               {lifecycleFilter !== 'ALL'
                 ? `Lifecycle filter set to "${lifecycleFilter === 'LIVE_WARM' ? 'Live + Warm (≤48h)' : lifecycleFilter}". Try widening to "All" or selecting a different bucket.`
@@ -3792,7 +3792,7 @@ export default function NewsFeedPage() {
               <button
                 onClick={handleRefresh}
                 disabled={isRefreshing}
-                style={{ backgroundColor: '#0F7ABF', color: 'white', border: 'none', borderRadius: '8px', padding: '8px 16px', fontSize: '12px', cursor: isRefreshing ? 'wait' : 'pointer', opacity: isRefreshing ? 0.7 : 1 }}
+                style={{ backgroundColor: 'var(--mc-accent)', color: 'white', border: 'none', borderRadius: '8px', padding: '8px 16px', fontSize: '12px', cursor: isRefreshing ? 'wait' : 'pointer', opacity: isRefreshing ? 0.7 : 1 }}
               >
                 {isRefreshing ? 'Fetching news…' : 'Refresh Now'}
               </button>
@@ -3815,14 +3815,14 @@ export default function NewsFeedPage() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', marginTop: '12px', paddingBottom: '6px', borderBottom: `1px solid ${config.color}30` }}>
                     <div style={{ width: '3px', height: '16px', borderRadius: '2px', backgroundColor: config.color }} />
                     <span style={{ fontSize: '11px', fontWeight: '700', color: config.color, letterSpacing: '0.8px' }}>{config.label}</span>
-                    <span style={{ fontSize: '10px', color: '#4A5B6C' }}>{config.description}</span>
-                    <span style={{ fontSize: '10px', color: '#4A5B6C', marginLeft: 'auto' }}>{layerArticles.length}</span>
+                    <span style={{ fontSize: '10px', color: 'var(--mc-text-4)' }}>{config.description}</span>
+                    <span style={{ fontSize: '10px', color: 'var(--mc-text-4)', marginLeft: 'auto' }}>{layerArticles.length}</span>
                   </div>
                   {layerArticles.map(art => <NewsCard key={art.id} article={art} onSelect={setSelectedArticle} />)}
                 </div>
               );
             })}
-            <div style={{ textAlign: 'center', padding: '16px 0 8px', fontSize: '12px', color: '#4A5B6C' }}>
+            <div style={{ textAlign: 'center', padding: '16px 0 8px', fontSize: '12px', color: 'var(--mc-text-4)' }}>
               {/* PATCH 0720 — count layers from the memoized map (was a
                   nested filter+some that was O(N×4) on every render). */}
               Showing {articles.length} articles across {(['MACRO_REGIME', 'STRUCTURAL', 'COMPANY_ALPHA', 'GENERAL'] as FeedLayer[]).filter(l => layerArticleMap[l].length > 0).length} layers
@@ -3832,7 +3832,7 @@ export default function NewsFeedPage() {
           // ── Timeline view: chronological ──
           <>
             {articles.map(art => <NewsCard key={art.id} article={art} onSelect={setSelectedArticle} />)}
-            <div style={{ textAlign: 'center', padding: '16px 0 8px', fontSize: '12px', color: '#4A5B6C' }}>
+            <div style={{ textAlign: 'center', padding: '16px 0 8px', fontSize: '12px', color: 'var(--mc-text-4)' }}>
               Showing {articles.length} articles
             </div>
           </>
@@ -3851,7 +3851,7 @@ export default function NewsFeedPage() {
               backgroundColor: '#F59E0B0A',
               border: '1px solid #F59E0B30',
               borderRadius: 8, cursor: 'pointer',
-              color: '#F59E0B', fontSize: 12, fontWeight: 600,
+              color: 'var(--mc-warn)', fontSize: 12, fontWeight: 600,
               textAlign: 'left', fontFamily: 'inherit',
             }}
             title="Switch the lifecycle filter to STALE to view these"
@@ -3916,8 +3916,8 @@ export default function NewsFeedPage() {
 
         return (
         <div style={{
-          backgroundColor: '#0D1B2E', border: '1px solid #1E2D45',
-          borderLeft: '4px solid #EF4444',
+          backgroundColor: '#0D1B2E', border: '1px solid var(--mc-border-1)',
+          borderLeft: '4px solid var(--mc-bearish)',
           // PATCH 0085: doubled padding so the section breathes at larger card sizes
           borderRadius: '14px', padding: '16px 20px', marginBottom: '16px',
         }}>
@@ -3931,10 +3931,10 @@ export default function NewsFeedPage() {
             }}
           >
             {/* PATCH 0085: section header doubled — 10px → 15px */}
-            <span style={{ fontSize: '15px', fontWeight: 700, color: '#EF4444', letterSpacing: '0.8px' }}>
+            <span style={{ fontSize: '15px', fontWeight: 700, color: 'var(--mc-bearish)', letterSpacing: '0.8px' }}>
               🚧 PERSISTENT BOTTLENECK READING
             </span>
-            <span style={{ fontSize: '13px', color: '#4A5B6C' }}>
+            <span style={{ fontSize: '13px', color: 'var(--mc-text-4)' }}>
               🇮🇳 {indiaItems.length} India · 🌐 {globalItems.length} Global · auto-detected from accumulated evidence
             </span>
             {/* PATCH 0212 — freshness chip for bottleneck dashboard */}
@@ -3969,7 +3969,7 @@ export default function NewsFeedPage() {
               <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: liveColor, boxShadow: `0 0 6px ${liveColor}` }} />
               {liveLabel.toUpperCase()}
             </span>
-            <span style={{ marginLeft: 'auto', fontSize: '13px', color: '#4A5B6C' }}>
+            <span style={{ marginLeft: 'auto', fontSize: '13px', color: 'var(--mc-text-4)' }}>
               {/* PATCH 0435 BUG-034 — distinct label vs Forward Calendar expand */}
               {showPersistent ? '▼ Hide Bottleneck Reading' : '▶ Show Bottleneck Reading'}
             </span>
@@ -3997,7 +3997,7 @@ export default function NewsFeedPage() {
                       <span style={{ fontSize: 16, fontWeight: 800, color: accent, letterSpacing: '0.6px' }}>
                         {isIN ? '🇮🇳 INDIA' : '🌐 GLOBAL'}
                       </span>
-                      <span style={{ fontSize: 12, color: '#6B7A8D' }}>
+                      <span style={{ fontSize: 12, color: 'var(--mc-text-4)' }}>
                         {rowAny.count} {rowAny.count === 1 ? 'bottleneck' : 'bottlenecks'} · {isIN
                           ? 'NSE-listed beneficiaries only — Indian sources / ₹ / PSU patterns'
                           : 'global L1–L6 roster — US / EU / Japan / Taiwan / Korea names'}
@@ -4034,12 +4034,12 @@ export default function NewsFeedPage() {
                 return (
                   // PATCH 0085: card padding 8/10 → 14/18, radius 8 → 12
                   <div key={b.node} style={{
-                    backgroundColor: '#0A1422', border: '1px solid #1A2840',
+                    backgroundColor: '#0A1422', border: '1px solid var(--mc-bg-4)',
                     borderRadius: 12, padding: '14px 18px',
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
                       {/* PATCH 0085: card title 11 → 17 */}
-                      <span style={{ fontSize: 17, fontWeight: 800, color: '#F5F7FA', letterSpacing: '0.3px' }}>
+                      <span style={{ fontSize: 17, fontWeight: 800, color: 'var(--mc-text-0)', letterSpacing: '0.3px' }}>
                         {showLabel}
                       </span>
                       {b.is_structural && (
@@ -4069,13 +4069,13 @@ export default function NewsFeedPage() {
                     </div>
                     {b.sub && (
                       // PATCH 0085: sub 10 → 14
-                      <div style={{ fontSize: 14, color: '#94A3B8', lineHeight: 1.4, marginBottom: 8 }}>
+                      <div style={{ fontSize: 14, color: 'var(--mc-text-3)', lineHeight: 1.4, marginBottom: 8 }}>
                         {b.sub}
                       </div>
                     )}
                     {/* PATCH 0085: meta row 10 → 13 */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, fontSize: 13, color: '#94A3B8' }}>
-                      <span style={{ color: '#10B981', fontWeight: 700 }}>{b.confidence_pct}% conf</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, fontSize: 13, color: 'var(--mc-text-3)' }}>
+                      <span style={{ color: 'var(--mc-bullish)', fontWeight: 700 }}>{b.confidence_pct}% conf</span>
                       <span>·</span>
                       <span>{b.sample_count} articles</span>
                       <span>·</span>
@@ -4083,19 +4083,19 @@ export default function NewsFeedPage() {
                     </div>
                     {bestSample && (
                       // PATCH 0085: top signal 9 → 12
-                      <div style={{ fontSize: 12, color: '#6B7A8D', lineHeight: 1.5, borderTop: '1px solid #1A2840', paddingTop: 8 }}>
-                        <span style={{ color: '#22D3EE', fontWeight: 700 }}>Top signal:</span>{' '}
-                        <span style={{ color: '#CBD5E1' }}>{bestSample.title.slice(0, 110)}</span>
+                      <div style={{ fontSize: 12, color: 'var(--mc-text-4)', lineHeight: 1.5, borderTop: '1px solid var(--mc-bg-4)', paddingTop: 8 }}>
+                        <span style={{ color: 'var(--mc-cyan)', fontWeight: 700 }}>Top signal:</span>{' '}
+                        <span style={{ color: 'var(--mc-text-2)' }}>{bestSample.title.slice(0, 110)}</span>
                         <br/>
-                        <span style={{ color: '#4A5B6C' }}>{bestSample.source} · {bestSample.tier}</span>
+                        <span style={{ color: 'var(--mc-text-4)' }}>{bestSample.source} · {bestSample.tier}</span>
                       </div>
                     )}
                     {/* PATCH 0081 + 0082: ARCHITECTURAL BENEFICIARIES — second-order winners
                         PATCH 0085: typography all bumped ~70% larger so the card actually reads
                         at desk distance. */}
                     {b.architectural_adaptations && b.architectural_adaptations.length > 0 && (
-                      <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed #1A2840' }}>
-                        <div style={{ fontSize: 12, color: '#F59E0B', fontWeight: 700, letterSpacing: '0.5px', marginBottom: 8 }}>
+                      <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed var(--mc-bg-4)' }}>
+                        <div style={{ fontSize: 12, color: 'var(--mc-warn)', fontWeight: 700, letterSpacing: '0.5px', marginBottom: 8 }}>
                           ↪ ARCHITECTURAL BENEFICIARIES (2nd-order)
                         </div>
                         {b.architectural_adaptations.map((adapt) => {
@@ -4114,7 +4114,7 @@ export default function NewsFeedPage() {
                           return (
                             <div key={adapt.adaptation} style={{ marginBottom: 12, fontSize: 13, lineHeight: 1.5 }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
-                                <span style={{ color: '#10B981', fontWeight: 700, fontSize: 14 }}>· {adapt.label}</span>
+                                <span style={{ color: 'var(--mc-bullish)', fontWeight: 700, fontSize: 14 }}>· {adapt.label}</span>
                                 {durLabel && (
                                   <span style={{
                                     fontSize: 10, fontWeight: 700, letterSpacing: '0.3px',
@@ -4130,7 +4130,7 @@ export default function NewsFeedPage() {
                                    Show clean prose rationale + a count indicator instead so the
                                    sub-theme + duration tag still convey the actionable shape
                                    without surfacing speculative ticker-tagging. */}
-                              <div style={{ color: '#CBD5E1', fontSize: 12, lineHeight: 1.5, marginTop: 4 }} title={adapt.rationale}>
+                              <div style={{ color: 'var(--mc-text-2)', fontSize: 12, lineHeight: 1.5, marginTop: 4 }} title={adapt.rationale}>
                                 {adapt.rationale}
                               </div>
                             </div>
@@ -4157,8 +4157,8 @@ export default function NewsFeedPage() {
                         L6: { icon: '⚡', label: 'Infrastructure / Efficiency',  tag: 'Power, thermal, perf-per-watt',         color: '#D946EF' },
                       };
                       return (
-                        <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed #1A2840' }}>
-                          <div style={{ fontSize: 12, color: '#22D3EE', fontWeight: 700, letterSpacing: '0.5px', marginBottom: 8 }}>
+                        <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed var(--mc-bg-4)' }}>
+                          <div style={{ fontSize: 12, color: 'var(--mc-cyan)', fontWeight: 700, letterSpacing: '0.5px', marginBottom: 8 }}>
                             🔁 TRANSMISSION SUB-THEMES (L1–L6)
                           </div>
                           {lb.fired_layers.map((L) => {
@@ -4177,16 +4177,16 @@ export default function NewsFeedPage() {
                                 }}>
                                   {L}
                                 </span>
-                                <span style={{ fontSize: 13, fontWeight: 600, color: '#E6EDF3' }}>
+                                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--mc-text-1)' }}>
                                   {meta.icon} {meta.label}
                                 </span>
-                                <span style={{ fontSize: 11, color: '#6B7A8D', fontStyle: 'italic' }}>{meta.tag}</span>
+                                <span style={{ fontSize: 11, color: 'var(--mc-text-4)', fontStyle: 'italic' }}>{meta.tag}</span>
                               </div>
                             );
                           })}
                           {/* Transmission cascade T0 → T4 */}
-                          <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #1A2840' }}>
-                            <div style={{ fontSize: 11, color: '#6B7A8D', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>Transmission cascade</div>
+                          <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--mc-bg-4)' }}>
+                            <div style={{ fontSize: 11, color: 'var(--mc-text-4)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>Transmission cascade</div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 12 }}>
                               {([
                                 ['T0', 'now',    lb.transmission.T0, '#22D3EE'],
@@ -4197,8 +4197,8 @@ export default function NewsFeedPage() {
                               ] as const).map(([t, q, txt, color]) => (
                                 <div key={t} style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
                                   <span style={{ color, fontWeight: 700, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', minWidth: 22 }}>{t}</span>
-                                  <span style={{ color: '#6B7A8D', fontSize: 10, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', minWidth: 50 }}>{q}</span>
-                                  <span style={{ color: '#CBD5E1', lineHeight: 1.45 }}>{txt}</span>
+                                  <span style={{ color: 'var(--mc-text-4)', fontSize: 10, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', minWidth: 50 }}>{q}</span>
+                                  <span style={{ color: 'var(--mc-text-2)', lineHeight: 1.45 }}>{txt}</span>
                                 </div>
                               ))}
                             </div>

@@ -22,6 +22,9 @@ import TickerExportToolbar from '@/components/TickerExportToolbar';
 import { scoreTurnaroundRow, parseTurnaroundRow, type TurnaroundResult, type TurnaroundStage, type TurnaroundArchetype } from '@/lib/turnaround';
 // VALUATION-B — inline fair-value strip from 10 institutional valuation models
 import { ValuationStrip } from '@/components/valuation/ValuationStrip';
+// PATCH 1079 — HANDOFF §6 wire-up: asset-rich + promoter-rising filters above the sort table.
+import { AssetRichFilter, type AssetRichStock } from '@/components/asset-rich-filter';
+import { PromoterRisingFilter, type PromoterFilterRow } from '@/components/promoter-trajectory';
 // PATCH 0578 — Operating Leverage Cluster framework (§17.4(C))
 import { computeClusterScore, isClusterSeed, CLUSTER_TIER_META, type ClusterResult } from '@/lib/op-leverage-cluster';
 // PATCH 0614 — MNC_ALLOWLIST extracted to lib/multibagger-allowlists.ts as
@@ -1429,7 +1432,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
           <span style={{fontSize:F.xs,fontWeight:700,color:GREEN,letterSpacing:0.3}}>{rows.length} stocks loaded</span>
         )}
         <details style={{marginLeft:'auto',fontSize:F.xs,color:MUTED,cursor:'pointer'}}>
-          <summary style={{listStyle:'none',color:'#22d3ee'}}>+ Optional CSV columns for full scoring</summary>
+          <summary style={{listStyle:'none',color:'var(--mc-cyan)'}}>+ Optional CSV columns for full scoring</summary>
           <div style={{marginTop:6,paddingTop:6,borderTop:`1px dashed ${BORDER}`,maxWidth:720,lineHeight:1.55,fontSize:9,color:MUTED}}>
             <strong style={{color:TEXT}}>Quality:</strong> Gross profit margin · Return on invested capital · OPM last year
             &nbsp;·&nbsp;<strong style={{color:TEXT}}>Cash:</strong> Free Cash Flow · FCF Yield · Net Debt · EBITDA · EV/EBITDA
@@ -1438,6 +1441,37 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
           </div>
         </details>
       </div>
+
+      {/* PATCH 1079 — Asset-rich + promoter-rising filters (HANDOFF §6 wire-up).
+          Both gracefully no-op when `rows` is empty or shapes don't match. */}
+      {Array.isArray(rows) && rows.length > 0 && (
+        <div style={{marginBottom:12,display:'grid',gap:10}}>
+          <AssetRichFilter
+            universe={rows.map((r: any): AssetRichStock => ({
+              ticker: r.ticker || r.symbol || r.name || '',
+              marketCapCr: typeof r.marketCapCr === 'number' ? r.marketCapCr : (typeof r.mcap === 'number' ? r.mcap : 0),
+              netCashCr: typeof r.netCashCr === 'number' ? r.netCashCr : undefined,
+              ocfCr: typeof r.ocfCr === 'number' ? r.ocfCr : undefined,
+              de: typeof r.de === 'number' ? r.de : (typeof r.debtToEquity === 'number' ? r.debtToEquity : undefined),
+              pledgePct: typeof r.pledgePct === 'number' ? r.pledgePct : undefined,
+              rocePct: typeof r.rocePct === 'number' ? r.rocePct : (typeof r.roce === 'number' ? r.roce : undefined),
+              currentRatio: typeof r.currentRatio === 'number' ? r.currentRatio : undefined,
+              divYieldPct: typeof r.divYieldPct === 'number' ? r.divYieldPct : (typeof r.dividendYield === 'number' ? r.dividendYield : undefined),
+              structuralDecline: !!r.structuralDecline,
+            }))}
+          />
+          <PromoterRisingFilter
+            universe={rows.map((r: any): PromoterFilterRow => ({
+              ticker: r.ticker || r.symbol || r.name || '',
+              company: r.company || r.name || r.ticker || '',
+              promoterHistory: Array.isArray(r.promoterHistory) ? r.promoterHistory : [],
+              pledgePct: typeof r.pledgePct === 'number' ? r.pledgePct : undefined,
+              marketCapCr: typeof r.marketCapCr === 'number' ? r.marketCapCr : undefined,
+              rocePct: typeof r.rocePct === 'number' ? r.rocePct : undefined,
+            }))}
+          />
+        </div>
+      )}
 
       {/* Upload zone */}
       <div
@@ -1462,7 +1496,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
       {/* ── GUIDANCE BUTTON — always visible, prominent ─────────────────────────
           Fetches recent earnings/guidance news and re-scores all loaded stocks.
           Shows disabled state when no data is loaded yet. */}
-      <div style={{marginBottom:20,display:'flex',alignItems:'center',gap:14,padding:'16px 20px',backgroundColor:CARD_BG,border:`2px solid ${guidanceMode?'#F59E0B':'#F59E0B40'}`,borderRadius:12,flexWrap:'wrap'}}>
+      <div style={{marginBottom:20,display:'flex',alignItems:'center',gap:14,padding:'16px 20px',backgroundColor:CARD_BG,border:`2px solid ${guidanceMode?'var(--mc-warn)':'#F59E0B40'}`,borderRadius:12,flexWrap:'wrap'}}>
         <button
           onClick={() => {
             if (rows.length === 0) return;
@@ -1477,9 +1511,9 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
           style={{
             padding:'14px 28px', borderRadius:10,
             cursor: rows.length === 0 ? 'not-allowed' : 'pointer',
-            border:`2px solid ${guidanceMode?'#F59E0B':'#F59E0B60'}`,
+            border:`2px solid ${guidanceMode?'var(--mc-warn)':'#F59E0B60'}`,
             background: guidanceMode ? '#F59E0B30' : '#F59E0B10',
-            color: rows.length === 0 ? '#F59E0B50' : '#F59E0B',
+            color: rows.length === 0 ? '#F59E0B50' : 'var(--mc-warn)',
             display:'flex', alignItems:'center', gap:10,
             opacity: rows.length === 0 ? 0.5 : 1,
             transition:'all 0.15s',
@@ -1496,7 +1530,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                `Re-score ${rows.length} stocks using live earnings & guidance news`}
             </div>
           </div>
-          {guidanceMode && <span style={{fontSize:F.sm,fontWeight:700,color:'#F59E0B',marginLeft:8}}>✓ ACTIVE</span>}
+          {guidanceMode && <span style={{fontSize:F.sm,fontWeight:700,color:'var(--mc-warn)',marginLeft:8}}>✓ ACTIVE</span>}
         </button>
         <div style={{flex:1,minWidth:200}}>
           <div style={{fontSize:F.sm,color:MUTED,lineHeight:1.6}}>
@@ -1589,7 +1623,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
             <select
               value={sectorFilter}
               onChange={(e) => setSectorFilter(e.target.value)}
-              style={{fontSize:F.xs,fontWeight:700,padding:'5px 8px',borderRadius:7,border:`1px solid ${sectorFilter==='ALL'?BORDER:'#22D3EE60'}`,background:sectorFilter==='ALL'?'transparent':'#22D3EE15',color:sectorFilter==='ALL'?MUTED:'#22D3EE',cursor:'pointer'}}>
+              style={{fontSize:F.xs,fontWeight:700,padding:'5px 8px',borderRadius:7,border:`1px solid ${sectorFilter==='ALL'?BORDER:'#22D3EE60'}`,background:sectorFilter==='ALL'?'transparent':'#22D3EE15',color:sectorFilter==='ALL'?MUTED:'var(--mc-cyan)',cursor:'pointer'}}>
               <option value="ALL">All sectors</option>
               {(() => {
                 const counts: Record<string, number> = {};
@@ -1687,10 +1721,10 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                 ≥75 = strong compounder; ≥100 = 100-bagger DNA tier.
                 Composes AND-style with all other filters. */}
             <div style={{width:1,background:BORDER,height:20}}/>
-            <span style={{fontSize:F.xs,color:'#a78bfa',fontWeight:700,letterSpacing:'0.5px'}}>Q50:</span>
+            <span style={{fontSize:F.xs,color:'var(--mc-state-persistent)',fontWeight:700,letterSpacing:'0.5px'}}>Q50:</span>
             {(['ALL',50,75,100] as const).map(v=>(
               <button key={String(v)} onClick={()=>setIndQualityMin(p=>p===v?'ALL':v)} style={{fontSize:F.xs,fontWeight:700,padding:'4px 9px',borderRadius:6,
-                border:`1px solid ${indQualityMin===v?'#a78bfa60':BORDER}`,background:indQualityMin===v?'#a78bfa14':'transparent',color:indQualityMin===v?'#a78bfa':MUTED,cursor:'pointer'}}
+                border:`1px solid ${indQualityMin===v?'#a78bfa60':BORDER}`,background:indQualityMin===v?'#a78bfa14':'transparent',color:indQualityMin===v?'var(--mc-state-persistent)':MUTED,cursor:'pointer'}}
                 title={v==='ALL'?'No quality filter':`ROCE + Profit CAGR ≥ ${v}${v===100?' = 100-bagger DNA tier':v===75?' = strong compounder':' = MOSL elite baseline'}`}>
                 {v==='ALL'?'All':`≥${v}${v===100?' 🏆':''}`}
                 {v!=='ALL' && ` (${rows.filter(r=>(r.roce??0)+(r.profitCagr??0)>=v).length})`}
@@ -1698,10 +1732,10 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
             ))}
             {/* PATCH 0345 — ROCE filter standalone (moat signature) */}
             <div style={{width:1,background:BORDER,height:20}}/>
-            <span style={{fontSize:F.xs,color:'#10b981',fontWeight:700,letterSpacing:'0.5px'}}>ROCE:</span>
+            <span style={{fontSize:F.xs,color:'var(--mc-bullish)',fontWeight:700,letterSpacing:'0.5px'}}>ROCE:</span>
             {(['ALL',20,25,30] as const).map(v=>(
               <button key={String(v)} onClick={()=>setIndRoceMin(p=>p===v?'ALL':v)} style={{fontSize:F.xs,fontWeight:700,padding:'4px 9px',borderRadius:6,
-                border:`1px solid ${indRoceMin===v?'#10b98160':BORDER}`,background:indRoceMin===v?'#10b98114':'transparent',color:indRoceMin===v?'#10b981':MUTED,cursor:'pointer'}}>
+                border:`1px solid ${indRoceMin===v?'#10b98160':BORDER}`,background:indRoceMin===v?'#10b98114':'transparent',color:indRoceMin===v?'var(--mc-bullish)':MUTED,cursor:'pointer'}}>
                 {v==='ALL'?'All':`≥${v}%${v===30?' 💎':''}`}
                 {v!=='ALL' && ` (${rows.filter(r=>(r.roce??0)>=v).length})`}
               </button>
@@ -1719,7 +1753,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
             {/* Guidance tier filter — only shown when guidance mode is ON */}
             {guidanceMode && <>
               <div style={{width:1,background:BORDER,height:20}}/>
-              <span style={{fontSize:F.xs,color:'#F59E0B',fontWeight:700,letterSpacing:'0.5px'}}>GUIDANCE:</span>
+              <span style={{fontSize:F.xs,color:'var(--mc-warn)',fontWeight:700,letterSpacing:'0.5px'}}>GUIDANCE:</span>
               {([
                 {k:'ALL' as GuidanceTier,    label:'All',        col:MUTED},
                 {k:'STRONG' as GuidanceTier, label:'▲ Strong',   col:GREEN},
@@ -1846,7 +1880,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                   const url = URL.createObjectURL(blob);
                   const a = document.createElement('a'); a.href = url; a.download = `multibagger-${new Date().toISOString().slice(0,10)}.docx`; a.click(); URL.revokeObjectURL(url);
                 }}
-                style={{ fontSize:F.xs, fontWeight:700, padding:'5px 12px', borderRadius:7, cursor:'pointer', border:`1px solid ${BORDER}`, background:'transparent', color:'#a78bfa' }}
+                style={{ fontSize:F.xs, fontWeight:700, padding:'5px 12px', borderRadius:7, cursor:'pointer', border:`1px solid ${BORDER}`, background:'transparent', color:'var(--mc-state-persistent)' }}
               >⬇ DOCX</button>
             )}
 
@@ -2102,7 +2136,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
             <span onClick={()=>handleSort('score')} style={{cursor:'pointer',userSelect:'none',color:sortField==='score'?ACCENT:MUTED}}>SCORE{sortIcon('score')}</span>
             <span>GRADE</span>
             <span onClick={()=>handleSort('pe')} style={{cursor:'pointer',userSelect:'none',color:sortField==='pe'||sortField==='peg'?YELLOW:MUTED}}>P/E{sortIcon('pe')} · <span onClick={e=>{e.stopPropagation();handleSort('peg')}} style={{cursor:'pointer'}}>PEG{sortIcon('peg')}</span></span>
-            <span style={{color:guidanceMode?'#F59E0B':MUTED}}>GUIDANCE{!guidanceMode&&<span style={{fontSize:9,fontWeight:400}}> ↑📡</span>}</span>
+            <span style={{color:guidanceMode?'var(--mc-warn)':MUTED}}>GUIDANCE{!guidanceMode&&<span style={{fontSize:9,fontWeight:400}}> ↑📡</span>}</span>
             <span>DECISION STRIP</span>
             <span onClick={()=>handleSort('revenueAcceleration')} style={{cursor:'pointer',userSelect:'none',color:sortField==='revenueAcceleration'?GREEN:MUTED}}>SQGLP PILLARS{sortIcon('revenueAcceleration')}</span>
             <span onClick={()=>handleSort('marketCapCr')} style={{cursor:'pointer',userSelect:'none',color:sortField==='marketCapCr'?'#f97316':MUTED}}>COV{sortIcon('marketCapCr')}</span>
@@ -2138,7 +2172,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                           <span
                             title="On Conviction Beats bench (BLOCKBUSTER/STRONG earnings)"
                             style={{
-                              fontSize: 9, fontWeight: 800, color: '#F59E0B',
+                              fontSize: 9, fontWeight: 800, color: 'var(--mc-warn)',
                               border: '1px solid #F59E0B60', backgroundColor: 'rgba(245,158,11,0.10)',
                               padding: '1px 5px', borderRadius: 3, letterSpacing: 0.3,
                             }}
@@ -2157,7 +2191,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                           return (
                             <span title={tip} style={{
                               fontSize: 9, fontWeight: 800,
-                              color: (h.pnlPercent ?? 0) >= 0 ? '#10B981' : '#EF4444',
+                              color: (h.pnlPercent ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)',
                               border: '1px solid currentColor',
                               padding: '1px 5px', borderRadius: 3, letterSpacing: 0.3,
                               backgroundColor: 'rgba(16,185,129,0.08)',
@@ -2183,7 +2217,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                         <span
                           title={`GOVERNANCE WATCH: classic operator-driven small-cap setup (low promoter + zero institutional + small mcap). Score capped at 65 regardless of fundamentals because the financial quality itself can't be independently verified without institutional auditor pressure.`}
                           style={{
-                            fontSize: 9, fontWeight: 800, color: '#EF4444',
+                            fontSize: 9, fontWeight: 800, color: 'var(--mc-bearish)',
                             border: '1px solid #EF444460',
                             backgroundColor: 'rgba(239,68,68,0.12)',
                             padding: '1px 4px', borderRadius: 3, width: 'fit-content',
@@ -2215,8 +2249,8 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                       })()}
                       {/* Signals: inflection/trigger/trajectory/rerating */}
                       <div style={{display:'flex',gap:3,flexWrap:'wrap',marginTop:2}}>
-                        {r.inflectionSignal&&<span title="Early inflection phase: low-base high profit growth" style={{fontSize:9,fontWeight:800,color:'#F59E0B',border:'1px solid #F59E0B40',padding:'0 4px',borderRadius:3}}>💥 INFLECT</span>}
-                        {r.triggerBonus>=10&&<span title={`Trigger bonus +${r.triggerBonus}: turnaround/new engine/industry shift proxy`} style={{fontSize:9,fontWeight:700,color:'#10B981',border:'1px solid #10B98140',padding:'0 4px',borderRadius:3}}>⚡+{r.triggerBonus}</span>}
+                        {r.inflectionSignal&&<span title="Early inflection phase: low-base high profit growth" style={{fontSize:9,fontWeight:800,color:'var(--mc-warn)',border:'1px solid #F59E0B40',padding:'0 4px',borderRadius:3}}>💥 INFLECT</span>}
+                        {r.triggerBonus>=10&&<span title={`Trigger bonus +${r.triggerBonus}: turnaround/new engine/industry shift proxy`} style={{fontSize:9,fontWeight:700,color:'var(--mc-bullish)',border:'1px solid #10B98140',padding:'0 4px',borderRadius:3}}>⚡+{r.triggerBonus}</span>}
                         {r.trajectoryScore>20&&<span title={`Trajectory +${r.trajectoryScore.toFixed(0)}pp above historical`} style={{fontSize:9,fontWeight:700,color:'#38bdf8',border:'1px solid #38bdf840',padding:'0 4px',borderRadius:3}}>↑T+{r.trajectoryScore.toFixed(0)}</span>}
                         {r.trajectoryScore<-20&&<span title={`Trajectory ${r.trajectoryScore.toFixed(0)}pp below historical`} style={{fontSize:9,color:RED}}>↓T{r.trajectoryScore.toFixed(0)}</span>}
                         {r.reratingBonus!==0&&<span style={{fontSize:9,color:r.reratingBonus>0?GREEN:RED}}>{r.reratingBonus>0?'↑':'↓'}{Math.abs(r.reratingBonus)}r</span>}
@@ -2633,7 +2667,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                               <span style={{fontSize:F.sm,fontWeight:800,color:tierColor,letterSpacing:'0.5px'}}>🤖 AI FORWARD GUIDANCE</span>
                               <span style={{fontSize:F.xs,fontWeight:700,color:tierColor}}>{tierIcon} {ai.tier} · {ai.score >= 0 ? '+' : ''}{ai.score.toFixed(2)}</span>
                               <span style={{fontSize:F.xs,color:MUTED}}>· {ai.period} · fetched {ageDays}d ago</span>
-                              {ai.sourceUrl && <a href={ai.sourceUrl} target="_blank" rel="noopener noreferrer" style={{fontSize:F.xs,color:'#22d3ee',marginLeft:'auto',textDecoration:'none'}}>↗ Source</a>}
+                              {ai.sourceUrl && <a href={ai.sourceUrl} target="_blank" rel="noopener noreferrer" style={{fontSize:F.xs,color:'var(--mc-cyan)',marginLeft:'auto',textDecoration:'none'}}>↗ Source</a>}
                             </div>
                             {(ai.rationale || ai.summary) && (
                               <div style={{fontSize:F.sm,color:TEXT,lineHeight:1.5,marginBottom:8}}>
@@ -2642,7 +2676,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                             )}
                             {Array.isArray(ai.numbers) && ai.numbers.length > 0 && (
                               <div style={{marginTop:8,paddingTop:8,borderTop:`1px dashed ${tierColor}30`}}>
-                                <div style={{fontSize:F.xs,fontWeight:700,color:'#22d3ee',letterSpacing:'0.4px',marginBottom:4}}>📊 NUMBERS</div>
+                                <div style={{fontSize:F.xs,fontWeight:700,color:'var(--mc-cyan)',letterSpacing:'0.4px',marginBottom:4}}>📊 NUMBERS</div>
                                 <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:6}}>
                                   {ai.numbers.map((n,i) => (
                                     <div key={i} style={{fontSize:F.xs,padding:'4px 6px',backgroundColor:CARD2,borderRadius:4,fontVariantNumeric:'tabular-nums'}}>
@@ -2656,21 +2690,21 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                             )}
                             {Array.isArray(ai.catalysts) && ai.catalysts.length > 0 && (
                               <div style={{marginTop:8,paddingTop:8,borderTop:`1px dashed ${tierColor}30`}}>
-                                <div style={{fontSize:F.xs,fontWeight:700,color:'#F59E0B',letterSpacing:'0.4px',marginBottom:4}}>⚡ FORWARD CATALYSTS</div>
+                                <div style={{fontSize:F.xs,fontWeight:700,color:'var(--mc-warn)',letterSpacing:'0.4px',marginBottom:4}}>⚡ FORWARD CATALYSTS</div>
                                 {ai.catalysts.map((c,i) => (
                                   <div key={i} style={{fontSize:F.xs,color:MUTED,padding:'2px 0',lineHeight:1.4}}>
                                     › <span style={{color:TEXT}}>{c.event}</span>
-                                    {c.timing && <span style={{color:'#F59E0B',fontWeight:700}}> · {c.timing}</span>}
+                                    {c.timing && <span style={{color:'var(--mc-warn)',fontWeight:700}}> · {c.timing}</span>}
                                   </div>
                                 ))}
                               </div>
                             )}
                             {Array.isArray(ai.quotes) && ai.quotes.length > 0 && (
                               <div style={{marginTop:8,paddingTop:8,borderTop:`1px dashed ${tierColor}30`}}>
-                                <div style={{fontSize:F.xs,fontWeight:700,color:'#a78bfa',letterSpacing:'0.4px',marginBottom:4}}>💬 KEY QUOTES (CONCALL)</div>
+                                <div style={{fontSize:F.xs,fontWeight:700,color:'var(--mc-state-persistent)',letterSpacing:'0.4px',marginBottom:4}}>💬 KEY QUOTES (CONCALL)</div>
                                 {ai.quotes.map((q,i) => (
                                   <div key={i} style={{fontSize:F.xs,color:MUTED,padding:'4px 0',lineHeight:1.45,borderLeft:`2px solid ${tierColor}30`,paddingLeft:8,marginBottom:3,fontStyle:'italic'}}>
-                                    "{q.quote}"{q.speaker && <span style={{color:'#a78bfa',fontStyle:'normal',fontWeight:700}}> — {q.speaker}</span>}
+                                    "{q.quote}"{q.speaker && <span style={{color:'var(--mc-state-persistent)',fontStyle:'normal',fontWeight:700}}> — {q.speaker}</span>}
                                   </div>
                                 ))}
                               </div>
@@ -2715,7 +2749,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                               ))}
                               {orphans.length>0 && (
                                 <div style={{marginBottom:6}}>
-                                  <div style={{fontSize:9,fontWeight:800,color:'#94A3B8',letterSpacing:0.4,marginBottom:2}}>· OTHER ({orphans.length})</div>
+                                  <div style={{fontSize:9,fontWeight:800,color:'var(--mc-text-3)',letterSpacing:0.4,marginBottom:2}}>· OTHER ({orphans.length})</div>
                                   {orphans.map((s,i)=><div key={i} style={{fontSize:F.xs,color:MUTED,padding:'2px 0 2px 14px',lineHeight:1.4}}>› {s}</div>)}
                                 </div>
                               )}
@@ -2745,7 +2779,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                         {/* ── PATCH 0056+0058: MULTIBAGGER FRAMEWORK PANEL ── */}
                         {(r.dilution || r.reinvestment || r.framework_coverage || r.archetype) && (
                           <div style={{marginTop:16,borderTop:`1px solid ${BORDER}`,paddingTop:12}}>
-                            <div style={{fontSize:F.sm,fontWeight:800,letterSpacing:'0.8px',color:'#22d3ee',marginBottom:10}}>
+                            <div style={{fontSize:F.sm,fontWeight:800,letterSpacing:'0.8px',color:'var(--mc-cyan)',marginBottom:10}}>
                               🧬 MULTIBAGGER FRAMEWORK ANALYSIS
                             </div>
                             {/* PATCH 0058: Archetype card — featured first */}
@@ -2877,7 +2911,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                                 inside hover-tooltip to avoid visual noise. */}
                             {r.missing_dimensions && r.missing_dimensions.length > 0 && (
                               <div style={{marginTop:10,padding:'8px 12px',backgroundColor:`${MUTED}05`,border:`1px solid ${MUTED}20`,borderLeft:`3px solid ${MUTED}`,borderRadius:6}}>
-                                <div style={{fontSize:F.xs,fontWeight:700,color:'#94A3B8',marginBottom:6,letterSpacing:0.4,display:'flex',alignItems:'baseline',gap:8}}>
+                                <div style={{fontSize:F.xs,fontWeight:700,color:'var(--mc-text-3)',marginBottom:6,letterSpacing:0.4,display:'flex',alignItems:'baseline',gap:8}}>
                                   <span>FRAMEWORK BOUNDARY</span>
                                   <span style={{color:MUTED,fontSize:9,fontWeight:600}}>· qualitative dimensions outside Screener export · verify manually for high-conviction picks</span>
                                 </div>
@@ -4021,7 +4055,7 @@ function USACompare() {
           {usaUploadAgeDays != null && usaUploadAgeDays > 60 && (
             <div style={{ marginBottom: 12, padding: '10px 14px', borderRadius: 8,
               backgroundColor: '#F59E0B14', border: '1px solid #F59E0B60',
-              color: '#F59E0B', fontSize: 12, fontWeight: 700,
+              color: 'var(--mc-warn)', fontSize: 12, fontWeight: 700,
               display: 'flex', alignItems: 'center', gap: 10,
             }}>
               <span style={{ fontSize: 16 }}>⚠</span>
@@ -4064,10 +4098,10 @@ function USACompare() {
 
               {/* PATCH 0345 — Rule of 40 tiered filter (composes AND-style with others) */}
               <div style={{width:1,background:BORDER,height:18}}/>
-              <span style={{fontSize:F.xs,color:'#a78bfa',fontWeight:700}}>R40:</span>
+              <span style={{fontSize:F.xs,color:'var(--mc-state-persistent)',fontWeight:700}}>R40:</span>
               {(['ALL',40,60,80] as const).map(v=>(
                 <button key={String(v)} onClick={()=>setUsR40Min(p=>p===v?'ALL':v)} style={{fontSize:F.xs,fontWeight:700,padding:'4px 9px',borderRadius:6,
-                  border:`1px solid ${usR40Min===v?'#a78bfa60':BORDER}`,background:usR40Min===v?'#a78bfa14':'transparent',color:usR40Min===v?'#a78bfa':MUTED,cursor:'pointer'}}>
+                  border:`1px solid ${usR40Min===v?'#a78bfa60':BORDER}`,background:usR40Min===v?'#a78bfa14':'transparent',color:usR40Min===v?'var(--mc-state-persistent)':MUTED,cursor:'pointer'}}>
                   {v==='ALL'?'All':`≥${v}${v===80?' 🏆':''}`}
                   {v!=='ALL' && ` (${rows.filter(r=>(r.ruleOf40 ?? -999) >= v).length})`}
                 </button>
@@ -4076,10 +4110,10 @@ function USACompare() {
               {/* PATCH 0345 — Piotroski F-score filter (≥5 clean, ≥7 elite) */}
               {rows.some(r=>r.piotroskiFScore !== undefined) && <>
                 <div style={{width:1,background:BORDER,height:18}}/>
-                <span style={{fontSize:F.xs,color:'#10b981',fontWeight:700}}>Piotroski:</span>
+                <span style={{fontSize:F.xs,color:'var(--mc-bullish)',fontWeight:700}}>Piotroski:</span>
                 {(['ALL',5,7] as const).map(v=>(
                   <button key={String(v)} onClick={()=>setUsPiotroskiMin(p=>p===v?'ALL':v)} style={{fontSize:F.xs,fontWeight:700,padding:'4px 9px',borderRadius:6,
-                    border:`1px solid ${usPiotroskiMin===v?'#10b98160':BORDER}`,background:usPiotroskiMin===v?'#10b98114':'transparent',color:usPiotroskiMin===v?'#10b981':MUTED,cursor:'pointer'}}>
+                    border:`1px solid ${usPiotroskiMin===v?'#10b98160':BORDER}`,background:usPiotroskiMin===v?'#10b98114':'transparent',color:usPiotroskiMin===v?'var(--mc-bullish)':MUTED,cursor:'pointer'}}>
                     {v==='ALL'?'All':`≥${v}${v===7?'/9 💎':''}`}
                     {v!=='ALL' && ` (${rows.filter(r=>(r.piotroskiFScore ?? -1) >= v).length})`}
                   </button>
@@ -4116,7 +4150,7 @@ function USACompare() {
               {/* Analyst Rating filter — only shown when data has ratings */}
               {rows.some(r=>r.analystRating) && <>
                 <div style={{width:1,background:BORDER,height:18}}/>
-                <span style={{fontSize:F.xs,color:'#F59E0B',fontWeight:700}}>ANALYST:</span>
+                <span style={{fontSize:F.xs,color:'var(--mc-warn)',fontWeight:700}}>ANALYST:</span>
                 {([
                   {k:'ALL' as const, label:'All', col:MUTED},
                   {k:'BUY' as const, label:'Buy+', col:GREEN},
@@ -4216,8 +4250,8 @@ function USACompare() {
             <span>GRADE</span>
             <span onClick={()=>handleUSASort('fwdPe')} style={{cursor:'pointer',color:usSortField==='fwdPe'||usSortField==='peg'?YELLOW:MUTED}}>VAL{usSortIcon('fwdPe')}</span>
             <span onClick={()=>handleUSASort('revGrowthAnn')} style={{cursor:'pointer',color:usSortField==='revGrowthAnn'?GREEN:MUTED}}>ACCEL{usSortIcon('revGrowthAnn')}</span>
-            <span onClick={()=>handleUSASort('ruleOf40')} style={{cursor:'pointer',color:usSortField==='ruleOf40'?'#a78bfa':MUTED}} title="Rule of 40 = Quarterly Rev Growth + FCF Margin (≥40 = institutional benchmark)">R40{usSortIcon('ruleOf40')}</span>
-            <span onClick={()=>handleUSASort('grossMargin')} style={{cursor:'pointer',color:usSortField==='grossMargin'||usSortField==='fcfMargin'?'#a78bfa':MUTED}}>PILLARS{usSortIcon('grossMargin')}</span>
+            <span onClick={()=>handleUSASort('ruleOf40')} style={{cursor:'pointer',color:usSortField==='ruleOf40'?'var(--mc-state-persistent)':MUTED}} title="Rule of 40 = Quarterly Rev Growth + FCF Margin (≥40 = institutional benchmark)">R40{usSortIcon('ruleOf40')}</span>
+            <span onClick={()=>handleUSASort('grossMargin')} style={{cursor:'pointer',color:usSortField==='grossMargin'||usSortField==='fcfMargin'?'var(--mc-state-persistent)':MUTED}}>PILLARS{usSortIcon('grossMargin')}</span>
             <span onClick={()=>handleUSASort('marketCapB')} style={{cursor:'pointer',color:usSortField==='marketCapB'?ORANGE:MUTED}}>COV{usSortIcon('marketCapB')}</span>
           </div>
 
@@ -4254,7 +4288,7 @@ function USACompare() {
                       )}
                       {r.suggestedMaxPositionPct !== undefined && (
                         <div title={`Position-size guidance based on market cap. Microcap volatility is structurally 2-3× large-cap, so size should reflect liquidity, not just composite score.`}
-                             style={{fontSize:9,fontWeight:700,color:'#94a3b8',background:'rgba(148,163,184,0.10)',border:'1px solid rgba(148,163,184,0.25)',padding:'1px 5px',borderRadius:4,marginTop:2,display:'inline-block'}}>
+                             style={{fontSize:9,fontWeight:700,color:'var(--mc-text-3)',background:'rgba(148,163,184,0.10)',border:'1px solid rgba(148,163,184,0.25)',padding:'1px 5px',borderRadius:4,marginTop:2,display:'inline-block'}}>
                           MAX {r.suggestedMaxPositionPct}%
                         </div>
                       )}
@@ -4292,7 +4326,7 @@ function USACompare() {
                           ⏳ STALE {usaUploadAgeDays}d
                         </div>
                       )}
-                      {r.nextEarnings&&<div style={{fontSize:9,color:'#f59e0b'}}>📅 {r.nextEarnings}</div>}
+                      {r.nextEarnings&&<div style={{fontSize:9,color:'var(--mc-warn)'}}>📅 {r.nextEarnings}</div>}
                       {r.analystRating && (() => {
                         const rating = r.analystRating.toLowerCase();
                         const col = rating.includes('strong buy') ? GREEN : rating.includes('buy') ? '#34d399' : rating.includes('strong sell') ? RED : rating.includes('sell') ? ORANGE : MUTED;
@@ -4528,7 +4562,7 @@ function DecisionBar({ symbol, company, market, score, grade, currentPrice, bump
                 fontSize: 11, fontWeight: 800, padding: '5px 11px', borderRadius: 6, cursor: 'pointer',
                 border: `1px solid ${active ? meta.color + 'AA' : '#1e293b'}`,
                 background: active ? `${meta.color}25` : 'transparent',
-                color: active ? meta.color : '#94a3b8',
+                color: active ? meta.color : 'var(--mc-text-3)',
               }}>
               {meta.emoji} {meta.label}
             </button>
@@ -4537,7 +4571,7 @@ function DecisionBar({ symbol, company, market, score, grade, currentPrice, bump
         {status && (
           <button onClick={onClear} style={{
             fontSize: 10, padding: '4px 9px', borderRadius: 5, cursor: 'pointer',
-            border: '1px solid #1e293b', background: 'transparent', color: '#94a3b8', marginLeft: 'auto',
+            border: '1px solid #1e293b', background: 'transparent', color: 'var(--mc-text-3)', marginLeft: 'auto',
           }} title="Remove this decision">
             ✕ Clear
           </button>
@@ -4566,7 +4600,7 @@ function DecisionBar({ symbol, company, market, score, grade, currentPrice, bump
       </div>
       {existing && (
         <div style={{ marginTop: 6, fontSize: 10, color: '#64748b' }}>
-          Decision recorded when score was <strong style={{ color: '#94a3b8' }}>{existing.scoreAtDecision ?? '—'} {existing.gradeAtDecision ?? ''}</strong>.
+          Decision recorded when score was <strong style={{ color: 'var(--mc-text-3)' }}>{existing.scoreAtDecision ?? '—'} {existing.gradeAtDecision ?? ''}</strong>.
           This persists even after you clear your upload — useful as a personal logbook.
         </div>
       )}
@@ -4816,14 +4850,14 @@ function MbScreenerChips() {
       padding: '6px 10px', borderRadius: 6,
       border: '1px solid #1E3A5F', background: '#0F1B2D',
     }}>
-      <span style={{ fontSize: 10, color: '#22D3EE', fontWeight: 800, letterSpacing: '0.5px' }}>
+      <span style={{ fontSize: 10, color: 'var(--mc-cyan)', fontWeight: 800, letterSpacing: '0.5px' }}>
         📊 {files.length} SCREENER{files.length === 1 ? '' : 'S'}
       </span>
       <span style={{ width: 1, height: 12, background: '#1E3A5F' }} />
       {files.slice(0, 12).map((f, i) => (
         <span key={f + '_' + i} style={{
-          fontSize: 10, color: '#94A3B8', fontWeight: 600,
-          padding: '2px 7px', borderRadius: 3, background: '#1A2540',
+          fontSize: 10, color: 'var(--mc-text-3)', fontWeight: 600,
+          padding: '2px 7px', borderRadius: 3, background: 'var(--mc-bg-4)',
           fontFamily: 'ui-sans-serif, system-ui',
           maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         }} title={f}>
@@ -4831,7 +4865,7 @@ function MbScreenerChips() {
         </span>
       ))}
       {files.length > 12 && (
-        <span style={{ fontSize: 10, color: '#6B7A8D', fontStyle: 'italic' }}>
+        <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontStyle: 'italic' }}>
           +{files.length - 12} more
         </span>
       )}
@@ -4865,12 +4899,12 @@ function MultiConfirmedCard({ stocks }: { stocks: any[] }) {
   if (multi.length === 0) {
     return (
       <div style={cardStyle}>
-        <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+        <div style={{ fontSize: 13, color: 'var(--mc-cyan)', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
           🎯 MULTI-CONFIRMED PICKS (0)
         </div>
-        <div style={{ fontSize: 11, color: '#6B7A8D', lineHeight: 1.5 }}>
+        <div style={{ fontSize: 11, color: 'var(--mc-text-4)', lineHeight: 1.5 }}>
           Stocks appearing in 2+ uploaded Screener.in CSVs land here.{' '}
-          <strong style={{ color: '#94A3B8' }}>Re-upload your screens</strong> to populate —
+          <strong style={{ color: 'var(--mc-text-3)' }}>Re-upload your screens</strong> to populate —
           screener membership wasn't tracked before this patch, so existing rows show 0.
         </div>
       </div>
@@ -4879,10 +4913,10 @@ function MultiConfirmedCard({ stocks }: { stocks: any[] }) {
 
   return (
     <div style={cardStyle}>
-      <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+      <div style={{ fontSize: 13, color: 'var(--mc-cyan)', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
         🎯 MULTI-CONFIRMED PICKS ({multi.length})
       </div>
-      <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.45 }}>
+      <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 10, lineHeight: 1.45 }}>
         Stocks that surfaced in 2+ Screener.in screens. Classic conviction-by-consensus.
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
@@ -4894,20 +4928,20 @@ function MultiConfirmedCard({ stocks }: { stocks: any[] }) {
               border: '1px solid #22D3EE30', background: '#22D3EE08', textDecoration: 'none',
             }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 11, color: '#22D3EE', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 70 }}>
+              <span style={{ fontSize: 11, color: 'var(--mc-cyan)', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 70 }}>
                 {s.symbol.replace(/\.(NS|BO)$/i, '')}
               </span>
-              <span style={{ flex: 1, fontSize: 11, color: '#E6EDF3', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <span style={{ flex: 1, fontSize: 11, color: 'var(--mc-text-1)', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {s.company || s.symbol}
               </span>
               <span style={{
-                fontSize: 10, color: '#22D3EE', fontWeight: 800,
+                fontSize: 10, color: 'var(--mc-cyan)', fontWeight: 800,
                 padding: '2px 7px', borderRadius: 3, background: '#22D3EE22',
                 fontVariantNumeric: 'tabular-nums',
               }}>
                 📂 {s._scrCount}
               </span>
-              <span style={{ fontSize: 11, color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+              <span style={{ fontSize: 11, color: 'var(--mc-bullish)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
                 {s.score} {s.grade}
               </span>
             </div>
@@ -5626,12 +5660,12 @@ function MultibaggerAnalytics({
     <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
       {company ? (
         <>
-          <span style={{ fontSize: 12, fontWeight: 700, color: '#E6EDF3', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{company}</span>
-          <span style={{ fontSize: 9, color: '#94A3B8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 600, letterSpacing: '0.3px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ticker}</span>
+          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--mc-text-1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{company}</span>
+          <span style={{ fontSize: 9, color: 'var(--mc-text-3)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 600, letterSpacing: '0.3px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ticker}</span>
         </>
       ) : (
         // No company name available — fall back to ticker as the headline.
-        <span style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ticker}</span>
+        <span style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-text-1)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ticker}</span>
       )}
     </div>
   );
@@ -5640,7 +5674,7 @@ function MultibaggerAnalytics({
     return (
       <div style={{ padding: 30, textAlign: 'center', color: '#8A95A3' }}>
         <div style={{ fontSize: 36, marginBottom: 12 }}>📊</div>
-        <p style={{ margin: 0, fontWeight: 700, color: '#E6EDF3' }}>No Multibagger data uploaded yet</p>
+        <p style={{ margin: 0, fontWeight: 700, color: 'var(--mc-text-1)' }}>No Multibagger data uploaded yet</p>
         <p style={{ margin: '8px 0 16px', fontSize: 12, lineHeight: 1.5, maxWidth: 480, marginLeft: 'auto', marginRight: 'auto' }}>
           Upload your Screener.in CSV (India) or TradingView CSV (USA) on the ranking tabs.
           The analytics view will populate the moment data is loaded.
@@ -5648,11 +5682,11 @@ function MultibaggerAnalytics({
         <div style={{ display: 'inline-flex', gap: 8 }}>
           <button onClick={() => onSwitchTab('excel')} style={{
             padding: '6px 14px', borderRadius: 6, border: '1px solid #10B98160',
-            background: '#10B98115', color: '#10B981', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+            background: '#10B98115', color: 'var(--mc-bullish)', fontSize: 12, fontWeight: 700, cursor: 'pointer',
           }}>🇮🇳 Upload India CSV</button>
           <button onClick={() => onSwitchTab('usa')} style={{
             padding: '6px 14px', borderRadius: 6, border: '1px solid #22D3EE60',
-            background: '#22D3EE15', color: '#22D3EE', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+            background: '#22D3EE15', color: 'var(--mc-cyan)', fontSize: 12, fontWeight: 700, cursor: 'pointer',
           }}>🇺🇸 Upload USA CSV</button>
         </div>
       </div>
@@ -5663,7 +5697,7 @@ function MultibaggerAnalytics({
     <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 18 }}>
       {/* ── MARKET SCOPE TOGGLE ─────────────────────────────────────────── */}
       <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 11, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.3px', marginRight: 6 }}>MARKET</span>
+        <span style={{ fontSize: 11, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.3px', marginRight: 6 }}>MARKET</span>
         {(['INDIA', 'USA', 'BOTH'] as MbMarketScope[]).map((m) => {
           const isActive = scope === m;
           const color = m === 'INDIA' ? '#10B981' : m === 'USA' ? '#22D3EE' : '#8B5CF6';
@@ -5673,9 +5707,9 @@ function MultibaggerAnalytics({
               onClick={() => setScope(m)}
               style={{
                 fontSize: 11, fontWeight: 800, letterSpacing: '0.4px', cursor: 'pointer',
-                border: `1px solid ${isActive ? color : '#1A2540'}`,
+                border: `1px solid ${isActive ? color : 'var(--mc-bg-4)'}`,
                 backgroundColor: isActive ? `${color}22` : 'transparent',
-                color: isActive ? color : '#6B7A8D',
+                color: isActive ? color : 'var(--mc-text-4)',
                 padding: '4px 12px', borderRadius: 4,
               }}
             >
@@ -5692,29 +5726,29 @@ function MultibaggerAnalytics({
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
         <div style={cardStyle}>
           <div style={labelStyle}>Total stocks</div>
-          <div style={{ fontSize: 22, fontWeight: 900, color: '#22D3EE', fontVariantNumeric: 'tabular-nums' }}>{stats.total}</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--mc-cyan)', fontVariantNumeric: 'tabular-nums' }}>{stats.total}</div>
         </div>
         <div style={cardStyle}>
           <div style={labelStyle}>Avg / Median score</div>
-          <div style={{ fontSize: 20, fontWeight: 900, color: '#10B981', fontVariantNumeric: 'tabular-nums' }}>
-            {stats.avg} <span style={{ color: '#6B7A8D', fontSize: 13 }}>/ {stats.p50}</span>
+          <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--mc-bullish)', fontVariantNumeric: 'tabular-nums' }}>
+            {stats.avg} <span style={{ color: 'var(--mc-text-4)', fontSize: 13 }}>/ {stats.p50}</span>
           </div>
         </div>
         <div style={cardStyle}>
           <div style={labelStyle}>P75 / P25 thresholds</div>
-          <div style={{ fontSize: 18, fontWeight: 900, color: '#3B82F6', fontVariantNumeric: 'tabular-nums' }}>
-            {stats.p75} <span style={{ color: '#6B7A8D', fontSize: 13 }}>/ {stats.p25}</span>
+          <div style={{ fontSize: 18, fontWeight: 900, color: 'var(--mc-info)', fontVariantNumeric: 'tabular-nums' }}>
+            {stats.p75} <span style={{ color: 'var(--mc-text-4)', fontSize: 13 }}>/ {stats.p25}</span>
           </div>
         </div>
         <div style={cardStyle}>
           <div style={labelStyle}>A+ / A counts</div>
-          <div style={{ fontSize: 20, fontWeight: 900, color: '#10B981', fontVariantNumeric: 'tabular-nums' }}>
-            {stats.aPlus} <span style={{ color: '#22D3EE' }}>/ {stats.aOnly}</span>
+          <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--mc-bullish)', fontVariantNumeric: 'tabular-nums' }}>
+            {stats.aPlus} <span style={{ color: 'var(--mc-cyan)' }}>/ {stats.aOnly}</span>
           </div>
         </div>
         <div style={cardStyle}>
           <div style={labelStyle}>% A-or-better</div>
-          <div style={{ fontSize: 22, fontWeight: 900, color: '#F59E0B', fontVariantNumeric: 'tabular-nums' }}>{stats.aPct}%</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--mc-warn)', fontVariantNumeric: 'tabular-nums' }}>{stats.aPct}%</div>
         </div>
         <div style={cardStyle}>
           <div style={labelStyle}>Conviction overlap</div>
@@ -5732,7 +5766,7 @@ function MultibaggerAnalytics({
           <div style={labelStyle}>Mean Δ vs last upload</div>
           <div style={{
             fontSize: 22, fontWeight: 900,
-            color: stats.meanDelta > 0 ? '#10B981' : stats.meanDelta < 0 ? '#EF4444' : '#94A3B8',
+            color: stats.meanDelta > 0 ? 'var(--mc-bullish)' : stats.meanDelta < 0 ? 'var(--mc-bearish)' : 'var(--mc-text-3)',
             fontVariantNumeric: 'tabular-nums',
           }}>
             {stats.meanDelta > 0 ? '▲ +' : stats.meanDelta < 0 ? '▼ ' : '• '}{Math.abs(stats.meanDelta).toFixed(1)}
@@ -5747,13 +5781,13 @@ function MultibaggerAnalytics({
           borderRadius: 6, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12,
         }}>
           <span style={{ fontSize: 18 }}>⚠</span>
-          <div style={{ flex: 1, fontSize: 12, color: '#F59E0B', fontWeight: 600, lineHeight: 1.5 }}>
+          <div style={{ flex: 1, fontSize: 12, color: 'var(--mc-warn)', fontWeight: 600, lineHeight: 1.5 }}>
             <span style={{ fontWeight: 800 }}>Concentration risk:</span>{' '}
             {stats.top3Pct}% of your A-grade names sit in{' '}
             {stats.top3Sectors.map(([sec, n]) => (
               <span key={sec} style={{ fontWeight: 700 }}>{sec} ({n}){', '}</span>
             ))}
-            <span style={{ color: '#CBD5E1', fontWeight: 500 }}>— diversify exposure across sectors to avoid single-cycle drawdown.</span>
+            <span style={{ color: 'var(--mc-text-2)', fontWeight: 500 }}>— diversify exposure across sectors to avoid single-cycle drawdown.</span>
           </div>
         </div>
       )}
@@ -5770,12 +5804,12 @@ function MultibaggerAnalytics({
           background: 'linear-gradient(180deg, #F59E0B14 0%, transparent 100%)',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
-            <div style={{ fontSize: 14, color: '#F59E0B', fontWeight: 900, letterSpacing: '0.4px' }}>
+            <div style={{ fontSize: 14, color: 'var(--mc-warn)', fontWeight: 900, letterSpacing: '0.4px' }}>
               🚀 TODAY&apos;S TOP {stats.top3Today.length} BUYS
             </div>
-            <span style={{ fontSize: 10, color: '#F59E0B', background: '#F59E0B22', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>ACTION-READY</span>
+            <span style={{ fontSize: 10, color: 'var(--mc-warn)', background: '#F59E0B22', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>ACTION-READY</span>
           </div>
-          <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 10, lineHeight: 1.5 }}>
+          <div style={{ fontSize: 11, color: 'var(--mc-text-3)', marginBottom: 10, lineHeight: 1.5 }}>
             The highest-conviction A+/A names you have not yet added to the bench. Open the row in Earnings
             Opportunities to add, or click the company name to open the stock sheet.
           </div>
@@ -5785,11 +5819,11 @@ function MultibaggerAnalytics({
                 style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '10px 12px', borderRadius: 6,
                   border: '1px solid #F59E0B40', background: '#F59E0B10', textDecoration: 'none' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 16, fontWeight: 900, color: '#F59E0B' }}>#{i + 1}</span>
+                  <span style={{ fontSize: 16, fontWeight: 900, color: 'var(--mc-warn)' }}>#{i + 1}</span>
                   <TickerCompanyCell ticker={s.symbol} company={s.company} />
-                  <span style={{ fontSize: 12, color: '#10B981', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
+                  <span style={{ fontSize: 12, color: 'var(--mc-bullish)', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
                 </div>
-                <span style={{ fontSize: 10, color: '#CBD5E1', lineHeight: 1.4 }}>
+                <span style={{ fontSize: 10, color: 'var(--mc-text-2)', lineHeight: 1.4 }}>
                   {s.sector || '—'} · {reasonFor(s as any, convictionSet.has((s.symbol || '').toUpperCase().replace(/\.(NS|BO)$/i, '')) ? 'STRONG_BUY' : 'ADD')}
                 </span>
               </a>
@@ -5802,14 +5836,14 @@ function MultibaggerAnalytics({
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12 }}>
         {/* STRONG BUY */}
         <div style={{ ...cardStyle, borderColor: '#10B98140' }}>
-          <div style={{ fontSize: 13, color: '#10B981', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+          <div style={{ fontSize: 13, color: 'var(--mc-bullish)', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
             🎯 STRONG BUY ({stats.strongBuy.length})
           </div>
-          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.45 }}>
+          <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 10, lineHeight: 1.45 }}>
             Grade A/A+, on Conviction Beats, sector avg ≥ 65.
           </div>
           {stats.strongBuy.length === 0 ? (
-            <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic' }}>No names meet all three gates yet.</div>
+            <div style={{ fontSize: 11, color: 'var(--mc-text-3)', fontStyle: 'italic' }}>No names meet all three gates yet.</div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
               {stats.strongBuy.slice(0, 8).map((s) => (
@@ -5818,16 +5852,16 @@ function MultibaggerAnalytics({
                     border: '1px solid #10B98130', background: '#10B98108', textDecoration: 'none' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <TickerCompanyCell ticker={s.symbol} company={s.company} />
-                    <span style={{ fontSize: 11, color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}</span>
+                    <span style={{ fontSize: 11, color: 'var(--mc-bullish)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}</span>
                     {/* PATCH 0991 — screener-membership badge */}
                     {Array.isArray((s as any)._screeners) && (s as any)._screeners.length >= 2 && (
                       <span title={(s as any)._screeners.join(', ')} style={{
-                        fontSize: 9, color: '#22D3EE', fontWeight: 800,
+                        fontSize: 9, color: 'var(--mc-cyan)', fontWeight: 800,
                         padding: '1px 5px', borderRadius: 3, background: '#22D3EE22',
                         fontVariantNumeric: 'tabular-nums',
                       }}>📂 {(s as any)._screeners.length}</span>
                     )}
-                    <span style={{ fontSize: 9, color: '#94A3B8', maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sector || '—'}</span>
+                    <span style={{ fontSize: 9, color: 'var(--mc-text-3)', maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sector || '—'}</span>
                   </div>
                   <span style={{ fontSize: 9.5, color: '#10B981CC', fontStyle: 'italic', lineHeight: 1.35 }}>
                     Why: {reasonFor(s, 'STRONG_BUY')}
@@ -5844,10 +5878,10 @@ function MultibaggerAnalytics({
             moment any score jumps ≥5 vs last upload. */}
         {stats.rerating.length > 0 && (
         <div style={{ ...cardStyle, borderColor: '#22D3EE40' }}>
-          <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+          <div style={{ fontSize: 13, color: 'var(--mc-cyan)', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
             📈 RE-RATING in progress ({stats.rerating.length})
           </div>
-          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.45 }}>
+          <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 10, lineHeight: 1.45 }}>
             Score jumped ≥ 5 vs last upload, still grade A/A+.
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
@@ -5859,9 +5893,9 @@ function MultibaggerAnalytics({
                     border: '1px solid #22D3EE30', background: '#22D3EE08', textDecoration: 'none' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <TickerCompanyCell ticker={s.symbol} company={s.company} />
-                    <span style={{ fontSize: 10, color: '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>{s.prevScore} →</span>
-                    <span style={{ fontSize: 11, color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}</span>
-                    <span style={{ fontSize: 10, color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>▲+{delta}</span>
+                    <span style={{ fontSize: 10, color: 'var(--mc-text-3)', fontVariantNumeric: 'tabular-nums' }}>{s.prevScore} →</span>
+                    <span style={{ fontSize: 11, color: 'var(--mc-bullish)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}</span>
+                    <span style={{ fontSize: 10, color: 'var(--mc-bullish)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>▲+{delta}</span>
                   </div>
                   <span style={{ fontSize: 9.5, color: '#67E8F9', fontStyle: 'italic', lineHeight: 1.35 }}>
                     Why: Score jumped ▲+{delta} vs last upload · still grade {s.grade}{s.sector ? ` · ${s.sector}` : ''}
@@ -5878,14 +5912,14 @@ function MultibaggerAnalytics({
 
         {/* AVOID / TRIM */}
         <div style={{ ...cardStyle, borderColor: '#EF444440' }}>
-          <div style={{ fontSize: 13, color: '#EF4444', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+          <div style={{ fontSize: 13, color: 'var(--mc-bearish)', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
             ⚠️ AVOID / TRIM ({stats.avoid.length})
           </div>
-          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.45 }}>
+          <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 10, lineHeight: 1.45 }}>
             Grade D, or grade C with ≥ 5-point drop.
           </div>
           {stats.avoid.length === 0 ? (
-            <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic' }}>Clean roster — no warning candidates.</div>
+            <div style={{ fontSize: 11, color: 'var(--mc-text-3)', fontStyle: 'italic' }}>Clean roster — no warning candidates.</div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
               {stats.avoid.slice(0, 5).map((s) => {
@@ -5896,9 +5930,9 @@ function MultibaggerAnalytics({
                       border: '1px solid #EF444430', background: '#EF444408', textDecoration: 'none' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <TickerCompanyCell ticker={s.symbol} company={s.company} />
-                      <span style={{ fontSize: 11, color: '#EF4444', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score} {s.grade}</span>
+                      <span style={{ fontSize: 11, color: 'var(--mc-bearish)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score} {s.grade}</span>
                       {delta !== null && delta < 0 && (
-                        <span style={{ fontSize: 10, color: '#EF4444', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>▼{delta}</span>
+                        <span style={{ fontSize: 10, color: 'var(--mc-bearish)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>▼{delta}</span>
                       )}
                     </div>
                     <span style={{ fontSize: 9.5, color: '#FCA5A5', fontStyle: 'italic', lineHeight: 1.35 }}>
@@ -5921,10 +5955,10 @@ function MultibaggerAnalytics({
           probably data gaps, not deterioration." */}
       {stats.reviewDataGap && stats.reviewDataGap.length > 0 && (
         <div style={{ ...cardStyle, borderColor: '#A78BFA40' }}>
-          <div style={{ fontSize: 13, color: '#A78BFA', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+          <div style={{ fontSize: 13, color: 'var(--mc-state-persistent)', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
             🔬 REVIEW · DATA INCOMPLETE ({stats.reviewDataGap.length})
           </div>
-          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.45 }}>
+          <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 10, lineHeight: 1.45 }}>
             Very low score but no red flags — likely missing data in the CSV (debtor days, working
             capital, interest coverage). Don&apos;t auto-avoid; verify the row in Screener and re-upload
             with the missing columns. METRICS_TO_ADD.md lists what to include.
@@ -5936,7 +5970,7 @@ function MultibaggerAnalytics({
                   border: '1px solid #A78BFA30', background: '#A78BFA08', textDecoration: 'none' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <TickerCompanyCell ticker={s.symbol} company={s.company} />
-                  <span style={{ fontSize: 11, color: '#A78BFA', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
+                  <span style={{ fontSize: 11, color: 'var(--mc-state-persistent)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
                 </div>
                 <span style={{ fontSize: 9.5, color: '#C4B5FD', fontStyle: 'italic', lineHeight: 1.35 }}>
                   Why review: 0 flags but score &lt; 30 — check Screener export for missing metrics{s.sector ? ` · ${s.sector}` : ''}
@@ -5956,14 +5990,14 @@ function MultibaggerAnalytics({
       {stats.valuationGate && stats.valuationGate.length > 0 && (
         <div style={{ ...cardStyle, borderColor: '#22D3EE40', background: 'linear-gradient(180deg, #22D3EE10 0%, transparent 100%)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
-            <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 800, letterSpacing: '0.4px' }}>
+            <div style={{ fontSize: 13, color: 'var(--mc-cyan)', fontWeight: 800, letterSpacing: '0.4px' }}>
               💎 VALUATION GATEWAY ({stats.valuationGate.length})
             </div>
-            <span style={{ fontSize: 10, color: '#22D3EE', background: '#22D3EE22', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>
+            <span style={{ fontSize: 10, color: 'var(--mc-cyan)', background: '#22D3EE22', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>
               A-GRADE + CHEAP
             </span>
           </div>
-          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.5 }}>
+          <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 10, lineHeight: 1.5 }}>
             A-grade names that <strong>also clear the valuation gate</strong> (PEG &lt; 2 + optional
             PB/ROE bonus). Separates expensive quality from buyable quality. PEG &lt;1 = 15pts,
             &lt;1.5 = 10pts, &lt;2 = 5pts; PB&lt;1.5 with ROE&gt;15% adds 5pts. Minimum 10 to qualify.
@@ -5976,8 +6010,8 @@ function MultibaggerAnalytics({
                   border: '1px solid #22D3EE40', background: '#22D3EE10', textDecoration: 'none' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <TickerCompanyCell ticker={s.symbol} company={s.company} />
-                  <span style={{ fontSize: 10, color: '#22D3EE', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
-                  <span style={{ fontSize: 9, color: '#22D3EE', fontWeight: 800, padding: '1px 5px', borderRadius: 3, background: '#22D3EE22' }}>
+                  <span style={{ fontSize: 10, color: 'var(--mc-cyan)', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
+                  <span style={{ fontSize: 9, color: 'var(--mc-cyan)', fontWeight: 800, padding: '1px 5px', borderRadius: 3, background: '#22D3EE22' }}>
                     V {s.valuationScore}
                   </span>
                 </div>
@@ -5997,15 +6031,15 @@ function MultibaggerAnalytics({
       {stats.tripleConfirmed.length > 0 && (
         <div style={{ ...cardStyle, borderColor: '#F59E0B70', background: 'linear-gradient(180deg, #F59E0B10 0%, transparent 100%)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-            <div style={{ fontSize: 13, color: '#F59E0B', fontWeight: 800, letterSpacing: '0.4px' }}>
+            <div style={{ fontSize: 13, color: 'var(--mc-warn)', fontWeight: 800, letterSpacing: '0.4px' }}>
               🎯 TRIPLE-CONFIRMED ({stats.tripleConfirmed.length})
             </div>
-            <span style={{ fontSize: 10, color: '#F59E0B', background: '#F59E0B22', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>HIGHEST CONVICTION</span>
+            <span style={{ fontSize: 10, color: 'var(--mc-warn)', background: '#F59E0B22', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>HIGHEST CONVICTION</span>
           </div>
-          <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 10, lineHeight: 1.5 }}>
-            Score <span style={{ color: '#10B981', fontWeight: 700 }}>A+/A</span>  ∩  on{' '}
-            <span style={{ color: '#F59E0B', fontWeight: 700 }}>Conviction Beats</span>  ∩  decision ={' '}
-            <span style={{ color: '#22D3EE', fontWeight: 700 }}>BUY/WATCH</span>. Independent confirmation from three layers.
+          <div style={{ fontSize: 11, color: 'var(--mc-text-3)', marginBottom: 10, lineHeight: 1.5 }}>
+            Score <span style={{ color: 'var(--mc-bullish)', fontWeight: 700 }}>A+/A</span>  ∩  on{' '}
+            <span style={{ color: 'var(--mc-warn)', fontWeight: 700 }}>Conviction Beats</span>  ∩  decision ={' '}
+            <span style={{ color: 'var(--mc-cyan)', fontWeight: 700 }}>BUY/WATCH</span>. Independent confirmation from three layers.
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))', gap: 6 }}>
             {stats.tripleConfirmed.slice(0, 18).map((s) => {
@@ -6017,7 +6051,7 @@ function MultibaggerAnalytics({
                   style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 4,
                     border: '1px solid #F59E0B40', background: '#F59E0B10', textDecoration: 'none' }}>
                   <TickerCompanyCell ticker={s.symbol} company={s.company} />
-                  <span style={{ fontSize: 10, color: '#F59E0B', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
+                  <span style={{ fontSize: 10, color: 'var(--mc-warn)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
                   <span style={{ fontSize: 9, color: decColor, fontWeight: 800, padding: '1px 5px', borderRadius: 3, border: `1px solid ${decColor}50` }}>{dec?.status}</span>
                 </a>
               );
@@ -6033,14 +6067,14 @@ function MultibaggerAnalytics({
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(310px, 1fr))', gap: 12 }}>
         {/* ADD CANDIDATES — A+ but NOT on CB */}
         <div style={{ ...cardStyle, borderColor: '#10B98140' }}>
-          <div style={{ fontSize: 13, color: '#10B981', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+          <div style={{ fontSize: 13, color: 'var(--mc-bullish)', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
             ➕ ADD TO BENCH ({stats.decisionBridge.addCandidates.length})
           </div>
-          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.45 }}>
+          <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 10, lineHeight: 1.45 }}>
             Score A+/A but not yet on Conviction Beats. Open the row in Earnings Opportunities to add.
           </div>
           {stats.decisionBridge.addCandidates.length === 0 ? (
-            <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic' }}>All A-grade names already on the bench.</div>
+            <div style={{ fontSize: 11, color: 'var(--mc-text-3)', fontStyle: 'italic' }}>All A-grade names already on the bench.</div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
               {stats.decisionBridge.addCandidates.map((s) => (
@@ -6049,8 +6083,8 @@ function MultibaggerAnalytics({
                     border: '1px solid #10B98130', background: '#10B98108', textDecoration: 'none' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <TickerCompanyCell ticker={s.symbol} company={s.company} />
-                    <span style={{ fontSize: 11, color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
-                    <span style={{ fontSize: 9, color: '#94A3B8', maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sector || '—'}</span>
+                    <span style={{ fontSize: 11, color: 'var(--mc-bullish)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
+                    <span style={{ fontSize: 9, color: 'var(--mc-text-3)', maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sector || '—'}</span>
                   </div>
                   <span style={{ fontSize: 9.5, color: '#10B981CC', fontStyle: 'italic', lineHeight: 1.35 }}>
                     Why: {reasonFor(s, 'ADD')}
@@ -6063,14 +6097,14 @@ function MultibaggerAnalytics({
 
         {/* DROP ALERTS — on CB but score deteriorated */}
         <div style={{ ...cardStyle, borderColor: '#EF444440' }}>
-          <div style={{ fontSize: 13, color: '#EF4444', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+          <div style={{ fontSize: 13, color: 'var(--mc-bearish)', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
             ⚠ TRIM ALERTS ({stats.decisionBridge.dropAlerts.length})
           </div>
-          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.45 }}>
+          <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 10, lineHeight: 1.45 }}>
             On Conviction Beats but score has dropped ≥5 or grade fell to B or below. Review for trim.
           </div>
           {stats.decisionBridge.dropAlerts.length === 0 ? (
-            <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic' }}>Bench is clean — no deterioration flagged.</div>
+            <div style={{ fontSize: 11, color: 'var(--mc-text-3)', fontStyle: 'italic' }}>Bench is clean — no deterioration flagged.</div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
               {stats.decisionBridge.dropAlerts.map((s) => {
@@ -6081,9 +6115,9 @@ function MultibaggerAnalytics({
                       border: '1px solid #EF444430', background: '#EF444408', textDecoration: 'none' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <TickerCompanyCell ticker={s.symbol} company={s.company} />
-                      <span style={{ fontSize: 11, color: '#EF4444', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
+                      <span style={{ fontSize: 11, color: 'var(--mc-bearish)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
                       {delta !== null && delta < 0 && (
-                        <span style={{ fontSize: 10, color: '#EF4444', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>▼{delta}</span>
+                        <span style={{ fontSize: 10, color: 'var(--mc-bearish)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>▼{delta}</span>
                       )}
                     </div>
                     <span style={{ fontSize: 9.5, color: '#FCA5A5', fontStyle: 'italic', lineHeight: 1.35 }}>
@@ -6100,10 +6134,10 @@ function MultibaggerAnalytics({
             Block re-appears the moment any REJECTED ticker re-grades to A+/A. */}
         {stats.decisionBridge.reEvaluate.length > 0 && (
         <div style={{ ...cardStyle, borderColor: '#A78BFA40' }}>
-          <div style={{ fontSize: 13, color: '#A78BFA', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+          <div style={{ fontSize: 13, color: 'var(--mc-state-persistent)', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
             🔄 RE-EVALUATE ({stats.decisionBridge.reEvaluate.length})
           </div>
-          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.45 }}>
+          <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 10, lineHeight: 1.45 }}>
             You earlier marked these REJECTED, but the scorer now grades them A+/A. Was the rejection too early?
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
@@ -6116,7 +6150,7 @@ function MultibaggerAnalytics({
                       border: '1px solid #A78BFA30', background: '#A78BFA08', textDecoration: 'none' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <TickerCompanyCell ticker={s.symbol} company={s.company} />
-                      <span style={{ fontSize: 11, color: '#A78BFA', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
+                      <span style={{ fontSize: 11, color: 'var(--mc-state-persistent)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}{s.grade}</span>
                     </div>
                   <span style={{ fontSize: 9.5, color: '#C4B5FD', fontStyle: 'italic', lineHeight: 1.35 }}>
                     Why revisit: {reasonFor(s as any, 'REEVAL')}
@@ -6134,33 +6168,33 @@ function MultibaggerAnalytics({
           One side per market (India structural / cyclical; USA forensic). */}
       {stats.qualityAudit.aTotal > 0 && (
         <div style={cardStyle}>
-          <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>
+          <div style={{ fontSize: 13, color: 'var(--mc-cyan)', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>
             🔍 QUALITY AUDIT — A-roster ({stats.qualityAudit.aTotal})
           </div>
-          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.45 }}>
+          <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 10, lineHeight: 1.45 }}>
             Don't trust the A+ label until you know what's flagged inside it. Audit the latent risk.
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(290px, 1fr))', gap: 12 }}>
             {/* India structural / cyclical */}
             {stats.qualityAudit.indiaTotal > 0 && (
-              <div style={{ border: '1px solid #1A2540', borderRadius: 4, padding: '8px 10px' }}>
-                <div style={{ fontSize: 11, color: '#10B981', fontWeight: 800, marginBottom: 6 }}>🇮🇳 INDIA ({stats.qualityAudit.indiaTotal})</div>
+              <div style={{ border: '1px solid var(--mc-bg-4)', borderRadius: 4, padding: '8px 10px' }}>
+                <div style={{ fontSize: 11, color: 'var(--mc-bullish)', fontWeight: 800, marginBottom: 6 }}>🇮🇳 INDIA ({stats.qualityAudit.indiaTotal})</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-                  <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, background: '#10B98122', color: '#10B981', fontWeight: 700 }}>
+                  <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, background: '#10B98122', color: 'var(--mc-bullish)', fontWeight: 700 }}>
                     ✓ CLEAN {stats.qualityAudit.indCleanCount}
                   </span>
                   {stats.qualityAudit.indCriticalCount > 0 && (
-                    <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, background: '#EF444422', color: '#EF4444', fontWeight: 700 }}>
+                    <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, background: '#EF444422', color: 'var(--mc-bearish)', fontWeight: 700 }}>
                       🛑 CRITICAL {stats.qualityAudit.indCriticalCount}
                     </span>
                   )}
                   {stats.qualityAudit.indStructuralCount > 0 && (
-                    <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, background: '#F59E0B22', color: '#F59E0B', fontWeight: 700 }}>
+                    <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, background: '#F59E0B22', color: 'var(--mc-warn)', fontWeight: 700 }}>
                       ⚠ HIGH STRUCTURAL {stats.qualityAudit.indStructuralCount}
                     </span>
                   )}
                   {stats.qualityAudit.indCyclicalCount > 0 && (
-                    <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, background: '#22D3EE22', color: '#22D3EE', fontWeight: 700 }}>
+                    <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, background: '#22D3EE22', color: 'var(--mc-cyan)', fontWeight: 700 }}>
                       ◐ CYCLICAL {stats.qualityAudit.indCyclicalCount}
                     </span>
                   )}
@@ -6173,13 +6207,13 @@ function MultibaggerAnalytics({
                           border: '1px solid #F59E0B25', background: '#F59E0B08', textDecoration: 'none' }}>
                         <TickerCompanyCell ticker={s.symbol} company={s.company} />
                         {(s.redFlagSummary?.critical ?? 0) > 0 && (
-                          <span style={{ fontSize: 9, color: '#EF4444', fontWeight: 700 }}>🛑{s.redFlagSummary?.critical}</span>
+                          <span style={{ fontSize: 9, color: 'var(--mc-bearish)', fontWeight: 700 }}>🛑{s.redFlagSummary?.critical}</span>
                         )}
                         {(s.redFlagSummary?.structural ?? 0) > 0 && (
-                          <span style={{ fontSize: 9, color: '#F59E0B', fontWeight: 700 }}>⚠{s.redFlagSummary?.structural}</span>
+                          <span style={{ fontSize: 9, color: 'var(--mc-warn)', fontWeight: 700 }}>⚠{s.redFlagSummary?.structural}</span>
                         )}
                         {(s.redFlagSummary?.cyclical ?? 0) > 0 && (
-                          <span style={{ fontSize: 9, color: '#22D3EE', fontWeight: 700 }}>◐{s.redFlagSummary?.cyclical}</span>
+                          <span style={{ fontSize: 9, color: 'var(--mc-cyan)', fontWeight: 700 }}>◐{s.redFlagSummary?.cyclical}</span>
                         )}
                       </a>
                     ))}
@@ -6190,24 +6224,24 @@ function MultibaggerAnalytics({
 
             {/* USA forensic flags */}
             {stats.qualityAudit.usaTotal > 0 && (
-              <div style={{ border: '1px solid #1A2540', borderRadius: 4, padding: '8px 10px' }}>
-                <div style={{ fontSize: 11, color: '#22D3EE', fontWeight: 800, marginBottom: 6 }}>🇺🇸 USA ({stats.qualityAudit.usaTotal})</div>
+              <div style={{ border: '1px solid var(--mc-bg-4)', borderRadius: 4, padding: '8px 10px' }}>
+                <div style={{ fontSize: 11, color: 'var(--mc-cyan)', fontWeight: 800, marginBottom: 6 }}>🇺🇸 USA ({stats.qualityAudit.usaTotal})</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-                  <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, background: '#10B98122', color: '#10B981', fontWeight: 700 }}>
+                  <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, background: '#10B98122', color: 'var(--mc-bullish)', fontWeight: 700 }}>
                     ✓ CLEAN {stats.qualityAudit.usaCleanCount}
                   </span>
                   {stats.qualityAudit.usaFcfDivCount > 0 && (
-                    <span title="FCF margin > 2× Op-Income margin: working-capital / SBC noise inflating FCF" style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, background: '#EF444422', color: '#EF4444', fontWeight: 700 }}>
+                    <span title="FCF margin > 2× Op-Income margin: working-capital / SBC noise inflating FCF" style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, background: '#EF444422', color: 'var(--mc-bearish)', fontWeight: 700 }}>
                       🚨 FCF SUSPECT {stats.qualityAudit.usaFcfDivCount}
                     </span>
                   )}
                   {stats.qualityAudit.usaPostRunCount > 0 && (
-                    <span title="Up >100% in 1y AND FwdPE >25 — priced for perfection (PAYS pattern)" style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, background: '#F59E0B22', color: '#F59E0B', fontWeight: 700 }}>
+                    <span title="Up >100% in 1y AND FwdPE >25 — priced for perfection (PAYS pattern)" style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, background: '#F59E0B22', color: 'var(--mc-warn)', fontWeight: 700 }}>
                       🌡 STRETCHED {stats.qualityAudit.usaPostRunCount}
                     </span>
                   )}
                   {stats.qualityAudit.usaEarnSoonCount > 0 && (
-                    <span title="Reports within 7 days — wait for the print" style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, background: '#A78BFA22', color: '#A78BFA', fontWeight: 700 }}>
+                    <span title="Reports within 7 days — wait for the print" style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, background: '#A78BFA22', color: 'var(--mc-state-persistent)', fontWeight: 700 }}>
                       ⚠ EARNINGS &lt;7d {stats.qualityAudit.usaEarnSoonCount}
                     </span>
                   )}
@@ -6218,7 +6252,7 @@ function MultibaggerAnalytics({
                       style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px', borderRadius: 3,
                         border: '1px solid #EF444425', background: '#EF444408', textDecoration: 'none' }}>
                       <TickerCompanyCell ticker={s.symbol} company={s.company} />
-                      <span style={{ fontSize: 9, color: '#EF4444', fontWeight: 700 }}>🚨 FCF</span>
+                      <span style={{ fontSize: 9, color: 'var(--mc-bearish)', fontWeight: 700 }}>🚨 FCF</span>
                     </a>
                   ))}
                   {stats.qualityAudit.usaPostRunList.map((s) => (
@@ -6226,7 +6260,7 @@ function MultibaggerAnalytics({
                       style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px', borderRadius: 3,
                         border: '1px solid #F59E0B25', background: '#F59E0B08', textDecoration: 'none' }}>
                       <TickerCompanyCell ticker={s.symbol} company={s.company} />
-                      <span style={{ fontSize: 9, color: '#F59E0B', fontWeight: 700 }}>🌡 STR</span>
+                      <span style={{ fontSize: 9, color: 'var(--mc-warn)', fontWeight: 700 }}>🌡 STR</span>
                     </a>
                   ))}
                   {stats.qualityAudit.usaEarnSoonList.map((s) => (
@@ -6234,7 +6268,7 @@ function MultibaggerAnalytics({
                       style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px', borderRadius: 3,
                         border: '1px solid #A78BFA25', background: '#A78BFA08', textDecoration: 'none' }}>
                       <TickerCompanyCell ticker={s.symbol} company={s.company} />
-                      <span style={{ fontSize: 9, color: '#A78BFA', fontWeight: 700 }}>⚠ {s.earningsProximityDays}d</span>
+                      <span style={{ fontSize: 9, color: 'var(--mc-state-persistent)', fontWeight: 700 }}>⚠ {s.earningsProximityDays}d</span>
                     </a>
                   ))}
                 </div>
@@ -6244,14 +6278,14 @@ function MultibaggerAnalytics({
 
           {/* Decision-coverage strip */}
           {stats.decisionBridge.aTotal > 0 && (
-            <div style={{ marginTop: 10, padding: '6px 8px', borderTop: '1px solid #1A2540', display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
-              <span style={{ color: '#6B7A8D', fontWeight: 700 }}>DECISION COVERAGE</span>
-              <span style={{ color: '#22D3EE', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
+            <div style={{ marginTop: 10, padding: '6px 8px', borderTop: '1px solid var(--mc-bg-4)', display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
+              <span style={{ color: 'var(--mc-text-4)', fontWeight: 700 }}>DECISION COVERAGE</span>
+              <span style={{ color: 'var(--mc-cyan)', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
                 {stats.decisionBridge.aDecisionCount}/{stats.decisionBridge.aTotal}
               </span>
-              <span style={{ color: '#94A3B8' }}>
+              <span style={{ color: 'var(--mc-text-3)' }}>
                 A-roster names have a Decision Logbook entry —{' '}
-                <span style={{ color: stats.decisionBridge.aTotal - stats.decisionBridge.aDecisionCount > 0 ? '#F59E0B' : '#10B981', fontWeight: 700 }}>
+                <span style={{ color: stats.decisionBridge.aTotal - stats.decisionBridge.aDecisionCount > 0 ? 'var(--mc-warn)' : 'var(--mc-bullish)', fontWeight: 700 }}>
                   {stats.decisionBridge.aTotal - stats.decisionBridge.aDecisionCount} still untagged
                 </span>.
               </span>
@@ -6273,12 +6307,12 @@ function MultibaggerAnalytics({
       {stats.clusterRanked && stats.clusterRanked.length > 0 && (
         <div style={cardStyle}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
-            <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 800, letterSpacing: '0.4px' }}>
+            <div style={{ fontSize: 13, color: 'var(--mc-cyan)', fontWeight: 800, letterSpacing: '0.4px' }}>
               🏭 OPERATING LEVERAGE CLUSTER ({stats.clusterHighConv.length} high-conviction · {stats.clusterEmerging.length} emerging)
             </div>
-            <span style={{ fontSize: 10, color: '#22D3EE', background: '#22D3EE22', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>§17.4(C)</span>
+            <span style={{ fontSize: 10, color: 'var(--mc-cyan)', background: '#22D3EE22', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>§17.4(C)</span>
           </div>
-          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.5 }}>
+          <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 10, lineHeight: 1.5 }}>
             Cluster Score = 0.30·Utilization + 0.25·Margin-Inflection + 0.20·BS-Repair + 0.15·Demand-Durability + 0.10·Value-Added-Mix.
             ⭐ marks user-curated cluster seeds (SHYAMMETL, AJAXENGG, NELCAST, GOPAL, JNKINDIA, TRITURBINE).
             Downgrades penalize capex peaks, debt creep, margin compression.
@@ -6301,20 +6335,20 @@ function MultibaggerAnalytics({
                     <span style={{ fontSize: 13, fontWeight: 800, color: meta.color, fontVariantNumeric: 'tabular-nums', minWidth: 30, textAlign: 'right' }}>{c.cluster.score}</span>
                     <span style={{ fontSize: 9, fontWeight: 800, color: meta.color, padding: '1px 5px', borderRadius: 3, background: `${meta.color}22`, letterSpacing: '0.3px' }}>{meta.emoji} {meta.label}</span>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9, color: '#94A3B8' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9, color: 'var(--mc-text-3)' }}>
                     <span title="Utilization Evidence">UTIL {c.cluster.factors.utilizationEvidence}</span>
-                    <span style={{ color: '#1A2540' }}>·</span>
+                    <span style={{ color: 'var(--mc-bg-4)' }}>·</span>
                     <span title="Margin Inflection">MARG {c.cluster.factors.marginInflection}</span>
-                    <span style={{ color: '#1A2540' }}>·</span>
+                    <span style={{ color: 'var(--mc-bg-4)' }}>·</span>
                     <span title="Balance-Sheet Repair">BS {c.cluster.factors.bsRepair}</span>
-                    <span style={{ color: '#1A2540' }}>·</span>
+                    <span style={{ color: 'var(--mc-bg-4)' }}>·</span>
                     <span title="Demand Durability">DEM {c.cluster.factors.demandDurability}</span>
-                    <span style={{ color: '#1A2540' }}>·</span>
+                    <span style={{ color: 'var(--mc-bg-4)' }}>·</span>
                     <span title="Value-Added Mix">VA {c.cluster.factors.valueAddedMix}</span>
                     <span style={{ marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }}>{c.score}{c.grade}</span>
                   </div>
                   {c.cluster.downgrades.length > 0 && (
-                    <div style={{ fontSize: 9, color: '#F59E0B', fontStyle: 'italic' }}>
+                    <div style={{ fontSize: 9, color: 'var(--mc-warn)', fontStyle: 'italic' }}>
                       ⚠ {c.cluster.downgrades.join(' · ')}
                     </div>
                   )}
@@ -6323,7 +6357,7 @@ function MultibaggerAnalytics({
             })}
           </div>
           {stats.clusterRanked.length > 18 && (
-            <div style={{ fontSize: 10, color: '#6B7A8D', marginTop: 6, fontStyle: 'italic' }}>
+            <div style={{ fontSize: 10, color: 'var(--mc-text-4)', marginTop: 6, fontStyle: 'italic' }}>
               Showing top 18 of {stats.clusterRanked.length} ranked. Lower tiers (WATCH / SKIP) hidden.
             </div>
           )}
@@ -6334,25 +6368,25 @@ function MultibaggerAnalytics({
               analyst knows to add the missing columns to their Screener
               export rather than thinking the company is poor quality. */}
           {stats.clusterIncomplete && stats.clusterIncomplete.length > 0 && (
-            <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px dashed #1A2540' }}>
-              <div style={{ fontSize: 11, color: '#A78BFA', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 6 }}>
+            <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px dashed var(--mc-bg-4)' }}>
+              <div style={{ fontSize: 11, color: 'var(--mc-state-persistent)', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 6 }}>
                 ❓ DATA INCOMPLETE ({stats.clusterIncomplete.length})
               </div>
-              <div style={{ fontSize: 10, color: '#94A3B8', marginBottom: 8 }}>
+              <div style={{ fontSize: 10, color: 'var(--mc-text-3)', marginBottom: 8 }}>
                 Cluster formula needs at least 2 of: ROCE · OPM (TTM/Annual) · sales growth · D/E.
                 Add the missing columns to the Screener export and re-upload to score these.
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                 {stats.clusterIncomplete.slice(0, 18).map((c) => (
                   <a key={c.symbol} href={`/stock-sheet?ticker=${encodeURIComponent((c.symbol || '').replace(/\.(NS|BO)$/i, ''))}`}
-                    style={{ fontSize: 10, fontWeight: 700, color: '#A78BFA',
+                    style={{ fontSize: 10, fontWeight: 700, color: 'var(--mc-state-persistent)',
                       border: '1px solid #A78BFA30', backgroundColor: '#A78BFA08',
                       padding: '3px 8px', borderRadius: 4, textDecoration: 'none' }}>
                     {c.isSeed && '⭐ '}{c.company || c.symbol}
                   </a>
                 ))}
                 {stats.clusterIncomplete.length > 18 && (
-                  <span style={{ fontSize: 10, color: '#6B7A8D', fontStyle: 'italic' }}>+ {stats.clusterIncomplete.length - 18} more</span>
+                  <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontStyle: 'italic' }}>+ {stats.clusterIncomplete.length - 18} more</span>
                 )}
               </div>
             </div>
@@ -6368,12 +6402,12 @@ function MultibaggerAnalytics({
       {stats.cashRich && stats.cashRich.length > 0 && (
         <div style={cardStyle}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
-            <div style={{ fontSize: 13, color: '#10B981', fontWeight: 800, letterSpacing: '0.4px' }}>
+            <div style={{ fontSize: 13, color: 'var(--mc-bullish)', fontWeight: 800, letterSpacing: '0.4px' }}>
               💰 CASH RICH · NET-ZERO DEBT ({stats.cashRich.length})
             </div>
-            <span style={{ fontSize: 10, color: '#10B981', background: '#10B98122', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>NEXT-HUNT LENS</span>
+            <span style={{ fontSize: 10, color: 'var(--mc-bullish)', background: '#10B98122', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>NEXT-HUNT LENS</span>
           </div>
-          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.5 }}>
+          <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 10, lineHeight: 1.5 }}>
             Cash ≥ 20% of market cap <strong>AND</strong> effectively zero debt (D/E &lt; 0.10 or net-cash by ND/EBITDA).
             These names have optionality — they can buyback, acquire, or weather a downturn without dilution.
             Composite score is informational only; the lens is pure balance-sheet quality.
@@ -6386,22 +6420,22 @@ function MultibaggerAnalytics({
                   border: '1px solid #10B98140', background: '#10B98110', textDecoration: 'none' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <TickerCompanyCell ticker={r.symbol} company={r.company} />
-                  <span style={{ fontSize: 9, color: r.market === 'INDIA' ? '#10B981' : '#22D3EE', fontWeight: 800 }}>{r.market === 'INDIA' ? '🇮🇳' : '🇺🇸'}</span>
-                  <span style={{ fontSize: 11, color: '#10B981', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{r.score}{r.grade}</span>
+                  <span style={{ fontSize: 9, color: r.market === 'INDIA' ? 'var(--mc-bullish)' : 'var(--mc-cyan)', fontWeight: 800 }}>{r.market === 'INDIA' ? '🇮🇳' : '🇺🇸'}</span>
+                  <span style={{ fontSize: 11, color: 'var(--mc-bullish)', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{r.score}{r.grade}</span>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: '#94A3B8' }}>
-                  <span style={{ color: '#10B981', fontWeight: 700 }}>{r.cashAbsLabel}</span>
-                  <span style={{ color: '#1A2540' }}>·</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: 'var(--mc-text-3)' }}>
+                  <span style={{ color: 'var(--mc-bullish)', fontWeight: 700 }}>{r.cashAbsLabel}</span>
+                  <span style={{ color: 'var(--mc-bg-4)' }}>·</span>
                   <span>{r.cashToMcapPct}% of mcap</span>
-                  <span style={{ color: '#1A2540' }}>·</span>
-                  <span style={{ color: '#10B981', fontStyle: 'italic' }}>{r.debtIndicator}</span>
+                  <span style={{ color: 'var(--mc-bg-4)' }}>·</span>
+                  <span style={{ color: 'var(--mc-bullish)', fontStyle: 'italic' }}>{r.debtIndicator}</span>
                 </div>
-                <div style={{ fontSize: 9, color: '#6B7A8D' }}>{r.sector || '—'}</div>
+                <div style={{ fontSize: 9, color: 'var(--mc-text-4)' }}>{r.sector || '—'}</div>
               </a>
             ))}
           </div>
           {stats.cashRich.length > 24 && (
-            <div style={{ fontSize: 10, color: '#6B7A8D', marginTop: 6, fontStyle: 'italic' }}>
+            <div style={{ fontSize: 10, color: 'var(--mc-text-4)', marginTop: 6, fontStyle: 'italic' }}>
               Showing top 24 of {stats.cashRich.length} qualifying. Sort: highest cash/mcap ratio first.
             </div>
           )}
@@ -6410,10 +6444,10 @@ function MultibaggerAnalytics({
 
       {/* ── SCORE HISTOGRAM (PATCH 0548) ────────────────────────────────── */}
       <div style={cardStyle}>
-        <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+        <div style={{ fontSize: 13, color: 'var(--mc-cyan)', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
           📊 SCORE HISTOGRAM
         </div>
-        <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10 }}>
+        <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 10 }}>
           Shape of your universe — bimodal? Top-heavy? Long tail?
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -6426,9 +6460,9 @@ function MultibaggerAnalytics({
                 : b.min >= 50 ? '#F59E0B' : b.min >= 40 ? '#94A3B8' : '#EF4444';
               return (
                 <div key={b.bin} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span style={{ fontSize: 11, color: '#6B7A8D', fontWeight: 700, minWidth: 50, fontVariantNumeric: 'tabular-nums' }}>{b.bin}</span>
-                  <span style={{ fontSize: 11, color: '#94A3B8', minWidth: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{b.count}</span>
-                  <div style={{ flex: 1, height: 8, background: '#1A2540', borderRadius: 4, overflow: 'hidden' }}>
+                  <span style={{ fontSize: 11, color: 'var(--mc-text-4)', fontWeight: 700, minWidth: 50, fontVariantNumeric: 'tabular-nums' }}>{b.bin}</span>
+                  <span style={{ fontSize: 11, color: 'var(--mc-text-3)', minWidth: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{b.count}</span>
+                  <div style={{ flex: 1, height: 8, background: 'var(--mc-bg-4)', borderRadius: 4, overflow: 'hidden' }}>
                     <div style={{ width: `${widthPct}%`, height: '100%', background: tone }} />
                   </div>
                   <span style={{ fontSize: 11, color: tone, fontWeight: 700, minWidth: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{pct}%</span>
@@ -6442,21 +6476,21 @@ function MultibaggerAnalytics({
       {/* ── CAP-SIZE BREAKDOWN (PATCH 0548, India only) ─────────────────── */}
       {stats.hasCapData && (
         <div style={cardStyle}>
-          <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+          <div style={{ fontSize: 13, color: 'var(--mc-cyan)', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
             🏛 CAP-SIZE BREAKDOWN (India)
           </div>
-          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10 }}>
+          <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 10 }}>
             Balance your portfolio concentration across size buckets.
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
             {stats.capBuckets.map((b) => {
               const tone = b.avgScore >= 70 ? '#10B981' : b.avgScore >= 55 ? '#22D3EE' : b.avgScore >= 40 ? '#F59E0B' : '#94A3B8';
               return (
-                <div key={b.label} style={{ padding: '8px 10px', border: '1px solid #1A2540', borderRadius: 4 }}>
-                  <div style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 700, marginBottom: 4 }}>{b.label}</div>
+                <div key={b.label} style={{ padding: '8px 10px', border: '1px solid var(--mc-bg-4)', borderRadius: 4 }}>
+                  <div style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 700, marginBottom: 4 }}>{b.label}</div>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                    <span style={{ fontSize: 18, fontWeight: 900, color: '#E6EDF3', fontVariantNumeric: 'tabular-nums' }}>{b.count}</span>
-                    <span style={{ fontSize: 10, color: '#94A3B8' }}>stocks</span>
+                    <span style={{ fontSize: 18, fontWeight: 900, color: 'var(--mc-text-1)', fontVariantNumeric: 'tabular-nums' }}>{b.count}</span>
+                    <span style={{ fontSize: 10, color: 'var(--mc-text-3)' }}>stocks</span>
                     <span style={{ marginLeft: 'auto', fontSize: 12, color: tone, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>avg {b.avgScore}</span>
                   </div>
                 </div>
@@ -6466,7 +6500,7 @@ function MultibaggerAnalytics({
         </div>
       )}
       {!stats.hasCapData && scope !== 'USA' && (
-        <div style={{ fontSize: 10, color: '#6B7A8D', fontStyle: 'italic', padding: '0 4px' }}>
+        <div style={{ fontSize: 10, color: 'var(--mc-text-4)', fontStyle: 'italic', padding: '0 4px' }}>
           (Cap-size breakdown skipped — no market-cap data in current upload.)
         </div>
       )}
@@ -6474,12 +6508,12 @@ function MultibaggerAnalytics({
       {/* ── HIDDEN GEMS (PATCH 0548) ────────────────────────────────────── */}
       {stats.hiddenGems.length > 0 && (
         <div style={cardStyle}>
-          <div style={{ fontSize: 13, color: '#A78BFA', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+          <div style={{ fontSize: 13, color: 'var(--mc-state-persistent)', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
             💎 HIDDEN GEMS ({stats.hiddenGems.length})
           </div>
-          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10, lineHeight: 1.5 }}>
+          <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 10, lineHeight: 1.5 }}>
             Score ≥ 70, not yet on Conviction Beats, in sectors with avg &lt; 60 —
-            <span style={{ color: '#CBD5E1' }}> they passed your quality bar but the rest of their sector hasn't moved. Alpha window.</span>
+            <span style={{ color: 'var(--mc-text-2)' }}> they passed your quality bar but the rest of their sector hasn't moved. Alpha window.</span>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 6 }}>
             {stats.hiddenGems.map((s) => (
@@ -6487,8 +6521,8 @@ function MultibaggerAnalytics({
                 style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 4,
                   border: '1px solid #A78BFA40', background: '#A78BFA10', textDecoration: 'none' }}>
                 <TickerCompanyCell ticker={s.symbol} company={s.company} />
-                <span style={{ fontSize: 10, color: '#A78BFA', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}</span>
-                <span style={{ fontSize: 9, color: '#94A3B8', maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sector || '—'}</span>
+                <span style={{ fontSize: 10, color: 'var(--mc-state-persistent)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}</span>
+                <span style={{ fontSize: 9, color: 'var(--mc-text-3)', maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sector || '—'}</span>
               </a>
             ))}
           </div>
@@ -6497,7 +6531,7 @@ function MultibaggerAnalytics({
 
       {/* ── GRADE DISTRIBUTION ──────────────────────────────────────────── */}
       <div style={cardStyle}>
-        <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 10 }}>
+        <div style={{ fontSize: 13, color: 'var(--mc-cyan)', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 10 }}>
           🎯 GRADE DISTRIBUTION
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -6510,8 +6544,8 @@ function MultibaggerAnalytics({
             return (
               <div key={g} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <span style={{ fontSize: 12, fontWeight: 800, color: tone, minWidth: 30 }}>{g}</span>
-                <span style={{ fontSize: 11, color: '#6B7A8D', minWidth: 35, textAlign: 'right' }}>{count}</span>
-                <div style={{ flex: 1, height: 10, background: '#1A2540', borderRadius: 4, overflow: 'hidden' }}>
+                <span style={{ fontSize: 11, color: 'var(--mc-text-4)', minWidth: 35, textAlign: 'right' }}>{count}</span>
+                <div style={{ flex: 1, height: 10, background: 'var(--mc-bg-4)', borderRadius: 4, overflow: 'hidden' }}>
                   <div style={{ width: `${pct}%`, height: '100%', background: tone }} />
                 </div>
                 <span style={{ fontSize: 11, color: tone, fontWeight: 700, minWidth: 40, textAlign: 'right' }}>{pct}%</span>
@@ -6523,10 +6557,10 @@ function MultibaggerAnalytics({
 
       {/* ── SECTOR EXPOSURE ─────────────────────────────────────────────── */}
       <div style={cardStyle}>
-        <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+        <div style={{ fontSize: 13, color: 'var(--mc-cyan)', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
           🧭 SECTOR EXPOSURE
         </div>
-        <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10 }}>
+        <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 10 }}>
           Which sectors dominate your roster and what's the average score per bucket.
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -6537,9 +6571,9 @@ function MultibaggerAnalytics({
               : s.avgScore >= 45 ? '#F59E0B' : '#94A3B8';
             return (
               <div key={s.sector} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ fontSize: 11, color: '#E6EDF3', fontWeight: 600, minWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sector}</span>
-                <span style={{ fontSize: 10, color: '#6B7A8D', minWidth: 28, textAlign: 'right' }}>{s.count}</span>
-                <div style={{ flex: 1, height: 8, background: '#1A2540', borderRadius: 4, overflow: 'hidden' }}>
+                <span style={{ fontSize: 11, color: 'var(--mc-text-1)', fontWeight: 600, minWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sector}</span>
+                <span style={{ fontSize: 10, color: 'var(--mc-text-4)', minWidth: 28, textAlign: 'right' }}>{s.count}</span>
+                <div style={{ flex: 1, height: 8, background: 'var(--mc-bg-4)', borderRadius: 4, overflow: 'hidden' }}>
                   <div style={{ width: `${pct}%`, height: '100%', background: tone }} />
                 </div>
                 <span style={{ fontSize: 11, color: tone, fontWeight: 700, minWidth: 70, textAlign: 'right' }}>avg {s.avgScore}</span>
@@ -6551,31 +6585,31 @@ function MultibaggerAnalytics({
 
       {/* ── TOP 25 BY SCORE (PATCH 0548 — expanded + Δ columns) ─────────── */}
       <div style={cardStyle}>
-        <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 10 }}>
+        <div style={{ fontSize: 13, color: 'var(--mc-cyan)', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 10 }}>
           🏆 TOP 25 BY SCORE
         </div>
         {/* PATCH 0573 — COMPANY column added between TICKER and SECTOR so
             unfamiliar symbols (especially BSE: scrip codes) are readable
             at a glance. Truncates with ellipsis on narrow viewports;
             tooltip shows the full company name on hover. */}
-        <div style={{ border: '1px solid #1A2540', borderRadius: 4, overflow: 'auto' }}>
+        <div style={{ border: '1px solid var(--mc-bg-4)', borderRadius: 4, overflow: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>
               {/* PATCH 0585 — COMPANY first, TICKER second per user feedback.
                   Company name is the primary identity; ticker is the small
                   accessory for power-users. Score column kept right. */}
               <tr style={{ backgroundColor: '#0A1422' }}>
-                <th style={{ padding: '6px 10px', textAlign: 'left', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>RANK</th>
-                <th style={{ padding: '6px 10px', textAlign: 'left', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>COMPANY</th>
-                <th style={{ padding: '6px 10px', textAlign: 'left', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>TICKER</th>
-                <th style={{ padding: '6px 10px', textAlign: 'left', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>SECTOR</th>
-                <th style={{ padding: '6px 10px', textAlign: 'right', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>PREV</th>
-                <th style={{ padding: '6px 10px', textAlign: 'right', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>SCORE</th>
-                <th style={{ padding: '6px 10px', textAlign: 'right', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>Δ</th>
-                <th style={{ padding: '6px 10px', textAlign: 'center', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>GRADE</th>
+                <th style={{ padding: '6px 10px', textAlign: 'left', color: 'var(--mc-text-4)', fontSize: 10, fontWeight: 700 }}>RANK</th>
+                <th style={{ padding: '6px 10px', textAlign: 'left', color: 'var(--mc-text-4)', fontSize: 10, fontWeight: 700 }}>COMPANY</th>
+                <th style={{ padding: '6px 10px', textAlign: 'left', color: 'var(--mc-text-4)', fontSize: 10, fontWeight: 700 }}>TICKER</th>
+                <th style={{ padding: '6px 10px', textAlign: 'left', color: 'var(--mc-text-4)', fontSize: 10, fontWeight: 700 }}>SECTOR</th>
+                <th style={{ padding: '6px 10px', textAlign: 'right', color: 'var(--mc-text-4)', fontSize: 10, fontWeight: 700 }}>PREV</th>
+                <th style={{ padding: '6px 10px', textAlign: 'right', color: 'var(--mc-text-4)', fontSize: 10, fontWeight: 700 }}>SCORE</th>
+                <th style={{ padding: '6px 10px', textAlign: 'right', color: 'var(--mc-text-4)', fontSize: 10, fontWeight: 700 }}>Δ</th>
+                <th style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--mc-text-4)', fontSize: 10, fontWeight: 700 }}>GRADE</th>
                 {/* PATCH 0991 — Screener-count column */}
-                <th title="Number of uploaded Screener.in CSVs this stock appeared in" style={{ padding: '6px 10px', textAlign: 'center', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>📂</th>
-                <th style={{ padding: '6px 10px', textAlign: 'center', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>MKT</th>
+                <th title="Number of uploaded Screener.in CSVs this stock appeared in" style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--mc-text-4)', fontSize: 10, fontWeight: 700 }}>📂</th>
+                <th style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--mc-text-4)', fontSize: 10, fontWeight: 700 }}>MKT</th>
               </tr>
             </thead>
             <tbody>
@@ -6586,25 +6620,25 @@ function MultibaggerAnalytics({
                 const deltaColor = delta === null ? '#94A3B8' : delta > 0 ? '#10B981' : delta < 0 ? '#EF4444' : '#94A3B8';
                 const deltaSym = delta === null ? 'NEW' : delta > 0 ? `▲+${delta}` : delta < 0 ? `▼${delta}` : '•0';
                 return (
-                  <tr key={s.symbol + i} style={{ borderTop: '1px solid #1A2540' }}>
-                    <td style={{ padding: '6px 10px', color: '#6B7A8D', fontVariantNumeric: 'tabular-nums' }}>{i + 1}</td>
-                    <td title={s.company || s.symbol} style={{ padding: '6px 10px', color: '#E6EDF3', fontSize: 12, fontWeight: 700, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      <a href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`} style={{ color: '#E6EDF3', textDecoration: 'none' }}>
+                  <tr key={s.symbol + i} style={{ borderTop: '1px solid var(--mc-bg-4)' }}>
+                    <td style={{ padding: '6px 10px', color: 'var(--mc-text-4)', fontVariantNumeric: 'tabular-nums' }}>{i + 1}</td>
+                    <td title={s.company || s.symbol} style={{ padding: '6px 10px', color: 'var(--mc-text-1)', fontSize: 12, fontWeight: 700, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <a href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`} style={{ color: 'var(--mc-text-1)', textDecoration: 'none' }}>
                         {s.company || s.symbol}
                       </a>
-                      {inCb && <span title="In Conviction Beats" style={{ marginLeft: 5, fontSize: 10, color: '#F59E0B' }}>🏆</span>}
+                      {inCb && <span title="In Conviction Beats" style={{ marginLeft: 5, fontSize: 10, color: 'var(--mc-warn)' }}>🏆</span>}
                     </td>
-                    <td style={{ padding: '6px 10px', color: '#94A3B8', fontSize: 10, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 600 }}>{s.symbol}</td>
-                    <td style={{ padding: '6px 10px', color: '#94A3B8', fontSize: 11 }}>{s.sector || '—'}</td>
-                    <td style={{ padding: '6px 10px', textAlign: 'right', color: '#6B7A8D', fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>{hasPrev ? s.prevScore : '—'}</td>
-                    <td style={{ padding: '6px 10px', textAlign: 'right', color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}</td>
+                    <td style={{ padding: '6px 10px', color: 'var(--mc-text-3)', fontSize: 10, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 600 }}>{s.symbol}</td>
+                    <td style={{ padding: '6px 10px', color: 'var(--mc-text-3)', fontSize: 11 }}>{s.sector || '—'}</td>
+                    <td style={{ padding: '6px 10px', textAlign: 'right', color: 'var(--mc-text-4)', fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>{hasPrev ? s.prevScore : '—'}</td>
+                    <td style={{ padding: '6px 10px', textAlign: 'right', color: 'var(--mc-bullish)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}</td>
                     <td style={{ padding: '6px 10px', textAlign: 'right', color: deltaColor, fontWeight: 700, fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>{deltaSym}</td>
-                    <td style={{ padding: '6px 10px', textAlign: 'center', color: s.grade === 'A+' ? '#10B981' : '#22D3EE', fontWeight: 700 }}>{s.grade}</td>
+                    <td style={{ padding: '6px 10px', textAlign: 'center', color: s.grade === 'A+' ? 'var(--mc-bullish)' : 'var(--mc-cyan)', fontWeight: 700 }}>{s.grade}</td>
                     {/* PATCH 0991 — Screener-count cell */}
-                    <td title={Array.isArray((s as any)._screeners) ? (s as any)._screeners.join(', ') : ''} style={{ padding: '6px 10px', textAlign: 'center', fontSize: 11, fontWeight: 700, color: ((s as any)._screeners?.length ?? 0) >= 2 ? '#22D3EE' : '#6B7A8D', fontVariantNumeric: 'tabular-nums' }}>
+                    <td title={Array.isArray((s as any)._screeners) ? (s as any)._screeners.join(', ') : ''} style={{ padding: '6px 10px', textAlign: 'center', fontSize: 11, fontWeight: 700, color: ((s as any)._screeners?.length ?? 0) >= 2 ? 'var(--mc-cyan)' : 'var(--mc-text-4)', fontVariantNumeric: 'tabular-nums' }}>
                       {((s as any)._screeners?.length ?? 0) >= 1 ? (s as any)._screeners.length : '—'}
                     </td>
-                    <td style={{ padding: '6px 10px', textAlign: 'center', color: s.market === 'INDIA' ? '#10B981' : '#22D3EE', fontSize: 10, fontWeight: 700 }}>{s.market === 'INDIA' ? '🇮🇳' : '🇺🇸'}</td>
+                    <td style={{ padding: '6px 10px', textAlign: 'center', color: s.market === 'INDIA' ? 'var(--mc-bullish)' : 'var(--mc-cyan)', fontSize: 10, fontWeight: 700 }}>{s.market === 'INDIA' ? '🇮🇳' : '🇺🇸'}</td>
                   </tr>
                 );
               })}
@@ -6616,10 +6650,10 @@ function MultibaggerAnalytics({
       {/* ── CONVICTION BEATS OVERLAP ────────────────────────────────────── */}
       {stats.convictionOverlap.length > 0 && (
         <div style={cardStyle}>
-          <div style={{ fontSize: 13, color: '#F59E0B', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+          <div style={{ fontSize: 13, color: 'var(--mc-warn)', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
             🏆 CONVICTION BEATS OVERLAP ({stats.convictionOverlap.length})
           </div>
-          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10 }}>
+          <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 10 }}>
             Stocks from your Multibagger upload that also sit on the Conviction Beats bench — strongest decision-ready candidates.
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -6629,16 +6663,16 @@ function MultibaggerAnalytics({
                 href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
                 title={s.company || ''}
                 style={{
-                  fontSize: 11, fontWeight: 700, color: '#F59E0B',
+                  fontSize: 11, fontWeight: 700, color: 'var(--mc-warn)',
                   border: '1px solid #F59E0B40', backgroundColor: '#F59E0B10',
                   padding: '3px 8px', borderRadius: 4, textDecoration: 'none',
                   fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
                   display: 'inline-flex', flexDirection: 'column', gap: 1,
                 }}
               >
-                <span>{s.symbol} <span style={{ color: '#94A3B8', fontWeight: 500 }}>· {s.score} {s.grade}</span></span>
+                <span>{s.symbol} <span style={{ color: 'var(--mc-text-3)', fontWeight: 500 }}>· {s.score} {s.grade}</span></span>
                 {s.company && (
-                  <span style={{ fontSize: 9, color: '#CBD5E1', fontWeight: 500, fontFamily: 'system-ui, sans-serif', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.company}</span>
+                  <span style={{ fontSize: 9, color: 'var(--mc-text-2)', fontWeight: 500, fontFamily: 'system-ui, sans-serif', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.company}</span>
                 )}
               </a>
             ))}
@@ -6827,7 +6861,7 @@ function TurnaroundCompare() {
     <div style={{ padding: '20px 24px 60px', maxWidth: 1800, margin: '0 auto' }}>
       {/* Header */}
       <div style={{ marginBottom: 18 }}>
-        <h2 style={{ fontSize: F.h2, fontWeight: 800, color: '#22D3EE', margin: 0, marginBottom: 5 }}>
+        <h2 style={{ fontSize: F.h2, fontWeight: 800, color: 'var(--mc-cyan)', margin: 0, marginBottom: 5 }}>
           🔄 Turnaround Research Engine
         </h2>
         <p style={{ fontSize: F.sm, color: MUTED, margin: 0, lineHeight: 1.5 }}>
@@ -6838,7 +6872,7 @@ function TurnaroundCompare() {
 
       {/* PATCH 0374 — Upload + Add Another CSV (multi-file pool) */}
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 18px', backgroundColor: rows.length === 0 ? '#22D3EE' : '#A78BFA', color: '#0A0E1A', borderRadius: 8, fontWeight: 800, fontSize: F.sm, cursor: 'pointer' }}>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 18px', backgroundColor: rows.length === 0 ? 'var(--mc-cyan)' : 'var(--mc-state-persistent)', color: 'var(--mc-bg-0)', borderRadius: 8, fontWeight: 800, fontSize: F.sm, cursor: 'pointer' }}>
           📁 {rows.length === 0 ? 'Upload Screener.in CSV(s) — multi-select OK' : `+ Add more CSVs (pool with ${rows.length} existing) — multi-select OK`}
           {/* PATCH 0375 — multiple attr lets user pick several CSVs at once.
               All files in the selection get parsed + merged in a single batch. */}
@@ -6868,8 +6902,8 @@ function TurnaroundCompare() {
       </div>
 
       {rows.length === 0 && (
-        <div style={{ padding: 24, border: '1px dashed #1A2840', borderRadius: 10, color: MUTED, fontSize: F.sm, lineHeight: 1.6 }}>
-          <strong style={{ color: '#22D3EE' }}>How to use:</strong>
+        <div style={{ padding: 24, border: '1px dashed var(--mc-bg-4)', borderRadius: 10, color: MUTED, fontSize: F.sm, lineHeight: 1.6 }}>
+          <strong style={{ color: 'var(--mc-cyan)' }}>How to use:</strong>
           <ol style={{ marginTop: 8, paddingLeft: 22 }}>
             <li>Build a Screener.in custom screen (e.g. "PAT growth &gt; 50%" or "Loss making years &gt; 0 AND latest qtr PAT &gt; 0")</li>
             <li>Export columns to CSV — see <strong style={{ color: '#FBBF24' }}>📚 Required Fields</strong> below</li>
@@ -6880,20 +6914,20 @@ function TurnaroundCompare() {
           <details style={{ marginTop: 12 }}>
             <summary style={{ cursor: 'pointer', color: '#FBBF24', fontWeight: 700 }}>📚 Screener.in column names (use these exact strings in 'Edit Columns')</summary>
             <div style={{ marginTop: 10, fontSize: F.xs, lineHeight: 1.6 }}>
-              <p><strong style={{ color: '#10B981' }}>✅ AVAILABLE in Screener — add these (engine-critical):</strong></p>
+              <p><strong style={{ color: 'var(--mc-bullish)' }}>✅ AVAILABLE in Screener — add these (engine-critical):</strong></p>
               <ul style={{ margin: '4px 0 8px 18px', padding: 0 }}>
-                <li><strong>Quarterly trail:</strong> <code style={{ fontSize: 10, color: '#94A3B8' }}>Sales Qtr Rs.Cr. · Sales Prev Qtr Rs.Cr. · Sales 2Qtr Bk Rs.Cr. · Sales 3Qtr Bk Rs.Cr.</code></li>
-                <li><strong>PAT trail:</strong> <code style={{ fontSize: 10, color: '#94A3B8' }}>PAT Qtr Rs.Cr. · PAT Prev Qtr Rs.Cr. · NP 2Qtr Bk Rs.Cr. · NP 3Qtr Bk Rs.Cr.</code></li>
-                <li><strong>YoY signals:</strong> <code style={{ fontSize: 10, color: '#94A3B8' }}>Qtr Profit Var % · Qtr Sales Var % · Profit Var 3Yrs % · Sales Var 3Yrs %</code></li>
-                <li><strong>Operating:</strong> <code style={{ fontSize: 10, color: '#94A3B8' }}>OPM % · OPM Qtr % · ROCE % · ROCE 3Yr % · ROIC % · CFO/PAT</code></li>
-                <li><strong>Balance sheet:</strong> <code style={{ fontSize: 10, color: '#94A3B8' }}>Debt Rs.Cr. · Debt / Eq · Int Coverage · WC Days · WC Days 3yrs</code></li>
-                <li><strong>Governance:</strong> <code style={{ fontSize: 10, color: '#94A3B8' }}>Prom. Hold. % · Chg in Prom Hold 3Yr % · Pledged % · FII Hold % · DII Hold %</code></li>
-                <li><strong>Valuation:</strong> <code style={{ fontSize: 10, color: '#94A3B8' }}>P/E · PEG · EV / EBITDA · From 52w high · Ind PE · CMP / BV</code></li>
-                <li><strong>Returns:</strong> <code style={{ fontSize: 10, color: '#94A3B8' }}>1Yr return %</code></li>
-                <li><strong>Annual:</strong> <code style={{ fontSize: 10, color: '#94A3B8' }}>Sales Rs.Cr. · Mar Cap Rs.Cr. · EPS 12M Rs. · Free Cash Flow Rs.Cr. · Sales growth % · Profit growth %</code></li>
+                <li><strong>Quarterly trail:</strong> <code style={{ fontSize: 10, color: 'var(--mc-text-3)' }}>Sales Qtr Rs.Cr. · Sales Prev Qtr Rs.Cr. · Sales 2Qtr Bk Rs.Cr. · Sales 3Qtr Bk Rs.Cr.</code></li>
+                <li><strong>PAT trail:</strong> <code style={{ fontSize: 10, color: 'var(--mc-text-3)' }}>PAT Qtr Rs.Cr. · PAT Prev Qtr Rs.Cr. · NP 2Qtr Bk Rs.Cr. · NP 3Qtr Bk Rs.Cr.</code></li>
+                <li><strong>YoY signals:</strong> <code style={{ fontSize: 10, color: 'var(--mc-text-3)' }}>Qtr Profit Var % · Qtr Sales Var % · Profit Var 3Yrs % · Sales Var 3Yrs %</code></li>
+                <li><strong>Operating:</strong> <code style={{ fontSize: 10, color: 'var(--mc-text-3)' }}>OPM % · OPM Qtr % · ROCE % · ROCE 3Yr % · ROIC % · CFO/PAT</code></li>
+                <li><strong>Balance sheet:</strong> <code style={{ fontSize: 10, color: 'var(--mc-text-3)' }}>Debt Rs.Cr. · Debt / Eq · Int Coverage · WC Days · WC Days 3yrs</code></li>
+                <li><strong>Governance:</strong> <code style={{ fontSize: 10, color: 'var(--mc-text-3)' }}>Prom. Hold. % · Chg in Prom Hold 3Yr % · Pledged % · FII Hold % · DII Hold %</code></li>
+                <li><strong>Valuation:</strong> <code style={{ fontSize: 10, color: 'var(--mc-text-3)' }}>P/E · PEG · EV / EBITDA · From 52w high · Ind PE · CMP / BV</code></li>
+                <li><strong>Returns:</strong> <code style={{ fontSize: 10, color: 'var(--mc-text-3)' }}>1Yr return %</code></li>
+                <li><strong>Annual:</strong> <code style={{ fontSize: 10, color: 'var(--mc-text-3)' }}>Sales Rs.Cr. · Mar Cap Rs.Cr. · EPS 12M Rs. · Free Cash Flow Rs.Cr. · Sales growth % · Profit growth %</code></li>
               </ul>
 
-              <p style={{ marginTop: 10 }}><strong style={{ color: '#F59E0B' }}>⚠️ NOT in Screener (engine scores 0 for these dimensions — that's OK):</strong></p>
+              <p style={{ marginTop: 10 }}><strong style={{ color: 'var(--mc-warn)' }}>⚠️ NOT in Screener (engine scores 0 for these dimensions — that's OK):</strong></p>
               <ul style={{ margin: '4px 0 8px 18px', padding: 0, color: MUTED }}>
                 <li><code style={{ fontSize: 10 }}>OPM Prev Qtr / OPM 2Qtr Bk / OPM 3Qtr Bk</code> — Screener only exposes current quarter OPM. Sequential OPM trend signal (3 pts) will be 0.</li>
                 <li><code style={{ fontSize: 10 }}>EPS Prev Qtr / EPS 2Qtr Bk / EPS 3Qtr Bk</code> — same, EPS trail not available.</li>
@@ -6904,7 +6938,7 @@ function TurnaroundCompare() {
                 <li><code style={{ fontSize: 10 }}>Auditor changes</code> — not exposed by Screener; manual flag only.</li>
               </ul>
 
-              <p style={{ marginTop: 10 }}><strong style={{ color: '#22D3EE' }}>Smart aliases:</strong> the parser already maps your real column names — just upload the CSV as-is from Screener and the engine will recognise everything.</p>
+              <p style={{ marginTop: 10 }}><strong style={{ color: 'var(--mc-cyan)' }}>Smart aliases:</strong> the parser already maps your real column names — just upload the CSV as-is from Screener and the engine will recognise everything.</p>
             </div>
           </details>
         </div>
@@ -6920,11 +6954,11 @@ function TurnaroundCompare() {
             if (rows.length >= 5 && nonTurnaroundCount / rows.length >= 0.5) {
               return (
                 <div style={{ marginBottom: 14, padding: '10px 14px', backgroundColor: '#22D3EE12', border: '1px solid #22D3EE40', borderRadius: 8 }}>
-                  <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', marginBottom: 4 }}>💡 Heads-up — most of your uploaded rows aren&apos;t turnarounds</div>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-cyan)', marginBottom: 4 }}>💡 Heads-up — most of your uploaded rows aren&apos;t turnarounds</div>
                   <div style={{ fontSize: 11, color: '#C9D4E0', lineHeight: 1.5 }}>
-                    {nonTurnaroundCount} of {rows.length} rows are quality/growth compounders or neutral — not turnaround setups. Only <strong style={{ color: '#F59E0B' }}>{turnaroundCount}</strong> rows match the turnaround pattern (TURNAROUND / WAIT / VALUE-TRAP / DECLINING).
+                    {nonTurnaroundCount} of {rows.length} rows are quality/growth compounders or neutral — not turnaround setups. Only <strong style={{ color: 'var(--mc-warn)' }}>{turnaroundCount}</strong> rows match the turnaround pattern (TURNAROUND / WAIT / VALUE-TRAP / DECLINING).
                     <br />
-                    <strong>What to do:</strong> Click <code style={{ background: '#0A1422', padding: '1px 5px', borderRadius: 3, color: '#F59E0B' }}>🔄 Turnaround</code> in the ARCHETYPE filter above to see only real turnaround candidates. The quality/growth ones belong on the <strong>🇮🇳 India Multibagger</strong> tab.
+                    <strong>What to do:</strong> Click <code style={{ background: '#0A1422', padding: '1px 5px', borderRadius: 3, color: 'var(--mc-warn)' }}>🔄 Turnaround</code> in the ARCHETYPE filter above to see only real turnaround candidates. The quality/growth ones belong on the <strong>🇮🇳 India Multibagger</strong> tab.
                   </div>
                 </div>
               );
@@ -7022,14 +7056,14 @@ function TurnaroundCompare() {
               );
             })}
             <span style={{ width: 1, height: 18, background: BORDER, margin: '0 6px' }} />
-            <button onClick={() => setShowOnlyHighConcall(v => !v)} style={{ fontSize: F.xs, fontWeight: 700, padding: '5px 10px', borderRadius: 6, border: `1px solid ${showOnlyHighConcall ? '#A78BFA' : BORDER}`, background: showOnlyHighConcall ? '#A78BFA20' : 'transparent', color: showOnlyHighConcall ? '#A78BFA' : MUTED, cursor: 'pointer' }}>
+            <button onClick={() => setShowOnlyHighConcall(v => !v)} style={{ fontSize: F.xs, fontWeight: 700, padding: '5px 10px', borderRadius: 6, border: `1px solid ${showOnlyHighConcall ? 'var(--mc-state-persistent)' : BORDER}`, background: showOnlyHighConcall ? '#A78BFA20' : 'transparent', color: showOnlyHighConcall ? 'var(--mc-state-persistent)' : MUTED, cursor: 'pointer' }}>
               🎙 High Concall {showOnlyHighConcall ? '✓' : ''}
             </button>
             <button onClick={() => setShowLossRecovery(v => !v)} style={{ fontSize: F.xs, fontWeight: 700, padding: '5px 10px', borderRadius: 6, border: `1px solid ${showLossRecovery ? '#FBBF24' : BORDER}`, background: showLossRecovery ? '#FBBF2420' : 'transparent', color: showLossRecovery ? '#FBBF24' : MUTED, cursor: 'pointer' }}>
               💎 Loss→Profit recovery {showLossRecovery ? '✓' : ''}
             </button>
             {/* PATCH 0386 — Expand All / Collapse All toggle */}
-            <button onClick={() => { setExpandAll(v => !v); setExpRow(null); }} style={{ fontSize: F.xs, fontWeight: 700, padding: '5px 10px', borderRadius: 6, border: `1px solid ${expandAll ? '#22D3EE' : BORDER}`, background: expandAll ? '#22D3EE20' : 'transparent', color: expandAll ? '#22D3EE' : MUTED, cursor: 'pointer' }}>
+            <button onClick={() => { setExpandAll(v => !v); setExpRow(null); }} style={{ fontSize: F.xs, fontWeight: 700, padding: '5px 10px', borderRadius: 6, border: `1px solid ${expandAll ? 'var(--mc-cyan)' : BORDER}`, background: expandAll ? '#22D3EE20' : 'transparent', color: expandAll ? 'var(--mc-cyan)' : MUTED, cursor: 'pointer' }}>
               {expandAll ? '▲ Collapse All' : '▼ Expand All'}
             </button>
             <span style={{ marginLeft: 'auto', fontSize: F.xs, color: MUTED }}>{filtered.length} showing</span>
@@ -7037,15 +7071,15 @@ function TurnaroundCompare() {
 
           {/* PATCH 0381 — Institutional filter row (Best/Type/Phase per playbook) */}
           <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center', padding: '8px 10px', background: '#0A1422', border: `1px solid #F59E0B40`, borderRadius: 8 }}>
-            <span style={{ fontSize: F.xs, color: '#F59E0B', fontWeight: 800, letterSpacing: '0.5px', marginRight: 4 }}>★ INSTITUTIONAL:</span>
+            <span style={{ fontSize: F.xs, color: 'var(--mc-warn)', fontWeight: 800, letterSpacing: '0.5px', marginRight: 4 }}>★ INSTITUTIONAL:</span>
             <button
               onClick={() => setShowBestOnly(v => !v)}
               title="Best candidates only: TURNAROUND + Phase 3 INFLECTION + Survival ≥ 6/8 + zero killers + score ≥ 50"
               style={{
                 fontSize: F.xs, fontWeight: 800, padding: '6px 12px', borderRadius: 6,
-                border: `2px solid ${showBestOnly ? '#F59E0B' : '#F59E0B80'}`,
+                border: `2px solid ${showBestOnly ? 'var(--mc-warn)' : '#F59E0B80'}`,
                 background: showBestOnly ? '#F59E0B30' : 'transparent',
-                color: showBestOnly ? '#F59E0B' : '#F59E0BC0',
+                color: showBestOnly ? 'var(--mc-warn)' : '#F59E0BC0',
                 cursor: 'pointer',
               }}>
               ★ BEST ONLY {showBestOnly ? '✓' : ''} · {rows.filter(r => r.isBestCandidate).length}
@@ -7089,10 +7123,10 @@ function TurnaroundCompare() {
               <div style={{ marginBottom: 14, padding: 12, background: 'linear-gradient(135deg, #F59E0B10, #F59E0B05)', border: '1px solid #F59E0B50', borderRadius: 10 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                   <div>
-                    <div style={{ fontSize: 13, fontWeight: 900, color: '#F59E0B', letterSpacing: '0.5px' }}>★ BEST RISK/REWARD — INSTITUTIONAL SHORTLIST</div>
+                    <div style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-warn)', letterSpacing: '0.5px' }}>★ BEST RISK/REWARD — INSTITUTIONAL SHORTLIST</div>
                     <div style={{ fontSize: 10, color: MUTED, marginTop: 2 }}>TURNAROUND archetype · Phase 3 INFLECTION · Survival ≥ 6/8 · Zero killers · Score ≥ 50</div>
                   </div>
-                  <button onClick={() => { setShowBestOnly(true); }} style={{ fontSize: 11, fontWeight: 700, padding: '6px 12px', borderRadius: 6, border: '1px solid #F59E0B', background: '#F59E0B20', color: '#F59E0B', cursor: 'pointer' }}>
+                  <button onClick={() => { setShowBestOnly(true); }} style={{ fontSize: 11, fontWeight: 700, padding: '6px 12px', borderRadius: 6, border: '1px solid var(--mc-warn)', background: '#F59E0B20', color: 'var(--mc-warn)', cursor: 'pointer' }}>
                     View all {rows.filter(r => r.isBestCandidate).length} →
                   </button>
                 </div>
@@ -7101,14 +7135,14 @@ function TurnaroundCompare() {
                     <div key={b.symbol} style={{ flex: '1 1 240px', minWidth: 240, padding: 10, background: '#0A1422', border: '1px solid #F59E0B40', borderRadius: 8 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
                         <div style={{ fontSize: 14, fontWeight: 900, color: '#F8FAFC' }}>{b.symbol}</div>
-                        <div style={{ fontSize: 16, fontWeight: 900, color: '#F59E0B' }}>{b.totalScore.toFixed(0)}</div>
+                        <div style={{ fontSize: 16, fontWeight: 900, color: 'var(--mc-warn)' }}>{b.totalScore.toFixed(0)}</div>
                       </div>
                       <div style={{ fontSize: 10, color: MUTED, marginBottom: 6 }}>{b.company}</div>
                       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', fontSize: 9 }}>
-                        <span style={{ padding: '2px 6px', borderRadius: 4, background: '#F59E0B20', color: '#F59E0B', fontWeight: 700 }}>{b.turnaroundType}</span>
-                        <span style={{ padding: '2px 6px', borderRadius: 4, background: '#10B98120', color: '#10B981', fontWeight: 700 }}>Surv {b.survivalScore}/8</span>
-                        <span style={{ padding: '2px 6px', borderRadius: 4, background: '#22D3EE20', color: '#22D3EE', fontWeight: 700 }}>Max {b.suggestedPositionPct}%</span>
-                        {b.concallScore >= 12 && <span style={{ padding: '2px 6px', borderRadius: 4, background: '#A78BFA20', color: '#A78BFA', fontWeight: 700 }}>🎙 CC {b.concallScore.toFixed(0)}</span>}
+                        <span style={{ padding: '2px 6px', borderRadius: 4, background: '#F59E0B20', color: 'var(--mc-warn)', fontWeight: 700 }}>{b.turnaroundType}</span>
+                        <span style={{ padding: '2px 6px', borderRadius: 4, background: '#10B98120', color: 'var(--mc-bullish)', fontWeight: 700 }}>Surv {b.survivalScore}/8</span>
+                        <span style={{ padding: '2px 6px', borderRadius: 4, background: '#22D3EE20', color: 'var(--mc-cyan)', fontWeight: 700 }}>Max {b.suggestedPositionPct}%</span>
+                        {b.concallScore >= 12 && <span style={{ padding: '2px 6px', borderRadius: 4, background: '#A78BFA20', color: 'var(--mc-state-persistent)', fontWeight: 700 }}>🎙 CC {b.concallScore.toFixed(0)}</span>}
                       </div>
                     </div>
                   ))}
@@ -7147,14 +7181,14 @@ function TurnaroundCompare() {
                         <div style={{ fontSize: 9, color: MUTED }}>{r.sector || '—'}</div>
                       </div>
                       <div>
-                        <div style={{ fontSize: F.h2, fontWeight: 900, color: '#A78BFA' }}>{r.totalScore}</div>
+                        <div style={{ fontSize: F.h2, fontWeight: 900, color: 'var(--mc-state-persistent)' }}>{r.totalScore}</div>
                         <div style={{ fontSize: 9, color: MUTED, fontWeight: 700 }}>{r.grade}</div>
                       </div>
                       <div>
                         <span style={{ fontSize: 10, fontWeight: 800, padding: '2px 7px', borderRadius: 4, background: `${r.stageColor}20`, color: r.stageColor, border: `1px solid ${r.stageColor}40` }}>
                           {r.stageEmoji} {r.stage}
                         </span>
-                        {r.inBuyZone && <div style={{ fontSize: 9, fontWeight: 800, color: '#10B981', marginTop: 3 }}>🎯 BUY-ZONE</div>}
+                        {r.inBuyZone && <div style={{ fontSize: 9, fontWeight: 800, color: 'var(--mc-bullish)', marginTop: 3 }}>🎯 BUY-ZONE</div>}
                         {/* PATCH 0374 — Archetype badge */}
                         <div title={r.archetypeNote}
                           style={{ fontSize: 9, fontWeight: 800, color: r.archetypeColor, marginTop: 3, padding: '1px 5px', display: 'inline-block', borderRadius: 3, background: `${r.archetypeColor}15`, border: `1px solid ${r.archetypeColor}40` }}>
@@ -7163,33 +7197,33 @@ function TurnaroundCompare() {
                         {/* PATCH 0381 — Institutional chips: BEST + Type + Phase + Survival */}
                         <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', marginTop: 4 }}>
                           {r.isBestCandidate && (
-                            <span title="Best Risk/Reward candidate: TURNAROUND + Phase 3 + Survival ≥ 6/8 + zero killers" style={{ fontSize: 8, fontWeight: 900, color: '#F59E0B', padding: '1px 4px', borderRadius: 3, background: '#F59E0B25', border: '1px solid #F59E0B' }}>★ BEST</span>
+                            <span title="Best Risk/Reward candidate: TURNAROUND + Phase 3 + Survival ≥ 6/8 + zero killers" style={{ fontSize: 8, fontWeight: 900, color: 'var(--mc-warn)', padding: '1px 4px', borderRadius: 3, background: '#F59E0B25', border: '1px solid var(--mc-warn)' }}>★ BEST</span>
                           )}
                           {r.turnaroundType !== 'UNKNOWN' && (
                             <span title={r.turnaroundTypeNote} style={{
                               fontSize: 8, fontWeight: 800, padding: '1px 4px', borderRadius: 3,
-                              color: r.turnaroundType === 'CYCLICAL' ? '#10B981' : r.turnaroundType === 'OPERATIONAL' ? '#F59E0B' : '#EF4444',
+                              color: r.turnaroundType === 'CYCLICAL' ? 'var(--mc-bullish)' : r.turnaroundType === 'OPERATIONAL' ? 'var(--mc-warn)' : 'var(--mc-bearish)',
                               background: r.turnaroundType === 'CYCLICAL' ? '#10B98115' : r.turnaroundType === 'OPERATIONAL' ? '#F59E0B15' : '#EF444415',
                               border: `1px solid ${r.turnaroundType === 'CYCLICAL' ? '#10B98140' : r.turnaroundType === 'OPERATIONAL' ? '#F59E0B40' : '#EF444440'}`,
                             }}>{r.turnaroundType.slice(0, 4)}</span>
                           )}
                           <span title={`${r.phaseLabel} — ${r.phaseAction}`} style={{
                             fontSize: 8, fontWeight: 800, padding: '1px 4px', borderRadius: 3,
-                            color: r.phase === 3 ? '#10B981' : r.phase === 4 ? '#22D3EE' : r.phase === 2 ? '#A78BFA' : '#EF4444',
+                            color: r.phase === 3 ? 'var(--mc-bullish)' : r.phase === 4 ? 'var(--mc-cyan)' : r.phase === 2 ? 'var(--mc-state-persistent)' : 'var(--mc-bearish)',
                             background: '#13131a',
                             border: `1px solid ${r.phase === 3 ? '#10B98140' : r.phase === 4 ? '#22D3EE40' : r.phase === 2 ? '#A78BFA40' : '#EF444440'}`,
                           }}>Ph{r.phase}{r.phase === 3 ? '★' : ''}</span>
                           <span title={`Survival ${r.survivalScore}/8 — playbook Ch.4 gate`} style={{
                             fontSize: 8, fontWeight: 800, padding: '1px 4px', borderRadius: 3,
-                            color: r.survivalScore >= 7 ? '#10B981' : r.survivalScore >= 5 ? '#22D3EE' : '#EF4444',
+                            color: r.survivalScore >= 7 ? 'var(--mc-bullish)' : r.survivalScore >= 5 ? 'var(--mc-cyan)' : 'var(--mc-bearish)',
                             background: '#13131a',
                             border: `1px solid ${r.survivalScore >= 7 ? '#10B98140' : r.survivalScore >= 5 ? '#22D3EE40' : '#EF444440'}`,
                           }}>S {r.survivalScore}/8</span>
                           {r.suggestedPositionPct > 0 && (
-                            <span title="Max position size suggestion (playbook Ch.6)" style={{ fontSize: 8, fontWeight: 800, padding: '1px 4px', borderRadius: 3, color: '#94A3B8', border: '1px solid #94A3B840' }}>Max {r.suggestedPositionPct}%</span>
+                            <span title="Max position size suggestion (playbook Ch.6)" style={{ fontSize: 8, fontWeight: 800, padding: '1px 4px', borderRadius: 3, color: 'var(--mc-text-3)', border: '1px solid #94A3B840' }}>Max {r.suggestedPositionPct}%</span>
                           )}
                           {r.killers.length > 0 && (
-                            <span title={`Killers: ${r.killers.join(' · ')}`} style={{ fontSize: 8, fontWeight: 900, padding: '1px 4px', borderRadius: 3, color: '#EF4444', background: '#EF444420', border: '1px solid #EF4444' }}>⚠ {r.killers.length} killer{r.killers.length > 1 ? 's' : ''}</span>
+                            <span title={`Killers: ${r.killers.join(' · ')}`} style={{ fontSize: 8, fontWeight: 900, padding: '1px 4px', borderRadius: 3, color: 'var(--mc-bearish)', background: '#EF444420', border: '1px solid var(--mc-bearish)' }}>⚠ {r.killers.length} killer{r.killers.length > 1 ? 's' : ''}</span>
                           )}
                         </div>
                       </div>
@@ -7220,7 +7254,7 @@ function TurnaroundCompare() {
                         <div style={{ color: r.pe != null ? TEXT : MUTED }}>PE {r.pe?.toFixed(0) ?? '—'}</div>
                         <div>ROCE {r.roce?.toFixed(0) ?? '—'}</div>
                       </div>
-                      <div style={{ fontSize: 10, color: r.coverage >= 70 ? GREEN : r.coverage >= 50 ? '#FBBF24' : '#EF4444', textAlign: 'center', fontWeight: 700 }}>
+                      <div style={{ fontSize: 10, color: r.coverage >= 70 ? GREEN : r.coverage >= 50 ? '#FBBF24' : 'var(--mc-bearish)', textAlign: 'center', fontWeight: 700 }}>
                         {r.coverage}%
                       </div>
                     </div>
@@ -7239,23 +7273,23 @@ function TurnaroundCompare() {
 
                       {/* PATCH 0381 — Institutional panel: Type / Phase / Survival / Killers / Position */}
                       <div style={{ marginBottom: 12, padding: '12px', background: '#0A1422', border: '1px solid #F59E0B30', borderRadius: 6 }}>
-                        <div style={{ fontSize: 11, fontWeight: 900, color: '#F59E0B', letterSpacing: '0.5px', marginBottom: 8 }}>★ INSTITUTIONAL PLAYBOOK READING</div>
+                        <div style={{ fontSize: 11, fontWeight: 900, color: 'var(--mc-warn)', letterSpacing: '0.5px', marginBottom: 8 }}>★ INSTITUTIONAL PLAYBOOK READING</div>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, fontSize: 11, color: '#C9D4E0' }}>
                           <div>
                             <div style={{ fontSize: 9, fontWeight: 800, color: MUTED, letterSpacing: '0.4px', marginBottom: 4 }}>TURNAROUND TYPE (Ch.1)</div>
-                            <div style={{ fontWeight: 800, color: r.turnaroundType === 'CYCLICAL' ? '#10B981' : r.turnaroundType === 'OPERATIONAL' ? '#F59E0B' : r.turnaroundType === 'DISTRESSED' ? '#EF4444' : '#94A3B8', marginBottom: 2 }}>{r.turnaroundType}</div>
+                            <div style={{ fontWeight: 800, color: r.turnaroundType === 'CYCLICAL' ? 'var(--mc-bullish)' : r.turnaroundType === 'OPERATIONAL' ? 'var(--mc-warn)' : r.turnaroundType === 'DISTRESSED' ? 'var(--mc-bearish)' : 'var(--mc-text-3)', marginBottom: 2 }}>{r.turnaroundType}</div>
                             <div style={{ fontSize: 10, color: MUTED, lineHeight: 1.4 }}>{r.turnaroundTypeNote}</div>
                           </div>
                           <div>
                             <div style={{ fontSize: 9, fontWeight: 800, color: MUTED, letterSpacing: '0.4px', marginBottom: 4 }}>PHASE (Ch.2)</div>
-                            <div style={{ fontWeight: 800, color: r.phase === 3 ? '#10B981' : r.phase === 4 ? '#22D3EE' : r.phase === 2 ? '#A78BFA' : '#EF4444', marginBottom: 2 }}>{r.phaseLabel}</div>
+                            <div style={{ fontWeight: 800, color: r.phase === 3 ? 'var(--mc-bullish)' : r.phase === 4 ? 'var(--mc-cyan)' : r.phase === 2 ? 'var(--mc-state-persistent)' : 'var(--mc-bearish)', marginBottom: 2 }}>{r.phaseLabel}</div>
                             <div style={{ fontSize: 10, color: MUTED }}>Action: <strong style={{ color: '#C9D4E0' }}>{r.phaseAction}</strong></div>
                           </div>
                           <div>
                             <div style={{ fontSize: 9, fontWeight: 800, color: MUTED, letterSpacing: '0.4px', marginBottom: 4 }}>SURVIVAL FILTER (Ch.4) — {r.survivalScore}/8</div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                               {r.survivalChecks.map((c, i) => (
-                                <div key={i} title={c.note} style={{ fontSize: 10, color: c.pass ? '#10B981' : '#EF4444' }}>
+                                <div key={i} title={c.note} style={{ fontSize: 10, color: c.pass ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>
                                   {c.pass ? '✓' : '✗'} {c.label} <span style={{ color: MUTED }}>({c.note})</span>
                                 </div>
                               ))}
@@ -7263,12 +7297,12 @@ function TurnaroundCompare() {
                           </div>
                           <div>
                             <div style={{ fontSize: 9, fontWeight: 800, color: MUTED, letterSpacing: '0.4px', marginBottom: 4 }}>POSITION SIZE (Ch.6)</div>
-                            <div style={{ fontSize: 14, fontWeight: 900, color: '#22D3EE' }}>Max {r.suggestedPositionPct}% of portfolio</div>
+                            <div style={{ fontSize: 14, fontWeight: 900, color: 'var(--mc-cyan)' }}>Max {r.suggestedPositionPct}% of portfolio</div>
                             <div style={{ fontSize: 10, color: MUTED, marginTop: 2 }}>Based on type + survival + killers</div>
                           </div>
                           {r.killers.length > 0 && (
                             <div style={{ gridColumn: '1 / -1' }}>
-                              <div style={{ fontSize: 9, fontWeight: 800, color: '#EF4444', letterSpacing: '0.4px', marginBottom: 4 }}>⚠ KILLERS DETECTED (PART VII) — {r.killers.length}</div>
+                              <div style={{ fontSize: 9, fontWeight: 800, color: 'var(--mc-bearish)', letterSpacing: '0.4px', marginBottom: 4 }}>⚠ KILLERS DETECTED (PART VII) — {r.killers.length}</div>
                               {r.killers.map((k, i) => (
                                 <div key={i} style={{ fontSize: 11, color: '#FCA5A5', padding: '2px 0' }}>› {k}</div>
                               ))}
@@ -7279,7 +7313,7 @@ function TurnaroundCompare() {
                       {/* PATCH 0374 — Missing-fields hint when coverage is low */}
                       {r.coverage < 70 && r.missingFields.length > 0 && (
                         <div style={{ marginBottom: 12, padding: '8px 12px', background: '#F59E0B12', border: '1px solid #F59E0B40', borderRadius: 6 }}>
-                          <div style={{ fontSize: 10, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.4px', marginBottom: 4 }}>
+                          <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--mc-warn)', letterSpacing: '0.4px', marginBottom: 4 }}>
                             ⚠ DATA COVERAGE {r.coverage}% — {r.missingFields.length} fields missing
                           </div>
                           <div style={{ fontSize: 10, color: MUTED, lineHeight: 1.5 }}>
@@ -7290,32 +7324,32 @@ function TurnaroundCompare() {
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 14 }}>
                         {/* Inflection Signals */}
                         <div>
-                          <div style={{ fontSize: 10, color: '#10B981', fontWeight: 800, letterSpacing: '0.5px', marginBottom: 6 }}>📈 INFLECTION SIGNALS</div>
+                          <div style={{ fontSize: 10, color: 'var(--mc-bullish)', fontWeight: 800, letterSpacing: '0.5px', marginBottom: 6 }}>📈 INFLECTION SIGNALS</div>
                           {r.inflectionSignals.length > 0 ? r.inflectionSignals.map((s, i) => (
                             <div key={i} style={{ fontSize: 11, color: '#C9D4E0', padding: '2px 0' }}>› {s}</div>
                           )) : <div style={{ fontSize: 11, color: MUTED, fontStyle: 'italic' }}>No earnings inflection detected yet</div>}
                         </div>
                         {/* Quarterly trail */}
                         <div>
-                          <div style={{ fontSize: 10, color: '#22D3EE', fontWeight: 800, letterSpacing: '0.5px', marginBottom: 6 }}>📊 QUARTERLY TRAIL</div>
+                          <div style={{ fontSize: 10, color: 'var(--mc-cyan)', fontWeight: 800, letterSpacing: '0.5px', marginBottom: 6 }}>📊 QUARTERLY TRAIL</div>
                           <div style={{ fontSize: 10, color: MUTED, fontFamily: 'ui-monospace, monospace' }}>
                             <div>Sales: {r.salesQ4?.toFixed(0) ?? '—'} → {r.salesQ3?.toFixed(0) ?? '—'} → {r.salesQ2?.toFixed(0) ?? '—'} → <span style={{ color: TEXT }}>{r.salesQ1?.toFixed(0) ?? '—'}</span></div>
                             <div>OPM: {r.opmQ4?.toFixed(0) ?? '—'}% → {r.opmQ3?.toFixed(0) ?? '—'}% → {r.opmQ2?.toFixed(0) ?? '—'}% → <span style={{ color: TEXT }}>{r.opmQ1?.toFixed(0) ?? '—'}%</span></div>
-                            <div>PAT: {r.patQ4?.toFixed(0) ?? '—'} → {r.patQ3?.toFixed(0) ?? '—'} → {r.patQ2?.toFixed(0) ?? '—'} → <span style={{ color: (r.patQ1 ?? 0) > 0 ? '#10B981' : '#EF4444' }}>{r.patQ1?.toFixed(0) ?? '—'}</span></div>
+                            <div>PAT: {r.patQ4?.toFixed(0) ?? '—'} → {r.patQ3?.toFixed(0) ?? '—'} → {r.patQ2?.toFixed(0) ?? '—'} → <span style={{ color: (r.patQ1 ?? 0) > 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{r.patQ1?.toFixed(0) ?? '—'}</span></div>
                             <div>EPS: {r.epsQ4?.toFixed(1) ?? '—'} → {r.epsQ3?.toFixed(1) ?? '—'} → {r.epsQ2?.toFixed(1) ?? '—'} → <span style={{ color: TEXT }}>{r.epsQ1?.toFixed(1) ?? '—'}</span></div>
                           </div>
                         </div>
                         {/* Concall paste */}
                         <div>
-                          <div style={{ fontSize: 10, color: '#F59E0B', fontWeight: 800, letterSpacing: '0.5px', marginBottom: 6 }}>🎙 CONCALL NARRATIVE — paste to unlock score</div>
+                          <div style={{ fontSize: 10, color: 'var(--mc-warn)', fontWeight: 800, letterSpacing: '0.5px', marginBottom: 6 }}>🎙 CONCALL NARRATIVE — paste to unlock score</div>
                           <textarea
                             value={concallMap[r.symbol] || ''}
                             onChange={(e) => updateConcall(r.symbol, e.target.value)}
                             placeholder="Paste recent concall transcript / Q&A / management commentary. Engine auto-detects institutional phrases (capacity expansion, margin recovery, deleveraging, demand recovery, etc.) and scores up to 15 points."
-                            style={{ width: '100%', minHeight: 90, padding: '6px 9px', backgroundColor: '#0A1422', border: '1px solid #1A2840', borderRadius: 4, color: '#E6EDF3', fontSize: 11, outline: 'none', resize: 'vertical', fontFamily: 'inherit' }}
+                            style={{ width: '100%', minHeight: 90, padding: '6px 9px', backgroundColor: '#0A1422', border: '1px solid var(--mc-bg-4)', borderRadius: 4, color: 'var(--mc-text-1)', fontSize: 11, outline: 'none', resize: 'vertical', fontFamily: 'inherit' }}
                           />
                           <div style={{ fontSize: 10, color: MUTED, marginTop: 4 }}>
-                            Concall score: <span style={{ color: r.concallScore >= 8 ? '#10B981' : r.concallScore >= 4 ? '#F59E0B' : MUTED, fontWeight: 700 }}>{r.concallScore.toFixed(1)} / 15</span>
+                            Concall score: <span style={{ color: r.concallScore >= 8 ? 'var(--mc-bullish)' : r.concallScore >= 4 ? 'var(--mc-warn)' : MUTED, fontWeight: 700 }}>{r.concallScore.toFixed(1)} / 15</span>
                             {r.concallPhrases.length > 0 && <> · phrases: {r.concallPhrases.join(', ')}</>}
                           </div>
                         </div>
@@ -7324,13 +7358,13 @@ function TurnaroundCompare() {
                       {/* Strengths + Risks */}
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 14 }}>
                         <div>
-                          <div style={{ fontSize: 10, color: '#10B981', fontWeight: 800, marginBottom: 5 }}>✅ STRENGTHS</div>
+                          <div style={{ fontSize: 10, color: 'var(--mc-bullish)', fontWeight: 800, marginBottom: 5 }}>✅ STRENGTHS</div>
                           {r.strengths.length > 0 ? r.strengths.map((s, i) => (
                             <div key={i} style={{ fontSize: 11, color: '#C9D4E0', padding: '2px 0' }}>› {s}</div>
                           )) : <div style={{ fontSize: 11, color: MUTED, fontStyle: 'italic' }}>No notable strengths captured yet</div>}
                         </div>
                         <div>
-                          <div style={{ fontSize: 10, color: '#EF4444', fontWeight: 800, marginBottom: 5 }}>⚠️ RISKS</div>
+                          <div style={{ fontSize: 10, color: 'var(--mc-bearish)', fontWeight: 800, marginBottom: 5 }}>⚠️ RISKS</div>
                           {r.risks.length > 0 ? r.risks.map((s, i) => (
                             <div key={i} style={{ fontSize: 11, color: '#C9D4E0', padding: '2px 0' }}>› {s}</div>
                           )) : <div style={{ fontSize: 11, color: MUTED, fontStyle: 'italic' }}>No specific risks flagged</div>}
@@ -7339,7 +7373,7 @@ function TurnaroundCompare() {
 
                       {/* PATCH 0386 — SIX-FACTOR MASTER CHECKLIST (playbook Ch.5) */}
                       <div style={{ marginTop: 14, padding: 12, background: '#0A1422', border: `1px solid #A78BFA40`, borderRadius: 6 }}>
-                        <div style={{ fontSize: 11, fontWeight: 900, color: '#A78BFA', letterSpacing: '0.5px', marginBottom: 8 }}>📋 SIX-FACTOR MASTER CHECKLIST (Ch.5)</div>
+                        <div style={{ fontSize: 11, fontWeight: 900, color: 'var(--mc-state-persistent)', letterSpacing: '0.5px', marginBottom: 8 }}>📋 SIX-FACTOR MASTER CHECKLIST (Ch.5)</div>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, fontSize: 11 }}>
                           {(() => {
                             const factors = [
@@ -7352,8 +7386,8 @@ function TurnaroundCompare() {
                             ];
                             return factors.map((f, i) => (
                               <div key={i} style={{ padding: '8px 10px', background: '#13131a', border: `1px solid ${f.pass ? '#10B98140' : '#94A3B840'}`, borderRadius: 5 }}>
-                                <div style={{ fontSize: 10, fontWeight: 700, color: f.pass ? '#10B981' : '#94A3B8', marginBottom: 2 }}>{f.pass ? '✓' : '○'} {f.name}</div>
-                                <div style={{ fontSize: 13, fontWeight: 900, color: f.pass ? '#10B981' : '#C9D4E0' }}>{f.score}</div>
+                                <div style={{ fontSize: 10, fontWeight: 700, color: f.pass ? 'var(--mc-bullish)' : 'var(--mc-text-3)', marginBottom: 2 }}>{f.pass ? '✓' : '○'} {f.name}</div>
+                                <div style={{ fontSize: 13, fontWeight: 900, color: f.pass ? 'var(--mc-bullish)' : '#C9D4E0' }}>{f.score}</div>
                                 <div style={{ fontSize: 9, color: MUTED, marginTop: 1, lineHeight: 1.3 }}>{f.note}</div>
                               </div>
                             ));
@@ -7363,7 +7397,7 @@ function TurnaroundCompare() {
 
                       {/* PATCH 0386 — ENTRY / EXIT STAGING (playbook Ch.6) */}
                       <div style={{ marginTop: 14, padding: 12, background: '#0A1422', border: `1px solid #10B98140`, borderRadius: 6 }}>
-                        <div style={{ fontSize: 11, fontWeight: 900, color: '#10B981', letterSpacing: '0.5px', marginBottom: 8 }}>🎯 ENTRY & EXIT STAGING (Ch.6)</div>
+                        <div style={{ fontSize: 11, fontWeight: 900, color: 'var(--mc-bullish)', letterSpacing: '0.5px', marginBottom: 8 }}>🎯 ENTRY & EXIT STAGING (Ch.6)</div>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, fontSize: 11 }}>
                           {(() => {
                             const max = r.suggestedPositionPct;
@@ -7374,16 +7408,16 @@ function TurnaroundCompare() {
                               { label: '🏛️ STAGE 3 FULL', pct: (max * 0.45).toFixed(1), trigger: 'Recovery thesis clearly underway; sequential rev growth; margin expansion visible', active: r.phase === 3 && r.isBestCandidate },
                             ];
                             return stages.map((s, i) => (
-                              <div key={i} style={{ padding: '8px 10px', background: s.active ? '#10B98115' : '#13131a', border: `1px solid ${s.active ? '#10B981' : '#94A3B840'}`, borderRadius: 5 }}>
-                                <div style={{ fontSize: 10, fontWeight: 800, color: s.active ? '#10B981' : MUTED, marginBottom: 3 }}>{s.label}{s.active ? ' · ACTIVE' : ''}</div>
-                                <div style={{ fontSize: 14, fontWeight: 900, color: s.active ? '#10B981' : '#C9D4E0' }}>{s.pct}% of portfolio</div>
+                              <div key={i} style={{ padding: '8px 10px', background: s.active ? '#10B98115' : '#13131a', border: `1px solid ${s.active ? 'var(--mc-bullish)' : '#94A3B840'}`, borderRadius: 5 }}>
+                                <div style={{ fontSize: 10, fontWeight: 800, color: s.active ? 'var(--mc-bullish)' : MUTED, marginBottom: 3 }}>{s.label}{s.active ? ' · ACTIVE' : ''}</div>
+                                <div style={{ fontSize: 14, fontWeight: 900, color: s.active ? 'var(--mc-bullish)' : '#C9D4E0' }}>{s.pct}% of portfolio</div>
                                 <div style={{ fontSize: 9, color: MUTED, marginTop: 2, lineHeight: 1.4 }}>{s.trigger}</div>
                               </div>
                             ));
                           })()}
                         </div>
                         <div style={{ marginTop: 10, padding: '8px 10px', background: '#EF444412', border: '1px solid #EF444440', borderRadius: 5 }}>
-                          <div style={{ fontSize: 10, fontWeight: 800, color: '#EF4444', marginBottom: 4 }}>🚪 EXIT TRIGGERS</div>
+                          <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--mc-bearish)', marginBottom: 4 }}>🚪 EXIT TRIGGERS</div>
                           <div style={{ fontSize: 10, color: '#C9D4E0', lineHeight: 1.5 }}>
                             <strong>TRIM</strong> when stock up 100%+ and valuation approaching normalised fair value · <strong>SELL</strong> if thesis broken, material new negative, management credibility destroyed · <strong>IMMEDIATE EXIT</strong> on covenant breach, surprise maturity, CCC downgrade, accounting restatement, key contract loss
                           </div>
@@ -7392,7 +7426,7 @@ function TurnaroundCompare() {
 
                       {/* PATCH 0386 — ALL METRICS table (matches Multibagger India depth) */}
                       <details style={{ marginTop: 14, padding: 12, background: '#0A1422', border: `1px solid ${BORDER}`, borderRadius: 6 }}>
-                        <summary style={{ cursor: 'pointer', fontSize: 11, fontWeight: 900, color: '#22D3EE', letterSpacing: '0.5px' }}>📐 ALL METRICS (click to expand raw data)</summary>
+                        <summary style={{ cursor: 'pointer', fontSize: 11, fontWeight: 900, color: 'var(--mc-cyan)', letterSpacing: '0.5px' }}>📐 ALL METRICS (click to expand raw data)</summary>
                         <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14 }}>
                           {(() => {
                             const sections: Array<{ title: string; fields: Array<[string, unknown, string?]> }> = [
@@ -7625,7 +7659,7 @@ function MultibaggerReference({ excelRows }: { excelRows: ExcelResult[] }) {
                 </div>
                 {isOpen && (
                   <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${BORDER}`}}>
-                    <div style={{fontSize:F.xs,fontWeight:700,color:'#22d3ee',marginBottom:6,letterSpacing:'0.6px'}}>
+                    <div style={{fontSize:F.xs,fontWeight:700,color:'var(--mc-cyan)',marginBottom:6,letterSpacing:'0.6px'}}>
                       FRAMEWORK SIGNALS THAT WOULD HAVE CAUGHT IT
                     </div>
                     <div style={{display:'flex',flexWrap:'wrap',gap:5,marginBottom:10}}>
@@ -7653,7 +7687,7 @@ function MultibaggerReference({ excelRows }: { excelRows: ExcelResult[] }) {
                                 {s.company}
                               </span>
                               <span style={{
-                                color: s.score>=80?GREEN:s.score>=68?'#22d3ee':s.score>=55?YELLOW:ORANGE,
+                                color: s.score>=80?GREEN:s.score>=68?'var(--mc-cyan)':s.score>=55?YELLOW:ORANGE,
                                 fontWeight:700,minWidth:30,textAlign:'right',
                               }}>{s.score}</span>
                               <span style={{color:MUTED,minWidth:60,textAlign:'right'}}>
@@ -7855,7 +7889,7 @@ function CapitalAllocationPanel() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 14 }}>
               <div>
                 <div style={{ fontSize: 10, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.6, fontWeight: 700 }}>Capital Allocation Score</div>
-                <div style={{ fontSize: 36, fontWeight: 800, fontFamily: 'ui-monospace,monospace', color: analysis.overall.score >= 70 ? '#10b981' : analysis.overall.score >= 50 ? '#fbbf24' : '#fb923c' }}>
+                <div style={{ fontSize: 36, fontWeight: 800, fontFamily: 'ui-monospace,monospace', color: analysis.overall.score >= 70 ? 'var(--mc-bullish)' : analysis.overall.score >= 50 ? '#fbbf24' : '#fb923c' }}>
                   {analysis.overall.score}<span style={{ fontSize: 14, color: MUTED }}>/100</span>
                 </div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: TEXT }}>Grade {analysis.overall.grade}</div>
@@ -7875,7 +7909,7 @@ function CapitalAllocationPanel() {
               <div style={{ minWidth: 180 }}>
                 <div style={{ fontSize: 10, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.6, fontWeight: 700 }}>{row.title}</div>
                 <div style={{ fontSize: 18, fontWeight: 800, color: TEXT, fontFamily: 'ui-monospace,monospace' }}>{row.value}</div>
-                {row.grade && <div style={{ fontSize: 11, fontWeight: 700, color: row.grade === 'A' ? '#10b981' : row.grade === 'F' ? '#ef4444' : '#fbbf24' }}>Grade {row.grade}</div>}
+                {row.grade && <div style={{ fontSize: 11, fontWeight: 700, color: row.grade === 'A' ? 'var(--mc-bullish)' : row.grade === 'F' ? 'var(--mc-bearish)' : '#fbbf24' }}>Grade {row.grade}</div>}
               </div>
               <div style={{ flex: 1, fontSize: 12, color: TEXT, lineHeight: 1.5 }}>{row.body}</div>
             </div>

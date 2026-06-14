@@ -26,8 +26,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="manifest" href="/manifest.json" />
       </head>
       <body className="font-sans antialiased" style={{
-        backgroundColor: 'var(--mc-bg, #0A0E1A)',
-        color: 'var(--mc-text, #F5F7FA)',
+        backgroundColor: 'var(--mc-bg, var(--mc-bg-0))',
+        color: 'var(--mc-text, var(--mc-text-0))',
         fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
       }}>
         <Providers>

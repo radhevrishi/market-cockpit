@@ -127,9 +127,9 @@ export default function ConcallIntelPage() {
   const [tab, setTab] = useState<'live' | 'analytics'>('live');
 
   return (
-    <div style={{ padding: '20px 24px', backgroundColor: '#0A0E1A', minHeight: '100%', color: '#E6EDF3' }}>
+    <div style={{ padding: '20px 24px', backgroundColor: 'var(--mc-bg-0)', minHeight: '100%', color: 'var(--mc-text-1)' }}>
       <h1 style={{ fontSize: 22, fontWeight: 900, margin: 0, marginBottom: 6 }}>🎙️ Concall Intelligence v3</h1>
-      <p style={{ fontSize: 12, color: '#94A3B8', margin: 0, marginBottom: 10 }}>
+      <p style={{ fontSize: 12, color: 'var(--mc-text-3)', margin: 0, marginBottom: 10 }}>
         🔥 LIVE bullish NSE/BSE concall + investor-presentation filings (auto-poll). ⬇️ Plus manual transcript / PDF analyser below.
       </p>
 
@@ -140,21 +140,21 @@ export default function ConcallIntelPage() {
           gates everything). */}
       <div style={{
         background: 'linear-gradient(90deg, rgba(46,160,67,0.08) 0%, rgba(245,158,11,0.06) 100%)',
-        border: '1px solid #1A2540',
-        borderLeft: '3px solid #2EA043',
+        border: '1px solid var(--mc-bg-4)',
+        borderLeft: '3px solid var(--mc-bullish-2)',
         borderRadius: 6,
         padding: '8px 12px',
         marginBottom: 14,
         fontSize: 11,
-        color: '#CBD5E1',
+        color: 'var(--mc-text-2)',
         display: 'flex',
         flexWrap: 'wrap',
         alignItems: 'center',
         gap: 6,
         lineHeight: 1.7,
       }}>
-        <span style={{ fontWeight: 800, color: '#2EA043', letterSpacing: 0.3 }}>📌 EARNINGS BLOCKBUSTER CHECKLIST</span>
-        <span style={{ color: '#475569', margin: '0 4px' }}>›</span>
+        <span style={{ fontWeight: 800, color: 'var(--mc-bullish-2)', letterSpacing: 0.3 }}>📌 EARNINGS BLOCKBUSTER CHECKLIST</span>
+        <span style={{ color: 'var(--mc-text-4)', margin: '0 4px' }}>›</span>
         {[
           ['Good Guidance', '#2EA043'],
           ['Margins ↑', '#2EA043'],
@@ -190,7 +190,7 @@ export default function ConcallIntelPage() {
       </div>
 
       {/* PATCH 0592 — Tab rail */}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 14, borderBottom: '1px solid #1A2540', paddingBottom: 6 }}>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 14, borderBottom: '1px solid var(--mc-bg-4)', paddingBottom: 6 }}>
         {([
           { id: 'live',      label: '🔥 Live Feeds',  hint: 'Warrant / Movers / Bullish / Keyword + Manual Analyser' },
           { id: 'analytics', label: '📊 Analytics',   hint: 'Institutional-format consolidated dashboard' },
@@ -204,9 +204,9 @@ export default function ConcallIntelPage() {
               style={{
                 fontSize: 12, fontWeight: 800, letterSpacing: '0.3px',
                 padding: '6px 14px', borderRadius: 6,
-                border: `1px solid ${isActive ? '#22D3EE' : '#1A2540'}`,
+                border: `1px solid ${isActive ? 'var(--mc-cyan)' : 'var(--mc-bg-4)'}`,
                 background: isActive ? '#22D3EE22' : 'transparent',
-                color: isActive ? '#22D3EE' : '#94A3B8',
+                color: isActive ? 'var(--mc-cyan)' : 'var(--mc-text-3)',
                 cursor: 'pointer',
               }}
             >
@@ -238,47 +238,47 @@ export default function ConcallIntelPage() {
       <KeywordWatchFeed />
 
       <h2 style={{ fontSize: 16, fontWeight: 900, margin: '32px 0 8px' }}>📝 Manual Transcript / PDF Analyser</h2>
-      <p style={{ fontSize: 11, color: '#94A3B8', margin: 0, marginBottom: 14 }}>
+      <p style={{ fontSize: 11, color: 'var(--mc-text-3)', margin: 0, marginBottom: 14 }}>
         Paste a concall transcript OR enter a public PDF URL. Output: tone score, guidance map, key themes, red flags, key numbers.
       </p>
       {/* AUDIT_100 #80 — calibration disclosure. Tone score is regex/lexicon-based;
           a 78 vs 72 difference is NOT statistically meaningful. Communicate this
           explicitly so users don't over-trust small deltas. */}
-      <p style={{ fontSize: 10.5, color: '#6B7A8D', margin: '0 0 14px', fontStyle: 'italic', lineHeight: 1.5 }}>
+      <p style={{ fontSize: 10.5, color: 'var(--mc-text-4)', margin: '0 0 14px', fontStyle: 'italic', lineHeight: 1.5 }}>
         Note: tone is computed from a positive/negative/defensive lexicon (no LLM). Treat ±5 differences as noise — only ±15 changes reflect real shifts. Use the cue counts (📈/📉/🛡) for the actual signal.
       </p>
 
       {/* ── Input ───────────────────────────────────────────────────── */}
-      <div style={{ backgroundColor: '#0D1623', border: '1px solid #1A2540', borderRadius: 10, padding: '14px 18px', marginBottom: 14 }}>
+      <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 10, padding: '14px 18px', marginBottom: 14 }}>
         <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
           <input value={ticker} onChange={(e) => setTicker(e.target.value)} placeholder="Ticker (optional)"
-            style={{ flex: '0 0 140px', padding: '7px 10px', backgroundColor: '#0A1422', border: '1px solid #1A2840', borderRadius: 6, color: '#E6EDF3', fontSize: 12, outline: 'none' }} />
+            style={{ flex: '0 0 140px', padding: '7px 10px', backgroundColor: '#0A1422', border: '1px solid var(--mc-bg-4)', borderRadius: 6, color: 'var(--mc-text-1)', fontSize: 12, outline: 'none' }} />
           <input value={pdfUrl} onChange={(e) => setPdfUrl(e.target.value)} placeholder="Public PDF URL of concall (optional)"
-            style={{ flex: 1, padding: '7px 10px', backgroundColor: '#0A1422', border: '1px solid #1A2840', borderRadius: 6, color: '#E6EDF3', fontSize: 12, outline: 'none' }} />
+            style={{ flex: 1, padding: '7px 10px', backgroundColor: '#0A1422', border: '1px solid var(--mc-bg-4)', borderRadius: 6, color: 'var(--mc-text-1)', fontSize: 12, outline: 'none' }} />
         </div>
         <textarea value={transcript} onChange={(e) => setTranscript(e.target.value)}
           placeholder="...or paste the transcript here (Q&A + management commentary, 200+ chars)"
           rows={6}
-          style={{ width: '100%', padding: '8px 10px', backgroundColor: '#0A1422', border: '1px solid #1A2840', borderRadius: 6, color: '#E6EDF3', fontSize: 12, outline: 'none', fontFamily: 'ui-sans-serif, system-ui', resize: 'vertical' }} />
+          style={{ width: '100%', padding: '8px 10px', backgroundColor: '#0A1422', border: '1px solid var(--mc-bg-4)', borderRadius: 6, color: 'var(--mc-text-1)', fontSize: 12, outline: 'none', fontFamily: 'ui-sans-serif, system-ui', resize: 'vertical' }} />
         <div style={{ marginTop: 10, display: 'flex', gap: 10 }}>
           <button onClick={() => analyze(false)} disabled={loading || (!pdfUrl.trim() && transcript.trim().length < 200)}
-            style={{ padding: '8px 16px', backgroundColor: loading ? '#22D3EE40' : '#22D3EE', color: '#0A0E1A', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 800, cursor: loading ? 'wait' : 'pointer' }}>
+            style={{ padding: '8px 16px', backgroundColor: loading ? '#22D3EE40' : 'var(--mc-cyan)', color: 'var(--mc-bg-0)', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 800, cursor: loading ? 'wait' : 'pointer' }}>
             {loading ? 'Analysing…' : 'Analyse Concall'}
           </button>
           {/* AUDIT_100 #61 — Force re-analyze bypasses the corpus cache. */}
           <button onClick={() => analyze(true)} disabled={loading || (!pdfUrl.trim() && transcript.trim().length < 200)}
             title="Bypass the local 25-analysis cache and re-run the full pipeline"
-            style={{ padding: '8px 12px', backgroundColor: 'transparent', color: '#94A3B8', border: '1px solid #1A2840', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: loading ? 'wait' : 'pointer' }}>
+            style={{ padding: '8px 12px', backgroundColor: 'transparent', color: 'var(--mc-text-3)', border: '1px solid var(--mc-bg-4)', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: loading ? 'wait' : 'pointer' }}>
             ↻ Force re-analyze
           </button>
           {/* AUDIT_100 #36 — surface intermediate phase + elapsed time so 65s
               spinner doesn't look frozen. */}
           {loading && (
-            <span style={{ color: '#22D3EE', fontSize: 11, fontStyle: 'italic' }}>
+            <span style={{ color: 'var(--mc-cyan)', fontSize: 11, fontStyle: 'italic' }}>
               {progressHint} · {elapsedSec}s elapsed
             </span>
           )}
-          {error && <span style={{ color: '#EF4444', fontSize: 11 }}>⚠ {error}</span>}
+          {error && <span style={{ color: 'var(--mc-bearish)', fontSize: 11 }}>⚠ {error}</span>}
         </div>
       </div>
 
@@ -286,33 +286,33 @@ export default function ConcallIntelPage() {
       {result && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {/* Tone Score */}
-          <div style={{ backgroundColor: '#0D1623', border: `1px solid ${toneColor(result.tone.score)}40`, borderLeft: `4px solid ${toneColor(result.tone.score)}`, borderRadius: 10, padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 24 }}>
+          <div style={{ backgroundColor: 'var(--mc-bg-1)', border: `1px solid ${toneColor(result.tone.score)}40`, borderLeft: `4px solid ${toneColor(result.tone.score)}`, borderRadius: 10, padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 24 }}>
             <div>
-              <div style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.6px' }}>TONE & CONFIDENCE</div>
+              <div style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.6px' }}>TONE & CONFIDENCE</div>
               <div style={{ fontSize: 44, fontWeight: 900, color: toneColor(result.tone.score), lineHeight: 1 }}>
-                {result.tone.score}<span style={{ fontSize: 14, color: '#94A3B8' }}>/100</span>
+                {result.tone.score}<span style={{ fontSize: 14, color: 'var(--mc-text-3)' }}>/100</span>
               </div>
               <div style={{ fontSize: 13, fontWeight: 800, color: toneColor(result.tone.score), marginTop: 4 }}>{result.tone.label}</div>
             </div>
-            <div style={{ flex: 1, fontSize: 11, color: '#94A3B8' }}>
-              <div>📈 Positive cues: <strong style={{ color: '#10B981' }}>{result.tone.pos}</strong></div>
-              <div>📉 Negative cues: <strong style={{ color: '#EF4444' }}>{result.tone.neg}</strong></div>
-              <div>🛡 Defensive language: <strong style={{ color: '#F59E0B' }}>{result.tone.defensive}</strong></div>
+            <div style={{ flex: 1, fontSize: 11, color: 'var(--mc-text-3)' }}>
+              <div>📈 Positive cues: <strong style={{ color: 'var(--mc-bullish)' }}>{result.tone.pos}</strong></div>
+              <div>📉 Negative cues: <strong style={{ color: 'var(--mc-bearish)' }}>{result.tone.neg}</strong></div>
+              <div>🛡 Defensive language: <strong style={{ color: 'var(--mc-warn)' }}>{result.tone.defensive}</strong></div>
               <div style={{ marginTop: 4 }}>Transcript length: {result.length.toLocaleString()} chars</div>
             </div>
           </div>
 
           {/* Guidance Map */}
           {result.guidance.length > 0 && (
-            <div style={{ backgroundColor: '#0A1422', border: '1px solid #1A2840', borderLeft: '3px solid #22D3EE', borderRadius: 8, padding: '12px 14px' }}>
-              <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px', marginBottom: 8 }}>GUIDANCE MAP — {result.guidance.length}</div>
+            <div style={{ backgroundColor: '#0A1422', border: '1px solid var(--mc-bg-4)', borderLeft: '3px solid var(--mc-cyan)', borderRadius: 8, padding: '12px 14px' }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.4px', marginBottom: 8 }}>GUIDANCE MAP — {result.guidance.length}</div>
               {result.guidance.slice(0, 12).map((g, i) => {
                 const col = g.kind === 'raise' ? '#10B981' : g.kind === 'cut' ? '#EF4444' : g.kind === 'withdraw' ? '#F97316' : '#94A3B8';
                 return (
-                  <div key={i} style={{ fontSize: 11, padding: '4px 0', borderBottom: '1px dashed #1A2840' }}>
+                  <div key={i} style={{ fontSize: 11, padding: '4px 0', borderBottom: '1px dashed var(--mc-bg-4)' }}>
                     <span style={{ fontWeight: 800, color: col, textTransform: 'uppercase', letterSpacing: '0.4px', marginRight: 6 }}>{g.kind}</span>
-                    {g.pct && <span style={{ color: '#E6EDF3', fontWeight: 700 }}>{g.pct} </span>}
-                    <span style={{ color: '#94A3B8', fontStyle: 'italic' }}>… {g.snippet}</span>
+                    {g.pct && <span style={{ color: 'var(--mc-text-1)', fontWeight: 700 }}>{g.pct} </span>}
+                    <span style={{ color: 'var(--mc-text-3)', fontStyle: 'italic' }}>… {g.snippet}</span>
                   </div>
                 );
               })}
@@ -322,21 +322,21 @@ export default function ConcallIntelPage() {
           {/* Themes + Numbers side-by-side */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 10 }}>
             {result.themes.length > 0 && (
-              <div style={{ backgroundColor: '#0A1422', border: '1px solid #1A2840', borderLeft: '3px solid #FBBF24', borderRadius: 8, padding: '12px 14px' }}>
+              <div style={{ backgroundColor: '#0A1422', border: '1px solid var(--mc-bg-4)', borderLeft: '3px solid #FBBF24', borderRadius: 8, padding: '12px 14px' }}>
                 <div style={{ fontSize: 12, fontWeight: 800, color: '#FBBF24', letterSpacing: '0.4px', marginBottom: 8 }}>KEY THEMES</div>
                 {result.themes.map((t, i) => (
                   <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 0', fontSize: 12 }}>
-                    <span style={{ color: '#E6EDF3' }}>{t.theme}</span>
-                    <span style={{ color: '#94A3B8', fontFamily: 'ui-monospace, monospace' }}>{t.mentions}× mention{t.mentions === 1 ? '' : 's'}</span>
+                    <span style={{ color: 'var(--mc-text-1)' }}>{t.theme}</span>
+                    <span style={{ color: 'var(--mc-text-3)', fontFamily: 'ui-monospace, monospace' }}>{t.mentions}× mention{t.mentions === 1 ? '' : 's'}</span>
                   </div>
                 ))}
               </div>
             )}
             {result.red_flags.length > 0 && (
-              <div style={{ backgroundColor: '#0A1422', border: '1px solid #EF444440', borderLeft: '3px solid #EF4444', borderRadius: 8, padding: '12px 14px' }}>
-                <div style={{ fontSize: 12, fontWeight: 800, color: '#EF4444', letterSpacing: '0.4px', marginBottom: 8 }}>⚠ RED FLAGS</div>
+              <div style={{ backgroundColor: '#0A1422', border: '1px solid #EF444440', borderLeft: '3px solid var(--mc-bearish)', borderRadius: 8, padding: '12px 14px' }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-bearish)', letterSpacing: '0.4px', marginBottom: 8 }}>⚠ RED FLAGS</div>
                 {result.red_flags.map((f, i) => (
-                  <div key={i} style={{ fontSize: 12, padding: '4px 0', color: '#E6EDF3' }}>· {f}</div>
+                  <div key={i} style={{ fontSize: 12, padding: '4px 0', color: 'var(--mc-text-1)' }}>· {f}</div>
                 ))}
               </div>
             )}
@@ -344,14 +344,14 @@ export default function ConcallIntelPage() {
 
           {/* Numbers Mentioned */}
           {result.numbers.length > 0 && (
-            <div style={{ backgroundColor: '#0A1422', border: '1px solid #1A2840', borderLeft: '3px solid #10B981', borderRadius: 8, padding: '12px 14px' }}>
-              <div style={{ fontSize: 12, fontWeight: 800, color: '#10B981', letterSpacing: '0.4px', marginBottom: 8 }}>NUMBERS MENTIONED — {result.numbers.length}</div>
+            <div style={{ backgroundColor: '#0A1422', border: '1px solid var(--mc-bg-4)', borderLeft: '3px solid var(--mc-bullish)', borderRadius: 8, padding: '12px 14px' }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-bullish)', letterSpacing: '0.4px', marginBottom: 8 }}>NUMBERS MENTIONED — {result.numbers.length}</div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 6 }}>
                 {result.numbers.map((n, i) => (
-                  <div key={i} style={{ fontSize: 11, padding: '5px 8px', backgroundColor: '#0D1623', borderRadius: 4 }}>
+                  <div key={i} style={{ fontSize: 11, padding: '5px 8px', backgroundColor: 'var(--mc-bg-1)', borderRadius: 4 }}>
                     <span style={{ color: '#FBBF24', fontWeight: 800, textTransform: 'uppercase' }}>{n.metric}</span>
-                    <span style={{ color: '#E6EDF3', fontWeight: 800, marginLeft: 8 }}>{n.value}</span>
-                    <div style={{ color: '#6B7A8D', fontSize: 10, marginTop: 2, fontStyle: 'italic' }}>…{n.snippet}…</div>
+                    <span style={{ color: 'var(--mc-text-1)', fontWeight: 800, marginLeft: 8 }}>{n.value}</span>
+                    <div style={{ color: 'var(--mc-text-4)', fontSize: 10, marginTop: 2, fontStyle: 'italic' }}>…{n.snippet}…</div>
                   </div>
                 ))}
               </div>
@@ -534,21 +534,21 @@ function LiveBullishFeed() {
   }, [data]);
 
   return (
-    <div style={{ backgroundColor: '#0D1623', border: '1px solid #F59E0B30', borderLeft: '4px solid #F59E0B', borderRadius: 10, padding: '14px 18px', marginBottom: 14 }}>
+    <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid #F59E0B30', borderLeft: '4px solid var(--mc-warn)', borderRadius: 10, padding: '14px 18px', marginBottom: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 900, color: '#F59E0B', letterSpacing: '0.4px' }}>🔥 LIVE BULLISH FEED — NSE / BSE concall + presentation filings</div>
-          <div style={{ fontSize: 10, color: '#94A3B8', marginTop: 2 }}>
+          <div style={{ fontSize: 14, fontWeight: 900, color: 'var(--mc-warn)', letterSpacing: '0.4px' }}>🔥 LIVE BULLISH FEED — NSE / BSE concall + presentation filings</div>
+          <div style={{ fontSize: 10, color: 'var(--mc-text-3)', marginTop: 2 }}>
             {data ? (
               <>
                 {data.count_total} total · {data.count_relevant} concall-relevant ·
-                {' '}<strong style={{ color: '#22D3EE' }}>{tierCounts.ULTRA_BULLISH || 0} 🚀</strong> ·
-                {' '}<strong style={{ color: '#10B981' }}>{tierCounts.BULLISH || 0} 🟢</strong> ·
-                {' '}<strong style={{ color: '#F59E0B' }}>{tierCounts.MIXED_POSITIVE || 0} 🟡</strong> ·
-                {' '}<strong style={{ color: '#94A3B8' }}>{tierCounts.NEUTRAL || 0} ⚪</strong> ·
-                {' '}<strong style={{ color: '#EF4444' }}>{tierCounts.BEARISH || 0} 🔴</strong> ·
-                {' '}<strong style={{ color: '#3B82F6' }}>{tierCounts.DATA_PENDING || 0} 🟦</strong>
-                {' '}· sources: NSE <strong style={{ color: data.sources.nse === 'NSE_OK' ? '#10B981' : '#EF4444' }}>{({NSE_OK:'OK', BSE_EMPTY:'no filings'} as Record<string,string>)[data.sources.nse] || data.sources.nse}</strong> · BSE <strong style={{ color: data.sources.bse === 'BSE_OK' ? '#10B981' : '#94A3B8' }}>{({NSE_OK:'OK', BSE_EMPTY:'no filings'} as Record<string,string>)[data.sources.bse] || data.sources.bse}</strong>
+                {' '}<strong style={{ color: 'var(--mc-cyan)' }}>{tierCounts.ULTRA_BULLISH || 0} 🚀</strong> ·
+                {' '}<strong style={{ color: 'var(--mc-bullish)' }}>{tierCounts.BULLISH || 0} 🟢</strong> ·
+                {' '}<strong style={{ color: 'var(--mc-warn)' }}>{tierCounts.MIXED_POSITIVE || 0} 🟡</strong> ·
+                {' '}<strong style={{ color: 'var(--mc-text-3)' }}>{tierCounts.NEUTRAL || 0} ⚪</strong> ·
+                {' '}<strong style={{ color: 'var(--mc-bearish)' }}>{tierCounts.BEARISH || 0} 🔴</strong> ·
+                {' '}<strong style={{ color: 'var(--mc-info)' }}>{tierCounts.DATA_PENDING || 0} 🟦</strong>
+                {' '}· sources: NSE <strong style={{ color: data.sources.nse === 'NSE_OK' ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{({NSE_OK:'OK', BSE_EMPTY:'no filings'} as Record<string,string>)[data.sources.nse] || data.sources.nse}</strong> · BSE <strong style={{ color: data.sources.bse === 'BSE_OK' ? 'var(--mc-bullish)' : 'var(--mc-text-3)' }}>{({NSE_OK:'OK', BSE_EMPTY:'no filings'} as Record<string,string>)[data.sources.bse] || data.sources.bse}</strong>
                 {lastRefresh && <> · refreshed {lastRefresh.toLocaleTimeString()}</>}
               </>
             ) : loading ? 'Loading…' : '—'}
@@ -578,15 +578,15 @@ function LiveBullishFeed() {
           })()}
         </div>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button onClick={() => setBullishOnly(v => !v)} style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5, border: `1px solid ${bullishOnly ? '#10B981' : '#1A2540'}`, background: bullishOnly ? '#10B98120' : 'transparent', color: bullishOnly ? '#10B981' : '#94A3B8', cursor: 'pointer' }}>
+          <button onClick={() => setBullishOnly(v => !v)} style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5, border: `1px solid ${bullishOnly ? 'var(--mc-bullish)' : 'var(--mc-bg-4)'}`, background: bullishOnly ? '#10B98120' : 'transparent', color: bullishOnly ? 'var(--mc-bullish)' : 'var(--mc-text-3)', cursor: 'pointer' }}>
             ★ Bullish only {bullishOnly ? '✓' : ''}
           </button>
           {(['ALL', 'NSE', 'BSE'] as const).map(e => (
-            <button key={e} onClick={() => setExchange(e)} style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5, border: `1px solid ${exchange === e ? '#22D3EE' : '#1A2540'}`, background: exchange === e ? '#22D3EE20' : 'transparent', color: exchange === e ? '#22D3EE' : '#94A3B8', cursor: 'pointer' }}>
+            <button key={e} onClick={() => setExchange(e)} style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5, border: `1px solid ${exchange === e ? 'var(--mc-cyan)' : 'var(--mc-bg-4)'}`, background: exchange === e ? '#22D3EE20' : 'transparent', color: exchange === e ? 'var(--mc-cyan)' : 'var(--mc-text-3)', cursor: 'pointer' }}>
               {e}
             </button>
           ))}
-          <select value={days} onChange={(e) => setDays(parseInt(e.target.value))} style={{ fontSize: 11, padding: '4px 8px', borderRadius: 5, border: '1px solid #1A2540', background: '#0A1422', color: '#E6EDF3' }}>
+          <select value={days} onChange={(e) => setDays(parseInt(e.target.value))} style={{ fontSize: 11, padding: '4px 8px', borderRadius: 5, border: '1px solid var(--mc-bg-4)', background: '#0A1422', color: 'var(--mc-text-1)' }}>
             <option value={1}>1 day</option>
             <option value={2}>2 days</option>
             <option value={3}>3 days</option>
@@ -598,7 +598,7 @@ function LiveBullishFeed() {
             <option value={90}>90 days</option>
             <option value={180}>180 days</option>
           </select>
-          <button onClick={() => fetchFeed(true)} disabled={loading} style={{ fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 5, border: '1px solid #22D3EE', background: '#22D3EE20', color: '#22D3EE', cursor: loading ? 'wait' : 'pointer' }}>
+          <button onClick={() => fetchFeed(true)} disabled={loading} style={{ fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 5, border: '1px solid var(--mc-cyan)', background: '#22D3EE20', color: 'var(--mc-cyan)', cursor: loading ? 'wait' : 'pointer' }}>
             {loading ? '…' : '↻ Refresh'}
           </button>
         </div>
@@ -610,10 +610,10 @@ function LiveBullishFeed() {
           last successful response still has fresh data shown on screen.
           Show a soft amber notice instead, only if no data is rendered. */}
       {error && (!data || (data.filings?.length || 0) === 0) && (
-        <div style={{ fontSize: 11, color: '#EF4444', marginBottom: 8 }}>⚠ {error}</div>
+        <div style={{ fontSize: 11, color: 'var(--mc-bearish)', marginBottom: 8 }}>⚠ {error}</div>
       )}
       {error && data && (data.filings?.length || 0) > 0 && (
-        <div style={{ fontSize: 10, color: '#F59E0B', marginBottom: 8, fontStyle: 'italic' }}>
+        <div style={{ fontSize: 10, color: 'var(--mc-warn)', marginBottom: 8, fontStyle: 'italic' }}>
           · last refresh slow ({error}); showing previous results
         </div>
       )}
@@ -632,7 +632,7 @@ function LiveBullishFeed() {
             const active = tierFilter.has(t.id);
             const count = tierCounts[t.id] || 0;
             return (
-              <button key={t.id} onClick={() => toggleTier(t.id)} style={{ fontSize: 10, fontWeight: 700, padding: '4px 9px', borderRadius: 5, border: `1px solid ${active ? t.color : '#1A2540'}`, background: active ? `${t.color}20` : 'transparent', color: active ? t.color : '#94A3B8', cursor: 'pointer' }}>
+              <button key={t.id} onClick={() => toggleTier(t.id)} style={{ fontSize: 10, fontWeight: 700, padding: '4px 9px', borderRadius: 5, border: `1px solid ${active ? t.color : 'var(--mc-bg-4)'}`, background: active ? `${t.color}20` : 'transparent', color: active ? t.color : 'var(--mc-text-3)', cursor: 'pointer' }}>
                 {t.label} · {count}
               </button>
             );
@@ -641,7 +641,7 @@ function LiveBullishFeed() {
       )}
 
       {filtered.length === 0 && !loading && (
-        <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic', padding: '12px 0' }}>
+        <div style={{ fontSize: 11, color: 'var(--mc-text-3)', fontStyle: 'italic', padding: '12px 0' }}>
           {data && data.count_relevant > 0
             ? `No filings match the selected tiers. Try enabling more tiers above (e.g. Mixed Positive surfaces realistic mid-quality bullish setups).`
             : 'No concall-related filings yet. NSE/BSE may be blocking the request (try refresh in a few minutes).'}
@@ -699,38 +699,38 @@ function LiveBullishFeed() {
         return (
           <div style={{ marginBottom: 14, padding: 14, background: 'linear-gradient(135deg, #EF444415, #F59E0B10)', border: '1px solid #EF444460', borderRadius: 10 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
-              <div style={{ fontSize: 13, fontWeight: 900, color: '#EF4444', letterSpacing: '0.5px' }}>
+              <div style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-bearish)', letterSpacing: '0.5px' }}>
                 🚨 SUPPLY-CHAIN BOTTLENECKS DETECTED — {detected.length} filing{detected.length === 1 ? '' : 's'} across {groupArr.length} component{groupArr.length === 1 ? '' : 's'}{ungrouped.length > 0 ? ` + ${ungrouped.length} unmapped` : ''}
               </div>
-              <div style={{ fontSize: 10, color: '#94A3B8', fontWeight: 600 }}>last {days}d · pattern-detected</div>
+              <div style={{ fontSize: 10, color: 'var(--mc-text-3)', fontWeight: 600 }}>last {days}d · pattern-detected</div>
             </div>
-            <div style={{ fontSize: 10, color: '#94A3B8', marginBottom: 10, fontStyle: 'italic' }}>
+            <div style={{ fontSize: 10, color: 'var(--mc-text-3)', marginBottom: 10, fontStyle: 'italic' }}>
               Detection is 100% regex on concall text — no company hardcoding. Sympathy beneficiaries are mapped from curated industry knowledge; verify independently.
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: 10 }}>
               {groupArr.slice(0, 12).map((g, gi) => (
-                <div key={g.component + '-bg-' + gi} style={{ padding: 10, background: '#0A1422', border: `1px solid ${g.critical ? '#EF4444' : '#F59E0B'}60`, borderRadius: 8 }}>
+                <div key={g.component + '-bg-' + gi} style={{ padding: 10, background: '#0A1422', border: `1px solid ${g.critical ? 'var(--mc-bearish)' : 'var(--mc-warn)'}60`, borderRadius: 8 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
-                    <div style={{ fontSize: 12, fontWeight: 900, color: g.critical ? '#EF4444' : '#F59E0B' }}>
+                    <div style={{ fontSize: 12, fontWeight: 900, color: g.critical ? 'var(--mc-bearish)' : 'var(--mc-warn)' }}>
                       {g.critical ? '🚨 ' : '⚠ '}{g.component.replace(/_/g, ' ')}
                     </div>
-                    <div style={{ fontSize: 10, color: '#94A3B8' }}>{g.companies.length} co{g.companies.length === 1 ? '' : 's'}</div>
+                    <div style={{ fontSize: 10, color: 'var(--mc-text-3)' }}>{g.companies.length} co{g.companies.length === 1 ? '' : 's'}</div>
                   </div>
                   {g.sectors.size > 0 && (
-                    <div style={{ fontSize: 9, color: '#94A3B8', marginBottom: 4 }}>sector: {Array.from(g.sectors).join(' · ')}</div>
+                    <div style={{ fontSize: 9, color: 'var(--mc-text-3)', marginBottom: 4 }}>sector: {Array.from(g.sectors).join(' · ')}</div>
                   )}
                   <div style={{ fontSize: 10, color: '#C9D4E0', marginBottom: 6, lineHeight: 1.45 }}>
                     {g.companies.slice(0, 2).map((c, ci) => (
                       <div key={c.symbol + '-c-' + ci} style={{ marginBottom: 3 }}>
-                        <strong style={{ color: '#22D3EE' }}>[{c.symbol || c.company_name}]</strong> &ldquo;{(c.evidence || '').slice(0, 180)}{(c.evidence || '').length > 180 ? '…' : ''}&rdquo;
+                        <strong style={{ color: 'var(--mc-cyan)' }}>[{c.symbol || c.company_name}]</strong> &ldquo;{(c.evidence || '').slice(0, 180)}{(c.evidence || '').length > 180 ? '…' : ''}&rdquo;
                       </div>
                     ))}
                     {g.companies.length > 2 && (
-                      <div style={{ fontSize: 9, color: '#94A3B8' }}>+ {g.companies.length - 2} more</div>
+                      <div style={{ fontSize: 9, color: 'var(--mc-text-3)' }}>+ {g.companies.length - 2} more</div>
                     )}
                   </div>
                   {g.beneficiaries.size > 0 && (
-                    <div style={{ fontSize: 9, color: '#10B981' }}>
+                    <div style={{ fontSize: 9, color: 'var(--mc-bullish)' }}>
                       <span style={{ fontWeight: 800 }}>↪ POTENTIAL READ-THROUGH:</span> {Array.from(g.beneficiaries).slice(0, 8).join(' · ')}
                     </div>
                   )}
@@ -738,17 +738,17 @@ function LiveBullishFeed() {
               ))}
             </div>
             {ungrouped.length > 0 && (
-              <div style={{ marginTop: 10, padding: 10, background: '#0A1422', border: '1px solid #1A2540', borderRadius: 8 }}>
-                <div style={{ fontSize: 11, fontWeight: 800, color: '#A78BFA', marginBottom: 6, letterSpacing: '0.5px' }}>
+              <div style={{ marginTop: 10, padding: 10, background: '#0A1422', border: '1px solid var(--mc-bg-4)', borderRadius: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-state-persistent)', marginBottom: 6, letterSpacing: '0.5px' }}>
                   📡 RAW BOTTLENECK EVIDENCE (component not in known vocab — surface so future bottlenecks aren't missed)
                 </div>
                 {ungrouped.slice(0, 6).map((u, ui) => (
                   <div key={u.symbol + '-u-' + ui} style={{ fontSize: 10, color: '#C9D4E0', marginBottom: 4, lineHeight: 1.45 }}>
-                    <strong style={{ color: '#22D3EE' }}>[{u.symbol || u.company_name}]</strong> {u.critical ? '🚨 ' : ''}&ldquo;{(u.evidence || '').slice(0, 200)}{(u.evidence || '').length > 200 ? '…' : ''}&rdquo;
+                    <strong style={{ color: 'var(--mc-cyan)' }}>[{u.symbol || u.company_name}]</strong> {u.critical ? '🚨 ' : ''}&ldquo;{(u.evidence || '').slice(0, 200)}{(u.evidence || '').length > 200 ? '…' : ''}&rdquo;
                   </div>
                 ))}
                 {ungrouped.length > 6 && (
-                  <div style={{ fontSize: 9, color: '#94A3B8', marginTop: 4 }}>+ {ungrouped.length - 6} more raw evidence lines</div>
+                  <div style={{ fontSize: 9, color: 'var(--mc-text-3)', marginTop: 4 }}>+ {ungrouped.length - 6} more raw evidence lines</div>
                 )}
               </div>
             )}
@@ -769,7 +769,7 @@ function LiveBullishFeed() {
             <div style={{ fontSize: 13, fontWeight: 900, color: '#06B6D4', letterSpacing: '0.5px' }}>
               🌐 CROSS-COMPANY THEME CLUSTERS — institutional cross-confirmation across the window
             </div>
-            <div style={{ fontSize: 10, color: '#94A3B8', fontWeight: 600 }}>
+            <div style={{ fontSize: 10, color: 'var(--mc-text-3)', fontWeight: 600 }}>
               {(data as any).theme_clusters.length} cluster{(data as any).theme_clusters.length === 1 ? '' : 's'} · last {days}d
             </div>
           </div>
@@ -783,35 +783,35 @@ function LiveBullishFeed() {
               return (
                 <div key={tc.key + '-tc-' + ti} style={{ padding: 10, background: '#0A1422', border: `1px solid ${convictionColor}50`, borderRadius: 8 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 5 }}>
-                    <div style={{ fontSize: 12, fontWeight: 900, color: '#E6EDF3' }}>
+                    <div style={{ fontSize: 12, fontWeight: 900, color: 'var(--mc-text-1)' }}>
                       <span style={{ marginRight: 6 }}>{kindIcon}</span>{tc.label}
                     </div>
                     <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, background: `${convictionColor}25`, color: convictionColor, fontWeight: 900, letterSpacing: '0.4px' }}>
                       {tc.conviction}
                     </span>
                   </div>
-                  <div style={{ fontSize: 10, color: '#94A3B8', marginBottom: 6 }}>
+                  <div style={{ fontSize: 10, color: 'var(--mc-text-3)', marginBottom: 6 }}>
                     {tc.company_count} unique compan{tc.company_count === 1 ? 'y' : 'ies'} · {tc.filing_count} filings · avg composite {tc.avg_score.toFixed(1)}
                   </div>
                   <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 6 }}>
                     {tc.top_companies.slice(0, 8).map((c: any) => (
-                      <span key={c.symbol} title={`${c.company_name} · composite ${c.score.toFixed(1)}`} style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, background: '#1A2540', color: '#C9D4E0', border: '1px solid #1A2540' }}>
+                      <span key={c.symbol} title={`${c.company_name} · composite ${c.score.toFixed(1)}`} style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, background: 'var(--mc-bg-4)', color: '#C9D4E0', border: '1px solid var(--mc-bg-4)' }}>
                         {c.symbol} <span style={{ color: convictionColor, marginLeft: 3 }}>{c.score.toFixed(1)}</span>
                       </span>
                     ))}
                   </div>
                   {tc.kind === 'COMPONENT' && Array.isArray(tc.beneficiaries) && tc.beneficiaries.length > 0 && (
                     <div style={{ marginBottom: 5 }}>
-                      <div style={{ fontSize: 9, fontWeight: 700, color: '#94A3B8', marginBottom: 3 }}>★ READ-THROUGH BENEFICIARIES (verify independently)</div>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--mc-text-3)', marginBottom: 3 }}>★ READ-THROUGH BENEFICIARIES (verify independently)</div>
                       <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
                         {tc.beneficiaries.slice(0, 10).map((b: string) => (
-                          <span key={b} style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, background: '#10B98120', color: '#10B981', border: '1px solid #10B98140' }}>{b}</span>
+                          <span key={b} style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, background: '#10B98120', color: 'var(--mc-bullish)', border: '1px solid #10B98140' }}>{b}</span>
                         ))}
                       </div>
                     </div>
                   )}
                   {tc.evidence_excerpts && tc.evidence_excerpts.length > 0 && (
-                    <div style={{ fontSize: 9, color: '#94A3B8', fontStyle: 'italic', marginTop: 4, lineHeight: 1.4 }}>
+                    <div style={{ fontSize: 9, color: 'var(--mc-text-3)', fontStyle: 'italic', marginTop: 4, lineHeight: 1.4 }}>
                       {tc.evidence_excerpts.slice(0, 2).map((ex: string, i: number) => (
                         <div key={i} style={{ marginBottom: 2 }}>› {ex}</div>
                       ))}
@@ -848,11 +848,11 @@ function LiveBullishFeed() {
           .slice(0, 10);
         if (ranked.length === 0) {
           return (
-            <div style={{ marginBottom: 12, padding: 16, background: 'linear-gradient(135deg, #10B98110, #22D3EE10)', border: '1px solid #1A2540', borderRadius: 10, textAlign: 'center' }}>
-              <div style={{ fontSize: 13, fontWeight: 900, color: '#94A3B8', letterSpacing: '0.5px', marginBottom: 4 }}>
+            <div style={{ marginBottom: 12, padding: 16, background: 'linear-gradient(135deg, #10B98110, #22D3EE10)', border: '1px solid var(--mc-bg-4)', borderRadius: 10, textAlign: 'center' }}>
+              <div style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-text-3)', letterSpacing: '0.5px', marginBottom: 4 }}>
                 ★ TOP RANKED — institutional shortlist
               </div>
-              <div style={{ fontSize: 11, color: '#94A3B8', lineHeight: 1.5 }}>
+              <div style={{ fontSize: 11, color: 'var(--mc-text-3)', lineHeight: 1.5 }}>
                 No actionable signals in the last {days} day{days === 1 ? '' : 's'} yet.
                 Strict calibration filters out boilerplate. As more PDFs are extracted from
                 background cache (each refresh adds 50-100), real BULLISH / MIXED_POSITIVE
@@ -864,8 +864,8 @@ function LiveBullishFeed() {
         return (
           <div style={{ marginBottom: 12, padding: 12, background: 'linear-gradient(135deg, #10B98110, #22D3EE10)', border: '1px solid #10B98150', borderRadius: 10 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
-              <div style={{ fontSize: 12, fontWeight: 900, color: '#10B981', letterSpacing: '0.5px' }}>★ TOP {ranked.length} RANKED — institutional shortlist (by composite: 0.5×Quality + 0.3×Cycle + 0.2×Sentiment)</div>
-              <div style={{ fontSize: 10, color: '#94A3B8', fontWeight: 600 }}>· window: last {days} day{days === 1 ? '' : 's'}</div>
+              <div style={{ fontSize: 12, fontWeight: 900, color: 'var(--mc-bullish)', letterSpacing: '0.5px' }}>★ TOP {ranked.length} RANKED — institutional shortlist (by composite: 0.5×Quality + 0.3×Cycle + 0.2×Sentiment)</div>
+              <div style={{ fontSize: 10, color: 'var(--mc-text-3)', fontWeight: 600 }}>· window: last {days} day{days === 1 ? '' : 's'}</div>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 8 }}>
               {ranked.map((r, i) => {
@@ -874,17 +874,17 @@ function LiveBullishFeed() {
                   <div key={r.symbol + '-rank-' + i} style={{ padding: 10, background: '#0A1422', border: `1px solid ${tierColor}50`, borderRadius: 8 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
                       <div>
-                        <span style={{ fontSize: 9, color: '#F59E0B', fontWeight: 900, marginRight: 6 }}>#{i + 1}</span>
-                        <span style={{ fontSize: 13, fontWeight: 900, color: '#E6EDF3' }}>{r.symbol || r.company_name}</span>
+                        <span style={{ fontSize: 9, color: 'var(--mc-warn)', fontWeight: 900, marginRight: 6 }}>#{i + 1}</span>
+                        <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-text-1)' }}>{r.symbol || r.company_name}</span>
                       </div>
                       <span title={`Composite = 0.5×Q + 0.3×C + 0.2×S. Raw bullish: ${r.bullish.raw_score.toFixed(1)}`} style={{ fontSize: 16, fontWeight: 900, color: tierColor }}>{((r.bullish.components as any).composite_score ?? r.bullish.raw_score).toFixed(1)}</span>
                     </div>
-                    <div style={{ fontSize: 10, color: '#94A3B8', marginBottom: 4 }}>{r.company_name}</div>
+                    <div style={{ fontSize: 10, color: 'var(--mc-text-3)', marginBottom: 4 }}>{r.company_name}</div>
                     <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', fontSize: 8 }}>
                       <span style={{ padding: '1px 5px', borderRadius: 3, background: `${tierColor}20`, color: tierColor, fontWeight: 800 }}>{r.bullish.tier?.replace('_', ' ')}</span>
-                      <span style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: '#10B981' }}>Mgmt {r.bullish.components.management_confidence.toFixed(1)}</span>
-                      <span style={{ padding: '1px 5px', borderRadius: 3, background: '#22D3EE15', color: '#22D3EE' }}>Biz {r.bullish.components.business_evidence.toFixed(1)}</span>
-                      {(r.bullish.components.blockers || 0) > 0 && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#EF444415', color: '#EF4444' }}>Risk {r.bullish.components.blockers.toFixed(1)}</span>}
+                      <span style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: 'var(--mc-bullish)' }}>Mgmt {r.bullish.components.management_confidence.toFixed(1)}</span>
+                      <span style={{ padding: '1px 5px', borderRadius: 3, background: '#22D3EE15', color: 'var(--mc-cyan)' }}>Biz {r.bullish.components.business_evidence.toFixed(1)}</span>
+                      {(r.bullish.components.blockers || 0) > 0 && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#EF444415', color: 'var(--mc-bearish)' }}>Risk {r.bullish.components.blockers.toFixed(1)}</span>}
                     </div>
                   </div>
                 );
@@ -908,12 +908,12 @@ function LiveBullishFeed() {
             PRESS_RELEASE: '📰 Press Release',
           };
           return (
-            <div key={f.symbol + '-' + i} style={{ padding: '10px 12px', background: '#0A1422', border: `1px solid ${f.is_high_bullish ? '#10B98140' : '#1A2540'}`, borderLeft: `3px solid ${scoreColor}`, borderRadius: 6 }}>
+            <div key={f.symbol + '-' + i} style={{ padding: '10px 12px', background: '#0A1422', border: `1px solid ${f.is_high_bullish ? '#10B98140' : 'var(--mc-bg-4)'}`, borderLeft: `3px solid ${scoreColor}`, borderRadius: 6 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, marginBottom: 4 }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 13, fontWeight: 900, color: '#E6EDF3' }}>{f.symbol || f.company_name}</span>
-                  {f.symbol && <span style={{ fontSize: 11, color: '#94A3B8' }}>{f.company_name}</span>}
-                  <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#1A2540', color: '#94A3B8', fontWeight: 700 }}>{f.exchange}</span>
+                  <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-text-1)' }}>{f.symbol || f.company_name}</span>
+                  {f.symbol && <span style={{ fontSize: 11, color: 'var(--mc-text-3)' }}>{f.company_name}</span>}
+                  <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'var(--mc-bg-4)', color: 'var(--mc-text-3)', fontWeight: 700 }}>{f.exchange}</span>
                   <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: `${scoreColor}20`, color: scoreColor, fontWeight: 700 }}>{filingTypeLabel[f.filing_type] || f.filing_type}</span>
                   {/* PATCH 0391 — tier badge replaces single HIGH BULLISH */}
                   {(() => {
@@ -931,10 +931,10 @@ function LiveBullishFeed() {
                     return <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: `${t.color}20`, color: t.color, fontWeight: 800, border: `1px solid ${t.color}` }}>{t.label}</span>;
                   })()}
                   {f.bullish.fatal_blockers && f.bullish.fatal_blockers.length > 0 && (
-                    <span title={`Fatal blockers: ${f.bullish.fatal_blockers.join(', ')}`} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#EF444425', color: '#EF4444', fontWeight: 800, border: '1px solid #EF4444' }}>☠ FATAL</span>
+                    <span title={`Fatal blockers: ${f.bullish.fatal_blockers.join(', ')}`} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#EF444425', color: 'var(--mc-bearish)', fontWeight: 800, border: '1px solid var(--mc-bearish)' }}>☠ FATAL</span>
                   )}
-                  {f.scored_from === 'PDF' && <span title={`Scored from extracted PDF text${f.pdf_pages ? ` (${f.pdf_pages}p)` : ''}`} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#22D3EE15', color: '#22D3EE', fontWeight: 700 }}>📄 PDF</span>}
-                  {f.scored_from === 'SUBJECT' && f.pdf_failure_reason && <span title={`PDF extraction failed: ${f.pdf_failure_reason}`} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#94A3B815', color: '#94A3B8', fontWeight: 700 }}>📝 subject only</span>}
+                  {f.scored_from === 'PDF' && <span title={`Scored from extracted PDF text${f.pdf_pages ? ` (${f.pdf_pages}p)` : ''}`} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#22D3EE15', color: 'var(--mc-cyan)', fontWeight: 700 }}>📄 PDF</span>}
+                  {f.scored_from === 'SUBJECT' && f.pdf_failure_reason && <span title={`PDF extraction failed: ${f.pdf_failure_reason}`} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#94A3B815', color: 'var(--mc-text-3)', fontWeight: 700 }}>📝 subject only</span>}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                   {/* PATCH 0398 — Composite is the primary score now per
@@ -946,9 +946,9 @@ function LiveBullishFeed() {
                       <>
                         <span title={`Composite = 0.5×Quality + 0.3×Cycle + 0.2×Sentiment. Raw bullish score: ${f.bullish.raw_score.toFixed(1)}`} style={{ fontSize: 16, fontWeight: 900, color: scoreColor }}>{primary.toFixed(1)}</span>
                         {composite != null && (
-                          <span style={{ fontSize: 9, color: '#6B7A8D' }}>· raw {f.bullish.raw_score.toFixed(1)}</span>
+                          <span style={{ fontSize: 9, color: 'var(--mc-text-4)' }}>· raw {f.bullish.raw_score.toFixed(1)}</span>
                         )}
-                        <span style={{ fontSize: 10, color: '#94A3B8' }}>· {f.bullish.confidence}</span>
+                        <span style={{ fontSize: 10, color: 'var(--mc-text-3)' }}>· {f.bullish.confidence}</span>
                       </>
                     );
                   })()}
@@ -958,21 +958,21 @@ function LiveBullishFeed() {
               {f.bullish.tags.length > 0 && (
                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 4 }}>
                   {f.bullish.tags.map((t, j) => (
-                    <span key={j} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: '#10B981', fontWeight: 700 }}>{t}</span>
+                    <span key={j} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: 'var(--mc-bullish)', fontWeight: 700 }}>{t}</span>
                   ))}
                 </div>
               )}
               {f.bullish.red_flags.length > 0 && (
                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 4 }}>
                   {f.bullish.red_flags.map((t, j) => (
-                    <span key={j} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#EF444415', color: '#EF4444', fontWeight: 700 }}>⚠ {t}</span>
+                    <span key={j} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#EF444415', color: 'var(--mc-bearish)', fontWeight: 700 }}>⚠ {t}</span>
                   ))}
                 </div>
               )}
               {/* PATCH 0407 — Bottleneck + sympathy beneficiary read-through */}
               {(f as any).bottleneck && (f as any).bottleneck.detected && (
-                <div style={{ marginTop: 6, padding: '8px 10px', background: 'linear-gradient(135deg, #F59E0B15, #EF444415)', border: `1px solid ${(f as any).bottleneck.critical ? '#EF4444' : '#F59E0B'}60`, borderRadius: 5 }}>
-                  <div style={{ fontSize: 10, fontWeight: 800, color: (f as any).bottleneck.critical ? '#EF4444' : '#F59E0B', letterSpacing: '0.5px', marginBottom: 4 }}>
+                <div style={{ marginTop: 6, padding: '8px 10px', background: 'linear-gradient(135deg, #F59E0B15, #EF444415)', border: `1px solid ${(f as any).bottleneck.critical ? 'var(--mc-bearish)' : 'var(--mc-warn)'}60`, borderRadius: 5 }}>
+                  <div style={{ fontSize: 10, fontWeight: 800, color: (f as any).bottleneck.critical ? 'var(--mc-bearish)' : 'var(--mc-warn)', letterSpacing: '0.5px', marginBottom: 4 }}>
                     {(f as any).bottleneck.critical ? '🚨 CRITICAL BOTTLENECK DETECTED' : '⚠ BOTTLENECK DETECTED'}
                     {(f as any).bottleneck.components.length > 0 && (
                       <span style={{ marginLeft: 8, fontSize: 9, color: '#C9D4E0', fontWeight: 700 }}>· components: {(f as any).bottleneck.components.join(', ')}</span>
@@ -985,16 +985,16 @@ function LiveBullishFeed() {
                   )}
                   {(f as any).bottleneck.beneficiaries && (f as any).bottleneck.beneficiaries.length > 0 && (
                     <div style={{ marginTop: 4 }}>
-                      <div style={{ fontSize: 9, fontWeight: 700, color: '#94A3B8', letterSpacing: '0.4px', marginBottom: 3 }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--mc-text-3)', letterSpacing: '0.4px', marginBottom: 3 }}>
                         ★ POTENTIAL READ-THROUGH BENEFICIARIES (verify independently)
                       </div>
                       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                         {((f as any).bottleneck.beneficiaries as string[]).slice(0, 8).map((b: string) => (
-                          <span key={b} style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, background: '#10B98120', color: '#10B981', border: '1px solid #10B98140' }}>{b}</span>
+                          <span key={b} style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, background: '#10B98120', color: 'var(--mc-bullish)', border: '1px solid #10B98140' }}>{b}</span>
                         ))}
                       </div>
                       {(f as any).bottleneck.sectors && (f as any).bottleneck.sectors.length > 0 && (
-                        <div style={{ fontSize: 9, color: '#94A3B8', marginTop: 3 }}>
+                        <div style={{ fontSize: 9, color: 'var(--mc-text-3)', marginTop: 3 }}>
                           · sectors: {((f as any).bottleneck.sectors as string[]).join(' · ')}
                         </div>
                       )}
@@ -1043,7 +1043,7 @@ function LiveBullishFeed() {
                   <div style={{ marginTop: 6, marginBottom: 4, fontSize: 10, lineHeight: 1.5 }}>
                     {bull.length > 0 && (
                       <div style={{ marginBottom: 4 }}>
-                        <span style={{ color: '#10B981', fontWeight: 700, marginRight: 4 }}>WHY BULLISH:</span>
+                        <span style={{ color: 'var(--mc-bullish)', fontWeight: 700, marginRight: 4 }}>WHY BULLISH:</span>
                         <div style={{ marginLeft: 0, marginTop: 2 }}>
                           {bull.slice(0, 4).map((e, k) => (
                             <div key={k} style={{ color: '#C9D4E0', padding: '1px 0' }}>› <span style={{ color: '#10B98180', fontWeight: 700 }}>[{e.tag}]</span> &ldquo;{e.text}&rdquo;</div>
@@ -1053,7 +1053,7 @@ function LiveBullishFeed() {
                     )}
                     {bear.length > 0 && (
                       <div style={{ marginBottom: 4 }}>
-                        <span style={{ color: '#EF4444', fontWeight: 700, marginRight: 4 }}>RISKS:</span>
+                        <span style={{ color: 'var(--mc-bearish)', fontWeight: 700, marginRight: 4 }}>RISKS:</span>
                         <div style={{ marginLeft: 0, marginTop: 2 }}>
                           {bear.slice(0, 3).map((e, k) => (
                             <div key={k} style={{ color: '#C9D4E0', padding: '1px 0' }}>› <span style={{ color: '#EF444480', fontWeight: 700 }}>[{e.tag}{e.negated ? ' — negated' : ''}]</span> &ldquo;{e.text}&rdquo;</div>
@@ -1075,12 +1075,12 @@ function LiveBullishFeed() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
                     <span style={{ fontSize: 10, fontWeight: 800, color: '#06B6D4', letterSpacing: '0.4px' }}>
                       💡 EARNINGS DELTA · <span style={{ color:
-                        (f as any).earnings_delta.net_read === 'BULLISH' ? '#10B981' :
-                        (f as any).earnings_delta.net_read === 'BEARISH' ? '#EF4444' :
-                        (f as any).earnings_delta.net_read === 'MIXED'   ? '#F59E0B' : '#94A3B8'
+                        (f as any).earnings_delta.net_read === 'BULLISH' ? 'var(--mc-bullish)' :
+                        (f as any).earnings_delta.net_read === 'BEARISH' ? 'var(--mc-bearish)' :
+                        (f as any).earnings_delta.net_read === 'MIXED'   ? 'var(--mc-warn)' : 'var(--mc-text-3)'
                       }}>{(f as any).earnings_delta.net_read}</span>
                     </span>
-                    <span style={{ fontSize: 9, color: '#94A3B8', fontStyle: 'italic' }}>{(f as any).earnings_delta.rationale}</span>
+                    <span style={{ fontSize: 9, color: 'var(--mc-text-3)', fontStyle: 'italic' }}>{(f as any).earnings_delta.rationale}</span>
                   </div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
                     {[
@@ -1101,15 +1101,15 @@ function LiveBullishFeed() {
                   </div>
                   {/* Narrative vs Financial split — review item 4.5 */}
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 9 }}>
-                    <span style={{ color: '#94A3B8', fontWeight: 700 }}>NARR vs FIN:</span>
-                    <span title="Narrative strength: story quality (tag breadth + forward language)" style={{ padding: '1px 6px', borderRadius: 3, background: '#A78BFA15', color: '#A78BFA', fontWeight: 800 }}>
+                    <span style={{ color: 'var(--mc-text-3)', fontWeight: 700 }}>NARR vs FIN:</span>
+                    <span title="Narrative strength: story quality (tag breadth + forward language)" style={{ padding: '1px 6px', borderRadius: 3, background: '#A78BFA15', color: 'var(--mc-state-persistent)', fontWeight: 800 }}>
                       📖 {(f as any).earnings_delta.narrative_strength.toFixed(1)}/10
                     </span>
-                    <span title="Financial strength: actual numbers + concrete guidance + composite score" style={{ padding: '1px 6px', borderRadius: 3, background: '#22D3EE15', color: '#22D3EE', fontWeight: 800 }}>
+                    <span title="Financial strength: actual numbers + concrete guidance + composite score" style={{ padding: '1px 6px', borderRadius: 3, background: '#22D3EE15', color: 'var(--mc-cyan)', fontWeight: 800 }}>
                       💰 {(f as any).earnings_delta.financial_strength.toFixed(1)}/10
                     </span>
                     {Math.abs((f as any).earnings_delta.narrative_strength - (f as any).earnings_delta.financial_strength) >= 3 && (
-                      <span style={{ color: '#F59E0B', fontStyle: 'italic' }}>
+                      <span style={{ color: 'var(--mc-warn)', fontStyle: 'italic' }}>
                         ⚠ {(f as any).earnings_delta.narrative_strength > (f as any).earnings_delta.financial_strength ? 'story-ahead-of-numbers' : 'numbers-ahead-of-story'}
                       </span>
                     )}
@@ -1118,71 +1118,71 @@ function LiveBullishFeed() {
               )}
 
               {/* PATCH 0395+0397 — Decomposed score breakdown (transparency) */}
-              <div style={{ marginTop: 6, padding: '6px 8px', background: '#13131a', border: '1px solid #1A2540', borderRadius: 4 }}>
-                <div style={{ fontSize: 9, color: '#94A3B8', fontWeight: 700, marginBottom: 3, letterSpacing: '0.4px' }}>
+              <div style={{ marginTop: 6, padding: '6px 8px', background: '#13131a', border: '1px solid var(--mc-bg-4)', borderRadius: 4 }}>
+                <div style={{ fontSize: 9, color: 'var(--mc-text-3)', fontWeight: 700, marginBottom: 3, letterSpacing: '0.4px' }}>
                   SCORE DECOMPOSITION (raw {f.bullish.raw_score.toFixed(1)} / 10)
                   {(f.bullish.components as any).composite_score != null && (
-                    <span style={{ marginLeft: 8, color: '#10B981' }}>· composite {(f.bullish.components as any).composite_score.toFixed(1)} / 10</span>
+                    <span style={{ marginLeft: 8, color: 'var(--mc-bullish)' }}>· composite {(f.bullish.components as any).composite_score.toFixed(1)} / 10</span>
                   )}
                   {(f.bullish.components as any).earnings_anchored && (
-                    <span title={`Anchors: ${((f.bullish.components as any).anchor_evidence || []).join(' · ')}`} style={{ marginLeft: 8, color: '#10B981', fontWeight: 800 }}>· ⚓ EARNINGS-ANCHORED</span>
+                    <span title={`Anchors: ${((f.bullish.components as any).anchor_evidence || []).join(' · ')}`} style={{ marginLeft: 8, color: 'var(--mc-bullish)', fontWeight: 800 }}>· ⚓ EARNINGS-ANCHORED</span>
                   )}
                   {!(f.bullish.components as any).earnings_anchored && (
-                    <span style={{ marginLeft: 8, color: '#F59E0B', fontWeight: 700 }}>· ⚠ no financial anchor (capped at 6)</span>
+                    <span style={{ marginLeft: 8, color: 'var(--mc-warn)', fontWeight: 700 }}>· ⚠ no financial anchor (capped at 6)</span>
                   )}
                 </div>
                 {/* PATCH 0401 — Sector overlay chip + signals */}
                 {f.sector_overlay && f.sector_overlay.sector !== 'UNKNOWN' && (
                   <div style={{ marginBottom: 4, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', fontSize: 9 }}>
-                    <span title={`Sector confidence: ${f.sector_overlay.sector_confidence}/10`} style={{ padding: '1px 6px', borderRadius: 3, background: '#A78BFA20', color: '#A78BFA', fontWeight: 800 }}>
+                    <span title={`Sector confidence: ${f.sector_overlay.sector_confidence}/10`} style={{ padding: '1px 6px', borderRadius: 3, background: '#A78BFA20', color: 'var(--mc-state-persistent)', fontWeight: 800 }}>
                       🏷 {f.sector_overlay.sector.replace('_', ' ')}
                     </span>
                     {f.sector_overlay.overlay_score !== 0 && (
-                      <span title="Sector overlay adjusts base score by +/-3 based on sector-specific signals" style={{ padding: '1px 6px', borderRadius: 3, background: f.sector_overlay.overlay_score > 0 ? '#10B98120' : '#EF444420', color: f.sector_overlay.overlay_score > 0 ? '#10B981' : '#EF4444', fontWeight: 800 }}>
+                      <span title="Sector overlay adjusts base score by +/-3 based on sector-specific signals" style={{ padding: '1px 6px', borderRadius: 3, background: f.sector_overlay.overlay_score > 0 ? '#10B98120' : '#EF444420', color: f.sector_overlay.overlay_score > 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: 800 }}>
                         overlay {f.sector_overlay.overlay_score > 0 ? '+' : ''}{f.sector_overlay.overlay_score.toFixed(1)}
                       </span>
                     )}
                     {f.sector_overlay.positive_signals.slice(0, 3).map((s, j) => (
-                      <span key={j} title="Sector positive signal" style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: '#10B981', fontWeight: 700 }}>✓ {s}</span>
+                      <span key={j} title="Sector positive signal" style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: 'var(--mc-bullish)', fontWeight: 700 }}>✓ {s}</span>
                     ))}
                     {f.sector_overlay.negative_signals.slice(0, 2).map((s, j) => (
-                      <span key={j} title="Sector negative signal" style={{ padding: '1px 5px', borderRadius: 3, background: '#EF444415', color: '#EF4444', fontWeight: 700 }}>✗ {s}</span>
+                      <span key={j} title="Sector negative signal" style={{ padding: '1px 5px', borderRadius: 3, background: '#EF444415', color: 'var(--mc-bearish)', fontWeight: 700 }}>✗ {s}</span>
                     ))}
                   </div>
                 )}
                 {/* PATCH 0397 — 3-LAYER score bars (Quality / Cycle / Sentiment) */}
                 {(f.bullish.components as any).quality_score != null && (
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', fontSize: 9, marginBottom: 4 }}>
-                    <span title="Quality layer: margin stability + cash flow + deleveraging" style={{ padding: '1px 6px', borderRadius: 3, background: '#22D3EE20', color: '#22D3EE', fontWeight: 800 }}>Q {((f.bullish.components as any).quality_score ?? 0).toFixed(1)}/10</span>
-                    <span title="Cycle layer: order book + capacity + demand + new customer + capex" style={{ padding: '1px 6px', borderRadius: 3, background: '#A78BFA20', color: '#A78BFA', fontWeight: 800 }}>C {((f.bullish.components as any).cycle_score ?? 0).toFixed(1)}/10</span>
-                    <span title="Sentiment layer: guidance + management tone + outlook" style={{ padding: '1px 6px', borderRadius: 3, background: '#F59E0B20', color: '#F59E0B', fontWeight: 800 }}>S {((f.bullish.components as any).sentiment_score ?? 0).toFixed(1)}/10</span>
-                    <span style={{ fontSize: 9, color: '#6B7A8D', fontStyle: 'italic', alignSelf: 'center' }}>composite = 0.5×Q + 0.3×C + 0.2×S</span>
+                    <span title="Quality layer: margin stability + cash flow + deleveraging" style={{ padding: '1px 6px', borderRadius: 3, background: '#22D3EE20', color: 'var(--mc-cyan)', fontWeight: 800 }}>Q {((f.bullish.components as any).quality_score ?? 0).toFixed(1)}/10</span>
+                    <span title="Cycle layer: order book + capacity + demand + new customer + capex" style={{ padding: '1px 6px', borderRadius: 3, background: '#A78BFA20', color: 'var(--mc-state-persistent)', fontWeight: 800 }}>C {((f.bullish.components as any).cycle_score ?? 0).toFixed(1)}/10</span>
+                    <span title="Sentiment layer: guidance + management tone + outlook" style={{ padding: '1px 6px', borderRadius: 3, background: '#F59E0B20', color: 'var(--mc-warn)', fontWeight: 800 }}>S {((f.bullish.components as any).sentiment_score ?? 0).toFixed(1)}/10</span>
+                    <span style={{ fontSize: 9, color: 'var(--mc-text-4)', fontStyle: 'italic', alignSelf: 'center' }}>composite = 0.5×Q + 0.3×C + 0.2×S</span>
                   </div>
                 )}
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', fontSize: 9 }}>
-                  <span title="Sum of bullish combo points before penalties" style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: '#10B981', fontWeight: 700 }}>Positive {(f.bullish.components.positive_score ?? f.bullish.raw_score).toFixed(1)}</span>
-                  <span title="Management confidence pillar (Guidance + Demand + Margin + Outlook)" style={{ padding: '1px 5px', borderRadius: 3, background: '#22D3EE15', color: '#22D3EE', fontWeight: 700 }}>Mgmt {f.bullish.components.management_confidence.toFixed(1)}</span>
-                  <span title="Business evidence pillar (Order Book + Capacity + Customer + Capex + etc.)" style={{ padding: '1px 5px', borderRadius: 3, background: '#A78BFA15', color: '#A78BFA', fontWeight: 700 }}>Biz {f.bullish.components.business_evidence.toFixed(1)}</span>
-                  <span title="Total blocker weight (LOW + MEDIUM + FATAL) — deduped per tag" style={{ padding: '1px 5px', borderRadius: 3, background: f.bullish.components.blockers > 0 ? '#EF444415' : '#94A3B815', color: f.bullish.components.blockers > 0 ? '#EF4444' : '#94A3B8', fontWeight: 700 }}>Risk -{f.bullish.components.blockers.toFixed(1)}</span>
-                  {(f.bullish.components.blocker_severity_fatal ?? 0) > 0 && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#EF444430', color: '#EF4444', fontWeight: 800 }}>FATAL -{(f.bullish.components.blocker_severity_fatal ?? 0).toFixed(1)}</span>}
-                  {(f.bullish.components.blocker_severity_medium ?? 0) > 0 && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#F59E0B15', color: '#F59E0B', fontWeight: 700 }}>MED -{(f.bullish.components.blocker_severity_medium ?? 0).toFixed(1)}</span>}
-                  {(f.bullish.components.blocker_severity_low ?? 0) > 0 && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#94A3B815', color: '#94A3B8', fontWeight: 700 }}>LOW -{(f.bullish.components.blocker_severity_low ?? 0).toFixed(1)}</span>}
+                  <span title="Sum of bullish combo points before penalties" style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: 'var(--mc-bullish)', fontWeight: 700 }}>Positive {(f.bullish.components.positive_score ?? f.bullish.raw_score).toFixed(1)}</span>
+                  <span title="Management confidence pillar (Guidance + Demand + Margin + Outlook)" style={{ padding: '1px 5px', borderRadius: 3, background: '#22D3EE15', color: 'var(--mc-cyan)', fontWeight: 700 }}>Mgmt {f.bullish.components.management_confidence.toFixed(1)}</span>
+                  <span title="Business evidence pillar (Order Book + Capacity + Customer + Capex + etc.)" style={{ padding: '1px 5px', borderRadius: 3, background: '#A78BFA15', color: 'var(--mc-state-persistent)', fontWeight: 700 }}>Biz {f.bullish.components.business_evidence.toFixed(1)}</span>
+                  <span title="Total blocker weight (LOW + MEDIUM + FATAL) — deduped per tag" style={{ padding: '1px 5px', borderRadius: 3, background: f.bullish.components.blockers > 0 ? '#EF444415' : '#94A3B815', color: f.bullish.components.blockers > 0 ? 'var(--mc-bearish)' : 'var(--mc-text-3)', fontWeight: 700 }}>Risk -{f.bullish.components.blockers.toFixed(1)}</span>
+                  {(f.bullish.components.blocker_severity_fatal ?? 0) > 0 && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#EF444430', color: 'var(--mc-bearish)', fontWeight: 800 }}>FATAL -{(f.bullish.components.blocker_severity_fatal ?? 0).toFixed(1)}</span>}
+                  {(f.bullish.components.blocker_severity_medium ?? 0) > 0 && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#F59E0B15', color: 'var(--mc-warn)', fontWeight: 700 }}>MED -{(f.bullish.components.blocker_severity_medium ?? 0).toFixed(1)}</span>}
+                  {(f.bullish.components.blocker_severity_low ?? 0) > 0 && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#94A3B815', color: 'var(--mc-text-3)', fontWeight: 700 }}>LOW -{(f.bullish.components.blocker_severity_low ?? 0).toFixed(1)}</span>}
                 </div>
-                <div style={{ fontSize: 9, color: '#6B7A8D', marginTop: 3, fontStyle: 'italic' }}>
+                <div style={{ fontSize: 9, color: 'var(--mc-text-4)', marginTop: 3, fontStyle: 'italic' }}>
                   Formula: positive − (blockers × 0.65) · blockers deduped per tag · ULTRA requires 0 red flags · score capped at 6 without earnings anchor
                 </div>
               </div>
               {/* PATCH 0395 — Traceability footer */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, color: '#6B7A8D', marginTop: 6 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, color: 'var(--mc-text-4)', marginTop: 6 }}>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   <span title="Filing timestamp (ISO)">{new Date(f.filing_datetime).toLocaleString()}</span>
                   {f.pdf_pages != null && <span title="PDF page count">📄 {f.pdf_pages}p</span>}
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
                   {f.attachment_urls.slice(0, 2).map((u, j) => (
-                    <a key={j} href={u} target="_blank" rel="noopener noreferrer" style={{ color: '#22D3EE', textDecoration: 'none' }}>📎 attachment</a>
+                    <a key={j} href={u} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--mc-cyan)', textDecoration: 'none' }}>📎 attachment</a>
                   ))}
-                  <a href={f.source_url} target="_blank" rel="noopener noreferrer" style={{ color: '#22D3EE', textDecoration: 'none' }}>↗ {f.exchange} filing</a>
+                  <a href={f.source_url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--mc-cyan)', textDecoration: 'none' }}>↗ {f.exchange} filing</a>
                 </div>
               </div>
             </div>
@@ -1190,7 +1190,7 @@ function LiveBullishFeed() {
         })}
       </div>
       {filtered.length > 50 && (
-        <div style={{ fontSize: 10, color: '#94A3B8', marginTop: 8, textAlign: 'center' }}>… {filtered.length - 50} more (showing top 50 by score)</div>
+        <div style={{ fontSize: 10, color: 'var(--mc-text-3)', marginTop: 8, textAlign: 'center' }}>… {filtered.length - 50} more (showing top 50 by score)</div>
       )}
     </div>
   );
@@ -1342,14 +1342,14 @@ function WarrantMomentumFeed() {
   }, [days, passingOnly]);
 
   return (
-    <div style={{ backgroundColor: '#0D1623', border: '1px solid #A78BFA40', borderLeft: '4px solid #A78BFA', borderRadius: 10, padding: '14px 18px', marginBottom: 14, marginTop: 14 }}>
+    <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid #A78BFA40', borderLeft: '4px solid var(--mc-state-persistent)', borderRadius: 10, padding: '14px 18px', marginBottom: 14, marginTop: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 900, color: '#A78BFA', letterSpacing: '0.4px' }}>🚀 WARRANT MOMENTUM — promoter warrants + post-breakout + business momentum</div>
-          <div style={{ fontSize: 10, color: '#94A3B8', marginTop: 2 }}>
+          <div style={{ fontSize: 14, fontWeight: 900, color: 'var(--mc-state-persistent)', letterSpacing: '0.4px' }}>🚀 WARRANT MOMENTUM — promoter warrants + post-breakout + business momentum</div>
+          <div style={{ fontSize: 10, color: 'var(--mc-text-3)', marginTop: 2 }}>
             {data ? (
               <>
-                {data.count_total} filings · {data.count_relevant} warrant-related · <strong style={{ color: '#10B981' }}>{data.count_passing} passing gate (≥5.5/10)</strong>
+                {data.count_total} filings · {data.count_relevant} warrant-related · <strong style={{ color: 'var(--mc-bullish)' }}>{data.count_passing} passing gate (≥5.5/10)</strong>
                 {lastRefresh && <> · refreshed {lastRefresh.toLocaleTimeString()}</>}
               </>
             ) : loading ? (slowFetch ? 'Loading… (cache warming, ~30s)' : 'Loading…') : '—'}
@@ -1361,12 +1361,12 @@ function WarrantMomentumFeed() {
             value={tickerSearch}
             onChange={(e) => setTickerSearch(e.target.value.toUpperCase())}
             placeholder="🔍 ticker (STLTECH...)"
-            style={{ fontSize: 11, padding: '4px 8px', borderRadius: 5, border: `1px solid ${tickerSearch ? '#22D3EE' : '#1A2540'}`, background: '#0A1422', color: '#E6EDF3', width: 160, outline: 'none' }}
+            style={{ fontSize: 11, padding: '4px 8px', borderRadius: 5, border: `1px solid ${tickerSearch ? 'var(--mc-cyan)' : 'var(--mc-bg-4)'}`, background: '#0A1422', color: 'var(--mc-text-1)', width: 160, outline: 'none' }}
           />
-          <button onClick={() => setPassingOnly(v => !v)} style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5, border: `1px solid ${passingOnly ? '#10B981' : '#1A2540'}`, background: passingOnly ? '#10B98120' : 'transparent', color: passingOnly ? '#10B981' : '#94A3B8', cursor: 'pointer' }}>
+          <button onClick={() => setPassingOnly(v => !v)} style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5, border: `1px solid ${passingOnly ? 'var(--mc-bullish)' : 'var(--mc-bg-4)'}`, background: passingOnly ? '#10B98120' : 'transparent', color: passingOnly ? 'var(--mc-bullish)' : 'var(--mc-text-3)', cursor: 'pointer' }}>
             ★ High conviction only {passingOnly ? '✓' : ''}
           </button>
-          <select value={days} onChange={(e) => setDays(parseInt(e.target.value))} style={{ fontSize: 11, padding: '4px 8px', borderRadius: 5, border: '1px solid #1A2540', background: '#0A1422', color: '#E6EDF3' }}>
+          <select value={days} onChange={(e) => setDays(parseInt(e.target.value))} style={{ fontSize: 11, padding: '4px 8px', borderRadius: 5, border: '1px solid var(--mc-bg-4)', background: '#0A1422', color: 'var(--mc-text-1)' }}>
             <option value={3}>3 days</option>
             <option value={7}>7 days</option>
             <option value={14}>14 days</option>
@@ -1375,7 +1375,7 @@ function WarrantMomentumFeed() {
             <option value={90}>90 days</option>
             <option value={180}>180 days</option>
           </select>
-          <button onClick={() => fetchFeed(true)} disabled={loading} style={{ fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 5, border: '1px solid #A78BFA', background: '#A78BFA20', color: '#A78BFA', cursor: loading ? 'wait' : 'pointer' }}>
+          <button onClick={() => fetchFeed(true)} disabled={loading} style={{ fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 5, border: '1px solid var(--mc-state-persistent)', background: '#A78BFA20', color: 'var(--mc-state-persistent)', cursor: loading ? 'wait' : 'pointer' }}>
             {loading ? '…' : '↻ Refresh'}
           </button>
         </div>
@@ -1390,32 +1390,32 @@ function WarrantMomentumFeed() {
       {error && (!data || data.count_total === 0) && (
         <div style={{
           fontSize: 12, color: '#FCA5A5', marginBottom: 10,
-          border: '2px solid #EF4444', borderRadius: 6,
+          border: '2px solid var(--mc-bearish)', borderRadius: 6,
           background: 'rgba(239,68,68,0.06)',
           padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
         }}>
           <span style={{ fontSize: 16 }}>⚠</span>
           <span style={{ flex: 1, minWidth: 200 }}>{error}</span>
           {/* PATCH 0693 — explicit Retry button on terminal error */}
-          <button onClick={() => fetchFeed(true)} style={{ fontSize: 11, fontWeight: 800, padding: '5px 12px', borderRadius: 5, border: '1px solid #EF4444', background: '#EF444430', color: '#FCA5A5', cursor: 'pointer' }}>↻ Retry</button>
+          <button onClick={() => fetchFeed(true)} style={{ fontSize: 11, fontWeight: 800, padding: '5px 12px', borderRadius: 5, border: '1px solid var(--mc-bearish)', background: '#EF444430', color: '#FCA5A5', cursor: 'pointer' }}>↻ Retry</button>
         </div>
       )}
       {/* PATCH 0693 — slow-fetch warning during long initial load. */}
       {/* PATCH 0965 BUG #3 — message updated to reflect new 15s ceiling. */}
       {loading && slowFetch && !data && (
-        <div style={{ fontSize: 11, color: '#F59E0B', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ fontSize: 11, color: 'var(--mc-warn)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
           <span>⚠ Warrant feed is slow — cache warming up. Will time out at 15s.</span>
-          <button onClick={() => fetchFeed(true)} style={{ fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 4, border: '1px solid #F59E0B', background: '#F59E0B20', color: '#F59E0B', cursor: 'pointer' }}>↻ Retry now</button>
+          <button onClick={() => fetchFeed(true)} style={{ fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 4, border: '1px solid var(--mc-warn)', background: '#F59E0B20', color: 'var(--mc-warn)', cursor: 'pointer' }}>↻ Retry now</button>
         </div>
       )}
       {error && data && data.count_total > 0 && (
-        <div style={{ fontSize: 10, color: '#F59E0B', marginBottom: 8, fontStyle: 'italic' }}>
+        <div style={{ fontSize: 10, color: 'var(--mc-warn)', marginBottom: 8, fontStyle: 'italic' }}>
           · last refresh slow ({error}); showing previous results
         </div>
       )}
 
       {data && data.filings.length === 0 && !loading && (
-        <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic', padding: '12px 0' }}>
+        <div style={{ fontSize: 11, color: 'var(--mc-text-3)', fontStyle: 'italic', padding: '12px 0' }}>
           {data.count_relevant > 0
             ? `No warrants passing the strict gate in current filter. Total relevant: ${data.count_relevant}. Toggle "High conviction only" off to inspect.`
             : 'No warrant filings detected yet — try widening to 90/180 days or toggling "High conviction only" OFF so partial-conviction names also surface.'}
@@ -1431,7 +1431,7 @@ function WarrantMomentumFeed() {
           onClick={() => setPassingOnly(false)}
           style={{
             fontSize: 11, fontWeight: 700, padding: '6px 12px', borderRadius: 5,
-            border: '1px solid #F59E0B', background: '#F59E0B20', color: '#F59E0B',
+            border: '1px solid var(--mc-warn)', background: '#F59E0B20', color: 'var(--mc-warn)',
             cursor: 'pointer', marginTop: 6,
           }}
         >
@@ -1456,31 +1456,31 @@ function WarrantMomentumFeed() {
         );
         return (
           <div style={{ marginBottom: 12, padding: 12, background: '#0A1422', border: '1px solid #22D3EE60', borderRadius: 8 }}>
-            <div style={{ fontSize: 12, fontWeight: 900, color: '#22D3EE', marginBottom: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 900, color: 'var(--mc-cyan)', marginBottom: 8 }}>
               🔍 COVERAGE PROBE: {q} — {matches.length} filing{matches.length === 1 ? '' : 's'} in last {days} days
             </div>
             {matches.length === 0 ? (
-              <div style={{ fontSize: 10, color: '#94A3B8', fontStyle: 'italic' }}>
+              <div style={{ fontSize: 10, color: 'var(--mc-text-3)', fontStyle: 'italic' }}>
                 Not classified as a warrant filing in this window. Could mean: (a) no warrant filing exists, (b) subject didn&apos;t match warrant patterns (try widening to 180d), (c) filing fell outside the per-sub-window NSE/BSE chunked fetch coverage. Toggle &quot;High conviction only&quot; OFF and widen to 180d for max coverage.
               </div>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 6 }}>
                 {matches.slice(0, 10).map((m: any, i: number) => (
-                  <div key={'probe-' + i} style={{ padding: 8, background: '#0D1623', border: '1px solid #1A2540', borderRadius: 5 }}>
-                    <div style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3' }}>
-                      {m.symbol} <span style={{ fontSize: 9, color: '#94A3B8' }}>{m.warrant_type}</span>
-                      <span style={{ float: 'right', color: m.conviction.passes_gate ? '#10B981' : '#F59E0B', fontWeight: 900 }}>{m.conviction.conviction.toFixed(1)}/10</span>
+                  <div key={'probe-' + i} style={{ padding: 8, background: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 5 }}>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-text-1)' }}>
+                      {m.symbol} <span style={{ fontSize: 9, color: 'var(--mc-text-3)' }}>{m.warrant_type}</span>
+                      <span style={{ float: 'right', color: m.conviction.passes_gate ? 'var(--mc-bullish)' : 'var(--mc-warn)', fontWeight: 900 }}>{m.conviction.conviction.toFixed(1)}/10</span>
                     </div>
-                    <div style={{ fontSize: 9, color: '#94A3B8', marginTop: 2 }}>{m.subject?.slice(0, 110)}{m.subject?.length > 110 ? '…' : ''}</div>
+                    <div style={{ fontSize: 9, color: 'var(--mc-text-3)', marginTop: 2 }}>{m.subject?.slice(0, 110)}{m.subject?.length > 110 ? '…' : ''}</div>
                     {m.conviction.diagnostics && (
-                      <div style={{ fontSize: 9, marginTop: 4, color: '#94A3B8' }}>
+                      <div style={{ fontSize: 9, marginTop: 4, color: 'var(--mc-text-3)' }}>
                         {m.conviction.diagnostics.pdf_extracted ? '✓ PDF' : '✗ PDF NOT EXTRACTED'} ·
                         {m.conviction.diagnostics.promoter_subscribed_found ? ' ✓ Promoter' : ' ✗ Promoter'} ·
                         {m.conviction.diagnostics.issue_price_found ? ' ✓ Price' : ' ✗ Price'} ·
                         {m.conviction.diagnostics.cmp_found ? ' ✓ CMP' : ' ✗ CMP'}
                       </div>
                     )}
-                    <div style={{ fontSize: 9, color: '#6B7A8D', marginTop: 2 }}>{new Date(m.filing_datetime).toLocaleString()}</div>
+                    <div style={{ fontSize: 9, color: 'var(--mc-text-4)', marginTop: 2 }}>{new Date(m.filing_datetime).toLocaleString()}</div>
                   </div>
                 ))}
               </div>
@@ -1518,7 +1518,7 @@ function WarrantMomentumFeed() {
         green.sort(byWeighted); amber.sort(byWeighted); red.sort(byWeighted);
         return (
           <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 10, color: '#94A3B8', marginBottom: 6, fontStyle: 'italic' }}>
+            <div style={{ fontSize: 10, color: 'var(--mc-text-3)', marginBottom: 6, fontStyle: 'italic' }}>
               ⚙ Weighted formula: <strong>0.35×funding_quality + 0.30×balance_sheet + 0.25×business_trajectory − 0.10×dilution_penalty</strong>
               {' · '}Buckets are hard-filter rules, not soft rankings.
             </div>
@@ -1527,14 +1527,14 @@ function WarrantMomentumFeed() {
               { label: '🟡 NEUTRAL RESTRUCTURING',      color: '#F59E0B', list: amber, note: 'Partial signals — balance-sheet repair / unclear capital use / mixed' },
               { label: '🔴 DISTRESS / SURVIVAL',         color: '#EF4444', list: red,   note: 'Distress ≥55% OR weighted ≤3 OR heavy dilution + non-strategic use' },
             ] as Array<{ label: string; color: string; list: any[]; note: string }>).map((b, bi) => b.list.length === 0 ? (
-              <div key={'bk-' + bi} style={{ marginBottom: 8, padding: 8, background: `${b.color}08`, border: `1px dashed ${b.color}30`, borderRadius: 6, fontSize: 10, color: '#94A3B8' }}>
+              <div key={'bk-' + bi} style={{ marginBottom: 8, padding: 8, background: `${b.color}08`, border: `1px dashed ${b.color}30`, borderRadius: 6, fontSize: 10, color: 'var(--mc-text-3)' }}>
                 <strong style={{ color: b.color }}>{b.label}</strong> — none in this window. <span style={{ fontStyle: 'italic' }}>{b.note}</span>
               </div>
             ) : (
               <div key={'bk-' + bi} style={{ marginBottom: 10, padding: 10, background: `${b.color}10`, border: `1px solid ${b.color}50`, borderRadius: 8 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
                   <div style={{ fontSize: 11, fontWeight: 900, color: b.color, letterSpacing: '0.5px' }}>{b.label} · {b.list.length}</div>
-                  <div style={{ fontSize: 9, color: '#94A3B8', fontStyle: 'italic' }}>{b.note}</div>
+                  <div style={{ fontSize: 9, color: 'var(--mc-text-3)', fontStyle: 'italic' }}>{b.note}</div>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(290px, 1fr))', gap: 6 }}>
                   {b.list.map((r: any, i: number) => {
@@ -1543,32 +1543,32 @@ function WarrantMomentumFeed() {
                       <div key={'bk-card-' + bi + '-' + i} style={{ padding: 8, background: '#0A1422', border: `1px solid ${b.color}40`, borderRadius: 6 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 3 }}>
                           <div>
-                            <span style={{ fontSize: 12, fontWeight: 900, color: '#E6EDF3' }}>{r.symbol || r.company_name}</span>
+                            <span style={{ fontSize: 12, fontWeight: 900, color: 'var(--mc-text-1)' }}>{r.symbol || r.company_name}</span>
                             {r.group_aliases && r.group_aliases.length > 0 && (
-                              <span title={`Related group entities: ${r.group_aliases.join(', ')}`} style={{ fontSize: 8, marginLeft: 6, color: '#A78BFA', fontWeight: 700 }}>+{r.group_aliases.length} grp</span>
+                              <span title={`Related group entities: ${r.group_aliases.join(', ')}`} style={{ fontSize: 8, marginLeft: 6, color: 'var(--mc-state-persistent)', fontWeight: 700 }}>+{r.group_aliases.length} grp</span>
                             )}
                           </div>
                           <span title={`Weighted = 0.35×F + 0.30×BS + 0.25×BT − 0.10×D`} style={{ fontSize: 14, fontWeight: 900, color: b.color }}>{(w.final ?? 0).toFixed(1)}</span>
                         </div>
-                        <div style={{ fontSize: 9, color: '#94A3B8', marginBottom: 4 }}>{r.company_name}</div>
+                        <div style={{ fontSize: 9, color: 'var(--mc-text-3)', marginBottom: 4 }}>{r.company_name}</div>
                         <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', fontSize: 8, marginBottom: 3 }}>
-                          <span title="Funding quality (promoter intent + capital use + premium)" style={{ padding: '1px 4px', borderRadius: 3, background: '#10B98115', color: '#10B981' }}>F {(w.funding_quality ?? 0).toFixed(1)}</span>
-                          <span title="Balance sheet (inverse of distress)" style={{ padding: '1px 4px', borderRadius: 3, background: '#22D3EE15', color: '#22D3EE' }}>BS {(w.balance_sheet ?? 0).toFixed(1)}</span>
-                          <span title="Business trajectory (concall + 90d + 52w-high)" style={{ padding: '1px 4px', borderRadius: 3, background: '#A78BFA15', color: '#A78BFA' }}>BT {(w.business_trajectory ?? 0).toFixed(1)}</span>
-                          <span title="Dilution penalty (scaled from dilution %)" style={{ padding: '1px 4px', borderRadius: 3, background: '#EF444415', color: '#EF4444' }}>−D {(w.dilution_penalty ?? 0).toFixed(1)}</span>
+                          <span title="Funding quality (promoter intent + capital use + premium)" style={{ padding: '1px 4px', borderRadius: 3, background: '#10B98115', color: 'var(--mc-bullish)' }}>F {(w.funding_quality ?? 0).toFixed(1)}</span>
+                          <span title="Balance sheet (inverse of distress)" style={{ padding: '1px 4px', borderRadius: 3, background: '#22D3EE15', color: 'var(--mc-cyan)' }}>BS {(w.balance_sheet ?? 0).toFixed(1)}</span>
+                          <span title="Business trajectory (concall + 90d + 52w-high)" style={{ padding: '1px 4px', borderRadius: 3, background: '#A78BFA15', color: 'var(--mc-state-persistent)' }}>BT {(w.business_trajectory ?? 0).toFixed(1)}</span>
+                          <span title="Dilution penalty (scaled from dilution %)" style={{ padding: '1px 4px', borderRadius: 3, background: '#EF444415', color: 'var(--mc-bearish)' }}>−D {(w.dilution_penalty ?? 0).toFixed(1)}</span>
                         </div>
                         <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', fontSize: 8 }}>
                           {r.conviction.capital_use && r.conviction.capital_use !== 'UNKNOWN' && (
-                            <span style={{ padding: '1px 4px', borderRadius: 3, background: '#1A2540', color: '#C9D4E0' }}>{r.conviction.capital_use.replace(/_/g, ' ')}</span>
+                            <span style={{ padding: '1px 4px', borderRadius: 3, background: 'var(--mc-bg-4)', color: '#C9D4E0' }}>{r.conviction.capital_use.replace(/_/g, ' ')}</span>
                           )}
                           {r.conviction.promoter_intent && r.conviction.promoter_intent !== 'UNKNOWN' && (
-                            <span style={{ padding: '1px 4px', borderRadius: 3, background: '#1A2540', color: '#C9D4E0' }}>{r.conviction.promoter_intent.replace(/_/g, ' ')}</span>
+                            <span style={{ padding: '1px 4px', borderRadius: 3, background: 'var(--mc-bg-4)', color: '#C9D4E0' }}>{r.conviction.promoter_intent.replace(/_/g, ' ')}</span>
                           )}
                           {r.conviction.dilution_pct != null && (
-                            <span style={{ padding: '1px 4px', borderRadius: 3, background: r.conviction.dilution_pct >= 15 ? '#EF444425' : '#1A2540', color: r.conviction.dilution_pct >= 15 ? '#EF4444' : '#94A3B8' }}>Dil {r.conviction.dilution_pct.toFixed(1)}%</span>
+                            <span style={{ padding: '1px 4px', borderRadius: 3, background: r.conviction.dilution_pct >= 15 ? '#EF444425' : 'var(--mc-bg-4)', color: r.conviction.dilution_pct >= 15 ? 'var(--mc-bearish)' : 'var(--mc-text-3)' }}>Dil {r.conviction.dilution_pct.toFixed(1)}%</span>
                           )}
                           {r.details.total_size_cr != null && (
-                            <span style={{ padding: '1px 4px', borderRadius: 3, background: '#1A2540', color: '#C9D4E0' }}>₹{r.details.total_size_cr.toFixed(0)}Cr</span>
+                            <span style={{ padding: '1px 4px', borderRadius: 3, background: 'var(--mc-bg-4)', color: '#C9D4E0' }}>₹{r.details.total_size_cr.toFixed(0)}Cr</span>
                           )}
                         </div>
                       </div>
@@ -1604,10 +1604,10 @@ function WarrantMomentumFeed() {
           <div style={{ marginBottom: 12, padding: 12, background: `linear-gradient(135deg, ${headerColor}10, #22D3EE10)`, border: `1px solid ${headerColor}50`, borderRadius: 10 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
               <div style={{ fontSize: 12, fontWeight: 900, color: headerColor, letterSpacing: '0.5px' }}>{headerLabel}</div>
-              <div style={{ fontSize: 10, color: '#94A3B8', fontWeight: 600 }}>· window: last {days} day{days === 1 ? '' : 's'}</div>
+              <div style={{ fontSize: 10, color: 'var(--mc-text-3)', fontWeight: 600 }}>· window: last {days} day{days === 1 ? '' : 's'}</div>
             </div>
             {!isActionable && (
-              <div style={{ fontSize: 10, color: '#94A3B8', fontStyle: 'italic', marginBottom: 8, padding: '6px 8px', background: '#0A0E1A', border: '1px solid #1A2540', borderRadius: 4 }}>
+              <div style={{ fontSize: 10, color: 'var(--mc-text-3)', fontStyle: 'italic', marginBottom: 8, padding: '6px 8px', background: 'var(--mc-bg-0)', border: '1px solid var(--mc-bg-4)', borderRadius: 4 }}>
                 Treat below as an <strong>event scanner</strong>, not alpha signal. Scores 4-6 mean a warrant exists with partial conviction markers — NOT that the stock is a buy. Use Tier-1/2/3 classification + Distress P% on each card for real assessment.
               </div>
             )}
@@ -1620,12 +1620,12 @@ function WarrantMomentumFeed() {
                   <div key={r.symbol + '-warr-rank-' + i} style={{ padding: 10, background: '#0A1422', border: `1px solid ${color}50`, borderRadius: 8 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
                       <div>
-                        <span style={{ fontSize: 9, color: '#A78BFA', fontWeight: 900, marginRight: 6 }}>#{i + 1}</span>
-                        <span style={{ fontSize: 13, fontWeight: 900, color: '#E6EDF3' }}>{r.symbol || r.company_name}</span>
+                        <span style={{ fontSize: 9, color: 'var(--mc-state-persistent)', fontWeight: 900, marginRight: 6 }}>#{i + 1}</span>
+                        <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-text-1)' }}>{r.symbol || r.company_name}</span>
                       </div>
                       <span title={`Conviction = ${cv.toFixed(1)} / 10`} style={{ fontSize: 16, fontWeight: 900, color }}>{cv.toFixed(1)}</span>
                     </div>
-                    <div style={{ fontSize: 10, color: '#94A3B8', marginBottom: 4 }}>{r.company_name}</div>
+                    <div style={{ fontSize: 10, color: 'var(--mc-text-3)', marginBottom: 4 }}>{r.company_name}</div>
                     <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', fontSize: 9 }}>
                       {/* PATCH 0427 — Tier chip on every Top 10 card */}
                       {r.conviction.tier && (() => {
@@ -1634,12 +1634,12 @@ function WarrantMomentumFeed() {
                         return <span title={r.conviction.tier_rationale || ''} style={{ padding: '1px 5px', borderRadius: 3, background: `${tColor}25`, color: tColor, fontWeight: 900 }}>{tLbl}</span>;
                       })()}
                       <span style={{ padding: '1px 5px', borderRadius: 3, background: `${color}20`, color, fontWeight: 800 }}>{r.warrant_type.replace(/_/g, ' ')}</span>
-                      {r.conviction.passes_gate && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98125', color: '#10B981', fontWeight: 800 }}>★ GATE</span>}
-                      {prem != null && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#1A2540', color: prem >= 0 ? '#10B981' : prem >= -10 ? '#F59E0B' : '#EF4444' }}>{prem >= 0 ? '+' : ''}{prem.toFixed(1)}% vs CMP</span>}
-                      {r.details.total_size_cr != null && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#1A2540', color: '#C9D4E0' }}>₹{r.details.total_size_cr.toFixed(0)}Cr</span>}
-                      {r.details.promoter_participation_pct != null && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: '#10B981' }}>Promo {r.details.promoter_participation_pct.toFixed(0)}%</span>}
+                      {r.conviction.passes_gate && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98125', color: 'var(--mc-bullish)', fontWeight: 800 }}>★ GATE</span>}
+                      {prem != null && <span style={{ padding: '1px 5px', borderRadius: 3, background: 'var(--mc-bg-4)', color: prem >= 0 ? 'var(--mc-bullish)' : prem >= -10 ? 'var(--mc-warn)' : 'var(--mc-bearish)' }}>{prem >= 0 ? '+' : ''}{prem.toFixed(1)}% vs CMP</span>}
+                      {r.details.total_size_cr != null && <span style={{ padding: '1px 5px', borderRadius: 3, background: 'var(--mc-bg-4)', color: '#C9D4E0' }}>₹{r.details.total_size_cr.toFixed(0)}Cr</span>}
+                      {r.details.promoter_participation_pct != null && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: 'var(--mc-bullish)' }}>Promo {r.details.promoter_participation_pct.toFixed(0)}%</span>}
                       {r.conviction.distress_probability != null && r.conviction.distress_probability >= 0.3 && (
-                        <span title="Distress probability" style={{ padding: '1px 5px', borderRadius: 3, background: '#EF444415', color: '#EF4444', fontWeight: 700 }}>
+                        <span title="Distress probability" style={{ padding: '1px 5px', borderRadius: 3, background: '#EF444415', color: 'var(--mc-bearish)', fontWeight: 700 }}>
                           Distress {(r.conviction.distress_probability * 100).toFixed(0)}%
                         </span>
                       )}
@@ -1658,18 +1658,18 @@ function WarrantMomentumFeed() {
           const premium = f.conviction.premium_pct;
           const premiumColor = premium == null ? '#94A3B8' : premium >= 0 ? '#10B981' : premium >= -10 ? '#F59E0B' : '#EF4444';
           return (
-            <div key={f.symbol + '-' + i} style={{ padding: '10px 12px', background: '#0A1422', border: `1px solid ${f.conviction.passes_gate ? '#10B98140' : '#1A2540'}`, borderLeft: `3px solid ${cvColor}`, borderRadius: 6 }}>
+            <div key={f.symbol + '-' + i} style={{ padding: '10px 12px', background: '#0A1422', border: `1px solid ${f.conviction.passes_gate ? '#10B98140' : 'var(--mc-bg-4)'}`, borderLeft: `3px solid ${cvColor}`, borderRadius: 6 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, marginBottom: 4 }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 13, fontWeight: 900, color: '#E6EDF3' }}>{f.symbol || f.company_name}</span>
-                  {f.symbol && <span style={{ fontSize: 11, color: '#94A3B8' }}>{f.company_name}</span>}
-                  <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#1A2540', color: '#94A3B8', fontWeight: 700 }}>{f.exchange}</span>
+                  <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-text-1)' }}>{f.symbol || f.company_name}</span>
+                  {f.symbol && <span style={{ fontSize: 11, color: 'var(--mc-text-3)' }}>{f.company_name}</span>}
+                  <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'var(--mc-bg-4)', color: 'var(--mc-text-3)', fontWeight: 700 }}>{f.exchange}</span>
                   <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: `${cvColor}20`, color: cvColor, fontWeight: 700 }}>{f.warrant_type.replace(/_/g, ' ')}</span>
-                  {f.conviction.passes_gate && <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#10B98125', color: '#10B981', fontWeight: 800, border: '1px solid #10B981' }}>★ PASSES GATE</span>}
+                  {f.conviction.passes_gate && <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#10B98125', color: 'var(--mc-bullish)', fontWeight: 800, border: '1px solid var(--mc-bullish)' }}>★ PASSES GATE</span>}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                   <span style={{ fontSize: 16, fontWeight: 900, color: cvColor }}>{f.conviction.conviction.toFixed(1)}</span>
-                  <span style={{ fontSize: 10, color: '#94A3B8' }}>/10</span>
+                  <span style={{ fontSize: 10, color: 'var(--mc-text-3)' }}>/10</span>
                 </div>
               </div>
 
@@ -1697,7 +1697,7 @@ function WarrantMomentumFeed() {
                   <div style={{ marginBottom: 6, padding: '6px 8px', background: `${tierColor}10`, border: `1px solid ${tierColor}50`, borderRadius: 4 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 3 }}>
                       <span style={{ fontSize: 10, fontWeight: 900, color: tierColor, letterSpacing: '0.4px' }}>{tierLabel}</span>
-                      <span title="0 = clean institutional, 1.0 = clear distress" style={{ fontSize: 9, color: distress >= 0.5 ? '#EF4444' : distress >= 0.3 ? '#F59E0B' : '#10B981', fontWeight: 700 }}>
+                      <span title="0 = clean institutional, 1.0 = clear distress" style={{ fontSize: 9, color: distress >= 0.5 ? 'var(--mc-bearish)' : distress >= 0.3 ? 'var(--mc-warn)' : 'var(--mc-bullish)', fontWeight: 700 }}>
                         Distress P = {(distress * 100).toFixed(0)}%
                       </span>
                     </div>
@@ -1709,7 +1709,7 @@ function WarrantMomentumFeed() {
                         👥 Promoter: {intent?.replace(/_/g, ' ') || 'UNKNOWN'}
                       </span>
                     </div>
-                    <div style={{ fontSize: 9, color: '#94A3B8', fontStyle: 'italic' }}>{(f.conviction as any).tier_rationale}</div>
+                    <div style={{ fontSize: 9, color: 'var(--mc-text-3)', fontStyle: 'italic' }}>{(f.conviction as any).tier_rationale}</div>
                   </div>
                 );
               })()}
@@ -1717,35 +1717,35 @@ function WarrantMomentumFeed() {
               {/* Key facts */}
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 6, fontSize: 10 }}>
                 {f.details.issue_price != null && (
-                  <div><span style={{ color: '#94A3B8' }}>Issue:</span> <strong style={{ color: '#E6EDF3' }}>₹{f.details.issue_price.toFixed(0)}</strong></div>
+                  <div><span style={{ color: 'var(--mc-text-3)' }}>Issue:</span> <strong style={{ color: 'var(--mc-text-1)' }}>₹{f.details.issue_price.toFixed(0)}</strong></div>
                 )}
                 {f.price.cmp != null && (
-                  <div><span style={{ color: '#94A3B8' }}>CMP:</span> <strong style={{ color: '#E6EDF3' }}>₹{f.price.cmp.toFixed(0)}</strong></div>
+                  <div><span style={{ color: 'var(--mc-text-3)' }}>CMP:</span> <strong style={{ color: 'var(--mc-text-1)' }}>₹{f.price.cmp.toFixed(0)}</strong></div>
                 )}
                 {premium != null && (
-                  <div><span style={{ color: '#94A3B8' }}>vs CMP:</span> <strong style={{ color: premiumColor }}>{premium >= 0 ? '+' : ''}{premium.toFixed(1)}%</strong></div>
+                  <div><span style={{ color: 'var(--mc-text-3)' }}>vs CMP:</span> <strong style={{ color: premiumColor }}>{premium >= 0 ? '+' : ''}{premium.toFixed(1)}%</strong></div>
                 )}
                 {f.details.total_size_cr != null && (
-                  <div><span style={{ color: '#94A3B8' }}>Size:</span> <strong style={{ color: '#E6EDF3' }}>₹{f.details.total_size_cr.toFixed(0)}Cr</strong></div>
+                  <div><span style={{ color: 'var(--mc-text-3)' }}>Size:</span> <strong style={{ color: 'var(--mc-text-1)' }}>₹{f.details.total_size_cr.toFixed(0)}Cr</strong></div>
                 )}
                 {f.details.promoter_participation_pct != null && (
-                  <div><span style={{ color: '#94A3B8' }}>Promoter:</span> <strong style={{ color: '#10B981' }}>{f.details.promoter_participation_pct.toFixed(0)}%</strong></div>
+                  <div><span style={{ color: 'var(--mc-text-3)' }}>Promoter:</span> <strong style={{ color: 'var(--mc-bullish)' }}>{f.details.promoter_participation_pct.toFixed(0)}%</strong></div>
                 )}
                 {f.price.perf_52w_high_pct != null && (
-                  <div><span style={{ color: '#94A3B8' }}>vs 52wH:</span> <strong style={{ color: f.price.perf_52w_high_pct >= -5 ? '#10B981' : '#94A3B8' }}>{f.price.perf_52w_high_pct.toFixed(1)}%</strong></div>
+                  <div><span style={{ color: 'var(--mc-text-3)' }}>vs 52wH:</span> <strong style={{ color: f.price.perf_52w_high_pct >= -5 ? 'var(--mc-bullish)' : 'var(--mc-text-3)' }}>{f.price.perf_52w_high_pct.toFixed(1)}%</strong></div>
                 )}
                 {f.price.perf_90d_pct != null && (
-                  <div><span style={{ color: '#94A3B8' }}>90d:</span> <strong style={{ color: f.price.perf_90d_pct >= 20 ? '#10B981' : f.price.perf_90d_pct >= 0 ? '#22D3EE' : '#EF4444' }}>{f.price.perf_90d_pct >= 0 ? '+' : ''}{f.price.perf_90d_pct.toFixed(0)}%</strong></div>
+                  <div><span style={{ color: 'var(--mc-text-3)' }}>90d:</span> <strong style={{ color: f.price.perf_90d_pct >= 20 ? 'var(--mc-bullish)' : f.price.perf_90d_pct >= 0 ? 'var(--mc-cyan)' : 'var(--mc-bearish)' }}>{f.price.perf_90d_pct >= 0 ? '+' : ''}{f.price.perf_90d_pct.toFixed(0)}%</strong></div>
                 )}
                 {f.business_momentum_score != null && (
-                  <div><span style={{ color: '#94A3B8' }}>Momentum:</span> <strong style={{ color: f.business_momentum_score >= 6 ? '#10B981' : '#94A3B8' }}>{f.business_momentum_score.toFixed(1)}/10</strong></div>
+                  <div><span style={{ color: 'var(--mc-text-3)' }}>Momentum:</span> <strong style={{ color: f.business_momentum_score >= 6 ? 'var(--mc-bullish)' : 'var(--mc-text-3)' }}>{f.business_momentum_score.toFixed(1)}/10</strong></div>
                 )}
               </div>
 
               {/* Signals + risks */}
               {f.conviction.signals.length > 0 && (
                 <div style={{ marginBottom: 4 }}>
-                  <span style={{ fontSize: 10, color: '#10B981', fontWeight: 700, marginRight: 4 }}>WHY:</span>
+                  <span style={{ fontSize: 10, color: 'var(--mc-bullish)', fontWeight: 700, marginRight: 4 }}>WHY:</span>
                   {f.conviction.signals.slice(0, 5).map((s, j) => (
                     <span key={j} style={{ fontSize: 10, color: '#C9D4E0', marginRight: 8 }}>› {s}</span>
                   ))}
@@ -1753,7 +1753,7 @@ function WarrantMomentumFeed() {
               )}
               {f.conviction.red_flags.length > 0 && (
                 <div style={{ marginBottom: 4 }}>
-                  <span style={{ fontSize: 10, color: '#EF4444', fontWeight: 700, marginRight: 4 }}>RISKS:</span>
+                  <span style={{ fontSize: 10, color: 'var(--mc-bearish)', fontWeight: 700, marginRight: 4 }}>RISKS:</span>
                   {f.conviction.red_flags.slice(0, 3).map((s, j) => (
                     <span key={j} style={{ fontSize: 10, color: '#C9D4E0', marginRight: 8 }}>› {s}</span>
                   ))}
@@ -1762,31 +1762,31 @@ function WarrantMomentumFeed() {
 
               {/* Historical memory */}
               {f.conviction.history_summary && (
-                <div style={{ marginTop: 4, fontSize: 10, color: '#A78BFA', fontStyle: 'italic' }}>
+                <div style={{ marginTop: 4, fontSize: 10, color: 'var(--mc-state-persistent)', fontStyle: 'italic' }}>
                   📜 {f.conviction.history_summary}
                 </div>
               )}
 
               {/* PATCH 0395 — Warrant scoring transparency: full component breakdown */}
-              <div style={{ marginTop: 6, padding: '6px 8px', background: '#13131a', border: '1px solid #1A2540', borderRadius: 4 }}>
-                <div style={{ fontSize: 9, color: '#94A3B8', fontWeight: 700, marginBottom: 3, letterSpacing: '0.4px' }}>SCORE DECOMPOSITION (raw {f.conviction.raw_score.toFixed(1)} / 10)</div>
+              <div style={{ marginTop: 6, padding: '6px 8px', background: '#13131a', border: '1px solid var(--mc-bg-4)', borderRadius: 4 }}>
+                <div style={{ fontSize: 9, color: 'var(--mc-text-3)', fontWeight: 700, marginBottom: 3, letterSpacing: '0.4px' }}>SCORE DECOMPOSITION (raw {f.conviction.raw_score.toFixed(1)} / 10)</div>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', fontSize: 9 }}>
-                  <span title="Promoter / promoter-group participation (0-3, MANDATORY)" style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: '#10B981', fontWeight: 700 }}>Promoter {f.conviction.components.promoter_participation.toFixed(1)}/3</span>
-                  <span title="Issue price vs CMP. Premium = good (+3), -10% OK (+1), deeper discount = bad" style={{ padding: '1px 5px', borderRadius: 3, background: '#22D3EE15', color: '#22D3EE', fontWeight: 700 }}>Pricing {f.conviction.components.pricing_premium >= 0 ? '+' : ''}{f.conviction.components.pricing_premium.toFixed(1)}</span>
-                  <span title="Near 52w high or strong 90d perf = +2; weak structure = -" style={{ padding: '1px 5px', borderRadius: 3, background: '#A78BFA15', color: '#A78BFA', fontWeight: 700 }}>Breakout {f.conviction.components.breakout_relative_strength.toFixed(1)}/2</span>
-                  <span title="Concall bullish score: ≥6 = +2; 4-6 = +1; <2 = negative" style={{ padding: '1px 5px', borderRadius: 3, background: '#F59E0B15', color: '#F59E0B', fontWeight: 700 }}>Momentum {f.conviction.components.business_momentum.toFixed(1)}/2</span>
-                  {f.conviction.components.history_boost > 0 && <span title="Prior warrants rallied ≥25% = boost" style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: '#10B981', fontWeight: 700 }}>History +{f.conviction.components.history_boost.toFixed(1)}</span>}
-                  {f.conviction.components.governance_penalty < 0 && <span title="Microcap / pledge / dilution pattern penalty" style={{ padding: '1px 5px', borderRadius: 3, background: '#EF444415', color: '#EF4444', fontWeight: 700 }}>Govern {f.conviction.components.governance_penalty.toFixed(1)}</span>}
+                  <span title="Promoter / promoter-group participation (0-3, MANDATORY)" style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: 'var(--mc-bullish)', fontWeight: 700 }}>Promoter {f.conviction.components.promoter_participation.toFixed(1)}/3</span>
+                  <span title="Issue price vs CMP. Premium = good (+3), -10% OK (+1), deeper discount = bad" style={{ padding: '1px 5px', borderRadius: 3, background: '#22D3EE15', color: 'var(--mc-cyan)', fontWeight: 700 }}>Pricing {f.conviction.components.pricing_premium >= 0 ? '+' : ''}{f.conviction.components.pricing_premium.toFixed(1)}</span>
+                  <span title="Near 52w high or strong 90d perf = +2; weak structure = -" style={{ padding: '1px 5px', borderRadius: 3, background: '#A78BFA15', color: 'var(--mc-state-persistent)', fontWeight: 700 }}>Breakout {f.conviction.components.breakout_relative_strength.toFixed(1)}/2</span>
+                  <span title="Concall bullish score: ≥6 = +2; 4-6 = +1; <2 = negative" style={{ padding: '1px 5px', borderRadius: 3, background: '#F59E0B15', color: 'var(--mc-warn)', fontWeight: 700 }}>Momentum {f.conviction.components.business_momentum.toFixed(1)}/2</span>
+                  {f.conviction.components.history_boost > 0 && <span title="Prior warrants rallied ≥25% = boost" style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: 'var(--mc-bullish)', fontWeight: 700 }}>History +{f.conviction.components.history_boost.toFixed(1)}</span>}
+                  {f.conviction.components.governance_penalty < 0 && <span title="Microcap / pledge / dilution pattern penalty" style={{ padding: '1px 5px', borderRadius: 3, background: '#EF444415', color: 'var(--mc-bearish)', fontWeight: 700 }}>Govern {f.conviction.components.governance_penalty.toFixed(1)}</span>}
                 </div>
-                <div style={{ fontSize: 9, color: '#6B7A8D', marginTop: 3, fontStyle: 'italic' }}>
+                <div style={{ fontSize: 9, color: 'var(--mc-text-4)', marginTop: 3, fontStyle: 'italic' }}>
                   Gate (≥ 8/10): A) promoter present · B) pricing ≥ -10% · C) no critical governance · D) breakout OR momentum present
                 </div>
                 {/* PATCH 0423 — extraction diagnostics. Shows user EXACTLY why a
                     warrant scored low: which fields were missing from the PDF
                     body, and which conviction gates failed. No black box. */}
                 {(f.conviction as any).diagnostics && (
-                  <div style={{ marginTop: 6, padding: '6px 8px', background: '#0A0E1A', border: '1px solid #1A2540', borderRadius: 4 }}>
-                    <div style={{ fontSize: 9, fontWeight: 800, color: '#94A3B8', letterSpacing: '0.4px', marginBottom: 3 }}>🔍 EXTRACTION DIAGNOSTICS</div>
+                  <div style={{ marginTop: 6, padding: '6px 8px', background: 'var(--mc-bg-0)', border: '1px solid var(--mc-bg-4)', borderRadius: 4 }}>
+                    <div style={{ fontSize: 9, fontWeight: 800, color: 'var(--mc-text-3)', letterSpacing: '0.4px', marginBottom: 3 }}>🔍 EXTRACTION DIAGNOSTICS</div>
                     <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 4 }}>
                       {[
                         { lbl: 'PDF', ok: (f.conviction as any).diagnostics.pdf_extracted },
@@ -1796,18 +1796,18 @@ function WarrantMomentumFeed() {
                         { lbl: 'CMP', ok: (f.conviction as any).diagnostics.cmp_found },
                         { lbl: 'Momentum', ok: (f.conviction as any).diagnostics.momentum_found },
                       ].map((d, j) => (
-                        <span key={j} style={{ fontSize: 8, padding: '1px 5px', borderRadius: 3, background: d.ok ? '#10B98115' : '#EF444415', color: d.ok ? '#10B981' : '#EF4444', fontWeight: 700 }}>
+                        <span key={j} style={{ fontSize: 8, padding: '1px 5px', borderRadius: 3, background: d.ok ? '#10B98115' : '#EF444415', color: d.ok ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: 700 }}>
                           {d.ok ? '✓' : '✗'} {d.lbl}
                         </span>
                       ))}
                     </div>
                     {(f.conviction as any).diagnostics.gate_failures.length > 0 && (
-                      <div style={{ fontSize: 9, color: '#F59E0B' }}>
+                      <div style={{ fontSize: 9, color: 'var(--mc-warn)' }}>
                         <span style={{ fontWeight: 800 }}>FAILED GATES:</span> {(f.conviction as any).diagnostics.gate_failures.join(' · ')}
                       </div>
                     )}
                     {(f.conviction as any).diagnostics.missing_fields.length > 0 && (
-                      <div style={{ fontSize: 9, color: '#94A3B8', fontStyle: 'italic', marginTop: 2 }}>
+                      <div style={{ fontSize: 9, color: 'var(--mc-text-3)', fontStyle: 'italic', marginTop: 2 }}>
                         missing: {(f.conviction as any).diagnostics.missing_fields.join(' · ')}
                       </div>
                     )}
@@ -1815,13 +1815,13 @@ function WarrantMomentumFeed() {
                 )}
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, color: '#6B7A8D', marginTop: 6 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, color: 'var(--mc-text-4)', marginTop: 6 }}>
                 <span>{new Date(f.filing_datetime).toLocaleString()}</span>
                 <div style={{ display: 'flex', gap: 8 }}>
                   {f.attachment_urls.slice(0, 2).map((u, j) => (
-                    <a key={j} href={u} target="_blank" rel="noopener noreferrer" style={{ color: '#22D3EE', textDecoration: 'none' }}>📎 attachment</a>
+                    <a key={j} href={u} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--mc-cyan)', textDecoration: 'none' }}>📎 attachment</a>
                   ))}
-                  <a href={f.source_url} target="_blank" rel="noopener noreferrer" style={{ color: '#22D3EE', textDecoration: 'none' }}>↗ {f.exchange} filing</a>
+                  <a href={f.source_url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--mc-cyan)', textDecoration: 'none' }}>↗ {f.exchange} filing</a>
                 </div>
               </div>
             </div>
@@ -1950,29 +1950,29 @@ function KeywordWatchFeed() {
   }, [catalog]);
 
   return (
-    <div style={{ backgroundColor: '#0D1623', border: '1px solid #22D3EE40', borderLeft: '4px solid #22D3EE', borderRadius: 10, padding: '14px 18px', marginBottom: 14, marginTop: 14 }}>
+    <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid #22D3EE40', borderLeft: '4px solid var(--mc-cyan)', borderRadius: 10, padding: '14px 18px', marginBottom: 14, marginTop: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 900, color: '#22D3EE', letterSpacing: '0.4px' }}>🔎 KEYWORD WATCH — scan every concall for theme / risk / regulatory phrases</div>
-          <div style={{ fontSize: 10, color: '#94A3B8', marginTop: 2 }}>
+          <div style={{ fontSize: 14, fontWeight: 900, color: 'var(--mc-cyan)', letterSpacing: '0.4px' }}>🔎 KEYWORD WATCH — scan every concall for theme / risk / regulatory phrases</div>
+          <div style={{ fontSize: 10, color: 'var(--mc-text-3)', marginTop: 2 }}>
             {data ? (
               <>
-                {data.count_relevant} concall-relevant · <strong style={{ color: '#22D3EE' }}>{data.count_matched} matched</strong> · {data.totals.total_hits} total hits ·
-                {' '}<span style={{ color: '#EF4444' }}>{data.totals.by_group.RISK || 0} RISK</span> ·
-                {' '}<span style={{ color: '#10B981' }}>{data.totals.by_group.OPPORTUNITY || 0} OPP</span> ·
-                {' '}<span style={{ color: '#A78BFA' }}>{data.totals.by_group.THEME || 0} THEME</span> ·
-                {' '}<span style={{ color: '#F59E0B' }}>{data.totals.by_group.REGULATORY || 0} REG</span> ·
-                {' '}<span style={{ color: '#22D3EE' }}>{data.totals.by_group.SECTOR || 0} SECTOR</span>
+                {data.count_relevant} concall-relevant · <strong style={{ color: 'var(--mc-cyan)' }}>{data.count_matched} matched</strong> · {data.totals.total_hits} total hits ·
+                {' '}<span style={{ color: 'var(--mc-bearish)' }}>{data.totals.by_group.RISK || 0} RISK</span> ·
+                {' '}<span style={{ color: 'var(--mc-bullish)' }}>{data.totals.by_group.OPPORTUNITY || 0} OPP</span> ·
+                {' '}<span style={{ color: 'var(--mc-state-persistent)' }}>{data.totals.by_group.THEME || 0} THEME</span> ·
+                {' '}<span style={{ color: 'var(--mc-warn)' }}>{data.totals.by_group.REGULATORY || 0} REG</span> ·
+                {' '}<span style={{ color: 'var(--mc-cyan)' }}>{data.totals.by_group.SECTOR || 0} SECTOR</span>
                 {lastRefresh && <> · refreshed {lastRefresh.toLocaleTimeString()}</>}
               </>
             ) : loading ? 'Loading…' : '—'}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button onClick={() => setShowCatalog(v => !v)} style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5, border: '1px solid #22D3EE', background: '#22D3EE20', color: '#22D3EE', cursor: 'pointer' }}>
+          <button onClick={() => setShowCatalog(v => !v)} style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5, border: '1px solid var(--mc-cyan)', background: '#22D3EE20', color: 'var(--mc-cyan)', cursor: 'pointer' }}>
             {showCatalog ? '▲ Hide keywords' : '▼ Edit watchlist'}
           </button>
-          <select value={days} onChange={(e) => setDays(parseInt(e.target.value))} style={{ fontSize: 11, padding: '4px 8px', borderRadius: 5, border: '1px solid #1A2540', background: '#0A1422', color: '#E6EDF3' }}>
+          <select value={days} onChange={(e) => setDays(parseInt(e.target.value))} style={{ fontSize: 11, padding: '4px 8px', borderRadius: 5, border: '1px solid var(--mc-bg-4)', background: '#0A1422', color: 'var(--mc-text-1)' }}>
             <option value={3}>3 days</option>
             <option value={7}>7 days</option>
             <option value={14}>14 days</option>
@@ -1981,7 +1981,7 @@ function KeywordWatchFeed() {
             <option value={90}>90 days</option>
             <option value={180}>180 days</option>
           </select>
-          <button onClick={() => fetchFeed(true)} disabled={loading} style={{ fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 5, border: '1px solid #22D3EE', background: '#22D3EE20', color: '#22D3EE', cursor: loading ? 'wait' : 'pointer' }}>
+          <button onClick={() => fetchFeed(true)} disabled={loading} style={{ fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 5, border: '1px solid var(--mc-cyan)', background: '#22D3EE20', color: 'var(--mc-cyan)', cursor: loading ? 'wait' : 'pointer' }}>
             {loading ? '…' : '↻ Refresh'}
           </button>
         </div>
@@ -1998,12 +1998,12 @@ function KeywordWatchFeed() {
         if (catalog.length === 0 && totalCount === 0 && !loading) {
           return (
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, padding: '8px 12px', background: '#0A1422', border: '1px dashed #22D3EE60', borderRadius: 6 }}>
-              <span style={{ fontSize: 11, color: '#22D3EE', fontWeight: 700 }}>
+              <span style={{ fontSize: 11, color: 'var(--mc-cyan)', fontWeight: 700 }}>
                 Add keywords to start monitoring concalls
               </span>
               <button
                 onClick={() => setShowCatalog(true)}
-                style={{ fontSize: 10, fontWeight: 800, padding: '3px 10px', borderRadius: 5, border: '1px solid #22D3EE', background: '#22D3EE20', color: '#22D3EE', cursor: 'pointer' }}
+                style={{ fontSize: 10, fontWeight: 800, padding: '3px 10px', borderRadius: 5, border: '1px solid var(--mc-cyan)', background: '#22D3EE20', color: 'var(--mc-cyan)', cursor: 'pointer' }}
               >
                 ▼ Edit watchlist
               </button>
@@ -2012,19 +2012,19 @@ function KeywordWatchFeed() {
         }
         return (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
-            <span style={{ fontSize: 10, color: '#94A3B8', fontWeight: 700, marginRight: 4 }}>GROUPS:</span>
+            <span style={{ fontSize: 10, color: 'var(--mc-text-3)', fontWeight: 700, marginRight: 4 }}>GROUPS:</span>
             {Object.keys(KW_GROUP_COLORS).map(g => {
               const active = selectedGroups.has(g);
               const color = KW_GROUP_COLORS[g];
               const count = data?.totals.by_group[g] || 0;
               return (
-                <button key={g} onClick={() => toggleGroup(g)} style={{ fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 5, border: `1px solid ${active ? color : '#1A2540'}`, background: active ? `${color}20` : 'transparent', color: active ? color : '#94A3B8', cursor: 'pointer' }}>
+                <button key={g} onClick={() => toggleGroup(g)} style={{ fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 5, border: `1px solid ${active ? color : 'var(--mc-bg-4)'}`, background: active ? `${color}20` : 'transparent', color: active ? color : 'var(--mc-text-3)', cursor: 'pointer' }}>
                   {g} · {count}
                 </button>
               );
             })}
             {selectedGroups.size > 0 && (
-              <button onClick={() => setSelectedGroups(new Set())} style={{ fontSize: 10, color: '#94A3B8', background: 'transparent', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
+              <button onClick={() => setSelectedGroups(new Set())} style={{ fontSize: 10, color: 'var(--mc-text-3)', background: 'transparent', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
                 clear groups
               </button>
             )}
@@ -2034,17 +2034,17 @@ function KeywordWatchFeed() {
 
       {/* Keyword catalog editor (collapsible) */}
       {showCatalog && (
-        <div style={{ marginBottom: 10, padding: 10, background: '#0A1422', border: '1px solid #1A2540', borderRadius: 6 }}>
-          <div style={{ fontSize: 10, color: '#94A3B8', marginBottom: 6 }}>Click keywords to filter. Empty = all keywords active. {selectedKeywords.size > 0 && <button onClick={() => setSelectedKeywords(new Set())} style={{ fontSize: 10, color: '#22D3EE', background: 'transparent', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>clear all</button>}</div>
+        <div style={{ marginBottom: 10, padding: 10, background: '#0A1422', border: '1px solid var(--mc-bg-4)', borderRadius: 6 }}>
+          <div style={{ fontSize: 10, color: 'var(--mc-text-3)', marginBottom: 6 }}>Click keywords to filter. Empty = all keywords active. {selectedKeywords.size > 0 && <button onClick={() => setSelectedKeywords(new Set())} style={{ fontSize: 10, color: 'var(--mc-cyan)', background: 'transparent', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>clear all</button>}</div>
           {Object.entries(groupedCatalog).map(([group, kws]) => (
             <div key={group} style={{ marginBottom: 8 }}>
-              <div style={{ fontSize: 9, fontWeight: 800, color: KW_GROUP_COLORS[group] || '#94A3B8', letterSpacing: '0.5px', marginBottom: 4 }}>{group}</div>
+              <div style={{ fontSize: 9, fontWeight: 800, color: KW_GROUP_COLORS[group] || 'var(--mc-text-3)', letterSpacing: '0.5px', marginBottom: 4 }}>{group}</div>
               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                 {kws.map(k => {
                   const active = selectedKeywords.has(k.id);
                   const color = KW_GROUP_COLORS[group] || '#94A3B8';
                   return (
-                    <button key={k.id} onClick={() => toggleKeyword(k.id)} style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4, border: `1px solid ${active ? color : '#1A2540'}`, background: active ? `${color}20` : 'transparent', color: active ? color : '#94A3B8', cursor: 'pointer' }}>
+                    <button key={k.id} onClick={() => toggleKeyword(k.id)} style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4, border: `1px solid ${active ? color : 'var(--mc-bg-4)'}`, background: active ? `${color}20` : 'transparent', color: active ? color : 'var(--mc-text-3)', cursor: 'pointer' }}>
                       {k.display}
                     </button>
                   );
@@ -2057,10 +2057,10 @@ function KeywordWatchFeed() {
 
       {/* PATCH 0420 — soft amber when refresh slow but data is loaded; red only when truly empty */}
       {error && (!data || (data.filings?.length || 0) === 0) && (
-        <div style={{ fontSize: 11, color: '#EF4444', marginBottom: 8 }}>⚠ {error}</div>
+        <div style={{ fontSize: 11, color: 'var(--mc-bearish)', marginBottom: 8 }}>⚠ {error}</div>
       )}
       {error && data && (data.filings?.length || 0) > 0 && (
-        <div style={{ fontSize: 10, color: '#F59E0B', marginBottom: 8, fontStyle: 'italic' }}>
+        <div style={{ fontSize: 10, color: 'var(--mc-warn)', marginBottom: 8, fontStyle: 'italic' }}>
           · last refresh slow ({error}); showing previous results
         </div>
       )}
@@ -2070,22 +2070,22 @@ function KeywordWatchFeed() {
           padding: '20px 16px',
           marginTop: 8,
           backgroundColor: '#0A1422',
-          border: '1px solid #1A2840',
-          borderLeft: '3px solid #22D3EE',
+          border: '1px solid var(--mc-bg-4)',
+          borderLeft: '3px solid var(--mc-cyan)',
           borderRadius: 8,
           textAlign: 'center',
         }}>
           <div style={{ fontSize: 24, marginBottom: 8 }}>🔍</div>
-          <div style={{ fontSize: 13, color: '#E6EDF3', fontWeight: 700, marginBottom: 6 }}>
+          <div style={{ fontSize: 13, color: 'var(--mc-text-1)', fontWeight: 700, marginBottom: 6 }}>
             No filings matched these keywords in the last {days}d
           </div>
-          <div style={{ fontSize: 11, color: '#94A3B8', lineHeight: 1.6, marginBottom: 10 }}>
+          <div style={{ fontSize: 11, color: 'var(--mc-text-3)', lineHeight: 1.6, marginBottom: 10 }}>
             This either means the chosen theme genuinely hasn&apos;t surfaced in recent transcripts,
             or our window is too narrow for low-frequency topics.
           </div>
-          <div style={{ fontSize: 10.5, color: '#6B7A8D', lineHeight: 1.6 }}>
-            Try: <span style={{ color: '#22D3EE', fontWeight: 700 }}>widen to 90 or 180 days</span>{' '}
-            · <span style={{ color: '#22D3EE', fontWeight: 700 }}>clear keyword filter</span>{' '}
+          <div style={{ fontSize: 10.5, color: 'var(--mc-text-4)', lineHeight: 1.6 }}>
+            Try: <span style={{ color: 'var(--mc-cyan)', fontWeight: 700 }}>widen to 90 or 180 days</span>{' '}
+            · <span style={{ color: 'var(--mc-cyan)', fontWeight: 700 }}>clear keyword filter</span>{' '}
             · pick a broader group (e.g. all &ldquo;capex&rdquo; or &ldquo;China+1&rdquo;).
           </div>
         </div>
@@ -2093,14 +2093,14 @@ function KeywordWatchFeed() {
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {(data?.filings || []).slice(0, 60).map((f, i) => (
-          <div key={f.symbol + '-' + i} style={{ padding: '10px 12px', background: '#0A1422', border: '1px solid #1A2540', borderRadius: 6 }}>
+          <div key={f.symbol + '-' + i} style={{ padding: '10px 12px', background: '#0A1422', border: '1px solid var(--mc-bg-4)', borderRadius: 6 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, marginBottom: 4 }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 13, fontWeight: 900, color: '#E6EDF3' }}>{f.symbol || f.company_name}</span>
-                {f.symbol && <span style={{ fontSize: 11, color: '#94A3B8' }}>{f.company_name}</span>}
-                <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#1A2540', color: '#94A3B8', fontWeight: 700 }}>{f.exchange}</span>
+                <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-text-1)' }}>{f.symbol || f.company_name}</span>
+                {f.symbol && <span style={{ fontSize: 11, color: 'var(--mc-text-3)' }}>{f.company_name}</span>}
+                <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'var(--mc-bg-4)', color: 'var(--mc-text-3)', fontWeight: 700 }}>{f.exchange}</span>
               </div>
-              <span style={{ fontSize: 12, fontWeight: 900, color: '#22D3EE' }}>{f.hit_count} hit{f.hit_count > 1 ? 's' : ''}</span>
+              <span style={{ fontSize: 12, fontWeight: 900, color: 'var(--mc-cyan)' }}>{f.hit_count} hit{f.hit_count > 1 ? 's' : ''}</span>
             </div>
             <div style={{ fontSize: 11, color: '#C9D4E0', marginBottom: 6, lineHeight: 1.4 }}>{decodeHTMLEntities(f.subject)}</div>
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 6 }}>
@@ -2119,15 +2119,15 @@ function KeywordWatchFeed() {
                   </div>
                 );
               })}
-              {f.hits.length > 5 && <div style={{ color: '#94A3B8', fontStyle: 'italic', padding: '2px 0' }}>+ {f.hits.length - 5} more matches</div>}
+              {f.hits.length > 5 && <div style={{ color: 'var(--mc-text-3)', fontStyle: 'italic', padding: '2px 0' }}>+ {f.hits.length - 5} more matches</div>}
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, color: '#6B7A8D', marginTop: 6 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, color: 'var(--mc-text-4)', marginTop: 6 }}>
               <span>{new Date(f.filing_datetime).toLocaleString()}</span>
               <div style={{ display: 'flex', gap: 8 }}>
                 {f.attachment_urls.slice(0, 1).map((u, j) => (
-                  <a key={j} href={u} target="_blank" rel="noopener noreferrer" style={{ color: '#22D3EE', textDecoration: 'none' }}>📎 attachment</a>
+                  <a key={j} href={u} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--mc-cyan)', textDecoration: 'none' }}>📎 attachment</a>
                 ))}
-                <a href={f.source_url} target="_blank" rel="noopener noreferrer" style={{ color: '#22D3EE', textDecoration: 'none' }}>↗ {f.exchange}</a>
+                <a href={f.source_url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--mc-cyan)', textDecoration: 'none' }}>↗ {f.exchange}</a>
               </div>
             </div>
           </div>
@@ -2214,18 +2214,18 @@ function MoversPanel() {
                   // PATCH 0490 QA-#14 — display NSE symbol when symbol is a raw BSE code.
                   const r = resolveTicker(m.symbol);
                   return (
-                    <span style={{ fontWeight: 800, color: '#E6EDF3' }} title={r.bseCode ? `BSE: ${r.bseCode}` : ''}>
+                    <span style={{ fontWeight: 800, color: 'var(--mc-text-1)' }} title={r.bseCode ? `BSE: ${r.bseCode}` : ''}>
                       {r.nseSymbol || r.display}
                     </span>
                   );
                 })()}
-                <span style={{ color: '#94A3B8', fontSize: 9, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span style={{ color: 'var(--mc-text-3)', fontSize: 9, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {(() => { const r = resolveTicker(m.symbol); return m.company_name || r.shortName || ''; })()}
                 </span>
               </div>
               <div style={{ display: 'flex', gap: 5, alignItems: 'baseline' }}>
                 {m.delta != null && (
-                  <span style={{ fontSize: 9, color: m.delta > 0 ? '#10B981' : m.delta < 0 ? '#EF4444' : '#94A3B8', fontWeight: 700 }}>
+                  <span style={{ fontSize: 9, color: m.delta > 0 ? 'var(--mc-bullish)' : m.delta < 0 ? 'var(--mc-bearish)' : 'var(--mc-text-3)', fontWeight: 700 }}>
                     {m.delta > 0 ? '+' : ''}{m.delta.toFixed(1)}
                   </span>
                 )}
@@ -2241,11 +2241,11 @@ function MoversPanel() {
   };
 
   return (
-    <div style={{ backgroundColor: '#0D1623', border: '1px solid #A78BFA40', borderLeft: '4px solid #A78BFA', borderRadius: 10, padding: '14px 18px', marginBottom: 14 }}>
+    <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid #A78BFA40', borderLeft: '4px solid var(--mc-state-persistent)', borderRadius: 10, padding: '14px 18px', marginBottom: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
         <div>
-          <div style={{ fontSize: 13, fontWeight: 900, color: '#A78BFA', letterSpacing: '0.4px' }}>📈 MOVERS — daily delta vs last snapshot</div>
-          <div style={{ fontSize: 10, color: '#94A3B8', marginTop: 2 }}>
+          <div style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-state-persistent)', letterSpacing: '0.4px' }}>📈 MOVERS — daily delta vs last snapshot</div>
+          <div style={{ fontSize: 10, color: 'var(--mc-text-3)', marginTop: 2 }}>
             today {data.today_date} vs {data.reference_date || 'no prior snapshot'} · {loading ? 'loading…' : `${data.new_entries.length} new · ${data.big_jumps.length} big jumps · ${data.lost_momentum.length} lost momentum`}
           </div>
         </div>
@@ -2368,25 +2368,25 @@ function WarrantAnalytics({ data }: { data: WarrantFeedPayload }) {
   };
 
   const Bar = ({ pct, color, height }: { pct: number; color: string; height?: number }) => (
-    <div style={{ flex: 1, height: height ?? 6, background: '#1A2540', borderRadius: 3, overflow: 'hidden' }}>
+    <div style={{ flex: 1, height: height ?? 6, background: 'var(--mc-bg-4)', borderRadius: 3, overflow: 'hidden' }}>
       <div style={{ width: `${Math.max(0, Math.min(100, pct))}%`, height: '100%', background: color }} />
     </div>
   );
 
   return (
-    <div style={{ background: '#0D1623', border: '1px dashed #22D3EE40', borderRadius: 8, padding: '10px 12px', marginBottom: 14 }}>
+    <div style={{ background: 'var(--mc-bg-1)', border: '1px dashed #22D3EE40', borderRadius: 8, padding: '10px 12px', marginBottom: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
         <button
           onClick={() => setExpanded(v => !v)}
           style={{
-            background: 'transparent', border: 'none', color: '#22D3EE',
+            background: 'transparent', border: 'none', color: 'var(--mc-cyan)',
             fontSize: 13, fontWeight: 800, cursor: 'pointer', padding: 0,
             display: 'flex', alignItems: 'center', gap: 6,
           }}
         >
           {expanded ? '▾' : '▸'} 📊 WARRANT ANALYTICS
         </button>
-        <span style={{ fontSize: 10, color: '#22D3EE', background: '#22D3EE22', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>
+        <span style={{ fontSize: 10, color: 'var(--mc-cyan)', background: '#22D3EE22', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>
           {total} filings · avg score {avgScore}/10 · {promoterRate}% promoter-subscribed
         </span>
       </div>
@@ -2411,7 +2411,7 @@ function WarrantAnalytics({ data }: { data: WarrantFeedPayload }) {
                 background: '#EF444412', border: '1px solid #EF444440',
                 borderRadius: 4, padding: '8px 12px',
               }}>
-                <div style={{ fontSize: 11, fontWeight: 800, color: '#EF4444', marginBottom: 3 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-bearish)', marginBottom: 3 }}>
                   ⚠ EXTRACTION QUALITY LOW — treat below as anomaly detector, not investment ranking
                 </div>
                 <div style={{ fontSize: 10.5, color: '#FCA5A5', lineHeight: 1.5 }}>
@@ -2428,44 +2428,44 @@ function WarrantAnalytics({ data }: { data: WarrantFeedPayload }) {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 8 }}>
             <div style={cardStyle}>
               <div style={labelStyle}>Total filings</div>
-              <div style={{ fontSize: 20, fontWeight: 900, color: '#E6EDF3', fontVariantNumeric: 'tabular-nums' }}>{total}</div>
+              <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--mc-text-1)', fontVariantNumeric: 'tabular-nums' }}>{total}</div>
             </div>
             <div style={cardStyle}>
               <div style={labelStyle}>Avg conviction</div>
-              <div style={{ fontSize: 20, fontWeight: 900, color: '#22D3EE', fontVariantNumeric: 'tabular-nums' }}>{avgScore}/10</div>
+              <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--mc-cyan)', fontVariantNumeric: 'tabular-nums' }}>{avgScore}/10</div>
             </div>
             <div style={cardStyle}>
               <div style={labelStyle}>Strategic (GREEN)</div>
-              <div style={{ fontSize: 20, fontWeight: 900, color: '#10B981', fontVariantNumeric: 'tabular-nums' }}>{byBucket.GREEN || 0}</div>
+              <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--mc-bullish)', fontVariantNumeric: 'tabular-nums' }}>{byBucket.GREEN || 0}</div>
             </div>
             <div style={cardStyle}>
               <div style={labelStyle}>Distress (RED)</div>
-              <div style={{ fontSize: 20, fontWeight: 900, color: '#EF4444', fontVariantNumeric: 'tabular-nums' }}>{byBucket.RED || 0}</div>
+              <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--mc-bearish)', fontVariantNumeric: 'tabular-nums' }}>{byBucket.RED || 0}</div>
             </div>
             <div style={cardStyle}>
               <div style={labelStyle}>Promoter subscribed</div>
-              <div style={{ fontSize: 20, fontWeight: 900, color: '#A78BFA', fontVariantNumeric: 'tabular-nums' }}>{promoterSubscribedCount}</div>
-              <div style={{ fontSize: 10, color: '#6B7A8D' }}>{promoterRate}% of all</div>
+              <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--mc-state-persistent)', fontVariantNumeric: 'tabular-nums' }}>{promoterSubscribedCount}</div>
+              <div style={{ fontSize: 10, color: 'var(--mc-text-4)' }}>{promoterRate}% of all</div>
             </div>
             <div style={cardStyle}>
               <div style={labelStyle}>Exchange split</div>
-              <div style={{ fontSize: 13, fontWeight: 800, color: '#E6EDF3' }}>NSE {byExchange.NSE} · BSE {byExchange.BSE}</div>
+              <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-text-1)' }}>NSE {byExchange.NSE} · BSE {byExchange.BSE}</div>
             </div>
             <div style={cardStyle}>
               <div style={labelStyle}>Aging</div>
-              <div style={{ fontSize: 11, color: '#E6EDF3', fontWeight: 700 }}>
-                <span style={{ color: '#10B981' }}>● {aging.fresh}</span>{' '}
-                <span style={{ color: '#F59E0B' }}>◐ {aging.warm}</span>{' '}
-                <span style={{ color: '#6B7A8D' }}>◯ {aging.older}</span>
+              <div style={{ fontSize: 11, color: 'var(--mc-text-1)', fontWeight: 700 }}>
+                <span style={{ color: 'var(--mc-bullish)' }}>● {aging.fresh}</span>{' '}
+                <span style={{ color: 'var(--mc-warn)' }}>◐ {aging.warm}</span>{' '}
+                <span style={{ color: 'var(--mc-text-4)' }}>◯ {aging.older}</span>
               </div>
-              <div style={{ fontSize: 9, color: '#6B7A8D' }}>fresh · warm · older</div>
+              <div style={{ fontSize: 9, color: 'var(--mc-text-4)' }}>fresh · warm · older</div>
             </div>
           </div>
 
           {/* ── 🎯 TOP BY WEIGHTED SCORE ──────────────────────────────── */}
           {topRanked.length > 0 && (
             <div style={cardStyle}>
-              <div style={{ fontSize: 12, fontWeight: 800, color: '#F59E0B', marginBottom: 6 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-warn)', marginBottom: 6 }}>
                 🎯 TOP {topRanked.length} BY WEIGHTED SCORE
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 6 }}>
@@ -2481,18 +2481,18 @@ function WarrantAnalytics({ data }: { data: WarrantFeedPayload }) {
                       border: `1px solid ${bcolor}30`, background: `${bcolor}08`,
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 700, fontVariantNumeric: 'tabular-nums', minWidth: 22 }}>#{i + 1}</span>
+                        <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 700, fontVariantNumeric: 'tabular-nums', minWidth: 22 }}>#{i + 1}</span>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 12, fontWeight: 700, color: '#E6EDF3', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--mc-text-1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {f.company_name}
                           </div>
-                          <div style={{ fontSize: 9, color: '#94A3B8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 600 }}>
+                          <div style={{ fontSize: 9, color: 'var(--mc-text-3)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 600 }}>
                             {f.symbol} · {f.exchange}
                           </div>
                         </div>
                         <span style={{ fontSize: 12, fontWeight: 800, color: bcolor, fontVariantNumeric: 'tabular-nums' }}>{score.toFixed(1)}</span>
                       </div>
-                      <div style={{ fontSize: 9, color: '#6B7A8D', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      <div style={{ fontSize: 9, color: 'var(--mc-text-4)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {(f.warrant_type || '').replace(/_/g, ' ')}
                         {c.capital_use && ` · use: ${c.capital_use.toLowerCase()}`}
                         {c.premium_pct != null && ` · ${c.premium_pct > 0 ? '+' : ''}${c.premium_pct.toFixed(0)}% vs CMP`}
@@ -2508,7 +2508,7 @@ function WarrantAnalytics({ data }: { data: WarrantFeedPayload }) {
 
             {/* ── 🪣 BUCKET MIX ──────────────────────────────────────── */}
             <div style={cardStyle}>
-              <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', marginBottom: 6 }}>🪣 BUCKET MIX</div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-cyan)', marginBottom: 6 }}>🪣 BUCKET MIX</div>
               {([
                 { key: 'GREEN', label: '🟢 STRATEGIC', color: '#10B981' },
                 { key: 'AMBER', label: '🟡 NEUTRAL',   color: '#F59E0B' },
@@ -2520,8 +2520,8 @@ function WarrantAnalytics({ data }: { data: WarrantFeedPayload }) {
                 const pct = total > 0 ? (n / total) * 100 : 0;
                 return (
                   <div key={b.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                    <span style={{ fontSize: 10, color: '#E6EDF3', fontWeight: 700, minWidth: 100 }}>{b.label}</span>
-                    <span style={{ fontSize: 10, color: '#94A3B8', minWidth: 24, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{n}</span>
+                    <span style={{ fontSize: 10, color: 'var(--mc-text-1)', fontWeight: 700, minWidth: 100 }}>{b.label}</span>
+                    <span style={{ fontSize: 10, color: 'var(--mc-text-3)', minWidth: 24, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{n}</span>
                     <Bar pct={pct} color={b.color} />
                     <span style={{ fontSize: 10, color: b.color, fontWeight: 700, minWidth: 36, textAlign: 'right' }}>{pct.toFixed(0)}%</span>
                   </div>
@@ -2531,7 +2531,7 @@ function WarrantAnalytics({ data }: { data: WarrantFeedPayload }) {
 
             {/* ── 💰 USE OF PROCEEDS ─────────────────────────────────── */}
             <div style={cardStyle}>
-              <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', marginBottom: 6 }}>💰 USE OF PROCEEDS</div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-cyan)', marginBottom: 6 }}>💰 USE OF PROCEEDS</div>
               {Object.entries(byUse).sort((a, b) => b[1] - a[1]).map(([k, n]) => {
                 const pct = total > 0 ? (n / total) * 100 : 0;
                 const tone = /CAPEX|EXPANSION|ACQUISITION/.test(k) ? '#10B981'
@@ -2539,8 +2539,8 @@ function WarrantAnalytics({ data }: { data: WarrantFeedPayload }) {
                           : '#6B7A8D';
                 return (
                   <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                    <span style={{ fontSize: 10, color: '#E6EDF3', fontWeight: 700, minWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{k.replace(/_/g, ' ')}</span>
-                    <span style={{ fontSize: 10, color: '#94A3B8', minWidth: 24, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{n}</span>
+                    <span style={{ fontSize: 10, color: 'var(--mc-text-1)', fontWeight: 700, minWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{k.replace(/_/g, ' ')}</span>
+                    <span style={{ fontSize: 10, color: 'var(--mc-text-3)', minWidth: 24, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{n}</span>
                     <Bar pct={pct} color={tone} />
                     <span style={{ fontSize: 10, color: tone, fontWeight: 700, minWidth: 36, textAlign: 'right' }}>{pct.toFixed(0)}%</span>
                   </div>
@@ -2550,8 +2550,8 @@ function WarrantAnalytics({ data }: { data: WarrantFeedPayload }) {
 
             {/* ── 👥 PROMOTER MIX ────────────────────────────────────── */}
             <div style={cardStyle}>
-              <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', marginBottom: 6 }}>👥 PROMOTER PARTICIPATION</div>
-              <div style={{ fontSize: 10, color: '#94A3B8', marginBottom: 6, lineHeight: 1.4 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-cyan)', marginBottom: 6 }}>👥 PROMOTER PARTICIPATION</div>
+              <div style={{ fontSize: 10, color: 'var(--mc-text-3)', marginBottom: 6, lineHeight: 1.4 }}>
                 Promoter-subscribed warrants are the high-conviction subset.
                 Third-party-only warrants imply external dilution without owner alignment.
               </div>
@@ -2560,8 +2560,8 @@ function WarrantAnalytics({ data }: { data: WarrantFeedPayload }) {
                 const tone = /PARTICIPAT|SUBSCRIB|MAINTAIN/.test(k) ? '#10B981' : '#6B7A8D';
                 return (
                   <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                    <span style={{ fontSize: 10, color: '#E6EDF3', fontWeight: 700, minWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{k.replace(/_/g, ' ')}</span>
-                    <span style={{ fontSize: 10, color: '#94A3B8', minWidth: 24, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{n}</span>
+                    <span style={{ fontSize: 10, color: 'var(--mc-text-1)', fontWeight: 700, minWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{k.replace(/_/g, ' ')}</span>
+                    <span style={{ fontSize: 10, color: 'var(--mc-text-3)', minWidth: 24, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{n}</span>
                     <Bar pct={pct} color={tone} />
                     <span style={{ fontSize: 10, color: tone, fontWeight: 700, minWidth: 36, textAlign: 'right' }}>{pct.toFixed(0)}%</span>
                   </div>
@@ -2571,8 +2571,8 @@ function WarrantAnalytics({ data }: { data: WarrantFeedPayload }) {
 
             {/* ── 🔍 EXTRACTION QUALITY ──────────────────────────────── */}
             <div style={cardStyle}>
-              <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', marginBottom: 6 }}>🔍 EXTRACTION QUALITY</div>
-              <div style={{ fontSize: 10, color: '#94A3B8', marginBottom: 6, lineHeight: 1.4 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-cyan)', marginBottom: 6 }}>🔍 EXTRACTION QUALITY</div>
+              <div style={{ fontSize: 10, color: 'var(--mc-text-3)', marginBottom: 6, lineHeight: 1.4 }}>
                 % of filings with each field extracted. Low coverage means
                 the scoring model has limited signal; verify manually.
               </div>
@@ -2588,8 +2588,8 @@ function WarrantAnalytics({ data }: { data: WarrantFeedPayload }) {
                 const tone = pct >= 80 ? '#10B981' : pct >= 50 ? '#22D3EE' : pct >= 25 ? '#F59E0B' : '#EF4444';
                 return (
                   <div key={row.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                    <span style={{ fontSize: 10, color: '#E6EDF3', fontWeight: 700, minWidth: 120 }}>{row.label}</span>
-                    <span style={{ fontSize: 10, color: '#94A3B8', minWidth: 24, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{row.n}</span>
+                    <span style={{ fontSize: 10, color: 'var(--mc-text-1)', fontWeight: 700, minWidth: 120 }}>{row.label}</span>
+                    <span style={{ fontSize: 10, color: 'var(--mc-text-3)', minWidth: 24, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{row.n}</span>
                     <Bar pct={pct} color={tone} />
                     <span style={{ fontSize: 10, color: tone, fontWeight: 700, minWidth: 36, textAlign: 'right' }}>{pct.toFixed(0)}%</span>
                   </div>
@@ -2599,8 +2599,8 @@ function WarrantAnalytics({ data }: { data: WarrantFeedPayload }) {
 
             {/* ── 💹 PRICING SPREAD vs CMP ──────────────────────────── */}
             <div style={cardStyle}>
-              <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', marginBottom: 6 }}>💹 ISSUE PRICE vs CMP</div>
-              <div style={{ fontSize: 10, color: '#94A3B8', marginBottom: 6, lineHeight: 1.4 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-cyan)', marginBottom: 6 }}>💹 ISSUE PRICE vs CMP</div>
+              <div style={{ fontSize: 10, color: 'var(--mc-text-3)', marginBottom: 6, lineHeight: 1.4 }}>
                 Issue price relative to current market price. Deep discounts
                 signal distress; premium offers signal promoter confidence.
               </div>
@@ -2615,8 +2615,8 @@ function WarrantAnalytics({ data }: { data: WarrantFeedPayload }) {
                 const pct = pricedCount > 0 ? (row.n / pricedCount) * 100 : 0;
                 return (
                   <div key={row.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                    <span style={{ fontSize: 10, color: '#E6EDF3', fontWeight: 700, minWidth: 160 }}>{row.label}</span>
-                    <span style={{ fontSize: 10, color: '#94A3B8', minWidth: 24, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{row.n}</span>
+                    <span style={{ fontSize: 10, color: 'var(--mc-text-1)', fontWeight: 700, minWidth: 160 }}>{row.label}</span>
+                    <span style={{ fontSize: 10, color: 'var(--mc-text-3)', minWidth: 24, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{row.n}</span>
                     <Bar pct={pct} color={row.color} />
                     <span style={{ fontSize: 10, color: row.color, fontWeight: 700, minWidth: 36, textAlign: 'right' }}>{pct.toFixed(0)}%</span>
                   </div>
@@ -2626,8 +2626,8 @@ function WarrantAnalytics({ data }: { data: WarrantFeedPayload }) {
 
             {/* ── 🏷 TIER MIX ───────────────────────────────────────── */}
             <div style={cardStyle}>
-              <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', marginBottom: 6 }}>🏷 TIER MIX</div>
-              <div style={{ fontSize: 10, color: '#94A3B8', marginBottom: 6, lineHeight: 1.4 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-cyan)', marginBottom: 6 }}>🏷 TIER MIX</div>
+              <div style={{ fontSize: 10, color: 'var(--mc-text-3)', marginBottom: 6, lineHeight: 1.4 }}>
                 T1 = highest conviction (promoter + low distress).
                 T2 = neutral / partial signals. T3 = distress / non-strategic.
               </div>
@@ -2641,8 +2641,8 @@ function WarrantAnalytics({ data }: { data: WarrantFeedPayload }) {
                 const pct = total > 0 ? (n / total) * 100 : 0;
                 return (
                   <div key={row.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                    <span style={{ fontSize: 10, color: '#E6EDF3', fontWeight: 700, minWidth: 80 }}>{row.label}</span>
-                    <span style={{ fontSize: 10, color: '#94A3B8', minWidth: 24, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{n}</span>
+                    <span style={{ fontSize: 10, color: 'var(--mc-text-1)', fontWeight: 700, minWidth: 80 }}>{row.label}</span>
+                    <span style={{ fontSize: 10, color: 'var(--mc-text-3)', minWidth: 24, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{n}</span>
                     <Bar pct={pct} color={row.color} />
                     <span style={{ fontSize: 10, color: row.color, fontWeight: 700, minWidth: 36, textAlign: 'right' }}>{pct.toFixed(0)}%</span>
                   </div>
@@ -2653,9 +2653,9 @@ function WarrantAnalytics({ data }: { data: WarrantFeedPayload }) {
           </div>
 
           {/* ── 📚 INSTITUTIONAL DISCLOSURE ────────────────────────────────── */}
-          <div style={{ ...cardStyle, borderColor: '#1A2540' }}>
-            <div style={{ fontSize: 10, color: '#6B7A8D', lineHeight: 1.5 }}>
-              <strong style={{ color: '#94A3B8' }}>HOW TO READ:</strong>{' '}
+          <div style={{ ...cardStyle, borderColor: 'var(--mc-bg-4)' }}>
+            <div style={{ fontSize: 10, color: 'var(--mc-text-4)', lineHeight: 1.5 }}>
+              <strong style={{ color: 'var(--mc-text-3)' }}>HOW TO READ:</strong>{' '}
               The bucket mix is the most important chart — strategic (GREEN) warrants
               with promoter subscription and premium pricing are the multibagger setup.
               Distress (RED) warrants signal capital raises from non-promoter parties
@@ -2814,16 +2814,16 @@ function ConcallAnalyticsTab() {
     fontSize: 11, color: '#6B7A8D', letterSpacing: '0.3px', marginBottom: 4,
   };
   const Bar = ({ pct, color, height }: { pct: number; color: string; height?: number }) => (
-    <div style={{ flex: 1, height: height ?? 6, background: '#1A2540', borderRadius: 3, overflow: 'hidden' }}>
+    <div style={{ flex: 1, height: height ?? 6, background: 'var(--mc-bg-4)', borderRadius: 3, overflow: 'hidden' }}>
       <div style={{ width: `${Math.max(0, Math.min(100, pct))}%`, height: '100%', background: color }} />
     </div>
   );
 
   if (loading) {
     return (
-      <div style={{ padding: 40, textAlign: 'center', color: '#94A3B8', fontSize: 12 }}>
+      <div style={{ padding: 40, textAlign: 'center', color: 'var(--mc-text-3)', fontSize: 12 }}>
         📡 Loading Concall Intelligence analytics across warrants · movers · bullish · keyword watch…
-        <div style={{ marginTop: 8, fontSize: 10, color: '#6B7A8D' }}>(≤ 16s · times out gracefully)</div>
+        <div style={{ marginTop: 8, fontSize: 10, color: 'var(--mc-text-4)' }}>(≤ 16s · times out gracefully)</div>
       </div>
     );
   }
@@ -2837,14 +2837,14 @@ function ConcallAnalyticsTab() {
     return (
       <div style={{
         margin: 16, padding: '18px 22px', borderRadius: 8,
-        border: '2px solid #EF4444', background: 'rgba(239,68,68,0.06)',
+        border: '2px solid var(--mc-bearish)', background: 'rgba(239,68,68,0.06)',
         color: '#FCA5A5', fontSize: 13,
       }}>
-        <div style={{ fontSize: 14, fontWeight: 800, color: '#EF4444', marginBottom: 6 }}>⚠ Concall Intel analytics unavailable</div>
+        <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--mc-bearish)', marginBottom: 6 }}>⚠ Concall Intel analytics unavailable</div>
         <div style={{ marginBottom: 10 }}>{loadError}</div>
         <button onClick={fetchAll} style={{
-          padding: '6px 14px', borderRadius: 5, border: '1px solid #EF4444',
-          background: '#EF444420', color: '#EF4444', cursor: 'pointer', fontSize: 12, fontWeight: 700,
+          padding: '6px 14px', borderRadius: 5, border: '1px solid var(--mc-bearish)',
+          background: '#EF444420', color: 'var(--mc-bearish)', cursor: 'pointer', fontSize: 12, fontWeight: 700,
         }}>↻ Retry</button>
       </div>
     );
@@ -2894,14 +2894,14 @@ function ConcallAnalyticsTab() {
 
       {/* ── HEADER ─────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-        <div style={{ fontSize: 14, fontWeight: 900, color: '#22D3EE', letterSpacing: '0.5px' }}>
+        <div style={{ fontSize: 14, fontWeight: 900, color: 'var(--mc-cyan)', letterSpacing: '0.5px' }}>
           📊 CONCALL INTELLIGENCE — CONSOLIDATED ANALYTICS
         </div>
-        <div style={{ display: 'flex', gap: 10, fontSize: 11, color: '#94A3B8', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 10, fontSize: 11, color: 'var(--mc-text-3)', alignItems: 'center' }}>
           {lastRefresh && <span>as of {lastRefresh.toLocaleTimeString()}</span>}
           <button onClick={fetchAll} disabled={loading} style={{
             fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 4,
-            border: '1px solid #22D3EE', background: '#22D3EE15', color: '#22D3EE', cursor: loading ? 'wait' : 'pointer',
+            border: '1px solid var(--mc-cyan)', background: '#22D3EE15', color: 'var(--mc-cyan)', cursor: loading ? 'wait' : 'pointer',
           }}>↻ Refresh all</button>
         </div>
       </div>
@@ -2915,15 +2915,15 @@ function ConcallAnalyticsTab() {
           / cross-source-confirmation / signal-persistence — not as a
           probability. */}
       <div style={{
-        background: 'linear-gradient(90deg, #1E2D4530 0%, #0D1623 100%)',
-        border: '1px solid #1E2D45',
-        borderLeft: '3px solid #F59E0B',
+        background: 'linear-gradient(90deg, #1E2D4530 0%, var(--mc-bg-1) 100%)',
+        border: '1px solid var(--mc-border-1)',
+        borderLeft: '3px solid var(--mc-warn)',
         borderRadius: 6, padding: '10px 14px',
       }}>
-        <div style={{ fontSize: 11, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.5px', marginBottom: 4 }}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-warn)', letterSpacing: '0.5px', marginBottom: 4 }}>
           📐 CALIBRATION DISCLOSURE — read this once
         </div>
-        <div style={{ fontSize: 11, color: '#CBD5E1', lineHeight: 1.5 }}>
+        <div style={{ fontSize: 11, color: 'var(--mc-text-2)', lineHeight: 1.5 }}>
           All scores on this page are <strong>evidence-density / cross-source-confirmation</strong> measures
           (regex + lexicon over filings + news, no backtested probabilities, no realized-alpha attribution).
           Read scores as <em>"how many independent signals agree?"</em>, not as <em>"how likely is the trade to work?"</em>.
@@ -2944,7 +2944,7 @@ function ConcallAnalyticsTab() {
       {/* ── 2. WARRANT ANALYTICS (reuse) ────────────────────────────────── */}
       {warrantData && warrantData.filings.length > 0 && (
         <div>
-          <div style={{ fontSize: 12, fontWeight: 800, color: '#A78BFA', letterSpacing: '0.4px', marginBottom: 6 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-state-persistent)', letterSpacing: '0.4px', marginBottom: 6 }}>
             🚀 WARRANT MOMENTUM ANALYTICS
           </div>
           <WarrantAnalytics data={warrantData} />
@@ -2954,14 +2954,14 @@ function ConcallAnalyticsTab() {
       {/* ── 3. BULLISH CONCALL ANALYTICS ────────────────────────────────── */}
       {(liveBullishData?.filings.length ?? 0) > 0 && (
         <div style={cardStyle}>
-          <div style={{ fontSize: 12, fontWeight: 800, color: '#10B981', letterSpacing: '0.4px', marginBottom: 6 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-bullish)', letterSpacing: '0.4px', marginBottom: 6 }}>
             🔥 LIVE BULLISH CONCALL ANALYTICS ({liveBullishData?.count_relevant ?? 0})
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 10 }}>
 
             {/* Tier breakdown */}
             <div style={{ ...cardStyle, background: '#0A1422' }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: '#22D3EE', marginBottom: 6 }}>TIER DISTRIBUTION</div>
+              <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-cyan)', marginBottom: 6 }}>TIER DISTRIBUTION</div>
               {([
                 { key: 'ULTRA_BULLISH',   label: '🔥 ULTRA',         color: '#10B981' },
                 { key: 'BULLISH',         label: '✓ BULLISH',         color: '#22D3EE' },
@@ -2977,8 +2977,8 @@ function ConcallAnalyticsTab() {
                 const pct = (n / total) * 100;
                 return (
                   <div key={row.key} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-                    <span style={{ fontSize: 10, color: '#E6EDF3', fontWeight: 700, minWidth: 120 }}>{row.label}</span>
-                    <span style={{ fontSize: 10, color: '#94A3B8', minWidth: 22, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{n}</span>
+                    <span style={{ fontSize: 10, color: 'var(--mc-text-1)', fontWeight: 700, minWidth: 120 }}>{row.label}</span>
+                    <span style={{ fontSize: 10, color: 'var(--mc-text-3)', minWidth: 22, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{n}</span>
                     <Bar pct={pct} color={row.color} />
                     <span style={{ fontSize: 10, color: row.color, fontWeight: 700, minWidth: 32, textAlign: 'right' }}>{pct.toFixed(0)}%</span>
                   </div>
@@ -2989,16 +2989,16 @@ function ConcallAnalyticsTab() {
             {/* Sector overlay rollup */}
             {Object.keys(sectorOverlayCounts).length > 0 && (
               <div style={{ ...cardStyle, background: '#0A1422' }}>
-                <div style={{ fontSize: 11, fontWeight: 800, color: '#22D3EE', marginBottom: 6 }}>SECTOR OVERLAY</div>
+                <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-cyan)', marginBottom: 6 }}>SECTOR OVERLAY</div>
                 {Object.entries(sectorOverlayCounts).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([sector, n]) => {
                   const total = liveBullishData?.filings.length || 1;
                   const pct = (n / total) * 100;
                   return (
                     <div key={sector} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-                      <span style={{ fontSize: 10, color: '#E6EDF3', fontWeight: 600, minWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sector}</span>
-                      <span style={{ fontSize: 10, color: '#94A3B8', minWidth: 22, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{n}</span>
+                      <span style={{ fontSize: 10, color: 'var(--mc-text-1)', fontWeight: 600, minWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sector}</span>
+                      <span style={{ fontSize: 10, color: 'var(--mc-text-3)', minWidth: 22, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{n}</span>
                       <Bar pct={pct} color="#22D3EE" />
-                      <span style={{ fontSize: 10, color: '#22D3EE', fontWeight: 700, minWidth: 32, textAlign: 'right' }}>{pct.toFixed(0)}%</span>
+                      <span style={{ fontSize: 10, color: 'var(--mc-cyan)', fontWeight: 700, minWidth: 32, textAlign: 'right' }}>{pct.toFixed(0)}%</span>
                     </div>
                   );
                 })}
@@ -3009,7 +3009,7 @@ function ConcallAnalyticsTab() {
           {/* Top bullish by score */}
           {topBullish.length > 0 && (
             <div style={{ marginTop: 10 }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: '#22D3EE', marginBottom: 6 }}>🎯 TOP 12 BY BULLISH SCORE</div>
+              <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-cyan)', marginBottom: 6 }}>🎯 TOP 12 BY BULLISH SCORE</div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 6 }}>
                 {topBullish.map((f, i) => {
                   const tier = f.bullish?.tier || 'NEUTRAL';
@@ -3022,14 +3022,14 @@ function ConcallAnalyticsTab() {
                       textDecoration: 'none',
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 700, minWidth: 22 }}>#{i + 1}</span>
+                        <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 700, minWidth: 22 }}>#{i + 1}</span>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 12, fontWeight: 700, color: '#E6EDF3', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.company_name}</div>
-                          <div style={{ fontSize: 9, color: '#94A3B8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 600 }}>{f.symbol} · {f.exchange}</div>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--mc-text-1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.company_name}</div>
+                          <div style={{ fontSize: 9, color: 'var(--mc-text-3)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 600 }}>{f.symbol} · {f.exchange}</div>
                         </div>
                         <span style={{ fontSize: 12, fontWeight: 800, color: tColor, fontVariantNumeric: 'tabular-nums' }}>{f.bullish?.score?.toFixed(0) ?? '—'}</span>
                       </div>
-                      <div style={{ fontSize: 9, color: '#6B7A8D' }}>{tier} · {f.filing_type}</div>
+                      <div style={{ fontSize: 9, color: 'var(--mc-text-4)' }}>{tier} · {f.filing_type}</div>
                     </a>
                   );
                 })}
@@ -3042,7 +3042,7 @@ function ConcallAnalyticsTab() {
       {/* ── 4. KEYWORD WATCH ANALYTICS ──────────────────────────────────── */}
       {(kwData?.count_matched ?? 0) > 0 && (
         <div style={cardStyle}>
-          <div style={{ fontSize: 12, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.4px', marginBottom: 6 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-warn)', letterSpacing: '0.4px', marginBottom: 6 }}>
             🔎 KEYWORD WATCH ANALYTICS ({kwData?.count_matched ?? 0} filings · {kwData?.totals?.total_hits ?? 0} hits)
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 10 }}>
@@ -3050,15 +3050,15 @@ function ConcallAnalyticsTab() {
             {/* By group */}
             {Object.keys(kwByGroup).length > 0 && (
               <div style={{ ...cardStyle, background: '#0A1422' }}>
-                <div style={{ fontSize: 11, fontWeight: 800, color: '#22D3EE', marginBottom: 6 }}>HITS BY GROUP</div>
+                <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-cyan)', marginBottom: 6 }}>HITS BY GROUP</div>
                 {Object.entries(kwByGroup).sort((a, b) => b[1] - a[1]).map(([group, n]) => {
                   const total = kwData?.totals?.total_hits || 1;
                   const pct = (n / total) * 100;
                   const color = KW_GROUP_COLORS[group] || '#6B7A8D';
                   return (
                     <div key={group} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-                      <span style={{ fontSize: 10, color: '#E6EDF3', fontWeight: 700, minWidth: 110 }}>{group}</span>
-                      <span style={{ fontSize: 10, color: '#94A3B8', minWidth: 22, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{n}</span>
+                      <span style={{ fontSize: 10, color: 'var(--mc-text-1)', fontWeight: 700, minWidth: 110 }}>{group}</span>
+                      <span style={{ fontSize: 10, color: 'var(--mc-text-3)', minWidth: 22, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{n}</span>
                       <Bar pct={pct} color={color} />
                       <span style={{ fontSize: 10, color, fontWeight: 700, minWidth: 32, textAlign: 'right' }}>{pct.toFixed(0)}%</span>
                     </div>
@@ -3070,7 +3070,7 @@ function ConcallAnalyticsTab() {
             {/* By sentiment */}
             {Object.keys(kwBySentiment).length > 0 && (
               <div style={{ ...cardStyle, background: '#0A1422' }}>
-                <div style={{ fontSize: 11, fontWeight: 800, color: '#22D3EE', marginBottom: 6 }}>HITS BY SENTIMENT</div>
+                <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-cyan)', marginBottom: 6 }}>HITS BY SENTIMENT</div>
                 {Object.entries(kwBySentiment).sort((a, b) => b[1] - a[1]).map(([sent, n]) => {
                   const total = kwData?.totals?.total_hits || 1;
                   const pct = (n / total) * 100;
@@ -3079,8 +3079,8 @@ function ConcallAnalyticsTab() {
                               : '#94A3B8';
                   return (
                     <div key={sent} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-                      <span style={{ fontSize: 10, color: '#E6EDF3', fontWeight: 700, minWidth: 110 }}>{sent}</span>
-                      <span style={{ fontSize: 10, color: '#94A3B8', minWidth: 22, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{n}</span>
+                      <span style={{ fontSize: 10, color: 'var(--mc-text-1)', fontWeight: 700, minWidth: 110 }}>{sent}</span>
+                      <span style={{ fontSize: 10, color: 'var(--mc-text-3)', minWidth: 22, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{n}</span>
                       <Bar pct={pct} color={color} />
                       <span style={{ fontSize: 10, color, fontWeight: 700, minWidth: 32, textAlign: 'right' }}>{pct.toFixed(0)}%</span>
                     </div>
@@ -3093,7 +3093,7 @@ function ConcallAnalyticsTab() {
           {/* Top filings by hit_count */}
           {topKwFilings.length > 0 && (
             <div style={{ marginTop: 10 }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: '#22D3EE', marginBottom: 6 }}>🎯 TOP {topKwFilings.length} BY KEYWORD HIT COUNT</div>
+              <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-cyan)', marginBottom: 6 }}>🎯 TOP {topKwFilings.length} BY KEYWORD HIT COUNT</div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 6 }}>
                 {topKwFilings.map((f, i) => (
                   <a key={f.symbol + i} href={f.source_url} target="_blank" rel="noopener noreferrer" style={{
@@ -3103,14 +3103,14 @@ function ConcallAnalyticsTab() {
                     textDecoration: 'none',
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 700, minWidth: 22 }}>#{i + 1}</span>
+                      <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 700, minWidth: 22 }}>#{i + 1}</span>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 12, fontWeight: 700, color: '#E6EDF3', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.company_name}</div>
-                        <div style={{ fontSize: 9, color: '#94A3B8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 600 }}>{f.symbol} · {f.exchange}</div>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--mc-text-1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.company_name}</div>
+                        <div style={{ fontSize: 9, color: 'var(--mc-text-3)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: 600 }}>{f.symbol} · {f.exchange}</div>
                       </div>
-                      <span style={{ fontSize: 12, fontWeight: 800, color: '#F59E0B', fontVariantNumeric: 'tabular-nums' }}>{f.hit_count}</span>
+                      <span style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-warn)', fontVariantNumeric: 'tabular-nums' }}>{f.hit_count}</span>
                     </div>
-                    <div style={{ fontSize: 9, color: '#6B7A8D', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    <div style={{ fontSize: 9, color: 'var(--mc-text-4)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {f.hit_groups.join(' · ') || 'no groups'}
                     </div>
                   </a>
@@ -3124,11 +3124,11 @@ function ConcallAnalyticsTab() {
       {/* ── 5. MOVERS ANALYTICS ─────────────────────────────────────────── */}
       {moversData && (moversNew + moversJump + moversLost) > 0 && (
         <div style={cardStyle}>
-          <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px', marginBottom: 6 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.4px', marginBottom: 6 }}>
             📈 DAILY MOVERS — {moversHasReference ? `vs ${moversData.reference_date}` : 'first snapshot today (no prior reference yet)'}
           </div>
           {!moversHasReference && (
-            <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 8, lineHeight: 1.5, padding: '6px 10px', background: '#F59E0B12', border: '1px solid #F59E0B40', borderRadius: 4 }}>
+            <div style={{ fontSize: 11, color: 'var(--mc-text-3)', marginBottom: 8, lineHeight: 1.5, padding: '6px 10px', background: '#F59E0B12', border: '1px solid #F59E0B40', borderRadius: 4 }}>
               ⚠ Big Jumps and Lost Momentum will populate after the next cron snapshot. Until then only New Entries
               (top filings discovered today) is meaningful.
             </div>
@@ -3142,18 +3142,18 @@ function ConcallAnalyticsTab() {
               <div key={b.label} style={{ ...cardStyle, background: '#0A1422', borderColor: `${b.color}30` }}>
                 <div style={{ fontSize: 11, fontWeight: 800, color: b.color, marginBottom: 6 }}>{b.label} ({b.items.length})</div>
                 {b.items.length === 0 ? (
-                  <div style={{ fontSize: 10, color: '#6B7A8D', fontStyle: 'italic' }}>{b.emptyHint}</div>
+                  <div style={{ fontSize: 10, color: 'var(--mc-text-4)', fontStyle: 'italic' }}>{b.emptyHint}</div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                     {b.items.slice(0, 6).map((m, i) => (
                       <div key={m.symbol + i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 11, fontWeight: 700, color: '#E6EDF3', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.company_name}</div>
-                          <div style={{ fontSize: 9, color: '#94A3B8', fontFamily: 'ui-monospace, monospace' }}>{m.symbol}</div>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-text-1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.company_name}</div>
+                          <div style={{ fontSize: 9, color: 'var(--mc-text-3)', fontFamily: 'ui-monospace, monospace' }}>{m.symbol}</div>
                         </div>
                         <span style={{ fontSize: 11, color: b.color, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{m.composite_today?.toFixed(1) ?? '—'}</span>
                         {typeof m.delta === 'number' && (
-                          <span style={{ fontSize: 9, color: m.delta > 0 ? '#10B981' : '#EF4444', fontWeight: 700 }}>{m.delta > 0 ? '+' : ''}{m.delta.toFixed(1)}</span>
+                          <span style={{ fontSize: 9, color: m.delta > 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: 700 }}>{m.delta > 0 ? '+' : ''}{m.delta.toFixed(1)}</span>
                         )}
                       </div>
                     ))}
@@ -3166,7 +3166,7 @@ function ConcallAnalyticsTab() {
           {/* Today's top ranking */}
           {moversTop.length > 0 && (
             <div style={{ marginTop: 10 }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: '#22D3EE', marginBottom: 6 }}>🎯 TODAY&apos;S TOP {moversTop.length}</div>
+              <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-cyan)', marginBottom: 6 }}>🎯 TODAY&apos;S TOP {moversTop.length}</div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 6 }}>
                 {moversTop.map((m, i) => (
                   <div key={m.symbol + i} style={{
@@ -3174,12 +3174,12 @@ function ConcallAnalyticsTab() {
                     padding: '5px 8px', borderRadius: 4,
                     border: '1px solid #22D3EE25', background: '#22D3EE08',
                   }}>
-                    <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 700, minWidth: 22 }}>#{m.rank_today}</span>
+                    <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 700, minWidth: 22 }}>#{m.rank_today}</span>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: '#E6EDF3', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.company_name}</div>
-                      <div style={{ fontSize: 9, color: '#94A3B8', fontFamily: 'ui-monospace, monospace' }}>{m.symbol}</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-text-1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.company_name}</div>
+                      <div style={{ fontSize: 9, color: 'var(--mc-text-3)', fontFamily: 'ui-monospace, monospace' }}>{m.symbol}</div>
                     </div>
-                    <span style={{ fontSize: 11, color: '#22D3EE', fontWeight: 800 }}>{m.composite_today?.toFixed(1) ?? '—'}</span>
+                    <span style={{ fontSize: 11, color: 'var(--mc-cyan)', fontWeight: 800 }}>{m.composite_today?.toFixed(1) ?? '—'}</span>
                   </div>
                 ))}
               </div>
@@ -3198,13 +3198,13 @@ function ConcallAnalyticsTab() {
       {crossStream.length > 0 && (
         <div style={cardStyle}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, flexWrap: 'wrap' }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.4px' }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-warn)', letterSpacing: '0.4px' }}>
               🎯 CROSS-STREAM EVIDENCE CONVERGENCE ({crossStream.length})
             </div>
-            <span style={{ fontSize: 9, color: '#F59E0B', background: '#F59E0B22', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>EVIDENCE-DENSITY</span>
+            <span style={{ fontSize: 9, color: 'var(--mc-warn)', background: '#F59E0B22', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>EVIDENCE-DENSITY</span>
           </div>
-          <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 8, lineHeight: 1.5 }}>
-            Tickers mentioned in <strong style={{ color: '#E6EDF3' }}>≥ 2 independent streams</strong> simultaneously
+          <div style={{ fontSize: 11, color: 'var(--mc-text-3)', marginBottom: 8, lineHeight: 1.5 }}>
+            Tickers mentioned in <strong style={{ color: 'var(--mc-text-1)' }}>≥ 2 independent streams</strong> simultaneously
             (warrant filing · bullish concall · keyword watch). Higher ×N count means more orthogonal datasets agree.
             Read as <em>"this name has wider evidence"</em>, NOT <em>"this name will outperform"</em>.
             Validate with price action / earnings revisions before sizing.
@@ -3222,8 +3222,8 @@ function ConcallAnalyticsTab() {
                 }}>
                   <span title={evidenceLabel} style={{ fontSize: 10, color, fontWeight: 800, minWidth: 22, padding: '1px 5px', borderRadius: 3, background: `${color}22` }}>×{c.count}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: '#E6EDF3', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.company || c.symbol}</div>
-                    <div style={{ fontSize: 9, color: '#94A3B8', fontFamily: 'ui-monospace, monospace' }}>{c.symbol} · {c.streams.join(' + ')}</div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--mc-text-1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.company || c.symbol}</div>
+                    <div style={{ fontSize: 9, color: 'var(--mc-text-3)', fontFamily: 'ui-monospace, monospace' }}>{c.symbol} · {c.streams.join(' + ')}</div>
                   </div>
                 </a>
               );
@@ -3244,12 +3244,12 @@ function ConcallAnalyticsTab() {
       {crossStream.length > 0 && (
         <div style={cardStyle}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, flexWrap: 'wrap' }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: '#10B981', letterSpacing: '0.4px' }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-bullish)', letterSpacing: '0.4px' }}>
               📦 PORTFOLIO BASKET SCAFFOLD
             </div>
-            <span style={{ fontSize: 9, color: '#10B981', background: '#10B98122', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>STARTING STRUCTURE</span>
+            <span style={{ fontSize: 9, color: 'var(--mc-bullish)', background: '#10B98122', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>STARTING STRUCTURE</span>
           </div>
-          <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 8, lineHeight: 1.5 }}>
+          <div style={{ fontSize: 11, color: 'var(--mc-text-3)', marginBottom: 8, lineHeight: 1.5 }}>
             A starting structure derived from cross-stream evidence — <strong>not a recommendation</strong>.
             CORE = wide evidence (≥3 streams). TACTICAL = pair evidence with at least one strong stream.
             Use this as a candidate list, then prune by valuation, liquidity, and your own conviction work
@@ -3264,10 +3264,10 @@ function ConcallAnalyticsTab() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                   <span style={{ fontSize: 12, color: b.color, fontWeight: 800 }}>{b.label}</span>
                   <span style={{ fontSize: 10, color: b.color, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>({b.items.length})</span>
-                  <span style={{ marginLeft: 'auto', fontSize: 9, color: '#6B7A8D' }}>{b.sizeHint}</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--mc-text-4)' }}>{b.sizeHint}</span>
                 </div>
                 {b.items.length === 0 ? (
-                  <div style={{ fontSize: 10, color: '#6B7A8D', fontStyle: 'italic' }}>no candidates at this evidence-density tier</div>
+                  <div style={{ fontSize: 10, color: 'var(--mc-text-4)', fontStyle: 'italic' }}>no candidates at this evidence-density tier</div>
                 ) : (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                     {b.items.slice(0, 12).map((c) => (
@@ -3291,35 +3291,35 @@ function ConcallAnalyticsTab() {
       )}
 
       {/* ── 8. INSTITUTIONAL DISCLOSURE (PATCH 0598 recalibrated) ───────── */}
-      <div style={{ ...cardStyle, borderColor: '#1A2540' }}>
-        <div style={{ fontSize: 12, color: '#94A3B8', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 6 }}>
+      <div style={{ ...cardStyle, borderColor: 'var(--mc-bg-4)' }}>
+        <div style={{ fontSize: 12, color: 'var(--mc-text-3)', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 6 }}>
           📚 HOW TO READ THIS ANALYTICS (recalibrated)
         </div>
-        <ul style={{ margin: 0, paddingLeft: 18, fontSize: 11, color: '#94A3B8', lineHeight: 1.6 }}>
+        <ul style={{ margin: 0, paddingLeft: 18, fontSize: 11, color: 'var(--mc-text-3)', lineHeight: 1.6 }}>
           <li>
-            <strong style={{ color: '#10B981' }}>Cross-stream evidence convergence</strong> is
+            <strong style={{ color: 'var(--mc-bullish)' }}>Cross-stream evidence convergence</strong> is
             this engine&apos;s strongest output — but it is <em>evidence-density</em>, not a
             probability of trade success. Validate with price action / volume / earnings revisions
             (a market-implied confirmation layer is on the roadmap but not yet shipped).
           </li>
           <li>
-            <strong style={{ color: '#A78BFA' }}>Warrant Analytics</strong> currently has known
+            <strong style={{ color: 'var(--mc-state-persistent)' }}>Warrant Analytics</strong> currently has known
             extraction gaps — promoter participation and use-of-proceeds are unknown on most rows.
             Treat as <em>anomaly detector</em>, not <em>investment ranking</em>, until the
             filings-extraction pipeline matures.
           </li>
           <li>
-            <strong style={{ color: '#22D3EE' }}>Bullish Tier distribution</strong> distinguishes
+            <strong style={{ color: 'var(--mc-cyan)' }}>Bullish Tier distribution</strong> distinguishes
             real signal from spam. ULTRA + BULLISH tiers carry actionable evidence-density;
             INSUFFICIENT / DATA_PENDING signal extraction gaps (not bearish reality).
           </li>
           <li>
-            <strong style={{ color: '#F59E0B' }}>Keyword Watch by group</strong> shows the
+            <strong style={{ color: 'var(--mc-warn)' }}>Keyword Watch by group</strong> shows the
             thematic loading of this week&apos;s concall pipeline. Heavy RISK loading with
             light OPPORTUNITY suggests caution; verify by reading the actual matched articles.
           </li>
           <li>
-            <strong style={{ color: '#94A3B8' }}>Movers</strong> capture day-over-day delta in
+            <strong style={{ color: 'var(--mc-text-3)' }}>Movers</strong> capture day-over-day delta in
             composite score — a stock breaking into TOP 25 today that wasn't there yesterday
             is a high-velocity signal worth investigating.
           </li>
@@ -3329,7 +3329,7 @@ function ConcallAnalyticsTab() {
             Cross-reference the source filings before acting.
           </li>
           <li>
-            <strong style={{ color: '#EF4444' }}>Counter-thesis caveat:</strong> the engine
+            <strong style={{ color: 'var(--mc-bearish)' }}>Counter-thesis caveat:</strong> the engine
             currently has structural-bullish bias by construction (every theme is named for
             its bottleneck, not its normalisation cycle). Curated counter-thesis lives on the
             Bottleneck Workbench detail pages (lib/bottleneck-intel.ts catalog). For themes
@@ -3337,7 +3337,7 @@ function ConcallAnalyticsTab() {
             eventually normalises, overbuilds, or gets substituted.
           </li>
           <li>
-            <strong style={{ color: '#94A3B8' }}>Missing layers</strong> (institutional roadmap):
+            <strong style={{ color: 'var(--mc-text-3)' }}>Missing layers</strong> (institutional roadmap):
             market-implied confirmation (price/volume/options-flow/short-interest/earnings-revisions),
             realized-alpha feedback loop, factor-overlap analysis, crowding metrics. Without these,
             this engine is an idea-generation surface, not a deployable portfolio.
@@ -3413,22 +3413,22 @@ function ConcallBottleneckPanel() {
 
   if (loading) {
     return (
-      <div style={{ backgroundColor: '#0D1623', border: '1px solid #1A2540', borderRadius: 6, padding: '12px 14px' }}>
-        <div style={{ fontSize: 12, fontWeight: 800, color: '#EF4444', letterSpacing: '0.4px', marginBottom: 6 }}>
+      <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 6, padding: '12px 14px' }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-bearish)', letterSpacing: '0.4px', marginBottom: 6 }}>
           🏗 BOTTLENECK THEMES (news-side)
         </div>
-        <div style={{ fontSize: 11, color: '#94A3B8' }}>📡 Loading bottleneck dashboard…</div>
+        <div style={{ fontSize: 11, color: 'var(--mc-text-3)' }}>📡 Loading bottleneck dashboard…</div>
       </div>
     );
   }
 
   if (error || sorted.length === 0) {
     return (
-      <div style={{ backgroundColor: '#0D1623', border: '1px solid #1A2540', borderRadius: 6, padding: '12px 14px' }}>
-        <div style={{ fontSize: 12, fontWeight: 800, color: '#EF4444', letterSpacing: '0.4px', marginBottom: 6 }}>
+      <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 6, padding: '12px 14px' }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-bearish)', letterSpacing: '0.4px', marginBottom: 6 }}>
           🏗 BOTTLENECK THEMES (news-side)
         </div>
-        <div style={{ fontSize: 11, color: '#94A3B8' }}>
+        <div style={{ fontSize: 11, color: 'var(--mc-text-3)' }}>
           {error ? `Could not load bottleneck dashboard (${error}). Visit /bottleneck-intel directly to inspect.` : 'No themes in the active news window.'}
         </div>
       </div>
@@ -3436,16 +3436,16 @@ function ConcallBottleneckPanel() {
   }
 
   return (
-    <div style={{ backgroundColor: '#0D1623', border: '1px solid #1A2540', borderRadius: 6, padding: '12px 14px' }}>
+    <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 6, padding: '12px 14px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
-        <div style={{ fontSize: 12, fontWeight: 800, color: '#EF4444', letterSpacing: '0.4px' }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-bearish)', letterSpacing: '0.4px' }}>
           🏗 BOTTLENECK THEMES (news-side, severity-sorted)
         </div>
-        <div style={{ fontSize: 10, color: '#94A3B8' }}>
-          {sorted.length} themes · {totalArticles} articles · {totalSignals} signals · <span style={{ color: '#EF4444', fontWeight: 700 }}>{high} HIGH</span>{med > 0 && <> · <span style={{ color: '#F59E0B', fontWeight: 700 }}>{med} MED</span></>}
+        <div style={{ fontSize: 10, color: 'var(--mc-text-3)' }}>
+          {sorted.length} themes · {totalArticles} articles · {totalSignals} signals · <span style={{ color: 'var(--mc-bearish)', fontWeight: 700 }}>{high} HIGH</span>{med > 0 && <> · <span style={{ color: 'var(--mc-warn)', fontWeight: 700 }}>{med} MED</span></>}
         </div>
       </div>
-      <div style={{ fontSize: 10.5, color: '#6B7A8D', marginBottom: 8, lineHeight: 1.5 }}>
+      <div style={{ fontSize: 10.5, color: 'var(--mc-text-4)', marginBottom: 8, lineHeight: 1.5 }}>
         Cross-app bottleneck themes from /bottleneck-intel. Click any theme to drill into its workbench
         (transmission ladder, related articles, India proxies, counter-thesis).
       </div>
@@ -3469,7 +3469,7 @@ function ConcallBottleneckPanel() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span style={{ fontSize: 14 }}>{b.severity_icon || '⚡'}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: '#E6EDF3', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--mc-text-1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {b.label || b.bucket_id}
                   </div>
                 </div>
@@ -3478,7 +3478,7 @@ function ConcallBottleneckPanel() {
                   background: `${color}22`, border: `1px solid ${color}50`, letterSpacing: '0.4px',
                 }}>{b.severity_label || '—'}</span>
               </div>
-              <div style={{ fontSize: 9, color: '#94A3B8', display: 'flex', gap: 8 }}>
+              <div style={{ fontSize: 9, color: 'var(--mc-text-3)', display: 'flex', gap: 8 }}>
                 <span>{b.article_count ?? 0} art</span>
                 <span>{b.signal_count ?? 0} sig</span>
                 {(b.key_tickers && b.key_tickers.length > 0) && (
@@ -3492,8 +3492,8 @@ function ConcallBottleneckPanel() {
         })}
       </div>
       {sorted.length > 18 && (
-        <div style={{ fontSize: 10, color: '#6B7A8D', marginTop: 8, fontStyle: 'italic' }}>
-          Showing top 18 of {sorted.length}. Open <a href="/bottleneck-intel" style={{ color: '#22D3EE' }}>/bottleneck-intel</a> for the full rotation tracker.
+        <div style={{ fontSize: 10, color: 'var(--mc-text-4)', marginTop: 8, fontStyle: 'italic' }}>
+          Showing top 18 of {sorted.length}. Open <a href="/bottleneck-intel" style={{ color: 'var(--mc-cyan)' }}>/bottleneck-intel</a> for the full rotation tracker.
         </div>
       )}
     </div>

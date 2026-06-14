@@ -1446,29 +1446,29 @@ function SignalCard({ sig, horizonColor }: { sig: ExtractedSignal; horizonColor:
           <span style={{fontWeight:600,color:'#C9D4E0'}}>{sig.subject}</span>
         </span>
         {sig.dupCount && sig.dupCount > 1 && (
-          <span style={{fontSize:8,color:'#4A5B6C',border:'1px solid #1A2840',padding:'0 4px',borderRadius:3}}>×{sig.dupCount} merged</span>
+          <span style={{fontSize:8,color:'var(--mc-text-4)',border:'1px solid var(--mc-bg-4)',padding:'0 4px',borderRadius:3}}>×{sig.dupCount} merged</span>
         )}
-        <span title={`Origin: ${sig.origin}`} style={{fontSize:9,color:'#4A5B6C'}}>{originBadge} {sig.origin}</span>
-        <span style={{fontSize:9,color:'#4A5B6C',fontStyle:'italic'}}>{sig.temporality}</span>
+        <span title={`Origin: ${sig.origin}`} style={{fontSize:9,color:'var(--mc-text-4)'}}>{originBadge} {sig.origin}</span>
+        <span style={{fontSize:9,color:'var(--mc-text-4)',fontStyle:'italic'}}>{sig.temporality}</span>
         <span style={{fontSize:9,fontWeight:700,color:horizonColor(sig.horizon),border:`1px solid ${horizonColor(sig.horizon)}40`,padding:'1px 5px',borderRadius:3}}>{sig.horizon}</span>
         {sig.numerical && (
-          <span style={{fontSize:10,fontWeight:800,color:'#F59E0B',border:'1px solid #F59E0B40',padding:'2px 7px',borderRadius:3}}>
+          <span style={{fontSize:10,fontWeight:800,color:'var(--mc-warn)',border:'1px solid #F59E0B40',padding:'2px 7px',borderRadius:3}}>
             ₹{sig.numerical.value}{sig.numerical.unit}{sig.numerical.timing?` · ${sig.numerical.timing}`:''}
           </span>
         )}
-        <span style={{fontSize:8,color:'#4A5B6C',marginLeft:'auto'}}>{sig.date?new Date(sig.date).toLocaleDateString('en-IN'):''}</span>
+        <span style={{fontSize:8,color:'var(--mc-text-4)',marginLeft:'auto'}}>{sig.date?new Date(sig.date).toLocaleDateString('en-IN'):''}</span>
       </div>
       {/* Evidence sentence — MANDATORY. If missing, flag it */}
       {sig.text && sig.text.length >= 15 ? (
-        <div style={{fontSize:11,color:'#C9D4E0',lineHeight:1.6,backgroundColor:'#060E1A',padding:'6px 10px',borderRadius:5,borderLeft:'2px solid #4A5B6C',marginBottom:4}}>
+        <div style={{fontSize:11,color:'#C9D4E0',lineHeight:1.6,backgroundColor:'#060E1A',padding:'6px 10px',borderRadius:5,borderLeft:'2px solid var(--mc-text-4)',marginBottom:4}}>
           "{sig.text}"
         </div>
       ) : (
-        <div style={{fontSize:10,color:'#F59E0B',padding:'4px 8px',backgroundColor:'#F59E0B08',borderRadius:4,marginBottom:4}}>
+        <div style={{fontSize:10,color:'var(--mc-warn)',padding:'4px 8px',backgroundColor:'#F59E0B08',borderRadius:4,marginBottom:4}}>
           ⚠ No traceable evidence sentence — do not act on this signal
         </div>
       )}
-      <div style={{fontSize:9,color:'#4A5B6C'}}>📰 {sig.source || 'Unknown source'}</div>
+      <div style={{fontSize:9,color:'var(--mc-text-4)'}}>📰 {sig.source || 'Unknown source'}</div>
     </div>
   );
 }
@@ -1876,11 +1876,11 @@ function ConcallIntelligence() {
             <div style={{fontSize:15,fontWeight:800,color:ACCENT2}}>🧠 Concall Intelligence — 30D Rolling Window</div>
             <div style={{fontSize:11,color:TEXT3,marginTop:2}}>
               Management signal extraction · MRI scoring · Signal vs Noise · {screenerStocks.length} companies tracked
-              <span style={{color:'#4A5B6C',marginLeft:8}}>
+              <span style={{color:'var(--mc-text-4)',marginLeft:8}}>
                 ({screenerStocks.filter(s=>s.source==='Screener').length} Screener · {screenerStocks.filter(s=>s.source==='Watchlist').length} Watchlist · {screenerStocks.filter(s=>s.source==='Portfolio').length} Portfolio)
               </span>
             </div>
-            <div style={{fontSize:10,color:'#F59E0B',marginTop:4}}>
+            <div style={{fontSize:10,color:'var(--mc-warn)',marginTop:4}}>
               💡 To add more stocks: in Screener.in click Export → downloads ALL results (all pages). Upload the CSV in Multibagger tab.
             </div>
           </div>
@@ -1888,7 +1888,7 @@ function ConcallIntelligence() {
             <button onClick={()=>setShowAlphaOnly(v=>!v)} style={{fontSize:11,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${showAlphaOnly?ACCENT2+'60':BORDER}`,background:showAlphaOnly?`${ACCENT2}18`:'transparent',color:showAlphaOnly?ACCENT2:TEXT3,cursor:'pointer'}}>
               ⭐ Alpha Only ({summaries.filter(s=>s.alphaCount>0).length})
             </button>
-            <button onClick={()=>setShowManualInput(v=>!v)} style={{fontSize:11,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${showManualInput?'#F59E0B60':BORDER}`,background:showManualInput?`#F59E0B18`:'transparent',color:showManualInput?'#F59E0B':TEXT3,cursor:'pointer'}}>
+            <button onClick={()=>setShowManualInput(v=>!v)} style={{fontSize:11,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${showManualInput?'#F59E0B60':BORDER}`,background:showManualInput?`#F59E0B18`:'transparent',color:showManualInput?'var(--mc-warn)':TEXT3,cursor:'pointer'}}>
               📝 Paste Concall
             </button>
             <button onClick={fetchConcallData} disabled={loading} style={{fontSize:11,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${BORDER}`,background:'transparent',color:TEXT3,cursor:'pointer'}}>
@@ -1937,9 +1937,9 @@ function ConcallIntelligence() {
                   <span style={{fontSize:9,fontWeight:700,color:TEXT3,letterSpacing:'0.5px'}}>SECTORS WITH SIGNALS:</span>
                   {sectorEntries.map(([sec,data])=>(
                     <span key={sec} style={{fontSize:9,fontWeight:700,padding:'3px 8px',borderRadius:5,
-                      backgroundColor: data.improving > 0 ? '#10b98114' : '#1A2840',
-                      color: data.improving > 0 ? '#10b981' : TEXT3,
-                      border: `1px solid ${data.improving > 0 ? '#10b98130' : '#1A2840'}`,
+                      backgroundColor: data.improving > 0 ? '#10b98114' : 'var(--mc-bg-4)',
+                      color: data.improving > 0 ? 'var(--mc-bullish)' : TEXT3,
+                      border: `1px solid ${data.improving > 0 ? '#10b98130' : 'var(--mc-bg-4)'}`,
                     }}>
                       {sec} · {data.alpha} signals{data.improving>0?` · ${data.improving}↑`:''}
                     </span>
@@ -1954,17 +1954,17 @@ function ConcallIntelligence() {
       {/* ── Manual Concall Input — paste transcript / highlight text ── */}
       {showManualInput && (
         <div style={{marginBottom:14,padding:'14px 16px',backgroundColor:'#F59E0B08',border:'1px solid #F59E0B30',borderRadius:10}}>
-          <div style={{fontSize:11,fontWeight:800,color:'#F59E0B',marginBottom:8}}>
+          <div style={{fontSize:11,fontWeight:800,color:'var(--mc-warn)',marginBottom:8}}>
             📝 PASTE CONCALL HIGHLIGHTS — add transcript-level signals not in news articles
           </div>
-          <div style={{fontSize:10,color:'#4A5B6C',marginBottom:10}}>
+          <div style={{fontSize:10,color:'var(--mc-text-4)',marginBottom:10}}>
             Paste raw concall text, investor presentation excerpts, or management commentary. The engine will extract signals and add to the relevant company.
           </div>
           <div style={{display:'flex',gap:8,marginBottom:8,flexWrap:'wrap'}}>
             <input value={manualSymbol} onChange={e=>setManualSymbol(e.target.value.toUpperCase())}
               placeholder="NSE Symbol (e.g. QPOWER)"
               style={{padding:'7px 12px',backgroundColor:'#0D1B2E',border:`1px solid ${BORDER}`,borderRadius:7,color:TEXT1,fontSize:12,width:180}}/>
-            <button onClick={processManualInput} style={{padding:'7px 16px',borderRadius:7,border:'none',backgroundColor:'#F59E0B',color:'#000',fontWeight:800,fontSize:12,cursor:'pointer'}}>
+            <button onClick={processManualInput} style={{padding:'7px 16px',borderRadius:7,border:'none',backgroundColor:'var(--mc-warn)',color:'#000',fontWeight:800,fontSize:12,cursor:'pointer'}}>
               Extract Signals →
             </button>
             <button onClick={()=>setShowManualInput(false)} style={{padding:'7px 12px',borderRadius:7,border:`1px solid ${BORDER}`,backgroundColor:'transparent',color:TEXT3,fontSize:12,cursor:'pointer'}}>
@@ -1976,7 +1976,7 @@ function ConcallIntelligence() {
             rows={6}
             style={{width:'100%',backgroundColor:'#0D1B2E',border:`1px solid ${BORDER}`,borderRadius:8,padding:'10px 12px',color:TEXT1,fontSize:12,resize:'vertical',boxSizing:'border-box',lineHeight:1.6}}
           />
-          <div style={{fontSize:10,color:'#4A5B6C',marginTop:6}}>
+          <div style={{fontSize:10,color:'var(--mc-text-4)',marginTop:6}}>
             💡 Signals extracted from this input are tagged as COMPANY origin with highest confidence. They are NOT from news articles — they are from management statements.
           </div>
           {/* Inline status feedback — replaces alert() */}
@@ -1984,7 +1984,7 @@ function ConcallIntelligence() {
             <div style={{marginTop:8,padding:'8px 12px',borderRadius:7,
               backgroundColor: manualParseStatus.type==='ok'?'#10b98114':manualParseStatus.type==='warn'?'#f59e0b14':'#ef444414',
               border:`1px solid ${manualParseStatus.type==='ok'?'#10b98130':manualParseStatus.type==='warn'?'#f59e0b30':'#ef444430'}`,
-              color: manualParseStatus.type==='ok'?'#10b981':manualParseStatus.type==='warn'?'#f59e0b':'#ef4444',
+              color: manualParseStatus.type==='ok'?'var(--mc-bullish)':manualParseStatus.type==='warn'?'var(--mc-warn)':'var(--mc-bearish)',
               fontSize:11, fontWeight:600,
             }}>
               {manualParseStatus.msg}
@@ -2033,7 +2033,7 @@ function ConcallIntelligence() {
                     <div style={{fontSize:13,fontWeight:800,color:TEXT1,letterSpacing:'-0.3px'}}>{s.symbol}</div>
                     <div style={{display:'flex',gap:4,alignItems:'center',marginTop:1}}>
                       {s.grade && <span style={{fontSize:8,fontWeight:700,color:gradeColor(s.grade),border:`1px solid ${gradeColor(s.grade)}40`,padding:'0px 4px',borderRadius:3}}>{s.grade}</span>}
-                      {(s as any).source && (s as any).source !== 'Screener' && <span style={{fontSize:7,color:'#475569',border:'1px solid #1A2840',padding:'0 3px',borderRadius:2}}>{(s as any).source}</span>}
+                      {(s as any).source && (s as any).source !== 'Screener' && <span style={{fontSize:7,color:'var(--mc-text-4)',border:'1px solid var(--mc-bg-4)',padding:'0 3px',borderRadius:2}}>{(s as any).source}</span>}
                     </div>
                   </div>
 
@@ -2067,7 +2067,7 @@ function ConcallIntelligence() {
                   {/* Company + Sector */}
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontSize:11,fontWeight:600,color:'#C9D4E0',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.company}</div>
-                    <div style={{fontSize:8,color:'#475569',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.sector||'—'}</div>
+                    <div style={{fontSize:8,color:'var(--mc-text-4)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.sector||'—'}</div>
                   </div>
 
                   {/* Right: compact metrics strip */}
@@ -2079,21 +2079,21 @@ function ConcallIntelligence() {
                     </div>
                     {/* MRI with bar */}
                     <div style={{textAlign:'center',minWidth:36}}>
-                      <div style={{fontSize:12,fontWeight:700,color:s.mriScore>=70?'#10b981':s.mriScore===50?TEXT3:'#f59e0b',lineHeight:1}}>{s.mriScore===50&&s.articleCount===0?'—':s.mriScore}</div>
-                      <div style={{width:32,height:2,backgroundColor:'#1A2840',borderRadius:1,marginTop:2,overflow:'hidden'}}>
-                        {s.articleCount>0&&<div style={{height:'100%',width:`${s.mriScore}%`,backgroundColor:s.mriScore>=70?'#10b981':s.mriScore>=50?'#f59e0b':'#ef4444',borderRadius:1}} />}
+                      <div style={{fontSize:12,fontWeight:700,color:s.mriScore>=70?'var(--mc-bullish)':s.mriScore===50?TEXT3:'var(--mc-warn)',lineHeight:1}}>{s.mriScore===50&&s.articleCount===0?'—':s.mriScore}</div>
+                      <div style={{width:32,height:2,backgroundColor:'var(--mc-bg-4)',borderRadius:1,marginTop:2,overflow:'hidden'}}>
+                        {s.articleCount>0&&<div style={{height:'100%',width:`${s.mriScore}%`,backgroundColor:s.mriScore>=70?'var(--mc-bullish)':s.mriScore>=50?'var(--mc-warn)':'var(--mc-bearish)',borderRadius:1}} />}
                       </div>
                       <div style={{fontSize:7,color:TEXT3}}>MRI</div>
                     </div>
                     {/* Trend + articles */}
                     <div style={{textAlign:'center',minWidth:40}}>
-                      <div style={{fontSize:11,fontWeight:700,color:s.trend==='IMPROVING'?'#10b981':s.trend==='DETERIORATING'?'#ef4444':s.trend==='UNKNOWN'?'#334155':'#f59e0b'}}>
+                      <div style={{fontSize:11,fontWeight:700,color:s.trend==='IMPROVING'?'var(--mc-bullish)':s.trend==='DETERIORATING'?'var(--mc-bearish)':s.trend==='UNKNOWN'?'#334155':'var(--mc-warn)'}}>
                         {s.trend==='IMPROVING'?'↑':s.trend==='DETERIORATING'?'↓':s.trend==='UNKNOWN'?'·':'→'} {s.trend==='UNKNOWN'?'—':s.trend.slice(0,4)}
                       </div>
                       <div style={{fontSize:7,color:TEXT3}}>{s.articleCount} art.</div>
                     </div>
                     {/* Freshness dot */}
-                    <div style={{width:8,height:8,borderRadius:'50%',backgroundColor:s.freshness==='FRESH'?'#10b981':s.freshness==='ACTIVE'?'#f59e0b':'#334155',flexShrink:0}} title={s.freshness} />
+                    <div style={{width:8,height:8,borderRadius:'50%',backgroundColor:s.freshness==='FRESH'?'var(--mc-bullish)':s.freshness==='ACTIVE'?'var(--mc-warn)':'#334155',flexShrink:0}} title={s.freshness} />
                     {/* Expand chevron */}
                     <span style={{fontSize:10,color:'#334155',marginLeft:2}}>{isExp?'▲':'▼'}</span>
                   </div>
@@ -2108,7 +2108,7 @@ function ConcallIntelligence() {
                       <span style={{
                         fontSize:8,fontWeight:800,flexShrink:0,marginTop:1,
                         padding:'1px 6px',borderRadius:4,
-                        color:bestSig.positive?'#10b981':'#ef4444',
+                        color:bestSig.positive?'var(--mc-bullish)':'var(--mc-bearish)',
                         backgroundColor:(bestSig.positive?'#10b98114':'#ef444414'),
                         border:`1px solid ${bestSig.positive?'#10b98130':'#ef444430'}`,
                         whiteSpace:'nowrap',
@@ -2125,7 +2125,7 @@ function ConcallIntelligence() {
                       </div>
                       {/* Negative signal warning if any */}
                       {bestNegSig && (
-                        <span style={{fontSize:8,fontWeight:700,flexShrink:0,padding:'1px 5px',borderRadius:3,color:'#ef4444',backgroundColor:'#ef444410',border:'1px solid #ef444425'}}>
+                        <span style={{fontSize:8,fontWeight:700,flexShrink:0,padding:'1px 5px',borderRadius:3,color:'var(--mc-bearish)',backgroundColor:'#ef444410',border:'1px solid #ef444425'}}>
                           ⚠ {(bestNegSig.subject||bestNegSig.type).replace(/_/g,' ').slice(0,12)}
                         </span>
                       )}
@@ -2140,7 +2140,7 @@ function ConcallIntelligence() {
                         </div>
                         <div style={{fontSize:8,color:'#334155',marginTop:1}}>
                           {topHeadline.source} · {topHeadline.date?new Date(topHeadline.date).toLocaleDateString('en-IN',{day:'numeric',month:'short'}):''}
-                          <span style={{marginLeft:8,color:'#475569'}}>{s.articleCount} article{s.articleCount!==1?'s':''}, 0 signals — expand to see all</span>
+                          <span style={{marginLeft:8,color:'var(--mc-text-4)'}}>{s.articleCount} article{s.articleCount!==1?'s':''}, 0 signals — expand to see all</span>
                         </div>
                       </div>
                     </div>
@@ -2148,7 +2148,7 @@ function ConcallIntelligence() {
                     // PATCH 0054 + 0065: 0 ARTICLES — actionable empty state
                     // with click-to-prefill manual-paste flow. Clicking the
                     // CTA opens the panel AND fills in the symbol.
-                    <div style={{fontSize:9,color:'#475569',display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+                    <div style={{fontSize:9,color:'var(--mc-text-4)',display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
                       <span>📭 No news + no concall transcript for {s.symbol}.</span>
                       <span
                         onClick={(ev) => {
@@ -2158,7 +2158,7 @@ function ConcallIntelligence() {
                           // Scroll to top so the paste form is visible
                           window.scrollTo({ top: 0, behavior: 'smooth' });
                         }}
-                        style={{color:'#0F7ABF',fontWeight:600,cursor:'pointer',textDecoration:'underline'}}
+                        style={{color:'var(--mc-accent)',fontWeight:600,cursor:'pointer',textDecoration:'underline'}}
                       >
                         ↑ Click here to paste {s.symbol}'s concall transcript →
                       </span>
@@ -2173,12 +2173,12 @@ function ConcallIntelligence() {
                     // PATCH 0054 + 0065: actionable empty state with prefilled
                     // manual-paste CTA (clicks open the panel + sets symbol).
                     <div style={{padding:'16px 0',color:TEXT3,fontSize:11,textAlign:'left'}}>
-                      <div style={{marginBottom:8,color:'#94A3B8',fontWeight:600}}>
+                      <div style={{marginBottom:8,color:'var(--mc-text-3)',fontWeight:600}}>
                         {s.articleCount === 0 ? '📭 No coverage in 30D window' : `📰 ${s.articleCount} article${s.articleCount !== 1 ? 's' : ''} found, but none matched a forward-looking management signal`}
                       </div>
                       <div style={{color:'#64748B',fontSize:10,lineHeight:1.5,marginBottom:10}}>
                         Concall Intel processes earnings news AND optional concall transcripts. News headlines often use past tense
-                        ('reported', 'achieved') which makes them low-confidence signals. <strong style={{color:'#94A3B8'}}>For a high-fidelity read</strong>, paste
+                        ('reported', 'achieved') which makes them low-confidence signals. <strong style={{color:'var(--mc-text-3)'}}>For a high-fidelity read</strong>, paste
                         the latest earnings call transcript (Q4 / Q3 of FY26). Manual transcripts give 5–10× more actionable signals than news-only coverage.
                       </div>
                       <button
@@ -2191,7 +2191,7 @@ function ConcallIntelligence() {
                         style={{
                           fontSize: 11, fontWeight: 700, padding: '6px 14px', borderRadius: 7,
                           border: '1px solid #10b98140', backgroundColor: '#10b98115',
-                          color: '#10b981', cursor: 'pointer',
+                          color: 'var(--mc-bullish)', cursor: 'pointer',
                         }}
                       >
                         📝 Paste {s.symbol}'s concall transcript
@@ -2202,10 +2202,10 @@ function ConcallIntelligence() {
 
                       {/* ── ARTICLE HEADLINES (always shown when articles exist) ── */}
                       {(s as any).recentHeadlines?.length > 0 && (
-                        <div style={{marginBottom:14,padding:'10px 12px',backgroundColor:'#060E1A',border:'1px solid #1A2840',borderRadius:8}}>
+                        <div style={{marginBottom:14,padding:'10px 12px',backgroundColor:'#060E1A',border:'1px solid var(--mc-bg-4)',borderRadius:8}}>
                           <div style={{fontSize:9,fontWeight:800,color:'#64748B',letterSpacing:'1px',marginBottom:8}}>
                             📰 RECENT NEWS ({s.articleCount} article{s.articleCount!==1?'s':''} found for {s.company})
-                            {s.alphaCount === 0 && <span style={{color:'#F59E0B',marginLeft:6}}>— no actionable management signals detected yet</span>}
+                            {s.alphaCount === 0 && <span style={{color:'var(--mc-warn)',marginLeft:6}}>— no actionable management signals detected yet</span>}
                           </div>
                           <div style={{display:'flex',flexDirection:'column',gap:5}}>
                             {(s as any).recentHeadlines.map((h: {title:string;source:string;date:string;url?:string}, hi: number) => (
@@ -2213,11 +2213,11 @@ function ConcallIntelligence() {
                                 <span style={{fontSize:10,color:'#334155',flexShrink:0}}>›</span>
                                 <div style={{flex:1,minWidth:0}}>
                                   {h.url ? (
-                                    <a href={h.url} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:'#94A3B8',lineHeight:1.4,textDecoration:'none',display:'block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                                    <a href={h.url} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:'var(--mc-text-3)',lineHeight:1.4,textDecoration:'none',display:'block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
                                       {h.title}
                                     </a>
                                   ) : (
-                                    <span style={{fontSize:11,color:'#94A3B8',lineHeight:1.4,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',display:'block'}}>{h.title}</span>
+                                    <span style={{fontSize:11,color:'var(--mc-text-3)',lineHeight:1.4,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',display:'block'}}>{h.title}</span>
                                   )}
                                   <span style={{fontSize:9,color:'#334155'}}>{h.source}{h.date?' · '+new Date(h.date).toLocaleDateString('en-IN',{day:'numeric',month:'short'}):''}</span>
                                 </div>
@@ -2226,7 +2226,7 @@ function ConcallIntelligence() {
                           </div>
                           {s.alphaCount === 0 && (
                             <div style={{marginTop:8,padding:'6px 8px',backgroundColor:'#F59E0B08',border:'1px solid #F59E0B20',borderRadius:5}}>
-                              <span style={{fontSize:9,color:'#F59E0B'}}>💡 To extract signals: paste the earnings call transcript in "📝 Paste Concall" above → instant signal extraction.</span>
+                              <span style={{fontSize:9,color:'var(--mc-warn)'}}>💡 To extract signals: paste the earnings call transcript in "📝 Paste Concall" above → instant signal extraction.</span>
                             </div>
                           )}
                         </div>
@@ -2234,15 +2234,15 @@ function ConcallIntelligence() {
 
                       {/* No articles at all — explain why and what to do */}
                       {s.articleCount === 0 && (
-                        <div style={{marginBottom:14,padding:'10px 12px',backgroundColor:'#060E1A',border:'1px solid #1A2840',borderRadius:8}}>
+                        <div style={{marginBottom:14,padding:'10px 12px',backgroundColor:'#060E1A',border:'1px solid var(--mc-bg-4)',borderRadius:8}}>
                           <div style={{fontSize:9,fontWeight:800,color:'#334155',marginBottom:6}}>📭 NO NEWS FOUND IN LAST 30 DAYS</div>
-                          <div style={{fontSize:10,color:'#475569',lineHeight:1.6}}>
+                          <div style={{fontSize:10,color:'var(--mc-text-4)',lineHeight:1.6}}>
                             No articles matching <strong style={{color:'#64748B'}}>{s.company}</strong> in the news database.
                             This can happen when: (1) the company uses a different name in press coverage,
                             (2) no significant news in 30 days, or (3) stock is too small for mainstream coverage.
                           </div>
                           <div style={{marginTop:8,padding:'6px 8px',backgroundColor:'#0F7ABF08',border:'1px solid #0F7ABF20',borderRadius:5}}>
-                            <span style={{fontSize:9,color:'#0F7ABF'}}>💡 Use "📝 Paste Concall" above to directly paste earnings call highlights for this company.</span>
+                            <span style={{fontSize:9,color:'var(--mc-accent)'}}>💡 Use "📝 Paste Concall" above to directly paste earnings call highlights for this company.</span>
                           </div>
                         </div>
                       )}
@@ -2257,7 +2257,7 @@ function ConcallIntelligence() {
                               return (
                                 <div key={ci} style={{padding:'6px 10px',backgroundColor:dc+'10',border:`1px solid ${dc}30`,borderRadius:6,minWidth:90}}>
                                   <div style={{fontSize:10,fontWeight:700,color:dc}}>{c.direction==='UP'?'↑':c.direction==='DOWN'?'↓':'→'} {c.label}</div>
-                                  <div style={{fontSize:8,color:'#4A5B6C'}}>{c.count} signal{c.count!==1?'s':''} · str:{c.strength}/5</div>
+                                  <div style={{fontSize:8,color:'var(--mc-text-4)'}}>{c.count} signal{c.count!==1?'s':''} · str:{c.strength}/5</div>
                                 </div>
                               );
                             })}
@@ -2268,7 +2268,7 @@ function ConcallIntelligence() {
                       {/* ── WHY IT MATTERS ── */}
                       {(s as any).whyItMatters && (
                         <div style={{marginBottom:14,padding:'10px 14px',backgroundColor:'#F59E0B08',border:'1px solid #F59E0B20',borderRadius:8}}>
-                          <div style={{fontSize:9,fontWeight:800,color:'#F59E0B',marginBottom:4}}>💡 WHY THIS MATTERS FOR YOUR POSITION</div>
+                          <div style={{fontSize:9,fontWeight:800,color:'var(--mc-warn)',marginBottom:4}}>💡 WHY THIS MATTERS FOR YOUR POSITION</div>
                           <div style={{fontSize:11,color:'#C9D4E0',lineHeight:1.5}}>{(s as any).whyItMatters}</div>
                         </div>
                       )}
@@ -2287,7 +2287,7 @@ function ConcallIntelligence() {
                           {/* Company-specific signals */}
                           {s.signals.filter(sig=>sig.isAlpha&&sig.origin==='COMPANY').length > 0 && (
                             <div style={{marginBottom:10}}>
-                              <div style={{fontSize:10,fontWeight:800,color:'#10b981',letterSpacing:'1px',marginBottom:6}}>🏢 COMPANY SIGNALS — confirmed for {s.symbol}</div>
+                              <div style={{fontSize:10,fontWeight:800,color:'var(--mc-bullish)',letterSpacing:'1px',marginBottom:6}}>🏢 COMPANY SIGNALS — confirmed for {s.symbol}</div>
                               <div style={{display:'flex',flexDirection:'column',gap:6}}>
                                 {s.signals.filter(sig=>sig.isAlpha&&sig.origin==='COMPANY').map((sig,i)=>(
                                   <SignalCard key={i} sig={sig} horizonColor={horizonColor} />
@@ -2300,7 +2300,7 @@ function ConcallIntelligence() {
                             <div style={{marginBottom:10}}>
                               <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
                                 <div style={{fontSize:10,fontWeight:800,color:'#06b6d4',letterSpacing:'1px'}}>🌍 SECTOR CONTEXT — does NOT affect score</div>
-                                <span style={{fontSize:9,color:'#4A5B6C',border:'1px solid #1A2840',padding:'1px 6px',borderRadius:3}}>Informational only</span>
+                                <span style={{fontSize:9,color:'var(--mc-text-4)',border:'1px solid var(--mc-bg-4)',padding:'1px 6px',borderRadius:3}}>Informational only</span>
                               </div>
                               <div style={{display:'flex',flexDirection:'column',gap:6}}>
                                 {s.signals.filter(sig=>sig.isAlpha&&sig.origin==='SECTOR').map((sig,i)=>{
@@ -2309,18 +2309,18 @@ function ConcallIntelligence() {
                                     <div key={i} style={{padding:'10px 12px',backgroundColor:'#06b6d408',border:'1px solid #06b6d420',borderLeft:'3px solid #06b6d4',borderRadius:7}}>
                                       <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:4,flexWrap:'wrap'}}>
                                         <span style={{fontSize:11,fontWeight:800,color:'#06b6d4'}}>🌍 {sig.subject}</span>
-                                        {sd && <span style={{fontSize:9,color:'#4A5B6C',fontStyle:'italic'}}>driven by: {sd.driver}</span>}
-                                        <span style={{fontSize:8,color:'#4A5B6C',marginLeft:'auto'}}>{sig.date?new Date(sig.date).toLocaleDateString('en-IN'):''}</span>
+                                        {sd && <span style={{fontSize:9,color:'var(--mc-text-4)',fontStyle:'italic'}}>driven by: {sd.driver}</span>}
+                                        <span style={{fontSize:8,color:'var(--mc-text-4)',marginLeft:'auto'}}>{sig.date?new Date(sig.date).toLocaleDateString('en-IN'):''}</span>
                                       </div>
-                                      {sd && <div style={{fontSize:10,color:'#0F7ABF',marginBottom:4}}>→ {sd.impact}</div>}
+                                      {sd && <div style={{fontSize:10,color:'var(--mc-accent)',marginBottom:4}}>→ {sd.impact}</div>}
                                       {sig.text && sig.text.length >= 15 ? (
                                         <div style={{fontSize:11,color:'#8A95A3',lineHeight:1.5,backgroundColor:'#060E1A',padding:'5px 9px',borderRadius:5,borderLeft:'2px solid #06b6d430',marginBottom:3}}>
                                           "{sig.text}"
                                         </div>
                                       ) : (
-                                        <div style={{fontSize:10,color:'#F59E0B'}}>⚠ No direct evidence — sector inference only</div>
+                                        <div style={{fontSize:10,color:'var(--mc-warn)'}}>⚠ No direct evidence — sector inference only</div>
                                       )}
-                                      <div style={{fontSize:9,color:'#4A5B6C'}}>📰 {sig.source}</div>
+                                      <div style={{fontSize:9,color:'var(--mc-text-4)'}}>📰 {sig.source}</div>
                                     </div>
                                   );
                                 })}
@@ -2330,7 +2330,7 @@ function ConcallIntelligence() {
                           {/* Negative alpha */}
                           {s.signals.filter(sig=>sig.isAlpha&&!sig.positive).length > 0 && (
                             <div>
-                              <div style={{fontSize:10,fontWeight:800,color:'#ef4444',letterSpacing:'1px',marginBottom:6}}>⚠ RISK SIGNALS</div>
+                              <div style={{fontSize:10,fontWeight:800,color:'var(--mc-bearish)',letterSpacing:'1px',marginBottom:6}}>⚠ RISK SIGNALS</div>
                               <div style={{display:'flex',flexDirection:'column',gap:6}}>
                                 {s.signals.filter(sig=>sig.isAlpha&&!sig.positive).map((sig,i)=>(
                                   <SignalCard key={i} sig={sig} horizonColor={horizonColor} />
@@ -2346,8 +2346,8 @@ function ConcallIntelligence() {
                           <div style={{fontSize:10,fontWeight:800,color:TEXT3,letterSpacing:'1px',marginBottom:6}}>📰 NOISE SIGNALS — 1-5D relevance only</div>
                           <div style={{display:'flex',flexDirection:'column',gap:4}}>
                             {s.signals.filter(sig=>!sig.isAlpha).map((sig,i)=>(
-                              <div key={i} style={{padding:'7px 10px',backgroundColor:'#1A2840',borderRadius:6,fontSize:10,color:'#8A95A3'}}>
-                                <span style={{fontWeight:600,color:sig.positive?'#10b981':'#ef4444'}}>{sig.type.replace(/_/g,' ')}</span>: {sig.text.slice(0,80)}...
+                              <div key={i} style={{padding:'7px 10px',backgroundColor:'var(--mc-bg-4)',borderRadius:6,fontSize:10,color:'#8A95A3'}}>
+                                <span style={{fontWeight:600,color:sig.positive?'var(--mc-bullish)':'var(--mc-bearish)'}}>{sig.type.replace(/_/g,' ')}</span>: {sig.text.slice(0,80)}...
                               </div>
                             ))}
                           </div>
@@ -2867,7 +2867,7 @@ export default function CompanyIntelligencePage() {
               display: 'flex', alignItems: 'center', gap: '4px',
               background: 'none', border: `1px solid ${BORDER}`, borderRadius: '5px',
               padding: '4px 10px', cursor: filteredSignals.length ? 'pointer' : 'not-allowed',
-              color: filteredSignals.length ? '#10b981' : TEXT3, fontSize: '11px', fontWeight: 600,
+              color: filteredSignals.length ? 'var(--mc-bullish)' : TEXT3, fontSize: '11px', fontWeight: 600,
               opacity: filteredSignals.length ? 1 : 0.4,
             }}
           >
@@ -2885,10 +2885,10 @@ export default function CompanyIntelligencePage() {
         display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'center',
         padding: '4px 14px', marginBottom: '8px', fontSize: '9px', color: TEXT3,
       }}>
-        <span>Materiality: <span style={{ color: GREEN }}>■75+</span> <span style={{ color: '#3B82F6' }}>■60</span> <span style={{ color: '#F59E0B' }}>■45</span> <span style={{ color: TEXT3 }}>■&lt;45</span></span>
+        <span>Materiality: <span style={{ color: GREEN }}>■75+</span> <span style={{ color: 'var(--mc-info)' }}>■60</span> <span style={{ color: 'var(--mc-warn)' }}>■45</span> <span style={{ color: TEXT3 }}>■&lt;45</span></span>
         <span>Conf: <span style={{ color: GREEN }}>70+</span> <span style={{ color: YELLOW }}>50+</span> <span style={{ color: ORANGE }}>&lt;50</span></span>
-        <span>Evidence: <span style={{ color: '#059669' }}>A</span>=Filed <span style={{ color: '#D97706' }}>B</span>=Likely <span style={{ color: '#DC2626' }}>C</span>=Probable <span style={{ color: '#6B7280' }}>D</span>=Weak</span>
-        <span><span style={{ color: PURPLE }}>PF</span>=Portfolio <span style={{ color: ACCENT }}>WL</span>=Watchlist <span style={{ color: '#F59E0B' }}>CB</span>=Conviction Beats <span style={{ color: '#F59E0B' }}>EST</span>=Estimated</span>
+        <span>Evidence: <span style={{ color: '#059669' }}>A</span>=Filed <span style={{ color: '#D97706' }}>B</span>=Likely <span style={{ color: 'var(--mc-bearish-2)' }}>C</span>=Probable <span style={{ color: '#6B7280' }}>D</span>=Weak</span>
+        <span><span style={{ color: PURPLE }}>PF</span>=Portfolio <span style={{ color: ACCENT }}>WL</span>=Watchlist <span style={{ color: 'var(--mc-warn)' }}>CB</span>=Conviction Beats <span style={{ color: 'var(--mc-warn)' }}>EST</span>=Estimated</span>
       </div>
 
       {/* ── DAILY DECISION SUMMARY ── */}
@@ -3065,7 +3065,7 @@ export default function CompanyIntelligencePage() {
       {/* Loading */}
       {loading && top3.length === 0 && (
         <div style={{ textAlign: 'center', padding: '50px 0' }}>
-          <div style={{ width: '28px', height: '28px', border: '3px solid #1A2840', borderTopColor: ACCENT, borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 10px' }} />
+          <div style={{ width: '28px', height: '28px', border: '3px solid var(--mc-bg-4)', borderTopColor: ACCENT, borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 10px' }} />
           <p style={{ color: TEXT3, fontSize: '13px' }}>Scanning corporate announcements, block deals, bulk deals...</p>
           <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         </div>
@@ -3075,7 +3075,7 @@ export default function CompanyIntelligencePage() {
       {overlapSignals.length > 0 && typeFilter === 'ALL' && universeFilter === 'ALL' && (
         <div style={{ marginBottom: '16px', padding: '14px 16px', backgroundColor: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.25)', borderLeft: '3px solid #8b5cf6', borderRadius: '10px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
-            <span style={{ fontSize: '12px', fontWeight: 800, color: '#a78bfa', letterSpacing: '1px' }}>⭐ CROSS-UNIVERSE OVERLAP</span>
+            <span style={{ fontSize: '12px', fontWeight: 800, color: 'var(--mc-state-persistent)', letterSpacing: '1px' }}>⭐ CROSS-UNIVERSE OVERLAP</span>
             <span style={{ fontSize: '11px', color: TEXT3 }}>Stocks with signals in 2+ tracked universes — highest conviction</span>
           </div>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
@@ -3096,7 +3096,7 @@ export default function CompanyIntelligencePage() {
                     {universes.map(u => (
                       <span key={u} style={{ fontSize: '9px', fontWeight: 600, padding: '1px 6px', borderRadius: '10px',
                         backgroundColor: u === 'Portfolio' ? 'rgba(139,92,246,0.2)' : u === 'Watchlist' ? 'rgba(15,122,191,0.2)' : 'rgba(16,185,129,0.2)',
-                        color: u === 'Portfolio' ? '#a78bfa' : u === 'Watchlist' ? '#38bdf8' : '#10b981',
+                        color: u === 'Portfolio' ? 'var(--mc-state-persistent)' : u === 'Watchlist' ? '#38bdf8' : 'var(--mc-bullish)',
                       }}>{u}</span>
                     ))}
                   </div>
@@ -3111,7 +3111,7 @@ export default function CompanyIntelligencePage() {
       {(excelNewsDigest.length > 0 || excelNewsLoading) && (universeFilter === 'ALL' || universeFilter === 'EXCEL') && typeFilter === 'ALL' && (
         <div style={{ marginBottom: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-            <span style={{ fontSize: '11px', fontWeight: 800, color: '#10b981', letterSpacing: '1px' }}>
+            <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--mc-bullish)', letterSpacing: '1px' }}>
               📊 EXCEL PICKS — NEWS MONITOR {excelNewsLoading ? '⏳' : `(${excelNewsDigest.length})`}
             </span>
             <span style={{ fontSize: '10px', color: TEXT3 }}>
@@ -3186,7 +3186,7 @@ export default function CompanyIntelligencePage() {
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
                     <span style={{ fontSize: '10px', color: TEXT3, transition: 'transform 0.2s', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
-                    <span style={{ fontSize: '14px', fontWeight: 700, color: '#3B82F6' }}>{t.symbol}</span>
+                    <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--mc-info)' }}>{t.symbol}</span>
                     <span style={{
                       fontSize: '9px', fontWeight: 700, color: stackColor,
                       padding: '1px 5px', borderRadius: '3px', backgroundColor: `${stackColor}15`,
@@ -3328,13 +3328,13 @@ export default function CompanyIntelligencePage() {
                   padding: '10px 14px',
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: '14px', fontWeight: 700, color: '#3B82F6' }}>{idea.symbol}</span>
+                    <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--mc-info)' }}>{idea.symbol}</span>
                     {idea.lastPrice && idea.lastPrice > 0 && (
                       <span style={{ fontSize: '11px', color: TEXT2 }}>₹{idea.lastPrice.toLocaleString('en-IN')}</span>
                     )}
                     {idea.isPortfolio && <span style={{ fontSize: '9px', color: PURPLE, fontWeight: 600, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(139,92,246,0.15)' }}>PF</span>}
                     {idea.isWatchlist && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.15)' }}>WL</span>}
-                    {(idea as any).isConviction && <span title="Conviction Beats" style={{ fontSize: '9px', color: '#F59E0B', fontWeight: 700, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)' }}>CB</span>}
+                    {(idea as any).isConviction && <span title="Conviction Beats" style={{ fontSize: '9px', color: 'var(--mc-warn)', fontWeight: 700, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)' }}>CB</span>}
                     {idea.segment && <span style={{ fontSize: '9px', color: TEXT3, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(100,116,139,0.08)' }}>{idea.segment}</span>}
                     <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px' }}>
                       <span style={{ fontSize: '9px', fontWeight: 700, color: confColor, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(167,139,250,0.08)' }}>
@@ -3369,14 +3369,14 @@ export default function CompanyIntelligencePage() {
               <div key={`top-${i}`} style={{
                 backgroundColor: CARD,
                 border: `1px solid ${noActionableSignals ? 'rgba(167,139,250,0.3)' : (s.isNegative ? `${RED}40` : `${actionColor(s.action)}30`)}`,
-                borderLeft: `4px solid ${noActionableSignals ? '#A78BFA' : (s.isNegative ? RED : actionColor(s.action))}`,
+                borderLeft: `4px solid ${noActionableSignals ? 'var(--mc-state-persistent)' : (s.isNegative ? RED : actionColor(s.action))}`,
                 borderRadius: '10px',
                 padding: '14px 18px',
               }}>
                 {/* Row 1: Symbol, Action, Impact, Value */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '8px' }}>
                   <span style={{ fontSize: '13px' }}>{eventTypeIcon(s.eventType)}</span>
-                  <span style={{ fontSize: '16px', fontWeight: 700, color: '#3B82F6' }}>{s.symbol}</span>
+                  <span style={{ fontSize: '16px', fontWeight: 700, color: 'var(--mc-info)' }}>{s.symbol}</span>
                   {/* Current price with confidence indicator */}
                   <span style={{
                     fontSize: '11px', fontWeight: 600,
@@ -3390,20 +3390,20 @@ export default function CompanyIntelligencePage() {
                   </span>
                   {s.isPortfolio && <span style={{ fontSize: '9px', color: PURPLE, fontWeight: 600, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(139,92,246,0.15)' }}>PF</span>}
                   {s.isWatchlist && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.15)' }}>WL</span>}
-                  {(s as any).isConviction && <span title="Conviction Beats" style={{ fontSize: '9px', color: '#F59E0B', fontWeight: 700, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)' }}>CB</span>}
+                  {(s as any).isConviction && <span title="Conviction Beats" style={{ fontSize: '9px', color: 'var(--mc-warn)', fontWeight: 700, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)' }}>CB</span>}
                   {s.tag && <span style={{ 
   fontSize: '9px', 
   fontWeight: 700, 
   padding: '1px 5px', 
   borderRadius: '3px', 
-  color: s.tag === 'RISK-WATCH' ? '#EF4444' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? '#F59E0B' : '#A78BFA',
+  color: s.tag === 'RISK-WATCH' ? 'var(--mc-bearish)' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? 'var(--mc-warn)' : 'var(--mc-state-persistent)',
   backgroundColor: s.tag === 'RISK-WATCH' ? 'rgba(239,68,68,0.12)' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? 'rgba(245,158,11,0.12)' : 'rgba(167,139,250,0.12)',
   border: `1px solid ${s.tag === 'RISK-WATCH' ? 'rgba(239,68,68,0.25)' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? 'rgba(245,158,11,0.25)' : 'rgba(167,139,250,0.25)'}`,
 }}>{s.tag}</span>}
                   {s.isNegative && <span style={{ fontSize: '9px', color: RED, fontWeight: 700, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(239,68,68,0.12)' }}>⚠ NEGATIVE</span>}
                   {s.signalClass && s.signalClass !== 'COMPLIANCE' && (
                     <span style={{ fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '2px',
-                      color: s.signalClass === 'ECONOMIC' ? '#10B981' : s.signalClass === 'STRATEGIC' ? '#8B5CF6' : '#F59E0B',
+                      color: s.signalClass === 'ECONOMIC' ? 'var(--mc-bullish)' : s.signalClass === 'STRATEGIC' ? '#8B5CF6' : 'var(--mc-warn)',
                       backgroundColor: s.signalClass === 'ECONOMIC' ? 'rgba(16,185,129,0.1)' : s.signalClass === 'STRATEGIC' ? 'rgba(139,92,246,0.1)' : 'rgba(245,158,11,0.1)',
                     }}>{s.signalClass}</span>
                   )}
@@ -3547,7 +3547,7 @@ export default function CompanyIntelligencePage() {
                 {/* Risk factors panel */}
                 {s.riskFactors && s.riskFactors.length > 0 && (
                   <div style={{
-                    fontSize: '10px', color: '#F59E0B', lineHeight: 1.4, padding: '3px 10px',
+                    fontSize: '10px', color: 'var(--mc-warn)', lineHeight: 1.4, padding: '3px 10px',
                     marginBottom: '4px', borderLeft: '2px solid rgba(245,158,11,0.3)',
                   }}>
                     Risk: {s.riskFactors.slice(0, 3).join(' · ')}
@@ -3571,7 +3571,7 @@ export default function CompanyIntelligencePage() {
                   {s.signalTier && (
                     <span style={{
                       fontSize: '9px', fontWeight: 700, padding: '1px 6px', borderRadius: '3px',
-                      color: s.signalTier === 'TIER1_VERIFIED' ? '#10B981' : '#94A3B8',
+                      color: s.signalTier === 'TIER1_VERIFIED' ? 'var(--mc-bullish)' : 'var(--mc-text-3)',
                       backgroundColor: s.signalTier === 'TIER1_VERIFIED' ? 'rgba(16,185,129,0.12)' : 'rgba(100,116,139,0.08)',
                       border: `1px solid ${s.signalTier === 'TIER1_VERIFIED' ? 'rgba(16,185,129,0.3)' : 'rgba(100,116,139,0.2)'}`,
                     }}>
@@ -3603,7 +3603,7 @@ export default function CompanyIntelligencePage() {
                       {s.freshness}
                     </span>
                   )}
-                  {s.dataType && <span style={{ fontSize: '9px', fontWeight: 700, padding: '1px 5px', borderRadius: '3px', color: s.dataType === 'FACT' ? '#10B981' : '#F59E0B', backgroundColor: s.dataType === 'FACT' ? 'rgba(16,185,129,0.1)' : 'rgba(245,158,11,0.1)', border: `1px solid ${s.dataType === 'FACT' ? 'rgba(16,185,129,0.25)' : 'rgba(245,158,11,0.25)'}` }}>{s.dataType === 'FACT' ? '✅ Confirmed' : '⚠️ Inferred'}</span>}
+                  {s.dataType && <span style={{ fontSize: '9px', fontWeight: 700, padding: '1px 5px', borderRadius: '3px', color: s.dataType === 'FACT' ? 'var(--mc-bullish)' : 'var(--mc-warn)', backgroundColor: s.dataType === 'FACT' ? 'rgba(16,185,129,0.1)' : 'rgba(245,158,11,0.1)', border: `1px solid ${s.dataType === 'FACT' ? 'rgba(16,185,129,0.25)' : 'rgba(245,158,11,0.25)'}` }}>{s.dataType === 'FACT' ? '✅ Confirmed' : '⚠️ Inferred'}</span>}
                   {s.monitorScore !== undefined && <span style={{ fontSize: '9px', color: s.monitorTier === 'HIGH' ? GREEN : s.monitorTier === 'MEDIUM' ? YELLOW : TEXT3, fontWeight: 600 }}>Conf: {s.monitorScore}/100</span>}
                   {s.confidenceType && <span style={{ fontSize: '10px', color: s.confidenceType === 'ACTUAL' ? GREEN : s.confidenceType === 'INFERRED' ? YELLOW : TEXT3, marginLeft: '4px' }}>✓ {s.confidenceType}</span>}
                   {s.dataSource && <span style={{ fontSize: '10px', color: TEXT3, marginLeft: '4px' }}>· {s.dataSource}</span>}
@@ -3637,13 +3637,13 @@ export default function CompanyIntelligencePage() {
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                     <span style={{ fontSize: '12px' }}>{eventTypeIcon(s.eventType)}</span>
-                    <span style={{ fontSize: '14px', fontWeight: 700, color: '#3B82F6' }}>{s.symbol}</span>
+                    <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--mc-info)' }}>{s.symbol}</span>
                     {s.lastPrice && s.lastPrice > 0 && (
                       <span style={{ fontSize: '11px', color: TEXT2 }}>{fmtPrice(s.lastPrice)}</span>
                     )}
                     {s.isPortfolio && <span style={{ fontSize: '9px', color: PURPLE, fontWeight: 600, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(139,92,246,0.15)' }}>PF</span>}
                     {s.isWatchlist && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.15)' }}>WL</span>}
-                    {(s as any).isConviction && <span title="Conviction Beats" style={{ fontSize: '9px', color: '#F59E0B', fontWeight: 700, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)' }}>CB</span>}
+                    {(s as any).isConviction && <span title="Conviction Beats" style={{ fontSize: '9px', color: 'var(--mc-warn)', fontWeight: 700, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)' }}>CB</span>}
                     <span style={{ fontSize: '10px', color: ACCENT, padding: '1px 6px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.08)' }}>{s.eventType}</span>
                     {s.valueCr > 0 && <span style={{ fontSize: '11px', fontWeight: 700, color: CYAN }}>{fmtCr(s.valueCr)}{s.inferenceUsed ? '*' : ''}</span>}
                     {s.impactPct > 0 && (
@@ -3653,7 +3653,7 @@ export default function CompanyIntelligencePage() {
                     )}
                     {s.signalClass && s.signalClass !== 'COMPLIANCE' && (
                       <span style={{ fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '2px',
-                        color: s.signalClass === 'ECONOMIC' ? '#10B981' : s.signalClass === 'STRATEGIC' ? '#8B5CF6' : '#F59E0B',
+                        color: s.signalClass === 'ECONOMIC' ? 'var(--mc-bullish)' : s.signalClass === 'STRATEGIC' ? '#8B5CF6' : 'var(--mc-warn)',
                         backgroundColor: s.signalClass === 'ECONOMIC' ? 'rgba(16,185,129,0.1)' : s.signalClass === 'STRATEGIC' ? 'rgba(139,92,246,0.1)' : 'rgba(245,158,11,0.1)',
                       }}>{s.signalClass}</span>
                     )}
@@ -3672,11 +3672,11 @@ export default function CompanyIntelligencePage() {
                   <div style={{ display: 'flex', gap: '8px', marginTop: '4px', alignItems: 'center' }}>
                     {s.signalTier && (
                       <span style={{ fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
-                        color: s.signalTier === 'TIER1_VERIFIED' ? '#10B981' : '#64748B',
+                        color: s.signalTier === 'TIER1_VERIFIED' ? 'var(--mc-bullish)' : '#64748B',
                         backgroundColor: s.signalTier === 'TIER1_VERIFIED' ? 'rgba(16,185,129,0.1)' : 'rgba(100,116,139,0.06)',
                       }}>{s.signalTier === 'TIER1_VERIFIED' ? '✓ VERIFIED' : '~ INFERRED'}</span>
                     )}
-                    {s.dataType && <span style={{ fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px', color: s.dataType === 'FACT' ? '#10B981' : '#F59E0B', backgroundColor: s.dataType === 'FACT' ? 'rgba(16,185,129,0.08)' : 'rgba(245,158,11,0.08)' }}>{s.dataType === 'FACT' ? '✅ Confirmed' : '⚠️ Inferred'}</span>}
+                    {s.dataType && <span style={{ fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px', color: s.dataType === 'FACT' ? 'var(--mc-bullish)' : 'var(--mc-warn)', backgroundColor: s.dataType === 'FACT' ? 'rgba(16,185,129,0.08)' : 'rgba(245,158,11,0.08)' }}>{s.dataType === 'FACT' ? '✅ Confirmed' : '⚠️ Inferred'}</span>}
                     {s.monitorScore !== undefined && <span style={{ fontSize: '8px', color: s.monitorTier === 'HIGH' ? GREEN : s.monitorTier === 'MEDIUM' ? YELLOW : TEXT3, fontWeight: 600 }}>Conf:{s.monitorScore}</span>}
                     {!s.monitorScore && s.confidenceScore !== undefined && (
                       <span style={{ fontSize: '8px', color: s.confidenceScore >= 70 ? GREEN : s.confidenceScore >= 60 ? YELLOW : TEXT3 }}>
@@ -3717,9 +3717,9 @@ export default function CompanyIntelligencePage() {
               <div style={{ fontSize: '10px', fontWeight: 700, color: PURPLE, marginBottom: '6px' }}>THEMATIC DEVELOPMENTS</div>
               {thematicIdeas.slice(0, 3).map((t, i) => (
                 <div key={`qt-${i}`} style={{ fontSize: '11px', color: TEXT2, marginBottom: '4px', paddingLeft: '8px', borderLeft: `2px solid ${PURPLE}40` }}>
-                  <span style={{ fontWeight: 600, color: '#3B82F6' }}>{t.symbol}</span>
+                  <span style={{ fontWeight: 600, color: 'var(--mc-info)' }}>{t.symbol}</span>
                   {t.isPortfolio && <span style={{ fontSize: '8px', color: PURPLE, marginLeft: '4px' }}>PF</span>}
-                  {(t as any).isConviction && <span title="Conviction Beats" style={{ fontSize: '8px', color: '#F59E0B', marginLeft: '4px', fontWeight: 700 }}>CB</span>}
+                  {(t as any).isConviction && <span title="Conviction Beats" style={{ fontSize: '8px', color: 'var(--mc-warn)', marginLeft: '4px', fontWeight: 700 }}>CB</span>}
                   {' — '}{t.theme.narrative}
                 </div>
               ))}
@@ -3731,9 +3731,9 @@ export default function CompanyIntelligencePage() {
               <div style={{ fontSize: '10px', fontWeight: 700, color: ACCENT, marginBottom: '6px' }}>MONITORING ({monitorList.length})</div>
               {monitorList.slice(0, 5).map((s, i) => (
                 <div key={`qm-${i}`} style={{ fontSize: '11px', color: TEXT2, marginBottom: '4px', paddingLeft: '8px', borderLeft: `2px solid ${ACCENT}40` }}>
-                  <span style={{ fontWeight: 600, color: '#3B82F6' }}>{s.symbol}</span>
+                  <span style={{ fontWeight: 600, color: 'var(--mc-info)' }}>{s.symbol}</span>
                   {s.isPortfolio && <span style={{ fontSize: '8px', color: PURPLE, marginLeft: '4px' }}>PF</span>}
-                  {(s as any).isConviction && <span title="Conviction Beats" style={{ fontSize: '8px', color: '#F59E0B', marginLeft: '4px', fontWeight: 700 }}>CB</span>}
+                  {(s as any).isConviction && <span title="Conviction Beats" style={{ fontSize: '8px', color: 'var(--mc-warn)', marginLeft: '4px', fontWeight: 700 }}>CB</span>}
                   {' — '}{s.whatHappened || s.whyItMatters || s.eventType}
                   <span style={{ fontSize: '9px', color: TEXT3, marginLeft: '6px' }}>{fmtDate(s.date)}</span>
                 </div>
@@ -3866,7 +3866,7 @@ export default function CompanyIntelligencePage() {
                 .slice(0, 5)
                 .map((signal, idx) => (
                   <div key={`pf-${signal.symbol}-${idx}`} style={{
-                    background: 'linear-gradient(135deg, #1a1a2e 0%, #0D1623 100%)',
+                    background: 'linear-gradient(135deg, #1a1a2e 0%, var(--mc-bg-1) 100%)',
                     border: `1px solid ${ORANGE}33`,
                     borderRadius: '8px', padding: '10px 14px', marginBottom: '6px',
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -3926,13 +3926,13 @@ export default function CompanyIntelligencePage() {
                       border: `1px solid ${s.isNegative ? `${RED}30` : s.isPortfolio ? `${PURPLE}40` : s.isWatchlist ? `${ACCENT}30` : BORDER}`,
                       borderRadius: '8px',
                       padding: '12px 16px',
-                      borderLeft: `3px solid ${s.signalTier === 'TIER1_VERIFIED' ? '#10B981' : s.isNegative ? '#EF4444' : '#475569'}`,
+                      borderLeft: `3px solid ${s.signalTier === 'TIER1_VERIFIED' ? 'var(--mc-bullish)' : s.isNegative ? 'var(--mc-bearish)' : 'var(--mc-text-4)'}`,
                       opacity: s.signalTier === 'TIER2_INFERRED' ? 0.85 : 1,
                     }}>
                       {/* Row 1: Core info */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                   <span style={{ fontSize: '12px' }}>{eventTypeIcon(s.eventType)}</span>
-                  <span style={{ fontSize: '14px', fontWeight: 700, color: '#3B82F6', minWidth: '80px' }}>{s.symbol}</span>
+                  <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--mc-info)', minWidth: '80px' }}>{s.symbol}</span>
                   {/* Current price with confidence indicator */}
                   <span style={{
                     fontSize: '11px', fontWeight: 600,
@@ -3955,13 +3955,13 @@ export default function CompanyIntelligencePage() {
                   )}
                   {s.isPortfolio && <span style={{ fontSize: '9px', color: PURPLE, fontWeight: 600 }}>PF</span>}
                   {s.isWatchlist && !s.isPortfolio && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600 }}>WL</span>}
-                  {(s as any).isConviction && <span title="Conviction Beats" style={{ fontSize: '9px', color: '#F59E0B', fontWeight: 700, padding: '0 4px', borderRadius: '3px', backgroundColor: 'rgba(245,158,11,0.15)' }}>CB</span>}
+                  {(s as any).isConviction && <span title="Conviction Beats" style={{ fontSize: '9px', color: 'var(--mc-warn)', fontWeight: 700, padding: '0 4px', borderRadius: '3px', backgroundColor: 'rgba(245,158,11,0.15)' }}>CB</span>}
                   {s.tag && <span style={{ 
   fontSize: '9px', 
   fontWeight: 700, 
   padding: '1px 5px', 
   borderRadius: '3px', 
-  color: s.tag === 'RISK-WATCH' ? '#EF4444' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? '#F59E0B' : '#A78BFA',
+  color: s.tag === 'RISK-WATCH' ? 'var(--mc-bearish)' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? 'var(--mc-warn)' : 'var(--mc-state-persistent)',
   backgroundColor: s.tag === 'RISK-WATCH' ? 'rgba(239,68,68,0.12)' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? 'rgba(245,158,11,0.12)' : 'rgba(167,139,250,0.12)',
   border: `1px solid ${s.tag === 'RISK-WATCH' ? 'rgba(239,68,68,0.25)' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? 'rgba(245,158,11,0.25)' : 'rgba(167,139,250,0.25)'}`,
 }}>{s.tag}</span>}
@@ -4111,7 +4111,7 @@ export default function CompanyIntelligencePage() {
                   {s.signalTier && (
                     <span style={{
                       fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
-                      color: s.signalTier === 'TIER1_VERIFIED' ? '#10B981' : '#64748B',
+                      color: s.signalTier === 'TIER1_VERIFIED' ? 'var(--mc-bullish)' : '#64748B',
                       backgroundColor: s.signalTier === 'TIER1_VERIFIED' ? 'rgba(16,185,129,0.1)' : 'rgba(100,116,139,0.06)',
                     }}>
                       {s.signalTier === 'TIER1_VERIFIED' ? '✓ VERIFIED' : '~ INFERRED'}
@@ -4127,7 +4127,7 @@ export default function CompanyIntelligencePage() {
                   {s.catalystStrength && (
                     <span style={{
                       fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
-                      color: s.catalystStrength === 'STRONG' ? '#10B981' : s.catalystStrength === 'MODERATE' ? '#F59E0B' : '#64748B',
+                      color: s.catalystStrength === 'STRONG' ? 'var(--mc-bullish)' : s.catalystStrength === 'MODERATE' ? 'var(--mc-warn)' : '#64748B',
                       backgroundColor: s.catalystStrength === 'STRONG' ? 'rgba(16,185,129,0.1)' : s.catalystStrength === 'MODERATE' ? 'rgba(245,158,11,0.1)' : 'rgba(100,116,139,0.06)',
                     }}>
                       {s.catalystStrength === 'STRONG' ? '⚡ STRONG' : s.catalystStrength === 'MODERATE' ? '◆ MOD' : '○ WEAK'}
@@ -4136,7 +4136,7 @@ export default function CompanyIntelligencePage() {
                   {/* Evidence tier badge */}
                   {s.evidenceTier && (
                     <span style={{ fontSize: '7px', fontWeight: 700, padding: '1px 3px', borderRadius: '2px',
-                      color: s.evidenceTier === 'TIER_A' ? '#059669' : s.evidenceTier === 'TIER_B' ? '#D97706' : s.evidenceTier === 'TIER_D' ? '#6B7280' : '#DC2626',
+                      color: s.evidenceTier === 'TIER_A' ? '#059669' : s.evidenceTier === 'TIER_B' ? '#D97706' : s.evidenceTier === 'TIER_D' ? '#6B7280' : 'var(--mc-bearish-2)',
                       backgroundColor: s.evidenceTier === 'TIER_A' ? 'rgba(5,150,105,0.08)' : s.evidenceTier === 'TIER_B' ? 'rgba(217,119,6,0.08)' : s.evidenceTier === 'TIER_D' ? 'rgba(107,114,128,0.08)' : 'rgba(220,38,38,0.08)',
                     }}>
                       {s.evidenceTier === 'TIER_A' ? 'A' : s.evidenceTier === 'TIER_B' ? 'B' : s.evidenceTier === 'TIER_D' ? 'D' : 'C'}
@@ -4159,7 +4159,7 @@ export default function CompanyIntelligencePage() {
                   )}
                   {/* Heuristic suppression warning */}
                   {s.heuristicSuppressed && (
-                    <span style={{ fontSize: '7px', fontWeight: 700, padding: '1px 3px', borderRadius: '2px', color: '#DC2626', backgroundColor: 'rgba(220,38,38,0.08)', letterSpacing: '0.3px' }}
+                    <span style={{ fontSize: '7px', fontWeight: 700, padding: '1px 3px', borderRadius: '2px', color: 'var(--mc-bearish-2)', backgroundColor: 'rgba(220,38,38,0.08)', letterSpacing: '0.3px' }}
                       title={s.templatePattern || 'Unverified pattern detected'}>
                       ⚠ LOW-CONF PATTERN
                     </span>
@@ -4232,13 +4232,13 @@ export default function CompanyIntelligencePage() {
                       border: `1px solid ${s.isNegative ? `${RED}30` : s.isPortfolio ? `${PURPLE}40` : s.isWatchlist ? `${ACCENT}30` : BORDER}`,
                       borderRadius: '8px',
                       padding: '12px 16px',
-                      borderLeft: `3px solid ${s.signalTier === 'TIER1_VERIFIED' ? '#10B981' : s.isNegative ? '#EF4444' : '#475569'}`,
+                      borderLeft: `3px solid ${s.signalTier === 'TIER1_VERIFIED' ? 'var(--mc-bullish)' : s.isNegative ? 'var(--mc-bearish)' : 'var(--mc-text-4)'}`,
                       opacity: s.signalTier === 'TIER2_INFERRED' ? 0.85 : 1,
                     }}>
                       {/* Row 1: Core info */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                         <span style={{ fontSize: '12px' }}>{eventTypeIcon(s.eventType)}</span>
-                        <span style={{ fontSize: '14px', fontWeight: 700, color: '#3B82F6', minWidth: '80px' }}>{s.symbol}</span>
+                        <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--mc-info)', minWidth: '80px' }}>{s.symbol}</span>
                         {/* Current price with confidence indicator */}
                         <span style={{
                           fontSize: '11px', fontWeight: 600,
@@ -4260,13 +4260,13 @@ export default function CompanyIntelligencePage() {
                         )}
                         {s.isPortfolio && <span style={{ fontSize: '9px', color: PURPLE, fontWeight: 600 }}>PF</span>}
                         {s.isWatchlist && !s.isPortfolio && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600 }}>WL</span>}
-                        {(s as any).isConviction && <span title="Conviction Beats" style={{ fontSize: '9px', color: '#F59E0B', fontWeight: 700, padding: '0 4px', borderRadius: '3px', backgroundColor: 'rgba(245,158,11,0.15)' }}>CB</span>}
+                        {(s as any).isConviction && <span title="Conviction Beats" style={{ fontSize: '9px', color: 'var(--mc-warn)', fontWeight: 700, padding: '0 4px', borderRadius: '3px', backgroundColor: 'rgba(245,158,11,0.15)' }}>CB</span>}
                         {s.tag && <span style={{ 
   fontSize: '9px', 
   fontWeight: 700, 
   padding: '1px 5px', 
   borderRadius: '3px', 
-  color: s.tag === 'RISK-WATCH' ? '#EF4444' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? '#F59E0B' : '#A78BFA',
+  color: s.tag === 'RISK-WATCH' ? 'var(--mc-bearish)' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? 'var(--mc-warn)' : 'var(--mc-state-persistent)',
   backgroundColor: s.tag === 'RISK-WATCH' ? 'rgba(239,68,68,0.12)' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? 'rgba(245,158,11,0.12)' : 'rgba(167,139,250,0.12)',
   border: `1px solid ${s.tag === 'RISK-WATCH' ? 'rgba(239,68,68,0.25)' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? 'rgba(245,158,11,0.25)' : 'rgba(167,139,250,0.25)'}`,
 }}>{s.tag}</span>}
@@ -4349,7 +4349,7 @@ export default function CompanyIntelligencePage() {
                         {s.signalTier && (
                           <span style={{
                             fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
-                            color: s.signalTier === 'TIER1_VERIFIED' ? '#10B981' : '#64748B',
+                            color: s.signalTier === 'TIER1_VERIFIED' ? 'var(--mc-bullish)' : '#64748B',
                             backgroundColor: s.signalTier === 'TIER1_VERIFIED' ? 'rgba(16,185,129,0.1)' : 'rgba(100,116,139,0.06)',
                           }}>
                             {s.signalTier === 'TIER1_VERIFIED' ? '✓ VERIFIED' : '~ INFERRED'}
@@ -4365,7 +4365,7 @@ export default function CompanyIntelligencePage() {
                         {s.catalystStrength && (
                           <span style={{
                             fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
-                            color: s.catalystStrength === 'STRONG' ? '#10B981' : s.catalystStrength === 'MODERATE' ? '#F59E0B' : '#64748B',
+                            color: s.catalystStrength === 'STRONG' ? 'var(--mc-bullish)' : s.catalystStrength === 'MODERATE' ? 'var(--mc-warn)' : '#64748B',
                             backgroundColor: s.catalystStrength === 'STRONG' ? 'rgba(16,185,129,0.1)' : s.catalystStrength === 'MODERATE' ? 'rgba(245,158,11,0.1)' : 'rgba(100,116,139,0.06)',
                           }}>
                             {s.catalystStrength === 'STRONG' ? '⚡ STRONG' : s.catalystStrength === 'MODERATE' ? '◆ MOD' : '○ WEAK'}
@@ -4373,7 +4373,7 @@ export default function CompanyIntelligencePage() {
                         )}
                         {s.evidenceTier && (
                           <span style={{ fontSize: '7px', fontWeight: 700, padding: '1px 3px', borderRadius: '2px',
-                            color: s.evidenceTier === 'TIER_A' ? '#059669' : s.evidenceTier === 'TIER_B' ? '#D97706' : '#DC2626',
+                            color: s.evidenceTier === 'TIER_A' ? '#059669' : s.evidenceTier === 'TIER_B' ? '#D97706' : 'var(--mc-bearish-2)',
                             backgroundColor: s.evidenceTier === 'TIER_A' ? 'rgba(5,150,105,0.08)' : s.evidenceTier === 'TIER_B' ? 'rgba(217,119,6,0.08)' : 'rgba(220,38,38,0.08)',
                           }}>
                             {s.evidenceTier === 'TIER_A' ? 'A' : s.evidenceTier === 'TIER_B' ? 'B' : 'C'}
@@ -4393,7 +4393,7 @@ export default function CompanyIntelligencePage() {
                           </span>
                         )}
                         {s.heuristicSuppressed && (
-                          <span style={{ fontSize: '7px', fontWeight: 700, padding: '1px 3px', borderRadius: '2px', color: '#DC2626', backgroundColor: 'rgba(220,38,38,0.06)' }}>
+                          <span style={{ fontSize: '7px', fontWeight: 700, padding: '1px 3px', borderRadius: '2px', color: 'var(--mc-bearish-2)', backgroundColor: 'rgba(220,38,38,0.06)' }}>
                             TEMPLATE
                           </span>
                         )}
@@ -4453,13 +4453,13 @@ export default function CompanyIntelligencePage() {
                       border: `1px solid ${s.isNegative ? `${RED}30` : s.isPortfolio ? `${PURPLE}40` : s.isWatchlist ? `${ACCENT}30` : BORDER}`,
                       borderRadius: '8px',
                       padding: '12px 16px',
-                      borderLeft: `3px solid ${s.signalTier === 'TIER1_VERIFIED' ? '#10B981' : s.isNegative ? '#EF4444' : '#475569'}`,
+                      borderLeft: `3px solid ${s.signalTier === 'TIER1_VERIFIED' ? 'var(--mc-bullish)' : s.isNegative ? 'var(--mc-bearish)' : 'var(--mc-text-4)'}`,
                       opacity: s.signalTier === 'TIER2_INFERRED' ? 0.85 : 1,
                     }}>
                       {/* Row 1: Core info */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                         <span style={{ fontSize: '12px' }}>{eventTypeIcon(s.eventType)}</span>
-                        <span style={{ fontSize: '14px', fontWeight: 700, color: '#3B82F6', minWidth: '80px' }}>{s.symbol}</span>
+                        <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--mc-info)', minWidth: '80px' }}>{s.symbol}</span>
                         {/* Current price with confidence indicator */}
                         <span style={{
                           fontSize: '11px', fontWeight: 600,
@@ -4481,13 +4481,13 @@ export default function CompanyIntelligencePage() {
                         )}
                         {s.isPortfolio && <span style={{ fontSize: '9px', color: PURPLE, fontWeight: 600 }}>PF</span>}
                         {s.isWatchlist && !s.isPortfolio && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600 }}>WL</span>}
-                        {(s as any).isConviction && <span title="Conviction Beats" style={{ fontSize: '9px', color: '#F59E0B', fontWeight: 700, padding: '0 4px', borderRadius: '3px', backgroundColor: 'rgba(245,158,11,0.15)' }}>CB</span>}
+                        {(s as any).isConviction && <span title="Conviction Beats" style={{ fontSize: '9px', color: 'var(--mc-warn)', fontWeight: 700, padding: '0 4px', borderRadius: '3px', backgroundColor: 'rgba(245,158,11,0.15)' }}>CB</span>}
                         {s.tag && <span style={{ 
   fontSize: '9px', 
   fontWeight: 700, 
   padding: '1px 5px', 
   borderRadius: '3px', 
-  color: s.tag === 'RISK-WATCH' ? '#EF4444' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? '#F59E0B' : '#A78BFA',
+  color: s.tag === 'RISK-WATCH' ? 'var(--mc-bearish)' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? 'var(--mc-warn)' : 'var(--mc-state-persistent)',
   backgroundColor: s.tag === 'RISK-WATCH' ? 'rgba(239,68,68,0.12)' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? 'rgba(245,158,11,0.12)' : 'rgba(167,139,250,0.12)',
   border: `1px solid ${s.tag === 'RISK-WATCH' ? 'rgba(239,68,68,0.25)' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? 'rgba(245,158,11,0.25)' : 'rgba(167,139,250,0.25)'}`,
 }}>{s.tag}</span>}
@@ -4570,7 +4570,7 @@ export default function CompanyIntelligencePage() {
                         {s.signalTier && (
                           <span style={{
                             fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
-                            color: s.signalTier === 'TIER1_VERIFIED' ? '#10B981' : '#64748B',
+                            color: s.signalTier === 'TIER1_VERIFIED' ? 'var(--mc-bullish)' : '#64748B',
                             backgroundColor: s.signalTier === 'TIER1_VERIFIED' ? 'rgba(16,185,129,0.1)' : 'rgba(100,116,139,0.06)',
                           }}>
                             {s.signalTier === 'TIER1_VERIFIED' ? '✓ VERIFIED' : '~ INFERRED'}
@@ -4586,7 +4586,7 @@ export default function CompanyIntelligencePage() {
                         {s.catalystStrength && (
                           <span style={{
                             fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
-                            color: s.catalystStrength === 'STRONG' ? '#10B981' : s.catalystStrength === 'MODERATE' ? '#F59E0B' : '#64748B',
+                            color: s.catalystStrength === 'STRONG' ? 'var(--mc-bullish)' : s.catalystStrength === 'MODERATE' ? 'var(--mc-warn)' : '#64748B',
                             backgroundColor: s.catalystStrength === 'STRONG' ? 'rgba(16,185,129,0.1)' : s.catalystStrength === 'MODERATE' ? 'rgba(245,158,11,0.1)' : 'rgba(100,116,139,0.06)',
                           }}>
                             {s.catalystStrength === 'STRONG' ? '⚡ STRONG' : s.catalystStrength === 'MODERATE' ? '◆ MOD' : '○ WEAK'}
@@ -4594,7 +4594,7 @@ export default function CompanyIntelligencePage() {
                         )}
                         {s.evidenceTier && (
                           <span style={{ fontSize: '7px', fontWeight: 700, padding: '1px 3px', borderRadius: '2px',
-                            color: s.evidenceTier === 'TIER_A' ? '#059669' : s.evidenceTier === 'TIER_B' ? '#D97706' : '#DC2626',
+                            color: s.evidenceTier === 'TIER_A' ? '#059669' : s.evidenceTier === 'TIER_B' ? '#D97706' : 'var(--mc-bearish-2)',
                             backgroundColor: s.evidenceTier === 'TIER_A' ? 'rgba(5,150,105,0.08)' : s.evidenceTier === 'TIER_B' ? 'rgba(217,119,6,0.08)' : 'rgba(220,38,38,0.08)',
                           }}>
                             {s.evidenceTier === 'TIER_A' ? 'A' : s.evidenceTier === 'TIER_B' ? 'B' : 'C'}
@@ -4614,7 +4614,7 @@ export default function CompanyIntelligencePage() {
                           </span>
                         )}
                         {s.heuristicSuppressed && (
-                          <span style={{ fontSize: '7px', fontWeight: 700, padding: '1px 3px', borderRadius: '2px', color: '#DC2626', backgroundColor: 'rgba(220,38,38,0.06)' }}>
+                          <span style={{ fontSize: '7px', fontWeight: 700, padding: '1px 3px', borderRadius: '2px', color: 'var(--mc-bearish-2)', backgroundColor: 'rgba(220,38,38,0.06)' }}>
                             TEMPLATE
                           </span>
                         )}
@@ -4704,13 +4704,13 @@ export default function CompanyIntelligencePage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                     <span style={{ fontSize: '12px' }}>{eventTypeIcon(s.eventType)}</span>
-                    <span style={{ fontSize: '13px', fontWeight: 700, color: '#3B82F6' }}>{s.symbol}</span>
+                    <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--mc-info)' }}>{s.symbol}</span>
                     {s.company && s.company !== s.symbol && (
                       <span style={{ fontSize: '10px', color: TEXT3 }}>{s.company.length > 25 ? s.company.substring(0, 25) + '...' : s.company}</span>
                     )}
                     {s.isPortfolio && <span style={{ fontSize: '8px', color: PURPLE, fontWeight: 700, padding: '1px 4px', borderRadius: '3px', backgroundColor: 'rgba(139,92,246,0.15)' }}>PF</span>}
                     {s.isWatchlist && !s.isPortfolio && <span style={{ fontSize: '8px', color: ACCENT, fontWeight: 700, padding: '1px 4px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.15)' }}>WL</span>}
-                    {(s as any).isConviction && <span title="Conviction Beats" style={{ fontSize: '8px', color: '#F59E0B', fontWeight: 700, padding: '1px 4px', borderRadius: '3px', backgroundColor: 'rgba(245,158,11,0.15)' }}>CB</span>}
+                    {(s as any).isConviction && <span title="Conviction Beats" style={{ fontSize: '8px', color: 'var(--mc-warn)', fontWeight: 700, padding: '1px 4px', borderRadius: '3px', backgroundColor: 'rgba(245,158,11,0.15)' }}>CB</span>}
                     <span style={{ fontSize: '9px', padding: '1px 6px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.08)', color: ACCENT, fontWeight: 600 }}>
                       {s.eventType}
                     </span>
@@ -4721,7 +4721,7 @@ export default function CompanyIntelligencePage() {
                     )}
                     {s.signalClass && s.signalClass !== 'COMPLIANCE' && (
                       <span style={{ fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '2px',
-                        color: s.signalClass === 'ECONOMIC' ? '#10B981' : s.signalClass === 'STRATEGIC' ? '#8B5CF6' : '#F59E0B',
+                        color: s.signalClass === 'ECONOMIC' ? 'var(--mc-bullish)' : s.signalClass === 'STRATEGIC' ? '#8B5CF6' : 'var(--mc-warn)',
                         backgroundColor: s.signalClass === 'ECONOMIC' ? 'rgba(16,185,129,0.1)' : s.signalClass === 'STRATEGIC' ? 'rgba(139,92,246,0.1)' : 'rgba(245,158,11,0.1)',
                       }}>{s.signalClass}</span>
                     )}
@@ -4779,12 +4779,12 @@ export default function CompanyIntelligencePage() {
                   {s.segment && <span style={{ fontSize: '9px', color: TEXT3 }}>{s.segment}</span>}
                   {s.evidenceTier && (
                     <span style={{ fontSize: '7px', fontWeight: 700, padding: '1px 3px', borderRadius: '2px',
-                      color: s.evidenceTier === 'TIER_A' ? '#059669' : s.evidenceTier === 'TIER_B' ? '#D97706' : s.evidenceTier === 'TIER_C' ? '#DC2626' : '#6B7280',
+                      color: s.evidenceTier === 'TIER_A' ? '#059669' : s.evidenceTier === 'TIER_B' ? '#D97706' : s.evidenceTier === 'TIER_C' ? 'var(--mc-bearish-2)' : '#6B7280',
                       backgroundColor: s.evidenceTier === 'TIER_A' ? 'rgba(5,150,105,0.08)' : s.evidenceTier === 'TIER_B' ? 'rgba(217,119,6,0.08)' : s.evidenceTier === 'TIER_C' ? 'rgba(220,38,38,0.08)' : 'rgba(107,114,128,0.08)',
                     }}>{s.evidenceTier.replace('TIER_', '')}</span>
                   )}
                   {isEstimated && (
-                    <span style={{ fontSize: '7px', fontWeight: 600, padding: '1px 4px', borderRadius: '2px', color: '#F59E0B', backgroundColor: 'rgba(245,158,11,0.08)' }}>EST</span>
+                    <span style={{ fontSize: '7px', fontWeight: 600, padding: '1px 4px', borderRadius: '2px', color: 'var(--mc-warn)', backgroundColor: 'rgba(245,158,11,0.08)' }}>EST</span>
                   )}
                   {s.dataType === 'FACT' && (
                     <span style={{ fontSize: '7px', fontWeight: 700, padding: '1px 4px', borderRadius: '2px', color: GREEN, backgroundColor: 'rgba(16,185,129,0.08)' }}>CONFIRMED</span>
@@ -4803,7 +4803,7 @@ export default function CompanyIntelligencePage() {
           {upstreamHint ? (
             <>
               <Eye size={40} color="#F59E0B" style={{ margin: '0 auto 12px', display: 'block' }} />
-              <p style={{ color: '#F59E0B', fontSize: '14px', fontWeight: 600 }}>No signals available</p>
+              <p style={{ color: 'var(--mc-warn)', fontSize: '14px', fontWeight: 600 }}>No signals available</p>
               <p style={{ color: TEXT3, fontSize: '12px', maxWidth: 520, margin: '8px auto 0', lineHeight: 1.5 }}>
                 {upstreamHint}
               </p>

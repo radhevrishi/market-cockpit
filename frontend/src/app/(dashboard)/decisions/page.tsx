@@ -308,7 +308,7 @@ export default function DecisionsPage() {
             onClick={() => setShowAdd(true)}
             style={{
               marginLeft: 'auto', padding: '6px 12px', borderRadius: 6,
-              background: '#10B98115', border: '1px solid #10B98160', color: '#10B981',
+              background: '#10B98115', border: '1px solid #10B98160', color: 'var(--mc-bullish)',
               fontSize: 12, fontWeight: 700, cursor: 'pointer',
               display: 'inline-flex', alignItems: 'center', gap: 6,
             }}
@@ -321,7 +321,7 @@ export default function DecisionsPage() {
             disabled={rows.length === 0}
             style={{
               padding: '6px 12px', borderRadius: 6,
-              background: '#22D3EE15', border: '1px solid #22D3EE60', color: '#22D3EE',
+              background: '#22D3EE15', border: '1px solid #22D3EE60', color: 'var(--mc-cyan)',
               fontSize: 12, fontWeight: 700, cursor: rows.length ? 'pointer' : 'not-allowed',
               display: 'inline-flex', alignItems: 'center', gap: 6,
               opacity: rows.length ? 1 : 0.4,
@@ -380,7 +380,7 @@ export default function DecisionsPage() {
                     const hit = k && tickerToCompany.get(k);
                     if (hit) {
                       return (
-                        <div style={{ marginTop: 4, fontSize: 10, color: '#10B981', fontWeight: 600 }}>
+                        <div style={{ marginTop: 4, fontSize: 10, color: 'var(--mc-bullish)', fontWeight: 600 }}>
                           ✓ resolved: {hit.company}{hit.market ? ` · ${hit.market === 'IN' ? '🇮🇳' : '🇺🇸'}` : ''}
                         </div>
                       );
@@ -414,9 +414,9 @@ export default function DecisionsPage() {
                       {(['IN', 'US'] as DecisionMarket[]).map((m) => (
                         <button key={m} onClick={() => setAddMarket(m)} style={{
                           flex: 1, padding: '6px 10px', borderRadius: 5,
-                          border: `1px solid ${addMarket === m ? '#22D3EE' : BORDER}`,
+                          border: `1px solid ${addMarket === m ? 'var(--mc-cyan)' : BORDER}`,
                           background: addMarket === m ? '#22D3EE20' : 'transparent',
-                          color: addMarket === m ? '#22D3EE' : DIM,
+                          color: addMarket === m ? 'var(--mc-cyan)' : DIM,
                           fontSize: 12, fontWeight: 700, cursor: 'pointer',
                         }}>{m}</button>
                       ))}
@@ -460,9 +460,9 @@ export default function DecisionsPage() {
                   }}>Cancel</button>
                   <button onClick={submitNewDecision} disabled={!addSymbol.trim()} style={{
                     flex: 2, padding: '8px 12px', borderRadius: 5,
-                    border: '1px solid #10B981',
+                    border: '1px solid var(--mc-bullish)',
                     background: addSymbol.trim() ? '#10B98125' : 'transparent',
-                    color: addSymbol.trim() ? '#10B981' : DIM,
+                    color: addSymbol.trim() ? 'var(--mc-bullish)' : DIM,
                     fontSize: 12, fontWeight: 700, cursor: addSymbol.trim() ? 'pointer' : 'not-allowed',
                   }}>Save Decision</button>
                 </div>
@@ -540,9 +540,9 @@ export default function DecisionsPage() {
                 }}
                 style={{
                   padding: '5px 10px', borderRadius: 5,
-                  border: `1px solid ${isActive ? '#22D3EE' : BORDER}`,
+                  border: `1px solid ${isActive ? 'var(--mc-cyan)' : BORDER}`,
                   background: isActive ? '#22D3EE20' : 'transparent',
-                  color: isActive ? '#22D3EE' : DIM,
+                  color: isActive ? 'var(--mc-cyan)' : DIM,
                   fontSize: 11, fontWeight: 700, cursor: 'pointer',
                 }}
               >
@@ -560,11 +560,11 @@ export default function DecisionsPage() {
               <p style={{ margin: 0, fontWeight: 700, color: TEXT }}>No decisions logged yet</p>
               <p style={{ margin: '6px 0 0', fontSize: 12 }}>
                 Open Multibagger India or USA, expand any row, and click BUY / WATCH / NEUTRAL / REJECTED to start your logbook —
-                or use the <strong style={{ color: '#10B981' }}>+ NEW DECISION</strong> button above to add one manually.
+                or use the <strong style={{ color: 'var(--mc-bullish)' }}>+ NEW DECISION</strong> button above to add one manually.
               </p>
               <button onClick={() => setShowAdd(true)} style={{
                 marginTop: 14, padding: '8px 18px', borderRadius: 6,
-                background: '#10B98115', border: '1px solid #10B98160', color: '#10B981',
+                background: '#10B98115', border: '1px solid #10B98160', color: 'var(--mc-bullish)',
                 fontSize: 12, fontWeight: 700, cursor: 'pointer',
               }}>+ Add Your First Decision</button>
             </div>
@@ -605,7 +605,7 @@ export default function DecisionsPage() {
                               fontSize: 11, fontWeight: 800,
                             }}>{meta.emoji} {meta.label}</span>
                           </td>
-                          <td style={{ ...td, fontWeight: 700, color: '#22D3EE' }}>{d.symbol}</td>
+                          <td style={{ ...td, fontWeight: 700, color: 'var(--mc-cyan)' }}>{d.symbol}</td>
                           <td style={td}>{d.market === 'IN' ? '🇮🇳' : '🇺🇸'}</td>
                           <td style={{ ...td, color: TEXT, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {d.company || '—'}
@@ -659,7 +659,7 @@ export default function DecisionsPage() {
                           fontSize: 11, fontWeight: 800,
                         }}>{meta.emoji} {meta.label}</span>
                       </td>
-                      <td style={{ ...td, fontWeight: 700, color: '#22D3EE' }}>{d.symbol}</td>
+                      <td style={{ ...td, fontWeight: 700, color: 'var(--mc-cyan)' }}>{d.symbol}</td>
                       <td style={td}>{d.market === 'IN' ? '🇮🇳' : '🇺🇸'}</td>
                       <td style={{ ...td, color: TEXT, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {d.company || '—'}
@@ -700,7 +700,7 @@ export default function DecisionsPage() {
                           const dropPct = ((live - d.priceAtDecision) / d.priceAtDecision) * 100;
                           if (dropPct > -25) return null;  // only fire when price fell ≥25%
                           return (
-                            <div style={{ marginTop: 4, fontSize: 10, fontWeight: 800, color: '#10B981', background: '#10B98115', border: '1px solid #10B98140', borderRadius: 3, padding: '3px 7px', display: 'inline-block', fontStyle: 'normal' }} title={`Rejected at ₹${d.priceAtDecision.toFixed(0)}, now ₹${live.toFixed(0)} — fundamentals unchanged?`}>
+                            <div style={{ marginTop: 4, fontSize: 10, fontWeight: 800, color: 'var(--mc-bullish)', background: '#10B98115', border: '1px solid #10B98140', borderRadius: 3, padding: '3px 7px', display: 'inline-block', fontStyle: 'normal' }} title={`Rejected at ₹${d.priceAtDecision.toFixed(0)}, now ₹${live.toFixed(0)} — fundamentals unchanged?`}>
                               ⤴ RE-EVALUATE? · {dropPct.toFixed(0)}% since reject
                             </div>
                           );
@@ -708,9 +708,9 @@ export default function DecisionsPage() {
                         {/* Bull/Bear quick-glance when present */}
                         {(d.bullCase || d.bearCase || d.wouldChangeMind) && (
                           <div style={{ marginTop: 4, fontSize: 10, color: DIM, fontStyle: 'normal' }}>
-                            {d.bullCase && <span style={{ color: '#10B981', marginRight: 8 }} title={d.bullCase}>▲ bull</span>}
-                            {d.bearCase && <span style={{ color: '#EF4444', marginRight: 8 }} title={d.bearCase}>▼ bear</span>}
-                            {d.wouldChangeMind && <span style={{ color: '#22D3EE' }} title={d.wouldChangeMind}>↻ change-mind</span>}
+                            {d.bullCase && <span style={{ color: 'var(--mc-bullish)', marginRight: 8 }} title={d.bullCase}>▲ bull</span>}
+                            {d.bearCase && <span style={{ color: 'var(--mc-bearish)', marginRight: 8 }} title={d.bearCase}>▼ bear</span>}
+                            {d.wouldChangeMind && <span style={{ color: 'var(--mc-cyan)' }} title={d.wouldChangeMind}>↻ change-mind</span>}
                           </div>
                         )}
                         {/* PATCH 0856 — News-since-decision feed */}
@@ -728,7 +728,7 @@ export default function DecisionsPage() {
                           return (
                             <div style={{ marginTop: 4, fontSize: 10, fontStyle: 'normal' }}>
                               <span title={tooltipText}
-                                style={{ color: '#22D3EE', background: '#22D3EE15', border: '1px solid #22D3EE40', padding: '2px 6px', borderRadius: 3, fontWeight: 800 }}>
+                                style={{ color: 'var(--mc-cyan)', background: '#22D3EE15', border: '1px solid #22D3EE40', padding: '2px 6px', borderRadius: 3, fontWeight: 800 }}>
                                 📰 {fresh.length} news since decision
                               </span>
                               {fresh[0]?.url ? (
@@ -752,14 +752,14 @@ export default function DecisionsPage() {
                               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                                 <span>Remove decision for <strong>{d.symbol}</strong>?</span>
                                 <button onClick={() => { clearDecision(d.symbol); toast.dismiss(t.id); toast.success(`${d.symbol} removed`); }}
-                                  style={{ padding: '4px 10px', background: '#EF4444', color: '#fff', borderRadius: 4, border: 0, cursor: 'pointer', fontSize: 12 }}>Delete</button>
+                                  style={{ padding: '4px 10px', background: 'var(--mc-bearish)', color: '#fff', borderRadius: 4, border: 0, cursor: 'pointer', fontSize: 12 }}>Delete</button>
                                 <button onClick={() => toast.dismiss(t.id)}
-                                  style={{ padding: '4px 10px', background: 'transparent', color: '#94A3B8', borderRadius: 4, border: '1px solid #2A3B4C', cursor: 'pointer', fontSize: 12 }}>Cancel</button>
+                                  style={{ padding: '4px 10px', background: 'transparent', color: 'var(--mc-text-3)', borderRadius: 4, border: '1px solid #2A3B4C', cursor: 'pointer', fontSize: 12 }}>Cancel</button>
                               </div>
                             ), { duration: 8000 });
                           }}
                           title="Remove this decision"
-                          style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', padding: 4 }}
+                          style={{ background: 'none', border: 'none', color: 'var(--mc-bearish)', cursor: 'pointer', padding: 4 }}
                         >
                           <Trash2 size={13} />
                         </button>

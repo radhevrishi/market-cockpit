@@ -1,32 +1,40 @@
 #!/usr/bin/env node
 // ─────────────────────────────────────────────────────────────────────────
-// scripts/migrate-design-tokens.mjs  (HANDOFF4)
+// scripts/migrate-design-tokens.fixed.mjs
 //
-// Walk frontend/src/**/*.{ts,tsx} and rewrite inline hex literals to the
-// design-system CSS variables shipped in PATCH 1060.
+// Hardened version of migrate-design-tokens.mjs. Fixes two bugs in the
+// original:
+//
+//   BUG #1 — original walked .css files and corrupted the source-of-truth
+//            design-system.css by making every var self-referential
+//            (--mc-bg-0: var(--mc-bg-0)).
+//
+//   BUG #2 — original rewrote hex literals inside data tables (lib/yahoo.ts
+//            SECTOR_ETFS_INDIA, lib/turnaround.ts, etc) whose `.color` field
+//            is later consumed via `${x.color}XX` template-literal patterns
+//            in 436 places across the frontend. After rewrite those become
+//            `var(--mc-bullish)25` — broken CSS.
+//
+// FIXES
+//   1. EXCLUDE source-of-truth files (design-system.css, design-tokens.ts,
+//      theme.ts).
+//   2. For .ts/.tsx files: only rewrite hex literals inside JSX
+//      `style={{ ... }}` blocks (brace-walked) and inside styled-jsx
+//      `<style jsx>{`...`}</style>` template literals. Hex literals in
+//      data tables are left alone.
+//   3. For .css files: rewrite freely (design-system.css already excluded).
 //
 // USAGE
-//   node scripts/migrate-design-tokens.mjs --dry-run            # report only
-//   node scripts/migrate-design-tokens.mjs --dry-run --page super-investors
-//   node scripts/migrate-design-tokens.mjs                      # write changes
+//   node scripts/migrate-design-tokens.fixed.mjs --dry-run
+//   node scripts/migrate-design-tokens.fixed.mjs --dry-run --page super-investors
+//   node scripts/migrate-design-tokens.fixed.mjs
 //
-// FLAGS
-//   --dry-run     Print the diff per file; do NOT write
-//   --page <id>   Limit to one page (matches the route folder name)
-//   --json        Emit per-file machine-readable report
-//
-// The script is intentionally conservative: it only rewrites hex codes that
-// appear in JSX style props or styled-jsx blocks, never inside string
-// literals that look like data (e.g. ticker colours). If a hex value has
-// multiple plausible token names, we leave it alone and log the conflict.
 // ─────────────────────────────────────────────────────────────────────────
 
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 
-// Map from raw hex (uppercased, no alpha) to the CSS variable it replaces.
-// Cross-reference with frontend/src/styles/design-system.css :root block.
 const HEX_TO_VAR = new Map([
   // Surfaces
   ['#0A0E1A', 'var(--mc-bg-0)'],
@@ -34,25 +42,22 @@ const HEX_TO_VAR = new Map([
   ['#111B35', 'var(--mc-bg-2)'],
   ['#172234', 'var(--mc-bg-3)'],
   ['#1A2540', 'var(--mc-bg-4)'],
-  ['#1A2840', 'var(--mc-bg-4)'],     // audit-listed alias
-  ['#0D1623', 'var(--mc-bg-1)'],     // common card alt
-  ['#0F1E30', 'var(--mc-bg-0)'],     // brand-navy-dark alias
-
+  ['#1A2840', 'var(--mc-bg-4)'],
+  ['#0D1623', 'var(--mc-bg-1)'],
+  ['#0F1E30', 'var(--mc-bg-0)'],
   // Borders
   ['#1E2D45', 'var(--mc-border-1)'],
   ['#2D3E5F', 'var(--mc-border-2)'],
-
   // Text
   ['#F5F7FA', 'var(--mc-text-0)'],
   ['#E6EDF3', 'var(--mc-text-1)'],
   ['#CBD5E1', 'var(--mc-text-2)'],
   ['#94A3B8', 'var(--mc-text-3)'],
   ['#6B7A8D', 'var(--mc-text-4)'],
-  ['#8BA3C1', 'var(--mc-text-3)'],   // close enough — audit alias
+  ['#8BA3C1', 'var(--mc-text-3)'],
   ['#7AA2D8', 'var(--mc-text-3)'],
   ['#4A5B6C', 'var(--mc-text-4)'],
   ['#475569', 'var(--mc-text-4)'],
-
   // Semantic / state
   ['#10B981', 'var(--mc-bullish)'],
   ['#2EA043', 'var(--mc-bullish-2)'],
@@ -69,30 +74,82 @@ const HEX_TO_VAR = new Map([
   ['#A78BFA', 'var(--mc-state-persistent)'],
 ]);
 
-// Conservative hex matcher: 6-digit hex preceded by `:` or `=` or `'`/`"` /
-// `(` so we don't rewrite arbitrary tokens that happen to look hex inside
-// other contexts (e.g. CSS gradients with multiple stops have alpha pairs
-// that we want to preserve — alpha is added back below).
 const HEX_RE = /(#[0-9A-Fa-f]{6})([0-9A-Fa-f]{2})?(?=[^0-9A-Fa-f]|$)/g;
 
-function replaceHex(input) {
-  const conflicts = [];
-  const stats = new Map();
-  let out = input;
-  out = out.replace(HEX_RE, (match, hex6, alpha) => {
+function rewriteRange(src, conflicts, stats) {
+  return src.replace(HEX_RE, (match, hex6, alpha) => {
     const key = hex6.toUpperCase();
     const target = HEX_TO_VAR.get(key);
     if (!target) return match;
-    stats.set(key, (stats.get(key) || 0) + 1);
-    // CSS variables can't carry an alpha pair, so if the source had `#10B98115`
-    // we have to use color-mix() or a sibling --mc-*-bg variant. For PATCH 1062
-    // we leave alpha'd values alone and log them — they need design review.
     if (alpha) {
       conflicts.push({ hex: key, alpha, suggestion: target, full: `${hex6}${alpha}` });
       return match;
     }
+    stats.set(key, (stats.get(key) || 0) + 1);
     return target;
   });
+}
+
+// Find every `style={{ ... }}` region by brace-walking and every
+// styled-jsx tagged template by scanning for `<style jsx>{` and matching
+// `</style>`. Returns an array of [start, end] ranges (end exclusive).
+function findRewritableRanges(src) {
+  const ranges = [];
+  // style={{ ... }}
+  let i = 0;
+  while (i < src.length) {
+    const idx = src.indexOf('style={{', i);
+    if (idx === -1) break;
+    let depth = 2; // we've consumed `{{`
+    let j = idx + 'style={{'.length;
+    while (j < src.length && depth > 0) {
+      const ch = src[j];
+      if (ch === '{') depth++;
+      else if (ch === '}') depth--;
+      j++;
+    }
+    ranges.push([idx, j]);
+    i = j;
+  }
+  // <style jsx>{ ... }</style>  and  <style jsx global>{ ... }</style>
+  const styleOpen = /<style[^>]*>\{`/g;
+  let m;
+  while ((m = styleOpen.exec(src)) !== null) {
+    const start = m.index;
+    const end = src.indexOf('`}</style>', m.index);
+    if (end !== -1) ranges.push([start, end]);
+  }
+  return ranges;
+}
+
+function rewriteJsxFile(src) {
+  const ranges = findRewritableRanges(src);
+  if (ranges.length === 0) return { out: src, stats: new Map(), conflicts: [] };
+  // Sort + merge overlapping
+  ranges.sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  for (const r of ranges) {
+    if (merged.length && r[0] <= merged[merged.length - 1][1]) {
+      merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], r[1]);
+    } else merged.push([...r]);
+  }
+  const stats = new Map();
+  const conflicts = [];
+  let out = '';
+  let cursor = 0;
+  for (const [s, e] of merged) {
+    out += src.slice(cursor, s);
+    out += rewriteRange(src.slice(s, e), conflicts, stats);
+    cursor = e;
+  }
+  out += src.slice(cursor);
+  return { out, stats, conflicts };
+}
+
+function rewriteCssFile(src) {
+  const stats = new Map();
+  const conflicts = [];
+  const out = rewriteRange(src, conflicts, stats);
   return { out, stats, conflicts };
 }
 
@@ -117,12 +174,22 @@ async function* walk(dir) {
 }
 
 const root = path.resolve(process.cwd(), 'frontend/src');
+
+// EXCLUDE source-of-truth files (BUG #1 + BUG #2).
+const EXCLUDE = new Set([
+  path.resolve(root, 'styles/design-system.css'),
+  path.resolve(root, 'lib/design-tokens.ts'),
+  path.resolve(root, 'lib/theme.ts'),
+]);
+
 const summary = { files: 0, changedFiles: 0, totalRepl: 0, conflicts: [] };
 
 for await (const file of walk(root)) {
+  if (EXCLUDE.has(file)) continue;
   if (pageArg && !file.includes(`/${pageArg}/`)) continue;
   const src = await fs.readFile(file, 'utf8');
-  const { out, stats, conflicts } = replaceHex(src);
+  const isCss = file.endsWith('.css');
+  const { out, stats, conflicts } = isCss ? rewriteCssFile(src) : rewriteJsxFile(src);
   summary.files++;
   if (out === src) continue;
   summary.changedFiles++;

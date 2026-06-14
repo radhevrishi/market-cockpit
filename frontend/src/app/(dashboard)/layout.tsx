@@ -7,10 +7,10 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 export const dynamic = 'force-dynamic';
 
 const LoadingSpinner = () => (
-  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', backgroundColor: '#0A0E1A' }}>
+  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', backgroundColor: 'var(--mc-bg-0)' }}>
     <div style={{ textAlign: 'center' }}>
-      <div style={{ width: '40px', height: '40px', border: '3px solid #1A2840', borderTopColor: '#0F7ABF', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 16px' }} />
-      <p style={{ color: '#4A5B6C', fontSize: '13px' }}>Loading dashboard...</p>
+      <div style={{ width: '40px', height: '40px', border: '3px solid var(--mc-bg-4)', borderTopColor: 'var(--mc-accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 16px' }} />
+      <p style={{ color: 'var(--mc-text-4)', fontSize: '13px' }}>Loading dashboard...</p>
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   </div>

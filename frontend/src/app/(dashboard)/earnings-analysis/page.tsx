@@ -4137,7 +4137,7 @@ export default function EarningsAnalysisPage() {
         <div style={{display:'flex',alignItems:'center',gap:14}}>
           <div style={{fontSize:28}}>🤖</div>
           <div>
-            <div style={{fontSize:F.md,fontWeight:800,color:'#22D3EE',marginBottom:2}}>
+            <div style={{fontSize:F.md,fontWeight:800,color:'var(--mc-cyan)',marginBottom:2}}>
               Need a full valuation report on these documents?
             </div>
             <div style={{fontSize:F.xs,color:MUTED,lineHeight:1.55}}>
@@ -4147,7 +4147,7 @@ export default function EarningsAnalysisPage() {
           </div>
         </div>
         <div style={{
-          fontSize:F.sm, fontWeight:800, color:'#0a0a0f', background:'#22D3EE',
+          fontSize:F.sm, fontWeight:800, color:'#0a0a0f', background:'var(--mc-cyan)',
           padding:'8px 16px', borderRadius:6, whiteSpace:'nowrap', letterSpacing:'0.3px',
         }}>
           OPEN AUTO-VAL →
