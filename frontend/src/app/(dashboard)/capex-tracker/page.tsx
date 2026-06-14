@@ -2741,13 +2741,16 @@ export default function CapexTrackerPage() {
         });
         const buckets: { id: string; label: string; sub: string; rows: typeof rows; color: string }[] = [
           { id: 'best', label: '🏆 BEST TURNAROUNDS — A-grade · Phase 3 / Phase 4', sub: 'Inflection or re-rating with all gates clear', color: C.green,
-            rows: rows.filter((x) => x.ta!.thesisAlive && x.ta!.grade === 'A' && (x.ta!.phase === 'PHASE_3_INFLECTION' || x.ta!.phase === 'PHASE_4_RE_RATING')) },
+            rows: rows.filter((x) => x.ta!.action === 'BUY' || (x.ta!.thesisAlive && x.ta!.grade === 'A' && (x.ta!.phase === 'PHASE_3_INFLECTION' || x.ta!.phase === 'PHASE_4_RE_RATING'))) },
           { id: 'starter', label: '🟢 STARTER — A/B grade · early inflection', sub: 'Building the position, not full size yet', color: C.amber,
-            rows: rows.filter((x) => x.ta!.thesisAlive && x.ta!.action === 'STARTER' && !(x.ta!.grade === 'A' && (x.ta!.phase === 'PHASE_3_INFLECTION' || x.ta!.phase === 'PHASE_4_RE_RATING'))) },
-          { id: 'watch', label: '👀 WATCH — Phase 2 stabilisation', sub: 'Decline decelerating, no position yet', color: C.amber,
-            rows: rows.filter((x) => x.ta!.thesisAlive && x.ta!.action === 'WATCH') },
+            rows: rows.filter((x) => x.ta!.action === 'STARTER') },
+          { id: 'watch', label: '👀 WATCH — stabilisation or marginal grade', sub: 'Decline decelerating, no position yet', color: C.amber,
+            rows: rows.filter((x) => x.ta!.action === 'WATCH') },
+          // PATCH 1080c — HEALTHY = cash-generative compounder, not a turnaround setup.
+          { id: 'healthy', label: '🏥 HEALTHY — not a turnaround (cash compounders)', sub: 'No distress episode in the window — different framework (Multibagger DNA) is more relevant', color: C.cyan,
+            rows: rows.filter((x) => x.ta!.action === 'HEALTHY') },
           { id: 'avoid', label: '⛔ AVOID — survival gate FAIL', sub: 'Capital impairment risk — thesis dead-on-arrival', color: C.red,
-            rows: rows.filter((x) => !x.ta!.thesisAlive) },
+            rows: rows.filter((x) => x.ta!.action === 'AVOID') },
           { id: 'skip', label: '— SKIP — thin score, no edge', sub: 'Different opportunity better', color: C.muted,
             rows: rows.filter((x) => x.ta!.action === 'SKIP') },
         ];

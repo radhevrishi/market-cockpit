@@ -139,7 +139,7 @@ export interface TurnaroundResult {
   thesisAlive: boolean;
   redFlags: RedFlag[];
   redFlagTrippedCount: number;
-  action: 'BUY' | 'STARTER' | 'WATCH' | 'AVOID' | 'SKIP';
+  action: 'BUY' | 'STARTER' | 'WATCH' | 'AVOID' | 'SKIP' | 'HEALTHY';
   actionColor: string;
   actionReason: string;
 }
@@ -234,14 +234,26 @@ function buildGates(d: DerivedSeries): SurvivalGate[] {
   if (li < 0) return [];
   const gates: SurvivalGate[] = [];
 
+  // PATCH 1080c FIX 5 — when EBITDA <= 0 the ratio is meaningless (negative/negative
+  // gives a fake "positive" ratio). Fall back to absolute net-debt assessment.
   const ndE = d.netDebtToEbitda[li];
-  gates.push({
-    id: 'nd_ebitda', label: 'Net Debt / EBITDA',
-    value: isFinite(ndE) ? +ndE.toFixed(2) : null,
-    thresholdText: '< 4x green · < 6x ok · > 8x fail',
-    status: !isFinite(ndE) ? 'NA' : ndE <= 4 ? 'PASS' : ndE <= 6 ? 'WARN' : ndE > 10 ? 'FAIL' : 'WARN',
-    reason: !isFinite(ndE) ? 'Net debt or EBITDA missing' : ndE <= 4 ? 'Manageable leverage' : ndE > 10 ? 'Capital structure dangerously stretched' : 'Elevated but workable',
-  });
+  const ebitdaLatest = d.ebitda[li];
+  const netDebtLatest = d.netDebt[li];
+  let ndeStatus: GateStatus; let ndeReason: string; let ndeValue: number | null;
+  if (!isFinite(ebitdaLatest) || ebitdaLatest <= 0) {
+    // EBITDA negative/zero — the ratio is uninformative. Judge by abs net-debt sign.
+    ndeValue = isFinite(netDebtLatest) ? +netDebtLatest.toFixed(0) : null;
+    if (!isFinite(netDebtLatest)) { ndeStatus = 'NA'; ndeReason = 'EBITDA <= 0 and net debt missing'; }
+    else if (netDebtLatest <= 0) { ndeStatus = 'WARN'; ndeReason = 'EBITDA negative but net cash positive — runway depends on operations'; }
+    else { ndeStatus = 'FAIL'; ndeReason = 'EBITDA negative AND net debt positive — operations cannot service debt'; }
+  } else if (!isFinite(ndE)) { ndeStatus = 'NA'; ndeValue = null; ndeReason = 'Net debt missing'; }
+  else { ndeValue = +ndE.toFixed(2);
+    ndeStatus = ndE <= 4 ? 'PASS' : ndE <= 6 ? 'WARN' : ndE > 10 ? 'FAIL' : 'WARN';
+    ndeReason = ndE <= 4 ? 'Manageable leverage' : ndE > 10 ? 'Capital structure dangerously stretched' : 'Elevated but workable';
+  }
+  gates.push({ id: 'nd_ebitda', label: 'Net Debt / EBITDA',
+    value: ndeValue, thresholdText: '< 4x green · < 6x ok · > 8x fail · neg EBITDA → judged on abs net debt',
+    status: ndeStatus, reason: ndeReason });
 
   const ic = d.interestCoverage[li];
   gates.push({
@@ -252,26 +264,57 @@ function buildGates(d: DerivedSeries): SurvivalGate[] {
     reason: !isFinite(ic) ? 'EBIT or interest missing' : ic < 1.0 ? 'Operating earnings cannot cover interest' : ic >= 2.5 ? 'Comfortable interest cover' : 'Tight cover',
   });
 
+  // PATCH 1080c FIX 1 — Cash Runway only matters when the business is BURNING cash.
+  // Original gate computed months-of-opex coverage, which is irrelevant for a cash-
+  // generative business (e.g. AIA Engineering with 224 Cr cash + positive CFO + no
+  // debt was flagged as "0.8mo · liquidity crisis"). The playbook concept is months-
+  // until-broke-at-current-burn-rate; for profitable companies burn-rate is zero.
   const cash = d.cash[li];
-  const monthlyExp = d.expenses[li] / 12;
-  const runway = monthlyExp > 0 ? cash / monthlyExp : NaN;
-  gates.push({
-    id: 'cash_runway', label: 'Cash Runway (months of opex)',
-    value: isFinite(runway) ? +runway.toFixed(1) : null,
-    thresholdText: '≥ 12mo green · ≥ 6mo ok · < 3mo fail',
-    status: !isFinite(runway) ? 'NA' : runway >= 12 ? 'PASS' : runway >= 6 ? 'WARN' : runway >= 3 ? 'WARN' : 'FAIL',
-    reason: !isFinite(runway) ? 'Cash or expenses missing' : runway < 3 ? 'Liquidity crisis' : runway >= 12 ? 'Plenty of runway' : 'Short runway',
-  });
+  const cfoLatest = d.cfo[li];
+  let runway: number | null = null; let runwayStatus: GateStatus = 'NA'; let runwayReason = '';
+  if (!isFinite(cfoLatest)) {
+    runwayStatus = 'NA'; runwayReason = 'CFO missing — cannot evaluate burn-rate';
+    const monthlyExp = d.expenses[li] / 12;
+    runway = monthlyExp > 0 && isFinite(cash) ? +(cash / monthlyExp).toFixed(1) : null;
+  } else if (cfoLatest >= 0) {
+    runwayStatus = 'PASS';
+    runwayReason = `Cash-generative (CFO +${cfoLatest.toFixed(0)} Cr) — burn-rate not a survival concern`;
+    const monthlyExp = d.expenses[li] / 12;
+    runway = monthlyExp > 0 && isFinite(cash) ? +(cash / monthlyExp).toFixed(1) : null;
+  } else {
+    const monthlyBurn = -cfoLatest / 12;
+    runway = monthlyBurn > 0 && isFinite(cash) ? +(cash / monthlyBurn).toFixed(1) : null;
+    if (runway == null) { runwayStatus = 'NA'; runwayReason = 'Cash missing'; }
+    else { runwayStatus = runway >= 12 ? 'PASS' : runway >= 6 ? 'WARN' : runway >= 3 ? 'WARN' : 'FAIL';
+      runwayReason = runway < 3 ? `Burning ${monthlyBurn.toFixed(0)} Cr/mo — only ${runway.toFixed(1)} months left` :
+        runway >= 12 ? `Burning but ${runway.toFixed(1)} months of cushion` : `${runway.toFixed(1)} months at current burn`;
+    }
+  }
+  gates.push({ id: 'cash_runway', label: 'Cash Runway (vs burn rate)',
+    value: runway, thresholdText: '≥ 12mo green · < 3mo fail · positive CFO → PASS (not burning)',
+    status: runwayStatus, reason: runwayReason });
 
+  // PATCH 1080c FIX 2 — relative debt change from a tiny base is misleading. KAYNES
+  // went 28 Cr → 913 Cr (+3163%) but D/E is still 0.19 — that's growth-capex funded
+  // by IPO proceeds, not distress. Only FAIL when growth AND D/E now elevated.
   const bor3 = li >= 3 ? d.borrowings[li - 3] : NaN;
   const dRed = isFinite(bor3) && bor3 > 0 ? ((d.borrowings[li] / bor3) - 1) * 100 : NaN;
-  gates.push({
-    id: 'debt_3y', label: 'Debt change over 3 years',
+  const deLatest = d.debtToEquity[li];
+  let d3yStatus: GateStatus; let d3yReason: string;
+  if (!isFinite(dRed)) { d3yStatus = 'NA'; d3yReason = '3y back data missing'; }
+  else if (dRed <= -25) { d3yStatus = 'PASS'; d3yReason = 'Aggressive deleveraging'; }
+  else if (dRed <= 0) { d3yStatus = 'WARN'; d3yReason = 'Modest debt change'; }
+  else if (dRed > 25 && isFinite(deLatest) && deLatest > 1.5) {
+    d3yStatus = 'FAIL'; d3yReason = `Debt up ${dRed.toFixed(0)}% AND D/E now ${deLatest.toFixed(2)} — leverage risk`;
+  } else if (dRed > 50 && isFinite(deLatest) && deLatest > 0.75) {
+    d3yStatus = 'WARN'; d3yReason = `Debt rising ${dRed.toFixed(0)}% — watch D/E (${deLatest.toFixed(2)})`;
+  } else {
+    d3yStatus = 'WARN'; d3yReason = `Debt up ${dRed.toFixed(0)}% from low base — D/E still ${isFinite(deLatest) ? deLatest.toFixed(2) : 'n/a'}`;
+  }
+  gates.push({ id: 'debt_3y', label: 'Debt change over 3 years',
     value: isFinite(dRed) ? +dRed.toFixed(1) : null,
-    thresholdText: '≤ -25% green · ≤ 0% ok · > 25% fail',
-    status: !isFinite(dRed) ? 'NA' : dRed <= -25 ? 'PASS' : dRed <= 0 ? 'WARN' : dRed > 50 ? 'FAIL' : 'WARN',
-    reason: !isFinite(dRed) ? '3y back data missing' : dRed > 50 ? 'Borrowings ballooning' : dRed <= -25 ? 'Aggressive deleveraging' : 'Marginal change',
-  });
+    thresholdText: '≤ -25% green · FAIL only if up >25% AND D/E > 1.5',
+    status: d3yStatus, reason: d3yReason });
 
   const cp = d.cfoOverPat[li];
   gates.push({
@@ -308,10 +351,17 @@ function buildRedFlags(d: DerivedSeries, fin: Fin): RedFlag[] {
     tripped: isFinite(ndE) && ndE > 8 && isFinite(cfo) && isFinite(intr) && cfo < intr,
     reason: 'NetDebt/EBITDA > 8x AND CFO < interest payable' });
 
+  // PATCH 1080c FIX 4 — use TRIMMED peak (drop top 20%) so one-time OPM spikes
+  // (e.g. KWALITY FY22 37.6%, NGL FY21 29.8%) don't make 22% OPM look "destroyed".
   const opmW = d.opmPct.slice(0, li + 1).filter(isFinite);
+  const opmPrior = opmW.slice(0, opmW.length - 3);
+  const opmPriorSorted = [...opmPrior].sort((a, b) => b - a);
+  const trimmedPeak = opmPriorSorted.length >= 5
+    ? opmPriorSorted[Math.max(1, Math.floor(opmPriorSorted.length * 0.2))]
+    : opmPriorSorted.length > 0 ? opmPriorSorted[0] : NaN;
   flags.push({ id: 'permanent_margin_destruction', label: 'Permanent margin destruction',
-    tripped: opmW.length >= 4 && opmW.slice(-3).every((v) => v < Math.max(...opmW.slice(0, opmW.length - 3)) - 5),
-    reason: 'Last 3y OPM all > 500bps below historical peak' });
+    tripped: opmW.length >= 4 && isFinite(trimmedPeak) && opmW.slice(-3).every((v) => v < trimmedPeak - 5),
+    reason: `Last 3y OPM all > 500bps below trimmed peak (${isFinite(trimmedPeak) ? trimmedPeak.toFixed(1) + '%' : 'n/a'})` });
 
   flags.push({ id: 'negative_equity', label: 'Negative equity / capital wipeout',
     tripped: isFinite(d.equity[li]) && d.equity[li] < 0,
@@ -332,10 +382,16 @@ function buildRedFlags(d: DerivedSeries, fin: Fin): RedFlag[] {
     reason: 'CFO/PAT < 0.5 in each of last 3+ years' });
 
   if (li >= 2) {
+    // PATCH 1080c FIX 7 — only flag receivable expansion when sales aren't growing.
+    // For real channel-stuffing the receivables outpace sales; for growth companies
+    // receivables grow proportionally and that's healthy.
     const recvGrowth = d.years.map((_, i) => (i > 0 && d.receivableDays[i - 1] > 0 ? d.receivableDays[i] - d.receivableDays[i - 1] : 0));
+    const recvUp = recvGrowth.slice(-3).every((v) => v > 5);
+    const salesRecent = d.salesYoYPct.slice(-3).filter(isFinite);
+    const salesStagnant = salesRecent.length > 0 && salesRecent.every((y) => y < 10);
     flags.push({ id: 'receivables', label: 'Receivable days expanding',
-      tripped: recvGrowth.slice(-3).every((v) => v > 5),
-      reason: 'Receivable days up > 5 each year for 3 years' });
+      tripped: recvUp && salesStagnant,
+      reason: 'Receivable days +5d/yr for 3y AND sales not growing > 10%' });
   } else {
     flags.push({ id: 'receivables', label: 'Receivable days expanding', tripped: false, reason: 'Insufficient history' });
   }
@@ -476,14 +532,22 @@ function classifyPhase(d: DerivedSeries): { phase: TurnaroundPhase; label: strin
   const dOPM = d.opmDeltaBps[li];
   const np = d.netProfit[li];
   const npPrev = d.netProfit[li - 1];
+  const opmLatest = d.opmPct[li];
   const borTrend = li >= 3 && isFinite(d.borrowings[li - 3]) && d.borrowings[li - 3] > 0 ? (d.borrowings[li] / d.borrowings[li - 3]) - 1 : NaN;
-  const peakOPM = Math.max(...d.opmPct.slice(0, li + 1).filter(isFinite), 0);
-  const opmGap = isFinite(d.opmPct[li]) ? d.opmPct[li] - peakOPM : -100;
+  // PATCH 1080c FIX 4 — use trimmed peak (90th percentile) to ignore one-time spikes.
+  const opmW = d.opmPct.slice(0, li + 1).filter(isFinite);
+  const opmSorted = [...opmW].sort((a, b) => b - a);
+  const peakOPM = opmSorted.length >= 5 ? opmSorted[Math.max(1, Math.floor(opmSorted.length * 0.1))] : opmSorted[0] ?? 0;
+  const opmGap = isFinite(opmLatest) ? opmLatest - peakOPM : -100;
 
   if (isFinite(sYoY) && sYoY < -10 && isFinite(accel) && accel <= 0 && (np < 0 || (isFinite(npPrev) && np < npPrev))) return { phase: 'PHASE_1_COLLAPSE', label: 'PHASE 1 · COLLAPSE', color: '#e24b4a' };
-  if (isFinite(sYoY) && sYoY > 5 && opmGap > -2 && np > 0 && (isFinite(borTrend) ? borTrend <= 0 : true)) return { phase: 'PHASE_4_RE_RATING', label: 'PHASE 4 · RE-RATING', color: '#4d8fcc' };
-  if (isFinite(sYoY) && sYoY > 0 && isFinite(dOPM) && dOPM > 0 && (isFinite(borTrend) ? borTrend <= 0.1 : true)) return { phase: 'PHASE_3_INFLECTION', label: 'PHASE 3 · INFLECTION', color: '#1d9e75' };
-  if ((isFinite(accel) && accel > 0) || (isFinite(dOPM) && dOPM >= -50)) return { phase: 'PHASE_2_STABILISATION', label: 'PHASE 2 · STABILISATION', color: '#ef9f27' };
+  // PATCH 1080c FIX 3 — Phase 4 now also fires for mature high-margin companies even
+  // with mild OPM dip if margins are still strong absolute (>15%) and growing sales.
+  if (isFinite(sYoY) && sYoY > 5 && np > 0 && (opmGap > -3 || (isFinite(opmLatest) && opmLatest >= 15)) && (isFinite(borTrend) ? borTrend <= 0.1 : true)) return { phase: 'PHASE_4_RE_RATING', label: 'PHASE 4 · RE-RATING', color: '#4d8fcc' };
+  if (isFinite(sYoY) && sYoY > 0 && ((isFinite(dOPM) && dOPM > 0) || (isFinite(opmLatest) && opmLatest >= 15)) && (isFinite(borTrend) ? borTrend <= 0.25 : true)) return { phase: 'PHASE_3_INFLECTION', label: 'PHASE 3 · INFLECTION', color: '#1d9e75' };
+  // PATCH 1080c FIX 3 — loosen Phase 2 OPM threshold from -50bps to -300bps so mature
+  // companies with normal margin fluctuation still classify (e.g. SUPRITA -200bps).
+  if ((isFinite(accel) && accel > 0) || (isFinite(dOPM) && dOPM >= -300) || (isFinite(sYoY) && sYoY > 0)) return { phase: 'PHASE_2_STABILISATION', label: 'PHASE 2 · STABILISATION', color: '#ef9f27' };
   return { phase: 'UNCLASSIFIED', label: 'Unclassified', color: '#5a677d' };
 }
 
@@ -544,8 +608,29 @@ export function scoreTurnaround(fin: Fin | null | undefined, company = ''): Turn
     sales: troughSales.idx >= 0 && li >= 0 ? recoveryFromTrough(derived.sales[li], derived.sales[troughSales.idx]) : null,
   };
 
+  // PATCH 1080c FIX 6 — recognize HEALTHY companies (cash compounders, not turnarounds).
+  // A company that's been consistently profitable, low-debt, and has not had a real
+  // distress episode isn't a turnaround setup at all — surface it as HEALTHY so the
+  // user can quickly filter the growth compounders out of the turnaround universe.
+  const npHist = derived.netProfit.filter(isFinite);
+  const opmHist = derived.opmPct.filter(isFinite);
+  const roceHist = derived.roce.filter(isFinite);
+  const everHadLossYear = npHist.some((p) => p < 0);
+  const everHadDistressMargin = opmHist.some((o) => o < 5);
+  // ROCE distress year (< 8%) = real stumble. SAI Life FY22 ROCE 3.9% → not healthy.
+  // AIA's worst ROCE is 16.6% → still healthy (cyclical bottom, not distress).
+  const hadRoceDistress = roceHist.length > 0 && Math.min(...roceHist) < 8;
+  const latestDE = derived.debtToEquity[li];
+  const latestOPM = derived.opmPct[li];
+  const isHealthyCompounder = thesisAlive
+    && !everHadLossYear && !everHadDistressMargin && !hadRoceDistress
+    && isFinite(latestDE) && latestDE < 0.5
+    && isFinite(latestOPM) && latestOPM >= 15
+    && npHist.length >= 5;
+
   let action: TurnaroundResult['action'] = 'SKIP'; let actionColor = '#5a677d'; let actionReason = '';
   if (!thesisAlive) { action = 'AVOID'; actionColor = '#e24b4a'; actionReason = `${gateFailCount} survival gate FAIL — capital impairment risk`; }
+  else if (isHealthyCompounder) { action = 'HEALTHY'; actionColor = '#22d3ee'; actionReason = 'Cash-generative compounder — not a turnaround setup (no distress episode in the window)'; }
   else if (grade === 'A' && phaseInfo.phase === 'PHASE_3_INFLECTION') { action = 'BUY'; actionColor = '#1d9e75'; actionReason = 'A-grade · Phase 3 inflection — full-position zone'; }
   else if ((grade === 'A' || grade === 'B') && (phaseInfo.phase === 'PHASE_3_INFLECTION' || phaseInfo.phase === 'PHASE_4_RE_RATING')) { action = 'STARTER'; actionColor = '#34d399'; actionReason = `${grade}-grade · ${phaseInfo.label} — starter position`; }
   else if (grade === 'B' || phaseInfo.phase === 'PHASE_2_STABILISATION') { action = 'WATCH'; actionColor = '#ef9f27'; actionReason = 'Build the file — early signal, no position yet'; }
