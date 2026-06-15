@@ -23,6 +23,10 @@ import {
   type InvestorStyle, type SuperInvestor, type LifecycleStage, type Sector,
 } from '@/lib/super-investors';
 import { HoldingsFreshnessChip } from '@/components/holdings-freshness-chip';
+// PATCH 1085 — surface MFI concentration ranking on the analytics view (was
+// removed from dashboard home per 1081e; this is its natural home since the
+// endpoint composes from super-investor flow).
+import { MFIConcentrationTile } from '@/components/MFIConcentrationTile';
 
 const BG = '#0A0E1A';
 const PANEL = '#0D1623';
@@ -526,6 +530,11 @@ function AnalyticsView({ marketScope, onJumpToInvestor }: { marketScope: MarketS
           </div>
         </Section>
       )}
+
+      {/* PATCH 1085 — MFI Concentration ranking (from /api/v1/mfi-concentration) */}
+      <Section title="🎯 MFI CONCENTRATION — TOP 10" subtitle="Highest-concentration names across the super-investor roster, last 90 days. Net actions + signal score ranked.">
+        <MFIConcentrationTile days={90} limit={10} />
+      </Section>
 
       {/* Consensus picks (3+) */}
       <Section title={`🏆 CONSENSUS PICKS — 3+ INVESTORS (${data.consensus3plus.length})`} subtitle="Stocks owned by 3 or more super investors — highest conviction across the roster">
