@@ -689,6 +689,36 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   });
   const [parseError, setParseError] = useState('');
   const [loading, setLoading] = useState(false);
+  // PATCH 1083 — orphan-meta detection. If STORAGE_META shows count > 0 but
+  // localStorage[STORAGE_KEY] is empty (quota wiped after 5MB cap or app version
+  // change), show a red banner so user knows to re-upload. Auto-clears stale
+  // meta after dismissal so it doesn't keep firing.
+  const [orphanMetaCount, setOrphanMetaCount] = useState<number>(0);
+  useEffect(() => {
+    try {
+      const metaRaw = localStorage.getItem(STORAGE_META);
+      const dataRaw = localStorage.getItem(STORAGE_KEY);
+      if (metaRaw) {
+        const meta = JSON.parse(metaRaw);
+        if (meta && meta.count > 0 && (!dataRaw || dataRaw === '[]')) {
+          // Try one more IDB read before giving up
+          mbIdbGet('mb_scored').then((raw) => {
+            if (raw && raw !== '[]') {
+              try {
+                const parsed = JSON.parse(raw) as ExcelResult[];
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                  setRows(applyForcedRanking(parsed));
+                  return;
+                }
+              } catch {}
+            }
+            setOrphanMetaCount(meta.count);
+          });
+        }
+      }
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [expRow, setExpRow] = useState<string|null>(null);
   const [expandAll, setExpandAll] = useState(false);
   const [gradeFilter, setGradeFilter] = useState<Set<string>>(new Set(['ALL']));
@@ -1438,6 +1468,26 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
           </div>
         </details>
       </div>
+
+      {/* PATCH 1083 — orphan-meta warning banner */}
+      {orphanMetaCount > 0 && (
+        <div style={{marginBottom:14,padding:'14px 18px',backgroundColor:`color-mix(in srgb, ${RED} 12%, transparent)`,border:`1px solid ${RED}88`,borderLeft:`4px solid ${RED}`,borderRadius:8,display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+          <div style={{fontSize:18}}>⚠</div>
+          <div style={{flex:1,minWidth:200}}>
+            <div style={{fontSize:F.sm,fontWeight:800,color:RED}}>Saved data lost ({orphanMetaCount} stocks)</div>
+            <div style={{fontSize:F.xs,color:MUTED,lineHeight:1.5,marginTop:4}}>
+              Browser localStorage was wiped (5 MB cap reached after other uploads). The metadata
+              survived but the actual stock data is gone. Re-upload your Excel file once — future
+              uploads also write to IndexedDB which doesn&apos;t have the 5 MB limit, so they will
+              persist permanently.
+            </div>
+          </div>
+          <button onClick={() => { try { localStorage.removeItem(STORAGE_META); } catch {} setFileName(''); setOrphanMetaCount(0); }}
+            style={{padding:'6px 14px',backgroundColor:'transparent',border:`1px solid ${RED}88`,borderRadius:6,color:RED,fontSize:F.xs,fontWeight:700,cursor:'pointer'}}>
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Upload zone */}
       <div
