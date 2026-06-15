@@ -1460,8 +1460,8 @@ function ChecklistTab() {
                           }
                           return (
                             <li key={i} style={{ display: 'flex', gap: 10, padding: '6px 4px', borderBottom: i < list.length - 1 ? `1px dashed ${C.border}` : 'none' }}>
-                              <span style={{ ...MONO, color: C.dim, fontSize: 10, minWidth: 22, marginTop: 2, fontWeight: 700 }}>{String(i + 1).padStart(2, '0')}</span>
-                              <span style={{ fontSize: 12.5, color: C.text2, lineHeight: 1.55 }}>{display}</span>
+                              <span style={{ ...MONO, color: C.dim, fontSize: 12, minWidth: 26, marginTop: 3, fontWeight: 700 }}>{String(i + 1).padStart(2, '0')}</span>
+                              <span style={{ fontSize: 14.5, color: C.text2, lineHeight: 1.6 }}>{display}</span>
                             </li>
                           );
                         })}
@@ -1604,8 +1604,8 @@ function ChecklistTab() {
                           onChange={() => toggle(cat.n, i)}
                           style={{ marginTop: 2, width: 16, height: 16, accentColor: 'var(--mc-bullish)', flexShrink: 0 }}
                         />
-                        <span style={{ ...MONO, color: C.dim, fontSize: 10, minWidth: 22, marginTop: 1 }}>{String(i + 1).padStart(2, '0')}</span>
-                        <span style={{ fontSize: 12, color: checked ? C.text : C.text2, lineHeight: 1.5, textDecoration: checked ? 'none' : 'none' }}>{q}</span>
+                        <span style={{ ...MONO, color: C.dim, fontSize: 12, minWidth: 26, marginTop: 2 }}>{String(i + 1).padStart(2, '0')}</span>
+                        <span style={{ fontSize: 14.5, color: checked ? C.text : C.text2, lineHeight: 1.6 }}>{q}</span>
                       </label>
                     );
                   })}
