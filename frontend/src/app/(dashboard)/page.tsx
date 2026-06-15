@@ -114,6 +114,9 @@ interface ChangedRow {
 interface HomeState {
   loading: boolean;
   inPlay: NewsItem[];
+  // PATCH 1096b — separate older context items so IN-PLAY top stays fresh (<36h)
+  // and stale-but-relevant items get a dedicated collapsed "Recent Context" tail.
+  inPlayRecent?: NewsItem[];
   inPlayDiag?: { fetched: number; recent: number; clean: number; fellBack: boolean; error?: string; status?: number };  // PATCH 0617/0618 — visible diagnostics including fetch error
   bottleneck: BottleneckBucket[];
   earningsToday: GradedCard[];
@@ -499,7 +502,7 @@ export default function HomeDashboard() {
     const sync = buildSyncState();
     return {
       loading: false, // never block; network sections handle their own loading
-      inPlay: [], bottleneck: [], earningsToday: [], earningsLabel: 'today', alerts: [],
+      inPlay: [], inPlayRecent: [], bottleneck: [], earningsToday: [], earningsLabel: 'today', alerts: [],
       ...sync,
     };
   });
@@ -567,6 +570,7 @@ export default function HomeDashboard() {
   // ("hide raw news feeds / low-confidence signals / secondary analytics")
   const [showTier3, setShowTier3] = useState(true);  // PATCH 0625 — default expanded
   const [showInPlay, setShowInPlay] = useState(true);  // PATCH 0620 — In-Play moved to top of Home, default expanded
+  const [showInPlayRecent, setShowInPlayRecent] = useState(false);  // PATCH 1096b — collapsed Recent Context tail
   const [showQuickAccess, setShowQuickAccess] = useState(true);  // PATCH 0623 — default expanded
   // PATCH 1057 — Auto-refresh tick. The main fetch useEffect is wired to
   // [refreshTick] so it re-runs whenever this counter increments. We tick
@@ -848,7 +852,27 @@ export default function HomeDashboard() {
           return {
             ...d,
             // PATCH 1086 — MED-05: drop stale articles (>7 days old) before slicing so IN-PLAY doesn't mix 22/61/130-day-old items with today's
-            inPlay: keepOld ? (d as any).inPlay : final.filter((n: any) => { try { const dd = new Date(n.published_at || n.date || n.time); return (Date.now() - dd.getTime()) < 7*86400e3; } catch { return true; } }).slice(0, 15), // PATCH 1012 — 10 -> 15 per user request
+            // PATCH 1096b — split into "fresh" (<36h) for the visible IN-PLAY top
+            // and "recent context" (36h-7d) for the collapsed tail. Keeps the
+            // top truly active without losing the older-but-relevant items.
+            inPlay: keepOld
+              ? (d as any).inPlay
+              : final.filter((n: any) => {
+                  try {
+                    const dd = new Date(n.published_at || n.date || n.time);
+                    const ageMs = Date.now() - dd.getTime();
+                    return ageMs < 36 * 3600e3; // <36h
+                  } catch { return true; }
+                }).slice(0, 15),
+            inPlayRecent: keepOld
+              ? []
+              : final.filter((n: any) => {
+                  try {
+                    const dd = new Date(n.published_at || n.date || n.time);
+                    const ageMs = Date.now() - dd.getTime();
+                    return ageMs >= 36 * 3600e3 && ageMs < 7 * 86400e3; // 36h–7d
+                  } catch { return false; }
+                }).slice(0, 10),
             inPlayDiag: keepOld
               ? { ...(d as any).inPlayDiag, staleKept: true, lastError: error, status }
               : { fetched: raw.length, recent: recent.length, clean: clean.length, fellBack: clean.length === 0 && recent.length > 0, error, status },
@@ -2586,7 +2610,7 @@ export default function HomeDashboard() {
             fontSize: 13, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.4px',
             display: 'flex', alignItems: 'center', gap: 6, width: '100%',
           }}>
-            {showInPlay ? '▾' : '▸'} 🔥 IN-PLAY NEWS — top {data.inPlay.length}
+            {showInPlay ? '▾' : '▸'} 🔥 IN-PLAY NEWS — top {data.inPlay.length} <span style={{ fontSize: 9, fontWeight: 600, color: DIM, marginLeft: 4 }}>· active &lt;36h</span>
             <span style={{ marginLeft: 'auto', fontSize: 10, color: DIM, fontWeight: 500 }}>
               <Link href="/news" style={{ color: 'var(--mc-cyan)', textDecoration: 'none' }} onClick={(e) => e.stopPropagation()}>Full feed →</Link>
             </span>
@@ -2671,6 +2695,52 @@ export default function HomeDashboard() {
                   </a>
                 );
               })}
+            </div>
+          )}
+          {/* PATCH 1096b — Recent Context tail: 36h–7d items, collapsed by
+              default. Kept on home so the user doesn't lose the older relevant
+              stories — they just don't crowd "in-play". */}
+          {showInPlay && !netLoading.inPlay && (data.inPlayRecent?.length || 0) > 0 && (
+            <div style={{ marginTop: 10, borderTop: '1px dashed var(--mc-bg-4)', paddingTop: 8 }}>
+              <button
+                onClick={() => setShowInPlayRecent(v => !v)}
+                style={{
+                  background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
+                  fontSize: 10, fontWeight: 700, color: DIM, letterSpacing: '0.4px',
+                  display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+                }}
+              >
+                {showInPlayRecent ? '▾' : '▸'} 🕰 RECENT CONTEXT — {data.inPlayRecent!.length} older stories (36h–7d)
+              </button>
+              {showInPlayRecent && (
+                <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3, opacity: 0.78 }}>
+                  {data.inPlayRecent!.map((n, i) => {
+                    const title = n.title || n.headline || '(no headline)';
+                    const pubIso = n.published_at;
+                    let relAge = '';
+                    if (pubIso) {
+                      try {
+                        const d = new Date(pubIso);
+                        if (!isNaN(d.getTime())) {
+                          const ageSec = Math.round((Date.now() - d.getTime()) / 1000);
+                          relAge = ageSec < 86400 ? `${Math.round(ageSec / 3600)}h` : `${Math.round(ageSec / 86400)}d`;
+                        }
+                      } catch { /* swallow */ }
+                    }
+                    return (
+                      <a key={(n.id || '') + 'rc' + i} href={n.url || n.source_url || '#'} target="_blank" rel="noopener noreferrer"
+                        style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 6px', textDecoration: 'none' }}>
+                        <span style={{ fontSize: 10, color: DIM, fontWeight: 700, minWidth: 20 }}>{i + 1}</span>
+                        <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: 'var(--mc-text-3)', fontWeight: 500, lineHeight: 1.35 }}>{title}</span>
+                        {relAge && (
+                          <span style={{ fontSize: 9, color: DIM, fontFamily: 'ui-monospace, monospace', whiteSpace: 'nowrap' }}>{relAge}</span>
+                        )}
+                        <span style={{ fontSize: 9, color: DIM, whiteSpace: 'nowrap' }}>{n.source_name || n.source || '—'}</span>
+                      </a>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
         </div>
