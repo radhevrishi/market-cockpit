@@ -110,16 +110,43 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
     }
   };
 
-  // Load saved data on mount (persists across tab switches until Clear)
+  // Load saved data on mount (persists across tab switches until Clear).
+  // PATCH 1086 — watchlist scope render. The header reads STORAGE_NAME and
+  // showed "Loaded: tar-earnings-watchlist.csv", but the body still rendered
+  // the empty drop-zone because data was historically uploaded under the
+  // unscoped key `mc:fundamentals:data:v1` (or a sibling scope), so the
+  // scoped lookup `mc:fundamentals:watchlist:data:v1` returned nothing.
+  // We now fall back through the scoped name + scoped key, then the unscoped
+  // key, and finally the sibling-scope keys, so any saved list flows into
+  // the analyzer and the dropzone gives way to the dashboard.
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length) setData(parsed);
+      const KEY_CANDIDATES = [
+        STORAGE_KEY,
+        'mc:fundamentals:data:v1',
+        'mc:fundamentals:watchlist:data:v1',
+        'mc:fundamentals:portfolio:data:v1',
+      ];
+      const NAME_CANDIDATES = [
+        STORAGE_NAME,
+        'mc:fundamentals:name:v1',
+        'mc:fundamentals:watchlist:name:v1',
+        'mc:fundamentals:portfolio:name:v1',
+      ];
+      let loadedRows: Row[] | null = null;
+      for (const k of KEY_CANDIDATES) {
+        const raw = localStorage.getItem(k);
+        if (!raw) continue;
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length) { loadedRows = parsed; break; }
+        } catch {}
       }
-      const nm = localStorage.getItem(STORAGE_NAME);
-      if (nm) setFname(nm);
+      if (loadedRows) setData(loadedRows);
+      for (const k of NAME_CANDIDATES) {
+        const nm = localStorage.getItem(k);
+        if (nm) { setFname(nm); break; }
+      }
     } catch {}
   }, []);
 
