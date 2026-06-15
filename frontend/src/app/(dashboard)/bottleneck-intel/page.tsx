@@ -2391,17 +2391,19 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
             {/* Why section */}
             <div style={{ padding: '16px 20px', borderRight: '1px solid var(--mc-bg-4)' }}>
               <p style={{ fontSize: '10px', color: 'var(--mc-text-4)', fontWeight: '700', letterSpacing: '1px', margin: '0 0 8px' }}>WHY IT'S A BOTTLENECK</p>
-              <p style={{ fontSize: '12px', color: 'var(--mc-text-2)', lineHeight: '1.6', margin: 0 }}>{entry.why}</p>
+              {/* PATCH 1085 — AutoAcronyms wraps so HBM/GPU/TAM/EUV/CoWoS/etc.
+                  surface tooltips. */}
+              <p style={{ fontSize: '12px', color: 'var(--mc-text-2)', lineHeight: '1.6', margin: 0 }}><AutoAcronyms text={entry.why} /></p>
             </div>
             {/* Supply / Demand */}
             <div style={{ padding: '16px 20px' }}>
               <div style={{ marginBottom: '14px' }}>
                 <p style={{ fontSize: '10px', color: 'var(--mc-bearish)', fontWeight: '700', letterSpacing: '1px', margin: '0 0 6px' }}>SUPPLY CONSTRAINT</p>
-                <p style={{ fontSize: '12px', color: 'var(--mc-text-2)', lineHeight: '1.6', margin: 0 }}>{entry.supply}</p>
+                <p style={{ fontSize: '12px', color: 'var(--mc-text-2)', lineHeight: '1.6', margin: 0 }}><AutoAcronyms text={entry.supply} /></p>
               </div>
               <div>
                 <p style={{ fontSize: '10px', color: 'var(--mc-bullish)', fontWeight: '700', letterSpacing: '1px', margin: '0 0 6px' }}>DEMAND DRIVER</p>
-                <p style={{ fontSize: '12px', color: 'var(--mc-text-2)', lineHeight: '1.6', margin: 0 }}>{entry.demand}</p>
+                <p style={{ fontSize: '12px', color: 'var(--mc-text-2)', lineHeight: '1.6', margin: 0 }}><AutoAcronyms text={entry.demand} /></p>
               </div>
             </div>
           </div>
@@ -2413,7 +2415,7 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
               {entry.winners.map(w => (
                 <div key={w.ticker} style={{ display: 'flex', gap: '8px', marginBottom: '8px', padding: '8px 12px', backgroundColor: 'color-mix(in srgb, var(--mc-bullish) 3%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 13%, transparent)', borderRadius: '8px' }}>
                   <span style={{ fontSize: '12px', fontWeight: '800', color: 'var(--mc-bullish)', minWidth: '52px' }}>{w.ticker}</span>
-                  <span style={{ fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.4' }}>{w.thesis}</span>
+                  <span style={{ fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.4' }}><AutoAcronyms text={w.thesis} /></span>
                 </div>
               ))}
             </div>
@@ -2423,7 +2425,7 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
                 {entry.losers.map(l => (
                   <div key={l.ticker} style={{ display: 'flex', gap: '8px', marginBottom: '8px', padding: '8px 12px', backgroundColor: 'color-mix(in srgb, var(--mc-bearish) 3%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bearish) 13%, transparent)', borderRadius: '8px' }}>
                     <span style={{ fontSize: '12px', fontWeight: '800', color: 'var(--mc-bearish)', minWidth: '52px' }}>{l.ticker}</span>
-                    <span style={{ fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.4' }}>{l.thesis}</span>
+                    <span style={{ fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.4' }}><AutoAcronyms text={l.thesis} /></span>
                   </div>
                 ))}
               </div>
@@ -2434,15 +2436,15 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
           <div style={{ padding: '0 20px 16px', borderTop: '1px solid var(--mc-bg-4)', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px', paddingTop: '16px' }}>
             <div>
               <p style={{ fontSize: '10px', color: 'var(--mc-bullish)', fontWeight: '700', letterSpacing: '1px', margin: '0 0 8px' }}>✅ WHAT CONFIRMS THESIS</p>
-              {entry.confirms.map((c, i) => <div key={i} style={{ display: 'flex', gap: '6px', marginBottom: '5px', fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.4' }}><span style={{ color: 'var(--mc-bullish)', flexShrink: 0 }}>›</span>{c}</div>)}
+              {entry.confirms.map((c, i) => <div key={i} style={{ display: 'flex', gap: '6px', marginBottom: '5px', fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.4' }}><span style={{ color: 'var(--mc-bullish)', flexShrink: 0 }}>›</span><AutoAcronyms text={c} /></div>)}
             </div>
             <div>
               <p style={{ fontSize: '10px', color: 'var(--mc-bearish)', fontWeight: '700', letterSpacing: '1px', margin: '0 0 8px' }}>❌ WHAT BREAKS THESIS</p>
-              {entry.breaks.map((b, i) => <div key={i} style={{ display: 'flex', gap: '6px', marginBottom: '5px', fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.4' }}><span style={{ color: 'var(--mc-bearish)', flexShrink: 0 }}>›</span>{b}</div>)}
+              {entry.breaks.map((b, i) => <div key={i} style={{ display: 'flex', gap: '6px', marginBottom: '5px', fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.4' }}><span style={{ color: 'var(--mc-bearish)', flexShrink: 0 }}>›</span><AutoAcronyms text={b} /></div>)}
             </div>
             <div>
               <p style={{ fontSize: '10px', color: 'var(--mc-warn)', fontWeight: '700', letterSpacing: '1px', margin: '0 0 8px' }}>📊 WATCH THESE KPIs</p>
-              {entry.watch_kpi.map((k, i) => <div key={i} style={{ display: 'flex', gap: '6px', marginBottom: '5px', fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.4' }}><span style={{ color: 'var(--mc-warn)', flexShrink: 0 }}>›</span>{k}</div>)}
+              {entry.watch_kpi.map((k, i) => <div key={i} style={{ display: 'flex', gap: '6px', marginBottom: '5px', fontSize: '11px', color: 'var(--mc-text-3)', lineHeight: '1.4' }}><span style={{ color: 'var(--mc-warn)', flexShrink: 0 }}>›</span><AutoAcronyms text={k} /></div>)}
             </div>
           </div>
 
