@@ -671,7 +671,8 @@ export default function DecisionsPage() {
                       <td style={{ ...td, textAlign: 'right', fontFamily: 'ui-monospace, monospace' }}>
                         {(() => {
                           const now = currentScoreMap.get(d.symbol.toUpperCase() + '|' + d.market);
-                          if (!now || now.score == null) return <span style={{ color: DIM }}>—</span>;
+                          // PATCH 1086 — MED-07: signal pending/failed fetch with loading dots instead of bare em-dash
+                          if (!now || now.score == null) return <span style={{ color: DIM }} title="live price unavailable">⋯</span>;
                           const delta = (d.scoreAtDecision != null) ? Math.round(now.score) - Math.round(d.scoreAtDecision) : null;
                           const deltaColor = delta == null ? DIM : delta > 0 ? '#10B981' : delta < 0 ? '#EF4444' : DIM;
                           return (
