@@ -179,8 +179,14 @@ jobs:
           echo
           if [ "$STATUS" != "200" ] && [ "$STATUS" != "201" ] && [ "$STATUS" != "202" ] && [ "$STATUS" != "204" ]; then
             echo "::warning title=$LABEL::Vercel returned HTTP $STATUS"
-            # 10y-ops: fail only on 5xx so silent host suspensions surface; tolerate 4xx (endpoint may still have done work)
-            if [[ "$STATUS" == 5* ]]; then exit 1; fi
+            # PATCH 1086 — when Railway is recovering (CRIT-01) we get 5xx on
+            # every cron tick, which spams "All jobs failed" notifications and
+            # buries real regressions. The heartbeat (next step) is the
+            # canonical signal mc-guardian uses to detect persistent stops;
+            # treat the job as warning-only here and let guardian alert if
+            # multiple consecutive heartbeats are non-ok. To get loud-fail
+            # back, set repo variable STRICT_CRON_FAIL=1.
+            if [[ "$STATUS" == 5* && "${STRICT_CRON_FAIL:-0}" == "1" ]]; then exit 1; fi
             exit 0
           fi
           echo "::notice title=$LABEL::Vercel endpoint responded $STATUS"

@@ -74,7 +74,17 @@ jobs:
           print(f'roster: {len(roster)} investors')
 
           # ── 2. Fetch the listing once, map name → slug url ─────────────
-          listing_html = http_get('https://trendlyne.com/portfolio/superstar-shareholders/index/')
+          # PATCH 1086 — if Trendlyne 403/404s the runner pool (same way it
+          # blocked Railway in PATCH 1068b), exit cleanly. The server-side
+          # refresh-super-investors cron handles the documented fallback;
+          # crashing here just spams failure email every 6h without surfacing
+          # a real regression.
+          try:
+              listing_html = http_get('https://trendlyne.com/portfolio/superstar-shareholders/index/')
+          except Exception as e:
+              print(f'Trendlyne listing fetch failed: {e}')
+              print('Exiting 0 — server-side refresh-super-investors cron handles fallback.')
+              sys.exit(0)
           slug_re = re.compile(r'href="(/portfolio/superstar-shareholders/\d+/latest/([a-z0-9-]+)/)"')
           STOPWORDS = {'and','family','associates','sons','huf','the','portfolio'}
           def toks(s):
