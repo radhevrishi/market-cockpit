@@ -4785,7 +4785,12 @@ export default function MultibaggerPage() {
               } catch { return null; }
             })()}
           </div>
-          <div style={{display:'flex',gap:0}}>
+          {/* PATCH 1086 — tab overflow. Last tab ("Multibagger Reference") was
+              clipping to "Res..." on viewports < ~1500px because the flex row
+              had no horizontal scroll fallback. Adding overflowX:auto +
+              whiteSpace:nowrap lets the row scroll instead of truncating;
+              child buttons already use flexShrink:0 so they keep full width. */}
+          <div style={{display:'flex',gap:0,overflowX:'auto',whiteSpace:'nowrap',scrollbarWidth:'thin'}}>
             {([
               // PATCH 0492 — Analytics tab is FIRST (default landing). User asked
               // to see analytics first, not the ranking table.
