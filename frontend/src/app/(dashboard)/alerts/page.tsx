@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Bell, Plus, Trash2, ToggleLeft, ToggleRight, AlertCircle, RefreshCw, TrendingUp, TrendingDown, Newspaper, X, Check } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -72,7 +72,7 @@ const PRESETS = [
   { name: 'High importance news', type: 'NEWS', ticker: '', exchange: 'NSE', conditions: {}, news_conditions: { min_importance: 80 }, icon: '📰' },
 ];
 
-function CreateAlertModal({ onClose }: { onClose: () => void }) {
+function CreateAlertModal({ onClose, localOnly, onLocalCreate }: { onClose: () => void; localOnly?: boolean; onLocalCreate?: (rule: AlertRule) => void }) {
   const qc = useQueryClient();
   const [step, setStep] = useState<'preset' | 'form'>('preset');
   const [form, setForm] = useState({
@@ -107,6 +107,27 @@ function CreateAlertModal({ onClose }: { onClose: () => void }) {
           ? { min_importance: Number(form.min_importance) }
           : null,
       };
+      // PATCH 1087 — alerts localStorage fallback (CRIT-03)
+      if (localOnly && onLocalCreate) {
+        const localRule: AlertRule = {
+          id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          name: form.name,
+          rule_type: form.rule_type,
+          ticker: form.ticker.toUpperCase() || undefined,
+          exchange: form.exchange,
+          is_active: true,
+          conditions: form.rule_type === 'PRICE'
+            ? { direction: form.direction, threshold_pct: Number(form.threshold_pct) }
+            : {},
+          news_conditions: form.rule_type === 'NEWS'
+            ? { min_importance: Number(form.min_importance) }
+            : undefined,
+          cooldown_minutes: Number(form.cooldown_minutes),
+          created_at: new Date().toISOString(),
+        };
+        onLocalCreate(localRule);
+        return;
+      }
       await api.post('/alerts/rules', payload);
     },
     onSuccess: () => {
@@ -339,6 +360,40 @@ export default function AlertsPage() {
   const { data: rules, isLoading: rulesLoading, error: rulesError, refetch: refetchRules, isFetching: rulesFetching, dataUpdatedAt: rulesUpdatedAt } = useAlertRules();
   const { data: instances, isLoading: histLoading, error: histError, refetch: refetchHist, isFetching: histFetching, dataUpdatedAt: histUpdatedAt } = useAlertInstances();
 
+  // PATCH 1087 — alerts localStorage fallback (CRIT-03)
+  const [localOnly, setLocalOnly] = useState(false);
+  const [localRules, setLocalRules] = useState<AlertRule[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const raw = window.localStorage.getItem('mc:alert-rules-local');
+      return raw ? (JSON.parse(raw) as AlertRule[]) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // PATCH 1087 — alerts localStorage fallback (CRIT-03)
+  // Flip into local-only mode whenever the rules query errors; flip back when it succeeds.
+  useEffect(() => {
+    if (rulesError) setLocalOnly(true);
+    else if (rules) setLocalOnly(false);
+  }, [rulesError, rules]);
+
+  // PATCH 1087 — alerts localStorage fallback (CRIT-03)
+  // Persist local rules whenever they change so reloads keep working while backend is down.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem('mc:alert-rules-local', JSON.stringify(localRules));
+    } catch {
+      // quota/serialization failure — ignore, the in-memory copy still works.
+    }
+  }, [localRules]);
+
+  // PATCH 1087 — alerts localStorage fallback (CRIT-03)
+  // Display source: server rules when healthy, localStorage rules when degraded.
+  const displayRules: AlertRule[] = localOnly ? localRules : (rules ?? []);
+
   const toggleMutation = useMutation({
     mutationFn: async ({ id, is_active }: { id: string; is_active: boolean }) => {
       await api.patch(`/alerts/rules/${id}`, { is_active });
@@ -351,7 +406,27 @@ export default function AlertsPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['alerts', 'rules'] }),
   });
 
-  const activeCount = (rules ?? []).filter(r => r.is_active).length;
+  // PATCH 1087 — alerts localStorage fallback (CRIT-03)
+  // Local-mode handlers: mutate localRules in place; the persistence effect above flushes to localStorage.
+  const handleToggle = (rule: AlertRule) => {
+    if (localOnly) {
+      setLocalRules(prev => prev.map(r => r.id === rule.id ? { ...r, is_active: !r.is_active } : r));
+      toast.success(rule.is_active ? 'Alert disabled (local)' : 'Alert enabled (local)');
+      return;
+    }
+    toggleMutation.mutate({ id: rule.id, is_active: !rule.is_active });
+  };
+
+  const handleDelete = (rule: AlertRule) => {
+    if (localOnly) {
+      setLocalRules(prev => prev.filter(r => r.id !== rule.id));
+      toast.success('Alert deleted (local)');
+      return;
+    }
+    deleteMutation.mutate(rule.id);
+  };
+
+  const activeCount = displayRules.filter(r => r.is_active).length;
   const triggeredToday = (instances ?? []).filter(i => {
     const d = new Date(i.triggered_at);
     const now = new Date();
@@ -360,7 +435,18 @@ export default function AlertsPage() {
 
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-5">
-      {showCreate && <CreateAlertModal onClose={() => setShowCreate(false)} />}
+      {/* PATCH 1087 — alerts localStorage fallback (CRIT-03) */}
+      {showCreate && (
+        <CreateAlertModal
+          onClose={() => setShowCreate(false)}
+          localOnly={localOnly}
+          onLocalCreate={(rule) => {
+            setLocalRules(prev => [rule, ...prev]);
+            toast.success(`Alert created (local) for ${rule.ticker || 'news'}`);
+            setShowCreate(false);
+          }}
+        />
+      )}
 
       {/* PATCH 1079 — Watchlist-alerts composer (HANDOFF §6 wire-up) */}
       <WatchlistAlertsComposer />
@@ -391,7 +477,7 @@ export default function AlertsPage() {
         {[
           { label: 'Active Alerts', value: activeCount, icon: Bell, color: 'text-green-400' },
           { label: 'Triggered Today', value: triggeredToday, icon: Check, color: 'text-blue-400' },
-          { label: 'Total Rules', value: (rules ?? []).length, icon: AlertCircle, color: 'text-[#8899AA]' },
+          { label: 'Total Rules', value: displayRules.length, icon: AlertCircle, color: 'text-[#8899AA]' },
         ].map(({ label, value, icon: Icon, color }) => (
           <div key={label} className="bg-[#1A2B3C] border border-[#2A3B4C] rounded-xl px-4 py-3 flex items-center gap-3">
             <Icon className={`w-5 h-5 ${color} shrink-0`} />
@@ -416,15 +502,17 @@ export default function AlertsPage() {
       {/* Rules tab */}
       {activeTab === 'rules' && (
         <div className="space-y-3">
-          {rulesError && (
-            <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/30 rounded-xl p-3 text-red-400 text-sm">
-              <AlertCircle className="w-4 h-4 shrink-0" /> Failed to load alert rules.
-              <button onClick={() => refetchRules()} className="ml-auto text-xs hover:text-red-300 flex items-center gap-1"><RefreshCw className="w-3 h-3" /> Retry</button>
+          {/* PATCH 1087 — alerts localStorage fallback (CRIT-03) */}
+          {localOnly && (
+            <div className="flex items-center gap-2 bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-3 text-yellow-300 text-sm">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>⚠ Backend unreachable — alert rules saved locally on this device only. Will sync when backend is back.</span>
+              <button onClick={() => refetchRules()} className="ml-auto text-xs hover:text-yellow-200 flex items-center gap-1"><RefreshCw className="w-3 h-3" /> Retry backend</button>
             </div>
           )}
           {rulesLoading
             ? Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)
-            : !(rules ?? []).length
+            : !displayRules.length
             ? (
               <div className="text-center py-16 border-2 border-dashed border-[#2A3B4C] rounded-2xl">
                 <Bell className="w-10 h-10 text-[#2A3B4C] mx-auto mb-3" />
@@ -435,10 +523,11 @@ export default function AlertsPage() {
                 </button>
               </div>
             )
-            : (rules ?? []).map(rule => (
+            : displayRules.map(rule => (
+                /* PATCH 1087 — alerts localStorage fallback (CRIT-03) */
                 <AlertRuleCard key={rule.id} rule={rule}
-                  onToggle={() => toggleMutation.mutate({ id: rule.id, is_active: !rule.is_active })}
-                  onDelete={() => deleteMutation.mutate(rule.id)} />
+                  onToggle={() => handleToggle(rule)}
+                  onDelete={() => handleDelete(rule)} />
               ))
           }
         </div>
