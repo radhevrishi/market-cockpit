@@ -143,7 +143,7 @@ export default function JourneyPage() {
         <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 8, padding: '16px 18px' }}>
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 }}>
             <div>
-              <div style={{ fontSize: 14, fontWeight: 800, color: C.cyan, letterSpacing: 0.3 }}>🎯 WEALTH TARGETS &middot; ₹1 CR SEED</div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: C.cyan, letterSpacing: 0.3 }}>🎯 WEALTH TARGETS &middot; ₹{startCr} CR SEED</div>
               <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Pure compounding math &middot; before tax &middot; no withdrawals</div>
             </div>
           </div>
@@ -165,7 +165,7 @@ export default function JourneyPage() {
                       {cagr}% {isFlagship && <span style={{ fontSize: 9, color: C.cyan, marginLeft: 6, fontWeight: 700 }}>← MY TARGET</span>}
                     </td>
                     {HORIZONS.map((y) => {
-                      const v = compound(1, cagr, y);
+                      const v = compound(startCr, cagr, y);
                       const big = v >= 100;
                       return (
                         <td key={y} style={{ padding: '14px 12px', textAlign: 'right', fontSize: big ? 16 : 14, fontWeight: big ? 900 : 700, color: big ? (cagr >= 30 ? C.green : C.cyan) : C.text }}>
@@ -302,12 +302,24 @@ function Field({ label, value, setValue, step = 1, min, max }: {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <label style={{ fontSize: 10, color: C.muted, fontWeight: 700, letterSpacing: 0.3, textTransform: 'uppercase' }}>{label}</label>
       <input
-        type="number"
-        value={isFinite(value) ? value : 0}
-        step={step} min={min} max={max}
+        type="text"
+        inputMode="decimal"
+        value={isFinite(value) ? String(value) : '0'}
         onChange={(e) => {
-          const n = Number(e.target.value);
+          // PATCH 1082b — accept European comma format ("0,5" → 0.5) and any
+          // partial input. We do not clamp to min/max while typing; only on blur.
+          const raw = e.target.value.trim().replace(',', '.');
+          if (raw === '' || raw === '.' || raw === '-') return;
+          const n = Number(raw);
           if (isFinite(n)) setValue(n);
+        }}
+        onBlur={(e) => {
+          // Clamp to min/max on blur so user can type freely.
+          let n = Number(String(e.target.value).trim().replace(',', '.'));
+          if (!isFinite(n)) n = 0;
+          if (min != null && n < min) n = min;
+          if (max != null && n > max) n = max;
+          setValue(n);
         }}
         style={{ background: C.bg, border: '1px solid ' + C.borderStrong, color: C.text, padding: '8px 10px', borderRadius: 4, fontSize: 14, fontWeight: 700, ...MONO }}
       />
