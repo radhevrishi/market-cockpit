@@ -154,6 +154,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/playbook',         label: 'Playbook',         icon: <BookMarked className="w-4 h-4" /> },
       { href: '/investing-os', label: 'Investing OS', icon: <Compass className="w-4 h-4" /> },
       { href: '/journey', label: 'The Journey', icon: <Rocket className="w-4 h-4" /> }, // PATCH 1082
+      { href: '/market-cycles', label: 'Market Cycles', icon: <RefreshCw className="w-4 h-4" /> }, // PATCH 1089 — handbook
       { href: '/gautam-baid', label: 'Baid Playbook', icon: <BookMarked className="w-4 h-4" /> },
       { href: '/earnings-trigger', label: 'Earnings Trigger', icon: <TrendingUp className="w-4 h-4" /> },
       { href: '/earnings-trigger-masterclass', label: 'ET Masterclass', icon: <BookMarked className="w-4 h-4" /> },

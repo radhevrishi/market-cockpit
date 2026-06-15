@@ -2263,6 +2263,8 @@ export default function HomeDashboard() {
             <Link href="/playbook"               style={navChip('#F59E0B')}>📚 Playbook</Link>
             {/* PATCH 1082 — wealth-journey tab */}
             <Link href="/journey"                style={navChip('#22D3EE')}>🚀 The Journey</Link>
+            {/* PATCH 1089 — Market Cycles handbook tab */}
+            <Link href="/market-cycles"          style={navChip('#A78BFA')}>🎢 Market Cycles</Link>
             {/* PATCH 1063 — deep-link chips into Playbook sub-sections per user request */}
             <Link href="/playbook#about-me"      style={navChip('#fb7185')}>🌿 About Me</Link>
             <Link href="/playbook#life-sat"      style={navChip('#fbbf24')}>🌅 Life Sat</Link>
