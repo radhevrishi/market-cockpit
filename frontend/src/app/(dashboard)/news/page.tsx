@@ -965,13 +965,17 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
     <CardWrapper
       {...cardProps}
       className="news-card"
-      style={{ display: 'block', backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-1)', borderRadius: '14px', padding: '16px', cursor: 'pointer', transition: 'border-color 0.15s, background-color 0.15s', opacity: (isStale && !isPersistent && !isStructural) ? 0.55 : 1, textDecoration: 'none', color: 'inherit' }}
+      style={{ display: 'block', backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-1)', borderRadius: '14px', padding: '18px', cursor: 'pointer', transition: 'border-color 0.15s, background-color 0.15s', opacity: (isStale && !isPersistent && !isStructural) ? 0.55 : 1, textDecoration: 'none', color: 'inherit' }}
       onClick={handleCardClick}
     >
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+      {/* PATCH 1094 — relax card breathing room: padding 16→18, inner gap 10→12,
+          chip-strip marginBottom 8→10 and gap 6→7, title bottom 4→6.
+          Goal: keep the dense Bloomberg-lite feel, just untie the chip strip
+          from the headline. */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
         <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: importanceDot(article.importance_score), flexShrink: 0, marginTop: '7px' }} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '7px', marginBottom: '10px', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '18px', color: 'var(--mc-text-4)' }}>{regionFlag(article.region)}</span>
             <span style={{
               fontSize: '10px', fontWeight: '600', padding: '3px 8px', borderRadius: '5px',
@@ -1205,7 +1209,7 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
               return chips;
             })()}
           </div>
-          <p style={{ fontSize: '17px', fontWeight: '600', color: '#E8EDF2', margin: '0 0 4px', lineHeight: '1.55' }}>{title}</p>
+          <p style={{ fontSize: '17px', fontWeight: '600', color: '#E8EDF2', margin: '0 0 6px', lineHeight: '1.55' }}>{title}</p>
           {article.impact_statement && (
             <p style={{ fontSize: '18px', color: 'var(--mc-warn)', margin: '0 0 6px', lineHeight: '1.5', fontWeight: '500', fontStyle: 'italic' }}>
               Impact: {article.impact_statement}
@@ -3685,7 +3689,8 @@ export default function NewsFeedPage() {
               </button>
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {/* PATCH 1094 — bottleneck-list card gap 8→10 */}
               {articles.map(art => <NewsCard key={art.id} article={art} onSelect={setSelectedArticle} />)}
             </div>
           )}
@@ -3818,7 +3823,12 @@ export default function NewsFeedPage() {
                     <span style={{ fontSize: '10px', color: 'var(--mc-text-4)' }}>{config.description}</span>
                     <span style={{ fontSize: '10px', color: 'var(--mc-text-4)', marginLeft: 'auto' }}>{layerArticles.length}</span>
                   </div>
-                  {layerArticles.map(art => <NewsCard key={art.id} article={art} onSelect={setSelectedArticle} />)}
+                  {/* PATCH 1094 — wrap grouped layer cards in flex column so
+                      they don't stack edge-to-edge (was the biggest tightness
+                      driver in grouped view, the default). */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {layerArticles.map(art => <NewsCard key={art.id} article={art} onSelect={setSelectedArticle} />)}
+                  </div>
                 </div>
               );
             })}
@@ -3831,7 +3841,10 @@ export default function NewsFeedPage() {
         ) : (
           // ── Timeline view: chronological ──
           <>
-            {articles.map(art => <NewsCard key={art.id} article={art} onSelect={setSelectedArticle} />)}
+            {/* PATCH 1094 — same flex-column gap fix for timeline view. */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {articles.map(art => <NewsCard key={art.id} article={art} onSelect={setSelectedArticle} />)}
+            </div>
             <div style={{ textAlign: 'center', padding: '16px 0 8px', fontSize: '12px', color: 'var(--mc-text-4)' }}>
               Showing {articles.length} articles
             </div>
