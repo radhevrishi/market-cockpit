@@ -15,7 +15,12 @@ const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN_MOVERS || process.env.TELEGRAM_B
 // TELEGRAM_CHAT_ID in Vercel env. Empty default avoids leaking a
 // personal chat ID to anyone forking the repo (#1).
 const TG_CHAT_ID = process.env.TELEGRAM_CHAT_ID_MOVERS || process.env.TELEGRAM_CHAT_ID || '';
+// PATCH 1095 — accept CRON_SECRET as a fallback so vercel-cron-bridge.yml
+// (which sends ?secret=$CRON_SECRET uniformly) authenticates without
+// having to plumb a second secret into GitHub Actions. The original
+// MC_BOT_SECRET path still works for any other caller.
 const BOT_SECRET = process.env.MC_BOT_SECRET || '';
+const CRON_SECRET = process.env.CRON_SECRET || '';
 const API_BASE = 'https://market-cockpit.vercel.app';
 
 // ── NSE Direct Fetch ────────────────────────────────────────────────────
@@ -1364,11 +1369,13 @@ export async function GET(request: Request) {
   // letting an empty `?secret=` match an empty `BOT_SECRET`. Vercel cron
   // is allowed to bypass via its auto-added x-vercel-cron header.
   const vercelCron = request.headers.get('x-vercel-cron') || request.headers.get('x-vercel-signature') || '';
-  if (!BOT_SECRET) {
+  // PATCH 1095 — accept BOT_SECRET OR CRON_SECRET. Either is sufficient.
+  // Server is misconfigured only when BOTH are unset (no auth available).
+  if (!BOT_SECRET && !CRON_SECRET) {
     if (!vercelCron) {
-      return NextResponse.json({ error: 'server-misconfigured: MC_BOT_SECRET not set' }, { status: 503 });
+      return NextResponse.json({ error: 'server-misconfigured: MC_BOT_SECRET / CRON_SECRET not set' }, { status: 503 });
     }
-  } else if (!vercelCron && secret !== BOT_SECRET) {
+  } else if (!vercelCron && secret !== BOT_SECRET && secret !== CRON_SECRET) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   diagnostics.steps.push('auth_passed');
