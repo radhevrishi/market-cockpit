@@ -2679,16 +2679,11 @@ export default function CapexTrackerPage() {
                 };
               })}
             />
-            <PromoterRisingFilter
-              universe={intel.map(({ s: stock, fin }): PromoterFilterRow => ({
-                ticker: stock.name,
-                company: stock.industry || stock.sector || stock.name,
-                promoterHistory: [],
-                pledgePct: undefined,
-                marketCapCr: typeof fin?.mcap === 'number' ? fin.mcap : undefined,
-                rocePct: undefined,
-              }))}
-            />
+            {/* PATCH 1085 — PromoterRisingFilter hidden until a real promoter-holding
+                history data source is wired in. The Excel workbook doesn't carry
+                a promoter-holding column, so passing promoterHistory: [] makes the
+                filter permanently empty and just adds visual noise. Re-enable when
+                a shareholding-pattern source is connected. */}
           </div>
           <div style={{ ...card, padding: 0, overflowX: 'auto' }}>
             <table className="cxt" style={{ borderCollapse: 'collapse', width: '100%', fontSize: F.sm }}>
