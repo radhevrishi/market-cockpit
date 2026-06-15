@@ -1269,7 +1269,13 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
           return { ...r, _screeners: mergedScr } as ExcelResult;
         });
         const reranked = applyForcedRanking([...rowsWithUpdatedScreeners].sort((a, b) => b.score - a.score));
-        setExcelRows(reranked);
+        // PATCH 1090 — REGRESSION FIX: was `setExcelRows(reranked)` which is
+        // the PARENT scope's setter (defined inside MultibaggerPage). Inside
+        // ExcelCompare the prop is named `setRows` — calling the parent name
+        // here is a ReferenceError that silently crashed every same-file
+        // re-upload since PATCH 1043. That's the "Saved data lost (N stocks)"
+        // banner staying visible even after the user re-uploaded.
+        setRows(reranked);
         try {
           const existingFiles: string[] = JSON.parse(localStorage.getItem('mb_excel_files_v1') || '[]');
           const mergedFiles = Array.from(new Set([...existingFiles, ...arr.map(f => f.name)]));
@@ -1484,8 +1490,10 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
         </details>
       </div>
 
-      {/* PATCH 1083 — orphan-meta warning banner */}
-      {orphanMetaCount > 0 && (
+      {/* PATCH 1083 — orphan-meta warning banner. PATCH 1090 — also gate
+          on rows.length === 0; once IDB rehydration or re-upload populates
+          rows, the banner becomes stale and shouldn't keep firing. */}
+      {orphanMetaCount > 0 && rows.length === 0 && (
         <div style={{marginBottom:14,padding:'14px 18px',backgroundColor:`color-mix(in srgb, ${RED} 12%, transparent)`,border:`1px solid ${RED}88`,borderLeft:`4px solid ${RED}`,borderRadius:8,display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
           <div style={{fontSize:18}}>⚠</div>
           <div style={{flex:1,minWidth:200}}>
