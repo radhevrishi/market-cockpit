@@ -694,6 +694,21 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   // change), show a red banner so user knows to re-upload. Auto-clears stale
   // meta after dismissal so it doesn't keep firing.
   const [orphanMetaCount, setOrphanMetaCount] = useState<number>(0);
+  // PATCH 1084 — sync fileName when the parent clears all data via the
+  // mb-upload:updated event. Previously fileName stayed showing "1 file · N
+  // stocks" even after Clear because the state lives in this child component.
+  useEffect(() => {
+    function onUploadEvent(e: Event) {
+      const ce = e as CustomEvent<{ cleared?: boolean }>;
+      if (ce.detail && ce.detail.cleared) {
+        setFileName('');
+        setOrphanMetaCount(0);
+        setParseError('');
+      }
+    }
+    window.addEventListener('mb-upload:updated', onUploadEvent);
+    return () => window.removeEventListener('mb-upload:updated', onUploadEvent);
+  }, []);
   useEffect(() => {
     try {
       const metaRaw = localStorage.getItem(STORAGE_META);
