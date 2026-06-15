@@ -501,6 +501,22 @@ export default function PlaybookPage() {
   const [holdings, setHoldings] = useState<HoldingState[]>([]);
   const [addTicker, setAddTicker] = useState('');
 
+  // PATCH 1086 — about-me anchor scroll. Direct-URL hashes (e.g.
+  // /playbook#about-me) were landing at the top of the page because the
+  // sections below the fold mount after first paint; the browser had nothing
+  // to scroll to when it processed the hash. This effect re-applies the hash
+  // after a short delay so any anchor — about-me, life-sat, cadence,
+  // relationships, mastery, stress — scrolls into view on direct navigation.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const hash = window.location.hash.slice(1);
+    if (!hash) return;
+    const t = setTimeout(() => {
+      document.getElementById(hash)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 300);
+    return () => clearTimeout(t);
+  }, []);
+
   useEffect(() => {
     let saved: HoldingState[] = [];
     try { saved = JSON.parse(localStorage.getItem('mc:playbook:states:v1') || '[]'); } catch {}
