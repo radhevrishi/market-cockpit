@@ -14,7 +14,13 @@ export const maxDuration = 55;
 // (or TELEGRAM_BOT_TOKEN as a shared default) in Vercel env vars.
 const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN_PORTFOLIO || process.env.TELEGRAM_BOT_TOKEN || '';
 const TG_CHAT_ID = process.env.TELEGRAM_CHAT_ID_PORTFOLIO || process.env.TELEGRAM_CHAT_ID || '';
+// PATCH 1095c — accept CRON_SECRET as a fallback so vercel-cron-bridge.yml
+// (which sends ?secret=$CRON_SECRET uniformly) authenticates without
+// having to plumb a second secret into GitHub Actions. The original
+// MC_BOT_SECRET path still works for any other caller. Same pattern as
+// movers-alert (1095a) and watchlist-alert (1095b).
 const BOT_SECRET = process.env.MC_BOT_SECRET || '';
+const CRON_SECRET = process.env.CRON_SECRET || '';
 const API_BASE = 'https://market-cockpit.vercel.app';
 
 // ── Default Portfolio (user's actual holdings) ─────────────────────────
@@ -999,13 +1005,14 @@ export async function GET(request: Request) {
   console.log(`[PORTFOLIO] Incoming request: mode=${searchParams.get('mode')}, secret=${secret ? 'provided' : 'missing'}`);
   diagnostics.steps.push('request_received');
 
-  // Fail-closed when MC_BOT_SECRET env is unset; allow Vercel-cron header bypass.
+  // Fail-closed when both BOT_SECRET and CRON_SECRET are unset; allow Vercel-cron header bypass.
+  // PATCH 1095c — accept BOT_SECRET OR CRON_SECRET so vercel-cron-bridge.yml works uniformly.
   const vercelCron = request.headers.get('x-vercel-cron') || request.headers.get('x-vercel-signature') || '';
-  if (!BOT_SECRET) {
+  if (!BOT_SECRET && !CRON_SECRET) {
     if (!vercelCron) {
-      return NextResponse.json({ error: 'server-misconfigured: MC_BOT_SECRET not set' }, { status: 503 });
+      return NextResponse.json({ error: 'server-misconfigured: MC_BOT_SECRET / CRON_SECRET not set' }, { status: 503 });
     }
-  } else if (!vercelCron && secret !== BOT_SECRET) {
+  } else if (!vercelCron && secret !== BOT_SECRET && secret !== CRON_SECRET) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   diagnostics.steps.push('auth_passed');
