@@ -2324,6 +2324,16 @@ function SpecsitAnalytics({ events, isLoading }: { events: CanonicalEvent[]; isL
   // Per-row card builder used everywhere.
   const EventRow = ({ e, accent, extra }: { e: typeof enriched[number]; accent: string; extra?: React.ReactNode }) => {
     const primaryTicker = e.ev.tickers[0] || '';
+    // PATCH 1086 — market flag bug. The canonical event's `region` field was
+    // missing/defaulted on most analytics rows, so every card fell through to
+    // 🇺🇸 US. Derive the flag from the ticker exchange suffix first
+    // (NSE: / BSE: / .NS / .BO → 🇮🇳 IN) and only fall back to ev.region if
+    // no ticker hint exists. This matches the user-visible rule:
+    // NSE/BSE → 🇮🇳 IN, else 🇺🇸 US.
+    const tickerStr = e.ev.tickers.join(' ').toUpperCase();
+    const isIndianTicker = /\b(NSE|BSE):/.test(tickerStr) || /\.(NS|BO)\b/.test(tickerStr);
+    const market: 'IN' | 'US' = isIndianTicker || e.ev.region === 'IN' ? 'IN' : 'US';
+    const marketFlag = market === 'IN' ? '🇮🇳' : '🇺🇸';
     return (
       <a
         href={e.ev.primary_filing?.link || '#'}
@@ -2339,9 +2349,11 @@ function SpecsitAnalytics({ events, isLoading }: { events: CanonicalEvent[]; isL
           e.catalyst ? `Catalyst: ${e.catalyst.label}` : '',
           e.lifecycleMeta ? `Lifecycle: ${e.lifecycleMeta.label}` : '',
           `Source: ${e.ev.primary_filing?.source || '—'} (${e.sourceTier || 'UNK'})`,
+          `Market: ${market}`,
         ].filter(Boolean).join('\n')}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 11 }} title={`Market: ${market}`}>{marketFlag}</span>
           <span style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-text-1)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
             {primaryTicker || (e.ev.target_name || '—')}
           </span>
