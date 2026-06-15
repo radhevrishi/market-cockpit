@@ -22,7 +22,7 @@
 // math and operating manual; drops historical prose narrative.
 // ════════════════════════════════════════════════════════════════════════════
 
-import { useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 
 const C = {
   bg: 'var(--mc-bg-0)', card: 'var(--mc-bg-1)', card2: 'var(--mc-bg-2)',
@@ -35,7 +35,7 @@ const C = {
 
 const MONO: CSSProperties = { fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace' };
 
-type TabId = 'overview' | 'cycles' | 'crashbook' | 'precrash' | 'deployment' | 'rotation' | 'psychology' | 'elite';
+type TabId = 'overview' | 'cycles' | 'crashbook' | 'precrash' | 'deployment' | 'rotation' | 'psychology' | 'elite' | 'checklist';
 
 const TABS: { id: TabId; label: string; emoji: string; sub: string }[] = [
   { id: 'overview',   emoji: '🧭', label: 'Overview',        sub: 'Six Truths + framework' },
@@ -46,6 +46,7 @@ const TABS: { id: TabId; label: string; emoji: string; sub: string }[] = [
   { id: 'rotation',   emoji: '🧬', label: 'Sector Rotation',  sub: 'Phase-by-phase tilts' },
   { id: 'psychology', emoji: '🧠', label: 'Psychology',       sub: '12 biases + crash protocol' },
   { id: 'elite',      emoji: '🦅', label: 'Elite Playbook',   sub: '10 rules + 7 after-double' },
+  { id: 'checklist',  emoji: '📋', label: '500-Point Check',  sub: 'Before selling any winner' },
 ];
 
 // ── Block primitive ─────────────────────────────────────────────────────────
@@ -649,6 +650,876 @@ function EliteTab() {
   );
 }
 
+const CHECKLIST_500: { n: number; emoji: string; name: string; questions: string[] }[] = [
+  { n: 1, emoji: '🏛', name: "Business Model Durability",
+    questions: [
+      "Is the core product or service still in demand five years from now under reasonable assumptions?",
+      "Has the customer’s underlying need (functional, emotional, status) remained stable for at least 5 years?",
+      "Is the business model still cash-generative without subsidies, promotional spending, or unsustainable working capital extensions?",
+      "Has the business successfully extended into adjacent products/services in the last 3 years?",
+      "Is there a credible 10-year growth runway based on penetration, geography, category extension, or pricing?",
+      "Has the company demonstrated category leadership in at least 2 distinct economic cycles?",
+      "Is the business model resilient to a 30% drop in volumes for 12 months?",
+      "Are recurring revenues at least 30% of total revenue (subscriptions, contracts, repeat purchases)?",
+      "Is the customer-acquisition cost stable or declining over 3 years?",
+      "Is customer retention rate above 85% for B2C and 90% for B2B?",
+      "Does the business model improve with scale (rising margins, falling per-unit costs)?",
+      "Has the business successfully reinvented its core product or distribution at least once in the last decade?",
+      "Is the supply chain robust against single-source dependencies?",
+      "Is the business model defensible against a well-funded new entrant with $1bn capital?",
+      "Has the business model been validated in multiple geographies or sub-markets?",
+      "Does the business model have meaningful network effects, platform effects, or two-sided market dynamics?",
+      "Is the pricing structure (margin × volume × frequency) stable across cycles?",
+      "Has the unit economics (LTV/CAC, gross margin, contribution margin) improved over 3 years?",
+      "Is the business model regulated in a way that creates entry barriers rather than profit ceilings?",
+      "Would the business model survive 2 years of zero new customer acquisition?",
+    ] },
+  { n: 2, emoji: '🛡', name: "Competitive Moat Status",
+    questions: [
+      "Has market share been stable or rising over the last 5 years?",
+      "Has the gross margin been stable or rising over the last 5 years?",
+      "Are there at least 3 named structural moats (brand, scale, distribution, switching cost, network effect, regulatory, IP, cost advantage)?",
+      "Has the company successfully defended against at least one credible new entrant?",
+      "Is the moat strengthening, stable, or eroding (with evidence)?",
+      "Are customer-switching costs measurable and meaningful?",
+      "Does the company own its distribution channel sufficiently to prevent disintermediation?",
+      "Is the brand the dominant choice in unprompted recall surveys?",
+      "Does the company have pricing power demonstrated by past price increases without volume loss?",
+      "Is there a meaningful gap (>200 bps) in ROCE versus the nearest competitor?",
+      "Has the company successfully resisted a major price-discount competitor?",
+      "Are competitive responses to company actions slow (>12 months) and partial?",
+      "Does scale provide cost advantages of at least 5% on COGS versus #3-5 players?",
+      "Is the company’s R&D / innovation pipeline ahead of competitors?",
+      "Is the talent base — management, key technical staff, sales — stable and not poachable?",
+      "Do customers measure the company on quality more than price?",
+      "Is the company’s brand premium quantifiable in price-per-unit data versus generic?",
+      "Has the company successfully entered any competitor’s home market in the last 5 years?",
+      "Are competitive losses (lost contracts, deserted customers, displaced sales) below 5% per year?",
+      "Is the moat sustainable through a 50% input cost shock?",
+    ] },
+  { n: 3, emoji: '👔', name: "Management Quality & Tenure",
+    questions: [
+      "Has the CEO been in role for at least 5 years (or successor groomed visibly for 2+)?",
+      "Does the CEO have substantial personal ownership (>5% for promoter CEO, >1% for hired CEO)?",
+      "Has management consistently delivered on stated 3-year guidance?",
+      "Has management demonstrated honest communication during downturns (no misleading earnings calls)?",
+      "Is the CFO experienced, with at least 5-year tenure and clean audit history?",
+      "Are board members independent in substance, not just form?",
+      "Has management successfully navigated at least one major industry crisis or regulation change?",
+      "Is the senior leadership team (CXOs) stable, with <15% annual turnover?",
+      "Has management voluntarily acknowledged a past strategic mistake publicly?",
+      "Does management share visibly in shareholder pain (no excessive bonuses during loss years)?",
+      "Is management compensation reasonable relative to peer industry?",
+      "Has the management team been built from within or recruited externally with success?",
+      "Does management have a clear succession plan publicly articulated?",
+      "Has management successfully integrated at least one acquisition?",
+      "Is the management’s investor communication consistent and substantive (no spin)?",
+      "Has management avoided related-party transactions that disadvantage minority shareholders?",
+      "Does management focus on long-term wealth creation versus short-term EPS optimization?",
+      "Has the management proactively managed regulatory risk?",
+      "Is management’s vision for the business clear, articulated, and credible?",
+      "Would I trust this management team with another 20% of my portfolio?",
+    ] },
+  { n: 4, emoji: '🤝', name: "Promoter Integrity",
+    questions: [
+      "Has the promoter family/group maintained or increased holding over the last 5 years?",
+      "Are promoter pledges below 10% of holding?",
+      "Have there been any related-party transactions in the last 3 years that disadvantage minority shareholders?",
+      "Has the promoter been investigated, fined, or prosecuted by any regulator?",
+      "Is the promoter’s other listed/unlisted business activity consistent with high standards?",
+      "Has the promoter avoided significant insider trading flags?",
+      "Has the promoter clearly delineated personal wealth from company wealth?",
+      "Is the promoter’s lifestyle (visible) consistent with stated commitment to long-term value creation?",
+      "Has the promoter publicly committed to specific shareholder-returns policies (dividends, buybacks)?",
+      "Has the promoter avoided unrelated diversification destructive to shareholder value?",
+      "Is the promoter family’s next generation visibly engaged in or transitioning from the business?",
+      "Has the promoter avoided personal endorsement of speculative investments via company resources?",
+      "Are promoter-loan-against-shares transactions transparent and disclosed?",
+      "Has the promoter demonstrated ability to attract top-tier external talent?",
+      "Has the promoter maintained ethical relationships with regulators, employees, customers?",
+      "Are promoter dividend payouts consistent with company’s stated dividend policy?",
+      "Has the promoter avoided manipulating earnings to support stock price?",
+      "Has the promoter shown long-term skin in the game during downturns (no significant pledging during stress)?",
+      "Has the promoter avoided actions that suggest impending exit (e.g., progressive stake reduction)?",
+      "Would I be comfortable investing in any other business this promoter starts?",
+    ] },
+  { n: 5, emoji: '💰', name: "Financial Health",
+    questions: [
+      "Is net debt-to-equity below 0.5x?",
+      "Is interest coverage above 6x?",
+      "Is the current ratio above 1.5x?",
+      "Has working capital been stable as % of revenue?",
+      "Has debt-to-EBITDA stayed below 2x for 5 years?",
+      "Is the cash conversion cycle stable or improving?",
+      "Has the company avoided emergency rights issues, qualified institutional placements at distressed prices?",
+      "Are the credit ratings (CRISIL, ICRA) stable AA- or above?",
+      "Has goodwill on balance sheet stayed below 25% of equity?",
+      "Are contingent liabilities disclosed and immaterial (<15% of equity)?",
+      "Are receivables aging-profiles healthy (>90% under 90 days)?",
+      "Has inventory turnover been stable or improving?",
+      "Have the auditors been stable and reputable (Big 4 or established Indian firm)?",
+      "Is the proportion of pension/employee benefit obligations to equity manageable?",
+      "Are forex hedging policies prudent and disclosed?",
+      "Are off-balance-sheet structures (SPVs, JVs) transparent?",
+      "Has the company avoided complex derivative exposures?",
+      "Are minority interest reserves treated transparently?",
+      "Has the company maintained adequate insurance against operational risks?",
+      "Would a stress scenario of 30% revenue decline still leave the company solvent?",
+    ] },
+  { n: 6, emoji: '📈', name: "Earnings Trajectory",
+    questions: [
+      "Has earnings (PAT) grown at least 15% CAGR over the last 5 years?",
+      "Has revenue grown at least 12% CAGR over the last 5 years?",
+      "Has the company avoided declining earnings in more than 2 of the last 10 years?",
+      "Has earnings quality (PAT vs. CFO) been stable, with CFO/PAT >0.85?",
+      "Are next-12-month earnings estimates rising over the last 3 quarters?",
+      "Have quarterly results consistently exceeded or matched consensus by >50% frequency?",
+      "Has EBITDA margin been stable or expanding over 5 years?",
+      "Has gross margin been stable or expanding over 5 years?",
+      "Has the operating leverage worked in favor (rising margins on rising revenue)?",
+      "Has the company demonstrated pricing-led growth (not just volume)?",
+      "Has the company demonstrated volume-led growth (not just pricing)?",
+      "Is the earnings trajectory consistent with management’s medium-term guidance?",
+      "Has tax rate been stable (avoiding suspicious one-time benefits)?",
+      "Have one-time gains/losses been clearly disclosed and immaterial?",
+      "Has the company avoided aggressive revenue recognition or capitalization?",
+      "Is the earnings-power of mature products and emerging products clearly segmentable?",
+      "Is the dependency on top 5 customers declining over time?",
+      "Has the company’s gross margin moved in the right direction even when input costs spiked?",
+      "Has the company demonstrated counter-cyclical earnings stability?",
+      "Will the earnings trajectory of the next 3 years be self-sustaining without new capital infusion?",
+    ] },
+  { n: 7, emoji: '💸', name: "Free Cash Flow Status",
+    questions: [
+      "Is FCF positive in each of the last 5 years?",
+      "Is FCF/PAT > 70% on a 5-year average?",
+      "Has working capital deterioration not exceeded 200 bps of revenue in any year?",
+      "Has capex intensity (capex/revenue) been stable?",
+      "Has the company funded growth from internal cash generation?",
+      "Are dividend payouts sustainable (DPR < 40% of net profit, on average)?",
+      "Has the company avoided destructive M&A using debt-funded cash?",
+      "Has the company demonstrated FCF growth at least as fast as PAT growth?",
+      "Are receivable days under industry median?",
+      "Are payable days reasonable (not stretched in a way that risks supplier relationships)?",
+      "Is the depreciation policy consistent with industry norms?",
+      "Is the maintenance capex separately disclosed from growth capex?",
+      "Has the company avoided substantial working capital seasonality risks?",
+      "Have FCF margins been expanding over time?",
+      "Has the company minimized financial-cost drag through prudent treasury?",
+      "Are R&D expenses appropriately balanced (not too high, not too low) for the industry?",
+      "Has the company avoided treating R&D capitalization as a tool to inflate FCF?",
+      "Are minority dividend obligations from subsidiaries managed properly?",
+      "Has the company demonstrated counter-cyclical FCF resilience?",
+      "Will the next 3 years’ FCF support both growth investments and shareholder returns?",
+    ] },
+  { n: 8, emoji: '♻️', name: "ROCE & Capital Allocation",
+    questions: [
+      "Is ROCE > 20% in each of the last 5 years?",
+      "Has ROCE been stable or rising?",
+      "Has incremental ROCE on new capital deployed been > 18%?",
+      "Has the company avoided destructive M&A (ROCE-dilutive acquisitions)?",
+      "Are buybacks executed at value-accretive levels (below intrinsic value)?",
+      "Are dividends growing at a sustainable rate (5-15% per year)?",
+      "Has the company avoided “diversification for diversification’s sake”?",
+      "Are spin-offs, demergers, or restructurings value-accretive?",
+      "Has the company demonstrated discipline in saying NO to bad capital deployment?",
+      "Is the company’s capital structure optimized for risk-adjusted ROE?",
+      "Has the company avoided excessive financial leverage to boost ROE?",
+      "Are joint ventures and partnerships value-accretive?",
+      "Has the company avoided destructive related-party transactions?",
+      "Is treasury operations conservative (cash held in safe instruments)?",
+      "Have promoter-related capital allocations been minimal?",
+      "Has the company communicated capital allocation philosophy clearly?",
+      "Are stock-option grants reasonable (not excessive dilution)?",
+      "Has the company avoided value-destructive cross-holdings in unrelated businesses?",
+      "Has the company maintained a buyback program when stock was undervalued?",
+      "Are the next 5 years’ capital allocation priorities transparent and rational?",
+    ] },
+  { n: 9, emoji: '🌬', name: "Industry Tailwind/Headwind",
+    questions: [
+      "Is the industry in a 5-10 year structural tailwind phase?",
+      "Has industry growth been at least 8% CAGR over 5 years?",
+      "Is industry penetration in India still below 50% of mature-market levels?",
+      "Are regulatory trends favorable (formalization, GST benefits, etc.)?",
+      "Is the industry consolidating in favor of larger players?",
+      "Are technological changes disrupting the industry in the company’s favor?",
+      "Is the demographic profile supportive (young population, urbanization, income growth)?",
+      "Has the industry demonstrated resilience through past economic crises?",
+      "Are imports/exports trends favorable for the company?",
+      "Is per-capita consumption growing year-on-year?",
+      "Is the industry’s pricing environment rational (no destructive competition)?",
+      "Are the industry’s input costs trending stable or favorable?",
+      "Has industry capacity utilization been in a healthy range (75-90%)?",
+      "Are there any disruptive substitutes entering the industry?",
+      "Has the company’s industry segment outperformed the broader industry?",
+      "Are sub-segments where the company plays growing faster than the overall industry?",
+      "Has government policy been supportive of the industry (PLI schemes, etc.)?",
+      "Are international peers in the same industry showing healthy performance?",
+      "Is the industry’s cyclicality reducing (becoming more secular)?",
+      "Will the next 5 years see continued industry tailwind?",
+    ] },
+  { n: 10, emoji: '🛒', name: "Customer Base Health",
+    questions: [
+      "Is the customer concentration (top 10 customers as % of revenue) below 30%?",
+      "Has customer retention rate stayed above 85%?",
+      "Has the customer base been growing year-on-year?",
+      "Are customer demographics shifting in favorable directions?",
+      "Has the customer satisfaction (NPS, ratings) stayed above industry benchmark?",
+      "Has customer feedback been incorporated into product roadmap?",
+      "Is the customer’s willingness-to-pay growing (premium attach rates)?",
+      "Has customer acquisition cost been declining or stable?",
+      "Is the customer’s underlying demand stable across economic cycles?",
+      "Has the customer geographic spread been diversifying?",
+      "Has the company successfully entered new customer segments?",
+      "Is the customer engagement increasing (frequency, basket size, duration)?",
+      "Has the customer’s adjacent-needs been addressed by the company?",
+      "Are repeat-purchase rates among target customer base above 60%?",
+      "Has the company avoided customer-acquisition deceleration?",
+      "Are demographic shifts (rural-to-urban, female workforce, etc.) favorable?",
+      "Has the company captured share-of-wallet from competitors?",
+      "Has the customer’s distribution channel (offline, online, omni-channel) been managed well?",
+      "Are customers showing willingness to advocate the brand (organic growth)?",
+      "Will the next 5 years see continued customer health?",
+    ] },
+  { n: 11, emoji: '💎', name: "Pricing Power",
+    questions: [
+      "Has the company raised prices in each of the last 5 years?",
+      "Have price increases stayed below inflation rate consistently?",
+      "Has the company successfully passed input cost shocks to customers?",
+      "Has gross margin remained stable or expanded across cycles?",
+      "Has the company avoided race-to-the-bottom pricing wars?",
+      "Is the company’s price premium versus generic alternatives stable or growing?",
+      "Has the company successfully introduced premium variants?",
+      "Is the price-elasticity of demand low (price increases don’t hurt volume materially)?",
+      "Has the company demonstrated brand premium captured in pricing data?",
+      "Has the company avoided destructive discounting practices?",
+      "Is the company’s pricing structure (cap, variable, surge) optimized?",
+      "Has the company successfully captured premiumization trends?",
+      "Are pricing benchmarks vs. global peers favorable?",
+      "Has the company successfully entered higher-margin segments?",
+      "Has price-led growth contributed at least 5% to revenue growth in recent years?",
+      "Has the company demonstrated competitive resilience against discount challengers?",
+      "Are pricing policies clearly communicated to all stakeholders?",
+      "Has the company maintained pricing during periods of weak demand?",
+      "Is the company’s premium-pricing strategy sustainable over the next 5 years?",
+      "Has the company avoided over-promotion that erodes brand equity?",
+    ] },
+  { n: 12, emoji: '📊', name: "Volume Growth",
+    questions: [
+      "Has volume growth been at least 8% CAGR over the last 5 years?",
+      "Has volume growth been broad-based across geographies/segments?",
+      "Has volume growth been sustainable without unsustainable subsidies?",
+      "Has the company avoided volume contraction in more than 1 of the last 5 years?",
+      "Is the volume growth driven by structural rather than cyclical factors?",
+      "Has the company captured share-gains from competitors?",
+      "Has volume growth in the company’s premium segment exceeded overall volume growth?",
+      "Has the company demonstrated geographic expansion without margin dilution?",
+      "Has the company’s distribution density increased?",
+      "Are new products contributing 20%+ of incremental volume?",
+      "Has volume growth been balanced across customer cohorts?",
+      "Has the company successfully entered new occasion/use-case segments?",
+      "Has the channel mix (offline, online, omni-channel) been optimizing volume?",
+      "Has the company successfully scaled in tier-2/tier-3/rural markets?",
+      "Has volume growth been counter-cyclically resilient?",
+      "Has the company avoided destocking/restocking shocks that distort volume reads?",
+      "Has manufacturing capacity utilization stayed healthy (75-90%)?",
+      "Is the capacity addition pipeline aligned with demand visibility?",
+      "Has volume growth been confirmed by independent third-party data?",
+      "Will the next 5 years see continued volume growth at 8%+?",
+    ] },
+  { n: 13, emoji: '📐', name: "Margin Profile",
+    questions: [
+      "Has EBITDA margin stayed above industry median?",
+      "Has EBITDA margin been stable or expanding over 5 years?",
+      "Has gross margin been stable or expanding over 5 years?",
+      "Has the company demonstrated operating leverage benefit?",
+      "Has the company avoided margin compression from competitive intensity?",
+      "Has the company successfully managed input cost volatility?",
+      "Are forex margins managed prudently?",
+      "Has the company avoided destructive promotion that erodes margins?",
+      "Has the company demonstrated margin-of-safety pricing power?",
+      "Have the new products/segments matured to deliver expected margins?",
+      "Has the company maintained margin during periods of input cost spike?",
+      "Has the company successfully premiumized the product mix?",
+      "Are fixed costs being managed efficiently?",
+      "Has the company avoided one-time margin shocks that mask underlying deterioration?",
+      "Are the margins comparable to (or better than) global peers in similar industries?",
+      "Has the company’s operating leverage worked in volume-up cycles?",
+      "Has the company’s operating leverage been manageable in volume-down cycles?",
+      "Are margin guidance and actuals consistent?",
+      "Has margin from emerging segments been improving?",
+      "Will the next 5 years see margin expansion or stable margin?",
+    ] },
+  { n: 14, emoji: '🔄', name: "Working Capital Cycle",
+    questions: [
+      "Has the cash conversion cycle stayed below industry median?",
+      "Have receivable days been stable or improving?",
+      "Are inventory days appropriate for the business model?",
+      "Are payable days reasonable and not excessively stretched?",
+      "Has working capital been managed during demand cycles?",
+      "Has the company avoided distress-driven inventory write-downs?",
+      "Has the company maintained healthy supplier relationships?",
+      "Has the company managed channel inventory effectively?",
+      "Has the company avoided receivable concentration that creates collection risk?",
+      "Have working capital ratios been benchmarked against global peers?",
+      "Has the company demonstrated working capital resilience in crisis?",
+      "Has the company optimized supply chain for cost and speed?",
+      "Are demand forecasts driving inventory decisions effectively?",
+      "Has the company avoided unnecessary working capital intensity?",
+      "Is the dealer/distributor inventory healthy (no overstocking)?",
+      "Has the company managed currency exposure in working capital?",
+      "Has the company’s days-sales-outstanding been consistent with peers?",
+      "Is the company’s float management effective?",
+      "Has the company avoided receivable factoring/bill discounting that masks issues?",
+      "Will the next 5 years see continued working capital efficiency?",
+    ] },
+  { n: 15, emoji: '⚖️', name: "Balance Sheet (Debt & Cash)",
+    questions: [
+      "Is gross debt below 1.5x EBITDA?",
+      "Is the debt-to-equity ratio below 0.5x?",
+      "Is the interest coverage above 6x?",
+      "Are the credit ratings stable AA- or above?",
+      "Has the company avoided emergency capital raises in distress?",
+      "Has the company avoided opaque off-balance-sheet structures?",
+      "Are pension/employee benefit obligations manageable?",
+      "Has the company maintained adequate cash reserves?",
+      "Has cash been deployed in high-quality short-term instruments?",
+      "Is the debt maturity profile manageable (no concentration risk)?",
+      "Are the bank facilities adequate without being excessive?",
+      "Has the company avoided expensive subordinated debt?",
+      "Has the company avoided destructive related-party guarantees?",
+      "Are contingent liabilities disclosed and immaterial?",
+      "Is the FX exposure hedged prudently?",
+      "Are minority-interest obligations transparent?",
+      "Has the company avoided destructive convertible debt or PE-style equity?",
+      "Has goodwill/intangibles been impairment-tested and stable?",
+      "Has the company avoided “creative accounting” on balance sheet?",
+      "Will the next 5 years see continued balance sheet strength?",
+    ] },
+  { n: 16, emoji: '🏗', name: "Capex Cycle Status",
+    questions: [
+      "Has the capex cycle been matched to demand visibility?",
+      "Has the company avoided over-investment that hurt ROCE?",
+      "Are capex projects delivering expected payback?",
+      "Has the company avoided destructive M&A at high valuations?",
+      "Has growth capex been funded primarily by internal cash flow?",
+      "Has maintenance capex been adequate to maintain operational excellence?",
+      "Has the company’s R&D capex been productive (new products delivering revenue)?",
+      "Are technology investments aligned with industry direction?",
+      "Has the company avoided geographic expansion that destroyed value?",
+      "Has the company’s capex cycle been counter-cyclical (investing in downturns)?",
+      "Are project commissioning timelines being met?",
+      "Has the company avoided cost overruns in large projects?",
+      "Are capacity expansion plans aligned with demand visibility?",
+      "Has the company maintained capital discipline in over-heated industries?",
+      "Are JVs and partnerships value-accretive?",
+      "Has the company avoided destructive vertical integration?",
+      "Are exit options (sale of underperforming assets) being exercised when appropriate?",
+      "Has the company demonstrated ability to scale capex execution?",
+      "Are environmental and regulatory capex costs being managed?",
+      "Will the next 5 years see disciplined capex deployment?",
+    ] },
+  { n: 17, emoji: '🌍', name: "Geopolitical Risk",
+    questions: [
+      "Is the company’s revenue geographically diversified (no single country >40%)?",
+      "Has the company managed exposure to US-China decoupling?",
+      "Has the company benefited from China+1 sourcing trends?",
+      "Is the company insulated from oil-price shocks?",
+      "Has the company diversified its supply chain to manage geopolitical risk?",
+      "Has the company avoided overexposure to crisis-prone geographies?",
+      "Has the company demonstrated resilience to currency volatility?",
+      "Has the company managed sanctions and trade-war risks?",
+      "Has the company benefited from India’s strategic positioning?",
+      "Are export markets stable and growing?",
+      "Has the company hedged geopolitical risks where possible?",
+      "Has the company demonstrated political-risk awareness in expansion?",
+      "Has the company avoided dependence on government contracts that are politically vulnerable?",
+      "Has the company managed trade-tariff risks?",
+      "Has the company maintained relationships with multiple geographic stakeholders?",
+      "Has the company demonstrated agility in shifting production geographically?",
+      "Has the company managed visa/talent-mobility risks?",
+      "Has the company avoided overexposure to regulated authoritarian markets?",
+      "Has the company demonstrated resilience to climate-geopolitical events?",
+      "Will the next 5 years see continued geopolitical resilience?",
+    ] },
+  { n: 18, emoji: '📜', name: "Regulatory Risk",
+    questions: [
+      "Is the company in a regulatory environment that is stable and predictable?",
+      "Has the company successfully navigated past regulatory changes?",
+      "Is the company’s regulatory burden manageable (not crushing)?",
+      "Has the company maintained good relationships with regulators?",
+      "Has the company avoided regulatory violations or fines?",
+      "Has the company anticipated and prepared for emerging regulations?",
+      "Has the company benefited from regulatory tailwinds (GST, formalization, PLI)?",
+      "Has the company avoided dependence on regulatory subsidies?",
+      "Is the company’s tax planning prudent and not aggressive?",
+      "Has the company managed environmental compliance?",
+      "Has the company managed worker-safety and labor regulations?",
+      "Has the company managed data-privacy and cybersecurity regulations?",
+      "Has the company’s sector-specific regulatory framework been stable?",
+      "Has the company maintained good relationships with industry bodies?",
+      "Has the company avoided destructive litigation?",
+      "Has the company prepared for potential industry restructuring (e.g., telecom AGR)?",
+      "Has the company managed ESG-related regulatory pressure?",
+      "Has the company’s lobby-and-advocacy efforts been ethical?",
+      "Has the company avoided dependence on political connections?",
+      "Will the next 5 years see continued regulatory navigability?",
+    ] },
+  { n: 19, emoji: '⚙️', name: "Technology Disruption",
+    questions: [
+      "Is the business model insulated from AI disruption?",
+      "Has the company adopted technology to enhance its moat?",
+      "Has the company avoided technology obsolescence?",
+      "Has the company’s R&D pipeline addressed emerging technology?",
+      "Has the company built digital capabilities competitive with new entrants?",
+      "Has the company’s customer experience been digitally optimized?",
+      "Has the company managed supply-chain technology effectively?",
+      "Has the company’s manufacturing technology kept pace with global peers?",
+      "Has the company invested adequately in data and analytics?",
+      "Has the company avoided dependence on legacy technology?",
+      "Has the company managed the technology talent pipeline?",
+      "Has the company anticipated technology shifts in the customer’s industry?",
+      "Has the company avoided being commoditized by technology?",
+      "Has the company built a tech-enabled premium position?",
+      "Has the company managed the platform vs. proprietary tradeoff?",
+      "Has the company partnered with leading technology providers?",
+      "Has the company built robust cybersecurity?",
+      "Has the company avoided destructive technology bets?",
+      "Has the company’s technology strategy been transparent to investors?",
+      "Will the next 5 years see continued technology resilience?",
+    ] },
+  { n: 20, emoji: '🌱', name: "ESG & Governance",
+    questions: [
+      "Is the company rated highly on independent ESG metrics?",
+      "Are board independence and diversity meaningful?",
+      "Has the company avoided major governance scandals?",
+      "Are auditor relationships stable and reputable?",
+      "Has the company demonstrated environmental responsibility?",
+      "Has the company managed worker rights and safety?",
+      "Has the company avoided greenwashing?",
+      "Are CEO/management compensation linked to long-term value creation?",
+      "Has the company managed climate-related risks?",
+      "Has the company demonstrated supply chain ESG management?",
+      "Are minority shareholder rights protected?",
+      "Has the company maintained ethical relationships with all stakeholders?",
+      "Has the company managed data privacy and customer trust?",
+      "Has the company avoided destructive related-party transactions?",
+      "Has the company demonstrated transparency in financial reporting?",
+      "Has the company anticipated emerging ESG trends?",
+      "Has the company avoided over-optimization that erodes governance quality?",
+      "Has the company integrated ESG into business strategy?",
+      "Has the company communicated ESG progress to all stakeholders?",
+      "Will the next 5 years see continued ESG and governance excellence?",
+    ] },
+  { n: 21, emoji: '🧮', name: "Valuation",
+    questions: [
+      "Is the current P/E within 1 standard deviation of the 10-year average?",
+      "Is the current P/E reasonable relative to global peers?",
+      "Is the EV/EBITDA reasonable relative to the company’s own history?",
+      "Has the implied earnings growth in the current valuation been reasonable?",
+      "Is the dividend yield reasonable relative to peers and risk-free rate?",
+      "Is the price-to-book within reasonable range?",
+      "Is the price-to-sales ratio reasonable for the business model?",
+      "Is the company’s market cap consistent with intrinsic value estimates?",
+      "Has the valuation premium relative to peers been justified?",
+      "Has the company’s valuation been growing in line with earnings (not multiple expansion)?",
+      "Is the next-12-month earnings growth expectation reasonable?",
+      "Has the company been trading near recent 52-week high or low?",
+      "Is the company’s valuation reasonable in light of the macro environment?",
+      "Has the company’s valuation responded to fundamental drivers?",
+      "Is the company’s valuation supportive of long-term ownership?",
+      "Has the company’s valuation been validated by precedent transactions?",
+      "Has the company’s valuation kept pace with sector benchmarks?",
+      "Is the company’s free cash flow yield reasonable?",
+      "Has the company’s valuation been supported by multiple expansion or contraction?",
+      "Will the next 5 years see continued valuation reasonableness?",
+    ] },
+  { n: 22, emoji: '💼', name: "Tax Considerations",
+    questions: [
+      "Will the sale trigger LTCG above the ₹1.25 lakh annual exemption?",
+      "Has the position been held long enough to qualify for LTCG (12 months+ for equity)?",
+      "Have I considered the LTCG tax rate of 12.5% (post-July 2024)?",
+      "Have I considered the STCG tax rate of 20% (post-July 2024)?",
+      "Have I planned for the tax payment liquidity?",
+      "Have I considered offsetting losses from other positions?",
+      "Have I considered the indexation benefit (if applicable)?",
+      "Have I considered the tax impact on dividend income?",
+      "Have I considered the tax efficiency of the alternative investment?",
+      "Have I considered the impact on overall tax planning?",
+      "Have I considered the HUF transfer option for tax efficiency?",
+      "Have I considered the family planning aspects?",
+      "Have I consulted with a tax advisor for complex situations?",
+      "Have I considered the timing of the sale relative to financial year-end?",
+      "Have I considered the impact on annual tax filings?",
+      "Have I considered the wealth tax/estate planning implications?",
+      "Have I considered the gift tax implications?",
+      "Have I considered the impact on tax loss harvesting opportunities?",
+      "Have I considered the long-term tax-efficient withdrawal strategy?",
+      "Will the tax cost reduce my net return enough to question the sale decision?",
+    ] },
+  { n: 23, emoji: '📦', name: "Position Size & Concentration",
+    questions: [
+      "Is the current position size aligned with my target weight for this name?",
+      "Has the position grown to >25% of the total portfolio due to outperformance?",
+      "Has the position grown to >5% of my net worth?",
+      "Is the position size consistent with my risk tolerance?",
+      "Does the position size require trimming for risk management?",
+      "Would selling reduce concentration risk meaningfully?",
+      "Is the position correlated with other holdings (sector, factor)?",
+      "Has the position reached the maximum size I had pre-committed?",
+      "Has the position become my largest holding in the portfolio?",
+      "Would partial trimming achieve the position-size objective?",
+      "Is the position size consistent with my conviction level?",
+      "Has the position size grown faster than my net worth?",
+      "Is the position size consistent with my long-term plan?",
+      "Would full exit destroy a hard-built position with future compounding upside?",
+      "Has the position size limited my ability to add other opportunities?",
+      "Has the position size created a behavioral overhang (focusing too much on it)?",
+      "Has the position size triggered any wealth-planning thresholds (estate, gifts)?",
+      "Is the position size manageable from a liquidity perspective?",
+      "Has the position size been considered against my retirement runway?",
+      "Will the position size grow further without trimming?",
+    ] },
+  { n: 24, emoji: '🔀', name: "Alternative Opportunities",
+    questions: [
+      "Is there an alternative investment with higher expected return for the same risk?",
+      "Is there an alternative investment with lower risk for the same return?",
+      "Have I researched the alternative thoroughly?",
+      "Has the alternative been compared on absolute and relative valuation?",
+      "Has the alternative demonstrated comparable management quality?",
+      "Has the alternative demonstrated comparable competitive moat?",
+      "Has the alternative demonstrated comparable industry tailwinds?",
+      "Is the alternative more liquid than the current position?",
+      "Is the alternative providing portfolio diversification benefits?",
+      "Is the alternative aligned with my long-term strategy?",
+      "Has the alternative been stress-tested through past cycles?",
+      "Has the alternative been compared on tax efficiency?",
+      "Has the alternative been compared on transaction costs?",
+      "Has the alternative been verified by independent research?",
+      "Has the alternative been examined for management quality risk?",
+      "Has the alternative been examined for promoter integrity?",
+      "Has the alternative been examined for accounting quality?",
+      "Has the alternative been examined for industry positioning?",
+      "Has the alternative been examined for competitive risk?",
+      "Will the alternative compound at 25%+ over the next 10 years if held?",
+    ] },
+  { n: 25, emoji: '🧠', name: "Emotional State",
+    questions: [
+      "Am I selling because of recent negative news headlines rather than fundamentals?",
+      "Am I selling because the stock has moved against me in the short term?",
+      "Am I selling because of peer pressure or social proof?",
+      "Am I selling because the market is in a panic phase?",
+      "Am I selling because I’m bored with the position?",
+      "Am I selling to chase a new “hot” opportunity?",
+      "Am I selling because the position has performed well and I want to “lock in”?",
+      "Am I selling because I’m tired of the volatility?",
+      "Am I selling to fund a non-investment expense?",
+      "Am I selling because of conflict with my spouse, family, or partner?",
+      "Am I selling because of recent personal stress (job change, illness, etc.)?",
+      "Am I selling because of FOMO on a different investment?",
+      "Am I selling because I read an article that scared me?",
+      "Am I selling because the stock has been talked down by an influential commentator?",
+      "Am I selling because the stock has been frozen for trading and I panic?",
+      "Have I spoken to my accountability partner about this sale?",
+      "Have I waited 48 hours since the decision to sell?",
+      "Have I documented my rationale in writing?",
+      "Have I considered the lessons from past wrong sells in similar situations?",
+      "If I sold all my multibaggers at this same point in their journey, would I have built any wealth?",
+    ] },
+];
+
+// ── 500-Point Checklist (PATCH 1091) ───────────────────────────────────────
+const VERDICT = {
+  HOLD:    { label: 'STRONG HOLD',       color: 'var(--mc-bullish)',          rule: 'Score ≥ 80%. Do not sell. Add 25% on next 10% pullback. Quarterly review only.' },
+  MONITOR: { label: 'HOLD WITH MONITORING', color: 'var(--mc-cyan)',          rule: 'Score 60-80%. Do not sell now. Intensify monitoring to monthly. Re-run checklist in 3 months.' },
+  TRIM:    { label: 'TRIM 25-50%',       color: 'var(--mc-warn)',             rule: 'Score 40-60%. Sell 25-50% of position. Hold remainder. Re-run checklist in 6 months.' },
+  EXIT:    { label: 'EXIT PROGRESSIVELY', color: 'var(--mc-bearish)',         rule: 'Score < 40%. Sell over 3-6 months to manage tax. Document rationale. Identify replacement.' },
+};
+
+function verdictFor(yesCount: number, coffeeCan: boolean): { key: keyof typeof VERDICT; pct: number } {
+  const pct = (yesCount / 500) * 100;
+  if (coffeeCan && pct >= 50) return { key: 'HOLD', pct };
+  if (pct >= 80) return { key: 'HOLD', pct };
+  if (pct >= 60) return { key: 'MONITOR', pct };
+  if (pct >= 40) return { key: 'TRIM', pct };
+  return { key: 'EXIT', pct };
+}
+
+function ChecklistTab() {
+  const [ticker, setTicker] = useState<string>('');
+  const [tickerInput, setTickerInput] = useState<string>('');
+  const [checks, setChecks] = useState<Record<string, boolean>>({});
+  const [coffeeCan, setCoffeeCan] = useState<boolean>(false);
+  const [expandedCat, setExpandedCat] = useState<number | null>(null);
+
+  const STORAGE_KEY = (t: string) => `mc:cycles:checklist:${t.toUpperCase()}`;
+
+  // Hydrate when ticker locks in
+  useEffect(() => {
+    if (typeof window === 'undefined' || !ticker) return;
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY(ticker));
+      if (raw) {
+        const p = JSON.parse(raw);
+        setChecks(p.checks || {});
+        setCoffeeCan(!!p.coffeeCan);
+      } else {
+        setChecks({});
+        setCoffeeCan(false);
+      }
+    } catch {}
+  }, [ticker]);
+
+  // Persist on every change
+  useEffect(() => {
+    if (typeof window === 'undefined' || !ticker) return;
+    try {
+      window.localStorage.setItem(STORAGE_KEY(ticker), JSON.stringify({ checks, coffeeCan, ts: Date.now() }));
+    } catch {}
+  }, [checks, coffeeCan, ticker]);
+
+  const yesCount = useMemo(() => Object.values(checks).filter(Boolean).length, [checks]);
+  const { key: vKey, pct } = verdictFor(yesCount, coffeeCan);
+  const v = VERDICT[vKey];
+
+  const catCount = (catN: number) => {
+    let n = 0;
+    for (let i = 0; i < 20; i++) if (checks[`${catN}:${i}`]) n++;
+    return n;
+  };
+
+  const toggle = (catN: number, qIdx: number) => {
+    const k = `${catN}:${qIdx}`;
+    setChecks((prev) => ({ ...prev, [k]: !prev[k] }));
+  };
+
+  const markAllInCategory = (catN: number, value: boolean) => {
+    setChecks((prev) => {
+      const next = { ...prev };
+      for (let i = 0; i < 20; i++) next[`${catN}:${i}`] = value;
+      return next;
+    });
+  };
+
+  const reset = () => {
+    if (typeof window !== 'undefined' && window.confirm(`Reset checklist for ${ticker}?`)) {
+      setChecks({});
+      setCoffeeCan(false);
+    }
+  };
+
+  if (!ticker) {
+    return (
+      <>
+        <Card title="📋 The 500-Point Checklist (§18)" accent={C.amber}>
+          <div style={{ fontSize: 13, color: C.text2, lineHeight: 1.6, marginBottom: 10 }}>
+            <strong>The friction mechanism</strong> that separates the analytical "should I sell" from the impulsive one. 25 categories × 20 questions = 500 checks. Forces the seller to verify, in writing, against every reasonable dimension of the thesis before exiting a long-held winner.
+          </div>
+          <Quote text="The hardest investing decision is the decision NOT to act. The 500-point checklist forces you to earn the right to sell — by proving the thesis is genuinely broken on the data, not on the price." who="Quantitative Research" />
+          <div style={{ fontSize: 12, color: C.muted, marginTop: 10 }}>
+            <strong style={{ color: C.cyan }}>Recommended usage:</strong> Annual deep review (1× per major holding) · Triggered review (whenever the impulse to sell arises) · Within 90 days of any new initial buy · Quarterly sample rotation (1-2 positions per quarter).
+          </div>
+        </Card>
+
+        <Card title="🎯 Start: Enter The Stock Under Review" accent={C.cyan}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input
+              type="text"
+              value={tickerInput}
+              onChange={(e) => setTickerInput(e.target.value.toUpperCase())}
+              onKeyDown={(e) => { if (e.key === 'Enter' && tickerInput.trim()) setTicker(tickerInput.trim()); }}
+              placeholder="e.g. HDFCBANK, ASIANPAINT, BAJFINANCE"
+              style={{
+                flex: 1, minWidth: 240, padding: '10px 14px', borderRadius: 6,
+                border: `1px solid ${C.border}`, background: C.card2, color: C.text,
+                fontSize: 14, fontWeight: 600, letterSpacing: 0.5, ...MONO,
+              }}
+            />
+            <button
+              onClick={() => tickerInput.trim() && setTicker(tickerInput.trim())}
+              style={{
+                padding: '10px 22px', borderRadius: 6,
+                background: C.cyan, color: '#000', fontSize: 13, fontWeight: 800,
+                border: 'none', cursor: 'pointer', letterSpacing: 0.4,
+              }}
+            >
+              START CHECKLIST →
+            </button>
+          </div>
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 8 }}>
+            Your responses persist in browser storage keyed to this ticker. You can come back any time and resume.
+          </div>
+        </Card>
+
+        <Card title="📊 The 25 Categories Covered" accent={C.purple}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8, fontSize: 12 }}>
+            {CHECKLIST_500.map((c) => (
+              <div key={c.n} style={{ display: 'flex', gap: 6, alignItems: 'center', padding: 6, background: C.card2, borderRadius: 4 }}>
+                <span style={{ fontSize: 14 }}>{c.emoji}</span>
+                <span style={{ color: C.muted, fontWeight: 700, ...MONO, fontSize: 10 }}>{String(c.n).padStart(2, '0')}</span>
+                <span style={{ color: C.text, fontWeight: 600 }}>{c.name}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+
+        <Card title="🪙 The Coffee Can Test (§18.26)" accent={C.green}>
+          The final filter: <strong>"Would I be comfortable owning this position with no ability to trade for 10 years?"</strong> If yes — HOLD regardless of marginal score. If no — the sale rationale is strengthened. This filter overrides the math when the math is over-weighting near-term noise.
+        </Card>
+      </>
+    );
+  }
+
+  // ── Active checklist view ─────────────────────────────────────────────
+  return (
+    <>
+      {/* Header — ticker + scorecard */}
+      <div style={{
+        background: C.card, border: `1px solid ${C.border}`,
+        borderLeft: `4px solid ${v.color}`, borderRadius: 8,
+        padding: 16, marginBottom: 14,
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontSize: 11, color: C.muted, fontWeight: 700, letterSpacing: 0.4 }}>STOCK UNDER REVIEW</div>
+            <div style={{ fontSize: 26, fontWeight: 900, color: C.text, ...MONO, letterSpacing: 1 }}>{ticker}</div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={reset} style={{
+              padding: '6px 12px', background: 'transparent', border: `1px solid ${C.border}`,
+              borderRadius: 4, color: C.muted, fontSize: 11, fontWeight: 700, cursor: 'pointer',
+            }}>↻ RESET</button>
+            <button onClick={() => { setTicker(''); setTickerInput(''); }} style={{
+              padding: '6px 12px', background: 'transparent', border: `1px solid ${C.border}`,
+              borderRadius: 4, color: C.muted, fontSize: 11, fontWeight: 700, cursor: 'pointer',
+            }}>← CHANGE</button>
+          </div>
+        </div>
+
+        {/* Score row */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, marginTop: 14 }}>
+          <div style={{ padding: 12, background: C.card2, borderRadius: 6, textAlign: 'center' }}>
+            <div style={{ fontSize: 10, color: C.muted, fontWeight: 700, letterSpacing: 0.4 }}>YES COUNT</div>
+            <div style={{ fontSize: 26, fontWeight: 900, color: C.cyan, ...MONO }}>{yesCount} <span style={{ fontSize: 14, color: C.muted }}>/ 500</span></div>
+          </div>
+          <div style={{ padding: 12, background: C.card2, borderRadius: 6, textAlign: 'center' }}>
+            <div style={{ fontSize: 10, color: C.muted, fontWeight: 700, letterSpacing: 0.4 }}>COMPOSITE</div>
+            <div style={{ fontSize: 26, fontWeight: 900, color: v.color, ...MONO }}>{pct.toFixed(0)}%</div>
+          </div>
+          <div style={{ padding: 12, background: C.card2, borderRadius: 6, textAlign: 'center' }}>
+            <div style={{ fontSize: 10, color: C.muted, fontWeight: 700, letterSpacing: 0.4 }}>VERDICT</div>
+            <div style={{ fontSize: 16, fontWeight: 900, color: v.color, letterSpacing: 0.4, marginTop: 4 }}>{v.label}</div>
+          </div>
+          <div style={{ padding: 12, background: C.card2, borderRadius: 6 }}>
+            <label style={{ display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={coffeeCan}
+                onChange={(e) => setCoffeeCan(e.target.checked)}
+                style={{ width: 18, height: 18, accentColor: 'var(--mc-bullish)' }}
+              />
+              <div>
+                <div style={{ fontSize: 11, color: C.text, fontWeight: 700 }}>🪙 Coffee Can Test</div>
+                <div style={{ fontSize: 9, color: C.muted, marginTop: 2 }}>Override: HOLD if 50%+ and willing to hold 10y</div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        {/* Progress bar */}
+        <div style={{ marginTop: 12, height: 8, background: C.card2, borderRadius: 4, overflow: 'hidden' }}>
+          <div style={{ width: `${pct}%`, height: '100%', background: `linear-gradient(90deg, ${C.red}, ${C.amber} 40%, ${C.cyan} 60%, ${C.green})`, transition: 'width 0.3s' }} />
+        </div>
+        <div style={{ fontSize: 11, color: C.muted, marginTop: 10, padding: '8px 10px', background: C.card2, borderRadius: 4, borderLeft: `3px solid ${v.color}` }}>
+          <strong style={{ color: v.color }}>Rule:</strong> {v.rule}
+        </div>
+      </div>
+
+      {/* Category grid */}
+      <div style={{ display: 'grid', gap: 8 }}>
+        {CHECKLIST_500.map((cat) => {
+          const cn = catCount(cat.n);
+          const catPct = (cn / 20) * 100;
+          const expanded = expandedCat === cat.n;
+          const catColor = cn >= 16 ? C.green : cn >= 12 ? C.cyan : cn >= 8 ? C.amber : C.red;
+          return (
+            <div key={cat.n} style={{
+              background: C.card, border: `1px solid ${C.border}`,
+              borderLeft: `3px solid ${catColor}`, borderRadius: 6,
+              overflow: 'hidden',
+            }}>
+              <button
+                onClick={() => setExpandedCat(expanded ? null : cat.n)}
+                style={{
+                  width: '100%', display: 'flex', alignItems: 'center', gap: 12,
+                  padding: '10px 14px', background: 'transparent', border: 'none',
+                  cursor: 'pointer', textAlign: 'left', color: C.text,
+                }}
+              >
+                <span style={{ fontSize: 18 }}>{cat.emoji}</span>
+                <span style={{ color: C.muted, fontWeight: 700, ...MONO, fontSize: 11, minWidth: 28 }}>{String(cat.n).padStart(2, '0')}</span>
+                <span style={{ fontSize: 13, fontWeight: 700, flex: 1 }}>{cat.name}</span>
+                <span style={{ ...MONO, fontSize: 11, color: catColor, fontWeight: 800, minWidth: 50, textAlign: 'right' }}>{cn}/20</span>
+                <div style={{ width: 80, height: 5, background: C.card2, borderRadius: 3, overflow: 'hidden' }}>
+                  <div style={{ width: `${catPct}%`, height: '100%', background: catColor, transition: 'width 0.2s' }} />
+                </div>
+                <span style={{ color: C.muted, fontSize: 12, marginLeft: 4 }}>{expanded ? '▾' : '▸'}</span>
+              </button>
+
+              {expanded && (
+                <div style={{ borderTop: `1px solid ${C.border}`, padding: '8px 14px 12px' }}>
+                  <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', marginBottom: 6 }}>
+                    <button onClick={() => markAllInCategory(cat.n, true)} style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: `1px solid ${C.green}40`, color: C.green, borderRadius: 3, fontWeight: 700, cursor: 'pointer' }}>✓ ALL YES</button>
+                    <button onClick={() => markAllInCategory(cat.n, false)} style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: `1px solid ${C.border}`, color: C.muted, borderRadius: 3, fontWeight: 700, cursor: 'pointer' }}>RESET</button>
+                  </div>
+                  {cat.questions.map((q, i) => {
+                    const k = `${cat.n}:${i}`;
+                    const checked = !!checks[k];
+                    return (
+                      <label
+                        key={i}
+                        style={{
+                          display: 'flex', gap: 10, alignItems: 'flex-start',
+                          padding: '7px 8px', borderRadius: 4, cursor: 'pointer',
+                          background: checked ? `${C.green}08` : 'transparent',
+                          marginBottom: 2,
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggle(cat.n, i)}
+                          style={{ marginTop: 2, width: 16, height: 16, accentColor: 'var(--mc-bullish)', flexShrink: 0 }}
+                        />
+                        <span style={{ ...MONO, color: C.dim, fontSize: 10, minWidth: 22, marginTop: 1 }}>{String(i + 1).padStart(2, '0')}</span>
+                        <span style={{ fontSize: 12, color: checked ? C.text : C.text2, lineHeight: 1.5, textDecoration: checked ? 'none' : 'none' }}>{q}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Bottom decision tree */}
+      <Card title="📐 Scoring & Decision (§18.26)" accent={v.color}>
+        <div style={{ display: 'grid', gap: 6, fontSize: 12 }}>
+          <div style={{ color: C.text }}><strong style={{ color: C.green }}>≥ 80% (400+ YES):</strong> STRONG HOLD — Do not sell · Add 25% on next 10% pullback · Quarterly review only.</div>
+          <div style={{ color: C.text }}><strong style={{ color: C.cyan }}>60-80% (300-400 YES):</strong> HOLD WITH MONITORING — Do not sell now · Intensify monitoring to monthly · Re-run in 3 months.</div>
+          <div style={{ color: C.text }}><strong style={{ color: C.amber }}>40-60% (200-300 YES):</strong> TRIM 25-50% — Sell 25-50% of position · Hold remainder · Re-run in 6 months · Document which categories failed.</div>
+          <div style={{ color: C.text }}><strong style={{ color: C.red }}>&lt; 40% (&lt;200 YES):</strong> EXIT PROGRESSIVELY — Sell over 3-6 months to manage tax · Document rationale · Identify replacement.</div>
+        </div>
+        <div style={{ marginTop: 10, padding: 10, background: C.card2, borderRadius: 6, fontSize: 12, color: C.text2 }}>
+          <strong style={{ color: C.green }}>Coffee Can Override:</strong> Would I be comfortable owning this with NO ability to trade for 10 years? If yes — HOLD regardless of marginal score.
+        </div>
+      </Card>
+    </>
+  );
+}
+
+
 // ── Page shell ──────────────────────────────────────────────────────────────
 export default function MarketCyclesPage() {
   const [active, setActive] = useState<TabId>('overview');
@@ -708,6 +1579,7 @@ export default function MarketCyclesPage() {
         {active === 'rotation'   && <RotationTab />}
         {active === 'psychology' && <PsychologyTab />}
         {active === 'elite'      && <EliteTab />}
+        {active === 'checklist'  && <ChecklistTab />}
 
         <div style={{ marginTop: 24, padding: 14, background: C.card2, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 11, color: C.muted, textAlign: 'center', lineHeight: 1.6 }}>
           The framework is the framework. The math is the math. <strong style={{ color: C.amber }}>Your discipline is the variable.</strong>
