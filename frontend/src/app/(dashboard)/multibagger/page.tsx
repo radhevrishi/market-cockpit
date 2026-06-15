@@ -22,9 +22,6 @@ import TickerExportToolbar from '@/components/TickerExportToolbar';
 import { scoreTurnaroundRow, parseTurnaroundRow, type TurnaroundResult, type TurnaroundStage, type TurnaroundArchetype } from '@/lib/turnaround';
 // VALUATION-B — inline fair-value strip from 10 institutional valuation models
 import { ValuationStrip } from '@/components/valuation/ValuationStrip';
-// PATCH 1079 — HANDOFF §6 wire-up: asset-rich + promoter-rising filters above the sort table.
-import { AssetRichFilter, type AssetRichStock } from '@/components/asset-rich-filter';
-import { PromoterRisingFilter, type PromoterFilterRow } from '@/components/promoter-trajectory';
 // PATCH 0578 — Operating Leverage Cluster framework (§17.4(C))
 import { computeClusterScore, isClusterSeed, CLUSTER_TIER_META, type ClusterResult } from '@/lib/op-leverage-cluster';
 // PATCH 0614 — MNC_ALLOWLIST extracted to lib/multibagger-allowlists.ts as
@@ -1441,37 +1438,6 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
           </div>
         </details>
       </div>
-
-      {/* PATCH 1079 — Asset-rich + promoter-rising filters (HANDOFF §6 wire-up).
-          Both gracefully no-op when `rows` is empty or shapes don't match. */}
-      {Array.isArray(rows) && rows.length > 0 && (
-        <div style={{marginBottom:12,display:'grid',gap:10}}>
-          <AssetRichFilter
-            universe={rows.map((r: any): AssetRichStock => ({
-              ticker: r.ticker || r.symbol || r.name || '',
-              marketCapCr: typeof r.marketCapCr === 'number' ? r.marketCapCr : (typeof r.mcap === 'number' ? r.mcap : 0),
-              netCashCr: typeof r.netCashCr === 'number' ? r.netCashCr : undefined,
-              ocfCr: typeof r.ocfCr === 'number' ? r.ocfCr : undefined,
-              de: typeof r.de === 'number' ? r.de : (typeof r.debtToEquity === 'number' ? r.debtToEquity : undefined),
-              pledgePct: typeof r.pledgePct === 'number' ? r.pledgePct : undefined,
-              rocePct: typeof r.rocePct === 'number' ? r.rocePct : (typeof r.roce === 'number' ? r.roce : undefined),
-              currentRatio: typeof r.currentRatio === 'number' ? r.currentRatio : undefined,
-              divYieldPct: typeof r.divYieldPct === 'number' ? r.divYieldPct : (typeof r.dividendYield === 'number' ? r.dividendYield : undefined),
-              structuralDecline: !!r.structuralDecline,
-            }))}
-          />
-          <PromoterRisingFilter
-            universe={rows.map((r: any): PromoterFilterRow => ({
-              ticker: r.ticker || r.symbol || r.name || '',
-              company: r.company || r.name || r.ticker || '',
-              promoterHistory: Array.isArray(r.promoterHistory) ? r.promoterHistory : [],
-              pledgePct: typeof r.pledgePct === 'number' ? r.pledgePct : undefined,
-              marketCapCr: typeof r.marketCapCr === 'number' ? r.marketCapCr : undefined,
-              rocePct: typeof r.rocePct === 'number' ? r.rocePct : undefined,
-            }))}
-          />
-        </div>
-      )}
 
       {/* Upload zone */}
       <div
