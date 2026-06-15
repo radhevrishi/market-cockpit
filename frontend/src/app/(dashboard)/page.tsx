@@ -847,7 +847,8 @@ export default function HomeDashboard() {
           const keepOld = !!error && final.length === 0 && Array.isArray((d as any).inPlay) && (d as any).inPlay.length > 0;
           return {
             ...d,
-            inPlay: keepOld ? (d as any).inPlay : final.slice(0, 15), // PATCH 1012 — 10 -> 15 per user request
+            // PATCH 1086 — MED-05: drop stale articles (>7 days old) before slicing so IN-PLAY doesn't mix 22/61/130-day-old items with today's
+            inPlay: keepOld ? (d as any).inPlay : final.filter((n: any) => { try { const dd = new Date(n.published_at || n.date || n.time); return (Date.now() - dd.getTime()) < 7*86400e3; } catch { return true; } }).slice(0, 15), // PATCH 1012 — 10 -> 15 per user request
             inPlayDiag: keepOld
               ? { ...(d as any).inPlayDiag, staleKept: true, lastError: error, status }
               : { fetched: raw.length, recent: recent.length, clean: clean.length, fellBack: clean.length === 0 && recent.length > 0, error, status },
@@ -2011,11 +2012,30 @@ export default function HomeDashboard() {
   // PATCH 0897 — Turnaround tier lensing
   const lensedTurnaround = useMemo(() => applyLens((data as any).turnaroundTier1 || [], true), [(data as any).turnaroundTier1, activeLens]);
 
+  // PATCH 1086 — NEW LENS button. Previous implementation chained two
+  // window.prompt() calls which on some browsers (Safari with popups blocked,
+  // Brave shields, embedded webviews) silently no-op'd, making the button
+  // appear dead. Replaced with an inline modal: name input + filter criteria
+  // textarea + Save/Cancel. Persists to the same 'mc:home-custom-lenses:v1'
+  // localStorage key via setCustomLenses so the existing render path picks
+  // the new lens up immediately with no separate plumbing.
+  const [lensModalOpen, setLensModalOpen] = useState(false);
+  const [lensModalName, setLensModalName] = useState('');
+  const [lensModalPattern, setLensModalPattern] = useState('');
+  const [lensModalError, setLensModalError] = useState<string | null>(null);
+  const [lensToast, setLensToast] = useState<string | null>(null);
   const addCustomLens = () => {
-    const name = window.prompt('Lens name (e.g. "AI Infra")');
-    if (!name) return;
-    const pattern = window.prompt('Sector keyword (regex; e.g. "data center|ai|semiconductor")', '');
-    if (!pattern) return;
+    setLensModalName('');
+    setLensModalPattern('');
+    setLensModalError(null);
+    setLensModalOpen(true);
+  };
+  const saveCustomLens = () => {
+    const name = lensModalName.trim();
+    const pattern = lensModalPattern.trim();
+    if (!name) { setLensModalError('Lens name is required'); return; }
+    if (!pattern) { setLensModalError('Filter criteria (sector regex) is required'); return; }
+    try { new RegExp(pattern, 'i'); } catch { setLensModalError('Filter criteria is not a valid regex'); return; }
     const newLens: Lens = {
       id: `custom-${Date.now()}`,
       label: name.toUpperCase().slice(0, 24),
@@ -2025,6 +2045,9 @@ export default function HomeDashboard() {
     };
     setCustomLenses(prev => [...prev, newLens]);
     setActiveLensId(newLens.id);
+    setLensModalOpen(false);
+    setLensToast(`Lens "${newLens.label}" saved`);
+    setTimeout(() => setLensToast(null), 2200);
   };
   const removeCustomLens = (id: string) => {
     setCustomLenses(prev => prev.filter(l => l.id !== id));
@@ -2169,7 +2192,12 @@ export default function HomeDashboard() {
             <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
               <span style={{fontSize:12,fontWeight:800,color:'var(--mc-state-persistent)',letterSpacing:'0.5px'}}>💰 POSITION SIZING</span>
               <span style={{fontSize:11,color:DIM,fontWeight:700}}>Portfolio</span>
-              <span style={{fontSize:13,color:TEXT,fontWeight:800}}>$</span>
+              {/* PATCH 1086 — UX-02: read currency symbol from localStorage (INR default) instead of hard-coded $ */}
+              {(() => {
+                let _ccy = '₹';
+                try { _ccy = (typeof window !== 'undefined' && localStorage.getItem('mc-default-currency')) || '₹'; } catch { _ccy = '₹'; }
+                return <span style={{fontSize:13,color:TEXT,fontWeight:800}}>{_ccy}</span>;
+              })()}
               <input
                 type="number"
                 value={posCalcCapital}
@@ -2180,15 +2208,20 @@ export default function HomeDashboard() {
               <span style={{fontSize:10,color:DIM}}>· editable, syncs across pages</span>
             </div>
             <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
-              {[1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 6, 7, 8, 9, 10, 15, 20].map(pct => {
-                const amt = Math.round(posCalcCapital * pct / 100);
-                return (
-                  <div key={pct} style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'4px 8px',backgroundColor:'#13131a',border:'1px solid rgba(255,255,255,0.12)',borderRadius:6,minWidth:62}}>
-                    <span style={{fontSize:10,color:DIM,fontWeight:700}}>{pct}%</span>
-                    <span style={{fontSize:13,color:'var(--mc-bullish)',fontWeight:800}}>${amt.toLocaleString('en-US')}</span>
-                  </div>
-                );
-              })}
+              {/* PATCH 1086 — UX-02: pct chips also use localStorage currency */}
+              {(() => {
+                let _ccy = '₹';
+                try { _ccy = (typeof window !== 'undefined' && localStorage.getItem('mc-default-currency')) || '₹'; } catch { _ccy = '₹'; }
+                return [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 6, 7, 8, 9, 10, 15, 20].map(pct => {
+                  const amt = Math.round(posCalcCapital * pct / 100);
+                  return (
+                    <div key={pct} style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'4px 8px',backgroundColor:'#13131a',border:'1px solid rgba(255,255,255,0.12)',borderRadius:6,minWidth:62}}>
+                      <span style={{fontSize:10,color:DIM,fontWeight:700}}>{pct}%</span>
+                      <span style={{fontSize:13,color:'var(--mc-bullish)',fontWeight:800}}>{_ccy}{amt.toLocaleString('en-US')}</span>
+                    </div>
+                  );
+                });
+              })()}
             </div>
           </div>
 
@@ -2420,6 +2453,9 @@ export default function HomeDashboard() {
               </span>
             );
           })}
+          {/* PATCH 1086 — NEW LENS button. onClick now opens the inline modal
+              defined below (addCustomLens sets lensModalOpen=true) instead of
+              calling chained window.prompt() that could silently no-op. */}
           <button
             onClick={addCustomLens}
             style={{ fontSize: 10, padding: '3px 9px', border: '1px dashed color-mix(in srgb, var(--mc-cyan) 38%, transparent)', background: 'transparent', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
@@ -2429,6 +2465,115 @@ export default function HomeDashboard() {
             <span style={{ fontSize: 10, color: DIM, marginLeft: 4 }}>
               · Tier 1: {lensedTier1.length}/{data.tier1.length} · Tier 2: {lensedTier2.length}/{data.tier2.length} · Tier 3: {lensedTier3.length}/{data.tier3.length}
             </span>
+          )}
+          {/* PATCH 1086 — NEW LENS button. Inline modal (overlay) + confirmation toast.
+              Renders inside the lens bar so it inherits theme tokens and disappears
+              as soon as the LENS section unmounts. Custom lenses are persisted via
+              the existing setCustomLenses→useEffect→localStorage chain (key
+              'mc:home-custom-lenses:v1'), so saved lenses survive reload and show
+              up inline alongside the preset chips with no extra wiring. */}
+          {lensModalOpen && (
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="New custom lens"
+              onClick={(e) => { if (e.target === e.currentTarget) setLensModalOpen(false); }}
+              style={{
+                position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                zIndex: 9999,
+              }}
+            >
+              <div
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  width: 420, maxWidth: '92vw',
+                  background: 'var(--mc-bg-1)',
+                  border: '1px solid var(--mc-bg-4)',
+                  borderRadius: 8,
+                  padding: 18,
+                  color: TEXT,
+                  boxShadow: '0 8px 32px rgba(0,0,0,0.45)',
+                  display: 'flex', flexDirection: 'column', gap: 12,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <strong style={{ fontSize: 13, letterSpacing: '0.4px', color: 'var(--mc-cyan)' }}>+ NEW LENS</strong>
+                  <button
+                    onClick={() => setLensModalOpen(false)}
+                    aria-label="Close"
+                    style={{ background: 'transparent', border: 'none', color: DIM, cursor: 'pointer', fontSize: 16, lineHeight: 1 }}
+                  >×</button>
+                </div>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, color: DIM, fontWeight: 700, letterSpacing: '0.3px' }}>
+                  LENS NAME
+                  <input
+                    type="text"
+                    value={lensModalName}
+                    onChange={(e) => setLensModalName(e.target.value)}
+                    placeholder='e.g. "AI Infra"'
+                    autoFocus
+                    maxLength={24}
+                    style={{
+                      fontSize: 12, padding: '6px 8px',
+                      background: 'var(--mc-bg-0)', color: TEXT,
+                      border: '1px solid var(--mc-bg-4)', borderRadius: 4,
+                      outline: 'none',
+                    }}
+                  />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, color: DIM, fontWeight: 700, letterSpacing: '0.3px' }}>
+                  FILTER CRITERIA (sector regex, case-insensitive)
+                  <textarea
+                    value={lensModalPattern}
+                    onChange={(e) => setLensModalPattern(e.target.value)}
+                    placeholder='e.g. "data center|ai|semiconductor"'
+                    rows={3}
+                    style={{
+                      fontSize: 12, padding: '6px 8px',
+                      background: 'var(--mc-bg-0)', color: TEXT,
+                      border: '1px solid var(--mc-bg-4)', borderRadius: 4,
+                      outline: 'none', resize: 'vertical', fontFamily: 'ui-monospace, monospace',
+                    }}
+                  />
+                </label>
+                {lensModalError && (
+                  <div style={{ fontSize: 11, color: 'var(--mc-bearish)' }}>{lensModalError}</div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+                  <button
+                    onClick={() => setLensModalOpen(false)}
+                    style={{
+                      fontSize: 11, padding: '6px 14px', fontWeight: 700, letterSpacing: '0.3px',
+                      background: 'transparent', color: TEXT,
+                      border: '1px solid var(--mc-bg-4)', borderRadius: 4, cursor: 'pointer',
+                    }}
+                  >CANCEL</button>
+                  <button
+                    onClick={saveCustomLens}
+                    style={{
+                      fontSize: 11, padding: '6px 14px', fontWeight: 700, letterSpacing: '0.3px',
+                      background: 'color-mix(in srgb, var(--mc-cyan) 18%, transparent)',
+                      color: 'var(--mc-cyan)',
+                      border: '1px solid var(--mc-cyan)', borderRadius: 4, cursor: 'pointer',
+                    }}
+                  >SAVE</button>
+                </div>
+              </div>
+            </div>
+          )}
+          {lensToast && (
+            <div
+              role="status"
+              style={{
+                position: 'fixed', bottom: 24, right: 24, zIndex: 10000,
+                fontSize: 12, padding: '8px 14px',
+                background: 'color-mix(in srgb, var(--mc-cyan) 14%, var(--mc-bg-1))',
+                border: '1px solid var(--mc-cyan)', color: 'var(--mc-cyan)',
+                borderRadius: 6, fontWeight: 700, letterSpacing: '0.3px',
+                boxShadow: '0 4px 16px rgba(0,0,0,0.35)',
+              }}
+            >{lensToast}</div>
           )}
         </div>
 
@@ -4051,7 +4196,14 @@ function DecisionTierBlock({
                 <>
                   <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '5px 10px', fontSize: 12, lineHeight: 1.5, marginTop: 4 }}>
                     <span style={{ color: DIM, fontWeight: 700 }}>Thesis</span>
-                    <span style={{ color: TEXT }}>{a.thesis}</span>
+                    {/* PATCH 1086 — UX-01: scrub stale "Not in turnaround" thesis text for non-turnaround grades */}
+                    <span style={{ color: TEXT }}>{(() => {
+                      const t = String(a.thesis || '');
+                      if (/not in turnaround/i.test(t) || /not turnaround/i.test(t)) {
+                        return `Awaiting turnaround signals — grade ${a.grade || '—'}`;
+                      }
+                      return a.thesis;
+                    })()}</span>
                     <span style={{ color: DIM, fontWeight: 700 }}>Risk</span>
                     <span style={{ color: '#FCA5A5' }}>{a.risk}</span>
                     <span style={{ color: DIM, fontWeight: 700 }}>Horizon</span>
