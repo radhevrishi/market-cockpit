@@ -1251,6 +1251,10 @@ function ChecklistTab() {
   const [checks, setChecks] = useState<Record<string, boolean>>({});
   const [coffeeCan, setCoffeeCan] = useState<boolean>(false);
   const [expandedCat, setExpandedCat] = useState<number | null>(null);
+  // PATCH 1092 — browse-mode state for the empty/reference view so users can
+  // read all 500 questions before starting a checklist for any ticker.
+  const [browseOpen, setBrowseOpen] = useState<Set<number>>(new Set([1, 2, 3])); // first three open
+  const [browseFilter, setBrowseFilter] = useState<string>('');
 
   const STORAGE_KEY = (t: string) => `mc:cycles:checklist:${t.toUpperCase()}`;
 
@@ -1351,14 +1355,22 @@ function ChecklistTab() {
           </div>
         </Card>
 
-        <Card title="📊 The 25 Categories Covered" accent={C.purple}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8, fontSize: 12 }}>
+        {/* Compact category-index chip strip — jump-to anchors */}
+        <Card title="📊 Jump To Category" accent={C.purple}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 6, fontSize: 12 }}>
             {CHECKLIST_500.map((c) => (
-              <div key={c.n} style={{ display: 'flex', gap: 6, alignItems: 'center', padding: 6, background: C.card2, borderRadius: 4 }}>
+              <button
+                key={c.n}
+                onClick={() => {
+                  setBrowseOpen((prev) => { const next = new Set(prev); next.add(c.n); return next; });
+                  setTimeout(() => { document.getElementById(`browse-cat-${c.n}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 80);
+                }}
+                style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '6px 8px', background: C.card2, borderRadius: 4, border: `1px solid ${C.border}`, cursor: 'pointer', textAlign: 'left' }}
+              >
                 <span style={{ fontSize: 14 }}>{c.emoji}</span>
                 <span style={{ color: C.muted, fontWeight: 700, ...MONO, fontSize: 10 }}>{String(c.n).padStart(2, '0')}</span>
                 <span style={{ color: C.text, fontWeight: 600 }}>{c.name}</span>
-              </div>
+              </button>
             ))}
           </div>
         </Card>
@@ -1366,6 +1378,107 @@ function ChecklistTab() {
         <Card title="🪙 The Coffee Can Test (§18.26)" accent={C.green}>
           The final filter: <strong>"Would I be comfortable owning this position with no ability to trade for 10 years?"</strong> If yes — HOLD regardless of marginal score. If no — the sale rationale is strengthened. This filter overrides the math when the math is over-weighting near-term noise.
         </Card>
+
+        {/* PATCH 1092 — browsable reference view of all 500 questions */}
+        <div style={{ marginTop: 18, marginBottom: 8 }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', marginBottom: 10 }}>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: C.amber, letterSpacing: 0.4, textTransform: 'uppercase' }}>📖 Read All 500 Questions</div>
+              <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>The full reference. Read once before your first review · skim before each sell decision.</div>
+            </div>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+              <input
+                type="search"
+                placeholder="🔍 filter questions…"
+                value={browseFilter}
+                onChange={(e) => setBrowseFilter(e.target.value)}
+                style={{ padding: '7px 10px', borderRadius: 4, border: `1px solid ${C.border}`, background: C.card2, color: C.text, fontSize: 12, width: 200 }}
+              />
+              <button
+                onClick={() => setBrowseOpen(new Set(CHECKLIST_500.map(c => c.n)))}
+                style={{ fontSize: 11, padding: '6px 10px', background: 'transparent', border: `1px solid ${C.cyan}40`, color: C.cyan, borderRadius: 4, fontWeight: 700, cursor: 'pointer' }}
+              >▾ EXPAND ALL</button>
+              <button
+                onClick={() => setBrowseOpen(new Set())}
+                style={{ fontSize: 11, padding: '6px 10px', background: 'transparent', border: `1px solid ${C.border}`, color: C.muted, borderRadius: 4, fontWeight: 700, cursor: 'pointer' }}
+              >▸ COLLAPSE ALL</button>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gap: 8 }}>
+            {CHECKLIST_500.map((cat) => {
+              const open = browseOpen.has(cat.n);
+              const f = browseFilter.trim().toLowerCase();
+              const matches = f ? cat.questions.filter(q => q.toLowerCase().includes(f)) : cat.questions;
+              const filterHit = f && matches.length > 0;
+              // When filter active, force open + show only matches
+              const effOpen = open || filterHit;
+              const list = f ? matches : cat.questions;
+              if (f && matches.length === 0) return null;
+              return (
+                <div
+                  key={cat.n}
+                  id={`browse-cat-${cat.n}`}
+                  style={{
+                    background: C.card, border: `1px solid ${C.border}`,
+                    borderLeft: `3px solid ${C.purple}`, borderRadius: 6,
+                    overflow: 'hidden', scrollMarginTop: 24,
+                  }}
+                >
+                  <button
+                    onClick={() => setBrowseOpen((prev) => { const next = new Set(prev); if (next.has(cat.n)) next.delete(cat.n); else next.add(cat.n); return next; })}
+                    style={{
+                      width: '100%', display: 'flex', alignItems: 'center', gap: 12,
+                      padding: '10px 14px', background: 'transparent', border: 'none',
+                      cursor: 'pointer', textAlign: 'left', color: C.text,
+                    }}
+                  >
+                    <span style={{ fontSize: 20 }}>{cat.emoji}</span>
+                    <span style={{ color: C.purple, fontWeight: 800, ...MONO, fontSize: 11, minWidth: 50 }}>CAT&nbsp;{String(cat.n).padStart(2, '0')}</span>
+                    <span style={{ fontSize: 14, fontWeight: 700, flex: 1 }}>{cat.name}</span>
+                    <span style={{ ...MONO, fontSize: 11, color: C.muted, fontWeight: 700 }}>{list.length} q</span>
+                    <span style={{ color: C.muted, fontSize: 14, marginLeft: 4 }}>{effOpen ? '▾' : '▸'}</span>
+                  </button>
+
+                  {effOpen && (
+                    <div style={{ borderTop: `1px solid ${C.border}`, padding: '10px 16px 14px', background: C.bg }}>
+                      <ol style={{ margin: 0, paddingLeft: 0, listStyle: 'none' }}>
+                        {list.map((q, i) => {
+                          // Highlight matched substring when filter active
+                          let display: React.ReactNode = q;
+                          if (f) {
+                            const idx = q.toLowerCase().indexOf(f);
+                            if (idx >= 0) {
+                              display = (
+                                <>
+                                  {q.slice(0, idx)}
+                                  <mark style={{ background: `${C.amber}50`, color: C.text, padding: '0 2px', borderRadius: 2 }}>{q.slice(idx, idx + f.length)}</mark>
+                                  {q.slice(idx + f.length)}
+                                </>
+                              );
+                            }
+                          }
+                          return (
+                            <li key={i} style={{ display: 'flex', gap: 10, padding: '6px 4px', borderBottom: i < list.length - 1 ? `1px dashed ${C.border}` : 'none' }}>
+                              <span style={{ ...MONO, color: C.dim, fontSize: 10, minWidth: 22, marginTop: 2, fontWeight: 700 }}>{String(i + 1).padStart(2, '0')}</span>
+                              <span style={{ fontSize: 12.5, color: C.text2, lineHeight: 1.55 }}>{display}</span>
+                            </li>
+                          );
+                        })}
+                      </ol>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {browseFilter && CHECKLIST_500.every(c => c.questions.filter(q => q.toLowerCase().includes(browseFilter.trim().toLowerCase())).length === 0) && (
+            <div style={{ padding: 16, textAlign: 'center', color: C.muted, fontSize: 12, fontStyle: 'italic' }}>
+              No questions match "{browseFilter}". Try a different term.
+            </div>
+          )}
+        </div>
       </>
     );
   }
