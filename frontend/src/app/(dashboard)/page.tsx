@@ -840,11 +840,25 @@ export default function HomeDashboard() {
         const recentStructural = recent.filter((a: any) => isStructural(a));
         const olderStructural = olderPool.filter((a: any) => isStructural(a));
         const _seenInPlay = new Set<string>();
+        // PATCH 1097 — Off-topic noise filter. Same regex as the news feed page;
+        // drops sports / entertainment / exam-result / lifestyle filler that
+        // aggregator feeds push into financial news streams. Structural items
+        // (synthetic theses, persistent themes) bypass this filter.
+        const OFF_TOPIC_RX = /\b(?:fifa|world cup|premier league|epl|la liga|champions league|champions trophy|playing xi|kick[- ]?off|how to watch|ipl |bcci|t20 |ranji|cricket\s+(?:match|score|live)|football\s+(?:match|score|live)|live[- ]?stream(?:ing)?\s+(?:of\s+|the\s+)?(?:match|tv|online|.*\bvs\s)|bollywood|hollywood|box office|movie review|film review|web series|trailer launch|album launch|concert tour|msbte|neet result|jee main|jee advanced|upsc (?:result|prelims|mains)|ssc (?:cgl|chsl|result)|cbse (?:result|class\s+(?:10|12))|icse result|(?:10th|12th|diploma)\s+result|admit card|hall ticket|answer key|merit list|cut[- ]?off list|direct link.*download|horoscope|astrology|lottery|jackpot|recipe)\b/i;
+        const isStructuralAny = (a: any) => !!a?.is_synthetic
+          || a?.feed_layer === 'STRUCTURAL_ALPHA'
+          || a?.freshness_layer === 'PERSISTENT_THEME';
         const final = [...clean, ...olderClean, ...recentStructural, ...olderStructural]
           .filter((a: any) => {
             const k = String(a?.id || a?.url || a?.source_url || a?.title || a?.headline || '');
             if (!k || _seenInPlay.has(k)) return false;
-            _seenInPlay.add(k); return true;
+            _seenInPlay.add(k);
+            // PATCH 1097 — drop off-topic noise unless structural.
+            if (!isStructuralAny(a)) {
+              const blob = `${a?.title || ''} ${a?.headline || ''} ${a?.summary || ''}`;
+              if (OFF_TOPIC_RX.test(blob)) return false;
+            }
+            return true;
           });
         setData((d) => {
           // Keep last-good list when a refresh fails (429/timeout/network) — never wipe a working panel with an error state.
