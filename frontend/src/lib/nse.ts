@@ -644,8 +644,17 @@ export async function fetchBseResultsDateRange(fromDate: string, toDate: string)
 
 // Normalize granular NSE industry names to ~12 broad sectors
 // This keeps the sector count manageable for heatmap, movers, and RRG displays
+// PATCH 1088 — MED-03 / MED-04 sector-mapping bug. Previously returned the
+// literal string 'Unmapped' on no-match, which is truthy. Every call site
+// uses `sectorMap[sym] || normalizeSector(i) || NIFTY50_SECTORS[sym] || 'Other'`
+// — the truthy 'Unmapped' short-circuited the chain, blocking the static
+// Nifty-50 map AND the final 'Other' label. Return '' (falsy) so the chain
+// flows correctly. Downstream callers already treat the first truthy
+// member as the displayed sector; 'Other' becomes the legitimate honest
+// label for stocks whose industry string is recognized neither by keyword
+// tree nor static Nifty-50 map.
 export function normalizeSector(industry: string | undefined): string {
-  if (!industry) return 'Unmapped';
+  if (!industry) return '';  // PATCH 1088 — was 'Unmapped' (truthy, broke chain)
   const i = industry.toLowerCase();
 
   // Banking & Finance (banks, NBFC, insurance, asset management, fintech)
@@ -698,7 +707,7 @@ export function normalizeSector(industry: string | undefined): string {
   if (i.includes('services')) return 'Services';
 
   // Honest label — industry string present but not recognised by any rule.
-  return 'Unmapped';
+  return '';
 }
 
 // ======= DYNAMIC SECTOR MAPPING =======
