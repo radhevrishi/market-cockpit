@@ -2634,7 +2634,11 @@ export default function NewsFeedPage() {
       const isStructuralOrPersistent = a.is_synthetic
         || a.feed_layer === 'STRUCTURAL_ALPHA'
         || (a as any).freshness_layer === 'PERSISTENT_THEME';
-      const ageDecay = isStructuralOrPersistent ? 1 : Math.exp(-ageHours / 24); // 1 @ 0h, 0.37 @ 24h, 0.14 @ 48h, 0.05 @ 72h
+      // PATCH 1096a (refined) — softened from /24 to /36 to avoid the abrupt
+      // 24h cliff. Now 1.0 @ 0h, 0.51 @ 24h, 0.26 @ 48h, 0.13 @ 72h. A 23h
+      // article and a 25h article look much more similar than before, while
+      // truly old non-structural items still fall off.
+      const ageDecay = isStructuralOrPersistent ? 1 : Math.exp(-ageHours / 36);
       const adjusted = total * srcW * noise.qualityMultiplier * ageDecay;
       (a as any).__priority = Math.round(adjusted * 10) / 10;
       (a as any).__priorityParts = { ...parts, source_weight: srcW, noise_mult: noise.qualityMultiplier, age_decay: Math.round(ageDecay * 100) / 100 };
