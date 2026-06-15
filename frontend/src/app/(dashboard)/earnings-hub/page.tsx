@@ -84,6 +84,55 @@ export default function EarningsHubPage() {
     }
   }, [active, searchParams, router]);
 
+  // PATCH 1086 — concall recent clickable.
+  // The Concall AI sub-page renders a "Recent Analyses" strip of saved
+  // company cards (Microwave Products Limited, Astra Microwave, …) that were
+  // historically inert — clicking did nothing. Rather than reach into the
+  // dynamically-loaded sub-page, we install event delegation at the hub level:
+  // any descendant element flagged with `data-recent-analysis` (or the class
+  // `recent-analysis-card`) becomes clickable. The handler reads the card's
+  // `data-ticker`, switches to the Concall AI tab, and pushes `?ticker=…` so
+  // the analyzer can re-hydrate the saved analysis from localStorage on mount.
+  // We also inject a small global stylesheet so the cards visibly read as
+  // clickable (cursor: pointer).
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const STYLE_ID = 'mc-patch1086-recent-analysis-style';
+    if (!document.getElementById(STYLE_ID)) {
+      const s = document.createElement('style');
+      s.id = STYLE_ID;
+      s.textContent =
+        '[data-recent-analysis],.recent-analysis-card{cursor:pointer;}' +
+        '[data-recent-analysis]:hover,.recent-analysis-card:hover{filter:brightness(1.08);}';
+      document.head.appendChild(s);
+    }
+    const onClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      const card = target.closest('[data-recent-analysis], .recent-analysis-card') as HTMLElement | null;
+      if (!card) return;
+      // Avoid hijacking interior anchors / buttons (e.g. a Delete button on the card).
+      const interactive = (target.closest('a,button,input,select,textarea') as HTMLElement | null);
+      if (interactive && interactive !== card && card.contains(interactive)) return;
+      const ticker =
+        card.getAttribute('data-ticker') ||
+        card.getAttribute('data-recent-analysis') ||
+        card.getAttribute('data-symbol') ||
+        '';
+      e.preventDefault();
+      e.stopPropagation();
+      setActive('concall');
+      try {
+        const sp = new URLSearchParams(window.location.search);
+        sp.set('tab', 'concall');
+        if (ticker) sp.set('ticker', ticker);
+        router.replace(`/earnings-hub?${sp.toString()}`, { scroll: false });
+      } catch {}
+    };
+    document.addEventListener('click', onClick, true);
+    return () => document.removeEventListener('click', onClick, true);
+  }, [router]);
+
   const activeMeta = TABS.find((t) => t.id === active) || TABS[0];
 
   return (
