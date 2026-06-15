@@ -709,31 +709,73 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
     window.addEventListener('mb-upload:updated', onUploadEvent);
     return () => window.removeEventListener('mb-upload:updated', onUploadEvent);
   }, []);
+  // PATCH 1099 — REAL persistence fix. Previous PATCH 1083/1084/1090 patched
+  // symptoms; this addresses three structural bugs that kept producing the
+  // "Saved data lost (N stocks)" banner even after a successful upload:
+  //
+  //   (1) META was written in the same call as data, but localStorage data
+  //       writes can silently fail (5MB quota) while META always succeeds.
+  //       Result: META=345 + data=empty is possible. Fix is in setExcelRows
+  //       (in MultibaggerPage below): write IDB first, only write META after
+  //       IDB confirms.
+  //
+  //   (2) This effect ran ONCE on mount and raced the parent's async IDB
+  //       hydration. If the child's check resolved first, the banner fired
+  //       even when IDB had data the parent would soon load. Fix: rerun on
+  //       rows.length change, wait 1.2s for parent hydration to settle, and
+  //       always clear the banner the instant rows is populated.
+  //
+  //   (3) The displayed "✅ N stocks · saved …" came from META alone, so the
+  //       success message and warning banner could appear simultaneously —
+  //       exactly the user-reported confusion. fileName is now resynced on
+  //       rows hydration (see effect below).
   useEffect(() => {
-    try {
-      const metaRaw = localStorage.getItem(STORAGE_META);
-      const dataRaw = localStorage.getItem(STORAGE_KEY);
-      if (metaRaw) {
+    if (rows.length > 0) {
+      setOrphanMetaCount(0);
+      return;
+    }
+    let alive = true;
+    const tid = window.setTimeout(async () => {
+      if (!alive) return;
+      try {
+        const metaRaw = localStorage.getItem(STORAGE_META);
+        if (!metaRaw) { setOrphanMetaCount(0); return; }
         const meta = JSON.parse(metaRaw);
-        if (meta && meta.count > 0 && (!dataRaw || dataRaw === '[]')) {
-          // Try one more IDB read before giving up
-          mbIdbGet('mb_scored').then((raw) => {
-            if (raw && raw !== '[]') {
-              try {
-                const parsed = JSON.parse(raw) as ExcelResult[];
-                if (Array.isArray(parsed) && parsed.length > 0) {
-                  setRows(applyForcedRanking(parsed));
-                  return;
-                }
-              } catch {}
+        if (!meta || !meta.count || meta.count === 0) { setOrphanMetaCount(0); return; }
+        const dataRaw = localStorage.getItem(STORAGE_KEY);
+        if (dataRaw && dataRaw !== '[]') return; // parent's sync init will restore
+        const idbRaw = await mbIdbGet('mb_scored');
+        if (!alive) return;
+        if (idbRaw && idbRaw !== '[]') {
+          try {
+            const parsed = JSON.parse(idbRaw) as ExcelResult[];
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setRows(applyForcedRanking(parsed));
+              return;
             }
-            setOrphanMetaCount(meta.count);
-          });
+          } catch {}
         }
-      }
-    } catch {}
+        setOrphanMetaCount(meta.count);
+      } catch {}
+    }, 1200);
+    return () => { alive = false; clearTimeout(tid); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [rows.length]);
+
+  // PATCH 1099 — keep the file-label honest. Once rows hydrate from any source
+  // (localStorage init or parent's IDB rehydrate), refresh fileName from META
+  // so the timestamp matches what the user is actually looking at.
+  useEffect(() => {
+    if (rows.length > 0) {
+      try {
+        const meta = JSON.parse(localStorage.getItem(STORAGE_META) || '{}');
+        if (meta.count && meta.savedAt) {
+          const d = new Date(meta.savedAt);
+          setFileName(`${meta.count} stocks · saved ${d.toLocaleString()}`);
+        }
+      } catch {}
+    }
+  }, [rows.length]);
   const [expRow, setExpRow] = useState<string|null>(null);
   const [expandAll, setExpandAll] = useState(false);
   const [gradeFilter, setGradeFilter] = useState<Set<string>>(new Set(['ALL']));
@@ -4726,17 +4768,31 @@ export default function MultibaggerPage() {
   function setExcelRows(rows: ExcelResult[]) {
     const ranked = applyForcedRanking(rows); // sort already done by caller
     setExcelRowsState(ranked);
-    try {
-      { const __mbR = JSON.stringify(ranked); mbIdbSet('mb_scored', __mbR); try { localStorage.setItem(STORAGE_KEY, __mbR); } catch {} }
-      localStorage.setItem(STORAGE_META, JSON.stringify({
-        savedAt: new Date().toISOString(),
-        count: ranked.length,
-      }));
+    // PATCH 1099 — IDB is the source of truth (essentially unlimited storage).
+    // Write IDB FIRST; only write META and broadcast AFTER IDB confirms. If
+    // IDB write fails, do NOT write META — that's what produced the "Saved
+    // data lost (N stocks)" phantom banner: META survived (it's small) but
+    // the actual data didn't, and the banner correctly fired but on data
+    // that was never really persisted.
+    const __mbR = JSON.stringify(ranked);
+    mbIdbSet('mb_scored', __mbR).then(() => {
+      try { localStorage.setItem(STORAGE_KEY, __mbR); } catch {}
+      try {
+        localStorage.setItem(STORAGE_META, JSON.stringify({
+          savedAt: new Date().toISOString(),
+          count: ranked.length,
+        }));
+      } catch {}
       // PATCH 0471 — broadcast cross-tab update so consumers (Re-rating,
       // Signals, Earnings Scan) refresh their derived universes immediately
-      // after a fresh India upload. Mirrors the clearExcelRows broadcast.
-      window.dispatchEvent(new CustomEvent('mb-upload:updated', { detail: { market: 'India', count: ranked.length } }));
-    } catch {}
+      // after a fresh India upload.
+      try { window.dispatchEvent(new CustomEvent('mb-upload:updated', { detail: { market: 'India', count: ranked.length } })); } catch {}
+    }).catch(() => {
+      // IDB write failed — last-ditch localStorage attempt, but DO NOT write
+      // META (would create the same orphan-META condition this patch fixes).
+      try { localStorage.setItem(STORAGE_KEY, __mbR); } catch {}
+      try { window.dispatchEvent(new CustomEvent('mb-upload:updated', { detail: { market: 'India', count: ranked.length } })); } catch {}
+    });
   }
 
   // Clear all data — explicit user action only
