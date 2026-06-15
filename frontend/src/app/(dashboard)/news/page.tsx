@@ -2502,6 +2502,14 @@ export default function NewsFeedPage() {
   // Sort: 'impact' (importance_score + structural boost) or 'time' (published_at desc).
   const STALE_MS = 48 * 60 * 60 * 1000; // 48 hours
 
+  // PATCH 1097 — Off-topic noise filter. Aggregator feeds (Mint, ET, BS, etc.)
+  // routinely include sports live-stream guides, exam result notifications,
+  // Bollywood box-office, and lifestyle filler that have no place in a
+  // financial dashboard. Drop these unless the article is structural (synthetic
+  // thesis or persistent theme). Hard filter, no UI toggle — false positives
+  // are easier to fix by trimming the regex than by adding another setting.
+  const OFF_TOPIC_RX = /\b(?:fifa|world cup|premier league|epl|la liga|champions league|champions trophy|playing xi|kick[- ]?off|how to watch|ipl |bcci|t20 |ranji|cricket\s+(?:match|score|live)|football\s+(?:match|score|live)|live[- ]?stream(?:ing)?\s+(?:of\s+|the\s+)?(?:match|tv|online|.*\bvs\s)|bollywood|hollywood|box office|movie review|film review|web series|trailer launch|album launch|concert tour|msbte|neet result|jee main|jee advanced|upsc (?:result|prelims|mains)|ssc (?:cgl|chsl|result)|cbse (?:result|class\s+(?:10|12))|icse result|(?:10th|12th|diploma)\s+result|admit card|hall ticket|answer key|merit list|cut[- ]?off list|direct link.*download|horoscope|astrology|lottery|jackpot|recipe)\b/i;
+
   const articles = useMemo(() => {
     const now = Date.now();
     // PATCH 0121 — IMP-08: Q4 FY26 earnings season chip forces article_type=EARNINGS
@@ -2510,6 +2518,17 @@ export default function NewsFeedPage() {
 
     const filtered = base.filter(a => {
       if (!isMarketRelevant(a)) return false;
+      // PATCH 1097 — drop off-topic noise (sports / entertainment / exam results
+      // / lifestyle). Structural / synthetic / persistent items bypass this.
+      {
+        const isStructuralOrPersistent = !!a.is_synthetic
+          || a.feed_layer === 'STRUCTURAL_ALPHA'
+          || (a as any).freshness_layer === 'PERSISTENT_THEME';
+        if (!isStructuralOrPersistent) {
+          const blob = `${a.title || ''} ${a.headline || ''} ${a.summary || ''}`;
+          if (OFF_TOPIC_RX.test(blob)) return false;
+        }
+      }
       // PATCH 0121 — IMP-08: when the Q4 FY26 chip is on, restrict to the
       // Apr 1 → Jul 31 2026 window (Indian Q4 results season).
       if (earningsSeasonActive) {
