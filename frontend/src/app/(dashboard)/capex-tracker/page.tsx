@@ -8,6 +8,9 @@ import TurnaroundStrips from './TurnaroundStrips';
 import { scoreTurnaround, type TurnaroundResult } from '@/lib/turnaround-scoring';
 // PATCH 1081d — Acronym tooltips on table headers (HANDOFF §10 item E).
 import { AutoAcronyms } from '@/components/bottom-nav';
+// PATCH 1081g — moved from /multibagger page (this tab has the rich Fin series).
+import { AssetRichFilter, type AssetRichStock } from '@/components/asset-rich-filter';
+import { PromoterRisingFilter, type PromoterFilterRow } from '@/components/promoter-trajectory';
 import CapexPlaybook from './CapexPlaybook';
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2652,6 +2655,41 @@ export default function CapexTrackerPage() {
       {/* ═══ 🚀 MULTIBAGGER ═══ */}
       {tab === 'multibagger' && scored.length > 0 && (
         <>
+          {/* PATCH 1081g — Asset-rich + promoter-rising filters built from the
+              uploaded Fin series (Excel workbook). PromoterRisingFilter shows
+              0 matches if the workbook lacks promoter-holding history rows. */}
+          <div style={{ display: 'grid', gap: 10, marginBottom: 12 }}>
+            <AssetRichFilter
+              universe={intel.map(({ s: stock, fin, ta }): AssetRichStock => {
+                const li = ta && ta.derived.years.length > 0 ? ta.derived.years.length - 1 : -1;
+                const cash = li >= 0 && ta ? ta.derived.cash[li] : NaN;
+                const bor = li >= 0 && ta ? ta.derived.borrowings[li] : NaN;
+                const netCashCr = (isFinite(cash) && isFinite(bor)) ? cash - bor : undefined;
+                const ocfCr = li >= 0 && ta && isFinite(ta.derived.cfo[li]) ? ta.derived.cfo[li] : undefined;
+                const de = li >= 0 && ta && isFinite(ta.derived.debtToEquity[li]) ? ta.derived.debtToEquity[li] : undefined;
+                const rocePct = li >= 0 && ta && isFinite(ta.derived.roce[li]) ? ta.derived.roce[li] : undefined;
+                return {
+                  ticker: stock.name,
+                  marketCapCr: typeof fin?.mcap === 'number' ? fin.mcap : 0,
+                  netCashCr, ocfCr, de, rocePct,
+                  pledgePct: undefined,
+                  currentRatio: undefined,
+                  divYieldPct: undefined,
+                  structuralDecline: false,
+                };
+              })}
+            />
+            <PromoterRisingFilter
+              universe={intel.map(({ s: stock, fin }): PromoterFilterRow => ({
+                ticker: stock.name,
+                company: stock.industry || stock.sector || stock.name,
+                promoterHistory: [],
+                pledgePct: undefined,
+                marketCapCr: typeof fin?.mcap === 'number' ? fin.mcap : undefined,
+                rocePct: undefined,
+              }))}
+            />
+          </div>
           <div style={{ ...card, padding: 0, overflowX: 'auto' }}>
             <table className="cxt" style={{ borderCollapse: 'collapse', width: '100%', fontSize: F.sm }}>
               <thead><tr style={{ borderBottom: '1px solid ' + C.line }}>
