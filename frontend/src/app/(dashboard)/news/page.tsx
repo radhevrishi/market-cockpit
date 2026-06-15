@@ -2574,10 +2574,18 @@ export default function NewsFeedPage() {
       const imp = a.importance_score || 0;
       const sev = SEVERITY_BOOST[a.bottleneck_level || ''] || 0;
       const structural = (a.is_synthetic || a.feed_layer === 'STRUCTURAL_ALPHA') ? 2 : 0;
+      // PATCH 1096a — sharper additive recency: 8 pts <6h, decaying to 0 at 36h.
+      // Previous curve (3 pts over 72h) let high-importance 3-day-old items
+      // outrank fresh medium-importance ones. Combined with the multiplicative
+      // ageDecay below, this gives clearly active news a real edge while
+      // structural / persistent themes stay exempt.
       const recency = (() => {
         try {
           const age = (Date.now() - new Date(a.published_at).getTime()) / (1000 * 60 * 60);
-          return Math.max(0, 3 - age / 24); // 3 points today, 0 after ~3 days
+          if (age <= 6) return 8;
+          if (age <= 24) return Math.max(2, 8 - (age - 6) * (6 / 18));  // 8 → 2 over 18h
+          if (age <= 36) return Math.max(0, 2 - (age - 24) * (2 / 12)); // 2 → 0 over 12h
+          return 0;
         } catch { return 0; }
       })();
       const parts = {
@@ -2597,9 +2605,20 @@ export default function NewsFeedPage() {
       const { total, parts } = scoreOf(a);
       const srcW = sourceQualityWeight(a.source_name || a.source, a.source_url || a.url);
       const noise = annotateArticle({ title: a.title, headline: a.headline, summary: a.summary }).noise;
-      const adjusted = total * srcW * noise.qualityMultiplier;
+      // PATCH 1096a — multiplicative age decay so truly old non-structural items
+      // fall well below fresh ones globally. Structural / synthetic items are
+      // exempt — they ARE the long-running thesis and re-stamp each cycle.
+      const ageHours = (() => {
+        try { return (Date.now() - new Date(a.published_at).getTime()) / 3.6e6; }
+        catch { return 0; }
+      })();
+      const isStructuralOrPersistent = a.is_synthetic
+        || a.feed_layer === 'STRUCTURAL_ALPHA'
+        || (a as any).freshness_layer === 'PERSISTENT_THEME';
+      const ageDecay = isStructuralOrPersistent ? 1 : Math.exp(-ageHours / 24); // 1 @ 0h, 0.37 @ 24h, 0.14 @ 48h, 0.05 @ 72h
+      const adjusted = total * srcW * noise.qualityMultiplier * ageDecay;
       (a as any).__priority = Math.round(adjusted * 10) / 10;
-      (a as any).__priorityParts = { ...parts, source_weight: srcW, noise_mult: noise.qualityMultiplier };
+      (a as any).__priorityParts = { ...parts, source_weight: srcW, noise_mult: noise.qualityMultiplier, age_decay: Math.round(ageDecay * 100) / 100 };
       (a as any).__sourceWeight = srcW;
       (a as any).__isListicle = noise.isListicle;
       (a as any).__isSpeculation = noise.isSpeculation;
