@@ -61,15 +61,26 @@ const TICKER_INDEX = [
 ]
 const POPULAR_TICKERS = TICKER_INDEX.slice(0, 8)
 
+// PATCH 1086 — wire stock universe search
+interface UniverseTicker {
+  ticker: string
+  company: string
+  sector: string
+  exchange: string
+}
+
 export default function GlobalSearch() {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchResult[]>([])
+  const [tickerResults, setTickerResults] = useState<UniverseTicker[]>([])
   const [loading, setLoading] = useState(false)
   const [selected, setSelected] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
   // const router = useRouter()  // Replaced with custom events
   const debounceRef = useRef<ReturnType<typeof setTimeout>>()
+  const tickerDebounceRef = useRef<ReturnType<typeof setTimeout>>()
+  const tickerAbortRef = useRef<AbortController | null>(null)
 
   // Open on Cmd+K / Ctrl+K
   useEffect(() => {
@@ -94,9 +105,52 @@ export default function GlobalSearch() {
     const focusTimer = setTimeout(() => inputRef.current?.focus(), 50);
     setQuery('');
     setResults([]);
+    setTickerResults([]);
     setSelected(0);
     return () => clearTimeout(focusTimer);
   }, [open]);
+
+  // PATCH 1086 — wire stock universe search
+  // Parallel fetch to /api/symbols (the NSE catalog search used by TickerSearch).
+  // Renders results in a separate "TICKERS" section above the existing page-nav
+  // results so the user sees stock matches for any input (e.g. "RELIANCE").
+  // Debounced at the same 300ms cadence as the page-nav search above.
+  const searchUniverse = useCallback(async (q: string) => {
+    const term = q.trim()
+    if (term.length < 1) { setTickerResults([]); return }
+    if (tickerAbortRef.current) tickerAbortRef.current.abort()
+    const controller = new AbortController()
+    tickerAbortRef.current = controller
+    try {
+      const res = await fetch(
+        `/api/symbols?search=${encodeURIComponent(term)}&limit=8`,
+        { signal: controller.signal },
+      )
+      if (!res.ok) return
+      const data = await res.json()
+      const rows: UniverseTicker[] = (data?.results || []).map((s: any) => ({
+        ticker: String(s.symbol || s.ticker || '').toUpperCase(),
+        company: String(s.companyName || s.company || s.symbol || ''),
+        sector: String(s.industry || s.sector || ''),
+        exchange: String(s.exchange || 'NSE').toUpperCase(),
+      })).filter((r: UniverseTicker) => r.ticker)
+      setTickerResults(rows.slice(0, 8))
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') {
+        // best-effort; fall through silently
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    clearTimeout(tickerDebounceRef.current)
+    if (query) {
+      tickerDebounceRef.current = setTimeout(() => searchUniverse(query), 300)
+    } else {
+      setTickerResults([])
+    }
+    return () => clearTimeout(tickerDebounceRef.current)
+  }, [query, searchUniverse]);
 
   // Search with debounce - first check local index + Excel stocks, then try API
   const search = useCallback(async (q: string) => {
@@ -305,7 +359,41 @@ export default function GlobalSearch() {
 
         {/* Results */}
         <div className="max-h-80 overflow-y-auto">
-          {displayItems.length === 0 && query && !loading && (
+          {/* PATCH 1086 — wire stock universe search: ticker section, additive, above page-nav */}
+          {query && tickerResults.length > 0 && (
+            <>
+              <div className="px-4 pt-3 pb-1 text-xs text-white/30 uppercase tracking-widest">Tickers</div>
+              {tickerResults.map((t) => {
+                const market = (t.exchange === 'NSE' || t.exchange === 'BSE') ? 'india' : 'us'
+                return (
+                  <div
+                    key={`tk-${t.ticker}-${t.exchange}`}
+                    className="flex items-center justify-between px-4 py-3 cursor-pointer transition-colors hover:bg-white/5"
+                    onClick={() => {
+                      const sym = market === 'india' && !t.ticker.includes('.')
+                        ? `${t.ticker}.${t.exchange === 'BSE' ? 'BO' : 'NS'}`
+                        : t.ticker
+                      window.location.href = `/stock-sheet?ticker=${encodeURIComponent(sym)}&market=${market}`
+                      setOpen(false)
+                    }}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white">
+                        {t.ticker.slice(0, 2)}
+                      </div>
+                      <div>
+                        <div className="text-sm font-semibold text-white">{t.ticker}</div>
+                        <div className="text-xs text-white/40">
+                          {t.company} · {t.exchange}{t.sector ? ` · ${t.sector}` : ''}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </>
+          )}
+          {displayItems.length === 0 && tickerResults.length === 0 && query && !loading && (
             <div className="px-4 py-6 text-center text-white/30 text-sm">No results for "{query}"</div>
           )}
           {!query && (

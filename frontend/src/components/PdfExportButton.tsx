@@ -140,6 +140,7 @@ export function PdfExportButton({ compact = false }: { compact?: boolean }) {
       onClick={handleExport}
       disabled={busy}
       title="Export this page as PDF"
+      // PATCH 1086 — UX-05: prevent "Exporting…" / "PDF" label from truncating to "Exp..." in narrow header flex
       style={{
         display: 'flex', alignItems: 'center', gap: '6px',
         background: 'none', border: '1px solid var(--mc-bg-4)', borderRadius: '10px',
@@ -148,6 +149,9 @@ export function PdfExportButton({ compact = false }: { compact?: boolean }) {
         minHeight: '36px',
         fontSize: '12px',
         fontWeight: 600,
+        whiteSpace: 'nowrap',
+        minWidth: 'auto',
+        flexShrink: 0,
       }}
     >
       <FileDown className="w-4 h-4" />
