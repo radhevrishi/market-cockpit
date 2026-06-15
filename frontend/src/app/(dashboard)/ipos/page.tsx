@@ -153,6 +153,21 @@ export default function IPOsPage() {
     return { openCount: openC, upcomingCount: upC, listedCount: lC };
   }, [ipos]);
 
+  // PATCH 1087 — IPO staleness banner (HIGH-08)
+  // When lastUpdatedMs is > 24h old the page was silently showing days-old NSE
+  // data with no warning. Compute age once and reuse for both the banner and
+  // the dimmed placeholder cells so staleness is visually obvious.
+  const { isStale, ageDays, ageHours } = useMemo(() => {
+    if (!lastUpdatedMs) return { isStale: false, ageDays: 0, ageHours: 0 };
+    const ageMs = Date.now() - lastUpdatedMs;
+    const stale = ageMs > 24 * 3600 * 1000;
+    return {
+      isStale: stale,
+      ageDays: Math.floor(ageMs / 86400000),
+      ageHours: Math.floor(ageMs / 3600000),
+    };
+  }, [lastUpdatedMs, ipos]);
+
   const formatDate = (dateString: string) => {
     try {
       return new Date(dateString).toLocaleDateString('en-IN', {
@@ -384,6 +399,36 @@ export default function IPOsPage() {
         </div>
       )}
 
+      {/* PATCH 1087 — IPO staleness banner (HIGH-08).
+          When upstream NSE is blocking the host, the freshness chip alone
+          isn't loud enough — users assumed days-old data was current. */}
+      {!loading && !error && isStale && (
+        <div
+          role="alert"
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 10,
+            padding: '12px 16px',
+            marginBottom: '20px',
+            borderRadius: 8,
+            border: '1px solid var(--mc-warn, #F59E0B)',
+            backgroundColor: 'var(--mc-warn-10, rgba(245,158,11,0.10))',
+            color: 'var(--mc-text-1, #F5F7FA)',
+            fontSize: 13,
+            lineHeight: 1.5,
+          }}
+        >
+          <span style={{ fontSize: 18, lineHeight: 1, color: 'var(--mc-warn, #F59E0B)' }}>⚠</span>
+          <span>
+            <strong style={{ color: 'var(--mc-warn, #F59E0B)' }}>
+              IPO data is {ageDays >= 1 ? `${ageDays} day${ageDays === 1 ? '' : 's'}` : `${ageHours} hour${ageHours === 1 ? '' : 's'}`} old.
+            </strong>{' '}
+            NSE upstream may be blocking. Manual data refresh required.
+          </span>
+        </div>
+      )}
+
       {/* IPO Grid */}
       {!loading && !error && ipos.length > 0 && (
         <div style={{
@@ -529,7 +574,7 @@ export default function IPOsPage() {
                     fontSize: '14px',
                     fontWeight: 'bold',
                   }}>
-                    {ipo.priceBand && ipo.priceBand !== 'TBA' && ipo.priceBand !== 'tba' ? ipo.priceBand : <span style={{ color: THEME.textSecondary }}>—</span>}
+                    {ipo.priceBand && ipo.priceBand !== 'TBA' && ipo.priceBand !== 'tba' ? ipo.priceBand : <span style={{ color: THEME.textSecondary, opacity: isStale ? 0.45 : 1 }}>—</span>}
                   </div>
                 </div>
 
@@ -548,7 +593,7 @@ export default function IPOsPage() {
                     fontSize: '14px',
                     fontWeight: 'bold',
                   }}>
-                    {ipo.lotSize && ipo.lotSize !== '-' && ipo.lotSize !== '—' ? ipo.lotSize : <span style={{ color: THEME.textSecondary }}>—</span>}
+                    {ipo.lotSize && ipo.lotSize !== '-' && ipo.lotSize !== '—' ? ipo.lotSize : <span style={{ color: THEME.textSecondary, opacity: isStale ? 0.45 : 1 }}>—</span>}
                   </div>
                 </div>
 
@@ -567,7 +612,7 @@ export default function IPOsPage() {
                     fontSize: '14px',
                     fontWeight: 'bold',
                   }}>
-                    {ipo.issueSize && ipo.issueSize !== '-' && ipo.issueSize !== '—' ? ipo.issueSize : <span style={{ color: THEME.textSecondary }}>—</span>}
+                    {ipo.issueSize && ipo.issueSize !== '-' && ipo.issueSize !== '—' ? ipo.issueSize : <span style={{ color: THEME.textSecondary, opacity: isStale ? 0.45 : 1 }}>—</span>}
                   </div>
                 </div>
 
@@ -591,7 +636,7 @@ export default function IPOsPage() {
                     {(() => {
                       const s = (ipo.sector || '').trim();
                       if (!s || s === '-' || s === '—' || /^various$/i.test(s) || /^n\/a$/i.test(s)) {
-                        return <span style={{ color: THEME.textSecondary }}>—</span>;
+                        return <span style={{ color: THEME.textSecondary, opacity: isStale ? 0.45 : 1 }}>—</span>;
                       }
                       return s;
                     })()}
