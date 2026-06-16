@@ -1379,8 +1379,10 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
 
   const GRADES:Grade[]=['A+','A','B+','B','C','D'];
   // "Good companies only" = passes all hard survival criteria
+  // PATCH 1101d — null-safe optional chaining so a Screener CSV row missing
+  // the decisionStrip fields can't crash the filter (silent crash → mystery 0).
   const goodCompanies = rows.filter(r =>
-    r.decisionStrip.survival.pass &&
+    (r.decisionStrip?.survival?.pass ?? false) &&
     r.accelSignal !== 'DECELERATING' &&
     r.bucket !== 'MONITOR' &&
     r.score >= 60
@@ -1584,6 +1586,12 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
             if (guidanceMode) {
               setGuidanceMode(false);
               setGuidanceScores({});
+              // PATCH 1101d — reset guidanceTier on mode-off so the hidden
+              // filter can't silently empty the result set later (this was
+              // the root of the "Good Only shows 0" bug: guidanceTier
+              // persisted from an earlier session, its chip hid with
+              // guidanceMode, and it kept filtering invisibly).
+              setGuidanceTier('ALL');
             } else {
               setGuidanceMode(true);
               fetchGuidanceScores();
@@ -2223,9 +2231,72 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
             <span onClick={()=>handleSort('marketCapCr')} style={{cursor:'pointer',userSelect:'none',color:sortField==='marketCapCr'?'var(--mc-warn)':MUTED}}>COV{sortIcon('marketCapCr')}</span>
           </div>
 
+          {/* PATCH 1101d — Empty-state diagnostic. When the filter chain reduces
+              the row list to zero but rows are loaded, surface which filters
+              are active + a one-click reset, so silent zero-row states no
+              longer look like a phantom data loss. */}
+          {filtered.length === 0 && rows.length > 0 && (() => {
+            const active: string[] = [];
+            if (goodOnly) active.push('Good Only');
+            if (!gradeFilter.has('ALL')) active.push(`Grade: ${Array.from(gradeFilter).join(', ')}`);
+            if (bucketFilter !== 'ALL') active.push(`Bucket: ${bucketFilter}`);
+            if (sectorFilter !== 'ALL') active.push(`Sector: ${sectorFilter}`);
+            if (aiTierFilter !== 'ALL') active.push(`AI tier: ${aiTierFilter}`);
+            if (fraudFilter !== 'ALL') active.push(`Fraud: ${fraudFilter}`);
+            if (accelOnly) active.push('Accelerating');
+            if (fcfOnly) active.push('FCF+');
+            if (discoveryOnly) active.push('Discovery <15%');
+            if (dmaConfirmedOnly) active.push('50/200 DMA ↑');
+            if (inflectionOnly) active.push('Inflection');
+            if (convictionOnly) active.push('Conviction');
+            if (peMax !== 'ALL') active.push(`PE ≤ ${peMax}`);
+            if (pegMax !== 'ALL') active.push(`PEG ≤ ${pegMax}`);
+            if (indQualityMin !== 'ALL') active.push(`Q50 ≥ ${indQualityMin}`);
+            if (indRoceMin !== 'ALL') active.push(`ROCE ≥ ${indRoceMin}%`);
+            if (indCfoMin !== 'ALL') active.push(`CFO/PAT ≥ ${indCfoMin}×`);
+            if (indDecisionFilter !== 'ALL') active.push(`Decision: ${indDecisionFilter}`);
+            if (guidanceMode && guidanceTier !== 'ALL') active.push(`Guidance tier: ${guidanceTier}`);
+            return (
+              <div style={{padding:'24px 18px',textAlign:'center',backgroundColor:CARD_BG,borderRadius:8,margin:'14px 0',border:`1px dashed ${BORDER}`}}>
+                <div style={{fontSize:F.md,color:TEXT,fontWeight:700,marginBottom:8}}>No stocks match the current filters</div>
+                <div style={{fontSize:F.sm,color:MUTED,marginBottom:12,lineHeight:1.5}}>
+                  {active.length > 0
+                    ? <>Active filters: <strong style={{color:YELLOW}}>{active.join(' · ')}</strong></>
+                    : <>All filters set to All — but no rows after sort/grade gate. Try reloading the CSV.</>}
+                </div>
+                {active.length > 0 && (
+                  <button onClick={() => {
+                    setGoodOnly(false);
+                    setGradeFilter(new Set(['ALL']));
+                    setBucketFilter('ALL');
+                    setSectorFilter('ALL');
+                    setAiTierFilter('ALL');
+                    setFraudFilter('ALL');
+                    setAccelOnly(false);
+                    setFcfOnly(false);
+                    setDiscoveryOnly(false);
+                    setDmaConfirmedOnly(false);
+                    setInflectionOnly(false);
+                    setConvictionOnly(false);
+                    setPeMax('ALL');
+                    setPegMax('ALL');
+                    setIndQualityMin('ALL');
+                    setIndRoceMin('ALL');
+                    setIndCfoMin('ALL');
+                    setIndDecisionFilter('ALL');
+                    setGuidanceTier('ALL');
+                  }} style={{padding:'8px 18px',borderRadius:8,border:`1px solid ${ACCENT}50`,background:`${ACCENT}14`,color:ACCENT,fontSize:F.sm,fontWeight:700,cursor:'pointer'}}>
+                    Clear all filters
+                  </button>
+                )}
+              </div>
+            );
+          })()}
+
           {filtered.map((r,idx)=>{
             const isExp=expandAll || expRow===r.symbol;
-            const hasCrit=r.redFlags.some(f=>f.severity==='CRITICAL');
+            // PATCH 1101d — null-safe redFlags access (Screener CSV gaps).
+            const hasCrit=(r.redFlags ?? []).some(f=>f.severity==='CRITICAL');
             return (
               <div key={r.symbol+idx} style={{borderBottom:`1px solid rgba(255,255,255,0.05)`}}>
                 <button onClick={()=>setExpRow(isExp?null:r.symbol)} style={{width:'100%',background:isExp?CARD_BG:'transparent',border:'none',cursor:'pointer',textAlign:'left',padding:'12px 14px'}}>
