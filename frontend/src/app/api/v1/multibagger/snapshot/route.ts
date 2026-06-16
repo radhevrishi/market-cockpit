@@ -1,48 +1,63 @@
-// PATCH 1101l — /api/v1/multibagger/snapshot
+// PATCH 1101m — /api/v1/multibagger/snapshot (POSTGRES-BACKED)
 //
-// Server-side persistence layer for the India Multibagger scored dataset.
-// localStorage gets evicted at the 5MB quota; IndexedDB gets evicted under
-// browser-wide storage pressure (especially Safari, Chrome under heavy use).
-// This route stores the scored JSON in Upstash Redis keyed by an anonymous
-// client UUID the client generates on first visit and stores in localStorage.
+// REWRITE of 1101l: Upstash KV was falling back to in-memory storage when
+// env vars weren't set OR when payload > 8MB cap, defeating persistence.
+// Now uses Railway Postgres directly via lib/db.ts pool — auto-creates
+// table on first call, no env-var dependency beyond DATABASE_URL.
 //
-// POST  { clientId: string, snapshot: string }   → save (snapshot can be ~5MB)
-// GET   ?clientId=xxx                            → fetch
+// Schema (auto-created idempotent):
+//   mb_snapshots(client_id text PK, market text, snapshot_json text,
+//                meta_json text, updated_at timestamptz default now())
 //
-// 30-day TTL means stale clients age out automatically. Each save bumps TTL.
+// POST  { clientId, snapshot, count, market }   → upsert
+// GET   ?clientId=xxx&market=IN                 → fetch
+//
+// No TTL — snapshots persist until explicitly cleared. ~3-5 MB JSON per
+// 345-stock dataset, well within Postgres TEXT column limits.
 
 import { NextResponse, NextRequest } from 'next/server';
-import { kvGet, kvSet } from '@/lib/kv';
+import { dbQuery, dbAvailable } from '@/lib/db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
-const ROW_KEY = (cid: string) => `mb-snapshot:${cid}`;
-const META_KEY = (cid: string) => `mb-snapshot-meta:${cid}`;
-const TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
+const MAX_SNAPSHOT_BYTES = 12 * 1024 * 1024; // 12MB hard cap — generous
 
-// Hard cap. Upstash supports up to 1MB per value on free tier, 10MB on paid.
-// A 345-stock scored JSON is typically 1.5–3 MB. We cap at 8 MB to be safe.
-const MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
-
-interface SnapshotMeta {
-  count: number;
-  bytes: number;
-  savedAt: string;
-  market?: string;
+let tableEnsured = false;
+async function ensureTable(): Promise<void> {
+  if (tableEnsured) return;
+  await dbQuery(`
+    CREATE TABLE IF NOT EXISTS mb_snapshots (
+      client_id text NOT NULL,
+      market text NOT NULL DEFAULT 'IN',
+      snapshot_json text NOT NULL,
+      meta_json text,
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (client_id, market)
+    )
+  `);
+  tableEnsured = true;
 }
 
 function isValidClientId(cid: unknown): cid is string {
   return typeof cid === 'string' && /^[a-zA-Z0-9_-]{8,64}$/.test(cid);
 }
 
+function normalizeMarket(m: unknown): string {
+  const v = typeof m === 'string' ? m.toUpperCase() : 'IN';
+  return v === 'USA' || v === 'TURNAROUND' ? v : 'IN';
+}
+
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
+    if (!dbAvailable()) {
+      return NextResponse.json({ ok: false, error: 'database not configured (DATABASE_URL missing)' }, { status: 503 });
+    }
     const body = await req.json().catch(() => ({}));
     const clientId = body?.clientId;
     const snapshot = body?.snapshot;
-    const market = typeof body?.market === 'string' ? body.market : 'IN';
+    const market = normalizeMarket(body?.market);
     const count = typeof body?.count === 'number' ? body.count : 0;
     if (!isValidClientId(clientId)) {
       return NextResponse.json({ ok: false, error: 'invalid clientId' }, { status: 400 });
@@ -52,45 +67,68 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
     const bytes = snapshot.length;
     if (bytes > MAX_SNAPSHOT_BYTES) {
-      return NextResponse.json({ ok: false, error: `snapshot too large (${(bytes / 1024 / 1024).toFixed(2)}MB > 8MB)` }, { status: 413 });
+      return NextResponse.json({ ok: false, error: `snapshot too large (${(bytes / 1024 / 1024).toFixed(2)}MB > 12MB)` }, { status: 413 });
     }
-    const key = market === 'USA' ? `mb-snapshot-usa:${clientId}` : ROW_KEY(clientId);
-    await kvSet(key, snapshot, TTL_SECONDS);
-    const meta: SnapshotMeta = {
-      count,
-      bytes,
-      savedAt: new Date().toISOString(),
-      market,
-    };
-    await kvSet(META_KEY(clientId) + (market === 'USA' ? ':usa' : ''), JSON.stringify(meta), TTL_SECONDS);
-    return NextResponse.json({ ok: true, bytes, savedAt: meta.savedAt });
+    await ensureTable();
+    const meta = JSON.stringify({ count, bytes, savedAt: new Date().toISOString() });
+    await dbQuery(
+      `INSERT INTO mb_snapshots (client_id, market, snapshot_json, meta_json, updated_at)
+       VALUES ($1, $2, $3, $4, now())
+       ON CONFLICT (client_id, market)
+       DO UPDATE SET snapshot_json = EXCLUDED.snapshot_json, meta_json = EXCLUDED.meta_json, updated_at = now()`,
+      [clientId, market, snapshot, meta]
+    );
+    return NextResponse.json({ ok: true, bytes, market, savedAt: new Date().toISOString() });
   } catch (e: any) {
-    console.error('[mb-snapshot POST] error', e);
+    console.error('[mb-snapshot POST] error', e?.message || e);
     return NextResponse.json({ ok: false, error: e?.message || 'server error' }, { status: 500 });
   }
 }
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
+    if (!dbAvailable()) {
+      return NextResponse.json({ ok: false, error: 'database not configured' }, { status: 503 });
+    }
     const url = new URL(req.url);
     const clientId = url.searchParams.get('clientId');
-    const market = url.searchParams.get('market') || 'IN';
+    const market = normalizeMarket(url.searchParams.get('market'));
     if (!isValidClientId(clientId)) {
       return NextResponse.json({ ok: false, error: 'invalid clientId' }, { status: 400 });
     }
-    const key = market === 'USA' ? `mb-snapshot-usa:${clientId}` : ROW_KEY(clientId);
-    const snapshot = await kvGet<string>(key);
-    if (!snapshot) {
+    await ensureTable();
+    const rows = await dbQuery<{ snapshot_json: string; meta_json: string | null; updated_at: string }>(
+      `SELECT snapshot_json, meta_json, updated_at FROM mb_snapshots WHERE client_id = $1 AND market = $2 LIMIT 1`,
+      [clientId, market]
+    );
+    if (!rows.length) {
       return NextResponse.json({ ok: true, snapshot: null, meta: null });
     }
-    const metaRaw = await kvGet<string>(META_KEY(clientId) + (market === 'USA' ? ':usa' : ''));
-    let meta: SnapshotMeta | null = null;
-    if (metaRaw) {
-      try { meta = JSON.parse(metaRaw); } catch {}
-    }
-    return NextResponse.json({ ok: true, snapshot, meta });
+    const row = rows[0];
+    let meta: any = null;
+    try { meta = row.meta_json ? JSON.parse(row.meta_json) : null; } catch {}
+    return NextResponse.json({ ok: true, snapshot: row.snapshot_json, meta, updatedAt: row.updated_at });
   } catch (e: any) {
-    console.error('[mb-snapshot GET] error', e);
+    console.error('[mb-snapshot GET] error', e?.message || e);
+    return NextResponse.json({ ok: false, error: e?.message || 'server error' }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest): Promise<NextResponse> {
+  try {
+    if (!dbAvailable()) {
+      return NextResponse.json({ ok: false, error: 'database not configured' }, { status: 503 });
+    }
+    const url = new URL(req.url);
+    const clientId = url.searchParams.get('clientId');
+    const market = normalizeMarket(url.searchParams.get('market'));
+    if (!isValidClientId(clientId)) {
+      return NextResponse.json({ ok: false, error: 'invalid clientId' }, { status: 400 });
+    }
+    await ensureTable();
+    await dbQuery(`DELETE FROM mb_snapshots WHERE client_id = $1 AND market = $2`, [clientId, market]);
+    return NextResponse.json({ ok: true, market });
+  } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message || 'server error' }, { status: 500 });
   }
 }
