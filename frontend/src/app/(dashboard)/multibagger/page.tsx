@@ -2347,6 +2347,25 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                     {/* Grade */}
                     <span style={{fontSize:F.md,fontWeight:800,padding:'4px 8px',borderRadius:6,color:GRADE_COLOR[r.grade],backgroundColor:`${GRADE_COLOR[r.grade]}18`,border:`1px solid ${GRADE_COLOR[r.grade]}30`,textAlign:'center'}}>{r.grade}</span>
 
+                    {/* PATCH 1101a — Grade D label split. Per 500-Bagger / 1000X
+                        Protocol audit (Ch 11): a legitimate large-cap or cyclical
+                        that scores 0 by the megawinner mandate is NOT the same
+                        thing as a fraud-tier scam. Show "🚨 NEVER BUY" ONLY when
+                        a fraud:* CRITICAL flag has fired; otherwise show muted
+                        "NOT A SETUP" so Grasim / Ather / AMAGI / Zydus read as
+                        "not a multibagger candidate" rather than fraud risk. */}
+                    {r.grade === 'D' && (() => {
+                      const isFraudFlagged = r.redFlags.some(f => f.source && f.source.startsWith('fraud:') && f.severity === 'CRITICAL');
+                      if (isFraudFlagged) {
+                        return (
+                          <span title="Critical fraud-pattern flag fired (CFO/PAT, pledge cascade, smart-money exit, operator/shell, ghost ROCE, or banking NPA proxy)" style={{fontSize:F.xs,fontWeight:800,padding:'3px 7px',borderRadius:6,color:RED,backgroundColor:`${RED}18`,border:`1px solid ${RED}50`,letterSpacing:'0.4px',whiteSpace:'nowrap'}}>🚨 NEVER BUY</span>
+                        );
+                      }
+                      return (
+                        <span title="Doesn't fit the megawinner setup (early-stage compounder with high growth runway). Not necessarily a bad business — just not a multibagger candidate by this framework's mandate." style={{fontSize:F.xs,fontWeight:700,padding:'3px 7px',borderRadius:6,color:MUTED,backgroundColor:'transparent',border:`1px solid ${MUTED}40`,letterSpacing:'0.4px',whiteSpace:'nowrap'}}>NOT A SETUP</span>
+                      );
+                    })()}
+
                     {/* P/E + PEG — always visible for every stock */}
                     {(() => {
                       const pe = r.pe;
@@ -6028,16 +6047,38 @@ function MultibaggerAnalytics({
                   <a key={s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
                     style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '6px 9px', borderRadius: 4,
                       border: '1px solid color-mix(in srgb, var(--mc-bearish) 19%, transparent)', background: 'color-mix(in srgb, var(--mc-bearish) 3%, transparent)', textDecoration: 'none' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <TickerCompanyCell ticker={s.symbol} company={s.company} />
-                      <span style={{ fontSize: 11, color: 'var(--mc-bearish)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score} {s.grade}</span>
-                      {delta !== null && delta < 0 && (
-                        <span style={{ fontSize: 10, color: 'var(--mc-bearish)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>▼{delta}</span>
-                      )}
-                    </div>
-                    <span style={{ fontSize: 9.5, color: '#FCA5A5', fontStyle: 'italic', lineHeight: 1.35 }}>
-                      Why avoid: {s.grade === 'D' ? 'Grade D — failing scorecard' : `Grade ${s.grade} with ${delta != null && delta < 0 ? `${Math.abs(delta)}-pt drop` : 'weak fundamentals'}`}{s.sector ? ` · ${s.sector}` : ''}
-                    </span>
+                    {/* PATCH 1101a — Grade D label split. A clean Grade D is
+                        "doesn't fit the megawinner mandate" (legit large cap,
+                        cyclical conglomerate, etc.). Only fraud:* CRITICAL
+                        flags warrant the 🚨 NEVER BUY treatment. */}
+                    {(() => {
+                      const isFraudFlagged = (s.redFlagSummary?.critical ?? 0) > 0;
+                      const labelColor = isFraudFlagged ? 'var(--mc-bearish)' : 'var(--mc-text-4)';
+                      const labelText  = isFraudFlagged ? '🚨 NEVER BUY' : 'NOT A SETUP';
+                      return (
+                        <>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                            <TickerCompanyCell ticker={s.symbol} company={s.company} />
+                            <span style={{ fontSize: 11, color: 'var(--mc-bearish)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score} {s.grade}</span>
+                            <span style={{ fontSize: 9.5, fontWeight: 800, padding: '1px 5px', borderRadius: 3, color: labelColor, border: `1px solid ${labelColor}50`, letterSpacing: '0.4px' }}>{labelText}</span>
+                            {delta !== null && delta < 0 && (
+                              <span style={{ fontSize: 10, color: 'var(--mc-bearish)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>▼{delta}</span>
+                            )}
+                          </div>
+                          <span style={{ fontSize: 9.5, color: isFraudFlagged ? '#FCA5A5' : 'var(--mc-text-3)', fontStyle: 'italic', lineHeight: 1.35 }}>
+                            {(() => {
+                              if (isFraudFlagged) {
+                                return `Why avoid: critical fraud-pattern flag fired${s.sector ? ` · ${s.sector}` : ''}`;
+                              }
+                              if (s.grade === 'D') {
+                                return `Not a multibagger candidate by this framework's mandate (large-cap or cyclical without the early-compounder DNA). The business may still be perfectly fine to own — just not via this engine${s.sector ? ` · ${s.sector}` : ''}`;
+                              }
+                              return `Grade ${s.grade} with ${delta != null && delta < 0 ? `${Math.abs(delta)}-pt drop` : 'weak fundamentals'}${s.sector ? ` · ${s.sector}` : ''}`;
+                            })()}
+                          </span>
+                        </>
+                      );
+                    })()}
                   </a>
                 );
               })}
