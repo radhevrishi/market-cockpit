@@ -4722,6 +4722,73 @@ async function mbIdbGetWithRetry(key: string, retries = 4, delayMs = 250): Promi
   return null;
 }
 
+// PATCH 1101l — Server-side persistence layer (Upstash Redis via Railway).
+// localStorage + IDB are both subject to browser eviction under storage
+// pressure — the "Saved data lost (N stocks)" banner kept recurring even
+// after 1101i hardened the IDB write path. This third layer survives ALL
+// local browser eviction by stashing the scored JSON on Railway under an
+// anonymous client UUID stored in localStorage. POST happens after every
+// successful upload; GET happens on hydration ONLY when both local layers
+// are empty.
+const MB_CLIENT_ID_KEY = 'mb_client_id_v1';
+function mbGetClientId(): string {
+  try {
+    let cid = localStorage.getItem(MB_CLIENT_ID_KEY);
+    if (cid && /^[a-zA-Z0-9_-]{8,64}$/.test(cid)) return cid;
+    // Generate a new anonymous UUID. Format: 12 chars random base36.
+    cid = 'mb-' + Math.random().toString(36).slice(2, 11) + Date.now().toString(36);
+    localStorage.setItem(MB_CLIENT_ID_KEY, cid);
+    return cid;
+  } catch {
+    // localStorage unavailable (private browsing) — fall back to session UUID.
+    return 'mb-' + Math.random().toString(36).slice(2, 11);
+  }
+}
+async function mbServerSnapshotSave(snapshot: string, count: number, market: 'IN' | 'USA' = 'IN'): Promise<boolean> {
+  try {
+    const clientId = mbGetClientId();
+    const res = await fetch('/api/v1/multibagger/snapshot', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientId, snapshot, count, market }),
+      // Don't block UI on this — but do await so we surface failures.
+    });
+    if (!res.ok) {
+      try { console.warn('[mb-server-snapshot] save failed', res.status, await res.text()); } catch {}
+      return false;
+    }
+    return true;
+  } catch (e) {
+    try { console.warn('[mb-server-snapshot] save threw', e); } catch {}
+    return false;
+  }
+}
+async function mbServerSnapshotLoad(market: 'IN' | 'USA' = 'IN'): Promise<string | null> {
+  try {
+    const clientId = mbGetClientId();
+    const res = await fetch(`/api/v1/multibagger/snapshot?clientId=${encodeURIComponent(clientId)}&market=${market}`);
+    if (!res.ok) return null;
+    const j = await res.json();
+    return (j?.snapshot as string) || null;
+  } catch (e) {
+    try { console.warn('[mb-server-snapshot] load threw', e); } catch {}
+    return null;
+  }
+}
+// Request persistent storage so browsers don't evict IDB under pressure.
+// This is best-effort — Safari rarely honors it, Chrome/Firefox usually do.
+function mbRequestPersistentStorage(): void {
+  try {
+    if (typeof navigator !== 'undefined'
+        && navigator.storage
+        && typeof navigator.storage.persist === 'function') {
+      navigator.storage.persist().then((granted) => {
+        try { console.log('[mb-persist] navigator.storage.persist() →', granted); } catch {}
+      }).catch(() => {});
+    }
+  } catch {}
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // PATCH 0347 — DECISION BAR COMPONENT
 // Used in both India and USA expanded rows.
@@ -4894,28 +4961,71 @@ export default function MultibaggerPage() {
   // prevent orphan-META "Saved data lost" banners. The old effect wrote IDB
   // without awaiting and ignored failures, contributing to the bug.
 
-  // PATCH 1101i — Hydrate India dataset from IndexedDB on mount with retries
-  // and re-scoring. Previously a single mbIdbGet → if it returned null
-  // (transient IDB slow-init / cold-cache) we silently treated as "no data"
-  // and the orphan-META banner fired even though IDB actually had data.
+  // PATCH 1101i + 1101l — Three-layer hydration on mount.
+  //   1. localStorage initializer (synchronous, line above) tries first.
+  //   2. IDB retry — catches localStorage 5MB eviction with IDB still intact.
+  //   3. SERVER fetch (Railway Upstash Redis) — catches the case where BOTH
+  //      local layers were evicted by the browser. This is the bulletproof
+  //      tier the user explicitly asked for after 1101i still wasn't holding.
+  // Each layer only fires if the prior one returned empty. Once data lands,
+  // the data is written back DOWN to local layers so next session is fast.
   useEffect(() => {
     let alive = true;
+    // Ask the browser to mark our origin's storage as persistent so IDB
+    // doesn't get evicted under storage pressure (best-effort).
+    mbRequestPersistentStorage();
     (async () => {
-      const raw = await mbIdbGetWithRetry('mb_scored');
-      if (!alive || !raw) return;
+      // Layer 2: IDB
+      const idbRaw = await mbIdbGetWithRetry('mb_scored');
+      if (!alive) return;
+      if (idbRaw) {
+        try {
+          const parsed = JSON.parse(idbRaw) as ExcelResult[];
+          if (Array.isArray(parsed) && parsed.length) {
+            const rescored = parsed.map(r => {
+              try { return scoreExcelRow(r as unknown as ExcelRow); } catch { return r; }
+            });
+            const sorted = rescored.sort((a, b) => b.score - a.score);
+            setExcelRowsState((prev) => (prev && prev.length ? prev : applyForcedRanking(sorted)));
+            return;
+          }
+        } catch (e) {
+          try { console.warn('[mb-idb] hydrate parse failed', e); } catch {}
+        }
+      }
+      // Layer 3: SERVER. Both local layers came up empty — try the Upstash
+      // backup before letting the orphan-META banner fire.
+      try { console.log('[mb-persist] local layers empty, trying server snapshot'); } catch {}
+      const serverRaw = await mbServerSnapshotLoad('IN');
+      if (!alive || !serverRaw) {
+        try { console.log('[mb-persist] server snapshot also empty'); } catch {}
+        return;
+      }
       try {
-        const parsed = JSON.parse(raw) as ExcelResult[];
+        const parsed = JSON.parse(serverRaw) as ExcelResult[];
         if (Array.isArray(parsed) && parsed.length) {
-          // Re-score on hydration so engine updates (1101a–h) apply without
-          // needing re-upload. Same as the localStorage initializer does.
+          try { console.log(`[mb-persist] restored ${parsed.length} stocks from server`); } catch {}
           const rescored = parsed.map(r => {
             try { return scoreExcelRow(r as unknown as ExcelRow); } catch { return r; }
           });
           const sorted = rescored.sort((a, b) => b.score - a.score);
           setExcelRowsState((prev) => (prev && prev.length ? prev : applyForcedRanking(sorted)));
+          // Write back DOWN to IDB + localStorage so future hydrations are fast
+          // and don't require a server round-trip.
+          const __mbS = JSON.stringify(sorted);
+          mbIdbSet('mb_scored', __mbS).then(() => {
+            try { localStorage.setItem(STORAGE_KEY, __mbS); } catch {}
+            try {
+              localStorage.setItem(STORAGE_META, JSON.stringify({
+                savedAt: new Date().toISOString(),
+                count: sorted.length,
+                restoredFrom: 'server',
+              }));
+            } catch {}
+          }).catch(() => {});
         }
       } catch (e) {
-        try { console.warn('[mb-idb] hydrate parse failed', e); } catch {}
+        try { console.warn('[mb-server-snapshot] parse failed', e); } catch {}
       }
     })();
     return () => { alive = false; };
@@ -4942,6 +5052,12 @@ export default function MultibaggerPage() {
           count: ranked.length,
         }));
       } catch {}
+      // PATCH 1101l — Server backup. Fire and forget — don't block the UI
+      // on the network round-trip. If it fails, we still have IDB + local;
+      // if it succeeds, the data survives browser storage eviction.
+      mbServerSnapshotSave(__mbR, ranked.length, 'IN').then((ok) => {
+        try { console.log('[mb-persist] server snapshot save →', ok ? 'OK' : 'FAILED'); } catch {}
+      });
       // PATCH 0471 — broadcast cross-tab update so consumers (Re-rating,
       // Signals, Earnings Scan) refresh their derived universes immediately
       // after a fresh India upload.
