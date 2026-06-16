@@ -544,8 +544,11 @@ export default function HomeDashboard() {
   // though the dataset was present. Read the IndexedDB copy on mount and, if it
   // holds more than localStorage, rebuild the India Tier blocks from it.
   useEffect(() => {
+    let alive = true;
+    let foundLocally = false;
     try {
       const lsLen = (localStorage.getItem('mb_excel_scored_v2') || '').length;
+      if (lsLen > 0) foundLocally = true;
       const req = indexedDB.open('mc-mb', 1);
       req.onsuccess = () => {
         try {
@@ -555,9 +558,11 @@ export default function HomeDashboard() {
           g.onsuccess = () => {
             try {
               const raw = g.result as string | undefined;
-              if (!raw || raw.length <= lsLen) return; // localStorage already had >= data
+              if (!raw) return;
+              foundLocally = true;
+              if (raw.length <= lsLen) return; // localStorage already had >= data
               const rows = JSON.parse(raw);
-              if (Array.isArray(rows) && rows.length) {
+              if (Array.isArray(rows) && rows.length && alive) {
                 setData((prev: HomeState) => ({ ...prev, ...buildSyncState(rows) }));
               }
             } catch {}
@@ -565,6 +570,49 @@ export default function HomeDashboard() {
         } catch {}
       };
     } catch {}
+    // PATCH 1101o — Railway server fallback. If BOTH localStorage AND IDB are
+    // empty (browser eviction took both layers, OR user is on a fresh device),
+    // try the Railway Postgres snapshot. This is what's been making the home
+    // page show the "Upload India CSV" empty state even though the user's
+    // multibagger data is safely backed up on Railway.
+    setTimeout(() => {
+      if (!alive || foundLocally) return;
+      try {
+        const cid = localStorage.getItem('mb_client_id_v1');
+        if (!cid) return; // user never made a snapshot from this browser
+        fetch(`/api/v1/multibagger/snapshot?clientId=${encodeURIComponent(cid)}&market=IN`)
+          .then(r => r.ok ? r.json() : null)
+          .then(j => {
+            if (!alive || !j || !j.ok || !j.snapshot) return;
+            try {
+              const rows = JSON.parse(j.snapshot);
+              if (Array.isArray(rows) && rows.length) {
+                try { console.log(`[home] restored ${rows.length} India stocks from Railway snapshot`); } catch {}
+                setData((prev: HomeState) => ({ ...prev, ...buildSyncState(rows) }));
+                // Write back DOWN so subsequent loads are fast.
+                try {
+                  // Best-effort localStorage mirror — may fail on quota.
+                  localStorage.setItem('mb_excel_scored_v2', j.snapshot);
+                } catch {}
+                // IDB write — usually succeeds even when localStorage doesn't.
+                try {
+                  const req2 = indexedDB.open('mc-mb', 1);
+                  req2.onsuccess = () => {
+                    try {
+                      const db = req2.result;
+                      if (db.objectStoreNames.contains('kv')) {
+                        db.transaction('kv', 'readwrite').objectStore('kv').put(j.snapshot, 'mb_scored');
+                      }
+                    } catch {}
+                  };
+                } catch {}
+              }
+            } catch {}
+          })
+          .catch((e) => { try { console.warn('[home] Railway snapshot fetch failed', e); } catch {} });
+      } catch {}
+    }, 800); // Wait 800ms so IDB hydration has a chance first.
+    return () => { alive = false; };
   }, []);
   // PATCH 0605 — collapse defaults per institutional review
   // ("hide raw news feeds / low-confidence signals / secondary analytics")
