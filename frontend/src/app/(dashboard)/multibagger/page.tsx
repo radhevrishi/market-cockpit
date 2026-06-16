@@ -2219,7 +2219,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
           })()}
 
           {/* Table header */}
-          <div style={{display:'grid',gridTemplateColumns:'130px 130px 65px 65px 96px 86px 120px 1fr 76px',gap:8,padding:'10px 14px',fontSize:F.xs,fontWeight:700,letterSpacing:'0.6px',color:MUTED,borderBottom:`1px solid ${BORDER}`}}>
+          <div style={{display:'grid',gridTemplateColumns:'130px 130px 65px 90px 96px 86px 120px 1fr 76px',gap:8,padding:'10px 14px',fontSize:F.xs,fontWeight:700,letterSpacing:'0.6px',color:MUTED,borderBottom:`1px solid ${BORDER}`}}>
             {/* Clickable sort headers */}
             <span>TICKER</span><span>COMPANY</span>
             <span onClick={()=>handleSort('score')} style={{cursor:'pointer',userSelect:'none',color:sortField==='score'?ACCENT:MUTED}}>SCORE{sortIcon('score')}</span>
@@ -2300,7 +2300,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
             return (
               <div key={r.symbol+idx} style={{borderBottom:`1px solid rgba(255,255,255,0.05)`}}>
                 <button onClick={()=>setExpRow(isExp?null:r.symbol)} style={{width:'100%',background:isExp?CARD_BG:'transparent',border:'none',cursor:'pointer',textAlign:'left',padding:'12px 14px'}}>
-                  <div style={{display:'grid',gridTemplateColumns:'130px 130px 65px 65px 96px 86px 180px 1fr 76px',gap:8,alignItems:'center'}}>
+                  <div style={{display:'grid',gridTemplateColumns:'130px 130px 65px 90px 96px 86px 180px 1fr 76px',gap:8,alignItems:'center'}}>
                     {/* Ticker + bucket + accel badge */}
                     <div style={{display:'flex',flexDirection:'column',gap:3}}>
                       <div style={{display:'flex',alignItems:'center',gap:5}}>
@@ -2415,27 +2415,25 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                     {/* Score */}
                     <span style={{fontSize:F.h2,fontWeight:900,color:GRADE_COLOR[r.grade]??MUTED}}>{r.score}</span>
 
-                    {/* Grade */}
-                    <span style={{fontSize:F.md,fontWeight:800,padding:'4px 8px',borderRadius:6,color:GRADE_COLOR[r.grade],backgroundColor:`${GRADE_COLOR[r.grade]}18`,border:`1px solid ${GRADE_COLOR[r.grade]}30`,textAlign:'center'}}>{r.grade}</span>
-
-                    {/* PATCH 1101a — Grade D label split. Per 500-Bagger / 1000X
-                        Protocol audit (Ch 11): a legitimate large-cap or cyclical
-                        that scores 0 by the megawinner mandate is NOT the same
-                        thing as a fraud-tier scam. Show "🚨 NEVER BUY" ONLY when
-                        a fraud:* CRITICAL flag has fired; otherwise show muted
-                        "NOT A SETUP" so Grasim / Ather / AMAGI / Zydus read as
-                        "not a multibagger candidate" rather than fraud risk. */}
-                    {r.grade === 'D' && (() => {
-                      const isFraudFlagged = r.redFlags.some(f => f.source && f.source.startsWith('fraud:') && f.severity === 'CRITICAL');
-                      if (isFraudFlagged) {
+                    {/* PATCH 1101e — Wrap Grade chip + 1101a NOT A SETUP / NEVER
+                        BUY chip in a single grid cell so column count stays at
+                        9 and the SQGLP pillar block (col 8) doesn't wrap. */}
+                    <div style={{display:'flex',flexDirection:'column',gap:3,alignItems:'flex-start'}}>
+                      {/* Grade */}
+                      <span style={{fontSize:F.md,fontWeight:800,padding:'4px 8px',borderRadius:6,color:GRADE_COLOR[r.grade],backgroundColor:`${GRADE_COLOR[r.grade]}18`,border:`1px solid ${GRADE_COLOR[r.grade]}30`,textAlign:'center',alignSelf:'stretch'}}>{r.grade}</span>
+                      {/* PATCH 1101a — Grade D label split (fraud vs not-a-setup) */}
+                      {r.grade === 'D' && (() => {
+                        const isFraudFlagged = (r.redFlags ?? []).some(f => f.source && f.source.startsWith('fraud:') && f.severity === 'CRITICAL');
+                        if (isFraudFlagged) {
+                          return (
+                            <span title="Critical fraud-pattern flag fired" style={{fontSize:9,fontWeight:800,padding:'1px 4px',borderRadius:4,color:RED,backgroundColor:`${RED}18`,border:`1px solid ${RED}50`,letterSpacing:'0.3px',whiteSpace:'nowrap',lineHeight:1.2}}>🚨 NEVER BUY</span>
+                          );
+                        }
                         return (
-                          <span title="Critical fraud-pattern flag fired (CFO/PAT, pledge cascade, smart-money exit, operator/shell, ghost ROCE, or banking NPA proxy)" style={{fontSize:F.xs,fontWeight:800,padding:'3px 7px',borderRadius:6,color:RED,backgroundColor:`${RED}18`,border:`1px solid ${RED}50`,letterSpacing:'0.4px',whiteSpace:'nowrap'}}>🚨 NEVER BUY</span>
+                          <span title="Doesn't fit megawinner setup — not necessarily a bad business" style={{fontSize:9,fontWeight:700,padding:'1px 4px',borderRadius:4,color:MUTED,backgroundColor:'transparent',border:`1px solid ${MUTED}40`,letterSpacing:'0.3px',whiteSpace:'nowrap',lineHeight:1.2}}>NOT A SETUP</span>
                         );
-                      }
-                      return (
-                        <span title="Doesn't fit the megawinner setup (early-stage compounder with high growth runway). Not necessarily a bad business — just not a multibagger candidate by this framework's mandate." style={{fontSize:F.xs,fontWeight:700,padding:'3px 7px',borderRadius:6,color:MUTED,backgroundColor:'transparent',border:`1px solid ${MUTED}40`,letterSpacing:'0.4px',whiteSpace:'nowrap'}}>NOT A SETUP</span>
-                      );
-                    })()}
+                      })()}
+                    </div>
 
                     {/* P/E + PEG — always visible for every stock */}
                     {(() => {
