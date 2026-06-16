@@ -25,7 +25,11 @@ const C = {
 
 const MONO: CSSProperties = { fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace' };
 
-const CAGRS = [20, 25, 30, 40] as const;
+// PATCH 1101k — Added 10% (FD/bank-deposit benchmark) and 15% (typical mutual
+// fund) rows above the target band (20/25/30/40) for educational reference.
+// User's actual targets remain 20–40%; 10/15 just frame the opportunity cost
+// of staying in low-return vehicles. The flagship highlight stays at 25%.
+const CAGRS = [10, 15, 20, 25, 30, 40] as const;
 const HORIZONS = [10, 15, 20, 25, 30] as const;
 
 function compound(start: number, cagrPct: number, years: number): number {
@@ -124,7 +128,8 @@ export default function JourneyPage() {
           </h1>
           <div style={{ marginTop: 6, fontSize: 12, color: C.muted, lineHeight: 1.5 }}>
             Wealth compounding is not magic, it is mathematics &middot; patience &middot; discipline.
-            What ₹1 cr becomes at 20% vs 25% vs 30% vs 40% over a lifetime &mdash; and where you stand vs target.
+            Top rows (10% &middot; 15%) frame the opportunity cost of staying in FD / index funds;
+            target band (20% &mdash; 40%) is the actual hunting ground.
           </div>
         </div>
 
@@ -179,7 +184,9 @@ export default function JourneyPage() {
             </tbody>
           </table>
           <div style={{ marginTop: 10, fontSize: 11, color: C.dim, lineHeight: 1.6 }}>
-            <strong style={{ color: C.amber }}>Reality check:</strong> Nifty 50 long-term CAGR is ~12%.
+            <strong style={{ color: C.amber }}>Reality check:</strong> Bank FDs / debt funds run ~7-8% (post-tax) &mdash;
+            essentially treading water vs inflation. The average actively-managed equity MF prints ~12-15%.
+            Nifty 50 long-term CAGR is ~12%.
             Top Indian compounders (Page Industries, Pidilite, Asian Paints over 20y) printed ~24-28%.
             30%+ over 20y has been done (Bajaj Finance, Astral, AU Small Finance early years) but is a top-1% outcome.
             40% over 20y is essentially the realm of one-decision multibaggers held without flinching.
