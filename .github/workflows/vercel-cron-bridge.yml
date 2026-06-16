@@ -208,7 +208,18 @@ jobs:
           if [[ "$STATUS" == 2* ]]; then OK="true"; fi
           # If the step was skipped (no matching schedule), don't write a misleading heartbeat
           if [[ "${{ steps.hit.outcome }}" == "skipped" ]]; then exit 0; fi
+          # PATCH 1100 — forward the response body as 'error' on non-2xx so the
+          # heartbeat row carries the WHY (was always null before, which is what
+          # made archive-to-postgres 500s opaque). Truncate to 500 chars and
+          # JSON-escape so the curl payload stays well-formed.
+          ERR_FIELD="null"
+          if [ "$OK" != "true" ] && [ -s /tmp/response.json ]; then
+            ERR_JSON=$(head -c 500 /tmp/response.json | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo "null")
+            if [ -n "$ERR_JSON" ] && [ "$ERR_JSON" != "null" ]; then
+              ERR_FIELD="$ERR_JSON"
+            fi
+          fi
           curl -s --max-time 15 -X POST "$BASE/api/v1/cron/heartbeat" \
             -H 'Content-Type: application/json' \
-            -d "{\"name\":\"$LABEL\",\"phase\":\"end\",\"ok\":$OK,\"exit_code\":$STATUS,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -d "{\"name\":\"$LABEL\",\"phase\":\"end\",\"ok\":$OK,\"exit_code\":$STATUS,\"error\":$ERR_FIELD,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
             -o /dev/null -w "heartbeat %{http_code}\n" || true
