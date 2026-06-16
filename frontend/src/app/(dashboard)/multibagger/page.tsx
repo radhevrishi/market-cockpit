@@ -2788,7 +2788,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                         const highF = fraudFlags.filter(f => f.severity === 'HIGH').length;
                         const medF  = fraudFlags.filter(f => f.severity === 'MEDIUM').length;
                         const fraudScore = Math.min(100, critF*30 + highF*15 + medF*5);
-                        const FRAUD_RULES_TOTAL = 18;
+                        const FRAUD_RULES_TOTAL = 19; // PATCH 1101j — added C7 revenue-inflation archetype (Rajesh Exports)
                         const passed = FRAUD_RULES_TOTAL - fraudFlags.length;
                         const verdict = critF>=2?'NEVER BUY': critF>=1?'AVOID': highF>=2?'HIGH RISK': highF>=1?'CAUTION': medF>=2?'MINOR FLAGS':'CLEAN';
                         const color = critF>=1?RED: highF>=1?ORANGE: medF>=1?YELLOW:GREEN;
