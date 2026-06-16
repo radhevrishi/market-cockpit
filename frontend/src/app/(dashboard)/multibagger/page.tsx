@@ -1556,6 +1556,14 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
         </div>
       )}
 
+      {/* PATCH 1101m — Cloud save status badge. Visible at all times so the
+          user can SEE whether their data has been backed up to Railway
+          Postgres (the third persistence layer that survives browser
+          eviction). Includes a manual "Backup now" button as an escape
+          valve if the auto-save ever fails. */}
+      <CloudSaveStatusBadge rows={rows} />
+
+
       {/* Upload zone */}
       <div
         onClick={()=>fileRef.current?.click()}
@@ -4775,6 +4783,71 @@ async function mbServerSnapshotLoad(market: 'IN' | 'USA' = 'IN'): Promise<string
     return null;
   }
 }
+// PATCH 1101m — Visible cloud save status badge. Listens for cloud save
+// events and shows the user where their data lives right now. Includes a
+// "Backup now" button as a manual escape valve when auto-save fails.
+function CloudSaveStatusBadge({ rows }: { rows: ExcelResult[] }): React.ReactElement | null {
+  const [status, setStatus] = React.useState<'idle' | 'saving' | 'ok' | 'failed'>(() => {
+    try { return (localStorage.getItem('mb_server_save_status') as any) || 'idle'; } catch { return 'idle'; }
+  });
+  const [savedAt, setSavedAt] = React.useState<string | null>(() => {
+    try { return localStorage.getItem('mb_server_save_at'); } catch { return null; }
+  });
+  const [forcing, setForcing] = React.useState(false);
+  React.useEffect(() => {
+    const onStatus = (e: Event) => {
+      const ce = e as CustomEvent<'saving' | 'ok' | 'failed'>;
+      if (ce.detail) {
+        setStatus(ce.detail);
+        if (ce.detail === 'ok') {
+          try { setSavedAt(localStorage.getItem('mb_server_save_at')); } catch {}
+        }
+      }
+    };
+    window.addEventListener('mb-cloud-save:status', onStatus);
+    return () => window.removeEventListener('mb-cloud-save:status', onStatus);
+  }, []);
+  if (!rows || rows.length === 0) return null;
+  const forceBackup = async () => {
+    setForcing(true);
+    try {
+      const __mbR = JSON.stringify(rows);
+      try { localStorage.setItem('mb_server_save_status', 'saving'); window.dispatchEvent(new CustomEvent('mb-cloud-save:status', { detail: 'saving' })); } catch {}
+      const ok = await mbServerSnapshotSave(__mbR, rows.length, 'IN');
+      try {
+        if (ok) {
+          localStorage.setItem('mb_server_save_status', 'ok');
+          localStorage.setItem('mb_server_save_at', new Date().toISOString());
+        } else {
+          localStorage.setItem('mb_server_save_status', 'failed');
+        }
+        window.dispatchEvent(new CustomEvent('mb-cloud-save:status', { detail: ok ? 'ok' : 'failed' }));
+      } catch {}
+    } finally {
+      setForcing(false);
+    }
+  };
+  const color = status === 'ok' ? '#22c55e' : status === 'saving' ? '#3b82f6' : status === 'failed' ? '#ef4444' : '#94a3b8';
+  const icon = status === 'ok' ? '☁ ✓' : status === 'saving' ? '☁ ⏳' : status === 'failed' ? '☁ ⚠' : '☁ ?';
+  const label = status === 'ok' ? `Backed up to Railway · ${savedAt ? new Date(savedAt).toLocaleString() : ''}`
+              : status === 'saving' ? 'Saving to Railway cloud…'
+              : status === 'failed' ? 'Cloud backup failed — local data only'
+              : 'Not yet backed up to cloud';
+  return (
+    <div style={{marginBottom:14,padding:'8px 14px',backgroundColor:`color-mix(in srgb, ${color} 8%, transparent)`,border:`1px solid ${color}55`,borderLeft:`3px solid ${color}`,borderRadius:6,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',fontSize:12}}>
+      <span style={{color, fontWeight:800, letterSpacing:0.4}}>{icon}</span>
+      <span style={{color:'var(--mc-text-2)', fontWeight:600}}>{label}</span>
+      <span style={{flex:1}}/>
+      <button
+        onClick={forceBackup}
+        disabled={forcing || status === 'saving'}
+        style={{padding:'4px 12px',backgroundColor:'transparent',border:`1px solid ${color}77`,borderRadius:5,color,fontSize:11,fontWeight:700,cursor:forcing?'wait':'pointer',opacity:forcing?0.5:1}}>
+        {forcing ? 'Saving…' : 'Backup now'}
+      </button>
+    </div>
+  );
+}
+
 // Request persistent storage so browsers don't evict IDB under pressure.
 // This is best-effort — Safari rarely honors it, Chrome/Firefox usually do.
 function mbRequestPersistentStorage(): void {
@@ -5052,11 +5125,21 @@ export default function MultibaggerPage() {
           count: ranked.length,
         }));
       } catch {}
-      // PATCH 1101l — Server backup. Fire and forget — don't block the UI
-      // on the network round-trip. If it fails, we still have IDB + local;
-      // if it succeeds, the data survives browser storage eviction.
+      // PATCH 1101l + 1101m — Server backup via Railway Postgres. Track save
+      // status in localStorage so the UI can show a "☁ Cloud OK" / "⚠ Local
+      // only" badge — user needs to SEE whether persistence is working.
+      try { localStorage.setItem('mb_server_save_status', 'saving'); window.dispatchEvent(new CustomEvent('mb-cloud-save:status', { detail: 'saving' })); } catch {}
       mbServerSnapshotSave(__mbR, ranked.length, 'IN').then((ok) => {
         try { console.log('[mb-persist] server snapshot save →', ok ? 'OK' : 'FAILED'); } catch {}
+        try {
+          if (ok) {
+            localStorage.setItem('mb_server_save_status', 'ok');
+            localStorage.setItem('mb_server_save_at', new Date().toISOString());
+          } else {
+            localStorage.setItem('mb_server_save_status', 'failed');
+          }
+          window.dispatchEvent(new CustomEvent('mb-cloud-save:status', { detail: ok ? 'ok' : 'failed' }));
+        } catch {}
       });
       // PATCH 0471 — broadcast cross-tab update so consumers (Re-rating,
       // Signals, Earnings Scan) refresh their derived universes immediately
