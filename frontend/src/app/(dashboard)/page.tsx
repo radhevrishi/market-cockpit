@@ -316,9 +316,18 @@ function buildSyncState(indiaOverride?: any[]): Pick<HomeState, 'tier1' | 'tier2
         try { return mbScoreIndia(r as MbIndiaRow); } catch { return r; }
       });
       const sorted = rescored.sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0));
-      return mbApplyRanking(sorted as any[]);
-    } catch {
-      // Fall back to raw data if re-scoring throws (e.g., schema mismatch).
+      const ranked = mbApplyRanking(sorted as any[]);
+      // PATCH 1101q — Diagnostic logging so user can verify what's happening.
+      try {
+        if (typeof window !== 'undefined') {
+          const gradeCount: Record<string, number> = {};
+          ranked.forEach((r: any) => { gradeCount[r.grade] = (gradeCount[r.grade] || 0) + 1; });
+          console.log(`[home] India rescore: ${ranked.length} rows · grades:`, gradeCount);
+        }
+      } catch {}
+      return ranked;
+    } catch (e) {
+      try { console.warn('[home] India rescore threw, falling back to raw', e); } catch {}
       return indiaRawSrc;
     }
   })();
@@ -382,6 +391,18 @@ function buildSyncState(indiaOverride?: any[]): Pick<HomeState, 'tier1' | 'tier2
   const tier1India = buildMarketTier1('IN');
   const tier1Usa = buildMarketTier1('US');
   const tier1: TierAction[] = [...tier1India, ...tier1Usa];
+  // PATCH 1101q — Diagnostic so user can see WHY Tier 1 is small. The most
+  // common cause has been the user accumulating many BUY/REJECTED rows in the
+  // Decision Log over time, which excludes those names from Tier 1 by design.
+  try {
+    if (typeof window !== 'undefined') {
+      const indiaAgrade = indiaRows.filter((r: any) => r.grade === 'A+' || r.grade === 'A').length;
+      const indiaInDecisions = indiaRows.filter((r: any) => decisions[(r.symbol || '').toUpperCase()]).length;
+      const indiaInCB = indiaRows.filter((r: any) => cbSet.has(symKey(r.symbol))).length;
+      const decisionCount = Object.keys(decisions).length;
+      console.log(`[home] Tier 1 India build: ${indiaRows.length} rows · ${indiaAgrade} A-grade · ${indiaInCB} on CB · ${indiaInDecisions} in decisions (decision log has ${decisionCount} entries total) → ${tier1India.length} on Tier 1`);
+    }
+  } catch {}
 
   const tier2 = allRows
     .filter((r: any) => (r.grade === 'A+' || r.grade === 'A') && !tier1.find(t => t.symbol === r.symbol))
