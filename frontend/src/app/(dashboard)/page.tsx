@@ -111,6 +111,7 @@ interface TierAction {
   href: string;
   cbConfirmed?: boolean;  // PATCH 0611 — true = on Conviction Beats bench, false = top-up A-grade
   market?: 'IN' | 'US' | string;  // PATCH 0617 — country chip on card
+  decisionStatus?: string;  // PATCH 1101r — BUY/WATCH/REJECTED if already in Decision Log
 }
 
 interface ChangedRow {
@@ -349,15 +350,24 @@ function buildSyncState(indiaOverride?: any[]): Pick<HomeState, 'tier1' | 'tier2
   // If strict yields < 6, top up with A+/A grade names NOT on CB.
   // Cross-confirmed ones flagged cbConfirmed=true. Each card carries _market.
   const symKey = (s: any) => canonicalTicker(s); // PATCH 0721 — was: (s||'').toString().toUpperCase().replace(/\.(NS|BO)$/i, '')
-  const buildTier = (r: any, cbConfirmed?: boolean): TierAction => ({
-    symbol: r.symbol, company: r.company || r.companyName,
-    score: r.score ?? r.composite, grade: r.grade, sector: r.sector,
-    ...riskFraming(r.sector, 'multibagger', r.symbol),
-    scoreBreakdown: decomposeScore(r),
-    href: `/stock-sheet?ticker=${encodeURIComponent((r.symbol || '').replace(/\.(NS|BO)$/i, ''))}${r._market === 'US' ? '&market=us' : ''}`,
-    cbConfirmed,
-    market: r._market,
-  } as TierAction);
+  const buildTier = (r: any, cbConfirmed?: boolean): TierAction => {
+    // PATCH 1101r — Pick up existing decision-log status so it can be rendered
+    // as a badge on the card (BUY / WATCH / REJECTED). With the new decision-
+    // exclusion-removed filter, Tier 1 includes logged stocks; the badge tells
+    // the user "you already logged this" instead of hiding the row.
+    const decisionEntry = decisions[(r.symbol || '').toUpperCase()];
+    const decisionStatus = decisionEntry?.status as string | undefined;
+    return {
+      symbol: r.symbol, company: r.company || r.companyName,
+      score: r.score ?? r.composite, grade: r.grade, sector: r.sector,
+      ...riskFraming(r.sector, 'multibagger', r.symbol),
+      scoreBreakdown: decomposeScore(r),
+      href: `/stock-sheet?ticker=${encodeURIComponent((r.symbol || '').replace(/\.(NS|BO)$/i, ''))}${r._market === 'US' ? '&market=us' : ''}`,
+      cbConfirmed,
+      market: r._market,
+      decisionStatus,
+    } as TierAction;
+  };
 
   // PATCH 1001 — Tier 1 split into TWO independent top-10 blocks: India and
   // USA. Each ranks strict cross-confirmed (★ = A-grade + on Conviction Beats
@@ -366,6 +376,17 @@ function buildSyncState(indiaOverride?: any[]): Pick<HomeState, 'tier1' | 'tier2
   // Stored as one concatenated array (India first, then USA); the renderer
   // splits by .market into two DecisionTierBlocks, each renumbered from 1.
   const TIER1_PER_MARKET = 10;
+  // PATCH 1101r — Tier 1 build now ALWAYS tops up to 10. The user reported
+  // seeing only 2 names per market. Diagnosis: the Decision Log filter was
+  // excluding A-grade stocks they'd already marked BUY/WATCH/REJECTED, leaving
+  // nothing for fillers to backfill from. Now:
+  //   • Strict (★) — keeps decision-log exclusion. ★ stays "fresh signal".
+  //   • Fillers (+) — drops decision-log exclusion. Always shows the top A-grade
+  //     A-grade A-grade A-grade names; decision-log status is rendered as a
+  //     badge on the card so user sees their existing decision in context.
+  //   • Final fallback — if even that produces < 10, top up with B+ stocks
+  //     (which 1101a-h moved many former B/C compounders into). Better to see
+  //     the next best candidates than an empty block.
   const buildMarketTier1 = (mkt: 'IN' | 'US'): TierAction[] => {
     const rows = allRows.filter((r: any) => r._market === mkt);
     const strict = rows
@@ -379,12 +400,24 @@ function buildSyncState(indiaOverride?: any[]): Pick<HomeState, 'tier1' | 'tier2
       const have = new Set(list.map((t: TierAction) => symKey(t.symbol)));
       const fillers = rows
         .filter((r: any) => (r.grade === 'A+' || r.grade === 'A')
-                         && !have.has(symKey(r.symbol))
-                         && !decisions[(r.symbol || '').toUpperCase()])
+                         && !have.has(symKey(r.symbol)))
+        // PATCH 1101r — Decision-log exclusion REMOVED here (was a 4th condition).
+        // Score-rank A/A+ names and let the card show decision-log status as
+        // a badge instead of hiding the row entirely.
         .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
         .slice(0, TIER1_PER_MARKET - list.length)
         .map((r: any) => buildTier(r, false));
       list = [...list, ...fillers];
+    }
+    // PATCH 1101r — Final fallback: B+ top-up if still short of 10.
+    if (list.length < TIER1_PER_MARKET) {
+      const have2 = new Set(list.map((t: TierAction) => symKey(t.symbol)));
+      const bplusFillers = rows
+        .filter((r: any) => r.grade === 'B+' && !have2.has(symKey(r.symbol)))
+        .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
+        .slice(0, TIER1_PER_MARKET - list.length)
+        .map((r: any) => buildTier(r, false));
+      list = [...list, ...bplusFillers];
     }
     return list;
   };
