@@ -486,6 +486,54 @@ export function isCyclicalSector(sector: string): boolean {
   return /METAL|STEEL|IRON|ALUMIN|COPPER|ZINC|CEMENT|MINING|MINERAL|COMMODITY|OIL|GAS|CRUDE|PETRO|SUGAR|COTTON|TEXTILE.*SPIN|FERTILISER|FERTILIZER|CAST.*FORG|FORG.*CAST|SHIPPING|BULK/.test(s);
 }
 
+// ── PATCH 1101c — CYCLICAL/STRUCTURAL 3-WAY TAXONOMY ─────────────────────────
+// Per 1000X Protocol Chapter 11 Upgrade 1 (the doc's explicit framework gap
+// recommendation): every stock should be tagged as one of three categories.
+//   - 'pure_structural':   Anthem, KMC, Vadilal, Lupin — consumer, pharma,
+//                          healthcare, financials, software. Hold-forever DNA.
+//   - 'cyclical_overlay':  Skipper, Atlanta Electricals, KEI, Carraro —
+//                          capex-cycle riding a structural multi-decade demand
+//                          (T&D, grid, EMS, capital goods, defence MFG).
+//                          Cycle-aware exit but worth holding through downcycle.
+//   - 'pure_cyclical':     HZ, HC, Shyam Metalics, IMFA, GE Shipping —
+//                          commodity-tied. Cycle-timed entry and exit.
+//                          Multibagger possible only with cycle timing.
+//
+// Position-sizing and penalty handling differ across categories. The doc says:
+// "Pure structural can be held forever; cyclical-overlay needs cycle-aware
+// exit; pure cyclical needs cycle-timed entry and exit."
+//
+// In the scoring engine this affects two penalties:
+//   1. Revenue CAGR penalty (1101b) — lumpy revenue is expected in
+//      cyclicals; waive fully for pure_cyclical, halve for cyclical_overlay.
+//   2. OPM compression penalty — pricing-power erosion signal is real for
+//      structural, but expected mid-cycle for cyclicals. Skip for
+//      pure_cyclical, halve for cyclical_overlay.
+//
+// See also 500-Bagger §9.2.2: "Adani Enterprises, Apollo Tyres, Adani Power
+// broke out with debt loads, governance concerns, or capital-structure
+// complexities that would have eliminated them from a typical fundamental
+// quality screen. The technical fingerprint was sufficient."
+export type CyclicalClass = 'pure_structural' | 'cyclical_overlay' | 'pure_cyclical';
+
+export function getCyclicalClass(sector: string): CyclicalClass {
+  const s = sector.toUpperCase();
+  // Pure cyclical — commodity-tied, mean-reverting margins, cycle is the trade.
+  if (/METAL|STEEL|IRON|ALUMIN|COPPER|ZINC|MINING|MINERAL|COMMODITY|OIL|GAS|CRUDE|PETRO|REFIN|SUGAR|COTTON|FERTILISER|FERTILIZER|SHIPPING|BULK|FERROUS|NON.*FERROUS|DIVERSIFIED.*METAL|PAPER.*FOREST|JUTE|TOBACCO/.test(s)) {
+    return 'pure_cyclical';
+  }
+  // Cyclical overlay — capex/order-book business riding structural demand.
+  // Skipper (T&D), Atlanta Electricals (substation transformers), KEI (cables),
+  // Carraro (drivetrain), GE Power (grid), Uniparts (off-highway components),
+  // capital goods, EMS, construction, infrastructure, defence manufacturing,
+  // engineering services. These have project lumpiness but multi-decade demand.
+  if (/CAPITAL.*GOOD|HEAVY.*ENGG|MACHINE.*TOOL|POWER.*EQUIP|ELECTRICAL.*EQUIP|EMS|ELECTRONICS.*MFG|ELEC.*COMPONENT|CONSTRUCTION|REALTY|TRANSPORT.*INFRA|RAILWAY|METRO|FREIGHT.*CORR|TRANSPORT.*SERVICE|LOGISTIC|WAREHOU|3PL|AEROSPACE|AERO|DEFENCE|MILITARY|ORDNANCE|INDUSTRIAL.*PRODUCT|INDUSTRIAL.*MFG|ENGINEERING.*SERV|AUTO.*COMPONENT|AUTOMOBILE|TYRE|BEARING|CEMENT|CASTING|FORGING|TEXTILE.*SPIN|CAPITAL.*MARKET|POWER\b|SOLAR|WIND.*POWER|RENEW.*ENERGY|GAS\b|TELECOM.*EQUIP|HEALTHCARE.*EQUIP|MINOR.*MIN|OTHER.*CONST/.test(s)) {
+    return 'cyclical_overlay';
+  }
+  // Default — pure structural compounder DNA.
+  return 'pure_structural';
+}
+
 // ── INDUSTRY TAILWIND ENGINE (Gap 3) ─────────────────────────────────────────
 // Structural industry tailwind score (0-100) based on policy, demand cycle, global shift.
 // Sources: MOSL sector studies, PLI notifications, DPIIT data, RBI credit flows.
@@ -1741,6 +1789,11 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
   // finding that Adani Enterprises / Apollo Tyres / Adani Power broke out with
   // lumpy revenue and still produced megawinner outcomes. The inflection rule
   // is preserved (recent YOY ≥ 25% further halves the residual penalty).
+  // PATCH 1101c — Replace binary `cyclical` half with 3-way classification.
+  // Pure cyclical: waive fully (commodity earnings come in cycles, lumpy CAGR is the business).
+  // Cyclical overlay: halve (project lumpiness on top of structural demand).
+  // Pure structural: full penalty (slow revenue = structurally broken DNA).
+  const cyclicalClass = getCyclicalClass(row.sector);
   if (row.revCagr !== undefined && row.revCagr < 12) {
     const isInflecting = (row.yoySalesGrowth ?? 0) >= 25;
     let basePenalty: number;
@@ -1755,15 +1808,20 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
       basePenalty = 10;
       band = '8–12% (below doc PASS band)';
     }
-    if (cyclical) basePenalty = Math.round(basePenalty / 2);
+    if (cyclicalClass === 'pure_cyclical')     basePenalty = 0;
+    else if (cyclicalClass === 'cyclical_overlay') basePenalty = Math.round(basePenalty / 2);
     if (isInflecting) basePenalty = Math.round(basePenalty / 2);
     if (basePenalty > 0) {
       hardPenalty += basePenalty;
       const tags: string[] = [];
-      if (cyclical) tags.push('cyclical sector → half');
+      if (cyclicalClass === 'pure_cyclical')     tags.push('pure cyclical sector → waived');
+      else if (cyclicalClass === 'cyclical_overlay') tags.push('cyclical overlay → half');
       if (isInflecting) tags.push(`recent YOY ${(row.yoySalesGrowth??0).toFixed(0)}% inflection → half`);
       const tagStr = tags.length ? ` (${tags.join(' · ')})` : '';
       risks.push(`Growth Quality Filter −${basePenalty}: Sales CAGR ${row.revCagr.toFixed(1)}% in ${band}${tagStr} · 1000X Protocol Attribute 5 PASS ≥ 12%`);
+    } else if (cyclicalClass === 'pure_cyclical') {
+      // Surface the waive so the audit panel explains the absence of a penalty.
+      risks.push(`Growth Quality Filter waived: Sales CAGR ${row.revCagr.toFixed(1)}% — pure cyclical sector (commodity earnings come in cycles, lumpy CAGR is expected)`);
     }
   }
 
@@ -1782,8 +1840,26 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
     risks.push(`Hard −10: ROCE fell ${Math.abs(row.roceExpansion).toFixed(0)}pp over 3yr — new capital earning less than legacy (value destruction)`);
   }
   if (row.opmExpansion !== undefined && row.opmExpansion < -6) {
-    hardPenalty += 7;
-    risks.push(`Hard −7: OPM compressed ${Math.abs(row.opmExpansion).toFixed(0)}pp (${row.opm3yr !== undefined ? '3yr' : '1yr'}) — moat eroding, pricing power weakening`);
+    // PATCH 1101c — OPM compression is a "moat eroding" signal for structural
+    // compounders, but expected mid-cycle for cyclicals (margins swing with the
+    // commodity / capex cycle). Per 1000X Protocol Ch 11 Upgrade 1: skip the
+    // moat-erosion penalty entirely for pure cyclicals; halve for cyclical
+    // overlay (project-business margin volatility is normal between award cycles).
+    let opmPenalty = 7;
+    let opmNote = 'moat eroding, pricing power weakening';
+    if (cyclicalClass === 'pure_cyclical') {
+      opmPenalty = 0;
+      opmNote = 'OPM compression expected mid-cycle for pure cyclicals — penalty waived per 1000X Protocol Ch 11 Upgrade 1';
+    } else if (cyclicalClass === 'cyclical_overlay') {
+      opmPenalty = 4;
+      opmNote = 'cyclical overlay (project lumpiness expected) — half penalty';
+    }
+    if (opmPenalty > 0) {
+      hardPenalty += opmPenalty;
+      risks.push(`Hard −${opmPenalty}: OPM compressed ${Math.abs(row.opmExpansion).toFixed(0)}pp (${row.opm3yr !== undefined ? '3yr' : '1yr'}) — ${opmNote}`);
+    } else {
+      risks.push(`OPM compression ${Math.abs(row.opmExpansion).toFixed(0)}pp — ${opmNote}`);
+    }
   }
 
   // ── TECHNICAL GATE (DMA200 enforcement) ─────────────────────────────────────
