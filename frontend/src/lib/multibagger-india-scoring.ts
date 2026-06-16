@@ -1726,19 +1726,44 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
   }
 
   // ── 🚨 GROWTH QUALITY FILTER — 100-bagger base requirement ──────────────────
-  // MOSL 100× study: every enduring 100-bagger had ≥15% revenue CAGR.
-  // Without this base growth rate, compounding to 100× in <20 yrs is mathematically
-  // near-impossible. This is the first filter Warren Buffett / MOSL apply.
-  // Nuance: if recent YOY ≥ 25% (company inflecting), penalty halved — growth may
-  // be emerging even if historical CAGR was low (turnaround / new product).
-  if (row.revCagr !== undefined && row.revCagr < 15) {
+  // PATCH 1101b — Tiered curve replacing the binary < 15% → −30 hammer.
+  // The 1000X Protocol (Attribute 5, §3.6) sets the empirical bar at:
+  //   Pass:       > 12% revenue CAGR for 7 consecutive years
+  //   Strong:     > 15% for 10 years
+  //   Exceptional > 20% for 10+ years
+  // Previous code penalised the doc's PASS band by −30, dragging legitimate
+  // large caps (Grasim, Ather, AMAGI, Zydus) to score 0. New curve:
+  //   ≥ 12% → no penalty (within doc PASS band)
+  //   8–12% → −10 (below pass, not broken)
+  //   4–8%  → −20 (durability concern)
+  //   < 4%  → −30 (structurally broken — likely industry-mature or decelerating)
+  // Cyclical / project-business sectors get half-penalty per 500-Bagger §9.2.2
+  // finding that Adani Enterprises / Apollo Tyres / Adani Power broke out with
+  // lumpy revenue and still produced megawinner outcomes. The inflection rule
+  // is preserved (recent YOY ≥ 25% further halves the residual penalty).
+  if (row.revCagr !== undefined && row.revCagr < 12) {
     const isInflecting = (row.yoySalesGrowth ?? 0) >= 25;
-    if (isInflecting) {
-      hardPenalty += 15;
-      risks.push(`Growth Quality Filter −15: Sales CAGR ${row.revCagr.toFixed(1)}% < 15% (but recent YOY ${(row.yoySalesGrowth??0).toFixed(0)}% suggests inflection — half penalty)`);
+    let basePenalty: number;
+    let band: string;
+    if (row.revCagr < 4) {
+      basePenalty = 30;
+      band = '< 4% (structurally broken)';
+    } else if (row.revCagr < 8) {
+      basePenalty = 20;
+      band = '4–8% (durability concern)';
     } else {
-      hardPenalty += 30;
-      risks.push(`🚨 Growth Quality Filter −30: Sales CAGR ${row.revCagr.toFixed(1)}% < 15% — insufficient base growth for 100-bagger thesis (MOSL: every 100× had ≥15% CAGR)`);
+      basePenalty = 10;
+      band = '8–12% (below doc PASS band)';
+    }
+    if (cyclical) basePenalty = Math.round(basePenalty / 2);
+    if (isInflecting) basePenalty = Math.round(basePenalty / 2);
+    if (basePenalty > 0) {
+      hardPenalty += basePenalty;
+      const tags: string[] = [];
+      if (cyclical) tags.push('cyclical sector → half');
+      if (isInflecting) tags.push(`recent YOY ${(row.yoySalesGrowth??0).toFixed(0)}% inflection → half`);
+      const tagStr = tags.length ? ` (${tags.join(' · ')})` : '';
+      risks.push(`Growth Quality Filter −${basePenalty}: Sales CAGR ${row.revCagr.toFixed(1)}% in ${band}${tagStr} · 1000X Protocol Attribute 5 PASS ≥ 12%`);
     }
   }
 
