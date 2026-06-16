@@ -28,6 +28,14 @@
 
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import Link from 'next/link';
+// PATCH 1101p — Re-score restored multibagger rows on home page. The /multibagger
+// page re-scores on every load (initializer line 5024) so its display reflects
+// the latest scoring formula. The home page was reading the raw localStorage
+// data without re-scoring, so it showed STALE grades — only stocks that were
+// A-grade BEFORE the recent 1101a-h scoring changes appeared in Tier 1, hence
+// the user seeing 2 names instead of 10.
+import { scoreExcelRow as mbScoreIndia, applyForcedRanking as mbApplyRanking } from '@/lib/multibagger-india-scoring';
+import type { ExcelRow as MbIndiaRow } from '@/lib/multibagger-india-scoring';
 // PATCH 0708 — institutional event-attribution engine for the Top Movers panel.
 import {
   attributeMovers,
@@ -295,8 +303,24 @@ function buildSyncState(indiaOverride?: any[]): Pick<HomeState, 'tier1' | 'tier2
   // PATCH 0617 — pull BOTH India AND USA rows so Tier 1/2/3 reflect the full
   // multibagger universe, not just one market. Each row carries a _market tag
   // for the per-card chip + stock-sheet routing.
-  const indiaRaw: any[] = (indiaOverride && indiaOverride.length) ? indiaOverride : (() => {
+  // PATCH 1101p — Re-score on every read so home Tier 1 reflects the LATEST
+  // scoring formula. Before this fix, home was reading raw localStorage with
+  // old (pre-1101a-h) grades — the user saw Tier 1 INDIA (2) instead of (10).
+  const indiaRawSrc: any[] = (indiaOverride && indiaOverride.length) ? indiaOverride : (() => {
     try { return JSON.parse(localStorage.getItem('mb_excel_scored_v2') || '[]') || []; } catch { return []; }
+  })();
+  const indiaRaw: any[] = (() => {
+    if (!indiaRawSrc.length) return [];
+    try {
+      const rescored = indiaRawSrc.map((r: any) => {
+        try { return mbScoreIndia(r as MbIndiaRow); } catch { return r; }
+      });
+      const sorted = rescored.sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0));
+      return mbApplyRanking(sorted as any[]);
+    } catch {
+      // Fall back to raw data if re-scoring throws (e.g., schema mismatch).
+      return indiaRawSrc;
+    }
   })();
   const usaRaw: any[] = (() => {
     try { return JSON.parse(localStorage.getItem('mb_usa_scored_v1') || '[]') || []; } catch { return []; }
@@ -585,10 +609,21 @@ export default function HomeDashboard() {
           .then(j => {
             if (!alive || !j || !j.ok || !j.snapshot) return;
             try {
-              const rows = JSON.parse(j.snapshot);
-              if (Array.isArray(rows) && rows.length) {
-                try { console.log(`[home] restored ${rows.length} India stocks from Railway snapshot`); } catch {}
-                setData((prev: HomeState) => ({ ...prev, ...buildSyncState(rows) }));
+              const rawRows = JSON.parse(j.snapshot);
+              if (Array.isArray(rawRows) && rawRows.length) {
+                try { console.log(`[home] restored ${rawRows.length} India stocks from Railway snapshot`); } catch {}
+                // PATCH 1101p — Re-score rows before passing to buildSyncState
+                // so the latest scoring formula applies (the Railway snapshot
+                // may have been saved when older grades were in effect).
+                let rescored: any[] = rawRows;
+                try {
+                  const arr = rawRows.map((r: any) => {
+                    try { return mbScoreIndia(r as MbIndiaRow); } catch { return r; }
+                  });
+                  const sorted = arr.sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0));
+                  rescored = mbApplyRanking(sorted as any[]);
+                } catch {}
+                setData((prev: HomeState) => ({ ...prev, ...buildSyncState(rescored) }));
                 // Write back DOWN so subsequent loads are fast.
                 try {
                   // Best-effort localStorage mirror — may fail on quota.
