@@ -1037,7 +1037,13 @@ function computeFraudRiskFlags(
       && !(profitCagr!==undefined && profitCagr>50 && cfoToPat>=-0.3)) {
     flags.push({label:`Acquirer-rollup proxy (rev CAGR ${revCagr.toFixed(0)}% · CFO/PAT ${cfoToPat.toFixed(2)})`,severity:'HIGH',source:'fraud:H5-rollup',kind:'STRUCTURAL'});
   }
-  if (!_isFinSector && icr!==undefined && icr<2.0 && de!==undefined && de>1.5) {
+  // PATCH 1101h — H6 ICR+D/E narrowed. The new ICR rule (line ~2400) already
+  // surfaces ICR < 1.5 as CRITICAL and 1.5–2.0 as HIGH on its own. H6 fraud
+  // was double-counting on debt-laden growth (Adani Enterprises pre-breakout
+  // sat at ICR ~1.6, D/E 1.7 — and went on to produce a megawinner per
+  // 500-Bagger §9.2.2). Tighten to require BOTH a fragile ICR (<1.5) AND
+  // very high leverage (D/E > 2.0) — the genuine debt-service-fragile zone.
+  if (!_isFinSector && icr!==undefined && icr<1.5 && de!==undefined && de>2.0) {
     flags.push({label:`ICR ${icr.toFixed(1)} with D/E ${de.toFixed(1)} (debt service fragile)`,severity:'HIGH',source:'fraud:H6-icr-leverage',kind:'STRUCTURAL'});
   }
   // PATCH 1101f — H7 microcap: tightened from < 0.7 to < 0.3. A microcap
@@ -1301,19 +1307,25 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
     if (row.accelSignal === 'ACCELERATING') {
       strengths.push(`Revenue ACCELERATING: +${row.yoySalesGrowth?.toFixed(0)}% vs CAGR ${row.revCagr?.toFixed(0)}% (+${row.revenueAcceleration?.toFixed(0)}pp) — Framework Core Signal`);
     } else if (row.accelSignal === 'DECELERATING') {
-      // PATCH 1101g — Acceleration shield. Revenue decelerating is a HIGH
-      // signal in the abstract, but when the underlying business shows
-      // strong operating leverage (profit growing materially faster than
-      // sales) the deceleration is the maturing-base effect on a still-
-      // compounding company. Downgrade HIGH → MEDIUM when recent op leverage
-      // >= 1.5x OR profit CAGR is materially above revenue CAGR. Keep HIGH
-      // for the pure deceleration case (margins also compressing).
+      // PATCH 1101g — Acceleration shield (op leverage / profit outpacing).
+      // PATCH 1101h — Cyclical shield. For pure_cyclical / cyclical_overlay
+      // sectors, revenue deceleration mid-cycle is the NORM, not a Framework
+      // rejection signal — per 1000X Protocol Ch 11 Upgrade 1 and 500-Bagger
+      // §9.2.2. Pure cyclicals get the flag downgraded to MEDIUM; cyclical
+      // overlays still surface MEDIUM since they ride structural demand.
+      const _cycClass = getCyclicalClass(row.sector);
       const _opLevStrong = (row.recentOpLev ?? 0) >= 1.5;
       const _profitOutpacing = (row.profitCagr ?? 0) > (row.revCagr ?? 0) + 10;
-      const _shield = _opLevStrong || _profitOutpacing;
+      const _isCyclical = _cycClass !== 'pure_structural';
+      const _shield = _opLevStrong || _profitOutpacing || _isCyclical;
       if (_shield) {
-        risks.push(`Revenue DECELERATING: ${row.yoySalesGrowth?.toFixed(0)}% vs CAGR ${row.revCagr?.toFixed(0)}% — but profit growing materially faster (op leverage ${(row.recentOpLev??0).toFixed(1)}x) → softened to MEDIUM`);
-        redFlags.push({ label: `Revenue decelerating (op-leverage shield)`, severity: 'MEDIUM', source: 'Framework', kind: 'CYCLICAL' });
+        const _why = _opLevStrong
+          ? `op leverage ${(row.recentOpLev??0).toFixed(1)}x absorbing revenue plateau`
+          : _profitOutpacing
+            ? `profit CAGR ${(row.profitCagr??0).toFixed(0)}% > rev CAGR ${(row.revCagr??0).toFixed(0)}% + 10pp`
+            : `${_cycClass.replace('_',' ')} — mid-cycle decel expected`;
+        risks.push(`Revenue DECELERATING: ${row.yoySalesGrowth?.toFixed(0)}% vs CAGR ${row.revCagr?.toFixed(0)}% — softened to MEDIUM (${_why})`);
+        redFlags.push({ label: `Revenue decelerating (shield: ${_isCyclical ? 'cyclical' : 'op-leverage'})`, severity: 'MEDIUM', source: 'Framework', kind: 'CYCLICAL' });
       } else {
         risks.push(`Revenue DECELERATING: ${row.yoySalesGrowth?.toFixed(0)}% vs CAGR ${row.revCagr?.toFixed(0)}% (${row.revenueAcceleration?.toFixed(0)}pp) — Framework rejection filter`);
         redFlags.push({ label: `Revenue decelerating`, severity: 'HIGH', source: 'Framework', kind: 'CYCLICAL' });
