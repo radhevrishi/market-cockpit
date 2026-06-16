@@ -4641,29 +4641,85 @@ function mbIdbOpen(): Promise<IDBDatabase> {
     } catch (e) { reject(e); }
   });
 }
+// PATCH 1101i — Persistence primitives hardened. The outer `.catch(() => {})`
+// on mbIdbSet was swallowing all IDB write failures and resolving the Promise
+// to undefined — meaning callers' `.then()` would fire even when the write
+// had silently failed. That's exactly why META was being written without
+// IDB data (the "Saved data lost (N stocks)" banner root cause).
+//
+// Now: writes that fail REJECT the Promise so callers can branch correctly.
+// Also: console.warn on failure so the user (and us) can see what happened
+// in DevTools instead of silent loss.
 function mbIdbSet(key: string, val: string): Promise<void> {
   return mbIdbOpen().then(db => new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(MB_IDB_STORE, 'readwrite');
-    tx.objectStore(MB_IDB_STORE).put(val, key);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  })).catch(() => {});
+    try {
+      const tx = db.transaction(MB_IDB_STORE, 'readwrite');
+      tx.objectStore(MB_IDB_STORE).put(val, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => {
+        try { console.warn('[mb-idb] write tx error', key, tx.error); } catch {}
+        reject(tx.error || new Error('IDB tx error'));
+      };
+      tx.onabort = () => {
+        try { console.warn('[mb-idb] write tx abort', key, tx.error); } catch {}
+        reject(tx.error || new Error('IDB tx abort'));
+      };
+    } catch (e) {
+      try { console.warn('[mb-idb] write threw', key, e); } catch {}
+      reject(e);
+    }
+  })).catch((e) => {
+    // Surface the failure to the caller so they can stop writing META.
+    try { console.warn('[mb-idb] write failed (rethrowing)', key, e); } catch {}
+    throw e;
+  });
 }
 function mbIdbGet(key: string): Promise<string | null> {
-  return mbIdbOpen().then(db => new Promise<string | null>((resolve) => {
-    const tx = db.transaction(MB_IDB_STORE, 'readonly');
-    const r = tx.objectStore(MB_IDB_STORE).get(key);
-    r.onsuccess = () => resolve((r.result as string) ?? null);
-    r.onerror = () => resolve(null);
-  })).catch(() => null);
+  return mbIdbOpen().then(db => new Promise<string | null>((resolve, reject) => {
+    try {
+      const tx = db.transaction(MB_IDB_STORE, 'readonly');
+      const r = tx.objectStore(MB_IDB_STORE).get(key);
+      r.onsuccess = () => resolve((r.result as string) ?? null);
+      r.onerror = () => {
+        try { console.warn('[mb-idb] read request error', key, r.error); } catch {}
+        reject(r.error || new Error('IDB read error'));
+      };
+    } catch (e) {
+      reject(e);
+    }
+  })).catch((e) => {
+    // Read failure → return null so caller treats as "no data", but log it
+    // so future debugging of empty hydration is possible. Differs from write:
+    // a failed read isn't catastrophic, but we don't want to silently lie
+    // either when investigating the orphan-META mystery.
+    try { console.warn('[mb-idb] read failed → returning null', key, e); } catch {}
+    return null;
+  });
 }
 function mbIdbDel(key: string): Promise<void> {
   return mbIdbOpen().then(db => new Promise<void>((resolve) => {
-    const tx = db.transaction(MB_IDB_STORE, 'readwrite');
-    tx.objectStore(MB_IDB_STORE).delete(key);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => resolve();
+    try {
+      const tx = db.transaction(MB_IDB_STORE, 'readwrite');
+      tx.objectStore(MB_IDB_STORE).delete(key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    } catch { resolve(); }
   })).catch(() => {});
+}
+
+// PATCH 1101i — Resilient IDB read with retry. The browser's IDB layer can
+// be slow to initialize on cold start or after heavy other-tab activity, so
+// a single read attempt occasionally returns null even when data exists.
+// Retry up to 4 times with backoff before giving up.
+async function mbIdbGetWithRetry(key: string, retries = 4, delayMs = 250): Promise<string | null> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const raw = await mbIdbGet(key);
+      if (raw && raw !== '[]') return raw;
+    } catch {}
+    if (i < retries - 1) await new Promise(r => setTimeout(r, delayMs * (i + 1)));
+  }
+  return null;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -4832,23 +4888,36 @@ export default function MultibaggerPage() {
     } catch {}
     return [];
   });
-  // PATCH (assistant): persist India multibagger dataset on every change; initializer above already restores from STORAGE_KEY
-  useEffect(() => {
-    try { if (Array.isArray(excelRows) && excelRows.length) { const __mb = JSON.stringify(excelRows); mbIdbSet('mb_scored', __mb); try { localStorage.setItem(STORAGE_KEY, __mb); } catch {} } } catch {}
-  }, [excelRows]);
+  // PATCH 1101i — Removed the redundant background-write effect that fired on
+  // every excelRows change. setExcelRows (below) is the single writer now —
+  // it awaits IDB success before writing META, which is the only way to
+  // prevent orphan-META "Saved data lost" banners. The old effect wrote IDB
+  // without awaiting and ignored failures, contributing to the bug.
 
-  // PATCH: hydrate India dataset from IndexedDB on mount (survives beyond localStorage ~5MB quota)
+  // PATCH 1101i — Hydrate India dataset from IndexedDB on mount with retries
+  // and re-scoring. Previously a single mbIdbGet → if it returned null
+  // (transient IDB slow-init / cold-cache) we silently treated as "no data"
+  // and the orphan-META banner fired even though IDB actually had data.
   useEffect(() => {
     let alive = true;
-    mbIdbGet('mb_scored').then((raw) => {
+    (async () => {
+      const raw = await mbIdbGetWithRetry('mb_scored');
       if (!alive || !raw) return;
       try {
         const parsed = JSON.parse(raw) as ExcelResult[];
         if (Array.isArray(parsed) && parsed.length) {
-          setExcelRowsState((prev) => (prev && prev.length ? prev : applyForcedRanking(parsed)));
+          // Re-score on hydration so engine updates (1101a–h) apply without
+          // needing re-upload. Same as the localStorage initializer does.
+          const rescored = parsed.map(r => {
+            try { return scoreExcelRow(r as unknown as ExcelRow); } catch { return r; }
+          });
+          const sorted = rescored.sort((a, b) => b.score - a.score);
+          setExcelRowsState((prev) => (prev && prev.length ? prev : applyForcedRanking(sorted)));
         }
-      } catch {}
-    });
+      } catch (e) {
+        try { console.warn('[mb-idb] hydrate parse failed', e); } catch {}
+      }
+    })();
     return () => { alive = false; };
   }, []);
 
@@ -4856,14 +4925,16 @@ export default function MultibaggerPage() {
   function setExcelRows(rows: ExcelResult[]) {
     const ranked = applyForcedRanking(rows); // sort already done by caller
     setExcelRowsState(ranked);
-    // PATCH 1099 — IDB is the source of truth (essentially unlimited storage).
-    // Write IDB FIRST; only write META and broadcast AFTER IDB confirms. If
-    // IDB write fails, do NOT write META — that's what produced the "Saved
-    // data lost (N stocks)" phantom banner: META survived (it's small) but
-    // the actual data didn't, and the banner correctly fired but on data
-    // that was never really persisted.
+    // PATCH 1099 + 1101i — IDB is the source of truth (essentially unlimited
+    // storage). Write IDB FIRST; only write META AFTER IDB confirms. With
+    // 1101i the mbIdbSet primitive now properly rejects on failure (instead
+    // of swallowing the error and falsely resolving), so the .then() branch
+    // below ACTUALLY only fires on successful writes. Previously, an IDB
+    // failure would silently resolve, META would write, localStorage might
+    // also fail, and the next session would show orphan META + no data.
     const __mbR = JSON.stringify(ranked);
     mbIdbSet('mb_scored', __mbR).then(() => {
+      // IDB write confirmed succeeded.
       try { localStorage.setItem(STORAGE_KEY, __mbR); } catch {}
       try {
         localStorage.setItem(STORAGE_META, JSON.stringify({
@@ -4875,10 +4946,30 @@ export default function MultibaggerPage() {
       // Signals, Earnings Scan) refresh their derived universes immediately
       // after a fresh India upload.
       try { window.dispatchEvent(new CustomEvent('mb-upload:updated', { detail: { market: 'India', count: ranked.length } })); } catch {}
-    }).catch(() => {
-      // IDB write failed — last-ditch localStorage attempt, but DO NOT write
-      // META (would create the same orphan-META condition this patch fixes).
-      try { localStorage.setItem(STORAGE_KEY, __mbR); } catch {}
+    }).catch((e) => {
+      // PATCH 1101i — IDB write FAILED (genuinely now, not swallowed). Try
+      // localStorage as a fallback for small datasets, but DO NOT write META
+      // unless that localStorage write succeeds with the actual data. This
+      // is the second line of defence against the orphan-META banner.
+      try { console.warn('[mb-persistence] IDB write failed, attempting localStorage fallback', e); } catch {}
+      let localOk = false;
+      try { localStorage.setItem(STORAGE_KEY, __mbR); localOk = true; } catch (lsErr) {
+        try { console.warn('[mb-persistence] localStorage fallback ALSO failed — data NOT persisted', lsErr); } catch {}
+      }
+      if (localOk) {
+        try {
+          localStorage.setItem(STORAGE_META, JSON.stringify({
+            savedAt: new Date().toISOString(),
+            count: ranked.length,
+            fallback: 'localStorage-only',
+          }));
+        } catch {}
+      } else {
+        // Both writes failed — surface a clear warning to the user.
+        try {
+          alert(`⚠ Save failed: your ${ranked.length}-stock dataset couldn't be persisted (IndexedDB unavailable + localStorage quota exceeded). The data is live in this session but will be lost on refresh. Consider exporting via the "Download Screener CSV" button.`);
+        } catch {}
+      }
       try { window.dispatchEvent(new CustomEvent('mb-upload:updated', { detail: { market: 'India', count: ranked.length } })); } catch {}
     });
   }
