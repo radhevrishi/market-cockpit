@@ -1023,10 +1023,18 @@ function computeFraudRiskFlags(
   if (!_isFinSector && !_isRetailSector && debtorDays!==undefined && debtorDays>120) {
     flags.push({label:`Debtor days ${debtorDays.toFixed(0)} (>120 — receivable buildup / channel stuffing risk)`,severity:'HIGH',source:'fraud:H4-debtor-buildup',kind:'STRUCTURAL'});
   }
-  // PATCH 1101f — H5 rollup: tightened from < 0.8 to < 0.3 since 0.3–0.8 is
-  // now healthy. A real rollup-proxy fraud needs rev surge AND meaningfully
-  // poor cash conversion, not just CFO/PAT below the strong-marker.
-  if (!_isFinSector && revCagr!==undefined && revCagr>35 && cfoToPat!==undefined && cfoToPat<0.3) {
+  // PATCH 1101g — H5 rollup: further softened to require CFO/PAT < 0 (true
+  // WC stretch, not just thin). Per 500-Bagger §9.2.2: "Adani Enterprises,
+  // Apollo Tyres, Adani Power broke out with debt loads, governance concerns,
+  // or capital-structure complexities that would have eliminated them from a
+  // typical fundamental quality screen. The technical fingerprint was
+  // sufficient." A growing business with CFO/PAT 0.25 and rev CAGR 38% is
+  // far more likely an early-stage compounder catching working capital up to
+  // revenue than a rollup-acquirer fraud. Add an additional shield: when
+  // profit CAGR > 50% (strong operating leverage), waive even at CFO/PAT < 0
+  // unless it's also < −0.3 (in which case C1 will fire separately).
+  if (!_isFinSector && revCagr!==undefined && revCagr>35 && cfoToPat!==undefined && cfoToPat<0
+      && !(profitCagr!==undefined && profitCagr>50 && cfoToPat>=-0.3)) {
     flags.push({label:`Acquirer-rollup proxy (rev CAGR ${revCagr.toFixed(0)}% · CFO/PAT ${cfoToPat.toFixed(2)})`,severity:'HIGH',source:'fraud:H5-rollup',kind:'STRUCTURAL'});
   }
   if (!_isFinSector && icr!==undefined && icr<2.0 && de!==undefined && de>1.5) {
@@ -1293,8 +1301,23 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
     if (row.accelSignal === 'ACCELERATING') {
       strengths.push(`Revenue ACCELERATING: +${row.yoySalesGrowth?.toFixed(0)}% vs CAGR ${row.revCagr?.toFixed(0)}% (+${row.revenueAcceleration?.toFixed(0)}pp) — Framework Core Signal`);
     } else if (row.accelSignal === 'DECELERATING') {
-      risks.push(`Revenue DECELERATING: ${row.yoySalesGrowth?.toFixed(0)}% vs CAGR ${row.revCagr?.toFixed(0)}% (${row.revenueAcceleration?.toFixed(0)}pp) — Framework rejection filter`);
-      redFlags.push({ label: `Revenue decelerating`, severity: 'HIGH', source: 'Framework', kind: 'CYCLICAL' });
+      // PATCH 1101g — Acceleration shield. Revenue decelerating is a HIGH
+      // signal in the abstract, but when the underlying business shows
+      // strong operating leverage (profit growing materially faster than
+      // sales) the deceleration is the maturing-base effect on a still-
+      // compounding company. Downgrade HIGH → MEDIUM when recent op leverage
+      // >= 1.5x OR profit CAGR is materially above revenue CAGR. Keep HIGH
+      // for the pure deceleration case (margins also compressing).
+      const _opLevStrong = (row.recentOpLev ?? 0) >= 1.5;
+      const _profitOutpacing = (row.profitCagr ?? 0) > (row.revCagr ?? 0) + 10;
+      const _shield = _opLevStrong || _profitOutpacing;
+      if (_shield) {
+        risks.push(`Revenue DECELERATING: ${row.yoySalesGrowth?.toFixed(0)}% vs CAGR ${row.revCagr?.toFixed(0)}% — but profit growing materially faster (op leverage ${(row.recentOpLev??0).toFixed(1)}x) → softened to MEDIUM`);
+        redFlags.push({ label: `Revenue decelerating (op-leverage shield)`, severity: 'MEDIUM', source: 'Framework', kind: 'CYCLICAL' });
+      } else {
+        risks.push(`Revenue DECELERATING: ${row.yoySalesGrowth?.toFixed(0)}% vs CAGR ${row.revCagr?.toFixed(0)}% (${row.revenueAcceleration?.toFixed(0)}pp) — Framework rejection filter`);
+        redFlags.push({ label: `Revenue decelerating`, severity: 'HIGH', source: 'Framework', kind: 'CYCLICAL' });
+      }
     }
   }
   // FIX #2+#3: Operating leverage as primary scored input in acceleration pillar
@@ -2391,15 +2414,25 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
   // coverage stress signal.
   const _isFinICR = /bank|insurance|finance|capital markets|asset management|nbfc|reit|invit/.test((row.sector||'').toLowerCase());
   if (typeof row.interestCoverage === 'number' && row.interestCoverage > 0 && !_isFinICR) {
+    // PATCH 1101g — ICR thresholds widened. < 3 HIGH was firing on healthy
+    // mid-cycle growth companies (Bajaj Finance early-stage ICRs ran 2–4).
+    // Standard institutional bands: <1.5 distress, 1.5–2 stress, 2–2.5
+    // manageable-but-watch (MEDIUM), >2.5 fine. Aligns with 500-Bagger §9.2.2
+    // tolerance for leveraged compounders.
     if (row.interestCoverage < 1.5) {
       redFlags.push({
         label: `ICR ${row.interestCoverage.toFixed(1)}× — distress`,
         severity: 'CRITICAL', source: 'Leverage', kind: 'STRUCTURAL',
       });
-    } else if (row.interestCoverage < 3) {
+    } else if (row.interestCoverage < 2.0) {
       redFlags.push({
         label: `ICR ${row.interestCoverage.toFixed(1)}× — leverage tight`,
         severity: 'HIGH', source: 'Leverage', kind: 'STRUCTURAL',
+      });
+    } else if (row.interestCoverage < 2.5) {
+      redFlags.push({
+        label: `ICR ${row.interestCoverage.toFixed(1)}× — watchlist (manageable but thin)`,
+        severity: 'MEDIUM', source: 'Leverage', kind: 'STRUCTURAL',
       });
     } else if (row.interestCoverage > 15) {
       reratingBonus += 2;
