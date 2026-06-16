@@ -5145,16 +5145,31 @@ export default function MultibaggerPage() {
       // Signals, Earnings Scan) refresh their derived universes immediately
       // after a fresh India upload.
       try { window.dispatchEvent(new CustomEvent('mb-upload:updated', { detail: { market: 'India', count: ranked.length } })); } catch {}
-    }).catch((e) => {
+    }).catch(async (e) => {
       // PATCH 1101i — IDB write FAILED (genuinely now, not swallowed). Try
       // localStorage as a fallback for small datasets, but DO NOT write META
-      // unless that localStorage write succeeds with the actual data. This
-      // is the second line of defence against the orphan-META banner.
-      try { console.warn('[mb-persistence] IDB write failed, attempting localStorage fallback', e); } catch {}
+      // unless that localStorage write succeeds with the actual data.
+      // PATCH 1101n — CRITICAL: also attempt the server save in this path.
+      // Previously the server-save call only lived in the .then() branch, so
+      // when local writes failed, the user lost their data even though the
+      // server backup could have saved it. Now we try ALL three (IDB-was-
+      // already-tried, localStorage, server) and only alert if literally
+      // every layer failed. Also: log the actual JSON size so the user can
+      // see how big their dataset has gotten.
+      const sizeMB = (__mbR.length / 1024 / 1024).toFixed(2);
+      try { console.warn(`[mb-persistence] IDB write failed (${sizeMB}MB), trying fallbacks`, e); } catch {}
       let localOk = false;
       try { localStorage.setItem(STORAGE_KEY, __mbR); localOk = true; } catch (lsErr) {
-        try { console.warn('[mb-persistence] localStorage fallback ALSO failed — data NOT persisted', lsErr); } catch {}
+        try { console.warn('[mb-persistence] localStorage also failed', lsErr); } catch {}
       }
+      // Server save — this is the key 1101n fix. Try regardless of local state.
+      try { localStorage.setItem('mb_server_save_status', 'saving'); window.dispatchEvent(new CustomEvent('mb-cloud-save:status', { detail: 'saving' })); } catch {}
+      const serverOk = await mbServerSnapshotSave(__mbR, ranked.length, 'IN');
+      try {
+        localStorage.setItem('mb_server_save_status', serverOk ? 'ok' : 'failed');
+        if (serverOk) localStorage.setItem('mb_server_save_at', new Date().toISOString());
+        window.dispatchEvent(new CustomEvent('mb-cloud-save:status', { detail: serverOk ? 'ok' : 'failed' }));
+      } catch {}
       if (localOk) {
         try {
           localStorage.setItem(STORAGE_META, JSON.stringify({
@@ -5163,11 +5178,14 @@ export default function MultibaggerPage() {
             fallback: 'localStorage-only',
           }));
         } catch {}
-      } else {
-        // Both writes failed — surface a clear warning to the user.
+      }
+      // Only alert if EVERY persistence layer failed.
+      if (!localOk && !serverOk) {
         try {
-          alert(`⚠ Save failed: your ${ranked.length}-stock dataset couldn't be persisted (IndexedDB unavailable + localStorage quota exceeded). The data is live in this session but will be lost on refresh. Consider exporting via the "Download Screener CSV" button.`);
+          alert(`⚠ Save failed across all layers (${sizeMB}MB):\n• IndexedDB: failed\n• localStorage: quota exceeded\n• Railway cloud: unreachable\n\nYour data is live in this session but will be lost on refresh. Use "Download Screener CSV" to export, or click "Backup now" once your connection returns.`);
         } catch {}
+      } else if (serverOk && !localOk) {
+        try { console.log('[mb-persistence] Local writes failed but server backup succeeded — data is safe.'); } catch {}
       }
       try { window.dispatchEvent(new CustomEvent('mb-upload:updated', { detail: { market: 'India', count: ranked.length } })); } catch {}
     });
