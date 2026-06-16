@@ -869,10 +869,17 @@ export function applyForcedRanking(results: ExcelResult[]): ExcelResult[] {
     // These caps cannot be bypassed by ANY prior step (rank, good rerate, bucket override).
     // Order: CFO → D/E → MoS → profitAccel (each can only lower, never raise)
 
-    // CFO/PAT < 0.8 → max B+ (earnings quality too weak for A-tier conviction)
-    // Note: undefined cfoToPat is treated as unknown, so cap does NOT fire (data gap ≠ bad quality)
-    if (r.cfoToPat !== undefined && r.cfoToPat >= 0 && r.cfoToPat < 0.8) {
+    // PATCH 1101f — Grade cap revised. Per user spec, 0.3–0.8 CFO/PAT is
+    // "healthy / mild positive", not weak. Restrict the A-tier cap to the
+    // 0–0.3 acceptable/watchlist band; preserve full A+/A eligibility for
+    // 0.3+ businesses. Note: undefined cfoToPat is treated as unknown, so
+    // cap does NOT fire (data gap ≠ bad quality).
+    if (r.cfoToPat !== undefined && r.cfoToPat >= 0 && r.cfoToPat < 0.3) {
       if (grade === 'A+' || grade === 'A') grade = 'B+';
+    }
+    // Negative CFO/PAT — never A-tier (regardless of band depth).
+    if (r.cfoToPat !== undefined && r.cfoToPat < 0) {
+      if (grade === 'A+' || grade === 'A' || grade === 'B+') grade = 'B';
     }
 
     // D/E > 1.0 → max B (leverage risk incompatible with 100-bagger profile)
@@ -977,7 +984,11 @@ function computeFraudRiskFlags(
   const yoySales=row.yoySalesGrowth, yoyProfit=row.yoyProfitGrowth, roce=row.roce, evEbitda=row.evEbitda;
   const fired: Record<string, boolean> = {};
   // ── CRITICAL (each caps composite at 38) ──
-  if (!_isFinSector && cfoToPat!==undefined && cfoToPat<0.5 && profitCagr!==undefined && profitCagr>15 && fcf!==undefined && fcf<0) {
+  // PATCH 1101f — CFO/PAT fraud threshold raised from < 0.5 to < −0.3 per
+  // user spec. 0.5–0.8 is now treated as healthy (mild positive), 0–0.3 is
+  // acceptable/watchlist, −0.3–0 is WC stretch (penalty but no fraud flag),
+  // and only < −0.3 is structurally suspect enough to flag as CRITICAL fraud.
+  if (!_isFinSector && cfoToPat!==undefined && cfoToPat<-0.3 && profitCagr!==undefined && profitCagr>15 && fcf!==undefined && fcf<0) {
     flags.push({label:`Earnings without cash (CFO/PAT ${cfoToPat.toFixed(2)} · profit CAGR ${profitCagr.toFixed(0)}% · FCF negative)`,severity:'CRITICAL',source:'fraud:C1-earnings-without-cash',kind:'STRUCTURAL'}); fired['C1']=true;
   }
   if (pledge!==undefined && pledge>50 && ((de!==undefined && de>1.5) || (dProm!==undefined && dProm<-2))) {
@@ -996,7 +1007,11 @@ function computeFraudRiskFlags(
     flags.push({label:`Banking NPA proxy (financial sector · Δpromoter ${dProm.toFixed(1)}pp at PE ${pe.toFixed(0)} · only ${pctFrom52w.toFixed(0)}% off high)`,severity:'CRITICAL',source:'fraud:C6-banking-npa-proxy',kind:'STRUCTURAL'}); fired['C6']=true;
   }
   // ── HIGH STRUCTURAL (cap at 60 single / 48 double) ──
-  if (!_isFinSector && cfoToPat!==undefined && cfoToPat>=0.5 && cfoToPat<0.8 && profitCagr!==undefined && profitCagr>20) {
+  // PATCH 1101f — H1 was firing for CFO/PAT 0.5–0.8 with high profit CAGR,
+  // but user's new band puts 0.3–0.8 in the "healthy" zone. Narrow the band
+  // to fire only when CFO/PAT is in the genuinely concerning 0–0.3 range
+  // (acceptable/watchlist) AND profit CAGR is high (real divergence signal).
+  if (!_isFinSector && cfoToPat!==undefined && cfoToPat>=0 && cfoToPat<0.3 && profitCagr!==undefined && profitCagr>20) {
     flags.push({label:`CFO/PAT ${cfoToPat.toFixed(2)} below profit CAGR ${profitCagr.toFixed(0)}% — cash conversion gap`,severity:'HIGH',source:'fraud:H1-cfo-gap',kind:'STRUCTURAL'});
   }
   if (pledge!==undefined && pledge>=25 && pledge<=50) {
@@ -1008,18 +1023,30 @@ function computeFraudRiskFlags(
   if (!_isFinSector && !_isRetailSector && debtorDays!==undefined && debtorDays>120) {
     flags.push({label:`Debtor days ${debtorDays.toFixed(0)} (>120 — receivable buildup / channel stuffing risk)`,severity:'HIGH',source:'fraud:H4-debtor-buildup',kind:'STRUCTURAL'});
   }
-  if (!_isFinSector && revCagr!==undefined && revCagr>35 && cfoToPat!==undefined && cfoToPat<0.8) {
+  // PATCH 1101f — H5 rollup: tightened from < 0.8 to < 0.3 since 0.3–0.8 is
+  // now healthy. A real rollup-proxy fraud needs rev surge AND meaningfully
+  // poor cash conversion, not just CFO/PAT below the strong-marker.
+  if (!_isFinSector && revCagr!==undefined && revCagr>35 && cfoToPat!==undefined && cfoToPat<0.3) {
     flags.push({label:`Acquirer-rollup proxy (rev CAGR ${revCagr.toFixed(0)}% · CFO/PAT ${cfoToPat.toFixed(2)})`,severity:'HIGH',source:'fraud:H5-rollup',kind:'STRUCTURAL'});
   }
   if (!_isFinSector && icr!==undefined && icr<2.0 && de!==undefined && de>1.5) {
     flags.push({label:`ICR ${icr.toFixed(1)} with D/E ${de.toFixed(1)} (debt service fragile)`,severity:'HIGH',source:'fraud:H6-icr-leverage',kind:'STRUCTURAL'});
   }
-  if (!_isFinSector && mcap!==undefined && mcap<3000 && yoySales!==undefined && yoySales>60 && cfoToPat!==undefined && cfoToPat<0.7) {
+  // PATCH 1101f — H7 microcap: tightened from < 0.7 to < 0.3. A microcap
+  // growing 60%+ YoY with CFO/PAT 0.4 is doing fine — it has aggressive
+  // growth and most of it is converting to cash. Only flag when CFO/PAT
+  // is in the watchlist band (< 0.3).
+  if (!_isFinSector && mcap!==undefined && mcap<3000 && yoySales!==undefined && yoySales>60 && cfoToPat!==undefined && cfoToPat<0.3) {
     flags.push({label:`Microcap aggressive growth without cash (mcap ₹${mcap.toFixed(0)}Cr · YoY sales ${yoySales.toFixed(0)}% · CFO/PAT ${cfoToPat.toFixed(2)})`,severity:'HIGH',source:'fraud:H7-microcap-growth',kind:'STRUCTURAL'});
   }
   // ── MEDIUM (−5 each via existing penalty layer) ──
-  if (cfoToPat!==undefined && cfoToPat>=0.8 && cfoToPat<1.0 && yoyProfit!==undefined && yoyProfit>40) {
-    flags.push({label:`CFO/PAT ${cfoToPat.toFixed(2)} with YoY profit ${yoyProfit.toFixed(0)}% (mild cash gap)`,severity:'MEDIUM',source:'fraud:M1-mild-cash-gap'});
+  // PATCH 1101f — M1 retired: per user spec, CFO/PAT ≥ 0.8 is "full marks".
+  // The mild-cash-gap medium flag at 0.8–1.0 with YoY profit > 40% is no
+  // longer surfaced because the band is now considered healthy. Replaced
+  // with a narrower 0.3–0.6 + extreme YoY profit signal (real cash gap on
+  // a still-acceptable cash-conversion business).
+  if (cfoToPat!==undefined && cfoToPat>=0.3 && cfoToPat<0.6 && yoyProfit!==undefined && yoyProfit>50) {
+    flags.push({label:`CFO/PAT ${cfoToPat.toFixed(2)} with YoY profit ${yoyProfit.toFixed(0)}% (mild cash gap on still-acceptable conversion)`,severity:'MEDIUM',source:'fraud:M1-mild-cash-gap'});
   }
   if (peg!==undefined && peg>5) {
     flags.push({label:`PEG ${peg.toFixed(1)} (>5 — valuation detached from growth)`,severity:'MEDIUM',source:'fraud:M2-peg-extreme'});
@@ -1091,7 +1118,20 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
   if (row.roe!==undefined)  { qualS+=sv(row.roe,[12,18,26]); qualC++; }
   if (row.opm!==undefined)  { qualS+=sv(row.opm,b.opm); qualC++; }
   if (row.cfoToPat!==undefined) {
-    const s = row.cfoToPat>=1.0?90:row.cfoToPat>=0.8?78:row.cfoToPat>=0.5?55:row.cfoToPat>=0?32:15;
+    // PATCH 1101f — Quality pillar score remapped to the user's 5-band scale:
+    //   > 1.0          → 92  (exceptional)
+    //   0.8 – 1.0      → 82  (full marks)
+    //   0.3 – 0.8      → 65  (healthy / mild positive)
+    //   0   – 0.3      → 38  (acceptable / watchlist)
+    //   −0.3 – 0       → 18  (WC stretch)
+    //   < −0.3         → 5   (structural)
+    const c = row.cfoToPat;
+    const s = c >= 1.0 ? 92
+            : c >= 0.8 ? 82
+            : c >= 0.3 ? 65
+            : c >= 0   ? 38
+            : c >= -0.3 ? 18
+            : 5;
     qualS+=s; qualC++;
     if (row.cfoToPat>=1.0 && !_dnaWillLikelyFire) strengths.push(`CFO/PAT ${row.cfoToPat.toFixed(2)}x — excellent earnings quality`); // PATCH 0717
     if (row.cfoToPat<0) {
@@ -1669,14 +1709,43 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
       risks.push(`Ownership vacuum −10: Promoter ${row.promoter.toFixed(1)}% + FII+DII ${fiiDii.toFixed(0)}% — no meaningful ownership anchor`);
     }
   }
-  // Fix 2: DOUBLE PENALTY on poor cash conversion.
-  // CFO/PAT < 0.5 = profit is largely paper — major red flag for compounders.
-  if (row.cfoToPat !== undefined && row.cfoToPat < 0.5 && row.cfoToPat >= 0) {
-    hardPenalty += 20; // doubled from 10
-    risks.push(`Hard −20: CFO/PAT ${row.cfoToPat.toFixed(2)}x < 0.5 — severely poor cash conversion (profit mostly paper)`);
-  } else if (row.cfoToPat !== undefined && row.cfoToPat < cfoThreshold && row.cfoToPat >= 0) {
-    hardPenalty += 10;
-    risks.push(`Hard −10: CFO/PAT ${row.cfoToPat.toFixed(2)}x < ${cfoThreshold}`);
+  // PATCH 1101f — CFO/PAT graduated band scoring (user spec). Replaces the
+  // binary < 0.5 → −20 cliff with a 5-band scale. Many legitimate growth
+  // companies sit in the 0.3–0.8 range and were unfairly hammered.
+  //
+  //   > 0.8         → full marks, no penalty (excellent cash conversion)
+  //   0.3 – 0.8     → healthy / mild positive (no penalty; gives small bonus
+  //                   elsewhere via pillar scoring)
+  //   0   – 0.3     → acceptable / watchlist (small −5)
+  //   −0.3 – 0      → working-capital stretch (moderate −12, no fraud flag)
+  //   < −0.3        → structural concern (heavy −25, fraud flag also fires)
+  //
+  // The pre-existing sector-threshold band is preserved as a soft overlay only
+  // when CFO/PAT is positive but below the sector p25, to keep the cyclical
+  // sector signal intact without double-stacking with the new band penalties.
+  if (row.cfoToPat !== undefined) {
+    const c = row.cfoToPat;
+    if (c > 0.8) {
+      // full marks — no penalty
+    } else if (c >= 0.3) {
+      // healthy band — no penalty
+    } else if (c >= 0) {
+      hardPenalty += 5;
+      risks.push(`CFO/PAT −5: ${c.toFixed(2)}x in 0–0.3 acceptable/watchlist band — cash conversion thin but not broken`);
+    } else if (c >= -0.3) {
+      hardPenalty += 12;
+      risks.push(`CFO/PAT −12: ${c.toFixed(2)}x in −0.3–0 WC-stretch band — working capital draining cash (no fraud flag)`);
+    } else {
+      hardPenalty += 25;
+      risks.push(`CFO/PAT −25: ${c.toFixed(2)}x < −0.3 — structural concern, profit not converting to cash`);
+    }
+    // Sector-threshold overlay — only fire when in the healthy band but below
+    // sector p25 (e.g. cyclical sector with lower benchmark). Avoids stacking
+    // on the band penalties above.
+    if (c >= 0.3 && c < cfoThreshold) {
+      hardPenalty += 5;
+      risks.push(`Sector overlay −5: CFO/PAT ${c.toFixed(2)}x below sector p25 ${cfoThreshold} (still in user-defined healthy band)`);
+    }
   }
   if (row.de !== undefined && row.de > deThreshold) {
     hardPenalty += 10;
