@@ -1006,6 +1006,23 @@ function computeFraudRiskFlags(
   if (_isFinSector && dProm!==undefined && dProm<-3 && pe!==undefined && pe<15 && pctFrom52w!==undefined && pctFrom52w>-50) {
     flags.push({label:`Banking NPA proxy (financial sector · Δpromoter ${dProm.toFixed(1)}pp at PE ${pe.toFixed(0)} · only ${pctFrom52w.toFixed(0)}% off high)`,severity:'CRITICAL',source:'fraud:C6-banking-npa-proxy',kind:'STRUCTURAL'}); fired['C6']=true;
   }
+  // PATCH 1101j — C7: Revenue-inflation archetype (Rajesh Exports / commodity
+  // operator pattern). MarketSmith India (Jun 2026) flagged the SEBI interim
+  // order on Rajesh Exports for allegedly inflated revenue of ₹15.15 lakh
+  // crore FY21–FY25. The structural signature of this archetype:
+  //   • Large market cap (> ₹10,000 Cr) — size becomes implicit credibility
+  //   • Razor-thin OPM (< 5%) — commodity/trader margins
+  //   • Cash conversion gap (CFO/PAT < 0.5) — revenue ≠ real cash
+  //   • Receivable bloat (debtor days > 90) — counterparties cycling
+  // All four must fire together to trip C7. This is intentionally narrow
+  // so it doesn't false-positive on genuine low-margin distributors or
+  // commodity traders (they typically have CFO/PAT close to 1).
+  if (!_isFinSector && mcap!==undefined && mcap>10000
+      && row.opm!==undefined && row.opm<5
+      && cfoToPat!==undefined && cfoToPat<0.5
+      && debtorDays!==undefined && debtorDays>90) {
+    flags.push({label:`Revenue-inflation archetype (mcap ₹${(mcap/1000).toFixed(0)}k Cr · OPM ${row.opm.toFixed(1)}% · CFO/PAT ${cfoToPat.toFixed(2)} · debtor days ${debtorDays.toFixed(0)}) — Rajesh Exports / commodity-operator pattern per MarketSmith India Jun 2026`,severity:'CRITICAL',source:'fraud:C7-revenue-inflation-archetype',kind:'STRUCTURAL'}); fired['C7']=true;
+  }
   // ── HIGH STRUCTURAL (cap at 60 single / 48 double) ──
   // PATCH 1101f — H1 was firing for CFO/PAT 0.5–0.8 with high profit CAGR,
   // but user's new band puts 0.3–0.8 in the "healthy" zone. Narrow the band
