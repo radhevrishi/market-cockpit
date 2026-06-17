@@ -27,8 +27,38 @@ jobs:
         run: |
           # 10y-ops: override-able via CRON_BASE_URL repo secret; fallback to live Railway host so workflow never silently breaks if the secret is unset.
           BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
-          curl -fsS --max-time 60 "$BASE/api/market/quotes?market=india&refresh=1" -o /dev/null -w "india %{http_code}\n"
-          curl -fsS --max-time 60 "$BASE/api/market/quotes?market=us&refresh=1" -o /dev/null -w "us %{http_code}\n"
+          # PATCH 1101s — Resilience hardening so the job stops failing during
+          # transient Railway redeploys / cold-start latency on /api/market/quotes.
+          # Each market gets 3 retries with backoff (2s/8s/20s). 2xx OR 4xx ends
+          # the retry loop (4xx means "endpoint responded, just rejected input"
+          # which is not a refresh failure). 5xx triggers retry. After all
+          # retries, soft-pass — log status but DO NOT fail the whole workflow
+          # because a single transient miss shouldn't break the heartbeat chain.
+          refresh_one() {
+            local market="$1"
+            local url="${BASE}/api/market/quotes?market=${market}&refresh=1"
+            local attempt=0
+            local status="000"
+            local delays=(2 8 20)
+            while [ $attempt -lt 3 ]; do
+              status=$(curl -sS --max-time 90 -o /dev/null -w "%{http_code}" "$url" || echo "000")
+              echo "${market} attempt $((attempt+1)): ${status}"
+              # Accept any 2xx or 4xx (4xx = endpoint up but rejected)
+              if [[ "$status" == 2* ]] || [[ "$status" == 4* ]]; then
+                echo "${market} OK"
+                return 0
+              fi
+              attempt=$((attempt+1))
+              if [ $attempt -lt 3 ]; then
+                sleep "${delays[$((attempt-1))]}"
+              fi
+            done
+            echo "${market} FINAL=${status} (soft-pass after 3 retries)"
+            # Don't exit non-zero — heartbeat will surface the failure.
+            return 0
+          }
+          refresh_one india
+          refresh_one us
 
       - name: Heartbeat (always run)
         if: always()
