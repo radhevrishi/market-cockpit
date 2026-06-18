@@ -424,16 +424,21 @@ function buildSyncState(indiaOverride?: any[]): Pick<HomeState, 'tier1' | 'tier2
   const tier1India = buildMarketTier1('IN');
   const tier1Usa = buildMarketTier1('US');
   const tier1: TierAction[] = [...tier1India, ...tier1Usa];
-  // PATCH 1101q — Diagnostic so user can see WHY Tier 1 is small. The most
-  // common cause has been the user accumulating many BUY/REJECTED rows in the
-  // Decision Log over time, which excludes those names from Tier 1 by design.
+  // PATCH 1101q + 1101v — Diagnostic so user can see WHY Tier 1 is small.
+  // Most common cause: many BUY/REJECTED in Decision Log filtered prior to
+  // 1101r. Now (1101r) only the strict path filters by decisions; fillers
+  // backfill from A-grade regardless. If Tier 1 < 10 with 30 A-grade stocks,
+  // something is wrong in the data path itself.
   try {
     if (typeof window !== 'undefined') {
       const indiaAgrade = indiaRows.filter((r: any) => r.grade === 'A+' || r.grade === 'A').length;
       const indiaInDecisions = indiaRows.filter((r: any) => decisions[(r.symbol || '').toUpperCase()]).length;
       const indiaInCB = indiaRows.filter((r: any) => cbSet.has(symKey(r.symbol))).length;
       const decisionCount = Object.keys(decisions).length;
-      console.log(`[home] Tier 1 India build: ${indiaRows.length} rows · ${indiaAgrade} A-grade · ${indiaInCB} on CB · ${indiaInDecisions} in decisions (decision log has ${decisionCount} entries total) → ${tier1India.length} on Tier 1`);
+      console.log(`[home] Tier 1 India build: ${indiaRows.length} rows · ${indiaAgrade} A-grade · ${indiaInCB} on CB · ${indiaInDecisions} in decisions (log size: ${decisionCount}) → ${tier1India.length} on Tier 1`);
+      const usaAgrade = usaRows.filter((r: any) => r.grade === 'A+' || r.grade === 'A').length;
+      const usaInCB = usaRows.filter((r: any) => cbSet.has(symKey(r.symbol))).length;
+      console.log(`[home] Tier 1 USA build: ${usaRows.length} rows · ${usaAgrade} A-grade · ${usaInCB} on CB → ${tier1Usa.length} on Tier 1`);
     }
   } catch {}
 
@@ -623,10 +628,14 @@ export default function HomeDashboard() {
   // holds more than localStorage, rebuild the India Tier blocks from it.
   useEffect(() => {
     let alive = true;
-    let foundLocally = false;
+    let localRowCount = 0;
     try {
-      const lsLen = (localStorage.getItem('mb_excel_scored_v2') || '').length;
-      if (lsLen > 0) foundLocally = true;
+      // PATCH 1101v — track ROW COUNT not just byte length so we can compare
+      // with Railway's count and prefer the larger dataset.
+      const lsRaw = localStorage.getItem('mb_excel_scored_v2');
+      if (lsRaw) {
+        try { localRowCount = (JSON.parse(lsRaw) as any[])?.length || 0; } catch {}
+      }
       const req = indexedDB.open('mc-mb', 1);
       req.onsuccess = () => {
         try {
@@ -637,8 +646,9 @@ export default function HomeDashboard() {
             try {
               const raw = g.result as string | undefined;
               if (!raw) return;
-              foundLocally = true;
-              if (raw.length <= lsLen) return; // localStorage already had >= data
+              let idbCount = 0;
+              try { idbCount = (JSON.parse(raw) as any[])?.length || 0; } catch {}
+              if (idbCount > localRowCount) localRowCount = idbCount;
               const rows = JSON.parse(raw);
               if (Array.isArray(rows) && rows.length && alive) {
                 setData((prev: HomeState) => ({ ...prev, ...buildSyncState(rows) }));
@@ -648,36 +658,43 @@ export default function HomeDashboard() {
         } catch {}
       };
     } catch {}
-    // PATCH 1101o — Railway server fallback. If BOTH localStorage AND IDB are
-    // empty (browser eviction took both layers, OR user is on a fresh device),
-    // try the Railway Postgres snapshot. This is what's been making the home
-    // page show the "Upload India CSV" empty state even though the user's
-    // multibagger data is safely backed up on Railway.
+    // PATCH 1101o + 1101v — Railway snapshot. PATCH 1101o would skip Railway
+    // whenever localStorage had ANY data — even 3 stale rows would block the
+    // restore from a 345-row Railway snapshot. 1101v: ALWAYS try Railway and
+    // prefer whichever dataset is bigger. Also extended to USA market so a
+    // stale localStorage USA dataset (the "VCTR + LPG appearing on home but
+    // missing from /multibagger") gets overridden by the current Railway state.
     setTimeout(() => {
-      if (!alive || foundLocally) return;
+      if (!alive) return;
       try {
         const cid = localStorage.getItem('mb_client_id_v1');
         if (!cid) return; // user never made a snapshot from this browser
+        // ── INDIA ──
         fetch(`/api/v1/multibagger/snapshot?clientId=${encodeURIComponent(cid)}&market=IN`)
           .then(r => r.ok ? r.json() : null)
           .then(j => {
             if (!alive || !j || !j.ok || !j.snapshot) return;
             try {
               const rawRows = JSON.parse(j.snapshot);
-              if (Array.isArray(rawRows) && rawRows.length) {
-                try { console.log(`[home] restored ${rawRows.length} India stocks from Railway snapshot`); } catch {}
-                // PATCH 1101p — Re-score rows before passing to buildSyncState
-                // so the latest scoring formula applies (the Railway snapshot
-                // may have been saved when older grades were in effect).
-                let rescored: any[] = rawRows;
-                try {
-                  const arr = rawRows.map((r: any) => {
-                    try { return mbScoreIndia(r as MbIndiaRow); } catch { return r; }
-                  });
-                  const sorted = arr.sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0));
-                  rescored = mbApplyRanking(sorted as any[]);
-                } catch {}
-                setData((prev: HomeState) => ({ ...prev, ...buildSyncState(rescored) }));
+              if (!Array.isArray(rawRows) || !rawRows.length) return;
+              // PATCH 1101v — Only overwrite if Railway has MORE rows than
+              // local. Prevents wiping a fresh local upload with a stale
+              // Railway snapshot. If user wants to force-pull, they can use
+              // the "Backup now" button on /multibagger and re-visit home.
+              if (rawRows.length < localRowCount) {
+                try { console.log(`[home] Railway India has ${rawRows.length} < local ${localRowCount}, keeping local`); } catch {}
+                return;
+              }
+              try { console.log(`[home] restored ${rawRows.length} India stocks from Railway snapshot (local had ${localRowCount})`); } catch {}
+              let rescored: any[] = rawRows;
+              try {
+                const arr = rawRows.map((r: any) => {
+                  try { return mbScoreIndia(r as MbIndiaRow); } catch { return r; }
+                });
+                const sorted = arr.sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0));
+                rescored = mbApplyRanking(sorted as any[]);
+              } catch {}
+              setData((prev: HomeState) => ({ ...prev, ...buildSyncState(rescored) }));
                 // Write back DOWN so subsequent loads are fast.
                 try {
                   // Best-effort localStorage mirror — may fail on quota.
@@ -698,7 +715,38 @@ export default function HomeDashboard() {
               }
             } catch {}
           })
-          .catch((e) => { try { console.warn('[home] Railway snapshot fetch failed', e); } catch {} });
+          .catch((e) => { try { console.warn('[home] Railway India fetch failed', e); } catch {} });
+        // PATCH 1101v — ── USA ── parallel pull. Also try Railway for USA
+        // market. If the user has stale USA data in localStorage but Railway
+        // has none / fewer, the local stale data persists; user can clear via
+        // the "Clear All Data" button on /multibagger USA tab.
+        let localUsaCount = 0;
+        try {
+          const lsUsa = localStorage.getItem('mb_usa_scored_v1');
+          if (lsUsa) { try { localUsaCount = (JSON.parse(lsUsa) as any[])?.length || 0; } catch {} }
+        } catch {}
+        try { console.log(`[home] USA local row count: ${localUsaCount}`); } catch {}
+        fetch(`/api/v1/multibagger/snapshot?clientId=${encodeURIComponent(cid)}&market=USA`)
+          .then(r => r.ok ? r.json() : null)
+          .then(j => {
+            if (!alive || !j || !j.ok || !j.snapshot) return;
+            try {
+              const rawRows = JSON.parse(j.snapshot);
+              if (!Array.isArray(rawRows) || !rawRows.length) return;
+              if (rawRows.length < localUsaCount) {
+                try { console.log(`[home] Railway USA has ${rawRows.length} < local ${localUsaCount}, keeping local`); } catch {}
+                return;
+              }
+              try { console.log(`[home] restored ${rawRows.length} USA stocks from Railway (local had ${localUsaCount})`); } catch {}
+              // Write back to localStorage so /multibagger USA tab also sees it.
+              try { localStorage.setItem('mb_usa_scored_v1', j.snapshot); } catch {}
+              // Force a re-render by bumping refreshTick (USA flows through buildSyncState
+              // which re-reads localStorage on next call).
+              try { window.dispatchEvent(new CustomEvent('mb-upload:updated', { detail: { market: 'USA', count: rawRows.length } })); } catch {}
+              setData((prev: HomeState) => ({ ...prev, ...buildSyncState() }));
+            } catch {}
+          })
+          .catch((e) => { try { console.warn('[home] Railway USA fetch failed', e); } catch {} });
       } catch {}
     }, 800); // Wait 800ms so IDB hydration has a chance first.
     return () => { alive = false; };
