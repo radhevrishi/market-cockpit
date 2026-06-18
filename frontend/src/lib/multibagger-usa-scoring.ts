@@ -85,6 +85,24 @@ export interface USARow {
   price?: number;                 // Last close (USD), from TradingView "Price" / "Last" column
   avgVolume30d?: number;          // Average daily share volume, 30-day (TradingView "Average Volume (30 day)")
   avgDailyValueUsdM?: number;     // Derived: (avgVolume30d × price) / 1e6 — average daily $ traded, in millions
+  // PATCH 1101qq — New TradingView fields user added.
+  perf3m?: number;                // "Performance %, 3 months" — medium momentum
+  perf6m?: number;                // "Performance %, 6 months" — medium-long momentum
+  epsEstimateAnnual?: number;     // "Earnings per share estimate, Annual" — forward EPS
+  beta5y?: number;                // "Beta, 5 years" — market sensitivity
+  ebitdaMargin?: number;          // "EBITDA margin %, TTM" — alternative profitability
+  capexPerShareTtm?: number;      // "Capital expenditures per share, TTM" — reinvestment intensity
+  epsGrowthQtr?: number;          // "Earnings per share diluted growth %, Quarterly YoY" — EPS quarterly accel
+  targetPrice1y?: number;         // "Target price, 1 year" — analyst mean target
+  ema50?: number;                 // "Exponential moving average, 50, 1 day"
+  ema200?: number;                // "Exponential moving average, 200, 1 day"
+  // Derived
+  rsRating?: number;              // O'Neil-style 1-99 composite (3-horizon weighted)
+  impliedUpsidePct?: number;      // (targetPrice1y - price) / price * 100
+  forwardPeg?: number;            // Forward P/E ÷ forward EPS growth
+  epsAcceleration?: number;       // epsGrowthQtr - epsGrowth (positive = accel)
+  capexIntensityPct?: number;     // capexPerShareTtm / fcfPerShareTtm equivalent
+  stage2?: boolean;               // Price > EMA200 AND EMA50 > EMA200 AND 1Y perf > 0
 }
 export type USAGrade = 'A+'|'A'|'B+'|'B'|'C'|'D';
 
@@ -1157,6 +1175,78 @@ export function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGr
     ? Math.round((row.grossMarginTtm - row.grossMarginAnn) * 10) / 10
     : row.grossMarginExpansion;
 
+  // PATCH 1101qq — derived metrics from new TV fields.
+  // RS RATING (O'Neil-style 1-99) — weighted 3-horizon momentum.
+  // Weights: 40% × 6M + 30% × 3M + 30% × 1Y. Then normalize to 1-99 scale.
+  let rsRating: number | undefined = undefined;
+  if (typeof row.perf3m === 'number' || typeof row.perf6m === 'number' || typeof row.perf1y === 'number') {
+    const p3 = row.perf3m ?? row.perf1y ?? 0;
+    const p6 = row.perf6m ?? row.perf1y ?? 0;
+    const p12 = row.perf1y ?? 0;
+    const composite = 0.30 * p3 + 0.40 * p6 + 0.30 * p12;
+    // Map roughly: -50% → 1, 0% → 30, 50% → 70, 100%+ → 90+
+    const rs = Math.max(1, Math.min(99, Math.round(50 + composite * 0.5)));
+    rsRating = rs;
+    if (rs >= 80) strengths.push(`🚀 RS Rating ${rs} — top 20% momentum (3M ${p3.toFixed(0)}% · 6M ${p6.toFixed(0)}% · 1Y ${p12.toFixed(0)}%)`);
+    else if (rs <= 20) risks.push(`⚠️ RS Rating ${rs} — bottom 20% momentum, name is being sold`);
+    score = Math.round(score + Math.min(6, Math.max(-6, (rs - 50) / 10)));
+  }
+  // FORWARD PEG — Forward P/E ÷ forward EPS growth %
+  let forwardPeg: number | undefined = undefined;
+  if (row.forwardPe && row.forwardPe > 0 && row.epsEstimateAnnual !== undefined) {
+    // Need current EPS to compute forward growth
+    const currentEps = row.pe && row.price ? row.price / row.pe : undefined;
+    if (currentEps && currentEps > 0) {
+      const fwdGrowth = ((row.epsEstimateAnnual - currentEps) / currentEps) * 100;
+      if (fwdGrowth > 0) {
+        forwardPeg = Math.round((row.forwardPe / fwdGrowth) * 100) / 100;
+        if (forwardPeg < 1) strengths.push(`Forward PEG ${forwardPeg.toFixed(2)} — undervalued vs expected EPS growth ${fwdGrowth.toFixed(0)}%`);
+        else if (forwardPeg > 3) risks.push(`Forward PEG ${forwardPeg.toFixed(2)} — expensive vs expected growth`);
+      }
+    }
+  }
+  // IMPLIED UPSIDE % from target price
+  let impliedUpsidePct: number | undefined = undefined;
+  if (row.targetPrice1y && row.price && row.price > 0) {
+    impliedUpsidePct = Math.round(((row.targetPrice1y - row.price) / row.price) * 100);
+    if (impliedUpsidePct >= 30) strengths.push(`🎯 Analyst target ${impliedUpsidePct}% above current — institutional consensus bullish`);
+    else if (impliedUpsidePct <= -10) risks.push(`Analyst target ${impliedUpsidePct}% below current — consensus thinks it's overpriced`);
+  }
+  // EPS ACCELERATION — Quarterly EPS growth vs Annual EPS growth
+  let epsAcceleration: number | undefined = undefined;
+  if (typeof row.epsGrowthQtr === 'number' && typeof row.epsGrowth === 'number') {
+    epsAcceleration = Math.round(row.epsGrowthQtr - row.epsGrowth);
+    if (epsAcceleration >= 20) strengths.push(`⚡ EPS Q-accel +${epsAcceleration}pp vs annual — earnings inflection accelerating`);
+    else if (epsAcceleration <= -20) risks.push(`EPS Q-decel ${epsAcceleration}pp — earnings momentum stalling`);
+  }
+  // STAGE 2 TREND DETECTOR (Weinstein) — Price > EMA200 AND EMA50 > EMA200 AND 1Y perf > 0
+  let stage2: boolean | undefined = undefined;
+  if (row.price && row.ema50 && row.ema200) {
+    stage2 = row.price > row.ema200 && row.ema50 > row.ema200 && (row.perf1y ?? 0) > 0;
+    if (stage2) strengths.push(`📈 Stage 2 uptrend confirmed (Price > EMA200 · EMA50 > EMA200 · 1Y+)`);
+  }
+  // BETA-ADJUSTED MAX % — scale suggested max position by 1/sqrt(beta)
+  // High beta → smaller position. Beta 1.0 → no adjustment. Beta 2.0 → 70% of base.
+  if (typeof row.beta5y === 'number' && row.beta5y > 0) {
+    if (row.beta5y >= 2.0) risks.push(`⚠️ Beta ${row.beta5y.toFixed(1)} — 2× market volatility, halve normal position size`);
+    else if (row.beta5y <= 0.7) strengths.push(`Beta ${row.beta5y.toFixed(1)} — low market sensitivity, defensive`);
+  }
+  // EBITDA MARGIN BOOST for capital-intensive sectors where FCF is structurally low.
+  if (typeof row.ebitdaMargin === 'number') {
+    if (row.ebitdaMargin >= 30) strengths.push(`EBITDA margin ${row.ebitdaMargin.toFixed(0)}% — elite operational leverage`);
+    else if (row.ebitdaMargin < 10) risks.push(`EBITDA margin ${row.ebitdaMargin.toFixed(0)}% — thin operational profitability`);
+  }
+  // CAPEX INTENSITY — Capex/Revenue or Capex/FCF check
+  let capexIntensityPct: number | undefined = undefined;
+  if (typeof row.capexPerShareTtm === 'number' && typeof row.fcfPerShareTtm === 'number'
+      && row.fcfPerShareTtm > 0) {
+    capexIntensityPct = Math.round((row.capexPerShareTtm / (row.capexPerShareTtm + row.fcfPerShareTtm)) * 100);
+    // High capex+positive FCF = growth investment (good).
+    // High capex+negative FCF = capital destruction (bad - already handled elsewhere).
+    if (capexIntensityPct > 40 && row.fcfPerShareTtm > 0) {
+      strengths.push(`Capex intensity ${capexIntensityPct}% — heavy reinvestment with positive FCF = growth phase`);
+    }
+  }
   return {
     ...row,
     score, grade, coverage,
@@ -1164,6 +1254,12 @@ export function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGr
     grossMarginExpansion: computedGMExpansion,
     revenueAccel: revAccel,
     accelSignal: revAccel !== undefined ? (revAccel>=5?'ACCELERATING':revAccel<=-5?'DECELERATING':'STABLE') : row.accelSignal,
+    rsRating,
+    forwardPeg,
+    impliedUpsidePct,
+    epsAcceleration,
+    stage2,
+    capexIntensityPct,
     marketCapB: row.marketCapUsd !== undefined ? Math.round(row.marketCapUsd/1e9*100)/100 : row.marketCapB,
     strengths, risks,
     // PATCH 0349 — surfaced flags for chip rendering in JSX
