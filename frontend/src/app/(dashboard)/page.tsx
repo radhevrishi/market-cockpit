@@ -2485,6 +2485,8 @@ export default function HomeDashboard() {
             <Link href="/market-cycles"          style={navChip('#A78BFA')}>🎢 Market Cycles</Link>
             {/* PATCH 1101t — Volume Rules: 9 institutional volume/price-action tips */}
             <Link href="/volume-rules"           style={navChip('#22D3EE')}>🎯 Volume Rules</Link>
+            {/* PATCH 1101x — Earnings Mastery: post-earnings multibagger playbook */}
+            <Link href="/earnings-mastery"       style={navChip('#F59E0B')}>📊 Earnings Mastery</Link>
             {/* PATCH 1063 — deep-link chips into Playbook sub-sections per user request */}
             <Link href="/playbook#about-me"      style={navChip('#fb7185')}>🌿 About Me</Link>
             <Link href="/playbook#life-sat"      style={navChip('#fbbf24')}>🌅 Life Sat</Link>
