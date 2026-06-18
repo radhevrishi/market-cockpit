@@ -302,7 +302,17 @@ export function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGr
     else if (row.forwardRevGrowth >= 15) valComponents.push(62);
     else if (row.forwardRevGrowth < 10) { valComponents.push(35); risks.push(`Forward revenue growth ${row.forwardRevGrowth.toFixed(0)}% — analysts expect slowdown`); }
   }
-  const valS = valComponents.length > 0 ? valComponents.reduce((a,b)=>a+b,0)/valComponents.length : 50;
+  // PATCH 1101dd — Missing valuation data penalty (was: silent default 50).
+  // Rows with P/E "—" AND EV/EBITDA "—" should not be treated as neutral.
+  // We can't assess valuation = downside risk. 40 (below-neutral) is more
+  // honest and feeds through to a lower final score. This catches early-stage
+  // / pre-revenue stocks that previously coasted at C grade.
+  const valS = valComponents.length > 0
+    ? valComponents.reduce((a,b)=>a+b,0)/valComponents.length
+    : 40;
+  if (valComponents.length === 0) {
+    risks.push(`⚠️ No valuation metrics (P/E, Fwd P/E, EV/EBITDA, PEG all missing) — can't assess valuation. Pillar defaulted to 40 (below-neutral penalty).`);
+  }
 
   // ── MARKET (10%): Market cap discovery + sector tailwind + insider ──────────
   let mktS=50;
@@ -772,11 +782,55 @@ export function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGr
   //   R40 < 30  → cap 72 (B+ ceiling, no A grades)
   //   R40 < 40  → cap 78 (A ceiling, no A+ grades)
   // Names with elite R40 (≥80) bypass these caps via the elite-R40 bonus.
+  // PATCH 1101dd — extend cap to negative R40 territory. User feedback:
+  // stocks with R40 -3000 (ABSI) still grading D-only at 25, but stocks with
+  // R40 -500 (PLUG, RIOT) were sitting at 45 (C). Negative R40 = burning cash
+  // faster than growing — should be progressively harder caps.
   if (row.ruleOf40 !== undefined) {
-    if (row.ruleOf40 < 10)      score = Math.min(score, 55);
-    else if (row.ruleOf40 < 20) score = Math.min(score, 65);
-    else if (row.ruleOf40 < 30) score = Math.min(score, 72);
-    else if (row.ruleOf40 < 40) score = Math.min(score, 78);
+    if (row.ruleOf40 < -200)      score = Math.min(score, 15);  // NEVER BUY territory
+    else if (row.ruleOf40 < -50)  score = Math.min(score, 25);  // D floor
+    else if (row.ruleOf40 < 0)    score = Math.min(score, 40);  // C/D boundary
+    else if (row.ruleOf40 < 10)   score = Math.min(score, 55);
+    else if (row.ruleOf40 < 20)   score = Math.min(score, 65);
+    else if (row.ruleOf40 < 30)   score = Math.min(score, 72);
+    else if (row.ruleOf40 < 40)   score = Math.min(score, 78);
+    if (row.ruleOf40 < -50) risks.push(`🛑 Rule of 40: ${row.ruleOf40.toFixed(0)} — catastrophic (burning cash >${Math.abs(row.ruleOf40).toFixed(0)}% faster than growing). NEVER BUY territory.`);
+  }
+
+  // (9b) PATCH 1101dd — REVENUE-INFLATION ARCHETYPE (USA C7 equivalent).
+  // Signature: massive annual growth (>200%) + no profit + huge mcap. This
+  // catches ASTS (Ann +1505%, $51B mcap, 0% profit), reverse-merger pumps,
+  // pre-revenue SPACs trading on narrative. India's C7 rule (PATCH 1101j)
+  // has caught Rajesh Exports etc. for years; USA lacked the equivalent.
+  const isRevInflationRisk =
+       (row.revenueGrowthAnn ?? 0) > 200
+    && (row.marketCapB ?? 0) > 10
+    && ((row.netProfitMargin ?? 0) <= 0 || (row.opmTtm ?? row.opmAnn ?? 0) < 5);
+  if (isRevInflationRisk) {
+    score = Math.min(score, 35);
+    risks.push(`🛑 NEVER BUY: Revenue-inflation archetype — ${(row.revenueGrowthAnn ?? 0).toFixed(0)}% growth · $${(row.marketCapB ?? 0).toFixed(0)}B mcap · NPM ${(row.netProfitMargin ?? 0).toFixed(1)}% · OPM ${(row.opmTtm ?? row.opmAnn ?? 0).toFixed(1)}%. Classic ASTS / Rajesh-Exports pattern — narrative-driven mcap on unprofitable growth. Cap 35.`);
+  }
+
+  // (9c) PATCH 1101dd — CFO/PAT EARNINGS-WITHOUT-CASH (USA C1 equivalent).
+  // Crypto miners (PLUG, RIOT, CLSK) report revenue but burn cash. India's
+  // C1 rule catches CFO/PAT < -0.3 as critical fraud signal. USA lacked it
+  // because we don't always have cfoToPat in TradingView export — use FCF
+  // margin + net margin divergence as a proxy when cfoToPat is missing.
+  // FCF margin <<< Net profit margin (gap >15pp with NPM >0) = accrual quality concern.
+  if (typeof (row as any).cfoToPat === 'number') {
+    const cp = (row as any).cfoToPat as number;
+    if (cp < -0.3) {
+      score = Math.min(score, 35);
+      risks.push(`🛑 CFO/PAT ${cp.toFixed(2)} — earnings without cash (operating cash flow strongly negative vs reported PAT). Critical fraud signal. Cap 35.`);
+    } else if (cp < 0.3 && (row.revenueGrowthAnn ?? 0) > 20) {
+      risks.push(`⚠️ CFO/PAT ${cp.toFixed(2)} weak vs ${(row.revenueGrowthAnn ?? 0).toFixed(0)}% revenue growth — working capital may be inflating; growth quality suspect.`);
+    }
+  } else if (
+       (row.netProfitMargin ?? 0) > 0
+    && (row.fcfMarginAnn ?? row.fcfMarginTtm ?? 999) < (row.netProfitMargin ?? 0) - 15
+  ) {
+    score = Math.min(score, 60);
+    risks.push(`⚠️ FCF-margin proxy for CFO/PAT: NPM ${(row.netProfitMargin ?? 0).toFixed(1)}% but FCF margin ${(row.fcfMarginAnn ?? row.fcfMarginTtm ?? 0).toFixed(1)}% (gap >15pp). Reported profit not converting to cash — accrual quality concern. Cap 60.`);
   }
 
   // (10) GROWTH-RATE HARD CAPS.
@@ -1013,18 +1067,52 @@ export function applyUSARanking(results: USAResult[]): USAResult[] {
     return GRADE_ORDER[Math.min(GRADE_ORDER.length - 1, idx + steps)];
   };
 
-  return results.map(r => {
-    let grade: USAGrade = r.grade;
+  // PATCH 1101dd — FORCED PERCENTILE RANKING (parity with India scorer).
+  // OLD: only categorical demotions (mega-cap, sub-10% growth, decel). Result:
+  // 450-stock cohort clustered as B (214), C (147), B+ (41) — only 11 stocks
+  // in the entire A/A+ band. Distribution did not match India (which uses
+  // forced ranking → bell curve).
+  // NEW: enforce same percentile bands India uses:
+  //   A+ ≤ 10%, A ≤ 28%, B+ ≤ 55%, B ≤ 75%, C ≤ 88%, D > 88%
+  // This is applied ON TOP OF the absolute-score grade; we take the WORSE of
+  // the two so a score-cap (e.g., R40 < -200 forces D at score 15) is never
+  // un-done by percentile rank.
+  const sorted = [...results]
+    .map((r, idx) => ({ r, idx, s: r.score ?? 0 }))
+    .sort((a, b) => b.s - a.s);
+  const n = sorted.length;
+  const cutA_PLUS = Math.floor(n * 0.10);
+  const cutA      = Math.floor(n * 0.28);
+  const cutBPLUS  = Math.floor(n * 0.55);
+  const cutB      = Math.floor(n * 0.75);
+  const cutC      = Math.floor(n * 0.88);
+
+  const rankGradeByIdx = new Map<number, USAGrade>();
+  sorted.forEach((entry, rank) => {
+    let g: USAGrade;
+    if (rank < cutA_PLUS)      g = 'A+';
+    else if (rank < cutA)      g = 'A';
+    else if (rank < cutBPLUS)  g = 'B+';
+    else if (rank < cutB)      g = 'B';
+    else if (rank < cutC)      g = 'C';
+    else                       g = 'D';
+    rankGradeByIdx.set(entry.idx, g);
+  });
+
+  return results.map((r, idx) => {
+    const scoreGrade: USAGrade = r.grade;
+    const rankGrade: USAGrade = rankGradeByIdx.get(idx) ?? r.grade;
+    // Take the WORSE of the two so caps from scoreUSARow are never undone.
+    const scoreRank = GRADE_ORDER.indexOf(scoreGrade);
+    const rankRank = GRADE_ORDER.indexOf(rankGrade);
+    let grade: USAGrade = GRADE_ORDER[Math.max(scoreRank, rankRank)] ?? scoreGrade;
+
+    // Hard-cap demotions remain (mega-cap, sub-10% growth, decel).
     let demoteSteps = 0;
-
-    // Each flag adds ONE step of demotion, regardless of current grade.
-    if (r.marketCapB !== undefined && r.marketCapB > 150) demoteSteps += 1;     // mega-cap
-    if (r.marketCapB !== undefined && r.marketCapB > 500) demoteSteps += 1;     // mega-mega-cap (additive on top of above)
-    if (r.revenueGrowthAnn !== undefined && r.revenueGrowthAnn < 10) demoteSteps += 1;  // not the thesis
-    if (r.accelSignal === 'DECELERATING') demoteSteps += 1;                     // momentum broken
-
-    // Floor at B+ for premium-grade rows (A+/A) — compounding extra steps
-    // pushes them further down per audit recommendation.
+    if (r.marketCapB !== undefined && r.marketCapB > 150) demoteSteps += 1;
+    if (r.marketCapB !== undefined && r.marketCapB > 500) demoteSteps += 1;
+    if (r.revenueGrowthAnn !== undefined && r.revenueGrowthAnn < 10) demoteSteps += 1;
+    if (r.accelSignal === 'DECELERATING') demoteSteps += 1;
     if (demoteSteps > 0 && (grade === 'A+' || grade === 'A' || grade === 'B+')) {
       grade = downgrade(grade, demoteSteps);
     }
