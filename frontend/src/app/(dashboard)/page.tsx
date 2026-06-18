@@ -2202,7 +2202,19 @@ export default function HomeDashboard() {
   });
   const [activeLensId, setActiveLensId] = useState<string>(() => {
     if (typeof window === 'undefined') return 'all';
-    try { return localStorage.getItem('mc:home-active-lens:v1') || 'all'; } catch { return 'all'; }
+    try {
+      // PATCH 1101cc — One-time force-reset. The previous "CONVICTION-ONLY" /
+      // "A+ ONLY" lens persistence was silently filtering Tier 1 to 3-5 stocks
+      // and the user thought their data was broken. Force back to 'all' once
+      // via a versioned flag — user can re-activate any lens manually, but the
+      // default is no longer sticky from old sessions.
+      if (!localStorage.getItem('mc:lens-reset:v2')) {
+        localStorage.setItem('mc:home-active-lens:v1', 'all');
+        localStorage.setItem('mc:lens-reset:v2', '1');
+        return 'all';
+      }
+      return localStorage.getItem('mc:home-active-lens:v1') || 'all';
+    } catch { return 'all'; }
   });
   useEffect(() => {
     try { localStorage.setItem('mc:home-active-lens:v1', activeLensId); } catch {}
@@ -2991,6 +3003,10 @@ export default function HomeDashboard() {
           (() => {
             const t1India = lensedTier1.filter((t: TierAction) => (t as any).market !== 'US');
             const t1Usa = lensedTier1.filter((t: TierAction) => (t as any).market === 'US');
+            // PATCH 1101cc — pass unfiltered counts so headers show
+            // "(3 of 10 — lens filtering)" when a lens is reducing visible rows.
+            const t1IndiaTotal = data.tier1.filter((t: TierAction) => (t as any).market !== 'US').length;
+            const t1UsaTotal = data.tier1.filter((t: TierAction) => (t as any).market === 'US').length;
             return (
               <>
                 {t1India.length > 0 ? (
@@ -3000,6 +3016,7 @@ export default function HomeDashboard() {
                     color="#10B981"
                     description="Cross-confirmed (★) = A-grade + on Conviction Beats + not in Decision Log. (+) = A-grade top-up when fewer than 10 cross-confirmed exist. Top 10 India names."
                     items={t1India}
+                    totalCount={t1IndiaTotal}
                     expanded
                   />
                 ) : (
@@ -3021,6 +3038,7 @@ export default function HomeDashboard() {
                     color="#10B981"
                     description="Cross-confirmed (★) = A-grade + on Conviction Beats + not in Decision Log. (+) = A-grade top-up when fewer than 10 cross-confirmed exist. Top 10 US names."
                     items={t1Usa}
+                    totalCount={t1UsaTotal}
                     expanded
                   />
                 )}
@@ -4447,11 +4465,17 @@ export default function HomeDashboard() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function DecisionTierBlock({
-  tier, label, color, description, items, expanded, condensed = false,
+  tier, label, color, description, items, expanded, condensed = false, totalCount,
 }: {
   tier: number; label: string; color: string; description: string;
   items: TierAction[]; expanded: boolean; condensed?: boolean;
+  /* PATCH 1101cc — Optional unfiltered count. When a lens reduces the visible
+     items, pass the original list size here so the header shows "(3 of 10)"
+     instead of just "(3)" — makes it instantly clear that a filter is hiding
+     results. */
+  totalCount?: number;
 }) {
+  const hasFilter = typeof totalCount === 'number' && totalCount > items.length;
   return (
     <div style={{
       ...cardStyle,
@@ -4460,7 +4484,7 @@ function DecisionTierBlock({
     }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
         <span style={{ fontSize: 14, fontWeight: 900, color, letterSpacing: '0.4px' }}>
-          {tier === 1 ? '🎯' : tier === 2 ? '👁' : '🧪'} TIER {tier} — {label} ({items.length})
+          {tier === 1 ? '🎯' : tier === 2 ? '👁' : '🧪'} TIER {tier} — {label} {hasFilter ? `(${items.length} of ${totalCount} — lens filtering)` : `(${items.length})`}
         </span>
         <span style={{ fontSize: 10, color, background: `${color}22`, padding: '2px 7px', borderRadius: 3, fontWeight: 700 }}>
           {tier === 1 ? 'ACTION NOW' : tier === 2 ? 'WATCH' : 'EXPERIMENTAL'}
