@@ -5270,7 +5270,27 @@ export default function MultibaggerPage() {
                 if (count === 0) return null;
                 return (
                   <button
-                    onClick={() => { if (window.confirm(`Clear all ${count} USA stocks? This cannot be undone.`)) { localStorage.removeItem('mb_usa_scored_v1'); window.location.reload(); } }}
+                    onClick={async () => {
+                      if (!window.confirm(`Clear all ${count} USA stocks? This cannot be undone.`)) return;
+                      // PATCH 1101bb — also delete Railway snapshot so stale USA
+                      // stocks (like the VCTR/LPG ghost the user kept seeing)
+                      // don't re-appear on refresh. Previously the button only
+                      // cleared localStorage, leaving Railway as the silent
+                      // source of truth that re-hydrated on next visit.
+                      try {
+                        const cid = localStorage.getItem('mb_client_id_v1');
+                        if (cid) {
+                          await fetch(`/api/v1/multibagger/snapshot?clientId=${encodeURIComponent(cid)}&market=USA`, { method: 'DELETE' });
+                          try { console.log('[mb-usa] Railway snapshot deleted'); } catch {}
+                        }
+                      } catch (e) {
+                        try { console.warn('[mb-usa] Railway delete failed', e); } catch {}
+                      }
+                      localStorage.removeItem('mb_usa_scored_v1');
+                      localStorage.removeItem('mb_usa_uploaded_at_v1');
+                      try { window.dispatchEvent(new CustomEvent('mb-upload:updated', { detail: { cleared: true, market: 'USA' } })); } catch {}
+                      window.location.reload();
+                    }}
                     style={{padding:'8px 16px',backgroundColor:`${RED}14`,border:`1px solid ${RED}40`,borderRadius:8,color:RED,fontSize:F.sm,fontWeight:700,cursor:'pointer',flexShrink:0,whiteSpace:'nowrap'}}
                   >
                     🗑 Clear USA Data ({count})
