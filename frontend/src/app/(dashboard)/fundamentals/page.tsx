@@ -209,19 +209,49 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
         return;
       }
       setData((prev) => {
+        // PATCH 1101vv — Per-file membership delta. Each row keeps `_files` array
+        // tracking which CSV file names it has appeared in. On re-upload of the
+        // SAME file: incoming tickers that were not in current dataset are
+        // ADDED; tickers that were in this same file before but not in the new
+        // incoming are REMOVED from this file (still in dataset for now — user
+        // can apply removals from the banner).
+        const incomingKeys = new Set(validIncoming.map(rowKey));
+        const prevKeys = new Set(prev.map(rowKey));
+        const added = validIncoming.filter(r => !prevKeys.has(rowKey(r))).map(rowKey);
+        const removedFromFile = prev
+          .filter(r => {
+            const files = ((r as any)._files as string[] | undefined) ?? [];
+            return files.includes(name) && !incomingKeys.has(rowKey(r));
+          })
+          .map(rowKey);
         const map = new Map<string, Row>();
-        prev.forEach((r) => map.set(rowKey(r), r));
-        validIncoming.forEach((r) => map.set(rowKey(r), r));
+        prev.forEach((r) => {
+          // Strip this file from _files if ticker no longer in incoming for it
+          const files = ((r as any)._files as string[] | undefined) ?? [];
+          if (files.includes(name) && !incomingKeys.has(rowKey(r))) {
+            const filtered = files.filter(f => f !== name);
+            map.set(rowKey(r), { ...r, _files: filtered } as any);
+          } else {
+            map.set(rowKey(r), r);
+          }
+        });
+        validIncoming.forEach((r) => {
+          const existingRow = map.get(rowKey(r));
+          const prevFiles: string[] = ((existingRow as any)?._files as string[] | undefined) ?? [];
+          const mergedFiles = Array.from(new Set([...prevFiles, name]));
+          map.set(rowKey(r), { ...r, _files: mergedFiles } as any);
+        });
         const merged = Array.from(map.values());
         const dataOk = mcPersist(STORAGE_KEY, JSON.stringify(merged));
         if (dataOk) {
           mcPersist(STORAGE_NAME, name);
           setFname(name);
           setError('');
+          // Surface the delta to the user.
+          if (added.length > 0 || removedFromFile.length > 0) {
+            setLastDelta({ file: name, added, removedFromFile, when: Date.now() });
+          }
         } else {
-          // Quota fail. Don't write the name — it would lie about what's
-          // actually in storage. Force the in-memory rows back to prev so the
-          // user's screen matches what will reload on refresh.
           try { localStorage.removeItem(STORAGE_NAME); } catch {}
           return prev;
         }
@@ -229,6 +259,20 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
       });
     } catch (e: any) { setError('Could not parse that CSV: ' + (e?.message || e)); }
   }, [market, STORAGE_KEY, STORAGE_NAME]);
+
+  // PATCH 1101vv — Delta state surfaced as banner above the dashboard.
+  const [lastDelta, setLastDelta] = useState<{ file: string; added: string[]; removedFromFile: string[]; when: number } | null>(null);
+  const applyRemovals = useCallback(() => {
+    if (!lastDelta) return;
+    const toRemove = new Set(lastDelta.removedFromFile);
+    setData((prev) => {
+      const next = prev.filter(r => !toRemove.has(rowKey(r)));
+      try { mcPersist(STORAGE_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+    setLastDelta(null);
+  }, [lastDelta, STORAGE_KEY]);
+  const dismissDelta = useCallback(() => setLastDelta(null), []);
 
   const clearAll = useCallback(() => {
     setData([]); setFname(''); setError('');
@@ -353,10 +397,68 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
                 : SAMPLE_HINT}
             </div>
           </div>
-        ) : market === 'USA' ? (
-          <UsaFundamentalsDashboard data={data} onRemove={removeRow} onClear={clearAll} />
         ) : (
-          <Dashboard data={data} onRemove={removeRow} onAdd={addTickers} onClear={clearAll} />
+          <>
+            {/* PATCH 1101vv — Re-upload delta banner. Shows added + removed
+                tickers from the most recent upload of a previously-seen file. */}
+            {lastDelta && (lastDelta.added.length > 0 || lastDelta.removedFromFile.length > 0) && (
+              <div style={{
+                marginTop: 16, padding: 14, borderRadius: 10,
+                background: 'linear-gradient(180deg, color-mix(in srgb, var(--mc-cyan) 8%, transparent), transparent)',
+                border: `1px solid color-mix(in srgb, var(--mc-cyan) 35%, transparent)`,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: COL.cyan, letterSpacing: '0.3px' }}>
+                    📊 Upload delta · <span style={{ color: COL.txt }}>{lastDelta.file}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {lastDelta.removedFromFile.length > 0 && (
+                      <button
+                        onClick={applyRemovals}
+                        style={{ background: '#EF444418', color: '#EF4444', border: '1px solid #EF444460', padding: '4px 12px', borderRadius: 6, fontSize: 11, fontWeight: 800, cursor: 'pointer' }}
+                      >🗑 Apply {lastDelta.removedFromFile.length} removal{lastDelta.removedFromFile.length === 1 ? '' : 's'}</button>
+                    )}
+                    <button
+                      onClick={dismissDelta}
+                      style={{ background: 'transparent', color: COL.muted, border: `1px solid ${COL.line2}`, padding: '4px 12px', borderRadius: 6, fontSize: 11, fontWeight: 800, cursor: 'pointer' }}
+                    >✕ Dismiss</button>
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: '#10B981', fontWeight: 800, marginBottom: 4 }}>+ ADDED ({lastDelta.added.length})</div>
+                    <div style={{ fontSize: 11, color: COL.muted, lineHeight: 1.6 }}>
+                      {lastDelta.added.length === 0 ? <em>no new tickers in this upload</em>
+                        : lastDelta.added.slice(0, 30).map(t => (
+                            <span key={t} style={{ display: 'inline-block', margin: '2px 4px 2px 0', padding: '2px 6px', background: '#10B98115', border: '1px solid #10B98140', borderRadius: 4, color: '#10B981', fontWeight: 700 }}>{t}</span>
+                          ))}
+                      {lastDelta.added.length > 30 && <span style={{ color: COL.dim }}> +{lastDelta.added.length - 30} more</span>}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: '#EF4444', fontWeight: 800, marginBottom: 4 }}>− REMOVED FROM SCREENER ({lastDelta.removedFromFile.length})</div>
+                    <div style={{ fontSize: 11, color: COL.muted, lineHeight: 1.6 }}>
+                      {lastDelta.removedFromFile.length === 0 ? <em>nothing dropped from this screener</em>
+                        : lastDelta.removedFromFile.slice(0, 30).map(t => (
+                            <span key={t} style={{ display: 'inline-block', margin: '2px 4px 2px 0', padding: '2px 6px', background: '#EF444415', border: '1px solid #EF444440', borderRadius: 4, color: '#EF4444', fontWeight: 700 }}>{t}</span>
+                          ))}
+                      {lastDelta.removedFromFile.length > 30 && <span style={{ color: COL.dim }}> +{lastDelta.removedFromFile.length - 30} more</span>}
+                    </div>
+                    {lastDelta.removedFromFile.length > 0 && (
+                      <div style={{ fontSize: 10, color: COL.dim, marginTop: 6, lineHeight: 1.4 }}>
+                        These tickers were in <strong>{lastDelta.file}</strong> previously but not in this upload. Click <strong>"Apply N removals"</strong> to drop them from the dataset, or dismiss to keep them.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+            {market === 'USA' ? (
+              <UsaFundamentalsDashboard data={data} onRemove={removeRow} onClear={clearAll} />
+            ) : (
+              <Dashboard data={data} onRemove={removeRow} onAdd={addTickers} onClear={clearAll} />
+            )}
+          </>
         )}
       </div>
     </div>
@@ -465,7 +567,12 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
     const pctVsEma50 = (price && ema50 && ema50 > 0) ? Math.round(((price - ema50) / ema50) * 1000) / 10 : undefined;
     const pctVsEma200 = (price && ema200 && ema200 > 0) ? Math.round(((price - ema200) / ema200) * 1000) / 10 : undefined;
     return { raw: r, symbol, company, sector, mcapB, price, r40, fwdPe, pe, revAnn, revQtr, fcfMargin, gpm, opm, roic, roce, roe, netMargin, perf1y, perf3m, perf6m, rsRating, beta, ebitdaMargin, epsGrowth, pegFwd: peg, targetUpside, piotroski, analystRating, isOutlier, ema50, ema200, pctVsEma50, pctVsEma200 };
-  }), [data]);
+  }).filter(r => r.symbol && r.symbol.length > 0 && r.symbol.length < 20 && !/^\d+$/.test(r.symbol)), [data]);
+  // PATCH 1101vv — Filter out ghost India rows that have no Symbol (these are
+  // remnants from pre-1101tt accidental India CSV uploads to USA tab. They
+  // have NSE Code / BSE Code populated but no Symbol, so they render as
+  // nameless rows showing only an "Industry" cell). Now: rows must have a
+  // proper-looking Symbol (1-19 chars, not all digits) to be included.
 
   const sortedRows = useMemo(() => {
     const out = [...rows];
@@ -519,15 +626,29 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
 
   return (
     <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {/* PATCH 1101uu — Below 50-EMA / Below 200-EMA cards (India parity).
-          Shows stocks trading below their 50d and 200d moving averages. */}
+      {/* PATCH 1101uu/vv — Below 50-EMA / Below 200-EMA cards.
+          PATCH 1101vv — always render the section. When Price column is missing
+          from TradingView export, show an instruction banner explaining how to
+          add it (most TV exports don't include Price by default — user must add
+          a "Close" or "Price" column manually). */}
       {(() => {
+        const totalWithEma = rows.filter(r => typeof r.pctVsEma50 === 'number').length;
+        const hasAnyEma = rows.some(r => typeof r.ema50 === 'number' || typeof r.ema200 === 'number');
+        if (totalWithEma === 0) {
+          if (!hasAnyEma) return null; // no EMA at all → silent
+          return (
+            <div style={{ background: COL.panel2, border: `1px solid ${COL.line}`, borderRadius: 8, padding: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: '#F59E0B', marginBottom: 4, letterSpacing: '0.4px' }}>📈 MOVING AVERAGES — needs Price column</div>
+              <div style={{ fontSize: 11, color: COL.muted }}>
+                Your TradingView export has EMA 50 and EMA 200 columns, but no <strong style={{ color: COL.txt }}>Price</strong> or <strong style={{ color: COL.txt }}>Close</strong> column. Add a <strong style={{ color: COL.txt }}>"Close"</strong> column (TradingView column picker → Price section) and re-export to enable the Below 50-EMA / Below 200-EMA tracking that India has.
+              </div>
+            </div>
+          );
+        }
         const below50 = rows.filter(r => typeof r.pctVsEma50 === 'number' && r.pctVsEma50 < 0)
           .sort((a, b) => (a.pctVsEma50 ?? 0) - (b.pctVsEma50 ?? 0));
         const below200 = rows.filter(r => typeof r.pctVsEma200 === 'number' && r.pctVsEma200 < 0)
           .sort((a, b) => (a.pctVsEma200 ?? 0) - (b.pctVsEma200 ?? 0));
-        const totalWithEma = rows.filter(r => typeof r.pctVsEma50 === 'number').length;
-        if (totalWithEma === 0) return null;
         const renderTable = (title: string, sub: string, items: any[], maKey: 'ema50' | 'ema200', pctKey: 'pctVsEma50' | 'pctVsEma200') => (
           <div style={{ background: COL.panel2, border: `1px solid ${COL.line}`, borderRadius: 8, padding: 12 }}>
             <div style={{ fontSize: 12, fontWeight: 800, color: '#EF4444', marginBottom: 2, letterSpacing: '0.4px' }}>{title}</div>
