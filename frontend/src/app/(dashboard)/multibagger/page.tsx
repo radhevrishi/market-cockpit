@@ -4125,6 +4125,11 @@ function USACompare() {
       const seenSymbols = new Set(rows.map(r=>r.symbol));
       // PATCH 0347 — Cross-market detection on USA upload
       const allHeaders: string[] = [];
+      // PATCH 1101kk — Track which TradingView CSV each ticker came from so
+      // 🎯 MULTI-CONFIRMED PICKS populates for USA too. India does this via
+      // _screenerMap during parsing; USA was just scoring + merging blindly,
+      // so user kept seeing "Re-upload your screens" even after 3 uploads.
+      const _usaScreenerMap = new Map<string, string[]>();
       for (const file of arr) {
         const buf = await file.arrayBuffer();
         const wb = XLSX.read(buf, { type:'array' });
@@ -4133,7 +4138,12 @@ function USACompare() {
         if (raw.length > 0) allHeaders.push(...Object.keys(raw[0]));
         for (const r of raw) {
           const parsed = parseUSARow(r as Record<string,unknown>);
-          if (!parsed || seenSymbols.has(parsed.symbol)) continue;
+          if (!parsed) continue;
+          // Record which file this ticker appeared in (even for duplicates).
+          const existing = _usaScreenerMap.get(parsed.symbol) ?? [];
+          if (!existing.includes(file.name)) existing.push(file.name);
+          _usaScreenerMap.set(parsed.symbol, existing);
+          if (seenSymbols.has(parsed.symbol)) continue;
           seenSymbols.add(parsed.symbol);
           allRows.push(parsed);
         }
@@ -4150,9 +4160,37 @@ function USACompare() {
           return;
         }
       }
+      // PATCH 1101kk — Re-upload-only case: every ticker already in dataset.
+      // Still flush screener-membership onto existing rows so MULTI-CONFIRMED
+      // picks update without forcing user to clear data first.
+      if (!allRows.length && rows.length > 0) {
+        const rowsWithScreeners = rows.map(r => {
+          const newSources = _usaScreenerMap.get(r.symbol);
+          if (!newSources || newSources.length === 0) return r;
+          const existing = ((r as any)._screeners as string[] | undefined) ?? [];
+          const merged = Array.from(new Set([...existing, ...newSources]));
+          return { ...r, _screeners: merged } as any;
+        });
+        setRows(rowsWithScreeners);
+        setFileName(`Screener membership refreshed · ${arr.length} file${arr.length>1?'s':''} · ${rows.length} stocks`);
+        setLoading(false); return;
+      }
       if (!allRows.length) { setParseError('No valid rows found. Ensure the file has a Symbol column.'); setLoading(false); return; }
-      const scored = allRows.map(r => scoreUSARow(r));
-      const merged = [...rows, ...scored].sort((a,b)=>b.score-a.score);
+      // PATCH 1101kk — Attach _screeners from CSVs to each newly-scored row.
+      const scored = allRows.map(r => {
+        const s = scoreUSARow(r);
+        const sc = _usaScreenerMap.get(r.symbol) ?? [];
+        return { ...s, _screeners: sc } as any;
+      });
+      // PATCH 1101kk — Also merge new screener files onto pre-existing rows.
+      const existingMerged = rows.map(r => {
+        const newSources = _usaScreenerMap.get(r.symbol);
+        if (!newSources || newSources.length === 0) return r;
+        const existing = ((r as any)._screeners as string[] | undefined) ?? [];
+        const m = Array.from(new Set([...existing, ...newSources]));
+        return { ...r, _screeners: m } as any;
+      });
+      const merged = [...existingMerged, ...scored].sort((a,b)=>b.score-a.score);
       setRows(merged);
       // PATCH 0872 — Pre-upload baseline saved at TOP of handleFiles now.
       setFileName(`${arr.length} file${arr.length>1?'s':''} · ${merged.length} stocks`);
