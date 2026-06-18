@@ -7239,7 +7239,7 @@ function MultibaggerAnalytics({
           { label: 'Below 0-20',   test: (v: number) => v >= 0 && v < 20, color: '#FB923C' },
           { label: 'Burning <0',   test: (v: number) => v < 0,            color: '#EF4444' },
         ].map(b => ({ ...b, count: r40s.filter(x => b.test(x.v)).length, names: r40s.filter(x => b.test(x.v)).slice(0, 5).map(x => x.s.symbol) }));
-        const top10R40 = [...r40s].sort((a, b) => b.v - a.v).slice(0, 10);
+        const top10R40 = [...r40s].sort((a, b) => b.v - a.v).slice(0, 20);
         const tiers = ['MICRO', 'SMALL', 'MID', 'LARGE', 'MEGA'] as const;
         const byTier = tiers.map(t => {
           const subset = usaRows.filter((r: any) => r.capTier === t);
@@ -7293,7 +7293,7 @@ function MultibaggerAnalytics({
               </>
             )}
             <div style={{ fontSize: 11, color: 'var(--mc-text-3)', fontWeight: 700, marginBottom: 6, letterSpacing: '0.3px' }}>
-              Top 10 by Rule of 40
+              Top 20 by Rule of 40
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 4 }}>
               {top10R40.map((x, i) => (
