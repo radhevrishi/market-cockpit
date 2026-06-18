@@ -5487,8 +5487,11 @@ function MultiConfirmedCard({ stocks }: { stocks: any[] }) {
     // re-uploaded after the tracking patch landed — so the stale "re-upload"
     // copy is wrong. Show a different message: they've re-uploaded but no
     // single ticker appears in 2+ different CSVs.
-    const hasTrackedScreenerData = (rows as any[]).some(r =>
-      Array.isArray((r as any).screenerFiles) && (r as any).screenerFiles.length > 0
+    // PATCH 1101jj — Fix `rows is not defined` build error from 1101gg. This
+    // function uses `stocks`, not `rows`. The mistake broke USA Analytics
+    // entirely with "Page — Something went wrong". Renamed reference.
+    const hasTrackedScreenerData = (stocks as any[]).some(r =>
+      Array.isArray((r as any)._screeners) && (r as any)._screeners.length > 0
     );
     return (
       <div style={cardStyle}>
