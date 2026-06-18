@@ -5482,6 +5482,14 @@ function MultiConfirmedCard({ stocks }: { stocks: any[] }) {
   };
 
   if (multi.length === 0) {
+    // PATCH 1101gg — detect whether ANY row in the current dataset has the
+    // screenerFiles field tracked. If at least one row has it, the user HAS
+    // re-uploaded after the tracking patch landed — so the stale "re-upload"
+    // copy is wrong. Show a different message: they've re-uploaded but no
+    // single ticker appears in 2+ different CSVs.
+    const hasTrackedScreenerData = (rows as any[]).some(r =>
+      Array.isArray((r as any).screenerFiles) && (r as any).screenerFiles.length > 0
+    );
     return (
       <div style={cardStyle}>
         <div style={{ fontSize: 13, color: 'var(--mc-cyan)', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
@@ -5489,8 +5497,13 @@ function MultiConfirmedCard({ stocks }: { stocks: any[] }) {
         </div>
         <div style={{ fontSize: 11, color: 'var(--mc-text-4)', lineHeight: 1.5 }}>
           Stocks appearing in 2+ uploaded Screener.in CSVs land here.{' '}
-          <strong style={{ color: 'var(--mc-text-3)' }}>Re-upload your screens</strong> to populate —
-          screener membership wasn't tracked before this patch, so existing rows show 0.
+          {hasTrackedScreenerData ? (
+            <>No ticker is currently in your dataset in 2 or more different uploaded CSVs.
+            Upload another screen (different focus — e.g. cash-rich, FII-favourites, low-debt) to find overlaps.</>
+          ) : (
+            <><strong style={{ color: 'var(--mc-text-3)' }}>Re-upload your screens</strong> to populate —
+            screener membership wasn't tracked before this patch, so existing rows show 0.</>
+          )}
         </div>
       </div>
     );
