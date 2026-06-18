@@ -695,24 +695,19 @@ export default function HomeDashboard() {
                 rescored = mbApplyRanking(sorted as any[]);
               } catch {}
               setData((prev: HomeState) => ({ ...prev, ...buildSyncState(rescored) }));
-                // Write back DOWN so subsequent loads are fast.
-                try {
-                  // Best-effort localStorage mirror — may fail on quota.
-                  localStorage.setItem('mb_excel_scored_v2', j.snapshot);
-                } catch {}
-                // IDB write — usually succeeds even when localStorage doesn't.
-                try {
-                  const req2 = indexedDB.open('mc-mb', 1);
-                  req2.onsuccess = () => {
-                    try {
-                      const db = req2.result;
-                      if (db.objectStoreNames.contains('kv')) {
-                        db.transaction('kv', 'readwrite').objectStore('kv').put(j.snapshot, 'mb_scored');
-                      }
-                    } catch {}
-                  };
-                } catch {}
-              }
+              // PATCH 1101v — Write back DOWN so subsequent loads are fast.
+              try { localStorage.setItem('mb_excel_scored_v2', j.snapshot); } catch {}
+              try {
+                const req2 = indexedDB.open('mc-mb', 1);
+                req2.onsuccess = () => {
+                  try {
+                    const db = req2.result;
+                    if (db.objectStoreNames.contains('kv')) {
+                      db.transaction('kv', 'readwrite').objectStore('kv').put(j.snapshot, 'mb_scored');
+                    }
+                  } catch {}
+                };
+              } catch {}
             } catch {}
           })
           .catch((e) => { try { console.warn('[home] Railway India fetch failed', e); } catch {} });
