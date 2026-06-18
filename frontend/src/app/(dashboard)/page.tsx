@@ -2952,6 +2952,41 @@ export default function HomeDashboard() {
         </div>
 
         {/* ═══════════════ TIER 1 — IMMEDIATE ACTION ════════════════════ */}
+        {/* PATCH 1101bb — Lens-filter banner. The "CONVICTION-ONLY" / "A+ ONLY"
+            / sector lenses silently filtered Tier 1 from 10 → 2-3 stocks and
+            the user had no idea WHY their count was small. Now: if the active
+            lens is reducing Tier 1, show a prominent banner saying so with a
+            one-click reset to ALL. THIS was the actual cause of Tier 1 (3),
+            not the data path. The fillers logic was always correct. */}
+        {activeLens.mode !== 'all' && data.tier1.length > lensedTier1.length && (
+          <div style={{
+            marginBottom: 14, padding: '10px 14px',
+            background: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--mc-warn) 40%, transparent)',
+            borderLeft: '3px solid var(--mc-warn)', borderRadius: 8,
+            display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', fontSize: 12,
+          }}>
+            <span style={{ fontSize: 16 }}>🔍</span>
+            <div style={{ flex: 1, minWidth: 220 }}>
+              <strong style={{ color: 'var(--mc-warn)', fontWeight: 800 }}>{activeLens.emoji ? `${activeLens.emoji} ` : ''}{activeLens.label}</strong>
+              <span style={{ color: TEXT, marginLeft: 8 }}>
+                lens is filtering — showing <strong>{lensedTier1.length}</strong> of <strong>{data.tier1.length}</strong> Tier 1 stocks.
+              </span>
+            </div>
+            <button
+              onClick={() => setActiveLensId('all')}
+              style={{
+                padding: '5px 12px',
+                background: 'transparent',
+                border: '1px solid color-mix(in srgb, var(--mc-warn) 60%, transparent)',
+                borderRadius: 6,
+                color: 'var(--mc-warn)', fontSize: 11, fontWeight: 800, cursor: 'pointer',
+                letterSpacing: 0.3,
+              }}
+            >SHOW ALL ({data.tier1.length})</button>
+          </div>
+        )}
+
         {lensedTier1.length > 0 ? (
           (() => {
             const t1India = lensedTier1.filter((t: TierAction) => (t as any).market !== 'US');
