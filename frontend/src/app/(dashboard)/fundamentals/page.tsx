@@ -94,8 +94,21 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
       if (qp === 'watchlist' || qp === 'portfolio') scope = qp;
     } catch {}
   }
-  const STORAGE_KEY = scope ? 'mc:fundamentals:' + scope + ':data:v1' : 'mc:fundamentals:data:v1';
-  const STORAGE_NAME = scope ? 'mc:fundamentals:' + scope + ':name:v1' : 'mc:fundamentals:name:v1';
+  // PATCH 1101ss — Market dimension (India / USA). India uses existing Screener.in
+  // parser; USA accepts TradingView CSV. Each market gets its own storage so the
+  // two lists don't collide and the user can flip between them.
+  const MARKET_KEY = scope ? 'mc:fundamentals:' + scope + ':market:v1' : 'mc:fundamentals:market:v1';
+  const [market, setMarketState] = useState<'INDIA' | 'USA'>(() => {
+    if (typeof window === 'undefined') return 'INDIA';
+    try { return (localStorage.getItem(MARKET_KEY) as 'INDIA' | 'USA') || 'INDIA'; } catch { return 'INDIA'; }
+  });
+  const setMarket = (m: 'INDIA' | 'USA') => {
+    setMarketState(m);
+    try { localStorage.setItem(MARKET_KEY, m); } catch {}
+  };
+  const marketSuffix = market === 'USA' ? ':usa' : ''; // INDIA keeps legacy key for backwards compat
+  const STORAGE_KEY = scope ? 'mc:fundamentals:' + scope + marketSuffix + ':data:v1' : 'mc:fundamentals' + marketSuffix + ':data:v1';
+  const STORAGE_NAME = scope ? 'mc:fundamentals:' + scope + marketSuffix + ':name:v1' : 'mc:fundamentals' + marketSuffix + ':name:v1';
   const [data, setData] = useState<Row[]>([]);
   const [fname, setFname] = useState<string>('');
   const [dragging, setDragging] = useState(false);
@@ -147,9 +160,14 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
       } else if (rawName) {
         try { localStorage.removeItem(STORAGE_NAME); } catch {}
         setFname('');
+      } else {
+        // PATCH 1101ss — switching markets needs to CLEAR previous market's data
+        // from React state, otherwise stale rows linger.
+        setData([]);
+        setFname('');
       }
     } catch {}
-  }, []);
+  }, [STORAGE_KEY, STORAGE_NAME]);
 
   // Merge new rows into existing — accumulate across uploads, de-dup by ticker, NEW data wins.
   // PATCH 1101oo — atomic data+name persistence. Previously the data write
@@ -238,6 +256,26 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            {/* PATCH 1101ss — INDIA/USA market toggle. Each market has its own
+                saved list and accepts its own CSV format. */}
+            <div style={{ display: 'flex', gap: 0, border: `1px solid ${COL.line2}`, borderRadius: 6, overflow: 'hidden' }}>
+              {(['INDIA', 'USA'] as const).map((m) => {
+                const active = market === m;
+                const color = m === 'INDIA' ? '#10B981' : '#22D3EE';
+                return (
+                  <button
+                    key={m}
+                    onClick={() => setMarket(m)}
+                    style={{
+                      padding: '6px 12px', fontSize: 12, fontWeight: 800, letterSpacing: '0.3px',
+                      background: active ? `${color}22` : 'transparent',
+                      color: active ? color : COL.muted,
+                      border: 'none', cursor: 'pointer',
+                    }}
+                  >{m === 'INDIA' ? '🇮🇳 INDIA' : '🇺🇸 USA'}</button>
+                );
+              })}
+            </div>
             {fname ? <span style={chip}>Loaded: <b style={{ color: COL.txt }}>{fname}</b></span> : null}
             {data.length ? <span style={chip}><b style={{ color: COL.txt }}>{data.length}</b> stocks</span> : null}
             {data.length ? (
@@ -274,10 +312,20 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
             }}
           >
             <div style={{ fontSize: 34, marginBottom: 10 }}>📊</div>
-            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>Drop a Screener.in CSV here, or click “Upload CSV”</div>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>
+              {market === 'USA'
+                ? 'Drop a TradingView USA CSV here, or click "Upload CSV"'
+                : 'Drop a Screener.in CSV here, or click "Upload CSV"'}
+            </div>
             <div style={{ color: COL.muted, fontSize: 12 }}>Any number of stocks. Expected columns include:</div>
-            <div style={{ color: COL.dim, fontSize: 11.5, marginTop: 8, maxWidth: 720, marginLeft: 'auto', marginRight: 'auto' }}>{SAMPLE_HINT}</div>
+            <div style={{ color: COL.dim, fontSize: 11.5, marginTop: 8, maxWidth: 720, marginLeft: 'auto', marginRight: 'auto' }}>
+              {market === 'USA'
+                ? 'Symbol · Description · Sector · Market capitalization · Revenue growth %, Annual YoY · Gross margin %, TTM · Free cash flow margin %, Annual · Forward P/E · EV/EBITDA · ROIC · ROCE · Net margin %, TTM · Performance %, 1 year (and 3M / 6M) · Beta 5y · EBITDA margin %, TTM · Target price · Analyst rating · Piotroski F-score · Altman Z-score'
+                : SAMPLE_HINT}
+            </div>
           </div>
+        ) : market === 'USA' ? (
+          <UsaFundamentalsDashboard data={data} onRemove={removeRow} onClear={clearAll} />
         ) : (
           <Dashboard data={data} onRemove={removeRow} onAdd={addTickers} onClear={clearAll} />
         )}
@@ -288,6 +336,235 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
 
 const chip: any = { background: '#1b2330', border: `1px solid ${COL.line}`, borderRadius: 6, padding: '3px 9px', color: COL.muted, fontSize: 11 };
 const drop: any = { border: `1px dashed ${COL.line2}`, borderRadius: 8, padding: '8px 14px', color: COL.muted, fontSize: 12, cursor: 'pointer', background: COL.panel2 };
+
+// ============================================================================
+// PATCH 1101ss — USA Fundamentals dashboard. Reads TradingView CSV columns
+// and renders a US-centric table + key analytics. India columns (ROCE, debtor
+// days, promoter holding, etc.) are absent in USA exports so we don't pretend
+// they exist; instead we surface what TV actually provides.
+function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; onRemove: (key: string) => void; onClear: () => void }) {
+  const [sortKey, setSortKey] = useState<string>('Market capitalization');
+  const [sortDesc, setSortDesc] = useState(true);
+
+  const get = (r: Row, ...keys: string[]) => {
+    for (const k of keys) {
+      const v = r[k];
+      if (v !== undefined && v !== '' && v !== null) return v;
+    }
+    return undefined;
+  };
+  const n = (v: any): number | undefined => {
+    if (v === undefined || v === null || v === '') return undefined;
+    const p = parseFloat(String(v).replace(/[,$%]/g, ''));
+    return isNaN(p) ? undefined : p;
+  };
+
+  type UsaRow = {
+    raw: Row; symbol: string; company: string; sector: string;
+    mcapB?: number; price?: number; r40?: number; fwdPe?: number; pe?: number;
+    revAnn?: number; revQtr?: number; fcfMargin?: number; gpm?: number; opm?: number;
+    roic?: number; roce?: number; roe?: number; netMargin?: number;
+    perf1y?: number; perf3m?: number; perf6m?: number;
+    rsRating?: number; beta?: number; ebitdaMargin?: number;
+    epsGrowth?: number; pegFwd?: number; targetUpside?: number;
+    piotroski?: number; analystRating?: string;
+  };
+  const rows: UsaRow[] = useMemo(() => data.map((r) => {
+    const symbol = String(get(r, 'Symbol', 'Ticker') ?? '').trim().toUpperCase();
+    const company = String(get(r, 'Description', 'Company name', 'Company') ?? '').trim();
+    const sector = String(get(r, 'Sector', 'Industry') ?? '').trim();
+    const mcap = n(get(r, 'Market capitalization', 'Market Cap'));
+    const mcapB = mcap !== undefined ? Math.round(mcap / 1e9 * 100) / 100 : undefined;
+    const price = n(get(r, 'Price', 'Last', 'Close'));
+    const revAnn = n(get(r, 'Revenue growth %, Annual YoY', 'Revenue growth, Annual YoY'));
+    const revQtr = n(get(r, 'Revenue growth %, Quarterly YoY', 'Revenue growth, Quarterly YoY'));
+    const fcfMargin = n(get(r, 'Free cash flow margin %, Annual', 'FCF margin, Annual'));
+    const gpm = n(get(r, 'Gross margin %, Trailing 12 months', 'Gross margin %, TTM'));
+    const opm = n(get(r, 'Operating margin %, Trailing 12 months', 'Operating margin %, TTM'));
+    const r40 = (revAnn !== undefined && fcfMargin !== undefined) ? Math.round(revAnn + fcfMargin) : undefined;
+    const fwdPe = n(get(r, 'Forward non-GAAP price to earnings, Annual', 'Forward P/E', 'Fwd P/E'));
+    const pe = n(get(r, 'Price to earnings ratio', 'P/E'));
+    const roic = n(get(r, 'Return on invested capital %, Annual', 'ROIC'));
+    const roce = n(get(r, 'Return on capital employed %, Annual', 'ROCE'));
+    const roe = n(get(r, 'Return on equity %, Trailing 12 months', 'ROE TTM'));
+    const netMargin = n(get(r, 'Net margin %, Trailing 12 months', 'Net margin TTM'));
+    const perf1y = n(get(r, 'Performance %, 1 year', 'Performance, 1 Year %'));
+    const perf3m = n(get(r, 'Performance %, 3 months'));
+    const perf6m = n(get(r, 'Performance %, 6 months'));
+    const beta = n(get(r, 'Beta, 5 years', 'Beta 5y', 'Beta'));
+    const ebitdaMargin = n(get(r, 'EBITDA margin %, Trailing 12 months', 'EBITDA margin %, TTM'));
+    const epsGrowth = n(get(r, 'Earnings per share diluted growth %, TTM YoY', 'EPS growth %, TTM YoY'));
+    const peg = n(get(r, 'Price to earning to growth, Trailing 12 months', 'PEG'));
+    const piotroski = n(get(r, 'Piotroski F-score, Trailing 12 months', 'Piotroski F-score, Annual'));
+    const analystRating = String(get(r, 'Analyst Rating', 'Analyst rating') ?? '').trim() || undefined;
+    const targetPrice = n(get(r, 'Target price, 1 year', 'Target price 1 year'));
+    const targetUpside = (targetPrice && price && price > 0) ? Math.round(((targetPrice - price) / price) * 100) : undefined;
+    let rsRating: number | undefined;
+    if (perf1y !== undefined || perf3m !== undefined || perf6m !== undefined) {
+      const p3 = perf3m ?? perf1y ?? 0;
+      const p6 = perf6m ?? perf1y ?? 0;
+      const p12 = perf1y ?? 0;
+      const composite = 0.30 * p3 + 0.40 * p6 + 0.30 * p12;
+      rsRating = Math.max(1, Math.min(99, Math.round(50 + composite * 0.5)));
+    }
+    return { raw: r, symbol, company, sector, mcapB, price, r40, fwdPe, pe, revAnn, revQtr, fcfMargin, gpm, opm, roic, roce, roe, netMargin, perf1y, perf3m, perf6m, rsRating, beta, ebitdaMargin, epsGrowth, pegFwd: peg, targetUpside, piotroski, analystRating };
+  }), [data]);
+
+  const sortedRows = useMemo(() => {
+    const out = [...rows];
+    const k = sortKey as keyof UsaRow;
+    out.sort((a, b) => {
+      const av = (a as any)[k]; const bv = (b as any)[k];
+      if (av === undefined && bv === undefined) return 0;
+      if (av === undefined) return 1;
+      if (bv === undefined) return -1;
+      if (typeof av === 'number' && typeof bv === 'number') return sortDesc ? bv - av : av - bv;
+      return sortDesc ? String(bv).localeCompare(String(av)) : String(av).localeCompare(String(bv));
+    });
+    return out;
+  }, [rows, sortKey, sortDesc]);
+
+  // Summary stats
+  const med = (arr: number[]) => {
+    if (!arr.length) return 0;
+    const s = [...arr].sort((a, b) => a - b);
+    const m = Math.floor(s.length / 2);
+    return s.length % 2 === 0 ? Math.round((s[m - 1] + s[m]) / 2) : Math.round(s[m]);
+  };
+  const r40s = rows.map(r => r.r40).filter((x): x is number => typeof x === 'number');
+  const rsRatings = rows.map(r => r.rsRating).filter((x): x is number => typeof x === 'number');
+  const fwdPes = rows.map(r => r.fwdPe).filter((x): x is number => typeof x === 'number' && x > 0);
+  const roics = rows.map(r => r.roic).filter((x): x is number => typeof x === 'number');
+  const eliteR40 = r40s.filter(x => x >= 60).length;
+  const passingR40 = r40s.filter(x => x >= 40).length;
+  const topRs = rsRatings.filter(x => x >= 80).length;
+
+  // Sector aggregation
+  const sectorMap = new Map<string, { count: number; r40s: number[]; rs: number[] }>();
+  for (const r of rows) {
+    const s = r.sector || 'Unclassified';
+    const cur = sectorMap.get(s) ?? { count: 0, r40s: [], rs: [] };
+    cur.count++;
+    if (typeof r.r40 === 'number') cur.r40s.push(r.r40);
+    if (typeof r.rsRating === 'number') cur.rs.push(r.rsRating);
+    sectorMap.set(s, cur);
+  }
+  const sectors = Array.from(sectorMap.entries())
+    .map(([sec, v]) => ({ sec, count: v.count, medR40: med(v.r40s), medRs: med(v.rs) }))
+    .sort((a, b) => b.medR40 - a.medR40);
+
+  const headerCell: any = { padding: '8px 10px', fontSize: 10, fontWeight: 800, color: COL.muted, letterSpacing: '0.4px', cursor: 'pointer', whiteSpace: 'nowrap', textAlign: 'left' };
+  const cell: any = { padding: '7px 10px', fontSize: 11, color: COL.txt, fontVariantNumeric: 'tabular-nums', borderTop: `1px solid ${COL.line}`, whiteSpace: 'nowrap' };
+  const setSort = (k: string) => { if (sortKey === k) setSortDesc(!sortDesc); else { setSortKey(k); setSortDesc(true); } };
+  const arrow = (k: string) => sortKey === k ? (sortDesc ? ' ↓' : ' ↑') : '';
+  const colorR40 = (r: number) => r >= 80 ? '#10B981' : r >= 60 ? '#22D3EE' : r >= 40 ? '#3B82F6' : r >= 20 ? '#F59E0B' : r >= 0 ? '#FB923C' : '#EF4444';
+  const colorRs = (r: number) => r >= 80 ? '#10B981' : r >= 60 ? '#22D3EE' : r >= 40 ? COL.muted : '#F59E0B';
+
+  return (
+    <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* Stats strip */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
+        {[
+          { label: 'Stocks', val: rows.length, color: '#22D3EE' },
+          { label: 'Median R40', val: med(r40s), color: '#22D3EE' },
+          { label: 'R40 Elite (≥60)', val: eliteR40, color: '#10B981' },
+          { label: 'R40 Pass (≥40)', val: passingR40, color: '#3B82F6' },
+          { label: 'RS ≥80', val: topRs, color: '#10B981' },
+          { label: 'Median Fwd P/E', val: med(fwdPes), color: '#F59E0B' },
+          { label: 'Median ROIC %', val: med(roics), color: '#10B981' },
+        ].map((s, i) => (
+          <div key={i} style={{ background: COL.panel2, border: `1px solid ${COL.line}`, borderRadius: 6, padding: '8px 12px' }}>
+            <div style={{ fontSize: 10, color: COL.muted, fontWeight: 700, letterSpacing: '0.4px' }}>{s.label}</div>
+            <div style={{ fontSize: 18, fontWeight: 900, color: s.color, marginTop: 2 }}>{s.val}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Sector heatmap */}
+      {sectors.length > 0 && (
+        <div style={{ background: COL.panel2, border: `1px solid ${COL.line}`, borderRadius: 8, padding: 12 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: COL.cyan, marginBottom: 8, letterSpacing: '0.4px' }}>🇺🇸 SECTOR R40 / RS — median by sector</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {sectors.map(s => (
+              <div key={s.sec} style={{ display: 'grid', gridTemplateColumns: '180px 1fr 80px 80px 60px', gap: 8, alignItems: 'center', fontSize: 11 }}>
+                <span style={{ color: COL.txt, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sec}</span>
+                <div style={{ position: 'relative', height: 10, background: COL.panel, borderRadius: 3, overflow: 'hidden' }}>
+                  <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${Math.max(2, Math.min(100, (s.medR40 + 50) / 1.5))}%`, background: colorR40(s.medR40) }} />
+                </div>
+                <span style={{ color: colorR40(s.medR40), fontWeight: 800, textAlign: 'right' }}>R40 {s.medR40}</span>
+                <span style={{ color: colorRs(s.medRs), fontWeight: 800, textAlign: 'right' }}>RS {s.medRs}</span>
+                <span style={{ color: COL.muted, textAlign: 'right' }}>{s.count} cos</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Main table */}
+      <div style={{ background: COL.panel2, border: `1px solid ${COL.line}`, borderRadius: 8, overflowX: 'auto' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: `1px solid ${COL.line}` }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: COL.cyan, letterSpacing: '0.4px' }}>🇺🇸 USA Holdings — sortable</div>
+          <button onClick={onClear} style={{ ...drop, color: COL.red, borderColor: '#EF444460', background: '#EF444411' }}>✕ Clear all</button>
+        </div>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ background: COL.panel }}>
+              <th style={headerCell}>TICKER</th>
+              <th style={headerCell}>COMPANY</th>
+              <th style={headerCell}>SECTOR</th>
+              <th style={headerCell as any} onClick={() => setSort('mcapB')}>MCAP $B{arrow('mcapB')}</th>
+              <th style={headerCell as any} onClick={() => setSort('r40')}>R40{arrow('r40')}</th>
+              <th style={headerCell as any} onClick={() => setSort('rsRating')}>RS{arrow('rsRating')}</th>
+              <th style={headerCell as any} onClick={() => setSort('revAnn')}>REV YOY{arrow('revAnn')}</th>
+              <th style={headerCell as any} onClick={() => setSort('fcfMargin')}>FCF M{arrow('fcfMargin')}</th>
+              <th style={headerCell as any} onClick={() => setSort('ebitdaMargin')}>EBITDA M{arrow('ebitdaMargin')}</th>
+              <th style={headerCell as any} onClick={() => setSort('roic')}>ROIC{arrow('roic')}</th>
+              <th style={headerCell as any} onClick={() => setSort('fwdPe')}>FWD P/E{arrow('fwdPe')}</th>
+              <th style={headerCell as any} onClick={() => setSort('pegFwd')}>PEG{arrow('pegFwd')}</th>
+              <th style={headerCell as any} onClick={() => setSort('targetUpside')}>UPSIDE{arrow('targetUpside')}</th>
+              <th style={headerCell as any} onClick={() => setSort('beta')}>BETA{arrow('beta')}</th>
+              <th style={headerCell as any} onClick={() => setSort('piotroski')}>PIO{arrow('piotroski')}</th>
+              <th style={headerCell}>✕</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sortedRows.map((r) => (
+              <tr key={r.symbol}>
+                <td style={{ ...cell, fontWeight: 800, color: COL.cyan }}>{r.symbol}</td>
+                <td style={{ ...cell, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.company}</td>
+                <td style={{ ...cell, color: COL.muted, fontSize: 10 }}>{r.sector}</td>
+                <td style={cell}>{r.mcapB?.toLocaleString() ?? '—'}</td>
+                <td style={{ ...cell, color: typeof r.r40 === 'number' ? colorR40(r.r40) : COL.muted, fontWeight: 800 }}>{r.r40 ?? '—'}</td>
+                <td style={{ ...cell, color: typeof r.rsRating === 'number' ? colorRs(r.rsRating) : COL.muted, fontWeight: 800 }}>{r.rsRating ?? '—'}</td>
+                <td style={cell}>{r.revAnn !== undefined ? `${r.revAnn.toFixed(0)}%` : '—'}</td>
+                <td style={cell}>{r.fcfMargin !== undefined ? `${r.fcfMargin.toFixed(0)}%` : '—'}</td>
+                <td style={cell}>{r.ebitdaMargin !== undefined ? `${r.ebitdaMargin.toFixed(0)}%` : '—'}</td>
+                <td style={cell}>{r.roic !== undefined ? `${r.roic.toFixed(0)}%` : '—'}</td>
+                <td style={cell}>{r.fwdPe !== undefined ? `${r.fwdPe.toFixed(0)}×` : '—'}</td>
+                <td style={cell}>{r.pegFwd !== undefined ? r.pegFwd.toFixed(2) : '—'}</td>
+                <td style={{ ...cell, color: typeof r.targetUpside === 'number' ? (r.targetUpside >= 20 ? '#10B981' : r.targetUpside >= 0 ? '#22D3EE' : '#EF4444') : COL.muted, fontWeight: 700 }}>
+                  {r.targetUpside !== undefined ? `${r.targetUpside >= 0 ? '↑' : '↓'} ${Math.abs(r.targetUpside)}%` : '—'}
+                </td>
+                <td style={{ ...cell, color: typeof r.beta === 'number' ? (r.beta >= 2 ? '#EF4444' : r.beta >= 1.3 ? '#F59E0B' : '#10B981') : COL.muted }}>
+                  {r.beta !== undefined ? r.beta.toFixed(1) : '—'}
+                </td>
+                <td style={{ ...cell, color: typeof r.piotroski === 'number' ? (r.piotroski >= 7 ? '#10B981' : r.piotroski >= 5 ? '#22D3EE' : '#F59E0B') : COL.muted, fontWeight: 700 }}>
+                  {r.piotroski ?? '—'}
+                </td>
+                <td style={cell}>
+                  <button onClick={() => onRemove(rowKey(r.raw))} style={{ background: 'transparent', border: 'none', color: COL.muted, cursor: 'pointer', fontSize: 14 }}>✕</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ fontSize: 10, color: COL.dim, textAlign: 'center', marginTop: 6 }}>
+        TradingView USA fundamentals · all metrics computed in-browser. R40 = revenue growth + FCF margin · RS = O&apos;Neil-style 1-99 from 3M/6M/1Y composite · Upside = vs analyst 1-year target · PEG = trailing.
+      </div>
+    </div>
+  );
+}
 
 // ============================================================================
 function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: (key: string) => void; onAdd: (raw: string) => void; onClear: () => void }) {
