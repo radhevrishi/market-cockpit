@@ -6644,9 +6644,16 @@ function MultibaggerAnalytics({
             🔬 REVIEW · DATA INCOMPLETE ({stats.reviewDataGap.length})
           </div>
           <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 10, lineHeight: 1.45 }}>
-            Very low score but no red flags — likely missing data in the CSV (debtor days, working
-            capital, interest coverage). Don&apos;t auto-avoid; verify the row in Screener and re-upload
-            with the missing columns. METRICS_TO_ADD.md lists what to include.
+            {/* PATCH 1101pp — copy is scope-aware (USA needs different columns). */}
+            {scope === 'USA' ? (
+              <>Very low score but no red flags — likely missing data in the TradingView export
+              (P/E, EV/EBITDA, FCF margin, Piotroski F-score, ROIC). Re-export from TradingView with
+              the &quot;Recommended extra columns&quot; listed on the USA Multibagger tab.</>
+            ) : (
+              <>Very low score but no red flags — likely missing data in the CSV (debtor days, working
+              capital, interest coverage). Don&apos;t auto-avoid; verify the row in Screener and re-upload
+              with the missing columns. METRICS_TO_ADD.md lists what to include.</>
+            )}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
             {stats.reviewDataGap.slice(0, 8).map((s) => (
@@ -7241,14 +7248,24 @@ function MultibaggerAnalytics({
         ].map(b => ({ ...b, count: r40s.filter(x => b.test(x.v)).length, names: r40s.filter(x => b.test(x.v)).slice(0, 5).map(x => x.s.symbol) }));
         const top10R40 = [...r40s].sort((a, b) => b.v - a.v).slice(0, 20);
         const tiers = ['MICRO', 'SMALL', 'MID', 'LARGE', 'MEGA'] as const;
+        // PATCH 1101pp — Use MEDIAN instead of MEAN for R40. Outliers like
+        // HGRAF (-11438) wreck mean averages — SMALL was showing -553 even
+        // when 9 of 30 stocks are elite (R40 ≥ 60). Median ignores tails.
+        const median = (arr: number[]) => {
+          if (!arr.length) return 0;
+          const s = [...arr].sort((a, b) => a - b);
+          const m = Math.floor(s.length / 2);
+          return s.length % 2 === 0 ? Math.round((s[m - 1] + s[m]) / 2) : Math.round(s[m]);
+        };
         const byTier = tiers.map(t => {
           const subset = usaRows.filter((r: any) => r.capTier === t);
           if (subset.length === 0) return null;
           const r40sub = subset.map((r: any) => r.ruleOf40 ?? 0);
-          const avgR40 = Math.round(r40sub.reduce((a: number, b: number) => a + b, 0) / r40sub.length);
+          const medR40 = median(r40sub);
           const elite = subset.filter((r: any) => (r.ruleOf40 ?? 0) >= 60).length;
-          return { tier: t, count: subset.length, avgR40, elite };
-        }).filter(Boolean) as { tier: string; count: number; avgR40: number; elite: number }[];
+          const passing = subset.filter((r: any) => (r.ruleOf40 ?? 0) >= 40).length;
+          return { tier: t, count: subset.length, avgR40: medR40, elite, passing };
+        }).filter(Boolean) as { tier: string; count: number; avgR40: number; elite: number; passing: number }[];
         return (
           <div style={cardStyle}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
@@ -7275,18 +7292,18 @@ function MultibaggerAnalytics({
             {byTier.length > 0 && (
               <>
                 <div style={{ fontSize: 11, color: 'var(--mc-text-3)', fontWeight: 700, marginBottom: 6, letterSpacing: '0.3px' }}>
-                  Cap-Tier Breakdown · avg R40 + count of R40 ≥ 60 (elite franchises)
+                  Cap-Tier Breakdown · median R40 (outlier-resistant) + R40 ≥ 40 (passes) and ≥ 60 (elite)
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 6, marginBottom: 12 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 6, marginBottom: 12 }}>
                   {byTier.map(t => (
                     <div key={t.tier} style={{ padding: '6px 10px', background: 'var(--mc-bg-2)', border: '1px solid var(--mc-bg-4)', borderRadius: 5 }}>
                       <div style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.3px' }}>{t.tier}</div>
                       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 2 }}>
                         <span style={{ fontSize: 13, color: 'var(--mc-text-1)', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{t.count}</span>
                         <span style={{ fontSize: 10, color: 'var(--mc-text-4)' }}>names</span>
-                        <span style={{ marginLeft: 'auto', fontSize: 10, color: '#22D3EE', fontWeight: 700 }}>R40 avg {t.avgR40}</span>
+                        <span style={{ marginLeft: 'auto', fontSize: 10, color: '#22D3EE', fontWeight: 700 }}>R40 med {t.avgR40}</span>
                       </div>
-                      <div style={{ fontSize: 9, color: '#10B981', fontWeight: 700, marginTop: 1 }}>{t.elite} elite (≥60)</div>
+                      <div style={{ fontSize: 9, color: '#10B981', fontWeight: 700, marginTop: 1 }}>{t.elite} elite · {t.passing} pass</div>
                     </div>
                   ))}
                 </div>
@@ -7359,19 +7376,28 @@ function MultibaggerAnalytics({
       {scope === 'USA' && (() => {
         const usaRows = (stocks as any[]).filter((r: any) => r.market === 'USA' && typeof r.ruleOf40 === 'number');
         if (usaRows.length === 0) return null;
-        const sectorMap = new Map<string, { count: number; sumR40: number; avgScore: number; elite: number }>();
+        // PATCH 1101pp — Sector heatmap also switched to median R40. Mean
+        // was producing "Producer manufacturing R40 -878" because of a handful
+        // of crypto-miner / SPAC outliers in that bucket.
+        const sectorMapM = new Map<string, { r40s: number[]; scores: number[]; elite: number; passing: number }>();
         for (const r of usaRows) {
           const sec = r.sector || 'Unclassified';
-          const cur = sectorMap.get(sec) ?? { count: 0, sumR40: 0, avgScore: 0, elite: 0 };
-          cur.count++;
-          cur.sumR40 += r.ruleOf40 ?? 0;
-          cur.avgScore += r.score ?? 0;
+          const cur = sectorMapM.get(sec) ?? { r40s: [], scores: [], elite: 0, passing: 0 };
+          cur.r40s.push(r.ruleOf40 ?? 0);
+          cur.scores.push(r.score ?? 0);
           if ((r.ruleOf40 ?? 0) >= 60) cur.elite++;
-          sectorMap.set(sec, cur);
+          if ((r.ruleOf40 ?? 0) >= 40) cur.passing++;
+          sectorMapM.set(sec, cur);
         }
-        const ranked = Array.from(sectorMap.entries())
-          .filter(([_, v]) => v.count >= 2)
-          .map(([sec, v]) => ({ sec, count: v.count, avgR40: Math.round(v.sumR40 / v.count), avgScore: Math.round(v.avgScore / v.count), elite: v.elite }))
+        const medianN = (a: number[]) => {
+          if (!a.length) return 0;
+          const s = [...a].sort((x, y) => x - y);
+          const m = Math.floor(s.length / 2);
+          return s.length % 2 === 0 ? Math.round((s[m - 1] + s[m]) / 2) : Math.round(s[m]);
+        };
+        const ranked = Array.from(sectorMapM.entries())
+          .filter(([_, v]) => v.r40s.length >= 2)
+          .map(([sec, v]) => ({ sec, count: v.r40s.length, avgR40: medianN(v.r40s), avgScore: medianN(v.scores), elite: v.elite, passing: v.passing }))
           .sort((a, b) => b.avgR40 - a.avgR40);
         if (ranked.length === 0) return null;
         return (
@@ -7380,21 +7406,21 @@ function MultibaggerAnalytics({
               🇺🇸 SECTOR R40 HEATMAP
             </div>
             <div style={{ fontSize: 10, color: 'var(--mc-text-4)', marginBottom: 8 }}>
-              Sectors ranked by average Rule of 40 · ≥ 40 = institutional hunting ground · &lt; 0 = capital-destroyers
+              Sectors ranked by <strong>median</strong> Rule of 40 (outlier-resistant) · ≥ 40 = institutional hunting ground · &lt; 0 = capital-destroyers
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               {ranked.map(r => {
                 const color = r.avgR40 >= 60 ? '#10B981' : r.avgR40 >= 40 ? '#22D3EE' : r.avgR40 >= 20 ? '#F59E0B' : r.avgR40 >= 0 ? '#FB923C' : '#EF4444';
                 const widthPct = Math.max(2, Math.min(100, (r.avgR40 + 50) / 1.5));
                 return (
-                  <div key={r.sec} style={{ display: 'grid', gridTemplateColumns: '180px 1fr 80px 60px 90px', gap: 8, alignItems: 'center', fontSize: 11 }}>
+                  <div key={r.sec} style={{ display: 'grid', gridTemplateColumns: '180px 1fr 80px 60px 110px', gap: 8, alignItems: 'center', fontSize: 11 }}>
                     <span style={{ color: 'var(--mc-text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.sec}</span>
                     <div style={{ position: 'relative', height: 12, background: 'var(--mc-bg-2)', borderRadius: 3, overflow: 'hidden' }}>
                       <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${widthPct}%`, background: color }} />
                     </div>
-                    <span style={{ color, fontWeight: 800, fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}>R40 {r.avgR40}</span>
+                    <span style={{ color, fontWeight: 800, fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}>med {r.avgR40}</span>
                     <span style={{ color: 'var(--mc-text-4)', textAlign: 'right' }}>{r.count} cos</span>
-                    <span style={{ color: '#10B981', fontWeight: 700, textAlign: 'right' }}>{r.elite} elite</span>
+                    <span style={{ color: '#10B981', fontWeight: 700, textAlign: 'right' }}>{r.elite}/{r.passing} elite/pass</span>
                   </div>
                 );
               })}
