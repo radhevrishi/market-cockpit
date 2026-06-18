@@ -185,6 +185,15 @@ export function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGr
     if (row.roic>=20) strengths.push(`ROIC ${row.roic.toFixed(1)}% — above cost of capital, durable value creation`);
     else if (row.roic<10) risks.push(`ROIC ${row.roic.toFixed(1)}% — below WACC, capital not productive`);
   }
+  // PATCH 1101hh — ROCE (was parsed but never used). Buffett's #1 capital
+  // efficiency metric. ROCE measures returns on the ENTIRE capital base
+  // (equity + debt) so it strips out leverage games. >25% = elite franchise.
+  if (row.roce !== undefined) {
+    const s=row.roce>=25?92:row.roce>=18?82:row.roce>=12?65:row.roce>=8?45:25;
+    qualS+=s; qualC++;
+    if (row.roce>=25) strengths.push(`ROCE ${row.roce.toFixed(1)}% — Buffett-grade capital efficiency (>25%)`);
+    else if (row.roce<10) risks.push(`ROCE ${row.roce.toFixed(1)}% — capital base not productive (<10%)`);
+  }
   if (row.netProfitMargin !== undefined) {
     const s=svUS(row.netProfitMargin,[5,12,22]); qualS+=s*0.6; qualC+=0.6;
   }
@@ -291,6 +300,24 @@ export function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGr
   }
   if (row.ps !== undefined && row.ps > 0) {
     valComponents.push(svUS(row.ps,[2,5,12],false));
+    if (row.ps < 2) strengths.push(`P/S ${row.ps.toFixed(1)}× — value zone for the franchise`);
+    else if (row.ps > 25) risks.push(`P/S ${row.ps.toFixed(1)}× — extreme valuation, depends entirely on sustained hyper-growth`);
+  }
+  // PATCH 1101hh — Price-to-Book (was parsed but never used in scoring).
+  // P/B < 1 = deep value (asset coverage), P/B 1-3 = reasonable, > 5 = quality premium,
+  // > 10 = stretched. Adds a value-floor signal especially for capital-intensive sectors.
+  if (row.pb !== undefined && row.pb > 0) {
+    const pbS = row.pb < 1 ? 88 : row.pb < 3 ? 72 : row.pb < 5 ? 58 : row.pb < 10 ? 42 : 28;
+    valComponents.push(pbS);
+    if (row.pb < 1) strengths.push(`P/B ${row.pb.toFixed(2)}× — trades below book value (asset-backed value)`);
+    else if (row.pb > 10) risks.push(`P/B ${row.pb.toFixed(1)}× — extreme premium to book; valuation hyper-dependent on intangibles`);
+  }
+  // PATCH 1101hh — EV/Revenue (was parsed but never used). Best valuation metric
+  // for pre-profit / low-margin companies where P/E and EV/EBITDA are not meaningful.
+  if (row.evRevenue !== undefined && row.evRevenue > 0) {
+    const evrS = row.evRevenue < 1 ? 90 : row.evRevenue < 3 ? 72 : row.evRevenue < 8 ? 55 : row.evRevenue < 15 ? 38 : 22;
+    valComponents.push(evrS);
+    if (row.evRevenue > 25) risks.push(`EV/Revenue ${row.evRevenue.toFixed(1)}× — narrative-driven valuation; needs hyper-growth + 50%+ margins to justify`);
   }
   // PEG ratio — best growth-adjusted valuation check
   if (row.peg !== undefined && row.peg > 0) {
@@ -398,6 +425,44 @@ export function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGr
       risks.push(`Analyst consensus: Sell — analysts see downside risk`);
     }
     // Neutral / Hold → no adjustment (no signal)
+  }
+
+  // PATCH 1101hh — Net-Cash Bonus (parsed cashUsd / ltDebtUsd but never used).
+  // Net-cash balance sheet = optionality + buyback firepower + survival in downturns.
+  // Cash > LT debt AND > 5% of mcap = meaningful net-cash position.
+  if (row.cashUsd !== undefined && row.ltDebtUsd !== undefined && row.marketCapUsd !== undefined) {
+    const netCash = row.cashUsd - row.ltDebtUsd;
+    const netCashPctMcap = (netCash / row.marketCapUsd) * 100;
+    if (netCash > 0 && netCashPctMcap >= 10) {
+      mktS = Math.min(100, mktS + 8);
+      strengths.push(`Net cash $${(netCash/1e9).toFixed(1)}B (${netCashPctMcap.toFixed(0)}% of mcap) — optionality and downturn survival`);
+    } else if (netCash > 0 && netCashPctMcap >= 5) {
+      mktS = Math.min(100, mktS + 4);
+    } else if (row.ltDebtUsd > 0 && netCash < -row.marketCapUsd * 0.25) {
+      mktS = Math.max(0, mktS - 8);
+      risks.push(`Heavy leverage: LT debt $${(row.ltDebtUsd/1e9).toFixed(1)}B exceeds 25% of mcap — refinancing risk`);
+    }
+  } else if (row.cashStInvest !== undefined && row.marketCapUsd !== undefined && row.ltDebtUsd !== undefined) {
+    // Fallback when explicit cashUsd is missing — use Cash and short-term investments.
+    const netCash = row.cashStInvest - row.ltDebtUsd;
+    const netCashPctMcap = (netCash / row.marketCapUsd) * 100;
+    if (netCash > 0 && netCashPctMcap >= 10) {
+      mktS = Math.min(100, mktS + 8);
+      strengths.push(`Net cash + ST investments $${(netCash/1e9).toFixed(1)}B (${netCashPctMcap.toFixed(0)}% of mcap) — fortress balance sheet`);
+    }
+  }
+
+  // PATCH 1101hh — Free Float % (parsed but never used). High free float =
+  // institutional liquidity for size buyers. Low free float = micro-illiquid
+  // (price subject to manipulation, hard to exit large positions). India
+  // promoter holding uses inverse logic; for USA, FF<25% is the warning sign.
+  if (row.freeFloatPct !== undefined) {
+    if (row.freeFloatPct < 25) {
+      mktS = Math.max(0, mktS - 6);
+      risks.push(`Free float ${row.freeFloatPct.toFixed(0)}% — low public float (illiquid, manipulation risk for institutional sizers)`);
+    } else if (row.freeFloatPct >= 70 && row.freeFloatPct <= 95) {
+      mktS = Math.min(100, mktS + 3);
+    }
   }
 
   // ── RSI Momentum (TradingView "Relative strength index, 14") ─────────────
