@@ -10,7 +10,9 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
 
 // Identity for de-dup: NSE code, else BSE code, else Name (uppercased).
-const rowKey = (d: Record<string, string>) => ((d['NSE Code'] || d['BSE Code'] || d['Name'] || '').trim().toUpperCase());
+// PATCH 1101tt — rowKey now also recognises TradingView USA columns (Symbol / Ticker / Description)
+// so USA CSV uploads don't all collapse to the same empty-string key.
+const rowKey = (d: Record<string, string>) => ((d['NSE Code'] || d['BSE Code'] || d['Symbol'] || d['Ticker'] || d['Name'] || d['Description'] || d['Company name'] || d['Company'] || '').trim().toUpperCase());
 
 type Row = Record<string, string>;
 
@@ -179,10 +181,37 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
     try {
       const incoming = toObjects(parseCSV(text));
       if (!incoming.length) { setError('No data rows found in that file.'); return; }
+      // PATCH 1101tt — Format detection. Reject cross-market uploads.
+      const headers = Object.keys(incoming[0] || {});
+      const isTradingViewUSA = headers.some(h =>
+        h.includes('Forward non-GAAP') ||
+        h.includes('Piotroski F-score') ||
+        h.includes('Free cash flow margin %, Annual') ||
+        h.includes('Performance %, 1 year')
+      );
+      const isScreenerIndia = headers.some(h =>
+        h === 'NSE Code' || h === 'BSE Code' || h === 'Promoter holding' ||
+        h.includes('Pledge') || h === 'ROCE 3yr avg' || h === 'Debtor days'
+      );
+      if (market === 'USA' && !isTradingViewUSA && isScreenerIndia) {
+        setError(`❌ "${name}" looks like an India Screener.in CSV (has columns like NSE Code / Promoter holding). You're on the 🇺🇸 USA tab. Switch to 🇮🇳 INDIA before uploading this file, or upload a TradingView USA export here.`);
+        return;
+      }
+      if (market === 'INDIA' && !isScreenerIndia && isTradingViewUSA) {
+        setError(`❌ "${name}" looks like a TradingView USA CSV (has columns like Forward non-GAAP P/E / Piotroski F-score). You're on the 🇮🇳 INDIA tab. Switch to 🇺🇸 USA before uploading this file.`);
+        return;
+      }
+      // Drop rows that don't have a usable symbol — prevents the dedup collision
+      // that previously collapsed every USA row into the same empty-key bucket.
+      const validIncoming = incoming.filter((r) => rowKey(r) !== '');
+      if (!validIncoming.length) {
+        setError(`No rows with a recognised Symbol / Ticker / NSE Code / BSE Code column found in "${name}".`);
+        return;
+      }
       setData((prev) => {
         const map = new Map<string, Row>();
         prev.forEach((r) => map.set(rowKey(r), r));
-        incoming.forEach((r) => map.set(rowKey(r), r));
+        validIncoming.forEach((r) => map.set(rowKey(r), r));
         const merged = Array.from(map.values());
         const dataOk = mcPersist(STORAGE_KEY, JSON.stringify(merged));
         if (dataOk) {
@@ -199,7 +228,7 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
         return merged;
       });
     } catch (e: any) { setError('Could not parse that CSV: ' + (e?.message || e)); }
-  }, []);
+  }, [market, STORAGE_KEY, STORAGE_NAME]);
 
   const clearAll = useCallback(() => {
     setData([]); setFname(''); setError('');
@@ -499,6 +528,153 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
           </div>
         </div>
       )}
+
+      {/* PATCH 1101tt — Must Hold / Exit Triggers — strengths and risks count per stock.
+          Builds parity with India fundamentals "Keep / Exit" sections. */}
+      {(() => {
+        const score = (r: UsaRow) => {
+          const strengths: string[] = [];
+          const triggers: string[] = [];
+          if (typeof r.r40 === 'number') {
+            if (r.r40 >= 60) strengths.push('R40 elite ≥60');
+            else if (r.r40 < 0) triggers.push('R40 negative — cash burning');
+          }
+          if (typeof r.rsRating === 'number') {
+            if (r.rsRating >= 80) strengths.push('RS Rating top 20%');
+            else if (r.rsRating <= 20) triggers.push('RS bottom 20%');
+          }
+          if (typeof r.roic === 'number' && r.roic >= 20) strengths.push('ROIC ≥20% (Buffett tier)');
+          else if (typeof r.roic === 'number' && r.roic < 5) triggers.push('ROIC <5%');
+          if (typeof r.fcfMargin === 'number' && r.fcfMargin >= 15) strengths.push('FCF margin ≥15%');
+          else if (typeof r.fcfMargin === 'number' && r.fcfMargin < 0) triggers.push('FCF negative');
+          if (typeof r.ebitdaMargin === 'number' && r.ebitdaMargin >= 30) strengths.push('EBITDA margin ≥30%');
+          if (typeof r.gpm === 'number' && r.gpm >= 60) strengths.push('Gross margin ≥60% (moat)');
+          if (typeof r.netMargin === 'number' && r.netMargin >= 20) strengths.push('Net margin ≥20%');
+          if (typeof r.perf1y === 'number' && r.perf1y >= 30) strengths.push('1Y return ≥30%');
+          else if (typeof r.perf1y === 'number' && r.perf1y < -20) triggers.push('1Y return <-20%');
+          if (typeof r.pegFwd === 'number' && r.pegFwd > 0 && r.pegFwd < 1) strengths.push('PEG <1 (cheap vs growth)');
+          else if (typeof r.pegFwd === 'number' && r.pegFwd > 3) triggers.push('PEG >3 (rich)');
+          if (typeof r.fwdPe === 'number' && r.fwdPe > 0 && r.fwdPe > 80) triggers.push('Fwd P/E >80');
+          if (typeof r.beta === 'number' && r.beta >= 2) triggers.push('Beta ≥2 (volatile)');
+          if (typeof r.piotroski === 'number' && r.piotroski >= 7) strengths.push('Piotroski ≥7/9');
+          else if (typeof r.piotroski === 'number' && r.piotroski <= 3) triggers.push('Piotroski ≤3/9');
+          if (typeof r.targetUpside === 'number' && r.targetUpside >= 20) strengths.push('Analyst upside ≥20%');
+          else if (typeof r.targetUpside === 'number' && r.targetUpside <= -10) triggers.push('Analyst downside');
+          return { strengths, triggers };
+        };
+        const scored = rows.map(r => ({ r, s: score(r) }));
+        const mustHold = scored.filter(x => x.s.strengths.length >= 3).sort((a, b) => b.s.strengths.length - a.s.strengths.length).slice(0, 25);
+        const exitTriggers = scored.filter(x => x.s.triggers.length >= 2).sort((a, b) => b.s.triggers.length - a.s.triggers.length).slice(0, 25);
+        return (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: 12 }}>
+            <div style={{ background: COL.panel2, border: `1px solid ${COL.line}`, borderRadius: 8, padding: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: '#10B981', marginBottom: 4, letterSpacing: '0.4px' }}>✅ MUST HOLD / KEEP CONVICTION ({mustHold.length})</div>
+              <div style={{ fontSize: 10, color: COL.muted, marginBottom: 8 }}>≥3 institutional strengths. More green flags = stronger case to hold/add.</div>
+              {mustHold.map(({ r, s }) => (
+                <div key={r.symbol} style={{ display: 'grid', gridTemplateColumns: '60px 1fr auto', gap: 8, padding: '5px 0', borderTop: `1px solid ${COL.line}`, fontSize: 11 }}>
+                  <span style={{ color: '#10B981', fontWeight: 800 }}>{r.symbol}</span>
+                  <span style={{ color: COL.muted, fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.strengths.slice(0, 4).join(' · ')}</span>
+                  <span style={{ color: '#10B981', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{s.strengths.length}</span>
+                </div>
+              ))}
+              {mustHold.length === 0 && <div style={{ color: COL.muted, fontSize: 11 }}>No stocks meet ≥3 strengths.</div>}
+            </div>
+            <div style={{ background: COL.panel2, border: `1px solid ${COL.line}`, borderRadius: 8, padding: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: '#EF4444', marginBottom: 4, letterSpacing: '0.4px' }}>⚠️ EXIT / REVIEW TRIGGERS ({exitTriggers.length})</div>
+              <div style={{ fontSize: 10, color: COL.muted, marginBottom: 8 }}>≥2 red flags. More triggers = stronger case to exit/trim.</div>
+              {exitTriggers.map(({ r, s }) => (
+                <div key={r.symbol} style={{ display: 'grid', gridTemplateColumns: '60px 1fr auto', gap: 8, padding: '5px 0', borderTop: `1px solid ${COL.line}`, fontSize: 11 }}>
+                  <span style={{ color: '#EF4444', fontWeight: 800 }}>{r.symbol}</span>
+                  <span style={{ color: COL.muted, fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.triggers.slice(0, 4).join(' · ')}</span>
+                  <span style={{ color: '#EF4444', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{s.triggers.length}</span>
+                </div>
+              ))}
+              {exitTriggers.length === 0 && <div style={{ color: COL.muted, fontSize: 11 }}>No stocks flagged.</div>}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* PATCH 1101tt — Leader grids (top 10 by various metrics, India parity). */}
+      {(() => {
+        const lead = (key: keyof UsaRow, desc = true, label: string, color: string, fmt: (v: number) => string) => {
+          const filtered = rows.filter(r => typeof r[key] === 'number') as UsaRow[];
+          const sorted = filtered.sort((a, b) => desc ? ((b[key] as number) - (a[key] as number)) : ((a[key] as number) - (b[key] as number))).slice(0, 10);
+          return { label, color, items: sorted.map(r => ({ symbol: r.symbol, company: r.company, val: fmt(r[key] as number) })) };
+        };
+        const leaders = [
+          lead('rsRating', true, 'Top 10 — RS Rating', '#10B981', (v) => String(v)),
+          lead('r40', true, 'Top 10 — Rule of 40', '#22D3EE', (v) => String(v)),
+          lead('roic', true, 'Top 10 — ROIC %', '#3B82F6', (v) => `${v.toFixed(0)}%`),
+          lead('ebitdaMargin', true, 'Top 10 — EBITDA margin %', '#10B981', (v) => `${v.toFixed(0)}%`),
+          lead('fcfMargin', true, 'Top 10 — FCF margin %', '#22D3EE', (v) => `${v.toFixed(0)}%`),
+          lead('revAnn', true, 'Top 10 — Revenue growth %', '#10B981', (v) => `${v.toFixed(0)}%`),
+          lead('perf1y', true, 'Top 10 — 1-year return %', '#F59E0B', (v) => `${v.toFixed(0)}%`),
+          lead('targetUpside', true, 'Top 10 — Implied upside vs target', '#22D3EE', (v) => `${v >= 0 ? '↑' : '↓'} ${Math.abs(v)}%`),
+          lead('pegFwd', false, 'Bottom 10 — PEG (cheapest)', '#10B981', (v) => v.toFixed(2)),
+          lead('fwdPe', true, 'Top 10 — Richest Fwd P/E', '#EF4444', (v) => `${v.toFixed(0)}×`),
+        ];
+        return (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 8 }}>
+            {leaders.map(l => l.items.length === 0 ? null : (
+              <div key={l.label} style={{ background: COL.panel2, border: `1px solid ${COL.line}`, borderRadius: 8, padding: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: l.color, marginBottom: 6, letterSpacing: '0.3px' }}>{l.label}</div>
+                {l.items.map((it, i) => (
+                  <div key={it.symbol} style={{ display: 'grid', gridTemplateColumns: '20px 60px 1fr auto', gap: 6, padding: '3px 0', fontSize: 10.5, borderTop: i === 0 ? 'none' : `1px solid ${COL.line}` }}>
+                    <span style={{ color: COL.muted }}>#{i + 1}</span>
+                    <span style={{ color: l.color, fontWeight: 700 }}>{it.symbol}</span>
+                    <span style={{ color: COL.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.company}</span>
+                    <span style={{ color: l.color, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{it.val}</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        );
+      })()}
+
+      {/* PATCH 1101tt — Sector mix + Beta distribution */}
+      {(() => {
+        const sectorCounts = new Map<string, number>();
+        for (const r of rows) {
+          const s = r.sector || 'Unclassified';
+          sectorCounts.set(s, (sectorCounts.get(s) ?? 0) + 1);
+        }
+        const sectorList = Array.from(sectorCounts.entries()).sort((a, b) => b[1] - a[1]);
+        const betas = rows.map(r => r.beta).filter((x): x is number => typeof x === 'number');
+        const betaBuckets = [
+          { label: '< 0.7 defensive', test: (b: number) => b < 0.7, color: '#10B981' },
+          { label: '0.7–1.0', test: (b: number) => b >= 0.7 && b < 1.0, color: '#22D3EE' },
+          { label: '1.0–1.3', test: (b: number) => b >= 1.0 && b < 1.3, color: '#3B82F6' },
+          { label: '1.3–2.0', test: (b: number) => b >= 1.3 && b < 2.0, color: '#F59E0B' },
+          { label: '≥ 2.0 high-vol', test: (b: number) => b >= 2.0, color: '#EF4444' },
+        ].map(b => ({ ...b, count: betas.filter(b.test).length }));
+        return (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 12 }}>
+            <div style={{ background: COL.panel2, border: `1px solid ${COL.line}`, borderRadius: 8, padding: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: COL.cyan, marginBottom: 8, letterSpacing: '0.4px' }}>🧭 SECTOR MIX ({sectorList.length} groups)</div>
+              {sectorList.map(([sec, n]) => (
+                <div key={sec} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, padding: '4px 0', fontSize: 11, borderTop: `1px solid ${COL.line}` }}>
+                  <span style={{ color: COL.txt }}>{sec}</span>
+                  <span style={{ color: COL.muted, fontVariantNumeric: 'tabular-nums' }}>{n} ({Math.round(n / rows.length * 100)}%)</span>
+                </div>
+              ))}
+            </div>
+            <div style={{ background: COL.panel2, border: `1px solid ${COL.line}`, borderRadius: 8, padding: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: COL.cyan, marginBottom: 8, letterSpacing: '0.4px' }}>📈 BETA DISTRIBUTION</div>
+              {betaBuckets.map(b => (
+                <div key={b.label} style={{ display: 'grid', gridTemplateColumns: '140px 1fr auto', gap: 8, padding: '4px 0', fontSize: 11, borderTop: `1px solid ${COL.line}`, alignItems: 'center' }}>
+                  <span style={{ color: b.color, fontWeight: 700 }}>{b.label}</span>
+                  <div style={{ position: 'relative', height: 8, background: COL.panel, borderRadius: 2, overflow: 'hidden' }}>
+                    <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${Math.max(2, (b.count / Math.max(1, betas.length)) * 100)}%`, background: b.color }} />
+                  </div>
+                  <span style={{ color: b.color, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{b.count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Main table */}
       <div style={{ background: COL.panel2, border: `1px solid ${COL.line}`, borderRadius: 8, overflowX: 'auto' }}>
