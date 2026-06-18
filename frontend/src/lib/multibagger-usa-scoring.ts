@@ -107,6 +107,42 @@ export function getUSABench(sector: string) {
   return USA_BENCH.DEFAULT;
 }
 
+// PATCH 1101ii — Market-cap tier helper. Same scoring for AAOI ($13B large)
+// vs ENVX ($2B small) is wrong: a large cap burning cash is a bigger red flag
+// than a small cap doing the same (small cap is allowed to be early-stage).
+// Tiers chosen to match institutional convention:
+//   Micro <$500M  · early discovery, max risk, max upside
+//   Small $500M-$2B · still building, growth tolerance high
+//   Mid $2B-$10B  · sweet spot (institutional eligibility)
+//   Large $10B-$100B · mature, must generate cash
+//   Mega >$100B   · franchise; lower growth, higher quality bar
+export type CapTier = 'MICRO' | 'SMALL' | 'MID' | 'LARGE' | 'MEGA';
+export function getCapTier(mcapB?: number): CapTier {
+  if (mcapB === undefined) return 'MID';
+  if (mcapB < 0.5) return 'MICRO';
+  if (mcapB < 2)   return 'SMALL';
+  if (mcapB < 10)  return 'MID';
+  if (mcapB < 100) return 'LARGE';
+  return 'MEGA';
+}
+// Per-tier thresholds. Lower R40 ok for small (early stage). Higher
+// growth required for small (can't justify risk without 25%+). FCF margin
+// floor: small can burn, large/mega MUST be FCF positive.
+export const CAP_TIER_RULES: Record<CapTier, {
+  r40Min: number;          // R40 strict gate (below this → cap at C)
+  r40Pass: number;         // R40 "institutional pass" (below this → cap at B+)
+  growthMin: number;       // revenue growth filter (below this → growth penalty)
+  fcfMarginFloor: number;  // FCF margin floor (below → harsh penalty)
+  roceTarget: number;      // ROCE expectation
+  label: string;
+}> = {
+  MICRO: { r40Min: -50, r40Pass: 20, growthMin: 30, fcfMarginFloor: -25, roceTarget: 12, label: 'Micro <$500M' },
+  SMALL: { r40Min: -30, r40Pass: 25, growthMin: 25, fcfMarginFloor: -15, roceTarget: 15, label: 'Small $500M-$2B' },
+  MID:   { r40Min:   0, r40Pass: 40, growthMin: 20, fcfMarginFloor:   0, roceTarget: 18, label: 'Mid $2B-$10B' },
+  LARGE: { r40Min:  10, r40Pass: 40, growthMin: 15, fcfMarginFloor:   5, roceTarget: 22, label: 'Large $10B-$100B' },
+  MEGA:  { r40Min:  15, r40Pass: 35, growthMin: 10, fcfMarginFloor:  10, roceTarget: 25, label: 'Mega >$100B' },
+};
+
 export function svUS(v: number|undefined, bench: number[], hiGood=true): number {
   if (v===undefined||v===null||isNaN(v as number)) return 0;
   const [lo,mid,hi] = hiGood ? bench : bench.map(x=>-x);
@@ -122,6 +158,14 @@ export function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGr
   const strengths: string[] = [];
   const risks: string[] = [];
 
+  // PATCH 1101ii — Compute market-cap tier and surface it. Used downstream
+  // for tier-specific R40 gates, growth filters, FCF margin floors, ROCE
+  // expectations. Defaults to MID when mcap unknown (neutral).
+  const capTier = getCapTier(row.marketCapB);
+  const tierRules = CAP_TIER_RULES[capTier];
+  (row as any).capTier = capTier;
+  strengths.push(`📊 Cap tier: ${tierRules.label}`);
+
   // ── QUALITY (30%): Gross Margin, FCF Margin, OPM, ROE ──────────────────────
   let qualS=0, qualC=0;
   // Use TTM as primary gross margin (TradingView now provides TTM; Annual is fallback)
@@ -134,6 +178,18 @@ export function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGr
   }
   if (row.fcfMarginAnn !== undefined) {
     let s = row.fcfMarginAnn>=25?92:row.fcfMarginAnn>=15?82:row.fcfMarginAnn>=8?65:row.fcfMarginAnn>=0?45:20;
+    // PATCH 1101ii — Cap-aware FCF margin floor.
+    // A large cap with negative FCF margin is a much bigger red flag than a
+    // micro cap with the same negative FCF. Mature franchises must generate
+    // cash; early-stage allowed to burn during growth phase.
+    if (row.fcfMarginAnn < tierRules.fcfMarginFloor) {
+      const gapPp = tierRules.fcfMarginFloor - row.fcfMarginAnn;
+      // Penalty scales with both gap AND cap tier — larger tier means harsher.
+      const tierMultiplier = capTier === 'MEGA' ? 1.5 : capTier === 'LARGE' ? 1.3 : capTier === 'MID' ? 1.0 : capTier === 'SMALL' ? 0.7 : 0.5;
+      const penalty = Math.min(40, Math.round(gapPp * tierMultiplier));
+      s = Math.max(5, s - penalty);
+      risks.push(`🛑 FCF margin ${row.fcfMarginAnn.toFixed(1)}% below ${tierRules.fcfMarginFloor}% floor for ${tierRules.label} (−${penalty}). ${capTier === 'LARGE' || capTier === 'MEGA' ? 'Mature companies must generate cash — burning $1B+ at this scale is unforgivable.' : 'Cash burn acceptable only with hyper-growth justification.'}`);
+    }
     // PATCH 0753 — single-source FCF rule. When DNA bonus is GOING to fire
     // below (which awards +6 explicitly crediting FCF margin), AND the FCF
     // margin is already extreme (≥20%), the Quality pillar's FCF
@@ -246,11 +302,15 @@ export function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGr
   if (row.revenueGrowthAnn !== undefined) {
     const s=svUS(row.revenueGrowthAnn,b.revGrowth); growS+=s; growC++;
     if (s>=80) strengths.push(`Revenue growth ${row.revenueGrowthAnn.toFixed(1)}% YoY — strong compounding`);
-    // 🚨 Growth Quality Filter — ≥20% for US multibaggers
-    if (row.revenueGrowthAnn < 20) {
-      const penalty = row.revenueGrowthAnn < 10 ? 25 : 12;
+    // 🚨 PATCH 1101ii — CAP-AWARE Growth Quality Filter.
+    // Different growth expectations per cap tier. Micro/small must grow fast
+    // (no other reason to own them); large/mega get a pass at 15%/10% because
+    // mature franchises don't grow at hyper rates and that's OK.
+    if (row.revenueGrowthAnn < tierRules.growthMin) {
+      const gapPp = tierRules.growthMin - row.revenueGrowthAnn;
+      const penalty = gapPp > 20 ? 25 : gapPp > 10 ? 18 : 10;
       growS = Math.max(0, growS - penalty);
-      risks.push(`🚨 Growth filter: ${row.revenueGrowthAnn.toFixed(1)}% annual revenue growth${row.revenueGrowthAnn < 10 ? ' — very low for US multibagger (−25)' : ' — below 20% threshold (−12)'}`);
+      risks.push(`🚨 Growth filter (${tierRules.label}): ${row.revenueGrowthAnn.toFixed(1)}% below ${tierRules.growthMin}% threshold for this cap tier (−${penalty})`);
     }
   }
   // 3-year CAGR consistency check — spike vs sustained
@@ -1200,17 +1260,20 @@ export function applyUSARanking(results: USAResult[]): USAResult[] {
     if (r.revenueGrowthAnn !== undefined && r.revenueGrowthAnn < 10) demoteSteps += 1;
     if (r.accelSignal === 'DECELERATING') demoteSteps += 1;
 
-    // PATCH 1101gg — R40 STRICT GATE. User: don't promote stocks that fail R40
-    // into A/A+. If R40 < 40 (institutional benchmark), block above B+. If
-    // R40 < 20, block above B. If R40 < 0, block above C. This catches the
-    // crypto miners / cash burners that were still landing on the leaderboard.
+    // PATCH 1101gg+1101ii — CAP-AWARE R40 STRICT GATE. Same R40 number means
+    // different things at different cap sizes:
+    //   - LARGE/MEGA: R40 = 10 is awful (mature should hit 40+). Cap at C.
+    //   - MICRO/SMALL: R40 = 10 is fine for early stage. Cap at B+ only.
+    // Use per-tier r40Min (D/C cap) and r40Pass (B+ cap) from CAP_TIER_RULES.
     const r40 = (r as any).ruleOf40;
+    const tier: CapTier = (r as any).capTier ?? getCapTier(r.marketCapB);
+    const rules = CAP_TIER_RULES[tier];
     if (typeof r40 === 'number') {
-      if (r40 < 0 && (grade === 'A+' || grade === 'A' || grade === 'B+' || grade === 'B')) {
+      if (r40 < rules.r40Min && (grade === 'A+' || grade === 'A' || grade === 'B+' || grade === 'B')) {
         grade = 'C';
-      } else if (r40 < 20 && (grade === 'A+' || grade === 'A' || grade === 'B+')) {
+      } else if (r40 < (rules.r40Min + rules.r40Pass) / 2 && (grade === 'A+' || grade === 'A' || grade === 'B+')) {
         grade = 'B';
-      } else if (r40 < 40 && (grade === 'A+' || grade === 'A')) {
+      } else if (r40 < rules.r40Pass && (grade === 'A+' || grade === 'A')) {
         grade = 'B+';
       }
     }
