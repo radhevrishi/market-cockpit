@@ -397,6 +397,9 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
     rsRating?: number; beta?: number; ebitdaMargin?: number;
     epsGrowth?: number; pegFwd?: number; targetUpside?: number;
     piotroski?: number; analystRating?: string;
+    isOutlier?: boolean; // PATCH 1101uu — flagged when a value was clipped
+    ema50?: number; ema200?: number; // PATCH 1101uu — moving averages
+    pctVsEma50?: number; pctVsEma200?: number;
   };
   const rows: UsaRow[] = useMemo(() => data.map((r) => {
     const symbol = String(get(r, 'Symbol', 'Ticker') ?? '').trim().toUpperCase();
@@ -410,14 +413,34 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
     const fcfMargin = n(get(r, 'Free cash flow margin %, Annual', 'FCF margin, Annual'));
     const gpm = n(get(r, 'Gross margin %, Trailing 12 months', 'Gross margin %, TTM'));
     const opm = n(get(r, 'Operating margin %, Trailing 12 months', 'Operating margin %, TTM'));
-    const r40 = (revAnn !== undefined && fcfMargin !== undefined) ? Math.round(revAnn + fcfMargin) : undefined;
+    // PATCH 1101uu — Sanity-clip R40 to [-200, 500] band so corporate-action
+    // anomalies (TE +25574% revenue from spinoff, HGRAF -11438% FCF margin from
+    // single-quarter freak) don't poison leader lists and medians.
+    let r40: number | undefined;
+    let isOutlier = false;
+    if (revAnn !== undefined && fcfMargin !== undefined) {
+      const raw = revAnn + fcfMargin;
+      if (raw > 500 || raw < -200) {
+        isOutlier = true;
+        r40 = Math.round(Math.max(-200, Math.min(500, raw)));
+      } else {
+        r40 = Math.round(raw);
+      }
+    }
+    // PATCH 1101uu — same clip for 1Y return (SNDK showed 4718% post-spinoff).
+    const perf1yClipped = (() => {
+      const v = n(get(r, 'Performance %, 1 year', 'Performance, 1 Year %'));
+      if (v === undefined) return undefined;
+      if (v > 1000 || v < -100) { isOutlier = true; return Math.max(-100, Math.min(1000, v)); }
+      return v;
+    })();
     const fwdPe = n(get(r, 'Forward non-GAAP price to earnings, Annual', 'Forward P/E', 'Fwd P/E'));
     const pe = n(get(r, 'Price to earnings ratio', 'P/E'));
     const roic = n(get(r, 'Return on invested capital %, Annual', 'ROIC'));
     const roce = n(get(r, 'Return on capital employed %, Annual', 'ROCE'));
     const roe = n(get(r, 'Return on equity %, Trailing 12 months', 'ROE TTM'));
     const netMargin = n(get(r, 'Net margin %, Trailing 12 months', 'Net margin TTM'));
-    const perf1y = n(get(r, 'Performance %, 1 year', 'Performance, 1 Year %'));
+    const perf1y = perf1yClipped;
     const perf3m = n(get(r, 'Performance %, 3 months'));
     const perf6m = n(get(r, 'Performance %, 6 months'));
     const beta = n(get(r, 'Beta, 5 years', 'Beta 5y', 'Beta'));
@@ -436,7 +459,12 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
       const composite = 0.30 * p3 + 0.40 * p6 + 0.30 * p12;
       rsRating = Math.max(1, Math.min(99, Math.round(50 + composite * 0.5)));
     }
-    return { raw: r, symbol, company, sector, mcapB, price, r40, fwdPe, pe, revAnn, revQtr, fcfMargin, gpm, opm, roic, roce, roe, netMargin, perf1y, perf3m, perf6m, rsRating, beta, ebitdaMargin, epsGrowth, pegFwd: peg, targetUpside, piotroski, analystRating };
+    // PATCH 1101uu — Moving averages (50 / 200 day EMA) from TradingView export.
+    const ema50 = n(get(r, 'Exponential moving average, 50, 1 day', 'EMA 50'));
+    const ema200 = n(get(r, 'Exponential moving average, 200, 1 day', 'EMA 200'));
+    const pctVsEma50 = (price && ema50 && ema50 > 0) ? Math.round(((price - ema50) / ema50) * 1000) / 10 : undefined;
+    const pctVsEma200 = (price && ema200 && ema200 > 0) ? Math.round(((price - ema200) / ema200) * 1000) / 10 : undefined;
+    return { raw: r, symbol, company, sector, mcapB, price, r40, fwdPe, pe, revAnn, revQtr, fcfMargin, gpm, opm, roic, roce, roe, netMargin, perf1y, perf3m, perf6m, rsRating, beta, ebitdaMargin, epsGrowth, pegFwd: peg, targetUpside, piotroski, analystRating, isOutlier, ema50, ema200, pctVsEma50, pctVsEma200 };
   }), [data]);
 
   const sortedRows = useMemo(() => {
@@ -491,6 +519,55 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
 
   return (
     <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* PATCH 1101uu — Below 50-EMA / Below 200-EMA cards (India parity).
+          Shows stocks trading below their 50d and 200d moving averages. */}
+      {(() => {
+        const below50 = rows.filter(r => typeof r.pctVsEma50 === 'number' && r.pctVsEma50 < 0)
+          .sort((a, b) => (a.pctVsEma50 ?? 0) - (b.pctVsEma50 ?? 0));
+        const below200 = rows.filter(r => typeof r.pctVsEma200 === 'number' && r.pctVsEma200 < 0)
+          .sort((a, b) => (a.pctVsEma200 ?? 0) - (b.pctVsEma200 ?? 0));
+        const totalWithEma = rows.filter(r => typeof r.pctVsEma50 === 'number').length;
+        if (totalWithEma === 0) return null;
+        const renderTable = (title: string, sub: string, items: any[], maKey: 'ema50' | 'ema200', pctKey: 'pctVsEma50' | 'pctVsEma200') => (
+          <div style={{ background: COL.panel2, border: `1px solid ${COL.line}`, borderRadius: 8, padding: 12 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: '#EF4444', marginBottom: 2, letterSpacing: '0.4px' }}>{title}</div>
+            <div style={{ fontSize: 10, color: COL.muted, marginBottom: 8 }}>{sub}</div>
+            {items.length === 0 ? (
+              <div style={{ color: COL.muted, fontSize: 11 }}>None — all stocks trading above this MA. 🟢</div>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                <thead>
+                  <tr style={{ color: COL.muted, fontSize: 10 }}>
+                    <th style={{ textAlign: 'left', padding: '4px 6px' }}>TICKER</th>
+                    <th style={{ textAlign: 'left', padding: '4px 6px' }}>COMPANY</th>
+                    <th style={{ textAlign: 'right', padding: '4px 6px' }}>PRICE</th>
+                    <th style={{ textAlign: 'right', padding: '4px 6px' }}>EMA</th>
+                    <th style={{ textAlign: 'right', padding: '4px 6px' }}>% vs MA</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.slice(0, 12).map(r => (
+                    <tr key={r.symbol} style={{ borderTop: `1px solid ${COL.line}` }}>
+                      <td style={{ padding: '4px 6px', color: COL.cyan, fontWeight: 700 }}>{r.symbol}</td>
+                      <td style={{ padding: '4px 6px', color: COL.muted, fontSize: 10, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
+                      <td style={{ padding: '4px 6px', textAlign: 'right', color: COL.txt }}>{r.price?.toFixed(2) ?? '—'}</td>
+                      <td style={{ padding: '4px 6px', textAlign: 'right', color: COL.muted }}>{(r[maKey] as number)?.toFixed(2) ?? '—'}</td>
+                      <td style={{ padding: '4px 6px', textAlign: 'right', color: '#EF4444', fontWeight: 800 }}>{(r[pctKey] as number)?.toFixed(1)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        );
+        return (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: 12 }}>
+            {renderTable(`↓ Below 50-EMA — ${below50.length} of ${totalWithEma}`, 'price under the 50-day exponential moving average', below50, 'ema50', 'pctVsEma50')}
+            {renderTable(`↓ Below 200-EMA — ${below200.length} of ${totalWithEma}`, 'price under the 200-day exponential moving average', below200, 'ema200', 'pctVsEma200')}
+          </div>
+        );
+      })()}
+
       {/* Stats strip */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
         {[
@@ -521,7 +598,8 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
                   <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${Math.max(2, Math.min(100, (s.medR40 + 50) / 1.5))}%`, background: colorR40(s.medR40) }} />
                 </div>
                 <span style={{ color: colorR40(s.medR40), fontWeight: 800, textAlign: 'right' }}>R40 {s.medR40}</span>
-                <span style={{ color: colorRs(s.medRs), fontWeight: 800, textAlign: 'right' }}>RS {s.medRs}</span>
+                {/* PATCH 1101uu — show "—" when sector has no RS data instead of misleading "RS 0". */}
+                <span style={{ color: s.medRs ? colorRs(s.medRs) : COL.muted, fontWeight: 800, textAlign: 'right' }}>{s.medRs ? `RS ${s.medRs}` : '—'}</span>
                 <span style={{ color: COL.muted, textAlign: 'right' }}>{s.count} cos</span>
               </div>
             ))}
@@ -595,24 +673,37 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
         );
       })()}
 
-      {/* PATCH 1101tt — Leader grids (top 10 by various metrics, India parity). */}
+      {/* PATCH 1101tt — Leader grids (top 10 by various metrics, India parity).
+          PATCH 1101uu — For "Top" lists, filter out negative values and outliers
+          so "Top 10 ROIC" doesn't show SNDK at -15% etc. */}
       {(() => {
-        const lead = (key: keyof UsaRow, desc = true, label: string, color: string, fmt: (v: number) => string) => {
-          const filtered = rows.filter(r => typeof r[key] === 'number') as UsaRow[];
+        const lead = (key: keyof UsaRow, desc = true, label: string, color: string, fmt: (v: number) => string, positiveOnly = false) => {
+          let filtered = rows.filter(r => typeof r[key] === 'number') as UsaRow[];
+          if (positiveOnly) filtered = filtered.filter(r => (r[key] as number) > 0);
+          // Exclude clipped outliers from leader lists so corporate actions don't dominate
+          if (desc) filtered = filtered.filter(r => !r.isOutlier);
           const sorted = filtered.sort((a, b) => desc ? ((b[key] as number) - (a[key] as number)) : ((a[key] as number) - (b[key] as number))).slice(0, 10);
           return { label, color, items: sorted.map(r => ({ symbol: r.symbol, company: r.company, val: fmt(r[key] as number) })) };
         };
         const leaders = [
-          lead('rsRating', true, 'Top 10 — RS Rating', '#10B981', (v) => String(v)),
-          lead('r40', true, 'Top 10 — Rule of 40', '#22D3EE', (v) => String(v)),
-          lead('roic', true, 'Top 10 — ROIC %', '#3B82F6', (v) => `${v.toFixed(0)}%`),
-          lead('ebitdaMargin', true, 'Top 10 — EBITDA margin %', '#10B981', (v) => `${v.toFixed(0)}%`),
-          lead('fcfMargin', true, 'Top 10 — FCF margin %', '#22D3EE', (v) => `${v.toFixed(0)}%`),
-          lead('revAnn', true, 'Top 10 — Revenue growth %', '#10B981', (v) => `${v.toFixed(0)}%`),
-          lead('perf1y', true, 'Top 10 — 1-year return %', '#F59E0B', (v) => `${v.toFixed(0)}%`),
+          lead('rsRating', true, 'Top 10 — RS Rating', '#10B981', (v) => String(v), true),
+          lead('r40', true, 'Top 10 — Rule of 40', '#22D3EE', (v) => String(v), true),
+          lead('roic', true, 'Top 10 — ROIC %', '#3B82F6', (v) => `${v.toFixed(0)}%`, true),
+          lead('roe', true, 'Top 10 — ROE %', '#22D3EE', (v) => `${v.toFixed(0)}%`, true),
+          lead('ebitdaMargin', true, 'Top 10 — EBITDA margin %', '#10B981', (v) => `${v.toFixed(0)}%`, true),
+          lead('fcfMargin', true, 'Top 10 — FCF margin %', '#22D3EE', (v) => `${v.toFixed(0)}%`, true),
+          lead('gpm', true, 'Top 10 — Gross margin %', '#10B981', (v) => `${v.toFixed(0)}%`, true),
+          lead('netMargin', true, 'Top 10 — Net margin %', '#10B981', (v) => `${v.toFixed(0)}%`, true),
+          lead('revAnn', true, 'Top 10 — Revenue growth %', '#10B981', (v) => `${v.toFixed(0)}%`, true),
+          lead('epsGrowth', true, 'Top 10 — EPS growth %', '#10B981', (v) => `${v.toFixed(0)}%`, true),
+          lead('perf1y', true, 'Top 10 — 1-year return %', '#F59E0B', (v) => `${v.toFixed(0)}%`, true),
+          lead('perf3m', true, 'Top 10 — 3-month return %', '#F59E0B', (v) => `${v.toFixed(0)}%`, true),
           lead('targetUpside', true, 'Top 10 — Implied upside vs target', '#22D3EE', (v) => `${v >= 0 ? '↑' : '↓'} ${Math.abs(v)}%`),
-          lead('pegFwd', false, 'Bottom 10 — PEG (cheapest)', '#10B981', (v) => v.toFixed(2)),
-          lead('fwdPe', true, 'Top 10 — Richest Fwd P/E', '#EF4444', (v) => `${v.toFixed(0)}×`),
+          lead('pegFwd', false, 'Bottom 10 — PEG (cheapest)', '#10B981', (v) => v.toFixed(2), true),
+          lead('fwdPe', true, 'Top 10 — Richest Fwd P/E', '#EF4444', (v) => `${v.toFixed(0)}×`, true),
+          lead('mcapB', true, 'Top 10 — Largest Market Cap $B', '#22D3EE', (v) => `$${v.toLocaleString()}B`, true),
+          lead('mcapB', false, 'Bottom 10 — Smallest Market Cap $B', '#22D3EE', (v) => `$${v.toLocaleString()}B`, true),
+          lead('piotroski', true, 'Top 10 — Piotroski F-score', '#10B981', (v) => `${v}/9`, true),
         ];
         return (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 8 }}>
