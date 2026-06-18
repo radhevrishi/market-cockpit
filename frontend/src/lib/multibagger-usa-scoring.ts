@@ -1142,6 +1142,32 @@ export function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGr
     else if (mcapBForPos < 5.0)  suggestedMaxPositionPct = 5.0;
     else if (mcapBForPos < 20.0) suggestedMaxPositionPct = 8.0;
     else                          suggestedMaxPositionPct = 15.0;
+    // PATCH 1101rr — LIQUIDITY-AWARE ADJUSTMENT. Reduce Max % when average
+    // daily $ volume is too low for the implied position to be filled without
+    // slippage. Institutional rule: position size ≤ 5% of 30-day ADV implies
+    // ~5 days to fill without market impact.
+    if (typeof row.avgDailyValueUsdM === 'number' && row.avgDailyValueUsdM > 0) {
+      let adv = row.avgDailyValueUsdM;
+      let liqCap: number | undefined;
+      if (adv < 1)      liqCap = 0.5;
+      else if (adv < 5)  liqCap = 1.5;
+      else if (adv < 20) liqCap = 3.0;
+      else if (adv < 50) liqCap = 5.0;
+      else if (adv < 200) liqCap = 8.0;
+      if (liqCap !== undefined && liqCap < suggestedMaxPositionPct) {
+        const wasOriginal = suggestedMaxPositionPct;
+        suggestedMaxPositionPct = liqCap;
+        risks.push(`💧 Liquidity-capped: avg daily $ volume only $${adv.toFixed(1)}M → max position reduced ${wasOriginal}% → ${liqCap}% (5%-of-ADV rule).`);
+      }
+    }
+    // PATCH 1101rr — BETA-AWARE ADJUSTMENT. High-beta names get smaller max.
+    if (typeof row.beta5y === 'number' && row.beta5y >= 1.5) {
+      const betaFactor = 1 / Math.sqrt(row.beta5y);
+      const adjusted = Math.max(1.0, Math.round(suggestedMaxPositionPct * betaFactor * 10) / 10);
+      if (adjusted < suggestedMaxPositionPct) {
+        suggestedMaxPositionPct = adjusted;
+      }
+    }
   }
 
   // PATCH 0344 — Use Math.floor(score/5)*5 instead of Math.round(score/5)*5.
