@@ -4621,8 +4621,27 @@ function USACompare() {
                       })()}
                     </div>
                     <span style={{fontSize:F.sm,color:MUTED,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.company}</span>
-                    <span style={{fontSize:F.h2,fontWeight:900,color:GRADE_COLOR_US[r.grade]}}>{r.score}</span>
-                    <span style={{fontSize:F.md,fontWeight:800,padding:'4px 8px',borderRadius:6,color:GRADE_COLOR_US[r.grade],backgroundColor:`${GRADE_COLOR_US[r.grade]}18`,border:`1px solid ${GRADE_COLOR_US[r.grade]}30`,textAlign:'center'}}>{r.grade}</span>
+                    <div style={{display:'flex',flexDirection:'column',alignItems:'flex-start',gap:1}}>
+                      <span style={{fontSize:F.h2,fontWeight:900,color:GRADE_COLOR_US[r.grade]}}>{r.score}</span>
+                      {/* PATCH 1101rr — RS Rating below score (O'Neil-style 1-99 momentum).
+                          Color: green ≥80, cyan 60-80, muted 40-60, orange <40. */}
+                      {typeof (r as any).rsRating === 'number' && (
+                        <span style={{fontSize:F.xxs,fontWeight:800,color:(r as any).rsRating>=80?GREEN:(r as any).rsRating>=60?'#22D3EE':(r as any).rsRating>=40?MUTED:ORANGE,letterSpacing:'0.3px'}}
+                          title={`RS Rating: O'Neil-style 1-99 momentum composite (30% 3M + 40% 6M + 30% 1Y)`}>
+                          RS {(r as any).rsRating}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:1}}>
+                      <span style={{fontSize:F.md,fontWeight:800,padding:'4px 8px',borderRadius:6,color:GRADE_COLOR_US[r.grade],backgroundColor:`${GRADE_COLOR_US[r.grade]}18`,border:`1px solid ${GRADE_COLOR_US[r.grade]}30`,textAlign:'center'}}>{r.grade}</span>
+                      {/* PATCH 1101rr — Implied Upside % below grade. Green positive, red negative. */}
+                      {typeof (r as any).impliedUpsidePct === 'number' && (
+                        <span style={{fontSize:F.xxs,fontWeight:800,color:(r as any).impliedUpsidePct>=20?GREEN:(r as any).impliedUpsidePct>=0?'#22D3EE':RED,letterSpacing:'0.3px'}}
+                          title={`Implied upside vs analyst 1-year mean target price`}>
+                          {(r as any).impliedUpsidePct>=0?'↑':'↓'} {Math.abs((r as any).impliedUpsidePct)}%
+                        </span>
+                      )}
+                    </div>
                     <div style={{display:'flex',flexDirection:'column',gap:3}}>
                       {r.forwardPe !== undefined && r.forwardPe > 0
                         ? <div style={{display:'flex',alignItems:'baseline',gap:3}}><span style={{fontSize:F.xs,color:MUTED}}>Fwd P/E</span><span style={{fontSize:F.md,fontWeight:800,color:r.forwardPe<25?GREEN:r.forwardPe<50?YELLOW:ORANGE}}>{r.forwardPe.toFixed(0)}×</span></div>
