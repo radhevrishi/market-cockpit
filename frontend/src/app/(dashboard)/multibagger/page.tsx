@@ -4016,6 +4016,10 @@ function USACompare() {
   const [expandAll, setExpandAll] = React.useState(false);
   const [gradeFilter, setGradeFilter] = React.useState<Set<string>>(new Set(['ALL']));
   const [accelOnly, setAccelOnly] = React.useState(false);
+  // PATCH 1101dd — Good Only toggle for USA tab (parity with India).
+  // "Good" = score ≥ 60 AND accelerating (not decelerating) AND no critical fraud
+  // risks AND R40 ≥ 0. Catches the spirit of India's gooCompanies filter.
+  const [usGoodOnly, setUsGoodOnly] = React.useState(false);
   const [usPeMax,       setUsPeMax]       = React.useState<'ALL'|15|25|40|60|100>('ALL');
   const [usPegMax,      setUsPegMax]      = React.useState<'ALL'|0.8|1.0|1.5|2.0>('ALL');
   const [usFcfOnly,     setUsFcfOnly]     = React.useState(false);
@@ -4161,6 +4165,14 @@ function USACompare() {
   let filtered = gradeFilter.has('ALL') ? rows : rows.filter(r=>gradeFilter.has(r.grade));
   if (accelOnly)        filtered = filtered.filter(r=>r.accelSignal==='ACCELERATING');
   if (usFcfOnly)        filtered = filtered.filter(r=>(r.fcfMarginAnn ?? -99) >= 10);
+  // PATCH 1101dd — Good Only USA composite filter
+  const usaGoodCompanies = rows.filter(r =>
+       r.score >= 60
+    && r.accelSignal !== 'DECELERATING'
+    && (r.ruleOf40 ?? 0) >= 0
+    && !(r.risks || []).some((s: string) => s.includes('🛑') || s.includes('NEVER BUY') || s.includes('CRITICAL'))
+  );
+  if (usGoodOnly) filtered = filtered.filter(r => usaGoodCompanies.includes(r));
   // PATCH 0345 — Rule of 40 / Piotroski / GPM filters compose AND-style
   if (usR40Min !== 'ALL')       filtered = filtered.filter(r=>(r.ruleOf40 ?? -999) >= usR40Min);
   if (usPiotroskiMin !== 'ALL') filtered = filtered.filter(r=>(r.piotroskiFScore ?? -1) >= usPiotroskiMin);
@@ -4290,6 +4302,21 @@ function USACompare() {
               </div>
             ))}
             <div style={{display:'flex',gap:6,alignItems:'center',marginLeft:'auto',flexWrap:'wrap'}}>
+              {/* PATCH 1101dd — Good Only filter on USA tab (parity with India). */}
+              <button
+                onClick={()=>setUsGoodOnly(v=>!v)}
+                style={{
+                  fontSize:F.sm,fontWeight:800,padding:'8px 16px',borderRadius:8,
+                  border:`2px solid ${usGoodOnly?GREEN+'80':BORDER}`,
+                  background:usGoodOnly?`${GREEN}18`:'transparent',
+                  color:usGoodOnly?GREEN:MUTED,
+                  cursor:'pointer',
+                }}
+                title="Score ≥ 60 · not decelerating · R40 ≥ 0 · no critical fraud / NEVER-BUY risks"
+              >
+                {usGoodOnly?`✅ Good Only (${usaGoodCompanies.length})`:`🔍 Good Only`}
+              </button>
+              <div style={{width:1,background:BORDER,height:24}}/>
               {(['ALL',...GRADES] as const).map(g=>{
                 const active=gradeFilter.has(g);
                 const col=GRADE_COLOR_US[g as USAGrade]||'#38bdf8';
