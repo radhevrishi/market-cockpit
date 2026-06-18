@@ -5364,7 +5364,15 @@ export default function MultibaggerPage() {
       {activeTab==='excel'                 && <ExcelCompare rows={excelRows} setRows={setExcelRows} />}
       {activeTab==='usa'                   && <USACompare />}
       {/* PATCH 0872 — dedicated USA + Turnaround analytics dashboards */}
-      {activeTab==='usa-analytics'         && <USAAnalytics />}
+      {/* PATCH 1101ff — route USA Analytics through the full MultibaggerAnalytics
+          component (which already supports INDIA/USA/BOTH scope) instead of the
+          much smaller standalone USAAnalytics widget. User now gets full feature
+          parity: 10-KPI stats strip, score histogram, Strong Buy / Avoid / Watch
+          buckets with sub-categories, Operating Leverage Cluster, Cash-Rich lens,
+          Valuation Gateway (PEG/PB-ROE), Today's Top 3 Buys, Decision Bridge,
+          sector ranking, conviction overlap stats. The old USAAnalytics function
+          is retained as dead code below for reference but no longer mounted. */}
+      {activeTab==='usa-analytics'         && <MultibaggerAnalytics indiaRows={excelRows} onSwitchTab={(t) => setActiveTab(t as any)} initialScope="USA" />}
       {activeTab==='turnaround'            && <TurnaroundCompare />}
       {activeTab==='turnaround-analytics'  && <TurnaroundAnalytics />}
       {activeTab==='usa-checklist'         && <USAChecklist />}
@@ -5538,11 +5546,18 @@ function MultiConfirmedCard({ stocks }: { stocks: any[] }) {
 function MultibaggerAnalytics({
   indiaRows,
   onSwitchTab,
+  initialScope,
 }: {
   indiaRows: ExcelResult[];
   onSwitchTab: (t: string) => void;
+  /* PATCH 1101ff — Allow caller to set the initial scope so the USA Analytics
+     tab boots into USA view instead of INDIA. User reported USA analytics
+     much worse than India because the separate USAAnalytics() function only
+     had ~480 lines of widgets vs MultibaggerAnalytics' ~3000 lines. Route
+     the USA tab through this full component instead. */
+  initialScope?: MbMarketScope;
 }) {
-  const [scope, setScope] = React.useState<MbMarketScope>('INDIA');
+  const [scope, setScope] = React.useState<MbMarketScope>(initialScope ?? 'INDIA');
 
   // PATCH 0874 — USA rows + prev-score baselines now live in state with
   // a tick-bumping listener pair (storage + mb-upload:updated), so this
