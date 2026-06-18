@@ -7201,6 +7201,98 @@ function MultibaggerAnalytics({
         </div>
       )}
 
+      {/* ── 🇺🇸 USA RULE OF 40 + CAP TIER (PATCH 1101ll) ─────────────────────
+          USA-specific widget that surfaces the metrics that actually matter
+          for US multibagger hunting: Rule of 40 buckets, cap-tier breakdown,
+          and the top R40 names. The India side has its own composite (Q50,
+          ROCE etc.) — different mental model. Hidden when scope === INDIA. */}
+      {scope === 'USA' && (() => {
+        const usaRows = (stocks as any[]).filter((r: any) => r._market === 'US' || r._market === 'USA' || typeof r.ruleOf40 === 'number' || typeof r.fcfMarginAnn === 'number');
+        const r40s = usaRows
+          .map(r => ({ s: r, v: (r.ruleOf40 ?? (typeof r.revenueGrowthAnn === 'number' && typeof r.fcfMarginAnn === 'number' ? r.revenueGrowthAnn + r.fcfMarginAnn : undefined)) }))
+          .filter(x => typeof x.v === 'number') as { s: any; v: number }[];
+        if (r40s.length === 0) return null;
+        const buckets = [
+          { label: '🏆 Elite ≥80', test: (v: number) => v >= 80, color: '#10B981' },
+          { label: 'Strong 60-80', test: (v: number) => v >= 60 && v < 80, color: '#22D3EE' },
+          { label: 'Passes 40-60', test: (v: number) => v >= 40 && v < 60, color: '#3B82F6' },
+          { label: 'Weak 20-40',   test: (v: number) => v >= 20 && v < 40, color: '#F59E0B' },
+          { label: 'Below 0-20',   test: (v: number) => v >= 0 && v < 20, color: '#FB923C' },
+          { label: 'Burning <0',   test: (v: number) => v < 0,            color: '#EF4444' },
+        ].map(b => ({ ...b, count: r40s.filter(x => b.test(x.v)).length, names: r40s.filter(x => b.test(x.v)).slice(0, 5).map(x => x.s.symbol) }));
+        const top10R40 = [...r40s].sort((a, b) => b.v - a.v).slice(0, 10);
+        const tiers = ['MICRO', 'SMALL', 'MID', 'LARGE', 'MEGA'] as const;
+        const byTier = tiers.map(t => {
+          const subset = usaRows.filter((r: any) => r.capTier === t);
+          if (subset.length === 0) return null;
+          const r40sub = subset.map((r: any) => r.ruleOf40 ?? 0);
+          const avgR40 = Math.round(r40sub.reduce((a: number, b: number) => a + b, 0) / r40sub.length);
+          const elite = subset.filter((r: any) => (r.ruleOf40 ?? 0) >= 60).length;
+          return { tier: t, count: subset.length, avgR40, elite };
+        }).filter(Boolean) as { tier: string; count: number; avgR40: number; elite: number }[];
+        return (
+          <div style={cardStyle}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+              <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 800, letterSpacing: '0.4px' }}>
+                🇺🇸 RULE OF 40 · USA SIGNATURE METRIC
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--mc-text-4)' }}>
+                R40 = revenue growth + FCF margin · institutional benchmark for SaaS-era compounders.
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 6, marginBottom: 12 }}>
+              {buckets.map(b => (
+                <div key={b.label} style={{ padding: '8px 10px', background: `${b.color}10`, border: `1px solid ${b.color}40`, borderRadius: 5 }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 6 }}>
+                    <span style={{ fontSize: 11, color: b.color, fontWeight: 800 }}>{b.label}</span>
+                    <span style={{ fontSize: 14, color: b.color, fontWeight: 900, fontVariantNumeric: 'tabular-nums' }}>{b.count}</span>
+                  </div>
+                  <div style={{ fontSize: 9, color: 'var(--mc-text-3)', marginTop: 3, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {b.names.length > 0 ? b.names.join(' · ') : '—'}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {byTier.length > 0 && (
+              <>
+                <div style={{ fontSize: 11, color: 'var(--mc-text-3)', fontWeight: 700, marginBottom: 6, letterSpacing: '0.3px' }}>
+                  Cap-Tier Breakdown · avg R40 + count of R40 ≥ 60 (elite franchises)
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 6, marginBottom: 12 }}>
+                  {byTier.map(t => (
+                    <div key={t.tier} style={{ padding: '6px 10px', background: 'var(--mc-bg-2)', border: '1px solid var(--mc-bg-4)', borderRadius: 5 }}>
+                      <div style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.3px' }}>{t.tier}</div>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 2 }}>
+                        <span style={{ fontSize: 13, color: 'var(--mc-text-1)', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{t.count}</span>
+                        <span style={{ fontSize: 10, color: 'var(--mc-text-4)' }}>names</span>
+                        <span style={{ marginLeft: 'auto', fontSize: 10, color: '#22D3EE', fontWeight: 700 }}>R40 avg {t.avgR40}</span>
+                      </div>
+                      <div style={{ fontSize: 9, color: '#10B981', fontWeight: 700, marginTop: 1 }}>{t.elite} elite (≥60)</div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+            <div style={{ fontSize: 11, color: 'var(--mc-text-3)', fontWeight: 700, marginBottom: 6, letterSpacing: '0.3px' }}>
+              Top 10 by Rule of 40
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 4 }}>
+              {top10R40.map((x, i) => (
+                <a key={x.s.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(x.s.symbol)}&market=us`}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px', borderRadius: 4,
+                    background: x.v >= 80 ? '#10B98114' : x.v >= 60 ? '#22D3EE14' : 'transparent',
+                    border: `1px solid ${x.v >= 80 ? '#10B98140' : x.v >= 60 ? '#22D3EE40' : 'var(--mc-bg-4)'}`,
+                    textDecoration: 'none' }}>
+                  <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 800, minWidth: 18 }}>#{i + 1}</span>
+                  <TickerCompanyCell ticker={x.s.symbol} company={x.s.company} />
+                  <span style={{ marginLeft: 'auto', fontSize: 12, color: x.v >= 80 ? '#10B981' : x.v >= 60 ? '#22D3EE' : 'var(--mc-text-2)', fontWeight: 900, fontVariantNumeric: 'tabular-nums' }}>{Math.round(x.v)}</span>
+                </a>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ── GRADE DISTRIBUTION ──────────────────────────────────────────── */}
       <div style={cardStyle}>
         <div style={{ fontSize: 13, color: 'var(--mc-cyan)', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 10 }}>
