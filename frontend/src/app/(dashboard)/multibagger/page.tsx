@@ -6930,8 +6930,12 @@ function MultibaggerAnalytics({
           + 0.15·Demand-Durability (sector prior + 3yr CAGR)
           + 0.10·Value-Added-Mix (GPM, ROIC)
           minus downgrade triggers (OPM compress / debt rising / capex peaking).
-          User-seeded core lights up with a ⭐. */}
-      {stats.clusterRanked && stats.clusterRanked.length > 0 && (
+          User-seeded core lights up with a ⭐.
+          PATCH 1101ii — The cluster formula uses India-specific fields (ROCE,
+          cfoToPat, capex trend, debt creep history) that the USA scorer
+          doesn't compute. When the user is on USA scope, this widget was
+          showing leftover Indian rows. Now hidden unless scope === 'INDIA'. */}
+      {scope === 'INDIA' && stats.clusterRanked && stats.clusterRanked.length > 0 && (
         <div style={cardStyle}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
             <div style={{ fontSize: 13, color: 'var(--mc-cyan)', fontWeight: 800, letterSpacing: '0.4px' }}>
