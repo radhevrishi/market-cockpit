@@ -146,10 +146,51 @@ export default function JourneyPage() {
 
         {/* ─── THE TABLE — CANONICAL TARGETS ───────────────────────── */}
         <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 8, padding: '16px 18px' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10, gap: 12, flexWrap: 'wrap' }}>
             <div>
-              <div style={{ fontSize: 14, fontWeight: 800, color: C.cyan, letterSpacing: 0.3 }}>🎯 WEALTH TARGETS &middot; ₹{startCr} CR SEED</div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: C.cyan, letterSpacing: 0.3 }}>🎯 WEALTH TARGETS &middot; ₹{startCr < 1 ? (startCr * 100).toFixed(0) + ' L' : startCr + ' CR'} SEED</div>
               <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Pure compounding math &middot; before tax &middot; no withdrawals</div>
+            </div>
+            {/* PATCH 1101z — Quick-pick seed amounts. User wanted to change ₹1 cr to
+                ₹0.5 cr etc. without scrolling down to the My Plan section. Common values
+                are one click; custom amounts still editable in My Plan below. */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 10, color: C.muted, fontWeight: 800, letterSpacing: 0.5 }}>SEED:</span>
+              {[
+                { v: 0.25, label: '₹25 L' },
+                { v: 0.5,  label: '₹50 L' },
+                { v: 1,    label: '₹1 cr' },
+                { v: 2,    label: '₹2 cr' },
+                { v: 5,    label: '₹5 cr' },
+                { v: 10,   label: '₹10 cr' },
+              ].map((opt) => {
+                const active = Math.abs(startCr - opt.v) < 0.001;
+                return (
+                  <button key={opt.v} onClick={() => setStartCr(opt.v)} style={{
+                    padding: '4px 10px',
+                    background: active ? 'color-mix(in srgb, var(--mc-cyan) 18%, transparent)' : 'transparent',
+                    border: '1px solid ' + (active ? C.cyan : C.border),
+                    borderRadius: 5,
+                    color: active ? C.cyan : C.text2,
+                    fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                    ...MONO,
+                  }}>{opt.label}</button>
+                );
+              })}
+              <span style={{ fontSize: 10, color: C.muted, marginLeft: 4 }}>or</span>
+              <input
+                type="number"
+                value={startCr}
+                onChange={(e) => { const v = parseFloat(e.target.value); if (!isNaN(v) && v >= 0.05) setStartCr(v); }}
+                step={0.25} min={0.05}
+                style={{
+                  width: 70, padding: '3px 6px',
+                  background: C.card2, border: '1px solid ' + C.border,
+                  borderRadius: 5, color: C.text, fontSize: 11, ...MONO, textAlign: 'right',
+                }}
+                title="Custom seed (₹ cr)"
+              />
+              <span style={{ fontSize: 10, color: C.muted, fontWeight: 700 }}>cr</span>
             </div>
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse', ...MONO }}>
