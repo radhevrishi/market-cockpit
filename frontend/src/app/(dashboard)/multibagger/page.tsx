@@ -5755,6 +5755,23 @@ function MultibaggerAnalytics({
       postRunStretched: r.postRunStretched === true,
       earningsProximityDays: typeof r.earningsProximityDays === 'number' ? r.earningsProximityDays : undefined,
       suggestedMaxPositionPct: typeof r.suggestedMaxPositionPct === 'number' ? r.suggestedMaxPositionPct : undefined,
+      // PATCH 1101mm — pass _screeners + USA-specific fields through to stocks.
+      // Previously USA mapping stripped these fields (only India side carried
+      // _screeners), so MULTI-CONFIRMED PICKS always showed 0 + the new R40
+      // widget had no data to read.
+      _screeners: ((r as any)._screeners as string[] | undefined) ?? [],
+      ruleOf40: typeof r.ruleOf40 === 'number' ? r.ruleOf40
+              : (typeof r.revenueGrowthAnn === 'number' && typeof r.fcfMarginAnn === 'number'
+                  ? r.revenueGrowthAnn + r.fcfMarginAnn
+                  : undefined),
+      revenueGrowthAnn: r.revenueGrowthAnn,
+      fcfMarginAnn: r.fcfMarginAnn,
+      capTier: r.capTier,
+      // PATCH 1101mm — also surface common quality metrics for richer USA widgets
+      roic: r.roic,
+      roe: r.roe,
+      grossMarginTtm: r.grossMarginTtm ?? r.grossMarginAnn,
+      piotroskiFScore: r.piotroskiFScore,
     }));
     const merged: AnaStock[] = [...ind, ...us];
     return scope === 'BOTH' ? merged : merged.filter((s) => s.market === scope);
@@ -7207,7 +7224,9 @@ function MultibaggerAnalytics({
           and the top R40 names. The India side has its own composite (Q50,
           ROCE etc.) — different mental model. Hidden when scope === INDIA. */}
       {scope === 'USA' && (() => {
-        const usaRows = (stocks as any[]).filter((r: any) => r._market === 'US' || r._market === 'USA' || typeof r.ruleOf40 === 'number' || typeof r.fcfMarginAnn === 'number');
+        // PATCH 1101mm — stocks uses `market` (not `_market`); ruleOf40 is now
+        // carried through the USA mapping so we read it directly.
+        const usaRows = (stocks as any[]).filter((r: any) => r.market === 'USA');
         const r40s = usaRows
           .map(r => ({ s: r, v: (r.ruleOf40 ?? (typeof r.revenueGrowthAnn === 'number' && typeof r.fcfMarginAnn === 'number' ? r.revenueGrowthAnn + r.fcfMarginAnn : undefined)) }))
           .filter(x => typeof x.v === 'number') as { s: any; v: number }[];
@@ -7288,6 +7307,97 @@ function MultibaggerAnalytics({
                   <span style={{ marginLeft: 'auto', fontSize: 12, color: x.v >= 80 ? '#10B981' : x.v >= 60 ? '#22D3EE' : 'var(--mc-text-2)', fontWeight: 900, fontVariantNumeric: 'tabular-nums' }}>{Math.round(x.v)}</span>
                 </a>
               ))}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── 💎 USA QUALITY LEADERS (PATCH 1101mm) ────────────────────────────
+          Top ROIC + ROE + Piotroski names. The "true compounder DNA" check —
+          can the business consistently turn capital into returns above cost?
+          Surfaces the actual highest-quality franchises across cap tiers. */}
+      {scope === 'USA' && (() => {
+        const usaRows = (stocks as any[]).filter((r: any) => r.market === 'USA');
+        const withRoic = usaRows.filter((r: any) => typeof r.roic === 'number').sort((a: any, b: any) => (b.roic ?? 0) - (a.roic ?? 0)).slice(0, 8);
+        const withPiotroski = usaRows.filter((r: any) => typeof r.piotroskiFScore === 'number' && r.piotroskiFScore >= 7).sort((a: any, b: any) => (b.piotroskiFScore ?? 0) - (a.piotroskiFScore ?? 0)).slice(0, 8);
+        const cashBurners = usaRows.filter((r: any) => typeof r.fcfMarginAnn === 'number' && r.fcfMarginAnn < -10).sort((a: any, b: any) => (a.fcfMarginAnn ?? 0) - (b.fcfMarginAnn ?? 0)).slice(0, 8);
+        if (withRoic.length === 0 && withPiotroski.length === 0 && cashBurners.length === 0) return null;
+        const sec = (color: string, title: string, sub: string, rows: any[], valueFn: (r: any) => string, valueColor: string) => (
+          rows.length === 0 ? null : (
+            <div style={{ padding: '8px 10px', background: `${color}10`, border: `1px solid ${color}40`, borderRadius: 5 }}>
+              <div style={{ fontSize: 11, color, fontWeight: 800, letterSpacing: '0.3px' }}>{title}</div>
+              <div style={{ fontSize: 9, color: 'var(--mc-text-4)', marginBottom: 6 }}>{sub}</div>
+              {rows.map((r: any) => (
+                <a key={r.symbol} href={`/stock-sheet?ticker=${encodeURIComponent(r.symbol)}&market=us`}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', textDecoration: 'none' }}>
+                  <span style={{ fontSize: 11, color: 'var(--mc-text-2)', fontWeight: 700, minWidth: 50 }}>{r.symbol}</span>
+                  <span style={{ fontSize: 10, color: 'var(--mc-text-4)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</span>
+                  <span style={{ fontSize: 11, color: valueColor, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{valueFn(r)}</span>
+                </a>
+              ))}
+            </div>
+          )
+        );
+        return (
+          <div style={cardStyle}>
+            <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 8 }}>
+              💎 USA QUALITY LEADERS
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 6 }}>
+              {sec('#10B981', '🏆 ROIC Leaders', 'Returns on invested capital — Buffett tier', withRoic, (r) => `${r.roic?.toFixed(0)}%`, '#10B981')}
+              {sec('#3B82F6', '🛡 Piotroski ≥ 7/9', 'Earnings-quality score, accruals + leverage check', withPiotroski, (r) => `${r.piotroskiFScore}/9`, '#3B82F6')}
+              {sec('#EF4444', '🛑 Cash Burners (FCF < -10%)', 'Negative FCF margin — needs growth or capital raise', cashBurners, (r) => `${r.fcfMarginAnn?.toFixed(0)}%`, '#EF4444')}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── 🇺🇸 USA SECTOR-R40 HEATMAP (PATCH 1101mm) ────────────────────────
+          Average R40 per sector — finds which sectors are firing on growth +
+          cash flow simultaneously. Sectors with avg R40 ≥ 40 are the hunting
+          ground; sectors with avg < 0 are deathtraps. */}
+      {scope === 'USA' && (() => {
+        const usaRows = (stocks as any[]).filter((r: any) => r.market === 'USA' && typeof r.ruleOf40 === 'number');
+        if (usaRows.length === 0) return null;
+        const sectorMap = new Map<string, { count: number; sumR40: number; avgScore: number; elite: number }>();
+        for (const r of usaRows) {
+          const sec = r.sector || 'Unclassified';
+          const cur = sectorMap.get(sec) ?? { count: 0, sumR40: 0, avgScore: 0, elite: 0 };
+          cur.count++;
+          cur.sumR40 += r.ruleOf40 ?? 0;
+          cur.avgScore += r.score ?? 0;
+          if ((r.ruleOf40 ?? 0) >= 60) cur.elite++;
+          sectorMap.set(sec, cur);
+        }
+        const ranked = Array.from(sectorMap.entries())
+          .filter(([_, v]) => v.count >= 2)
+          .map(([sec, v]) => ({ sec, count: v.count, avgR40: Math.round(v.sumR40 / v.count), avgScore: Math.round(v.avgScore / v.count), elite: v.elite }))
+          .sort((a, b) => b.avgR40 - a.avgR40);
+        if (ranked.length === 0) return null;
+        return (
+          <div style={cardStyle}>
+            <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>
+              🇺🇸 SECTOR R40 HEATMAP
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--mc-text-4)', marginBottom: 8 }}>
+              Sectors ranked by average Rule of 40 · ≥ 40 = institutional hunting ground · &lt; 0 = capital-destroyers
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {ranked.map(r => {
+                const color = r.avgR40 >= 60 ? '#10B981' : r.avgR40 >= 40 ? '#22D3EE' : r.avgR40 >= 20 ? '#F59E0B' : r.avgR40 >= 0 ? '#FB923C' : '#EF4444';
+                const widthPct = Math.max(2, Math.min(100, (r.avgR40 + 50) / 1.5));
+                return (
+                  <div key={r.sec} style={{ display: 'grid', gridTemplateColumns: '180px 1fr 80px 60px 90px', gap: 8, alignItems: 'center', fontSize: 11 }}>
+                    <span style={{ color: 'var(--mc-text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.sec}</span>
+                    <div style={{ position: 'relative', height: 12, background: 'var(--mc-bg-2)', borderRadius: 3, overflow: 'hidden' }}>
+                      <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${widthPct}%`, background: color }} />
+                    </div>
+                    <span style={{ color, fontWeight: 800, fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}>R40 {r.avgR40}</span>
+                    <span style={{ color: 'var(--mc-text-4)', textAlign: 'right' }}>{r.count} cos</span>
+                    <span style={{ color: '#10B981', fontWeight: 700, textAlign: 'right' }}>{r.elite} elite</span>
+                  </div>
+                );
+              })}
             </div>
           </div>
         );
