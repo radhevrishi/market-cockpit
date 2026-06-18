@@ -3646,6 +3646,17 @@ function parseUSARow(row: Record<string,unknown>): USARow | null {
       }
       return undefined;
     })(),
+    // PATCH 1101qq — New TradingView fields user added in latest export.
+    perf3m: n(row['Performance %, 3 months'] ?? row['Performance % 3 months']),
+    perf6m: n(row['Performance %, 6 months'] ?? row['Performance % 6 months']),
+    epsEstimateAnnual: n(row['Earnings per share estimate, Annual'] ?? row['EPS estimate, Annual']),
+    beta5y: n(row['Beta, 5 years'] ?? row['Beta 5y'] ?? row['Beta']),
+    ebitdaMargin: n(row['EBITDA margin %, Trailing 12 months'] ?? row['EBITDA margin %, TTM']),
+    capexPerShareTtm: n(row['Capital expenditures per share, Trailing 12 months'] ?? row['Capital expenditures per share, TTM']),
+    epsGrowthQtr: n(row['Earnings per share diluted growth %, Quarterly YoY'] ?? row['EPS diluted growth %, Quarterly YoY']),
+    targetPrice1y: n(row['Target price, 1 year'] ?? row['Target price 1 year'] ?? row['Price target - mean']),
+    ema50: n(row['Exponential moving average, 50, 1 day'] ?? row['EMA 50']),
+    ema200: n(row['Exponential moving average, 200, 1 day'] ?? row['EMA 200']),
     // Derived at parse time
     revenueAccel: (revQtr !== undefined && revAnn !== undefined) ? Math.round(revQtr - revAnn) : undefined,
     accelSignal: (revQtr !== undefined && revAnn !== undefined)
