@@ -2487,6 +2487,14 @@ export default function HomeDashboard() {
             <Link href="/volume-rules"           style={navChip('#22D3EE')}>🎯 Volume Rules</Link>
             {/* PATCH 1101x — Earnings Mastery: post-earnings multibagger playbook */}
             <Link href="/earnings-mastery"       style={navChip('#F59E0B')}>📊 Earnings Mastery</Link>
+            {/* PATCH 1101aa — External IBEF news link (India Brand Equity Foundation).
+                Opens in new tab; not a Next.js Link because it's a third-party URL. */}
+            <a
+              href="https://www.ibef.org/news/past-news"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={navChip('#10B981')}
+            >🇮🇳 IBEF</a>
             {/* PATCH 1063 — deep-link chips into Playbook sub-sections per user request */}
             <Link href="/playbook#about-me"      style={navChip('#fb7185')}>🌿 About Me</Link>
             <Link href="/playbook#life-sat"      style={navChip('#fbbf24')}>🌅 Life Sat</Link>
