@@ -4053,8 +4053,9 @@ function USACompare() {
   function setRows(r: USAResult[]) {
     const ranked = applyUSARanking(r);
     setRowsState(ranked);
+    const __mbUsa = JSON.stringify(ranked);
     try {
-      localStorage.setItem(USA_STORAGE_KEY, JSON.stringify(ranked));
+      localStorage.setItem(USA_STORAGE_KEY, __mbUsa);
       // AUDIT_100 #77 — stamp the upload time so we can warn when the
       // CSV is > 60 days old (stale fundamentals vs fresh price risk
       // called out in CLAUDE.md §10.10).
@@ -4064,7 +4065,40 @@ function USACompare() {
       // India behaviour set up in 0453 P1-18).
       window.dispatchEvent(new CustomEvent('mb-upload:updated', { detail: { market: 'USA', count: ranked.length } }));
     } catch {}
+    // PATCH 1101v — Mirror to Railway snapshot so USA survives browser eviction
+    // (same architecture as 1101m for India). Fire-and-forget — UI doesn't wait.
+    mbServerSnapshotSave(__mbUsa, ranked.length, 'USA').then((ok) => {
+      try { console.log('[mb-persist] USA server snapshot save →', ok ? 'OK' : 'FAILED'); } catch {}
+    });
   }
+  // PATCH 1101v — Hydrate USA from Railway on mount when localStorage has
+  // fewer rows. Same pattern as India hydration but for the USA market key.
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const lsRaw = localStorage.getItem(USA_STORAGE_KEY);
+        let localCount = 0;
+        try { localCount = lsRaw ? (JSON.parse(lsRaw) as any[])?.length || 0 : 0; } catch {}
+        const serverRaw = await mbServerSnapshotLoad('USA');
+        if (!alive || !serverRaw) return;
+        let serverRows: any[] = [];
+        try { serverRows = JSON.parse(serverRaw); } catch {}
+        if (!Array.isArray(serverRows) || !serverRows.length) return;
+        if (serverRows.length < localCount) {
+          try { console.log(`[mb-usa] Railway has ${serverRows.length} < local ${localCount}, keeping local`); } catch {}
+          return;
+        }
+        try { console.log(`[mb-usa] restored ${serverRows.length} USA stocks from Railway (local had ${localCount})`); } catch {}
+        setRowsState(applyUSARanking(serverRows as USAResult[]));
+        try { localStorage.setItem(USA_STORAGE_KEY, serverRaw); } catch {}
+        try { window.dispatchEvent(new CustomEvent('mb-upload:updated', { detail: { market: 'USA', count: serverRows.length } })); } catch {}
+      } catch (e) {
+        try { console.warn('[mb-usa] Railway hydrate failed', e); } catch {}
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
   // AUDIT_100 #77 — age of the loaded data set in days
   const usaUploadAgeDays = React.useMemo(() => {
     try {
