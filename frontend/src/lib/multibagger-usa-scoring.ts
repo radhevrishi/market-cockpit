@@ -213,6 +213,15 @@ export function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGr
   // margin in its own bullet. When DNA fires the elite-R40 phrasing becomes
   // redundant — suppress and let the richer DNA bullet carry the signal.
   // (Same pattern P0575 used for the standalone Qual FCF bullet.)
+  // PATCH 1101gg — Always calculate R40 when CSV doesn't provide it.
+  // User insight: revenue growth + FCF margin = R40, both fields are usually
+  // present, so we can always compute it. Previously stocks without explicit
+  // ruleOf40 column escaped the R40 caps entirely.
+  if (row.ruleOf40 === undefined
+      && typeof row.revenueGrowthAnn === 'number'
+      && typeof (row.fcfMarginAnn ?? row.fcfMarginTtm) === 'number') {
+    (row as any).ruleOf40 = (row.revenueGrowthAnn ?? 0) + (row.fcfMarginAnn ?? row.fcfMarginTtm ?? 0);
+  }
   const ruleOf40 = row.ruleOf40;
   if (ruleOf40 !== undefined) {
     const willFireDnaAtCap =
@@ -827,10 +836,17 @@ export function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGr
     }
   } else if (
        (row.netProfitMargin ?? 0) > 0
-    && (row.fcfMarginAnn ?? row.fcfMarginTtm ?? 999) < (row.netProfitMargin ?? 0) - 15
+    && ((row.fcfMarginAnn ?? row.fcfMarginTtm ?? 999) < 0)
+    && ((row.fcfMarginAnn ?? row.fcfMarginTtm ?? 999) < (row.netProfitMargin ?? 0) - 25)
   ) {
-    score = Math.min(score, 60);
-    risks.push(`⚠️ FCF-margin proxy for CFO/PAT: NPM ${(row.netProfitMargin ?? 0).toFixed(1)}% but FCF margin ${(row.fcfMarginAnn ?? row.fcfMarginTtm ?? 0).toFixed(1)}% (gap >15pp). Reported profit not converting to cash — accrual quality concern. Cap 60.`);
+    // PATCH 1101gg — Relaxed FCF-vs-NPM divergence cap. Previous threshold
+    // (gap >15pp) was firing on capital-intensive sectors (shipping, capex,
+    // utilities) where FCF margin is structurally lower than NPM due to
+    // sustained capex. LPG (Dorian) dropped 90→60 incorrectly. Now require
+    // BOTH (a) FCF margin is actually NEGATIVE (real cash burn) AND
+    // (b) gap >25pp from NPM. Cap raised 60→75 (still a warning, not a kill).
+    score = Math.min(score, 75);
+    risks.push(`⚠️ FCF-margin proxy: NPM ${(row.netProfitMargin ?? 0).toFixed(1)}% but FCF margin ${(row.fcfMarginAnn ?? row.fcfMarginTtm ?? 0).toFixed(1)}% NEGATIVE (gap >25pp) — reported profit not converting to cash. Accrual quality concern. Cap 75.`);
   }
 
   // (10) GROWTH-RATE HARD CAPS.
@@ -1109,10 +1125,31 @@ export function applyUSARanking(results: USAResult[]): USAResult[] {
 
     // Hard-cap demotions remain (mega-cap, sub-10% growth, decel).
     let demoteSteps = 0;
+    // PATCH 1101gg — softer mega-cap penalty. Previously NVDA / MU / SNDK class
+    // names got -1 for >$150B AND ANOTHER -1 for >$500B, knocking $1T+ stocks
+    // 2 grades down (A → B). User correctly observed that an A-quality $1T name
+    // is still A-quality; mega-cap dampens 10x odds, not 2-3x odds. Now: ONE
+    // step max regardless of size — the rank-based percentile already handles
+    // most of the absolute-cap concerns.
     if (r.marketCapB !== undefined && r.marketCapB > 150) demoteSteps += 1;
-    if (r.marketCapB !== undefined && r.marketCapB > 500) demoteSteps += 1;
     if (r.revenueGrowthAnn !== undefined && r.revenueGrowthAnn < 10) demoteSteps += 1;
     if (r.accelSignal === 'DECELERATING') demoteSteps += 1;
+
+    // PATCH 1101gg — R40 STRICT GATE. User: don't promote stocks that fail R40
+    // into A/A+. If R40 < 40 (institutional benchmark), block above B+. If
+    // R40 < 20, block above B. If R40 < 0, block above C. This catches the
+    // crypto miners / cash burners that were still landing on the leaderboard.
+    const r40 = (r as any).ruleOf40;
+    if (typeof r40 === 'number') {
+      if (r40 < 0 && (grade === 'A+' || grade === 'A' || grade === 'B+' || grade === 'B')) {
+        grade = 'C';
+      } else if (r40 < 20 && (grade === 'A+' || grade === 'A' || grade === 'B+')) {
+        grade = 'B';
+      } else if (r40 < 40 && (grade === 'A+' || grade === 'A')) {
+        grade = 'B+';
+      }
+    }
+
     if (demoteSteps > 0 && (grade === 'A+' || grade === 'A' || grade === 'B+')) {
       grade = downgrade(grade, demoteSteps);
     }
