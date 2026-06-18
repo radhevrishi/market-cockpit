@@ -119,38 +119,44 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
   // We now fall back through the scoped name + scoped key, then the unscoped
   // key, and finally the sibling-scope keys, so any saved list flows into
   // the analyzer and the dropzone gives way to the dashboard.
+  // PATCH 1101oo — Strict-scope load + name consistency. BUG: user uploaded
+  // latest-portfolio.csv with 52 stocks; after refresh saw same filename but
+  // 49 DIFFERENT stocks. Two compounding causes:
+  //   1. mcPersist swallowed quota-exceeded errors. Data write failed (too big)
+  //      but name write succeeded (small). Storage left holding PREV data +
+  //      NEW name → refresh = mismatch.
+  //   2. Previous PATCH 1086 added fall-through to other scopes for migration;
+  //      a portfolio mount could pick up watchlist data.
+  // Fix: load STRICTLY from the scoped pair. If saved data is empty but a
+  // name is present, clear the orphaned name so UI stops claiming a file is
+  // loaded that isn't actually present.
   useEffect(() => {
     try {
-      const KEY_CANDIDATES = [
-        STORAGE_KEY,
-        'mc:fundamentals:data:v1',
-        'mc:fundamentals:watchlist:data:v1',
-        'mc:fundamentals:portfolio:data:v1',
-      ];
-      const NAME_CANDIDATES = [
-        STORAGE_NAME,
-        'mc:fundamentals:name:v1',
-        'mc:fundamentals:watchlist:name:v1',
-        'mc:fundamentals:portfolio:name:v1',
-      ];
-      let loadedRows: Row[] | null = null;
-      for (const k of KEY_CANDIDATES) {
-        const raw = localStorage.getItem(k);
-        if (!raw) continue;
+      const rawData = localStorage.getItem(STORAGE_KEY);
+      const rawName = localStorage.getItem(STORAGE_NAME);
+      let parsedData: Row[] | null = null;
+      if (rawData) {
         try {
-          const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed) && parsed.length) { loadedRows = parsed; break; }
+          const parsed = JSON.parse(rawData);
+          if (Array.isArray(parsed) && parsed.length) parsedData = parsed;
         } catch {}
       }
-      if (loadedRows) setData(loadedRows);
-      for (const k of NAME_CANDIDATES) {
-        const nm = localStorage.getItem(k);
-        if (nm) { setFname(nm); break; }
+      if (parsedData) {
+        setData(parsedData);
+        if (rawName) setFname(rawName);
+      } else if (rawName) {
+        try { localStorage.removeItem(STORAGE_NAME); } catch {}
+        setFname('');
       }
     } catch {}
   }, []);
 
   // Merge new rows into existing — accumulate across uploads, de-dup by ticker, NEW data wins.
+  // PATCH 1101oo — atomic data+name persistence. Previously the data write
+  // could fail (quota exceeded on a large merged CSV) while the name write
+  // succeeded (small payload), leaving storage with NEW name + OLD data.
+  // Refresh then loaded the OLD data and showed the NEW filename — confusing
+  // mismatch the user reported. Now: only write the name when data succeeded.
   const handleText = useCallback((text: string, name: string) => {
     try {
       const incoming = toObjects(parseCSV(text));
@@ -158,14 +164,22 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
       setData((prev) => {
         const map = new Map<string, Row>();
         prev.forEach((r) => map.set(rowKey(r), r));
-        incoming.forEach((r) => map.set(rowKey(r), r)); // new upload overrides existing on same ticker
+        incoming.forEach((r) => map.set(rowKey(r), r));
         const merged = Array.from(map.values());
-        try { mcPersist(STORAGE_KEY, JSON.stringify(merged)); } catch {}
+        const dataOk = mcPersist(STORAGE_KEY, JSON.stringify(merged));
+        if (dataOk) {
+          mcPersist(STORAGE_NAME, name);
+          setFname(name);
+          setError('');
+        } else {
+          // Quota fail. Don't write the name — it would lie about what's
+          // actually in storage. Force the in-memory rows back to prev so the
+          // user's screen matches what will reload on refresh.
+          try { localStorage.removeItem(STORAGE_NAME); } catch {}
+          return prev;
+        }
         return merged;
       });
-      setFname(name);
-      try { mcPersist(STORAGE_NAME, name); } catch {}
-      setError('');
     } catch (e: any) { setError('Could not parse that CSV: ' + (e?.message || e)); }
   }, []);
 
