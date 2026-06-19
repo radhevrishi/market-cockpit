@@ -2557,21 +2557,32 @@ export default function HomeDashboard() {
                   { id: '3615320', name: 'ipobases' },
                   { id: '3658091', name: 'great-results-and-pullback' },
                   { id: '3717728', name: 'capex' },
-                ];
+                  // PATCH 1101ccc — watchlists. Different URL pattern on screener.in.
+                  { id: '10432429', name: 'watchlist-10432429', type: 'watchlist' },
+                  { id: '10432585', name: 'watchlist-10432585', type: 'watchlist' },
+                  { id: '8105148',  name: 'watchlist-8105148',  type: 'watchlist' },
+                ] as { id: string; name: string; type?: 'screen' | 'watchlist' }[];
                 const btn = (event!.target as HTMLButtonElement);
                 const orig = btn.innerText;
                 btn.style.opacity = '0.6';
+                // PATCH 1101ccc — open DevTools tip on first sync so user can see
+                // logs if "nothing happens" again. Also a console banner.
+                console.log('[ScreenerSync] starting sync of', screens.length, 'items. serverConfigured =', serverConfigured);
                 let i = 0;
                 try {
                   for (const s of screens) {
                     i++;
                     // PATCH 1101bbb — visible per-screen progress
                     btn.innerText = `⏳ ${i}/${screens.length} ${s.name}`;
+                    // PATCH 1101ccc — verbose console log so user can see in DevTools
+                    // exactly what's happening, plus pass type for watchlist support.
+                    console.log(`[ScreenerSync] ${i}/${screens.length} fetching ${s.type || 'screen'} ${s.id} (${s.name})`);
                     const r = await fetch('/api/screener/sync', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ sessionid, screenId: s.id, name: s.name }),
+                      body: JSON.stringify({ sessionid, screenId: s.id, name: s.name, type: s.type || 'screen' }),
                     });
+                    console.log(`[ScreenerSync] ${i}/${screens.length} response status ${r.status}`);
                     if (!r.ok) {
                       const j = await r.json().catch(() => ({}));
                       if (r.status === 401) {
