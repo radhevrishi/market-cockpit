@@ -2520,17 +2520,30 @@ export default function HomeDashboard() {
                 On first click, prompts for sessionid (stored in localStorage for reuse).
                 MVP: hard-codes screen 3443614 (fii); multi-screen will follow once user verifies. */}
             <button
-              onClick={async () => {
+              onClick={async (e) => {
+                // PATCH 1101ddd — capture event explicitly. event!.target relies
+                // on the implicit global event variable which is undefined in
+                // modern React/TS strict mode, throwing TypeError that silently
+                // killed the whole handler. User saw "nothing happened".
+                console.log('[ScreenerSync] button clicked');
+                const btn = e.currentTarget as HTMLButtonElement;
+                const orig = btn.innerText;
                 // PATCH 1101aaa — probe server first. If SCREENER_SESSIONID env
                 // var is set on Railway, skip the prompt entirely.
                 let serverConfigured = false;
                 try {
                   const probe = await fetch('/api/screener/sync', { method: 'GET' });
+                  console.log('[ScreenerSync] probe status', probe.status);
                   if (probe.ok) {
                     const j = await probe.json().catch(() => ({}));
                     serverConfigured = !!j.configured;
+                    console.log('[ScreenerSync] serverConfigured =', serverConfigured);
                   }
-                } catch {}
+                } catch (probeErr) {
+                  console.error('[ScreenerSync] probe failed', probeErr);
+                  alert('❌ Could not reach /api/screener/sync. Either the deploy hasn\'t completed (hard-refresh Cmd+Shift+R) or the route is broken. See DevTools Console for details.');
+                  return;
+                }
                 let sessionid = serverConfigured ? '' : (localStorage.getItem('mc:screener:sessionid:v1') || '');
                 if (!serverConfigured && !sessionid) {
                   sessionid = (window.prompt(
@@ -2562,8 +2575,7 @@ export default function HomeDashboard() {
                   { id: '10432585', name: 'watchlist-10432585', type: 'watchlist' },
                   { id: '8105148',  name: 'watchlist-8105148',  type: 'watchlist' },
                 ] as { id: string; name: string; type?: 'screen' | 'watchlist' }[];
-                const btn = (event!.target as HTMLButtonElement);
-                const orig = btn.innerText;
+                // PATCH 1101ddd — btn/orig already captured at top via e.currentTarget.
                 btn.style.opacity = '0.6';
                 // PATCH 1101ccc — open DevTools tip on first sync so user can see
                 // logs if "nothing happens" again. Also a console banner.
