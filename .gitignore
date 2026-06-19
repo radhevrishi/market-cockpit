@@ -43,3 +43,6 @@ frontend.log
 docker-compose.override.yml
 .vercel
 .env*.local
+
+# Wrangler local auth/cache (never commit)
+workers/*/.wrangler/
