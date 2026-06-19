@@ -34,7 +34,10 @@ export default function ScreenerSyncPage() {
   // When user clicks the bookmark while on screener.in (any page), this fires.
   const bookmarkletCode = useMemo(() => {
     const screens = SCREENS.map(s => ({ id: s.id, name: s.name, type: s.type }));
-    const src = `(async()=>{const S=${JSON.stringify(screens)};const today=new Date().toISOString().slice(0,10);for(let i=0;i<S.length;i++){const s=S[i];const url=s.type==='watchlist'?'https://www.screener.in/watchlist/'+s.id+'/?excel=1':'https://www.screener.in/screens/'+s.id+'/?source=&days=365&excel=1';const a=document.createElement('a');a.href=url;a.download=s.name+'-'+today+'.csv';document.body.appendChild(a);a.click();document.body.removeChild(a);await new Promise(r=>setTimeout(r,1800));}alert('Done! '+S.length+' files downloaded. Check Downloads folder.');})();`;
+    // PATCH 1101fff — screener.in returned 404 for /screens/<id>/?excel=1
+    // because it requires the slug too: /screens/<id>/<slug>/?excel=1.
+    // Use s.name as the slug (matches the URL slugs the user provided).
+    const src = `(async()=>{const S=${JSON.stringify(screens)};const today=new Date().toISOString().slice(0,10);for(let i=0;i<S.length;i++){const s=S[i];const url=s.type==='watchlist'?'https://www.screener.in/watchlist/'+s.id+'/?excel=1':'https://www.screener.in/screens/'+s.id+'/'+s.name+'/?source=&days=365&excel=1';const a=document.createElement('a');a.href=url;a.download=s.name+'-'+today+'.csv';document.body.appendChild(a);a.click();document.body.removeChild(a);await new Promise(r=>setTimeout(r,1800));}alert('Done! '+S.length+' files downloaded. Check Downloads folder.');})();`;
     return 'javascript:' + encodeURIComponent(src);
   }, []);
 
