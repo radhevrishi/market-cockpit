@@ -20,24 +20,37 @@ on:
   schedule:
     # Times in UTC. IST = UTC + 5:30.
     - cron: '0 1 * * *'        # 01:00 UTC daily   -> refresh-earnings-calendar
+    - cron: '0 13 * * *'  # 1101sss doubled from above
     - cron: '0 4 * * 1-5'      # 04:00 UTC Mon-Fri -> intelligence/compute
+    - cron: '0 16 * * 1-5'  # 1101sss doubled from above
     - cron: '15 4 * * 1-5'     # 04:15 UTC Mon-Fri -> earnings-guidance/ingest
+    - cron: '15 16 * * 1-5'  # 1101sss doubled from above
     - cron: '35 4 * * 1-5'     # 04:35 UTC Mon-Fri -> movers-alert?mode=full
+    - cron: '35 16 * * 1-5'  # 1101sss doubled from above
     - cron: '50 4 * * 1-5'     # 04:50 UTC Mon-Fri -> watchlist-alert?mode=full
+    - cron: '50 16 * * 1-5'  # 1101sss doubled from above
     - cron: '30 5 * * *'       # 05:30 UTC daily   -> eo-blockbuster-alert (morning)
+    - cron: '30 17 * * *'  # 1101sss doubled from above
     - cron: '30 15 * * *'      # 15:30 UTC daily   -> eo-blockbuster-alert (evening)
+    - cron: '30 3 * * *'  # 1101sss doubled from above
     # PATCH 1031 - pre-warm the Earnings Opportunities graded cache (last 7
     # days) on Railway so the page is always a warm hit (no Hard Refresh).
     - cron: '0 3 * * *'        # 03:00 UTC daily   -> prewarm-earnings (08:30 IST pre-market)
+    - cron: '0 15 * * *'  # 1101sss doubled from above
     - cron: '0 6 * * *'        # 06:00 UTC daily   -> prewarm-earnings (11:30 IST mid-session)
+    - cron: '0 18 * * *'  # 1101sss doubled from above
     - cron: '0 11 * * *'       # 11:00 UTC daily   -> prewarm-earnings (16:30 IST post-close)
+    - cron: '0 23 * * *'  # 1101sss doubled from above
     - cron: '0 14 * * *'       # 14:00 UTC daily   -> prewarm-earnings (19:30 IST evening filings)
+    - cron: '0 2 * * *'  # 1101sss doubled from above
     # Phase 1 - durable Postgres archive: persist each day's KV snapshot into
     # raw_filings + earnings_events + calendar_snapshots (idempotent, never destructive).
     - cron: '30 19 * * *'      # 19:30 UTC daily   -> archive-to-postgres (after evening filings settle)
+    - cron: '30 7 * * *'  # 1101sss doubled from above
     # Ingestion: refresh the current-month KV snapshot from NSE/BSE (live = ingestion
     # only). Runs BEFORE the archive cron so archive-to-postgres then persists KV->PG.
     - cron: '0 18 * * *'       # 18:00 UTC daily   -> hub ingest (current month)
+    - cron: '0 6 * * *'  # 1101sss doubled from above
   workflow_dispatch:
     inputs:
       endpoint:

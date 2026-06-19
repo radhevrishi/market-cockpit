@@ -23,8 +23,11 @@ on:
     # Keep 11:00 IST (post-open snapshot) + 15:30 IST (close). Drop pre-open
     # + evening — index levels stable overnight.
     - cron: '30 5 * * *'   # 11:00 IST — post-open
+    - cron: '30 17 * * *'  # 1101sss doubled from above
     - cron: '0 10 * * *'   # 15:30 IST — close
+    - cron: '0 22 * * *'  # 1101sss doubled from above
     - cron: '0 15 * * 1-5'   # 20:30 IST — after EOD bhavcopy publishes (today's data)
+    - cron: '0 3 * * 1-5'  # 1101sss doubled from above
   workflow_dispatch: {}    # manual trigger from GitHub UI
 
 concurrency:

@@ -8,6 +8,7 @@ on:
   schedule:
     # Every 15 min during IST market hours (08:30 IST → 18:00 IST = 03:00 → 12:30 UTC)
     - cron: '*/15 3-12 * * 1-5'
+    - cron: '*/7 3-12 * * 1-5'    # 1101sss doubled
     # Off-hours: hourly to keep ledger warm
     - cron: '0 13-23 * * *'
     - cron: '0 0-2 * * *'

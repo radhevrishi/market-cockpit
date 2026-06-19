@@ -18,6 +18,7 @@ on:
   schedule:
     # 23:30 IST daily → 18:00 UTC. After Indian market close.
     - cron: '0 18 * * *'
+    - cron: '0 6 * * *'    # 1101sss doubled
   workflow_dispatch: {}
 
 concurrency:

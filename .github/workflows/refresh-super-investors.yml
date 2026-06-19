@@ -10,6 +10,7 @@ name: Refresh Super Investor Holdings (6h)
 on:
   schedule:
     - cron: '0 */6 * * *'    # every 6 h on the hour (UTC)
+    - cron: '0 */3 * * *'  # 1101sss doubled from above
   workflow_dispatch:
     inputs:
       force:

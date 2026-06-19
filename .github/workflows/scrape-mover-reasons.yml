@@ -19,9 +19,13 @@ on:
     # snapshots, post-close sweep, evening update. Same operational value
     # for users (they don't refresh /movers every hour), much less load.
     - cron: '15 5 * * 1-5'   # 10:45 IST — mid-morning snapshot
+    - cron: '15 17 * * 1-5'  # 1101sss doubled from above
     - cron: '15 8 * * 1-5'   # 13:45 IST — afternoon snapshot
+    - cron: '15 20 * * 1-5'  # 1101sss doubled from above
     - cron: '0 11 * * 1-5'   # 16:30 IST — post-close sweep
+    - cron: '0 23 * * 1-5'  # 1101sss doubled from above
     - cron: '0 14 * * *'     # 19:30 IST daily — evening update for weekend viewing
+    - cron: '0 2 * * *'  # 1101sss doubled from above
   workflow_dispatch: {}
 
 concurrency:
