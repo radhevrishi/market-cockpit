@@ -1,22 +1,19 @@
 'use client';
-// PATCH 1101ggg — Screener.in Sync: ONE CLICK download.
+// PATCH 1101hhh — Same-origin redirect proxy avoids Chrome's popup blocker.
 //
-// Earlier approaches that failed for the user:
-//   1. Server fetch (Railway -> screener.in)  -> Cloudflare blocks data-center IPs.
-//   2. Bookmarklet (drag to bookmarks bar)   -> Awkward UX, user says "just click and it works".
+// 1101ggg attempted to open 15 cross-origin target="_blank" anchors in one
+// gesture. Chrome blocked 14 of them as popups (only the first survives for
+// cross-origin URLs).
 //
-// This patch: a real button on this page. On click, we synthesise 15 <a target="_blank"
-// href="screener.in/..."> anchors and click them in rapid succession inside the SAME user
-// gesture. Because these are top-level navigations the browser sends screener.in's
-// session cookie automatically (the user is already logged in in another tab). screener.in
-// responds with Content-Disposition: attachment so each tab triggers a download and closes
-// itself. First time the user runs it the browser will ask "Allow market-cockpit to download
-// multiple files?" — click Allow once and it works forever after.
+// 1101hhh routes anchors through /api/screener/redirect?url=<...> which is
+// SAME-ORIGIN. With <a download="..."> on a same-origin URL, the browser uses
+// its download manager instead of opening a new window → no popup blocker.
+// The server responds 302 to screener.in; the browser follows the redirect
+// as part of the download fetch and lands the CSV in the Downloads folder.
 //
 // Requirements:
 //   1. User must be logged in to screener.in in this same browser (any tab).
-//   2. First click: approve "Allow multiple downloads" prompt.
-// Works in Chrome, Comet, Edge, Brave, Arc — anywhere with standard popup semantics.
+//   2. Browser may show "Allow multiple downloads" on first run — approve once.
 
 import Link from 'next/link';
 import { useState } from 'react';
@@ -39,44 +36,54 @@ const SCREENS = [
   { id: '8105148',  name: 'watchlist-8105148',  type: 'watchlist' },
 ] as const;
 
-function urlFor(s: { id: string; name: string; type: string }): string {
+function realUrl(s: { id: string; name: string; type: string }): string {
   return s.type === 'watchlist'
     ? `https://www.screener.in/watchlist/${s.id}/?excel=1`
     : `https://www.screener.in/screens/${s.id}/${s.name}/?source=&days=365&excel=1`;
+}
+
+// PATCH 1101hhh — wrap in same-origin redirect proxy so anchors don't trip
+// Chrome's cross-origin popup blocker.
+function proxiedUrl(s: { id: string; name: string; type: string }): string {
+  return `/api/screener/redirect?url=${encodeURIComponent(realUrl(s))}`;
 }
 
 export default function ScreenerSyncPage() {
   const [status, setStatus] = useState<string>('');
   const [busy, setBusy] = useState(false);
 
-  // PATCH 1101ggg — fires 15 anchor.click() calls inside the user-gesture
-  // event handler. First click triggers the browser's "Allow multiple
-  // downloads" prompt — once approved, all 15 files download.
   const syncAll = () => {
     setBusy(true);
-    setStatus('Triggering 15 downloads… approve "Allow multiple downloads" if prompted.');
+    setStatus(`Starting ${SCREENS.length} downloads…`);
     let n = 0;
     for (const s of SCREENS) {
+      // Same-origin anchor with download attribute. Browser uses the download
+      // manager — no popup, no new tab. Server 302's to screener.in; browser
+      // follows the redirect as part of the download fetch and lands the file
+      // in the Downloads folder.
       const a = document.createElement('a');
-      a.href = urlFor(s);
-      a.target = '_blank';
-      a.rel = 'noopener';
-      // download attribute is advisory for cross-origin — screener.in's
-      // Content-Disposition header decides the final name. Setting it here
-      // means same-origin policies will still trigger a download flow.
+      a.href = proxiedUrl(s);
       a.download = `${s.name}.csv`;
+      // No target="_blank" — same-origin + download attribute uses download
+      // manager directly.
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       n++;
     }
-    setStatus(`Triggered ${n} downloads. Check your Downloads folder. If only some downloaded, click again and approve the popup prompt.`);
+    setStatus(`Triggered ${n} downloads. If the browser prompted "Allow multiple downloads", click Allow. Check your Downloads folder.`);
     setTimeout(() => setBusy(false), 1500);
   };
 
-  // Per-screen manual fallback in case the bulk button is blocked.
+  // Fallback: individual buttons. Each is its own user gesture so works
+  // even when the bulk approach is restricted.
   const downloadOne = (s: { id: string; name: string; type: string }) => {
-    window.open(urlFor(s), '_blank', 'noopener,noreferrer');
+    const a = document.createElement('a');
+    a.href = proxiedUrl(s);
+    a.download = `${s.name}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   };
 
   return (
@@ -102,9 +109,9 @@ export default function ScreenerSyncPage() {
         <div style={{ background: 'color-mix(in srgb, var(--mc-accent) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-accent) 35%, transparent)', borderRadius: 8, padding: 12, marginBottom: 16 }}>
           <div style={{ fontWeight: 700, marginBottom: 4 }}>Before clicking:</div>
           <ol style={{ margin: 0, paddingLeft: 22, fontSize: 13 }}>
-            <li>Open <a href="https://www.screener.in/" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--mc-accent)' }}>screener.in</a> in another tab and make sure you're logged in.</li>
+            <li>Open <a href="https://www.screener.in/" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--mc-accent)' }}>screener.in</a> in another tab and confirm you're logged in.</li>
             <li>Come back here, click the big button below.</li>
-            <li>If the browser asks <em>"Allow market-cockpit-production.up.railway.app to download multiple files"</em>, click <strong>Allow</strong>. This prompt only appears once.</li>
+            <li>If your browser asks <em>"Allow market-cockpit-production.up.railway.app to download multiple files?"</em>, click <strong>Allow</strong>. One-time only.</li>
           </ol>
         </div>
 
@@ -138,17 +145,18 @@ export default function ScreenerSyncPage() {
 
         {/* How it works */}
         <details style={{ marginBottom: 20, background: 'var(--mc-bg-2)', border: '1px solid var(--mc-border)', borderRadius: 8, padding: 12 }}>
-          <summary style={{ cursor: 'pointer', fontWeight: 700, fontSize: 13 }}>How this works (and why no server)</summary>
+          <summary style={{ cursor: 'pointer', fontWeight: 700, fontSize: 13 }}>How this works</summary>
           <div style={{ fontSize: 12, color: 'var(--mc-text-3)', marginTop: 8 }}>
-            Screener.in is behind Cloudflare which blocks our Railway server from fetching directly.
-            So the click triggers <strong>your browser</strong> to fetch 15 screener.in URLs — your browser already has
-            screener.in's session cookie from your other tab, so each download just works. We never see your sessionid.
+            Earlier attempts opened 15 cross-origin tabs which Chrome's popup blocker stopped after the first.
+            Now each anchor points to <code>/api/screener/redirect</code> (same origin) which 302-redirects to screener.in.
+            Browser treats this as a download (not a popup) and follows the redirect — your screener.in session cookie
+            is sent automatically because it's a top-level navigation continuation. Files arrive in your Downloads folder.
           </div>
         </details>
 
         {/* Individual fallbacks */}
         <div style={{ marginTop: 24, marginBottom: 8, fontSize: 13, fontWeight: 700 }}>
-          Or download one at a time ({SCREENS.length} screens + watchlists)
+          Or download one at a time
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 8 }}>
           {SCREENS.map((s) => (
@@ -177,9 +185,9 @@ export default function ScreenerSyncPage() {
 
         <div style={{ marginTop: 24, padding: 12, background: 'var(--mc-bg-2)', border: '1px solid var(--mc-border)', borderRadius: 8, fontSize: 11, color: 'var(--mc-text-4)' }}>
           <strong>Troubleshooting:</strong>
-          <br />· <strong>Got the login page instead of a download:</strong> you're not logged in to screener.in. Log in in another tab, come back, click again.
-          <br />· <strong>Only some files downloaded:</strong> browser blocked multi-download. Click the lock icon next to the URL → Site settings → Automatic downloads → Allow. Or click again and approve the prompt.
-          <br />· <strong>404 on a file:</strong> the slug in the URL changed on screener.in. Update SCREENS in <code>screener-sync/page.tsx</code>.
+          <br />· <strong>Downloaded file is HTML / login page:</strong> you're not logged in to screener.in. Log in in another tab, come back, click again.
+          <br />· <strong>Only some files downloaded:</strong> approve "Allow multiple downloads". Click the icon left of the URL → Site settings → Automatic downloads → Allow → click big button again.
+          <br />· <strong>404 on a file:</strong> the slug in the URL changed. Update SCREENS in <code>screener-sync/page.tsx</code>.
         </div>
       </div>
     </div>
