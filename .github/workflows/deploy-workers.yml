@@ -1,0 +1,57 @@
+# PATCH 1101uuu: auto-deploy all Cloudflare Workers on push to workers/.
+#
+# Why: Dashboard-uploaded Workers strip the [triggers] cron config from
+# wrangler.toml, which is exactly how mc-movers + mc-alerts ended up
+# without cron triggers. Letting CI run `wrangler deploy` instead keeps
+# the wrangler.toml-declared crons authoritative.
+#
+# Secrets needed on this repo (Settings > Secrets > Actions):
+#   CLOUDFLARE_API_TOKEN  - https://dash.cloudflare.com/profile/api-tokens
+#                           use the "Edit Cloudflare Workers" template,
+#                           or a custom token with permissions:
+#                             Account: Workers Scripts:Edit
+#                             Account: Workers KV Storage:Edit
+#                             Zone: Workers Routes:Edit  (only if you use routes)
+#   CLOUDFLARE_ACCOUNT_ID - 880c51da572278c2d828f6f74ab3ecc3 (your account)
+#
+# What it does:
+#   - On any push that touches workers/<any>/, deploys all three workers
+#     in parallel via matrix. One worker failing does not abort the others.
+#   - Manual run available via workflow_dispatch.
+
+name: Deploy Cloudflare Workers
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'workers/**'
+      - '.github/workflows/deploy-workers.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        worker: [mc-movers, mc-alerts, mc-guardian]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Deploy ${{ matrix.worker }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: workers/${{ matrix.worker }}
+          command: deploy
