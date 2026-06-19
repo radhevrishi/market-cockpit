@@ -51,6 +51,10 @@ jobs:
       - name: Deploy ${{ matrix.worker }}
         uses: cloudflare/wrangler-action@v3
         with:
+          # PATCH 1101vvv: pin wrangler v4 — v3.90 was rejected by CF API
+          # because wrangler.toml compatibility_date "2026-01-01" is newer
+          # than v3.90 knows about.
+          wranglerVersion: '4'
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: workers/${{ matrix.worker }}
