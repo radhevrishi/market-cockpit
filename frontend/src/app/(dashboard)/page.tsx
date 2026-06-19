@@ -2521,10 +2521,20 @@ export default function HomeDashboard() {
                 MVP: hard-codes screen 3443614 (fii); multi-screen will follow once user verifies. */}
             <button
               onClick={async () => {
-                let sessionid = localStorage.getItem('mc:screener:sessionid:v1') || '';
-                if (!sessionid) {
+                // PATCH 1101aaa — probe server first. If SCREENER_SESSIONID env
+                // var is set on Railway, skip the prompt entirely.
+                let serverConfigured = false;
+                try {
+                  const probe = await fetch('/api/screener/sync', { method: 'GET' });
+                  if (probe.ok) {
+                    const j = await probe.json().catch(() => ({}));
+                    serverConfigured = !!j.configured;
+                  }
+                } catch {}
+                let sessionid = serverConfigured ? '' : (localStorage.getItem('mc:screener:sessionid:v1') || '');
+                if (!serverConfigured && !sessionid) {
                   sessionid = (window.prompt(
-                    'Paste your Screener.in sessionid cookie.\n\nFind it in Chrome: open screener.in (logged in) → DevTools → Application → Cookies → screener.in → copy "sessionid" value.\n\nIt will be saved in your browser for next time.',
+                    'Paste your Screener.in sessionid cookie.\n\nFind it in Chrome: open screener.in (logged in) → DevTools → Application → Cookies → screener.in → copy "sessionid" value.\n\nIt will be saved in your browser for next time.\n\nTIP: If you set SCREENER_SESSIONID on Railway env vars, this prompt never appears.',
                     ''
                   ) || '').trim();
                   if (!sessionid) return;
