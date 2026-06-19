@@ -1,14 +1,19 @@
-# PATCH 1101nnn: Discover screener.in export URL pattern from screen HTML.
+# PATCH 1101ooo: Discover-and-POST. Mimic clicking screener.in's Export button.
 #
-# Premium accounts can export. The URL ?excel=1 returns the screen page HTML
-# for our requests, which means screener.in is rendering the screen, not the
-# export. Most likely the export needs a different URL or POST. This workflow
-# now:
-#   1. Auth precheck
-#   2. Pull screen HTML (no ?excel=1)
-#   3. Grep for export button form action or href in the HTML
-#   4. Use the discovered URL to fetch the CSV
-#   5. Dump HTML as base64 if everything still fails so we can read it back
+# What we learned the hard way:
+#   - GET /screens/<id>/<slug>/?excel=1 returns the screen HTML page (ignored).
+#   - The actual Export button on the page is a POST inside a Django form with
+#     a csrfmiddlewaretoken. Path pattern (from the company export button):
+#     /user/company/export/<id>/ -> by analogy /user/screen/export/<id>/.
+#   - We must replicate the form POST exactly: extract csrfmiddlewaretoken
+#     and formaction from the HTML, send both csrftoken cookie and POST body.
+#
+# Workflow:
+#   1. For each screen: GET the screen page, capture csrftoken cookie + form data.
+#   2. Extract formaction (export URL) + csrfmiddlewaretoken from HTML.
+#   3. POST to the discovered export URL with both cookies + token.
+#   4. Validate response is binary CSV/XLSX, not HTML.
+#   5. On failure: commit the captured HTML to _debug/ so we can inspect offline.
 
 name: Sync Screener.in CSVs
 
@@ -47,40 +52,10 @@ jobs:
           echo "sessionid length: ${#SESSION}"
 
           DATA_DIR="frontend/public/data/screener"
-          mkdir -p "$DATA_DIR"
+          DEBUG_DIR="frontend/public/data/screener/_debug"
+          mkdir -p "$DATA_DIR" "$DEBUG_DIR"
 
           UA="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
-
-          # PATCH 1101nnn: Auth precheck against a known-public premium-only
-          # page. Hit /premium/ which should return premium-status HTML.
-          echo "::group::Auth precheck"
-          PRE_HDR=$(mktemp)
-          PRE_BODY=$(mktemp)
-          curl -sSL --max-time 20 -o "$PRE_BODY" -D "$PRE_HDR" \
-            -H "Cookie: sessionid=$SESSION" \
-            -H "User-Agent: $UA" \
-            -H "Accept: text/html" \
-            -H "Referer: https://www.screener.in/" \
-            "https://www.screener.in/dash/"
-          echo "Status line:"
-          head -1 "$PRE_HDR" | tr -d '\r'
-          echo "Set-Cookie lines (count):"
-          grep -ci '^set-cookie:' "$PRE_HDR" || true
-          # Check for clues in body
-          if grep -qi 'logout\|/users/account/' "$PRE_BODY"; then
-            echo "Body contains logout / account link -> looks logged in."
-          else
-            echo "Body has no logout link -> may not be authenticated."
-          fi
-          if grep -qi 'premium\|crown.fb0d' "$PRE_BODY"; then
-            echo "Body mentions premium."
-          fi
-          # base64 first 4KB so we can decode and read later
-          echo "Body[0..4000] base64:"
-          head -c 4000 "$PRE_BODY" | base64 -w0
-          echo ""
-          rm -f "$PRE_HDR" "$PRE_BODY"
-          echo "::endgroup::"
 
           ENTRIES=(
             "3443614:fii:screen"
@@ -100,113 +75,133 @@ jobs:
             "8105148:watchlist-8105148:watchlist"
           )
 
-          # PATCH 1101nnn: Discover export URL from one screen's HTML.
-          # Save the discovered pattern so we apply it to all.
-          echo "::group::Discover export URL pattern"
-          DISCOVER_BODY=$(mktemp)
-          curl -sSL --max-time 30 -o "$DISCOVER_BODY" \
-            -H "Cookie: sessionid=$SESSION" \
-            -H "User-Agent: $UA" \
-            -H "Accept: text/html" \
-            -H "Referer: https://www.screener.in/" \
-            "https://www.screener.in/screens/3443614/fii/?source=&days=365"
-          echo "Screen HTML size: $(wc -c < "$DISCOVER_BODY")"
-          echo "<title> found:"
-          grep -o '<title>[^<]*</title>' "$DISCOVER_BODY" | head -3
-          echo "Any 'formaction' lines mentioning export:"
-          grep -i 'formaction' "$DISCOVER_BODY" | head -10 || true
-          echo "Any /excel/ or /export/ refs:"
-          grep -oiE '"/[^"]*(excel|export|csv)[^"]*"' "$DISCOVER_BODY" | sort -u | head -20 || true
-          echo "Any 'Export' visible text neighbourhoods:"
-          grep -i -A1 -B1 'Export' "$DISCOVER_BODY" | head -30 || true
-          # Look for crucial single-line patterns: action="/...", formaction="/..."
-          echo "All form actions in page:"
-          grep -oE '(form)?action="[^"]+"' "$DISCOVER_BODY" | sort -u | head -20
-          # Premium indicator?
-          if grep -qi 'driver=top-nav\|/premium/' "$DISCOVER_BODY" && ! grep -qi 'crown.fb0d\|premium-active\|"premium":\s*true' "$DISCOVER_BODY"; then
-            echo "WARNING: Screener page shows 'Upgrade to premium' nav -> account may not actually be premium with this sessionid."
-          fi
-          # base64 first 3KB and last 3KB so we can decode and read full HTML
-          echo "HTML[0..3000] base64:"
-          head -c 3000 "$DISCOVER_BODY" | base64 -w0
-          echo ""
-          echo "HTML[last 3000] base64:"
-          tail -c 3000 "$DISCOVER_BODY" | base64 -w0
-          echo ""
-          rm -f "$DISCOVER_BODY"
-          echo "::endgroup::"
-
           OK_COUNT=0
           FAIL_COUNT=0
-          DIAG_DUMPED=0
+          DEBUG_SAVED=0
           REPORT=""
 
           for entry in "${ENTRIES[@]}"; do
             IFS=':' read -r id slug type <<< "$entry"
-            if [ "$type" = "watchlist" ]; then
-              url="https://www.screener.in/watchlist/$id/?excel=1"
-            else
-              url="https://www.screener.in/screens/$id/$slug/?source=&days=365&excel=1"
-            fi
             out="$DATA_DIR/$slug"
-            echo "-> $slug ($url)"
+
+            if [ "$type" = "watchlist" ]; then
+              page_url="https://www.screener.in/watchlist/$id/"
+            else
+              page_url="https://www.screener.in/screens/$id/$slug/"
+            fi
+            echo "==== $slug ($page_url) ===="
+
+            # Cookie jar carries csrftoken + any other cookies screener.in sets.
+            JAR=$(mktemp)
+            echo "# Netscape HTTP Cookie File" > "$JAR"
+            # Seed sessionid manually so it's sent on the FIRST request.
+            printf '.screener.in\tTRUE\t/\tTRUE\t9999999999\tsessionid\t%s\n' "$SESSION" >> "$JAR"
+
+            PAGE=$(mktemp)
+            # Fetch the screen/watchlist HTML page.
+            PAGE_STATUS=$(curl -sSL --max-time 30 -c "$JAR" -b "$JAR" \
+              -H "User-Agent: $UA" \
+              -H "Accept: text/html" \
+              -H "Accept-Language: en-US,en;q=0.9" \
+              -H "Referer: https://www.screener.in/" \
+              -o "$PAGE" -w "%{http_code}" \
+              "$page_url" || echo "000")
+            echo "  page GET status: $PAGE_STATUS, size: $(wc -c < "$PAGE")"
+
+            # Extract csrfmiddlewaretoken (Django CSRF token in form input).
+            CSRF=$(grep -oE 'name="csrfmiddlewaretoken"[^>]*value="[^"]+"' "$PAGE" | head -1 | sed -E 's/.*value="([^"]+)".*/\1/')
+            if [ -z "$CSRF" ]; then
+              CSRF=$(grep -oE 'name=.csrfmiddlewaretoken.[^>]*value=.[a-zA-Z0-9]+.' "$PAGE" | head -1 | sed -E 's/.*value=.([a-zA-Z0-9]+)..*/\1/')
+            fi
+            echo "  csrf token length: ${#CSRF}"
+
+            # Extract export formaction URL.
+            # First: look for "formaction" attribute that contains 'export'.
+            EXPORT_PATH=$(grep -oE 'formaction="[^"]*export[^"]*"' "$PAGE" | head -1 | sed -E 's/formaction="([^"]+)"/\1/')
+            if [ -z "$EXPORT_PATH" ]; then
+              # Some screener.in pages may use href instead.
+              EXPORT_PATH=$(grep -oE 'href="[^"]*export[^"]*\.xlsx[^"]*"' "$PAGE" | head -1 | sed -E 's/href="([^"]+)"/\1/')
+            fi
+            if [ -z "$EXPORT_PATH" ]; then
+              # Fall back to guessing the analogous pattern from the company page.
+              if [ "$type" = "watchlist" ]; then
+                EXPORT_PATH="/user/watchlist/export/$id/"
+              else
+                EXPORT_PATH="/user/screen/export/$id/"
+              fi
+              echo "  no formaction in HTML, guessing $EXPORT_PATH"
+            else
+              echo "  discovered formaction: $EXPORT_PATH"
+            fi
+
+            EXPORT_URL="https://www.screener.in${EXPORT_PATH}"
 
             HDR=$(mktemp)
-            if ! curl -sSL --max-time 45 \
-                -H "Cookie: sessionid=$SESSION" \
-                -H "User-Agent: $UA" \
-                -H "Accept: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, text/csv, */*" \
-                -H "Accept-Language: en-US,en;q=0.9" \
-                -H "Referer: https://www.screener.in/screens/$id/$slug/" \
-                -D "$HDR" \
-                -o "$out.tmp" \
-                "$url"; then
-              echo "::warning::curl failed for $slug"
-              FAIL_COUNT=$((FAIL_COUNT+1))
-              REPORT="$REPORT"$'\n'"- $slug: curl error"
-              rm -f "$out.tmp" "$HDR"
-              continue
-            fi
+            # POST to export URL with CSRF + cookies. screener.in's CSRF check
+            # uses BOTH the csrfmiddlewaretoken form field AND the csrftoken
+            # cookie (Django convention), so the cookie jar matters here.
+            curl -sSL --max-time 60 -X POST -c "$JAR" -b "$JAR" \
+              -H "User-Agent: $UA" \
+              -H "Accept: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, text/csv, */*" \
+              -H "Accept-Language: en-US,en;q=0.9" \
+              -H "Referer: $page_url" \
+              -H "Origin: https://www.screener.in" \
+              -D "$HDR" \
+              -o "$out.tmp" \
+              --data-urlencode "csrfmiddlewaretoken=$CSRF" \
+              --data "source=" --data "days=365" \
+              "$EXPORT_URL" || true
 
             STATUS_LINE=$(head -1 "$HDR" | tr -d '\r')
-            CT=$(grep -i '^content-type:' "$HDR" | tr '[:upper:]' '[:lower:]' | tr -d '\r' | head -1 || true)
+            CT=$(grep -i '^content-type:' "$HDR" | tr -d '\r' | head -1 || true)
+            CD=$(grep -i '^content-disposition:' "$HDR" | tr -d '\r' | head -1 || true)
+            SIZE=$(wc -c < "$out.tmp" 2>/dev/null || echo 0)
+            echo "  POST $EXPORT_URL -> $STATUS_LINE ; ct: $CT ; cd: $CD ; bytes: $SIZE"
 
+            IS_HTML=0
             if head -c 200 "$out.tmp" | grep -qi '<html\|<!doctype'; then
-              echo "::warning::$slug returned HTML ($STATUS_LINE)"
-              if [ $DIAG_DUMPED -eq 0 ]; then
-                echo "::group::Diagnostics first HTML failure ($slug)"
-                echo "URL: $url"
-                echo "Status: $STATUS_LINE"
-                echo "Content-Type: $CT"
-                echo "Response headers:"
-                sed 's/^/    /' "$HDR" | head -25
-                echo "Body base64 (first 3000):"
-                head -c 3000 "$out.tmp" | base64 -w0
-                echo ""
-                echo "::endgroup::"
-                DIAG_DUMPED=1
-              fi
-              FAIL_COUNT=$((FAIL_COUNT+1))
-              REPORT="$REPORT"$'\n'"- $slug: HTML"
-              rm -f "$out.tmp" "$HDR"
-              continue
+              IS_HTML=1
             fi
-            rm -f "$HDR"
 
-            if echo "$CT" | grep -q 'spreadsheet\|excel\|xlsx'; then
-              EXT="xlsx"
+            if [ "$IS_HTML" = "0" ] && [ "$SIZE" -gt 100 ]; then
+              # Real binary or CSV response.
+              if echo "$CT" | grep -qi 'spreadsheet\|excel\|xlsx'; then
+                EXT="xlsx"
+              elif echo "$CT" | grep -qi 'csv'; then
+                EXT="csv"
+              elif head -c 4 "$out.tmp" | od -An -c | grep -q 'P  K'; then
+                EXT="xlsx"  # ZIP signature == xlsx
+              else
+                EXT="csv"
+              fi
+              mv "$out.tmp" "$out.$EXT"
+              for stale_ext in csv xlsx; do
+                if [ "$stale_ext" != "$EXT" ] && [ -f "$out.$stale_ext" ]; then
+                  rm -f "$out.$stale_ext"
+                fi
+              done
+              OK_COUNT=$((OK_COUNT+1))
+              REPORT="$REPORT"$'\n'"  ok $slug.$EXT ($SIZE bytes)"
+              echo "  SUCCESS"
             else
-              EXT="csv"
+              echo "::warning::$slug failed: still HTML or empty"
+              FAIL_COUNT=$((FAIL_COUNT+1))
+              REPORT="$REPORT"$'\n'"  fail $slug (size=$SIZE, html=$IS_HTML)"
+              # Save the screen page + response to debug folder on FIRST failure
+              # so we can inspect after the run.
+              if [ "$DEBUG_SAVED" = "0" ]; then
+                cp "$PAGE" "$DEBUG_DIR/${slug}-page.html"
+                cp "$HDR" "$DEBUG_DIR/${slug}-response-headers.txt"
+                if [ -f "$out.tmp" ]; then
+                  cp "$out.tmp" "$DEBUG_DIR/${slug}-response-body.html"
+                fi
+                echo "Saved debug files to $DEBUG_DIR/${slug}-*"
+                DEBUG_SAVED=1
+              fi
+              rm -f "$out.tmp"
             fi
 
-            mv "$out.tmp" "$out.$EXT"
-            for stale_ext in csv xlsx; do
-              if [ "$stale_ext" != "$EXT" ] && [ -f "$out.$stale_ext" ]; then
-                rm -f "$out.$stale_ext"
-              fi
-            done
-            OK_COUNT=$((OK_COUNT+1))
-            REPORT="$REPORT"$'\n'"- $slug.$EXT ok"
+            rm -f "$PAGE" "$HDR" "$JAR"
             sleep 1.5
           done
 
@@ -231,15 +226,14 @@ jobs:
             echo "}"
           } > "$DATA_DIR/manifest.json"
 
-          echo "OK=$OK_COUNT FAIL=$FAIL_COUNT"
-          echo "$REPORT"
+          echo "============================="
+          echo "Summary: OK=$OK_COUNT FAIL=$FAIL_COUNT"
+          printf '%s\n' "$REPORT"
+          echo "============================="
 
-          if [ $OK_COUNT -eq 0 ]; then
-            echo "::error::All fetches failed. Inspect Discover / Auth groups above."
-            exit 1
-          fi
+          # Always commit (even on full failure) so the debug HTML lands in repo.
 
-      - name: Commit data
+      - name: Commit data + debug
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
