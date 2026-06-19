@@ -1,0 +1,188 @@
+# PATCH 1101jjj — Daily Screener.in CSV sync via GitHub Actions.
+#
+# Why this exists:
+#   Cloudflare blocks Railway's data-center IPs from reaching screener.in, so
+#   the portal cannot fetch CSVs server-side. GitHub Actions runners use
+#   different IPs that screener.in accepts. This workflow runs on those
+#   runners, downloads all 15 saved screens + watchlists, and commits them
+#   into frontend/public/data/screener/. Next.js then serves them at
+#   /data/screener/<name>.csv — same-origin, so the portal's bulk-download
+#   button doesn't hit Chrome's cross-origin popup blocker.
+#
+# One-time setup the user needs to do:
+#   1. GitHub repo → Settings → Secrets and variables → Actions → New repo secret
+#   2. Name:  SCREENER_SESSIONID
+#      Value: paste the sessionid cookie from screener.in (same value as the
+#             Railway env var of the same name)
+#   3. GitHub repo → Actions tab → "Sync Screener.in CSVs" → Run workflow
+#      (manual trigger to populate the data folder the first time).
+#   4. After ~30s the workflow commits files into frontend/public/data/screener/.
+#      Railway auto-redeploys → the portal serves them.
+#
+# Ongoing:
+#   - Runs every day at 04:00 UTC (~09:30 IST).
+#   - Manual trigger anytime via Actions → Run workflow.
+#   - Rotate SCREENER_SESSIONID if logged out (do it in both Railway + GitHub).
+
+name: Sync Screener.in CSVs
+
+on:
+  schedule:
+    # 04:00 UTC = 09:30 IST. Before market open so portal has fresh data.
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: screener-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Sync all screens + watchlists
+        env:
+          SESSION: ${{ secrets.SCREENER_SESSIONID }}
+        run: |
+          set -e
+          if [ -z "$SESSION" ]; then
+            echo "::error::SCREENER_SESSIONID secret is not set."
+            echo "Add it under repo Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+
+          DATA_DIR="frontend/public/data/screener"
+          mkdir -p "$DATA_DIR"
+
+          # id : slug : type   (type = screen | watchlist)
+          # watchlists don't need a slug; we still pass one for the filename.
+          ENTRIES=(
+            "3443614:fii:screen"
+            "3470949:future-leaders:screen"
+            "3479774:lowequitycapital:screen"
+            "3545352:multibagger2-ignoring-trend:screen"
+            "3549314:stocks-like-bajaj-consumer:screen"
+            "3565418:rajeev-thakkar-ppfas-screener:screen"
+            "3586238:100-baggers-sales-and-eps-growth:screen"
+            "3601571:multibagger-like-acutaasatlantadee-dev:screen"
+            "3612486:pead-master-screener-rishi-framework:screen"
+            "3615320:ipobases:screen"
+            "3658091:great-results-and-pullback:screen"
+            "3717728:capex:screen"
+            "10432429:watchlist-10432429:watchlist"
+            "10432585:watchlist-10432585:watchlist"
+            "8105148:watchlist-8105148:watchlist"
+          )
+
+          UA="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+          OK_COUNT=0
+          FAIL_COUNT=0
+          REPORT=""
+
+          for entry in "${ENTRIES[@]}"; do
+            IFS=':' read -r id slug type <<< "$entry"
+            if [ "$type" = "watchlist" ]; then
+              url="https://www.screener.in/watchlist/$id/?excel=1"
+            else
+              url="https://www.screener.in/screens/$id/$slug/?source=&days=365&excel=1"
+            fi
+            out="$DATA_DIR/$slug"
+
+            echo "→ Fetching $slug from $url"
+
+            HDR=$(mktemp)
+            if ! curl -sSL --max-time 45 \
+                -H "Cookie: sessionid=$SESSION" \
+                -H "User-Agent: $UA" \
+                -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
+                -H "Accept-Language: en-US,en;q=0.9" \
+                -H "Referer: https://www.screener.in/" \
+                -D "$HDR" \
+                -o "$out.tmp" \
+                "$url"; then
+              echo "::warning::curl failed for $slug"
+              FAIL_COUNT=$((FAIL_COUNT+1))
+              REPORT="$REPORT\n- $slug: curl error"
+              rm -f "$out.tmp" "$HDR"
+              continue
+            fi
+
+            CT=$(grep -i '^content-type:' "$HDR" | tr '[:upper:]' '[:lower:]' | tr -d '\r' || true)
+            rm -f "$HDR"
+
+            if head -c 200 "$out.tmp" | grep -qi '<html\|<!doctype'; then
+              echo "::warning::$slug returned HTML (session expired or screen renamed?)."
+              FAIL_COUNT=$((FAIL_COUNT+1))
+              REPORT="$REPORT\n- $slug: HTML response (likely auth)"
+              rm -f "$out.tmp"
+              continue
+            fi
+
+            if echo "$CT" | grep -q 'spreadsheet\|excel\|xlsx'; then
+              EXT="xlsx"
+            else
+              EXT="csv"
+            fi
+
+            mv "$out.tmp" "$out.$EXT"
+            for stale_ext in csv xlsx; do
+              if [ "$stale_ext" != "$EXT" ] && [ -f "$out.$stale_ext" ]; then
+                rm -f "$out.$stale_ext"
+              fi
+            done
+
+            OK_COUNT=$((OK_COUNT+1))
+            REPORT="$REPORT\n- $slug.$EXT ($(stat -c%s "$out.$EXT" 2>/dev/null || echo ?) bytes)"
+
+            sleep 1.5
+          done
+
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          {
+            echo "{"
+            echo "  \"lastSync\": \"$NOW\","
+            echo "  \"ok\": $OK_COUNT,"
+            echo "  \"fail\": $FAIL_COUNT,"
+            echo "  \"files\": ["
+            FIRST=1
+            for f in "$DATA_DIR"/*.csv "$DATA_DIR"/*.xlsx; do
+              [ -f "$f" ] || continue
+              BN=$(basename "$f")
+              SZ=$(stat -c%s "$f" 2>/dev/null || echo 0)
+              if [ $FIRST -eq 0 ]; then echo "    ,"; fi
+              echo -n "    {\"name\": \"$BN\", \"size\": $SZ}"
+              FIRST=0
+            done
+            echo ""
+            echo "  ]"
+            echo "}"
+          } > "$DATA_DIR/manifest.json"
+
+          echo "=================================="
+          echo "Sync complete. OK=$OK_COUNT FAIL=$FAIL_COUNT"
+          echo -e "$REPORT"
+          echo "=================================="
+
+          if [ $OK_COUNT -eq 0 ]; then
+            echo "::error::All fetches failed — sessionid is probably expired."
+            exit 1
+          fi
+
+      - name: Commit data
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/public/data/screener/
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "[skip ci] Sync Screener.in CSVs — $(date -u +%Y-%m-%d)"
+            git push
+          fi
