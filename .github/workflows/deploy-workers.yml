@@ -48,12 +48,22 @@ jobs:
         with:
           node-version: 20
 
+      # PATCH 1101www: diagnostic step — print whoami so we can see exactly
+      # what scope/permissions the token has. Helps untangle which token
+      # GitHub is actually using.
+      - name: Diagnose token (whoami)
+        uses: cloudflare/wrangler-action@v3
+        with:
+          wranglerVersion: '4'
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: workers/${{ matrix.worker }}
+          command: whoami
+        continue-on-error: true
+
       - name: Deploy ${{ matrix.worker }}
         uses: cloudflare/wrangler-action@v3
         with:
-          # PATCH 1101vvv: pin wrangler v4 — v3.90 was rejected by CF API
-          # because wrangler.toml compatibility_date "2026-01-01" is newer
-          # than v3.90 knows about.
           wranglerVersion: '4'
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
