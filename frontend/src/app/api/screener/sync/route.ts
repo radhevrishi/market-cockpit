@@ -41,7 +41,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const envSessionid = (process.env.SCREENER_SESSIONID || '').trim();
     const sessionid: string = envSessionid || String(body.sessionid || '').trim();
     const screenId: string = String(body.screenId || '').trim();
-    const rawName: string = String(body.name || `screener-${screenId}`).trim();
+    // PATCH 1101ccc — support both saved screens AND watchlists. type='screen'
+    // uses /screens/<id>/?excel=1. type='watchlist' uses /watchlist/<id>/?excel=1.
+    const type: 'screen' | 'watchlist' = body.type === 'watchlist' ? 'watchlist' : 'screen';
+    const rawName: string = String(body.name || `${type}-${screenId}`).trim();
     const name = sanitizeFilename(rawName);
 
     if (!sessionid) {
@@ -53,8 +56,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         hint: 'Example: for https://www.screener.in/screens/3443614/fii/, screenId is 3443614' }, { status: 400 });
     }
 
-    // Screener.in export endpoint. excel=1 triggers download.
-    const url = `https://www.screener.in/screens/${screenId}/?source=&days=365&excel=1`;
+    // PATCH 1101ccc — Screener.in export endpoint. Different URL for screens
+    // vs watchlists, both support ?excel=1 to trigger CSV/Excel download.
+    const url = type === 'watchlist'
+      ? `https://www.screener.in/watchlist/${screenId}/?excel=1`
+      : `https://www.screener.in/screens/${screenId}/?source=&days=365&excel=1`;
 
     // PATCH 1101aaa — Robust fetch. The previous slim header set triggered
     // generic "fetch failed" — Cloudflare upstream blocks bot-ish requests.
