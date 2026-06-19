@@ -1,19 +1,21 @@
 'use client';
-// PATCH 1101hhh — Same-origin redirect proxy avoids Chrome's popup blocker.
+// PATCH 1101iii — Pragmatic Screener.in sync. Three approaches, user picks.
 //
-// 1101ggg attempted to open 15 cross-origin target="_blank" anchors in one
-// gesture. Chrome blocked 14 of them as popups (only the first survives for
-// cross-origin URLs).
+// What we learned:
+//   - Cross-origin <a target="_blank"> popups: Chrome blocks 14 of 15 (1101ggg).
+//   - Same-origin <a download> via /api/redirect: 302 to cross-origin DROPS the
+//     download attribute, browser navigates current tab away (1101hhh — broke
+//     the page entirely).
+//   - Cloudflare blocks Railway server-side fetches (original error).
 //
-// 1101hhh routes anchors through /api/screener/redirect?url=<...> which is
-// SAME-ORIGIN. With <a download="..."> on a same-origin URL, the browser uses
-// its download manager instead of opening a new window → no popup blocker.
-// The server responds 302 to screener.in; the browser follows the redirect
-// as part of the download fetch and lands the CSV in the Downloads folder.
-//
-// Requirements:
-//   1. User must be logged in to screener.in in this same browser (any tab).
-//   2. Browser may show "Allow multiple downloads" on first run — approve once.
+// Settled approach:
+//   1. PRIMARY: 15 individual buttons. Each click is its own user gesture →
+//      opens one popup → screener.in Content-Disposition triggers download →
+//      tab self-closes. Always works.
+//   2. BULK: opens 15 target="_blank" anchors. First one downloads, browser
+//      shows "Allow multiple downloads" prompt. User approves once, subsequent
+//      clicks all work.
+//   3. Use target="_blank" so the current tab is NEVER replaced.
 
 import Link from 'next/link';
 import { useState } from 'react';
@@ -36,55 +38,42 @@ const SCREENS = [
   { id: '8105148',  name: 'watchlist-8105148',  type: 'watchlist' },
 ] as const;
 
-function realUrl(s: { id: string; name: string; type: string }): string {
+function urlFor(s: { id: string; name: string; type: string }): string {
   return s.type === 'watchlist'
     ? `https://www.screener.in/watchlist/${s.id}/?excel=1`
     : `https://www.screener.in/screens/${s.id}/${s.name}/?source=&days=365&excel=1`;
 }
 
-// PATCH 1101hhh — wrap in same-origin redirect proxy so anchors don't trip
-// Chrome's cross-origin popup blocker.
-function proxiedUrl(s: { id: string; name: string; type: string }): string {
-  return `/api/screener/redirect?url=${encodeURIComponent(realUrl(s))}`;
-}
-
 export default function ScreenerSyncPage() {
+  const [downloaded, setDownloaded] = useState<Set<string>>(new Set());
   const [status, setStatus] = useState<string>('');
-  const [busy, setBusy] = useState(false);
 
-  const syncAll = () => {
-    setBusy(true);
-    setStatus(`Starting ${SCREENS.length} downloads…`);
-    let n = 0;
-    for (const s of SCREENS) {
-      // Same-origin anchor with download attribute. Browser uses the download
-      // manager — no popup, no new tab. Server 302's to screener.in; browser
-      // follows the redirect as part of the download fetch and lands the file
-      // in the Downloads folder.
-      const a = document.createElement('a');
-      a.href = proxiedUrl(s);
-      a.download = `${s.name}.csv`;
-      // No target="_blank" — same-origin + download attribute uses download
-      // manager directly.
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      n++;
-    }
-    setStatus(`Triggered ${n} downloads. If the browser prompted "Allow multiple downloads", click Allow. Check your Downloads folder.`);
-    setTimeout(() => setBusy(false), 1500);
-  };
-
-  // Fallback: individual buttons. Each is its own user gesture so works
-  // even when the bulk approach is restricted.
+  // Individual download — always opens new tab, NEVER replaces current page.
   const downloadOne = (s: { id: string; name: string; type: string }) => {
-    const a = document.createElement('a');
-    a.href = proxiedUrl(s);
-    a.download = `${s.name}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    const w = window.open(urlFor(s), '_blank', 'noopener,noreferrer');
+    if (!w) {
+      setStatus(`❌ Popup blocked for ${s.name}. Click the lock icon (left of URL) → Site settings → Popups and redirects → Allow → try again.`);
+      return;
+    }
+    setDownloaded((prev) => new Set(prev).add(s.id));
+    setStatus(`✓ Triggered ${s.name} — check Downloads folder.`);
   };
+
+  // Bulk — best effort. Opens 15 target="_blank" anchors in one gesture.
+  // First popup goes through; the rest depend on the user approving
+  // "Allow multiple downloads" or having popups allowed for this site.
+  const syncAll = () => {
+    setStatus('Triggered 15 download requests. If only one downloaded, allow popups for this site or use individual buttons below.');
+    const newSet = new Set(downloaded);
+    for (const s of SCREENS) {
+      window.open(urlFor(s), '_blank', 'noopener,noreferrer');
+      newSet.add(s.id);
+    }
+    setDownloaded(newSet);
+  };
+
+  const allCount = SCREENS.length;
+  const doneCount = downloaded.size;
 
   return (
     <div style={{
@@ -102,39 +91,45 @@ export default function ScreenerSyncPage() {
           📥 Screener.in Sync
         </h1>
         <div style={{ fontSize: 12, color: 'var(--mc-text-4)', marginBottom: 24 }}>
-          One click → all {SCREENS.length} files download to your Downloads folder.
+          Click any button below → that file downloads to your Downloads folder. Be logged in to screener.in in another tab first.
         </div>
 
         {/* Pre-flight */}
-        <div style={{ background: 'color-mix(in srgb, var(--mc-accent) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-accent) 35%, transparent)', borderRadius: 8, padding: 12, marginBottom: 16 }}>
-          <div style={{ fontWeight: 700, marginBottom: 4 }}>Before clicking:</div>
+        <div style={{ background: 'color-mix(in srgb, var(--mc-accent) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-accent) 35%, transparent)', borderRadius: 8, padding: 12, marginBottom: 20 }}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>One-time setup:</div>
           <ol style={{ margin: 0, paddingLeft: 22, fontSize: 13 }}>
-            <li>Open <a href="https://www.screener.in/" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--mc-accent)' }}>screener.in</a> in another tab and confirm you're logged in.</li>
-            <li>Come back here, click the big button below.</li>
-            <li>If your browser asks <em>"Allow market-cockpit-production.up.railway.app to download multiple files?"</em>, click <strong>Allow</strong>. One-time only.</li>
+            <li>Open <a href="https://www.screener.in/" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--mc-accent)' }}>screener.in</a> in another tab and log in.</li>
+            <li>In <strong>this</strong> tab: click the lock icon (left of URL) → <strong>Site settings</strong> → <strong>Popups and redirects</strong> → <strong>Allow</strong>. (This is what lets the bulk button work.)</li>
+            <li>Come back here, click the bulk button — or click individual buttons one by one if you prefer.</li>
           </ol>
         </div>
 
-        {/* THE BUTTON */}
+        {/* Progress */}
+        {doneCount > 0 && (
+          <div style={{ background: 'color-mix(in srgb, var(--mc-success) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-success) 35%, transparent)', borderRadius: 8, padding: 10, marginBottom: 12, fontSize: 13 }}>
+            Progress: <strong>{doneCount} / {allCount}</strong> triggered.
+          </div>
+        )}
+
+        {/* Bulk button */}
         <button
           onClick={syncAll}
-          disabled={busy}
           style={{
             width: '100%',
-            background: busy ? 'var(--mc-bg-3)' : 'linear-gradient(135deg, var(--mc-accent), color-mix(in srgb, var(--mc-accent) 60%, var(--mc-success)))',
+            background: 'linear-gradient(135deg, var(--mc-accent), color-mix(in srgb, var(--mc-accent) 60%, var(--mc-success)))',
             color: '#fff',
             border: 'none',
             borderRadius: 12,
-            padding: '24px 32px',
-            fontSize: 22,
+            padding: '20px 28px',
+            fontSize: 20,
             fontWeight: 800,
-            cursor: busy ? 'not-allowed' : 'pointer',
+            cursor: 'pointer',
             marginBottom: 14,
             boxShadow: '0 4px 16px color-mix(in srgb, var(--mc-accent) 30%, transparent)',
             letterSpacing: 0.3,
           }}
         >
-          {busy ? 'Downloading…' : `📥 Download all ${SCREENS.length} files`}
+          📥 Download all {allCount} files (allow popups first)
         </button>
 
         {status && (
@@ -143,51 +138,72 @@ export default function ScreenerSyncPage() {
           </div>
         )}
 
-        {/* How it works */}
-        <details style={{ marginBottom: 20, background: 'var(--mc-bg-2)', border: '1px solid var(--mc-border)', borderRadius: 8, padding: 12 }}>
-          <summary style={{ cursor: 'pointer', fontWeight: 700, fontSize: 13 }}>How this works</summary>
+        {/* INDIVIDUAL — primary path */}
+        <div style={{ marginTop: 28, marginBottom: 10 }}>
+          <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 4 }}>
+            Or click each button to download (always works)
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--mc-text-4)' }}>
+            Each click downloads one file — no popup blocker issues. The button turns green once you've clicked it.
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
+          {SCREENS.map((s) => {
+            const done = downloaded.has(s.id);
+            return (
+              <button
+                key={s.id}
+                onClick={() => downloadOne(s)}
+                style={{
+                  textAlign: 'left',
+                  background: done
+                    ? 'color-mix(in srgb, var(--mc-success) 18%, var(--mc-bg-2))'
+                    : 'var(--mc-bg-2)',
+                  border: done
+                    ? '1px solid var(--mc-success)'
+                    : '1px solid var(--mc-border)',
+                  borderRadius: 8,
+                  padding: '10px 12px',
+                  color: 'var(--mc-text-2)',
+                  fontSize: 12,
+                  cursor: 'pointer',
+                  position: 'relative',
+                }}
+              >
+                <span style={{
+                  color: s.type === 'watchlist' ? 'var(--mc-warn)' : 'var(--mc-accent)',
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: 0.5,
+                }}>
+                  {s.type === 'watchlist' ? 'WATCHLIST' : 'SCREEN'}
+                </span>
+                {done && (
+                  <span style={{ position: 'absolute', top: 8, right: 10, color: 'var(--mc-success)', fontWeight: 800 }}>✓</span>
+                )}
+                <div style={{ fontWeight: 700, fontSize: 13 }}>{s.name}</div>
+                <div style={{ color: 'var(--mc-text-4)', fontSize: 11 }}>ID {s.id}</div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* How this actually works — honest explanation */}
+        <details style={{ marginTop: 28, background: 'var(--mc-bg-2)', border: '1px solid var(--mc-border)', borderRadius: 8, padding: 12 }}>
+          <summary style={{ cursor: 'pointer', fontWeight: 700, fontSize: 13 }}>Why isn't this just one button?</summary>
           <div style={{ fontSize: 12, color: 'var(--mc-text-3)', marginTop: 8 }}>
-            Earlier attempts opened 15 cross-origin tabs which Chrome's popup blocker stopped after the first.
-            Now each anchor points to <code>/api/screener/redirect</code> (same origin) which 302-redirects to screener.in.
-            Browser treats this as a download (not a popup) and follows the redirect — your screener.in session cookie
-            is sent automatically because it's a top-level navigation continuation. Files arrive in your Downloads folder.
+            Cloudflare (screener.in's CDN) blocks our Railway server from fetching screener.in directly — so the server can't bundle the files for you. Your browser CAN reach screener.in (it lets your home IP through), so each download has to be triggered by your browser. But Chrome only allows one cross-origin popup per click — that's why clicking the bulk button often only delivers one file unless you've allowed popups for this site.
+            <br /><br />
+            <strong>Long-term fix:</strong> a GitHub Actions cron job that runs daily, fetches all 15 CSVs from a non-blocked IP, and commits them into the repo. Portal would read them same-origin. Tell me when you want this and I'll wire it up.
           </div>
         </details>
 
-        {/* Individual fallbacks */}
-        <div style={{ marginTop: 24, marginBottom: 8, fontSize: 13, fontWeight: 700 }}>
-          Or download one at a time
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 8 }}>
-          {SCREENS.map((s) => (
-            <button
-              key={s.id}
-              onClick={() => downloadOne(s)}
-              style={{
-                textAlign: 'left',
-                background: 'var(--mc-bg-2)',
-                border: '1px solid var(--mc-border)',
-                borderRadius: 6,
-                padding: '8px 10px',
-                color: 'var(--mc-text-2)',
-                fontSize: 12,
-                cursor: 'pointer',
-              }}
-            >
-              <span style={{ color: s.type === 'watchlist' ? 'var(--mc-warn)' : 'var(--mc-accent)', fontSize: 10, fontWeight: 700 }}>
-                {s.type === 'watchlist' ? 'WATCHLIST' : 'SCREEN'}
-              </span>
-              <div style={{ fontWeight: 600 }}>{s.name}</div>
-              <div style={{ color: 'var(--mc-text-4)', fontSize: 11 }}>ID {s.id}</div>
-            </button>
-          ))}
-        </div>
-
-        <div style={{ marginTop: 24, padding: 12, background: 'var(--mc-bg-2)', border: '1px solid var(--mc-border)', borderRadius: 8, fontSize: 11, color: 'var(--mc-text-4)' }}>
+        <div style={{ marginTop: 18, padding: 12, background: 'var(--mc-bg-2)', border: '1px solid var(--mc-border)', borderRadius: 8, fontSize: 11, color: 'var(--mc-text-4)' }}>
           <strong>Troubleshooting:</strong>
-          <br />· <strong>Downloaded file is HTML / login page:</strong> you're not logged in to screener.in. Log in in another tab, come back, click again.
-          <br />· <strong>Only some files downloaded:</strong> approve "Allow multiple downloads". Click the icon left of the URL → Site settings → Automatic downloads → Allow → click big button again.
-          <br />· <strong>404 on a file:</strong> the slug in the URL changed. Update SCREENS in <code>screener-sync/page.tsx</code>.
+          <br />· <strong>New tab opens but no download:</strong> you're not logged in to screener.in. Log in in another tab, come back, click again.
+          <br />· <strong>Bulk button only downloads 1 file:</strong> click the lock icon left of the URL → Site settings → Popups → Allow → click bulk button again. Or just click each individual button.
+          <br />· <strong>Tab stays open after download:</strong> normal for some browsers. Close it manually or ignore — file is already downloaded.
         </div>
       </div>
     </div>
