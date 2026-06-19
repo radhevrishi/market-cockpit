@@ -2540,15 +2540,33 @@ export default function HomeDashboard() {
                   if (!sessionid) return;
                   localStorage.setItem('mc:screener:sessionid:v1', sessionid);
                 }
+                // PATCH 1101bbb — All 12 of the user's saved screens.
+                // Browser-default-downloads-folder behavior is automatic: each
+                // download triggers an anchor click with a 2s spacing between
+                // requests to stay polite with screener.in rate limits.
                 const screens = [
                   { id: '3443614', name: 'fii' },
+                  { id: '3470949', name: 'future-leaders' },
+                  { id: '3479774', name: 'lowequitycapital' },
+                  { id: '3545352', name: 'multibagger2-ignoring-trend' },
+                  { id: '3549314', name: 'stocks-like-bajaj-consumer' },
+                  { id: '3565418', name: 'rajeev-thakkar-ppfas-screener' },
+                  { id: '3586238', name: '100-baggers-sales-and-eps-growth' },
+                  { id: '3601571', name: 'multibagger-like-acutaasatlantadee-dev' },
+                  { id: '3612486', name: 'pead-master-screener-rishi-framework' },
+                  { id: '3615320', name: 'ipobases' },
+                  { id: '3658091', name: 'great-results-and-pullback' },
+                  { id: '3717728', name: 'capex' },
                 ];
                 const btn = (event!.target as HTMLButtonElement);
                 const orig = btn.innerText;
-                btn.innerText = '⏳ Syncing…';
                 btn.style.opacity = '0.6';
+                let i = 0;
                 try {
                   for (const s of screens) {
+                    i++;
+                    // PATCH 1101bbb — visible per-screen progress
+                    btn.innerText = `⏳ ${i}/${screens.length} ${s.name}`;
                     const r = await fetch('/api/screener/sync', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
@@ -2575,8 +2593,8 @@ export default function HomeDashboard() {
                     URL.revokeObjectURL(a.href);
                     if (screens.length > 1) await new Promise((res) => setTimeout(res, 2000));
                   }
-                  btn.innerText = '✅ Synced!';
-                  setTimeout(() => { btn.innerText = orig; btn.style.opacity = '1'; }, 2000);
+                  btn.innerText = `✅ Synced ${screens.length}!`;
+                  setTimeout(() => { btn.innerText = orig; btn.style.opacity = '1'; }, 3000);
                 } catch (err: any) {
                   alert('❌ Sync failed: ' + (err?.message || String(err)));
                   btn.innerText = orig;
