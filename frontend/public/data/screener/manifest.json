@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-06-19T09:52:16Z",
+  "lastSync": "2026-06-19T18:05:16Z",
   "ok": 15,
   "fail": 0,
   "files": [
@@ -10,7 +10,7 @@
     },
     {
       "name": "capex.csv",
-      "size": 7805,
+      "size": 7803,
       "displayName": "CAPEX"
     },
     {
@@ -25,27 +25,27 @@
     },
     {
       "name": "great-results-and-pullback.csv",
-      "size": 6569,
+      "size": 6114,
       "displayName": "Great Results and Pullback"
     },
     {
       "name": "ipobases.csv",
-      "size": 4556,
+      "size": 4942,
       "displayName": "IPOBASES"
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 6607,
+      "size": 6171,
       "displayName": "Lowequitycapital"
     },
     {
       "name": "multibagger-like-acutaasatlantadee-dev.csv",
-      "size": 6608,
+      "size": 6186,
       "displayName": "Multibagger like Acutaas,Atlanta,Dee Dev"
     },
     {
       "name": "multibagger2-ignoring-trend.csv",
-      "size": 6531,
+      "size": 6530,
       "displayName": "Multibagger2 Ignoring trend"
     },
     {
@@ -60,7 +60,7 @@
     },
     {
       "name": "stocks-like-bajaj-consumer.csv",
-      "size": 6694,
+      "size": 6695,
       "displayName": "Stocks like Bajaj Consumer"
     },
     {
@@ -70,12 +70,12 @@
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63323,
+      "size": 63321,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65490,
+      "size": 65491,
       "displayName": "Working watchlist"
     }
   ]
