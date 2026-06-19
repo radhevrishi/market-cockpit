@@ -1,19 +1,6 @@
-# PATCH 1101ppp: Screener.in export discovered from debug HTML.
-#
-# Real export URL pattern (from /screens/3443614/fii/ page HTML):
-#   <form action="/api/export/screen/?url_name=screen&amp;screen_id=3443614&amp;slug_name=fii"
-#         method="POST">
-#     <input type="hidden" name="csrfmiddlewaretoken" value="...">
-#     <button type="submit">Export</button>
-#   </form>
-#
-# So the workflow:
-#   1. GET /screens/<id>/<slug>/ to capture csrftoken cookie + csrfmiddlewaretoken.
-#   2. POST /api/export/screen/?url_name=screen&screen_id=<id>&slug_name=<slug>
-#      with csrfmiddlewaretoken in body and both cookies.
-#   3. For watchlists, GET /watchlist/<id>/ + POST /api/export/watchlist/?...
-#   4. Discover-from-HTML pattern still preferred over hard-coded URL: if the
-#      page declares a different action, we use what the page says.
+# PATCH 1101rrr: also capture screener.in's display name (page <title>) so
+# the portal can label files with the actual name the user gave them on
+# screener.in instead of the raw filename.
 
 name: Sync Screener.in CSVs
 
@@ -54,7 +41,6 @@ jobs:
           DATA_DIR="frontend/public/data/screener"
           DEBUG_DIR="$DATA_DIR/_debug"
           mkdir -p "$DATA_DIR" "$DEBUG_DIR"
-          # Wipe previous debug files; they only matter for the most recent run.
           rm -f "$DEBUG_DIR"/*.html "$DEBUG_DIR"/*.txt 2>/dev/null || true
 
           UA="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
@@ -82,7 +68,9 @@ jobs:
           DEBUG_SAVED=0
           REPORT=""
 
-          # HTML entity decoder for &amp; -> &
+          # PATCH 1101rrr: collect file -> display name mapping for manifest.
+          NAMES_FILE=$(mktemp)
+
           html_decode() {
             printf '%s' "$1" | sed 's/&amp;/\&/g; s/&quot;/"/g; s/&#39;/'\''/g; s/&lt;/</g; s/&gt;/>/g'
           }
@@ -113,26 +101,26 @@ jobs:
             PAGE_SIZE=$(wc -c < "$PAGE")
             echo "  page GET status: $PAGE_STATUS, size: $PAGE_SIZE"
 
-            # PATCH 1101ppp: real regex. The export is inside <form action="...">
-            # (NOT a button's formaction). Action URL is an /api/export/... path
-            # with query string. We strip line through end of action attribute
-            # and html-decode &amp;.
+            # PATCH 1101rrr: extract <title>NAME - Screener</title>, html-decode,
+            # strip trailing " - Screener". This is the friendly name the user
+            # gave the screen/watchlist when they created it.
+            TITLE_RAW=$(grep -oE '<title>[^<]+</title>' "$PAGE" | head -1 | sed -E 's|<title>([^<]+)</title>|\1|')
+            DISPLAY=$(html_decode "$TITLE_RAW" | sed -E 's/[[:space:]]*-[[:space:]]*Screener[[:space:]]*$//' | sed -E 's/^[[:space:]]+//;s/[[:space:]]+$//')
+            if [ -z "$DISPLAY" ]; then DISPLAY="$slug"; fi
+            echo "  display name: $DISPLAY"
+
             EXPORT_RAW=$(grep -oE '<form[^>]*action="/api/export[^"]+"' "$PAGE" | head -1 | grep -oE 'action="[^"]+"' | sed -E 's/action="([^"]+)"/\1/')
             EXPORT_PATH=$(html_decode "$EXPORT_RAW")
             CSRF=$(grep -oE 'name="csrfmiddlewaretoken" value="[^"]+"' "$PAGE" | head -1 | sed -E 's/.*value="([^"]+)".*/\1/')
-            echo "  csrf token length: ${#CSRF}"
-            echo "  discovered export path: $EXPORT_PATH"
+            echo "  csrf length: ${#CSRF}; export path: $EXPORT_PATH"
 
             if [ -z "$EXPORT_PATH" ]; then
-              # Fall back to constructed URL based on known pattern.
               if [ "$type" = "watchlist" ]; then
                 EXPORT_PATH="/api/export/watchlist/?url_name=watchlist&watchlist_id=$id"
               else
                 EXPORT_PATH="/api/export/screen/?url_name=screen&screen_id=$id&slug_name=$slug"
               fi
-              echo "  fallback to: $EXPORT_PATH"
             fi
-
             EXPORT_URL="https://www.screener.in${EXPORT_PATH}"
 
             HDR=$(mktemp)
@@ -149,25 +137,17 @@ jobs:
 
             STATUS_LINE=$(head -1 "$HDR" | tr -d '\r')
             CT=$(grep -i '^content-type:' "$HDR" | tr -d '\r' | head -1 || true)
-            CD=$(grep -i '^content-disposition:' "$HDR" | tr -d '\r' | head -1 || true)
             SIZE=$(wc -c < "$out.tmp" 2>/dev/null || echo 0)
-            echo "  POST -> $STATUS_LINE ; ct: $CT ; size: $SIZE"
+            echo "  POST -> $STATUS_LINE ; size: $SIZE"
 
             IS_HTML=0
-            if head -c 200 "$out.tmp" | grep -qi '<html\|<!doctype'; then
-              IS_HTML=1
-            fi
+            if head -c 200 "$out.tmp" | grep -qi '<html\|<!doctype'; then IS_HTML=1; fi
 
             if [ "$IS_HTML" = "0" ] && [ "$SIZE" -gt 100 ]; then
-              if echo "$CT" | grep -qi 'spreadsheet\|excel\|xlsx'; then
-                EXT="xlsx"
-              elif echo "$CT" | grep -qi 'csv'; then
-                EXT="csv"
-              elif head -c 4 "$out.tmp" | od -An -c | grep -q 'P  K'; then
-                EXT="xlsx"
-              else
-                EXT="csv"
-              fi
+              if echo "$CT" | grep -qi 'spreadsheet\|excel\|xlsx'; then EXT="xlsx"
+              elif echo "$CT" | grep -qi 'csv'; then EXT="csv"
+              elif head -c 4 "$out.tmp" | od -An -c | grep -q 'P  K'; then EXT="xlsx"
+              else EXT="csv"; fi
               mv "$out.tmp" "$out.$EXT"
               for stale_ext in csv xlsx; do
                 if [ "$stale_ext" != "$EXT" ] && [ -f "$out.$stale_ext" ]; then
@@ -175,19 +155,21 @@ jobs:
                 fi
               done
               OK_COUNT=$((OK_COUNT+1))
-              REPORT="$REPORT"$'\n'"  ok $slug.$EXT ($SIZE bytes)"
-              echo "  SUCCESS"
+              REPORT="$REPORT"$'\n'"  ok $slug.$EXT ($SIZE bytes) -> $DISPLAY"
+              # Save (filename, displayName) to NAMES_FILE for manifest.
+              # Format: filename<TAB>display name
+              printf '%s.%s\t%s\n' "$slug" "$EXT" "$DISPLAY" >> "$NAMES_FILE"
+              echo "  SUCCESS ($DISPLAY)"
             else
               echo "::warning::$slug failed (size=$SIZE, html=$IS_HTML)"
               FAIL_COUNT=$((FAIL_COUNT+1))
-              REPORT="$REPORT"$'\n'"  fail $slug (size=$SIZE, html=$IS_HTML)"
+              REPORT="$REPORT"$'\n'"  fail $slug"
               if [ "$DEBUG_SAVED" = "0" ]; then
                 cp "$PAGE" "$DEBUG_DIR/${slug}-page.html"
                 cp "$HDR" "$DEBUG_DIR/${slug}-response-headers.txt"
                 if [ -f "$out.tmp" ]; then
                   cp "$out.tmp" "$DEBUG_DIR/${slug}-response-body.html"
                 fi
-                echo "Saved debug files."
                 DEBUG_SAVED=1
               fi
               rm -f "$out.tmp"
@@ -198,25 +180,38 @@ jobs:
           done
 
           NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          {
-            echo "{"
-            echo "  \"lastSync\": \"$NOW\","
-            echo "  \"ok\": $OK_COUNT,"
-            echo "  \"fail\": $FAIL_COUNT,"
-            echo "  \"files\": ["
-            FIRST=1
-            for f in "$DATA_DIR"/*.csv "$DATA_DIR"/*.xlsx; do
-              [ -f "$f" ] || continue
-              BN=$(basename "$f")
-              SZ=$(stat -c%s "$f" 2>/dev/null || echo 0)
-              if [ $FIRST -eq 0 ]; then echo "    ,"; fi
-              echo -n "    {\"name\": \"$BN\", \"size\": $SZ}"
-              FIRST=0
-            done
-            echo ""
-            echo "  ]"
-            echo "}"
-          } > "$DATA_DIR/manifest.json"
+          # PATCH 1101rrr: manifest now includes displayName per file.
+          python3 - "$NAMES_FILE" "$DATA_DIR" "$NOW" "$OK_COUNT" "$FAIL_COUNT" <<'PYEOF'
+          import json, os, sys
+          names_file, data_dir, now, ok, fail = sys.argv[1:6]
+          ok = int(ok); fail = int(fail)
+          name_map = {}
+          if os.path.exists(names_file):
+              for line in open(names_file):
+                  if not line.strip() or '\t' not in line: continue
+                  fn, dn = line.rstrip('\n').split('\t', 1)
+                  name_map[fn] = dn
+          files = []
+          for fn in sorted(os.listdir(data_dir)):
+              if not (fn.endswith('.csv') or fn.endswith('.xlsx')): continue
+              if fn == 'manifest.json': continue
+              path = os.path.join(data_dir, fn)
+              if not os.path.isfile(path): continue
+              files.append({
+                  'name': fn,
+                  'size': os.path.getsize(path),
+                  'displayName': name_map.get(fn, fn),
+              })
+          out = {
+              'lastSync': now,
+              'ok': ok,
+              'fail': fail,
+              'files': files,
+          }
+          with open(os.path.join(data_dir, 'manifest.json'), 'w') as f:
+              json.dump(out, f, indent=2)
+          print(f'manifest written: {len(files)} files, {sum(1 for x in files if x["displayName"] != x["name"])} with display names')
+          PYEOF
 
           echo "============================="
           echo "Summary: OK=$OK_COUNT FAIL=$FAIL_COUNT"
