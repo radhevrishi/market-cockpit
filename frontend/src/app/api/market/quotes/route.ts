@@ -641,12 +641,23 @@ async function fetchIndianDataWithCache() {
         const _postClose = _istDow >= 1 && _istDow <= 5
           && _istMin > (15 * 60 + 30) && _istMin < (20 * 60 + 45);
         const _wantLive = _mktOpen || _postClose;
+        // PATCH 1101yy — Expand market-hours Yahoo refresh from top-100 large
+        // to top-500 by turnover. User reported losing live intraday data for
+        // small/mid cap movers since PATCH 1008 narrowed the slice to large-cap
+        // only. Active small/mid names (the focus of the home Movers widget)
+        // need live prices DURING market hours, not just after close.
+        // Top-500 by turnover covers virtually all active movers (small/mid
+        // tend to lead by volume even when small mcap), and Yahoo's chart-batch
+        // already handles 500 within Vercel's 30s budget. The post-close branch
+        // keeps top-700 for full settlement-day breadth.
         const _liveTickers: any[] = _wantLive
           ? (_postClose
               ? [...tickers]
                   .sort((a: any, b: any) => (b.turnoverLacs || 0) - (a.turnoverLacs || 0))
                   .slice(0, 700)
-              : tickers.filter((t: any) => (t.cap || '').toLowerCase() === 'large').slice(0, 100))
+              : [...tickers]
+                  .sort((a: any, b: any) => (b.turnoverLacs || 0) - (a.turnoverLacs || 0))
+                  .slice(0, 500))
           : [];
         const liveSyms: string[] = _liveTickers.map((t: any) => `${t.ticker}.NS`);
         const unpricedSyms = tickers.filter((t: any) => !t.hasPrice).map((t: any) => `${t.ticker}.NS`);
