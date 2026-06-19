@@ -8,6 +8,13 @@
 // ============================================================================
 
 import { useState, useMemo, useCallback, useEffect } from 'react';
+// PATCH 1101qqq — auto-sync loader feeds CSVs (committed by daily GitHub
+// Action) into the existing handleText() pipeline, so the user's Portfolio
+// and Watchlist analyzers stay populated without manual upload.
+import {
+  SYNC_ROUTING, fetchCsvText, getSyncStatus,
+  shouldAutoLoad, markAutoLoaded, resetAutoLoadFlag, type SyncStatus,
+} from '@/lib/screener-data-loader';
 
 // Identity for de-dup: NSE code, else BSE code, else Name (uppercased).
 // PATCH 1101tt — rowKey now also recognises TradingView USA columns (Symbol / Ticker / Description)
@@ -303,6 +310,66 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
     });
   }, []);
 
+  // ── PATCH 1101qqq — AUTO-SYNC FROM screener.in via GitHub Action ──────────
+  // Loads the user's watchlist CSVs (committed daily by screener-sync workflow)
+  // into the existing handleText() pipeline. Portfolio scope loads
+  // watchlist-10432429.csv (their LATEST portfolio); Watchlist scope loads two
+  // additional watchlists alongside any manual uploads.
+  // INDIA-only: USA market preserves manual upload flow.
+  const autoLoadScope = (scope === 'portfolio' || scope === 'watchlist') && market === 'INDIA'
+    ? 'fundamentals-' + scope + '-india'
+    : '';
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+  const [syncLoading, setSyncLoading] = useState(false);
+  useEffect(() => {
+    if (!autoLoadScope) return;
+    getSyncStatus().then(setSyncStatus);
+  }, [autoLoadScope]);
+  const runAutoSync = useCallback(async (force = false) => {
+    if (syncLoading || !autoLoadScope) return;
+    setSyncLoading(true);
+    try {
+      let filenames: readonly string[] = [];
+      if (scope === 'portfolio') filenames = [SYNC_ROUTING.portfolioIndia];
+      else if (scope === 'watchlist') filenames = SYNC_ROUTING.watchlistIndia;
+      else return;
+      let loaded = 0;
+      for (const fn of filenames) {
+        const text = await fetchCsvText(fn);
+        if (!text) continue;
+        handleText(text, fn);
+        loaded++;
+        // Spacing so React state batching keeps consecutive merges intact.
+        await new Promise<void>((r) => setTimeout(r, 80));
+      }
+      if (loaded === 0) {
+        setError('Auto-sync failed: no matching files in /data/screener/. Run the GitHub Action first.');
+      } else {
+        markAutoLoaded(autoLoadScope);
+      }
+      if (force) {
+        const s = await getSyncStatus();
+        setSyncStatus(s);
+      }
+    } finally {
+      setSyncLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncLoading, autoLoadScope, scope, handleText]);
+  // First-mount auto-load when storage is empty for this scope+market.
+  useEffect(() => {
+    if (!autoLoadScope) return;
+    if (data.length > 0) return;
+    if (!shouldAutoLoad(autoLoadScope)) return;
+    const t = setTimeout(() => {
+      if (data.length === 0 && shouldAutoLoad(autoLoadScope)) {
+        runAutoSync(false);
+      }
+    }, 1200);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoLoadScope, data.length]);
+
   // Accept one or many files (multi-select or multi-drop); each merges in.
   const onFile = useCallback((files?: FileList | File[] | null) => {
     if (!files) return;
@@ -351,6 +418,22 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
             </div>
             {fname ? <span style={chip}>Loaded: <b style={{ color: COL.txt }}>{fname}</b></span> : null}
             {data.length ? <span style={chip}><b style={{ color: COL.txt }}>{data.length}</b> stocks</span> : null}
+            {/* PATCH 1101qqq — Auto-sync status + manual refresh */}
+            {autoLoadScope && syncStatus && syncStatus.hasManifest ? (
+              <span style={{ ...chip, borderColor: syncStatus.isStale ? COL.red : COL.violet, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ color: syncStatus.isStale ? COL.red : COL.muted }}>
+                  🔄 auto-sync · {syncStatus.hoursOld != null ? Math.round(syncStatus.hoursOld) + 'h ago' : '?'}
+                  {syncStatus.isStale && ' · STALE'}
+                </span>
+                <button
+                  onClick={() => { resetAutoLoadFlag(autoLoadScope); runAutoSync(true); }}
+                  disabled={syncLoading}
+                  style={{ padding: '2px 8px', background: COL.violet, color: '#fff', border: 'none', borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: syncLoading ? 'wait' : 'pointer' }}
+                >
+                  {syncLoading ? '...' : 'Refresh'}
+                </button>
+              </span>
+            ) : null}
             {data.length ? (
               <button
                 onClick={clearAll}
