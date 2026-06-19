@@ -2516,10 +2516,21 @@ export default function HomeDashboard() {
               rel="noopener noreferrer"
               style={navChip('#10B981')}
             >🇮🇳 IBEF</a>
-            {/* PATCH 1101zz — Screener.in sync. One-click download of saved screen CSVs.
-                On first click, prompts for sessionid (stored in localStorage for reuse).
-                MVP: hard-codes screen 3443614 (fii); multi-screen will follow once user verifies. */}
+            {/* PATCH 1101eee — Screener.in sync via browser bookmarklet.
+                Server-side fetch is blocked by Cloudflare's data-center IP filter.
+                The /screener-sync page guides the user through a one-time
+                bookmarklet setup; the bookmark runs in the browser (allowed by
+                Cloudflare) and downloads all 15 files. */}
+            <Link
+              href="/screener-sync"
+              style={{ ...navChip('#8B5CF6'), border: '1px solid color-mix(in srgb, #8B5CF6 40%, transparent)' }}
+              title="Set up the browser bookmarklet — bypasses Cloudflare's block on server-side fetch"
+            >📥 Sync Screener.in</Link>
+            {/* PATCH 1101zz/ddd — old in-place sync button. Hidden because
+                Cloudflare blocks Railway egress to screener.in. Kept as dead
+                code for reference; remove later. */}
             <button
+              hidden
               onClick={async (e) => {
                 // PATCH 1101ddd — capture event explicitly. event!.target relies
                 // on the implicit global event variable which is undefined in
