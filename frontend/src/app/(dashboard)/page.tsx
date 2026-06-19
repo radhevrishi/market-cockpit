@@ -2526,10 +2526,12 @@ export default function HomeDashboard() {
               style={{ ...navChip('#8B5CF6'), border: '1px solid color-mix(in srgb, #8B5CF6 40%, transparent)' }}
               title="Set up the browser bookmarklet — bypasses Cloudflare's block on server-side fetch"
             >📥 Sync Screener.in</Link>
-            {/* PATCH 1101zz/ddd — old in-place sync button. Hidden because
-                Cloudflare blocks Railway egress to screener.in. Kept as dead
-                code for reference; remove later. */}
-            <button
+            {/* PATCH 1101fff — old in-place sync button removed entirely.
+                Previously kept with hidden attribute as dead code for reference
+                but it still rendered visibly in some styling contexts (user
+                reported duplicate button). The /screener-sync bookmarklet flow
+                is the supported path. */}
+            {false && <button
               hidden
               onClick={async (e) => {
                 // PATCH 1101ddd — capture event explicitly. event!.target relies
@@ -2637,7 +2639,7 @@ export default function HomeDashboard() {
               }}
               title="One-click download of saved Screener.in screens. Uses your stored sessionid cookie."
               style={{ ...navChip('#8B5CF6'), cursor: 'pointer', border: '1px solid color-mix(in srgb, #8B5CF6 40%, transparent)' }}
-            >📥 Sync Screener.in</button>
+            >📥 Sync Screener.in</button>}
             {/* PATCH 1063 — deep-link chips into Playbook sub-sections per user request */}
             <Link href="/playbook#about-me"      style={navChip('#fb7185')}>🌿 About Me</Link>
             <Link href="/playbook#life-sat"      style={navChip('#fbbf24')}>🌅 Life Sat</Link>
