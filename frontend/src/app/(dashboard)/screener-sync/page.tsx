@@ -1,13 +1,25 @@
 'use client';
-// PATCH 1101eee — Screener.in Sync via browser bookmarklet.
-// Cloudflare blocks Railway server-side fetches to screener.in. The reliable
-// workaround is a bookmarklet: a small JS snippet pinned in the browser's
-// bookmarks bar. The user clicks it WHILE on screener.in (logged in) and the
-// browser triggers all 15 downloads using their existing session cookie + home
-// IP — which Cloudflare allows.
+// PATCH 1101ggg — Screener.in Sync: ONE CLICK download.
+//
+// Earlier approaches that failed for the user:
+//   1. Server fetch (Railway -> screener.in)  -> Cloudflare blocks data-center IPs.
+//   2. Bookmarklet (drag to bookmarks bar)   -> Awkward UX, user says "just click and it works".
+//
+// This patch: a real button on this page. On click, we synthesise 15 <a target="_blank"
+// href="screener.in/..."> anchors and click them in rapid succession inside the SAME user
+// gesture. Because these are top-level navigations the browser sends screener.in's
+// session cookie automatically (the user is already logged in in another tab). screener.in
+// responds with Content-Disposition: attachment so each tab triggers a download and closes
+// itself. First time the user runs it the browser will ask "Allow market-cockpit to download
+// multiple files?" — click Allow once and it works forever after.
+//
+// Requirements:
+//   1. User must be logged in to screener.in in this same browser (any tab).
+//   2. First click: approve "Allow multiple downloads" prompt.
+// Works in Chrome, Comet, Edge, Brave, Arc — anywhere with standard popup semantics.
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 
 const SCREENS = [
   { id: '3443614', name: 'fii', type: 'screen' },
@@ -27,28 +39,44 @@ const SCREENS = [
   { id: '8105148',  name: 'watchlist-8105148',  type: 'watchlist' },
 ] as const;
 
+function urlFor(s: { id: string; name: string; type: string }): string {
+  return s.type === 'watchlist'
+    ? `https://www.screener.in/watchlist/${s.id}/?excel=1`
+    : `https://www.screener.in/screens/${s.id}/${s.name}/?source=&days=365&excel=1`;
+}
+
 export default function ScreenerSyncPage() {
-  const [copied, setCopied] = useState(false);
+  const [status, setStatus] = useState<string>('');
+  const [busy, setBusy] = useState(false);
 
-  // The bookmarklet code. Defined as a single-line javascript: URL.
-  // When user clicks the bookmark while on screener.in (any page), this fires.
-  const bookmarkletCode = useMemo(() => {
-    const screens = SCREENS.map(s => ({ id: s.id, name: s.name, type: s.type }));
-    // PATCH 1101fff — screener.in returned 404 for /screens/<id>/?excel=1
-    // because it requires the slug too: /screens/<id>/<slug>/?excel=1.
-    // Use s.name as the slug (matches the URL slugs the user provided).
-    const src = `(async()=>{const S=${JSON.stringify(screens)};const today=new Date().toISOString().slice(0,10);for(let i=0;i<S.length;i++){const s=S[i];const url=s.type==='watchlist'?'https://www.screener.in/watchlist/'+s.id+'/?excel=1':'https://www.screener.in/screens/'+s.id+'/'+s.name+'/?source=&days=365&excel=1';const a=document.createElement('a');a.href=url;a.download=s.name+'-'+today+'.csv';document.body.appendChild(a);a.click();document.body.removeChild(a);await new Promise(r=>setTimeout(r,1800));}alert('Done! '+S.length+' files downloaded. Check Downloads folder.');})();`;
-    return 'javascript:' + encodeURIComponent(src);
-  }, []);
-
-  const copyBookmarklet = async () => {
-    try {
-      await navigator.clipboard.writeText(bookmarkletCode);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 3000);
-    } catch {
-      window.prompt('Copy this bookmarklet code:', bookmarkletCode);
+  // PATCH 1101ggg — fires 15 anchor.click() calls inside the user-gesture
+  // event handler. First click triggers the browser's "Allow multiple
+  // downloads" prompt — once approved, all 15 files download.
+  const syncAll = () => {
+    setBusy(true);
+    setStatus('Triggering 15 downloads… approve "Allow multiple downloads" if prompted.');
+    let n = 0;
+    for (const s of SCREENS) {
+      const a = document.createElement('a');
+      a.href = urlFor(s);
+      a.target = '_blank';
+      a.rel = 'noopener';
+      // download attribute is advisory for cross-origin — screener.in's
+      // Content-Disposition header decides the final name. Setting it here
+      // means same-origin policies will still trigger a download flow.
+      a.download = `${s.name}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      n++;
     }
+    setStatus(`Triggered ${n} downloads. Check your Downloads folder. If only some downloaded, click again and approve the popup prompt.`);
+    setTimeout(() => setBusy(false), 1500);
+  };
+
+  // Per-screen manual fallback in case the bulk button is blocked.
+  const downloadOne = (s: { id: string; name: string; type: string }) => {
+    window.open(urlFor(s), '_blank', 'noopener,noreferrer');
   };
 
   return (
@@ -64,104 +92,94 @@ export default function ScreenerSyncPage() {
         <Link href="/" style={{ color: 'var(--mc-text-4)', fontSize: 12, textDecoration: 'none' }}>← Home</Link>
 
         <h1 style={{ fontSize: 22, fontWeight: 800, marginTop: 16, marginBottom: 4 }}>
-          📥 Screener.in Sync — Browser Bookmarklet
+          📥 Screener.in Sync
         </h1>
         <div style={{ fontSize: 12, color: 'var(--mc-text-4)', marginBottom: 24 }}>
-          One-time 30-second setup. After that, clicking the bookmark while on screener.in downloads all {SCREENS.length} files.
+          One click → all {SCREENS.length} files download to your Downloads folder.
         </div>
 
-        {/* Why */}
-        <div style={{ background: 'color-mix(in srgb, var(--mc-warn) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 35%, transparent)', borderRadius: 8, padding: 12, marginBottom: 20 }}>
-          <div style={{ fontWeight: 700, color: 'var(--mc-warn)', marginBottom: 4 }}>⚠ Why a bookmarklet?</div>
-          <div style={{ fontSize: 12, color: 'var(--mc-text-3)' }}>
-            Screener.in is behind Cloudflare, which blocks our server (Railway) from fetching directly — that's why the previous "Sync" button errored with <em>"fetch failed at network layer"</em>.
-            <br/><br/>
-            The bookmarklet runs in <strong>your browser</strong>, which is already logged into screener.in. Cloudflare allows your IP. Each fetch uses your existing session cookie. Files download to your Downloads folder. Zero server involvement.
-          </div>
-        </div>
-
-        {/* Step 1 */}
-        <div style={{ background: 'var(--mc-bg-2)', border: '1px solid var(--mc-bg-4)', borderRadius: 8, padding: 16, marginBottom: 14 }}>
-          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8 }}>Step 1 — Add the bookmark (one time only)</div>
-          <div style={{ fontSize: 12, color: 'var(--mc-text-3)', marginBottom: 10 }}>
-            Your bookmarks bar must be visible. If not: <code style={{ background: 'var(--mc-bg-3)', padding: '1px 5px', borderRadius: 3 }}>Cmd+Shift+B</code> (Mac) / <code style={{ background: 'var(--mc-bg-3)', padding: '1px 5px', borderRadius: 3 }}>Ctrl+Shift+B</code> (Windows).
-            <br/>
-            Then <strong>drag this purple button up to your bookmarks bar</strong>:
-          </div>
-          {/* The actual draggable bookmarklet link */}
-          <a
-            href={bookmarkletCode}
-            onClick={(e) => { e.preventDefault(); alert('Don\'t click — drag this to your bookmarks bar.'); }}
-            style={{
-              display: 'inline-block',
-              background: '#8B5CF6',
-              color: '#fff',
-              padding: '8px 18px',
-              borderRadius: 6,
-              fontWeight: 800,
-              fontSize: 14,
-              textDecoration: 'none',
-              cursor: 'grab',
-              border: '2px solid #6d28d9',
-              boxShadow: '0 2px 8px rgba(139, 92, 246, 0.3)',
-              userSelect: 'none',
-            }}
-            draggable
-            title="Drag this to your bookmarks bar — do not click"
-          >
-            📥 Sync Screener.in
-          </a>
-          <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginTop: 10 }}>
-            Can't drag? <button
-              onClick={copyBookmarklet}
-              style={{ background: 'transparent', color: 'var(--mc-cyan)', border: '1px solid var(--mc-cyan)', borderRadius: 4, padding: '2px 8px', fontSize: 11, cursor: 'pointer' }}
-            >{copied ? '✅ Copied!' : '📋 Copy code'}</button> — then right-click bookmarks bar → Add new bookmark → paste into URL field.
-          </div>
-        </div>
-
-        {/* Step 2 */}
-        <div style={{ background: 'var(--mc-bg-2)', border: '1px solid var(--mc-bg-4)', borderRadius: 8, padding: 16, marginBottom: 14 }}>
-          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8 }}>Step 2 — Use it</div>
-          <ol style={{ margin: 0, paddingLeft: 20, color: 'var(--mc-text-3)', fontSize: 12 }}>
-            <li style={{ marginBottom: 4 }}>Open <a href="https://www.screener.in/" target="_blank" rel="noreferrer" style={{ color: 'var(--mc-cyan)' }}>screener.in</a> in a new tab (make sure you're <strong>logged in</strong>)</li>
-            <li style={{ marginBottom: 4 }}>Click the <strong>📥 Sync Screener.in</strong> bookmark in your bookmarks bar</li>
-            <li style={{ marginBottom: 4 }}>Chrome will prompt: <em>"This site wants to download multiple files"</em> — click <strong>Allow</strong> (one-time per origin)</li>
-            <li style={{ marginBottom: 4 }}>Wait ~30 seconds — files download one at a time with 1.8s spacing</li>
-            <li>Each file lands in your <strong>Downloads folder</strong> as <code style={{ background: 'var(--mc-bg-3)', padding: '0 4px', borderRadius: 2, fontSize: 11 }}>fii-2026-06-19.csv</code> etc.</li>
+        {/* Pre-flight */}
+        <div style={{ background: 'color-mix(in srgb, var(--mc-accent) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-accent) 35%, transparent)', borderRadius: 8, padding: 12, marginBottom: 16 }}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>Before clicking:</div>
+          <ol style={{ margin: 0, paddingLeft: 22, fontSize: 13 }}>
+            <li>Open <a href="https://www.screener.in/" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--mc-accent)' }}>screener.in</a> in another tab and make sure you're logged in.</li>
+            <li>Come back here, click the big button below.</li>
+            <li>If the browser asks <em>"Allow market-cockpit-production.up.railway.app to download multiple files"</em>, click <strong>Allow</strong>. This prompt only appears once.</li>
           </ol>
         </div>
 
-        {/* Screens list */}
-        <div style={{ background: 'var(--mc-bg-2)', border: '1px solid var(--mc-bg-4)', borderRadius: 8, padding: 16 }}>
-          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8 }}>Files that will be downloaded ({SCREENS.length})</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 4 }}>
-            {SCREENS.map((s, i) => (
-              <div key={s.id} style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                padding: '4px 8px',
-                fontSize: 11,
-                borderBottom: '1px solid var(--mc-bg-3)',
-              }}>
-                <span style={{ color: 'var(--mc-text-4)', fontWeight: 700, minWidth: 24 }}>{i + 1}.</span>
-                <span style={{
-                  fontSize: 9,
-                  padding: '0 4px',
-                  borderRadius: 2,
-                  background: s.type === 'watchlist' ? 'color-mix(in srgb, var(--mc-cyan) 20%, transparent)' : 'color-mix(in srgb, var(--mc-bullish) 20%, transparent)',
-                  color: s.type === 'watchlist' ? 'var(--mc-cyan)' : 'var(--mc-bullish)',
-                  fontWeight: 700,
-                }}>{s.type === 'watchlist' ? 'WL' : 'SCR'}</span>
-                <span style={{ color: 'var(--mc-text-2)' }}>{s.name}</span>
-                <span style={{ marginLeft: 'auto', color: 'var(--mc-text-4)', fontFamily: 'monospace', fontSize: 10 }}>{s.id}</span>
-              </div>
-            ))}
+        {/* THE BUTTON */}
+        <button
+          onClick={syncAll}
+          disabled={busy}
+          style={{
+            width: '100%',
+            background: busy ? 'var(--mc-bg-3)' : 'linear-gradient(135deg, var(--mc-accent), color-mix(in srgb, var(--mc-accent) 60%, var(--mc-success)))',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 12,
+            padding: '24px 32px',
+            fontSize: 22,
+            fontWeight: 800,
+            cursor: busy ? 'not-allowed' : 'pointer',
+            marginBottom: 14,
+            boxShadow: '0 4px 16px color-mix(in srgb, var(--mc-accent) 30%, transparent)',
+            letterSpacing: 0.3,
+          }}
+        >
+          {busy ? 'Downloading…' : `📥 Download all ${SCREENS.length} files`}
+        </button>
+
+        {status && (
+          <div style={{ background: 'var(--mc-bg-2)', border: '1px solid var(--mc-border)', borderRadius: 8, padding: 12, marginBottom: 20, fontSize: 13 }}>
+            {status}
           </div>
+        )}
+
+        {/* How it works */}
+        <details style={{ marginBottom: 20, background: 'var(--mc-bg-2)', border: '1px solid var(--mc-border)', borderRadius: 8, padding: 12 }}>
+          <summary style={{ cursor: 'pointer', fontWeight: 700, fontSize: 13 }}>How this works (and why no server)</summary>
+          <div style={{ fontSize: 12, color: 'var(--mc-text-3)', marginTop: 8 }}>
+            Screener.in is behind Cloudflare which blocks our Railway server from fetching directly.
+            So the click triggers <strong>your browser</strong> to fetch 15 screener.in URLs — your browser already has
+            screener.in's session cookie from your other tab, so each download just works. We never see your sessionid.
+          </div>
+        </details>
+
+        {/* Individual fallbacks */}
+        <div style={{ marginTop: 24, marginBottom: 8, fontSize: 13, fontWeight: 700 }}>
+          Or download one at a time ({SCREENS.length} screens + watchlists)
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 8 }}>
+          {SCREENS.map((s) => (
+            <button
+              key={s.id}
+              onClick={() => downloadOne(s)}
+              style={{
+                textAlign: 'left',
+                background: 'var(--mc-bg-2)',
+                border: '1px solid var(--mc-border)',
+                borderRadius: 6,
+                padding: '8px 10px',
+                color: 'var(--mc-text-2)',
+                fontSize: 12,
+                cursor: 'pointer',
+              }}
+            >
+              <span style={{ color: s.type === 'watchlist' ? 'var(--mc-warn)' : 'var(--mc-accent)', fontSize: 10, fontWeight: 700 }}>
+                {s.type === 'watchlist' ? 'WATCHLIST' : 'SCREEN'}
+              </span>
+              <div style={{ fontWeight: 600 }}>{s.name}</div>
+              <div style={{ color: 'var(--mc-text-4)', fontSize: 11 }}>ID {s.id}</div>
+            </button>
+          ))}
         </div>
 
-        <div style={{ marginTop: 24, fontSize: 11, color: 'var(--mc-text-4)' }}>
-          Want to change the screen list? Edit <code style={{ background: 'var(--mc-bg-3)', padding: '0 4px', borderRadius: 2 }}>frontend/src/app/(dashboard)/screener-sync/page.tsx</code> — the bookmarklet auto-regenerates.
+        <div style={{ marginTop: 24, padding: 12, background: 'var(--mc-bg-2)', border: '1px solid var(--mc-border)', borderRadius: 8, fontSize: 11, color: 'var(--mc-text-4)' }}>
+          <strong>Troubleshooting:</strong>
+          <br />· <strong>Got the login page instead of a download:</strong> you're not logged in to screener.in. Log in in another tab, come back, click again.
+          <br />· <strong>Only some files downloaded:</strong> browser blocked multi-download. Click the lock icon next to the URL → Site settings → Automatic downloads → Allow. Or click again and approve the prompt.
+          <br />· <strong>404 on a file:</strong> the slug in the URL changed on screener.in. Update SCREENS in <code>screener-sync/page.tsx</code>.
         </div>
       </div>
     </div>
