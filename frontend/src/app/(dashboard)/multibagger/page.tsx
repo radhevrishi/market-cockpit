@@ -30,6 +30,13 @@ import { MNC_ALLOWLIST_IN } from '@/lib/multibagger-allowlists';
 // PATCH 0755 — Pure CSV utilities extracted to a sibling lib so the page
 // file shrinks further (was 7,140 lines after P0728). No behavior change.
 import { parseCsvFlexible, detectCsvMarket } from '@/lib/multibagger-csv-parsers';
+// PATCH 1101qqq — auto-sync loader. Fetches CSVs committed by the daily
+// GitHub Action and feeds them into the existing handleFiles() pipeline,
+// so no separate code path is needed.
+import {
+  SYNC_ROUTING, getSyncStatus, fetchCsvsAsFiles,
+  shouldAutoLoad, markAutoLoaded, resetAutoLoadFlag, type SyncStatus,
+} from '@/lib/screener-data-loader';
 
 // Shared API base — respects NEXT_PUBLIC_API_URL env var so all fetch() calls
 // resolve consistently when the base URL changes (fixes #13: mixed /api/v1 vs /api)
@@ -1211,6 +1218,49 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
 
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // ── PATCH 1101qqq — AUTO-SYNC FROM screener.in via GitHub Action ──────────
+  // Loads 12 screen CSVs from /data/screener/ (committed daily by the
+  // workflow) and runs them through handleFiles(). One-shot on mount when
+  // storage is empty + always-available manual refresh button.
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+  const [syncLoading, setSyncLoading] = useState(false);
+  useEffect(() => { getSyncStatus().then(setSyncStatus); }, []);
+  const runAutoSync = useCallback(async (force = false) => {
+    if (syncLoading) return;
+    setSyncLoading(true);
+    try {
+      const files = await fetchCsvsAsFiles(SYNC_ROUTING.multibaggerIndia);
+      if (files.length === 0) {
+        setParseError('Auto-sync failed: no CSVs in /data/screener/. Run the GitHub Action first.');
+        return;
+      }
+      await handleFiles(files);
+      markAutoLoaded('multibagger-india');
+      if (force) {
+        // refresh manifest display
+        const s = await getSyncStatus();
+        setSyncStatus(s);
+      }
+    } finally {
+      setSyncLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncLoading]);
+  // First-mount: if nothing's been loaded yet AND we haven't auto-loaded
+  // before, pull from sync. Skips when user has manually uploaded already.
+  useEffect(() => {
+    if (rows.length > 0) return;
+    if (!shouldAutoLoad('multibagger-india')) return;
+    // Wait 1.5s so the parent's IDB hydration has time to finish first.
+    const t = setTimeout(() => {
+      if (rows.length === 0 && shouldAutoLoad('multibagger-india')) {
+        runAutoSync(false);
+      }
+    }, 1500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows.length]);
+
   // ── SORTABLE COLUMNS ──────────────────────────────────────────────────────
   type IndiaSort = 'score'|'pe'|'peg'|'roce'|'revCagr'|'profitCagr'|'marketCapCr'|'revenueAcceleration'|'opm'|'cfoToPat';
   const [sortField, setSortField] = useState<IndiaSort>('score');
@@ -1563,6 +1613,24 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
           valve if the auto-save ever fails. */}
       <CloudSaveStatusBadge rows={rows} />
 
+
+      {/* PATCH 1101qqq — Auto-sync status chip + manual refresh button.
+          Shows last-sync date, lets user pull fresh CSVs without leaving tab. */}
+      {syncStatus && syncStatus.hasManifest && (
+        <div style={{marginBottom:8,padding:'6px 12px',display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',backgroundColor:syncStatus.isStale?`${RED}10`:`${PURPLE}08`,border:`1px solid ${syncStatus.isStale?RED:PURPLE}30`,borderRadius:8}}>
+          <span style={{fontSize:F.xs,color:syncStatus.isStale?RED:MUTED}}>
+            🔄 Auto-sync from screener.in · last run {syncStatus.lastSync?.toLocaleString()} ({syncStatus.hoursOld != null ? Math.round(syncStatus.hoursOld) : '?'}h ago)
+            {syncStatus.isStale && ' · STALE'}
+          </span>
+          <button
+            onClick={() => { resetAutoLoadFlag('multibagger-india'); runAutoSync(true); }}
+            disabled={syncLoading}
+            style={{marginLeft:'auto',padding:'4px 10px',backgroundColor:PURPLE,color:'#fff',border:'none',borderRadius:6,fontSize:F.xs,fontWeight:700,cursor:syncLoading?'wait':'pointer'}}
+          >
+            {syncLoading ? 'Loading...' : 'Refresh now'}
+          </button>
+        </div>
+      )}
 
       {/* Upload zone */}
       <div
