@@ -17,7 +17,9 @@ export type SyncManifest = {
   lastSync: string;     // ISO date
   ok: number;
   fail: number;
-  files: { name: string; size: number }[];
+  // PATCH 1101rrr — displayName is screener.in's actual name for the
+  // watchlist/screen (from page <title>) so the UI labels stay friendly.
+  files: { name: string; size: number; displayName?: string }[];
 };
 
 // Per-target file routing. Add/remove entries here when screen list changes.
@@ -71,15 +73,34 @@ export async function fetchCsvText(filename: string): Promise<string | null> {
 
 // Materialize the chosen CSVs as File objects so they can be passed straight
 // into Multibagger's existing handleFiles() upload pipeline.
+// PATCH 1101rrr — when the manifest carries a displayName, use it as the
+// File's name. That string flows through to Multibagger's _screeners
+// membership labels so the UI shows friendly names everywhere.
 export async function fetchCsvsAsFiles(filenames: readonly string[]): Promise<File[]> {
+  const manifest = await fetchManifest();
+  const displayMap = new Map<string, string>();
+  if (manifest) {
+    for (const f of manifest.files) displayMap.set(f.name, f.displayName || f.name);
+  }
   const out: File[] = [];
   for (const fname of filenames) {
     const text = await fetchCsvText(fname);
     if (!text) continue;
+    const displayName = displayMap.get(fname) || fname;
     const blob = new Blob([text], { type: 'text/csv' });
-    out.push(new File([blob], fname, { type: 'text/csv' }));
+    out.push(new File([blob], displayName, { type: 'text/csv' }));
   }
   return out;
+}
+
+// PATCH 1101rrr — single-file display-name lookup used by Fundamentals so
+// the `Loaded: ...` chip shows the user's chosen watchlist name from
+// screener.in instead of the raw filename.
+export async function getDisplayName(filename: string): Promise<string> {
+  const m = await fetchManifest();
+  if (!m) return filename;
+  const entry = m.files.find((f) => f.name === filename);
+  return entry?.displayName || filename;
 }
 
 // Convenience helper for tabs that just need to know whether the sync exists
