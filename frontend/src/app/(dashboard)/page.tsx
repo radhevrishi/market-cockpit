@@ -3501,7 +3501,29 @@ export default function HomeDashboard() {
             <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
               {(() => {
                 const open = _isIndianMarketOpen();
-                if (open) return `Watchlist + Portfolio + CB · live · ${data.moversUpdatedAt ? new Date(data.moversUpdatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : ''}`;
+                // PATCH 1101xx — Honest staleness label. User saw "live · 08:24 am"
+                // in pre-market when data was actually yesterday's BHAVCOPY close.
+                // EPACKPEB was +9.99% (Thursday's day-change) shown as "live" while
+                // today's actual was -2.32%. Now: only say "live" if data is fresh
+                // (<10 min old) AND market is open. Otherwise show T-1 BHAVCOPY warning.
+                const updatedAtMs = data.moversUpdatedAt ? new Date(data.moversUpdatedAt).getTime() : 0;
+                const ageMin = updatedAtMs > 0 ? Math.round((Date.now() - updatedAtMs) / 60_000) : 999;
+                // Count stale flags in current movers data to detect BHAVCOPY-only response
+                const allMovers = [...((data as any).gainers || []), ...((data as any).losers || [])];
+                const staleCount = allMovers.filter((m: any) => m?.staleEOD === true).length;
+                const isStaleBlob = allMovers.length > 0 && staleCount / allMovers.length > 0.5;
+                const istNow = new Date(new Date().getTime() + (new Date().getTimezoneOffset() + 330) * 60_000);
+                const _istMin = istNow.getUTCHours() * 60 + istNow.getUTCMinutes();
+                const isPreMarket = _istMin < (9 * 60 + 15); // before 9:15 IST
+                if (open && ageMin < 10 && !isStaleBlob) {
+                  return `Watchlist + Portfolio + CB · live · ${data.moversUpdatedAt ? new Date(data.moversUpdatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : ''}`;
+                }
+                if (open && (ageMin >= 10 || isStaleBlob)) {
+                  return `⚠ Watchlist + Portfolio + CB · STALE T-1 close (${ageMin}m old) · refresh to load live data`;
+                }
+                if (isPreMarket) {
+                  return `🕒 Pre-market · showing YESTERDAY'S CLOSE (T-1 BHAVCOPY) · NSE opens 09:15 IST`;
+                }
                 const ist = new Date(new Date().getTime() + (new Date().getTimezoneOffset() + 330) * 60_000);
                 const dow = ist.getDay();
                 const lastClose = (() => {
