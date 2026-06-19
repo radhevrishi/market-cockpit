@@ -1178,8 +1178,17 @@ export default function HomeDashboard() {
         }
         const inUniverse = (s: any) => universe.has(norm(s?.ticker || s?.symbol || ''));
         const smallMidOnly = (arr: any[]) => arr.filter((s: any) => {
+          // PATCH 1101ww — Server tags indexGroup as "Midcap 50" / "Smallcap 50"
+          // / "Micro" / "NIFTY 50" (full labels), not "mid"/"small". The exact
+          // equality check used here previously NEVER matched any stock — so
+          // the cascade always fell through to "all liquid" and the home
+          // widget filled up with NIFTY-50 large-cap names. Switch to substring
+          // match. Exclude "NIFTY 50" / "Large" explicitly so the filter does
+          // exactly what its name promises.
           const g = (s?.indexGroup || '').toLowerCase();
-          return g === 'small' || g === 'mid';
+          if (!g) return false;
+          if (g.includes('nifty 50') || g.startsWith('large')) return false;
+          return g.includes('mid') || g.includes('small') || g.includes('micro') || g.includes('nifty next');
         });
         const splitGainersLosers = (arr: any[]) => {
           const g = arr.filter((s: any) => (s?.changePercent || 0) > 0).sort((a, b) => (b.changePercent || 0) - (a.changePercent || 0));
