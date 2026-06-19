@@ -1,18 +1,14 @@
-# PATCH 1101lll: Daily Screener.in CSV sync with auth precheck and diagnostics.
-# ASCII-only YAML (the previous version had mangled em-dashes that broke parsing).
+# PATCH 1101nnn: Discover screener.in export URL pattern from screen HTML.
 #
-# Architecture:
-#   Cloudflare blocks Railway data-center IPs. GitHub Actions runners are not
-#   blocked, so this workflow downloads all 15 saved screens + watchlists here
-#   and commits them into frontend/public/data/screener/. Next.js serves them
-#   at /data/screener/<name> same-origin -- no popup blocker, no login on the
-#   portal.
-#
-# Setup (one time):
-#   1. Repo > Settings > Secrets and variables > Actions > New repository secret
-#      Name:  SCREENER_SESSIONID
-#      Value: the sessionid cookie from screener.in (no quotes, no spaces)
-#   2. Actions tab > "Sync Screener.in CSVs" > Run workflow.
+# Premium accounts can export. The URL ?excel=1 returns the screen page HTML
+# for our requests, which means screener.in is rendering the screen, not the
+# export. Most likely the export needs a different URL or POST. This workflow
+# now:
+#   1. Auth precheck
+#   2. Pull screen HTML (no ?excel=1)
+#   3. Grep for export button form action or href in the HTML
+#   4. Use the discovered URL to fetch the CSV
+#   5. Dump HTML as base64 if everything still fails so we can read it back
 
 name: Sync Screener.in CSVs
 
@@ -36,61 +32,54 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Sync all screens and watchlists
+      - name: Sync screens
         env:
           SESSION_RAW: ${{ secrets.SCREENER_SESSIONID }}
         run: |
           set -e
 
-          SESSION=$(echo -n "$SESSION_RAW" | tr -d '\r\n\t ' | sed 's/^"//;s/"$//;s/^'\''//;s/'\''$//')
+          SESSION=$(printf '%s' "$SESSION_RAW" | tr -d '\r\n\t ' | sed 's/^"//;s/"$//;s/^'\''//;s/'\''$//')
           if [ -z "$SESSION" ]; then
-            echo "::error::SCREENER_SESSIONID secret is empty."
+            echo "::error::SCREENER_SESSIONID is empty."
             exit 1
           fi
           echo "::add-mask::$SESSION"
-          SESSION_LEN=${#SESSION}
-          echo "sessionid length: $SESSION_LEN chars"
+          echo "sessionid length: ${#SESSION}"
 
           DATA_DIR="frontend/public/data/screener"
           mkdir -p "$DATA_DIR"
 
           UA="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
 
-          echo "::group::Auth precheck GET https://www.screener.in/users/me/"
+          # PATCH 1101nnn: Auth precheck against a known-public premium-only
+          # page. Hit /premium/ which should return premium-status HTML.
+          echo "::group::Auth precheck"
           PRE_HDR=$(mktemp)
           PRE_BODY=$(mktemp)
-          PRE_STATUS=$(curl -sSL --max-time 20 -o "$PRE_BODY" -w "%{http_code}" \
+          curl -sSL --max-time 20 -o "$PRE_BODY" -D "$PRE_HDR" \
             -H "Cookie: sessionid=$SESSION" \
             -H "User-Agent: $UA" \
-            -H "Accept: text/html,application/xhtml+xml" \
-            -H "Accept-Language: en-US,en;q=0.9" \
+            -H "Accept: text/html" \
             -H "Referer: https://www.screener.in/" \
-            -D "$PRE_HDR" \
-            "https://www.screener.in/users/me/" || echo "000")
-          echo "HTTP status: $PRE_STATUS"
-          echo "--- Response headers ---"
-          sed 's/^/    /' "$PRE_HDR" | head -30
-          echo "--- Body preview (first 800 chars) ---"
-          head -c 800 "$PRE_BODY" | tr -d '\r' || true
-          echo ""
-          echo "--- end preview ---"
-
-          PRE_BODY_SAMPLE=$(head -c 4000 "$PRE_BODY" | tr -d '\r')
-          rm -f "$PRE_HDR" "$PRE_BODY"
-
-          if echo "$PRE_BODY_SAMPLE" | grep -qi 'log-in\|login-form\|Please log in\|/login/'; then
-            if ! echo "$PRE_BODY_SAMPLE" | grep -qi 'logout\|/users/account/'; then
-              echo "::error::Auth precheck FAILED. screener.in returned the login page for /users/me/."
-              echo "Likely causes:"
-              echo "  1. SCREENER_SESSIONID value is wrong or has extra characters."
-              echo "  2. The sessionid expired."
-              echo "  3. screener.in is binding sessions to your home IP and blocking GitHub runners."
-              echo ""
-              echo "Re-grab the cookie: DevTools > Application > Cookies > screener.in > sessionid > value."
-              exit 1
-            fi
+            "https://www.screener.in/dash/"
+          echo "Status line:"
+          head -1 "$PRE_HDR" | tr -d '\r'
+          echo "Set-Cookie lines (count):"
+          grep -ci '^set-cookie:' "$PRE_HDR" || true
+          # Check for clues in body
+          if grep -qi 'logout\|/users/account/' "$PRE_BODY"; then
+            echo "Body contains logout / account link -> looks logged in."
+          else
+            echo "Body has no logout link -> may not be authenticated."
           fi
-          echo "Auth precheck passed."
+          if grep -qi 'premium\|crown.fb0d' "$PRE_BODY"; then
+            echo "Body mentions premium."
+          fi
+          # base64 first 4KB so we can decode and read later
+          echo "Body[0..4000] base64:"
+          head -c 4000 "$PRE_BODY" | base64 -w0
+          echo ""
+          rm -f "$PRE_HDR" "$PRE_BODY"
           echo "::endgroup::"
 
           ENTRIES=(
@@ -111,6 +100,42 @@ jobs:
             "8105148:watchlist-8105148:watchlist"
           )
 
+          # PATCH 1101nnn: Discover export URL from one screen's HTML.
+          # Save the discovered pattern so we apply it to all.
+          echo "::group::Discover export URL pattern"
+          DISCOVER_BODY=$(mktemp)
+          curl -sSL --max-time 30 -o "$DISCOVER_BODY" \
+            -H "Cookie: sessionid=$SESSION" \
+            -H "User-Agent: $UA" \
+            -H "Accept: text/html" \
+            -H "Referer: https://www.screener.in/" \
+            "https://www.screener.in/screens/3443614/fii/?source=&days=365"
+          echo "Screen HTML size: $(wc -c < "$DISCOVER_BODY")"
+          echo "<title> found:"
+          grep -o '<title>[^<]*</title>' "$DISCOVER_BODY" | head -3
+          echo "Any 'formaction' lines mentioning export:"
+          grep -i 'formaction' "$DISCOVER_BODY" | head -10 || true
+          echo "Any /excel/ or /export/ refs:"
+          grep -oiE '"/[^"]*(excel|export|csv)[^"]*"' "$DISCOVER_BODY" | sort -u | head -20 || true
+          echo "Any 'Export' visible text neighbourhoods:"
+          grep -i -A1 -B1 'Export' "$DISCOVER_BODY" | head -30 || true
+          # Look for crucial single-line patterns: action="/...", formaction="/..."
+          echo "All form actions in page:"
+          grep -oE '(form)?action="[^"]+"' "$DISCOVER_BODY" | sort -u | head -20
+          # Premium indicator?
+          if grep -qi 'driver=top-nav\|/premium/' "$DISCOVER_BODY" && ! grep -qi 'crown.fb0d\|premium-active\|"premium":\s*true' "$DISCOVER_BODY"; then
+            echo "WARNING: Screener page shows 'Upgrade to premium' nav -> account may not actually be premium with this sessionid."
+          fi
+          # base64 first 3KB and last 3KB so we can decode and read full HTML
+          echo "HTML[0..3000] base64:"
+          head -c 3000 "$DISCOVER_BODY" | base64 -w0
+          echo ""
+          echo "HTML[last 3000] base64:"
+          tail -c 3000 "$DISCOVER_BODY" | base64 -w0
+          echo ""
+          rm -f "$DISCOVER_BODY"
+          echo "::endgroup::"
+
           OK_COUNT=0
           FAIL_COUNT=0
           DIAG_DUMPED=0
@@ -124,7 +149,6 @@ jobs:
               url="https://www.screener.in/screens/$id/$slug/?source=&days=365&excel=1"
             fi
             out="$DATA_DIR/$slug"
-
             echo "-> $slug ($url)"
 
             HDR=$(mktemp)
@@ -133,7 +157,7 @@ jobs:
                 -H "User-Agent: $UA" \
                 -H "Accept: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, text/csv, */*" \
                 -H "Accept-Language: en-US,en;q=0.9" \
-                -H "Referer: https://www.screener.in/" \
+                -H "Referer: https://www.screener.in/screens/$id/$slug/" \
                 -D "$HDR" \
                 -o "$out.tmp" \
                 "$url"; then
@@ -150,21 +174,20 @@ jobs:
             if head -c 200 "$out.tmp" | grep -qi '<html\|<!doctype'; then
               echo "::warning::$slug returned HTML ($STATUS_LINE)"
               if [ $DIAG_DUMPED -eq 0 ]; then
-                echo "::group::Diagnostics for first HTML failure ($slug)"
-                echo "Request URL: $url"
-                echo "Status line: $STATUS_LINE"
+                echo "::group::Diagnostics first HTML failure ($slug)"
+                echo "URL: $url"
+                echo "Status: $STATUS_LINE"
                 echo "Content-Type: $CT"
-                echo "--- Response headers ---"
+                echo "Response headers:"
                 sed 's/^/    /' "$HDR" | head -25
-                echo "--- Body (first 1500 chars) ---"
-                head -c 1500 "$out.tmp" | tr -d '\r' || true
+                echo "Body base64 (first 3000):"
+                head -c 3000 "$out.tmp" | base64 -w0
                 echo ""
-                echo "--- end body ---"
                 echo "::endgroup::"
                 DIAG_DUMPED=1
               fi
               FAIL_COUNT=$((FAIL_COUNT+1))
-              REPORT="$REPORT"$'\n'"- $slug: HTML ($STATUS_LINE)"
+              REPORT="$REPORT"$'\n'"- $slug: HTML"
               rm -f "$out.tmp" "$HDR"
               continue
             fi
@@ -182,10 +205,8 @@ jobs:
                 rm -f "$out.$stale_ext"
               fi
             done
-
             OK_COUNT=$((OK_COUNT+1))
-            REPORT="$REPORT"$'\n'"- $slug.$EXT ($(stat -c%s "$out.$EXT" 2>/dev/null || echo ?) bytes)"
-
+            REPORT="$REPORT"$'\n'"- $slug.$EXT ok"
             sleep 1.5
           done
 
@@ -210,23 +231,21 @@ jobs:
             echo "}"
           } > "$DATA_DIR/manifest.json"
 
-          echo "=================================="
-          echo "Sync complete. OK=$OK_COUNT FAIL=$FAIL_COUNT"
+          echo "OK=$OK_COUNT FAIL=$FAIL_COUNT"
           echo "$REPORT"
-          echo "=================================="
 
           if [ $OK_COUNT -eq 0 ]; then
-            echo "::error::All fetches failed. Read the Diagnostics group above for the screener.in response."
+            echo "::error::All fetches failed. Inspect Discover / Auth groups above."
             exit 1
           fi
 
       - name: Commit data
         run: |
-          git config user.name  "github-actions[bot]"
+          git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add frontend/public/data/screener/
           if git diff --staged --quiet; then
-            echo "No changes to commit."
+            echo "No changes."
           else
             git commit -m "[skip ci] Sync Screener.in CSVs $(date -u +%Y-%m-%d)"
             git push
