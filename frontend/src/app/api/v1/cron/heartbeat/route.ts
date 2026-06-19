@@ -23,6 +23,16 @@ const ROW_KEY = (name: string) => `cron-heartbeat:row:${name}`;
 const NAMES_TTL = 60 * 60 * 24 * 90;
 const ROW_TTL = 60 * 60 * 24 * 90;
 
+// PATCH 1101xxx — ignore one-off manual/test pings in the stale_count.
+// Names like `manual-smoke-test`, `validation-test` are written once and never
+// recur on a schedule. They stay in the names index forever (90d TTL), so they
+// become "stale" after 25h and pollute mc-guardian's alert. The actual rows
+// still show in the `rows[]` response for debugging — they just don't trigger
+// the alert flag.
+function isTestName(name: string): boolean {
+  return /^manual-|^test-|-test$|^validation|smoke-test/i.test(name);
+}
+
 interface HeartbeatRow {
   name: string;
   last_started_at: string | null;
@@ -133,7 +143,31 @@ export async function GET(req: Request) {
   );
   const filtered = rows.filter((r): r is NonNullable<typeof r> => r !== null);
   filtered.sort((a, b) => Number(b.stale) - Number(a.stale) || a.name.localeCompare(b.name));
-  const staleCount = filtered.filter((r) => r.stale).length;
+  // PATCH 1101xxx — exclude test/manual entries from the alert count.
+  const staleCount = filtered.filter((r) => r.stale && !isTestName(r.name)).length;
 
   return NextResponse.json({ ok: staleCount === 0, stale_count: staleCount, rows: filtered });
+}
+
+// PATCH 1101xxx — DELETE a heartbeat (cleanup endpoint). Useful for removing
+// one-off test/manual entries that should never have been written. Requires
+// Authorization: Bearer <HEARTBEAT_ADMIN_TOKEN> env var. No token configured
+// = endpoint is disabled (fail-closed).
+export async function DELETE(req: Request) {
+  const adminToken = (process.env.HEARTBEAT_ADMIN_TOKEN || '').trim();
+  if (!adminToken) return NextResponse.json({ ok: false, error: 'DELETE disabled — set HEARTBEAT_ADMIN_TOKEN env var to enable' }, { status: 503 });
+  const auth = req.headers.get('authorization') || '';
+  if (auth !== `Bearer ${adminToken}`) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
+  const { searchParams } = new URL(req.url);
+  const name = (searchParams.get('name') || '').slice(0, 80);
+  if (!name) return NextResponse.json({ ok: false, error: 'name required' }, { status: 400 });
+
+  // Remove from names index
+  const names = (await kvGet<string[]>(NAMES_KEY)) || [];
+  const next = names.filter((n) => n !== name);
+  await kvSet(NAMES_KEY, next, NAMES_TTL);
+  // Overwrite row with a 1-second TTL to functionally delete it.
+  await kvSet(ROW_KEY(name), null, 1);
+
+  return NextResponse.json({ ok: true, deleted: name });
 }
