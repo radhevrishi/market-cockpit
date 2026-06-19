@@ -2516,6 +2516,66 @@ export default function HomeDashboard() {
               rel="noopener noreferrer"
               style={navChip('#10B981')}
             >🇮🇳 IBEF</a>
+            {/* PATCH 1101zz — Screener.in sync. One-click download of saved screen CSVs.
+                On first click, prompts for sessionid (stored in localStorage for reuse).
+                MVP: hard-codes screen 3443614 (fii); multi-screen will follow once user verifies. */}
+            <button
+              onClick={async () => {
+                let sessionid = localStorage.getItem('mc:screener:sessionid:v1') || '';
+                if (!sessionid) {
+                  sessionid = (window.prompt(
+                    'Paste your Screener.in sessionid cookie.\n\nFind it in Chrome: open screener.in (logged in) → DevTools → Application → Cookies → screener.in → copy "sessionid" value.\n\nIt will be saved in your browser for next time.',
+                    ''
+                  ) || '').trim();
+                  if (!sessionid) return;
+                  localStorage.setItem('mc:screener:sessionid:v1', sessionid);
+                }
+                const screens = [
+                  { id: '3443614', name: 'fii' },
+                ];
+                const btn = (event!.target as HTMLButtonElement);
+                const orig = btn.innerText;
+                btn.innerText = '⏳ Syncing…';
+                btn.style.opacity = '0.6';
+                try {
+                  for (const s of screens) {
+                    const r = await fetch('/api/screener/sync', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ sessionid, screenId: s.id, name: s.name }),
+                    });
+                    if (!r.ok) {
+                      const j = await r.json().catch(() => ({}));
+                      if (r.status === 401) {
+                        // Bad sessionid — clear and re-prompt
+                        localStorage.removeItem('mc:screener:sessionid:v1');
+                        alert(`❌ ${j.error || 'Auth failed'}\n\n${j.hint || ''}\n\nYour saved sessionid was cleared. Click Sync again and paste a fresh one.`);
+                        return;
+                      }
+                      alert(`❌ ${j.error || 'Failed'}\n\n${j.hint || ''}`);
+                      return;
+                    }
+                    const blob = await r.blob();
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = `${s.name}-${new Date().toISOString().slice(0, 10)}.csv`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(a.href);
+                    if (screens.length > 1) await new Promise((res) => setTimeout(res, 2000));
+                  }
+                  btn.innerText = '✅ Synced!';
+                  setTimeout(() => { btn.innerText = orig; btn.style.opacity = '1'; }, 2000);
+                } catch (err: any) {
+                  alert('❌ Sync failed: ' + (err?.message || String(err)));
+                  btn.innerText = orig;
+                  btn.style.opacity = '1';
+                }
+              }}
+              title="One-click download of saved Screener.in screens. Uses your stored sessionid cookie."
+              style={{ ...navChip('#8B5CF6'), cursor: 'pointer', border: '1px solid color-mix(in srgb, #8B5CF6 40%, transparent)' }}
+            >📥 Sync Screener.in</button>
             {/* PATCH 1063 — deep-link chips into Playbook sub-sections per user request */}
             <Link href="/playbook#about-me"      style={navChip('#fb7185')}>🌿 About Me</Link>
             <Link href="/playbook#life-sat"      style={navChip('#fbbf24')}>🌅 Life Sat</Link>
