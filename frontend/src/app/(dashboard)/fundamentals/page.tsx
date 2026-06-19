@@ -12,9 +12,42 @@ import { useState, useMemo, useCallback, useEffect } from 'react';
 // Action) into the existing handleText() pipeline, so the user's Portfolio
 // and Watchlist analyzers stay populated without manual upload.
 import {
-  SYNC_ROUTING, fetchCsvText, getSyncStatus,
+  SYNC_ROUTING, fetchCsvText, getSyncStatus, getDisplayName,
   shouldAutoLoad, markAutoLoaded, resetAutoLoadFlag, type SyncStatus,
 } from '@/lib/screener-data-loader';
+
+// PATCH 1101rrr — IndexedDB fallback for when localStorage hits its 5MB
+// quota. Same key namespace so loads/saves transparently move between the
+// two layers. We mark the localStorage with a `:idb` sentinel so the loader
+// effect knows to look in IDB next time.
+const FUND_IDB_NAME = 'mc-fund';
+const FUND_IDB_STORE = 'kv';
+function openFundDB(): Promise<IDBDatabase> {
+  return new Promise<IDBDatabase>((resolve, reject) => {
+    const req = indexedDB.open(FUND_IDB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(FUND_IDB_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function fundIdbPut(key: string, value: string): Promise<void> {
+  const db = await openFundDB();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(FUND_IDB_STORE, 'readwrite');
+    tx.objectStore(FUND_IDB_STORE).put(value, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+async function fundIdbGet(key: string): Promise<string | null> {
+  const db = await openFundDB();
+  return new Promise<string | null>((resolve, reject) => {
+    const tx = db.transaction(FUND_IDB_STORE, 'readonly');
+    const req = tx.objectStore(FUND_IDB_STORE).get(key);
+    req.onsuccess = () => resolve((req.result as string) ?? null);
+    req.onerror = () => reject(req.error);
+  });
+}
 
 // Identity for de-dup: NSE code, else BSE code, else Name (uppercased).
 // PATCH 1101tt — rowKey now also recognises TradingView USA columns (Symbol / Ticker / Description)
@@ -122,13 +155,27 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
   const [fname, setFname] = useState<string>('');
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string>('');
+  // PATCH 1101rrr \u2014 graceful storage fallback: localStorage first (fast,
+  // synchronous reads), IDB on quota overflow. Either path counts as a
+  // successful persistence; the user gets no "too large" error unless even
+  // IDB fails (extremely rare).
   const mcPersist = (k: string, v: string): boolean => {
     try {
       localStorage.setItem(k, v);
+      // If we previously used IDB for this key, the localStorage value now
+      // supersedes \u2014 clear the sentinel so loads pick the small payload.
+      try { localStorage.removeItem(k + ':idb'); } catch {}
+      setError('');
       return true;
-    } catch (err) {
-      setError("Couldn't save this list \u2014 it's too large for your browser's storage (about 5MB). Remove some rows or split it into a smaller list, then try again.");
-      return false;
+    } catch {
+      // localStorage full or value too big. Move to IDB.
+      fundIdbPut(k, v).then(() => {
+        try { localStorage.setItem(k + ':idb', '1'); } catch {}
+        setError('');
+      }).catch(() => {
+        setError("Storage is full and IndexedDB save also failed. Clear browser site data and try again.");
+      });
+      return true; // optimistic: IDB write completes asynchronously
     }
   };
 
@@ -153,29 +200,43 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
   // name is present, clear the orphaned name so UI stops claiming a file is
   // loaded that isn't actually present.
   useEffect(() => {
-    try {
-      const rawData = localStorage.getItem(STORAGE_KEY);
-      const rawName = localStorage.getItem(STORAGE_NAME);
-      let parsedData: Row[] | null = null;
-      if (rawData) {
-        try {
-          const parsed = JSON.parse(rawData);
-          if (Array.isArray(parsed) && parsed.length) parsedData = parsed;
-        } catch {}
-      }
-      if (parsedData) {
-        setData(parsedData);
-        if (rawName) setFname(rawName);
-      } else if (rawName) {
-        try { localStorage.removeItem(STORAGE_NAME); } catch {}
-        setFname('');
-      } else {
-        // PATCH 1101ss — switching markets needs to CLEAR previous market's data
-        // from React state, otherwise stale rows linger.
-        setData([]);
-        setFname('');
-      }
-    } catch {}
+    let cancelled = false;
+    (async () => {
+      try {
+        let rawData = localStorage.getItem(STORAGE_KEY);
+        const rawName = localStorage.getItem(STORAGE_NAME);
+        // PATCH 1101rrr — if a quota-overflow happened previously, the data
+        // lives in IDB. The sentinel tells us to look there.
+        if (!rawData) {
+          try {
+            const idbSentinel = localStorage.getItem(STORAGE_KEY + ':idb');
+            if (idbSentinel) {
+              const fromIdb = await fundIdbGet(STORAGE_KEY);
+              if (fromIdb) rawData = fromIdb;
+            }
+          } catch {}
+        }
+        if (cancelled) return;
+        let parsedData: Row[] | null = null;
+        if (rawData) {
+          try {
+            const parsed = JSON.parse(rawData);
+            if (Array.isArray(parsed) && parsed.length) parsedData = parsed;
+          } catch {}
+        }
+        if (parsedData) {
+          setData(parsedData);
+          if (rawName) setFname(rawName);
+        } else if (rawName) {
+          try { localStorage.removeItem(STORAGE_NAME); } catch {}
+          setFname('');
+        } else {
+          setData([]);
+          setFname('');
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
   }, [STORAGE_KEY, STORAGE_NAME]);
 
   // Merge new rows into existing — accumulate across uploads, de-dup by ticker, NEW data wins.
@@ -337,7 +398,10 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
       for (const fn of filenames) {
         const text = await fetchCsvText(fn);
         if (!text) continue;
-        handleText(text, fn);
+        // PATCH 1101rrr — use screener.in's actual list name so the
+        // "Loaded: ..." chip shows the friendly name.
+        const displayName = await getDisplayName(fn);
+        handleText(text, displayName);
         loaded++;
         // Spacing so React state batching keeps consecutive merges intact.
         await new Promise<void>((r) => setTimeout(r, 80));
