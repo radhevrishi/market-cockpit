@@ -1,29 +1,24 @@
-# PATCH 1101kkk â Daily Screener.in CSV sync (with auth precheck + diagnostics).
+# PATCH 1101lll: Daily Screener.in CSV sync with auth precheck and diagnostics.
+# ASCII-only YAML (the previous version had mangled em-dashes that broke parsing).
 #
 # Architecture:
-#   Cloudflare blocks Railway's data-center IPs. GitHub-hosted runners are
-#   not blocked, so this workflow downloads all 15 saved screens + watchlists
-#   here and commits them into frontend/public/data/screener/. Next.js then
-#   serves them at /data/screener/<name> same-origin â no popup blocker, no
-#   login required on the portal.
+#   Cloudflare blocks Railway data-center IPs. GitHub Actions runners are not
+#   blocked, so this workflow downloads all 15 saved screens + watchlists here
+#   and commits them into frontend/public/data/screener/. Next.js serves them
+#   at /data/screener/<name> same-origin -- no popup blocker, no login on the
+#   portal.
 #
 # Setup (one time):
-#   1. Repo â Settings â Secrets and variables â Actions â New repository secret
+#   1. Repo > Settings > Secrets and variables > Actions > New repository secret
 #      Name:  SCREENER_SESSIONID
 #      Value: the sessionid cookie from screener.in (no quotes, no spaces)
-#   2. Actions tab â "Sync Screener.in CSVs" â Run workflow.
-#
-# How to read the sessionid:
-#   - Log in to screener.in in Chrome/Comet
-#   - Open DevTools (F12) â Application â Cookies â https://www.screener.in
-#   - Find the row named exactly `sessionid` â copy the Value column
-#   - Paste into GitHub Secret. No quotes. No leading/trailing whitespace.
+#   2. Actions tab > "Sync Screener.in CSVs" > Run workflow.
 
 name: Sync Screener.in CSVs
 
 on:
   schedule:
-    - cron: '0 4 * * *'   # 04:00 UTC = 09:30 IST
+    - cron: '0 4 * * *'
   workflow_dispatch:
 
 permissions:
@@ -41,20 +36,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Sync all screens + watchlists
+      - name: Sync all screens and watchlists
         env:
           SESSION_RAW: ${{ secrets.SCREENER_SESSIONID }}
         run: |
           set -e
 
-          # PATCH 1101kkk: strip whitespace + quotes (common paste mistakes).
           SESSION=$(echo -n "$SESSION_RAW" | tr -d '\r\n\t ' | sed 's/^"//;s/"$//;s/^'\''//;s/'\''$//')
           if [ -z "$SESSION" ]; then
             echo "::error::SCREENER_SESSIONID secret is empty."
-            echo "Set it: repo â Settings â Secrets and variables â Actions â New repository secret."
             exit 1
           fi
-          # Mask it so it doesn't appear in logs even if echoed by accident.
           echo "::add-mask::$SESSION"
           SESSION_LEN=${#SESSION}
           echo "sessionid length: $SESSION_LEN chars"
@@ -64,10 +56,7 @@ jobs:
 
           UA="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
 
-          # PATCH 1101kkk â AUTH PRECHECK. Fetch /users/me/ before trying 15
-          # screens. If sessionid is bad we fail fast with a clear message and
-          # a dump of what screener.in actually returned.
-          echo "::group::Auth precheck â GET https://www.screener.in/users/me/"
+          echo "::group::Auth precheck GET https://www.screener.in/users/me/"
           PRE_HDR=$(mktemp)
           PRE_BODY=$(mktemp)
           PRE_STATUS=$(curl -sSL --max-time 20 -o "$PRE_BODY" -w "%{http_code}" \
@@ -89,28 +78,21 @@ jobs:
           PRE_BODY_SAMPLE=$(head -c 4000 "$PRE_BODY" | tr -d '\r')
           rm -f "$PRE_HDR" "$PRE_BODY"
 
-          # Detect logged-out state. screener.in's /users/me/ returns the login
-          # page (or a redirect to it) for anonymous users. When logged in it
-          # renders something with the user's data.
           if echo "$PRE_BODY_SAMPLE" | grep -qi 'log-in\|login-form\|Please log in\|/login/'; then
             if ! echo "$PRE_BODY_SAMPLE" | grep -qi 'logout\|/users/account/'; then
               echo "::error::Auth precheck FAILED. screener.in returned the login page for /users/me/."
               echo "Likely causes:"
-              echo "  1. SCREENER_SESSIONID value is wrong, has extra characters, or you copied the wrong cookie."
-              echo "  2. The sessionid expired (you logged out, password changed, or session timed out)."
-              echo "  3. screener.in is binding sessions to your home IP and blocking GitHub Actions runners."
+              echo "  1. SCREENER_SESSIONID value is wrong or has extra characters."
+              echo "  2. The sessionid expired."
+              echo "  3. screener.in is binding sessions to your home IP and blocking GitHub runners."
               echo ""
-              echo "Re-grab the cookie:"
-              echo "  Chrome/Comet â DevTools (F12) â Application â Cookies â https://www.screener.in"
-              echo "  Find the row exactly named 'sessionid'. Copy ONLY the Value column."
-              echo "  Update SCREENER_SESSIONID in repo Settings â Secrets â Actions."
+              echo "Re-grab the cookie: DevTools > Application > Cookies > screener.in > sessionid > value."
               exit 1
             fi
           fi
           echo "Auth precheck passed."
           echo "::endgroup::"
 
-          # id : slug : type
           ENTRIES=(
             "3443614:fii:screen"
             "3470949:future-leaders:screen"
@@ -143,7 +125,7 @@ jobs:
             fi
             out="$DATA_DIR/$slug"
 
-            echo "â $slug  ($url)"
+            echo "-> $slug ($url)"
 
             HDR=$(mktemp)
             if ! curl -sSL --max-time 45 \
@@ -157,7 +139,7 @@ jobs:
                 "$url"; then
               echo "::warning::curl failed for $slug"
               FAIL_COUNT=$((FAIL_COUNT+1))
-              REPORT="$REPORT\n- $slug: curl error"
+              REPORT="$REPORT"$'\n'"- $slug: curl error"
               rm -f "$out.tmp" "$HDR"
               continue
             fi
@@ -167,7 +149,6 @@ jobs:
 
             if head -c 200 "$out.tmp" | grep -qi '<html\|<!doctype'; then
               echo "::warning::$slug returned HTML ($STATUS_LINE)"
-              # PATCH 1101kkk â dump first failure diagnostics so we know WHY.
               if [ $DIAG_DUMPED -eq 0 ]; then
                 echo "::group::Diagnostics for first HTML failure ($slug)"
                 echo "Request URL: $url"
@@ -183,7 +164,7 @@ jobs:
                 DIAG_DUMPED=1
               fi
               FAIL_COUNT=$((FAIL_COUNT+1))
-              REPORT="$REPORT\n- $slug: HTML ($STATUS_LINE)"
+              REPORT="$REPORT"$'\n'"- $slug: HTML ($STATUS_LINE)"
               rm -f "$out.tmp" "$HDR"
               continue
             fi
@@ -203,7 +184,7 @@ jobs:
             done
 
             OK_COUNT=$((OK_COUNT+1))
-            REPORT="$REPORT\n- $slug.$EXT ($(stat -c%s "$out.$EXT" 2>/dev/null || echo ?) bytes)"
+            REPORT="$REPORT"$'\n'"- $slug.$EXT ($(stat -c%s "$out.$EXT" 2>/dev/null || echo ?) bytes)"
 
             sleep 1.5
           done
@@ -231,11 +212,11 @@ jobs:
 
           echo "=================================="
           echo "Sync complete. OK=$OK_COUNT FAIL=$FAIL_COUNT"
-          echo -e "$REPORT"
+          echo "$REPORT"
           echo "=================================="
 
           if [ $OK_COUNT -eq 0 ]; then
-            echo "::error::All fetches failed. Read the Diagnostics group above for the actual screener.in response."
+            echo "::error::All fetches failed. Read the Diagnostics group above for the screener.in response."
             exit 1
           fi
 
@@ -247,6 +228,6 @@ jobs:
           if git diff --staged --quiet; then
             echo "No changes to commit."
           else
-            git commit -m "[skip ci] Sync Screener.in CSVs â $(date -u +%Y-%m-%d)"
+            git commit -m "[skip ci] Sync Screener.in CSVs $(date -u +%Y-%m-%d)"
             git push
           fi
