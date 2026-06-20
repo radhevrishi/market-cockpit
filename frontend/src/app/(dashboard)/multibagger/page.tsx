@@ -820,6 +820,20 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   const [decisionsVersion, setDecisionsVersion] = useState(0);
   const bumpDecisions = useCallback(() => setDecisionsVersion(v => v + 1), []);
   useEffect(() => subscribeDecisions(() => bumpDecisions()), [bumpDecisions]);
+  // PATCH 1101zzz3 / AUDIT H6 — cache the decision map once per decisionsVersion
+  // bump so filter chains and chip counts don't hit localStorage 2000+ times
+  // per render. getDecision(symbol) internally calls readDecisions() →
+  // localStorage.getItem + JSON.parse, which the audit flagged as the actual
+  // 200ms-per-filter-toggle bottleneck. Replacing each call with an O(1)
+  // object lookup keeps reactivity (re-reads on decisionsVersion change) and
+  // avoids the risky full-filter-chain useMemo refactor.
+  const decisionsCache = React.useMemo(() => {
+    try { return readDecisions(); } catch { return {} as Record<string, any>; }
+  }, [decisionsVersion]);
+  const lookupDecision = useCallback((symbol: string | undefined) => {
+    if (!symbol) return undefined;
+    return decisionsCache[symbol.toUpperCase()] || decisionsCache[symbol];
+  }, [decisionsCache]);
   // Guidance tier filter — only applies when guidanceMode is ON
   type GuidanceTier = 'ALL'|'STRONG'|'POS'|'NEUTRAL'|'NEG'|'WEAK';
   const [guidanceTier, setGuidanceTier] = useState<GuidanceTier>('ALL');
@@ -1493,9 +1507,11 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   if (indRoceMin !== 'ALL') baseRows = baseRows.filter(r => (r.roce ?? 0) >= indRoceMin);
   if (indCfoMin !== 'ALL')  baseRows = baseRows.filter(r => (r.cfoToPat ?? 0) >= indCfoMin);
   // PATCH 0347 — decision filter
+  // PATCH 1101zzz3 / AUDIT H6 — use cached lookup (decisionsCache) instead of
+  // getDecision() to avoid localStorage read per row (~2000 reads → 1 read).
   if (indDecisionFilter !== 'ALL') {
     baseRows = baseRows.filter(r => {
-      const d = getDecision(r.symbol);
+      const d = lookupDecision(r.symbol);
       if (indDecisionFilter === 'WITH') return !!d;
       if (indDecisionFilter === 'NONE') return !d;
       return d?.status === indDecisionFilter;
