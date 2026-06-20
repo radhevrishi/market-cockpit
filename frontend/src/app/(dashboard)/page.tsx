@@ -292,7 +292,11 @@ function decomposeScore(row: any): Record<string, number> {
 // instant (no network) so we run them up-front and render the Home shell
 // immediately. Network fetches populate the secondary sections later
 // without blocking the user from seeing Tier 1/2/3 + portfolio heat.
-function buildSyncState(indiaOverride?: any[]): Pick<HomeState, 'tier1' | 'tier2' | 'tier3' | 'turnaroundTier1' | 'changedToday' | 'portfolio' | 'portfolioBySector' | 'staleDataAgeDays' | 'alphaFeedback'> {
+// PATCH 1101zzz4 / AUDIT H7 — accept `skipRescore` so the first paint can use
+// the cached scores as-is and avoid the 200-300ms blocking re-score loop.
+// A second buildSyncState() call from a requestAnimationFrame effect (see
+// HomeDashboard) then updates Tier 1/2/3 with the freshly re-scored grades.
+function buildSyncState(indiaOverride?: any[], opts: { skipRescore?: boolean } = {}): Pick<HomeState, 'tier1' | 'tier2' | 'tier3' | 'turnaroundTier1' | 'changedToday' | 'portfolio' | 'portfolioBySector' | 'staleDataAgeDays' | 'alphaFeedback'> {
   if (typeof window === 'undefined') {
     return { tier1: [], tier2: [], tier3: [], turnaroundTier1: [], changedToday: [], portfolio: [], portfolioBySector: [] };
   }
@@ -312,6 +316,17 @@ function buildSyncState(indiaOverride?: any[]): Pick<HomeState, 'tier1' | 'tier2
   })();
   const indiaRaw: any[] = (() => {
     if (!indiaRawSrc.length) return [];
+    // PATCH 1101zzz4 / AUDIT H7 — fast path: skip the per-row rescore and use
+    // the cached scores. Called from the useState initializer so the first
+    // paint stays under 100ms even when 500+ rows are in localStorage. The
+    // deferred useEffect below re-runs buildSyncState() WITHOUT skipRescore
+    // to refresh grades against the latest scoring formula.
+    if (opts.skipRescore) {
+      try {
+        const sorted = [...indiaRawSrc].sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0));
+        return mbApplyRanking(sorted as any[]);
+      } catch { return indiaRawSrc; }
+    }
     try {
       const rescored = indiaRawSrc.map((r: any) => {
         try { return mbScoreIndia(r as MbIndiaRow); } catch { return r; }
@@ -581,14 +596,34 @@ export default function HomeDashboard() {
   // PATCH 0606 — synchronous initial state from localStorage so the page
   // shows Tier 1/2/3 + portfolio heat in <100ms. Network sections lazy-load
   // and each shows its own loading state instead of blocking the whole page.
+  // PATCH 1101zzz4 / AUDIT H7 — initial state uses skipRescore: true so the
+  // first paint avoids 200-300ms of mbScoreIndia work over 500+ rows. The
+  // deferred effect below re-runs buildSyncState() WITHOUT the flag to
+  // refresh grades against the current scoring formula.
   const [data, setData] = useState<HomeState>(() => {
-    const sync = buildSyncState();
+    const sync = buildSyncState(undefined, { skipRescore: true });
     return {
       loading: false, // never block; network sections handle their own loading
       inPlay: [], inPlayRecent: [], bottleneck: [], earningsToday: [], earningsLabel: 'today', alerts: [],
       ...sync,
     };
   });
+  // PATCH 1101zzz4 / AUDIT H7 — after first paint, do the slow rescore in
+  // a requestAnimationFrame. Updates Tier 1/2/3 with fresh grades. If the
+  // user's scores were already current, the diff is a no-op for the React
+  // reconciler; otherwise grades silently update inline.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const raf = requestAnimationFrame(() => {
+      try {
+        const sync = buildSyncState();
+        setData((prev: HomeState) => ({ ...prev, ...sync }));
+      } catch (e) {
+        try { console.warn('[home] deferred rescore failed', e); } catch {}
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, []);
   const [netLoading, setNetLoading] = useState({ inPlay: true, bottleneck: true, earnings: true });
   // PATCH 0693 — hard wall-clock fallback. If safeDiag never resolves
   // (e.g. fetch hangs without aborting), the section spinners would sit
