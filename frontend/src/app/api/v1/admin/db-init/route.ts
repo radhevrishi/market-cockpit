@@ -122,11 +122,16 @@ CREATE TABLE IF NOT EXISTS ingestion_coverage (
 `;
 
 export async function GET(req: Request) {
+  // PATCH 1101zzz / AUDIT C1 — removed hardcoded ONESHOT bypass token
+  // 'mc-dbinit-1043-once'. Public repo = public token. The bypass let
+  // anyone with the string re-initialize the database. Strict CRON_SECRET only.
   const { searchParams } = new URL(req.url);
   const provided = searchParams.get('secret') || '';
-  const expected = process.env.CRON_SECRET || '';
-  const ONESHOT = 'mc-dbinit-1043-once';
-  if (!((expected !== '' && provided === expected) || provided === ONESHOT)) {
+  const expected = (process.env.CRON_SECRET || '').trim();
+  if (!expected) {
+    return NextResponse.json({ error: 'server-misconfigured', hint: 'CRON_SECRET must be set in env to use db-init' }, { status: 503 });
+  }
+  if (provided.length !== expected.length || provided !== expected) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
   if (!dbAvailable()) {
