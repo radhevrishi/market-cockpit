@@ -17,9 +17,13 @@
 
 import toast from 'react-hot-toast';
 import { Copy, Download, ExternalLink, FileSpreadsheet } from 'lucide-react';
-// PATCH 1050 — One-click Excel (.xlsx) export of the full conviction bench.
-// SheetJS is already a dependency (used by /portfolio + screener imports).
-import * as XLSX from 'xlsx';
+// PATCH 1101zzz / AUDIT H8 — dynamically import xlsx only when the user
+// actually clicks Excel export. Top-level import was pulling ~150KB of
+// SheetJS into the initial bundle for every page that uses this toolbar,
+// even though 99% of opens never trigger an export.
+// (PATCH 1050 originally imported it eagerly with the rationale 'already a
+// dependency'. True, but the cost was unconditional initial-bundle bloat.)
+type XLSXModule = typeof import('xlsx');
 
 interface GroupedTickers {
   label: string;        // 'BLOCKBUSTER', 'STRONG', etc.
@@ -292,8 +296,16 @@ export default function TickerExportToolbar({
     return '';
   };
 
-  const downloadXlsx = (subset: string[], label: string) => {
+  const downloadXlsx = async (subset: string[], label: string) => {
     if (subset.length === 0) { toast.error(`No ${label} tickers to export`); return; }
+    // PATCH 1101zzz / AUDIT H8 — lazy-load SheetJS at click time.
+    let XLSX: XLSXModule;
+    try {
+      XLSX = await import('xlsx');
+    } catch (err) {
+      toast.error('Failed to load Excel export library — refresh and try again.');
+      return;
+    }
     const convictionSet = new Set<string>(
       (groups || [])
         .filter((g) => /conviction/i.test(g.label))
