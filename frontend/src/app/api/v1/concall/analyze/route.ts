@@ -18,10 +18,37 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
+import { rateLimitResponse } from '@/lib/rateLimit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
+
+// PATCH 1101zzz / AUDIT C5 — SSRF guard. pdf_url must be a public https://
+// URL pointing at a real document host. Reject file://, gopher://, internal
+// IP ranges (RFC1918 / loopback / link-local), and javascript: protocol.
+function isSafePublicHttpsUrl(u: string): { ok: boolean; reason?: string } {
+  try {
+    const url = new URL(u);
+    if (url.protocol !== 'https:') return { ok: false, reason: 'protocol must be https://' };
+    const host = url.hostname;
+    if (host === 'localhost' || host === '0.0.0.0') return { ok: false, reason: 'localhost not allowed' };
+    // IPv4 private ranges + loopback + link-local
+    const ipv4 = host.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+    if (ipv4) {
+      const [, a, b] = ipv4.map(Number);
+      if (a === 10) return { ok: false, reason: 'private IP not allowed' };
+      if (a === 127) return { ok: false, reason: 'loopback IP not allowed' };
+      if (a === 169 && b === 254) return { ok: false, reason: 'link-local IP not allowed' };
+      if (a === 172 && b >= 16 && b <= 31) return { ok: false, reason: 'private IP not allowed' };
+      if (a === 192 && b === 168) return { ok: false, reason: 'private IP not allowed' };
+    }
+    if (host.endsWith('.internal') || host.endsWith('.local')) return { ok: false, reason: 'internal host not allowed' };
+    return { ok: true };
+  } catch {
+    return { ok: false, reason: 'invalid URL' };
+  }
+}
 
 // ─── Lexicons (hand-curated from 100+ Indian concalls) ─────────────────────
 const POSITIVE_TONE_RE = /\b(strong|robust|record|all[- ]time high|momentum|accelerat|outperform|expand|gaining share|on track|exceeded?|beat|raise|upgrade|optimistic|confident|healthy demand|broad[- ]based|tailwind|operating leverage|margin expansion)\b/gi;
@@ -209,11 +236,31 @@ function extractRedFlags(text: string): string[] {
 
 // ─── POST handler ──────────────────────────────────────────────────────────
 export async function POST(req: Request) {
+  // PATCH 1101zzz / AUDIT H4 — rate-limit to prevent resource exhaustion via
+  // repeated calls (the heuristic engine is cheap, but loadTranscript()
+  // makes outbound fetches when pdf_url is set).
+  const limited = rateLimitResponse(req, 20, 60_000);
+  if (limited) return limited;
+
   let body: any = {};
-  try { body = await req.json(); } catch {}
-  const transcript = body?.transcript || '';
-  const pdf_url = body?.pdf_url || '';
-  const ticker = body?.ticker || '';
+  try { body = await req.json(); } catch {
+    return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 });
+  }
+  const transcript = String(body?.transcript || '');
+  const pdf_url = String(body?.pdf_url || '').trim();
+  const ticker = String(body?.ticker || '');
+
+  // PATCH 1101zzz / AUDIT C5 — validate pdf_url before fetch to prevent SSRF.
+  // Server would otherwise fetch arbitrary URLs (including internal services).
+  if (pdf_url) {
+    const safe = isSafePublicHttpsUrl(pdf_url);
+    if (!safe.ok) {
+      return NextResponse.json({ error: 'invalid pdf_url', reason: safe.reason }, { status: 400 });
+    }
+  }
+  if (!transcript && !pdf_url) {
+    return NextResponse.json({ error: 'either transcript or pdf_url required' }, { status: 400 });
+  }
 
   const text = await loadTranscript(pdf_url, transcript);
   if (!text || text.length < 200) {
