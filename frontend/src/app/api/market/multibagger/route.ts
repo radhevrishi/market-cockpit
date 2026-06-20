@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchStockQuote, fetchCompanyFinancialResults, fetchPriceWithFallback } from '@/lib/nse';
 import { kvGet, kvSet } from '@/lib/kv';
+import { rateLimitResponse } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
@@ -1282,6 +1283,12 @@ function sanitizeForJSON(obj: unknown): unknown {
 
 // ── Main GET handler ──────────────────────────────────────────────────────────
 export async function GET(request: NextRequest) {
+  // PATCH 1101zzz / AUDIT H5 — rate-limit the multibagger scoring endpoint.
+  // Each call triggers N concurrent screener.in + NSE fetches and 5-pillar
+  // compute over 20-200 stocks. Without throttling a single client can
+  // exhaust Vercel function concurrency in seconds.
+  const limited = rateLimitResponse(request, 30, 60_000);
+  if (limited) return limited;
   try {
     const { searchParams } = new URL(request.url);
     const portfolioRaw = searchParams.get('portfolio') || '';
