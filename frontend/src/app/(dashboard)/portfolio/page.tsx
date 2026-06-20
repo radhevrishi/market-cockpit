@@ -206,8 +206,19 @@ const fmtPct = (n: number) => `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
 
 /* ── Helpers ────────────────────────────────────────────────────────── */
 
-/** Weighted CAGR across all holdings: annualizes total return using value-weighted average holding years */
-function computePortfolioCagr(rows: PortfolioRow[], holdings: PortfolioHolding[]): number | null {
+/** Weighted return across all holdings.
+ *  Returns { value, mode, years } where:
+ *   - mode='CAGR'  = value is annualized (only when avgYears >= 1)
+ *   - mode='TOTAL' = value is raw total return (when avgYears < 1)
+ *
+ *  PATCH 1101zzz7 — Reported bug: portfolio held since May 2026 (~1.5 months)
+ *  showed CAGR +1269%. The math (1+ret)^(1/years) was correct but meaningless
+ *  for sub-annual holdings — a 30% gain over 1.5 months annualizes to 800%+.
+ *  Industry convention (CFA/GIPS): do not annualize returns < 1 year. Show the
+ *  raw total return and label it as such; switch to CAGR once avgYears >= 1.
+ */
+function computePortfolioCagr(rows: PortfolioRow[], holdings: PortfolioHolding[]):
+  { value: number; mode: 'CAGR' | 'TOTAL'; years: number } | null {
   const now = Date.now();
   let weightedYears = 0;
   let totalInvested = 0;
@@ -228,8 +239,13 @@ function computePortfolioCagr(rows: PortfolioRow[], holdings: PortfolioHolding[]
   const totalCurrent = rows.reduce((s, r) => s + r.currentValue, 0);
   const totalInv = rows.reduce((s, r) => s + r.investedValue, 0);
   if (totalInv <= 0 || totalCurrent <= 0) return null;
+  const totalReturnPct = (totalCurrent / totalInv - 1) * 100;
+  // Hold-period < 1 year: do NOT annualize. Show raw return.
+  if (avgYears < 1) {
+    return { value: parseFloat(totalReturnPct.toFixed(2)), mode: 'TOTAL', years: avgYears };
+  }
   const cagr = (Math.pow(totalCurrent / totalInv, 1 / avgYears) - 1) * 100;
-  return parseFloat(cagr.toFixed(1));
+  return { value: parseFloat(cagr.toFixed(1)), mode: 'CAGR', years: avgYears };
 }
 
 /** Returns top sector and its weight% */
@@ -274,7 +290,26 @@ function PortfolioSummary({ rows, holdings }: { rows: PortfolioRow[]; holdings: 
     priced.length > 0
       ? { label: 'TOTAL P&L', value: `${totalPnl < 0 ? '-' : ''}${fmt(Math.abs(totalPnl))} (${fmtPct(totalPnlPct)})`, color: totalPnl >= 0 ? '#10B981' : '#EF4444' }
       : { label: 'TOTAL P&L', value: '—', sub: 'prices unavailable', color: '#F5F7FA' },
-    ...(cagr !== null ? [{ label: 'CAGR', value: fmtPct(cagr), sub: 'annualized return', color: cagr >= 0 ? '#10B981' : '#EF4444' }] : []),
+    // PATCH 1101zzz7 — Honest label: TOTAL RETURN when held <1y, CAGR when >=1y.
+    // The number is the same compounded gain; the LABEL prevents the misread
+    // that a 1.5-month +30% means a sustainable +1269% annual run-rate.
+    ...(cagr !== null
+      ? (() => {
+          const monthsHeld = cagr.years * 12;
+          const periodLabel =
+            monthsHeld < 1
+              ? `over ~${(cagr.years * 365).toFixed(0)} days`
+              : monthsHeld < 12
+                ? `over ~${monthsHeld.toFixed(1)} months`
+                : `${cagr.years.toFixed(1)}y annualized`;
+          return [{
+            label: cagr.mode === 'TOTAL' ? 'TOTAL RETURN' : 'CAGR',
+            value: fmtPct(cagr.value),
+            sub: cagr.mode === 'TOTAL' ? periodLabel : 'annualized return',
+            color: cagr.value >= 0 ? '#10B981' : '#EF4444',
+          }];
+        })()
+      : []),
     { label: 'DAY P&L', value: `${dayPnl < 0 ? '-' : ''}${fmt(Math.abs(dayPnl))}`, color: dayPnl >= 0 ? '#10B981' : '#EF4444' },
     { label: 'HOLDINGS', value: `${rows.length}`, sub: `${gainers} ↑  ${losers} ↓${noData > 0 ? `  ${noData} N/A` : ''}`, color: '#F5F7FA' },
     ...(top ? [{ label: 'TOP SECTOR', value: top.sector, sub: `${top.pct.toFixed(0)}% of portfolio`, color: '#60A5FA' }] : []),
