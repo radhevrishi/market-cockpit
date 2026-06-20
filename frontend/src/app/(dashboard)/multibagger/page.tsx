@@ -4865,13 +4865,50 @@ const STORAGE_KEY = 'mb_excel_scored_v2';
 const STORAGE_META = 'mb_excel_meta_v2';
 const MB_IDB_DB = 'mc-mb';
 const MB_IDB_STORE = 'kv';
+// PATCH 1101zzz8 — Bumped version 1 -> 2. Reported bug found in production
+// console (mc-guardian-style sweep, June 20 2026):
+//   NotFoundError: Failed to execute 'transaction' on 'IDBDatabase':
+//   One of the specified object stores was not found.
+// Symptom: every read of `mb_scored` failed for users whose browser had a
+// legacy `mc-mb` DB created without the `kv` store. Because the version
+// matched (1 == 1), `onupgradeneeded` never fired and we never got a chance
+// to create the store. The transaction call then threw because `kv` was
+// not in `db.objectStoreNames`.
+// Fix: bump version to 2 + safe-create the store on any upgrade path
+// (including the first-run case). Also added a defensive re-open: if the
+// post-open DB still lacks the store (cross-tab race or other corruption),
+// close it and re-open at version+1 to force the upgrade handler.
+const MB_IDB_VERSION = 2;
 function mbIdbOpen(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     try {
-      const req = indexedDB.open(MB_IDB_DB, 1);
-      req.onupgradeneeded = () => { const db = req.result; if (!db.objectStoreNames.contains(MB_IDB_STORE)) db.createObjectStore(MB_IDB_STORE); };
-      req.onsuccess = () => resolve(req.result);
+      const req = indexedDB.open(MB_IDB_DB, MB_IDB_VERSION);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(MB_IDB_STORE)) db.createObjectStore(MB_IDB_STORE);
+      };
+      req.onsuccess = () => {
+        const db = req.result;
+        // Defensive: if store still missing, force an upgrade by reopening
+        // at version+1. Don't loop — fall through to rejection if this fails.
+        if (!db.objectStoreNames.contains(MB_IDB_STORE)) {
+          const currentVersion = db.version;
+          db.close();
+          const req2 = indexedDB.open(MB_IDB_DB, currentVersion + 1);
+          req2.onupgradeneeded = () => {
+            const db2 = req2.result;
+            if (!db2.objectStoreNames.contains(MB_IDB_STORE)) db2.createObjectStore(MB_IDB_STORE);
+          };
+          req2.onsuccess = () => resolve(req2.result);
+          req2.onerror = () => reject(req2.error);
+          return;
+        }
+        resolve(db);
+      };
       req.onerror = () => reject(req.error);
+      req.onblocked = () => {
+        try { console.warn('[mb-idb] open blocked — another tab holds an old version'); } catch {}
+      };
     } catch (e) { reject(e); }
   });
 }
