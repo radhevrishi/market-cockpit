@@ -1,7 +1,8 @@
 // Phase 0 - create the canonical earnings-archive schema (idempotent).
-// GET /api/v1/admin/db-init?secret=<CRON_SECRET|token>
+// GET /api/v1/admin/db-init?secret=<CRON_SECRET>
 import { NextResponse } from 'next/server';
 import { getPool, dbAvailable } from '@/lib/db';
+import { verifyCronSecret } from '@/lib/verifyAuth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -124,15 +125,13 @@ CREATE TABLE IF NOT EXISTS ingestion_coverage (
 export async function GET(req: Request) {
   // PATCH 1101zzz / AUDIT C1 — removed hardcoded ONESHOT bypass token
   // 'mc-dbinit-1043-once'. Public repo = public token. The bypass let
-  // anyone with the string re-initialize the database. Strict CRON_SECRET only.
-  const { searchParams } = new URL(req.url);
-  const provided = searchParams.get('secret') || '';
-  const expected = (process.env.CRON_SECRET || '').trim();
-  if (!expected) {
-    return NextResponse.json({ error: 'server-misconfigured', hint: 'CRON_SECRET must be set in env to use db-init' }, { status: 503 });
-  }
-  if (provided.length !== expected.length || provided !== expected) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  // anyone with the string re-initialize the database.
+  // PATCH 1101zzz2 / AUDIT H2 — use shared verifyCronSecret helper for
+  // constant-time comparison via crypto.timingSafeEqual.
+  const auth = verifyCronSecret(req, { requireSecret: true });
+  if (!auth.ok) {
+    const status = auth.reason.includes('not configured') ? 503 : 401;
+    return NextResponse.json({ error: auth.reason }, { status });
   }
   if (!dbAvailable()) {
     return NextResponse.json({ error: 'DATABASE_URL not set' }, { status: 503 });
