@@ -4133,6 +4133,18 @@ function USACompare() {
   React.useEffect(() => subscribeDecisions(() => bumpUsDecisions()), [bumpUsDecisions]);
   // Touch usDecisionsV so it's read on render (avoids unused-var lint)
   void usDecisionsV;
+  // PATCH 1101zzz6 / AUDIT H6 (USA parity) — cache the decision map once per
+  // usDecisionsV. Without this, the decision chip count at the toolbar
+  // (`rows.filter(r=>getDecision(r.symbol)?.status===k).length` × 4 statuses)
+  // and the decision filter loop each re-read localStorage on every keystroke
+  // → 4×N+N reads per render of USACompare. Same fix as the India side.
+  const usDecisionsCache = React.useMemo(() => {
+    try { return readDecisions(); } catch { return {} as Record<string, any>; }
+  }, [usDecisionsV]);
+  const usLookupDecision = React.useCallback((symbol: string | undefined) => {
+    if (!symbol) return undefined;
+    return usDecisionsCache[symbol.toUpperCase()] || usDecisionsCache[symbol];
+  }, [usDecisionsCache]);
   // USA sortable columns
   type USASort = 'score'|'fwdPe'|'peg'|'revGrowthAnn'|'ruleOf40'|'fcfMargin'|'marketCapB'|'grossMargin';
   const [usSortField, setUsSortField] = React.useState<USASort>('score');
@@ -4316,7 +4328,8 @@ function USACompare() {
   // PATCH 0347 — decision filter for USA
   if (usDecisionFilter !== 'ALL') {
     filtered = filtered.filter(r => {
-      const d = getDecision(r.symbol);
+      // PATCH 1101zzz6 / AUDIT H6 — usLookupDecision uses cached map
+      const d = usLookupDecision(r.symbol);
       if (usDecisionFilter === 'WITH') return !!d;
       if (usDecisionFilter === 'NONE') return !d;
       return d?.status === usDecisionFilter;
@@ -4514,7 +4527,7 @@ function USACompare() {
               ]).map(({k,label,col})=>(
                 <button key={k} onClick={()=>setUsDecisionFilter(p=>p===k?'ALL':k)} style={{fontSize:F.xs,fontWeight:700,padding:'4px 9px',borderRadius:6,
                   border:`1px solid ${usDecisionFilter===k?col+'60':BORDER}`,background:usDecisionFilter===k?col+'18':'transparent',color:usDecisionFilter===k?col:MUTED,cursor:'pointer'}}>
-                  {label} {k!=='ALL' && `(${rows.filter(r=>getDecision(r.symbol)?.status===k).length})`}
+                  {label} {k!=='ALL' && `(${rows.filter(r=>usLookupDecision(r.symbol)?.status===k).length})`}
                 </button>
               ))}
 
