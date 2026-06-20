@@ -15,6 +15,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { dispatchAlert, type AlertPayload } from '@/lib/alert-dispatcher';
+import { verifyCronSecret } from '@/lib/verifyAuth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,16 +31,13 @@ function isValidPayload(x: any): x is AlertPayload {
 }
 
 export async function POST(req: NextRequest) {
-  const expected = process.env.CRON_SECRET;
-  if (!expected) {
-    return NextResponse.json(
-      { error: 'CRON_SECRET not configured; endpoint disabled' },
-      { status: 503 },
-    );
-  }
-  const secret = req.nextUrl.searchParams.get('secret');
-  if (secret !== expected) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  // PATCH 1101zzz2 / AUDIT H2 — constant-time secret comparison via shared
+  // verifyCronSecret helper. Was `secret !== expected` which leaks timing on
+  // mismatch (char-by-char early-exit). The helper uses crypto.timingSafeEqual.
+  const auth = verifyCronSecret(req, { requireSecret: true });
+  if (!auth.ok) {
+    const status = auth.reason.includes('not configured') ? 503 : 401;
+    return NextResponse.json({ error: auth.reason }, { status });
   }
 
   let body: any;
