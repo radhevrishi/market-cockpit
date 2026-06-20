@@ -108,7 +108,20 @@ export async function GET(req: Request) {
   }
 
   // Default action is health when called as GET
-  const staleHours = parseFloat(searchParams.get('stale_hours') || '25');
+  // PATCH 1101zzz5 — weekend-aware stale threshold. Many of our crons are
+  // Mon-Fri only (intelligence-compute, movers-alert, watchlist-alert,
+  // earnings-guidance-ingest). On Saturday + Sunday they legitimately go
+  // ~60h silent between Fri 16 UTC and Mon 04 UTC. With the default 25h
+  // threshold mc-guardian Telegrams every 10 min through both weekend days.
+  // Bump the effective threshold to 72h on Sat/Sun and Mon < 08 UTC so the
+  // alert only fires for crons that are silent beyond a normal weekend gap.
+  const baseStaleHours = parseFloat(searchParams.get('stale_hours') || '25');
+  const now = new Date();
+  const dowUtc = now.getUTCDay();           // 0=Sun, 6=Sat
+  const hourUtc = now.getUTCHours();
+  const isWeekend = dowUtc === 0 || dowUtc === 6;
+  const isEarlyMonday = dowUtc === 1 && hourUtc < 8;
+  const staleHours = (isWeekend || isEarlyMonday) ? Math.max(baseStaleHours, 72) : baseStaleHours;
   const cutoff = Date.now() - staleHours * 3600 * 1000;
 
   const names = (await kvGet<string[]>(NAMES_KEY)) || [];
