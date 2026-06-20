@@ -18,6 +18,7 @@ import { NextResponse } from 'next/server';
 import { nseApiFetch, fetchStockQuote } from '@/lib/nse';
 import { normalizeTicker } from '@/lib/tickers';
 import { kvGet, kvSet, kvSetNX, kvSwap, kvDel } from '@/lib/kv';
+import { rateLimitResponse } from '@/lib/rateLimit';
 
 const LOCK_KEY = 'lock:intelligence:compute';
 const LOCK_TTL = 120; // 2 minutes (short — Vercel may kill function without running finally block)
@@ -5660,6 +5661,11 @@ async function autoLoadSymbols(): Promise<{ watchlist: string[]; portfolio: stri
 
 export async function GET(request: Request) {
   console.log('[Compute] GET triggered (cron)');
+  // PATCH 1101zzz / AUDIT H5 — rate-limit. Compute pass fans out news fetches
+  // + symbol resolution for 100+ tickers and is the heaviest endpoint in the
+  // portal. Even cron triggers don't need to thunder more than 10/min.
+  const limited = rateLimitResponse(request, 10, 60_000);
+  if (limited) return limited;
   try {
     // PATCH 0850 — admin escape hatch: ?clearLock=1 forcibly nukes the
     // distributed lock + meta + prod blob before running. Used when the
