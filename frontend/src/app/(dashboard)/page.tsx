@@ -671,7 +671,18 @@ export default function HomeDashboard() {
       if (lsRaw) {
         try { localRowCount = (JSON.parse(lsRaw) as any[])?.length || 0; } catch {}
       }
-      const req = indexedDB.open('mc-mb', 1);
+      // PATCH 1101zzz8 — bump to v2 + ensure 'kv' store exists on upgrade.
+      // Mirrors the fix in multibagger/page.tsx — if home opens the DB first
+      // (before multibagger), it would otherwise consume the v1->v2 upgrade
+      // event without creating the store, leaving multibagger's later open
+      // still broken.
+      const req = indexedDB.open('mc-mb', 2);
+      req.onupgradeneeded = () => {
+        try {
+          const db = req.result;
+          if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
+        } catch {}
+      };
       req.onsuccess = () => {
         try {
           const db = req.result;
@@ -733,7 +744,13 @@ export default function HomeDashboard() {
               // PATCH 1101v — Write back DOWN so subsequent loads are fast.
               try { localStorage.setItem('mb_excel_scored_v2', j.snapshot); } catch {}
               try {
-                const req2 = indexedDB.open('mc-mb', 1);
+                const req2 = indexedDB.open('mc-mb', 2);
+                req2.onupgradeneeded = () => {
+                  try {
+                    const db = req2.result;
+                    if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
+                  } catch {}
+                };
                 req2.onsuccess = () => {
                   try {
                     const db = req2.result;
