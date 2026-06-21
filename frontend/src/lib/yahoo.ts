@@ -119,12 +119,33 @@ export async function fetchQuotes(symbols: string[]): Promise<any[]> {
   }
 }
 
+// PATCH 1101zzz12 — Known ticker renames / BSE-only symbols. When Yahoo
+// returns nothing for the user's ticker, look here before retrying with a
+// BSE suffix. Keeps the symbol the user typed on the surface (their
+// portfolio still says AXTEL) but resolves it under the hood.
+// Format: input UPPERCASE NSE-style symbol → preferred Yahoo symbol.
+const TICKER_REMAP: Record<string, string> = {
+  // AXTEL — Axtel Industries is BSE-only; .NS returns no data.
+  // BSE code 532430. Yahoo's BSE feed uses AXTELIND.BO (verified live).
+  'AXTEL.NS': 'AXTELIND.BO',
+  'AXTELIND.NS': 'AXTELIND.BO',
+  // Add more known cases as they surface — keeps the renames in one place
+  // instead of scattered through scoring + portfolio code.
+};
+
 // Fetch quotes with fallback to chart API
 export async function fetchQuotesWithFallback(symbols: string[]): Promise<any[]> {
-  // Try batch v7 first
-  let results = await fetchQuotes(symbols);
+  // PATCH 1101zzz12 — apply rename map before any network call.
+  const remappedSymbols = symbols.map(s => TICKER_REMAP[s] || s);
+  // Build a reverse map so callers see the symbol they asked for, not the
+  // remapped one (their portfolio row still says AXTEL).
+  const remappedToOriginal = new Map<string, string>();
+  symbols.forEach((orig, i) => {
+    if (orig !== remappedSymbols[i]) remappedToOriginal.set(remappedSymbols[i], orig);
+  });
 
-  if (results.length > 0) return results;
+  // Try batch v7 first
+  let results = await fetchQuotes(remappedSymbols);
 
   // Fallback: fetch individually via chart API (v8 chart — no crumb needed).
   // PATCH 0964: Yahoo v7 /finance/quote now returns 401 Unauthorized for
@@ -132,28 +153,83 @@ export async function fetchQuotesWithFallback(symbols: string[]): Promise<any[]>
   // unbounded Promise.all over every symbol at once, which Yahoo rate-limited —
   // only ~20% resolved (the "22 of 100 largecaps" thin-movers bug). Bounded
   // concurrency (CONC=6 + 120ms slab gap) resolves ~95%+ in a few seconds.
-  const CONC = 6;
-  const GAP_MS = 120;
-  const out: any[] = [];
-  for (let i = 0; i < symbols.length; i += CONC) {
-    const slab = symbols.slice(i, i + CONC);
-    const charts = await Promise.all(slab.map((sym) => fetchChart(sym)));
-    for (const chart of charts) {
-      if (!chart) continue;
-      out.push({
-        symbol: chart.symbol,
-        shortName: chart.shortName,
-        regularMarketPrice: chart.regularMarketPrice,
-        regularMarketChange: chart.change,
-        regularMarketChangePercent: chart.changePercent,
-        regularMarketVolume: chart.volume,
-        regularMarketPreviousClose: chart.previousClose,
-        marketCap: 0,
-      });
+  if (results.length === 0) {
+    const CONC = 6;
+    const GAP_MS = 120;
+    const out: any[] = [];
+    for (let i = 0; i < remappedSymbols.length; i += CONC) {
+      const slab = remappedSymbols.slice(i, i + CONC);
+      const charts = await Promise.all(slab.map((sym) => fetchChart(sym)));
+      for (const chart of charts) {
+        if (!chart) continue;
+        out.push({
+          symbol: chart.symbol,
+          shortName: chart.shortName,
+          regularMarketPrice: chart.regularMarketPrice,
+          regularMarketChange: chart.change,
+          regularMarketChangePercent: chart.changePercent,
+          regularMarketVolume: chart.volume,
+          regularMarketPreviousClose: chart.previousClose,
+          marketCap: 0,
+        });
+      }
+      if (i + CONC < remappedSymbols.length) await new Promise((r) => setTimeout(r, GAP_MS));
     }
-    if (i + CONC < symbols.length) await new Promise((r) => setTimeout(r, GAP_MS));
+    results = out;
   }
-  return out;
+
+  // PATCH 1101zzz12 — BSE retry for unresolved .NS symbols. If a symbol
+  // came in as XYZ.NS, was NOT in our rename map, and Yahoo returned
+  // nothing, try XYZ.BO once. Many small/micro-caps are BSE-only. Keep
+  // the .NS label on the result so caller's symbol matching still works.
+  const got = new Set(results.map((r: any) => String(r.symbol || '')));
+  const bseRetryNeeded: { ns: string; bo: string }[] = [];
+  for (let i = 0; i < remappedSymbols.length; i++) {
+    const sym = remappedSymbols[i];
+    // Only retry .NS symbols that we didn't already get a result for AND
+    // that weren't already remapped (those failed for a different reason).
+    if (sym.endsWith('.NS') && !got.has(sym) && symbols[i] === remappedSymbols[i]) {
+      bseRetryNeeded.push({ ns: sym, bo: sym.replace(/\.NS$/, '.BO') });
+    }
+  }
+  if (bseRetryNeeded.length > 0) {
+    const CONC = 6;
+    const GAP_MS = 120;
+    for (let i = 0; i < bseRetryNeeded.length; i += CONC) {
+      const slab = bseRetryNeeded.slice(i, i + CONC);
+      const charts = await Promise.all(slab.map(p => fetchChart(p.bo)));
+      charts.forEach((chart, idx) => {
+        if (!chart) return;
+        // Tag with the original NS symbol so callers' .find() by .NS works.
+        results.push({
+          symbol: slab[idx].ns,
+          _bseOriginalSymbol: chart.symbol,
+          shortName: chart.shortName,
+          regularMarketPrice: chart.regularMarketPrice,
+          regularMarketChange: chart.change,
+          regularMarketChangePercent: chart.changePercent,
+          regularMarketVolume: chart.volume,
+          regularMarketPreviousClose: chart.previousClose,
+          marketCap: 0,
+        });
+      });
+      if (i + CONC < bseRetryNeeded.length) await new Promise((r) => setTimeout(r, GAP_MS));
+    }
+  }
+
+  // PATCH 1101zzz12 — restore the caller's original ticker on remapped results
+  // (e.g. AXTELIND.BO comes back labelled with AXTEL.NS so AXTEL row in the
+  // portfolio table lights up).
+  if (remappedToOriginal.size > 0) {
+    for (const r of results) {
+      const orig = remappedToOriginal.get(String(r.symbol || ''));
+      if (orig) {
+        r._remappedFrom = r.symbol;
+        r.symbol = orig;
+      }
+    }
+  }
+  return results;
 }
 
 // NIFTY 50 constituents with sectors
