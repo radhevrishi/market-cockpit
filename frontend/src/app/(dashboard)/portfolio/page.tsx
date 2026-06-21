@@ -1098,7 +1098,7 @@ export default function PortfolioPage() {
       if (e?.name === 'QuotesShapeError') {
         setFetchError(`Price data malformed — check console for /api/market/quotes payload (last attempt ${stamp}).`);
       } else if (e?.name === 'TimeoutError' || /abort|timeout/i.test(String(e?.message || ''))) {
-        setFetchError(`Price data unavailable — fetch timed out after 20s (last attempt ${stamp}). Click Retry.`);
+        setFetchError(`Price data unavailable — fetch timed out after 45s (last attempt ${stamp}). Click Retry.`);
       } else {
         setFetchError(`Price data unavailable — last attempt failed at ${stamp}. ${e?.message ? `(${e.message})` : ''} Click Retry.`);
       }
