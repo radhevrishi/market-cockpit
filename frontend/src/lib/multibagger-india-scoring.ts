@@ -1079,8 +1079,18 @@ function computeFraudRiskFlags(
   if (cfoToPat!==undefined && cfoToPat>=0.3 && cfoToPat<0.6 && yoyProfit!==undefined && yoyProfit>50) {
     flags.push({label:`CFO/PAT ${cfoToPat.toFixed(2)} with YoY profit ${yoyProfit.toFixed(0)}% (mild cash gap on still-acceptable conversion)`,severity:'MEDIUM',source:'fraud:M1-mild-cash-gap'});
   }
-  if (peg!==undefined && peg>5) {
-    flags.push({label:`PEG ${peg.toFixed(1)} (>5 — valuation detached from growth)`,severity:'MEDIUM',source:'fraud:M2-peg-extreme'});
+  // PATCH 1101zzz24 — PEG philosophy reset per user framework.
+  // Page Industries, Bajaj Finance, Astral, Titan, Polycab all traded PEG 4-8+
+  // at various points and became multi-baggers. PEG > 5 alone is NOT a fraud
+  // signal — it's a valuation premium the market may justify via sustained
+  // growth + brand premium. Graduated bands now:
+  //   5 < PEG ≤ 10  → no fraud flag (was MEDIUM)
+  //   10 < PEG ≤ 20 → MEDIUM (was always MEDIUM at >5; now requires >10)
+  //   PEG > 20      → HIGH (bubble warning)
+  if (peg!==undefined && peg>10 && peg<=20) {
+    flags.push({label:`PEG ${peg.toFixed(1)} (>10 — high valuation risk)`,severity:'MEDIUM',source:'fraud:M2-peg-high-risk'});
+  } else if (peg!==undefined && peg>20) {
+    flags.push({label:`PEG ${peg.toFixed(1)} (>20 — bubble territory, mathematically unjustifiable)`,severity:'HIGH',source:'fraud:M2-peg-bubble'});
   }
   if (dProm!==undefined && dProm<=-1 && dProm>-2) {
     flags.push({label:`Promoter mild trim ${dProm.toFixed(1)}pp over 3y`,severity:'MEDIUM',source:'fraud:M3-promoter-trim'});
@@ -1390,10 +1400,21 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
     else if (row.marketCapCr>25000) risks.push(`Market cap ₹${row.marketCapCr.toLocaleString()}Cr — large base limits upside`);
   }
   if (row.fiiPlusDii!==undefined) {
-    const s = row.fiiPlusDii<10?90:row.fiiPlusDii<20?78:row.fiiPlusDii<35?62:45;
+    // PATCH 1101zzz24 — Institutional ownership penalty REWORKED per user
+    // framework. Old: heavy penalty from ~35% upwards (Polycab/Trent/SRF/
+    // Astral/PI Industries all generated huge returns AFTER institutional
+    // discovery — penalising them post-discovery was wrong). New: penalise
+    // ONLY when BOTH FII+DII > 70% AND mcap > ₹50,000 Cr — that combination
+    // signals the easy rerate is over. Otherwise reward the discovery
+    // (low FII+DII) without punishing mid-stage institutional buy-in.
+    const isMegaCap = (row.marketCapCr ?? 0) > 50_000;
+    const isOverInst = row.fiiPlusDii > 70;
+    const s = row.fiiPlusDii<10?90:row.fiiPlusDii<20?82:row.fiiPlusDii<40?74:row.fiiPlusDii<55?66:row.fiiPlusDii<70?58:(isMegaCap?40:55);
     longS+=s; longC++;
     if (row.fiiPlusDii<10) strengths.push(`FII+DII ${row.fiiPlusDii.toFixed(1)}% — largely undiscovered`);
-    else if (row.fiiPlusDii>40) risks.push(`FII+DII ${row.fiiPlusDii.toFixed(1)}% — heavily institutionalised`);
+    else if (row.fiiPlusDii<25) strengths.push(`FII+DII ${row.fiiPlusDii.toFixed(1)}% — early institutional discovery, runway ahead`);
+    else if (isOverInst && isMegaCap) risks.push(`FII+DII ${row.fiiPlusDii.toFixed(1)}% on ₹${(row.marketCapCr!/1000).toFixed(0)}k Cr mega-cap — easy rerate already priced`);
+    else if (row.fiiPlusDii>40 && !isMegaCap) strengths.push(`FII+DII ${row.fiiPlusDii.toFixed(1)}% — institutional conviction without mega-cap cap`);
   }
 
   // ─────────────────────────────────────────────────────────────────────
@@ -1523,14 +1544,18 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
       if (row.peg<0.8) strengths.push(`PEG ${row.peg.toFixed(2)} — undervalued growth`);
       if (row.peg>2.5 && !isHighGrowth) risks.push(`PEG ${row.peg.toFixed(2)} — expensive for growth rate`);
       if (row.peg>2.5 && isHighGrowth)  risks.push(`PEG ${row.peg.toFixed(2)} — high but growth >25% may justify`);
-      // PATCH 1051 — PEG > 5 with no genuine high-growth justification → HIGH
-      // structural flag (caps composite at 60). Severity escalates at PEG > 10
-      // to CRITICAL (caps at 38). Bypass when isHighGrowth (revCagr/yoy > 25%
-      // AND PEG ≤ 3 — see new isHighGrowth definition above).
-      if (row.peg > 10 && !isHighGrowth) {
-        redFlags.push({label:`PEG ${row.peg.toFixed(1)} — bubble valuation`,severity:'CRITICAL',kind:'STRUCTURAL',source:'Valuation'});
-      } else if (row.peg > 5 && !isHighGrowth) {
-        redFlags.push({label:`PEG ${row.peg.toFixed(1)} — severely overvalued for growth`,severity:'HIGH',kind:'STRUCTURAL',source:'Valuation'});
+      // PATCH 1051 + 1101zzz24 — Graduated PEG severity per user framework:
+      //   5 < PEG ≤ 10  → no structural red flag (was HIGH; user pointed
+      //                   out Page/Bajaj Finance/Astral/Titan/Polycab all
+      //                   traded here and compounded)
+      //   10 < PEG ≤ 20 → HIGH structural flag (caps composite at 60)
+      //   PEG > 20      → CRITICAL (caps at 38, mathematically impossible
+      //                   to justify even with extreme growth)
+      // Bypass when isHighGrowth (revCagr/yoy > 25% AND PEG ≤ 3).
+      if (row.peg > 20 && !isHighGrowth) {
+        redFlags.push({label:`PEG ${row.peg.toFixed(1)} — bubble valuation, mathematically unjustifiable`,severity:'CRITICAL',kind:'STRUCTURAL',source:'Valuation'});
+      } else if (row.peg > 10 && !isHighGrowth) {
+        redFlags.push({label:`PEG ${row.peg.toFixed(1)} — high valuation risk for growth rate`,severity:'HIGH',kind:'STRUCTURAL',source:'Valuation'});
       }
     }
   } else if (cyclical && row.peg!==undefined) {
@@ -2869,8 +2894,17 @@ export function scoreExcelRow(row: ExcelRow): ExcelResult {
   else if (highCyclicalCnt >= 2)        score = Math.min(score, 62);   // 2+ cyclical flags = clear pressure
   else if (highCyclicalCnt >= 1)        score = Math.min(score, 72);   // 1 cyclical flag = still B+ ceiling
   // Mixed case (1 of each) hits the structural cap first (60) since structural dominates.
-  if (row.accelSignal === 'DECELERATING') score = Math.min(score, 52);
-  if (bucket === 'MONITOR') score = Math.min(score, 45);
+  // PATCH 1101zzz24 — deceleration cap softened from 52 → 62 (B+ ceiling).
+  // A single bad quarter shouldn't bury a 10-year winner. The decel signal
+  // is informational; let other pillars (margins, ROCE, ownership) decide
+  // whether it's a one-off or structural.
+  if (row.accelSignal === 'DECELERATING') score = Math.min(score, 62);
+  // PATCH 1101zzz24 — MONITOR bucket cap REMOVED. Many future multibaggers
+  // start as unknown / illiquid / newly-listed / small-cap — labelled
+  // MONITOR by the bucket classifier. Capping their score at 45 prevents
+  // them from EVER showing up in a top-quartile view. The bucket label
+  // still surfaces in the UI for context; the score is no longer truncated.
+  // (Old line: `if (bucket === 'MONITOR') score = Math.min(score, 45);`)
 
   // ── PATCH 0313: GOVERNANCE WATCH SCORE CAP ───────────────────────────────
   // The pump-and-dump fingerprint caps composite at 65 regardless of

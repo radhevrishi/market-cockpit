@@ -397,12 +397,25 @@ export function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGr
     valComponents.push(evrS);
     if (row.evRevenue > 25) risks.push(`EV/Revenue ${row.evRevenue.toFixed(1)}× — narrative-driven valuation; needs hyper-growth + 50%+ margins to justify`);
   }
-  // PEG ratio — best growth-adjusted valuation check
+  // PEG ratio — best growth-adjusted valuation check.
+  // PATCH 1101zzz24 — Graduated PEG bands per user framework. NVDA, Palantir,
+  // Tesla, Shopify all traded PEG 4-10+ at various points and went on to
+  // 5-10x. Don't kill them on PEG alone. New thresholds:
+  //   PEG < 0.8 → 92  | undervalued
+  //   PEG < 1.2 → 84  | fair GARP
+  //   PEG < 2.0 → 72  | reasonable
+  //   PEG < 3.0 → 60  | premium but defensible
+  //   PEG < 5.0 → 48  | warning (was the Critical zone @ 25)
+  //   PEG < 10  → 32  | high risk
+  //   PEG < 20  → 18  | severe
+  //   PEG ≥ 20  → 8   | bubble (mathematically unjustifiable)
   if (row.peg !== undefined && row.peg > 0) {
-    const pegS = row.peg<0.8?92:row.peg<1.2?82:row.peg<2.0?65:row.peg<3.0?45:25;
+    const pegS = row.peg<0.8?92:row.peg<1.2?84:row.peg<2.0?72:row.peg<3.0?60:row.peg<5?48:row.peg<10?32:row.peg<20?18:8;
     valComponents.push(pegS);
     if (row.peg<1.0) strengths.push(`PEG ${row.peg.toFixed(2)} — undervalued relative to growth rate`);
-    else if (row.peg>3.0) risks.push(`PEG ${row.peg.toFixed(2)} — expensive relative to growth rate`);
+    else if (row.peg<3.0) strengths.push(`PEG ${row.peg.toFixed(2)} — fair-to-premium growth-adjusted multiple`);
+    else if (row.peg>10) risks.push(`PEG ${row.peg.toFixed(2)} — high risk for growth rate (>10)`);
+    else if (row.peg>5)  risks.push(`PEG ${row.peg.toFixed(2)} — warning (5-10), needs sustained growth justification`);
   } else if (row.peg !== undefined && row.peg <= 0) {
     // PATCH 0461 — PEG ≤ 0 is a red flag, not a skip. Negative PEG means
     // negative growth or loss-making. Either way the growth-adjusted
