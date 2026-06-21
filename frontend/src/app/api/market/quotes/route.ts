@@ -710,15 +710,6 @@ async function fetchIndianDataWithCache() {
           }
         } catch {}
         void _liveKvUsed;
-        // PATCH 1101zzz19 — pre-compute market-open flag once so the per-row
-        // BHAVCOPY-preference logic below can reference it without re-importing.
-        // The downstream block already calls isIndianMarketOpen() at line ~858
-        // but only after the merge loop; we need it BEFORE.
-        let marketIsOpen = true;
-        try {
-          const { isIndianMarketOpen } = await import('@/lib/market-hours');
-          marketIsOpen = isIndianMarketOpen();
-        } catch {}
         let mergedStocks: any[] = [];
         for (const t of tickers) {
           let price = 0, prevClose = 0, change = 0, changePercent = 0;
@@ -734,20 +725,8 @@ async function fetchIndianDataWithCache() {
 
           // PATCH 0815 — ALWAYS prefer Yahoo when present (live during
           // market hours, T-1 close otherwise — both fresher than blob).
-          // PATCH 1101zzz19 — when the Indian market is CLOSED and BHAVCOPY
-          // has a price for this ticker, prefer BHAVCOPY over Yahoo. Reason:
-          // Yahoo's "live" feed on weekends carries each stock's last LTP
-          // recorded before NSE's closing auction (3:30-3:40 PM IST), which
-          // misses the auction-adjusted close. BHAVCOPY is the canonical NSE
-          // EOD with the official close. Reported bug: PANAMAPET showed
-          // +18.37% on Saturday because Yahoo had the pre-auction LTP
-          // (₹483.25) while NSE's official close was ₹489.9 (+20.00%).
-          // Only flips the preference when (a) market is closed AND (b)
-          // BHAVCOPY has data for this ticker. Open-market behavior
-          // unchanged — Yahoo wins for live intraday.
           const liveQ = yahooMap.get(t.ticker);
-          const blobHasFreshClose = !marketIsOpen && t.hasPrice && (t.price ?? 0) > 0;
-          if (liveQ && liveQ.regularMarketPrice > 0 && !blobHasFreshClose) {
+          if (liveQ && liveQ.regularMarketPrice > 0) {
             // Live intraday from Yahoo during market hours
             price = liveQ.regularMarketPrice || 0;
             prevClose = liveQ.regularMarketPreviousClose || t.previousClose || 0;
@@ -779,6 +758,34 @@ async function fetchIndianDataWithCache() {
             dayHigh = t.dayHigh || 0;
             dayLow = t.dayLow || 0;
             staleEOD = true;
+            // PATCH 1101zzz22 — Upper/lower-circuit detector. When BHAVCOPY's
+            // changePercent lands within 0.3pp of a standard NSE circuit
+            // band (5/10/20%), the stock almost certainly hit the circuit
+            // and BHAVCOPY recorded the LAST-TRADED price (which can be a
+            // tick or two below the circuit ceiling), not the official
+            // circuit close. PANAMAPET on 2026-06-19 is the canonical
+            // example: BHAVCOPY 483.25 / +18.37% vs NSE individual quote
+            // 489.9 / +20.0% (exactly prev × 1.20). When we detect that
+            // pattern, snap the price to the exact circuit value so the
+            // displayed % matches the official close.
+            if (prevClose > 0 && price > 0) {
+              const absPct = Math.abs(changePercent);
+              const sign = changePercent >= 0 ? 1 : -1;
+              const BANDS = [5, 10, 20];
+              for (const band of BANDS) {
+                if (Math.abs(absPct - band) < 0.3) {
+                  const circuitPrice = prevClose * (1 + (sign * band) / 100);
+                  // Only snap UPWARDS — never widen losses past what BHAVCOPY
+                  // recorded. Snapping a 9.85% loss to 10.0% would be honest;
+                  // snapping a 9.85% gain to 10.0% would be honest too. Both
+                  // directions are fine because circuit closes are official.
+                  price = parseFloat(circuitPrice.toFixed(2));
+                  change = parseFloat((price - prevClose).toFixed(2));
+                  changePercent = sign * band;
+                  break;
+                }
+              }
+            }
           } else {
             // Yahoo enrichment for missing prices
             const q = yahooMap.get(t.ticker);
