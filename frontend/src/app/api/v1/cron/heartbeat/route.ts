@@ -140,7 +140,11 @@ export async function GET(req: Request) {
       if (!r) return null;
       const lastOkMs = r.last_ok_at ? Date.parse(r.last_ok_at) : 0;
       const hoursSinceOk = lastOkMs ? Math.round(((Date.now() - lastOkMs) / 3600000) * 100) / 100 : null;
-      const stale = !r.last_ok_at || lastOkMs < cutoff;
+      // PATCH 1101zzz18 — gate the per-row `stale` flag on isTestName() too.
+      // PATCH 1101xxx already excluded test rows from the COUNT, but the
+      // per-row flag still rendered red, contradicting "stale_count: 0".
+      const rawStale = !r.last_ok_at || lastOkMs < cutoff;
+      const stale = rawStale && !isTestName(name);
       return {
         name,
         last_ok_at: r.last_ok_at,
@@ -151,6 +155,7 @@ export async function GET(req: Request) {
         run_url: r.run_url,
         hours_since_ok: hoursSinceOk,
         stale,
+        is_test: isTestName(name),
       };
     }),
   );
