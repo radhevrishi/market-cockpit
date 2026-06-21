@@ -130,6 +130,65 @@ export async function GET(req: Request) {
           cronTotal += tickers.length;
         } catch {}
       }));
+      // PATCH 1101zzz23 — third fallback layer. When the cron has written
+      // little or nothing (NSE blocks Railway's egress so the cron's
+      // /api/equity-stockIndices fetch fails and universe_size=0), fetch
+      // from the mc-scraper Cloudflare Worker's /api/results/latest
+      // endpoint. The Worker has ~3000 corporate filings updated every
+      // 5 min; we filter to "Financial Results" subjects (~50/week) and
+      // group by date. This matches Screener.in's calendar density.
+      if (cronTotal === 0) {
+        try {
+          const WORKER_URL = process.env.CF_WORKER_URL || 'https://mc-scraper.radhev-232.workers.dev';
+          const r = await fetch(`${WORKER_URL}/api/results/latest`, {
+            cache: 'no-store',
+            signal: AbortSignal.timeout(8000),
+          });
+          if (r.ok) {
+            const wd: any = await r.json();
+            const filings: any[] = Array.isArray(wd?.results) ? wd.results : [];
+            const FR_RE = /financial\s*result/i;
+            // 'DD-MMM-YYYY HH:MM:SS' -> 'YYYY-MM-DD'
+            const monthMap: Record<string, string> = {
+              JAN: '01', FEB: '02', MAR: '03', APR: '04', MAY: '05', JUN: '06',
+              JUL: '07', AUG: '08', SEP: '09', OCT: '10', NOV: '11', DEC: '12',
+            };
+            const parseFilingDate = (s: string): string | null => {
+              const m = String(s || '').match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})/);
+              if (!m) return null;
+              const mm = monthMap[m[2].toUpperCase()];
+              if (!mm) return null;
+              return `${m[3]}-${mm}-${m[1].padStart(2, '0')}`;
+            };
+            for (const f of filings) {
+              const subj = String(f?.subject || '');
+              if (!FR_RE.test(subj)) continue;
+              const isoDate = parseFilingDate(f?.filing_date);
+              if (!isoDate) continue;
+              const sym = String(f?.symbol || '').toUpperCase();
+              if (!sym) continue;
+              if (!cronByDate[isoDate]) cronByDate[isoDate] = [];
+              cronByDate[isoDate].push({
+                symbol: sym,
+                company: String(f?.company || sym),
+                filing_date: isoDate,
+                filing_dt_iso: null,
+                quarter: '',
+                period_ended: '',
+                audited: false,
+                consolidated: false,
+                period_type: subj.includes('Clarification') ? 'Clarification' : 'Quarterly',
+                attachment: String(f?.attachment_url || `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(sym)}`),
+                source_url: String(f?.attachment_url || `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(sym)}`),
+                exchange: 'NSE',
+              } as any);
+              cronTotal++;
+            }
+          }
+        } catch {
+          // Worker fetch failed — keep cron data as-is (likely still empty).
+        }
+      }
       const summary = (await kvGet<{ last_run?: string }>('earnings-cal:auto:_summary')) || {};
       const fallbackPayload: any = {
         ...emptyPayload(),
@@ -138,10 +197,10 @@ export async function GET(req: Request) {
         to: horizonEnd.toISOString().slice(0, 10),
         total: cronTotal,
         by_date: cronByDate,
-        source: 'cron-fallback',
+        source: 'cron+worker-fallback',
         note: parsedFull
-          ? 'legacy scraper stale (>7d); falling back to GitHub Actions cron data'
-          : 'legacy scraper has not written; using GitHub Actions cron data',
+          ? 'legacy scraper stale (>7d); merging cron data + mc-scraper Worker results'
+          : 'legacy scraper has not written; using cron + mc-scraper Worker results',
       };
       // Range filter on fallback
       if (from || to) {
