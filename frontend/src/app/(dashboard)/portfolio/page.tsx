@@ -249,17 +249,30 @@ function computePortfolioCagr(rows: PortfolioRow[], holdings: PortfolioHolding[]
 }
 
 /** Returns top sector and its weight% */
-function topSector(rows: PortfolioRow[]): { sector: string; pct: number } | null {
+// PATCH 1101zzz11 — TOP SECTOR honesty. Was returning "Other 50%" because
+// "Other" was treated as a real sector. "Other" is what the data feed returns
+// when sector enrichment fails — surfacing it as the user's top sector is
+// misleading noise. Skip Other / unknown / dash, and ALSO return null when
+// the leading "real" sector covers under 10% of the portfolio (any number
+// below that is a tied-many-sectors signal, not a concentration insight).
+function topSector(rows: PortfolioRow[]): { sector: string; pct: number; mappedPct: number } | null {
   const totalValue = rows.reduce((s, r) => s + r.currentValue, 0);
   if (totalValue === 0) return null;
+  const SKIP = new Set(['', '—', 'Other', 'other', 'Unknown', 'unknown', 'N/A', 'n/a']);
   const bySector: Record<string, number> = {};
+  let mappedTotal = 0;
   for (const r of rows) {
-    if (!r.sector || r.sector === '—') continue;
+    if (!r.sector || SKIP.has(r.sector)) continue;
     bySector[r.sector] = (bySector[r.sector] ?? 0) + r.currentValue;
+    mappedTotal += r.currentValue;
   }
   const entries = Object.entries(bySector).sort((a, b) => b[1] - a[1]);
   if (!entries.length) return null;
-  return { sector: entries[0][0], pct: (entries[0][1] / totalValue) * 100 };
+  return {
+    sector: entries[0][0],
+    pct: (entries[0][1] / totalValue) * 100,
+    mappedPct: totalValue > 0 ? (mappedTotal / totalValue) * 100 : 0,
+  };
 }
 
 /* ── Summary Cards ─────────────────────────────────────────────────── */
@@ -453,31 +466,57 @@ function PortfolioSummary({ rows, holdings }: { rows: PortfolioRow[]; holdings: 
     { label: 'INVESTED VALUE', value: fmt(totalInvested), color: '#F5F7FA' },
     { label: 'CURRENT VALUE (equity)', value: priced.length > 0 ? fmt(totalCurrent) : '—', color: '#F5F7FA' },
     priced.length > 0
-      ? { label: 'TOTAL P&L', value: `${totalPnl < 0 ? '-' : ''}${fmt(Math.abs(totalPnl))} (${fmtPct(totalPnlPct)})`, color: totalPnl >= 0 ? '#10B981' : '#EF4444' }
+      ? {
+          label: 'TOTAL P&L',
+          value: `${totalPnl < 0 ? '-' : ''}${fmt(Math.abs(totalPnl))} (${fmtPct(totalPnlPct)})`,
+          // PATCH 1101zzz11 — flag equity-only when cash exists so user
+          // doesn't compare it to wealth-level numbers above.
+          sub: totalCash > 0 ? 'equity only' : undefined,
+          color: totalPnl >= 0 ? '#10B981' : '#EF4444',
+        }
       : { label: 'TOTAL P&L', value: '—', sub: 'prices unavailable', color: '#F5F7FA' },
     // PATCH 1101zzz7 — Honest label: TOTAL RETURN when held <1y, CAGR when >=1y.
     // The number is the same compounded gain; the LABEL prevents the misread
     // that a 1.5-month +30% means a sustainable +1269% annual run-rate.
+    // PATCH 1101zzz11 — sub-label honesty: cagr.years is computed from
+    // holding.addedAt, which is "when added to the tracker", NOT the real
+    // purchase date. A user importing a 4-year portfolio yesterday gets
+    // years=0.0027 here. Rename to "since added to tracker" so the period
+    // isn't misread as actual holding time.
     ...(cagr !== null
       ? (() => {
-          const monthsHeld = cagr.years * 12;
+          const monthsTracked = cagr.years * 12;
           const periodLabel =
-            monthsHeld < 1
-              ? `over ~${(cagr.years * 365).toFixed(0)} days`
-              : monthsHeld < 12
-                ? `over ~${monthsHeld.toFixed(1)} months`
-                : `${cagr.years.toFixed(1)}y avg hold`;
+            monthsTracked < 1
+              ? `~${(cagr.years * 365).toFixed(0)} days in tracker`
+              : monthsTracked < 12
+                ? `~${monthsTracked.toFixed(1)} months in tracker`
+                : `${cagr.years.toFixed(1)}y in tracker`;
           return [{
             label: cagr.mode === 'TOTAL' ? 'WEIGHTED RETURN' : 'WEIGHTED CAGR',
             value: fmtPct(cagr.value),
-            sub: cagr.mode === 'TOTAL' ? periodLabel : `${periodLabel} (per-holding)`,
+            sub: cagr.mode === 'TOTAL' ? periodLabel : `${periodLabel} · per-holding`,
             color: cagr.value >= 0 ? '#10B981' : '#EF4444',
           }];
         })()
       : []),
-    { label: 'DAY P&L', value: `${dayPnl < 0 ? '-' : ''}${fmt(Math.abs(dayPnl))}`, color: dayPnl >= 0 ? '#10B981' : '#EF4444' },
+    {
+      label: 'DAY P&L',
+      value: `${dayPnl < 0 ? '-' : ''}${fmt(Math.abs(dayPnl))}`,
+      sub: totalCash > 0 ? 'equity only' : undefined,
+      color: dayPnl >= 0 ? '#10B981' : '#EF4444',
+    },
     { label: 'HOLDINGS', value: `${rows.length}`, sub: `${gainers} ↑  ${losers} ↓${noData > 0 ? `  ${noData} N/A` : ''}`, color: '#F5F7FA' },
-    ...(top ? [{ label: 'TOP SECTOR', value: top.sector, sub: `${top.pct.toFixed(0)}% of portfolio`, color: '#60A5FA' }] : []),
+    // PATCH 1101zzz11 — TOP SECTOR honest sub-label: "% of mapped" so user
+    // sees that a chunk of the portfolio has no sector mapping. If <60%
+    // of value has a real sector, also flag "low coverage" so the user
+    // knows the leader is from a small base.
+    ...(top ? [{
+      label: 'TOP SECTOR',
+      value: top.sector,
+      sub: `${top.pct.toFixed(0)}% of total${top.mappedPct < 60 ? ` · ${top.mappedPct.toFixed(0)}% of holdings mapped` : ''}`,
+      color: '#60A5FA',
+    }] : []),
     { label: 'BEST PERFORMER', value: best ? best.symbol : '—', sub: best ? fmtPct(best.pnlPercent) : 'needs 2+ priced holdings', color: '#10B981' },
     { label: 'WORST PERFORMER', value: worst ? worst.symbol : '—', sub: worst ? fmtPct(worst.pnlPercent) : 'needs 2+ priced holdings', color: '#EF4444' },
   ];
