@@ -27,6 +27,22 @@ const HEAVY_ROUTES = [
   '/api/market/multibagger',
 ];
 
+// PATCH 1101zzz13 — Cheap KV-backed read routes. They return cached
+// payloads with negligible upstream work and are fired in bursts by the
+// concall-intel and home dashboards (5+ concurrent feeds + auto-poll).
+// Exempt from rate-limit counting so a normal active session with two
+// tabs open and a "Refresh" click doesn't trip 429 on these alone.
+const CHEAP_CACHED_ROUTES = [
+  '/api/v1/concall-intel/live-feed',
+  '/api/v1/concall-intel/warrant-feed',
+  '/api/v1/concall-intel/keyword-watch',
+  '/api/v1/concall-intel/movers',
+  '/api/v1/breadth',
+  '/api/v1/news/in-play',
+  '/api/v1/news/bottleneck-dashboard',
+  '/api/v1/cron/heartbeat',
+];
+
 // PATCH 0699 — Permanent (308) redirects for legacy / wrong slugs that
 // currently 404. Old bookmarks update on first hit.
 //   /activity      → /activity-log
@@ -68,9 +84,24 @@ export function middleware(req: NextRequest) {
 
   if (!path.startsWith('/api/')) return NextResponse.next();
 
+  // PATCH 1101zzz13 — Bypass rate limit for cheap KV-cached read routes.
+  // These return cached payloads with negligible cost. Without this,
+  // a normal session (home tab + concall-intel tab + a refresh) was
+  // burning the 300/min budget on these alone, then 429-wiping the
+  // page on the next render. Heavy routes are still gated.
+  const isCheap = CHEAP_CACHED_ROUTES.some((p) => path.startsWith(p));
+  if (isCheap) {
+    const res = NextResponse.next();
+    res.headers.set('X-RateLimit-Exempt', '1');
+    return res;
+  }
+
   const ip = clientIp(req);
   const isHeavy = HEAVY_ROUTES.some((p) => path.startsWith(p));
-  const limit = isHeavy ? 30 : 300; // 120 -> 300: home dashboard fires ~20 calls per auto-refresh tick; a couple of tabs + manual refreshes tripped 120 and 429-wiped every panel
+  // PATCH 1101zzz13 — bumped 300 → 600. Auto-poll + multiple tabs +
+  // user refreshes on the home dashboard burn through 300 in ~3 minutes.
+  // 600 still rejects real abuse but accommodates active normal use.
+  const limit = isHeavy ? 30 : 600;
   const windowMs = 60_000;
 
   const { allowed, remaining, resetInMs } = checkRateLimit(ip, limit, windowMs);
