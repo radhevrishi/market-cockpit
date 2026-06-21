@@ -278,6 +278,33 @@ const INCEPTION_DATE_KEY = 'mc_portfolio_inception_date_v1';
 const DEFAULT_INCEPTION_CAPITAL = 3540000;
 const DEFAULT_INCEPTION_DATE = '2022-08-01';
 
+// PATCH 1101zzz10 — Cash positions. Multiple labelled buckets (Savings,
+// Liquid Fund, FD, etc.) so the dashboard reflects TOTAL WEALTH (equities +
+// cash), not just equity value. Every summary metric — current value, total
+// P&L, since-inception return, CAGR, allocation — now folds cash in.
+const CASH_POSITIONS_KEY = 'mc_portfolio_cash_positions_v1';
+interface CashPosition {
+  id: string;
+  label: string;
+  amount: number;
+  addedAt: string;
+}
+const loadCashPositions = (): CashPosition[] => {
+  try {
+    const raw = localStorage.getItem(CASH_POSITIONS_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return [];
+    return arr.filter((c: any) =>
+      c && typeof c.id === 'string' && typeof c.label === 'string' &&
+      typeof c.amount === 'number' && isFinite(c.amount) && c.amount >= 0
+    );
+  } catch { return []; }
+};
+const saveCashPositions = (positions: CashPosition[]): void => {
+  try { localStorage.setItem(CASH_POSITIONS_KEY, JSON.stringify(positions)); } catch {}
+};
+
 function PortfolioSummary({ rows, holdings }: { rows: PortfolioRow[]; holdings: PortfolioHolding[] }) {
   // Hooks must run unconditionally — keep them above the empty-rows guard.
   const [inceptionCapital, setInceptionCapital] = useState<number>(() => {
@@ -314,7 +341,42 @@ function PortfolioSummary({ rows, holdings }: { rows: PortfolioRow[]; holdings: 
     setEditingInception(false);
   };
 
-  if (rows.length === 0) return null;
+  // PATCH 1101zzz10 — Cash positions state.
+  const [cashPositions, setCashPositions] = useState<CashPosition[]>(() => loadCashPositions());
+  const [addingCash, setAddingCash] = useState(false);
+  const [newCashLabel, setNewCashLabel] = useState('');
+  const [newCashAmount, setNewCashAmount] = useState('');
+
+  const persistCash = (next: CashPosition[]) => {
+    setCashPositions(next);
+    saveCashPositions(next);
+  };
+  const addCashPosition = () => {
+    const label = newCashLabel.trim();
+    const amount = parseFloat(newCashAmount);
+    if (!label) { toast.error('Cash label required (e.g. Savings, Liquid Fund)'); return; }
+    if (!isFinite(amount) || amount <= 0) { toast.error('Amount must be > 0'); return; }
+    const pos: CashPosition = {
+      id: `cash_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      label, amount, addedAt: new Date().toISOString(),
+    };
+    persistCash([...cashPositions, pos]);
+    setNewCashLabel(''); setNewCashAmount(''); setAddingCash(false);
+    toast.success(`Added cash position: ${label}`);
+  };
+  const removeCashPosition = (id: string) => {
+    const pos = cashPositions.find(p => p.id === id);
+    persistCash(cashPositions.filter(p => p.id !== id));
+    if (pos) toast.success(`Removed ${pos.label}`);
+  };
+  const updateCashAmount = (id: string, amount: number) => {
+    if (!isFinite(amount) || amount < 0) return;
+    persistCash(cashPositions.map(p => p.id === id ? { ...p, amount } : p));
+  };
+
+  const totalCash = cashPositions.reduce((s, c) => s + c.amount, 0);
+
+  if (rows.length === 0 && cashPositions.length === 0) return null;
 
   const totalInvested = rows.reduce((s, r) => s + r.investedValue, 0);
   // Holdings without a live price must not pretend zero P&L — aggregate only priced rows.
@@ -333,26 +395,32 @@ function PortfolioSummary({ rows, holdings }: { rows: PortfolioRow[]; holdings: 
   const cagr = computePortfolioCagr(rows, holdings);
   const top = topSector(rows);
 
-  // PATCH 1101zzz9 — Since-Inception math.
-  // Use TOTAL invested (priced + unpriced) for return calc — if a holding has
-  // no live quote we honestly can't include its current value, but we should
-  // still report total return only on what we CAN price. So: numerator is
-  // totalCurrent (priced only); denominator is the user-supplied inception
-  // capital. Caveat shown in sub-label when unpriced holdings exist.
+  // PATCH 1101zzz9 + zzz10 — Since-Inception math, now including cash.
+  // TOTAL WEALTH = equity current value + total cash. This is what we compare
+  // against initial capital for "since inception" return and CAGR.
+  //
+  // We DO show a sub-label caveat when unpriced equity holdings exist, since
+  // the equity portion is then a lower-bound estimate. Stock P&L (totalPnl
+  // above) intentionally stays equities-only — cash doesn't have P&L until
+  // you spend it, and mixing cash into it would be misleading.
+  const totalWealth = totalCurrent + totalCash;
+  const hasWealthData = priced.length > 0 || totalCash > 0;
   const inceptionMs = new Date(inceptionDate + 'T00:00:00Z').getTime();
   const yearsSince = isFinite(inceptionMs)
     ? (Date.now() - inceptionMs) / (365.25 * 24 * 3600 * 1000)
     : NaN;
-  const sinceInceptionGain = priced.length > 0 ? totalCurrent - inceptionCapital : NaN;
-  const sinceInceptionPct = priced.length > 0 && inceptionCapital > 0
-    ? ((totalCurrent / inceptionCapital) - 1) * 100
+  const sinceInceptionGain = hasWealthData ? totalWealth - inceptionCapital : NaN;
+  const sinceInceptionPct = hasWealthData && inceptionCapital > 0
+    ? ((totalWealth / inceptionCapital) - 1) * 100
     : NaN;
-  const sinceInceptionCagr = priced.length > 0 && inceptionCapital > 0 && yearsSince >= 1 && totalCurrent > 0
-    ? (Math.pow(totalCurrent / inceptionCapital, 1 / yearsSince) - 1) * 100
+  const sinceInceptionCagr = hasWealthData && inceptionCapital > 0 && yearsSince >= 1 && totalWealth > 0
+    ? (Math.pow(totalWealth / inceptionCapital, 1 / yearsSince) - 1) * 100
     : NaN;
   const yearsLabel = isFinite(yearsSince) && yearsSince > 0
     ? `${yearsSince.toFixed(1)}y · since ${new Date(inceptionDate).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}`
     : 'set inception →';
+  const equityPct = totalWealth > 0 ? (totalCurrent / totalWealth) * 100 : 0;
+  const cashPct = totalWealth > 0 ? (totalCash / totalWealth) * 100 : 0;
 
   const cards = [
     // Since-inception cards lead — they're the user's primary "how am I doing overall" view.
@@ -360,17 +428,30 @@ function PortfolioSummary({ rows, holdings }: { rows: PortfolioRow[]; holdings: 
     ...(isFinite(sinceInceptionGain) ? [{
       label: 'TOTAL RETURN (since inception)',
       value: `${sinceInceptionGain < 0 ? '-' : ''}${fmt(Math.abs(sinceInceptionGain))} (${fmtPct(sinceInceptionPct)})`,
-      sub: noData > 0 ? `${noData} holdings unpriced · indicative` : yearsLabel,
+      sub: noData > 0 ? `${noData} unpriced · ${totalCash > 0 ? 'incl. cash · ' : ''}indicative` : (totalCash > 0 ? `incl. ${fmt(totalCash)} cash · ${yearsLabel}` : yearsLabel),
       color: sinceInceptionGain >= 0 ? '#10B981' : '#EF4444',
     }] : []),
     ...(isFinite(sinceInceptionCagr) ? [{
       label: 'CAGR (since inception)',
       value: fmtPct(sinceInceptionCagr),
-      sub: yearsLabel,
+      sub: totalCash > 0 ? `${yearsLabel} · incl. cash` : yearsLabel,
       color: sinceInceptionCagr >= 0 ? '#10B981' : '#EF4444',
     }] : []),
+    // PATCH 1101zzz10 — TOTAL WEALTH = equities + cash.
+    ...(totalCash > 0 ? [{
+      label: 'TOTAL WEALTH',
+      value: fmt(totalWealth),
+      sub: `${equityPct.toFixed(0)}% equity · ${cashPct.toFixed(0)}% cash`,
+      color: '#60A5FA',
+    }] : []),
+    ...(totalCash > 0 ? [{
+      label: 'CASH BALANCE',
+      value: fmt(totalCash),
+      sub: cashPositions.length === 1 ? cashPositions[0].label : `${cashPositions.length} buckets`,
+      color: '#FBBF24',
+    }] : []),
     { label: 'INVESTED VALUE', value: fmt(totalInvested), color: '#F5F7FA' },
-    { label: 'CURRENT VALUE', value: priced.length > 0 ? fmt(totalCurrent) : '—', color: '#F5F7FA' },
+    { label: 'CURRENT VALUE (equity)', value: priced.length > 0 ? fmt(totalCurrent) : '—', color: '#F5F7FA' },
     priced.length > 0
       ? { label: 'TOTAL P&L', value: `${totalPnl < 0 ? '-' : ''}${fmt(Math.abs(totalPnl))} (${fmtPct(totalPnlPct)})`, color: totalPnl >= 0 ? '#10B981' : '#EF4444' }
       : { label: 'TOTAL P&L', value: '—', sub: 'prices unavailable', color: '#F5F7FA' },
@@ -446,6 +527,83 @@ function PortfolioSummary({ rows, holdings }: { rows: PortfolioRow[]; holdings: 
           </>
         )}
       </div>
+
+      {/* PATCH 1101zzz10 — Cash positions bar. Mirrors the inception bar's
+          visual language so the two read as a pair. List inline; add via
+          the "+ Add Cash" button which expands two compact inputs. */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16,
+        padding: '8px 12px', backgroundColor: 'var(--mc-bg-2)',
+        border: '1px solid var(--mc-border-2)', borderRadius: 8,
+        flexWrap: 'wrap',
+      }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: '#FBBF24', letterSpacing: '0.5px' }}>💵 CASH:</span>
+        {cashPositions.length === 0 && !addingCash && (
+          <span style={{ fontSize: 12, color: 'var(--mc-text-3)' }}>none — track savings, liquid funds, FDs so wealth + CAGR include them</span>
+        )}
+        {cashPositions.map(c => (
+          <span key={c.id} style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            fontSize: 12, fontWeight: 700, color: 'var(--mc-text-1)',
+            background: 'var(--mc-bg-1)', padding: '4px 8px', borderRadius: 5,
+            border: '1px solid var(--mc-border-2)',
+          }}>
+            <span style={{ color: '#FBBF24' }}>{c.label}</span>
+            <input
+              type="number"
+              value={c.amount}
+              onChange={e => updateCashAmount(c.id, parseFloat(e.target.value) || 0)}
+              style={{ width: 100, fontSize: 12, fontWeight: 700, padding: '2px 6px',
+                background: 'var(--mc-bg-0)', border: '1px solid var(--mc-border-2)',
+                borderRadius: 3, color: 'var(--mc-text-1)',
+                fontFamily: 'ui-monospace, monospace' }}
+              title={`Editable. Added ${new Date(c.addedAt).toLocaleDateString('en-IN')}`}
+            />
+            <button onClick={() => removeCashPosition(c.id)} title="Remove"
+              style={{ background: 'transparent', border: 'none', color: '#EF4444',
+                cursor: 'pointer', padding: 2, display: 'inline-flex', alignItems: 'center' }}>
+              <Trash2 size={12} />
+            </button>
+          </span>
+        ))}
+        {addingCash ? (
+          <>
+            <input value={newCashLabel} onChange={e => setNewCashLabel(e.target.value)}
+              placeholder="Label (Savings, Liquid Fund...)"
+              style={{ fontSize: 12, padding: '4px 8px', background: 'var(--mc-bg-1)',
+                border: '1px solid var(--mc-border-2)', borderRadius: 5,
+                color: 'var(--mc-text-1)', width: 180 }} />
+            <input value={newCashAmount} onChange={e => setNewCashAmount(e.target.value.replace(/[^\d.]/g, ''))}
+              placeholder="Amount ₹"
+              style={{ fontSize: 12, padding: '4px 8px', background: 'var(--mc-bg-1)',
+                border: '1px solid var(--mc-border-2)', borderRadius: 5,
+                color: 'var(--mc-text-1)', fontFamily: 'ui-monospace, monospace', width: 110 }} />
+            <button onClick={addCashPosition}
+              style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5,
+                background: '#10B981', border: 'none', color: 'white', cursor: 'pointer' }}>
+              <Check size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} />Save
+            </button>
+            <button onClick={() => { setAddingCash(false); setNewCashLabel(''); setNewCashAmount(''); }}
+              style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5,
+                background: 'transparent', border: '1px solid var(--mc-border-2)',
+                color: 'var(--mc-text-2)', cursor: 'pointer' }}>
+              <X size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} />Cancel
+            </button>
+          </>
+        ) : (
+          <button onClick={() => setAddingCash(true)}
+            style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5,
+              background: 'transparent', border: '1px solid #FBBF24', color: '#FBBF24', cursor: 'pointer' }}>
+            <Plus size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} />Add Cash
+          </button>
+        )}
+        {!addingCash && cashPositions.length > 0 && (
+          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--mc-text-3)' }}>
+            = {fmt(totalCash)}
+          </span>
+        )}
+      </div>
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '20px' }}>
         {cards.map(c => (
           <div key={c.label} style={{ backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-2)', borderRadius: '12px', padding: '16px' }}>
