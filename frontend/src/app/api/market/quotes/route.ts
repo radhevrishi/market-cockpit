@@ -710,6 +710,15 @@ async function fetchIndianDataWithCache() {
           }
         } catch {}
         void _liveKvUsed;
+        // PATCH 1101zzz19 — pre-compute market-open flag once so the per-row
+        // BHAVCOPY-preference logic below can reference it without re-importing.
+        // The downstream block already calls isIndianMarketOpen() at line ~858
+        // but only after the merge loop; we need it BEFORE.
+        let marketIsOpen = true;
+        try {
+          const { isIndianMarketOpen } = await import('@/lib/market-hours');
+          marketIsOpen = isIndianMarketOpen();
+        } catch {}
         let mergedStocks: any[] = [];
         for (const t of tickers) {
           let price = 0, prevClose = 0, change = 0, changePercent = 0;
@@ -725,8 +734,20 @@ async function fetchIndianDataWithCache() {
 
           // PATCH 0815 — ALWAYS prefer Yahoo when present (live during
           // market hours, T-1 close otherwise — both fresher than blob).
+          // PATCH 1101zzz19 — when the Indian market is CLOSED and BHAVCOPY
+          // has a price for this ticker, prefer BHAVCOPY over Yahoo. Reason:
+          // Yahoo's "live" feed on weekends carries each stock's last LTP
+          // recorded before NSE's closing auction (3:30-3:40 PM IST), which
+          // misses the auction-adjusted close. BHAVCOPY is the canonical NSE
+          // EOD with the official close. Reported bug: PANAMAPET showed
+          // +18.37% on Saturday because Yahoo had the pre-auction LTP
+          // (₹483.25) while NSE's official close was ₹489.9 (+20.00%).
+          // Only flips the preference when (a) market is closed AND (b)
+          // BHAVCOPY has data for this ticker. Open-market behavior
+          // unchanged — Yahoo wins for live intraday.
           const liveQ = yahooMap.get(t.ticker);
-          if (liveQ && liveQ.regularMarketPrice > 0) {
+          const blobHasFreshClose = !marketIsOpen && t.hasPrice && (t.price ?? 0) > 0;
+          if (liveQ && liveQ.regularMarketPrice > 0 && !blobHasFreshClose) {
             // Live intraday from Yahoo during market hours
             price = liveQ.regularMarketPrice || 0;
             prevClose = liveQ.regularMarketPreviousClose || t.previousClose || 0;
