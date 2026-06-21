@@ -1,6 +1,0 @@
-HTTP/2 405 
-server: nginx
-date: Sat, 20 Jun 2026 17:40:34 GMT
-content-type: text/html; charset=utf-8
-content-length: 552
-
