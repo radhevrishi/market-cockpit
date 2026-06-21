@@ -264,7 +264,56 @@ function topSector(rows: PortfolioRow[]): { sector: string; pct: number } | null
 
 /* ── Summary Cards ─────────────────────────────────────────────────── */
 
+// PATCH 1101zzz9 — Since-Inception tracking. Two extra fields the user
+// asked for: an editable INITIAL CAPITAL (deposit ₹) and an inception
+// DATE (when that capital was first committed). From those + current
+// portfolio value we derive:
+//   • TOTAL RETURN since inception (₹ gain and %)
+//   • CAGR since inception (annualized — meaningful because >1y of data)
+//
+// Defaults: ₹35,40,000 deposited Aug 2022 (user-supplied). User can edit
+// inline; values persist in localStorage so a refresh doesn't reset them.
+const INCEPTION_CAPITAL_KEY = 'mc_portfolio_inception_capital_v1';
+const INCEPTION_DATE_KEY = 'mc_portfolio_inception_date_v1';
+const DEFAULT_INCEPTION_CAPITAL = 3540000;
+const DEFAULT_INCEPTION_DATE = '2022-08-01';
+
 function PortfolioSummary({ rows, holdings }: { rows: PortfolioRow[]; holdings: PortfolioHolding[] }) {
+  // Hooks must run unconditionally — keep them above the empty-rows guard.
+  const [inceptionCapital, setInceptionCapital] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem(INCEPTION_CAPITAL_KEY);
+      const n = saved ? parseFloat(saved) : NaN;
+      return isFinite(n) && n > 0 ? n : DEFAULT_INCEPTION_CAPITAL;
+    } catch { return DEFAULT_INCEPTION_CAPITAL; }
+  });
+  const [inceptionDate, setInceptionDate] = useState<string>(() => {
+    try { return localStorage.getItem(INCEPTION_DATE_KEY) || DEFAULT_INCEPTION_DATE; }
+    catch { return DEFAULT_INCEPTION_DATE; }
+  });
+  const [editingInception, setEditingInception] = useState(false);
+  const [tmpCapital, setTmpCapital] = useState<string>(String(inceptionCapital));
+  const [tmpDate, setTmpDate] = useState<string>(inceptionDate);
+
+  const saveInception = () => {
+    const n = parseFloat(tmpCapital);
+    if (!isFinite(n) || n <= 0) { toast.error('Initial capital must be > 0'); return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(tmpDate)) { toast.error('Date must be YYYY-MM-DD'); return; }
+    setInceptionCapital(n);
+    setInceptionDate(tmpDate);
+    try {
+      localStorage.setItem(INCEPTION_CAPITAL_KEY, String(n));
+      localStorage.setItem(INCEPTION_DATE_KEY, tmpDate);
+    } catch {}
+    setEditingInception(false);
+    toast.success('Inception updated');
+  };
+  const cancelInception = () => {
+    setTmpCapital(String(inceptionCapital));
+    setTmpDate(inceptionDate);
+    setEditingInception(false);
+  };
+
   if (rows.length === 0) return null;
 
   const totalInvested = rows.reduce((s, r) => s + r.investedValue, 0);
@@ -284,7 +333,42 @@ function PortfolioSummary({ rows, holdings }: { rows: PortfolioRow[]; holdings: 
   const cagr = computePortfolioCagr(rows, holdings);
   const top = topSector(rows);
 
+  // PATCH 1101zzz9 — Since-Inception math.
+  // Use TOTAL invested (priced + unpriced) for return calc — if a holding has
+  // no live quote we honestly can't include its current value, but we should
+  // still report total return only on what we CAN price. So: numerator is
+  // totalCurrent (priced only); denominator is the user-supplied inception
+  // capital. Caveat shown in sub-label when unpriced holdings exist.
+  const inceptionMs = new Date(inceptionDate + 'T00:00:00Z').getTime();
+  const yearsSince = isFinite(inceptionMs)
+    ? (Date.now() - inceptionMs) / (365.25 * 24 * 3600 * 1000)
+    : NaN;
+  const sinceInceptionGain = priced.length > 0 ? totalCurrent - inceptionCapital : NaN;
+  const sinceInceptionPct = priced.length > 0 && inceptionCapital > 0
+    ? ((totalCurrent / inceptionCapital) - 1) * 100
+    : NaN;
+  const sinceInceptionCagr = priced.length > 0 && inceptionCapital > 0 && yearsSince >= 1 && totalCurrent > 0
+    ? (Math.pow(totalCurrent / inceptionCapital, 1 / yearsSince) - 1) * 100
+    : NaN;
+  const yearsLabel = isFinite(yearsSince) && yearsSince > 0
+    ? `${yearsSince.toFixed(1)}y · since ${new Date(inceptionDate).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}`
+    : 'set inception →';
+
   const cards = [
+    // Since-inception cards lead — they're the user's primary "how am I doing overall" view.
+    { label: 'INITIAL CAPITAL', value: fmt(inceptionCapital), sub: `deposited ${new Date(inceptionDate).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}`, color: '#F5F7FA' },
+    ...(isFinite(sinceInceptionGain) ? [{
+      label: 'TOTAL RETURN (since inception)',
+      value: `${sinceInceptionGain < 0 ? '-' : ''}${fmt(Math.abs(sinceInceptionGain))} (${fmtPct(sinceInceptionPct)})`,
+      sub: noData > 0 ? `${noData} holdings unpriced · indicative` : yearsLabel,
+      color: sinceInceptionGain >= 0 ? '#10B981' : '#EF4444',
+    }] : []),
+    ...(isFinite(sinceInceptionCagr) ? [{
+      label: 'CAGR (since inception)',
+      value: fmtPct(sinceInceptionCagr),
+      sub: yearsLabel,
+      color: sinceInceptionCagr >= 0 ? '#10B981' : '#EF4444',
+    }] : []),
     { label: 'INVESTED VALUE', value: fmt(totalInvested), color: '#F5F7FA' },
     { label: 'CURRENT VALUE', value: priced.length > 0 ? fmt(totalCurrent) : '—', color: '#F5F7FA' },
     priced.length > 0
@@ -301,11 +385,11 @@ function PortfolioSummary({ rows, holdings }: { rows: PortfolioRow[]; holdings: 
               ? `over ~${(cagr.years * 365).toFixed(0)} days`
               : monthsHeld < 12
                 ? `over ~${monthsHeld.toFixed(1)} months`
-                : `${cagr.years.toFixed(1)}y annualized`;
+                : `${cagr.years.toFixed(1)}y avg hold`;
           return [{
-            label: cagr.mode === 'TOTAL' ? 'TOTAL RETURN' : 'CAGR',
+            label: cagr.mode === 'TOTAL' ? 'WEIGHTED RETURN' : 'WEIGHTED CAGR',
             value: fmtPct(cagr.value),
-            sub: cagr.mode === 'TOTAL' ? periodLabel : 'annualized return',
+            sub: cagr.mode === 'TOTAL' ? periodLabel : `${periodLabel} (per-holding)`,
             color: cagr.value >= 0 ? '#10B981' : '#EF4444',
           }];
         })()
@@ -318,15 +402,60 @@ function PortfolioSummary({ rows, holdings }: { rows: PortfolioRow[]; holdings: 
   ];
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '20px' }}>
-      {cards.map(c => (
-        <div key={c.label} style={{ backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-2)', borderRadius: '12px', padding: '16px' }}>
-          <div style={{ fontSize: '10px', color: 'var(--mc-text-3)', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.5px' }}>{c.label}</div>
-          <div style={{ fontSize: '20px', fontWeight: '700', color: c.color }}>{c.value}</div>
-          {c.sub && <div style={{ fontSize: '11px', color: 'var(--mc-text-4)', marginTop: '2px' }}>{c.sub}</div>}
-        </div>
-      ))}
-    </div>
+    <>
+      {/* Inception editor — collapsed by default, opens on click. */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10,
+        padding: '8px 12px', backgroundColor: 'var(--mc-bg-2)',
+        border: '1px solid var(--mc-border-2)', borderRadius: 8,
+        flexWrap: 'wrap',
+      }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-text-3)', letterSpacing: '0.5px' }}>📍 INCEPTION:</span>
+        {!editingInception ? (
+          <>
+            <span style={{ fontSize: 13, color: 'var(--mc-text-1)', fontWeight: 700 }}>
+              {fmt(inceptionCapital)} · {new Date(inceptionDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+            </span>
+            <button onClick={() => { setTmpCapital(String(inceptionCapital)); setTmpDate(inceptionDate); setEditingInception(true); }}
+              style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5,
+                background: 'transparent', border: '1px solid var(--mc-border-2)', color: 'var(--mc-text-2)', cursor: 'pointer' }}>
+              <Edit3 size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} />Edit
+            </button>
+          </>
+        ) : (
+          <>
+            <label style={{ fontSize: 11, color: 'var(--mc-text-3)' }}>Capital ₹</label>
+            <input value={tmpCapital} onChange={e => setTmpCapital(e.target.value.replace(/[^\d.]/g, ''))}
+              style={{ fontSize: 13, padding: '4px 8px', background: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-2)',
+                borderRadius: 5, color: 'var(--mc-text-1)', fontFamily: 'ui-monospace, monospace', width: 130 }}
+              placeholder="3540000" />
+            <label style={{ fontSize: 11, color: 'var(--mc-text-3)' }}>Date</label>
+            <input type="date" value={tmpDate} onChange={e => setTmpDate(e.target.value)}
+              style={{ fontSize: 13, padding: '4px 8px', background: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-2)',
+                borderRadius: 5, color: 'var(--mc-text-1)', fontFamily: 'ui-monospace, monospace' }} />
+            <button onClick={saveInception}
+              style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5,
+                background: '#10B981', border: 'none', color: 'white', cursor: 'pointer' }}>
+              <Check size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} />Save
+            </button>
+            <button onClick={cancelInception}
+              style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5,
+                background: 'transparent', border: '1px solid var(--mc-border-2)', color: 'var(--mc-text-2)', cursor: 'pointer' }}>
+              <X size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} />Cancel
+            </button>
+          </>
+        )}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '20px' }}>
+        {cards.map(c => (
+          <div key={c.label} style={{ backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-2)', borderRadius: '12px', padding: '16px' }}>
+            <div style={{ fontSize: '10px', color: 'var(--mc-text-3)', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.5px' }}>{c.label}</div>
+            <div style={{ fontSize: '20px', fontWeight: '700', color: c.color }}>{c.value}</div>
+            {c.sub && <div style={{ fontSize: '11px', color: 'var(--mc-text-4)', marginTop: '2px' }}>{c.sub}</div>}
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 
