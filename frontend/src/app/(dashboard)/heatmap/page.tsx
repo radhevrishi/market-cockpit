@@ -317,10 +317,23 @@ export default function HeatmapPage() {
                 return mc >= mcMin && mc < mcMax;
               });
             };
+            // PATCH 1101zzz16 — Cap the smallcap fallback at top 150 by market
+            // cap. The old fallback handed the treemap ALL small+micro stocks
+            // (~2097 on the user's market) which rendered as an unreadable
+            // wall of micro-cells. The tab is labelled "Smallcap 150" — keep
+            // the cardinality honest. Midcap label already says "Midcap 150"
+            // and naturally returns ~150 from the `['mid']` bucket; apply the
+            // same cap defensively in case Mid ever overflows too.
+            const capTopN = (stocks: Stock[], n: number): Stock[] => {
+              if (stocks.length <= n) return stocks;
+              return [...stocks]
+                .sort((a: any, b: any) => (Number(b.marketCap) || 0) - (Number(a.marketCap) || 0))
+                .slice(0, n);
+            };
             const fallbackMap = {
-              nifty50: mkResp(byCap(['large'], 20000, Infinity)),
-              midcap150: mkResp(byCap(['mid'], 5000, 20000)),
-              smallcap150: mkResp(byCap(['small', 'micro'], 0, 5000)),
+              nifty50: mkResp(capTopN(byCap(['large'], 20000, Infinity), 50)),
+              midcap150: mkResp(capTopN(byCap(['mid'], 5000, 20000), 150)),
+              smallcap150: mkResp(capTopN(byCap(['small', 'micro'], 0, 5000), 150)),
             };
             setDataMap(fallbackMap);
             setLastUpdated(new Date());
