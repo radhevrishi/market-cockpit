@@ -951,13 +951,37 @@ async function fetchScreenerViaWorker(symbol: string): Promise<{
 } | null> {
   const screenerSym = getScreenerSymbol(symbol);
   const url = `${SCREENER_WORKER_BASE.replace(/\/$/, '')}/stock?symbol=${encodeURIComponent(screenerSym)}`;
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
-    if (!res.ok) {
-      console.warn(`[Earnings Scan] ${symbol}: worker HTTP ${res.status}`);
+  // zzz55 — Worker call with 30s timeout + 1 retry on transient failures.
+  // NAM-INDIA and other low-frequency symbols were timing out at 12s under
+  // burst load (CF Worker cold-start + screener.in fetch). Retry once on
+  // AbortError/network error before giving up.
+  let j: any = null;
+  let lastErr: Error | null = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
+      if (!res.ok) {
+        console.warn(`[Earnings Scan] ${symbol}: worker HTTP ${res.status} (attempt ${attempt})`);
+        if (res.status >= 500 && attempt < 2) {
+          await new Promise(r => setTimeout(r, 800));
+          continue;
+        }
+        return null;
+      }
+      j = await res.json();
+      break;
+    } catch (e) {
+      lastErr = e as Error;
+      if (attempt < 2) {
+        console.warn(`[Earnings Scan] ${symbol}: worker attempt ${attempt} failed (${lastErr.message}) — retrying`);
+        await new Promise(r => setTimeout(r, 800));
+        continue;
+      }
+      console.warn(`[Earnings Scan] ${symbol}: worker fallback failed after retry:`, lastErr.message);
       return null;
     }
-    const j: any = await res.json();
+  }
+  try {
     if (!j || !j.quarters || !Array.isArray(j.quarters.dates) || j.quarters.dates.length === 0) {
       console.warn(`[Earnings Scan] ${symbol}: worker returned no quarters`);
       return null;
