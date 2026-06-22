@@ -1291,7 +1291,7 @@ function WarrantMomentumFeed() {
    * a Retry button, so users didn't realise they could re-fire.
    *
    * FIX:
-   *   - Timeout tightened 25s → 15s via AbortSignal.timeout(15_000).
+   *   - Timeout tightened 25s → 15s via AbortSignal.timeout(45_000).
    *   - Error always sets an empty-shape data so the empty-state
    *     branch (with its prominent Retry button) renders instead of
    *     the spinner.
@@ -1311,11 +1311,11 @@ function WarrantMomentumFeed() {
         ...(passingOnly ? { passingOnly: '1' } : {}),
         ...(force ? { force: '1' } : {}),
       });
-      // PATCH 0965 BUG #3 — AbortSignal.timeout(15_000) per spec; replaces
+      // PATCH 0965 BUG #3 — AbortSignal.timeout(45_000) per spec; replaces
       // the bespoke 25s AbortController so the spinner is bounded.
       const res = await fetch(`/api/v1/concall-intel/warrant-feed?${params}`, {
         cache: 'no-store',
-        signal: AbortSignal.timeout(15_000),
+        signal: AbortSignal.timeout(45_000),
       });
       if (!res.ok) {
         setError(`HTTP ${res.status} — warrant feed unavailable`);
@@ -1330,7 +1330,7 @@ function WarrantMomentumFeed() {
       // banner copy matches what the user actually saw.
       const isTimeout = e?.name === 'TimeoutError' || e?.name === 'AbortError' || /timeout|abort/i.test(String(e?.message || ''));
       setError(isTimeout
-        ? '⚠ Warrant momentum data unavailable — pipeline may be processing (timed out after 15s)'
+        ? '⚠ Warrant momentum data unavailable — pipeline may be processing (timed out after 45s)'
         : `⚠ Warrant momentum fetch failed: ${e?.message || 'unknown error'}`);
       // Surface an empty-shape so the UI rolls forward instead of spinning.
       setData((prev) => prev || { filings: [], count_total: 0, count_relevant: 0, count_passing: 0 } as any);
@@ -2728,7 +2728,7 @@ function ConcallAnalyticsTab() {
    *
    * FIX:
    *   - Track an explicit `loadError` state.
-   *   - Use AbortSignal.timeout(15_000) on every fetch (per spec).
+   *   - Use AbortSignal.timeout(45_000) on every fetch (per spec).
    *   - Count failures; if every endpoint failed, surface a red
    *     ErrorState card with a Retry button.
    *   - Outer timer trimmed 20s → 16s (just past per-fetch timeout)
@@ -2746,13 +2746,13 @@ function ConcallAnalyticsTab() {
       setLastRefresh(new Date());
       setLoading(false);
       // PATCH 0965 BUG #3 — make the outer-timeout case visible.
-      setLoadError('Concall Intel analytics timed out after 16s. Pipeline may be processing — Retry.');
+      setLoadError('Concall Intel analytics timed out after 45s. Pipeline may be processing — Retry.');
     }, 16_000);
     let failures = 0;
     const safeFetch = async <T,>(url: string): Promise<T | null> => {
       try {
-        // PATCH 0965 BUG #3 — AbortSignal.timeout(15_000) per spec.
-        const res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(15_000) });
+        // PATCH 0965 BUG #3 — AbortSignal.timeout(45_000) per spec.
+        const res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(45_000) });
         if (!res.ok) { failures++; return null; }
         return await res.json() as T;
       } catch { failures++; return null; }
