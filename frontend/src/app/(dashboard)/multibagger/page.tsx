@@ -1229,7 +1229,11 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   // already absorbed. Lets us auto-refresh existing IDB state when the
   // GitHub Action commits a newer manifest, instead of leaving users stuck
   // on weeks-old snapshots until they remember to click "🔄 Refresh now".
-  const LAST_SYNC_SEEN_KEY = 'mb_india_last_sync_seen_v1';
+  // PATCH 1101zzz42 — bumped v1 → v2 to invalidate stamps written by
+  // zzz40's silent-stamp branch. v1 stampers never actually pulled, so
+  // every subsequent visit thought "already up to date". v2 ensures
+  // first-load after this deploy sees seenIso === null → triggers pull.
+  const LAST_SYNC_SEEN_KEY = 'mb_india_last_sync_seen_v2';
   const runAutoSync = useCallback(async (force = false) => {
     if (syncLoading) return;
     setSyncLoading(true);
