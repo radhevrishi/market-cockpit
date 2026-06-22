@@ -2921,8 +2921,16 @@ export default function EarningsOpportunitiesPage() {
           )}
           {/* PATCH 0503 — Source coverage telemetry chip. Surfaces which
               exchange provided how many filings + the merged total so the
-              user can spot coverage gaps at a glance. */}
-          {coverageStats && (
+              user can spot coverage gaps at a glance.
+              PATCH zzz58 part 1/3 — Hide the chip entirely when all three
+              counts are zero. The `today-live` route returns 0/0/0
+              whenever NSE rate-limits Railway egress (which is most of
+              the time), producing a misleading red "NSE 0 · BSE 0 ·
+              merged 0" chip even when the calendar is healthy and being
+              served from KV cache. Suppressing the chip in the all-zero
+              case removes the false alarm without hiding genuine
+              coverage info when at least one source returns data. */}
+          {coverageStats && (coverageStats.nse > 0 || coverageStats.bse > 0 || coverageStats.total > 0) && (
             <span
               title={`NSE corp-announcements: ${coverageStats.nse} filings
 BSE corp-announcements: ${coverageStats.bse} filings
