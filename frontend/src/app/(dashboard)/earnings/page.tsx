@@ -1782,8 +1782,14 @@ export default function EarningsPage() {
             // PATCH 0467 — 25s per-batch timeout. Without this, one stuck
             // batch would prevent the wave from settling and the user sees
             // the spinner forever.
+            // PATCH 1101zzz48 — bumped 25s → 50s. On cold start the 30-symbol
+            // batch takes ~30s (one screener.in page-fetch + parse per symbol),
+            // hitting the 25s ceiling reliably. User saw ALL 58 cards as
+            // "DATA MISSING" because every batch aborted. 50s is well under
+            // the 60s Vercel function maxDuration so we never wait longer
+            // than the server itself does.
             const ctl = new AbortController();
-            const timer = setTimeout(() => ctl.abort(), 25_000);
+            const timer = setTimeout(() => ctl.abort(), 50_000);
             try {
               const res = await fetch(`/api/market/earnings-scan?symbols=${encoded}&debug=true`, { signal: ctl.signal });
               if (!res.ok) return null;
