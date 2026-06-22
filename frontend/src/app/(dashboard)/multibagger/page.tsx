@@ -3570,11 +3570,31 @@ function parseUSARow(row: Record<string,unknown>): USARow | null {
       row['1-year performance %'] ??
       row['Perf.Y']
     ),
-    pctFrom52wHigh: n(
-      row['Change from 52-week high, %'] ??
-      row['% from 52W high'] ??
-      row['Change from 52W High']
-    ),
+    // PATCH 1101zzz25 — auto-derive pctFrom52wHigh from Price + High, 52
+    // weeks when the explicit column isn't in the export. TradingView's
+    // "Change from 52-week high, %" column was missing from the user's
+    // CSV but they had both Price and High, 52 weeks. Compute on the fly
+    // so they don't have to add another column.
+    pctFrom52wHigh: (() => {
+      const explicit = n(
+        row['Change from 52-week high, %'] ??
+        row['% from 52W high'] ??
+        row['Change from 52W High']
+      );
+      if (explicit !== undefined) return explicit;
+      const price = n(row['Price'] ?? row['Last'] ?? row['Close']);
+      const high52w = n(
+        row['High, 52 weeks'] ??
+        row['52 week high'] ??
+        row['52 Week High'] ??
+        row['52-week high'] ??
+        row['52W High']
+      );
+      if (price !== undefined && high52w !== undefined && high52w > 0) {
+        return parseFloat((((price - high52w) / high52w) * 100).toFixed(2));
+      }
+      return undefined;
+    })(),
     // ── TradingView fields (confirmed to exist) ──────────────────────────────
     // 5-year CAGR (TradingView column: "Revenue growth %, 5 year CAGR")
     revGrowth3yr: n(
