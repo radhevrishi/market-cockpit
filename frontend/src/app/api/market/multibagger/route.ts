@@ -13,7 +13,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchStockQuote, fetchCompanyFinancialResults, fetchPriceWithFallback } from '@/lib/nse';
 import { kvGet, kvSet } from '@/lib/kv';
-import { rateLimitResponse } from '@/lib/rateLimit';
+// zzz59: Yahoo /v7/finance/spark fallback — works from Railway egress when
+// /v7/finance/quote returns 401 (crumb-gated). Used to reset degradedMode by
+// providing at least lastPrice + prevClose + pChange + companyName.
+import { fetchYahooSparkBatch } from '@/lib/yahoo';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
@@ -560,104 +563,108 @@ async function fetchYahooData(symbol: string): Promise<{ data: Record<string, an
   } catch { return { data: {}, ok: false }; }
 }
 
-// ── Yahoo spark API — fast price + 52W + name (no auth needed) ──────────────
-// PATCH 1101zzz59 — Migrated off /v7/finance/quote (401 from server egress
-// since Oct-2025) onto /v7/finance/spark. Spark provides regularMarketPrice,
-// previousClose, fiftyTwoWeekHigh/Low, shortName/longName — but NOT
-// trailingPE, epsTrailingTwelveMonths, bookValue, priceToBook, marketCap.
-// Those fields are now null from this path; they get filled from screener.in
-// (fetchScreenerData), Yahoo v8 quoteSummary (fetchYahooData) and NSE
-// financials (fetchNSEFinancials) elsewhere in the scoring pipeline.
-// Net effect: the data-quality gate now passes (lastPrice > 0) and the
-// remaining fundamentals come from non-Yahoo sources instead of returning
-// blanket nulls when v7 returned 401.
-function _adaptSparkRow(meta: any, symbolKey: string, source: string): Record<string, any> {
-  const price = Number(meta?.regularMarketPrice) || 0;
-  const prevClose = Number(meta?.previousClose) || Number(meta?.chartPreviousClose) || 0;
-  const pChange = (price > 0 && prevClose > 0) ? ((price - prevClose) / prevClose) * 100 : null;
-  return {
-    lastPrice: price,
-    pe: null,
-    eps: null,
-    bookValue: null,
-    priceToBook: null,
-    marketCapCr: null,
-    high52: meta?.fiftyTwoWeekHigh ?? null,
-    low52: meta?.fiftyTwoWeekLow ?? null,
-    pChange,
-    companyName: meta?.longName || meta?.shortName || null,
-    sector: null, // spark does not expose sector
-    _source: source,
-    _symbolKey: symbolKey,
-  };
-}
-
+// ── Yahoo v7 quote API — fast, reliable price + basic fundamentals ──────────
 async function fetchYahooV7Quote(symbol: string): Promise<{ data: Record<string, any>; ok: boolean }> {
   try {
     const yahooSym = `${symbol}.NS`;
-    const url = `https://query1.finance.yahoo.com/v7/finance/spark?symbols=${encodeURIComponent(yahooSym)}&range=1d&interval=1m`;
+    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(yahooSym)}&fields=regularMarketPrice,regularMarketPreviousClose,marketCap,trailingPE,epsTrailingTwelveMonths,bookValue,priceToBook,fiftyTwoWeekHigh,fiftyTwoWeekLow,regularMarketChangePercent,longName,shortName,sector,industry`;
     const resp = await fetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MarketCockpit/2.0)' },
       signal: AbortSignal.timeout(4000),
     });
     if (!resp.ok) return { data: {}, ok: false };
     const json = await resp.json();
-    const meta = json?.spark?.result?.[0]?.response?.[0]?.meta;
-    if (!meta || !meta.regularMarketPrice) return { data: {}, ok: false };
-    return { data: _adaptSparkRow(meta, yahooSym, 'yahoo_spark'), ok: true };
+    const q = json?.quoteResponse?.result?.[0];
+    if (!q || !q.regularMarketPrice) return { data: {}, ok: false };
+    const d: Record<string, any> = {};
+    d.lastPrice = q.regularMarketPrice;
+    d.pe = q.trailingPE ?? null;
+    d.eps = q.epsTrailingTwelveMonths ?? null;
+    d.bookValue = q.bookValue ?? null;
+    d.priceToBook = q.priceToBook ?? null;
+    d.marketCapCr = q.marketCap ? Math.round(q.marketCap / 10000000) : null;
+    d.high52 = q.fiftyTwoWeekHigh ?? null;
+    d.low52 = q.fiftyTwoWeekLow ?? null;
+    d.pChange = q.regularMarketChangePercent ?? null;
+    d.companyName = q.longName || q.shortName || null;
+    d.sector = q.sector || null;
+    d._source = 'yahoo_v7';
+    return { data: d, ok: true };
   } catch { return { data: {}, ok: false }; }
 }
 
-// ── Yahoo spark BATCH fetch — up to 20 syms per call (proven in mc-movers) ──
+// ── Yahoo v7 BATCH fetch — single HTTP call for ALL symbols ──────────────────
 async function fetchYahooV7Batch(symbols: string[]): Promise<Map<string, Record<string, any>>> {
   const result = new Map<string, Record<string, any>>();
   if (symbols.length === 0) return result;
-  // PATCH 1101zzz59 — spark caps cleanly at 20 syms/batch.
-  const BATCH_SIZE = 20;
+  // Yahoo v7 accepts comma-separated symbols, max ~50 per call
   const chunks: string[][] = [];
-  for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
-    chunks.push(symbols.slice(i, i + BATCH_SIZE));
+  for (let i = 0; i < symbols.length; i += 40) {
+    chunks.push(symbols.slice(i, i + 40));
   }
   for (const chunk of chunks) {
     try {
       const yahooSyms = chunk.map(s => `${s}.NS`).join(',');
-      const url = `https://query1.finance.yahoo.com/v7/finance/spark?symbols=${encodeURIComponent(yahooSyms)}&range=1d&interval=1m`;
+      const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(yahooSyms)}&fields=regularMarketPrice,regularMarketPreviousClose,marketCap,trailingPE,epsTrailingTwelveMonths,bookValue,priceToBook,fiftyTwoWeekHigh,fiftyTwoWeekLow,regularMarketChangePercent,longName,shortName,sector,industry`;
       const resp = await fetch(url, {
         headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MarketCockpit/2.0)' },
         signal: AbortSignal.timeout(8000),
       });
       if (!resp.ok) continue;
       const json = await resp.json();
-      const rows = json?.spark?.result || [];
-      for (const r of rows) {
-        const meta = r?.response?.[0]?.meta;
-        if (!meta || !meta.regularMarketPrice) continue;
-        const rawSym = String(r.symbol || meta.symbol || '');
-        const sym = rawSym.replace(/\.(NS|BO)$/i, '');
+      const quotes = json?.quoteResponse?.result || [];
+      for (const q of quotes) {
+        if (!q || !q.regularMarketPrice) continue;
+        // Extract base symbol (remove .NS suffix)
+        const sym = (q.symbol || '').replace('.NS', '').replace('.BO', '');
         if (!sym) continue;
-        result.set(sym, _adaptSparkRow(meta, rawSym, 'yahoo_spark_batch'));
+        result.set(sym, {
+          lastPrice: q.regularMarketPrice,
+          pe: q.trailingPE ?? null,
+          eps: q.epsTrailingTwelveMonths ?? null,
+          bookValue: q.bookValue ?? null,
+          priceToBook: q.priceToBook ?? null,
+          marketCapCr: q.marketCap ? Math.round(q.marketCap / 10000000) : null,
+          high52: q.fiftyTwoWeekHigh ?? null,
+          low52: q.fiftyTwoWeekLow ?? null,
+          pChange: q.regularMarketChangePercent ?? null,
+          companyName: q.longName || q.shortName || null,
+          sector: q.sector || null,
+          _source: 'yahoo_v7_batch',
+        });
       }
     } catch {}
-    // BSE retry for unresolved symbols
+    // Also try BSE (.BO) for symbols that didn't resolve via NSE
     const missing = chunk.filter(s => !result.has(s));
     if (missing.length > 0) {
       try {
         const bseSyms = missing.map(s => `${s}.BO`).join(',');
-        const url = `https://query1.finance.yahoo.com/v7/finance/spark?symbols=${encodeURIComponent(bseSyms)}&range=1d&interval=1m`;
+        const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(bseSyms)}&fields=regularMarketPrice,marketCap,trailingPE,epsTrailingTwelveMonths,bookValue,priceToBook,fiftyTwoWeekHigh,fiftyTwoWeekLow,regularMarketChangePercent,longName,shortName,sector,industry`;
         const resp = await fetch(url, {
           headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MarketCockpit/2.0)' },
           signal: AbortSignal.timeout(6000),
         });
         if (resp.ok) {
           const json = await resp.json();
-          const rows = json?.spark?.result || [];
-          for (const r of rows) {
-            const meta = r?.response?.[0]?.meta;
-            if (!meta || !meta.regularMarketPrice) continue;
-            const rawSym = String(r.symbol || meta.symbol || '');
-            const sym = rawSym.replace(/\.(BO|NS)$/i, '');
+          const quotes = json?.quoteResponse?.result || [];
+          for (const q of quotes) {
+            if (!q || !q.regularMarketPrice) continue;
+            const sym = (q.symbol || '').replace('.BO', '').replace('.NS', '');
             if (!sym || result.has(sym)) continue;
-            result.set(sym, _adaptSparkRow(meta, rawSym, 'yahoo_spark_bse_batch'));
+            result.set(sym, {
+              lastPrice: q.regularMarketPrice,
+              pe: q.trailingPE ?? null,
+              eps: q.epsTrailingTwelveMonths ?? null,
+              bookValue: q.bookValue ?? null,
+              priceToBook: q.priceToBook ?? null,
+              marketCapCr: q.marketCap ? Math.round(q.marketCap / 10000000) : null,
+              high52: q.fiftyTwoWeekHigh ?? null,
+              low52: q.fiftyTwoWeekLow ?? null,
+              pChange: q.regularMarketChangePercent ?? null,
+              companyName: q.longName || q.shortName || null,
+              sector: q.sector || null,
+              _source: 'yahoo_bse_batch',
+            });
           }
         }
       } catch {}
@@ -666,20 +673,33 @@ async function fetchYahooV7Batch(symbols: string[]): Promise<Map<string, Record<
   return result;
 }
 
-// ── Yahoo spark with BSE suffix (.BO) — single-symbol BSE fallback ──────────
+// ── Yahoo v7 with BSE suffix (.BO) — fallback for NSE-missing symbols ──────
 async function fetchYahooBSEQuote(symbol: string): Promise<{ data: Record<string, any>; ok: boolean }> {
   try {
     const yahooSym = `${symbol}.BO`;
-    const url = `https://query1.finance.yahoo.com/v7/finance/spark?symbols=${encodeURIComponent(yahooSym)}&range=1d&interval=1m`;
+    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(yahooSym)}&fields=regularMarketPrice,marketCap,trailingPE,epsTrailingTwelveMonths,bookValue,priceToBook,fiftyTwoWeekHigh,fiftyTwoWeekLow,regularMarketChangePercent,longName,shortName,sector,industry`;
     const resp = await fetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MarketCockpit/2.0)' },
       signal: AbortSignal.timeout(4000),
     });
     if (!resp.ok) return { data: {}, ok: false };
     const json = await resp.json();
-    const meta = json?.spark?.result?.[0]?.response?.[0]?.meta;
-    if (!meta || !meta.regularMarketPrice) return { data: {}, ok: false };
-    return { data: _adaptSparkRow(meta, yahooSym, 'yahoo_spark_bse'), ok: true };
+    const q = json?.quoteResponse?.result?.[0];
+    if (!q || !q.regularMarketPrice) return { data: {}, ok: false };
+    const d: Record<string, any> = {};
+    d.lastPrice = q.regularMarketPrice;
+    d.pe = q.trailingPE ?? null;
+    d.eps = q.epsTrailingTwelveMonths ?? null;
+    d.bookValue = q.bookValue ?? null;
+    d.priceToBook = q.priceToBook ?? null;
+    d.marketCapCr = q.marketCap ? Math.round(q.marketCap / 10000000) : null;
+    d.high52 = q.fiftyTwoWeekHigh ?? null;
+    d.low52 = q.fiftyTwoWeekLow ?? null;
+    d.pChange = q.regularMarketChangePercent ?? null;
+    d.companyName = q.longName || q.shortName || null;
+    d.sector = q.sector || null;
+    d._source = 'yahoo_bse';
+    return { data: d, ok: true };
   } catch { return { data: {}, ok: false }; }
 }
 
@@ -1266,12 +1286,6 @@ function sanitizeForJSON(obj: unknown): unknown {
 
 // ── Main GET handler ──────────────────────────────────────────────────────────
 export async function GET(request: NextRequest) {
-  // PATCH 1101zzz / AUDIT H5 — rate-limit the multibagger scoring endpoint.
-  // Each call triggers N concurrent screener.in + NSE fetches and 5-pillar
-  // compute over 20-200 stocks. Without throttling a single client can
-  // exhaust Vercel function concurrency in seconds.
-  const limited = rateLimitResponse(request, 30, 60_000);
-  if (limited) return limited;
   try {
     const { searchParams } = new URL(request.url);
     const portfolioRaw = searchParams.get('portfolio') || '';
@@ -1410,6 +1424,34 @@ export async function GET(request: NextRequest) {
       try {
         yahooBatchData = await fetchYahooV7Batch(yahooAliases);
       } catch {}
+      // zzz59: If v7/quote returned nothing (401 from Railway egress), fall back to
+      // /v7/finance/spark which works without a crumb. Spark gives us price + prevClose
+      // + companyName — not PE/marketCap, but enough to clear "Invalid or zero price"
+      // and reset degradedMode. Fundamentals come from screener/NSE in PHASE 2.
+      if (yahooBatchData.size === 0) {
+        try {
+          const sparkSymbols = uncachedSymbols.map(s => (SYMBOL_ALIASES[s]?.yahoo || `${s}.NS`));
+          const sparkBatch = await fetchYahooSparkBatch(sparkSymbols);
+          // Merge spark data into yahooBatchData using the same key shape (no suffix).
+          for (const [baseSym, sd] of sparkBatch.entries()) {
+            if (!sd.lastPrice) continue;
+            yahooBatchData.set(baseSym, {
+              lastPrice: sd.lastPrice,
+              pe: null,
+              eps: null,
+              bookValue: null,
+              priceToBook: null,
+              marketCapCr: null,
+              high52: null,
+              low52: null,
+              pChange: sd.pChange,
+              companyName: sd.companyName,
+              sector: null,
+              _source: 'yahoo_spark_batch_fallback',
+            });
+          }
+        } catch {}
+      }
     }
 
     // Process in batches of 6
