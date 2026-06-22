@@ -395,7 +395,11 @@ export default function StrategicVisibilityPage() {
 
   return (
     <div style={{ minHeight: '100%', backgroundColor: 'var(--mc-bg-0)', padding: '20px 24px' }}>
-      <div style={{ maxWidth: 1400, margin: '0 auto' }}>
+      {/* PATCH 1101zzz38 — Per-user: "increase size of this". CSS `zoom` 1.18
+          uniformly scales every inline px size in the card grid below
+          (Chromium / Safari / FF 126+). Cleaner than touching ~200 inline
+          fontSize values across the page. */}
+      <div style={{ maxWidth: 1400, margin: '0 auto', zoom: 1.18 } as any}>
         <header style={{ marginBottom: 18 }}>
           <h1 style={{ fontSize: 22, fontWeight: 800, color: 'var(--mc-text-0)', margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
             🌟 <span style={{ background: 'linear-gradient(90deg,var(--mc-state-persistent),var(--mc-cyan))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Transformational Contracts</span>
