@@ -84,7 +84,15 @@ async function fetchPriceContext(symbol: string, signal?: AbortSignal): Promise<
     // Yahoo Finance v8 chart endpoint — 1y history
     const yahooSymbol = `${symbol}.NS`;
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?interval=1d&range=1y`;
-    const res = await fetch(url, { signal, cache: 'no-store' });
+    // PATCH 1101zzz46 — Yahoo returns 429 (Too Many Requests) when there's
+    // no User-Agent header. That's why CMP coverage on the warrant feed
+    // recently dropped to 0%. v8 chart API works fine with a UA — same
+    // header lib/yahoo.ts already uses.
+    const res = await fetch(url, {
+      signal,
+      cache: 'no-store',
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MarketCockpit/1.0)' },
+    });
     if (!res.ok) return { cmp: null, perf_90d_pct: null, perf_52w_high_pct: null };
     const j = await res.json();
     const result = j?.chart?.result?.[0];
