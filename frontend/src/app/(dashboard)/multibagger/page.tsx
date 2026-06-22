@@ -772,16 +772,28 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   // PATCH 1099 — keep the file-label honest. Once rows hydrate from any source
   // (localStorage init or parent's IDB rehydrate), refresh fileName from META
   // so the timestamp matches what the user is actually looking at.
+  // PATCH 1101zzz43 — guarded: only refresh from META when the existing
+  // fileName looks like the stale IDB-restore format (`N stocks · saved …`).
+  // The handleFiles upload toast sets fileName to "+N new stocks added · …"
+  // and that string MUST NOT be clobbered by this effect, otherwise the user
+  // never sees the diagnostic counts and the displayed count/date freeze on
+  // the last IDB snapshot. Regression seen after auto-sync from 121 → 137:
+  // toast briefly correct then snapped back to "121 stocks · saved 6/19".
   useEffect(() => {
-    if (rows.length > 0) {
-      try {
-        const meta = JSON.parse(localStorage.getItem(STORAGE_META) || '{}');
-        if (meta.count && meta.savedAt) {
-          const d = new Date(meta.savedAt);
-          setFileName(`${meta.count} stocks · saved ${d.toLocaleString()}`);
-        }
-      } catch {}
-    }
+    if (rows.length === 0) return;
+    // Only allow this effect to refresh the label when the current label is
+    // either empty OR the IDB-restore format. Never overwrite an active
+    // upload toast (contains "added" / "files ·" / "membership refreshed").
+    const isUploadToast = !!fileName && /added|files\s*·|membership refreshed/i.test(fileName);
+    if (isUploadToast) return;
+    try {
+      const meta = JSON.parse(localStorage.getItem(STORAGE_META) || '{}');
+      if (meta.count && meta.savedAt) {
+        const d = new Date(meta.savedAt);
+        setFileName(`${meta.count} stocks · saved ${d.toLocaleString()}`);
+      }
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows.length]);
   const [expRow, setExpRow] = useState<string|null>(null);
   const [expandAll, setExpandAll] = useState(false);
