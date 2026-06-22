@@ -57,9 +57,10 @@ export async function GET(req: Request) {
   }
 
   const url = new URL(req.url);
-  const date = url.searchParams.get('date');
-  const from = url.searchParams.get('from');
-  const to   = url.searchParams.get('to');
+  const date  = url.searchParams.get('date');
+  const month = url.searchParams.get('month');
+  const from  = url.searchParams.get('from');
+  const to    = url.searchParams.get('to');
 
   try {
     // Fast path: single-date lookup
@@ -76,6 +77,52 @@ export async function GET(req: Request) {
         });
       }
       return NextResponse.json({ date, items: [], total: 0, source: 'NSE', empty_reason: 'no_filings_or_scrape_pending' });
+    }
+
+    // PATCH zzz58 part 3/3 — Month-aggregate query (`?month=YYYY-MM`).
+    // Before this patch, a `?month=` request would fall through to the
+    // legacy full-payload KV (`earnings:calendar:nse:v1`), which is
+    // written ONLY by the silent Claude-in-Chrome scraper — so the
+    // route returned `total: 0` even when per-date keys
+    // (`earnings:calendar:nse:v1:date:YYYY-MM-DD`) were healthy and
+    // populated. Fix: when `month` is given, iterate every day in the
+    // month, fetch the per-date keys in parallel, and aggregate.
+    if (month && /^\d{4}-\d{2}$/.test(month)) {
+      const [yStr, mStr] = month.split('-');
+      const year = Number(yStr);
+      const monthIdx = Number(mStr) - 1; // JS Date months are 0-indexed
+      // Days in this month (handles Feb 28/29, 30-day months, etc.)
+      const daysInMonth = new Date(Date.UTC(year, monthIdx + 1, 0)).getUTCDate();
+      const dates: string[] = [];
+      for (let day = 1; day <= daysInMonth; day++) {
+        dates.push(`${month}-${String(day).padStart(2, '0')}`);
+      }
+      const byDate: Record<string, CalendarItem[]> = {};
+      let total = 0;
+      let latestScrapedAt: string | null = null;
+      await Promise.all(dates.map(async (d) => {
+        try {
+          const raw: any = await kvGet(`earnings:calendar:nse:v1:date:${d}`);
+          if (!raw) return;
+          const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+          const items: CalendarItem[] = Array.isArray(parsed?.items) ? parsed.items : [];
+          if (items.length === 0) return;
+          byDate[d] = items;
+          total += items.length;
+          if (parsed?.scraped_at && (!latestScrapedAt || parsed.scraped_at > latestScrapedAt)) {
+            latestScrapedAt = parsed.scraped_at;
+          }
+        } catch {}
+      }));
+      return NextResponse.json({
+        scraped_at: latestScrapedAt || '',
+        from: `${month}-01`,
+        to: `${month}-${String(daysInMonth).padStart(2, '0')}`,
+        month,
+        total,
+        by_date: byDate,
+        source: 'NSE',
+      });
     }
 
     // Full payload
@@ -224,6 +271,11 @@ export async function GET(req: Request) {
     const parsed = parsedFull as FullPayload;
 
     // Range filter
+    // PATCH zzz58 part 3/3 — When `from`/`to` is given and the legacy
+    // full payload's by_date map is missing the requested range (often
+    // the case for future-dated queries, since the legacy scraper only
+    // captures filings it has already seen), fall back to per-date KV
+    // keys. This restores parity with the month-aggregate path.
     if (from || to) {
       const fromD = from || '0000-00-00';
       const toD   = to   || '9999-99-99';
@@ -235,6 +287,35 @@ export async function GET(req: Request) {
           count += arr.length;
         }
       }
+      // Second pass: enumerate every day in [from, to] and fill gaps
+      // from per-date keys when the legacy payload was empty for them.
+      // Only do this when the range is reasonable (<= 90 days) to avoid
+      // unbounded KV fan-out on a malicious query.
+      try {
+        const fromTs = Date.parse(`${fromD}T00:00:00Z`);
+        const toTs   = Date.parse(`${toD}T00:00:00Z`);
+        if (Number.isFinite(fromTs) && Number.isFinite(toTs) && toTs >= fromTs) {
+          const spanDays = Math.round((toTs - fromTs) / 86400000) + 1;
+          if (spanDays > 0 && spanDays <= 92) {
+            const missingDates: string[] = [];
+            for (let i = 0; i < spanDays; i++) {
+              const d = new Date(fromTs + i * 86400000).toISOString().slice(0, 10);
+              if (!byDateFiltered[d]) missingDates.push(d);
+            }
+            await Promise.all(missingDates.map(async (d) => {
+              try {
+                const raw: any = await kvGet(`earnings:calendar:nse:v1:date:${d}`);
+                if (!raw) return;
+                const p = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                const items: CalendarItem[] = Array.isArray(p?.items) ? p.items : [];
+                if (!items.length) return;
+                byDateFiltered[d] = items;
+                count += items.length;
+              } catch {}
+            }));
+          }
+        }
+      } catch {}
       return NextResponse.json({
         ...parsed,
         from: fromD,
