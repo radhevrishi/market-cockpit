@@ -64,39 +64,43 @@ async function kvSet(env, key, value, ttlSeconds) {
   if (!res.ok) { const t = await res.text().catch(() => ''); throw new Error('Upstash SET ' + res.status + ' ' + t.slice(0, 200)); }
 }
 
-// ---- Yahoo auth (cookie + crumb) — the v7 batch-quote endpoint needs both ----
-async function yahooAuth() {
-  let cookie = '';
-  for (const u of ['https://fc.yahoo.com/', 'https://finance.yahoo.com/']) {
-    try {
-      const r = await fetch(u, { headers: { 'User-Agent': UA, Accept: 'text/html' }, redirect: 'follow', signal: AbortSignal.timeout(15000) });
-      const sc = r.headers.get('set-cookie');
-      if (sc) { cookie = sc.split(/,(?=[^ ;]+=)/).map((c) => c.split(';')[0].trim()).filter(Boolean).join('; '); if (cookie) break; }
-    } catch {}
-  }
-  let crumb = '';
+// ---- Yahoo spark (v7) — batch endpoint that still works without cookie/crumb.
+// PATCH 1101xxx: the /v7/finance/quote endpoint started returning 401 from
+// Cloudflare egress IPs (and from most servers since Aug 2024) even with the
+// cookie+crumb dance. The /v7/finance/spark endpoint (max 20 symbols/call)
+// still serves the same fields we need: regularMarketPrice, chartPreviousClose,
+// regularMarketDayHigh/Low, regularMarketVolume, fiftyTwoWeekHigh/Low. No auth
+// required. Smaller batches → more subrequests, but well within the paid
+// Worker limit (1000) for our 1600-symbol cap (1600/20 = 80 batches).
+async function yahooSparkBatch(symbols) {
+  const url = 'https://query1.finance.yahoo.com/v7/finance/spark?symbols=' +
+    encodeURIComponent(symbols.join(',')) + '&range=1d&interval=1d';
   try {
-    const r = await fetch('https://query1.finance.yahoo.com/v1/test/getcrumb', { headers: { 'User-Agent': UA, Cookie: cookie, Accept: 'text/plain' }, signal: AbortSignal.timeout(15000) });
-    crumb = (await r.text()).trim();
-  } catch {}
-  return { cookie, crumb };
-}
-
-async function yahooBatch(symbols, auth) {
-  const sym = symbols.join(',');
-  const tryUrls = [];
-  if (auth.crumb) tryUrls.push('https://query1.finance.yahoo.com/v7/finance/quote?crumb=' + encodeURIComponent(auth.crumb) + '&symbols=' + encodeURIComponent(sym));
-  tryUrls.push('https://query2.finance.yahoo.com/v7/finance/quote?symbols=' + encodeURIComponent(sym));
-  for (const url of tryUrls) {
-    try {
-      const r = await fetch(url, { headers: { 'User-Agent': UA, Cookie: auth.cookie, Accept: 'application/json' }, signal: AbortSignal.timeout(20000) });
-      if (!r.ok) continue;
-      const j = await r.json().catch(() => null);
-      const arr = j && j.quoteResponse && j.quoteResponse.result;
-      if (Array.isArray(arr) && arr.length) return arr;
-    } catch {}
-  }
-  return [];
+    const r = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: AbortSignal.timeout(20000) });
+    if (!r.ok) return [];
+    const j = await r.json().catch(() => null);
+    const arr = j && j.spark && j.spark.result;
+    if (!Array.isArray(arr)) return [];
+    // Flatten to {symbol, regularMarketPrice, regularMarketPreviousClose, ...}
+    // so the downstream parsing stays identical to the v7/quote shape.
+    const out = [];
+    for (const row of arr) {
+      const resp = row && row.response && row.response[0];
+      const meta = resp && resp.meta;
+      if (!meta) continue;
+      const price = meta.regularMarketPrice;
+      const prev  = meta.chartPreviousClose;
+      out.push({
+        symbol: meta.symbol || row.symbol,
+        regularMarketPrice: price,
+        regularMarketPreviousClose: prev,
+        regularMarketChange: (price != null && prev != null) ? price - prev : null,
+        regularMarketChangePercent: (price != null && prev) ? ((price - prev) / prev) * 100 : null,
+        regularMarketVolume: meta.regularMarketVolume,
+      });
+    }
+    return out;
+  } catch { return []; }
 }
 
 function chunk(a, n) { const out = []; for (let i = 0; i < a.length; i += n) out.push(a.slice(i, i + n)); return out; }
@@ -129,16 +133,14 @@ async function run(env, trigger) {
       let syms = [...meta.keys()].sort((a, b) => (capRank[meta.get(a).cap] ?? 2) - (capRank[meta.get(b).cap] ?? 2));
       if (syms.length > SYMBOL_CAP) syms = syms.slice(0, SYMBOL_CAP); // cap to most-liquid by cap rank
 
-      // 2) auth + batched live quotes from Yahoo (clean Cloudflare egress IP)
-      const auth = await yahooAuth();
-      summary.yahooAuth = { cookie: !!auth.cookie, crumb: !!auth.crumb };
-
-      const batches = chunk(syms.map((s) => s + '.NS'), 50);
+      // 2) batched live quotes from Yahoo via /v7/finance/spark (no auth needed,
+      // max 20 symbols/call). 1600/20 = 80 batches — within paid Worker limits.
+      const batches = chunk(syms.map((s) => s + '.NS'), 20);
       const out = [];
       let okBatches = 0;
       for (let i = 0; i < batches.length; i++) {
-        let res = await yahooBatch(batches[i], auth);
-        if (!res.length) { await sleep(800); res = await yahooBatch(batches[i], auth); } // one retry per failed batch
+        let res = await yahooSparkBatch(batches[i]);
+        if (!res.length) { await sleep(800); res = await yahooSparkBatch(batches[i]); } // one retry per failed batch
         if (res.length) okBatches++;
         for (const q of res) {
           const sym = String(q.symbol || '').replace(/\.NS$/i, '').toUpperCase();
@@ -158,7 +160,7 @@ async function run(env, trigger) {
             });
           }
         }
-        await sleep(150); // be gentle with Yahoo (same pacing as the .mjs)
+        await sleep(50); // be gentle with Yahoo (tighter pacing to fit 80 batches in budget)
       }
 
       summary.symbols = syms.length;
@@ -201,6 +203,22 @@ export default {
       const auth = req.headers.get('authorization') || '';
       if (auth !== 'Bearer ' + env.RUN_SECRET) return new Response('unauthorized', { status: 401 });
       return Response.json(await run(env, 'manual'));
+    }
+    // PATCH 1101xxx: /probe — public read-only Yahoo connectivity check. Fetches
+    // one spark batch (no KV writes, no secrets touched) so the deploy can be
+    // verified end-to-end without RUN_SECRET. Safe to keep enabled.
+    if (url.pathname === '/probe') {
+      const sample = ['RELIANCE.NS', 'TCS.NS', 'INFY.NS', 'HDFCBANK.NS', 'SBIN.NS'];
+      const t0 = Date.now();
+      const res = await yahooSparkBatch(sample);
+      return Response.json({
+        ok: res.length === sample.length,
+        endpoint: 'v7/finance/spark',
+        requested: sample.length,
+        returned: res.length,
+        sample: res.slice(0, 2).map((q) => ({ symbol: q.symbol, price: q.regularMarketPrice, prev: q.regularMarketPreviousClose })),
+        durationMs: Date.now() - t0,
+      });
     }
     let last = null;
     try { last = await kvGetRaw(env, LASTRUN_KEY); } catch {}
