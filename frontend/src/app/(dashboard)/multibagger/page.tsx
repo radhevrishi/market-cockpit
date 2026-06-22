@@ -1225,6 +1225,11 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [syncLoading, setSyncLoading] = useState(false);
   useEffect(() => { getSyncStatus().then(setSyncStatus); }, []);
+  // PATCH 1101zzz40 — track the server lastSync timestamp the user has
+  // already absorbed. Lets us auto-refresh existing IDB state when the
+  // GitHub Action commits a newer manifest, instead of leaving users stuck
+  // on weeks-old snapshots until they remember to click "🔄 Refresh now".
+  const LAST_SYNC_SEEN_KEY = 'mb_india_last_sync_seen_v1';
   const runAutoSync = useCallback(async (force = false) => {
     if (syncLoading) return;
     setSyncLoading(true);
@@ -1236,11 +1241,15 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
       }
       await handleFiles(files);
       markAutoLoaded('multibagger-india');
-      if (force) {
-        // refresh manifest display
-        const s = await getSyncStatus();
-        setSyncStatus(s);
-      }
+      // Stamp the lastSync timestamp the user just absorbed so the
+      // freshness check below doesn't re-fire on every navigation.
+      const fresh = await getSyncStatus();
+      setSyncStatus(fresh);
+      try {
+        if (fresh?.lastSync) {
+          localStorage.setItem(LAST_SYNC_SEEN_KEY, fresh.lastSync);
+        }
+      } catch {}
     } finally {
       setSyncLoading(false);
     }
@@ -1260,6 +1269,33 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows.length]);
+  // PATCH 1101zzz40 — freshness check. If the user already has rows but the
+  // server manifest's lastSync is newer than what they've absorbed, pull the
+  // diff automatically. handleFiles MERGES (existingSymbols dedup), so this
+  // is non-destructive: existing tickers stay, new tickers join. Wait 2s
+  // after mount to avoid racing the IDB hydration and the initial sync
+  // status fetch.
+  useEffect(() => {
+    if (!syncStatus?.lastSync) return;
+    if (syncLoading) return;
+    if (rows.length === 0) return;  // first-mount path handles this
+    let seenIso: string | null = null;
+    try { seenIso = localStorage.getItem(LAST_SYNC_SEEN_KEY); } catch {}
+    // First time we've ever recorded a seen-timestamp → just stamp current
+    // (user already has data from some past upload/sync, no need to re-pull).
+    if (!seenIso) {
+      try { localStorage.setItem(LAST_SYNC_SEEN_KEY, syncStatus.lastSync); } catch {}
+      return;
+    }
+    const serverMs = new Date(syncStatus.lastSync).getTime();
+    const seenMs = new Date(seenIso).getTime();
+    if (!Number.isFinite(serverMs) || !Number.isFinite(seenMs)) return;
+    if (serverMs <= seenMs) return;  // already up to date
+    // Server is newer — fire a non-blocking refresh.
+    const t = setTimeout(() => { runAutoSync(true); }, 2000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncStatus?.lastSync, rows.length]);
 
   // ── SORTABLE COLUMNS ──────────────────────────────────────────────────────
   type IndiaSort = 'score'|'pe'|'peg'|'roce'|'revCagr'|'profitCagr'|'marketCapCr'|'revenueAcceleration'|'opm'|'cfoToPat';
