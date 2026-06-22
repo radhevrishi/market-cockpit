@@ -1357,6 +1357,15 @@ export function applyUSARanking(results: USAResult[]): USAResult[] {
     .map((r, idx) => ({ r, idx, s: r.score ?? 0 }))
     .sort((a, b) => b.s - a.s);
   const n = sorted.length;
+  // PATCH 1101zzz26 — When the user uploads a small curated list (< 30 stocks),
+  // forced percentile ranking artificially demotes high-quality names to D/C
+  // purely because of rank position. INOD scored 69 with R40=69 elite +
+  // ACCELERATING + Strong-buy got D because rank 9/11 = 88th percentile.
+  // That's wrong for a hand-picked 11-stock conviction set. Disable
+  // percentile + auto-demote logic when N < 30; just trust the absolute
+  // score grade. Broad-universe runs (450+ stocks) still get the bell curve.
+  const SMALL_COHORT_THRESHOLD = 30;
+  const isSmallCohort = n < SMALL_COHORT_THRESHOLD;
   const cutA_PLUS = Math.floor(n * 0.10);
   const cutA      = Math.floor(n * 0.28);
   const cutBPLUS  = Math.floor(n * 0.55);
@@ -1377,6 +1386,17 @@ export function applyUSARanking(results: USAResult[]): USAResult[] {
 
   return results.map((r, idx) => {
     const scoreGrade: USAGrade = r.grade;
+    // PATCH 1101zzz26 — Small-cohort handling. For curated lists (< 30 stocks)
+    // skip the percentile-based grade entirely and use the absolute
+    // score-based grade. Percentile only makes statistical sense on broad
+    // universes; on small conviction sets it artificially forces the worst
+    // few into D regardless of how good they actually are. Also skip
+    // mega-cap / decel auto-demotes on small cohorts so user-supplied
+    // hand-picked names aren't double-penalized — the score itself already
+    // reflects fundamentals.
+    if (isSmallCohort) {
+      return { ...r, grade: scoreGrade };
+    }
     const rankGrade: USAGrade = rankGradeByIdx.get(idx) ?? r.grade;
     // Take the WORSE of the two so caps from scoreUSARow are never undone.
     const scoreRank = GRADE_ORDER.indexOf(scoreGrade);
