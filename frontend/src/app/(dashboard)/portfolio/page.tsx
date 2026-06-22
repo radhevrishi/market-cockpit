@@ -408,16 +408,53 @@ function PortfolioSummary({ rows, holdings }: { rows: PortfolioRow[]; holdings: 
   const cagr = computePortfolioCagr(rows, holdings);
   const top = topSector(rows);
 
-  // PATCH 1101zzz9 + zzz10 — Since-Inception math, now including cash.
-  // TOTAL WEALTH = equity current value + total cash. This is what we compare
-  // against initial capital for "since inception" return and CAGR.
-  //
-  // We DO show a sub-label caveat when unpriced equity holdings exist, since
-  // the equity portion is then a lower-bound estimate. Stock P&L (totalPnl
-  // above) intentionally stays equities-only — cash doesn't have P&L until
-  // you spend it, and mixing cash into it would be misleading.
-  const totalWealth = totalCurrent + totalCash;
-  const hasWealthData = priced.length > 0 || totalCash > 0;
+  // PATCH 1101zzz27 — Stale-feed guard. When the quote feed is temporarily
+  // down (e.g. NSE refresh in progress, network blip), > 50% of holdings come
+  // back with cmp=0. The naive calculation then reports TOTAL WEALTH = cash
+  // only and Since-Inception drops to -97%, which looks catastrophic but is
+  // just a refresh artifact. Detect that and fall back to last-good cached
+  // numbers (only updated when priceCoverage >= 70%) so user sees their REAL
+  // wealth with a "Refreshing prices..." indicator instead of red panic.
+  const LAST_GOOD_KEY = 'mc_portfolio_last_good_summary_v1';
+  const priceCoverage = rows.length > 0 ? priced.length / rows.length : 1;
+  const feedIsStale = rows.length > 0 && priceCoverage < 0.5;
+  type LastGoodSummary = {
+    capturedAt: string;
+    totalCurrent: number;
+    totalPnl: number;
+    totalPnlPct: number;
+    dayPnl: number;
+    gainersCount: number;
+    losersCount: number;
+  };
+  let lastGood: LastGoodSummary | null = null;
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem(LAST_GOOD_KEY) : null;
+    if (raw) lastGood = JSON.parse(raw);
+  } catch {}
+  // Write fresh data to cache when feed is healthy.
+  if (typeof window !== 'undefined' && rows.length > 0 && priceCoverage >= 0.7) {
+    try {
+      const next: LastGoodSummary = {
+        capturedAt: new Date().toISOString(),
+        totalCurrent, totalPnl, totalPnlPct, dayPnl,
+        gainersCount: gainers, losersCount: losers,
+      };
+      localStorage.setItem(LAST_GOOD_KEY, JSON.stringify(next));
+    } catch {}
+  }
+  // Use last-good values when feed is stale; live values otherwise.
+  const effectiveTotalCurrent = feedIsStale && lastGood?.totalCurrent ? lastGood.totalCurrent : totalCurrent;
+  const effectiveTotalPnl = feedIsStale && lastGood?.totalPnl !== undefined ? lastGood.totalPnl : totalPnl;
+  const effectiveTotalPnlPct = feedIsStale && lastGood?.totalPnlPct !== undefined ? lastGood.totalPnlPct : totalPnlPct;
+  const effectiveDayPnl = feedIsStale && lastGood?.dayPnl !== undefined ? lastGood.dayPnl : dayPnl;
+  const effectiveGainers = feedIsStale && lastGood?.gainersCount !== undefined ? lastGood.gainersCount : gainers;
+  const effectiveLosers = feedIsStale && lastGood?.losersCount !== undefined ? lastGood.losersCount : losers;
+  const showingStale = feedIsStale && !!lastGood;
+
+  // PATCH 1101zzz9 + zzz10 — TOTAL WEALTH = equity current + cash.
+  const totalWealth = effectiveTotalCurrent + totalCash;
+  const hasWealthData = effectiveTotalCurrent > 0 || totalCash > 0;
   const inceptionMs = new Date(inceptionDate + 'T00:00:00Z').getTime();
   const yearsSince = isFinite(inceptionMs)
     ? (Date.now() - inceptionMs) / (365.25 * 24 * 3600 * 1000)
@@ -464,17 +501,31 @@ function PortfolioSummary({ rows, holdings }: { rows: PortfolioRow[]; holdings: 
       color: '#FBBF24',
     }] : []),
     { label: 'INVESTED VALUE', value: fmt(totalInvested), color: '#F5F7FA' },
-    { label: 'CURRENT VALUE (equity)', value: priced.length > 0 ? fmt(totalCurrent) : '—', color: '#F5F7FA' },
+    { label: 'CURRENT VALUE (equity)',
+      // PATCH 1101zzz27 — show last-good when feed stale, with refresh indicator.
+      value: priced.length > 0 ? fmt(totalCurrent) : (showingStale && lastGood ? fmt(lastGood.totalCurrent) : '—'),
+      sub: showingStale ? '🔄 refreshing prices…' : undefined,
+      color: '#F5F7FA',
+    },
     priced.length > 0
       ? {
           label: 'TOTAL P&L',
           value: `${totalPnl < 0 ? '-' : ''}${fmt(Math.abs(totalPnl))} (${fmtPct(totalPnlPct)})`,
           // PATCH 1101zzz11 — flag equity-only when cash exists so user
           // doesn't compare it to wealth-level numbers above.
-          sub: totalCash > 0 ? 'equity only' : undefined,
-          color: totalPnl >= 0 ? '#10B981' : '#EF4444',
+          // PATCH 1101zzz27 — use effective values + stale indicator.
+          sub: showingStale ? '🔄 refreshing prices…' : (totalCash > 0 ? 'equity only' : undefined),
+          value: `${effectiveTotalPnl < 0 ? '-' : ''}${fmt(Math.abs(effectiveTotalPnl))} (${fmtPct(effectiveTotalPnlPct)})`,
+          color: effectiveTotalPnl >= 0 ? '#10B981' : '#EF4444',
         }
-      : { label: 'TOTAL P&L', value: '—', sub: 'prices unavailable', color: '#F5F7FA' },
+      : showingStale && lastGood
+        ? {
+            label: 'TOTAL P&L',
+            value: `${lastGood.totalPnl < 0 ? '-' : ''}${fmt(Math.abs(lastGood.totalPnl))} (${fmtPct(lastGood.totalPnlPct)})`,
+            sub: '🔄 refreshing prices…',
+            color: lastGood.totalPnl >= 0 ? '#10B981' : '#EF4444',
+          }
+        : { label: 'TOTAL P&L', value: '—', sub: 'prices unavailable', color: '#F5F7FA' },
     // PATCH 1101zzz7 — Honest label: TOTAL RETURN when held <1y, CAGR when >=1y.
     // The number is the same compounded gain; the LABEL prevents the misread
     // that a 1.5-month +30% means a sustainable +1269% annual run-rate.
@@ -502,11 +553,19 @@ function PortfolioSummary({ rows, holdings }: { rows: PortfolioRow[]; holdings: 
       : []),
     {
       label: 'DAY P&L',
-      value: `${dayPnl < 0 ? '-' : ''}${fmt(Math.abs(dayPnl))}`,
-      sub: totalCash > 0 ? 'equity only' : undefined,
-      color: dayPnl >= 0 ? '#10B981' : '#EF4444',
+      // PATCH 1101zzz27 — effective + stale indicator.
+      value: `${effectiveDayPnl < 0 ? '-' : ''}${fmt(Math.abs(effectiveDayPnl))}`,
+      sub: showingStale ? '🔄 refreshing prices…' : (totalCash > 0 ? 'equity only' : undefined),
+      color: effectiveDayPnl >= 0 ? '#10B981' : '#EF4444',
     },
-    { label: 'HOLDINGS', value: `${rows.length}`, sub: `${gainers} ↑  ${losers} ↓${noData > 0 ? `  ${noData} N/A` : ''}`, color: '#F5F7FA' },
+    { label: 'HOLDINGS',
+      value: `${rows.length}`,
+      // PATCH 1101zzz27 — show effective gainers/losers + refresh hint.
+      sub: showingStale
+        ? `🔄 refreshing prices… (${rows.length} held)`
+        : `${effectiveGainers} ↑  ${effectiveLosers} ↓${noData > 0 ? `  ${noData} N/A` : ''}`,
+      color: '#F5F7FA',
+    },
     // PATCH 1101zzz11 — TOP SECTOR honest sub-label: "% of mapped" so user
     // sees that a chunk of the portfolio has no sector mapping. If <60%
     // of value has a real sector, also flag "low coverage" so the user
