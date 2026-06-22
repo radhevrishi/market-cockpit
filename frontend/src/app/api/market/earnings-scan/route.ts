@@ -1768,7 +1768,28 @@ async function buildEarningsCard(symbol: string, origin?: string): Promise<Earni
       currentPrice: number | null;
       html?: string;
     } | null> => {
-      // Screener: try consolidated, then standalone, then original symbol
+      // zzz54 — Worker FIRST (was Worker-as-fallback in zzz53).
+      // Railway egress is bot-blocked by screener.in since ~May 8 2026 — direct
+      // fetch always returns null while eating a 25s timeout per attempt. The
+      // CF Worker has clean egress and pre-parses quarters. Make it the primary
+      // path; only fall through to direct if Worker returns null (Worker doesn't
+      // know the symbol or its parser missed the page).
+      const workerData = await fetchScreenerViaWorker(symbol);
+      if (workerData && workerData.quarters.length > 0) {
+        console.log(`[Earnings Scan] ${symbol}: ✓ Worker primary OK (${workerData.quarters.length}Q)`);
+        return {
+          quarters: workerData.quarters,
+          companyName: workerData.companyName,
+          isBanking: workerData.isBanking,
+          mcap: workerData.mcap,
+          pe: workerData.pe,
+          currentPrice: workerData.currentPrice,
+        };
+      }
+
+      // Direct screener.in fallback (works on the rare days when Railway egress
+      // is not bot-blocked, and serves as future-proofing if the block lifts).
+      console.log(`[Earnings Scan] ${symbol}: Worker returned ${workerData ? 'null-quarters' : 'null'} — trying direct screener.in`);
       let html = await fetchScreenerData(screenerSym, 'consolidated');
       if (!html && screenerSym !== symbol) html = await fetchScreenerData(symbol, 'consolidated');
       if (!html) html = await fetchScreenerData(screenerSym, 'standalone');
@@ -1786,22 +1807,6 @@ async function buildEarningsCard(symbol: string, origin?: string): Promise<Earni
             html,
           };
         }
-      }
-      // zzz53 — Railway egress is being served bot-challenge / empty HTML by
-      // screener.in (no "Quarterly Results" marker → null). Fall back to the
-      // Cloudflare Worker which proxies the same page from CF egress.
-      console.log(`[Earnings Scan] ${symbol}: direct screener.in returned null — trying Worker fallback`);
-      const workerData = await fetchScreenerViaWorker(symbol);
-      if (workerData) {
-        return {
-          quarters: workerData.quarters,
-          companyName: workerData.companyName,
-          isBanking: workerData.isBanking,
-          mcap: workerData.mcap,
-          pe: workerData.pe,
-          currentPrice: workerData.currentPrice,
-          // No html → guidance extraction is skipped, financials still flow
-        };
       }
       return null;
     })().catch(e => { failureReasons.push(`Screener: ${(e as Error).message}`); return null; }),
