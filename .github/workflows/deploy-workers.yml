@@ -41,18 +41,18 @@ jobs:
         worker: [mc-movers, mc-alerts, mc-guardian]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 24
 
       # PATCH 1101www: diagnostic step — print whoami so we can see exactly
       # what scope/permissions the token has. Helps untangle which token
       # GitHub is actually using.
       - name: Diagnose token (whoami)
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           wranglerVersion: '4'
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -62,7 +62,7 @@ jobs:
         continue-on-error: true
 
       - name: Deploy ${{ matrix.worker }}
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           wranglerVersion: '4'
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
