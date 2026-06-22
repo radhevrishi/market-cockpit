@@ -181,7 +181,49 @@ async function handleLiveFeed(req: NextRequest) {
   }
   // PATCH 0704 — cacheOnly path: no cache → return empty immediately so
   // client doesn't block on the 30-60s fresh-fetch.
+  // PATCH 1101zzz37 — when Redis cache is cold but the CF Worker blob has
+  // fresh filings (sub-100ms read, already deployed), fall through to that
+  // before declaring empty. Otherwise the Signals page shows "Upstream
+  // scraper is empty" forever even though mc-scraper has 20 fresh filings.
   if (cacheOnly) {
+    try {
+      const fromDateCO = new Date();
+      fromDateCO.setDate(fromDateCO.getDate() - days);
+      const fromIsoCO = fromDateCO.toISOString().slice(0, 10);
+      const toIsoCO = new Date().toISOString().slice(0, 10);
+      const cfResult = await fetchNSEAnnouncements({
+        signal: AbortSignal.timeout(3000),
+        fromIso: fromIsoCO,
+        toIso: toIsoCO,
+      });
+      const cfFilings = cfResult?.filings || [];
+      if (cfFilings.length > 0) {
+        // Return raw filings — caller routes only need .filings.length for
+        // the "is upstream empty?" diagnostic. Skips heavy scoring on
+        // cacheOnly path; cache the result so Signals reuses it.
+        const payload: any = {
+          generated_at: new Date().toISOString(),
+          count_total: cfFilings.length,
+          count_relevant: cfFilings.length,
+          count_high_bullish: 0,
+          filings: cfFilings.slice(0, 200).map((f: FilingRecord) => ({
+            symbol: f.symbol,
+            company: f.company_name,
+            exchange: f.exchange,
+            subject: f.subject,
+            filing_datetime: f.filing_datetime,
+            attachment_url: f.attachment_urls?.[0] || null,
+            source_url: f.source_url,
+            bullish: { tier: 'NEUTRAL', raw_score: 0, composite: 0 },
+            sectorOverlay: null,
+          })),
+          theme_clusters: [],
+          sources: { nse: 'NSE_OK', bse: 'BSE_EMPTY' },
+          cacheStatus: 'CF_WORKER_DIRECT',
+        };
+        return NextResponse.json(payload, { headers: { 'Cache-Control': 's-maxage=120, stale-while-revalidate=600' } });
+      }
+    } catch { /* fall through to empty payload */ }
     return NextResponse.json({
       generated_at: new Date().toISOString(),
       count_total: 0,
