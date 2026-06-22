@@ -240,30 +240,39 @@ export async function fetchNSEAnnouncements(opts: {
       return { filings: [], source: 'NSE_BLOCKED' as const };
     }
 
-    // PATCH 0929 — Try Cloudflare Worker FIRST. Worker maintains a fresh
-    // NSE-filings blob in CF KV (every 5 min during market hours). Sub-100ms
-    // read, no Vercel CPU spent on NSE upstream, no Upstash burn.
+    // PATCH 1101zzz29 — MERGE CF + GH blobs instead of exclusive fallback.
+    // Old: CF Worker won when non-empty → GH blob never read. CF Worker
+    // queries NSE `?index=equities` with no date range and returns only
+    // ~20 newest filings, starving downstream stages (concall scoring,
+    // warrant momentum, signals compute). Meanwhile the GH-Actions
+    // `scrape-corp-filings.yml` writes 500 filings/day to KV but that
+    // blob was unreachable because CF returned non-empty.
+    // Fix: pull BOTH in parallel, dedupe by content_hash, merge before
+    // window-filtering. CF stays as the freshness source for the last
+    // 15-30 min, GH gives the 24h depth needed for real scoring signal.
     try {
-      const cfFilings = await readCFWorkerBlob(opts.signal);
-      if (cfFilings && cfFilings.length > 0) {
-        const filtered = filterBlobToWindow(cfFilings, fromStr, toStr, 'NSE');
+      const [cfFilings, ghBlob] = await Promise.all([
+        readCFWorkerBlob(opts.signal).catch(() => null),
+        readGhBlob().catch(() => null),
+      ]);
+      const cfArr = (cfFilings && cfFilings.length > 0) ? cfFilings : [];
+      const ghArr = (ghBlob && ghBlob.filings) ? ghBlob.filings : [];
+      if (cfArr.length > 0 || ghArr.length > 0) {
+        const seen = new Set<string>();
+        const merged: FilingRecord[] = [];
+        // CF first (fresher), then GH entries that don't dupe.
+        // Dedupe key: content_hash if present, else symbol|subject|filing_date.
+        for (const f of cfArr) {
+          const k = (f as any).content_hash || `${f.symbol}|${f.subject}|${f.filing_date}`;
+          if (!seen.has(k)) { seen.add(k); merged.push(f); }
+        }
+        for (const f of ghArr) {
+          const k = (f as any).content_hash || `${f.symbol}|${f.subject}|${f.filing_date}`;
+          if (!seen.has(k)) { seen.add(k); merged.push(f); }
+        }
+        const filtered = filterBlobToWindow(merged, fromStr, toStr, 'NSE');
         if (filtered.length > 0) {
           return { filings: filtered, source: 'NSE_OK' as const };
-        }
-      }
-    } catch { /* fall through to next source */ }
-
-    // PATCH 0739 — Try the GH-Actions-scraped blob NEXT. Older fallback,
-    // kept for when CF Worker is being deployed / cold.
-    try {
-      const blob = await readGhBlob();
-      if (blob?.filings) {
-        const filtered = filterBlobToWindow(blob.filings, fromStr, toStr, 'NSE');
-        if (filtered.length > 0) {
-          return {
-            filings: filtered,
-            source: 'NSE_OK' as const,
-          };
         }
       }
     } catch {
@@ -369,21 +378,31 @@ export async function fetchBSEAnnouncements(opts: {
       return { filings: [], source: 'BSE_BLOCKED' as const };
     }
 
-    // PATCH 0739 — GH-blob fast path. Same rationale as the NSE adapter
-    // above. Saves Vercel CPU + dodges BSE rate-limiting.
+    // PATCH 0739 + 1101zzz29 — Merge CF + GH blobs for BSE too. Same
+    // logic as fetchNSEAnnouncements above.
     try {
-      const blob = await readGhBlob();
-      // For BSE, the iso strings have hyphens stripped (compare to NSE);
-      // reconstruct YYYY-MM-DD for the filter helper.
       const fromIso = `${fromStr.slice(0, 4)}-${fromStr.slice(4, 6)}-${fromStr.slice(6, 8)}`;
       const toIso   = `${toStr.slice(0, 4)}-${toStr.slice(4, 6)}-${toStr.slice(6, 8)}`;
-      if (blob?.filings) {
-        const filtered = filterBlobToWindow(blob.filings, fromIso, toIso, 'BSE');
+      const [cfFilings, blob] = await Promise.all([
+        readCFWorkerBlob(opts.signal).catch(() => null),
+        readGhBlob().catch(() => null),
+      ]);
+      const cfArr = (cfFilings && cfFilings.length > 0) ? cfFilings.filter((f: any) => f.exchange === 'BSE') : [];
+      const ghArr = (blob && blob.filings) ? blob.filings.filter((f: any) => f.exchange === 'BSE') : [];
+      if (cfArr.length > 0 || ghArr.length > 0) {
+        const seen = new Set<string>();
+        const merged: FilingRecord[] = [];
+        for (const f of cfArr) {
+          const k = (f as any).content_hash || `${f.symbol}|${f.subject}|${f.filing_date}`;
+          if (!seen.has(k)) { seen.add(k); merged.push(f); }
+        }
+        for (const f of ghArr) {
+          const k = (f as any).content_hash || `${f.symbol}|${f.subject}|${f.filing_date}`;
+          if (!seen.has(k)) { seen.add(k); merged.push(f); }
+        }
+        const filtered = filterBlobToWindow(merged, fromIso, toIso, 'BSE');
         if (filtered.length > 0) {
-          return {
-            filings: filtered,
-            source: 'BSE_OK' as const,
-          };
+          return { filings: filtered, source: 'BSE_OK' as const };
         }
       }
     } catch {
