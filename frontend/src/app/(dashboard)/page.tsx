@@ -2567,8 +2567,11 @@ export default function HomeDashboard() {
             <Link href="/super-investors"          style={navChip('#A78BFA')}>🦅 Super Investors</Link>
             <Link
               href="/screener-sync"
-              style={{ ...navChip('#8B5CF6'), border: '1px solid color-mix(in srgb, #8B5CF6 40%, transparent)' }}
-              title="Set up the browser bookmarklet — bypasses Cloudflare's block on server-side fetch"
+              // PATCH 1101zzz45 — force cursor:pointer + drop `title`. The
+              // title attribute was triggering the help (?) cursor on some
+              // browsers and visually inconsistent with all other chips.
+              // The chip text is already self-explanatory.
+              style={{ ...navChip('#8B5CF6'), border: '1px solid color-mix(in srgb, #8B5CF6 40%, transparent)', cursor: 'pointer' }}
             >📥 Sync Screener.in</Link>
             <Link href="/journey"                  style={navChip('#22D3EE')}>🚀 The Journey</Link>
             <Link href="/critical-themes"          style={navChip('#EF4444')}>🔥 Themes</Link>
