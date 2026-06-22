@@ -144,7 +144,7 @@ interface BroadResult {
   cohortDate?: string;
 }
 
-async function computeBroadBreadth(): Promise<BroadResult> {
+async function computeBroadBreadth(origin?: string): Promise<BroadResult> {
   // Read both blobs in parallel — neither blocks the other.
   const [uniBlob, rsBlob] = await Promise.all([
     kvGet<{ tickers?: UniverseTicker[]; generatedAt?: string }>('nse-ticker-universe:v1:latest').catch(() => null),
@@ -181,11 +181,14 @@ async function computeBroadBreadth(): Promise<BroadResult> {
       // Vercel + Railway both honour relative URLs in fetch() at runtime
       // for internal API calls so we use the absolute one with origin
       // derived from VERCEL_URL when present.
-      const origin =
-        process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}`
-        : process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
-        : 'http://localhost:3000';
-      const qRes = await fetch(`${origin}/api/market/quotes?market=india`, {
+      // PATCH 1101zzz31 — pass origin from the GET handler; env-based
+      // fallback fails on Railway because VERCEL_URL is unset and
+      // RAILWAY_PUBLIC_DOMAIN isn't always set on this deploy.
+      const effOrigin = origin ||
+        (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}`
+          : process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+          : 'http://localhost:3000');
+      const qRes = await fetch(`${effOrigin}/api/market/quotes?market=india`, {
         cache: 'no-store',
         signal: AbortSignal.timeout(6000),
       }).catch(() => null);
@@ -372,7 +375,11 @@ export async function GET(request: Request) {
 
   // ─── BROAD MODE — read from KV blobs, full NSE universe ──────────────
   if (mode === 'broad' || mode === 'auto') {
-    const broad = await computeBroadBreadth();
+    // PATCH 1101zzz31 — extract origin from incoming request URL so the
+    // live-overlay internal fetch works regardless of env var availability.
+    const reqUrl = new URL(request.url);
+    const origin = `${reqUrl.protocol}//${reqUrl.host}`;
+    const broad = await computeBroadBreadth(origin);
     if (broad.ok) {
       const composite =
         broad.trendScore! * 0.35 +
