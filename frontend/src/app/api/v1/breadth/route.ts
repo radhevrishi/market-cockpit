@@ -164,28 +164,85 @@ async function computeBroadBreadth(): Promise<BroadResult> {
   const stats = rsBlob?.stats || {};
   const tickers = uniBlob.tickers.filter((t) => t.hasPrice && t.ticker);
 
+  // PATCH 1101zzz30 — LIVE INTRADAY OVERLAY. During NSE open hours we
+  // overlay live regularMarketPrice from /api/market/quotes on top of the
+  // EOD BHAVCOPY universe. The rolling stats blob carries sma20, sma50,
+  // range60dHigh, range60dLow as NUMERIC fields — so we can recompute
+  // aboveSma20 / aboveSma50 / pctOfRange60dHigh in real time using the
+  // live price, while keeping the 60-day SMA + range as the baseline.
+  // Off hours / weekends: fall through to the precomputed booleans
+  // (yesterday's close), behaviour identical to pre-zzz30.
+  let liveQuoteMap: Map<string, number> | null = null;
+  try {
+    const { isIndianMarketOpen } = await import('@/lib/market-hours');
+    if (isIndianMarketOpen()) {
+      // Fetch live quotes from the internal route. host is derived from
+      // the incoming request URL so we work in dev + prod identically.
+      // Vercel + Railway both honour relative URLs in fetch() at runtime
+      // for internal API calls so we use the absolute one with origin
+      // derived from VERCEL_URL when present.
+      const origin =
+        process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}`
+        : process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+        : 'http://localhost:3000';
+      const qRes = await fetch(`${origin}/api/market/quotes?market=india`, {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(6000),
+      }).catch(() => null);
+      if (qRes && qRes.ok) {
+        const qJson: any = await qRes.json().catch(() => null);
+        const stocks: any[] = Array.isArray(qJson?.stocks) ? qJson.stocks : [];
+        liveQuoteMap = new Map();
+        for (const s of stocks) {
+          const sym = String(s.ticker || s.symbol || '').toUpperCase();
+          const price = Number(s.price);
+          if (sym && Number.isFinite(price) && price > 0) {
+            liveQuoteMap.set(sym, price);
+          }
+        }
+      }
+    }
+  } catch {
+    /* live overlay best-effort; fall through to EOD precomputed flags */
+  }
+
   // ─── TREND BREADTH (35%) ─────────────────────────────────────────────
-  // PATCH 0810: now uses REAL sma20 + sma50 from rolling-stats blob
-  // (computed by GH Actions over 60-day BHAVCOPY window). 60-day range
-  // high/low is used for "new high/low" — that's an HONEST 60d signal,
-  // not pretending to be 52w.
+  // PATCH 0810 + 1101zzz30: REAL sma20 + sma50 from rolling-stats blob
+  // (computed by GH Actions over 60-day BHAVCOPY window). When live
+  // overlay is available, aboveSma20 / aboveSma50 / pct-of-range are
+  // recomputed against today's intraday price instead of yesterday's
+  // close, making the breadth indicator truly live during market hours.
   let aboveSma20 = 0, hasSma20 = 0;
   let aboveSma50 = 0, hasSma50 = 0;
   let newHigh = 0, newLow = 0, hasHL = 0;
   for (const t of tickers) {
     const s = stats[t.ticker] || {};
-    if (typeof s.aboveSma20 === 'boolean') {
+    const livePrice = liveQuoteMap?.get(String(t.ticker).toUpperCase());
+    // aboveSma20
+    if (livePrice !== undefined && Number.isFinite(s.sma20) && s.sma20! > 0) {
+      hasSma20++;
+      if (livePrice > s.sma20!) aboveSma20++;
+    } else if (typeof s.aboveSma20 === 'boolean') {
       hasSma20++;
       if (s.aboveSma20) aboveSma20++;
     }
-    if (typeof s.aboveSma50 === 'boolean') {
+    // aboveSma50
+    if (livePrice !== undefined && Number.isFinite(s.sma50) && s.sma50! > 0) {
+      hasSma50++;
+      if (livePrice > s.sma50!) aboveSma50++;
+    } else if (typeof s.aboveSma50 === 'boolean') {
       hasSma50++;
       if (s.aboveSma50) aboveSma50++;
     }
     // 60-day range — current within 2% of period high = new high; within 5% of low = new low
-    const p = Number.isFinite(s.pctOfRange60dHigh)
-      ? s.pctOfRange60dHigh!
-      : (Number.isFinite(s.pctOf52wHigh) ? s.pctOf52wHigh! : null);
+    let p: number | null = null;
+    if (livePrice !== undefined && Number.isFinite(s.range60dHigh) && s.range60dHigh! > 0) {
+      p = livePrice / s.range60dHigh!;
+    } else {
+      p = Number.isFinite(s.pctOfRange60dHigh)
+        ? s.pctOfRange60dHigh!
+        : (Number.isFinite(s.pctOf52wHigh) ? s.pctOf52wHigh! : null);
+    }
     if (p !== null) {
       hasHL++;
       if (p >= 0.98) newHigh++;
@@ -301,7 +358,11 @@ async function computeBroadBreadth(): Promise<BroadResult> {
     },
     universeSize: tickers.length,
     cohortDate: uniBlob.generatedAt,
-  };
+    // PATCH 1101zzz30 — surface whether the live overlay fired so the
+    // top-level response can reflect "live" vs "EOD only" in `source`.
+    liveOverlayUsed: !!(liveQuoteMap && liveQuoteMap.size > 0),
+    liveQuoteCount: liveQuoteMap?.size ?? 0,
+  } as any;
 }
 
 export async function GET(request: Request) {
@@ -335,7 +396,9 @@ export async function GET(request: Request) {
         universe_size: broad.universeSize,
         scope: 'broad',
         scope_label: `Full NSE universe (${broad.universeSize} stocks)`,
-        source: 'nse-ticker-universe + nse-rolling-stats (GH Actions BHAVCOPY)',
+        source: (broad as any).liveOverlayUsed
+          ? `nse-ticker-universe + nse-rolling-stats (GH Actions BHAVCOPY) + LIVE INTRADAY OVERLAY (${(broad as any).liveQuoteCount} tickers)`
+          : 'nse-ticker-universe + nse-rolling-stats (GH Actions BHAVCOPY)',
         cohort_date: broad.cohortDate,
         ms: Date.now() - t0,
         generated_at: new Date().toISOString(),
