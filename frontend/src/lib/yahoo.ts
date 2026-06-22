@@ -71,7 +71,25 @@ export async function fetchChart(symbol: string, range = '1d', interval = '1d') 
   }
 }
 
-// Batch fetch quotes using v7 quote API (more efficient for multiple symbols)
+// Batch fetch quotes using v7/finance/spark API.
+//
+// PATCH 1101zzz59 — Migrated off /v7/finance/quote (returns 401 Unauthorized
+// from server egress since Oct-2025, crumb-gated) onto /v7/finance/spark, which
+// works without auth and was already proven in PATCH 1101zzz (mc-movers worker)
+// to return prices in ~80ms at 20 symbols per call.
+//
+// Spark response shape:
+//   { spark: { result: [{ symbol, response: [{ meta: {...} }] }] } }
+//
+// Fields available from spark meta (drop-in for v7 quote consumers):
+//   regularMarketPrice, previousClose, chartPreviousClose,
+//   shortName, longName, currency,
+//   fiftyTwoWeekHigh, fiftyTwoWeekLow,
+//   regularMarketDayHigh, regularMarketDayLow, regularMarketVolume.
+// Fields NOT in spark (callers that need these must use chart fallback or
+// rely on other data sources): marketCap, trailingPE, eps, bookValue.
+// We synthesise regularMarketChange/regularMarketChangePercent from
+// price - prevClose so existing call sites keep working unchanged.
 export async function fetchQuotes(symbols: string[]): Promise<any[]> {
   if (symbols.length === 0) return [];
 
@@ -80,13 +98,8 @@ export async function fetchQuotes(symbols: string[]): Promise<any[]> {
   if (cached) return cached;
 
   try {
-    // PATCH 0788 — concurrent batching with rate-limit-friendly settings.
-    // P0787 used CONC=8 + 8s timeout — Yahoo rate-limited after 4-5
-    // batches and resolved only 239/755 tickers. Backing off to CONC=4
-    // (gentler) + 12s timeout (Yahoo cold quotes can be slow), with a
-    // 100ms gap between slabs. For 755 symbols (38 batches) that's
-    // ~10 slabs × ~1.5s = ~15s total — well within Vercel maxDuration
-    // and reliable.
+    // Same batching profile as old v7/quote path so the rate-limit + timing
+    // story is unchanged: 20 syms/batch × CONC=4 × 100ms slab gap.
     const BATCH = 20;
     const CONC  = 4;
     const SLAB_GAP_MS = 100;
@@ -97,12 +110,47 @@ export async function fetchQuotes(symbols: string[]): Promise<any[]> {
 
     const allResults: any[] = [];
     const fetchOne = async (chunk: string[]) => {
-      const url = `${YF_BASE2}/v7/finance/quote?symbols=${encodeURIComponent(chunk.join(','))}`;
+      const url = `${YF_BASE}/v7/finance/spark?symbols=${encodeURIComponent(chunk.join(','))}&range=1d&interval=1m`;
       try {
         const res = await fetch(url, { headers: HEADERS, next: { revalidate: 300 }, signal: AbortSignal.timeout(12_000) });
         if (!res.ok) return [];
         const json = await res.json();
-        return json?.quoteResponse?.result || [];
+        const sparkResults = json?.spark?.result || [];
+        const adapted: any[] = [];
+        for (const r of sparkResults) {
+          const meta = r?.response?.[0]?.meta;
+          if (!meta) continue;
+          const price = Number(meta.regularMarketPrice) || 0;
+          // chartPreviousClose is the previous session close — spark's
+          // canonical "yesterday" value. previousClose falls back to it.
+          const prevClose = Number(meta.previousClose) || Number(meta.chartPreviousClose) || 0;
+          const change = (price > 0 && prevClose > 0) ? (price - prevClose) : 0;
+          const changePct = (price > 0 && prevClose > 0) ? ((price - prevClose) / prevClose) * 100 : 0;
+          adapted.push({
+            // Identity
+            symbol: r.symbol || meta.symbol,
+            shortName: meta.shortName || meta.symbol,
+            longName: meta.longName,
+            currency: meta.currency,
+            // Price
+            regularMarketPrice: price,
+            regularMarketPreviousClose: prevClose,
+            regularMarketChange: change,
+            regularMarketChangePercent: changePct,
+            // Day/year bounds (when spark provides them; open is NOT in spark)
+            regularMarketDayHigh: meta.regularMarketDayHigh ?? 0,
+            regularMarketDayLow: meta.regularMarketDayLow ?? 0,
+            regularMarketVolume: meta.regularMarketVolume ?? 0,
+            fiftyTwoWeekHigh: meta.fiftyTwoWeekHigh ?? 0,
+            fiftyTwoWeekLow: meta.fiftyTwoWeekLow ?? 0,
+            // marketCap / PE / EPS are NOT available from spark. Callers
+            // that need them must use a different source (we set 0 / null
+            // so the field exists for downstream `q.marketCap || 0` checks).
+            marketCap: 0,
+            _source: 'yahoo_spark',
+          });
+        }
+        return adapted;
       } catch { return []; }
     };
     for (let i = 0; i < chunks.length; i += CONC) {
