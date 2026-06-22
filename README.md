@@ -214,3 +214,4 @@ With the backend running, visit:
 | AI | Anthropic Claude |
 | Cache/PubSub | Redis (optional) |
 | Auth | JWT (python-jose + bcrypt) |
+
