@@ -71,25 +71,7 @@ export async function fetchChart(symbol: string, range = '1d', interval = '1d') 
   }
 }
 
-// Batch fetch quotes using v7/finance/spark API.
-//
-// PATCH 1101zzz59 — Migrated off /v7/finance/quote (returns 401 Unauthorized
-// from server egress since Oct-2025, crumb-gated) onto /v7/finance/spark, which
-// works without auth and was already proven in PATCH 1101zzz (mc-movers worker)
-// to return prices in ~80ms at 20 symbols per call.
-//
-// Spark response shape:
-//   { spark: { result: [{ symbol, response: [{ meta: {...} }] }] } }
-//
-// Fields available from spark meta (drop-in for v7 quote consumers):
-//   regularMarketPrice, previousClose, chartPreviousClose,
-//   shortName, longName, currency,
-//   fiftyTwoWeekHigh, fiftyTwoWeekLow,
-//   regularMarketDayHigh, regularMarketDayLow, regularMarketVolume.
-// Fields NOT in spark (callers that need these must use chart fallback or
-// rely on other data sources): marketCap, trailingPE, eps, bookValue.
-// We synthesise regularMarketChange/regularMarketChangePercent from
-// price - prevClose so existing call sites keep working unchanged.
+// Batch fetch quotes using v7 quote API (more efficient for multiple symbols)
 export async function fetchQuotes(symbols: string[]): Promise<any[]> {
   if (symbols.length === 0) return [];
 
@@ -98,8 +80,13 @@ export async function fetchQuotes(symbols: string[]): Promise<any[]> {
   if (cached) return cached;
 
   try {
-    // Same batching profile as old v7/quote path so the rate-limit + timing
-    // story is unchanged: 20 syms/batch × CONC=4 × 100ms slab gap.
+    // PATCH 0788 — concurrent batching with rate-limit-friendly settings.
+    // P0787 used CONC=8 + 8s timeout — Yahoo rate-limited after 4-5
+    // batches and resolved only 239/755 tickers. Backing off to CONC=4
+    // (gentler) + 12s timeout (Yahoo cold quotes can be slow), with a
+    // 100ms gap between slabs. For 755 symbols (38 batches) that's
+    // ~10 slabs × ~1.5s = ~15s total — well within Vercel maxDuration
+    // and reliable.
     const BATCH = 20;
     const CONC  = 4;
     const SLAB_GAP_MS = 100;
@@ -110,47 +97,12 @@ export async function fetchQuotes(symbols: string[]): Promise<any[]> {
 
     const allResults: any[] = [];
     const fetchOne = async (chunk: string[]) => {
-      const url = `${YF_BASE}/v7/finance/spark?symbols=${encodeURIComponent(chunk.join(','))}&range=1d&interval=1m`;
+      const url = `${YF_BASE2}/v7/finance/quote?symbols=${encodeURIComponent(chunk.join(','))}`;
       try {
         const res = await fetch(url, { headers: HEADERS, next: { revalidate: 300 }, signal: AbortSignal.timeout(12_000) });
         if (!res.ok) return [];
         const json = await res.json();
-        const sparkResults = json?.spark?.result || [];
-        const adapted: any[] = [];
-        for (const r of sparkResults) {
-          const meta = r?.response?.[0]?.meta;
-          if (!meta) continue;
-          const price = Number(meta.regularMarketPrice) || 0;
-          // chartPreviousClose is the previous session close — spark's
-          // canonical "yesterday" value. previousClose falls back to it.
-          const prevClose = Number(meta.previousClose) || Number(meta.chartPreviousClose) || 0;
-          const change = (price > 0 && prevClose > 0) ? (price - prevClose) : 0;
-          const changePct = (price > 0 && prevClose > 0) ? ((price - prevClose) / prevClose) * 100 : 0;
-          adapted.push({
-            // Identity
-            symbol: r.symbol || meta.symbol,
-            shortName: meta.shortName || meta.symbol,
-            longName: meta.longName,
-            currency: meta.currency,
-            // Price
-            regularMarketPrice: price,
-            regularMarketPreviousClose: prevClose,
-            regularMarketChange: change,
-            regularMarketChangePercent: changePct,
-            // Day/year bounds (when spark provides them; open is NOT in spark)
-            regularMarketDayHigh: meta.regularMarketDayHigh ?? 0,
-            regularMarketDayLow: meta.regularMarketDayLow ?? 0,
-            regularMarketVolume: meta.regularMarketVolume ?? 0,
-            fiftyTwoWeekHigh: meta.fiftyTwoWeekHigh ?? 0,
-            fiftyTwoWeekLow: meta.fiftyTwoWeekLow ?? 0,
-            // marketCap / PE / EPS are NOT available from spark. Callers
-            // that need them must use a different source (we set 0 / null
-            // so the field exists for downstream `q.marketCap || 0` checks).
-            marketCap: 0,
-            _source: 'yahoo_spark',
-          });
-        }
-        return adapted;
+        return json?.quoteResponse?.result || [];
       } catch { return []; }
     };
     for (let i = 0; i < chunks.length; i += CONC) {
@@ -167,33 +119,58 @@ export async function fetchQuotes(symbols: string[]): Promise<any[]> {
   }
 }
 
-// PATCH 1101zzz12 — Known ticker renames / BSE-only symbols. When Yahoo
-// returns nothing for the user's ticker, look here before retrying with a
-// BSE suffix. Keeps the symbol the user typed on the surface (their
-// portfolio still says AXTEL) but resolves it under the hood.
-// Format: input UPPERCASE NSE-style symbol → preferred Yahoo symbol.
-const TICKER_REMAP: Record<string, string> = {
-  // AXTEL — Axtel Industries is BSE-only; .NS returns no data.
-  // BSE code 532430. Yahoo's BSE feed uses AXTELIND.BO (verified live).
-  'AXTEL.NS': 'AXTELIND.BO',
-  'AXTELIND.NS': 'AXTELIND.BO',
-  // Add more known cases as they surface — keeps the renames in one place
-  // instead of scattered through scoring + portfolio code.
-};
+// zzz59: Yahoo /v7/finance/spark — works from Railway egress when /v7/finance/quote
+// returns 401 (crumb-gated). Returns price + chartPreviousClose + longName per symbol.
+// Use this as the price-fallback when the v7/quote batch comes back empty.
+// Shape: Map<base-symbol-without-.NS-suffix, { lastPrice, prevClose, pChange, companyName }>
+export async function fetchYahooSparkBatch(symbolsWithSuffix: string[]): Promise<Map<string, { lastPrice: number | null; prevClose: number | null; pChange: number | null; companyName: string | null }>> {
+  const out = new Map<string, { lastPrice: number | null; prevClose: number | null; pChange: number | null; companyName: string | null }>();
+  if (symbolsWithSuffix.length === 0) return out;
+  const BATCH = 20;
+  const CONC = 4;
+  const GAP_MS = 120;
+  const chunks: string[][] = [];
+  for (let i = 0; i < symbolsWithSuffix.length; i += BATCH) {
+    chunks.push(symbolsWithSuffix.slice(i, i + BATCH));
+  }
+  const fetchOne = async (chunk: string[]) => {
+    const url = `${YF_BASE}/v7/finance/spark?symbols=${encodeURIComponent(chunk.join(','))}&range=1d&interval=1d`;
+    try {
+      const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(8_000) });
+      if (!res.ok) return [];
+      const json: any = await res.json();
+      return json?.spark?.result || [];
+    } catch { return []; }
+  };
+  for (let i = 0; i < chunks.length; i += CONC) {
+    const slab = chunks.slice(i, i + CONC);
+    const results = await Promise.all(slab.map(fetchOne));
+    for (const arr of results) {
+      for (const r of arr) {
+        const sym = String(r?.symbol || '');
+        const resp = (r?.response && r.response[0]) || {};
+        const meta = resp?.meta || {};
+        const price = (typeof meta.regularMarketPrice === 'number' && meta.regularMarketPrice > 0) ? meta.regularMarketPrice : null;
+        const prevClose = (typeof meta.previousClose === 'number' && meta.previousClose > 0) ? meta.previousClose : (typeof meta.chartPreviousClose === 'number' && meta.chartPreviousClose > 0 ? meta.chartPreviousClose : null);
+        const pChange = (price !== null && prevClose !== null) ? ((price - prevClose) / prevClose) * 100 : null;
+        const companyName = meta.longName || meta.shortName || null;
+        if (!sym) continue;
+        // Index by base (no .NS / .BO suffix) for easy multibagger lookup
+        const baseSym = sym.replace(/\.(NS|BO)$/i, '');
+        out.set(baseSym, { lastPrice: price, prevClose, pChange, companyName });
+      }
+    }
+    if (i + CONC < chunks.length) await new Promise(r => setTimeout(r, GAP_MS));
+  }
+  return out;
+}
 
 // Fetch quotes with fallback to chart API
 export async function fetchQuotesWithFallback(symbols: string[]): Promise<any[]> {
-  // PATCH 1101zzz12 — apply rename map before any network call.
-  const remappedSymbols = symbols.map(s => TICKER_REMAP[s] || s);
-  // Build a reverse map so callers see the symbol they asked for, not the
-  // remapped one (their portfolio row still says AXTEL).
-  const remappedToOriginal = new Map<string, string>();
-  symbols.forEach((orig, i) => {
-    if (orig !== remappedSymbols[i]) remappedToOriginal.set(remappedSymbols[i], orig);
-  });
-
   // Try batch v7 first
-  let results = await fetchQuotes(remappedSymbols);
+  let results = await fetchQuotes(symbols);
+
+  if (results.length > 0) return results;
 
   // Fallback: fetch individually via chart API (v8 chart — no crumb needed).
   // PATCH 0964: Yahoo v7 /finance/quote now returns 401 Unauthorized for
@@ -201,83 +178,28 @@ export async function fetchQuotesWithFallback(symbols: string[]): Promise<any[]>
   // unbounded Promise.all over every symbol at once, which Yahoo rate-limited —
   // only ~20% resolved (the "22 of 100 largecaps" thin-movers bug). Bounded
   // concurrency (CONC=6 + 120ms slab gap) resolves ~95%+ in a few seconds.
-  if (results.length === 0) {
-    const CONC = 6;
-    const GAP_MS = 120;
-    const out: any[] = [];
-    for (let i = 0; i < remappedSymbols.length; i += CONC) {
-      const slab = remappedSymbols.slice(i, i + CONC);
-      const charts = await Promise.all(slab.map((sym) => fetchChart(sym)));
-      for (const chart of charts) {
-        if (!chart) continue;
-        out.push({
-          symbol: chart.symbol,
-          shortName: chart.shortName,
-          regularMarketPrice: chart.regularMarketPrice,
-          regularMarketChange: chart.change,
-          regularMarketChangePercent: chart.changePercent,
-          regularMarketVolume: chart.volume,
-          regularMarketPreviousClose: chart.previousClose,
-          marketCap: 0,
-        });
-      }
-      if (i + CONC < remappedSymbols.length) await new Promise((r) => setTimeout(r, GAP_MS));
-    }
-    results = out;
-  }
-
-  // PATCH 1101zzz12 — BSE retry for unresolved .NS symbols. If a symbol
-  // came in as XYZ.NS, was NOT in our rename map, and Yahoo returned
-  // nothing, try XYZ.BO once. Many small/micro-caps are BSE-only. Keep
-  // the .NS label on the result so caller's symbol matching still works.
-  const got = new Set(results.map((r: any) => String(r.symbol || '')));
-  const bseRetryNeeded: { ns: string; bo: string }[] = [];
-  for (let i = 0; i < remappedSymbols.length; i++) {
-    const sym = remappedSymbols[i];
-    // Only retry .NS symbols that we didn't already get a result for AND
-    // that weren't already remapped (those failed for a different reason).
-    if (sym.endsWith('.NS') && !got.has(sym) && symbols[i] === remappedSymbols[i]) {
-      bseRetryNeeded.push({ ns: sym, bo: sym.replace(/\.NS$/, '.BO') });
-    }
-  }
-  if (bseRetryNeeded.length > 0) {
-    const CONC = 6;
-    const GAP_MS = 120;
-    for (let i = 0; i < bseRetryNeeded.length; i += CONC) {
-      const slab = bseRetryNeeded.slice(i, i + CONC);
-      const charts = await Promise.all(slab.map(p => fetchChart(p.bo)));
-      charts.forEach((chart, idx) => {
-        if (!chart) return;
-        // Tag with the original NS symbol so callers' .find() by .NS works.
-        results.push({
-          symbol: slab[idx].ns,
-          _bseOriginalSymbol: chart.symbol,
-          shortName: chart.shortName,
-          regularMarketPrice: chart.regularMarketPrice,
-          regularMarketChange: chart.change,
-          regularMarketChangePercent: chart.changePercent,
-          regularMarketVolume: chart.volume,
-          regularMarketPreviousClose: chart.previousClose,
-          marketCap: 0,
-        });
+  const CONC = 6;
+  const GAP_MS = 120;
+  const out: any[] = [];
+  for (let i = 0; i < symbols.length; i += CONC) {
+    const slab = symbols.slice(i, i + CONC);
+    const charts = await Promise.all(slab.map((sym) => fetchChart(sym)));
+    for (const chart of charts) {
+      if (!chart) continue;
+      out.push({
+        symbol: chart.symbol,
+        shortName: chart.shortName,
+        regularMarketPrice: chart.regularMarketPrice,
+        regularMarketChange: chart.change,
+        regularMarketChangePercent: chart.changePercent,
+        regularMarketVolume: chart.volume,
+        regularMarketPreviousClose: chart.previousClose,
+        marketCap: 0,
       });
-      if (i + CONC < bseRetryNeeded.length) await new Promise((r) => setTimeout(r, GAP_MS));
     }
+    if (i + CONC < symbols.length) await new Promise((r) => setTimeout(r, GAP_MS));
   }
-
-  // PATCH 1101zzz12 — restore the caller's original ticker on remapped results
-  // (e.g. AXTELIND.BO comes back labelled with AXTEL.NS so AXTEL row in the
-  // portfolio table lights up).
-  if (remappedToOriginal.size > 0) {
-    for (const r of results) {
-      const orig = remappedToOriginal.get(String(r.symbol || ''));
-      if (orig) {
-        r._remappedFrom = r.symbol;
-        r.symbol = orig;
-      }
-    }
-  }
-  return results;
+  return out;
 }
 
 // NIFTY 50 constituents with sectors
