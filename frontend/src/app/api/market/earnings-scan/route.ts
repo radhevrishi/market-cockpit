@@ -927,6 +927,81 @@ async function fetchScreenerData(symbol: string, type: 'consolidated' | 'standal
   return result?.html || null;
 }
 
+// ── Cloudflare Worker fallback (CF egress → screener.in) ──
+// zzz53 — Railway's egress IP started getting served bot-challenge / empty
+// HTML by screener.in around 45 days ago, which made direct fetches return
+// 200 OK with HTML that lacks the "Quarterly Results" marker — so
+// fetchFinancialPageHTML returned null and the card collapsed to "DATA
+// MISSING" with reason "Screener: no data returned" for ASTRAMICRO, CGPOWER,
+// MARKSANS, PRICOLLTD, MANORAMA, DIXON and ~20 others.
+//
+// indiaearninghub.radhev-232.workers.dev/stock?symbol=X already pre-parses
+// the same screener.in page from a Cloudflare egress IP (not blocked) and
+// returns pre-parsed JSON. We map its quarters arrays into our internal
+// QuarterFinancials shape so it slots straight into the validSources flow.
+const SCREENER_WORKER_BASE = process.env.SCREENER_WORKER_URL || 'https://indiaearninghub.radhev-232.workers.dev';
+
+async function fetchScreenerViaWorker(symbol: string): Promise<{
+  quarters: QuarterFinancials[];
+  companyName: string;
+  isBanking: boolean;
+  mcap: number | null;
+  pe: number | null;
+  currentPrice: number | null;
+} | null> {
+  const screenerSym = getScreenerSymbol(symbol);
+  const url = `${SCREENER_WORKER_BASE.replace(/\/$/, '')}/stock?symbol=${encodeURIComponent(screenerSym)}`;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
+    if (!res.ok) {
+      console.warn(`[Earnings Scan] ${symbol}: worker HTTP ${res.status}`);
+      return null;
+    }
+    const j: any = await res.json();
+    if (!j || !j.quarters || !Array.isArray(j.quarters.dates) || j.quarters.dates.length === 0) {
+      console.warn(`[Earnings Scan] ${symbol}: worker returned no quarters`);
+      return null;
+    }
+    const dates: string[] = j.quarters.dates;
+    const sales: number[] = j.quarters.sales || [];
+    const operatingProfit: number[] = j.quarters.operatingProfit || [];
+    const opm: number[] = j.quarters.opm || [];
+    const netProfit: number[] = j.quarters.netProfit || [];
+    const eps: number[] = j.quarters.eps || [];
+
+    // Build quarters in REVERSE order (latest first — matches parseQuarterlyResults output)
+    const quarters: QuarterFinancials[] = [];
+    for (let i = dates.length - 1; i >= 0; i--) {
+      const rev = sales[i] ?? 0;
+      const op = operatingProfit[i] ?? 0;
+      const pat = netProfit[i] ?? 0;
+      const e = eps[i] ?? 0;
+      const opmVal = opm[i] ?? (rev > 0 ? parseFloat(((op / rev) * 100).toFixed(1)) : 0);
+      const npmVal = rev > 0 ? parseFloat(((pat / rev) * 100).toFixed(1)) : 0;
+      if (rev === 0 && pat === 0 && e === 0) continue;
+      quarters.push({ period: dates[i], revenue: rev, operatingProfit: op, opm: opmVal, pat, npm: npmVal, eps: e });
+    }
+    if (quarters.length === 0) return null;
+
+    // Banking heuristic: worker doesn't expose this directly, so use the
+    // same name-based heuristic the rest of the codebase uses
+    const isBanking = /bank|finance|nbfc|hdfc|icici|sbi|kotak|axis|indusind/i.test(String(j.name || ''));
+
+    console.log(`[Earnings Scan] ${symbol}: ✓ worker OK (${quarters.length}Q, latest=${quarters[0].period})`);
+    return {
+      quarters,
+      companyName: j.name || symbol,
+      isBanking,
+      mcap: typeof j.marketCapCr === 'number' ? j.marketCapCr : null,
+      pe: typeof j.stockPE === 'number' ? j.stockPE : null,
+      currentPrice: typeof j.currentPrice === 'number' ? j.currentPrice : null,
+    };
+  } catch (err) {
+    console.warn(`[Earnings Scan] ${symbol}: worker fallback failed:`, (err as Error).message);
+    return null;
+  }
+}
+
 function parseNumber(str: string): number {
   if (!str || str.trim() === '' || str.trim() === '-') return 0;
   // Remove commas, handle negative
@@ -1684,24 +1759,51 @@ async function buildEarningsCard(symbol: string, origin?: string): Promise<Earni
   // Run ALL sources in parallel — pick best result after
   const [mcResult, scrResult, nseResult] = await Promise.allSettled([
     fetchMoneycontrolFinancials(symbol).catch(e => { failureReasons.push(`MC: ${(e as Error).message}`); return null; }),
-    (async () => {
+    (async (): Promise<{
+      quarters: QuarterFinancials[];
+      companyName: string;
+      isBanking: boolean;
+      mcap: number | null;
+      pe: number | null;
+      currentPrice: number | null;
+      html?: string;
+    } | null> => {
       // Screener: try consolidated, then standalone, then original symbol
       let html = await fetchScreenerData(screenerSym, 'consolidated');
       if (!html && screenerSym !== symbol) html = await fetchScreenerData(symbol, 'consolidated');
       if (!html) html = await fetchScreenerData(screenerSym, 'standalone');
       if (!html && screenerSym !== symbol) html = await fetchScreenerData(symbol, 'standalone');
-      if (!html) return null;
-      const parsed = parseQuarterlyResults(html);
-      if (parsed.quarters.length === 0) return null;
-      return {
-        quarters: parsed.quarters,
-        companyName: parsed.companyName,
-        isBanking: parsed.isBanking,
-        mcap: parsed.mcap,
-        pe: parsed.pe,
-        currentPrice: parsed.currentPrice,
-        html,
-      };
+      if (html) {
+        const parsed = parseQuarterlyResults(html);
+        if (parsed.quarters.length > 0) {
+          return {
+            quarters: parsed.quarters,
+            companyName: parsed.companyName,
+            isBanking: parsed.isBanking,
+            mcap: parsed.mcap,
+            pe: parsed.pe,
+            currentPrice: parsed.currentPrice,
+            html,
+          };
+        }
+      }
+      // zzz53 — Railway egress is being served bot-challenge / empty HTML by
+      // screener.in (no "Quarterly Results" marker → null). Fall back to the
+      // Cloudflare Worker which proxies the same page from CF egress.
+      console.log(`[Earnings Scan] ${symbol}: direct screener.in returned null — trying Worker fallback`);
+      const workerData = await fetchScreenerViaWorker(symbol);
+      if (workerData) {
+        return {
+          quarters: workerData.quarters,
+          companyName: workerData.companyName,
+          isBanking: workerData.isBanking,
+          mcap: workerData.mcap,
+          pe: workerData.pe,
+          currentPrice: workerData.currentPrice,
+          // No html → guidance extraction is skipped, financials still flow
+        };
+      }
+      return null;
     })().catch(e => { failureReasons.push(`Screener: ${(e as Error).message}`); return null; }),
     fetchNSEFinancials(symbol).catch(e => { failureReasons.push(`NSE: ${(e as Error).message}`); return null; }),
   ]);
