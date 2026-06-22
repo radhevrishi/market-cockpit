@@ -1275,23 +1275,23 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   // is non-destructive: existing tickers stay, new tickers join. Wait 2s
   // after mount to avoid racing the IDB hydration and the initial sync
   // status fetch.
+  // PATCH 1101zzz41 — when seenIso is null (first encounter with this
+  // patch), DO trigger a pull. Stamping silently meant established users
+  // never auto-received the daily diff. Pull is non-destructive.
   useEffect(() => {
     if (!syncStatus?.lastSync) return;
     if (syncLoading) return;
     if (rows.length === 0) return;  // first-mount path handles this
     let seenIso: string | null = null;
     try { seenIso = localStorage.getItem(LAST_SYNC_SEEN_KEY); } catch {}
-    // First time we've ever recorded a seen-timestamp → just stamp current
-    // (user already has data from some past upload/sync, no need to re-pull).
-    if (!seenIso) {
-      try { localStorage.setItem(LAST_SYNC_SEEN_KEY, syncStatus.lastSync); } catch {}
-      return;
-    }
     const serverMs = new Date(syncStatus.lastSync).getTime();
-    const seenMs = new Date(seenIso).getTime();
-    if (!Number.isFinite(serverMs) || !Number.isFinite(seenMs)) return;
-    if (serverMs <= seenMs) return;  // already up to date
-    // Server is newer — fire a non-blocking refresh.
+    if (!Number.isFinite(serverMs)) return;
+    if (seenIso) {
+      const seenMs = new Date(seenIso).getTime();
+      if (Number.isFinite(seenMs) && serverMs <= seenMs) return;  // already up to date
+    }
+    // Either no seen-stamp yet (first encounter) OR server is newer than what
+    // we last absorbed → pull. handleFiles dedupes, so safe.
     const t = setTimeout(() => { runAutoSync(true); }, 2000);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
