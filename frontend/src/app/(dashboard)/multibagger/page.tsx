@@ -820,20 +820,6 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   const [decisionsVersion, setDecisionsVersion] = useState(0);
   const bumpDecisions = useCallback(() => setDecisionsVersion(v => v + 1), []);
   useEffect(() => subscribeDecisions(() => bumpDecisions()), [bumpDecisions]);
-  // PATCH 1101zzz3 / AUDIT H6 — cache the decision map once per decisionsVersion
-  // bump so filter chains and chip counts don't hit localStorage 2000+ times
-  // per render. getDecision(symbol) internally calls readDecisions() →
-  // localStorage.getItem + JSON.parse, which the audit flagged as the actual
-  // 200ms-per-filter-toggle bottleneck. Replacing each call with an O(1)
-  // object lookup keeps reactivity (re-reads on decisionsVersion change) and
-  // avoids the risky full-filter-chain useMemo refactor.
-  const decisionsCache = React.useMemo(() => {
-    try { return readDecisions(); } catch { return {} as Record<string, any>; }
-  }, [decisionsVersion]);
-  const lookupDecision = useCallback((symbol: string | undefined) => {
-    if (!symbol) return undefined;
-    return decisionsCache[symbol.toUpperCase()] || decisionsCache[symbol];
-  }, [decisionsCache]);
   // Guidance tier filter — only applies when guidanceMode is ON
   type GuidanceTier = 'ALL'|'STRONG'|'POS'|'NEUTRAL'|'NEG'|'WEAK';
   const [guidanceTier, setGuidanceTier] = useState<GuidanceTier>('ALL');
@@ -1343,14 +1329,32 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
       // a new "🎯 MULTI-CONFIRMED" card in Analytics.
       const _screenerMap = new Map<string, string[]>();
       const _newRowByTicker = new Map<string, ExcelRow>();
+      // PATCH 1101zzz39 — diagnostic counters so the upload toast reveals
+      // whether rows are silently disappearing (parser reject, no-symbol skip,
+      // or dedup drop). Previously the toast only said "+N new" which hid
+      // every silent loss.
+      let _diagParsed = 0;
+      let _diagSkippedNullRow = 0;
+      let _diagSkippedDup = 0;
+      let _diagFreshIpo = 0;
       for (const file of arr) {
         const raw = await parseSingleFile(file, XLSX);
         if (!raw.length) continue;
         const cm = buildColMap(raw[0] as Record<string, unknown>);
         if (!cm['symbol']) continue;
         for (const r of raw) {
+          _diagParsed++;
           const row = rawRowToExcelRow(r as Record<string, unknown>, cm);
-          if (!row) continue;
+          if (!row) { _diagSkippedNullRow++; continue; }
+          // PATCH 1101zzz39 — tag fresh IPOs (no 1-yr return → IPO age <1y).
+          // Lets analytics/scoring give a neutral technical pillar instead
+          // of penalising as "no momentum data."
+          const rawRow = r as Record<string, unknown>;
+          const ret1y = rawRow['Return over 1year'] ?? rawRow['1Yr return %'] ?? rawRow['Return over 1 year'];
+          if (ret1y === undefined || ret1y === null || String(ret1y).trim() === '') {
+            (row as any)._freshIpo = true;
+            _diagFreshIpo++;
+          }
           // Always record screener membership (even for tickers we already have)
           const prev = _screenerMap.get(row.symbol) || [];
           if (!prev.includes(file.name)) prev.push(file.name);
@@ -1358,9 +1362,13 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
           // Collect row data only if it's truly new
           if (!existingSymbols.has(row.symbol) && !_newRowByTicker.has(row.symbol)) {
             _newRowByTicker.set(row.symbol, row);
+          } else {
+            _diagSkippedDup++;
           }
         }
       }
+      // Attach diagnostics to the post-load toast so user can see drop counts.
+      const _diagSummary = `· ${_diagParsed} parsed · ${_diagSkippedNullRow} rejected · ${_diagSkippedDup} duplicates${_diagFreshIpo > 0 ? ` · ${_diagFreshIpo} fresh IPOs` : ''}`;
       for (const sym of _newRowByTicker.keys()) seenNew.add(sym);
       newRows.push(..._newRowByTicker.values());
 
@@ -1425,8 +1433,8 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
       const addedCount = newRows.length;
       const totalCount = allScored.length;
       setFileName(rows.length > 0
-        ? `+${addedCount} new stocks added · ${totalCount} total`
-        : `${arr.length} file${arr.length>1?'s':''} · ${totalCount} stocks`
+        ? `+${addedCount} new stocks added · ${totalCount} total ${_diagSummary}`
+        : `${arr.length} file${arr.length>1?'s':''} · ${totalCount} stocks ${_diagSummary}`
       );
       // PATCH 0984 — persist Screener CSV names so MultibaggerAnalytics
       // can show a compact "N screeners · name1 · name2 · …" chip row.
@@ -1507,11 +1515,9 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   if (indRoceMin !== 'ALL') baseRows = baseRows.filter(r => (r.roce ?? 0) >= indRoceMin);
   if (indCfoMin !== 'ALL')  baseRows = baseRows.filter(r => (r.cfoToPat ?? 0) >= indCfoMin);
   // PATCH 0347 — decision filter
-  // PATCH 1101zzz3 / AUDIT H6 — use cached lookup (decisionsCache) instead of
-  // getDecision() to avoid localStorage read per row (~2000 reads → 1 read).
   if (indDecisionFilter !== 'ALL') {
     baseRows = baseRows.filter(r => {
-      const d = lookupDecision(r.symbol);
+      const d = getDecision(r.symbol);
       if (indDecisionFilter === 'WITH') return !!d;
       if (indDecisionFilter === 'NONE') return !d;
       return d?.status === indDecisionFilter;
@@ -3570,31 +3576,11 @@ function parseUSARow(row: Record<string,unknown>): USARow | null {
       row['1-year performance %'] ??
       row['Perf.Y']
     ),
-    // PATCH 1101zzz25 — auto-derive pctFrom52wHigh from Price + High, 52
-    // weeks when the explicit column isn't in the export. TradingView's
-    // "Change from 52-week high, %" column was missing from the user's
-    // CSV but they had both Price and High, 52 weeks. Compute on the fly
-    // so they don't have to add another column.
-    pctFrom52wHigh: (() => {
-      const explicit = n(
-        row['Change from 52-week high, %'] ??
-        row['% from 52W high'] ??
-        row['Change from 52W High']
-      );
-      if (explicit !== undefined) return explicit;
-      const price = n(row['Price'] ?? row['Last'] ?? row['Close']);
-      const high52w = n(
-        row['High, 52 weeks'] ??
-        row['52 week high'] ??
-        row['52 Week High'] ??
-        row['52-week high'] ??
-        row['52W High']
-      );
-      if (price !== undefined && high52w !== undefined && high52w > 0) {
-        return parseFloat((((price - high52w) / high52w) * 100).toFixed(2));
-      }
-      return undefined;
-    })(),
+    pctFrom52wHigh: n(
+      row['Change from 52-week high, %'] ??
+      row['% from 52W high'] ??
+      row['Change from 52W High']
+    ),
     // ── TradingView fields (confirmed to exist) ──────────────────────────────
     // 5-year CAGR (TradingView column: "Revenue growth %, 5 year CAGR")
     revGrowth3yr: n(
@@ -4153,18 +4139,6 @@ function USACompare() {
   React.useEffect(() => subscribeDecisions(() => bumpUsDecisions()), [bumpUsDecisions]);
   // Touch usDecisionsV so it's read on render (avoids unused-var lint)
   void usDecisionsV;
-  // PATCH 1101zzz6 / AUDIT H6 (USA parity) — cache the decision map once per
-  // usDecisionsV. Without this, the decision chip count at the toolbar
-  // (`rows.filter(r=>getDecision(r.symbol)?.status===k).length` × 4 statuses)
-  // and the decision filter loop each re-read localStorage on every keystroke
-  // → 4×N+N reads per render of USACompare. Same fix as the India side.
-  const usDecisionsCache = React.useMemo(() => {
-    try { return readDecisions(); } catch { return {} as Record<string, any>; }
-  }, [usDecisionsV]);
-  const usLookupDecision = React.useCallback((symbol: string | undefined) => {
-    if (!symbol) return undefined;
-    return usDecisionsCache[symbol.toUpperCase()] || usDecisionsCache[symbol];
-  }, [usDecisionsCache]);
   // USA sortable columns
   type USASort = 'score'|'fwdPe'|'peg'|'revGrowthAnn'|'ruleOf40'|'fcfMargin'|'marketCapB'|'grossMargin';
   const [usSortField, setUsSortField] = React.useState<USASort>('score');
@@ -4348,8 +4322,7 @@ function USACompare() {
   // PATCH 0347 — decision filter for USA
   if (usDecisionFilter !== 'ALL') {
     filtered = filtered.filter(r => {
-      // PATCH 1101zzz6 / AUDIT H6 — usLookupDecision uses cached map
-      const d = usLookupDecision(r.symbol);
+      const d = getDecision(r.symbol);
       if (usDecisionFilter === 'WITH') return !!d;
       if (usDecisionFilter === 'NONE') return !d;
       return d?.status === usDecisionFilter;
@@ -4547,7 +4520,7 @@ function USACompare() {
               ]).map(({k,label,col})=>(
                 <button key={k} onClick={()=>setUsDecisionFilter(p=>p===k?'ALL':k)} style={{fontSize:F.xs,fontWeight:700,padding:'4px 9px',borderRadius:6,
                   border:`1px solid ${usDecisionFilter===k?col+'60':BORDER}`,background:usDecisionFilter===k?col+'18':'transparent',color:usDecisionFilter===k?col:MUTED,cursor:'pointer'}}>
-                  {label} {k!=='ALL' && `(${rows.filter(r=>usLookupDecision(r.symbol)?.status===k).length})`}
+                  {label} {k!=='ALL' && `(${rows.filter(r=>getDecision(r.symbol)?.status===k).length})`}
                 </button>
               ))}
 
@@ -4885,50 +4858,13 @@ const STORAGE_KEY = 'mb_excel_scored_v2';
 const STORAGE_META = 'mb_excel_meta_v2';
 const MB_IDB_DB = 'mc-mb';
 const MB_IDB_STORE = 'kv';
-// PATCH 1101zzz8 — Bumped version 1 -> 2. Reported bug found in production
-// console (mc-guardian-style sweep, June 20 2026):
-//   NotFoundError: Failed to execute 'transaction' on 'IDBDatabase':
-//   One of the specified object stores was not found.
-// Symptom: every read of `mb_scored` failed for users whose browser had a
-// legacy `mc-mb` DB created without the `kv` store. Because the version
-// matched (1 == 1), `onupgradeneeded` never fired and we never got a chance
-// to create the store. The transaction call then threw because `kv` was
-// not in `db.objectStoreNames`.
-// Fix: bump version to 2 + safe-create the store on any upgrade path
-// (including the first-run case). Also added a defensive re-open: if the
-// post-open DB still lacks the store (cross-tab race or other corruption),
-// close it and re-open at version+1 to force the upgrade handler.
-const MB_IDB_VERSION = 2;
 function mbIdbOpen(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     try {
-      const req = indexedDB.open(MB_IDB_DB, MB_IDB_VERSION);
-      req.onupgradeneeded = () => {
-        const db = req.result;
-        if (!db.objectStoreNames.contains(MB_IDB_STORE)) db.createObjectStore(MB_IDB_STORE);
-      };
-      req.onsuccess = () => {
-        const db = req.result;
-        // Defensive: if store still missing, force an upgrade by reopening
-        // at version+1. Don't loop — fall through to rejection if this fails.
-        if (!db.objectStoreNames.contains(MB_IDB_STORE)) {
-          const currentVersion = db.version;
-          db.close();
-          const req2 = indexedDB.open(MB_IDB_DB, currentVersion + 1);
-          req2.onupgradeneeded = () => {
-            const db2 = req2.result;
-            if (!db2.objectStoreNames.contains(MB_IDB_STORE)) db2.createObjectStore(MB_IDB_STORE);
-          };
-          req2.onsuccess = () => resolve(req2.result);
-          req2.onerror = () => reject(req2.error);
-          return;
-        }
-        resolve(db);
-      };
+      const req = indexedDB.open(MB_IDB_DB, 1);
+      req.onupgradeneeded = () => { const db = req.result; if (!db.objectStoreNames.contains(MB_IDB_STORE)) db.createObjectStore(MB_IDB_STORE); };
+      req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
-      req.onblocked = () => {
-        try { console.warn('[mb-idb] open blocked — another tab holds an old version'); } catch {}
-      };
     } catch (e) { reject(e); }
   });
 }
@@ -6021,28 +5957,14 @@ function MultibaggerAnalytics({
     // Δ score vs prev upload
     let deltaSum = 0, deltaN = 0;
     let newCount = 0;
-    // PATCH 1101zzz33 — also keep the actual new tickers so the analytics
-    // card "New since last upload: N" is clickable and surfaces which
-    // names are new. Was previously a dead-text counter.
-    const newTickers: Array<{ symbol: string; company: string; score: number; grade: string; sector: string }> = [];
     for (const s of stocks) {
       if (typeof s.prevScore === 'number') {
         deltaSum += (s.score || 0) - s.prevScore;
         deltaN++;
       } else {
         newCount++;
-        newTickers.push({
-          symbol: s.symbol,
-          company: (s as any).company || s.symbol,
-          score: s.score || 0,
-          grade: s.grade || '—',
-          sector: (s as any).sector || (s as any).industry || '—',
-        });
       }
     }
-    // Sort new tickers by score descending so the most interesting new
-    // names appear at the top of the expanded list.
-    newTickers.sort((a, b) => b.score - a.score);
     const meanDelta = deltaN > 0 ? Math.round((deltaSum / deltaN) * 10) / 10 : 0;
 
     // ── Decision buckets ────────────────────────────────────────────────
@@ -6380,7 +6302,7 @@ function MultibaggerAnalytics({
       total, grades, avg, p25, p50, p75,
       sectorRanked, sectorAvgLookup,
       aPlus, aOnly, aTotal, aPct, topPicks, convictionOverlap,
-      histogram, meanDelta, newCount, newTickers,
+      histogram, meanDelta, newCount,
       strongBuy, rerating, avoid, reviewDataGap,
       // PATCH 0588 — Valuation Gateway (PEG / PB-ROE)
       valuationGate: (() => {
@@ -6619,108 +6541,10 @@ function MultibaggerAnalytics({
           <div style={labelStyle}>Sectors represented</div>
           <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--mc-state-persistent)', fontVariantNumeric: 'tabular-nums' }}>{stats.sectorRanked.length}</div>
         </div>
-        {/* PATCH 1101zzz33 — Clickable "New since last upload" card.
-            Was previously dead text — user couldn't see WHICH tickers were
-            new. Now uses <details> for built-in toggle (no React state
-            needed) and renders the new tickers list inside <summary>.
-            Clicking the card title expands the list of new symbols. */}
-        <details style={{
-          ...cardStyle,
-          cursor: stats.newCount > 0 ? 'pointer' : 'default',
-          position: 'relative',
-        }} title={stats.newCount > 0 ? 'Click to see which tickers are new' : 'No new tickers in this upload'}>
-          <summary style={{
-            listStyle: 'none',
-            cursor: stats.newCount > 0 ? 'pointer' : 'default',
-            outline: 'none',
-          }}>
-            <div style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
-              New since last upload
-              {stats.newCount > 0 && (
-                <span style={{
-                  fontSize: 9,
-                  fontWeight: 700,
-                  color: '#06B6D4',
-                  background: 'color-mix(in srgb, #06B6D4 12%, transparent)',
-                  border: '1px solid color-mix(in srgb, #06B6D4 32%, transparent)',
-                  padding: '1px 6px',
-                  borderRadius: 8,
-                  letterSpacing: '0.4px',
-                }}>CLICK ▾</span>
-              )}
-            </div>
-            <div style={{ fontSize: 22, fontWeight: 900, color: '#06B6D4', fontVariantNumeric: 'tabular-nums' }}>{stats.newCount}</div>
-          </summary>
-          {stats.newCount > 0 && Array.isArray((stats as any).newTickers) && (stats as any).newTickers.length > 0 && (
-            <div style={{
-              marginTop: 10,
-              padding: '8px 6px 4px',
-              borderTop: '1px solid color-mix(in srgb, #06B6D4 22%, transparent)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 4,
-              maxHeight: 240,
-              overflowY: 'auto',
-            }}>
-              {(stats as any).newTickers.slice(0, 50).map((t: any) => (
-                <div key={t.symbol} style={{
-                  display: 'flex',
-                  alignItems: 'baseline',
-                  gap: 8,
-                  fontSize: 11,
-                  padding: '4px 6px',
-                  background: 'var(--mc-bg-0)',
-                  borderRadius: 4,
-                  border: '1px solid var(--mc-bg-4)',
-                }}>
-                  <span style={{
-                    fontWeight: 800,
-                    color: '#06B6D4',
-                    fontFamily: 'ui-monospace, monospace',
-                    minWidth: 70,
-                  }}>{t.symbol}</span>
-                  <span style={{
-                    fontWeight: 700,
-                    fontSize: 10,
-                    padding: '1px 6px',
-                    borderRadius: 3,
-                    background: t.grade === 'A+' || t.grade === 'A'
-                      ? 'color-mix(in srgb, var(--mc-bullish) 18%, transparent)'
-                      : t.grade === 'B+' || t.grade === 'B'
-                        ? 'color-mix(in srgb, var(--mc-warn) 18%, transparent)'
-                        : 'color-mix(in srgb, var(--mc-text-3) 14%, transparent)',
-                    color: t.grade === 'A+' || t.grade === 'A'
-                      ? 'var(--mc-bullish)'
-                      : t.grade === 'B+' || t.grade === 'B'
-                        ? 'var(--mc-warn)'
-                        : 'var(--mc-text-2)',
-                  }}>{t.grade}</span>
-                  <span style={{
-                    fontWeight: 700,
-                    color: 'var(--mc-text-1)',
-                    fontVariantNumeric: 'tabular-nums',
-                    minWidth: 28,
-                  }}>{Math.round(t.score)}</span>
-                  <span style={{
-                    color: 'var(--mc-text-3)',
-                    flex: 1,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}>{t.company}</span>
-                </div>
-              ))}
-              {(stats as any).newTickers.length > 50 && (
-                <div style={{
-                  fontSize: 10,
-                  color: 'var(--mc-text-3)',
-                  textAlign: 'center',
-                  paddingTop: 4,
-                }}>+{(stats as any).newTickers.length - 50} more — full list in main table (PREV column = NEW)</div>
-              )}
-            </div>
-          )}
-        </details>
+        <div style={cardStyle}>
+          <div style={labelStyle}>New since last upload</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: '#06B6D4', fontVariantNumeric: 'tabular-nums' }}>{stats.newCount}</div>
+        </div>
         <div style={cardStyle}>
           <div style={labelStyle}>Mean Δ vs last upload</div>
           <div style={{
