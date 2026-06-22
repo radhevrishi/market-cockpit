@@ -171,7 +171,40 @@ export async function readTransformational(opts: ReadOptions = {}): Promise<{
     items.push(v);
   }
 
-  return { window_days: window, total: inWindow.length, items };
+  // PATCH 1101zzz49 — Story-level dedup. The persistence layer dedupes by
+  // URL content_hash, so the SAME story syndicated by two newsrooms (e.g.
+  // ET EnergyWorld + ET Industry both reporting the NTPC 5GWh battery
+  // story 1 day apart) was rendering as two separate entries. Group by
+  // (normalized title-prefix + ±5d) and keep the highest-rank survivor
+  // — preserves the better source while killing the visible duplicate.
+  const deduped: TransformationalItem[] = [];
+  const seenStoryKeys = new Map<string, number>(); // story-key → index in deduped
+  for (const it of items) {
+    const titleKey = (it.title || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, '')
+      .split(/\s+/)
+      .slice(0, 6)
+      .join(' ');
+    const tsMs = new Date(it.published_at || it.recorded_at).getTime();
+    const weekBucket = Number.isFinite(tsMs)
+      ? Math.floor(tsMs / (5 * 24 * 60 * 60 * 1000))
+      : 0;
+    const storyKey = `${titleKey}::${weekBucket}`;
+    const prevIdx = seenStoryKeys.get(storyKey);
+    if (prevIdx === undefined) {
+      seenStoryKeys.set(storyKey, deduped.length);
+      deduped.push(it);
+    } else {
+      // Keep the higher-ranked of the pair
+      const prev = deduped[prevIdx];
+      const prevRank = strategicRankScore(prev.strategic_visibility);
+      const curRank = strategicRankScore(it.strategic_visibility);
+      if (curRank > prevRank) deduped[prevIdx] = it;
+    }
+  }
+
+  return { window_days: window, total: inWindow.length, items: deduped };
 }
 
 // ─── SUMMARY STATS for the UI header ──────────────────────────────────────
