@@ -516,8 +516,20 @@ function LiveBullishFeed() {
     let out = data.filings;
     if (exchange !== 'ALL') out = out.filter(f => f.exchange === exchange);
     if (bullishOnly) {
-      // PATCH 0391 — when bullishOnly toggled, use tier filter
-      out = out.filter(f => f.bullish.tier && tierFilter.has(f.bullish.tier));
+      // PATCH 1101zzz36 — bullishOnly should ACTUALLY narrow the feed.
+      // Previously it just intersected with tierFilter (which defaults to include
+      // NEUTRAL), so toggling did almost nothing. Now: restrict to actionable
+      // bullish tiers AND drop 1-page subject-only noise (raw composite <= 0.5).
+      // The tier chips below still let the user re-widen if needed.
+      const BULLISH_TIERS = new Set(['ULTRA_BULLISH', 'BULLISH', 'MIXED_POSITIVE']);
+      out = out.filter(f => {
+        if (!f.bullish.tier || !BULLISH_TIERS.has(f.bullish.tier)) return false;
+        // Drop 1-page subject-only noise (raw_score ≤ 0.5 = no parsed signal)
+        if ((f.bullish.raw_score ?? 0) <= 0.5) return false;
+        // Honour explicit chip overrides on top of the narrowed default
+        if (!tierFilter.has(f.bullish.tier)) return false;
+        return true;
+      });
     }
     return out;
   }, [data, exchange, bullishOnly, tierFilter]);
@@ -1299,14 +1311,11 @@ function WarrantMomentumFeed() {
         ...(passingOnly ? { passingOnly: '1' } : {}),
         ...(force ? { force: '1' } : {}),
       });
-      // PATCH 0965 BUG #3 + 1101zzz34 — Bumped from 15s to 30s. Cold-start
-      // after a Railway redeploy plus the warrant-feed's PDF extraction
-      // step can take 20-25s on first hit. 15s was too tight and produced
-      // false-positive "timed out" banners that needed manual Retry.
-      // Route itself has maxDuration=60s so 30s client cap is safe.
+      // PATCH 0965 BUG #3 — AbortSignal.timeout(15_000) per spec; replaces
+      // the bespoke 25s AbortController so the spinner is bounded.
       const res = await fetch(`/api/v1/concall-intel/warrant-feed?${params}`, {
         cache: 'no-store',
-        signal: AbortSignal.timeout(30_000),
+        signal: AbortSignal.timeout(15_000),
       });
       if (!res.ok) {
         setError(`HTTP ${res.status} — warrant feed unavailable`);
@@ -1321,7 +1330,7 @@ function WarrantMomentumFeed() {
       // banner copy matches what the user actually saw.
       const isTimeout = e?.name === 'TimeoutError' || e?.name === 'AbortError' || /timeout|abort/i.test(String(e?.message || ''));
       setError(isTimeout
-        ? '⚠ Warrant momentum data unavailable — pipeline may be processing (timed out after 30s)'
+        ? '⚠ Warrant momentum data unavailable — pipeline may be processing (timed out after 15s)'
         : `⚠ Warrant momentum fetch failed: ${e?.message || 'unknown error'}`);
       // Surface an empty-shape so the UI rolls forward instead of spinning.
       setData((prev) => prev || { filings: [], count_total: 0, count_relevant: 0, count_passing: 0 } as any);
