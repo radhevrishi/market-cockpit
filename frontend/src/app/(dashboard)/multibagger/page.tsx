@@ -6021,14 +6021,28 @@ function MultibaggerAnalytics({
     // Δ score vs prev upload
     let deltaSum = 0, deltaN = 0;
     let newCount = 0;
+    // PATCH 1101zzz33 — also keep the actual new tickers so the analytics
+    // card "New since last upload: N" is clickable and surfaces which
+    // names are new. Was previously a dead-text counter.
+    const newTickers: Array<{ symbol: string; company: string; score: number; grade: string; sector: string }> = [];
     for (const s of stocks) {
       if (typeof s.prevScore === 'number') {
         deltaSum += (s.score || 0) - s.prevScore;
         deltaN++;
       } else {
         newCount++;
+        newTickers.push({
+          symbol: s.symbol,
+          company: (s as any).company || s.symbol,
+          score: s.score || 0,
+          grade: s.grade || '—',
+          sector: (s as any).sector || (s as any).industry || '—',
+        });
       }
     }
+    // Sort new tickers by score descending so the most interesting new
+    // names appear at the top of the expanded list.
+    newTickers.sort((a, b) => b.score - a.score);
     const meanDelta = deltaN > 0 ? Math.round((deltaSum / deltaN) * 10) / 10 : 0;
 
     // ── Decision buckets ────────────────────────────────────────────────
@@ -6366,7 +6380,7 @@ function MultibaggerAnalytics({
       total, grades, avg, p25, p50, p75,
       sectorRanked, sectorAvgLookup,
       aPlus, aOnly, aTotal, aPct, topPicks, convictionOverlap,
-      histogram, meanDelta, newCount,
+      histogram, meanDelta, newCount, newTickers,
       strongBuy, rerating, avoid, reviewDataGap,
       // PATCH 0588 — Valuation Gateway (PEG / PB-ROE)
       valuationGate: (() => {
@@ -6605,10 +6619,108 @@ function MultibaggerAnalytics({
           <div style={labelStyle}>Sectors represented</div>
           <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--mc-state-persistent)', fontVariantNumeric: 'tabular-nums' }}>{stats.sectorRanked.length}</div>
         </div>
-        <div style={cardStyle}>
-          <div style={labelStyle}>New since last upload</div>
-          <div style={{ fontSize: 22, fontWeight: 900, color: '#06B6D4', fontVariantNumeric: 'tabular-nums' }}>{stats.newCount}</div>
-        </div>
+        {/* PATCH 1101zzz33 — Clickable "New since last upload" card.
+            Was previously dead text — user couldn't see WHICH tickers were
+            new. Now uses <details> for built-in toggle (no React state
+            needed) and renders the new tickers list inside <summary>.
+            Clicking the card title expands the list of new symbols. */}
+        <details style={{
+          ...cardStyle,
+          cursor: stats.newCount > 0 ? 'pointer' : 'default',
+          position: 'relative',
+        }} title={stats.newCount > 0 ? 'Click to see which tickers are new' : 'No new tickers in this upload'}>
+          <summary style={{
+            listStyle: 'none',
+            cursor: stats.newCount > 0 ? 'pointer' : 'default',
+            outline: 'none',
+          }}>
+            <div style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
+              New since last upload
+              {stats.newCount > 0 && (
+                <span style={{
+                  fontSize: 9,
+                  fontWeight: 700,
+                  color: '#06B6D4',
+                  background: 'color-mix(in srgb, #06B6D4 12%, transparent)',
+                  border: '1px solid color-mix(in srgb, #06B6D4 32%, transparent)',
+                  padding: '1px 6px',
+                  borderRadius: 8,
+                  letterSpacing: '0.4px',
+                }}>CLICK ▾</span>
+              )}
+            </div>
+            <div style={{ fontSize: 22, fontWeight: 900, color: '#06B6D4', fontVariantNumeric: 'tabular-nums' }}>{stats.newCount}</div>
+          </summary>
+          {stats.newCount > 0 && Array.isArray((stats as any).newTickers) && (stats as any).newTickers.length > 0 && (
+            <div style={{
+              marginTop: 10,
+              padding: '8px 6px 4px',
+              borderTop: '1px solid color-mix(in srgb, #06B6D4 22%, transparent)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 4,
+              maxHeight: 240,
+              overflowY: 'auto',
+            }}>
+              {(stats as any).newTickers.slice(0, 50).map((t: any) => (
+                <div key={t.symbol} style={{
+                  display: 'flex',
+                  alignItems: 'baseline',
+                  gap: 8,
+                  fontSize: 11,
+                  padding: '4px 6px',
+                  background: 'var(--mc-bg-0)',
+                  borderRadius: 4,
+                  border: '1px solid var(--mc-bg-4)',
+                }}>
+                  <span style={{
+                    fontWeight: 800,
+                    color: '#06B6D4',
+                    fontFamily: 'ui-monospace, monospace',
+                    minWidth: 70,
+                  }}>{t.symbol}</span>
+                  <span style={{
+                    fontWeight: 700,
+                    fontSize: 10,
+                    padding: '1px 6px',
+                    borderRadius: 3,
+                    background: t.grade === 'A+' || t.grade === 'A'
+                      ? 'color-mix(in srgb, var(--mc-bullish) 18%, transparent)'
+                      : t.grade === 'B+' || t.grade === 'B'
+                        ? 'color-mix(in srgb, var(--mc-warn) 18%, transparent)'
+                        : 'color-mix(in srgb, var(--mc-text-3) 14%, transparent)',
+                    color: t.grade === 'A+' || t.grade === 'A'
+                      ? 'var(--mc-bullish)'
+                      : t.grade === 'B+' || t.grade === 'B'
+                        ? 'var(--mc-warn)'
+                        : 'var(--mc-text-2)',
+                  }}>{t.grade}</span>
+                  <span style={{
+                    fontWeight: 700,
+                    color: 'var(--mc-text-1)',
+                    fontVariantNumeric: 'tabular-nums',
+                    minWidth: 28,
+                  }}>{Math.round(t.score)}</span>
+                  <span style={{
+                    color: 'var(--mc-text-3)',
+                    flex: 1,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}>{t.company}</span>
+                </div>
+              ))}
+              {(stats as any).newTickers.length > 50 && (
+                <div style={{
+                  fontSize: 10,
+                  color: 'var(--mc-text-3)',
+                  textAlign: 'center',
+                  paddingTop: 4,
+                }}>+{(stats as any).newTickers.length - 50} more — full list in main table (PREV column = NEW)</div>
+              )}
+            </div>
+          )}
+        </details>
         <div style={cardStyle}>
           <div style={labelStyle}>Mean Δ vs last upload</div>
           <div style={{
