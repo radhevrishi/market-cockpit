@@ -840,14 +840,18 @@ async function fetchFinancialPageHTML(symbol: string, type: 'consolidated' | 'st
   };
 
   // Source 1: screener.in (use mapped symbol)
+  // zzz52 — bump fetch timeout 10s→25s. Bigger HTMLs (~200KB for ASTRAMICRO/CGPOWER/
+  // MARKSANS/PRICOLLTD) were silently timing out on Railway egress, falling through to
+  // the (also failing) trendlyne/tickertape sources, and returning "DATA MISSING".
+  // Direct screener.in fetches take 1-3s locally; 25s on Railway covers cold-start + slow egress.
   try {
     const suffix = type === 'consolidated' ? 'consolidated/' : '';
     const url = `https://www.screener.in/company/${screenerSym}/${suffix}`;
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(25000) });
     if (res.ok) {
       const html = await res.text();
       if (html.includes('Quarterly Results') || html.includes('id="quarters"')) {
-        console.log(`[Earnings Scan] ${symbol}: screener.in OK (${type})`);
+        console.log(`[Earnings Scan] ${symbol}: screener.in OK (${type}, ${html.length}b)`);
         return { html, source: 'screener.in' };
       }
     }
@@ -866,7 +870,7 @@ async function fetchFinancialPageHTML(symbol: string, type: 'consolidated' | 'st
             // Add to map for future use
             SCREENER_SYMBOL_MAP[symbol] = discoveredSym;
             const discoverUrl = `https://www.screener.in${match.url}${match.url.includes('consolidated') ? '' : (suffix || '')}`;
-            const discoverRes = await fetch(discoverUrl, { headers, signal: AbortSignal.timeout(10000) });
+            const discoverRes = await fetch(discoverUrl, { headers, signal: AbortSignal.timeout(25000) });
             if (discoverRes.ok) {
               const discoverHtml = await discoverRes.text();
               if (discoverHtml.includes('Quarterly Results') || discoverHtml.includes('id="quarters"')) {
