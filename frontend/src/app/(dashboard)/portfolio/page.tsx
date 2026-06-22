@@ -451,10 +451,19 @@ function PortfolioSummary({ rows, holdings }: { rows: PortfolioRow[]; holdings: 
   const effectiveGainers = feedIsStale && lastGood?.gainersCount !== undefined ? lastGood.gainersCount : gainers;
   const effectiveLosers = feedIsStale && lastGood?.losersCount !== undefined ? lastGood.losersCount : losers;
   const showingStale = feedIsStale && !!lastGood;
+  // PATCH 1101zzz35 — When feed is stale AND we have NO last-good cache
+  // yet (first visit since deploy, or cache cleared), the Since-Inception
+  // math falls through to totalWealth = cash only and reports a ~-97%
+  // catastrophe even though the real portfolio is fine — we just haven't
+  // loaded prices yet. Suppress ALL wealth-dependent cards entirely in
+  // that window. They reappear automatically once either prices arrive
+  // or a healthy refresh populates the cache.
+  const noUsableWealthData = feedIsStale && !lastGood;
 
   // PATCH 1101zzz9 + zzz10 — TOTAL WEALTH = equity current + cash.
   const totalWealth = effectiveTotalCurrent + totalCash;
-  const hasWealthData = effectiveTotalCurrent > 0 || totalCash > 0;
+  const hasWealthData =
+    !noUsableWealthData && (effectiveTotalCurrent > 0 || totalCash > 0);
   const inceptionMs = new Date(inceptionDate + 'T00:00:00Z').getTime();
   const yearsSince = isFinite(inceptionMs)
     ? (Date.now() - inceptionMs) / (365.25 * 24 * 3600 * 1000)
@@ -487,8 +496,10 @@ function PortfolioSummary({ rows, holdings }: { rows: PortfolioRow[]; holdings: 
       sub: totalCash > 0 ? `${yearsLabel} · incl. cash` : yearsLabel,
       color: sinceInceptionCagr >= 0 ? '#10B981' : '#EF4444',
     }] : []),
-    // PATCH 1101zzz10 — TOTAL WEALTH = equities + cash.
-    ...(totalCash > 0 ? [{
+    // PATCH 1101zzz10 + zzz35 — TOTAL WEALTH = equities + cash. Suppress
+    // when feed stale + no cache, so we don't show the misleading
+    // "₹97K wealth on a ₹62L portfolio" snapshot.
+    ...(totalCash > 0 && !noUsableWealthData ? [{
       label: 'TOTAL WEALTH',
       value: fmt(totalWealth),
       sub: `${equityPct.toFixed(0)}% equity · ${cashPct.toFixed(0)}% cash`,
@@ -498,6 +509,16 @@ function PortfolioSummary({ rows, holdings }: { rows: PortfolioRow[]; holdings: 
       label: 'CASH BALANCE',
       value: fmt(totalCash),
       sub: cashPositions.length === 1 ? cashPositions[0].label : `${cashPositions.length} buckets`,
+      color: '#FBBF24',
+    }] : []),
+    // PATCH 1101zzz35 — Refreshing placeholder card. When feed is stale
+    // AND no last-good cache exists, surface a single explicit "loading"
+    // card so the user sees WHY all wealth metrics are hidden, instead
+    // of mistaking the suppression for missing portfolio data.
+    ...(noUsableWealthData ? [{
+      label: 'WEALTH (loading)',
+      value: '🔄 …',
+      sub: 'Prices loading — refresh manually or wait ~30s',
       color: '#FBBF24',
     }] : []),
     { label: 'INVESTED VALUE', value: fmt(totalInvested), color: '#F5F7FA' },
