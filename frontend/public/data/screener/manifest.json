@@ -1,16 +1,16 @@
 {
-  "lastSync": "2026-06-22T09:38:56Z",
+  "lastSync": "2026-06-22T19:37:10Z",
   "ok": 15,
   "fail": 0,
   "files": [
     {
       "name": "100-baggers-sales-and-eps-growth.csv",
-      "size": 11605,
+      "size": 11583,
       "displayName": "100 baggers sales and eps growth"
     },
     {
       "name": "capex.csv",
-      "size": 7389,
+      "size": 7399,
       "displayName": "CAPEX"
     },
     {
@@ -25,7 +25,7 @@
     },
     {
       "name": "great-results-and-pullback.csv",
-      "size": 5305,
+      "size": 3556,
       "displayName": "Great Results and Pullback"
     },
     {
@@ -40,7 +40,7 @@
     },
     {
       "name": "multibagger-like-acutaasatlantadee-dev.csv",
-      "size": 6610,
+      "size": 6187,
       "displayName": "Multibagger like Acutaas,Atlanta,Dee Dev"
     },
     {
@@ -50,7 +50,7 @@
     },
     {
       "name": "pead-master-screener-rishi-framework.csv",
-      "size": 11185,
+      "size": 11164,
       "displayName": "PEAD MASTER SCREENER - Rishi Framework"
     },
     {
@@ -65,17 +65,17 @@
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 23013,
+      "size": 23003,
       "displayName": "Latest Portfolio"
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63325,
+      "size": 63313,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65490,
+      "size": 65549,
       "displayName": "Working watchlist"
     }
   ]
