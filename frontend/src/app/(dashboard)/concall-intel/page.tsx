@@ -1299,11 +1299,14 @@ function WarrantMomentumFeed() {
         ...(passingOnly ? { passingOnly: '1' } : {}),
         ...(force ? { force: '1' } : {}),
       });
-      // PATCH 0965 BUG #3 — AbortSignal.timeout(15_000) per spec; replaces
-      // the bespoke 25s AbortController so the spinner is bounded.
+      // PATCH 0965 BUG #3 + 1101zzz34 — Bumped from 15s to 30s. Cold-start
+      // after a Railway redeploy plus the warrant-feed's PDF extraction
+      // step can take 20-25s on first hit. 15s was too tight and produced
+      // false-positive "timed out" banners that needed manual Retry.
+      // Route itself has maxDuration=60s so 30s client cap is safe.
       const res = await fetch(`/api/v1/concall-intel/warrant-feed?${params}`, {
         cache: 'no-store',
-        signal: AbortSignal.timeout(15_000),
+        signal: AbortSignal.timeout(30_000),
       });
       if (!res.ok) {
         setError(`HTTP ${res.status} — warrant feed unavailable`);
@@ -1318,7 +1321,7 @@ function WarrantMomentumFeed() {
       // banner copy matches what the user actually saw.
       const isTimeout = e?.name === 'TimeoutError' || e?.name === 'AbortError' || /timeout|abort/i.test(String(e?.message || ''));
       setError(isTimeout
-        ? '⚠ Warrant momentum data unavailable — pipeline may be processing (timed out after 15s)'
+        ? '⚠ Warrant momentum data unavailable — pipeline may be processing (timed out after 30s)'
         : `⚠ Warrant momentum fetch failed: ${e?.message || 'unknown error'}`);
       // Surface an empty-shape so the UI rolls forward instead of spinning.
       setData((prev) => prev || { filings: [], count_total: 0, count_relevant: 0, count_passing: 0 } as any);
