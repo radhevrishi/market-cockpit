@@ -130,6 +130,10 @@ export async function GET(req: Request) {
         if (r.ok) {
           const wd: any = await r.json();
           const filings: any[] = Array.isArray(wd?.results) ? wd.results : [];
+          // PATCH zzz72 — Clarifications are NSE-mandated explanations of prior
+          // filings, NOT new earnings. Must filter BEFORE the FR_RE match because
+          // subjects like "Clarification - Financial Results" pass /financial\s*result/i.
+          const CLARIFICATION_RE = /clarification|reply\s+to/i;
           const FR_RE = /financial\s*result/i;
           const monthMap: Record<string, string> = {
             JAN: '01', FEB: '02', MAR: '03', APR: '04', MAY: '05', JUN: '06',
@@ -144,6 +148,7 @@ export async function GET(req: Request) {
           };
           for (const f of filings) {
             const subj = String(f?.subject || '');
+            if (CLARIFICATION_RE.test(subj)) continue;  // zzz72 — skip clarifications, not new earnings
             if (!FR_RE.test(subj)) continue;
             const isoDate = parseFilingDate(f?.filing_date);
             if (!isoDate) continue;
@@ -364,6 +369,9 @@ export async function GET(req: Request) {
           if (r.ok) {
             const wd: any = await r.json();
             const filings: any[] = Array.isArray(wd?.results) ? wd.results : [];
+            // PATCH zzz72 — Clarifications/Replies are NOT new earnings filings.
+            // "Clarification - Financial Results" passes FR_RE; must filter first.
+            const CLARIFICATION_RE = /clarification|reply\s+to/i;
             const FR_RE = /financial\s*result/i;
             // 'DD-MMM-YYYY HH:MM:SS' -> 'YYYY-MM-DD'
             const monthMap: Record<string, string> = {
@@ -379,6 +387,7 @@ export async function GET(req: Request) {
             };
             for (const f of filings) {
               const subj = String(f?.subject || '');
+              if (CLARIFICATION_RE.test(subj)) continue;  // zzz72 — skip clarifications, not new earnings
               if (!FR_RE.test(subj)) continue;
               const isoDate = parseFilingDate(f?.filing_date);
               if (!isoDate) continue;
