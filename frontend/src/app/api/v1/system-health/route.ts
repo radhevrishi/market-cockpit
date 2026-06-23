@@ -1,5 +1,17 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// /api/v1/system-health (PATCH zzz69)
+// /api/v1/system-health (PATCH zzz71)
+//
+// zzz71 changes (over zzz70):
+//   - Railway compute row now ships REAL DATA observed on Railway billing
+//     dashboard 2026-06-23 (was: $3.50 estimate / 70%). Actual: $6.40 / 128%
+//     — OVER included credit. Status: FAIL (RED).
+//   - Cost breakdown surfaced inline so user sees Memory = $5.26/mo = 82% of
+//     bill is the #1 cost driver (NOT CPU or egress).
+//   - Postgres row clarified: Volume cost is $0.03/mo (0.5%) — not a problem.
+//   - "Unused Capacity" Railway row flipped from "warn / tightest" to "fail /
+//     over limit" with quick-win fix list.
+//   - Executive summary banner on the page will auto-flag the 128% as
+//     CRITICAL (page.tsx already triggers RED when largest consumer > 80%).
 //
 // One-screen self-service health checkup. Probes:
 //   - 5 Cloudflare Workers /health endpoints
@@ -451,43 +463,47 @@ async function buildResourceSection(): Promise<HealthSection> {
     });
   }
 
-  // 6. Postgres storage (Railway) ─────────────────────────────────────────
-  // Estimated from data shape: earnings_facts + concall snapshots + filings
-  // grow ~50MB/quarter. After several quarters of data, current size is
-  // approximately ~200MB. Free starter limit: 1GB = 20%.
+  // 6. Postgres storage / Railway Volume ──────────────────────────────────
+  // zzz71: REAL data observed on Railway dashboard 2026-06-23:
+  //   Volume usage: 7,378 GB-min → $0.03/mo (0.5% of bill — NEGLIGIBLE)
+  //   Actual DB size is well under 1GB. Volume cost is a rounding error.
   {
     const limit = 1024; // MB
-    const ESTIMATE = 200; // MB
+    const ESTIMATE = 200; // MB (DB content size, unchanged estimate)
     const p = pct(ESTIMATE, limit);
     items.push({
       name: 'Postgres storage',
-      status: statusFromPct(p),
+      status: 'ok',
       limit: '1 GB (Railway free starter)',
-      current: `~${ESTIMATE} MB (estimated from data shape)`,
+      current: `~${ESTIMATE} MB · Volume cost $0.03/mo (negligible)`,
       percent: p,
-      details: `~${ESTIMATE} MB / 1,024 MB (${p}%) · estimate = earnings_facts + concall snapshots + filings grow ~50MB/quarter. Verify on Railway dashboard.`,
-      description: 'Postgres database size. Stores earnings facts, scraper run logs, user notes. Growth is slow but quarterly earnings imports add ~50MB/quarter.',
+      details: `~${ESTIMATE} MB / 1,024 MB (${p}%) · Railway Volume usage observed ${OBSERVED_DATE}: 7,378 GB-min = $0.03/mo (0.5% of bill — NOT a cost driver). DB content grows ~50MB/quarter.`,
+      description: 'Postgres database size + Railway volume. Volume cost is negligible ($0.03/mo). Disk is not the problem.',
       url: 'https://railway.app/dashboard',
     });
   }
 
   // 7. Railway compute spend ──────────────────────────────────────────────
-  // Always-on Next.js server on Railway starter typically lands in the
-  // $3-5/mo range depending on traffic. Estimate $3.50 (70% — "watch")
-  // because the high end of the range would push past the $5 credit, but
-  // typical observed spend has been lower. Verify on Railway billing.
+  // zzz71: REAL Railway billing observed 2026-06-23 — OVER LIMIT.
+  //   Used: $6.40 of $5 included (128%)
+  //   Memory: 22,724.75 minutely GB → $5.26 (82% of bill — #1 COST DRIVER)
+  //   CPU: 427.95 minutely vCPU → $0.20 (3%)
+  //   Egress: 15.41 GB → $0.77 (12%)
+  //   Volume: 7,378 GB-min → $0.03 (0.5%)
+  //   Credits Available: $2.43 · Estimated bill: $3.97 this cycle
+  // Status: FAIL — must reduce Memory footprint (~250MB always-on RSS).
   {
-    const limit = 5; // $/mo
-    const ESTIMATE = 3.5;
-    const p = pct(ESTIMATE, limit);
+    const limit = 5; // $/mo included credit
+    const ACTUAL = 6.40;
+    const p = 128; // hard-coded since we are deliberately over 100% and pct() clamps at 100
     items.push({
       name: 'Railway compute',
-      status: statusFromPct(p),
-      limit: '$5/mo free credit',
-      current: `~$${ESTIMATE.toFixed(2)}/mo (estimated, verify on Railway)`,
+      status: 'fail',
+      limit: '$5.00/mo included (Hobby plan)',
+      current: '$6.40/mo (128% — over included)',
       percent: p,
-      details: `~$${ESTIMATE.toFixed(2)} / $5.00 (${p}%) · estimate spans $3-5/mo for an always-on Next.js server. This single number has the highest variance of any line here — check Railway billing for the actual figure.`,
-      description: 'Compute hours for the Next.js app on Railway. Track spend monthly so you do not hit the credit ceiling unexpectedly.',
+      details: `$${ACTUAL.toFixed(2)} / $5.00 (${p}% — OVER) · observed Railway billing ${OBSERVED_DATE}. Breakdown: Memory 22,724 GB-min → $5.26 (82%) · CPU $0.20 (3%) · Egress $0.77 (12%) · Volume $0.03 (0.5%). Memory is the #1 cost driver — the always-on Next.js server holds ~250MB RSS.`,
+      description: 'OVER INCLUDED CREDIT. Memory ($5.26/mo = 82% of bill) is the #1 cost driver — the always-on Next.js server keeps ~250MB resident. Fix candidates: (1) trim module-level caches (LRU eviction on /api/market/* responseCache Maps); (2) drop pg Pool max from 5→2; (3) remove unused deps (ioredis, socket.io-client); (4) .unref() the rate-limit cleanup interval so Railway can idle the process. See PATCH zzz71 memory audit.',
       url: 'https://railway.app/account/billing',
     });
   }
@@ -508,7 +524,7 @@ async function buildResourceSection(): Promise<HealthSection> {
       'If you hit Cloudflare KV writes (1k/day): a cron is writing too aggressively. Most likely mc-scraper writing per-symbol. Batch writes into one big KV object per cron run.',
       'If you hit Upstash Redis (10k cmds/day): switch the hottest keys to in-memory cache inside the Next.js server (the route is single-instance on Railway, so in-memory works).',
       'If Postgres > 800MB: archive earnings_facts older than 8 quarters to a JSON file in repo, then DELETE from table. Always VACUUM after.',
-      'If Railway compute > $4/mo: the Next.js server is staying warm too long. Add an idle-shutdown setting, or move heavy compute (intelligence rollups) into a Worker cron.',
+      'RAILWAY COMPUTE IS OVER INCLUDED CREDIT ($6.40 / $5.00 = 128%). #1 cost driver is MEMORY at $5.26/mo (82% of bill) — not CPU. Fix priority (zzz71): (a) audit module-level Map/CACHE caches in route.ts files — most are unbounded — add LRU eviction (~30-60MB saved); (b) pg Pool max 5→2 in lib/db.ts (~15MB); (c) remove unused deps `ioredis` + `socket.io-client` from package.json (~10MB); (d) `.unref()` the rate-limit cleanup interval in lib/rateLimit.ts so the Node event loop can idle. Also pause any unused Railway services (e.g. `zestful-learning`).',
       'Numbers are estimates derived from worker code + traffic patterns + dashboard observations. For live counts, add CLOUDFLARE_API_TOKEN and UPSTASH_REDIS_REST_TOKEN to Railway env vars.',
     ],
     links: [
@@ -702,10 +718,10 @@ async function compute(request: Request): Promise<HealthPayload> {
           description: 'IDEA: enable longer earnings history — currently we keep ~2 years; could extend to 5 years (adds ~150MB). Or add a "filing history" table that retains every NSE filing seen — useful for backtests. Or add a "search index" for company search by ISIN / sector.',
         },
         {
-          name: 'Railway compute at ~70% (~$1.50/mo headroom)',
-          status: 'warn' as ItemStatus,
-          details: 'Tightest constraint',
-          description: 'WARNING: this is your TIGHTEST resource. Before adding compute-heavy features, optimize: (1) move heavy compute into CF Workers (CPU is free there), (2) add idle-shutdown so server scales down at night, (3) audit slow API routes via Railway dashboard → Observability. If you blow past $5/mo, billing kicks in.',
+          name: 'Railway compute at 128% — OVER LIMIT',
+          status: 'fail' as ItemStatus,
+          details: 'NEGATIVE headroom — $1.40 over included',
+          description: 'CRITICAL (zzz71): Memory ($5.26/mo = 82% of bill) is the #1 cost driver. The always-on Next.js server holds ~250MB RSS. QUICK WINS to cut Memory 30-50%: (1) add LRU eviction to /api/market/* responseCache Maps (saves 30-60MB), (2) drop pg Pool max 5→2 (saves ~15MB), (3) remove unused deps ioredis + socket.io-client (saves ~10MB), (4) .unref() rate-limit cleanup interval so Railway can idle the process. See PATCH zzz71 memory audit for file:line evidence.',
         },
       ],
       troubleshooting: [
