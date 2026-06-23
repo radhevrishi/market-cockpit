@@ -134,6 +134,7 @@ export async function GET(req: NextRequest) {
     // PATCH 0420 — never return HTTP 500. Empty payload + error field.
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[movers] uncaught', msg);
+    // PATCH zzz65 — sanitize.
     return NextResponse.json({
       generated_at: new Date().toISOString(),
       today_date: new Date().toISOString().slice(0, 10),
@@ -142,18 +143,33 @@ export async function GET(req: NextRequest) {
       big_jumps: [],
       lost_momentum: [],
       ranking_today: [],
-      error: `movers failed: ${msg.slice(0, 200)}`,
+      error: 'movers temporarily unavailable',
     });
   }
 }
 
 async function _handleGET(req: NextRequest) {
-  const referenceDate = req.nextUrl.searchParams.get('date');
+  // PATCH zzz65 — strict date format check. Without it, attacker-supplied
+  // date string flows into KV key `concall-snapshot:v1:${referenceDate}`
+  // (key injection / silent miss).
+  const rawDate = req.nextUrl.searchParams.get('date');
+  const referenceDate = (rawDate && /^\d{4}-\d{2}-\d{2}$/.test(rawDate)) ? rawDate : null;
 
   // Build TODAY's snapshot live (don't write to KV — that's POST's job)
   const origin = new URL(req.url).origin;
   const r = await railwaySelfFetch(`${origin}/api/v1/concall-intel/live-feed?days=2`, { cache: 'no-store' });
-  if (!r.ok) return NextResponse.json({ error: `live-feed HTTP ${r.status}` }, { status: 502 });
+  // PATCH zzz65 — return success shape (empty arrays) on upstream failure so
+  // clients reading new_entries/big_jumps/ranking_today don't crash.
+  if (!r.ok) return NextResponse.json({
+    generated_at: new Date().toISOString(),
+    today_date: new Date().toISOString().slice(0, 10),
+    reference_date: referenceDate,
+    new_entries: [],
+    big_jumps: [],
+    lost_momentum: [],
+    ranking_today: [],
+    error: 'live-feed unavailable',
+  }, { status: 200 });
   const data = await r.json();
 
   const todayTop: SnapshotEntry[] = (data.filings || [])
