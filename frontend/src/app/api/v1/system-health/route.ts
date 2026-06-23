@@ -61,6 +61,67 @@ interface HealthPayload {
   links: Array<{ label: string; url: string }>;
 }
 
+// ─── zzz70 — Page → Backend dependency map ─────────────────────────────────
+// Single source of truth for "if X breaks, which pages stop working".
+const PAGE_DEPENDENCIES: Array<{
+  page: string;
+  href: string;
+  deps: string[];
+  description: string;
+}> = [
+  { page: 'Earnings Calendar',         href: '/earnings-calendar',
+    deps: ['mc-scraper Worker', 'Earnings Calendar KV', 'vercel-cron-bridge'],
+    description: 'NSE filings list by date. Driven by mc-scraper writing to CF KV.' },
+  { page: 'Earnings Opportunities',    href: '/earnings-opportunities',
+    deps: ['mc-scraper Worker', 'Earnings Calendar KV', 'graded API', 'vercel-cron-bridge'],
+    description: 'Filings graded into BLOCKBUSTER/STRONG/MIXED/AVOID. Needs calendar data + Postgres for grading.' },
+  { page: 'Earnings Intelligence',     href: '/earnings',
+    deps: ['indiaearninghub Worker', 'screener.in (via CF Worker proxy)'],
+    description: 'Quarterly results for custom universe. Reads quarter data via Worker.' },
+  { page: 'Conviction Beats',          href: '/watchlists?tab=conviction',
+    deps: ['indiaearninghub Worker', 'screener-sync Worker', 'Postgres (watchlist table)'],
+    description: 'Watchlist + earnings overlay. Needs both data sources.' },
+  { page: 'Concall Intelligence',      href: '/concall-intel',
+    deps: ['mc-scraper Worker', 'concall-intel API routes', 'OpenAI (for AI extraction)'],
+    description: 'NSE concall PDFs + AI extraction. mc-scraper finds the PDFs.' },
+  { page: 'Signals',                   href: '/orders',
+    deps: ['mc-scraper Worker', 'Signals KV', 'vercel-cron-bridge'],
+    description: 'Corp-action signals. Needs filings feed.' },
+  { page: 'Movers',                    href: '/movers',
+    deps: ['mc-movers Worker', 'Yahoo Finance (via Worker)', 'movers KV cache'],
+    description: 'Intraday +/-N% movers. mc-movers feeds the live ticker.' },
+  { page: 'Breadth',                   href: '/breadth',
+    deps: ['mc-movers Worker', 'breadth API route', 'Postgres'],
+    description: 'Market breadth pillars. Pulls live data from mc-movers.' },
+  { page: 'Heatmap',                   href: '/heatmap',
+    deps: ['mc-movers Worker', 'heatmap API route'],
+    description: 'Sector heatmap. Needs mc-movers for prices.' },
+  { page: 'Multibagger',               href: '/multibagger',
+    deps: ['screener-sync workflow', 'mc-movers Worker', 'Postgres (snapshot)'],
+    description: 'Scoring + filters. Needs CSV sync + price lookups.' },
+  { page: 'Portfolio',                 href: '/portfolio',
+    deps: ['indiaearninghub Worker', 'mc-movers Worker', 'Postgres (portfolio table)', 'Yahoo Spark API'],
+    description: 'My Book. Latest prices + fundamentals.' },
+  { page: 'Strategic Visibility',      href: '/strategic-visibility',
+    deps: ['transformational-ledger', 'news RSS feeds', 'Postgres'],
+    description: 'Big news stories. Reads from transformational ledger.' },
+  { page: 'Special Situations',        href: '/special-situations',
+    deps: ['mc-scraper Worker (corp actions)', 'special-situations API'],
+    description: 'Event-driven setups. Needs filings + classification.' },
+  { page: 'Super Investors',           href: '/super-investors',
+    deps: ['refresh-super-investors workflow', 'RSS scrapers'],
+    description: 'BUY/SELL moves by known investors. Cron-driven.' },
+  { page: 'Buy Strategy',              href: '/buy-strategy',
+    deps: ['mc-alerts Worker (Telegram)', 'index price feeds'],
+    description: 'Staggered buy zones. mc-alerts Telegrams on hit.' },
+  { page: 'System Health (this page)', href: '/system-health',
+    deps: ['Every Worker /health endpoint', 'GitHub API', 'Internal cache'],
+    description: 'This dashboard you are looking at.' },
+  { page: 'Playbook / Decision Log',   href: '/playbook',
+    deps: ['Railway only', 'Postgres (decisions table)'],
+    description: 'Static content + Postgres. No external dependency.' },
+];
+
 // ─── What each Worker does + which app pages depend on it ─────────────────
 const WORKERS: Array<{ name: string; url: string; description: string }> = [
   {
@@ -552,10 +613,11 @@ async function compute(request: Request): Promise<HealthPayload> {
       items: workerItems,
       kind: 'standard',
       troubleshooting: [
-        'If a Worker shows RED (fail): open its URL in a new tab. If it 404s or times out, the Worker is down.',
-        'To redeploy: go to GitHub Actions and run the "Deploy Workers" workflow manually (workflow_dispatch button on the right side).',
-        'Check the Cloudflare dashboard for runtime errors or quota issues (Workers free tier = 100k requests/day — see Resource Usage section below).',
-        'mc-scraper is the most important — it fills the data warehouse. If it is down for more than 24h, all dashboards go stale.',
+        'STEP A — If a Worker shows RED: open https://dash.cloudflare.com → click "Workers & Pages" in the left sidebar → click the failing Worker name → click "Logs" tab. Look for the most recent ERROR line.',
+        'STEP B — To redeploy a Worker: open https://github.com/radhevrishi/market-cockpit/actions/workflows/deploy-workers.yml → click "Run workflow" (top-right dropdown) → leave branch as "main" → click green "Run workflow" button. Wait ~60s, refresh. The new run should show green Success.',
+        'STEP C — If Workers are throttled: check https://dash.cloudflare.com → Workers & Pages → "Workers" tile. Total req/day should be under 100k (free tier). If close to ceiling: upgrade to $5/mo at https://dash.cloudflare.com/?to=/:account/workers/plans.',
+        'STEP D — mc-scraper is critical (it fills the data warehouse). If down >24h: ALL dashboards go stale. Priority redeploy via STEP B above.',
+        'STEP E — If indiaearninghub is down: Earnings Intelligence + Earnings Scan show "DATA MISSING". Redeploy via STEP B, then hard-refresh the affected page.',
       ],
       links: [
         { label: 'Cloudflare dashboard', url: 'https://dash.cloudflare.com' },
@@ -568,11 +630,11 @@ async function compute(request: Request): Promise<HealthPayload> {
       items: wfItems,
       kind: 'standard',
       troubleshooting: [
-        'If a workflow shows RED: click the URL → open the failing run → read the red step. The error message is usually self-explanatory.',
-        'Cron heartbeat missing? Most common cause: CRON_SECRET environment variable mismatch between GitHub Secrets and Railway. Check both.',
-        'Second most common: Cloudflare KV namespace is hitting quota or wrong namespace ID in wrangler.toml.',
-        'To trigger manually: open the workflow page → click "Run workflow" → select branch main → green Run button.',
-        'If you see "rate-limited" above, the GitHub API got throttled by anonymous requests. The next refresh should work. To raise the limit, add GITHUB_TOKEN to Railway env.',
+        'STEP A — Open the workflow URL above → find the most recent RED run → click into it → click the failed job → click the red step. The actual error is in the log output. Copy the error and search it.',
+        'STEP B — If you see "Authentication error [code: 10000]" on Deploy Workers: the CLOUDFLARE_API_TOKEN secret has wrong scopes. Open https://github.com/radhevrishi/market-cockpit/settings/secrets/actions → click pencil next to CLOUDFLARE_API_TOKEN → paste a NEW token. To create the token: go to https://dash.cloudflare.com/profile/api-tokens → "Create Token" → "Custom Token" → permissions: Account.Workers Scripts:Edit + Account.Workers KV Storage:Edit + User.Memberships:Read → no TTL.',
+        'STEP C — CRON_SECRET mismatch (causes vercel-cron-bridge failures): GENERATE a fresh secret: open Terminal → run `openssl rand -hex 32` → copy the 64-char output. UPDATE GITHUB: https://github.com/radhevrishi/market-cockpit/settings/secrets/actions → pencil next to CRON_SECRET → paste → Update secret. UPDATE RAILWAY: https://railway.app/dashboard → click market-cockpit project → click "Variables" tab on top → pencil next to CRON_SECRET → paste SAME value → Save. Railway redeploys in ~60s.',
+        'STEP D — To manually trigger a cron: open the workflow URL → top-right "Run workflow" dropdown → leave branch=main → click green button. Wait 2 min and refresh — should show Success.',
+        'STEP E — Rate-limited GitHub API (yellow on this page itself): the anonymous GitHub API quota is 60 req/hr. Next refresh will work. To raise to 5000/hr permanently: create a Personal Access Token at https://github.com/settings/personal-access-tokens/new (Fine-grained: select your repo, give it Actions:Read permission), then add GITHUB_TOKEN to Railway Variables.',
       ],
       links: [
         { label: 'All GitHub Actions runs', url: 'https://github.com/radhevrishi/market-cockpit/actions' },
@@ -584,11 +646,11 @@ async function compute(request: Request): Promise<HealthPayload> {
       items: freshItems,
       kind: 'standard',
       troubleshooting: [
-        'If data is older than 24h: the cron that refreshes it is not firing. Check the GitHub Actions section above.',
-        'Earnings calendar stale? Manually trigger "Deploy Workers" → mc-scraper, or hit POST https://mc-scraper.radhev-232.workers.dev/scrape with the CRON_SECRET header.',
-        'Movers stale? Manually trigger the vercel-cron-bridge workflow, or wait for next scheduled run (every 15 min on market hours).',
-        'mc-scraper last_run > 24h? The Worker cron is broken. Redeploy via Deploy Workers workflow.',
-        'If everything is stale, the most likely cause is a single rotated/expired secret. Check CRON_SECRET, CLOUDFLARE_API_TOKEN, GITHUB_TOKEN.',
+        'STEP A — Earnings Calendar stale (>24h)? Force refresh: open https://github.com/radhevrishi/market-cockpit/actions/workflows/vercel-cron-bridge.yml → "Run workflow" → main → Run. Then in 2 min open /earnings-calendar → click "Hard Refresh" button at top.',
+        'STEP B — Movers stale (>24h)? During off-market: this is normal (last update was last market close). During market hours: open https://mc-movers.radhev-232.workers.dev/probe to test the Worker. If 200 OK with prices: Worker is healthy, refresh /movers page. If failing: redeploy Worker via Deploy Workers workflow.',
+        'STEP C — mc-scraper last_run > 24h? Worker cron is broken. Open https://github.com/radhevrishi/market-cockpit/actions/workflows/deploy-workers.yml → "Run workflow" → main → Run. After it goes green: open https://mc-scraper.radhev-232.workers.dev/health → should show fresh last_run timestamp.',
+        'STEP D — ALL data stale at once (rare)? A single secret is wrong/expired. In order, check: (1) CLOUDFLARE_API_TOKEN at https://github.com/radhevrishi/market-cockpit/settings/secrets/actions — re-create from https://dash.cloudflare.com/profile/api-tokens; (2) CRON_SECRET at the same GitHub secrets page AND at Railway Variables — must MATCH exactly; (3) UPSTASH_REDIS_REST_TOKEN at Railway Variables → if Upstash console shows "Database paused", click Resume button.',
+        'STEP E — Test the full cron chain manually: paste in Terminal: `curl -X POST -H "x-cron-secret: $YOUR_CRON_SECRET" https://market-cockpit-production.up.railway.app/api/v1/cron/refresh-earnings-calendar`. If you see 200 OK + data: chain works. If 401: CRON_SECRET wrong. If 500: route bug — open GitHub issue.',
       ],
       links: [
         { label: 'Railway dashboard', url: 'https://railway.app/dashboard' },
@@ -596,6 +658,92 @@ async function compute(request: Request): Promise<HealthPayload> {
       ],
     },
     resourceSection,  // zzz68: NEW section
+    // zzz70 — Unused Capacity / Opportunities. Most free-tier limits are barely
+    // touched (5% / 0% / 38% / 3% / 20% / 70%) — surface ideas for using the headroom.
+    {
+      name: 'Unused Capacity — Ideas',
+      status: 'healthy' as SectionStatus,
+      kind: 'opportunities' as any,
+      items: [
+        {
+          name: 'CF Workers at ~5% (~95k req/day headroom)',
+          status: 'ok' as ItemStatus,
+          details: 'Could add a 6th Worker',
+          description: 'IDEA: spin up a worker that scrapes BSE filings (currently we only have NSE via mc-scraper). Or add a Worker that polls trendlyne / tickertape as a fallback for the 7 documented straggler symbols (DATAPATTNS, KENNAMET etc.). Each new Worker would add ~500 req/day and you would still be under 10%.',
+        },
+        {
+          name: 'CF KV reads at ~0% (~99.7k reads/day headroom)',
+          status: 'ok' as ItemStatus,
+          details: 'Could cache more, longer',
+          description: 'IDEA: extend KV cache TTL on hot endpoints (intelligence, breadth, transmission) from current 6h to 24h. Each page load saves a Postgres query. Or pre-warm the next 30 days of calendar entries so Earnings Opportunities is instant on every date click.',
+        },
+        {
+          name: 'CF KV writes at ~38% (~620 writes/day headroom)',
+          status: 'ok' as ItemStatus,
+          details: 'Moderate — be careful',
+          description: 'IDEA: batch the mc-scraper per-symbol writes into one big JSON per day (saves ~150 writes). Use the freed budget to also write graded results to KV instead of Postgres (faster reads). DO NOT add a new write-heavy cron without first batching the existing ones.',
+        },
+        {
+          name: 'GitHub Actions: unlimited (public repo)',
+          status: 'ok' as ItemStatus,
+          details: 'Use freely',
+          description: 'IDEA: add a "weekly earnings season prep" cron that runs every Sunday — pre-fetches likely-filing companies for the week and warms cache. Or add a "deploy verifier" cron that runs daily, hits 10 critical endpoints, and Telegrams you on regression.',
+        },
+        {
+          name: 'Upstash Redis at ~3% (~9.7k cmds/day headroom)',
+          status: 'ok' as ItemStatus,
+          details: 'Plenty of room',
+          description: 'IDEA: move ALL hot reads (movers, breadth, intelligence) from Postgres → Upstash. Currently Postgres serves them — Redis would be 10x faster. At current usage you could 30x your Redis usage and still be under quota.',
+        },
+        {
+          name: 'Postgres at ~20% (~800MB headroom)',
+          status: 'ok' as ItemStatus,
+          details: 'Store more history',
+          description: 'IDEA: enable longer earnings history — currently we keep ~2 years; could extend to 5 years (adds ~150MB). Or add a "filing history" table that retains every NSE filing seen — useful for backtests. Or add a "search index" for company search by ISIN / sector.',
+        },
+        {
+          name: 'Railway compute at ~70% (~$1.50/mo headroom)',
+          status: 'warn' as ItemStatus,
+          details: 'Tightest constraint',
+          description: 'WARNING: this is your TIGHTEST resource. Before adding compute-heavy features, optimize: (1) move heavy compute into CF Workers (CPU is free there), (2) add idle-shutdown so server scales down at night, (3) audit slow API routes via Railway dashboard → Observability. If you blow past $5/mo, billing kicks in.',
+        },
+      ],
+      troubleshooting: [
+        'WHAT THIS SECTION IS: you are barely using your free-tier quotas. Each row above suggests a feature you could add WITHOUT moving to a paid tier.',
+        'PRIORITY: pick the 1-2 ideas that match what you actually want next. Most users do not need more capacity — but if you have an idea blocked by "I dont want to pay", check here first.',
+        'REPEATED PATTERN: every time we added a new feature this session, we used <2% of available capacity. You have years of feature runway on free tier.',
+        'EXCEPTION: Railway compute is the tightest. Watch it monthly. Everything else is wide open.',
+      ],
+      links: [
+        { label: 'CF dashboard (all services)', url: 'https://dash.cloudflare.com' },
+        { label: 'Upstash console', url: 'https://console.upstash.com' },
+        { label: 'Railway billing', url: 'https://railway.app/account/billing' },
+      ],
+    },
+    // zzz70 — Page Dependency Map. User-friendly answer to "if X breaks,
+    // which pages break?". Each row: portal page → backend systems it relies on.
+    {
+      name: 'Page → System Dependencies',
+      status: 'healthy' as SectionStatus,
+      kind: 'pageMap' as any,
+      items: PAGE_DEPENDENCIES.map(p => ({
+        name: p.page,
+        status: 'ok' as ItemStatus,
+        url: `https://market-cockpit-production.up.railway.app${p.href}`,
+        details: p.deps.join(' • '),
+        description: p.description,
+      })),
+      troubleshooting: [
+        'This table maps every portal page to the backend systems it depends on.',
+        'If a page is broken: find it here, see which Workers / KV / API it needs, then check those items in the sections above.',
+        'Example: if Earnings Intelligence shows "DATA MISSING" — look at "indiaearninghub" Worker in section 1.',
+        'Example: if Earnings Calendar is empty — look at "mc-scraper" Worker + "Earnings Calendar KV" data freshness.',
+        'Pages without backend deps (Playbook, Decision Log) only depend on Railway being up.',
+      ],
+      links: [
+        { label: 'Master Operations Doc', url: 'https://github.com/radhevrishi/market-cockpit/blob/main/MASTER_OPERATIONS_DOC.md' },
+      ],
+    },
   ];
 
   return {
