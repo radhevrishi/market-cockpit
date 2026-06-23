@@ -104,12 +104,25 @@ let CACHE: { at: number; payload: HealthPayload } | null = null;
 const CACHE_TTL_MS = 60_000;
 
 // ─── zzz68: safe stringify for arbitrary timestamp shapes from /health ────
+// Workers return last_run in different shapes:
+//   mc-scraper:   nested under last_meta.last_run (handled at probe-call time)
+//   mc-movers:    last_run is a whole object { startedAt, generatedAt, ... }
+//   indiaearninghub: usually a plain ISO string
+// This helper pulls the most-recent timestamp out without ever returning [object Object].
 function stringifyTs(v: any): string {
   if (v == null) return '';
   if (typeof v === 'string' || typeof v === 'number') return String(v);
-  // Some Workers return { iso: '...', epoch_ms: ... } or { time: '...' }
   if (typeof v === 'object') {
-    return String(v.iso || v.time || v.timestamp || v.value || v.epoch_ms || JSON.stringify(v));
+    return String(
+      v.generatedAt ||  // mc-movers
+      v.startedAt ||    // mc-movers
+      v.iso ||
+      v.time ||
+      v.timestamp ||
+      v.value ||
+      v.epoch_ms ||
+      ''
+    ) || '(complex)';   // never JSON-stringify the whole object — it bloats the UI
   }
   return String(v);
 }
@@ -124,8 +137,16 @@ async function probeWorker(w: { name: string; url: string; description: string }
     }
     let body: any = null;
     try { body = await res.json(); } catch { body = null; }
-    const version = body?.version || body?.v || body?.service || '';
-    const lastRunRaw = body?.last_run || body?.lastRun || body?.last_scrape || null;
+    // zzz68: prefer real version. mc-scraper exposes `service` (its own name), so prefer numeric version first.
+    const version = body?.version || body?.v || '';
+    // zzz68: cover nested shapes (mc-scraper.last_meta.last_run, mc-movers.lastRun.generatedAt)
+    const lastRunRaw =
+      body?.last_run ||
+      body?.lastRun ||
+      body?.last_scrape ||
+      body?.last_meta?.last_run ||
+      body?.last_meta?.lastRun ||
+      null;
     const lastRun = stringifyTs(lastRunRaw); // zzz68: never render "[object Object]"
     let details = '';
     if (version) details = `v${String(version).replace(/^v/, '')}`;
@@ -406,12 +427,15 @@ async function compute(request: Request): Promise<HealthPayload> {
     24,
     'Holds all NSE filings by date in Cloudflare KV. Used by: Earnings Opportunities (/earnings-opportunities), Earnings Calendar (/earnings-calendar), Graded Tiers.',
   );
+  // zzz68: read Movers freshness directly from the mc-movers Worker /health
+  // (its lastRun.generatedAt is the canonical timestamp; the Next.js
+  // /api/market/quotes does not always set as_of).
   const moversProbe = probeFreshness(
     'Movers feed',
-    origin + '/api/market/movers',  // zzz68: switched to /api/market/movers (the dedicated movers endpoint)
+    'https://mc-movers.radhev-232.workers.dev/health',
     (j: any) => {
-      // zzz68: prefer `as_of` first (it's the field the movers endpoint actually sets)
-      const ts = j?.as_of || j?.generated_at || j?.timestamp || j?.scraped_at;
+      const lr = j?.lastRun || j?.last_run;
+      const ts = lr?.generatedAt || lr?.startedAt || j?.as_of || j?.generated_at || null;
       if (!ts) return null;
       return (Date.now() - new Date(ts).getTime()) / 60000;
     },
@@ -422,9 +446,14 @@ async function compute(request: Request): Promise<HealthPayload> {
     'mc-scraper last_run',
     'https://mc-scraper.radhev-232.workers.dev/health',
     (j: any) => {
-      const ts = j?.last_run || j?.lastRun || j?.last_scrape;
+      // zzz68: mc-scraper nests its last_run under last_meta
+      const ts =
+        j?.last_meta?.last_run ||
+        j?.last_meta?.lastRun ||
+        j?.last_run ||
+        j?.lastRun ||
+        j?.last_scrape;
       if (!ts) return null;
-      // zzz68: handle object-shaped timestamps too
       const tsStr = stringifyTs(ts);
       const parsed = new Date(tsStr).getTime();
       if (!Number.isFinite(parsed)) return null;
