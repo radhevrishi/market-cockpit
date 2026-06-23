@@ -80,8 +80,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
     return NextResponse.json({ ok: true, bytes, market, savedAt: new Date().toISOString() });
   } catch (e: any) {
+    // PATCH zzz65 — log server-side, never leak Postgres details (table names,
+    // SQL fragments, connection strings) to client.
     console.error('[mb-snapshot POST] error', e?.message || e);
-    return NextResponse.json({ ok: false, error: e?.message || 'server error' }, { status: 500 });
+    return NextResponse.json({ ok: false, error: 'server error' }, { status: 500 });
   }
 }
 
@@ -109,8 +111,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     try { meta = row.meta_json ? JSON.parse(row.meta_json) : null; } catch {}
     return NextResponse.json({ ok: true, snapshot: row.snapshot_json, meta, updatedAt: row.updated_at });
   } catch (e: any) {
+    // PATCH zzz65 — sanitize.
     console.error('[mb-snapshot GET] error', e?.message || e);
-    return NextResponse.json({ ok: false, error: e?.message || 'server error' }, { status: 500 });
+    return NextResponse.json({ ok: false, error: 'server error' }, { status: 500 });
   }
 }
 
@@ -129,6 +132,8 @@ export async function DELETE(req: NextRequest): Promise<NextResponse> {
     await dbQuery(`DELETE FROM mb_snapshots WHERE client_id = $1 AND market = $2`, [clientId, market]);
     return NextResponse.json({ ok: true, market });
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message || 'server error' }, { status: 500 });
+    // PATCH zzz65 — sanitize.
+    console.error('[mb-snapshot DELETE] error', e?.message || e);
+    return NextResponse.json({ ok: false, error: 'server error' }, { status: 500 });
   }
 }
