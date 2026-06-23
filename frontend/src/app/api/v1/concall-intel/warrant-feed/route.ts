@@ -84,15 +84,7 @@ async function fetchPriceContext(symbol: string, signal?: AbortSignal): Promise<
     // Yahoo Finance v8 chart endpoint — 1y history
     const yahooSymbol = `${symbol}.NS`;
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?interval=1d&range=1y`;
-    // PATCH 1101zzz46 — Yahoo returns 429 (Too Many Requests) when there's
-    // no User-Agent header. That's why CMP coverage on the warrant feed
-    // recently dropped to 0%. v8 chart API works fine with a UA — same
-    // header lib/yahoo.ts already uses.
-    const res = await fetch(url, {
-      signal,
-      cache: 'no-store',
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MarketCockpit/1.0)' },
-    });
+    const res = await fetch(url, { signal, cache: 'no-store' });
     if (!res.ok) return { cmp: null, perf_90d_pct: null, perf_52w_high_pct: null };
     const j = await res.json();
     const result = j?.chart?.result?.[0];
@@ -148,12 +140,13 @@ export async function GET(req: NextRequest) {
     // PATCH 0416 — Never return HTTP 500
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[warrant-feed] uncaught error', msg);
+    // PATCH zzz65 — sanitize error response (no raw msg leak to client).
     return NextResponse.json({
       generated_at: new Date().toISOString(),
       count_total: 0, count_relevant: 0, count_passing: 0,
       filings: [], ranked_all: [],
       sources: { nse: 'NSE_BLOCKED', bse: 'BSE_BLOCKED' },
-      error: `warrant-feed failed: ${msg.slice(0, 200)}`,
+      error: 'warrant-feed temporarily unavailable',
     });
   }
 }
@@ -170,15 +163,20 @@ async function handleWarrantFeed(req: NextRequest) {
   // PATCH 0393 — max lookback bumped 30 → 60 days per user request
   // PATCH 0405 — bumped 60 → 90 days for full-quarter view
   // PATCH 0407 — bumped 90 → 180 days for historical validation
-  const days = Math.min(180, Math.max(1, parseInt(req.nextUrl.searchParams.get('days') || '14')));
+  // PATCH zzz65 — NaN guards on numeric params so ?days=abc / ?threshold=foo
+  // can't poison downstream arithmetic.
+  const daysRaw = parseInt(req.nextUrl.searchParams.get('days') || '14');
+  const days = Math.min(180, Math.max(1, Number.isFinite(daysRaw) ? daysRaw : 14));
   // PATCH 0392 — threshold default dropped 8 → 5 (ranking, not hard gate)
   // PATCH 0536 — keep ranking floor at 5 but the hard passing gate in
   // warrant-momentum.ts is now 5.5 (was 6.5); callers passing threshold=6.5
   // get the old behaviour but the default surface is more permissive.
-  const threshold = parseFloat(req.nextUrl.searchParams.get('threshold') || '5');
+  const thresholdRaw = parseFloat(req.nextUrl.searchParams.get('threshold') || '5');
+  const threshold = Number.isFinite(thresholdRaw) ? thresholdRaw : 5;
   const passingOnly = req.nextUrl.searchParams.get('passingOnly') === '1';
   // PATCH 0392 — top-N ranking mode (returns best N regardless of threshold)
-  const topN = parseInt(req.nextUrl.searchParams.get('topN') || '0');
+  const topNRaw = parseInt(req.nextUrl.searchParams.get('topN') || '0');
+  const topN = Number.isFinite(topNRaw) ? Math.max(0, Math.min(500, topNRaw)) : 0;
   const force = req.nextUrl.searchParams.get('force') === '1';
 
   const cacheKey = CACHE_KEY(days);
