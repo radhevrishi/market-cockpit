@@ -1987,12 +1987,20 @@ export async function GET(request: NextRequest) {
       const cached = await kvGet<any>(cacheKey);
       if (cached && cached.results && cached.results.length > 0) {
         console.log('[Multibagger] Serving stale cached results after fatal error');
-        return NextResponse.json({ ...cached, _stale: true, _staleFallbackReason: msg });
+        // PATCH zzz65 — do not leak raw error to client (same fix as earnings C3).
+        return NextResponse.json({ ...cached, _stale: true, _staleFallbackReason: 'upstream_error' });
       }
     } catch { /* cache miss — return error */ }
 
+    // PATCH zzz65 — return error path with FULL success shape (degradedMode, meta)
+    // so clients that read meta.total / degradedMode don't crash. No raw `msg` leak.
     return NextResponse.json(
-      { results: [], error: msg, message: 'Internal error — please retry' },
+      {
+        results: [],
+        degradedMode: true,
+        meta: { total: 0, withData: 0, missingData: 0, errors: 1, degraded: true },
+        message: 'Internal error — please retry',
+      },
       { status: 500 }
     );
   }
