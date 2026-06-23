@@ -144,7 +144,7 @@ interface BroadResult {
   cohortDate?: string;
 }
 
-async function computeBroadBreadth(origin?: string): Promise<BroadResult> {
+async function computeBroadBreadth(): Promise<BroadResult> {
   // Read both blobs in parallel — neither blocks the other.
   const [uniBlob, rsBlob] = await Promise.all([
     kvGet<{ tickers?: UniverseTicker[]; generatedAt?: string }>('nse-ticker-universe:v1:latest').catch(() => null),
@@ -164,88 +164,28 @@ async function computeBroadBreadth(origin?: string): Promise<BroadResult> {
   const stats = rsBlob?.stats || {};
   const tickers = uniBlob.tickers.filter((t) => t.hasPrice && t.ticker);
 
-  // PATCH 1101zzz30 — LIVE INTRADAY OVERLAY. During NSE open hours we
-  // overlay live regularMarketPrice from /api/market/quotes on top of the
-  // EOD BHAVCOPY universe. The rolling stats blob carries sma20, sma50,
-  // range60dHigh, range60dLow as NUMERIC fields — so we can recompute
-  // aboveSma20 / aboveSma50 / pctOfRange60dHigh in real time using the
-  // live price, while keeping the 60-day SMA + range as the baseline.
-  // Off hours / weekends: fall through to the precomputed booleans
-  // (yesterday's close), behaviour identical to pre-zzz30.
-  let liveQuoteMap: Map<string, number> | null = null;
-  try {
-    const { isIndianMarketOpen } = await import('@/lib/market-hours');
-    if (isIndianMarketOpen()) {
-      // Fetch live quotes from the internal route. host is derived from
-      // the incoming request URL so we work in dev + prod identically.
-      // Vercel + Railway both honour relative URLs in fetch() at runtime
-      // for internal API calls so we use the absolute one with origin
-      // derived from VERCEL_URL when present.
-      // PATCH 1101zzz31 — pass origin from the GET handler; env-based
-      // fallback fails on Railway because VERCEL_URL is unset and
-      // RAILWAY_PUBLIC_DOMAIN isn't always set on this deploy.
-      const effOrigin = origin ||
-        (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}`
-          : process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
-          : 'http://localhost:3000');
-      const qRes = await fetch(`${effOrigin}/api/market/quotes?market=india`, {
-        cache: 'no-store',
-        signal: AbortSignal.timeout(6000),
-      }).catch(() => null);
-      if (qRes && qRes.ok) {
-        const qJson: any = await qRes.json().catch(() => null);
-        const stocks: any[] = Array.isArray(qJson?.stocks) ? qJson.stocks : [];
-        liveQuoteMap = new Map();
-        for (const s of stocks) {
-          const sym = String(s.ticker || s.symbol || '').toUpperCase();
-          const price = Number(s.price);
-          if (sym && Number.isFinite(price) && price > 0) {
-            liveQuoteMap.set(sym, price);
-          }
-        }
-      }
-    }
-  } catch {
-    /* live overlay best-effort; fall through to EOD precomputed flags */
-  }
-
   // ─── TREND BREADTH (35%) ─────────────────────────────────────────────
-  // PATCH 0810 + 1101zzz30: REAL sma20 + sma50 from rolling-stats blob
-  // (computed by GH Actions over 60-day BHAVCOPY window). When live
-  // overlay is available, aboveSma20 / aboveSma50 / pct-of-range are
-  // recomputed against today's intraday price instead of yesterday's
-  // close, making the breadth indicator truly live during market hours.
+  // PATCH 0810: now uses REAL sma20 + sma50 from rolling-stats blob
+  // (computed by GH Actions over 60-day BHAVCOPY window). 60-day range
+  // high/low is used for "new high/low" — that's an HONEST 60d signal,
+  // not pretending to be 52w.
   let aboveSma20 = 0, hasSma20 = 0;
   let aboveSma50 = 0, hasSma50 = 0;
   let newHigh = 0, newLow = 0, hasHL = 0;
   for (const t of tickers) {
     const s = stats[t.ticker] || {};
-    const livePrice = liveQuoteMap?.get(String(t.ticker).toUpperCase());
-    // aboveSma20
-    if (livePrice !== undefined && Number.isFinite(s.sma20) && s.sma20! > 0) {
-      hasSma20++;
-      if (livePrice > s.sma20!) aboveSma20++;
-    } else if (typeof s.aboveSma20 === 'boolean') {
+    if (typeof s.aboveSma20 === 'boolean') {
       hasSma20++;
       if (s.aboveSma20) aboveSma20++;
     }
-    // aboveSma50
-    if (livePrice !== undefined && Number.isFinite(s.sma50) && s.sma50! > 0) {
-      hasSma50++;
-      if (livePrice > s.sma50!) aboveSma50++;
-    } else if (typeof s.aboveSma50 === 'boolean') {
+    if (typeof s.aboveSma50 === 'boolean') {
       hasSma50++;
       if (s.aboveSma50) aboveSma50++;
     }
     // 60-day range — current within 2% of period high = new high; within 5% of low = new low
-    let p: number | null = null;
-    if (livePrice !== undefined && Number.isFinite(s.range60dHigh) && s.range60dHigh! > 0) {
-      p = livePrice / s.range60dHigh!;
-    } else {
-      p = Number.isFinite(s.pctOfRange60dHigh)
-        ? s.pctOfRange60dHigh!
-        : (Number.isFinite(s.pctOf52wHigh) ? s.pctOf52wHigh! : null);
-    }
+    const p = Number.isFinite(s.pctOfRange60dHigh)
+      ? s.pctOfRange60dHigh!
+      : (Number.isFinite(s.pctOf52wHigh) ? s.pctOf52wHigh! : null);
     if (p !== null) {
       hasHL++;
       if (p >= 0.98) newHigh++;
@@ -361,25 +301,21 @@ async function computeBroadBreadth(origin?: string): Promise<BroadResult> {
     },
     universeSize: tickers.length,
     cohortDate: uniBlob.generatedAt,
-    // PATCH 1101zzz30 — surface whether the live overlay fired so the
-    // top-level response can reflect "live" vs "EOD only" in `source`.
-    liveOverlayUsed: !!(liveQuoteMap && liveQuoteMap.size > 0),
-    liveQuoteCount: liveQuoteMap?.size ?? 0,
-  } as any;
+  };
 }
 
 export async function GET(request: Request) {
+ try {
   const t0 = Date.now();
   const { searchParams } = new URL(request.url);
-  const mode = (searchParams.get('mode') || 'broad').toLowerCase();   // PATCH 0807 — default to broad
+  // PATCH zzz65 — whitelist mode param. Any other value silently passes
+  // through to the Yahoo basket fallback (legacy behaviour preserved).
+  const rawMode = (searchParams.get('mode') || 'broad').toLowerCase();
+  const mode = (rawMode === 'broad' || rawMode === 'auto' || rawMode === 'basket') ? rawMode : 'broad';   // PATCH 0807 — default to broad
 
   // ─── BROAD MODE — read from KV blobs, full NSE universe ──────────────
   if (mode === 'broad' || mode === 'auto') {
-    // PATCH 1101zzz31 — extract origin from incoming request URL so the
-    // live-overlay internal fetch works regardless of env var availability.
-    const reqUrl = new URL(request.url);
-    const origin = `${reqUrl.protocol}//${reqUrl.host}`;
-    const broad = await computeBroadBreadth(origin);
+    const broad = await computeBroadBreadth();
     if (broad.ok) {
       const composite =
         broad.trendScore! * 0.35 +
@@ -403,9 +339,7 @@ export async function GET(request: Request) {
         universe_size: broad.universeSize,
         scope: 'broad',
         scope_label: `Full NSE universe (${broad.universeSize} stocks)`,
-        source: (broad as any).liveOverlayUsed
-          ? `nse-ticker-universe + nse-rolling-stats (GH Actions BHAVCOPY) + LIVE INTRADAY OVERLAY (${(broad as any).liveQuoteCount} tickers)`
-          : 'nse-ticker-universe + nse-rolling-stats (GH Actions BHAVCOPY)',
+        source: 'nse-ticker-universe + nse-rolling-stats (GH Actions BHAVCOPY)',
         cohort_date: broad.cohortDate,
         ms: Date.now() - t0,
         generated_at: new Date().toISOString(),
@@ -546,4 +480,29 @@ export async function GET(request: Request) {
     generated_at: new Date().toISOString(),
   };
   return NextResponse.json(payload, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } });
+ } catch (e: any) {
+  // PATCH zzz65 — outer try/catch. Math.max(...closes) RangeError on very
+  // large arrays + any Yahoo throw would surface as raw Next.js 500.
+  console.error('[breadth] fatal error', e?.message || e);
+  return NextResponse.json({
+    composite: 50,
+    regime: 'Transitional',
+    regime_color: '#F59E0B',
+    regime_desc: 'Data temporarily unavailable',
+    suggested_cash_pct: 25,
+    pillars: {
+      trend: { score: 50, weight: 35 },
+      sector: { score: 50, weight: 25 },
+      smallcap: { score: 50, weight: 20 },
+      flow: { score: 50, weight: 10 },
+      momentum: { score: 50, weight: 10 },
+    },
+    universe_size: 0,
+    scope: 'error',
+    scope_label: 'Data temporarily unavailable',
+    source: 'error',
+    generated_at: new Date().toISOString(),
+    error: 'breadth temporarily unavailable',
+  }, { status: 200, headers: { 'Cache-Control': 's-maxage=60' } });
+ }
 }
