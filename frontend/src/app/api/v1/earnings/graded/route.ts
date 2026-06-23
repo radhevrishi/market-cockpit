@@ -914,14 +914,27 @@ export async function GET(req: Request) {
   // its cron+worker fallback chain (mc-scraper Worker, NSE auto-keys). Pull
   // from there and seed dayList. This bridges the gap where the hub aggregator
   // hasn't yet picked up filings the Worker already has.
+  //
+  // NB: Railway's edge layer rejects self-loops on the public URL, so we use
+  // the same loopback-on-failure pattern as _doEnrichSelfFetch.
   if (dayList.length === 0) {
     try {
-      const calUrl = `${base.protocol}//${base.host}/api/v1/earnings/calendar?date=${date}`;
-      const calRes = await fetch(calUrl, {
-        cache: 'no-store',
-        signal: AbortSignal.timeout(8000),
-      });
-      if (calRes.ok) {
+      const calUrlPublic = `${base.protocol}//${base.host}/api/v1/earnings/calendar?date=${date}`;
+      const _calFetch = async (u: string) => fetch(u, { cache: 'no-store', signal: AbortSignal.timeout(8000) });
+      let calRes: Response | null = null;
+      try {
+        calRes = await _calFetch(calUrlPublic);
+      } catch (err: any) {
+        const port = process.env.PORT;
+        if (port) {
+          const loop = calUrlPublic.replace(/^https?:\/\/[^/]+/, `http://127.0.0.1:${port}`);
+          console.log(`[graded] calendar public fetch failed (${err?.message}), retrying via loopback`);
+          calRes = await _calFetch(loop);
+        } else {
+          throw err;
+        }
+      }
+      if (calRes && calRes.ok) {
         const cal: any = await calRes.json();
         const calItems: any[] = Array.isArray(cal?.items) ? cal.items : [];
         const existingTickers = new Set<string>(dayList.map((r: any) => String(r.ticker || '').toUpperCase()));
