@@ -1587,7 +1587,9 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
     const { searchParams } = new URL(request.url);
     const watchlistParam = searchParams.get('watchlist');
     const portfolioParam = searchParams.get('portfolio');
-    const days = parseInt(searchParams.get('days') || '30');
+    // PATCH zzz65 — NaN guard. `parseInt('abc')` = NaN → poisons cutoffMs / daysWindow.
+    const daysParam = parseInt(searchParams.get('days') || '30');
+    const days = Number.isFinite(daysParam) && daysParam > 0 ? Math.min(365, daysParam) : 30;
     const forceRefresh = searchParams.get('force') === 'true';
     // PATCH 0482 — `universe=all` disables the cached-feed PF/WL filter so
     // the user sees the full market. Default behaviour stays filtered.
@@ -3618,6 +3620,8 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
     console.error(`[Intelligence] Fatal error:`, error);
 
     // Try stale cache on fatal error
+    // PATCH zzz65 — log raw, don't ship raw error to client.
+    console.error('[Intelligence] Fatal error:', (error as Error)?.message || error);
     try {
       const cached = await getCachedSignals();
       if (cached && cached.signals && cached.signals.length > 0) {
@@ -3627,11 +3631,12 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
           updatedAt: new Date().toISOString(),
           stale: true,
           error: 'Recovered from cache after error',
-          debug: { error: (error as Error).message },
         });
       }
     } catch {}
 
+    // PATCH zzz65 — full-shape error path so clients reading notable/observations/
+    // speculative/thematicIdeas/_stats don't crash. No raw error.message leak.
     return NextResponse.json({
       top3: [],
       signals: [],
@@ -3643,8 +3648,13 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
         portfolioAlerts: 0, negativeSignals: 0,
         summary: 'Error fetching intelligence — all sources failed',
       },
+      notable: [],
+      observations: [],
+      speculative: [],
+      thematicIdeas: [],
+      _stats: { total: 0 },
+      _allSignals: [],
       updatedAt: new Date().toISOString(),
-      debug: { error: (error as Error).message },
     }, { status: 500 });
   }
 }
