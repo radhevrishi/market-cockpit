@@ -34,7 +34,13 @@ export async function GET(request: Request) {
   const fieldsParam = searchParams.get('fields');
   const limitParam = searchParams.get('limit');
   const allowFields = fieldsParam ? new Set(fieldsParam.split(',').map((f) => f.trim()).filter(Boolean)) : null;
-  const limitN = limitParam ? Math.max(1, Math.min(2500, Number(limitParam))) : null;
+  // PATCH zzz65 — NaN guard. `Number('abc') = NaN` propagates through Math.max/min
+  // unchanged, then `.slice(0, NaN)` silently returns an empty array — clients see
+  // an empty stocks/gainers/losers list while summary.total still reflects 2353.
+  const limitNRaw = limitParam ? Number(limitParam) : null;
+  const limitN = (limitNRaw != null && Number.isFinite(limitNRaw))
+    ? Math.max(1, Math.min(2500, Math.floor(limitNRaw)))
+    : null;
   function projectAndLimit(data: any): any {
     if (!data || typeof data !== 'object') return data;
     let out = data;
@@ -120,7 +126,15 @@ export async function GET(request: Request) {
   } catch (error) {
     __sfReject(error); inFlightBuilds.delete(cacheKey);
     console.error('Market quotes error:', error);
-    return NextResponse.json({ error: 'Failed to fetch market data', stocks: [], gainers: [], losers: [], summary: { total: 0, gainersCount: 0, losersCount: 0, avgChange: 0, sectors: 0 } }, { status: 500 });
+    // PATCH zzz65 — shape parity. Success returns source/updatedAt; error must too
+    // or the client's "as of" badge goes blank when an upstream fails.
+    return NextResponse.json({
+      error: 'Failed to fetch market data',
+      stocks: [], gainers: [], losers: [],
+      summary: { total: 0, gainersCount: 0, losersCount: 0, avgChange: 0, sectors: 0 },
+      source: 'error',
+      updatedAt: new Date().toISOString(),
+    }, { status: 500 });
   }
 }
 
@@ -758,34 +772,6 @@ async function fetchIndianDataWithCache() {
             dayHigh = t.dayHigh || 0;
             dayLow = t.dayLow || 0;
             staleEOD = true;
-            // PATCH 1101zzz22 — Upper/lower-circuit detector. When BHAVCOPY's
-            // changePercent lands within 0.3pp of a standard NSE circuit
-            // band (5/10/20%), the stock almost certainly hit the circuit
-            // and BHAVCOPY recorded the LAST-TRADED price (which can be a
-            // tick or two below the circuit ceiling), not the official
-            // circuit close. PANAMAPET on 2026-06-19 is the canonical
-            // example: BHAVCOPY 483.25 / +18.37% vs NSE individual quote
-            // 489.9 / +20.0% (exactly prev × 1.20). When we detect that
-            // pattern, snap the price to the exact circuit value so the
-            // displayed % matches the official close.
-            if (prevClose > 0 && price > 0) {
-              const absPct = Math.abs(changePercent);
-              const sign = changePercent >= 0 ? 1 : -1;
-              const BANDS = [5, 10, 20];
-              for (const band of BANDS) {
-                if (Math.abs(absPct - band) < 0.3) {
-                  const circuitPrice = prevClose * (1 + (sign * band) / 100);
-                  // Only snap UPWARDS — never widen losses past what BHAVCOPY
-                  // recorded. Snapping a 9.85% loss to 10.0% would be honest;
-                  // snapping a 9.85% gain to 10.0% would be honest too. Both
-                  // directions are fine because circuit closes are official.
-                  price = parseFloat(circuitPrice.toFixed(2));
-                  change = parseFloat((price - prevClose).toFixed(2));
-                  changePercent = sign * band;
-                  break;
-                }
-              }
-            }
           } else {
             // Yahoo enrichment for missing prices
             const q = yahooMap.get(t.ticker);
