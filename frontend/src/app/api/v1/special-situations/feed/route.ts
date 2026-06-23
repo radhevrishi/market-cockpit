@@ -842,15 +842,26 @@ export async function GET(req: Request) {
     }
     return NextResponse.json({ ...data, cached: false, cache_age_min: 0 });
   } catch (e: any) {
+    // PATCH zzz65 — sanitize. Don't ship raw error.message to client.
+    console.error('[special-situations/feed] error', e?.message || e);
     return NextResponse.json({
-      error: 'special-situations feed failed',
-      message: e?.message || String(e),
+      error: 'special-situations feed temporarily unavailable',
+      message: 'upstream temporarily unavailable',
       last_updated: new Date().toISOString(),
       total: 0,
       // PATCH 0550 — fallback shape must match the live Category set (Patch
       // 0532 added CAPEX + CONCALL). Otherwise the page renders the empty
       // catch payload and the new chip groups silently disappear.
       by_category: { SPIN: [], MA: [], TURN: [], CAP: [], CAPEX: [], CONCALL: [] },
+      // PATCH zzz65 — full success-shape parity so clients reading events/
+      // by_tier/event_type_counts/event_priors/source_status/coverage_diagnostic
+      // don't crash (mismatched-shape bug).
+      events: [],
+      by_tier: {},
+      source_status: {},
+      coverage_diagnostic: {},
+      event_type_counts: {},
+      event_priors: {},
     }, { status: 200 });
   }
 }
