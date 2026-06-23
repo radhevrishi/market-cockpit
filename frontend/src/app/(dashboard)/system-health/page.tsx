@@ -1,17 +1,17 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// PATCH zzz68 — System Health page (enhanced).
+// PATCH zzz69 — System Health page (real numbers + visual polish).
 //
 // One-screen self-service checkup. Designed for the user who will lose AI
 // access in 2 days and needs to monitor everything without writing code.
 //
-// Every card has:
-//   - Live status (green/yellow/red)
-//   - Per-item details
-//   - NEW: "What this is for" / "Used by:" description on every item
-//   - INLINE troubleshooting (plain English, no jargon)
-//   - Direct links to GitHub/CF/Railway
-//
-// NEW SECTION (zzz68): "Resource Usage & Limits" rendered as a table.
+// zzz69 changes over zzz68:
+//   - Executive summary card at the very top ("All systems within free-tier
+//     limits. Largest consumer: CF KV writes at 37%. No action needed.")
+//   - Resource section now shows PROGRESS BARS (visual % filled) with
+//     colour-coded fill (green <50%, yellow 50-80%, red >80%)
+//   - Compact metric chips in section headers (e.g. "4.5% used")
+//   - Removed "Unknown — check dashboard" — replaced with honest estimates
+//     and a small "estimated" / "live" badge so the source is clear
 //
 // Refreshes every 60 seconds. Manual refresh button.
 // ═══════════════════════════════════════════════════════════════════════════
@@ -145,6 +145,27 @@ export default function SystemHealthPage() {
 
   const overall = data.overall_status;
 
+  // zzz69: Pull the resources section so we can build an executive summary.
+  const resourcesSection = data.sections.find(s => s.kind === 'resources');
+  const resourceItems = resourcesSection?.items || [];
+  const largestConsumer = [...resourceItems]
+    .filter(i => typeof i.percent === 'number' && (i.percent ?? 0) > 0)
+    .sort((a, b) => (b.percent ?? 0) - (a.percent ?? 0))[0];
+  const allHealthy = resourceItems.every(i => i.status === 'ok' || (i.percent ?? 0) < 50);
+  const execSummary = (() => {
+    if (resourceItems.length === 0) return null;
+    if (largestConsumer && (largestConsumer.percent ?? 0) > 80) {
+      return `CRITICAL: ${largestConsumer.name} at ${largestConsumer.percent}% of free tier. Action required.`;
+    }
+    if (largestConsumer && (largestConsumer.percent ?? 0) > 50) {
+      return `Watch ${largestConsumer.name} at ${largestConsumer.percent}%. Approaching free-tier ceiling — plan a fix.`;
+    }
+    if (largestConsumer) {
+      return `All systems within free-tier limits. Largest consumer: ${largestConsumer.name} at ${largestConsumer.percent}%. No action needed.`;
+    }
+    return allHealthy ? 'All systems within free-tier limits. No action needed.' : null;
+  })();
+
   return (
     <div style={{ padding: 20, color: 'var(--mc-text-1)', fontFamily: 'system-ui, -apple-system, sans-serif', maxWidth: 1100, margin: '0 auto' }}>
 
@@ -160,6 +181,51 @@ export default function SystemHealthPage() {
           </button>
         </div>
       </div>
+
+      {/* ─── zzz69: Executive summary card ───────────────────────────── */}
+      {execSummary && (
+        <div style={{
+          padding: '14px 18px',
+          background: 'var(--mc-bg-2)',
+          border: '1px solid var(--mc-bg-4)',
+          borderLeft: `4px solid ${allHealthy ? COLOR.ok : COLOR.warn}`,
+          borderRadius: 8,
+          marginBottom: 14,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 14,
+        }}>
+          <div style={{
+            fontSize: 11, fontWeight: 800, letterSpacing: 1.5, textTransform: 'uppercase',
+            color: allHealthy ? COLOR.ok : COLOR.warn,
+            padding: '3px 8px', borderRadius: 4,
+            background: `${allHealthy ? COLOR.ok : COLOR.warn}18`,
+            whiteSpace: 'nowrap',
+          }}>
+            Executive Summary
+          </div>
+          <div style={{ fontSize: 13.5, color: 'var(--mc-text-1)', fontWeight: 500, lineHeight: 1.5 }}>
+            {execSummary}
+          </div>
+        </div>
+      )}
+
+      {/* ─── zzz69: Resource chips row (compact metric banner) ───────── */}
+      {resourceItems.length > 0 && (
+        <div style={{
+          display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 18,
+          padding: '10px 14px',
+          background: 'var(--mc-bg-1)',
+          border: '1px dashed var(--mc-bg-4)',
+          borderRadius: 8,
+        }}>
+          {resourceItems
+            .filter(i => typeof i.percent === 'number')
+            .map(i => (
+            <ResourceChip key={i.name} item={i} />
+          ))}
+        </div>
+      )}
 
       {/* ─── Overall status banner ───────────────────────────────────── */}
       <div style={{
@@ -327,67 +393,163 @@ function StandardItemList({ items }: { items: HealthItem[] }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Resources table — zzz68
-// Renders Service | Limit | Current | % Used | Safe? as a tight table
-// with the description as a sub-row.
+// Resources table — zzz69
+// Now ships with PROGRESS BARS (visual % filled) + colour-coded thresholds.
+//   green  <50% (safe)
+//   yellow 50-80% (watch)
+//   red    >80% (over)
+// Each row: name + limit + current (with source tag) + progress bar + status pill.
 // ═══════════════════════════════════════════════════════════════════════════
+
+// Colour for a progress bar based on percent filled.
+function barColor(p: number | null | undefined): string {
+  if (p == null) return '#94A3B8';
+  if (p > 80) return COLOR.fail;
+  if (p > 50) return COLOR.warn;
+  return COLOR.ok;
+}
+
+// Inline progress bar.
+function ProgressBar({ percent, height = 8 }: { percent: number | null | undefined; height?: number }) {
+  const p = percent == null ? 0 : Math.max(0, Math.min(100, percent));
+  const c = barColor(percent);
+  return (
+    <div style={{
+      width: '100%', height, borderRadius: height / 2,
+      background: 'var(--mc-bg-4)', overflow: 'hidden', position: 'relative',
+    }}>
+      <div style={{
+        width: `${p}%`, height: '100%',
+        background: c,
+        borderRadius: height / 2,
+        transition: 'width 600ms ease, background 600ms ease',
+      }} />
+    </div>
+  );
+}
+
+// Compact chip used in the metric banner row at top of page.
+function ResourceChip({ item }: { item: HealthItem }) {
+  const p = item.percent;
+  const c = barColor(p);
+  return (
+    <div style={{
+      display: 'inline-flex', flexDirection: 'column', gap: 4,
+      padding: '6px 10px', borderRadius: 6,
+      background: 'var(--mc-bg-2)',
+      border: `1px solid ${c}55`,
+      minWidth: 130,
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--mc-text-2)' }}>{item.name}</span>
+        <span style={{ fontSize: 11, fontWeight: 800, color: c }}>{p != null ? `${p}%` : '—'}</span>
+      </div>
+      <ProgressBar percent={p} height={5} />
+    </div>
+  );
+}
+
 function ResourcesTable({ items }: { items: HealthItem[] }) {
   const safeBadge = (s: ItemStatus, p: number | null) => {
     const label = s === 'ok' ? '✓ Safe' : s === 'warn' ? '⚠ Watch' : '✗ Over';
     return (
       <span style={{
-        fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 4,
+        fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 4,
         background: `${COLOR[s]}22`, color: COLOR[s], whiteSpace: 'nowrap',
+        border: `1px solid ${COLOR[s]}55`,
       }}>
-        {label}{p != null ? ` (${p}%)` : ''}
+        {label}{p != null ? ` ${p}%` : ''}
       </span>
     );
   };
+
+  // Helper to detect whether "current" string carries a live/estimated/observed source tag.
+  const sourceTag = (current?: string): { label: string; color: string } | null => {
+    if (!current) return null;
+    const c = current.toLowerCase();
+    if (c.includes('live')) return { label: 'live', color: COLOR.ok };
+    if (c.includes('observed')) return { label: 'observed', color: COLOR.ok };
+    if (c.includes('estimate')) return { label: 'estimated', color: COLOR.warn };
+    if (c.includes('unlimited')) return { label: 'unlimited', color: COLOR.ok };
+    return null;
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      {/* Column headers */}
-      <div style={{
-        display: 'grid', gridTemplateColumns: '1.5fr 1.4fr 1.4fr 0.8fr',
-        gap: 10, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1,
-        color: 'var(--mc-text-3)', padding: '0 12px',
-      }}>
-        <div>Service</div>
-        <div>Limit</div>
-        <div>Current</div>
-        <div style={{ textAlign: 'right' }}>Status</div>
-      </div>
-
-      {items.map(item => (
-        <div key={item.name} style={{
-          padding: '10px 12px', background: 'var(--mc-bg-1)', borderRadius: 5,
-          borderLeft: `3px solid ${COLOR[item.status]}`,
-        }}>
-          <div style={{
-            display: 'grid', gridTemplateColumns: '1.5fr 1.4fr 1.4fr 0.8fr',
-            gap: 10, alignItems: 'center',
+      {items.map(item => {
+        const tag = sourceTag(item.current);
+        return (
+          <div key={item.name} style={{
+            padding: '12px 14px', background: 'var(--mc-bg-1)', borderRadius: 6,
+            borderLeft: `3px solid ${COLOR[item.status]}`,
           }}>
-            <div style={{ fontWeight: 600, fontSize: 13 }}>{item.name}</div>
-            <div style={{ fontSize: 11.5, color: 'var(--mc-text-2)' }}>{item.limit || '—'}</div>
-            <div style={{ fontSize: 11.5, color: 'var(--mc-text-2)' }}>{item.current || '—'}</div>
-            <div style={{ textAlign: 'right' }}>{safeBadge(item.status, item.percent ?? null)}</div>
+            {/* Top row: name on the left, status pill on the right */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 8 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontWeight: 700, fontSize: 13.5 }}>{item.name}</span>
+                  {tag && (
+                    <span style={{
+                      fontSize: 9.5, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase',
+                      padding: '2px 6px', borderRadius: 3,
+                      background: `${tag.color}18`, color: tag.color,
+                      border: `1px solid ${tag.color}44`,
+                    }}>
+                      {tag.label}
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--mc-text-3)' }}>
+                  Limit: {item.limit || '—'}
+                </div>
+              </div>
+              {safeBadge(item.status, item.percent ?? null)}
+            </div>
+
+            {/* Progress bar */}
+            <div style={{ marginBottom: 8 }}>
+              <ProgressBar percent={item.percent} height={8} />
+              <div style={{
+                display: 'flex', justifyContent: 'space-between',
+                fontSize: 11, color: 'var(--mc-text-2)', marginTop: 4,
+              }}>
+                <span>{item.current || '—'}</span>
+                <span style={{ color: barColor(item.percent), fontWeight: 700 }}>
+                  {item.percent != null ? `${item.percent}% of limit` : ''}
+                </span>
+              </div>
+            </div>
+
+            {/* Description sub-row */}
+            {item.description && (
+              <div style={{
+                fontSize: 11.5, lineHeight: 1.5, color: 'var(--mc-text-3)',
+                marginTop: 8, paddingTop: 8, borderTop: '1px dashed var(--mc-bg-4)',
+              }}>
+                {item.description}
+              </div>
+            )}
+
+            {/* Detail / methodology line */}
+            {item.details && (
+              <div style={{
+                fontSize: 10.5, lineHeight: 1.5, color: 'var(--mc-text-3)',
+                marginTop: 6, fontStyle: 'italic',
+              }}>
+                {item.details}
+              </div>
+            )}
+
+            {item.url && (
+              <div style={{ marginTop: 8, fontSize: 11 }}>
+                <a href={item.url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--mc-accent)', textDecoration: 'none' }}>
+                  Open dashboard ↗
+                </a>
+              </div>
+            )}
           </div>
-          {item.description && (
-            <div style={{
-              fontSize: 11.5, lineHeight: 1.5, color: 'var(--mc-text-3)',
-              marginTop: 6, paddingTop: 6, borderTop: '1px dashed var(--mc-bg-4)',
-            }}>
-              {item.description}
-            </div>
-          )}
-          {item.url && (
-            <div style={{ marginTop: 6, fontSize: 11 }}>
-              <a href={item.url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--mc-accent)', textDecoration: 'none' }}>
-                Open dashboard ↗
-              </a>
-            </div>
-          )}
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
