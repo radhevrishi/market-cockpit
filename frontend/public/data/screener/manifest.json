@@ -1,21 +1,21 @@
 {
-  "lastSync": "2026-06-23T07:38:42Z",
+  "lastSync": "2026-06-23T18:06:11Z",
   "ok": 15,
   "fail": 0,
   "files": [
     {
       "name": "100-baggers-sales-and-eps-growth.csv",
-      "size": 11581,
+      "size": 11582,
       "displayName": "100 baggers sales and eps growth"
     },
     {
       "name": "capex.csv",
-      "size": 7806,
+      "size": 7807,
       "displayName": "CAPEX"
     },
     {
       "name": "fii.csv",
-      "size": 3303,
+      "size": 3304,
       "displayName": "FII"
     },
     {
@@ -25,22 +25,22 @@
     },
     {
       "name": "great-results-and-pullback.csv",
-      "size": 4418,
+      "size": 4841,
       "displayName": "Great Results and Pullback"
     },
     {
       "name": "ipobases.csv",
-      "size": 5745,
+      "size": 4924,
       "displayName": "IPOBASES"
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 6195,
+      "size": 6194,
       "displayName": "Lowequitycapital"
     },
     {
       "name": "multibagger-like-acutaasatlantadee-dev.csv",
-      "size": 5788,
+      "size": 6186,
       "displayName": "Multibagger like Acutaas,Atlanta,Dee Dev"
     },
     {
@@ -50,7 +50,7 @@
     },
     {
       "name": "pead-master-screener-rishi-framework.csv",
-      "size": 10746,
+      "size": 10745,
       "displayName": "PEAD MASTER SCREENER - Rishi Framework"
     },
     {
@@ -65,12 +65,12 @@
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 22996,
+      "size": 22999,
       "displayName": "Latest Portfolio"
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63309,
+      "size": 63306,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
