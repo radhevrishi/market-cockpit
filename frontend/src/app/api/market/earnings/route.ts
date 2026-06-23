@@ -491,6 +491,13 @@ export async function GET(request: Request) {
   // companies missed on the prior pass.
   const force = searchParams.get('force') === 'true' || searchParams.get('force') === '1';
 
+  // PATCH zzz64 — validate `month` (YYYY-MM, month 01-12) before any parsing.
+  // Garbage in `month` previously produced NaN dates that propagated through
+  // the pipeline as silent zero-results.
+  if (month && !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+    return NextResponse.json({ error: 'Bad request', code: 'invalid_param', param: 'month' }, { status: 400 });
+  }
+
   // Route-level cache check (5 min TTL per month+index combo)
   const cacheKey = `${market}_${month || 'current'}_${indexFilter || 'all'}`;
   const cached = _earningsRouteCache.get(cacheKey);
