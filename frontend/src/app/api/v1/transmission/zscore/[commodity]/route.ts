@@ -122,8 +122,13 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ commodity: string }> }) {
+ try {
   const { commodity } = await params;
   if (!commodity) return NextResponse.json({ error: 'commodity required' }, { status: 400 });
+  // PATCH zzz65 — restrict commodity path param to safe chars (used in KV key).
+  if (!/^[A-Za-z0-9_-]{1,40}$/.test(commodity)) {
+    return NextResponse.json({ error: 'invalid commodity' }, { status: 400 });
+  }
   const windowRaw = parseInt(req.nextUrl.searchParams.get('window') || '365', 10);
   const windowDays = (VALID_WINDOWS.has(windowRaw as Window) ? windowRaw : 365) as Window;
   const force = req.nextUrl.searchParams.get('force') === '1';
@@ -155,10 +160,17 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ comm
   const current = prices[prices.length - 1];
   const stats = computeStats(prices);
   if (!stats) {
+    // PATCH zzz65 — was returning HTTP 500 for legitimate sparse-history case
+    // (inconsistent with line 152 which returns 200). Return 200 with same
+    // INSUFFICIENT_DATA shape so client doesn't think server is broken.
     return NextResponse.json({
-      commodity, window_days: windowDays, source: 'INSUFFICIENT_DATA',
-      error: 'Failed to compute statistics',
-    }, { status: 500 });
+      commodity, window_days: windowDays,
+      current_price: 0, mean: 0, median: 0, std_dev: 0, z_score: 0, percentile: 0,
+      min: 0, max: 0, sample_size: prices.length,
+      interpretation: 'Failed to compute statistics.',
+      source: 'INSUFFICIENT_DATA',
+      generated_at: new Date().toISOString(),
+    });
   }
   const z = stats.std > 0 ? (current - stats.mean) / stats.std : 0;
   // Percentile: where does current fall in sorted history?
@@ -185,4 +197,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ comm
     await kvSet(KEY(cacheKey, windowDays), result, TTL_SECONDS);
   }
   return NextResponse.json(result);
+ } catch (e: any) {
+  // PATCH zzz65 — outer try/catch.
+  console.error('[transmission/zscore] fatal error', e?.message || e);
+  return NextResponse.json({
+    error: 'zscore temporarily unavailable',
+    source: 'ERROR',
+    generated_at: new Date().toISOString(),
+  }, { status: 200 });
+ }
 }
