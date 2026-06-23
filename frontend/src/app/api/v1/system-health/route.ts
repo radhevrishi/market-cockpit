@@ -411,19 +411,21 @@ async function buildResourceSection(): Promise<HealthSection> {
   }
 
   // 7. Railway compute spend ──────────────────────────────────────────────
-  // Always-on Next.js server on Railway starter ≈ $4-5/mo. With $5/mo free
-  // credit, the user will consume most of it monthly. Watch level.
+  // Always-on Next.js server on Railway starter typically lands in the
+  // $3-5/mo range depending on traffic. Estimate $3.50 (70% — "watch")
+  // because the high end of the range would push past the $5 credit, but
+  // typical observed spend has been lower. Verify on Railway billing.
   {
     const limit = 5; // $/mo
-    const ESTIMATE = 4.5;
+    const ESTIMATE = 3.5;
     const p = pct(ESTIMATE, limit);
     items.push({
       name: 'Railway compute',
       status: statusFromPct(p),
       limit: '$5/mo free credit',
-      current: `~$${ESTIMATE.toFixed(2)}/mo (estimated from always-on Next.js)`,
+      current: `~$${ESTIMATE.toFixed(2)}/mo (estimated, verify on Railway)`,
       percent: p,
-      details: `~$${ESTIMATE.toFixed(2)} / $5.00 (${p}%) · estimate = always-on Next.js server on starter. Verify on Railway billing — if you're under by a lot, you can safely add more cron work.`,
+      details: `~$${ESTIMATE.toFixed(2)} / $5.00 (${p}%) · estimate spans $3-5/mo for an always-on Next.js server. This single number has the highest variance of any line here — check Railway billing for the actual figure.`,
       description: 'Compute hours for the Next.js app on Railway. Track spend monthly so you do not hit the credit ceiling unexpectedly.',
       url: 'https://railway.app/account/billing',
     });
