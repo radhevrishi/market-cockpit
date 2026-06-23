@@ -56,12 +56,13 @@ export async function GET(req: NextRequest) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[keyword-watch] uncaught error', msg);
+    // PATCH zzz65 — sanitize.
     return NextResponse.json({
       generated_at: new Date().toISOString(),
       count_total: 0, count_relevant: 0, matched_count: 0, total_hits: 0,
       filings: [], group_counts: {},
       sources: { nse: 'NSE_BLOCKED', bse: 'BSE_BLOCKED' },
-      error: `keyword-watch failed: ${msg.slice(0, 200)}`,
+      error: 'keyword-watch temporarily unavailable',
     });
   }
 }
@@ -69,7 +70,9 @@ export async function GET(req: NextRequest) {
 async function handleKeywordWatch(req: NextRequest) {
   // PATCH 0405 — bumped 60 → 90 days for full-quarter view
   // PATCH 0407 — bumped 90 → 180 days for historical signal validation
-  const days = Math.min(180, Math.max(1, parseInt(req.nextUrl.searchParams.get('days') || '14')));
+  // PATCH zzz65 — NaN guard.
+  const daysRaw = parseInt(req.nextUrl.searchParams.get('days') || '14');
+  const days = Math.min(180, Math.max(1, Number.isFinite(daysRaw) ? daysRaw : 14));
   const keywordsParam = (req.nextUrl.searchParams.get('keywords') || '').trim();
   const groupsParam = (req.nextUrl.searchParams.get('groups') || '').trim();
   const force = req.nextUrl.searchParams.get('force') === '1';
