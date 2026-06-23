@@ -80,8 +80,12 @@ function normalizeCompany(s: string): string {
 }
 
 export async function GET(request: Request) {
+ try {
   const { searchParams } = new URL(request.url);
-  const days = parseInt(searchParams.get('days') || '30', 10);
+  // PATCH zzz65 — NaN guard. `?days=abc` → NaN poisons cacheKey AND cutoffMs;
+  // a NaN cutoff makes the date filter never match → silent empty rows.
+  const daysRaw = parseInt(searchParams.get('days') || '30', 10);
+  const days = Number.isFinite(daysRaw) && daysRaw > 0 ? Math.min(365, daysRaw) : 30;
   // PATCH 0734 — bumped v1→v2 to invalidate any cached payloads built with
   // the old (unsanitized) company-name extractor. The new sanitizer +
   // aggregator-side `looksLikeCompany` filter would otherwise be masked
@@ -236,4 +240,17 @@ export async function GET(request: Request) {
   }
 
   return NextResponse.json(payload, { headers: { 'Cache-Control': 's-maxage=600, stale-while-revalidate=1800' } });  // PATCH 0818 — flow data changes slowly
+ } catch (e: any) {
+  // PATCH zzz65 — outer try/catch. Without it, any throw in internalBase /
+  // fan-out / aggregation surfaces as unsanitized Next.js 500 with stack trace.
+  console.error('[super-investor-flow] fatal error', e?.message || e);
+  return NextResponse.json({
+    days: 30,
+    rows: [],
+    counts: { total: 0, accumulation: 0, distribution: 0, mixed: 0 },
+    generated_at: new Date().toISOString(),
+    cached: false,
+    error: 'super-investor-flow temporarily unavailable',
+  }, { status: 200 });
+ }
 }
