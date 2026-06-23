@@ -150,6 +150,22 @@ function gradeRow(row: any): ParsedEarning | null {
       if (diffDays > 3) return null;
     }
   }
+  // zzz72 — require recent announce_date for past dates to prevent stale Screener data pollution.
+  // PATCH 0182 only fires when announce_date_iso is present. On Screener-only rows it's null,
+  // so the guard silently passes — Screener returns the LATEST quarter's financials, which
+  // can be months old. Without announce_date_iso to verify the filing actually happened on
+  // row.filing_date, we have no way to confirm this row is a real filing for that date.
+  // Rule: if announce_date_iso is missing AND filing_date is in the past by more than 7 days
+  // (i.e. user is querying a stale past date), skip — Screener's latest-quarter data is not a
+  // safe substitute for an actual filing event on that historic date.
+  if (!row?.announce_date_iso && row?.filing_date) {
+    const filingD = new Date(row.filing_date);
+    const todayD = new Date();
+    if (!isNaN(filingD.getTime())) {
+      const ageDays = (todayD.getTime() - filingD.getTime()) / 86_400_000;
+      if (ageDays > 7) return null;
+    }
+  }
 
   // PATCH 0178 — RELAXED quarter alignment.
   // Only drop on screener-only source with extreme mismatch (>95 days).
@@ -942,6 +958,8 @@ export async function GET(req: Request) {
         for (const it of calItems) {
           const sym = String(it.symbol || '').toUpperCase();
           if (!sym || existingTickers.has(sym)) continue;
+          // zzz72 — defense-in-depth: never grade Clarification announcements
+          if (it.period_type === 'Clarification') continue;
           dayList.push({
             ticker: sym,
             company: it.company || sym,
