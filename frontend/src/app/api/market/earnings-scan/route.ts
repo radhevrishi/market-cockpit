@@ -940,6 +940,11 @@ async function fetchScreenerData(symbol: string, type: 'consolidated' | 'standal
 // returns pre-parsed JSON. We map its quarters arrays into our internal
 // QuarterFinancials shape so it slots straight into the validSources flow.
 const SCREENER_WORKER_BASE = process.env.SCREENER_WORKER_URL || 'https://indiaearninghub.radhev-232.workers.dev';
+// zzz62 — optional 2nd Worker hostname for rate-limit / IP-throttle bypass.
+// Set SCREENER_WORKER_URL_2 on Railway env when you've deployed a 2nd CF Worker
+// (e.g., indiaearninghub2.YOUR-SUBDOMAIN.workers.dev) and want NAM-INDIA-style
+// symbols that get blocked on the primary worker to retry through the 2nd.
+const SCREENER_WORKER_BASE_2 = process.env.SCREENER_WORKER_URL_2 || '';
 
 async function fetchScreenerViaWorker(symbol: string): Promise<{
   quarters: QuarterFinancials[];
@@ -949,8 +954,28 @@ async function fetchScreenerViaWorker(symbol: string): Promise<{
   pe: number | null;
   currentPrice: number | null;
 } | null> {
+  // Try primary worker; if it returns null AND a 2nd worker is configured,
+  // retry once on the 2nd hostname (works around CF Worker per-IP rate limits).
+  const primary = await fetchScreenerFromWorkerUrl(SCREENER_WORKER_BASE, symbol);
+  if (primary) return primary;
+  if (SCREENER_WORKER_BASE_2) {
+    console.log(`[Earnings Scan] ${symbol}: primary worker returned null — trying SCREENER_WORKER_URL_2`);
+    const secondary = await fetchScreenerFromWorkerUrl(SCREENER_WORKER_BASE_2, symbol);
+    if (secondary) return secondary;
+  }
+  return null;
+}
+
+async function fetchScreenerFromWorkerUrl(workerBase: string, symbol: string): Promise<{
+  quarters: QuarterFinancials[];
+  companyName: string;
+  isBanking: boolean;
+  mcap: number | null;
+  pe: number | null;
+  currentPrice: number | null;
+} | null> {
   const screenerSym = getScreenerSymbol(symbol);
-  const url = `${SCREENER_WORKER_BASE.replace(/\/$/, '')}/stock?symbol=${encodeURIComponent(screenerSym)}`;
+  const url = `${workerBase.replace(/\/$/, '')}/stock?symbol=${encodeURIComponent(screenerSym)}`;
   // zzz55 — Worker call with 30s timeout + 1 retry on transient failures.
   // NAM-INDIA and other low-frequency symbols were timing out at 12s under
   // burst load (CF Worker cold-start + screener.in fetch). Retry once on
