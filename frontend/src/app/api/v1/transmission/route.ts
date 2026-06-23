@@ -544,6 +544,7 @@ function pctChange(pts: YahooPoint[], daysBack: number): number | null {
 }
 
 export async function GET() {
+ try {
   const t0 = Date.now();
 
   // PATCH 0248 — Multi-source fetcher (Yahoo → FMP → AV with fallback).
@@ -676,4 +677,19 @@ export async function GET() {
     }
   } catch { /* fall through */ }
   return NextResponse.json(payload, { headers: respHeaders });
+ } catch (e: any) {
+  // PATCH zzz65 — outer try/catch (was missing). Any throw inside the
+  // COMMODITIES map / Promise.all / pctChange arithmetic would surface as
+  // raw Next.js 500 with stack trace.
+  console.error('[transmission] fatal error', e?.message || e);
+  return NextResponse.json({
+    commodities: [],
+    top_shocks: [],
+    fetched_at: new Date().toISOString(),
+    ms: 0,
+    stale: false,
+    feed_offline: true,
+    error: 'transmission temporarily unavailable',
+  }, { status: 200, headers: { 'Cache-Control': 's-maxage=600, stale-while-revalidate=1800' } });
+ }
 }
