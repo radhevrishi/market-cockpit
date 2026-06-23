@@ -301,6 +301,11 @@ export async function GET(request: Request) {
   const indexFilter = searchParams.get('index');
   const debug = searchParams.get('debug') === 'true';
 
+  // PATCH zzz64 — validate `month` (YYYY-MM, month 01-12) before parsing.
+  if (month && !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+    return NextResponse.json({ error: 'Bad request', code: 'invalid_param', param: 'month' }, { status: 400 });
+  }
+
   try {
     const now = new Date();
     let fromDate: Date, toDate: Date;
@@ -308,6 +313,12 @@ export async function GET(request: Request) {
       const [y, m] = month.split('-').map(Number);
       fromDate = new Date(y, m - 1, 1);
       toDate = new Date(y, m, 0);
+      // PATCH zzz64 — defensive guard. Even though regex validation above
+      // should prevent this, fail fast on any Invalid Date so we never
+      // propagate NaN-ts further down the pipeline.
+      if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
+        return NextResponse.json({ error: 'Bad request', code: 'invalid_param', param: 'month' }, { status: 400 });
+      }
     } else {
       fromDate = new Date(now.getFullYear(), now.getMonth(), 1);
       toDate = new Date(now.getFullYear(), now.getMonth() + 1, 0);
@@ -671,6 +682,7 @@ export async function GET(request: Request) {
     });
 
   } catch (error) {
+    // PATCH zzz64 — no raw exception class/message leakage.
     console.error('[Earnings Cards v4] Error:', error);
     return NextResponse.json({
       cards: [],
@@ -680,7 +692,8 @@ export async function GET(request: Request) {
         dataQualityBreakdown: { full: 0, partial: 0, none: 0 },
         niftyReturn: 0,
       },
-      error: String(error),
+      error: 'Internal error',
+      code: 'internal_error',
       schemaVersion: 2,
     }, { status: 500 });
   }
