@@ -1247,10 +1247,48 @@ export default function EarningsOpportunitiesPage() {
       autoJumpedRef.current = true;
       return;
     }
-    // Current resolved date returned 0 cards → walk back day-by-day via
-    // the graded endpoint until we find one with filings, up to 7 days.
+    // zzz66 — Off-season smart-default: instead of walking 7 days (which
+    // misses dense filing dates 2-4 weeks back during off-season — May 21-Jun 23
+    // gap), first probe the calendar for "most recent date with ≥10 filings"
+    // by fetching the current month + previous month. If that finds a dense
+    // date, jump there immediately. Falls back to the day-by-day graded walk.
     autoWalkProbingRef.current = true;
     (async () => {
+      // STEP A — calendar-based jump to most recent dense date (zzz66)
+      try {
+        const start = new Date(resolvedDateForGrading);
+        const fmtMonth = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        const months: string[] = [fmtMonth(start)];
+        const prev = new Date(start); prev.setDate(1); prev.setMonth(prev.getMonth() - 1);
+        months.push(fmtMonth(prev));
+        const prev2 = new Date(start); prev2.setDate(1); prev2.setMonth(prev2.getMonth() - 2);
+        months.push(fmtMonth(prev2));
+        for (const m of months) {
+          const res = await fetch(`/api/v1/earnings/calendar?month=${m}`, { cache: 'no-store' });
+          if (!res.ok) continue;
+          const payload = await res.json();
+          const byDate: Record<string, unknown[]> = payload?.by_date || {};
+          // Sort dates descending, pick first with ≥10 items
+          const denseDates = Object.entries(byDate)
+            .filter(([_, items]) => Array.isArray(items) && items.length >= 10)
+            .map(([d]) => d)
+            .sort()
+            .reverse();
+          if (denseDates.length > 0) {
+            const targetDate = denseDates[0];
+            // Don't jump FORWARD past today's resolved date — defensive guard
+            if (targetDate <= resolvedDateForGrading) {
+              autoJumpedRef.current = true;
+              autoWalkProbingRef.current = false;
+              setFilterDate(targetDate);
+              return;
+            }
+          }
+        }
+      } catch {}
+
+      // STEP B — fallback: original 7-day graded probe (kept for in-season
+      // when calendar walk-back is overkill; finds even sparse filings).
       const start = new Date(resolvedDateForGrading);
       for (let i = 1; i <= 7; i++) {
         const d = new Date(start);
