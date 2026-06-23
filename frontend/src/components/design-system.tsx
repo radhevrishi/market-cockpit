@@ -304,6 +304,8 @@ const DEFAULT_PAGES: CommandItem[] = [
   { label: 'Buy Strategy',         url: '/buy-strategy' },
   { label: 'Investing OS',         url: '/investing-os' },
   { label: 'System Status',        url: '/system-status' },
+  // PATCH zzz67 — System Health checkup page (no-code self-service ops view).
+  { label: 'System Health',        url: '/system-health', keywords: 'health checkup workers cron freshness ops' },
   { label: 'Activity Log',         url: '/activity-log' },
   { label: 'IPOs',                 url: '/ipos' },
   { label: 'Smart Money',          url: '/smart-money' },
