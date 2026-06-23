@@ -909,6 +909,50 @@ export async function GET(req: Request) {
     }
   }
 
+  // PATCH zzz64 — Calendar fallback seed. When the hub returns 0 candidates
+  // for a date, the calendar endpoint may still know about real filings via
+  // its cron+worker fallback chain (mc-scraper Worker, NSE auto-keys). Pull
+  // from there and seed dayList. This bridges the gap where the hub aggregator
+  // hasn't yet picked up filings the Worker already has.
+  if (dayList.length === 0) {
+    try {
+      const calUrl = `${base.protocol}//${base.host}/api/v1/earnings/calendar?date=${date}`;
+      const calRes = await fetch(calUrl, {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(8000),
+      });
+      if (calRes.ok) {
+        const cal: any = await calRes.json();
+        const calItems: any[] = Array.isArray(cal?.items) ? cal.items : [];
+        const existingTickers = new Set<string>(dayList.map((r: any) => String(r.ticker || '').toUpperCase()));
+        let addedFromCal = 0;
+        for (const it of calItems) {
+          const sym = String(it.symbol || '').toUpperCase();
+          if (!sym || existingTickers.has(sym)) continue;
+          dayList.push({
+            ticker: sym,
+            company: it.company || sym,
+            resultDate: date,
+            quarter: 'Q4',
+            sector: null,
+            marketCap: null,
+            quality: 'Confirmed',
+            source_url: it.source_url || it.attachment || `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(sym)}`,
+            filing_iso: it.filing_dt_iso || null,
+            __source: 'calendar-fallback',
+          });
+          existingTickers.add(sym);
+          addedFromCal++;
+        }
+        if (addedFromCal > 0) {
+          console.log(`[graded] ${date}: PATCH zzz64 — seeded ${addedFromCal} candidates from calendar fallback (source=${cal?.source})`);
+        }
+      }
+    } catch (err) {
+      console.warn(`[graded] calendar fallback fetch failed for ${date}:`, (err as Error).message);
+    }
+  }
+
   // PATCH 0497 — 2nd-pass live-NSE attempt with force=1 if first pass
   // returned empty (NSE may have been transiently blocked). Only for recent
   // past dates where we expect filings to exist.
