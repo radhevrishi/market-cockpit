@@ -134,6 +134,8 @@ export async function GET(req: NextRequest) {
     // a 200 with an `error` field. UI shows graceful degradation.
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[live-feed] uncaught error', msg);
+    // PATCH zzz65 — never echo raw error to client (could include upstream
+    // URLs, KV creds-in-message, stack fragments). Generic label only.
     return NextResponse.json({
       generated_at: new Date().toISOString(),
       count_total: 0,
@@ -142,7 +144,7 @@ export async function GET(req: NextRequest) {
       filings: [],
       theme_clusters: [],
       sources: { nse: 'NSE_BLOCKED', bse: 'BSE_BLOCKED' },
-      error: `live-feed failed: ${msg.slice(0, 200)}`,
+      error: 'live-feed temporarily unavailable',
     }, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } });  // PATCH 0818
   }
 }
@@ -160,9 +162,13 @@ async function handleLiveFeed(req: NextRequest) {
   // PATCH 0405 — bumped 60 → 90 days so Top-10 surfaces a wider universe
   // PATCH 0407 — bumped 90 → 180 days so user can validate historical
   // signal calls (Dec 25-27 concalls etc.) against current engine
-  const days = Math.min(180, Math.max(1, parseInt(req.nextUrl.searchParams.get('days') || '7')));
+  // PATCH zzz65 — NaN guard. `?days=foo` → NaN → Invalid Date later → garbage NSE call.
+  const daysRaw = parseInt(req.nextUrl.searchParams.get('days') || '7');
+  const days = Math.min(180, Math.max(1, Number.isFinite(daysRaw) ? daysRaw : 7));
   const exchangeFilter = (req.nextUrl.searchParams.get('exchange') || '').toUpperCase();
-  const rawThreshold = parseFloat(req.nextUrl.searchParams.get('threshold') || '4');
+  // PATCH zzz65 — NaN guard on threshold (silent `NaN >= NaN = false` hid all results).
+  const thresholdRaw = parseFloat(req.nextUrl.searchParams.get('threshold') || '4');
+  const rawThreshold = Number.isFinite(thresholdRaw) ? thresholdRaw : 4;
   const bullishOnly = req.nextUrl.searchParams.get('bullishOnly') === '1';
   const force = req.nextUrl.searchParams.get('force') === '1';
   // PATCH 0704 — cacheOnly=1 returns cached payload if any, otherwise an
