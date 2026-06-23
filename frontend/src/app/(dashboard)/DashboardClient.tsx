@@ -162,6 +162,8 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/themes',           label: 'Themes',           icon: <BarChart3 className="w-4 h-4" /> },
       { href: '/news-alerts',  label: 'News Alerts',   icon: <Bell className="w-4 h-4" /> },
       { href: '/status',       label: 'System Status', icon: <Bell className="w-4 h-4" /> },
+      // PATCH zzz67 — System Health checkup (workers + cron + freshness)
+      { href: '/system-health', label: 'System Health', icon: <Shield className="w-4 h-4" /> },
       { href: '/settings',     label: 'Settings',      icon: <Shield className="w-4 h-4" /> },
     ],
   },

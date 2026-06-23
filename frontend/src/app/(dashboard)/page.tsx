@@ -292,11 +292,7 @@ function decomposeScore(row: any): Record<string, number> {
 // instant (no network) so we run them up-front and render the Home shell
 // immediately. Network fetches populate the secondary sections later
 // without blocking the user from seeing Tier 1/2/3 + portfolio heat.
-// PATCH 1101zzz4 / AUDIT H7 — accept `skipRescore` so the first paint can use
-// the cached scores as-is and avoid the 200-300ms blocking re-score loop.
-// A second buildSyncState() call from a requestAnimationFrame effect (see
-// HomeDashboard) then updates Tier 1/2/3 with the freshly re-scored grades.
-function buildSyncState(indiaOverride?: any[], opts: { skipRescore?: boolean } = {}): Pick<HomeState, 'tier1' | 'tier2' | 'tier3' | 'turnaroundTier1' | 'changedToday' | 'portfolio' | 'portfolioBySector' | 'staleDataAgeDays' | 'alphaFeedback'> {
+function buildSyncState(indiaOverride?: any[]): Pick<HomeState, 'tier1' | 'tier2' | 'tier3' | 'turnaroundTier1' | 'changedToday' | 'portfolio' | 'portfolioBySector' | 'staleDataAgeDays' | 'alphaFeedback'> {
   if (typeof window === 'undefined') {
     return { tier1: [], tier2: [], tier3: [], turnaroundTier1: [], changedToday: [], portfolio: [], portfolioBySector: [] };
   }
@@ -316,17 +312,6 @@ function buildSyncState(indiaOverride?: any[], opts: { skipRescore?: boolean } =
   })();
   const indiaRaw: any[] = (() => {
     if (!indiaRawSrc.length) return [];
-    // PATCH 1101zzz4 / AUDIT H7 — fast path: skip the per-row rescore and use
-    // the cached scores. Called from the useState initializer so the first
-    // paint stays under 100ms even when 500+ rows are in localStorage. The
-    // deferred useEffect below re-runs buildSyncState() WITHOUT skipRescore
-    // to refresh grades against the latest scoring formula.
-    if (opts.skipRescore) {
-      try {
-        const sorted = [...indiaRawSrc].sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0));
-        return mbApplyRanking(sorted as any[]);
-      } catch { return indiaRawSrc; }
-    }
     try {
       const rescored = indiaRawSrc.map((r: any) => {
         try { return mbScoreIndia(r as MbIndiaRow); } catch { return r; }
@@ -596,34 +581,14 @@ export default function HomeDashboard() {
   // PATCH 0606 — synchronous initial state from localStorage so the page
   // shows Tier 1/2/3 + portfolio heat in <100ms. Network sections lazy-load
   // and each shows its own loading state instead of blocking the whole page.
-  // PATCH 1101zzz4 / AUDIT H7 — initial state uses skipRescore: true so the
-  // first paint avoids 200-300ms of mbScoreIndia work over 500+ rows. The
-  // deferred effect below re-runs buildSyncState() WITHOUT the flag to
-  // refresh grades against the current scoring formula.
   const [data, setData] = useState<HomeState>(() => {
-    const sync = buildSyncState(undefined, { skipRescore: true });
+    const sync = buildSyncState();
     return {
       loading: false, // never block; network sections handle their own loading
       inPlay: [], inPlayRecent: [], bottleneck: [], earningsToday: [], earningsLabel: 'today', alerts: [],
       ...sync,
     };
   });
-  // PATCH 1101zzz4 / AUDIT H7 — after first paint, do the slow rescore in
-  // a requestAnimationFrame. Updates Tier 1/2/3 with fresh grades. If the
-  // user's scores were already current, the diff is a no-op for the React
-  // reconciler; otherwise grades silently update inline.
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const raf = requestAnimationFrame(() => {
-      try {
-        const sync = buildSyncState();
-        setData((prev: HomeState) => ({ ...prev, ...sync }));
-      } catch (e) {
-        try { console.warn('[home] deferred rescore failed', e); } catch {}
-      }
-    });
-    return () => cancelAnimationFrame(raf);
-  }, []);
   const [netLoading, setNetLoading] = useState({ inPlay: true, bottleneck: true, earnings: true });
   // PATCH 0693 — hard wall-clock fallback. If safeDiag never resolves
   // (e.g. fetch hangs without aborting), the section spinners would sit
@@ -671,18 +636,7 @@ export default function HomeDashboard() {
       if (lsRaw) {
         try { localRowCount = (JSON.parse(lsRaw) as any[])?.length || 0; } catch {}
       }
-      // PATCH 1101zzz8 — bump to v2 + ensure 'kv' store exists on upgrade.
-      // Mirrors the fix in multibagger/page.tsx — if home opens the DB first
-      // (before multibagger), it would otherwise consume the v1->v2 upgrade
-      // event without creating the store, leaving multibagger's later open
-      // still broken.
-      const req = indexedDB.open('mc-mb', 2);
-      req.onupgradeneeded = () => {
-        try {
-          const db = req.result;
-          if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
-        } catch {}
-      };
+      const req = indexedDB.open('mc-mb', 1);
       req.onsuccess = () => {
         try {
           const db = req.result;
@@ -744,13 +698,7 @@ export default function HomeDashboard() {
               // PATCH 1101v — Write back DOWN so subsequent loads are fast.
               try { localStorage.setItem('mb_excel_scored_v2', j.snapshot); } catch {}
               try {
-                const req2 = indexedDB.open('mc-mb', 2);
-                req2.onupgradeneeded = () => {
-                  try {
-                    const db = req2.result;
-                    if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
-                  } catch {}
-                };
+                const req2 = indexedDB.open('mc-mb', 1);
                 req2.onsuccess = () => {
                   try {
                     const db = req2.result;
@@ -2519,67 +2467,69 @@ export default function HomeDashboard() {
           {/* PATCH 0619/0635 — institutional chip strip. All in one row group,
               uniform pill style, left-aligned, even row gap. */}
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-start', rowGap: 8, alignItems: 'center' }}>
-            {/* PATCH 1101zzz28 — Alphabetical sort by label (emoji ignored).
-                Previously broken-alpha due to layered additive patches.
-                External (IBEF) interleaved at correct position. Dead
-                button block below (false && <button>) left intact for
-                code archaeology — never renders. */}
-            <Link href="/playbook#about-me"        style={navChip('#fb7185')}>🌿 About Me</Link>
-            <Link href="/activity-log"             style={navChip('#A78BFA')}>📜 Activity</Link>
-            <Link href="/auto-valuation"           style={navChip('#10B981')}>🤖 Auto-Valuation</Link>
-            <Link href="/gautam-baid"              style={navChip('#e3b341')}>📖 Baid Playbook</Link>
-            <Link href="/breadth"                  style={navChip('#10B981')}>📊 Breadth</Link>
-            <Link href="/buy-strategy"             style={navChip('#FFD700')}>🛒 Buy Strategy</Link>
-            <Link href="/playbook#cadence"         style={navChip('#22D3EE')}>🗓 Cadence</Link>
-            <Link href="/capex-tracker"            style={navChip('#F0883E')}>🏗 Capex Tracker</Link>
+            {/* PATCH 0668 — alphabetical order (by label, ignoring emoji) */}
+            <Link href="/activity-log"           style={navChip('#A78BFA')}>📜 Activity</Link>
+            <Link href="/auto-valuation"         style={navChip('#10B981')}>🤖 Auto-Valuation</Link>
+            <Link href="/breadth"                style={navChip('#10B981')}>📊 Breadth</Link>
+            <Link href="/buy-strategy" style={navChip('#FFD700')}>🛒 Buy Strategy</Link>
+            <Link href="/in-play" style={navChip('#22D3EE')}>📰 Live In Play</Link>
             <Link href="/earnings-hub?tab=concall" style={navChip('#A78BFA')}>🧠 Concall AI</Link>
-            <Link href="/concall-intel"            style={navChip('#A78BFA')}>🎙 Concall Intel</Link>
+            <Link href="/concall-intel"          style={navChip('#A78BFA')}>🎙 Concall Intel</Link>
+            {/* PATCH 0910 — User request: surface Conviction Beats + Heatmap
+                here, alphabetical. CB lives inside /watchlists as a sub-tab. */}
             <Link href="/watchlists?tab=conviction" style={navChip('#F59E0B')}>🏆 Conviction Beats</Link>
-            <Link href="/decisions"                style={navChip('#22D3EE')}>📒 Decision Log</Link>
-            <Link href="/earnings-mastery"         style={navChip('#F59E0B')}>📊 Earnings Mastery</Link>
-            <Link href="/earnings-opportunities"   style={navChip('#F59E0B')}>📅 Earnings Ops</Link>
-            <Link href="/earnings"                 style={navChip('#F59E0B')}>📊 Earnings Scan</Link>
-            <Link href="/earnings-trigger"         style={navChip('#f0883e')}>⚡ Earnings Trigger</Link>
-            <Link href="/guidance-extractor"       style={navChip('#A78BFA')}>📋 Guidance</Link>
-            <Link href="/heatmap"                  style={navChip('#22D3EE')}>🗺 Heatmap</Link>
+            <Link href="/decisions"              style={navChip('#22D3EE')}>📒 Decision Log</Link>
+            <Link href="/earnings-opportunities" style={navChip('#F59E0B')}>📅 Earnings Ops</Link>
+            <Link href="/earnings"               style={navChip('#F59E0B')}>📊 Earnings Scan</Link>
+            <Link href="/guidance-extractor"     style={navChip('#A78BFA')}>📋 Guidance</Link>
+            {/* PATCH 1121 — Watchlist & Portfolio Fundamentals deep-link chips per user request */}
+            <Link href="/fundamentals?scope=watchlist" style={navChip('#2dd4bf')}>🔬 Watchlist Fundamentals</Link>
+            <Link href="/fundamentals?scope=portfolio" style={navChip('#f59e0b')}>🔬 Portfolio Fundamentals</Link>
+            <Link href="/heatmap"                style={navChip('#22D3EE')}>🗺 Heatmap</Link>
+            <Link href="/movers"                 style={navChip('#10B981')}>📈 Movers</Link>
+            {/* PATCH 1067 — News Feed chip per user request */}
+            <Link href="/news"                   style={navChip('#60A5FA')}>📰 News Feed</Link>
+            <Link href="/multibagger"            style={navChip('#10B981')}>🚀 Multibagger</Link>
+            <Link href="/capex-tracker"          style={navChip('#F0883E')}>🏗 Capex Tracker</Link>
+            {/* PATCH — 🧭 Verdict deep link: combined capex+MB+forensic+concall verdict tab */}
+            <Link href="/capex-tracker?tab=verdict" style={navChip('#A78BFA')}>🧭 Verdict</Link>
+            <Link href="/portfolio"              style={navChip('#22D3EE')}>💼 My Book</Link>
+            {/* PATCH 0776 — 📑 Order Book + 🏛 Rating Actions chips removed (modules deleted). */}
+            {/* PATCH 1122 — Investing OS chip */}
+            <Link href="/investing-os"           style={navChip('#2dd4bf')}>🧠 Investing OS</Link>
+            <Link href="/gautam-baid"            style={navChip('#e3b341')}>📖 Baid Playbook</Link>
+            <Link href="/earnings-trigger"      style={navChip('#f0883e')}>⚡ Earnings Trigger</Link>
+            <Link href="/playbook"               style={navChip('#F59E0B')}>📚 Playbook</Link>
+            {/* PATCH 1082 — wealth-journey tab */}
+            <Link href="/journey"                style={navChip('#22D3EE')}>🚀 The Journey</Link>
+            {/* PATCH 1089 — Market Cycles handbook tab */}
+            <Link href="/market-cycles"          style={navChip('#A78BFA')}>🎢 Market Cycles</Link>
+            {/* PATCH 1101t — Volume Rules: 9 institutional volume/price-action tips */}
+            <Link href="/volume-rules"           style={navChip('#22D3EE')}>🎯 Volume Rules</Link>
+            {/* PATCH 1101x — Earnings Mastery: post-earnings multibagger playbook */}
+            <Link href="/earnings-mastery"       style={navChip('#F59E0B')}>📊 Earnings Mastery</Link>
+            {/* PATCH 1101aa — External IBEF news link (India Brand Equity Foundation).
+                Opens in new tab; not a Next.js Link because it's a third-party URL. */}
             <a
               href="https://www.ibef.org/news/past-news"
               target="_blank"
               rel="noopener noreferrer"
               style={navChip('#10B981')}
             >🇮🇳 IBEF</a>
-            <Link href="/investing-os"             style={navChip('#2dd4bf')}>🧠 Investing OS</Link>
-            <Link href="/playbook#life-sat"        style={navChip('#fbbf24')}>🌅 Life Sat</Link>
-            <Link href="/in-play"                  style={navChip('#22D3EE')}>📰 Live In Play</Link>
-            <Link href="/market-cycles"            style={navChip('#A78BFA')}>🎢 Market Cycles</Link>
-            <Link href="/movers"                   style={navChip('#10B981')}>📈 Movers</Link>
-            <Link href="/multibagger"              style={navChip('#10B981')}>🚀 Multibagger</Link>
-            <Link href="/portfolio"                style={navChip('#22D3EE')}>💼 My Book</Link>
-            <Link href="/news"                     style={navChip('#60A5FA')}>📰 News Feed</Link>
-            <Link href="/playbook#mastery"         style={navChip('#84cc16')}>🏏 Peak Performance</Link>
-            <Link href="/playbook"                 style={navChip('#F59E0B')}>📚 Playbook</Link>
-            <Link href="/fundamentals?scope=portfolio" style={navChip('#f59e0b')}>🔬 Portfolio Fundamentals</Link>
-            <Link href="/playbook#relationships"   style={navChip('#2dd4bf')}>🤝 Relationships</Link>
-            <Link href="/orders"                   style={navChip('#22D3EE')}>📡 Signals</Link>
-            <Link href="/special-situations"       style={navChip('#EF4444')}>🎯 Special Sit</Link>
-            <Link href="/strategic-visibility"     style={navChip('#A78BFA')}>⭐ Strategic Vis</Link>
-            <Link href="/playbook#stress"          style={navChip('#38bdf8')}>🧘 Stress</Link>
-            <Link href="/super-investors"          style={navChip('#A78BFA')}>🦅 Super Investors</Link>
+            {/* PATCH 1101eee — Screener.in sync via browser bookmarklet.
+                Server-side fetch is blocked by Cloudflare's data-center IP filter.
+                The /screener-sync page guides the user through a one-time
+                bookmarklet setup; the bookmark runs in the browser (allowed by
+                Cloudflare) and downloads all 15 files. */}
             <Link
               href="/screener-sync"
-              // PATCH 1101zzz45 — force cursor:pointer + drop `title`. The
-              // title attribute was triggering the help (?) cursor on some
-              // browsers and visually inconsistent with all other chips.
-              // The chip text is already self-explanatory.
+              // PATCH 1101zzz45 — force cursor:pointer. With the `title`
+              // attribute below, some browsers/extensions render this chip
+              // with the help (?) cursor. All other chips read as pointers,
+              // so the inconsistency stood out. Belt-and-suspenders: also
+              // remove the title since the chip text is self-explanatory.
               style={{ ...navChip('#8B5CF6'), border: '1px solid color-mix(in srgb, #8B5CF6 40%, transparent)', cursor: 'pointer' }}
             >📥 Sync Screener.in</Link>
-            <Link href="/journey"                  style={navChip('#22D3EE')}>🚀 The Journey</Link>
-            <Link href="/critical-themes"          style={navChip('#EF4444')}>🔥 Themes</Link>
-            <Link href="/valuation-calc"           style={navChip('#22D3EE')}>🧮 Valuation Calc</Link>
-            <Link href="/capex-tracker?tab=verdict" style={navChip('#A78BFA')}>🧭 Verdict</Link>
-            <Link href="/volume-rules"             style={navChip('#22D3EE')}>🎯 Volume Rules</Link>
-            <Link href="/watchlists"               style={navChip('#22D3EE')}>👁 Watchlist</Link>
-            <Link href="/fundamentals?scope=watchlist" style={navChip('#2dd4bf')}>🔬 Watchlist Fundamentals</Link>
             {/* PATCH 1101fff — old in-place sync button removed entirely.
                 Previously kept with hidden attribute as dead code for reference
                 but it still rendered visibly in some styling contexts (user
@@ -2707,6 +2657,8 @@ export default function HomeDashboard() {
             <Link href="/strategic-visibility"   style={navChip('#A78BFA')}>⭐ Strategic Vis</Link>
             <Link href="/super-investors"        style={navChip('#A78BFA')}>🦅 Super Investors</Link>
             <Link href="/critical-themes"        style={navChip('#EF4444')}>🔥 Themes</Link>
+            {/* PATCH zzz67 — quick-link to the new no-code System Health checkup */}
+            <Link href="/system-health"          style={navChip('#10B981')}>🩺 System Health</Link>
             <Link href="/valuation-calc"         style={navChip('#22D3EE')}>🧮 Valuation Calc</Link>
             <Link href="/watchlists"             style={navChip('#22D3EE')}>👁 Watchlist</Link>
           </div>
