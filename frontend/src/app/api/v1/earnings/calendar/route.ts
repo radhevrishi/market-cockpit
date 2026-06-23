@@ -62,21 +62,174 @@ export async function GET(req: Request) {
   const from  = url.searchParams.get('from');
   const to    = url.searchParams.get('to');
 
+  // PATCH zzz64 — input validation. Reject malformed date/month/from/to with
+  // a 400 before we attempt KV lookups, so callers get a clean error instead
+  // of silent zero-results. All four params share the same YYYY-MM-DD format
+  // (except `month` which is YYYY-MM). Month component must be 01-12.
+  const DATE_RE  = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+  const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+  if (date && !DATE_RE.test(date)) {
+    return NextResponse.json({ error: 'Bad request', code: 'invalid_param', param: 'date' }, { status: 400 });
+  }
+  if (month && !MONTH_RE.test(month)) {
+    return NextResponse.json({ error: 'Bad request', code: 'invalid_param', param: 'month' }, { status: 400 });
+  }
+  if (from && !DATE_RE.test(from)) {
+    return NextResponse.json({ error: 'Bad request', code: 'invalid_param', param: 'from' }, { status: 400 });
+  }
+  if (to && !DATE_RE.test(to)) {
+    return NextResponse.json({ error: 'Bad request', code: 'invalid_param', param: 'to' }, { status: 400 });
+  }
+  if (from && to && from > to) {
+    return NextResponse.json({ error: 'Bad request', code: 'invalid_param', param: 'from_after_to' }, { status: 400 });
+  }
+
+  // PATCH zzz64 — extracted fallback builder. Both the original from/to
+  // branch and the new date/month fall-through paths use this identical
+  // cron+worker fallback chain when KV misses. Returns the full fallback
+  // payload (cron auto keys + mc-scraper Worker filings), optionally
+  // range-filtered. `rangeFrom`/`rangeTo` are inclusive YYYY-MM-DD bounds.
+  async function buildCronWorkerFallback(rangeFrom?: string, rangeTo?: string) {
+    const today = new Date();
+    const horizonStart = new Date(today); horizonStart.setUTCDate(today.getUTCDate() - 60);
+    const horizonEnd   = new Date(today); horizonEnd.setUTCDate(today.getUTCDate() + 60);
+    const datesToCheck: string[] = [];
+    for (let d = new Date(horizonStart); d <= horizonEnd; d.setUTCDate(d.getUTCDate() + 1)) {
+      datesToCheck.push(d.toISOString().slice(0, 10));
+    }
+    const cronByDate: Record<string, CalendarItem[]> = {};
+    let cronTotal = 0;
+    await Promise.all(datesToCheck.map(async (d) => {
+      try {
+        const tickers = await kvGet<string[]>(`earnings-cal:auto:${d}`);
+        if (!tickers || !tickers.length) return;
+        cronByDate[d] = tickers.map((t) => ({
+          symbol: t,
+          company: t,
+          filing_date: d,
+          filing_dt_iso: null,
+          quarter: '',
+          period_ended: '',
+          audited: false,
+          consolidated: false,
+          period_type: 'Quarterly',
+          attachment: `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(t)}`,
+          source_url: `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(t)}`,
+          exchange: 'NSE',
+        } as any));
+        cronTotal += tickers.length;
+      } catch {}
+    }));
+    if (cronTotal === 0) {
+      try {
+        const WORKER_URL = process.env.CF_WORKER_URL || 'https://mc-scraper.radhev-232.workers.dev';
+        const r = await fetch(`${WORKER_URL}/api/results/latest`, {
+          cache: 'no-store',
+          signal: AbortSignal.timeout(8000),
+        });
+        if (r.ok) {
+          const wd: any = await r.json();
+          const filings: any[] = Array.isArray(wd?.results) ? wd.results : [];
+          const FR_RE = /financial\s*result/i;
+          const monthMap: Record<string, string> = {
+            JAN: '01', FEB: '02', MAR: '03', APR: '04', MAY: '05', JUN: '06',
+            JUL: '07', AUG: '08', SEP: '09', OCT: '10', NOV: '11', DEC: '12',
+          };
+          const parseFilingDate = (s: string): string | null => {
+            const m = String(s || '').match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})/);
+            if (!m) return null;
+            const mm = monthMap[m[2].toUpperCase()];
+            if (!mm) return null;
+            return `${m[3]}-${mm}-${m[1].padStart(2, '0')}`;
+          };
+          for (const f of filings) {
+            const subj = String(f?.subject || '');
+            if (!FR_RE.test(subj)) continue;
+            const isoDate = parseFilingDate(f?.filing_date);
+            if (!isoDate) continue;
+            const sym = String(f?.symbol || '').toUpperCase();
+            if (!sym) continue;
+            if (!cronByDate[isoDate]) cronByDate[isoDate] = [];
+            cronByDate[isoDate].push({
+              symbol: sym,
+              company: String(f?.company || sym),
+              filing_date: isoDate,
+              filing_dt_iso: null,
+              quarter: '',
+              period_ended: '',
+              audited: false,
+              consolidated: false,
+              period_type: subj.includes('Clarification') ? 'Clarification' : 'Quarterly',
+              attachment: String(f?.attachment_url || `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(sym)}`),
+              source_url: String(f?.attachment_url || `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(sym)}`),
+              exchange: 'NSE',
+            } as any);
+            cronTotal++;
+          }
+        }
+      } catch {}
+    }
+    const summary = (await kvGet<{ last_run?: string }>('earnings-cal:auto:_summary')) || {};
+    const fallbackPayload: any = {
+      ...emptyPayload(),
+      scraped_at: summary.last_run || new Date().toISOString(),
+      from: horizonStart.toISOString().slice(0, 10),
+      to: horizonEnd.toISOString().slice(0, 10),
+      total: cronTotal,
+      by_date: cronByDate,
+      source: 'cron+worker-fallback',
+      note: 'using cron + mc-scraper Worker results',
+    };
+    if (rangeFrom || rangeTo) {
+      const fromD = rangeFrom || '0000-00-00';
+      const toD   = rangeTo   || '9999-99-99';
+      const filtered: Record<string, CalendarItem[]> = {};
+      let count = 0;
+      for (const [d, arr] of Object.entries(cronByDate)) {
+        if (d >= fromD && d <= toD) {
+          filtered[d] = arr;
+          count += arr.length;
+        }
+      }
+      fallbackPayload.from = fromD;
+      fallbackPayload.to = toD;
+      fallbackPayload.total = count;
+      fallbackPayload.by_date = filtered;
+    }
+    return fallbackPayload;
+  }
+
   try {
     // Fast path: single-date lookup
     if (date) {
       const day: any = await kvGet(`earnings:calendar:nse:v1:date:${date}`);
       if (day) {
         const parsed = typeof day === 'string' ? JSON.parse(day) : day;
-        return NextResponse.json({
-          date: parsed.date || date,
-          items: parsed.items || [],
-          total: parsed.total ?? (parsed.items?.length || 0),
-          scraped_at: parsed.scraped_at || null,
-          source: 'NSE',
-        });
+        const items = parsed.items || [];
+        if (items.length > 0) {
+          return NextResponse.json({
+            date: parsed.date || date,
+            items,
+            total: parsed.total ?? items.length,
+            scraped_at: parsed.scraped_at || null,
+            source: 'NSE',
+          });
+        }
       }
-      return NextResponse.json({ date, items: [], total: 0, source: 'NSE', empty_reason: 'no_filings_or_scrape_pending' });
+      // PATCH zzz64 — KV miss/empty: fall through to cron+worker fallback,
+      // filtered to this single date. Previously this returned an immediate
+      // 0-total which made the graded route show 0 cards even when the
+      // worker had real filings for the day.
+      const fb = await buildCronWorkerFallback(date, date);
+      const dayItems = (fb.by_date && fb.by_date[date]) ? fb.by_date[date] : [];
+      return NextResponse.json({
+        date,
+        items: dayItems,
+        total: dayItems.length,
+        scraped_at: fb.scraped_at || null,
+        source: dayItems.length > 0 ? 'cron+worker-fallback' : 'NSE',
+        ...(dayItems.length === 0 ? { empty_reason: 'no_filings_or_scrape_pending' } : {}),
+      });
     }
 
     // PATCH zzz58 part 3/3 — Month-aggregate query (`?month=YYYY-MM`).
@@ -87,7 +240,7 @@ export async function GET(req: Request) {
     // (`earnings:calendar:nse:v1:date:YYYY-MM-DD`) were healthy and
     // populated. Fix: when `month` is given, iterate every day in the
     // month, fetch the per-date keys in parallel, and aggregate.
-    if (month && /^\d{4}-\d{2}$/.test(month)) {
+    if (month) {
       const [yStr, mStr] = month.split('-');
       const year = Number(yStr);
       const monthIdx = Number(mStr) - 1; // JS Date months are 0-indexed
@@ -114,6 +267,23 @@ export async function GET(req: Request) {
           }
         } catch {}
       }));
+      // PATCH zzz64 — when per-date KV came back empty for the whole month,
+      // fall through to the cron+worker fallback (scoped to this month)
+      // so callers don't get a silent 0-total on healthy months.
+      if (total === 0) {
+        const monthFrom = `${month}-01`;
+        const monthTo = `${month}-${String(daysInMonth).padStart(2, '0')}`;
+        const fb = await buildCronWorkerFallback(monthFrom, monthTo);
+        return NextResponse.json({
+          scraped_at: fb.scraped_at || '',
+          from: monthFrom,
+          to: monthTo,
+          month,
+          total: fb.total,
+          by_date: fb.by_date,
+          source: fb.total > 0 ? 'cron+worker-fallback' : 'NSE',
+        });
+      }
       return NextResponse.json({
         scraped_at: latestScrapedAt || '',
         from: `${month}-01`,
@@ -328,8 +498,11 @@ export async function GET(req: Request) {
 
     return NextResponse.json(parsed);
   } catch (e: any) {
+    // PATCH zzz64 — don't leak exception class/message in the error field.
+    console.error('[earnings/calendar] internal error:', e?.message || e);
     return NextResponse.json({
-      error: String(e?.message || e),
+      error: 'Internal error',
+      code: 'internal_error',
       ...emptyPayload(),
     }, { status: 500 });
   }
