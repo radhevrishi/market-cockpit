@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// PATCH zzz67 — System Health page.
+// PATCH zzz68 — System Health page (enhanced).
 //
 // One-screen self-service checkup. Designed for the user who will lose AI
 // access in 2 days and needs to monitor everything without writing code.
@@ -7,8 +7,11 @@
 // Every card has:
 //   - Live status (green/yellow/red)
 //   - Per-item details
+//   - NEW: "What this is for" / "Used by:" description on every item
 //   - INLINE troubleshooting (plain English, no jargon)
 //   - Direct links to GitHub/CF/Railway
+//
+// NEW SECTION (zzz68): "Resource Usage & Limits" rendered as a table.
 //
 // Refreshes every 60 seconds. Manual refresh button.
 // ═══════════════════════════════════════════════════════════════════════════
@@ -25,6 +28,10 @@ interface HealthItem {
   url?: string;
   details?: string;
   latency_ms?: number;
+  description?: string;
+  limit?: string;
+  current?: string;
+  percent?: number | null;
 }
 interface HealthSection {
   name: string;
@@ -32,6 +39,7 @@ interface HealthSection {
   items: HealthItem[];
   troubleshooting: string[];
   links?: Array<{ label: string; url: string }>;
+  kind?: 'standard' | 'resources';
 }
 interface HealthPayload {
   generated_at: string;
@@ -107,11 +115,13 @@ export default function SystemHealthPage() {
   }, [fetchHealth]);
 
   // Initial expand: any non-healthy section auto-opens so problems are visible.
+  // zzz68 polish: guard against expanding empty sections (no items yet → loading)
   useEffect(() => {
     if (!data) return;
     const next: Record<string, boolean> = { ...expanded };
     let changed = false;
     for (const s of data.sections) {
+      if (s.items.length === 0) continue;  // zzz68: skip empty/loading sections
       if (s.status !== 'healthy' && next[s.name] === undefined) {
         next[s.name] = true;
         changed = true;
@@ -187,6 +197,7 @@ export default function SystemHealthPage() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         {data.sections.map(section => {
           const isOpen = expanded[section.name] ?? false;
+          const isResources = section.kind === 'resources';
           return (
             <div key={section.name} style={cardStyle(section.status)}>
               {/* Card header — always visible */}
@@ -216,41 +227,17 @@ export default function SystemHealthPage() {
 
               {isOpen && (
                 <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--mc-bg-4)' }}>
-                  {/* Items table */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
-                    {section.items.map(item => (
-                      <div key={item.name} style={{
-                        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
-                        padding: '8px 10px', background: 'var(--mc-bg-1)', borderRadius: 5,
-                        borderLeft: `3px solid ${COLOR[item.status]}`,
-                      }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
-                          <span style={{
-                            fontFamily: 'monospace', fontWeight: 700, color: COLOR[item.status],
-                            width: 16, textAlign: 'center', flexShrink: 0,
-                          }}>{ITEM_GLYPH[item.status]}</span>
-                          <span style={{ fontWeight: 600, fontSize: 13 }}>{item.name}</span>
-                          {item.details && (
-                            <span style={{ fontSize: 11, color: 'var(--mc-text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              · {item.details}
-                            </span>
-                          )}
-                        </div>
-                        <div style={{ display: 'flex', gap: 10, fontSize: 11, color: 'var(--mc-text-3)', flexShrink: 0 }}>
-                          {item.latency_ms != null && <span>{item.latency_ms}ms</span>}
-                          {item.url && (
-                            <a href={item.url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--mc-accent)', textDecoration: 'none' }}>open ↗</a>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  {isResources ? (
+                    <ResourcesTable items={section.items} />
+                  ) : (
+                    <StandardItemList items={section.items} />
+                  )}
 
                   {/* Troubleshooting — inline manual */}
                   <div style={{
                     background: 'var(--mc-bg-1)',
                     border: '1px solid var(--mc-bg-4)',
-                    borderRadius: 6, padding: 12,
+                    borderRadius: 6, padding: 12, marginTop: 16,
                   }}>
                     <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--mc-text-3)', marginBottom: 8 }}>
                       What to do
@@ -283,9 +270,124 @@ export default function SystemHealthPage() {
         background: 'var(--mc-bg-1)', border: '1px dashed var(--mc-bg-4)', borderRadius: 6, lineHeight: 1.6,
       }}>
         <strong style={{ color: 'var(--mc-text-2)' }}>How to use this page:</strong> Green dot = working. Yellow = degraded but not down. Red = broken, action needed.
-        Each card expands to show exactly what to check and direct links to fix it. This page calls the same endpoints your users see, so what you see here is what they see.
+        Each card expands to show exactly what each item is for, which pages use it, and how to fix it. This page calls the same endpoints your users see, so what you see here is what they see.
       </div>
 
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Standard item list (Workers, Workflows, Data Freshness)
+// Shows: status glyph, name, details, AND the new description line.
+// ═══════════════════════════════════════════════════════════════════════════
+function StandardItemList({ items }: { items: HealthItem[] }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {items.map(item => (
+        <div key={item.name} style={{
+          display: 'flex', flexDirection: 'column', gap: 4,
+          padding: '10px 12px', background: 'var(--mc-bg-1)', borderRadius: 5,
+          borderLeft: `3px solid ${COLOR[item.status]}`,
+        }}>
+          {/* Top row: status + name + details + latency + link */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
+              <span style={{
+                fontFamily: 'monospace', fontWeight: 700, color: COLOR[item.status],
+                width: 16, textAlign: 'center', flexShrink: 0,
+              }}>{ITEM_GLYPH[item.status]}</span>
+              <span style={{ fontWeight: 600, fontSize: 13 }}>{item.name}</span>
+              {item.details && (
+                <span style={{ fontSize: 11, color: 'var(--mc-text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  · {item.details}
+                </span>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 10, fontSize: 11, color: 'var(--mc-text-3)', flexShrink: 0 }}>
+              {item.latency_ms != null && <span>{item.latency_ms}ms</span>}
+              {item.url && (
+                <a href={item.url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--mc-accent)', textDecoration: 'none' }}>open ↗</a>
+              )}
+            </div>
+          </div>
+          {/* zzz68: Description row — "What this is for + which page uses it" */}
+          {item.description && (
+            <div style={{
+              fontSize: 11.5, lineHeight: 1.5, color: 'var(--mc-text-3)',
+              paddingLeft: 26, paddingRight: 4, marginTop: 2,
+            }}>
+              {item.description}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Resources table — zzz68
+// Renders Service | Limit | Current | % Used | Safe? as a tight table
+// with the description as a sub-row.
+// ═══════════════════════════════════════════════════════════════════════════
+function ResourcesTable({ items }: { items: HealthItem[] }) {
+  const safeBadge = (s: ItemStatus, p: number | null) => {
+    const label = s === 'ok' ? '✓ Safe' : s === 'warn' ? '⚠ Watch' : '✗ Over';
+    return (
+      <span style={{
+        fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 4,
+        background: `${COLOR[s]}22`, color: COLOR[s], whiteSpace: 'nowrap',
+      }}>
+        {label}{p != null ? ` (${p}%)` : ''}
+      </span>
+    );
+  };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {/* Column headers */}
+      <div style={{
+        display: 'grid', gridTemplateColumns: '1.5fr 1.4fr 1.4fr 0.8fr',
+        gap: 10, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1,
+        color: 'var(--mc-text-3)', padding: '0 12px',
+      }}>
+        <div>Service</div>
+        <div>Limit</div>
+        <div>Current</div>
+        <div style={{ textAlign: 'right' }}>Status</div>
+      </div>
+
+      {items.map(item => (
+        <div key={item.name} style={{
+          padding: '10px 12px', background: 'var(--mc-bg-1)', borderRadius: 5,
+          borderLeft: `3px solid ${COLOR[item.status]}`,
+        }}>
+          <div style={{
+            display: 'grid', gridTemplateColumns: '1.5fr 1.4fr 1.4fr 0.8fr',
+            gap: 10, alignItems: 'center',
+          }}>
+            <div style={{ fontWeight: 600, fontSize: 13 }}>{item.name}</div>
+            <div style={{ fontSize: 11.5, color: 'var(--mc-text-2)' }}>{item.limit || '—'}</div>
+            <div style={{ fontSize: 11.5, color: 'var(--mc-text-2)' }}>{item.current || '—'}</div>
+            <div style={{ textAlign: 'right' }}>{safeBadge(item.status, item.percent ?? null)}</div>
+          </div>
+          {item.description && (
+            <div style={{
+              fontSize: 11.5, lineHeight: 1.5, color: 'var(--mc-text-3)',
+              marginTop: 6, paddingTop: 6, borderTop: '1px dashed var(--mc-bg-4)',
+            }}>
+              {item.description}
+            </div>
+          )}
+          {item.url && (
+            <div style={{ marginTop: 6, fontSize: 11 }}>
+              <a href={item.url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--mc-accent)', textDecoration: 'none' }}>
+                Open dashboard ↗
+              </a>
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
