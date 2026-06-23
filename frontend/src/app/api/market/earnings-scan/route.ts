@@ -2614,11 +2614,42 @@ export async function GET(request: Request) {
     });
 
   } catch (error) {
+    // PATCH zzz64 — emit the SAME summary shape on error as on success, and
+    // do not leak the raw exception class/message back to clients.
     console.error('[Earnings Scan] Error:', error);
     return NextResponse.json({
       cards: [],
-      summary: { total: 0, excellent: 0, strong: 0, good: 0, ok: 0, bad: 0, avgScore: 0, guidanceCoverage: 0, guidancePositive: 0, guidanceNeutral: 0, guidanceNegative: 0, avgSentiment: 0, divergences: 0, dataQualityBreakdown: { full: 0, partial: 0, priceOnly: 0 }, dataAgeBreakdown: { fresh: 0, stale: 0, missing: 0 } },
-      error: String(error),
+      summary: emptySummary(),
+      error: 'Internal error',
+      code: 'internal_error',
     }, { status: 500 });
   }
+}
+
+// PATCH zzz64 — single source of truth for the empty-summary shape. Both the
+// success path (when cards.length === 0) and the catch path must use this so
+// the frontend can rely on a stable schema regardless of which branch runs.
+function emptySummary() {
+  return {
+    total: 0,
+    withData: 0,
+    missing: 0,
+    excellent: 0,
+    strong: 0,
+    good: 0,
+    ok: 0,
+    bad: 0,
+    avgScore: 0,
+    sourceBreakdown: { nse: 0, moneycontrol: 0, screener: 0, trendlyne: 0, none: 0 },
+    avgConfidence: 0,
+    guidanceCoverage: 0,
+    guidancePositive: 0,
+    guidanceNeutral: 0,
+    guidanceNegative: 0,
+    avgSentiment: 0,
+    divergences: 0,
+    dataQualityBreakdown: { full: 0, partial: 0, priceOnly: 0 },
+    dataAgeBreakdown: { fresh: 0, stale: 0, missing: 0 },
+    dataStatusBreakdown: { full: 0, partial: 0, estimated: 0, missing: 0 },
+  };
 }
