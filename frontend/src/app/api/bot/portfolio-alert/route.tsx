@@ -21,7 +21,7 @@ const TG_CHAT_ID = process.env.TELEGRAM_CHAT_ID_PORTFOLIO || process.env.TELEGRA
 // movers-alert (1095a) and watchlist-alert (1095b).
 const BOT_SECRET = process.env.MC_BOT_SECRET || '';
 const CRON_SECRET = process.env.CRON_SECRET || '';
-const API_BASE = 'https://market-cockpit.vercel.app';
+const API_BASE = 'https://market-cockpit-production.up.railway.app';
 
 // ── Default Portfolio (user's actual holdings) ─────────────────────────
 const DEFAULT_PORTFOLIO = [
@@ -619,7 +619,7 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
           backgroundColor: '#080E1A', borderTopWidth: '1px', borderTopStyle: 'solid', borderTopColor: 'var(--mc-bg-3)',
           fontSize: '13px', color: 'var(--mc-text-4)', fontWeight: 600,
         }}>
-          <span style={{ display: 'flex' }}>market-cockpit.vercel.app</span>
+          <span style={{ display: 'flex' }}>market-cockpit-production.up.railway.app</span>
           <span style={{ display: 'flex' }}>{timestamp}</span>
         </div>
       </div>
@@ -842,11 +842,11 @@ export async function POST(request: Request) {
 
     if (text === '/start') {
       await sendTelegramTo(chatId,
-        `<b>MC Portfolio Pulse — Connected!</b>\n\nWelcome ${esc(firstName)}! Your portfolio tracker is live.\n\n<b>What you'll receive:</b>\n• Real-time performance cards for YOUR holdings\n• Gainers &amp; losers in your portfolio\n• 52-week high/low proximity alerts\n• Intelligence signals for your stocks\n• Latest news for portfolio companies\n\n<b>Default Portfolio:</b>\n${DEFAULT_PORTFOLIO.slice(0, 8).join(', ')}, …\n\n<b>Commands:</b>\n/add SYMBOL — Add holdings (space-separated)\n/remove SYMBOL — Remove holding\n/list — Show your portfolio\n/pulse — Get portfolio performance card\n/intel — Intelligence signals for your stocks\n/news — Latest news for portfolio\n/help — Show all commands\n/status — Bot status\n\n<a href="https://market-cockpit.vercel.app/portfolio">View Dashboard</a>\n<i>Powered by Market Cockpit</i>`
+        `<b>MC Portfolio Pulse — Connected!</b>\n\nWelcome ${esc(firstName)}! Your portfolio tracker is live.\n\n<b>What you'll receive:</b>\n• Real-time performance cards for YOUR holdings\n• Gainers &amp; losers in your portfolio\n• 52-week high/low proximity alerts\n• Intelligence signals for your stocks\n• Latest news for portfolio companies\n\n<b>Default Portfolio:</b>\n${DEFAULT_PORTFOLIO.slice(0, 8).join(', ')}, …\n\n<b>Commands:</b>\n/add SYMBOL — Add holdings (space-separated)\n/remove SYMBOL — Remove holding\n/list — Show your portfolio\n/pulse — Get portfolio performance card\n/intel — Intelligence signals for your stocks\n/news — Latest news for portfolio\n/help — Show all commands\n/status — Bot status\n\n<a href="https://market-cockpit-production.up.railway.app/portfolio">View Dashboard</a>\n<i>Powered by Market Cockpit</i>`
       );
     } else if (text === '/help') {
       await sendTelegramTo(chatId,
-        `<b>MC Portfolio Pulse — Help</b>\n\n<b>Commands:</b>\n/start — Welcome &amp; setup\n/add SYMBOL — Add holdings (space-separated, e.g. /add TCS INFY)\n/remove SYMBOL — Remove single holding\n/list — Show your current portfolio\n/pulse — Generate portfolio performance card\n/intel — Get intelligence signals for portfolio\n/news — Get latest news for portfolio companies\n/status — Bot status &amp; diagnostics\n/help — This help message\n\n<b>Examples:</b>\n<code>/add BAJAJFINSV BHARTIARTL</code> — Add two stocks\n<code>/remove TATAMOTORS</code> — Remove one\n<code>/list</code> — See all holdings\n\n<b>Scheduled Alerts:</b>\nTwice daily: 10:15 AM &amp; 3:15 PM IST\n• Portfolio performance card\n• Relevant news &amp; intelligence\n\n<a href="https://market-cockpit.vercel.app/portfolio">View Dashboard</a>\n<i>Powered by Market Cockpit</i>`
+        `<b>MC Portfolio Pulse — Help</b>\n\n<b>Commands:</b>\n/start — Welcome &amp; setup\n/add SYMBOL — Add holdings (space-separated, e.g. /add TCS INFY)\n/remove SYMBOL — Remove single holding\n/list — Show your current portfolio\n/pulse — Generate portfolio performance card\n/intel — Get intelligence signals for portfolio\n/news — Get latest news for portfolio companies\n/status — Bot status &amp; diagnostics\n/help — This help message\n\n<b>Examples:</b>\n<code>/add BAJAJFINSV BHARTIARTL</code> — Add two stocks\n<code>/remove TATAMOTORS</code> — Remove one\n<code>/list</code> — See all holdings\n\n<b>Scheduled Alerts:</b>\nTwice daily: 10:15 AM &amp; 3:15 PM IST\n• Portfolio performance card\n• Relevant news &amp; intelligence\n\n<a href="https://market-cockpit-production.up.railway.app/portfolio">View Dashboard</a>\n<i>Powered by Market Cockpit</i>`
       );
     } else if (text === '/list') {
       const portfolio = await getPortfolio(chatId);
@@ -924,7 +924,7 @@ export async function POST(request: Request) {
           const img = await generatePortfolioImage(stocks);
           const gainers = stocks.filter(s => s.changePercent > 0).length;
           const losers = stocks.filter(s => s.changePercent < 0).length;
-          await sendTelegramPhoto(img, `<b>${stocks.length} holdings</b> | Up:${gainers} Down:${losers} — <a href="https://market-cockpit.vercel.app/portfolio">Dashboard</a>`, chatId);
+          await sendTelegramPhoto(img, `<b>${stocks.length} holdings</b> | Up:${gainers} Down:${losers} — <a href="https://market-cockpit-production.up.railway.app/portfolio">Dashboard</a>`, chatId);
         } catch (e) {
           console.error('[PORTFOLIO] Image gen failed:', e);
           const msg = buildPortfolioMessage(stocks, portfolio);
@@ -953,7 +953,7 @@ export async function POST(request: Request) {
           if (s.eventType) lines.push(`   <i>${s.eventType}${impact}${value}</i>`);
           lines.push('');
         }
-        lines.push(`<i>Full analysis: <a href="https://market-cockpit.vercel.app/orders">Intelligence Dashboard</a></i>`);
+        lines.push(`<i>Full analysis: <a href="https://market-cockpit-production.up.railway.app/orders">Intelligence Dashboard</a></i>`);
         await sendTelegramTo(chatId, lines.join('\n'));
       }
     } else if (text === '/news') {
@@ -1064,7 +1064,7 @@ export async function GET(request: Request) {
     const losers = stocks.filter(s => s.changePercent < 0).length;
     const photoResult = await sendTelegramPhoto(
       img,
-      `<b>${stocks.length} holdings</b> | Up:${gainers} Down:${losers} — <a href="https://market-cockpit.vercel.app/portfolio">Dashboard</a>`
+      `<b>${stocks.length} holdings</b> | Up:${gainers} Down:${losers} — <a href="https://market-cockpit-production.up.railway.app/portfolio">Dashboard</a>`
     );
     diagnostics.steps.push(photoResult.ok ? 'photo_sent' : 'photo_failed');
 

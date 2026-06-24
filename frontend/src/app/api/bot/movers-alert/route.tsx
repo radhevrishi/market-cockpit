@@ -21,7 +21,7 @@ const TG_CHAT_ID = process.env.TELEGRAM_CHAT_ID_MOVERS || process.env.TELEGRAM_C
 // MC_BOT_SECRET path still works for any other caller.
 const BOT_SECRET = process.env.MC_BOT_SECRET || '';
 const CRON_SECRET = process.env.CRON_SECRET || '';
-const API_BASE = 'https://market-cockpit.vercel.app';
+const API_BASE = 'https://market-cockpit-production.up.railway.app';
 
 // ── NSE Direct Fetch ────────────────────────────────────────────────────
 const NSE_BASE = 'https://www.nseindia.com';
@@ -521,7 +521,7 @@ async function generateMoversImage(
           color: 'var(--mc-text-4)',
         }}
       >
-        <span>market-cockpit.vercel.app</span>
+        <span>market-cockpit-production.up.railway.app</span>
         <span>{timestamp}</span>
       </div>
     </div>
@@ -945,7 +945,7 @@ async function generateStreetPulseCard(
           color: 'var(--mc-text-4)',
         }}
       >
-        <span>market-cockpit.vercel.app</span>
+        <span>market-cockpit-production.up.railway.app</span>
         <span>{timestamp}</span>
       </div>
     </div>
@@ -1151,7 +1151,7 @@ function buildSummaryMessage(
   lines.push('');
   lines.push(`<i>L=Large  M=Mid  S=Small</i>`);
   lines.push('');
-  lines.push(`<a href="https://market-cockpit.vercel.app/movers">Open Dashboard</a>  ·  <i>Market Cockpit</i>`);
+  lines.push(`<a href="https://market-cockpit-production.up.railway.app/movers">Open Dashboard</a>  ·  <i>Market Cockpit</i>`);
 
   return lines.join('\n');
 }
@@ -1171,7 +1171,7 @@ async function sendFullAlert(
   // 1. Send Combined Street Pulse Dashboard Card
   try {
     const dashImg = await generateStreetPulseCard(movers, indices);
-    const caption = `<b>Street Pulse</b>\n${movers.total} stocks • ^${movers.breadth.advancing} v${movers.breadth.declining}\n<a href="https://market-cockpit.vercel.app/movers">Dashboard</a>`;
+    const caption = `<b>Street Pulse</b>\n${movers.total} stocks • ^${movers.breadth.advancing} v${movers.breadth.declining}\n<a href="https://market-cockpit-production.up.railway.app/movers">Dashboard</a>`;
     const r0 = await sendTelegramPhoto(dashImg, caption, target);
     if (!r0.ok) errors.push(`Dashboard image: ${r0.error}`);
   } catch (e: any) {
@@ -1248,11 +1248,11 @@ export async function POST(request: Request) {
 
     if (text === '/start') {
       await sendTelegramTo(chatId,
-        `<b>MC Street Pulse — Connected!</b>\n\nWelcome ${esc(firstName)}! Your market intelligence bot is live.\n\n<b>What you'll receive:</b>\n• Professional image cards — Top Gainers &amp; Losers\n• Sector &amp; Industry breakdown\n• NIFTY, MIDCAP, SMALLCAP &amp; VIX snapshot\n• Market breadth (advance/decline ratio)\n• Circuit breaker alerts (8%+ moves)\n• Earnings pulse (top quality results)\n\n<b>Schedule:</b> 10:05 AM &amp; 3:05 PM IST (Mon–Fri)\n\n<b>Commands:</b>\n/pulse — Get live pulse with images\n/gainers — Top gainers image card\n/losers — Top losers image card\n/indices — Index snapshot + breadth\n/news — Market intelligence alerts\n/status — Bot status &amp; next alert\n/help — Show all commands\n\n<a href="https://market-cockpit.vercel.app/movers">View Dashboard</a>\n<i>Powered by Market Cockpit</i>`
+        `<b>MC Street Pulse — Connected!</b>\n\nWelcome ${esc(firstName)}! Your market intelligence bot is live.\n\n<b>What you'll receive:</b>\n• Professional image cards — Top Gainers &amp; Losers\n• Sector &amp; Industry breakdown\n• NIFTY, MIDCAP, SMALLCAP &amp; VIX snapshot\n• Market breadth (advance/decline ratio)\n• Circuit breaker alerts (8%+ moves)\n• Earnings pulse (top quality results)\n\n<b>Schedule:</b> 10:05 AM &amp; 3:05 PM IST (Mon–Fri)\n\n<b>Commands:</b>\n/pulse — Get live pulse with images\n/gainers — Top gainers image card\n/losers — Top losers image card\n/indices — Index snapshot + breadth\n/news — Market intelligence alerts\n/status — Bot status &amp; next alert\n/help — Show all commands\n\n<a href="https://market-cockpit-production.up.railway.app/movers">View Dashboard</a>\n<i>Powered by Market Cockpit</i>`
       );
     } else if (text === '/help') {
       await sendTelegramTo(chatId,
-        `<b>MC Street Pulse — Help</b>\n\n<b>Commands:</b>\n/start — Welcome &amp; setup\n/pulse — Full market pulse with image cards\n/gainers — Top gainers image (4%+ movers)\n/losers — Top losers image (4%+ drops)\n/indices — NIFTY/MIDCAP/SMALLCAP/VIX snapshot\n/news — Market intelligence alerts\n/status — Bot status &amp; next alert\n/help — This help message\n\n<b>Automatic Alerts:</b>\n10:05 AM IST — Morning pulse\n3:05 PM IST — Afternoon pulse\n\nEach alert includes:\nTop Gainers image card\nTop Losers image card\nIndex snapshot &amp; breadth\nCircuit breakers (8%+)\nEarnings pulse\n\n<a href="https://market-cockpit.vercel.app/movers">View Full Dashboard</a>\n<i>Powered by Market Cockpit</i>`
+        `<b>MC Street Pulse — Help</b>\n\n<b>Commands:</b>\n/start — Welcome &amp; setup\n/pulse — Full market pulse with image cards\n/gainers — Top gainers image (4%+ movers)\n/losers — Top losers image (4%+ drops)\n/indices — NIFTY/MIDCAP/SMALLCAP/VIX snapshot\n/news — Market intelligence alerts\n/status — Bot status &amp; next alert\n/help — This help message\n\n<b>Automatic Alerts:</b>\n10:05 AM IST — Morning pulse\n3:05 PM IST — Afternoon pulse\n\nEach alert includes:\nTop Gainers image card\nTop Losers image card\nIndex snapshot &amp; breadth\nCircuit breakers (8%+)\nEarnings pulse\n\n<a href="https://market-cockpit-production.up.railway.app/movers">View Full Dashboard</a>\n<i>Powered by Market Cockpit</i>`
       );
     } else if (text === '/pulse') {
       await sendTelegramTo(chatId, 'Generating street pulse dashboard...');
@@ -1270,7 +1270,7 @@ export async function POST(request: Request) {
       } else {
         try {
           const img = await generateMoversImage(movers.gainers, 'gainers');
-          await sendTelegramPhoto(img, `Top ${movers.gainers.filter(g => g.changePercent >= 4).length || movers.gainers.length} Gainers — <a href="https://market-cockpit.vercel.app/movers">Dashboard</a>`, chatId);
+          await sendTelegramPhoto(img, `Top ${movers.gainers.filter(g => g.changePercent >= 4).length || movers.gainers.length} Gainers — <a href="https://market-cockpit-production.up.railway.app/movers">Dashboard</a>`, chatId);
         } catch (e) {
           // Fallback to text
           const lines = [`<b>TOP GAINERS</b>\n`];
@@ -1289,7 +1289,7 @@ export async function POST(request: Request) {
       } else {
         try {
           const img = await generateMoversImage(movers.losers, 'losers');
-          await sendTelegramPhoto(img, `Top ${movers.losers.filter(l => l.changePercent <= -4).length || movers.losers.length} Losers — <a href="https://market-cockpit.vercel.app/movers">Dashboard</a>`, chatId);
+          await sendTelegramPhoto(img, `Top ${movers.losers.filter(l => l.changePercent <= -4).length || movers.losers.length} Losers — <a href="https://market-cockpit-production.up.railway.app/movers">Dashboard</a>`, chatId);
         } catch (e) {
           const lines = [`<b>TOP LOSERS</b>\n`];
           for (let i = 0; i < movers.losers.length; i++) {
@@ -1328,7 +1328,7 @@ export async function POST(request: Request) {
           if (news[i].source) lines.push(`   <i>${news[i].source}</i>`);
         }
         lines.push('');
-        lines.push(`<a href="https://market-cockpit.vercel.app/orders">Full Intelligence Dashboard</a>`);
+        lines.push(`<a href="https://market-cockpit-production.up.railway.app/orders">Full Intelligence Dashboard</a>`);
         await sendTelegramTo(chatId, lines.join('\n'));
       }
     } else if (text === '/status') {
@@ -1399,7 +1399,7 @@ export async function GET(request: Request) {
   if (mode === 'test') {
     diagnostics.steps.push('sending_test_message');
     const result = await sendTelegram(
-      '<b>Market Cockpit Bot Connected</b>\n\nImage card alerts are active! You\'ll receive:\nTop Gainers card\nTop Losers card\nIndex + Breadth summary\n\nTwice daily at 10:05 AM &amp; 3:05 PM IST.\n\n<a href="https://market-cockpit.vercel.app/movers">View Dashboard</a>',
+      '<b>Market Cockpit Bot Connected</b>\n\nImage card alerts are active! You\'ll receive:\nTop Gainers card\nTop Losers card\nIndex + Breadth summary\n\nTwice daily at 10:05 AM &amp; 3:05 PM IST.\n\n<a href="https://market-cockpit-production.up.railway.app/movers">View Dashboard</a>',
       targetChatId,
     );
     diagnostics.steps.push(result.ok ? 'test_sent_ok' : 'test_send_failed');

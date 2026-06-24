@@ -14,7 +14,7 @@ export const maxDuration = 55;
 // TELEGRAM_BOT_TOKEN_EARNINGS in Vercel env vars.
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN_EARNINGS || process.env.TELEGRAM_BOT_TOKEN || '';
 // Use production alias directly — VERCEL_URL is blocked by Deployment Protection (401)
-const API_BASE = 'https://market-cockpit.vercel.app';
+const API_BASE = 'https://market-cockpit-production.up.railway.app';
 
 // Empty defaults — set TELEGRAM_CHAT_ID_WATCHLIST / _INDEX (preferred)
 // or TELEGRAM_CHAT_ID in Vercel env. No personal chat ID in source (#1).
@@ -392,7 +392,7 @@ export async function GET(request: Request) {
 
       const chatId = isWatchlist ? WATCHLIST_CHAT_ID : INDEX_CHAT_ID;
       const prefix = isWatchlist ? '⭐ WATCHLIST EARNINGS' : '📊 INDEX EARNINGS';
-      const caption = `${prefix}\n\n${formatEarningsText(card)}\n\n🔗 market-cockpit.vercel.app/earnings`;
+      const caption = `${prefix}\n\n${formatEarningsText(card)}\n\n🔗 market-cockpit-production.up.railway.app/earnings`;
 
       try {
         const imageBuffer = await generateEarningsImage(card);
