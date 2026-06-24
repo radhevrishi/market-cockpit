@@ -967,7 +967,134 @@ export async function POST(request: Request) {
           );
         }
       }
+    } else if (text === '/pulse') {
+      await sendTelegramTo(chatId, '<i>Generating portfolio pulse card...</i>');
+      const portfolio = await getPortfolio(chatId);
+      let stocks = await fetchPortfolioStocks(portfolio);
+
+      // PATCH zzz74 — Yahoo fallback for after-hours / NSE-empty
+      if (stocks.length === 0) {
+        console.log(`[PORTFOLIO] NSE returned 0 stocks; trying Yahoo fallback for ${portfolio.length} symbols`);
+        try {
+          const ySyms = portfolio.map((s: string) => `${s.toUpperCase()}.NS`);
+          const yQuotes = await fetchQuotesWithFallback(ySyms);
+          stocks = yQuotes
+            .filter((q: any) => (q?.regularMarketPrice || 0) > 0)
+            .map((q: any) => ({
+              ticker: String(q.symbol || '').replace(/\.NS$/i, ''),
+              company: q.longName || q.shortName || q.symbol,
+              price: q.regularMarketPrice || 0,
+              changePercent: Math.round((q.regularMarketChangePercent || 0) * 100) / 100,
+              change: Math.round((q.regularMarketChange || 0) * 100) / 100,
+              cap: 'M',
+              sector: q.sector || q.industry || '',
+              dayHigh: q.regularMarketDayHigh,
+              dayLow: q.regularMarketDayLow,
+              weekHigh52: q.fiftyTwoWeekHigh,
+              weekLow52: q.fiftyTwoWeekLow,
+            }));
+          console.log(`[PORTFOLIO] Yahoo fallback returned ${stocks.length}/${portfolio.length} stocks`);
+        } catch (e) {
+          console.error('[PORTFOLIO] Yahoo fallback failed:', e);
+        }
+      }
+
+      if (stocks.length === 0) {
+        await sendTelegramTo(chatId, '<b>Portfolio Pulse — data sources unavailable</b>\n\nNSE and Yahoo both returned empty. Market closed and feeds throttled.\n\nTry /list to see holdings, or visit the <a href="https://market-cockpit-production.up.railway.app/portfolio">Dashboard</a>.');
+      } else {
+        try {
+          const img = await generatePortfolioImage(stocks);
+          const gainers = stocks.filter(s => s.changePercent > 0).length;
+          const losers = stocks.filter(s => s.changePercent < 0).length;
+          await sendTelegramPhoto(img, `<b>${stocks.length} holdings</b> | Up:${gainers} Down:${losers} — <a href="https://market-cockpit-production.up.railway.app/portfolio">Dashboard</a>`, chatId);
+        } catch (e) {
+          console.error('[PORTFOLIO] Image gen failed:', e);
+          const msg = buildPortfolioMessage(stocks, portfolio);
+          await sendTelegramTo(chatId, msg);
+        }
+      }
+    } else if (text === '/intel') {
+      await sendTelegramTo(chatId, '<i>Fetching intelligence signals...</i>');
+      const portfolio = await getPortfolio(chatId);
+      const signals = await fetchPortfolioIntelligence(portfolio);
+      if (signals.length === 0) {
+        await sendTelegramTo(chatId, 'No actionable intelligence signals for your portfolio right now.');
+      } else {
+        const lines = [`<b>Portfolio Intelligence</b>\n`];
+        for (let i = 0; i < signals.length; i++) {
+          const s = signals[i];
+          const tier = s.signalTierV7 === 'ACTIONABLE' ? '[ACTION]' : s.signalTierV7 === 'NOTABLE' ? '[NOTABLE]' : '[INFO]';
+          const action = s.action || 'MONITOR';
+          const name = s.symbol || s.ticker || s.primaryTicker || '???';
+          const company = s.company || s.companyName || '';
+          const impact = s.impactLevel ? ` · ${s.impactLevel}` : '';
+          const value = s.eventValueCr ? ` · ₹${s.eventValueCr} Cr` : '';
+          lines.push(`${tier} <b>${esc(name)}</b>${company ? ` (${esc(truncate(company, 25))})` : ''}  <code>${action}</code>`);
+          const desc = s.headline || s.narrative || s.summary || s.eventType || '';
+          if (desc) lines.push(`   ${esc(truncate(desc, 80))}`);
+          if (s.eventType) lines.push(`   <i>${s.eventType}${impact}${value}</i>`);
+          lines.push('');
+        }
+        lines.push(`<i>Full analysis: <a href="https://market-cockpit-production.up.railway.app/orders">Intelligence Dashboard</a></i>`);
+        await sendTelegramTo(chatId, lines.join('\n'));
+      }
+    } else if (text === '/news') {
+      await sendTelegramTo(chatId, '<i>Fetching latest news...</i>');
+      const portfolio = await getPortfolio(chatId);
+      const news = await fetchPortfolioNews(portfolio);
+      if (news.length === 0) {
+        await sendTelegramTo(chatId, 'No recent news for your portfolio holdings.');
+      } else {
+        const lines = [`<b>Portfolio News</b>\n`];
+        for (let i = 0; i < news.length; i++) {
+          lines.push(`${i + 1}. ${esc(truncate(news[i].title, 80))}`);
+          if (news[i].source) lines.push(`   <i>[${news[i].source}]</i>`);
+        }
+        await sendTelegramTo(chatId, lines.join('\n'));
+      }
     } else if (text === '/blockbuster' || text === '/strong') {
+      // PATCH zzz77 — filter user's portfolio by Earnings Opportunities tier.
+      // Different from Street Pulse where these show MARKET-wide results.
+      const tier: 'BLOCKBUSTER' | 'STRONG' = text === '/blockbuster' ? 'BLOCKBUSTER' : 'STRONG';
+      await sendTelegramTo(chatId, `<i>Checking your portfolio for ${tier} earnings...</i>`);
+      const holdings = await getPortfolio(chatId);
+      if (!holdings.length) {
+        await sendTelegramTo(chatId, 'Your portfolio is empty.');
+      } else {
+        // Yesterday in IST, weekend-aware (Sat/Sun → Fri)
+        const ist = _istNow();
+        const d = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate() - 1));
+        const dow = d.getUTCDay();
+        if (dow === 0) d.setUTCDate(d.getUTCDate() - 2);
+        else if (dow === 6) d.setUTCDate(d.getUTCDate() - 1);
+        const yest = d.toISOString().slice(0, 10);
+        try {
+          const r = await fetch(`${API_BASE}/api/v1/earnings/graded?date=${yest}`, { signal: AbortSignal.timeout(20_000) });
+          if (!r.ok) {
+            await sendTelegramTo(chatId, `Could not fetch earnings for ${yest} (HTTP ${r.status}).`);
+          } else {
+            const data = await r.json();
+            const tierCards = (data?.by_tier?.[tier] || []) as any[];
+            const myset = new Set(holdings.map((s: string) => s.toUpperCase()));
+            const myCards = tierCards.filter((c: any) => myset.has(String(c.ticker || '').toUpperCase()));
+            if (!myCards.length) {
+              await sendTelegramTo(chatId, `<b>${tier} in your portfolio · ${yest}</b>\n\nNone of your ${holdings.length} holdings filed ${tier}-tier results.\n\n<i>Tip: Street Pulse bot /${tier === 'BLOCKBUSTER' ? 'toptiers' : 'strongbeats'} shows MARKET-wide results.</i>`);
+            } else {
+              const lines = [`<b>${tier} earnings in your portfolio · ${yest}</b>`, `<i>${myCards.length} of ${holdings.length} holdings</i>`, ''];
+              for (const c of myCards) {
+                const move = c.move_pct != null ? ` · ${c.move_pct >= 0 ? '+' : ''}${Number(c.move_pct).toFixed(1)}%` : '';
+                const score = c.composite_score != null ? ` · Score ${c.composite_score}` : '';
+                lines.push(`<b>${esc(c.ticker)}</b> — ${esc(c.company || '')}${move}${score}`);
+              }
+              await sendTelegramTo(chatId, lines.join('\n'));
+            }
+          }
+        } catch (e: any) {
+          console.error(`[PORTFOLIO] /${tier.toLowerCase()} failed:`, e?.message || e);
+          await sendTelegramTo(chatId, `Could not fetch ${tier} earnings. Try again later.`);
+        }
+      }
+        } else if (text === '/blockbuster' || text === '/strong') {
       // PATCH zzz77 — filter user's portfolio by Earnings Opportunities tier.
       // Different from Street Pulse where these show MARKET-wide results.
       const tier: 'BLOCKBUSTER' | 'STRONG' = text === '/blockbuster' ? 'BLOCKBUSTER' : 'STRONG';
