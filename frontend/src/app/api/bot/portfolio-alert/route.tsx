@@ -838,7 +838,9 @@ export async function POST(request: Request) {
     }
 
     const chatId = String(message.chat.id);
-    const text = message.text.trim();
+    const rawText = message.text.trim();
+    // PATCH zzz78 — strip @bot_username suffix so /pulse@mc_xxx_bot matches /pulse
+    const text = rawText.replace(/^(\/\w+)@\w+/, '$1');
     const firstName = message.chat.first_name || 'there';
 
     if (text === '/start') {
