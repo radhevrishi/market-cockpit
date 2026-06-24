@@ -515,15 +515,15 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
           {/* 200 DMA warning dot */}
           <div style={{ display: 'flex', width: '7px', height: '7px', borderRadius: '4px', backgroundColor: dotColor, marginRight: '2px' }} />
           {/* SYMBOL */}
-          <div style={{ display: 'flex', width: '78px', fontWeight: 900, color: '#F1F5F9', fontSize: `${fontSize.sym}px` }}>
+          <div style={{ display: 'flex', width: '108px', fontWeight: 900, color: '#F1F5F9', fontSize: `${fontSize.sym}px` }}>
             {truncate(s.ticker, 10)}
           </div>
           {/* %CHG */}
-          <div style={{ display: 'flex', width: '52px', justifyContent: 'flex-end', color: pctColor, fontWeight: 900, fontSize: `${fontSize.pct}px` }}>
+          <div style={{ display: 'flex', width: '60px', justifyContent: 'flex-end', color: pctColor, fontWeight: 900, fontSize: `${fontSize.pct}px` }}>
             <span style={{ display: 'flex' }}>{sign}{s.changePercent.toFixed(1)}%</span>
           </div>
           {/* CHG */}
-          <div style={{ display: 'flex', width: '48px', justifyContent: 'flex-end', color: pctColor, fontSize: `${fontSize.chg}px`, fontWeight: 600, marginLeft: '1px' }}>
+          <div style={{ display: 'flex', width: '56px', justifyContent: 'flex-end', color: pctColor, fontSize: `${fontSize.chg}px`, fontWeight: 600, marginLeft: '1px' }}>
             <span style={{ display: 'flex' }}>{sign}{s.change.toFixed(1)}</span>
           </div>
           {/* PRICE */}
