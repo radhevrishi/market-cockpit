@@ -35,7 +35,7 @@ const BOT_TOKEN =
   process.env.TELEGRAM_BOT_TOKEN_EARNINGS ||
   process.env.TELEGRAM_BOT_TOKEN ||
   '';
-const API_BASE = 'https://market-cockpit.vercel.app';
+const API_BASE = 'https://market-cockpit-production.up.railway.app';
 // CRON_SECRET MUST be set in Vercel env — no hardcoded fallback (security).
 const SECRET = process.env.CRON_SECRET || '';
 

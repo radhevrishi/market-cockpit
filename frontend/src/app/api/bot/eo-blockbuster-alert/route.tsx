@@ -45,7 +45,7 @@ const CHAT_ID =
   process.env.TELEGRAM_CHAT_ID ||
   '';
 
-const API_BASE = 'https://market-cockpit.vercel.app';
+const API_BASE = 'https://market-cockpit-production.up.railway.app';
 const DEDUP_TTL_S = 48 * 60 * 60; // 48h — covers all 3 daily cron firings + next day
 
 // ─── Types (mirror /api/v1/earnings/graded shape) ──────────────────────────
@@ -537,7 +537,7 @@ async function generateSummaryImage(
       {/* Footer */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingLeft: '24px', paddingRight: '24px', height: `${FOOTER_H}px`, backgroundColor: BG, borderTop: `1px solid ${BORDER}` }}>
         <span style={{ fontSize: '13px', fontWeight: 700, color: TEXT_LABEL, letterSpacing: '0.5px', display: 'flex' }}>
-          market-cockpit.vercel.app/earnings-opportunities
+          market-cockpit-production.up.railway.app/earnings-opportunities
         </span>
         <span style={{ fontSize: '13px', fontWeight: 700, color: TEXT_LABEL, letterSpacing: '0.5px', display: 'flex' }}>
           MARKET COCKPIT · {istTimestamp}
