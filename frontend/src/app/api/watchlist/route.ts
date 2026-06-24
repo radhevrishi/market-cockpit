@@ -90,8 +90,15 @@ export async function POST(request: Request) {
     }
 
     // Auth check for watchlist modification actions
-    if (!BOT_SECRET || secret !== BOT_SECRET) {
-      return NextResponse.json({ error: 'Unauthorized — server secret not configured or token mismatch' }, { status: 401 });
+    // PATCH zzz88 — single-tenant: allow admin chatId (5057319640) without secret.
+    // Restores click-to-edit on /portfolio and /watchlists dashboard pages.
+    // External tools still need the secret if it's set.
+    const ADMIN_CHATID = process.env.NEXT_PUBLIC_CHAT_ID || '5057319640';
+    const isAdmin = String(chatId) === ADMIN_CHATID;
+    if (!isAdmin) {
+      if (!BOT_SECRET || secret !== BOT_SECRET) {
+        return NextResponse.json({ error: 'Unauthorized — server secret not configured or token mismatch' }, { status: 401 });
+      }
     }
 
     let updated: string[] = [];
