@@ -1248,7 +1248,7 @@ export async function POST(request: Request) {
 
     if (text === '/start') {
       await sendTelegramTo(chatId,
-        `<b>MC Street Pulse — Connected!</b>\n\nWelcome ${esc(firstName)}! Your market intelligence bot is live.\n\n<b>What you'll receive:</b>\n• Professional image cards — Top Gainers &amp; Losers\n• Sector &amp; Industry breakdown\n• NIFTY, MIDCAP, SMALLCAP &amp; VIX snapshot\n• Market breadth (advance/decline ratio)\n• Circuit breaker alerts (8%+ moves)\n• Earnings pulse (top quality results)\n\n<b>Schedule:</b> 10:05 AM &amp; 3:05 PM IST (Mon–Fri)\n\n<b>Commands:</b>\n/pulse — Get live pulse with images\n/gainers — Top gainers image card\n/losers — Top losers image card\n/indices — Index snapshot + breadth\n/news — Market intelligence alerts\n/status — Bot status &amp; next alert\n/help — Show all commands\n\n<a href="https://market-cockpit-production.up.railway.app/movers">View Dashboard</a>\n<i>Powered by Market Cockpit</i>`
+        `<b>MC Street Pulse — Connected!</b>\n\nWelcome ${esc(firstName)}! Your market intelligence bot is live.\n\n<b>What you'll receive:</b>\n• Professional image cards — Top Gainers &amp; Losers\n• Sector &amp; Industry breakdown\n• NIFTY, MIDCAP, SMALLCAP &amp; VIX snapshot\n• Market breadth (advance/decline ratio)\n• Circuit breaker alerts (8%+ moves)\n• Earnings pulse (top quality results)\n\n<b>Schedule:</b> 10:05 AM &amp; 3:05 PM IST (Mon–Fri)\n\n<b>Commands:</b>\n/pulse — Get live pulse with images\n/gainers — Top gainers image card\n/losers — Top losers image card\n/indices — Index snapshot + breadth\n/news — Market intelligence alerts\n/status — Bot status &amp; next alert\n/help — Show all commands\n/summary2 — 2-day earnings BLOCKBUSTER+STRONG\n/strongbeats — STRONG beats (2d)\n/toptiers — BLOCKBUSTER (2d)\n\n<a href="https://market-cockpit-production.up.railway.app/movers">View Dashboard</a>\n<i>Powered by Market Cockpit</i>`
       );
     } else if (text === '/help') {
       await sendTelegramTo(chatId,
@@ -1331,6 +1331,31 @@ export async function POST(request: Request) {
         lines.push(`<a href="https://market-cockpit-production.up.railway.app/orders">Full Intelligence Dashboard</a>`);
         await sendTelegramTo(chatId, lines.join('\n'));
       }
+    } else if (text === '/summary2' || text === '/summary2d' || text === '/summary 2d' || text === '/strongbeats' || text === '/toptiers' || text === '/blockbuster' || text === '/blockbusters') {
+      // PATCH zzz76 — proxy to eo-blockbuster-alert (same-bot send via shared
+      // TELEGRAM_BOT_TOKEN_EARNINGS = mc_street_pulse_bot token). User typed
+      // commands available in EO context: 2-day BLOCKBUSTER+STRONG summary,
+      // STRONG-only, BLOCKBUSTER-only. Falls back to dashboard link on failure.
+      await sendTelegramTo(chatId, '<i>Fetching earnings summary...</i>');
+      let days = 2;
+      let tiersParam = '';
+      let title = 'last 2 days';
+      if (text === '/strongbeats') { tiersParam = '&tiers=STRONG'; title = 'STRONG beats · 2d'; }
+      else if (text === '/toptiers' || text === '/blockbuster' || text === '/blockbusters') { tiersParam = '&tiers=BLOCKBUSTER'; title = 'BLOCKBUSTER · 2d'; }
+      const auth = encodeURIComponent(BOT_SECRET || CRON_SECRET || '');
+      const proxyUrl = `${API_BASE}/api/bot/eo-blockbuster-alert?secret=${auth}&days=${days}&mode=summary&override_chat_id=${chatId}&force=1${tiersParam}`;
+      console.log(`[BOT] proxy ${text} -> /api/bot/eo-blockbuster-alert?...days=${days}${tiersParam}`);
+      try {
+        const r = await fetch(proxyUrl, { signal: AbortSignal.timeout(30_000) });
+        console.log(`[BOT] proxy response: HTTP ${r.status}`);
+        if (!r.ok) {
+          await sendTelegramTo(chatId, `<b>Earnings summary (${title}) unavailable</b>\n\nVisit the <a href="${API_BASE}/earnings-opportunities">EO Dashboard</a> for live data.`);
+        }
+        // eo-blockbuster-alert sends summary text directly to chatId via override_chat_id
+      } catch (e: any) {
+        console.error('[BOT] proxy fetch failed:', e?.message || e);
+        await sendTelegramTo(chatId, `<b>Earnings summary fetch failed</b>\n\nNetwork timeout. Visit the <a href="${API_BASE}/earnings-opportunities">EO Dashboard</a>.`);
+      }
     } else if (text === '/status') {
       // PATCH 0715 — centralized via _istNow. UTC getters on IST-shifted Date.
       const ist = _istNow();
@@ -1343,6 +1368,10 @@ export async function POST(request: Request) {
       await sendTelegramTo(chatId,
         `<b>MC Street Pulse — Status</b>\n\n[OK] Bot: Online\nIST: ${ist.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}\n${isMarketDay && isMarketHours ? '[+] Market: Open' : '[-] Market: Closed'}\nNext Alert: ${isMarketDay ? nextAlert : 'Monday 10:05 AM'}\nMode: Image Cards + Text Summary\n\n<i>Alerts run Mon–Fri at 10:05 AM &amp; 3:05 PM IST</i>`
       );
+    } else {
+      // PATCH zzz76 — catch-all: log + reply on unmatched commands so silent drops are visible
+      console.log(`[BOT] Unmatched command: ${JSON.stringify(text)}`);
+      await sendTelegramTo(chatId, `Unknown command: <code>${esc(text)}</code>\n\nTry /help for the command list.`);
     }
 
     return NextResponse.json({ ok: true });
