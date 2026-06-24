@@ -63,27 +63,64 @@ interface Portfolio {
 const portfolioStorage: Record<string, Portfolio> = {};
 
 async function getPortfolio(chatId: string): Promise<string[]> {
-  // Read DIRECTLY from Redis — no HTTP self-call, no timeout issues, instant
+  // PATCH zzz81 — read PortfolioData (portal schema) OR legacy string[].
+  // Empty if neither — no more hardcoded DEFAULT_PORTFOLIO seed.
   try {
-    const stored = await kvGet<string[]>(`watchlist:pf_${chatId}`);
-    if (stored && Array.isArray(stored) && stored.length > 0) {
-      console.log(`[PORTFOLIO] Loaded ${stored.length} stocks from Redis for pf_${chatId}`);
-      portfolioStorage[chatId] = { stocks: stored, addedAt: Date.now() };
-      return stored;
+    const stored = await kvGet<any>(`portfolio:${chatId}`);
+    if (stored?.holdings && Array.isArray(stored.holdings)) {
+      const syms = stored.holdings
+        .map((h: any) => String(h.symbol || '').trim().toUpperCase())
+        .filter((s: string) => s.length > 0);
+      console.log(`[PORTFOLIO] Loaded ${syms.length} holdings from PortfolioData (portal sync) for ${chatId}`);
+      return syms;
+    }
+    if (Array.isArray(stored) && stored.length > 0) {
+      const syms = stored.map((s: any) => String(s).trim().toUpperCase()).filter((s: string) => s.length > 0);
+      console.log(`[PORTFOLIO] Loaded ${syms.length} symbols from legacy string[] for ${chatId}`);
+      return syms;
     }
   } catch (e) {
-    console.warn('[PORTFOLIO] Redis read failed:', e);
+    console.warn('[PORTFOLIO] KV read failed:', e);
   }
-
-  // Fallback: check in-memory (from /add commands in current session)
   if (portfolioStorage[chatId] && portfolioStorage[chatId].stocks.length > 0) {
     return portfolioStorage[chatId].stocks;
   }
+  console.log(`[PORTFOLIO] No portfolio found for ${chatId} — empty`);
+  return [];
+}
 
-  // Last resort: default portfolio
-  console.warn(`[PORTFOLIO] No saved portfolio found, using DEFAULT_PORTFOLIO (${DEFAULT_PORTFOLIO.length})`);
-  portfolioStorage[chatId] = { stocks: [...DEFAULT_PORTFOLIO], addedAt: Date.now() };
-  return DEFAULT_PORTFOLIO;
+// PATCH zzz81 — write PortfolioData schema (portal-compat). Preserves existing
+// entryPrice/quantity for symbols that were already there.
+async function savePortfolioToKv(chatId: string, symbols: string[]): Promise<void> {
+  try {
+    const existing = await kvGet<any>(`portfolio:${chatId}`);
+    let existingHoldings: any[] = [];
+    if (existing?.holdings && Array.isArray(existing.holdings)) {
+      existingHoldings = existing.holdings;
+    } else if (Array.isArray(existing)) {
+      existingHoldings = existing.map((s: any) => ({
+        symbol: String(s).trim().toUpperCase(),
+        entryPrice: 0,
+        quantity: 0,
+        weight: 0,
+        addedAt: new Date().toISOString(),
+      }));
+    }
+    const symSet = new Set(symbols.map(s => s.toUpperCase()));
+    const merged: any[] = existingHoldings.filter((h: any) => symSet.has(String(h.symbol || '').toUpperCase()));
+    const existingSyms = new Set(merged.map((h: any) => String(h.symbol).toUpperCase()));
+    for (const sym of symbols) {
+      const up = sym.toUpperCase();
+      if (!existingSyms.has(up)) {
+        merged.push({ symbol: up, entryPrice: 0, quantity: 0, weight: 0, addedAt: new Date().toISOString() });
+      }
+    }
+    await kvSet(`portfolio:${chatId}`, { holdings: merged, updatedAt: new Date().toISOString() });
+    console.log(`[PORTFOLIO] Saved ${merged.length} holdings to KV as PortfolioData`);
+  } catch (e) {
+    console.error('[PORTFOLIO] savePortfolioToKv failed:', e);
+    throw e;
+  }
 }
 
 function setPortfolio(chatId: string, stocks: string[]): void {
@@ -871,135 +908,43 @@ export async function POST(request: Request) {
       lines.push(`/remove SYMBOL — Remove holding`);
       lines.push(`/pulse — Performance card`);
       await sendTelegramTo(chatId, lines.join('\n'));
-    } else if (text.startsWith('/add ')) {
-      const toAdd = text.slice(5).trim().split(/[\s,]+/).map((t: string) => t.toUpperCase()).filter((t: string) => t.length > 0 && t.length < 30);
+    } else if (text === '/add' || text.startsWith('/add ') || text === '/watch' || text.startsWith('/watch ')) {
+      // PATCH zzz81 — bare /add usage hint; /watch alias; writes PortfolioData.
+      const body = text.replace(/^\/(add|watch)\s*/, '').trim();
+      const toAdd = body.split(/[\s,]+/).map((t: string) => t.toUpperCase()).filter((t: string) => t.length > 0 && t.length < 30);
       if (toAdd.length === 0) {
-        await sendTelegramTo(chatId, '[X] Please provide stock symbols. Example: <code>/add TCS INFY</code> or <code>/add TCS,INFY,WIPRO</code>');
+        await sendTelegramTo(chatId, '<b>/add</b> — Add holdings to your portfolio\n\nUsage:\n<code>/add TCS</code>\n<code>/add TCS INFY WIPRO</code>\n<code>/add TCS,INFY,WIPRO</code>\n\nUse /list to see your current portfolio.');
       } else {
         const current = await getPortfolio(chatId);
         const before = current.length;
         const updated = [...new Set([...current, ...toAdd])];
         setPortfolio(chatId, updated);
-
-        // Save DIRECTLY to Redis — no fire-and-forget HTTP that can silently fail
-        try {
-          await kvSet(`watchlist:pf_${chatId}`, updated);
-          console.log(`[PORTFOLIO] Saved ${updated.length} stocks to Redis for pf_${chatId}`);
-        } catch (e) {
-          console.error('[PORTFOLIO] Redis save failed:', e);
-        }
-
+        try { await savePortfolioToKv(chatId, updated); } catch (e) { console.error('[PORTFOLIO] /add KV save failed:', e); }
         const added = updated.length - before;
         await sendTelegramTo(chatId,
-          `[OK] <b>Portfolio Updated</b>\n\n[+] Added: <code>${toAdd.join(', ')}</code>\nTotal holdings: <b>${updated.length}</b>\n\n<i>Your portfolio will be used for alerts and reports.</i>`
+          `[OK] <b>Portfolio Updated</b>\n\n[+] Added: <code>${toAdd.join(', ')}</code>\nNew: <b>${added}</b> · Total: <b>${updated.length}</b>\n\n<i>Synced with /portfolio dashboard.</i>`
         );
       }
-    } else if (text.startsWith('/remove ')) {
-      const toRemove = text.slice(8).trim().toUpperCase();
+    } else if (text === '/remove' || text.startsWith('/remove ') || text === '/unwatch' || text.startsWith('/unwatch ')) {
+      // PATCH zzz81 — bare /remove usage hint; /unwatch alias.
+      const body = text.replace(/^\/(remove|unwatch)\s*/, '').trim();
+      const toRemove = body.toUpperCase().split(/[\s,]+/)[0] || '';
       if (!toRemove) {
-        await sendTelegramTo(chatId, '[X] Please provide a symbol. Example: <code>/remove HFCL</code>');
+        const pf = await getPortfolio(chatId);
+        const sample = pf.slice(0, 3).join(', ');
+        await sendTelegramTo(chatId, `<b>/remove</b> — Remove a holding\n\nUsage:\n<code>/remove ${sample || 'RELIANCE'}</code>\n\nUse /list to see what you can remove.`);
       } else {
         const current = await getPortfolio(chatId);
-        const updated = current.filter(t => t !== toRemove);
+        const updated = current.filter((t: string) => t !== toRemove);
         if (updated.length === current.length) {
           await sendTelegramTo(chatId, `[X] <b>${toRemove}</b> not found in your portfolio.`);
         } else {
           setPortfolio(chatId, updated);
-
-          // Save directly to Redis
-          try {
-            await kvSet(`watchlist:pf_${chatId}`, updated);
-          } catch {}
-
+          try { await savePortfolioToKv(chatId, updated); } catch {}
           await sendTelegramTo(chatId,
-            `[OK] <b>Removed</b>\n\n[-] Removed: <code>${toRemove}</code>\nTotal holdings: <b>${updated.length}</b>`
+            `[OK] <b>Removed</b>\n\n[-] Removed: <code>${toRemove}</code>\nTotal: <b>${updated.length}</b>\n\n<i>Synced with /portfolio dashboard.</i>`
           );
         }
-      }
-    } else if (text === '/pulse') {
-      await sendTelegramTo(chatId, '<i>Generating portfolio pulse card...</i>');
-      const portfolio = await getPortfolio(chatId);
-      let stocks = await fetchPortfolioStocks(portfolio);
-
-      // PATCH zzz74 — Yahoo fallback for after-hours / NSE-empty
-      if (stocks.length === 0) {
-        console.log(`[PORTFOLIO] NSE returned 0 stocks; trying Yahoo fallback for ${portfolio.length} symbols`);
-        try {
-          const ySyms = portfolio.map((s: string) => `${s.toUpperCase()}.NS`);
-          const yQuotes = await fetchQuotesWithFallback(ySyms);
-          stocks = yQuotes
-            .filter((q: any) => (q?.regularMarketPrice || 0) > 0)
-            .map((q: any) => ({
-              ticker: String(q.symbol || '').replace(/\.NS$/i, ''),
-              company: q.longName || q.shortName || q.symbol,
-              price: q.regularMarketPrice || 0,
-              changePercent: Math.round((q.regularMarketChangePercent || 0) * 100) / 100,
-              change: Math.round((q.regularMarketChange || 0) * 100) / 100,
-              cap: 'M',
-              sector: q.sector || q.industry || '',
-              dayHigh: q.regularMarketDayHigh,
-              dayLow: q.regularMarketDayLow,
-              weekHigh52: q.fiftyTwoWeekHigh,
-              weekLow52: q.fiftyTwoWeekLow,
-            }));
-          console.log(`[PORTFOLIO] Yahoo fallback returned ${stocks.length}/${portfolio.length} stocks`);
-        } catch (e) {
-          console.error('[PORTFOLIO] Yahoo fallback failed:', e);
-        }
-      }
-
-      if (stocks.length === 0) {
-        await sendTelegramTo(chatId, '<b>Portfolio Pulse — data sources unavailable</b>\n\nNSE and Yahoo both returned empty. Market closed and feeds throttled.\n\nTry /list to see holdings, or visit the <a href="https://market-cockpit-production.up.railway.app/portfolio">Dashboard</a>.');
-      } else {
-        try {
-          const img = await generatePortfolioImage(stocks);
-          const gainers = stocks.filter(s => s.changePercent > 0).length;
-          const losers = stocks.filter(s => s.changePercent < 0).length;
-          await sendTelegramPhoto(img, `<b>${stocks.length} holdings</b> | Up:${gainers} Down:${losers} — <a href="https://market-cockpit-production.up.railway.app/portfolio">Dashboard</a>`, chatId);
-        } catch (e) {
-          console.error('[PORTFOLIO] Image gen failed:', e);
-          const msg = buildPortfolioMessage(stocks, portfolio);
-          await sendTelegramTo(chatId, msg);
-        }
-      }
-    } else if (text === '/intel') {
-      await sendTelegramTo(chatId, '<i>Fetching intelligence signals...</i>');
-      const portfolio = await getPortfolio(chatId);
-      const signals = await fetchPortfolioIntelligence(portfolio);
-      if (signals.length === 0) {
-        await sendTelegramTo(chatId, 'No actionable intelligence signals for your portfolio right now.');
-      } else {
-        const lines = [`<b>Portfolio Intelligence</b>\n`];
-        for (let i = 0; i < signals.length; i++) {
-          const s = signals[i];
-          const tier = s.signalTierV7 === 'ACTIONABLE' ? '[ACTION]' : s.signalTierV7 === 'NOTABLE' ? '[NOTABLE]' : '[INFO]';
-          const action = s.action || 'MONITOR';
-          const name = s.symbol || s.ticker || s.primaryTicker || '???';
-          const company = s.company || s.companyName || '';
-          const impact = s.impactLevel ? ` · ${s.impactLevel}` : '';
-          const value = s.eventValueCr ? ` · ₹${s.eventValueCr} Cr` : '';
-          lines.push(`${tier} <b>${esc(name)}</b>${company ? ` (${esc(truncate(company, 25))})` : ''}  <code>${action}</code>`);
-          const desc = s.headline || s.narrative || s.summary || s.eventType || '';
-          if (desc) lines.push(`   ${esc(truncate(desc, 80))}`);
-          if (s.eventType) lines.push(`   <i>${s.eventType}${impact}${value}</i>`);
-          lines.push('');
-        }
-        lines.push(`<i>Full analysis: <a href="https://market-cockpit-production.up.railway.app/orders">Intelligence Dashboard</a></i>`);
-        await sendTelegramTo(chatId, lines.join('\n'));
-      }
-    } else if (text === '/news') {
-      await sendTelegramTo(chatId, '<i>Fetching latest news...</i>');
-      const portfolio = await getPortfolio(chatId);
-      const news = await fetchPortfolioNews(portfolio);
-      if (news.length === 0) {
-        await sendTelegramTo(chatId, 'No recent news for your portfolio holdings.');
-      } else {
-        const lines = [`<b>Portfolio News</b>\n`];
-        for (let i = 0; i < news.length; i++) {
-          lines.push(`${i + 1}. ${esc(truncate(news[i].title, 80))}`);
-          if (news[i].source) lines.push(`   <i>[${news[i].source}]</i>`);
-        }
-        await sendTelegramTo(chatId, lines.join('\n'));
       }
     } else if (text === '/blockbuster' || text === '/strong') {
       // PATCH zzz77 — filter user's portfolio by Earnings Opportunities tier.
@@ -1055,6 +1000,9 @@ export async function POST(request: Request) {
       await sendTelegramTo(chatId,
         `<b>MC Portfolio Pulse — Status</b>\n\n[OK] Bot: Online\nIST: ${ist.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })}\n${isMarketDay && isMarketHours ? '[+] Market: Open' : '[-] Market: Closed'}\nPortfolio: <b>${portfolio.length}</b> holdings\nAlerts: 10:15 AM &amp; 3:15 PM IST (Mon–Fri)\n\n<i>Portfolio synced to cloud — persists across sessions.</i>`
       );
+    } else if (text.startsWith('/') && text.length < 40) {
+      console.log(`[PORTFOLIO] Unmatched slash command: ${JSON.stringify(text)}`);
+      await sendTelegramTo(chatId, `Unknown command: <code>${esc(text)}</code>\n\nSend /help for the command list.`);
     }
 
     return NextResponse.json({ ok: true });
