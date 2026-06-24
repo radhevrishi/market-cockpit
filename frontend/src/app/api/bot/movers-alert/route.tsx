@@ -361,7 +361,7 @@ async function generateMoversImage(
         borderBottom: '1px solid #1F2937',
       }}
     >
-      <span style={{ width: '30px', color: 'var(--mc-text-3)', fontSize: '14px', fontWeight: 600, display: 'flex' }}>
+      <span style={{ width: '30px', color: '#CBD5E1', fontSize: '14px', fontWeight: 600, display: 'flex' }}>
         {rowIdx + 1}
       </span>
       <span style={{ width: '100px', marginLeft: '12px', color: '#FFFFFF', fontSize: '16px', fontWeight: 800, display: 'flex' }}>
@@ -382,10 +382,10 @@ async function generateMoversImage(
           {isGainers ? '+' : ''}{s.change.toFixed(1)}
         </span>
       </div>
-      <span style={{ width: '110px', marginLeft: '12px', color: 'var(--mc-text-3)', fontSize: '14px', fontWeight: 600, display: 'flex' }}>
+      <span style={{ width: '110px', marginLeft: '12px', color: '#CBD5E1', fontSize: '14px', fontWeight: 600, display: 'flex' }}>
         {truncate(s.sector, 18)}
       </span>
-      <span style={{ width: '60px', marginLeft: '12px', color: 'var(--mc-text-3)', fontSize: '14px', fontWeight: 600, display: 'flex' }}>
+      <span style={{ width: '60px', marginLeft: '12px', color: '#CBD5E1', fontSize: '14px', fontWeight: 600, display: 'flex' }}>
         {s.cap === 'L' ? 'Large' : s.cap === 'M' ? 'Mid' : 'Small'}
       </span>
     </div>
@@ -407,7 +407,7 @@ async function generateMoversImage(
       <span style={{ color: accentColor, fontSize: '14px', fontWeight: 800, textTransform: 'uppercase', display: 'flex' }}>
         {label}
       </span>
-      <span style={{ marginLeft: '8px', color: 'var(--mc-text-4)', fontSize: '14px', fontWeight: 800, display: 'flex' }}>
+      <span style={{ marginLeft: '8px', color: '#94A3B8', fontSize: '14px', fontWeight: 800, display: 'flex' }}>
         ({count})
       </span>
     </div>
@@ -443,7 +443,7 @@ async function generateMoversImage(
         <span style={{ fontSize: '24px', fontWeight: 800, color: accentColor, letterSpacing: '1px', textTransform: 'uppercase', display: 'flex' }}>
           {isGainers ? 'Top Gainers' : 'Top Losers'}
         </span>
-        <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--mc-text-3)', letterSpacing: '0.5px', display: 'flex' }}>
+        <span style={{ fontSize: '14px', fontWeight: 700, color: '#CBD5E1', letterSpacing: '0.5px', display: 'flex' }}>
           {allStocks.length} stocks · {timestamp}
         </span>
       </div>
@@ -460,31 +460,31 @@ async function generateMoversImage(
           borderBottom: '1px solid #1F2937',
         }}
       >
-        <span style={{ width: '30px', color: 'var(--mc-text-4)', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+        <span style={{ width: '30px', color: '#94A3B8', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
           #
         </span>
-        <span style={{ width: '100px', marginLeft: '12px', color: 'var(--mc-text-4)', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+        <span style={{ width: '100px', marginLeft: '12px', color: '#94A3B8', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
           Symbol
         </span>
         <div style={{ display: 'flex', width: '85px', marginLeft: '12px', justifyContent: 'flex-end' }}>
-          <span style={{ color: 'var(--mc-text-4)', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+          <span style={{ color: '#94A3B8', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
             %Chg
           </span>
         </div>
         <div style={{ display: 'flex', width: '90px', marginLeft: '12px', justifyContent: 'flex-end' }}>
-          <span style={{ color: 'var(--mc-text-4)', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+          <span style={{ color: '#94A3B8', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
             Price
           </span>
         </div>
         <div style={{ display: 'flex', width: '75px', marginLeft: '12px', justifyContent: 'flex-end' }}>
-          <span style={{ color: 'var(--mc-text-4)', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+          <span style={{ color: '#94A3B8', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
             Chg
           </span>
         </div>
-        <span style={{ width: '110px', marginLeft: '12px', color: 'var(--mc-text-4)', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+        <span style={{ width: '110px', marginLeft: '12px', color: '#94A3B8', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
           Sector
         </span>
-        <span style={{ width: '60px', marginLeft: '12px', color: 'var(--mc-text-4)', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+        <span style={{ width: '60px', marginLeft: '12px', color: '#94A3B8', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
           Cap
         </span>
       </div>
@@ -518,7 +518,7 @@ async function generateMoversImage(
           borderTop: '1px solid #1F2937',
           fontSize: '13px',
           fontWeight: 700,
-          color: 'var(--mc-text-4)',
+          color: '#94A3B8',
         }}
       >
         <span>market-cockpit-production.up.railway.app</span>
@@ -589,14 +589,14 @@ async function generateStreetPulseCard(
         borderBottom: '1px solid #1F2937',
       }}
     >
-      <span style={{ width: '25px', color: 'var(--mc-text-3)', fontSize: '14px', fontWeight: 600, display: 'flex' }}>
+      <span style={{ width: '25px', color: '#CBD5E1', fontSize: '14px', fontWeight: 600, display: 'flex' }}>
         {rowIdx + 1}
       </span>
       <span style={{ width: '90px', marginLeft: '12px', color: '#FFFFFF', fontSize: '16px', fontWeight: 800, display: 'flex' }}>
         {truncate(s.ticker, 12)}
       </span>
       <div style={{ display: 'flex', width: '80px', marginLeft: '12px', justifyContent: 'flex-end' }}>
-        <span style={{ color: isBullish ? 'var(--mc-bullish)' : '#B91C1C', fontSize: '16px', fontWeight: 800, fontFamily: 'monospace', display: 'flex' }}>
+        <span style={{ color: isBullish ? '#22C55E' : '#B91C1C', fontSize: '16px', fontWeight: 800, fontFamily: 'monospace', display: 'flex' }}>
           {isBullish ? '+' : ''}{s.changePercent.toFixed(1)}%
         </span>
       </div>
@@ -606,14 +606,14 @@ async function generateStreetPulseCard(
         </span>
       </div>
       <div style={{ display: 'flex', width: '70px', marginLeft: '12px', justifyContent: 'flex-end' }}>
-        <span style={{ color: isBullish ? 'var(--mc-bullish)' : '#B91C1C', fontSize: '16px', fontWeight: 800, fontFamily: 'monospace', display: 'flex' }}>
+        <span style={{ color: isBullish ? '#22C55E' : '#B91C1C', fontSize: '16px', fontWeight: 800, fontFamily: 'monospace', display: 'flex' }}>
           {isBullish ? '+' : ''}{s.change.toFixed(1)}
         </span>
       </div>
-      <span style={{ width: '100px', marginLeft: '12px', color: 'var(--mc-text-3)', fontSize: '14px', fontWeight: 600, display: 'flex' }}>
+      <span style={{ width: '100px', marginLeft: '12px', color: '#CBD5E1', fontSize: '14px', fontWeight: 600, display: 'flex' }}>
         {truncate(s.sector, 16)}
       </span>
-      <span style={{ width: '55px', marginLeft: '12px', color: 'var(--mc-text-3)', fontSize: '14px', fontWeight: 600, display: 'flex' }}>
+      <span style={{ width: '55px', marginLeft: '12px', color: '#CBD5E1', fontSize: '14px', fontWeight: 600, display: 'flex' }}>
         {s.cap === 'L' ? 'Large' : s.cap === 'M' ? 'Mid' : 'Small'}
       </span>
     </div>
@@ -635,7 +635,7 @@ async function generateStreetPulseCard(
       <span style={{ color: color, fontSize: '14px', fontWeight: 800, textTransform: 'uppercase', display: 'flex' }}>
         {label}
       </span>
-      <span style={{ marginLeft: '8px', color: 'var(--mc-text-4)', fontSize: '14px', fontWeight: 800, display: 'flex' }}>
+      <span style={{ marginLeft: '8px', color: '#94A3B8', fontSize: '14px', fontWeight: 800, display: 'flex' }}>
         ({count})
       </span>
     </div>
@@ -653,7 +653,7 @@ async function generateStreetPulseCard(
       }}
     >
       {/* Accent bar */}
-      <div style={{ display: 'flex', width: '100%', height: `${ACCENT_H}px`, background: 'linear-gradient(90deg, var(--mc-info) 0%, #60A5FA 100%)' }} />
+      <div style={{ display: 'flex', width: '100%', height: `${ACCENT_H}px`, background: 'linear-gradient(90deg, #2196F3 0%, #60A5FA 100%)' }} />
 
       {/* Header */}
       <div
@@ -671,7 +671,7 @@ async function generateStreetPulseCard(
         <span style={{ fontSize: '24px', fontWeight: 800, color: '#E5E7EB', letterSpacing: '1px', textTransform: 'uppercase', display: 'flex' }}>
           Street Pulse
         </span>
-        <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--mc-text-3)', letterSpacing: '0.5px', display: 'flex' }}>
+        <span style={{ fontSize: '14px', fontWeight: 700, color: '#CBD5E1', letterSpacing: '0.5px', display: 'flex' }}>
           {timestamp}
         </span>
       </div>
@@ -709,7 +709,7 @@ async function generateStreetPulseCard(
                   marginRight: '32px',
                 }}
               >
-                <span style={{ color: 'var(--mc-text-3)', fontSize: '14px', fontWeight: 700, marginRight: '8px' }}>
+                <span style={{ color: '#CBD5E1', fontSize: '14px', fontWeight: 700, marginRight: '8px' }}>
                   <span>{idx.shortName}</span>
                 </span>
                 <span style={{ color: '#E5E7EB', fontSize: '14px', fontWeight: 700, fontFamily: 'monospace', marginRight: '8px' }}>
@@ -745,7 +745,7 @@ async function generateStreetPulseCard(
               display: 'flex',
               width: `${advPct}%`,
               height: '14px',
-              backgroundColor: 'var(--mc-bullish)',
+              backgroundColor: '#22C55E',
             }}
           />
           <div
@@ -758,22 +758,22 @@ async function generateStreetPulseCard(
           />
         </div>
         <div style={{ display: 'flex', width: '100%', alignItems: 'center' }}>
-          <span style={{ color: 'var(--mc-text-3)', fontSize: '13px', fontWeight: 700 }}>
+          <span style={{ color: '#CBD5E1', fontSize: '13px', fontWeight: 700 }}>
             <span>Adv: </span>
           </span>
-          <span style={{ color: 'var(--mc-bullish)', fontSize: '13px', fontWeight: 700, marginRight: '12px' }}>
+          <span style={{ color: '#22C55E', fontSize: '13px', fontWeight: 700, marginRight: '12px' }}>
             <span>{breadth.advancing}</span>
           </span>
-          <span style={{ color: 'var(--mc-text-3)', fontSize: '13px', fontWeight: 700 }}>
+          <span style={{ color: '#CBD5E1', fontSize: '13px', fontWeight: 700 }}>
             <span>Dec: </span>
           </span>
           <span style={{ color: '#B91C1C', fontSize: '13px', fontWeight: 700, marginRight: '12px' }}>
             <span>{breadth.declining}</span>
           </span>
-          <span style={{ color: 'var(--mc-text-3)', fontSize: '13px', fontWeight: 700 }}>
+          <span style={{ color: '#CBD5E1', fontSize: '13px', fontWeight: 700 }}>
             <span>Unc: </span>
           </span>
-          <span style={{ color: 'var(--mc-text-3)', fontSize: '13px', fontWeight: 700 }}>
+          <span style={{ color: '#CBD5E1', fontSize: '13px', fontWeight: 700 }}>
             <span>{breadth.unchanged}</span>
           </span>
         </div>
@@ -791,8 +791,8 @@ async function generateStreetPulseCard(
           borderBottom: '1px solid #1F2937',
         }}
       >
-        <div style={{ display: 'flex', width: '2px', height: '20px', backgroundColor: 'var(--mc-bullish)', marginRight: '12px' }} />
-        <span style={{ fontSize: '16px', fontWeight: 700, color: 'var(--mc-bullish)', textTransform: 'uppercase' }}>
+        <div style={{ display: 'flex', width: '2px', height: '20px', backgroundColor: '#22C55E', marginRight: '12px' }} />
+        <span style={{ fontSize: '16px', fontWeight: 700, color: '#22C55E', textTransform: 'uppercase' }}>
           <span>Gainers</span>
         </span>
       </div>
@@ -809,31 +809,31 @@ async function generateStreetPulseCard(
           borderBottom: '1px solid #1F2937',
         }}
       >
-        <span style={{ width: '25px', color: 'var(--mc-text-4)', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+        <span style={{ width: '25px', color: '#94A3B8', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
           #
         </span>
-        <span style={{ width: '90px', marginLeft: '12px', color: 'var(--mc-text-4)', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+        <span style={{ width: '90px', marginLeft: '12px', color: '#94A3B8', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
           Symbol
         </span>
         <div style={{ display: 'flex', width: '80px', marginLeft: '12px', justifyContent: 'flex-end' }}>
-          <span style={{ color: 'var(--mc-text-4)', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+          <span style={{ color: '#94A3B8', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
             %Chg
           </span>
         </div>
         <div style={{ display: 'flex', width: '85px', marginLeft: '12px', justifyContent: 'flex-end' }}>
-          <span style={{ color: 'var(--mc-text-4)', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+          <span style={{ color: '#94A3B8', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
             Price
           </span>
         </div>
         <div style={{ display: 'flex', width: '70px', marginLeft: '12px', justifyContent: 'flex-end' }}>
-          <span style={{ color: 'var(--mc-text-4)', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+          <span style={{ color: '#94A3B8', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
             Chg
           </span>
         </div>
-        <span style={{ width: '100px', marginLeft: '12px', color: 'var(--mc-text-4)', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+        <span style={{ width: '100px', marginLeft: '12px', color: '#94A3B8', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
           Sector
         </span>
-        <span style={{ width: '55px', marginLeft: '12px', color: 'var(--mc-text-4)', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+        <span style={{ width: '55px', marginLeft: '12px', color: '#94A3B8', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
           Cap
         </span>
       </div>
@@ -884,31 +884,31 @@ async function generateStreetPulseCard(
           borderBottom: '1px solid #1F2937',
         }}
       >
-        <span style={{ width: '25px', color: 'var(--mc-text-4)', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+        <span style={{ width: '25px', color: '#94A3B8', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
           #
         </span>
-        <span style={{ width: '90px', marginLeft: '12px', color: 'var(--mc-text-4)', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+        <span style={{ width: '90px', marginLeft: '12px', color: '#94A3B8', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
           Symbol
         </span>
         <div style={{ display: 'flex', width: '80px', marginLeft: '12px', justifyContent: 'flex-end' }}>
-          <span style={{ color: 'var(--mc-text-4)', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+          <span style={{ color: '#94A3B8', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
             %Chg
           </span>
         </div>
         <div style={{ display: 'flex', width: '85px', marginLeft: '12px', justifyContent: 'flex-end' }}>
-          <span style={{ color: 'var(--mc-text-4)', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+          <span style={{ color: '#94A3B8', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
             Price
           </span>
         </div>
         <div style={{ display: 'flex', width: '70px', marginLeft: '12px', justifyContent: 'flex-end' }}>
-          <span style={{ color: 'var(--mc-text-4)', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+          <span style={{ color: '#94A3B8', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
             Chg
           </span>
         </div>
-        <span style={{ width: '100px', marginLeft: '12px', color: 'var(--mc-text-4)', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+        <span style={{ width: '100px', marginLeft: '12px', color: '#94A3B8', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
           Sector
         </span>
-        <span style={{ width: '55px', marginLeft: '12px', color: 'var(--mc-text-4)', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+        <span style={{ width: '55px', marginLeft: '12px', color: '#94A3B8', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
           Cap
         </span>
       </div>
@@ -942,7 +942,7 @@ async function generateStreetPulseCard(
           borderTop: '1px solid #1F2937',
           fontSize: '13px',
           fontWeight: 700,
-          color: 'var(--mc-text-4)',
+          color: '#94A3B8',
         }}
       >
         <span>market-cockpit-production.up.railway.app</span>
