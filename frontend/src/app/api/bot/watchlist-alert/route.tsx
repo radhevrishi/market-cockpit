@@ -747,7 +747,9 @@ export async function POST(request: Request) {
     }
 
     const chatId = String(message.chat.id);
-    const text = message.text.trim();
+    const rawText = message.text.trim();
+    // PATCH zzz78 — strip @bot_username suffix so /pulse@mc_xxx_bot matches /pulse
+    const text = rawText.replace(/^(\/\w+)@\w+/, '$1');
     const firstName = message.chat.first_name || 'there';
 
     if (text === '/start') {
@@ -911,10 +913,13 @@ export async function POST(request: Request) {
       await sendTelegramTo(chatId,
         `<b>MC Watchlist Pulse — Status</b>\n\n[OK] Bot: Online\nIST: ${ist.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })}\n${isMarketDay && isMarketHours ? '[OPEN] Market: Open' : '[CLOSED] Market: Closed'}\nWatchlist: <b>${watchlist.length}</b> stocks\nAlerts: 10:05 AM &amp; 3:05 PM IST (Mon–Fri)\n\n<i>Watchlist synced to cloud — persists across sessions.</i>`
       );
-    } else {
-      // PATCH zzz74 — catch-all: log + reply on unmatched commands
-      console.log(`[WATCHLIST] Unmatched command: ${JSON.stringify(text)}`);
-      await sendTelegramTo(chatId, `Unknown command: <code>${esc(text)}</code>\n\nSend /help for the command list.`);
+    } else if (text.startsWith('/') && text.length < 40) {
+      // PATCH zzz78 — tightened catch-all: only reply if it LOOKS like a slash-command
+      // (avoid yelling 'Unknown' at regular chat). Also gated on length to skip pastes.
+      console.log(`[WATCHLIST] Unmatched slash command: ${JSON.stringify(text)}`);
+      await sendTelegramTo(chatId, `Unknown command: <code>${esc(text)}</code>
+
+Send /help for the command list.`);
     }
 
     return NextResponse.json({ ok: true });
