@@ -889,9 +889,16 @@ export async function POST(request: Request) {
     }
 
     const chatId = String(message.chat.id);
-    const rawText = message.text.trim();
-    // PATCH zzz78 — strip @bot_username suffix so /pulse@mc_xxx_bot matches /pulse
-    const text = rawText.replace(/^(\/\w+)@\w+/, '$1');
+    const rawText = (message.text || '').trim();
+    // PATCH zzz85 — robust command normalization. Handles @bot suffix,
+    // mixed case, weird unicode whitespace. Logs every command for debug.
+    // Strip @bot_username anywhere in first token, normalize whitespace.
+    const firstSpace = rawText.search(/\s/);
+    const cmdRaw = firstSpace === -1 ? rawText : rawText.slice(0, firstSpace);
+    const argsRaw = firstSpace === -1 ? '' : rawText.slice(firstSpace + 1);
+    const cmd = cmdRaw.replace(/@\w+$/, '').toLowerCase().replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+    const text = argsRaw ? `${cmd} ${argsRaw}` : cmd;
+    console.log(`[PORTFOLIO] cmd received: raw=${JSON.stringify(rawText)} cmd=${JSON.stringify(cmd)} text=${JSON.stringify(text)}`);
     const firstName = message.chat.first_name || 'there';
 
     if (text === '/start') {
