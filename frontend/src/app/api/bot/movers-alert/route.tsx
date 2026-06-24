@@ -3,6 +3,8 @@ import { ImageResponse } from 'next/og';
 import React from 'react';
 // PATCH 0715 — centralized IST helpers.
 import { istNow as _istNow } from '@/lib/market-hours';
+// PATCH zzz83 — Railway edge blocks self-loop fetches; helper retries via 127.0.0.1
+import { railwaySelfFetch } from '@/lib/railway-self-fetch';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
@@ -1366,7 +1368,7 @@ export async function POST(request: Request) {
       const collected: Array<Card & { date: string }> = [];
       for (const date of dates) {
         try {
-          const r = await fetch(`${API_BASE}/api/v1/earnings/graded?date=${date}`, {
+          const r = await railwaySelfFetch(`${API_BASE}/api/v1/earnings/graded?date=${date}`, {
             signal: AbortSignal.timeout(15_000),
           });
           if (!r.ok) {
