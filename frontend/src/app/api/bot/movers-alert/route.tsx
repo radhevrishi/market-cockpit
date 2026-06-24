@@ -1334,29 +1334,87 @@ export async function POST(request: Request) {
         await sendTelegramTo(chatId, lines.join('\n'));
       }
     } else if (text === '/summary2' || text === '/summary2d' || text === '/summary 2d' || text === '/strongbeats' || text === '/toptiers' || text === '/blockbuster' || text === '/blockbusters') {
-      // PATCH zzz76 — proxy to eo-blockbuster-alert (same-bot send via shared
-      // TELEGRAM_BOT_TOKEN_EARNINGS = mc_street_pulse_bot token). User typed
-      // commands available in EO context: 2-day BLOCKBUSTER+STRONG summary,
-      // STRONG-only, BLOCKBUSTER-only. Falls back to dashboard link on failure.
+      // PATCH zzz79 — DIRECT implementation (no more eo-blockbuster-alert proxy
+      // which had CRON_SECRET / TELEGRAM_BOT_TOKEN_EARNINGS dependency hell).
+      // Fetch /api/v1/earnings/graded for past N IST days, filter tiers, format, send.
       await sendTelegramTo(chatId, '<i>Fetching earnings summary...</i>');
       let days = 2;
-      let tiersParam = '';
-      let title = 'last 2 days';
-      if (text === '/strongbeats') { tiersParam = '&tiers=STRONG'; title = 'STRONG beats · 2d'; }
-      else if (text === '/toptiers' || text === '/blockbuster' || text === '/blockbusters') { tiersParam = '&tiers=BLOCKBUSTER'; title = 'BLOCKBUSTER · 2d'; }
-      const auth = encodeURIComponent(BOT_SECRET || CRON_SECRET || '');
-      const proxyUrl = `${API_BASE}/api/bot/eo-blockbuster-alert?secret=${auth}&days=${days}&mode=summary&override_chat_id=${chatId}&force=1${tiersParam}`;
-      console.log(`[BOT] proxy ${text} -> /api/bot/eo-blockbuster-alert?...days=${days}${tiersParam}`);
-      try {
-        const r = await fetch(proxyUrl, { signal: AbortSignal.timeout(30_000) });
-        console.log(`[BOT] proxy response: HTTP ${r.status}`);
-        if (!r.ok) {
-          await sendTelegramTo(chatId, `<b>Earnings summary (${title}) unavailable</b>\n\nVisit the <a href="${API_BASE}/earnings-opportunities">EO Dashboard</a> for live data.`);
+      let allowedTiers: string[] = ['BLOCKBUSTER', 'STRONG'];
+      let header = '2-day BLOCKBUSTER + STRONG digest';
+      if (text === '/strongbeats') { allowedTiers = ['STRONG']; header = 'STRONG beats · last 2d'; }
+      else if (text === '/toptiers' || text === '/blockbuster' || text === '/blockbusters') {
+        allowedTiers = ['BLOCKBUSTER']; header = 'BLOCKBUSTER · last 2d';
+      }
+
+      // Compute past N IST dates (weekend-aware: skip Sat/Sun backward)
+      const ist = _istNow();
+      const dates: string[] = [];
+      let cursor = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate()));
+      while (dates.length < days) {
+        const dow = cursor.getUTCDay();
+        if (dow !== 0 && dow !== 6) {
+          dates.push(cursor.toISOString().slice(0, 10));
         }
-        // eo-blockbuster-alert sends summary text directly to chatId via override_chat_id
-      } catch (e: any) {
-        console.error('[BOT] proxy fetch failed:', e?.message || e);
-        await sendTelegramTo(chatId, `<b>Earnings summary fetch failed</b>\n\nNetwork timeout. Visit the <a href="${API_BASE}/earnings-opportunities">EO Dashboard</a>.`);
+        cursor.setUTCDate(cursor.getUTCDate() - 1);
+        if (dates.length === 0 && cursor.getUTCDate() < ist.getUTCDate() - 10) break; // safety
+      }
+      console.log(`[BOT] /${text.slice(1)} fetching dates: ${dates.join(',')} tiers=${allowedTiers.join(',')}`);
+
+      type Card = { ticker?: string; company?: string; tier?: string; composite_score?: number;
+                    sales_yoy_pct?: number; net_profit_yoy_pct?: number; move_pct?: number;
+                    filing_date?: string };
+      const collected: Array<Card & { date: string }> = [];
+      for (const date of dates) {
+        try {
+          const r = await fetch(`${API_BASE}/api/v1/earnings/graded?date=${date}`, {
+            signal: AbortSignal.timeout(15_000),
+          });
+          if (!r.ok) {
+            console.warn(`[BOT] graded fetch ${date} HTTP ${r.status}`);
+            continue;
+          }
+          const data: any = await r.json();
+          for (const tier of allowedTiers) {
+            const cards = (data?.by_tier?.[tier] || []) as Card[];
+            for (const c of cards) {
+              collected.push({ ...c, tier, date });
+            }
+          }
+        } catch (e: any) {
+          console.error(`[BOT] graded fetch ${date} failed:`, e?.message || e);
+        }
+      }
+
+      if (collected.length === 0) {
+        await sendTelegramTo(chatId,
+          `<b>${header}</b>
+
+No qualifying earnings filed on ${dates.join(' / ')}.
+
+<i>Off-season is normal — check back during earnings weeks (Apr, Jul, Oct, Jan).</i>
+
+<a href="${API_BASE}/earnings-opportunities">EO Dashboard</a>`
+        );
+      } else {
+        // Sort: BLOCKBUSTER first, then composite score descending
+        collected.sort((a, b) => {
+          if (a.tier !== b.tier) return a.tier === 'BLOCKBUSTER' ? -1 : 1;
+          return (b.composite_score || 0) - (a.composite_score || 0);
+        });
+        const lines: string[] = [`<b>${header}</b>`, `<i>Dates: ${dates.join(' · ')} · ${collected.length} qualifying companies</i>`, ''];
+        for (const c of collected.slice(0, 20)) {
+          const emoji = c.tier === 'BLOCKBUSTER' ? '⭐' : '🟢';
+          const score = c.composite_score != null ? ` · Score ${c.composite_score}` : '';
+          const sales = c.sales_yoy_pct != null ? ` · Sales ${c.sales_yoy_pct >= 0 ? '+' : ''}${Math.round(c.sales_yoy_pct)}%` : '';
+          const pat = c.net_profit_yoy_pct != null ? ` · PAT ${c.net_profit_yoy_pct >= 0 ? '+' : ''}${Math.round(c.net_profit_yoy_pct)}%` : '';
+          const move = c.move_pct != null ? ` · Move ${c.move_pct >= 0 ? '+' : ''}${c.move_pct.toFixed(1)}%` : '';
+          lines.push(`${emoji} <b>${esc(c.ticker || '?')}</b> — ${esc((c.company || '').slice(0, 40))}${score}`);
+          lines.push(`     ${sales}${pat}${move} <i>(${c.date})</i>`);
+        }
+        if (collected.length > 20) lines.push('', `<i>+${collected.length - 20} more — see EO Dashboard</i>`);
+        lines.push('', `<a href="${API_BASE}/earnings-opportunities">EO Dashboard →</a>`);
+        await sendTelegramTo(chatId, lines.join('
+'));
       }
     } else if (text === '/setup_menus' || text === '/setupmenus' || text === '/setup_menu') {
       // PATCH zzz78 — admin: call setMyCommands for all 3 bots using their
