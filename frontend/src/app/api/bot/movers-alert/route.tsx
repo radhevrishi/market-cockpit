@@ -1413,8 +1413,7 @@ No qualifying earnings filed on ${dates.join(' / ')}.
         }
         if (collected.length > 20) lines.push('', `<i>+${collected.length - 20} more — see EO Dashboard</i>`);
         lines.push('', `<a href="${API_BASE}/earnings-opportunities">EO Dashboard →</a>`);
-        await sendTelegramTo(chatId, lines.join('
-'));
+        await sendTelegramTo(chatId, lines.join('\n'));
       }
     } else if (text === '/setup_menus' || text === '/setupmenus' || text === '/setup_menu') {
       // PATCH zzz78 — admin: call setMyCommands for all 3 bots using their
