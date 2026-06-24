@@ -85,7 +85,21 @@ async function getPortfolio(chatId: string): Promise<string[]> {
   if (portfolioStorage[chatId] && portfolioStorage[chatId].stocks.length > 0) {
     return portfolioStorage[chatId].stocks;
   }
-  console.log(`[PORTFOLIO] No portfolio found for ${chatId} — empty`);
+  // PATCH zzz82 — first-time / empty KV: seed defaults into KV as PortfolioData
+  // so the /portfolio dashboard tab also sees them. User can /add or /remove
+  // to customize from here.
+  if (DEFAULT_PORTFOLIO.length > 0) {
+    try {
+      await savePortfolioToKv(chatId, [...DEFAULT_PORTFOLIO]);
+      portfolioStorage[chatId] = { stocks: [...DEFAULT_PORTFOLIO], addedAt: Date.now() };
+      console.log(`[PORTFOLIO] First-time seed: wrote ${DEFAULT_PORTFOLIO.length} DEFAULT_PORTFOLIO to KV for ${chatId}`);
+      return [...DEFAULT_PORTFOLIO];
+    } catch (e) {
+      console.warn('[PORTFOLIO] seed failed, returning defaults in-memory only:', e);
+      return [...DEFAULT_PORTFOLIO];
+    }
+  }
+  console.log(`[PORTFOLIO] No portfolio for ${chatId} and no defaults — empty`);
   return [];
 }
 
