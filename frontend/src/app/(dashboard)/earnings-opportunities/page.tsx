@@ -1008,13 +1008,13 @@ export default function EarningsOpportunitiesPage() {
   // staleTime, React Query never refetched even after the server backfilled
   // the real graded payload. Bumping the prefix invalidates every stale
   // snapshot in one shot. The scrub below removes orphan v8/v7 keys.
-  const LS_PREFIX = 'mc:graded:v11:';  // PATCH 1042 — bump v10→v11 so liquidity (adtv/thin-float) shows without a Hard Refresh
+  const LS_PREFIX = 'mc:graded:v12:';  // PATCH zzz86 — bump to evict cross-date poisoned cache  // PATCH 1042 — bump v10→v11 so liquidity (adtv/thin-float) shows without a Hard Refresh
   if (typeof window !== 'undefined') {
     try {
       const SCRUB_GRADED = 'mc:graded-scrub:v9';
       if (!localStorage.getItem(SCRUB_GRADED)) {
         for (const k of Object.keys(localStorage)) {
-          if (k.startsWith('mc:graded:v7:') || k.startsWith('mc:graded:v8:') || k.startsWith('mc:graded:v9:') || k.startsWith('mc:graded:v10:')) localStorage.removeItem(k);
+          if (k.startsWith('mc:graded:v7:') || k.startsWith('mc:graded:v8:') || k.startsWith('mc:graded:v9:') || k.startsWith('mc:graded:v10:') || k.startsWith('mc:graded:v11:')) localStorage.removeItem(k);
         }
         localStorage.setItem(SCRUB_GRADED, '1');
       }
@@ -1197,7 +1197,7 @@ export default function EarningsOpportunitiesPage() {
       if (daysOld > 0 && daysOld <= 3) return 10 * 60_000;
       return false;
     },
-    placeholderData: (prev) => prev,  // keep showing previous date while next loads
+    placeholderData: (prev: any, prevQuery: any) => prevQuery?.queryKey?.[1] === resolvedDateForGrading ? prev : undefined, // PATCH zzz86 — same-date scope only  // keep showing previous date while next loads
     // Hydrate from localStorage so the screen never goes blank on navigation
     initialData: () => readLsCache(resolvedDateForGrading),
     // AUDIT_100 #6 / PATCH 0550 — when initialData returns a value, the
