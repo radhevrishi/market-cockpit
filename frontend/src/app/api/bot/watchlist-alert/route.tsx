@@ -412,15 +412,15 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
           {/* 200 DMA warning dot */}
           <div style={{ display: 'flex', width: '7px', height: '7px', borderRadius: '4px', backgroundColor: dotColor, marginRight: '2px' }} />
           {/* SYMBOL */}
-          <div style={{ display: 'flex', width: '78px', fontWeight: 900, color: '#F1F5F9', fontSize: `${fontSize.sym}px` }}>
+          <div style={{ display: 'flex', width: '108px', fontWeight: 900, color: '#F1F5F9', fontSize: `${fontSize.sym}px` }}>
             {truncate(s.ticker, 10)}
           </div>
           {/* %CHG */}
-          <div style={{ display: 'flex', width: '52px', justifyContent: 'flex-end', color: pctColor, fontWeight: 900, fontSize: `${fontSize.pct}px` }}>
+          <div style={{ display: 'flex', width: '60px', justifyContent: 'flex-end', color: pctColor, fontWeight: 900, fontSize: `${fontSize.pct}px` }}>
             <span style={{ display: 'flex' }}>{sign}{s.changePercent.toFixed(1)}%</span>
           </div>
           {/* CHG */}
-          <div style={{ display: 'flex', width: '48px', justifyContent: 'flex-end', color: pctColor, fontSize: `${fontSize.chg}px`, fontWeight: 600, marginLeft: '1px' }}>
+          <div style={{ display: 'flex', width: '56px', justifyContent: 'flex-end', color: pctColor, fontSize: `${fontSize.chg}px`, fontWeight: 600, marginLeft: '1px' }}>
             <span style={{ display: 'flex' }}>{sign}{s.change.toFixed(1)}</span>
           </div>
           {/* PRICE */}
@@ -432,11 +432,11 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
             <span style={{ display: 'flex' }}>{s.sector || '--'}</span>
           </div>
           {/* 52W HIGH — single line, no % */}
-          <div style={{ display: 'flex', width: '56px', justifyContent: 'flex-end', color: '#78909C', fontSize: `${fontSize.w52}px`, fontWeight: 600, marginLeft: '2px' }}>
+          <div style={{ display: 'flex', width: '0px', justifyContent: 'flex-end', color: '#78909C', fontSize: `${fontSize.w52}px`, fontWeight: 600, marginLeft: '0px', display: 'none' }}>
             <span style={{ display: 'flex' }}>{s.weekHigh52 ? s.weekHigh52.toLocaleString('en-IN', { maximumFractionDigits: 0 }) : '--'}</span>
           </div>
           {/* RNG% */}
-          <div style={{ display: 'flex', width: '38px', justifyContent: 'flex-end', marginLeft: '2px' }}>
+          <div style={{ display: 'flex', width: '0px', justifyContent: 'flex-end', marginLeft: '0px', display: 'none' }}>
             <span style={{ display: 'flex', fontSize: `${fontSize.rng}px`, fontWeight: 800, color: rangePct >= 75 ? '#00E676' : rangePct >= 50 ? '#FDD835' : rangePct >= 25 ? '#FF9100' : '#FF1744' }}>
               {Math.round(rangePct)}%
             </span>
@@ -517,15 +517,15 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
             }}>
               <div style={{ display: 'flex', width: '16px', marginRight: '1px' }} />
               <div style={{ display: 'flex', width: '7px', marginRight: '2px' }} />
-              <div style={{ display: 'flex', width: '78px', fontSize: '12px', fontWeight: 900, color: '#00E676', letterSpacing: '1px' }}>
+              <div style={{ display: 'flex', width: '108px', fontSize: '12px', fontWeight: 900, color: '#00E676', letterSpacing: '1px' }}>
                 WINNERS ({winnersN})
               </div>
-              <div style={{ display: 'flex', width: '52px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#94A3B8' }}>%CHG</div>
-              <div style={{ display: 'flex', width: '48px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#94A3B8', marginLeft: '1px' }}>CHG</div>
-              <div style={{ display: 'flex', width: '62px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#94A3B8', marginLeft: '2px' }}>PRICE</div>
+              <div style={{ display: 'flex', width: '60px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#94A3B8' }}>%CHG</div>
+              <div style={{ display: 'flex', width: '56px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#94A3B8', marginLeft: '1px' }}>CHG</div>
+              <div style={{ display: 'flex', width: '82px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#94A3B8', marginLeft: '2px' }}>PRICE</div>
               <div style={{ display: 'flex', flex: 1, fontSize: '11px', fontWeight: 800, color: '#94A3B8', marginLeft: '4px' }}>INDUSTRY</div>
-              <div style={{ display: 'flex', width: '56px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#94A3B8', marginLeft: '2px' }}>52W H</div>
-              <div style={{ display: 'flex', width: '38px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#FDD835', marginLeft: '2px' }}>RNG%</div>
+              <div style={{ display: 'flex', width: '0px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#94A3B8', marginLeft: '0px', display: 'none' }}>52W H</div>
+              <div style={{ display: 'flex', width: '0px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#FDD835', marginLeft: '0px', display: 'none' }}>RNG%</div>
             </div>
             {winners.map((s, i) => renderRow(s, i, 'w'))}
             {winners.length < maxRows && renderFillers(maxRows - winners.length, 'w')}
@@ -543,7 +543,7 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
             }}>
               <div style={{ display: 'flex', width: '16px', marginRight: '1px' }} />
               <div style={{ display: 'flex', width: '7px', marginRight: '2px' }} />
-              <div style={{ display: 'flex', width: '78px', fontSize: '12px', fontWeight: 900, color: '#FF1744', letterSpacing: '1px' }}>
+              <div style={{ display: 'flex', width: '108px', fontSize: '12px', fontWeight: 900, color: '#FF1744', letterSpacing: '1px' }}>
                 LOSERS ({losersN})
               </div>
               <div style={{ display: 'flex', width: '52px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#94A3B8' }}>%CHG</div>
