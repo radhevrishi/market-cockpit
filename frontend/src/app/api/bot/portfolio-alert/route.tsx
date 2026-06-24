@@ -843,7 +843,7 @@ export async function POST(request: Request) {
 
     if (text === '/start') {
       await sendTelegramTo(chatId,
-        `<b>MC Portfolio Pulse — Connected!</b>\n\nWelcome ${esc(firstName)}! Your portfolio tracker is live.\n\n<b>What you'll receive:</b>\n• Real-time performance cards for YOUR holdings\n• Gainers &amp; losers in your portfolio\n• 52-week high/low proximity alerts\n• Intelligence signals for your stocks\n• Latest news for portfolio companies\n\n<b>Default Portfolio:</b>\n${DEFAULT_PORTFOLIO.slice(0, 8).join(', ')}, …\n\n<b>Commands:</b>\n/add SYMBOL — Add holdings (space-separated)\n/remove SYMBOL — Remove holding\n/list — Show your portfolio\n/pulse — Get portfolio performance card\n/intel — Intelligence signals for your stocks\n/news — Latest news for portfolio\n/help — Show all commands\n/status — Bot status\n\n<a href="https://market-cockpit-production.up.railway.app/portfolio">View Dashboard</a>\n<i>Powered by Market Cockpit</i>`
+        `<b>MC Portfolio Pulse — Connected!</b>\n\nWelcome ${esc(firstName)}! Your portfolio tracker is live.\n\n<b>What you'll receive:</b>\n• Real-time performance cards for YOUR holdings\n• Gainers &amp; losers in your portfolio\n• 52-week high/low proximity alerts\n• Intelligence signals for your stocks\n• Latest news for portfolio companies\n\n<b>Default Portfolio:</b>\n${DEFAULT_PORTFOLIO.slice(0, 8).join(', ')}, …\n\n<b>Commands:</b>\n/add SYMBOL — Add holdings (space-separated)\n/remove SYMBOL — Remove holding\n/list — Show your portfolio\n/pulse — Get portfolio performance card\n/intel — Intelligence signals for your stocks\n/news — Latest news for portfolio\n/blockbuster — My holdings in BLOCKBUSTER tier (yesterday)\n/strong — My holdings in STRONG tier (yesterday)\n/help — Show all commands\n/status — Bot status\n\n<a href="https://market-cockpit-production.up.railway.app/portfolio">View Dashboard</a>\n<i>Powered by Market Cockpit</i>`
       );
     } else if (text === '/help') {
       await sendTelegramTo(chatId,
@@ -998,6 +998,48 @@ export async function POST(request: Request) {
           if (news[i].source) lines.push(`   <i>[${news[i].source}]</i>`);
         }
         await sendTelegramTo(chatId, lines.join('\n'));
+      }
+    } else if (text === '/blockbuster' || text === '/strong') {
+      // PATCH zzz77 — filter user's portfolio by Earnings Opportunities tier.
+      // Different from Street Pulse where these show MARKET-wide results.
+      const tier: 'BLOCKBUSTER' | 'STRONG' = text === '/blockbuster' ? 'BLOCKBUSTER' : 'STRONG';
+      await sendTelegramTo(chatId, `<i>Checking your portfolio for ${tier} earnings...</i>`);
+      const holdings = await getPortfolio(chatId);
+      if (!holdings.length) {
+        await sendTelegramTo(chatId, 'Your portfolio is empty.');
+      } else {
+        // Yesterday in IST, weekend-aware (Sat/Sun → Fri)
+        const ist = _istNow();
+        const d = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate() - 1));
+        const dow = d.getUTCDay();
+        if (dow === 0) d.setUTCDate(d.getUTCDate() - 2);
+        else if (dow === 6) d.setUTCDate(d.getUTCDate() - 1);
+        const yest = d.toISOString().slice(0, 10);
+        try {
+          const r = await fetch(`${API_BASE}/api/v1/earnings/graded?date=${yest}`, { signal: AbortSignal.timeout(20_000) });
+          if (!r.ok) {
+            await sendTelegramTo(chatId, `Could not fetch earnings for ${yest} (HTTP ${r.status}).`);
+          } else {
+            const data = await r.json();
+            const tierCards = (data?.by_tier?.[tier] || []) as any[];
+            const myset = new Set(holdings.map((s: string) => s.toUpperCase()));
+            const myCards = tierCards.filter((c: any) => myset.has(String(c.ticker || '').toUpperCase()));
+            if (!myCards.length) {
+              await sendTelegramTo(chatId, `<b>${tier} in your portfolio · ${yest}</b>\n\nNone of your ${holdings.length} holdings filed ${tier}-tier results.\n\n<i>Tip: Street Pulse bot /${tier === 'BLOCKBUSTER' ? 'toptiers' : 'strongbeats'} shows MARKET-wide results.</i>`);
+            } else {
+              const lines = [`<b>${tier} earnings in your portfolio · ${yest}</b>`, `<i>${myCards.length} of ${holdings.length} holdings</i>`, ''];
+              for (const c of myCards) {
+                const move = c.move_pct != null ? ` · ${c.move_pct >= 0 ? '+' : ''}${Number(c.move_pct).toFixed(1)}%` : '';
+                const score = c.composite_score != null ? ` · Score ${c.composite_score}` : '';
+                lines.push(`<b>${esc(c.ticker)}</b> — ${esc(c.company || '')}${move}${score}`);
+              }
+              await sendTelegramTo(chatId, lines.join('\n'));
+            }
+          }
+        } catch (e: any) {
+          console.error(`[PORTFOLIO] /${tier.toLowerCase()} failed:`, e?.message || e);
+          await sendTelegramTo(chatId, `Could not fetch ${tier} earnings. Try again later.`);
+        }
       }
     } else if (text === '/status') {
       // PATCH 0715 — centralized via _istNow + UTC getters.
