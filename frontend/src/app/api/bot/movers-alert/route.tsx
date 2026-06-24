@@ -1335,30 +1335,35 @@ export async function POST(request: Request) {
         lines.push(`<a href="https://market-cockpit-production.up.railway.app/orders">Full Intelligence Dashboard</a>`);
         await sendTelegramTo(chatId, lines.join('\n'));
       }
-    } else if (text === '/summary2' || text === '/summary2d' || text === '/summary 2d' || text === '/strongbeats' || text === '/toptiers' || text === '/blockbuster' || text === '/blockbusters') {
+    } else if (text === '/summary2' || text === '/summary2d' || text === '/summary 2d' || text === '/summary3' || text === '/summary3d' || text === '/summary5' || text === '/summary7' || text === '/strongbeats' || text === '/toptiers' || text === '/blockbuster' || text === '/blockbusters') {
       // PATCH zzz79 — DIRECT implementation (no more eo-blockbuster-alert proxy
       // which had CRON_SECRET / TELEGRAM_BOT_TOKEN_EARNINGS dependency hell).
       // Fetch /api/v1/earnings/graded for past N IST days, filter tiers, format, send.
       await sendTelegramTo(chatId, '<i>Fetching earnings summary...</i>');
+      // PATCH zzz84 — variable window: /summary2 /summary3 /summary5 /summary7
       let days = 2;
       let allowedTiers: string[] = ['BLOCKBUSTER', 'STRONG'];
-      let header = '2-day BLOCKBUSTER + STRONG digest';
-      if (text === '/strongbeats') { allowedTiers = ['STRONG']; header = 'STRONG beats · last 2d'; }
+      if (text === '/summary3' || text === '/summary3d') days = 3;
+      else if (text === '/summary5') days = 5;
+      else if (text === '/summary7') days = 7;
+      let header = `${days}-day BLOCKBUSTER + STRONG digest`;
+      if (text === '/strongbeats') { allowedTiers = ['STRONG']; header = `STRONG beats · last ${days}d`; }
       else if (text === '/toptiers' || text === '/blockbuster' || text === '/blockbusters') {
-        allowedTiers = ['BLOCKBUSTER']; header = 'BLOCKBUSTER · last 2d';
+        allowedTiers = ['BLOCKBUSTER']; header = `BLOCKBUSTER · last ${days}d`;
       }
 
       // Compute past N IST dates (weekend-aware: skip Sat/Sun backward)
       const ist = _istNow();
       const dates: string[] = [];
-      let cursor = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate()));
+      // PATCH zzz84 — start from YESTERDAY, not today. Earnings filed before/after market hours.
+      let cursor = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate() - 1));
       while (dates.length < days) {
         const dow = cursor.getUTCDay();
         if (dow !== 0 && dow !== 6) {
           dates.push(cursor.toISOString().slice(0, 10));
         }
         cursor.setUTCDate(cursor.getUTCDate() - 1);
-        if (dates.length === 0 && cursor.getUTCDate() < ist.getUTCDate() - 10) break; // safety
+        if (cursor.getUTCDate() < ist.getUTCDate() - 14) break; // PATCH zzz84 — wider safety
       }
       console.log(`[BOT] /${text.slice(1)} fetching dates: ${dates.join(',')} tiers=${allowedTiers.join(',')}`);
 
