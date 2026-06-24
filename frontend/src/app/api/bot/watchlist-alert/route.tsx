@@ -782,11 +782,13 @@ export async function POST(request: Request) {
       lines.push(`/unwatch SYMBOL — Remove stock`);
       lines.push(`/pulse — Performance card`);
       await sendTelegramTo(chatId, lines.join('\n'));
-    } else if (text.startsWith('/watch ')) {
-      // Support both comma and space separators: /watch TCS INFY or /watch TCS,INFY,WIPRO
-      const toAdd = text.slice(7).trim().split(/[\s,]+/).map((t: string) => t.toUpperCase()).filter((t: string) => t.length > 0 && t.length < 30);
+    } else if (text === '/watch' || text.startsWith('/watch ') || text === '/add' || text.startsWith('/add ')) {
+      // PATCH zzz80 — bare /watch shows usage; supports comma OR space separators.
+      // Also accepts /add as alias (in case user types portfolio-style command).
+      const body = text.replace(/^\/(watch|add)\s*/, '');
+      const toAdd = body.trim().split(/[\s,]+/).map((t: string) => t.toUpperCase()).filter((t: string) => t.length > 0 && t.length < 30);
       if (toAdd.length === 0) {
-        await sendTelegramTo(chatId, '[X] Please provide stock symbols. Example: <code>/watch TCS INFY</code> or <code>/watch TCS,INFY,WIPRO</code>');
+        await sendTelegramTo(chatId, '<b>/watch</b> — Add stocks to your watchlist\n\nUsage:\n<code>/watch TCS</code>\n<code>/watch TCS INFY WIPRO</code>\n<code>/watch TCS,INFY,WIPRO</code>\n\nUse /list to see your current watchlist.');
       } else {
         const current = await getWatchlist(chatId);
         const before = current.length;
@@ -801,10 +803,14 @@ export async function POST(request: Request) {
           `[OK] <b>Watchlist Updated</b>\n\nAdded: <code>${toAdd.join(', ')}</code>\nTotal stocks: <b>${updated.length}</b>\n\n<i>Your watchlist will be used for alerts and reports.</i>`
         );
       }
-    } else if (text.startsWith('/unwatch ')) {
-      const toRemove = text.slice(9).trim().toUpperCase();
+    } else if (text === '/unwatch' || text.startsWith('/unwatch ') || text === '/remove' || text.startsWith('/remove ')) {
+      // PATCH zzz80 — bare /unwatch shows usage; /remove is alias
+      const body = text.replace(/^\/(unwatch|remove)\s*/, '').trim();
+      const toRemove = body.toUpperCase().split(/[\s,]+/)[0] || '';
       if (!toRemove) {
-        await sendTelegramTo(chatId, '[X] Please provide a symbol. Example: <code>/unwatch RELIANCE</code>');
+        const wl = await getWatchlist(chatId);
+        const sample = wl.slice(0, 3).join(', ');
+        await sendTelegramTo(chatId, `<b>/unwatch</b> — Remove a stock from your watchlist\n\nUsage:\n<code>/unwatch ${sample || 'RELIANCE'}</code>\n\nUse /list to see what you can remove.`);
       } else {
         const current = await getWatchlist(chatId);
         const updated = current.filter(t => t !== toRemove);
@@ -824,9 +830,37 @@ export async function POST(request: Request) {
     } else if (text === '/pulse') {
       await sendTelegramTo(chatId, 'Generating watchlist pulse card...');
       const watchlist = await getWatchlist(chatId);
-      const stocks = await fetchWatchlistStocks(watchlist);
+      let stocks = await fetchWatchlistStocks(watchlist);
       if (stocks.length === 0) {
-        await sendTelegramTo(chatId, 'No watchlist data available. Market may be closed or symbols not found.');
+        // PATCH zzz80 — Yahoo fallback when NSE returns empty (after-hours)
+        console.log(`[WATCHLIST] NSE empty; Yahoo fallback for ${watchlist.length} symbols`);
+        try {
+          const { fetchQuotesWithFallback } = await import('@/lib/yahoo');
+          const ySyms = watchlist.map((s: string) => `${s.toUpperCase()}.NS`);
+          const yQuotes = await fetchQuotesWithFallback(ySyms);
+          const yStocks: Stock[] = yQuotes
+            .filter((q: any) => (q?.regularMarketPrice || 0) > 0)
+            .map((q: any) => ({
+              ticker: String(q.symbol || '').replace(/\.NS$/i, ''),
+              company: q.longName || q.shortName || q.symbol,
+              price: q.regularMarketPrice || 0,
+              changePercent: Math.round((q.regularMarketChangePercent || 0) * 100) / 100,
+              change: Math.round((q.regularMarketChange || 0) * 100) / 100,
+              cap: 'M',
+              sector: q.sector || q.industry || '',
+              dayHigh: q.regularMarketDayHigh,
+              dayLow: q.regularMarketDayLow,
+              weekHigh52: q.fiftyTwoWeekHigh,
+              weekLow52: q.fiftyTwoWeekLow,
+            }));
+          console.log(`[WATCHLIST] Yahoo fallback: ${yStocks.length}/${watchlist.length}`);
+          stocks.push(...yStocks);
+        } catch (e: any) {
+          console.error('[WATCHLIST] Yahoo fallback failed:', e?.message || e);
+        }
+      }
+      if (stocks.length === 0) {
+        await sendTelegramTo(chatId, `<b>Watchlist Pulse — data sources unavailable</b>\n\nNSE and Yahoo both returned empty for your ${watchlist.length} stocks. Market is closed and feeds are throttled.\n\nTry /list to see your watchlist, or visit the <a href="${API_BASE}">Dashboard</a>.`);
       } else {
         try {
           const img = await generateWatchlistImage(stocks);
