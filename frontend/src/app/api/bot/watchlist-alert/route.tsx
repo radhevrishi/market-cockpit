@@ -79,8 +79,21 @@ async function getWatchlist(chatId: string): Promise<string[]> {
     return watchlistStorage[chatId].stocks;
   }
 
-  // PATCH zzz81 — portal sync: empty if KV has nothing (no hardcoded defaults).
-  console.log(`[WATCHLIST] No saved watchlist for ${chatId} — empty`);
+  // PATCH zzz82 — first-time / empty KV: seed DEFAULT_WATCHLIST into KV as
+  // string[] (matches portal /watchlists schema). User can /watch or /unwatch
+  // to customize from here.
+  if (DEFAULT_WATCHLIST.length > 0) {
+    try {
+      await kvSet(`watchlist:${chatId}`, [...DEFAULT_WATCHLIST]);
+      watchlistStorage[chatId] = { stocks: [...DEFAULT_WATCHLIST], addedAt: Date.now() };
+      console.log(`[WATCHLIST] First-time seed: wrote ${DEFAULT_WATCHLIST.length} DEFAULT_WATCHLIST to KV for ${chatId}`);
+      return [...DEFAULT_WATCHLIST];
+    } catch (e) {
+      console.warn('[WATCHLIST] seed failed:', e);
+      return [...DEFAULT_WATCHLIST];
+    }
+  }
+  console.log(`[WATCHLIST] No watchlist for ${chatId} and no defaults — empty`);
   return [];
 }
 
