@@ -1243,7 +1243,9 @@ export async function POST(request: Request) {
     }
 
     const chatId = String(message.chat.id);
-    const text = message.text.trim();
+    const rawText = message.text.trim();
+    // PATCH zzz78 — strip @bot_username suffix so /pulse@mc_xxx_bot matches /pulse
+    const text = rawText.replace(/^(\/\w+)@\w+/, '$1');
     const firstName = message.chat.first_name || 'there';
 
     if (text === '/start') {
@@ -1356,6 +1358,73 @@ export async function POST(request: Request) {
         console.error('[BOT] proxy fetch failed:', e?.message || e);
         await sendTelegramTo(chatId, `<b>Earnings summary fetch failed</b>\n\nNetwork timeout. Visit the <a href="${API_BASE}/earnings-opportunities">EO Dashboard</a>.`);
       }
+    } else if (text === '/setup_menus' || text === '/setupmenus' || text === '/setup_menu') {
+      // PATCH zzz78 — admin: call setMyCommands for all 3 bots using their
+      // env tokens (no exposed tokens, no script for user to run). Gated to
+      // admin chat ID only.
+      if (chatId !== '5057319640') {
+        await sendTelegramTo(chatId, 'Admin only.');
+      } else {
+        await sendTelegramTo(chatId, '<i>Setting up bot menus for all 3 bots...</i>');
+        const TOKENS: Array<[string, string, Array<{command: string; description: string}>]> = [
+          ['mc_street_pulse_bot', process.env.TELEGRAM_BOT_TOKEN_MOVERS || '', [
+            {command: 'pulse', description: 'Full Street Pulse dashboard'},
+            {command: 'summary2', description: '2-day BLOCKBUSTER + STRONG digest'},
+            {command: 'strongbeats', description: 'STRONG-tier beats (2d, market)'},
+            {command: 'toptiers', description: 'BLOCKBUSTER tier (2d, market)'},
+            {command: 'gainers', description: 'Top gainers image card'},
+            {command: 'losers', description: 'Top losers image card'},
+            {command: 'indices', description: 'Index snapshot + breadth'},
+            {command: 'news', description: 'Market intelligence alerts'},
+            {command: 'status', description: 'Bot status'},
+            {command: 'help', description: 'Show all commands'},
+          ]],
+          ['mc_watchlist_pulse_bot', process.env.TELEGRAM_BOT_TOKEN_WATCHLIST || '', [
+            {command: 'pulse', description: 'My watchlist performance card'},
+            {command: 'list', description: 'Show my watchlist'},
+            {command: 'watch', description: 'Add stocks: /watch TCS INFY'},
+            {command: 'unwatch', description: 'Remove a stock'},
+            {command: 'blockbuster', description: 'My watchlist in BLOCKBUSTER tier'},
+            {command: 'strong', description: 'My watchlist in STRONG tier'},
+            {command: 'news', description: 'News for my watchlist'},
+            {command: 'status', description: 'Bot status'},
+            {command: 'help', description: 'Show all commands'},
+          ]],
+          ['mc_portfolio_pulse_bot', process.env.TELEGRAM_BOT_TOKEN_PORTFOLIO || '', [
+            {command: 'pulse', description: 'My portfolio performance card'},
+            {command: 'list', description: 'Show my holdings'},
+            {command: 'add', description: 'Add holding: /add TCS'},
+            {command: 'remove', description: 'Remove a holding'},
+            {command: 'blockbuster', description: 'My holdings in BLOCKBUSTER tier'},
+            {command: 'strong', description: 'My holdings in STRONG tier'},
+            {command: 'intel', description: 'Intelligence signals for my holdings'},
+            {command: 'news', description: 'News for my holdings'},
+            {command: 'status', description: 'Bot status'},
+            {command: 'help', description: 'Show all commands'},
+          ]],
+        ];
+        const results: string[] = [];
+        for (const [name, tok, cmds] of TOKENS) {
+          if (!tok || tok.length < 30) {
+            results.push(`[X] <b>${name}</b>: token env missing`);
+            continue;
+          }
+          try {
+            const r = await fetch(`https://api.telegram.org/bot${tok}/setMyCommands`, {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({commands: cmds}),
+              signal: AbortSignal.timeout(10_000),
+            });
+            const j: any = await r.json();
+            if (j.ok) results.push(`[OK] <b>${name}</b>: ${cmds.length} commands set`);
+            else results.push(`[X] <b>${name}</b>: ${j.description || 'failed'}`);
+          } catch (e: any) {
+            results.push(`[X] <b>${name}</b>: ${e?.message || 'fetch error'}`);
+          }
+        }
+        await sendTelegramTo(chatId, `<b>Bot menu setup complete</b>\n\n${results.join('\n')}\n\n<i>Reopen each bot chat to see the new / autocomplete.</i>`);
+      }
     } else if (text === '/status') {
       // PATCH 0715 — centralized via _istNow. UTC getters on IST-shifted Date.
       const ist = _istNow();
@@ -1368,10 +1437,13 @@ export async function POST(request: Request) {
       await sendTelegramTo(chatId,
         `<b>MC Street Pulse — Status</b>\n\n[OK] Bot: Online\nIST: ${ist.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}\n${isMarketDay && isMarketHours ? '[+] Market: Open' : '[-] Market: Closed'}\nNext Alert: ${isMarketDay ? nextAlert : 'Monday 10:05 AM'}\nMode: Image Cards + Text Summary\n\n<i>Alerts run Mon–Fri at 10:05 AM &amp; 3:05 PM IST</i>`
       );
-    } else {
-      // PATCH zzz76 — catch-all: log + reply on unmatched commands so silent drops are visible
-      console.log(`[BOT] Unmatched command: ${JSON.stringify(text)}`);
-      await sendTelegramTo(chatId, `Unknown command: <code>${esc(text)}</code>\n\nTry /help for the command list.`);
+    } else if (text.startsWith('/') && text.length < 40) {
+      // PATCH zzz78 — tightened catch-all: only reply if it LOOKS like a slash-command
+      // (avoid yelling 'Unknown' at regular chat). Also gated on length to skip pastes.
+      console.log(`[BOT] Unmatched slash command: ${JSON.stringify(text)}`);
+      await sendTelegramTo(chatId, `Unknown command: <code>${esc(text)}</code>
+
+Send /help for the command list.`);
     }
 
     return NextResponse.json({ ok: true });
