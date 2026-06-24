@@ -924,10 +924,21 @@ export default function EarningsOpportunitiesPage() {
   const [multibaggerOnly, setMultibaggerOnly] = useState(false);
   // PATCH 1022 — market-cap range filter (uses market_cap_cr in ₹ Cr)
   const [capFilter, setCapFilter] = useState<'all' | 'sweet' | 'mega' | 'large' | 'mid' | 'small' | 'micro'>('all');
-  // PATCH 0498 — Initialize to '' (Latest mode) so auto-walk-back fires
-  // from today and lands on the most-recently-populated date. Previously
-  // initialized to todayISO() which short-circuited the walk-back.
-  const [filterDate, setFilterDate] = useState<string>('');
+  // PATCH zzz75 — Always default to ONE day before today (previous weekday,
+  // skipping Sat/Sun backward to Fri). User explicitly wants the page to
+  // start on yesterday, NOT auto-jump to a dense-earnings calendar date.
+  // The walk-back behavior is still available via the "↩ Latest" button
+  // which sets filterDate to '' and triggers the original probe.
+  // PATCH 0498 (previous): initialized to '' so walk-back fired on load — reverted.
+  const [filterDate, setFilterDate] = useState<string>(() => {
+    if (typeof window === 'undefined') return '';  // SSR safety
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    const dow = d.getDay();
+    if (dow === 0) d.setDate(d.getDate() - 2);      // Sun → Fri
+    else if (dow === 6) d.setDate(d.getDate() - 1); // Sat → Fri
+    return d.toISOString().slice(0, 10);
+  });
   const [showAbout, setShowAbout] = useState(false);
   const [expanded, setExpanded] = useState<Record<EarningsTier, boolean>>({
     BLOCKBUSTER: true, STRONG: true, MIXED: false, AVOID: false,
