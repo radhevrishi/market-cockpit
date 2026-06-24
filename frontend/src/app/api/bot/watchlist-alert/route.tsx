@@ -79,9 +79,9 @@ async function getWatchlist(chatId: string): Promise<string[]> {
     return watchlistStorage[chatId].stocks;
   }
 
-  // Last resort: default
-  watchlistStorage[chatId] = { stocks: [...DEFAULT_WATCHLIST], addedAt: Date.now() };
-  return DEFAULT_WATCHLIST;
+  // PATCH zzz81 — portal sync: empty if KV has nothing (no hardcoded defaults).
+  console.log(`[WATCHLIST] No saved watchlist for ${chatId} — empty`);
+  return [];
 }
 
 function setWatchlist(chatId: string, stocks: string[]): void {
