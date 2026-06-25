@@ -7,10 +7,19 @@ name: Refresh Movers (2x/day post-close)
 
 on:
   schedule:
+    # PATCH zzz103 — Intraday warmers added so Railway's in-memory cache
+    # stays hot during NSE hours. The Cloudflare Worker mc-movers handles
+    # the actual KV refresh every 5min; these crons keep Railway pre-warmed
+    # so the homepage Top Movers widget doesn't pay the 25-30s cold rebuild.
+    - cron: '30 3 * * 1-5'    # 09:00 IST — pre-open warm
+    - cron: '30 5 * * 1-5'    # 11:00 IST — mid-morning warm
+    - cron: '30 7 * * 1-5'    # 13:00 IST — mid-day warm
+    - cron: '0 9 * * 1-5'     # 14:30 IST — pre-close warm
+    # Post-close refreshes (final EOD bhavcopy attribution)
     - cron: '15 10 * * 1-5'   # 15:45 IST (Mon-Fri) - just after close
-    - cron: '15 22 * * 1-5'  # 1101sss doubled from above
+    - cron: '15 22 * * 1-5'   # 1101sss doubled from above
     - cron: '30 13 * * 1-5'   # 19:00 IST (Mon-Fri) - after final EOD bhavcopy
-    - cron: '30 1 * * 1-5'  # 1101sss doubled from above
+    - cron: '30 1 * * 1-5'    # 1101sss doubled from above
   workflow_dispatch: {}
 
 concurrency:
