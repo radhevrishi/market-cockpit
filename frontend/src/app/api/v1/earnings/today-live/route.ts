@@ -40,6 +40,13 @@ const CACHE_TTL_SECONDS = 3 * 60;  // 3 minutes — page auto-polls every 4
 // (BHAGYANGR/LLOYDSENGG/STLTECH May-14 ghost-filing bug).
 const RESULT_PATTERNS = [
   /outcome\s+of\s+board\s+meeting.*(?:financial\s+result|audited)/i,
+  // PATCH zzz93 — accept BARE "Outcome of Board Meeting" too. Many companies
+  // (e.g. VIKASLIFE 24-Jun-2026) file results under this subject without the
+  // word "financial result" or "audited" in the subject line. Downstream
+  // grading naturally filters out board-meeting outcomes that don't contain
+  // actual financials (extraction returns null → AVOID tier or skipped).
+  // The "Board Meeting" without "Outcome" is still blocked via blocklist below.
+  /^outcome\s+of\s+board\s+meeting(?:\s|$|[.,]|held)/i,
   /audited\s+(?:standalone\s+|consolidated\s+|standalone\s+(?:and|&)\s+consolidated\s+)?financial\s+result/i,
   /(?:standalone|consolidated)\s+(?:and\s+|&\s+)?(?:audited\s+)?(?:un[- ]?audited\s+)?financial\s+result/i,
   /financial\s+result.*(?:quarter|year)\s+(?:ended|ending)/i,
@@ -56,7 +63,7 @@ const SUBJECT_BLOCKLIST = [
   /\bnotice\b/i,
   /\bintimation\b/i,
   /\bconsider(?:ation)?\b.*financial/i,             // "to consider financial results"
-  /\bboard\s+meeting\b(?!.*outcome)/i,              // "Board Meeting on …" without "Outcome"
+  /^(?!.*\boutcome\b)board\s+meeting\b/i,         // PATCH zzz93 — block 'Board Meeting' only if 'outcome' is NOT anywhere in subject
   /\bschedul(?:e|ing)\b/i,
   /\bpress\s+release\b/i,
   /\binvestor\s+presentation\b/i,
