@@ -99,7 +99,7 @@ const setStoredHoldings = (h: PortfolioHolding[]) => {
  *
  * FIX: Bubble fetch failures up to fetchData as typed exceptions so the
  * outer catch can render a red banner with a Retry button. We also:
- *   - bump per-request timeout to AbortSignal.timeout(45_000)
+ *   - bump per-request timeout to AbortSignal.timeout(60_000)  // PATCH zzz90 (EO5)
  *   - distinguish "network/timeout" vs "200 with malformed shape"
  *   - log malformed payloads to console so users can self-diagnose
  *   - expose `QuotesShapeError` so fetchData can surface a distinct
@@ -121,11 +121,11 @@ const fetchStockQuotes = async (): Promise<StockQuote[]> => {
     indexGroup: s.indexGroup || s.cap || '', marketCap: s.marketCap || 0, // PATCH 1100
   });
   const fetchOne = async (market: 'india' | 'us'): Promise<StockQuote[]> => {
-    // PATCH 0965 BUG #1 — AbortSignal.timeout(45_000) replaces the bespoke
+    // PATCH 0965 BUG #1 — AbortSignal.timeout(60_000)  // PATCH zzz90 (EO5) replaces the bespoke
     // AbortController, and we now THROW rather than return [] on failure
     // so the caller can render a visible error banner.
     const res = await fetch(`/api/market/quotes?market=${market}`, {
-      signal: AbortSignal.timeout(45_000),
+      signal: AbortSignal.timeout(60_000)  // PATCH zzz90 (EO5),
     });
     if (!res.ok) {
       throw new Error(`/api/market/quotes?market=${market} → HTTP ${res.status}`);
@@ -1109,7 +1109,14 @@ export default function PortfolioPage() {
       const bulkQuotes = await fetchStockQuotes();
       const bulkTickers = new Set(bulkQuotes.map(q => q.ticker));
       const holdingSymbols = holdings.map(h => h.symbol);
-      const missing = holdingSymbols.filter(s => !bulkTickers.has(s) && !bulkTickers.has(normalizeTicker(s)));
+      // PATCH zzz90 (EO5) — also fall back when bulk HAS ticker but price <= 0
+      // (handles the case where /api/market/quotes?market=india aborted under cold-build
+      // and Promise.allSettled kept the US-only success bucket → all 17 IN holdings missing prices)
+      const bulkByTicker = new Map(bulkQuotes.map((q: any) => [String(q.ticker).toUpperCase(), q]));
+      const missing = holdingSymbols.filter((s: string) => {
+        const q = bulkByTicker.get(s.toUpperCase()) || bulkByTicker.get(normalizeTicker(s).toUpperCase());
+        return !q || !(Number(q.price) > 0);
+      });
 
       let allQuotes = bulkQuotes;
       if (missing.length > 0) {
