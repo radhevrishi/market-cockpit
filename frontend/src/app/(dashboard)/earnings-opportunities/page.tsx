@@ -936,6 +936,21 @@ export default function EarningsOpportunitiesPage() {
   // PATCH 0498 (previous): initialized to '' so walk-back fired on load — reverted.
   const [filterDate, setFilterDate] = useState<string>(() => {
     if (typeof window === 'undefined') return '';  // SSR safety
+    // PATCH zzz98 — persist filterDate to LS so Hard Refresh keeps the selected date
+    // Prefer the user's last-picked date over the yesterday-weekday default,
+    // but only when it's a valid YYYY-MM-DD within the last 30 days (so a
+    // stale month-old value can't pin the page on an empty calendar).
+    try {
+      const saved = localStorage.getItem('mc:eo:v12:filterDate');
+      if (saved && /^\d{4}-\d{2}-\d{2}$/.test(saved)) {
+        const savedMs = new Date(saved + 'T00:00:00Z').getTime();
+        const nowMs = Date.now();
+        const ageDays = (nowMs - savedMs) / (1000 * 60 * 60 * 24);
+        if (Number.isFinite(savedMs) && ageDays >= -1 && ageDays <= 30) {
+          return saved;
+        }
+      }
+    } catch {}
     const d = new Date();
     d.setDate(d.getDate() - 1);
     const dow = d.getDay();
@@ -943,6 +958,21 @@ export default function EarningsOpportunitiesPage() {
     else if (dow === 6) d.setDate(d.getDate() - 1); // Sat → Fri
     return d.toISOString().slice(0, 10);
   });
+  // PATCH zzz98 — persist filterDate to LS so Hard Refresh keeps the selected date
+  // Mirrors every filterDate change (including the "↩ Latest" clear) so the
+  // next mount of this component reads the user's most recent intent.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      if (filterDate && /^\d{4}-\d{2}-\d{2}$/.test(filterDate)) {
+        localStorage.setItem('mc:eo:v12:filterDate', filterDate);
+      } else {
+        // User clicked "↩ Latest" — clear the saved value so the
+        // yesterday-weekday default takes over on the next mount.
+        localStorage.removeItem('mc:eo:v12:filterDate');
+      }
+    } catch {}
+  }, [filterDate]);
   const [showAbout, setShowAbout] = useState(false);
   const [expanded, setExpanded] = useState<Record<EarningsTier, boolean>>({
     BLOCKBUSTER: true, STRONG: true, MIXED: false, AVOID: false,
