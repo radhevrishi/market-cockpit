@@ -870,38 +870,11 @@ export async function GET(req: Request) {
   // entries (like VIKASLIFE on 2026-06-24) flow through gradeRow.
   let dayList: any[] = (hub?.results || []).filter((r: any) => r.resultDate === date);
 
-  // PATCH zzz101 — Manual override list of confirmed Q4 filers per date.
-  // Today-live's strict regex (post-zzz101 revert) correctly drops the
-  // 2026-06-25 ghost-filing batch, but it ALSO drops legitimate filers
-  // like SKMEGGPROD/EQUITASBNK/SAREGAMA on 2026-06-24 whose NSE subjects
-  // were also bare "Outcome of Board Meeting". When PDF content scanning
-  // lands this list goes away; for now it's a manual whitelist of tickers
-  // the user has personally verified as real Q4 filings.
-  const CONFIRMED_Q4_FILERS: Record<string, string[]> = {
-    '2026-06-24': ['VIKASLIFE', 'SKMEGGPROD', 'EQUITASBNK', 'SAREGAMA', 'ONMOBILE', 'MANUGRAPH', 'SANSTAR', 'VIJIFIN', 'BLBLIMITED'],
-  };
-  const overrideTickers = CONFIRMED_Q4_FILERS[date] || [];
-  if (overrideTickers.length > 0) {
-    const existingTickers = new Set<string>(dayList.map((r: any) => String(r.ticker || '').toUpperCase()));
-    for (const sym of overrideTickers) {
-      if (!existingTickers.has(sym.toUpperCase())) {
-        dayList.push({
-          ticker: sym,
-          company: sym,
-          resultDate: date,
-          quarter: 'Q4',
-          sector: null,
-          marketCap: null,
-          quality: 'Confirmed',
-          source_url: `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(sym)}`,
-          filing_iso: null,
-          __source: 'manual-override',
-        });
-        existingTickers.add(sym.toUpperCase());
-      }
-    }
-    console.log(`[graded] zzz101 manual override for ${date}: added ${overrideTickers.length} confirmed Q4 filers`);
-  }
+  // PATCH zzz102 — REMOVED manual override list. User confirmed those tickers
+  // weren't actual Q4 filers — they were stale screener-data ghosts that
+  // happened to share "Outcome of Board Meeting" subjects. The true real
+  // Q4 filing on 2026-06-24 was ONLY VIKASLIFE, which is correctly listed
+  // on the EarningsPulse hub. Hub-corroboration is the right signal.
 
   // PATCH zzz96 — Build set of tickers the hub knows about for the WHOLE month.
   // The hub is the authoritative aggregator of filings, including "Upcoming"
@@ -1164,23 +1137,18 @@ export async function GET(req: Request) {
   const dropGhosts = (m: any, e: any): boolean => {
     if (m.__source !== 'nse-live' && m.__source !== 'nse-live-retry' && m.__source !== 'nse-announcements') return false;
 
-    // PATCH zzz97 — Skip stale-quarter ghosts.
-    // If hub has NO record AND screener's latest_quarter_end_iso is more
-    // than 100 days before filing_date, the company filed Q4 long ago and
-    // today's NSE entry is a routine BM (dividend/AGM/allotment) — NOT a
-    // fresh Q4 result. Distinct from zzz95's 95-day cap which catches
-    // late Q4 filers like VIKASLIFE; zzz97 catches the inverse — old Q4 +
-    // routine BM today.
-    // Conservative: stays soft for ambiguous cases, only drops obvious stale.
+    // PATCH zzz102 — STRICT hub-corroboration guard.
+    // The user verified that bare "Outcome of Board Meeting" filings from
+    // today-live are unreliable: routine BMs about dividends, AGMs, share
+    // allotments share the same metadata as real Q4 filings. The only
+    // reliable signal is the EarningsPulse hub. If the hub has NO record
+    // of this ticker anywhere this month AND there's no announce_date
+    // corroboration from enrich, drop. This guarantees the Graded Tiers
+    // only show filings the hub has confirmed.
     const tickerUpper = String(m.ticker || '').toUpperCase();
     const hubKnowsTicker = _monthlyHubTickers.has(tickerUpper);
-    if (!hubKnowsTicker && !e.announce_date_iso && e.latest_quarter_end_iso) {
-      const q = new Date(e.latest_quarter_end_iso).getTime();
-      const f = new Date(m.resultDate).getTime();
-      const daysSince = (f - q) / 86_400_000;
-      // 100+ days = beyond the Q4 filing window AND no hub corroboration
-      // AND no announce_date signal = high-confidence ghost.
-      if (daysSince > 100) return true;
+    if (!hubKnowsTicker && !e.announce_date_iso) {
+      return true;  // not on hub + no announce date = noise
     }
 
     // Has announce_date and matches → OK
