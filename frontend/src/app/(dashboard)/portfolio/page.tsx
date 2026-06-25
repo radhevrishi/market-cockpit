@@ -121,12 +121,21 @@ const fetchStockQuotes = async (): Promise<StockQuote[]> => {
     indexGroup: s.indexGroup || s.cap || '', marketCap: s.marketCap || 0, // PATCH 1100
   });
   const fetchOne = async (market: 'india' | 'us'): Promise<StockQuote[]> => {
-    // PATCH 0965 BUG #1 — AbortSignal.timeout(60_000)  // PATCH zzz90 (EO5) replaces the bespoke
-    // AbortController, and we now THROW rather than return [] on failure
-    // so the caller can render a visible error banner.
-    const res = await fetch(`/api/market/quotes?market=${market}`, {
-      signal: AbortSignal.timeout(60_000)  // PATCH zzz90 (EO5),
-    });
+    // PATCH zzz100 — Retry-on-timeout. Bulk India API responds in <1s normally
+    // but Railway cold-starts can spike to 30s+. Strategy: 20s primary attempt,
+    // 25s retry, then surrender. Catches transient slowness without making
+    // the user wait the full 60s before seeing data.
+    const tryOnce = async (timeoutMs: number) =>
+      fetch(`/api/market/quotes?market=${market}`, { signal: AbortSignal.timeout(timeoutMs) });
+    let res: Response;
+    try {
+      res = await tryOnce(20_000);
+    } catch (e: any) {
+      if (e?.name === 'TimeoutError' || /abort|timeout/i.test(String(e?.message || ''))) {
+        console.warn(`[portfolio] zzz100 ${market} primary 20s timed out, retrying with 25s`);
+        res = await tryOnce(25_000);
+      } else { throw e; }
+    }
     if (!res.ok) {
       throw new Error(`/api/market/quotes?market=${market} → HTTP ${res.status}`);
     }
@@ -1233,7 +1242,9 @@ export default function PortfolioPage() {
       if (e?.name === 'QuotesShapeError') {
         setFetchError(`Price data malformed — check console for /api/market/quotes payload (last attempt ${stamp}).`);
       } else if (e?.name === 'TimeoutError' || /abort|timeout/i.test(String(e?.message || ''))) {
-        setFetchError(`Price data unavailable — fetch timed out after 45s (last attempt ${stamp}). Click Retry.`);
+        // PATCH zzz100 — fixed misleading "45s" message + auto-retry once after 5s.
+        setFetchError(`Price data unavailable — Railway is slow right now (last attempt ${stamp}). Auto-retrying in 5s.`);
+        setTimeout(() => { try { fetchData(); } catch {} }, 5_000);
       } else {
         setFetchError(`Price data unavailable — last attempt failed at ${stamp}. ${e?.message ? `(${e.message})` : ''} Click Retry.`);
       }
