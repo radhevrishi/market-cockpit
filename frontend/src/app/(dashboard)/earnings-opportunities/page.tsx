@@ -224,8 +224,10 @@ function buildCalendarFromHub(hub: MarketEarningsResponse | undefined, fromIso: 
   if (hub?.results) {
     for (const e of hub.results) {
       if (!e.resultDate || !ISO_DATE_RE.test(e.resultDate)) continue;
-      // PATCH zzz90 (EO1) — exclude scheduled board meetings (quality='Upcoming')
-      if ((e as any).quality === 'Upcoming') continue;
+      // PATCH zzz91 (revert zzz90 EO1) — keep 'Upcoming' rows so users still see
+      // scheduled board meetings in the calendar as a heads-up. The SCHEDULED
+      // TODAY panel below ALREADY surfaces them with clear "results not yet
+      // filed" copy. Hiding them removed visibility users relied on.
       if (e.resultDate < fromIso || e.resultDate > toIso) continue;
       if (!by_date[e.resultDate]) by_date[e.resultDate] = [];
       by_date[e.resultDate].push({
