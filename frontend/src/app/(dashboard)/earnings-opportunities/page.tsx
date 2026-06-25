@@ -224,6 +224,8 @@ function buildCalendarFromHub(hub: MarketEarningsResponse | undefined, fromIso: 
   if (hub?.results) {
     for (const e of hub.results) {
       if (!e.resultDate || !ISO_DATE_RE.test(e.resultDate)) continue;
+      // PATCH zzz90 (EO1) — exclude scheduled board meetings (quality='Upcoming')
+      if ((e as any).quality === 'Upcoming') continue;
       if (e.resultDate < fromIso || e.resultDate > toIso) continue;
       if (!by_date[e.resultDate]) by_date[e.resultDate] = [];
       by_date[e.resultDate].push({
@@ -2511,7 +2513,14 @@ export default function EarningsOpportunitiesPage() {
             title="Open NSE's official corporate-filings page in a new tab to verify the full universe of filings for any date"
             style={{ fontSize: 10, padding: '4px 10px', borderRadius: 6, border: '1px solid color-mix(in srgb, var(--mc-text-3) 38%, transparent)', background: 'transparent', color: 'var(--mc-text-3)', fontWeight: 700, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}
           >🔗 NSE official ↗</a>
-          <button onClick={() => refetch()} disabled={hardRefreshing}
+          <button onClick={async () => {
+            // PATCH zzz90 (EO4) — show feedback toast after refresh completes
+            const r = await refetch();
+            const total = (r?.data as any)?.candidates_total ?? 0;
+            const d = resolvedDateForGrading || 'today';
+            setRefreshFeedback(total > 0 ? `✓ Refreshed — ${total} filings for ${d}` : `✓ Refreshed — no NSE/BSE filings for ${d}`);
+            setTimeout(() => setRefreshFeedback(null), 8000);
+          }} disabled={hardRefreshing}
             title="Hard refresh — busts cache, re-fetches NSE/BSE feeds, pulls in newly-filed tickers (works for any date including weekends)"
             style={{
               padding: '4px 10px', borderRadius: 6,
@@ -2794,7 +2803,7 @@ export default function EarningsOpportunitiesPage() {
             <button
               onClick={() => {
                 const today = new Date();
-                setFilterDate(today.toISOString().slice(0, 10));
+                setFilterDate(todayIstISO());  // PATCH zzz90 (EO3) — IST-anchored Today
               }}
               title="Jump to today"
               style={{ padding: '4px 8px', background: 'transparent', border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-3)', fontSize: 10, fontWeight: 700, borderRadius: 4, cursor: 'pointer' }}
