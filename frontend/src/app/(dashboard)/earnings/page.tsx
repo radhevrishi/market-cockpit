@@ -343,6 +343,8 @@ function aiTier(ai: AIForwardGuidance | null | undefined):
 }
 
 function GuidanceBadge({ guidance, score, ai }: { guidance?: string; score?: number; ai?: AIForwardGuidance | null }) {
+  // PATCH zzz104 — AI Guidance UI removed per user request
+  return null;
   // PATCH 0948/0949 — Two distinct visual tracks so the user can read the chip
   // and know IMMEDIATELY whether it's the keyword-derived Screener Signal
   // (historical) or the AI-extracted Forward Guidance (concall transcript).
@@ -1199,10 +1201,8 @@ function EarningsCardComponent({ card, postGap, ai }: { card: EarningsScanCard; 
             <span style={{ fontSize: '10px', color: TEXT_DIM, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px' }}>Guidance</span>
             <GuidanceBadge guidance={card.guidance} score={card.sentimentScore} ai={ai} />
             <DivergenceBadge divergence={card.divergence} />
-            {/* PATCH 0956 — eligibility hint when there's no AI badge so user
-                knows whether AI is gated or just not extracted yet. Only
-                shown when there's no AI guidance for this card. */}
-            {!ai && (() => {
+            {/* PATCH zzz104 — AI Guidance UI removed per user request */}
+            {false && !ai && (() => {
               const elig = aiEligibilityReason(card);
               if (elig.state === 'eligible') {
                 return (
@@ -1224,12 +1224,8 @@ function EarningsCardComponent({ card, postGap, ai }: { card: EarningsScanCard; 
               );
             })()}
           </div>
-          {/* PATCH 0951b — Institutional brief. When AI Forward Guidance has
-              extracted hard numbers or catalysts, render them all visibly here
-              so the user reads the whole brief without hovering. Tooltip
-              remains as a backup but the chip face + this panel together =
-              a complete card-level read. */}
-          {ai && ((ai.numbers && ai.numbers.length > 0) || (ai.catalysts && ai.catalysts.length > 0)) && (
+          {/* PATCH zzz104 — AI Guidance UI removed per user request */}
+          {false && ai && ((ai.numbers && ai.numbers.length > 0) || (ai.catalysts && ai.catalysts.length > 0)) && (
             <div style={{
               marginTop: '6px', marginBottom: '6px',
               padding: '8px 10px', borderRadius: '6px',
@@ -3359,13 +3355,8 @@ export default function EarningsPage() {
               <Download style={{ width: '14px', height: '14px' }} /> PDF
             </button>
           )}
-          {/* PATCH 0950 — AI tier filter chips (multi-select). Mirrors the Day-1
-              chip pattern: click a chip to add, click again to remove. Chips OR
-              together within the AI filter, then AND with every other filter
-              (universe, grade, date, conviction, Day-1, keyword Screener Signal).
-              Only rendered once at least one AI-classified card is in state so
-              the toolbar stays clean before the user runs AI Guidance. */}
-          {Object.keys(aiGuidance).length > 0 && (() => {
+          {/* PATCH zzz104 — AI Guidance UI removed per user request */}
+          {false && Object.keys(aiGuidance).length > 0 && (() => {
             const AI_CHIPS: Array<{ key: AIFilterKey; label: string; color: string; icon: string }> = [
               { key: 'EXTRACTED_ONLY', label: 'Extracted', color: '#7C3AED', icon: '🤖' },
               { key: 'EXCELLENT',      label: 'Excellent', color: '#10B981', icon: '🚀' },
@@ -3410,17 +3401,8 @@ export default function EarningsPage() {
               </div>
             );
           })()}
-          {/* PATCH 0948/0954 — AI Forward Guidance button + coverage counter.
-              P0954 changes:
-                • Shows 'AI: X / Y covered' chip so user sees coverage at a glance
-                • Button label switches to '🤖 AI Guidance — N new' counting only
-                  uncached qualifiers (so 'AI Guidance — 30' stops misleading when
-                  28 are already cached)
-                • Button styling escalates (amber border, pulse) when there are
-                  uncovered qualifiers — visible CTA after universe expansion
-                • Button still runs the full qualifying set (cache handles the rest)
-              Qualification rule unchanged: EX/ST + D1 >= +2%. Shift-click force-refresh. */}
-          {(() => {
+          {/* PATCH zzz104 — AI Guidance UI removed per user request */}
+          {false && (() => {
             const qualifying = qualifyingForAI;
             if (qualifying.length === 0) return null;
             const coveredCount = qualifying.filter(c => !!aiGuidance[c.symbol.toUpperCase()]).length;
@@ -3568,7 +3550,8 @@ export default function EarningsPage() {
           changed substantially since the last AI run (e.g. universe expanded
           from 4 to 30 qualifying), the stats no longer apply to what's on
           screen and we hide them instead of displaying stale numbers. */}
-      {aiStats && aiStats.total === qualifyingForAI.length && aiStats.extracted === 0 && aiStats.cached === 0 && (
+      {/* PATCH zzz104 — AI Guidance UI removed per user request */}
+      {false && aiStats && aiStats.total === qualifyingForAI.length && aiStats.extracted === 0 && aiStats.cached === 0 && (
         <div style={{
           padding: '14px 18px', marginTop: '10px', borderRadius: '8px',
           backgroundColor: 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)', border: '2px solid var(--mc-bearish)',
@@ -3651,7 +3634,8 @@ export default function EarningsPage() {
           )}
         </div>
       )}
-      {aiStats && aiStats.total === qualifyingForAI.length && (aiStats.extracted > 0 || aiStats.cached > 0) && (
+      {/* PATCH zzz104 — AI Guidance UI removed per user request */}
+      {false && aiStats && aiStats.total === qualifyingForAI.length && (aiStats.extracted > 0 || aiStats.cached > 0) && (
         <div style={{
           padding: '6px 12px', marginTop: '6px', borderRadius: '6px',
           backgroundColor: '#7C3AED12', border: '1px solid #7C3AED40',
@@ -3759,8 +3743,9 @@ export default function EarningsPage() {
         </div>
       )}
 
+      {/* PATCH zzz104 — AI Guidance UI removed per user request */}
       {/* Guidance Sentiment Aggregation — uses liveSummary */}
-      {!loading && liveSummary.guidanceCoverage > 0 && (
+      {false && !loading && liveSummary.guidanceCoverage > 0 && (
         <div style={{
           display: 'flex', gap: '16px', marginBottom: '16px', alignItems: 'center', flexWrap: 'wrap',
           backgroundColor: CARD, border: `1px solid ${CARD_BORDER}`, borderRadius: '8px', padding: '10px 16px',
