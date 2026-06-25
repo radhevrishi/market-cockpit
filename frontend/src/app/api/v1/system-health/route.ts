@@ -622,6 +622,123 @@ async function compute(request: Request): Promise<HealthPayload> {
     ? settled[3].value
     : { name: 'Resource Usage & Limits', status: 'degraded', items: [], troubleshooting: ['Resource probe failed.'], kind: 'resources' };
 
+
+// ─── zzz78 — Telegram Bots probe helpers ────────────────────────────────
+// Calls Telegram getWebhookInfo per bot to verify token + webhook URL.
+// Token env var name → human bot username → expected webhook path on Railway.
+const TG_BOTS: Array<{
+  envKey: string;
+  username: string;
+  expectedPath: string;
+  description: string;
+}> = [
+  {
+    envKey: 'TELEGRAM_BOT_TOKEN_MOVERS',
+    username: 'mc_street_pulse_bot',
+    expectedPath: '/api/bot/movers-alert',
+    description: 'Market-wide gainers/losers/indices + 2-day BLOCKBUSTER/STRONG digest. Token shared with EARNINGS env so eo_blockbuster_alert sends from same bot.',
+  },
+  {
+    envKey: 'TELEGRAM_BOT_TOKEN_WATCHLIST',
+    username: 'mc_watchlist_pulse_bot',
+    expectedPath: '/api/bot/watchlist-alert',
+    description: 'User watchlist performance card + /blockbuster /strong filter for MY watchlist.',
+  },
+  {
+    envKey: 'TELEGRAM_BOT_TOKEN_PORTFOLIO',
+    username: 'mc_portfolio_pulse_bot',
+    expectedPath: '/api/bot/portfolio-alert',
+    description: 'User portfolio performance card + /blockbuster /strong filter for MY holdings. Yahoo fallback when NSE returns empty.',
+  },
+];
+
+async function probeTelegramBot(b: typeof TG_BOTS[0]): Promise<HealthItem> {
+  const token = process.env[b.envKey] || '';
+  const url = `https://api.telegram.org/bot${token}/getWebhookInfo`;
+  if (!token || token.length < 30) {
+    return {
+      name: b.username,
+      status: 'fail',
+      details: `${b.envKey} env var missing or invalid`,
+      description: b.description,
+    };
+  }
+  const start = Date.now();
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    const latency = Date.now() - start;
+    const json: any = await res.json().catch(() => ({}));
+    if (!json.ok) {
+      const code = json.error_code || res.status;
+      return {
+        name: b.username,
+        status: 'fail',
+        details: `Telegram returned ${code}: ${(json.description || 'unknown').slice(0, 80)}`,
+        latency_ms: latency,
+        description: b.description,
+      };
+    }
+    const result = json.result || {};
+    const webhookUrl: string = result.url || '';
+    const pending: number = result.pending_update_count || 0;
+    const lastErr: string = result.last_error_message || '';
+    const matches = webhookUrl.includes(b.expectedPath);
+    let status: ItemStatus = 'ok';
+    let details = `webhook OK · pending=${pending}`;
+    if (!webhookUrl) {
+      status = 'fail';
+      details = 'no webhook registered';
+    } else if (!matches) {
+      status = 'warn';
+      details = `webhook URL mismatch: ${webhookUrl.slice(-40)}`;
+    } else if (lastErr) {
+      status = 'warn';
+      details = `last error: ${lastErr.slice(0, 60)}`;
+    } else if (pending > 10) {
+      status = 'warn';
+      details = `${pending} pending updates (handler slow/down)`;
+    }
+    return {
+      name: b.username,
+      status,
+      url: webhookUrl || undefined,
+      details,
+      latency_ms: latency,
+      description: b.description,
+    };
+  } catch (e: any) {
+    return {
+      name: b.username,
+      status: 'fail',
+      details: `probe failed: ${e?.message || String(e)}`,
+      latency_ms: Date.now() - start,
+      description: b.description,
+    };
+  }
+}
+
+function envItem(name: string, optional = false, helpText = ''): HealthItem {
+  const v = process.env[name] || '';
+  const isSet = v.length > 0;
+  if (isSet) {
+    return {
+      name,
+      status: 'ok',
+      details: `set (${v.length} chars)`,
+      description: helpText,
+    };
+  }
+  return {
+    name,
+    status: optional ? 'warn' : 'fail',
+    details: optional ? 'unset (optional, fallback used)' : 'unset — required',
+    description: helpText,
+  };
+}
+
+  // ─── zzz78 — probe all 3 Telegram bots in parallel ───
+  const tgBotItems = await Promise.all(TG_BOTS.map(probeTelegramBot));
+
   const sections: HealthSection[] = [
     {
       name: 'Cloudflare Workers',
@@ -671,6 +788,39 @@ async function compute(request: Request): Promise<HealthPayload> {
       links: [
         { label: 'Railway dashboard', url: 'https://railway.app/dashboard' },
         { label: 'mc-scraper /health', url: 'https://mc-scraper.radhev-232.workers.dev/health' },
+      ],
+    },
+    // ─── zzz78 — Telegram Bots & Setup ─────────────────────────────
+    {
+      name: 'Telegram Bots & Setup',
+      status: rollup(tgBotItems) as SectionStatus,
+      kind: 'standard',
+      items: [
+        ...tgBotItems,
+        envItem('TELEGRAM_BOT_TOKEN_MOVERS', false, 'Street Pulse bot token. Used by /api/bot/movers-alert.'),
+        envItem('TELEGRAM_BOT_TOKEN_WATCHLIST', false, 'Watchlist bot token. Used by /api/bot/watchlist-alert.'),
+        envItem('TELEGRAM_BOT_TOKEN_PORTFOLIO', false, 'Portfolio bot token. Used by /api/bot/portfolio-alert.'),
+        envItem('TELEGRAM_BOT_TOKEN_EARNINGS', true, 'Used by /api/bot/eo-blockbuster-alert. Should equal TELEGRAM_BOT_TOKEN_MOVERS (Street Pulse bot doubles for earnings broadcasts).'),
+        envItem('CRON_SECRET', false, 'Shared with GitHub Actions and bot route auth. Must MATCH the secret in GitHub repo settings.'),
+        envItem('MC_BOT_SECRET', true, 'Legacy bot auth. CRON_SECRET is preferred; keep both for transition.'),
+      ],
+      troubleshooting: [
+        'STEP A — Bot is SILENT on /start: open this page → expand "Telegram Bots & Setup" → check the bot item status. RED with "Telegram returned 401" means token was revoked. RED with "no webhook registered" means setWebhook never ran. WARN "URL mismatch" means webhook points to old domain.',
+        'STEP B — Full BotFather reset (when a token is leaked or stops working): open @BotFather in Telegram → /mybots → tap the bot name → API Token → Revoke current token → BotFather replies with a NEW long string (digits:letters). Copy that EXACT string. Do NOT edit characters by hand.',
+        'STEP C — After STEP B, update Railway env vars: https://railway.app/dashboard → market-cockpit → Variables tab → edit the matching TELEGRAM_BOT_TOKEN_* (see above for the env key) → paste new token → Save. Railway redeploys in ~60s. Without this, the bot handler keeps sending with the old token and Telegram returns 401.',
+        'STEP D — After STEP C, RE-REGISTER the webhook (token change invalidates Telegram\'s side too): in Terminal run `curl "https://api.telegram.org/botYOUR_NEW_TOKEN/setWebhook?url=https://market-cockpit-production.up.railway.app/api/bot/movers-alert"` (substitute the right path: movers-alert / watchlist-alert / portfolio-alert). Expect {"ok":true,"description":"Webhook was set"}. Refresh this page — bot item should turn GREEN.',
+        'STEP E — Set the / autocomplete menu (per-bot): run set-bot-menus.sh from the outputs folder, OR call setMyCommands manually: `curl -s "https://api.telegram.org/botYOUR_TOKEN/setMyCommands" -H "Content-Type: application/json" -d \'{"commands":[{"command":"pulse","description":"Performance card"}, ...]}\'`. Updates instantly in Telegram (reopen chat to refresh).',
+        'STEP F — Webhook 404 (Telegram says "Not Found"): the token in your URL is wrong/incomplete. Common cause: pasted partial string or kept brace placeholder. Verify with `curl "https://api.telegram.org/botTOKEN/getMe"` — valid token returns {"ok":true,"result":{"username":"..."}}. Length should be 45-46 chars (digits + colon + letters).',
+        'STEP G — Webhook 401 (Telegram says "Unauthorized"): token revoked or wrong. Re-run STEP B from BotFather and follow C-D. If still 401 with the FRESH token: there is hidden whitespace — `echo -n "TOKEN" | wc -c` should be 45-46.',
+        'STEP H — Bot replies from wrong account (e.g. Watchlist bot replies appear from Portfolio bot): TELEGRAM_BOT_TOKEN_* env vars are mixed up in Railway. Each bot must have its OWN token. EARNINGS is the only intentional duplicate (= MOVERS).',
+        'STEP I — Pending updates piling up (>10 on the item): the handler is timing out or crashing on POST. Open Railway → Deployments → View Logs → search for [BOT] / [WATCHLIST] / [PORTFOLIO]. If no logs from a bot: handler is dead. If crash trace: fix and redeploy.',
+        'STEP J — User sees stale message wording: deployment did not pick up the latest code. Confirm the active deploy commit on Railway is the latest from main. If older: trigger a fresh build (push any small commit or manually redeploy).',
+      ],
+      links: [
+        { label: 'BotFather (Telegram)', url: 'https://t.me/BotFather' },
+        { label: 'Railway Variables', url: 'https://railway.com/project/60474f6e-6d8c-4f54-bef2-c7dda8477ba8/service/6ec9f3ca-472b-467e-9da7-275d7cb5c462/variables' },
+        { label: 'set-bot-menus.sh source', url: 'https://github.com/radhevrishi/market-cockpit/blob/main/scripts/set-bot-menus.sh' },
+        { label: 'Telegram getWebhookInfo docs', url: 'https://core.telegram.org/bots/api#getwebhookinfo' },
       ],
     },
     resourceSection,  // zzz68: NEW section
