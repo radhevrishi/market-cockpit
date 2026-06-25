@@ -243,14 +243,25 @@ export default function HeatmapPage() {
       setError(null);
       setIsRefreshing(true);
       setFallbackInfo(null);
-      // PATCH 0517 — Wall-clock timeout on daily-mode fetches. Was spinning
-      // indefinitely if /api/market/quotes hung (mirrors fetchEarnings's
-      // 30s pattern at line 237). Falls back to honest error instead.
+      // zzz108 — Heatmap was slow because Tier 1 (3 index-scoped intraday
+      // calls) ran SERIALLY before Tier 2 (broad BHAVCOPY cache) even
+      // started. When the market is closed (most weekends + evenings +
+      // pre/post-open), Tier 1 always returns 0 stocks, so we'd pay ~1-2s
+      // of round-trip for nothing before Tier 2 began. Fix: kick off Tier
+      // 2 in parallel with Tier 1. If Tier 1 has data, use it; otherwise
+      // Tier 2 is already done (or nearly so), so the fallback is instant.
+      //
+      // Also reduced the wall-clock from 25s to 12s — server normally
+      // responds in <1s; 25s was a sticky relic from when Yahoo blocked
+      // requests cold.
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 25_000);
+      const timer = setTimeout(() => ctrl.abort(), 12_000);
       try {
         // PATCH 0544 — Shared quote fetch dedupes with /movers when user
         // toggles inside /market-snapshot within the 60s cache window.
+        // zzz108 — fire Tier 2 NOW so it overlaps Tier 1's latency.
+        const broadPromise = fetchQuotesShared({ market: 'india', signal: ctrl.signal })
+          .catch((e) => { console.warn('[heatmap] background TIER 2 prefetch error:', e); return null as unknown as ApiResponse; });
         // ── TIER 1: live index-scoped intraday quotes ─────────────────
         const [n50Json, mcJson, scJson] = await Promise.all([
           fetchQuotesShared({ market: 'india', index: 'nifty50', signal: ctrl.signal }),
@@ -285,11 +296,11 @@ export default function HeatmapPage() {
         }
 
         // ── TIER 2: BHAVCOPY-backed unscoped quotes (same surface /movers uses) ──
-        // PATCH 0965 BUG #2 — re-issue WITHOUT `index` so the route
-        // returns its broad cached payload instead of the empty NSE
-        // intraday response. We still respect the 25s wall-clock timer.
+        // zzz108 — await the prefetched promise that was kicked off above.
+        // By now it's almost certainly already resolved, so this is a
+        // ~0ms grab rather than a fresh round-trip.
         try {
-          const broad = (await fetchQuotesShared({ market: 'india', signal: ctrl.signal })) as ApiResponse;
+          const broad = (await broadPromise) as ApiResponse;
           if (broad?.stocks && broad.stocks.length > 0) {
             // Bucket the broad payload into the three tabs by marketCap so
             // the existing tab UI keeps working. Heuristic mirrors the
@@ -757,7 +768,7 @@ export default function HeatmapPage() {
               {isEarningsMode ? 'Loading post-earnings cohort…' : 'Loading daily heatmap…'}
             </span>
             <span style={{ fontSize: 11, color: 'var(--mc-text-3)', fontStyle: 'italic' }}>
-              ≤30s · times out gracefully
+              ≤12s · times out gracefully
             </span>
           </div>
           <div style={{
