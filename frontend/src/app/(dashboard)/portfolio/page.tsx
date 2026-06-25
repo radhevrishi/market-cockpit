@@ -173,8 +173,10 @@ const fetchIndividualQuotes = async (symbols: string[]): Promise<StockQuote[]> =
   if (symbols.length === 0) return [];
   try {
     const results: StockQuote[] = [];
-    for (let i = 0; i < symbols.length; i += 20) {
-      const batch = symbols.slice(i, i + 20);
+    // PATCH zzz92 — per-symbol endpoint can't handle 17+ at once (returns 0 stocks).
+    // Smaller batches (3) succeed where 20-batches fail entirely.
+    for (let i = 0; i < symbols.length; i += 3) {
+      const batch = symbols.slice(i, i + 3);
       // Normalize tickers and URL-encode them to handle special chars like &
       const normalizedBatch = batch.map(s => encodeURIComponent(normalizeTicker(s)));
       // PATCH 0465 — per-batch 10s timeout (matches watchlist pattern)
@@ -1120,8 +1122,54 @@ export default function PortfolioPage() {
 
       let allQuotes = bulkQuotes;
       if (missing.length > 0) {
-        const individual = await fetchIndividualQuotes(missing);
-        allQuotes = [...bulkQuotes, ...individual];
+        // PATCH zzz92 — when bulk had many holdings missing, retry bulk India ONCE
+        // before falling to per-symbol (per-symbol can't handle batches reliably).
+        if (missing.length >= 5) {
+          try {
+            const retryRes = await fetch(`/api/market/quotes?market=india&_=${Date.now()}`, {
+              signal: AbortSignal.timeout(60_000)
+            });
+            if (retryRes.ok) {
+              const retryData = await retryRes.json();
+              const retryStocks = Array.isArray(retryData?.stocks) ? retryData.stocks : [];
+              console.log(`[portfolio] zzz92 retry bulk India returned ${retryStocks.length} stocks`);
+              if (retryStocks.length > 0) {
+                const mapped = retryStocks.map((s: any) => ({
+                  ticker: s.ticker, company: s.company || s.ticker, sector: s.sector || '—',
+                  industry: s.industry || '—', price: s.price || 0, change: s.change || 0,
+                  changePercent: s.changePercent || 0, dayHigh: s.dayHigh || s.price || 0,
+                  dayLow: s.dayLow || s.price || 0,
+                  indexGroup: s.indexGroup || s.cap || '', marketCap: s.marketCap || 0,
+                }));
+                // Merge unique by ticker
+                const seen = new Set(bulkQuotes.map(q => q.ticker.toUpperCase()));
+                for (const q of mapped) {
+                  if (!seen.has(q.ticker.toUpperCase()) && (Number(q.price) || 0) > 0) {
+                    bulkQuotes.push(q);
+                    seen.add(q.ticker.toUpperCase());
+                  }
+                }
+                // Recompute missing after retry
+                const bulkByTicker2 = new Map(bulkQuotes.map((q: any) => [String(q.ticker).toUpperCase(), q]));
+                const stillMissing = missing.filter((s: string) => {
+                  const q = bulkByTicker2.get(s.toUpperCase()) || bulkByTicker2.get(normalizeTicker(s).toUpperCase());
+                  return !q || !(Number(q.price) > 0);
+                });
+                missing.length = 0;
+                missing.push(...stillMissing);
+                console.log(`[portfolio] zzz92 after retry, still missing: ${missing.length}`);
+              }
+            }
+          } catch (e) {
+            console.warn('[portfolio] zzz92 retry bulk failed:', e);
+          }
+        }
+        if (missing.length > 0) {
+          const individual = await fetchIndividualQuotes(missing);
+          allQuotes = [...bulkQuotes, ...individual];
+        } else {
+          allQuotes = bulkQuotes;
+        }
       }
 
       setQuotes(allQuotes);
