@@ -866,7 +866,42 @@ export async function GET(req: Request) {
     // hub stub so the rest of the pipeline can run on just live NSE filings.
     hub = { results: [] };
   }
-  let dayList: any[] = (hub?.results || []).filter((r: any) => r.resultDate === date && r.quality !== 'Upcoming');
+  // PATCH zzz101 — DROP the quality !== 'Upcoming' filter so hub Upcoming
+  // entries (like VIKASLIFE on 2026-06-24) flow through gradeRow.
+  let dayList: any[] = (hub?.results || []).filter((r: any) => r.resultDate === date);
+
+  // PATCH zzz101 — Manual override list of confirmed Q4 filers per date.
+  // Today-live's strict regex (post-zzz101 revert) correctly drops the
+  // 2026-06-25 ghost-filing batch, but it ALSO drops legitimate filers
+  // like SKMEGGPROD/EQUITASBNK/SAREGAMA on 2026-06-24 whose NSE subjects
+  // were also bare "Outcome of Board Meeting". When PDF content scanning
+  // lands this list goes away; for now it's a manual whitelist of tickers
+  // the user has personally verified as real Q4 filings.
+  const CONFIRMED_Q4_FILERS: Record<string, string[]> = {
+    '2026-06-24': ['VIKASLIFE', 'SKMEGGPROD', 'EQUITASBNK', 'SAREGAMA', 'ONMOBILE', 'MANUGRAPH', 'SANSTAR', 'VIJIFIN', 'BLBLIMITED'],
+  };
+  const overrideTickers = CONFIRMED_Q4_FILERS[date] || [];
+  if (overrideTickers.length > 0) {
+    const existingTickers = new Set<string>(dayList.map((r: any) => String(r.ticker || '').toUpperCase()));
+    for (const sym of overrideTickers) {
+      if (!existingTickers.has(sym.toUpperCase())) {
+        dayList.push({
+          ticker: sym,
+          company: sym,
+          resultDate: date,
+          quarter: 'Q4',
+          sector: null,
+          marketCap: null,
+          quality: 'Confirmed',
+          source_url: `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(sym)}`,
+          filing_iso: null,
+          __source: 'manual-override',
+        });
+        existingTickers.add(sym.toUpperCase());
+      }
+    }
+    console.log(`[graded] zzz101 manual override for ${date}: added ${overrideTickers.length} confirmed Q4 filers`);
+  }
 
   // PATCH zzz96 — Build set of tickers the hub knows about for the WHOLE month.
   // The hub is the authoritative aggregator of filings, including "Upcoming"
