@@ -1123,13 +1123,16 @@ export async function GET(req: Request) {
       const f = new Date(m.resultDate).getTime();
       if (Math.abs(d - f) <= 3 * 86_400_000) return false;
     }
-    // Quarter-end within 75 days of filing → OK (filing typically lands
-    // within 45-60 days of quarter end)
+    // Quarter-end within 95 days of filing → OK
+    // PATCH zzz95 — bumped from 75 to 95 days. Small caps routinely file
+    // Q4 results late: VIKASLIFE filed Q4 Mar-2026 on 24-Jun-2026 = 85 days,
+    // got dropped by the 75-day cap even though it's a legitimate filing.
+    // SEBI deadline is 60 days but extensions push small caps to 90+ days.
     if (e.latest_quarter_end_iso) {
       const q = new Date(e.latest_quarter_end_iso).getTime();
       const f = new Date(m.resultDate).getTime();
       const daysSince = (f - q) / 86_400_000;
-      if (daysSince >= 0 && daysSince <= 75) return false;
+      if (daysSince >= 0 && daysSince <= 95) return false;
     }
     // PATCH 0511 — When BOTH announce_date AND quarter_end are missing
     // from enrich (Screener Cloudflare-blocked us, or Yahoo had no Q-data),
