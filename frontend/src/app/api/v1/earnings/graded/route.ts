@@ -868,6 +868,17 @@ export async function GET(req: Request) {
   }
   let dayList: any[] = (hub?.results || []).filter((r: any) => r.resultDate === date && r.quality !== 'Upcoming');
 
+  // PATCH zzz96 — Build set of tickers the hub knows about for the WHOLE month.
+  // The hub is the authoritative aggregator of filings, including "Upcoming"
+  // entries from EarningsPulse forecast. Used downstream in dropGhosts to
+  // drop today-live items that have NO corroboration anywhere in the hub —
+  // those are bare "Outcome of Board Meeting" filings about dividends, AGMs,
+  // share allotments, etc. — NOT Q4 results.
+  const _monthlyHubTickers = new Set<string>();
+  for (const r of (hub?.results || [])) {
+    if (r?.ticker) _monthlyHubTickers.add(String(r.ticker).toUpperCase());
+  }
+
   // PATCH 0363 / PATCH 0497 — Augment with live NSE corp-announcements.
   //
   // Original (0363): only fired for today + yesterday, on the theory that
@@ -1117,6 +1128,22 @@ export async function GET(req: Request) {
   // resurrect the bug.
   const dropGhosts = (m: any, e: any): boolean => {
     if (m.__source !== 'nse-live' && m.__source !== 'nse-live-retry' && m.__source !== 'nse-announcements') return false;
+
+    // PATCH zzz96 — Hub-corroboration guard.
+    // If the EarningsPulse hub has NO record of this ticker ANYWHERE in the
+    // current month, the today-live filing is almost certainly a routine
+    // board-meeting outcome (dividend, AGM, allotment) — NOT a Q4 result.
+    // The hub aggregates EarningsPulse forecasts + bhavcopy + announce
+    // dates, so a real Q4 filer will be on the hub for some date in the
+    // month, even if hub hasn't yet attributed it to today's date.
+    // Skip this guard if announce_date_iso is present and matches filing
+    // (strong signal from another source).
+    const tickerUpper = String(m.ticker || '').toUpperCase();
+    const hubKnowsTicker = _monthlyHubTickers.has(tickerUpper);
+    if (!hubKnowsTicker && !e.announce_date_iso) {
+      return true;  // unknown to hub + no announce signal = noise
+    }
+
     // Has announce_date and matches → OK
     if (e.announce_date_iso) {
       const d = new Date(e.announce_date_iso).getTime();
