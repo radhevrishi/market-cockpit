@@ -1129,19 +1129,23 @@ export async function GET(req: Request) {
   const dropGhosts = (m: any, e: any): boolean => {
     if (m.__source !== 'nse-live' && m.__source !== 'nse-live-retry' && m.__source !== 'nse-announcements') return false;
 
-    // PATCH zzz96 — Hub-corroboration guard.
-    // If the EarningsPulse hub has NO record of this ticker ANYWHERE in the
-    // current month, the today-live filing is almost certainly a routine
-    // board-meeting outcome (dividend, AGM, allotment) — NOT a Q4 result.
-    // The hub aggregates EarningsPulse forecasts + bhavcopy + announce
-    // dates, so a real Q4 filer will be on the hub for some date in the
-    // month, even if hub hasn't yet attributed it to today's date.
-    // Skip this guard if announce_date_iso is present and matches filing
-    // (strong signal from another source).
+    // PATCH zzz97 — Skip stale-quarter ghosts.
+    // If hub has NO record AND screener's latest_quarter_end_iso is more
+    // than 100 days before filing_date, the company filed Q4 long ago and
+    // today's NSE entry is a routine BM (dividend/AGM/allotment) — NOT a
+    // fresh Q4 result. Distinct from zzz95's 95-day cap which catches
+    // late Q4 filers like VIKASLIFE; zzz97 catches the inverse — old Q4 +
+    // routine BM today.
+    // Conservative: stays soft for ambiguous cases, only drops obvious stale.
     const tickerUpper = String(m.ticker || '').toUpperCase();
     const hubKnowsTicker = _monthlyHubTickers.has(tickerUpper);
-    if (!hubKnowsTicker && !e.announce_date_iso) {
-      return true;  // unknown to hub + no announce signal = noise
+    if (!hubKnowsTicker && !e.announce_date_iso && e.latest_quarter_end_iso) {
+      const q = new Date(e.latest_quarter_end_iso).getTime();
+      const f = new Date(m.resultDate).getTime();
+      const daysSince = (f - q) / 86_400_000;
+      // 100+ days = beyond the Q4 filing window AND no hub corroboration
+      // AND no announce_date signal = high-confidence ghost.
+      if (daysSince > 100) return true;
     }
 
     // Has announce_date and matches → OK
