@@ -1143,8 +1143,7 @@ export async function GET(req: Request) {
     // allotments share the same metadata as real Q4 filings. The only
     // reliable signal is the EarningsPulse hub. If the hub has NO record
     // of this ticker anywhere this month AND there's no announce_date
-    // corroboration from enrich, drop. This guarantees the Graded Tiers
-    // only show filings the hub has confirmed.
+    // corroboration from enrich, drop.
     const tickerUpper = String(m.ticker || '').toUpperCase();
     const hubKnowsTicker = _monthlyHubTickers.has(tickerUpper);
     if (!hubKnowsTicker && !e.announce_date_iso) {
@@ -1192,6 +1191,20 @@ export async function GET(req: Request) {
     if (dropGhosts(m, e)) {
       console.log(`[graded] ${date}: dropping ghost-filing ${m.ticker} (no announce_date and quarter_end too far)`);
       continue;
+    }
+    // PATCH zzz102 — Freshness guard. If screener's latest_quarter_end_iso
+    // is more than 100 days before the filing_date, the company hasn't yet
+    // filed Q4 — screener is serving the prior quarter (Q3 Dec data).
+    // Catches hub-confirmed Upcoming tickers like GENCON (2025-12-31 ÷
+    // 2026-06-25 = 176 days) that haven't actually filed Q4 yet.
+    if (e?.latest_quarter_end_iso) {
+      const q = new Date(e.latest_quarter_end_iso).getTime();
+      const f = new Date(m.resultDate).getTime();
+      const daysSince = (f - q) / 86_400_000;
+      if (daysSince > 100) {
+        console.log(`[graded] ${date}: dropping ${m.ticker} — screener quarter ${e.latest_quarter_end_iso} is ${Math.round(daysSince)}d stale (Q4 not filed yet)`);
+        continue;
+      }
     }
     const row = {
       hub_quality: m.quality,
