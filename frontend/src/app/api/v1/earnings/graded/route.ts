@@ -891,10 +891,19 @@ export async function GET(req: Request) {
   if (shouldLiveAugment) {
     try {
       const liveUrl = `${base.protocol}//${base.host}/api/v1/earnings/today-live?date=${date}${force ? '&force=1' : ''}`;
-      const liveRes = await fetch(liveUrl, {
-        cache: 'no-store',
-        signal: AbortSignal.timeout(10000),
-      });
+      // PATCH zzz94 — Railway edge blocks public self-loops; use loopback on failure
+      const _doLiveFetch = async (u: string) => fetch(u, { cache: 'no-store', signal: AbortSignal.timeout(10000) });
+      let liveRes: Response;
+      try {
+        liveRes = await _doLiveFetch(liveUrl);
+      } catch (e: any) {
+        const port = process.env.PORT;
+        if (port) {
+          const loopUrl = liveUrl.replace(/^https?:\/\/[^/]+/, `http://127.0.0.1:${port}`);
+          console.log(`[graded] zzz94 today-live public fetch failed, retrying loopback: ${loopUrl}`);
+          liveRes = await _doLiveFetch(loopUrl);
+        } else { throw e; }
+      }
       if (liveRes.ok) {
         const live: any = await liveRes.json();
         const liveFilings: any[] = Array.isArray(live?.filings) ? live.filings : [];
@@ -990,10 +999,19 @@ export async function GET(req: Request) {
   if (dateAgeDays > 0 && dateAgeDays <= 14 && dayList.length === 0) {
     try {
       const retryUrl = `${base.protocol}//${base.host}/api/v1/earnings/today-live?date=${date}&force=1`;
-      const retryRes = await fetch(retryUrl, {
-        cache: 'no-store',
-        signal: AbortSignal.timeout(10000),
-      });
+      // PATCH zzz94 — Railway edge blocks public self-loops; use loopback on failure
+      const _doRetryFetch = async (u: string) => fetch(u, { cache: 'no-store', signal: AbortSignal.timeout(10000) });
+      let retryRes: Response;
+      try {
+        retryRes = await _doRetryFetch(retryUrl);
+      } catch (e: any) {
+        const port = process.env.PORT;
+        if (port) {
+          const loopUrl = retryUrl.replace(/^https?:\/\/[^/]+/, `http://127.0.0.1:${port}`);
+          console.log(`[graded] zzz94 today-live retry public fetch failed, retrying loopback: ${loopUrl}`);
+          retryRes = await _doRetryFetch(loopUrl);
+        } else { throw e; }
+      }
       if (retryRes.ok) {
         const retry: any = await retryRes.json();
         const filings: any[] = Array.isArray(retry?.filings) ? retry.filings : [];
