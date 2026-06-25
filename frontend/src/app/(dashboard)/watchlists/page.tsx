@@ -1052,7 +1052,30 @@ export default function WatchlistsPage() {
       </div>
 
       {activeTab === 'fundamentals' ? <FundamentalsAnalyzerPage scope="watchlist" /> : activeTab === 'conviction' ? (
-        <ConvictionBeatsPanel entries={convictionEntries} onRemove={(t) => { removeConviction(t); setConvictionEntries(getConvictionList()); }} />
+        <ConvictionBeatsPanel
+          entries={convictionEntries}
+          onRemove={(t) => { removeConviction(t); setConvictionEntries(getConvictionList()); }}
+          /* PATCH zzz99 — bulk Clear All for Conviction Beats. Iterates the
+             current list and removes each ticker via the same per-entry API
+             so the storage layer, the 'conviction-beats:updated' event, and
+             any cross-tab listeners all fire exactly as they do on × clicks.
+             Snapshot ticker list first because removeConviction mutates the
+             source the snapshot is derived from. */
+          onClearAll={() => {
+            const all = getConvictionList().map((e) => e.ticker);
+            for (const t of all) removeConviction(t);
+            // Belt-and-braces: nuke the LS key directly in case the lib
+            // missed an entry (legacy/malformed row). Both known keys are
+            // tried so we cover any historical schema rename.
+            try {
+              if (typeof window !== 'undefined') {
+                window.localStorage.removeItem('mc:conviction-beats');
+                window.localStorage.removeItem('conviction-beats');
+              }
+            } catch {}
+            setConvictionEntries(getConvictionList());
+          }}
+        />
       ) : (
       <>
       {/* ── Add Ticker Search ──────────────────────────────────────────────── */}
@@ -1639,7 +1662,11 @@ function passesHubFilter(c: EarningsScanCard, f: HubFilters, watchlist: Set<stri
   return true;
 }
 
-function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[]; onRemove: (t: string) => void }) {
+function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: ConvictionEntry[]; onRemove: (t: string) => void; onClearAll?: () => void }) {
+  // PATCH zzz99 — bulk Clear All button for Conviction Beats.
+  // User flow: starting fresh for next earnings cycle, drain the entire
+  // bench at once instead of clicking × on every row. Guarded by
+  // window.confirm so a misclick can't nuke 100+ entries silently.
   // PATCH 0540 — all hooks declared BEFORE any early-return so React's
   // Rules-of-Hooks holds across the empty-bench → populated-bench transition
   // (previously the empty-state returned before useState, which would have
@@ -1915,6 +1942,33 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
               style={{ ...(revalidating ? chipActive('var(--mc-state-persistent)') : chipBase), cursor: revalidating ? 'wait' : 'pointer' }}>
               🔄 {revalidating ? 'Re-validating…' : 'Re-validate bench'}
             </button>
+            {/* PATCH zzz99 — bulk Clear All button for Conviction Beats.
+                Placed next to Re-validate bench so the two whole-bench
+                actions live together. Disabled when the bench is empty
+                or no clear handler is wired (panel can still be reused
+                in a read-only context). window.confirm gates the wipe
+                because it's irreversible — there is no undo for the LS
+                write, and an accidental wipe of 100+ entries would force
+                the user to wait for next earnings to re-populate. */}
+            {onClearAll && (
+              <button
+                onClick={() => {
+                  if (entries.length === 0) return;
+                  const ok = window.confirm(`Clear all ${entries.length} conviction beats? This cannot be undone.`);
+                  if (ok) onClearAll();
+                }}
+                disabled={entries.length === 0}
+                title={entries.length === 0
+                  ? 'Bench is already empty.'
+                  : `Wipe all ${entries.length} conviction beats from the bench. Use this when starting fresh for the next earnings cycle. Cannot be undone — the bench will re-populate as new BLOCKBUSTER/STRONG prints come in.`}
+                style={{
+                  ...(entries.length === 0 ? chipBase : chipActive('var(--mc-bearish, #EF4444)')),
+                  cursor: entries.length === 0 ? 'not-allowed' : 'pointer',
+                  opacity: entries.length === 0 ? 0.4 : 1,
+                }}>
+                🗑 Clear All ({entries.length})
+              </button>
+            )}
             {revalProgress && (
               <span style={{
                 fontSize: 10.5, fontWeight: 700, padding: '3px 8px', borderRadius: 4,
