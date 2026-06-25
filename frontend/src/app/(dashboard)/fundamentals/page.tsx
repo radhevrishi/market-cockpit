@@ -1108,6 +1108,50 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
   const name = (d: Row) => d['Name'] || '';
   const nse = (d: Row) => d['NSE Code'] || d['BSE Code'] || '';
 
+  // zzz107 — Live CMP overlay. Screener CSV "Current Price" is a daily
+  // snapshot (whatever screener.in had when the GH Action ran). The DMA
+  // tables below were therefore off by 0.5–3% vs the actual live print,
+  // and intraday could be off much more. Fix: fetch live NSE quotes once
+  // when data loads, build a Map<NSE_CODE, price>, prefer live over CSV.
+  // Falls back to CSV value when the symbol isn't in /api/market/quotes
+  // (e.g. BSE-only tickers like 523850).
+  const [liveCmp, setLiveCmp] = useState<Map<string, number>>(new Map());
+  const [liveCmpAt, setLiveCmpAt] = useState<string>('');
+  useEffect(() => {
+    if (!data.length) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch('/api/market/quotes?market=india', { cache: 'no-store' });
+        if (!r.ok) return;
+        const j = await r.json();
+        const stocks: Array<{ ticker: string; price: number }> = j?.stocks || [];
+        if (!Array.isArray(stocks) || cancelled) return;
+        const m = new Map<string, number>();
+        for (const s of stocks) {
+          if (s && typeof s.ticker === 'string' && typeof s.price === 'number' && !isNaN(s.price)) {
+            m.set(s.ticker.trim().toUpperCase(), s.price);
+          }
+        }
+        setLiveCmp(m);
+        setLiveCmpAt(typeof j?.updatedAt === 'string' ? j.updatedAt : new Date().toISOString());
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [data.length]);
+  const cmp = useCallback((d: Row): number => {
+    const k = (d['NSE Code'] || d['BSE Code'] || '').trim().toUpperCase();
+    if (k) {
+      const v = liveCmp.get(k);
+      if (typeof v === 'number' && !isNaN(v)) return v;
+    }
+    return num(d['Current Price']);
+  }, [liveCmp]);
+  const isLive = useCallback((d: Row): boolean => {
+    const k = (d['NSE Code'] || d['BSE Code'] || '').trim().toUpperCase();
+    return !!k && liveCmp.has(k);
+  }, [liveCmp]);
+
   const kpiDefs: [string, string, string][] = [
     ['Sales growth', 'Sales growth (TTM)', '%'],
     ['Profit growth', 'Profit growth (TTM)', '%'],
@@ -1155,22 +1199,25 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
   const [maMode, setMaMode] = useState<'below' | 'above'>('below');
   const hasMA = useMemo(() => data.some((d) => !isNaN(num(d['DMA 50'])) || !isNaN(num(d['DMA 200']))), [data]);
   const maList = (dmaKey: string, mode: 'below' | 'above') => {
+    // zzz107 — use live cmp() for filter + sort so DMA buckets reflect real
+    // intraday position vs MA, not the screener-snapshot price.
     const v = data.filter((d) => {
-      const cmp = num(d['Current Price']); const dma = num(d[dmaKey]);
-      if (isNaN(cmp) || isNaN(dma)) return false;
-      return mode === 'below' ? cmp < dma : cmp >= dma;
+      const c = cmp(d); const dma = num(d[dmaKey]);
+      if (isNaN(c) || isNaN(dma)) return false;
+      return mode === 'below' ? c < dma : c >= dma;
     });
     v.sort((a, b) => {
-      const da = (num(a['Current Price']) - num(a[dmaKey])) / num(a[dmaKey]);
-      const db = (num(b['Current Price']) - num(b[dmaKey])) / num(b[dmaKey]);
+      const dma_a = num(a[dmaKey]); const dma_b = num(b[dmaKey]);
+      const da = (cmp(a) - dma_a) / dma_a;
+      const db = (cmp(b) - dma_b) / dma_b;
       return mode === 'below' ? da - db : db - da; // below: most-below first · above: most-above first
     });
     return v;
   };
   const ma50 = hasMA ? maList('DMA 50', maMode) : [];
   const ma200 = hasMA ? maList('DMA 200', maMode) : [];
-  const withMA50 = data.filter((d) => !isNaN(num(d['DMA 50'])) && !isNaN(num(d['Current Price']))).length;
-  const withMA200 = data.filter((d) => !isNaN(num(d['DMA 200'])) && !isNaN(num(d['Current Price']))).length;
+  const withMA50 = data.filter((d) => !isNaN(num(d['DMA 50'])) && !isNaN(cmp(d))).length;
+  const withMA200 = data.filter((d) => !isNaN(num(d['DMA 200'])) && !isNaN(cmp(d))).length;
   const maOn = maMode === 'below' ? COL.red : COL.green;
 
   // Fundamental + technical EXIT / REVIEW triggers — institutional deterioration checklist.
@@ -1188,8 +1235,8 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
     const pe = num(d['Price to Earning']); if (!isNaN(pe) && pe > 80) f.push('Rich P/E>80');
     const chp = num(d['Change in promoter holding 3Years']); if (!isNaN(chp) && chp < -2) f.push('Promoter reducing');
     const pl = num(d['Pledged percentage']); if (!isNaN(pl) && pl > 15) f.push('High pledge');
-    const cmp = num(d['Current Price']); const dma200 = num(d['DMA 200']); if (!isNaN(cmp) && !isNaN(dma200) && cmp < dma200) f.push('Below 200-DMA');
-    const dma50 = num(d['DMA 50']); if (!isNaN(cmp) && !isNaN(dma50) && cmp < dma50) f.push('Below 50-DMA');
+    const c = cmp(d); const dma200 = num(d['DMA 200']); if (!isNaN(c) && !isNaN(dma200) && c < dma200) f.push('Below 200-DMA');
+    const dma50 = num(d['DMA 50']); if (!isNaN(c) && !isNaN(dma50) && c < dma50) f.push('Below 50-DMA');
     return f;
   };
   const flagged = data.map((d) => ({ d, flags: exitFlags(d) })).filter((o) => o.flags.length > 0).sort((a, b) => b.flags.length - a.flags.length);
@@ -1209,8 +1256,8 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
     const chp = num(d['Change in promoter holding 3Years']); if (!isNaN(chp) && chp > 2) f.push('Promoter increasing');
     const pl = num(d['Pledged percentage']); if (!isNaN(pl) && pl === 0) f.push('Zero pledge');
     const r1 = num(d['Return over 1year']); if (!isNaN(r1) && r1 > 30) f.push('1Y return>30%');
-    const cmp = num(d['Current Price']); const dma200 = num(d['DMA 200']); if (!isNaN(cmp) && !isNaN(dma200) && cmp > dma200) f.push('Above 200-DMA');
-    const dma50 = num(d['DMA 50']); if (!isNaN(cmp) && !isNaN(dma50) && cmp > dma50) f.push('Above 50-DMA');
+    const c = cmp(d); const dma200 = num(d['DMA 200']); if (!isNaN(c) && !isNaN(dma200) && c > dma200) f.push('Above 200-DMA');
+    const dma50 = num(d['DMA 50']); if (!isNaN(c) && !isNaN(dma50) && c > dma50) f.push('Above 50-DMA');
     return f;
   };
   const holders = data.map((d) => ({ d, flags: holdFlags(d) })).filter((o) => o.flags.length >= 2).sort((a, b) => b.flags.length - a.flags.length);
@@ -1258,10 +1305,10 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
           </div>
           <div style={grid2}>
             <Card title={`${maMode === 'below' ? 'Below' : 'Above'} 50-DMA — ${ma50.length} of ${withMA50}`} dot={maOn} hint={`price ${maMode === 'below' ? 'under' : 'over'} the 50-day moving average`}>
-              <MATable rows={ma50} dmaKey="DMA 50" name={name} nse={nse} />
+              <MATable rows={ma50} dmaKey="DMA 50" name={name} nse={nse} cmp={cmp} isLive={isLive} liveAt={liveCmpAt} />
             </Card>
             <Card title={`${maMode === 'below' ? 'Below' : 'Above'} 200-DMA — ${ma200.length} of ${withMA200}`} dot={maOn} hint={`price ${maMode === 'below' ? 'under' : 'over'} the 200-day moving average`}>
-              <MATable rows={ma200} dmaKey="DMA 200" name={name} nse={nse} />
+              <MATable rows={ma200} dmaKey="DMA 200" name={name} nse={nse} cmp={cmp} isLive={isLive} liveAt={liveCmpAt} />
             </Card>
           </div>
         </div>
@@ -1684,33 +1731,50 @@ function ChartLink({ symbol }: { symbol: string }) {
   );
 }
 
-function MATable({ rows, dmaKey, name, nse }: {
-  rows: Row[]; dmaKey: string; name: (d: Row) => string; nse: (d: Row) => string;
+function MATable({ rows, dmaKey, name, nse, cmp, isLive, liveAt }: {
+  rows: Row[]; dmaKey: string;
+  name: (d: Row) => string; nse: (d: Row) => string;
+  cmp?: (d: Row) => number; isLive?: (d: Row) => boolean; liveAt?: string;
 }) {
   if (!rows.length) return <div style={{ color: COL.dim, fontSize: 12, padding: '8px 2px' }}>None in this bucket.</div>;
+  // zzz107 — fall back to CSV "Current Price" if cmp prop wasn't threaded
+  // (defensive; legacy callers, if any).
+  const getCmp = (d: Row): number => cmp ? cmp(d) : num(d['Current Price']);
+  const live = (d: Row): boolean => (isLive ? isLive(d) : false);
   return (
-    <table style={tbl}>
-      <thead>
-        <tr><th style={thR}></th><th style={thL}>Company</th><th style={thR}>CMP</th><th style={thR}>{dmaKey}</th><th style={thR}>% vs MA</th><th style={thR}>Chart</th></tr>
-      </thead>
-      <tbody>
-        {rows.map((d, i) => {
-          const cmp = num(d['Current Price']); const dma = num(d[dmaKey]);
-          const pct = dma ? ((cmp - dma) / dma) * 100 : NaN;
-          const sym = nse(d);
-          return (
-            <tr key={i}>
-              <td style={tdDim}>{i + 1}</td>
-              <td style={tdL}><b>{name(d)}</b><span style={nseS}>{sym}</span></td>
-              <td style={tdR}>{fmt(cmp, 1)}</td>
-              <td style={tdR}>{fmt(dma, 1)}</td>
-              <td style={{ ...tdR, color: pcCol(pct), fontWeight: 700 }}>{pct >= 0 ? '+' : ''}{fmt(pct, 1)}%</td>
-              <td style={tdR}><ChartLink symbol={sym} /></td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+    <>
+      {liveAt ? (
+        <div style={{ fontSize: 10, color: COL.dim, padding: '0 2px 4px' }}>
+          CMP overlay · live NSE quotes · updated {new Date(liveAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+        </div>
+      ) : null}
+      <table style={tbl}>
+        <thead>
+          <tr><th style={thR}></th><th style={thL}>Company</th><th style={thR}>CMP</th><th style={thR}>{dmaKey}</th><th style={thR}>% vs MA</th><th style={thR}>Chart</th></tr>
+        </thead>
+        <tbody>
+          {rows.map((d, i) => {
+            const c = getCmp(d); const dma = num(d[dmaKey]);
+            const pct = dma ? ((c - dma) / dma) * 100 : NaN;
+            const sym = nse(d);
+            return (
+              <tr key={i}>
+                <td style={tdDim}>{i + 1}</td>
+                <td style={tdL}><b>{name(d)}</b><span style={nseS}>{sym}</span></td>
+                <td style={tdR}>
+                  {fmt(c, 1)}
+                  {live(d) ? <span title="Live NSE quote" style={{ color: '#10B981', marginLeft: 4, fontSize: 9, fontWeight: 700 }}>•LIVE</span>
+                           : <span title="Screener CSV snapshot — symbol not in live NSE quotes" style={{ color: COL.amber, marginLeft: 4, fontSize: 9, fontWeight: 700 }}>•CSV</span>}
+                </td>
+                <td style={tdR}>{fmt(dma, 1)}</td>
+                <td style={{ ...tdR, color: pcCol(pct), fontWeight: 700 }}>{pct >= 0 ? '+' : ''}{fmt(pct, 1)}%</td>
+                <td style={tdR}><ChartLink symbol={sym} /></td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </>
   );
 }
 
