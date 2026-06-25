@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-06-25T07:33:32Z",
+  "lastSync": "2026-06-25T18:19:57Z",
   "ok": 15,
   "fail": 0,
   "files": [
@@ -10,7 +10,7 @@
     },
     {
       "name": "capex.csv",
-      "size": 6992,
+      "size": 7397,
       "displayName": "CAPEX"
     },
     {
@@ -20,17 +20,17 @@
     },
     {
       "name": "future-leaders.csv",
-      "size": 7874,
+      "size": 7900,
       "displayName": "Future Leaders"
     },
     {
       "name": "great-results-and-pullback.csv",
-      "size": 5202,
+      "size": 3926,
       "displayName": "Great Results and Pullback"
     },
     {
       "name": "ipobases.csv",
-      "size": 5242,
+      "size": 4406,
       "displayName": "IPOBASES"
     },
     {
@@ -40,7 +40,7 @@
     },
     {
       "name": "multibagger-like-acutaasatlantadee-dev.csv",
-      "size": 6189,
+      "size": 6187,
       "displayName": "Multibagger like Acutaas,Atlanta,Dee Dev"
     },
     {
@@ -50,12 +50,12 @@
     },
     {
       "name": "pead-master-screener-rishi-framework.csv",
-      "size": 11162,
+      "size": 11160,
       "displayName": "PEAD MASTER SCREENER - Rishi Framework"
     },
     {
       "name": "rajeev-thakkar-ppfas-screener.csv",
-      "size": 6266,
+      "size": 6268,
       "displayName": "Rajeev Thakkar PPFAS Screener"
     },
     {
@@ -65,12 +65,12 @@
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 22992,
+      "size": 22988,
       "displayName": "Latest Portfolio"
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63307,
+      "size": 63303,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
