@@ -1127,7 +1127,11 @@ export default function HomeDashboard() {
       // conviction beats in my watchlist not for all companies. now fix it
       // and make it that way." The /movers full page still shows the broad
       // market — this is just the home dashboard panel filter.
-      safeDiag<any>(`/api/market/quotes?market=india&_=${Date.now()}`, 30_000).then(async ({ data: j }) => {
+      // PATCH zzz103 — bumped 30s → 60s to match /movers page. Railway cold-start
+      // can take 25-30s to rebuild the quotes blob; the old 30s timeout dropped
+      // the response before moversUpdatedAt got captured, leaving the homepage
+      // showing "STALE T-1 close (999m old)" even though /movers was live.
+      safeDiag<any>(`/api/market/quotes?market=india&_=${Date.now()}`, 60_000).then(async ({ data: j }) => {
         if (cancelled) return;
         if (!j) return; // failed refresh (429/timeout) — keep the last-good movers/sector data instead of wiping it
         // Build the user's universe (UPPER + suffix-stripped tickers).
@@ -1876,7 +1880,8 @@ export default function HomeDashboard() {
       // PATCH 0622 — Portfolio P&L + Watchlist Pulse + Sector Rotation —
       // all derived from a single quotes fetch which we also use for Movers.
       // The Movers fetch above already runs; we ride on the same /quotes call.
-      safeDiag<any>(`/api/market/quotes?market=india&_=${Date.now()}`, 30_000).then(({ data: j }) => {
+      // PATCH zzz103 — same 30s → 60s bump for portfolio/sector quotes fetch
+      safeDiag<any>(`/api/market/quotes?market=india&_=${Date.now()}`, 60_000).then(({ data: j }) => {
         if (cancelled) return;
         const stocks: any[] = j?.stocks || [];
         const byTicker = new Map<string, any>();
@@ -3637,7 +3642,11 @@ export default function HomeDashboard() {
                 // today's actual was -2.32%. Now: only say "live" if data is fresh
                 // (<10 min old) AND market is open. Otherwise show T-1 BHAVCOPY warning.
                 const updatedAtMs = data.moversUpdatedAt ? new Date(data.moversUpdatedAt).getTime() : 0;
-                const ageMin = updatedAtMs > 0 ? Math.round((Date.now() - updatedAtMs) / 60_000) : 999;
+                // PATCH zzz103 — when moversUpdatedAt is missing but gainers are
+                // present, the data IS fresh (it just got fetched); don't fall
+                // back to 999 and misleadingly show "STALE T-1 close (999m)".
+                const _haveFreshRows = (((data as any).gainers || []).length > 0 || ((data as any).losers || []).length > 0);
+                const ageMin = updatedAtMs > 0 ? Math.round((Date.now() - updatedAtMs) / 60_000) : (_haveFreshRows ? 0 : 999);
                 // Count stale flags in current movers data to detect BHAVCOPY-only response
                 const allMovers = [...((data as any).gainers || []), ...((data as any).losers || [])];
                 const staleCount = allMovers.filter((m: any) => m?.staleEOD === true).length;
