@@ -1636,26 +1636,30 @@ function computePriceScore(pct: number): number {
 }
 
 function gradeFromScore(score: number, card?: { revenueYoY: number | null; patYoY: number | null; epsYoY: number | null; opmCurrent: number; opmPrevYear: number; isBanking?: boolean }, guidanceData?: GuidanceData | null): { grade: EarningsScanCard['grade']; color: string } {
-  // EXCELLENT: Strong fundamentals + positive forward guidance
-  // Two paths to EXCELLENT:
-  // Path 1 (with guidance): score >= 78, strong metrics, guidance = Positive
-  // Path 2 (exceptional numbers): score >= 80, ALL metrics very strong, guidance at least Neutral/unavailable
-  // CRITICAL: Guidance makes it easier to reach EXCELLENT, not impossible without it
-  if (score >= 78 && card) {
+  // zzz105: EXCELLENT was always 0 because totalScore = 0.6*fund + 0.4*50 = max 80
+  // (priceScore is hard-coded to 50 in the scan path), making the old score>=82
+  // Path-2 threshold MATHEMATICALLY UNREACHABLE. And Path-1 needed guidanceData
+  // = Positive, which is almost never present after zzz104 hid AI Guidance UI.
+  //
+  // Fix: drop the unreachable score>=82 bar; allow exceptional metric chains to
+  // grade EXCELLENT on numbers alone from score >= 76. Positive guidance, when
+  // present, still gives EXCELLENT at the slightly easier metric chain.
+  if (score >= 76 && card) {
     const revOk = card.revenueYoY !== null && card.revenueYoY > 10;
     const patOk = card.patYoY !== null && card.patYoY > 15;
     const epsOk = card.epsYoY !== null && card.epsYoY > 10;
     const marginOk = card.isBanking || (card.opmCurrent - card.opmPrevYear) >= -1; // Allow tiny contraction
 
     if (revOk && patOk && epsOk && marginOk) {
-      // Path 1: Has guidance and it's positive → EXCELLENT at score 78+
+      // Path 1: Positive AI guidance + strong metrics → EXCELLENT
       if (guidanceData && guidanceData.guidance === 'Positive') {
         return { grade: 'EXCELLENT', color: '#7C3AED' };
       }
-      // Path 2: Exceptional numbers even without guidance → EXCELLENT at score 82+
-      // (Rev > 20%, PAT > 25%, EPS > 20%)
-      if (score >= 82 && card.revenueYoY !== null && card.revenueYoY > 20 &&
-          card.patYoY !== null && card.patYoY > 25 && card.epsYoY !== null && card.epsYoY > 20) {
+      // Path 2: Exceptional numbers (rev>20, pat>25, eps>20) → EXCELLENT,
+      // no guidance required. (Old gate was score>=82 — impossible at max 80.)
+      if (card.revenueYoY !== null && card.revenueYoY > 20 &&
+          card.patYoY !== null && card.patYoY > 25 &&
+          card.epsYoY !== null && card.epsYoY > 20) {
         return { grade: 'EXCELLENT', color: '#7C3AED' };
       }
     }
@@ -2078,11 +2082,19 @@ async function buildCardFromEnrichFallback(
     // resultDate from broadcastDate when available.
     const revYoY = e.sales_yoy_pct ?? null;
     const patYoY = e.pat_yoy_pct ?? null;
+    const epsYoYEarly = e.eps_yoy_pct ?? null;
+    const opmExpansionEarly = (e.opm_pct != null && e.opm_prev_pct != null)
+      ? Number(e.opm_pct) - Number(e.opm_prev_pct)
+      : null;
     let totalScore = 50;
     if (revYoY != null && revYoY > 20) totalScore += 10;
     if (revYoY != null && revYoY > 40) totalScore += 5;
     if (patYoY != null && patYoY > 25) totalScore += 10;
     if (patYoY != null && patYoY > 75) totalScore += 5;
+    // zzz105: add EPS + OPM bonuses so EXCELLENT (>= 80) is actually reachable
+    // for genuinely strong filers — old max was 80 only if rev>40 AND pat>75.
+    if (epsYoYEarly != null && epsYoYEarly > 25) totalScore += 5;
+    if (opmExpansionEarly != null && opmExpansionEarly > 2) totalScore += 5;
     const grade =
       totalScore >= 80 ? 'EXCELLENT' :
       totalScore >= 70 ? 'STRONG'    :
@@ -2380,11 +2392,44 @@ function buildCardFromData(data: ScreenerData, guidanceData?: GuidanceData | nul
     guidanceData.divergence = detectDivergence(fundamentalsScore, guidanceData);
   }
 
+  // zzz105: when narrative/screener-pros-cons parsing returned null (most cards
+  // after zzz104 hid AI Guidance — and historically too for most names without
+  // screener Pros/Cons text), fall back to the metric-based sentiment engine.
+  // guidanceFromMetrics is the old "points + sentiment" logic (low-base-swing
+  // dampener, quality-of-growth flag, catastrophic-decline override, etc.).
+  // This lets EXCELLENT Path 1 fire on strong metrics WITHOUT depending on
+  // AI Guidance being present.
+  let effectiveGuidance: GuidanceData | null = guidanceData;
+  if (!effectiveGuidance) {
+    const m = guidanceFromMetrics({
+      revYoY: revenueYoY, patYoY, epsYoY,
+      opmExpansion: (latest.opm != null && yoyQ?.opm != null) ? latest.opm - yoyQ.opm : null,
+      patAbsCurr: latest.pat ?? null,
+      patAbsPrev: yoyQ?.pat ?? null,
+    });
+    effectiveGuidance = {
+      guidance: m.guidance,
+      sentimentScore: m.sentimentScore,
+      revenueOutlook: 'Unknown',
+      marginOutlook: 'Unknown',
+      capexSignal: 'Unknown',
+      demandSignal: 'Unknown',
+      keyPhrasesPositive: [],
+      keyPhrasesNegative: [],
+      prosText: '',
+      consText: '',
+      divergence: 'None',
+    };
+    // Tag the divergence using the metric-derived guidance, same as we do
+    // for screener-narrative guidance above.
+    effectiveGuidance.divergence = detectDivergence(fundamentalsScore, effectiveGuidance);
+  }
+
   const { grade, color: gradeColor } = gradeFromScore(totalScore, {
     revenueYoY, patYoY, epsYoY,
     opmCurrent: latest.opm, opmPrevYear: yoyQ?.opm || latest.opm,
     isBanking: data.isBanking,
-  }, guidanceData);
+  }, effectiveGuidance);
 
   // Take last 3 quarters for display + year-ago quarter
   const displayQuarters = quarters.slice(0, 3);
