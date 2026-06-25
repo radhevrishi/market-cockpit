@@ -40,13 +40,16 @@ const CACHE_TTL_SECONDS = 3 * 60;  // 3 minutes — page auto-polls every 4
 // (BHAGYANGR/LLOYDSENGG/STLTECH May-14 ghost-filing bug).
 const RESULT_PATTERNS = [
   /outcome\s+of\s+board\s+meeting.*(?:financial\s+result|audited)/i,
-  // PATCH zzz93 — accept BARE "Outcome of Board Meeting" too. Many companies
-  // (e.g. VIKASLIFE 24-Jun-2026) file results under this subject without the
-  // word "financial result" or "audited" in the subject line. Downstream
-  // grading naturally filters out board-meeting outcomes that don't contain
-  // actual financials (extraction returns null → AVOID tier or skipped).
-  // The "Board Meeting" without "Outcome" is still blocked via blocklist below.
-  /^outcome\s+of\s+board\s+meeting(?:\s|$|[.,]|held)/i,
+  // PATCH zzz101 — REMOVED the bare-Outcome admission (was zzz93). It admitted
+  // EVERY "Outcome of Board Meeting" filing, dragging routine BMs about
+  // dividends, bonus allotments, AGM, etc into Graded Tiers as ghost-filings
+  // with stale Screener data (the user pasted on 2026-06-25: SETL/RHIM/CDSL/
+  // FABTECH/ICSA/KOTYARK all shown as graded but none actually filed Q4 that
+  // day — KOTYARK's PDF was titled "Bonus_Allotment.pdf"). User asked to
+  // restore previous strict behavior. Trade-off: legitimate filers like
+  // VIKASLIFE 24-Jun-2026 whose subject was bare "Outcome of Board Meeting"
+  // won't show via today-live — they have to wait for the hub aggregator to
+  // catch up (typically within a day or two for EarningsPulse-tracked tickers).
   /audited\s+(?:standalone\s+|consolidated\s+|standalone\s+(?:and|&)\s+consolidated\s+)?financial\s+result/i,
   /(?:standalone|consolidated)\s+(?:and\s+|&\s+)?(?:audited\s+)?(?:un[- ]?audited\s+)?financial\s+result/i,
   /financial\s+result.*(?:quarter|year)\s+(?:ended|ending)/i,
