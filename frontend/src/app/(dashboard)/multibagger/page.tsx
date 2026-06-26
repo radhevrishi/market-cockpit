@@ -6528,7 +6528,27 @@ function MultibaggerAnalytics({
     </div>
   );
 
-  if (stats.total === 0) {
+  // PATCH zzz106 — Auto-switch scope to where data actually lives.
+  // When the current scope filter would render zero stocks BUT the other
+  // market(s) have data, flip the scope automatically so the user sees their
+  // 102 USA uploads on the USA Analytics tab without first having to find
+  // the MARKET toggle. Previously the empty-state took over when stats.total
+  // was 0, even though usaRows had 102 stocks waiting under a different
+  // scope filter.
+  const usaCount = (usaRows || []).length;
+  const indiaCount = (indiaRows || []).length;
+  const totalUsaIndia = usaCount + indiaCount;
+  // Auto-fallback: if current scope yields 0 but other scopes have data, hop.
+  React.useEffect(() => {
+    if (stats.total === 0) {
+      if (scope === 'USA' && usaCount === 0 && indiaCount > 0)         setScope('INDIA');
+      else if (scope === 'INDIA' && indiaCount === 0 && usaCount > 0)  setScope('USA');
+      else if (scope !== 'BOTH' && totalUsaIndia > 0
+              && (scope === 'USA' ? usaCount : indiaCount) === 0)       setScope('BOTH');
+    }
+  }, [scope, stats.total, usaCount, indiaCount, totalUsaIndia]);
+
+  if (stats.total === 0 && totalUsaIndia === 0) {
     return (
       <div style={{ padding: 30, textAlign: 'center', color: 'var(--mc-text-3)' }}>
         <div style={{ fontSize: 36, marginBottom: 12 }}>📊</div>
@@ -6547,6 +6567,19 @@ function MultibaggerAnalytics({
             background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', color: 'var(--mc-cyan)', fontSize: 12, fontWeight: 700, cursor: 'pointer',
           }}>🇺🇸 Upload USA CSV</button>
         </div>
+      </div>
+    );
+  }
+  // PATCH zzz106 — Friendlier empty state for the wrong-scope case (data IS
+  // in LS, just not under the current MARKET filter). The auto-fallback above
+  // usually rescues this within a render; the message is the visible fallback
+  // if React batches the scope-flip a frame late.
+  if (stats.total === 0 && totalUsaIndia > 0) {
+    return (
+      <div style={{ padding: 30, textAlign: 'center', color: 'var(--mc-text-3)' }}>
+        <div style={{ fontSize: 36, marginBottom: 12 }}>🔄</div>
+        <p style={{ margin: 0, fontWeight: 700, color: 'var(--mc-text-1)' }}>Switching market — {usaCount} USA · {indiaCount} India loaded</p>
+        <p style={{ margin: '8px 0', fontSize: 12 }}>If this doesn&apos;t auto-update, click MARKET → BOTH below.</p>
       </div>
     );
   }
