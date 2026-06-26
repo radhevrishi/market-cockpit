@@ -6528,58 +6528,64 @@ function MultibaggerAnalytics({
     </div>
   );
 
-  // PATCH zzz106 — Auto-switch scope to where data actually lives.
-  // When the current scope filter would render zero stocks BUT the other
-  // market(s) have data, flip the scope automatically so the user sees their
-  // 102 USA uploads on the USA Analytics tab without first having to find
-  // the MARKET toggle. Previously the empty-state took over when stats.total
-  // was 0, even though usaRows had 102 stocks waiting under a different
-  // scope filter.
+  // PATCH zzz107 — REVERTED zzz106 auto-flip (it was wrong).
+  // zzz106 had logic to auto-switch scope from USA → INDIA when the current
+  // scope filter showed 0 stocks. That misled the user: on the USA Analytics
+  // tab, with 102 USA stocks uploaded but not visible to this component, the
+  // auto-flip silently switched to INDIA and showed Indian companies under
+  // "USA Analytics". User correctly called this out as misleading.
+  //
+  // New approach: keep scope on the user's choice. Show a diagnostic empty
+  // state that tells the truth — what we DO see vs what we DON'T see, with a
+  // path forward (refresh or switch to BOTH).
   const usaCount = (usaRows || []).length;
   const indiaCount = (indiaRows || []).length;
-  const totalUsaIndia = usaCount + indiaCount;
-  // Auto-fallback: if current scope yields 0 but other scopes have data, hop.
-  React.useEffect(() => {
-    if (stats.total === 0) {
-      if (scope === 'USA' && usaCount === 0 && indiaCount > 0)         setScope('INDIA');
-      else if (scope === 'INDIA' && indiaCount === 0 && usaCount > 0)  setScope('USA');
-      else if (scope !== 'BOTH' && totalUsaIndia > 0
-              && (scope === 'USA' ? usaCount : indiaCount) === 0)       setScope('BOTH');
-    }
-  }, [scope, stats.total, usaCount, indiaCount, totalUsaIndia]);
 
-  if (stats.total === 0 && totalUsaIndia === 0) {
+  if (stats.total === 0) {
+    const dataExistsElsewhere = (scope === 'USA' && indiaCount > 0)
+                              || (scope === 'INDIA' && usaCount > 0)
+                              || (scope === 'BOTH' && (usaCount > 0 || indiaCount > 0));
+    const noDataAnywhere = usaCount === 0 && indiaCount === 0;
     return (
       <div style={{ padding: 30, textAlign: 'center', color: 'var(--mc-text-3)' }}>
-        <div style={{ fontSize: 36, marginBottom: 12 }}>📊</div>
-        <p style={{ margin: 0, fontWeight: 700, color: 'var(--mc-text-1)' }}>No Multibagger data uploaded yet</p>
-        <p style={{ margin: '8px 0 16px', fontSize: 12, lineHeight: 1.5, maxWidth: 480, marginLeft: 'auto', marginRight: 'auto' }}>
-          Upload your Screener.in CSV (India) or TradingView CSV (USA) on the ranking tabs.
-          The analytics view will populate the moment data is loaded.
-        </p>
-        <div style={{ display: 'inline-flex', gap: 8 }}>
+        <div style={{ fontSize: 36, marginBottom: 12 }}>{noDataAnywhere ? '📊' : '⚠️'}</div>
+        {noDataAnywhere ? (
+          <>
+            <p style={{ margin: 0, fontWeight: 700, color: 'var(--mc-text-1)' }}>No Multibagger data uploaded yet</p>
+            <p style={{ margin: '8px 0 16px', fontSize: 12, lineHeight: 1.5, maxWidth: 480, marginLeft: 'auto', marginRight: 'auto' }}>
+              Upload your Screener.in CSV (India) or TradingView CSV (USA) on the ranking tabs.
+            </p>
+          </>
+        ) : (
+          <>
+            <p style={{ margin: 0, fontWeight: 700, color: 'var(--mc-text-1)' }}>
+              No {scope} data visible to Analytics — but {usaCount} USA + {indiaCount} India are in storage.
+            </p>
+            <p style={{ margin: '8px 0', fontSize: 12, lineHeight: 1.5, maxWidth: 520, marginLeft: 'auto', marginRight: 'auto' }}>
+              Likely cause: localStorage was filled (5MB cap) and the latest write was rejected silently.
+              {dataExistsElsewhere && <> Click <b>MARKET → BOTH</b> below to see what loaded.</>}
+            </p>
+            <p style={{ margin: '8px 0', fontSize: 11, fontFamily: 'ui-monospace, SFMono-Regular, monospace', color: 'var(--mc-text-4)' }}>
+              {`scope=${scope}  usaRows.len=${usaCount}  indiaRows.len=${indiaCount}`}
+            </p>
+          </>
+        )}
+        <div style={{ display: 'inline-flex', gap: 8, marginTop: 12 }}>
           <button onClick={() => onSwitchTab('excel')} style={{
             padding: '6px 14px', borderRadius: 6, border: '1px solid color-mix(in srgb, var(--mc-bullish) 38%, transparent)',
             background: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', color: 'var(--mc-bullish)', fontSize: 12, fontWeight: 700, cursor: 'pointer',
-          }}>🇮🇳 Upload India CSV</button>
+          }}>🇮🇳 India tab</button>
           <button onClick={() => onSwitchTab('usa')} style={{
             padding: '6px 14px', borderRadius: 6, border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)',
             background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', color: 'var(--mc-cyan)', fontSize: 12, fontWeight: 700, cursor: 'pointer',
-          }}>🇺🇸 Upload USA CSV</button>
+          }}>🇺🇸 USA tab</button>
+          {dataExistsElsewhere && (
+            <button onClick={() => setScope('BOTH')} style={{
+              padding: '6px 14px', borderRadius: 6, border: '1px solid #8B5CF640',
+              background: '#8B5CF610', color: '#8B5CF6', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+            }}>🌐 Switch to BOTH</button>
+          )}
         </div>
-      </div>
-    );
-  }
-  // PATCH zzz106 — Friendlier empty state for the wrong-scope case (data IS
-  // in LS, just not under the current MARKET filter). The auto-fallback above
-  // usually rescues this within a render; the message is the visible fallback
-  // if React batches the scope-flip a frame late.
-  if (stats.total === 0 && totalUsaIndia > 0) {
-    return (
-      <div style={{ padding: 30, textAlign: 'center', color: 'var(--mc-text-3)' }}>
-        <div style={{ fontSize: 36, marginBottom: 12 }}>🔄</div>
-        <p style={{ margin: 0, fontWeight: 700, color: 'var(--mc-text-1)' }}>Switching market — {usaCount} USA · {indiaCount} India loaded</p>
-        <p style={{ margin: '8px 0', fontSize: 12 }}>If this doesn&apos;t auto-update, click MARKET → BOTH below.</p>
       </div>
     );
   }
