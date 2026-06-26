@@ -5797,13 +5797,36 @@ function MultibaggerAnalytics({
     const refresh = () => bumpData();
     const onStorage = (e: StorageEvent) => {
       if (!e.key) { refresh(); return; }
-      if (e.key === USA_STORAGE_KEY || e.key === 'mb_india_prev_scores_v1' || e.key === 'mb_usa_prev_scores_v1') refresh();
+      if (e.key === USA_STORAGE_KEY || e.key === 'mb_india_prev_scores_v1' || e.key === 'mb_usa_prev_scores_v1' || e.key === 'mb_excel_scored_v2') refresh();
     };
     window.addEventListener('storage', onStorage);
     window.addEventListener('mb-upload:updated', refresh);
+    // PATCH zzz105 — also refresh on focus (catches case where user uploaded
+    // on another tab and came back).
+    window.addEventListener('focus', refresh);
+    // PATCH zzz105 — poller fallback for same-tab uploads where the storage
+    // event doesn't fire (browser same-tab semantics). Checks LS length every
+    // 2s; if either USA or India dataset changed size, bump.
+    let lastUsaLen = 0, lastIndiaLen = 0;
+    try {
+      lastUsaLen = (localStorage.getItem(USA_STORAGE_KEY) || '').length;
+      lastIndiaLen = (localStorage.getItem('mb_excel_scored_v2') || '').length;
+    } catch {}
+    const poller = setInterval(() => {
+      try {
+        const u = (localStorage.getItem(USA_STORAGE_KEY) || '').length;
+        const i = (localStorage.getItem('mb_excel_scored_v2') || '').length;
+        if (u !== lastUsaLen || i !== lastIndiaLen) {
+          lastUsaLen = u; lastIndiaLen = i;
+          refresh();
+        }
+      } catch {}
+    }, 2000);
     return () => {
       window.removeEventListener('storage', onStorage);
       window.removeEventListener('mb-upload:updated', refresh);
+      window.removeEventListener('focus', refresh);
+      clearInterval(poller);
     };
   }, []);
 
