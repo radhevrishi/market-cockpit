@@ -28,8 +28,34 @@ type StyleDef = {
 };
 
 const STYLES: StyleDef[] = [
+  // PATCH zzz119 — Transformational Contracts inserted as new A (was none).
+  // Existing A→B, B→C, C→D, D→E, E→F, F→G, G→H.
   {
-    letter: 'A', name: 'Fundamental Inflection Investor', color: C.red, rating: 'Neutral',
+    letter: 'A', name: 'Transformational Contracts Investor', color: '#FBBF24', rating: 'Good',
+    money: 'companies that land contracts so large they re-rate the business model',
+    mind: 'One deal can change a 3-year EPS trajectory. I hunt the chain — second deal confirms, third = institutional money in.',
+    focus: ['Multi-year binding contracts', 'Deal > 10% of mcap', 'Multi-buyer chain = re-rating'],
+    subs: [
+      { tag: 'TC1 · Single Mega-Deal', text: 'One contract whose value exceeds 10% of company mcap. Use News Triage Score Calculator: Magnitude 4-5, Permanence 5. Examples: NBIS+MSFT $17.4B, LEU HALEU $3.4B, WULF Google $3.7B.' },
+      { tag: 'TC2 · Chain (2+ Hyperscaler Deals)', text: 'Same company lands a SECOND major contract within 6 months. The chain is the alpha. NBIS Meta+MSFT, MP DoD+Apple, VST multiple hyperscalers. Use the Multi-Order Calculator on News Triage page.' },
+      { tag: 'TC3 · National-Security Anchor', text: 'Contracts from DoD / DOE / national governments. Hard to reverse. Adds policy moat. Examples: LEU (DOE HALEU), MP (DoD rare earth), HII (Navy shipbuilding).' },
+      { tag: 'TC4 · Multi-year Capacity Lock', text: 'Take-or-pay style contracts that lock pricing for 5-10 years. Re-rates from cyclical to growth multiple. Example: Micron 16 SCAs ~$100B over remaining term.' },
+      { tag: 'TC5 · Strategic Customer Concentration', text: 'A single hyperscaler (MSFT/META/GOOG/AWS) becomes 30%+ of revenue — risky if reversible, transformational if structural.' },
+    ],
+    rule: 'BUY when News Triage score ≥18/25 AND there is at least one structural multi-year element. SELL when contract churn appears or customer publicly pivots away.',
+    entry: 'Don\'t wait for the third deal — institutional money is already in by then. Enter on the SECOND deal confirmation of the chain.',
+    edge: 'Most retail focuses on quarterly earnings. You focus on contract chains that re-rate the entire forward earnings stream. One mega-deal can compress 5 years of normal compounding into 12 months.',
+    example: 'NBIS at $15B mcap lands MSFT $17.4B (Sept 2025) → followed by Meta deal → stock re-rates from infra speculation to confirmed AI compute leader.',
+    notes: [
+      'Use the News Triage tab → Live Score Calculator to score every new deal in 30 seconds.',
+      'Use the Multi-Order Combinations Calculator for companies with chains (NBIS, MP, WULF, VST, LEU).',
+      'Magnitude > 30% of mcap = always actionable. Magnitude 5-30% needs other dims to confirm.',
+      'Customer concentration is the main risk — track if the buyer ever publicly pivots.',
+      'Pattern lesson: small/mid-cap + two hyperscaler contracts in 6 months = re-rating moment.',
+    ],
+  },
+  {
+    letter: 'B', name: 'Fundamental Inflection Investor', color: C.red, rating: 'Neutral',
     money: 'earnings inflections the market has not repriced yet',
     mind: 'Numbers drive price. The market reprices later — I hold through volatility for big compounders (2–10x).',
     focus: ['Business-driven, multi-quarter winners', 'Numbers lead, price lags', 'Hold through volatility'],
@@ -50,7 +76,7 @@ const STYLES: StyleDef[] = [
     ],
   },
   {
-    letter: 'B', name: 'Special Situation Investor', color: C.orange, rating: 'Good',
+    letter: 'C', name: 'Special Situation Investor', color: C.orange, rating: 'Good',
     money: 'event-driven mispricings before the catalyst plays out',
     mind: 'Price moves on events, not earnings. I buy the mispricing before the catalyst plays out (hold 6–24 months).',
     focus: ['Event-driven mispricing', 'Valuation + catalyst', 'Medium holding period'],
@@ -66,7 +92,7 @@ const STYLES: StyleDef[] = [
     example: 'A conglomerate spins off its high-margin division → the freed unit re-rates once its real economics become visible; or an open offer prices the stock above market.',
   },
   {
-    letter: 'C', name: 'Earnings / EP Momentum Trader', color: C.lime, rating: 'No edge',
+    letter: 'D', name: 'Earnings / EP Momentum Trader', color: C.lime, rating: 'No edge',
     money: 'buying earnings strength and riding the momentum',
     mind: 'Buy strength + volume, not weakness. Follow momentum and institutional flow (Qullamaggie-style).',
     focus: ['Buy strength, not weakness', 'Volume + price expansion', 'Short–medium term'],
@@ -80,7 +106,7 @@ const STYLES: StyleDef[] = [
     example: 'A 30% earnings beat + ~5× average volume → enter immediately on the breakout, no waiting.',
   },
   {
-    letter: 'D', name: 'Technical Structure Trader', color: C.blue, rating: 'No edge',
+    letter: 'E', name: 'Technical Structure Trader', color: C.blue, rating: 'No edge',
     money: 'clean technical breakouts out of tight bases',
     mind: 'I trust price structure over narrative and wait for clean setups. Compression → expansion.',
     focus: ['Pattern-driven entries', 'Price structure over story', 'Works in trending markets'],
@@ -96,7 +122,7 @@ const STYLES: StyleDef[] = [
     example: 'A tight VCP that breaks out on expanding volume → clean entry, tight stop, controlled risk.',
   },
   {
-    letter: 'E', name: 'Supply–Demand / Flow Trader', color: C.cyan, rating: 'Good',
+    letter: 'F', name: 'Supply–Demand / Flow Trader', color: C.cyan, rating: 'Good',
     money: 'supply–demand imbalances and liquidity squeezes',
     mind: 'I trade imbalances. Flow > fundamentals; speed is the edge.',
     focus: ['Flow-driven edge', 'Trade imbalances', 'Faster moves, higher risk'],
@@ -109,7 +135,7 @@ const STYLES: StyleDef[] = [
     notes: ['FII-buying flow gets special focus — follow where foreign institutions are accumulating (e.g. Bajaj Consumer, MCX).'],
   },
   {
-    letter: 'F', name: 'Trend Follower (Stage-2)', color: C.violet, rating: '',
+    letter: 'G', name: 'Trend Follower (Stage-2)', color: C.violet, rating: '',
     money: 'riding established Stage-2 uptrends',
     mind: "I don't predict — I follow trend strength and capture the middle of the move.",
     focus: ['Stage-2 breakouts, pullbacks, RS leaders', 'Strength = confirmation', 'Best in strong bull markets'],
@@ -123,7 +149,7 @@ const STYLES: StyleDef[] = [
     example: 'A relative-strength leader breaks a 12-month base and trends for months — ride the middle, not the turn.',
   },
   {
-    letter: 'G', name: 'Re-rating / Multiple Expansion Investor', color: C.teal, rating: '',
+    letter: 'H', name: 'Re-rating / Multiple Expansion Investor', color: C.teal, rating: '',
     money: 'valuation re-ratings as quality gets recognised',
     mind: 'I profit from valuation expansion, not just earnings growth — as the market slowly realises quality improved.',
     focus: ['Business-model shifts', 'Margin expansion', 'PE re-rating'],
@@ -141,30 +167,42 @@ const byLetter = (l: string) => STYLES.find((s) => s.letter === l);
 
 type FinderOpt = { label: string; styles: string[] };
 const FINDER: { q: string; opts: FinderOpt[] }[] = [
+  // PATCH zzz119 — letters shifted (A→B, B→C, …, G→H), new A = Transformational Contracts
   { q: '1. What gives you conviction?', opts: [
-    { label: 'Financials', styles: ['A'] }, { label: 'Corporate events', styles: ['B'] },
-    { label: 'Price + volume', styles: ['C'] }, { label: 'Chart patterns', styles: ['D'] },
-    { label: 'Order flow / imbalance', styles: ['E'] }, { label: 'Trend strength', styles: ['F'] },
-    { label: 'Valuation shift', styles: ['G'] },
+    { label: 'Mega-contracts / chain deals', styles: ['A'] },
+    { label: 'Financials', styles: ['B'] },
+    { label: 'Corporate events', styles: ['C'] },
+    { label: 'Price + volume', styles: ['D'] },
+    { label: 'Chart patterns', styles: ['E'] },
+    { label: 'Order flow / imbalance', styles: ['F'] },
+    { label: 'Trend strength', styles: ['G'] },
+    { label: 'Valuation shift', styles: ['H'] },
   ] },
   { q: '2. Your holding comfort?', opts: [
-    { label: 'Months–years', styles: ['A', 'G'] }, { label: 'Weeks–months', styles: ['B', 'F'] },
-    { label: 'Days–weeks', styles: ['C', 'D', 'E'] },
+    { label: 'Months–years', styles: ['A', 'B', 'H'] },
+    { label: 'Weeks–months', styles: ['C', 'G'] },
+    { label: 'Days–weeks', styles: ['D', 'E', 'F'] },
   ] },
   { q: '3. What frustrates you most?', opts: [
-    { label: 'Missing fundamentals', styles: ['A'] }, { label: 'Missing news / events', styles: ['B'] },
-    { label: 'Missing fast moves', styles: ['C', 'E'] }, { label: 'Entering bad patterns', styles: ['D'] },
-    { label: 'Fighting the trend', styles: ['F'] },
+    { label: 'Missing big contract announcements', styles: ['A'] },
+    { label: 'Missing fundamentals', styles: ['B'] },
+    { label: 'Missing news / events', styles: ['C'] },
+    { label: 'Missing fast moves', styles: ['D', 'F'] },
+    { label: 'Entering bad patterns', styles: ['E'] },
+    { label: 'Fighting the trend', styles: ['G'] },
   ] },
 ];
 const QWEIGHT = [3, 1, 2]; // conviction weighted highest, then frustration, then horizon
 
 type Combo = { key: string; name: string; members: string[]; desc: string; best?: boolean };
 const COMBOS: Combo[] = [
-  { key: 'A + D', name: 'Best for most', members: ['A', 'D'], desc: 'Fundamental + Technical — find strong companies, enter via VCP / bases. The workhorse used by most top growth investors.', best: true },
-  { key: 'C + F', name: 'Momentum elite', members: ['C', 'F'], desc: 'EP + Trend — buy the earnings strength, then ride the established trend.' },
-  { key: 'B + D', name: 'Smart money', members: ['B', 'D'], desc: 'Special-situation / earnings + Technical — the event creates the move, the chart gives you timing. Enter on EP, add on trend continuation.' },
-  { key: 'A + C', name: 'Aggressive growth', members: ['A', 'C'], desc: 'Fundamental + EP — identify the growth early, enter aggressively on the earnings beat.' },
+  // PATCH zzz119 — combos updated for shifted letters + new A combos
+  { key: 'A + E', name: 'Contract Re-rating + Technical', members: ['A', 'E'], desc: 'Transformational Contracts + Technical — score the deal on News Triage (≥18/25), then time entry via clean VCP / breakout on the chart. Catches NBIS / WULF-style chain re-ratings with low-risk entries.', best: true },
+  { key: 'A + D', name: 'Contract + Momentum', members: ['A', 'D'], desc: 'Transformational Contracts + EP Momentum — buy the contract announcement, ride the post-news momentum drift. Highest velocity returns.' },
+  { key: 'B + E', name: 'Best for most fundamentals', members: ['B', 'E'], desc: 'Fundamental + Technical — find strong companies, enter via VCP / bases. The workhorse used by most top growth investors.' },
+  { key: 'D + G', name: 'Momentum elite', members: ['D', 'G'], desc: 'EP + Trend — buy the earnings strength, then ride the established trend.' },
+  { key: 'C + E', name: 'Smart money', members: ['C', 'E'], desc: 'Special-situation + Technical — the event creates the move, the chart gives you timing.' },
+  { key: 'B + D', name: 'Aggressive growth', members: ['B', 'D'], desc: 'Fundamental + EP — identify the growth early, enter aggressively on the earnings beat.' },
 ];
 
 const CYCLICALS: { sector: string; driver: string }[] = [
@@ -308,7 +346,7 @@ const GUIDANCE: { name: string; guide: string }[] = [
 ];
 
 const SECTIONS: { id: string; label: string }[] = [
-  { id: 'styles', label: '7 Styles' }, { id: 'combos', label: 'Combos' }, { id: 'avoid', label: 'Avoid' },
+  { id: 'styles', label: '8 Styles' }, { id: 'combos', label: 'Combos' }, { id: 'avoid', label: 'Avoid' },
   { id: 'cyclical', label: 'Cyclical' }, { id: 'flags', label: 'Green/Red' }, { id: 'edges', label: 'Edge Rules' }, { id: 'bagger', label: '100-Bagger' },
   { id: 'checklist', label: 'Buy Checklist' }, { id: 'valuation', label: 'Valuation' }, { id: 'portfolio', label: 'Portfolio' },
   { id: 'investors', label: 'Investors' }, { id: 'guidance', label: 'Guidance' }, { id: 'finder', label: 'Edge Finder' },
@@ -465,7 +503,7 @@ export default function InvestingOSPage() {
       <div style={{ ...wrap, padding: '6px 16px 90px' }}>
 
         {/* 1 · STYLES */}
-        <SectionHead id="styles" n={1} title="The 7 Edge Styles (A–G)" sub="Badges show your own self-assessment. Green = your good strategy · Amber = neutral · Red = no edge yet." color={C.blue} />
+        <SectionHead id="styles" n={1} title="The 8 Edge Styles (A–H)" sub="A = Transformational Contracts (new) — your highest-leverage edge per the News Triage chain calculator. Badges show your own self-assessment. Green = your good strategy · Amber = neutral · Red = no edge yet." color={C.blue} />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(500px, 1fr))', gap: 12, alignItems: 'start' }}>
           {STYLES.map((s) => <StyleCard key={s.letter} s={s} />)}
         </div>
