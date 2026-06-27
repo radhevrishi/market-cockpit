@@ -862,10 +862,36 @@ export default function InvestingOSPage() {
             <div style={{ fontSize: F.sm, color: C.muted, lineHeight: 1.55 }}>NBIS + MSFT $17.4B → Meta · LEU HALEU $3.4B (DOE) · WULF + Google $3.7B · MP DoD + Apple · Micron 16 SCAs ~$100B · VST multi-hyperscaler</div>
           </div>
 
-          {/* B · Fundamental Inflection */}
+          {/* B · Multibagger + Chart — zzz122 — already automated in Rahev Terminal */}
+          <div style={{ background: C.panel, border: `1px solid ${C.lime}40`, borderLeft: `4px solid ${C.lime}`, borderRadius: 12, padding: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
+              <span style={{ fontSize: F.xl, fontWeight: 900, color: C.lime }}>B</span>
+              <span style={{ fontSize: F.md, fontWeight: 800, color: C.txt }}>Multibagger + Chart</span>
+              <span style={{ marginLeft: 'auto', fontSize: F.xs, color: C.lime, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.4, background: `${C.lime}1a`, padding: '2px 8px', borderRadius: 6, border: `1px solid ${C.lime}40` }}>⚡ Automated — Rahev Terminal</span>
+            </div>
+            <ul style={{ margin: 0, paddingLeft: 18, marginBottom: 10 }}>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}>Earnings can compound <b style={{ color: C.lime }}>3–5×</b> in 3–5 years — multibagger DNA</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}>Small/mid cap + scalable business model + structural industry tailwind</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}>Chart confirms: clean Stage-2 OR breakout from a long base on volume</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}>Volume + RS leadership — never buy narrative without chart confirmation</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55 }}>Own the strongest chart in the strongest theme (catch-the-leader rule)</li>
+            </ul>
+            <div style={{ background: `${C.lime}10`, border: `1px solid ${C.lime}33`, borderRadius: 8, padding: 10, marginBottom: 10 }}>
+              <div style={{ fontSize: F.xs, color: C.lime, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>⚡ Already built into this terminal</div>
+              <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55 }}>
+                → <a href="/multibagger" style={{ color: C.lime, fontWeight: 800, textDecoration: 'none' }}>Multibagger tab</a> — auto-scans CSV uploads (India + USA), ranks by inflection criteria<br />
+                → <a href="/best-charts" style={{ color: C.lime, fontWeight: 800, textDecoration: 'none' }}>Best Charts</a> — daily scan of Stage-2 + clean breakouts + RS leaders<br />
+                → <a href="/bottom-picking" style={{ color: C.lime, fontWeight: 800, textDecoration: 'none' }}>Bottom Picking</a> + <a href="/double-bottom" style={{ color: C.lime, fontWeight: 800, textDecoration: 'none' }}>Double Bottom</a> + <a href="/fan-principle" style={{ color: C.lime, fontWeight: 800, textDecoration: 'none' }}>Fan Principle</a> — chart-pattern guides
+              </div>
+            </div>
+            <div style={{ fontSize: F.xs, color: C.lime, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 }}>Examples</div>
+            <div style={{ fontSize: F.sm, color: C.muted, lineHeight: 1.55 }}>NVDA 2023 (AI + Stage-2) · BAJFINANCE 2018–20 (NBFC + Cup) · TITAN 2010s (consumer + base breakout) · ACUTAAS (chemicals tailwind) · NBIS pre-MSFT · TATAELXSI 2020–21</div>
+          </div>
+
+          {/* C · Fundamental Inflection */}
           <div style={{ background: C.panel, border: `1px solid ${C.blue}40`, borderLeft: `4px solid ${C.blue}`, borderRadius: 12, padding: 16 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
-              <span style={{ fontSize: F.xl, fontWeight: 900, color: C.blue }}>B</span>
+              <span style={{ fontSize: F.xl, fontWeight: 900, color: C.blue }}>C</span>
               <span style={{ fontSize: F.md, fontWeight: 800, color: C.txt }}>Fundamental Inflection</span>
               <span style={{ marginLeft: 'auto', fontSize: F.xs, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>small/mid cap</span>
             </div>
@@ -881,10 +907,10 @@ export default function InvestingOSPage() {
             <div style={{ fontSize: F.sm, color: C.muted, lineHeight: 1.55 }}>Acutaas Chemicals · Syrma SGS · MTAR Tech · Netweb Tech · HFCL · Apollo Micro · Aimtron · Sedemac · Aeroflex</div>
           </div>
 
-          {/* C · Technical Patterns */}
+          {/* D · Technical Patterns */}
           <div style={{ background: C.panel, border: `1px solid ${C.cyan}40`, borderLeft: `4px solid ${C.cyan}`, borderRadius: 12, padding: 16 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
-              <span style={{ fontSize: F.xl, fontWeight: 900, color: C.cyan }}>C</span>
+              <span style={{ fontSize: F.xl, fontWeight: 900, color: C.cyan }}>D</span>
               <span style={{ fontSize: F.md, fontWeight: 800, color: C.txt }}>Technical Patterns (critical only)</span>
               <span style={{ marginLeft: 'auto', fontSize: F.xs, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>compression → expansion</span>
             </div>
@@ -900,10 +926,10 @@ export default function InvestingOSPage() {
             <div style={{ fontSize: F.sm, color: C.muted, lineHeight: 1.55 }}>BAJFINANCE 2020 Cup · DIVISLAB 2021 Flat Base · NVDA 2023 VCP · TITAN 2009 HTF · ASIANPAINT 2017 VCP · TATAELXSI 2021 Cup</div>
           </div>
 
-          {/* D · Supply-Demand / Bottleneck */}
+          {/* E · Supply-Demand / Bottleneck */}
           <div style={{ background: C.panel, border: `1px solid ${C.violet}40`, borderLeft: `4px solid ${C.violet}`, borderRadius: 12, padding: 16 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
-              <span style={{ fontSize: F.xl, fontWeight: 900, color: C.violet }}>D</span>
+              <span style={{ fontSize: F.xl, fontWeight: 900, color: C.violet }}>E</span>
               <span style={{ fontSize: F.md, fontWeight: 800, color: C.txt }}>Supply-Demand / Bottleneck</span>
               <span style={{ marginLeft: 'auto', fontSize: F.xs, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>flow {'>'} fundamentals</span>
             </div>
@@ -918,10 +944,10 @@ export default function InvestingOSPage() {
             <div style={{ fontSize: F.sm, color: C.muted, lineHeight: 1.55 }}>MP rare earths (US export curbs 2024) · LEU HALEU (Russia ban) · Specialty Chemicals 2022 (China lockdowns) · Tantalum / Tungsten plays · Bajaj Consumer (FII accumulation) · MCX (regulatory tailwind)</div>
           </div>
 
-          {/* E · Stage-2 Trend Follower */}
+          {/* F · Stage-2 Trend Follower */}
           <div style={{ background: C.panel, border: `1px solid ${C.amber}40`, borderLeft: `4px solid ${C.amber}`, borderRadius: 12, padding: 16 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
-              <span style={{ fontSize: F.xl, fontWeight: 900, color: C.amber }}>E</span>
+              <span style={{ fontSize: F.xl, fontWeight: 900, color: C.amber }}>F</span>
               <span style={{ fontSize: F.md, fontWeight: 800, color: C.txt }}>Stage-2 Trend Follower</span>
               <span style={{ marginLeft: 'auto', fontSize: F.xs, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>Weinstein-style</span>
             </div>
