@@ -349,7 +349,7 @@ const SECTIONS: { id: string; label: string }[] = [
   { id: 'styles', label: '8 Styles' }, { id: 'combos', label: 'Combos' }, { id: 'avoid', label: 'Avoid' },
   { id: 'cyclical', label: 'Cyclical' }, { id: 'flags', label: 'Green/Red' }, { id: 'edges', label: 'Edge Rules' }, { id: 'bagger', label: '100-Bagger' },
   { id: 'checklist', label: 'Buy Checklist' }, { id: 'valuation', label: 'Valuation' }, { id: 'portfolio', label: 'Portfolio' },
-  { id: 'investors', label: 'Investors' }, { id: 'guidance', label: 'Guidance' }, { id: 'finder', label: 'Edge Finder' },
+  { id: 'investors', label: 'Investors' }, { id: 'guidance', label: 'Guidance' }, { id: 'playbook', label: '⚡ Playbook' }, { id: 'finder', label: 'Edge Finder' },
 ];
 
 // ---- helpers ----
@@ -695,8 +695,105 @@ export default function InvestingOSPage() {
           ))}
         </div>
 
+        {/* 12.5 · CRITICAL TRADING PLAYBOOK — zzz120 — tight cheat-sheet of what to actually trade */}
+        <SectionHead id="playbook" n={13} title="⚡ Critical Trading Playbook" sub="The tight version — only what to actually trade. Few bullets per strategy + real examples. Use this as the day-to-day reference; the full theory lives in section 1." color={C.cyan} />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: 12 }}>
+
+          {/* A · Transformational Contracts */}
+          <div style={{ background: C.panel, border: `1px solid ${C.green}40`, borderLeft: `4px solid ${C.green}`, borderRadius: 12, padding: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
+              <span style={{ fontSize: F.xl, fontWeight: 900, color: C.green }}>A</span>
+              <span style={{ fontSize: F.md, fontWeight: 800, color: C.txt }}>Transformational Contracts</span>
+              <span style={{ marginLeft: 'auto', fontSize: F.xs, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>News Triage chain</span>
+            </div>
+            <ul style={{ margin: 0, paddingLeft: 18, marginBottom: 10 }}>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}>Deal &gt; 10% of mcap (single mega-deal) OR multi-year binding lock</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}>Buyer = hyperscaler / DoD / DOE / sovereign — adds policy moat</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}>Duration &gt; 3 years (re-rates from cyclical to growth multiple)</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55 }}>Chain confirmation: 2nd hyperscaler-class deal within 6 months — enter on the SECOND deal</li>
+            </ul>
+            <div style={{ fontSize: F.xs, color: C.green, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 }}>Examples</div>
+            <div style={{ fontSize: F.sm, color: C.muted, lineHeight: 1.55 }}>NBIS + MSFT $17.4B → Meta · LEU HALEU $3.4B (DOE) · WULF + Google $3.7B · MP DoD + Apple · Micron 16 SCAs ~$100B · VST multi-hyperscaler</div>
+          </div>
+
+          {/* B · Fundamental Inflection */}
+          <div style={{ background: C.panel, border: `1px solid ${C.blue}40`, borderLeft: `4px solid ${C.blue}`, borderRadius: 12, padding: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
+              <span style={{ fontSize: F.xl, fontWeight: 900, color: C.blue }}>B</span>
+              <span style={{ fontSize: F.md, fontWeight: 800, color: C.txt }}>Fundamental Inflection</span>
+              <span style={{ marginLeft: 'auto', fontSize: F.xs, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>small/mid cap</span>
+            </div>
+            <ul style={{ margin: 0, paddingLeft: 18, marginBottom: 10 }}>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}>Sales growth &gt; 20% YoY for 2–3 consecutive quarters</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}>EPS growth ACCELERATING QoQ (not flat 20% — actually rising)</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}>EBITDA margin expanding — operating leverage kicking in</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}>Profit-growth guidance ≥ 25% next FY (sandbag-style mgmt preferred)</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}>Daily move &gt; 2% on earnings day on volume (institutions buying)</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55 }}>Small/mid cap — ≤ ₹15,000 Cr mcap; room to compound</li>
+            </ul>
+            <div style={{ fontSize: F.xs, color: C.blue, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 }}>Examples</div>
+            <div style={{ fontSize: F.sm, color: C.muted, lineHeight: 1.55 }}>Acutaas Chemicals · Syrma SGS · MTAR Tech · Netweb Tech · HFCL · Apollo Micro · Aimtron · Sedemac · Aeroflex</div>
+          </div>
+
+          {/* C · Technical Patterns */}
+          <div style={{ background: C.panel, border: `1px solid ${C.cyan}40`, borderLeft: `4px solid ${C.cyan}`, borderRadius: 12, padding: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
+              <span style={{ fontSize: F.xl, fontWeight: 900, color: C.cyan }}>C</span>
+              <span style={{ fontSize: F.md, fontWeight: 800, color: C.txt }}>Technical Patterns (critical only)</span>
+              <span style={{ marginLeft: 'auto', fontSize: F.xs, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>compression → expansion</span>
+            </div>
+            <ul style={{ margin: 0, paddingLeft: 18, marginBottom: 10 }}>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}><b style={{ color: C.cyan }}>U-pattern / Cup:</b> rounded base 8–12 weeks, breakout on right rim with volume</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}><b style={{ color: C.cyan }}>Flat Base:</b> 4–7 weeks sideways, &lt;15% range, low-volume drift = absorption</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}><b style={{ color: C.cyan }}>VCP:</b> 3–5 contractions, each tighter, volume drying to multi-week low before pop</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}><b style={{ color: C.cyan }}>Double Bottom:</b> twin lows 3–8 weeks apart, neckline break = confirmation</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}><b style={{ color: C.cyan }}>HTF (High Tight Flag):</b> 100%+ rally then 3–5 week tight pullback (Zanger)</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55 }}>Demand ≥ 40% above-avg volume on breakout — sub-avg = trap</li>
+            </ul>
+            <div style={{ fontSize: F.xs, color: C.cyan, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 }}>Examples</div>
+            <div style={{ fontSize: F.sm, color: C.muted, lineHeight: 1.55 }}>BAJFINANCE 2020 Cup · DIVISLAB 2021 Flat Base · NVDA 2023 VCP · TITAN 2009 HTF · ASIANPAINT 2017 VCP · TATAELXSI 2021 Cup</div>
+          </div>
+
+          {/* D · Supply-Demand / Bottleneck */}
+          <div style={{ background: C.panel, border: `1px solid ${C.violet}40`, borderLeft: `4px solid ${C.violet}`, borderRadius: 12, padding: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
+              <span style={{ fontSize: F.xl, fontWeight: 900, color: C.violet }}>D</span>
+              <span style={{ fontSize: F.md, fontWeight: 800, color: C.txt }}>Supply-Demand / Bottleneck</span>
+              <span style={{ marginLeft: 'auto', fontSize: F.xs, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>flow {'>'} fundamentals</span>
+            </div>
+            <ul style={{ margin: 0, paddingLeft: 18, marginBottom: 10 }}>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}>Sudden supply CUT or demand SURGE in a commodity / component</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}>Only listed pure-play OR one of 2–3 globally = pricing power</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}>News-driven: export curb · capacity outage · sanctions · policy / budget shift</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}>FII / DII flow visible (block deals, bulk-deal data)</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55 }}>Trade FAST — edge window 2–8 weeks; sell into peak margins</li>
+            </ul>
+            <div style={{ fontSize: F.xs, color: C.violet, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 }}>Examples</div>
+            <div style={{ fontSize: F.sm, color: C.muted, lineHeight: 1.55 }}>MP rare earths (US export curbs 2024) · LEU HALEU (Russia ban) · Specialty Chemicals 2022 (China lockdowns) · Tantalum / Tungsten plays · Bajaj Consumer (FII accumulation) · MCX (regulatory tailwind)</div>
+          </div>
+
+          {/* E · Stage-2 Trend Follower */}
+          <div style={{ background: C.panel, border: `1px solid ${C.amber}40`, borderLeft: `4px solid ${C.amber}`, borderRadius: 12, padding: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
+              <span style={{ fontSize: F.xl, fontWeight: 900, color: C.amber }}>E</span>
+              <span style={{ fontSize: F.md, fontWeight: 800, color: C.txt }}>Stage-2 Trend Follower</span>
+              <span style={{ marginLeft: 'auto', fontSize: F.xs, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>Weinstein-style</span>
+            </div>
+            <ul style={{ margin: 0, paddingLeft: 18, marginBottom: 10 }}>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}>Price above RISING 30-week MA (slope must be up)</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}>Higher highs + higher lows for 8+ weeks</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}>RS line at new 52-week high — leads price</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}>Volume on up days &gt; volume on down days</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55 }}>Buy pullbacks to 10 / 21 EMA — NEVER chase &gt; 5% extended from EMA</li>
+            </ul>
+            <div style={{ fontSize: F.xs, color: C.amber, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 }}>Examples — current Stage-2 (illustrative — verify daily)</div>
+            <div style={{ fontSize: F.sm, color: C.muted, lineHeight: 1.55 }}><b style={{ color: C.txt }}>India:</b> BAJFINANCE · TITAN · TRENT · POLYCAB &nbsp; · &nbsp; <b style={{ color: C.txt }}>US:</b> NVDA · META · AVGO · PLTR</div>
+          </div>
+
+        </div>
+
         {/* 12 · EDGE FINDER (at the end) */}
-        <SectionHead id="finder" n={13} title="🎯 Edge Finder" sub="Answer honestly. Conviction is weighted highest, then frustration, then horizon. The finder ranks the styles, shows your matched edge in full, and lets you lock it in." color={C.teal} />
+        <SectionHead id="finder" n={14} title="🎯 Edge Finder" sub="Answer honestly. Conviction is weighted highest, then frustration, then horizon. The finder ranks the styles, shows your matched edge in full, and lets you lock it in." color={C.teal} />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
           {FINDER.map((blk, qi) => (
             <div key={qi} style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, padding: 14 }}>
