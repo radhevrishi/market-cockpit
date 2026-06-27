@@ -2519,6 +2519,8 @@ export default function HomeDashboard() {
             <Link href="/fan-principle"          style={navChip('#06B6D4')}>🪭 Fan Principle</Link>
             {/* PATCH zzz113 — Bottom Picking master playbook */}
             <Link href="/bottom-picking"         style={navChip('#FBBF24')}>🎯 Bottom Picking</Link>
+            {/* PATCH zzz114 — News Triage playbook */}
+            <Link href="/news-triage"            style={navChip('#EF4444')}>📰 News Triage</Link>
             {/* PATCH 1101aa — External IBEF news link (India Brand Equity Foundation).
                 Opens in new tab; not a Next.js Link because it's a third-party URL. */}
             <a
