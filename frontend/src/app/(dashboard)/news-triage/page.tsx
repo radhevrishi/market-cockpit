@@ -279,6 +279,242 @@ function ScoreCalculator() {
   );
 }
 
+// ── PATCH zzz118 — Multi-Order Calculator ───────────────────────────────────
+// For companies that get a CHAIN of major contracts (NBIS Meta+MSFT, MP DoD+Apple).
+// One mcap + N orders. Cumulative magnitude auto-computes. Other 4 dims shared.
+type Unit = 'M'|'B'|'Cr'|'KCr';
+type Order = { label: string; val: string; unit: Unit };
+
+function MultiOrderCalculator() {
+  const [mcap, setMcap] = React.useState<string>('');
+  const [mcapUnit, setMcapUnit] = React.useState<Unit>('B');
+  const [orders, setOrders] = React.useState<Order[]>([
+    { label: '', val: '', unit: 'B' },
+    { label: '', val: '', unit: 'B' },
+  ]);
+  const [P, setP] = React.useState<number>(0);
+  const [V, setV] = React.useState<number>(0);
+  const [S, setS] = React.useState<number>(0);
+  const [Vf, setVf] = React.useState<number>(0);
+  const [mOverride, setMOverride] = React.useState<number|null>(null);
+
+  const toUsdM = (v: number, u: Unit) => u === 'B' ? v * 1000 : u === 'M' ? v : u === 'Cr' ? v * 0.12 : u === 'KCr' ? v * 120 : v;
+
+  const validOrders = orders.filter(o => parseFloat(o.val) > 0);
+  const totalDealUsdM = validOrders.reduce((s, o) => s + toUsdM(parseFloat(o.val), o.unit), 0);
+  const mcapUsdM = parseFloat(mcap) > 0 ? toUsdM(parseFloat(mcap), mcapUnit) : 0;
+  const pct = mcapUsdM > 0 ? (totalDealUsdM / mcapUsdM) * 100 : 0;
+
+  const autoM = (() => {
+    if (validOrders.length === 0 || mcapUsdM === 0) return null;
+    if (pct >= 30) return 5;
+    if (pct >= 10) return 4;
+    if (pct >= 5)  return 3;
+    if (pct >= 1)  return 2;
+    return 1;
+  })();
+  const M = mOverride ?? autoM ?? 0;
+
+  const total = M + P + V + S + Vf;
+  const filled = autoM !== null && P > 0 && V > 0 && S > 0 && Vf > 0;
+
+  const verdict = (() => {
+    if (!filled) return { label: 'Add orders + complete dimensions →', color: '#94A3B8', detail: '' };
+    if (total >= 22) return { label: '⭐ TOP-CONVICTION LONG (CHAIN)', color: '#22C55E', detail: 'Multi-deal momentum confirms. Size up.' };
+    if (total >= 18) return { label: '✅ LONG-TERM BUY', color: '#22C55E', detail: 'Normal sizing. Each new deal in the chain compounds the thesis.' };
+    if (total >= 15) return { label: '⚡ SHORT-TERM TRADE', color: '#06B6D4', detail: 'Starter position; wait for 3rd deal to size up.' };
+    if (total >= 10) return { label: '👁 WATCH', color: '#F59E0B', detail: 'Track for next contract announcement.' };
+    return { label: '🚫 IGNORE', color: '#EF4444', detail: 'Even combined, signal too small.' };
+  })();
+
+  const updateOrder = (i: number, patch: Partial<Order>) => {
+    setOrders(prev => prev.map((o, idx) => idx === i ? { ...o, ...patch } : o));
+    setMOverride(null);
+  };
+  const addOrder = () => setOrders(prev => [...prev, { label: '', val: '', unit: 'B' }]);
+  const removeOrder = (i: number) => setOrders(prev => prev.filter((_, idx) => idx !== i));
+  const reset = () => { setMcap(''); setOrders([{ label: '', val: '', unit: 'B' }, { label: '', val: '', unit: 'B' }]); setP(0); setV(0); setS(0); setVf(0); setMOverride(null); };
+
+  const loadExample = (mc: string, mcU: Unit, ords: Order[], p: number, v: number, s: number, vf: number) => {
+    setMcap(mc); setMcapUnit(mcU); setOrders(ords); setP(p); setV(v); setS(s); setVf(vf); setMOverride(null);
+  };
+
+  const inputStyle: React.CSSProperties = { background: '#0B0E14', border: '1px solid #1F2937', borderRadius: 6, padding: '8px 12px', color: '#E5E7EB', fontSize: 16, width: '100%', boxSizing: 'border-box' };
+  const selectStyle: React.CSSProperties = { ...inputStyle, cursor: 'pointer' };
+  const labelStyle: React.CSSProperties = { fontSize: 13, fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.4px' };
+  const scoreBox = (n: number): React.CSSProperties => ({
+    background: n === 0 ? '#161B27' : n >= 4 ? 'rgba(34,197,94,0.15)' : n >= 3 ? 'rgba(245,158,11,0.15)' : 'rgba(239,68,68,0.15)',
+    color: n === 0 ? '#64748B' : n >= 4 ? '#22C55E' : n >= 3 ? '#F59E0B' : '#EF4444',
+    border: '1px solid #1F2937', borderRadius: 6, padding: '8px 0', textAlign: 'center',
+    fontSize: 22, fontWeight: 800, letterSpacing: '0.5px',
+  });
+
+  return (
+    <div style={{ background: '#11151F', border: '1px solid #8B5CF655', borderLeft: '4px solid #8B5CF6', borderRadius: 12, padding: '28px 32px', margin: '24px 0' }}>
+      <h3 style={{ margin: '0 0 6px', fontSize: 24, fontWeight: 800, color: '#fff' }}>📚 Multi-Order Combinations Calculator</h3>
+      <p style={{ margin: '0 0 18px', fontSize: 15, color: '#94A3B8' }}>
+        Some companies receive a <b style={{ color: '#8B5CF6' }}>chain</b> of major contracts within months
+        (NBIS landed Meta + MSFT, MP Materials landed DoD + Apple). Each new deal compounds the thesis.
+        Add all orders below to see cumulative magnitude.
+      </p>
+
+      {/* Market cap (single) */}
+      <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr 90px', gap: 12, alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #1F2937' }}>
+        <div style={labelStyle}>Market Cap</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px', gap: 8 }}>
+          <input type="number" placeholder="Company market cap at time of first deal" value={mcap} onChange={(e) => { setMcap(e.target.value); setMOverride(null); }} style={inputStyle}/>
+          <select value={mcapUnit} onChange={(e) => setMcapUnit(e.target.value as Unit)} style={selectStyle}>
+            <option value="M">$M</option><option value="B">$B</option><option value="Cr">₹Cr</option><option value="KCr">₹KCr</option>
+          </select>
+        </div>
+        <div></div>
+      </div>
+
+      {/* Orders */}
+      <div style={{ padding: '12px 0', borderBottom: '1px solid #1F2937' }}>
+        <div style={{ ...labelStyle, marginBottom: 10 }}>Orders / Contracts</div>
+        {orders.map((o, i) => (
+          <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 80px 40px', gap: 8, alignItems: 'center', marginBottom: 6 }}>
+            <input type="text" placeholder={`Order ${i+1} label (e.g. MSFT, Meta, DoD)`} value={o.label} onChange={(e) => updateOrder(i, { label: e.target.value })} style={inputStyle}/>
+            <input type="number" placeholder="Deal size" value={o.val} onChange={(e) => updateOrder(i, { val: e.target.value })} style={inputStyle}/>
+            <select value={o.unit} onChange={(e) => updateOrder(i, { unit: e.target.value as Unit })} style={selectStyle}>
+              <option value="M">$M</option><option value="B">$B</option><option value="Cr">₹Cr</option><option value="KCr">₹KCr</option>
+            </select>
+            <button onClick={() => removeOrder(i)} disabled={orders.length <= 1} style={{
+              background: orders.length <= 1 ? '#0B0E14' : '#161B27', border: '1px solid #1F2937', borderRadius: 6, padding: '8px 0',
+              color: orders.length <= 1 ? '#1F2937' : '#EF4444', fontSize: 14, fontWeight: 700, cursor: orders.length <= 1 ? 'not-allowed' : 'pointer',
+            }}>×</button>
+          </div>
+        ))}
+        <button onClick={addOrder} style={{
+          background: '#161B27', border: '1px dashed #8B5CF655', borderRadius: 6, padding: '8px 18px', marginTop: 4,
+          color: '#8B5CF6', fontSize: 13, fontWeight: 700, cursor: 'pointer',
+        }}>+ Add another order</button>
+      </div>
+
+      {/* Cumulative Magnitude */}
+      <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr 90px', gap: 12, alignItems: 'center', padding: '12px 0', borderBottom: '1px solid #1F2937' }}>
+        <div style={labelStyle}>Cumulative M</div>
+        <div style={{ fontSize: 15, color: '#94A3B8' }}>
+          {validOrders.length > 0 && mcapUsdM > 0 ? (
+            <>
+              <b style={{ color: '#06B6D4' }}>{validOrders.length}</b> order{validOrders.length === 1 ? '' : 's'} totaling{' '}
+              <b style={{ color: '#06B6D4' }}>{totalDealUsdM >= 1000 ? `$${(totalDealUsdM/1000).toFixed(1)}B` : `$${totalDealUsdM.toFixed(0)}M`}</b>{' '}
+              = <b style={{ color: '#FBBF24' }}>{pct.toFixed(1)}%</b> of mcap →
+              <span style={{ color: M >= 4 ? '#22C55E' : M >= 3 ? '#F59E0B' : '#EF4444', fontWeight: 700 }}>
+                {' '}{pct >= 30 ? 'massive (5/5)' : pct >= 10 ? 'large (4/5)' : pct >= 5 ? 'material (3/5)' : pct >= 1 ? 'small (2/5)' : 'negligible (1/5)'}
+              </span>
+            </>
+          ) : 'Enter market cap + at least one order'}
+        </div>
+        <div style={scoreBox(M)}>{M || '?'}</div>
+      </div>
+      {autoM !== null && (
+        <div style={{ padding: '4px 0 12px 152px', fontSize: 13, color: '#64748B' }}>
+          <button onClick={() => setMOverride(mOverride === null ? M : null)} style={{ background: 'none', border: '1px solid #1F2937', borderRadius: 4, padding: '2px 8px', color: '#94A3B8', fontSize: 11, cursor: 'pointer' }}>
+            {mOverride === null ? 'Override M' : `Override: ${mOverride}/5 ✓`}
+          </button>
+          {mOverride !== null && [1,2,3,4,5].map(n => (
+            <button key={n} onClick={() => setMOverride(n)} style={{ marginLeft: 4, background: mOverride === n ? '#8B5CF6' : 'none', border: '1px solid #1F2937', borderRadius: 4, padding: '2px 7px', color: mOverride === n ? '#000' : '#94A3B8', fontSize: 11, cursor: 'pointer', fontWeight: 700 }}>{n}</button>
+          ))}
+        </div>
+      )}
+
+      {/* Shared P/V/S/Vf */}
+      <p style={{ fontSize: 13, color: '#64748B', marginTop: 12, marginBottom: 6 }}>
+        Score the chain as a whole (these dimensions usually apply consistently across deals from same buyer/cycle):
+      </p>
+
+      {[
+        { name: 'Permanence', val: P, setter: setP, opts: ['5 · Multi-year contracts / structural moat / TAM raise', '4 · 1-2 year deals / acquisition', '3 · Single FY impact', '2 · One quarter beat', '1 · One-off PR'] },
+        { name: 'Velocity', val: V, setter: setV, opts: ['5 · Already in current quarter', '4 · 1-2 quarters', '3 · Within 12 months', '2 · 1-3 years', '1 · 3+ years'] },
+        { name: 'Surprise', val: S, setter: setS, opts: ['5 · Totally unexpected', '4 · Larger than consensus', '3 · In line', '2 · Mostly priced in', '1 · Fully anticipated'] },
+        { name: 'Verifiability', val: Vf, setter: setVf, opts: ['5 · SEC filing / press release', '4 · Bloomberg / Reuters', '3 · CNBC / trade press', '2 · "Reportedly" / Twitter', '1 · Pure rumor'] },
+      ].map(({ name, val, setter, opts }) => (
+        <div key={name} style={{ display: 'grid', gridTemplateColumns: '140px 1fr 90px', gap: 12, alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #1F2937' }}>
+          <div style={labelStyle}>{name}</div>
+          <select value={val} onChange={(e) => setter(parseInt(e.target.value))} style={selectStyle}>
+            <option value={0}>Select…</option>
+            {opts.map((opt, i) => <option key={i} value={5-i}>{opt}</option>)}
+          </select>
+          <div style={scoreBox(val)}>{val || '?'}</div>
+        </div>
+      ))}
+
+      {/* Verdict */}
+      <div style={{
+        marginTop: 22, padding: '24px 28px', borderRadius: 12,
+        background: filled ? `linear-gradient(135deg, ${verdict.color}22 0%, ${verdict.color}11 100%)` : '#161B27',
+        border: `2px solid ${verdict.color}55`,
+        display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 24, alignItems: 'center',
+      }}>
+        <div style={{ fontSize: 56, fontWeight: 800, color: verdict.color, lineHeight: 1, fontFamily: 'ui-monospace, SFMono-Regular, monospace', minWidth: 100, textAlign: 'center' }}>
+          {total || 0}<span style={{ fontSize: 22, color: '#64748B' }}>/25</span>
+        </div>
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: verdict.color, marginBottom: 4 }}>{verdict.label}</div>
+          {verdict.detail && <div style={{ fontSize: 15, color: '#94A3B8' }}>{verdict.detail}</div>}
+        </div>
+        <button onClick={reset} style={{ background: '#11151F', border: '1px solid #1F2937', borderRadius: 6, padding: '10px 16px', color: '#94A3B8', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>↻ Reset</button>
+      </div>
+
+      {/* Quick examples */}
+      <div style={{ marginTop: 16 }}>
+        <div style={{ fontSize: 13, color: '#64748B', marginBottom: 8 }}>Try a real chain:</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          <button onClick={() => loadExample('15', 'B', [
+              { label: 'MSFT', val: '17.4', unit: 'B' },
+              { label: 'Meta', val: '3', unit: 'B' },
+            ], 5, 3, 5, 5)}
+            title="NBIS landed Microsoft $17.4B (Sept 2025) followed by Meta multi-billion AI hosting deal; mcap ~$15B"
+            style={{ background: '#161B27', border: '1px solid #8B5CF655', borderRadius: 5, padding: '6px 12px', color: '#8B5CF6', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+            NBIS chain: MSFT + Meta
+          </button>
+          <button onClick={() => loadExample('1.5', 'B', [
+              { label: 'DoD', val: '400', unit: 'M' },
+              { label: 'Apple', val: '500', unit: 'M' },
+            ], 5, 3, 5, 5)}
+            title="MP Materials landed DoD $400M (rare earth supply) + Apple $500M (magnets) in July 2025; mcap ~$1.5B"
+            style={{ background: '#161B27', border: '1px solid #8B5CF655', borderRadius: 5, padding: '6px 12px', color: '#8B5CF6', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+            MP chain: DoD + Apple
+          </button>
+          <button onClick={() => loadExample('1.5', 'B', [
+              { label: 'DOE HALEU Phase 1', val: '150', unit: 'M' },
+              { label: 'DOE HALEU Phase 2', val: '3.2', unit: 'B' },
+            ], 5, 2, 4, 5)}
+            title="Centrus Energy HALEU: initial DOE order $150M + follow-on phase ~$3.2B; mcap ~$1.5B"
+            style={{ background: '#161B27', border: '1px solid #8B5CF655', borderRadius: 5, padding: '6px 12px', color: '#8B5CF6', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+            LEU chain: DOE phase 1 + 2
+          </button>
+          <button onClick={() => loadExample('40', 'B', [
+              { label: 'MSFT Comanche Peak', val: '3', unit: 'B' },
+              { label: 'Energy Harbor (nuclear)', val: '3.4', unit: 'B' },
+              { label: 'Additional hyperscaler', val: '2', unit: 'B' },
+            ], 5, 3, 4, 5)}
+            title="Vistra Corp data center + nuclear deals: MSFT contract + Energy Harbor + others; mcap ~$40B"
+            style={{ background: '#161B27', border: '1px solid #8B5CF655', borderRadius: 5, padding: '6px 12px', color: '#8B5CF6', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+            VST chain: 3 deals
+          </button>
+          <button onClick={() => loadExample('2.5', 'B', [
+              { label: 'Google HPC hosting', val: '3.7', unit: 'B' },
+              { label: 'Follow-on capacity', val: '1', unit: 'B' },
+            ], 5, 2, 5, 5)}
+            title="TeraWulf Google HPC contract + follow-on expansion; mcap ~$2.5B at time"
+            style={{ background: '#161B27', border: '1px solid #8B5CF655', borderRadius: 5, padding: '6px 12px', color: '#8B5CF6', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+            WULF chain: Google + expansion
+          </button>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 14, padding: '12px 14px', background: 'rgba(139,92,246,0.08)', border: '1px dashed #8B5CF655', borderRadius: 8, fontSize: 13, color: '#94A3B8' }}>
+        <b style={{ color: '#8B5CF6' }}>Pattern lesson:</b> When a small/mid-cap lands TWO hyperscaler contracts within 6 months — that&apos;s the
+        re-rating moment. NBIS, MP, WULF all followed this template. The single deal is the alert; the second deal is the confirmation.
+        Don&apos;t wait for the third — by then institutional money is already in.
+      </div>
+    </div>
+  );
+}
+
 export default function NewsTriagePage() {
   return (
     <div style={{
@@ -386,6 +622,9 @@ export default function NewsTriagePage() {
 
       {/* ── PATCH zzz116 — Interactive Calculator ───────────────────────── */}
       <ScoreCalculator />
+
+      {/* ── PATCH zzz118 — Multi-Order Calculator (separate, untouched single calc above) ── */}
+      <MultiOrderCalculator />
 
       {/* ── DECISION TREE FLOWCHART ─────────────────────────────────────── */}
       <h2>2 · The 30-Second Decision Tree</h2>
