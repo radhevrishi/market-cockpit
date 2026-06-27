@@ -253,6 +253,27 @@ function ScoreCalculator() {
           style={{ background: '#161B27', border: '1px solid #EF444455', borderRadius: 5, padding: '6px 12px', color: '#EF4444', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
           Carter&apos;s WNBA Partnership
         </button>
+        {/* PATCH zzz117 — user&apos;s personal high-conviction examples */}
+        <button onClick={() => { setDealVal('17.4'); setDealUnit('B'); setMcapVal('15'); setMcapUnit('B'); setP(5); setV(3); setS(5); setVf(5); setMOverride(null); }}
+          title="Nebius Group landed Microsoft $17.4B AI infra deal Sept 2025; mcap ~$15B at announcement → deal larger than entire mcap"
+          style={{ background: '#161B27', border: '1px solid #FBBF2455', borderRadius: 5, padding: '6px 12px', color: '#FBBF24', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+          NBIS $17.4B MSFT deal
+        </button>
+        <button onClick={() => { setDealVal('3.4'); setDealUnit('B'); setMcapVal('1.5'); setMcapUnit('B'); setP(5); setV(2); setS(4); setVf(5); setMOverride(null); }}
+          title="Centrus Energy DOE HALEU multi-year contract ~$3.4B total value; mcap ~$1.5B → deal more than 2× mcap"
+          style={{ background: '#161B27', border: '1px solid #FBBF2455', borderRadius: 5, padding: '6px 12px', color: '#FBBF24', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+          LEU HALEU multi-yr
+        </button>
+        <button onClick={() => { setDealVal('5'); setDealUnit('B'); setMcapVal('40'); setMcapUnit('B'); setP(5); setV(3); setS(4); setVf(5); setMOverride(null); }}
+          title="Vistra Corp data center power supply contract with Microsoft; estimated multi-year deal value; mcap ~$40B at announcement"
+          style={{ background: '#161B27', border: '1px solid #FBBF2455', borderRadius: 5, padding: '6px 12px', color: '#FBBF24', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+          VST MSFT power deal
+        </button>
+        <button onClick={() => { setDealVal('3.7'); setDealUnit('B'); setMcapVal('2.5'); setMcapUnit('B'); setP(5); setV(2); setS(5); setVf(5); setMOverride(null); }}
+          title="TeraWulf landed Google-backed HPC/AI hosting contract ~$3.7B over 10 years; mcap ~$2.5B at announcement → deal larger than mcap"
+          style={{ background: '#161B27', border: '1px solid #FBBF2455', borderRadius: 5, padding: '6px 12px', color: '#FBBF24', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+          WULF Google AI deal
+        </button>
       </div>
     </div>
   );
