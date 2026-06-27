@@ -4184,12 +4184,31 @@ function toSlimUsaRows(rows: any[]): any[] {
 function USACompare() {
   const fileRef = React.useRef<HTMLInputElement>(null);
   const [rows, setRowsState] = React.useState<USAResult[]>(() => {
+    // PATCH zzz109 — Two-key restore: try full payload first, fall back to
+    // slim. If the previous setRows failed to persist the full payload due
+    // to localStorage quota (5MB cap with India universe + prev-scores
+    // already loaded), the slim payload — written in zzz108 — is the only
+    // copy still in storage. Without this fallback, the USA Multibagger
+    // tab silently restarts at 0 stocks every navigation, which made the
+    // re-upload "lose" data and made Analytics permanently empty.
     try {
       const saved = localStorage.getItem(USA_STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved) as USAResult[];
-        const rescored = parsed.map(r => scoreUSARow(r as unknown as USARow));
-        return applyUSARanking(rescored.sort((a,b)=>b.score-a.score));
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const rescored = parsed.map(r => scoreUSARow(r as unknown as USARow));
+          return applyUSARanking(rescored.sort((a,b)=>b.score-a.score));
+        }
+      }
+      // PATCH zzz109 — slim fallback
+      const slimRaw = localStorage.getItem('mb_usa_slim_v1');
+      if (slimRaw) {
+        const slim = JSON.parse(slimRaw);
+        if (Array.isArray(slim) && slim.length > 0) {
+          try { console.log(`[mb-usa] zzz109 USA Multibagger tab restored from slim payload (${slim.length} rows — full payload was empty/missing, likely quota-rejected)`); } catch {}
+          // Slim rows are pre-scored; just apply ranking.
+          return applyUSARanking((slim as USAResult[]).sort((a,b)=>b.score-a.score));
+        }
       }
     } catch {}
     return [];
