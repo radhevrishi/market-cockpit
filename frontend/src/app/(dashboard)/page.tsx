@@ -2513,6 +2513,10 @@ export default function HomeDashboard() {
             <Link href="/volume-rules"           style={navChip('#22D3EE')}>🎯 Volume Rules</Link>
             {/* PATCH 1101x — Earnings Mastery: post-earnings multibagger playbook */}
             <Link href="/earnings-mastery"       style={navChip('#F59E0B')}>📊 Earnings Mastery</Link>
+            {/* PATCH zzz111 — Double Bottom pattern guide */}
+            <Link href="/double-bottom"          style={navChip('#22C55E')}>📉 Double Bottom</Link>
+            {/* PATCH zzz112 — Fan Principle pattern guide */}
+            <Link href="/fan-principle"          style={navChip('#06B6D4')}>🪭 Fan Principle</Link>
             {/* PATCH 1101aa — External IBEF news link (India Brand Equity Foundation).
                 Opens in new tab; not a Next.js Link because it's a third-party URL. */}
             <a
