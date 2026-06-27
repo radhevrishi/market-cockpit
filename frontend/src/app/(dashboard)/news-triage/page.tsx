@@ -45,6 +45,219 @@ const Tag = ({ kind, children }: { kind: 'long'|'short'|'sector'|'ignore'|'high'
   );
 };
 
+// ── PATCH zzz116 — Interactive Score Calculator ─────────────────────────────
+// Auto-computes Magnitude from deal $ + market cap. Other 4 dims via dropdown.
+// User can manually override every score.
+function ScoreCalculator() {
+  const [dealVal, setDealVal] = React.useState<string>('');
+  const [dealUnit, setDealUnit] = React.useState<'M'|'B'|'Cr'|'KCr'>('B');
+  const [mcapVal, setMcapVal] = React.useState<string>('');
+  const [mcapUnit, setMcapUnit] = React.useState<'M'|'B'|'Cr'|'KCr'>('B');
+
+  // Convert to common USD for ratio. 1 Cr ≈ 0.12M USD; 1 KCr ≈ 120M USD.
+  const toUsdMillions = (v: number, u: string): number => {
+    if (u === 'B') return v * 1000;
+    if (u === 'M') return v;
+    if (u === 'Cr') return v * 0.12;       // 1 Cr ≈ $120K = 0.12M (approx 83 INR/USD)
+    if (u === 'KCr') return v * 120;       // 1,000 Cr ≈ $120M
+    return v;
+  };
+
+  // Auto-Magnitude from %
+  const autoM = (() => {
+    const d = parseFloat(dealVal);
+    const m = parseFloat(mcapVal);
+    if (isNaN(d) || isNaN(m) || d <= 0 || m <= 0) return null;
+    const dUsd = toUsdMillions(d, dealUnit);
+    const mUsd = toUsdMillions(m, mcapUnit);
+    const pct = (dUsd / mUsd) * 100;
+    if (pct >= 30) return { score: 5, pct };
+    if (pct >= 10) return { score: 4, pct };
+    if (pct >= 5)  return { score: 3, pct };
+    if (pct >= 1)  return { score: 2, pct };
+    return { score: 1, pct };
+  })();
+
+  // Manual overrides
+  const [mOverride, setMOverride] = React.useState<number|null>(null);
+  const M = mOverride ?? autoM?.score ?? 0;
+
+  // P / V / S / V — dropdown-driven, with override
+  const [P, setP] = React.useState<number>(0);
+  const [V, setV] = React.useState<number>(0);
+  const [S, setS] = React.useState<number>(0);
+  const [Vf, setVf] = React.useState<number>(0);
+
+  const total = M + P + V + S + Vf;
+  const filled = !!autoM && P > 0 && V > 0 && S > 0 && Vf > 0;
+
+  const verdict = (() => {
+    if (!filled) return { label: 'Complete all 5 dimensions →', color: '#94A3B8', detail: '' };
+    if (total >= 22) return { label: '⭐ TOP-CONVICTION LONG', color: '#22C55E', detail: 'Size up. Hold years. Add on dips.' };
+    if (total >= 18) return { label: '✅ LONG-TERM BUY', color: '#22C55E', detail: 'Normal sizing. Hold 6-24 months.' };
+    if (total >= 15) return { label: '⚡ SHORT-TERM TRADE', color: '#06B6D4', detail: 'Starter position or 1-12 week trade.' };
+    if (total >= 10) return { label: '👁 WATCH', color: '#F59E0B', detail: 'Track but do not trade.' };
+    return { label: '🚫 IGNORE', color: '#EF4444', detail: 'Noise. Do not act.' };
+  })();
+
+  const F = { num: 17, label: 13, big: 56, hint: 13 };
+  const rowStyle: React.CSSProperties = { display: 'grid', gridTemplateColumns: '140px 1fr 90px', gap: 12, alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #1F2937' };
+  const labelStyle: React.CSSProperties = { fontSize: F.label, fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.4px' };
+  const inputStyle: React.CSSProperties = { background: '#0B0E14', border: '1px solid #1F2937', borderRadius: 6, padding: '8px 12px', color: '#E5E7EB', fontSize: F.num, width: '100%', boxSizing: 'border-box' };
+  const selectStyle: React.CSSProperties = { ...inputStyle, cursor: 'pointer' };
+  const scoreBox = (n: number): React.CSSProperties => ({
+    background: n === 0 ? '#161B27' : n >= 4 ? 'rgba(34,197,94,0.15)' : n >= 3 ? 'rgba(245,158,11,0.15)' : 'rgba(239,68,68,0.15)',
+    color: n === 0 ? '#64748B' : n >= 4 ? '#22C55E' : n >= 3 ? '#F59E0B' : '#EF4444',
+    border: '1px solid #1F2937', borderRadius: 6, padding: '8px 0', textAlign: 'center',
+    fontSize: 22, fontWeight: 800, letterSpacing: '0.5px',
+  });
+
+  return (
+    <div style={{ background: '#11151F', border: '1px solid #1F2937', borderRadius: 12, padding: '28px 32px', margin: '24px 0' }}>
+      <h3 style={{ margin: '0 0 8px', fontSize: 24, fontWeight: 800, color: '#fff' }}>🧮 Live Score Calculator</h3>
+      <p style={{ margin: '0 0 16px', fontSize: 15, color: '#94A3B8' }}>
+        Enter what you know. Override anything. Score updates live.
+      </p>
+
+      {/* Magnitude — auto from deal $ + mcap $ */}
+      <div style={rowStyle}>
+        <div style={labelStyle}>Magnitude</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 70px 18px 1fr 70px', gap: 8, alignItems: 'center' }}>
+          <input type="number" placeholder="Deal size" value={dealVal} onChange={(e) => { setDealVal(e.target.value); setMOverride(null); }} style={inputStyle}/>
+          <select value={dealUnit} onChange={(e) => setDealUnit(e.target.value as any)} style={selectStyle}>
+            <option value="M">$M</option>
+            <option value="B">$B</option>
+            <option value="Cr">₹Cr</option>
+            <option value="KCr">₹KCr</option>
+          </select>
+          <span style={{ textAlign: 'center', color: '#64748B', fontSize: 15 }}>÷</span>
+          <input type="number" placeholder="Market cap" value={mcapVal} onChange={(e) => { setMcapVal(e.target.value); setMOverride(null); }} style={inputStyle}/>
+          <select value={mcapUnit} onChange={(e) => setMcapUnit(e.target.value as any)} style={selectStyle}>
+            <option value="M">$M</option>
+            <option value="B">$B</option>
+            <option value="Cr">₹Cr</option>
+            <option value="KCr">₹KCr</option>
+          </select>
+        </div>
+        <div style={scoreBox(M)}>{M || '?'}</div>
+      </div>
+      {autoM && (
+        <div style={{ fontSize: F.hint, color: '#64748B', padding: '4px 0 8px 152px' }}>
+          = <b style={{ color: '#06B6D4' }}>{autoM.pct.toFixed(1)}%</b> of mcap →
+          {autoM.pct >= 30 ? ' massive (5/5)' : autoM.pct >= 10 ? ' large (4/5)' : autoM.pct >= 5 ? ' material (3/5)' : autoM.pct >= 1 ? ' small (2/5)' : ' negligible (1/5)'}
+          <button onClick={() => setMOverride(mOverride === null ? M : null)} style={{ marginLeft: 14, background: 'none', border: '1px solid #1F2937', borderRadius: 4, padding: '2px 8px', color: '#94A3B8', fontSize: 11, cursor: 'pointer' }}>
+            {mOverride === null ? 'Override' : `Override: ${mOverride}/5 ✓`}
+          </button>
+          {mOverride !== null && (
+            <>
+              {[1,2,3,4,5].map(n => (
+                <button key={n} onClick={() => setMOverride(n)} style={{ marginLeft: 4, background: mOverride === n ? '#06B6D4' : 'none', border: '1px solid #1F2937', borderRadius: 4, padding: '2px 7px', color: mOverride === n ? '#000' : '#94A3B8', fontSize: 11, cursor: 'pointer', fontWeight: 700 }}>{n}</button>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Permanence */}
+      <div style={rowStyle}>
+        <div style={labelStyle}>Permanence</div>
+        <select value={P} onChange={(e) => setP(parseInt(e.target.value))} style={selectStyle}>
+          <option value={0}>Select…</option>
+          <option value={5}>5 · Multi-year contract / structural moat / TAM raise</option>
+          <option value={4}>4 · 1-2 year clear benefit / acquisition / regulatory clearance</option>
+          <option value={3}>3 · Single fiscal year impact / new product launch</option>
+          <option value={2}>2 · Single quarter beat / one-time gain</option>
+          <option value={1}>1 · One-off PR / partnership / cosmetic</option>
+        </select>
+        <div style={scoreBox(P)}>{P || '?'}</div>
+      </div>
+
+      {/* Velocity */}
+      <div style={rowStyle}>
+        <div style={labelStyle}>Velocity</div>
+        <select value={V} onChange={(e) => setV(parseInt(e.target.value))} style={selectStyle}>
+          <option value={0}>Select…</option>
+          <option value={5}>5 · Already in current quarter results</option>
+          <option value={4}>4 · Will show within next 1-2 quarters</option>
+          <option value={3}>3 · Within 12 months</option>
+          <option value={2}>2 · 1-3 years out</option>
+          <option value={1}>1 · 3+ years / research-stage</option>
+        </select>
+        <div style={scoreBox(V)}>{V || '?'}</div>
+      </div>
+
+      {/* Surprise */}
+      <div style={rowStyle}>
+        <div style={labelStyle}>Surprise</div>
+        <select value={S} onChange={(e) => setS(parseInt(e.target.value))} style={selectStyle}>
+          <option value={0}>Select…</option>
+          <option value={5}>5 · Totally unexpected / no leaks / shocked the street</option>
+          <option value={4}>4 · Larger than consensus expected</option>
+          <option value={3}>3 · Roughly in line with expectations</option>
+          <option value={2}>2 · Mostly priced in already</option>
+          <option value={1}>1 · Fully anticipated / sell-side already raised TP</option>
+        </select>
+        <div style={scoreBox(S)}>{S || '?'}</div>
+      </div>
+
+      {/* Verifiability */}
+      <div style={rowStyle}>
+        <div style={labelStyle}>Verifiability</div>
+        <select value={Vf} onChange={(e) => setVf(parseInt(e.target.value))} style={selectStyle}>
+          <option value={0}>Select…</option>
+          <option value={5}>5 · SEC/SEBI filing / signed press release / earnings transcript</option>
+          <option value={4}>4 · Bloomberg / Reuters / Mint with named source</option>
+          <option value={3}>3 · CNBC / Business Standard / reputable trade press</option>
+          <option value={2}>2 · &quot;Reportedly&quot; / Twitter scoop / Discord leak</option>
+          <option value={1}>1 · Pure rumor / chat board / 4chan</option>
+        </select>
+        <div style={scoreBox(Vf)}>{Vf || '?'}</div>
+      </div>
+
+      {/* Total + Verdict */}
+      <div style={{
+        marginTop: 22, padding: '24px 28px', borderRadius: 12,
+        background: filled ? `linear-gradient(135deg, ${verdict.color}22 0%, ${verdict.color}11 100%)` : '#161B27',
+        border: `2px solid ${verdict.color}55`,
+        display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 24, alignItems: 'center',
+      }}>
+        <div style={{ fontSize: F.big, fontWeight: 800, color: verdict.color, lineHeight: 1, fontFamily: 'ui-monospace, SFMono-Regular, monospace', minWidth: 100, textAlign: 'center' }}>
+          {total || 0}<span style={{ fontSize: 22, color: '#64748B' }}>/25</span>
+        </div>
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: verdict.color, marginBottom: 4 }}>{verdict.label}</div>
+          {verdict.detail && <div style={{ fontSize: 15, color: '#94A3B8' }}>{verdict.detail}</div>}
+        </div>
+        <button onClick={() => { setDealVal(''); setMcapVal(''); setP(0); setV(0); setS(0); setVf(0); setMOverride(null); }} style={{
+          background: '#11151F', border: '1px solid #1F2937', borderRadius: 6, padding: '10px 16px',
+          color: '#94A3B8', fontSize: 14, fontWeight: 700, cursor: 'pointer',
+        }}>↻ Reset</button>
+      </div>
+
+      {/* Quick examples to load */}
+      <div style={{ marginTop: 16, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+        <span style={{ fontSize: 13, color: '#64748B', alignSelf: 'center', marginRight: 6 }}>Try a real example:</span>
+        <button onClick={() => { setDealVal('100'); setDealUnit('B'); setMcapVal('120'); setMcapUnit('B'); setP(5); setV(3); setS(5); setVf(5); setMOverride(null); }}
+          style={{ background: '#161B27', border: '1px solid #22C55E55', borderRadius: 5, padding: '6px 12px', color: '#22C55E', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+          MICRON $100B SCAs
+        </button>
+        <button onClick={() => { setDealVal('25'); setDealUnit('KCr'); setMcapVal('600'); setMcapUnit('KCr'); setP(5); setV(2); setS(4); setVf(5); setMOverride(null); }}
+          style={{ background: '#161B27', border: '1px solid #22C55E55', borderRadius: 5, padding: '6px 12px', color: '#22C55E', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+          L&amp;T Bullet Train ₹25KCr
+        </button>
+        <button onClick={() => { setDealVal('7'); setDealUnit('B'); setMcapVal('30'); setMcapUnit('B'); setP(4); setV(4); setS(4); setVf(5); setMOverride(null); }}
+          style={{ background: '#161B27', border: '1px solid #06B6D455', borderRadius: 5, padding: '6px 12px', color: '#06B6D4', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+          onsemi/Synaptics $7B
+        </button>
+        <button onClick={() => { setDealVal('0.05'); setDealUnit('B'); setMcapVal('5'); setMcapUnit('B'); setP(1); setV(2); setS(2); setVf(5); setMOverride(null); }}
+          style={{ background: '#161B27', border: '1px solid #EF444455', borderRadius: 5, padding: '6px 12px', color: '#EF4444', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+          Carter&apos;s WNBA Partnership
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function NewsTriagePage() {
   return (
     <div style={{
@@ -149,6 +362,9 @@ export default function NewsTriagePage() {
           <tr><td><b>&lt; 10</b></td><td>IGNORE. Pure noise.</td><td>—</td></tr>
         </tbody>
       </table>
+
+      {/* ── PATCH zzz116 — Interactive Calculator ───────────────────────── */}
+      <ScoreCalculator />
 
       {/* ── DECISION TREE FLOWCHART ─────────────────────────────────────── */}
       <h2>2 · The 30-Second Decision Tree</h2>
