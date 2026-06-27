@@ -4148,6 +4148,38 @@ function USAChecklist() {
 }
 
 const USA_STORAGE_KEY = 'mb_usa_scored_v1';
+// PATCH zzz108 — Slim Analytics-only payload key. The full USA storage often
+// blows past the 5MB localStorage cap once a user has uploaded a 100+ row
+// TradingView CSV (each row has 50+ columns). When the full write is rejected
+// silently by the browser, Analytics ends up with usaRows.len=0 even though
+// USA Multibagger's React state has the rows. The slim key writes only the
+// fields Analytics actually reads — typically 5-10× smaller — and survives
+// quota pressure that kills the full write.
+const USA_SLIM_KEY = 'mb_usa_slim_v1';
+function toSlimUsaRows(rows: any[]): any[] {
+  return (rows || []).map((r: any) => ({
+    symbol: r.symbol,
+    company: r.company || r.companyName,
+    score: r.score,
+    grade: r.grade,
+    sector: r.sector,
+    marketCapB: r.marketCapB,
+    fcfOpDivergence: r.fcfOpDivergence,
+    postRunStretched: r.postRunStretched,
+    earningsProximityDays: r.earningsProximityDays,
+    suggestedMaxPositionPct: r.suggestedMaxPositionPct,
+    _screeners: r._screeners,
+    ruleOf40: r.ruleOf40,
+    revenueGrowthAnn: r.revenueGrowthAnn,
+    fcfMarginAnn: r.fcfMarginAnn,
+    capTier: r.capTier,
+    roic: r.roic,
+    roe: r.roe,
+    grossMarginTtm: r.grossMarginTtm || r.grossMarginAnn,
+    piotroskiFScore: r.piotroskiFScore,
+    market: 'USA',
+  }));
+}
 
 function USACompare() {
   const fileRef = React.useRef<HTMLInputElement>(null);
@@ -4211,12 +4243,29 @@ function USACompare() {
     const ranked = applyUSARanking(r);
     setRowsState(ranked);
     const __mbUsa = JSON.stringify(ranked);
+    let __fullWriteOk = false;
     try {
       localStorage.setItem(USA_STORAGE_KEY, __mbUsa);
+      __fullWriteOk = true;
       // AUDIT_100 #77 — stamp the upload time so we can warn when the
       // CSV is > 60 days old (stale fundamentals vs fresh price risk
       // called out in CLAUDE.md §10.10).
       localStorage.setItem('mb_usa_uploaded_at_v1', String(Date.now()));
+    } catch (e) {
+      try { console.warn('[mb-usa] zzz108 full LS write failed (likely quota), will rely on slim payload:', e); } catch {}
+    }
+    // PATCH zzz108 — Slim payload write. Even if the full write succeeded,
+    // we still write the slim version so Analytics has a stable fast-path
+    // read. If the full write FAILED (quota), the slim write is the only
+    // way Analytics will see the USA data.
+    try {
+      const slimJson = JSON.stringify(toSlimUsaRows(ranked));
+      localStorage.setItem(USA_SLIM_KEY, slimJson);
+      try { console.log(`[mb-usa] zzz108 slim payload written (${slimJson.length}B, ${ranked.length} rows, fullWriteOk=${__fullWriteOk})`); } catch {}
+    } catch (e2) {
+      try { console.error('[mb-usa] zzz108 slim LS write ALSO failed:', e2); } catch {}
+    }
+    try {
       // PATCH 0471 — broadcast cross-tab update so Re-rating/Signals refresh
       // their derived universes immediately after a USA upload (matches
       // India behaviour set up in 0453 P1-18).
@@ -5797,7 +5846,7 @@ function MultibaggerAnalytics({
     const refresh = () => bumpData();
     const onStorage = (e: StorageEvent) => {
       if (!e.key) { refresh(); return; }
-      if (e.key === USA_STORAGE_KEY || e.key === 'mb_india_prev_scores_v1' || e.key === 'mb_usa_prev_scores_v1' || e.key === 'mb_excel_scored_v2') refresh();
+      if (e.key === USA_STORAGE_KEY || e.key === USA_SLIM_KEY || e.key === 'mb_india_prev_scores_v1' || e.key === 'mb_usa_prev_scores_v1' || e.key === 'mb_excel_scored_v2') refresh();
     };
     window.addEventListener('storage', onStorage);
     window.addEventListener('mb-upload:updated', refresh);
@@ -5807,17 +5856,19 @@ function MultibaggerAnalytics({
     // PATCH zzz105 — poller fallback for same-tab uploads where the storage
     // event doesn't fire (browser same-tab semantics). Checks LS length every
     // 2s; if either USA or India dataset changed size, bump.
-    let lastUsaLen = 0, lastIndiaLen = 0;
+    let lastUsaLen = 0, lastUsaSlimLen = 0, lastIndiaLen = 0;
     try {
       lastUsaLen = (localStorage.getItem(USA_STORAGE_KEY) || '').length;
+      lastUsaSlimLen = (localStorage.getItem(USA_SLIM_KEY) || '').length;
       lastIndiaLen = (localStorage.getItem('mb_excel_scored_v2') || '').length;
     } catch {}
     const poller = setInterval(() => {
       try {
         const u = (localStorage.getItem(USA_STORAGE_KEY) || '').length;
+        const us = (localStorage.getItem(USA_SLIM_KEY) || '').length;
         const i = (localStorage.getItem('mb_excel_scored_v2') || '').length;
-        if (u !== lastUsaLen || i !== lastIndiaLen) {
-          lastUsaLen = u; lastIndiaLen = i;
+        if (u !== lastUsaLen || us !== lastUsaSlimLen || i !== lastIndiaLen) {
+          lastUsaLen = u; lastUsaSlimLen = us; lastIndiaLen = i;
           refresh();
         }
       } catch {}
@@ -5833,8 +5884,24 @@ function MultibaggerAnalytics({
   const usaRows = React.useMemo<any[]>(() => {
     if (typeof window === 'undefined') return [];
     try {
+      // PATCH zzz108 — Try full payload first, fall back to slim payload.
+      // Slim payload survives 5MB localStorage quota pressure that kills the
+      // full one. This is the bridge that finally makes USA Analytics see
+      // the 100+ stock TradingView uploads.
       const raw = localStorage.getItem(USA_STORAGE_KEY);
-      return raw ? JSON.parse(raw) : [];
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+      const slimRaw = localStorage.getItem(USA_SLIM_KEY);
+      if (slimRaw) {
+        const slim = JSON.parse(slimRaw);
+        if (Array.isArray(slim) && slim.length > 0) {
+          try { console.log(`[mb-analytics] zzz108 using slim USA payload (${slim.length} rows, full was empty/missing)`); } catch {}
+          return slim;
+        }
+      }
+      return [];
     } catch { return []; }
   }, [dataTick]);
 
