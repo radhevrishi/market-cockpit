@@ -4156,6 +4156,27 @@ const USA_STORAGE_KEY = 'mb_usa_scored_v1';
 // fields Analytics actually reads — typically 5-10× smaller — and survives
 // quota pressure that kills the full write.
 const USA_SLIM_KEY = 'mb_usa_slim_v1';
+
+// PATCH zzz110 — IN-MEMORY USA ROWS BRIDGE.
+// Five prior patches (zzz105/106/107/108/109) all assumed localStorage works.
+// On this user's session it apparently doesn't — Analytics keeps reporting
+// usaRows.len=0 even after multiple uploads. This module-level cache is the
+// bypass: USACompare writes here synchronously, MultibaggerAnalytics reads
+// here first. No browser storage involved. Survives sub-tab switches inside
+// the Multibagger Research Engine (same React tree, same page session).
+// Lost on full page reload — user reuploads in that case, same as today.
+let _usaRowsMemCache: any[] = [];
+function _setUsaRowsMemCache(rows: any[]) {
+  _usaRowsMemCache = Array.isArray(rows) ? rows : [];
+  try {
+    window.dispatchEvent(new CustomEvent('mb-upload:updated', {
+      detail: { market: 'USA', count: _usaRowsMemCache.length, source: 'mem-cache' },
+    }));
+  } catch {}
+}
+function _getUsaRowsMemCache(): any[] {
+  return _usaRowsMemCache;
+}
 function toSlimUsaRows(rows: any[]): any[] {
   return (rows || []).map((r: any) => ({
     symbol: r.symbol,
@@ -4184,30 +4205,34 @@ function toSlimUsaRows(rows: any[]): any[] {
 function USACompare() {
   const fileRef = React.useRef<HTMLInputElement>(null);
   const [rows, setRowsState] = React.useState<USAResult[]>(() => {
-    // PATCH zzz109 — Two-key restore: try full payload first, fall back to
-    // slim. If the previous setRows failed to persist the full payload due
-    // to localStorage quota (5MB cap with India universe + prev-scores
-    // already loaded), the slim payload — written in zzz108 — is the only
-    // copy still in storage. Without this fallback, the USA Multibagger
-    // tab silently restarts at 0 stocks every navigation, which made the
-    // re-upload "lose" data and made Analytics permanently empty.
+    // PATCH zzz110 — Check in-memory cache FIRST (cross-mount survival within
+    // the same page session). Then full LS. Then slim LS (zzz108/109).
+    try {
+      const mem = _getUsaRowsMemCache();
+      if (Array.isArray(mem) && mem.length > 0) {
+        try { console.log(`[mb-usa] zzz110 restored ${mem.length} rows from in-memory cache`); } catch {}
+        return applyUSARanking((mem as USAResult[]).sort((a,b)=>b.score-a.score));
+      }
+    } catch {}
     try {
       const saved = localStorage.getItem(USA_STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved) as USAResult[];
         if (Array.isArray(parsed) && parsed.length > 0) {
           const rescored = parsed.map(r => scoreUSARow(r as unknown as USARow));
-          return applyUSARanking(rescored.sort((a,b)=>b.score-a.score));
+          const ranked = applyUSARanking(rescored.sort((a,b)=>b.score-a.score));
+          _setUsaRowsMemCache(ranked);  // zzz110 — populate cache from LS restore
+          return ranked;
         }
       }
-      // PATCH zzz109 — slim fallback
       const slimRaw = localStorage.getItem('mb_usa_slim_v1');
       if (slimRaw) {
         const slim = JSON.parse(slimRaw);
         if (Array.isArray(slim) && slim.length > 0) {
-          try { console.log(`[mb-usa] zzz109 USA Multibagger tab restored from slim payload (${slim.length} rows — full payload was empty/missing, likely quota-rejected)`); } catch {}
-          // Slim rows are pre-scored; just apply ranking.
-          return applyUSARanking((slim as USAResult[]).sort((a,b)=>b.score-a.score));
+          try { console.log(`[mb-usa] zzz109 restored ${slim.length} rows from slim payload`); } catch {}
+          const ranked = applyUSARanking((slim as USAResult[]).sort((a,b)=>b.score-a.score));
+          _setUsaRowsMemCache(ranked);
+          return ranked;
         }
       }
     } catch {}
@@ -4261,6 +4286,10 @@ function USACompare() {
   function setRows(r: USAResult[]) {
     const ranked = applyUSARanking(r);
     setRowsState(ranked);
+    // PATCH zzz110 — synchronous in-memory bridge to MultibaggerAnalytics.
+    // Cannot fail. Independent of localStorage. This is the primary path now.
+    _setUsaRowsMemCache(ranked);
+    try { console.log(`[mb-usa] zzz110 memCache set with ${ranked.length} rows`); } catch {}
     const __mbUsa = JSON.stringify(ranked);
     let __fullWriteOk = false;
     try {
@@ -5902,11 +5931,19 @@ function MultibaggerAnalytics({
 
   const usaRows = React.useMemo<any[]>(() => {
     if (typeof window === 'undefined') return [];
+    // PATCH zzz110 — IN-MEMORY CACHE FIRST. This is the bypass that finally
+    // closes the bug: USACompare wrote here synchronously when the user
+    // uploaded their CSV; we read here unconditionally. localStorage is no
+    // longer required for the USA Analytics pipeline within the same page
+    // session. LS is just persistence-across-reload now.
     try {
-      // PATCH zzz108 — Try full payload first, fall back to slim payload.
-      // Slim payload survives 5MB localStorage quota pressure that kills the
-      // full one. This is the bridge that finally makes USA Analytics see
-      // the 100+ stock TradingView uploads.
+      const mem = _getUsaRowsMemCache();
+      if (Array.isArray(mem) && mem.length > 0) {
+        try { console.log(`[mb-analytics] zzz110 using in-memory USA cache (${mem.length} rows)`); } catch {}
+        return mem;
+      }
+    } catch {}
+    try {
       const raw = localStorage.getItem(USA_STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
