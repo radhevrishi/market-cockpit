@@ -19,6 +19,108 @@ const C = {
 };
 const F = { xs: 13, sm: 14.5, md: 16, base: 17, lg: 20, xl: 24, xxl: 32, hero: 40 };
 
+// zzz121 — Mega Contract Scanner prompt (full text per user spec — do not truncate)
+const SCANNER_PROMPT = `Now scan company news, SEC/SEBI filings, investor decks, earnings releases, and Tier-1 analyst , media reports , News Websites for mega contracts, transformational multi-year programs, or strategic chokepoint frameworks that reset earnings power or extend multi-year visibility — even if awarded in smaller tranches.
+
+✅ Inclusion Filters (ALL apply)
+A) Size (ANY one):
+•	≥ $300M firm contract/order/Framework/ public-private agreement, OR
+•	≥ 10× backlog impact, OR
+•	3–10y committed ≥ 20% LTM revenue OR ≥10% mcap, OR
+•	JV/framework ≥ $5B with ≥ $300M firm orders expected in 12M.
+➡️ If a 10-year (or longer) agreement's or total value of Agreement / Contract  ≥ 30% of current market capitalization, ignore all other criteria and include automatically (🌟 automatic inclusion
+✅ Inclusion Filters (ALL apply)
+A) Size (ANY one):
+• ≥ $500 M firm contract/order, OR
+• ≥ 10× backlog impact, OR
+• 3–10 y committed ≥ 20 % LTM revenue OR ≥ 10 % mcap, OR
+• Multi-year agreement, framework, or public-private / hyperscaler JV whose announced or implied total value ≥ 30 % of current market capitalization, even if portions are future-phased or not yet fully firmed (🌟 automatic inclusion), OR
+• JV/framework ≥ $5 B with ≥ $500 M firm orders expected in 12 M.
+B) Strategic Theme (ONE):
+•	AI Infrastructure (DCs, hyperscaler leases, interconnect/fabric, fabs, thermal/power)
+•	Energy Transition (grid/T&D, renewables, BESS, uranium/nuclear incl. enrichment, SMR)
+•	Defense/Aerospace (jets, missiles, naval, radar/EW, C4ISR, space)
+•	Semiconductor Supply Chain (fab tools, packaging, interconnect, rare earths)
+•	Critical National/Strategic Programs (govt multi-year appropriations)
+•	Large-scale Colo/HPC Leases (MSFT/GOOG/AMZN/META or major financials)
+•	neocloud / AI infrastructure
+•	Quantum
+•	Crypto
+•	Power
+•	Grid
+C) Duration & Commitment:
+•	Firm visibility ≥ 3 years (prefer ≥5–10y)
+•	Binding or officially announced long-term framework / public-private agreement with defined counterparty, minimum tenor ≥ 5 y, and disclosed financial or capacity commitments (offtake, capex, JV share, price-floor, etc.)
+•	Counterparties: Hyperscaler / Tier-1 Gov-Defense / Top-3 Utility / Major financial backer
+
+🔒 Chokepoint Exception + Cumulative Visibility Override
+Also include contracts < $500 M if ALL (or most) apply:
+• Company is a strategic chokepoint (sole/near-sole producer/refiner/enricher in U.S./allied supply chain; < 3 global competitors).
+• Visibility ≥ 5 years, policy-backed (DoD / DOE / GoI / EC / Utilities / Tier-1 industrial).
+• Cumulative federal or industrial awards + loans + preferred equity + price-floor offtakes ≥ $250 M (36 mo) or ≥ $500 M (48 mo).
+• Includes public-private packages where financing + price mechanisms directly fund capacity/offtake (e.g., preferred equity + loan + 10-year price floor = binding support).
+• Belongs to a mission-critical theme (rare earths, uranium, HALEU, grid transformers, AI infrastructure materials).
+
+📌 Tag as: 🔒 Strategic Chokepoint + 🧭 Policy-Backed Framework and show cumulative $.
+
+
+🌍 Strategic Program / Framework Override
+Also include agreements that:
+• Are announced by government or Tier-1 hyperscaler as part of a national or hyperscale infrastructure program;
+• Involve ≥ $300 M disclosed or implied total value even if firm tranches are smaller;
+• Provide ≥ 5-year forward visibility through policy-backing, loan guarantees, or public-private construction financing;
+• Create new capacity or supply independence (rare-earths, data-center power, chip fabs, AI infrastructure).
+📌 Tag as: 🧭 Strategic Framework
+
+❌ Exclusions
+•	< $300M AND <5% mcap (unless ≥10× backlog OR chokepoint override)
+•	MOUs/LOIs/pilots without binding $ or term
+•	Amendments/extensions without new $ or term
+•	Non-core or one-offs
+
+🔍 Normalization & Verification
+•	Normalize all contract values to USD (note original currency if >10% deviation).
+•	Verify via ≥2 credible sources — at least one primary disclosure (SEC/SEBI filing, 6-K/8-K/10-Q, investor deck, or official company press release) plus one Tier-1 media or analyst confirmation.
+•	If a 6-K / investor deck / regulatory filing explicitly mentions the deal, treat it as binding, even if structured in phases or tranches.
+•	Include when the filing or release specifies:
+•	"Firm commitments," "take-or-pay," "lease agreements," "framework allocations," or "contracted capacity."
+•	Revenue visibility ≥ 3 years and disclosed counterparty (e.g., hyperscaler, Tier-1 Gov/Utility).
+• Reject items appearing only in rumor media, blogs, or social posts without filing or Tier-1 corroboration.
+• If value or execution is staged (e.g., phased capex, optional tranches), tag as 🧭 Strategic Framework and specify firm portion separately.
+• If the company confirms the deal via SEC filing or investor deck (as in Nebius–Microsoft, 2025-09-08 6-K), automatically qualify it under verified inclusion.
+• Document all sources at the end of each entry for audit transparency.
+• Mega-caps > $100 B: still include < 5 % mcap items if ≥ $5 B absolute.
+• Frameworks: note shared vs. company-specific and expected firm-order timeline.
+
+⚡ Impact Flags
+•	🌟 ≥ mcap OR ≥30% mcap
+•	🔥 ≥5× backlog OR ≥50% LTM revenue
+•	✅ ≥10y visibility
+•	🔒 Strategic chokepoint (cumulative override)
+
+📊 Ranking
+•	🌟 > 🔥 > ✅ > 🔒
+•	Then by $ size, term
+•	Counterparty: Hyperscaler > Tier-1 Gov > Utility > Financial
+•	New > extension (show incremental $)
+•	Deduplicate per event/date
+
+📌 Output Format
+· [Ticker] → [Contract/framework size or cumulative (USD), program, counterparty]
+([Order date: YYYY-MM-DD] Impact: backlog multiple / % revenue base / visibility [take-or-pay/lease/framework]; cumulative $ if chokepoint) [Flags]
+
+🧪 Examples
+· LEU → $2.7B DOE HALEU framework (DOE)
+([2025-04-29] Impact: shared framework, firm orders within 12M / decade visibility) ✅🔒
+· WULF → $3.7B AI hosting lease (10y, opt. to $8.7B) (Google)
+([2025-08-14] Impact: revenue base +30% / decade visibility [lease]) 🌟✅
+· NBIS → $17.4B AI infrastructure JV (Microsoft)
+([2025-09-08] Impact: multi-year compute capacity / 5y visibility [JV]) 🌟✅
+· PWR → $2B multi-year T&D EPC awards (Top-3 utilities)
+([2025-05-15] Impact: ~3× backlog / 5y visibility [EPC]) 🔥
+· ANET → $500M AI fabric orders (Top-2 hyperscalers)
+([2025-07-20] Impact: revenue mix reset / 3–5y visibility [orders]) ✅`;
+
 type Rating = 'Good' | 'Neutral' | 'No edge' | '';
 type StyleDef = {
   letter: string; name: string; color: string; rating: Rating;
@@ -697,6 +799,50 @@ export default function InvestingOSPage() {
 
         {/* 12.5 · CRITICAL TRADING PLAYBOOK — zzz120 — tight cheat-sheet of what to actually trade */}
         <SectionHead id="playbook" n={13} title="⚡ Critical Trading Playbook" sub="The tight version — only what to actually trade. Few bullets per strategy + real examples. Use this as the day-to-day reference; the full theory lives in section 1." color={C.cyan} />
+
+        {/* zzz121 — Mega Contract Scanner: opens ChatGPT or Perplexity with the full prompt pre-loaded */}
+        <div style={{ background: `${C.green}0d`, border: `1px solid ${C.green}40`, borderRadius: 14, padding: 16, marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: F.lg, fontWeight: 900, color: C.green }}>🛰 Mega Contract Scanner</span>
+            <span style={{ fontSize: F.xs, color: C.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4 }}>powers your A · Transformational Contracts edge</span>
+          </div>
+          <div style={{ fontSize: F.sm, color: C.muted, lineHeight: 1.55, marginBottom: 12 }}>
+            Click either button — the full scanner prompt opens pre-loaded in your AI of choice (SEC/SEBI filings + investor decks + Tier-1 media). Perplexity auto-submits; ChatGPT pre-fills, hit Enter. If a URL gets truncated, use Copy and paste it manually.
+          </div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+            <a
+              href={`https://chatgpt.com/?q=${encodeURIComponent(SCANNER_PROMPT)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ background: C.green, color: '#06140b', fontSize: F.sm, fontWeight: 900, padding: '11px 18px', borderRadius: 10, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            >🤖 Scan via ChatGPT →</a>
+            <a
+              href={`https://www.perplexity.ai/search?q=${encodeURIComponent(SCANNER_PROMPT)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ background: C.teal, color: '#04201c', fontSize: F.sm, fontWeight: 900, padding: '11px 18px', borderRadius: 10, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            >🔮 Scan via Perplexity →</a>
+            <button
+              onClick={() => {
+                try {
+                  navigator.clipboard.writeText(SCANNER_PROMPT);
+                  // best-effort visual confirmation
+                  // eslint-disable-next-line no-alert
+                  alert('Scanner prompt copied — paste into any AI');
+                } catch {
+                  // eslint-disable-next-line no-alert
+                  alert('Copy failed — your browser blocked clipboard access');
+                }
+              }}
+              style={{ background: C.panel2, color: C.txt, fontSize: F.sm, fontWeight: 800, padding: '11px 18px', borderRadius: 10, border: `1px solid ${C.line2}`, cursor: 'pointer' }}
+            >📋 Copy prompt</button>
+            <details style={{ marginLeft: 'auto' }}>
+              <summary style={{ cursor: 'pointer', fontSize: F.xs, color: C.muted, fontWeight: 700 }}>View prompt</summary>
+              <pre style={{ marginTop: 10, padding: 12, background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 8, fontSize: F.xs, color: C.txt, lineHeight: 1.55, whiteSpace: 'pre-wrap', maxHeight: 320, overflow: 'auto', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{SCANNER_PROMPT}</pre>
+            </details>
+          </div>
+        </div>
+
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: 12 }}>
 
           {/* A · Transformational Contracts */}
