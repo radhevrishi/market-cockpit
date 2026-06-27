@@ -16,7 +16,6 @@ name: Scrape Super Investor holdings from Trendlyne (every 6h)
 on:
   schedule:
     - cron: '15 */6 * * *'    # every 6h at :15 (offset from the Railway cron at :00)
-    - cron: '15 */3 * * *'  # 1101sss doubled from above
   workflow_dispatch:
     inputs:
       limit:

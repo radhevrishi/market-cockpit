@@ -17,9 +17,7 @@ on:
     # Commodities don't move that fast intraday for this app's purpose;
     # 2 snapshots/day (morning + evening) are enough.
     - cron: '15 1 * * *'    # 06:45 IST — morning
-    - cron: '15 13 * * *'  # 1101sss doubled from above
     - cron: '45 14 * * *'   # 20:15 IST — evening
-    - cron: '45 2 * * *'  # 1101sss doubled from above
   workflow_dispatch: {}
 
 concurrency:

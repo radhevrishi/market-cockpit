@@ -19,9 +19,7 @@ on:
     # Keep morning (06:30 IST) + post-close (20:00 IST). Mid-session
     # runs dropped — interactive Refresh button still works.
     - cron: '0 1 * * *'    # 06:30 IST — morning
-    - cron: '0 13 * * *'  # 1101sss doubled from above
     - cron: '30 14 * * *'  # 20:00 IST — evening
-    - cron: '30 2 * * *'  # 1101sss doubled from above
   workflow_dispatch: {}    # manual trigger from GitHub UI
 
 concurrency:

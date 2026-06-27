@@ -26,9 +26,7 @@ on:
     # batch update. Mid-day refreshes dropped — users opening /signals
     # mid-day will use last-batch data + can manually click Refresh.
     - cron: '30 1 * * *'    # 07:00 IST — pre-open
-    - cron: '30 13 * * *'  # 1101sss doubled from above
     - cron: '0 15 * * *'    # 20:30 IST — post-close evening batch
-    - cron: '0 3 * * *'  # 1101sss doubled from above
   workflow_dispatch: {}
 
 concurrency:

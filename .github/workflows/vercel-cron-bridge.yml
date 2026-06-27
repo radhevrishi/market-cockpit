@@ -13,46 +13,31 @@ name: Vercel Cron Bridge
 # Required secrets:
 #   CRON_SECRET             - same value as Vercel env var (gates the endpoints)
 #
-# PATCH 1101yyy: doubling commit (1101sss) added new cron times but didn't add
-# matching cases below — every doubled cron fired and bailed with "Unknown
-# schedule". This file now maps every cron expression in the schedule list
-# (original + doubled) to a route via combined `|` cases.
+# Schedule routing via github.event.schedule (matches the cron expression):
 # ----------
 
 on:
   schedule:
     # Times in UTC. IST = UTC + 5:30.
     - cron: '0 1 * * *'        # 01:00 UTC daily   -> refresh-earnings-calendar
-    - cron: '0 13 * * *'  # 1101sss doubled from above
     - cron: '0 4 * * 1-5'      # 04:00 UTC Mon-Fri -> intelligence/compute
-    - cron: '0 16 * * 1-5'  # 1101sss doubled from above
     - cron: '15 4 * * 1-5'     # 04:15 UTC Mon-Fri -> earnings-guidance/ingest
-    - cron: '15 16 * * 1-5'  # 1101sss doubled from above
     - cron: '35 4 * * 1-5'     # 04:35 UTC Mon-Fri -> movers-alert?mode=full
-    - cron: '35 16 * * 1-5'  # 1101sss doubled from above
     - cron: '50 4 * * 1-5'     # 04:50 UTC Mon-Fri -> watchlist-alert?mode=full
-    - cron: '50 16 * * 1-5'  # 1101sss doubled from above
     - cron: '30 5 * * *'       # 05:30 UTC daily   -> eo-blockbuster-alert (morning)
-    - cron: '30 17 * * *'  # 1101sss doubled from above
     - cron: '30 15 * * *'      # 15:30 UTC daily   -> eo-blockbuster-alert (evening)
-    - cron: '30 3 * * *'  # 1101sss doubled from above
     # PATCH 1031 - pre-warm the Earnings Opportunities graded cache (last 7
     # days) on Railway so the page is always a warm hit (no Hard Refresh).
     - cron: '0 3 * * *'        # 03:00 UTC daily   -> prewarm-earnings (08:30 IST pre-market)
-    - cron: '0 15 * * *'  # 1101sss doubled from above
     - cron: '0 6 * * *'        # 06:00 UTC daily   -> prewarm-earnings (11:30 IST mid-session)
-    - cron: '0 20 * * *'  # 1101yyy: was '0 18' which collided with hub-ingest
     - cron: '0 11 * * *'       # 11:00 UTC daily   -> prewarm-earnings (16:30 IST post-close)
-    - cron: '0 23 * * *'  # 1101sss doubled from above
     - cron: '0 14 * * *'       # 14:00 UTC daily   -> prewarm-earnings (19:30 IST evening filings)
-    - cron: '0 2 * * *'  # 1101sss doubled from above
     # Phase 1 - durable Postgres archive: persist each day's KV snapshot into
     # raw_filings + earnings_events + calendar_snapshots (idempotent, never destructive).
     - cron: '30 19 * * *'      # 19:30 UTC daily   -> archive-to-postgres (after evening filings settle)
-    - cron: '30 7 * * *'  # 1101sss doubled from above
-    # Ingestion: refresh the current-month KV snapshot from NSE/BSE.
+    # Ingestion: refresh the current-month KV snapshot from NSE/BSE (live = ingestion
+    # only). Runs BEFORE the archive cron so archive-to-postgres then persists KV->PG.
     - cron: '0 18 * * *'       # 18:00 UTC daily   -> hub ingest (current month)
-    - cron: '0 8 * * *'  # 1101yyy: was '0 6' which collided with prewarm
   workflow_dispatch:
     inputs:
       endpoint:
@@ -85,43 +70,43 @@ jobs:
           INPUT="${{ github.event.inputs.endpoint }}"
           echo "Schedule: '$SCHEDULE' / Input: '$INPUT'"
           case "$SCHEDULE" in
-            "0 1 * * *"|"0 13 * * *")
+            "0 1 * * *")
               echo "path=/api/v1/cron/refresh-earnings-calendar" >> "$GITHUB_OUTPUT"
               echo "label=refresh-earnings-calendar" >> "$GITHUB_OUTPUT"
               ;;
-            "0 4 * * 1-5"|"0 16 * * 1-5")
+            "0 4 * * 1-5")
               echo "path=/api/market/intelligence/compute" >> "$GITHUB_OUTPUT"
               echo "label=intelligence-compute" >> "$GITHUB_OUTPUT"
               ;;
-            "15 4 * * 1-5"|"15 16 * * 1-5")
+            "15 4 * * 1-5")
               echo "path=/api/market/earnings-guidance/ingest" >> "$GITHUB_OUTPUT"
               echo "label=earnings-guidance-ingest" >> "$GITHUB_OUTPUT"
               ;;
-            "35 4 * * 1-5"|"35 16 * * 1-5")
+            "35 4 * * 1-5")
               echo "path=/api/bot/movers-alert?mode=full" >> "$GITHUB_OUTPUT"
               echo "label=movers-alert" >> "$GITHUB_OUTPUT"
               ;;
-            "50 4 * * 1-5"|"50 16 * * 1-5")
+            "50 4 * * 1-5")
               echo "path=/api/bot/watchlist-alert?mode=full" >> "$GITHUB_OUTPUT"
               echo "label=watchlist-alert" >> "$GITHUB_OUTPUT"
               ;;
-            "30 5 * * *"|"30 17 * * *")
+            "30 5 * * *")
               echo "path=/api/bot/eo-blockbuster-alert" >> "$GITHUB_OUTPUT"
               echo "label=eo-blockbuster-morning" >> "$GITHUB_OUTPUT"
               ;;
-            "30 15 * * *"|"30 3 * * *")
+            "30 15 * * *")
               echo "path=/api/bot/eo-blockbuster-alert" >> "$GITHUB_OUTPUT"
               echo "label=eo-blockbuster-evening" >> "$GITHUB_OUTPUT"
               ;;
-            "0 3 * * *"|"0 6 * * *"|"0 11 * * *"|"0 14 * * *"|"0 15 * * *"|"0 20 * * *"|"0 23 * * *"|"0 2 * * *")
+            "0 3 * * *"|"0 6 * * *"|"0 11 * * *"|"0 14 * * *")
               echo "path=/api/v1/cron/prewarm-earnings" >> "$GITHUB_OUTPUT"
               echo "label=prewarm-earnings" >> "$GITHUB_OUTPUT"
               ;;
-            "30 19 * * *"|"30 7 * * *")
+            "30 19 * * *")
               echo "path=/api/v1/cron/archive-to-postgres?months=2" >> "$GITHUB_OUTPUT"
               echo "label=archive-to-postgres" >> "$GITHUB_OUTPUT"
               ;;
-            "0 18 * * *"|"0 8 * * *")
+            "0 18 * * *")
               echo "path=/api/market/earnings?ingest=1&force=1&month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
               echo "label=hub-ingest" >> "$GITHUB_OUTPUT"
               ;;
@@ -150,20 +135,36 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
         run: |
+          # OPTION B (hands-free): CRON_SECRET is optional. The warming/ingest/archive
+          # endpoints accept calls when no server-side secret is configured (they only
+          # READ public NSE data and WRITE to our own DB). If a secret IS set we still
+          # send it; if not, we proceed open so the daily refresh never silently stalls.
           if [ -z "$CRON_SECRET" ]; then
             echo "::notice title=Open mode::CRON_SECRET unset - running cron without auth (idempotent, read-only-source endpoints)"
           fi
           PATH_PART="${{ steps.route.outputs.path }}"
           LABEL="${{ steps.route.outputs.label }}"
-          echo "label=$LABEL" >> "$GITHUB_OUTPUT"
+          echo "label=$LABEL" >> "$GITHUB_OUTPUT" 
+          # PATCH 1031 - app moved off Vercel (account suspended -> HTTP 402).
+          # Point every scheduled job at the live Railway deployment, otherwise
+          # NONE of the warming/alert crons reach the running site and the EO
+          # page stays cold (forcing constant manual Hard Refresh / backfill).
+          # Override-able via the CRON_BASE_URL repo secret if the host changes.
           BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
+          # If the path already has ? params, append &secret=; else use ?secret=
           if [[ "$PATH_PART" == *"?"* ]]; then
             URL="$BASE$PATH_PART&secret=$CRON_SECRET"
           else
             URL="$BASE$PATH_PART?secret=$CRON_SECRET"
           fi
+          # Don't print the URL with secret in logs
           SAFE_URL="$BASE$PATH_PART"
           echo "> POST $SAFE_URL  (label=$LABEL)"
+          # Use --max-time 240s - most Vercel functions complete in 10-60s but
+          # earnings-calendar refresh can take longer.
+          # Bot alert routes (/api/bot/*) send alerts from their GET handler;
+          # their POST handler is the Telegram webhook receiver and no-ops on
+          # cron calls. Use GET for bot paths so alerts actually fire.
           METHOD="POST"
           case "$PATH_PART" in
             /api/bot/*) METHOD="GET" ;;
@@ -173,11 +174,18 @@ jobs:
             --max-time 240 \
             "$URL" || echo "000")
           echo "- HTTP $STATUS"
-          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT" 
           head -c 600 /tmp/response.json || true
           echo
           if [ "$STATUS" != "200" ] && [ "$STATUS" != "201" ] && [ "$STATUS" != "202" ] && [ "$STATUS" != "204" ]; then
             echo "::warning title=$LABEL::Vercel returned HTTP $STATUS"
+            # PATCH 1086 — when Railway is recovering (CRIT-01) we get 5xx on
+            # every cron tick, which spams "All jobs failed" notifications and
+            # buries real regressions. The heartbeat (next step) is the
+            # canonical signal mc-guardian uses to detect persistent stops;
+            # treat the job as warning-only here and let guardian alert if
+            # multiple consecutive heartbeats are non-ok. To get loud-fail
+            # back, set repo variable STRICT_CRON_FAIL=1.
             if [[ "$STATUS" == 5* && "${STRICT_CRON_FAIL:-0}" == "1" ]]; then exit 1; fi
             exit 0
           fi
@@ -188,13 +196,22 @@ jobs:
         env:
           CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
         run: |
+          # 10y-ops Section 7.3: POST heartbeat so mc-guardian detects silent stops.
+          # Heartbeat name = the route label (one row per endpoint). Best-effort.
           BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
           LABEL="${{ steps.hit.outputs.label }}"
           STATUS="${{ steps.hit.outputs.status }}"
+          # name fallback: if route step never ran (workflow_dispatch with no schedule), use "vercel-cron-bridge"
           if [ -z "$LABEL" ]; then LABEL="vercel-cron-bridge"; fi
           OK="false"
+          # 2xx counts as ok; 4xx/5xx flag the run as failed for guardian
           if [[ "$STATUS" == 2* ]]; then OK="true"; fi
+          # If the step was skipped (no matching schedule), don't write a misleading heartbeat
           if [[ "${{ steps.hit.outcome }}" == "skipped" ]]; then exit 0; fi
+          # PATCH 1100 — forward the response body as 'error' on non-2xx so the
+          # heartbeat row carries the WHY (was always null before, which is what
+          # made archive-to-postgres 500s opaque). Truncate to 500 chars and
+          # JSON-escape so the curl payload stays well-formed.
           ERR_FIELD="null"
           if [ "$OK" != "true" ] && [ -s /tmp/response.json ]; then
             ERR_JSON=$(head -c 500 /tmp/response.json | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo "null")

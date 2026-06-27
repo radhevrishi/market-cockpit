@@ -15,7 +15,6 @@ on:
     # 22:30 IST → 17:00 UTC, ~3h after market close, gives NSE archives time
     # to publish the day's BHAVCOPY
     - cron: '0 17 * * 1-5'   # weekdays only
-    - cron: '0 5 * * 1-5'  # 1101sss doubled from above
   workflow_dispatch: {}
 
 concurrency:

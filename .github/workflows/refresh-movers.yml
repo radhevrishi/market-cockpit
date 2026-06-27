@@ -17,9 +17,7 @@ on:
     - cron: '0 9 * * 1-5'     # 14:30 IST — pre-close warm
     # Post-close refreshes (final EOD bhavcopy attribution)
     - cron: '15 10 * * 1-5'   # 15:45 IST (Mon-Fri) - just after close
-    - cron: '15 22 * * 1-5'   # 1101sss doubled from above
     - cron: '30 13 * * 1-5'   # 19:00 IST (Mon-Fri) - after final EOD bhavcopy
-    - cron: '30 1 * * 1-5'    # 1101sss doubled from above
   workflow_dispatch: {}
 
 concurrency:

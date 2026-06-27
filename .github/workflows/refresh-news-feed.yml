@@ -10,7 +10,6 @@ name: Refresh News Feed (hourly)
 on:
   schedule:
     - cron: '0 * * * *'   # top of every hour (UTC)
-    - cron: '30 * * * *'  # 1101sss doubled from above
   workflow_dispatch: {}
 
 jobs:
