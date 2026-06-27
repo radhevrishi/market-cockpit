@@ -38,9 +38,9 @@ const Tag = ({ kind, children }: { kind: 'long'|'short'|'sector'|'ignore'|'high'
   const s = map[kind] || map.ignore;
   return (
     <span style={{
-      display: 'inline-block', padding: '2px 8px', borderRadius: 5,
-      background: s.bg, color: s.fg, fontSize: 11, fontWeight: 800,
-      letterSpacing: '0.3px', marginRight: 6,
+      display: 'inline-block', padding: '4px 12px', borderRadius: 6,
+      background: s.bg, color: s.fg, fontSize: 14, fontWeight: 800,
+      letterSpacing: '0.4px', marginRight: 8,
     }}>{children || s.label}</span>
   );
 };
@@ -48,45 +48,45 @@ const Tag = ({ kind, children }: { kind: 'long'|'short'|'sector'|'ignore'|'high'
 export default function NewsTriagePage() {
   return (
     <div style={{
-      maxWidth: 1180, margin: '0 auto', padding: '24px 28px 80px',
+      maxWidth: 1280, margin: '0 auto', padding: '32px 36px 100px',
       color: C.text, fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-      lineHeight: 1.55, fontSize: 14,
+      lineHeight: 1.65, fontSize: 17,
     }}>
       <style>{`
-        h1 { font-size: 30px; font-weight: 800; margin: 0 0 4px; color: #fff; letter-spacing: -0.4px; }
-        h2 { font-size: 21px; font-weight: 700; margin: 32px 0 12px; color: #fff; letter-spacing: -0.2px; }
-        h3 { font-size: 15px; font-weight: 700; margin: 18px 0 6px; color: #E5E7EB; }
-        p  { margin: 6px 0; }
-        ul { margin: 6px 0 8px 18px; padding: 0; }
-        li { margin: 3px 0; }
-        table { border-collapse: collapse; width: 100%; font-size: 12.5px; margin: 6px 0; }
-        th, td { border: 1px solid ${C.border}; padding: 6px 8px; text-align: left; vertical-align: top; }
-        th { background: ${C.panel2}; color: #fff; font-weight: 700; font-size: 12px; }
-        code { background: ${C.panel2}; padding: 1px 5px; border-radius: 3px; font-size: 12px; color: ${C.cyan}; }
-        .panel  { background: ${C.panel}; border: 1px solid ${C.border}; border-radius: 8px; padding: 14px 16px; margin: 10px 0; }
-        .longp  { background: rgba(34,197,94,0.05); border-left: 3px solid ${C.green}; }
-        .shortp { background: rgba(6,182,212,0.05); border-left: 3px solid ${C.cyan}; }
-        .sectp  { background: rgba(139,92,246,0.05); border-left: 3px solid ${C.purple}; }
-        .ignp   { background: rgba(239,68,68,0.04); border-left: 3px solid ${C.red}; }
-        .indp   { background: rgba(255,107,53,0.04); border-left: 3px solid ${C.india}; }
-        .small  { font-size: 12px; color: ${C.text2}; }
-        .grid5  { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin: 12px 0; }
-        .dim    { background: ${C.panel2}; border: 1px solid ${C.border}; border-radius: 8px; padding: 12px; text-align: center; }
-        .dim-n  { font-size: 28px; font-weight: 800; color: ${C.cyan}; line-height: 1; margin: 4px 0; }
-        .dim-l  { font-size: 11px; color: ${C.text3}; text-transform: uppercase; letter-spacing: 0.4px; font-weight: 700; }
-        .dim-d  { font-size: 11.5px; color: ${C.text2}; margin-top: 4px; line-height: 1.35; }
-        .return { display: inline-block; padding: 2px 8px; border-radius: 4px; background: ${C.green}22; color: ${C.green}; font-weight: 800; font-size: 12px; }
-        .loss   { display: inline-block; padding: 2px 8px; border-radius: 4px; background: ${C.red}22; color: ${C.red}; font-weight: 800; font-size: 12px; }
-        .toc-row { display: grid; grid-template-columns: 32px 1fr 80px; gap: 8px; padding: 4px 8px; border-bottom: 1px solid ${C.border}; }
+        h1 { font-size: 40px; font-weight: 800; margin: 0 0 6px; color: #fff; letter-spacing: -0.5px; line-height: 1.15; }
+        h2 { font-size: 28px; font-weight: 700; margin: 42px 0 16px; color: #fff; letter-spacing: -0.3px; line-height: 1.25; }
+        h3 { font-size: 20px; font-weight: 700; margin: 24px 0 10px; color: #E5E7EB; line-height: 1.3; }
+        p  { margin: 10px 0; font-size: 17px; }
+        ul { margin: 10px 0 12px 22px; padding: 0; }
+        li { margin: 6px 0; font-size: 17px; }
+        table { border-collapse: collapse; width: 100%; font-size: 16px; margin: 10px 0; }
+        th, td { border: 1px solid ${C.border}; padding: 10px 12px; text-align: left; vertical-align: top; line-height: 1.5; }
+        th { background: ${C.panel2}; color: #fff; font-weight: 700; font-size: 15px; }
+        code { background: ${C.panel2}; padding: 2px 7px; border-radius: 4px; font-size: 15px; color: ${C.cyan}; }
+        .panel  { background: ${C.panel}; border: 1px solid ${C.border}; border-radius: 10px; padding: 20px 22px; margin: 14px 0; }
+        .longp  { background: rgba(34,197,94,0.05); border-left: 4px solid ${C.green}; }
+        .shortp { background: rgba(6,182,212,0.05); border-left: 4px solid ${C.cyan}; }
+        .sectp  { background: rgba(139,92,246,0.05); border-left: 4px solid ${C.purple}; }
+        .ignp   { background: rgba(239,68,68,0.04); border-left: 4px solid ${C.red}; }
+        .indp   { background: rgba(255,107,53,0.04); border-left: 4px solid ${C.india}; }
+        .small  { font-size: 15px; color: ${C.text2}; }
+        .grid5  { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin: 18px 0; }
+        .dim    { background: ${C.panel2}; border: 1px solid ${C.border}; border-radius: 10px; padding: 18px; text-align: center; }
+        .dim-n  { font-size: 42px; font-weight: 800; color: ${C.cyan}; line-height: 1; margin: 6px 0; }
+        .dim-l  { font-size: 14px; color: ${C.text3}; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; }
+        .dim-d  { font-size: 14px; color: ${C.text2}; margin-top: 8px; line-height: 1.45; }
+        .return { display: inline-block; padding: 4px 12px; border-radius: 5px; background: ${C.green}22; color: ${C.green}; font-weight: 800; font-size: 14px; margin-left: 6px; }
+        .loss   { display: inline-block; padding: 4px 12px; border-radius: 5px; background: ${C.red}22; color: ${C.red}; font-weight: 800; font-size: 14px; margin-left: 6px; }
+        .toc-row { display: grid; grid-template-columns: 40px 1fr 110px; gap: 12px; padding: 8px 12px; border-bottom: 1px solid ${C.border}; font-size: 16px; }
       `}</style>
 
-      <div style={{ marginBottom: 16, color: C.text3, fontSize: 12, fontWeight: 600, letterSpacing: '0.4px', textTransform: 'uppercase' }}>
+      <div style={{ marginBottom: 20, color: C.text3, fontSize: 14, fontWeight: 600, letterSpacing: '0.5px', textTransform: 'uppercase' }}>
         Market Cockpit · Decision Master · News Triage v2
       </div>
       <h1>📰 The News Triage Playbook</h1>
-      <div className="small" style={{ marginBottom: 18, maxWidth: 880 }}>
+      <div style={{ marginBottom: 24, maxWidth: 980, fontSize: 18, lineHeight: 1.65, color: C.text2 }}>
         90% of financial news is noise. 10% can change a stock&apos;s 3-year trajectory. Job isn&apos;t to read everything —
-        score every headline in 30 seconds, decide: <b>Long-term buy · Short-term trade · Sector play · Ignore.</b>
+        score every headline in 30 seconds, decide: <b style={{ color: C.text }}>Long-term buy · Short-term trade · Sector play · Ignore.</b>
         This playbook gives you the framework + 40+ real historical examples (US + India) so you can pattern-match next time.
       </div>
 
@@ -153,48 +153,48 @@ export default function NewsTriagePage() {
       {/* ── DECISION TREE FLOWCHART ─────────────────────────────────────── */}
       <h2>2 · The 30-Second Decision Tree</h2>
       <div className="panel">
-        <svg viewBox="0 0 900 380" width="100%" style={{ display: 'block' }}>
+        <svg viewBox="0 0 1100 500" width="100%" style={{ display: 'block' }}>
           <defs>
-            <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <path d="M 0 0 L 10 5 L 0 10 z" fill={C.text2}/>
             </marker>
           </defs>
-          <rect x="340" y="10" width="220" height="50" rx="8" fill={C.panel2} stroke={C.cyan}/>
-          <text x="450" y="32" textAnchor="middle" fill={C.text} fontSize="13" fontWeight="700">NEW NEWS ITEM</text>
-          <text x="450" y="50" textAnchor="middle" fill={C.text2} fontSize="11">Headline + first paragraph</text>
+          <rect x="410" y="15" width="280" height="65" rx="10" fill={C.panel2} stroke={C.cyan} strokeWidth="2"/>
+          <text x="550" y="44" textAnchor="middle" fill={C.text} fontSize="20" fontWeight="800">NEW NEWS ITEM</text>
+          <text x="550" y="66" textAnchor="middle" fill={C.text2} fontSize="15">Headline + first paragraph</text>
 
-          <line x1="450" y1="60" x2="450" y2="80" stroke={C.text2} strokeWidth="1.5" markerEnd="url(#arr)"/>
-          <rect x="290" y="80" width="320" height="48" rx="8" fill={C.panel2} stroke={C.amber}/>
-          <text x="450" y="102" textAnchor="middle" fill={C.text} fontSize="12" fontWeight="700">Q1: Is there a dollar number, quantity, or % change?</text>
-          <text x="450" y="118" textAnchor="middle" fill={C.text2} fontSize="11">e.g. &quot;$100B contracts&quot; / &quot;+50% YoY&quot;</text>
+          <line x1="550" y1="80" x2="550" y2="105" stroke={C.text2} strokeWidth="2" markerEnd="url(#arr)"/>
+          <rect x="350" y="105" width="400" height="64" rx="10" fill={C.panel2} stroke={C.amber} strokeWidth="2"/>
+          <text x="550" y="135" textAnchor="middle" fill={C.text} fontSize="17" fontWeight="700">Q1: Is there a $ number, quantity, or % change?</text>
+          <text x="550" y="156" textAnchor="middle" fill={C.text2} fontSize="14">e.g. &quot;$100B contracts&quot; / &quot;+50% YoY&quot;</text>
 
-          <line x1="290" y1="104" x2="160" y2="104" stroke={C.red} strokeWidth="1.5" markerEnd="url(#arr)"/>
-          <text x="225" y="98" textAnchor="middle" fill={C.red} fontSize="10" fontWeight="800">NO</text>
-          <rect x="40" y="80" width="120" height="48" rx="8" fill="rgba(239,68,68,0.15)" stroke={C.red}/>
-          <text x="100" y="108" textAnchor="middle" fill={C.red} fontSize="12" fontWeight="800">IGNORE</text>
+          <line x1="350" y1="137" x2="200" y2="137" stroke={C.red} strokeWidth="2" markerEnd="url(#arr)"/>
+          <text x="270" y="128" textAnchor="middle" fill={C.red} fontSize="15" fontWeight="800">NO</text>
+          <rect x="50" y="105" width="150" height="64" rx="10" fill="rgba(239,68,68,0.15)" stroke={C.red} strokeWidth="2"/>
+          <text x="125" y="143" textAnchor="middle" fill={C.red} fontSize="18" fontWeight="800">IGNORE</text>
 
-          <line x1="450" y1="128" x2="450" y2="150" stroke={C.text2} strokeWidth="1.5" markerEnd="url(#arr)"/>
-          <text x="465" y="142" fill={C.green} fontSize="10" fontWeight="800">YES</text>
-          <rect x="290" y="150" width="320" height="48" rx="8" fill={C.panel2} stroke={C.amber}/>
-          <text x="450" y="172" textAnchor="middle" fill={C.text} fontSize="12" fontWeight="700">Q2: Is it &gt; 5% of company&apos;s annual revenue OR mcap?</text>
-          <text x="450" y="188" textAnchor="middle" fill={C.text2} fontSize="11">If no → score &lt; 15 → IGNORE</text>
+          <line x1="550" y1="169" x2="550" y2="195" stroke={C.text2} strokeWidth="2" markerEnd="url(#arr)"/>
+          <text x="572" y="186" fill={C.green} fontSize="15" fontWeight="800">YES</text>
+          <rect x="350" y="195" width="400" height="64" rx="10" fill={C.panel2} stroke={C.amber} strokeWidth="2"/>
+          <text x="550" y="225" textAnchor="middle" fill={C.text} fontSize="17" fontWeight="700">Q2: Is it &gt; 5% of revenue OR mcap?</text>
+          <text x="550" y="246" textAnchor="middle" fill={C.text2} fontSize="14">If no → score &lt; 15 → IGNORE</text>
 
-          <line x1="450" y1="198" x2="450" y2="220" stroke={C.text2} strokeWidth="1.5" markerEnd="url(#arr)"/>
-          <rect x="290" y="220" width="320" height="48" rx="8" fill={C.panel2} stroke={C.amber}/>
-          <text x="450" y="242" textAnchor="middle" fill={C.text} fontSize="12" fontWeight="700">Q3: Is it structural (multi-year) or one-time?</text>
-          <text x="450" y="258" textAnchor="middle" fill={C.text2} fontSize="11">Contracts/agreements/TAM expansion = structural. Buybacks/dividends = one-time.</text>
+          <line x1="550" y1="259" x2="550" y2="285" stroke={C.text2} strokeWidth="2" markerEnd="url(#arr)"/>
+          <rect x="350" y="285" width="400" height="64" rx="10" fill={C.panel2} stroke={C.amber} strokeWidth="2"/>
+          <text x="550" y="315" textAnchor="middle" fill={C.text} fontSize="17" fontWeight="700">Q3: Structural (multi-year) or one-time?</text>
+          <text x="550" y="336" textAnchor="middle" fill={C.text2} fontSize="14">Contracts/TAM = structural. Buybacks/dividends = one-time.</text>
 
-          <line x1="290" y1="270" x2="150" y2="320" stroke={C.cyan} strokeWidth="1.5" markerEnd="url(#arr)"/>
-          <text x="210" y="290" fill={C.cyan} fontSize="10" fontWeight="800">ONE-TIME</text>
-          <rect x="40" y="320" width="220" height="50" rx="8" fill="rgba(6,182,212,0.12)" stroke={C.cyan}/>
-          <text x="150" y="340" textAnchor="middle" fill={C.cyan} fontSize="13" fontWeight="800">SHORT TRADE</text>
-          <text x="150" y="358" textAnchor="middle" fill={C.text2} fontSize="11">Buybacks · tariffs · dividends · M&amp;A pop</text>
+          <line x1="350" y1="350" x2="180" y2="410" stroke={C.cyan} strokeWidth="2" markerEnd="url(#arr)"/>
+          <text x="240" y="385" fill={C.cyan} fontSize="15" fontWeight="800">ONE-TIME</text>
+          <rect x="50" y="410" width="270" height="70" rx="10" fill="rgba(6,182,212,0.12)" stroke={C.cyan} strokeWidth="2"/>
+          <text x="185" y="438" textAnchor="middle" fill={C.cyan} fontSize="19" fontWeight="800">SHORT TRADE</text>
+          <text x="185" y="463" textAnchor="middle" fill={C.text2} fontSize="14">Buybacks · tariffs · dividends · M&amp;A pop</text>
 
-          <line x1="610" y1="270" x2="750" y2="320" stroke={C.green} strokeWidth="1.5" markerEnd="url(#arr)"/>
-          <text x="690" y="290" fill={C.green} fontSize="10" fontWeight="800">STRUCTURAL</text>
-          <rect x="640" y="320" width="220" height="50" rx="8" fill="rgba(34,197,94,0.12)" stroke={C.green}/>
-          <text x="750" y="340" textAnchor="middle" fill={C.green} fontSize="13" fontWeight="800">LONG-TERM BUY</text>
-          <text x="750" y="358" textAnchor="middle" fill={C.text2} fontSize="11">Contracts · TAM raises · regulatory shifts</text>
+          <line x1="750" y1="350" x2="920" y2="410" stroke={C.green} strokeWidth="2" markerEnd="url(#arr)"/>
+          <text x="860" y="385" fill={C.green} fontSize="15" fontWeight="800">STRUCTURAL</text>
+          <rect x="780" y="410" width="270" height="70" rx="10" fill="rgba(34,197,94,0.12)" stroke={C.green} strokeWidth="2"/>
+          <text x="915" y="438" textAnchor="middle" fill={C.green} fontSize="19" fontWeight="800">LONG-TERM BUY</text>
+          <text x="915" y="463" textAnchor="middle" fill={C.text2} fontSize="14">Contracts · TAM raises · regulatory shifts</text>
         </svg>
       </div>
 
