@@ -888,10 +888,120 @@ export default function InvestingOSPage() {
             <div style={{ fontSize: F.sm, color: C.muted, lineHeight: 1.55 }}>NVDA 2023 (AI + Stage-2) · BAJFINANCE 2018–20 (NBFC + Cup) · TITAN 2010s (consumer + base breakout) · ACUTAAS (chemicals tailwind) · NBIS pre-MSFT · TATAELXSI 2020–21</div>
           </div>
 
-          {/* C · Fundamental Inflection */}
+          {/* C · Theme-Based Investing — zzz123 — top-down play */}
+          <div style={{ background: C.panel, border: `1px solid ${C.orange}40`, borderLeft: `4px solid ${C.orange}`, borderRadius: 12, padding: 16, gridColumn: '1 / -1' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: F.xl, fontWeight: 900, color: C.orange }}>C</span>
+              <span style={{ fontSize: F.md, fontWeight: 800, color: C.txt }}>Theme-Based Investing</span>
+              <span style={{ marginLeft: 'auto', fontSize: F.xs, color: C.orange, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.4, background: `${C.orange}1a`, padding: '2px 8px', borderRadius: 6, border: `1px solid ${C.orange}40` }}>top-down · policy + capital flows</span>
+            </div>
+            <ul style={{ margin: 0, paddingLeft: 18, marginBottom: 12 }}>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}>Pick the THEME first (policy mention · budget allocation · multi-year tailwind · capital cycle)</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}>Then pick the LEADER (best chart + best fundamentals + biggest moat within the theme)</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55, marginBottom: 3 }}>Verify: government program · contract / order · FII or DII flow · sector ETF rising</li>
+              <li style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.55 }}>Hold while theme is ACTIVE — exit when capital rotates out (leader breaks 50-DMA)</li>
+            </ul>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 10, marginBottom: 12 }}>
+              <div style={{ background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 8, padding: 10 }}>
+                <div style={{ fontSize: F.sm, fontWeight: 800, color: C.orange, marginBottom: 4 }}>⚛️ Nuclear / SMR / Uranium</div>
+                <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.5 }}><b>US:</b> LEU · BWXT · NNE · SMR · OKLO · CCJ · NXE · UEC · URA (ETF)</div>
+                <div style={{ fontSize: F.xs, color: C.muted, marginTop: 3 }}>DOE HALEU framework · AI-driven power demand · Russia-ban</div>
+              </div>
+
+              <div style={{ background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 8, padding: 10 }}>
+                <div style={{ fontSize: F.sm, fontWeight: 800, color: C.orange, marginBottom: 4 }}>🤖 AI Infra / Hyperscalers</div>
+                <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.5 }}><b>US:</b> NVDA · NBIS · AVGO · MRVL · ANET · VRT · SMCI · ARM · DELL</div>
+                <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.5 }}><b>IN:</b> Persistent · KPIT · Tata Elxsi · Netweb · Tanla</div>
+              </div>
+
+              <div style={{ background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 8, padding: 10 }}>
+                <div style={{ fontSize: F.sm, fontWeight: 800, color: C.orange, marginBottom: 4 }}>⚡ Power / Grid / T&amp;D</div>
+                <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.5 }}><b>US:</b> VST · CEG · GEV · ETN · PWR · ABB · EMR · MTZ · NEE</div>
+                <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.5 }}><b>IN:</b> NTPC · POWERGRID · KEC Int'l · KEI · Polycab · ABB India · Siemens India · L&amp;T</div>
+              </div>
+
+              <div style={{ background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 8, padding: 10 }}>
+                <div style={{ fontSize: F.sm, fontWeight: 800, color: C.orange, marginBottom: 4 }}>🪨 Rare Earths / Critical Minerals</div>
+                <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.5 }}><b>US:</b> MP · USAR · TMC · REMX (ETF)</div>
+                <div style={{ fontSize: F.xs, color: C.muted, marginTop: 3 }}>China export-curbs · Pentagon equity · EV magnet supply</div>
+              </div>
+
+              <div style={{ background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 8, padding: 10 }}>
+                <div style={{ fontSize: F.sm, fontWeight: 800, color: C.orange, marginBottom: 4 }}>🛡 Defense / Aerospace</div>
+                <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.5 }}><b>US:</b> LMT · RTX · NOC · GD · HII · KTOS · AVAV · BWXT</div>
+                <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.5 }}><b>IN:</b> HAL · BEL · BDL · Mazagon Dock · Cochin Shipyard · GRSE · BEML</div>
+              </div>
+
+              <div style={{ background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 8, padding: 10 }}>
+                <div style={{ fontSize: F.sm, fontWeight: 800, color: C.orange, marginBottom: 4 }}>💎 Quantum Computing</div>
+                <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.5 }}><b>US:</b> IONQ · RGTI · QUBT · QBTS · ARQQ</div>
+                <div style={{ fontSize: F.xs, color: C.muted, marginTop: 3 }}>Early-stage · high beta · news-driven · DARPA / NSF funding</div>
+              </div>
+
+              <div style={{ background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 8, padding: 10 }}>
+                <div style={{ fontSize: F.sm, fontWeight: 800, color: C.orange, marginBottom: 4 }}>🔬 Semiconductors / Foundry</div>
+                <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.5 }}><b>US:</b> TSM · NVDA · AMD · MU · LRCX · AMAT · KLAC · ASML · SOXX</div>
+                <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.5 }}><b>IN:</b> Polymatech · Syrma SGS · Kaynes · Tata Elxsi (services)</div>
+              </div>
+
+              <div style={{ background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 8, padding: 10 }}>
+                <div style={{ fontSize: F.sm, fontWeight: 800, color: C.orange, marginBottom: 4 }}>⛏ Crypto / Bitcoin Mining</div>
+                <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.5 }}><b>US:</b> WULF · IREN · RIOT · MARA · CIFR · BITF · CLSK · COIN · MSTR</div>
+                <div style={{ fontSize: F.xs, color: C.muted, marginTop: 3 }}>BTC halving cycle · pivot to AI hosting (WULF, IREN)</div>
+              </div>
+
+              <div style={{ background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 8, padding: 10 }}>
+                <div style={{ fontSize: F.sm, fontWeight: 800, color: C.orange, marginBottom: 4 }}>☁️ Neocloud / AI Compute</div>
+                <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.5 }}><b>US:</b> NBIS · CRWV · APLD · IREN</div>
+                <div style={{ fontSize: F.xs, color: C.muted, marginTop: 3 }}>Hyperscaler take-or-pay deals · GPU rental</div>
+              </div>
+
+              <div style={{ background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 8, padding: 10 }}>
+                <div style={{ fontSize: F.sm, fontWeight: 800, color: C.orange, marginBottom: 4 }}>🔋 Energy Transition / EV / Battery</div>
+                <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.5 }}><b>US:</b> TSLA · ENPH · FSLR · RUN · LCID</div>
+                <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.5 }}><b>IN:</b> Tata Power · IREDA · REC · BHEL · Olectra · JBM Auto</div>
+              </div>
+
+              <div style={{ background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 8, padding: 10 }}>
+                <div style={{ fontSize: F.sm, fontWeight: 800, color: C.orange, marginBottom: 4 }}>🛰 Space</div>
+                <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.5 }}><b>US:</b> ASTS · RKLB · SPCE · IRDM · MAXR · PL · LUNR</div>
+                <div style={{ fontSize: F.xs, color: C.muted, marginTop: 3 }}>Launch cadence · LEO sat constellations · DoD contracts</div>
+              </div>
+
+              <div style={{ background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 8, padding: 10 }}>
+                <div style={{ fontSize: F.sm, fontWeight: 800, color: C.orange, marginBottom: 4 }}>🇮🇳 India PLI Beneficiaries</div>
+                <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.5 }}><b>IN:</b> Dixon Tech · Amber · Apollo Micro · Syrma SGS · Kaynes · Netweb · Aimtron · MTAR · Aeroflex</div>
+                <div style={{ fontSize: F.xs, color: C.muted, marginTop: 3 }}>GoI Production Linked Incentive scheme — multi-year capex tailwind</div>
+              </div>
+
+              <div style={{ background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 8, padding: 10 }}>
+                <div style={{ fontSize: F.sm, fontWeight: 800, color: C.orange, marginBottom: 4 }}>🔐 Cybersecurity</div>
+                <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.5 }}><b>US:</b> CRWD · PANW · ZS · NET · S · OKTA · TENB</div>
+                <div style={{ fontSize: F.xs, color: C.muted, marginTop: 3 }}>Regulatory mandates (SEC, NIS2) · AI-driven attack surface</div>
+              </div>
+
+              <div style={{ background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 8, padding: 10 }}>
+                <div style={{ fontSize: F.sm, fontWeight: 800, color: C.orange, marginBottom: 4 }}>🏗 Infra / Capex Cycle (India)</div>
+                <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.5 }}><b>IN:</b> L&amp;T · BHEL · Cummins India · ABB India · Siemens India · Thermax · Triveni Turbine</div>
+                <div style={{ fontSize: F.xs, color: C.muted, marginTop: 3 }}>GoI capex push · order books at multi-year highs</div>
+              </div>
+
+              <div style={{ background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 8, padding: 10 }}>
+                <div style={{ fontSize: F.sm, fontWeight: 800, color: C.orange, marginBottom: 4 }}>🧬 Obesity / GLP-1 / Pharma</div>
+                <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.5 }}><b>US:</b> LLY · NVO · VKTX · ALT · CRSP</div>
+                <div style={{ fontSize: F.sm, color: C.txt, lineHeight: 1.5 }}><b>IN:</b> Sun Pharma · Cipla · Glenmark · Biocon · Divis</div>
+              </div>
+            </div>
+
+            <div style={{ fontSize: F.xs, color: C.orange, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 }}>Theme Hall-of-Fame — recent winners</div>
+            <div style={{ fontSize: F.sm, color: C.muted, lineHeight: 1.55 }}>NUCLEAR 2024-25: LEU 5× · NNE 8× · SMR 4× (DOE HALEU framework) · AI POWER 2024-25: VST 4× · CEG 3× · GEV 2× (hyperscaler PPAs) · RARE EARTHS 2024: MP 3× (Pentagon equity) · INDIA DEFENSE 2023-24: HAL 4× · BEL 3× · MAZDOCK 5× (Modi capex push) · INDIA RAILWAYS 2023: IRFC 6× · RVNL 5× (record capex)</div>
+          </div>
+
+          {/* D · Fundamental Inflection */}
           <div style={{ background: C.panel, border: `1px solid ${C.blue}40`, borderLeft: `4px solid ${C.blue}`, borderRadius: 12, padding: 16 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
-              <span style={{ fontSize: F.xl, fontWeight: 900, color: C.blue }}>C</span>
+              <span style={{ fontSize: F.xl, fontWeight: 900, color: C.blue }}>D</span>
               <span style={{ fontSize: F.md, fontWeight: 800, color: C.txt }}>Fundamental Inflection</span>
               <span style={{ marginLeft: 'auto', fontSize: F.xs, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>small/mid cap</span>
             </div>
@@ -907,10 +1017,10 @@ export default function InvestingOSPage() {
             <div style={{ fontSize: F.sm, color: C.muted, lineHeight: 1.55 }}>Acutaas Chemicals · Syrma SGS · MTAR Tech · Netweb Tech · HFCL · Apollo Micro · Aimtron · Sedemac · Aeroflex</div>
           </div>
 
-          {/* D · Technical Patterns */}
+          {/* E · Technical Patterns */}
           <div style={{ background: C.panel, border: `1px solid ${C.cyan}40`, borderLeft: `4px solid ${C.cyan}`, borderRadius: 12, padding: 16 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
-              <span style={{ fontSize: F.xl, fontWeight: 900, color: C.cyan }}>D</span>
+              <span style={{ fontSize: F.xl, fontWeight: 900, color: C.cyan }}>E</span>
               <span style={{ fontSize: F.md, fontWeight: 800, color: C.txt }}>Technical Patterns (critical only)</span>
               <span style={{ marginLeft: 'auto', fontSize: F.xs, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>compression → expansion</span>
             </div>
@@ -926,10 +1036,10 @@ export default function InvestingOSPage() {
             <div style={{ fontSize: F.sm, color: C.muted, lineHeight: 1.55 }}>BAJFINANCE 2020 Cup · DIVISLAB 2021 Flat Base · NVDA 2023 VCP · TITAN 2009 HTF · ASIANPAINT 2017 VCP · TATAELXSI 2021 Cup</div>
           </div>
 
-          {/* E · Supply-Demand / Bottleneck */}
+          {/* F · Supply-Demand / Bottleneck */}
           <div style={{ background: C.panel, border: `1px solid ${C.violet}40`, borderLeft: `4px solid ${C.violet}`, borderRadius: 12, padding: 16 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
-              <span style={{ fontSize: F.xl, fontWeight: 900, color: C.violet }}>E</span>
+              <span style={{ fontSize: F.xl, fontWeight: 900, color: C.violet }}>F</span>
               <span style={{ fontSize: F.md, fontWeight: 800, color: C.txt }}>Supply-Demand / Bottleneck</span>
               <span style={{ marginLeft: 'auto', fontSize: F.xs, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>flow {'>'} fundamentals</span>
             </div>
@@ -944,10 +1054,10 @@ export default function InvestingOSPage() {
             <div style={{ fontSize: F.sm, color: C.muted, lineHeight: 1.55 }}>MP rare earths (US export curbs 2024) · LEU HALEU (Russia ban) · Specialty Chemicals 2022 (China lockdowns) · Tantalum / Tungsten plays · Bajaj Consumer (FII accumulation) · MCX (regulatory tailwind)</div>
           </div>
 
-          {/* F · Stage-2 Trend Follower */}
+          {/* G · Stage-2 Trend Follower */}
           <div style={{ background: C.panel, border: `1px solid ${C.amber}40`, borderLeft: `4px solid ${C.amber}`, borderRadius: 12, padding: 16 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
-              <span style={{ fontSize: F.xl, fontWeight: 900, color: C.amber }}>F</span>
+              <span style={{ fontSize: F.xl, fontWeight: 900, color: C.amber }}>G</span>
               <span style={{ fontSize: F.md, fontWeight: 800, color: C.txt }}>Stage-2 Trend Follower</span>
               <span style={{ marginLeft: 'auto', fontSize: F.xs, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>Weinstein-style</span>
             </div>
