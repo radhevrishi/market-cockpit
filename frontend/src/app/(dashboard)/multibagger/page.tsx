@@ -7169,7 +7169,7 @@ function TechnicalsTab() {
             <li><b style={{ color: '#84CC16' }}>HIGH PRIORITY — Composite RS (1M/3M/6M/12M weighted):</b> we already have 1W/1M/3M/6M/1Y perfs — can build internal Composite RS rank percentile across the universe <b>NOW with current fields</b>, no new fields needed. Just need code.</li>
             <li><b style={{ color: '#84CC16' }}>HIGH PRIORITY — RS vs SPY:</b> add <i>"Performance %, 1 month"</i> column for SPY by uploading an SPY row in the same CSV, OR add <i>"Beta, 1 year"</i> and we derive. Cleanest path: hardcode SPY 1M/3M from a manual cell or compute from universe-median. <b>Possible with 1 SPY-row trick.</b></li>
             <li><b style={{ color: '#FBBF24' }}>MEDIUM — Industry RS / Sub-industry:</b> TradingView exposes <i>"Industry"</i> as separate from <i>"Sector"</i>. Add <i>"Industry"</i> column → we'll auto-group + rank sub-industries by median 1M perf. <b>Possible with 1 new field.</b></li>
-            <li><b style={{ color: '#FBBF24' }}>MEDIUM — Earnings Surprise %:</b> add <i>"EPS surprise %, last quarter"</i>. <b>TradingView has it — possible.</b></li>
+            <li><b style={{ color: '#94A3B8' }}>MEDIUM — Earnings Surprise %:</b> ❌ <b>NOT in TradingView screener</b>. Workaround: add <i>"Earnings per share, Quarterly"</i> (actual) <b>AND</b> <i>"Earnings per share estimate, Quarterly"</i> (estimate) — we'll compute surprise = (actual − estimate) ÷ |estimate| × 100. Cleaner alternative: skip and rely on the Upcoming earnings date we already have + Bonde's 1W move + RelVol burst as the EP proxy.</li>
             <li><b style={{ color: '#FBBF24' }}>MEDIUM — Gap % + close-near-high:</b> add <i>"Gap %"</i> and <i>"Change %"</i> (today). Bonde EP signature. <b>Possible.</b></li>
             <li><b style={{ color: '#FBBF24' }}>MEDIUM — Short Interest % + Days to Cover:</b> TradingView fields available. <b>Possible.</b></li>
             <li><b style={{ color: '#94A3B8' }}>LOW — Tight weekly closes (Minervini):</b> needs last-5-weeks closes. TradingView export only gives current values — would need historical weekly OHLC. <b>Not practical via single-CSV export.</b></li>
@@ -7180,13 +7180,17 @@ function TechnicalsTab() {
             <li><b style={{ color: '#94A3B8' }}>LOW — IBD RS Rating (1-99):</b> proprietary IBD metric, not in TradingView. <b>We can fake-rank from universe-internal 1Y perf percentile, fine for relative ranking.</b></li>
           </ol>
           <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(34,211,238,0.08)', borderRadius: 6, fontSize: 11.5, color: TXT, lineHeight: 1.6 }}>
-            <b style={{ color: CYAN }}>📋 Recommended next fields to add to your TradingView export (only 3, all natively available):</b>
+            <b style={{ color: CYAN }}>📋 Recommended next fields to add (only 2, both natively available in TradingView screener):</b>
             <ol style={{ margin: '6px 0 0 22px', padding: 0 }}>
               <li><b>Average volume, 30 days</b> — enables Volume Dry-up + VCP automation</li>
-              <li><b>Industry</b> (the sub-industry field, separate from Sector) — enables Industry RS</li>
-              <li><b>EPS surprise %, last quarter</b> — enables Bonde EP quality grade</li>
+              <li><b>Industry</b> (the sub-industry field, separate from Sector) — enables Industry RS leaderboards</li>
             </ol>
-            <div style={{ marginTop: 6, color: MUTED }}>Once those land, I'll wire: Composite RS rank · Industry RS rank · Volume-dry-up score · EPS surprise booster. Multi-bucket scoring (Momentum / Quality / Risk / Institutional / Valuation) becomes implementable after.</div>
+            <div style={{ marginTop: 6, color: MUTED }}>
+              Optional 3rd if you can find them: <b>Earnings per share, Quarterly (actual)</b> + <b>Earnings per share estimate, Quarterly</b> → we'd compute EPS surprise = (actual − estimate) ÷ |estimate|. If unavailable, we can skip — Bonde EP already proxies with 1W move + RelVol burst + earnings-date proximity, which is good enough.
+            </div>
+            <div style={{ marginTop: 6, color: MUTED }}>
+              Once Average vol 30d + Industry land, I'll wire: Composite RS rank · Industry RS rank · Volume-dry-up score. Multi-bucket scoring (Momentum / Quality / Risk / Institutional / Valuation) becomes implementable after.
+            </div>
           </div>
         </div>
       </div>
