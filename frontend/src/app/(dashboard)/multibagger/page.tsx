@@ -5369,7 +5369,7 @@ export default function MultibaggerPage() {
   // dedicated dashboards for the USA Multibagger universe and the
   // Turnaround universe respectively. The original 'analytics' tab stays
   // as the cross-market overview (India-led).
-  const [activeTab, setActiveTab] = useState<'analytics'|'excel'|'usa'|'usa-analytics'|'turnaround'|'turnaround-analytics'|'usa-checklist'|'checklist'|'capital-alloc'|'reference'>('analytics');
+  const [activeTab, setActiveTab] = useState<'analytics'|'excel'|'usa'|'usa-analytics'|'technicals'|'turnaround'|'turnaround-analytics'|'usa-checklist'|'checklist'|'capital-alloc'|'reference'>('analytics');
   React.useEffect(() => {
     const onSwitch = (e: Event) => {
       const ce = e as CustomEvent<{ tab: 'excel' | 'usa' }>;
@@ -5649,6 +5649,7 @@ export default function MultibaggerPage() {
               {id:'excel',                  label:'🇮🇳 India Multibagger Ranking'},
               {id:'usa',                    label:'🇺🇸 USA Multibagger'},
               {id:'usa-analytics',          label:'📊 USA Analytics'},
+              {id:'technicals',             label:'📈 Technicals (Qulla/Zanger/Bonde/Minervini)'},
               {id:'turnaround',             label:'🔄 Turnarounds'},
               {id:'turnaround-analytics',   label:'📈 Turnaround Analytics'},
               {id:'usa-checklist',          label:'🇺🇸 USA Checklist'},
@@ -5680,6 +5681,7 @@ export default function MultibaggerPage() {
           sector ranking, conviction overlap stats. The old USAAnalytics function
           is retained as dead code below for reference but no longer mounted. */}
       {activeTab==='usa-analytics'         && <MultibaggerAnalytics indiaRows={excelRows} onSwitchTab={(t) => setActiveTab(t as any)} initialScope="USA" />}
+      {activeTab==='technicals'            && <TechnicalsTab />}
       {activeTab==='turnaround'            && <TurnaroundCompare />}
       {activeTab==='turnaround-analytics'  && <TurnaroundAnalytics />}
       {activeTab==='usa-checklist'         && <USAChecklist />}
@@ -5861,6 +5863,353 @@ function MultiConfirmedCard({ stocks }: { stocks: any[] }) {
             </div>
           </a>
         ))}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PATCH zzz129 — TECHNICALS TAB (Qullamaggie / Zanger / Bonde / Minervini)
+//
+// Pure-technical scoring against 4 trader playbooks using fields ALREADY in
+// the USA TradingView export: Price, EMA50, EMA200, Performance 1Y/3M/6M,
+// RSI 14, 52-week High, Beta, Avg Volume 30d, Market Cap.
+//
+// Computes derived metrics: % vs EMA50, % vs EMA200, EMA50/EMA200 spread,
+// distance from 52w high, momentum acceleration (3M > 6M annualized > 1Y).
+//
+// Then scores each ticker against:
+//   • QULLAMAGGIE   — momentum acceleration, not over-extended, small/mid cap
+//   • ZANGER HTF    — 6M perf 80%+ then tight 3M consolidation
+//   • PRADEEP BONDE — EP (Episodic Pivot) candidates: recent surge + reasonable extension
+//   • MINERVINI     — Trend Template: Price > EMA50 > EMA200 (rising), within 25% of 52W high
+//
+// Right entry zone: 0–7% above EMA50 (proxy for Qullamaggie's 21-EMA rule).
+// ═══════════════════════════════════════════════════════════════════════════
+function TechnicalsTab() {
+  const [dataTick, bumpData] = React.useReducer((x: number) => x + 1, 0);
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const refresh = () => bumpData();
+    window.addEventListener('storage', refresh);
+    window.addEventListener('mb-upload:updated', refresh);
+    window.addEventListener('focus', refresh);
+    return () => {
+      window.removeEventListener('storage', refresh);
+      window.removeEventListener('mb-upload:updated', refresh);
+      window.removeEventListener('focus', refresh);
+    };
+  }, []);
+
+  const usaRows = React.useMemo<any[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const mem = _getUsaRowsMemCache();
+      if (Array.isArray(mem) && mem.length > 0) return mem;
+      const raw = localStorage.getItem(USA_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+      const slimRaw = localStorage.getItem(USA_SLIM_KEY);
+      if (slimRaw) {
+        const slim = JSON.parse(slimRaw);
+        if (Array.isArray(slim)) return slim;
+      }
+    } catch {}
+    return [];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataTick]);
+
+  type TechRow = {
+    symbol: string; company?: string; sector?: string;
+    price?: number; mcapB?: number;
+    ema50?: number; ema200?: number; rsi?: number;
+    perf1y?: number; perf3m?: number; perf6m?: number;
+    high52w?: number; beta?: number; avgVol30d?: number;
+    // Derived
+    pctVsEma50?: number;
+    pctVsEma200?: number;
+    emaSpread?: number;          // (EMA50 / EMA200 − 1) * 100
+    distFromHigh?: number;       // % below 52w high (always negative or 0)
+    momentumAccel?: number;      // (3M annualized > 6M annualized > 1Y) score 0-3
+    // Playbook scores 0-100
+    qullaScore: number; qullaReasons: string[];
+    zangerScore: number; zangerReasons: string[];
+    bondeScore: number; bondeReasons: string[];
+    minerviniScore: number; minerviniReasons: string[];
+    rightEntry: 'BUY ZONE' | 'EXTENDED' | 'CHASE' | 'BELOW' | 'NO DATA';
+    rightEntryDetail: string;
+    totalScore: number;
+  };
+
+  const techRows: TechRow[] = React.useMemo(() => {
+    const rows: TechRow[] = (usaRows || []).map((r: any) => {
+      const price = num(r.price);
+      const mcap = num(r.marketCapB);
+      const ema50 = num(r.ema50);
+      const ema200 = num(r.ema200);
+      const rsi = num(r.rsi);
+      const perf1y = num(r.perf1y);
+      const perf3m = num(r.perf3m);
+      const perf6m = num(r.perf6m);
+      const high52w = num(r.high52w);
+      const beta = num(r.beta);
+      const avgVol30d = num(r.avgVol30d ?? r.avgVolume30d);
+
+      // Derived
+      const pctVsEma50 = (price !== undefined && ema50 !== undefined && ema50 > 0)
+        ? Math.round((price - ema50) / ema50 * 1000) / 10 : undefined;
+      const pctVsEma200 = (price !== undefined && ema200 !== undefined && ema200 > 0)
+        ? Math.round((price - ema200) / ema200 * 1000) / 10 : undefined;
+      const emaSpread = (ema50 !== undefined && ema200 !== undefined && ema200 > 0)
+        ? Math.round((ema50 - ema200) / ema200 * 1000) / 10 : undefined;
+      const distFromHigh = (price !== undefined && high52w !== undefined && high52w > 0)
+        ? Math.round((price - high52w) / high52w * 1000) / 10 : undefined;
+
+      // Momentum acceleration: 3M annualized > 6M annualized > 1Y
+      let momentumAccel = 0;
+      if (typeof perf3m === 'number' && typeof perf6m === 'number' && typeof perf1y === 'number') {
+        const ann3m = perf3m * 4;
+        const ann6m = perf6m * 2;
+        if (ann3m > ann6m) momentumAccel++;
+        if (ann6m > perf1y) momentumAccel++;
+        if (perf3m > 0 && perf6m > 0 && perf1y > 0) momentumAccel++;
+      }
+
+      // ── QULLAMAGGIE ── biggest gainers of last 1-3 months, not extended, small/mid cap
+      let qullaScore = 0; const qReasons: string[] = [];
+      if (typeof perf3m === 'number' && perf3m >= 30) { qullaScore += 25; qReasons.push(`3M perf ${perf3m.toFixed(0)}%`); }
+      else if (typeof perf3m === 'number' && perf3m >= 15) { qullaScore += 15; qReasons.push(`3M perf ${perf3m.toFixed(0)}%`); }
+      if (typeof perf6m === 'number' && perf6m >= 50) { qullaScore += 20; qReasons.push(`6M perf ${perf6m.toFixed(0)}%`); }
+      if (typeof pctVsEma50 === 'number' && pctVsEma50 >= 0 && pctVsEma50 <= 15) { qullaScore += 20; qReasons.push(`not extended (${pctVsEma50.toFixed(0)}% over EMA50)`); }
+      else if (typeof pctVsEma50 === 'number' && pctVsEma50 > 15 && pctVsEma50 <= 25) { qullaScore += 10; qReasons.push(`slightly extended (${pctVsEma50.toFixed(0)}%)`); }
+      if (typeof mcap === 'number' && mcap < 10) { qullaScore += 15; qReasons.push(`small cap $${mcap.toFixed(1)}B`); }
+      else if (typeof mcap === 'number' && mcap < 50) { qullaScore += 10; qReasons.push(`mid cap $${mcap.toFixed(1)}B`); }
+      if (momentumAccel >= 2) { qullaScore += 20; qReasons.push('momentum accelerating'); }
+
+      // ── ZANGER HTF ── 100-200% rally in 4-8 weeks then tight 3-5 week pullback
+      let zangerScore = 0; const zReasons: string[] = [];
+      if (typeof perf6m === 'number' && perf6m >= 80) { zangerScore += 30; zReasons.push(`6M ${perf6m.toFixed(0)}% (HTF base)`); }
+      else if (typeof perf6m === 'number' && perf6m >= 50) { zangerScore += 15; zReasons.push(`6M ${perf6m.toFixed(0)}%`); }
+      if (typeof perf3m === 'number' && typeof perf6m === 'number' && perf6m > 0 && perf3m < perf6m * 0.4) { zangerScore += 25; zReasons.push('tight 3M consolidation'); }
+      if (typeof pctVsEma50 === 'number' && pctVsEma50 >= -3 && pctVsEma50 <= 8) { zangerScore += 20; zReasons.push('breakout-ready (near EMA50)'); }
+      if (typeof distFromHigh === 'number' && distFromHigh >= -10) { zangerScore += 15; zReasons.push(`near 52W high (${distFromHigh.toFixed(0)}%)`); }
+      if (typeof rsi === 'number' && rsi >= 50 && rsi <= 70) { zangerScore += 10; zReasons.push(`RSI healthy (${rsi.toFixed(0)})`); }
+
+      // ── PRADEEP BONDE EP ── Episodic Pivot: recent volume surge + reasonable extension + earnings drift
+      let bondeScore = 0; const bReasons: string[] = [];
+      if (typeof perf3m === 'number' && perf3m >= 20) { bondeScore += 25; bReasons.push(`3M move ${perf3m.toFixed(0)}%`); }
+      if (typeof perf1y === 'number' && perf1y >= 50) { bondeScore += 20; bReasons.push(`1Y trend ${perf1y.toFixed(0)}%`); }
+      if (typeof pctVsEma50 === 'number' && pctVsEma50 >= 0 && pctVsEma50 <= 20) { bondeScore += 20; bReasons.push('PED zone (not over-extended)'); }
+      if (typeof pctVsEma200 === 'number' && pctVsEma200 > 10) { bondeScore += 15; bReasons.push(`Stage-2 (+${pctVsEma200.toFixed(0)}% over 200EMA)`); }
+      if (typeof avgVol30d === 'number' && avgVol30d >= 500_000) { bondeScore += 10; bReasons.push('liquid'); }
+      if (momentumAccel >= 1) { bondeScore += 10; bReasons.push('momentum building'); }
+
+      // ── MINERVINI TREND TEMPLATE ── classic 8-point check
+      let minerviniScore = 0; const mReasons: string[] = [];
+      // 1. Price above EMA50 and EMA200
+      if (typeof pctVsEma50 === 'number' && pctVsEma50 > 0 && typeof pctVsEma200 === 'number' && pctVsEma200 > 0) {
+        minerviniScore += 15; mReasons.push('price > EMA50 & EMA200');
+      }
+      // 2. EMA50 above EMA200 (golden cross territory)
+      if (typeof emaSpread === 'number' && emaSpread > 0) { minerviniScore += 15; mReasons.push(`EMA50 > EMA200 by ${emaSpread.toFixed(0)}%`); }
+      // 3. EMA200 rising (proxy: price well above EMA200 → recent uptrend)
+      if (typeof pctVsEma200 === 'number' && pctVsEma200 > 10) { minerviniScore += 10; mReasons.push('EMA200 trend up'); }
+      // 4. 1-year performance positive
+      if (typeof perf1y === 'number' && perf1y > 0) { minerviniScore += 10; mReasons.push(`1Y +${perf1y.toFixed(0)}%`); }
+      // 5. Within 25% of 52w high
+      if (typeof distFromHigh === 'number' && distFromHigh >= -25) { minerviniScore += 15; mReasons.push(`within 25% of 52W high`); }
+      // 6. RSI 45-75 sweet spot
+      if (typeof rsi === 'number' && rsi >= 45 && rsi <= 75) { minerviniScore += 10; mReasons.push(`RSI ${rsi.toFixed(0)} (healthy)`); }
+      // 7. Strong relative momentum (3M positive)
+      if (typeof perf3m === 'number' && perf3m > 5) { minerviniScore += 15; mReasons.push(`3M momentum +${perf3m.toFixed(0)}%`); }
+      // 8. Stage-2 confirmation (price > EMA50 by >0%)
+      if (typeof pctVsEma50 === 'number' && pctVsEma50 > 5 && pctVsEma50 < 30) { minerviniScore += 10; mReasons.push('Stage-2'); }
+
+      // ── RIGHT ENTRY ── proxy for Qullamaggie's 21-EMA rule using EMA50
+      let rightEntry: TechRow['rightEntry'] = 'NO DATA';
+      let rightEntryDetail = '';
+      if (typeof pctVsEma50 === 'number') {
+        if (pctVsEma50 < 0) { rightEntry = 'BELOW'; rightEntryDetail = `${pctVsEma50.toFixed(1)}% under EMA50 — wait for reclaim`; }
+        else if (pctVsEma50 <= 7) { rightEntry = 'BUY ZONE'; rightEntryDetail = `+${pctVsEma50.toFixed(1)}% over EMA50 — ideal entry`; }
+        else if (pctVsEma50 <= 15) { rightEntry = 'EXTENDED'; rightEntryDetail = `+${pctVsEma50.toFixed(1)}% — wait for pullback to EMA50`; }
+        else { rightEntry = 'CHASE'; rightEntryDetail = `+${pctVsEma50.toFixed(1)}% — chasing; high risk`; }
+      }
+
+      const totalScore = Math.round((qullaScore + zangerScore + bondeScore + minerviniScore) / 4);
+
+      return {
+        symbol: r.symbol, company: r.company, sector: r.sector,
+        price, mcapB: mcap, ema50, ema200, rsi,
+        perf1y, perf3m, perf6m, high52w, beta, avgVol30d,
+        pctVsEma50, pctVsEma200, emaSpread, distFromHigh, momentumAccel,
+        qullaScore, qullaReasons: qReasons,
+        zangerScore, zangerReasons: zReasons,
+        bondeScore, bondeReasons: bReasons,
+        minerviniScore, minerviniReasons: mReasons,
+        rightEntry, rightEntryDetail, totalScore,
+      };
+    }).filter(r => r.symbol);
+    return rows;
+  }, [usaRows]);
+
+  // Sort buckets per playbook
+  const qullaTop = React.useMemo(() => [...techRows].sort((a, b) => b.qullaScore - a.qullaScore).filter(r => r.qullaScore >= 50).slice(0, 12), [techRows]);
+  const zangerTop = React.useMemo(() => [...techRows].sort((a, b) => b.zangerScore - a.zangerScore).filter(r => r.zangerScore >= 40).slice(0, 12), [techRows]);
+  const bondeTop = React.useMemo(() => [...techRows].sort((a, b) => b.bondeScore - a.bondeScore).filter(r => r.bondeScore >= 50).slice(0, 12), [techRows]);
+  const minerviniTop = React.useMemo(() => [...techRows].sort((a, b) => b.minerviniScore - a.minerviniScore).filter(r => r.minerviniScore >= 60).slice(0, 12), [techRows]);
+  const buyZone = React.useMemo(() => [...techRows].filter(r => r.rightEntry === 'BUY ZONE').sort((a, b) => b.totalScore - a.totalScore).slice(0, 18), [techRows]);
+
+  const PANEL = 'var(--mc-panel, #11151F)';
+  const PANEL2 = 'var(--mc-panel2, rgba(255,255,255,0.03))';
+  const LINE = 'var(--mc-line, rgba(255,255,255,0.08))';
+  const TXT = 'var(--mc-txt, #e6edf3)';
+  const MUTED = 'var(--mc-muted, #8b95a5)';
+  const CYAN = '#22D3EE';
+  const cardStyle: React.CSSProperties = { background: PANEL, border: `1px solid ${LINE}`, borderRadius: 12, padding: 16, marginBottom: 12 };
+
+  const renderPlaybookSection = (title: string, color: string, emoji: string, items: TechRow[], scoreKey: 'qullaScore' | 'zangerScore' | 'bondeScore' | 'minerviniScore', reasonsKey: 'qullaReasons' | 'zangerReasons' | 'bondeReasons' | 'minerviniReasons', subtitle: string) => (
+    <div style={cardStyle}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+        <div style={{ fontSize: 14, color, fontWeight: 800, letterSpacing: '0.3px' }}>{emoji} {title} ({items.length})</div>
+        <div style={{ fontSize: 11, color: MUTED }}>{subtitle}</div>
+      </div>
+      {items.length === 0 ? (
+        <div style={{ fontSize: 11.5, color: MUTED, padding: 12, background: PANEL2, borderRadius: 6 }}>No candidates pass the threshold today. Upload a fresh USA CSV on the 🇺🇸 USA Multibagger tab.</div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 8 }}>
+          {items.map(r => (
+            <div key={r.symbol} style={{ background: PANEL2, border: `1px solid color-mix(in srgb, ${color} 25%, transparent)`, borderLeft: `3px solid ${color}`, borderRadius: 8, padding: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 4 }}>
+                <span style={{ fontSize: 14, fontWeight: 900, color: CYAN }}>{r.symbol}</span>
+                <span style={{ fontSize: 10, color: MUTED }}>{r.sector?.slice(0, 22) || ''}</span>
+                <span style={{ marginLeft: 'auto', fontSize: 14, fontWeight: 900, color }}>{r[scoreKey]}/100</span>
+              </div>
+              <div style={{ fontSize: 11, color: TXT, marginBottom: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.company || ''}>{r.company || r.symbol}</div>
+              <div style={{ fontSize: 10.5, color: MUTED, lineHeight: 1.5 }}>{r[reasonsKey].slice(0, 5).join(' · ')}</div>
+              <div style={{ marginTop: 5, fontSize: 10, color: r.rightEntry === 'BUY ZONE' ? '#10B981' : r.rightEntry === 'EXTENDED' ? '#F59E0B' : r.rightEntry === 'CHASE' ? '#EF4444' : MUTED, fontWeight: 700 }}>
+                ENTRY: {r.rightEntry} · {r.rightEntryDetail}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div style={{ padding: '20px 24px', maxWidth: 1600, margin: '0 auto' }}>
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontSize: 22, fontWeight: 800, color: TXT, marginBottom: 4 }}>📈 Technicals — Qullamaggie · Zanger · Bonde · Minervini</div>
+        <div style={{ fontSize: 12, color: MUTED }}>Pure-technical scoring using your TradingView USA export. Switch your CSV to the 🇺🇸 USA Multibagger tab to load data — this tab reads the same source. {techRows.length} stocks scored.</div>
+      </div>
+
+      {/* What data we use + what to add */}
+      <div style={{ ...cardStyle, background: 'color-mix(in srgb, #22D3EE 5%, transparent)', borderColor: 'color-mix(in srgb, #22D3EE 25%, transparent)' }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: CYAN, marginBottom: 6 }}>📋 What this tab uses · what to add for better scoring</div>
+        <div style={{ fontSize: 11.5, color: TXT, lineHeight: 1.6 }}>
+          <b style={{ color: '#10B981' }}>✅ Already using (from your CSV):</b> Price · EMA 50 · EMA 200 · RSI 14 · Performance 1Y / 3M / 6M · 52W High · Beta · Avg Volume 30d · Market Cap.
+          <br />
+          <b style={{ color: '#F59E0B' }}>➕ For sharper scoring add these to your next TradingView export:</b>
+          <ul style={{ margin: '6px 0 0 18px', padding: 0, color: TXT }}>
+            <li><b>Performance %, 1 week</b> AND <b>Performance %, 1 month</b> — Qullamaggie's signature 1M/1W gainers list</li>
+            <li><b>Average true range, 14, 1 day (ATR)</b> — for proper stop placement + ADR%</li>
+            <li><b>Volatility, 1 month</b> + <b>Volatility, 1 week</b> — Minervini VCP contraction detection</li>
+            <li><b>Simple moving average, 50/150/200, 1 day (SMA)</b> — Minervini Trend Template uses SMA not EMA</li>
+            <li><b>Low, 52 weeks</b> — needed for Minervini's "≥30% above 52W low" check</li>
+            <li><b>Relative volume, 10 days</b> — Bonde EP volume-burst signal</li>
+            <li><b>Volume, 1 day</b> (today's volume) — breakout volume confirmation</li>
+          </ul>
+        </div>
+      </div>
+
+      {/* 🎯 RIGHT ENTRY — BUY ZONE leaderboard */}
+      <div style={cardStyle}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+          <div style={{ fontSize: 14, color: '#10B981', fontWeight: 800, letterSpacing: '0.3px' }}>🎯 RIGHT ENTRY — BUY ZONE ({buyZone.length})</div>
+          <div style={{ fontSize: 11, color: MUTED }}>0–7% above EMA50 — Qullamaggie's "not extended" entry rule (using EMA50 as proxy for 21-EMA).</div>
+        </div>
+        {buyZone.length === 0 ? (
+          <div style={{ fontSize: 11.5, color: MUTED, padding: 12, background: PANEL2, borderRadius: 6 }}>No tickers in the BUY ZONE right now. Most names are either extended or below their EMA50.</div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
+            {buyZone.map(r => (
+              <div key={r.symbol} style={{ background: PANEL2, border: '1px solid color-mix(in srgb, #10B981 35%, transparent)', borderLeft: '3px solid #10B981', borderRadius: 8, padding: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                  <span style={{ fontSize: 14, fontWeight: 900, color: CYAN }}>{r.symbol}</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 900, color: '#10B981' }}>{r.totalScore}</span>
+                </div>
+                <div style={{ fontSize: 11, color: TXT, marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.company || ''}</div>
+                <div style={{ fontSize: 10.5, color: MUTED, marginTop: 3, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  <span>+{r.pctVsEma50?.toFixed(1)}% EMA50</span>
+                  {typeof r.perf3m === 'number' ? <span>3M {r.perf3m.toFixed(0)}%</span> : null}
+                  {typeof r.rsi === 'number' ? <span>RSI {r.rsi.toFixed(0)}</span> : null}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* QULLAMAGGIE */}
+      {renderPlaybookSection('Qullamaggie — Episodic Momentum Leaders', '#22D3EE', '🔥', qullaTop, 'qullaScore', 'qullaReasons',
+        'Top 3-6 month gainers, not over-extended, small/mid cap preferred.')}
+
+      {/* ZANGER HTF */}
+      {renderPlaybookSection('Dan Zanger — High Tight Flag (HTF)', '#A78BFA', '🚀', zangerTop, 'zangerScore', 'zangerReasons',
+        '80%+ rally in 4-6 months then tight 3-month consolidation near highs.')}
+
+      {/* BONDE EP */}
+      {renderPlaybookSection('Pradeep Bonde — Episodic Pivot (EP)', '#FBBF24', '⚡', bondeTop, 'bondeScore', 'bondeReasons',
+        'Recent earnings/news surge in Stage-2 trend, not over-extended.')}
+
+      {/* MINERVINI */}
+      {renderPlaybookSection('Mark Minervini — Trend Template', '#84CC16', '🏆', minerviniTop, 'minerviniScore', 'minerviniReasons',
+        'Classic 8-point template: price > EMA50 > EMA200 (rising), within 25% of 52W high, RSI 45-75.')}
+
+      {/* All tickers ranked by total score */}
+      <div style={cardStyle}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: TXT, marginBottom: 10 }}>🏁 ALL TICKERS — RANKED BY COMPOSITE TECHNICAL SCORE</div>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5 }}>
+            <thead>
+              <tr style={{ background: PANEL2, color: MUTED }}>
+                <th style={{ padding: '6px 8px', textAlign: 'left' }}>TICKER</th>
+                <th style={{ padding: '6px 8px', textAlign: 'left' }}>COMPANY</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right' }}>QULLA</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right' }}>ZANGER</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right' }}>BONDE</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right' }}>MINER</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right' }}>AVG</th>
+                <th style={{ padding: '6px 8px', textAlign: 'left' }}>ENTRY</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right' }}>%EMA50</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right' }}>3M%</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right' }}>RSI</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...techRows].sort((a, b) => b.totalScore - a.totalScore).map(r => {
+                const entryColor = r.rightEntry === 'BUY ZONE' ? '#10B981' : r.rightEntry === 'EXTENDED' ? '#F59E0B' : r.rightEntry === 'CHASE' ? '#EF4444' : MUTED;
+                return (
+                  <tr key={r.symbol} style={{ borderBottom: `1px solid ${LINE}` }}>
+                    <td style={{ padding: '6px 8px', fontWeight: 800, color: CYAN }}>{r.symbol}</td>
+                    <td style={{ padding: '6px 8px', color: TXT, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', color: r.qullaScore >= 60 ? '#22D3EE' : MUTED, fontWeight: r.qullaScore >= 60 ? 800 : 400 }}>{r.qullaScore}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', color: r.zangerScore >= 60 ? '#A78BFA' : MUTED, fontWeight: r.zangerScore >= 60 ? 800 : 400 }}>{r.zangerScore}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', color: r.bondeScore >= 60 ? '#FBBF24' : MUTED, fontWeight: r.bondeScore >= 60 ? 800 : 400 }}>{r.bondeScore}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', color: r.minerviniScore >= 70 ? '#84CC16' : MUTED, fontWeight: r.minerviniScore >= 70 ? 800 : 400 }}>{r.minerviniScore}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 800, color: TXT }}>{r.totalScore}</td>
+                    <td style={{ padding: '6px 8px', color: entryColor, fontWeight: 700, fontSize: 10.5 }}>{r.rightEntry}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', color: TXT }}>{r.pctVsEma50 !== undefined ? `${r.pctVsEma50 >= 0 ? '+' : ''}${r.pctVsEma50.toFixed(0)}%` : '—'}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', color: TXT }}>{r.perf3m !== undefined ? `${r.perf3m >= 0 ? '+' : ''}${r.perf3m.toFixed(0)}%` : '—'}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', color: TXT }}>{r.rsi !== undefined ? r.rsi.toFixed(0) : '—'}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
