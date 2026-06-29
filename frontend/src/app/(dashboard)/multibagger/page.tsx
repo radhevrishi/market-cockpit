@@ -3817,6 +3817,8 @@ function parseUSARow(row: Record<string,unknown>): USARow | null {
     vol1d: n(row['Volume, 1 day'] ?? row['Volume 1d']),
     rsi: n(row['Relative strength index, 14, 1 day'] ?? row['RSI 14']),
     avgVol30d: n(row['Average volume, 30 days'] ?? row['Avg Vol 30d']),
+    // zzz140 — Industry (sub-industry, granular vs Sector) enables Industry RS leaderboards
+    industry: (typeof row['Industry'] === 'string' && row['Industry']) ? row['Industry'] : undefined,
     high52w: n(row['High, 52 weeks'] ?? row['High 52w']),
     // Derived at parse time
     revenueAccel: (revQtr !== undefined && revAnn !== undefined) ? Math.round(revQtr - revAnn) : undefined,
@@ -5973,6 +5975,9 @@ function TechnicalsTab() {
 
   type TechRow = {
     symbol: string; company?: string; sector?: string;
+    industry?: string;            // zzz140 — granular sub-industry
+    industryRsRank?: number;      // 1-100, derived from industry-median perf
+    compositeRs?: number;         // 0-100, derived from perf percentile vs universe
     price?: number; mcapB?: number;
     ema50?: number; ema200?: number; rsi?: number;
     ema21?: number;              // zzz138 — Qullamaggie's actual entry rule
@@ -6452,6 +6457,7 @@ function TechnicalsTab() {
 
       return {
         symbol: r.symbol, company: r.company, sector: r.sector,
+        industry: (typeof r.industry === 'string' && r.industry) ? r.industry : undefined,  // zzz140
         price, mcapB: mcap, ema50, ema200, rsi,
         ema21, pctVsEma21,  // zzz138
         perf1y, perf3m, perf6m, high52w, beta, avgVol30d,
@@ -6473,8 +6479,104 @@ function TechnicalsTab() {
         totalScore,
       };
     }).filter(r => r.symbol);
+
+    // zzz140 — Second pass: compute Composite RS rank + Industry RS rank
+    // Composite RS = weighted blend of 1M/3M/6M/1Y perf, percentile-ranked within this universe (0-100).
+    // Industry RS = each industry's median composite-perf percentile vs universe (0-100).
+    if (rows.length >= 3) {
+      // 1) Build composite-perf weighted score per row
+      const compositePerfs: number[] = rows.map(r => {
+        const w1m = typeof r.perf1m === 'number' ? r.perf1m : 0;
+        const w3m = typeof r.perf3m === 'number' ? r.perf3m : 0;
+        const w6m = typeof r.perf6m === 'number' ? r.perf6m : 0;
+        const w1y = typeof r.perf1y === 'number' ? r.perf1y : 0;
+        // weights: 1M 0.40 · 3M 0.30 · 6M 0.20 · 1Y 0.10 (institutional momentum bias)
+        return 0.40 * w1m + 0.30 * w3m + 0.20 * w6m + 0.10 * w1y;
+      });
+      // Compute percentile rank (1-100) for each row's composite perf
+      const sorted = [...compositePerfs].sort((a, b) => a - b);
+      rows.forEach((r, i) => {
+        const v = compositePerfs[i];
+        const below = sorted.filter(s => s < v).length;
+        r.compositeRs = Math.round((below / Math.max(1, sorted.length - 1)) * 100);
+      });
+
+      // 2) Industry RS rank: group by industry, compute median composite-perf, then rank industries
+      const industryPerfs: Record<string, number[]> = {};
+      rows.forEach((r, i) => {
+        if (typeof r.industry !== 'string' || !r.industry) return;
+        if (!industryPerfs[r.industry]) industryPerfs[r.industry] = [];
+        industryPerfs[r.industry].push(compositePerfs[i]);
+      });
+      // Median per industry (only industries with ≥ 2 stocks for stability)
+      const industryMedians: { industry: string; median: number }[] = [];
+      Object.entries(industryPerfs).forEach(([ind, perfs]) => {
+        if (perfs.length < 1) return;
+        const s = [...perfs].sort((a, b) => a - b);
+        const median = s.length % 2 === 0 ? (s[s.length / 2 - 1] + s[s.length / 2]) / 2 : s[Math.floor(s.length / 2)];
+        industryMedians.push({ industry: ind, median });
+      });
+      // Rank industries by median, assign 1-100 percentile
+      industryMedians.sort((a, b) => a.median - b.median);
+      const industryRankMap: Record<string, number> = {};
+      industryMedians.forEach((entry, idx) => {
+        industryRankMap[entry.industry] = Math.round(((idx + 1) / industryMedians.length) * 100);
+      });
+      // Attach Industry RS rank back to each row
+      rows.forEach(r => {
+        if (typeof r.industry === 'string' && industryRankMap[r.industry] !== undefined) {
+          r.industryRsRank = industryRankMap[r.industry];
+        }
+      });
+
+      // 3) Score adjustments based on Composite RS + Industry RS
+      // Boost Minervini + Qulla if both are high (top quartile = institutional setup)
+      rows.forEach(r => {
+        const compRs = typeof r.compositeRs === 'number' ? r.compositeRs : 50;
+        const indRs = typeof r.industryRsRank === 'number' ? r.industryRsRank : 50;
+        // Composite RS booster (Minervini SEPA requires RS >= 80)
+        if (compRs >= 90) { r.minerviniScore += 8; r.minerviniReasons.push(`📊 Composite RS ${compRs} (top 10%)`); }
+        else if (compRs >= 80) { r.minerviniScore += 5; r.minerviniReasons.push(`Composite RS ${compRs}`); }
+        else if (compRs >= 70) { r.minerviniScore += 2; }
+        else if (compRs <= 30) { r.minerviniScore -= 3; r.minerviniReasons.push(`weak RS ${compRs}`); }
+        // Qulla wants leading-industry leadership
+        if (compRs >= 85) { r.qullaScore += 5; r.qullaReasons.push(`🚀 RS ${compRs}`); }
+        // Industry RS boost — only meaningful with ≥ 3 industries
+        if (industryMedians.length >= 3 && indRs >= 80) {
+          r.qullaScore += 4; r.qullaReasons.push(`🏭 Industry top 20% (${r.industry})`);
+          r.minerviniScore += 3; r.minerviniReasons.push(`Industry RS ${indRs}`);
+        } else if (industryMedians.length >= 3 && indRs <= 30) {
+          r.qullaScore -= 2; r.qullaReasons.push(`⚠️ weak industry (${r.industry})`);
+        }
+        // Recompute totalScore with the adjustments
+        r.totalScore = Math.round(0.35 * r.minerviniScore + 0.30 * r.qullaScore + 0.20 * r.bondeScore + 0.15 * r.zangerScore);
+        // Clamp playbook scores to 0-100 for display
+        r.qullaScore = Math.max(0, Math.min(100, r.qullaScore));
+        r.minerviniScore = Math.max(0, Math.min(100, r.minerviniScore));
+      });
+    }
     return rows;
   }, [usaRows]);
+
+  // zzz140 — Industry RS leaderboard (sorted industries by median composite-perf percentile)
+  const industryLeaderboard = React.useMemo(() => {
+    if (techRows.length === 0) return [] as { industry: string; rank: number; count: number; medianRs: number; topTickers: string[] }[];
+    const byIndustry: Record<string, TechRow[]> = {};
+    techRows.forEach(r => {
+      if (typeof r.industry !== 'string' || !r.industry) return;
+      if (!byIndustry[r.industry]) byIndustry[r.industry] = [];
+      byIndustry[r.industry].push(r);
+    });
+    const out: { industry: string; rank: number; count: number; medianRs: number; topTickers: string[] }[] = [];
+    Object.entries(byIndustry).forEach(([ind, members]) => {
+      if (members.length < 1) return;
+      const rsVals = members.map(m => typeof m.compositeRs === 'number' ? m.compositeRs : 50).sort((a, b) => a - b);
+      const med = rsVals.length % 2 === 0 ? (rsVals[rsVals.length / 2 - 1] + rsVals[rsVals.length / 2]) / 2 : rsVals[Math.floor(rsVals.length / 2)];
+      const top = [...members].sort((a, b) => (b.compositeRs ?? 0) - (a.compositeRs ?? 0)).slice(0, 4).map(m => m.symbol);
+      out.push({ industry: ind, rank: members[0].industryRsRank ?? 50, count: members.length, medianRs: med, topTickers: top });
+    });
+    return out.sort((a, b) => b.medianRs - a.medianRs);
+  }, [techRows]);
 
   // zzz133 — playbook tops restricted to ELIGIBLE stocks (hard filters first)
   const qullaTop = React.useMemo(() => [...techRows].filter(r => r.eligible).sort((a, b) => b.qullaScore - a.qullaScore).filter(r => r.qullaScore >= 55).slice(0, 12), [techRows]);
@@ -6743,7 +6845,7 @@ function TechnicalsTab() {
       {/* zzz133 — DATA QUALITY + ELIGIBILITY summary chips */}
       <div style={{ ...cardStyle, background: 'color-mix(in srgb, #10B981 5%, transparent)', borderColor: 'color-mix(in srgb, #10B981 30%, transparent)', padding: 14 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-          <span style={{ fontSize: 14, fontWeight: 800, color: '#10B981' }}>✅ zzz135 — Weighted composite + position sizing + click-to-detail</span>
+          <span style={{ fontSize: 14, fontWeight: 800, color: '#10B981' }}>✅ zzz140 — EMA21 + Industry RS + Composite RS rank</span>
           <span style={{ background: 'rgba(255,255,255,0.06)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: TXT }}>Total <b>{dataQuality.total}</b></span>
           <span style={{ background: 'rgba(16,185,129,0.18)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: '#10B981' }}>✓ eligible <b>{techRows.filter(r => r.eligible).length}</b></span>
           <span style={{ background: 'rgba(239,68,68,0.12)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: '#EF4444' }}>✗ rejected <b>{rejected.length}</b></span>
@@ -7044,6 +7146,42 @@ function TechnicalsTab() {
         </div>
       </div>
 
+      {/* zzz140 — INDUSTRY RS LEADERBOARD */}
+      {industryLeaderboard.length >= 2 && (
+        <div style={cardStyle}>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+            <div style={{ fontSize: 16, color: '#84CC16', fontWeight: 900 }}>🏭 INDUSTRY RS LEADERBOARD ({industryLeaderboard.length})</div>
+            <div style={{ fontSize: 12, color: MUTED, fontStyle: 'italic' }}>Industries ranked by median composite RS · institutions buy groups, not isolated stocks</div>
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+              <thead>
+                <tr style={{ background: PANEL2, color: MUTED, fontSize: 11 }}>
+                  <th style={{ padding: '8px 10px', textAlign: 'left' }}>#</th>
+                  <th style={{ padding: '8px 10px', textAlign: 'left' }}>INDUSTRY</th>
+                  <th style={{ padding: '8px 10px', textAlign: 'right' }}>Med RS</th>
+                  <th style={{ padding: '8px 10px', textAlign: 'right' }}>RANK</th>
+                  <th style={{ padding: '8px 10px', textAlign: 'right' }}>STOCKS</th>
+                  <th style={{ padding: '8px 10px', textAlign: 'left' }}>TOP TICKERS</th>
+                </tr>
+              </thead>
+              <tbody>
+                {industryLeaderboard.slice(0, 25).map((row, i) => (
+                  <tr key={row.industry} style={{ borderBottom: `1px solid ${LINE}` }}>
+                    <td style={{ padding: '7px 10px', color: MUTED, fontWeight: 700 }}>{i + 1}</td>
+                    <td style={{ padding: '7px 10px', fontWeight: 700, color: TXT }}>{row.industry}</td>
+                    <td style={{ padding: '7px 10px', textAlign: 'right', fontWeight: 800, color: row.medianRs >= 80 ? '#10B981' : row.medianRs >= 60 ? CYAN : row.medianRs >= 40 ? '#FBBF24' : MUTED, fontFamily: 'ui-monospace, monospace' }}>{row.medianRs.toFixed(0)}</td>
+                    <td style={{ padding: '7px 10px', textAlign: 'right', color: row.rank >= 80 ? '#10B981' : row.rank >= 60 ? CYAN : row.rank >= 40 ? '#FBBF24' : MUTED, fontFamily: 'ui-monospace, monospace' }}>{row.rank}</td>
+                    <td style={{ padding: '7px 10px', textAlign: 'right', color: TXT, fontFamily: 'ui-monospace, monospace' }}>{row.count}</td>
+                    <td style={{ padding: '7px 10px', fontSize: 11.5, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{row.topTickers.join(' · ')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* QULLAMAGGIE */}
       {renderPlaybookSection('Qullamaggie — Episodic Momentum Leaders', '#22D3EE', '🔥', qullaTop, 'qullaScore', 'qullaReasons',
         '1M ≥ 15% gainer · ADR 4–7% sweet spot · not extended (≤ 15% above SMA50) · small-mid cap')}
@@ -7159,7 +7297,7 @@ function TechnicalsTab() {
         <div style={{ fontSize: 15, fontWeight: 900, color: CYAN, marginBottom: 8 }}>💡 OPTIONAL — TradingView FIELDS still worth adding</div>
         <div style={{ fontSize: 12.5, color: TXT, lineHeight: 1.7 }}>
           <div style={{ marginBottom: 8 }}>
-            <b style={{ color: '#10B981' }}>✅ Now wired:</b> <b>EMA 21 (Qullamaggie's exact entry rule)</b> · Revenue Q/Annual/5Y growth · EPS TTM + Q growth · Gross profit Q growth · Upcoming earnings · Free Float · FCF margin · ROE · Net debt/EBITDA · Analyst rating · Piotroski · Position sizing · P/L calculator · R:R ratio.
+            <b style={{ color: '#10B981' }}>✅ Now wired:</b> <b>EMA 21</b> · <b>Industry RS rank</b> · <b>Composite RS percentile</b> · Avg vol 30d · Revenue Q/Annual/5Y growth · EPS TTM + Q growth · Gross profit Q growth · Upcoming earnings · Free Float · FCF margin · ROE · Net debt/EBITDA · Analyst rating · Piotroski · Position sizing · P/L calculator · R:R ratio.
           </div>
           <div style={{ marginBottom: 8 }}>
             <b style={{ color: '#FBBF24' }}>🟡 What's POSSIBLE with more TradingView fields (prioritized):</b>
@@ -7179,17 +7317,16 @@ function TechnicalsTab() {
             <li><b style={{ color: '#94A3B8' }}>LOW — Base length / VCP automated detection:</b> needs daily OHLC history. <b>Not via screener.</b></li>
             <li><b style={{ color: '#94A3B8' }}>LOW — IBD RS Rating (1-99):</b> proprietary IBD metric, not in TradingView. <b>We can fake-rank from universe-internal 1Y perf percentile, fine for relative ranking.</b></li>
           </ol>
-          <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(34,211,238,0.08)', borderRadius: 6, fontSize: 11.5, color: TXT, lineHeight: 1.6 }}>
-            <b style={{ color: CYAN }}>📋 Recommended next fields to add (only 2, both natively available in TradingView screener):</b>
-            <ol style={{ margin: '6px 0 0 22px', padding: 0 }}>
-              <li><b>Average volume, 30 days</b> — enables Volume Dry-up + VCP automation</li>
-              <li><b>Industry</b> (the sub-industry field, separate from Sector) — enables Industry RS leaderboards</li>
-            </ol>
-            <div style={{ marginTop: 6, color: MUTED }}>
-              Optional 3rd if you can find them: <b>Earnings per share, Quarterly (actual)</b> + <b>Earnings per share estimate, Quarterly</b> → we'd compute EPS surprise = (actual − estimate) ÷ |estimate|. If unavailable, we can skip — Bonde EP already proxies with 1W move + RelVol burst + earnings-date proximity, which is good enough.
-            </div>
-            <div style={{ marginTop: 6, color: MUTED }}>
-              Once Average vol 30d + Industry land, I'll wire: Composite RS rank · Industry RS rank · Volume-dry-up score. Multi-bucket scoring (Momentum / Quality / Risk / Institutional / Valuation) becomes implementable after.
+          <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(16,185,129,0.08)', borderRadius: 6, fontSize: 11.5, color: TXT, lineHeight: 1.6 }}>
+            <b style={{ color: '#10B981' }}>✅ Industry + Avg Vol now wired (zzz140):</b>
+            <ul style={{ margin: '6px 0 0 22px', padding: 0 }}>
+              <li><b>Industry RS rank</b> — every stock now has an industry tag and its industry's 1-100 percentile rank vs the universe.</li>
+              <li><b>Composite RS (0-100)</b> — weighted blend of 1M/3M/6M/1Y perf, percentile-ranked. Minervini bonus +8 if RS ≥ 90, +5 if ≥ 80 (matches his SEPA RS ≥ 80 requirement).</li>
+              <li><b>Industry RS leaderboard</b> table inserted above the playbook sections — shows which industries are leading.</li>
+              <li><b>Qulla & Minervini score boost</b> when the stock is in a top-20% industry AND high personal RS.</li>
+            </ul>
+            <div style={{ marginTop: 8, color: MUTED }}>
+              Next high-leverage adds (if you find them in TradingView): <b>Short Interest %</b> · <b>Gap %</b> (today's open vs prior close) · <b>EPS actual Q</b> + <b>EPS estimate Q</b> (then we compute surprise). Otherwise this is essentially as good as a TradingView-only screener can get without intraday/historical OHLC.
             </div>
           </div>
         </div>
@@ -7291,6 +7428,9 @@ function TechnicalsTab() {
                   ['Vol contraction (VCP)', expandedRow.volContraction === true ? '✅ Yes (1W vol < 1M × 0.85)' : (expandedRow.volContraction === false ? 'No' : '—')],
                   ['Momentum accel (0-3)', typeof expandedRow.momentumAccel === 'number' ? `${expandedRow.momentumAccel}/3 ${expandedRow.momentumAccel >= 2 ? '🚀' : ''}` : '—'],
                   ['Beta', typeof expandedRow.beta === 'number' ? expandedRow.beta.toFixed(2) : '—'],
+                  ['Industry', expandedRow.industry || '—'],
+                  ['Composite RS (0-100)', typeof expandedRow.compositeRs === 'number' ? `${expandedRow.compositeRs} ${expandedRow.compositeRs >= 80 ? '🚀 elite' : expandedRow.compositeRs >= 60 ? '✅ strong' : expandedRow.compositeRs >= 40 ? '' : '⚠️ weak'}` : '—'],
+                  ['Industry RS rank', typeof expandedRow.industryRsRank === 'number' ? `${expandedRow.industryRsRank} ${expandedRow.industryRsRank >= 80 ? '🏭 leading' : expandedRow.industryRsRank <= 30 ? '⚠️ laggard' : ''}` : '—'],
                 ].map(([label, val]) => (
                   <div key={label} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 12, borderBottom: `1px solid rgba(255,255,255,0.04)` }}>
                     <span style={{ color: MUTED }}>{label}</span>
