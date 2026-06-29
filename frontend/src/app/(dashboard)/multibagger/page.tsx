@@ -5889,6 +5889,67 @@ function MultibaggerAnalytics({
   // moment a fresh CSV was scored — the user reported a USA leaderboard
   // that refused to update without a full page reload.
   const [dataTick, bumpData] = React.useReducer((x: number) => x + 1, 0);
+
+  // PATCH zzz126 — Hoist Railway USA hydration into Analytics. The prior
+  // hydration (PATCH 1101v) lived inside USACompare's useEffect, so it
+  // only fired when the user mounted the USA Multibagger tab. If the
+  // user opened /multibagger and went straight to Analytics or USA
+  // Analytics, the Railway snapshot was never pulled — leaving usaRows=0
+  // even though their CSV existed server-side. This duplicate hydration
+  // ensures Analytics gets USA rows regardless of which tab is open first.
+  // It is best-effort: errors are swallowed, no UI block.
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let alive = true;
+    (async () => {
+      try {
+        // If we already have USA rows in mem cache or full LS, skip.
+        const mem = _getUsaRowsMemCache();
+        if (Array.isArray(mem) && mem.length > 0) return;
+        let localCount = 0;
+        try {
+          const raw = localStorage.getItem(USA_STORAGE_KEY);
+          if (raw) localCount = (JSON.parse(raw) as any[])?.length || 0;
+        } catch {}
+        if (localCount > 0) return;
+        // Also check slim payload — if slim has data we don't need server.
+        try {
+          const slimRaw = localStorage.getItem(USA_SLIM_KEY);
+          if (slimRaw) {
+            const slim = JSON.parse(slimRaw);
+            if (Array.isArray(slim) && slim.length > 0) {
+              _setUsaRowsMemCache(slim);
+              bumpData();
+              return;
+            }
+          }
+        } catch {}
+        // Pull from Railway server snapshot.
+        const serverRaw = await mbServerSnapshotLoad('USA');
+        if (!alive || !serverRaw) return;
+        let serverRows: any[] = [];
+        try { serverRows = JSON.parse(serverRaw); } catch {}
+        if (!Array.isArray(serverRows) || !serverRows.length) return;
+        try { console.log(`[mb-analytics] zzz126 hydrated ${serverRows.length} USA rows from Railway`); } catch {}
+        // Populate all three layers: mem cache (instant), slim LS (quota-safe),
+        // best-effort full LS.
+        _setUsaRowsMemCache(serverRows);
+        try {
+          const slimJson = JSON.stringify(toSlimUsaRows(serverRows));
+          localStorage.setItem(USA_SLIM_KEY, slimJson);
+        } catch {}
+        try { localStorage.setItem(USA_STORAGE_KEY, serverRaw); } catch {}
+        bumpData();
+        try { window.dispatchEvent(new CustomEvent('mb-upload:updated', { detail: { market: 'USA', count: serverRows.length, source: 'analytics-hydrate' } })); } catch {}
+      } catch (e) {
+        try { console.warn('[mb-analytics] zzz126 Railway hydrate failed', e); } catch {}
+      }
+    })();
+    return () => { alive = false; };
+    // Run only on mount — subsequent updates flow through the storage / event listeners.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
     const refresh = () => bumpData();
@@ -6496,6 +6557,37 @@ function MultibaggerAnalytics({
     const cashRich = [...indiaCashRich, ...usaCashRich]
       .sort((a, b) => b.cashToMcapPct - a.cashToMcapPct);
 
+    // PATCH zzz127 — USA Operating Leverage Leaders.
+    // Op Leverage = EPS growth YoY ÷ Revenue growth YoY. >1× = margins
+    // expanding (positive op-lev). Skip rows where revenue growth < 2%
+    // (noisy / mean-reverts). Cap to keep table tidy.
+    type UsaOpLevRow = {
+      symbol: string; company?: string; sector?: string;
+      grade: string; score: number;
+      opLev: number; epsGrowth: number; revGrowth: number;
+      opmTtm?: number; marketCapB?: number;
+    };
+    const usaOpLevAll: UsaOpLevRow[] = (usaRows || []).map((r: any) => {
+      const eps = num(r.epsGrowth);
+      const rev = num(r.revenueGrowthAnn);
+      if (typeof eps !== 'number' || typeof rev !== 'number' || rev < 2) return null;
+      const raw = eps / rev;
+      const opLev = Math.max(-9.9, Math.min(99.9, Math.round(raw * 10) / 10));
+      return {
+        symbol: r.symbol,
+        company: r.company,
+        sector: r.sector,
+        grade: r.grade,
+        score: r.score,
+        opLev,
+        epsGrowth: eps,
+        revGrowth: rev,
+        opmTtm: num(r.opmTtm),
+        marketCapB: num(r.marketCapB),
+      } as UsaOpLevRow;
+    }).filter(Boolean) as UsaOpLevRow[];
+    const usaOpLevTop = [...usaOpLevAll].sort((a, b) => b.opLev - a.opLev).slice(0, 18);
+
     return {
       total, grades, avg, p25, p50, p75,
       sectorRanked, sectorAvgLookup,
@@ -6556,6 +6648,7 @@ function MultibaggerAnalytics({
       top3Sectors, top3Pct, concentrationRisk,
       // PATCH 0578 — cluster scores + cash-rich lens
       clusterRanked, clusterHighConv, clusterEmerging, clusterIncomplete,
+      usaOpLevTop, // zzz127
       cashRich,
     };
     // PATCH 0872 — `decisionTick` added so any BUY/WATCH/REJECTED tag
@@ -7357,6 +7450,49 @@ function MultibaggerAnalytics({
           cfoToPat, capex trend, debt creep history) that the USA scorer
           doesn't compute. When the user is on USA scope, this widget was
           showing leftover Indian rows. Now hidden unless scope === 'INDIA'. */}
+      {/* PATCH zzz127 — USA Operating Leverage Leaders. EPS YoY ÷ Revenue YoY.
+          Shown when scope is USA or BOTH (and USA rows exist). Placed BEFORE
+          the India cluster widget so it appears at the TOP of USA Analytics. */}
+      {(scope === 'USA' || scope === 'BOTH') && stats.usaOpLevTop && stats.usaOpLevTop.length > 0 && (
+        <div style={cardStyle}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 13, color: '#84CC16', fontWeight: 800, letterSpacing: '0.4px' }}>
+              ⚡ 🇺🇸 USA OPERATING LEVERAGE — BEST STOCKS ({stats.usaOpLevTop.length})
+            </div>
+            <span style={{ fontSize: 10, color: '#84CC16', background: 'color-mix(in srgb, #84CC16 13%, transparent)', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>EPS gr ÷ Rev gr</span>
+          </div>
+          <div style={{ fontSize: 11.5, color: 'var(--mc-muted)', marginBottom: 10 }}>
+            Companies where EPS is growing faster than revenue → margins expanding (positive op-lev). &gt;2× = strong. Sales growth ≥ 2% required.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 8 }}>
+            {stats.usaOpLevTop.map((r: any) => {
+              const tierColor = r.opLev >= 2 ? '#10B981' : r.opLev >= 1.5 ? '#22C55E' : r.opLev >= 1 ? '#84CC16' : r.opLev > 0 ? '#F59E0B' : '#EF4444';
+              return (
+                <div key={r.symbol} style={{ background: 'var(--mc-panel2, rgba(255,255,255,0.03))', border: `1px solid color-mix(in srgb, ${tierColor} 35%, transparent)`, borderLeft: `3px solid ${tierColor}`, borderRadius: 8, padding: 9 }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 3 }}>
+                    <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-cyan)' }}>{r.symbol}</span>
+                    {r.grade ? <span style={{ fontSize: 10, color: 'var(--mc-muted)', fontWeight: 700 }}>{r.grade}</span> : null}
+                    <span style={{ marginLeft: 'auto', fontSize: 14, fontWeight: 900, color: tierColor }}>{r.opLev.toFixed(1)}×</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--mc-txt, #e6edf3)', lineHeight: 1.4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.company || ''}>
+                    {r.company || r.symbol}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: 'var(--mc-muted)', marginTop: 3, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <span title="EPS growth YoY">EPS {r.epsGrowth.toFixed(0)}%</span>
+                    <span title="Revenue growth YoY">Rev {r.revGrowth.toFixed(0)}%</span>
+                    {typeof r.opmTtm === 'number' ? <span title="Operating margin TTM">OpM {r.opmTtm.toFixed(0)}%</span> : null}
+                    {typeof r.marketCapB === 'number' ? <span title="Market cap">${r.marketCapB.toFixed(1)}B</span> : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ marginTop: 8, fontSize: 10.5, color: 'var(--mc-muted)' }}>
+            Color: <b style={{ color: '#10B981' }}>≥ 2×</b> strong · <b style={{ color: '#84CC16' }}>1–2×</b> positive · <b style={{ color: '#F59E0B' }}>&lt; 1×</b> weak · <b style={{ color: '#EF4444' }}>negative</b> = margin erosion
+          </div>
+        </div>
+      )}
+
       {scope === 'INDIA' && stats.clusterRanked && stats.clusterRanked.length > 0 && (
         <div style={cardStyle}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
