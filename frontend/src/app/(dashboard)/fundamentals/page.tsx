@@ -649,6 +649,7 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
     isOutlier?: boolean; // PATCH 1101uu — flagged when a value was clipped
     ema50?: number; ema200?: number; // PATCH 1101uu — moving averages
     pctVsEma50?: number; pctVsEma200?: number;
+    opLev?: number; // zzz125 — Operating Leverage = EPS growth / Revenue growth (>1 = margins expanding)
   };
   const rows: UsaRow[] = useMemo(() => data.map((r) => {
     const symbol = String(get(r, 'Symbol', 'Ticker') ?? '').trim().toUpperCase();
@@ -713,7 +714,16 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
     const ema200 = n(get(r, 'Exponential moving average, 200, 1 day', 'EMA 200'));
     const pctVsEma50 = (price && ema50 && ema50 > 0) ? Math.round(((price - ema50) / ema50) * 1000) / 10 : undefined;
     const pctVsEma200 = (price && ema200 && ema200 > 0) ? Math.round(((price - ema200) / ema200) * 1000) / 10 : undefined;
-    return { raw: r, symbol, company, sector, mcapB, price, r40, fwdPe, pe, revAnn, revQtr, fcfMargin, gpm, opm, roic, roce, roe, netMargin, perf1y, perf3m, perf6m, rsRating, beta, ebitdaMargin, epsGrowth, pegFwd: peg, targetUpside, piotroski, analystRating, isOutlier, ema50, ema200, pctVsEma50, pctVsEma200 };
+    // zzz125 — Operating Leverage: how much EPS grows per 1% of revenue growth.
+    // Formula: epsGrowth / revAnn (both YoY %). >1.0 = margins expanding (positive op lev),
+    // >2.0 = strong, <1.0 = no leverage. Skip if rev growth is tiny / negative (noisy).
+    let opLev: number | undefined;
+    if (typeof revAnn === 'number' && typeof epsGrowth === 'number' && revAnn >= 2) {
+      const v = epsGrowth / revAnn;
+      // Cap to keep table tidy; companies turning from loss to profit can show enormous ratios.
+      opLev = Math.max(-9.9, Math.min(99.9, Math.round(v * 10) / 10));
+    }
+    return { raw: r, symbol, company, sector, mcapB, price, r40, fwdPe, pe, revAnn, revQtr, fcfMargin, gpm, opm, roic, roce, roe, netMargin, perf1y, perf3m, perf6m, rsRating, beta, ebitdaMargin, epsGrowth, pegFwd: peg, targetUpside, piotroski, analystRating, isOutlier, ema50, ema200, pctVsEma50, pctVsEma200, opLev };
   }).filter(r => r.symbol && r.symbol.length > 0 && r.symbol.length < 20 && !/^\d+$/.test(r.symbol)), [data]);
   // PATCH 1101vv — Filter out ghost India rows that have no Symbol (these are
   // remnants from pre-1101tt accidental India CSV uploads to USA tab. They
@@ -894,6 +904,7 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
           if (typeof r.fcfMargin === 'number' && r.fcfMargin >= 15) strengths.push('FCF margin ≥15%');
           else if (typeof r.fcfMargin === 'number' && r.fcfMargin < 0) triggers.push('FCF negative');
           if (typeof r.ebitdaMargin === 'number' && r.ebitdaMargin >= 30) strengths.push('EBITDA margin ≥30%');
+          if (typeof r.opLev === 'number' && r.opLev >= 1.5) strengths.push(`Op-Lev ${r.opLev.toFixed(1)}× (margins expanding)`);
           if (typeof r.gpm === 'number' && r.gpm >= 60) strengths.push('Gross margin ≥60% (moat)');
           if (typeof r.netMargin === 'number' && r.netMargin >= 20) strengths.push('Net margin ≥20%');
           if (typeof r.perf1y === 'number' && r.perf1y >= 30) strengths.push('1Y return ≥30%');
@@ -964,6 +975,7 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
           lead('netMargin', true, 'Top 10 — Net margin %', '#10B981', (v) => `${v.toFixed(0)}%`, true),
           lead('revAnn', true, 'Top 10 — Revenue growth %', '#10B981', (v) => `${v.toFixed(0)}%`, true),
           lead('epsGrowth', true, 'Top 10 — EPS growth %', '#10B981', (v) => `${v.toFixed(0)}%`, true),
+          lead('opLev', true, 'Top 10 — Operating Leverage', '#84CC16', (v) => `${v.toFixed(1)}×`, true),
           lead('perf1y', true, 'Top 10 — 1-year return %', '#F59E0B', (v) => `${v.toFixed(0)}%`, true),
           lead('perf3m', true, 'Top 10 — 3-month return %', '#F59E0B', (v) => `${v.toFixed(0)}%`, true),
           lead('targetUpside', true, 'Top 10 — Implied upside vs target', '#22D3EE', (v) => `${v >= 0 ? '↑' : '↓'} ${Math.abs(v)}%`),
@@ -1053,6 +1065,7 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
               <th style={headerCell as any} onClick={() => setSort('revAnn')}>REV YOY{arrow('revAnn')}</th>
               <th style={headerCell as any} onClick={() => setSort('fcfMargin')}>FCF M{arrow('fcfMargin')}</th>
               <th style={headerCell as any} onClick={() => setSort('ebitdaMargin')}>EBITDA M{arrow('ebitdaMargin')}</th>
+              <th style={headerCell as any} onClick={() => setSort('opLev')} title="Operating Leverage = EPS growth ÷ Revenue growth (YoY). >1 = margins expanding (positive op-lev). >2 = strong.">OP LEV{arrow('opLev')}</th>
               <th style={headerCell as any} onClick={() => setSort('roic')}>ROIC{arrow('roic')}</th>
               <th style={headerCell as any} onClick={() => setSort('fwdPe')}>FWD P/E{arrow('fwdPe')}</th>
               <th style={headerCell as any} onClick={() => setSort('pegFwd')}>PEG{arrow('pegFwd')}</th>
@@ -1074,6 +1087,7 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
                 <td style={cell}>{r.revAnn !== undefined ? `${r.revAnn.toFixed(0)}%` : '—'}</td>
                 <td style={cell}>{r.fcfMargin !== undefined ? `${r.fcfMargin.toFixed(0)}%` : '—'}</td>
                 <td style={cell}>{r.ebitdaMargin !== undefined ? `${r.ebitdaMargin.toFixed(0)}%` : '—'}</td>
+                <td style={{ ...cell, color: typeof r.opLev === 'number' ? (r.opLev >= 2 ? '#10B981' : r.opLev >= 1.5 ? '#22C55E' : r.opLev >= 1 ? '#84CC16' : r.opLev > 0 ? '#F59E0B' : '#EF4444') : COL.muted, fontWeight: 800 }} title={r.opLev !== undefined ? `EPS YoY ${r.epsGrowth?.toFixed(0) ?? '—'}% ÷ Rev YoY ${r.revAnn?.toFixed(0) ?? '—'}%` : 'needs rev YoY ≥2% + EPS YoY'}>{r.opLev !== undefined ? `${r.opLev.toFixed(1)}×` : '—'}</td>
                 <td style={cell}>{r.roic !== undefined ? `${r.roic.toFixed(0)}%` : '—'}</td>
                 <td style={cell}>{r.fwdPe !== undefined ? `${r.fwdPe.toFixed(0)}×` : '—'}</td>
                 <td style={cell}>{r.pegFwd !== undefined ? r.pegFwd.toFixed(2) : '—'}</td>
@@ -1168,6 +1182,26 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
     ['Debt to equity', 'Debt / Equity', 'x'],
     ['Promoter holding', 'Promoter holding', '%'],
   ];
+
+  // zzz125 — Operating Leverage for India = Profit growth ÷ Sales growth (TTM YoY).
+  // >1.0 = margins expanding; >2.0 = strong operating leverage; <1.0 = no leverage.
+  // Skip rows where sales growth is < 2% (noisy / mean-reverts).
+  const opLevRows = useMemo(() => {
+    return data.map((d) => {
+      const sg = num(d['Sales growth']);
+      const pg = num(d['Profit growth']);
+      if (isNaN(sg) || isNaN(pg) || sg < 2) return { ...d, '_OpLev': NaN } as any;
+      const v = Math.max(-9.9, Math.min(99.9, Math.round((pg / sg) * 10) / 10));
+      return { ...d, '_OpLev': v } as any;
+    });
+  }, [data]);
+  const opLevVals = useMemo(() => opLevRows.map((d: any) => num(d['_OpLev'])).filter((v: number) => !isNaN(v)), [opLevRows]);
+  const opLevStat = useMemo(() => stats(opLevVals), [opLevVals]);
+  const opLevLeaders = useMemo(() => {
+    const v = opLevRows.filter((d: any) => !isNaN(num(d['_OpLev'])));
+    v.sort((a: any, b: any) => num(b['_OpLev']) - num(a['_OpLev']));
+    return v.slice(0, 10);
+  }, [opLevRows]);
 
   const leaders = (key: string, dir: 'desc' | 'asc', n = 10) => {
     const v = data.filter((d) => !isNaN(num(d[key])));
@@ -1467,6 +1501,14 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
             </div>
           );
         })}
+        {/* zzz125 — Operating Leverage KPI card (computed: profit growth ÷ sales growth) */}
+        <div style={{ ...kpiCard, border: `1px solid ${COL.lime || '#84CC16'}40` }} title="Operating Leverage = Profit growth ÷ Sales growth (TTM YoY). >1 = margins expanding · >2 = strong">
+          <div style={{ fontSize: 10.5, letterSpacing: .4, textTransform: 'uppercase', color: '#84CC16', marginBottom: 7, fontWeight: 700 }}>
+            ⚡ Op Leverage<span style={{ color: COL.dim, fontWeight: 500 }}> · avg</span>
+          </div>
+          <div style={{ fontSize: 23, fontWeight: 700, color: isNaN(opLevStat.trimmed) ? COL.txt : opLevStat.trimmed >= 1.5 ? '#10B981' : opLevStat.trimmed >= 1 ? '#84CC16' : opLevStat.trimmed > 0 ? '#F59E0B' : '#EF4444' }}>{isNaN(opLevStat.trimmed) ? '—' : `${fmt(opLevStat.trimmed, 1)}×`}</div>
+          <div style={{ fontSize: 11, color: COL.dim, marginTop: 4 }}>median <b style={{ color: COL.muted }}>{isNaN(opLevStat.median) ? '—' : `${fmt(opLevStat.median, 1)}×`}</b> · n={opLevStat.n}</div>
+        </div>
       </div>
 
       {/* Market Cap leaders (Top 15 / Bottom 15) */}
@@ -1496,6 +1538,25 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
         </Card>
         <Card title="Bottom 10 — Profit growth (TTM)" dot={COL.red} hint="earnings under pressure">
           <LeaderTable rows={leaders('Profit growth', 'asc')} valKey="Profit growth" unit="%" name={name} nse={nse} />
+        </Card>
+      </div>
+
+      {/* zzz125 — Operating Leverage leaders (profit growth ÷ sales growth) */}
+      <div style={grid2}>
+        <Card title="⚡ Top 10 — Operating Leverage" dot="#84CC16" hint="profit growth ÷ sales growth · >1× = margins expanding">
+          <LeaderTable rows={opLevLeaders} valKey="_OpLev" unit="x" name={name} nse={nse} />
+        </Card>
+        <Card title="Operating Leverage — How it works" dot="#84CC16">
+          <div style={{ padding: 12, fontSize: 13, color: COL.muted, lineHeight: 1.55 }}>
+            <div style={{ marginBottom: 8 }}><b style={{ color: '#84CC16' }}>Formula:</b> Profit growth % ÷ Sales growth % (both TTM YoY)</div>
+            <ul style={{ margin: 0, paddingLeft: 18 }}>
+              <li><b style={{ color: '#10B981' }}>≥ 2.0×</b> — strong operating leverage, margins expanding fast</li>
+              <li><b style={{ color: '#84CC16' }}>1.0–2.0×</b> — positive leverage, fixed-cost absorption working</li>
+              <li><b style={{ color: '#F59E0B' }}>0–1.0×</b> — no leverage, growth without margin pickup</li>
+              <li><b style={{ color: '#EF4444' }}>negative</b> — profit falling even as revenue grows (margin erosion)</li>
+            </ul>
+            <div style={{ marginTop: 10, fontSize: 12, color: COL.dim }}>Rows with sales growth &lt; 2% are excluded (noisy / mean-reverts).</div>
+          </div>
         </Card>
       </div>
 
