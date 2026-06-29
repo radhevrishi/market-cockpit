@@ -6611,17 +6611,22 @@ function TechnicalsTab() {
     .sort((a, b) => b.totalScore - a.totalScore)
     .slice(0, 10), [techRows]);
 
-  // zzz135 — QUALITY ON SALE (STRICTER per user): Fund > 60, Tech 30-45,
-  // price within 15% of SMA200. This avoids broken/collapsing stocks that
-  // happen to score well on fundamentals from stale data.
+  // zzz141 — QUALITY ON SALE re-tuned: Fund > 60 was too strict (universe scoring max ~70).
+  // New gate: Fund >= 55 AND Tech <= 50 (broader band), within reasonable SMA200 range,
+  // and exclude only the truly-broken (parabolic / thin vol / micro-cap data flags).
+  // "Below SMA50" eligibility failure is EXPECTED for this bucket — that's the whole point.
   const qualityOnSale = React.useMemo(() => [...techRows]
-    .filter(r => r.fundScore > 60)
-    .filter(r => r.totalScore >= 30 && r.totalScore <= 45)
+    .filter(r => r.fundScore >= 55)
+    .filter(r => r.totalScore <= 50)
+    // Don't include parabolic / thin / extreme-extension flagged rows
+    .filter(r => !r.qualityFlags || (!r.qualityFlags.includes('RSI parabolic') && !r.qualityFlags.includes('thin volume') && !r.qualityFlags.includes('micro-cap illiquid')))
+    // Within reasonable SMA200 band — not in free-fall, not parabolic
     .filter(r => {
-      const pctSma200 = typeof r.pctVsSma200 === 'number' ? r.pctVsSma200 : r.pctVsEma200;
-      return typeof pctSma200 === 'number' && pctSma200 >= -15 && pctSma200 <= 50;
+      const p = typeof r.pctVsSma200 === 'number' ? r.pctVsSma200 : r.pctVsEma200;
+      return typeof p !== 'number' || (p >= -30 && p <= 100);
     })
-    .filter(r => r.eligible || (r.eligibilityFailures.length === 1 && r.eligibilityFailures[0].startsWith('below SMA50')))
+    // Allow not-eligible IF the only failures are "below SMA50" type (expected for this bucket)
+    .filter(r => r.eligible || r.eligibilityFailures.every(f => f.startsWith('below SMA50')))
     .sort((a, b) => b.fundScore - a.fundScore)
     .slice(0, 12), [techRows]);
 
@@ -7023,7 +7028,7 @@ function TechnicalsTab() {
         </div>
         <div style={{ ...cardStyle, marginBottom: 0, background: 'color-mix(in srgb, #84CC16 5%, transparent)', borderColor: 'color-mix(in srgb, #84CC16 40%, transparent)' }}>
           <div style={{ fontSize: 15, fontWeight: 900, color: '#84CC16', marginBottom: 10 }}>💰 QUALITY ON SALE ({qualityOnSale.length})</div>
-          <div style={{ fontSize: 11, color: MUTED, marginBottom: 10, fontStyle: 'italic' }}>Strong fundamentals (R40 / growth / FCF) but technicals weak — waiting list for trend reversal entry.</div>
+          <div style={{ fontSize: 11, color: MUTED, marginBottom: 10, fontStyle: 'italic' }}>Fund ≥ 55 AND Tech ≤ 50 — strong fundamentals (R40 / growth / FCF) but technicals weak. Waiting list for trend reversal entry.</div>
           {qualityOnSale.length === 0 ? <div style={{ fontSize: 12, color: MUTED }}>None today.</div> : qualityOnSale.map(r => (
             <div key={r.symbol} onClick={() => setExpandedSymbol(r.symbol)} style={{ display: 'flex', gap: 8, padding: '8px 10px', background: PANEL2, borderRadius: 6, marginBottom: 5, fontSize: 12, alignItems: 'center', cursor: 'pointer' }}>
               <span style={{ fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace', minWidth: 55 }}>{r.symbol}</span>
