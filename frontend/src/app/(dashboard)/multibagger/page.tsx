@@ -6557,10 +6557,11 @@ function MultibaggerAnalytics({
     const cashRich = [...indiaCashRich, ...usaCashRich]
       .sort((a, b) => b.cashToMcapPct - a.cashToMcapPct);
 
-    // PATCH zzz127 — USA Operating Leverage Leaders.
+    // PATCH zzz128 — USA Operating Leverage Leaders (improved).
     // Op Leverage = EPS growth YoY ÷ Revenue growth YoY. >1× = margins
-    // expanding (positive op-lev). Skip rows where revenue growth < 2%
-    // (noisy / mean-reverts). Cap to keep table tidy.
+    // expanding (positive op-lev). Filter widened to rev > 0 (was rev >= 2)
+    // so growth companies with modest top-line still surface if they have
+    // strong margin expansion. Cap to keep table tidy.
     type UsaOpLevRow = {
       symbol: string; company?: string; sector?: string;
       grade: string; score: number;
@@ -6570,7 +6571,7 @@ function MultibaggerAnalytics({
     const usaOpLevAll: UsaOpLevRow[] = (usaRows || []).map((r: any) => {
       const eps = num(r.epsGrowth);
       const rev = num(r.revenueGrowthAnn);
-      if (typeof eps !== 'number' || typeof rev !== 'number' || rev < 2) return null;
+      if (typeof eps !== 'number' || typeof rev !== 'number' || rev <= 0) return null;
       const raw = eps / rev;
       const opLev = Math.max(-9.9, Math.min(99.9, Math.round(raw * 10) / 10));
       return {
@@ -6586,7 +6587,12 @@ function MultibaggerAnalytics({
         marketCapB: num(r.marketCapB),
       } as UsaOpLevRow;
     }).filter(Boolean) as UsaOpLevRow[];
+    // Split by tier so we can show "STRONG" leaders prominently and a
+    // secondary "POSITIVE but not yet strong" group for context.
     const usaOpLevTop = [...usaOpLevAll].sort((a, b) => b.opLev - a.opLev).slice(0, 18);
+    const usaOpLevStrong = usaOpLevAll.filter(r => r.opLev >= 1.5).sort((a, b) => b.opLev - a.opLev).slice(0, 12);
+    const usaOpLevPositive = usaOpLevAll.filter(r => r.opLev >= 1 && r.opLev < 1.5).sort((a, b) => b.opLev - a.opLev).slice(0, 8);
+    const usaOpLevEligibleCount = usaOpLevAll.length;
 
     return {
       total, grades, avg, p25, p50, p75,
@@ -6648,7 +6654,7 @@ function MultibaggerAnalytics({
       top3Sectors, top3Pct, concentrationRisk,
       // PATCH 0578 — cluster scores + cash-rich lens
       clusterRanked, clusterHighConv, clusterEmerging, clusterIncomplete,
-      usaOpLevTop, // zzz127
+      usaOpLevTop, usaOpLevStrong, usaOpLevPositive, usaOpLevEligibleCount, // zzz127 + zzz128
       cashRich,
     };
     // PATCH 0872 — `decisionTick` added so any BUY/WATCH/REJECTED tag
@@ -7450,49 +7456,6 @@ function MultibaggerAnalytics({
           cfoToPat, capex trend, debt creep history) that the USA scorer
           doesn't compute. When the user is on USA scope, this widget was
           showing leftover Indian rows. Now hidden unless scope === 'INDIA'. */}
-      {/* PATCH zzz127 — USA Operating Leverage Leaders. EPS YoY ÷ Revenue YoY.
-          Shown when scope is USA or BOTH (and USA rows exist). Placed BEFORE
-          the India cluster widget so it appears at the TOP of USA Analytics. */}
-      {(scope === 'USA' || scope === 'BOTH') && stats.usaOpLevTop && stats.usaOpLevTop.length > 0 && (
-        <div style={cardStyle}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
-            <div style={{ fontSize: 13, color: '#84CC16', fontWeight: 800, letterSpacing: '0.4px' }}>
-              ⚡ 🇺🇸 USA OPERATING LEVERAGE — BEST STOCKS ({stats.usaOpLevTop.length})
-            </div>
-            <span style={{ fontSize: 10, color: '#84CC16', background: 'color-mix(in srgb, #84CC16 13%, transparent)', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>EPS gr ÷ Rev gr</span>
-          </div>
-          <div style={{ fontSize: 11.5, color: 'var(--mc-muted)', marginBottom: 10 }}>
-            Companies where EPS is growing faster than revenue → margins expanding (positive op-lev). &gt;2× = strong. Sales growth ≥ 2% required.
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 8 }}>
-            {stats.usaOpLevTop.map((r: any) => {
-              const tierColor = r.opLev >= 2 ? '#10B981' : r.opLev >= 1.5 ? '#22C55E' : r.opLev >= 1 ? '#84CC16' : r.opLev > 0 ? '#F59E0B' : '#EF4444';
-              return (
-                <div key={r.symbol} style={{ background: 'var(--mc-panel2, rgba(255,255,255,0.03))', border: `1px solid color-mix(in srgb, ${tierColor} 35%, transparent)`, borderLeft: `3px solid ${tierColor}`, borderRadius: 8, padding: 9 }}>
-                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 3 }}>
-                    <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-cyan)' }}>{r.symbol}</span>
-                    {r.grade ? <span style={{ fontSize: 10, color: 'var(--mc-muted)', fontWeight: 700 }}>{r.grade}</span> : null}
-                    <span style={{ marginLeft: 'auto', fontSize: 14, fontWeight: 900, color: tierColor }}>{r.opLev.toFixed(1)}×</span>
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--mc-txt, #e6edf3)', lineHeight: 1.4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.company || ''}>
-                    {r.company || r.symbol}
-                  </div>
-                  <div style={{ fontSize: 10.5, color: 'var(--mc-muted)', marginTop: 3, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    <span title="EPS growth YoY">EPS {r.epsGrowth.toFixed(0)}%</span>
-                    <span title="Revenue growth YoY">Rev {r.revGrowth.toFixed(0)}%</span>
-                    {typeof r.opmTtm === 'number' ? <span title="Operating margin TTM">OpM {r.opmTtm.toFixed(0)}%</span> : null}
-                    {typeof r.marketCapB === 'number' ? <span title="Market cap">${r.marketCapB.toFixed(1)}B</span> : null}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <div style={{ marginTop: 8, fontSize: 10.5, color: 'var(--mc-muted)' }}>
-            Color: <b style={{ color: '#10B981' }}>≥ 2×</b> strong · <b style={{ color: '#84CC16' }}>1–2×</b> positive · <b style={{ color: '#F59E0B' }}>&lt; 1×</b> weak · <b style={{ color: '#EF4444' }}>negative</b> = margin erosion
-          </div>
-        </div>
-      )}
-
       {scope === 'INDIA' && stats.clusterRanked && stats.clusterRanked.length > 0 && (
         <div style={cardStyle}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
@@ -7821,6 +7784,93 @@ function MultibaggerAnalytics({
           </div>
         );
       })()}
+
+      {/* ── ⚡ USA OPERATING LEVERAGE — BEST STOCKS (PATCH zzz128) ───────────
+          Right after Rule of 40 (which is on the same theme — institutional
+          quality metrics) so users find it without scrolling deep. Always
+          renders when scope includes USA so the user gets visual feedback
+          (either the leaders, or a "no candidates with the data we need"
+          message). zzz127 was placed too deep — buried mid-page. */}
+      {(scope === 'USA' || scope === 'BOTH') && (
+        <div style={cardStyle}>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+            <div style={{ fontSize: 13, color: '#84CC16', fontWeight: 800, letterSpacing: '0.4px' }}>
+              ⚡ 🇺🇸 USA OPERATING LEVERAGE — BEST STOCKS
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--mc-text-4, var(--mc-muted))' }}>
+              EPS growth ÷ Revenue growth (YoY). &gt;1× = margins expanding · &gt;2× = strong op-lev firing.
+            </div>
+          </div>
+
+          {stats.usaOpLevTop && stats.usaOpLevTop.length > 0 ? (
+            <>
+              {/* Tier summary chips */}
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+                <span style={{ fontSize: 11, color: '#10B981', background: 'color-mix(in srgb, #10B981 13%, transparent)', padding: '2px 8px', borderRadius: 4, fontWeight: 700 }}>STRONG ≥1.5× · {stats.usaOpLevStrong?.length || 0}</span>
+                <span style={{ fontSize: 11, color: '#84CC16', background: 'color-mix(in srgb, #84CC16 13%, transparent)', padding: '2px 8px', borderRadius: 4, fontWeight: 700 }}>POSITIVE 1–1.5× · {stats.usaOpLevPositive?.length || 0}</span>
+                <span style={{ fontSize: 11, color: 'var(--mc-muted)', background: 'rgba(255,255,255,0.04)', padding: '2px 8px', borderRadius: 4, fontWeight: 600 }}>Eligible · {stats.usaOpLevEligibleCount || 0} of {(usaRows || []).length}</span>
+              </div>
+
+              {/* Strong leaders grid */}
+              {stats.usaOpLevStrong && stats.usaOpLevStrong.length > 0 && (
+                <>
+                  <div style={{ fontSize: 11, color: '#10B981', fontWeight: 800, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.4 }}>🏆 STRONG (≥1.5×) — margins firing</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 8, marginBottom: 12 }}>
+                    {stats.usaOpLevStrong.map((r: any) => {
+                      const tierColor = r.opLev >= 2 ? '#10B981' : '#22C55E';
+                      return (
+                        <div key={r.symbol} style={{ background: 'var(--mc-panel2, rgba(255,255,255,0.03))', border: `1px solid color-mix(in srgb, ${tierColor} 35%, transparent)`, borderLeft: `3px solid ${tierColor}`, borderRadius: 8, padding: 9 }}>
+                          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 3 }}>
+                            <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-cyan)' }}>{r.symbol}</span>
+                            {r.grade ? <span style={{ fontSize: 10, color: 'var(--mc-muted)', fontWeight: 700 }}>{r.grade}</span> : null}
+                            <span style={{ marginLeft: 'auto', fontSize: 14, fontWeight: 900, color: tierColor }}>{r.opLev.toFixed(1)}×</span>
+                          </div>
+                          <div style={{ fontSize: 11, color: 'var(--mc-txt, #e6edf3)', lineHeight: 1.4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.company || ''}>
+                            {r.company || r.symbol}
+                          </div>
+                          <div style={{ fontSize: 10.5, color: 'var(--mc-muted)', marginTop: 3, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                            <span title="EPS growth YoY">EPS {r.epsGrowth.toFixed(0)}%</span>
+                            <span title="Revenue growth YoY">Rev {r.revGrowth.toFixed(0)}%</span>
+                            {typeof r.opmTtm === 'number' ? <span title="Operating margin TTM">OpM {r.opmTtm.toFixed(0)}%</span> : null}
+                            {typeof r.marketCapB === 'number' ? <span title="Market cap">${r.marketCapB.toFixed(1)}B</span> : null}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+
+              {/* Positive but not strong */}
+              {stats.usaOpLevPositive && stats.usaOpLevPositive.length > 0 && (
+                <>
+                  <div style={{ fontSize: 11, color: '#84CC16', fontWeight: 800, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.4 }}>POSITIVE (1–1.5×) — early signs</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 6 }}>
+                    {stats.usaOpLevPositive.map((r: any) => (
+                      <div key={r.symbol} style={{ background: 'var(--mc-panel2, rgba(255,255,255,0.02))', border: '1px solid color-mix(in srgb, #84CC16 25%, transparent)', borderRadius: 6, padding: '6px 8px', fontSize: 11 }}>
+                        <span style={{ fontWeight: 800, color: 'var(--mc-cyan)' }}>{r.symbol}</span>
+                        <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 800, color: '#84CC16', float: 'right' }}>{r.opLev.toFixed(1)}×</span>
+                        <div style={{ color: 'var(--mc-muted)', fontSize: 10, marginTop: 2 }}>EPS {r.epsGrowth.toFixed(0)}% · Rev {r.revGrowth.toFixed(0)}%</div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              <div style={{ marginTop: 10, fontSize: 10.5, color: 'var(--mc-muted)' }}>
+                Color bands: <b style={{ color: '#10B981' }}>≥ 2×</b> strong · <b style={{ color: '#22C55E' }}>1.5–2×</b> green · <b style={{ color: '#84CC16' }}>1–1.5×</b> positive. Rows where revenue growth ≤ 0 are excluded. Negative op-lev (EPS shrinking while rev grows) means margin erosion.
+              </div>
+            </>
+          ) : (
+            <div style={{ background: 'rgba(245, 158, 11, 0.08)', border: '1px solid color-mix(in srgb, #F59E0B 30%, transparent)', borderRadius: 8, padding: 14 }}>
+              <div style={{ fontSize: 12, color: '#F59E0B', fontWeight: 700, marginBottom: 4 }}>⚠ No Op-Lev candidates yet</div>
+              <div style={{ fontSize: 11.5, color: 'var(--mc-muted)', lineHeight: 1.5 }}>
+                Op Leverage needs <b>both</b> EPS growth and Revenue growth (YoY %) per row. Out of {(usaRows || []).length} USA stocks loaded, {stats.usaOpLevEligibleCount || 0} have both fields populated with rev &gt; 0. Re-export your USA Multibagger CSV from TradingView with these columns enabled: <i>Revenue growth %, Annual YoY</i> and <i>Earnings per share diluted growth %, TTM YoY</i>.
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── 💎 USA QUALITY LEADERS (PATCH 1101mm) ────────────────────────────
           Top ROIC + ROE + Piotroski names. The "true compounder DNA" check —
