@@ -5983,6 +5983,8 @@ function TechnicalsTab() {
     rightEntry: 'BUY ZONE' | 'EXTENDED' | 'CHASE' | 'BELOW' | 'NO DATA';
     rightEntryDetail: string;
     stopLoss?: number;           // price - 2 * ATR
+    stopLossPct?: number;        // (price - stopLoss) / price * 100
+    qualityFlags?: string[];     // zzz132 — data-quality warnings
     totalScore: number;
   };
 
@@ -6034,6 +6036,7 @@ function TechnicalsTab() {
       const volContraction = (typeof vol1w === 'number' && typeof vol1m === 'number') ? vol1w < vol1m * 0.85 : undefined;
       const volumeBurst = (typeof relVol1w === 'number') ? relVol1w >= 1.5 : undefined;
       const stopLoss = (typeof price === 'number' && typeof atr14 === 'number') ? Math.round((price - 2 * atr14) * 100) / 100 : undefined;
+      const stopLossPct = (typeof price === 'number' && typeof stopLoss === 'number' && price > 0) ? Math.round((price - stopLoss) / price * 1000) / 10 : undefined;
 
       // Momentum acceleration: 3M annualized > 6M annualized > 1Y
       let momentumAccel = 0;
@@ -6045,91 +6048,156 @@ function TechnicalsTab() {
         if (perf3m > 0 && perf6m > 0 && perf1y > 0) momentumAccel++;
       }
 
-      // ── QULLAMAGGIE ── biggest 1M/3M gainers, ADR 3-6%, not extended, small/mid cap
+      // zzz132 — DATA QUALITY warnings (parabolic / data anomaly detection)
+      const qualityFlags: string[] = [];
+      if (typeof rsi === 'number' && rsi >= 88) qualityFlags.push('RSI parabolic');
+      if (typeof pctVsEma50 === 'number' && pctVsEma50 >= 60) qualityFlags.push('extreme extension');
+      if (typeof mcap === 'number' && mcap < 0.3) qualityFlags.push('micro-cap illiquid');
+      if (typeof avgVol30d === 'number' && avgVol30d < 200_000) qualityFlags.push('thin volume');
+
+      // zzz132 — QULLAMAGGIE rewritten with finer gradations (was clustering 80-85)
+      // Now spreads scores from 20 to 100 based on actual setup strength
       let qullaScore = 0; const qReasons: string[] = [];
-      // PRIMARY: 1M gainer (Qullamaggie's #1 filter)
-      if (typeof perf1m === 'number' && perf1m >= 30) { qullaScore += 30; qReasons.push(`🔥 1M ${perf1m.toFixed(0)}%`); }
-      else if (typeof perf1m === 'number' && perf1m >= 15) { qullaScore += 20; qReasons.push(`1M ${perf1m.toFixed(0)}%`); }
-      else if (typeof perf3m === 'number' && perf3m >= 30) { qullaScore += 20; qReasons.push(`3M ${perf3m.toFixed(0)}%`); }
-      else if (typeof perf3m === 'number' && perf3m >= 15) { qullaScore += 10; qReasons.push(`3M ${perf3m.toFixed(0)}%`); }
-      // ADR sweet spot 3-6% (Qulla's signature filter)
-      if (typeof adrPct === 'number' && adrPct >= 3 && adrPct <= 6) { qullaScore += 20; qReasons.push(`ADR ${adrPct.toFixed(1)}% (sweet spot)`); }
-      else if (typeof adrPct === 'number' && adrPct >= 2 && adrPct <= 8) { qullaScore += 10; qReasons.push(`ADR ${adrPct.toFixed(1)}%`); }
-      // Not extended above 21-EMA proxy (using EMA50 here is conservative)
-      if (typeof pctVsEma50 === 'number' && pctVsEma50 >= 0 && pctVsEma50 <= 15) { qullaScore += 15; qReasons.push(`not extended (+${pctVsEma50.toFixed(0)}% EMA50)`); }
-      else if (typeof pctVsEma50 === 'number' && pctVsEma50 > 15 && pctVsEma50 <= 25) { qullaScore += 5; qReasons.push(`slightly extended (+${pctVsEma50.toFixed(0)}%)`); }
-      // Volume burst confirmation
-      if (volumeBurst === true) { qullaScore += 10; qReasons.push(`Rel Vol ${relVol1w!.toFixed(1)}× (burst)`); }
-      // Small/mid cap preference
-      if (typeof mcap === 'number' && mcap < 10) { qullaScore += 10; qReasons.push(`small cap $${mcap.toFixed(1)}B`); }
-      else if (typeof mcap === 'number' && mcap < 50) { qullaScore += 5; qReasons.push(`mid cap $${mcap.toFixed(1)}B`); }
-      // Stage-2 confirmation
-      if (typeof pctVsEma200 === 'number' && pctVsEma200 > 0) { qullaScore += 10; qReasons.push('Stage-2'); }
+      // PRIMARY: 1M momentum (Qullamaggie's #1 filter — biggest 1M gainers)
+      if (typeof perf1m === 'number' && perf1m >= 50) { qullaScore += 35; qReasons.push(`💥 1M +${perf1m.toFixed(0)}%`); }
+      else if (typeof perf1m === 'number' && perf1m >= 30) { qullaScore += 28; qReasons.push(`🔥 1M +${perf1m.toFixed(0)}%`); }
+      else if (typeof perf1m === 'number' && perf1m >= 15) { qullaScore += 18; qReasons.push(`1M +${perf1m.toFixed(0)}%`); }
+      else if (typeof perf1m === 'number' && perf1m >= 5) { qullaScore += 8; qReasons.push(`1M +${perf1m.toFixed(0)}%`); }
+      else if (typeof perf3m === 'number' && perf3m >= 30) { qullaScore += 15; qReasons.push(`3M +${perf3m.toFixed(0)}% (1M weak)`); }
+      else if (typeof perf3m === 'number' && perf3m >= 15) { qullaScore += 6; qReasons.push(`3M +${perf3m.toFixed(0)}%`); }
+      // ADR sweet spot — Qullamaggie's exact 4-8% rule (graded)
+      if (typeof adrPct === 'number' && adrPct >= 4 && adrPct <= 7) { qullaScore += 20; qReasons.push(`ADR ${adrPct.toFixed(1)}% (perfect)`); }
+      else if (typeof adrPct === 'number' && adrPct >= 3 && adrPct < 4) { qullaScore += 14; qReasons.push(`ADR ${adrPct.toFixed(1)}%`); }
+      else if (typeof adrPct === 'number' && adrPct > 7 && adrPct <= 9) { qullaScore += 10; qReasons.push(`ADR ${adrPct.toFixed(1)}% (high)`); }
+      else if (typeof adrPct === 'number' && adrPct >= 2 && adrPct < 3) { qullaScore += 6; qReasons.push(`ADR ${adrPct.toFixed(1)}% (low vol)`); }
+      // Extension above SMA50 (preferred) — Qulla's "not too far from 21-EMA" rule
+      const qPctMA = typeof pctVsSma50 === 'number' ? pctVsSma50 : pctVsEma50;
+      const qMALabel = typeof pctVsSma50 === 'number' ? 'SMA50' : 'EMA50';
+      if (typeof qPctMA === 'number') {
+        if (qPctMA >= 0 && qPctMA <= 8) { qullaScore += 20; qReasons.push(`+${qPctMA.toFixed(0)}% ${qMALabel} (entry zone)`); }
+        else if (qPctMA > 8 && qPctMA <= 15) { qullaScore += 12; qReasons.push(`+${qPctMA.toFixed(0)}% ${qMALabel}`); }
+        else if (qPctMA > 15 && qPctMA <= 25) { qullaScore += 5; qReasons.push(`extended +${qPctMA.toFixed(0)}%`); }
+        else if (qPctMA > 40) { qullaScore -= 5; qReasons.push(`⚠️ over-extended +${qPctMA.toFixed(0)}%`); }
+      }
+      // Volume burst confirmation (graded by intensity)
+      if (typeof relVol1w === 'number' && relVol1w >= 3) { qullaScore += 12; qReasons.push(`Rel Vol ${relVol1w.toFixed(1)}× 🔥🔥`); }
+      else if (typeof relVol1w === 'number' && relVol1w >= 2) { qullaScore += 9; qReasons.push(`Rel Vol ${relVol1w.toFixed(1)}× 🔥`); }
+      else if (typeof relVol1w === 'number' && relVol1w >= 1.5) { qullaScore += 6; qReasons.push(`Rel Vol ${relVol1w.toFixed(1)}×`); }
+      // Small/mid cap preference — Qulla hunts $1-10B sweet spot
+      if (typeof mcap === 'number' && mcap >= 1 && mcap <= 10) { qullaScore += 10; qReasons.push(`small-mid $${mcap.toFixed(1)}B`); }
+      else if (typeof mcap === 'number' && mcap < 1 && mcap >= 0.3) { qullaScore += 6; qReasons.push(`micro $${(mcap*1000).toFixed(0)}M`); }
+      else if (typeof mcap === 'number' && mcap > 10 && mcap <= 50) { qullaScore += 5; qReasons.push(`mid $${mcap.toFixed(1)}B`); }
+      // Stage-2 confirmation (graded)
+      if (typeof pctVsEma200 === 'number' && pctVsEma200 >= 30) { qullaScore += 8; qReasons.push(`strong Stage-2 (+${pctVsEma200.toFixed(0)}%)`); }
+      else if (typeof pctVsEma200 === 'number' && pctVsEma200 >= 10) { qullaScore += 5; qReasons.push('Stage-2'); }
+      else if (typeof pctVsEma200 === 'number' && pctVsEma200 > 0) { qullaScore += 2; qReasons.push('early Stage-2'); }
 
-      // ── ZANGER HTF ── 100-200% rally in 4-8 weeks then tight 3-5 week pullback
+      // zzz132 — ZANGER HTF rewritten with proper rally-then-flag detection
+      // HTF = 80-200% rally in 4-8 weeks + tight 3-5 week consolidation near highs
       let zangerScore = 0; const zReasons: string[] = [];
-      // HTF requires explosive 4-8 week move — use 1M as proxy
-      if (typeof perf1m === 'number' && perf1m >= 50) { zangerScore += 35; zReasons.push(`💥 1M ${perf1m.toFixed(0)}% (HTF launch)`); }
-      else if (typeof perf6m === 'number' && perf6m >= 80) { zangerScore += 25; zReasons.push(`6M ${perf6m.toFixed(0)}% (HTF base)`); }
-      else if (typeof perf6m === 'number' && perf6m >= 50) { zangerScore += 12; zReasons.push(`6M ${perf6m.toFixed(0)}%`); }
-      // Tight 3-5 week pullback after rally = 1W flat or slightly negative AFTER a strong 1M
-      if (typeof perf1w === 'number' && typeof perf1m === 'number' && perf1m >= 30 && perf1w >= -5 && perf1w <= 5) {
-        zangerScore += 25; zReasons.push(`1W flat (+${perf1w.toFixed(1)}%) tight flag`);
+      // RALLY component — must have explosive recent move
+      if (typeof perf1m === 'number' && perf1m >= 80) { zangerScore += 35; zReasons.push(`💥 1M +${perf1m.toFixed(0)}% (textbook HTF)`); }
+      else if (typeof perf1m === 'number' && perf1m >= 50) { zangerScore += 28; zReasons.push(`💥 1M +${perf1m.toFixed(0)}% (HTF launch)`); }
+      else if (typeof perf1m === 'number' && perf1m >= 30) { zangerScore += 18; zReasons.push(`1M +${perf1m.toFixed(0)}%`); }
+      else if (typeof perf6m === 'number' && perf6m >= 150) { zangerScore += 22; zReasons.push(`6M +${perf6m.toFixed(0)}% (HTF base)`); }
+      else if (typeof perf6m === 'number' && perf6m >= 80) { zangerScore += 12; zReasons.push(`6M +${perf6m.toFixed(0)}%`); }
+      // FLAG component — tight 1W consolidation AFTER big 1M
+      if (typeof perf1w === 'number' && typeof perf1m === 'number' && perf1m >= 30 && perf1w >= -3 && perf1w <= 3) {
+        zangerScore += 25; zReasons.push(`📐 1W ${perf1w >= 0 ? '+' : ''}${perf1w.toFixed(1)}% TIGHT FLAG`);
+      } else if (typeof perf1w === 'number' && typeof perf1m === 'number' && perf1m >= 20 && perf1w >= -5 && perf1w <= 5) {
+        zangerScore += 15; zReasons.push(`1W +${perf1w.toFixed(1)}% flagging`);
       }
-      // Near EMA50 = breakout setup
-      if (typeof pctVsEma50 === 'number' && pctVsEma50 >= -3 && pctVsEma50 <= 8) { zangerScore += 15; zReasons.push('breakout-ready (near EMA50)'); }
-      // Near 52W high
-      if (typeof distFromHigh === 'number' && distFromHigh >= -10) { zangerScore += 15; zReasons.push(`near 52W high (${distFromHigh.toFixed(0)}%)`); }
-      // Volume burst = breakout confirm
-      if (volumeBurst === true) { zangerScore += 10; zReasons.push(`volume burst ${relVol1w!.toFixed(1)}×`); }
-      if (typeof rsi === 'number' && rsi >= 50 && rsi <= 70) { zangerScore += 5; zReasons.push(`RSI ${rsi.toFixed(0)}`); }
+      // PROXIMITY to MA — breakout setup (graded)
+      const zPctMA = typeof pctVsSma50 === 'number' ? pctVsSma50 : pctVsEma50;
+      if (typeof zPctMA === 'number' && zPctMA >= 0 && zPctMA <= 5) { zangerScore += 15; zReasons.push('breakout-ready'); }
+      else if (typeof zPctMA === 'number' && zPctMA > 5 && zPctMA <= 12) { zangerScore += 8; zReasons.push('near base'); }
+      // NEAR 52W HIGH — graded
+      if (typeof distFromHigh === 'number' && distFromHigh >= -3) { zangerScore += 15; zReasons.push(`at 52W high (${distFromHigh.toFixed(0)}%)`); }
+      else if (typeof distFromHigh === 'number' && distFromHigh >= -10) { zangerScore += 10; zReasons.push(`near 52W high (${distFromHigh.toFixed(0)}%)`); }
+      else if (typeof distFromHigh === 'number' && distFromHigh >= -15) { zangerScore += 5; zReasons.push(`${distFromHigh.toFixed(0)}% from high`); }
+      // VOLUME burst (graded)
+      if (typeof relVol1w === 'number' && relVol1w >= 3) { zangerScore += 12; zReasons.push(`vol ${relVol1w.toFixed(1)}×🔥🔥`); }
+      else if (typeof relVol1w === 'number' && relVol1w >= 2) { zangerScore += 8; zReasons.push(`vol ${relVol1w.toFixed(1)}×🔥`); }
+      else if (typeof relVol1w === 'number' && relVol1w >= 1.5) { zangerScore += 5; zReasons.push(`vol ${relVol1w.toFixed(1)}×`); }
+      // RSI sweet spot
+      if (typeof rsi === 'number' && rsi >= 55 && rsi <= 70) { zangerScore += 5; zReasons.push(`RSI ${rsi.toFixed(0)}`); }
+      else if (typeof rsi === 'number' && rsi > 70 && rsi <= 80) { zangerScore += 2; }
 
-      // ── PRADEEP BONDE EP ── Episodic Pivot: volume surge + recent earnings surge + reasonable extension
+      // zzz132 — BONDE EP rewritten — fix clustering at 85 by grading every component
       let bondeScore = 0; const bReasons: string[] = [];
-      // EP signature = recent 1W/1M move on volume
-      if (typeof perf1w === 'number' && perf1w >= 10) { bondeScore += 25; bReasons.push(`⚡ 1W ${perf1w.toFixed(0)}% (EP fired)`); }
-      else if (typeof perf1m === 'number' && perf1m >= 20) { bondeScore += 20; bReasons.push(`1M ${perf1m.toFixed(0)}%`); }
-      else if (typeof perf3m === 'number' && perf3m >= 20) { bondeScore += 12; bReasons.push(`3M ${perf3m.toFixed(0)}%`); }
-      // Volume burst is THE EP signal
-      if (volumeBurst === true) { bondeScore += 20; bReasons.push(`Rel Vol ${relVol1w!.toFixed(1)}× confirms`); }
-      // PED-zone: not over-extended
-      if (typeof pctVsEma50 === 'number' && pctVsEma50 >= 0 && pctVsEma50 <= 20) { bondeScore += 15; bReasons.push('PED entry zone'); }
-      // Stage-2 trend
-      if (typeof pctVsEma200 === 'number' && pctVsEma200 > 10) { bondeScore += 15; bReasons.push(`Stage-2 (+${pctVsEma200.toFixed(0)}% EMA200)`); }
-      // Liquidity
-      if (typeof avgVol30d === 'number' && avgVol30d >= 500_000) { bondeScore += 10; bReasons.push('liquid'); }
-      if (momentumAccel >= 2) { bondeScore += 10; bReasons.push('momentum accelerating'); }
-      if (typeof perf1y === 'number' && perf1y >= 50) { bondeScore += 5; bReasons.push(`1Y +${perf1y.toFixed(0)}%`); }
+      // EP TRIGGER — recent 1W move (Bonde's signature signal, graded)
+      if (typeof perf1w === 'number' && perf1w >= 25) { bondeScore += 32; bReasons.push(`⚡ 1W +${perf1w.toFixed(0)}% MEGA-EP`); }
+      else if (typeof perf1w === 'number' && perf1w >= 15) { bondeScore += 25; bReasons.push(`⚡ 1W +${perf1w.toFixed(0)}% EP fired`); }
+      else if (typeof perf1w === 'number' && perf1w >= 8) { bondeScore += 16; bReasons.push(`⚡ 1W +${perf1w.toFixed(0)}%`); }
+      else if (typeof perf1w === 'number' && perf1w >= 3) { bondeScore += 8; bReasons.push(`1W +${perf1w.toFixed(0)}%`); }
+      else if (typeof perf1m === 'number' && perf1m >= 25) { bondeScore += 15; bReasons.push(`1M +${perf1m.toFixed(0)}% (1W flat)`); }
+      else if (typeof perf3m === 'number' && perf3m >= 30) { bondeScore += 8; bReasons.push(`3M +${perf3m.toFixed(0)}%`); }
+      // VOLUME — THE EP confirmation signal (heavily graded)
+      if (typeof relVol1w === 'number' && relVol1w >= 4) { bondeScore += 25; bReasons.push(`Rel Vol ${relVol1w.toFixed(1)}× 🔥🔥🔥`); }
+      else if (typeof relVol1w === 'number' && relVol1w >= 2.5) { bondeScore += 20; bReasons.push(`Rel Vol ${relVol1w.toFixed(1)}× 🔥🔥`); }
+      else if (typeof relVol1w === 'number' && relVol1w >= 1.5) { bondeScore += 13; bReasons.push(`Rel Vol ${relVol1w.toFixed(1)}× confirms`); }
+      else if (typeof relVol1w === 'number' && relVol1w >= 1) { bondeScore += 5; bReasons.push(`Rel Vol ${relVol1w.toFixed(1)}× normal`); }
+      // PED ENTRY ZONE — Bonde's "post-earnings drift" zone (0-15% over MA = perfect)
+      const bPctMA = typeof pctVsSma50 === 'number' ? pctVsSma50 : pctVsEma50;
+      if (typeof bPctMA === 'number' && bPctMA >= 0 && bPctMA <= 8) { bondeScore += 18; bReasons.push(`PED prime zone +${bPctMA.toFixed(0)}%`); }
+      else if (typeof bPctMA === 'number' && bPctMA > 8 && bPctMA <= 15) { bondeScore += 12; bReasons.push(`PED zone +${bPctMA.toFixed(0)}%`); }
+      else if (typeof bPctMA === 'number' && bPctMA > 15 && bPctMA <= 25) { bondeScore += 6; bReasons.push(`drifting +${bPctMA.toFixed(0)}%`); }
+      // STAGE-2 trend (graded)
+      if (typeof pctVsEma200 === 'number' && pctVsEma200 >= 50) { bondeScore += 15; bReasons.push(`Stage-2 strong +${pctVsEma200.toFixed(0)}%`); }
+      else if (typeof pctVsEma200 === 'number' && pctVsEma200 >= 20) { bondeScore += 10; bReasons.push(`Stage-2 +${pctVsEma200.toFixed(0)}%`); }
+      else if (typeof pctVsEma200 === 'number' && pctVsEma200 >= 5) { bondeScore += 5; bReasons.push(`early Stage-2`); }
+      // LIQUIDITY (graded — Bonde needs liquid names)
+      if (typeof avgVol30d === 'number' && avgVol30d >= 2_000_000) { bondeScore += 8; bReasons.push('liquid'); }
+      else if (typeof avgVol30d === 'number' && avgVol30d >= 500_000) { bondeScore += 5; bReasons.push('mid-liquid'); }
+      // MOMENTUM acceleration confirmation
+      if (momentumAccel >= 3) { bondeScore += 6; bReasons.push('mom-accel 3/3'); }
+      else if (momentumAccel >= 2) { bondeScore += 3; bReasons.push('mom-accel 2/3'); }
+      // 1Y trend confirmation
+      if (typeof perf1y === 'number' && perf1y >= 100) { bondeScore += 6; bReasons.push(`1Y +${perf1y.toFixed(0)}%`); }
+      else if (typeof perf1y === 'number' && perf1y >= 50) { bondeScore += 3; }
 
-      // ── MINERVINI TREND TEMPLATE ── 8-point check (now uses SMA50/150/200)
+      // zzz132 — MINERVINI Trend Template rewritten — finer gradations, breaks 87-clustering
       let minerviniScore = 0; const mReasons: string[] = [];
-      // 1. Price above SMA150 and SMA200 (preferred) — fall back to EMA if SMA missing
-      const aboveLong = (typeof pctVsSma150 === 'number' && pctVsSma150 > 0 && typeof pctVsSma200 === 'number' && pctVsSma200 > 0)
-        || (typeof pctVsEma200 === 'number' && pctVsEma200 > 0);
-      if (aboveLong) { minerviniScore += 12; mReasons.push('price > SMA150 & SMA200'); }
-      // 2. SMA150 above SMA200
-      if (typeof sma150 === 'number' && typeof sma200 === 'number' && sma150 > sma200) {
-        minerviniScore += 10; mReasons.push('SMA150 > SMA200');
-      } else if (typeof emaSpread === 'number' && emaSpread > 0) {
-        minerviniScore += 8; mReasons.push('EMA50 > EMA200');
-      }
-      // 3. SMA200 trending up (proxy: price well above SMA200)
-      if (typeof pctVsSma200 === 'number' && pctVsSma200 > 5) { minerviniScore += 10; mReasons.push('SMA200 trending up'); }
-      // 4. SMA50 > SMA150 > SMA200 (proper hierarchy)
+      // 1. Price > SMA150 AND SMA200 (or EMA fallback)
+      const aboveLong = (typeof pctVsSma150 === 'number' && pctVsSma150 > 0 && typeof pctVsSma200 === 'number' && pctVsSma200 > 0);
+      if (aboveLong) { minerviniScore += 10; mReasons.push('price > SMA150 & 200'); }
+      else if (typeof pctVsEma200 === 'number' && pctVsEma200 > 0) { minerviniScore += 6; mReasons.push('price > EMA200 (no SMA)'); }
+      // 2. SMA150 > SMA200
+      if (typeof sma150 === 'number' && typeof sma200 === 'number' && sma150 > sma200) { minerviniScore += 8; mReasons.push('SMA150 > 200'); }
+      else if (typeof emaSpread === 'number' && emaSpread > 0) { minerviniScore += 5; }
+      // 3. SMA200 trending UP — use 3M perf as proxy for slope
+      if (typeof perf3m === 'number' && perf3m >= 15) { minerviniScore += 10; mReasons.push('SMA200 trending up'); }
+      else if (typeof perf3m === 'number' && perf3m >= 5) { minerviniScore += 6; mReasons.push('SMA200 rising'); }
+      else if (typeof perf3m === 'number' && perf3m >= 0) { minerviniScore += 3; }
+      // 4. Clean hierarchy SMA50 > 150 > 200
       if (typeof sma50 === 'number' && typeof sma150 === 'number' && typeof sma200 === 'number' && sma50 > sma150 && sma150 > sma200) {
-        minerviniScore += 12; mReasons.push('SMA50 > 150 > 200 (clean hierarchy)');
+        minerviniScore += 12; mReasons.push('SMA50 > 150 > 200 ✓');
       }
-      // 5. Price above SMA50
-      if (typeof pctVsSma50 === 'number' && pctVsSma50 > 0) { minerviniScore += 8; mReasons.push(`+${pctVsSma50.toFixed(0)}% over SMA50`); }
-      else if (typeof pctVsEma50 === 'number' && pctVsEma50 > 0) { minerviniScore += 5; mReasons.push(`+${pctVsEma50.toFixed(0)}% over EMA50`); }
-      // 6. Within 25% of 52W high
-      if (typeof distFromHigh === 'number' && distFromHigh >= -25) { minerviniScore += 12; mReasons.push(`within 25% of 52W high`); }
-      // 7. ≥30% above 52W low (THE Minervini check — needs low52w field)
-      if (typeof pctAboveLow52w === 'number' && pctAboveLow52w >= 30) { minerviniScore += 15; mReasons.push(`+${pctAboveLow52w.toFixed(0)}% above 52W low`); }
-      // 8. RSI 50-75
-      if (typeof rsi === 'number' && rsi >= 50 && rsi <= 75) { minerviniScore += 8; mReasons.push(`RSI ${rsi.toFixed(0)}`); }
-      // 9. VCP signal — 1W volatility contraction vs 1M
-      if (volContraction === true) { minerviniScore += 13; mReasons.push(`📉 VCP (vol contracting)`); }
+      // 5. Position above SMA50 — graded sweet spot 0-15%
+      const mPctMA = typeof pctVsSma50 === 'number' ? pctVsSma50 : pctVsEma50;
+      if (typeof mPctMA === 'number' && mPctMA >= 2 && mPctMA <= 15) { minerviniScore += 12; mReasons.push(`+${mPctMA.toFixed(0)}% SMA50 ideal`); }
+      else if (typeof mPctMA === 'number' && mPctMA > 15 && mPctMA <= 25) { minerviniScore += 7; mReasons.push(`+${mPctMA.toFixed(0)}% SMA50`); }
+      else if (typeof mPctMA === 'number' && mPctMA >= 0 && mPctMA < 2) { minerviniScore += 5; mReasons.push(`+${mPctMA.toFixed(1)}% SMA50 (near)`); }
+      else if (typeof mPctMA === 'number' && mPctMA > 25) { minerviniScore += 2; mReasons.push(`extended +${mPctMA.toFixed(0)}%`); }
+      // 6. Distance from 52W high (graded — Minervini's "within 25%" rule)
+      if (typeof distFromHigh === 'number' && distFromHigh >= -5) { minerviniScore += 15; mReasons.push(`at 52W high (${distFromHigh.toFixed(0)}%)`); }
+      else if (typeof distFromHigh === 'number' && distFromHigh >= -15) { minerviniScore += 10; mReasons.push(`${distFromHigh.toFixed(0)}% from high`); }
+      else if (typeof distFromHigh === 'number' && distFromHigh >= -25) { minerviniScore += 5; mReasons.push(`${distFromHigh.toFixed(0)}% from high`); }
+      // 7. ≥30% above 52W low (THE Minervini criterion — graded)
+      if (typeof pctAboveLow52w === 'number' && pctAboveLow52w >= 100) { minerviniScore += 12; mReasons.push(`+${pctAboveLow52w.toFixed(0)}% above 52W low ✓`); }
+      else if (typeof pctAboveLow52w === 'number' && pctAboveLow52w >= 50) { minerviniScore += 9; mReasons.push(`+${pctAboveLow52w.toFixed(0)}% above 52W low`); }
+      else if (typeof pctAboveLow52w === 'number' && pctAboveLow52w >= 30) { minerviniScore += 5; mReasons.push(`+${pctAboveLow52w.toFixed(0)}% above 52W low`); }
+      // 8. RSI sweet spot (graded — Minervini likes 50-70)
+      if (typeof rsi === 'number' && rsi >= 55 && rsi <= 70) { minerviniScore += 8; mReasons.push(`RSI ${rsi.toFixed(0)} ideal`); }
+      else if (typeof rsi === 'number' && rsi >= 50 && rsi < 55) { minerviniScore += 5; mReasons.push(`RSI ${rsi.toFixed(0)}`); }
+      else if (typeof rsi === 'number' && rsi > 70 && rsi <= 80) { minerviniScore += 3; mReasons.push(`RSI ${rsi.toFixed(0)} hot`); }
+      else if (typeof rsi === 'number' && rsi >= 45 && rsi < 50) { minerviniScore += 3; }
+      // 9. VCP — volatility contraction (graded: tighter = better)
+      if (typeof vol1w === 'number' && typeof vol1m === 'number' && vol1m > 0) {
+        const vRatio = vol1w / vol1m;
+        if (vRatio < 0.6) { minerviniScore += 13; mReasons.push(`📉 VCP TIGHT (${(vRatio*100).toFixed(0)}%)`); }
+        else if (vRatio < 0.85) { minerviniScore += 8; mReasons.push(`📉 VCP (${(vRatio*100).toFixed(0)}%)`); }
+      }
 
       // ── RIGHT ENTRY ── prefer SMA50 if available, else EMA50; tightened ADR-aware zone
       let rightEntry: TechRow['rightEntry'] = 'NO DATA';
@@ -6158,18 +6226,59 @@ function TechnicalsTab() {
         zangerScore, zangerReasons: zReasons,
         bondeScore, bondeReasons: bReasons,
         minerviniScore, minerviniReasons: mReasons,
-        rightEntry, rightEntryDetail, stopLoss, totalScore,
+        rightEntry, rightEntryDetail, stopLoss, stopLossPct, qualityFlags, totalScore,
       };
     }).filter(r => r.symbol);
     return rows;
   }, [usaRows]);
 
   // Sort buckets per playbook
-  const qullaTop = React.useMemo(() => [...techRows].sort((a, b) => b.qullaScore - a.qullaScore).filter(r => r.qullaScore >= 50).slice(0, 12), [techRows]);
-  const zangerTop = React.useMemo(() => [...techRows].sort((a, b) => b.zangerScore - a.zangerScore).filter(r => r.zangerScore >= 40).slice(0, 12), [techRows]);
-  const bondeTop = React.useMemo(() => [...techRows].sort((a, b) => b.bondeScore - a.bondeScore).filter(r => r.bondeScore >= 50).slice(0, 12), [techRows]);
-  const minerviniTop = React.useMemo(() => [...techRows].sort((a, b) => b.minerviniScore - a.minerviniScore).filter(r => r.minerviniScore >= 60).slice(0, 12), [techRows]);
-  const buyZone = React.useMemo(() => [...techRows].filter(r => r.rightEntry === 'BUY ZONE').sort((a, b) => b.totalScore - a.totalScore).slice(0, 18), [techRows]);
+  const qullaTop = React.useMemo(() => [...techRows].sort((a, b) => b.qullaScore - a.qullaScore).filter(r => r.qullaScore >= 55).slice(0, 12), [techRows]);
+  const zangerTop = React.useMemo(() => [...techRows].sort((a, b) => b.zangerScore - a.zangerScore).filter(r => r.zangerScore >= 45).slice(0, 12), [techRows]);
+  const bondeTop = React.useMemo(() => [...techRows].sort((a, b) => b.bondeScore - a.bondeScore).filter(r => r.bondeScore >= 55).slice(0, 12), [techRows]);
+  const minerviniTop = React.useMemo(() => [...techRows].sort((a, b) => b.minerviniScore - a.minerviniScore).filter(r => r.minerviniScore >= 65).slice(0, 12), [techRows]);
+
+  // zzz132 — BUY ZONE quality gate: must have positive 1M (or 3M if 1M missing)
+  // and at least one supporting signal (Vol🔥 or Stage-2 or strong momentum).
+  // Previously this let through 1M -7% names like BAND that "happened to" sit
+  // near SMA50 but had no momentum. Tightened.
+  const buyZone = React.useMemo(() => [...techRows]
+    .filter(r => r.rightEntry === 'BUY ZONE')
+    .filter(r => {
+      const hasMomentum = (typeof r.perf1m === 'number' ? r.perf1m >= 0 : (typeof r.perf3m === 'number' ? r.perf3m >= 8 : true));
+      return hasMomentum;
+    })
+    .sort((a, b) => b.totalScore - a.totalScore)
+    .slice(0, 24), [techRows]);
+
+  // zzz132 — READY TO BUY: highest-conviction subset of BUY ZONE
+  // composite ≥ 50, positive 1M ≥ 3%, has at least one strong signal
+  const readyToBuy = React.useMemo(() => [...techRows]
+    .filter(r => r.rightEntry === 'BUY ZONE')
+    .filter(r => r.totalScore >= 50)
+    .filter(r => (typeof r.perf1m === 'number' && r.perf1m >= 3) || (typeof r.perf3m === 'number' && r.perf3m >= 15))
+    .filter(r => r.volumeBurst === true || (typeof r.pctVsEma200 === 'number' && r.pctVsEma200 > 10) || (typeof r.momentumAccel === 'number' && r.momentumAccel >= 2))
+    .sort((a, b) => b.totalScore - a.totalScore)
+    .slice(0, 10), [techRows]);
+
+  // zzz132 — QULLA 1M LEADERS — pure 1M momentum leaderboard (Qulla's actual screen)
+  const qulla1MLeaders = React.useMemo(() => [...techRows]
+    .filter(r => typeof r.perf1m === 'number' && r.perf1m >= 15)
+    .sort((a, b) => (b.perf1m ?? 0) - (a.perf1m ?? 0))
+    .slice(0, 15), [techRows]);
+
+  // Data-quality summary
+  const dataQuality = React.useMemo(() => {
+    const total = techRows.length;
+    const flagged = techRows.filter(r => r.qualityFlags && r.qualityFlags.length > 0).length;
+    const withSMA = techRows.filter(r => typeof r.sma50 === 'number').length;
+    const withATR = techRows.filter(r => typeof r.atr14 === 'number').length;
+    const with52WLow = techRows.filter(r => typeof r.low52w === 'number').length;
+    const with1W = techRows.filter(r => typeof r.perf1w === 'number').length;
+    const with1M = techRows.filter(r => typeof r.perf1m === 'number').length;
+    const withRelVol = techRows.filter(r => typeof r.relVol1w === 'number').length;
+    return { total, flagged, withSMA, withATR, with52WLow, with1W, with1M, withRelVol };
+  }, [techRows]);
 
   const PANEL = 'var(--mc-panel, #11151F)';
   const PANEL2 = 'var(--mc-panel2, rgba(255,255,255,0.03))';
@@ -6177,30 +6286,52 @@ function TechnicalsTab() {
   const TXT = 'var(--mc-txt, #e6edf3)';
   const MUTED = 'var(--mc-muted, #8b95a5)';
   const CYAN = '#22D3EE';
-  const cardStyle: React.CSSProperties = { background: PANEL, border: `1px solid ${LINE}`, borderRadius: 12, padding: 16, marginBottom: 12 };
+  const cardStyle: React.CSSProperties = { background: PANEL, border: `1px solid ${LINE}`, borderRadius: 12, padding: 18, marginBottom: 14 };
+
+  // zzz132 helpers
+  const fmtPrice = (p?: number) => (typeof p === 'number' ? (p >= 1000 ? `$${p.toFixed(0)}` : `$${p.toFixed(2)}`) : '—');
+  const fmtPct = (p?: number, digits = 0) => (typeof p === 'number' ? `${p >= 0 ? '+' : ''}${p.toFixed(digits)}%` : '—');
+  const scoreColor = (s: number) => s >= 80 ? '#10B981' : s >= 65 ? '#22D3EE' : s >= 50 ? '#84CC16' : s >= 35 ? '#F59E0B' : MUTED;
+  const entryColor = (e: string) => e === 'BUY ZONE' ? '#10B981' : e === 'EXTENDED' ? '#F59E0B' : e === 'CHASE' ? '#EF4444' : e === 'BELOW' ? '#94A3B8' : MUTED;
 
   const renderPlaybookSection = (title: string, color: string, emoji: string, items: TechRow[], scoreKey: 'qullaScore' | 'zangerScore' | 'bondeScore' | 'minerviniScore', reasonsKey: 'qullaReasons' | 'zangerReasons' | 'bondeReasons' | 'minerviniReasons', subtitle: string) => (
     <div style={cardStyle}>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
-        <div style={{ fontSize: 14, color, fontWeight: 800, letterSpacing: '0.3px' }}>{emoji} {title} ({items.length})</div>
-        <div style={{ fontSize: 11, color: MUTED }}>{subtitle}</div>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+        <div style={{ fontSize: 17, color, fontWeight: 900, letterSpacing: '0.3px' }}>{emoji} {title} <span style={{ color: MUTED, fontWeight: 600 }}>({items.length})</span></div>
+        <div style={{ fontSize: 12, color: MUTED, fontStyle: 'italic' }}>{subtitle}</div>
       </div>
       {items.length === 0 ? (
-        <div style={{ fontSize: 11.5, color: MUTED, padding: 12, background: PANEL2, borderRadius: 6 }}>No candidates pass the threshold today. Upload a fresh USA CSV on the 🇺🇸 USA Multibagger tab.</div>
+        <div style={{ fontSize: 12.5, color: MUTED, padding: 14, background: PANEL2, borderRadius: 6 }}>No candidates pass the threshold today. Upload a fresh USA CSV on the 🇺🇸 USA Multibagger tab.</div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 8 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 10 }}>
           {items.map(r => (
-            <div key={r.symbol} style={{ background: PANEL2, border: `1px solid color-mix(in srgb, ${color} 25%, transparent)`, borderLeft: `3px solid ${color}`, borderRadius: 8, padding: 10 }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 4 }}>
-                <span style={{ fontSize: 14, fontWeight: 900, color: CYAN }}>{r.symbol}</span>
-                <span style={{ fontSize: 10, color: MUTED }}>{r.sector?.slice(0, 22) || ''}</span>
-                <span style={{ marginLeft: 'auto', fontSize: 14, fontWeight: 900, color }}>{r[scoreKey]}/100</span>
+            <div key={r.symbol} style={{ background: PANEL2, border: `1px solid color-mix(in srgb, ${color} 30%, transparent)`, borderLeft: `4px solid ${color}`, borderRadius: 8, padding: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
+                <span style={{ fontSize: 17, fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{r.symbol}</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</span>
+                <span style={{ marginLeft: 'auto', fontSize: 16, fontWeight: 900, color: scoreColor(r[scoreKey]) }}>{r[scoreKey]}<span style={{ fontSize: 10, color: MUTED }}>/100</span></span>
               </div>
-              <div style={{ fontSize: 11, color: TXT, marginBottom: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.company || ''}>{r.company || r.symbol}</div>
-              <div style={{ fontSize: 10.5, color: MUTED, lineHeight: 1.5 }}>{r[reasonsKey].slice(0, 5).join(' · ')}</div>
-              <div style={{ marginTop: 5, fontSize: 10, color: r.rightEntry === 'BUY ZONE' ? '#10B981' : r.rightEntry === 'EXTENDED' ? '#F59E0B' : r.rightEntry === 'CHASE' ? '#EF4444' : MUTED, fontWeight: 700 }}>
-                ENTRY: {r.rightEntry} · {r.rightEntryDetail}
+              <div style={{ fontSize: 11.5, color: TXT, marginBottom: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.company || ''}>
+                <span style={{ color: MUTED, fontSize: 10 }}>{r.sector?.slice(0, 25) || ''}</span> · {r.company || r.symbol}
               </div>
+              <div style={{ fontSize: 11.5, color: TXT, lineHeight: 1.55, marginBottom: 6 }}>{r[reasonsKey].slice(0, 5).join(' · ')}</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, fontSize: 10.5, marginBottom: 4 }}>
+                {typeof r.perf1w === 'number' ? <span style={{ background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: 4 }}>1W {fmtPct(r.perf1w)}</span> : null}
+                {typeof r.perf1m === 'number' ? <span style={{ background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: 4 }}>1M {fmtPct(r.perf1m)}</span> : null}
+                {typeof r.perf3m === 'number' ? <span style={{ background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: 4 }}>3M {fmtPct(r.perf3m)}</span> : null}
+                {typeof r.rsi === 'number' ? <span style={{ background: r.rsi > 85 ? 'rgba(239,68,68,0.15)' : 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: 4, color: r.rsi > 85 ? '#EF4444' : TXT }}>RSI {r.rsi.toFixed(0)}</span> : null}
+              </div>
+              <div style={{ fontSize: 11, color: entryColor(r.rightEntry), fontWeight: 800, marginTop: 4 }}>
+                🎯 {r.rightEntry} · {r.rightEntryDetail}
+              </div>
+              {typeof r.stopLoss === 'number' ? (
+                <div style={{ fontSize: 10.5, color: '#F59E0B', marginTop: 3, fontWeight: 700 }}>
+                  🛑 STOP {fmtPrice(r.stopLoss)} ({typeof r.stopLossPct === 'number' ? `−${r.stopLossPct.toFixed(1)}% risk` : '−2×ATR'})
+                </div>
+              ) : null}
+              {r.qualityFlags && r.qualityFlags.length > 0 ? (
+                <div style={{ fontSize: 10, color: '#EF4444', marginTop: 3, fontWeight: 700 }}>⚠️ {r.qualityFlags.join(' · ')}</div>
+              ) : null}
             </div>
           ))}
         </div>
@@ -6209,55 +6340,91 @@ function TechnicalsTab() {
   );
 
   return (
-    <div style={{ padding: '20px 24px', maxWidth: 1600, margin: '0 auto' }}>
-      <div style={{ marginBottom: 20 }}>
-        <div style={{ fontSize: 22, fontWeight: 800, color: TXT, marginBottom: 4 }}>📈 Technicals — Qullamaggie · Zanger · Bonde · Minervini</div>
-        <div style={{ fontSize: 12, color: MUTED }}>Pure-technical scoring using your TradingView USA export. Switch your CSV to the 🇺🇸 USA Multibagger tab to load data — this tab reads the same source. {techRows.length} stocks scored.</div>
-      </div>
-
-      {/* Data status — zzz130 now uses ALL the new fields */}
-      <div style={{ ...cardStyle, background: 'color-mix(in srgb, #10B981 5%, transparent)', borderColor: 'color-mix(in srgb, #10B981 30%, transparent)' }}>
-        <div style={{ fontSize: 13, fontWeight: 800, color: '#10B981', marginBottom: 6 }}>✅ Full Technicals scoring active — all 11 new fields wired in</div>
-        <div style={{ fontSize: 11.5, color: TXT, lineHeight: 1.6 }}>
-          Using everything from your latest 89-column TradingView export:
-          <ul style={{ margin: '6px 0 0 18px', padding: 0, color: TXT }}>
-            <li><b style={{ color: CYAN }}>Qullamaggie</b> now scores on real <b>1M / 1W performance</b> (not 3M proxy) + <b>ADR%</b> sweet-spot 3–6% + <b>relative-volume burst</b></li>
-            <li><b style={{ color: '#A78BFA' }}>Zanger HTF</b> uses 1M explosive move + 1W tight-flag detection + volume confirmation</li>
-            <li><b style={{ color: '#FBBF24' }}>Bonde EP</b> fires on 1W move with Rel Vol ≥1.5× (the true Episodic Pivot signal)</li>
-            <li><b style={{ color: '#84CC16' }}>Minervini Trend Template</b> now uses <b>SMA 50/150/200 hierarchy</b> + <b>≥30% above 52W low</b> + <b>VCP volatility contraction</b> (1W vol &lt; 1M vol)</li>
-            <li><b>Buy-zone ceiling</b> is now ADR-adaptive (2× ADR above SMA50/EMA50) — wider for volatile names, tighter for low-vol</li>
-            <li><b>Stop-loss</b> auto-computed at <b>price − 2× ATR14</b> for every BUY ZONE pick</li>
-          </ul>
+    <div style={{ padding: '20px 24px', maxWidth: 1700, margin: '0 auto', fontSize: 14 }}>
+      <div style={{ marginBottom: 22 }}>
+        <div style={{ fontSize: 26, fontWeight: 900, color: TXT, marginBottom: 6 }}>📈 Technicals — Qullamaggie · Zanger · Bonde · Minervini</div>
+        <div style={{ fontSize: 13, color: MUTED, lineHeight: 1.5 }}>
+          Pure-technical scoring of your TradingView USA export. <b style={{ color: TXT }}>{techRows.length} stocks</b> scored.
+          Pulls from the same source as 🇺🇸 USA Multibagger — upload there to refresh.
         </div>
       </div>
 
-      {/* 🎯 RIGHT ENTRY — BUY ZONE leaderboard */}
-      <div style={cardStyle}>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
-          <div style={{ fontSize: 14, color: '#10B981', fontWeight: 800, letterSpacing: '0.3px' }}>🎯 RIGHT ENTRY — BUY ZONE ({buyZone.length})</div>
-          <div style={{ fontSize: 11, color: MUTED }}>0–7% above EMA50 — Qullamaggie's "not extended" entry rule (using EMA50 as proxy for 21-EMA).</div>
+      {/* zzz132 — DATA QUALITY summary chips */}
+      <div style={{ ...cardStyle, background: 'color-mix(in srgb, #10B981 5%, transparent)', borderColor: 'color-mix(in srgb, #10B981 30%, transparent)', padding: 14 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+          <span style={{ fontSize: 14, fontWeight: 800, color: '#10B981' }}>✅ zzz132 — Scoring engine upgrade</span>
+          <span style={{ background: 'rgba(255,255,255,0.06)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: TXT }}>Total <b>{dataQuality.total}</b></span>
+          <span style={{ background: 'rgba(255,255,255,0.06)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: TXT }}>SMA cov <b>{dataQuality.withSMA}/{dataQuality.total}</b></span>
+          <span style={{ background: 'rgba(255,255,255,0.06)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: TXT }}>ATR cov <b>{dataQuality.withATR}/{dataQuality.total}</b></span>
+          <span style={{ background: 'rgba(255,255,255,0.06)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: TXT }}>1W cov <b>{dataQuality.with1W}/{dataQuality.total}</b></span>
+          <span style={{ background: 'rgba(255,255,255,0.06)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: TXT }}>52W-Low cov <b>{dataQuality.with52WLow}/{dataQuality.total}</b></span>
+          <span style={{ background: 'rgba(239,68,68,0.12)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: '#EF4444' }}>⚠️ flagged <b>{dataQuality.flagged}</b></span>
         </div>
-        {buyZone.length === 0 ? (
-          <div style={{ fontSize: 11.5, color: MUTED, padding: 12, background: PANEL2, borderRadius: 6 }}>No tickers in the BUY ZONE right now. Most names are either extended or below their EMA50.</div>
+        <div style={{ fontSize: 12, color: TXT, lineHeight: 1.65, marginTop: 10 }}>
+          Each playbook is now <b>gradient-scored 0–100</b> instead of step-binary (fixed the cluster-at-85/87 problem in zzz130).
+          BUY ZONE requires positive 1M momentum (1M ≥ 0% or 3M ≥ 8%). All cards now show <b>CMP, stop-loss, risk %</b>, plus data-quality flags
+          for parabolic RSI / extreme extension / illiquid names.
+        </div>
+      </div>
+
+      {/* zzz132 — 🎯 READY TO BUY — top high-conviction picks */}
+      <div style={{ ...cardStyle, background: 'color-mix(in srgb, #10B981 7%, transparent)', borderColor: '#10B981', borderWidth: 2 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+          <div style={{ fontSize: 19, color: '#10B981', fontWeight: 900, letterSpacing: '0.3px' }}>🎯 READY TO BUY — TOP HIGH-CONVICTION PICKS ({readyToBuy.length})</div>
+          <div style={{ fontSize: 12, color: MUTED, fontStyle: 'italic' }}>BUY ZONE + composite ≥ 50 + positive 1M ≥ 3% + (Vol🔥 OR Stage-2 OR mom-accel)</div>
+        </div>
+        {readyToBuy.length === 0 ? (
+          <div style={{ fontSize: 13, color: MUTED, padding: 14, background: PANEL2, borderRadius: 8 }}>
+            No high-conviction BUY-ZONE picks today. Most strong names are extended/chase. Wait for pullback to SMA50 on top-scoring names, or scan the BUY ZONE list below for B-tier setups.
+          </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
-            {buyZone.map(r => (
-              <div key={r.symbol} style={{ background: PANEL2, border: '1px solid color-mix(in srgb, #10B981 35%, transparent)', borderLeft: '3px solid #10B981', borderRadius: 8, padding: 10 }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                  <span style={{ fontSize: 14, fontWeight: 900, color: CYAN }}>{r.symbol}</span>
-                  <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 900, color: '#10B981' }}>{r.totalScore}</span>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12 }}>
+            {readyToBuy.map(r => (
+              <div key={r.symbol} style={{ background: 'rgba(16,185,129,0.06)', border: '2px solid #10B981', borderRadius: 10, padding: 14 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
+                  <span style={{ fontSize: 20, fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{r.symbol}</span>
+                  <span style={{ fontSize: 15, fontWeight: 800, color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 22, fontWeight: 900, color: '#10B981' }}>{r.totalScore}</span>
                 </div>
-                <div style={{ fontSize: 11, color: TXT, marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.company || ''}</div>
-                <div style={{ fontSize: 10.5, color: MUTED, marginTop: 3, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  {typeof r.perf1m === 'number' ? <span>1M {r.perf1m.toFixed(0)}%</span> : (typeof r.perf3m === 'number' ? <span>3M {r.perf3m.toFixed(0)}%</span> : null)}
-                  {typeof r.adrPct === 'number' ? <span>ADR {r.adrPct.toFixed(1)}%</span> : null}
-                  {r.volumeBurst === true ? <span style={{ color: '#10B981', fontWeight: 700 }}>Vol🔥</span> : null}
-                  {typeof r.rsi === 'number' ? <span>RSI {r.rsi.toFixed(0)}</span> : null}
+                <div style={{ fontSize: 13, color: TXT, marginBottom: 8, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.company || ''}>
+                  {r.company || r.symbol} <span style={{ color: MUTED, fontSize: 11 }}>· {r.sector?.slice(0, 22) || ''}</span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, marginBottom: 8, fontSize: 11 }}>
+                  <div style={{ background: 'rgba(34,211,238,0.12)', padding: 6, borderRadius: 5, textAlign: 'center' }}>
+                    <div style={{ color: MUTED, fontSize: 9 }}>QULLA</div>
+                    <div style={{ color: scoreColor(r.qullaScore), fontWeight: 800, fontSize: 14 }}>{r.qullaScore}</div>
+                  </div>
+                  <div style={{ background: 'rgba(167,139,250,0.12)', padding: 6, borderRadius: 5, textAlign: 'center' }}>
+                    <div style={{ color: MUTED, fontSize: 9 }}>ZANGER</div>
+                    <div style={{ color: scoreColor(r.zangerScore), fontWeight: 800, fontSize: 14 }}>{r.zangerScore}</div>
+                  </div>
+                  <div style={{ background: 'rgba(251,191,36,0.12)', padding: 6, borderRadius: 5, textAlign: 'center' }}>
+                    <div style={{ color: MUTED, fontSize: 9 }}>BONDE</div>
+                    <div style={{ color: scoreColor(r.bondeScore), fontWeight: 800, fontSize: 14 }}>{r.bondeScore}</div>
+                  </div>
+                  <div style={{ background: 'rgba(132,204,22,0.12)', padding: 6, borderRadius: 5, textAlign: 'center' }}>
+                    <div style={{ color: MUTED, fontSize: 9 }}>MINER</div>
+                    <div style={{ color: scoreColor(r.minerviniScore), fontWeight: 800, fontSize: 14 }}>{r.minerviniScore}</div>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, fontSize: 11, marginBottom: 6 }}>
+                  {typeof r.perf1w === 'number' ? <span style={{ background: 'rgba(255,255,255,0.05)', padding: '3px 7px', borderRadius: 4 }}>1W {fmtPct(r.perf1w)}</span> : null}
+                  {typeof r.perf1m === 'number' ? <span style={{ background: 'rgba(255,255,255,0.05)', padding: '3px 7px', borderRadius: 4 }}>1M {fmtPct(r.perf1m)}</span> : null}
+                  {typeof r.perf3m === 'number' ? <span style={{ background: 'rgba(255,255,255,0.05)', padding: '3px 7px', borderRadius: 4 }}>3M {fmtPct(r.perf3m)}</span> : null}
+                  {typeof r.adrPct === 'number' ? <span style={{ background: 'rgba(255,255,255,0.05)', padding: '3px 7px', borderRadius: 4 }}>ADR {r.adrPct.toFixed(1)}%</span> : null}
+                  {r.volumeBurst === true && typeof r.relVol1w === 'number' ? <span style={{ background: 'rgba(16,185,129,0.18)', color: '#10B981', padding: '3px 7px', borderRadius: 4, fontWeight: 700 }}>Vol {r.relVol1w.toFixed(1)}× 🔥</span> : null}
+                  {typeof r.rsi === 'number' ? <span style={{ background: 'rgba(255,255,255,0.05)', padding: '3px 7px', borderRadius: 4 }}>RSI {r.rsi.toFixed(0)}</span> : null}
+                </div>
+                <div style={{ fontSize: 12, color: '#10B981', fontWeight: 800, marginTop: 6 }}>
+                  ✅ {r.rightEntryDetail}
                 </div>
                 {typeof r.stopLoss === 'number' ? (
-                  <div style={{ fontSize: 10, color: '#F59E0B', marginTop: 4, fontWeight: 700 }}>
-                    STOP: ${r.stopLoss.toFixed(2)} (−2×ATR)
+                  <div style={{ fontSize: 11.5, color: '#F59E0B', marginTop: 4, fontWeight: 700 }}>
+                    🛑 STOP {fmtPrice(r.stopLoss)} <span style={{ color: MUTED, fontWeight: 600 }}>(risk {typeof r.stopLossPct === 'number' ? `−${r.stopLossPct.toFixed(1)}%` : '−2×ATR'})</span>
                   </div>
+                ) : null}
+                {r.qualityFlags && r.qualityFlags.length > 0 ? (
+                  <div style={{ fontSize: 11, color: '#EF4444', marginTop: 4, fontWeight: 700 }}>⚠️ {r.qualityFlags.join(' · ')}</div>
                 ) : null}
               </div>
             ))}
@@ -6265,63 +6432,185 @@ function TechnicalsTab() {
         )}
       </div>
 
+      {/* 🎯 RIGHT ENTRY — BUY ZONE leaderboard — broader list */}
+      <div style={cardStyle}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+          <div style={{ fontSize: 17, color: '#10B981', fontWeight: 900, letterSpacing: '0.3px' }}>🟢 BUY ZONE — POSITION ENTRIES ({buyZone.length})</div>
+          <div style={{ fontSize: 12, color: MUTED, fontStyle: 'italic' }}>0% to max(7%, 2×ADR%) above SMA50 — ADR-adaptive ceiling · positive 1M momentum required</div>
+        </div>
+        {buyZone.length === 0 ? (
+          <div style={{ fontSize: 12.5, color: MUTED, padding: 14, background: PANEL2, borderRadius: 8 }}>No tickers in the BUY ZONE right now. Most names are either extended or below their SMA50.</div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 10 }}>
+            {buyZone.map(r => (
+              <div key={r.symbol} style={{ background: PANEL2, border: '1px solid color-mix(in srgb, #10B981 35%, transparent)', borderLeft: '4px solid #10B981', borderRadius: 8, padding: 11 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                  <span style={{ fontSize: 16, fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{r.symbol}</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 16, fontWeight: 900, color: scoreColor(r.totalScore) }}>{r.totalScore}</span>
+                </div>
+                <div style={{ fontSize: 11.5, color: TXT, marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.company || ''}</div>
+                <div style={{ fontSize: 11, color: MUTED, marginTop: 4, display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                  {typeof r.perf1w === 'number' ? <span>1W {fmtPct(r.perf1w)}</span> : null}
+                  {typeof r.perf1m === 'number' ? <span>1M {fmtPct(r.perf1m)}</span> : null}
+                  {typeof r.adrPct === 'number' ? <span>ADR {r.adrPct.toFixed(1)}%</span> : null}
+                  {r.volumeBurst === true && typeof r.relVol1w === 'number' ? <span style={{ color: '#10B981', fontWeight: 700 }}>Vol {r.relVol1w.toFixed(1)}×🔥</span> : null}
+                  {typeof r.rsi === 'number' ? <span style={{ color: r.rsi > 85 ? '#EF4444' : MUTED }}>RSI {r.rsi.toFixed(0)}</span> : null}
+                </div>
+                <div style={{ fontSize: 10.5, color: '#10B981', marginTop: 5, fontWeight: 700 }}>
+                  {r.rightEntryDetail}
+                </div>
+                {typeof r.stopLoss === 'number' ? (
+                  <div style={{ fontSize: 10.5, color: '#F59E0B', marginTop: 3, fontWeight: 700 }}>
+                    🛑 {fmtPrice(r.stopLoss)} <span style={{ color: MUTED, fontWeight: 600 }}>({typeof r.stopLossPct === 'number' ? `−${r.stopLossPct.toFixed(1)}%` : '−2×ATR'})</span>
+                  </div>
+                ) : null}
+                {r.qualityFlags && r.qualityFlags.length > 0 ? (
+                  <div style={{ fontSize: 10, color: '#EF4444', marginTop: 3, fontWeight: 700 }}>⚠️ {r.qualityFlags.join(' · ')}</div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* zzz132 — QULLA 1M LEADERS — pure momentum leaderboard */}
+      <div style={cardStyle}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+          <div style={{ fontSize: 16, color: CYAN, fontWeight: 900 }}>🚀 QULLAMAGGIE 1M LEADERS — pure momentum board ({qulla1MLeaders.length})</div>
+          <div style={{ fontSize: 12, color: MUTED, fontStyle: 'italic' }}>Top 1M performers ≥ 15% · the actual screen Kris Kullamäki uses · entry status shown</div>
+        </div>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+            <thead>
+              <tr style={{ background: PANEL2, color: MUTED, fontSize: 11 }}>
+                <th style={{ padding: '8px 10px', textAlign: 'left' }}>#</th>
+                <th style={{ padding: '8px 10px', textAlign: 'left' }}>TICKER</th>
+                <th style={{ padding: '8px 10px', textAlign: 'right' }}>CMP</th>
+                <th style={{ padding: '8px 10px', textAlign: 'right' }}>1W%</th>
+                <th style={{ padding: '8px 10px', textAlign: 'right' }}>1M%</th>
+                <th style={{ padding: '8px 10px', textAlign: 'right' }}>3M%</th>
+                <th style={{ padding: '8px 10px', textAlign: 'right' }}>ADR</th>
+                <th style={{ padding: '8px 10px', textAlign: 'right' }}>RelVol</th>
+                <th style={{ padding: '8px 10px', textAlign: 'right' }}>%SMA50</th>
+                <th style={{ padding: '8px 10px', textAlign: 'left' }}>ENTRY</th>
+                <th style={{ padding: '8px 10px', textAlign: 'right' }}>QULLA</th>
+              </tr>
+            </thead>
+            <tbody>
+              {qulla1MLeaders.map((r, i) => (
+                <tr key={r.symbol} style={{ borderBottom: `1px solid ${LINE}` }}>
+                  <td style={{ padding: '7px 10px', color: MUTED, fontWeight: 700 }}>{i + 1}</td>
+                  <td style={{ padding: '7px 10px', fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{r.symbol}</td>
+                  <td style={{ padding: '7px 10px', textAlign: 'right', color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</td>
+                  <td style={{ padding: '7px 10px', textAlign: 'right', color: typeof r.perf1w === 'number' && r.perf1w > 0 ? '#10B981' : TXT }}>{fmtPct(r.perf1w)}</td>
+                  <td style={{ padding: '7px 10px', textAlign: 'right', color: '#10B981', fontWeight: 800 }}>{fmtPct(r.perf1m)}</td>
+                  <td style={{ padding: '7px 10px', textAlign: 'right', color: TXT }}>{fmtPct(r.perf3m)}</td>
+                  <td style={{ padding: '7px 10px', textAlign: 'right', color: typeof r.adrPct === 'number' && r.adrPct >= 4 && r.adrPct <= 7 ? '#10B981' : TXT }}>{typeof r.adrPct === 'number' ? `${r.adrPct.toFixed(1)}%` : '—'}</td>
+                  <td style={{ padding: '7px 10px', textAlign: 'right', color: r.volumeBurst === true ? '#10B981' : TXT, fontWeight: r.volumeBurst === true ? 700 : 400 }}>{typeof r.relVol1w === 'number' ? `${r.relVol1w.toFixed(1)}×` : '—'}</td>
+                  <td style={{ padding: '7px 10px', textAlign: 'right', color: TXT }}>{typeof r.pctVsSma50 === 'number' ? fmtPct(r.pctVsSma50) : fmtPct(r.pctVsEma50)}</td>
+                  <td style={{ padding: '7px 10px', color: entryColor(r.rightEntry), fontWeight: 800, fontSize: 11 }}>{r.rightEntry}</td>
+                  <td style={{ padding: '7px 10px', textAlign: 'right', fontWeight: 900, color: scoreColor(r.qullaScore) }}>{r.qullaScore}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       {/* QULLAMAGGIE */}
       {renderPlaybookSection('Qullamaggie — Episodic Momentum Leaders', '#22D3EE', '🔥', qullaTop, 'qullaScore', 'qullaReasons',
-        'Top 3-6 month gainers, not over-extended, small/mid cap preferred.')}
+        '1M ≥ 15% gainer · ADR 4–7% sweet spot · not extended (≤ 15% above SMA50) · small-mid cap')}
 
       {/* ZANGER HTF */}
       {renderPlaybookSection('Dan Zanger — High Tight Flag (HTF)', '#A78BFA', '🚀', zangerTop, 'zangerScore', 'zangerReasons',
-        '80%+ rally in 4-6 months then tight 3-month consolidation near highs.')}
+        '80–200% rally in 4–8 weeks + tight 1W flag near 52W high + volume confirmation')}
 
       {/* BONDE EP */}
       {renderPlaybookSection('Pradeep Bonde — Episodic Pivot (EP)', '#FBBF24', '⚡', bondeTop, 'bondeScore', 'bondeReasons',
-        'Recent earnings/news surge in Stage-2 trend, not over-extended.')}
+        '1W ≥ 10% move on Rel Vol ≥ 1.5× · in PED entry zone (0–15% above SMA50) · Stage-2 trend · liquid')}
 
       {/* MINERVINI */}
       {renderPlaybookSection('Mark Minervini — Trend Template', '#84CC16', '🏆', minerviniTop, 'minerviniScore', 'minerviniReasons',
-        'Classic 8-point template: price > EMA50 > EMA200 (rising), within 25% of 52W high, RSI 45-75.')}
+        'SMA 50 > 150 > 200 hierarchy · within 25% of 52W high · ≥ 30% above 52W low · VCP volatility contraction')}
 
-      {/* All tickers ranked by total score */}
+      {/* All tickers — UPGRADED with CMP, 1M, 1W, Vol, Stop columns */}
       <div style={cardStyle}>
-        <div style={{ fontSize: 13, fontWeight: 800, color: TXT, marginBottom: 10 }}>🏁 ALL TICKERS — RANKED BY COMPOSITE TECHNICAL SCORE</div>
+        <div style={{ fontSize: 16, fontWeight: 900, color: TXT, marginBottom: 12 }}>🏁 ALL TICKERS — COMPOSITE LEADERBOARD ({techRows.length})</div>
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>
-              <tr style={{ background: PANEL2, color: MUTED }}>
-                <th style={{ padding: '6px 8px', textAlign: 'left' }}>TICKER</th>
-                <th style={{ padding: '6px 8px', textAlign: 'left' }}>COMPANY</th>
-                <th style={{ padding: '6px 8px', textAlign: 'right' }}>QULLA</th>
-                <th style={{ padding: '6px 8px', textAlign: 'right' }}>ZANGER</th>
-                <th style={{ padding: '6px 8px', textAlign: 'right' }}>BONDE</th>
-                <th style={{ padding: '6px 8px', textAlign: 'right' }}>MINER</th>
-                <th style={{ padding: '6px 8px', textAlign: 'right' }}>AVG</th>
-                <th style={{ padding: '6px 8px', textAlign: 'left' }}>ENTRY</th>
-                <th style={{ padding: '6px 8px', textAlign: 'right' }}>%EMA50</th>
-                <th style={{ padding: '6px 8px', textAlign: 'right' }}>3M%</th>
-                <th style={{ padding: '6px 8px', textAlign: 'right' }}>RSI</th>
+              <tr style={{ background: PANEL2, color: MUTED, fontSize: 11 }}>
+                <th style={{ padding: '8px 8px', textAlign: 'left' }}>TICKER</th>
+                <th style={{ padding: '8px 8px', textAlign: 'right' }}>CMP</th>
+                <th style={{ padding: '8px 8px', textAlign: 'left' }}>COMPANY</th>
+                <th style={{ padding: '8px 6px', textAlign: 'right' }}>QULLA</th>
+                <th style={{ padding: '8px 6px', textAlign: 'right' }}>ZNGR</th>
+                <th style={{ padding: '8px 6px', textAlign: 'right' }}>BNDE</th>
+                <th style={{ padding: '8px 6px', textAlign: 'right' }}>MNVI</th>
+                <th style={{ padding: '8px 6px', textAlign: 'right' }}>AVG</th>
+                <th style={{ padding: '8px 8px', textAlign: 'left' }}>ENTRY</th>
+                <th style={{ padding: '8px 6px', textAlign: 'right' }}>%SMA50</th>
+                <th style={{ padding: '8px 6px', textAlign: 'right' }}>1W</th>
+                <th style={{ padding: '8px 6px', textAlign: 'right' }}>1M</th>
+                <th style={{ padding: '8px 6px', textAlign: 'right' }}>3M</th>
+                <th style={{ padding: '8px 6px', textAlign: 'right' }}>ADR</th>
+                <th style={{ padding: '8px 6px', textAlign: 'right' }}>Vol</th>
+                <th style={{ padding: '8px 6px', textAlign: 'right' }}>RSI</th>
+                <th style={{ padding: '8px 6px', textAlign: 'right' }}>STOP</th>
               </tr>
             </thead>
             <tbody>
               {[...techRows].sort((a, b) => b.totalScore - a.totalScore).map(r => {
-                const entryColor = r.rightEntry === 'BUY ZONE' ? '#10B981' : r.rightEntry === 'EXTENDED' ? '#F59E0B' : r.rightEntry === 'CHASE' ? '#EF4444' : MUTED;
+                const c = entryColor(r.rightEntry);
+                const pctMA = typeof r.pctVsSma50 === 'number' ? r.pctVsSma50 : r.pctVsEma50;
                 return (
                   <tr key={r.symbol} style={{ borderBottom: `1px solid ${LINE}` }}>
-                    <td style={{ padding: '6px 8px', fontWeight: 800, color: CYAN }}>{r.symbol}</td>
-                    <td style={{ padding: '6px 8px', color: TXT, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
-                    <td style={{ padding: '6px 8px', textAlign: 'right', color: r.qullaScore >= 60 ? '#22D3EE' : MUTED, fontWeight: r.qullaScore >= 60 ? 800 : 400 }}>{r.qullaScore}</td>
-                    <td style={{ padding: '6px 8px', textAlign: 'right', color: r.zangerScore >= 60 ? '#A78BFA' : MUTED, fontWeight: r.zangerScore >= 60 ? 800 : 400 }}>{r.zangerScore}</td>
-                    <td style={{ padding: '6px 8px', textAlign: 'right', color: r.bondeScore >= 60 ? '#FBBF24' : MUTED, fontWeight: r.bondeScore >= 60 ? 800 : 400 }}>{r.bondeScore}</td>
-                    <td style={{ padding: '6px 8px', textAlign: 'right', color: r.minerviniScore >= 70 ? '#84CC16' : MUTED, fontWeight: r.minerviniScore >= 70 ? 800 : 400 }}>{r.minerviniScore}</td>
-                    <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 800, color: TXT }}>{r.totalScore}</td>
-                    <td style={{ padding: '6px 8px', color: entryColor, fontWeight: 700, fontSize: 10.5 }}>{r.rightEntry}</td>
-                    <td style={{ padding: '6px 8px', textAlign: 'right', color: TXT }}>{r.pctVsEma50 !== undefined ? `${r.pctVsEma50 >= 0 ? '+' : ''}${r.pctVsEma50.toFixed(0)}%` : '—'}</td>
-                    <td style={{ padding: '6px 8px', textAlign: 'right', color: TXT }}>{r.perf3m !== undefined ? `${r.perf3m >= 0 ? '+' : ''}${r.perf3m.toFixed(0)}%` : '—'}</td>
-                    <td style={{ padding: '6px 8px', textAlign: 'right', color: TXT }}>{r.rsi !== undefined ? r.rsi.toFixed(0) : '—'}</td>
+                    <td style={{ padding: '6px 8px', fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{r.symbol}{r.qualityFlags && r.qualityFlags.length > 0 ? <span title={r.qualityFlags.join(' · ')} style={{ color: '#EF4444', marginLeft: 4 }}>⚠</span> : null}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</td>
+                    <td style={{ padding: '6px 8px', color: TXT, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
+                    <td style={{ padding: '6px 6px', textAlign: 'right', color: scoreColor(r.qullaScore), fontWeight: r.qullaScore >= 60 ? 800 : 500 }}>{r.qullaScore}</td>
+                    <td style={{ padding: '6px 6px', textAlign: 'right', color: scoreColor(r.zangerScore), fontWeight: r.zangerScore >= 60 ? 800 : 500 }}>{r.zangerScore}</td>
+                    <td style={{ padding: '6px 6px', textAlign: 'right', color: scoreColor(r.bondeScore), fontWeight: r.bondeScore >= 60 ? 800 : 500 }}>{r.bondeScore}</td>
+                    <td style={{ padding: '6px 6px', textAlign: 'right', color: scoreColor(r.minerviniScore), fontWeight: r.minerviniScore >= 60 ? 800 : 500 }}>{r.minerviniScore}</td>
+                    <td style={{ padding: '6px 6px', textAlign: 'right', fontWeight: 900, color: scoreColor(r.totalScore), fontSize: 13 }}>{r.totalScore}</td>
+                    <td style={{ padding: '6px 8px', color: c, fontWeight: 800, fontSize: 10.5 }}>{r.rightEntry}</td>
+                    <td style={{ padding: '6px 6px', textAlign: 'right', color: TXT }}>{typeof pctMA === 'number' ? fmtPct(pctMA) : '—'}</td>
+                    <td style={{ padding: '6px 6px', textAlign: 'right', color: typeof r.perf1w === 'number' && r.perf1w >= 5 ? '#10B981' : (typeof r.perf1w === 'number' && r.perf1w < 0 ? '#EF4444' : TXT), fontWeight: typeof r.perf1w === 'number' && r.perf1w >= 5 ? 700 : 400 }}>{fmtPct(r.perf1w)}</td>
+                    <td style={{ padding: '6px 6px', textAlign: 'right', color: typeof r.perf1m === 'number' && r.perf1m >= 15 ? '#10B981' : (typeof r.perf1m === 'number' && r.perf1m < 0 ? '#EF4444' : TXT), fontWeight: typeof r.perf1m === 'number' && r.perf1m >= 15 ? 700 : 400 }}>{fmtPct(r.perf1m)}</td>
+                    <td style={{ padding: '6px 6px', textAlign: 'right', color: TXT }}>{fmtPct(r.perf3m)}</td>
+                    <td style={{ padding: '6px 6px', textAlign: 'right', color: typeof r.adrPct === 'number' && r.adrPct >= 4 && r.adrPct <= 7 ? '#10B981' : TXT }}>{typeof r.adrPct === 'number' ? `${r.adrPct.toFixed(1)}` : '—'}</td>
+                    <td style={{ padding: '6px 6px', textAlign: 'right', color: r.volumeBurst === true ? '#10B981' : TXT, fontWeight: r.volumeBurst === true ? 700 : 400 }}>{typeof r.relVol1w === 'number' ? `${r.relVol1w.toFixed(1)}×` : '—'}</td>
+                    <td style={{ padding: '6px 6px', textAlign: 'right', color: typeof r.rsi === 'number' && r.rsi > 85 ? '#EF4444' : TXT }}>{r.rsi !== undefined ? r.rsi.toFixed(0) : '—'}</td>
+                    <td style={{ padding: '6px 6px', textAlign: 'right', color: '#F59E0B', fontFamily: 'ui-monospace, monospace' }}>{typeof r.stopLoss === 'number' ? fmtPrice(r.stopLoss) : '—'}</td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
+        </div>
+      </div>
+
+      {/* zzz132 — Suggestions for additional TradingView fields */}
+      <div style={{ ...cardStyle, background: 'color-mix(in srgb, #22D3EE 4%, transparent)', borderColor: 'color-mix(in srgb, #22D3EE 30%, transparent)' }}>
+        <div style={{ fontSize: 15, fontWeight: 900, color: CYAN, marginBottom: 8 }}>💡 ADDITIONAL TradingView FIELDS that would sharpen scoring even more</div>
+        <div style={{ fontSize: 12.5, color: TXT, lineHeight: 1.7 }}>
+          Your 89-column export already covers the essentials. Add these to push the engine from "great" to "institutional":
+          <ol style={{ margin: '8px 0 0 22px', padding: 0 }}>
+            <li><b style={{ color: CYAN }}>RS Rating (IBD Relative Strength, 1–99)</b> — TradingView calls it <i>"Relative Strength Index (RSI), 14"</i> for the indicator OR you can compute from <i>"Performance, 1 Year %"</i> percentile rank. Minervini wants RS ≥ 80, Qulla wants RS ≥ 90. Currently we proxy with raw perf %.</li>
+            <li><b style={{ color: CYAN }}>Earnings Date (next)</b> — let us mark "earnings within X days" — Bonde EP often fires AT earnings, knowing if the move is pre/post-earnings is critical.</li>
+            <li><b style={{ color: CYAN }}>Earnings Surprise %</b> — last quarter's beat/miss vs estimates. A 1W EP with a +20% earnings surprise is far higher conviction than a 1W move with a miss.</li>
+            <li><b style={{ color: CYAN }}>Average Volume, 30 days</b> + <b>Average Dollar Volume, 30 days</b> — you have 30D vol implicitly via Rel Vol but explicit avg vol lets us filter <b>$10M+/day liquidity</b> (Bonde's hard floor).</li>
+            <li><b style={{ color: CYAN }}>EMA 21, 1 day</b> — Qullamaggie's <b>actual</b> entry rule uses 21-EMA, not SMA50. We're proxying. Adding 21-EMA from TradingView gives exact buy-zone math.</li>
+            <li><b style={{ color: CYAN }}>Float Shares</b> + <b>Short Interest %</b> — small-float + high SI = short-squeeze fuel. Qulla loves &lt; 50M float setups.</li>
+            <li><b style={{ color: CYAN }}>Sector Relative Strength</b> — is the stock in a leading sector? Add as TradingView's <i>"Sector"</i> + we'll auto-rank sectors by median 1M perf.</li>
+            <li><b style={{ color: CYAN }}>Gap %</b> (today's open vs prior close) — Bonde's EP is OFTEN a gap up + hold. Currently invisible without intraday open.</li>
+            <li><b style={{ color: CYAN }}>Distance from 21-day high</b> + <b>Distance from 10-day high</b> — proper Qullamaggie consolidation detection.</li>
+            <li><b style={{ color: CYAN }}>52W Volatility (Annualized)</b> — distinguish low-vol compounders from high-vol cowboys; lets Minervini auto-filter to low-vol candidates.</li>
+          </ol>
+          <div style={{ marginTop: 10, color: MUTED, fontSize: 11.5 }}>
+            <b>If you add even 3 of these (RS Rating, EMA 21, Earnings Date)</b>, the BUY-ZONE list will get materially tighter and the READY TO BUY section will be near-zero-noise.
+          </div>
         </div>
       </div>
     </div>
