@@ -5985,6 +5985,38 @@ function TechnicalsTab() {
     stopLoss?: number;           // price - 2 * ATR
     stopLossPct?: number;        // (price - stopLoss) / price * 100
     qualityFlags?: string[];     // zzz132 — data-quality warnings
+    // zzz133 — FUNDAMENTAL growth fields (already parsed at USA pipeline)
+    revGrowthQtr?: number;       // Revenue growth %, Quarterly YoY
+    revGrowthAnn?: number;       // Revenue growth %, Annual YoY
+    revGrowth5Y?: number;        // Revenue growth %, 5 year CAGR
+    epsGrowthTTM?: number;       // EPS diluted growth %, TTM YoY
+    epsGrowthQtr?: number;       // EPS diluted growth %, Quarterly YoY
+    grossProfitGrowthQtr?: number; // Gross profit growth %, Quarterly YoY
+    grossMargin?: number;
+    netMargin?: number;
+    opMargin?: number;
+    fcfMargin?: number;
+    roe?: number;
+    roic?: number;
+    debtEquity?: number;
+    netDebtEbitda?: number;
+    interestCoverage?: number;
+    piotroski?: number;
+    analystRating?: number;
+    nextEarnings?: string;       // Upcoming earnings date (ISO YYYY-MM-DD)
+    daysToEarnings?: number;     // Days until next earnings (negative if past)
+    freeFloatPct?: number;       // Free float %
+    dollarVolume?: number;       // price × avg vol 30d
+    fundScore: number;           // 0-100 fundamental quality
+    fundReasons: string[];
+    sepaScore: number;           // Minervini SEPA-style fundamental quality 0-100
+    sepaReasons: string[];
+    growthConfirmed: boolean;    // EPS Q >= 25% AND Rev Q >= 15%
+    marginExpanding: boolean;    // Gross profit growth Q > Revenue growth Q
+    // zzz133 — ELIGIBILITY ENGINE
+    eligible: boolean;
+    eligibilityFailures: string[];
+    eligibilityTags: string[];
     totalScore: number;
   };
 
@@ -6054,6 +6086,148 @@ function TechnicalsTab() {
       if (typeof pctVsEma50 === 'number' && pctVsEma50 >= 60) qualityFlags.push('extreme extension');
       if (typeof mcap === 'number' && mcap < 0.3) qualityFlags.push('micro-cap illiquid');
       if (typeof avgVol30d === 'number' && avgVol30d < 200_000) qualityFlags.push('thin volume');
+
+      // zzz133 — FUNDAMENTAL FIELDS (parsed at USA pipeline, surfaced here)
+      const revGrowthQtr = num(r.revQtr ?? r.revGrowthQtr ?? r.revenueGrowthQtr);
+      const revGrowthAnn = num(r.revAnn ?? r.revGrowth ?? r.revenueGrowth);
+      const revGrowth5Y = num(r.revGrowth5y ?? r.revGrowth3yr ?? r.revCagr);
+      const epsGrowthTTM = num(r.epsGrowth ?? r.epsGrowthTTM);
+      const epsGrowthQtr = num(r.epsGrowthQtr);
+      const grossProfitGrowthQtr = num(r.grossProfitGrowthQtr);
+      const grossMargin = num(r.grossMargin);
+      const netMargin = num(r.netMargin);
+      const opMargin = num(r.opMargin ?? r.operatingMargin);
+      const fcfMargin = num(r.fcfMargin);
+      const roe = num(r.roe);
+      const roic = num(r.roic);
+      const debtEquity = num(r.de ?? r.debtEquity);
+      const netDebtEbitda = num(r.netDebtEbitda);
+      const interestCoverage = num(r.interestCoverage);
+      const piotroski = num(r.piotroski ?? r.fScore);
+      const analystRating = num(r.analystRating ?? r.rating);
+      const freeFloatPct = num(r.freeFloatPct);
+      const nextEarningsRaw = r.nextEarnings ?? r.upcomingEarnings;
+      const nextEarnings: string | undefined = (typeof nextEarningsRaw === 'string' && nextEarningsRaw.length > 0) ? nextEarningsRaw : undefined;
+      // Compute days to earnings
+      let daysToEarnings: number | undefined = undefined;
+      if (nextEarnings) {
+        try {
+          const earnDate = new Date(nextEarnings);
+          if (!isNaN(earnDate.getTime())) {
+            daysToEarnings = Math.round((earnDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+          }
+        } catch {}
+      }
+
+      const dollarVolume = (typeof price === 'number' && typeof avgVol30d === 'number') ? price * avgVol30d : undefined;
+
+      // Derived growth flags
+      const growthConfirmed = (typeof epsGrowthQtr === 'number' && epsGrowthQtr >= 25 && typeof revGrowthQtr === 'number' && revGrowthQtr >= 15);
+      const marginExpanding = (typeof grossProfitGrowthQtr === 'number' && typeof revGrowthQtr === 'number' && grossProfitGrowthQtr > revGrowthQtr);
+
+      // zzz133 — ELIGIBILITY RULE ENGINE (hard filters before any bullish bucket)
+      // A stock must pass eligibility to appear in CHAMPIONS / READY TO BUY / BUY ZONE.
+      // Tracks failures with reasons so user can see WHY a name is rejected.
+      const eligibilityFailures: string[] = [];
+      const eligibilityTags: string[] = [];
+      // Liquidity gate
+      if (typeof avgVol30d === 'number' && avgVol30d < 200_000) eligibilityFailures.push(`illiquid (avg vol ${(avgVol30d/1000).toFixed(0)}k < 200k)`);
+      if (typeof dollarVolume === 'number' && dollarVolume < 5_000_000) eligibilityFailures.push(`low $-vol ($${(dollarVolume/1_000_000).toFixed(1)}M < $5M)`);
+      // Trend gate — must be above SMA50 (no falling knives)
+      const pctMA50Chk = typeof pctVsSma50 === 'number' ? pctVsSma50 : pctVsEma50;
+      if (typeof pctMA50Chk === 'number' && pctMA50Chk < -3) eligibilityFailures.push(`below SMA50 (${pctMA50Chk.toFixed(1)}%)`);
+      // Data sufficiency
+      if (typeof perf1m !== 'number' && typeof perf3m !== 'number') eligibilityFailures.push('no momentum data');
+      // Parabolic exclusion
+      if (typeof rsi === 'number' && rsi >= 90) eligibilityFailures.push(`parabolic RSI ${rsi.toFixed(0)}`);
+      // Extreme extension
+      if (typeof pctMA50Chk === 'number' && pctMA50Chk > 80) eligibilityFailures.push(`extreme extension +${pctMA50Chk.toFixed(0)}%`);
+      // Earnings event window
+      if (typeof daysToEarnings === 'number' && daysToEarnings >= 0 && daysToEarnings <= 3) {
+        eligibilityFailures.push(`earnings in ${daysToEarnings}d (event risk)`);
+        eligibilityTags.push('EARNINGS_IMMINENT');
+      } else if (typeof daysToEarnings === 'number' && daysToEarnings > 3 && daysToEarnings <= 14) {
+        eligibilityTags.push('EARNINGS_SOON');
+      }
+      const eligible = eligibilityFailures.length === 0;
+
+      // zzz133 — FUNDAMENTAL SCORE 0-100 (Minervini SEPA-style fundamental quality)
+      let fundScore = 0;
+      const fundReasons: string[] = [];
+      // 1. Rule of 40 (revenue growth + FCF margin)
+      const r40 = (typeof revGrowthAnn === 'number' && typeof fcfMargin === 'number') ? revGrowthAnn + fcfMargin : undefined;
+      if (typeof r40 === 'number') {
+        if (r40 >= 60) { fundScore += 18; fundReasons.push(`R40 ${r40.toFixed(0)} ELITE`); }
+        else if (r40 >= 40) { fundScore += 12; fundReasons.push(`R40 ${r40.toFixed(0)} pass`); }
+        else if (r40 >= 20) { fundScore += 5; fundReasons.push(`R40 ${r40.toFixed(0)}`); }
+        else if (r40 < 0) { fundScore -= 4; fundReasons.push(`R40 ${r40.toFixed(0)} burn`); }
+      }
+      // 2. Revenue growth Q YoY (graded)
+      if (typeof revGrowthQtr === 'number') {
+        if (revGrowthQtr >= 40) { fundScore += 14; fundReasons.push(`Rev Q +${revGrowthQtr.toFixed(0)}% 🔥`); }
+        else if (revGrowthQtr >= 20) { fundScore += 10; fundReasons.push(`Rev Q +${revGrowthQtr.toFixed(0)}%`); }
+        else if (revGrowthQtr >= 10) { fundScore += 6; fundReasons.push(`Rev Q +${revGrowthQtr.toFixed(0)}%`); }
+        else if (revGrowthQtr >= 0) { fundScore += 2; }
+        else { fundScore -= 4; fundReasons.push(`Rev Q ${revGrowthQtr.toFixed(0)}% decline`); }
+      }
+      // 3. EPS growth TTM YoY
+      if (typeof epsGrowthTTM === 'number') {
+        if (epsGrowthTTM >= 50) { fundScore += 14; fundReasons.push(`EPS TTM +${epsGrowthTTM.toFixed(0)}% 🔥`); }
+        else if (epsGrowthTTM >= 25) { fundScore += 10; fundReasons.push(`EPS TTM +${epsGrowthTTM.toFixed(0)}%`); }
+        else if (epsGrowthTTM >= 10) { fundScore += 5; fundReasons.push(`EPS TTM +${epsGrowthTTM.toFixed(0)}%`); }
+        else if (epsGrowthTTM < -10) { fundScore -= 6; fundReasons.push(`EPS TTM ${epsGrowthTTM.toFixed(0)}% decline`); }
+      }
+      // 4. EPS Q YoY (acceleration)
+      if (typeof epsGrowthQtr === 'number' && typeof epsGrowthTTM === 'number' && epsGrowthQtr > epsGrowthTTM && epsGrowthQtr >= 30) {
+        fundScore += 8; fundReasons.push(`EPS accelerating (Q ${epsGrowthQtr.toFixed(0)}% > TTM ${epsGrowthTTM.toFixed(0)}%)`);
+      } else if (typeof epsGrowthQtr === 'number' && epsGrowthQtr >= 25) {
+        fundScore += 4; fundReasons.push(`EPS Q +${epsGrowthQtr.toFixed(0)}%`);
+      }
+      // 5. Margin expansion (gross profit Q > rev Q)
+      if (marginExpanding) { fundScore += 8; fundReasons.push('margin expanding'); }
+      // 6. 5Y revenue CAGR (durable compounding)
+      if (typeof revGrowth5Y === 'number') {
+        if (revGrowth5Y >= 25) { fundScore += 8; fundReasons.push(`5Y CAGR ${revGrowth5Y.toFixed(0)}%`); }
+        else if (revGrowth5Y >= 15) { fundScore += 5; fundReasons.push(`5Y CAGR ${revGrowth5Y.toFixed(0)}%`); }
+        else if (revGrowth5Y < 0) { fundScore -= 4; }
+      }
+      // 7. Profitability
+      if (typeof roe === 'number') {
+        if (roe >= 25) { fundScore += 10; fundReasons.push(`ROE ${roe.toFixed(0)}%`); }
+        else if (roe >= 15) { fundScore += 6; fundReasons.push(`ROE ${roe.toFixed(0)}%`); }
+        else if (roe >= 8) { fundScore += 2; }
+      }
+      // 8. FCF margin
+      if (typeof fcfMargin === 'number') {
+        if (fcfMargin >= 20) { fundScore += 8; fundReasons.push(`FCF ${fcfMargin.toFixed(0)}%`); }
+        else if (fcfMargin >= 10) { fundScore += 4; fundReasons.push(`FCF ${fcfMargin.toFixed(0)}%`); }
+        else if (fcfMargin < -10) { fundScore -= 6; fundReasons.push(`FCF ${fcfMargin.toFixed(0)}% burn`); }
+      }
+      // 9. Leverage
+      if (typeof netDebtEbitda === 'number') {
+        if (netDebtEbitda < 0) { fundScore += 6; fundReasons.push('net cash'); }
+        else if (netDebtEbitda < 1) { fundScore += 4; fundReasons.push(`NDE ${netDebtEbitda.toFixed(1)}×`); }
+        else if (netDebtEbitda > 4) { fundScore -= 6; fundReasons.push(`NDE ${netDebtEbitda.toFixed(1)}× leveraged`); }
+      } else if (typeof debtEquity === 'number') {
+        if (debtEquity < 0.3) fundScore += 3;
+        else if (debtEquity > 2) { fundScore -= 4; fundReasons.push(`D/E ${debtEquity.toFixed(1)} leveraged`); }
+      }
+      // 10. Analyst rating
+      if (typeof analystRating === 'number') {
+        if (analystRating >= 4.5) { fundScore += 5; fundReasons.push('Analyst Strong Buy'); }
+        else if (analystRating >= 4) { fundScore += 3; }
+        else if (analystRating < 3) { fundScore -= 4; fundReasons.push(`Analyst rating ${analystRating.toFixed(1)} weak`); }
+      }
+      // Piotroski F-Score (financial health proxy)
+      if (typeof piotroski === 'number') {
+        if (piotroski >= 8) { fundScore += 5; fundReasons.push(`Piotroski ${piotroski.toFixed(0)}/9`); }
+        else if (piotroski <= 3) { fundScore -= 4; fundReasons.push(`Piotroski ${piotroski.toFixed(0)}/9 weak`); }
+      }
+      fundScore = Math.max(0, Math.min(100, fundScore));
+
+      // SEPA score (same as fundScore for now; alias for Minervini terminology)
+      const sepaScore = fundScore;
+      const sepaReasons = fundReasons.slice();
 
       // zzz132 — QULLAMAGGIE rewritten with finer gradations (was clustering 80-85)
       // Now spreads scores from 20 to 100 based on actual setup strength
@@ -6226,46 +6400,96 @@ function TechnicalsTab() {
         zangerScore, zangerReasons: zReasons,
         bondeScore, bondeReasons: bReasons,
         minerviniScore, minerviniReasons: mReasons,
-        rightEntry, rightEntryDetail, stopLoss, stopLossPct, qualityFlags, totalScore,
+        rightEntry, rightEntryDetail, stopLoss, stopLossPct, qualityFlags,
+        // zzz133 — fundamentals + eligibility
+        revGrowthQtr, revGrowthAnn, revGrowth5Y, epsGrowthTTM, epsGrowthQtr,
+        grossProfitGrowthQtr, grossMargin, netMargin, opMargin, fcfMargin,
+        roe, roic, debtEquity, netDebtEbitda, interestCoverage, piotroski,
+        analystRating, nextEarnings, daysToEarnings, freeFloatPct, dollarVolume,
+        fundScore, fundReasons, sepaScore, sepaReasons, growthConfirmed, marginExpanding,
+        eligible, eligibilityFailures, eligibilityTags,
+        totalScore,
       };
     }).filter(r => r.symbol);
     return rows;
   }, [usaRows]);
 
-  // Sort buckets per playbook
-  const qullaTop = React.useMemo(() => [...techRows].sort((a, b) => b.qullaScore - a.qullaScore).filter(r => r.qullaScore >= 55).slice(0, 12), [techRows]);
-  const zangerTop = React.useMemo(() => [...techRows].sort((a, b) => b.zangerScore - a.zangerScore).filter(r => r.zangerScore >= 45).slice(0, 12), [techRows]);
-  const bondeTop = React.useMemo(() => [...techRows].sort((a, b) => b.bondeScore - a.bondeScore).filter(r => r.bondeScore >= 55).slice(0, 12), [techRows]);
-  const minerviniTop = React.useMemo(() => [...techRows].sort((a, b) => b.minerviniScore - a.minerviniScore).filter(r => r.minerviniScore >= 65).slice(0, 12), [techRows]);
+  // zzz133 — playbook tops restricted to ELIGIBLE stocks (hard filters first)
+  const qullaTop = React.useMemo(() => [...techRows].filter(r => r.eligible).sort((a, b) => b.qullaScore - a.qullaScore).filter(r => r.qullaScore >= 55).slice(0, 12), [techRows]);
+  const zangerTop = React.useMemo(() => [...techRows].filter(r => r.eligible).sort((a, b) => b.zangerScore - a.zangerScore).filter(r => r.zangerScore >= 45).slice(0, 12), [techRows]);
+  const bondeTop = React.useMemo(() => [...techRows].filter(r => r.eligible).sort((a, b) => b.bondeScore - a.bondeScore).filter(r => r.bondeScore >= 55).slice(0, 12), [techRows]);
+  const minerviniTop = React.useMemo(() => [...techRows].filter(r => r.eligible).sort((a, b) => b.minerviniScore - a.minerviniScore).filter(r => r.minerviniScore >= 65).slice(0, 12), [techRows]);
 
-  // zzz132 — BUY ZONE quality gate: must have positive 1M (or 3M if 1M missing)
-  // and at least one supporting signal (Vol🔥 or Stage-2 or strong momentum).
-  // Previously this let through 1M -7% names like BAND that "happened to" sit
-  // near SMA50 but had no momentum. Tightened.
+  // zzz133 — STRICT BUY ZONE: eligibility + BUY ZONE position + positive 1M (no 3M-only sneak-ins)
   const buyZone = React.useMemo(() => [...techRows]
+    .filter(r => r.eligible)
     .filter(r => r.rightEntry === 'BUY ZONE')
-    .filter(r => {
-      const hasMomentum = (typeof r.perf1m === 'number' ? r.perf1m >= 0 : (typeof r.perf3m === 'number' ? r.perf3m >= 8 : true));
-      return hasMomentum;
-    })
+    .filter(r => typeof r.perf1m === 'number' && r.perf1m >= 0) // STRICT: must have positive 1M
+    .filter(r => typeof r.perf1w === 'number' && r.perf1w >= -8) // exclude falling knives
     .sort((a, b) => b.totalScore - a.totalScore)
     .slice(0, 24), [techRows]);
 
-  // zzz132 — READY TO BUY: highest-conviction subset of BUY ZONE
-  // composite ≥ 50, positive 1M ≥ 3%, has at least one strong signal
-  const readyToBuy = React.useMemo(() => [...techRows]
+  // zzz133 — 🏆 CHAMPIONS: tech ≥ 50 AND fund ≥ 50 AND eligible AND BUY ZONE
+  const champions = React.useMemo(() => [...techRows]
+    .filter(r => r.eligible)
     .filter(r => r.rightEntry === 'BUY ZONE')
-    .filter(r => r.totalScore >= 50)
-    .filter(r => (typeof r.perf1m === 'number' && r.perf1m >= 3) || (typeof r.perf3m === 'number' && r.perf3m >= 15))
-    .filter(r => r.volumeBurst === true || (typeof r.pctVsEma200 === 'number' && r.pctVsEma200 > 10) || (typeof r.momentumAccel === 'number' && r.momentumAccel >= 2))
+    .filter(r => r.totalScore >= 45 && r.fundScore >= 45)
+    .filter(r => typeof r.perf1m === 'number' && r.perf1m >= 0)
+    .filter(r => typeof r.perf1w === 'number' && r.perf1w >= -5)
+    .sort((a, b) => (b.totalScore + b.fundScore) - (a.totalScore + a.fundScore))
+    .slice(0, 10), [techRows]);
+
+  // zzz133 — TECH ONLY: strong technicals, weak fundamentals
+  const techOnly = React.useMemo(() => [...techRows]
+    .filter(r => r.eligible)
+    .filter(r => r.totalScore >= 55 && r.fundScore < 40)
     .sort((a, b) => b.totalScore - a.totalScore)
     .slice(0, 10), [techRows]);
 
-  // zzz132 — QULLA 1M LEADERS — pure 1M momentum leaderboard (Qulla's actual screen)
+  // zzz133 — QUALITY ON SALE: strong fundamentals, weak technicals (Buffett-style)
+  const qualityOnSale = React.useMemo(() => [...techRows]
+    .filter(r => r.fundScore >= 55 && r.totalScore < 45)
+    .sort((a, b) => b.fundScore - a.fundScore)
+    .slice(0, 10), [techRows]);
+
+  // zzz133 — EARNINGS SOON: event-driven bucket
+  const earningsSoon = React.useMemo(() => [...techRows]
+    .filter(r => r.eligibilityTags.includes('EARNINGS_SOON') || r.eligibilityTags.includes('EARNINGS_IMMINENT'))
+    .sort((a, b) => (a.daysToEarnings ?? 999) - (b.daysToEarnings ?? 999))
+    .slice(0, 15), [techRows]);
+
+  // zzz133 — REJECTED: failed hard filters (collapsible diagnostic)
+  const rejected = React.useMemo(() => [...techRows]
+    .filter(r => !r.eligible)
+    .sort((a, b) => b.totalScore - a.totalScore), [techRows]);
+
+  // zzz132 — QULLA 1M LEADERS — pure momentum (eligible only)
   const qulla1MLeaders = React.useMemo(() => [...techRows]
+    .filter(r => r.eligible)
     .filter(r => typeof r.perf1m === 'number' && r.perf1m >= 15)
     .sort((a, b) => (b.perf1m ?? 0) - (a.perf1m ?? 0))
     .slice(0, 15), [techRows]);
+
+  // zzz133 — SORT state for ALL TICKERS table
+  const [sortField, setSortField] = React.useState<string>('totalScore');
+  const [sortAsc, setSortAsc] = React.useState<boolean>(false);
+  const sortedAll = React.useMemo(() => {
+    const arr = [...techRows];
+    arr.sort((a: any, b: any) => {
+      const va = a[sortField], vb = b[sortField];
+      if (typeof va === 'number' && typeof vb === 'number') return sortAsc ? va - vb : vb - va;
+      if (typeof va === 'string' && typeof vb === 'string') return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+      if (va == null && vb != null) return 1;
+      if (va != null && vb == null) return -1;
+      return 0;
+    });
+    return arr;
+  }, [techRows, sortField, sortAsc]);
+  const handleSort = (field: string) => {
+    if (sortField === field) setSortAsc(!sortAsc);
+    else { setSortField(field); setSortAsc(field === 'symbol' || field === 'company'); }
+  };
+  const sortIcon = (field: string) => sortField === field ? (sortAsc ? ' ▲' : ' ▼') : '';
 
   // Data-quality summary
   const dataQuality = React.useMemo(() => {
@@ -6349,42 +6573,49 @@ function TechnicalsTab() {
         </div>
       </div>
 
-      {/* zzz132 — DATA QUALITY summary chips */}
+      {/* zzz133 — DATA QUALITY + ELIGIBILITY summary chips */}
       <div style={{ ...cardStyle, background: 'color-mix(in srgb, #10B981 5%, transparent)', borderColor: 'color-mix(in srgb, #10B981 30%, transparent)', padding: 14 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-          <span style={{ fontSize: 14, fontWeight: 800, color: '#10B981' }}>✅ zzz132 — Scoring engine upgrade</span>
+          <span style={{ fontSize: 14, fontWeight: 800, color: '#10B981' }}>✅ zzz133 — Multi-layer Rule Engine</span>
           <span style={{ background: 'rgba(255,255,255,0.06)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: TXT }}>Total <b>{dataQuality.total}</b></span>
+          <span style={{ background: 'rgba(16,185,129,0.18)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: '#10B981' }}>✓ eligible <b>{techRows.filter(r => r.eligible).length}</b></span>
+          <span style={{ background: 'rgba(239,68,68,0.12)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: '#EF4444' }}>✗ rejected <b>{rejected.length}</b></span>
+          <span style={{ background: 'rgba(251,191,36,0.15)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: '#FBBF24' }}>🗓 earnings soon <b>{earningsSoon.length}</b></span>
           <span style={{ background: 'rgba(255,255,255,0.06)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: TXT }}>SMA cov <b>{dataQuality.withSMA}/{dataQuality.total}</b></span>
           <span style={{ background: 'rgba(255,255,255,0.06)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: TXT }}>ATR cov <b>{dataQuality.withATR}/{dataQuality.total}</b></span>
-          <span style={{ background: 'rgba(255,255,255,0.06)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: TXT }}>1W cov <b>{dataQuality.with1W}/{dataQuality.total}</b></span>
-          <span style={{ background: 'rgba(255,255,255,0.06)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: TXT }}>52W-Low cov <b>{dataQuality.with52WLow}/{dataQuality.total}</b></span>
           <span style={{ background: 'rgba(239,68,68,0.12)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: '#EF4444' }}>⚠️ flagged <b>{dataQuality.flagged}</b></span>
         </div>
         <div style={{ fontSize: 12, color: TXT, lineHeight: 1.65, marginTop: 10 }}>
-          Each playbook is now <b>gradient-scored 0–100</b> instead of step-binary (fixed the cluster-at-85/87 problem in zzz130).
-          BUY ZONE requires positive 1M momentum (1M ≥ 0% or 3M ≥ 8%). All cards now show <b>CMP, stop-loss, risk %</b>, plus data-quality flags
-          for parabolic RSI / extreme extension / illiquid names.
+          <b>5-layer engine:</b> (1) <b>Hard filters</b> — liquidity ≥ 200k vol / $5M $-vol, price &gt; SMA50, RSI &lt; 90, no extreme extension.
+          (2) <b>Earnings window</b> — block within 3 days, tag within 14 days.
+          (3) <b>Technical scoring</b> — Qulla/Zanger/Bonde/Minervini graded 0–100 on eligible only.
+          (4) <b>Fundamental overlay</b> — R40, Rev/EPS growth, FCF margin, ROE, leverage, analyst rating.
+          (5) <b>Buckets</b> — 🏆 Champions (Tech+Fund elite), 🟢 Buy Zone (strict), 🔥 Tech-only, 💰 Quality on Sale, 🗓 Earnings Soon, 🚫 Rejected.
+          Never label BUY ZONE if hard filters fail. Click any column header to sort.
         </div>
       </div>
 
-      {/* zzz132 — 🎯 READY TO BUY — top high-conviction picks */}
-      <div style={{ ...cardStyle, background: 'color-mix(in srgb, #10B981 7%, transparent)', borderColor: '#10B981', borderWidth: 2 }}>
+      {/* zzz133 — 🏆 CHAMPIONS — Technically + Fundamentally elite */}
+      <div style={{ ...cardStyle, background: 'linear-gradient(135deg, rgba(16,185,129,0.08), rgba(34,211,238,0.05))', borderColor: '#10B981', borderWidth: 2 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-          <div style={{ fontSize: 19, color: '#10B981', fontWeight: 900, letterSpacing: '0.3px' }}>🎯 READY TO BUY — TOP HIGH-CONVICTION PICKS ({readyToBuy.length})</div>
-          <div style={{ fontSize: 12, color: MUTED, fontStyle: 'italic' }}>BUY ZONE + composite ≥ 50 + positive 1M ≥ 3% + (Vol🔥 OR Stage-2 OR mom-accel)</div>
+          <div style={{ fontSize: 20, color: '#10B981', fontWeight: 900, letterSpacing: '0.3px' }}>🏆 CHAMPIONS — TECH + FUNDAMENTAL ELITE ({champions.length})</div>
+          <div style={{ fontSize: 12, color: MUTED, fontStyle: 'italic' }}>Passes hard filters + BUY ZONE + composite tech ≥ 45 + fundamental ≥ 45 + positive 1M + no falling knife</div>
         </div>
-        {readyToBuy.length === 0 ? (
+        {champions.length === 0 ? (
           <div style={{ fontSize: 13, color: MUTED, padding: 14, background: PANEL2, borderRadius: 8 }}>
-            No high-conviction BUY-ZONE picks today. Most strong names are extended/chase. Wait for pullback to SMA50 on top-scoring names, or scan the BUY ZONE list below for B-tier setups.
+            No Champions today. Either market is extended (most strong names beyond buy zone) or fundamentals are weak across BUY ZONE candidates. Check 🟢 BUY ZONE for tech-only setups and 💰 QUALITY ON SALE for fund-only opportunities.
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12 }}>
-            {readyToBuy.map(r => (
-              <div key={r.symbol} style={{ background: 'rgba(16,185,129,0.06)', border: '2px solid #10B981', borderRadius: 10, padding: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 12 }}>
+            {champions.map(r => (
+              <div key={r.symbol} style={{ background: 'rgba(16,185,129,0.08)', border: '2px solid #10B981', borderRadius: 10, padding: 14, boxShadow: '0 0 0 1px rgba(16,185,129,0.1)' }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
                   <span style={{ fontSize: 20, fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{r.symbol}</span>
                   <span style={{ fontSize: 15, fontWeight: 800, color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</span>
-                  <span style={{ marginLeft: 'auto', fontSize: 22, fontWeight: 900, color: '#10B981' }}>{r.totalScore}</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 12, color: MUTED }}>TECH</span>
+                  <span style={{ fontSize: 22, fontWeight: 900, color: '#10B981' }}>{r.totalScore}</span>
+                  <span style={{ fontSize: 12, color: MUTED }}>FUND</span>
+                  <span style={{ fontSize: 22, fontWeight: 900, color: '#84CC16' }}>{r.fundScore}</span>
                 </div>
                 <div style={{ fontSize: 13, color: TXT, marginBottom: 8, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.company || ''}>
                   {r.company || r.symbol} <span style={{ color: MUTED, fontSize: 11 }}>· {r.sector?.slice(0, 22) || ''}</span>
@@ -6407,14 +6638,19 @@ function TechnicalsTab() {
                     <div style={{ color: scoreColor(r.minerviniScore), fontWeight: 800, fontSize: 14 }}>{r.minerviniScore}</div>
                   </div>
                 </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, fontSize: 11, marginBottom: 6 }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, fontSize: 11, marginBottom: 6 }}>
                   {typeof r.perf1w === 'number' ? <span style={{ background: 'rgba(255,255,255,0.05)', padding: '3px 7px', borderRadius: 4 }}>1W {fmtPct(r.perf1w)}</span> : null}
                   {typeof r.perf1m === 'number' ? <span style={{ background: 'rgba(255,255,255,0.05)', padding: '3px 7px', borderRadius: 4 }}>1M {fmtPct(r.perf1m)}</span> : null}
-                  {typeof r.perf3m === 'number' ? <span style={{ background: 'rgba(255,255,255,0.05)', padding: '3px 7px', borderRadius: 4 }}>3M {fmtPct(r.perf3m)}</span> : null}
-                  {typeof r.adrPct === 'number' ? <span style={{ background: 'rgba(255,255,255,0.05)', padding: '3px 7px', borderRadius: 4 }}>ADR {r.adrPct.toFixed(1)}%</span> : null}
                   {r.volumeBurst === true && typeof r.relVol1w === 'number' ? <span style={{ background: 'rgba(16,185,129,0.18)', color: '#10B981', padding: '3px 7px', borderRadius: 4, fontWeight: 700 }}>Vol {r.relVol1w.toFixed(1)}× 🔥</span> : null}
                   {typeof r.rsi === 'number' ? <span style={{ background: 'rgba(255,255,255,0.05)', padding: '3px 7px', borderRadius: 4 }}>RSI {r.rsi.toFixed(0)}</span> : null}
+                  {typeof r.revGrowthQtr === 'number' ? <span style={{ background: 'rgba(132,204,22,0.15)', color: '#84CC16', padding: '3px 7px', borderRadius: 4, fontWeight: 700 }}>Rev {fmtPct(r.revGrowthQtr)}</span> : null}
+                  {typeof r.epsGrowthTTM === 'number' ? <span style={{ background: 'rgba(132,204,22,0.15)', color: '#84CC16', padding: '3px 7px', borderRadius: 4, fontWeight: 700 }}>EPS {fmtPct(r.epsGrowthTTM)}</span> : null}
                 </div>
+                {r.fundReasons.length > 0 ? (
+                  <div style={{ fontSize: 10.5, color: '#84CC16', lineHeight: 1.5, marginBottom: 4 }}>
+                    💎 {r.fundReasons.slice(0, 4).join(' · ')}
+                  </div>
+                ) : null}
                 <div style={{ fontSize: 12, color: '#10B981', fontWeight: 800, marginTop: 6 }}>
                   ✅ {r.rightEntryDetail}
                 </div>
@@ -6423,14 +6659,69 @@ function TechnicalsTab() {
                     🛑 STOP {fmtPrice(r.stopLoss)} <span style={{ color: MUTED, fontWeight: 600 }}>(risk {typeof r.stopLossPct === 'number' ? `−${r.stopLossPct.toFixed(1)}%` : '−2×ATR'})</span>
                   </div>
                 ) : null}
-                {r.qualityFlags && r.qualityFlags.length > 0 ? (
-                  <div style={{ fontSize: 11, color: '#EF4444', marginTop: 4, fontWeight: 700 }}>⚠️ {r.qualityFlags.join(' · ')}</div>
+                {r.eligibilityTags.includes('EARNINGS_SOON') && typeof r.daysToEarnings === 'number' ? (
+                  <div style={{ fontSize: 11, color: '#FBBF24', marginTop: 4, fontWeight: 700 }}>🗓️ Earnings in {r.daysToEarnings}d</div>
                 ) : null}
               </div>
             ))}
           </div>
         )}
       </div>
+
+      {/* zzz133 — TECH ONLY + QUALITY ON SALE side-by-side */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(440px, 1fr))', gap: 12, marginBottom: 12 }}>
+        <div style={{ ...cardStyle, marginBottom: 0, background: 'color-mix(in srgb, #22D3EE 5%, transparent)', borderColor: 'color-mix(in srgb, #22D3EE 40%, transparent)' }}>
+          <div style={{ fontSize: 15, fontWeight: 900, color: CYAN, marginBottom: 10 }}>🔥 TECH STRONG · FUND WEAK ({techOnly.length})</div>
+          <div style={{ fontSize: 11, color: MUTED, marginBottom: 10, fontStyle: 'italic' }}>Speculative momentum plays — technicals breaking out but fundamentals soft. Trade with tight stops.</div>
+          {techOnly.length === 0 ? <div style={{ fontSize: 12, color: MUTED }}>None today.</div> : techOnly.map(r => (
+            <div key={r.symbol} style={{ display: 'flex', gap: 8, padding: '8px 10px', background: PANEL2, borderRadius: 6, marginBottom: 5, fontSize: 12, alignItems: 'center' }}>
+              <span style={{ fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace', minWidth: 55 }}>{r.symbol}</span>
+              <span style={{ color: TXT, fontFamily: 'ui-monospace, monospace', minWidth: 60 }}>{fmtPrice(r.price)}</span>
+              <span style={{ flex: 1, color: TXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: 11 }}>{r.company}</span>
+              <span style={{ color: scoreColor(r.totalScore), fontWeight: 800 }}>T{r.totalScore}</span>
+              <span style={{ color: '#94A3B8', fontWeight: 600 }}>F{r.fundScore}</span>
+              <span style={{ color: typeof r.perf1m === 'number' && r.perf1m > 0 ? '#10B981' : '#EF4444', fontWeight: 700 }}>{fmtPct(r.perf1m)}</span>
+            </div>
+          ))}
+        </div>
+        <div style={{ ...cardStyle, marginBottom: 0, background: 'color-mix(in srgb, #84CC16 5%, transparent)', borderColor: 'color-mix(in srgb, #84CC16 40%, transparent)' }}>
+          <div style={{ fontSize: 15, fontWeight: 900, color: '#84CC16', marginBottom: 10 }}>💰 QUALITY ON SALE ({qualityOnSale.length})</div>
+          <div style={{ fontSize: 11, color: MUTED, marginBottom: 10, fontStyle: 'italic' }}>Strong fundamentals (R40 / growth / FCF) but technicals weak — waiting list for trend reversal entry.</div>
+          {qualityOnSale.length === 0 ? <div style={{ fontSize: 12, color: MUTED }}>None today.</div> : qualityOnSale.map(r => (
+            <div key={r.symbol} style={{ display: 'flex', gap: 8, padding: '8px 10px', background: PANEL2, borderRadius: 6, marginBottom: 5, fontSize: 12, alignItems: 'center' }}>
+              <span style={{ fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace', minWidth: 55 }}>{r.symbol}</span>
+              <span style={{ color: TXT, fontFamily: 'ui-monospace, monospace', minWidth: 60 }}>{fmtPrice(r.price)}</span>
+              <span style={{ flex: 1, color: TXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: 11 }}>{r.company}</span>
+              <span style={{ color: '#94A3B8', fontWeight: 600 }}>T{r.totalScore}</span>
+              <span style={{ color: scoreColor(r.fundScore), fontWeight: 800 }}>F{r.fundScore}</span>
+              <span style={{ color: '#84CC16', fontWeight: 700 }}>{fmtPct(r.epsGrowthTTM)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* zzz133 — EARNINGS SOON event-driven bucket */}
+      {earningsSoon.length > 0 && (
+        <div style={{ ...cardStyle, background: 'color-mix(in srgb, #FBBF24 5%, transparent)', borderColor: 'color-mix(in srgb, #FBBF24 40%, transparent)' }}>
+          <div style={{ fontSize: 15, fontWeight: 900, color: '#FBBF24', marginBottom: 10 }}>🗓️ EARNINGS SOON ({earningsSoon.length}) — Event-driven bucket</div>
+          <div style={{ fontSize: 11, color: MUTED, marginBottom: 10, fontStyle: 'italic' }}>Stocks reporting within 14 days. Excluded from normal BUY ZONE due to event risk. Bonde EP often fires AT earnings — watch for post-earnings drift entries.</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
+            {earningsSoon.map(r => (
+              <div key={r.symbol} style={{ background: PANEL2, border: '1px solid color-mix(in srgb, #FBBF24 30%, transparent)', borderLeft: `4px solid ${(r.daysToEarnings ?? 99) <= 3 ? '#EF4444' : '#FBBF24'}`, borderRadius: 6, padding: 10 }}>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
+                  <span style={{ fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{r.symbol}</span>
+                  <span style={{ color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</span>
+                  <span style={{ marginLeft: 'auto', color: (r.daysToEarnings ?? 99) <= 3 ? '#EF4444' : '#FBBF24', fontWeight: 800 }}>{r.daysToEarnings}d</span>
+                </div>
+                <div style={{ fontSize: 11, color: TXT, marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.company}</div>
+                <div style={{ fontSize: 10.5, color: MUTED, marginTop: 4 }}>
+                  Tech {r.totalScore} · Fund {r.fundScore} · 1M {fmtPct(r.perf1m)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 🎯 RIGHT ENTRY — BUY ZONE leaderboard — broader list */}
       <div style={cardStyle}>
@@ -6534,54 +6825,69 @@ function TechnicalsTab() {
       {renderPlaybookSection('Mark Minervini — Trend Template', '#84CC16', '🏆', minerviniTop, 'minerviniScore', 'minerviniReasons',
         'SMA 50 > 150 > 200 hierarchy · within 25% of 52W high · ≥ 30% above 52W low · VCP volatility contraction')}
 
-      {/* All tickers — UPGRADED with CMP, 1M, 1W, Vol, Stop columns */}
+      {/* All tickers — zzz133 sortable + FUND column + ELIG indicator */}
       <div style={cardStyle}>
-        <div style={{ fontSize: 16, fontWeight: 900, color: TXT, marginBottom: 12 }}>🏁 ALL TICKERS — COMPOSITE LEADERBOARD ({techRows.length})</div>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+          <div style={{ fontSize: 16, fontWeight: 900, color: TXT }}>🏁 ALL TICKERS — COMPOSITE LEADERBOARD ({techRows.length})</div>
+          <div style={{ fontSize: 11, color: MUTED, fontStyle: 'italic' }}>Click any column header to sort · ✓ = eligible · ✗ = rejected by hard filters · ⚠ = data flag</div>
+        </div>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>
-              <tr style={{ background: PANEL2, color: MUTED, fontSize: 11 }}>
-                <th style={{ padding: '8px 8px', textAlign: 'left' }}>TICKER</th>
-                <th style={{ padding: '8px 8px', textAlign: 'right' }}>CMP</th>
-                <th style={{ padding: '8px 8px', textAlign: 'left' }}>COMPANY</th>
-                <th style={{ padding: '8px 6px', textAlign: 'right' }}>QULLA</th>
-                <th style={{ padding: '8px 6px', textAlign: 'right' }}>ZNGR</th>
-                <th style={{ padding: '8px 6px', textAlign: 'right' }}>BNDE</th>
-                <th style={{ padding: '8px 6px', textAlign: 'right' }}>MNVI</th>
-                <th style={{ padding: '8px 6px', textAlign: 'right' }}>AVG</th>
-                <th style={{ padding: '8px 8px', textAlign: 'left' }}>ENTRY</th>
-                <th style={{ padding: '8px 6px', textAlign: 'right' }}>%SMA50</th>
-                <th style={{ padding: '8px 6px', textAlign: 'right' }}>1W</th>
-                <th style={{ padding: '8px 6px', textAlign: 'right' }}>1M</th>
-                <th style={{ padding: '8px 6px', textAlign: 'right' }}>3M</th>
-                <th style={{ padding: '8px 6px', textAlign: 'right' }}>ADR</th>
-                <th style={{ padding: '8px 6px', textAlign: 'right' }}>Vol</th>
-                <th style={{ padding: '8px 6px', textAlign: 'right' }}>RSI</th>
-                <th style={{ padding: '8px 6px', textAlign: 'right' }}>STOP</th>
+              <tr style={{ background: PANEL2, color: MUTED, fontSize: 11, cursor: 'pointer' }}>
+                <th onClick={() => handleSort('symbol')} style={{ padding: '8px 8px', textAlign: 'left' }}>ELIG · TICKER{sortIcon('symbol')}</th>
+                <th onClick={() => handleSort('price')} style={{ padding: '8px 8px', textAlign: 'right' }}>CMP{sortIcon('price')}</th>
+                <th onClick={() => handleSort('company')} style={{ padding: '8px 8px', textAlign: 'left' }}>COMPANY{sortIcon('company')}</th>
+                <th onClick={() => handleSort('qullaScore')} style={{ padding: '8px 6px', textAlign: 'right' }}>QULLA{sortIcon('qullaScore')}</th>
+                <th onClick={() => handleSort('zangerScore')} style={{ padding: '8px 6px', textAlign: 'right' }}>ZNGR{sortIcon('zangerScore')}</th>
+                <th onClick={() => handleSort('bondeScore')} style={{ padding: '8px 6px', textAlign: 'right' }}>BNDE{sortIcon('bondeScore')}</th>
+                <th onClick={() => handleSort('minerviniScore')} style={{ padding: '8px 6px', textAlign: 'right' }}>MNVI{sortIcon('minerviniScore')}</th>
+                <th onClick={() => handleSort('totalScore')} style={{ padding: '8px 6px', textAlign: 'right', color: CYAN }}>TECH{sortIcon('totalScore')}</th>
+                <th onClick={() => handleSort('fundScore')} style={{ padding: '8px 6px', textAlign: 'right', color: '#84CC16' }}>FUND{sortIcon('fundScore')}</th>
+                <th onClick={() => handleSort('rightEntry')} style={{ padding: '8px 8px', textAlign: 'left' }}>ENTRY{sortIcon('rightEntry')}</th>
+                <th onClick={() => handleSort('pctVsSma50')} style={{ padding: '8px 6px', textAlign: 'right' }}>%SMA50{sortIcon('pctVsSma50')}</th>
+                <th onClick={() => handleSort('perf1w')} style={{ padding: '8px 6px', textAlign: 'right' }}>1W{sortIcon('perf1w')}</th>
+                <th onClick={() => handleSort('perf1m')} style={{ padding: '8px 6px', textAlign: 'right' }}>1M{sortIcon('perf1m')}</th>
+                <th onClick={() => handleSort('perf3m')} style={{ padding: '8px 6px', textAlign: 'right' }}>3M{sortIcon('perf3m')}</th>
+                <th onClick={() => handleSort('revGrowthQtr')} style={{ padding: '8px 6px', textAlign: 'right' }}>REV-Q{sortIcon('revGrowthQtr')}</th>
+                <th onClick={() => handleSort('epsGrowthTTM')} style={{ padding: '8px 6px', textAlign: 'right' }}>EPS-TTM{sortIcon('epsGrowthTTM')}</th>
+                <th onClick={() => handleSort('adrPct')} style={{ padding: '8px 6px', textAlign: 'right' }}>ADR{sortIcon('adrPct')}</th>
+                <th onClick={() => handleSort('relVol1w')} style={{ padding: '8px 6px', textAlign: 'right' }}>Vol{sortIcon('relVol1w')}</th>
+                <th onClick={() => handleSort('rsi')} style={{ padding: '8px 6px', textAlign: 'right' }}>RSI{sortIcon('rsi')}</th>
+                <th onClick={() => handleSort('daysToEarnings')} style={{ padding: '8px 6px', textAlign: 'right' }}>ERN-d{sortIcon('daysToEarnings')}</th>
+                <th onClick={() => handleSort('stopLoss')} style={{ padding: '8px 6px', textAlign: 'right' }}>STOP{sortIcon('stopLoss')}</th>
               </tr>
             </thead>
             <tbody>
-              {[...techRows].sort((a, b) => b.totalScore - a.totalScore).map(r => {
+              {sortedAll.map(r => {
                 const c = entryColor(r.rightEntry);
                 const pctMA = typeof r.pctVsSma50 === 'number' ? r.pctVsSma50 : r.pctVsEma50;
                 return (
-                  <tr key={r.symbol} style={{ borderBottom: `1px solid ${LINE}` }}>
-                    <td style={{ padding: '6px 8px', fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{r.symbol}{r.qualityFlags && r.qualityFlags.length > 0 ? <span title={r.qualityFlags.join(' · ')} style={{ color: '#EF4444', marginLeft: 4 }}>⚠</span> : null}</td>
+                  <tr key={r.symbol} style={{ borderBottom: `1px solid ${LINE}`, background: r.eligible ? 'transparent' : 'rgba(239,68,68,0.04)' }}>
+                    <td style={{ padding: '6px 8px', fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>
+                      <span style={{ color: r.eligible ? '#10B981' : '#EF4444', marginRight: 5 }} title={r.eligible ? 'Eligible' : r.eligibilityFailures.join(' · ')}>{r.eligible ? '✓' : '✗'}</span>
+                      {r.symbol}
+                      {r.qualityFlags && r.qualityFlags.length > 0 ? <span title={r.qualityFlags.join(' · ')} style={{ color: '#EF4444', marginLeft: 4 }}>⚠</span> : null}
+                    </td>
                     <td style={{ padding: '6px 8px', textAlign: 'right', color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</td>
-                    <td style={{ padding: '6px 8px', color: TXT, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
+                    <td style={{ padding: '6px 8px', color: TXT, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
                     <td style={{ padding: '6px 6px', textAlign: 'right', color: scoreColor(r.qullaScore), fontWeight: r.qullaScore >= 60 ? 800 : 500 }}>{r.qullaScore}</td>
                     <td style={{ padding: '6px 6px', textAlign: 'right', color: scoreColor(r.zangerScore), fontWeight: r.zangerScore >= 60 ? 800 : 500 }}>{r.zangerScore}</td>
                     <td style={{ padding: '6px 6px', textAlign: 'right', color: scoreColor(r.bondeScore), fontWeight: r.bondeScore >= 60 ? 800 : 500 }}>{r.bondeScore}</td>
                     <td style={{ padding: '6px 6px', textAlign: 'right', color: scoreColor(r.minerviniScore), fontWeight: r.minerviniScore >= 60 ? 800 : 500 }}>{r.minerviniScore}</td>
                     <td style={{ padding: '6px 6px', textAlign: 'right', fontWeight: 900, color: scoreColor(r.totalScore), fontSize: 13 }}>{r.totalScore}</td>
+                    <td style={{ padding: '6px 6px', textAlign: 'right', fontWeight: 900, color: r.fundScore >= 50 ? '#84CC16' : (r.fundScore >= 35 ? '#FBBF24' : MUTED), fontSize: 13 }}>{r.fundScore}</td>
                     <td style={{ padding: '6px 8px', color: c, fontWeight: 800, fontSize: 10.5 }}>{r.rightEntry}</td>
                     <td style={{ padding: '6px 6px', textAlign: 'right', color: TXT }}>{typeof pctMA === 'number' ? fmtPct(pctMA) : '—'}</td>
                     <td style={{ padding: '6px 6px', textAlign: 'right', color: typeof r.perf1w === 'number' && r.perf1w >= 5 ? '#10B981' : (typeof r.perf1w === 'number' && r.perf1w < 0 ? '#EF4444' : TXT), fontWeight: typeof r.perf1w === 'number' && r.perf1w >= 5 ? 700 : 400 }}>{fmtPct(r.perf1w)}</td>
                     <td style={{ padding: '6px 6px', textAlign: 'right', color: typeof r.perf1m === 'number' && r.perf1m >= 15 ? '#10B981' : (typeof r.perf1m === 'number' && r.perf1m < 0 ? '#EF4444' : TXT), fontWeight: typeof r.perf1m === 'number' && r.perf1m >= 15 ? 700 : 400 }}>{fmtPct(r.perf1m)}</td>
                     <td style={{ padding: '6px 6px', textAlign: 'right', color: TXT }}>{fmtPct(r.perf3m)}</td>
+                    <td style={{ padding: '6px 6px', textAlign: 'right', color: typeof r.revGrowthQtr === 'number' && r.revGrowthQtr >= 20 ? '#84CC16' : TXT }}>{fmtPct(r.revGrowthQtr)}</td>
+                    <td style={{ padding: '6px 6px', textAlign: 'right', color: typeof r.epsGrowthTTM === 'number' && r.epsGrowthTTM >= 25 ? '#84CC16' : TXT }}>{fmtPct(r.epsGrowthTTM)}</td>
                     <td style={{ padding: '6px 6px', textAlign: 'right', color: typeof r.adrPct === 'number' && r.adrPct >= 4 && r.adrPct <= 7 ? '#10B981' : TXT }}>{typeof r.adrPct === 'number' ? `${r.adrPct.toFixed(1)}` : '—'}</td>
                     <td style={{ padding: '6px 6px', textAlign: 'right', color: r.volumeBurst === true ? '#10B981' : TXT, fontWeight: r.volumeBurst === true ? 700 : 400 }}>{typeof r.relVol1w === 'number' ? `${r.relVol1w.toFixed(1)}×` : '—'}</td>
                     <td style={{ padding: '6px 6px', textAlign: 'right', color: typeof r.rsi === 'number' && r.rsi > 85 ? '#EF4444' : TXT }}>{r.rsi !== undefined ? r.rsi.toFixed(0) : '—'}</td>
+                    <td style={{ padding: '6px 6px', textAlign: 'right', color: typeof r.daysToEarnings === 'number' && r.daysToEarnings >= 0 && r.daysToEarnings <= 7 ? '#FBBF24' : MUTED, fontWeight: typeof r.daysToEarnings === 'number' && r.daysToEarnings >= 0 && r.daysToEarnings <= 7 ? 700 : 400 }}>{typeof r.daysToEarnings === 'number' && r.daysToEarnings >= 0 ? `${r.daysToEarnings}d` : '—'}</td>
                     <td style={{ padding: '6px 6px', textAlign: 'right', color: '#F59E0B', fontFamily: 'ui-monospace, monospace' }}>{typeof r.stopLoss === 'number' ? fmtPrice(r.stopLoss) : '—'}</td>
                   </tr>
                 );
@@ -6591,26 +6897,48 @@ function TechnicalsTab() {
         </div>
       </div>
 
-      {/* zzz132 — Suggestions for additional TradingView fields */}
-      <div style={{ ...cardStyle, background: 'color-mix(in srgb, #22D3EE 4%, transparent)', borderColor: 'color-mix(in srgb, #22D3EE 30%, transparent)' }}>
-        <div style={{ fontSize: 15, fontWeight: 900, color: CYAN, marginBottom: 8 }}>💡 ADDITIONAL TradingView FIELDS that would sharpen scoring even more</div>
-        <div style={{ fontSize: 12.5, color: TXT, lineHeight: 1.7 }}>
-          Your 89-column export already covers the essentials. Add these to push the engine from "great" to "institutional":
-          <ol style={{ margin: '8px 0 0 22px', padding: 0 }}>
-            <li><b style={{ color: CYAN }}>RS Rating (IBD Relative Strength, 1–99)</b> — TradingView calls it <i>"Relative Strength Index (RSI), 14"</i> for the indicator OR you can compute from <i>"Performance, 1 Year %"</i> percentile rank. Minervini wants RS ≥ 80, Qulla wants RS ≥ 90. Currently we proxy with raw perf %.</li>
-            <li><b style={{ color: CYAN }}>Earnings Date (next)</b> — let us mark "earnings within X days" — Bonde EP often fires AT earnings, knowing if the move is pre/post-earnings is critical.</li>
-            <li><b style={{ color: CYAN }}>Earnings Surprise %</b> — last quarter's beat/miss vs estimates. A 1W EP with a +20% earnings surprise is far higher conviction than a 1W move with a miss.</li>
-            <li><b style={{ color: CYAN }}>Average Volume, 30 days</b> + <b>Average Dollar Volume, 30 days</b> — you have 30D vol implicitly via Rel Vol but explicit avg vol lets us filter <b>$10M+/day liquidity</b> (Bonde's hard floor).</li>
-            <li><b style={{ color: CYAN }}>EMA 21, 1 day</b> — Qullamaggie's <b>actual</b> entry rule uses 21-EMA, not SMA50. We're proxying. Adding 21-EMA from TradingView gives exact buy-zone math.</li>
-            <li><b style={{ color: CYAN }}>Float Shares</b> + <b>Short Interest %</b> — small-float + high SI = short-squeeze fuel. Qulla loves &lt; 50M float setups.</li>
-            <li><b style={{ color: CYAN }}>Sector Relative Strength</b> — is the stock in a leading sector? Add as TradingView's <i>"Sector"</i> + we'll auto-rank sectors by median 1M perf.</li>
-            <li><b style={{ color: CYAN }}>Gap %</b> (today's open vs prior close) — Bonde's EP is OFTEN a gap up + hold. Currently invisible without intraday open.</li>
-            <li><b style={{ color: CYAN }}>Distance from 21-day high</b> + <b>Distance from 10-day high</b> — proper Qullamaggie consolidation detection.</li>
-            <li><b style={{ color: CYAN }}>52W Volatility (Annualized)</b> — distinguish low-vol compounders from high-vol cowboys; lets Minervini auto-filter to low-vol candidates.</li>
-          </ol>
-          <div style={{ marginTop: 10, color: MUTED, fontSize: 11.5 }}>
-            <b>If you add even 3 of these (RS Rating, EMA 21, Earnings Date)</b>, the BUY-ZONE list will get materially tighter and the READY TO BUY section will be near-zero-noise.
+      {/* zzz133 — REJECTED bucket — collapsible diagnostic */}
+      {rejected.length > 0 && (
+        <details style={{ ...cardStyle, background: 'rgba(239,68,68,0.04)', borderColor: 'rgba(239,68,68,0.25)' }}>
+          <summary style={{ fontSize: 15, fontWeight: 900, color: '#EF4444', cursor: 'pointer', marginBottom: 10 }}>🚫 REJECTED BY HARD FILTERS ({rejected.length}) — click to expand</summary>
+          <div style={{ fontSize: 11, color: MUTED, marginBottom: 10, fontStyle: 'italic' }}>These names failed eligibility (illiquid / below SMA50 / parabolic / earnings &lt; 3d / extreme extension). Shown for transparency — never appear in bullish buckets above.</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 8 }}>
+            {rejected.slice(0, 30).map(r => (
+              <div key={r.symbol} style={{ background: PANEL2, border: '1px solid rgba(239,68,68,0.25)', borderRadius: 6, padding: 10 }}>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
+                  <span style={{ fontWeight: 900, color: '#94A3B8', fontFamily: 'ui-monospace, monospace' }}>{r.symbol}</span>
+                  <span style={{ color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</span>
+                  <span style={{ marginLeft: 'auto', color: MUTED, fontSize: 11 }}>T{r.totalScore} · F{r.fundScore}</span>
+                </div>
+                <div style={{ fontSize: 11, color: '#EF4444', marginTop: 4, lineHeight: 1.5 }}>
+                  ✗ {r.eligibilityFailures.join(' · ')}
+                </div>
+              </div>
+            ))}
           </div>
+        </details>
+      )}
+
+      {/* zzz133 — Updated TradingView field wishlist */}
+      <div style={{ ...cardStyle, background: 'color-mix(in srgb, #22D3EE 4%, transparent)', borderColor: 'color-mix(in srgb, #22D3EE 30%, transparent)' }}>
+        <div style={{ fontSize: 15, fontWeight: 900, color: CYAN, marginBottom: 8 }}>💡 OPTIONAL — TradingView FIELDS still worth adding</div>
+        <div style={{ fontSize: 12.5, color: TXT, lineHeight: 1.7 }}>
+          <div style={{ marginBottom: 8 }}>
+            <b style={{ color: '#10B981' }}>✅ Now wired:</b> Revenue Q/Annual/5Y growth · EPS TTM + Q growth · Gross profit Q growth · Upcoming earnings · Free Float · FCF margin · ROE · Net debt/EBITDA · Analyst rating · Piotroski.
+          </div>
+          <div style={{ marginBottom: 8 }}>
+            <b style={{ color: '#FBBF24' }}>🟡 Still missing (low-priority):</b>
+          </div>
+          <ol style={{ margin: '4px 0 0 22px', padding: 0 }}>
+            <li><b style={{ color: CYAN }}>EMA 21, 1 day</b> — Qullamaggie's exact entry rule. Currently we proxy with SMA50. Adding 21-EMA gives precise buy-zone math.</li>
+            <li><b style={{ color: CYAN }}>Earnings Surprise %</b> — last quarter's beat/miss vs estimates. A 1W EP with +20% surprise is materially higher conviction than just a 1W move.</li>
+            <li><b style={{ color: CYAN }}>RS Rating (IBD 1–99)</b> — TradingView doesn't expose IBD's RS but you could compute approximate via 1Y perf percentile.</li>
+            <li><b style={{ color: CYAN }}>Short Interest %</b> + <b>Days to Cover</b> — for short-squeeze detection (Qulla often catches these).</li>
+            <li><b style={{ color: CYAN }}>Gap %</b> (today's open vs prior close) — Bonde EP often = gap-up + hold. Currently invisible.</li>
+            <li><b style={{ color: CYAN }}>Distance from 21-day high</b> + <b>10-day high</b> — proper consolidation pattern detection.</li>
+            <li><b style={{ color: CYAN }}>52W Volatility (Annualized)</b> — separates compounders from cowboys.</li>
+            <li><b style={{ color: CYAN }}>Industry / Sub-industry (granular)</b> — your current Sector is too broad ("Technology services" lumps SaaS + consulting + payments). Sub-industry lets sector RS calculation actually work.</li>
+          </ol>
         </div>
       </div>
     </div>
