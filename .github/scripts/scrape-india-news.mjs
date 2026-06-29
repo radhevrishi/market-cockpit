@@ -104,31 +104,76 @@ function parseRss(xml, sourceName) {
 
 // ─── Fetch with timeout ────────────────────────────────────────────────────
 
-async function fetchFeed(feed) {
+// PATCH zzz124 — Moneycontrol and Business Standard 403 our custom UA
+// from GitHub Actions IPs. Use realistic browser UAs + per-domain Referer +
+// full Accept-Language / Cache-Control headers. Retry on 403/429/5xx with a
+// different UA each time; sometimes that's an edge-cache miss.
+
+const BROWSER_UAS = [
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15',
+];
+
+function refererFor(feedUrl) {
+  try {
+    const u = new URL(feedUrl);
+    return `${u.protocol}//${u.host}/`;
+  } catch { return ''; }
+}
+
+function browserHeadersFor(feedUrl, attempt = 0) {
+  return {
+    'User-Agent': BROWSER_UAS[attempt % BROWSER_UAS.length],
+    'Accept': 'application/rss+xml, application/xml; q=0.9, text/xml; q=0.8, text/html; q=0.7, */*; q=0.5',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache',
+    'Referer': refererFor(feedUrl),
+    'Upgrade-Insecure-Requests': '1',
+  };
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function fetchOnce(feed, attempt) {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), FETCH_TIMEOUT_MS);
   try {
     const res = await fetch(feed.url, {
       signal: ctl.signal,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; MarketCockpit-Scraper/0.1; +https://market-cockpit.vercel.app)',
-        'Accept': 'application/rss+xml, application/xml, text/xml, */*',
-      },
+      headers: browserHeadersFor(feed.url, attempt),
+      redirect: 'follow',
     });
-    if (!res.ok) {
-      console.log(`::warning title=${feed.name}::HTTP ${res.status} — skipping`);
+    const xml = res.ok ? await res.text() : '';
+    return { status: res.status, ok: res.ok, xml };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchFeed(feed) {
+  try {
+    let r = await fetchOnce(feed, 0);
+    if (!r.ok && (r.status === 403 || r.status === 429 || r.status >= 500)) {
+      await sleep(1200);
+      r = await fetchOnce(feed, 1);
+    }
+    if (!r.ok && (r.status === 403 || r.status === 429 || r.status >= 500)) {
+      await sleep(2000);
+      r = await fetchOnce(feed, 2);
+    }
+    if (!r.ok) {
+      console.log(`::warning title=${feed.name}::HTTP ${r.status} — skipping after retries`);
       return [];
     }
-    const xml = await res.text();
-    const items = parseRss(xml, feed.name);
+    const items = parseRss(r.xml, feed.name);
     console.log(`  ${feed.name.padEnd(22)} → ${items.length} entries`);
     return items;
   } catch (e) {
     const msg = e?.name === 'AbortError' ? `timeout (${FETCH_TIMEOUT_MS}ms)` : (e?.message || String(e));
     console.log(`::warning title=${feed.name}::${msg}`);
     return [];
-  } finally {
-    clearTimeout(timer);
   }
 }
 
