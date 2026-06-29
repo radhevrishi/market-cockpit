@@ -3799,6 +3799,8 @@ function parseUSARow(row: Record<string,unknown>): USARow | null {
     targetPrice1y: n(row['Target price, 1 year'] ?? row['Target price 1 year'] ?? row['Price target - mean']),
     ema50: n(row['Exponential moving average, 50, 1 day'] ?? row['EMA 50']),
     ema200: n(row['Exponential moving average, 200, 1 day'] ?? row['EMA 200']),
+    // zzz138 — EMA 21 is Qullamaggie's EXACT entry rule (not SMA50 proxy).
+    ema21: n(row['Exponential moving average, 21, 1 day'] ?? row['EMA 21']),
     // zzz130 — New technical fields user added to TradingView export for the
     // Technicals tab (Qulla/Zanger/Bonde/Minervini). All optional; the tab
     // gracefully falls back if any are missing.
@@ -5973,6 +5975,8 @@ function TechnicalsTab() {
     symbol: string; company?: string; sector?: string;
     price?: number; mcapB?: number;
     ema50?: number; ema200?: number; rsi?: number;
+    ema21?: number;              // zzz138 — Qullamaggie's actual entry rule
+    pctVsEma21?: number;
     perf1y?: number; perf3m?: number; perf6m?: number;
     high52w?: number; beta?: number; avgVol30d?: number;
     // zzz130 — New technical fields
@@ -6046,6 +6050,7 @@ function TechnicalsTab() {
       const mcap = num(r.marketCapB);
       const ema50 = num(r.ema50);
       const ema200 = num(r.ema200);
+      const ema21 = num(r.ema21);  // zzz138 — Qullamaggie's exact entry rule
       const rsi = num(r.rsi);
       const perf1y = num(r.perf1y);
       const perf3m = num(r.perf3m);
@@ -6069,6 +6074,9 @@ function TechnicalsTab() {
       // Derived
       const pctVsEma50 = (price !== undefined && ema50 !== undefined && ema50 > 0)
         ? Math.round((price - ema50) / ema50 * 1000) / 10 : undefined;
+      // zzz138 — % distance to 21-EMA (Qullamaggie's actual rule, not SMA50/EMA50 proxy)
+      const pctVsEma21 = (price !== undefined && ema21 !== undefined && ema21 > 0)
+        ? Math.round((price - ema21) / ema21 * 1000) / 10 : undefined;
       const pctVsEma200 = (price !== undefined && ema200 !== undefined && ema200 > 0)
         ? Math.round((price - ema200) / ema200 * 1000) / 10 : undefined;
       const pctVsSma50 = (price !== undefined && sma50 !== undefined && sma50 > 0)
@@ -6276,14 +6284,32 @@ function TechnicalsTab() {
       else if (typeof adrPct === 'number' && adrPct >= 3 && adrPct < 4) { qullaScore += 14; qReasons.push(`ADR ${adrPct.toFixed(1)}%`); }
       else if (typeof adrPct === 'number' && adrPct > 7 && adrPct <= 9) { qullaScore += 10; qReasons.push(`ADR ${adrPct.toFixed(1)}% (high)`); }
       else if (typeof adrPct === 'number' && adrPct >= 2 && adrPct < 3) { qullaScore += 6; qReasons.push(`ADR ${adrPct.toFixed(1)}% (low vol)`); }
-      // Extension above SMA50 (preferred) — Qulla's "not too far from 21-EMA" rule
-      const qPctMA = typeof pctVsSma50 === 'number' ? pctVsSma50 : pctVsEma50;
-      const qMALabel = typeof pctVsSma50 === 'number' ? 'SMA50' : 'EMA50';
+      // zzz138 — Extension rule: prefer EMA21 (Qullamaggie's actual signal), fallback SMA50/EMA50.
+      // Qulla's exact rule: buy within 0-5% of 21-EMA on a tight pullback after a strong move.
+      // TIGHTER thresholds when EMA21 data available (Qulla rule is unforgiving).
+      const qPctMA = typeof pctVsEma21 === 'number' ? pctVsEma21
+        : typeof pctVsSma50 === 'number' ? pctVsSma50
+        : pctVsEma50;
+      const qMALabel = typeof pctVsEma21 === 'number' ? '21-EMA ✓'
+        : typeof pctVsSma50 === 'number' ? 'SMA50 (proxy)'
+        : 'EMA50 (proxy)';
+      const usingEma21 = typeof pctVsEma21 === 'number';
       if (typeof qPctMA === 'number') {
-        if (qPctMA >= 0 && qPctMA <= 8) { qullaScore += 20; qReasons.push(`+${qPctMA.toFixed(0)}% ${qMALabel} (entry zone)`); }
-        else if (qPctMA > 8 && qPctMA <= 15) { qullaScore += 12; qReasons.push(`+${qPctMA.toFixed(0)}% ${qMALabel}`); }
-        else if (qPctMA > 15 && qPctMA <= 25) { qullaScore += 5; qReasons.push(`extended +${qPctMA.toFixed(0)}%`); }
-        else if (qPctMA > 40) { qullaScore -= 5; qReasons.push(`⚠️ over-extended +${qPctMA.toFixed(0)}%`); }
+        if (usingEma21) {
+          // Tighter Qulla-rule thresholds when we have the real signal
+          if (qPctMA >= 0 && qPctMA <= 5) { qullaScore += 25; qReasons.push(`🎯 +${qPctMA.toFixed(1)}% ${qMALabel} (TEXTBOOK Qulla entry)`); }
+          else if (qPctMA > 5 && qPctMA <= 10) { qullaScore += 15; qReasons.push(`+${qPctMA.toFixed(1)}% ${qMALabel}`); }
+          else if (qPctMA > 10 && qPctMA <= 18) { qullaScore += 6; qReasons.push(`+${qPctMA.toFixed(0)}% ${qMALabel} (stretched)`); }
+          else if (qPctMA > 18 && qPctMA <= 30) { qullaScore += 0; qReasons.push(`extended +${qPctMA.toFixed(0)}% off ${qMALabel}`); }
+          else if (qPctMA > 30) { qullaScore -= 8; qReasons.push(`⚠️ chase risk +${qPctMA.toFixed(0)}% off ${qMALabel}`); }
+          else if (qPctMA < 0) { qullaScore -= 5; qReasons.push(`below ${qMALabel} (${qPctMA.toFixed(1)}%)`); }
+        } else {
+          // Looser thresholds for SMA50/EMA50 proxy (50-period MA lags 21-EMA)
+          if (qPctMA >= 0 && qPctMA <= 8) { qullaScore += 20; qReasons.push(`+${qPctMA.toFixed(0)}% ${qMALabel} (entry zone)`); }
+          else if (qPctMA > 8 && qPctMA <= 15) { qullaScore += 12; qReasons.push(`+${qPctMA.toFixed(0)}% ${qMALabel}`); }
+          else if (qPctMA > 15 && qPctMA <= 25) { qullaScore += 5; qReasons.push(`extended +${qPctMA.toFixed(0)}%`); }
+          else if (qPctMA > 40) { qullaScore -= 5; qReasons.push(`⚠️ over-extended +${qPctMA.toFixed(0)}%`); }
+        }
       }
       // Volume burst confirmation (graded by intensity)
       if (typeof relVol1w === 'number' && relVol1w >= 3) { qullaScore += 12; qReasons.push(`Rel Vol ${relVol1w.toFixed(1)}× 🔥🔥`); }
@@ -6427,6 +6453,7 @@ function TechnicalsTab() {
       return {
         symbol: r.symbol, company: r.company, sector: r.sector,
         price, mcapB: mcap, ema50, ema200, rsi,
+        ema21, pctVsEma21,  // zzz138
         perf1y, perf3m, perf6m, high52w, beta, avgVol30d,
         perf1w, perf1m, atr14, sma50, sma150, sma200, vol1m, vol1w, low52w, relVol1w, vol1d,
         pctVsEma50, pctVsEma200, pctVsSma50, pctVsSma150, pctVsSma200,
@@ -7132,21 +7159,35 @@ function TechnicalsTab() {
         <div style={{ fontSize: 15, fontWeight: 900, color: CYAN, marginBottom: 8 }}>💡 OPTIONAL — TradingView FIELDS still worth adding</div>
         <div style={{ fontSize: 12.5, color: TXT, lineHeight: 1.7 }}>
           <div style={{ marginBottom: 8 }}>
-            <b style={{ color: '#10B981' }}>✅ Now wired:</b> Revenue Q/Annual/5Y growth · EPS TTM + Q growth · Gross profit Q growth · Upcoming earnings · Free Float · FCF margin · ROE · Net debt/EBITDA · Analyst rating · Piotroski.
+            <b style={{ color: '#10B981' }}>✅ Now wired:</b> <b>EMA 21 (Qullamaggie's exact entry rule)</b> · Revenue Q/Annual/5Y growth · EPS TTM + Q growth · Gross profit Q growth · Upcoming earnings · Free Float · FCF margin · ROE · Net debt/EBITDA · Analyst rating · Piotroski · Position sizing · P/L calculator · R:R ratio.
           </div>
           <div style={{ marginBottom: 8 }}>
-            <b style={{ color: '#FBBF24' }}>🟡 Still missing (low-priority):</b>
+            <b style={{ color: '#FBBF24' }}>🟡 What's POSSIBLE with more TradingView fields (prioritized):</b>
           </div>
-          <ol style={{ margin: '4px 0 0 22px', padding: 0 }}>
-            <li><b style={{ color: CYAN }}>EMA 21, 1 day</b> — Qullamaggie's exact entry rule. Currently we proxy with SMA50. Adding 21-EMA gives precise buy-zone math.</li>
-            <li><b style={{ color: CYAN }}>Earnings Surprise %</b> — last quarter's beat/miss vs estimates. A 1W EP with +20% surprise is materially higher conviction than just a 1W move.</li>
-            <li><b style={{ color: CYAN }}>RS Rating (IBD 1–99)</b> — TradingView doesn't expose IBD's RS but you could compute approximate via 1Y perf percentile.</li>
-            <li><b style={{ color: CYAN }}>Short Interest %</b> + <b>Days to Cover</b> — for short-squeeze detection (Qulla often catches these).</li>
-            <li><b style={{ color: CYAN }}>Gap %</b> (today's open vs prior close) — Bonde EP often = gap-up + hold. Currently invisible.</li>
-            <li><b style={{ color: CYAN }}>Distance from 21-day high</b> + <b>10-day high</b> — proper consolidation pattern detection.</li>
-            <li><b style={{ color: CYAN }}>52W Volatility (Annualized)</b> — separates compounders from cowboys.</li>
-            <li><b style={{ color: CYAN }}>Industry / Sub-industry (granular)</b> — your current Sector is too broad ("Technology services" lumps SaaS + consulting + payments). Sub-industry lets sector RS calculation actually work.</li>
+          <ol style={{ margin: '4px 0 0 22px', padding: 0, lineHeight: 1.65 }}>
+            <li><b style={{ color: '#84CC16' }}>HIGH PRIORITY — VOLUME DRY-UP / Avg vol 30d:</b> add <i>"Average volume, 30 days"</i> and <i>"Average volume, 90 days"</i> — we'll compute volume-contraction ratio inside a base (Minervini VCP + Qulla pullback signal). <b>Possible now.</b></li>
+            <li><b style={{ color: '#84CC16' }}>HIGH PRIORITY — Composite RS (1M/3M/6M/12M weighted):</b> we already have 1W/1M/3M/6M/1Y perfs — can build internal Composite RS rank percentile across the universe <b>NOW with current fields</b>, no new fields needed. Just need code.</li>
+            <li><b style={{ color: '#84CC16' }}>HIGH PRIORITY — RS vs SPY:</b> add <i>"Performance %, 1 month"</i> column for SPY by uploading an SPY row in the same CSV, OR add <i>"Beta, 1 year"</i> and we derive. Cleanest path: hardcode SPY 1M/3M from a manual cell or compute from universe-median. <b>Possible with 1 SPY-row trick.</b></li>
+            <li><b style={{ color: '#FBBF24' }}>MEDIUM — Industry RS / Sub-industry:</b> TradingView exposes <i>"Industry"</i> as separate from <i>"Sector"</i>. Add <i>"Industry"</i> column → we'll auto-group + rank sub-industries by median 1M perf. <b>Possible with 1 new field.</b></li>
+            <li><b style={{ color: '#FBBF24' }}>MEDIUM — Earnings Surprise %:</b> add <i>"EPS surprise %, last quarter"</i>. <b>TradingView has it — possible.</b></li>
+            <li><b style={{ color: '#FBBF24' }}>MEDIUM — Gap % + close-near-high:</b> add <i>"Gap %"</i> and <i>"Change %"</i> (today). Bonde EP signature. <b>Possible.</b></li>
+            <li><b style={{ color: '#FBBF24' }}>MEDIUM — Short Interest % + Days to Cover:</b> TradingView fields available. <b>Possible.</b></li>
+            <li><b style={{ color: '#94A3B8' }}>LOW — Tight weekly closes (Minervini):</b> needs last-5-weeks closes. TradingView export only gives current values — would need historical weekly OHLC. <b>Not practical via single-CSV export.</b></li>
+            <li><b style={{ color: '#94A3B8' }}>LOW — Estimate revisions (30d/90d):</b> TradingView doesn't expose this in screener. <b>Not possible via current CSV.</b></li>
+            <li><b style={{ color: '#94A3B8' }}>LOW — Institutional ownership trend (% qoq):</b> TradingView gives current % but not historical trend. <b>Not possible without external data.</b></li>
+            <li><b style={{ color: '#94A3B8' }}>LOW — Pocket Pivot / Anchored VWAP:</b> needs intraday/daily OHLC + volume bars. <b>Not possible via screener CSV — needs chart data.</b></li>
+            <li><b style={{ color: '#94A3B8' }}>LOW — Base length / VCP automated detection:</b> needs daily OHLC history. <b>Not via screener.</b></li>
+            <li><b style={{ color: '#94A3B8' }}>LOW — IBD RS Rating (1-99):</b> proprietary IBD metric, not in TradingView. <b>We can fake-rank from universe-internal 1Y perf percentile, fine for relative ranking.</b></li>
           </ol>
+          <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(34,211,238,0.08)', borderRadius: 6, fontSize: 11.5, color: TXT, lineHeight: 1.6 }}>
+            <b style={{ color: CYAN }}>📋 Recommended next fields to add to your TradingView export (only 3, all natively available):</b>
+            <ol style={{ margin: '6px 0 0 22px', padding: 0 }}>
+              <li><b>Average volume, 30 days</b> — enables Volume Dry-up + VCP automation</li>
+              <li><b>Industry</b> (the sub-industry field, separate from Sector) — enables Industry RS</li>
+              <li><b>EPS surprise %, last quarter</b> — enables Bonde EP quality grade</li>
+            </ol>
+            <div style={{ marginTop: 6, color: MUTED }}>Once those land, I'll wire: Composite RS rank · Industry RS rank · Volume-dry-up score · EPS surprise booster. Multi-bucket scoring (Momentum / Quality / Risk / Institutional / Valuation) becomes implementable after.</div>
+          </div>
         </div>
       </div>
 
@@ -7229,6 +7270,8 @@ function TechnicalsTab() {
                   ['Avg Vol 30d', typeof expandedRow.avgVol30d === 'number' ? `${(expandedRow.avgVol30d/1_000_000).toFixed(2)}M shares` : '—'],
                   ['$ Volume / day', typeof expandedRow.dollarVolume === 'number' ? `$${(expandedRow.dollarVolume/1_000_000).toFixed(1)}M` : '—'],
                   ['Rel Vol (1W)', typeof expandedRow.relVol1w === 'number' ? `${expandedRow.relVol1w.toFixed(2)}× ${expandedRow.relVol1w >= 1.5 ? '🔥 burst' : expandedRow.relVol1w < 0.8 ? '📉 contracting (VCP-ish)' : ''}` : '—'],
+                  ['EMA 21', typeof expandedRow.ema21 === 'number' ? `$${expandedRow.ema21.toFixed(2)} (Qulla entry MA)` : '—'],
+                  ['% vs EMA 21', typeof expandedRow.pctVsEma21 === 'number' ? `${fmtPct(expandedRow.pctVsEma21, 1)} ${expandedRow.pctVsEma21 >= 0 && expandedRow.pctVsEma21 <= 5 ? '🎯 Qulla buy zone' : expandedRow.pctVsEma21 > 5 && expandedRow.pctVsEma21 <= 10 ? '⚠️ stretched' : expandedRow.pctVsEma21 > 10 ? '🚫 extended' : ''}` : '—'],
                   ['SMA 50', typeof expandedRow.sma50 === 'number' ? `$${expandedRow.sma50.toFixed(2)}` : '—'],
                   ['SMA 150', typeof expandedRow.sma150 === 'number' ? `$${expandedRow.sma150.toFixed(2)}` : '—'],
                   ['SMA 200', typeof expandedRow.sma200 === 'number' ? `$${expandedRow.sma200.toFixed(2)}` : '—'],
