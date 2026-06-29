@@ -2729,7 +2729,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
 
                     {/* SQGLP pillar bars */}
                     <div style={{display:'flex',gap:4,alignItems:'center',flexWrap:'wrap'}}>
-                      {r.pillarScores.map(p=>(
+                      {(r.pillarScores || []).map(p=>(
                         <div key={p.id} style={{display:'flex',flexDirection:'column',alignItems:'center',gap:2,minWidth:32}}>
                           <span style={{fontSize:F.sm,fontWeight:700,color:p.color}}>{p.score}</span>
                           <div style={{width:26,height:5,backgroundColor:'rgba(255,255,255,0.08)',borderRadius:2,overflow:'hidden'}}>
@@ -4222,13 +4222,31 @@ function toSlimUsaRows(rows: any[]): any[] {
 function USACompare() {
   const fileRef = React.useRef<HTMLInputElement>(null);
   const [rows, setRowsState] = React.useState<USAResult[]>(() => {
+    // zzz134 — Helper that ensures every row has `pillarScores`, `strengths`, `risks`.
+    // These come from scoreUSARow() but are stripped when the row passes through
+    // toSlimUsaRows() (LS-quota slim payload). If we read a slim row from
+    // mem cache (populated by Analytics' zzz126 hydration from slim LS) or
+    // directly from slim LS, we MUST re-score it before USACompare renders —
+    // otherwise `r.pillarScores.map(...)` at line ~4934 crashes with
+    // "Cannot read properties of undefined (reading 'map')".
+    const ensureScored = (arr: any[]): USAResult[] => {
+      if (!Array.isArray(arr) || arr.length === 0) return [] as USAResult[];
+      const needsRescore = !Array.isArray((arr[0] || {}).pillarScores);
+      if (!needsRescore) return arr as USAResult[];
+      try { console.log(`[mb-usa] zzz134 re-scoring ${arr.length} slim/stale rows (missing pillarScores)`); } catch {}
+      return arr.map((r: any) => {
+        try { return scoreUSARow(r as unknown as USARow) as USAResult; }
+        catch { return r as USAResult; }
+      });
+    };
     // PATCH zzz110 — Check in-memory cache FIRST (cross-mount survival within
     // the same page session). Then full LS. Then slim LS (zzz108/109).
     try {
       const mem = _getUsaRowsMemCache();
       if (Array.isArray(mem) && mem.length > 0) {
-        try { console.log(`[mb-usa] zzz110 restored ${mem.length} rows from in-memory cache`); } catch {}
-        return applyUSARanking((mem as USAResult[]).sort((a,b)=>b.score-a.score));
+        const scored = ensureScored(mem);
+        try { console.log(`[mb-usa] zzz110 restored ${scored.length} rows from in-memory cache`); } catch {}
+        return applyUSARanking(scored.sort((a,b)=>b.score-a.score));
       }
     } catch {}
     try {
@@ -4247,7 +4265,9 @@ function USACompare() {
         const slim = JSON.parse(slimRaw);
         if (Array.isArray(slim) && slim.length > 0) {
           try { console.log(`[mb-usa] zzz109 restored ${slim.length} rows from slim payload`); } catch {}
-          const ranked = applyUSARanking((slim as USAResult[]).sort((a,b)=>b.score-a.score));
+          // zzz134 — re-score slim rows so pillarScores/strengths/risks exist
+          const scored = ensureScored(slim);
+          const ranked = applyUSARanking(scored.sort((a,b)=>b.score-a.score));
           _setUsaRowsMemCache(ranked);
           return ranked;
         }
@@ -4940,7 +4960,7 @@ function USACompare() {
                       )}
                     </div>
                     <div style={{display:'flex',gap:4,alignItems:'center',flexWrap:'wrap'}}>
-                      {r.pillarScores.map(p=>(
+                      {(r.pillarScores || []).map(p=>(
                         <div key={p.id} style={{display:'flex',flexDirection:'column',alignItems:'center',gap:2,minWidth:32}}>
                           <span style={{fontSize:F.sm,fontWeight:700,color:p.color}}>{p.score}</span>
                           <div style={{width:26,height:5,backgroundColor:'rgba(255,255,255,0.08)',borderRadius:2,overflow:'hidden'}}>
@@ -4989,13 +5009,13 @@ function USACompare() {
                         })}
                       </div>
                       <div>
-                        {r.strengths.length>0&&<>
+                        {(r.strengths || []).length>0&&<>
                           <div style={{fontSize:F.sm,color:GREEN,fontWeight:700,marginBottom:6}}>✅ STRENGTHS</div>
-                          {r.strengths.map((s,i)=><div key={i} style={{fontSize:F.md,color:MUTED,padding:'3px 0'}}>› {s}</div>)}
+                          {(r.strengths || []).map((s,i)=><div key={i} style={{fontSize:F.md,color:MUTED,padding:'3px 0'}}>› {s}</div>)}
                         </>}
-                        {r.risks.length>0&&<>
+                        {(r.risks || []).length>0&&<>
                           <div style={{fontSize:F.sm,color:ORANGE,fontWeight:700,marginTop:12,marginBottom:6}}>⚠️ RISKS</div>
-                          {r.risks.map((s,i)=><div key={i} style={{fontSize:F.md,color:MUTED,padding:'3px 0'}}>› {s}</div>)}
+                          {(r.risks || []).map((s,i)=><div key={i} style={{fontSize:F.md,color:MUTED,padding:'3px 0'}}>› {s}</div>)}
                         </>}
                         <div style={{fontSize:F.sm,color:MUTED,marginTop:12,borderTop:`1px solid ${BORDER}`,paddingTop:8}}>
                           {r.sector} · {r.exchange} · Data: {r.coverage}% · {r.nextEarnings&&`Next earnings: ${r.nextEarnings}`}
@@ -6997,7 +7017,15 @@ function MultibaggerAnalytics({
           if (slimRaw) {
             const slim = JSON.parse(slimRaw);
             if (Array.isArray(slim) && slim.length > 0) {
-              _setUsaRowsMemCache(slim);
+              // zzz134 — Slim rows are missing pillarScores/strengths/risks.
+              // Re-score before writing to mem cache so USACompare (which reads
+              // this same cache) doesn't crash on r.pillarScores.map(...).
+              let rescored: any[] = slim;
+              try {
+                const needs = !Array.isArray((slim[0] || {}).pillarScores);
+                if (needs) rescored = slim.map((r: any) => { try { return scoreUSARow(r as unknown as USARow); } catch { return r; } });
+              } catch {}
+              _setUsaRowsMemCache(rescored);
               bumpData();
               return;
             }
