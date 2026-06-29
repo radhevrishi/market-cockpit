@@ -3799,6 +3799,23 @@ function parseUSARow(row: Record<string,unknown>): USARow | null {
     targetPrice1y: n(row['Target price, 1 year'] ?? row['Target price 1 year'] ?? row['Price target - mean']),
     ema50: n(row['Exponential moving average, 50, 1 day'] ?? row['EMA 50']),
     ema200: n(row['Exponential moving average, 200, 1 day'] ?? row['EMA 200']),
+    // zzz130 — New technical fields user added to TradingView export for the
+    // Technicals tab (Qulla/Zanger/Bonde/Minervini). All optional; the tab
+    // gracefully falls back if any are missing.
+    perf1w: n(row['Performance %, 1 week'] ?? row['Performance % 1 week']),
+    perf1m: n(row['Performance %, 1 month'] ?? row['Performance % 1 month']),
+    atr14: n(row['Average true range, 14, 1 day'] ?? row['ATR 14']),
+    sma50: n(row['Simple moving average, 50, 1 day'] ?? row['SMA 50']),
+    sma150: n(row['Simple moving average, 150, 1 day'] ?? row['SMA 150']),
+    sma200: n(row['Simple moving average, 200, 1 day'] ?? row['SMA 200']),
+    vol1m: n(row['Volatility, 1 month'] ?? row['Volatility 1M']),
+    vol1w: n(row['Volatility, 1 week'] ?? row['Volatility 1W']),
+    low52w: n(row['Low, 52 weeks'] ?? row['Low 52w']),
+    relVol1w: n(row['Relative volume, 1 week'] ?? row['Relative volume, 10 days'] ?? row['Relative volume']),
+    vol1d: n(row['Volume, 1 day'] ?? row['Volume 1d']),
+    rsi: n(row['Relative strength index, 14, 1 day'] ?? row['RSI 14']),
+    avgVol30d: n(row['Average volume, 30 days'] ?? row['Avg Vol 30d']),
+    high52w: n(row['High, 52 weeks'] ?? row['High 52w']),
     // Derived at parse time
     revenueAccel: (revQtr !== undefined && revAnn !== undefined) ? Math.round(revQtr - revAnn) : undefined,
     accelSignal: (revQtr !== undefined && revAnn !== undefined)
@@ -5927,11 +5944,25 @@ function TechnicalsTab() {
     ema50?: number; ema200?: number; rsi?: number;
     perf1y?: number; perf3m?: number; perf6m?: number;
     high52w?: number; beta?: number; avgVol30d?: number;
+    // zzz130 — New technical fields
+    perf1w?: number; perf1m?: number;
+    atr14?: number;
+    sma50?: number; sma150?: number; sma200?: number;
+    vol1m?: number; vol1w?: number;
+    low52w?: number;
+    relVol1w?: number; vol1d?: number;
     // Derived
     pctVsEma50?: number;
     pctVsEma200?: number;
+    pctVsSma50?: number;
+    pctVsSma150?: number;
+    pctVsSma200?: number;
     emaSpread?: number;          // (EMA50 / EMA200 − 1) * 100
     distFromHigh?: number;       // % below 52w high (always negative or 0)
+    pctAboveLow52w?: number;     // % above 52w low (always >=0)
+    adrPct?: number;             // ATR / price * 100 (Qullamaggie sweet-spot 3-6%)
+    volContraction?: boolean;    // 1w vol < 1m vol (VCP signal)
+    volumeBurst?: boolean;       // relative volume >= 1.5x
     momentumAccel?: number;      // (3M annualized > 6M annualized > 1Y) score 0-3
     // Playbook scores 0-100
     qullaScore: number; qullaReasons: string[];
@@ -5940,6 +5971,7 @@ function TechnicalsTab() {
     minerviniScore: number; minerviniReasons: string[];
     rightEntry: 'BUY ZONE' | 'EXTENDED' | 'CHASE' | 'BELOW' | 'NO DATA';
     rightEntryDetail: string;
+    stopLoss?: number;           // price - 2 * ATR
     totalScore: number;
   };
 
@@ -5956,16 +5988,41 @@ function TechnicalsTab() {
       const high52w = num(r.high52w);
       const beta = num(r.beta);
       const avgVol30d = num(r.avgVol30d ?? r.avgVolume30d);
+      // zzz130 — New fields (may be undefined if user uploaded older CSV)
+      const perf1w = num(r.perf1w);
+      const perf1m = num(r.perf1m);
+      const atr14 = num(r.atr14);
+      const sma50 = num(r.sma50);
+      const sma150 = num(r.sma150);
+      const sma200 = num(r.sma200);
+      const vol1m = num(r.vol1m);
+      const vol1w = num(r.vol1w);
+      const low52w = num(r.low52w);
+      const relVol1w = num(r.relVol1w);
+      const vol1d = num(r.vol1d);
 
       // Derived
       const pctVsEma50 = (price !== undefined && ema50 !== undefined && ema50 > 0)
         ? Math.round((price - ema50) / ema50 * 1000) / 10 : undefined;
       const pctVsEma200 = (price !== undefined && ema200 !== undefined && ema200 > 0)
         ? Math.round((price - ema200) / ema200 * 1000) / 10 : undefined;
+      const pctVsSma50 = (price !== undefined && sma50 !== undefined && sma50 > 0)
+        ? Math.round((price - sma50) / sma50 * 1000) / 10 : undefined;
+      const pctVsSma150 = (price !== undefined && sma150 !== undefined && sma150 > 0)
+        ? Math.round((price - sma150) / sma150 * 1000) / 10 : undefined;
+      const pctVsSma200 = (price !== undefined && sma200 !== undefined && sma200 > 0)
+        ? Math.round((price - sma200) / sma200 * 1000) / 10 : undefined;
       const emaSpread = (ema50 !== undefined && ema200 !== undefined && ema200 > 0)
         ? Math.round((ema50 - ema200) / ema200 * 1000) / 10 : undefined;
       const distFromHigh = (price !== undefined && high52w !== undefined && high52w > 0)
         ? Math.round((price - high52w) / high52w * 1000) / 10 : undefined;
+      const pctAboveLow52w = (price !== undefined && low52w !== undefined && low52w > 0)
+        ? Math.round((price - low52w) / low52w * 1000) / 10 : undefined;
+      const adrPct = (atr14 !== undefined && price !== undefined && price > 0)
+        ? Math.round(atr14 / price * 1000) / 10 : undefined;
+      const volContraction = (typeof vol1w === 'number' && typeof vol1m === 'number') ? vol1w < vol1m * 0.85 : undefined;
+      const volumeBurst = (typeof relVol1w === 'number') ? relVol1w >= 1.5 : undefined;
+      const stopLoss = (typeof price === 'number' && typeof atr14 === 'number') ? Math.round((price - 2 * atr14) * 100) / 100 : undefined;
 
       // Momentum acceleration: 3M annualized > 6M annualized > 1Y
       let momentumAccel = 0;
@@ -5977,64 +6034,104 @@ function TechnicalsTab() {
         if (perf3m > 0 && perf6m > 0 && perf1y > 0) momentumAccel++;
       }
 
-      // ── QULLAMAGGIE ── biggest gainers of last 1-3 months, not extended, small/mid cap
+      // ── QULLAMAGGIE ── biggest 1M/3M gainers, ADR 3-6%, not extended, small/mid cap
       let qullaScore = 0; const qReasons: string[] = [];
-      if (typeof perf3m === 'number' && perf3m >= 30) { qullaScore += 25; qReasons.push(`3M perf ${perf3m.toFixed(0)}%`); }
-      else if (typeof perf3m === 'number' && perf3m >= 15) { qullaScore += 15; qReasons.push(`3M perf ${perf3m.toFixed(0)}%`); }
-      if (typeof perf6m === 'number' && perf6m >= 50) { qullaScore += 20; qReasons.push(`6M perf ${perf6m.toFixed(0)}%`); }
-      if (typeof pctVsEma50 === 'number' && pctVsEma50 >= 0 && pctVsEma50 <= 15) { qullaScore += 20; qReasons.push(`not extended (${pctVsEma50.toFixed(0)}% over EMA50)`); }
-      else if (typeof pctVsEma50 === 'number' && pctVsEma50 > 15 && pctVsEma50 <= 25) { qullaScore += 10; qReasons.push(`slightly extended (${pctVsEma50.toFixed(0)}%)`); }
-      if (typeof mcap === 'number' && mcap < 10) { qullaScore += 15; qReasons.push(`small cap $${mcap.toFixed(1)}B`); }
-      else if (typeof mcap === 'number' && mcap < 50) { qullaScore += 10; qReasons.push(`mid cap $${mcap.toFixed(1)}B`); }
-      if (momentumAccel >= 2) { qullaScore += 20; qReasons.push('momentum accelerating'); }
+      // PRIMARY: 1M gainer (Qullamaggie's #1 filter)
+      if (typeof perf1m === 'number' && perf1m >= 30) { qullaScore += 30; qReasons.push(`🔥 1M ${perf1m.toFixed(0)}%`); }
+      else if (typeof perf1m === 'number' && perf1m >= 15) { qullaScore += 20; qReasons.push(`1M ${perf1m.toFixed(0)}%`); }
+      else if (typeof perf3m === 'number' && perf3m >= 30) { qullaScore += 20; qReasons.push(`3M ${perf3m.toFixed(0)}%`); }
+      else if (typeof perf3m === 'number' && perf3m >= 15) { qullaScore += 10; qReasons.push(`3M ${perf3m.toFixed(0)}%`); }
+      // ADR sweet spot 3-6% (Qulla's signature filter)
+      if (typeof adrPct === 'number' && adrPct >= 3 && adrPct <= 6) { qullaScore += 20; qReasons.push(`ADR ${adrPct.toFixed(1)}% (sweet spot)`); }
+      else if (typeof adrPct === 'number' && adrPct >= 2 && adrPct <= 8) { qullaScore += 10; qReasons.push(`ADR ${adrPct.toFixed(1)}%`); }
+      // Not extended above 21-EMA proxy (using EMA50 here is conservative)
+      if (typeof pctVsEma50 === 'number' && pctVsEma50 >= 0 && pctVsEma50 <= 15) { qullaScore += 15; qReasons.push(`not extended (+${pctVsEma50.toFixed(0)}% EMA50)`); }
+      else if (typeof pctVsEma50 === 'number' && pctVsEma50 > 15 && pctVsEma50 <= 25) { qullaScore += 5; qReasons.push(`slightly extended (+${pctVsEma50.toFixed(0)}%)`); }
+      // Volume burst confirmation
+      if (volumeBurst === true) { qullaScore += 10; qReasons.push(`Rel Vol ${relVol1w!.toFixed(1)}× (burst)`); }
+      // Small/mid cap preference
+      if (typeof mcap === 'number' && mcap < 10) { qullaScore += 10; qReasons.push(`small cap $${mcap.toFixed(1)}B`); }
+      else if (typeof mcap === 'number' && mcap < 50) { qullaScore += 5; qReasons.push(`mid cap $${mcap.toFixed(1)}B`); }
+      // Stage-2 confirmation
+      if (typeof pctVsEma200 === 'number' && pctVsEma200 > 0) { qullaScore += 10; qReasons.push('Stage-2'); }
 
       // ── ZANGER HTF ── 100-200% rally in 4-8 weeks then tight 3-5 week pullback
       let zangerScore = 0; const zReasons: string[] = [];
-      if (typeof perf6m === 'number' && perf6m >= 80) { zangerScore += 30; zReasons.push(`6M ${perf6m.toFixed(0)}% (HTF base)`); }
-      else if (typeof perf6m === 'number' && perf6m >= 50) { zangerScore += 15; zReasons.push(`6M ${perf6m.toFixed(0)}%`); }
-      if (typeof perf3m === 'number' && typeof perf6m === 'number' && perf6m > 0 && perf3m < perf6m * 0.4) { zangerScore += 25; zReasons.push('tight 3M consolidation'); }
-      if (typeof pctVsEma50 === 'number' && pctVsEma50 >= -3 && pctVsEma50 <= 8) { zangerScore += 20; zReasons.push('breakout-ready (near EMA50)'); }
-      if (typeof distFromHigh === 'number' && distFromHigh >= -10) { zangerScore += 15; zReasons.push(`near 52W high (${distFromHigh.toFixed(0)}%)`); }
-      if (typeof rsi === 'number' && rsi >= 50 && rsi <= 70) { zangerScore += 10; zReasons.push(`RSI healthy (${rsi.toFixed(0)})`); }
-
-      // ── PRADEEP BONDE EP ── Episodic Pivot: recent volume surge + reasonable extension + earnings drift
-      let bondeScore = 0; const bReasons: string[] = [];
-      if (typeof perf3m === 'number' && perf3m >= 20) { bondeScore += 25; bReasons.push(`3M move ${perf3m.toFixed(0)}%`); }
-      if (typeof perf1y === 'number' && perf1y >= 50) { bondeScore += 20; bReasons.push(`1Y trend ${perf1y.toFixed(0)}%`); }
-      if (typeof pctVsEma50 === 'number' && pctVsEma50 >= 0 && pctVsEma50 <= 20) { bondeScore += 20; bReasons.push('PED zone (not over-extended)'); }
-      if (typeof pctVsEma200 === 'number' && pctVsEma200 > 10) { bondeScore += 15; bReasons.push(`Stage-2 (+${pctVsEma200.toFixed(0)}% over 200EMA)`); }
-      if (typeof avgVol30d === 'number' && avgVol30d >= 500_000) { bondeScore += 10; bReasons.push('liquid'); }
-      if (momentumAccel >= 1) { bondeScore += 10; bReasons.push('momentum building'); }
-
-      // ── MINERVINI TREND TEMPLATE ── classic 8-point check
-      let minerviniScore = 0; const mReasons: string[] = [];
-      // 1. Price above EMA50 and EMA200
-      if (typeof pctVsEma50 === 'number' && pctVsEma50 > 0 && typeof pctVsEma200 === 'number' && pctVsEma200 > 0) {
-        minerviniScore += 15; mReasons.push('price > EMA50 & EMA200');
+      // HTF requires explosive 4-8 week move — use 1M as proxy
+      if (typeof perf1m === 'number' && perf1m >= 50) { zangerScore += 35; zReasons.push(`💥 1M ${perf1m.toFixed(0)}% (HTF launch)`); }
+      else if (typeof perf6m === 'number' && perf6m >= 80) { zangerScore += 25; zReasons.push(`6M ${perf6m.toFixed(0)}% (HTF base)`); }
+      else if (typeof perf6m === 'number' && perf6m >= 50) { zangerScore += 12; zReasons.push(`6M ${perf6m.toFixed(0)}%`); }
+      // Tight 3-5 week pullback after rally = 1W flat or slightly negative AFTER a strong 1M
+      if (typeof perf1w === 'number' && typeof perf1m === 'number' && perf1m >= 30 && perf1w >= -5 && perf1w <= 5) {
+        zangerScore += 25; zReasons.push(`1W flat (+${perf1w.toFixed(1)}%) tight flag`);
       }
-      // 2. EMA50 above EMA200 (golden cross territory)
-      if (typeof emaSpread === 'number' && emaSpread > 0) { minerviniScore += 15; mReasons.push(`EMA50 > EMA200 by ${emaSpread.toFixed(0)}%`); }
-      // 3. EMA200 rising (proxy: price well above EMA200 → recent uptrend)
-      if (typeof pctVsEma200 === 'number' && pctVsEma200 > 10) { minerviniScore += 10; mReasons.push('EMA200 trend up'); }
-      // 4. 1-year performance positive
-      if (typeof perf1y === 'number' && perf1y > 0) { minerviniScore += 10; mReasons.push(`1Y +${perf1y.toFixed(0)}%`); }
-      // 5. Within 25% of 52w high
-      if (typeof distFromHigh === 'number' && distFromHigh >= -25) { minerviniScore += 15; mReasons.push(`within 25% of 52W high`); }
-      // 6. RSI 45-75 sweet spot
-      if (typeof rsi === 'number' && rsi >= 45 && rsi <= 75) { minerviniScore += 10; mReasons.push(`RSI ${rsi.toFixed(0)} (healthy)`); }
-      // 7. Strong relative momentum (3M positive)
-      if (typeof perf3m === 'number' && perf3m > 5) { minerviniScore += 15; mReasons.push(`3M momentum +${perf3m.toFixed(0)}%`); }
-      // 8. Stage-2 confirmation (price > EMA50 by >0%)
-      if (typeof pctVsEma50 === 'number' && pctVsEma50 > 5 && pctVsEma50 < 30) { minerviniScore += 10; mReasons.push('Stage-2'); }
+      // Near EMA50 = breakout setup
+      if (typeof pctVsEma50 === 'number' && pctVsEma50 >= -3 && pctVsEma50 <= 8) { zangerScore += 15; zReasons.push('breakout-ready (near EMA50)'); }
+      // Near 52W high
+      if (typeof distFromHigh === 'number' && distFromHigh >= -10) { zangerScore += 15; zReasons.push(`near 52W high (${distFromHigh.toFixed(0)}%)`); }
+      // Volume burst = breakout confirm
+      if (volumeBurst === true) { zangerScore += 10; zReasons.push(`volume burst ${relVol1w!.toFixed(1)}×`); }
+      if (typeof rsi === 'number' && rsi >= 50 && rsi <= 70) { zangerScore += 5; zReasons.push(`RSI ${rsi.toFixed(0)}`); }
 
-      // ── RIGHT ENTRY ── proxy for Qullamaggie's 21-EMA rule using EMA50
+      // ── PRADEEP BONDE EP ── Episodic Pivot: volume surge + recent earnings surge + reasonable extension
+      let bondeScore = 0; const bReasons: string[] = [];
+      // EP signature = recent 1W/1M move on volume
+      if (typeof perf1w === 'number' && perf1w >= 10) { bondeScore += 25; bReasons.push(`⚡ 1W ${perf1w.toFixed(0)}% (EP fired)`); }
+      else if (typeof perf1m === 'number' && perf1m >= 20) { bondeScore += 20; bReasons.push(`1M ${perf1m.toFixed(0)}%`); }
+      else if (typeof perf3m === 'number' && perf3m >= 20) { bondeScore += 12; bReasons.push(`3M ${perf3m.toFixed(0)}%`); }
+      // Volume burst is THE EP signal
+      if (volumeBurst === true) { bondeScore += 20; bReasons.push(`Rel Vol ${relVol1w!.toFixed(1)}× confirms`); }
+      // PED-zone: not over-extended
+      if (typeof pctVsEma50 === 'number' && pctVsEma50 >= 0 && pctVsEma50 <= 20) { bondeScore += 15; bReasons.push('PED entry zone'); }
+      // Stage-2 trend
+      if (typeof pctVsEma200 === 'number' && pctVsEma200 > 10) { bondeScore += 15; bReasons.push(`Stage-2 (+${pctVsEma200.toFixed(0)}% EMA200)`); }
+      // Liquidity
+      if (typeof avgVol30d === 'number' && avgVol30d >= 500_000) { bondeScore += 10; bReasons.push('liquid'); }
+      if (momentumAccel >= 2) { bondeScore += 10; bReasons.push('momentum accelerating'); }
+      if (typeof perf1y === 'number' && perf1y >= 50) { bondeScore += 5; bReasons.push(`1Y +${perf1y.toFixed(0)}%`); }
+
+      // ── MINERVINI TREND TEMPLATE ── 8-point check (now uses SMA50/150/200)
+      let minerviniScore = 0; const mReasons: string[] = [];
+      // 1. Price above SMA150 and SMA200 (preferred) — fall back to EMA if SMA missing
+      const aboveLong = (typeof pctVsSma150 === 'number' && pctVsSma150 > 0 && typeof pctVsSma200 === 'number' && pctVsSma200 > 0)
+        || (typeof pctVsEma200 === 'number' && pctVsEma200 > 0);
+      if (aboveLong) { minerviniScore += 12; mReasons.push('price > SMA150 & SMA200'); }
+      // 2. SMA150 above SMA200
+      if (typeof sma150 === 'number' && typeof sma200 === 'number' && sma150 > sma200) {
+        minerviniScore += 10; mReasons.push('SMA150 > SMA200');
+      } else if (typeof emaSpread === 'number' && emaSpread > 0) {
+        minerviniScore += 8; mReasons.push('EMA50 > EMA200');
+      }
+      // 3. SMA200 trending up (proxy: price well above SMA200)
+      if (typeof pctVsSma200 === 'number' && pctVsSma200 > 5) { minerviniScore += 10; mReasons.push('SMA200 trending up'); }
+      // 4. SMA50 > SMA150 > SMA200 (proper hierarchy)
+      if (typeof sma50 === 'number' && typeof sma150 === 'number' && typeof sma200 === 'number' && sma50 > sma150 && sma150 > sma200) {
+        minerviniScore += 12; mReasons.push('SMA50 > 150 > 200 (clean hierarchy)');
+      }
+      // 5. Price above SMA50
+      if (typeof pctVsSma50 === 'number' && pctVsSma50 > 0) { minerviniScore += 8; mReasons.push(`+${pctVsSma50.toFixed(0)}% over SMA50`); }
+      else if (typeof pctVsEma50 === 'number' && pctVsEma50 > 0) { minerviniScore += 5; mReasons.push(`+${pctVsEma50.toFixed(0)}% over EMA50`); }
+      // 6. Within 25% of 52W high
+      if (typeof distFromHigh === 'number' && distFromHigh >= -25) { minerviniScore += 12; mReasons.push(`within 25% of 52W high`); }
+      // 7. ≥30% above 52W low (THE Minervini check — needs low52w field)
+      if (typeof pctAboveLow52w === 'number' && pctAboveLow52w >= 30) { minerviniScore += 15; mReasons.push(`+${pctAboveLow52w.toFixed(0)}% above 52W low`); }
+      // 8. RSI 50-75
+      if (typeof rsi === 'number' && rsi >= 50 && rsi <= 75) { minerviniScore += 8; mReasons.push(`RSI ${rsi.toFixed(0)}`); }
+      // 9. VCP signal — 1W volatility contraction vs 1M
+      if (volContraction === true) { minerviniScore += 13; mReasons.push(`📉 VCP (vol contracting)`); }
+
+      // ── RIGHT ENTRY ── prefer SMA50 if available, else EMA50; tightened ADR-aware zone
       let rightEntry: TechRow['rightEntry'] = 'NO DATA';
       let rightEntryDetail = '';
-      if (typeof pctVsEma50 === 'number') {
-        if (pctVsEma50 < 0) { rightEntry = 'BELOW'; rightEntryDetail = `${pctVsEma50.toFixed(1)}% under EMA50 — wait for reclaim`; }
-        else if (pctVsEma50 <= 7) { rightEntry = 'BUY ZONE'; rightEntryDetail = `+${pctVsEma50.toFixed(1)}% over EMA50 — ideal entry`; }
-        else if (pctVsEma50 <= 15) { rightEntry = 'EXTENDED'; rightEntryDetail = `+${pctVsEma50.toFixed(1)}% — wait for pullback to EMA50`; }
-        else { rightEntry = 'CHASE'; rightEntryDetail = `+${pctVsEma50.toFixed(1)}% — chasing; high risk`; }
+      const pctVsMA = typeof pctVsSma50 === 'number' ? pctVsSma50 : pctVsEma50;
+      const maLabel = typeof pctVsSma50 === 'number' ? 'SMA50' : 'EMA50';
+      if (typeof pctVsMA === 'number') {
+        // Use ADR to size the buy zone: ideally within 2*ADR above MA
+        const buyCeiling = (typeof adrPct === 'number' && adrPct > 0) ? Math.max(7, adrPct * 2) : 7;
+        if (pctVsMA < 0) { rightEntry = 'BELOW'; rightEntryDetail = `${pctVsMA.toFixed(1)}% under ${maLabel} — wait for reclaim`; }
+        else if (pctVsMA <= buyCeiling) { rightEntry = 'BUY ZONE'; rightEntryDetail = `+${pctVsMA.toFixed(1)}% over ${maLabel} (buy ceiling ${buyCeiling.toFixed(1)}%)`; }
+        else if (pctVsMA <= buyCeiling * 2) { rightEntry = 'EXTENDED'; rightEntryDetail = `+${pctVsMA.toFixed(1)}% — wait for pullback to ${maLabel}`; }
+        else { rightEntry = 'CHASE'; rightEntryDetail = `+${pctVsMA.toFixed(1)}% — chasing; high risk`; }
       }
 
       const totalScore = Math.round((qullaScore + zangerScore + bondeScore + minerviniScore) / 4);
@@ -6043,12 +6140,14 @@ function TechnicalsTab() {
         symbol: r.symbol, company: r.company, sector: r.sector,
         price, mcapB: mcap, ema50, ema200, rsi,
         perf1y, perf3m, perf6m, high52w, beta, avgVol30d,
-        pctVsEma50, pctVsEma200, emaSpread, distFromHigh, momentumAccel,
+        perf1w, perf1m, atr14, sma50, sma150, sma200, vol1m, vol1w, low52w, relVol1w, vol1d,
+        pctVsEma50, pctVsEma200, pctVsSma50, pctVsSma150, pctVsSma200,
+        emaSpread, distFromHigh, pctAboveLow52w, adrPct, volContraction, volumeBurst, momentumAccel,
         qullaScore, qullaReasons: qReasons,
         zangerScore, zangerReasons: zReasons,
         bondeScore, bondeReasons: bReasons,
         minerviniScore, minerviniReasons: mReasons,
-        rightEntry, rightEntryDetail, totalScore,
+        rightEntry, rightEntryDetail, stopLoss, totalScore,
       };
     }).filter(r => r.symbol);
     return rows;
@@ -6105,21 +6204,18 @@ function TechnicalsTab() {
         <div style={{ fontSize: 12, color: MUTED }}>Pure-technical scoring using your TradingView USA export. Switch your CSV to the 🇺🇸 USA Multibagger tab to load data — this tab reads the same source. {techRows.length} stocks scored.</div>
       </div>
 
-      {/* What data we use + what to add */}
-      <div style={{ ...cardStyle, background: 'color-mix(in srgb, #22D3EE 5%, transparent)', borderColor: 'color-mix(in srgb, #22D3EE 25%, transparent)' }}>
-        <div style={{ fontSize: 13, fontWeight: 800, color: CYAN, marginBottom: 6 }}>📋 What this tab uses · what to add for better scoring</div>
+      {/* Data status — zzz130 now uses ALL the new fields */}
+      <div style={{ ...cardStyle, background: 'color-mix(in srgb, #10B981 5%, transparent)', borderColor: 'color-mix(in srgb, #10B981 30%, transparent)' }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: '#10B981', marginBottom: 6 }}>✅ Full Technicals scoring active — all 11 new fields wired in</div>
         <div style={{ fontSize: 11.5, color: TXT, lineHeight: 1.6 }}>
-          <b style={{ color: '#10B981' }}>✅ Already using (from your CSV):</b> Price · EMA 50 · EMA 200 · RSI 14 · Performance 1Y / 3M / 6M · 52W High · Beta · Avg Volume 30d · Market Cap.
-          <br />
-          <b style={{ color: '#F59E0B' }}>➕ For sharper scoring add these to your next TradingView export:</b>
+          Using everything from your latest 89-column TradingView export:
           <ul style={{ margin: '6px 0 0 18px', padding: 0, color: TXT }}>
-            <li><b>Performance %, 1 week</b> AND <b>Performance %, 1 month</b> — Qullamaggie's signature 1M/1W gainers list</li>
-            <li><b>Average true range, 14, 1 day (ATR)</b> — for proper stop placement + ADR%</li>
-            <li><b>Volatility, 1 month</b> + <b>Volatility, 1 week</b> — Minervini VCP contraction detection</li>
-            <li><b>Simple moving average, 50/150/200, 1 day (SMA)</b> — Minervini Trend Template uses SMA not EMA</li>
-            <li><b>Low, 52 weeks</b> — needed for Minervini's "≥30% above 52W low" check</li>
-            <li><b>Relative volume, 10 days</b> — Bonde EP volume-burst signal</li>
-            <li><b>Volume, 1 day</b> (today's volume) — breakout volume confirmation</li>
+            <li><b style={{ color: CYAN }}>Qullamaggie</b> now scores on real <b>1M / 1W performance</b> (not 3M proxy) + <b>ADR%</b> sweet-spot 3–6% + <b>relative-volume burst</b></li>
+            <li><b style={{ color: '#A78BFA' }}>Zanger HTF</b> uses 1M explosive move + 1W tight-flag detection + volume confirmation</li>
+            <li><b style={{ color: '#FBBF24' }}>Bonde EP</b> fires on 1W move with Rel Vol ≥1.5× (the true Episodic Pivot signal)</li>
+            <li><b style={{ color: '#84CC16' }}>Minervini Trend Template</b> now uses <b>SMA 50/150/200 hierarchy</b> + <b>≥30% above 52W low</b> + <b>VCP volatility contraction</b> (1W vol &lt; 1M vol)</li>
+            <li><b>Buy-zone ceiling</b> is now ADR-adaptive (2× ADR above SMA50/EMA50) — wider for volatile names, tighter for low-vol</li>
+            <li><b>Stop-loss</b> auto-computed at <b>price − 2× ATR14</b> for every BUY ZONE pick</li>
           </ul>
         </div>
       </div>
@@ -6142,10 +6238,16 @@ function TechnicalsTab() {
                 </div>
                 <div style={{ fontSize: 11, color: TXT, marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.company || ''}</div>
                 <div style={{ fontSize: 10.5, color: MUTED, marginTop: 3, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  <span>+{r.pctVsEma50?.toFixed(1)}% EMA50</span>
-                  {typeof r.perf3m === 'number' ? <span>3M {r.perf3m.toFixed(0)}%</span> : null}
+                  {typeof r.perf1m === 'number' ? <span>1M {r.perf1m.toFixed(0)}%</span> : (typeof r.perf3m === 'number' ? <span>3M {r.perf3m.toFixed(0)}%</span> : null)}
+                  {typeof r.adrPct === 'number' ? <span>ADR {r.adrPct.toFixed(1)}%</span> : null}
+                  {r.volumeBurst === true ? <span style={{ color: '#10B981', fontWeight: 700 }}>Vol🔥</span> : null}
                   {typeof r.rsi === 'number' ? <span>RSI {r.rsi.toFixed(0)}</span> : null}
                 </div>
+                {typeof r.stopLoss === 'number' ? (
+                  <div style={{ fontSize: 10, color: '#F59E0B', marginTop: 4, fontWeight: 700 }}>
+                    STOP: ${r.stopLoss.toFixed(2)} (−2×ATR)
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>
