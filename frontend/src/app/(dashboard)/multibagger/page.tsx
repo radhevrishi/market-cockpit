@@ -5904,6 +5904,17 @@ function MultiConfirmedCard({ stocks }: { stocks: any[] }) {
 // Right entry zone: 0–7% above EMA50 (proxy for Qullamaggie's 21-EMA rule).
 // ═══════════════════════════════════════════════════════════════════════════
 function TechnicalsTab() {
+  // zzz131 — FIX `num is not defined` runtime error. The `num` helper was
+  // previously only defined inside MultibaggerAnalytics (line ~7117), so when
+  // this standalone TechnicalsTab component rendered it threw ReferenceError
+  // on mount and showed the user the "Something went wrong" boundary.
+  // Defining a local copy here keeps TechnicalsTab self-contained.
+  function num(v: any): number | undefined {
+    if (v === undefined || v === null || v === '') return undefined;
+    const n = typeof v === 'number' ? v : Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  }
+
   const [dataTick, bumpData] = React.useReducer((x: number) => x + 1, 0);
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
