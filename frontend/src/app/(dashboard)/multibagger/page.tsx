@@ -6536,16 +6536,28 @@ function TechnicalsTab() {
   const sortIcon = (field: string) => sortField === field ? (sortAsc ? ' ▲' : ' ▼') : '';
 
   // zzz135 — Position-sizing inputs (persistent in localStorage)
-  const [portfolioSize, setPortfolioSize] = React.useState<number>(() => {
-    if (typeof window === 'undefined') return 100_000;
-    try { const v = parseFloat(localStorage.getItem('mb_tech_portfolio') || '100000'); return Number.isFinite(v) && v > 0 ? v : 100_000; } catch { return 100_000; }
+  // zzz136 — Default 52000 + use string state for free typing (don't clamp during input,
+  // only when computing). Previous Math.max(1000, …) inside onChange snapped the field
+  // back to 1000 the moment the user cleared it to retype — making it unchangeable.
+  const [portfolioInput, setPortfolioInput] = React.useState<string>(() => {
+    if (typeof window === 'undefined') return '52000';
+    try { return localStorage.getItem('mb_tech_portfolio') || '52000'; } catch { return '52000'; }
   });
-  const [riskPct, setRiskPct] = React.useState<number>(() => {
-    if (typeof window === 'undefined') return 1;
-    try { const v = parseFloat(localStorage.getItem('mb_tech_risk_pct') || '1'); return Number.isFinite(v) && v > 0 && v <= 5 ? v : 1; } catch { return 1; }
+  const [riskPctInput, setRiskPctInput] = React.useState<string>(() => {
+    if (typeof window === 'undefined') return '1';
+    try { return localStorage.getItem('mb_tech_risk_pct') || '1'; } catch { return '1'; }
   });
-  React.useEffect(() => { try { localStorage.setItem('mb_tech_portfolio', String(portfolioSize)); } catch {} }, [portfolioSize]);
-  React.useEffect(() => { try { localStorage.setItem('mb_tech_risk_pct', String(riskPct)); } catch {} }, [riskPct]);
+  // Parsed numeric values used in calcs (fallback to last valid value when input is mid-edit)
+  const portfolioSize = React.useMemo(() => {
+    const v = parseFloat(portfolioInput);
+    return Number.isFinite(v) && v > 0 ? v : 52000;
+  }, [portfolioInput]);
+  const riskPct = React.useMemo(() => {
+    const v = parseFloat(riskPctInput);
+    return Number.isFinite(v) && v > 0 ? v : 1;
+  }, [riskPctInput]);
+  React.useEffect(() => { try { localStorage.setItem('mb_tech_portfolio', portfolioInput); } catch {} }, [portfolioInput]);
+  React.useEffect(() => { try { localStorage.setItem('mb_tech_risk_pct', riskPctInput); } catch {} }, [riskPctInput]);
 
   // Position sizing math: given portfolio, riskPct, price, stopLoss → shares + capital
   const calcPosition = (price?: number, stop?: number) => {
@@ -6682,11 +6694,11 @@ function TechnicalsTab() {
           <div style={{ fontSize: 14, fontWeight: 900, color: '#F59E0B' }}>💼 POSITION SIZING (per-trade risk)</div>
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: TXT }}>
             <span style={{ color: MUTED }}>Portfolio $</span>
-            <input type="number" value={portfolioSize} onChange={(e) => setPortfolioSize(Math.max(1000, parseFloat(e.target.value) || 0))} style={{ width: 120, padding: '5px 8px', background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 5, color: TXT, fontSize: 12, fontFamily: 'ui-monospace, monospace' }} />
+            <input type="text" inputMode="numeric" value={portfolioInput} onChange={(e) => setPortfolioInput(e.target.value)} onBlur={() => { if (!portfolioInput.trim()) setPortfolioInput('52000'); }} placeholder="52000" style={{ width: 130, padding: '5px 8px', background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 5, color: TXT, fontSize: 12, fontFamily: 'ui-monospace, monospace' }} />
           </label>
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: TXT }}>
             <span style={{ color: MUTED }}>Risk per trade %</span>
-            <input type="number" step="0.25" min="0.25" max="5" value={riskPct} onChange={(e) => setRiskPct(Math.max(0.25, Math.min(5, parseFloat(e.target.value) || 1)))} style={{ width: 70, padding: '5px 8px', background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 5, color: TXT, fontSize: 12, fontFamily: 'ui-monospace, monospace' }} />
+            <input type="text" inputMode="decimal" value={riskPctInput} onChange={(e) => setRiskPctInput(e.target.value)} onBlur={() => { if (!riskPctInput.trim()) setRiskPctInput('1'); }} placeholder="1" style={{ width: 70, padding: '5px 8px', background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 5, color: TXT, fontSize: 12, fontFamily: 'ui-monospace, monospace' }} />
           </label>
           <span style={{ background: 'rgba(245,158,11,0.15)', padding: '4px 10px', borderRadius: 6, fontSize: 12, color: '#F59E0B', fontWeight: 700 }}>
             $ at risk per trade: <b>${(portfolioSize * riskPct / 100).toLocaleString(undefined, {maximumFractionDigits: 0})}</b>
