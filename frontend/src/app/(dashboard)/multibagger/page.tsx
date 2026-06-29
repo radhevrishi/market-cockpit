@@ -6648,6 +6648,84 @@ function TechnicalsTab() {
     .sort((a, b) => (b.perf1m ?? 0) - (a.perf1m ?? 0))
     .slice(0, 15), [techRows]);
 
+  // zzz142 — BEST PICKS for watchlist export. Combines the highest-conviction subsets
+  // across all buckets, deduplicates, tags with tier. Filters OUT the bad stocks
+  // (rejected, parabolic, earnings imminent, extended without fund support).
+  type BestPick = TechRow & { _tier: 'ELITE' | 'STRONG' | 'MOMENTUM' | 'QUALITY' };
+  const bestPicks = React.useMemo<BestPick[]>(() => {
+    const seen = new Set<string>();
+    const out: BestPick[] = [];
+    const add = (rows: TechRow[], tier: BestPick['_tier']) => {
+      for (const r of rows) {
+        if (!r.symbol || seen.has(r.symbol)) continue;
+        // Hard exclusions even within tiered lists
+        if (r.eligibilityTags.includes('EARNINGS_IMMINENT')) continue;
+        if (r.qualityFlags && r.qualityFlags.includes('RSI parabolic')) continue;
+        seen.add(r.symbol);
+        out.push({ ...r, _tier: tier });
+      }
+    };
+    add(champions, 'ELITE');
+    add(buyZone, 'STRONG');
+    // Momentum: top composite RS that are eligible + totalScore >= 50 and not already added
+    const momentum = [...techRows]
+      .filter(r => r.eligible)
+      .filter(r => typeof r.compositeRs === 'number' && r.compositeRs >= 75)
+      .filter(r => r.totalScore >= 50)
+      .filter(r => typeof r.perf1m === 'number' && r.perf1m >= 5)
+      .sort((a, b) => (b.compositeRs ?? 0) - (a.compositeRs ?? 0));
+    add(momentum, 'MOMENTUM');
+    add(qualityOnSale, 'QUALITY');
+    return out;
+  }, [champions, buyZone, techRows, qualityOnSale]);
+
+  // Format helpers for export
+  const formatForTV = (picks: BestPick[]): string => {
+    const sections: Record<string, string[]> = { ELITE: [], STRONG: [], MOMENTUM: [], QUALITY: [] };
+    picks.forEach(p => { sections[p._tier].push(p.symbol); });
+    const out: string[] = [];
+    if (sections.ELITE.length) { out.push('###Champions (Tech+Fund Elite)'); out.push(...sections.ELITE); }
+    if (sections.STRONG.length) { out.push('###Buy Zone Strict'); out.push(...sections.STRONG); }
+    if (sections.MOMENTUM.length) { out.push('###Momentum Leaders'); out.push(...sections.MOMENTUM); }
+    if (sections.QUALITY.length) { out.push('###Quality on Sale'); out.push(...sections.QUALITY); }
+    return out.join(',');
+  };
+  const formatPlain = (picks: BestPick[]): string => picks.map(p => p.symbol).join(',');
+  const formatPlainNewline = (picks: BestPick[]): string => picks.map(p => p.symbol).join('\n');
+  const formatCsv = (picks: BestPick[]): string => {
+    const headers = 'Symbol,Tier,Tech,Fund,Qulla,Zanger,Bonde,Minervini,CompositeRS,IndustryRS,Industry,Sector,Entry,Price,Stop,RiskPct,1W%,1M%,3M%,RevQ%,EpsTTM%,RelVol,RSI';
+    const rows = picks.map(p => [
+      p.symbol, p._tier, p.totalScore, p.fundScore, p.qullaScore, p.zangerScore, p.bondeScore, p.minerviniScore,
+      p.compositeRs ?? '', p.industryRsRank ?? '', p.industry || '', p.sector || '',
+      p.rightEntry, p.price ?? '', p.stopLoss ?? '', p.stopLossPct ?? '',
+      p.perf1w ?? '', p.perf1m ?? '', p.perf3m ?? '', p.revGrowthQtr ?? '', p.epsGrowthTTM ?? '',
+      p.relVol1w ?? '', p.rsi ?? '',
+    ].map(v => typeof v === 'string' && v.includes(',') ? `"${v}"` : String(v)).join(','));
+    return [headers, ...rows].join('\n');
+  };
+
+  // zzz142 — Copy helper with toast feedback
+  const [copyToast, setCopyToast] = React.useState<string>('');
+  const copyToClipboard = async (txt: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(txt);
+      setCopyToast(`✓ Copied ${label}`);
+      setTimeout(() => setCopyToast(''), 2500);
+    } catch {
+      setCopyToast(`⚠️ Copy failed — select & copy manually`);
+      setTimeout(() => setCopyToast(''), 3500);
+    }
+  };
+  const downloadFile = (txt: string, filename: string, mime: string = 'text/plain') => {
+    try {
+      const blob = new Blob([txt], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+    } catch {}
+  };
+
   // zzz133 — SORT state for ALL TICKERS table
   const [sortField, setSortField] = React.useState<string>('totalScore');
   const [sortAsc, setSortAsc] = React.useState<boolean>(false);
@@ -6867,6 +6945,92 @@ function TechnicalsTab() {
           (5) <b>Buckets</b> — 🏆 Champions, 🟢 Buy Zone, 🔥 Tech-only, 💰 Quality on Sale (Fund &gt; 60 AND Tech 30–45 AND within 15% SMA200), 🗓 Earnings Soon, 🚫 Rejected.
           💡 <b>Click any ticker card or row</b> to open the full detail modal (technicals + fundamentals + playbook reasons + position sizing).
         </div>
+      </div>
+
+      {/* zzz142 — EXPORT BEST PICKS to TradingView / Excel / clipboard */}
+      <div style={{ ...cardStyle, background: 'color-mix(in srgb, #22D3EE 5%, transparent)', borderColor: 'color-mix(in srgb, #22D3EE 30%, transparent)' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', marginBottom: 10 }}>
+          <div style={{ fontSize: 15, fontWeight: 900, color: CYAN }}>📤 EXPORT BEST PICKS</div>
+          <span style={{ background: 'rgba(34,211,238,0.15)', padding: '4px 9px', borderRadius: 6, fontSize: 12, color: CYAN, fontWeight: 700 }}>
+            {bestPicks.length} curated picks
+          </span>
+          {(() => {
+            const elite = bestPicks.filter(p => p._tier === 'ELITE').length;
+            const strong = bestPicks.filter(p => p._tier === 'STRONG').length;
+            const momentum = bestPicks.filter(p => p._tier === 'MOMENTUM').length;
+            const quality = bestPicks.filter(p => p._tier === 'QUALITY').length;
+            return (<>
+              {elite > 0 && <span style={{ background: 'rgba(16,185,129,0.15)', padding: '3px 8px', borderRadius: 5, fontSize: 11, color: '#10B981', fontWeight: 700 }}>🏆 Elite {elite}</span>}
+              {strong > 0 && <span style={{ background: 'rgba(16,185,129,0.12)', padding: '3px 8px', borderRadius: 5, fontSize: 11, color: '#10B981', fontWeight: 600 }}>🟢 Strong {strong}</span>}
+              {momentum > 0 && <span style={{ background: 'rgba(34,211,238,0.12)', padding: '3px 8px', borderRadius: 5, fontSize: 11, color: CYAN, fontWeight: 600 }}>🔥 Momentum {momentum}</span>}
+              {quality > 0 && <span style={{ background: 'rgba(132,204,22,0.12)', padding: '3px 8px', borderRadius: 5, fontSize: 11, color: '#84CC16', fontWeight: 600 }}>💰 Quality {quality}</span>}
+            </>);
+          })()}
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: MUTED, fontStyle: 'italic' }}>
+            Only Champions + strict BUY ZONE + top-RS momentum + Quality-on-Sale. Bad stocks (rejected, parabolic, earnings ≤ 3d) excluded.
+          </span>
+        </div>
+
+        {/* Action buttons */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          <button onClick={() => copyToClipboard(formatForTV(bestPicks), 'TradingView format (with section headers)')}
+            disabled={bestPicks.length === 0}
+            style={{ background: bestPicks.length ? '#22D3EE' : '#1A2540', color: bestPicks.length ? '#0B1220' : MUTED, border: 'none', padding: '7px 13px', borderRadius: 6, fontSize: 12, fontWeight: 800, cursor: bestPicks.length ? 'pointer' : 'not-allowed' }}>
+            📋 Copy for TradingView (with sections)
+          </button>
+          <button onClick={() => copyToClipboard(formatPlain(bestPicks), 'plain ticker list')}
+            disabled={bestPicks.length === 0}
+            style={{ background: PANEL2, color: TXT, border: `1px solid ${LINE}`, padding: '7px 13px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: bestPicks.length ? 'pointer' : 'not-allowed' }}>
+            Copy comma list
+          </button>
+          <button onClick={() => downloadFile(formatPlainNewline(bestPicks), `mc-best-picks-${new Date().toISOString().slice(0,10)}.txt`)}
+            disabled={bestPicks.length === 0}
+            style={{ background: PANEL2, color: TXT, border: `1px solid ${LINE}`, padding: '7px 13px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: bestPicks.length ? 'pointer' : 'not-allowed' }}>
+            ⬇ Download .txt
+          </button>
+          <button onClick={() => downloadFile(formatCsv(bestPicks), `mc-best-picks-${new Date().toISOString().slice(0,10)}.csv`, 'text/csv')}
+            disabled={bestPicks.length === 0}
+            style={{ background: PANEL2, color: TXT, border: `1px solid ${LINE}`, padding: '7px 13px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: bestPicks.length ? 'pointer' : 'not-allowed' }}>
+            ⬇ Download CSV (full data)
+          </button>
+          {/* Per-tier quick copy */}
+          {(() => {
+            const tierKeys: BestPick['_tier'][] = ['ELITE', 'STRONG', 'MOMENTUM', 'QUALITY'];
+            const labels = { ELITE: '🏆 Elite', STRONG: '🟢 Strong', MOMENTUM: '🔥 Momentum', QUALITY: '💰 Quality' };
+            return tierKeys.filter(t => bestPicks.some(p => p._tier === t)).map(t => {
+              const subset = bestPicks.filter(p => p._tier === t);
+              return (
+                <button key={t} onClick={() => copyToClipboard(formatPlain(subset), `${labels[t]} (${subset.length})`)}
+                  style={{ background: 'transparent', border: `1px solid ${LINE}`, color: TXT, padding: '7px 11px', borderRadius: 6, fontSize: 11.5, fontWeight: 700, cursor: 'pointer' }}>
+                  Copy {labels[t]} <span style={{ color: MUTED, fontWeight: 500 }}>({subset.length})</span>
+                </button>
+              );
+            });
+          })()}
+          {copyToast && (
+            <span style={{ background: copyToast.startsWith('✓') ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)', color: copyToast.startsWith('✓') ? '#10B981' : '#EF4444', padding: '7px 11px', borderRadius: 6, fontSize: 12, fontWeight: 700 }}>
+              {copyToast}
+            </span>
+          )}
+        </div>
+
+        {/* Show the list */}
+        {bestPicks.length === 0 ? (
+          <div style={{ fontSize: 12, color: MUTED, padding: 10, background: PANEL2, borderRadius: 6, marginTop: 10 }}>
+            No best picks today — try uploading a fresh CSV, or scan the BUY ZONE / Quality on Sale sections below for B-tier setups.
+          </div>
+        ) : (
+          <div style={{ marginTop: 10, padding: 10, background: PANEL2, borderRadius: 6, fontSize: 11, color: TXT, fontFamily: 'ui-monospace, monospace', lineHeight: 1.8, maxHeight: 110, overflowY: 'auto' }}>
+            {bestPicks.map(p => {
+              const tierColor = p._tier === 'ELITE' ? '#10B981' : p._tier === 'STRONG' ? '#22D3EE' : p._tier === 'MOMENTUM' ? '#FBBF24' : '#84CC16';
+              return (
+                <span key={p.symbol} onClick={() => setExpandedSymbol(p.symbol)} style={{ display: 'inline-block', marginRight: 8, padding: '2px 6px', background: 'rgba(255,255,255,0.04)', borderRadius: 4, borderLeft: `2px solid ${tierColor}`, cursor: 'pointer' }}>
+                  <b style={{ color: CYAN }}>{p.symbol}</b> <span style={{ color: tierColor, fontSize: 10 }}>{p._tier[0]}</span> <span style={{ color: MUTED, fontSize: 10 }}>{p.totalScore}/{p.fundScore}</span>
+                </span>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* zzz135 — POSITION SIZING calculator (per-trade risk model) */}
