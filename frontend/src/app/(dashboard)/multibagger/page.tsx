@@ -6559,6 +6559,53 @@ function TechnicalsTab() {
   React.useEffect(() => { try { localStorage.setItem('mb_tech_portfolio', portfolioInput); } catch {} }, [portfolioInput]);
   React.useEffect(() => { try { localStorage.setItem('mb_tech_risk_pct', riskPctInput); } catch {} }, [riskPctInput]);
 
+  // zzz137 — P/L Calculator inputs (4 fields, persists to LS)
+  const [plEntry, setPlEntry] = React.useState<string>(() => {
+    if (typeof window === 'undefined') return '';
+    try { return localStorage.getItem('mb_tech_pl_entry') || ''; } catch { return ''; }
+  });
+  const [plQty, setPlQty] = React.useState<string>(() => {
+    if (typeof window === 'undefined') return '';
+    try { return localStorage.getItem('mb_tech_pl_qty') || ''; } catch { return ''; }
+  });
+  const [plStop, setPlStop] = React.useState<string>(() => {
+    if (typeof window === 'undefined') return '';
+    try { return localStorage.getItem('mb_tech_pl_stop') || ''; } catch { return ''; }
+  });
+  const [plTarget, setPlTarget] = React.useState<string>(() => {
+    if (typeof window === 'undefined') return '';
+    try { return localStorage.getItem('mb_tech_pl_target') || ''; } catch { return ''; }
+  });
+  React.useEffect(() => { try { localStorage.setItem('mb_tech_pl_entry', plEntry); } catch {} }, [plEntry]);
+  React.useEffect(() => { try { localStorage.setItem('mb_tech_pl_qty', plQty); } catch {} }, [plQty]);
+  React.useEffect(() => { try { localStorage.setItem('mb_tech_pl_stop', plStop); } catch {} }, [plStop]);
+  React.useEffect(() => { try { localStorage.setItem('mb_tech_pl_target', plTarget); } catch {} }, [plTarget]);
+
+  // P/L calc — works for any combination of valid inputs
+  const plCalc = React.useMemo(() => {
+    const entry = parseFloat(plEntry);
+    const qty = parseFloat(plQty);
+    const stop = parseFloat(plStop);
+    const target = parseFloat(plTarget);
+    if (!Number.isFinite(entry) || entry <= 0 || !Number.isFinite(qty) || qty <= 0) return null;
+    const capital = entry * qty;
+    let lossPct: number | null = null, lossAmt: number | null = null;
+    let profitPct: number | null = null, profitAmt: number | null = null;
+    let rr: number | null = null;
+    if (Number.isFinite(stop) && stop > 0 && stop < entry) {
+      lossAmt = (stop - entry) * qty; // negative
+      lossPct = ((stop - entry) / entry) * 100;
+    }
+    if (Number.isFinite(target) && target > 0 && target > entry) {
+      profitAmt = (target - entry) * qty;
+      profitPct = ((target - entry) / entry) * 100;
+    }
+    if (lossAmt !== null && profitAmt !== null && lossAmt !== 0) {
+      rr = profitAmt / Math.abs(lossAmt);
+    }
+    return { entry, qty, stop, target, capital, lossPct, lossAmt, profitPct, profitAmt, rr };
+  }, [plEntry, plQty, plStop, plTarget]);
+
   // Position sizing math: given portfolio, riskPct, price, stopLoss → shares + capital
   const calcPosition = (price?: number, stop?: number) => {
     if (typeof price !== 'number' || typeof stop !== 'number' || stop >= price) return null;
@@ -6706,6 +6753,53 @@ function TechnicalsTab() {
           <span style={{ marginLeft: 'auto', fontSize: 11, color: MUTED, fontStyle: 'italic' }}>
             Shares = $-risk ÷ (price − stop) · shown on every detail page
           </span>
+        </div>
+
+        {/* zzz137 — INLINE P/L CALCULATOR */}
+        <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid rgba(245,158,11,0.15)`, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#10B981' }}>📊 P/L CALC</div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: TXT }}>
+            <span style={{ color: MUTED }}>Entry $</span>
+            <input type="text" inputMode="decimal" value={plEntry} onChange={(e) => setPlEntry(e.target.value)} placeholder="100" style={{ width: 75, padding: '4px 7px', background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 5, color: TXT, fontSize: 12, fontFamily: 'ui-monospace, monospace' }} />
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: TXT }}>
+            <span style={{ color: MUTED }}>Qty</span>
+            <input type="text" inputMode="numeric" value={plQty} onChange={(e) => setPlQty(e.target.value)} placeholder="100" style={{ width: 65, padding: '4px 7px', background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 5, color: TXT, fontSize: 12, fontFamily: 'ui-monospace, monospace' }} />
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: TXT }}>
+            <span style={{ color: '#EF4444' }}>Stop $</span>
+            <input type="text" inputMode="decimal" value={plStop} onChange={(e) => setPlStop(e.target.value)} placeholder="92" style={{ width: 75, padding: '4px 7px', background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 5, color: TXT, fontSize: 12, fontFamily: 'ui-monospace, monospace' }} />
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: TXT }}>
+            <span style={{ color: '#10B981' }}>Target $</span>
+            <input type="text" inputMode="decimal" value={plTarget} onChange={(e) => setPlTarget(e.target.value)} placeholder="120" style={{ width: 75, padding: '4px 7px', background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 5, color: TXT, fontSize: 12, fontFamily: 'ui-monospace, monospace' }} />
+          </label>
+          {plCalc && (
+            <>
+              <span style={{ background: 'rgba(255,255,255,0.06)', padding: '4px 9px', borderRadius: 6, fontSize: 11.5, color: TXT }}>
+                Capital: <b style={{ fontFamily: 'ui-monospace, monospace' }}>${plCalc.capital.toLocaleString(undefined, {maximumFractionDigits: 0})}</b>
+              </span>
+              {plCalc.lossAmt !== null && plCalc.lossPct !== null && (
+                <span style={{ background: 'rgba(239,68,68,0.15)', padding: '4px 9px', borderRadius: 6, fontSize: 11.5, color: '#EF4444', fontWeight: 700 }}>
+                  🛑 LOSS: <b style={{ fontFamily: 'ui-monospace, monospace' }}>${plCalc.lossAmt.toLocaleString(undefined, {maximumFractionDigits: 0})}</b> <span style={{ fontWeight: 500 }}>({plCalc.lossPct.toFixed(2)}%)</span>
+                </span>
+              )}
+              {plCalc.profitAmt !== null && plCalc.profitPct !== null && (
+                <span style={{ background: 'rgba(16,185,129,0.15)', padding: '4px 9px', borderRadius: 6, fontSize: 11.5, color: '#10B981', fontWeight: 700 }}>
+                  🎯 PROFIT: <b style={{ fontFamily: 'ui-monospace, monospace' }}>+${plCalc.profitAmt.toLocaleString(undefined, {maximumFractionDigits: 0})}</b> <span style={{ fontWeight: 500 }}>(+{plCalc.profitPct.toFixed(2)}%)</span>
+                </span>
+              )}
+              {plCalc.rr !== null && (
+                <span style={{ background: plCalc.rr >= 3 ? 'rgba(16,185,129,0.18)' : plCalc.rr >= 2 ? 'rgba(245,158,11,0.18)' : 'rgba(239,68,68,0.18)', padding: '4px 9px', borderRadius: 6, fontSize: 11.5, color: plCalc.rr >= 3 ? '#10B981' : plCalc.rr >= 2 ? '#F59E0B' : '#EF4444', fontWeight: 800 }}>
+                  R:R <b style={{ fontFamily: 'ui-monospace, monospace' }}>{plCalc.rr.toFixed(2)}×</b> {plCalc.rr >= 3 ? '✅' : plCalc.rr >= 2 ? '👍' : '⚠️'}
+                </span>
+              )}
+              <button onClick={() => { setPlEntry(''); setPlQty(''); setPlStop(''); setPlTarget(''); }} style={{ background: 'transparent', border: `1px solid ${LINE}`, color: MUTED, fontSize: 11, padding: '4px 9px', borderRadius: 5, cursor: 'pointer' }}>Clear</button>
+            </>
+          )}
+          {!plCalc && (
+            <span style={{ fontSize: 11, color: MUTED, fontStyle: 'italic' }}>Fill Entry + Qty + (Stop and/or Target) to compute P/L instantly</span>
+          )}
         </div>
       </div>
 
