@@ -1,56 +1,63 @@
 {
-  "lastSync": "2026-06-30T19:03:37.811Z",
-  "workflowVersion": "zzz151",
-  "ok": 0,
-  "fail": 6,
+  "lastSync": "2026-06-30T19:17:20.914Z",
+  "workflowVersion": "zzz152",
+  "approach": "scanner-api-interception",
+  "ok": 6,
+  "fail": 0,
   "files": [
     {
       "name": "minervini-stocks.csv",
       "displayName": "Minervni Stocks",
       "screenerId": "sBtiBahk",
-      "ok": false,
-      "size": 0,
-      "error": "Could not trigger CSV export (no menu, no shortcut worked)"
+      "ok": true,
+      "size": 64791,
+      "rowCount": 52,
+      "error": null
     },
     {
       "name": "qullamaggie-leaders.csv",
       "displayName": "Qualmaggie Leader Stocks in Bearmarket or Corrections",
       "screenerId": "WJDx6FZ9",
-      "ok": false,
-      "size": 0,
-      "error": "Could not trigger CSV export (no menu, no shortcut worked)"
+      "ok": true,
+      "size": 55952,
+      "rowCount": 43,
+      "error": null
     },
     {
       "name": "episodic-pivot.csv",
       "displayName": "EPISODIC PIVOT / VOLUME SURGE",
       "screenerId": "Px4kG2hQ",
-      "ok": false,
-      "size": 0,
-      "error": "Could not trigger CSV export (no menu, no shortcut worked)"
+      "ok": true,
+      "size": 28670,
+      "rowCount": 23,
+      "error": null
     },
     {
       "name": "liquidity-leaders.csv",
       "displayName": "Liquidity Leaders",
       "screenerId": "9IcX30Ez",
-      "ok": false,
-      "size": 0,
-      "error": "Could not trigger CSV export (no menu, no shortcut worked)"
+      "ok": true,
+      "size": 98129,
+      "rowCount": 79,
+      "error": null
     },
     {
       "name": "weekly-gainer-usa.csv",
       "displayName": "Weekly Gainer Stocks USA",
       "screenerId": "Neuim2Bm",
-      "ok": false,
-      "size": 0,
-      "error": "Could not trigger CSV export (no menu, no shortcut worked)"
+      "ok": true,
+      "size": 122913,
+      "rowCount": 100,
+      "error": null
     },
     {
       "name": "sales-eps-growth-bonde.csv",
       "displayName": "Sales And EPS Growth for EP - Pradeep Bonde style",
       "screenerId": "RtSuWTgK",
-      "ok": false,
-      "size": 0,
-      "error": "Could not trigger CSV export (no menu, no shortcut worked)"
+      "ok": true,
+      "size": 81562,
+      "rowCount": 67,
+      "error": null
     }
   ]
 }
