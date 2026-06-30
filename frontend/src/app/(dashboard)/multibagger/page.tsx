@@ -5979,12 +5979,14 @@ function TechnicalsTab() {
   });
   React.useEffect(() => { try { localStorage.setItem(TECH_NO_FALLBACK_KEY, techNoFallback ? '1' : '0'); } catch {} }, [techNoFallback]);
 
-  const handleTechFiles = async (filesList: FileList) => {
+  // zzz148 — Accepts File[] (already cloned from FileList by caller) to avoid the
+  // race where onChange resets e.target.value before the async handler iterates.
+  const handleTechFiles = async (files: File[]) => {
     setTechLoading(true);
     setTechUploadMsg('');
     try {
       // zzz147 — Defensive: if no files passed in, show warning instead of fake success.
-      if (!filesList || filesList.length === 0) {
+      if (!files || files.length === 0) {
         setTechUploadMsg('⚠️ No files received — try the file picker again.');
         setTechLoading(false);
         return;
@@ -5993,7 +5995,7 @@ function TechnicalsTab() {
       const newRows: any[] = [];
       const newSources: TechSource[] = [];
       const fileDiagnostics: string[] = [];
-      for (const file of Array.from(filesList)) {
+      for (const file of files) {
         const buf = await file.arrayBuffer();
         const wb = XLSX.read(buf, { type: 'array' });
         const sheet = wb.Sheets[wb.SheetNames[0]];
@@ -7085,7 +7087,15 @@ function TechnicalsTab() {
           <span style={{ fontSize: 11.5, color: MUTED, fontStyle: 'italic' }}>Independent of USA Multibagger · Append or Replace · India + USA + mix all supported</span>
         </div>
         <input type="file" multiple accept=".csv,.xlsx,.xls" ref={techFileRef} style={{ display: 'none' }}
-          onChange={e => { if (e.target.files?.length) { handleTechFiles(e.target.files); e.target.value = ''; } }} />
+          onChange={e => {
+            // zzz148 — Clone FileList to Array BEFORE clearing input value, otherwise
+            // FileList becomes empty by the time the async handler iterates it.
+            if (e.target.files?.length) {
+              const files = Array.from(e.target.files);
+              e.target.value = '';
+              handleTechFiles(files);
+            }
+          }} />
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 10 }}>
           <button onClick={() => techFileRef.current?.click()} disabled={techLoading}
             style={{ background: CYAN, color: '#0B1220', border: 'none', padding: '8px 14px', borderRadius: 6, fontSize: 12.5, fontWeight: 800, cursor: techLoading ? 'wait' : 'pointer' }}>
@@ -7148,7 +7158,7 @@ function TechnicalsTab() {
       {/* zzz133 — DATA QUALITY + ELIGIBILITY summary chips */}
       <div style={{ ...cardStyle, background: 'color-mix(in srgb, #10B981 5%, transparent)', borderColor: 'color-mix(in srgb, #10B981 30%, transparent)', padding: 14 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-          <span style={{ fontSize: 14, fontWeight: 800, color: '#10B981' }}>✅ zzz147 — Clear-always button + fallback toggle + upload diagnostics</span>
+          <span style={{ fontSize: 14, fontWeight: 800, color: '#10B981' }}>✅ zzz148 — HOTFIX FileList race condition (upload now actually works)</span>
           <span style={{ background: 'rgba(255,255,255,0.06)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: TXT }}>Total <b>{dataQuality.total}</b></span>
           <span style={{ background: 'rgba(16,185,129,0.18)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: '#10B981' }}>✓ eligible <b>{techRows.filter(r => r.eligible).length}</b></span>
           <span style={{ background: 'rgba(239,68,68,0.12)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: '#EF4444' }}>✗ rejected <b>{rejected.length}</b></span>
