@@ -1,0 +1,63 @@
+# zzz150 — Auto-sync TradingView saved screeners daily.
+# Mirrors the screener.in workflow pattern: Playwright headless logs in with the
+# user's sessionid cookie, exports each saved screener to CSV, commits to
+# frontend/public/data/tradingview/ so the Technicals tab can pull from there.
+
+name: Sync TradingView Screeners
+
+on:
+  schedule:
+    - cron: '30 4 * * *'    # 04:30 UTC daily (10:00 IST)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tradingview-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: |
+          cd .github/scripts
+          npm init -y >/dev/null
+          npm install --silent playwright@latest
+          npx playwright install chromium --with-deps
+
+      - name: Run TradingView sync
+        env:
+          TRADINGVIEW_SESSIONID: ${{ secrets.TRADINGVIEW_SESSIONID }}
+        run: |
+          if [ -z "$TRADINGVIEW_SESSIONID" ]; then
+            echo "::error::TRADINGVIEW_SESSIONID secret is not set."
+            exit 1
+          fi
+          echo "::add-mask::$TRADINGVIEW_SESSIONID"
+          mkdir -p frontend/public/data/tradingview
+          cd .github/scripts
+          node tradingview-sync.mjs
+
+      - name: Commit synced CSVs
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/public/data/tradingview/
+          if git diff --staged --quiet; then
+            echo "No changes."
+          else
+            git commit -m "[skip ci] Sync TradingView CSVs $(date -u +%Y-%m-%d)"
+            git push
+          fi
