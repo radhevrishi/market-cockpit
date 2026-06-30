@@ -1,9 +1,14 @@
-// zzz151 — TradingView sync v2: stealth plugin + always-save debug screenshots.
-// Failure mode in v1 was "All screeners failed" with no useful info because
-// the prior debug screenshots were discarded when the script exited non-zero
-// before the commit step ran. Now: we save multi-step screenshots for every
-// screener (pre-load, post-render, post-menu, on-failure) and the workflow
-// uploads them as an artifact + commits them to the repo so we can inspect.
+// zzz152 — TradingView sync v3: intercept Scanner API JSON, no Export-menu dependency.
+// Diagnosis from zzz151 debug screenshots:
+//   - Stealth plugin works: pages load fully, user is logged in (premium R avatar visible)
+//   - 51 stocks render in the screener with all filters applied
+//   - The Export-menu click hit the WRONG button (user-account avatar menu opened
+//     instead of screener's own menu) because aria-label*="menu" was too broad
+//
+// New strategy: when the page loads, TradingView's web app POSTs to
+//   https://scanner.tradingview.com/<market>/scan
+// to fetch the screener results. We listen for that response, capture the JSON
+// body, and convert it to CSV directly. No UI clicks needed.
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import fs from 'node:fs';
@@ -23,14 +28,11 @@ const SCREENERS = [
 const SESSION = process.env.TRADINGVIEW_SESSIONID;
 if (!SESSION) { console.error('[fatal] TRADINGVIEW_SESSIONID not set'); process.exit(1); }
 
-// process.cwd() is .github/scripts when run from workflow
 const REPO_ROOT = path.resolve(process.cwd(), '..', '..');
 const OUT_DIR = path.join(REPO_ROOT, 'frontend/public/data/tradingview');
 const DEBUG_DIR = path.join(OUT_DIR, '_debug');
 fs.mkdirSync(OUT_DIR, { recursive: true });
 fs.mkdirSync(DEBUG_DIR, { recursive: true });
-console.log(`Output dir: ${OUT_DIR}`);
-console.log(`Debug dir: ${DEBUG_DIR}`);
 
 const browser = await chromium.launch({
   headless: true,
@@ -38,7 +40,6 @@ const browser = await chromium.launch({
     '--no-sandbox',
     '--disable-dev-shm-usage',
     '--disable-blink-features=AutomationControlled',
-    '--disable-features=IsolateOrigins,site-per-process',
   ],
 });
 const context = await browser.newContext({
@@ -47,16 +48,40 @@ const context = await browser.newContext({
   acceptDownloads: true,
   locale: 'en-US',
   timezoneId: 'America/New_York',
-  bypassCSP: true,
 });
 await context.addCookies([
   { name: 'sessionid', value: SESSION, domain: '.tradingview.com', path: '/', secure: true, sameSite: 'Lax' },
 ]);
 
 const shot = async (page, sc, step) => {
-  const file = path.join(DEBUG_DIR, `${sc.slug}-${step}.png`);
-  try { await page.screenshot({ path: file, fullPage: false }); console.log(`  📸 ${path.basename(file)}`); } catch {}
+  try { await page.screenshot({ path: path.join(DEBUG_DIR, `${sc.slug}-${step}.png`), fullPage: false }); } catch {}
 };
+
+// Convert TradingView Scanner JSON to a CSV that mimics the manual-export format.
+// Scanner JSON shape (typical): { totalCount, data: [{ s: "NASDAQ:AAPL", d: [v0, v1, ...] }, ...] }
+// `columns` array is sometimes in a separate response. We save raw JSON for debugging.
+function scannerJsonToCsv(scanResponse, requestBody) {
+  if (!scanResponse || !Array.isArray(scanResponse.data)) return null;
+  // Columns are echoed in the request body, not always in response
+  let columns = [];
+  try {
+    const reqJson = typeof requestBody === 'string' ? JSON.parse(requestBody) : requestBody;
+    columns = reqJson?.columns || [];
+  } catch {}
+  const header = ['Symbol', 'Exchange', ...columns];
+  const rows = scanResponse.data.map(item => {
+    const sym = (item.s || '').split(':');
+    const exchange = sym[0] || '';
+    const ticker = sym[1] || sym[0] || '';
+    const vals = (item.d || []).map(v => {
+      if (v === null || v === undefined) return '';
+      if (typeof v === 'string') return v.includes(',') ? `"${v.replace(/"/g, '""')}"` : v;
+      return String(v);
+    });
+    return [ticker, exchange, ...vals].join(',');
+  });
+  return [header.join(','), ...rows].join('\n');
+}
 
 const results = [];
 
@@ -64,108 +89,77 @@ for (const sc of SCREENERS) {
   console.log(`\n=== ${sc.name} (${sc.id}) ===`);
   const page = await context.newPage();
   const outPath = path.join(OUT_DIR, `${sc.slug}.csv`);
+  const rawJsonPath = path.join(DEBUG_DIR, `${sc.slug}-scanner-response.json`);
+
+  // Capture all scanner requests and their responses
+  const scannerCalls = [];
+  const onRequest = (request) => {
+    const url = request.url();
+    if (url.includes('scanner.tradingview.com') && url.includes('/scan')) {
+      try {
+        const postData = request.postData();
+        scannerCalls.push({ url, request: postData, response: null });
+        console.log(`  → scanner request: ${url.slice(0, 100)}`);
+      } catch {}
+    }
+  };
+  const onResponse = async (response) => {
+    const url = response.url();
+    if (url.includes('scanner.tradingview.com') && url.includes('/scan')) {
+      try {
+        const body = await response.json();
+        const last = scannerCalls.find(c => c.url === url && c.response === null);
+        if (last) last.response = body;
+        console.log(`  ← scanner response: ${response.status()} (${body?.data?.length || 0} rows)`);
+      } catch (e) {
+        console.log(`  ← scanner non-JSON response: ${e.message}`);
+      }
+    }
+  };
+  page.on('request', onRequest);
+  page.on('response', onResponse);
 
   try {
     const url = `https://www.tradingview.com/screener/${sc.id}/`;
     console.log(`  → ${url}`);
     const resp = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    console.log(`  HTTP ${resp ? resp.status() : '?'} ${resp ? resp.statusText() : ''}`);
+    console.log(`  HTTP ${resp ? resp.status() : '?'}`);
     await shot(page, sc, '1-loaded');
 
-    // Detect Cloudflare or login challenge
-    const title = await page.title();
-    console.log(`  page title: "${title}"`);
-    const html = await page.content();
-    if (/just a moment|cloudflare|attention required|checking your browser/i.test(title) ||
-        /cf-browser-verification|cf-challenge-running/i.test(html)) {
-      console.log('  ⚠️ Cloudflare challenge detected — waiting up to 30s for it to resolve');
-      try { await page.waitForFunction(() => !document.title.match(/just a moment|cloudflare|checking/i), { timeout: 30000 }); } catch {}
-      await shot(page, sc, '1b-post-cloudflare');
-    }
-
-    if (/sign in|log in/i.test(title)) {
-      throw new Error(`Login page returned — sessionid likely expired. Title: "${title}"`);
-    }
-
-    // Wait for the screener UI to mount
+    // Wait for scanner calls to complete
     try { await page.waitForLoadState('networkidle', { timeout: 30000 }); } catch {}
     await page.waitForTimeout(5000);
     await shot(page, sc, '2-after-wait');
 
-    // Strategy A: TradingView 3-dot button on screener toolbar
-    let downloaded = false;
+    console.log(`  captured ${scannerCalls.length} scanner calls`);
 
-    const tryMenuExport = async () => {
-      const triggers = await page.$$('button[aria-label*="menu" i], button[aria-label*="More" i], button[data-name="menu-button"], [data-name="screener-toolbar"] button, .menuOpenButton-l31H9iuA, .menuOpenButton');
-      console.log(`  found ${triggers.length} potential menu buttons`);
-      for (let i = 0; i < triggers.length; i++) {
-        const t = triggers[i];
-        try {
-          const box = await t.boundingBox();
-          if (!box) continue;
-          // Only consider buttons in the top half (toolbar area)
-          if (box.y > 250) continue;
-          await t.click({ timeout: 3000 });
-          await page.waitForTimeout(800);
-          await shot(page, sc, `3-menu-${i}-opened`);
-          // Look for Export in the open menu
-          const exp = await page.$('[data-name="export"], div[role="menuitem"]:has-text("Export"), button:has-text("Export"), span:has-text("Export")');
-          if (exp) {
-            console.log(`  menu ${i}: clicked Export`);
-            await exp.click({ timeout: 3000 });
-            await page.waitForTimeout(500);
-            await shot(page, sc, `4-export-${i}-opened`);
-            // CSV option
-            const dlPromise = page.waitForEvent('download', { timeout: 20000 });
-            const csv = await page.$('button:has-text("CSV"), a:has-text("CSV"), div[role="menuitem"]:has-text("CSV"), text=/^CSV/i');
-            if (csv) {
-              await csv.click({ timeout: 3000 });
-              const dl = await dlPromise;
-              await dl.saveAs(outPath);
-              return true;
-            }
-            console.log('  CSV option not found in export submenu');
-          }
-          // Close menu before trying next trigger
-          await page.keyboard.press('Escape').catch(() => {});
-          await page.waitForTimeout(300);
-        } catch (e) {
-          console.log(`  trigger ${i} failed: ${e.message.split('\n')[0]}`);
-        }
-      }
-      return false;
-    };
+    // Save the raw captures for debugging
+    fs.writeFileSync(rawJsonPath, JSON.stringify(scannerCalls, null, 2));
 
-    downloaded = await tryMenuExport();
+    // Find the scanner call with the most data — that's the real screener result
+    const bestCall = scannerCalls
+      .filter(c => c.response && Array.isArray(c.response.data))
+      .sort((a, b) => (b.response.data.length) - (a.response.data.length))[0];
 
-    // Strategy B: Direct keyboard shortcut Alt+S (legacy TV screener)
-    if (!downloaded) {
-      console.log('  trying Alt+S shortcut...');
-      try {
-        const dlPromise = page.waitForEvent('download', { timeout: 10000 });
-        await page.keyboard.press('Alt+S');
-        const dl = await dlPromise;
-        await dl.saveAs(outPath);
-        downloaded = true;
-      } catch (e) {
-        console.log(`  Alt+S failed: ${e.message.split('\n')[0]}`);
-      }
+    if (!bestCall) {
+      throw new Error('No scanner data captured');
     }
+    console.log(`  best call has ${bestCall.response.data.length} rows`);
 
-    if (!downloaded) {
-      throw new Error('Could not trigger CSV export (no menu, no shortcut worked)');
-    }
-
+    const csv = scannerJsonToCsv(bestCall.response, bestCall.request);
+    if (!csv) throw new Error('Failed to convert scanner JSON to CSV');
+    fs.writeFileSync(outPath, csv);
     const stat = fs.statSync(outPath);
-    if (stat.size < 200) throw new Error(`CSV looks empty (${stat.size} bytes)`);
-    console.log(`  ✓ ${path.basename(outPath)} (${stat.size} bytes)`);
-    results.push({ ...sc, ok: true, size: stat.size });
+    console.log(`  ✓ ${path.basename(outPath)} (${stat.size} bytes, ${bestCall.response.data.length} rows)`);
+    results.push({ ...sc, ok: true, size: stat.size, rowCount: bestCall.response.data.length });
   } catch (e) {
     const errMsg = e.message || String(e);
     console.error(`  ✗ ${sc.slug}: ${errMsg}`);
     await shot(page, sc, '9-FAIL');
     results.push({ ...sc, ok: false, error: errMsg });
   } finally {
+    page.off('request', onRequest);
+    page.off('response', onResponse);
     await page.close();
     await new Promise(r => setTimeout(r, 2000));
   }
@@ -175,7 +169,8 @@ await browser.close();
 
 const manifest = {
   lastSync: new Date().toISOString(),
-  workflowVersion: 'zzz151',
+  workflowVersion: 'zzz152',
+  approach: 'scanner-api-interception',
   ok: results.filter(r => r.ok).length,
   fail: results.filter(r => !r.ok).length,
   files: results.map(r => ({
@@ -184,14 +179,14 @@ const manifest = {
     screenerId: r.id,
     ok: r.ok,
     size: r.size || 0,
+    rowCount: r.rowCount || 0,
     error: r.error || null,
   })),
 };
 fs.writeFileSync(path.join(OUT_DIR, 'manifest.json'), JSON.stringify(manifest, null, 2));
 console.log(`\n=== Manifest: ${manifest.ok} ok, ${manifest.fail} failed ===`);
 
-// Exit non-zero only if all failed (so partial success still commits files)
 if (manifest.fail === results.length) {
-  console.error('::error::All screeners failed. Check uploaded debug screenshots.');
+  console.error('::error::All screeners failed. Inspect _debug/<slug>-scanner-response.json files for what TradingView returned.');
   process.exit(2);
 }
