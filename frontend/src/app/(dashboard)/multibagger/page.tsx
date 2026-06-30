@@ -6299,10 +6299,16 @@ function TechnicalsTab() {
         : typeof pctVsSma50 === 'number' ? 'SMA50 (proxy)'
         : 'EMA50 (proxy)';
       const usingEma21 = typeof pctVsEma21 === 'number';
+      // zzz144 — EMA21 TEXTBOOK requires real momentum context (1M ≥ 5% OR 3M ≥ 25%)
+      // to avoid mislabeling LSCC (1M -2%) and AMBQ (1M +1%) as Qulla setups just because
+      // they sit near 21-EMA. Kullamäki's actual setup: a stock that's HAD a move, now
+      // pulled back tight to 21-EMA. No prior move → not a Qulla setup.
+      const hasQullaMomentum = (typeof perf1m === 'number' && perf1m >= 5) || (typeof perf3m === 'number' && perf3m >= 25);
       if (typeof qPctMA === 'number') {
         if (usingEma21) {
           // Tighter Qulla-rule thresholds when we have the real signal
-          if (qPctMA >= 0 && qPctMA <= 5) { qullaScore += 25; qReasons.push(`🎯 +${qPctMA.toFixed(1)}% ${qMALabel} (TEXTBOOK Qulla entry)`); }
+          if (qPctMA >= 0 && qPctMA <= 5 && hasQullaMomentum) { qullaScore += 25; qReasons.push(`🎯 +${qPctMA.toFixed(1)}% ${qMALabel} (TEXTBOOK Qulla entry)`); }
+          else if (qPctMA >= 0 && qPctMA <= 5) { qullaScore += 10; qReasons.push(`+${qPctMA.toFixed(1)}% ${qMALabel} (near MA but no momentum)`); }
           else if (qPctMA > 5 && qPctMA <= 10) { qullaScore += 15; qReasons.push(`+${qPctMA.toFixed(1)}% ${qMALabel}`); }
           else if (qPctMA > 10 && qPctMA <= 18) { qullaScore += 6; qReasons.push(`+${qPctMA.toFixed(0)}% ${qMALabel} (stretched)`); }
           else if (qPctMA > 18 && qPctMA <= 30) { qullaScore += 0; qReasons.push(`extended +${qPctMA.toFixed(0)}% off ${qMALabel}`); }
@@ -6320,6 +6326,14 @@ function TechnicalsTab() {
       if (typeof relVol1w === 'number' && relVol1w >= 3) { qullaScore += 12; qReasons.push(`Rel Vol ${relVol1w.toFixed(1)}× 🔥🔥`); }
       else if (typeof relVol1w === 'number' && relVol1w >= 2) { qullaScore += 9; qReasons.push(`Rel Vol ${relVol1w.toFixed(1)}× 🔥`); }
       else if (typeof relVol1w === 'number' && relVol1w >= 1.5) { qullaScore += 6; qReasons.push(`Rel Vol ${relVol1w.toFixed(1)}×`); }
+      // zzz144 — VOLUME DRY-UP bonus (Qulla's signature flag pattern)
+      // After a strong 3M move, low rel-vol = consolidation tight flag = Qulla setup.
+      // Specifically: relVol1w < 0.7 AND (3M ≥ 25% OR 6M ≥ 50%) AND position near MA.
+      const hadPriorRun = (typeof perf3m === 'number' && perf3m >= 25) || (typeof perf6m === 'number' && perf6m >= 50);
+      const nearMA = typeof qPctMA === 'number' && qPctMA >= -3 && qPctMA <= 15;
+      if (typeof relVol1w === 'number' && relVol1w < 0.7 && hadPriorRun && nearMA) {
+        qullaScore += 8; qReasons.push(`📉 Vol dry-up ${relVol1w.toFixed(2)}× after run (tight flag)`);
+      }
       // Small/mid cap preference — Qulla hunts $1-10B sweet spot
       if (typeof mcap === 'number' && mcap >= 1 && mcap <= 10) { qullaScore += 10; qReasons.push(`small-mid $${mcap.toFixed(1)}B`); }
       else if (typeof mcap === 'number' && mcap < 1 && mcap >= 0.3) { qullaScore += 6; qReasons.push(`micro $${(mcap*1000).toFixed(0)}M`); }
@@ -6434,6 +6448,10 @@ function TechnicalsTab() {
         const vRatio = vol1w / vol1m;
         if (vRatio < 0.6) { minerviniScore += 13; mReasons.push(`📉 VCP TIGHT (${(vRatio*100).toFixed(0)}%)`); }
         else if (vRatio < 0.85) { minerviniScore += 8; mReasons.push(`📉 VCP (${(vRatio*100).toFixed(0)}%)`); }
+      }
+      // zzz144 — Volume dry-up confirms Minervini VCP (institutions stop selling)
+      if (typeof relVol1w === 'number' && relVol1w < 0.5 && typeof perf6m === 'number' && perf6m >= 30) {
+        minerviniScore += 5; mReasons.push(`💧 vol dry-up ${relVol1w.toFixed(2)}× (institutional accumulation)`);
       }
 
       // ── RIGHT ENTRY ── prefer SMA50 if available, else EMA50; tightened ADR-aware zone
@@ -6946,7 +6964,7 @@ function TechnicalsTab() {
       {/* zzz133 — DATA QUALITY + ELIGIBILITY summary chips */}
       <div style={{ ...cardStyle, background: 'color-mix(in srgb, #10B981 5%, transparent)', borderColor: 'color-mix(in srgb, #10B981 30%, transparent)', padding: 14 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-          <span style={{ fontSize: 14, fontWeight: 800, color: '#10B981' }}>✅ zzz143 — Quality on Sale relative gate + curated export</span>
+          <span style={{ fontSize: 14, fontWeight: 800, color: '#10B981' }}>✅ zzz144 — Volume dry-up + tighter Qulla TEXTBOOK + Champion subtitle fix</span>
           <span style={{ background: 'rgba(255,255,255,0.06)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: TXT }}>Total <b>{dataQuality.total}</b></span>
           <span style={{ background: 'rgba(16,185,129,0.18)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: '#10B981' }}>✓ eligible <b>{techRows.filter(r => r.eligible).length}</b></span>
           <span style={{ background: 'rgba(239,68,68,0.12)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: '#EF4444' }}>✗ rejected <b>{rejected.length}</b></span>
@@ -7123,7 +7141,7 @@ function TechnicalsTab() {
       <div style={{ ...cardStyle, background: 'linear-gradient(135deg, rgba(16,185,129,0.08), rgba(34,211,238,0.05))', borderColor: '#10B981', borderWidth: 2 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
           <div style={{ fontSize: 20, color: '#10B981', fontWeight: 900, letterSpacing: '0.3px' }}>🏆 CHAMPIONS — TECH + FUNDAMENTAL ELITE ({champions.length})</div>
-          <div style={{ fontSize: 12, color: MUTED, fontStyle: 'italic' }}>Passes hard filters + BUY ZONE + composite tech ≥ 45 + fundamental ≥ 45 + positive 1M + no falling knife</div>
+          <div style={{ fontSize: 12, color: MUTED, fontStyle: 'italic' }}>Eligible + BUY ZONE or EXTENDED (never CHASE) + tech ≥ 45 + fund ≥ 40 + positive 1M + no falling knife. EXTENDED names → wait for pullback to SMA50 before adding.</div>
         </div>
         {champions.length === 0 ? (
           <div style={{ fontSize: 13, color: MUTED, padding: 14, background: PANEL2, borderRadius: 8 }}>
