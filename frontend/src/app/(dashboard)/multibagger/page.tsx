@@ -5953,7 +5953,84 @@ function TechnicalsTab() {
     };
   }, []);
 
+  // zzz146 — Independent Technicals tab upload state. Multi-file, append/replace,
+  // India + USA + mix. Separate cache from USA Multibagger so user can keep them
+  // independently. Falls back to USA Multibagger cache when nothing uploaded here.
+  const TECH_ROWS_KEY = 'mb_tech_rows_v1';
+  const TECH_SOURCES_KEY = 'mb_tech_sources_v1';
+  type TechSource = { name: string; rowCount: number; cols: number; warning?: string };
+  const [techLocalRows, setTechLocalRows] = React.useState<any[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try { const raw = localStorage.getItem(TECH_ROWS_KEY); return raw ? (JSON.parse(raw) as any[]) : []; } catch { return []; }
+  });
+  const [techSources, setTechSources] = React.useState<TechSource[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try { const raw = localStorage.getItem(TECH_SOURCES_KEY); return raw ? (JSON.parse(raw) as TechSource[]) : []; } catch { return []; }
+  });
+  const [techAppendMode, setTechAppendMode] = React.useState<boolean>(true);
+  const [techUploadMsg, setTechUploadMsg] = React.useState<string>('');
+  const [techLoading, setTechLoading] = React.useState<boolean>(false);
+  const techFileRef = React.useRef<HTMLInputElement>(null);
+
+  const handleTechFiles = async (filesList: FileList) => {
+    setTechLoading(true);
+    setTechUploadMsg('');
+    try {
+      const XLSX = await import('xlsx');
+      const newRows: any[] = [];
+      const newSources: TechSource[] = [];
+      for (const file of Array.from(filesList)) {
+        const buf = await file.arrayBuffer();
+        const wb = XLSX.read(buf, { type: 'array' });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+        const cols = raw.length > 0 ? Object.keys(raw[0]).length : 0;
+        let parsedCount = 0;
+        for (const r of raw) {
+          const parsed = parseUSARow(r as Record<string, unknown>);
+          if (!parsed || !parsed.symbol) continue;
+          newRows.push(parsed);
+          parsedCount++;
+        }
+        let warning: string | undefined;
+        if (cols < 60) warning = `⚠️ Thin CSV (only ${cols} cols) — missing SMA/EMA/ATR/Industry. Stocks will show NO DATA.`;
+        newSources.push({ name: file.name, rowCount: parsedCount, cols, warning });
+      }
+      // Merge: append (default) or replace
+      const baseRows = techAppendMode ? [...techLocalRows] : [];
+      const baseSources = techAppendMode ? [...techSources] : [];
+      const seen = new Set(baseRows.map(r => r.symbol));
+      let added = 0, dup = 0;
+      for (const r of newRows) {
+        if (seen.has(r.symbol)) { dup++; continue; }
+        seen.add(r.symbol);
+        baseRows.push(r);
+        added++;
+      }
+      baseSources.push(...newSources);
+      setTechLocalRows(baseRows);
+      setTechSources(baseSources);
+      try { localStorage.setItem(TECH_ROWS_KEY, JSON.stringify(baseRows)); } catch {}
+      try { localStorage.setItem(TECH_SOURCES_KEY, JSON.stringify(baseSources)); } catch {}
+      setTechUploadMsg(`✓ Loaded ${newSources.length} file${newSources.length>1?'s':''} · added ${added}, deduped ${dup} · total ${baseRows.length} stocks`);
+      bumpData();
+    } catch (e) {
+      setTechUploadMsg(`⚠️ Error: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    setTechLoading(false);
+  };
+  const clearTechRows = () => {
+    setTechLocalRows([]);
+    setTechSources([]);
+    try { localStorage.removeItem(TECH_ROWS_KEY); } catch {}
+    try { localStorage.removeItem(TECH_SOURCES_KEY); } catch {}
+    setTechUploadMsg('✓ Cleared all Technicals uploads. Falling back to USA Multibagger data if available.');
+    bumpData();
+  };
+
   const usaRows = React.useMemo<any[]>(() => {
+    // zzz146 — Prefer Technicals-tab-local uploads. Fall back to USA cache.
+    if (techLocalRows.length > 0) return techLocalRows;
     if (typeof window === 'undefined') return [];
     try {
       const mem = _getUsaRowsMemCache();
@@ -5971,7 +6048,7 @@ function TechnicalsTab() {
     } catch {}
     return [];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataTick]);
+  }, [dataTick, techLocalRows]);
 
   type TechRow = {
     symbol: string; company?: string; sector?: string;
@@ -6958,15 +7035,67 @@ function TechnicalsTab() {
       <div style={{ marginBottom: 22 }}>
         <div style={{ fontSize: 26, fontWeight: 900, color: TXT, marginBottom: 6 }}>📈 Technicals — Qullamaggie · Zanger · Bonde · Minervini</div>
         <div style={{ fontSize: 13, color: MUTED, lineHeight: 1.5 }}>
-          Pure-technical scoring of your TradingView USA export. <b style={{ color: TXT }}>{techRows.length} stocks</b> scored.
-          Pulls from the same source as 🇺🇸 USA Multibagger — upload there to refresh.
+          Pure-technical scoring of any TradingView export — <b style={{ color: TXT }}>India · USA · or both mixed</b>.
+          <b style={{ color: TXT }}> {techRows.length} stocks scored</b>.
+          {techLocalRows.length > 0 ? <> · Source: <b style={{ color: '#10B981' }}>Technicals-tab upload ({techSources.length} file{techSources.length>1?'s':''})</b></> : <> · Source: <span style={{ color: MUTED }}>USA Multibagger cache (fallback)</span></>}
         </div>
+      </div>
+
+      {/* zzz146 — INDEPENDENT FILE UPLOAD for Technicals tab (India / USA / mix) */}
+      <div style={{ ...cardStyle, background: 'color-mix(in srgb, #22D3EE 5%, transparent)', borderColor: 'color-mix(in srgb, #22D3EE 40%, transparent)' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+          <div style={{ fontSize: 15, fontWeight: 900, color: CYAN }}>📂 UPLOAD TRADINGVIEW CSV(s)</div>
+          <span style={{ fontSize: 11.5, color: MUTED, fontStyle: 'italic' }}>Independent of USA Multibagger · Append or Replace · India + USA + mix all supported</span>
+        </div>
+        <input type="file" multiple accept=".csv,.xlsx,.xls" ref={techFileRef} style={{ display: 'none' }}
+          onChange={e => { if (e.target.files?.length) { handleTechFiles(e.target.files); e.target.value = ''; } }} />
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 10 }}>
+          <button onClick={() => techFileRef.current?.click()} disabled={techLoading}
+            style={{ background: CYAN, color: '#0B1220', border: 'none', padding: '8px 14px', borderRadius: 6, fontSize: 12.5, fontWeight: 800, cursor: techLoading ? 'wait' : 'pointer' }}>
+            {techLoading ? '⏳ Parsing…' : '📂 Choose CSV files (multi-select OK)'}
+          </button>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: TXT, cursor: 'pointer' }}>
+            <input type="checkbox" checked={techAppendMode} onChange={e => setTechAppendMode(e.target.checked)} />
+            <span><b>Append mode</b> (uncheck to REPLACE)</span>
+          </label>
+          {techLocalRows.length > 0 && (
+            <button onClick={clearTechRows} style={{ background: 'rgba(239,68,68,0.15)', color: '#EF4444', border: `1px solid rgba(239,68,68,0.3)`, padding: '7px 11px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+              🗑 Clear all ({techLocalRows.length} stocks)
+            </button>
+          )}
+          {techUploadMsg && (
+            <span style={{ background: techUploadMsg.startsWith('✓') ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)', color: techUploadMsg.startsWith('✓') ? '#10B981' : '#EF4444', padding: '6px 11px', borderRadius: 6, fontSize: 12, fontWeight: 700 }}>
+              {techUploadMsg}
+            </span>
+          )}
+        </div>
+        {techSources.length > 0 ? (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+            {techSources.map((s, i) => (
+              <div key={i} title={s.warning || ''} style={{ background: s.warning ? 'rgba(239,68,68,0.08)' : PANEL2, border: `1px solid ${s.warning ? 'rgba(239,68,68,0.3)' : LINE}`, padding: '5px 9px', borderRadius: 5, fontSize: 11, color: TXT, display: 'flex', gap: 6, alignItems: 'center' }}>
+                <span style={{ color: MUTED }}>{s.cols}c ·</span>
+                <span style={{ fontWeight: 700, color: CYAN }}>{s.rowCount}</span>
+                <span style={{ color: MUTED, maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
+                {s.warning && <span style={{ color: '#EF4444' }}>⚠️</span>}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ fontSize: 11.5, color: MUTED, fontStyle: 'italic', marginTop: 4 }}>
+            No files uploaded here yet. Tab is currently using the USA Multibagger cache as fallback. Upload TradingView CSVs above to take over with India/USA/mixed dataset.
+          </div>
+        )}
+        {techSources.some(s => s.warning) && (
+          <div style={{ fontSize: 11.5, color: '#EF4444', marginTop: 8, padding: 8, background: 'rgba(239,68,68,0.06)', borderRadius: 6 }}>
+            ⚠️ Some files have fewer than 60 columns — they're missing key technical fields (SMA, EMA, ATR, Industry). Stocks from those files will show "NO DATA" or be auto-rejected. Re-export from TradingView with the full column set (94 cols is the target — see suggestions block at bottom).
+          </div>
+        )}
       </div>
 
       {/* zzz133 — DATA QUALITY + ELIGIBILITY summary chips */}
       <div style={{ ...cardStyle, background: 'color-mix(in srgb, #10B981 5%, transparent)', borderColor: 'color-mix(in srgb, #10B981 30%, transparent)', padding: 14 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-          <span style={{ fontSize: 14, fontWeight: 800, color: '#10B981' }}>✅ zzz145 — RS percentile contextual label + nearMA tightened + RSI 85+ flag</span>
+          <span style={{ fontSize: 14, fontWeight: 800, color: '#10B981' }}>✅ zzz146 — Independent multi-file upload (India + USA + mix) + zzz145 fixes</span>
           <span style={{ background: 'rgba(255,255,255,0.06)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: TXT }}>Total <b>{dataQuality.total}</b></span>
           <span style={{ background: 'rgba(16,185,129,0.18)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: '#10B981' }}>✓ eligible <b>{techRows.filter(r => r.eligible).length}</b></span>
           <span style={{ background: 'rgba(239,68,68,0.12)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: '#EF4444' }}>✗ rejected <b>{rejected.length}</b></span>
