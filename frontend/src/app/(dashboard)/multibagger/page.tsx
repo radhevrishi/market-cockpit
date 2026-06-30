@@ -5971,29 +5971,57 @@ function TechnicalsTab() {
   const [techUploadMsg, setTechUploadMsg] = React.useState<string>('');
   const [techLoading, setTechLoading] = React.useState<boolean>(false);
   const techFileRef = React.useRef<HTMLInputElement>(null);
+  // zzz147 — Per-user toggle to disable USA fallback so user can see truly empty state
+  const TECH_NO_FALLBACK_KEY = 'mb_tech_no_fallback_v1';
+  const [techNoFallback, setTechNoFallback] = React.useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    try { return localStorage.getItem(TECH_NO_FALLBACK_KEY) === '1'; } catch { return false; }
+  });
+  React.useEffect(() => { try { localStorage.setItem(TECH_NO_FALLBACK_KEY, techNoFallback ? '1' : '0'); } catch {} }, [techNoFallback]);
 
   const handleTechFiles = async (filesList: FileList) => {
     setTechLoading(true);
     setTechUploadMsg('');
     try {
+      // zzz147 — Defensive: if no files passed in, show warning instead of fake success.
+      if (!filesList || filesList.length === 0) {
+        setTechUploadMsg('⚠️ No files received — try the file picker again.');
+        setTechLoading(false);
+        return;
+      }
       const XLSX = await import('xlsx');
       const newRows: any[] = [];
       const newSources: TechSource[] = [];
+      const fileDiagnostics: string[] = [];
       for (const file of Array.from(filesList)) {
         const buf = await file.arrayBuffer();
         const wb = XLSX.read(buf, { type: 'array' });
         const sheet = wb.Sheets[wb.SheetNames[0]];
         const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
         const cols = raw.length > 0 ? Object.keys(raw[0]).length : 0;
-        let parsedCount = 0;
+        // zzz147 — Detect which symbol-column the file uses
+        let symbolKey = 'Symbol';
+        if (raw.length > 0 && !(symbolKey in raw[0])) {
+          if ('Ticker' in raw[0]) symbolKey = 'Ticker';
+        }
+        let parsedCount = 0; let rejectCount = 0;
         for (const r of raw) {
-          const parsed = parseUSARow(r as Record<string, unknown>);
-          if (!parsed || !parsed.symbol) continue;
+          const rec = r as Record<string, unknown>;
+          // zzz147 — Normalize so parseUSARow finds 'Symbol' regardless of original key
+          if (symbolKey !== 'Symbol' && rec[symbolKey] && !rec['Symbol']) {
+            rec['Symbol'] = rec[symbolKey];
+          }
+          const parsed = parseUSARow(rec);
+          if (!parsed || !parsed.symbol) { rejectCount++; continue; }
           newRows.push(parsed);
           parsedCount++;
         }
         let warning: string | undefined;
         if (cols < 60) warning = `⚠️ Thin CSV (only ${cols} cols) — missing SMA/EMA/ATR/Industry. Stocks will show NO DATA.`;
+        if (parsedCount === 0) {
+          warning = `⚠️ Zero rows parsed (${raw.length} raw, ${rejectCount} rejected). Symbol column: "${symbolKey}". Check that the CSV has a Symbol or Ticker column.`;
+          fileDiagnostics.push(`"${file.name}": 0 of ${raw.length} parsed — no symbol column?`);
+        }
         newSources.push({ name: file.name, rowCount: parsedCount, cols, warning });
       }
       // Merge: append (default) or replace
@@ -6012,7 +6040,14 @@ function TechnicalsTab() {
       setTechSources(baseSources);
       try { localStorage.setItem(TECH_ROWS_KEY, JSON.stringify(baseRows)); } catch {}
       try { localStorage.setItem(TECH_SOURCES_KEY, JSON.stringify(baseSources)); } catch {}
-      setTechUploadMsg(`✓ Loaded ${newSources.length} file${newSources.length>1?'s':''} · added ${added}, deduped ${dup} · total ${baseRows.length} stocks`);
+      // zzz147 — Differentiated messages
+      if (newRows.length === 0) {
+        setTechUploadMsg(`⚠️ ${newSources.length} file${newSources.length>1?'s':''} read but 0 rows parsed. ${fileDiagnostics.length>0 ? fileDiagnostics[0] : ''} See file chips below for per-file warning.`);
+      } else if (added === 0 && dup > 0) {
+        setTechUploadMsg(`ℹ️ All ${dup} row${dup>1?'s':''} were duplicates of existing data. Uncheck Append to replace.`);
+      } else {
+        setTechUploadMsg(`✓ Loaded ${newSources.length} file${newSources.length>1?'s':''} · added ${added}, deduped ${dup} · total ${baseRows.length} stocks`);
+      }
       bumpData();
     } catch (e) {
       setTechUploadMsg(`⚠️ Error: ${e instanceof Error ? e.message : String(e)}`);
@@ -6031,6 +6066,8 @@ function TechnicalsTab() {
   const usaRows = React.useMemo<any[]>(() => {
     // zzz146 — Prefer Technicals-tab-local uploads. Fall back to USA cache.
     if (techLocalRows.length > 0) return techLocalRows;
+    // zzz147 — Respect "disable USA fallback" toggle so user can see truly empty state
+    if (techNoFallback) return [];
     if (typeof window === 'undefined') return [];
     try {
       const mem = _getUsaRowsMemCache();
@@ -6048,7 +6085,7 @@ function TechnicalsTab() {
     } catch {}
     return [];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataTick, techLocalRows]);
+  }, [dataTick, techLocalRows, techNoFallback]);
 
   type TechRow = {
     symbol: string; company?: string; sector?: string;
@@ -7037,7 +7074,7 @@ function TechnicalsTab() {
         <div style={{ fontSize: 13, color: MUTED, lineHeight: 1.5 }}>
           Pure-technical scoring of any TradingView export — <b style={{ color: TXT }}>India · USA · or both mixed</b>.
           <b style={{ color: TXT }}> {techRows.length} stocks scored</b>.
-          {techLocalRows.length > 0 ? <> · Source: <b style={{ color: '#10B981' }}>Technicals-tab upload ({techSources.length} file{techSources.length>1?'s':''})</b></> : <> · Source: <span style={{ color: MUTED }}>USA Multibagger cache (fallback)</span></>}
+          {techLocalRows.length > 0 ? <> · Source: <b style={{ color: '#10B981' }}>Technicals-tab upload ({techSources.length} file{techSources.length>1?'s':''})</b></> : (techNoFallback ? <> · Source: <span style={{ color: '#EF4444' }}>(empty — fallback disabled)</span></> : <> · Source: <span style={{ color: MUTED }}>USA Multibagger cache (fallback)</span></>)}
         </div>
       </div>
 
@@ -7058,11 +7095,27 @@ function TechnicalsTab() {
             <input type="checkbox" checked={techAppendMode} onChange={e => setTechAppendMode(e.target.checked)} />
             <span><b>Append mode</b> (uncheck to REPLACE)</span>
           </label>
-          {techLocalRows.length > 0 && (
-            <button onClick={clearTechRows} style={{ background: 'rgba(239,68,68,0.15)', color: '#EF4444', border: `1px solid rgba(239,68,68,0.3)`, padding: '7px 11px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
-              🗑 Clear all ({techLocalRows.length} stocks)
-            </button>
-          )}
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: TXT, cursor: 'pointer' }} title="When checked, the tab will show empty when no Technicals uploads exist (instead of falling back to USA Multibagger data)">
+            <input type="checkbox" checked={techNoFallback} onChange={e => setTechNoFallback(e.target.checked)} />
+            <span><b>Disable USA fallback</b></span>
+          </label>
+          {/* zzz147 — Clear button always visible. Smart behavior depending on state. */}
+          <button
+            onClick={() => {
+              if (techLocalRows.length > 0) {
+                clearTechRows();
+              } else if (!techNoFallback && techRows.length > 0) {
+                setTechNoFallback(true);
+                setTechUploadMsg('✓ USA fallback disabled. Tab is now empty until you upload here.');
+              } else {
+                setTechUploadMsg('Nothing to clear — already empty.');
+                setTimeout(() => setTechUploadMsg(''), 2500);
+              }
+            }}
+            style={{ background: 'rgba(239,68,68,0.15)', color: '#EF4444', border: `1px solid rgba(239,68,68,0.3)`, padding: '7px 11px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+          >
+            🗑 Clear {techLocalRows.length > 0 ? `(${techLocalRows.length} uploads)` : (!techNoFallback && techRows.length > 0 ? `(USA fallback · ${techRows.length} stocks)` : '(empty)')}
+          </button>
           {techUploadMsg && (
             <span style={{ background: techUploadMsg.startsWith('✓') ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)', color: techUploadMsg.startsWith('✓') ? '#10B981' : '#EF4444', padding: '6px 11px', borderRadius: 6, fontSize: 12, fontWeight: 700 }}>
               {techUploadMsg}
@@ -7095,7 +7148,7 @@ function TechnicalsTab() {
       {/* zzz133 — DATA QUALITY + ELIGIBILITY summary chips */}
       <div style={{ ...cardStyle, background: 'color-mix(in srgb, #10B981 5%, transparent)', borderColor: 'color-mix(in srgb, #10B981 30%, transparent)', padding: 14 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-          <span style={{ fontSize: 14, fontWeight: 800, color: '#10B981' }}>✅ zzz146 — Independent multi-file upload (India + USA + mix) + zzz145 fixes</span>
+          <span style={{ fontSize: 14, fontWeight: 800, color: '#10B981' }}>✅ zzz147 — Clear-always button + fallback toggle + upload diagnostics</span>
           <span style={{ background: 'rgba(255,255,255,0.06)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: TXT }}>Total <b>{dataQuality.total}</b></span>
           <span style={{ background: 'rgba(16,185,129,0.18)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: '#10B981' }}>✓ eligible <b>{techRows.filter(r => r.eligible).length}</b></span>
           <span style={{ background: 'rgba(239,68,68,0.12)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: '#EF4444' }}>✗ rejected <b>{rejected.length}</b></span>
