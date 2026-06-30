@@ -6115,7 +6115,8 @@ function TechnicalsTab() {
 
       // zzz132 — DATA QUALITY warnings (parabolic / data anomaly detection)
       const qualityFlags: string[] = [];
-      if (typeof rsi === 'number' && rsi >= 88) qualityFlags.push('RSI parabolic');
+      // zzz145 — RSI 85+ now flagged near-parabolic (was 88) so HNGE-style names trigger warning
+      if (typeof rsi === 'number' && rsi >= 85) qualityFlags.push('RSI near-parabolic (' + rsi.toFixed(0) + ')');
       if (typeof pctVsEma50 === 'number' && pctVsEma50 >= 60) qualityFlags.push('extreme extension');
       if (typeof mcap === 'number' && mcap < 0.3) qualityFlags.push('micro-cap illiquid');
       if (typeof avgVol30d === 'number' && avgVol30d < 200_000) qualityFlags.push('thin volume');
@@ -6330,7 +6331,8 @@ function TechnicalsTab() {
       // After a strong 3M move, low rel-vol = consolidation tight flag = Qulla setup.
       // Specifically: relVol1w < 0.7 AND (3M ≥ 25% OR 6M ≥ 50%) AND position near MA.
       const hadPriorRun = (typeof perf3m === 'number' && perf3m >= 25) || (typeof perf6m === 'number' && perf6m >= 50);
-      const nearMA = typeof qPctMA === 'number' && qPctMA >= -3 && qPctMA <= 15;
+      // zzz145 — tightened from 15 → 10: MTRN at +15% off EMA21 should NOT get tight-flag bonus
+      const nearMA = typeof qPctMA === 'number' && qPctMA >= -3 && qPctMA <= 10;
       if (typeof relVol1w === 'number' && relVol1w < 0.7 && hadPriorRun && nearMA) {
         qullaScore += 8; qReasons.push(`📉 Vol dry-up ${relVol1w.toFixed(2)}× after run (tight flag)`);
       }
@@ -6639,7 +6641,7 @@ function TechnicalsTab() {
   const qualityOnSale = React.useMemo(() => {
     const passes = [...techRows]
       // Don't include parabolic / thin / micro flagged rows
-      .filter(r => !r.qualityFlags || (!r.qualityFlags.includes('RSI parabolic') && !r.qualityFlags.includes('thin volume') && !r.qualityFlags.includes('micro-cap illiquid')))
+      .filter(r => !r.qualityFlags || (!r.qualityFlags.some(f => f.startsWith('RSI near-parabolic')) && !r.qualityFlags.includes('thin volume') && !r.qualityFlags.includes('micro-cap illiquid')))
       // Sane price range (not in free-fall)
       .filter(r => {
         const p = typeof r.pctVsSma200 === 'number' ? r.pctVsSma200 : r.pctVsEma200;
@@ -6696,7 +6698,7 @@ function TechnicalsTab() {
         if (!r.symbol || seen.has(r.symbol)) continue;
         // Hard exclusions even within tiered lists
         if (r.eligibilityTags.includes('EARNINGS_IMMINENT')) continue;
-        if (r.qualityFlags && r.qualityFlags.includes('RSI parabolic')) continue;
+        if (r.qualityFlags && r.qualityFlags.some(f => f.startsWith('RSI near-parabolic'))) continue;
         seen.add(r.symbol);
         out.push({ ...r, _tier: tier });
       }
@@ -6964,7 +6966,7 @@ function TechnicalsTab() {
       {/* zzz133 — DATA QUALITY + ELIGIBILITY summary chips */}
       <div style={{ ...cardStyle, background: 'color-mix(in srgb, #10B981 5%, transparent)', borderColor: 'color-mix(in srgb, #10B981 30%, transparent)', padding: 14 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-          <span style={{ fontSize: 14, fontWeight: 800, color: '#10B981' }}>✅ zzz144 — Volume dry-up + tighter Qulla TEXTBOOK + Champion subtitle fix</span>
+          <span style={{ fontSize: 14, fontWeight: 800, color: '#10B981' }}>✅ zzz145 — RS percentile contextual label + nearMA tightened + RSI 85+ flag</span>
           <span style={{ background: 'rgba(255,255,255,0.06)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: TXT }}>Total <b>{dataQuality.total}</b></span>
           <span style={{ background: 'rgba(16,185,129,0.18)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: '#10B981' }}>✓ eligible <b>{techRows.filter(r => r.eligible).length}</b></span>
           <span style={{ background: 'rgba(239,68,68,0.12)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: '#EF4444' }}>✗ rejected <b>{rejected.length}</b></span>
@@ -7634,7 +7636,7 @@ function TechnicalsTab() {
                   ['Momentum accel (0-3)', typeof expandedRow.momentumAccel === 'number' ? `${expandedRow.momentumAccel}/3 ${expandedRow.momentumAccel >= 2 ? '🚀' : ''}` : '—'],
                   ['Beta', typeof expandedRow.beta === 'number' ? expandedRow.beta.toFixed(2) : '—'],
                   ['Industry', expandedRow.industry || '—'],
-                  ['Composite RS (0-100)', typeof expandedRow.compositeRs === 'number' ? `${expandedRow.compositeRs} ${expandedRow.compositeRs >= 80 ? '🚀 elite' : expandedRow.compositeRs >= 60 ? '✅ strong' : expandedRow.compositeRs >= 40 ? '' : '⚠️ weak'}` : '—'],
+                  ['Composite RS (vs universe)', typeof expandedRow.compositeRs === 'number' ? `${expandedRow.compositeRs}%ile ${expandedRow.compositeRs >= 80 ? '🚀 universe leader' : expandedRow.compositeRs >= 60 ? '✅ above-median' : expandedRow.compositeRs >= 30 ? '· median band' : '· bottom decile (note: universe pre-curated for momentum)'}` : '—'],
                   ['Industry RS rank', typeof expandedRow.industryRsRank === 'number' ? `${expandedRow.industryRsRank} ${expandedRow.industryRsRank >= 80 ? '🏭 leading' : expandedRow.industryRsRank <= 30 ? '⚠️ laggard' : ''}` : '—'],
                 ].map(([label, val]) => (
                   <div key={label} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 12, borderBottom: `1px solid rgba(255,255,255,0.04)` }}>
