@@ -5410,7 +5410,7 @@ export default function MultibaggerPage() {
   // dedicated dashboards for the USA Multibagger universe and the
   // Turnaround universe respectively. The original 'analytics' tab stays
   // as the cross-market overview (India-led).
-  const [activeTab, setActiveTab] = useState<'analytics'|'excel'|'usa'|'usa-analytics'|'technicals'|'turnaround'|'turnaround-analytics'|'usa-checklist'|'checklist'|'capital-alloc'|'reference'>('analytics');
+  const [activeTab, setActiveTab] = useState<'analytics'|'excel'|'usa'|'usa-analytics'|'technicals'|'technicals-usa'|'technicals-ind'|'turnaround'|'turnaround-analytics'|'usa-checklist'|'checklist'|'capital-alloc'|'reference'>('analytics');
   React.useEffect(() => {
     const onSwitch = (e: Event) => {
       const ce = e as CustomEvent<{ tab: 'excel' | 'usa' }>;
@@ -5690,7 +5690,8 @@ export default function MultibaggerPage() {
               {id:'excel',                  label:'🇮🇳 India Multibagger Ranking'},
               {id:'usa',                    label:'🇺🇸 USA Multibagger'},
               {id:'usa-analytics',          label:'📊 USA Analytics'},
-              {id:'technicals',             label:'📈 Technicals (Qulla/Zanger/Bonde/Minervini)'},
+              {id:'technicals-usa',         label:'📈 USA Technicals (Qulla/Zanger/Bonde/Minervini)'},
+              {id:'technicals-ind',         label:'📈 India Technicals (Qulla/Zanger/Bonde/Minervini)'},
               {id:'turnaround',             label:'🔄 Turnarounds'},
               {id:'turnaround-analytics',   label:'📈 Turnaround Analytics'},
               {id:'usa-checklist',          label:'🇺🇸 USA Checklist'},
@@ -5722,7 +5723,9 @@ export default function MultibaggerPage() {
           sector ranking, conviction overlap stats. The old USAAnalytics function
           is retained as dead code below for reference but no longer mounted. */}
       {activeTab==='usa-analytics'         && <MultibaggerAnalytics indiaRows={excelRows} onSwitchTab={(t) => setActiveTab(t as any)} initialScope="USA" />}
-      {activeTab==='technicals'            && <TechnicalsTab />}
+      {activeTab==='technicals-usa'        && <TechnicalsTab market="USA" />}
+      {activeTab==='technicals-ind'        && <TechnicalsTab market="IND" />}
+      {activeTab==='technicals'            && <TechnicalsTab market="USA" />}
       {activeTab==='turnaround'            && <TurnaroundCompare />}
       {activeTab==='turnaround-analytics'  && <TurnaroundAnalytics />}
       {activeTab==='usa-checklist'         && <USAChecklist />}
@@ -5927,7 +5930,11 @@ function MultiConfirmedCard({ stocks }: { stocks: any[] }) {
 //
 // Right entry zone: 0–7% above EMA50 (proxy for Qullamaggie's 21-EMA rule).
 // ═══════════════════════════════════════════════════════════════════════════
-function TechnicalsTab() {
+function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
+  // zzz149 — Tab is parameterized by market. All localStorage keys are scoped
+  // per market so USA + India tabs are fully independent. Uploads in either
+  // tab auto-segregate rows by Exchange field into BOTH tabs' caches.
+  const MK = market.toLowerCase(); // 'usa' | 'ind'
   // zzz131 — FIX `num is not defined` runtime error. The `num` helper was
   // previously only defined inside MultibaggerAnalytics (line ~7117), so when
   // this standalone TechnicalsTab component rendered it threw ReferenceError
@@ -5953,11 +5960,23 @@ function TechnicalsTab() {
     };
   }, []);
 
-  // zzz146 — Independent Technicals tab upload state. Multi-file, append/replace,
-  // India + USA + mix. Separate cache from USA Multibagger so user can keep them
-  // independently. Falls back to USA Multibagger cache when nothing uploaded here.
-  const TECH_ROWS_KEY = 'mb_tech_rows_v1';
-  const TECH_SOURCES_KEY = 'mb_tech_sources_v1';
+  // zzz149 — Per-market localStorage keys. USA tab uses _usa_, India tab uses _ind_.
+  // No fallback to USA Multibagger cache — empty means empty.
+  const TECH_ROWS_KEY = `mb_tech_rows_${MK}_v1`;
+  const TECH_SOURCES_KEY = `mb_tech_sources_${MK}_v1`;
+  // zzz149 — Migration: copy legacy mb_tech_rows_v1 → USA tab on first mount (one-time)
+  if (typeof window !== 'undefined' && MK === 'usa') {
+    try {
+      const legacyRows = localStorage.getItem('mb_tech_rows_v1');
+      if (legacyRows && !localStorage.getItem(TECH_ROWS_KEY)) {
+        localStorage.setItem(TECH_ROWS_KEY, legacyRows);
+        const legacySources = localStorage.getItem('mb_tech_sources_v1');
+        if (legacySources) localStorage.setItem(TECH_SOURCES_KEY, legacySources);
+        localStorage.removeItem('mb_tech_rows_v1');
+        localStorage.removeItem('mb_tech_sources_v1');
+      }
+    } catch {}
+  }
   type TechSource = { name: string; rowCount: number; cols: number; warning?: string };
   const [techLocalRows, setTechLocalRows] = React.useState<any[]>(() => {
     if (typeof window === 'undefined') return [];
@@ -5971,13 +5990,10 @@ function TechnicalsTab() {
   const [techUploadMsg, setTechUploadMsg] = React.useState<string>('');
   const [techLoading, setTechLoading] = React.useState<boolean>(false);
   const techFileRef = React.useRef<HTMLInputElement>(null);
-  // zzz147 — Per-user toggle to disable USA fallback so user can see truly empty state
-  const TECH_NO_FALLBACK_KEY = 'mb_tech_no_fallback_v1';
-  const [techNoFallback, setTechNoFallback] = React.useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    try { return localStorage.getItem(TECH_NO_FALLBACK_KEY) === '1'; } catch { return false; }
-  });
-  React.useEffect(() => { try { localStorage.setItem(TECH_NO_FALLBACK_KEY, techNoFallback ? '1' : '0'); } catch {} }, [techNoFallback]);
+  // zzz149 — Fallback toggle removed entirely. Empty = empty, period.
+  // Variables retained as constants so existing UI code referencing them still compiles.
+  const techNoFallback = true;
+  const setTechNoFallback = (_: boolean) => {};
 
   // zzz148 — Accepts File[] (already cloned from FileList by caller) to avoid the
   // race where onChange resets e.target.value before the async handler iterates.
@@ -6026,29 +6042,82 @@ function TechnicalsTab() {
         }
         newSources.push({ name: file.name, rowCount: parsedCount, cols, warning });
       }
-      // Merge: append (default) or replace
-      const baseRows = techAppendMode ? [...techLocalRows] : [];
-      const baseSources = techAppendMode ? [...techSources] : [];
-      const seen = new Set(baseRows.map(r => r.symbol));
-      let added = 0, dup = 0;
+      // zzz149 — Auto-segregate each parsed row by Exchange field into USA or India bucket.
+      // Single upload fans out into BOTH tabs' localStorage so the user only uploads once.
+      const USA_EXCHANGES = new Set(['NYSE','NASDAQ','NMS','ARCA','AMEX','BATS','OTC','NYSE ARCA','NYSEARCA']);
+      const IND_EXCHANGES = new Set(['NSE','BSE']);
+      const usaNewRows: any[] = [];
+      const indNewRows: any[] = [];
+      const unknownNewRows: any[] = [];
       for (const r of newRows) {
-        if (seen.has(r.symbol)) { dup++; continue; }
-        seen.add(r.symbol);
-        baseRows.push(r);
-        added++;
+        const ex = String((r as any).exchange || '').toUpperCase().trim();
+        if (USA_EXCHANGES.has(ex)) usaNewRows.push(r);
+        else if (IND_EXCHANGES.has(ex)) indNewRows.push(r);
+        else unknownNewRows.push(r);
       }
+      // Unknown rows → keep them in the CURRENT tab (user chose to upload here)
+      const currentBucket = MK === 'usa' ? usaNewRows : indNewRows;
+      currentBucket.push(...unknownNewRows);
+
+      // Read the OTHER tab's current rows + sources to merge into
+      const otherMk = MK === 'usa' ? 'ind' : 'usa';
+      const otherRowsKey = `mb_tech_rows_${otherMk}_v1`;
+      const otherSourcesKey = `mb_tech_sources_${otherMk}_v1`;
+      let otherExistingRows: any[] = [];
+      let otherExistingSources: TechSource[] = [];
+      try { otherExistingRows = JSON.parse(localStorage.getItem(otherRowsKey) || '[]'); } catch {}
+      try { otherExistingSources = JSON.parse(localStorage.getItem(otherSourcesKey) || '[]'); } catch {}
+
+      // Merge function: append (default) or replace, dedupe by symbol
+      const mergeBucket = (existing: any[], newOnes: any[]) => {
+        const base = techAppendMode ? [...existing] : [];
+        const seen = new Set(base.map((r: any) => r.symbol));
+        let added = 0, dup = 0;
+        for (const r of newOnes) {
+          if (seen.has(r.symbol)) { dup++; continue; }
+          seen.add(r.symbol);
+          base.push(r);
+          added++;
+        }
+        return { rows: base, added, dup };
+      };
+
+      // Apply to current tab
+      const currentMerge = mergeBucket(techLocalRows, currentBucket);
+      const baseSources = techAppendMode ? [...techSources] : [];
       baseSources.push(...newSources);
-      setTechLocalRows(baseRows);
+      setTechLocalRows(currentMerge.rows);
       setTechSources(baseSources);
-      try { localStorage.setItem(TECH_ROWS_KEY, JSON.stringify(baseRows)); } catch {}
+      try { localStorage.setItem(TECH_ROWS_KEY, JSON.stringify(currentMerge.rows)); } catch {}
       try { localStorage.setItem(TECH_SOURCES_KEY, JSON.stringify(baseSources)); } catch {}
-      // zzz147 — Differentiated messages
+
+      // Apply to OTHER tab (write-only; that tab will pick up on its next mount/refresh)
+      const otherBucket = MK === 'usa' ? indNewRows : usaNewRows;
+      let otherAdded = 0;
+      if (otherBucket.length > 0) {
+        const otherMerge = mergeBucket(otherExistingRows, otherBucket);
+        otherAdded = otherMerge.added;
+        const otherSourcesNew = techAppendMode ? [...otherExistingSources] : [];
+        // Same source files recorded in the OTHER tab too so user sees full provenance
+        otherSourcesNew.push(...newSources.map(s => ({ ...s, rowCount: otherBucket.length })));
+        try { localStorage.setItem(otherRowsKey, JSON.stringify(otherMerge.rows)); } catch {}
+        try { localStorage.setItem(otherSourcesKey, JSON.stringify(otherSourcesNew)); } catch {}
+      }
+
+      // zzz149 — Diagnostics + routed-count message
+      const otherLabel = MK === 'usa' ? 'India' : 'USA';
+      const meLabel = MK === 'usa' ? 'USA' : 'India';
       if (newRows.length === 0) {
         setTechUploadMsg(`⚠️ ${newSources.length} file${newSources.length>1?'s':''} read but 0 rows parsed. ${fileDiagnostics.length>0 ? fileDiagnostics[0] : ''} See file chips below for per-file warning.`);
-      } else if (added === 0 && dup > 0) {
-        setTechUploadMsg(`ℹ️ All ${dup} row${dup>1?'s':''} were duplicates of existing data. Uncheck Append to replace.`);
       } else {
-        setTechUploadMsg(`✓ Loaded ${newSources.length} file${newSources.length>1?'s':''} · added ${added}, deduped ${dup} · total ${baseRows.length} stocks`);
+        const parts: string[] = [];
+        parts.push(`✓ ${newSources.length} file${newSources.length>1?'s':''}`);
+        parts.push(`→ ${meLabel} ${currentMerge.added} new`);
+        if (otherAdded > 0) parts.push(`→ ${otherLabel} ${otherAdded} new (auto-routed by Exchange)`);
+        if (currentMerge.dup > 0) parts.push(`${currentMerge.dup} dedup`);
+        if (unknownNewRows.length > 0) parts.push(`${unknownNewRows.length} unknown-exchange kept in ${meLabel}`);
+        parts.push(`· total ${currentMerge.rows.length} on this tab`);
+        setTechUploadMsg(parts.join(' '));
       }
       bumpData();
     } catch (e) {
@@ -6061,33 +6130,12 @@ function TechnicalsTab() {
     setTechSources([]);
     try { localStorage.removeItem(TECH_ROWS_KEY); } catch {}
     try { localStorage.removeItem(TECH_SOURCES_KEY); } catch {}
-    setTechUploadMsg('✓ Cleared all Technicals uploads. Falling back to USA Multibagger data if available.');
+    setTechUploadMsg(`✓ Cleared ${market === 'USA' ? 'USA' : 'India'} Technicals uploads.`);
     bumpData();
   };
 
-  const usaRows = React.useMemo<any[]>(() => {
-    // zzz146 — Prefer Technicals-tab-local uploads. Fall back to USA cache.
-    if (techLocalRows.length > 0) return techLocalRows;
-    // zzz147 — Respect "disable USA fallback" toggle so user can see truly empty state
-    if (techNoFallback) return [];
-    if (typeof window === 'undefined') return [];
-    try {
-      const mem = _getUsaRowsMemCache();
-      if (Array.isArray(mem) && mem.length > 0) return mem;
-      const raw = localStorage.getItem(USA_STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-      const slimRaw = localStorage.getItem(USA_SLIM_KEY);
-      if (slimRaw) {
-        const slim = JSON.parse(slimRaw);
-        if (Array.isArray(slim)) return slim;
-      }
-    } catch {}
-    return [];
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataTick, techLocalRows, techNoFallback]);
+  // zzz149 — Per-market data. No fallback to other caches.
+  const usaRows = React.useMemo<any[]>(() => techLocalRows, [dataTick, techLocalRows]);
 
   type TechRow = {
     symbol: string; company?: string; sector?: string;
@@ -6907,11 +6955,11 @@ function TechnicalsTab() {
   // back to 1000 the moment the user cleared it to retype — making it unchangeable.
   const [portfolioInput, setPortfolioInput] = React.useState<string>(() => {
     if (typeof window === 'undefined') return '52000';
-    try { return localStorage.getItem('mb_tech_portfolio') || '52000'; } catch { return '52000'; }
+    try { return localStorage.getItem(`mb_tech_portfolio_${MK}`) || '52000'; } catch { return '52000'; }
   });
   const [riskPctInput, setRiskPctInput] = React.useState<string>(() => {
     if (typeof window === 'undefined') return '1';
-    try { return localStorage.getItem('mb_tech_risk_pct') || '1'; } catch { return '1'; }
+    try { return localStorage.getItem(`mb_tech_risk_pct_${MK}`) || '1'; } catch { return '1'; }
   });
   // Parsed numeric values used in calcs (fallback to last valid value when input is mid-edit)
   const portfolioSize = React.useMemo(() => {
@@ -6922,30 +6970,30 @@ function TechnicalsTab() {
     const v = parseFloat(riskPctInput);
     return Number.isFinite(v) && v > 0 ? v : 1;
   }, [riskPctInput]);
-  React.useEffect(() => { try { localStorage.setItem('mb_tech_portfolio', portfolioInput); } catch {} }, [portfolioInput]);
-  React.useEffect(() => { try { localStorage.setItem('mb_tech_risk_pct', riskPctInput); } catch {} }, [riskPctInput]);
+  React.useEffect(() => { try { localStorage.setItem(`mb_tech_portfolio_${MK}`, portfolioInput); } catch {} }, [portfolioInput]);
+  React.useEffect(() => { try { localStorage.setItem(`mb_tech_risk_pct_${MK}`, riskPctInput); } catch {} }, [riskPctInput]);
 
   // zzz137 — P/L Calculator inputs (4 fields, persists to LS)
   const [plEntry, setPlEntry] = React.useState<string>(() => {
     if (typeof window === 'undefined') return '';
-    try { return localStorage.getItem('mb_tech_pl_entry') || ''; } catch { return ''; }
+    try { return localStorage.getItem(`mb_tech_pl_entry_${MK}`) || ''; } catch { return ''; }
   });
   const [plQty, setPlQty] = React.useState<string>(() => {
     if (typeof window === 'undefined') return '';
-    try { return localStorage.getItem('mb_tech_pl_qty') || ''; } catch { return ''; }
+    try { return localStorage.getItem(`mb_tech_pl_qty_${MK}`) || ''; } catch { return ''; }
   });
   const [plStop, setPlStop] = React.useState<string>(() => {
     if (typeof window === 'undefined') return '';
-    try { return localStorage.getItem('mb_tech_pl_stop') || ''; } catch { return ''; }
+    try { return localStorage.getItem(`mb_tech_pl_stop_${MK}`) || ''; } catch { return ''; }
   });
   const [plTarget, setPlTarget] = React.useState<string>(() => {
     if (typeof window === 'undefined') return '';
-    try { return localStorage.getItem('mb_tech_pl_target') || ''; } catch { return ''; }
+    try { return localStorage.getItem(`mb_tech_pl_target_${MK}`) || ''; } catch { return ''; }
   });
-  React.useEffect(() => { try { localStorage.setItem('mb_tech_pl_entry', plEntry); } catch {} }, [plEntry]);
-  React.useEffect(() => { try { localStorage.setItem('mb_tech_pl_qty', plQty); } catch {} }, [plQty]);
-  React.useEffect(() => { try { localStorage.setItem('mb_tech_pl_stop', plStop); } catch {} }, [plStop]);
-  React.useEffect(() => { try { localStorage.setItem('mb_tech_pl_target', plTarget); } catch {} }, [plTarget]);
+  React.useEffect(() => { try { localStorage.setItem(`mb_tech_pl_entry_${MK}`, plEntry); } catch {} }, [plEntry]);
+  React.useEffect(() => { try { localStorage.setItem(`mb_tech_pl_qty_${MK}`, plQty); } catch {} }, [plQty]);
+  React.useEffect(() => { try { localStorage.setItem(`mb_tech_pl_stop_${MK}`, plStop); } catch {} }, [plStop]);
+  React.useEffect(() => { try { localStorage.setItem(`mb_tech_pl_target_${MK}`, plTarget); } catch {} }, [plTarget]);
 
   // P/L calc — works for any combination of valid inputs
   const plCalc = React.useMemo(() => {
@@ -7074,9 +7122,9 @@ function TechnicalsTab() {
       <div style={{ marginBottom: 22 }}>
         <div style={{ fontSize: 26, fontWeight: 900, color: TXT, marginBottom: 6 }}>📈 Technicals — Qullamaggie · Zanger · Bonde · Minervini</div>
         <div style={{ fontSize: 13, color: MUTED, lineHeight: 1.5 }}>
-          Pure-technical scoring of any TradingView export — <b style={{ color: TXT }}>India · USA · or both mixed</b>.
+          {market === 'USA' ? '🇺🇸 USA Technicals' : '🇮🇳 India Technicals'} — pure-technical scoring of your TradingView {market === 'USA' ? 'USA' : 'India'} export.
           <b style={{ color: TXT }}> {techRows.length} stocks scored</b>.
-          {techLocalRows.length > 0 ? <> · Source: <b style={{ color: '#10B981' }}>Technicals-tab upload ({techSources.length} file{techSources.length>1?'s':''})</b></> : (techNoFallback ? <> · Source: <span style={{ color: '#EF4444' }}>(empty — fallback disabled)</span></> : <> · Source: <span style={{ color: MUTED }}>USA Multibagger cache (fallback)</span></>)}
+          {techLocalRows.length > 0 ? <> · Source: <b style={{ color: '#10B981' }}>{techSources.length} file{techSources.length>1?'s':''} uploaded here</b></> : <> · Source: <span style={{ color: MUTED }}>(empty — upload below)</span></>}
         </div>
       </div>
 
@@ -7084,7 +7132,7 @@ function TechnicalsTab() {
       <div style={{ ...cardStyle, background: 'color-mix(in srgb, #22D3EE 5%, transparent)', borderColor: 'color-mix(in srgb, #22D3EE 40%, transparent)' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginBottom: 10 }}>
           <div style={{ fontSize: 15, fontWeight: 900, color: CYAN }}>📂 UPLOAD TRADINGVIEW CSV(s)</div>
-          <span style={{ fontSize: 11.5, color: MUTED, fontStyle: 'italic' }}>Independent of USA Multibagger · Append or Replace · India + USA + mix all supported</span>
+          <span style={{ fontSize: 11.5, color: MUTED, fontStyle: 'italic' }}>Rows auto-routed by Exchange · {market === 'USA' ? 'NYSE/NASDAQ/OTC stay here' : 'NSE/BSE stay here'} · {market === 'USA' ? 'NSE/BSE fan out to India tab' : 'NYSE/NASDAQ/OTC fan out to USA tab'}</span>
         </div>
         <input type="file" multiple accept=".csv,.xlsx,.xls" ref={techFileRef} style={{ display: 'none' }}
           onChange={e => {
@@ -7105,18 +7153,11 @@ function TechnicalsTab() {
             <input type="checkbox" checked={techAppendMode} onChange={e => setTechAppendMode(e.target.checked)} />
             <span><b>Append mode</b> (uncheck to REPLACE)</span>
           </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: TXT, cursor: 'pointer' }} title="When checked, the tab will show empty when no Technicals uploads exist (instead of falling back to USA Multibagger data)">
-            <input type="checkbox" checked={techNoFallback} onChange={e => setTechNoFallback(e.target.checked)} />
-            <span><b>Disable USA fallback</b></span>
-          </label>
-          {/* zzz147 — Clear button always visible. Smart behavior depending on state. */}
+          {/* zzz149 — Clear button always visible. No fallback exists anymore. */}
           <button
             onClick={() => {
               if (techLocalRows.length > 0) {
                 clearTechRows();
-              } else if (!techNoFallback && techRows.length > 0) {
-                setTechNoFallback(true);
-                setTechUploadMsg('✓ USA fallback disabled. Tab is now empty until you upload here.');
               } else {
                 setTechUploadMsg('Nothing to clear — already empty.');
                 setTimeout(() => setTechUploadMsg(''), 2500);
@@ -7124,7 +7165,7 @@ function TechnicalsTab() {
             }}
             style={{ background: 'rgba(239,68,68,0.15)', color: '#EF4444', border: `1px solid rgba(239,68,68,0.3)`, padding: '7px 11px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
           >
-            🗑 Clear {techLocalRows.length > 0 ? `(${techLocalRows.length} uploads)` : (!techNoFallback && techRows.length > 0 ? `(USA fallback · ${techRows.length} stocks)` : '(empty)')}
+            🗑 Clear {techLocalRows.length > 0 ? `(${techLocalRows.length} stocks)` : '(empty)'}
           </button>
           {techUploadMsg && (
             <span style={{ background: techUploadMsg.startsWith('✓') ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)', color: techUploadMsg.startsWith('✓') ? '#10B981' : '#EF4444', padding: '6px 11px', borderRadius: 6, fontSize: 12, fontWeight: 700 }}>
@@ -7145,7 +7186,7 @@ function TechnicalsTab() {
           </div>
         ) : (
           <div style={{ fontSize: 11.5, color: MUTED, fontStyle: 'italic', marginTop: 4 }}>
-            No files uploaded here yet. Tab is currently using the USA Multibagger cache as fallback. Upload TradingView CSVs above to take over with India/USA/mixed dataset.
+            No files uploaded to {market === 'USA' ? 'USA' : 'India'} Technicals yet. Upload any TradingView CSV above — rows auto-route by Exchange field (NYSE/NASDAQ/OTC → USA tab · NSE/BSE → India tab). Single upload populates both tabs.
           </div>
         )}
         {techSources.some(s => s.warning) && (
@@ -7158,7 +7199,7 @@ function TechnicalsTab() {
       {/* zzz133 — DATA QUALITY + ELIGIBILITY summary chips */}
       <div style={{ ...cardStyle, background: 'color-mix(in srgb, #10B981 5%, transparent)', borderColor: 'color-mix(in srgb, #10B981 30%, transparent)', padding: 14 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-          <span style={{ fontSize: 14, fontWeight: 800, color: '#10B981' }}>✅ zzz148 — HOTFIX FileList race condition (upload now actually works)</span>
+          <span style={{ fontSize: 14, fontWeight: 800, color: '#10B981' }}>✅ zzz149 — Split USA + India tabs · auto-segregate by Exchange · no fallback</span>
           <span style={{ background: 'rgba(255,255,255,0.06)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: TXT }}>Total <b>{dataQuality.total}</b></span>
           <span style={{ background: 'rgba(16,185,129,0.18)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: '#10B981' }}>✓ eligible <b>{techRows.filter(r => r.eligible).length}</b></span>
           <span style={{ background: 'rgba(239,68,68,0.12)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: '#EF4444' }}>✗ rejected <b>{rejected.length}</b></span>
