@@ -1,13 +1,14 @@
-# zzz150 — Auto-sync TradingView saved screeners daily.
-# Mirrors the screener.in workflow pattern: Playwright headless logs in with the
-# user's sessionid cookie, exports each saved screener to CSV, commits to
-# frontend/public/data/tradingview/ so the Technicals tab can pull from there.
+# zzz151 — Sync TradingView saved screeners daily.
+# - Node 22 (was Node 20 — deprecation warning)
+# - playwright-extra + stealth plugin to bypass Cloudflare bot detection
+# - Always commit debug screenshots even on failure (for diagnosis)
+# - Upload debug artifacts so we can download and inspect them
 
 name: Sync TradingView Screeners
 
 on:
   schedule:
-    - cron: '30 4 * * *'    # 04:30 UTC daily (10:00 IST)
+    - cron: '30 4 * * *'   # 04:30 UTC daily (10:00 IST)
   workflow_dispatch:
 
 permissions:
@@ -25,19 +26,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node 22
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Install dependencies
         run: |
           cd .github/scripts
-          npm init -y >/dev/null
-          npm install --silent playwright@latest
+          if [ ! -f package.json ]; then npm init -y >/dev/null; fi
+          npm install --silent --no-audit --no-fund \
+            playwright-extra \
+            puppeteer-extra-plugin-stealth \
+            playwright
           npx playwright install chromium --with-deps
 
-      - name: Run TradingView sync
+      - name: Run TradingView sync (continue-on-error)
+        id: tv_sync
+        continue-on-error: true
         env:
           TRADINGVIEW_SESSIONID: ${{ secrets.TRADINGVIEW_SESSIONID }}
         run: |
@@ -46,11 +52,21 @@ jobs:
             exit 1
           fi
           echo "::add-mask::$TRADINGVIEW_SESSIONID"
-          mkdir -p frontend/public/data/tradingview
+          mkdir -p frontend/public/data/tradingview/_debug
           cd .github/scripts
           node tradingview-sync.mjs
 
-      - name: Commit synced CSVs
+      - name: Upload debug screenshots as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tradingview-debug-screenshots
+          path: frontend/public/data/tradingview/_debug/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Commit synced files + debug screenshots
+        if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -58,6 +74,12 @@ jobs:
           if git diff --staged --quiet; then
             echo "No changes."
           else
-            git commit -m "[skip ci] Sync TradingView CSVs $(date -u +%Y-%m-%d)"
+            git commit -m "[skip ci] TradingView sync $(date -u +%Y-%m-%dT%H:%M:%SZ) (incl. debug)"
             git push
           fi
+
+      - name: Fail the workflow if sync failed
+        if: steps.tv_sync.outcome == 'failure'
+        run: |
+          echo "::error::TradingView sync failed. Check debug screenshots artifact above."
+          exit 1
