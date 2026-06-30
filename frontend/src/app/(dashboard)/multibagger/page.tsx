@@ -6611,24 +6611,42 @@ function TechnicalsTab() {
     .sort((a, b) => b.totalScore - a.totalScore)
     .slice(0, 10), [techRows]);
 
-  // zzz141 — QUALITY ON SALE re-tuned: Fund > 60 was too strict (universe scoring max ~70).
-  // New gate: Fund >= 55 AND Tech <= 50 (broader band), within reasonable SMA200 range,
-  // and exclude only the truly-broken (parabolic / thin vol / micro-cap data flags).
-  // "Below SMA50" eligibility failure is EXPECTED for this bucket — that's the whole point.
-  const qualityOnSale = React.useMemo(() => [...techRows]
-    .filter(r => r.fundScore >= 55)
-    .filter(r => r.totalScore <= 50)
-    // Don't include parabolic / thin / extreme-extension flagged rows
-    .filter(r => !r.qualityFlags || (!r.qualityFlags.includes('RSI parabolic') && !r.qualityFlags.includes('thin volume') && !r.qualityFlags.includes('micro-cap illiquid')))
-    // Within reasonable SMA200 band — not in free-fall, not parabolic
-    .filter(r => {
-      const p = typeof r.pctVsSma200 === 'number' ? r.pctVsSma200 : r.pctVsEma200;
-      return typeof p !== 'number' || (p >= -30 && p <= 100);
-    })
-    // Allow not-eligible IF the only failures are "below SMA50" type (expected for this bucket)
-    .filter(r => r.eligible || r.eligibilityFailures.every(f => f.startsWith('below SMA50')))
-    .sort((a, b) => b.fundScore - a.fundScore)
-    .slice(0, 12), [techRows]);
+  // zzz143 — QUALITY ON SALE switched to RELATIVE gate (fund dominates tech).
+  // Root cause of "0 names": user uploads PRE-CURATED momentum watchlists
+  // (Qulla leaders + Minervini + Weekly Gainers). In that universe every stock
+  // already has strong tech AND strong fund, so absolute "fund>=55 AND tech<=50"
+  // gates can never fire. Switching to RELATIVE: surface stocks where fund
+  // meaningfully outpaces tech (fund-leaning quality plays even within a hot
+  // universe). If absolute gate still empty, falls back to top-N by fund/tech ratio.
+  const qualityOnSale = React.useMemo(() => {
+    const passes = [...techRows]
+      // Don't include parabolic / thin / micro flagged rows
+      .filter(r => !r.qualityFlags || (!r.qualityFlags.includes('RSI parabolic') && !r.qualityFlags.includes('thin volume') && !r.qualityFlags.includes('micro-cap illiquid')))
+      // Sane price range (not in free-fall)
+      .filter(r => {
+        const p = typeof r.pctVsSma200 === 'number' ? r.pctVsSma200 : r.pctVsEma200;
+        return typeof p !== 'number' || (p >= -30 && p <= 200);
+      })
+      // Allow rejected if only-below-SMA50 (that IS the setup)
+      .filter(r => r.eligible || r.eligibilityFailures.every(f => f.startsWith('below SMA50')));
+
+    // PRIMARY gate: fund >= 50 AND fund dominates tech by >= 8 pts
+    const primary = passes
+      .filter(r => r.fundScore >= 50)
+      .filter(r => (r.fundScore - r.totalScore) >= 8)
+      .sort((a, b) => (b.fundScore - b.totalScore) - (a.fundScore - a.totalScore));
+    if (primary.length > 0) return primary.slice(0, 12);
+
+    // FALLBACK gate: top fund/tech-ratio stocks even if dominance is small
+    return passes
+      .filter(r => r.fundScore >= 45)
+      .sort((a, b) => {
+        const ra = a.totalScore > 0 ? a.fundScore / a.totalScore : 0;
+        const rb = b.totalScore > 0 ? b.fundScore / b.totalScore : 0;
+        return rb - ra;
+      })
+      .slice(0, 8);
+  }, [techRows]);
 
   // zzz133 — EARNINGS SOON: event-driven bucket
   const earningsSoon = React.useMemo(() => [...techRows]
@@ -6928,7 +6946,7 @@ function TechnicalsTab() {
       {/* zzz133 — DATA QUALITY + ELIGIBILITY summary chips */}
       <div style={{ ...cardStyle, background: 'color-mix(in srgb, #10B981 5%, transparent)', borderColor: 'color-mix(in srgb, #10B981 30%, transparent)', padding: 14 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-          <span style={{ fontSize: 14, fontWeight: 800, color: '#10B981' }}>✅ zzz140 — EMA21 + Industry RS + Composite RS rank</span>
+          <span style={{ fontSize: 14, fontWeight: 800, color: '#10B981' }}>✅ zzz143 — Quality on Sale relative gate + curated export</span>
           <span style={{ background: 'rgba(255,255,255,0.06)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: TXT }}>Total <b>{dataQuality.total}</b></span>
           <span style={{ background: 'rgba(16,185,129,0.18)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: '#10B981' }}>✓ eligible <b>{techRows.filter(r => r.eligible).length}</b></span>
           <span style={{ background: 'rgba(239,68,68,0.12)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: '#EF4444' }}>✗ rejected <b>{rejected.length}</b></span>
@@ -6942,7 +6960,7 @@ function TechnicalsTab() {
           (2) <b>Earnings window</b> — block within 3 days, tag within 14 days.
           (3) <b>Tech score</b> = <b>0.35×Minervini + 0.30×Qulla + 0.20×Bonde + 0.15×Zanger</b> (weighted, not avg).
           (4) <b>Fund score</b> — Revenue Q YoY <b>heavier than EPS</b> (harder to manipulate), R40, FCF margin, ROE, leverage, Free Float, analyst rating.
-          (5) <b>Buckets</b> — 🏆 Champions, 🟢 Buy Zone, 🔥 Tech-only, 💰 Quality on Sale (Fund &gt; 60 AND Tech 30–45 AND within 15% SMA200), 🗓 Earnings Soon, 🚫 Rejected.
+          (5) <b>Buckets</b> — 🏆 Champions, 🟢 Buy Zone, 🔥 Tech-only, 💰 Quality on Sale (Fund − Tech ≥ 8, relative gate so it works on curated momentum universes), 🗓 Earnings Soon, 🚫 Rejected.
           💡 <b>Click any ticker card or row</b> to open the full detail modal (technicals + fundamentals + playbook reasons + position sizing).
         </div>
       </div>
