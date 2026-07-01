@@ -5995,6 +5995,28 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
   const techNoFallback = true;
   const setTechNoFallback = (_: boolean) => {};
 
+  // zzz155 — Cross-tab rehydration: when a pull writes to the OTHER market's
+  // localStorage keys, that tab's React state stays stale until we reload it.
+  // Listen for a global 'mb-tech-updated' event dispatched by handlePullFromServer
+  // and re-read this tab's localStorage. Also react to native 'storage' events
+  // (fires only across BROWSER tabs, not React components, but harmless to include).
+  React.useEffect(() => {
+    const handler = () => {
+      try {
+        const rawRows = localStorage.getItem(TECH_ROWS_KEY);
+        const rawSrcs = localStorage.getItem(TECH_SOURCES_KEY);
+        setTechLocalRows(rawRows ? JSON.parse(rawRows) : []);
+        setTechSources(rawSrcs ? JSON.parse(rawSrcs) : []);
+      } catch {}
+    };
+    window.addEventListener('mb-tech-updated', handler);
+    window.addEventListener('storage', handler);
+    return () => {
+      window.removeEventListener('mb-tech-updated', handler);
+      window.removeEventListener('storage', handler);
+    };
+  }, [TECH_ROWS_KEY, TECH_SOURCES_KEY]);
+
   // zzz148 — Accepts File[] (already cloned from FileList by caller) to avoid the
   // race where onChange resets e.target.value before the async handler iterates.
   const handleTechFiles = async (files: File[]) => {
@@ -6102,6 +6124,8 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
         otherSourcesNew.push(...newSources.map(s => ({ ...s, rowCount: otherBucket.length })));
         try { localStorage.setItem(otherRowsKey, JSON.stringify(otherMerge.rows)); } catch {}
         try { localStorage.setItem(otherSourcesKey, JSON.stringify(otherSourcesNew)); } catch {}
+        // zzz155 — broadcast so a mounted OTHER-market tab reloads its state
+        try { window.dispatchEvent(new CustomEvent('mb-tech-updated')); } catch {}
       }
 
       // zzz149 — Diagnostics + routed-count message
@@ -6130,14 +6154,18 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
     setTechSources([]);
     try { localStorage.removeItem(TECH_ROWS_KEY); } catch {}
     try { localStorage.removeItem(TECH_SOURCES_KEY); } catch {}
+    // zzz155 — broadcast so other-market mounted tab reloads (though clear is per-tab
+    // only; other tab shouldn't change, but keep dispatch pattern consistent)
+    try { window.dispatchEvent(new CustomEvent('mb-tech-updated')); } catch {}
     setTechUploadMsg(`✓ Cleared ${market === 'USA' ? 'USA' : 'India'} Technicals uploads.`);
     bumpData();
   };
 
-  // zzz154 — Pull latest TradingView screener CSVs from the daily-synced repo folder.
-  // The daily GitHub Actions workflow saves each screener as /data/tradingview/<slug>.csv
-  // + a manifest.json describing what's available. Rows are auto-routed by Exchange
-  // into USA/India buckets, same as manual upload.
+  // zzz155 — Pull latest TradingView screener CSVs from the daily-synced repo folder.
+  // Rewrite of zzz154 fixing:
+  //   (a) Per-file row counts for BOTH tabs (was: aggregate total shown per file)
+  //   (b) Cross-tab rehydration — dispatches 'mb-tech-updated' so a stale India tab
+  //       component reloads its state from localStorage after a USA-tab pull writes to it.
   const handlePullFromServer = async () => {
     setTechLoading(true);
     setTechUploadMsg('⏳ Fetching latest from server…');
@@ -6152,44 +6180,52 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
         return;
       }
       const XLSX = await import('xlsx');
-      const newRows: any[] = [];
-      const newSources: TechSource[] = [];
+      const USA_EXCHANGES = new Set(['NYSE','NASDAQ','NMS','ARCA','AMEX','BATS','OTC','NYSE ARCA','NYSEARCA']);
+      const IND_EXCHANGES = new Set(['NSE','BSE']);
+      const usaNewRows: any[] = [];
+      const indNewRows: any[] = [];
+      // Per-file source records for EACH tab (with proper per-file row counts)
+      const usaSourcesPerFile: TechSource[] = [];
+      const indSourcesPerFile: TechSource[] = [];
       for (const f of files) {
         try {
           const csvResp = await fetch(`/data/tradingview/${f.name}`, { cache: 'no-store' });
-          if (!csvResp.ok) { newSources.push({ name: f.name, rowCount: 0, cols: 0, warning: `HTTP ${csvResp.status}` }); continue; }
+          const label = `📡 ${f.displayName || f.name}`;
+          if (!csvResp.ok) {
+            const w = `HTTP ${csvResp.status}`;
+            usaSourcesPerFile.push({ name: label, rowCount: 0, cols: 0, warning: w });
+            indSourcesPerFile.push({ name: label, rowCount: 0, cols: 0, warning: w });
+            continue;
+          }
           const csvText = await csvResp.text();
           const wb = XLSX.read(csvText, { type: 'string' });
           const sheet = wb.Sheets[wb.SheetNames[0]];
           const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
           const cols = raw.length > 0 ? Object.keys(raw[0]).length : 0;
-          let parsedCount = 0;
+          let usaThisFile = 0, indThisFile = 0, unknownThisFile = 0;
           for (const r of raw) {
             const parsed = parseUSARow(r as Record<string, unknown>);
             if (!parsed || !parsed.symbol) continue;
-            newRows.push(parsed);
-            parsedCount++;
+            const ex = String((parsed as any).exchange || '').toUpperCase().trim();
+            if (USA_EXCHANGES.has(ex)) { usaNewRows.push(parsed); usaThisFile++; }
+            else if (IND_EXCHANGES.has(ex)) { indNewRows.push(parsed); indThisFile++; }
+            else {
+              // Unknown-exchange row goes into the CURRENT tab's bucket
+              if (MK === 'usa') { usaNewRows.push(parsed); usaThisFile++; }
+              else { indNewRows.push(parsed); indThisFile++; }
+              unknownThisFile++;
+            }
           }
           const warning = cols < 60 ? `⚠️ Thin CSV (${cols} cols)` : undefined;
-          newSources.push({ name: `📡 ${f.displayName || f.name}`, rowCount: parsedCount, cols, warning });
+          usaSourcesPerFile.push({ name: label, rowCount: usaThisFile, cols, warning });
+          indSourcesPerFile.push({ name: label, rowCount: indThisFile, cols, warning });
         } catch (e) {
-          newSources.push({ name: f.name, rowCount: 0, cols: 0, warning: `Error: ${e instanceof Error ? e.message : String(e)}` });
+          const label = `📡 ${f.displayName || f.name}`;
+          const w = `Error: ${e instanceof Error ? e.message : String(e)}`;
+          usaSourcesPerFile.push({ name: label, rowCount: 0, cols: 0, warning: w });
+          indSourcesPerFile.push({ name: label, rowCount: 0, cols: 0, warning: w });
         }
       }
-      // Auto-segregate by Exchange — same logic as manual upload
-      const USA_EXCHANGES = new Set(['NYSE','NASDAQ','NMS','ARCA','AMEX','BATS','OTC','NYSE ARCA','NYSEARCA']);
-      const IND_EXCHANGES = new Set(['NSE','BSE']);
-      const usaNewRows: any[] = [];
-      const indNewRows: any[] = [];
-      const unknownNewRows: any[] = [];
-      for (const r of newRows) {
-        const ex = String((r as any).exchange || '').toUpperCase().trim();
-        if (USA_EXCHANGES.has(ex)) usaNewRows.push(r);
-        else if (IND_EXCHANGES.has(ex)) indNewRows.push(r);
-        else unknownNewRows.push(r);
-      }
-      const currentBucket = MK === 'usa' ? usaNewRows : indNewRows;
-      currentBucket.push(...unknownNewRows);
 
       const otherMk = MK === 'usa' ? 'ind' : 'usa';
       const otherRowsKey = `mb_tech_rows_${otherMk}_v1`;
@@ -6210,24 +6246,31 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
         return { rows: base, added, dup };
       };
 
+      const currentBucket = MK === 'usa' ? usaNewRows : indNewRows;
+      const currentPerFileSources = MK === 'usa' ? usaSourcesPerFile : indSourcesPerFile;
+      const otherBucket = MK === 'usa' ? indNewRows : usaNewRows;
+      const otherPerFileSources = MK === 'usa' ? indSourcesPerFile : usaSourcesPerFile;
+
+      // Write CURRENT tab
       const currentMerge = mergeBucket(techLocalRows, currentBucket);
       const baseSources = techAppendMode ? [...techSources] : [];
-      baseSources.push(...newSources);
+      baseSources.push(...currentPerFileSources);
       setTechLocalRows(currentMerge.rows);
       setTechSources(baseSources);
       try { localStorage.setItem(TECH_ROWS_KEY, JSON.stringify(currentMerge.rows)); } catch {}
       try { localStorage.setItem(TECH_SOURCES_KEY, JSON.stringify(baseSources)); } catch {}
 
-      const otherBucket = MK === 'usa' ? indNewRows : usaNewRows;
-      let otherAdded = 0;
-      if (otherBucket.length > 0) {
-        const otherMerge = mergeBucket(otherExistingRows, otherBucket);
-        otherAdded = otherMerge.added;
-        const otherSourcesNew = techAppendMode ? [...otherExistingSources] : [];
-        otherSourcesNew.push(...newSources.map(s => ({ ...s, rowCount: otherBucket.length })));
-        try { localStorage.setItem(otherRowsKey, JSON.stringify(otherMerge.rows)); } catch {}
-        try { localStorage.setItem(otherSourcesKey, JSON.stringify(otherSourcesNew)); } catch {}
-      }
+      // Write OTHER tab (always — even if 0 rows — so the source chips reflect
+      // the sync attempt and empty tab is transparent about what happened)
+      const otherMerge = mergeBucket(otherExistingRows, otherBucket);
+      const otherAdded = otherMerge.added;
+      const otherSourcesNew = techAppendMode ? [...otherExistingSources] : [];
+      otherSourcesNew.push(...otherPerFileSources);
+      try { localStorage.setItem(otherRowsKey, JSON.stringify(otherMerge.rows)); } catch {}
+      try { localStorage.setItem(otherSourcesKey, JSON.stringify(otherSourcesNew)); } catch {}
+
+      // Broadcast so a mounted OTHER-tab component reloads from localStorage
+      try { window.dispatchEvent(new CustomEvent('mb-tech-updated')); } catch {}
 
       const lastSync = manifest.lastSync ? new Date(manifest.lastSync).toLocaleString() : '?';
       const meLabel = MK === 'usa' ? 'USA' : 'India';
