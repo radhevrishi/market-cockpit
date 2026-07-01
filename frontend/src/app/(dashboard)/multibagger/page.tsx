@@ -6104,10 +6104,15 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
         return { rows: base, added, dup };
       };
 
+      // zzz159 — Dedup source chips by name so re-uploading the same file replaces the chip.
+      const dedupSources = (existing: TechSource[], incoming: TechSource[]) => {
+        const incomingNames = new Set(incoming.map(s => s.name));
+        return [...existing.filter(s => !incomingNames.has(s.name)), ...incoming];
+      };
+
       // Apply to current tab
       const currentMerge = mergeBucket(techLocalRows, currentBucket);
-      const baseSources = techAppendMode ? [...techSources] : [];
-      baseSources.push(...newSources);
+      const baseSources = dedupSources(techAppendMode ? techSources : [], newSources);
       setTechLocalRows(currentMerge.rows);
       setTechSources(baseSources);
       try { localStorage.setItem(TECH_ROWS_KEY, JSON.stringify(currentMerge.rows)); } catch {}
@@ -6119,9 +6124,11 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       if (otherBucket.length > 0) {
         const otherMerge = mergeBucket(otherExistingRows, otherBucket);
         otherAdded = otherMerge.added;
-        const otherSourcesNew = techAppendMode ? [...otherExistingSources] : [];
         // Same source files recorded in the OTHER tab too so user sees full provenance
-        otherSourcesNew.push(...newSources.map(s => ({ ...s, rowCount: otherBucket.length })));
+        const otherSourcesNew = dedupSources(
+          techAppendMode ? otherExistingSources : [],
+          newSources.map(s => ({ ...s, rowCount: otherBucket.length }))
+        );
         try { localStorage.setItem(otherRowsKey, JSON.stringify(otherMerge.rows)); } catch {}
         try { localStorage.setItem(otherSourcesKey, JSON.stringify(otherSourcesNew)); } catch {}
         // zzz155 — broadcast so a mounted OTHER-market tab reloads its state
@@ -6251,10 +6258,18 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       const otherBucket = MK === 'usa' ? indNewRows : usaNewRows;
       const otherPerFileSources = MK === 'usa' ? indSourcesPerFile : usaSourcesPerFile;
 
+      // zzz159 — Dedup source chips by name (last-write-wins) so repeat pulls
+      // don't accumulate. Previously in append mode we blindly pushed 6 chips
+      // per pull, growing to 52+ chips after ~9 pulls.
+      const dedupSources = (existing: TechSource[], incoming: TechSource[]) => {
+        const incomingNames = new Set(incoming.map(s => s.name));
+        const kept = existing.filter(s => !incomingNames.has(s.name));
+        return [...kept, ...incoming];
+      };
+
       // Write CURRENT tab
       const currentMerge = mergeBucket(techLocalRows, currentBucket);
-      const baseSources = techAppendMode ? [...techSources] : [];
-      baseSources.push(...currentPerFileSources);
+      const baseSources = dedupSources(techAppendMode ? techSources : [], currentPerFileSources);
       setTechLocalRows(currentMerge.rows);
       setTechSources(baseSources);
       try { localStorage.setItem(TECH_ROWS_KEY, JSON.stringify(currentMerge.rows)); } catch {}
@@ -6264,8 +6279,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       // the sync attempt and empty tab is transparent about what happened)
       const otherMerge = mergeBucket(otherExistingRows, otherBucket);
       const otherAdded = otherMerge.added;
-      const otherSourcesNew = techAppendMode ? [...otherExistingSources] : [];
-      otherSourcesNew.push(...otherPerFileSources);
+      const otherSourcesNew = dedupSources(techAppendMode ? otherExistingSources : [], otherPerFileSources);
       try { localStorage.setItem(otherRowsKey, JSON.stringify(otherMerge.rows)); } catch {}
       try { localStorage.setItem(otherSourcesKey, JSON.stringify(otherSourcesNew)); } catch {}
 
@@ -6712,7 +6726,8 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       if (typeof perf1w === 'number' && typeof perf1m === 'number' && perf1m >= 30 && perf1w >= -3 && perf1w <= 3) {
         zangerScore += 25; zReasons.push(`📐 1W ${perf1w >= 0 ? '+' : ''}${perf1w.toFixed(1)}% TIGHT FLAG`);
       } else if (typeof perf1w === 'number' && typeof perf1m === 'number' && perf1m >= 20 && perf1w >= -5 && perf1w <= 5) {
-        zangerScore += 15; zReasons.push(`1W +${perf1w.toFixed(1)}% flagging`);
+        // zzz159 — fix "1W +-2.7%" double-sign glitch when perf1w is negative
+        zangerScore += 15; zReasons.push(`1W ${perf1w >= 0 ? '+' : ''}${perf1w.toFixed(1)}% flagging`);
       }
       // PROXIMITY to MA — breakout setup (graded)
       const zPctMA = typeof pctVsSma50 === 'number' ? pctVsSma50 : pctVsEma50;
@@ -6955,7 +6970,14 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
   // zzz133 — playbook tops restricted to ELIGIBLE stocks (hard filters first)
   const qullaTop = React.useMemo(() => [...techRows].filter(r => r.eligible).sort((a, b) => b.qullaScore - a.qullaScore).filter(r => r.qullaScore >= 55).slice(0, 12), [techRows]);
   const zangerTop = React.useMemo(() => [...techRows].filter(r => r.eligible).sort((a, b) => b.zangerScore - a.zangerScore).filter(r => r.zangerScore >= 45).slice(0, 12), [techRows]);
-  const bondeTop = React.useMemo(() => [...techRows].filter(r => r.eligible).sort((a, b) => b.bondeScore - a.bondeScore).filter(r => r.bondeScore >= 55).slice(0, 12), [techRows]);
+  // zzz159 — Require positive recent thrust so we don't list stocks with 1W -7% under Bonde EP.
+  // Accept either a strong 1W move (>= 5%) OR a strong 1M move (>= 20%) with recent EP-quality volume.
+  const bondeTop = React.useMemo(() => [...techRows]
+    .filter(r => r.eligible)
+    .filter(r => (typeof r.perf1w === 'number' && r.perf1w >= 5) || (typeof r.perf1m === 'number' && r.perf1m >= 20))
+    .sort((a, b) => b.bondeScore - a.bondeScore)
+    .filter(r => r.bondeScore >= 55)
+    .slice(0, 12), [techRows]);
   const minerviniTop = React.useMemo(() => [...techRows].filter(r => r.eligible).sort((a, b) => b.minerviniScore - a.minerviniScore).filter(r => r.minerviniScore >= 65).slice(0, 12), [techRows]);
 
   // zzz133 — STRICT BUY ZONE: eligibility + BUY ZONE position + positive 1M (no 3M-only sneak-ins)
@@ -7830,7 +7852,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
 
       {/* BONDE EP */}
       {renderPlaybookSection('Pradeep Bonde — Episodic Pivot (EP)', '#FBBF24', '⚡', bondeTop, 'bondeScore', 'bondeReasons',
-        '1W ≥ 10% move on Rel Vol ≥ 1.5× · in PED entry zone (0–15% above SMA50) · Stage-2 trend · liquid')}
+        'Recent thrust (1W ≥ 5% or 1M ≥ 20%) · PED entry zone (0–15% above SMA50) · Stage-2 trend · liquid')}
 
       {/* MINERVINI */}
       {renderPlaybookSection('Mark Minervini — Trend Template', '#84CC16', '🏆', minerviniTop, 'minerviniScore', 'minerviniReasons',
