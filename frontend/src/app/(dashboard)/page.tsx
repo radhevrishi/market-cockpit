@@ -2256,6 +2256,75 @@ export default function HomeDashboard() {
   // PATCH 0897 — Turnaround tier lensing
   const lensedTurnaround = useMemo(() => applyLens((data as any).turnaroundTier1 || [], true), [(data as any).turnaroundTier1, activeLens]);
 
+  // zzz167 — Home-page Technicals tiers. Reads rows persisted by the
+  // Technicals tab in localStorage and picks top 10 per market by a
+  // composite "momentum + trend" score (1M perf + position vs SMA50 - RSI penalty).
+  // Same TierAction shape as Tier 1 so DecisionTierBlock renders it consistently.
+  const [techTick, setTechTick] = useState(0);
+  useEffect(() => {
+    const bump = () => setTechTick(t => t + 1);
+    window.addEventListener('mb-tech-updated', bump);
+    window.addEventListener('storage', bump);
+    return () => {
+      window.removeEventListener('mb-tech-updated', bump);
+      window.removeEventListener('storage', bump);
+    };
+  }, []);
+  const buildTechTier = useCallback((mk: 'usa' | 'ind'): TierAction[] => {
+    if (typeof window === 'undefined') return [];
+    let rows: any[] = [];
+    try { rows = JSON.parse(localStorage.getItem(`mb_tech_rows_${mk}_v1`) || '[]'); } catch {}
+    if (!Array.isArray(rows) || rows.length === 0) return [];
+    // Score each row: 1M % weighted heavier + SMA-50 proximity + RSI mid-range bonus
+    const scored = rows.map((r: any) => {
+      const perf1m = Number(r.perf1m) || 0;
+      const perf1w = Number(r.perf1w) || 0;
+      const perf3m = Number(r.perf3m) || 0;
+      const rsi = Number(r.rsi) || 50;
+      const sma50 = Number(r.sma50) || 0;
+      const price = Number(r.price) || 0;
+      const pctSma50 = (sma50 > 0 && price > 0) ? ((price - sma50) / sma50 * 100) : 0;
+      // Composite tech score: 1M perf * 3 + 1W * 2 + 3M + trend bonus - overheat penalty
+      let s = perf1m * 3 + perf1w * 2 + perf3m;
+      if (pctSma50 > 0 && pctSma50 < 15) s += 15; // buy-zone bonus
+      else if (pctSma50 >= 15) s -= 5;             // extended penalty
+      if (rsi > 75) s -= 10;                        // overbought penalty
+      if (rsi < 40) s -= 5;                         // weak trend penalty
+      return { r, s, perf1w, perf1m, perf3m, rsi, pctSma50 };
+    });
+    scored.sort((a, b) => b.s - a.s);
+    return scored.slice(0, 10).map(({ r, s, perf1w, perf1m, perf3m, rsi, pctSma50 }): TierAction => {
+      const sym = String(r.symbol || '').toUpperCase();
+      const cur = mk === 'ind' ? '₹' : '$';
+      const price = Number(r.price) || 0;
+      const priceStr = price > 0 ? `${cur}${price >= 1000 ? price.toFixed(0) : price.toFixed(2)}` : '';
+      const parts: string[] = [];
+      if (priceStr) parts.push(priceStr);
+      parts.push(`1W ${perf1w >= 0 ? '+' : ''}${perf1w.toFixed(0)}%`);
+      parts.push(`1M ${perf1m >= 0 ? '+' : ''}${perf1m.toFixed(0)}%`);
+      parts.push(`3M ${perf3m >= 0 ? '+' : ''}${perf3m.toFixed(0)}%`);
+      const entryLabel = pctSma50 < 0 ? 'BELOW SMA50'
+        : pctSma50 < 7 ? 'BUY ZONE'
+        : pctSma50 < 15 ? `EXTENDED +${pctSma50.toFixed(0)}%`
+        : `CHASE +${pctSma50.toFixed(0)}%`;
+      return {
+        symbol: sym,
+        company: r.company || sym,
+        sector: r.sector || undefined,
+        score: Math.round(s),
+        grade: '',
+        thesis: parts.join(' · '),
+        risk: rsi > 75 ? `RSI ${rsi.toFixed(0)} overbought · trim on strength` : rsi < 40 ? `RSI ${rsi.toFixed(0)} weak trend` : `RSI ${rsi.toFixed(0)}`,
+        horizon: '1-3 months (swing/position)',
+        trigger: entryLabel,
+        href: `/multibagger?tab=technicals-${mk}`,
+        market: mk === 'usa' ? 'US' : 'IN',
+      };
+    });
+  }, []);
+  const techTier2India = useMemo(() => buildTechTier('ind'), [buildTechTier, techTick]);
+  const techTier3Usa   = useMemo(() => buildTechTier('usa'), [buildTechTier, techTick]);
+
   // PATCH 1086 — NEW LENS button. Previous implementation chained two
   // window.prompt() calls which on some browsers (Safari with popups blocked,
   // Brave shields, embedded webviews) silently no-op'd, making the button
@@ -3209,14 +3278,69 @@ export default function HomeDashboard() {
           </div>
         )}
 
-        {/* ═══════════════ PATCH 0897/0898/0899 — TURNAROUND TIER ═════════
+        {/* ═══════════════ zzz167 — TIER 2 · INDIA TECHNICALS ═════════════
+            Top 10 by momentum + trend composite from India Technicals localStorage. */}
+        {techTier2India.length > 0 ? (
+          <DecisionTierBlock
+            tier={2}
+            label="INDIA TECHNICALS · TOP 10 SWING/POSITION"
+            color="#22D3EE"
+            description="Top 10 India names by 1M momentum + trend proximity (SMA50 buy-zone bonus, overbought penalty). Same playbook as your Technicals tab (Qulla/Zanger/Bonde/Minervini). Click any tile to open the India Technicals sub-tab."
+            items={techTier2India}
+            expanded
+          />
+        ) : (
+          <div style={{
+            ...cardStyle,
+            borderColor: 'color-mix(in srgb, #22D3EE 44%, transparent)',
+            background: 'linear-gradient(180deg, color-mix(in srgb, #22D3EE 8%, transparent) 0%, transparent 100%)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
+              <span style={{ fontSize: 14, fontWeight: 900, color: '#22D3EE', letterSpacing: '0.4px' }}>📈 TIER 2 — INDIA TECHNICALS · TOP 10 (0)</span>
+              <span style={{ fontSize: 10, color: '#22D3EE', background: 'color-mix(in srgb, #22D3EE 13%, transparent)', padding: '2px 7px', borderRadius: 3, fontWeight: 700 }}>ACTION NOW</span>
+              <Link href="/multibagger?tab=technicals-ind" style={{ fontSize: 11, color: '#22D3EE', textDecoration: 'none', marginLeft: 'auto' }}>Open →</Link>
+            </div>
+            <div style={{ fontSize: 12, color: TEXT, padding: '10px 12px', background: 'color-mix(in srgb, #22D3EE 6%, transparent)', borderRadius: 6 }}>
+              No India Technicals data yet. Open the <Link href="/multibagger?tab=technicals-ind" style={{ color: '#22D3EE' }}>India Technicals tab</Link> — it auto-syncs from the daily TradingView cron.
+            </div>
+          </div>
+        )}
+
+        {/* ═══════════════ zzz167 — TIER 3 · USA TECHNICALS ═══════════════ */}
+        {techTier3Usa.length > 0 ? (
+          <DecisionTierBlock
+            tier={3}
+            label="USA TECHNICALS · TOP 10 SWING/POSITION"
+            color="#F87171"
+            description="Top 10 USA names by 1M momentum + trend proximity (SMA50 buy-zone bonus, overbought penalty). Same playbook as your Technicals tab (Qulla/Zanger/Bonde/Minervini). Click any tile to open the USA Technicals sub-tab."
+            items={techTier3Usa}
+            expanded
+          />
+        ) : (
+          <div style={{
+            ...cardStyle,
+            borderColor: 'color-mix(in srgb, #F87171 44%, transparent)',
+            background: 'linear-gradient(180deg, color-mix(in srgb, #F87171 8%, transparent) 0%, transparent 100%)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
+              <span style={{ fontSize: 14, fontWeight: 900, color: '#F87171', letterSpacing: '0.4px' }}>📈 TIER 3 — USA TECHNICALS · TOP 10 (0)</span>
+              <span style={{ fontSize: 10, color: '#F87171', background: 'color-mix(in srgb, #F87171 13%, transparent)', padding: '2px 7px', borderRadius: 3, fontWeight: 700 }}>ACTION NOW</span>
+              <Link href="/multibagger?tab=technicals-usa" style={{ fontSize: 11, color: '#F87171', textDecoration: 'none', marginLeft: 'auto' }}>Open →</Link>
+            </div>
+            <div style={{ fontSize: 12, color: TEXT, padding: '10px 12px', background: 'color-mix(in srgb, #F87171 6%, transparent)', borderRadius: 6 }}>
+              No USA Technicals data yet. Open the <Link href="/multibagger?tab=technicals-usa" style={{ color: '#F87171' }}>USA Technicals tab</Link> — it auto-syncs from the daily TradingView cron.
+            </div>
+          </div>
+        )}
+
+        {/* ═══════════════ TIER 4 — TURNAROUND BUY-ZONE (was Tier 2 pre-zzz167) ═════════
             Always renders. Uses DecisionTierBlock chrome (gradient + ACTION
             NOW chip + ranked grid) when data exists. When empty, mirrors
             the SAME chrome with an empty-state message in the grid slot
-            so the visual format matches Tier 1 / Tier 2 exactly. */}
+            so the visual format matches Tier 1 exactly. */}
         {lensedTurnaround.length > 0 ? (
           <DecisionTierBlock
-            tier={2}
+            tier={4}
             label="TURNAROUND BUY-ZONE"
             color="#F59E0B"
             description="Top turnaround setups from your /multibagger Turnarounds upload (top 5 by total score). Different playbook than the IMMEDIATE ACTION list above — these are INFLECTION setups, not sustained-quality compounders."
@@ -3235,7 +3359,7 @@ export default function HomeDashboard() {
           }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
               <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--mc-warn)', letterSpacing: '0.4px' }}>
-                🎯 TIER 2 — TURNAROUND BUY-ZONE (0)
+                🔄 TIER 4 — TURNAROUND BUY-ZONE (0)
               </span>
               <span style={{ fontSize: 10, color: 'var(--mc-warn)', background: 'color-mix(in srgb, var(--mc-warn) 13%, transparent)', padding: '2px 7px', borderRadius: 3, fontWeight: 700 }}>
                 ACTION NOW
@@ -3289,10 +3413,10 @@ export default function HomeDashboard() {
           </div>
         )}
 
-        {/* ═══════════════ TIER 2 — STRUCTURAL WATCHLIST ════════════════ */}
+        {/* ═══════════════ TIER 5 — STRUCTURAL WATCHLIST (was Tier 2 pre-zzz167) ════ */}
         {lensedTier2.length > 0 && (
           <DecisionTierBlock
-            tier={2}
+            tier={5}
             label="STRUCTURAL WATCHLIST"
             color="#22D3EE"
             description="A-grade scorecard — not yet on Conviction Beats bench OR already decision-tagged"
@@ -4660,10 +4784,11 @@ function DecisionTierBlock({
     }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
         <span style={{ fontSize: 14, fontWeight: 900, color, letterSpacing: '0.4px' }}>
-          {tier === 1 ? '🎯' : tier === 2 ? '👁' : '🧪'} TIER {tier} — {label} {hasFilter ? `(${items.length} of ${totalCount} — lens filtering)` : `(${items.length})`}
+          {/* zzz167 — emojis for tiers 1..5: Immediate Action / India Tech / USA Tech / Turnaround / Structural */}
+          {tier === 1 ? '🎯' : tier === 2 ? '📈' : tier === 3 ? '📈' : tier === 4 ? '🔄' : '👁'} TIER {tier} — {label} {hasFilter ? `(${items.length} of ${totalCount} — lens filtering)` : `(${items.length})`}
         </span>
         <span style={{ fontSize: 10, color, background: `${color}22`, padding: '2px 7px', borderRadius: 3, fontWeight: 700 }}>
-          {tier === 1 ? 'ACTION NOW' : tier === 2 ? 'WATCH' : 'EXPERIMENTAL'}
+          {tier === 1 || tier === 2 || tier === 3 ? 'ACTION NOW' : tier === 4 ? 'ACTION NOW' : 'WATCH'}
         </span>
       </div>
       <div style={{ fontSize: 11, color: 'var(--mc-text-3)', marginBottom: 10, lineHeight: 1.45 }}>{description}</div>
@@ -4677,7 +4802,7 @@ function DecisionTierBlock({
                 border: `1px solid ${color}40`, background: `${color}10`, textDecoration: 'none',
               }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                {tier === 1 && <span style={{ fontSize: 18, fontWeight: 900, color }}>#{i + 1}</span>}
+                {tier <= 4 && <span style={{ fontSize: 18, fontWeight: 900, color }}>#{i + 1}</span>}
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: condensed ? 13 : 16, fontWeight: 700, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 6 }}>
                     {a.company || a.symbol}
