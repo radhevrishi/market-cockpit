@@ -6134,6 +6134,117 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
     bumpData();
   };
 
+  // zzz154 — Pull latest TradingView screener CSVs from the daily-synced repo folder.
+  // The daily GitHub Actions workflow saves each screener as /data/tradingview/<slug>.csv
+  // + a manifest.json describing what's available. Rows are auto-routed by Exchange
+  // into USA/India buckets, same as manual upload.
+  const handlePullFromServer = async () => {
+    setTechLoading(true);
+    setTechUploadMsg('⏳ Fetching latest from server…');
+    try {
+      const manifestResp = await fetch('/data/tradingview/manifest.json', { cache: 'no-store' });
+      if (!manifestResp.ok) throw new Error(`manifest ${manifestResp.status}`);
+      const manifest = await manifestResp.json();
+      const files = (manifest.files || []).filter((f: any) => f.ok);
+      if (files.length === 0) {
+        setTechUploadMsg(`⚠️ Server manifest has no successful files. Last sync: ${manifest.lastSync || '?'}`);
+        setTechLoading(false);
+        return;
+      }
+      const XLSX = await import('xlsx');
+      const newRows: any[] = [];
+      const newSources: TechSource[] = [];
+      for (const f of files) {
+        try {
+          const csvResp = await fetch(`/data/tradingview/${f.name}`, { cache: 'no-store' });
+          if (!csvResp.ok) { newSources.push({ name: f.name, rowCount: 0, cols: 0, warning: `HTTP ${csvResp.status}` }); continue; }
+          const csvText = await csvResp.text();
+          const wb = XLSX.read(csvText, { type: 'string' });
+          const sheet = wb.Sheets[wb.SheetNames[0]];
+          const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+          const cols = raw.length > 0 ? Object.keys(raw[0]).length : 0;
+          let parsedCount = 0;
+          for (const r of raw) {
+            const parsed = parseUSARow(r as Record<string, unknown>);
+            if (!parsed || !parsed.symbol) continue;
+            newRows.push(parsed);
+            parsedCount++;
+          }
+          const warning = cols < 60 ? `⚠️ Thin CSV (${cols} cols)` : undefined;
+          newSources.push({ name: `📡 ${f.displayName || f.name}`, rowCount: parsedCount, cols, warning });
+        } catch (e) {
+          newSources.push({ name: f.name, rowCount: 0, cols: 0, warning: `Error: ${e instanceof Error ? e.message : String(e)}` });
+        }
+      }
+      // Auto-segregate by Exchange — same logic as manual upload
+      const USA_EXCHANGES = new Set(['NYSE','NASDAQ','NMS','ARCA','AMEX','BATS','OTC','NYSE ARCA','NYSEARCA']);
+      const IND_EXCHANGES = new Set(['NSE','BSE']);
+      const usaNewRows: any[] = [];
+      const indNewRows: any[] = [];
+      const unknownNewRows: any[] = [];
+      for (const r of newRows) {
+        const ex = String((r as any).exchange || '').toUpperCase().trim();
+        if (USA_EXCHANGES.has(ex)) usaNewRows.push(r);
+        else if (IND_EXCHANGES.has(ex)) indNewRows.push(r);
+        else unknownNewRows.push(r);
+      }
+      const currentBucket = MK === 'usa' ? usaNewRows : indNewRows;
+      currentBucket.push(...unknownNewRows);
+
+      const otherMk = MK === 'usa' ? 'ind' : 'usa';
+      const otherRowsKey = `mb_tech_rows_${otherMk}_v1`;
+      const otherSourcesKey = `mb_tech_sources_${otherMk}_v1`;
+      let otherExistingRows: any[] = [];
+      let otherExistingSources: TechSource[] = [];
+      try { otherExistingRows = JSON.parse(localStorage.getItem(otherRowsKey) || '[]'); } catch {}
+      try { otherExistingSources = JSON.parse(localStorage.getItem(otherSourcesKey) || '[]'); } catch {}
+
+      const mergeBucket = (existing: any[], newOnes: any[]) => {
+        const base = techAppendMode ? [...existing] : [];
+        const seen = new Set(base.map((r: any) => r.symbol));
+        let added = 0, dup = 0;
+        for (const r of newOnes) {
+          if (seen.has(r.symbol)) { dup++; continue; }
+          seen.add(r.symbol); base.push(r); added++;
+        }
+        return { rows: base, added, dup };
+      };
+
+      const currentMerge = mergeBucket(techLocalRows, currentBucket);
+      const baseSources = techAppendMode ? [...techSources] : [];
+      baseSources.push(...newSources);
+      setTechLocalRows(currentMerge.rows);
+      setTechSources(baseSources);
+      try { localStorage.setItem(TECH_ROWS_KEY, JSON.stringify(currentMerge.rows)); } catch {}
+      try { localStorage.setItem(TECH_SOURCES_KEY, JSON.stringify(baseSources)); } catch {}
+
+      const otherBucket = MK === 'usa' ? indNewRows : usaNewRows;
+      let otherAdded = 0;
+      if (otherBucket.length > 0) {
+        const otherMerge = mergeBucket(otherExistingRows, otherBucket);
+        otherAdded = otherMerge.added;
+        const otherSourcesNew = techAppendMode ? [...otherExistingSources] : [];
+        otherSourcesNew.push(...newSources.map(s => ({ ...s, rowCount: otherBucket.length })));
+        try { localStorage.setItem(otherRowsKey, JSON.stringify(otherMerge.rows)); } catch {}
+        try { localStorage.setItem(otherSourcesKey, JSON.stringify(otherSourcesNew)); } catch {}
+      }
+
+      const lastSync = manifest.lastSync ? new Date(manifest.lastSync).toLocaleString() : '?';
+      const meLabel = MK === 'usa' ? 'USA' : 'India';
+      const otherLabel = MK === 'usa' ? 'India' : 'USA';
+      const parts: string[] = [`✓ ${files.length} file${files.length>1?'s':''} from server (synced ${lastSync})`];
+      parts.push(`→ ${meLabel} ${currentMerge.added} new`);
+      if (otherAdded > 0) parts.push(`→ ${otherLabel} ${otherAdded} new`);
+      if (currentMerge.dup > 0) parts.push(`${currentMerge.dup} dedup`);
+      parts.push(`· total ${currentMerge.rows.length} on this tab`);
+      setTechUploadMsg(parts.join(' '));
+      bumpData();
+    } catch (e) {
+      setTechUploadMsg(`⚠️ Server pull failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    setTechLoading(false);
+  };
+
   // zzz149 — Per-market data. No fallback to other caches.
   const usaRows = React.useMemo<any[]>(() => techLocalRows, [dataTick, techLocalRows]);
 
@@ -7148,6 +7259,12 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
           <button onClick={() => techFileRef.current?.click()} disabled={techLoading}
             style={{ background: CYAN, color: '#0B1220', border: 'none', padding: '8px 14px', borderRadius: 6, fontSize: 12.5, fontWeight: 800, cursor: techLoading ? 'wait' : 'pointer' }}>
             {techLoading ? '⏳ Parsing…' : '📂 Choose CSV files (multi-select OK)'}
+          </button>
+          {/* zzz154 — Pull latest from server (daily TradingView sync via GitHub Actions) */}
+          <button onClick={handlePullFromServer} disabled={techLoading}
+            title="Fetch the latest daily-synced TradingView screener exports from the server"
+            style={{ background: '#8B5CF6', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: 6, fontSize: 12.5, fontWeight: 800, cursor: techLoading ? 'wait' : 'pointer' }}>
+            🔄 Pull latest from server
           </button>
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: TXT, cursor: 'pointer' }}>
             <input type="checkbox" checked={techAppendMode} onChange={e => setTechAppendMode(e.target.checked)} />
