@@ -5995,26 +5995,26 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
   const techNoFallback = true;
   const setTechNoFallback = (_: boolean) => {};
 
-  // zzz155 — Cross-tab rehydration: when a pull writes to the OTHER market's
-  // localStorage keys, that tab's React state stays stale until we reload it.
-  // Listen for a global 'mb-tech-updated' event dispatched by handlePullFromServer
-  // and re-read this tab's localStorage. Also react to native 'storage' events
-  // (fires only across BROWSER tabs, not React components, but harmless to include).
+  // zzz157 — DO NOT listen for our own 'mb-tech-updated' dispatch in the same tab.
+  // Bug from zzz155: the handler re-read localStorage; if setItem hit the browser's
+  // 5MB quota and silently threw, the read returned STALE data (0 rows) which reset
+  // state — nuking the 47 rows we just computed. Only listen for cross-BROWSER-tab
+  // 'storage' events (which only fire when a DIFFERENT tab writes to localStorage).
+  // In-app tab switch already unmounts+remounts TechnicalsTab (see the
+  // `activeTab==='technicals-ind' && <TechnicalsTab market="IND" />` pattern), so
+  // fresh mount re-reads localStorage naturally.
   React.useEffect(() => {
-    const handler = () => {
+    const handler = (e: StorageEvent) => {
+      if (e.key !== TECH_ROWS_KEY && e.key !== TECH_SOURCES_KEY) return;
       try {
         const rawRows = localStorage.getItem(TECH_ROWS_KEY);
         const rawSrcs = localStorage.getItem(TECH_SOURCES_KEY);
-        setTechLocalRows(rawRows ? JSON.parse(rawRows) : []);
-        setTechSources(rawSrcs ? JSON.parse(rawSrcs) : []);
+        if (rawRows) setTechLocalRows(JSON.parse(rawRows));
+        if (rawSrcs) setTechSources(JSON.parse(rawSrcs));
       } catch {}
     };
-    window.addEventListener('mb-tech-updated', handler);
     window.addEventListener('storage', handler);
-    return () => {
-      window.removeEventListener('mb-tech-updated', handler);
-      window.removeEventListener('storage', handler);
-    };
+    return () => window.removeEventListener('storage', handler);
   }, [TECH_ROWS_KEY, TECH_SOURCES_KEY]);
 
   // zzz148 — Accepts File[] (already cloned from FileList by caller) to avoid the
@@ -6125,7 +6125,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
         try { localStorage.setItem(otherRowsKey, JSON.stringify(otherMerge.rows)); } catch {}
         try { localStorage.setItem(otherSourcesKey, JSON.stringify(otherSourcesNew)); } catch {}
         // zzz155 — broadcast so a mounted OTHER-market tab reloads its state
-        try { window.dispatchEvent(new CustomEvent('mb-tech-updated')); } catch {}
+        // zzz157 — no cross-tab dispatch needed; unmount/remount handles rehydration
       }
 
       // zzz149 — Diagnostics + routed-count message
@@ -6270,7 +6270,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       try { localStorage.setItem(otherSourcesKey, JSON.stringify(otherSourcesNew)); } catch {}
 
       // Broadcast so a mounted OTHER-tab component reloads from localStorage
-      try { window.dispatchEvent(new CustomEvent('mb-tech-updated')); } catch {}
+      // zzz157 — no cross-tab dispatch needed; unmount/remount handles rehydration
 
       // zzz156 — Track last-pulled manifest timestamp so we don't re-pull the same data
       try { if (manifest.lastSync) localStorage.setItem('mb_tech_last_pulled_sync_v1', manifest.lastSync); } catch {}
