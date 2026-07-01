@@ -6343,6 +6343,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
 
   type TechRow = {
     symbol: string; company?: string; sector?: string;
+    exchange?: string;  // zzz161 — carried through from parseUSARow for TradingView export prefix
     industry?: string;            // zzz140 — granular sub-industry
     industryRsRank?: number;      // 1-100, derived from industry-median perf
     compositeRs?: number;         // 0-100, derived from perf percentile vs universe
@@ -6856,6 +6857,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
 
       return {
         symbol: r.symbol, company: r.company, sector: r.sector,
+        exchange: r.exchange,  // zzz161 — needed for TradingView watchlist export prefix
         industry: (typeof r.industry === 'string' && r.industry) ? r.industry : undefined,  // zzz140
         price, mcapB: mcap, ema50, ema200, rsi,
         ema21, pctVsEma21,  // zzz138
@@ -7103,10 +7105,20 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
     return out;
   }, [champions, buyZone, techRows, qualityOnSale]);
 
-  // Format helpers for export
+  // zzz161 — Format helpers for export. TradingView watchlist import needs
+  // "EXCHANGE:SYMBOL" (e.g., NYSE:TER, NSE:TITAN) to resolve reliably —
+  // otherwise TITAN, PARAS, RSI, P etc. collide across markets.
+  const tvSymbol = (p: BestPick | TechRow): string => {
+    const ex = (p.exchange || '').toUpperCase().trim();
+    if (!ex || !p.symbol) return p.symbol || '';
+    // TradingView uses NASDAQ, NYSE, AMEX, NSE, BSE — pass through as-is.
+    // "NMS", "ARCA", etc. → normalise to NASDAQ / AMEX where sensible.
+    const map: Record<string, string> = { NMS: 'NASDAQ', NASDAQGS: 'NASDAQ', ARCA: 'AMEX', BATS: 'AMEX' };
+    return `${map[ex] || ex}:${p.symbol}`;
+  };
   const formatForTV = (picks: BestPick[]): string => {
     const sections: Record<string, string[]> = { ELITE: [], STRONG: [], MOMENTUM: [], QUALITY: [] };
-    picks.forEach(p => { sections[p._tier].push(p.symbol); });
+    picks.forEach(p => { sections[p._tier].push(tvSymbol(p)); });
     const out: string[] = [];
     if (sections.ELITE.length) { out.push('###Champions (Tech+Fund Elite)'); out.push(...sections.ELITE); }
     if (sections.STRONG.length) { out.push('###Buy Zone Strict'); out.push(...sections.STRONG); }
@@ -7114,8 +7126,8 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
     if (sections.QUALITY.length) { out.push('###Quality on Sale'); out.push(...sections.QUALITY); }
     return out.join(',');
   };
-  const formatPlain = (picks: BestPick[]): string => picks.map(p => p.symbol).join(',');
-  const formatPlainNewline = (picks: BestPick[]): string => picks.map(p => p.symbol).join('\n');
+  const formatPlain = (picks: BestPick[]): string => picks.map(p => tvSymbol(p)).join(',');
+  const formatPlainNewline = (picks: BestPick[]): string => picks.map(p => tvSymbol(p)).join('\n');
   const formatCsv = (picks: BestPick[]): string => {
     const headers = 'Symbol,Tier,Tech,Fund,Qulla,Zanger,Bonde,Minervini,CompositeRS,IndustryRS,Industry,Sector,Entry,Price,Stop,RiskPct,1W%,1M%,3M%,RevQ%,EpsTTM%,RelVol,RSI';
     const rows = picks.map(p => [
