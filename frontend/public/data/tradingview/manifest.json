@@ -1,8 +1,8 @@
 {
-  "lastSync": "2026-07-01T08:39:26.689Z",
-  "workflowVersion": "zzz154",
+  "lastSync": "2026-07-01T10:46:33.577Z",
+  "workflowVersion": "zzz162",
   "approach": "scanner-api-interception + field-id translation",
-  "ok": 6,
+  "ok": 9,
   "fail": 0,
   "files": [
     {
@@ -10,7 +10,7 @@
       "displayName": "Minervni Stocks",
       "screenerId": "sBtiBahk",
       "ok": true,
-      "size": 61847,
+      "size": 61863,
       "rowCount": 54,
       "error": null
     },
@@ -28,8 +28,8 @@
       "displayName": "EPISODIC PIVOT / VOLUME SURGE",
       "screenerId": "Px4kG2hQ",
       "ok": true,
-      "size": 40343,
-      "rowCount": 34,
+      "size": 43825,
+      "rowCount": 37,
       "error": null
     },
     {
@@ -37,8 +37,8 @@
       "displayName": "Liquidity Leaders",
       "screenerId": "9IcX30Ez",
       "ok": true,
-      "size": 90681,
-      "rowCount": 80,
+      "size": 89722,
+      "rowCount": 79,
       "error": null
     },
     {
@@ -46,7 +46,7 @@
       "displayName": "Weekly Gainer Stocks USA",
       "screenerId": "Neuim2Bm",
       "ok": true,
-      "size": 111560,
+      "size": 111774,
       "rowCount": 100,
       "error": null
     },
@@ -55,8 +55,35 @@
       "displayName": "Sales And EPS Growth for EP - Pradeep Bonde style",
       "screenerId": "RtSuWTgK",
       "ok": true,
-      "size": 74436,
+      "size": 74712,
       "rowCount": 67,
+      "error": null
+    },
+    {
+      "name": "future-nvda-alab-app-pltr.csv",
+      "displayName": "Future NVDIA ALAB APP PLTR (USA)",
+      "screenerId": "5gzenlmQ",
+      "ok": true,
+      "size": 15826,
+      "rowCount": 12,
+      "error": null
+    },
+    {
+      "name": "usa-multibagger-3.csv",
+      "displayName": "USA Multibagger (GHHf1HVl)",
+      "screenerId": "GHHf1HVl",
+      "ok": true,
+      "size": 106374,
+      "rowCount": 100,
+      "error": null
+    },
+    {
+      "name": "future-super-scalers-nbis.csv",
+      "displayName": "Future Super Scalers like NBIS Full",
+      "screenerId": "oRvEFfVY",
+      "ok": true,
+      "size": 99812,
+      "rowCount": 90,
       "error": null
     }
   ]
