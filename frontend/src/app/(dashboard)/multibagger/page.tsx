@@ -6704,10 +6704,20 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       if (typeof relVol1w === 'number' && relVol1w < 0.7 && hadPriorRun && nearMA) {
         qullaScore += 8; qReasons.push(`📉 Vol dry-up ${relVol1w.toFixed(2)}× after run (tight flag)`);
       }
-      // Small/mid cap preference — Qulla hunts $1-10B sweet spot
-      if (typeof mcap === 'number' && mcap >= 1 && mcap <= 10) { qullaScore += 10; qReasons.push(`small-mid $${mcap.toFixed(1)}B`); }
-      else if (typeof mcap === 'number' && mcap < 1 && mcap >= 0.3) { qullaScore += 6; qReasons.push(`micro $${(mcap*1000).toFixed(0)}M`); }
-      else if (typeof mcap === 'number' && mcap > 10 && mcap <= 50) { qullaScore += 5; qReasons.push(`mid $${mcap.toFixed(1)}B`); }
+      // zzz160 — Market-aware small/mid cap preference. TradingView returns mcap in USD
+      // across markets, but India's ₹85/USD conversion means a $1B USA mid-cap ≈ ₹8500 Cr
+      // in India = a top-100 large cap. Use SEBI-adjusted USD tiers for India.
+      if (market === 'IND') {
+        // India tiers: sweet spot $150M-$1.5B (₹1300 Cr - ₹12,700 Cr, small-mid)
+        if (typeof mcap === 'number' && mcap >= 0.15 && mcap <= 1.5) { qullaScore += 10; qReasons.push(`small-mid ₹${(mcap*85).toFixed(0)}kCr`); }
+        else if (typeof mcap === 'number' && mcap < 0.15 && mcap >= 0.05) { qullaScore += 6; qReasons.push(`micro ₹${(mcap*8500).toFixed(0)}Cr`); }
+        else if (typeof mcap === 'number' && mcap > 1.5 && mcap <= 5) { qullaScore += 5; qReasons.push(`mid ₹${(mcap*85).toFixed(0)}kCr`); }
+      } else {
+        // USA tiers: sweet spot $1-10B
+        if (typeof mcap === 'number' && mcap >= 1 && mcap <= 10) { qullaScore += 10; qReasons.push(`small-mid $${mcap.toFixed(1)}B`); }
+        else if (typeof mcap === 'number' && mcap < 1 && mcap >= 0.3) { qullaScore += 6; qReasons.push(`micro $${(mcap*1000).toFixed(0)}M`); }
+        else if (typeof mcap === 'number' && mcap > 10 && mcap <= 50) { qullaScore += 5; qReasons.push(`mid $${mcap.toFixed(1)}B`); }
+      }
       // Stage-2 confirmation (graded)
       if (typeof pctVsEma200 === 'number' && pctVsEma200 >= 30) { qullaScore += 8; qReasons.push(`strong Stage-2 (+${pctVsEma200.toFixed(0)}%)`); }
       else if (typeof pctVsEma200 === 'number' && pctVsEma200 >= 10) { qullaScore += 5; qReasons.push('Stage-2'); }
@@ -7648,8 +7658,10 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
                     💎 {r.fundReasons.slice(0, 4).join(' · ')}
                   </div>
                 ) : null}
-                <div style={{ fontSize: 12, color: '#10B981', fontWeight: 800, marginTop: 6 }}>
-                  ✅ {r.rightEntryDetail}
+                {/* zzz160 — ✅ (green) only for BUY ZONE; ⏳ (amber) for EXTENDED. Contradictory
+                    to show green checkmark next to "wait for pullback to SMA50". */}
+                <div style={{ fontSize: 12, color: r.rightEntry === 'BUY ZONE' ? '#10B981' : '#F59E0B', fontWeight: 800, marginTop: 6 }}>
+                  {r.rightEntry === 'BUY ZONE' ? '✅' : '⏳'} {r.rightEntryDetail}
                 </div>
                 {typeof r.stopLoss === 'number' ? (
                   <div style={{ fontSize: 11.5, color: '#F59E0B', marginTop: 4, fontWeight: 700 }}>
@@ -8064,7 +8076,12 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
                 <div style={{ fontSize: 13, fontWeight: 900, color: CYAN, marginBottom: 10, letterSpacing: '0.5px' }}>📈 TECHNICALS</div>
                 {[
                   ['Price (CMP)', fmtPrice(expandedRow.price)],
-                  ['Market Cap', typeof expandedRow.mcapB === 'number' ? `$${expandedRow.mcapB.toFixed(1)}B` : '—'],
+                  // zzz160 — Show USD + INR-crore for India stocks (₹85/USD approx)
+                  ['Market Cap', typeof expandedRow.mcapB === 'number'
+                    ? (market === 'IND'
+                        ? `$${expandedRow.mcapB.toFixed(1)}B (₹${(expandedRow.mcapB * 85).toFixed(0)}kCr)`
+                        : `$${expandedRow.mcapB.toFixed(1)}B`)
+                    : '—'],
                   ['ATR (14d)', typeof expandedRow.atr14 === 'number' ? `${CUR}${expandedRow.atr14.toFixed(2)}` : '—'],
                   ['ADR %', typeof expandedRow.adrPct === 'number' ? `${expandedRow.adrPct.toFixed(1)}% ${expandedRow.adrPct >= 4 && expandedRow.adrPct <= 7 ? '🎯 sweet spot' : ''}` : '—'],
                   ['RSI', typeof expandedRow.rsi === 'number' ? `${expandedRow.rsi.toFixed(0)} ${expandedRow.rsi > 85 ? '⚠️ extreme' : expandedRow.rsi >= 55 && expandedRow.rsi <= 70 ? '✅' : ''}` : '—'],
