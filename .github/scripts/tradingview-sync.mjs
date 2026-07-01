@@ -1,3 +1,8 @@
+// zzz154 — TradingView sync v5.
+// Fixes zzz153 header-escape bug: friendly names contain commas
+// ("Revenue growth %, Quarterly YoY") — they must be CSV-quoted or
+// the parser splits them into two columns and parseUSARow finds nothing.
+//
 // zzz153 — TradingView sync v4.
 // Builds on zzz152 (scanner.tradingview.com JSON interception). Adds:
 //   1. Field-ID → friendly-name column mapping so parseUSARow() in page.tsx
@@ -201,7 +206,8 @@ function scannerJsonToCsv(scanResponse, requestBody) {
     }
   });
 
-  const header = ['Symbol', 'Exchange', 'Description', ...friendlyCols.map(c => c.name)];
+  // Escape header too — many friendly names contain commas (e.g., "Revenue growth %, Quarterly YoY")
+  const header = ['Symbol', 'Exchange', 'Description', ...friendlyCols.map(c => csvEscape(c.name))];
   const rows = scanResponse.data.map(item => {
     const sym = (item.s || '').split(':');
     const exchange = sym[0] || '';
@@ -300,7 +306,7 @@ await browser.close();
 
 const manifest = {
   lastSync: new Date().toISOString(),
-  workflowVersion: 'zzz153',
+  workflowVersion: 'zzz154',
   approach: 'scanner-api-interception + field-id translation',
   ok: results.filter(r => r.ok).length,
   fail: results.filter(r => !r.ok).length,
