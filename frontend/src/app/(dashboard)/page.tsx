@@ -2472,55 +2472,56 @@ export default function HomeDashboard() {
           {/* PATCH 0619/0635 — institutional chip strip. All in one row group,
               uniform pill style, left-aligned, even row gap. */}
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-start', rowGap: 8, alignItems: 'center' }}>
-            {/* PATCH 0668 — alphabetical order (by label, ignoring emoji) */}
+            {/* zzz166 — Fully alphabetized by label (case-insensitive, ignoring emoji).
+                Adds 📈 India Technicals + 📈 USA Technicals deep-links to
+                /multibagger?tab=technicals-ind|usa. */}
+            <Link href="/playbook#about-me"      style={navChip('#fb7185')}>🌿 About Me</Link>
             <Link href="/activity-log"           style={navChip('#A78BFA')}>📜 Activity</Link>
             <Link href="/auto-valuation"         style={navChip('#10B981')}>🤖 Auto-Valuation</Link>
+            <Link href="/gautam-baid"            style={navChip('#e3b341')}>📖 Baid Playbook</Link>
+            <Link href="/bottom-picking"         style={navChip('#FBBF24')}>🎯 Bottom Picking</Link>
             <Link href="/breadth"                style={navChip('#10B981')}>📊 Breadth</Link>
-            <Link href="/buy-strategy" style={navChip('#FFD700')}>🛒 Buy Strategy</Link>
-            <Link href="/in-play" style={navChip('#22D3EE')}>📰 Live In Play</Link>
+            <Link href="/buy-strategy"           style={navChip('#FFD700')}>🛒 Buy Strategy</Link>
+            <Link href="/playbook#cadence"       style={navChip('#22D3EE')}>🗓 Cadence</Link>
+            <Link href="/capex-tracker"          style={navChip('#F0883E')}>🏗 Capex Tracker</Link>
             <Link href="/earnings-hub?tab=concall" style={navChip('#A78BFA')}>🧠 Concall AI</Link>
             <Link href="/concall-intel"          style={navChip('#A78BFA')}>🎙 Concall Intel</Link>
-            {/* PATCH 0910 — User request: surface Conviction Beats + Heatmap
-                here, alphabetical. CB lives inside /watchlists as a sub-tab. */}
             <Link href="/watchlists?tab=conviction" style={navChip('#F59E0B')}>🏆 Conviction Beats</Link>
             <Link href="/decisions"              style={navChip('#22D3EE')}>📒 Decision Log</Link>
+            <Link href="/double-bottom"          style={navChip('#22C55E')}>📉 Double Bottom</Link>
+            <Link href="/earnings-mastery"       style={navChip('#F59E0B')}>📊 Earnings Mastery</Link>
             <Link href="/earnings-opportunities" style={navChip('#F59E0B')}>📅 Earnings Ops</Link>
             <Link href="/earnings"               style={navChip('#F59E0B')}>📊 Earnings Scan</Link>
-            <Link href="/guidance-extractor"     style={navChip('#A78BFA')}>📋 Guidance</Link>
-            {/* PATCH 1121 — Watchlist & Portfolio Fundamentals deep-link chips per user request */}
-            <Link href="/fundamentals?scope=watchlist" style={navChip('#2dd4bf')}>🔬 Watchlist Fundamentals</Link>
-            <Link href="/fundamentals?scope=portfolio" style={navChip('#f59e0b')}>🔬 Portfolio Fundamentals</Link>
-            <Link href="/heatmap"                style={navChip('#22D3EE')}>🗺 Heatmap</Link>
-            <Link href="/movers"                 style={navChip('#10B981')}>📈 Movers</Link>
-            {/* PATCH 1067 — News Feed chip per user request */}
-            <Link href="/news"                   style={navChip('#60A5FA')}>📰 News Feed</Link>
-            <Link href="/multibagger"            style={navChip('#10B981')}>🚀 Multibagger</Link>
-            <Link href="/capex-tracker"          style={navChip('#F0883E')}>🏗 Capex Tracker</Link>
-            {/* PATCH — 🧭 Verdict deep link: combined capex+MB+forensic+concall verdict tab */}
-            <Link href="/capex-tracker?tab=verdict" style={navChip('#A78BFA')}>🧭 Verdict</Link>
-            <Link href="/portfolio"              style={navChip('#22D3EE')}>💼 My Book</Link>
-            {/* PATCH 0776 — 📑 Order Book + 🏛 Rating Actions chips removed (modules deleted). */}
-            {/* PATCH 1122 — Investing OS chip */}
-            <Link href="/investing-os"           style={navChip('#2dd4bf')}>🧠 Investing OS</Link>
-            <Link href="/gautam-baid"            style={navChip('#e3b341')}>📖 Baid Playbook</Link>
-            <Link href="/earnings-trigger"      style={navChip('#f0883e')}>⚡ Earnings Trigger</Link>
-            <Link href="/playbook"               style={navChip('#F59E0B')}>📚 Playbook</Link>
-            {/* PATCH 1082 — wealth-journey tab */}
-            <Link href="/journey"                style={navChip('#22D3EE')}>🚀 The Journey</Link>
-            {/* PATCH 1089 — Market Cycles handbook tab */}
-            <Link href="/market-cycles"          style={navChip('#A78BFA')}>🎢 Market Cycles</Link>
-            {/* PATCH 1101t — Volume Rules: 9 institutional volume/price-action tips */}
-            <Link href="/volume-rules"           style={navChip('#22D3EE')}>🎯 Volume Rules</Link>
-            {/* PATCH 1101x — Earnings Mastery: post-earnings multibagger playbook */}
-            <Link href="/earnings-mastery"       style={navChip('#F59E0B')}>📊 Earnings Mastery</Link>
-            {/* PATCH zzz111 — Double Bottom pattern guide */}
-            <Link href="/double-bottom"          style={navChip('#22C55E')}>📉 Double Bottom</Link>
-            {/* PATCH zzz112 — Fan Principle pattern guide */}
+            <Link href="/earnings-trigger"       style={navChip('#f0883e')}>⚡ Earnings Trigger</Link>
             <Link href="/fan-principle"          style={navChip('#06B6D4')}>🪭 Fan Principle</Link>
-            {/* PATCH zzz113 — Bottom Picking master playbook */}
-            <Link href="/bottom-picking"         style={navChip('#FBBF24')}>🎯 Bottom Picking</Link>
-            {/* PATCH zzz114 — News Triage playbook */}
+            <Link href="/guidance-extractor"     style={navChip('#A78BFA')}>📋 Guidance</Link>
+            <Link href="/heatmap"                style={navChip('#22D3EE')}>🗺 Heatmap</Link>
+            <a
+              href="https://www.ibef.org/news/past-news"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={navChip('#10B981')}
+            >🇮🇳 IBEF</a>
+            {/* zzz166 — India Technicals deep-link */}
+            <Link href="/multibagger?tab=technicals-ind" style={navChip('#22D3EE')}>📈 India Technicals</Link>
+            <Link href="/investing-os"           style={navChip('#2dd4bf')}>🧠 Investing OS</Link>
+            <Link href="/playbook#life-sat"      style={navChip('#fbbf24')}>🌅 Life Sat</Link>
+            <Link href="/in-play"                style={navChip('#22D3EE')}>📰 Live In Play</Link>
+            <Link href="/market-cycles"          style={navChip('#A78BFA')}>🎢 Market Cycles</Link>
+            <Link href="/movers"                 style={navChip('#10B981')}>📈 Movers</Link>
+            <Link href="/multibagger"            style={navChip('#10B981')}>🚀 Multibagger</Link>
+            <Link href="/portfolio"              style={navChip('#22D3EE')}>💼 My Book</Link>
+            <Link href="/news"                   style={navChip('#60A5FA')}>📰 News Feed</Link>
             <Link href="/news-triage"            style={navChip('#EF4444')}>📰 News Triage</Link>
+            <Link href="/playbook#mastery"       style={navChip('#84cc16')}>🏏 Peak Performance</Link>
+            <Link href="/playbook"               style={navChip('#F59E0B')}>📚 Playbook</Link>
+            <Link href="/fundamentals?scope=portfolio" style={navChip('#f59e0b')}>🔬 Portfolio Fundamentals</Link>
+            <Link href="/playbook#relationships" style={navChip('#2dd4bf')}>🤝 Relationships</Link>
+            <Link href="/orders"                 style={navChip('#22D3EE')}>📡 Signals</Link>
+            <Link href="/special-situations"     style={navChip('#EF4444')}>🎯 Special Sit</Link>
+            <Link href="/strategic-visibility"   style={navChip('#A78BFA')}>⭐ Strategic Vis</Link>
+            <Link href="/playbook#stress"        style={navChip('#38bdf8')}>🧘 Stress</Link>
+            <Link href="/super-investors"        style={navChip('#A78BFA')}>🦅 Super Investors</Link>
             {/* PATCH 1101aa — External IBEF news link (India Brand Equity Foundation).
                 Opens in new tab; not a Next.js Link because it's a third-party URL. */}
             <a
@@ -2657,23 +2658,20 @@ export default function HomeDashboard() {
               title="One-click download of saved Screener.in screens. Uses your stored sessionid cookie."
               style={{ ...navChip('#8B5CF6'), cursor: 'pointer', border: '1px solid color-mix(in srgb, #8B5CF6 40%, transparent)' }}
             >📥 Sync Screener.in</button>}
-            {/* PATCH 1063 — deep-link chips into Playbook sub-sections per user request */}
-            <Link href="/playbook#about-me"      style={navChip('#fb7185')}>🌿 About Me</Link>
-            <Link href="/playbook#life-sat"      style={navChip('#fbbf24')}>🌅 Life Sat</Link>
-            {/* PATCH 1066 — Review Cadence + Relationships deep-link chips per user request */}
-            <Link href="/playbook#cadence"       style={navChip('#22D3EE')}>🗓 Cadence</Link>
-            <Link href="/playbook#relationships" style={navChip('#2dd4bf')}>🤝 Relationships</Link>
-            <Link href="/playbook#mastery"       style={navChip('#84cc16')}>🏏 Peak Performance</Link>
-            <Link href="/playbook#stress"        style={navChip('#38bdf8')}>🧘 Stress</Link>
-            <Link href="/orders"                 style={navChip('#22D3EE')}>📡 Signals</Link>
-            <Link href="/special-situations"     style={navChip('#EF4444')}>🎯 Special Sit</Link>
-            <Link href="/strategic-visibility"   style={navChip('#A78BFA')}>⭐ Strategic Vis</Link>
-            <Link href="/super-investors"        style={navChip('#A78BFA')}>🦅 Super Investors</Link>
-            <Link href="/critical-themes"        style={navChip('#EF4444')}>🔥 Themes</Link>
-            {/* PATCH zzz67 — quick-link to the new no-code System Health checkup */}
+            {/* zzz166 — Trailing alphabetized chips (S–W). All A–S chips moved
+                to the block above. Duplicates of About Me / Life Sat / Cadence /
+                Relationships / Peak Performance / Stress / Signals / Special Sit /
+                Strategic Vis / Super Investors were removed here. */}
             <Link href="/system-health"          style={navChip('#10B981')}>🩺 System Health</Link>
+            <Link href="/journey"                style={navChip('#22D3EE')}>🚀 The Journey</Link>
+            <Link href="/critical-themes"        style={navChip('#EF4444')}>🔥 Themes</Link>
+            {/* zzz166 — USA Technicals deep-link */}
+            <Link href="/multibagger?tab=technicals-usa" style={navChip('#22D3EE')}>📈 USA Technicals</Link>
             <Link href="/valuation-calc"         style={navChip('#22D3EE')}>🧮 Valuation Calc</Link>
+            <Link href="/capex-tracker?tab=verdict" style={navChip('#A78BFA')}>🧭 Verdict</Link>
+            <Link href="/volume-rules"           style={navChip('#22D3EE')}>🎯 Volume Rules</Link>
             <Link href="/watchlists"             style={navChip('#22D3EE')}>👁 Watchlist</Link>
+            <Link href="/fundamentals?scope=watchlist" style={navChip('#2dd4bf')}>🔬 Watchlist Fundamentals</Link>
           </div>
         </div>
 
@@ -3218,7 +3216,7 @@ export default function HomeDashboard() {
             so the visual format matches Tier 1 / Tier 2 exactly. */}
         {lensedTurnaround.length > 0 ? (
           <DecisionTierBlock
-            tier={1}
+            tier={2}
             label="TURNAROUND BUY-ZONE"
             color="#F59E0B"
             description="Top turnaround setups from your /multibagger Turnarounds upload (top 5 by total score). Different playbook than the IMMEDIATE ACTION list above — these are INFLECTION setups, not sustained-quality compounders."
@@ -3237,7 +3235,7 @@ export default function HomeDashboard() {
           }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
               <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--mc-warn)', letterSpacing: '0.4px' }}>
-                🎯 TIER 1 — TURNAROUND BUY-ZONE (0)
+                🎯 TIER 2 — TURNAROUND BUY-ZONE (0)
               </span>
               <span style={{ fontSize: 10, color: 'var(--mc-warn)', background: 'color-mix(in srgb, var(--mc-warn) 13%, transparent)', padding: '2px 7px', borderRadius: 3, fontWeight: 700 }}>
                 ACTION NOW
