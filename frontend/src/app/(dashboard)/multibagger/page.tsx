@@ -4238,7 +4238,9 @@ function USACompare() {
   const [usaSyncStatus, setUsaSyncStatus] = React.useState<SyncStatus | null>(null);
   const [usaSyncLoading, setUsaSyncLoading] = React.useState(false);
   React.useEffect(() => { getTradingviewSyncStatus().then(setUsaSyncStatus); }, []);
-  const USA_LAST_SYNC_SEEN_KEY = 'mb_usa_last_sync_seen_v1';
+  // zzz172 — bumped v1→v2 to match zzz171 storage-key nuke so old browsers
+  // don't skip freshness re-pulls due to stale seen-stamp
+  const USA_LAST_SYNC_SEEN_KEY = 'mb_usa_last_sync_seen_v2';
   const runUsaAutoSync = React.useCallback(async (_force = false) => {
     if (usaSyncLoading) return;
     setUsaSyncLoading(true);
@@ -6075,6 +6077,14 @@ function MultiConfirmedCard({ stocks }: { stocks: any[] }) {
 //
 // Right entry zone: 0–7% above EMA50 (proxy for Qullamaggie's 21-EMA rule).
 // ═══════════════════════════════════════════════════════════════════════════
+
+// zzz172 — Module-level dedupe for auto-pull. When user rapidly switches
+// USA <-> IND Technicals tabs, both TechnicalsTab instances would fire
+// handlePullFromServer against the same manifest.lastSync. This shared map
+// tracks in-flight pulls by manifest timestamp so a second tab short-circuits
+// while the first is running.
+const _techPullInFlight: { current: Set<string> } = { current: new Set() };
+
 function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
   // zzz149 — Tab is parameterized by market. All localStorage keys are scoped
   // per market so USA + India tabs are fully independent. Uploads in either
@@ -6319,16 +6329,26 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
   //   (b) Cross-tab rehydration — dispatches 'mb-tech-updated' so a stale India tab
   //       component reloads its state from localStorage after a USA-tab pull writes to it.
   const handlePullFromServer = async () => {
+    // zzz172 — Wrap in try/finally so setTechLoading(false) always runs,
+    // even if an unexpected throw happens before the outer try block below.
     setTechLoading(true);
     setTechUploadMsg('⏳ Fetching latest from server…');
     try {
       const manifestResp = await fetch('/data/tradingview/manifest.json', { cache: 'no-store' });
       if (!manifestResp.ok) throw new Error(`manifest ${manifestResp.status}`);
       const manifest = await manifestResp.json();
+      // zzz172 — race guard: if another TechnicalsTab (other market) is already
+      // pulling this exact manifest.lastSync, don't fire a second concurrent pull.
+      const pullKey = `${MK}-${manifest.lastSync || '?'}`;
+      if (_techPullInFlight.current.has(pullKey)) {
+        setTechUploadMsg('⏭ Another pull already in flight for this snapshot');
+        return;
+      }
+      _techPullInFlight.current.add(pullKey);
       const files = (manifest.files || []).filter((f: any) => f.ok);
       if (files.length === 0) {
         setTechUploadMsg(`⚠️ Server manifest has no successful files. Last sync: ${manifest.lastSync || '?'}`);
-        setTechLoading(false);
+        _techPullInFlight.current.delete(pullKey);
         return;
       }
       const XLSX = await import('xlsx');
@@ -6446,14 +6466,22 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       bumpData();
     } catch (e) {
       setTechUploadMsg(`⚠️ Server pull failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      // zzz172 — guaranteed unlock even on unexpected throws.
+      // Clear ALL in-flight entries for this market so subsequent pulls proceed.
+      Array.from(_techPullInFlight.current).forEach(k => {
+        if (k.startsWith(`${MK}-`)) _techPullInFlight.current.delete(k);
+      });
+      setTechLoading(false);
     }
-    setTechLoading(false);
   };
 
   // zzz156 — Auto-pull on tab mount when the server has newer data than what we
   // last pulled. Silent (no toast on skip), fully hands-free. Runs once per
   // mount per market — subsequent tab switches don't re-pull unless server has
   // a newer manifest timestamp.
+  // zzz172 — Module-level in-flight guard so rapid USA <-> IND tab switches
+  // don't race two concurrent pulls on the same manifest. Keyed by lastSync.
   const autoPullRanRef = React.useRef(false);
   React.useEffect(() => {
     if (autoPullRanRef.current) return;
