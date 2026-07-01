@@ -4170,15 +4170,18 @@ function USAChecklist() {
   );
 }
 
-const USA_STORAGE_KEY = 'mb_usa_scored_v1';
-// PATCH zzz108 — Slim Analytics-only payload key. The full USA storage often
-// blows past the 5MB localStorage cap once a user has uploaded a 100+ row
-// TradingView CSV (each row has 50+ columns). When the full write is rejected
-// silently by the browser, Analytics ends up with usaRows.len=0 even though
-// USA Multibagger's React state has the rows. The slim key writes only the
-// fields Analytics actually reads — typically 5-10× smaller — and survives
-// quota pressure that kills the full write.
-const USA_SLIM_KEY = 'mb_usa_slim_v1';
+// zzz171 — NUCLEAR CACHE BUST. Bumping v1 → v2 in USA_STORAGE_KEY and
+// USA_SLIM_KEY makes every browser's cached 76 India-heavy USAResult rows
+// (persisted before zzz163's exchange filter ever ran) INVISIBLE. On mount,
+// useState reads v2 which is null → rows = [] → auto-load fires → fresh CSV
+// pull → exchange-filter runs → only NYSE/NASDAQ rows survive.
+// Also clean up the stale v1 keys to free up localStorage quota.
+const USA_STORAGE_KEY = 'mb_usa_scored_v2';
+const USA_SLIM_KEY = 'mb_usa_slim_v2';
+if (typeof window !== 'undefined') {
+  try { localStorage.removeItem('mb_usa_scored_v1'); } catch {}
+  try { localStorage.removeItem('mb_usa_slim_v1'); } catch {}
+}
 
 // PATCH zzz110 — IN-MEMORY USA ROWS BRIDGE.
 // Five prior patches (zzz105/106/107/108/109) all assumed localStorage works.
