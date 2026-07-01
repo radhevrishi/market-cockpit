@@ -36,6 +36,8 @@ import { parseCsvFlexible, detectCsvMarket } from '@/lib/multibagger-csv-parsers
 import {
   SYNC_ROUTING, getSyncStatus, fetchCsvsAsFiles,
   shouldAutoLoad, markAutoLoaded, resetAutoLoadFlag, type SyncStatus,
+  // zzz162 — TradingView-side helpers for USA Multibagger auto-sync
+  getTradingviewSyncStatus, fetchTradingviewCsvsAsFiles,
 } from '@/lib/screener-data-loader';
 
 // Shared API base — respects NEXT_PUBLIC_API_URL env var so all fetch() calls
@@ -4225,6 +4227,40 @@ function toSlimUsaRows(rows: any[]): any[] {
 
 function USACompare() {
   const fileRef = React.useRef<HTMLInputElement>(null);
+  // zzz162 — TradingView auto-sync state (parallel to India's runAutoSync).
+  const [usaSyncStatus, setUsaSyncStatus] = React.useState<SyncStatus | null>(null);
+  const [usaSyncLoading, setUsaSyncLoading] = React.useState(false);
+  React.useEffect(() => { getTradingviewSyncStatus().then(setUsaSyncStatus); }, []);
+  const USA_LAST_SYNC_SEEN_KEY = 'mb_usa_last_sync_seen_v1';
+  const runUsaAutoSync = React.useCallback(async (_force = false) => {
+    if (usaSyncLoading) return;
+    setUsaSyncLoading(true);
+    try {
+      const files = await fetchTradingviewCsvsAsFiles(SYNC_ROUTING.multibaggerUsa);
+      if (files.length === 0) {
+        setParseError('Auto-sync failed: no CSVs in /data/tradingview/. Run the GitHub Action first.');
+        return;
+      }
+      await handleFiles(files);
+      const fresh = await getTradingviewSyncStatus();
+      setUsaSyncStatus(fresh);
+      try { if (fresh?.lastSync) localStorage.setItem(USA_LAST_SYNC_SEEN_KEY, fresh.lastSync.toISOString()); } catch {}
+    } finally {
+      setUsaSyncLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usaSyncLoading]);
+  // zzz162 — Auto-load on first mount when USA rows are empty and we haven't
+  // auto-loaded before for this scope. Matches India Multibagger behavior.
+  React.useEffect(() => {
+    if (rows.length > 0) return;
+    if (!shouldAutoLoad('multibagger-usa')) return;
+    const t = setTimeout(() => {
+      runUsaAutoSync(false).then(() => markAutoLoaded('multibagger-usa'));
+    }, 1500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [rows, setRowsState] = React.useState<USAResult[]>(() => {
     // zzz134 — Helper that ensures every row has `pillarScores`, `strengths`, `risks`.
     // These come from scoreUSARow() but are stripped when the row passes through
@@ -4582,6 +4618,21 @@ function USACompare() {
         </div>
       </div>
 
+      {/* zzz162 — Auto-sync from TradingView (daily GitHub Action).
+          Pulls 4 CSVs from /data/tradingview/. Similar pattern to India tab. */}
+      <div style={{marginBottom:14,padding:'12px 16px',background:CARD2,border:`1px solid ${BORDER}`,borderRadius:10,display:'flex',flexWrap:'wrap',alignItems:'center',gap:12}}>
+        <span style={{fontSize:F.md,color:'#22D3EE',fontWeight:800}}>📡 Server Auto-Sync</span>
+        <span style={{fontSize:F.sm,color:MUTED}}>
+          {usaSyncStatus?.hasManifest
+            ? <>Last daily sync: <b style={{color:'#e6edf3'}}>{usaSyncStatus.lastSync?.toLocaleString()}</b> ({usaSyncStatus.hoursOld != null ? Math.round(usaSyncStatus.hoursOld) : '?'}h ago) · {usaSyncStatus.okCount} screens ready</>
+            : <>No server sync yet — click below to pull the daily-cached TradingView Multibagger CSVs.</>}
+        </span>
+        <button
+          onClick={()=>runUsaAutoSync(true)}
+          disabled={usaSyncLoading || loading}
+          style={{marginLeft:'auto',background:'#38bdf8',color:'#0B1220',border:'none',padding:'8px 14px',borderRadius:6,fontSize:F.sm,fontWeight:800,cursor:(usaSyncLoading||loading)?'wait':'pointer'}}
+        >{usaSyncLoading ? '⏳ Pulling…' : '🔄 Pull latest from server'}</button>
+      </div>
       {/* Upload */}
       <div
         onClick={()=>fileRef.current?.click()}
@@ -4593,7 +4644,7 @@ function USACompare() {
         <div style={{fontSize:F.xl,fontWeight:700,color:'#38bdf8'}}>
           {loading?'Scoring...' : fileName?`✅ ${fileName}` : 'Upload TradingView CSV'}
         </div>
-        <div style={{fontSize:F.md,color:MUTED,marginTop:6}}>Export any TradingView screen · .csv · all columns auto-detected</div>
+        <div style={{fontSize:F.md,color:MUTED,marginTop:6}}>Export any TradingView screen · .csv · all columns auto-detected · <span style={{color:YELLOW}}>or use auto-sync above</span></div>
         <input ref={fileRef} type="file" accept=".csv,.xlsx" multiple style={{display:'none'}}
           onChange={e=>{if(e.target.files?.length)handleFiles(e.target.files);}} />
       </div>
