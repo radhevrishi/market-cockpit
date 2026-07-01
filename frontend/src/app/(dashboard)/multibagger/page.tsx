@@ -6272,6 +6272,9 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       // Broadcast so a mounted OTHER-tab component reloads from localStorage
       try { window.dispatchEvent(new CustomEvent('mb-tech-updated')); } catch {}
 
+      // zzz156 — Track last-pulled manifest timestamp so we don't re-pull the same data
+      try { if (manifest.lastSync) localStorage.setItem('mb_tech_last_pulled_sync_v1', manifest.lastSync); } catch {}
+
       const lastSync = manifest.lastSync ? new Date(manifest.lastSync).toLocaleString() : '?';
       const meLabel = MK === 'usa' ? 'USA' : 'India';
       const otherLabel = MK === 'usa' ? 'India' : 'USA';
@@ -6287,6 +6290,39 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
     }
     setTechLoading(false);
   };
+
+  // zzz156 — Auto-pull on tab mount when the server has newer data than what we
+  // last pulled. Silent (no toast on skip), fully hands-free. Runs once per
+  // mount per market — subsequent tab switches don't re-pull unless server has
+  // a newer manifest timestamp.
+  const autoPullRanRef = React.useRef(false);
+  React.useEffect(() => {
+    if (autoPullRanRef.current) return;
+    autoPullRanRef.current = true;
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch('/data/tradingview/manifest.json', { cache: 'no-store' });
+        if (!resp.ok) return;
+        const manifest = await resp.json();
+        if (cancelled) return;
+        const serverSync: string | undefined = manifest?.lastSync;
+        if (!serverSync) return;
+        let lastPulled: string | null = null;
+        try { lastPulled = localStorage.getItem('mb_tech_last_pulled_sync_v1'); } catch {}
+        const localEmpty = techLocalRows.length === 0;
+        const isNewer = !lastPulled || new Date(serverSync).getTime() > new Date(lastPulled).getTime();
+        // Auto-pull when: server has fresher data OR current tab is empty
+        if (isNewer || localEmpty) {
+          handlePullFromServer();
+        }
+      } catch { /* silent */ }
+    })();
+    return () => { cancelled = true; };
+    // Only run once per component mount. Intentionally omit dependencies —
+    // we don't want to re-run when techLocalRows changes (that's the pull itself).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // zzz149 — Per-market data. No fallback to other caches.
   const usaRows = React.useMemo<any[]>(() => techLocalRows, [dataTick, techLocalRows]);
