@@ -46,10 +46,23 @@ export const SYNC_ROUTING = {
     'watchlist-10432585.csv',
     'watchlist-8105148.csv',
   ],
+  // zzz162 — USA Multibagger auto-sync from TradingView screener exports.
+  // These CSVs land in /data/tradingview/ (not /data/screener/) via
+  // .github/workflows/tradingview-sync.yml. Callers should use
+  // fetchTradingviewCsvsAsFiles() to load them.
+  multibaggerUsa: [
+    'sales-eps-growth-bonde.csv',
+    'future-nvda-alab-app-pltr.csv',
+    'usa-multibagger-3.csv',
+    'future-super-scalers-nbis.csv',
+  ],
 } as const;
 
 const MANIFEST_URL = '/data/screener/manifest.json';
 const FILE_URL_BASE = '/data/screener/';
+// zzz162 — TradingView CSVs live in a separate folder + manifest.
+const TV_MANIFEST_URL = '/data/tradingview/manifest.json';
+const TV_FILE_URL_BASE = '/data/tradingview/';
 
 export async function fetchManifest(): Promise<SyncManifest | null> {
   try {
@@ -152,4 +165,65 @@ export function markAutoLoaded(scope: string): void {
 export function resetAutoLoadFlag(scope: string): void {
   if (typeof window === 'undefined') return;
   try { localStorage.removeItem(autoLoadKey(scope)); } catch {}
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz162 — TradingView CSV helpers (parallel to Screener.in ones above).
+// TradingView CSVs live in /data/tradingview/ and are populated by the
+// tradingview-sync.yml GitHub Action. Same shape as Screener.in manifest.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function fetchTradingviewManifest(): Promise<SyncManifest | null> {
+  try {
+    const r = await fetch(TV_MANIFEST_URL, { cache: 'no-store' });
+    if (!r.ok) return null;
+    return (await r.json()) as SyncManifest;
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchTradingviewCsvText(filename: string): Promise<string | null> {
+  try {
+    const r = await fetch(TV_FILE_URL_BASE + filename, { cache: 'no-store' });
+    if (!r.ok) return null;
+    return await r.text();
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchTradingviewCsvsAsFiles(filenames: readonly string[]): Promise<File[]> {
+  const manifest = await fetchTradingviewManifest();
+  const displayMap = new Map<string, string>();
+  if (manifest) {
+    for (const f of manifest.files) displayMap.set(f.name, f.displayName || f.name);
+  }
+  const out: File[] = [];
+  for (const fname of filenames) {
+    const text = await fetchTradingviewCsvText(fname);
+    if (!text) continue;
+    const displayName = displayMap.get(fname) || fname;
+    const blob = new Blob([text], { type: 'text/csv' });
+    out.push(new File([blob], displayName, { type: 'text/csv' }));
+  }
+  return out;
+}
+
+export async function getTradingviewSyncStatus(): Promise<SyncStatus> {
+  const m = await fetchTradingviewManifest();
+  if (!m) {
+    return { hasManifest: false, lastSync: null, hoursOld: null, isStale: true, okCount: 0, failCount: 0, files: [] };
+  }
+  const lastSync = new Date(m.lastSync);
+  const hoursOld = (Date.now() - lastSync.getTime()) / 3_600_000;
+  return {
+    hasManifest: true,
+    lastSync,
+    hoursOld,
+    isStale: hoursOld > 36,
+    okCount: m.ok,
+    failCount: m.fail,
+    files: m.files.map(f => f.name),
+  };
 }
