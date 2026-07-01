@@ -50,12 +50,11 @@ export const SYNC_ROUTING = {
   // These CSVs land in /data/tradingview/ (not /data/screener/) via
   // .github/workflows/tradingview-sync.yml. Callers should use
   // fetchTradingviewCsvsAsFiles() to load them.
-  // zzz164 — Dropped 'sales-eps-growth-bonde.csv' from USA Multibagger. The
-  // Bonde screener has 26 NSE (India) tickers mixed in that leak through even
-  // with zzz163's exchange filter (they were the actual source of TITAN,
-  // BAJAJCON, WEBELSOLAR, etc. showing on the USA Multibagger tab). The 3
-  // remaining screeners are 100% USA-market (~200 rows).
+  // zzz165 — User cleaned the Bonde TradingView screener to USA-only stocks,
+  // so restoring it to USA Multibagger routing. (zzz163 exchange filter stays
+  // as a defensive backstop in case any drift back in future.)
   multibaggerUsa: [
+    'sales-eps-growth-bonde.csv',
     'future-nvda-alab-app-pltr.csv',
     'usa-multibagger-3.csv',
     'future-super-scalers-nbis.csv',
