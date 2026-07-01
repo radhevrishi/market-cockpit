@@ -19,12 +19,18 @@ import path from 'node:path';
 chromium.use(StealthPlugin());
 
 const SCREENERS = [
+  // Technicals tab (Qulla/Zanger/Bonde/Minervini)
   { id: 'sBtiBahk', slug: 'minervini-stocks',          name: 'Minervni Stocks' },
   { id: 'WJDx6FZ9', slug: 'qullamaggie-leaders',       name: 'Qualmaggie Leader Stocks in Bearmarket or Corrections' },
   { id: 'Px4kG2hQ', slug: 'episodic-pivot',            name: 'EPISODIC PIVOT / VOLUME SURGE' },
   { id: '9IcX30Ez', slug: 'liquidity-leaders',         name: 'Liquidity Leaders' },
   { id: 'Neuim2Bm', slug: 'weekly-gainer-usa',         name: 'Weekly Gainer Stocks USA' },
+  // Shared: Bonde also used by USA Multibagger
   { id: 'RtSuWTgK', slug: 'sales-eps-growth-bonde',    name: 'Sales And EPS Growth for EP - Pradeep Bonde style' },
+  // zzz162 — USA Multibagger (Fisher 100-Bagger framework)
+  { id: '5gzenlmQ', slug: 'future-nvda-alab-app-pltr', name: 'Future NVDIA ALAB APP PLTR (USA)' },
+  { id: 'GHHf1HVl', slug: 'usa-multibagger-3',         name: 'USA Multibagger (GHHf1HVl)' },
+  { id: 'oRvEFfVY', slug: 'future-super-scalers-nbis', name: 'Future Super Scalers like NBIS Full' },
 ];
 
 // ─── Field ID → friendly column header map ─────────────────────────────────
@@ -306,7 +312,7 @@ await browser.close();
 
 const manifest = {
   lastSync: new Date().toISOString(),
-  workflowVersion: 'zzz154',
+  workflowVersion: 'zzz162',
   approach: 'scanner-api-interception + field-id translation',
   ok: results.filter(r => r.ok).length,
   fail: results.filter(r => !r.ok).length,
