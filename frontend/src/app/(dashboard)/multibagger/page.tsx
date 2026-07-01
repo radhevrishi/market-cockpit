@@ -4227,6 +4227,10 @@ function toSlimUsaRows(rows: any[]): any[] {
 
 function USACompare() {
   const fileRef = React.useRef<HTMLInputElement>(null);
+  // zzz170 — Ref flag: when TRUE, handleFiles ignores stale closure `rows` and
+  // starts from empty state. Fixes the async-setState closure bug in zzz169
+  // that let 76 pre-filter India rows survive every subsequent auto-pull.
+  const forceStartFromEmptyRef = React.useRef<boolean>(false);
   // zzz162 — TradingView auto-sync state (parallel to India's runAutoSync).
   const [usaSyncStatus, setUsaSyncStatus] = React.useState<SyncStatus | null>(null);
   const [usaSyncLoading, setUsaSyncLoading] = React.useState(false);
@@ -4290,10 +4294,12 @@ function USACompare() {
         setParseError('Auto-sync: 0 USA rows after exchange filter — did upstream screeners drift to India-only?');
         return;
       }
-      // zzz169 — CLEAR existing state before merging in fresh filtered rows.
-      // handleFiles merges by symbol so stale India rows persisted through the
-      // filter era. Now every auto-pull starts from a clean slate, guaranteeing
-      // only USA-exchange rows survive.
+      // zzz170 — CLEAR everything AND set the ref flag so handleFiles bypasses
+      // its stale-closure `rows` value. Without the ref, React batches the
+      // setRowsState([]) call and handleFiles' seenSymbols init still reads
+      // the OLD 76 India rows from closure. That's the bug that let India
+      // stocks survive zzz163 filter + zzz169 clear for 5 attempts.
+      forceStartFromEmptyRef.current = true;
       try { setRowsState([]); } catch {}
       try { localStorage.removeItem(USA_STORAGE_KEY); } catch {}
       try { localStorage.removeItem(USA_SLIM_KEY); } catch {}
@@ -4506,15 +4512,21 @@ function USACompare() {
 
   async function handleFiles(files: FileList | File[]) {
     setParseError(''); setLoading(true);
+    // zzz170 — If runUsaAutoSync set the reset flag, ignore stale `rows` closure
+    // and treat existing rows as empty. Clear the flag immediately after read
+    // so subsequent manual uploads still merge normally.
+    const startFromEmpty = forceStartFromEmptyRef.current;
+    forceStartFromEmptyRef.current = false;
+    const baselineRows = startFromEmpty ? ([] as USAResult[]) : rows;
     // PATCH 0872 — Capture pre-upload USA baseline FIRST (was previously
     // written AFTER scoring, which made PREV==CURRENT and zeroed every
     // USA score-delta indicator in MultibaggerAnalytics).
-    try { localStorage.setItem(USA_PREV_KEY, JSON.stringify(Object.fromEntries(rows.map(r=>[r.symbol,r.score])))); } catch {}
+    try { localStorage.setItem(USA_PREV_KEY, JSON.stringify(Object.fromEntries(baselineRows.map(r=>[r.symbol,r.score])))); } catch {}
     try {
       const XLSX = await import('xlsx');
       const arr = Array.from(files);
       const allRows: USARow[] = [];
-      const seenSymbols = new Set(rows.map(r=>r.symbol));
+      const seenSymbols = new Set(baselineRows.map(r=>r.symbol));
       // PATCH 0347 — Cross-market detection on USA upload
       const allHeaders: string[] = [];
       // PATCH 1101kk — Track which TradingView CSV each ticker came from so
@@ -4555,8 +4567,10 @@ function USACompare() {
       // PATCH 1101kk — Re-upload-only case: every ticker already in dataset.
       // Still flush screener-membership onto existing rows so MULTI-CONFIRMED
       // picks update without forcing user to clear data first.
-      if (!allRows.length && rows.length > 0) {
-        const rowsWithScreeners = rows.map(r => {
+      if (!allRows.length && baselineRows.length > 0) {
+        // zzz170 — Use baselineRows (== [] when reset flag set) so we don't
+        // resurrect the 76 stale India rows via the "screener membership refresh" path.
+        const rowsWithScreeners = baselineRows.map(r => {
           const newSources = _usaScreenerMap.get(r.symbol);
           if (!newSources || newSources.length === 0) return r;
           const existing = ((r as any)._screeners as string[] | undefined) ?? [];
@@ -4564,7 +4578,7 @@ function USACompare() {
           return { ...r, _screeners: merged } as any;
         });
         setRows(rowsWithScreeners);
-        setFileName(`Screener membership refreshed · ${arr.length} file${arr.length>1?'s':''} · ${rows.length} stocks`);
+        setFileName(`Screener membership refreshed · ${arr.length} file${arr.length>1?'s':''} · ${baselineRows.length} stocks`);
         setLoading(false); return;
       }
       if (!allRows.length) { setParseError('No valid rows found. Ensure the file has a Symbol column.'); setLoading(false); return; }
@@ -4574,8 +4588,9 @@ function USACompare() {
         const sc = _usaScreenerMap.get(r.symbol) ?? [];
         return { ...s, _screeners: sc } as any;
       });
-      // PATCH 1101kk — Also merge new screener files onto pre-existing rows.
-      const existingMerged = rows.map(r => {
+      // zzz170 — Use baselineRows here too. When reset flag was set,
+      // baselineRows == [], so merged == scored (only fresh USA-filtered stuff).
+      const existingMerged = baselineRows.map(r => {
         const newSources = _usaScreenerMap.get(r.symbol);
         if (!newSources || newSources.length === 0) return r;
         const existing = ((r as any)._screeners as string[] | undefined) ?? [];
