@@ -5510,7 +5510,18 @@ export default function MultibaggerPage() {
   // dedicated dashboards for the USA Multibagger universe and the
   // Turnaround universe respectively. The original 'analytics' tab stays
   // as the cross-market overview (India-led).
-  const [activeTab, setActiveTab] = useState<'analytics'|'excel'|'usa'|'usa-analytics'|'technicals'|'technicals-usa'|'technicals-ind'|'turnaround'|'turnaround-analytics'|'usa-checklist'|'checklist'|'capital-alloc'|'reference'>('analytics');
+  type MbTab = 'analytics'|'excel'|'usa'|'usa-analytics'|'technicals'|'technicals-usa'|'technicals-ind'|'turnaround'|'turnaround-analytics'|'usa-checklist'|'checklist'|'capital-alloc'|'reference';
+  const VALID_TABS: MbTab[] = ['analytics','excel','usa','usa-analytics','technicals','technicals-usa','technicals-ind','turnaround','turnaround-analytics','usa-checklist','checklist','capital-alloc','reference'];
+  // zzz166 — Support deep-links like /multibagger?tab=technicals-usa from home nav chips.
+  const initialTab = React.useMemo<MbTab>(() => {
+    if (typeof window === 'undefined') return 'analytics';
+    try {
+      const t = new URLSearchParams(window.location.search).get('tab') as MbTab | null;
+      return t && VALID_TABS.includes(t) ? t : 'analytics';
+    } catch { return 'analytics'; }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const [activeTab, setActiveTab] = useState<MbTab>(initialTab);
   React.useEffect(() => {
     const onSwitch = (e: Event) => {
       const ce = e as CustomEvent<{ tab: 'excel' | 'usa' }>;
