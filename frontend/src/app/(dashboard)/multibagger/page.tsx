@@ -4290,6 +4290,14 @@ function USACompare() {
         setParseError('Auto-sync: 0 USA rows after exchange filter — did upstream screeners drift to India-only?');
         return;
       }
+      // zzz169 — CLEAR existing state before merging in fresh filtered rows.
+      // handleFiles merges by symbol so stale India rows persisted through the
+      // filter era. Now every auto-pull starts from a clean slate, guaranteeing
+      // only USA-exchange rows survive.
+      try { setRowsState([]); } catch {}
+      try { localStorage.removeItem(USA_STORAGE_KEY); } catch {}
+      try { localStorage.removeItem(USA_SLIM_KEY); } catch {}
+      try { _setUsaRowsMemCache([]); } catch {}
       await handleFiles(filteredFiles);
       const fresh = await getTradingviewSyncStatus();
       setUsaSyncStatus(fresh);
@@ -4299,13 +4307,21 @@ function USACompare() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [usaSyncLoading]);
-  // zzz162 — Auto-load on first mount when USA rows are empty and we haven't
-  // auto-loaded before for this scope. Matches India Multibagger behavior.
+  // zzz169 — Bumped scope key so browsers that already auto-loaded pre-filter
+  // will re-run the auto-pull once and get the clean USA-only set.
   React.useEffect(() => {
-    if (rows.length > 0) return;
-    if (!shouldAutoLoad('multibagger-usa')) return;
+    if (rows.length > 0) {
+      // Even if rows exist, check if they contain India tickers (leftover from
+      // pre-zzz163 caches). Force a re-pull if any Exchange is NSE/BSE.
+      const hasIndia = rows.some((r: any) => {
+        const ex = String(r.exchange || '').toUpperCase();
+        return ex === 'NSE' || ex === 'BSE';
+      });
+      if (!hasIndia) return;
+    }
+    if (!shouldAutoLoad('multibagger-usa-v169')) return;
     const t = setTimeout(() => {
-      runUsaAutoSync(false).then(() => markAutoLoaded('multibagger-usa'));
+      runUsaAutoSync(false).then(() => markAutoLoaded('multibagger-usa-v169'));
     }, 1500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
