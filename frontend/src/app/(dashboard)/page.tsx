@@ -2256,74 +2256,120 @@ export default function HomeDashboard() {
   // PATCH 0897 — Turnaround tier lensing
   const lensedTurnaround = useMemo(() => applyLens((data as any).turnaroundTier1 || [], true), [(data as any).turnaroundTier1, activeLens]);
 
-  // zzz167 — Home-page Technicals tiers. Reads rows persisted by the
-  // Technicals tab in localStorage and picks top 10 per market by a
-  // composite "momentum + trend" score (1M perf + position vs SMA50 - RSI penalty).
-  // Same TierAction shape as Tier 1 so DecisionTierBlock renders it consistently.
-  const [techTick, setTechTick] = useState(0);
+  // zzz168 — Home-page Technicals tiers. Fetches /data/tradingview/*.csv
+  // directly instead of reading localStorage (which is empty until user
+  // visits the Technicals tab). Parses inline, groups by exchange,
+  // scores by momentum + trend proximity, returns top 10 per market.
+  const [techTier2India, setTechTier2India] = useState<TierAction[]>([]);
+  const [techTier3Usa, setTechTier3Usa] = useState<TierAction[]>([]);
   useEffect(() => {
-    const bump = () => setTechTick(t => t + 1);
-    window.addEventListener('mb-tech-updated', bump);
-    window.addEventListener('storage', bump);
-    return () => {
-      window.removeEventListener('mb-tech-updated', bump);
-      window.removeEventListener('storage', bump);
+    let cancelled = false;
+    const USA_EXCHANGES = new Set(['NYSE','NASDAQ','NMS','ARCA','AMEX','BATS','OTC','NYSE ARCA','NYSEARCA']);
+    const IND_EXCHANGES = new Set(['NSE','BSE']);
+    // Parse a single CSV line respecting quoted fields (headers contain commas).
+    const parseCsvLine = (line: string): string[] => {
+      const out: string[] = [];
+      let cur = ''; let inQ = false;
+      for (const c of line) {
+        if (c === '"') { inQ = !inQ; continue; }
+        if (c === ',' && !inQ) { out.push(cur); cur = ''; continue; }
+        cur += c;
+      }
+      out.push(cur);
+      return out;
     };
+    const num = (v: string | undefined): number | undefined => {
+      if (v == null || v === '') return undefined;
+      const n = parseFloat(String(v).replace(/[,%]/g, ''));
+      return isNaN(n) ? undefined : n;
+    };
+    (async () => {
+      try {
+        // Fetch manifest to know which CSVs are available today.
+        const m = await fetch('/data/tradingview/manifest.json', { cache: 'no-store' });
+        if (!m.ok) return;
+        const manifest = await m.json();
+        const files: string[] = (manifest.files || []).filter((f: any) => f.ok).map((f: any) => f.name);
+        // Fetch + concat all CSVs; dedup by ticker.
+        const seen = new Map<string, { row: Record<string, string>; ex: string }>();
+        for (const fname of files) {
+          const r = await fetch(`/data/tradingview/${fname}`, { cache: 'no-store' });
+          if (!r.ok) continue;
+          const text = await r.text();
+          const lines = text.split('\n').filter(l => l.trim());
+          if (lines.length < 2) continue;
+          const header = parseCsvLine(lines[0]);
+          const symIdx = header.indexOf('Symbol');
+          const exIdx = header.indexOf('Exchange');
+          if (symIdx < 0 || exIdx < 0) continue;
+          for (let i = 1; i < lines.length; i++) {
+            const cells = parseCsvLine(lines[i]);
+            const sym = (cells[symIdx] || '').trim().toUpperCase();
+            const ex = (cells[exIdx] || '').trim().toUpperCase();
+            if (!sym || seen.has(sym)) continue;
+            const row: Record<string, string> = {};
+            for (let j = 0; j < header.length && j < cells.length; j++) row[header[j]] = cells[j];
+            seen.set(sym, { row, ex });
+          }
+        }
+        if (cancelled) return;
+        const groups: Record<'ind' | 'usa', typeof seen extends Map<string, infer V> ? V[] : never> = { ind: [], usa: [] };
+        for (const v of seen.values()) {
+          if (USA_EXCHANGES.has(v.ex)) groups.usa.push(v);
+          else if (IND_EXCHANGES.has(v.ex)) groups.ind.push(v);
+        }
+        const buildTier = (mk: 'ind' | 'usa'): TierAction[] => {
+          const bucket = groups[mk];
+          const scored = bucket.map(({ row }) => {
+            const perf1w = num(row['Performance %, 1 week']) ?? 0;
+            const perf1m = num(row['Performance %, 1 month']) ?? 0;
+            const perf3m = num(row['Performance %, 3 months']) ?? 0;
+            const rsi = num(row['Relative strength index, 14, 1 day']) ?? num(row['Relative strength index, 14']) ?? 50;
+            const sma50 = num(row['Simple moving average, 50, 1 day']) ?? 0;
+            const price = num(row['Price']) ?? 0;
+            const pctSma50 = (sma50 > 0 && price > 0) ? ((price - sma50) / sma50 * 100) : 0;
+            let s = perf1m * 3 + perf1w * 2 + perf3m;
+            if (pctSma50 > 0 && pctSma50 < 15) s += 15;
+            else if (pctSma50 >= 15) s -= 5;
+            if (rsi > 75) s -= 10;
+            if (rsi < 40) s -= 5;
+            return { row, s, perf1w, perf1m, perf3m, rsi, pctSma50, price };
+          });
+          scored.sort((a, b) => b.s - a.s);
+          return scored.slice(0, 10).map(({ row, s, perf1w, perf1m, perf3m, rsi, pctSma50, price }): TierAction => {
+            const sym = row['Symbol'] || '';
+            const cur = mk === 'ind' ? '₹' : '$';
+            const priceStr = price > 0 ? `${cur}${price >= 1000 ? price.toFixed(0) : price.toFixed(2)}` : '';
+            const parts: string[] = [];
+            if (priceStr) parts.push(priceStr);
+            parts.push(`1W ${perf1w >= 0 ? '+' : ''}${perf1w.toFixed(0)}%`);
+            parts.push(`1M ${perf1m >= 0 ? '+' : ''}${perf1m.toFixed(0)}%`);
+            parts.push(`3M ${perf3m >= 0 ? '+' : ''}${perf3m.toFixed(0)}%`);
+            const entryLabel = pctSma50 < 0 ? 'BELOW SMA50'
+              : pctSma50 < 7 ? 'BUY ZONE'
+              : pctSma50 < 15 ? `EXTENDED +${pctSma50.toFixed(0)}%`
+              : `CHASE +${pctSma50.toFixed(0)}%`;
+            return {
+              symbol: sym,
+              company: row['Description'] || sym,
+              sector: row['Sector'] || undefined,
+              score: Math.round(s),
+              grade: '',
+              thesis: parts.join(' · '),
+              risk: rsi > 75 ? `RSI ${rsi.toFixed(0)} overbought · trim on strength` : rsi < 40 ? `RSI ${rsi.toFixed(0)} weak trend` : `RSI ${rsi.toFixed(0)}`,
+              horizon: '1-3 months (swing/position)',
+              trigger: entryLabel,
+              href: `/multibagger?tab=technicals-${mk}`,
+              market: mk === 'usa' ? 'US' : 'IN',
+            };
+          });
+        };
+        setTechTier2India(buildTier('ind'));
+        setTechTier3Usa(buildTier('usa'));
+      } catch { /* silent — empty state UI handles it */ }
+    })();
+    return () => { cancelled = true; };
   }, []);
-  const buildTechTier = useCallback((mk: 'usa' | 'ind'): TierAction[] => {
-    if (typeof window === 'undefined') return [];
-    let rows: any[] = [];
-    try { rows = JSON.parse(localStorage.getItem(`mb_tech_rows_${mk}_v1`) || '[]'); } catch {}
-    if (!Array.isArray(rows) || rows.length === 0) return [];
-    // Score each row: 1M % weighted heavier + SMA-50 proximity + RSI mid-range bonus
-    const scored = rows.map((r: any) => {
-      const perf1m = Number(r.perf1m) || 0;
-      const perf1w = Number(r.perf1w) || 0;
-      const perf3m = Number(r.perf3m) || 0;
-      const rsi = Number(r.rsi) || 50;
-      const sma50 = Number(r.sma50) || 0;
-      const price = Number(r.price) || 0;
-      const pctSma50 = (sma50 > 0 && price > 0) ? ((price - sma50) / sma50 * 100) : 0;
-      // Composite tech score: 1M perf * 3 + 1W * 2 + 3M + trend bonus - overheat penalty
-      let s = perf1m * 3 + perf1w * 2 + perf3m;
-      if (pctSma50 > 0 && pctSma50 < 15) s += 15; // buy-zone bonus
-      else if (pctSma50 >= 15) s -= 5;             // extended penalty
-      if (rsi > 75) s -= 10;                        // overbought penalty
-      if (rsi < 40) s -= 5;                         // weak trend penalty
-      return { r, s, perf1w, perf1m, perf3m, rsi, pctSma50 };
-    });
-    scored.sort((a, b) => b.s - a.s);
-    return scored.slice(0, 10).map(({ r, s, perf1w, perf1m, perf3m, rsi, pctSma50 }): TierAction => {
-      const sym = String(r.symbol || '').toUpperCase();
-      const cur = mk === 'ind' ? '₹' : '$';
-      const price = Number(r.price) || 0;
-      const priceStr = price > 0 ? `${cur}${price >= 1000 ? price.toFixed(0) : price.toFixed(2)}` : '';
-      const parts: string[] = [];
-      if (priceStr) parts.push(priceStr);
-      parts.push(`1W ${perf1w >= 0 ? '+' : ''}${perf1w.toFixed(0)}%`);
-      parts.push(`1M ${perf1m >= 0 ? '+' : ''}${perf1m.toFixed(0)}%`);
-      parts.push(`3M ${perf3m >= 0 ? '+' : ''}${perf3m.toFixed(0)}%`);
-      const entryLabel = pctSma50 < 0 ? 'BELOW SMA50'
-        : pctSma50 < 7 ? 'BUY ZONE'
-        : pctSma50 < 15 ? `EXTENDED +${pctSma50.toFixed(0)}%`
-        : `CHASE +${pctSma50.toFixed(0)}%`;
-      return {
-        symbol: sym,
-        company: r.company || sym,
-        sector: r.sector || undefined,
-        score: Math.round(s),
-        grade: '',
-        thesis: parts.join(' · '),
-        risk: rsi > 75 ? `RSI ${rsi.toFixed(0)} overbought · trim on strength` : rsi < 40 ? `RSI ${rsi.toFixed(0)} weak trend` : `RSI ${rsi.toFixed(0)}`,
-        horizon: '1-3 months (swing/position)',
-        trigger: entryLabel,
-        href: `/multibagger?tab=technicals-${mk}`,
-        market: mk === 'usa' ? 'US' : 'IN',
-      };
-    });
-  }, []);
-  const techTier2India = useMemo(() => buildTechTier('ind'), [buildTechTier, techTick]);
-  const techTier3Usa   = useMemo(() => buildTechTier('usa'), [buildTechTier, techTick]);
 
   // PATCH 1086 — NEW LENS button. Previous implementation chained two
   // window.prompt() calls which on some browsers (Safari with popups blocked,
