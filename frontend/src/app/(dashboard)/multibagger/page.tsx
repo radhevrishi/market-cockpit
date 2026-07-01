@@ -7257,7 +7257,9 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
   const cardStyle: React.CSSProperties = { background: PANEL, border: `1px solid ${LINE}`, borderRadius: 12, padding: 18, marginBottom: 14 };
 
   // zzz132 helpers
-  const fmtPrice = (p?: number) => (typeof p === 'number' ? (p >= 1000 ? `$${p.toFixed(0)}` : `$${p.toFixed(2)}`) : '—');
+  // zzz158 — Currency symbol by market. India tab = ₹ (rupee), USA tab = $ (dollar).
+  const CUR = market === 'IND' ? '₹' : '$';
+  const fmtPrice = (p?: number) => (typeof p === 'number' ? (p >= 1000 ? `${CUR}${p.toFixed(0)}` : `${CUR}${p.toFixed(2)}`) : '—');
   const fmtPct = (p?: number, digits = 0) => (typeof p === 'number' ? `${p >= 0 ? '+' : ''}${p.toFixed(digits)}%` : '—');
   const scoreColor = (s: number) => s >= 80 ? '#10B981' : s >= 65 ? '#22D3EE' : s >= 50 ? '#84CC16' : s >= 35 ? '#F59E0B' : MUTED;
   const entryColor = (e: string) => e === 'BUY ZONE' ? '#10B981' : e === 'EXTENDED' ? '#F59E0B' : e === 'CHASE' ? '#EF4444' : e === 'BELOW' ? '#94A3B8' : MUTED;
@@ -8041,17 +8043,17 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
                 {[
                   ['Price (CMP)', fmtPrice(expandedRow.price)],
                   ['Market Cap', typeof expandedRow.mcapB === 'number' ? `$${expandedRow.mcapB.toFixed(1)}B` : '—'],
-                  ['ATR (14d)', typeof expandedRow.atr14 === 'number' ? `$${expandedRow.atr14.toFixed(2)}` : '—'],
+                  ['ATR (14d)', typeof expandedRow.atr14 === 'number' ? `${CUR}${expandedRow.atr14.toFixed(2)}` : '—'],
                   ['ADR %', typeof expandedRow.adrPct === 'number' ? `${expandedRow.adrPct.toFixed(1)}% ${expandedRow.adrPct >= 4 && expandedRow.adrPct <= 7 ? '🎯 sweet spot' : ''}` : '—'],
                   ['RSI', typeof expandedRow.rsi === 'number' ? `${expandedRow.rsi.toFixed(0)} ${expandedRow.rsi > 85 ? '⚠️ extreme' : expandedRow.rsi >= 55 && expandedRow.rsi <= 70 ? '✅' : ''}` : '—'],
                   ['Avg Vol 30d', typeof expandedRow.avgVol30d === 'number' ? `${(expandedRow.avgVol30d/1_000_000).toFixed(2)}M shares` : '—'],
                   ['$ Volume / day', typeof expandedRow.dollarVolume === 'number' ? `$${(expandedRow.dollarVolume/1_000_000).toFixed(1)}M` : '—'],
                   ['Rel Vol (1W)', typeof expandedRow.relVol1w === 'number' ? `${expandedRow.relVol1w.toFixed(2)}× ${expandedRow.relVol1w >= 1.5 ? '🔥 burst' : expandedRow.relVol1w < 0.8 ? '📉 contracting (VCP-ish)' : ''}` : '—'],
-                  ['EMA 21', typeof expandedRow.ema21 === 'number' ? `$${expandedRow.ema21.toFixed(2)} (Qulla entry MA)` : '—'],
+                  ['EMA 21', typeof expandedRow.ema21 === 'number' ? `${CUR}${expandedRow.ema21.toFixed(2)} (Qulla entry MA)` : '—'],
                   ['% vs EMA 21', typeof expandedRow.pctVsEma21 === 'number' ? `${fmtPct(expandedRow.pctVsEma21, 1)} ${expandedRow.pctVsEma21 >= 0 && expandedRow.pctVsEma21 <= 5 ? '🎯 Qulla buy zone' : expandedRow.pctVsEma21 > 5 && expandedRow.pctVsEma21 <= 10 ? '⚠️ stretched' : expandedRow.pctVsEma21 > 10 ? '🚫 extended' : ''}` : '—'],
-                  ['SMA 50', typeof expandedRow.sma50 === 'number' ? `$${expandedRow.sma50.toFixed(2)}` : '—'],
-                  ['SMA 150', typeof expandedRow.sma150 === 'number' ? `$${expandedRow.sma150.toFixed(2)}` : '—'],
-                  ['SMA 200', typeof expandedRow.sma200 === 'number' ? `$${expandedRow.sma200.toFixed(2)}` : '—'],
+                  ['SMA 50', typeof expandedRow.sma50 === 'number' ? `${CUR}${expandedRow.sma50.toFixed(2)}` : '—'],
+                  ['SMA 150', typeof expandedRow.sma150 === 'number' ? `${CUR}${expandedRow.sma150.toFixed(2)}` : '—'],
+                  ['SMA 200', typeof expandedRow.sma200 === 'number' ? `${CUR}${expandedRow.sma200.toFixed(2)}` : '—'],
                   ['% vs SMA50', fmtPct(expandedRow.pctVsSma50, 1)],
                   ['% vs SMA200', fmtPct(expandedRow.pctVsSma200, 1)],
                   ['% from 52W high', fmtPct(expandedRow.distFromHigh, 1)],
