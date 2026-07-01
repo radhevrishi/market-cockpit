@@ -4236,12 +4236,61 @@ function USACompare() {
     if (usaSyncLoading) return;
     setUsaSyncLoading(true);
     try {
-      const files = await fetchTradingviewCsvsAsFiles(SYNC_ROUTING.multibaggerUsa);
-      if (files.length === 0) {
+      const rawFiles = await fetchTradingviewCsvsAsFiles(SYNC_ROUTING.multibaggerUsa);
+      if (rawFiles.length === 0) {
         setParseError('Auto-sync failed: no CSVs in /data/tradingview/. Run the GitHub Action first.');
         return;
       }
-      await handleFiles(files);
+      // zzz163 — Filter each CSV to USA-exchange rows only.
+      // "USA Multibagger 3" (GHHf1HVl) is actually a mixed universe with 100 NSE tickers
+      // that were leaking into the USA Multibagger scoring engine. Drop NSE/BSE rows here
+      // so the tab only ranks USA growth names, matching the Fisher framework intent.
+      const USA_EXCHANGES = new Set(['NYSE','NASDAQ','NMS','ARCA','AMEX','BATS','OTC','NYSE ARCA','NYSEARCA']);
+      const filteredFiles: File[] = [];
+      for (const f of rawFiles) {
+        try {
+          const text = await f.text();
+          const lines = text.split('\n');
+          if (lines.length < 2) continue;
+          const header = lines[0];
+          // Parse header to find Exchange column index
+          const cols = (() => {
+            const out: string[] = [];
+            let cur = ''; let inQ = false;
+            for (const c of header) {
+              if (c === '"') { inQ = !inQ; continue; }
+              if (c === ',' && !inQ) { out.push(cur.trim()); cur = ''; continue; }
+              cur += c;
+            }
+            out.push(cur.trim());
+            return out;
+          })();
+          const exIdx = cols.findIndex(c => c === 'Exchange');
+          if (exIdx < 0) {
+            // No Exchange column — keep file as-is (fallback path)
+            filteredFiles.push(f);
+            continue;
+          }
+          const kept: string[] = [header];
+          for (let i = 1; i < lines.length; i++) {
+            const line = lines[i];
+            if (!line.trim()) continue;
+            // Simple CSV split — Exchange comes very early (col 1) and never contains commas
+            const parts = line.split(',');
+            const ex = (parts[exIdx] || '').replace(/"/g, '').trim().toUpperCase();
+            if (USA_EXCHANGES.has(ex)) kept.push(line);
+          }
+          if (kept.length > 1) {
+            const blob = new Blob([kept.join('\n')], { type: 'text/csv' });
+            filteredFiles.push(new File([blob], f.name, { type: 'text/csv' }));
+          }
+        } catch { /* skip file on parse error */ }
+      }
+      if (filteredFiles.length === 0) {
+        setParseError('Auto-sync: 0 USA rows after exchange filter — did upstream screeners drift to India-only?');
+        return;
+      }
+      await handleFiles(filteredFiles);
       const fresh = await getTradingviewSyncStatus();
       setUsaSyncStatus(fresh);
       try { if (fresh?.lastSync) localStorage.setItem(USA_LAST_SYNC_SEEN_KEY, fresh.lastSync.toISOString()); } catch {}
