@@ -754,6 +754,60 @@ function NewSeenCheckbox({ isNew, isAcked, onToggle }: { isNew: boolean; isAcked
   );
 }
 
+// zzz181 - Recently Added panel: compares current tickers vs stored baseline snapshot.
+function _raLoad(k: string, fallback: string[]): string[] {
+  if (typeof window === 'undefined') return fallback;
+  try { const r = localStorage.getItem(k); return r ? JSON.parse(r) : fallback; } catch { return fallback; }
+}
+function _raSave(k: string, v: string[]) {
+  if (typeof window === 'undefined') return;
+  try { localStorage.setItem(k, JSON.stringify(v)); } catch {}
+}
+function RecentlyAddedPanel({ tab, tickers, marketLabel }: { tab: NewTabKey; tickers: string[]; marketLabel: string }) {
+  const [tick, setTick] = React.useState(0);
+  const baselineKey = 'mb_recent_v1_' + tab + '_baseline';
+  const stampKey = 'mb_recent_v1_' + tab + '_stamp';
+  const baseline = React.useMemo(() => new Set(_raLoad(baselineKey, [])), [tab, tick]);
+  const stamp = React.useMemo(() => (typeof window !== 'undefined' ? (localStorage.getItem(stampKey) || '') : ''), [tab, tick]);
+  const added = React.useMemo(() => {
+    if (baseline.size === 0) return [];
+    return tickers.filter(t => t && !baseline.has(t));
+  }, [tickers, baseline]);
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (baseline.size === 0 && tickers.length > 0) {
+      _raSave(baselineKey, tickers);
+      try { localStorage.setItem(stampKey, new Date().toISOString()); } catch {}
+      setTick(x => x + 1);
+    }
+  }, [tickers.length, baseline.size, baselineKey, stampKey]);
+  const resetBaseline = () => {
+    _raSave(baselineKey, tickers);
+    try { localStorage.setItem(stampKey, new Date().toISOString()); } catch {}
+    setTick(x => x + 1);
+  };
+  const stampLabel = stamp ? new Date(stamp).toLocaleString() : 'now';
+  return (
+    <div style={{ margin: '12px 0', padding: '10px 14px', backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: added.length > 0 ? 8 : 0 }}>
+        <span style={{ fontSize: 13, fontWeight: 800, color: '#22D3EE' }}>&#128225; Recently Added ({added.length})</span>
+        <span style={{ fontSize: 11, color: '#64748b' }}>{marketLabel} tickers new since baseline &middot; {stampLabel}</span>
+        <button onClick={resetBaseline} style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 6, border: '1px solid #334155', background: 'transparent', color: '#94a3b8', cursor: 'pointer' }}>&#128260; Save baseline now</button>
+      </div>
+      {added.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {added.map(t => (
+            <span key={t} style={{ fontSize: 12, fontWeight: 800, padding: '3px 9px', borderRadius: 4, background: 'color-mix(in srgb, #22D3EE 15%, transparent)', color: '#22D3EE', border: '1px solid #22D3EE60', fontFamily: 'ui-monospace, monospace' }}>{t}</span>
+          ))}
+        </div>
+      )}
+      {added.length === 0 && (
+        <span style={{ fontSize: 11, color: '#64748b', fontStyle: 'italic' }}>No new tickers since baseline was set. Click "Save baseline now" once you have reviewed the current list to establish a reset point; tomorrow's arrivals will show up here.</span>
+      )}
+    </div>
+  );
+}
+
 function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:ExcelResult[])=>void }) {
   const [fileName, setFileName] = useState(() => {
     // Restore last session's file label from meta
@@ -4759,6 +4813,8 @@ function USACompare() {
 
   return (
     <div style={{maxWidth:1800,margin:'0 auto',padding:'28px 20px'}}>
+      {/* zzz181 - Recently Added panel */}
+      <RecentlyAddedPanel tab="us-mb" tickers={usaAllSymbols} marketLabel="🇺🇸 USA Multibagger" />
       {/* Header */}
       <div style={{marginBottom:20,padding:'18px 20px',backgroundColor:CARD_BG,border:`1px solid ${BORDER}`,borderRadius:12}}>
         <div style={{fontSize:F.lg,fontWeight:800,color:'#38bdf8',marginBottom:8}}>🇺🇸 USA Multibagger — TradingView Export</div>
@@ -7892,6 +7948,9 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
           )}
         </div>
       </div>
+
+      {/* zzz181 - Recently Added panel */}
+      <RecentlyAddedPanel tab={NEW_TAB_KEY_T} tickers={allSymbolsT} marketLabel={market === 'IND' ? '🇮🇳 India Technicals' : '🇺🇸 USA Technicals'} />
 
       {/* zzz133 — 🏆 CHAMPIONS — Technically + Fundamentally elite */}
       <div style={{ ...cardStyle, background: 'linear-gradient(135deg, rgba(16,185,129,0.08), rgba(34,211,238,0.05))', borderColor: '#10B981', borderWidth: 2 }}>
