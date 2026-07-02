@@ -739,15 +739,16 @@ function useNewTracker(tab: NewTabKey, allTickers: string[]) {
   return { newTickerSet, ackSet, toggleAck };
 }
 function NewSeenCheckbox({ isNew, isAcked, onToggle }: { isNew: boolean; isAcked: boolean; onToggle: () => void }) {
-  if (!isNew && !isAcked) return null;
+  // zzz179: only show when the ticker is genuinely new. Acknowledged tickers hide completely.
+  if (!isNew) return null;
   return (
     <button onClick={(e) => { e.stopPropagation(); e.preventDefault(); onToggle(); }}
-      title={isAcked ? 'Marked seen · click to un-mark' : 'Mark as seen'}
-      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 6px', fontSize: 11, fontWeight: 700,
-        border: `1px solid ${isAcked ? '#64748b' : '#22D3EE'}`,
-        background: isAcked ? 'transparent' : 'color-mix(in srgb, #22D3EE 15%, transparent)',
-        color: isAcked ? '#64748b' : '#22D3EE', borderRadius: 4, cursor: 'pointer', lineHeight: 1 }}
-    >{isAcked ? '☐ seen' : '🆕 NEW'}</button>
+      title="Mark as seen (removes badge)"
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 6px', fontSize: 10, fontWeight: 700,
+        border: '1px solid #22D3EE',
+        background: 'color-mix(in srgb, #22D3EE 15%, transparent)',
+        color: '#22D3EE', borderRadius: 4, cursor: 'pointer', lineHeight: 1 }}
+    >🆕 NEW</button>
   );
 }
 
