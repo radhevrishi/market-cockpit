@@ -684,6 +684,61 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
 // EXCEL COMPARE TAB — institutional scale UI
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// zzz175 - "New" tracker (shared across all 4 tabs)
+type NewTabKey = 'us-tech' | 'in-tech' | 'us-mb' | 'in-mb';
+const NEW_WINDOW_DAYS = 7;
+function _newLoad(k, fallback) {
+  if (typeof window === 'undefined') return fallback;
+  try { const r = localStorage.getItem(k); return r ? JSON.parse(r) : fallback; } catch { return fallback; }
+}
+function _newSave(k, v) {
+  if (typeof window === 'undefined') return;
+  try { localStorage.setItem(k, JSON.stringify(v)); } catch {}
+}
+function _newRecordFirstSeen(tab: NewTabKey, tickers: string[]) {
+  const key = `mb_new_v1_${tab}_firstseen`;
+  const cur = _newLoad(key, {}) as Record<string,string>;
+  const now = new Date().toISOString();
+  let changed = false;
+  for (const t of tickers) { if (t && !cur[t]) { cur[t] = now; changed = true; } }
+  if (changed) _newSave(key, cur);
+  return cur;
+}
+function _newIsNew(ticker: string, firstSeenMap: Record<string,string>, ackSet: Set<string>) {
+  if (!ticker || ackSet.has(ticker)) return false;
+  const fs = firstSeenMap[ticker]; if (!fs) return false;
+  return (Date.now() - new Date(fs).getTime()) / 86400000 <= NEW_WINDOW_DAYS;
+}
+function useNewTracker(tab: NewTabKey, allTickers: string[]) {
+  const [tick, setTick] = React.useState(0);
+  const firstSeenMap = React.useMemo(() => _newRecordFirstSeen(tab, allTickers), [tab, allTickers.length, tick]);
+  const ackSet = React.useMemo(() => new Set(_newLoad(`mb_new_v1_${tab}_seen`, []) as string[]), [tab, tick]);
+  const newTickerSet = React.useMemo(() => {
+    const s = new Set<string>();
+    for (const t of allTickers) if (_newIsNew(t, firstSeenMap, ackSet)) s.add(t);
+    return s;
+  }, [allTickers.length, firstSeenMap, ackSet]);
+  const toggleAck = React.useCallback((ticker: string) => {
+    const key = `mb_new_v1_${tab}_seen`;
+    const cur = _newLoad(key, []) as string[];
+    const idx = cur.indexOf(ticker); if (idx >= 0) cur.splice(idx, 1); else cur.push(ticker);
+    _newSave(key, cur); setTick(x => x + 1);
+  }, [tab]);
+  return { newTickerSet, ackSet, toggleAck };
+}
+function NewSeenCheckbox({ isNew, isAcked, onToggle }: { isNew: boolean; isAcked: boolean; onToggle: () => void }) {
+  if (!isNew && !isAcked) return null;
+  return (
+    <button onClick={(e) => { e.stopPropagation(); e.preventDefault(); onToggle(); }}
+      title={isAcked ? 'Marked seen · click to un-mark' : 'Mark as seen'}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 6px', fontSize: 11, fontWeight: 700,
+        border: `1px solid ${isAcked ? '#64748b' : '#22D3EE'}`,
+        background: isAcked ? 'transparent' : 'color-mix(in srgb, #22D3EE 15%, transparent)',
+        color: isAcked ? '#64748b' : '#22D3EE', borderRadius: 4, cursor: 'pointer', lineHeight: 1 }}
+    >{isAcked ? '☐ seen' : '🆕 NEW'}</button>
+  );
+}
+
 function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:ExcelResult[])=>void }) {
   const [fileName, setFileName] = useState(() => {
     // Restore last session's file label from meta
@@ -1595,7 +1650,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   const guidanceApplied = guidanceMode && Object.keys(guidanceScores).length > 0
     ? [...baseFiltered.map(r => applyGuidance(r))] : baseFiltered;
   // Apply sortable column sort (default: score descending — same as before)
-  const filtered = [...guidanceApplied].sort((a, b) => {
+  const sortedFiltered = [...guidanceApplied].sort((a, b) => {
     const getV = (r: ExcelResult): number => {
       switch(sortField) {
         case 'pe':                  return r.pe ?? (sortAsc ? 999 : -1);
@@ -1613,6 +1668,11 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
     const av = getV(a), bv = getV(b);
     return sortAsc ? av - bv : bv - av;
   });
+  // zzz175 India Multibagger tracker
+  const indAllSymbols = React.useMemo(() => rows.map(r => r.symbol).filter(Boolean), [rows]);
+  const { newTickerSet: indNewSet, ackSet: indAckSet, toggleAck: toggleIndAck } = useNewTracker('in-mb', indAllSymbols);
+  const [showOnlyNewInd, setShowOnlyNewInd] = React.useState(false);
+  const filtered = showOnlyNewInd ? sortedFiltered.filter(r => indNewSet.has(r.symbol)) : sortedFiltered;
   const topPicks = rows.filter(r => ['A+','A','B+'].includes(r.grade) && r.bucket !== 'MONITOR');
 
   const METRICS: [keyof ExcelRow, string, string][] = [
@@ -1957,6 +2017,13 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                 {f.label} ({f.count})
               </button>
             ))}
+            {/* zzz175 New filter */}
+            <button onClick={()=>setShowOnlyNewInd(v=>!v)}
+              title="Show only tickers first seen in last 7 days"
+              style={{fontSize:F.xs,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${showOnlyNewInd?'#22D3EE60':BORDER}`,background:showOnlyNewInd?'#22D3EE14':'transparent',color:showOnlyNewInd?'#22D3EE':MUTED,cursor:'pointer'}}>
+              🆕 New ({indNewSet.size}){showOnlyNewInd?' · ON':''}
+            </button>
+            {indAckSet.size > 0 && <span style={{fontSize:F.xs,color:MUTED,fontStyle:'italic'}}>✓ {indAckSet.size} seen</span>}
             {/* PATCH 0345 — India "Quality of 50" composite filter (analog of USA R40).
                 ROCE + Profit CAGR ≥ threshold. ≥50 = passes (MOSL elite baseline);
                 ≥75 = strong compounder; ≥100 = 100-bagger DNA tier.
@@ -2450,7 +2517,10 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
             // PATCH 1101d — null-safe redFlags access (Screener CSV gaps).
             const hasCrit=(r.redFlags ?? []).some(f=>f.severity==='CRITICAL');
             return (
-              <div key={r.symbol+idx} style={{borderBottom:`1px solid rgba(255,255,255,0.05)`}}>
+              <div key={r.symbol+idx} style={{borderBottom:`1px solid rgba(255,255,255,0.05)`, position:'relative'}}>
+                <div onClick={(e)=>{ e.stopPropagation(); }} style={{position:'absolute', top:8, right:8, zIndex:2}}>
+                  <NewSeenCheckbox isNew={indNewSet.has(r.symbol)} isAcked={indAckSet.has(r.symbol)} onToggle={()=>toggleIndAck(r.symbol)} />
+                </div>
                 <button onClick={()=>setExpRow(isExp?null:r.symbol)} style={{width:'100%',background:isExp?CARD_BG:'transparent',border:'none',cursor:'pointer',textAlign:'left',padding:'12px 14px'}}>
                   <div style={{display:'grid',gridTemplateColumns:'130px 130px 65px 90px 96px 86px 180px 1fr 76px',gap:8,alignItems:'center'}}>
                     {/* Ticker + bucket + accel badge */}
@@ -4666,6 +4736,12 @@ function USACompare() {
     return usSortAsc ? av-bv : bv-av;
   });
 
+  // zzz175 USA Multibagger tracker
+  const usaAllSymbols = React.useMemo(() => rows.map(r => r.symbol).filter(Boolean), [rows]);
+  const { newTickerSet: usaNewSet, ackSet: usaAckSet, toggleAck: toggleUsaAck } = useNewTracker('us-mb', usaAllSymbols);
+  const [showOnlyNewUsa, setShowOnlyNewUsa] = React.useState(false);
+  if (showOnlyNewUsa) filtered = filtered.filter(r => usaNewSet.has(r.symbol));
+
   return (
     <div style={{maxWidth:1800,margin:'0 auto',padding:'28px 20px'}}>
       {/* Header */}
@@ -4798,6 +4874,13 @@ function USACompare() {
               <button onClick={()=>setUsFcfOnly(v=>!v)} style={{fontSize:F.xs,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${usFcfOnly?'#38bdf8'+'60':BORDER}`,background:usFcfOnly?`${'#38bdf8'}14`:'transparent',color:usFcfOnly?'#38bdf8':MUTED,cursor:'pointer'}}>
                 💰 FCF≥10% ({rows.filter(r=>(r.fcfMarginAnn??-99)>=10).length})
               </button>
+              {/* zzz175 New filter */}
+              <button onClick={()=>setShowOnlyNewUsa(v=>!v)}
+                title="Show only tickers first seen in last 7 days"
+                style={{fontSize:F.xs,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${showOnlyNewUsa?'#22D3EE60':BORDER}`,background:showOnlyNewUsa?'#22D3EE14':'transparent',color:showOnlyNewUsa?'#22D3EE':MUTED,cursor:'pointer'}}>
+                🆕 New ({usaNewSet.size}){showOnlyNewUsa?' · ON':''}
+              </button>
+              {usaAckSet.size > 0 && <span style={{fontSize:F.xs,color:MUTED,fontStyle:'italic'}}>✓ {usaAckSet.size} seen</span>}
 
               {/* PATCH 0345 — Rule of 40 tiered filter (composes AND-style with others) */}
               <div style={{width:1,background:BORDER,height:18}}/>
@@ -4961,7 +5044,10 @@ function USACompare() {
           {filtered.map((r,idx)=>{
             const isExp=expandAll||expRow===r.symbol;
             return (
-              <div key={r.symbol+idx} style={{borderBottom:`1px solid rgba(255,255,255,0.05)`}}>
+              <div key={r.symbol+idx} style={{borderBottom:`1px solid rgba(255,255,255,0.05)`, position:'relative'}}>
+                <div onClick={(e)=>{ e.stopPropagation(); }} style={{position:'absolute', top:8, right:8, zIndex:2}}>
+                  <NewSeenCheckbox isNew={usaNewSet.has(r.symbol)} isAcked={usaAckSet.has(r.symbol)} onToggle={()=>toggleUsaAck(r.symbol)} />
+                </div>
                 <button onClick={()=>setExpRow(isExp?null:r.symbol)} style={{width:'100%',background:isExp?CARD_BG:'transparent',border:'none',cursor:'pointer',textAlign:'left',padding:'12px 14px'}}>
                   <div style={{display:'grid',gridTemplateColumns:'120px 140px 60px 55px 90px 100px 70px 1fr 60px',gap:8,alignItems:'center'}}>
                     <div>
