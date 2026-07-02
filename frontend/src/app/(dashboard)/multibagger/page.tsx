@@ -739,7 +739,9 @@ function useNewTracker(tab: NewTabKey, allTickers: string[]) {
   return { newTickerSet, ackSet, toggleAck };
 }
 function NewSeenCheckbox({ isNew, isAcked, onToggle }: { isNew: boolean; isAcked: boolean; onToggle: () => void }) {
-  // zzz179: only show when the ticker is genuinely new. Acknowledged tickers hide completely.
+  // zzz180: disabled - badges cluttered the UI. Replaced with a compact "Recently Added" panel.
+  return null;
+  // Legacy body (unused):
   if (!isNew) return null;
   return (
     <button onClick={(e) => { e.stopPropagation(); e.preventDefault(); onToggle(); }}
@@ -8193,7 +8195,6 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
                 <th onClick={() => handleSort('rsi')} style={{ padding: '8px 6px', textAlign: 'right' }}>RSI{sortIcon('rsi')}</th>
                 <th onClick={() => handleSort('daysToEarnings')} style={{ padding: '8px 6px', textAlign: 'right' }}>ERN-d{sortIcon('daysToEarnings')}</th>
                 <th onClick={() => handleSort('stopLoss')} style={{ padding: '8px 6px', textAlign: 'right' }}>STOP{sortIcon('stopLoss')}</th>
-                <th style={{ padding: '8px 4px', textAlign: 'center', width: 60 }} title="🆕 New in last 7 days · check to acknowledge">NEW</th>
               </tr>
             </thead>
             <tbody>
@@ -8227,9 +8228,6 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
                     <td style={{ padding: '6px 6px', textAlign: 'right', color: typeof r.rsi === 'number' && r.rsi > 85 ? '#EF4444' : TXT }}>{r.rsi !== undefined ? r.rsi.toFixed(0) : '—'}</td>
                     <td style={{ padding: '6px 6px', textAlign: 'right', color: typeof r.daysToEarnings === 'number' && r.daysToEarnings >= 0 && r.daysToEarnings <= 7 ? '#FBBF24' : MUTED, fontWeight: typeof r.daysToEarnings === 'number' && r.daysToEarnings >= 0 && r.daysToEarnings <= 7 ? 700 : 400 }}>{typeof r.daysToEarnings === 'number' && r.daysToEarnings >= 0 ? `${r.daysToEarnings}d` : '—'}</td>
                     <td style={{ padding: '6px 6px', textAlign: 'right', color: '#F59E0B', fontFamily: 'ui-monospace, monospace' }}>{typeof r.stopLoss === 'number' ? fmtPrice(r.stopLoss) : '—'}</td>
-                    <td onClick={(e) => e.stopPropagation()} style={{ padding: '6px 4px', textAlign: 'center' }}>
-                      <NewSeenCheckbox isNew={techNewSet.has(r.symbol)} isAcked={techAckSet.has(r.symbol)} onToggle={() => toggleTechAck(r.symbol)} />
-                    </td>
                   </tr>
                 );
               })}
