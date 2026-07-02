@@ -697,11 +697,23 @@ function _newSave(k, v) {
 }
 function _newRecordFirstSeen(tab: NewTabKey, tickers: string[]) {
   const key = `mb_new_v1_${tab}_firstseen`;
+  const initKey = `mb_new_v1_${tab}_initialized`;
   const cur = _newLoad(key, {}) as Record<string,string>;
   const now = new Date().toISOString();
   let changed = false;
+  const isFirstEver = typeof window !== 'undefined' && !localStorage.getItem(initKey);
   for (const t of tickers) { if (t && !cur[t]) { cur[t] = now; changed = true; } }
   if (changed) _newSave(key, cur);
+  if (isFirstEver && tickers.length > 0) {
+    try {
+      const seenKey = `mb_new_v1_${tab}_seen`;
+      const existingSeen = _newLoad(seenKey, []) as string[];
+      const seenSet = new Set(existingSeen);
+      for (const t of tickers) if (t) seenSet.add(t);
+      _newSave(seenKey, Array.from(seenSet));
+      localStorage.setItem(initKey, new Date().toISOString());
+    } catch {}
+  }
   return cur;
 }
 function _newIsNew(ticker: string, firstSeenMap: Record<string,string>, ackSet: Set<string>) {
@@ -8159,7 +8171,6 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>
               <tr style={{ background: PANEL2, color: MUTED, fontSize: 11, cursor: 'pointer' }}>
-                <th style={{ padding: '8px 4px', textAlign: 'center', width: 28 }} title="🆕 New in last 7 days · check to acknowledge">NEW</th>
                 <th onClick={() => handleSort('symbol')} style={{ padding: '8px 8px', textAlign: 'left' }}>ELIG · TICKER{sortIcon('symbol')}</th>
                 <th onClick={() => handleSort('price')} style={{ padding: '8px 8px', textAlign: 'right' }}>CMP{sortIcon('price')}</th>
                 <th onClick={() => handleSort('company')} style={{ padding: '8px 8px', textAlign: 'left' }}>COMPANY{sortIcon('company')}</th>
@@ -8181,6 +8192,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
                 <th onClick={() => handleSort('rsi')} style={{ padding: '8px 6px', textAlign: 'right' }}>RSI{sortIcon('rsi')}</th>
                 <th onClick={() => handleSort('daysToEarnings')} style={{ padding: '8px 6px', textAlign: 'right' }}>ERN-d{sortIcon('daysToEarnings')}</th>
                 <th onClick={() => handleSort('stopLoss')} style={{ padding: '8px 6px', textAlign: 'right' }}>STOP{sortIcon('stopLoss')}</th>
+                <th style={{ padding: '8px 4px', textAlign: 'center', width: 60 }} title="🆕 New in last 7 days · check to acknowledge">NEW</th>
               </tr>
             </thead>
             <tbody>
@@ -8189,9 +8201,6 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
                 const pctMA = typeof r.pctVsSma50 === 'number' ? r.pctVsSma50 : r.pctVsEma50;
                 return (
                   <tr key={r.symbol} onClick={() => setExpandedSymbol(r.symbol)} style={{ borderBottom: `1px solid ${LINE}`, background: r.eligible ? 'transparent' : 'rgba(239,68,68,0.04)', cursor: 'pointer' }}>
-                    <td onClick={(e) => e.stopPropagation()} style={{ padding: '6px 4px', textAlign: 'center' }}>
-                      <NewSeenCheckbox isNew={techNewSet.has(r.symbol)} isAcked={techAckSet.has(r.symbol)} onToggle={() => toggleTechAck(r.symbol)} />
-                    </td>
                     <td style={{ padding: '6px 8px', fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>
                       <span style={{ color: r.eligible ? '#10B981' : '#EF4444', marginRight: 5 }} title={r.eligible ? 'Eligible' : r.eligibilityFailures.join(' · ')}>{r.eligible ? '✓' : '✗'}</span>
                       {r.symbol}
@@ -8217,6 +8226,9 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
                     <td style={{ padding: '6px 6px', textAlign: 'right', color: typeof r.rsi === 'number' && r.rsi > 85 ? '#EF4444' : TXT }}>{r.rsi !== undefined ? r.rsi.toFixed(0) : '—'}</td>
                     <td style={{ padding: '6px 6px', textAlign: 'right', color: typeof r.daysToEarnings === 'number' && r.daysToEarnings >= 0 && r.daysToEarnings <= 7 ? '#FBBF24' : MUTED, fontWeight: typeof r.daysToEarnings === 'number' && r.daysToEarnings >= 0 && r.daysToEarnings <= 7 ? 700 : 400 }}>{typeof r.daysToEarnings === 'number' && r.daysToEarnings >= 0 ? `${r.daysToEarnings}d` : '—'}</td>
                     <td style={{ padding: '6px 6px', textAlign: 'right', color: '#F59E0B', fontFamily: 'ui-monospace, monospace' }}>{typeof r.stopLoss === 'number' ? fmtPrice(r.stopLoss) : '—'}</td>
+                    <td onClick={(e) => e.stopPropagation()} style={{ padding: '6px 4px', textAlign: 'center' }}>
+                      <NewSeenCheckbox isNew={techNewSet.has(r.symbol)} isAcked={techAckSet.has(r.symbol)} onToggle={() => toggleTechAck(r.symbol)} />
+                    </td>
                   </tr>
                 );
               })}
