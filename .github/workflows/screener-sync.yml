@@ -5,8 +5,13 @@
 name: Sync Screener.in CSVs
 
 on:
+  # zzz177 — GitHub Actions cron is unreliable (starvation delays 30min-4hr, sometimes skips days).
+  # Fire multiple times daily so at least one attempt lands. Concurrency:group prevents duplicate runs.
   schedule:
-    - cron: '0 4 * * *'
+    - cron: '0 4 * * *'      # 04:00 UTC / 09:30 IST — pre-open primary
+    - cron: '30 5 * * *'     # 05:30 UTC / 11:00 IST — backup if 04:00 was starved
+    - cron: '0 8 * * *'      # 08:00 UTC / 13:30 IST — mid-day catch-up
+    - cron: '0 12 * * *'     # 12:00 UTC / 17:30 IST — post-close redundancy
   workflow_dispatch:
 
 permissions:

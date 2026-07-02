@@ -7,8 +7,13 @@
 name: Sync TradingView Screeners
 
 on:
+  # zzz177 — GitHub Actions cron is unreliable (starvation delays 30min-4hr, sometimes skips days).
+  # Fire multiple times daily so at least one attempt lands. Concurrency:group prevents duplicate runs.
   schedule:
-    - cron: '30 4 * * *'   # 04:30 UTC daily (10:00 IST)
+    - cron: '30 4 * * *'    # 04:30 UTC / 10:00 IST — primary
+    - cron: '0 6 * * *'     # 06:00 UTC / 11:30 IST — backup if 04:30 was starved
+    - cron: '30 8 * * *'    # 08:30 UTC / 14:00 IST — mid-day catch-up
+    - cron: '30 12 * * *'   # 12:30 UTC / 18:00 IST — post-close redundancy
   workflow_dispatch:
 
 permissions:
