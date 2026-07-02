@@ -1,5 +1,5 @@
-# zzz151 — Sync TradingView saved screeners daily.
-# - Node 22 (was Node 20 — deprecation warning)
+# zzz151 â Sync TradingView saved screeners daily.
+# - Node 22 (was Node 20 â deprecation warning)
 # - playwright-extra + stealth plugin to bypass Cloudflare bot detection
 # - Always commit debug screenshots even on failure (for diagnosis)
 # - Upload debug artifacts so we can download and inspect them
@@ -7,13 +7,13 @@
 name: Sync TradingView Screeners
 
 on:
-  # zzz177 — GitHub Actions cron is unreliable (starvation delays 30min-4hr, sometimes skips days).
+  # zzz177 â GitHub Actions cron is unreliable (starvation delays 30min-4hr, sometimes skips days).
   # Fire multiple times daily so at least one attempt lands. Concurrency:group prevents duplicate runs.
   schedule:
-    - cron: '30 4 * * *'    # 04:30 UTC / 10:00 IST — primary
-    - cron: '0 6 * * *'     # 06:00 UTC / 11:30 IST — backup if 04:30 was starved
-    - cron: '30 8 * * *'    # 08:30 UTC / 14:00 IST — mid-day catch-up
-    - cron: '30 12 * * *'   # 12:30 UTC / 18:00 IST — post-close redundancy
+    - cron: '30 4 * * *'    # 04:30 UTC / 10:00 IST â primary
+    - cron: '0 6 * * *'     # 06:00 UTC / 11:30 IST â backup if 04:30 was starved
+    - cron: '30 8 * * *'    # 08:30 UTC / 14:00 IST â mid-day catch-up
+    - cron: '30 12 * * *'   # 12:30 UTC / 18:00 IST â post-close redundancy
   workflow_dispatch:
 
 permissions:
@@ -80,7 +80,20 @@ jobs:
             echo "No changes."
           else
             git commit -m "[skip ci] TradingView sync $(date -u +%Y-%m-%dT%H:%M:%SZ) (incl. debug)"
-            git push
+            # zzz177 — retry push with rebase on non-fast-forward. Same fix pattern as
+            # screener-sync.yml — concurrent scheduled + dispatched runs race, and simple
+            # `git push` fails when a sibling job pushed a commit 1-2 seconds earlier.
+            for i in 1 2 3 4 5; do
+              if git push; then
+                echo "push succeeded on attempt $i"
+                exit 0
+              fi
+              echo "push failed on attempt $i — pulling with rebase and retrying"
+              git pull --rebase --autostash origin main || true
+              sleep 2
+            done
+            echo "::error::push failed after 5 attempts"
+            exit 1
           fi
 
       - name: Fail the workflow if sync failed
