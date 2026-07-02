@@ -93,7 +93,7 @@ function useMarketEarnings(months: string[]) {
   // An empty results[] array passed the old `parsed.results` truthiness check
   // and was served as fresh initialData for 15 min, so the calendar kept
   // showing "No filings" even after the server recovered the month.
-  const HUB_LS_PREFIX = 'mc:hub:v5:';  // PATCH 1042 — drop stale 'No filings' caches
+  const HUB_LS_PREFIX = 'mc:hub:v6:';  // zzz176 — bumped v5→v6 because months-to-fetch key now includes next month; old v5 payloads keyed to 2 months would poison the 3-month key.
   const key = months.join(',');
   // PATCH 0453 P1-12 — Audit found this hub-scrub ran on every render
   // (50-200ms cost iterating localStorage). Now runs once per app session
@@ -101,10 +101,10 @@ function useMarketEarnings(months: string[]) {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
-      const SCRUB_HUB = 'mc:hub-scrub:v5';  // PATCH 1042
+      const SCRUB_HUB = 'mc:hub-scrub:v6';  // zzz176 — bumped for months-to-fetch key change
       if (!localStorage.getItem(SCRUB_HUB)) {
         for (const k of Object.keys(localStorage)) {
-          if (k.startsWith('mc:hub:v1:') || k.startsWith('mc:hub:v2:') || k.startsWith('mc:hub:v3:') || k.startsWith('mc:hub:v4:')) localStorage.removeItem(k);
+          if (k.startsWith('mc:hub:v1:') || k.startsWith('mc:hub:v2:') || k.startsWith('mc:hub:v3:') || k.startsWith('mc:hub:v4:') || k.startsWith('mc:hub:v5:')) localStorage.removeItem(k);
         }
         localStorage.setItem(SCRUB_HUB, '1');
       }
@@ -990,12 +990,20 @@ export default function EarningsOpportunitiesPage() {
   // PATCH 0152 — drive everything from the hub source-of-truth.
   // Months to fetch: cover the current filterDate's month + the previous
   // month (so the calendar grid view can show ~6 weeks of history).
+  // zzz176 — Also fetch the NEXT month, because the calendar strip
+  // (`calRange`) extends +14 days forward from filterDate. When
+  // filterDate is late in a month (e.g. Jun 26), the strip crosses into
+  // the next month (Jul 1-10). Without the next-month fetch, those
+  // forward dates rendered "Data unavailable" because they weren't in
+  // any month payload's `ingested_dates`. Fix: also fetch next month
+  // so ingested_dates covers the full strip window.
   const monthsToFetch = useMemo(() => {
     const baseDate = filterDate || todayISO();
     const cur = new Date(baseDate);
     const prev = new Date(baseDate); prev.setDate(1); prev.setMonth(prev.getMonth() - 1);
+    const next = new Date(baseDate); next.setDate(1); next.setMonth(next.getMonth() + 1);
     const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-    return Array.from(new Set([fmt(prev), fmt(cur)]));
+    return Array.from(new Set([fmt(prev), fmt(cur), fmt(next)]));
   }, [filterDate]);
   const { data: hub, isLoading: hubLoading, error: hubError, refetch: refetchHub } = useMarketEarnings(monthsToFetch);
 
