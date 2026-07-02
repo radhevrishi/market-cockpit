@@ -7218,6 +7218,11 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
     return rows;
   }, [usaRows]);
 
+  // zzz175 tech tabs New tracker (per-market)
+  const NEW_TAB_KEY_T: NewTabKey = market === 'IND' ? 'in-tech' : 'us-tech';
+  const allSymbolsT = React.useMemo(() => techRows.map(r => r.symbol).filter(Boolean), [techRows]);
+  const { newTickerSet: techNewSet, ackSet: techAckSet, toggleAck: toggleTechAck } = useNewTracker(NEW_TAB_KEY_T, allSymbolsT);
+
   // zzz140 — Industry RS leaderboard (sorted industries by median composite-perf percentile)
   const industryLeaderboard = React.useMemo(() => {
     if (techRows.length === 0) return [] as { industry: string; rank: number; count: number; medianRs: number; topTickers: string[] }[];
@@ -7886,7 +7891,10 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 12 }}>
             {champions.map(r => (
-              <div key={r.symbol} onClick={() => setExpandedSymbol(r.symbol)} style={{ background: 'rgba(16,185,129,0.08)', border: '2px solid #10B981', borderRadius: 10, padding: 14, boxShadow: '0 0 0 1px rgba(16,185,129,0.1)', cursor: 'pointer' }}>
+              <div key={r.symbol} onClick={() => setExpandedSymbol(r.symbol)} style={{ background: 'rgba(16,185,129,0.08)', border: '2px solid #10B981', borderRadius: 10, padding: 14, boxShadow: '0 0 0 1px rgba(16,185,129,0.1)', cursor: 'pointer', position: 'relative' }}>
+                <div onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', top: 8, right: 8, zIndex: 2 }}>
+                  <NewSeenCheckbox isNew={techNewSet.has(r.symbol)} isAcked={techAckSet.has(r.symbol)} onToggle={() => toggleTechAck(r.symbol)} />
+                </div>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
                   <span style={{ fontSize: 20, fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{r.symbol}</span>
                   <span style={{ fontSize: 15, fontWeight: 800, color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</span>
@@ -8151,6 +8159,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>
               <tr style={{ background: PANEL2, color: MUTED, fontSize: 11, cursor: 'pointer' }}>
+                <th style={{ padding: '8px 4px', textAlign: 'center', width: 28 }} title="🆕 New in last 7 days · check to acknowledge">NEW</th>
                 <th onClick={() => handleSort('symbol')} style={{ padding: '8px 8px', textAlign: 'left' }}>ELIG · TICKER{sortIcon('symbol')}</th>
                 <th onClick={() => handleSort('price')} style={{ padding: '8px 8px', textAlign: 'right' }}>CMP{sortIcon('price')}</th>
                 <th onClick={() => handleSort('company')} style={{ padding: '8px 8px', textAlign: 'left' }}>COMPANY{sortIcon('company')}</th>
@@ -8180,6 +8189,9 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
                 const pctMA = typeof r.pctVsSma50 === 'number' ? r.pctVsSma50 : r.pctVsEma50;
                 return (
                   <tr key={r.symbol} onClick={() => setExpandedSymbol(r.symbol)} style={{ borderBottom: `1px solid ${LINE}`, background: r.eligible ? 'transparent' : 'rgba(239,68,68,0.04)', cursor: 'pointer' }}>
+                    <td onClick={(e) => e.stopPropagation()} style={{ padding: '6px 4px', textAlign: 'center' }}>
+                      <NewSeenCheckbox isNew={techNewSet.has(r.symbol)} isAcked={techAckSet.has(r.symbol)} onToggle={() => toggleTechAck(r.symbol)} />
+                    </td>
                     <td style={{ padding: '6px 8px', fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>
                       <span style={{ color: r.eligible ? '#10B981' : '#EF4444', marginRight: 5 }} title={r.eligible ? 'Eligible' : r.eligibilityFailures.join(' · ')}>{r.eligible ? '✓' : '✗'}</span>
                       {r.symbol}
