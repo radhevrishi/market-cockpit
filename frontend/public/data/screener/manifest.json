@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-07-02T07:00:07Z",
+  "lastSync": "2026-07-02T10:33:05Z",
   "ok": 15,
   "fail": 0,
   "files": [
@@ -10,7 +10,7 @@
     },
     {
       "name": "capex.csv",
-      "size": 7777,
+      "size": 7369,
       "displayName": "CAPEX"
     },
     {
@@ -35,7 +35,7 @@
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 5759,
+      "size": 6172,
       "displayName": "Lowequitycapital"
     },
     {
@@ -65,7 +65,7 @@
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 23470,
+      "size": 23471,
       "displayName": "Latest Portfolio"
     },
     {
@@ -75,7 +75,7 @@
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65540,
+      "size": 65541,
       "displayName": "Working watchlist"
     }
   ]
