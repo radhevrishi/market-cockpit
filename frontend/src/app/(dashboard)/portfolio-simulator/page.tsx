@@ -790,12 +790,12 @@ export default function PortfolioSimulatorPage() {
           </div>
         </div>
 
-        {/* INPUTS + CHARTS row */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 340px) 1fr', gap: 16, marginBottom: 20 }}>
+        {/* INPUTS row (charts moved to bottom per zzz198) */}
+        <div style={{ marginBottom: 20 }}>
           {/* Inputs */}
           <div style={{ ...card }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: COL.txt, marginBottom: 14 }}>Inputs</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
               <div style={{ gridColumn: '1 / -1' }}>
                 <span style={label}>Portfolio capital (₹)</span>
                 <input type="number" style={input} value={inp.capital}
@@ -859,16 +859,6 @@ export default function PortfolioSimulatorPage() {
                 <div><div style={{ color: COL.muted }}>Reward / risk</div><div style={{ color: COL.txt, fontWeight: 700 }}>{rewardRisk.toFixed(2)} : 1</div></div>
                 <div><div style={{ color: COL.muted }}>Median final</div><div style={{ color: COL.txt, fontWeight: 700 }}>{fmtMoney(medianFinal)}</div></div>
               </div>
-            </div>
-          </div>
-
-          {/* Charts */}
-          <div style={{ display: 'grid', gridTemplateRows: '1fr 1fr', gap: 12 }}>
-            <div style={{ ...card, padding: 8 }}>
-              <Histogram data={result.cagrs} />
-            </div>
-            <div style={{ ...card, padding: 8 }}>
-              <EquityCurves curves={result.sampleEquity} years={inp.years} capital={inp.capital} />
             </div>
           </div>
         </div>
@@ -970,6 +960,16 @@ export default function PortfolioSimulatorPage() {
           </div>
           <div style={{ fontSize: 11, color: COL.muted, marginTop: 10 }}>
             All rows recomputed live with 1,500 simulations each · {DEFAULTS.positions} positions × {fmtPct(DEFAULTS.positionSize, 0)} · {DEFAULTS.years}-year horizon · annual rebalance.
+          </div>
+        </div>
+
+        {/* zzz198: CHARTS moved to bottom — CAGR distribution + equity curves */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: 16, marginBottom: 20 }}>
+          <div style={{ ...card, padding: 8 }}>
+            <Histogram data={result.cagrs} width={720} height={280} />
+          </div>
+          <div style={{ ...card, padding: 8 }}>
+            <EquityCurves curves={result.sampleEquity} years={inp.years} capital={inp.capital} width={720} height={280} />
           </div>
         </div>
 
