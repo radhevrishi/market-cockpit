@@ -6291,6 +6291,169 @@ function MultiConfirmedCard({ stocks }: { stocks: any[] }) {
 // while the first is running.
 const _techPullInFlight: { current: Set<string> } = { current: new Set() };
 
+// ─── zzz203: SEPA CHECKLIST PANEL (Winning Playbook overlay) ──────────────
+// Scores every stock in the Technicals set against the measurable rules from
+// the Winning Playbook checklist. Fundamentals-only rules that can't be
+// determined from technical data (new product, new management, industry
+// leadership, small float, etc.) are excluded — the score is out of 10.
+// Sits at the TOP of each Technicals tab so the highest-quality names are the
+// first thing the user sees.
+function SepaChecklistPanel({ techRows }: { techRows: any[] }) {
+  const PANEL = '#0F141B';
+  const PANEL2 = '#121821';
+  const LINE = '#1E2632';
+  const LINE2 = '#2A3444';
+  const TXT = '#E5ECF4';
+  const MUTED = '#7B8898';
+  const CYAN = '#22D3EE';
+  const GREEN = '#10B981';
+  const RED = '#EF4444';
+  const AMBER = '#F59E0B';
+
+  // Only score rows that have at least the basics
+  const scored = React.useMemo(() => {
+    return (techRows || []).map((r: any) => {
+      const price = r.price;
+      const checks: (boolean | null)[] = [];
+      // 1. Price > 200-SMA
+      checks.push((price != null && r.sma200 != null) ? price > r.sma200 : null);
+      // 2. Price > 150-SMA (if available)
+      checks.push((price != null && r.sma150 != null) ? price > r.sma150 : null);
+      // 3. Price > 50-SMA
+      checks.push((price != null && r.sma50 != null) ? price > r.sma50 : null);
+      // 4. 50-SMA > 150-SMA > 200-SMA (bullish stack)
+      checks.push((r.sma50 != null && r.sma200 != null)
+        ? (r.sma150 != null ? (r.sma50 > r.sma150 && r.sma150 > r.sma200) : (r.sma50 > r.sma200))
+        : null);
+      // 5. Within 25% of 52w high
+      checks.push((r.distFromHigh != null) ? r.distFromHigh >= -25 : null);
+      // 6. At least 30% above 52w low
+      checks.push((r.pctAboveLow52w != null) ? r.pctAboveLow52w >= 30 : null);
+      // 7. 1-Year return > 30% (RS proxy)
+      checks.push((r.perf1y != null) ? r.perf1y > 30 : null);
+      // 8. 3-month RS: outperforming (proxy for RS >= 70)
+      checks.push((r.perf3m != null) ? r.perf3m > 10 : null);
+      // 9. Above 21-EMA short-term (Minervini)
+      checks.push((price != null && r.ema21 != null) ? price > r.ema21 : null);
+      // 10. Not extended: RSI < 90 AND not >30% above 21-EMA
+      checks.push((r.rsi != null || r.pctVsEma21 != null)
+        ? ((r.rsi == null || r.rsi < 90) && (r.pctVsEma21 == null || r.pctVsEma21 < 30))
+        : null);
+
+      const passed = checks.filter(x => x === true).length;
+      const known = checks.filter(x => x !== null).length;
+      return { r, checks, passed, known };
+    }).filter(x => x.known >= 6); // require at least 6 known checks
+  }, [techRows]);
+
+  const sorted = React.useMemo(() => [...scored].sort((a, b) => b.passed - a.passed), [scored]);
+  const eliteCount = sorted.filter(x => x.passed >= 8).length;
+  const goodCount = sorted.filter(x => x.passed >= 6 && x.passed < 8).length;
+  const showTop = Math.min(sorted.length, 30);
+
+  if (sorted.length === 0) {
+    return (
+      <div style={{ background: PANEL, border: `1px solid ${LINE}`, borderRadius: 10, padding: 16, marginBottom: 20 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: TXT }}>🏆 Winning Playbook — SEPA checklist score</div>
+        <div style={{ fontSize: 12, color: MUTED, marginTop: 6 }}>Upload a TradingView CSV with SMA/EMA columns to see stocks scored against Minervini&apos;s Trend Template.</div>
+      </div>
+    );
+  }
+
+  const labels = [
+    'Price > 200-SMA',
+    'Price > 150-SMA',
+    'Price > 50-SMA',
+    '50 &gt; 150 &gt; 200 (bullish stack)',
+    'Within 25% of 52w high',
+    '≥ 30% above 52w low',
+    '1Y return &gt; 30%',
+    '3M return &gt; 10% (RS proxy)',
+    'Above 21-EMA (short-term)',
+    'Not extended (RSI &lt; 90 &amp; ≤ 30% above 21-EMA)',
+  ];
+
+  return (
+    <div style={{ background: `linear-gradient(180deg, ${CYAN}0F 0%, ${PANEL} 60%)`, border: `1px solid ${CYAN}55`, borderRadius: 10, padding: 18, marginBottom: 20 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 900, color: TXT }}>
+            🏆 Winning Playbook · SEPA checklist score
+            <a href="/winning-playbook" style={{ marginLeft: 10, fontSize: 11, color: CYAN, textDecoration: 'none' }}>[see full rules →]</a>
+          </div>
+          <div style={{ fontSize: 12, color: MUTED, marginTop: 4, lineHeight: 1.5, maxWidth: 900 }}>
+            Scored against Minervini&apos;s Trend Template (measurable technical rules only). Fundamentals — new product / new management / small float / industry leadership — need manual check on top. Sorted by score.
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ background: `${GREEN}20`, border: `1px solid ${GREEN}55`, color: GREEN, padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700 }}>
+            🥇 Elite (8+/10): <b>{eliteCount}</b>
+          </span>
+          <span style={{ background: `${AMBER}20`, border: `1px solid ${AMBER}55`, color: AMBER, padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700 }}>
+            🥈 Good (6-7/10): <b>{goodCount}</b>
+          </span>
+          <span style={{ background: PANEL2, border: `1px solid ${LINE2}`, color: MUTED, padding: '3px 10px', borderRadius: 999, fontSize: 11 }}>
+            Total scored: <b style={{ color: TXT }}>{sorted.length}</b>
+          </span>
+        </div>
+      </div>
+
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5 }}>
+          <thead>
+            <tr style={{ color: MUTED, borderBottom: `1px solid ${LINE2}` }}>
+              <th style={{ textAlign: 'left', padding: '6px 8px' }}>#</th>
+              <th style={{ textAlign: 'left', padding: '6px 8px' }}>Ticker</th>
+              <th style={{ textAlign: 'right', padding: '6px 8px' }}>Price</th>
+              <th style={{ textAlign: 'right', padding: '6px 8px' }}>1Y</th>
+              <th style={{ textAlign: 'right', padding: '6px 8px' }}>3M</th>
+              <th style={{ textAlign: 'right', padding: '6px 8px' }}>From 52wH</th>
+              <th style={{ textAlign: 'right', padding: '6px 8px' }}>Above 52wL</th>
+              <th style={{ textAlign: 'center', padding: '6px 8px' }} title={labels.map((_, i) => (i + 1) + '. ' + labels[i].replace(/&[a-z]+;/g, '')).join(' | ')}>Checks (1-10)</th>
+              <th style={{ textAlign: 'right', padding: '6px 8px' }}>Score</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.slice(0, showTop).map((row, i) => {
+              const r = row.r;
+              const scoreColor = row.passed >= 8 ? GREEN : row.passed >= 6 ? AMBER : row.passed >= 4 ? CYAN : MUTED;
+              return (
+                <tr key={r.symbol || i} style={{ borderBottom: `1px solid ${LINE}`, background: row.passed >= 8 ? `${GREEN}0A` : 'transparent' }}>
+                  <td style={{ padding: '6px 8px', color: MUTED }}>{i + 1}</td>
+                  <td style={{ padding: '6px 8px', color: TXT, fontWeight: 700 }}>{r.symbol || r.ticker || '—'}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', color: TXT, fontVariantNumeric: 'tabular-nums' }}>{r.price != null ? r.price.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—'}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', color: (r.perf1y ?? 0) >= 0 ? GREEN : RED }}>{r.perf1y != null ? (r.perf1y > 0 ? '+' : '') + r.perf1y.toFixed(0) + '%' : '—'}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', color: (r.perf3m ?? 0) >= 0 ? GREEN : RED }}>{r.perf3m != null ? (r.perf3m > 0 ? '+' : '') + r.perf3m.toFixed(0) + '%' : '—'}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', color: (r.distFromHigh ?? 0) >= -10 ? GREEN : (r.distFromHigh ?? 0) >= -25 ? AMBER : RED }}>{r.distFromHigh != null ? r.distFromHigh.toFixed(0) + '%' : '—'}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', color: (r.pctAboveLow52w ?? 0) >= 30 ? GREEN : AMBER }}>{r.pctAboveLow52w != null ? '+' + r.pctAboveLow52w.toFixed(0) + '%' : '—'}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'center', fontFamily: 'monospace', letterSpacing: 1.5 }}>
+                    {row.checks.map((c, ci) => (
+                      <span key={ci} title={labels[ci].replace(/&[a-z]+;/g, m => m === '&gt;' ? '>' : m === '&lt;' ? '<' : m === '&amp;' ? '&' : m)} style={{ color: c === true ? GREEN : c === false ? RED : MUTED }}>
+                        {c === true ? '✓' : c === false ? '✗' : '·'}
+                      </span>
+                    ))}
+                  </td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 800, color: scoreColor }}>{row.passed}/{row.known}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {sorted.length > showTop && (
+        <div style={{ fontSize: 11, color: MUTED, marginTop: 8, fontStyle: 'italic' }}>
+          Showing top {showTop} of {sorted.length} scored stocks. Refine below by uploading a fresh TradingView export or narrowing by industry.
+        </div>
+      )}
+
+      <div style={{ fontSize: 11, color: MUTED, marginTop: 12, padding: '8px 10px', background: PANEL2, borderRadius: 6, lineHeight: 1.6 }}>
+        <b style={{ color: TXT }}>Rules not shown here (do manually)</b> — CANSLIM &quot;N&quot; (new product / management / cycle), &quot;S&quot; (small float / high demand), &quot;L&quot; (industry leader), &quot;I&quot; (institutional buying — check Portfolio Fundamentals). Score of 8+/10 combined with these 4 manual checks is the full 15/15 Elite trigger from the Winning Playbook.
+      </div>
+    </div>
+  );
+}
+
 function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
   // zzz149 — Tab is parameterized by market. All localStorage keys are scoped
   // per market so USA + India tabs are fully independent. Uploads in either
@@ -7821,6 +7984,9 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
           </div>
         )}
       </div>
+
+      {/* zzz203: SEPA CHECKLIST PANEL — Winning Playbook overlay */}
+      <SepaChecklistPanel techRows={techRows} />
 
       {/* zzz133 — DATA QUALITY + ELIGIBILITY summary chips */}
       <div style={{ ...cardStyle, background: 'color-mix(in srgb, #10B981 5%, transparent)', borderColor: 'color-mix(in srgb, #10B981 30%, transparent)', padding: 14 }}>
