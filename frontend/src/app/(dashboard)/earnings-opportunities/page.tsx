@@ -1733,23 +1733,10 @@ export default function EarningsOpportunitiesPage() {
       try { payload = await res.json(); } catch {}
       // Then refetch via React Query so the UI picks up the new data
       await Promise.all([refetchHub(), refetchGraded()]);
-      // PATCH 0193 — if the current date is genuinely empty (weekend / no
-      // filings), auto-jump to the most recent past date that DOES have
-      // filings, so the user isn't stuck on a blank screen after refresh.
-      const stillEmpty = !payload || !payload.by_tier ||
-        (payload.candidates_total ?? 0) === 0;
-      if (stillEmpty && hub?.results) {
-        const todayIso2 = new Date().toISOString().slice(0, 10);
-        const byDate: Record<string, number> = {};
-        for (const r of hub.results) {
-          if (!r.resultDate || r.resultDate > todayIso2 || r.quality === 'Upcoming') continue;
-          byDate[r.resultDate] = (byDate[r.resultDate] || 0) + 1;
-        }
-        const recentDate = Object.keys(byDate).sort().reverse()[0];
-        if (recentDate && recentDate !== resolvedDateForGrading) {
-          setFilterDate(recentDate);
-        }
-      }
+      // zzz190: removed the "auto-jump to latest with filings" fallback.
+      // If the user explicitly clicked Hard Refresh on a specific date, respect
+      // that choice — don't yank them to another date. If the date is genuinely
+      // empty they'll see the empty state and can navigate manually.
     } finally {
       setHardRefreshing(false);
     }
