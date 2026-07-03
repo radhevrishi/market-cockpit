@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-07-03T08:32:28Z",
+  "lastSync": "2026-07-03T10:30:50Z",
   "ok": 15,
   "fail": 0,
   "files": [
@@ -30,7 +30,7 @@
     },
     {
       "name": "ipobases.csv",
-      "size": 5279,
+      "size": 4905,
       "displayName": "IPOBASES"
     },
     {
@@ -65,12 +65,12 @@
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 23009,
+      "size": 23010,
       "displayName": "Latest Portfolio"
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63320,
+      "size": 63321,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
