@@ -294,11 +294,17 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
           .map(rowKey);
         const map = new Map<string, Row>();
         prev.forEach((r) => {
-          // Strip this file from _files if ticker no longer in incoming for it
+          // zzz184: auto-drop tickers that were in this file previously but no longer are.
+          // If the ticker isn't in ANY other file either, remove it entirely so analytics
+          // instantly reflect the current CSV. Banner still surfaces the delta as info.
           const files = ((r as any)._files as string[] | undefined) ?? [];
           if (files.includes(name) && !incomingKeys.has(rowKey(r))) {
             const filtered = files.filter(f => f !== name);
-            map.set(rowKey(r), { ...r, _files: filtered } as any);
+            if (filtered.length > 0) {
+              // Still referenced by other files — keep but strip this file
+              map.set(rowKey(r), { ...r, _files: filtered } as any);
+            }
+            // else: drop entirely (no map.set) — analytics update automatically
           } else {
             map.set(rowKey(r), r);
           }
