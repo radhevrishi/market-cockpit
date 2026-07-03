@@ -775,7 +775,7 @@ function RealWorldScenarios({ positionSize }: { positionSize: number }) {
           </tbody>
         </table>
         <div style={{ fontSize: 11, color: COL.muted, marginTop: 10, lineHeight: 1.6 }}>
-          Note: many of the best long-term investors (Buffett, Peter Lynch, Terry Smith, Nick Sleep) don\'t use mechanical
+          Note: many of the best long-term investors (Buffett, Peter Lynch, Terry Smith, Nick Sleep) don't use mechanical
           stop-losses. They rely on thesis discipline instead. The right approach depends on your temperament, edge, and
           the concentration / diversification of your book — not a universal rule.
         </div>
@@ -839,6 +839,331 @@ function YearByYearTable({ result, capital }: { result: SimResult; capital: numb
   );
 }
 
+// ── zzz200: Growth Ladder — path from 50L to 10Cr with Minervini-style rules ─
+// Concentrated 10-position book, hard stop at avg loser %, winners in the
+// specified range. Shows batch-by-batch capital growth, sample trade sequence
+// with SEPA-style setups, and time-to-target under different assumptions.
+
+type LadderInputs = {
+  startCapital: number;
+  targetCapital: number;
+  positions: number;
+  winRate: number;    // fraction
+  minWinner: number;  // fraction (e.g. 0.10)
+  maxWinner: number;  // fraction (e.g. 0.40)
+  maxLoss: number;    // fraction NEGATIVE (e.g. -0.13)
+  holdWeeks: number;  // avg weeks per trade cycle
+};
+
+const LADDER_DEFAULTS: LadderInputs = {
+  startCapital: 50_00_000,       // 50 lakhs
+  targetCapital: 10_00_00_000,   // 10 crores
+  positions: 10,
+  winRate: 0.55,                 // realistic Minervini live win rate
+  minWinner: 0.10,
+  maxWinner: 0.40,
+  maxLoss: -0.13,
+  holdWeeks: 6,
+};
+
+// Deterministic per-batch expected return: E[R_pos] = p*avgWin + (1-p)*maxLoss
+// where avgWin is midpoint of the range. Portfolio full-invested = sum of positions
+// weighted 1/N so E[batch] = E[R_pos] regardless of position count.
+function ladderExpectedBatch(inp: LadderInputs): number {
+  const avgWin = (inp.minWinner + inp.maxWinner) / 2;
+  return inp.winRate * avgWin + (1 - inp.winRate) * inp.maxLoss;
+}
+
+function ladderProject(inp: LadderInputs): {
+  batches: number;
+  years: number;
+  cagr: number;
+  ladder: { batch: number; portfolio: number; multiple: number; weeksElapsed: number; batchRet: number }[];
+} {
+  const rBatch = ladderExpectedBatch(inp);
+  const growthNeeded = inp.targetCapital / inp.startCapital;
+  const batches = rBatch > 0 ? Math.ceil(Math.log(growthNeeded) / Math.log(1 + rBatch)) : 999;
+  const weeks = batches * inp.holdWeeks;
+  const years = weeks / 52;
+  const cagr = years > 0 ? Math.pow(growthNeeded, 1 / years) - 1 : 0;
+  const ladder: { batch: number; portfolio: number; multiple: number; weeksElapsed: number; batchRet: number }[] = [];
+  let v = inp.startCapital;
+  for (let b = 1; b <= Math.min(batches, 60); b++) {
+    v = v * (1 + rBatch);
+    ladder.push({ batch: b, portfolio: v, multiple: v / inp.startCapital, weeksElapsed: b * inp.holdWeeks, batchRet: rBatch });
+  }
+  return { batches, years, cagr, ladder };
+}
+
+// Realistic Minervini-style setups
+const SEPA_SETUPS = ['VCP', 'Cup & Handle', 'Flat Base', 'Power-Play', 'Pivot Base', 'IPO Base', 'Flag'];
+const SEPA_TICKERS = ['AZAD', 'DATAPATTNS', 'HAPPYFORGE', 'JNKINDIA', 'RACLGEAR', 'SYRMA', 'INOXINDIA', 'KENNAMET',
+  'ASTRAMICRO', 'MARKSANS', 'AEROFLEX', 'CGPOWER', 'PARAS', 'DIVGIITTS', 'RISHABH', 'LLOYDSENGG',
+  'DREDGECORP', 'NGLFINE', 'SANGHVIMOV', 'WOCKPHARMA', 'JAMNAAUTO', 'SKIPPER', 'OLECTRA',
+  'KIRLOSENG', 'AVALON', 'REFEX', 'MMTC', 'AXTEL', 'KECL', 'FCL'];
+
+// Deterministic sample trade sequence (30 trades) — expected outcome distribution
+function buildSampleTrades(inp: LadderInputs): { i: number; ticker: string; setup: string; type: 'W' | 'L'; ret: number; days: number }[] {
+  const winnersInBucket = Math.round(30 * inp.winRate);
+  const losersInBucket = 30 - winnersInBucket;
+  const rng = (seed: number) => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+  const trades: { i: number; ticker: string; setup: string; type: 'W' | 'L'; ret: number; days: number }[] = [];
+  let seed = 42;
+  for (let i = 0; i < winnersInBucket; i++) {
+    seed = (seed * 9301 + 49297) % 233280;
+    const r = seed / 233280;
+    const ret = inp.minWinner + r * (inp.maxWinner - inp.minWinner);
+    const days = Math.round(20 + r * 45); // 3-9 weeks
+    trades.push({
+      i: i + 1,
+      ticker: SEPA_TICKERS[i % SEPA_TICKERS.length],
+      setup: SEPA_SETUPS[i % SEPA_SETUPS.length],
+      type: 'W', ret, days,
+    });
+  }
+  for (let i = 0; i < losersInBucket; i++) {
+    seed = (seed * 9301 + 49297) % 233280;
+    const r = seed / 233280;
+    // Losses usually smaller than max because SL trailing/anticipation
+    const ret = inp.maxLoss * (0.6 + r * 0.4); // -60% to -100% of max
+    const days = Math.round(5 + r * 20); // fast cuts, 1-4 weeks
+    trades.push({
+      i: winnersInBucket + i + 1,
+      ticker: SEPA_TICKERS[(winnersInBucket + i) % SEPA_TICKERS.length],
+      setup: SEPA_SETUPS[(winnersInBucket + i) % SEPA_SETUPS.length],
+      type: 'L', ret, days,
+    });
+  }
+  // Interleave winners and losers roughly
+  const interleaved: typeof trades = [];
+  const wArr = trades.filter(t => t.type === 'W');
+  const lArr = trades.filter(t => t.type === 'L');
+  let wi = 0, li = 0;
+  for (let k = 0; k < 30; k++) {
+    if ((k * inp.winRate) % 1 < inp.winRate && wi < wArr.length) { interleaved.push({ ...wArr[wi], i: k + 1 }); wi++; }
+    else if (li < lArr.length) { interleaved.push({ ...lArr[li], i: k + 1 }); li++; }
+    else if (wi < wArr.length) { interleaved.push({ ...wArr[wi], i: k + 1 }); wi++; }
+  }
+  return interleaved;
+}
+
+function GrowthLadder() {
+  const [inp, setInp] = useState<LadderInputs>(LADDER_DEFAULTS);
+  const proj = useMemo(() => ladderProject(inp), [inp]);
+  const rBatch = ladderExpectedBatch(inp);
+  const positionSize = 1 / inp.positions;
+  const avgWin = (inp.minWinner + inp.maxWinner) / 2;
+  const rewardRisk = Math.abs(avgWin / (inp.maxLoss || -0.0001));
+  const posExpectancy = inp.winRate * avgWin + (1 - inp.winRate) * inp.maxLoss;
+
+  const sampleTrades = useMemo(() => buildSampleTrades(inp), [inp]);
+  const sampleContrib = sampleTrades.map(t => positionSize * t.ret);
+  let sampleRunning = inp.startCapital;
+  const sampleRows = sampleTrades.map((t, i) => {
+    const contrib = sampleContrib[i];
+    sampleRunning = sampleRunning * (1 + contrib);
+    return { ...t, contrib, running: sampleRunning };
+  });
+
+  // Best-case Minervini presets — click to load
+  const presets: { name: string; blurb: string; color: string; inp: Partial<LadderInputs> }[] = [
+    { name: 'Minervini SEPA · realistic',   color: '#22D3EE', blurb: 'Live-book realism: 55% win, +10 to +40% winners, -13% max loss, 6-week hold', inp: { winRate: 0.55, minWinner: 0.10, maxWinner: 0.40, maxLoss: -0.13, holdWeeks: 6 } },
+    { name: 'Minervini · peak execution',   color: '#10B981', blurb: 'Championship trader mode: 65% win, +15 to +50% winners, -7% max loss, 5-week hold', inp: { winRate: 0.65, minWinner: 0.15, maxWinner: 0.50, maxLoss: -0.07, holdWeeks: 5 } },
+    { name: 'Conservative swing',           color: '#A78BFA', blurb: 'Selective swing: 60% win, +8 to +25% winners, -10% loss, 8-week hold', inp: { winRate: 0.60, minWinner: 0.08, maxWinner: 0.25, maxLoss: -0.10, holdWeeks: 8 } },
+    { name: 'Poor discipline',              color: '#EF4444', blurb: 'What breaks the ladder: 45% win, +10 to +30% winners, -20% loss (SL slippage), 8-week hold', inp: { winRate: 0.45, minWinner: 0.10, maxWinner: 0.30, maxLoss: -0.20, holdWeeks: 8 } },
+  ];
+
+  return (
+    <div style={{ ...card, marginBottom: 20, borderColor: '#22D3EE55', background: `linear-gradient(180deg, #22D3EE0F 0%, ${COL.panel} 60%)` }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 800, color: COL.txt }}>
+            Growth Ladder · <span style={{ color: COL.cyan }}>{fmtMoney(inp.startCapital)}</span> → <span style={{ color: COL.green }}>{fmtMoney(inp.targetCapital)}</span>
+          </div>
+          <div style={{ fontSize: 11, color: COL.muted, marginTop: 4, lineHeight: 1.5 }}>
+            Concentrated 10-position book, Minervini-style rules — hard stop at max loss %, winners in the specified range.
+            Assumes fully deployed capital each batch (10 concurrent trades roll every {inp.holdWeeks} weeks).
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ ...chip, borderColor: COL.cyan + '55', color: COL.cyan }}>
+            {proj.batches} batches
+          </span>
+          <span style={{ ...chip, borderColor: COL.green + '55', color: COL.green }}>
+            {proj.years.toFixed(1)} years
+          </span>
+          <span style={{ ...chip, borderColor: COL.amber + '55', color: COL.amber }}>
+            {fmtSignedPct(proj.cagr, 1)} CAGR
+          </span>
+        </div>
+      </div>
+
+      {/* Preset shortcuts */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8, marginBottom: 14 }}>
+        {presets.map(p => (
+          <button key={p.name}
+            onClick={() => setInp(s => ({ ...s, ...p.inp }))}
+            style={{ textAlign: 'left', cursor: 'pointer', background: COL.panel2, border: `1px solid ${p.color}55`, color: COL.txt, padding: 10, borderRadius: 6 }}
+          >
+            <div style={{ fontSize: 12, fontWeight: 800, color: p.color }}>{p.name}</div>
+            <div style={{ fontSize: 10, color: COL.muted, marginTop: 2, lineHeight: 1.4 }}>{p.blurb}</div>
+          </button>
+        ))}
+      </div>
+
+      {/* Inputs grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 12 }}>
+        <div><span style={label}>Start capital (₹)</span>
+          <input type="number" style={input} value={inp.startCapital}
+            onChange={e => setInp(s => ({ ...s, startCapital: Number(e.target.value) }))} />
+        </div>
+        <div><span style={label}>Target (₹)</span>
+          <input type="number" style={input} value={inp.targetCapital}
+            onChange={e => setInp(s => ({ ...s, targetCapital: Number(e.target.value) }))} />
+        </div>
+        <div><span style={label}>Positions</span>
+          <input type="number" style={input} value={inp.positions}
+            onChange={e => setInp(s => ({ ...s, positions: Math.max(1, Number(e.target.value)) }))} />
+        </div>
+        <div><span style={label}>Win rate (%)</span>
+          <input type="number" style={input} value={Math.round(inp.winRate * 100)}
+            onChange={e => setInp(s => ({ ...s, winRate: Math.max(0, Math.min(1, Number(e.target.value) / 100)) }))} />
+        </div>
+        <div><span style={label}>Min winner (%)</span>
+          <input type="number" style={input} value={Math.round(inp.minWinner * 100)}
+            onChange={e => setInp(s => ({ ...s, minWinner: Number(e.target.value) / 100 }))} />
+        </div>
+        <div><span style={label}>Max winner (%)</span>
+          <input type="number" style={input} value={Math.round(inp.maxWinner * 100)}
+            onChange={e => setInp(s => ({ ...s, maxWinner: Number(e.target.value) / 100 }))} />
+        </div>
+        <div><span style={label}>Max loss (%)</span>
+          <input type="number" style={input} value={Math.round(inp.maxLoss * 100)}
+            onChange={e => setInp(s => ({ ...s, maxLoss: Number(e.target.value) / 100 }))} />
+        </div>
+        <div><span style={label}>Hold (weeks)</span>
+          <input type="number" style={input} value={inp.holdWeeks}
+            onChange={e => setInp(s => ({ ...s, holdWeeks: Math.max(1, Number(e.target.value)) }))} />
+        </div>
+      </div>
+
+      {/* Math summary */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, marginBottom: 16 }}>
+        <div style={{ background: COL.panel2, border: `1px solid ${COL.line2}`, borderRadius: 6, padding: 10 }}>
+          <div style={{ fontSize: 10, color: COL.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Reward : Risk</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: COL.txt, marginTop: 2 }}>{rewardRisk.toFixed(2)} : 1</div>
+        </div>
+        <div style={{ background: COL.panel2, border: `1px solid ${COL.line2}`, borderRadius: 6, padding: 10 }}>
+          <div style={{ fontSize: 10, color: COL.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Per-trade expectancy</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: posExpectancy >= 0 ? COL.green : COL.red, marginTop: 2 }}>{fmtSignedPct(posExpectancy, 2)}</div>
+        </div>
+        <div style={{ background: COL.panel2, border: `1px solid ${COL.line2}`, borderRadius: 6, padding: 10 }}>
+          <div style={{ fontSize: 10, color: COL.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Per-batch return</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: rBatch >= 0 ? COL.green : COL.red, marginTop: 2 }}>{fmtSignedPct(rBatch, 2)}</div>
+        </div>
+        <div style={{ background: COL.panel2, border: `1px solid ${COL.line2}`, borderRadius: 6, padding: 10 }}>
+          <div style={{ fontSize: 10, color: COL.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Trades to target</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: COL.cyan, marginTop: 2 }}>{proj.batches * inp.positions}</div>
+        </div>
+      </div>
+
+      {/* BATCH LADDER TABLE */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: COL.txt, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+          Batch ladder · capital growth per 10-trade cycle
+        </div>
+        <div style={{ overflowX: 'auto', background: COL.panel2, borderRadius: 8, border: `1px solid ${COL.line2}` }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+            <thead>
+              <tr style={{ color: COL.muted, borderBottom: `1px solid ${COL.line2}` }}>
+                <th style={{ textAlign: 'left', padding: '6px 10px' }}>Batch</th>
+                <th style={{ textAlign: 'left', padding: '6px 10px' }}>Week</th>
+                <th style={{ textAlign: 'right', padding: '6px 10px' }}>Batch return</th>
+                <th style={{ textAlign: 'right', padding: '6px 10px' }}>Portfolio value</th>
+                <th style={{ textAlign: 'right', padding: '6px 10px' }}>Multiple</th>
+                <th style={{ textAlign: 'right', padding: '6px 10px' }}>% of target</th>
+              </tr>
+            </thead>
+            <tbody>
+              {proj.ladder.filter((_, i) =>
+                i < 8 || i >= proj.ladder.length - 5 || i % Math.max(1, Math.floor(proj.ladder.length / 12)) === 0
+              ).map(row => (
+                <tr key={row.batch} style={{ borderBottom: `1px solid ${COL.line}` }}>
+                  <td style={{ padding: '6px 10px', color: COL.muted }}>#{row.batch}</td>
+                  <td style={{ padding: '6px 10px', color: COL.muted }}>W{row.weeksElapsed}</td>
+                  <td style={{ padding: '6px 10px', textAlign: 'right', color: row.batchRet >= 0 ? COL.green : COL.red, fontWeight: 700 }}>{fmtSignedPct(row.batchRet, 2)}</td>
+                  <td style={{ padding: '6px 10px', textAlign: 'right', color: COL.txt, fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(row.portfolio)}</td>
+                  <td style={{ padding: '6px 10px', textAlign: 'right', color: COL.cyan, fontWeight: 700 }}>{row.multiple.toFixed(2)}×</td>
+                  <td style={{ padding: '6px 10px', textAlign: 'right', color: COL.muted }}>{((row.portfolio / inp.targetCapital) * 100).toFixed(1)}%</td>
+                </tr>
+              ))}
+              {proj.batches > proj.ladder.length && (
+                <tr style={{ background: COL.panel, fontWeight: 700 }}>
+                  <td colSpan={3} style={{ padding: '8px 10px', color: COL.green }}>Target hit ≈ Batch #{proj.batches}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', color: COL.green }}>{fmtMoney(inp.targetCapital)}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', color: COL.green }}>{(inp.targetCapital / inp.startCapital).toFixed(2)}×</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', color: COL.green }}>100%</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* SAMPLE TRADE SEQUENCE (30 trades) */}
+      <div>
+        <div style={{ fontSize: 12, fontWeight: 700, color: COL.txt, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+          Sample trade sequence · first 30 trades (illustrative Minervini-style setups)
+        </div>
+        <div style={{ overflowX: 'auto', background: COL.panel2, borderRadius: 8, border: `1px solid ${COL.line2}` }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+            <thead>
+              <tr style={{ color: COL.muted, borderBottom: `1px solid ${COL.line2}` }}>
+                <th style={{ textAlign: 'left', padding: '4px 8px' }}>#</th>
+                <th style={{ textAlign: 'left', padding: '4px 8px' }}>Ticker</th>
+                <th style={{ textAlign: 'left', padding: '4px 8px' }}>Setup</th>
+                <th style={{ textAlign: 'left', padding: '4px 8px' }}>Result</th>
+                <th style={{ textAlign: 'right', padding: '4px 8px' }}>Return</th>
+                <th style={{ textAlign: 'right', padding: '4px 8px' }}>Days</th>
+                <th style={{ textAlign: 'right', padding: '4px 8px' }}>Contribution</th>
+                <th style={{ textAlign: 'right', padding: '4px 8px' }}>Running portfolio</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sampleRows.map((r, i) => (
+                <tr key={i} style={{ borderBottom: `1px solid ${COL.line}` }}>
+                  <td style={{ padding: '4px 8px', color: COL.muted }}>T{r.i}</td>
+                  <td style={{ padding: '4px 8px', color: COL.txt, fontWeight: 600 }}>{r.ticker}</td>
+                  <td style={{ padding: '4px 8px', color: COL.muted }}>{r.setup}</td>
+                  <td style={{ padding: '4px 8px', color: r.type === 'W' ? COL.green : COL.red, fontWeight: 700 }}>{r.type === 'W' ? 'WIN' : 'STOP'}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right', color: r.ret >= 0 ? COL.green : COL.red }}>{fmtSignedPct(r.ret, 1)}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right', color: COL.muted }}>{r.days}d</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right', color: r.contrib >= 0 ? COL.green : COL.red }}>{fmtSignedPct(r.contrib, 2)}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right', color: COL.txt, fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(r.running)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ fontSize: 11, color: COL.muted, marginTop: 8, lineHeight: 1.5 }}>
+          Deterministic sample using expected mix. Real Minervini-style trading has streaks — 5+ wins in a row and 4+ stops in a row are common;
+          equity curve stair-steps with visible drawdowns. Use the Monte Carlo panel below to see how variance affects the path.
+        </div>
+      </div>
+
+      {/* Notes */}
+      <div style={{ marginTop: 14, background: COL.panel2, border: `1px solid ${COL.line2}`, borderRadius: 8, padding: 12, fontSize: 11, color: COL.txt, lineHeight: 1.6 }}>
+        <div style={{ color: COL.cyan, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>How to read this</div>
+        Reward-to-risk of <b>{rewardRisk.toFixed(2)} : 1</b> with <b>{fmtPct(inp.winRate, 0)}</b> win-rate produces per-position expectancy of <b style={{ color: posExpectancy >= 0 ? COL.green : COL.red }}>{fmtSignedPct(posExpectancy, 2)}</b>.
+        With 10 concurrent positions rolling every {inp.holdWeeks} weeks, that compounds to <b style={{ color: COL.amber }}>{fmtSignedPct(proj.cagr, 1)} CAGR</b>,
+        turning {fmtMoney(inp.startCapital)} into {fmtMoney(inp.targetCapital)} in about <b style={{ color: COL.green }}>{proj.years.toFixed(1)} years</b>.
+        That&apos;s <b>{proj.batches * inp.positions}</b> total trades. The math is only that clean if losses stay disciplined —
+        one -30% instead of -13% eats a full batch of winners. That&apos;s why Minervini&apos;s hard rule is <i>never let a loser run</i>.
+      </div>
+    </div>
+  );
+}
+
 // ── Main page ───────────────────────────────────────────────────────────────
 export default function PortfolioSimulatorPage() {
   const [inp, setInp] = useState<Inputs>(DEFAULTS);
@@ -892,6 +1217,9 @@ export default function PortfolioSimulatorPage() {
           <KpiCard title="Max drawdown" value={fmtSignedPct(medianDD, 0)} sub={`Median · worst 10th pctile ${fmtSignedPct(worstDD, 0)}`} color={COL.amber} />
           <KpiCard title="P( CAGR > 20% )" value={(p20 * 100).toFixed(1) + '%'} sub={`P(positive) ${(pPositive * 100).toFixed(1)}%`} color={COL.violet} />
         </div>
+
+        {/* zzz200: GROWTH LADDER — path from starting capital to target */}
+        <GrowthLadder />
 
         {/* Comparison table */}
         <div style={{ ...card, marginBottom: 20 }}>
@@ -1063,8 +1391,9 @@ export default function PortfolioSimulatorPage() {
               </div>
               <div style={{ color: COL.muted }}>
                 {p20 >= 0.5 ? 'Better than 50/50 to compound above 20% — a strong edge under these assumptions.'
-                  : p20 >= 0.25 ? 'Roughly 1-in-4 shot at &gt;20% CAGR. Meaningful, but requires discipline through drawdowns.'
-                  : 'Achieving &gt;20% CAGR is a low-probability outcome under these inputs. Improve win-rate or reward-to-risk before scaling.'}
+                  : p20 >= 0.35 ? 'Close to even odds on hitting >20% CAGR. A real edge, but variance is wide — plan for the P10 downside.'
+                  : p20 >= 0.20 ? 'Roughly 1-in-4 shot at >20% CAGR. Meaningful, but requires discipline through drawdowns.'
+                  : 'Achieving >20% CAGR is a low-probability outcome under these inputs. Improve win-rate or reward-to-risk before scaling.'}
               </div>
             </div>
             <div>
