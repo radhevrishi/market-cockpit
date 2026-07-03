@@ -874,11 +874,33 @@ function ladderExpectedBatch(inp: LadderInputs): number {
   return inp.winRate * avgWin + (1 - inp.winRate) * inp.maxLoss;
 }
 
+// zzz201: simulate each batch with a realistic W/L split + running counters
+// + milestone markers. Uses seeded PRNG so results are reproducible for the
+// same input set (no jitter on every re-render).
+type LadderRow = {
+  batch: number;
+  weeksElapsed: number;
+  wins: number;
+  losses: number;
+  batchRet: number;
+  portfolio: number;
+  multiple: number;
+  cumWins: number;
+  cumLosses: number;
+  cumTrades: number;      // zzz201: total trades executed so far
+  bestWin: number;        // biggest winner % this batch
+  worstLoss: number;      // biggest loser % this batch (negative)
+  gainRs: number;         // absolute rupee gain this batch
+  milestone: string | null;
+};
+
 function ladderProject(inp: LadderInputs): {
   batches: number;
   years: number;
   cagr: number;
-  ladder: { batch: number; portfolio: number; multiple: number; weeksElapsed: number; batchRet: number }[];
+  ladder: LadderRow[];
+  cumWinsTotal: number;
+  cumLossesTotal: number;
 } {
   const rBatch = ladderExpectedBatch(inp);
   const growthNeeded = inp.targetCapital / inp.startCapital;
@@ -886,13 +908,91 @@ function ladderProject(inp: LadderInputs): {
   const weeks = batches * inp.holdWeeks;
   const years = weeks / 52;
   const cagr = years > 0 ? Math.pow(growthNeeded, 1 / years) - 1 : 0;
-  const ladder: { batch: number; portfolio: number; multiple: number; weeksElapsed: number; batchRet: number }[] = [];
+
+  // Seeded PRNG — deterministic per input set.
+  const seedBase = Math.round(inp.winRate * 1000)
+    + Math.round(inp.minWinner * 10000)
+    + Math.round(inp.maxWinner * 10000)
+    + Math.round(inp.maxLoss * 10000)
+    + inp.positions * 7
+    + inp.holdWeeks * 13;
+  let seed = seedBase || 1;
+  const rand = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+
+  const avgWin = (inp.minWinner + inp.maxWinner) / 2;
+  const targetMultiples = [2, 5, 10, 20, 50, 100];
+
+  const ladder: LadderRow[] = [];
   let v = inp.startCapital;
-  for (let b = 1; b <= Math.min(batches, 60); b++) {
-    v = v * (1 + rBatch);
-    ladder.push({ batch: b, portfolio: v, multiple: v / inp.startCapital, weeksElapsed: b * inp.holdWeeks, batchRet: rBatch });
+  let cumWins = 0, cumLosses = 0;
+  const hitMilestones = new Set<number>();
+
+  const totalRowsToShow = Math.min(batches, 80);
+  for (let b = 1; b <= totalRowsToShow; b++) {
+    // Simulate this batch: N positions, each independently a winner or loser.
+    // For deterministic-but-varied outcomes, use seeded PRNG.
+    let wins = 0;
+    let bestWin = 0;
+    let worstLoss = 0;
+    let sumWinRet = 0;
+    let sumLossRet = 0;
+    for (let p = 0; p < inp.positions; p++) {
+      if (rand() < inp.winRate) {
+        wins++;
+        // Individual winner return spans [minWinner, maxWinner]
+        const wr = inp.minWinner + rand() * (inp.maxWinner - inp.minWinner);
+        sumWinRet += wr;
+        if (wr > bestWin) bestWin = wr;
+      } else {
+        // Individual loser return spans [maxLoss, maxLoss * 0.4] (some smaller cuts)
+        const lr = inp.maxLoss * (0.4 + rand() * 0.6);
+        sumLossRet += lr;
+        if (lr < worstLoss) worstLoss = lr;
+      }
+    }
+    const losses = inp.positions - wins;
+    const positionSize = 1 / inp.positions;
+    const batchRet = positionSize * (sumWinRet + sumLossRet);
+    const gainRs = v * batchRet;
+    v = v * (1 + batchRet);
+    cumWins += wins;
+    cumLosses += losses;
+    const mult = v / inp.startCapital;
+
+    // Detect milestone: first time crossing 2x, 5x, 10x etc.
+    let milestone: string | null = null;
+    for (const m of targetMultiples) {
+      if (mult >= m && !hitMilestones.has(m) && m <= growthNeeded) {
+        hitMilestones.add(m);
+        milestone = m >= growthNeeded ? '🎯 Target hit' : `⭐ ${m}× capital`;
+        break;
+      }
+    }
+    if (!milestone && mult >= growthNeeded && !hitMilestones.has(-1)) {
+      hitMilestones.add(-1);
+      milestone = '🎯 Target hit';
+    }
+
+    ladder.push({
+      batch: b,
+      weeksElapsed: b * inp.holdWeeks,
+      wins,
+      losses,
+      batchRet,
+      portfolio: v,
+      multiple: mult,
+      cumWins,
+      cumLosses,
+      cumTrades: b * inp.positions,
+      bestWin,
+      worstLoss,
+      gainRs,
+      milestone,
+    });
+
+    if (mult >= growthNeeded) break; // stop at target
   }
-  return { batches, years, cagr, ladder };
+  return { batches: ladder.length, years: (ladder.length * inp.holdWeeks) / 52, cagr: Math.pow(v / inp.startCapital, 52 / (ladder.length * inp.holdWeeks || 1)) - 1, ladder, cumWinsTotal: cumWins, cumLossesTotal: cumLosses };
 }
 
 // Realistic Minervini-style setups
@@ -1067,46 +1167,67 @@ function GrowthLadder() {
         </div>
       </div>
 
-      {/* BATCH LADDER TABLE */}
+      {/* BATCH LADDER TABLE — zzz201: variable W/L mix + milestones */}
       <div style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: COL.txt, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
-          Batch ladder · capital growth per 10-trade cycle
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: COL.txt, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            Batch ladder · realistic per-batch W/L mix
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <span style={chip}>Total wins <b style={{ color: COL.green }}>{proj.cumWinsTotal}</b></span>
+            <span style={chip}>Total stops <b style={{ color: COL.red }}>{proj.cumLossesTotal}</b></span>
+            <span style={chip}>Actual win-rate <b style={{ color: COL.txt }}>{proj.cumWinsTotal + proj.cumLossesTotal > 0 ? ((proj.cumWinsTotal / (proj.cumWinsTotal + proj.cumLossesTotal)) * 100).toFixed(1) + '%' : '—'}</b></span>
+          </div>
         </div>
         <div style={{ overflowX: 'auto', background: COL.panel2, borderRadius: 8, border: `1px solid ${COL.line2}` }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
             <thead>
               <tr style={{ color: COL.muted, borderBottom: `1px solid ${COL.line2}` }}>
                 <th style={{ textAlign: 'left', padding: '6px 10px' }}>Batch</th>
-                <th style={{ textAlign: 'left', padding: '6px 10px' }}>Week</th>
+                <th style={{ textAlign: 'right', padding: '6px 10px' }}>Trades done</th>
+                <th style={{ textAlign: 'left', padding: '6px 10px' }}>Elapsed</th>
+                <th style={{ textAlign: 'center', padding: '6px 10px' }}>W / L this batch</th>
+                <th style={{ textAlign: 'right', padding: '6px 10px' }}>Best win</th>
+                <th style={{ textAlign: 'right', padding: '6px 10px' }}>Worst stop</th>
                 <th style={{ textAlign: 'right', padding: '6px 10px' }}>Batch return</th>
-                <th style={{ textAlign: 'right', padding: '6px 10px' }}>Portfolio value</th>
-                <th style={{ textAlign: 'right', padding: '6px 10px' }}>Multiple</th>
-                <th style={{ textAlign: 'right', padding: '6px 10px' }}>% of target</th>
+                <th style={{ textAlign: 'right', padding: '6px 10px' }}>Gain (₹)</th>
+                <th style={{ textAlign: 'right', padding: '6px 10px' }}>Portfolio</th>
+                <th style={{ textAlign: 'right', padding: '6px 10px' }}>×</th>
+                <th style={{ textAlign: 'left', padding: '6px 10px' }}>Milestone</th>
               </tr>
             </thead>
             <tbody>
-              {proj.ladder.filter((_, i) =>
-                i < 8 || i >= proj.ladder.length - 5 || i % Math.max(1, Math.floor(proj.ladder.length / 12)) === 0
+              {proj.ladder.filter((row, i) =>
+                i < 10 || i >= proj.ladder.length - 6 || row.milestone !== null || i % Math.max(1, Math.floor(proj.ladder.length / 14)) === 0
               ).map(row => (
-                <tr key={row.batch} style={{ borderBottom: `1px solid ${COL.line}` }}>
+                <tr key={row.batch} style={{ borderBottom: `1px solid ${COL.line}`, background: row.milestone ? '#F59E0B10' : 'transparent' }}>
                   <td style={{ padding: '6px 10px', color: COL.muted }}>#{row.batch}</td>
-                  <td style={{ padding: '6px 10px', color: COL.muted }}>W{row.weeksElapsed}</td>
+                  <td style={{ padding: '6px 10px', textAlign: 'right', color: COL.cyan, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{row.cumTrades}</td>
+                  <td style={{ padding: '6px 10px', color: COL.muted, fontVariantNumeric: 'tabular-nums' }}>
+                    {row.weeksElapsed >= 52 ? `${(row.weeksElapsed / 52).toFixed(1)}y` : `${row.weeksElapsed}w`}
+                  </td>
+                  <td style={{ padding: '6px 10px', textAlign: 'center', color: COL.txt, fontVariantNumeric: 'tabular-nums' }}>
+                    <span style={{ color: COL.green, fontWeight: 700 }}>{row.wins}</span>
+                    <span style={{ color: COL.muted, margin: '0 4px' }}>/</span>
+                    <span style={{ color: COL.red, fontWeight: 700 }}>{row.losses}</span>
+                  </td>
+                  <td style={{ padding: '6px 10px', textAlign: 'right', color: row.bestWin > 0 ? COL.green : COL.muted }}>{row.bestWin > 0 ? fmtSignedPct(row.bestWin, 0) : '—'}</td>
+                  <td style={{ padding: '6px 10px', textAlign: 'right', color: row.worstLoss < 0 ? COL.red : COL.muted }}>{row.worstLoss < 0 ? fmtSignedPct(row.worstLoss, 0) : '—'}</td>
                   <td style={{ padding: '6px 10px', textAlign: 'right', color: row.batchRet >= 0 ? COL.green : COL.red, fontWeight: 700 }}>{fmtSignedPct(row.batchRet, 2)}</td>
+                  <td style={{ padding: '6px 10px', textAlign: 'right', color: row.gainRs >= 0 ? COL.green : COL.red, fontVariantNumeric: 'tabular-nums' }}>{row.gainRs >= 0 ? '+' : ''}{fmtMoney(Math.abs(row.gainRs))}</td>
                   <td style={{ padding: '6px 10px', textAlign: 'right', color: COL.txt, fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(row.portfolio)}</td>
                   <td style={{ padding: '6px 10px', textAlign: 'right', color: COL.cyan, fontWeight: 700 }}>{row.multiple.toFixed(2)}×</td>
-                  <td style={{ padding: '6px 10px', textAlign: 'right', color: COL.muted }}>{((row.portfolio / inp.targetCapital) * 100).toFixed(1)}%</td>
+                  <td style={{ padding: '6px 10px', color: row.milestone ? COL.amber : COL.muted, fontWeight: row.milestone ? 700 : 400 }}>
+                    {row.milestone || ''}
+                  </td>
                 </tr>
               ))}
-              {proj.batches > proj.ladder.length && (
-                <tr style={{ background: COL.panel, fontWeight: 700 }}>
-                  <td colSpan={3} style={{ padding: '8px 10px', color: COL.green }}>Target hit ≈ Batch #{proj.batches}</td>
-                  <td style={{ padding: '8px 10px', textAlign: 'right', color: COL.green }}>{fmtMoney(inp.targetCapital)}</td>
-                  <td style={{ padding: '8px 10px', textAlign: 'right', color: COL.green }}>{(inp.targetCapital / inp.startCapital).toFixed(2)}×</td>
-                  <td style={{ padding: '8px 10px', textAlign: 'right', color: COL.green }}>100%</td>
-                </tr>
-              )}
             </tbody>
           </table>
+        </div>
+        <div style={{ fontSize: 11, color: COL.muted, marginTop: 8, lineHeight: 1.5 }}>
+          Each batch simulates 10 concurrent trades independently at your win-rate — batch returns vary as they would in a live book.
+          Occasionally you'll see batches with 3 wins / 7 stops (drawdown) and 8 wins / 2 stops (breakout). Cumulative win-rate converges to your assumption as batches compound.
         </div>
       </div>
 
