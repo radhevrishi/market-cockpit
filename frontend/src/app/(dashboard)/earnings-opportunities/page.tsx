@@ -1052,13 +1052,13 @@ export default function EarningsOpportunitiesPage() {
   // staleTime, React Query never refetched even after the server backfilled
   // the real graded payload. Bumping the prefix invalidates every stale
   // snapshot in one shot. The scrub below removes orphan v8/v7 keys.
-  const LS_PREFIX = 'mc:graded:v12:';  // PATCH zzz86 — bump to evict cross-date poisoned cache  // PATCH 1042 — bump v10→v11 so liquidity (adtv/thin-float) shows without a Hard Refresh
+  const LS_PREFIX = 'mc:graded:v13:';  // zzz189 — bumped v12→v13 to invalidate stale payloads that lost enrich metadata under zzz187 fix
   if (typeof window !== 'undefined') {
     try {
       const SCRUB_GRADED = 'mc:graded-scrub:v9';
       if (!localStorage.getItem(SCRUB_GRADED)) {
         for (const k of Object.keys(localStorage)) {
-          if (k.startsWith('mc:graded:v7:') || k.startsWith('mc:graded:v8:') || k.startsWith('mc:graded:v9:') || k.startsWith('mc:graded:v10:') || k.startsWith('mc:graded:v11:')) localStorage.removeItem(k);
+          if (k.startsWith('mc:graded:v7:') || k.startsWith('mc:graded:v8:') || k.startsWith('mc:graded:v9:') || k.startsWith('mc:graded:v10:') || k.startsWith('mc:graded:v11:') || k.startsWith('mc:graded:v12:')) localStorage.removeItem(k);  // zzz189 — v12 added
         }
         localStorage.setItem(SCRUB_GRADED, '1');
       }
