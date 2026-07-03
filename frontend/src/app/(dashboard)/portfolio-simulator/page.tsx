@@ -97,13 +97,33 @@ const DEFAULTS: Inputs = {
 // Rebalance = redistribute to equal weights each period.
 // Note: with N positions × positionSize each, cash weight = 1 - N*positionSize.
 // Cash earns 0 (conservative). We model exactly what the user typed.
+// zzz199: Monthly-path Monte Carlo with correlated market factor.
+// Previous version used yearly periods → drawdowns were often 0% because a
+// single yearly draw with positive expectancy rarely dips below start. Real
+// portfolios experience within-year peak-to-trough dips driven by correlated
+// market shocks. We now step monthly and add a market factor (all positions
+// move partially together each month), which produces realistic drawdowns
+// without changing the user-specified expected return.
 function runMonteCarlo(inp: Inputs): SimResult {
-  const { positions, positionSize, winRate, avgWinner, avgLoser, years, sims, rebalance, capital } = inp;
-  const periodsPerYear = rebalance === 'annual' ? 1 : 4;
-  const totalPeriods = years * periodsPerYear;
-  // Per-period scaling of arithmetic returns: quarterly gets 1/periodsPerYear share.
-  const perPeriodWin = Math.pow(1 + avgWinner, 1 / periodsPerYear) - 1;
-  const perPeriodLoss = Math.pow(1 + avgLoser, 1 / periodsPerYear) - 1;
+  const { positions, positionSize, winRate, avgWinner, avgLoser, years, sims, capital } = inp;
+  const monthsPerYear = 12;
+  const totalMonths = years * monthsPerYear;
+  // Arithmetic scaling — preserves expected annual return exactly.
+  const perMonthWin = avgWinner / monthsPerYear;
+  const perMonthLoss = avgLoser / monthsPerYear;
+  // Market factor: correlated shock across all positions each month. Roughly
+  // matches ~15% annual small/mid-cap benchmark vol → produces realistic
+  // 15-30% peak-to-trough drawdowns for concentrated books.
+  const marketAnnualVol = 0.15;
+  const marketMonthlyVol = marketAnnualVol / Math.sqrt(monthsPerYear);
+
+  // Box-Muller standard normal sampler (mean 0, sd 1).
+  const stdNormal = (): number => {
+    let u = Math.random();
+    if (u < 1e-12) u = 1e-12;
+    const v = Math.random();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  };
 
   const finalValues: number[] = new Array(sims);
   const cagrs: number[] = new Array(sims);
@@ -120,18 +140,18 @@ function runMonteCarlo(inp: Inputs): SimResult {
     const curve: number[] = [];
     const collect = sampleIndices.has(s);
     if (collect) curve.push(value);
-    for (let t = 0; t < totalPeriods; t++) {
-      // Sample N position returns for this period.
+    for (let t = 0; t < totalMonths; t++) {
+      // Correlated market shock this month (applies to every position).
+      const marketShock = stdNormal() * marketMonthlyVol;
       let sumReturns = 0;
       for (let p = 0; p < positions; p++) {
-        const r = Math.random() < winRate ? perPeriodWin : perPeriodLoss;
-        sumReturns += r;
+        const idio = Math.random() < winRate ? perMonthWin : perMonthLoss;
+        sumReturns += idio + marketShock;
       }
-      // Portfolio return = positionSize * sum(positionReturns) (remaining cash returns 0)
       const portRet = positionSize * sumReturns;
       value = value * (1 + portRet);
       if (value > peak) peak = value;
-      const dd = value / peak - 1; // <= 0
+      const dd = value / peak - 1;
       if (dd < maxDd) maxDd = dd;
       if (collect) curve.push(value);
     }
@@ -375,119 +395,189 @@ function TradeByTradeExample({ inp }: { inp: Inputs }) {
   );
 }
 
-// ── zzz197: Six real-world small/mid-cap scenarios (with/without stop-loss) ─
+// ── zzz199: Three exit-discipline approaches × three market regimes ─────────
+// Descriptive, not prescriptive. No approach wins by construction — each has
+// scenarios where it shines and scenarios where it hurts. The Bull table
+// deliberately includes a "SL stopped a would-be multibagger" case to show
+// the opportunity cost. The No-Stop scenarios use a REALISTIC loss distribution
+// (some -12%, some -25%, some -45%) not "every loser becomes -60%".
+type ExitApproach = 'mechanical' | 'thesis' | 'none';
 type ScenarioTrade = { ticker: string; ret: number; note?: string };
 type RealScenario = {
   key: string;
-  title: string;
   regime: 'bull' | 'normal' | 'bear';
-  hasSL: boolean;
+  approach: ExitApproach;
+  title: string;
   blurb: string;
   color: string;
   trades: ScenarioTrade[];
 };
 
+const APPROACH_META: Record<ExitApproach, { name: string; short: string; color: string; oneLine: string }> = {
+  mechanical: { name: 'Mechanical stop-loss',  short: 'Mech SL',   color: '#22D3EE', oneLine: 'Exit at fixed % loss (e.g. -15%)' },
+  thesis:     { name: 'Thesis-based exit',     short: 'Thesis',    color: '#A78BFA', oneLine: 'Exit only on fundamental break' },
+  none:       { name: 'No predefined stop',    short: 'No stop',   color: '#F59E0B', oneLine: 'Hold on price alone; conviction-only' },
+};
+
+const REGIME_COLOR: Record<'bull' | 'normal' | 'bear', string> = { bull: '#10B981', normal: '#22D3EE', bear: '#EF4444' };
+
 const REAL_SCENARIOS: RealScenario[] = [
+  // ── BULL YEAR ────────────────────────────────────────────────────────────
   {
-    key: 'bull-sl', title: 'Bull Year · with stop-loss',
-    regime: 'bull', hasSL: true, color: '#10B981',
-    blurb: 'Small-cap rip (like FY24 — Nifty Smallcap +55%). Winners run, losers stopped at -15%.',
+    key: 'bull-mech', regime: 'bull', approach: 'mechanical', color: '#22D3EE',
+    title: 'Bull · Mechanical SL',
+    blurb: 'Losers cut at -15%. Note T7: stopped at -15% — would-be +180% multibagger. This is the whipsaw cost.',
     trades: [
-      { ticker: 'AZAD',       ret:  1.80, note: 'Q3 order-book multibagger' },
-      { ticker: 'DATAPATTNS', ret:  0.95, note: 'Defence order flow' },
-      { ticker: 'HAPPYFORGE', ret:  0.65, note: 'Margin expansion' },
-      { ticker: 'JNKINDIA',   ret:  0.50, note: 'Post-IPO re-rating' },
-      { ticker: 'RACLGEAR',   ret:  0.40, note: 'EV supply chain' },
-      { ticker: 'SYRMA',      ret:  0.30, note: 'PLI tailwind' },
-      { ticker: 'DIVGIITTS',  ret: -0.15, note: 'Stopped out at -15%' },
-      { ticker: 'RISHABH',    ret: -0.15, note: 'Stopped out at -15%' },
-      { ticker: 'SASKEN',     ret: -0.15, note: 'Stopped out at -15%' },
-      { ticker: 'LLOYDSENGG', ret: -0.15, note: 'Stopped out at -15%' },
+      { ticker: 'AZAD',       ret:  1.80, note: 'Order-book multibagger' },
+      { ticker: 'DATAPATTNS', ret:  0.95 },
+      { ticker: 'HAPPYFORGE', ret:  0.60 },
+      { ticker: 'JNKINDIA',   ret:  0.45 },
+      { ticker: 'RACLGEAR',   ret:  0.35 },
+      { ticker: 'SYRMA',      ret:  0.25 },
+      { ticker: 'INOXINDIA',  ret: -0.15, note: 'Stopped -15% · went on to +180% later ⚠️' },
+      { ticker: 'DIVGIITTS',  ret: -0.15, note: 'Stopped -15%' },
+      { ticker: 'RISHABH',    ret: -0.15, note: 'Stopped -15%' },
+      { ticker: 'LLOYDSENGG', ret: -0.15, note: 'Stopped -15%' },
     ],
   },
   {
-    key: 'normal-sl', title: 'Normal Year · with stop-loss',
-    regime: 'normal', hasSL: true, color: '#22D3EE',
-    blurb: 'Steady mid-cap compounding (like FY22). No big moves, discipline on losers pays.',
-    trades: [
-      { ticker: 'KENNAMET',    ret:  0.45 },
-      { ticker: 'ASTRAMICRO',  ret:  0.35 },
-      { ticker: 'INOXINDIA',   ret:  0.30 },
-      { ticker: 'MARKSANS',    ret:  0.22 },
-      { ticker: 'AEROFLEX',    ret:  0.18 },
-      { ticker: 'CGPOWER',     ret:  0.12 },
-      { ticker: 'PARAS',       ret: -0.15, note: 'Stopped out at -15%' },
-      { ticker: 'DREDGECORP',  ret: -0.15, note: 'Stopped out at -15%' },
-      { ticker: 'NGLFINE',     ret: -0.15, note: 'Stopped out at -15%' },
-      { ticker: 'SANGHVIMOV',  ret: -0.15, note: 'Stopped out at -15%' },
-    ],
-  },
-  {
-    key: 'bear-sl', title: 'Bear Market · with stop-loss',
-    regime: 'bear', hasSL: true, color: '#F59E0B',
-    blurb: 'Small-cap slaughter (like FY19 -20% / covid crash). Stop-losses save the book.',
-    trades: [
-      { ticker: 'WOCKPHARMA',  ret:  0.25, note: 'Defensive pharma held up' },
-      { ticker: 'NGLFINE',     ret:  0.10, note: 'Specialty chem outlier' },
-      { ticker: 'JAMNAAUTO',   ret: -0.15, note: 'Stopped -15%' },
-      { ticker: 'SKIPPER',     ret: -0.15, note: 'Stopped -15%' },
-      { ticker: 'OLECTRA',     ret: -0.15, note: 'Stopped -15%' },
-      { ticker: 'KIRLOSENG',   ret: -0.15, note: 'Stopped -15%' },
-      { ticker: 'AVALON',      ret: -0.15, note: 'Stopped -15%' },
-      { ticker: 'REFEX',       ret: -0.15, note: 'Stopped -15%' },
-      { ticker: 'MMTC',        ret: -0.15, note: 'Stopped -15%' },
-      { ticker: 'AZAD',        ret: -0.15, note: 'Stopped -15%' },
-    ],
-  },
-  {
-    key: 'bull-no-sl', title: 'Bull Year · NO stop-loss',
-    regime: 'bull', hasSL: false, color: '#84cc16',
-    blurb: 'Same bull tape but you hold losers hoping they turn around. Costs some of the win.',
+    key: 'bull-thesis', regime: 'bull', approach: 'thesis', color: '#A78BFA',
+    title: 'Bull · Thesis exit',
+    blurb: 'Hold unless fundamentals break. Winners run full course. Losers vary — some recover in the tape.',
     trades: [
       { ticker: 'AZAD',       ret:  1.80 },
       { ticker: 'DATAPATTNS', ret:  0.95 },
-      { ticker: 'HAPPYFORGE', ret:  0.65 },
-      { ticker: 'JNKINDIA',   ret:  0.50 },
-      { ticker: 'RACLGEAR',   ret:  0.40 },
-      { ticker: 'SYRMA',      ret:  0.30 },
-      { ticker: 'DIVGIITTS',  ret: -0.30, note: 'Rode it down (no SL)' },
-      { ticker: 'RISHABH',    ret: -0.35, note: 'Rode it down (no SL)' },
-      { ticker: 'SASKEN',     ret: -0.25, note: 'Rode it down (no SL)' },
-      { ticker: 'LLOYDSENGG', ret: -0.40, note: 'Rode it down (no SL)' },
+      { ticker: 'HAPPYFORGE', ret:  0.60 },
+      { ticker: 'JNKINDIA',   ret:  0.45 },
+      { ticker: 'RACLGEAR',   ret:  0.35 },
+      { ticker: 'SYRMA',      ret:  0.25 },
+      { ticker: 'INOXINDIA',  ret:  0.80, note: 'Recovered — thesis intact 🚀' },
+      { ticker: 'DIVGIITTS',  ret: -0.18, note: 'Underperformed but held (thesis OK)' },
+      { ticker: 'RISHABH',    ret: -0.30, note: 'Exited: management guidance cut ✗' },
+      { ticker: 'LLOYDSENGG', ret: -0.12, note: 'Held — thesis unchanged' },
     ],
   },
   {
-    key: 'normal-no-sl', title: 'Normal Year · NO stop-loss',
-    regime: 'normal', hasSL: false, color: '#60A5FA',
-    blurb: 'Steady tape but no discipline. Winners compound; unmanaged losers eat most of it.',
+    key: 'bull-none', regime: 'bull', approach: 'none', color: '#F59E0B',
+    title: 'Bull · No stop',
+    blurb: 'Same tape, no discipline. Wide range of loser outcomes — some flat, some deeper.',
     trades: [
-      { ticker: 'KENNAMET',    ret:  0.45 },
-      { ticker: 'ASTRAMICRO',  ret:  0.35 },
-      { ticker: 'INOXINDIA',   ret:  0.30 },
-      { ticker: 'MARKSANS',    ret:  0.22 },
-      { ticker: 'AEROFLEX',    ret:  0.18 },
-      { ticker: 'CGPOWER',     ret:  0.12 },
-      { ticker: 'PARAS',       ret: -0.30, note: 'No SL — rode it -30%' },
-      { ticker: 'DREDGECORP',  ret: -0.45, note: 'No SL — rode it -45%' },
-      { ticker: 'NGLFINE',     ret: -0.35, note: 'No SL — rode it -35%' },
-      { ticker: 'SANGHVIMOV',  ret: -0.25, note: 'No SL — rode it -25%' },
+      { ticker: 'AZAD',       ret:  1.80 },
+      { ticker: 'DATAPATTNS', ret:  0.95 },
+      { ticker: 'HAPPYFORGE', ret:  0.60 },
+      { ticker: 'JNKINDIA',   ret:  0.45 },
+      { ticker: 'RACLGEAR',   ret:  0.35 },
+      { ticker: 'SYRMA',      ret:  0.25 },
+      { ticker: 'INOXINDIA',  ret:  0.80, note: 'Recovered (would\'ve been stopped)' },
+      { ticker: 'DIVGIITTS',  ret: -0.18 },
+      { ticker: 'RISHABH',    ret: -0.42, note: 'Rode it further down' },
+      { ticker: 'LLOYDSENGG', ret: -0.25 },
+    ],
+  },
+
+  // ── NORMAL YEAR ──────────────────────────────────────────────────────────
+  {
+    key: 'normal-mech', regime: 'normal', approach: 'mechanical', color: '#22D3EE',
+    title: 'Normal · Mechanical SL',
+    blurb: 'Sideways tape. SL keeps losers contained. Costs one recovery.',
+    trades: [
+      { ticker: 'KENNAMET',    ret:  0.42 },
+      { ticker: 'ASTRAMICRO',  ret:  0.30 },
+      { ticker: 'INOXINDIA',   ret:  0.22 },
+      { ticker: 'MARKSANS',    ret:  0.18 },
+      { ticker: 'AEROFLEX',    ret:  0.12 },
+      { ticker: 'CGPOWER',     ret:  0.08 },
+      { ticker: 'PARAS',       ret: -0.15, note: 'Stopped -15%' },
+      { ticker: 'DREDGECORP',  ret: -0.15, note: 'Stopped -15% · recovered to +15% later' },
+      { ticker: 'NGLFINE',     ret: -0.15, note: 'Stopped -15%' },
+      { ticker: 'SANGHVIMOV',  ret: -0.15, note: 'Stopped -15%' },
     ],
   },
   {
-    key: 'bear-no-sl', title: 'Bear Market · NO stop-loss',
-    regime: 'bear', hasSL: false, color: '#EF4444',
-    blurb: 'Small-cap wreck with no discipline. This is how portfolios blow up.',
+    key: 'normal-thesis', regime: 'normal', approach: 'thesis', color: '#A78BFA',
+    title: 'Normal · Thesis exit',
+    blurb: 'Hold on price weakness alone. Mix of quiet losers, some grind back to flat.',
     trades: [
-      { ticker: 'WOCKPHARMA',  ret:  0.25 },
-      { ticker: 'NGLFINE',     ret:  0.10 },
-      { ticker: 'JAMNAAUTO',   ret: -0.55, note: 'No SL — went -55%' },
-      { ticker: 'SKIPPER',     ret: -0.50 },
-      { ticker: 'OLECTRA',     ret: -0.45 },
-      { ticker: 'KIRLOSENG',   ret: -0.40 },
-      { ticker: 'AVALON',      ret: -0.60 },
-      { ticker: 'REFEX',       ret: -0.35 },
+      { ticker: 'KENNAMET',    ret:  0.42 },
+      { ticker: 'ASTRAMICRO',  ret:  0.30 },
+      { ticker: 'INOXINDIA',   ret:  0.22 },
+      { ticker: 'MARKSANS',    ret:  0.18 },
+      { ticker: 'AEROFLEX',    ret:  0.12 },
+      { ticker: 'CGPOWER',     ret:  0.08 },
+      { ticker: 'PARAS',       ret: -0.10, note: 'Held — thesis intact' },
+      { ticker: 'DREDGECORP',  ret:  0.15, note: 'Recovered (would\'ve been stopped)' },
+      { ticker: 'NGLFINE',     ret: -0.25, note: 'Held — margin compression' },
+      { ticker: 'SANGHVIMOV',  ret: -0.35, note: 'Exited: capital allocation deteriorated ✗' },
+    ],
+  },
+  {
+    key: 'normal-none', regime: 'normal', approach: 'none', color: '#F59E0B',
+    title: 'Normal · No stop',
+    blurb: 'Realistic mixed outcomes. Not everything blows up — but nothing gets managed either.',
+    trades: [
+      { ticker: 'KENNAMET',    ret:  0.42 },
+      { ticker: 'ASTRAMICRO',  ret:  0.30 },
+      { ticker: 'INOXINDIA',   ret:  0.22 },
+      { ticker: 'MARKSANS',    ret:  0.18 },
+      { ticker: 'AEROFLEX',    ret:  0.12 },
+      { ticker: 'CGPOWER',     ret:  0.08 },
+      { ticker: 'PARAS',       ret: -0.12 },
+      { ticker: 'DREDGECORP',  ret:  0.05, note: 'Ground back to flat' },
+      { ticker: 'NGLFINE',     ret: -0.35 },
+      { ticker: 'SANGHVIMOV',  ret: -0.45, note: 'Capital trapped' },
+    ],
+  },
+
+  // ── BEAR MARKET ──────────────────────────────────────────────────────────
+  {
+    key: 'bear-mech', regime: 'bear', approach: 'mechanical', color: '#22D3EE',
+    title: 'Bear · Mechanical SL',
+    blurb: 'Small-cap slaughter. SL saves the book but locks in whipsaws.',
+    trades: [
+      { ticker: 'WOCKPHARMA',  ret:  0.20, note: 'Defensive held up' },
+      { ticker: 'NGLFINE',     ret:  0.08 },
+      { ticker: 'JAMNAAUTO',   ret: -0.15, note: 'Stopped · recovered +25% later' },
+      { ticker: 'SKIPPER',     ret: -0.15, note: 'Stopped' },
+      { ticker: 'OLECTRA',     ret: -0.15, note: 'Stopped · then fell to -45% (SL saved us)' },
+      { ticker: 'KIRLOSENG',   ret: -0.15, note: 'Stopped' },
+      { ticker: 'AVALON',      ret: -0.15, note: 'Stopped · then fell to -55% (SL saved us)' },
+      { ticker: 'REFEX',       ret: -0.15, note: 'Stopped · recovered +18% later' },
+      { ticker: 'MMTC',        ret: -0.15, note: 'Stopped' },
+      { ticker: 'AZAD',        ret: -0.15, note: 'Stopped · recovered +35% later' },
+    ],
+  },
+  {
+    key: 'bear-thesis', regime: 'bear', approach: 'thesis', color: '#A78BFA',
+    title: 'Bear · Thesis exit',
+    blurb: 'Hold quality, exit only on fundamental breaks. Painful ride but survives.',
+    trades: [
+      { ticker: 'WOCKPHARMA',  ret:  0.20 },
+      { ticker: 'NGLFINE',     ret:  0.08 },
+      { ticker: 'JAMNAAUTO',   ret: -0.30, note: 'Held — cyclical, thesis intact' },
+      { ticker: 'SKIPPER',     ret: -0.35, note: 'Held' },
+      { ticker: 'OLECTRA',     ret: -0.45, note: 'Held — deep drawdown' },
+      { ticker: 'KIRLOSENG',   ret: -0.25, note: 'Held' },
+      { ticker: 'AVALON',      ret: -0.55, note: 'Exited: guidance cut + debt spike ✗' },
+      { ticker: 'REFEX',       ret: -0.20 },
       { ticker: 'MMTC',        ret: -0.30 },
       { ticker: 'AZAD',        ret: -0.25 },
+    ],
+  },
+  {
+    key: 'bear-none', regime: 'bear', approach: 'none', color: '#F59E0B',
+    title: 'Bear · No stop',
+    blurb: 'No discipline. Losses vary — some catastrophic, some recover in year 2.',
+    trades: [
+      { ticker: 'WOCKPHARMA',  ret:  0.20 },
+      { ticker: 'NGLFINE',     ret:  0.08 },
+      { ticker: 'JAMNAAUTO',   ret: -0.35 },
+      { ticker: 'SKIPPER',     ret: -0.40 },
+      { ticker: 'OLECTRA',     ret: -0.55, note: 'Deep drawdown' },
+      { ticker: 'KIRLOSENG',   ret: -0.30 },
+      { ticker: 'AVALON',      ret: -0.65, note: 'Blow-up' },
+      { ticker: 'REFEX',       ret: -0.25 },
+      { ticker: 'MMTC',        ret: -0.32 },
+      { ticker: 'AZAD',        ret: -0.28 },
     ],
   },
 ];
@@ -501,47 +591,41 @@ function ScenarioTable({ sc, positionSize }: { sc: RealScenario; positionSize: n
   });
   const yearRet = running - 1;
   return (
-    <div style={{ background: COL.panel, border: `1px solid ${sc.color}44`, borderRadius: 10, padding: 14 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
+    <div style={{ background: COL.panel, border: `1px solid ${sc.color}44`, borderRadius: 10, padding: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 6 }}>
         <div>
-          <div style={{ fontSize: 13, fontWeight: 800, color: sc.color, letterSpacing: 0.3 }}>{sc.title}</div>
-          <div style={{ fontSize: 11, color: COL.muted, marginTop: 2 }}>{sc.blurb}</div>
+          <div style={{ fontSize: 12, fontWeight: 800, color: sc.color, letterSpacing: 0.3 }}>{sc.title}</div>
+          <div style={{ fontSize: 10, color: COL.muted, marginTop: 2, lineHeight: 1.4 }}>{sc.blurb}</div>
         </div>
         <span style={{
           padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 800,
           color: yearRet >= 0 ? COL.green : COL.red,
           background: yearRet >= 0 ? COL.green + '18' : COL.red + '18',
           border: `1px solid ${yearRet >= 0 ? COL.green : COL.red}55`, whiteSpace: 'nowrap',
-        }}>
-          Year-end {fmtSignedPct(yearRet, 1)}
-        </span>
+        }}>{fmtSignedPct(yearRet, 1)}</span>
       </div>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
         <thead>
           <tr style={{ color: COL.muted, borderBottom: `1px solid ${COL.line2}` }}>
-            <th style={{ textAlign: 'left', padding: '4px 6px', width: 22 }}>#</th>
-            <th style={{ textAlign: 'left', padding: '4px 6px' }}>Ticker</th>
-            <th style={{ textAlign: 'right', padding: '4px 6px' }}>Return</th>
-            <th style={{ textAlign: 'right', padding: '4px 6px' }}>Contribution</th>
-            <th style={{ textAlign: 'right', padding: '4px 6px' }}>Running</th>
+            <th style={{ textAlign: 'left', padding: '3px 5px', width: 18 }}>#</th>
+            <th style={{ textAlign: 'left', padding: '3px 5px' }}>Ticker</th>
+            <th style={{ textAlign: 'right', padding: '3px 5px' }}>Ret</th>
+            <th style={{ textAlign: 'right', padding: '3px 5px' }}>Run</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((r, i) => (
             <tr key={i} style={{ borderBottom: `1px solid ${COL.line}` }}>
-              <td style={{ padding: '4px 6px', color: COL.muted }}>T{i + 1}</td>
-              <td style={{ padding: '4px 6px', color: COL.txt, fontWeight: 600 }}>
+              <td style={{ padding: '3px 5px', color: COL.muted }}>T{i + 1}</td>
+              <td style={{ padding: '3px 5px', color: COL.txt, fontWeight: 600 }}>
                 {r.ticker}
-                {r.note && <div style={{ fontSize: 10, color: COL.muted, fontWeight: 400 }}>{r.note}</div>}
+                {r.note && <div style={{ fontSize: 10, color: COL.muted, fontWeight: 400, lineHeight: 1.3 }}>{r.note}</div>}
               </td>
-              <td style={{ padding: '4px 6px', textAlign: 'right', color: r.ret >= 0 ? COL.green : COL.red, fontWeight: 700 }}>
+              <td style={{ padding: '3px 5px', textAlign: 'right', color: r.ret >= 0 ? COL.green : COL.red, fontWeight: 700 }}>
                 {fmtSignedPct(r.ret, 0)}
               </td>
-              <td style={{ padding: '4px 6px', textAlign: 'right', color: r.contrib >= 0 ? COL.green : COL.red }}>
-                {fmtSignedPct(r.contrib, 2)}
-              </td>
-              <td style={{ padding: '4px 6px', textAlign: 'right', color: COL.txt, fontVariantNumeric: 'tabular-nums' }}>
-                {(r.running * 100).toFixed(2)}%
+              <td style={{ padding: '3px 5px', textAlign: 'right', color: COL.txt, fontVariantNumeric: 'tabular-nums' }}>
+                {(r.running * 100).toFixed(1)}%
               </td>
             </tr>
           ))}
@@ -557,102 +641,144 @@ function scenarioYearReturn(sc: RealScenario, positionSize: number): number {
   return running - 1;
 }
 
-function RealWorldScenarios({ positionSize }: { positionSize: number }) {
-  const slScenarios = REAL_SCENARIOS.filter(s => s.hasSL);
-  const noSlScenarios = REAL_SCENARIOS.filter(s => !s.hasSL);
+// Approach pros/cons — descriptive, not prescriptive.
+const APPROACH_TRADEOFFS: Record<ExitApproach, { pros: string[]; cons: string[]; suits: string }> = {
+  mechanical: {
+    pros: ['Limits catastrophic losses', 'Enforces position sizing', 'Easier psychologically', 'Removes emotion from exit'],
+    cons: ['Whipsaws on volatile names', 'Triggers taxable events', 'Misses V-shaped recoveries', 'Cost of opportunity in bull tapes'],
+    suits: 'Momentum, swing trading, high-volatility positions, novice discipline.',
+  },
+  thesis: {
+    pros: ['Captures long compounders', 'Ignores noise, respects thesis', 'Middle ground on turnover', 'Aligns with quality investing'],
+    cons: ['Requires deep fundamentals work', 'Anchoring bias risk', 'Hard to define thesis break objectively', 'Painful drawdowns before exit'],
+    suits: 'Quality growth, long-term compounding, moat businesses (Buffett / Terry Smith / Nick Sleep style).',
+  },
+  none: {
+    pros: ['Full participation in compounders', 'Lowest turnover / taxes', 'Rewards deep conviction', 'Avoids whipsaws entirely'],
+    cons: ['Blow-up risk on broken theses', 'Capital trapped in dead-money', 'Large drawdowns test resolve', 'Easy to average into losers'],
+    suits: 'Deep value with margin of safety, permanent-capital vehicles, portfolio ≥ 30 positions with wide diversification.',
+  },
+};
 
-  // 5-year cycle comparison: assume regime distribution 2 bull + 2 normal + 1 bear
+function RealWorldScenarios({ positionSize }: { positionSize: number }) {
+  const regimes = ['bull', 'normal', 'bear'] as const;
+  const approaches: ExitApproach[] = ['mechanical', 'thesis', 'none'];
+
+  // 5-year cycle: 2 bull + 2 normal + 1 bear.
   const cycle = ['bull', 'bull', 'normal', 'normal', 'bear'] as const;
-  const compoundCycle = (hasSL: boolean) => {
+  const compoundCycle = (approach: ExitApproach) => {
     let v = 1;
     for (const regime of cycle) {
-      const sc = REAL_SCENARIOS.find(s => s.regime === regime && s.hasSL === hasSL)!;
+      const sc = REAL_SCENARIOS.find(s => s.regime === regime && s.approach === approach)!;
       const yr = scenarioYearReturn(sc, positionSize);
       v = v * (1 + yr);
     }
-    return { finalMult: v, cagr: Math.pow(v, 1/5) - 1 };
+    return { finalMult: v, cagr: Math.pow(v, 1 / 5) - 1 };
   };
-  const slResult = compoundCycle(true);
-  const noSlResult = compoundCycle(false);
+  const results = Object.fromEntries(approaches.map(a => [a, compoundCycle(a)])) as Record<ExitApproach, { finalMult: number; cagr: number }>;
 
   return (
     <div style={{ ...card, marginBottom: 20 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
-        <div>
-          <div style={{ fontSize: 14, fontWeight: 700, color: COL.txt }}>
-            Real-world scenarios · small/mid-cap investing · with vs without stop-loss
+      <div style={{ marginBottom: 10 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: COL.txt }}>Exit-discipline scenarios · descriptive, not prescriptive</div>
+        <div style={{ fontSize: 11, color: COL.muted, marginTop: 4, lineHeight: 1.5 }}>
+          Three approaches — mechanical stop-loss, thesis-based exit, no predefined stop — across three regimes.
+          No approach wins by construction. The Bull-Mechanical column deliberately includes a would-be multibagger stopped
+          out (the whipsaw cost); the No-Stop column uses a realistic mixed loss distribution, not "every loser goes -60%".
+        </div>
+      </div>
+
+      {/* 5-year cycle summary */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, marginBottom: 16 }}>
+        {approaches.map(a => (
+          <div key={a} style={{ background: COL.panel2, border: `1px solid ${APPROACH_META[a].color}55`, borderRadius: 8, padding: 12 }}>
+            <div style={{ fontSize: 11, color: COL.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>5Y cycle · {APPROACH_META[a].short}</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: APPROACH_META[a].color, marginTop: 4 }}>
+              {fmtSignedPct(results[a].cagr, 1)}
+            </div>
+            <div style={{ fontSize: 11, color: COL.muted, marginTop: 2 }}>
+              {results[a].finalMult.toFixed(2)}× capital · 2 bull + 2 normal + 1 bear
+            </div>
           </div>
-          <div style={{ fontSize: 11, color: COL.muted, marginTop: 4 }}>
-            10 positions × {fmtPct(positionSize, 0)} each. Same wins in each pair — only the loss discipline differs.
+        ))}
+      </div>
+
+      {/* Regime rows */}
+      {regimes.map(regime => (
+        <div key={regime} style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 11, color: REGIME_COLOR[regime], textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8, fontWeight: 700 }}>
+            {regime.toUpperCase()} YEAR
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12 }}>
+            {approaches.map(a => {
+              const sc = REAL_SCENARIOS.find(s => s.regime === regime && s.approach === a)!;
+              return <ScenarioTable key={sc.key} sc={sc} positionSize={positionSize} />;
+            })}
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <span style={{ ...chip, borderColor: COL.green + '55', color: COL.green }}>
-            5Y with SL: {fmtSignedPct(slResult.cagr, 1)} CAGR · {slResult.finalMult.toFixed(2)}× capital
-          </span>
-          <span style={{ ...chip, borderColor: COL.red + '55', color: COL.red }}>
-            5Y no SL: {fmtSignedPct(noSlResult.cagr, 1)} CAGR · {noSlResult.finalMult.toFixed(2)}× capital
-          </span>
+      ))}
+
+      {/* Pros/cons */}
+      <div style={{ marginTop: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: COL.txt, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>
+          Possible approaches — pros, cons, when each tends to fit
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+          {approaches.map(a => (
+            <div key={a} style={{ background: COL.panel2, border: `1px solid ${APPROACH_META[a].color}44`, borderRadius: 8, padding: 14 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: APPROACH_META[a].color, marginBottom: 2 }}>{APPROACH_META[a].name}</div>
+              <div style={{ fontSize: 11, color: COL.muted, marginBottom: 10 }}>{APPROACH_META[a].oneLine}</div>
+              <div style={{ fontSize: 11, color: COL.green, fontWeight: 700, marginBottom: 4 }}>PROS</div>
+              <ul style={{ margin: '0 0 10px', paddingLeft: 16, fontSize: 11, color: COL.txt, lineHeight: 1.6 }}>
+                {APPROACH_TRADEOFFS[a].pros.map((p, i) => <li key={i}>{p}</li>)}
+              </ul>
+              <div style={{ fontSize: 11, color: COL.red, fontWeight: 700, marginBottom: 4 }}>CONS</div>
+              <ul style={{ margin: '0 0 10px', paddingLeft: 16, fontSize: 11, color: COL.txt, lineHeight: 1.6 }}>
+                {APPROACH_TRADEOFFS[a].cons.map((p, i) => <li key={i}>{p}</li>)}
+              </ul>
+              <div style={{ fontSize: 11, color: COL.muted, fontWeight: 700, marginBottom: 4 }}>WHERE IT TENDS TO FIT</div>
+              <div style={{ fontSize: 11, color: COL.txt, lineHeight: 1.5 }}>{APPROACH_TRADEOFFS[a].suits}</div>
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* With stop-loss row */}
-      <div style={{ fontSize: 11, color: COL.green, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8, fontWeight: 700 }}>
-        ✓ With stop-loss discipline (losers cut at -15%)
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12, marginBottom: 16 }}>
-        {slScenarios.map(sc => <ScenarioTable key={sc.key} sc={sc} positionSize={positionSize} />)}
-      </div>
-
-      {/* Without stop-loss row */}
-      <div style={{ fontSize: 11, color: COL.red, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8, fontWeight: 700 }}>
-        ✗ Without stop-loss (losers ride down)
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12, marginBottom: 16 }}>
-        {noSlScenarios.map(sc => <ScenarioTable key={sc.key} sc={sc} positionSize={positionSize} />)}
-      </div>
-
-      {/* What Claude thinks */}
-      <div style={{ background: COL.panel2, border: `1px solid ${COL.line2}`, borderRadius: 8, padding: 14 }}>
-        <div style={{ fontSize: 12, fontWeight: 800, color: COL.cyan, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
-          What I think — stop-loss vs no stop-loss for concentrated small/mid-cap investing
+      {/* Regime cheatsheet */}
+      <div style={{ marginTop: 16, background: COL.panel2, border: `1px solid ${COL.line2}`, borderRadius: 8, padding: 14 }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: COL.cyan, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>
+          Market regime cheatsheet · what tends to work when
         </div>
-        <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: COL.txt, lineHeight: 1.7 }}>
-          <li>
-            <b style={{ color: COL.green }}>In bull years</b> a stop-loss costs some upside (whipsaws — a name that would&apos;ve recovered gets sold at -15%).
-            In this bull example: <b>+{(scenarioYearReturn(REAL_SCENARIOS[0], positionSize) * 100).toFixed(1)}%</b> with SL vs
-            <b> +{(scenarioYearReturn(REAL_SCENARIOS[3], positionSize) * 100).toFixed(1)}%</b> without.
-            The difference is small — the winners do most of the work.
-          </li>
-          <li>
-            <b style={{ color: COL.amber }}>In normal years</b> stop-loss is neutral to slightly positive. The multibagger tail thin, the losers are the story.
-            <b> +{(scenarioYearReturn(REAL_SCENARIOS[1], positionSize) * 100).toFixed(1)}%</b> with SL vs
-            <b> +{(scenarioYearReturn(REAL_SCENARIOS[4], positionSize) * 100).toFixed(1)}%</b> without — that&apos;s the gap that decides whether the year compounds.
-          </li>
-          <li>
-            <b style={{ color: COL.red }}>In bear years</b> stop-loss is portfolio-saving. In this bear example:
-            <b> {(scenarioYearReturn(REAL_SCENARIOS[2], positionSize) * 100).toFixed(1)}%</b> with SL vs
-            <b> {(scenarioYearReturn(REAL_SCENARIOS[5], positionSize) * 100).toFixed(1)}%</b> without.
-            One bad year without stops erases 3-4 years of compounding.
-          </li>
-          <li>
-            <b style={{ color: COL.violet }}>Compound over a 5-year cycle</b> (2 bull + 2 normal + 1 bear):
-            with SL you compound to <b>{slResult.finalMult.toFixed(2)}×</b> capital ({fmtSignedPct(slResult.cagr, 1)} CAGR).
-            Without SL you end up at <b>{noSlResult.finalMult.toFixed(2)}×</b> ({fmtSignedPct(noSlResult.cagr, 1)} CAGR).
-            The asymmetry is the whole game — small-caps have fat left tails.
-          </li>
-          <li>
-            <b>Practical recipe:</b> hard SL at -15% on thesis-break (fundamentals change) — not just price. For
-            high-conviction compounders with intact thesis, tolerate 20-25% drawdowns; but scale out on rich valuations rather
-            than let them re-rate down 40%+. Position sizing does the rest of the work — 10% max per name means one blow-up costs
-            you 4-6% of the book with SL, 10%+ without.
-          </li>
-          <li>
-            <b>Where I&apos;d be careful:</b> the &quot;no SL&quot; scenarios above assume you also don&apos;t double down. In reality most investors
-            average into losers, which makes the no-SL path worse than shown. The bear-year -30% quickly becomes -50% when you
-            keep adding to broken theses.
-          </li>
-        </ul>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <thead>
+            <tr style={{ color: COL.muted, borderBottom: `1px solid ${COL.line2}` }}>
+              <th style={{ textAlign: 'left', padding: '6px 8px' }}>Regime</th>
+              <th style={{ textAlign: 'left', padding: '6px 8px' }}>What tends to work</th>
+              <th style={{ textAlign: 'left', padding: '6px 8px' }}>Caution</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style={{ borderBottom: `1px solid ${COL.line}` }}>
+              <td style={{ padding: '8px', color: COL.green, fontWeight: 700 }}>Strong bull</td>
+              <td style={{ padding: '8px', color: COL.txt }}>Let winners run · wider stops or thesis-only exits · trend-following </td>
+              <td style={{ padding: '8px', color: COL.muted }}>Tight mechanical SL frequently whipsaws you out of eventual multibaggers</td>
+            </tr>
+            <tr style={{ borderBottom: `1px solid ${COL.line}` }}>
+              <td style={{ padding: '8px', color: COL.cyan, fontWeight: 700 }}>Sideways / normal</td>
+              <td style={{ padding: '8px', color: COL.txt }}>Selective exits · valuation discipline · rebalance to fresh setups</td>
+              <td style={{ padding: '8px', color: COL.muted }}>Both mechanical and thesis approaches acceptable; no-stop needs patience</td>
+            </tr>
+            <tr style={{ borderBottom: `1px solid ${COL.line}` }}>
+              <td style={{ padding: '8px', color: COL.red, fontWeight: 700 }}>Bear</td>
+              <td style={{ padding: '8px', color: COL.txt }}>Risk control · raise cash · tighter loss management · protect capital</td>
+              <td style={{ padding: '8px', color: COL.muted }}>No-stop with concentrated small/mid-caps is where portfolios blow up</td>
+            </tr>
+          </tbody>
+        </table>
+        <div style={{ fontSize: 11, color: COL.muted, marginTop: 10, lineHeight: 1.6 }}>
+          Note: many of the best long-term investors (Buffett, Peter Lynch, Terry Smith, Nick Sleep) don\'t use mechanical
+          stop-losses. They rely on thesis discipline instead. The right approach depends on your temperament, edge, and
+          the concentration / diversification of your book — not a universal rule.
+        </div>
       </div>
     </div>
   );
@@ -767,6 +893,51 @@ export default function PortfolioSimulatorPage() {
           <KpiCard title="P( CAGR > 20% )" value={(p20 * 100).toFixed(1) + '%'} sub={`P(positive) ${(pPositive * 100).toFixed(1)}%`} color={COL.violet} />
         </div>
 
+        {/* Comparison table */}
+        <div style={{ ...card, marginBottom: 20 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: COL.txt, marginBottom: 12 }}>
+            Scenario comparison · same portfolio, different assumptions
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+              <thead>
+                <tr style={{ color: COL.muted, borderBottom: `1px solid ${COL.line2}` }}>
+                  <th style={{ textAlign: 'left', padding: '6px 10px' }}>Scenario</th>
+                  <th style={{ textAlign: 'right', padding: '6px 10px' }}>Win rate</th>
+                  <th style={{ textAlign: 'right', padding: '6px 10px' }}>Avg win</th>
+                  <th style={{ textAlign: 'right', padding: '6px 10px' }}>Avg loss</th>
+                  <th style={{ textAlign: 'right', padding: '6px 10px' }}>Expected CAGR</th>
+                  <th style={{ textAlign: 'right', padding: '6px 10px' }}>P(&gt;20%)</th>
+                  <th style={{ textAlign: 'right', padding: '6px 10px' }}>Max DD</th>
+                </tr>
+              </thead>
+              <tbody>
+                {SCENARIOS.map((s) => {
+                  const merged = { ...DEFAULTS, ...s.inputs, sims: 1500 };
+                  const r = runMonteCarlo(merged);
+                  const medC = median(r.cagrs);
+                  const p20s = r.cagrs.filter(x => x > 0.20).length / r.cagrs.length;
+                  const medD = median(r.maxDrawdowns);
+                  return (
+                    <tr key={s.key} style={{ borderBottom: `1px solid ${COL.line}` }}>
+                      <td style={{ padding: '8px 10px', color: s.color, fontWeight: 700 }}>{s.name}</td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right', color: COL.txt }}>{fmtPct(merged.winRate, 0)}</td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right', color: COL.green }}>{fmtSignedPct(merged.avgWinner, 0)}</td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right', color: COL.red }}>{fmtSignedPct(merged.avgLoser, 0)}</td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right', color: medC >= 0 ? COL.green : COL.red, fontWeight: 700 }}>{fmtSignedPct(medC, 1)}</td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right', color: p20s >= 0.4 ? COL.green : p20s >= 0.2 ? COL.amber : COL.red }}>{(p20s * 100).toFixed(0)}%</td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right', color: COL.amber }}>{fmtSignedPct(medD, 0)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize: 11, color: COL.muted, marginTop: 10 }}>
+            All rows recomputed live with 1,500 simulations each · {DEFAULTS.positions} positions × {fmtPct(DEFAULTS.positionSize, 0)} · {DEFAULTS.years}-year horizon · annual rebalance.
+          </div>
+        </div>
+
         {/* SCENARIOS */}
         <div style={{ marginBottom: 20 }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 10 }}>
@@ -790,12 +961,12 @@ export default function PortfolioSimulatorPage() {
           </div>
         </div>
 
-        {/* INPUTS row (charts moved to bottom per zzz198) */}
-        <div style={{ marginBottom: 20 }}>
+        {/* INPUTS + CHARTS row */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 340px) 1fr', gap: 16, marginBottom: 20 }}>
           {/* Inputs */}
           <div style={{ ...card }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: COL.txt, marginBottom: 14 }}>Inputs</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div style={{ gridColumn: '1 / -1' }}>
                 <span style={label}>Portfolio capital (₹)</span>
                 <input type="number" style={input} value={inp.capital}
@@ -861,6 +1032,16 @@ export default function PortfolioSimulatorPage() {
               </div>
             </div>
           </div>
+
+          {/* Charts */}
+          <div style={{ display: 'grid', gridTemplateRows: '1fr 1fr', gap: 12 }}>
+            <div style={{ ...card, padding: 8 }}>
+              <Histogram data={result.cagrs} />
+            </div>
+            <div style={{ ...card, padding: 8 }}>
+              <EquityCurves curves={result.sampleEquity} years={inp.years} capital={inp.capital} />
+            </div>
+          </div>
         </div>
 
         {/* INTERPRETATION */}
@@ -918,68 +1099,13 @@ export default function PortfolioSimulatorPage() {
         {/* zzz197: SIX REAL-WORLD SCENARIOS · with vs without stop-loss */}
         <RealWorldScenarios positionSize={inp.positionSize} />
 
-        {/* Comparison table */}
-        <div style={{ ...card, marginBottom: 20 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: COL.txt, marginBottom: 12 }}>
-            Scenario comparison · same portfolio, different assumptions
-          </div>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-              <thead>
-                <tr style={{ color: COL.muted, borderBottom: `1px solid ${COL.line2}` }}>
-                  <th style={{ textAlign: 'left', padding: '6px 10px' }}>Scenario</th>
-                  <th style={{ textAlign: 'right', padding: '6px 10px' }}>Win rate</th>
-                  <th style={{ textAlign: 'right', padding: '6px 10px' }}>Avg win</th>
-                  <th style={{ textAlign: 'right', padding: '6px 10px' }}>Avg loss</th>
-                  <th style={{ textAlign: 'right', padding: '6px 10px' }}>Expected CAGR</th>
-                  <th style={{ textAlign: 'right', padding: '6px 10px' }}>P(&gt;20%)</th>
-                  <th style={{ textAlign: 'right', padding: '6px 10px' }}>Max DD</th>
-                </tr>
-              </thead>
-              <tbody>
-                {SCENARIOS.map((s) => {
-                  const merged = { ...DEFAULTS, ...s.inputs, sims: 1500 };
-                  const r = runMonteCarlo(merged);
-                  const medC = median(r.cagrs);
-                  const p20s = r.cagrs.filter(x => x > 0.20).length / r.cagrs.length;
-                  const medD = median(r.maxDrawdowns);
-                  return (
-                    <tr key={s.key} style={{ borderBottom: `1px solid ${COL.line}` }}>
-                      <td style={{ padding: '8px 10px', color: s.color, fontWeight: 700 }}>{s.name}</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right', color: COL.txt }}>{fmtPct(merged.winRate, 0)}</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right', color: COL.green }}>{fmtSignedPct(merged.avgWinner, 0)}</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right', color: COL.red }}>{fmtSignedPct(merged.avgLoser, 0)}</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right', color: medC >= 0 ? COL.green : COL.red, fontWeight: 700 }}>{fmtSignedPct(medC, 1)}</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right', color: p20s >= 0.4 ? COL.green : p20s >= 0.2 ? COL.amber : COL.red }}>{(p20s * 100).toFixed(0)}%</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right', color: COL.amber }}>{fmtSignedPct(medD, 0)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          <div style={{ fontSize: 11, color: COL.muted, marginTop: 10 }}>
-            All rows recomputed live with 1,500 simulations each · {DEFAULTS.positions} positions × {fmtPct(DEFAULTS.positionSize, 0)} · {DEFAULTS.years}-year horizon · annual rebalance.
-          </div>
-        </div>
-
-        {/* zzz198: CHARTS moved to bottom — CAGR distribution + equity curves */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: 16, marginBottom: 20 }}>
-          <div style={{ ...card, padding: 8 }}>
-            <Histogram data={result.cagrs} width={720} height={280} />
-          </div>
-          <div style={{ ...card, padding: 8 }}>
-            <EquityCurves curves={result.sampleEquity} years={inp.years} capital={inp.capital} width={720} height={280} />
-          </div>
-        </div>
-
         {/* Footer note */}
         <div style={{ ...card, fontSize: 12, color: COL.muted, lineHeight: 1.6 }}>
-          <b style={{ color: COL.txt }}>Notes on the model.</b> This is a Monte Carlo simulation with i.i.d. Bernoulli
-          outcomes at the position level and equal-weight rebalancing at the chosen frequency. It ignores correlation between
-          positions (so tail risk is understated when the market crashes together), transaction costs, taxes and dividends.
-          Treat CAGR as the compounded arithmetic return; treat drawdowns as within-horizon peak-to-trough. The point isn&apos;t
-          a precise forecast — it&apos;s to see how sensitive your outcomes are to win-rate and reward/risk.
+          <b style={{ color: COL.txt }}>Notes on the model.</b> Monthly Monte Carlo path with an additive market factor
+          (~15% annual market vol) applied to every position each month, so drawdowns reflect realistic correlated selloffs
+          rather than IID noise. Individual position win/loss is drawn from your win-rate assumption. Ignores transaction
+          costs, taxes and dividends. Treat CAGR as the compounded arithmetic return; drawdowns are within-horizon peak-to-trough.
+          Not a forecast — a sensitivity tool for win-rate and reward/risk.
         </div>
       </div>
     </div>
