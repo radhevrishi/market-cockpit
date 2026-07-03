@@ -11,7 +11,7 @@
 // CACHING strategy (key insight: past filings are immutable):
 //   • Past dates (< today_IST): cache 90 days. Once a Q4 is filed, the
 //     numbers don't change — re-fetching is pure waste. KV key
-//     'graded:v8:<YYYY-MM-DD>' is hit on every subsequent visit (<100ms).
+//     'graded:v9:<YYYY-MM-DD>' is hit on every subsequent visit (<100ms). (zzz188: v8->v9 to purge stale payloads that lost enrich metadata under zzz187 fix)
 //   • Today's date: cache 15 min. New filings come throughout the day,
 //     so we accept brief staleness for freshness.
 //   • Future dates: not cached (Upcoming only).
@@ -542,7 +542,7 @@ export async function GET(req: Request) {
 
   const todayIso = new Date().toISOString().slice(0, 10);
   const isPast = date < todayIso;
-  const cacheKey = `graded:v8:${date}`;
+  const cacheKey = `graded:v9:${date}`;  // zzz188: bumped v8->v9 to invalidate old cached graded payloads that lost enrich metadata
 
   // Try cache first (past dates are immutable, 90-day TTL — practically forever for our use)
   // ── BUT bypass cache when refreshMissing or force is set ────────────────
