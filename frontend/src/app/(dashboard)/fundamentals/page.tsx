@@ -414,12 +414,19 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
       // Company fallbacks) so we don't false-positive drop BSE-only stocks
       // or rows loaded from CSVs with different column layouts.
       const allSyncedTickers = new Set<string>();
-      const syncDisplayNames = new Set<string>();
+      const syncSourceNames = new Set<string>();
       for (const fn of filenames) {
         const text = await fetchCsvText(fn);
         if (!text) continue;
         const displayName = await getDisplayName(fn);
-        syncDisplayNames.add(displayName);
+        // zzz193: track BOTH the raw filename and the human display name as
+        // valid sync-source markers. Rows loaded in older sessions (before
+        // manifest displayNames existed) have _files entries containing the
+        // raw filename; rows loaded from the current sync pipeline have the
+        // display name. Both must count as "came from sync" so the sweep can
+        // drop them when they disappear from the CSV.
+        syncSourceNames.add(displayName);
+        syncSourceNames.add(fn);
         handleText(text, displayName);
         // Also extract tickers directly from CSV for the sweep
         try {
@@ -459,7 +466,10 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
         setData((prev) => {
           const cleaned = prev.filter((row: any) => {
             const files: string[] = (row._files as string[] | undefined) ?? [];
-            const hasSyncSource = files.some(f => syncDisplayNames.has(f));
+            // zzz193: a row is a sync candidate if ANY entry in _files is a
+            // current sync source (raw filename or display name). This catches
+            // rows tagged with historical raw-filename markers.
+            const hasSyncSource = files.some(f => syncSourceNames.has(f));
             if (!hasSyncSource) return true; // manual row — never drop
             // Use rowKey()-equivalent fallbacks so BSE-only stocks and
             // Name-keyed rows survive when their sym is still in the CSV.
