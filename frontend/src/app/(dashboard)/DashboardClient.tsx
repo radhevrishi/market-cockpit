@@ -106,6 +106,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/valuations',      label: 'Valuations',            icon: <Star className="w-4 h-4" /> },
       { href: '/valuation-calc',  label: 'Valuation Calculators', icon: <Star className="w-4 h-4" /> },
       { href: '/portfolio-simulator', label: 'Portfolio Simulator', icon: <LineChart className="w-4 h-4" /> },
+      { href: '/winning-playbook', label: 'Winning Playbook', icon: <Star className="w-4 h-4" /> },
       { href: '/auto-valuation',  label: 'Auto-Valuation',        icon: <Star className="w-4 h-4" /> },
       { href: '/rerating',       label: 'Re-rating',       icon: <TrendingUp className="w-4 h-4" /> },
       { href: '/stock-sheet',    label: 'Stock Sheet',     icon: <BookMarked className="w-4 h-4" /> },
