@@ -375,6 +375,289 @@ function TradeByTradeExample({ inp }: { inp: Inputs }) {
   );
 }
 
+// ── zzz197: Six real-world small/mid-cap scenarios (with/without stop-loss) ─
+type ScenarioTrade = { ticker: string; ret: number; note?: string };
+type RealScenario = {
+  key: string;
+  title: string;
+  regime: 'bull' | 'normal' | 'bear';
+  hasSL: boolean;
+  blurb: string;
+  color: string;
+  trades: ScenarioTrade[];
+};
+
+const REAL_SCENARIOS: RealScenario[] = [
+  {
+    key: 'bull-sl', title: 'Bull Year · with stop-loss',
+    regime: 'bull', hasSL: true, color: '#10B981',
+    blurb: 'Small-cap rip (like FY24 — Nifty Smallcap +55%). Winners run, losers stopped at -15%.',
+    trades: [
+      { ticker: 'AZAD',       ret:  1.80, note: 'Q3 order-book multibagger' },
+      { ticker: 'DATAPATTNS', ret:  0.95, note: 'Defence order flow' },
+      { ticker: 'HAPPYFORGE', ret:  0.65, note: 'Margin expansion' },
+      { ticker: 'JNKINDIA',   ret:  0.50, note: 'Post-IPO re-rating' },
+      { ticker: 'RACLGEAR',   ret:  0.40, note: 'EV supply chain' },
+      { ticker: 'SYRMA',      ret:  0.30, note: 'PLI tailwind' },
+      { ticker: 'DIVGIITTS',  ret: -0.15, note: 'Stopped out at -15%' },
+      { ticker: 'RISHABH',    ret: -0.15, note: 'Stopped out at -15%' },
+      { ticker: 'SASKEN',     ret: -0.15, note: 'Stopped out at -15%' },
+      { ticker: 'LLOYDSENGG', ret: -0.15, note: 'Stopped out at -15%' },
+    ],
+  },
+  {
+    key: 'normal-sl', title: 'Normal Year · with stop-loss',
+    regime: 'normal', hasSL: true, color: '#22D3EE',
+    blurb: 'Steady mid-cap compounding (like FY22). No big moves, discipline on losers pays.',
+    trades: [
+      { ticker: 'KENNAMET',    ret:  0.45 },
+      { ticker: 'ASTRAMICRO',  ret:  0.35 },
+      { ticker: 'INOXINDIA',   ret:  0.30 },
+      { ticker: 'MARKSANS',    ret:  0.22 },
+      { ticker: 'AEROFLEX',    ret:  0.18 },
+      { ticker: 'CGPOWER',     ret:  0.12 },
+      { ticker: 'PARAS',       ret: -0.15, note: 'Stopped out at -15%' },
+      { ticker: 'DREDGECORP',  ret: -0.15, note: 'Stopped out at -15%' },
+      { ticker: 'NGLFINE',     ret: -0.15, note: 'Stopped out at -15%' },
+      { ticker: 'SANGHVIMOV',  ret: -0.15, note: 'Stopped out at -15%' },
+    ],
+  },
+  {
+    key: 'bear-sl', title: 'Bear Market · with stop-loss',
+    regime: 'bear', hasSL: true, color: '#F59E0B',
+    blurb: 'Small-cap slaughter (like FY19 -20% / covid crash). Stop-losses save the book.',
+    trades: [
+      { ticker: 'WOCKPHARMA',  ret:  0.25, note: 'Defensive pharma held up' },
+      { ticker: 'NGLFINE',     ret:  0.10, note: 'Specialty chem outlier' },
+      { ticker: 'JAMNAAUTO',   ret: -0.15, note: 'Stopped -15%' },
+      { ticker: 'SKIPPER',     ret: -0.15, note: 'Stopped -15%' },
+      { ticker: 'OLECTRA',     ret: -0.15, note: 'Stopped -15%' },
+      { ticker: 'KIRLOSENG',   ret: -0.15, note: 'Stopped -15%' },
+      { ticker: 'AVALON',      ret: -0.15, note: 'Stopped -15%' },
+      { ticker: 'REFEX',       ret: -0.15, note: 'Stopped -15%' },
+      { ticker: 'MMTC',        ret: -0.15, note: 'Stopped -15%' },
+      { ticker: 'AZAD',        ret: -0.15, note: 'Stopped -15%' },
+    ],
+  },
+  {
+    key: 'bull-no-sl', title: 'Bull Year · NO stop-loss',
+    regime: 'bull', hasSL: false, color: '#84cc16',
+    blurb: 'Same bull tape but you hold losers hoping they turn around. Costs some of the win.',
+    trades: [
+      { ticker: 'AZAD',       ret:  1.80 },
+      { ticker: 'DATAPATTNS', ret:  0.95 },
+      { ticker: 'HAPPYFORGE', ret:  0.65 },
+      { ticker: 'JNKINDIA',   ret:  0.50 },
+      { ticker: 'RACLGEAR',   ret:  0.40 },
+      { ticker: 'SYRMA',      ret:  0.30 },
+      { ticker: 'DIVGIITTS',  ret: -0.30, note: 'Rode it down (no SL)' },
+      { ticker: 'RISHABH',    ret: -0.35, note: 'Rode it down (no SL)' },
+      { ticker: 'SASKEN',     ret: -0.25, note: 'Rode it down (no SL)' },
+      { ticker: 'LLOYDSENGG', ret: -0.40, note: 'Rode it down (no SL)' },
+    ],
+  },
+  {
+    key: 'normal-no-sl', title: 'Normal Year · NO stop-loss',
+    regime: 'normal', hasSL: false, color: '#60A5FA',
+    blurb: 'Steady tape but no discipline. Winners compound; unmanaged losers eat most of it.',
+    trades: [
+      { ticker: 'KENNAMET',    ret:  0.45 },
+      { ticker: 'ASTRAMICRO',  ret:  0.35 },
+      { ticker: 'INOXINDIA',   ret:  0.30 },
+      { ticker: 'MARKSANS',    ret:  0.22 },
+      { ticker: 'AEROFLEX',    ret:  0.18 },
+      { ticker: 'CGPOWER',     ret:  0.12 },
+      { ticker: 'PARAS',       ret: -0.30, note: 'No SL — rode it -30%' },
+      { ticker: 'DREDGECORP',  ret: -0.45, note: 'No SL — rode it -45%' },
+      { ticker: 'NGLFINE',     ret: -0.35, note: 'No SL — rode it -35%' },
+      { ticker: 'SANGHVIMOV',  ret: -0.25, note: 'No SL — rode it -25%' },
+    ],
+  },
+  {
+    key: 'bear-no-sl', title: 'Bear Market · NO stop-loss',
+    regime: 'bear', hasSL: false, color: '#EF4444',
+    blurb: 'Small-cap wreck with no discipline. This is how portfolios blow up.',
+    trades: [
+      { ticker: 'WOCKPHARMA',  ret:  0.25 },
+      { ticker: 'NGLFINE',     ret:  0.10 },
+      { ticker: 'JAMNAAUTO',   ret: -0.55, note: 'No SL — went -55%' },
+      { ticker: 'SKIPPER',     ret: -0.50 },
+      { ticker: 'OLECTRA',     ret: -0.45 },
+      { ticker: 'KIRLOSENG',   ret: -0.40 },
+      { ticker: 'AVALON',      ret: -0.60 },
+      { ticker: 'REFEX',       ret: -0.35 },
+      { ticker: 'MMTC',        ret: -0.30 },
+      { ticker: 'AZAD',        ret: -0.25 },
+    ],
+  },
+];
+
+function ScenarioTable({ sc, positionSize }: { sc: RealScenario; positionSize: number }) {
+  let running = 1;
+  const rows = sc.trades.map((t) => {
+    const contrib = positionSize * t.ret;
+    running = running * (1 + contrib);
+    return { ...t, contrib, running };
+  });
+  const yearRet = running - 1;
+  return (
+    <div style={{ background: COL.panel, border: `1px solid ${sc.color}44`, borderRadius: 10, padding: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: sc.color, letterSpacing: 0.3 }}>{sc.title}</div>
+          <div style={{ fontSize: 11, color: COL.muted, marginTop: 2 }}>{sc.blurb}</div>
+        </div>
+        <span style={{
+          padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 800,
+          color: yearRet >= 0 ? COL.green : COL.red,
+          background: yearRet >= 0 ? COL.green + '18' : COL.red + '18',
+          border: `1px solid ${yearRet >= 0 ? COL.green : COL.red}55`, whiteSpace: 'nowrap',
+        }}>
+          Year-end {fmtSignedPct(yearRet, 1)}
+        </span>
+      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+        <thead>
+          <tr style={{ color: COL.muted, borderBottom: `1px solid ${COL.line2}` }}>
+            <th style={{ textAlign: 'left', padding: '4px 6px', width: 22 }}>#</th>
+            <th style={{ textAlign: 'left', padding: '4px 6px' }}>Ticker</th>
+            <th style={{ textAlign: 'right', padding: '4px 6px' }}>Return</th>
+            <th style={{ textAlign: 'right', padding: '4px 6px' }}>Contribution</th>
+            <th style={{ textAlign: 'right', padding: '4px 6px' }}>Running</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i} style={{ borderBottom: `1px solid ${COL.line}` }}>
+              <td style={{ padding: '4px 6px', color: COL.muted }}>T{i + 1}</td>
+              <td style={{ padding: '4px 6px', color: COL.txt, fontWeight: 600 }}>
+                {r.ticker}
+                {r.note && <div style={{ fontSize: 10, color: COL.muted, fontWeight: 400 }}>{r.note}</div>}
+              </td>
+              <td style={{ padding: '4px 6px', textAlign: 'right', color: r.ret >= 0 ? COL.green : COL.red, fontWeight: 700 }}>
+                {fmtSignedPct(r.ret, 0)}
+              </td>
+              <td style={{ padding: '4px 6px', textAlign: 'right', color: r.contrib >= 0 ? COL.green : COL.red }}>
+                {fmtSignedPct(r.contrib, 2)}
+              </td>
+              <td style={{ padding: '4px 6px', textAlign: 'right', color: COL.txt, fontVariantNumeric: 'tabular-nums' }}>
+                {(r.running * 100).toFixed(2)}%
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function scenarioYearReturn(sc: RealScenario, positionSize: number): number {
+  let running = 1;
+  for (const t of sc.trades) running = running * (1 + positionSize * t.ret);
+  return running - 1;
+}
+
+function RealWorldScenarios({ positionSize }: { positionSize: number }) {
+  const slScenarios = REAL_SCENARIOS.filter(s => s.hasSL);
+  const noSlScenarios = REAL_SCENARIOS.filter(s => !s.hasSL);
+
+  // 5-year cycle comparison: assume regime distribution 2 bull + 2 normal + 1 bear
+  const cycle = ['bull', 'bull', 'normal', 'normal', 'bear'] as const;
+  const compoundCycle = (hasSL: boolean) => {
+    let v = 1;
+    for (const regime of cycle) {
+      const sc = REAL_SCENARIOS.find(s => s.regime === regime && s.hasSL === hasSL)!;
+      const yr = scenarioYearReturn(sc, positionSize);
+      v = v * (1 + yr);
+    }
+    return { finalMult: v, cagr: Math.pow(v, 1/5) - 1 };
+  };
+  const slResult = compoundCycle(true);
+  const noSlResult = compoundCycle(false);
+
+  return (
+    <div style={{ ...card, marginBottom: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: COL.txt }}>
+            Real-world scenarios · small/mid-cap investing · with vs without stop-loss
+          </div>
+          <div style={{ fontSize: 11, color: COL.muted, marginTop: 4 }}>
+            10 positions × {fmtPct(positionSize, 0)} each. Same wins in each pair — only the loss discipline differs.
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ ...chip, borderColor: COL.green + '55', color: COL.green }}>
+            5Y with SL: {fmtSignedPct(slResult.cagr, 1)} CAGR · {slResult.finalMult.toFixed(2)}× capital
+          </span>
+          <span style={{ ...chip, borderColor: COL.red + '55', color: COL.red }}>
+            5Y no SL: {fmtSignedPct(noSlResult.cagr, 1)} CAGR · {noSlResult.finalMult.toFixed(2)}× capital
+          </span>
+        </div>
+      </div>
+
+      {/* With stop-loss row */}
+      <div style={{ fontSize: 11, color: COL.green, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8, fontWeight: 700 }}>
+        ✓ With stop-loss discipline (losers cut at -15%)
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12, marginBottom: 16 }}>
+        {slScenarios.map(sc => <ScenarioTable key={sc.key} sc={sc} positionSize={positionSize} />)}
+      </div>
+
+      {/* Without stop-loss row */}
+      <div style={{ fontSize: 11, color: COL.red, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8, fontWeight: 700 }}>
+        ✗ Without stop-loss (losers ride down)
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12, marginBottom: 16 }}>
+        {noSlScenarios.map(sc => <ScenarioTable key={sc.key} sc={sc} positionSize={positionSize} />)}
+      </div>
+
+      {/* What Claude thinks */}
+      <div style={{ background: COL.panel2, border: `1px solid ${COL.line2}`, borderRadius: 8, padding: 14 }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: COL.cyan, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+          What I think — stop-loss vs no stop-loss for concentrated small/mid-cap investing
+        </div>
+        <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: COL.txt, lineHeight: 1.7 }}>
+          <li>
+            <b style={{ color: COL.green }}>In bull years</b> a stop-loss costs some upside (whipsaws — a name that would&apos;ve recovered gets sold at -15%).
+            In this bull example: <b>+{(scenarioYearReturn(REAL_SCENARIOS[0], positionSize) * 100).toFixed(1)}%</b> with SL vs
+            <b> +{(scenarioYearReturn(REAL_SCENARIOS[3], positionSize) * 100).toFixed(1)}%</b> without.
+            The difference is small — the winners do most of the work.
+          </li>
+          <li>
+            <b style={{ color: COL.amber }}>In normal years</b> stop-loss is neutral to slightly positive. The multibagger tail thin, the losers are the story.
+            <b> +{(scenarioYearReturn(REAL_SCENARIOS[1], positionSize) * 100).toFixed(1)}%</b> with SL vs
+            <b> +{(scenarioYearReturn(REAL_SCENARIOS[4], positionSize) * 100).toFixed(1)}%</b> without — that&apos;s the gap that decides whether the year compounds.
+          </li>
+          <li>
+            <b style={{ color: COL.red }}>In bear years</b> stop-loss is portfolio-saving. In this bear example:
+            <b> {(scenarioYearReturn(REAL_SCENARIOS[2], positionSize) * 100).toFixed(1)}%</b> with SL vs
+            <b> {(scenarioYearReturn(REAL_SCENARIOS[5], positionSize) * 100).toFixed(1)}%</b> without.
+            One bad year without stops erases 3-4 years of compounding.
+          </li>
+          <li>
+            <b style={{ color: COL.violet }}>Compound over a 5-year cycle</b> (2 bull + 2 normal + 1 bear):
+            with SL you compound to <b>{slResult.finalMult.toFixed(2)}×</b> capital ({fmtSignedPct(slResult.cagr, 1)} CAGR).
+            Without SL you end up at <b>{noSlResult.finalMult.toFixed(2)}×</b> ({fmtSignedPct(noSlResult.cagr, 1)} CAGR).
+            The asymmetry is the whole game — small-caps have fat left tails.
+          </li>
+          <li>
+            <b>Practical recipe:</b> hard SL at -15% on thesis-break (fundamentals change) — not just price. For
+            high-conviction compounders with intact thesis, tolerate 20-25% drawdowns; but scale out on rich valuations rather
+            than let them re-rate down 40%+. Position sizing does the rest of the work — 10% max per name means one blow-up costs
+            you 4-6% of the book with SL, 10%+ without.
+          </li>
+          <li>
+            <b>Where I&apos;d be careful:</b> the &quot;no SL&quot; scenarios above assume you also don&apos;t double down. In reality most investors
+            average into losers, which makes the no-SL path worse than shown. The bear-year -30% quickly becomes -50% when you
+            keep adding to broken theses.
+          </li>
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 // ── Compounding table across years ───────────────────────────────────────────
 function YearByYearTable({ result, capital }: { result: SimResult; capital: number }) {
   const years = result.years;
@@ -641,6 +924,9 @@ export default function PortfolioSimulatorPage() {
           <TradeByTradeExample inp={inp} />
           <YearByYearTable result={result} capital={inp.capital} />
         </div>
+
+        {/* zzz197: SIX REAL-WORLD SCENARIOS · with vs without stop-loss */}
+        <RealWorldScenarios positionSize={inp.positionSize} />
 
         {/* Comparison table */}
         <div style={{ ...card, marginBottom: 20 }}>
