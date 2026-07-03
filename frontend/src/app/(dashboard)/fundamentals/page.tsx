@@ -406,49 +406,46 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
       else if (scope === 'watchlist') filenames = SYNC_ROUTING.watchlistIndia;
       else return;
       let loaded = 0;
-      // zzz186 / zzz192: collect (a) all tickers seen across all fetched CSVs
-      // and (b) the display names those CSVs land under. The sweep only
-      // considers rows whose _files array intersects (b) — so manual
-      // uploads and manually added placeholder tickers survive Refresh.
-      // Ticker lookup mirrors rowKey() (Name / Description / Company name /
-      // Company fallbacks) so we don't false-positive drop BSE-only stocks
-      // or rows loaded from CSVs with different column layouts.
-      const allSyncedTickers = new Set<string>();
-      const syncSourceNames = new Set<string>();
+      // zzz194: BEFORE ingesting fresh CSVs, resolve every sync file's current
+      // display name and pre-normalize the existing state so legacy rows tagged
+      // with the raw filename ('watchlist-10432429.csv') get rewritten to the
+      // current display name ('Latest Portfolio'). This makes handleText's
+      // zzz185 removedFromFile check work correctly for legacy rows.
+      const fileAliases = new Map<string, string>(); // rawFn -> displayName
+      for (const fn of filenames) {
+        try {
+          const dn = await getDisplayName(fn);
+          fileAliases.set(fn, dn);
+        } catch { fileAliases.set(fn, fn); }
+      }
+      // Normalize state: replace legacy raw-filename entries in _files with the
+      // current display name so handleText will recognize them as "in this file".
+      setData((prev) => {
+        let mutated = false;
+        const next = prev.map((r: any) => {
+          const files = (r._files as string[] | undefined) ?? [];
+          if (!files.length) return r;
+          const rewritten = files.map(f => fileAliases.get(f) || f);
+          if (rewritten.some((v, i) => v !== files[i])) {
+            mutated = true;
+            return { ...r, _files: Array.from(new Set(rewritten)) };
+          }
+          return r;
+        });
+        if (mutated) {
+          try { mcPersist(STORAGE_KEY, JSON.stringify(next)); } catch {}
+          return next;
+        }
+        return prev;
+      });
+      // Small tick to let the alias-rewrite flush before handleText reads state.
+      await new Promise<void>((r) => setTimeout(r, 50));
+
       for (const fn of filenames) {
         const text = await fetchCsvText(fn);
         if (!text) continue;
-        const displayName = await getDisplayName(fn);
-        // zzz193: track BOTH the raw filename and the human display name as
-        // valid sync-source markers. Rows loaded in older sessions (before
-        // manifest displayNames existed) have _files entries containing the
-        // raw filename; rows loaded from the current sync pipeline have the
-        // display name. Both must count as "came from sync" so the sweep can
-        // drop them when they disappear from the CSV.
-        syncSourceNames.add(displayName);
-        syncSourceNames.add(fn);
+        const displayName = fileAliases.get(fn) || fn;
         handleText(text, displayName);
-        // Also extract tickers directly from CSV for the sweep
-        try {
-          const lines = text.split(/\r?\n/);
-          if (lines.length >= 2) {
-            const header = lines[0].split(',').map(h => h.replace(/"/g, '').trim().toLowerCase());
-            // zzz192: broaden column detection to match rowKey() fallbacks so
-            // CSVs keyed by Name / Company survive the sweep. First hit wins,
-            // exactly like the old code, but we also collect from Name/Company
-            // as a secondary source when the primary is blank on a row.
-            const primaryIdx = header.findIndex(h => h === 'nse code' || h === 'ticker' || h === 'symbol' || h === 'bse code');
-            const nameIdx = header.findIndex(h => h === 'name' || h === 'company name' || h === 'company' || h === 'description');
-            for (let i = 1; i < lines.length; i++) {
-              const ln = lines[i].trim(); if (!ln) continue;
-              const parts = ln.split(',');
-              let t = '';
-              if (primaryIdx >= 0) t = (parts[primaryIdx] || '').replace(/"/g, '').trim();
-              if (!t && nameIdx >= 0) t = (parts[nameIdx] || '').replace(/"/g, '').trim();
-              if (t) allSyncedTickers.add(t.toUpperCase());
-            }
-          }
-        } catch {}
         loaded++;
         await new Promise<void>((r) => setTimeout(r, 80));
       }
@@ -456,35 +453,10 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
         setError('Auto-sync failed: no matching files in /data/screener/. Run the GitHub Action first.');
       } else {
         markAutoLoaded(autoLoadScope);
-        // zzz192: TARGETED sweep. Only inspect rows whose _files array overlaps
-        // syncDisplayNames — those rows come from the auto-sync pipeline and
-        // are the only ones that can be stale from a previous run. Rows with
-        // no _files (manually added placeholders) or with _files pointing only
-        // at manually-uploaded files are preserved unconditionally.
-        // Give React a tick to flush the batched handleText writes first.
-        await new Promise<void>((r) => setTimeout(r, 200));
-        setData((prev) => {
-          const cleaned = prev.filter((row: any) => {
-            const files: string[] = (row._files as string[] | undefined) ?? [];
-            // zzz193: a row is a sync candidate if ANY entry in _files is a
-            // current sync source (raw filename or display name). This catches
-            // rows tagged with historical raw-filename markers.
-            const hasSyncSource = files.some(f => syncSourceNames.has(f));
-            if (!hasSyncSource) return true; // manual row — never drop
-            // Use rowKey()-equivalent fallbacks so BSE-only stocks and
-            // Name-keyed rows survive when their sym is still in the CSV.
-            const sym = (
-              row['NSE Code'] || row['BSE Code'] || row['Symbol'] || row['Ticker']
-              || row['Name'] || row['Description'] || row['Company name'] || row['Company'] || ''
-            ).toString().toUpperCase().trim();
-            if (!sym) return true; // couldn't identify — keep to be safe
-            return allSyncedTickers.has(sym);
-          });
-          if (cleaned.length !== prev.length) {
-            try { mcPersist(STORAGE_KEY, JSON.stringify(cleaned)); } catch {}
-          }
-          return cleaned;
-        });
+        // zzz194: NO SWEEP. handleText's zzz185 per-file removedFromFile logic
+        // now correctly handles stale ticker removal because we normalized the
+        // _files aliases above. Rows manually added via addTickers (no _files)
+        // and manually uploaded lists are preserved untouched.
       }
       if (force) {
         const s = await getSyncStatus();
