@@ -315,7 +315,12 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
           const mergedFiles = Array.from(new Set([...prevFiles, name]));
           map.set(rowKey(r), { ...r, _files: mergedFiles } as any);
         });
-        const merged = Array.from(map.values());
+        // zzz185: robust auto-drop - remove any ticker that appears in removedFromFile.
+        // This matches EXACTLY what the delta banner shows, so if the banner says
+        // "REMOVED FROM SCREENER (3)" then those 3 tickers are guaranteed gone from
+        // analytics tables, medians, growth quadrants, MA screens, etc.
+        const removedSet_zzz185 = new Set(removedFromFile);
+        const merged = Array.from(map.values()).filter(r => !removedSet_zzz185.has(rowKey(r)));
         const dataOk = mcPersist(STORAGE_KEY, JSON.stringify(merged));
         if (dataOk) {
           mcPersist(STORAGE_NAME, name);
