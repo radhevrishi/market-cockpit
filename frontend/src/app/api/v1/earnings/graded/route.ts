@@ -178,12 +178,17 @@ function gradeRow(row: any): ParsedEarning | null {
   // Rule: if announce_date_iso is missing AND filing_date is in the past by more than 7 days
   // (i.e. user is querying a stale past date), skip — Screener's latest-quarter data is not a
   // safe substitute for an actual filing event on that historic date.
+  // zzz190: the 7-day guard is meant to reject rows where Screener's latest-quarter
+  // data cannot confirm the historic filing actually happened. But if hub_quality is
+  // set to anything other than 'Upcoming' (Good/OK/Great/Excellent/Weak), the Earnings
+  // Hub has already confirmed the filing. Keep those rows for historical browsing.
   if (!row?.announce_date_iso && row?.filing_date) {
     const filingD = new Date(row.filing_date);
     const todayD = new Date();
     if (!isNaN(filingD.getTime())) {
       const ageDays = (todayD.getTime() - filingD.getTime()) / 86_400_000;
-      if (ageDays > 7) return null;
+      const hubConfirmed = row?.hub_quality && row.hub_quality !== 'Upcoming';
+      if (ageDays > 7 && !hubConfirmed) return null;
     }
   }
 
