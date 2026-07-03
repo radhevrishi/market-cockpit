@@ -406,21 +406,53 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
       else if (scope === 'watchlist') filenames = SYNC_ROUTING.watchlistIndia;
       else return;
       let loaded = 0;
+      // zzz186: collect all tickers seen across all fetched CSVs so we can sweep
+      // the dataset after ingestion. This catches stale entries whose _files no
+      // longer matches the current display name (e.g., historical raw filenames).
+      const allSyncedTickers = new Set<string>();
       for (const fn of filenames) {
         const text = await fetchCsvText(fn);
         if (!text) continue;
-        // PATCH 1101rrr — use screener.in's actual list name so the
-        // "Loaded: ..." chip shows the friendly name.
         const displayName = await getDisplayName(fn);
         handleText(text, displayName);
+        // Also extract tickers directly from CSV for the sweep
+        try {
+          const lines = text.split(/\r?\n/);
+          if (lines.length >= 2) {
+            const header = lines[0].split(',').map(h => h.replace(/"/g, '').trim().toLowerCase());
+            const symIdx = header.findIndex(h => h === 'nse code' || h === 'ticker' || h === 'symbol' || h === 'bse code');
+            if (symIdx >= 0) {
+              for (let i = 1; i < lines.length; i++) {
+                const ln = lines[i].trim(); if (!ln) continue;
+                const parts = ln.split(',');
+                let t = (parts[symIdx] || '').replace(/"/g, '').trim();
+                if (t) allSyncedTickers.add(t.toUpperCase());
+              }
+            }
+          }
+        } catch {}
         loaded++;
-        // Spacing so React state batching keeps consecutive merges intact.
         await new Promise<void>((r) => setTimeout(r, 80));
       }
       if (loaded === 0) {
         setError('Auto-sync failed: no matching files in /data/screener/. Run the GitHub Action first.');
       } else {
         markAutoLoaded(autoLoadScope);
+        // zzz186: sweep the dataset. Any row whose symbol isn't in allSyncedTickers
+        // is stale (previously loaded from an older sync) - drop it.
+        // Give React a tick to flush the batched handleText writes first.
+        await new Promise<void>((r) => setTimeout(r, 200));
+        setData((prev) => {
+          const cleaned = prev.filter((row: any) => {
+            const sym = (row['NSE Code'] || row['Ticker'] || row['Symbol'] || row['BSE Code'] || '').toString().toUpperCase().trim();
+            if (!sym) return true; // no ticker column - keep to be safe
+            return allSyncedTickers.has(sym);
+          });
+          if (cleaned.length !== prev.length) {
+            try { mcPersist(STORAGE_KEY, JSON.stringify(cleaned)); } catch {}
+          }
+          return cleaned;
+        });
       }
       if (force) {
         const s = await getSyncStatus();
