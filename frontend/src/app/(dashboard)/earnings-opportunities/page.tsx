@@ -93,7 +93,7 @@ function useMarketEarnings(months: string[]) {
   // An empty results[] array passed the old `parsed.results` truthiness check
   // and was served as fresh initialData for 15 min, so the calendar kept
   // showing "No filings" even after the server recovered the month.
-  const HUB_LS_PREFIX = 'mc:hub:v6:';  // zzz176 — bumped v5→v6 because months-to-fetch key now includes next month; old v5 payloads keyed to 2 months would poison the 3-month key.
+  const HUB_LS_PREFIX = 'mc:hub:v7:';  // zzz183 — bumped v6→v7 because months-to-fetch key now includes next+1 month (4 months total)
   const key = months.join(',');
   // PATCH 0453 P1-12 — Audit found this hub-scrub ran on every render
   // (50-200ms cost iterating localStorage). Now runs once per app session
@@ -101,10 +101,10 @@ function useMarketEarnings(months: string[]) {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
-      const SCRUB_HUB = 'mc:hub-scrub:v6';  // zzz176 — bumped for months-to-fetch key change
+      const SCRUB_HUB = 'mc:hub-scrub:v7';  // zzz183 — bumped v6→v7 for 4-month fetch key
       if (!localStorage.getItem(SCRUB_HUB)) {
         for (const k of Object.keys(localStorage)) {
-          if (k.startsWith('mc:hub:v1:') || k.startsWith('mc:hub:v2:') || k.startsWith('mc:hub:v3:') || k.startsWith('mc:hub:v4:') || k.startsWith('mc:hub:v5:')) localStorage.removeItem(k);
+          if (k.startsWith('mc:hub:v1:') || k.startsWith('mc:hub:v2:') || k.startsWith('mc:hub:v3:') || k.startsWith('mc:hub:v4:') || k.startsWith('mc:hub:v5:') || k.startsWith('mc:hub:v6:')) localStorage.removeItem(k);
         }
         localStorage.setItem(SCRUB_HUB, '1');
       }
@@ -1002,8 +1002,10 @@ export default function EarningsOpportunitiesPage() {
     const cur = new Date(baseDate);
     const prev = new Date(baseDate); prev.setDate(1); prev.setMonth(prev.getMonth() - 1);
     const next = new Date(baseDate); next.setDate(1); next.setMonth(next.getMonth() + 1);
+    // zzz183: also fetch next+1 month so calRange +45 days forward is fully covered
+    const next2 = new Date(baseDate); next2.setDate(1); next2.setMonth(next2.getMonth() + 2);
     const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-    return Array.from(new Set([fmt(prev), fmt(cur), fmt(next)]));
+    return Array.from(new Set([fmt(prev), fmt(cur), fmt(next), fmt(next2)]));
   }, [filterDate]);
   const { data: hub, isLoading: hubLoading, error: hubError, refetch: refetchHub } = useMarketEarnings(monthsToFetch);
 
@@ -2422,11 +2424,12 @@ export default function EarningsOpportunitiesPage() {
     }
   };
 
-  // Calendar view: last 28 days back, next 14 forward — built from hub data
+  // zzz183: extend forward window from +14 to +45 days so users see further-out filings
+  // Calendar view: last 28 days back, next 45 forward — built from hub data
   const calRange = useMemo(() => {
     const d = new Date(filterDate || todayISO());
     const from = new Date(d); from.setDate(from.getDate() - 28);
-    const to   = new Date(d); to.setDate(to.getDate() + 14);
+    const to   = new Date(d); to.setDate(to.getDate() + 45);
     const fmt = (x: Date) => x.toISOString().slice(0, 10);
     return { from: fmt(from), to: fmt(to) };
   }, [filterDate]);
