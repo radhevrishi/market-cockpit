@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-07-03T11:11:39.424Z",
+  "lastSync": "2026-07-03T14:48:48.428Z",
   "workflowVersion": "zzz162",
   "approach": "scanner-api-interception + field-id translation",
   "ok": 9,
@@ -10,7 +10,7 @@
       "displayName": "Minervni Stocks",
       "screenerId": "sBtiBahk",
       "ok": true,
-      "size": 37283,
+      "size": 37279,
       "rowCount": 32,
       "error": null
     },
@@ -37,7 +37,7 @@
       "displayName": "Liquidity Leaders",
       "screenerId": "9IcX30Ez",
       "ok": true,
-      "size": 44379,
+      "size": 44375,
       "rowCount": 39,
       "error": null
     },
@@ -46,7 +46,7 @@
       "displayName": "Weekly Gainer Stocks USA",
       "screenerId": "Neuim2Bm",
       "ok": true,
-      "size": 112230,
+      "size": 112224,
       "rowCount": 100,
       "error": null
     },
@@ -64,7 +64,7 @@
       "displayName": "Future NVDIA ALAB APP PLTR (USA)",
       "screenerId": "5gzenlmQ",
       "ok": true,
-      "size": 15763,
+      "size": 15753,
       "rowCount": 12,
       "error": null
     },
@@ -73,7 +73,7 @@
       "displayName": "USA Multibagger (GHHf1HVl)",
       "screenerId": "GHHf1HVl",
       "ok": true,
-      "size": 106425,
+      "size": 106629,
       "rowCount": 100,
       "error": null
     },
