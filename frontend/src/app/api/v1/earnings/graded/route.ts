@@ -117,16 +117,36 @@ function gradeRow(row: any): ParsedEarning | null {
     const score = hubQuality === 'Excellent' ? 88 : hubQuality === 'Great' ? 76 : hubQuality === 'Good' ? 58 : hubQuality === 'OK' ? 42 : 22;
     const move = row?.move_pct ?? null;
     const moveLabel = move != null ? ` (${move >= 0 ? '+' : ''}${move.toFixed(1)}% on the day)` : '';
+    // zzz187: preserve absolute-quarter values + PE + market cap from enrichment.
+    // Prior fix blanked everything just because YoY couldn't be computed. Show
+    // whatever came in from /enrich so the card is informative even without YoY.
+    const hasAnyAbsolute = row?.sales_curr_cr != null || row?.pat_curr_cr != null || row?.eps_curr != null || row?.pe != null || row?.marketCapCr != null;
+    const absoluteBits: string[] = [];
+    if (row?.sales_curr_cr != null) absoluteBits.push(`Rev \u20B9${row.sales_curr_cr}Cr`);
+    if (row?.pat_curr_cr != null) absoluteBits.push(`PAT \u20B9${row.pat_curr_cr}Cr`);
+    if (row?.eps_curr != null) absoluteBits.push(`EPS \u20B9${row.eps_curr}`);
+    const absStr = absoluteBits.length ? ' \u00b7 ' + absoluteBits.join(' \u00b7 ') : '';
+    const narrative = hasAnyAbsolute
+      ? `${row.company || row.symbol} Q4 results${moveLabel}${absStr}. YoY comparison unavailable (prior-period data missing).`
+      : `${row.company || row.symbol} reported Q4 results${moveLabel}. Financial detail awaiting enrichment.`;
     return {
       ticker: row.symbol, company: row.company || row.symbol, sector: row.sector, filing_date: row.filing_date,
-      quarter: row.quarter || 'Q4', market_cap_bucket: row.market_cap_bucket, pe: null, price: row.current_price ?? null,
+      quarter: row.quarter || 'Q4', market_cap_bucket: row.market_cap_bucket,
+      market_cap_cr: row.marketCapCr ?? row.market_cap_cr ?? null,
+      pe: row.pe ?? row.stockPE ?? null,
+      price: row.current_price ?? null,
       sales_yoy_pct: null, net_profit_yoy_pct: null, eps_yoy_pct: null,
-      sales_curr_cr: null, sales_prev_cr: null, pat_curr_cr: null, pat_prev_cr: null, eps_curr: null, eps_prev: null,
+      sales_curr_cr: row.sales_curr_cr ?? null, sales_prev_cr: null,
+      pat_curr_cr: row.pat_curr_cr ?? null, pat_prev_cr: null,
+      eps_curr: row.eps_curr ?? null, eps_prev: null,
       gap_pct: row.gap_pct ?? null, d1_pct: row.d1_pct ?? null, move_pct: move,
       rs_rating: row.rs_rating ?? null, stage: row.stage ?? null, pct_from_52w_high: row.pct_from_52w_high ?? null,
-      composite_score: score, tier, methodology_tags: [], caveat_tags: [],
-      narrative: `${row.company || row.symbol} reported Q4 results${moveLabel}. Financial detail awaiting enrichment.`,
-      filing_url: row.source_url, source: 'NSE+BSE',
+      composite_score: score, tier,
+      methodology_tags: [],
+      caveat_tags: hasAnyAbsolute ? ['prior-year missing'] : [],
+      narrative,
+      filing_url: row.source_url,
+      source: hasAnyAbsolute ? (row.financials_source || 'screener-worker') : 'NSE+BSE',
     };
   }
 
