@@ -2631,6 +2631,7 @@ export default function HomeDashboard() {
             <Link href="/playbook#mastery"       style={navChip('#84cc16')}>🏏 Peak Performance</Link>
             <Link href="/playbook"               style={navChip('#F59E0B')}>📚 Playbook</Link>
             <Link href="/fundamentals?scope=portfolio" style={navChip('#f59e0b')}>🔬 Portfolio Fundamentals</Link>
+            <Link href="/portfolio-simulator"     style={navChip('#A78BFA')}>🎲 Portfolio Simulator</Link>
             <Link href="/playbook#relationships" style={navChip('#2dd4bf')}>🤝 Relationships</Link>
             <Link href="/orders"                 style={navChip('#22D3EE')}>📡 Signals</Link>
             <Link href="/special-situations"     style={navChip('#EF4444')}>🎯 Special Sit</Link>
