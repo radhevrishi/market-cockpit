@@ -406,57 +406,73 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
       else if (scope === 'watchlist') filenames = SYNC_ROUTING.watchlistIndia;
       else return;
       let loaded = 0;
-      // zzz194: BEFORE ingesting fresh CSVs, resolve every sync file's current
-      // display name and pre-normalize the existing state so legacy rows tagged
-      // with the raw filename ('watchlist-10432429.csv') get rewritten to the
-      // current display name ('Latest Portfolio'). This makes handleText's
-      // zzz185 removedFromFile check work correctly for legacy rows.
-      const fileAliases = new Map<string, string>(); // rawFn -> displayName
-      for (const fn of filenames) {
-        try {
-          const dn = await getDisplayName(fn);
-          fileAliases.set(fn, dn);
-        } catch { fileAliases.set(fn, fn); }
-      }
-      // Normalize state: replace legacy raw-filename entries in _files with the
-      // current display name so handleText will recognize them as "in this file".
-      setData((prev) => {
-        let mutated = false;
-        const next = prev.map((r: any) => {
-          const files = (r._files as string[] | undefined) ?? [];
-          if (!files.length) return r;
-          const rewritten = files.map(f => fileAliases.get(f) || f);
-          if (rewritten.some((v, i) => v !== files[i])) {
-            mutated = true;
-            return { ...r, _files: Array.from(new Set(rewritten)) };
-          }
-          return r;
-        });
-        if (mutated) {
-          try { mcPersist(STORAGE_KEY, JSON.stringify(next)); } catch {}
-          return next;
-        }
-        return prev;
-      });
-      // Small tick to let the alias-rewrite flush before handleText reads state.
-      await new Promise<void>((r) => setTimeout(r, 50));
-
+      // zzz195: AUTHORITATIVE SYNC. Collect fresh CSV rows in-memory FIRST,
+      // then replace state atomically. This guarantees Refresh reflects
+      // exactly the current CSV content (plus user's manual placeholder
+      // tickers), not a stale merge with old data.
+      const freshRows: Row[] = [];
+      const freshRowKeys = new Set<string>();
+      const displayNames: string[] = [];
       for (const fn of filenames) {
         const text = await fetchCsvText(fn);
         if (!text) continue;
-        const displayName = fileAliases.get(fn) || fn;
-        handleText(text, displayName);
+        let displayName: string;
+        try { displayName = await getDisplayName(fn); } catch { displayName = fn; }
+        displayNames.push(displayName);
+        try {
+          const incoming = toObjects(parseCSV(text));
+          if (!incoming.length) continue;
+          const valid = incoming.filter((r) => rowKey(r) !== '');
+          for (const r of valid) {
+            const k = rowKey(r);
+            const existingIdx = freshRows.findIndex(x => rowKey(x) === k);
+            if (existingIdx >= 0) {
+              // Same ticker in multiple sync CSVs — merge _files
+              const existing: any = freshRows[existingIdx];
+              const prevFiles: string[] = (existing._files as string[] | undefined) ?? [];
+              freshRows[existingIdx] = { ...existing, ...r, _files: Array.from(new Set([...prevFiles, displayName])) } as Row;
+            } else {
+              freshRows.push({ ...r, _files: [displayName] } as any);
+              freshRowKeys.add(k);
+            }
+          }
+        } catch (e: any) {
+          setError('Could not parse CSV "' + displayName + '": ' + (e?.message || e));
+        }
         loaded++;
-        await new Promise<void>((r) => setTimeout(r, 80));
+        await new Promise<void>((r) => setTimeout(r, 40));
       }
-      if (loaded === 0) {
-        setError('Auto-sync failed: no matching files in /data/screener/. Run the GitHub Action first.');
+      if (loaded === 0 || freshRows.length === 0) {
+        setError('Auto-sync failed: no matching files in /data/screener/ (or file was empty).');
       } else {
         markAutoLoaded(autoLoadScope);
-        // zzz194: NO SWEEP. handleText's zzz185 per-file removedFromFile logic
-        // now correctly handles stale ticker removal because we normalized the
-        // _files aliases above. Rows manually added via addTickers (no _files)
-        // and manually uploaded lists are preserved untouched.
+        // Replace state: fresh CSV rows + user's manual placeholder tickers only.
+        // A placeholder is a row created by addTickers() — it has Name + NSE Code
+        // both equal to the same ticker symbol and no other metric fields.
+        setData((prev) => {
+          const placeholders = prev.filter((r: any) => {
+            const files = (r._files as string[] | undefined) ?? [];
+            if (files.length > 0) return false; // came from a CSV, not a placeholder
+            const keys = Object.keys(r).filter(k => !k.startsWith('_'));
+            if (keys.length > 3) return false; // has metric columns — not a placeholder
+            const name = String(r.Name || r.name || '').trim().toUpperCase();
+            const nse = String(r['NSE Code'] || '').trim().toUpperCase();
+            return !!name && (name === nse || !nse);
+          });
+          // Placeholders whose ticker IS in fresh CSV are redundant — CSV wins.
+          const kept: Row[] = [...freshRows];
+          for (const p of placeholders) {
+            if (!freshRowKeys.has(rowKey(p))) kept.push(p);
+          }
+          try {
+            const ok = mcPersist(STORAGE_KEY, JSON.stringify(kept));
+            if (ok) {
+              mcPersist(STORAGE_NAME, displayNames[0] || '');
+              setFname(displayNames[0] || '');
+            }
+          } catch {}
+          return kept;
+        });
       }
       if (force) {
         const s = await getSyncStatus();
@@ -466,7 +482,7 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
       setSyncLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [syncLoading, autoLoadScope, scope, handleText]);
+  }, [syncLoading, autoLoadScope, scope, STORAGE_KEY, STORAGE_NAME]);
   // First-mount auto-load when storage is empty for this scope+market.
   useEffect(() => {
     if (!autoLoadScope) return;
