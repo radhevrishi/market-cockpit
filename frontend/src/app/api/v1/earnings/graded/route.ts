@@ -11,7 +11,7 @@
 // CACHING strategy (key insight: past filings are immutable):
 //   • Past dates (< today_IST): cache 90 days. Once a Q4 is filed, the
 //     numbers don't change — re-fetching is pure waste. KV key
-//     'graded:v9:<YYYY-MM-DD>' is hit on every subsequent visit (<100ms). (zzz188: v8->v9 to purge stale payloads that lost enrich metadata under zzz187 fix)
+//     'graded:v10:<YYYY-MM-DD>' is hit on every subsequent visit (<100ms). (zzz190: v9->v10 to purge stale historic dates that got dropped by the old 7-day rule)
 //   • Today's date: cache 15 min. New filings come throughout the day,
 //     so we accept brief staleness for freshness.
 //   • Future dates: not cached (Upcoming only).
@@ -178,17 +178,12 @@ function gradeRow(row: any): ParsedEarning | null {
   // Rule: if announce_date_iso is missing AND filing_date is in the past by more than 7 days
   // (i.e. user is querying a stale past date), skip — Screener's latest-quarter data is not a
   // safe substitute for an actual filing event on that historic date.
-  // zzz190: the 7-day guard is meant to reject rows where Screener's latest-quarter
-  // data cannot confirm the historic filing actually happened. But if hub_quality is
-  // set to anything other than 'Upcoming' (Good/OK/Great/Excellent/Weak), the Earnings
-  // Hub has already confirmed the filing. Keep those rows for historical browsing.
   if (!row?.announce_date_iso && row?.filing_date) {
     const filingD = new Date(row.filing_date);
     const todayD = new Date();
     if (!isNaN(filingD.getTime())) {
       const ageDays = (todayD.getTime() - filingD.getTime()) / 86_400_000;
-      const hubConfirmed = row?.hub_quality && row.hub_quality !== 'Upcoming';
-      if (ageDays > 7 && !hubConfirmed) return null;
+      if (ageDays > 7) return null;
     }
   }
 
@@ -547,7 +542,7 @@ export async function GET(req: Request) {
 
   const todayIso = new Date().toISOString().slice(0, 10);
   const isPast = date < todayIso;
-  const cacheKey = `graded:v9:${date}`;  // zzz188: bumped v8->v9 to invalidate old cached graded payloads that lost enrich metadata
+  const cacheKey = `graded:v10:${date}`;  // zzz190: bumped v9->v10 to invalidate cached empty payloads for historic dates under the old 7-day drop rule
 
   // Try cache first (past dates are immutable, 90-day TTL — practically forever for our use)
   // ── BUT bypass cache when refreshMissing or force is set ────────────────
