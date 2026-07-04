@@ -6291,16 +6291,11 @@ function MultiConfirmedCard({ stocks }: { stocks: any[] }) {
 // while the first is running.
 const _techPullInFlight: { current: Set<string> } = { current: new Set() };
 
-// ─── zzz203/204: SEPA CHECKLIST PANEL (Winning Playbook overlay) ──────────
-// zzz204 rewrite: 12-point score across 4 orthogonal categories with
-// PERCENTILE-based ranking within the uploaded universe (not fixed cutoffs).
-// Previous version had 62/73 stocks at 10/10 because rules 1-4 all measured
-// the same "bullish stack" thing. New categories:
-//   TREND  (3pt) — Stage-2 stack, 50-SMA slope, price above short/long MAs
-//   RS     (3pt) — percentile of 1Y/3M return, relative-strength ratio
-//   SETUP  (3pt) — proximity to 52w high, base tightness, no extension
-//   VOL    (3pt) — accumulation signature, volume expansion on breakout
-// Total = 12. Elite >= 10, Good 7-9, OK 4-6, Skip < 4.
+// ─── zzz203/204/205: SEPA CHECKLIST PANEL (Winning Playbook overlay) ──────
+// zzz205 UX cleanup: expand cryptic column abbreviations (Tr/RS/St/Vo become
+// TREND/REL-STR/SETUP/VOLUME with visible sub-checks), consolidate momentum
+// into one cell (1Y · 3M · 1W stacked), add "Why" column with plain-English
+// strength summary, and add always-visible category legend below the header.
 function SepaChecklistPanel({ techRows }: { techRows: any[] }) {
   const PANEL = '#0F141B';
   const PANEL2 = '#121821';
@@ -6316,7 +6311,7 @@ function SepaChecklistPanel({ techRows }: { techRows: any[] }) {
   const BLUE = '#60A5FA';
 
   const [filter, setFilter] = React.useState<'all' | 'elite' | 'fresh' | 'tight'>('all');
-  const [sortBy, setSortBy] = React.useState<'score' | 'high' | 'perf1y' | 'perf3m' | 'perf1w'>('score');
+  const [sortBy, setSortBy] = React.useState<'score' | 'perf1y' | 'perf3m' | 'perf1w' | 'rsRank' | 'distHigh'>('score');
 
   const universe = React.useMemo(() => techRows || [], [techRows]);
 
@@ -6345,37 +6340,39 @@ function SepaChecklistPanel({ techRows }: { techRows: any[] }) {
   const scored = React.useMemo(() => {
     return universe.map((r: any) => {
       const price = r.price;
-      const trendChecks: (boolean | null)[] = [];
+      // TREND checks with LABELS so we can build a "why" string
+      const trendLabels = ['Stage 2', 'Full stack', '> 21-EMA'];
       const stage2 = (price != null && r.sma200 != null && r.sma50 != null)
         ? (price > r.sma200 && r.sma50 > r.sma200) : null;
-      trendChecks.push(stage2);
       const stackTight = (r.sma50 != null && r.sma150 != null && r.sma200 != null)
         ? (r.sma50 > r.sma150 * 1.03 && r.sma150 > r.sma200 * 1.03)
         : (r.sma50 != null && r.sma200 != null) ? (r.sma50 > r.sma200 * 1.06) : null;
-      trendChecks.push(stackTight);
-      trendChecks.push((price != null && r.ema21 != null) ? price > r.ema21 : null);
+      const above21 = (price != null && r.ema21 != null) ? price > r.ema21 : null;
+      const trendChecks = [stage2, stackTight, above21];
 
-      const rsChecks: (boolean | null)[] = [];
+      const rsLabels = ['1Y top 20%', '3M top 25%', '1W up'];
       const p1y = pct(perf1ySorted, r.perf1y);
       const p3m = pct(perf3mSorted, r.perf3m);
       const p1w = pct(perf1wSorted, r.perf1w);
-      rsChecks.push(p1y == null ? null : p1y >= 0.80);
-      rsChecks.push(p3m == null ? null : p3m >= 0.75);
-      rsChecks.push(p1w == null ? null : (p1w >= 0.50 && (r.perf1w ?? 0) > 0));
+      const rs1y = p1y == null ? null : p1y >= 0.80;
+      const rs3m = p3m == null ? null : p3m >= 0.75;
+      const rs1w = p1w == null ? null : (p1w >= 0.50 && (r.perf1w ?? 0) > 0);
+      const rsChecks = [rs1y, rs3m, rs1w];
 
-      const setupChecks: (boolean | null)[] = [];
-      setupChecks.push((r.distFromHigh != null) ? r.distFromHigh >= -15 : null);
+      const setupLabels = ['Near 52wH', 'Tight base', 'Not extended'];
+      const nearHigh = (r.distFromHigh != null) ? r.distFromHigh >= -15 : null;
       const adrPctile = pct(adrSorted, r.adrPct);
-      setupChecks.push(adrPctile == null ? null : adrPctile <= 0.40);
+      const tight = adrPctile == null ? null : adrPctile <= 0.40;
       const rsiOk = (r.rsi == null) ? true : r.rsi < 80;
       const notFarAbove21 = (r.pctVsEma21 == null) ? true : r.pctVsEma21 < 15;
-      setupChecks.push((r.rsi != null || r.pctVsEma21 != null) ? (rsiOk && notFarAbove21) : null);
+      const notExtended = (r.rsi != null || r.pctVsEma21 != null) ? (rsiOk && notFarAbove21) : null;
+      const setupChecks = [nearHigh, tight, notExtended];
 
-      const volChecks: (boolean | null)[] = [];
-      volChecks.push((r.relVol1w != null) ? r.relVol1w > 1.1 : null);
-      volChecks.push((typeof r.volContraction === 'boolean') ? r.volContraction : null);
+      const volLabels = ['RelVol > 1.1', 'Vol dry-up', 'Momentum ↗'];
+      const relVolOk = (r.relVol1w != null) ? r.relVol1w > 1.1 : null;
+      const volDry = (typeof r.volContraction === 'boolean') ? r.volContraction : null;
       const accelerating = (r.perf1w != null && r.perf1m != null) ? (r.perf1w > 0 && r.perf1w > r.perf1m / 4) : null;
-      volChecks.push(accelerating);
+      const volChecks = [relVolOk, volDry, accelerating];
 
       const isFresh = (r.distFromHigh != null && r.distFromHigh >= -3 && (r.perf1w ?? 0) > 0);
       const isTightBase = (adrPctile != null && adrPctile <= 0.25);
@@ -6390,7 +6387,37 @@ function SepaChecklistPanel({ techRows }: { techRows: any[] }) {
       const V = cat(volChecks);
       const totalPts = T.pts + RS.pts + S.pts + V.pts;
       const totalKnown = T.known + RS.known + S.known + V.known;
-      return { r, T, RS, S, V, totalPts, totalKnown, p1y, p3m, p1w, adrPctile, isFresh, isTightBase };
+
+      // Build a plain-English "why" string — 2-3 highest signals
+      const strengths: string[] = [];
+      if (T.pts === 3) strengths.push('perfect trend');
+      else if (stage2 === true) strengths.push('Stage 2');
+      if (RS.pts === 3) strengths.push('elite RS');
+      else if (rs1y === true) strengths.push('top-RS 1Y');
+      if (S.pts === 3) strengths.push('tight setup');
+      else if (nearHigh === true && tight === true) strengths.push('near-high tight base');
+      else if (nearHigh === true) strengths.push('near 52w high');
+      else if (tight === true) strengths.push('tight base');
+      if (V.pts === 3) strengths.push('strong volume signal');
+      else if (relVolOk === true) strengths.push('volume expanding');
+      else if (volDry === true) strengths.push('vol dry-up');
+      if (isFresh) strengths.push('fresh breakout');
+
+      const weaknesses: string[] = [];
+      if (T.pts === 0 && T.known > 0) weaknesses.push('no trend');
+      if (RS.pts === 0 && RS.known > 0) weaknesses.push('lagging RS');
+      if (V.pts === 0 && V.known > 0) weaknesses.push('no volume');
+      if (S.pts === 0 && S.known > 0) weaknesses.push('poor setup');
+
+      const rsRank = p1y == null ? null : Math.round(p1y * 100);
+
+      return {
+        r, T, RS, S, V, totalPts, totalKnown,
+        p1y, p3m, p1w, adrPctile, rsRank,
+        isFresh, isTightBase,
+        strengths, weaknesses,
+        trendChecks, trendLabels, rsChecks, rsLabels, setupChecks, setupLabels, volChecks, volLabels,
+      };
     }).filter(x => x.totalKnown >= 6);
   }, [universe, perf1ySorted, perf3mSorted, perf1wSorted, adrSorted, pct]);
 
@@ -6400,10 +6427,11 @@ function SepaChecklistPanel({ techRows }: { techRows: any[] }) {
     if (filter === 'fresh') arr = arr.filter(x => x.isFresh);
     if (filter === 'tight') arr = arr.filter(x => x.isTightBase);
     switch (sortBy) {
-      case 'high': arr.sort((a, b) => (b.r.distFromHigh ?? -99) - (a.r.distFromHigh ?? -99)); break;
-      case 'perf1y': arr.sort((a, b) => (b.r.perf1y ?? -99) - (a.r.perf1y ?? -99)); break;
-      case 'perf3m': arr.sort((a, b) => (b.r.perf3m ?? -99) - (a.r.perf3m ?? -99)); break;
-      case 'perf1w': arr.sort((a, b) => (b.r.perf1w ?? -99) - (a.r.perf1w ?? -99)); break;
+      case 'perf1y':  arr.sort((a, b) => (b.r.perf1y ?? -99) - (a.r.perf1y ?? -99)); break;
+      case 'perf3m':  arr.sort((a, b) => (b.r.perf3m ?? -99) - (a.r.perf3m ?? -99)); break;
+      case 'perf1w':  arr.sort((a, b) => (b.r.perf1w ?? -99) - (a.r.perf1w ?? -99)); break;
+      case 'rsRank':  arr.sort((a, b) => (b.rsRank ?? -1) - (a.rsRank ?? -1)); break;
+      case 'distHigh': arr.sort((a, b) => (b.r.distFromHigh ?? -99) - (a.r.distFromHigh ?? -99)); break;
       default: arr.sort((a, b) => b.totalPts - a.totalPts || (b.p1y ?? 0) - (a.p1y ?? 0));
     }
     return arr;
@@ -6436,15 +6464,36 @@ function SepaChecklistPanel({ techRows }: { techRows: any[] }) {
     </button>
   );
 
-  const th = (key: string, label: string, align: 'left' | 'right' | 'center' = 'left') => (
-    <th style={{ textAlign: align, padding: '6px 8px', color: sortBy === key ? CYAN : MUTED, cursor: 'pointer', userSelect: 'none' }}
+  const sortableTh = (key: string, label: string, align: 'left' | 'right' | 'center' = 'left', color = MUTED) => (
+    <th style={{ textAlign: align, padding: '8px 8px', color: sortBy === key ? CYAN : color, cursor: 'pointer', userSelect: 'none', fontSize: 10.5, letterSpacing: 0.4, textTransform: 'uppercase' }}
         onClick={() => setSortBy(key as any)}>
       {label}{sortBy === key ? ' ↓' : ''}
     </th>
   );
 
+  // Category cell rendering with visible sub-check labels
+  const CatCell = ({ pts, known, checks, labels, color }: { pts: number; known: number; checks: (boolean | null)[]; labels: string[]; color: string }) => {
+    const perfect = pts === known && known > 0;
+    return (
+      <td style={{ padding: '8px 6px', textAlign: 'center', minWidth: 100 }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: perfect ? color : pts >= 2 ? AMBER : pts >= 1 ? MUTED : RED }}>
+          {pts}/{known}
+        </div>
+        <div style={{ fontSize: 9, color: MUTED, lineHeight: 1.4, marginTop: 2 }}>
+          {labels.map((lbl, i) => (
+            <span key={i} style={{ display: 'inline-block', marginRight: 4, opacity: checks[i] === true ? 1 : checks[i] === false ? 0.4 : 0.15 }}>
+              <span style={{ color: checks[i] === true ? color : checks[i] === false ? RED : MUTED }}>{checks[i] === true ? '✓' : checks[i] === false ? '✗' : '·'}</span>
+              <span style={{ color: checks[i] === true ? TXT : MUTED, marginLeft: 2 }}>{lbl}</span>
+            </span>
+          ))}
+        </div>
+      </td>
+    );
+  };
+
   return (
     <div style={{ background: `linear-gradient(180deg, ${CYAN}0F 0%, ${PANEL} 60%)`, border: `1px solid ${CYAN}55`, borderRadius: 10, padding: 18, marginBottom: 20 }}>
+      {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
         <div>
           <div style={{ fontSize: 15, fontWeight: 900, color: TXT }}>
@@ -6452,9 +6501,7 @@ function SepaChecklistPanel({ techRows }: { techRows: any[] }) {
             <a href="/winning-playbook" style={{ marginLeft: 10, fontSize: 11, color: CYAN, textDecoration: 'none' }}>[full rules →]</a>
           </div>
           <div style={{ fontSize: 11.5, color: MUTED, marginTop: 4, lineHeight: 1.5, maxWidth: 980 }}>
-            12-point score, split 4 categories: <b style={{ color: CYAN }}>TREND</b> · <b style={{ color: VIOLET }}>RS</b> · <b style={{ color: AMBER }}>SETUP</b> · <b style={{ color: BLUE }}>VOL</b>.
-            RS ranked as PERCENTILE within your uploaded universe — top 20% by 1Y return gets the RS1 point.
-            Fresh &amp; Tight Base tags are computed but not scored.
+            Every stock scored 0-12 across 4 categories (below). Higher = closer to a textbook Minervini setup. Sort by clicking any column header. Filter with the chips.
           </div>
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -6470,24 +6517,51 @@ function SepaChecklistPanel({ techRows }: { techRows: any[] }) {
         </div>
       </div>
 
+      {/* zzz205: ALWAYS-VISIBLE CATEGORY LEGEND */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8, marginBottom: 14 }}>
+        <div style={{ background: PANEL2, border: `1px solid ${CYAN}44`, borderLeft: `3px solid ${CYAN}`, padding: '8px 10px', borderRadius: 4 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: CYAN }}>🔷 TREND (3 pts)</div>
+          <div style={{ fontSize: 10.5, color: MUTED, marginTop: 3, lineHeight: 1.5 }}>
+            Stage 2 uptrend confirmed · full 50 &gt; 150 &gt; 200 stack · price above 21-EMA.
+          </div>
+        </div>
+        <div style={{ background: PANEL2, border: `1px solid ${VIOLET}44`, borderLeft: `3px solid ${VIOLET}`, padding: '8px 10px', borderRadius: 4 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: VIOLET }}>🟣 REL STR (3 pts)</div>
+          <div style={{ fontSize: 10.5, color: MUTED, marginTop: 3, lineHeight: 1.5 }}>
+            1-year return in top 20% of your CSV · 3-month in top 25% · 1-week positive AND top half.
+          </div>
+        </div>
+        <div style={{ background: PANEL2, border: `1px solid ${AMBER}44`, borderLeft: `3px solid ${AMBER}`, padding: '8px 10px', borderRadius: 4 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: AMBER }}>🟡 SETUP (3 pts)</div>
+          <div style={{ fontSize: 10.5, color: MUTED, marginTop: 3, lineHeight: 1.5 }}>
+            Within 15% of 52-week high · tight base (ADR% in bottom 40%) · not extended (RSI &lt; 80).
+          </div>
+        </div>
+        <div style={{ background: PANEL2, border: `1px solid ${BLUE}44`, borderLeft: `3px solid ${BLUE}`, padding: '8px 10px', borderRadius: 4 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: BLUE }}>🔵 VOLUME (3 pts)</div>
+          <div style={{ fontSize: 10.5, color: MUTED, marginTop: 3, lineHeight: 1.5 }}>
+            Recent volume &gt; 1.1× avg · volume dry-up in the base · momentum accelerating (1W &gt; 1M / 4).
+          </div>
+        </div>
+      </div>
+
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5 }}>
           <thead>
-            <tr style={{ borderBottom: `1px solid ${LINE2}` }}>
-              <th style={{ textAlign: 'left', padding: '6px 8px', color: MUTED }}>#</th>
-              <th style={{ textAlign: 'left', padding: '6px 8px', color: MUTED }}>Ticker</th>
-              <th style={{ textAlign: 'right', padding: '6px 8px', color: MUTED }}>Price</th>
-              {th('perf1y', '1Y', 'right')}
-              {th('perf3m', '3M', 'right')}
-              {th('perf1w', '1W', 'right')}
-              {th('high', 'From 52wH', 'right')}
-              <th style={{ textAlign: 'right', padding: '6px 8px', color: MUTED }}>RS pctl</th>
-              <th style={{ textAlign: 'center', padding: '6px 8px', color: CYAN }} title="Trend / 3">Tr</th>
-              <th style={{ textAlign: 'center', padding: '6px 8px', color: VIOLET }} title="Relative Strength / 3">RS</th>
-              <th style={{ textAlign: 'center', padding: '6px 8px', color: AMBER }} title="Setup quality / 3">St</th>
-              <th style={{ textAlign: 'center', padding: '6px 8px', color: BLUE }} title="Volume / 3">Vo</th>
-              <th style={{ textAlign: 'center', padding: '6px 8px', color: MUTED }}>Tags</th>
-              {th('score', 'Score', 'right')}
+            <tr style={{ borderBottom: `1px solid ${LINE2}`, background: PANEL2 }}>
+              <th style={{ textAlign: 'left', padding: '8px 8px', color: MUTED, fontSize: 10.5, letterSpacing: 0.4, textTransform: 'uppercase' }}>#</th>
+              <th style={{ textAlign: 'left', padding: '8px 8px', color: MUTED, fontSize: 10.5, letterSpacing: 0.4, textTransform: 'uppercase' }}>Ticker</th>
+              <th style={{ textAlign: 'right', padding: '8px 8px', color: MUTED, fontSize: 10.5, letterSpacing: 0.4, textTransform: 'uppercase' }}>Price</th>
+              <th style={{ textAlign: 'right', padding: '8px 8px', color: MUTED, fontSize: 10.5, letterSpacing: 0.4, textTransform: 'uppercase' }}>Perf (1Y · 3M · 1W)</th>
+              {sortableTh('distHigh', 'From 52wH', 'right')}
+              {sortableTh('rsRank', 'RS Rank', 'right')}
+              <th style={{ textAlign: 'center', padding: '8px 6px', color: CYAN, fontSize: 10.5, letterSpacing: 0.4, textTransform: 'uppercase', borderLeft: `2px solid ${LINE2}` }}>TREND</th>
+              <th style={{ textAlign: 'center', padding: '8px 6px', color: VIOLET, fontSize: 10.5, letterSpacing: 0.4, textTransform: 'uppercase' }}>REL STR</th>
+              <th style={{ textAlign: 'center', padding: '8px 6px', color: AMBER, fontSize: 10.5, letterSpacing: 0.4, textTransform: 'uppercase' }}>SETUP</th>
+              <th style={{ textAlign: 'center', padding: '8px 6px', color: BLUE, fontSize: 10.5, letterSpacing: 0.4, textTransform: 'uppercase' }}>VOLUME</th>
+              <th style={{ textAlign: 'left', padding: '8px 8px', color: MUTED, fontSize: 10.5, letterSpacing: 0.4, textTransform: 'uppercase', borderLeft: `2px solid ${LINE2}` }}>Why?</th>
+              <th style={{ textAlign: 'center', padding: '8px 8px', color: MUTED, fontSize: 10.5, letterSpacing: 0.4, textTransform: 'uppercase' }}>Tags</th>
+              {sortableTh('score', 'Score', 'right')}
             </tr>
           </thead>
           <tbody>
@@ -6495,32 +6569,37 @@ function SepaChecklistPanel({ techRows }: { techRows: any[] }) {
               const r = row.r;
               const total = row.totalPts;
               const scoreColor = total >= 10 ? GREEN : total >= 7 ? AMBER : total >= 4 ? CYAN : MUTED;
-              const catCell = (pts: number, known: number, color: string) => (
-                <td style={{ padding: '6px 8px', textAlign: 'center', color, fontWeight: 700 }}>
-                  {pts}/{known}
-                </td>
-              );
+              const whyText = row.strengths.length > 0
+                ? row.strengths.slice(0, 2).join(' · ')
+                : row.weaknesses.length > 0
+                  ? row.weaknesses.slice(0, 2).join(' · ')
+                  : '—';
               return (
                 <tr key={r.symbol || i} style={{ borderBottom: `1px solid ${LINE}`, background: total >= 10 ? `${GREEN}0A` : 'transparent' }}>
-                  <td style={{ padding: '6px 8px', color: MUTED }}>{i + 1}</td>
-                  <td style={{ padding: '6px 8px', color: TXT, fontWeight: 700 }}>{r.symbol || r.ticker || '—'}</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', color: TXT, fontVariantNumeric: 'tabular-nums' }}>{r.price != null ? r.price.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—'}</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', color: (r.perf1y ?? 0) >= 0 ? GREEN : RED }}>{r.perf1y != null ? (r.perf1y > 0 ? '+' : '') + r.perf1y.toFixed(0) + '%' : '—'}</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', color: (r.perf3m ?? 0) >= 0 ? GREEN : RED }}>{r.perf3m != null ? (r.perf3m > 0 ? '+' : '') + r.perf3m.toFixed(0) + '%' : '—'}</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', color: (r.perf1w ?? 0) >= 0 ? GREEN : RED }}>{r.perf1w != null ? (r.perf1w > 0 ? '+' : '') + r.perf1w.toFixed(1) + '%' : '—'}</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', color: (r.distFromHigh ?? 0) >= -5 ? GREEN : (r.distFromHigh ?? 0) >= -15 ? AMBER : RED }}>{r.distFromHigh != null ? r.distFromHigh.toFixed(0) + '%' : '—'}</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', color: (row.p1y ?? 0) >= 0.8 ? GREEN : (row.p1y ?? 0) >= 0.5 ? AMBER : MUTED, fontWeight: 700 }}>
-                    {row.p1y != null ? Math.round(row.p1y * 100) : '—'}
+                  <td style={{ padding: '8px', color: MUTED }}>{i + 1}</td>
+                  <td style={{ padding: '8px', color: TXT, fontWeight: 700 }}>{r.symbol || r.ticker || '—'}</td>
+                  <td style={{ padding: '8px', textAlign: 'right', color: TXT, fontVariantNumeric: 'tabular-nums' }}>{r.price != null ? r.price.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—'}</td>
+                  <td style={{ padding: '8px', textAlign: 'right', color: TXT, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                    <span style={{ color: (r.perf1y ?? 0) >= 0 ? GREEN : RED }}>{r.perf1y != null ? (r.perf1y > 0 ? '+' : '') + r.perf1y.toFixed(0) + '%' : '—'}</span>
+                    <span style={{ color: MUTED, margin: '0 4px' }}>·</span>
+                    <span style={{ color: (r.perf3m ?? 0) >= 0 ? GREEN : RED }}>{r.perf3m != null ? (r.perf3m > 0 ? '+' : '') + r.perf3m.toFixed(0) + '%' : '—'}</span>
+                    <span style={{ color: MUTED, margin: '0 4px' }}>·</span>
+                    <span style={{ color: (r.perf1w ?? 0) >= 0 ? GREEN : RED }}>{r.perf1w != null ? (r.perf1w > 0 ? '+' : '') + r.perf1w.toFixed(1) + '%' : '—'}</span>
                   </td>
-                  {catCell(row.T.pts, row.T.known, row.T.pts === row.T.known ? CYAN : MUTED)}
-                  {catCell(row.RS.pts, row.RS.known, row.RS.pts === row.RS.known ? VIOLET : MUTED)}
-                  {catCell(row.S.pts, row.S.known, row.S.pts === row.S.known ? AMBER : MUTED)}
-                  {catCell(row.V.pts, row.V.known, row.V.pts === row.V.known ? BLUE : MUTED)}
-                  <td style={{ padding: '6px 8px', textAlign: 'center', fontSize: 10 }}>
-                    {row.isFresh && <span title="Within 3% of 52w high + last week positive" style={{ color: CYAN, marginRight: 4 }}>🚀</span>}
-                    {row.isTightBase && <span title="ADR% in bottom 25% of universe" style={{ color: VIOLET }}>🎯</span>}
+                  <td style={{ padding: '8px', textAlign: 'right', color: (r.distFromHigh ?? 0) >= -5 ? GREEN : (r.distFromHigh ?? 0) >= -15 ? AMBER : RED }}>{r.distFromHigh != null ? r.distFromHigh.toFixed(0) + '%' : '—'}</td>
+                  <td style={{ padding: '8px', textAlign: 'right', color: (row.rsRank ?? 0) >= 80 ? GREEN : (row.rsRank ?? 0) >= 50 ? AMBER : MUTED, fontWeight: 700 }}>
+                    {row.rsRank != null ? row.rsRank : '—'}
                   </td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 800, color: scoreColor }}>{total}/{row.totalKnown}</td>
+                  <CatCell pts={row.T.pts} known={row.T.known} checks={row.trendChecks} labels={row.trendLabels} color={CYAN} />
+                  <CatCell pts={row.RS.pts} known={row.RS.known} checks={row.rsChecks} labels={row.rsLabels} color={VIOLET} />
+                  <CatCell pts={row.S.pts} known={row.S.known} checks={row.setupChecks} labels={row.setupLabels} color={AMBER} />
+                  <CatCell pts={row.V.pts} known={row.V.known} checks={row.volChecks} labels={row.volLabels} color={BLUE} />
+                  <td style={{ padding: '8px', color: row.strengths.length ? TXT : RED, fontSize: 11, borderLeft: `2px solid ${LINE2}` }}>{whyText}</td>
+                  <td style={{ padding: '8px', textAlign: 'center', fontSize: 12 }}>
+                    {row.isFresh && <span title="Fresh breakout: within 3% of 52-week high AND up this week" style={{ color: CYAN, marginRight: 4 }}>🚀</span>}
+                    {row.isTightBase && <span title="Tight base: ADR% in bottom 25% of the universe" style={{ color: VIOLET }}>🎯</span>}
+                  </td>
+                  <td style={{ padding: '8px', textAlign: 'right', fontWeight: 800, color: scoreColor, fontSize: 14 }}>{total}/{row.totalKnown}</td>
                 </tr>
               );
             })}
@@ -6530,17 +6609,16 @@ function SepaChecklistPanel({ techRows }: { techRows: any[] }) {
 
       {filtered.length > showTop && (
         <div style={{ fontSize: 11, color: MUTED, marginTop: 8, fontStyle: 'italic' }}>
-          Showing top {showTop} of {filtered.length} filtered stocks · click column headers to sort · click chips to filter.
+          Showing top {showTop} of {filtered.length} filtered stocks · click column headers to sort · click chips at the top to filter.
         </div>
       )}
 
       <div style={{ fontSize: 11, color: MUTED, marginTop: 12, padding: '8px 10px', background: PANEL2, borderRadius: 6, lineHeight: 1.6 }}>
-        <b style={{ color: TXT }}>How the score is built.</b>{' '}
-        <b style={{ color: CYAN }}>Trend (3)</b>: Stage-2 confirmed · full 50/150/200 stack · above 21-EMA.{' '}
-        <b style={{ color: VIOLET }}>RS (3)</b>: 1Y in top 20% · 3M in top 25% · 1W positive AND top half.{' '}
-        <b style={{ color: AMBER }}>Setup (3)</b>: within 15% of 52w high · tight ADR% (bottom 40%) · not extended.{' '}
-        <b style={{ color: BLUE }}>Volume (3)</b>: RelVol &gt; 1.1 · volume contraction pattern · momentum accelerating.
-        Manual checks: CANSLIM &quot;N&quot; (new product), &quot;S&quot; (small float), &quot;L&quot; (industry leader), &quot;I&quot; (institutional buying).
+        <b style={{ color: TXT }}>How to read this.</b>{' '}
+        Each of the 4 category cells shows the score (e.g. <b>3/3</b>) plus the specific checks that passed / failed below (✓ / ✗).
+        The <b>Why?</b> column summarizes the 2 strongest signals in plain English.
+        A <b>10+/12</b> stock passes almost every measurable Minervini/CANSLIM rule — but you still need to verify the manual items: new product / new management / new industry cycle, small float, industry leader, institutional buying (see the &quot;5-layer engine&quot; block below and Portfolio Fundamentals).
+        Click a ticker in the Champions / Buy Zone cards further down to see full technicals + fundamentals + position sizing.
       </div>
     </div>
   );
