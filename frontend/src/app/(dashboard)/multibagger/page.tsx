@@ -6291,13 +6291,12 @@ function MultiConfirmedCard({ stocks }: { stocks: any[] }) {
 // while the first is running.
 const _techPullInFlight: { current: Set<string> } = { current: new Set() };
 
-// ─── zzz207: VOLUME POCKETS PANEL (Screener.in weekly + monthly screens) ──
-// Surfaces the two Screener.in screens "Weekly Volume Pockets" (3771598) and
-// "Monthly Volume Pockets" (3771541), synced daily by screener-sync.yml into
-// /data/screener/. India Technicals ONLY. Each pocket stock is cross-referenced
-// against the tab's TradingView tech universe: if present we show its tech
-// score + entry status; if absent it's flagged so you can add it to the TV
-// screen. Copy buttons export NSE:SYMBOL lists straight to TradingView.
+// ─── zzz207/zzz209: VOLUME POCKETS PANEL (Screener.in weekly + monthly) ──
+// zzz209: full decision table. Company NAMES (not just tickers), Pocket Score
+// 0-100 built from: volume surge vs 1Y avg · trend vs DMA50/200 · distance
+// from 52w high · Q sales/profit growth · quality (ROCE, D/E, promoter,
+// pledge). Verdict tags (🟢 STRONG / 🟡 WATCH / ⚪ WEAK + ⚠ red flags),
+// TV-universe tech score cross-ref, ranked descending. India Technicals only.
 function VolumePocketsPanel({ techRows }: { techRows: any[] }) {
   const PANEL = '#0F141B';
   const PANEL2 = '#121821';
@@ -6311,60 +6310,24 @@ function VolumePocketsPanel({ techRows }: { techRows: any[] }) {
   const AMBER = '#F59E0B';
   const VIOLET = '#A78BFA';
 
-  type PocketStock = { symbol: string; name: string };
-  type Pocket = { key: 'weekly' | 'monthly'; label: string; stocks: PocketStock[]; error?: string };
-  const [pockets, setPockets] = React.useState<Pocket[] | null>(null);
+  type PocketStock = {
+    symbol: string; name: string; isBseCode: boolean;
+    inWeekly: boolean; inMonthly: boolean;
+    cmp?: number; mcap?: number;
+    surge?: number; surgeSrc?: 'W' | 'M';
+    above50?: boolean; above200?: boolean;
+    dist52w?: number;            // % from 52w high (negative = below)
+    salesQ?: number; profitQ?: number;
+    roce?: number; de?: number; promoter?: number; pledge?: number;
+    opmQ?: number; ret1y?: number; pe?: number;
+    score: number; verdict: 'STRONG' | 'WATCH' | 'WEAK'; flags: string[];
+    tv?: any;
+  };
+  const [stocks, setStocks] = React.useState<PocketStock[] | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [toast, setToast] = React.useState('');
+  const [tick, setTick] = React.useState(0);
 
-  const load = React.useCallback(async () => {
-    setLoading(true);
-    try {
-      const mResp = await fetch('/data/screener/manifest.json', { cache: 'no-store' });
-      if (!mResp.ok) { setPockets([]); return; }
-      const manifest = await mResp.json();
-      const files: { name: string }[] = manifest?.files || [];
-      const XLSX = await import('xlsx');
-      const defs: { key: 'weekly' | 'monthly'; label: string; prefix: string }[] = [
-        { key: 'weekly', label: '📅 Weekly Volume Pockets', prefix: 'weekly-volume-pockets' },
-        { key: 'monthly', label: '🗓 Monthly Volume Pockets', prefix: 'monthly-volume-pockets' },
-      ];
-      const out: Pocket[] = [];
-      for (const d of defs) {
-        const f = files.find(x => x.name && x.name.startsWith(d.prefix));
-        if (!f) { out.push({ key: d.key, label: d.label, stocks: [], error: 'not synced yet' }); continue; }
-        try {
-          const r = await fetch(`/data/screener/${f.name}`, { cache: 'no-store' });
-          if (!r.ok) { out.push({ key: d.key, label: d.label, stocks: [], error: `HTTP ${r.status}` }); continue; }
-          const ab = await r.arrayBuffer();
-          const wb = XLSX.read(new Uint8Array(ab), { type: 'array' });
-          const sheet = wb.Sheets[wb.SheetNames[0]];
-          const raw = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: '' });
-          const stocks: PocketStock[] = [];
-          const seen = new Set<string>();
-          for (const row of raw) {
-            const sym = String(row['NSE Code'] || row['NSE code'] || row['BSE Code'] || row['BSE code'] || '').trim();
-            const name = String(row['Name'] || row['name'] || '').trim();
-            if (!sym || seen.has(sym)) continue;
-            seen.add(sym);
-            stocks.push({ symbol: sym, name });
-          }
-          out.push({ key: d.key, label: d.label, stocks });
-        } catch (e) {
-          out.push({ key: d.key, label: d.label, stocks: [], error: e instanceof Error ? e.message : String(e) });
-        }
-      }
-      setPockets(out);
-    } catch {
-      setPockets([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  React.useEffect(() => { load(); }, [load]);
-
-  // Cross-ref map: TV tech universe symbol → row (for score + entry status)
   const techMap = React.useMemo(() => {
     const m = new Map<string, any>();
     for (const r of techRows || []) {
@@ -6373,6 +6336,116 @@ function VolumePocketsPanel({ techRows }: { techRows: any[] }) {
     }
     return m;
   }, [techRows]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const nn = (v: any): number | undefined => {
+          if (v === undefined || v === null || v === '') return undefined;
+          const n = typeof v === 'number' ? v : Number(String(v).replace(/,/g, ''));
+          return Number.isFinite(n) ? n : undefined;
+        };
+        const mResp = await fetch('/data/screener/manifest.json', { cache: 'no-store' });
+        if (!mResp.ok) { if (!cancelled) setStocks([]); return; }
+        const manifest = await mResp.json();
+        const files: { name: string }[] = manifest?.files || [];
+        const XLSX = await import('xlsx');
+        const byKey = new Map<string, PocketStock>();
+
+        for (const pk of ['weekly', 'monthly'] as const) {
+          const f = files.find(x => x.name && x.name.startsWith(`${pk}-volume-pockets`));
+          if (!f) continue;
+          let raw: Record<string, any>[] = [];
+          try {
+            const r = await fetch(`/data/screener/${f.name}`, { cache: 'no-store' });
+            if (!r.ok) continue;
+            const ab = await r.arrayBuffer();
+            const wb = XLSX.read(new Uint8Array(ab), { type: 'array' });
+            raw = XLSX.utils.sheet_to_json<Record<string, any>>(wb.Sheets[wb.SheetNames[0]], { defval: '' });
+          } catch { continue; }
+
+          for (const row of raw) {
+            const nse = String(row['NSE Code'] || row['NSE code'] || '').trim();
+            const bse = String(row['BSE Code'] || row['BSE code'] || '').trim();
+            const symbol = nse || bse;
+            const name = String(row['Name'] || '').trim();
+            if (!symbol && !name) continue;
+            const key = symbol || name;
+            let s = byKey.get(key);
+            if (!s) {
+              const cmp = nn(row['Current Price']);
+              const dma50 = nn(row['DMA 50']);
+              const dma200 = nn(row['DMA 200']);
+              const f52 = nn(row['From 52w high']); // price ÷ 52w-high ratio (0-1)
+              s = {
+                symbol: symbol || '—', name: name || symbol, isBseCode: !nse && !!bse,
+                inWeekly: false, inMonthly: false,
+                cmp, mcap: nn(row['Market Capitalization']),
+                above50: (cmp != null && dma50 != null) ? cmp > dma50 : undefined,
+                above200: (cmp != null && dma200 != null) ? cmp > dma200 : undefined,
+                dist52w: f52 != null ? (f52 - 1) * 100 : undefined,
+                salesQ: nn(row['YOY Quarterly sales growth']),
+                profitQ: nn(row['YOY Quarterly profit growth']),
+                roce: nn(row['Return on capital employed']),
+                de: nn(row['Debt to equity']),
+                promoter: nn(row['Promoter holding']),
+                pledge: nn(row['Pledged percentage']),
+                opmQ: nn(row['OPM latest quarter']),
+                ret1y: nn(row['Return over 1year']),
+                pe: nn(row['Price to Earning']),
+                score: 0, verdict: 'WEAK', flags: [],
+              };
+              byKey.set(key, s);
+            }
+            if (pk === 'weekly') s.inWeekly = true; else s.inMonthly = true;
+            // Volume surge: short-window avg vs 1-year avg — keep the STRONGEST
+            const volY = nn(row['Volume 1year average']);
+            const volShort = pk === 'weekly' ? nn(row['Volume 1week average']) : nn(row['Volume 1month average']);
+            if (volY && volShort && volY > 0) {
+              const ratio = volShort / volY;
+              if (s.surge == null || ratio > s.surge) { s.surge = ratio; s.surgeSrc = pk === 'weekly' ? 'W' : 'M'; }
+            }
+          }
+        }
+
+        // Score + verdict
+        for (const s of byKey.values()) {
+          let sc = 0;
+          const flags: string[] = [];
+          if (s.surge != null) sc += Math.max(0, Math.min(30, Math.round(10 * Math.log2(s.surge))));
+          if (s.above50 === true) sc += 10;
+          if (s.above200 === true) sc += 10;
+          if (s.dist52w != null) sc += s.dist52w >= -10 ? 10 : s.dist52w >= -25 ? 5 : 0;
+          if (s.salesQ != null) sc += s.salesQ >= 25 ? 10 : s.salesQ >= 10 ? 5 : 0;
+          if (s.profitQ != null) sc += s.profitQ >= 25 ? 10 : s.profitQ >= 10 ? 5 : 0;
+          if (s.ret1y != null && s.ret1y > 20) sc += 5;
+          if (s.roce != null && s.roce >= 15) sc += 5;
+          if (s.de != null && s.de <= 0.5) sc += 5;
+          if (s.promoter != null && s.promoter >= 50) sc += 3;
+          if (s.pledge != null && s.pledge === 0) sc += 2;
+          if (s.profitQ != null && s.profitQ < -20) flags.push('profit falling');
+          if (s.opmQ != null && s.opmQ <= 0) flags.push('negative OPM');
+          if (s.pledge != null && s.pledge > 5) flags.push(`pledge ${s.pledge.toFixed(0)}%`);
+          if (s.de != null && s.de > 1.5) flags.push(`D/E ${s.de.toFixed(1)}`);
+          if (s.above200 === false) flags.push('below 200-DMA');
+          s.score = Math.min(100, sc);
+          s.flags = flags;
+          s.verdict = (s.score >= 65 && flags.length === 0) ? 'STRONG' : s.score >= 45 ? 'WATCH' : 'WEAK';
+          s.tv = techMap.get((s.symbol || '').toUpperCase());
+        }
+
+        const arr = [...byKey.values()].sort((a, b) => b.score - a.score || (b.surge ?? 0) - (a.surge ?? 0));
+        if (!cancelled) setStocks(arr);
+      } catch {
+        if (!cancelled) setStocks([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [techMap, tick]);
 
   const copy = async (txt: string, label: string) => {
     try {
@@ -6384,8 +6457,9 @@ function VolumePocketsPanel({ techRows }: { techRows: any[] }) {
       setTimeout(() => setToast(''), 3000);
     }
   };
+  const tvList = (arr: PocketStock[]) => arr.filter(x => !x.isBseCode).map(x => `NSE:${x.symbol}`).join(',');
 
-  if (pockets === null) {
+  if (stocks === null) {
     return (
       <div style={{ background: PANEL, border: `1px solid ${LINE}`, borderRadius: 12, padding: 16, marginBottom: 20, fontSize: 13, color: MUTED }}>
         📦 Loading Volume Pockets (Screener.in)…
@@ -6393,79 +6467,128 @@ function VolumePocketsPanel({ techRows }: { techRows: any[] }) {
     );
   }
 
-  const anyData = pockets.some(p => p.stocks.length > 0);
+  const weekly = stocks.filter(s => s.inWeekly);
+  const monthly = stocks.filter(s => s.inMonthly);
+  const strongN = stocks.filter(s => s.verdict === 'STRONG').length;
+  const watchN = stocks.filter(s => s.verdict === 'WATCH').length;
+
+  const fmtCr = (v?: number) => v == null ? '—' : v >= 1000 ? `₹${(v / 1000).toFixed(1)}k Cr` : `₹${Math.round(v)} Cr`;
+  const fmtPc = (v?: number, dp = 0) => v == null ? '—' : `${v > 0 ? '+' : ''}${v.toFixed(dp)}%`;
+  const pcColor = (v?: number) => v == null ? MUTED : v >= 0 ? GREEN : RED;
+
+  const th = (label: string, align: 'left' | 'right' | 'center' = 'right') => (
+    <th style={{ textAlign: align, padding: '11px 9px', color: MUTED, fontSize: 11.5, fontWeight: 800, letterSpacing: 0.4, textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{label}</th>
+  );
 
   return (
     <div style={{ background: `linear-gradient(180deg, ${VIOLET}0D 0%, ${PANEL} 55%)`, border: `1px solid ${VIOLET}55`, borderRadius: 14, padding: 20, marginBottom: 20 }}>
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 10, marginBottom: 6 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginBottom: 6 }}>
         <div style={{ fontSize: 18, fontWeight: 900, color: TXT }}>📦 Volume Pockets · Screener.in</div>
-        <span style={{ fontSize: 12, color: MUTED }}>
-          Weekly (screen 3771598) + Monthly (3771541) · auto-synced daily · cross-checked against your TV technicals universe
-        </span>
-        <button onClick={load} disabled={loading}
-          style={{ marginLeft: 'auto', background: PANEL2, color: VIOLET, border: `1px solid ${VIOLET}55`, padding: '5px 12px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: loading ? 'wait' : 'pointer' }}>
-          {loading ? '⏳' : '🔄 Refresh'}
-        </button>
-        {toast && (
-          <span style={{ background: toast.startsWith('✓') ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)', color: toast.startsWith('✓') ? GREEN : RED, padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 700 }}>
-            {toast}
-          </span>
-        )}
+        <span style={{ background: `${GREEN}22`, color: GREEN, padding: '3px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700 }}>🟢 Strong {strongN}</span>
+        <span style={{ background: `${AMBER}22`, color: AMBER, padding: '3px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700 }}>🟡 Watch {watchN}</span>
+        <span style={{ background: `${CYAN}18`, color: CYAN, padding: '3px 10px', borderRadius: 999, fontSize: 12 }}>📅 Weekly {weekly.length}</span>
+        <span style={{ background: `${VIOLET}18`, color: VIOLET, padding: '3px 10px', borderRadius: 999, fontSize: 12 }}>🗓 Monthly {monthly.length}</span>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <button onClick={() => copy(tvList(weekly), `Weekly pockets (${weekly.length})`)}
+            style={{ background: 'transparent', border: `1px solid ${LINE2}`, color: TXT, padding: '5px 11px', borderRadius: 6, fontSize: 11.5, fontWeight: 700, cursor: 'pointer' }}>📋 Copy 📅 Weekly</button>
+          <button onClick={() => copy(tvList(monthly), `Monthly pockets (${monthly.length})`)}
+            style={{ background: 'transparent', border: `1px solid ${LINE2}`, color: TXT, padding: '5px 11px', borderRadius: 6, fontSize: 11.5, fontWeight: 700, cursor: 'pointer' }}>📋 Copy 🗓 Monthly</button>
+          <button onClick={() => copy(tvList(stocks.filter(x => x.verdict !== 'WEAK')), 'Strong + Watch pockets')}
+            style={{ background: `${GREEN}22`, border: `1px solid ${GREEN}55`, color: GREEN, padding: '5px 11px', borderRadius: 6, fontSize: 11.5, fontWeight: 700, cursor: 'pointer' }}>📋 Copy 🟢+🟡</button>
+          <button onClick={() => setTick(t => t + 1)} disabled={loading}
+            style={{ background: PANEL2, color: VIOLET, border: `1px solid ${VIOLET}55`, padding: '5px 11px', borderRadius: 6, fontSize: 11.5, fontWeight: 700, cursor: loading ? 'wait' : 'pointer' }}>{loading ? '⏳' : '🔄 Refresh'}</button>
+          {toast && <span style={{ background: toast.startsWith('✓') ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)', color: toast.startsWith('✓') ? GREEN : RED, padding: '5px 10px', borderRadius: 6, fontSize: 11.5, fontWeight: 700 }}>{toast}</span>}
+        </div>
       </div>
-      <div style={{ fontSize: 12, color: MUTED, marginBottom: 12, lineHeight: 1.5 }}>
-        A <b style={{ color: TXT }}>volume pocket</b> = unusual accumulation vs. recent average. Stocks also in your TV universe show their <b style={{ color: CYAN }}>tech score</b>;
-        <span style={{ color: AMBER }}> ⬚ not-in-universe</span> names are candidates to add to your TradingView screens.
+      <div style={{ fontSize: 12, color: MUTED, marginBottom: 12, lineHeight: 1.55 }}>
+        Screener.in screens <b style={{ color: TXT }}>Weekly (3771598)</b> + <b style={{ color: TXT }}>Monthly (3771541)</b>, auto-synced 4×/day.
+        <b style={{ color: TXT }}> Pocket Score (0-100)</b>: volume surge vs 1Y avg (30) · trend vs 50/200-DMA (20) · near 52w high (10) · Q sales + profit growth (20) · 1Y return (5) · quality — ROCE, D/E, promoter, zero pledge (15).
+        <b style={{ color: GREEN }}> 🟢 STRONG</b> = 65+ with no red flags · <b style={{ color: AMBER }}>🟡 WATCH</b> = 45+ · ⚠ flags listed per stock. TV column = tech score if the stock is in your TradingView universe.
       </div>
 
-      {!anyData && (
+      {stocks.length === 0 ? (
         <div style={{ fontSize: 12.5, color: MUTED, padding: 12, background: PANEL2, borderRadius: 8 }}>
-          No Volume Pockets data on the server yet. The screener-sync GitHub Action syncs 4× daily — or trigger it manually (Actions → &quot;Sync Screener.in CSVs&quot; → Run workflow).
+          No Volume Pockets data on the server yet. The screener-sync GitHub Action runs 4×/day — or trigger it manually (Actions → &quot;Sync Screener.in CSVs&quot;).
+        </div>
+      ) : (
+        <div style={{ overflowX: 'auto', border: `1px solid ${LINE}`, borderRadius: 10 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+            <thead>
+              <tr style={{ borderBottom: `2px solid ${LINE2}`, background: PANEL2 }}>
+                {th('#', 'left')}
+                {th('Company', 'left')}
+                {th('Pocket', 'center')}
+                {th('CMP')}
+                {th('MCap')}
+                {th('Vol surge')}
+                {th('Trend', 'center')}
+                {th('52wH')}
+                {th('Sales Q')}
+                {th('Profit Q')}
+                {th('ROCE')}
+                {th('D/E')}
+                {th('TV', 'center')}
+                {th('Verdict', 'left')}
+                {th('Score')}
+              </tr>
+            </thead>
+            <tbody>
+              {stocks.map((s, i) => {
+                const vColor = s.verdict === 'STRONG' ? GREEN : s.verdict === 'WATCH' ? AMBER : MUTED;
+                const zebra = i % 2 === 1 ? 'rgba(255,255,255,0.02)' : 'transparent';
+                return (
+                  <tr key={s.symbol + s.name} style={{ borderBottom: `1px solid ${LINE}`, background: s.verdict === 'STRONG' ? `${GREEN}0C` : zebra }}>
+                    <td style={{ padding: '9px', color: i < 3 ? AMBER : MUTED, fontWeight: i < 3 ? 800 : 400 }}>{i + 1}</td>
+                    <td style={{ padding: '9px', minWidth: 170 }}>
+                      <div style={{ color: TXT, fontWeight: 800, fontSize: 13.5 }}>{s.name}</div>
+                      <div style={{ color: MUTED, fontSize: 10.5, marginTop: 2 }}>{s.isBseCode ? `BSE ${s.symbol}` : `NSE:${s.symbol}`}</div>
+                    </td>
+                    <td style={{ padding: '9px', textAlign: 'center', fontSize: 13, whiteSpace: 'nowrap' }}>
+                      {s.inWeekly && <span title="Weekly Volume Pockets" style={{ marginRight: s.inMonthly ? 3 : 0 }}>📅</span>}
+                      {s.inMonthly && <span title="Monthly Volume Pockets">🗓</span>}
+                    </td>
+                    <td style={{ padding: '9px', textAlign: 'right', color: TXT, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{s.cmp != null ? `₹${s.cmp.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '—'}</td>
+                    <td style={{ padding: '9px', textAlign: 'right', color: MUTED, fontVariantNumeric: 'tabular-nums' }}>{fmtCr(s.mcap)}</td>
+                    <td style={{ padding: '9px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <span style={{ color: (s.surge ?? 0) >= 8 ? GREEN : (s.surge ?? 0) >= 3 ? AMBER : MUTED, fontWeight: 800, fontSize: 13.5 }}>
+                        {s.surge != null ? `${s.surge.toFixed(1)}×` : '—'}
+                      </span>
+                      {s.surgeSrc && <span style={{ color: MUTED, fontSize: 10, marginLeft: 3 }}>{s.surgeSrc}</span>}
+                    </td>
+                    <td style={{ padding: '9px', textAlign: 'center', whiteSpace: 'nowrap', fontSize: 11 }}>
+                      <span title="price vs 50-DMA" style={{ color: s.above50 === true ? GREEN : s.above50 === false ? RED : MUTED }}>{s.above50 === true ? '✓' : s.above50 === false ? '✗' : '·'}50</span>
+                      <span title="price vs 200-DMA" style={{ color: s.above200 === true ? GREEN : s.above200 === false ? RED : MUTED, marginLeft: 5 }}>{s.above200 === true ? '✓' : s.above200 === false ? '✗' : '·'}200</span>
+                    </td>
+                    <td style={{ padding: '9px', textAlign: 'right', color: (s.dist52w ?? -99) >= -10 ? GREEN : (s.dist52w ?? -99) >= -25 ? AMBER : RED, fontVariantNumeric: 'tabular-nums' }}>{s.dist52w != null ? `${s.dist52w.toFixed(0)}%` : '—'}</td>
+                    <td style={{ padding: '9px', textAlign: 'right', color: pcColor(s.salesQ), fontVariantNumeric: 'tabular-nums' }}>{fmtPc(s.salesQ)}</td>
+                    <td style={{ padding: '9px', textAlign: 'right', color: pcColor(s.profitQ), fontVariantNumeric: 'tabular-nums' }}>{fmtPc(s.profitQ)}</td>
+                    <td style={{ padding: '9px', textAlign: 'right', color: (s.roce ?? 0) >= 15 ? GREEN : MUTED, fontVariantNumeric: 'tabular-nums' }}>{s.roce != null ? s.roce.toFixed(0) + '%' : '—'}</td>
+                    <td style={{ padding: '9px', textAlign: 'right', color: (s.de ?? 0) > 1 ? RED : (s.de ?? 0) > 0.5 ? AMBER : GREEN, fontVariantNumeric: 'tabular-nums' }}>{s.de != null ? s.de.toFixed(2) : '—'}</td>
+                    <td style={{ padding: '9px', textAlign: 'center' }}>
+                      {s.tv
+                        ? <span title={`In your TV universe · tech ${s.tv.totalScore ?? '—'} · ${s.tv.rightEntry ?? ''}`} style={{ background: `${GREEN}1F`, color: (s.tv.totalScore ?? 0) >= 60 ? GREEN : AMBER, fontWeight: 800, fontSize: 12, padding: '2px 8px', borderRadius: 6 }}>{s.tv.totalScore ?? '—'}</span>
+                        : <span title="Not in your TradingView universe — candidate to add" style={{ color: MUTED, fontSize: 11 }}>—</span>}
+                    </td>
+                    <td style={{ padding: '9px', minWidth: 130 }}>
+                      <span style={{ color: vColor, fontWeight: 800, fontSize: 12 }}>
+                        {s.verdict === 'STRONG' ? '🟢 STRONG' : s.verdict === 'WATCH' ? '🟡 WATCH' : '⚪ WEAK'}
+                      </span>
+                      {s.flags.length > 0 && <div style={{ color: RED, fontSize: 10.5, marginTop: 2, lineHeight: 1.4 }}>⚠ {s.flags.join(' · ')}</div>}
+                    </td>
+                    <td style={{ padding: '9px', textAlign: 'right' }}>
+                      <span style={{ display: 'inline-block', background: `${vColor}1F`, border: `1px solid ${vColor}55`, color: vColor, fontWeight: 900, fontSize: 14, padding: '3px 9px', borderRadius: 8, fontVariantNumeric: 'tabular-nums' }}>{s.score}</span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 12 }}>
-        {pockets.map(p => {
-          const inUni = p.stocks.filter(s => techMap.has(s.symbol.toUpperCase()));
-          const notInUni = p.stocks.filter(s => !techMap.has(s.symbol.toUpperCase()));
-          const color = p.key === 'weekly' ? CYAN : VIOLET;
-          return (
-            <div key={p.key} style={{ background: PANEL2, border: `1px solid ${color}33`, borderTop: `3px solid ${color}`, borderRadius: 10, padding: 14 }}>
-              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                <div style={{ fontSize: 14.5, fontWeight: 800, color }}>{p.label}</div>
-                <span style={{ background: `${color}1F`, color, padding: '2px 9px', borderRadius: 999, fontSize: 11.5, fontWeight: 700 }}>{p.stocks.length}</span>
-                {inUni.length > 0 && <span style={{ background: 'rgba(16,185,129,0.15)', color: GREEN, padding: '2px 9px', borderRadius: 999, fontSize: 11 }}>in universe {inUni.length}</span>}
-                {p.stocks.length > 0 && (
-                  <button onClick={() => copy(p.stocks.map(s => `NSE:${s.symbol}`).join(','), `${p.label} (${p.stocks.length})`)}
-                    style={{ marginLeft: 'auto', background: 'transparent', border: `1px solid ${LINE2}`, color: TXT, padding: '4px 10px', borderRadius: 6, fontSize: 11.5, fontWeight: 700, cursor: 'pointer' }}>
-                    📋 Copy for TV
-                  </button>
-                )}
-              </div>
-              {p.error && <div style={{ fontSize: 12, color: AMBER, marginBottom: 6 }}>⚠️ {p.error}</div>}
-              {p.stocks.length === 0 && !p.error && <div style={{ fontSize: 12, color: MUTED }}>Empty screen right now.</div>}
-              {p.stocks.length > 0 && (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, maxHeight: 190, overflowY: 'auto' }}>
-                  {[...inUni, ...notInUni].map(s => {
-                    const t = techMap.get(s.symbol.toUpperCase());
-                    return (
-                      <span key={s.symbol} title={s.name + (t ? ` · tech ${t.totalScore ?? '—'} · ${t.rightEntry ?? ''}` : ' · not in TV universe')}
-                        style={{
-                          display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 8px', borderRadius: 6, fontSize: 12,
-                          background: t ? 'rgba(16,185,129,0.10)' : 'rgba(255,255,255,0.04)',
-                          border: `1px solid ${t ? 'rgba(16,185,129,0.35)' : LINE}`,
-                        }}>
-                        <b style={{ color: t ? GREEN : TXT }}>{s.symbol}</b>
-                        {t
-                          ? <span style={{ color: (t.totalScore ?? 0) >= 60 ? GREEN : (t.totalScore ?? 0) >= 45 ? AMBER : MUTED, fontSize: 11, fontWeight: 700 }}>{t.totalScore ?? '—'}</span>
-                          : <span style={{ color: AMBER, fontSize: 10.5 }}>⬚</span>}
-                      </span>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })}
+      <div style={{ fontSize: 11.5, color: MUTED, marginTop: 10, lineHeight: 1.6 }}>
+        💡 <b style={{ color: TXT }}>How to act on this:</b> a 🟢 STRONG with big vol surge + ✓50 ✓200 + near 52wH is institutional accumulation in an uptrend — check the SEPA table / detail modal before entry.
+        A high surge <b>below</b> the 200-DMA is early accumulation in a base — watchlist, don&apos;t chase. Names without a TV score aren&apos;t in your TradingView export yet — use the copy buttons to add them.
       </div>
     </div>
   );
