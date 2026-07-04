@@ -1,6 +1,6 @@
 {
-  "lastSync": "2026-07-04T14:28:55Z",
-  "ok": 15,
+  "lastSync": "2026-07-04T14:33:59Z",
+  "ok": 17,
   "fail": 0,
   "files": [
     {
@@ -37,6 +37,11 @@
       "name": "lowequitycapital.csv",
       "size": 5757,
       "displayName": "Lowequitycapital"
+    },
+    {
+      "name": "monthly-volume-pockets.csv",
+      "size": 14733,
+      "displayName": "Monthly Volume Pockets"
     },
     {
       "name": "multibagger-like-acutaasatlantadee-dev.csv",
@@ -77,6 +82,11 @@
       "name": "watchlist-8105148.csv",
       "size": 65541,
       "displayName": "Working watchlist"
+    },
+    {
+      "name": "weekly-volume-pockets.csv",
+      "size": 8254,
+      "displayName": "Weekly Volume Pockets"
     }
   ]
 }
