@@ -6291,11 +6291,12 @@ function MultiConfirmedCard({ stocks }: { stocks: any[] }) {
 // while the first is running.
 const _techPullInFlight: { current: Set<string> } = { current: new Set() };
 
-// ─── zzz203/204/205: SEPA CHECKLIST PANEL (Winning Playbook overlay) ──────
-// zzz205 UX cleanup: expand cryptic column abbreviations (Tr/RS/St/Vo become
-// TREND/REL-STR/SETUP/VOLUME with visible sub-checks), consolidate momentum
-// into one cell (1Y · 3M · 1W stacked), add "Why" column with plain-English
-// strength summary, and add always-visible category legend below the header.
+// ─── zzz203/204/205/206: SEPA CHECKLIST PANEL (Winning Playbook overlay) ──
+// zzz206: (1) UI upsize — bigger fonts everywhere, roomier cells, score pills,
+// zebra rows, stacked sub-checks, exchange tag under ticker; (2) EXPORT BEST
+// SEPA PICKS block — TradingView copy (with sections), comma list, .txt / .csv
+// download, per-bucket copy (Elite / Good / Fresh / Tight). Panel is shared by
+// BOTH the India and USA Technicals tabs, so both get the export for free.
 function SepaChecklistPanel({ techRows }: { techRows: any[] }) {
   const PANEL = '#0F141B';
   const PANEL2 = '#121821';
@@ -6444,11 +6445,88 @@ function SepaChecklistPanel({ techRows }: { techRows: any[] }) {
   const tightCount = scored.filter(x => x.isTightBase).length;
   const showTop = Math.min(filtered.length, 40);
 
+  // ── zzz206: SEPA EXPORT — curated buckets, deduped in priority order ──────
+  type SepaBucket = 'ELITE' | 'GOOD' | 'FRESH' | 'TIGHT';
+  const sepaPicks = React.useMemo(() => {
+    const seen = new Set<string>();
+    const out: { row: (typeof scored)[number]; bucket: SepaBucket }[] = [];
+    const add = (rows: typeof scored, bucket: SepaBucket) => {
+      for (const x of rows) {
+        const sym = x.r.symbol || x.r.ticker;
+        if (!sym || seen.has(sym)) continue;
+        seen.add(sym);
+        out.push({ row: x, bucket });
+      }
+    };
+    const bySc = [...scored].sort((a, b) => b.totalPts - a.totalPts || (b.p1y ?? 0) - (a.p1y ?? 0));
+    add(bySc.filter(x => x.totalPts >= 10), 'ELITE');
+    add(bySc.filter(x => x.totalPts >= 7 && x.totalPts < 10), 'GOOD');
+    add(bySc.filter(x => x.isFresh && x.totalPts >= 6), 'FRESH');
+    add(bySc.filter(x => x.isTightBase && x.totalPts >= 6), 'TIGHT');
+    return out;
+  }, [scored]);
+
+  const tvSym = (r: any): string => {
+    const ex = (r.exchange || '').toUpperCase().trim();
+    const sym = r.symbol || r.ticker || '';
+    if (!ex || !sym) return sym;
+    const map: Record<string, string> = { NMS: 'NASDAQ', NASDAQGS: 'NASDAQ', ARCA: 'AMEX', BATS: 'AMEX' };
+    return `${map[ex] || ex}:${sym}`;
+  };
+  const sepaFormatTV = (picks: typeof sepaPicks): string => {
+    const sections: Record<SepaBucket, string[]> = { ELITE: [], GOOD: [], FRESH: [], TIGHT: [] };
+    picks.forEach(p => { sections[p.bucket].push(tvSym(p.row.r)); });
+    const out: string[] = [];
+    if (sections.ELITE.length) { out.push('###SEPA Elite 10+'); out.push(...sections.ELITE); }
+    if (sections.GOOD.length) { out.push('###SEPA Good 7-9'); out.push(...sections.GOOD); }
+    if (sections.FRESH.length) { out.push('###Fresh Breakouts'); out.push(...sections.FRESH); }
+    if (sections.TIGHT.length) { out.push('###Tight Bases'); out.push(...sections.TIGHT); }
+    return out.join(',');
+  };
+  const sepaFormatPlain = (picks: typeof sepaPicks): string => picks.map(p => tvSym(p.row.r)).join(',');
+  const sepaFormatNewline = (picks: typeof sepaPicks): string => picks.map(p => tvSym(p.row.r)).join('\n');
+  const sepaFormatCsv = (picks: typeof sepaPicks): string => {
+    const headers = 'Symbol,Exchange,Bucket,Score,Trend,RelStr,Setup,Volume,RSRank,Price,1W%,1M%,3M%,1Y%,From52wH%,Fresh,TightBase,Why';
+    const rows = picks.map(p => {
+      const x = p.row; const r = x.r;
+      const why = x.strengths.slice(0, 3).join(' + ') || x.weaknesses.slice(0, 2).join(' + ');
+      return [
+        r.symbol || r.ticker || '', r.exchange || '', p.bucket,
+        `${x.totalPts}/${x.totalKnown}`, `${x.T.pts}/${x.T.known}`, `${x.RS.pts}/${x.RS.known}`, `${x.S.pts}/${x.S.known}`, `${x.V.pts}/${x.V.known}`,
+        x.rsRank ?? '', r.price ?? '',
+        r.perf1w ?? '', r.perf1m ?? '', r.perf3m ?? '', r.perf1y ?? '', r.distFromHigh ?? '',
+        x.isFresh ? 'Y' : '', x.isTightBase ? 'Y' : '', why,
+      ].map(v => typeof v === 'string' && v.includes(',') ? `"${v}"` : String(v)).join(',');
+    });
+    return [headers, ...rows].join('\n');
+  };
+
+  const [sepaToast, setSepaToast] = React.useState<string>('');
+  const sepaCopy = async (txt: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(txt);
+      setSepaToast(`✓ Copied ${label}`);
+      setTimeout(() => setSepaToast(''), 2500);
+    } catch {
+      setSepaToast('⚠️ Copy failed — select & copy manually');
+      setTimeout(() => setSepaToast(''), 3500);
+    }
+  };
+  const sepaDownload = (txt: string, filename: string, mime: string = 'text/plain') => {
+    try {
+      const blob = new Blob([txt], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+    } catch {}
+  };
+
   if (scored.length === 0) {
     return (
-      <div style={{ background: PANEL, border: `1px solid ${LINE}`, borderRadius: 10, padding: 16, marginBottom: 20 }}>
-        <div style={{ fontSize: 14, fontWeight: 800, color: TXT }}>🏆 Winning Playbook — SEPA checklist score</div>
-        <div style={{ fontSize: 12, color: MUTED, marginTop: 6 }}>Upload a TradingView CSV with SMA/EMA columns to see stocks scored against Minervini&apos;s Trend Template.</div>
+      <div style={{ background: PANEL, border: `1px solid ${LINE}`, borderRadius: 12, padding: 18, marginBottom: 20 }}>
+        <div style={{ fontSize: 16, fontWeight: 800, color: TXT }}>🏆 Winning Playbook — SEPA checklist score</div>
+        <div style={{ fontSize: 13, color: MUTED, marginTop: 6 }}>Upload a TradingView CSV with SMA/EMA columns to see stocks scored against Minervini&apos;s Trend Template.</div>
       </div>
     );
   }
@@ -6457,33 +6535,33 @@ function SepaChecklistPanel({ techRows }: { techRows: any[] }) {
     <button key={key} onClick={() => setFilter(active ? 'all' as any : key as any)}
       style={{
         background: active ? `${color}25` : PANEL2, border: `1px solid ${active ? color : LINE2}`,
-        color: active ? color : MUTED, padding: '3px 10px', borderRadius: 999,
-        fontSize: 11, fontWeight: 700, cursor: 'pointer',
+        color: active ? color : MUTED, padding: '6px 14px', borderRadius: 999,
+        fontSize: 12.5, fontWeight: 700, cursor: 'pointer',
       }}>
       {label}: <b style={{ color: active ? color : TXT }}>{count}</b>
     </button>
   );
 
   const sortableTh = (key: string, label: string, align: 'left' | 'right' | 'center' = 'left', color = MUTED) => (
-    <th style={{ textAlign: align, padding: '8px 8px', color: sortBy === key ? CYAN : color, cursor: 'pointer', userSelect: 'none', fontSize: 10.5, letterSpacing: 0.4, textTransform: 'uppercase' }}
+    <th style={{ textAlign: align, padding: '12px 10px', color: sortBy === key ? CYAN : color, cursor: 'pointer', userSelect: 'none', fontSize: 12, fontWeight: 800, letterSpacing: 0.5, textTransform: 'uppercase', whiteSpace: 'nowrap' }}
         onClick={() => setSortBy(key as any)}>
       {label}{sortBy === key ? ' ↓' : ''}
     </th>
   );
 
-  // Category cell rendering with visible sub-check labels
+  // zzz206: sub-checks now STACKED one per line (bigger, instantly scannable)
   const CatCell = ({ pts, known, checks, labels, color }: { pts: number; known: number; checks: (boolean | null)[]; labels: string[]; color: string }) => {
     const perfect = pts === known && known > 0;
     return (
-      <td style={{ padding: '8px 6px', textAlign: 'center', minWidth: 100 }}>
-        <div style={{ fontSize: 12, fontWeight: 800, color: perfect ? color : pts >= 2 ? AMBER : pts >= 1 ? MUTED : RED }}>
+      <td style={{ padding: '10px 8px', textAlign: 'center', minWidth: 116, verticalAlign: 'top' }}>
+        <div style={{ fontSize: 16, fontWeight: 900, color: perfect ? color : pts >= 2 ? AMBER : pts >= 1 ? MUTED : RED, marginBottom: 4 }}>
           {pts}/{known}
         </div>
-        <div style={{ fontSize: 9, color: MUTED, lineHeight: 1.4, marginTop: 2 }}>
+        <div style={{ fontSize: 10.5, lineHeight: 1.55, textAlign: 'left', display: 'inline-block' }}>
           {labels.map((lbl, i) => (
-            <span key={i} style={{ display: 'inline-block', marginRight: 4, opacity: checks[i] === true ? 1 : checks[i] === false ? 0.4 : 0.15 }}>
-              <span style={{ color: checks[i] === true ? color : checks[i] === false ? RED : MUTED }}>{checks[i] === true ? '✓' : checks[i] === false ? '✗' : '·'}</span>
-              <span style={{ color: checks[i] === true ? TXT : MUTED, marginLeft: 2 }}>{lbl}</span>
+            <span key={i} style={{ display: 'block', whiteSpace: 'nowrap', opacity: checks[i] === true ? 1 : checks[i] === false ? 0.45 : 0.18 }}>
+              <span style={{ color: checks[i] === true ? color : checks[i] === false ? RED : MUTED, fontWeight: 800 }}>{checks[i] === true ? '✓' : checks[i] === false ? '✗' : '·'}</span>
+              <span style={{ color: checks[i] === true ? TXT : MUTED, marginLeft: 4 }}>{lbl}</span>
             </span>
           ))}
         </div>
@@ -6492,24 +6570,24 @@ function SepaChecklistPanel({ techRows }: { techRows: any[] }) {
   };
 
   return (
-    <div style={{ background: `linear-gradient(180deg, ${CYAN}0F 0%, ${PANEL} 60%)`, border: `1px solid ${CYAN}55`, borderRadius: 10, padding: 18, marginBottom: 20 }}>
+    <div style={{ background: `linear-gradient(180deg, ${CYAN}0F 0%, ${PANEL} 60%)`, border: `1px solid ${CYAN}66`, borderRadius: 14, padding: 22, marginBottom: 20 }}>
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
         <div>
-          <div style={{ fontSize: 15, fontWeight: 900, color: TXT }}>
+          <div style={{ fontSize: 20, fontWeight: 900, color: TXT, letterSpacing: 0.2 }}>
             🏆 Winning Playbook · SEPA score
-            <a href="/winning-playbook" style={{ marginLeft: 10, fontSize: 11, color: CYAN, textDecoration: 'none' }}>[full rules →]</a>
+            <a href="/winning-playbook" style={{ marginLeft: 12, fontSize: 12.5, color: CYAN, textDecoration: 'none', fontWeight: 700 }}>[full rules →]</a>
           </div>
-          <div style={{ fontSize: 11.5, color: MUTED, marginTop: 4, lineHeight: 1.5, maxWidth: 980 }}>
+          <div style={{ fontSize: 13, color: MUTED, marginTop: 5, lineHeight: 1.55, maxWidth: 980 }}>
             Every stock scored 0-12 across 4 categories (below). Higher = closer to a textbook Minervini setup. Sort by clicking any column header. Filter with the chips.
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
           {chipBtn('elite', '🥇 Elite (10+)', eliteCount, GREEN, filter === 'elite')}
-          <span style={{ background: PANEL2, border: `1px solid ${LINE2}`, color: MUTED, padding: '3px 10px', borderRadius: 999, fontSize: 11 }}>
+          <span style={{ background: PANEL2, border: `1px solid ${LINE2}`, color: MUTED, padding: '6px 14px', borderRadius: 999, fontSize: 12.5 }}>
             🥈 Good (7-9): <b style={{ color: TXT }}>{goodCount}</b>
           </span>
-          <span style={{ background: PANEL2, border: `1px solid ${LINE2}`, color: MUTED, padding: '3px 10px', borderRadius: 999, fontSize: 11 }}>
+          <span style={{ background: PANEL2, border: `1px solid ${LINE2}`, color: MUTED, padding: '6px 14px', borderRadius: 999, fontSize: 12.5 }}>
             OK (4-6): <b style={{ color: TXT }}>{okCount}</b>
           </span>
           {chipBtn('fresh', '🚀 Fresh breakout', freshCount, CYAN, filter === 'fresh')}
@@ -6517,50 +6595,50 @@ function SepaChecklistPanel({ techRows }: { techRows: any[] }) {
         </div>
       </div>
 
-      {/* zzz205: ALWAYS-VISIBLE CATEGORY LEGEND */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8, marginBottom: 14 }}>
-        <div style={{ background: PANEL2, border: `1px solid ${CYAN}44`, borderLeft: `3px solid ${CYAN}`, padding: '8px 10px', borderRadius: 4 }}>
-          <div style={{ fontSize: 11, fontWeight: 800, color: CYAN }}>🔷 TREND (3 pts)</div>
-          <div style={{ fontSize: 10.5, color: MUTED, marginTop: 3, lineHeight: 1.5 }}>
+      {/* zzz205: ALWAYS-VISIBLE CATEGORY LEGEND (zzz206: upsized) */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10, marginBottom: 16 }}>
+        <div style={{ background: PANEL2, border: `1px solid ${CYAN}44`, borderLeft: `4px solid ${CYAN}`, padding: '12px 14px', borderRadius: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: CYAN }}>🔷 TREND (3 pts)</div>
+          <div style={{ fontSize: 12, color: MUTED, marginTop: 4, lineHeight: 1.55 }}>
             Stage 2 uptrend confirmed · full 50 &gt; 150 &gt; 200 stack · price above 21-EMA.
           </div>
         </div>
-        <div style={{ background: PANEL2, border: `1px solid ${VIOLET}44`, borderLeft: `3px solid ${VIOLET}`, padding: '8px 10px', borderRadius: 4 }}>
-          <div style={{ fontSize: 11, fontWeight: 800, color: VIOLET }}>🟣 REL STR (3 pts)</div>
-          <div style={{ fontSize: 10.5, color: MUTED, marginTop: 3, lineHeight: 1.5 }}>
+        <div style={{ background: PANEL2, border: `1px solid ${VIOLET}44`, borderLeft: `4px solid ${VIOLET}`, padding: '12px 14px', borderRadius: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: VIOLET }}>🟣 REL STR (3 pts)</div>
+          <div style={{ fontSize: 12, color: MUTED, marginTop: 4, lineHeight: 1.55 }}>
             1-year return in top 20% of your CSV · 3-month in top 25% · 1-week positive AND top half.
           </div>
         </div>
-        <div style={{ background: PANEL2, border: `1px solid ${AMBER}44`, borderLeft: `3px solid ${AMBER}`, padding: '8px 10px', borderRadius: 4 }}>
-          <div style={{ fontSize: 11, fontWeight: 800, color: AMBER }}>🟡 SETUP (3 pts)</div>
-          <div style={{ fontSize: 10.5, color: MUTED, marginTop: 3, lineHeight: 1.5 }}>
+        <div style={{ background: PANEL2, border: `1px solid ${AMBER}44`, borderLeft: `4px solid ${AMBER}`, padding: '12px 14px', borderRadius: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: AMBER }}>🟡 SETUP (3 pts)</div>
+          <div style={{ fontSize: 12, color: MUTED, marginTop: 4, lineHeight: 1.55 }}>
             Within 15% of 52-week high · tight base (ADR% in bottom 40%) · not extended (RSI &lt; 80).
           </div>
         </div>
-        <div style={{ background: PANEL2, border: `1px solid ${BLUE}44`, borderLeft: `3px solid ${BLUE}`, padding: '8px 10px', borderRadius: 4 }}>
-          <div style={{ fontSize: 11, fontWeight: 800, color: BLUE }}>🔵 VOLUME (3 pts)</div>
-          <div style={{ fontSize: 10.5, color: MUTED, marginTop: 3, lineHeight: 1.5 }}>
+        <div style={{ background: PANEL2, border: `1px solid ${BLUE}44`, borderLeft: `4px solid ${BLUE}`, padding: '12px 14px', borderRadius: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: BLUE }}>🔵 VOLUME (3 pts)</div>
+          <div style={{ fontSize: 12, color: MUTED, marginTop: 4, lineHeight: 1.55 }}>
             Recent volume &gt; 1.1× avg · volume dry-up in the base · momentum accelerating (1W &gt; 1M / 4).
           </div>
         </div>
       </div>
 
-      <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5 }}>
+      <div style={{ overflowX: 'auto', border: `1px solid ${LINE}`, borderRadius: 10 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
-            <tr style={{ borderBottom: `1px solid ${LINE2}`, background: PANEL2 }}>
-              <th style={{ textAlign: 'left', padding: '8px 8px', color: MUTED, fontSize: 10.5, letterSpacing: 0.4, textTransform: 'uppercase' }}>#</th>
-              <th style={{ textAlign: 'left', padding: '8px 8px', color: MUTED, fontSize: 10.5, letterSpacing: 0.4, textTransform: 'uppercase' }}>Ticker</th>
-              <th style={{ textAlign: 'right', padding: '8px 8px', color: MUTED, fontSize: 10.5, letterSpacing: 0.4, textTransform: 'uppercase' }}>Price</th>
-              <th style={{ textAlign: 'right', padding: '8px 8px', color: MUTED, fontSize: 10.5, letterSpacing: 0.4, textTransform: 'uppercase' }}>Perf (1Y · 3M · 1W)</th>
+            <tr style={{ borderBottom: `2px solid ${LINE2}`, background: PANEL2 }}>
+              <th style={{ textAlign: 'left', padding: '12px 10px', color: MUTED, fontSize: 12, fontWeight: 800, letterSpacing: 0.5, textTransform: 'uppercase' }}>#</th>
+              <th style={{ textAlign: 'left', padding: '12px 10px', color: MUTED, fontSize: 12, fontWeight: 800, letterSpacing: 0.5, textTransform: 'uppercase' }}>Ticker</th>
+              <th style={{ textAlign: 'right', padding: '12px 10px', color: MUTED, fontSize: 12, fontWeight: 800, letterSpacing: 0.5, textTransform: 'uppercase' }}>Price</th>
+              <th style={{ textAlign: 'right', padding: '12px 10px', color: MUTED, fontSize: 12, fontWeight: 800, letterSpacing: 0.5, textTransform: 'uppercase' }}>Perf (1Y · 3M · 1W)</th>
               {sortableTh('distHigh', 'From 52wH', 'right')}
               {sortableTh('rsRank', 'RS Rank', 'right')}
-              <th style={{ textAlign: 'center', padding: '8px 6px', color: CYAN, fontSize: 10.5, letterSpacing: 0.4, textTransform: 'uppercase', borderLeft: `2px solid ${LINE2}` }}>TREND</th>
-              <th style={{ textAlign: 'center', padding: '8px 6px', color: VIOLET, fontSize: 10.5, letterSpacing: 0.4, textTransform: 'uppercase' }}>REL STR</th>
-              <th style={{ textAlign: 'center', padding: '8px 6px', color: AMBER, fontSize: 10.5, letterSpacing: 0.4, textTransform: 'uppercase' }}>SETUP</th>
-              <th style={{ textAlign: 'center', padding: '8px 6px', color: BLUE, fontSize: 10.5, letterSpacing: 0.4, textTransform: 'uppercase' }}>VOLUME</th>
-              <th style={{ textAlign: 'left', padding: '8px 8px', color: MUTED, fontSize: 10.5, letterSpacing: 0.4, textTransform: 'uppercase', borderLeft: `2px solid ${LINE2}` }}>Why?</th>
-              <th style={{ textAlign: 'center', padding: '8px 8px', color: MUTED, fontSize: 10.5, letterSpacing: 0.4, textTransform: 'uppercase' }}>Tags</th>
+              <th style={{ textAlign: 'center', padding: '12px 8px', color: CYAN, fontSize: 12, fontWeight: 800, letterSpacing: 0.5, textTransform: 'uppercase', borderLeft: `2px solid ${LINE2}` }}>TREND</th>
+              <th style={{ textAlign: 'center', padding: '12px 8px', color: VIOLET, fontSize: 12, fontWeight: 800, letterSpacing: 0.5, textTransform: 'uppercase' }}>REL STR</th>
+              <th style={{ textAlign: 'center', padding: '12px 8px', color: AMBER, fontSize: 12, fontWeight: 800, letterSpacing: 0.5, textTransform: 'uppercase' }}>SETUP</th>
+              <th style={{ textAlign: 'center', padding: '12px 8px', color: BLUE, fontSize: 12, fontWeight: 800, letterSpacing: 0.5, textTransform: 'uppercase' }}>VOLUME</th>
+              <th style={{ textAlign: 'left', padding: '12px 10px', color: MUTED, fontSize: 12, fontWeight: 800, letterSpacing: 0.5, textTransform: 'uppercase', borderLeft: `2px solid ${LINE2}` }}>Why?</th>
+              <th style={{ textAlign: 'center', padding: '12px 10px', color: MUTED, fontSize: 12, fontWeight: 800, letterSpacing: 0.5, textTransform: 'uppercase' }}>Tags</th>
               {sortableTh('score', 'Score', 'right')}
             </tr>
           </thead>
@@ -6574,32 +6652,40 @@ function SepaChecklistPanel({ techRows }: { techRows: any[] }) {
                 : row.weaknesses.length > 0
                   ? row.weaknesses.slice(0, 2).join(' · ')
                   : '—';
+              const zebra = i % 2 === 1 ? 'rgba(255,255,255,0.02)' : 'transparent';
               return (
-                <tr key={r.symbol || i} style={{ borderBottom: `1px solid ${LINE}`, background: total >= 10 ? `${GREEN}0A` : 'transparent' }}>
-                  <td style={{ padding: '8px', color: MUTED }}>{i + 1}</td>
-                  <td style={{ padding: '8px', color: TXT, fontWeight: 700 }}>{r.symbol || r.ticker || '—'}</td>
-                  <td style={{ padding: '8px', textAlign: 'right', color: TXT, fontVariantNumeric: 'tabular-nums' }}>{r.price != null ? r.price.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—'}</td>
-                  <td style={{ padding: '8px', textAlign: 'right', color: TXT, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
-                    <span style={{ color: (r.perf1y ?? 0) >= 0 ? GREEN : RED }}>{r.perf1y != null ? (r.perf1y > 0 ? '+' : '') + r.perf1y.toFixed(0) + '%' : '—'}</span>
-                    <span style={{ color: MUTED, margin: '0 4px' }}>·</span>
+                <tr key={r.symbol || i} style={{ borderBottom: `1px solid ${LINE}`, background: total >= 10 ? `${GREEN}0F` : zebra }}>
+                  <td style={{ padding: '10px', color: i < 3 ? AMBER : MUTED, fontWeight: i < 3 ? 800 : 400, fontSize: 13 }}>{i + 1}</td>
+                  <td style={{ padding: '10px', verticalAlign: 'top' }}>
+                    <div style={{ color: TXT, fontWeight: 800, fontSize: 14.5 }}>{r.symbol || r.ticker || '—'}</div>
+                    {r.exchange ? <div style={{ color: MUTED, fontSize: 10, marginTop: 2, letterSpacing: 0.5 }}>{String(r.exchange).toUpperCase()}</div> : null}
+                  </td>
+                  <td style={{ padding: '10px', textAlign: 'right', color: TXT, fontVariantNumeric: 'tabular-nums', fontSize: 13.5, fontWeight: 600 }}>{r.price != null ? r.price.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—'}</td>
+                  <td style={{ padding: '10px', textAlign: 'right', color: TXT, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', fontSize: 13 }}>
+                    <span style={{ color: (r.perf1y ?? 0) >= 0 ? GREEN : RED, fontWeight: 700 }}>{r.perf1y != null ? (r.perf1y > 0 ? '+' : '') + r.perf1y.toFixed(0) + '%' : '—'}</span>
+                    <span style={{ color: MUTED, margin: '0 5px' }}>·</span>
                     <span style={{ color: (r.perf3m ?? 0) >= 0 ? GREEN : RED }}>{r.perf3m != null ? (r.perf3m > 0 ? '+' : '') + r.perf3m.toFixed(0) + '%' : '—'}</span>
-                    <span style={{ color: MUTED, margin: '0 4px' }}>·</span>
+                    <span style={{ color: MUTED, margin: '0 5px' }}>·</span>
                     <span style={{ color: (r.perf1w ?? 0) >= 0 ? GREEN : RED }}>{r.perf1w != null ? (r.perf1w > 0 ? '+' : '') + r.perf1w.toFixed(1) + '%' : '—'}</span>
                   </td>
-                  <td style={{ padding: '8px', textAlign: 'right', color: (r.distFromHigh ?? 0) >= -5 ? GREEN : (r.distFromHigh ?? 0) >= -15 ? AMBER : RED }}>{r.distFromHigh != null ? r.distFromHigh.toFixed(0) + '%' : '—'}</td>
-                  <td style={{ padding: '8px', textAlign: 'right', color: (row.rsRank ?? 0) >= 80 ? GREEN : (row.rsRank ?? 0) >= 50 ? AMBER : MUTED, fontWeight: 700 }}>
+                  <td style={{ padding: '10px', textAlign: 'right', fontSize: 13, fontWeight: 600, color: (r.distFromHigh ?? 0) >= -5 ? GREEN : (r.distFromHigh ?? 0) >= -15 ? AMBER : RED }}>{r.distFromHigh != null ? r.distFromHigh.toFixed(0) + '%' : '—'}</td>
+                  <td style={{ padding: '10px', textAlign: 'right', fontSize: 14, color: (row.rsRank ?? 0) >= 80 ? GREEN : (row.rsRank ?? 0) >= 50 ? AMBER : MUTED, fontWeight: 800 }}>
                     {row.rsRank != null ? row.rsRank : '—'}
                   </td>
                   <CatCell pts={row.T.pts} known={row.T.known} checks={row.trendChecks} labels={row.trendLabels} color={CYAN} />
                   <CatCell pts={row.RS.pts} known={row.RS.known} checks={row.rsChecks} labels={row.rsLabels} color={VIOLET} />
                   <CatCell pts={row.S.pts} known={row.S.known} checks={row.setupChecks} labels={row.setupLabels} color={AMBER} />
                   <CatCell pts={row.V.pts} known={row.V.known} checks={row.volChecks} labels={row.volLabels} color={BLUE} />
-                  <td style={{ padding: '8px', color: row.strengths.length ? TXT : RED, fontSize: 11, borderLeft: `2px solid ${LINE2}` }}>{whyText}</td>
-                  <td style={{ padding: '8px', textAlign: 'center', fontSize: 12 }}>
+                  <td style={{ padding: '10px', color: row.strengths.length ? TXT : RED, fontSize: 12.5, lineHeight: 1.45, borderLeft: `2px solid ${LINE2}`, maxWidth: 190 }}>{whyText}</td>
+                  <td style={{ padding: '10px', textAlign: 'center', fontSize: 16, whiteSpace: 'nowrap' }}>
                     {row.isFresh && <span title="Fresh breakout: within 3% of 52-week high AND up this week" style={{ color: CYAN, marginRight: 4 }}>🚀</span>}
                     {row.isTightBase && <span title="Tight base: ADR% in bottom 25% of the universe" style={{ color: VIOLET }}>🎯</span>}
                   </td>
-                  <td style={{ padding: '8px', textAlign: 'right', fontWeight: 800, color: scoreColor, fontSize: 14 }}>{total}/{row.totalKnown}</td>
+                  <td style={{ padding: '10px', textAlign: 'right' }}>
+                    <span style={{ display: 'inline-block', background: `${scoreColor}1F`, border: `1px solid ${scoreColor}55`, color: scoreColor, fontWeight: 900, fontSize: 15.5, padding: '4px 10px', borderRadius: 8, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                      {total}/{row.totalKnown}
+                    </span>
+                  </td>
                 </tr>
               );
             })}
@@ -6608,12 +6694,88 @@ function SepaChecklistPanel({ techRows }: { techRows: any[] }) {
       </div>
 
       {filtered.length > showTop && (
-        <div style={{ fontSize: 11, color: MUTED, marginTop: 8, fontStyle: 'italic' }}>
+        <div style={{ fontSize: 12.5, color: MUTED, marginTop: 10, fontStyle: 'italic' }}>
           Showing top {showTop} of {filtered.length} filtered stocks · click column headers to sort · click chips at the top to filter.
         </div>
       )}
 
-      <div style={{ fontSize: 11, color: MUTED, marginTop: 12, padding: '8px 10px', background: PANEL2, borderRadius: 6, lineHeight: 1.6 }}>
+      {/* zzz206: EXPORT BEST SEPA PICKS — TradingView / clipboard / files */}
+      <div style={{ marginTop: 16, padding: '14px 16px', background: PANEL2, border: `1px solid ${CYAN}33`, borderRadius: 10 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', marginBottom: 10 }}>
+          <div style={{ fontSize: 15, fontWeight: 900, color: CYAN }}>📤 EXPORT SEPA PICKS</div>
+          <span style={{ background: 'rgba(34,211,238,0.15)', padding: '4px 10px', borderRadius: 6, fontSize: 12.5, color: CYAN, fontWeight: 700 }}>
+            {sepaPicks.length} picks
+          </span>
+          {(['ELITE', 'GOOD', 'FRESH', 'TIGHT'] as SepaBucket[]).map(b => {
+            const n = sepaPicks.filter(p => p.bucket === b).length;
+            if (!n) return null;
+            const meta: Record<SepaBucket, [string, string]> = {
+              ELITE: ['🥇 Elite 10+', GREEN], GOOD: ['🥈 Good 7-9', AMBER], FRESH: ['🚀 Fresh', CYAN], TIGHT: ['🎯 Tight', VIOLET],
+            };
+            return (
+              <span key={b} style={{ background: `${meta[b][1]}22`, padding: '4px 9px', borderRadius: 5, fontSize: 12, color: meta[b][1], fontWeight: 700 }}>
+                {meta[b][0]} {n}
+              </span>
+            );
+          })}
+          <span style={{ marginLeft: 'auto', fontSize: 11.5, color: MUTED, fontStyle: 'italic' }}>
+            Elite (10+) + Good (7-9) + Fresh breakouts + Tight bases (score ≥ 6), deduped in that order.
+          </span>
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+          <button onClick={() => sepaCopy(sepaFormatTV(sepaPicks), 'TradingView format (with sections)')}
+            disabled={sepaPicks.length === 0}
+            style={{ background: sepaPicks.length ? CYAN : '#1A2540', color: sepaPicks.length ? '#0B1220' : MUTED, border: 'none', padding: '8px 14px', borderRadius: 6, fontSize: 12.5, fontWeight: 800, cursor: sepaPicks.length ? 'pointer' : 'not-allowed' }}>
+            📋 Copy for TradingView (with sections)
+          </button>
+          <button onClick={() => sepaCopy(sepaFormatPlain(sepaPicks), 'plain ticker list')}
+            disabled={sepaPicks.length === 0}
+            style={{ background: PANEL, color: TXT, border: `1px solid ${LINE2}`, padding: '8px 14px', borderRadius: 6, fontSize: 12.5, fontWeight: 700, cursor: sepaPicks.length ? 'pointer' : 'not-allowed' }}>
+            Copy comma list
+          </button>
+          <button onClick={() => sepaDownload(sepaFormatNewline(sepaPicks), `mc-sepa-picks-${new Date().toISOString().slice(0, 10)}.txt`)}
+            disabled={sepaPicks.length === 0}
+            style={{ background: PANEL, color: TXT, border: `1px solid ${LINE2}`, padding: '8px 14px', borderRadius: 6, fontSize: 12.5, fontWeight: 700, cursor: sepaPicks.length ? 'pointer' : 'not-allowed' }}>
+            ⬇ Download .txt
+          </button>
+          <button onClick={() => sepaDownload(sepaFormatCsv(sepaPicks), `mc-sepa-picks-${new Date().toISOString().slice(0, 10)}.csv`, 'text/csv')}
+            disabled={sepaPicks.length === 0}
+            style={{ background: PANEL, color: TXT, border: `1px solid ${LINE2}`, padding: '8px 14px', borderRadius: 6, fontSize: 12.5, fontWeight: 700, cursor: sepaPicks.length ? 'pointer' : 'not-allowed' }}>
+            ⬇ Download CSV (full data)
+          </button>
+          {(['ELITE', 'GOOD', 'FRESH', 'TIGHT'] as SepaBucket[]).map(b => {
+            const subset = sepaPicks.filter(p => p.bucket === b);
+            if (!subset.length) return null;
+            const labels: Record<SepaBucket, string> = { ELITE: '🥇 Elite', GOOD: '🥈 Good', FRESH: '🚀 Fresh', TIGHT: '🎯 Tight' };
+            return (
+              <button key={b} onClick={() => sepaCopy(sepaFormatPlain(subset), `${labels[b]} (${subset.length})`)}
+                style={{ background: 'transparent', border: `1px solid ${LINE2}`, color: TXT, padding: '8px 12px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                Copy {labels[b]} <span style={{ color: MUTED, fontWeight: 500 }}>({subset.length})</span>
+              </button>
+            );
+          })}
+          {sepaToast && (
+            <span style={{ background: sepaToast.startsWith('✓') ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)', color: sepaToast.startsWith('✓') ? GREEN : RED, padding: '8px 12px', borderRadius: 6, fontSize: 12.5, fontWeight: 700 }}>
+              {sepaToast}
+            </span>
+          )}
+        </div>
+        {sepaPicks.length > 0 && (
+          <div style={{ marginTop: 10, padding: 10, background: PANEL, borderRadius: 6, fontSize: 11.5, color: TXT, fontFamily: 'ui-monospace, monospace', lineHeight: 1.9, maxHeight: 110, overflowY: 'auto' }}>
+            {sepaPicks.map(p => {
+              const bColor = p.bucket === 'ELITE' ? GREEN : p.bucket === 'GOOD' ? AMBER : p.bucket === 'FRESH' ? CYAN : VIOLET;
+              const sym = p.row.r.symbol || p.row.r.ticker;
+              return (
+                <span key={sym} style={{ display: 'inline-block', marginRight: 8, padding: '2px 7px', background: 'rgba(255,255,255,0.04)', borderRadius: 4, borderLeft: `2px solid ${bColor}` }}>
+                  <b style={{ color: CYAN }}>{sym}</b> <span style={{ color: bColor, fontSize: 10.5 }}>{p.bucket[0]}</span> <span style={{ color: MUTED, fontSize: 10.5 }}>{p.row.totalPts}/{p.row.totalKnown}</span>
+                </span>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div style={{ fontSize: 12.5, color: MUTED, marginTop: 14, padding: '12px 14px', background: PANEL2, borderRadius: 8, lineHeight: 1.7 }}>
         <b style={{ color: TXT }}>How to read this.</b>{' '}
         Each of the 4 category cells shows the score (e.g. <b>3/3</b>) plus the specific checks that passed / failed below (✓ / ✗).
         The <b>Why?</b> column summarizes the 2 strongest signals in plain English.
