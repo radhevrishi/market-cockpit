@@ -6291,13 +6291,16 @@ function MultiConfirmedCard({ stocks }: { stocks: any[] }) {
 // while the first is running.
 const _techPullInFlight: { current: Set<string> } = { current: new Set() };
 
-// ─── zzz203: SEPA CHECKLIST PANEL (Winning Playbook overlay) ──────────────
-// Scores every stock in the Technicals set against the measurable rules from
-// the Winning Playbook checklist. Fundamentals-only rules that can't be
-// determined from technical data (new product, new management, industry
-// leadership, small float, etc.) are excluded — the score is out of 10.
-// Sits at the TOP of each Technicals tab so the highest-quality names are the
-// first thing the user sees.
+// ─── zzz203/204: SEPA CHECKLIST PANEL (Winning Playbook overlay) ──────────
+// zzz204 rewrite: 12-point score across 4 orthogonal categories with
+// PERCENTILE-based ranking within the uploaded universe (not fixed cutoffs).
+// Previous version had 62/73 stocks at 10/10 because rules 1-4 all measured
+// the same "bullish stack" thing. New categories:
+//   TREND  (3pt) — Stage-2 stack, 50-SMA slope, price above short/long MAs
+//   RS     (3pt) — percentile of 1Y/3M return, relative-strength ratio
+//   SETUP  (3pt) — proximity to 52w high, base tightness, no extension
+//   VOL    (3pt) — accumulation signature, volume expansion on breakout
+// Total = 12. Elite >= 10, Good 7-9, OK 4-6, Skip < 4.
 function SepaChecklistPanel({ techRows }: { techRows: any[] }) {
   const PANEL = '#0F141B';
   const PANEL2 = '#121821';
@@ -6309,49 +6312,111 @@ function SepaChecklistPanel({ techRows }: { techRows: any[] }) {
   const GREEN = '#10B981';
   const RED = '#EF4444';
   const AMBER = '#F59E0B';
+  const VIOLET = '#A78BFA';
+  const BLUE = '#60A5FA';
 
-  // Only score rows that have at least the basics
+  const [filter, setFilter] = React.useState<'all' | 'elite' | 'fresh' | 'tight'>('all');
+  const [sortBy, setSortBy] = React.useState<'score' | 'high' | 'perf1y' | 'perf3m' | 'perf1w'>('score');
+
+  const universe = React.useMemo(() => techRows || [], [techRows]);
+
+  const pct = React.useCallback((sortedArr: number[], v: number | undefined | null) => {
+    if (v == null || !Number.isFinite(v) || sortedArr.length === 0) return null;
+    let lo = 0, hi = sortedArr.length;
+    while (lo < hi) {
+      const m = (lo + hi) >> 1;
+      if (sortedArr[m] < v) lo = m + 1; else hi = m;
+    }
+    return lo / sortedArr.length;
+  }, []);
+
+  const buildSorted = (getKey: (r: any) => number | undefined) =>
+    React.useMemo(() => universe
+      .map((r: any) => getKey(r))
+      .filter((x): x is number => x != null && Number.isFinite(x))
+      .sort((a, b) => a - b),
+      [universe]);
+
+  const perf1ySorted = buildSorted((r) => r.perf1y);
+  const perf3mSorted = buildSorted((r) => r.perf3m);
+  const perf1wSorted = buildSorted((r) => r.perf1w);
+  const adrSorted = buildSorted((r) => r.adrPct);
+
   const scored = React.useMemo(() => {
-    return (techRows || []).map((r: any) => {
+    return universe.map((r: any) => {
       const price = r.price;
-      const checks: (boolean | null)[] = [];
-      // 1. Price > 200-SMA
-      checks.push((price != null && r.sma200 != null) ? price > r.sma200 : null);
-      // 2. Price > 150-SMA (if available)
-      checks.push((price != null && r.sma150 != null) ? price > r.sma150 : null);
-      // 3. Price > 50-SMA
-      checks.push((price != null && r.sma50 != null) ? price > r.sma50 : null);
-      // 4. 50-SMA > 150-SMA > 200-SMA (bullish stack)
-      checks.push((r.sma50 != null && r.sma200 != null)
-        ? (r.sma150 != null ? (r.sma50 > r.sma150 && r.sma150 > r.sma200) : (r.sma50 > r.sma200))
-        : null);
-      // 5. Within 25% of 52w high
-      checks.push((r.distFromHigh != null) ? r.distFromHigh >= -25 : null);
-      // 6. At least 30% above 52w low
-      checks.push((r.pctAboveLow52w != null) ? r.pctAboveLow52w >= 30 : null);
-      // 7. 1-Year return > 30% (RS proxy)
-      checks.push((r.perf1y != null) ? r.perf1y > 30 : null);
-      // 8. 3-month RS: outperforming (proxy for RS >= 70)
-      checks.push((r.perf3m != null) ? r.perf3m > 10 : null);
-      // 9. Above 21-EMA short-term (Minervini)
-      checks.push((price != null && r.ema21 != null) ? price > r.ema21 : null);
-      // 10. Not extended: RSI < 90 AND not >30% above 21-EMA
-      checks.push((r.rsi != null || r.pctVsEma21 != null)
-        ? ((r.rsi == null || r.rsi < 90) && (r.pctVsEma21 == null || r.pctVsEma21 < 30))
-        : null);
+      const trendChecks: (boolean | null)[] = [];
+      const stage2 = (price != null && r.sma200 != null && r.sma50 != null)
+        ? (price > r.sma200 && r.sma50 > r.sma200) : null;
+      trendChecks.push(stage2);
+      const stackTight = (r.sma50 != null && r.sma150 != null && r.sma200 != null)
+        ? (r.sma50 > r.sma150 * 1.03 && r.sma150 > r.sma200 * 1.03)
+        : (r.sma50 != null && r.sma200 != null) ? (r.sma50 > r.sma200 * 1.06) : null;
+      trendChecks.push(stackTight);
+      trendChecks.push((price != null && r.ema21 != null) ? price > r.ema21 : null);
 
-      const passed = checks.filter(x => x === true).length;
-      const known = checks.filter(x => x !== null).length;
-      return { r, checks, passed, known };
-    }).filter(x => x.known >= 6); // require at least 6 known checks
-  }, [techRows]);
+      const rsChecks: (boolean | null)[] = [];
+      const p1y = pct(perf1ySorted, r.perf1y);
+      const p3m = pct(perf3mSorted, r.perf3m);
+      const p1w = pct(perf1wSorted, r.perf1w);
+      rsChecks.push(p1y == null ? null : p1y >= 0.80);
+      rsChecks.push(p3m == null ? null : p3m >= 0.75);
+      rsChecks.push(p1w == null ? null : (p1w >= 0.50 && (r.perf1w ?? 0) > 0));
 
-  const sorted = React.useMemo(() => [...scored].sort((a, b) => b.passed - a.passed), [scored]);
-  const eliteCount = sorted.filter(x => x.passed >= 8).length;
-  const goodCount = sorted.filter(x => x.passed >= 6 && x.passed < 8).length;
-  const showTop = Math.min(sorted.length, 30);
+      const setupChecks: (boolean | null)[] = [];
+      setupChecks.push((r.distFromHigh != null) ? r.distFromHigh >= -15 : null);
+      const adrPctile = pct(adrSorted, r.adrPct);
+      setupChecks.push(adrPctile == null ? null : adrPctile <= 0.40);
+      const rsiOk = (r.rsi == null) ? true : r.rsi < 80;
+      const notFarAbove21 = (r.pctVsEma21 == null) ? true : r.pctVsEma21 < 15;
+      setupChecks.push((r.rsi != null || r.pctVsEma21 != null) ? (rsiOk && notFarAbove21) : null);
 
-  if (sorted.length === 0) {
+      const volChecks: (boolean | null)[] = [];
+      volChecks.push((r.relVol1w != null) ? r.relVol1w > 1.1 : null);
+      volChecks.push((typeof r.volContraction === 'boolean') ? r.volContraction : null);
+      const accelerating = (r.perf1w != null && r.perf1m != null) ? (r.perf1w > 0 && r.perf1w > r.perf1m / 4) : null;
+      volChecks.push(accelerating);
+
+      const isFresh = (r.distFromHigh != null && r.distFromHigh >= -3 && (r.perf1w ?? 0) > 0);
+      const isTightBase = (adrPctile != null && adrPctile <= 0.25);
+
+      const cat = (arr: (boolean | null)[]) => ({
+        pts: arr.filter(x => x === true).length,
+        known: arr.filter(x => x !== null).length,
+      });
+      const T = cat(trendChecks);
+      const RS = cat(rsChecks);
+      const S = cat(setupChecks);
+      const V = cat(volChecks);
+      const totalPts = T.pts + RS.pts + S.pts + V.pts;
+      const totalKnown = T.known + RS.known + S.known + V.known;
+      return { r, T, RS, S, V, totalPts, totalKnown, p1y, p3m, p1w, adrPctile, isFresh, isTightBase };
+    }).filter(x => x.totalKnown >= 6);
+  }, [universe, perf1ySorted, perf3mSorted, perf1wSorted, adrSorted, pct]);
+
+  const filtered = React.useMemo(() => {
+    let arr = [...scored];
+    if (filter === 'elite') arr = arr.filter(x => x.totalPts >= 10);
+    if (filter === 'fresh') arr = arr.filter(x => x.isFresh);
+    if (filter === 'tight') arr = arr.filter(x => x.isTightBase);
+    switch (sortBy) {
+      case 'high': arr.sort((a, b) => (b.r.distFromHigh ?? -99) - (a.r.distFromHigh ?? -99)); break;
+      case 'perf1y': arr.sort((a, b) => (b.r.perf1y ?? -99) - (a.r.perf1y ?? -99)); break;
+      case 'perf3m': arr.sort((a, b) => (b.r.perf3m ?? -99) - (a.r.perf3m ?? -99)); break;
+      case 'perf1w': arr.sort((a, b) => (b.r.perf1w ?? -99) - (a.r.perf1w ?? -99)); break;
+      default: arr.sort((a, b) => b.totalPts - a.totalPts || (b.p1y ?? 0) - (a.p1y ?? 0));
+    }
+    return arr;
+  }, [scored, filter, sortBy]);
+
+  const eliteCount = scored.filter(x => x.totalPts >= 10).length;
+  const goodCount = scored.filter(x => x.totalPts >= 7 && x.totalPts < 10).length;
+  const okCount = scored.filter(x => x.totalPts >= 4 && x.totalPts < 7).length;
+  const freshCount = scored.filter(x => x.isFresh).length;
+  const tightCount = scored.filter(x => x.isTightBase).length;
+  const showTop = Math.min(filtered.length, 40);
+
+  if (scored.length === 0) {
     return (
       <div style={{ background: PANEL, border: `1px solid ${LINE}`, borderRadius: 10, padding: 16, marginBottom: 20 }}>
         <div style={{ fontSize: 14, fontWeight: 800, color: TXT }}>🏆 Winning Playbook — SEPA checklist score</div>
@@ -6360,80 +6425,102 @@ function SepaChecklistPanel({ techRows }: { techRows: any[] }) {
     );
   }
 
-  const labels = [
-    'Price > 200-SMA',
-    'Price > 150-SMA',
-    'Price > 50-SMA',
-    '50 &gt; 150 &gt; 200 (bullish stack)',
-    'Within 25% of 52w high',
-    '≥ 30% above 52w low',
-    '1Y return &gt; 30%',
-    '3M return &gt; 10% (RS proxy)',
-    'Above 21-EMA (short-term)',
-    'Not extended (RSI &lt; 90 &amp; ≤ 30% above 21-EMA)',
-  ];
+  const chipBtn = (key: string, label: string, count: number, color: string, active: boolean) => (
+    <button key={key} onClick={() => setFilter(active ? 'all' as any : key as any)}
+      style={{
+        background: active ? `${color}25` : PANEL2, border: `1px solid ${active ? color : LINE2}`,
+        color: active ? color : MUTED, padding: '3px 10px', borderRadius: 999,
+        fontSize: 11, fontWeight: 700, cursor: 'pointer',
+      }}>
+      {label}: <b style={{ color: active ? color : TXT }}>{count}</b>
+    </button>
+  );
+
+  const th = (key: string, label: string, align: 'left' | 'right' | 'center' = 'left') => (
+    <th style={{ textAlign: align, padding: '6px 8px', color: sortBy === key ? CYAN : MUTED, cursor: 'pointer', userSelect: 'none' }}
+        onClick={() => setSortBy(key as any)}>
+      {label}{sortBy === key ? ' ↓' : ''}
+    </th>
+  );
 
   return (
     <div style={{ background: `linear-gradient(180deg, ${CYAN}0F 0%, ${PANEL} 60%)`, border: `1px solid ${CYAN}55`, borderRadius: 10, padding: 18, marginBottom: 20 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
         <div>
           <div style={{ fontSize: 15, fontWeight: 900, color: TXT }}>
-            🏆 Winning Playbook · SEPA checklist score
-            <a href="/winning-playbook" style={{ marginLeft: 10, fontSize: 11, color: CYAN, textDecoration: 'none' }}>[see full rules →]</a>
+            🏆 Winning Playbook · SEPA score
+            <a href="/winning-playbook" style={{ marginLeft: 10, fontSize: 11, color: CYAN, textDecoration: 'none' }}>[full rules →]</a>
           </div>
-          <div style={{ fontSize: 12, color: MUTED, marginTop: 4, lineHeight: 1.5, maxWidth: 900 }}>
-            Scored against Minervini&apos;s Trend Template (measurable technical rules only). Fundamentals — new product / new management / small float / industry leadership — need manual check on top. Sorted by score.
+          <div style={{ fontSize: 11.5, color: MUTED, marginTop: 4, lineHeight: 1.5, maxWidth: 980 }}>
+            12-point score, split 4 categories: <b style={{ color: CYAN }}>TREND</b> · <b style={{ color: VIOLET }}>RS</b> · <b style={{ color: AMBER }}>SETUP</b> · <b style={{ color: BLUE }}>VOL</b>.
+            RS ranked as PERCENTILE within your uploaded universe — top 20% by 1Y return gets the RS1 point.
+            Fresh &amp; Tight Base tags are computed but not scored.
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <span style={{ background: `${GREEN}20`, border: `1px solid ${GREEN}55`, color: GREEN, padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700 }}>
-            🥇 Elite (8+/10): <b>{eliteCount}</b>
-          </span>
-          <span style={{ background: `${AMBER}20`, border: `1px solid ${AMBER}55`, color: AMBER, padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700 }}>
-            🥈 Good (6-7/10): <b>{goodCount}</b>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {chipBtn('elite', '🥇 Elite (10+)', eliteCount, GREEN, filter === 'elite')}
+          <span style={{ background: PANEL2, border: `1px solid ${LINE2}`, color: MUTED, padding: '3px 10px', borderRadius: 999, fontSize: 11 }}>
+            🥈 Good (7-9): <b style={{ color: TXT }}>{goodCount}</b>
           </span>
           <span style={{ background: PANEL2, border: `1px solid ${LINE2}`, color: MUTED, padding: '3px 10px', borderRadius: 999, fontSize: 11 }}>
-            Total scored: <b style={{ color: TXT }}>{sorted.length}</b>
+            OK (4-6): <b style={{ color: TXT }}>{okCount}</b>
           </span>
+          {chipBtn('fresh', '🚀 Fresh breakout', freshCount, CYAN, filter === 'fresh')}
+          {chipBtn('tight', '🎯 Tight base', tightCount, VIOLET, filter === 'tight')}
         </div>
       </div>
 
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5 }}>
           <thead>
-            <tr style={{ color: MUTED, borderBottom: `1px solid ${LINE2}` }}>
-              <th style={{ textAlign: 'left', padding: '6px 8px' }}>#</th>
-              <th style={{ textAlign: 'left', padding: '6px 8px' }}>Ticker</th>
-              <th style={{ textAlign: 'right', padding: '6px 8px' }}>Price</th>
-              <th style={{ textAlign: 'right', padding: '6px 8px' }}>1Y</th>
-              <th style={{ textAlign: 'right', padding: '6px 8px' }}>3M</th>
-              <th style={{ textAlign: 'right', padding: '6px 8px' }}>From 52wH</th>
-              <th style={{ textAlign: 'right', padding: '6px 8px' }}>Above 52wL</th>
-              <th style={{ textAlign: 'center', padding: '6px 8px' }} title={labels.map((_, i) => (i + 1) + '. ' + labels[i].replace(/&[a-z]+;/g, '')).join(' | ')}>Checks (1-10)</th>
-              <th style={{ textAlign: 'right', padding: '6px 8px' }}>Score</th>
+            <tr style={{ borderBottom: `1px solid ${LINE2}` }}>
+              <th style={{ textAlign: 'left', padding: '6px 8px', color: MUTED }}>#</th>
+              <th style={{ textAlign: 'left', padding: '6px 8px', color: MUTED }}>Ticker</th>
+              <th style={{ textAlign: 'right', padding: '6px 8px', color: MUTED }}>Price</th>
+              {th('perf1y', '1Y', 'right')}
+              {th('perf3m', '3M', 'right')}
+              {th('perf1w', '1W', 'right')}
+              {th('high', 'From 52wH', 'right')}
+              <th style={{ textAlign: 'right', padding: '6px 8px', color: MUTED }}>RS pctl</th>
+              <th style={{ textAlign: 'center', padding: '6px 8px', color: CYAN }} title="Trend / 3">Tr</th>
+              <th style={{ textAlign: 'center', padding: '6px 8px', color: VIOLET }} title="Relative Strength / 3">RS</th>
+              <th style={{ textAlign: 'center', padding: '6px 8px', color: AMBER }} title="Setup quality / 3">St</th>
+              <th style={{ textAlign: 'center', padding: '6px 8px', color: BLUE }} title="Volume / 3">Vo</th>
+              <th style={{ textAlign: 'center', padding: '6px 8px', color: MUTED }}>Tags</th>
+              {th('score', 'Score', 'right')}
             </tr>
           </thead>
           <tbody>
-            {sorted.slice(0, showTop).map((row, i) => {
+            {filtered.slice(0, showTop).map((row, i) => {
               const r = row.r;
-              const scoreColor = row.passed >= 8 ? GREEN : row.passed >= 6 ? AMBER : row.passed >= 4 ? CYAN : MUTED;
+              const total = row.totalPts;
+              const scoreColor = total >= 10 ? GREEN : total >= 7 ? AMBER : total >= 4 ? CYAN : MUTED;
+              const catCell = (pts: number, known: number, color: string) => (
+                <td style={{ padding: '6px 8px', textAlign: 'center', color, fontWeight: 700 }}>
+                  {pts}/{known}
+                </td>
+              );
               return (
-                <tr key={r.symbol || i} style={{ borderBottom: `1px solid ${LINE}`, background: row.passed >= 8 ? `${GREEN}0A` : 'transparent' }}>
+                <tr key={r.symbol || i} style={{ borderBottom: `1px solid ${LINE}`, background: total >= 10 ? `${GREEN}0A` : 'transparent' }}>
                   <td style={{ padding: '6px 8px', color: MUTED }}>{i + 1}</td>
                   <td style={{ padding: '6px 8px', color: TXT, fontWeight: 700 }}>{r.symbol || r.ticker || '—'}</td>
                   <td style={{ padding: '6px 8px', textAlign: 'right', color: TXT, fontVariantNumeric: 'tabular-nums' }}>{r.price != null ? r.price.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—'}</td>
                   <td style={{ padding: '6px 8px', textAlign: 'right', color: (r.perf1y ?? 0) >= 0 ? GREEN : RED }}>{r.perf1y != null ? (r.perf1y > 0 ? '+' : '') + r.perf1y.toFixed(0) + '%' : '—'}</td>
                   <td style={{ padding: '6px 8px', textAlign: 'right', color: (r.perf3m ?? 0) >= 0 ? GREEN : RED }}>{r.perf3m != null ? (r.perf3m > 0 ? '+' : '') + r.perf3m.toFixed(0) + '%' : '—'}</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', color: (r.distFromHigh ?? 0) >= -10 ? GREEN : (r.distFromHigh ?? 0) >= -25 ? AMBER : RED }}>{r.distFromHigh != null ? r.distFromHigh.toFixed(0) + '%' : '—'}</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', color: (r.pctAboveLow52w ?? 0) >= 30 ? GREEN : AMBER }}>{r.pctAboveLow52w != null ? '+' + r.pctAboveLow52w.toFixed(0) + '%' : '—'}</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'center', fontFamily: 'monospace', letterSpacing: 1.5 }}>
-                    {row.checks.map((c, ci) => (
-                      <span key={ci} title={labels[ci].replace(/&[a-z]+;/g, m => m === '&gt;' ? '>' : m === '&lt;' ? '<' : m === '&amp;' ? '&' : m)} style={{ color: c === true ? GREEN : c === false ? RED : MUTED }}>
-                        {c === true ? '✓' : c === false ? '✗' : '·'}
-                      </span>
-                    ))}
+                  <td style={{ padding: '6px 8px', textAlign: 'right', color: (r.perf1w ?? 0) >= 0 ? GREEN : RED }}>{r.perf1w != null ? (r.perf1w > 0 ? '+' : '') + r.perf1w.toFixed(1) + '%' : '—'}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', color: (r.distFromHigh ?? 0) >= -5 ? GREEN : (r.distFromHigh ?? 0) >= -15 ? AMBER : RED }}>{r.distFromHigh != null ? r.distFromHigh.toFixed(0) + '%' : '—'}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', color: (row.p1y ?? 0) >= 0.8 ? GREEN : (row.p1y ?? 0) >= 0.5 ? AMBER : MUTED, fontWeight: 700 }}>
+                    {row.p1y != null ? Math.round(row.p1y * 100) : '—'}
                   </td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 800, color: scoreColor }}>{row.passed}/{row.known}</td>
+                  {catCell(row.T.pts, row.T.known, row.T.pts === row.T.known ? CYAN : MUTED)}
+                  {catCell(row.RS.pts, row.RS.known, row.RS.pts === row.RS.known ? VIOLET : MUTED)}
+                  {catCell(row.S.pts, row.S.known, row.S.pts === row.S.known ? AMBER : MUTED)}
+                  {catCell(row.V.pts, row.V.known, row.V.pts === row.V.known ? BLUE : MUTED)}
+                  <td style={{ padding: '6px 8px', textAlign: 'center', fontSize: 10 }}>
+                    {row.isFresh && <span title="Within 3% of 52w high + last week positive" style={{ color: CYAN, marginRight: 4 }}>🚀</span>}
+                    {row.isTightBase && <span title="ADR% in bottom 25% of universe" style={{ color: VIOLET }}>🎯</span>}
+                  </td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 800, color: scoreColor }}>{total}/{row.totalKnown}</td>
                 </tr>
               );
             })}
@@ -6441,14 +6528,19 @@ function SepaChecklistPanel({ techRows }: { techRows: any[] }) {
         </table>
       </div>
 
-      {sorted.length > showTop && (
+      {filtered.length > showTop && (
         <div style={{ fontSize: 11, color: MUTED, marginTop: 8, fontStyle: 'italic' }}>
-          Showing top {showTop} of {sorted.length} scored stocks. Refine below by uploading a fresh TradingView export or narrowing by industry.
+          Showing top {showTop} of {filtered.length} filtered stocks · click column headers to sort · click chips to filter.
         </div>
       )}
 
       <div style={{ fontSize: 11, color: MUTED, marginTop: 12, padding: '8px 10px', background: PANEL2, borderRadius: 6, lineHeight: 1.6 }}>
-        <b style={{ color: TXT }}>Rules not shown here (do manually)</b> — CANSLIM &quot;N&quot; (new product / management / cycle), &quot;S&quot; (small float / high demand), &quot;L&quot; (industry leader), &quot;I&quot; (institutional buying — check Portfolio Fundamentals). Score of 8+/10 combined with these 4 manual checks is the full 15/15 Elite trigger from the Winning Playbook.
+        <b style={{ color: TXT }}>How the score is built.</b>{' '}
+        <b style={{ color: CYAN }}>Trend (3)</b>: Stage-2 confirmed · full 50/150/200 stack · above 21-EMA.{' '}
+        <b style={{ color: VIOLET }}>RS (3)</b>: 1Y in top 20% · 3M in top 25% · 1W positive AND top half.{' '}
+        <b style={{ color: AMBER }}>Setup (3)</b>: within 15% of 52w high · tight ADR% (bottom 40%) · not extended.{' '}
+        <b style={{ color: BLUE }}>Volume (3)</b>: RelVol &gt; 1.1 · volume contraction pattern · momentum accelerating.
+        Manual checks: CANSLIM &quot;N&quot; (new product), &quot;S&quot; (small float), &quot;L&quot; (industry leader), &quot;I&quot; (institutional buying).
       </div>
     </div>
   );
