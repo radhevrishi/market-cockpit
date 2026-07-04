@@ -6291,6 +6291,186 @@ function MultiConfirmedCard({ stocks }: { stocks: any[] }) {
 // while the first is running.
 const _techPullInFlight: { current: Set<string> } = { current: new Set() };
 
+// ─── zzz207: VOLUME POCKETS PANEL (Screener.in weekly + monthly screens) ──
+// Surfaces the two Screener.in screens "Weekly Volume Pockets" (3771598) and
+// "Monthly Volume Pockets" (3771541), synced daily by screener-sync.yml into
+// /data/screener/. India Technicals ONLY. Each pocket stock is cross-referenced
+// against the tab's TradingView tech universe: if present we show its tech
+// score + entry status; if absent it's flagged so you can add it to the TV
+// screen. Copy buttons export NSE:SYMBOL lists straight to TradingView.
+function VolumePocketsPanel({ techRows }: { techRows: any[] }) {
+  const PANEL = '#0F141B';
+  const PANEL2 = '#121821';
+  const LINE = '#1E2632';
+  const LINE2 = '#2A3444';
+  const TXT = '#E5ECF4';
+  const MUTED = '#7B8898';
+  const CYAN = '#22D3EE';
+  const GREEN = '#10B981';
+  const RED = '#EF4444';
+  const AMBER = '#F59E0B';
+  const VIOLET = '#A78BFA';
+
+  type PocketStock = { symbol: string; name: string };
+  type Pocket = { key: 'weekly' | 'monthly'; label: string; stocks: PocketStock[]; error?: string };
+  const [pockets, setPockets] = React.useState<Pocket[] | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [toast, setToast] = React.useState('');
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const mResp = await fetch('/data/screener/manifest.json', { cache: 'no-store' });
+      if (!mResp.ok) { setPockets([]); return; }
+      const manifest = await mResp.json();
+      const files: { name: string }[] = manifest?.files || [];
+      const XLSX = await import('xlsx');
+      const defs: { key: 'weekly' | 'monthly'; label: string; prefix: string }[] = [
+        { key: 'weekly', label: '📅 Weekly Volume Pockets', prefix: 'weekly-volume-pockets' },
+        { key: 'monthly', label: '🗓 Monthly Volume Pockets', prefix: 'monthly-volume-pockets' },
+      ];
+      const out: Pocket[] = [];
+      for (const d of defs) {
+        const f = files.find(x => x.name && x.name.startsWith(d.prefix));
+        if (!f) { out.push({ key: d.key, label: d.label, stocks: [], error: 'not synced yet' }); continue; }
+        try {
+          const r = await fetch(`/data/screener/${f.name}`, { cache: 'no-store' });
+          if (!r.ok) { out.push({ key: d.key, label: d.label, stocks: [], error: `HTTP ${r.status}` }); continue; }
+          const ab = await r.arrayBuffer();
+          const wb = XLSX.read(new Uint8Array(ab), { type: 'array' });
+          const sheet = wb.Sheets[wb.SheetNames[0]];
+          const raw = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: '' });
+          const stocks: PocketStock[] = [];
+          const seen = new Set<string>();
+          for (const row of raw) {
+            const sym = String(row['NSE Code'] || row['NSE code'] || row['BSE Code'] || row['BSE code'] || '').trim();
+            const name = String(row['Name'] || row['name'] || '').trim();
+            if (!sym || seen.has(sym)) continue;
+            seen.add(sym);
+            stocks.push({ symbol: sym, name });
+          }
+          out.push({ key: d.key, label: d.label, stocks });
+        } catch (e) {
+          out.push({ key: d.key, label: d.label, stocks: [], error: e instanceof Error ? e.message : String(e) });
+        }
+      }
+      setPockets(out);
+    } catch {
+      setPockets([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  // Cross-ref map: TV tech universe symbol → row (for score + entry status)
+  const techMap = React.useMemo(() => {
+    const m = new Map<string, any>();
+    for (const r of techRows || []) {
+      const s = (r.symbol || r.ticker || '').toUpperCase();
+      if (s) m.set(s, r);
+    }
+    return m;
+  }, [techRows]);
+
+  const copy = async (txt: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(txt);
+      setToast(`✓ Copied ${label}`);
+      setTimeout(() => setToast(''), 2500);
+    } catch {
+      setToast('⚠️ Copy failed');
+      setTimeout(() => setToast(''), 3000);
+    }
+  };
+
+  if (pockets === null) {
+    return (
+      <div style={{ background: PANEL, border: `1px solid ${LINE}`, borderRadius: 12, padding: 16, marginBottom: 20, fontSize: 13, color: MUTED }}>
+        📦 Loading Volume Pockets (Screener.in)…
+      </div>
+    );
+  }
+
+  const anyData = pockets.some(p => p.stocks.length > 0);
+
+  return (
+    <div style={{ background: `linear-gradient(180deg, ${VIOLET}0D 0%, ${PANEL} 55%)`, border: `1px solid ${VIOLET}55`, borderRadius: 14, padding: 20, marginBottom: 20 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 10, marginBottom: 6 }}>
+        <div style={{ fontSize: 18, fontWeight: 900, color: TXT }}>📦 Volume Pockets · Screener.in</div>
+        <span style={{ fontSize: 12, color: MUTED }}>
+          Weekly (screen 3771598) + Monthly (3771541) · auto-synced daily · cross-checked against your TV technicals universe
+        </span>
+        <button onClick={load} disabled={loading}
+          style={{ marginLeft: 'auto', background: PANEL2, color: VIOLET, border: `1px solid ${VIOLET}55`, padding: '5px 12px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: loading ? 'wait' : 'pointer' }}>
+          {loading ? '⏳' : '🔄 Refresh'}
+        </button>
+        {toast && (
+          <span style={{ background: toast.startsWith('✓') ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)', color: toast.startsWith('✓') ? GREEN : RED, padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 700 }}>
+            {toast}
+          </span>
+        )}
+      </div>
+      <div style={{ fontSize: 12, color: MUTED, marginBottom: 12, lineHeight: 1.5 }}>
+        A <b style={{ color: TXT }}>volume pocket</b> = unusual accumulation vs. recent average. Stocks also in your TV universe show their <b style={{ color: CYAN }}>tech score</b>;
+        <span style={{ color: AMBER }}> ⬚ not-in-universe</span> names are candidates to add to your TradingView screens.
+      </div>
+
+      {!anyData && (
+        <div style={{ fontSize: 12.5, color: MUTED, padding: 12, background: PANEL2, borderRadius: 8 }}>
+          No Volume Pockets data on the server yet. The screener-sync GitHub Action syncs 4× daily — or trigger it manually (Actions → &quot;Sync Screener.in CSVs&quot; → Run workflow).
+        </div>
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 12 }}>
+        {pockets.map(p => {
+          const inUni = p.stocks.filter(s => techMap.has(s.symbol.toUpperCase()));
+          const notInUni = p.stocks.filter(s => !techMap.has(s.symbol.toUpperCase()));
+          const color = p.key === 'weekly' ? CYAN : VIOLET;
+          return (
+            <div key={p.key} style={{ background: PANEL2, border: `1px solid ${color}33`, borderTop: `3px solid ${color}`, borderRadius: 10, padding: 14 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <div style={{ fontSize: 14.5, fontWeight: 800, color }}>{p.label}</div>
+                <span style={{ background: `${color}1F`, color, padding: '2px 9px', borderRadius: 999, fontSize: 11.5, fontWeight: 700 }}>{p.stocks.length}</span>
+                {inUni.length > 0 && <span style={{ background: 'rgba(16,185,129,0.15)', color: GREEN, padding: '2px 9px', borderRadius: 999, fontSize: 11 }}>in universe {inUni.length}</span>}
+                {p.stocks.length > 0 && (
+                  <button onClick={() => copy(p.stocks.map(s => `NSE:${s.symbol}`).join(','), `${p.label} (${p.stocks.length})`)}
+                    style={{ marginLeft: 'auto', background: 'transparent', border: `1px solid ${LINE2}`, color: TXT, padding: '4px 10px', borderRadius: 6, fontSize: 11.5, fontWeight: 700, cursor: 'pointer' }}>
+                    📋 Copy for TV
+                  </button>
+                )}
+              </div>
+              {p.error && <div style={{ fontSize: 12, color: AMBER, marginBottom: 6 }}>⚠️ {p.error}</div>}
+              {p.stocks.length === 0 && !p.error && <div style={{ fontSize: 12, color: MUTED }}>Empty screen right now.</div>}
+              {p.stocks.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, maxHeight: 190, overflowY: 'auto' }}>
+                  {[...inUni, ...notInUni].map(s => {
+                    const t = techMap.get(s.symbol.toUpperCase());
+                    return (
+                      <span key={s.symbol} title={s.name + (t ? ` · tech ${t.totalScore ?? '—'} · ${t.rightEntry ?? ''}` : ' · not in TV universe')}
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 8px', borderRadius: 6, fontSize: 12,
+                          background: t ? 'rgba(16,185,129,0.10)' : 'rgba(255,255,255,0.04)',
+                          border: `1px solid ${t ? 'rgba(16,185,129,0.35)' : LINE}`,
+                        }}>
+                        <b style={{ color: t ? GREEN : TXT }}>{s.symbol}</b>
+                        {t
+                          ? <span style={{ color: (t.totalScore ?? 0) >= 60 ? GREEN : (t.totalScore ?? 0) >= 45 ? AMBER : MUTED, fontSize: 11, fontWeight: 700 }}>{t.totalScore ?? '—'}</span>
+                          : <span style={{ color: AMBER, fontSize: 10.5 }}>⬚</span>}
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─── zzz203/204/205/206: SEPA CHECKLIST PANEL (Winning Playbook overlay) ──
 // zzz206: (1) UI upsize — bigger fonts everywhere, roomier cells, score pills,
 // zebra rows, stacked sub-checks, exchange tag under ticker; (2) EXPORT BEST
@@ -8320,25 +8500,38 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       {/* zzz203: SEPA CHECKLIST PANEL — Winning Playbook overlay */}
       <SepaChecklistPanel techRows={techRows} />
 
-      {/* zzz133 — DATA QUALITY + ELIGIBILITY summary chips */}
-      <div style={{ ...cardStyle, background: 'color-mix(in srgb, #10B981 5%, transparent)', borderColor: 'color-mix(in srgb, #10B981 30%, transparent)', padding: 14 }}>
+      {/* zzz207: VOLUME POCKETS (Screener.in) — India tab only */}
+      {market === 'IND' && <VolumePocketsPanel techRows={techRows} />}
+
+      {/* zzz133/zzz208 — DATA QUALITY + ELIGIBILITY summary chips (cleaned) */}
+      <div style={{ ...cardStyle, background: 'color-mix(in srgb, #10B981 5%, transparent)', borderColor: 'color-mix(in srgb, #10B981 30%, transparent)', padding: 16 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-          <span style={{ fontSize: 14, fontWeight: 800, color: '#10B981' }}>✅ zzz149 — Split USA + India tabs · auto-segregate by Exchange · no fallback</span>
-          <span style={{ background: 'rgba(255,255,255,0.06)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: TXT }}>Total <b>{dataQuality.total}</b></span>
-          <span style={{ background: 'rgba(16,185,129,0.18)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: '#10B981' }}>✓ eligible <b>{techRows.filter(r => r.eligible).length}</b></span>
-          <span style={{ background: 'rgba(239,68,68,0.12)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: '#EF4444' }}>✗ rejected <b>{rejected.length}</b></span>
-          <span style={{ background: 'rgba(251,191,36,0.15)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: '#FBBF24' }}>🗓 earnings soon <b>{earningsSoon.length}</b></span>
-          <span style={{ background: 'rgba(255,255,255,0.06)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: TXT }}>SMA cov <b>{dataQuality.withSMA}/{dataQuality.total}</b></span>
-          <span style={{ background: 'rgba(255,255,255,0.06)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: TXT }}>ATR cov <b>{dataQuality.withATR}/{dataQuality.total}</b></span>
-          <span style={{ background: 'rgba(239,68,68,0.12)', padding: '3px 9px', borderRadius: 6, fontSize: 11.5, color: '#EF4444' }}>⚠️ flagged <b>{dataQuality.flagged}</b></span>
+          <span style={{ fontSize: 15, fontWeight: 900, color: '#10B981', marginRight: 4 }}>✅ DATA QUALITY &amp; ELIGIBILITY</span>
+          <span style={{ background: 'rgba(255,255,255,0.06)', padding: '4px 11px', borderRadius: 6, fontSize: 12.5, color: TXT }}>Total <b>{dataQuality.total}</b></span>
+          <span style={{ background: 'rgba(16,185,129,0.18)', padding: '4px 11px', borderRadius: 6, fontSize: 12.5, color: '#10B981' }}>✓ eligible <b>{techRows.filter(r => r.eligible).length}</b></span>
+          <span style={{ background: 'rgba(239,68,68,0.12)', padding: '4px 11px', borderRadius: 6, fontSize: 12.5, color: '#EF4444' }}>✗ rejected <b>{rejected.length}</b></span>
+          <span style={{ background: 'rgba(251,191,36,0.15)', padding: '4px 11px', borderRadius: 6, fontSize: 12.5, color: '#FBBF24' }}>🗓 earnings soon <b>{earningsSoon.length}</b></span>
+          <span style={{ background: 'rgba(255,255,255,0.06)', padding: '4px 11px', borderRadius: 6, fontSize: 12.5, color: TXT }}>SMA cov <b>{dataQuality.withSMA}/{dataQuality.total}</b></span>
+          <span style={{ background: 'rgba(255,255,255,0.06)', padding: '4px 11px', borderRadius: 6, fontSize: 12.5, color: TXT }}>ATR cov <b>{dataQuality.withATR}/{dataQuality.total}</b></span>
+          <span style={{ background: 'rgba(239,68,68,0.12)', padding: '4px 11px', borderRadius: 6, fontSize: 12.5, color: '#EF4444' }}>⚠️ flagged <b>{dataQuality.flagged}</b></span>
         </div>
-        <div style={{ fontSize: 12, color: TXT, lineHeight: 1.65, marginTop: 10 }}>
-          <b>5-layer engine:</b> (1) <b>Hard filters</b> — liquidity ≥ 200k vol / $5M $-vol, price &gt; SMA50, RSI &lt; 90, no extreme extension.
-          (2) <b>Earnings window</b> — block within 3 days, tag within 14 days.
-          (3) <b>Tech score</b> = <b>0.35×Minervini + 0.30×Qulla + 0.20×Bonde + 0.15×Zanger</b> (weighted, not avg).
-          (4) <b>Fund score</b> — Revenue Q YoY <b>heavier than EPS</b> (harder to manipulate), R40, FCF margin, ROE, leverage, Free Float, analyst rating.
-          (5) <b>Buckets</b> — 🏆 Champions, 🟢 Buy Zone, 🔥 Tech-only, 💰 Quality on Sale (Fund − Tech ≥ 8, relative gate so it works on curated momentum universes), 🗓 Earnings Soon, 🚫 Rejected.
-          💡 <b>Click any ticker card or row</b> to open the full detail modal (technicals + fundamentals + playbook reasons + position sizing).
+        {/* zzz208 — 5-layer engine rendered as 5 tidy cards instead of one dense paragraph */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(215px, 1fr))', gap: 8, marginTop: 12 }}>
+          {[
+            ['1 · HARD FILTERS', 'Liquidity ≥ 200k vol / $5M $-vol · price > SMA50 · RSI < 90 · no extreme extension.'],
+            ['2 · EARNINGS WINDOW', 'Block entries within 3 days of earnings · tag within 14 days.'],
+            ['3 · TECH SCORE', '0.35×Minervini + 0.30×Qulla + 0.20×Bonde + 0.15×Zanger (weighted, not averaged).'],
+            ['4 · FUND SCORE', 'Revenue Q YoY weighted above EPS (harder to manipulate) · R40 · FCF margin · ROE · leverage · float · analyst rating.'],
+            ['5 · BUCKETS', '🏆 Champions · 🟢 Buy Zone · 🔥 Tech-only · 💰 Quality on Sale · 🗓 Earnings Soon · 🚫 Rejected.'],
+          ].map(([t, d]) => (
+            <div key={t} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(16,185,129,0.18)', borderRadius: 8, padding: '10px 12px' }}>
+              <div style={{ fontSize: 11.5, fontWeight: 800, color: '#10B981', letterSpacing: 0.5 }}>{t}</div>
+              <div style={{ fontSize: 12, color: TXT, marginTop: 4, lineHeight: 1.55 }}>{d}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize: 12, color: MUTED, marginTop: 10 }}>
+          💡 Click any ticker card or table row to open the full detail modal — technicals + fundamentals + playbook reasons + position sizing.
         </div>
       </div>
 
@@ -8864,45 +9057,46 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
         </details>
       )}
 
-      {/* zzz133 — Updated TradingView field wishlist */}
-      <div style={{ ...cardStyle, background: 'color-mix(in srgb, #22D3EE 4%, transparent)', borderColor: 'color-mix(in srgb, #22D3EE 30%, transparent)' }}>
-        <div style={{ fontSize: 15, fontWeight: 900, color: CYAN, marginBottom: 8 }}>💡 OPTIONAL — TradingView FIELDS still worth adding</div>
-        <div style={{ fontSize: 12.5, color: TXT, lineHeight: 1.7 }}>
-          <div style={{ marginBottom: 8 }}>
-            <b style={{ color: '#10B981' }}>✅ Now wired:</b> <b>EMA 21</b> · <b>Industry RS rank</b> · <b>Composite RS percentile</b> · Avg vol 30d · Revenue Q/Annual/5Y growth · EPS TTM + Q growth · Gross profit Q growth · Upcoming earnings · Free Float · FCF margin · ROE · Net debt/EBITDA · Analyst rating · Piotroski · Position sizing · P/L calculator · R:R ratio.
+      {/* zzz133/zzz208 — TradingView field wishlist: collapsed + grouped by priority */}
+      <details style={{ ...cardStyle, background: 'color-mix(in srgb, #22D3EE 4%, transparent)', borderColor: 'color-mix(in srgb, #22D3EE 30%, transparent)' }}>
+        <summary style={{ fontSize: 15, fontWeight: 900, color: CYAN, cursor: 'pointer', userSelect: 'none' }}>
+          💡 TradingView fields worth adding <span style={{ fontSize: 12, color: MUTED, fontWeight: 500 }}>— optional wishlist · click to expand</span>
+        </summary>
+        <div style={{ marginTop: 12 }}>
+          <div style={{ padding: '10px 12px', background: 'rgba(16,185,129,0.08)', borderRadius: 8, fontSize: 12.5, color: TXT, lineHeight: 1.7, marginBottom: 12 }}>
+            <b style={{ color: '#10B981' }}>✅ Already wired:</b> EMA 21 · Industry RS rank · Composite RS percentile · Avg vol 30d · Revenue Q/Annual/5Y growth · EPS TTM + Q growth · Gross profit Q growth · Upcoming earnings · Free Float · FCF margin · ROE · Net debt/EBITDA · Analyst rating · Piotroski · Position sizing · P/L calculator · R:R ratio.
           </div>
-          <div style={{ marginBottom: 8 }}>
-            <b style={{ color: '#FBBF24' }}>🟡 What's POSSIBLE with more TradingView fields (prioritized):</b>
-          </div>
-          <ol style={{ margin: '4px 0 0 22px', padding: 0, lineHeight: 1.65 }}>
-            <li><b style={{ color: '#84CC16' }}>HIGH PRIORITY — VOLUME DRY-UP / Avg vol 30d:</b> add <i>"Average volume, 30 days"</i> and <i>"Average volume, 90 days"</i> — we'll compute volume-contraction ratio inside a base (Minervini VCP + Qulla pullback signal). <b>Possible now.</b></li>
-            <li><b style={{ color: '#84CC16' }}>HIGH PRIORITY — Composite RS (1M/3M/6M/12M weighted):</b> we already have 1W/1M/3M/6M/1Y perfs — can build internal Composite RS rank percentile across the universe <b>NOW with current fields</b>, no new fields needed. Just need code.</li>
-            <li><b style={{ color: '#84CC16' }}>HIGH PRIORITY — RS vs SPY:</b> add <i>"Performance %, 1 month"</i> column for SPY by uploading an SPY row in the same CSV, OR add <i>"Beta, 1 year"</i> and we derive. Cleanest path: hardcode SPY 1M/3M from a manual cell or compute from universe-median. <b>Possible with 1 SPY-row trick.</b></li>
-            <li><b style={{ color: '#FBBF24' }}>MEDIUM — Industry RS / Sub-industry:</b> TradingView exposes <i>"Industry"</i> as separate from <i>"Sector"</i>. Add <i>"Industry"</i> column → we'll auto-group + rank sub-industries by median 1M perf. <b>Possible with 1 new field.</b></li>
-            <li><b style={{ color: '#94A3B8' }}>MEDIUM — Earnings Surprise %:</b> ❌ <b>NOT in TradingView screener</b>. Workaround: add <i>"Earnings per share, Quarterly"</i> (actual) <b>AND</b> <i>"Earnings per share estimate, Quarterly"</i> (estimate) — we'll compute surprise = (actual − estimate) ÷ |estimate| × 100. Cleaner alternative: skip and rely on the Upcoming earnings date we already have + Bonde's 1W move + RelVol burst as the EP proxy.</li>
-            <li><b style={{ color: '#FBBF24' }}>MEDIUM — Gap % + close-near-high:</b> add <i>"Gap %"</i> and <i>"Change %"</i> (today). Bonde EP signature. <b>Possible.</b></li>
-            <li><b style={{ color: '#FBBF24' }}>MEDIUM — Short Interest % + Days to Cover:</b> TradingView fields available. <b>Possible.</b></li>
-            <li><b style={{ color: '#94A3B8' }}>LOW — Tight weekly closes (Minervini):</b> needs last-5-weeks closes. TradingView export only gives current values — would need historical weekly OHLC. <b>Not practical via single-CSV export.</b></li>
-            <li><b style={{ color: '#94A3B8' }}>LOW — Estimate revisions (30d/90d):</b> TradingView doesn't expose this in screener. <b>Not possible via current CSV.</b></li>
-            <li><b style={{ color: '#94A3B8' }}>LOW — Institutional ownership trend (% qoq):</b> TradingView gives current % but not historical trend. <b>Not possible without external data.</b></li>
-            <li><b style={{ color: '#94A3B8' }}>LOW — Pocket Pivot / Anchored VWAP:</b> needs intraday/daily OHLC + volume bars. <b>Not possible via screener CSV — needs chart data.</b></li>
-            <li><b style={{ color: '#94A3B8' }}>LOW — Base length / VCP automated detection:</b> needs daily OHLC history. <b>Not via screener.</b></li>
-            <li><b style={{ color: '#94A3B8' }}>LOW — IBD RS Rating (1-99):</b> proprietary IBD metric, not in TradingView. <b>We can fake-rank from universe-internal 1Y perf percentile, fine for relative ranking.</b></li>
-          </ol>
-          <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(16,185,129,0.08)', borderRadius: 6, fontSize: 11.5, color: TXT, lineHeight: 1.6 }}>
-            <b style={{ color: '#10B981' }}>✅ Industry + Avg Vol now wired (zzz140):</b>
-            <ul style={{ margin: '6px 0 0 22px', padding: 0 }}>
-              <li><b>Industry RS rank</b> — every stock now has an industry tag and its industry's 1-100 percentile rank vs the universe.</li>
-              <li><b>Composite RS (0-100)</b> — weighted blend of 1M/3M/6M/1Y perf, percentile-ranked. Minervini bonus +8 if RS ≥ 90, +5 if ≥ 80 (matches his SEPA RS ≥ 80 requirement).</li>
-              <li><b>Industry RS leaderboard</b> table inserted above the playbook sections — shows which industries are leading.</li>
-              <li><b>Qulla & Minervini score boost</b> when the stock is in a top-20% industry AND high personal RS.</li>
-            </ul>
-            <div style={{ marginTop: 8, color: MUTED }}>
-              Next high-leverage adds (if you find them in TradingView): <b>Short Interest %</b> · <b>Gap %</b> (today's open vs prior close) · <b>EPS actual Q</b> + <b>EPS estimate Q</b> (then we compute surprise). Otherwise this is essentially as good as a TradingView-only screener can get without intraday/historical OHLC.
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 10 }}>
+            <div style={{ background: 'rgba(132,204,22,0.06)', border: '1px solid rgba(132,204,22,0.3)', borderTop: '3px solid #84CC16', borderRadius: 8, padding: '12px 14px' }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: '#84CC16', marginBottom: 8 }}>🟢 HIGH — add these first</div>
+              <div style={{ fontSize: 12, color: TXT, lineHeight: 1.65 }}>
+                <div style={{ marginBottom: 6 }}><b>Volume dry-up:</b> add <i>Average volume 30d + 90d</i> → volume-contraction ratio inside a base (VCP + Qulla pullback).</div>
+                <div style={{ marginBottom: 6 }}><b>Composite RS:</b> already computable from 1W/1M/3M/6M/1Y perfs — wired.</div>
+                <div><b>RS vs SPY:</b> add one SPY row to the CSV (or <i>Beta 1Y</i>) → market-relative strength.</div>
+              </div>
+            </div>
+            <div style={{ background: 'rgba(251,191,36,0.05)', border: '1px solid rgba(251,191,36,0.3)', borderTop: '3px solid #FBBF24', borderRadius: 8, padding: '12px 14px' }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: '#FBBF24', marginBottom: 8 }}>🟡 MEDIUM — nice to have</div>
+              <div style={{ fontSize: 12, color: TXT, lineHeight: 1.65 }}>
+                <div style={{ marginBottom: 6 }}><b>Gap % + Change % (today):</b> Bonde EP signature.</div>
+                <div style={{ marginBottom: 6 }}><b>Short Interest % + Days to Cover:</b> available in TradingView.</div>
+                <div><b>Earnings surprise:</b> not exported directly — add <i>EPS actual Q</i> + <i>EPS estimate Q</i> and we compute (actual − est) ÷ |est|.</div>
+              </div>
+            </div>
+            <div style={{ background: 'rgba(148,163,184,0.05)', border: '1px solid rgba(148,163,184,0.25)', borderTop: '3px solid #94A3B8', borderRadius: 8, padding: '12px 14px' }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: '#94A3B8', marginBottom: 8 }}>⚪ NOT POSSIBLE via screener CSV</div>
+              <div style={{ fontSize: 12, color: MUTED, lineHeight: 1.65 }}>
+                <div style={{ marginBottom: 6 }}>Tight weekly closes · base length / VCP auto-detect · pocket pivot / anchored VWAP — all need historical OHLC, not a snapshot export.</div>
+                <div style={{ marginBottom: 6 }}>Estimate revisions · institutional ownership trend — TradingView doesn&apos;t expose history.</div>
+                <div>IBD RS Rating — proprietary; we approximate with universe-internal 1Y percentile (RS Rank column).</div>
+              </div>
             </div>
           </div>
+          <div style={{ marginTop: 10, fontSize: 12, color: MUTED, lineHeight: 1.6 }}>
+            Next high-leverage adds if you find them in TradingView: <b style={{ color: TXT }}>Short Interest %</b> · <b style={{ color: TXT }}>Gap %</b> · <b style={{ color: TXT }}>EPS actual + estimate Q</b>. Otherwise this is about as good as a TradingView-only screener gets without intraday/historical OHLC.
+          </div>
         </div>
-      </div>
+      </details>
 
       {/* zzz135 — Click-to-detail MODAL */}
       {expandedRow && (
