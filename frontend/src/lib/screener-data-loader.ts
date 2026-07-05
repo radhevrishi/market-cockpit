@@ -41,6 +41,20 @@ export const SYNC_ROUTING = {
   ],
   // Latest portfolio — single watchlist.
   portfolioIndia: 'watchlist-10432429.csv',
+  // zzz207 — Volume Pockets screens surface in the INDIA TECHNICALS tab
+  // (VolumePocketsPanel) as a cross-referenced watch strip, NOT in the
+  // Multibagger India fundamental pool. Files may land as .csv or .xlsx —
+  // consumers should match by slug prefix against the manifest.
+  volumePocketsIndia: [
+    'weekly-volume-pockets',
+    'monthly-volume-pockets',
+  ],
+  // zzz215 — Turnarounds tab auto-sync: two dedicated screens pooled into
+  // the TurnaroundCompare analyzer.
+  turnaroundsIndia: [
+    'turnarounds.csv',
+    'debt-reduction.csv',
+  ],
   // Watchlists go into the Watchlist Fundamentals scope.
   watchlistIndia: [
     'watchlist-10432585.csv',
