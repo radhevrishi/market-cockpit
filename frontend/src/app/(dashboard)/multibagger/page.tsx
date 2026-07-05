@@ -1868,6 +1868,9 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
       <CloudSaveStatusBadge rows={rows} />
 
 
+      {/* zzz214 — score movers since the previous upload/refresh */}
+      <ScoreMoversStrip rows={rows} prevKey="mb_india_prev_scores_v1" />
+
       {/* PATCH 1101qqq — Auto-sync status chip + manual refresh button.
           Shows last-sync date, lets user pull fresh CSVs without leaving tab. */}
       {syncStatus && syncStatus.hasManifest && (
@@ -4864,6 +4867,9 @@ function USACompare() {
     <div style={{maxWidth:1800,margin:'0 auto',padding:'28px 20px'}}>
       {/* zzz181 - Recently Added panel */}
       <RecentlyAddedPanel tab="us-mb" tickers={usaAllSymbols} marketLabel="🇺🇸 USA Multibagger" dataFolder="frontend/public/data/tradingview" />
+
+      {/* zzz214 — score movers since the previous upload/refresh */}
+      <ScoreMoversStrip rows={rows} prevKey="mb_usa_prev_scores_v1" />
       {/* Header */}
       <div style={{marginBottom:20,padding:'18px 20px',backgroundColor:CARD_BG,border:`1px solid ${BORDER}`,borderRadius:12}}>
         <div style={{fontSize:F.lg,fontWeight:800,color:'#38bdf8',marginBottom:8}}>🇺🇸 USA Multibagger — TradingView Export</div>
@@ -6291,13 +6297,55 @@ function MultiConfirmedCard({ stocks }: { stocks: any[] }) {
 // while the first is running.
 const _techPullInFlight: { current: Set<string> } = { current: new Set() };
 
+// ─── zzz214: SCORE MOVERS STRIP (India + USA Multibagger tabs) ───────────
+// Compares current scores against the pre-upload baseline the tabs already
+// persist (mb_india_prev_scores_v1 / mb_usa_prev_scores_v1) and surfaces the
+// biggest upgrades / downgrades since the last data refresh.
+function ScoreMoversStrip({ rows, prevKey }: { rows: any[]; prevKey: string }) {
+  const movers = React.useMemo(() => {
+    let prev: Record<string, number> = {};
+    try { prev = JSON.parse(localStorage.getItem(prevKey) || '{}'); } catch {}
+    const out: { symbol: string; from: number; to: number; d: number }[] = [];
+    for (const r of rows || []) {
+      if (!r || typeof r.symbol !== 'string') continue;
+      const p = prev[r.symbol];
+      if (typeof p !== 'number' || typeof r.score !== 'number') continue;
+      const d = Math.round(r.score - p);
+      if (Math.abs(d) >= 5) out.push({ symbol: r.symbol, from: Math.round(p), to: Math.round(r.score), d });
+    }
+    out.sort((a, b) => Math.abs(b.d) - Math.abs(a.d));
+    return out.slice(0, 16);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, prevKey]);
+  if (movers.length === 0) return null;
+  const ups = movers.filter(m => m.d > 0).length;
+  return (
+    <div style={{ marginBottom: 14, padding: '12px 16px', background: 'rgba(245,158,11,0.05)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+        <span style={{ fontSize: 14, fontWeight: 900, color: '#F59E0B' }}>📈 SCORE MOVERS since last refresh</span>
+        <span style={{ fontSize: 11.5, color: '#7B8898' }}>⬆ {ups} up · ⬇ {movers.length - ups} down · |Δ| ≥ 5 pts · biggest first</span>
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+        {movers.map(m => (
+          <span key={m.symbol} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'rgba(255,255,255,0.04)', border: `1px solid ${m.d > 0 ? 'rgba(16,185,129,0.4)' : 'rgba(239,68,68,0.4)'}`, padding: '4px 10px', borderRadius: 7, fontSize: 12 }}>
+            <span style={{ color: m.d > 0 ? '#10B981' : '#EF4444', fontWeight: 900 }}>{m.d > 0 ? '⬆' : '⬇'}</span>
+            <b style={{ color: '#E5ECF4' }}>{m.symbol}</b>
+            <span style={{ color: '#7B8898', fontVariantNumeric: 'tabular-nums' }}>{m.from}→{m.to}</span>
+            <span style={{ color: m.d > 0 ? '#10B981' : '#EF4444', fontWeight: 800 }}>{m.d > 0 ? '+' : ''}{m.d}</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── zzz207/zzz209: VOLUME POCKETS PANEL (Screener.in weekly + monthly) ──
 // zzz209: full decision table. Company NAMES (not just tickers), Pocket Score
 // 0-100 built from: volume surge vs 1Y avg · trend vs DMA50/200 · distance
 // from 52w high · Q sales/profit growth · quality (ROCE, D/E, promoter,
 // pledge). Verdict tags (🟢 STRONG / 🟡 WATCH / ⚪ WEAK + ⚠ red flags),
 // TV-universe tech score cross-ref, ranked descending. India Technicals only.
-function VolumePocketsPanel({ techRows, onBest }: { techRows: any[]; onBest?: (tvSymbols: string[]) => void }) {
+function VolumePocketsPanel({ techRows, onBest, onOpen }: { techRows: any[]; onBest?: (tvSymbols: string[]) => void; onOpen?: (symbol: string) => void }) {
   const PANEL = '#0F141B';
   const PANEL2 = '#121821';
   const LINE = '#1E2632';
@@ -6320,7 +6368,7 @@ function VolumePocketsPanel({ techRows, onBest }: { techRows: any[]; onBest?: (t
     salesQ?: number; profitQ?: number;
     roce?: number; de?: number; promoter?: number; pledge?: number;
     opmQ?: number; ret1y?: number; pe?: number;
-    score: number; verdict: 'STRONG' | 'WATCH' | 'WEAK'; flags: string[];
+    score: number; verdict: 'STRONG' | 'WATCH' | 'WEAK'; flags: string[]; isNew?: boolean;
     tv?: any;
   };
   const [stocks, setStocks] = React.useState<PocketStock[] | null>(null);
@@ -6437,6 +6485,32 @@ function VolumePocketsPanel({ techRows, onBest }: { techRows: any[]; onBest?: (t
         }
 
         const arr = [...byKey.values()].sort((a, b) => b.score - a.score || (b.surge ?? 0) - (a.surge ?? 0));
+
+        // zzz214 — 🆕 NEW-today detection vs the previous day's membership
+        // snapshot. Snapshot rolls forward once per calendar day so the NEW
+        // badges stay stable all day.
+        try {
+          const SNAP_KEY = 'mc_volpockets_snap_v1';
+          const today = new Date().toISOString().slice(0, 10);
+          const curSyms = arr.map(x => x.symbol).filter(Boolean).sort();
+          let snap: { date: string; prev: string[]; cur: string[] } | null = null;
+          try { snap = JSON.parse(localStorage.getItem(SNAP_KEY) || 'null'); } catch {}
+          let baselineSyms: string[] = [];
+          if (!snap || !snap.date) {
+            snap = { date: today, prev: [], cur: curSyms };
+          } else if (snap.date === today) {
+            baselineSyms = snap.prev || [];
+            snap.cur = curSyms;
+          } else {
+            baselineSyms = snap.cur || [];
+            snap = { date: today, prev: snap.cur || [], cur: curSyms };
+          }
+          localStorage.setItem(SNAP_KEY, JSON.stringify(snap));
+          if (baselineSyms.length > 0) {
+            const base = new Set(baselineSyms);
+            for (const x of arr) if (x.symbol && !base.has(x.symbol)) x.isNew = true;
+          }
+        } catch {}
         if (!cancelled) setStocks(arr);
       } catch {
         if (!cancelled) setStocks([]);
@@ -6493,6 +6567,9 @@ function VolumePocketsPanel({ techRows, onBest }: { techRows: any[]; onBest?: (t
         <div style={{ fontSize: 18, fontWeight: 900, color: TXT }}>📦 Volume Pockets · Screener.in</div>
         <span style={{ background: `${GREEN}22`, color: GREEN, padding: '3px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700 }}>🟢 Strong {strongN}</span>
         <span style={{ background: `${AMBER}22`, color: AMBER, padding: '3px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700 }}>🟡 Watch {watchN}</span>
+        {stocks.some(x => x.isNew) && (
+          <span style={{ background: `${CYAN}22`, color: CYAN, padding: '3px 10px', borderRadius: 999, fontSize: 12, fontWeight: 800 }}>🆕 New today {stocks.filter(x => x.isNew).length}</span>
+        )}
         <span style={{ background: `${CYAN}18`, color: CYAN, padding: '3px 10px', borderRadius: 999, fontSize: 12 }}>📅 Weekly {weekly.length}</span>
         <span style={{ background: `${VIOLET}18`, color: VIOLET, padding: '3px 10px', borderRadius: 999, fontSize: 12 }}>🗓 Monthly {monthly.length}</span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -6544,10 +6621,16 @@ function VolumePocketsPanel({ techRows, onBest }: { techRows: any[]; onBest?: (t
                 const vColor = s.verdict === 'STRONG' ? GREEN : s.verdict === 'WATCH' ? AMBER : MUTED;
                 const zebra = i % 2 === 1 ? 'rgba(255,255,255,0.02)' : 'transparent';
                 return (
-                  <tr key={s.symbol + s.name} style={{ borderBottom: `1px solid ${LINE}`, background: s.verdict === 'STRONG' ? `${GREEN}0C` : zebra }}>
+                  <tr key={s.symbol + s.name}
+                    onClick={() => { if (s.tv && onOpen) onOpen(s.symbol); }}
+                    title={s.tv ? 'Click for full detail modal' : 'Not in your TradingView universe — no detail data yet'}
+                    style={{ borderBottom: `1px solid ${LINE}`, background: s.verdict === 'STRONG' ? `${GREEN}0C` : zebra, cursor: s.tv && onOpen ? 'pointer' : 'default' }}>
                     <td style={{ padding: '9px', color: i < 3 ? AMBER : MUTED, fontWeight: i < 3 ? 800 : 400 }}>{i + 1}</td>
                     <td style={{ padding: '9px', minWidth: 170 }}>
-                      <div style={{ color: TXT, fontWeight: 800, fontSize: 13.5 }}>{s.name}</div>
+                      <div style={{ color: TXT, fontWeight: 800, fontSize: 13.5 }}>
+                        {s.name}
+                        {s.isNew && <span title="Newly entered the pocket vs yesterday's snapshot" style={{ marginLeft: 6, fontSize: 10, background: 'rgba(34,211,238,0.18)', color: CYAN, padding: '1px 6px', borderRadius: 4, fontWeight: 800, verticalAlign: 'middle' }}>NEW</span>}
+                      </div>
                       <div style={{ color: MUTED, fontSize: 10.5, marginTop: 2 }}>{s.isBseCode ? `BSE ${s.symbol}` : `NSE:${s.symbol}`}</div>
                     </td>
                     <td style={{ padding: '9px', textAlign: 'center', fontSize: 13, whiteSpace: 'nowrap' }}>
@@ -6607,7 +6690,7 @@ function VolumePocketsPanel({ techRows, onBest }: { techRows: any[]; onBest?: (t
 // SEPA PICKS block — TradingView copy (with sections), comma list, .txt / .csv
 // download, per-bucket copy (Elite / Good / Fresh / Tight). Panel is shared by
 // BOTH the India and USA Technicals tabs, so both get the export for free.
-function SepaChecklistPanel({ techRows, onBest }: { techRows: any[]; onBest?: (tvSymbols: string[]) => void }) {
+function SepaChecklistPanel({ techRows, onBest, onOpen }: { techRows: any[]; onBest?: (tvSymbols: string[]) => void; onOpen?: (symbol: string) => void }) {
   const PANEL = '#0F141B';
   const PANEL2 = '#121821';
   const LINE = '#1E2632';
@@ -6972,7 +7055,10 @@ function SepaChecklistPanel({ techRows, onBest }: { techRows: any[]; onBest?: (t
                   : '—';
               const zebra = i % 2 === 1 ? 'rgba(255,255,255,0.02)' : 'transparent';
               return (
-                <tr key={r.symbol || i} style={{ borderBottom: `1px solid ${LINE}`, background: total >= 10 ? `${GREEN}0F` : zebra }}>
+                <tr key={r.symbol || i}
+                  onClick={() => onOpen && (r.symbol || r.ticker) && onOpen(r.symbol || r.ticker)}
+                  title="Click for full detail — technicals + fundamentals + position sizing"
+                  style={{ borderBottom: `1px solid ${LINE}`, background: total >= 10 ? `${GREEN}0F` : zebra, cursor: onOpen ? 'pointer' : 'default' }}>
                   <td style={{ padding: '10px', color: i < 3 ? AMBER : MUTED, fontWeight: i < 3 ? 800 : 400, fontSize: 13 }}>{i + 1}</td>
                   <td style={{ padding: '10px', verticalAlign: 'top' }}>
                     <div style={{ color: TXT, fontWeight: 800, fontSize: 14.5 }}>{r.symbol || r.ticker || '—'}</div>
@@ -8365,6 +8451,32 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
   // ONE sectioned TradingView watchlist string, deduped across sections.
   const sepaBestRef = React.useRef<string[]>([]);
   const pocketsBestRef = React.useRef<string[]>([]);
+  // zzz214 — bump when panel best-lists arrive so the Confluence strip renders
+  const [bestTick, setBestTick] = React.useState(0);
+  // zzz214 — ⚡ CONFLUENCE: how many independent systems flag each stock.
+  const confluence = React.useMemo(() => {
+    const bare = (x: string) => (x.includes(':') ? (x.split(':').pop() || '') : x).toUpperCase();
+    const sysMap = new Map<string, Set<string>>();
+    const tag = (sym: string | undefined, label: string) => {
+      if (!sym) return;
+      const b = bare(sym);
+      if (!b) return;
+      if (!sysMap.has(b)) sysMap.set(b, new Set());
+      sysMap.get(b)!.add(label);
+    };
+    champions.forEach(r => tag(r.symbol, 'Champion'));
+    buyZone.forEach(r => tag(r.symbol, 'Buy Zone'));
+    sepaBestRef.current.forEach(x => tag(x, 'SEPA 7+'));
+    pocketsBestRef.current.forEach(x => tag(x, 'Pocket'));
+    bestPicks.filter(p => p._tier === 'MOMENTUM').forEach(p => tag(p.symbol, 'Momentum'));
+    bestPicks.filter(p => p._tier === 'QUALITY').forEach(p => tag(p.symbol, 'Quality'));
+    return [...sysMap.entries()]
+      .map(([symbol, set]) => ({ symbol, n: set.size, systems: [...set] }))
+      .filter(x => x.n >= 2)
+      .sort((a, b) => b.n - a.n || a.symbol.localeCompare(b.symbol))
+      .slice(0, 14);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [champions, buyZone, bestPicks, bestTick]);
   const copyAllBest = () => {
     const seen = new Set<string>();
     const out: string[] = [];
@@ -8690,6 +8802,19 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
             </span>
           )}
         </div>
+        {/* zzz214 — stale-file warning: parse YYYY-MM-DD from uploaded filenames */}
+        {(() => {
+          const stale = techSources.filter(x => {
+            const m = x.name.match(/20\d{2}-\d{2}-\d{2}/);
+            return m ? (Date.now() - new Date(m[0]).getTime()) / 86400000 > 5 : false;
+          });
+          if (stale.length === 0) return null;
+          return (
+            <div style={{ marginTop: 8, padding: '8px 12px', background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.35)', borderRadius: 8, fontSize: 12.5, color: '#FBBF24', fontWeight: 700 }}>
+              ⚠️ {stale.length} uploaded file{stale.length > 1 ? 's are' : ' is'} over 5 days old — prices, SMAs and RSI have drifted. Re-export from TradingView or use &quot;Pull latest from server&quot;.
+            </div>
+          );
+        })()}
         {techSources.length > 0 ? (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
             {techSources.map((s, i) => (
@@ -8698,6 +8823,12 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
                 <span style={{ fontWeight: 700, color: CYAN }}>{s.rowCount}</span>
                 <span style={{ color: MUTED, maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
                 {s.warning && <span style={{ color: '#EF4444' }}>⚠️</span>}
+                {(() => {
+                  const m = s.name.match(/20\d{2}-\d{2}-\d{2}/);
+                  if (!m) return null;
+                  const age = Math.floor((Date.now() - new Date(m[0]).getTime()) / 86400000);
+                  return <span style={{ color: age > 5 ? '#EF4444' : MUTED, fontWeight: age > 5 ? 800 : 400 }}>· {age}d old</span>;
+                })()}
               </div>
             ))}
           </div>
@@ -8734,6 +8865,28 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
           </a>
         ))}
       </div>
+
+      {/* zzz214 — ⚡ CONFLUENCE strip: stocks flagged by 2+ independent systems */}
+      {confluence.length > 0 && (
+        <div style={{ background: 'linear-gradient(135deg, rgba(245,158,11,0.08), rgba(34,211,238,0.05))', border: '1px solid rgba(245,158,11,0.45)', borderRadius: 12, padding: '14px 16px', marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+            <span style={{ fontSize: 16, fontWeight: 900, color: '#F59E0B' }}>⚡ CONFLUENCE — flagged by 2+ systems</span>
+            <span style={{ fontSize: 12, color: MUTED }}>Champion · Buy Zone · SEPA 7+ · Pocket · Momentum · Quality — the more independent systems agree, the stronger the signal. Click a chip for details.</span>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {confluence.map(c => (
+              <span key={c.symbol}
+                onClick={() => { if (techRows.some(r => (r.symbol || '').toUpperCase() === c.symbol)) setExpandedSymbol(c.symbol); }}
+                title={c.systems.join(' · ')}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: PANEL2, border: `1px solid ${c.n >= 4 ? '#10B981' : c.n === 3 ? '#F59E0B' : LINE}`, padding: '6px 12px', borderRadius: 8, cursor: 'pointer' }}>
+                <b style={{ color: TXT, fontSize: 13.5 }}>{c.symbol}</b>
+                <span style={{ color: c.n >= 4 ? '#10B981' : c.n === 3 ? '#F59E0B' : CYAN, fontWeight: 900, fontSize: 12.5 }}>×{c.n}</span>
+                <span style={{ color: MUTED, fontSize: 10.5 }}>{c.systems.join(' · ')}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* zzz133/zzz208 — DATA QUALITY + ELIGIBILITY summary chips (cleaned) */}
       <div style={{ ...cardStyle, background: 'color-mix(in srgb, #10B981 5%, transparent)', borderColor: 'color-mix(in srgb, #10B981 30%, transparent)', padding: 16 }}>
@@ -8915,10 +9068,10 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
 
       <div id="sec-sepa" style={{ scrollMarginTop: 80 }} />
       {/* zzz203: SEPA CHECKLIST PANEL — Winning Playbook overlay */}
-      <SepaChecklistPanel techRows={techRows} onBest={(l) => { sepaBestRef.current = l; }} />
+      <SepaChecklistPanel techRows={techRows} onOpen={(sym) => setExpandedSymbol(sym)} onBest={(l) => { if (l.join(',') !== sepaBestRef.current.join(',')) { sepaBestRef.current = l; setBestTick(t => t + 1); } }} />
 
       {/* zzz207: VOLUME POCKETS (Screener.in) — India tab only */}
-      {market === 'IND' && <><div id="sec-pockets" style={{ scrollMarginTop: 80 }} /><VolumePocketsPanel techRows={techRows} onBest={(l) => { pocketsBestRef.current = l; }} /></>}
+      {market === 'IND' && <><div id="sec-pockets" style={{ scrollMarginTop: 80 }} /><VolumePocketsPanel techRows={techRows} onOpen={(sym) => setExpandedSymbol(sym)} onBest={(l) => { if (l.join(',') !== pocketsBestRef.current.join(',')) { pocketsBestRef.current = l; setBestTick(t => t + 1); } }} /></>}
 
       <div id="sec-export" style={{ scrollMarginTop: 80 }} />
       {/* zzz142 — EXPORT BEST PICKS to TradingView / Excel / clipboard */}
