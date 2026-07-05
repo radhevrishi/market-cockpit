@@ -12045,6 +12045,36 @@ function TurnaroundCompare() {
     }).sort((a, b) => b.totalScore - a.totalScore));
   }, []);
 
+  // zzz215 — AUTO-SYNC from screener.in. Turnarounds (3658519) + Debt
+  // Reduction (3658621) are exported 4×/day by screener-sync.yml; this pulls
+  // them through the existing handleFiles() pipeline. Auto-loads once when
+  // the tab is empty; manual pull button always available.
+  const [turnSyncing, setTurnSyncing] = useState(false);
+  const turnPulledRef = useRef(false);
+  const pullTurnarounds = useCallback(async () => {
+    if (turnSyncing) return;
+    setTurnSyncing(true);
+    try {
+      const files = await fetchCsvsAsFiles(SYNC_ROUTING.turnaroundsIndia);
+      if (files.length === 0) {
+        setParseError('Auto-sync: no turnaround CSVs on the server yet — run the "Sync Screener.in CSVs" GitHub Action once.');
+        return;
+      }
+      await handleFiles(files);
+      markAutoLoaded('turnarounds');
+    } finally {
+      setTurnSyncing(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turnSyncing]);
+  useEffect(() => {
+    if (turnPulledRef.current || rows.length > 0 || !shouldAutoLoad('turnarounds')) return;
+    turnPulledRef.current = true;
+    const t = setTimeout(() => { pullTurnarounds(); }, 1200);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows.length]);
+
   // PATCH 0374 / 0375 — Multi-CSV upload. Accepts MULTIPLE files in one
   // picker, processes them all, then merges into existing rows via
   // functional setState (avoids stale closure on rows).
@@ -12189,6 +12219,11 @@ function TurnaroundCompare() {
             style={{ display: 'none' }}
           />
         </label>
+        <button onClick={() => pullTurnarounds()} disabled={turnSyncing}
+          title="Fetch the daily-synced Turnarounds + Debt Reduction screens from screener.in"
+          style={{ padding: '6px 14px', backgroundColor: '#8B5CF6', border: 'none', borderRadius: 6, color: '#fff', fontSize: F.xs, fontWeight: 700, cursor: turnSyncing ? 'wait' : 'pointer' }}>
+          {turnSyncing ? '⏳ Syncing…' : '🔄 Pull latest from server'}
+        </button>
         {fileName && <span style={{ fontSize: F.xs, color: MUTED }}>{fileName} · {rows.length} unique rows</span>}
         {parseError && <span style={{ fontSize: F.xs, color: RED, fontWeight: 700 }}>⚠ {parseError}</span>}
         {rows.length > 0 && (
