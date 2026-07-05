@@ -12010,9 +12010,17 @@ const TURNAROUND_STORAGE_KEY = 'mb_turnaround_scored_v1';
 // the auto-synced CSVs), so re-scoring them can never recover. Detect that
 // signature and transparently re-sync + re-parse from the server so the user
 // never has to Clear All manually after an engine upgrade.
+// zzz220 — engine version stamp: bump this whenever parsing/scoring changes
+// materially. A mismatch forces a transparent server re-sync on next load.
+const TURNAROUND_ENGINE_V = '220';
+const TURNAROUND_ENGINE_KEY = 'mb_turnaround_engine_v';
 function turnRowsAreStaleParsed(rows: any[]): boolean {
   if (!Array.isArray(rows) || rows.length < 3) return false;
-  const missing = rows.filter(r => r && r.patQ1 == null && r.salesQ1 == null).length;
+  try { if (localStorage.getItem(TURNAROUND_ENGINE_KEY) !== TURNAROUND_ENGINE_V) return true; } catch {}
+  // zzz220 — the pre-zzz217 parser DID map salesQ1 (that alias existed), so
+  // the old signature (patQ1 AND salesQ1 both missing) never matched real
+  // stale data. PAT quarters were never mapped by the old parser — use that.
+  const missing = rows.filter(r => r && r.patQ1 == null).length;
   return missing / rows.length > 0.8;
 }
 async function resyncTurnaroundsFromServer(): Promise<TurnaroundResult[]> {
@@ -12031,9 +12039,20 @@ async function resyncTurnaroundsFromServer(): Promise<TurnaroundResult[]> {
       }
     } catch {}
   }
+  // zzz220 — keep manually-uploaded rows that aren't in the server screens
+  // (re-scored with the current engine) instead of dropping them.
+  try {
+    const existing = JSON.parse(localStorage.getItem(TURNAROUND_STORAGE_KEY) || '[]');
+    if (Array.isArray(existing)) {
+      for (const r of existing) {
+        if (r && r.symbol && !merged.has(r.symbol)) merged.set(r.symbol, scoreTurnaroundRow(r));
+      }
+    }
+  } catch {}
   const rows = Array.from(merged.values()).sort((a, b) => b.totalScore - a.totalScore);
   if (rows.length > 0) {
     try { localStorage.setItem(TURNAROUND_STORAGE_KEY, JSON.stringify(rows)); } catch {}
+    try { localStorage.setItem(TURNAROUND_ENGINE_KEY, TURNAROUND_ENGINE_V); } catch {}
     try { window.dispatchEvent(new CustomEvent('mb-upload:updated', { detail: { market: 'TURN' } })); } catch {}
   }
   return rows;
