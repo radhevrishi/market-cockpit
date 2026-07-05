@@ -641,11 +641,17 @@ function classifyArchetype(row: TurnaroundRow): { archetype: TurnaroundArchetype
   // = post-listing valuation reset, not a turnaround. Per user feedback:
   // "Yatharth, Entero, Blackbuck are not turnarounds, they are post-listing
   //  growth normalization phases."
+  const hasQuarterlyDamage =
+    (row.patQ2 != null && row.patQ2 < 0) ||
+    (row.patQ3 != null && row.patQ3 < 0) ||
+    (row.patQ4 != null && row.patQ4 < 0) ||
+    (patG1y != null && patG1y <= -50);
   const isLikelyRecentIPO = (
     pe != null && pe >= 30 &&
     roce != null && roce < 18 &&
     mcapCr != null && mcapCr < 5000 &&
-    lossYears === 0
+    lossYears === 0 &&
+    !hasQuarterlyDamage  // zzz218 — real damage ≠ IPO normalization
   );
   if (isLikelyRecentIPO) {
     return {
@@ -670,6 +676,16 @@ function classifyArchetype(row: TurnaroundRow): { archetype: TurnaroundArchetype
   // HARD damage — any one = real impairment
   if (lossYears >= 2) priorDamage.push(`${lossYears}/5 loss yrs`);
   if (negLatestPAT) priorDamage.push('current losses');
+  // zzz218 — quarterly-loss damage: the auto-synced screens carry 4 quarters
+  // of PAT but no annual history. A loss in ANY of the last 3 prior quarters
+  // is hard impairment evidence (the exact base a turnaround recovers from).
+  const recentLossQuarters = [row.patQ2, row.patQ3, row.patQ4].filter(v => v != null && v < 0).length;
+  if (recentLossQuarters >= 1) priorDamage.push(`${recentLossQuarters} loss qtr${recentLossQuarters > 1 ? 's' : ''} in last year`);
+  // zzz218 — PAT crashed >80% over the last year (incl. profit→loss = <-100%)
+  if (patG1y != null && patG1y <= -80) priorDamage.push(`PAT 1y crashed ${patG1y.toFixed(0)}%`);
+  // zzz218 — standalone severe stress markers (no compounder ever shows these)
+  if (row.interestCoverage != null && row.interestCoverage < 1.5 && de != null && de > 0.3) priorDamage.push(`int-cov ${row.interestCoverage.toFixed(1)}x (debt stress)`);
+  if (roce != null && roce < 4) priorDamage.push(`ROCE ${roce.toFixed(1)}% (returns collapsed)`);
   if (patY2 != null && patY2 < 0) priorDamage.push('neg PAT prev yr');
   if (row.patY3 != null && row.patY3 < 0) priorDamage.push('neg PAT 3yr ago');
   if (roce != null && roce3y != null && roce3y < 3 && roce - roce3y >= 8) priorDamage.push(`ROCE was ${roce3y.toFixed(0)}% (severe collapse)`);
@@ -1136,8 +1152,15 @@ export function scoreTurnaroundRow(row: TurnaroundRow): TurnaroundResult {
   const governanceScore   = scoreGovernance(row, strengths);
   const valuationScore    = scoreValuationRerating(row, strengths);
 
-  const totalScore = earningsScore + operationalScore + balanceSheetScore +
+  let totalScore = earningsScore + operationalScore + balanceSheetScore +
                      concallScore + industryScore + governanceScore + valuationScore;
+  // zzz218 — EX-CONCALL NORMALIZATION. The concall dimension is 25/100 pts
+  // but auto-synced rows have no pasted narrative, so every stock was capped
+  // at 75 and graded D. When no concall text exists, rebase the composite to
+  // an ex-concall 100 so grades stay comparable. Pasting a concall switches
+  // the row back to the full 100-pt basis (and usually scores higher).
+  const hasConcallText = (row.concallText || '').trim().length > 50;
+  if (!hasConcallText) totalScore = (totalScore / 75) * 100;
 
   // Collect risks heuristically
   if (row.de != null && row.de > 2) risks.push(`High D/E ${row.de.toFixed(1)}×`);
@@ -1251,7 +1274,9 @@ export function scoreTurnaroundRow(row: TurnaroundRow): TurnaroundResult {
     phaseInfo.phase === 3 &&
     survival.score >= 6 &&
     killers.length === 0 &&
-    totalScore >= 40;
+    // zzz218 — 35 on the ex-concall basis (annual-history columns are absent
+    // from the auto-synced screens, which depresses EARN/BAL ceilings too)
+    totalScore >= (hasConcallText ? 40 : 35);
 
   return {
     ...row,
