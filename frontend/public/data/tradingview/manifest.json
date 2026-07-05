@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-07-04T14:16:07.573Z",
+  "lastSync": "2026-07-05T07:50:41.727Z",
   "workflowVersion": "zzz162",
   "approach": "scanner-api-interception + field-id translation",
   "ok": 9,
@@ -10,7 +10,7 @@
       "displayName": "Minervni Stocks",
       "screenerId": "sBtiBahk",
       "ok": true,
-      "size": 39277,
+      "size": 39269,
       "rowCount": 34,
       "error": null
     },
@@ -19,7 +19,7 @@
       "displayName": "Qualmaggie Leader Stocks in Bearmarket or Corrections",
       "screenerId": "WJDx6FZ9",
       "ok": true,
-      "size": 12340,
+      "size": 12350,
       "rowCount": 9,
       "error": null
     },
@@ -28,7 +28,7 @@
       "displayName": "EPISODIC PIVOT / VOLUME SURGE",
       "screenerId": "Px4kG2hQ",
       "ok": true,
-      "size": 13124,
+      "size": 13138,
       "rowCount": 10,
       "error": null
     },
@@ -46,7 +46,7 @@
       "displayName": "Weekly Gainer Stocks USA",
       "screenerId": "Neuim2Bm",
       "ok": true,
-      "size": 112248,
+      "size": 112250,
       "rowCount": 100,
       "error": null
     },
@@ -55,7 +55,7 @@
       "displayName": "Sales And EPS Growth for EP - Pradeep Bonde style",
       "screenerId": "RtSuWTgK",
       "ok": true,
-      "size": 48091,
+      "size": 48088,
       "rowCount": 41,
       "error": null
     },
@@ -64,8 +64,8 @@
       "displayName": "Future NVDIA ALAB APP PLTR (USA)",
       "screenerId": "5gzenlmQ",
       "ok": true,
-      "size": 15762,
-      "rowCount": 12,
+      "size": 14625,
+      "rowCount": 11,
       "error": null
     },
     {
@@ -73,7 +73,7 @@
       "displayName": "USA Multibagger (GHHf1HVl)",
       "screenerId": "GHHf1HVl",
       "ok": true,
-      "size": 106132,
+      "size": 106393,
       "rowCount": 100,
       "error": null
     },
@@ -82,7 +82,7 @@
       "displayName": "Future Super Scalers like NBIS Full",
       "screenerId": "oRvEFfVY",
       "ok": true,
-      "size": 99431,
+      "size": 99448,
       "rowCount": 90,
       "error": null
     }
