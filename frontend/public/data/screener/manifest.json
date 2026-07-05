@@ -1,6 +1,6 @@
 {
-  "lastSync": "2026-07-05T08:24:17Z",
-  "ok": 17,
+  "lastSync": "2026-07-05T09:29:24Z",
+  "ok": 19,
   "fail": 0,
   "files": [
     {
@@ -12,6 +12,11 @@
       "name": "capex.csv",
       "size": 7777,
       "displayName": "CAPEX"
+    },
+    {
+      "name": "debt-reduction.csv",
+      "size": 9988,
+      "displayName": "Debt Reduction"
     },
     {
       "name": "fii.csv",
@@ -67,6 +72,11 @@
       "name": "stocks-like-bajaj-consumer.csv",
       "size": 6696,
       "displayName": "Stocks like Bajaj Consumer"
+    },
+    {
+      "name": "turnarounds.csv",
+      "size": 12279,
+      "displayName": "Turnarounds"
     },
     {
       "name": "watchlist-10432429.csv",
