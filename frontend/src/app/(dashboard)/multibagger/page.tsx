@@ -8383,6 +8383,30 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
     if (market === 'IND') addSection('Volume Pockets', pocketsBestRef.current);
     addSection('Momentum', bestPicks.filter(p => p._tier === 'MOMENTUM').map(p => tvSymbol(p)));
     addSection('Quality on Sale', bestPicks.filter(p => p._tier === 'QUALITY').map(p => tvSymbol(p)));
+    // zzz212 — ###Multibaggers LAST: only well-graded (A+/A/B+, not MONITOR)
+    // rows from the matching Multibagger tab. Read fresh from localStorage at
+    // click time — India tab pulls mb_excel_scored_v2, USA pulls
+    // mb_usa_scored_v2. Numeric BSE-code-only symbols are skipped (TV can't
+    // resolve them).
+    try {
+      const mbKey = market === 'IND' ? 'mb_excel_scored_v2' : 'mb_usa_scored_v2';
+      const mbRaw = localStorage.getItem(mbKey);
+      if (mbRaw) {
+        const parsed = JSON.parse(mbRaw);
+        const mbRows: any[] = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.rows) ? parsed.rows : []);
+        const exMap: Record<string, string> = { NMS: 'NASDAQ', NASDAQGS: 'NASDAQ', ARCA: 'AMEX', BATS: 'AMEX' };
+        const good = mbRows.filter(r =>
+          r && typeof r.symbol === 'string' && r.symbol &&
+          ['A+', 'A', 'B+'].includes(r.grade) &&
+          r.bucket !== 'MONITOR' &&
+          !/^\d+$/.test(r.symbol));
+        addSection('Multibaggers', good.map(r => {
+          if (market === 'IND') return `NSE:${r.symbol}`;
+          const ex = String(r.exchange || '').toUpperCase().trim();
+          return `${exMap[ex] || ex || 'NASDAQ'}:${r.symbol}`;
+        }));
+      }
+    } catch {}
     if (out.length === 0) {
       copyToClipboard('', 'nothing — no best picks computed yet');
       return;
@@ -8587,7 +8611,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 6 }}>
           <div style={{ fontSize: 26, fontWeight: 900, color: TXT }}>📈 Technicals — Qullamaggie · Zanger · Bonde · Minervini</div>
           <button onClick={copyAllBest}
-            title="Copy every best pick on this tab — Champions, Buy Zone, SEPA Elite/Good, Volume Pockets, Momentum, Quality — as ONE sectioned TradingView watchlist"
+            title="Copy every best pick — Champions, Buy Zone, SEPA Elite/Good, Volume Pockets, Momentum, Quality + Multibaggers (A+/A/B+) — as ONE sectioned TradingView watchlist"
             style={{ marginLeft: 'auto', background: 'linear-gradient(135deg, #F59E0B, #22D3EE)', color: '#0B1220', border: 'none', padding: '9px 16px', borderRadius: 8, fontSize: 13, fontWeight: 900, cursor: 'pointer', whiteSpace: 'nowrap' }}>
             ⭐ Copy ALL BEST → TV
           </button>
