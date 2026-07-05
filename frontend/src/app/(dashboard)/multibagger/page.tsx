@@ -6297,7 +6297,7 @@ const _techPullInFlight: { current: Set<string> } = { current: new Set() };
 // from 52w high · Q sales/profit growth · quality (ROCE, D/E, promoter,
 // pledge). Verdict tags (🟢 STRONG / 🟡 WATCH / ⚪ WEAK + ⚠ red flags),
 // TV-universe tech score cross-ref, ranked descending. India Technicals only.
-function VolumePocketsPanel({ techRows }: { techRows: any[] }) {
+function VolumePocketsPanel({ techRows, onBest }: { techRows: any[]; onBest?: (tvSymbols: string[]) => void }) {
   const PANEL = '#0F141B';
   const PANEL2 = '#121821';
   const LINE = '#1E2632';
@@ -6446,6 +6446,13 @@ function VolumePocketsPanel({ techRows }: { techRows: any[] }) {
     })();
     return () => { cancelled = true; };
   }, [techMap, tick]);
+
+  // zzz211 — report Strong+Watch pocket names up for the master button.
+  React.useEffect(() => {
+    if (!onBest || !stocks) return;
+    onBest(stocks.filter(x => x.verdict !== 'WEAK' && !x.isBseCode).map(x => `NSE:${x.symbol}`));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stocks]);
 
   const copy = async (txt: string, label: string) => {
     try {
@@ -6600,7 +6607,7 @@ function VolumePocketsPanel({ techRows }: { techRows: any[] }) {
 // SEPA PICKS block — TradingView copy (with sections), comma list, .txt / .csv
 // download, per-bucket copy (Elite / Good / Fresh / Tight). Panel is shared by
 // BOTH the India and USA Technicals tabs, so both get the export for free.
-function SepaChecklistPanel({ techRows }: { techRows: any[] }) {
+function SepaChecklistPanel({ techRows, onBest }: { techRows: any[]; onBest?: (tvSymbols: string[]) => void }) {
   const PANEL = '#0F141B';
   const PANEL2 = '#121821';
   const LINE = '#1E2632';
@@ -6776,6 +6783,14 @@ function SepaChecklistPanel({ techRows }: { techRows: any[] }) {
     const map: Record<string, string> = { NMS: 'NASDAQ', NASDAQGS: 'NASDAQ', ARCA: 'AMEX', BATS: 'AMEX' };
     return `${map[ex] || ex}:${sym}`;
   };
+  // zzz211 — report Elite+Good picks up to TechnicalsTab for the master
+  // "Copy ALL BEST" button.
+  React.useEffect(() => {
+    if (!onBest) return;
+    onBest(sepaPicks.filter(p => p.bucket === 'ELITE' || p.bucket === 'GOOD').map(p => tvSym(p.row.r)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sepaPicks]);
+
   const sepaFormatTV = (picks: typeof sepaPicks): string => {
     const sections: Record<SepaBucket, string[]> = { ELITE: [], GOOD: [], FRESH: [], TIGHT: [] };
     picks.forEach(p => { sections[p.bucket].push(tvSym(p.row.r)); });
@@ -8344,6 +8359,37 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
     } catch {}
   };
 
+  // zzz211 — ⭐ MASTER "COPY ALL BEST" — aggregates the best names from every
+  // scoring system on this tab (Champions / Buy Zone / Momentum / Quality from
+  // the 5-layer engine + SEPA Elite&Good + Volume Pockets Strong&Watch) into
+  // ONE sectioned TradingView watchlist string, deduped across sections.
+  const sepaBestRef = React.useRef<string[]>([]);
+  const pocketsBestRef = React.useRef<string[]>([]);
+  const copyAllBest = () => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    const addSection = (title: string, syms: string[]) => {
+      const fresh = syms.filter(sym => {
+        const bare = (sym.includes(':') ? sym.split(':')[1] : sym).toUpperCase();
+        if (!bare || seen.has(bare)) return false;
+        seen.add(bare);
+        return true;
+      });
+      if (fresh.length) { out.push(`###${title}`); out.push(...fresh); }
+    };
+    addSection('Champions', bestPicks.filter(p => p._tier === 'ELITE').map(p => tvSymbol(p)));
+    addSection('Buy Zone', bestPicks.filter(p => p._tier === 'STRONG').map(p => tvSymbol(p)));
+    addSection('SEPA Elite+Good', sepaBestRef.current);
+    if (market === 'IND') addSection('Volume Pockets', pocketsBestRef.current);
+    addSection('Momentum', bestPicks.filter(p => p._tier === 'MOMENTUM').map(p => tvSymbol(p)));
+    addSection('Quality on Sale', bestPicks.filter(p => p._tier === 'QUALITY').map(p => tvSymbol(p)));
+    if (out.length === 0) {
+      copyToClipboard('', 'nothing — no best picks computed yet');
+      return;
+    }
+    copyToClipboard(out.join(','), `ALL BEST — ${seen.size} names, sectioned for TV watchlist`);
+  };
+
   // zzz133 — SORT state for ALL TICKERS table
   const [sortField, setSortField] = React.useState<string>('totalScore');
   const [sortAsc, setSortAsc] = React.useState<boolean>(false);
@@ -8538,7 +8584,19 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
   return (
     <div style={{ padding: '20px 24px', maxWidth: 1700, margin: '0 auto', fontSize: 14 }}>
       <div style={{ marginBottom: 22 }}>
-        <div style={{ fontSize: 26, fontWeight: 900, color: TXT, marginBottom: 6 }}>📈 Technicals — Qullamaggie · Zanger · Bonde · Minervini</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 6 }}>
+          <div style={{ fontSize: 26, fontWeight: 900, color: TXT }}>📈 Technicals — Qullamaggie · Zanger · Bonde · Minervini</div>
+          <button onClick={copyAllBest}
+            title="Copy every best pick on this tab — Champions, Buy Zone, SEPA Elite/Good, Volume Pockets, Momentum, Quality — as ONE sectioned TradingView watchlist"
+            style={{ marginLeft: 'auto', background: 'linear-gradient(135deg, #F59E0B, #22D3EE)', color: '#0B1220', border: 'none', padding: '9px 16px', borderRadius: 8, fontSize: 13, fontWeight: 900, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+            ⭐ Copy ALL BEST → TV
+          </button>
+          {copyToast && (
+            <span style={{ background: copyToast.startsWith('✓') ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)', color: copyToast.startsWith('✓') ? '#10B981' : '#EF4444', padding: '7px 11px', borderRadius: 6, fontSize: 12, fontWeight: 700 }}>
+              {copyToast}
+            </span>
+          )}
+        </div>
         <div style={{ fontSize: 13, color: MUTED, lineHeight: 1.5 }}>
           {market === 'USA' ? '🇺🇸 USA Technicals' : '🇮🇳 India Technicals'} — pure-technical scoring of your TradingView {market === 'USA' ? 'USA' : 'India'} export.
           <b style={{ color: TXT }}> {techRows.length} stocks scored</b>.
@@ -8620,11 +8678,27 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
         )}
       </div>
 
-      {/* zzz203: SEPA CHECKLIST PANEL — Winning Playbook overlay */}
-      <SepaChecklistPanel techRows={techRows} />
-
-      {/* zzz207: VOLUME POCKETS (Screener.in) — India tab only */}
-      {market === 'IND' && <VolumePocketsPanel techRows={techRows} />}
+      {/* zzz210 — SECTION JUMP BAR (decision-first ordering) */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, alignItems: 'center', margin: '2px 0 16px', padding: '10px 12px', background: '#121821', border: '1px solid #2A3444', borderRadius: 10 }}>
+        <span style={{ fontSize: 11, fontWeight: 800, color: '#7B8898', letterSpacing: 0.6, textTransform: 'uppercase', marginRight: 2 }}>Jump to</span>
+        {([
+          ['#sec-champions', '🏆 Champions'],
+          ['#sec-buyzone', '🟢 Buy Zone'],
+          ['#sec-earnings', '🗓 Earnings'],
+          ['#sec-sepa', '📋 SEPA Score'],
+          ...(market === 'IND' ? [['#sec-pockets', '📦 Vol Pockets']] : []),
+          ['#sec-export', '📤 Export'],
+          ['#sec-momentum', '🚀 Momentum'],
+          ['#sec-industry', '🏭 Industry RS'],
+          ['#sec-playbooks', '📚 Playbooks'],
+          ['#sec-watch', '🔥💰 Watch'],
+          ['#sec-all', '🏁 All Tickers'],
+        ] as [string, string][]).map(([href, label]) => (
+          <a key={href} href={href} style={{ fontSize: 12, fontWeight: 700, color: '#E5ECF4', textDecoration: 'none', background: 'rgba(255,255,255,0.05)', border: '1px solid #1E2632', padding: '5px 11px', borderRadius: 999 }}>
+            {label}
+          </a>
+        ))}
+      </div>
 
       {/* zzz133/zzz208 — DATA QUALITY + ELIGIBILITY summary chips (cleaned) */}
       <div style={{ ...cardStyle, background: 'color-mix(in srgb, #10B981 5%, transparent)', borderColor: 'color-mix(in srgb, #10B981 30%, transparent)', padding: 16 }}>
@@ -8658,6 +8732,160 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
         </div>
       </div>
 
+      <div id="sec-champions" style={{ scrollMarginTop: 80 }} />
+      {/* zzz133 — 🏆 CHAMPIONS — Technically + Fundamentally elite */}
+      <div style={{ ...cardStyle, background: 'linear-gradient(135deg, rgba(16,185,129,0.08), rgba(34,211,238,0.05))', borderColor: '#10B981', borderWidth: 2 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+          <div style={{ fontSize: 20, color: '#10B981', fontWeight: 900, letterSpacing: '0.3px' }}>🏆 CHAMPIONS — TECH + FUNDAMENTAL ELITE ({champions.length})</div>
+          <div style={{ fontSize: 12, color: MUTED, fontStyle: 'italic' }}>Eligible + BUY ZONE or EXTENDED (never CHASE) + tech ≥ 45 + fund ≥ 40 + positive 1M + no falling knife. EXTENDED names → wait for pullback to SMA50 before adding.</div>
+        </div>
+        {champions.length === 0 ? (
+          <div style={{ fontSize: 13, color: MUTED, padding: 14, background: PANEL2, borderRadius: 8 }}>
+            No Champions today. Either market is extended (most strong names beyond buy zone) or fundamentals are weak across BUY ZONE candidates. Check 🟢 BUY ZONE for tech-only setups and 💰 QUALITY ON SALE for fund-only opportunities.
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 12 }}>
+            {champions.map(r => (
+              <div key={r.symbol} onClick={() => setExpandedSymbol(r.symbol)} style={{ background: 'rgba(16,185,129,0.08)', border: '2px solid #10B981', borderRadius: 10, padding: 14, boxShadow: '0 0 0 1px rgba(16,185,129,0.1)', cursor: 'pointer', position: 'relative' }}>
+                <div onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', top: 8, right: 8, zIndex: 2 }}>
+                  <NewSeenCheckbox isNew={techNewSet.has(r.symbol)} isAcked={techAckSet.has(r.symbol)} onToggle={() => toggleTechAck(r.symbol)} />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
+                  <span style={{ fontSize: 20, fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{r.symbol}</span>
+                  <span style={{ fontSize: 15, fontWeight: 800, color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 12, color: MUTED }}>TECH</span>
+                  <span style={{ fontSize: 22, fontWeight: 900, color: '#10B981' }}>{r.totalScore}</span>
+                  <span style={{ fontSize: 12, color: MUTED }}>FUND</span>
+                  <span style={{ fontSize: 22, fontWeight: 900, color: '#84CC16' }}>{r.fundScore}</span>
+                </div>
+                <div style={{ fontSize: 13, color: TXT, marginBottom: 8, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.company || ''}>
+                  {r.company || r.symbol} <span style={{ color: MUTED, fontSize: 11 }}>· {r.sector?.slice(0, 22) || ''}</span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, marginBottom: 8, fontSize: 11 }}>
+                  <div style={{ background: 'rgba(34,211,238,0.12)', padding: 6, borderRadius: 5, textAlign: 'center' }}>
+                    <div style={{ color: MUTED, fontSize: 9 }}>QULLA</div>
+                    <div style={{ color: scoreColor(r.qullaScore), fontWeight: 800, fontSize: 14 }}>{r.qullaScore}</div>
+                  </div>
+                  <div style={{ background: 'rgba(167,139,250,0.12)', padding: 6, borderRadius: 5, textAlign: 'center' }}>
+                    <div style={{ color: MUTED, fontSize: 9 }}>ZANGER</div>
+                    <div style={{ color: scoreColor(r.zangerScore), fontWeight: 800, fontSize: 14 }}>{r.zangerScore}</div>
+                  </div>
+                  <div style={{ background: 'rgba(251,191,36,0.12)', padding: 6, borderRadius: 5, textAlign: 'center' }}>
+                    <div style={{ color: MUTED, fontSize: 9 }}>BONDE</div>
+                    <div style={{ color: scoreColor(r.bondeScore), fontWeight: 800, fontSize: 14 }}>{r.bondeScore}</div>
+                  </div>
+                  <div style={{ background: 'rgba(132,204,22,0.12)', padding: 6, borderRadius: 5, textAlign: 'center' }}>
+                    <div style={{ color: MUTED, fontSize: 9 }}>MINER</div>
+                    <div style={{ color: scoreColor(r.minerviniScore), fontWeight: 800, fontSize: 14 }}>{r.minerviniScore}</div>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, fontSize: 11, marginBottom: 6 }}>
+                  {typeof r.perf1w === 'number' ? <span style={{ background: 'rgba(255,255,255,0.05)', padding: '3px 7px', borderRadius: 4 }}>1W {fmtPct(r.perf1w)}</span> : null}
+                  {typeof r.perf1m === 'number' ? <span style={{ background: 'rgba(255,255,255,0.05)', padding: '3px 7px', borderRadius: 4 }}>1M {fmtPct(r.perf1m)}</span> : null}
+                  {r.volumeBurst === true && typeof r.relVol1w === 'number' ? <span style={{ background: 'rgba(16,185,129,0.18)', color: '#10B981', padding: '3px 7px', borderRadius: 4, fontWeight: 700 }}>Vol {r.relVol1w.toFixed(1)}× 🔥</span> : null}
+                  {typeof r.rsi === 'number' ? <span style={{ background: 'rgba(255,255,255,0.05)', padding: '3px 7px', borderRadius: 4 }}>RSI {r.rsi.toFixed(0)}</span> : null}
+                  {typeof r.revGrowthQtr === 'number' ? <span style={{ background: 'rgba(132,204,22,0.15)', color: '#84CC16', padding: '3px 7px', borderRadius: 4, fontWeight: 700 }}>Rev {fmtPct(r.revGrowthQtr)}</span> : null}
+                  {typeof r.epsGrowthTTM === 'number' ? <span style={{ background: 'rgba(132,204,22,0.15)', color: '#84CC16', padding: '3px 7px', borderRadius: 4, fontWeight: 700 }}>EPS {fmtPct(r.epsGrowthTTM)}</span> : null}
+                </div>
+                {r.fundReasons.length > 0 ? (
+                  <div style={{ fontSize: 10.5, color: '#84CC16', lineHeight: 1.5, marginBottom: 4 }}>
+                    💎 {r.fundReasons.slice(0, 4).join(' · ')}
+                  </div>
+                ) : null}
+                {/* zzz160 — ✅ (green) only for BUY ZONE; ⏳ (amber) for EXTENDED. Contradictory
+                    to show green checkmark next to "wait for pullback to SMA50". */}
+                <div style={{ fontSize: 12, color: r.rightEntry === 'BUY ZONE' ? '#10B981' : '#F59E0B', fontWeight: 800, marginTop: 6 }}>
+                  {r.rightEntry === 'BUY ZONE' ? '✅' : '⏳'} {r.rightEntryDetail}
+                </div>
+                {typeof r.stopLoss === 'number' ? (
+                  <div style={{ fontSize: 11.5, color: '#F59E0B', marginTop: 4, fontWeight: 700 }}>
+                    🛑 STOP {fmtPrice(r.stopLoss)} <span style={{ color: MUTED, fontWeight: 600 }}>(risk {typeof r.stopLossPct === 'number' ? `−${r.stopLossPct.toFixed(1)}%` : '−2×ATR'})</span>
+                  </div>
+                ) : null}
+                {r.eligibilityTags.includes('EARNINGS_SOON') && typeof r.daysToEarnings === 'number' ? (
+                  <div style={{ fontSize: 11, color: '#FBBF24', marginTop: 4, fontWeight: 700 }}>🗓️ Earnings in {r.daysToEarnings}d</div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div id="sec-buyzone" style={{ scrollMarginTop: 80 }} />
+      {/* 🎯 RIGHT ENTRY — BUY ZONE leaderboard — broader list */}
+      <div style={cardStyle}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+          <div style={{ fontSize: 17, color: '#10B981', fontWeight: 900, letterSpacing: '0.3px' }}>🟢 BUY ZONE — POSITION ENTRIES ({buyZone.length})</div>
+          <div style={{ fontSize: 12, color: MUTED, fontStyle: 'italic' }}>0% to max(7%, 2×ADR%) above SMA50 — ADR-adaptive ceiling · positive 1M momentum required</div>
+        </div>
+        {buyZone.length === 0 ? (
+          <div style={{ fontSize: 12.5, color: MUTED, padding: 14, background: PANEL2, borderRadius: 8 }}>No tickers in the BUY ZONE right now. Most names are either extended or below their SMA50.</div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 10 }}>
+            {buyZone.map(r => (
+              <div key={r.symbol} onClick={() => setExpandedSymbol(r.symbol)} style={{ background: PANEL2, border: '1px solid color-mix(in srgb, #10B981 35%, transparent)', borderLeft: '4px solid #10B981', borderRadius: 8, padding: 11, cursor: 'pointer' }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                  <span style={{ fontSize: 16, fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{r.symbol}</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 16, fontWeight: 900, color: scoreColor(r.totalScore) }}>{r.totalScore}</span>
+                </div>
+                <div style={{ fontSize: 11.5, color: TXT, marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.company || ''}</div>
+                <div style={{ fontSize: 11, color: MUTED, marginTop: 4, display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                  {typeof r.perf1w === 'number' ? <span>1W {fmtPct(r.perf1w)}</span> : null}
+                  {typeof r.perf1m === 'number' ? <span>1M {fmtPct(r.perf1m)}</span> : null}
+                  {typeof r.adrPct === 'number' ? <span>ADR {r.adrPct.toFixed(1)}%</span> : null}
+                  {r.volumeBurst === true && typeof r.relVol1w === 'number' ? <span style={{ color: '#10B981', fontWeight: 700 }}>Vol {r.relVol1w.toFixed(1)}×🔥</span> : null}
+                  {typeof r.rsi === 'number' ? <span style={{ color: r.rsi > 85 ? '#EF4444' : MUTED }}>RSI {r.rsi.toFixed(0)}</span> : null}
+                </div>
+                <div style={{ fontSize: 10.5, color: '#10B981', marginTop: 5, fontWeight: 700 }}>
+                  {r.rightEntryDetail}
+                </div>
+                {typeof r.stopLoss === 'number' ? (
+                  <div style={{ fontSize: 10.5, color: '#F59E0B', marginTop: 3, fontWeight: 700 }}>
+                    🛑 {fmtPrice(r.stopLoss)} <span style={{ color: MUTED, fontWeight: 600 }}>({typeof r.stopLossPct === 'number' ? `−${r.stopLossPct.toFixed(1)}%` : '−2×ATR'})</span>
+                  </div>
+                ) : null}
+                {r.qualityFlags && r.qualityFlags.length > 0 ? (
+                  <div style={{ fontSize: 10, color: '#EF4444', marginTop: 3, fontWeight: 700 }}>⚠️ {r.qualityFlags.join(' · ')}</div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div id="sec-earnings" style={{ scrollMarginTop: 80 }} />
+      {/* zzz133 — EARNINGS SOON event-driven bucket */}
+      {earningsSoon.length > 0 && (
+        <div style={{ ...cardStyle, background: 'color-mix(in srgb, #FBBF24 5%, transparent)', borderColor: 'color-mix(in srgb, #FBBF24 40%, transparent)' }}>
+          <div style={{ fontSize: 15, fontWeight: 900, color: '#FBBF24', marginBottom: 10 }}>🗓️ EARNINGS SOON ({earningsSoon.length}) — Event-driven bucket</div>
+          <div style={{ fontSize: 11, color: MUTED, marginBottom: 10, fontStyle: 'italic' }}>Stocks reporting within 14 days. Excluded from normal BUY ZONE due to event risk. Bonde EP often fires AT earnings — watch for post-earnings drift entries.</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
+            {earningsSoon.map(r => (
+              <div key={r.symbol} onClick={() => setExpandedSymbol(r.symbol)} style={{ background: PANEL2, border: '1px solid color-mix(in srgb, #FBBF24 30%, transparent)', borderLeft: `4px solid ${(r.daysToEarnings ?? 99) <= 3 ? '#EF4444' : '#FBBF24'}`, borderRadius: 6, padding: 10, cursor: 'pointer' }}>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
+                  <span style={{ fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{r.symbol}</span>
+                  <span style={{ color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</span>
+                  <span style={{ marginLeft: 'auto', color: (r.daysToEarnings ?? 99) <= 3 ? '#EF4444' : '#FBBF24', fontWeight: 800 }}>{r.daysToEarnings}d</span>
+                </div>
+                <div style={{ fontSize: 11, color: TXT, marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.company}</div>
+                <div style={{ fontSize: 10.5, color: MUTED, marginTop: 4 }}>
+                  Tech {r.totalScore} · Fund {r.fundScore} · 1M {fmtPct(r.perf1m)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div id="sec-sepa" style={{ scrollMarginTop: 80 }} />
+      {/* zzz203: SEPA CHECKLIST PANEL — Winning Playbook overlay */}
+      <SepaChecklistPanel techRows={techRows} onBest={(l) => { sepaBestRef.current = l; }} />
+
+      {/* zzz207: VOLUME POCKETS (Screener.in) — India tab only */}
+      {market === 'IND' && <><div id="sec-pockets" style={{ scrollMarginTop: 80 }} /><VolumePocketsPanel techRows={techRows} onBest={(l) => { pocketsBestRef.current = l; }} /></>}
+
+      <div id="sec-export" style={{ scrollMarginTop: 80 }} />
       {/* zzz142 — EXPORT BEST PICKS to TradingView / Excel / clipboard */}
       <div style={{ ...cardStyle, background: 'color-mix(in srgb, #22D3EE 5%, transparent)', borderColor: 'color-mix(in srgb, #22D3EE 30%, transparent)' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', marginBottom: 10 }}>
@@ -8812,184 +9040,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
         </div>
       </div>
 
-      {/* zzz181 - Recently Added panel */}
-      <RecentlyAddedPanel tab={NEW_TAB_KEY_T} tickers={allSymbolsT} marketLabel={market === 'IND' ? '🇮🇳 India Technicals' : '🇺🇸 USA Technicals'} dataFolder="frontend/public/data/tradingview" />
-
-      {/* zzz133 — 🏆 CHAMPIONS — Technically + Fundamentally elite */}
-      <div style={{ ...cardStyle, background: 'linear-gradient(135deg, rgba(16,185,129,0.08), rgba(34,211,238,0.05))', borderColor: '#10B981', borderWidth: 2 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-          <div style={{ fontSize: 20, color: '#10B981', fontWeight: 900, letterSpacing: '0.3px' }}>🏆 CHAMPIONS — TECH + FUNDAMENTAL ELITE ({champions.length})</div>
-          <div style={{ fontSize: 12, color: MUTED, fontStyle: 'italic' }}>Eligible + BUY ZONE or EXTENDED (never CHASE) + tech ≥ 45 + fund ≥ 40 + positive 1M + no falling knife. EXTENDED names → wait for pullback to SMA50 before adding.</div>
-        </div>
-        {champions.length === 0 ? (
-          <div style={{ fontSize: 13, color: MUTED, padding: 14, background: PANEL2, borderRadius: 8 }}>
-            No Champions today. Either market is extended (most strong names beyond buy zone) or fundamentals are weak across BUY ZONE candidates. Check 🟢 BUY ZONE for tech-only setups and 💰 QUALITY ON SALE for fund-only opportunities.
-          </div>
-        ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 12 }}>
-            {champions.map(r => (
-              <div key={r.symbol} onClick={() => setExpandedSymbol(r.symbol)} style={{ background: 'rgba(16,185,129,0.08)', border: '2px solid #10B981', borderRadius: 10, padding: 14, boxShadow: '0 0 0 1px rgba(16,185,129,0.1)', cursor: 'pointer', position: 'relative' }}>
-                <div onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', top: 8, right: 8, zIndex: 2 }}>
-                  <NewSeenCheckbox isNew={techNewSet.has(r.symbol)} isAcked={techAckSet.has(r.symbol)} onToggle={() => toggleTechAck(r.symbol)} />
-                </div>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
-                  <span style={{ fontSize: 20, fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{r.symbol}</span>
-                  <span style={{ fontSize: 15, fontWeight: 800, color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</span>
-                  <span style={{ marginLeft: 'auto', fontSize: 12, color: MUTED }}>TECH</span>
-                  <span style={{ fontSize: 22, fontWeight: 900, color: '#10B981' }}>{r.totalScore}</span>
-                  <span style={{ fontSize: 12, color: MUTED }}>FUND</span>
-                  <span style={{ fontSize: 22, fontWeight: 900, color: '#84CC16' }}>{r.fundScore}</span>
-                </div>
-                <div style={{ fontSize: 13, color: TXT, marginBottom: 8, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.company || ''}>
-                  {r.company || r.symbol} <span style={{ color: MUTED, fontSize: 11 }}>· {r.sector?.slice(0, 22) || ''}</span>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, marginBottom: 8, fontSize: 11 }}>
-                  <div style={{ background: 'rgba(34,211,238,0.12)', padding: 6, borderRadius: 5, textAlign: 'center' }}>
-                    <div style={{ color: MUTED, fontSize: 9 }}>QULLA</div>
-                    <div style={{ color: scoreColor(r.qullaScore), fontWeight: 800, fontSize: 14 }}>{r.qullaScore}</div>
-                  </div>
-                  <div style={{ background: 'rgba(167,139,250,0.12)', padding: 6, borderRadius: 5, textAlign: 'center' }}>
-                    <div style={{ color: MUTED, fontSize: 9 }}>ZANGER</div>
-                    <div style={{ color: scoreColor(r.zangerScore), fontWeight: 800, fontSize: 14 }}>{r.zangerScore}</div>
-                  </div>
-                  <div style={{ background: 'rgba(251,191,36,0.12)', padding: 6, borderRadius: 5, textAlign: 'center' }}>
-                    <div style={{ color: MUTED, fontSize: 9 }}>BONDE</div>
-                    <div style={{ color: scoreColor(r.bondeScore), fontWeight: 800, fontSize: 14 }}>{r.bondeScore}</div>
-                  </div>
-                  <div style={{ background: 'rgba(132,204,22,0.12)', padding: 6, borderRadius: 5, textAlign: 'center' }}>
-                    <div style={{ color: MUTED, fontSize: 9 }}>MINER</div>
-                    <div style={{ color: scoreColor(r.minerviniScore), fontWeight: 800, fontSize: 14 }}>{r.minerviniScore}</div>
-                  </div>
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, fontSize: 11, marginBottom: 6 }}>
-                  {typeof r.perf1w === 'number' ? <span style={{ background: 'rgba(255,255,255,0.05)', padding: '3px 7px', borderRadius: 4 }}>1W {fmtPct(r.perf1w)}</span> : null}
-                  {typeof r.perf1m === 'number' ? <span style={{ background: 'rgba(255,255,255,0.05)', padding: '3px 7px', borderRadius: 4 }}>1M {fmtPct(r.perf1m)}</span> : null}
-                  {r.volumeBurst === true && typeof r.relVol1w === 'number' ? <span style={{ background: 'rgba(16,185,129,0.18)', color: '#10B981', padding: '3px 7px', borderRadius: 4, fontWeight: 700 }}>Vol {r.relVol1w.toFixed(1)}× 🔥</span> : null}
-                  {typeof r.rsi === 'number' ? <span style={{ background: 'rgba(255,255,255,0.05)', padding: '3px 7px', borderRadius: 4 }}>RSI {r.rsi.toFixed(0)}</span> : null}
-                  {typeof r.revGrowthQtr === 'number' ? <span style={{ background: 'rgba(132,204,22,0.15)', color: '#84CC16', padding: '3px 7px', borderRadius: 4, fontWeight: 700 }}>Rev {fmtPct(r.revGrowthQtr)}</span> : null}
-                  {typeof r.epsGrowthTTM === 'number' ? <span style={{ background: 'rgba(132,204,22,0.15)', color: '#84CC16', padding: '3px 7px', borderRadius: 4, fontWeight: 700 }}>EPS {fmtPct(r.epsGrowthTTM)}</span> : null}
-                </div>
-                {r.fundReasons.length > 0 ? (
-                  <div style={{ fontSize: 10.5, color: '#84CC16', lineHeight: 1.5, marginBottom: 4 }}>
-                    💎 {r.fundReasons.slice(0, 4).join(' · ')}
-                  </div>
-                ) : null}
-                {/* zzz160 — ✅ (green) only for BUY ZONE; ⏳ (amber) for EXTENDED. Contradictory
-                    to show green checkmark next to "wait for pullback to SMA50". */}
-                <div style={{ fontSize: 12, color: r.rightEntry === 'BUY ZONE' ? '#10B981' : '#F59E0B', fontWeight: 800, marginTop: 6 }}>
-                  {r.rightEntry === 'BUY ZONE' ? '✅' : '⏳'} {r.rightEntryDetail}
-                </div>
-                {typeof r.stopLoss === 'number' ? (
-                  <div style={{ fontSize: 11.5, color: '#F59E0B', marginTop: 4, fontWeight: 700 }}>
-                    🛑 STOP {fmtPrice(r.stopLoss)} <span style={{ color: MUTED, fontWeight: 600 }}>(risk {typeof r.stopLossPct === 'number' ? `−${r.stopLossPct.toFixed(1)}%` : '−2×ATR'})</span>
-                  </div>
-                ) : null}
-                {r.eligibilityTags.includes('EARNINGS_SOON') && typeof r.daysToEarnings === 'number' ? (
-                  <div style={{ fontSize: 11, color: '#FBBF24', marginTop: 4, fontWeight: 700 }}>🗓️ Earnings in {r.daysToEarnings}d</div>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* zzz133 — TECH ONLY + QUALITY ON SALE side-by-side */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(440px, 1fr))', gap: 12, marginBottom: 12 }}>
-        <div style={{ ...cardStyle, marginBottom: 0, background: 'color-mix(in srgb, #22D3EE 5%, transparent)', borderColor: 'color-mix(in srgb, #22D3EE 40%, transparent)' }}>
-          <div style={{ fontSize: 15, fontWeight: 900, color: CYAN, marginBottom: 10 }}>🔥 TECH STRONG · FUND WEAK ({techOnly.length})</div>
-          <div style={{ fontSize: 11, color: MUTED, marginBottom: 10, fontStyle: 'italic' }}>Speculative momentum plays — technicals breaking out but fundamentals soft. Trade with tight stops.</div>
-          {techOnly.length === 0 ? <div style={{ fontSize: 12, color: MUTED }}>None today.</div> : techOnly.map(r => (
-            <div key={r.symbol} onClick={() => setExpandedSymbol(r.symbol)} style={{ display: 'flex', gap: 8, padding: '8px 10px', background: PANEL2, borderRadius: 6, marginBottom: 5, fontSize: 12, alignItems: 'center', cursor: 'pointer' }}>
-              <span style={{ fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace', minWidth: 55 }}>{r.symbol}</span>
-              <span style={{ color: TXT, fontFamily: 'ui-monospace, monospace', minWidth: 60 }}>{fmtPrice(r.price)}</span>
-              <span style={{ flex: 1, color: TXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: 11 }}>{r.company}</span>
-              <span style={{ color: scoreColor(r.totalScore), fontWeight: 800 }}>T{r.totalScore}</span>
-              <span style={{ color: '#94A3B8', fontWeight: 600 }}>F{r.fundScore}</span>
-              <span style={{ color: typeof r.perf1m === 'number' && r.perf1m > 0 ? '#10B981' : '#EF4444', fontWeight: 700 }}>{fmtPct(r.perf1m)}</span>
-            </div>
-          ))}
-        </div>
-        <div style={{ ...cardStyle, marginBottom: 0, background: 'color-mix(in srgb, #84CC16 5%, transparent)', borderColor: 'color-mix(in srgb, #84CC16 40%, transparent)' }}>
-          <div style={{ fontSize: 15, fontWeight: 900, color: '#84CC16', marginBottom: 10 }}>💰 QUALITY ON SALE ({qualityOnSale.length})</div>
-          <div style={{ fontSize: 11, color: MUTED, marginBottom: 10, fontStyle: 'italic' }}>Fund ≥ 55 AND Tech ≤ 50 — strong fundamentals (R40 / growth / FCF) but technicals weak. Waiting list for trend reversal entry.</div>
-          {qualityOnSale.length === 0 ? <div style={{ fontSize: 12, color: MUTED }}>None today.</div> : qualityOnSale.map(r => (
-            <div key={r.symbol} onClick={() => setExpandedSymbol(r.symbol)} style={{ display: 'flex', gap: 8, padding: '8px 10px', background: PANEL2, borderRadius: 6, marginBottom: 5, fontSize: 12, alignItems: 'center', cursor: 'pointer' }}>
-              <span style={{ fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace', minWidth: 55 }}>{r.symbol}</span>
-              <span style={{ color: TXT, fontFamily: 'ui-monospace, monospace', minWidth: 60 }}>{fmtPrice(r.price)}</span>
-              <span style={{ flex: 1, color: TXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: 11 }}>{r.company}</span>
-              <span style={{ color: '#94A3B8', fontWeight: 600 }}>T{r.totalScore}</span>
-              <span style={{ color: scoreColor(r.fundScore), fontWeight: 800 }}>F{r.fundScore}</span>
-              <span style={{ color: '#84CC16', fontWeight: 700 }}>{fmtPct(r.epsGrowthTTM)}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* zzz133 — EARNINGS SOON event-driven bucket */}
-      {earningsSoon.length > 0 && (
-        <div style={{ ...cardStyle, background: 'color-mix(in srgb, #FBBF24 5%, transparent)', borderColor: 'color-mix(in srgb, #FBBF24 40%, transparent)' }}>
-          <div style={{ fontSize: 15, fontWeight: 900, color: '#FBBF24', marginBottom: 10 }}>🗓️ EARNINGS SOON ({earningsSoon.length}) — Event-driven bucket</div>
-          <div style={{ fontSize: 11, color: MUTED, marginBottom: 10, fontStyle: 'italic' }}>Stocks reporting within 14 days. Excluded from normal BUY ZONE due to event risk. Bonde EP often fires AT earnings — watch for post-earnings drift entries.</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
-            {earningsSoon.map(r => (
-              <div key={r.symbol} onClick={() => setExpandedSymbol(r.symbol)} style={{ background: PANEL2, border: '1px solid color-mix(in srgb, #FBBF24 30%, transparent)', borderLeft: `4px solid ${(r.daysToEarnings ?? 99) <= 3 ? '#EF4444' : '#FBBF24'}`, borderRadius: 6, padding: 10, cursor: 'pointer' }}>
-                <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
-                  <span style={{ fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{r.symbol}</span>
-                  <span style={{ color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</span>
-                  <span style={{ marginLeft: 'auto', color: (r.daysToEarnings ?? 99) <= 3 ? '#EF4444' : '#FBBF24', fontWeight: 800 }}>{r.daysToEarnings}d</span>
-                </div>
-                <div style={{ fontSize: 11, color: TXT, marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.company}</div>
-                <div style={{ fontSize: 10.5, color: MUTED, marginTop: 4 }}>
-                  Tech {r.totalScore} · Fund {r.fundScore} · 1M {fmtPct(r.perf1m)}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* 🎯 RIGHT ENTRY — BUY ZONE leaderboard — broader list */}
-      <div style={cardStyle}>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-          <div style={{ fontSize: 17, color: '#10B981', fontWeight: 900, letterSpacing: '0.3px' }}>🟢 BUY ZONE — POSITION ENTRIES ({buyZone.length})</div>
-          <div style={{ fontSize: 12, color: MUTED, fontStyle: 'italic' }}>0% to max(7%, 2×ADR%) above SMA50 — ADR-adaptive ceiling · positive 1M momentum required</div>
-        </div>
-        {buyZone.length === 0 ? (
-          <div style={{ fontSize: 12.5, color: MUTED, padding: 14, background: PANEL2, borderRadius: 8 }}>No tickers in the BUY ZONE right now. Most names are either extended or below their SMA50.</div>
-        ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 10 }}>
-            {buyZone.map(r => (
-              <div key={r.symbol} onClick={() => setExpandedSymbol(r.symbol)} style={{ background: PANEL2, border: '1px solid color-mix(in srgb, #10B981 35%, transparent)', borderLeft: '4px solid #10B981', borderRadius: 8, padding: 11, cursor: 'pointer' }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                  <span style={{ fontSize: 16, fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{r.symbol}</span>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</span>
-                  <span style={{ marginLeft: 'auto', fontSize: 16, fontWeight: 900, color: scoreColor(r.totalScore) }}>{r.totalScore}</span>
-                </div>
-                <div style={{ fontSize: 11.5, color: TXT, marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.company || ''}</div>
-                <div style={{ fontSize: 11, color: MUTED, marginTop: 4, display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                  {typeof r.perf1w === 'number' ? <span>1W {fmtPct(r.perf1w)}</span> : null}
-                  {typeof r.perf1m === 'number' ? <span>1M {fmtPct(r.perf1m)}</span> : null}
-                  {typeof r.adrPct === 'number' ? <span>ADR {r.adrPct.toFixed(1)}%</span> : null}
-                  {r.volumeBurst === true && typeof r.relVol1w === 'number' ? <span style={{ color: '#10B981', fontWeight: 700 }}>Vol {r.relVol1w.toFixed(1)}×🔥</span> : null}
-                  {typeof r.rsi === 'number' ? <span style={{ color: r.rsi > 85 ? '#EF4444' : MUTED }}>RSI {r.rsi.toFixed(0)}</span> : null}
-                </div>
-                <div style={{ fontSize: 10.5, color: '#10B981', marginTop: 5, fontWeight: 700 }}>
-                  {r.rightEntryDetail}
-                </div>
-                {typeof r.stopLoss === 'number' ? (
-                  <div style={{ fontSize: 10.5, color: '#F59E0B', marginTop: 3, fontWeight: 700 }}>
-                    🛑 {fmtPrice(r.stopLoss)} <span style={{ color: MUTED, fontWeight: 600 }}>({typeof r.stopLossPct === 'number' ? `−${r.stopLossPct.toFixed(1)}%` : '−2×ATR'})</span>
-                  </div>
-                ) : null}
-                {r.qualityFlags && r.qualityFlags.length > 0 ? (
-                  <div style={{ fontSize: 10, color: '#EF4444', marginTop: 3, fontWeight: 700 }}>⚠️ {r.qualityFlags.join(' · ')}</div>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
+      <div id="sec-momentum" style={{ scrollMarginTop: 80 }} />
       {/* zzz132 — QULLA 1M LEADERS — pure momentum leaderboard */}
       <div style={cardStyle}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
@@ -9034,6 +9085,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
         </div>
       </div>
 
+      <div id="sec-industry" style={{ scrollMarginTop: 80 }} />
       {/* zzz140 — INDUSTRY RS LEADERBOARD */}
       {industryLeaderboard.length >= 2 && (
         <div style={cardStyle}>
@@ -9070,6 +9122,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
         </div>
       )}
 
+      <div id="sec-playbooks" style={{ scrollMarginTop: 80 }} />
       {/* QULLAMAGGIE */}
       {renderPlaybookSection('Qullamaggie — Episodic Momentum Leaders', '#22D3EE', '🔥', qullaTop, 'qullaScore', 'qullaReasons',
         '1M ≥ 15% gainer · ADR 4–7% sweet spot · not extended (≤ 15% above SMA50) · small-mid cap')}
@@ -9086,6 +9139,43 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       {renderPlaybookSection('Mark Minervini — Trend Template', '#84CC16', '🏆', minerviniTop, 'minerviniScore', 'minerviniReasons',
         'SMA 50 > 150 > 200 hierarchy · within 25% of 52W high · ≥ 30% above 52W low · VCP volatility contraction')}
 
+      <div id="sec-watch" style={{ scrollMarginTop: 80 }} />
+      {/* zzz133 — TECH ONLY + QUALITY ON SALE side-by-side */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(440px, 1fr))', gap: 12, marginBottom: 12 }}>
+        <div style={{ ...cardStyle, marginBottom: 0, background: 'color-mix(in srgb, #22D3EE 5%, transparent)', borderColor: 'color-mix(in srgb, #22D3EE 40%, transparent)' }}>
+          <div style={{ fontSize: 15, fontWeight: 900, color: CYAN, marginBottom: 10 }}>🔥 TECH STRONG · FUND WEAK ({techOnly.length})</div>
+          <div style={{ fontSize: 11, color: MUTED, marginBottom: 10, fontStyle: 'italic' }}>Speculative momentum plays — technicals breaking out but fundamentals soft. Trade with tight stops.</div>
+          {techOnly.length === 0 ? <div style={{ fontSize: 12, color: MUTED }}>None today.</div> : techOnly.map(r => (
+            <div key={r.symbol} onClick={() => setExpandedSymbol(r.symbol)} style={{ display: 'flex', gap: 8, padding: '8px 10px', background: PANEL2, borderRadius: 6, marginBottom: 5, fontSize: 12, alignItems: 'center', cursor: 'pointer' }}>
+              <span style={{ fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace', minWidth: 55 }}>{r.symbol}</span>
+              <span style={{ color: TXT, fontFamily: 'ui-monospace, monospace', minWidth: 60 }}>{fmtPrice(r.price)}</span>
+              <span style={{ flex: 1, color: TXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: 11 }}>{r.company}</span>
+              <span style={{ color: scoreColor(r.totalScore), fontWeight: 800 }}>T{r.totalScore}</span>
+              <span style={{ color: '#94A3B8', fontWeight: 600 }}>F{r.fundScore}</span>
+              <span style={{ color: typeof r.perf1m === 'number' && r.perf1m > 0 ? '#10B981' : '#EF4444', fontWeight: 700 }}>{fmtPct(r.perf1m)}</span>
+            </div>
+          ))}
+        </div>
+        <div style={{ ...cardStyle, marginBottom: 0, background: 'color-mix(in srgb, #84CC16 5%, transparent)', borderColor: 'color-mix(in srgb, #84CC16 40%, transparent)' }}>
+          <div style={{ fontSize: 15, fontWeight: 900, color: '#84CC16', marginBottom: 10 }}>💰 QUALITY ON SALE ({qualityOnSale.length})</div>
+          <div style={{ fontSize: 11, color: MUTED, marginBottom: 10, fontStyle: 'italic' }}>Fund ≥ 55 AND Tech ≤ 50 — strong fundamentals (R40 / growth / FCF) but technicals weak. Waiting list for trend reversal entry.</div>
+          {qualityOnSale.length === 0 ? <div style={{ fontSize: 12, color: MUTED }}>None today.</div> : qualityOnSale.map(r => (
+            <div key={r.symbol} onClick={() => setExpandedSymbol(r.symbol)} style={{ display: 'flex', gap: 8, padding: '8px 10px', background: PANEL2, borderRadius: 6, marginBottom: 5, fontSize: 12, alignItems: 'center', cursor: 'pointer' }}>
+              <span style={{ fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace', minWidth: 55 }}>{r.symbol}</span>
+              <span style={{ color: TXT, fontFamily: 'ui-monospace, monospace', minWidth: 60 }}>{fmtPrice(r.price)}</span>
+              <span style={{ flex: 1, color: TXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: 11 }}>{r.company}</span>
+              <span style={{ color: '#94A3B8', fontWeight: 600 }}>T{r.totalScore}</span>
+              <span style={{ color: scoreColor(r.fundScore), fontWeight: 800 }}>F{r.fundScore}</span>
+              <span style={{ color: '#84CC16', fontWeight: 700 }}>{fmtPct(r.epsGrowthTTM)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* zzz181 - Recently Added panel */}
+      <RecentlyAddedPanel tab={NEW_TAB_KEY_T} tickers={allSymbolsT} marketLabel={market === 'IND' ? '🇮🇳 India Technicals' : '🇺🇸 USA Technicals'} dataFolder="frontend/public/data/tradingview" />
+
+      <div id="sec-all" style={{ scrollMarginTop: 80 }} />
       {/* All tickers — zzz133 sortable + FUND column + ELIG indicator */}
       <div style={cardStyle}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
