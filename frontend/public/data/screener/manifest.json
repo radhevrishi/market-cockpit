@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-07-04T14:33:59Z",
+  "lastSync": "2026-07-05T07:20:38Z",
   "ok": 17,
   "fail": 0,
   "files": [
@@ -15,7 +15,7 @@
     },
     {
       "name": "fii.csv",
-      "size": 3302,
+      "size": 2874,
       "displayName": "FII"
     },
     {
@@ -25,7 +25,7 @@
     },
     {
       "name": "great-results-and-pullback.csv",
-      "size": 1532,
+      "size": 2003,
       "displayName": "Great Results and Pullback"
     },
     {
@@ -40,7 +40,7 @@
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 14733,
+      "size": 14719,
       "displayName": "Monthly Volume Pockets"
     },
     {
@@ -75,7 +75,7 @@
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63314,
+      "size": 63312,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
@@ -85,7 +85,7 @@
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 8254,
+      "size": 8225,
       "displayName": "Weekly Volume Pockets"
     }
   ]
