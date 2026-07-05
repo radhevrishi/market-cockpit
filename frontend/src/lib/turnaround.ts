@@ -1329,8 +1329,8 @@ export function parseTurnaroundRow(rawRow: Record<string, unknown>): TurnaroundR
     marketCapCr: num(row['Mar Cap Rs.Cr.'] || row['Market Capitalization'] || row['Market Cap'] || row['Mar Cap']),
     pe: num(row['P/E'] || row['Price to Earning'] || row['PE']),
     // PATCH 0373 — actual Screener field name
-    pe5yMedian: num(row['5Yrs PE'] || row['PE 5Yrs Median'] || row['Median PE 5Y']),
-    evEbitda: num(row['EV / EBITDA'] || row['EV/EBITDA']),
+    pe5yMedian: num(row['5Yrs PE'] || row['PE 5Yrs Median'] || row['Historical PE 5Years'] || row['Median PE 5Y']),
+    evEbitda: num(row['EV / EBITDA'] || row['EV/EBITDA'] || row['EVEBITDA']),
     evEbitdaSectorMedian: num(row['Sector EV/EBITDA'] || row['Sector median EV/EBITDA'] || row['Ind PE']),
 
     // PATCH 0372 — actual Screener.in column names (the user's real export
@@ -1338,8 +1338,8 @@ export function parseTurnaroundRow(rawRow: Record<string, unknown>): TurnaroundR
     // followed by older guesses for backwards compatibility.
     salesQ1: num(row['Sales Qtr Rs.Cr.'] || row['Sales Qtr'] || row['Sales latest quarter'] || row['Sales Q-1']),
     salesQ2: num(row['Sales Prev Qtr Rs.Cr.'] || row['Sales Prev Qtr'] || row['Sales preceding quarter'] || row['Sales Q-2']),
-    salesQ3: num(row['Sales 2Qtr Bk Rs.Cr.'] || row['Sales 2Qtr Bk'] || row['Sales 2 quarter back'] || row['Sales Q-3']),
-    salesQ4: num(row['Sales 3Qtr Bk Rs.Cr.'] || row['Sales 3Qtr Bk'] || row['Sales 3 quarter back'] || row['Sales Q-4']),
+    salesQ3: num(row['Sales 2Qtr Bk Rs.Cr.'] || row['Sales 2Qtr Bk'] || row['Sales 2 quarter back'] || row['Sales 2quarters back'] || row['Sales Q-3']),
+    salesQ4: num(row['Sales 3Qtr Bk Rs.Cr.'] || row['Sales 3Qtr Bk'] || row['Sales 3 quarter back'] || row['Sales 3quarters back'] || row['Sales Q-4']),
     // Op profit quarterly — Screener doesn't have these as separate columns
     // beyond the current quarter; we leave them as optional.
     opProfitQ1: num(row['OpProfit Qtr Rs.Cr.'] || row['Operating Profit latest quarter'] || row['Op Profit']),
@@ -1350,14 +1350,14 @@ export function parseTurnaroundRow(rawRow: Record<string, unknown>): TurnaroundR
     // Sequential OPM trend now scores using just Q-1 + Q-2 (no longer
     // requiring Q-3 / Q-4).
     opmQ1: num(row['OPM Qtr %'] || row['OPM Qtr'] || row['OPM latest quarter'] || row['OPM Q-1']),
-    opmQ2: num(row['OPM Prev Qtr %'] || row['OPM Prev Qtr']),
+    opmQ2: num(row['OPM Prev Qtr %'] || row['OPM Prev Qtr'] || row['OPM preceding quarter']),
     opmQ3: num(row['OPM 2Qtr Bk %'] || row['OPM 2Qtr Bk']),
     opmQ4: num(row['OPM 3Qtr Bk %'] || row['OPM 3Qtr Bk']),
     // PAT quarterly — Screener uses 'PAT Qtr' / 'PAT Prev Qtr' / 'NP 2Qtr Bk' / 'NP 3Qtr Bk'
-    patQ1: num(row['PAT Qtr Rs.Cr.'] || row['PAT Qtr'] || row['Net Profit latest quarter'] || row['PAT Q-1']),
-    patQ2: num(row['PAT Prev Qtr Rs.Cr.'] || row['PAT Prev Qtr'] || row['Net profit preceding quarter'] || row['PAT Q-2']),
-    patQ3: num(row['NP 2Qtr Bk Rs.Cr.'] || row['NP 2Qtr Bk'] || row['PAT 2Qtr Bk'] || row['PAT Q-3']),
-    patQ4: num(row['NP 3Qtr Bk Rs.Cr.'] || row['NP 3Qtr Bk'] || row['PAT 3Qtr Bk'] || row['PAT Q-4']),
+    patQ1: num(row['PAT Qtr Rs.Cr.'] || row['PAT Qtr'] || row['Net Profit latest quarter'] || row['Profit after tax latest quarter'] || row['PAT Q-1']),
+    patQ2: num(row['PAT Prev Qtr Rs.Cr.'] || row['PAT Prev Qtr'] || row['Net profit preceding quarter'] || row['Profit after tax preceding quarter'] || row['PAT Q-2']),
+    patQ3: num(row['NP 2Qtr Bk Rs.Cr.'] || row['NP 2Qtr Bk'] || row['PAT 2Qtr Bk'] || row['Net profit 2quarters back'] || row['PAT Q-3']),
+    patQ4: num(row['NP 3Qtr Bk Rs.Cr.'] || row['NP 3Qtr Bk'] || row['PAT 3Qtr Bk'] || row['Net profit 3quarters back'] || row['PAT Q-4']),
     epsQ1: num(row['EPS Qtr Rs.'] || row['EPS Qtr'] || row['EPS latest quarter'] || row['EPS Q-1']),
     epsQ2: num(row['EPS Prev Qtr Rs.'] || row['EPS Prev Qtr']),
     epsQ3: num(row['EPS 2Qtr Bk Rs.'] || row['EPS 2Qtr Bk']),
@@ -1368,14 +1368,14 @@ export function parseTurnaroundRow(rawRow: Record<string, unknown>): TurnaroundR
     // The scorer reads patQ1Yoy/salesQ1Yoy as YOY ABSOLUTES — so we derive
     // them from current * (1 / (1 + var/100)).
     patQ1Yoy: (() => {
-      const cur = num(row['PAT Qtr Rs.Cr.'] || row['PAT Qtr']);
-      const varPct = num(row['Qtr Profit Var %'] || row['Qtr Profit Var']);
+      const cur = num(row['PAT Qtr Rs.Cr.'] || row['PAT Qtr'] || row['Profit after tax latest quarter']);
+      const varPct = num(row['Qtr Profit Var %'] || row['Qtr Profit Var'] || row['YOY Quarterly profit growth']);
       if (cur != null && varPct != null && varPct !== -100) return cur / (1 + varPct / 100);
       return num(row['PAT Q-1 YoY'] || row['Net profit YoY same quarter']);
     })(),
     salesQ1Yoy: (() => {
-      const cur = num(row['Sales Qtr Rs.Cr.'] || row['Sales Qtr']);
-      const varPct = num(row['Qtr Sales Var %'] || row['Qtr Sales Var']);
+      const cur = num(row['Sales Qtr Rs.Cr.'] || row['Sales Qtr'] || row['Sales latest quarter']);
+      const varPct = num(row['Qtr Sales Var %'] || row['Qtr Sales Var'] || row['YOY Quarterly sales growth']);
       if (cur != null && varPct != null && varPct !== -100) return cur / (1 + varPct / 100);
       return num(row['Sales Q-1 YoY']);
     })(),
@@ -1394,9 +1394,9 @@ export function parseTurnaroundRow(rawRow: Record<string, unknown>): TurnaroundR
     patY5: num(row['PAT 5 year back'] || row['PAT Y-5']),
     // PATCH 0373 — actual Screener fields
     opmY1: num(row['OPM Ann %'] || row['OPM last year'] || row['OPM Y-1']),
-    opmY2: num(row['OPM Prev Ann %'] || row['OPM 2 year back'] || row['OPM Y-2']),
+    opmY2: num(row['OPM Prev Ann %'] || row['OPM 2 year back'] || row['OPM preceding year'] || row['OPM Y-2']),
     opmY3: num(row['OPM 3 year back'] || row['OPM Y-3']),
-    opm5yMedian: num(row['5Yr OPM %'] || row['OPM 5Y median'] || row['5Yrs OPM %']),
+    opm5yMedian: num(row['5Yr OPM %'] || row['OPM 5Y median'] || row['5Yrs OPM %'] || row['OPM 5Year']),
 
     // PATCH 0372 — match real Screener column names ('Sales growth %',
     // 'Profit growth %', 'Sales Var 3Yrs %', 'Profit Var 3Yrs %', etc.)
@@ -1410,7 +1410,7 @@ export function parseTurnaroundRow(rawRow: Record<string, unknown>): TurnaroundR
 
     debtCurr: num(row['Debt Rs.Cr.'] || row['Debt'] || row['Total Debt']),
     // PATCH 0373 — actual Screener field name
-    debt3yBack: num(row['Debt 3Yrs Rs.Cr.'] || row['Debt 3 year back'] || row['Debt 3Yr back']),
+    debt3yBack: num(row['Debt 3Yrs Rs.Cr.'] || row['Debt 3 year back'] || row['Debt 3Years back'] || row['Debt 3Yr back']),
     debt5yBack: num(row['Debt 5Yrs Rs.Cr.'] || row['Debt 5 year back'] || row['Debt 5Y back']),
     de: num(row['Debt / Eq'] || row['Debt to equity'] || row['D/E']),
     interestCoverage: num(row['Int Coverage'] || row['Interest Coverage Ratio'] || row['Interest coverage']),
