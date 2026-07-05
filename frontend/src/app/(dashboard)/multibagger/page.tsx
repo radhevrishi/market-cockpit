@@ -12004,6 +12004,40 @@ function MultibaggerAnalytics({
 // ═══════════════════════════════════════════════════════════════════════════
 
 const TURNAROUND_STORAGE_KEY = 'mb_turnaround_scored_v1';
+
+// zzz219 — SELF-HEALING turnaround data. Rows saved by the pre-zzz217 engine
+// were parsed without any quarterly fields (the column aliases didn't match
+// the auto-synced CSVs), so re-scoring them can never recover. Detect that
+// signature and transparently re-sync + re-parse from the server so the user
+// never has to Clear All manually after an engine upgrade.
+function turnRowsAreStaleParsed(rows: any[]): boolean {
+  if (!Array.isArray(rows) || rows.length < 3) return false;
+  const missing = rows.filter(r => r && r.patQ1 == null && r.salesQ1 == null).length;
+  return missing / rows.length > 0.8;
+}
+async function resyncTurnaroundsFromServer(): Promise<TurnaroundResult[]> {
+  const files = await fetchCsvsAsFiles(SYNC_ROUTING.turnaroundsIndia);
+  if (files.length === 0) return [];
+  const XLSX = await import('xlsx');
+  const merged = new Map<string, TurnaroundResult>();
+  for (const file of files) {
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array' });
+      const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[wb.SheetNames[0]], { defval: '' });
+      for (const r of raw) {
+        const p = parseTurnaroundRow(r);
+        if (p) merged.set(p.symbol, scoreTurnaroundRow(p));
+      }
+    } catch {}
+  }
+  const rows = Array.from(merged.values()).sort((a, b) => b.totalScore - a.totalScore);
+  if (rows.length > 0) {
+    try { localStorage.setItem(TURNAROUND_STORAGE_KEY, JSON.stringify(rows)); } catch {}
+    try { window.dispatchEvent(new CustomEvent('mb-upload:updated', { detail: { market: 'TURN' } })); } catch {}
+  }
+  return rows;
+}
 const TURNAROUND_CONCALLS_KEY = 'mb_turnaround_concalls_v1';
 
 function TurnaroundCompare() {
@@ -12082,6 +12116,14 @@ function TurnaroundCompare() {
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows.length]);
+  // zzz219 — self-heal: rows saved by the old parser (no quarterly fields)
+  // are silently replaced with a fresh server re-sync.
+  useEffect(() => {
+    if (!turnRowsAreStaleParsed(rows)) return;
+    turnPulledRef.current = true;
+    resyncTurnaroundsFromServer().then(fresh => { if (fresh.length) setRows(fresh); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // PATCH 0374 / 0375 — Multi-CSV upload. Accepts MULTIPLE files in one
   // picker, processes them all, then merges into existing rows via
@@ -13799,7 +13841,8 @@ function TurnaroundAnalytics() {
     try {
       const raw = localStorage.getItem(TURNAROUND_STORAGE_KEY);
       const parsed = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed) ? parsed : [];
+      // zzz219 — always RE-SCORE stored rows so engine upgrades apply here too
+      return Array.isArray(parsed) ? parsed.map((r: any) => scoreTurnaroundRow(r)) : [];
     } catch { return []; }
   });
   React.useEffect(() => {
@@ -13808,9 +13851,17 @@ function TurnaroundAnalytics() {
       try {
         const raw = localStorage.getItem(TURNAROUND_STORAGE_KEY);
         const parsed = raw ? JSON.parse(raw) : [];
-        setRows(Array.isArray(parsed) ? parsed : []);
+        setRows(Array.isArray(parsed) ? parsed.map((r: any) => scoreTurnaroundRow(r)) : []);
       } catch { setRows([]); }
     };
+    // zzz219 — self-heal stale-parsed rows without requiring a manual clear
+    try {
+      const raw = localStorage.getItem(TURNAROUND_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      if (turnRowsAreStaleParsed(parsed)) {
+        resyncTurnaroundsFromServer().then(fresh => { if (fresh.length) setRows(fresh); });
+      }
+    } catch {}
     const onStorage = (e: StorageEvent) => {
       if (!e.key || e.key === TURNAROUND_STORAGE_KEY) refresh();
     };
@@ -13839,6 +13890,36 @@ function TurnaroundAnalytics() {
 
   const [decisionTick, bumpDec] = React.useReducer((x: number) => x + 1, 0);
   React.useEffect(() => subscribeDecisions(() => bumpDec()), []);
+
+  // zzz219 — decision-oriented analytics inputs
+  const turnRowsAll = React.useMemo(() => rows.filter(r => r.archetype === 'TURNAROUND'), [rows]);
+  const actionBoard = React.useMemo(() => turnRowsAll
+    .filter(r => r.inBuyZone)
+    .sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0))
+    .slice(0, 12), [turnRowsAll]);
+  const dimAverages = React.useMemo(() => {
+    const src = turnRowsAll.length ? turnRowsAll : rows;
+    const n = src.length || 1;
+    const avg = (k: keyof TurnaroundResult) => src.reduce((acc, r) => acc + (Number(r[k]) || 0), 0) / n;
+    return [
+      { label: 'EARNINGS', v: avg('earningsScore'), max: 20 },
+      { label: 'OPERATIONS', v: avg('operationalScore'), max: 10 },
+      { label: 'BALANCE SHEET', v: avg('balanceSheetScore'), max: 15 },
+      { label: 'CONCALL', v: avg('concallScore'), max: 25 },
+      { label: 'INDUSTRY', v: avg('industryScore'), max: 10 },
+      { label: 'GOVERNANCE', v: avg('governanceScore'), max: 10 },
+      { label: 'VALUATION', v: avg('valuationScore'), max: 10 },
+    ];
+  }, [turnRowsAll, rows]);
+  const sectorCounts = React.useMemo(() => {
+    const c = new Map<string, number>();
+    for (const r of turnRowsAll) { const key = r.sector || '—'; c.set(key, (c.get(key) || 0) + 1); }
+    return Array.from(c.entries()).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  }, [turnRowsAll]);
+  const killerRows = React.useMemo(() => rows
+    .filter(r => (r.killers?.length || 0) > 0)
+    .sort((a, b) => (b.killers?.length || 0) - (a.killers?.length || 0))
+    .slice(0, 10), [rows]);
 
   // PATCH 0875 — Default view = real turnarounds only. User uploaded 100
   // rows from a general-purpose Screener, of which ~80 are quality
@@ -14021,8 +14102,8 @@ function TurnaroundAnalytics() {
           { label: 'AVG SCORE',          value: stats.avgScore.toFixed(1),                                                       sub: 'out of 100', color: ACCENT },
           { label: 'BUY-ZONE',           value: stats.buyZone.toString(),                                                        sub: 'EARLY-SHOOTS + PATTERN', color: stats.buyZone > 0 ? GREEN : MUTED },
           { label: 'INFLECTION (P3)',    value: stats.inflection.toString(),                                                     sub: 'institutional buy window', color: stats.inflection > 0 ? GREEN : MUTED },
-          { label: 'BEST CAND.',         value: stats.best.toString(),                                                           sub: 'survival≥6 · concall≥15', color: stats.best > 0 ? GREEN : MUTED },
-          { label: 'CONVICTION',         value: stats.convictionOverlap.toString(),                                              sub: 'overlap with your bench', color: stats.convictionOverlap > 0 ? PURPLE : MUTED },
+          { label: 'BEST CAND.',         value: stats.best.toString(),                                                           sub: 'P3 · survival≥6 · no killers', color: stats.best > 0 ? GREEN : MUTED },
+          { label: '⚠ KILLERS',          value: killerRows.length.toString(),                                                    sub: 'hard disqualifiers present', color: killerRows.length > 0 ? RED : MUTED },
         ].map((s) => (
           <div key={s.label} style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: '12px 14px' }}>
             <div style={{ fontSize: 10, color: MUTED, fontWeight: 700, letterSpacing: 0.6 }}>{s.label}</div>
@@ -14136,11 +14217,50 @@ function TurnaroundAnalytics() {
         </div>
       </div>
 
-      {/* ── BEST CANDIDATES + DECISION OVERLAY ─────────────────── */}
+      {/* ── zzz219: 🎯 ACTION BOARD — the decision table ─────────── */}
+      <div style={{ background: CARD_BG, border: `1px solid ${GREEN}40`, borderRadius: 10, padding: 16, marginBottom: 18 }}>
+        <div style={{ fontSize: F.sm, fontWeight: 800, color: GREEN, marginBottom: 4 }}>🎯 ACTION BOARD — BUY-ZONE TURNAROUNDS ({actionBoard.length})</div>
+        <div style={{ fontSize: 10, color: MUTED, marginBottom: 10 }}>Archetype TURNAROUND · stage EARLY-SHOOTS / PATTERN · ranked by score · MAX POS = engine&apos;s suggested position ceiling · P3 ★ = institutional buy window</div>
+        {actionBoard.length === 0
+          ? <div style={{ fontSize: 11, color: MUTED, padding: 12, textAlign: 'center' }}>Nothing in the buy zone right now — check back after the next sync.</div>
+          : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+              <thead>
+                <tr style={{ color: MUTED, textAlign: 'left' }}>
+                  {['#', 'SYMBOL', 'COMPANY', 'STAGE', 'PHASE', 'TYPE', 'SURV', 'EARN', 'BAL', 'OPS', 'SCORE', 'MAX POS'].map((h, hi) => (
+                    <th key={h} style={{ padding: '6px 8px', borderBottom: `1px solid ${BORDER}`, textAlign: hi >= 6 ? 'right' : 'left' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {actionBoard.map((r, i) => (
+                  <tr key={r.symbol} style={{ color: TEXT }}>
+                    <td style={{ padding: '6px 8px', color: MUTED, fontFamily: 'ui-monospace,monospace' }}>{i + 1}</td>
+                    <td style={{ padding: '6px 8px', fontWeight: 800, fontFamily: 'ui-monospace,monospace' }}>{r.symbol}</td>
+                    <td style={{ padding: '6px 8px', fontSize: 11, color: MUTED, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.company}>{r.company}</td>
+                    <td style={{ padding: '6px 8px', fontSize: 11, color: r.stageColor, fontWeight: 700 }}>{r.stageEmoji} {r.stage}</td>
+                    <td style={{ padding: '6px 8px', fontSize: 11, color: r.phase === 3 ? GREEN : ACCENT, fontWeight: 700 }}>P{r.phase}{r.phase === 3 ? ' ★' : ''}</td>
+                    <td style={{ padding: '6px 8px', fontSize: 11, color: MUTED }}>{r.turnaroundType && r.turnaroundType !== 'UNKNOWN' ? r.turnaroundType : '—'}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', color: (r.survivalScore ?? 0) >= 6 ? GREEN : YELLOW, fontWeight: 700, fontFamily: 'ui-monospace,monospace' }}>{r.survivalScore}/8</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'ui-monospace,monospace' }}>{Math.round(r.earningsScore || 0)}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'ui-monospace,monospace' }}>{Math.round(r.balanceSheetScore || 0)}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'ui-monospace,monospace' }}>{Math.round(r.operationalScore || 0)}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 800, fontFamily: 'ui-monospace,monospace' }}>{Math.round(r.totalScore || 0)}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', color: ACCENT, fontWeight: 700 }}>{r.suggestedPositionPct != null ? `${r.suggestedPositionPct}%` : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* ── BEST CANDIDATES + DIMENSION STRENGTH ─────────────────── */}
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 14, marginBottom: 18 }}>
         <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 16 }}>
           <div style={{ fontSize: F.sm, fontWeight: 800, color: GREEN, marginBottom: 4 }}>⭐ BEST CANDIDATES ({stats.bestList.length})</div>
-          <div style={{ fontSize: 10, color: MUTED, marginBottom: 10 }}>Pass: archetype = TURNAROUND · survival ≥6 · phase 2-3 · concall ≥15</div>
+          <div style={{ fontSize: 10, color: MUTED, marginBottom: 10 }}>Pass: TURNAROUND · phase 3 · survival ≥6 · no killers · score ≥35 (≥40 with concall pasted)</div>
           {stats.bestList.length === 0 && <div style={{ fontSize: 11, color: MUTED, padding: 12, textAlign: 'center' }}>No row passes the institutional best-candidate filter today.</div>}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {stats.bestList.slice(0, 10).map(r => {
@@ -14162,27 +14282,56 @@ function TurnaroundAnalytics() {
         </div>
 
         <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 16 }}>
-          <div style={{ fontSize: F.sm, fontWeight: 800, color: TEXT, marginBottom: 12 }}>DECISION OVERLAY</div>
-          {[
-            { label: 'BUY',      n: stats.decisionCounts.BUY,      color: GREEN },
-            { label: 'WATCH',    n: stats.decisionCounts.WATCH,    color: YELLOW },
-            { label: 'REJECTED', n: stats.decisionCounts.REJECTED, color: RED },
-            { label: 'No tag',   n: stats.decisionCounts.NONE,     color: MUTED },
-          ].map(d => {
-            const pct = stats.n ? (100 * d.n / stats.n) : 0;
+          <div style={{ fontSize: F.sm, fontWeight: 800, color: TEXT, marginBottom: 4 }}>DIMENSION STRENGTH</div>
+          <div style={{ fontSize: 10, color: MUTED, marginBottom: 10 }}>Cohort averages across {turnRowsAll.length || rows.length} rows — where the recovery signal actually comes from</div>
+          {dimAverages.map(d => {
+            const pct = Math.max(0, Math.min(100, (d.v / d.max) * 100));
+            const barColor = pct >= 55 ? GREEN : pct >= 30 ? YELLOW : MUTED;
             return (
               <div key={d.label} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <div style={{ width: 64, fontSize: 11, color: d.color, fontWeight: 700 }}>{d.label}</div>
+                <div style={{ width: 104, fontSize: 10, color: MUTED, fontWeight: 700, letterSpacing: 0.4 }}>{d.label}</div>
                 <div style={{ flex: 1, height: 10, background: '#0a0a0f', borderRadius: 4, overflow: 'hidden' }}>
-                  <div style={{ width: `${pct}%`, height: '100%', background: d.color }} />
+                  <div style={{ width: `${pct}%`, height: '100%', background: barColor }} />
                 </div>
-                <div style={{ width: 50, fontSize: 11, color: MUTED, fontFamily: 'ui-monospace,monospace', textAlign: 'right' }}>{d.n}</div>
+                <div style={{ width: 56, fontSize: 11, color: TEXT, fontFamily: 'ui-monospace,monospace', textAlign: 'right' }}>{d.v.toFixed(1)}/{d.max}</div>
               </div>
             );
           })}
-          <div style={{ marginTop: 12, padding: 10, background: '#0a0a0f', borderRadius: 6, fontSize: 11, color: MUTED }}>
-            Decision coverage: <span style={{ color: TEXT, fontWeight: 700 }}>{stats.n ? (100 * (stats.n - stats.decisionCounts.NONE) / stats.n).toFixed(0) : 0}%</span>
+          <div style={{ marginTop: 10, padding: 8, background: '#0a0a0f', borderRadius: 6, fontSize: 10, color: MUTED }}>
+            CONCALL at 0? Paste narratives on your shortlist rows in the 🔄 Turnarounds tab — it&apos;s 25% of the institutional signal.
           </div>
+        </div>
+      </div>
+
+      {/* ── zzz219: SECTOR CONCENTRATION + KILLER FLAGS ──────────── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 14, marginBottom: 18 }}>
+        <div style={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 16 }}>
+          <div style={{ fontSize: F.sm, fontWeight: 800, color: TEXT, marginBottom: 4 }}>🏭 SECTOR CONCENTRATION</div>
+          <div style={{ fontSize: 10, color: MUTED, marginBottom: 10 }}>Where the turnarounds cluster — sector recoveries move in packs</div>
+          {sectorCounts.length === 0 && <div style={{ fontSize: 11, color: MUTED }}>No turnaround rows yet.</div>}
+          {sectorCounts.map(([sec, n]) => {
+            const maxN = sectorCounts[0]?.[1] || 1;
+            return (
+              <div key={sec} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 7 }}>
+                <div style={{ width: 190, fontSize: 11, color: TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={sec}>{sec}</div>
+                <div style={{ flex: 1, height: 9, background: '#0a0a0f', borderRadius: 4, overflow: 'hidden' }}>
+                  <div style={{ width: `${(n / maxN) * 100}%`, height: '100%', background: PURPLE }} />
+                </div>
+                <div style={{ width: 24, fontSize: 11, color: MUTED, fontFamily: 'ui-monospace,monospace', textAlign: 'right' }}>{n}</div>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ background: CARD_BG, border: `1px solid ${RED}30`, borderRadius: 10, padding: 16 }}>
+          <div style={{ fontSize: F.sm, fontWeight: 800, color: RED, marginBottom: 4 }}>⚠ KILLER FLAGS ({killerRows.length})</div>
+          <div style={{ fontSize: 10, color: MUTED, marginBottom: 10 }}>Hard disqualifiers (playbook Ch.4) — do NOT buy these regardless of score</div>
+          {killerRows.length === 0 && <div style={{ fontSize: 11, color: MUTED }}>No killer flags in the current set. ✅</div>}
+          {killerRows.map(r => (
+            <div key={r.symbol} style={{ display: 'flex', gap: 8, alignItems: 'baseline', padding: '5px 8px', background: '#0a0a0f', borderRadius: 6, marginBottom: 5 }}>
+              <span style={{ fontSize: 11, fontWeight: 800, color: TEXT, fontFamily: 'ui-monospace,monospace', width: 100 }}>{r.symbol}</span>
+              <span style={{ fontSize: 10, color: RED, flex: 1 }}>{(r.killers || []).slice(0, 2).join(' · ')}</span>
+            </div>
+          ))}
         </div>
       </div>
 
