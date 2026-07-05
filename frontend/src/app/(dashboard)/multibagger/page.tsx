@@ -8398,13 +8398,24 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
         const good = mbRows.filter(r =>
           r && typeof r.symbol === 'string' && r.symbol &&
           ['A+', 'A', 'B+'].includes(r.grade) &&
-          r.bucket !== 'MONITOR' &&
-          !/^\d+$/.test(r.symbol));
+          r.bucket !== 'MONITOR');
+        // zzz213 — India Multibagger stores BSE-only listings as "BSE:524520"
+        // (numeric scrip code). Strip any embedded exchange prefix, then drop
+        // pure-numeric codes — TradingView can't resolve them, and the naive
+        // NSE: prefix produced broken "NSE:BSE:524520" entries.
         addSection('Multibaggers', good.map(r => {
-          if (market === 'IND') return `NSE:${r.symbol}`;
+          let sym = String(r.symbol).trim().toUpperCase();
+          let embeddedEx = '';
+          if (sym.includes(':')) {
+            const parts = sym.split(':');
+            sym = parts.pop() || '';
+            embeddedEx = parts.pop() || '';
+          }
+          if (!sym || /^\d+$/.test(sym)) return '';
+          if (market === 'IND') return `${embeddedEx || 'NSE'}:${sym}`;
           const ex = String(r.exchange || '').toUpperCase().trim();
-          return `${exMap[ex] || ex || 'NASDAQ'}:${r.symbol}`;
-        }));
+          return `${exMap[ex] || ex || embeddedEx || 'NASDAQ'}:${sym}`;
+        }).filter(Boolean) as string[]);
       }
     } catch {}
     if (out.length === 0) {
