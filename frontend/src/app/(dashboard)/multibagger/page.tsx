@@ -9054,7 +9054,15 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
                 <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
                   <span style={{ fontWeight: 900, color: CYAN, fontFamily: 'ui-monospace, monospace' }}>{r.symbol}</span>
                   <span style={{ color: TXT, fontFamily: 'ui-monospace, monospace' }}>{fmtPrice(r.price)}</span>
-                  <span style={{ marginLeft: 'auto', color: (r.daysToEarnings ?? 99) <= 3 ? '#EF4444' : '#FBBF24', fontWeight: 800 }}>{r.daysToEarnings}d</span>
+                  <span style={{ marginLeft: 'auto', textAlign: 'right', color: (r.daysToEarnings ?? 99) <= 3 ? '#EF4444' : '#FBBF24', fontWeight: 800 }}>
+                    {r.daysToEarnings}d
+                    {/* zzz216 — show the actual earnings date, not just the countdown */}
+                    {r.nextEarnings && (
+                      <span style={{ display: 'block', fontSize: 10.5, color: TXT, fontWeight: 700 }}>
+                        {new Date(r.nextEarnings).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
+                      </span>
+                    )}
+                  </span>
                 </div>
                 <div style={{ fontSize: 11, color: TXT, marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.company}</div>
                 <div style={{ fontSize: 10.5, color: MUTED, marginTop: 4 }}>
