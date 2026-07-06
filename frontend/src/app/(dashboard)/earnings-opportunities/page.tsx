@@ -2780,14 +2780,59 @@ export default function EarningsOpportunitiesPage() {
           </div>
           {showAbout && (
             <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--mc-bg-4)', fontSize: 11.5, color: 'var(--mc-text-3)', lineHeight: 1.7 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
-                <div><strong style={{ color: 'var(--mc-warn)' }}>⭐ BLOCKBUSTER</strong><br/>Exceptional fit on multiple lenses, clean earnings quality, technically primed. Rare — typically 0–3 names per day.</div>
-                <div><strong style={{ color: 'var(--mc-bullish)' }}>🟢 STRONG</strong><br/>High-conviction with clear pass on the strongest lenses; no material quality concerns.</div>
-                <div><strong style={{ color: '#FACC15' }}>🟡 MIXED</strong><br/>Some lenses pass, some fail; or optically strong results shadowed by quality flags.</div>
-                <div><strong style={{ color: 'var(--mc-bearish)' }}>🔴 AVOID</strong><br/>Multiple weakness signals or material quality flags dominate.</div>
+              {/* zzz227 — exact grading rules, mirrored from the grader code so the
+                  doc can never drift from behaviour without a code change here too. */}
+              <div style={{ marginBottom: 12, padding: '8px 12px', background: 'color-mix(in srgb, var(--mc-cyan) 6%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', borderRadius: 8 }}>
+                <strong style={{ color: 'var(--mc-cyan)' }}>📐 COMPOSITE SCORE (0–100)</strong> — the big number on each card.<br/>
+                <strong>Magnitude 35%</strong> (size of the Sales / PAT / EPS YoY beat) + <strong>Quality 25%</strong> (fewer caveat flags = higher) + <strong>Technicals 25%</strong> (Stage, RS rating, distance from 52-wk high) + <strong>Methodology 15%</strong> (how many playbooks pass: Trend Template · SEPA · CANSLIM).
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
+                <div style={{ padding: '8px 12px', background: 'color-mix(in srgb, #FCD34D 6%, transparent)', border: '1px solid color-mix(in srgb, #FCD34D 30%, transparent)', borderRadius: 8 }}>
+                  <strong style={{ color: '#FCD34D' }}>⭐ ELITE badge</strong> — strictest gate; ALL required, missing data fails:<br/>
+                  · Sales YoY ≥ 25% · PAT YoY ≥ 30% · OPM expanding ≥ +1pp<br/>
+                  · PAT &amp; EPS positive this quarter AND same quarter last year (no loss, no turnaround base)<br/>
+                  · Day-1 close ≥ +2% · gap-up ≥ 0% (market must confirm)<br/>
+                  · ZERO critical caveats (optical EPS / OCF divergence / low quality)<br/>
+                  · Not Stage 4 · RS ≥ 60 (if known) · ADTV ≥ ₹1 Cr/day (no thin float)
+                </div>
+                <div style={{ padding: '8px 12px', background: 'color-mix(in srgb, var(--mc-warn) 6%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 30%, transparent)', borderRadius: 8 }}>
+                  <strong style={{ color: 'var(--mc-warn)' }}>⭐ BLOCKBUSTER</strong> — rare (0–3/day). Any ONE path qualifies:<br/>
+                  <strong>A · Clean triple-beat:</strong> Sales, PAT &amp; EPS all ≥ 25% YoY + score ≥ 78 + ≤ 1 caveat + (≥ 1 playbook pass OR strong forward guidance) + chart OK<br/>
+                  <strong>B · Exceptional:</strong> Sales ≥ 40 / PAT ≥ 50 / EPS ≥ 50% + score ≥ 72 + ≤ 2 caveats + chart OK<br/>
+                  <strong>C · Mega:</strong> Sales ≥ 40 / PAT ≥ 75 / EPS ≥ 75% + ≤ 3 caveats + not Stage 4<br/>
+                  <em>Chart OK = not Stage 4 and within 25% of 52-wk high.</em>
+                </div>
+                <div style={{ padding: '8px 12px', background: 'color-mix(in srgb, var(--mc-bullish) 6%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 30%, transparent)', borderRadius: 8 }}>
+                  <strong style={{ color: 'var(--mc-bullish)' }}>🟢 STRONG</strong> — all four required:<br/>
+                  · Composite score ≥ 68<br/>
+                  · ≥ 1 playbook passing (Trend Template / SEPA / CANSLIM)<br/>
+                  · ≤ 3 caveat flags<br/>
+                  · Not Stage 4 (chart not in decline)
+                </div>
+                <div style={{ padding: '8px 12px', background: 'color-mix(in srgb, #FACC15 6%, transparent)', border: '1px solid color-mix(in srgb, #FACC15 30%, transparent)', borderRadius: 8 }}>
+                  <strong style={{ color: '#FACC15' }}>🟡 MIXED</strong> — either:<br/>
+                  · Composite score ≥ 35 but fails a STRONG condition, OR<br/>
+                  · Was BLOCKBUSTER/STRONG on numbers but demoted for thin float (ADTV &lt; ₹1 Cr/day — can't be traded at size)
+                </div>
+                <div style={{ padding: '8px 12px', background: 'color-mix(in srgb, var(--mc-bearish) 6%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bearish) 30%, transparent)', borderRadius: 8 }}>
+                  <strong style={{ color: 'var(--mc-bearish)' }}>🔴 AVOID</strong> — any of:<br/>
+                  · Hard fail: Stage 4 chart with RS &lt; 40 (broken chart)<br/>
+                  · Hard fail: EPS YoY negative AND PAT down &gt; 10%<br/>
+                  · Composite score &lt; 35<br/>
+                  <em>Hard fails override the score unless composite ≥ 70.</em>
+                </div>
+                <div style={{ padding: '8px 12px', background: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 8 }}>
+                  <strong style={{ color: 'var(--mc-text-2)' }}>🚩 CAVEAT FLAGS</strong> — quality deductions:<br/>
+                  · <strong>optical eps</strong> — EPS growth ≥ 3× sales growth (&amp; ≥ 50%), or ≥ 200%: beat likely not operational<br/>
+                  · <strong>tax distortion</strong> — PAT boosted by lower tax, not operations<br/>
+                  · <strong>segment mix shift</strong> — OPM contracted &gt; 1.5pp YoY<br/>
+                  · <strong>ocf divergence</strong> — operating cash flow &lt; 60% of PAT<br/>
+                  · <strong>low quality</strong> — Stage 4, or &gt; 25% below 52-wk high<br/>
+                  · <strong>thin float</strong> — ADTV &lt; ₹1 Cr/day
+                </div>
               </div>
               <div style={{ marginTop: 10, fontSize: 10.5, color: 'var(--mc-text-4)', fontStyle: 'italic' }}>
-                Educational only. Not investment advice. Server pipeline fetches BSE/NSE results announcements + Indian results RSS feeds. Parser accuracy depends on RSS title richness.
+                Educational only. Not investment advice. Server pipeline fetches BSE/NSE results announcements + Indian results RSS feeds; worker enriches with Stage / RS / OPM / ADTV. Parser accuracy depends on RSS title richness — missing fields are treated conservatively (never punished for AVOID, but ELITE requires them).
               </div>
             </div>
           )}
