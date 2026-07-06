@@ -2010,18 +2010,18 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             OPM Δ≥0 · Composite≥65 · D1≥0. Click again to clear. Detail chips
             below stay collapsed unless expanded. */}
         {(() => {
-          const presetActive = filters.pat === 30 && filters.eps === 40 && filters.opmDelta === 0 && filters.score === 65 && filters.d1Bucket === 0;
+          const presetActive = filters.pat === 40 && filters.eps === 40 && filters.opmDelta === 0 && filters.score === 65 && filters.d1Bucket === 0;
           return (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <button
                 onClick={() => setFilters((prev) => presetActive
                   ? { ...FILTER_DEFAULT, cap: prev.cap }
-                  : { ...FILTER_DEFAULT, cap: prev.cap, pat: 30, eps: 40, opmDelta: 0, score: 65, d1Bucket: 0 })}
-                title="One-click quality screen: PAT YoY ≥30% · EPS YoY ≥40% · OPM expanding (Δ≥0pp) · Composite score ≥65 · Day-1 close ≥0%. Click again to clear."
+                  : { ...FILTER_DEFAULT, cap: prev.cap, pat: 40, eps: 40, opmDelta: 0, score: 65, d1Bucket: 0 })}
+                title="One-click quality screen: PAT YoY ≥40% · EPS YoY ≥40% · OPM expanding (Δ≥0pp) · Composite score ≥65 · Day-1 close ≥0%. Click again to clear."
                 style={presetActive
                   ? chipActive('#F59E0B')
                   : { ...chipBase, border: '1px solid #F59E0B', color: '#F59E0B', fontWeight: 800 }}>
-                ⚡ QUALITY PRESET · PAT≥30 · EPS≥40 · OPM↗ · Score≥65 · D1≥0 {presetActive ? '✓ ON' : ''}
+                ⚡ QUALITY PRESET · PAT≥40 · EPS≥40 · OPM↗ · Score≥65 · D1≥0 {presetActive ? '✓ ON' : ''}
               </button>
               <button onClick={() => setShowAdvFilters((v) => !v)} style={chipBase}>
                 {showAdvFilters ? '▴ Hide detail filters' : '▾ Show detail filters'}
@@ -2077,6 +2077,8 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
           const toggleD1 = (v: number) =>
             setFilters((f) => ({ ...f, d1Bucket: f.d1Bucket === v ? null : v }));
           const opts: Array<{ v: number; lbl: string; color: string }> = [
+            // zzz226b — ≥0% chip so the QUALITY PRESET's D1≥0 is visible/toggleable
+            { v: 0,  lbl: '≥0%',   color: '#10B981' },
             { v: 2,  lbl: '≥+2%',  color: '#10B981' },
             { v: 4,  lbl: '≥+4%',  color: '#10B981' },
             { v: 7,  lbl: '≥+7%',  color: '#10B981' },
