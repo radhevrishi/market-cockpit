@@ -1175,6 +1175,9 @@ type ConvFilters = {
   pat: number | null;
   eps: number | null;
   pead: number | null;      // USER-REQ — minimum PEAD score (50/60/70/80)
+  // zzz223 — OPM margin delta (pp YoY): v ≥ 0 means "expansion ≥ v pp",
+  // v < 0 means "squeeze ≤ v pp". Mirrors the EO margin signal.
+  opmDelta?: number | null;
   sortByPead: boolean;
   // PATCH 1018 — ELITE / MULTIBAGGER quality filters (mirror Earnings Opps)
   elite: boolean;
@@ -1204,7 +1207,7 @@ type ConvFilters = {
   cap: 'all' | 'sweet' | 'mega' | 'large' | 'mid' | 'small' | 'micro';
 };
 
-const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, cap: 'all' };
+const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, opmDelta: null, cap: 'all' };
 
 // PATCH 1022 — shared market-cap range matcher (value in ₹ Cr). Buckets mirror
 // the enrich-route thresholds. Null market cap never matches a specific range.
@@ -1361,6 +1364,14 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
   if (f.opLev != null) {
     const ratio = pat / Math.max(sales, 0.01);
     if (!(ratio >= f.opLev)) return false;
+  }
+  // zzz223 — OPM margin delta filter (pp change vs prior year). Positive
+  // threshold = expansion ≥ v pp; negative threshold = squeeze ≤ v pp.
+  if (f.opmDelta != null) {
+    const o = (e as any).opm_pct; const p = (e as any).opm_prev_pct;
+    if (typeof o !== 'number' || typeof p !== 'number') return false;
+    const d = o - p;
+    if (f.opmDelta >= 0 ? d < f.opmDelta : d > f.opmDelta) return false;
   }
   // USER-REQ — PEAD score threshold filter (combinable with all others)
   if (f.pead != null) {
@@ -1716,6 +1727,9 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
                 is_elite: c.is_elite === true,
                 pead_score: typeof c.pead_score === 'number' ? c.pead_score : null,
                 multibagger_setup: c.multibagger_setup === true,
+                // zzz223 — OPM margin for the CB tab
+                opm_pct: typeof c.opm_pct === 'number' ? c.opm_pct : null,
+                opm_prev_pct: typeof c.opm_prev_pct === 'number' ? c.opm_prev_pct : null,
               });
             }
           }
@@ -1978,8 +1992,8 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
               }}>{revalProgress}</span>
             )}
             <button onClick={() => setFilters(FILTER_DEFAULT)}
-              disabled={filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && !filters.sortByPead && !filters.elite && !filters.multibagger && filters.cap === 'all'}
-              style={{ ...chipBase, opacity: (filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && !filters.sortByPead) ? 0.4 : 1 }}>
+              disabled={filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && filters.opmDelta == null && !filters.sortByPead && !filters.elite && !filters.multibagger && filters.cap === 'all'}
+              style={{ ...chipBase, opacity: (filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && filters.opmDelta == null && !filters.sortByPead) ? 0.4 : 1 }}>
               Clear
             </button>
           </div>
@@ -1996,6 +2010,10 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         ])}
         {renderChipGroup('EPS YoY', '#F59E0B', 'eps', [
           { v: 20, lbl: '≥20%' }, { v: 40, lbl: '≥40%' }, { v: 60, lbl: '≥60%' },
+        ])}
+        {/* zzz223 — OPM margin Δ chips (pp YoY) — mirrors the EO margin signal */}
+        {renderChipGroup('OPM Δ (pp YoY)', '#F472B6', 'opmDelta', [
+          { v: 0, lbl: '📈 Expanding ≥0' }, { v: 2, lbl: '≥+2pp' }, { v: 5, lbl: '≥+5pp' }, { v: -2, lbl: '📉 Squeeze ≤-2pp' },
         ])}
         {/* USER-REQ — PEAD score threshold filter (composable with all others) */}
         {renderChipGroup('PEAD SCORE', '#22D3EE', 'pead', [
@@ -2812,6 +2830,21 @@ function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: 
             <span><span style={{ color: 'var(--mc-text-4)' }}>Sales</span> <strong style={{ color: (entry.sales_yoy_pct ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{pct(entry.sales_yoy_pct)}</strong></span>
             <span><span style={{ color: 'var(--mc-text-4)' }}>PAT</span> <strong style={{ color: (entry.net_profit_yoy_pct ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{pct(entry.net_profit_yoy_pct)}</strong></span>
             <span><span style={{ color: 'var(--mc-text-4)' }}>EPS</span> <strong style={{ color: (entry.eps_yoy_pct ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{pct(entry.eps_yoy_pct)}</strong></span>
+            {/* zzz223 — OPM margin chip: latest OPM % + pp delta vs prior year */}
+            {typeof (entry as any).opm_pct === 'number' && (() => {
+              const o = (entry as any).opm_pct as number;
+              const p = (entry as any).opm_prev_pct as number | null | undefined;
+              const d = typeof p === 'number' ? o - p : null;
+              const col = d == null ? 'var(--mc-text-2)' : d >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)';
+              return (
+                <span title={typeof p === 'number' ? `OPM ${o.toFixed(1)}% vs ${p.toFixed(1)}% prior year — ${(d as number) >= 0 ? '+' : ''}${(d as number).toFixed(1)}pp` : `OPM ${o.toFixed(1)}% (no prior-year value)`}>
+                  <span style={{ color: 'var(--mc-text-4)' }}>OPM</span>{' '}
+                  <strong style={{ color: col }}>
+                    {o.toFixed(1)}%{d != null ? ` (${d >= 0 ? '+' : ''}${d.toFixed(1)}pp)` : ''}
+                  </strong>
+                </span>
+              );
+            })()}
           </div>
         );
       })()}
