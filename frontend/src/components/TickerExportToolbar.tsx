@@ -104,6 +104,38 @@ export default function TickerExportToolbar({
     }
   };
 
+  // zzz222 — SECTIONED TradingView copy. When tier groups exist (Conviction
+  // Beats BLOCKBUSTER/STRONG, Earnings Hub tiers, ...), the main copy button
+  // emits ###LABEL section headers — TradingView renders those as named
+  // watchlist sections on import. Only currently-visible (filtered) tickers
+  // are included; group order preserved; anything ungrouped lands in ###Other.
+  const copyTradingViewSectioned = async () => {
+    if (n === 0) { toast.error('No tickers to copy'); return; }
+    if (!groups || groups.length === 0) { await copyTradingView(safeTickers, 'All'); return; }
+    const visible = new Set(safeTickers);
+    const seen = new Set<string>();
+    const parts: string[] = [];
+    let sections = 0;
+    for (const g of groups) {
+      const subset = (g.tickers || [])
+        .map((t) => t.toUpperCase().trim())
+        .filter((t) => t && visible.has(t) && !seen.has(t));
+      subset.forEach((t) => seen.add(t));
+      if (subset.length) {
+        parts.push(`###${g.label}`, ...subset.map(tvSymbolFor));
+        sections++;
+      }
+    }
+    const rest = safeTickers.filter((t) => !seen.has(t));
+    if (rest.length) { parts.push('###Other', ...rest.map(tvSymbolFor)); sections++; }
+    try {
+      await navigator.clipboard.writeText(parts.join(','));
+      toast.success(`Copied ${seen.size + rest.length} tickers in ${sections} section${sections === 1 ? '' : 's'} for TradingView`);
+    } catch {
+      toast.error('Clipboard write failed — check browser permission');
+    }
+  };
+
   const downloadTxt = (subset: string[], label: string) => {
     if (subset.length === 0) { toast.error(`No ${label} tickers to download`); return; }
     // PATCH 0436 — per-ticker BSE/NSE auto-prefix
@@ -396,9 +428,9 @@ export default function TickerExportToolbar({
         </button>
 
         <button
-          onClick={() => copyTradingView(safeTickers, 'All')}
+          onClick={() => copyTradingViewSectioned()}
           disabled={n === 0}
-          title={`Copy all ${n} tickers with ${exchange}: prefix — paste directly into TradingView watchlist`}
+          title={`Copy all ${n} tickers for TradingView — tier groups become ###sections in the watchlist import`}
           style={{ ...btnBase, border: '1px solid var(--mc-cyan)', background: 'var(--mc-cyan)', color: 'var(--mc-bg-0)' }}
         >
           <Copy style={{ width: 14, height: 14 }} />
