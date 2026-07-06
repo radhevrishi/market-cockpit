@@ -2013,6 +2013,9 @@ export default function EarningsOpportunitiesPage() {
       fiscal_year?: number;
       d1_pct?: number | null;
       gap_pct?: number | null;
+      // zzz223 — OPM margin fields for the CB tab
+      opm_pct?: number | null;
+      opm_prev_pct?: number | null;
       // PATCH 1018 — institutional quality flags carried to the CB bench
       is_elite?: boolean;
       pead_score?: number | null;
@@ -2057,6 +2060,9 @@ export default function EarningsOpportunitiesPage() {
           is_elite: (c as any).is_elite === true,
           pead_score: typeof (c as any).pead_score === 'number' ? (c as any).pead_score : null,
           multibagger_setup: (c as any).multibagger_setup === true,
+          // zzz223 — OPM margin for the CB tab (latest + prior-year %)
+          opm_pct: typeof (c as any).opm_pct === 'number' ? (c as any).opm_pct : null,
+          opm_prev_pct: typeof (c as any).opm_prev_pct === 'number' ? (c as any).opm_prev_pct : null,
         });
       }
     }
