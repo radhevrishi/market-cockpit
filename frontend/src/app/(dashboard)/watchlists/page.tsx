@@ -1178,6 +1178,9 @@ type ConvFilters = {
   // zzz223 — OPM margin delta (pp YoY): v ≥ 0 means "expansion ≥ v pp",
   // v < 0 means "squeeze ≤ v pp". Mirrors the EO margin signal.
   opmDelta?: number | null;
+  // zzz225 — minimum composite tier score (the big number on each card,
+  // e.g. 67) — the EO grading composite, distinct from the PEAD score.
+  score?: number | null;
   sortByPead: boolean;
   // PATCH 1018 — ELITE / MULTIBAGGER quality filters (mirror Earnings Opps)
   elite: boolean;
@@ -1207,7 +1210,7 @@ type ConvFilters = {
   cap: 'all' | 'sweet' | 'mega' | 'large' | 'mid' | 'small' | 'micro';
 };
 
-const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, opmDelta: null, cap: 'all' };
+const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, opmDelta: null, score: null, cap: 'all' };
 
 // PATCH 1022 — shared market-cap range matcher (value in ₹ Cr). Buckets mirror
 // the enrich-route thresholds. Null market cap never matches a specific range.
@@ -1365,6 +1368,8 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
     const ratio = pat / Math.max(sales, 0.01);
     if (!(ratio >= f.opLev)) return false;
   }
+  // zzz225 — composite tier score threshold (the card's big number)
+  if (f.score != null && (e.composite_score ?? 0) < f.score) return false;
   // zzz223 — OPM margin delta filter (pp change vs prior year). Positive
   // threshold = expansion ≥ v pp; negative threshold = squeeze ≤ v pp.
   if (f.opmDelta != null) {
@@ -1992,8 +1997,8 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
               }}>{revalProgress}</span>
             )}
             <button onClick={() => setFilters(FILTER_DEFAULT)}
-              disabled={filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && filters.opmDelta == null && !filters.sortByPead && !filters.elite && !filters.multibagger && filters.cap === 'all'}
-              style={{ ...chipBase, opacity: (filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && filters.opmDelta == null && !filters.sortByPead) ? 0.4 : 1 }}>
+              disabled={filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && filters.opmDelta == null && filters.score == null && !filters.sortByPead && !filters.elite && !filters.multibagger && filters.cap === 'all'}
+              style={{ ...chipBase, opacity: (filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && filters.opmDelta == null && filters.score == null && !filters.sortByPead) ? 0.4 : 1 }}>
               Clear
             </button>
           </div>
@@ -2014,6 +2019,10 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         {/* zzz223 — OPM margin Δ chips (pp YoY) — mirrors the EO margin signal */}
         {renderChipGroup('OPM Δ (pp YoY)', '#F472B6', 'opmDelta', [
           { v: 0, lbl: '📈 Expanding ≥0' }, { v: 2, lbl: '≥+2pp' }, { v: 5, lbl: '≥+5pp' }, { v: -2, lbl: '📉 Squeeze ≤-2pp' },
+        ])}
+        {/* zzz225 — composite tier score chips (the big number on each card) */}
+        {renderChipGroup('COMPOSITE SCORE', '#FBBF24', 'score', [
+          { v: 60, lbl: '≥60' }, { v: 70, lbl: '≥70' }, { v: 75, lbl: '≥75' }, { v: 80, lbl: '≥80' },
         ])}
         {/* USER-REQ — PEAD score threshold filter (composable with all others) */}
         {renderChipGroup('PEAD SCORE', '#22D3EE', 'pead', [
