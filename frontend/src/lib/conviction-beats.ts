@@ -193,6 +193,26 @@ export function syncFromEarningsOps(entries: Array<SyncEntry>): number {
           map[bareKey] = { ...existing, guidance: e.guidance, guidance_score: e.guidance_score };
           count++;
         }
+        // zzz223d — same backfill idea for every optional field added AFTER
+        // the entry was stored (OPM margin, D1/gap, PEAD, quality flags,
+        // market cap). Without this, existing bench entries could NEVER pick
+        // up new fields because same-filing syncs skip the overwrite path.
+        {
+          const cur = map[bareKey] || existing;
+          const patch: Partial<ConvictionEntry> = {};
+          const fill = (k: keyof ConvictionEntry) => {
+            if ((cur as any)[k] == null && (e as any)[k] != null) (patch as any)[k] = (e as any)[k];
+          };
+          fill('opm_pct'); fill('opm_prev_pct');
+          fill('d1_pct'); fill('gap_pct');
+          fill('pead_score'); fill('market_cap_cr');
+          if ((cur as any).is_elite == null && (e as any).is_elite != null) (patch as any).is_elite = (e as any).is_elite;
+          if ((cur as any).multibagger_setup == null && (e as any).multibagger_setup != null) (patch as any).multibagger_setup = (e as any).multibagger_setup;
+          if (Object.keys(patch).length > 0) {
+            map[bareKey] = { ...cur, ...patch };
+            count++;
+          }
+        }
         continue;
       }
       // PATCH 0920 — incoming is NEWER or tier-upgrade. Before overwriting,
