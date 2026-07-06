@@ -2022,7 +2022,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         ])}
         {/* zzz225 — composite tier score chips (the big number on each card) */}
         {renderChipGroup('COMPOSITE SCORE', '#FBBF24', 'score', [
-          { v: 60, lbl: '≥60' }, { v: 70, lbl: '≥70' }, { v: 75, lbl: '≥75' }, { v: 80, lbl: '≥80' },
+          { v: 60, lbl: '≥60' }, { v: 65, lbl: '≥65' }, { v: 70, lbl: '≥70' }, { v: 75, lbl: '≥75' }, { v: 80, lbl: '≥80' },
         ])}
         {/* USER-REQ — PEAD score threshold filter (composable with all others) */}
         {renderChipGroup('PEAD SCORE', '#22D3EE', 'pead', [
