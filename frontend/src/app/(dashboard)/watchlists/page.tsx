@@ -1689,6 +1689,9 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
   // crashed if the bench populated while the user was on the tab).
   // USER-REQ — filter state (composable AND)
   const [filters, setFilters] = useState<ConvFilters>(FILTER_DEFAULT);
+  // zzz226 — detail filter chips are hidden by default; the ⚡ preset button
+  // applies the user's standard screen without opening them.
+  const [showAdvFilters, setShowAdvFilters] = useState(false);
   // PATCH 1019 — Re-validate bench. Re-fetches graded for every unique
   // filing date on the bench and re-syncs (all tiers) so any stock that
   // dropped out of BLOCKBUSTER/STRONG under the current grading logic
@@ -2003,6 +2006,30 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             </button>
           </div>
         </div>
+        {/* zzz226 — ⚡ QUALITY PRESET: one click applies PAT≥30 · EPS≥40 ·
+            OPM Δ≥0 · Composite≥65 · D1≥0. Click again to clear. Detail chips
+            below stay collapsed unless expanded. */}
+        {(() => {
+          const presetActive = filters.pat === 30 && filters.eps === 40 && filters.opmDelta === 0 && filters.score === 65 && filters.d1Bucket === 0;
+          return (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                onClick={() => setFilters((prev) => presetActive
+                  ? { ...FILTER_DEFAULT, cap: prev.cap }
+                  : { ...FILTER_DEFAULT, cap: prev.cap, pat: 30, eps: 40, opmDelta: 0, score: 65, d1Bucket: 0 })}
+                title="One-click quality screen: PAT YoY ≥30% · EPS YoY ≥40% · OPM expanding (Δ≥0pp) · Composite score ≥65 · Day-1 close ≥0%. Click again to clear."
+                style={presetActive
+                  ? chipActive('#F59E0B')
+                  : { ...chipBase, border: '1px solid #F59E0B', color: '#F59E0B', fontWeight: 800 }}>
+                ⚡ QUALITY PRESET · PAT≥30 · EPS≥40 · OPM↗ · Score≥65 · D1≥0 {presetActive ? '✓ ON' : ''}
+              </button>
+              <button onClick={() => setShowAdvFilters((v) => !v)} style={chipBase}>
+                {showAdvFilters ? '▴ Hide detail filters' : '▾ Show detail filters'}
+              </button>
+            </div>
+          );
+        })()}
+        {showAdvFilters && (<>
         {renderChipGroup('OP-LEV (PAT/Sales)', '#A78BFA', 'opLev', [
           { v: 1.5, lbl: '≥1.5×' }, { v: 2, lbl: '≥2×' }, { v: 3, lbl: '≥3×' },
         ])}
@@ -2387,6 +2414,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             </div>
           );
         })()}
+        </>)}
       </div>
       <div style={{
         padding: '10px 14px', backgroundColor: 'var(--mc-bg-0)',
