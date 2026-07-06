@@ -2432,6 +2432,10 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
       <TickerExportToolbar
         tickers={allTickers}
         groups={[
+          // zzz224 — ELITE leads: in the sectioned TradingView copy, elite
+          // names land under ###ELITE and are deduped out of the tier
+          // sections below (strongest names on top of the watchlist).
+          { label: 'ELITE', emoji: '🏆', tickers: [...blockbusters, ...strongs].filter((e: any) => e.is_elite).map((e) => e.ticker), color: '#22D3EE' },
           { label: 'BLOCKBUSTER', emoji: '⭐', tickers: blockbusters.map((e) => e.ticker), color: '#F59E0B' },
           { label: 'STRONG', emoji: '🟢', tickers: strongs.map((e) => e.ticker), color: '#10B981' },
         ]}
