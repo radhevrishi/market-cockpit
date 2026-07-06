@@ -1181,6 +1181,9 @@ type ConvFilters = {
   // zzz225 — minimum composite tier score (the big number on each card,
   // e.g. 67) — the EO grading composite, distinct from the PEAD score.
   score?: number | null;
+  // zzz226e — minimum ABSOLUTE OPM level (latest quarter %), distinct from
+  // the delta filter — screens out structurally thin-margin businesses.
+  opmMin?: number | null;
   sortByPead: boolean;
   // PATCH 1018 — ELITE / MULTIBAGGER quality filters (mirror Earnings Opps)
   elite: boolean;
@@ -1210,7 +1213,7 @@ type ConvFilters = {
   cap: 'all' | 'sweet' | 'mega' | 'large' | 'mid' | 'small' | 'micro';
 };
 
-const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, opmDelta: null, score: null, cap: 'all' };
+const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false, elite: false, multibagger: false, guidance: null, quarter: null, fy: null, fromDate: null, toDate: null, d1Bucket: null, opmDelta: null, score: null, opmMin: null, cap: 'all' };
 
 // PATCH 1022 — shared market-cap range matcher (value in ₹ Cr). Buckets mirror
 // the enrich-route thresholds. Null market cap never matches a specific range.
@@ -1370,6 +1373,11 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
   }
   // zzz225 — composite tier score threshold (the card's big number)
   if (f.score != null && (e.composite_score ?? 0) < f.score) return false;
+  // zzz226e — absolute OPM level threshold (latest quarter %)
+  if (f.opmMin != null) {
+    const o = (e as any).opm_pct;
+    if (typeof o !== 'number' || o < f.opmMin) return false;
+  }
   // zzz223 — OPM margin delta filter (pp change vs prior year). Positive
   // threshold = expansion ≥ v pp; negative threshold = squeeze ≤ v pp.
   if (f.opmDelta != null) {
@@ -2000,8 +2008,8 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
               }}>{revalProgress}</span>
             )}
             <button onClick={() => setFilters(FILTER_DEFAULT)}
-              disabled={filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && filters.opmDelta == null && filters.score == null && !filters.sortByPead && !filters.elite && !filters.multibagger && filters.cap === 'all'}
-              style={{ ...chipBase, opacity: (filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && filters.opmDelta == null && filters.score == null && !filters.sortByPead) ? 0.4 : 1 }}>
+              disabled={filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && filters.opmDelta == null && filters.score == null && filters.opmMin == null && !filters.sortByPead && !filters.elite && !filters.multibagger && filters.cap === 'all'}
+              style={{ ...chipBase, opacity: (filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && filters.opmDelta == null && filters.score == null && filters.opmMin == null && !filters.sortByPead) ? 0.4 : 1 }}>
               Clear
             </button>
           </div>
@@ -2010,18 +2018,18 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             OPM Δ≥0 · Composite≥65 · D1≥0. Click again to clear. Detail chips
             below stay collapsed unless expanded. */}
         {(() => {
-          const presetActive = filters.sales === 20 && filters.pat === 40 && filters.eps === 40 && filters.opmDelta === 0 && filters.score === 65 && filters.d1Bucket === 0;
+          const presetActive = filters.sales === 20 && filters.pat === 40 && filters.eps === 40 && filters.opmDelta === 0 && filters.opmMin === 12 && filters.score === 65 && filters.d1Bucket === 0;
           return (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <button
                 onClick={() => setFilters((prev) => presetActive
                   ? { ...FILTER_DEFAULT, cap: prev.cap }
-                  : { ...FILTER_DEFAULT, cap: prev.cap, sales: 20, pat: 40, eps: 40, opmDelta: 0, score: 65, d1Bucket: 0 })}
-                title="One-click quality screen: Sales YoY ≥20% · PAT YoY ≥40% · EPS YoY ≥40% · OPM expanding (Δ≥0pp) · Composite score ≥65 · Day-1 close ≥0%. Click again to clear."
+                  : { ...FILTER_DEFAULT, cap: prev.cap, sales: 20, pat: 40, eps: 40, opmDelta: 0, opmMin: 12, score: 65, d1Bucket: 0 })}
+                title="One-click quality screen: Sales YoY ≥20% · PAT YoY ≥40% · EPS YoY ≥40% · OPM expanding (Δ≥0pp) · OPM level ≥12% · Composite score ≥65 · Day-1 close ≥0%. Click again to clear."
                 style={presetActive
                   ? chipActive('#F59E0B')
                   : { ...chipBase, border: '1px solid #F59E0B', color: '#F59E0B', fontWeight: 800 }}>
-                ⚡ QUALITY PRESET · Sales≥20 · PAT≥40 · EPS≥40 · OPM↗ · Score≥65 · D1≥0 {presetActive ? '✓ ON' : ''}
+                ⚡ QUALITY PRESET · Sales≥20 · PAT≥40 · EPS≥40 · OPM↗ ≥12% · Score≥65 · D1≥0 {presetActive ? '✓ ON' : ''}
               </button>
               <button onClick={() => setShowAdvFilters((v) => !v)} style={chipBase}>
                 {showAdvFilters ? '▴ Hide detail filters' : '▾ Show detail filters'}
@@ -2046,6 +2054,10 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         {/* zzz223 — OPM margin Δ chips (pp YoY) — mirrors the EO margin signal */}
         {renderChipGroup('OPM Δ (pp YoY)', '#F472B6', 'opmDelta', [
           { v: 0, lbl: '📈 Expanding ≥0' }, { v: 2, lbl: '≥+2pp' }, { v: 5, lbl: '≥+5pp' }, { v: -2, lbl: '📉 Squeeze ≤-2pp' },
+        ])}
+        {/* zzz226e — absolute OPM level chips (latest quarter %) */}
+        {renderChipGroup('OPM LEVEL', '#F472B6', 'opmMin', [
+          { v: 10, lbl: '≥10%' }, { v: 12, lbl: '≥12%' }, { v: 15, lbl: '≥15%' }, { v: 20, lbl: '≥20%' },
         ])}
         {/* zzz225 — composite tier score chips (the big number on each card) */}
         {renderChipGroup('COMPOSITE SCORE', '#FBBF24', 'score', [
