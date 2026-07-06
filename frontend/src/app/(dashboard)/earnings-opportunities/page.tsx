@@ -2783,8 +2783,29 @@ export default function EarningsOpportunitiesPage() {
               {/* zzz227 — exact grading rules, mirrored from the grader code so the
                   doc can never drift from behaviour without a code change here too. */}
               <div style={{ marginBottom: 12, padding: '8px 12px', background: 'color-mix(in srgb, var(--mc-cyan) 6%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', borderRadius: 8 }}>
-                <strong style={{ color: 'var(--mc-cyan)' }}>📐 COMPOSITE SCORE (0–100)</strong> — the big number on each card.<br/>
-                <strong>Magnitude 35%</strong> (size of the Sales / PAT / EPS YoY beat) + <strong>Quality 25%</strong> (fewer caveat flags = higher) + <strong>Technicals 25%</strong> (Stage, RS rating, distance from 52-wk high) + <strong>Methodology 15%</strong> (how many playbooks pass: Trend Template · SEPA · CANSLIM).
+                <strong style={{ color: 'var(--mc-cyan)' }}>📐 COMPOSITE SCORE (0–100)</strong> — the big number on each card. Exact formula:<br/>
+                <strong>Score = Magnitude × 0.35 + Quality × 0.25 + Technicals × 0.25 + Methodology × 0.15</strong>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10, marginTop: 8 }}>
+                  <div>
+                    <strong style={{ color: 'var(--mc-text-2)' }}>1 · MAGNITUDE (35%)</strong> — each of Sales / PAT / EPS YoY is bucketed, then blended (Sales 35% · PAT 30% · EPS 35%):<br/>
+                    ≥100% → 100 pts · ≥50% → 90 · ≥25% → 75 · ≥15% → 60 · ≥5% → 40 · ≥0% → 25 · negative → scales toward 0. Missing metrics are dropped from the blend (not punished).
+                  </div>
+                  <div>
+                    <strong style={{ color: 'var(--mc-text-2)' }}>2 · QUALITY (25%)</strong> — starts at 100, each caveat deducts:<br/>
+                    ocf divergence −25 · low quality −25 · optical eps −20 · tax distortion −15 · accounting change −12 · segment mix shift −10 · one-time / exceptional item −10 · forex −8. Bonus: OPM expanding ≥ +3pp adds +8.
+                  </div>
+                  <div>
+                    <strong style={{ color: 'var(--mc-text-2)' }}>3 · TECHNICALS (25%)</strong> — Stage base + RS + 52-wk proximity:<br/>
+                    Stage 2 → 70 base · Stage 1 → 45 · Stage 3 → 30 · Stage 4 → 10 · unknown → 50. Plus RS÷3 (RS 90 = +30). Plus 52-wk high distance: within 5% → +15 · within 15% → +8 · within 25% → 0 · below → −15. Trend Template pass → +10.
+                  </div>
+                  <div>
+                    <strong style={{ color: 'var(--mc-text-2)' }}>4 · METHODOLOGY (15%)</strong> — playbook pass count (Trend Template · SEPA · CANSLIM · bonde EP):<br/>
+                    4 pass → 100 · 3 → 80 · 2 → 60 · 1 → 35 · 0 → 10. Floors: any Tier-1 pass (TT/SEPA/CANSLIM) → min 55 · mega triple-beat (≥40/75/75) → min 75 · exceptional (≥40/50/50) → min 65. SEPA pass adds +5.
+                  </div>
+                </div>
+                <div style={{ marginTop: 6, fontSize: 10.5, color: 'var(--mc-text-4)' }}>
+                  Playbook pass rules — <strong>Trend Template</strong>: MA stack aligned + RS ≥ 70 · <strong>SEPA</strong>: Stage 2 + RS ≥ 80 + EPS ≥ 25% + within 15% of 52-wk high · <strong>CANSLIM</strong>: EPS ≥ 25% + Sales ≥ 20% + RS ≥ 70 · <strong>bonde EP</strong>: EPS ≥ 20% with Sales ≥ 5%.
+                </div>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
                 <div style={{ padding: '8px 12px', background: 'color-mix(in srgb, #FCD34D 6%, transparent)', border: '1px solid color-mix(in srgb, #FCD34D 30%, transparent)', borderRadius: 8 }}>
@@ -2822,13 +2843,16 @@ export default function EarningsOpportunitiesPage() {
                   <em>Hard fails override the score unless composite ≥ 70.</em>
                 </div>
                 <div style={{ padding: '8px 12px', background: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 8 }}>
-                  <strong style={{ color: 'var(--mc-text-2)' }}>🚩 CAVEAT FLAGS</strong> — quality deductions:<br/>
-                  · <strong>optical eps</strong> — EPS growth ≥ 3× sales growth (&amp; ≥ 50%), or ≥ 200%: beat likely not operational<br/>
-                  · <strong>tax distortion</strong> — PAT boosted by lower tax, not operations<br/>
-                  · <strong>segment mix shift</strong> — OPM contracted &gt; 1.5pp YoY<br/>
-                  · <strong>ocf divergence</strong> — operating cash flow &lt; 60% of PAT<br/>
-                  · <strong>low quality</strong> — Stage 4, or &gt; 25% below 52-wk high<br/>
-                  · <strong>thin float</strong> — ADTV &lt; ₹1 Cr/day
+                  <strong style={{ color: 'var(--mc-text-2)' }}>🚩 CAVEAT FLAGS</strong> — each deducts from the Quality score (see #2):<br/>
+                  · <strong>optical eps</strong> (−20) — EPS growth ≥ 3× sales growth (&amp; ≥ 50%), or ≥ 200% YoY, or prior-year EPS was near zero: the beat is likely arithmetic, not operational<br/>
+                  · <strong>tax distortion</strong> (−15) — PAT YoY &gt; 100% while Op Profit YoY &lt; 30%: the tax line, not the business, is driving PAT<br/>
+                  · <strong>segment mix shift</strong> (−10) — OPM contracted &gt; 1.5pp YoY: growth came from lower-margin mix<br/>
+                  · <strong>ocf divergence</strong> (−25) — annual operating cash flow &lt; 60% of PAT, or negative OCF while PAT positive: profits not converting to cash<br/>
+                  · <strong>low quality</strong> (−25) — Stage 4 chart, or &gt; 25% below 52-wk high: market disagrees with the print<br/>
+                  · <strong>thin float</strong> — ADTV &lt; ₹1 Cr/day: also demotes BLOCKBUSTER/STRONG → MIXED<br/>
+                  · <strong>exceptional item / one-time order</strong> (−10) — filing text flags non-recurring income<br/>
+                  · <strong>accelerated depreciation</strong> (−10) · <strong>accounting change / pooling restate</strong> (−12) — comparability of YoY numbers is compromised<br/>
+                  · <strong>forex gain / loss</strong> (−8) — currency moves flatter or hurt the print
                 </div>
               </div>
               <div style={{ marginTop: 10, fontSize: 10.5, color: 'var(--mc-text-4)', fontStyle: 'italic' }}>
