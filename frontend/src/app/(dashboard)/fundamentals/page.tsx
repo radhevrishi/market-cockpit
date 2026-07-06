@@ -446,6 +446,9 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
         setError('Auto-sync failed: no matching files in /data/screener/ (or file was empty).');
       } else {
         markAutoLoaded(autoLoadScope);
+        // zzz221 — stamp the absorption time so the freshness effect below
+        // knows this browser has the current server snapshot.
+        try { localStorage.setItem(STORAGE_KEY + ':lastSyncSeen:v1', String(Date.now())); } catch {}
         // Replace state: fresh CSV rows + user's manual placeholder tickers only.
         // A placeholder is a row created by addTickers() — it has Name + NSE Code
         // both equal to the same ticker symbol and no other metric fields.
@@ -496,6 +499,27 @@ export default function FundamentalsAnalyzerPage({ scope: scopeProp = '' }: { sc
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoLoadScope, data.length]);
+
+  // zzz221 — FRESHNESS RE-SYNC. The effect above only pulls when storage is
+  // EMPTY, so a browser that absorbed an older snapshot kept deleted tickers
+  // forever (ghost rows like a removed watchlist member, with stale DMA
+  // values polluting the MA buckets) while the header showed the SERVER's
+  // sync age. Now: whenever the server manifest is newer than what this
+  // browser absorbed, re-run the authoritative sync — fresh rows replace
+  // state, manual placeholders survive, removed members disappear.
+  useEffect(() => {
+    if (!autoLoadScope || syncLoading) return;
+    if (!syncStatus || !syncStatus.hasManifest || !syncStatus.lastSync) return;
+    if (data.length === 0) return; // empty case handled above
+    const server = new Date(syncStatus.lastSync as any).getTime();
+    if (!Number.isFinite(server)) return;
+    let seen = 0;
+    try { seen = Number(localStorage.getItem(STORAGE_KEY + ':lastSyncSeen:v1') || 0); } catch {}
+    if (server <= seen) return;
+    const t = setTimeout(() => runAutoSync(false), 1600);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoLoadScope, syncStatus]);
 
   // Accept one or many files (multi-select or multi-drop); each merges in.
   const onFile = useCallback((files?: FileList | File[] | null) => {
