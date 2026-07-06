@@ -55,6 +55,11 @@ export interface ConvictionEntry {
   // (same UX as /earnings Hub). Both nullable for legacy entries.
   d1_pct?: number | null;       // Day-1 close % vs prior day
   gap_pct?: number | null;      // Open gap % (open vs prior close)
+  // zzz223 — OPM margin carried from the EO graded payload (latest-quarter
+  // OPM % and prior-year OPM %) so Conviction Beats can render + filter the
+  // margin expansion/squeeze signal exactly like Earnings Opportunities.
+  opm_pct?: number | null;
+  opm_prev_pct?: number | null;
   // PATCH 1018 — institutional quality flags carried from EO graded payload
   // so the Conviction Beats tab can filter ⭐ELITE / 🔥PEAD / 💎MULTIBAGGER.
   is_elite?: boolean;
