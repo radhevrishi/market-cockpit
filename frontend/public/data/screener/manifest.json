@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-07-07T07:34:10Z",
+  "lastSync": "2026-07-07T08:48:58Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -25,7 +25,7 @@
     },
     {
       "name": "future-leaders.csv",
-      "size": 6602,
+      "size": 7024,
       "displayName": "Future Leaders"
     },
     {
@@ -45,7 +45,7 @@
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 15929,
+      "size": 16295,
       "displayName": "Monthly Volume Pockets"
     },
     {
@@ -60,7 +60,7 @@
     },
     {
       "name": "pead-master-screener-rishi-framework.csv",
-      "size": 10754,
+      "size": 11187,
       "displayName": "PEAD MASTER SCREENER - Rishi Framework"
     },
     {
@@ -80,22 +80,22 @@
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 22158,
+      "size": 22159,
       "displayName": "Latest Portfolio"
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63305,
+      "size": 63308,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65546,
+      "size": 65547,
       "displayName": "Working watchlist"
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 9025,
+      "size": 9392,
       "displayName": "Weekly Volume Pockets"
     }
   ]
