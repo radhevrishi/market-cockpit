@@ -68,6 +68,57 @@ export interface ConvictionEntry {
 }
 
 const LS_KEY = 'mc:conviction-beats:v1';
+// zzz229 — recycle bin. Every delete path (demotion sync, manual x, Clear All)
+// snapshots the removed entries here first, so a rule-change-driven mass prune
+// (thin-float gate, stricter BLOCKBUSTER, re-validate) can be undone instead of
+// silently draining the bench. Capped to the most recent 300 removals.
+const BIN_KEY = 'mc:conviction-beats:bin:v1';
+const BIN_CAP = 300;
+
+export function readConvictionBin(): ConvictionEntry[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(BIN_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+}
+
+function binPush(entries: ConvictionEntry[]) {
+  if (typeof window === 'undefined' || entries.length === 0) return;
+  try {
+    const bin = readConvictionBin();
+    const stamped = entries.map((e) => ({ ...e, removed_at: new Date().toISOString() } as any));
+    const next = [...stamped, ...bin].slice(0, BIN_CAP);
+    localStorage.setItem(BIN_KEY, JSON.stringify(next));
+  } catch {}
+}
+
+/** zzz229 — Restore every binned entry that isn't already on the bench.
+ *  Returns the number restored. Clears the bin afterwards. */
+export function restoreConvictionBin(): number {
+  const bin = readConvictionBin();
+  if (bin.length === 0) return 0;
+  const map = readConvictionBeats();
+  let restored = 0;
+  for (const e of bin) {
+    if (!e || typeof (e as any).ticker !== 'string') continue;
+    const t = (e as any).ticker.toUpperCase();
+    const q = (e as any).quarter, fy = (e as any).fiscal_year;
+    const bareTaken = map[t] != null;
+    const key = bareTaken && q && fy ? `${t}@${q}-${fy}` : t;
+    if (map[key]) continue;
+    const { removed_at, ...rest } = e as any;
+    map[key] = { ...rest, ticker: t };
+    restored++;
+  }
+  writeConvictionBeats(map);
+  try { localStorage.removeItem(BIN_KEY); } catch {}
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('conviction-beats:updated'));
+  }
+  return restored;
+}
 
 /** Read all conviction entries from localStorage */
 export function readConvictionBeats(): Record<string, ConvictionEntry> {
@@ -153,13 +204,14 @@ export function syncFromEarningsOps(entries: Array<SyncEntry>): number {
       const incQ = (e as any).quarter;
       const incFY = (e as any).fiscal_year;
       if (existing && e.filing_date >= existing.filing_date) {
+        binPush([existing]);  // zzz229 — recoverable
         delete map[bareKey];
         count++;
       }
       // Remove same-quarter composite entry for this ticker too.
       if (incQ && incFY) {
         const cKey = `${ticker}@${incQ}-${incFY}`;
-        if (map[cKey]) { delete map[cKey]; count++; }
+        if (map[cKey]) { binPush([map[cKey]]); delete map[cKey]; count++; }
       }
       continue;  // never ADD MX/AV to the bench
     }
@@ -253,15 +305,19 @@ export function syncFromEarningsOps(entries: Array<SyncEntry>): number {
 export function removeConviction(key: string) {
   const map = readConvictionBeats();
   const upper = key.toUpperCase();
+  const binned: ConvictionEntry[] = [];  // zzz229
   if (upper.includes('@')) {
+    if (map[upper]) binned.push(map[upper]);
     delete map[upper];
   } else {
+    if (map[upper]) binned.push(map[upper]);
     delete map[upper];
     // Also remove every composite key for this ticker
     for (const k of Object.keys(map)) {
-      if (k.startsWith(upper + '@')) delete map[k];
+      if (k.startsWith(upper + '@')) { binned.push(map[k]); delete map[k]; }
     }
   }
+  binPush(binned);
   writeConvictionBeats(map);
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('conviction-beats:updated'));
@@ -322,6 +378,7 @@ export function getConvictionList(): ConvictionEntry[] {
 /** Clear all entries (rarely used — admin reset) */
 export function clearConvictionBeats() {
   if (typeof window === 'undefined') return;
+  try { binPush(Object.values(readConvictionBeats())); } catch {}  // zzz229
   try { localStorage.removeItem(LS_KEY); } catch {}
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('conviction-beats:updated'));
