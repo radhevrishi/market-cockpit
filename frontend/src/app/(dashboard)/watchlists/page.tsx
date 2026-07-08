@@ -11,6 +11,7 @@ import { isPriceSuspect } from '@/lib/nse';
 import { CHAT_ID, BOT_SECRET } from '@/lib/config';
 import {
   getConvictionList, removeConviction, syncFromEarningsOps,
+  readConvictionBin, restoreConvictionBin,
   type ConvictionEntry,
 } from '@/lib/conviction-beats';
 import { peadScore, peadColor, peadLabel } from '@/lib/pead-score';
@@ -1762,6 +1763,81 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
       setTimeout(() => setRevalProgress(null), 12_000);
     }
   }, [entries, revalidating]);
+  // zzz229 — REBUILD bench from server history. The bench lives only in
+  // browser storage; if the browser evicts the origin's storage (quota
+  // pressure from the big multibagger payloads) or grading-rule changes
+  // demote everything, the bench drains. The server keeps per-date graded
+  // payloads, so we can re-fetch the last 60 days and re-add every
+  // BLOCKBUSTER/STRONG print (ADD-only — never demotes/deletes).
+  const [rebuilding, setRebuilding] = useState(false);
+  const [rebuildProgress, setRebuildProgress] = useState<string | null>(null);
+  const [binCount, setBinCount] = useState<number>(() => readConvictionBin().length);
+  useEffect(() => {
+    const refresh = () => setBinCount(readConvictionBin().length);
+    window.addEventListener('conviction-beats:updated', refresh);
+    return () => window.removeEventListener('conviction-beats:updated', refresh);
+  }, []);
+  const runRebuild = useCallback(async () => {
+    if (rebuilding) return;
+    setRebuilding(true);
+    try {
+      const dates: string[] = [];
+      const now = new Date();
+      for (let i = 0; i < 60; i++) {
+        const d = new Date(now.getTime() - i * 24 * 3600_000);
+        const dow = d.getDay();
+        if (dow === 0 || dow === 6) continue;  // NSE closed
+        dates.push(d.toISOString().slice(0, 10));
+      }
+      const before = getConvictionList().length;
+      for (let i = 0; i < dates.length; i++) {
+        const d = dates[i];
+        setRebuildProgress(`Rebuilding ${i + 1}/${dates.length} · ${d}`);
+        try {
+          const res = await fetch(`/api/v1/earnings/graded?date=${d}`, { cache: 'no-store' });
+          if (!res.ok) continue;
+          const j = await res.json();
+          const bt = j?.by_tier || {};
+          const syncEntries: any[] = [];
+          for (const tier of ['BLOCKBUSTER', 'STRONG']) {  // ADD-only: skip MIXED/AVOID so nothing gets demoted
+            for (const c of (bt[tier] || [])) {
+              const qm = typeof c.quarter === 'string' ? c.quarter.match(/Q([1-4])/i) : null;
+              const fm = typeof c.quarter === 'string' ? c.quarter.match(/FY\s?(\d{2})/i) : null;
+              syncEntries.push({
+                ticker: c.ticker, company: c.company, tier,
+                composite_score: c.composite_score,
+                sales_yoy_pct: c.sales_yoy_pct, net_profit_yoy_pct: c.net_profit_yoy_pct, eps_yoy_pct: c.eps_yoy_pct,
+                filing_date: c.filing_date || d, sector: c.sector, market_cap_bucket: c.market_cap_bucket,
+                market_cap_cr: typeof c.market_cap_cr === 'number' ? c.market_cap_cr : null,
+                source_url: c.filing_url,
+                ...(qm ? { quarter: ('Q' + qm[1]) as any } : {}),
+                ...(fm ? { fiscal_year: (parseInt(fm[1], 10) < 50 ? 2000 + parseInt(fm[1], 10) : 1900 + parseInt(fm[1], 10)) } : {}),
+                d1_pct: typeof c.d1_pct === 'number' ? c.d1_pct : null,
+                gap_pct: typeof c.gap_pct === 'number' ? c.gap_pct : null,
+                is_elite: c.is_elite === true,
+                pead_score: typeof c.pead_score === 'number' ? c.pead_score : null,
+                multibagger_setup: c.multibagger_setup === true,
+                opm_pct: typeof c.opm_pct === 'number' ? c.opm_pct : null,
+                opm_prev_pct: typeof c.opm_prev_pct === 'number' ? c.opm_prev_pct : null,
+              });
+            }
+          }
+          if (syncEntries.length > 0) syncFromEarningsOps(syncEntries);
+        } catch {}
+        await new Promise((r) => setTimeout(r, 350));
+      }
+      const after = getConvictionList().length;
+      setRebuildProgress(`\u2713 Done \u2014 ${Math.max(0, after - before)} entries restored from ${dates.length} trading days.`);
+    } finally {
+      setRebuilding(false);
+      setTimeout(() => setRebuildProgress(null), 15_000);
+    }
+  }, [rebuilding]);
+  const runRestoreBin = useCallback(() => {
+    const n = restoreConvictionBin();
+    setRebuildProgress(`\u21a9 Restored ${n} removed ${n === 1 ? 'entry' : 'entries'} from the recycle bin.`);
+    setTimeout(() => setRebuildProgress(null), 10_000);
+  }, []);
   // PATCH 0923 — collapsible Q1-Q4 cheat sheet visibility.
   // Default OPEN on first mount so the user understands the chips immediately.
   const [showQuarterCheatSheet, setShowQuarterCheatSheet] = useState(true);
@@ -1867,6 +1943,31 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
           borderRadius: 6, color: 'var(--mc-warn)', fontSize: 12, fontWeight: 700,
           textDecoration: 'none',
         }}>Open Earnings Opportunities →</a>
+        {/* zzz229 — recovery actions when the bench drained unexpectedly
+            (browser storage eviction or rule-change demotions). */}
+        <div style={{ marginTop: 14, display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
+          <button onClick={runRebuild} disabled={rebuilding}
+            title="Re-fetch server grading for the last 60 trading days and re-add every BLOCKBUSTER/STRONG print. Add-only: never deletes anything. Takes ~30s."
+            style={{
+              padding: '8px 16px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: rebuilding ? 'wait' : 'pointer',
+              backgroundColor: 'color-mix(in srgb, var(--mc-cyan) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 40%, transparent)', color: 'var(--mc-cyan)',
+            }}>
+            ♻ {rebuilding ? 'Rebuilding…' : 'Rebuild bench from last 60 days'}
+          </button>
+          {binCount > 0 && (
+            <button onClick={runRestoreBin}
+              title="Restore entries that were removed by demotion sync, the × button, or Clear All."
+              style={{
+                padding: '8px 16px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                backgroundColor: 'color-mix(in srgb, var(--mc-bullish) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 40%, transparent)', color: 'var(--mc-bullish)',
+              }}>
+              ↩ Restore removed ({binCount})
+            </button>
+          )}
+        </div>
+        {rebuildProgress && (
+          <div style={{ marginTop: 10, fontSize: 12, color: 'var(--mc-cyan)', fontWeight: 600 }}>{rebuildProgress}</div>
+        )}
       </div>
     );
   }
@@ -1966,6 +2067,19 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
               <option value="small">SMALL ₹500–5k Cr</option>
               <option value="micro">MICRO &lt; ₹500 Cr</option>
             </select>
+            {/* zzz229 — Rebuild from history (add-only) + recycle-bin restore */}
+            <button onClick={runRebuild} disabled={rebuilding}
+              title="Re-fetch server grading for the last 60 trading days and re-add every BLOCKBUSTER/STRONG print that's missing from the bench. Add-only — never deletes."
+              style={{ ...(rebuilding ? chipActive('var(--mc-cyan)') : chipBase), cursor: rebuilding ? 'wait' : 'pointer' }}>
+              ♻ {rebuilding ? 'Rebuilding…' : 'Rebuild 60d'}
+            </button>
+            {binCount > 0 && (
+              <button onClick={runRestoreBin}
+                title="Restore entries removed by demotion sync, the × button, or Clear All."
+                style={{ ...chipBase, cursor: 'pointer' }}>
+                ↩ Restore ({binCount})
+              </button>
+            )}
             {/* PATCH 1019 — Re-validate bench (prune stocks no longer BB/ST) */}
             <button onClick={runRevalidate} disabled={revalidating}
               title="Re-fetch grading for every bench date and prune any stock that dropped out of BLOCKBUSTER/STRONG under current logic (e.g. demoted to MIXED). Takes ~1s per date."
@@ -2006,6 +2120,15 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
                 border: `1px solid ${revalProgress.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 25%, transparent)' : 'color-mix(in srgb, var(--mc-state-persistent) 25%, transparent)'}`,
                 color: revalProgress.startsWith('✓') ? 'var(--mc-bullish)' : 'var(--mc-state-persistent)',
               }}>{revalProgress}</span>
+            )}
+            {/* zzz229 - rebuild/restore progress chip (mirrors revalProgress styling) */}
+            {rebuildProgress && (
+              <span style={{
+                fontSize: 10.5, fontWeight: 700, padding: '3px 8px', borderRadius: 4,
+                backgroundColor: rebuildProgress.startsWith('\u2713') || rebuildProgress.startsWith('\u21a9') ? 'color-mix(in srgb, var(--mc-bullish) 9%, transparent)' : 'color-mix(in srgb, var(--mc-cyan) 9%, transparent)',
+                border: `1px solid ${rebuildProgress.startsWith('\u2713') || rebuildProgress.startsWith('\u21a9') ? 'color-mix(in srgb, var(--mc-bullish) 25%, transparent)' : 'color-mix(in srgb, var(--mc-cyan) 25%, transparent)'}`,
+                color: rebuildProgress.startsWith('\u2713') || rebuildProgress.startsWith('\u21a9') ? 'var(--mc-bullish)' : 'var(--mc-cyan)',
+              }}>{rebuildProgress}</span>
             )}
             <button onClick={() => setFilters(FILTER_DEFAULT)}
               disabled={filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && filters.guidance == null && filters.quarter == null && filters.fy == null && filters.fromDate == null && filters.toDate == null && filters.d1Bucket == null && filters.opmDelta == null && filters.score == null && filters.opmMin == null && !filters.sortByPead && !filters.elite && !filters.multibagger && filters.cap === 'all'}
