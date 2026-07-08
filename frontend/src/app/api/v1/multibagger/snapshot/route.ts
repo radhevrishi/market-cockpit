@@ -95,21 +95,31 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const url = new URL(req.url);
     const clientId = url.searchParams.get('clientId');
     const market = normalizeMarket(url.searchParams.get('market'));
-    if (!isValidClientId(clientId)) {
+    // zzz230 — latest=1 recovery path. Browser storage eviction wipes the
+    // client id together with the dataset, orphaning the server snapshot.
+    // Single-user deployment: return the most recent snapshot for the market
+    // and include its client_id so the browser can re-adopt it.
+    const wantLatest = url.searchParams.get('latest') === '1';
+    if (!isValidClientId(clientId) && !wantLatest) {
       return NextResponse.json({ ok: false, error: 'invalid clientId' }, { status: 400 });
     }
     await ensureTable();
-    const rows = await dbQuery<{ snapshot_json: string; meta_json: string | null; updated_at: string }>(
-      `SELECT snapshot_json, meta_json, updated_at FROM mb_snapshots WHERE client_id = $1 AND market = $2 LIMIT 1`,
-      [clientId, market]
-    );
+    const rows = isValidClientId(clientId)
+      ? await dbQuery<{ client_id: string; snapshot_json: string; meta_json: string | null; updated_at: string }>(
+          `SELECT client_id, snapshot_json, meta_json, updated_at FROM mb_snapshots WHERE client_id = $1 AND market = $2 LIMIT 1`,
+          [clientId, market]
+        )
+      : await dbQuery<{ client_id: string; snapshot_json: string; meta_json: string | null; updated_at: string }>(
+          `SELECT client_id, snapshot_json, meta_json, updated_at FROM mb_snapshots WHERE market = $1 ORDER BY updated_at DESC LIMIT 1`,
+          [market]
+        );
     if (!rows.length) {
       return NextResponse.json({ ok: true, snapshot: null, meta: null });
     }
     const row = rows[0];
     let meta: any = null;
     try { meta = row.meta_json ? JSON.parse(row.meta_json) : null; } catch {}
-    return NextResponse.json({ ok: true, snapshot: row.snapshot_json, meta, updatedAt: row.updated_at });
+    return NextResponse.json({ ok: true, snapshot: row.snapshot_json, meta, updatedAt: row.updated_at, clientId: row.client_id });
   } catch (e: any) {
     // PATCH zzz65 — sanitize.
     console.error('[mb-snapshot GET] error', e?.message || e);
