@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-07-08T06:24:54Z",
+  "lastSync": "2026-07-08T07:44:47Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -15,7 +15,7 @@
     },
     {
       "name": "debt-reduction.csv",
-      "size": 9985,
+      "size": 9984,
       "displayName": "Debt Reduction"
     },
     {
@@ -35,17 +35,17 @@
     },
     {
       "name": "ipobases.csv",
-      "size": 3564,
+      "size": 3634,
       "displayName": "IPOBASES"
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 5759,
+      "size": 5760,
       "displayName": "Lowequitycapital"
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 12838,
+      "size": 12472,
       "displayName": "Monthly Volume Pockets"
     },
     {
@@ -60,7 +60,7 @@
     },
     {
       "name": "pead-master-screener-rishi-framework.csv",
-      "size": 11186,
+      "size": 10748,
       "displayName": "PEAD MASTER SCREENER - Rishi Framework"
     },
     {
@@ -85,17 +85,17 @@
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63312,
+      "size": 63311,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65542,
+      "size": 65543,
       "displayName": "Working watchlist"
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 8037,
+      "size": 7670,
       "displayName": "Weekly Volume Pockets"
     }
   ]
