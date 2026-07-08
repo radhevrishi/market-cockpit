@@ -4400,6 +4400,7 @@ function toSlimUsaRows(rows: any[]): any[] {
     company: r.company || r.companyName,
     score: r.score,
     grade: r.grade,
+    exchange: r.exchange,
     sector: r.sector,
     marketCapB: r.marketCapB,
     fcfOpDivergence: r.fcfOpDivergence,
@@ -8503,9 +8504,29 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
     try {
       const mbKey = market === 'IND' ? 'mb_excel_scored_v2' : 'mb_usa_scored_v2';
       const mbRaw = localStorage.getItem(mbKey);
+      let mbRows: any[] = [];
       if (mbRaw) {
         const parsed = JSON.parse(mbRaw);
-        const mbRows: any[] = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.rows) ? parsed.rows : []);
+        mbRows = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.rows) ? parsed.rows : []);
+      }
+      // zzz228 — USA: the full scored_v2 write can FAIL on localStorage quota
+      // (zzz108 falls back to a slim payload + in-memory cache), so an empty
+      // read here silently dropped the whole Multibaggers section from
+      // Copy ALL BEST on the USA tab (India's smaller payload always fit,
+      // which is why India worked). Fallback: slim_v2 -> mem cache.
+      if (market === 'USA' && mbRows.length === 0) {
+        try {
+          const slimRaw = localStorage.getItem('mb_usa_slim_v2');
+          if (slimRaw) {
+            const slim = JSON.parse(slimRaw);
+            if (Array.isArray(slim)) mbRows = slim;
+          }
+        } catch {}
+        if (mbRows.length === 0) {
+          try { mbRows = _getUsaRowsMemCache() || []; } catch {}
+        }
+      }
+      if (mbRows.length > 0) {
         const exMap: Record<string, string> = { NMS: 'NASDAQ', NASDAQGS: 'NASDAQ', ARCA: 'AMEX', BATS: 'AMEX' };
         const good = mbRows.filter(r =>
           r && typeof r.symbol === 'string' && r.symbol &&
