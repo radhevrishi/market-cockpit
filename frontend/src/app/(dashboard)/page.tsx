@@ -668,12 +668,20 @@ export default function HomeDashboard() {
       if (!alive) return;
       try {
         const cid = localStorage.getItem('mb_client_id_v1');
-        if (!cid) return; // user never made a snapshot from this browser
+        // zzz230 — storage eviction wipes the client id together with the
+        // dataset, orphaning the server snapshot and leaving TIER 1 stuck on
+        // the "upload CSV" empty state forever. When cid is missing, fall
+        // back to the LATEST snapshot for the market (single-user app) and
+        // re-adopt its client id so future backups stay under the same key.
+        const snapUrl = (market: string) => cid
+          ? `/api/v1/multibagger/snapshot?clientId=${encodeURIComponent(cid)}&market=${market}`
+          : `/api/v1/multibagger/snapshot?latest=1&market=${market}`;
         // ── INDIA ──
-        fetch(`/api/v1/multibagger/snapshot?clientId=${encodeURIComponent(cid)}&market=IN`)
+        fetch(snapUrl('IN'))
           .then(r => r.ok ? r.json() : null)
           .then(j => {
             if (!alive || !j || !j.ok || !j.snapshot) return;
+            if (!cid && j.clientId) { try { localStorage.setItem('mb_client_id_v1', j.clientId); } catch {} }
             try {
               const rawRows = JSON.parse(j.snapshot);
               if (!Array.isArray(rawRows) || !rawRows.length) return;
@@ -721,10 +729,11 @@ export default function HomeDashboard() {
           if (lsUsa) { try { localUsaCount = (JSON.parse(lsUsa) as any[])?.length || 0; } catch {} }
         } catch {}
         try { console.log(`[home] USA local row count: ${localUsaCount}`); } catch {}
-        fetch(`/api/v1/multibagger/snapshot?clientId=${encodeURIComponent(cid)}&market=USA`)
+        fetch(snapUrl('USA'))
           .then(r => r.ok ? r.json() : null)
           .then(j => {
             if (!alive || !j || !j.ok || !j.snapshot) return;
+            if (!cid && j.clientId) { try { localStorage.setItem('mb_client_id_v1', j.clientId); } catch {} }
             try {
               const rawRows = JSON.parse(j.snapshot);
               if (!Array.isArray(rawRows) || !rawRows.length) return;
