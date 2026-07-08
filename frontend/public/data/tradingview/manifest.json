@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-07-08T08:33:37.583Z",
+  "lastSync": "2026-07-08T10:39:11.291Z",
   "workflowVersion": "zzz162",
   "approach": "scanner-api-interception + field-id translation",
   "ok": 9,
@@ -10,8 +10,8 @@
       "displayName": "Minervni Stocks",
       "screenerId": "sBtiBahk",
       "ok": true,
-      "size": 34846,
-      "rowCount": 30,
+      "size": 33862,
+      "rowCount": 29,
       "error": null
     },
     {
@@ -19,7 +19,7 @@
       "displayName": "Qualmaggie Leader Stocks in Bearmarket or Corrections",
       "screenerId": "WJDx6FZ9",
       "ok": true,
-      "size": 8985,
+      "size": 8979,
       "rowCount": 6,
       "error": null
     },
@@ -28,8 +28,8 @@
       "displayName": "EPISODIC PIVOT / VOLUME SURGE",
       "screenerId": "Px4kG2hQ",
       "ok": true,
-      "size": 17281,
-      "rowCount": 14,
+      "size": 12963,
+      "rowCount": 10,
       "error": null
     },
     {
@@ -37,8 +37,8 @@
       "displayName": "Liquidity Leaders",
       "screenerId": "9IcX30Ez",
       "ok": true,
-      "size": 40949,
-      "rowCount": 36,
+      "size": 37881,
+      "rowCount": 33,
       "error": null
     },
     {
@@ -46,8 +46,8 @@
       "displayName": "Weekly Gainer Stocks USA",
       "screenerId": "Neuim2Bm",
       "ok": true,
-      "size": 23020,
-      "rowCount": 20,
+      "size": 19285,
+      "rowCount": 16,
       "error": null
     },
     {
@@ -55,7 +55,7 @@
       "displayName": "Sales And EPS Growth for EP - Pradeep Bonde style",
       "screenerId": "RtSuWTgK",
       "ok": true,
-      "size": 49202,
+      "size": 49196,
       "rowCount": 42,
       "error": null
     },
@@ -73,7 +73,7 @@
       "displayName": "USA Multibagger (GHHf1HVl)",
       "screenerId": "GHHf1HVl",
       "ok": true,
-      "size": 105876,
+      "size": 106331,
       "rowCount": 100,
       "error": null
     },
@@ -82,7 +82,7 @@
       "displayName": "Future Super Scalers like NBIS Full",
       "screenerId": "oRvEFfVY",
       "ok": true,
-      "size": 99418,
+      "size": 99425,
       "rowCount": 90,
       "error": null
     }
