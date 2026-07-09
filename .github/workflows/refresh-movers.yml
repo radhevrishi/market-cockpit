@@ -15,9 +15,17 @@ on:
     - cron: '30 5 * * 1-5'    # 11:00 IST — mid-morning warm
     - cron: '30 7 * * 1-5'    # 13:00 IST — mid-day warm
     - cron: '0 9 * * 1-5'     # 14:30 IST — pre-close warm
-    # Post-close refreshes (final EOD bhavcopy attribution)
+    # Post-close refreshes (final EOD bhavcopy attribution).
+    # PATCH zzz231 — added denser post-close warmers as a belt-and-suspenders
+    # backup for the Cloudflare mc-movers worker cron. If the CF worker
+    # misses a run, these force Railway to recompute /api/market/quotes so
+    # the Home page movers block stays fresh right through the evening.
     - cron: '15 10 * * 1-5'   # 15:45 IST (Mon-Fri) - just after close
+    - cron: '45 10 * * 1-5'   # 16:15 IST (Mon-Fri)
+    - cron: '30 11 * * 1-5'   # 17:00 IST (Mon-Fri)
+    - cron: '30 12 * * 1-5'   # 18:00 IST (Mon-Fri)
     - cron: '30 13 * * 1-5'   # 19:00 IST (Mon-Fri) - after final EOD bhavcopy
+    - cron: '30 15 * * 1-5'   # 21:00 IST (Mon-Fri) - late warm before sleep
   workflow_dispatch: {}
 
 concurrency:
