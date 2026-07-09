@@ -12,8 +12,17 @@ name = "mc-movers"
 main = "index.js"
 compatibility_date = "2026-01-01"
 
-# Every 5 min, 03:00-10:55 UTC (= 08:30-16:25 IST), Mon-Fri.
-# The scheduled handler additionally gates to Mon-Fri 09:15-15:35 IST,
-# so the cron overshooting the session is harmless.
+# PATCH zzz231 — Post-close coverage. Previously crons stopped at 10:55 UTC
+# (16:25 IST) and the live blob (1h TTL) expired ~17:30 IST, leaving the
+# Home page to fall back to T-1 BHAVCOPY (yesterday's data) until the
+# next morning. User complained: "why do I need my own portal if it's not
+# updated?".
+#
+# New coverage:
+#   */5 3-10 * * 1-5   — every 5 min, 08:30-16:25 IST (intraday, unchanged)
+#   */15 10-16 * * 1-5 — every 15 min, 15:30-22:25 IST (post-close capture)
+# Total: ~120 runs Mon-Fri (~96 intraday + ~28 post-close).
+# The scheduled handler now allows both the intraday window (09:15-15:35)
+# and the post-close window (15:35-22:00), still Mon-Fri only.
 [triggers]
-crons = ["*/5 3-10 * * 1-5"]
+crons = ["*/5 3-10 * * 1-5", "*/15 10-16 * * 1-5"]

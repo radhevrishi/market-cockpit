@@ -19,7 +19,7 @@
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 const SYMBOL_CAP = 1600; // bound load/run-time (same default as MOVERS_SYMBOL_CAP in the .mjs)
-const FRESH_TTL = 3600; // live blob auto-expires in 1h if the cron stops
+const FRESH_TTL = 86400; // PATCH zzz231: live blob persists 24h so overnight/weekend keep last-close visible (post-close cron overwrites every 15 min)
 const LASTRUN_TTL = 86400; // 1 day
 const UNIVERSE_KEY = 'nse-ticker-universe:v1:latest';
 const LIVE_KEY = 'nse-movers-live:v1:latest';
@@ -32,8 +32,18 @@ function istNowParts() {
   return { dow: t.getUTCDay(), mins: t.getUTCHours() * 60 + t.getUTCMinutes() };
 }
 
-// Mon-Fri 09:15-15:35 IST — lets the cron overshoot the session safely.
+// PATCH zzz231 — widened to also cover post-close capture window so the
+// live blob keeps refreshing until 22:00 IST (previously stopped at 15:35).
+// Mon-Fri 09:15-22:00 IST (intraday + post-close). Cron may overshoot at
+// either end — the check keeps us Mon-Fri and inside the widened window.
 function marketOpen() {
+  const { dow, mins } = istNowParts();
+  if (dow === 0 || dow === 6) return false;
+  return mins >= 9 * 60 + 15 && mins <= 22 * 60;
+}
+
+// Kept for logs / diagnostics: strict intraday session (unchanged).
+function marketOpenIntraday() {
   const { dow, mins } = istNowParts();
   if (dow === 0 || dow === 6) return false;
   return mins >= 9 * 60 + 15 && mins <= 15 * 60 + 35;
@@ -193,7 +203,7 @@ async function run(env, trigger) {
 
 export default {
   async scheduled(event, env, ctx) {
-    if (!marketOpen()) { console.log('mc-movers: skipped — outside IST market hours (Mon-Fri 09:15-15:35)'); return; }
+    if (!marketOpen()) { console.log('mc-movers: skipped — outside IST cover window (Mon-Fri 09:15-22:00)'); return; }
     ctx.waitUntil(run(env, 'cron'));
   },
   async fetch(req, env) {
@@ -226,7 +236,7 @@ export default {
       ok: true,
       worker: 'mc-movers',
       endpoints: ['GET / (this summary)', 'GET /run (Bearer RUN_SECRET — manual trigger)'],
-      marketOpenIST: marketOpen(),
+      marketOpenIST: marketOpenIntraday(), coverWindow: marketOpen(),
       lastRun: last || null,
     });
   },
