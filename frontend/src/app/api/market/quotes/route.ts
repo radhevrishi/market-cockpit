@@ -711,7 +711,22 @@ async function fetchIndianDataWithCache() {
               const _ltk: any[] = (_lblob && _lblob.tickers) || [];
               if (_ltk.length) {
                 _liveKvAgeMin = Math.round((Date.now() - new Date(_lblob.generatedAt || 0).getTime()) / 60000);
-                if (_liveKvAgeMin >= -5 && _liveKvAgeMin < 45) {
+                // PATCH zzz231 — widen acceptance so the live blob keeps
+                // powering movers post-close (previously dropped at 45 min,
+                // forcing fallback to T-1 BHAVCOPY which reads as
+                // "yesterday's data" all evening).
+                //   Intraday (09:15-15:35 IST Mon-Fri): stay strict — 45 min
+                //     max so a broken cron is caught within minutes.
+                //   Post-close/overnight/weekend: accept up to 24h so the
+                //     day's final close remains the movers source until the
+                //     next morning's live cron kicks in.
+                const _ist = new Date(Date.now() + 5.5 * 3600 * 1000);
+                const _dow = _ist.getUTCDay();
+                const _min = _ist.getUTCHours() * 60 + _ist.getUTCMinutes();
+                const _weekend = _dow === 0 || _dow === 6;
+                const _intraday = !_weekend && _min >= 9 * 60 + 15 && _min <= 15 * 60 + 35;
+                const _maxAgeMin = _intraday ? 45 : 24 * 60;
+                if (_liveKvAgeMin >= -5 && _liveKvAgeMin < _maxAgeMin) {
                   for (const _q of _ltk) {
                     const _sym = String(_q.ticker || "").toUpperCase();
                     if (!_sym || yahooMap.has(_sym)) continue;
