@@ -70,7 +70,29 @@ export async function GET(request: Request) {
   // out". When NSE is CLOSED (weekend / after-hours) the data is static
   // last-close, so hold the cache 30 min; when OPEN keep it fresh (90s).
   let _ttl = RESPONSE_TTL;
-  try { const { isIndianMarketOpen } = await import('@/lib/market-hours'); _ttl = isIndianMarketOpen() ? 90_000 : 21_600_000 /* PATCH: hold closed-hours cache 6h so it stays warm */; } catch {}
+  // PATCH zzz233 — root-cause fix for "yesterday's data" complaint.
+  // Old closed-hours TTL was 6h → when the CF worker or GH cron refreshed
+  // the underlying blobs, users still saw the pre-refresh cached response
+  // for up to 6h. Now: 10 min during the post-close window (15:30-22:00
+  // IST) when blobs are actively being refreshed, 2h overnight when
+  // they're static. Trade-off: rebuild costs ~25s cold but only fires a
+  // handful of times/day (users are far fewer post-close anyway).
+  try {
+    const { isIndianMarketOpen } = await import('@/lib/market-hours');
+    const _open = isIndianMarketOpen();
+    if (_open) {
+      _ttl = 90_000;
+    } else {
+      const _t = new Date(Date.now() + 5.5 * 3600 * 1000);
+      const _mins = _t.getUTCHours() * 60 + _t.getUTCMinutes();
+      const _dow = _t.getUTCDay();
+      const _weekday = _dow >= 1 && _dow <= 5;
+      // Post-close 15:30-22:00 IST Mon-Fri = pipeline actively refreshing;
+      // keep cache short so freshly-published data surfaces within 10 min.
+      const _postClose = _weekday && _mins >= 15 * 60 + 30 && _mins <= 22 * 60;
+      _ttl = _postClose ? 600_000 : 7_200_000;
+    }
+  } catch {}
   // Check response cache
   const cached = responseCache.get(cacheKey);
   if (!_forceFresh && cached && Date.now() - cached.ts < _ttl) {
