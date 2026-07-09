@@ -901,7 +901,16 @@ async function fetchIndianDataWithCache() {
           // turnover) come through as fresh; the rest stay in the universe count
           // and sector view but don't pollute the top-30 with yesterday's moves
           // shown as today's. Honesty rule: never label stale data as live.
-          const _hideStale = marketOpen || _postClose;
+          // PATCH zzz232 — but if Yahoo coverage AND live-KV overlay both
+          // failed (yahooMap < 50 tickers), we have NOTHING else to show.
+          // The user's complaint: "No movers data available right now" is
+          // worse than showing BHAVCOPY — the "last close (Thu)" banner
+          // already tells the reader it's not live. So: relax the filter
+          // only in that empty-live case. Once the mc-movers CF worker
+          // (post-close cron via zzz231) or the GH Actions refresh brings
+          // live prices back, yahooMap.size will jump past 50 and the
+          // strict filter re-engages automatically.
+          const _hideStale = (marketOpen || _postClose) && yahooMap.size >= 50;
           const liveOnly = _hideStale ? mergedStocks.filter((s: any) => !s.staleEOD) : mergedStocks;
           const hiddenStaleCount = mergedStocks.length - liveOnly.length;
           const gainers = [...liveOnly].sort((a, b) => b.changePercent - a.changePercent).filter((s: any) => s.changePercent > 0).slice(0, 30);
