@@ -3,69 +3,81 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Catalyst Scorecard — 57 India Growth Stocks</title>
+<title>Catalyst Scorecard — 59 India Growth Stocks</title>
 <style>
   * { box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Roboto, sans-serif; background: #f1f5f9; color: #0f172a; margin: 0; padding: 0; line-height: 1.55; font-size: 13.5px; -webkit-font-smoothing: antialiased; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Roboto, sans-serif; background: #f1f5f9; color: #0f172a; margin: 0; padding: 0; line-height: 1.6; font-size: 19px; -webkit-font-smoothing: antialiased; }
   .container { max-width: 100%; margin: 0 auto; padding: 12px 16px 40px; }
   .header { margin-bottom: 14px; padding-bottom: 10px; border-bottom: 2px solid #e2e8f0; }
-  h1 { margin: 0 0 6px; font-size: 22px; color: #0f172a; font-weight: 800; letter-spacing: -0.3px; line-height: 1.15; }
-  .tagline { color: #475569; font-size: 13px; margin-bottom: 8px; line-height: 1.4; }
-  .disclaimer { background: #fef9c3; padding: 8px 14px; border-radius: 6px; font-size: 12px; color: #713f12; border-left: 4px solid #f59e0b; margin-bottom: 10px; line-height: 1.4; }
-  .toolbar-actions { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  .header-top { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+  .header-title { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; min-width: 0; flex: 1 1 auto; }
+  h1 { margin: 0; font-size: 26px; color: #0f172a; font-weight: 800; letter-spacing: -0.3px; line-height: 1.15; }
+  .tagline { color: #475569; font-size: 15px; line-height: 1.35; margin: 0; }
+  .toolbar-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 0; flex: 0 0 auto; }
   .btn { padding: 7px 14px; background: #0f172a; color: #ffffff; border: none; border-radius: 6px; font-size: 12px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: transform 0.1s, background 0.15s; box-shadow: 0 1px 3px rgba(15,23,42,0.12); }
   .btn:hover { background: #1e293b; transform: translateY(-1px); }
   .btn-pdf { background: #dc2626; box-shadow: 0 2px 4px rgba(220,38,38,0.25); }
   .btn-pdf:hover { background: #b91c1c; }
   .nav-fixed { position: fixed; right: 12px; bottom: 12px; display: flex; flex-direction: column; gap: 6px; z-index: 100; }
+  /* Auto-hide header while viewing companies */
+  body.scrolled .header, body.scrolled .filter-bar { display: none !important; }
+  .show-controls { display: none; position: fixed; top: 8px; right: 8px; z-index: 200; padding: 6px 10px; background: #0f172a; color: #fff; border: none; border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,0.25); }
+  .show-controls:hover { background: #1e293b; }
+  body.dark .show-controls { background: #3b82f6; }
+  body.dark .show-controls:hover { background: #2563eb; }
+  body.scrolled .show-controls { display: inline-flex; }
   .nav-btn { width: 40px; height: 40px; border-radius: 50%; border: none; background: #0f172a; color: #ffffff; font-size: 16px; font-weight: 800; cursor: pointer; box-shadow: 0 3px 8px rgba(0,0,0,0.22); transition: transform 0.15s, background 0.15s; }
   .nav-btn:hover { background: #1e293b; transform: translateY(-1px) scale(1.05); }
   body.dark .nav-btn { background: #3b82f6; }
   body.dark .nav-btn:hover { background: #2563eb; }
-  .legend-scope { font-size: 11px; color: #475569; margin-bottom: 5px; font-weight: 700; }
-  .legend { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; font-size: 11px; }
-  .legend-item { padding: 4px 10px; border-radius: 999px; font-weight: 700; cursor: pointer; opacity: 0.6; transition: opacity 0.15s, transform 0.15s; user-select: none; font-size: 11px; border: 1.5px solid transparent; }
+  .legend-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  .legend-scope { font-size: 14px; color: #475569; font-weight: 700; margin: 0; flex: 0 0 auto; }
+  .legend { display: flex; flex-wrap: wrap; gap: 7px; font-size: 14px; margin: 0; flex: 1 1 auto; }
+  .legend-item { padding: 6px 13px; border-radius: 999px; font-weight: 700; cursor: pointer; opacity: 0.6; transition: opacity 0.15s, transform 0.15s; user-select: none; font-size: 14px; border: 1.5px solid transparent; }
   .legend-item:hover { opacity: 0.95; transform: translateY(-1px); }
   .legend-item.active { opacity: 1; border-color: #0f172a; box-shadow: 0 2px 5px rgba(0,0,0,0.14); }
   .lg-all { background: #cbd5e1; color: #0f172a; }
   .filter-bar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; align-items: center; padding: 8px 12px; background: #ffffff; border-radius: 8px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(15,23,42,0.04); }
-  .filter-bar input, .filter-bar select { padding: 6px 10px; background: #f8fafc; color: #0f172a; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 12px; font-weight: 500; }
+  .filter-bar input, .filter-bar select { padding: 7px 10px; background: #f8fafc; color: #0f172a; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13.5px; font-weight: 500; }
   .filter-bar input { flex: 1; min-width: 200px; }
   .filter-bar input:focus, .filter-bar select:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.15); }
   .count { color: #475569; font-size: 12px; margin-left: auto; font-weight: 700; }
-  .grid { display: grid; grid-template-columns: 1fr; gap: 14px; scroll-snap-type: y proximity; }
-  .grid > .card { scroll-snap-align: start; scroll-margin-top: 8px; }
+  .grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
+  .grid > .card { scroll-margin-top: 8px; }
   .card { background: #ffffff; border-radius: 10px; padding: 12px 16px; border: 1px solid #e2e8f0; display: flex; flex-direction: column; box-shadow: 0 2px 6px rgba(15,23,42,0.05); page-break-inside: avoid; }
   .card-top { padding-bottom: 8px; border-bottom: 1.5px solid #f1f5f9; margin-bottom: 8px; }
-  .company-name { font-size: 17px; font-weight: 800; color: #0f172a; margin: 0 0 2px; letter-spacing: -0.3px; line-height: 1.2; }
-  .sector { font-size: 10px; color: #2563eb; margin: 0; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; }
-  .metrics { font-size: 11px; color: #334155; margin-top: 5px; font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace; background: #f1f5f9; padding: 4px 8px; border-radius: 5px; letter-spacing: 0.1px; font-weight: 600; }
-  .scores { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 8px; }
-  .score-box { text-align: center; padding: 5px 4px; border-radius: 6px; background: #f8fafc; border: 1.5px solid #e2e8f0; }
-  .score-label { font-size: 9px; color: #475569; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 1px; font-weight: 800; }
-  .score-value { font-size: 18px; font-weight: 900; letter-spacing: -0.3px; line-height: 1; }
-  .hero { background: linear-gradient(135deg, #fef3c7, #fde68a); border-left: 3px solid #d97706; padding: 8px 12px; border-radius: 6px; margin-bottom: 8px; font-size: 12px; color: #451a03; line-height: 1.45; font-weight: 500; }
-  .hero-label { font-size: 9px; text-transform: uppercase; color: #92400e; font-weight: 900; letter-spacing: 1px; margin-bottom: 3px; }
-  .subs { list-style: none; padding: 0; margin: 0 0 8px; font-size: 11.5px; color: #1e293b; line-height: 1.45; }
-  .subs li { padding: 4px 0 4px 14px; position: relative; border-bottom: 1px solid #f1f5f9; }
+  .company-name { font-size: 26px; font-weight: 800; color: #0f172a; margin: 0 0 4px; letter-spacing: -0.3px; line-height: 1.2; }
+  .sector { font-size: 13px; color: #2563eb; margin: 0; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; }
+  .metrics { font-size: 15px; color: #334155; margin-top: 7px; font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace; background: #f1f5f9; padding: 6px 12px; border-radius: 5px; letter-spacing: 0.1px; font-weight: 600; }
+  .scores { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+  .score-box { text-align: center; padding: 10px 5px; border-radius: 6px; background: #f8fafc; border: 1.5px solid #e2e8f0; }
+  .score-label { font-size: 12.5px; color: #475569; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 3px; font-weight: 800; }
+  .score-value { font-size: 28px; font-weight: 900; letter-spacing: -0.3px; line-height: 1; }
+  .hero { background: linear-gradient(135deg, #fef3c7, #fde68a); border-left: 3px solid #d97706; padding: 12px 16px; border-radius: 6px; margin-bottom: 12px; font-size: 17px; color: #451a03; line-height: 1.55; font-weight: 500; }
+  .hero-label { font-size: 12.5px; text-transform: uppercase; color: #92400e; font-weight: 900; letter-spacing: 1px; margin-bottom: 4px; }
+  .subs { list-style: none; padding: 0; margin: 0 0 12px; font-size: 16.5px; color: #1e293b; line-height: 1.6; }
+  .subs li { padding: 6px 0 6px 18px; position: relative; border-bottom: 1px solid #f1f5f9; }
   .subs li:last-child { border-bottom: none; padding-bottom: 2px; }
-  .subs li:before { content: "▶"; position: absolute; left: 2px; top: 5px; color: #3b82f6; font-weight: 900; font-size: 8px; }
-  .assessment { margin-top: 6px; padding: 8px 12px; background: #f8fafc; border-radius: 6px; font-size: 11.5px; line-height: 1.45; border: 1px solid #e2e8f0; }
-  .assessment-row { margin: 5px 0; }
+  .subs li:before { content: "▶"; position: absolute; left: 2px; top: 9px; color: #3b82f6; font-weight: 900; font-size: 10px; }
+  .assessment { margin-top: 8px; padding: 12px 16px; background: #f8fafc; border-radius: 6px; font-size: 16.5px; line-height: 1.55; border: 1px solid #e2e8f0; }
+  .assessment-row { margin: 6px 0; }
   .assessment-row:first-child { margin-top: 0; }
   .assessment-row:last-child { margin-bottom: 0; }
-  .assessment-label { color: #b45309; font-weight: 900; text-transform: uppercase; font-size: 9px; letter-spacing: 1px; display: block; margin-bottom: 1px; }
-  .note { font-size: 11px; color: #334155; font-style: italic; margin-top: 6px; padding: 6px 12px; background: #fef9c3; border-radius: 5px; border-left: 3px solid #f59e0b; line-height: 1.45; }
-  .compare { margin-top: 6px; padding: 8px 12px; background: #eff6ff; border-radius: 6px; font-size: 11.5px; border: 1px solid #bfdbfe; line-height: 1.45; }
-  .compare-row { margin: 5px 0; }
+  .assessment-label { color: #b45309; font-weight: 900; text-transform: uppercase; font-size: 11.5px; letter-spacing: 1px; display: block; margin-bottom: 2px; }
+  .note { font-size: 16px; color: #334155; font-style: italic; margin-top: 8px; padding: 10px 16px; background: #fef9c3; border-radius: 5px; border-left: 3px solid #f59e0b; line-height: 1.55; }
+  .compare { margin-top: 8px; padding: 12px 16px; background: #eff6ff; border-radius: 6px; font-size: 16.5px; border: 1px solid #bfdbfe; line-height: 1.55; }
+  .compare-row { margin: 6px 0; }
   .compare-row:first-child { margin-top: 0; }
   .compare-row:last-child { margin-bottom: 0; }
-  .compare-label { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; color: #1d4ed8; display: block; margin-bottom: 1px; }
+  .compare-label { font-size: 11.5px; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; color: #1d4ed8; display: block; margin-bottom: 2px; }
   .compare-text { color: #1e293b; }
-  .verdict-block { margin-top: 8px; padding: 8px 14px; border-radius: 8px; text-align: center; box-shadow: 0 2px 6px rgba(0,0,0,0.12); }
-  .verdict-label { font-size: 9px; text-transform: uppercase; letter-spacing: 1.2px; font-weight: 900; margin-bottom: 2px; opacity: 0.95; }
-  .verdict-text { font-size: 17px; font-weight: 900; letter-spacing: 1.1px; line-height: 1.1; }
-  .verdict-note { font-size: 10.5px; font-weight: 500; margin-top: 4px; opacity: 0.96; font-style: italic; line-height: 1.4; }
+  .footer-row { display: flex; gap: 8px; margin-top: 6px; align-items: stretch; flex-wrap: nowrap; }
+  .footer-row .compare { flex: 1 1 auto; margin-top: 0; }
+  .verdict-pill { margin-top: 10px; padding: 8px 16px; border-radius: 999px; box-shadow: 0 2px 5px rgba(0,0,0,0.14); display: flex; flex-direction: row; align-items: center; gap: 10px; line-height: 1.35; }
+  .verdict-pill .verdict-text { font-size: 15px; font-weight: 900; letter-spacing: 0.8px; white-space: nowrap; text-transform: uppercase; flex: 0 0 auto; }
+  .verdict-pill .verdict-note { font-size: 14px; font-weight: 500; font-style: italic; opacity: 0.96; flex: 1 1 auto; display: block; }
+  .verdict-pill:before { content: "·"; font-weight: 900; opacity: 0.6; order: 1; margin: 0 -2px; display: none; }
+  .verdict-label { display: none; }
   .v-accumulate { background: linear-gradient(135deg, #059669, #10b981); color: #ffffff; }
   .v-dips { background: linear-gradient(135deg, #0891b2, #06b6d4); color: #ffffff; }
   .v-hold { background: linear-gradient(135deg, #ca8a04, #eab308); color: #ffffff; }
@@ -169,30 +181,36 @@
 </style>
 </head>
 <body>
+<button class="show-controls" id="showControls" title="Show filters &amp; header">☰ Filters</button>
 <div class="container">
   <div class="header">
-    <h1>Catalyst Scorecard — 57 India Growth Stocks</h1>
-    <div class="tagline">Growth catalysts + Management quality + Moat quality — three separate lenses</div>
-    <div class="disclaimer">Not investment advice. Scores measure catalyst/management/moat quality on the pasted data — NOT valuation, not a buy signal. Own diligence required.</div>
-    <div class="toolbar-actions">
-      <button class="btn btn-pdf" onclick="window.print()">⬇ Download as PDF</button>
-      <button class="btn" id="themeToggle">🌙 Dark Mode</button>
-      <button class="btn" onclick="document.documentElement.scrollTo({top:0,behavior:'smooth'})">↑ Back to Top</button>
+    <div class="header-top">
+      <div class="header-title">
+        <h1>Catalyst Scorecard — 59 India Growth Stocks</h1>
+        <div class="tagline">Growth catalysts + Management quality + Moat quality — three separate lenses</div>
+      </div>
+      <div class="toolbar-actions">
+        <button class="btn btn-pdf" onclick="window.print()">⬇ Download as PDF</button>
+        <button class="btn" id="themeToggle">🌙 Dark Mode</button>
+        <button class="btn" onclick="document.documentElement.scrollTo({top:0,behavior:'smooth'})">↑ Back to Top</button>
+      </div>
     </div>
     <div class="nav-fixed">
       <button class="nav-btn" id="prevCo" title="Previous company (↑)">↑</button>
       <button class="nav-btn" id="nextCo" title="Next company (↓)">↓</button>
     </div>
-    <div class="legend-scope">Click a tier to filter <span id="tierScope">(applies to Catalyst score)</span></div>
-    <div class="legend">
-      <span class="legend-item lg-all active" data-tier="all">All</span>
-      <span class="legend-item lg-s90" data-tier="9">9.0+ Elite</span>
-      <span class="legend-item lg-s85" data-tier="8.5">8.5 Strong</span>
-      <span class="legend-item lg-s80" data-tier="8">8.0 Solid</span>
-      <span class="legend-item lg-s75" data-tier="7.5">7.5 Fair</span>
-      <span class="legend-item lg-s70" data-tier="7">7.0 Watch</span>
-      <span class="legend-item lg-s60" data-tier="6">6.0 Weak</span>
-      <span class="legend-item lg-s55" data-tier="special">Special</span>
+    <div class="legend-row">
+      <div class="legend-scope">Click a tier to filter <span id="tierScope">(applies to Catalyst score)</span></div>
+      <div class="legend">
+        <span class="legend-item lg-all active" data-tier="all">All</span>
+        <span class="legend-item lg-s90" data-tier="9">9.0+ Elite</span>
+        <span class="legend-item lg-s85" data-tier="8.5">8.5 Strong</span>
+        <span class="legend-item lg-s80" data-tier="8">8.0 Solid</span>
+        <span class="legend-item lg-s75" data-tier="7.5">7.5 Fair</span>
+        <span class="legend-item lg-s70" data-tier="7">7.0 Watch</span>
+        <span class="legend-item lg-s60" data-tier="6">6.0 Weak</span>
+        <span class="legend-item lg-s55" data-tier="special">Special</span>
+      </div>
     </div>
   </div>
   <div class="filter-bar">
@@ -1072,7 +1090,37 @@ const companies = [
     ],
     mgmtNote:"PSU (Government of India). Historic revenue COLLAPSED ₹30,001 cr FY21 → ₹1 cr FY26 as they exited the trading business. FY26 PAT ₹387 cr driven by non-operating items (NINL escrow + MMTC Pamp profit share). Not a growth story — an asset unlock story.",
     moatNote:"MMTC Pamp JV stake (Precious metals refining) — genuinely valuable stream generating ₹175 cr recurring JV profit share. But standalone business has NO MOAT — the trading operations have been wound down.",
-    catNote:"SPECIAL SITUATIONS framework applies — this is a wind-down/asset unlock story, NOT a growth story. Watch: Pamp JV profit trajectory + NINL escrow use of proceeds + SIOTL/ICEX/Gitanjali exit completions are the near-term events." }
+    catNote:"SPECIAL SITUATIONS framework applies — this is a wind-down/asset unlock story, NOT a growth story. Watch: Pamp JV profit trajectory + NINL escrow use of proceeds + SIOTL/ICEX/Gitanjali exit completions are the near-term events." },
+  { n:"Newgen Software", sector:"IT Product Companies", metrics:"Mcap ₹7,602Cr · P/E 24.94 · ROCE 21.6% · OPM 25.8%",
+    cat:8, mgmt:8, moat:7.5,
+    hero:"Annuity base ₹968 cr = 62% of FY26 revenue (up from 56% FY25), SaaS component +36% YoY, deferred revenue rose ₹220→₹300 cr — the recurring floor management explicitly ties to its double-digit growth aim, compounding independent of new-logo timing.",
+    subs:[
+      "AI-led internal cost compression — management targets 20-30% reduction in service delivery, execution and product cost over the next 2-3 years for the same revenue by embedding AI across engineering, helpdesk and legal workflows. On a ₹406 cr EBITDA base, even partial realisation lifts margins materially before any revenue benefit.",
+      "US large-account pivot gaining scale — US revenue +17% YoY FY26, with signed multi-year deals including a $5.3 mn enterprise content platform for a financial institution and a $2.6 mn healthcare subscription deal. The two-year transition away from small accounts is nearly complete; the residual funnel contains very large deals that can step up the ₹400 cr+ regional run-rate.",
+      "Saudi Arabia re-opening with a funded subsidiary — described as the largest growth market in EMEA, closed for a couple of quarters and now re-opening. A wholly-owned subsidiary is incorporated and a ₹38.6 cr loan-origination deal with a Saudi public-sector bank signals the pipeline that converts as travel and execution normalise.",
+      "Order book growth with a richer deal mix — residual order book +~13% YoY at FY26 close (>20% in H1) while the company deliberately layers higher-ticket AI, PaaS and insurance solutions. A growing backlog of multi-year subscription deals converts into the annuity base with a lag, reinforcing the compounding story.",
+      "Customer depth expanding across the base — customers billing over ₹5 cr rose 87 → 101 in FY26 with 47 new logos added. Deeper wallet share inside a 500+ active customer base is a capital-efficient growth lever that does not depend on winning net-new logos.",
+      "Australia territory crossing into scale — expected to cross $5 mn in FY26 with $10 mn targeted next year. At that level, the territory becomes a self-sustaining growth node funded by its own subscription renewals, adding a fourth geography to the US-EMEA-APAC mix."
+    ],
+    mgmtNote:"Diwakar Nigam-led team; two-year US large-account pivot executed to near-completion and an explicit multi-year AI cost-transformation programme with clear internal-cost math. FCF ₹223 cr FY26 (74% of PAT) shows real cash generation despite the growth deceleration this year.",
+    moatNote:"Product IP (OmniOMS, OmniDocs, NewgenONE low-code platform) with 500+ active customers and expanding wallet share (101 above ₹5 cr). SaaS-heavy annuity mix + rising deferred revenue create high switching cost; not a category-defining moat but a durable one for a niche BPM/CCM player.",
+    catNote:"Deceleration is the elephant — Q4 FY26 revenue +5.3% YoY vs. 20-30% two years ago, and PAT -1.9%. But P/E has compressed 44 → 19 and the annuity floor + AI cost cut are structural, not narrative. Watch: does US large-account funnel + Saudi re-opening reaccelerate revenue in H2 FY27." },
+  { n:"Rashi Peripherals", sector:"IT Distribution · Trading", metrics:"Mcap ₹5,182Cr · P/E 18.67 · ROCE 16% · OPM 2.9%",
+    cat:8, mgmt:7.5, moat:7,
+    hero:"VDA Infosolutions 67% stake acquired 23 June 2026 for ₹368.5 cr cash (remaining 33% in three annual tranches through Aug 2029) — adds ~₹850 cr revenue, 1,000+ professionals, and direct forward integration into higher-margin cloud, cybersecurity and digital-infrastructure services with IBM, Dell, Cisco and Palo Alto Networks relationships.",
+    subs:[
+      "Dell Technologies partnership — Rashi began distributing Dell's full portfolio (PCs, laptops, servers, storage, monitors) midway through FY26 with a dedicated team in place. Dell's India business at ~$3 bn; management expects the partnership to be substantial in FY27, adding a second large-scale commercial brand alongside the existing portfolio.",
+      "AI PC super-cycle + Windows 10 refresh — India shipped a record 15.9 mn PCs in CY25, AI notebooks +129% YoY, and Windows 10 end-of-support in October 2025 triggered a multi-year enterprise refresh. AI PCs at ₹75-80k vs. ₹40k for standard notebooks lift ASP even if unit growth flattens.",
+      "Component pricing tailwind — memory, storage and GPU firmed through FY26 as AI DC demand absorbed capacity; management expects a further ~20% increase in the PES category. Fixed costs stay flat while absolute margin per unit rises, amplifying operating leverage into the P&L.",
+      "AI data-centre project pipeline — executed India's first large AI DC (₹2,000 cr at Yotta) in FY25, consciously paused project business in FY26, and sees a ₹20,000-25,000 cr AI + non-AI funnel for FY27. Post-IPO balance-sheet capacity lets Rashi layer projects onto its 20% base-business growth subject to ROI discipline.",
+      "Geographic expansion into tier-3/4 cities — added Nanded, Baramati and Solapur branches in FY26 taking the network to 55 branches; non-metros now 34% of revenue. India's PC penetration is only 15-20% and the stated 800+ district goal opens a long runway in under-penetrated B/C/D cities.",
+      "Customs demand resolution — on 29 October 2025 Rashi received a favourable order quashing a ₹135 cr customs demand (with interest and penalty). Removal of this overhang cleans up the balance sheet and eliminates a potential cash-outflow risk outstanding since FY23.",
+      "Semiconductor and embedded systems vertical — +131% YoY FY26 with a dedicated subsidiary created; supported by a Bangalore embedded lab and rising automobile-sector demand. Small base today but positioned as a long-term earnings leg beyond distribution.",
+      "Quick-commerce distribution — first-mover advantage distributing close to 10 brands (laptops, printers); management expects to more than double this year. Dedicated quick-commerce division launched FY25, widening the channel beyond traditional IT retail."
+    ],
+    mgmtNote:"Post-IPO management deployed balance-sheet capacity into a defining acquisition (VDA) rather than growth-at-any-cost; capital discipline visible in the FY26 project-business pause and the customs-demand resolution. CFO turned positive at ₹114 cr FY26 vs. persistently negative through FY19-FY25 — a meaningful working-capital inflection.",
+    moatNote:"Distribution scale — 55 branches expanding to 800+ districts, exclusive/anchor brand relationships (Dell now added to the existing portfolio), first-mover quick-commerce IT distribution, and a semiconductor vertical +131% off a small base. But this is Trading — OPM is structurally thin (~3%) and working-capital intensive; moat is scale and relationships, not IP.",
+    catNote:"OPM 2.9% caps the multiple mechanically. But PAT +34% FY26, CFO/PAT turned 40% (was consistently negative), and the VDA deal actually pulls the group into higher-margin services. Watch: VDA integration + FY27 Dell ramp + AI DC funnel conversion. P/E 18.7 reasonable given the growth mix." }
 ];
 
 const badgeClass = s => {
@@ -1126,6 +1174,7 @@ const verdictMap = {
   "MMTC": { ideal:"Cash unlocks + high-margin JV monetisation", real:"Pamp JV ₹175 cr + NINL escrow ₹411 cr + small exits", v:"SPECIAL / SELL", vn:"Wind-down story, not growth; special situations framework applies" },
   "Morepen Laboratories": { ideal:"Anchor CDMO contract shipping + regulatory clean record + demerger value unlock", real:"₹825 cr CDMO shipping + Morepen Medipath demerger + zero-483 FDA + 403 DMFs", v:"HOLD", vn:"CDMO material but OPM 7%, PAT dropped 22% YoY FY26" },
   "Neuland Laboratories": { ideal:"Peptide capacity into GLP-1 boom + big pharma engagement + R&D scale", real:"Module 1 Jul 2026 + 8-10 peptide programs + Genome Valley 3× R&D + $5-6B TAM", v:"ACCUMULATE", vn:"Ideal matched, ROCE 24.8% strong; first NCE win is next trigger" },
+  "Newgen Software": { ideal:"Annuity majority + FCF compounding + cost transformation + geographic expansion", real:"Annuity 62% + AI 20-30% cost cut target + US $5.3M ECM + Saudi re-open + FCF ₹223 cr", v:"ACCUMULATE", vn:"P/E compressed 44→19; annuity + AI cost cut real; growth reacceleration is the test" },
   "NGL Fine-Chem": { ideal:"Sole-manufacturer patent-expiry molecules + regulated market entry + capacity", real:"Sole India fluralaner + afoxolaner pipeline + Tarapur Phase II + US VMFs", v:"HOLD", vn:"Ideal matched but OPM 21% → 15%, ROCE 26% → 15.5%, small cap single-therapy" },
   "NCL Industries": { ideal:"Cement demand tailwind + integrated power + specialty products", real:"Cement grinding + 130 MW solar-wind + sole-domestic CBP boards", v:"HOLD", vn:"Small cap, ₹919 cr RE project = 5× EBITDA (heavy leverage risk)" },
   "Paras Defence": { ideal:"Multiple sole-supplier positions + IP-led products + international exclusivity", real:"Sole Asia periscope + directed-energy laser + Northstar 10-yr + Optics Park", v:"HOLD", vn:"Ideal matched but P/E 111 extreme, execution across many subsidiaries risky" },
@@ -1133,6 +1182,7 @@ const verdictMap = {
   "PTC Industries": { ideal:"Multiple sole-Indian positions in flight-critical + integrated capabilities + recurring references", real:"Blue Origin BE-4 + Safran LEAP sole-Indian + BrahMos + SMTC integrated + GTRE first", v:"HOLD", vn:"Real catalyst elite but P/E 221 disconnect from ROE 6.7%, FCF -₹176 cr FY25" },
   "RACL Geartech": { ideal:"Multi-OEM programs with production visibility + EV drivetrain content + NA entry", real:"BMW EV × 2 programmes + Kawasaki 15-part + ZF NA trucks + BRP Canada", v:"HOLD", vn:"Small cap deep-tech, FCF negative most years, ROCE 16.6%, execution across many wins" },
   "Ramco Systems": { ideal:"Anchor product wins + margin recovery to profitability + recurring revenue scale", real:"Korean Air $10M+ 5-7 yr + EBITDA 14% → 24% + Tata C-130J + debt-free", v:"HOLD", vn:"Turnaround genuine, but historic P&L wreck (losses 4 yrs, reserves halved)" },
+  "Rashi Peripherals": { ideal:"Transformational M&A + AI PC/DC cycle + working-capital inflection + distribution scale", real:"VDA 67% ₹368 cr + Dell portfolio + Windows 10 refresh + CFO +₹114 cr FY26", v:"ACCUMULATE ON DIPS", vn:"Multiple catalysts converging; VDA forward integration real; thin OPM 2.9% caps multiple" },
   "Refex Industries": { ideal:"Wind ALMM domestic + long-duration contracted OB + demerger unlock + underleveraged", real:"Wind OB ₹1,860 cr + ALMM cert + ash handling scaling + green mobility demerger", v:"HOLD", vn:"Revenue declined FY26, FCF -₹430 cr FY25; wait for wind ramp visibility" },
   "Rishabh Instruments": { ideal:"European anchor client OB + multi-brand global presence + PLI", real:"Nashik doubling + Lumel SA €8M German + Sifam Tinsley USA + MID Europe", v:"HOLD", vn:"IPO 2023 short history, PAT volatile FY25 → FY26, ROCE 13.6%" },
   "Saksoft": { ideal:"AI-native repositioning + wallet-share expansion + cheap valuation + net cash", real:"Vision 2030 $500M + US pipeline 5× + AI decoupling + ₹223 cr cash + P/E 11", v:"ACCUMULATE", vn:"Metrics elite (ROCE 23%, PAT growing); Q4 growth deceleration is watch item" },
@@ -1234,33 +1284,49 @@ function render() {
         <div class="compare-row"><span class="compare-label">Ideal:</span><span class="compare-text">${verdictMap[c.n].ideal}</span></div>
         <div class="compare-row"><span class="compare-label">Real:</span><span class="compare-text">${verdictMap[c.n].real}</span></div>
       </div>
-      <div class="verdict-block ${verdictClass(verdictMap[c.n].v)}">
-        <div class="verdict-label">Directional Signal · Not Investment Advice</div>
-        <div class="verdict-text">${verdictMap[c.n].v}</div>
-        <div class="verdict-note">${verdictMap[c.n].vn}</div>
+      <div class="verdict-pill ${verdictClass(verdictMap[c.n].v)}">
+        <span class="verdict-text">${verdictMap[c.n].v}</span>
+        <span class="verdict-note">${verdictMap[c.n].vn}</span>
       </div>` : ''}
     </div>
   `).join('');
 }
 
-// Company navigation — jump to next/previous visible card
+// Company navigation — jump to next/previous card, aligned to its top
+function cardDocTop(card) {
+  return card.getBoundingClientRect().top + (window.pageYOffset || document.documentElement.scrollTop);
+}
+function currentCardIndex(cards) {
+  const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+  const probe = scrollTop + 12; // tiny buffer for rounding
+  let idx = 0;
+  for (let i = 0; i < cards.length; i++) {
+    if (cardDocTop(cards[i]) <= probe) idx = i;
+    else break;
+  }
+  return idx;
+}
 function scrollToCard(dir) {
   const cards = Array.from(document.querySelectorAll('#grid .card'));
   if (!cards.length) return;
-  const top = window.scrollY + 60;
-  let idx = 0;
-  for (let i = 0; i < cards.length; i++) {
-    if (cards[i].offsetTop <= top + 20) idx = i;
+  const cur = currentCardIndex(cards);
+  const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+  const curTop = cardDocTop(cards[cur]);
+  // If going down and we're not yet at the current card's top, snap to current card first
+  let nextIdx;
+  if (dir > 0) {
+    nextIdx = Math.abs(scrollTop - curTop) > 4 ? cur : Math.min(cards.length - 1, cur + 1);
+  } else {
+    nextIdx = Math.abs(scrollTop - curTop) > 4 ? cur : Math.max(0, cur - 1);
   }
-  const next = Math.max(0, Math.min(cards.length - 1, idx + dir));
-  cards[next].scrollIntoView({ behavior: 'smooth', block: 'start' });
+  window.scrollTo({ top: cardDocTop(cards[nextIdx]), behavior: 'smooth' });
 }
 document.getElementById('prevCo').addEventListener('click', () => scrollToCard(-1));
 document.getElementById('nextCo').addEventListener('click', () => scrollToCard(1));
 document.addEventListener('keydown', (e) => {
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
-  if (e.key === 'j' || e.key === 'ArrowDown' && e.shiftKey) { e.preventDefault(); scrollToCard(1); }
-  if (e.key === 'k' || e.key === 'ArrowUp' && e.shiftKey) { e.preventDefault(); scrollToCard(-1); }
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.key === 'j') { e.preventDefault(); scrollToCard(1); }
+  else if (e.key === 'k') { e.preventDefault(); scrollToCard(-1); }
 });
 
 // Theme toggle with persistence
@@ -1274,6 +1340,20 @@ themeBtn.addEventListener('click', () => {
   const next = document.body.classList.contains('dark') ? 'light' : 'dark';
   applyTheme(next);
   try { localStorage.setItem('scorecard-theme', next); } catch(e) {}
+});
+
+// Auto-hide header + filter bar once user scrolls into company data
+let _scrollTicking = false;
+window.addEventListener('scroll', () => {
+  if (_scrollTicking) return;
+  _scrollTicking = true;
+  requestAnimationFrame(() => {
+    document.body.classList.toggle('scrolled', window.scrollY > 40);
+    _scrollTicking = false;
+  });
+}, { passive: true });
+document.getElementById('showControls').addEventListener('click', () => {
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 });
 
 ['search', 'sort', 'tierScoreDim'].forEach(id => document.getElementById(id).addEventListener('input', render));
